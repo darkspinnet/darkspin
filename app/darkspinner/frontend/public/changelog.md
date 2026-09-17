@@ -2,6 +2,7 @@
 
 ### 2026-09-17
 
+- Attach Shadow Doppler split shaders to both bodies and remove them after the split instead of leaving persistent flashing effects at the spawn position.
 - Shorten commit hashes in unstable CI build versions from 12 characters with a g prefix to 7 characters without a prefix.
 - Respect account squad unlocks in profile responses so campaign selection does not offer empty, unpurchased squads as unlocked with hero level zero.
 - Explicitly gate unstable artifact builds on pushes to main, excluding pull requests and other branches.
