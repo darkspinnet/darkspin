@@ -5,6 +5,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/combat"
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
@@ -261,8 +262,7 @@ func (s gameplayPeerSession) applyPassiveDamageReduction(
 	case energyDamageSource:
 		reduction += creature.EnergyDamageReduction
 	}
-	reduction = min(max(reduction, float32(0)), float32(1))
-	return damage * (1 - reduction)
+	return combat.ApplyDamageReduction(damage, reduction)
 }
 
 func (r campaignNPCActionRuntime) applyCrushingDreadAllyReduction(
@@ -298,7 +298,7 @@ func (r campaignNPCActionRuntime) applyCrushingDreadAllyReduction(
 		}
 		reduction = max(reduction, candidateReduction)
 	}
-	return damage * (1 - min(max(reduction, float32(0)), float32(1)))
+	return combat.ApplyDamageReduction(damage, reduction)
 }
 
 func (s gameplayPeerSession) passiveDamageReduction(now time.Time) float32 {

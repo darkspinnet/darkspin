@@ -2,6 +2,10 @@
 
 ### 2026-09-17
 
+- Change player dodge and energy resistance ratings from linear scaling to diminishing returns with a 75% avoidance ceiling, and cap combined passive, aura, resistance, and armor mitigation at 90% so stacked defenses cannot grant immunity.
+- Match borderless rendering and the saved graphics resolution to the current monitor, and restore the remembered windowed resolution when switching back.
+- Apply in-game resolution changes to the window size immediately and retain the selected size when returning from borderless to windowed mode.
+- Change Alt+Enter from an unsaved exclusive-fullscreen toggle to a saved windowed/borderless toggle, default to windowed, and restore the previous window placement when leaving borderless.
 - Correct client preferences from GameData to DarksporeData across launcher modes, preserve saved settings, and initialize new profiles with valid windowed defaults.
 - Restore Enter-to-chat by correcting game-window detection from Game to the shipped Darkspore title.
 - Keep launcher self-update checks silent and show update progress only when an update is found, without holding content preparation at zero.

@@ -143,26 +143,83 @@ func ensureWindowedClientPreference(rootPath string) error {
 	if err != nil {
 		return fmt.Errorf("windowedMkdir: %w", err)
 	}
-	// Seed new profiles only; existing preferences belong to the client and player.
-	w, err := os.OpenFile(preferencePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if errors.Is(err, os.ErrExist) {
+	contents, err := os.ReadFile(preferencePath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("windowedRead: %w", err)
+	}
+	// Both windowed and borderless use native windowed rendering. Fang remembers
+	// borderless separately in DarkspinDisplay.ini; every other native option is
+	// preserved. Build 103 needs OptionVersion 5 when seeding a new profile.
+	if errors.Is(err, os.ErrNotExist) {
+		err = writeClientPreference(preferencePath, "OptionVersion 5\r\nOptionFullScreen 0\r\n")
+		if err != nil {
+			return fmt.Errorf("windowedSeed: %w", err)
+		}
 		return nil
 	}
-	if err != nil {
-		return fmt.Errorf("windowedCreate: %w", err)
+	preference := string(contents)
+	lines := strings.SplitAfter(preference, "\n")
+	isFullscreenPresent := false
+	for index, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || !strings.EqualFold(fields[0], "OptionFullScreen") {
+			continue
+		}
+		isFullscreenPresent = true
+		if len(fields) >= 2 && fields[1] == "0" {
+			continue
+		}
+		ending := ""
+		if strings.HasSuffix(line, "\r\n") {
+			ending = "\r\n"
+		} else if strings.HasSuffix(line, "\n") {
+			ending = "\n"
+		}
+		lines[index] = "OptionFullScreen 0" + ending
 	}
-	// Build 103 discards preferences without the current format version.
-	const preference = "OptionVersion 5\r\nOptionFullScreen 0\r\n"
+	updated := strings.Join(lines, "")
+	if !isFullscreenPresent {
+		if updated != "" && !strings.HasSuffix(updated, "\n") {
+			updated += "\r\n"
+		}
+		updated += "OptionFullScreen 0\r\n"
+	}
+	if updated == preference {
+		return nil
+	}
+	err = writeClientPreference(preferencePath, updated)
+	if err != nil {
+		return fmt.Errorf("windowedUpdate: %w", err)
+	}
+	return nil
+}
+
+func writeClientPreference(path, preference string) (resultErr error) {
+	w, err := os.CreateTemp(filepath.Dir(path), ".preferences-*")
+	if err != nil {
+		return fmt.Errorf("preferenceCreate: %w", err)
+	}
+	temporaryPath := w.Name()
+	defer func() {
+		removeErr := os.Remove(temporaryPath)
+		if removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			resultErr = errors.Join(resultErr, fmt.Errorf("preferenceCleanup: %w", removeErr))
+		}
+	}()
 	written, writeErr := w.WriteString(preference)
 	closeErr := w.Close()
 	if writeErr != nil {
-		return fmt.Errorf("windowedWrite: %w", errors.Join(writeErr, closeErr))
+		return fmt.Errorf("preferenceWrite: %w", errors.Join(writeErr, closeErr))
 	}
 	if closeErr != nil {
-		return fmt.Errorf("windowedClose: %w", closeErr)
+		return fmt.Errorf("preferenceClose: %w", closeErr)
 	}
 	if written != len(preference) {
-		return fmt.Errorf("windowedSize: wrote %d of %d bytes", written, len(preference))
+		return fmt.Errorf("preferenceSize: wrote %d of %d bytes", written, len(preference))
+	}
+	err = os.Rename(temporaryPath, path)
+	if err != nil {
+		return fmt.Errorf("preferenceReplace: %w", err)
 	}
 	return nil
 }

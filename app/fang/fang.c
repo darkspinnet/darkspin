@@ -1,4 +1,5 @@
 #include "fang.h"
+#include "hook.h"
 
 #include <limits.h>
 #include <ctype.h>
@@ -77,7 +78,6 @@ typedef void* (__cdecl* game_object_resolve_fn)(unsigned int object_id);
 typedef void* (__stdcall* locomotion_receiver_fn)(void* message);
 typedef float (__cdecl* frame_delta_fn)(void* frame);
 #if defined(__GNUC__)
-#define FANG_THISCALL __attribute__((thiscall))
 typedef void (__attribute__((thiscall))* sporenet_callback_fn)(void* request, void* response);
 typedef void (__attribute__((thiscall))* web_script_fn)(void* host, const wchar_t* script);
 typedef void (__attribute__((thiscall))* resource_lookup_fn)(void* manager,
@@ -106,7 +106,6 @@ typedef void (__attribute__((thiscall))* chat_initialize_fn)(void* chat);
 typedef void (__attribute__((thiscall))* chat_show_fn)(void* chat, unsigned char is_visible);
 typedef void (__attribute__((thiscall))* chat_open_fn)(void* chat, unsigned int action);
 #else
-#define FANG_THISCALL __thiscall
 typedef void (__thiscall* sporenet_callback_fn)(void* request, void* response);
 typedef void (__thiscall* web_script_fn)(void* host, const wchar_t* script);
 typedef void (__thiscall* resource_lookup_fn)(void* manager,
@@ -426,7 +425,6 @@ static void trace_party_navigation_gate(void* party, unsigned char is_ready);
 static void* traced_spline_camera;
 static int traced_spline_nodes;
 static float traced_spline_time = -1.0f;
-static void trace_client_state(const char* kind, unsigned int value);
 static uintptr_t trace_caller_rva(void* caller);
 static void trace_client_message_payload(unsigned char id, const void* data, unsigned int size);
 static void trace_raknet_payload(const char* direction, const char* kind, SOCKET socket,
@@ -629,7 +627,6 @@ static double __cdecl hooked_mana_cost(void* ability, void* actor, int rank, flo
 }
 static uint64_t trace_digest(const char* buffer, int length);
 static int readable_pointer(const void* pointer);
-static int readable_range(const void* pointer, size_t size);
 
 typedef struct pending_sporenet_script {
     UINT_PTR timer;
@@ -1345,7 +1342,8 @@ static LRESULT CALLBACK hooked_game_wndproc(HWND window, UINT message, WPARAM wp
             return 0;
         }
     }
-    if ((message == WM_KEYDOWN && wparam == VK_RETURN && (lparam & (1L << 30)) == 0) ||
+    if ((message == WM_KEYDOWN && wparam == VK_RETURN && (lparam & (1L << 30)) == 0 &&
+        (GetKeyState(VK_MENU) & 0x8000) == 0) ||
         message == CHAT_OPEN_MESSAGE) {
         void* chat = original_chat_lookup();
         unsigned int chat_state = chat != NULL;
@@ -1426,10 +1424,13 @@ static DWORD WINAPI poll_chat_key(LPVOID parameter) {
         SHORT return_state = GetAsyncKeyState(VK_RETURN);
         if ((return_state & 0x8000) == 0) {
             is_return_down = 0;
-        } else if (is_return_down == 0 && window != NULL && GetForegroundWindow() == window) {
+        } else if (is_return_down == 0) {
             is_return_down = 1;
-            trace_client_state("chat_enter_poll", 1);
-            PostMessageA(window, CHAT_OPEN_MESSAGE, 0, 0);
+            if (window != NULL && GetForegroundWindow() == window &&
+                (GetAsyncKeyState(VK_MENU) & 0x8000) == 0) {
+                trace_client_state("chat_enter_poll", 1);
+                PostMessageA(window, CHAT_OPEN_MESSAGE, 0, 0);
+            }
         }
 #if FANG_DIAGNOSTICS
         if (!held_basic_needs_reconcile()) {
@@ -2606,7 +2607,7 @@ static int readable_pointer(const void* pointer) {
     return 1;
 }
 
-static int readable_range(const void* pointer, size_t size) {
+int readable_range(const void* pointer, size_t size) {
     MEMORY_BASIC_INFORMATION information;
     uintptr_t start = (uintptr_t)pointer;
     uintptr_t end;
@@ -3615,7 +3616,7 @@ static VOID CALLBACK jwt_login_timer_callback(HWND window, UINT message, UINT_PT
        so the queued login cannot observe a cleared credential. */
 }
 
-static void trace_client_state(const char* kind, unsigned int value) {
+void trace_client_state(const char* kind, unsigned int value) {
     char line[512];
     DWORD written;
     int length;
@@ -5487,7 +5488,7 @@ static int patch_jump(void* target, void* replacement) {
     return 1;
 }
 
-static int patch_call(void* instruction, void* expected_target, void* replacement) {
+int patch_call(void* instruction, void* expected_target, void* replacement) {
     BYTE* call = (BYTE*)instruction;
     DWORD old_protection;
     DWORD ignored;
@@ -5687,7 +5688,7 @@ static void __attribute__((naked)) hooked_map_room_start_game(void) {
 }
 #endif
 
-static int patch_pointer(void** target, void* expected, void* replacement) {
+int patch_pointer(void** target, void* expected, void* replacement) {
     DWORD old_protection;
     DWORD ignored;
     if (target == NULL || replacement == NULL || *target != expected) {
@@ -5783,6 +5784,7 @@ static BOOL CALLBACK rename_game_window(HWND window, LPARAM parameter) {
         return TRUE;
     }
     install_chat_wndproc(window);
+    fang_set_display_window(window);
     if (SetWindowTextA(window, darkspin_window_title)) {
         *is_renamed = TRUE;
     }
@@ -5999,6 +6001,13 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
     trace_client_state("snapshot_capture_mode",
         (unsigned int)InterlockedCompareExchange(
             &snapshot_capture_enabled, 0, 0));
+    {
+        int is_display_hook_installed = fang_install_display_preferences(executable);
+        trace_client_state("display_preferences_hook", (unsigned int)is_display_hook_installed);
+        if (!is_display_hook_installed) {
+            result |= 0x8;
+        }
+    }
     {
         int is_locale_override_installed = patch_locale_argument_precedence(executable);
         trace_client_state("locale_argument_override",
