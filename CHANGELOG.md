@@ -2,6 +2,7 @@
 
 ### 2026-09-17
 
+- Add a security policy directing vulnerability reports to GitHub's private reporting flow.
 - Remove overflow-prone Scaleform allocation sizing, guard accumulated instruction offsets, and require HTTPS for authentication cookies with the Secure attribute.
 - Reject invalid Unix process IDs, bound firewall interface responses, and validate content offsets, sizes, and narrow integer fields before conversion to prevent overflow and excessive request-driven allocation.
 - Reject out-of-range DSE animation event indexes, event counts, and interpolation modes instead of silently truncating them.
