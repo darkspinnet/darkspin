@@ -2,6 +2,7 @@
 
 ### 2026-09-17
 
+- Explicitly gate unstable artifact builds on pushes to main, excluding pull requests and other branches.
 - Reject RW4 vertex declarations with more than 65,535 elements before allocating or encoding their 16-bit element count.
 - Enforce portable signed 32-bit bounds for DSE counts and layout offsets, and calculate Fang mana-cost trace products in double precision.
 - Add a security policy directing vulnerability reports to GitHub's private reporting flow.
