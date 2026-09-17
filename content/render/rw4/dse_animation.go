@@ -177,15 +177,27 @@ func parseFloat32Array(numbers []float32, text string) error {
 }
 
 func encodeKeyframeAnimation(section Section, animation KeyframeAnimation) ([]byte, error) {
+	if uint64(section.Size) > uint64(math.MaxInt) || section.Size < 48 {
+		return nil, fmt.Errorf("sectionSize: invalid animation size %d", section.Size)
+	}
+	if section.Offset > math.MaxUint32-section.Size {
+		return nil, fmt.Errorf("sectionEnd: offset %d size %d exceed uint32", section.Offset, section.Size)
+	}
+	if uint64(len(animation.Channels)) > (uint64(section.Size)-48)/16 {
+		return nil, fmt.Errorf("channelCount: %d exceeds section size", len(animation.Channels))
+	}
 	nameOffset := 48
 	infoOffset := nameOffset + len(animation.Channels)*4
 	dataOffset := infoOffset + len(animation.Channels)*12
 	required := dataOffset
 	for _, channel := range animation.Channels {
+		if channel.PoseSize != 8 && channel.PoseSize != 32 && channel.PoseSize != 48 {
+			return nil, fmt.Errorf("poseSize: invalid size %d", channel.PoseSize)
+		}
+		if uint64(len(channel.Keyframes)) > (uint64(section.Size)-uint64(required))/uint64(channel.PoseSize) {
+			return nil, fmt.Errorf("frameSize: keyframes exceed section size %d", section.Size)
+		}
 		required += len(channel.Keyframes) * int(channel.PoseSize)
-	}
-	if required > int(section.Size) {
-		return nil, fmt.Errorf("sectionSize: need %d, have %d", required, section.Size)
 	}
 	payload := make([]byte, section.Size)
 	binary.LittleEndian.PutUint32(payload[0:4], section.Offset+uint32(nameOffset))

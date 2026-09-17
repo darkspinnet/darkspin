@@ -751,7 +751,7 @@ func arenaDamageAfterReduction(
 	case energyDamageSource:
 		reduction += creature.EnergyDamageReduction
 	}
-	return damage * (1 - min(max(reduction, float32(0)), float32(1)))
+	return combat.ApplyDamageReduction(damage, reduction)
 }
 
 func (r campaignAbilityCommandRuntime) arenaEnemyTargetLocked(

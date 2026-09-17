@@ -1,13 +1,12 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { Authorize, Cancel, GetStatus, Patch, Play, SetAccount, SetSkipCinematic, SignOut } from '../wailsjs/go/main/App'
+import { Authorize, Cancel, GetStatus, Patch, Play, SetAccount, SignOut } from '../wailsjs/go/main/App'
 import { EventsOn } from '../wailsjs/runtime/runtime'
 
 const status = ref({ state:'idle', message:'Ready', account:'', manifestUrl:'', gameDirectory:'', version:'', progress:0, requiredFile:0, deleteFile:0, downloadByte:0, isAuthenticated:false, isAutoPlayRequested:false, isPatchEnabled:false, isCinematicSkipped:false })
 const account = ref(localStorage.getItem('darkspin.account') || '')
 const isAutoPatch = ref(localStorage.getItem('darkspin.autoPatch') !== 'false')
 const isAutoPlay = ref(localStorage.getItem('darkspin.autoPlay') === 'true')
-const isSkipCinematic = ref(localStorage.getItem('darkspin.skipCinematic') !== 'false')
 const log = ref([])
 const automaticPhase = ref('')
 const isBusy = computed(() => ['authorizing','checking','patching','launching'].includes(status.value.state))
@@ -18,7 +17,6 @@ const authLabel = computed(() => status.value.isAuthenticated ? 'Signed in' : 'O
 watch(account, value => localStorage.setItem('darkspin.account', value))
 watch(isAutoPatch, value => localStorage.setItem('darkspin.autoPatch', String(value)))
 watch(isAutoPlay, value => localStorage.setItem('darkspin.autoPlay', String(value)))
-watch(isSkipCinematic, value => localStorage.setItem('darkspin.skipCinematic', String(value)))
 
 onMounted(async () => {
   EventsOn('darkspin:status', async next => {
@@ -32,7 +30,6 @@ onMounted(async () => {
   status.value = { ...status.value, ...(await GetStatus()) }
   if (status.value.account) account.value = status.value.account
   isAutoPlay.value = isAutoPlay.value || status.value.isAutoPlayRequested
-  isSkipCinematic.value = isSkipCinematic.value || status.value.isCinematicSkipped
   if (isAutoPlay.value) await automaticStart()
 })
 
@@ -51,11 +48,9 @@ async function patch() {
 }
 async function play() {
   await SetAccount(account.value)
-  await SetSkipCinematic(isSkipCinematic.value)
   await Play()
 }
 async function automaticStart() {
-  await SetSkipCinematic(isSkipCinematic.value)
   automaticPhase.value = 'authorizing'
   if (account.value && !status.value.isAuthenticated) {
     await signIn()
@@ -107,7 +102,7 @@ async function continueAutomaticStart() {
       <div v-if="log.length" class="log"><p v-for="line in log" :key="line">{{ line }}</p></div>
     </section>
     <footer>
-      <div class="toggles"><label><input v-model="isAutoPatch" type="checkbox"> Auto patch</label><label><input v-model="isAutoPlay" type="checkbox"> Auto play after OAuth</label><label><input v-model="isSkipCinematic" type="checkbox"> Skip cinematics</label></div>
+      <div class="toggles"><label><input v-model="isAutoPatch" type="checkbox"> Auto patch</label><label><input v-model="isAutoPlay" type="checkbox"> Auto play after OAuth</label></div>
     </footer>
   </main>
 </template>

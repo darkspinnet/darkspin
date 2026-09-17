@@ -127,7 +127,7 @@ func main() {
 		app.integrationError = integrationErr.Error()
 	}
 	err = wails.Run(&wailsoptions.App{
-		Title:            "DarkSpinner",
+		Title:            "DarkSpinner v" + Version,
 		Width:            800,
 		Height:           560,
 		MinWidth:         680,
@@ -255,6 +255,11 @@ func run(ctx context.Context, arguments []string) error {
 	clientProfilePath, err := configureClientEnvironment(configuration.userDataDirectory)
 	if err != nil {
 		return fmt.Errorf("clientEnvironment: %w", err)
+	}
+	// All launch modes, including explicit profile directories, use this boundary.
+	err = ensureWindowedClientPreference(clientProfilePath)
+	if err != nil {
+		return fmt.Errorf("clientPreferences: %w", err)
 	}
 	gameArguments = append(gameArguments, "-userDataDir:"+clientProfilePath)
 	err = configureLaunchJWT(jwt)

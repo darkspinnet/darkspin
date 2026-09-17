@@ -370,6 +370,7 @@ func (a *App) preparePatch(ctx context.Context, gamePath, configPath string) err
 	isRestarting, err := a.prepareLauncherUpdate(ctx)
 	if err != nil {
 		a.log("Launcher update skipped: " + err.Error())
+		a.setSubsystem("Patch", "Pending", false)
 	}
 	if isRestarting {
 		return nil

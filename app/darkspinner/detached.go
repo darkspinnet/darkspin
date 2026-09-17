@@ -132,61 +132,94 @@ func prepareClientConfig(basePath, identity string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("configPath: %w", err)
 	}
-	err = ensureWindowedClientPreference(path)
-	if err != nil {
-		return "", fmt.Errorf("configWindowed: %w", err)
-	}
 	return path, nil
 }
 
 func ensureWindowedClientPreference(rootPath string) error {
 	preferencePath := filepath.Join(
-		rootPath, "AppData", "Roaming", "GameData", "Preferences", "Preferences.prop",
+		rootPath, "AppData", "Roaming", "DarksporeData", "Preferences", "Preferences.prop",
 	)
+	err := os.MkdirAll(filepath.Dir(preferencePath), 0o755)
+	if err != nil {
+		return fmt.Errorf("windowedMkdir: %w", err)
+	}
 	contents, err := os.ReadFile(preferencePath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("windowedRead: %w", err)
+	}
+	// Both windowed and borderless use native windowed rendering. Fang remembers
+	// borderless separately in DarkspinDisplay.ini; every other native option is
+	// preserved. Build 103 needs OptionVersion 5 when seeding a new profile.
 	if errors.Is(err, os.ErrNotExist) {
-		err = os.MkdirAll(filepath.Dir(preferencePath), 0o755)
+		err = writeClientPreference(preferencePath, "OptionVersion 5\r\nOptionFullScreen 0\r\n")
 		if err != nil {
-			return fmt.Errorf("windowedMkdir: %w", err)
-		}
-		err = os.WriteFile(preferencePath, []byte("OptionFullScreen 0\r\n"), 0o600)
-		if err != nil {
-			return fmt.Errorf("windowedCreate: %w", err)
+			return fmt.Errorf("windowedSeed: %w", err)
 		}
 		return nil
 	}
-	if err != nil {
-		return fmt.Errorf("windowedRead: %w", err)
-	}
-	lineEnding := "\n"
-	if strings.Contains(string(contents), "\r\n") {
-		lineEnding = "\r\n"
-	}
-	lines := strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n")
-	isFound := false
-	isChanged := false
+	preference := string(contents)
+	lines := strings.SplitAfter(preference, "\n")
+	isFullscreenPresent := false
 	for index, line := range lines {
 		fields := strings.Fields(line)
 		if len(fields) == 0 || !strings.EqualFold(fields[0], "OptionFullScreen") {
 			continue
 		}
-		isFound = true
-		if len(fields) == 2 && fields[1] == "0" {
+		isFullscreenPresent = true
+		if len(fields) >= 2 && fields[1] == "0" {
 			continue
 		}
-		lines[index] = "OptionFullScreen 0"
-		isChanged = true
+		ending := ""
+		if strings.HasSuffix(line, "\r\n") {
+			ending = "\r\n"
+		} else if strings.HasSuffix(line, "\n") {
+			ending = "\n"
+		}
+		lines[index] = "OptionFullScreen 0" + ending
 	}
-	if !isFound {
-		lines = append(lines, "OptionFullScreen 0")
-		isChanged = true
+	updated := strings.Join(lines, "")
+	if !isFullscreenPresent {
+		if updated != "" && !strings.HasSuffix(updated, "\n") {
+			updated += "\r\n"
+		}
+		updated += "OptionFullScreen 0\r\n"
 	}
-	if !isChanged {
+	if updated == preference {
 		return nil
 	}
-	err = os.WriteFile(preferencePath, []byte(strings.Join(lines, lineEnding)), 0o600)
+	err = writeClientPreference(preferencePath, updated)
 	if err != nil {
-		return fmt.Errorf("windowedWrite: %w", err)
+		return fmt.Errorf("windowedUpdate: %w", err)
+	}
+	return nil
+}
+
+func writeClientPreference(path, preference string) (resultErr error) {
+	w, err := os.CreateTemp(filepath.Dir(path), ".preferences-*")
+	if err != nil {
+		return fmt.Errorf("preferenceCreate: %w", err)
+	}
+	temporaryPath := w.Name()
+	defer func() {
+		removeErr := os.Remove(temporaryPath)
+		if removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			resultErr = errors.Join(resultErr, fmt.Errorf("preferenceCleanup: %w", removeErr))
+		}
+	}()
+	written, writeErr := w.WriteString(preference)
+	closeErr := w.Close()
+	if writeErr != nil {
+		return fmt.Errorf("preferenceWrite: %w", errors.Join(writeErr, closeErr))
+	}
+	if closeErr != nil {
+		return fmt.Errorf("preferenceClose: %w", closeErr)
+	}
+	if written != len(preference) {
+		return fmt.Errorf("preferenceSize: wrote %d of %d bytes", written, len(preference))
+	}
+	err = os.Rename(temporaryPath, path)
+	if err != nil {
+		return fmt.Errorf("preferenceReplace: %w", err)
 	}
 	return nil
 }

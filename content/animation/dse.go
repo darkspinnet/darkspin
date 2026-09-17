@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -413,6 +414,10 @@ func (e *dseParser) component(index int, frameCount uint32) (Component, error) {
 	if err != nil {
 		return Component{}, err
 	}
+	// Keep counts representable on both 32-bit and 64-bit hosts.
+	if frameCount > math.MaxInt32 {
+		return Component{}, fmt.Errorf("frameCount: %d exceeds supported integer range", frameCount)
+	}
 	count := int(frameCount)
 	component.Keyframes = make([]Keyframe, count)
 	for frameIndex := range component.Keyframes {
@@ -442,16 +447,14 @@ func (e *dseParser) keyframe(componentDeclaration string, index int) (Keyframe, 
 			return Keyframe{}, parseErr
 		}
 		keyframe.Time = time
-		eventStart, parseErr := e.uint32("EVENTSTART")
-		if parseErr != nil {
-			return Keyframe{}, parseErr
+		keyframe.EventStart, err = e.uint16("EVENTSTART")
+		if err != nil {
+			return Keyframe{}, fmt.Errorf("eventStartRead: %w", err)
 		}
-		keyframe.EventStart = uint16(eventStart)
-		eventCount, parseErr := e.uint32("EVENTCOUNT")
-		if parseErr != nil {
-			return Keyframe{}, parseErr
+		keyframe.EventCount, err = e.uint8("EVENTCOUNT")
+		if err != nil {
+			return Keyframe{}, fmt.Errorf("eventCountRead: %w", err)
 		}
-		keyframe.EventCount = uint8(eventCount)
 		keyframe.Flags, err = e.uint32("FLAGS")
 	case "POSITION":
 		keyframe.Position, err = e.vector3("POSITION")
@@ -467,14 +470,10 @@ func (e *dseParser) keyframe(componentDeclaration string, index int) (Keyframe, 
 			keyframe.Weight, err = e.float32("WEIGHT")
 		}
 		if err == nil {
-			mode, modeErr := e.uint32("NEXTMODE")
-			err = modeErr
-			keyframe.NextMode = uint8(mode)
+			keyframe.NextMode, err = e.uint8("NEXTMODE")
 		}
 		if err == nil {
-			mode, modeErr := e.uint32("PREVIOUSMODE")
-			err = modeErr
-			keyframe.PreviousMode = uint8(mode)
+			keyframe.PreviousMode, err = e.uint8("PREVIOUSMODE")
 		}
 		if err == nil {
 			keyframe.Interpolators, err = e.interpolators(1)
@@ -488,7 +487,10 @@ func (e *dseParser) keyframe(componentDeclaration string, index int) (Keyframe, 
 			keyframe.Interpolators, err = e.interpolators(2)
 		}
 	}
-	return keyframe, err
+	if err != nil {
+		return Keyframe{}, fmt.Errorf("frameRead: %w", err)
+	}
+	return keyframe, nil
 }
 
 func (e *dseParser) interpolators(expected int) ([]Interpolator, error) {
@@ -511,16 +513,14 @@ func (e *dseParser) interpolators(expected int) ([]Interpolator, error) {
 		if err != nil {
 			return nil, err
 		}
-		nextMode, parseErr := e.uint32("NEXTMODE")
-		if parseErr != nil {
-			return nil, parseErr
+		interpolators[index].NextMode, err = e.uint8("NEXTMODE")
+		if err != nil {
+			return nil, fmt.Errorf("nextModeRead[%d]: %w", index, err)
 		}
-		interpolators[index].NextMode = uint8(nextMode)
-		previousMode, parseErr := e.uint32("PREVIOUSMODE")
-		if parseErr != nil {
-			return nil, parseErr
+		interpolators[index].PreviousMode, err = e.uint8("PREVIOUSMODE")
+		if err != nil {
+			return nil, fmt.Errorf("previousModeRead[%d]: %w", index, err)
 		}
-		interpolators[index].PreviousMode = uint8(previousMode)
 	}
 	return interpolators, nil
 }
@@ -596,6 +596,28 @@ func (e *dseParser) expect(name string, count int) ([]string, error) {
 	return fields[1:], nil
 }
 
+func (e *dseParser) uint8(name string) (uint8, error) {
+	number, err := e.uint32(name)
+	if err != nil {
+		return 0, fmt.Errorf("uint8Read: %w", err)
+	}
+	if number > math.MaxUint8 {
+		return 0, fmt.Errorf("uint8Range: %s %d exceeds 255", name, number)
+	}
+	return uint8(number), nil
+}
+
+func (e *dseParser) uint16(name string) (uint16, error) {
+	number, err := e.uint32(name)
+	if err != nil {
+		return 0, fmt.Errorf("uint16Read: %w", err)
+	}
+	if number > math.MaxUint16 {
+		return 0, fmt.Errorf("uint16Range: %s %d exceeds 65535", name, number)
+	}
+	return uint16(number), nil
+}
+
 func (e *dseParser) uint32(name string) (uint32, error) {
 	fields, err := e.expect(name, 1)
 	if err != nil {
@@ -620,7 +642,13 @@ func (e *dseParser) int32(name string) (int32, error) {
 }
 func (e *dseParser) count(name string) (int, error) {
 	number, err := e.uint32(name)
-	return int(number), err
+	if err != nil {
+		return 0, fmt.Errorf("countRead: %w", err)
+	}
+	if number > math.MaxInt32 {
+		return 0, fmt.Errorf("countRange: %s %d exceeds supported integer range", name, number)
+	}
+	return int(number), nil
 }
 func (e *dseParser) float32(name string) (float32, error) {
 	fields, err := e.expect(name, 1)

@@ -48,7 +48,7 @@ type LauncherStatus struct {
 func NewApp(arguments []string) *App {
 	account := launchArgumentValue(arguments, "account")
 	return &App{
-		arguments: append([]string(nil), arguments...),
+		arguments: setBooleanLaunchArgument(arguments, "skip-cinematic", false),
 		status: LauncherStatus{
 			State:               "idle",
 			Message:             "Ready",
@@ -57,7 +57,7 @@ func NewApp(arguments []string) *App {
 			Version:             Version,
 			IsAutoPlayRequested: hasLaunchArgument(arguments, "auto-play"),
 			IsPatchEnabled:      strings.TrimSpace(patchManifestURL) != "",
-			IsCinematicSkipped:  hasLaunchArgument(arguments, "skip-cinematic"),
+			IsCinematicSkipped:  false,
 		},
 	}
 }
@@ -433,14 +433,16 @@ func setBooleanLaunchArgument(arguments []string, name string, isEnabled bool) [
 	longName := "--" + name
 	shortName := "-" + name
 	result := make([]string, 0, len(arguments)+1)
+	if isEnabled {
+		// Launcher flags must precede positional client arguments and "--".
+		result = append(result, longName)
+	}
 	for _, value := range arguments {
-		if value == longName || value == shortName || strings.HasPrefix(value, longName+"=") {
+		if value == longName || value == shortName ||
+			strings.HasPrefix(value, longName+"=") || strings.HasPrefix(value, shortName+"=") {
 			continue
 		}
 		result = append(result, value)
-	}
-	if isEnabled {
-		result = append(result, longName)
 	}
 	return result
 }

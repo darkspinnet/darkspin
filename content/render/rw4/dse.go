@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -441,6 +442,10 @@ func ReadDSE(r io.Reader, identity string) ([]byte, error) {
 		if readErr != nil {
 			return nil, fmt.Errorf("layoutData[%d]: %w", layoutIndex, readErr)
 		}
+		// Keep layout offsets representable on both 32-bit and 64-bit hosts.
+		if offset > math.MaxInt32 {
+			return nil, fmt.Errorf("layoutOffset[%d]: %d exceeds int", layoutIndex, offset)
+		}
 		spans = append(spans, dseSpan{offset: int(offset), data: data})
 	}
 	renderAssets, err := readDSERenderAssets(parser)
@@ -528,7 +533,7 @@ func ReadDSE(r io.Reader, identity string) ([]byte, error) {
 			payloadSize = end
 		}
 	}
-	if payloadSize > uint64(^uint(0)>>1) {
+	if payloadSize > uint64(math.MaxInt) {
 		return nil, fmt.Errorf("payloadSize: %d exceeds int", payloadSize)
 	}
 	payload := make([]byte, int(payloadSize))
@@ -559,7 +564,7 @@ func ReadDSE(r io.Reader, identity string) ([]byte, error) {
 		return nil, errors.New("sectionTable: exceeds payload")
 	}
 	for ordinal, section := range sections {
-		offset := int(sectionOffset) + ordinal*24
+		offset := uint64(sectionOffset) + uint64(ordinal)*24
 		storedOffset := section.Offset
 		if section.TypeCode == TypeBaseResource {
 			if section.Offset < bufferOffset {
@@ -569,7 +574,7 @@ func ReadDSE(r io.Reader, identity string) ([]byte, error) {
 		}
 		fields := []uint32{storedOffset, section.Field04, section.Size, section.Alignment, section.TypeCodeIndex, section.TypeCode}
 		for fieldIndex, field := range fields {
-			binary.LittleEndian.PutUint32(payload[offset+fieldIndex*4:offset+fieldIndex*4+4], field)
+			binary.LittleEndian.PutUint32(payload[offset+uint64(fieldIndex)*4:offset+uint64(fieldIndex)*4+4], field)
 		}
 	}
 	rebuiltDocument, err := Decode(payload)
@@ -632,8 +637,14 @@ func readDSEVertexDescription(parser *rw4Parser) ([]byte, error) {
 	elementFlags, err := parser.nextUint32("ELEMENTFLAGS", err)
 	field14, err := parser.nextUint32("FIELD14", err)
 	elementCount, err := parser.nextCount("NUMELEMENTS", err)
-	if err != nil || field0E > 0xFF || vertexSize > 0xFF {
-		return nil, fmt.Errorf("header: %v", err)
+	if err != nil {
+		return nil, fmt.Errorf("headerRead: %w", err)
+	}
+	if field0E > math.MaxUint8 || vertexSize > math.MaxUint8 {
+		return nil, fmt.Errorf("headerRange: FIELD0E %d or VERTEXSIZE %d exceeds uint8", field0E, vertexSize)
+	}
+	if elementCount < 0 || elementCount > math.MaxUint16 {
+		return nil, fmt.Errorf("elementCount: %d outside uint16 range", elementCount)
 	}
 	payload := make([]byte, 24+elementCount*12)
 	binary.LittleEndian.PutUint32(payload[0:4], field00)
@@ -787,16 +798,16 @@ func uint32Payload(fields ...uint32) []byte {
 
 func placeDSEBytes(payload []byte, occupied []bool, offset uint32, data []byte) error {
 	end := uint64(offset) + uint64(len(data))
-	if end > uint64(len(payload)) {
+	if end > uint64(len(payload)) || end > uint64(len(occupied)) {
 		return fmt.Errorf("range: %d:%d exceeds %d", offset, end, len(payload))
 	}
-	for index := int(offset); index < int(end); index++ {
+	for index := uint64(offset); index < end; index++ {
 		if occupied[index] {
 			return fmt.Errorf("overlap: byte %d", index)
 		}
 		occupied[index] = true
 	}
-	copy(payload[int(offset):int(end)], data)
+	copy(payload[uint64(offset):end], data)
 	return nil
 }
 
@@ -894,7 +905,7 @@ func (e *rw4Parser) count(name string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("number: %w", err)
 	}
-	if uint64(number) > uint64(^uint(0)>>1) {
+	if number > math.MaxInt32 {
 		return 0, fmt.Errorf("%s: %d exceeds int", name, number)
 	}
 	return int(number), nil

@@ -19,7 +19,7 @@ import (
 const (
 	SourceVersion  = "5.3.0.103"
 	SourceBuild    = 103
-	RecipeVersion  = 54
+	RecipeVersion  = 55
 	ContentRelease = "build-103-content"
 	RuntimeRole    = "runtime-content"
 )
@@ -779,7 +779,10 @@ func Verify(ctx context.Context, path string) (*Verification, error) {
 	if levelCount > 0 {
 		var tutorialAliasCount int
 		err = database.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM level_alias WHERE alias='Game_Tutorial_cryos_1_v2'`,
+			SELECT COUNT(*) FROM level_alias
+			JOIN level ON level.id=level_alias.level_id
+			WHERE level_alias.alias=? AND level.name=?`,
+			tutorialLevelAlias, tutorialLevelName,
 		).Scan(&tutorialAliasCount)
 		if err != nil {
 			return nil, fmt.Errorf("tutorialAlias: %w", err)

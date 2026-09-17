@@ -522,7 +522,7 @@ func (m *UserManager) prepareProfileStart(ctx context.Context, user *User) error
 	}
 	user.mutation.Lock()
 	defer user.mutation.Unlock()
-	previousAccount, previousSquad, isChanged := user.recoverThirdHeroLesson()
+	previousAccount, previousSquads, isChanged := user.recoverThirdHeroLesson()
 	maximumCreatureCount := 0
 	if m.template != nil {
 		maximumCreatureCount = len(m.template.List())
@@ -536,10 +536,7 @@ func (m *UserManager) prepareProfileStart(ctx context.Context, user *User) error
 	}
 	err := m.repository.Save(ctx, user.Record())
 	if err != nil {
-		user.mu.Lock()
-		user.Account = previousAccount
-		user.Squads = append(user.Squads[:0], previousSquad...)
-		user.mu.Unlock()
+		user.restoreDecks(previousAccount, previousSquads)
 		return fmt.Errorf("profileRepairSave: %w", err)
 	}
 	return nil

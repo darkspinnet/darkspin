@@ -267,9 +267,15 @@ func readDSEVertexData(parser *rw4Parser) ([]byte, error) {
 		key, readErr := parser.property("KEY", 1)
 		offset, readErr := parser.nextCount("OFFSET", readErr)
 		dataType, readErr := parser.nextSymbol("DATATYPE", readErr, map[string]uint32{"FLOAT2": dataFloat2, "FLOAT3": dataFloat3, "UBYTE4": dataUByte4, "UBYTE4N": dataUByte4N})
+		if readErr != nil {
+			return nil, fmt.Errorf("elementFields[%d]: %w", elementIndex, readErr)
+		}
+		if dataType > math.MaxUint8 {
+			return nil, fmt.Errorf("elementType[%d]: %d exceeds uint8", elementIndex, dataType)
+		}
 		size := vertexElementSize(uint8(dataType))
-		if readErr != nil || dataType > 0xFF || size == 0 || offset < 0 || offset+size > vertexSize {
-			return nil, fmt.Errorf("elementFields[%d]: %v", elementIndex, readErr)
+		if size == 0 || offset < 0 || offset > vertexSize || size > vertexSize-offset {
+			return nil, fmt.Errorf("elementRange[%d]: offset %d size %d exceeds stride %d", elementIndex, offset, size, vertexSize)
 		}
 		for byteOffset := offset; byteOffset < offset+size; byteOffset++ {
 			if coverage[byteOffset] {
@@ -287,6 +293,9 @@ func readDSEVertexData(parser *rw4Parser) ([]byte, error) {
 	vertexCount, err := parser.count("NUMVERTICES")
 	if err != nil {
 		return nil, fmt.Errorf("vertexCount: %w", err)
+	}
+	if vertexCount > math.MaxInt/vertexSize {
+		return nil, fmt.Errorf("vertexSize: %d vertices of %d bytes exceed int", vertexCount, vertexSize)
 	}
 	payload := make([]byte, vertexCount*vertexSize)
 	for vertexIndex := 0; vertexIndex < vertexCount; vertexIndex++ {

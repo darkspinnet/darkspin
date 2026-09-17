@@ -153,9 +153,10 @@ type GameplayCreature struct {
 // GameplayJoin authorizes a gameplay connection against Blaze-created game
 // membership without mutating the user or game.
 type GameplayJoin struct {
-	userFinder  ActiveUserFinder
-	gameManager *Manager
-	partCatalog *PartCatalog
+	userFinder           ActiveUserFinder
+	gameManager          *Manager
+	partCatalog          *PartCatalog
+	tutorialEndPublisher TutorialEndPublisher
 }
 
 func NewGameplayJoin(
@@ -741,30 +742,44 @@ func (o *GameplayJoin) RollbackTutorialComplete(ctx context.Context, userID int6
 	return nil
 }
 
-// RetireTutorial removes a completed tutorial's Blaze-visible game shell so a
-// later client login cannot rejoin the terminal tutorial instance.
-func (o *GameplayJoin) RetireTutorial(userID int64, gameID uint32) error {
+// EndTutorial starts the client's normal post-game leave exchange. Keep the
+// membership until RemovePlayer so its response can notify the departing user.
+func (o *GameplayJoin) EndTutorial(ctx context.Context, userID int64, gameID uint32) error {
+	if ctx == nil {
+		return errors.New("tutorial end: nil context")
+	}
+	err := ctx.Err()
+	if err != nil {
+		return fmt.Errorf("endContext: %w", err)
+	}
 	if o == nil || o.userFinder == nil || o.gameManager == nil || gameID == 0 {
-		return errors.New("tutorial retirement unavailable")
+		return errors.New("tutorial end unavailable")
 	}
 	user := o.userFinder.UserByID(userID)
 	if user == nil {
-		return fmt.Errorf("retirementUser: %w", ErrGameplayUserNotFound)
+		return fmt.Errorf("endUser: %w", ErrGameplayUserNotFound)
 	}
 	if user.CurrentGameID() != gameID {
-		return errors.New("retirementGame: current game changed")
+		return errors.New("endMembership: current game changed")
 	}
 	instance := o.gameManager.Game(gameID)
 	if instance == nil {
-		return fmt.Errorf("retirementGame: %w", ErrGameplayGameNotFound)
+		return fmt.Errorf("endGame: %w", ErrGameplayGameNotFound)
 	}
 	if instance.Info.Mode != ModeTutorial || !IsTutorialLevel(instance.Info.Level) {
-		return errors.New("retirementGame: not tutorial")
+		return errors.New("endMode: not tutorial")
 	}
 	if !instance.IsTutorialComplete(userID) {
-		return errors.New("retirementPlayer: tutorial incomplete")
+		return errors.New("endPlayer: tutorial incomplete")
 	}
-	o.gameManager.Remove(gameID)
+	if o.tutorialEndPublisher == nil {
+		return errors.New("tutorial end publisher unavailable")
+	}
+	err = o.tutorialEndPublisher.PublishTutorialEnd(ctx, userID, gameID)
+	if err != nil {
+		return fmt.Errorf("tutorialEndPublish: %w", err)
+	}
+	instance.SetState(StatePostGame)
 	return nil
 }
 

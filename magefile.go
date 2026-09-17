@@ -23,7 +23,7 @@ import (
 
 // releaseSemver is the single source of truth for Dark Spin release versions.
 // Build targets inject it without rewriting application or frontend sources.
-const releaseSemver = "1.0.1"
+const releaseSemver = "1.0.2"
 
 const binaryName = "darkrun.exe"
 
@@ -542,6 +542,42 @@ func (Darkrun) Build() error {
 	return nil
 }
 
+// BuildCI packages the standalone amd64 server for Windows or Linux.
+func (Darkrun) BuildCI(targetOS string) error {
+	if targetOS != "windows" && targetOS != "linux" {
+		return fmt.Errorf("unsupported Darkrun target %q", targetOS)
+	}
+	mg.SerialDeps(Version)
+	platformName := targetOS + "-amd64"
+	outputPath := filepath.Join("bin", "darkrunci", platformName)
+	err := os.MkdirAll(outputPath, 0o755)
+	if err != nil {
+		return fmt.Errorf("outputMkdir: %w", err)
+	}
+	executableName := "darkrun"
+	if targetOS == "windows" {
+		executableName += ".exe"
+	}
+	executablePath := filepath.Join(outputPath, executableName)
+	environment := map[string]string{"GOOS": targetOS, "GOARCH": "amd64", "CGO_ENABLED": "0"}
+	err = runCommandWithEnvironment("", environment, "go", "build", "-trimpath",
+		"-ldflags", "-s -w "+buildVersionLinkerFlags(), "-o", executablePath, "./app/darkrun")
+	if err != nil {
+		return fmt.Errorf("serverBuild: %w", err)
+	}
+	// Cross-compilation on Windows must still preserve Unix execute permission.
+	err = os.Chmod(executablePath, 0o755)
+	if err != nil {
+		return fmt.Errorf("binaryMode: %w", err)
+	}
+	archiveName := "darkrun-" + platformName + "-v" + buildVersion() + ".zip"
+	err = archiveBinary(outputPath, executableName, archiveName)
+	if err != nil {
+		return fmt.Errorf("serverArchive: %w", err)
+	}
+	return nil
+}
+
 // Build builds the all-in-one desktop runtime beside the assets under bin/game.
 func (Darkspinner) Build() error {
 	mg.SerialDeps(Version)
@@ -652,6 +688,19 @@ func archiveDarkSpinnerBinary(outputPath, binaryName, platformName string) error
 		}
 		return nil
 	}
+	archiveName := "darkspinner-v" + buildVersion() + ".zip"
+	if platformName != "" {
+		archiveName = "darkspinner-" + platformName + "-v" + buildVersion() + ".zip"
+	}
+	err := archiveBinary(outputPath, binaryName, archiveName)
+	if err != nil {
+		return fmt.Errorf("binaryArchive: %w", err)
+	}
+	return nil
+}
+
+func archiveBinary(outputPath, binaryName, archiveName string) error {
+	binaryPath := filepath.Join(outputPath, binaryName)
 	r, err := os.Open(binaryPath)
 	if err != nil {
 		return fmt.Errorf("archiveOpen: %w", err)
@@ -661,10 +710,6 @@ func archiveDarkSpinnerBinary(outputPath, binaryName, platformName string) error
 	if err != nil {
 		return fmt.Errorf("archiveStat: %w", err)
 	}
-	archiveName := "darkspinner-v" + buildVersion() + ".zip"
-	if platformName != "" {
-		archiveName = "darkspinner-" + platformName + "-v" + buildVersion() + ".zip"
-	}
 	archivePath := filepath.Join(outputPath, archiveName)
 	w, err := os.Create(archivePath)
 	if err != nil {
@@ -672,7 +717,7 @@ func archiveDarkSpinnerBinary(outputPath, binaryName, platformName string) error
 	}
 	archive := zip.NewWriter(w)
 	header := &zip.FileHeader{Name: binaryName, Method: zip.Deflate}
-	header.SetMode(fi.Mode())
+	header.SetMode(0o755)
 	header.SetModTime(fi.ModTime())
 	entry, err := archive.CreateHeader(header)
 	if err != nil {

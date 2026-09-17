@@ -7756,6 +7756,7 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 	distribution := soulLinkDistribution{activeDamage: result.Damage}
 	shieldPackets := [][]byte(nil)
 	absorbedAmount := float32(0)
+	defenseReq.Damage = result.Damage
 	if target.IsHero {
 		result.Damage = targetSession.applyPassiveDamageReduction(
 			result.Damage, plan.Profile.DamageSource, plan.SourceObjectID, r.now(),

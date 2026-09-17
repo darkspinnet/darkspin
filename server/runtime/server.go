@@ -781,6 +781,7 @@ func New(options Options) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gameplayJoin: %w", err)
 	}
+	gameplayJoin.UseTutorialEndPublisher(tutorialEndPublisher{servers: allBlazeServers})
 	directorSource, err := gamecontentsqlite.NewDirectorSource(contentStore)
 	if err != nil {
 		return nil, fmt.Errorf("directorSource: %w", err)

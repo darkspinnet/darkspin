@@ -34,13 +34,6 @@ go.work.sum
 # .idea/
 # .vscode/
 bin
-!/bin/
-/bin/*
-!/bin/game/
-/bin/game/*
-!/bin/game/logs/
-/bin/game/logs/*
-!/bin/game/logs/AGENTS.md
 mage_output_file.go
 .pnpm-store/
 .cache/

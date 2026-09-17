@@ -401,8 +401,7 @@ func ReadTypeScript(source []byte) ([]byte, error) {
 	lines := strings.Split(strings.ReplaceAll(expandedSource, "\r\n", "\n"), "\n")
 	constantPool, isConstantPoolInferred := inferTypeScriptConstants(lines)
 	if isConstantPoolInferred && len(constantPool) > 0 {
-		constantRow := make([]any, 1, len(constantPool)+1)
-		constantRow[0] = "CONSTANT_POOL"
+		constantRow := []any{"CONSTANT_POOL"}
 		for _, constant := range constantPool {
 			constantRow = append(constantRow, constant)
 		}
@@ -598,13 +597,16 @@ func ReadTypeScript(source []byte) ([]byte, error) {
 	if lastName != "END" {
 		rows = append(rows, []any{"END"})
 	}
-	offsets := make([]int, len(rows)+1)
+	offsets := []int{0}
 	for rowIndex, row := range rows {
 		recordPayload, err := assembleAction(row, 0)
 		if err != nil {
 			return nil, fmt.Errorf("instruction[%d]: %w", rowIndex, err)
 		}
-		offsets[rowIndex+1] = offsets[rowIndex] + len(recordPayload)
+		if len(recordPayload) > math.MaxInt-offsets[rowIndex] {
+			return nil, fmt.Errorf("instructionSize[%d]: exceeds int", rowIndex)
+		}
+		offsets = append(offsets, offsets[rowIndex]+len(recordPayload))
 	}
 	labelOffsets := make(map[string]int, len(labelsByRow))
 	for rowIndex, label := range labelsByRow {
@@ -1827,7 +1829,7 @@ func parseMemberCall(line string, constants []string) ([][]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("memberCallArguments: %w", err)
 	}
-	rows := make([][]any, 0, len(argumentSources)+len(pathParts)*2+3)
+	rows := make([][]any, 0)
 	methodName := pathParts[len(pathParts)-1]
 	for argumentIndex := len(argumentSources) - 1; argumentIndex >= 0; argumentIndex-- {
 		argumentSource := argumentSources[argumentIndex]
@@ -2499,15 +2501,11 @@ func parseActionStatement(line string) ([]any, error) {
 		kind = upperActionName(strings.TrimPrefix(method, "push"))
 	}
 	if isPushKind(kind) {
-		item := make([]any, 1, len(fields)+1)
-		item[0] = kind
-		item = append(item, fields...)
+		item := append([]any{kind}, fields...)
 		return []any{"PUSH", item}, nil
 	}
 	name := upperActionName(method)
-	row := make([]any, 1, len(fields)+1)
-	row[0] = name
-	row = append(row, fields...)
+	row := append([]any{name}, fields...)
 	return row, nil
 }
 
@@ -3178,8 +3176,14 @@ func assemblePush(fields []any) ([]byte, error) {
 			}
 			_ = operand.WriteByte(marker)
 			if bits == 8 {
+				if number > math.MaxUint8 {
+					return nil, fmt.Errorf("pushByte[%d]: %d", fieldIndex, number)
+				}
 				_ = operand.WriteByte(byte(number))
 			} else {
+				if number > math.MaxUint16 {
+					return nil, fmt.Errorf("pushWord[%d]: %d", fieldIndex, number)
+				}
 				_ = binary.Write(&operand, binary.LittleEndian, uint16(number))
 			}
 		default:
