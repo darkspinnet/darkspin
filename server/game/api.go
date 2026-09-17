@@ -718,7 +718,7 @@ func (a *API) accountProfileViewResponse(
 				xmlText("category", squad.Category),
 				xmlText("id", number(squad.ID)),
 				xmlText("slot", number(squad.Slot)),
-				xmlText("locked", boolNumber(squad.IsLocked)),
+				xmlText("locked", boolNumber(squad.IsLockedFor(view.Account))),
 				xmlNode("creatures", creatures...),
 			))
 		}
