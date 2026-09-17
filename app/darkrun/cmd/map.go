@@ -231,7 +231,7 @@ func writeMapSelections(
 			continue
 		}
 		selectionName := levelName
-		if strings.EqualFold(levelName, "Game_Tutorial_cryos_1") {
+		if game.IsTutorialLevel(levelName) {
 			selectionName = "tutorial"
 		}
 		_, err = fmt.Fprintf(output, "  %s=%s\n", selectionName, levelName)

@@ -125,9 +125,41 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  darkrun:
+    name: Build Darkrun ${{ matrix.platform }}-amd64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows, linux]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Install Mage
+        run: go install github.com/magefile/mage@v1.15.0
+
+      - name: Build Darkrun archive
+        run: mage darkrun:buildci ${{ matrix.platform }}
+
+      - name: Upload Darkrun archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: darkrun-${{ matrix.platform }}-amd64
+          path: bin/darkrunci/${{ matrix.platform }}-amd64/darkrun-${{ matrix.platform }}-amd64-v*.zip
+          if-no-files-found: error
+          retention-days: 1
+
   release:
     name: Publish version
-    needs: build
+    needs: [build, darkrun]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
 
@@ -137,6 +169,13 @@ jobs:
         with:
           pattern: darkspinner-*
           path: bin/darkspinnerci
+          merge-multiple: true
+
+      - name: Download Darkrun archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: darkrun-*
+          path: bin/darkrunci
           merge-multiple: true
 
       - name: Resolve release archives
@@ -167,6 +206,19 @@ jobs:
             release_version="${version}"
             cp "${archives[0]}" "bin/darkspinnerci/darkspinner-${platform}.zip"
           done
+          for platform in windows-amd64 linux-amd64; do
+            archives=(bin/darkrunci/darkrun-"${platform}"-v*.zip)
+            if (( ${#archives[@]} != 1 )); then
+              echo "Expected one Darkrun ${platform} archive, found ${#archives[@]}" >&2
+              exit 1
+            fi
+            archive_name="${archives[0]##*/}"
+            if [[ "${archive_name}" != "darkrun-${platform}-v${release_version}.zip" ]]; then
+              echo "Darkrun version mismatch: ${archive_name}" >&2
+              exit 1
+            fi
+            cp "${archives[0]}" "bin/darkrunci/darkrun-${platform}.zip"
+          done
           # Keep installed x86 launchers on their original manifest endpoint.
           cp bin/darkspinnerci/darkspinner-update-windows-win32.json bin/darkspinnerci/darkspinner-update.json
           echo "version=${release_version}" >> "$GITHUB_OUTPUT"
@@ -178,6 +230,8 @@ jobs:
         shell: bash
         run: |
           release_assets=(
+            bin/darkrunci/darkrun-windows-amd64.zip
+            bin/darkrunci/darkrun-linux-amd64.zip
             bin/darkspinnerci/darkspinner-windows-amd64.zip
             bin/darkspinnerci/darkspinner-windows-win32.zip
             bin/darkspinnerci/darkspinner-darwin-amd64.zip

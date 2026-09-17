@@ -66,11 +66,11 @@ const (
 	InitialChainLevel = "zelems_1"
 
 	// TutorialLevel is the retail client's first tutorial map.
-	TutorialLevel = "Game_Tutorial_cryos_1_v2"
+	TutorialLevel = "Darkspore_Tutorial_cryos_1_v2"
 
 	// TutorialDirectorLevel is the canonical content name returned for the
 	// retail tutorial alias requested by the client.
-	TutorialDirectorLevel = "Game_Tutorial_cryos_1"
+	TutorialDirectorLevel = "Darkspore_Tutorial_cryos_1"
 
 	// MaxGamePlayers is the executable-supported capacity of one game instance.
 	MaxGamePlayers uint16 = 4

@@ -166,3 +166,38 @@ jobs:
           path: bin/darkspinnerci/darkspinner-update.json
           if-no-files-found: error
           retention-days: 14
+
+  darkrun:
+    name: Build Darkrun ${{ matrix.platform }}-amd64
+    needs: version
+    env:
+      DARKSPIN_BUILD_VERSION: ${{ needs.version.outputs.version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows, linux]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Install Mage
+        run: go install github.com/magefile/mage@v1.15.0
+
+      - name: Build Darkrun archive
+        run: mage darkrun:buildci ${{ matrix.platform }}
+
+      - name: Upload Darkrun archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: darkrun-${{ matrix.platform }}-amd64-unstable
+          path: bin/darkrunci/${{ matrix.platform }}-amd64/darkrun-${{ matrix.platform }}-amd64-v*.zip
+          if-no-files-found: error
+          retention-days: 14

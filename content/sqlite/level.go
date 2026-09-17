@@ -21,6 +21,9 @@ const (
 	markerSetAssetType = 0xa11d3144
 	markerFixedOffset  = 0x28
 	markerFixedSize    = 0xc8
+	// These are authored resource names, not launcher branding.
+	tutorialLevelName  = "Darkspore_Tutorial_cryos_1"
+	tutorialLevelAlias = tutorialLevelName + "_v2"
 )
 
 type stringField struct {
@@ -338,16 +341,16 @@ func insertLevelAssets(ctx context.Context, transaction *sql.Tx, pkg *dbpf.Reade
 			{name: level.name, kind: "asset_name"},
 			{name: level.name + ".Level", kind: "asset_reference"},
 		}
-		if strings.EqualFold(level.name, "Game_Tutorial_cryos_1") {
+		if strings.EqualFold(level.name, tutorialLevelName) {
 			aliases = append(aliases,
 				struct {
 					name string
 					kind string
-				}{name: "Game_Tutorial_cryos_1_v2", kind: "client_alias"},
+				}{name: tutorialLevelAlias, kind: "client_alias"},
 				struct {
 					name string
 					kind string
-				}{name: "Game_Tutorial_cryos_1_v2.Level", kind: "client_alias"},
+				}{name: tutorialLevelAlias + ".Level", kind: "client_alias"},
 			)
 		}
 		for _, alias := range aliases {

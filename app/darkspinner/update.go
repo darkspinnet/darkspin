@@ -40,7 +40,6 @@ func (a *App) prepareLauncherUpdate(ctx context.Context) (bool, error) {
 	if manifestURL == "" {
 		return false, nil
 	}
-	a.setSubsystem("Patch", "Checking launcher update", false)
 	client := &http.Client{Timeout: 30 * time.Second}
 	release, err := checkLauncherUpdate(ctx, client, manifestURL, Version)
 	if err != nil {

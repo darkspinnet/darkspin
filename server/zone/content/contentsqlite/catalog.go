@@ -67,7 +67,7 @@ const stayAliveObjectiveSHA256 = "1547e9e5dcda912fc166202042e9d09ac04c54b73fc727
 const lootCrystalObjectiveSHA256 = "bb8cf84a351727e30a37596b334850862e9bb040df8cff0137e279585ab9741a"
 const noSlowingObjectiveSHA256 = "42f1ae9e55c14a58fe5578400f0505d78723b45f8e05c6cc36e084e1f02aab0a"
 const sameTypeObjectiveSHA256 = "8f15ed5adb0e0de1becb91218d36b19f515224eebe9e5dc8fbf2c971564ecec0"
-const cryosLevelName = "Game_Tutorial_cryos_1"
+const cryosLevelName = game.TutorialDirectorLevel
 const build103CrystalDefinitionCount = 192
 const build103CrystalLevelOffsetCount = 1
 

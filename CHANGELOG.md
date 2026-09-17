@@ -2,6 +2,9 @@
 
 ### 2026-09-17
 
+- Keep launcher self-update checks silent and show update progress only when an update is found, without holding content preparation at zero.
+- Fix content preparation failing at tutorialAlias by restoring authored tutorial names in content imports and runtime lookups.
+- Add standalone Darkrun Windows amd64 and Linux amd64 ZIPs to stable releases and unstable build artifacts.
 - Upgrade Echo from v4.13.3 to v4.15.3 to fix the static-file route middleware bypass vulnerability.
 - Update launcher build dependencies from Nano ID 3.3.16 to 3.3.19 and PostCSS 8.5.19 to 8.5.28 to resolve their security advisories.
 - Expand stable releases and unstable artifacts from Windows x86 and Linux x64 to Windows amd64/win32, macOS amd64/arm64, and Linux amd64/arm64, with architecture-specific Windows self-updates.

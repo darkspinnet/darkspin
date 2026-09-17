@@ -183,17 +183,22 @@ const launcherProgressFailureLabel = computed(() => {
   if (status.value.state === 'error') return 'Preparation failed'
   return ''
 })
+const isLauncherUpdateActive = computed(() =>
+  ['Downloading launcher update', 'Restarting with update'].includes(status.value.patch))
 const launcherProgress = computed(() => {
-  if (launcherProgressFailureLabel.value) return 0
+  if (launcherProgressFailureLabel.value || isLauncherUpdateActive.value) return 0
   if (statusRows.value.every(row => row.ready)) return 100
   const contentProgress = status.value.isContentReady ? 100 : estimatedContentProgress.value
-  const patchProgress = status.value.isPatchComplete ? 100 : Math.max(0, status.value.patchProgress || 0)
+  // A silent update check has no measurable work and must not hold content progress at zero.
+  const patchProgress = status.value.isPatchComplete || status.value.patch === 'Pending'
+    ? 100 : Math.max(0, status.value.patchProgress || 0)
   return Math.max(0, Math.min(97, Math.min(contentProgress, patchProgress) * .97))
 })
-const isLauncherProgressIndeterminate = computed(() => launcherProgress.value === 0 &&
-  !launcherProgressFailureLabel.value && statusRows.value.some(row => !row.ready))
+const isLauncherProgressIndeterminate = computed(() =>
+  isLauncherUpdateActive.value && !launcherProgressFailureLabel.value)
 const launcherProgressLabel = computed(() => {
   if (launcherProgressFailureLabel.value) return launcherProgressFailureLabel.value
+  if (isLauncherUpdateActive.value) return status.value.patch
   const pendingSystem = statusRows.value.find(row => !row.ready)
   if (pendingSystem) return visibleLauncherText(pendingSystem.detail || `${pendingSystem.label} pending`)
   if (status.value.state === 'launching') return visibleLauncherText(status.value.message || 'Launching game')

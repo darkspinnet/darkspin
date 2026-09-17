@@ -106,6 +106,13 @@ These permanent download links become available after the first successful run o
 
 The Windows unstable artifact contains `darkspinner.exe` directly. Linux and macOS artifacts contain an inner ZIP that preserves executable permissions and macOS bundle structure; extract that inner ZIP as well. Unstable links use [nightly.link](https://nightly.link/), require a public repository for anonymous downloads, and expire with the 14-day artifact retention period if no new successful build replaces them.
 
+Darkrun's standalone server/CLI is also packaged for Windows and Linux amd64, using the same stable version or unstable run version as Darkspinner. Build locally with `mage darkrun:buildci windows` or `mage darkrun:buildci linux`; archives are written beneath `bin/darkrunci/<os>-amd64`. Each ZIP contains only `darkrun.exe` or `darkrun`, with no game assets or runtime data. Unstable artifacts contain an inner ZIP, which must also be extracted. Darkrun updates are manual.
+
+| Darkrun target | Latest stable release | Latest unstable main artifact |
+| --- | --- | --- |
+| `windows-amd64` | [Download ZIP](https://github.com/darkspinnet/darkspin/releases/latest/download/darkrun-windows-amd64.zip) | [Download artifact](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-windows-amd64-unstable.zip) |
+| `linux-amd64` | [Download ZIP](https://github.com/darkspinnet/darkspin/releases/latest/download/darkrun-linux-amd64.zip) | [Download artifact](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-linux-amd64-unstable.zip) |
+
 Windows self-updates stay on their installed channel and architecture. They compare versions and verify the extracted executable's SHA-256 before replacement; failed checks are logged and startup continues. Each unstable manifest pins its binary download to a specific artifact ID, so another run cannot change an in-progress download. The unstable manifest artifact contains `darkspinner-update.json`.
 
 | Windows target | Stable manifest | Unstable manifest ZIP |
