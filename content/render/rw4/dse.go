@@ -442,7 +442,8 @@ func ReadDSE(r io.Reader, identity string) ([]byte, error) {
 		if readErr != nil {
 			return nil, fmt.Errorf("layoutData[%d]: %w", layoutIndex, readErr)
 		}
-		if uint64(offset) > uint64(math.MaxInt) {
+		// Keep layout offsets representable on both 32-bit and 64-bit hosts.
+		if offset > math.MaxInt32 {
 			return nil, fmt.Errorf("layoutOffset[%d]: %d exceeds int", layoutIndex, offset)
 		}
 		spans = append(spans, dseSpan{offset: int(offset), data: data})
@@ -898,7 +899,7 @@ func (e *rw4Parser) count(name string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("number: %w", err)
 	}
-	if uint64(number) > uint64(math.MaxInt) {
+	if number > math.MaxInt32 {
 		return 0, fmt.Errorf("%s: %d exceeds int", name, number)
 	}
 	return int(number), nil

@@ -2,6 +2,7 @@
 
 ### 2026-09-17
 
+- Enforce portable signed 32-bit bounds for DSE counts and layout offsets, and calculate Fang mana-cost trace products in double precision.
 - Add a security policy directing vulnerability reports to GitHub's private reporting flow.
 - Remove overflow-prone Scaleform allocation sizing, guard accumulated instruction offsets, and require HTTPS for authentication cookies with the Secure attribute.
 - Reject invalid Unix process IDs, bound firewall interface responses, and validate content offsets, sizes, and narrow integer fields before conversion to prevent overflow and excessive request-driven allocation.

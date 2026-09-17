@@ -414,7 +414,8 @@ func (e *dseParser) component(index int, frameCount uint32) (Component, error) {
 	if err != nil {
 		return Component{}, err
 	}
-	if uint64(frameCount) > uint64(math.MaxInt) {
+	// Keep counts representable on both 32-bit and 64-bit hosts.
+	if frameCount > math.MaxInt32 {
 		return Component{}, fmt.Errorf("frameCount: %d exceeds supported integer range", frameCount)
 	}
 	count := int(frameCount)
@@ -644,7 +645,7 @@ func (e *dseParser) count(name string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("countRead: %w", err)
 	}
-	if uint64(number) > uint64(math.MaxInt) {
+	if number > math.MaxInt32 {
 		return 0, fmt.Errorf("countRange: %s %d exceeds supported integer range", name, number)
 	}
 	return int(number), nil

@@ -579,7 +579,7 @@ static void trace_mana_cost(void* caller, void* ability, void* actor, int rank,
     if (caller_rva >= 5) {
         caller_rva -= 5;
     }
-    base = cost == 0.0 ? 0.0 : cost - property * coefficient;
+    base = cost == 0.0 ? 0.0 : cost - (double)property * (double)coefficient;
     EnterCriticalSection(&trace_lock);
     for (index = 0; index < traced_mana_cost_count; index++) {
         const mana_cost_trace* traced = &traced_mana_cost[index];
