@@ -75,7 +75,7 @@ const myReportsURL = 'https://github.com/darkspinnet/darkspin/issues?q=is%3Aissu
 const reportIssueBody = computed(() => {
   const report = reportResult.value
   if (!report) return ''
-  return `## ${report.title}\n\n${report.description}\n\n### Darkspinner build\n${report.version || 'Unknown'}\n\n### Diagnostic archive\n${report.name}\n\nAttach the ZIP from the bug folder before submitting this issue.`
+  return `## ${report.title}\n\n${report.description}\n\n### Darkspinner build\n${report.version || 'Unknown'}\n\n### Diagnostic archives\n${report.names.map(name => `- ${name}`).join('\n')}\n\nAttach all ${report.names.length} ZIP(s) from the bug folder before submitting this issue. Each ZIP is at most 25 MB.`
 })
 const reportIssueDraft = computed(() => {
   const report = reportResult.value
@@ -84,7 +84,7 @@ const reportIssueDraft = computed(() => {
   url.searchParams.set('title', Array.from(report.title).slice(0, 160).join(''))
   url.searchParams.set('body', reportIssueBody.value)
   const isLong = url.href.length > 7000
-  if (isLong) url.searchParams.set('body', 'Paste the complete report copied by Darkspinner here, then attach the ZIP from the bug folder before submitting.')
+  if (isLong) url.searchParams.set('body', 'Paste the complete report copied by Darkspinner here, then attach all report ZIPs from the bug folder before submitting.')
   return { url:url.href, isLong }
 })
 const isChangelogOpen = ref(false)
@@ -930,7 +930,7 @@ async function openReportIssue() {
     if (reportIssueDraft.value.isLong) {
       const isCopied = await ClipboardSetText(reportIssueBody.value)
       if (!isCopied) throw new Error('Could not copy the report. The complete description is also in report.txt inside the ZIP.')
-      reportShareMessage.value = 'Full report copied. Paste it into the GitHub description, then attach the ZIP.'
+      reportShareMessage.value = 'Full report copied. Paste it into the GitHub description, then attach every report ZIP.'
     } else {
       reportShareMessage.value = 'GitHub opened with your report details. Open the bug folder and drag the ZIP into the issue before submitting.'
     }
@@ -1598,10 +1598,11 @@ async function copyLauncherFailure() {
       <article class="notice-card report-notice">
         <p class="eyebrow">DIAGNOSTIC ARCHIVE READY</p>
         <h2 id="report-title">REPORT CREATED</h2>
-        <p><strong>{{ reportResult.name }}</strong> contains all available Darkspinner and protocol logs. Nothing was uploaded automatically; review the ZIP before sharing it.</p>
+        <p>{{ reportResult.names.length }} ZIP(s) contain all available Darkspinner and protocol logs, with each ZIP at most 25 MB. Nothing was uploaded automatically; review all parts before sharing them.</p>
+        <ul class="report-archives"><li v-for="name in reportResult.names" :key="name">{{ name }}</li></ul>
         <button class="report-path" type="button" title="Open report folder" @click="openReportFolder">{{ reportResult.directory }}</button>
         <p class="report-count">{{ reportResult.fileCount }} COMPLETE LOG FILES INCLUDED</p>
-        <p>Sign in to GitHub to create an issue with your report details. Then open the bug folder and drag this ZIP into the issue before submitting. ZIP attachments can be up to 25 MB.</p>
+        <p>Sign in to GitHub to create an issue with your report details. Then open the bug folder and attach every listed ZIP before submitting. Large logs may span numbered chunks; the ZIPs include reassembly instructions.</p>
         <p v-if="reportIssueDraft.isLong">Your description is too long for a browser link. Create GitHub issue will copy the full report for you to paste into the issue.</p>
         <p v-if="reportShareMessage" class="report-share-message" role="status">{{ reportShareMessage }}</p>
         <div class="notice-actions">

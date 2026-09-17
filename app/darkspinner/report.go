@@ -64,12 +64,13 @@ type reportSource struct {
 }
 
 type ReportResult struct {
-	Name      string `json:"name"`
-	Directory string `json:"directory"`
-	FileCount int    `json:"fileCount"`
+	Name      string   `json:"name"`
+	Names     []string `json:"names"`
+	Directory string   `json:"directory"`
+	FileCount int      `json:"fileCount"`
 }
 
-// SendReport creates one titled local archive containing the user's account of
+// SendReport creates size-limited local archives containing the user's account of
 // the problem and every available ordinary log. Sync Snapshot artifacts are
 // excluded because they are separate diagnostic reports. It never uploads the
 // bundle or opens another application by itself.
@@ -92,9 +93,17 @@ func (a *App) SendReport(title string, description string) (ReportResult, error)
 	if err != nil {
 		return ReportResult{}, fmt.Errorf("reportCreate: %w", err)
 	}
-	a.log(fmt.Sprintf("Report ready: %s (%d complete log files)", reportPath, len(records)))
+	paths, err := segmentReportArchive(reportPath)
+	if err != nil {
+		return ReportResult{}, fmt.Errorf("reportSegment: %w", err)
+	}
+	names := make([]string, 0, len(paths))
+	for _, path := range paths {
+		names = append(names, filepath.Base(path))
+	}
+	a.log(fmt.Sprintf("Report ready: %s (%d ZIPs, %d complete log files)", reportDirectory, len(names), len(records)))
 	return ReportResult{
-		Name: filepath.Base(reportPath), Directory: reportDirectory,
+		Name: names[0], Names: names, Directory: reportDirectory,
 		FileCount: len(records),
 	}, nil
 }

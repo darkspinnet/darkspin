@@ -4,8 +4,7 @@
 #include <string.h>
 #include <wchar.h>
 
-/* Darkspore 5.3.0.103: Alt+Enter normally queues an unsaved exclusive-mode
- * switch. The approved compatibility hook instead toggles a borderless
+/* Darkspore 5.3.0.103: Alt+Enter and Graphics Fullscreen select a borderless
  * window, with native windowed rendering and the normal preference saver.
  * Window changes, including committed resolution selections, run on the
  * client thread before App::Update prepares the next frame. */
@@ -24,6 +23,7 @@ enum {
     resolution_read_rva = 0x454650,
     app_busy_offset = 0x154,
     app_reset_offset = 0x158,
+    app_fullscreen_offset = 0x159,
     app_vsync_offset = 0x15B,
 };
 
@@ -56,12 +56,38 @@ static struct {
     int is_preference_dirty;
     int is_resolution_pending;
     int is_window_resolution_loaded;
+    int is_initialized;
     struct fang_resolution window_resolution;
     LONG_PTR window_style;
     LONG_PTR window_ex_style;
     WINDOWPLACEMENT window_placement;
     wchar_t config_path[32768];
 } display_preference;
+
+/* Only these UI call sites use this view of the display manager: Flash graphics
+ * options, legacy refresh/toggle, and Flash's final Apply comparison.
+ * Each only calls IsFullscreen (slot 0x54) and discards the object.
+ * Device/window bookkeeping must continue seeing the real windowed state. */
+static const unsigned int fullscreen_ui_calls[] = {0x03D53E, 0x377257, 0x377327, 0x03B1BD};
+
+static unsigned char FANG_THISCALL read_borderless(void* display) {
+    (void)display;
+    return (unsigned char)display_preference.is_borderless_requested;
+}
+
+static void* __cdecl fullscreen_ui_display(void) {
+    static void* methods[0x58 / 4] = {[0x54 / 4] = (void*)read_borderless};
+    static void** display = methods;
+    return &display;
+}
+
+static unsigned int FANG_THISCALL hooked_option_read(void* settings, unsigned int option) {
+    option_read_fn read = (option_read_fn)(client_base + option_read_rva);
+    if (option == option_fullscreen && display_preference.is_initialized) {
+        return (unsigned int)display_preference.is_borderless_requested;
+    }
+    return read(settings, option);
+}
 
 void fang_set_display_window(HWND window) {
     InterlockedExchangePointer(&display_window, window);
@@ -109,8 +135,10 @@ static void save_display_preference(void) {
         return;
     }
     methods = *(void***)settings;
-    read = (option_read_fn)methods[0x34 / 4];
-    write = (option_write_fn)methods[0x30 / 4];
+    /* Persist the actual device mode without treating this internal write as
+     * an unchecked Graphics checkbox. Borderless is stored in the local INI. */
+    read = (option_read_fn)(client_base + option_read_rva);
+    write = original_option_write;
     save = (preferences_save_fn)methods[0x48 / 4];
     write(settings, option_fullscreen, 0);
     if (read(settings, option_fullscreen) != 0) {
@@ -262,6 +290,21 @@ static void FANG_THISCALL hooked_option_write(void* settings,
     unsigned int option, unsigned int selection) {
     option_read_fn read = (option_read_fn)(client_base + option_read_rva);
     unsigned int previous = option == option_screen_size ? read(settings, option) : selection;
+    if (option == option_fullscreen) {
+        if (selection > 1) {
+            return;
+        }
+        /* Preference loading must not overwrite the separately saved borderless
+         * choice with OptionFullScreen=0. After startup this is Graphics Apply,
+         * including the native revert path. Never commit an exclusive property. */
+        if (display_preference.is_initialized) {
+            display_preference.is_borderless_requested = selection != 0;
+            display_preference.is_pending = 1;
+            display_preference.is_preference_dirty = 1;
+        }
+        original_option_write(settings, option, 0);
+        return;
+    }
     original_option_write(settings, option, selection);
     if (option == option_screen_size && previous != selection && read(settings, option) == selection) {
         /* Graphics Apply (and its revert path) commits the selection here.
@@ -377,6 +420,7 @@ static void apply_display_preference(void* app) {
         return;
     }
     display_preference.is_waiting_for_windowed = 0;
+    display_preference.is_initialized = 1;
     display_preference.is_pending = 0;
     if (display_preference.is_resolution_pending) {
         apply_window_resolution(app, window);
@@ -397,6 +441,20 @@ static void apply_display_preference(void* app) {
 }
 
 static void FANG_THISCALL hooked_app_update(void* app, unsigned int elapsed) {
+    /* Legacy Graphics Apply also queues the App exclusive toggle before it
+     * commits OptionFullScreen. The setter owns that request now. Suppress the
+     * redundant device toggle, retaining only recovery from an old exclusive
+     * startup mode. Unaccompanied native toggles select borderless too. */
+    if (readable_range(app, app_fullscreen_offset + 1) &&
+        *((BYTE*)app + app_fullscreen_offset) &&
+        !display_preference.is_waiting_for_windowed) {
+        *((BYTE*)app + app_fullscreen_offset) = 0;
+        if (!display_preference.is_pending) {
+            display_preference.is_borderless_requested = !display_preference.is_borderless_requested;
+            display_preference.is_pending = 1;
+            display_preference.is_preference_dirty = 1;
+        }
+    }
     /* Reset the renderer and queue the matching UI size before the native
      * update, as the native mode-switch path does. Resetting afterward leaves
      * the prepared scene/UI frame using the previous render target dimensions. */
@@ -447,6 +505,7 @@ int fang_install_display_preferences(HMODULE executable) {
     void** update_slot;
     void** setting_slots;
     int32_t shortcut_relative;
+    size_t ui_hook_count = 0;
     if (sizeof(void*) != 4 || !readable_range(dos, sizeof(*dos)) ||
         dos->e_magic != IMAGE_DOS_SIGNATURE) {
         return 0;
@@ -482,6 +541,23 @@ int fang_install_display_preferences(HMODULE executable) {
     original_option_write = (option_write_fn)(base + option_write_rva);
     display_getter = (manager_getter_fn)(base + display_getter_rva);
     settings_getter = (manager_getter_fn)(base + settings_getter_rva);
+    for (size_t index = 0; index < sizeof(fullscreen_ui_calls) / sizeof(fullscreen_ui_calls[0]); index++) {
+        BYTE* call = base + fullscreen_ui_calls[index];
+        int32_t relative;
+        static const BYTE query[] = {0x8B, 0x10, 0x8B, 0xC8, 0x8B, 0x42, 0x54, 0xFF, 0xD0};
+        memcpy(&relative, call + 1, sizeof(relative));
+        if (*call != 0xE8 || call + 5 + relative != base + display_getter_rva ||
+            (index < 3 && memcmp(call + 5, query, sizeof(query)) != 0)) {
+            return 0;
+        }
+    }
+    {
+        static const BYTE apply_query[] = {0x8B, 0x13, 0x8B, 0xF8, 0x8B, 0x42, 0x54,
+            0x4F, 0xF7, 0xDF, 0x1B, 0xFF, 0x8B, 0xCB, 0x47, 0xFF, 0xD0};
+        if (memcmp(base + 0x03B1D7, apply_query, sizeof(apply_query)) != 0) {
+            return 0;
+        }
+    }
     load_display_preference();
     if (!patch_pointer(update_slot, (void*)original_app_update, (void*)hooked_app_update)) {
         return 0;
@@ -493,16 +569,38 @@ int fang_install_display_preferences(HMODULE executable) {
         }
         return 0;
     }
-    if (!patch_call(base + shortcut_call_rva, (void*)original_shortcut,
-        (void*)hooked_shortcut)) {
-        if (!patch_pointer(setting_slots + 0x30 / 4, (void*)hooked_option_write,
-            (void*)original_option_write)) {
-            trace_client_state("display_resolution_hook_restore_failed", 1);
+    if (!patch_pointer(setting_slots + 0x34 / 4, base + option_read_rva,
+        (void*)hooked_option_read)) {
+        goto restore_write;
+    }
+    for (; ui_hook_count < sizeof(fullscreen_ui_calls) / sizeof(fullscreen_ui_calls[0]); ui_hook_count++) {
+        if (!patch_call(base + fullscreen_ui_calls[ui_hook_count], (void*)display_getter,
+            (void*)fullscreen_ui_display)) {
+            goto restore_ui;
         }
-        if (!patch_pointer(update_slot, (void*)hooked_app_update, (void*)original_app_update)) {
-            trace_client_state("display_preferences_hook_restore_failed", 1);
-        }
-        return 0;
+    }
+    if (!patch_call(base + shortcut_call_rva, (void*)original_shortcut, (void*)hooked_shortcut)) {
+        goto restore_ui;
     }
     return 1;
+
+restore_ui:
+    while (ui_hook_count > 0) {
+        ui_hook_count--;
+        if (!patch_call(base + fullscreen_ui_calls[ui_hook_count], (void*)fullscreen_ui_display,
+            (void*)display_getter)) {
+            trace_client_state("display_checkbox_hook_restore_failed", 1);
+        }
+    }
+    if (!patch_pointer(setting_slots + 0x34 / 4, (void*)hooked_option_read, base + option_read_rva)) {
+        trace_client_state("display_option_read_hook_restore_failed", 1);
+    }
+restore_write:
+    if (!patch_pointer(setting_slots + 0x30 / 4, (void*)hooked_option_write, (void*)original_option_write)) {
+        trace_client_state("display_resolution_hook_restore_failed", 1);
+    }
+    if (!patch_pointer(update_slot, (void*)hooked_app_update, (void*)original_app_update)) {
+        trace_client_state("display_preferences_hook_restore_failed", 1);
+    }
+    return 0;
 }

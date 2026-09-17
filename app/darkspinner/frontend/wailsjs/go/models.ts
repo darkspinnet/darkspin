@@ -278,6 +278,7 @@ export namespace main {
 	}
 	export class ReportResult {
 	    name: string;
+	    names: string[];
 	    directory: string;
 	    fileCount: number;
 	
@@ -288,6 +289,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
+	        this.names = source["names"];
 	        this.directory = source["directory"];
 	        this.fileCount = source["fileCount"];
 	    }
@@ -332,4 +334,3 @@ export namespace main {
 	}
 
 }
-

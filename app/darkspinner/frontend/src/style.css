@@ -1183,6 +1183,15 @@ footer {
   white-space: nowrap;
 }
 .report-path:hover { border-color: rgba(164, 235, 249, .68); color: #e2fbff; }
+.report-archives {
+  max-height: 140px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  padding-left: 20px;
+  color: #8edbed;
+  font: 10px Consolas, monospace;
+}
+.report-archives li { margin-bottom: 6px; }
 .report-notice .report-count { margin-bottom: 16px; color: #668d98; font: 8px Consolas, monospace; letter-spacing: .1em; }
 .report-folder-button { border-color: rgba(116, 190, 205, .48); color: #d2f7fc; background: rgba(21, 75, 88, .72); }
 
