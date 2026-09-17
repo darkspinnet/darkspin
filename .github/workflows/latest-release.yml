@@ -138,8 +138,12 @@ jobs:
             echo "Archive versions do not match: ${windows_name}, ${linux_name}" >&2
             exit 1
           fi
-          echo "windows=${windows_archives[0]}" >> "$GITHUB_OUTPUT"
-          echo "linux=${linux_archives[0]}" >> "$GITHUB_OUTPUT"
+          windows_asset=bin/darkspinnerci/darkspinner-win32.zip
+          linux_asset=bin/darkspinnerci/darkspinner-linux.zip
+          cp "${windows_archives[0]}" "${windows_asset}"
+          cp "${linux_archives[0]}" "${linux_asset}"
+          echo "windows=${windows_asset}" >> "$GITHUB_OUTPUT"
+          echo "linux=${linux_asset}" >> "$GITHUB_OUTPUT"
           echo "version=${release_version}" >> "$GITHUB_OUTPUT"
 
       - name: Prepare Windows self-update manifest
@@ -151,9 +155,9 @@ jobs:
           executable_digest="$(sha256sum "${executable_path}" | cut -d ' ' -f 1)"
           jq -n \
             --arg version "${RELEASE_VERSION}" \
-            --arg url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${RELEASE_VERSION}/darkspinner.exe" \
+            --arg url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${RELEASE_VERSION}/darkspinner-win32.zip" \
             --arg sha256 "${executable_digest}" \
-            '{version: $version, url: $url, sha256: $sha256}' \
+            '{version: $version, url: $url, sha256: $sha256, format: "zip"}' \
             > bin/darkspinnerci/darkspinner-update.json
 
       - name: Publish version and pivot latest
@@ -167,7 +171,6 @@ jobs:
           release_assets=(
             "${WINDOWS_ARCHIVE}"
             "${LINUX_ARCHIVE}"
-            bin/darkspinnerci/darkspinner.exe
             bin/darkspinnerci/darkspinner-update.json
           )
           version_core="${VERSION_TAG%%+*}"

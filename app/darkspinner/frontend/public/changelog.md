@@ -2,6 +2,8 @@
 
 ### 2026-09-16
 
+- Fix duel lobbies stalling before squad selection by removing malformed character data from initial player updates.
+- Generate main artifacts with unstable build numbers and commit labels, permanent download links, and Windows artifact self-updates while keeping GitHub releases exclusive to release.
 - Prepare for darkspinnet org public launch
 
 ### 2026-09-07

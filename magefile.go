@@ -51,7 +51,7 @@ const darkSpinnerAuthURLVariable = "github.com/darkspinnet/darkspin/app/darkspin
 
 const darkSpinnerPatchURLVariable = "github.com/darkspinnet/darkspin/app/darkspinner.patchManifestURL"
 
-const darkSpinnerUpdateURLVariable = "github.com/darkspinnet/darkspin/app/darkspinner.launcherUpdateManifestURL"
+const darkSpinnerUpdateURLVariable = "main.launcherUpdateManifestURL"
 
 const darkSpinnerVersionVariable = "main.Version"
 
@@ -70,12 +70,21 @@ var semanticVersionPattern = regexp.MustCompile(
 	`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`,
 )
 
-// Version validates the release version used by build-time injection.
+// Version validates the version used by build-time injection.
 func Version() error {
-	if !semanticVersionPattern.MatchString(releaseSemver) {
-		return fmt.Errorf("releaseSemver: %q is not semantic versioning", releaseSemver)
+	version := buildVersion()
+	if !semanticVersionPattern.MatchString(version) {
+		return fmt.Errorf("buildVersion: %q is not semantic versioning", version)
 	}
 	return nil
+}
+
+func buildVersion() string {
+	version := strings.TrimSpace(os.Getenv("DARKSPIN_BUILD_VERSION"))
+	if version != "" {
+		return version
+	}
+	return releaseSemver
 }
 
 // Darkrun groups standalone server commands.
@@ -160,7 +169,7 @@ func buildDarkrun() (string, error) {
 func buildVersionLinkerFlags() string {
 	buildID := time.Now().UTC().Format("20060102T150405.000000000Z")
 	return "-X github.com/darkspinnet/darkspin/server/buildinfo.ID=" + buildID +
-		" -X " + darkSpinnerServiceVersionVariable + "=" + releaseSemver
+		" -X " + darkSpinnerServiceVersionVariable + "=" + buildVersion()
 }
 
 func launcherLinkerFlags(base string) (string, error) {
@@ -168,7 +177,7 @@ func launcherLinkerFlags(base string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("desktopFlags: %w", err)
 	}
-	return flags + " -X " + darkSpinVersionVariable + "=" + releaseSemver, nil
+	return flags + " -X " + darkSpinVersionVariable + "=" + buildVersion(), nil
 }
 
 func desktopLinkerFlags(base, authVariable, patchVariable string) (string, error) {
@@ -202,7 +211,7 @@ func darkSpinnerLinkerFlags(base string) (string, error) {
 	if updateURL != "" {
 		flags += " -X " + darkSpinnerUpdateURLVariable + "=" + updateURL
 	}
-	return flags + " -X " + darkSpinnerVersionVariable + "=" + releaseSemver, nil
+	return flags + " -X " + darkSpinnerVersionVariable + "=" + buildVersion(), nil
 }
 
 func buildFang(isDiagnostics bool) error {
@@ -616,9 +625,9 @@ func archiveDarkSpinnerBinary(outputPath, binaryName, platformName string) error
 	if err != nil {
 		return fmt.Errorf("archiveStat: %w", err)
 	}
-	archiveName := "darkspinner-v" + releaseSemver + ".zip"
+	archiveName := "darkspinner-v" + buildVersion() + ".zip"
 	if platformName != "" {
-		archiveName = "darkspinner-" + platformName + "-v" + releaseSemver + ".zip"
+		archiveName = "darkspinner-" + platformName + "-v" + buildVersion() + ".zip"
 	}
 	archivePath := filepath.Join(outputPath, archiveName)
 	w, err := os.Create(archivePath)
@@ -744,9 +753,10 @@ func runVersionedWailsBuild(projectPath string, arguments ...string) error {
 }
 
 func windowsProductVersion() (string, error) {
-	fields := semanticVersionPattern.FindStringSubmatch(releaseSemver)
+	version := buildVersion()
+	fields := semanticVersionPattern.FindStringSubmatch(version)
 	if len(fields) < 4 {
-		return "", fmt.Errorf("releaseSemver: %q is not semantic versioning", releaseSemver)
+		return "", fmt.Errorf("buildVersion: %q is not semantic versioning", version)
 	}
 	return strings.Join(fields[1:4], "."), nil
 }

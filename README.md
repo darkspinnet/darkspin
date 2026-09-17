@@ -92,9 +92,36 @@ Use `mage darkspinner:buildrun` to rebuild and immediately launch DarkSpinner,
 or `mage darkspinner:build` when only a fresh binary is needed. Direct and CI
 launches play cinematics by default unless the player enables the saved skip option.
 
-On Windows, DarkSpinner checks [the latest release update manifest](https://github.com/darkspinnet/darkspin/releases/latest/download/darkspinner-update.json) during startup. It downloads only a newer semantic version, verifies the executable's SHA-256 checksum, and replaces itself before restarting. Failed update checks are logged and startup continues. Linux continues to use manual release downloads.
+Stable Windows builds of DarkSpinner check [the latest release update manifest](https://github.com/darkspinnet/darkspin/releases/latest/download/darkspinner-update.json) during startup. They download only a newer semantic version, verify the executable's SHA-256 checksum, and replace themselves before restarting. Failed update checks are logged and startup continues. Linux continues to use manual downloads.
 
-To publish an update, bump `releaseSemver` in `magefile.go` and push the completed change to the `release` branch. The release workflow publishes the `v<version>` tag, Windows and Linux ZIPs, `darkspinner.exe`, and `darkspinner-update.json`. The manifest pins the executable URL to that version's release; stable releases advance the latest feed, while versions such as `1.1.0-rc.1` are marked as prereleases and do not advance it. `DARKSPINNER_UPDATE_URL` remains a build-time override for a custom manifest endpoint.
+To publish an update, bump `releaseSemver` in `magefile.go` and merge the completed change through a pull request targeting `release`. The release workflow publishes the `v<version>` tag, Windows and Linux ZIPs, and `darkspinner-update.json`. The manifest uses `format: "zip"`, pins the Windows ZIP URL to that version's release, and records the extracted executable's SHA-256; no standalone executable is published. Stable releases advance the latest feed, while versions such as `1.1.0-rc.1` are marked as prereleases and do not advance it. `DARKSPINNER_UPDATE_URL` remains a build-time override for a custom manifest endpoint.
+
+Stable release ZIP assets use fixed names so these links always resolve to the latest stable release after its first publication with the new names:
+
+- [Latest stable Windows ZIP](https://github.com/darkspinnet/darkspin/releases/latest/download/darkspinner-win32.zip)
+- [Latest stable Linux ZIP](https://github.com/darkspinnet/darkspin/releases/latest/download/darkspinner-linux.zip)
+
+Version numbers remain in release tags, executable metadata, and update manifests. Self-updates use the specific release tag's ZIP URL so a newer release cannot change an in-progress download.
+
+Pushes to `main` run `.github/workflows/main-build.yml`, which produces unstable artifacts without creating Git tags or GitHub releases. Each run automatically generates a version such as `1.0.0-unstable.42.1+gabcdef123456`: the base comes from `releaseSemver`, the counters identify the workflow run and attempt, and the suffix identifies the commit. No manual version bump is needed for main updates. The launcher's version footer and changelog dialog display this full version. New pushes cancel unfinished builds; the latest-successful links advance only when both platform builds and manifest uploads succeed.
+
+Permanent links for Discord, available after the first successful main build:
+
+- [Latest unstable Windows download](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkspinner-win32-unstable.zip)
+- [Latest unstable Linux download](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkspinner-linux-unstable.zip)
+- [Latest unstable update manifest ZIP](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkspinner-update-unstable.zip)
+
+The unstable Windows executable checks that manifest ZIP at startup and remains on the unstable channel. The JSON inside contains `version`, `url`, `sha256`, and `format: "zip"`; its executable URL pins a specific artifact ID so another build cannot change the expected download. The updater accepts only a single `darkspinner.exe` inside the executable artifact and verifies the extracted binary's SHA-256 before replacement. Stable builds keep the stable release endpoint.
+
+These artifact links use the third-party [nightly.link](https://nightly.link/) service, require a public repository for anonymous downloads, and remain subject to the 14-day artifact retention period. Installing its read-only GitHub App is recommended by the service to avoid shared API rate limits. The Windows artifact contains the executable directly; the Linux artifact contains the native ZIP preserving executable permissions. Download from the run's Artifacts section as an alternative, or use an authenticated GitHub CLI:
+
+```powershell
+$runId = gh run list --repo darkspinnet/darkspin --workflow main-build.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId'
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($runId)) { throw 'No successful main build found.' }
+gh run download $runId --repo darkspinnet/darkspin --name darkspinner-win32-unstable --dir downloads
+```
+
+Use `darkspinner-linux-unstable` for Linux. The selected artifact must still be retained. `DARKSPIN_BUILD_VERSION` and `DARKSPINNER_UPDATE_URL` are build-time overrides used by the main workflow; ordinary stable builds use the source version and stable endpoint. Merging main into `release` merges source changes, not tags: the stable workflow creates its own `v<version>` tag and requires a fresh stable version when publishing a different commit.
 
 A fresh
 `bin/game/darkspin/saves/darkspin.db` starts without development seed users; create a
