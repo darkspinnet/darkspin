@@ -637,8 +637,14 @@ func readDSEVertexDescription(parser *rw4Parser) ([]byte, error) {
 	elementFlags, err := parser.nextUint32("ELEMENTFLAGS", err)
 	field14, err := parser.nextUint32("FIELD14", err)
 	elementCount, err := parser.nextCount("NUMELEMENTS", err)
-	if err != nil || field0E > 0xFF || vertexSize > 0xFF {
-		return nil, fmt.Errorf("header: %v", err)
+	if err != nil {
+		return nil, fmt.Errorf("headerRead: %w", err)
+	}
+	if field0E > math.MaxUint8 || vertexSize > math.MaxUint8 {
+		return nil, fmt.Errorf("headerRange: FIELD0E %d or VERTEXSIZE %d exceeds uint8", field0E, vertexSize)
+	}
+	if elementCount < 0 || elementCount > math.MaxUint16 {
+		return nil, fmt.Errorf("elementCount: %d outside uint16 range", elementCount)
 	}
 	payload := make([]byte, 24+elementCount*12)
 	binary.LittleEndian.PutUint32(payload[0:4], field00)

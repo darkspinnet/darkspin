@@ -2,6 +2,7 @@
 
 ### 2026-09-17
 
+- Reject RW4 vertex declarations with more than 65,535 elements before allocating or encoding their 16-bit element count.
 - Enforce portable signed 32-bit bounds for DSE counts and layout offsets, and calculate Fang mana-cost trace products in double precision.
 - Add a security policy directing vulnerability reports to GitHub's private reporting flow.
 - Remove overflow-prone Scaleform allocation sizing, guard accumulated instruction offsets, and require HTTPS for authentication cookies with the Secure attribute.
