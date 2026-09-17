@@ -322,14 +322,14 @@ func (e campaignDopplerFakeExpiry) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	fake, isFakeFound := peerSession.zone.NPCs().LiveNPC(e.fakeObjectID)
-	if !isFakeFound {
+	if !isFakeFound || fake.IsDefeated {
 		delete(peerSession.campaignNPCDopplerFakeObjectIDs, e.sourceObjectID)
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	result, err := peerSession.zone.NPCs().Damage(
-		e.fakeObjectID, e.fakeObjectID, fake.HitPoint,
+	result, err := peerSession.zone.NPCs().Defeat(
+		e.fakeObjectID, e.fakeObjectID,
 	)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()

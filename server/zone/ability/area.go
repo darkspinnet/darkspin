@@ -563,10 +563,10 @@ func CommitArea(
 		if err != nil {
 			return nil, fmt.Errorf("areaCritical[%d]: %w", target.Plan.ObjectID, err)
 		}
-		damage, err := enemies.DamageAreaFromPosition(
-			plan.SourceObjectID, target.Plan.ObjectID, critical.Damage, plan.Center,
-			plan.Definition.DamageSource,
-		)
+		damage, err := enemies.Hit(zonenpc.HitRequest{
+			SourceObjectID: plan.SourceObjectID, TargetObjectID: target.Plan.ObjectID, Damage: critical.Damage,
+			IsArea: true, SourcePosition: &plan.Center, Metadata: NPCDamageMetadata(plan.Definition),
+		})
 		if err != nil {
 			return nil, fmt.Errorf("areaApply[%d]: %w", target.Plan.ObjectID, err)
 		}

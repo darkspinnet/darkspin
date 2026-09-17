@@ -90,3 +90,12 @@ func npcDefenseRemaining(reduction, ceiling float32) float32 {
 	}
 	return 1 - min(max(reduction, float32(0)), ceiling)
 }
+
+// ReduceCompanionDamage uses the companion's own authored noun ratings, never
+// its owner's gear. It shares the zone's difficulty conversion and rating curve.
+func (e *Session) ReduceCompanionDamage(damage float32, profile game.CampaignNPCProfile, source uint32) float32 {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.reduceDamage(Snapshot{Plan: SpawnPlan{NPCProfile: profile}},
+		ActionProfile{}, damage, nil, source == 0, source == 1, false, false, time.Now())
+}

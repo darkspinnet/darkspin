@@ -1451,9 +1451,10 @@ func (e campaignCompanionAttackStep) hit() ([][]byte, error) {
 	result := zonenpc.DamageResult{}
 	transition := campaignDamageTransition{}
 	if isHitValid {
-		result, err = peerSession.zone.NPCs().Damage(
-			e.plan.ObjectID, e.plan.TargetObjectID, damage,
-		)
+		result, err = peerSession.zone.NPCs().Hit(zonenpc.HitRequest{
+			SourceObjectID: e.plan.ObjectID, TargetObjectID: e.plan.TargetObjectID, Damage: damage,
+			SourcePosition: nil, Metadata: zoneability.NPCDamageMetadata(e.runtime.npc.program.SupportHealerPetBasic),
+		})
 		if err == nil {
 			transition, err = peerSession.applyCampaignDamageTransition(result)
 		}
@@ -3587,9 +3588,10 @@ func (s campaignPlasmaBurnStep) produce() ([][]byte, error) {
 		s.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("plasmaBurnDamage[%d]: %w", s.tickIndex, err)
 	}
-	damageResult, err := peerSession.zone.NPCs().DamageOverTime(
-		s.sourceObjectID, s.targetObjectID, damage,
-	)
+	damageResult, err := peerSession.zone.NPCs().Hit(zonenpc.HitRequest{
+		SourceObjectID: s.sourceObjectID, TargetObjectID: s.targetObjectID, Damage: damage,
+		Metadata: zonenpc.DamageMetadata{DamageSource: 1, DamageType: 3, IsDamageTypeKnown: true, DescriptorMask: 36},
+	})
 	if err != nil {
 		s.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("plasmaBurnCommit[%d]: %w", s.tickIndex, err)
@@ -7689,6 +7691,7 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 		return nil, sporenet.PlayerStatDelta{}, false, nil
 	}
 	defenseReq := enemyDefenseRequest(plan.Profile, result.Damage, isAreaAttack, isRetainedStatus)
+	plan.Profile.DamageSource = defenseReq.DamageSource
 	defenseFlags := uint16(0)
 	if target.IsHero {
 		var defenseErr error
@@ -7757,6 +7760,7 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 	shieldPackets := [][]byte(nil)
 	absorbedAmount := float32(0)
 	defenseReq.Damage = result.Damage
+	result.Damage = r.reduceCompanionDamage(*peerSession, target, result.Damage, defenseReq.DamageSource)
 	if target.IsHero {
 		result.Damage = targetSession.applyPassiveDamageReduction(
 			result.Damage, plan.Profile.DamageSource, plan.SourceObjectID, r.now(),

@@ -40,6 +40,7 @@ func (r campaignNPCActionRuntime) applyEnemyProjectileDamage(
 		return nil, sporenet.PlayerStatDelta{}, false, nil
 	}
 	defenseReq := enemyDefenseRequest(plan.Profile, result.Damage, false, false)
+	plan.Profile.DamageSource = defenseReq.DamageSource
 	defenseFlags := uint16(0)
 	if target.IsHero {
 		var defenseErr error
@@ -129,6 +130,7 @@ func (r campaignNPCActionRuntime) applyEnemyProjectileDamage(
 	shieldPackets := [][]byte(nil)
 	absorbedAmount := float32(0)
 	defenseReq.Damage = result.Damage
+	result.Damage = r.reduceCompanionDamage(*peerSession, target, result.Damage, defenseReq.DamageSource)
 	if target.IsHero {
 		result.Damage = targetSession.applyPassiveDamageReduction(
 			result.Damage, plan.Profile.DamageSource, plan.SourceObjectID, r.now(),

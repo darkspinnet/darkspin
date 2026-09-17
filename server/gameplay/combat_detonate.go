@@ -150,8 +150,8 @@ func (e campaignExploderScarabSchedule) hit() ([][]byte, error) {
 			modifierPlans = append(modifierPlans, plan)
 		}
 	}
-	damageResult, err := peerSession.zone.NPCs().Damage(
-		req.objectID, req.objectID, source.HitPoint,
+	damageResult, err := peerSession.zone.NPCs().Defeat(
+		req.objectID, req.objectID,
 	)
 	if err != nil {
 		runtime.registry.mutex.Unlock()

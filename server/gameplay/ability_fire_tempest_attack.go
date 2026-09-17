@@ -234,9 +234,10 @@ func (e fireTempestPetAttackStep) impact() ([][]byte, error) {
 	result := zonenpc.DamageResult{}
 	transition := campaignDamageTransition{}
 	if isHit {
-		result, err = peerSession.zone.NPCs().Damage(
-			e.plan.ObjectID, e.plan.TargetObjectID, e.damage,
-		)
+		result, err = peerSession.zone.NPCs().Hit(zonenpc.HitRequest{
+			SourceObjectID: e.plan.ObjectID, TargetObjectID: e.plan.TargetObjectID, Damage: e.damage,
+			SourcePosition: &e.launchPosition, Metadata: zoneability.NPCDamageMetadata(e.runtime.npc.program.FireTempestPetBasic),
+		})
 		if err == nil {
 			transition, err = peerSession.applyCampaignDamageTransition(result)
 		}

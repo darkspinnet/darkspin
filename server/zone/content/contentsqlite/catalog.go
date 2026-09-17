@@ -1096,6 +1096,16 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		return zonecontent.Programs{}, fmt.Errorf("nonPlayerClass: %w", err)
 	}
 	nonPlayerHitPoint := make(map[uint32]float32, len(nonPlayerClasses))
+	defenseProfiles, defenseErr := store.NonPlayerNounProfiles(ctx)
+	if defenseErr != nil {
+		return zonecontent.Programs{}, fmt.Errorf("defenseProfiles: %w", defenseErr)
+	}
+	nonPlayerDefenses := make(map[uint32]game.CampaignNPCProfile, len(defenseProfiles))
+	for _, profile := range defenseProfiles {
+		nonPlayerDefenses[util.HashID(profile.NounName)] = game.CampaignNPCProfile{
+			DodgeRating: profile.DodgeRating, ResistRating: profile.ResistRating,
+		}
+	}
 	nonPlayerCritical := make(map[uint32]sim.CriticalProfile, len(nonPlayerClasses))
 	for _, class := range nonPlayerClasses {
 		nonPlayerHitPoint[class.InstanceID] = class.HitPoint
@@ -1630,6 +1640,7 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		PlayerBasicUnsupported: playerBasicUnsupported,
 		HeroKits:               heroKits,
 		NonPlayerHitPoint:      nonPlayerHitPoint,
+		NonPlayerDefenses:      nonPlayerDefenses,
 		NonPlayerCritical:      nonPlayerCritical,
 		NounPhysics:            nounPhysics,
 		NounPhysicsByID:        nounPhysicsByID,

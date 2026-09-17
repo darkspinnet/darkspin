@@ -3,6 +3,7 @@ package content
 import (
 	"errors"
 	"fmt"
+	"github.com/darkspinnet/darkspin/server/game"
 	"strings"
 
 	"github.com/darkspinnet/darkspin/server/sim"
@@ -54,6 +55,7 @@ type Programs struct {
 	PlayerBasicUnsupported map[uint32]string
 	HeroKits               map[uint32]HeroKit
 	NonPlayerHitPoint      map[uint32]float32
+	NonPlayerDefenses      map[uint32]game.CampaignNPCProfile
 	NonPlayerCritical      map[uint32]sim.CriticalProfile
 	NounPhysics            map[string]NounPhysics
 	NounPhysicsByID        map[uint32]NounPhysics

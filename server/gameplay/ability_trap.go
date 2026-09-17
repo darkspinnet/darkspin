@@ -429,10 +429,10 @@ func (e heroTrapSchedule) fireTurret() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("heroTurretCritical: %w", err)
 	}
-	result, err := peerSession.zone.NPCs().Damage(
-		e.objectID, target.Plan.ObjectID, critical.Damage,
-		e.definition.DamageSource,
-	)
+	result, err := peerSession.zone.NPCs().Hit(zonenpc.HitRequest{
+		SourceObjectID: e.objectID, TargetObjectID: target.Plan.ObjectID, Damage: critical.Damage,
+		SourcePosition: nil, Metadata: zoneability.NPCDamageMetadata(e.definition),
+	})
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("heroTurretCommit: %w", err)

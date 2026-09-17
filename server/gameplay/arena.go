@@ -380,6 +380,15 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 	if damage <= 0 && defenseFlags == 0 {
 		defenseFlags = 0x40
 	}
+	// Stage shield state on the session copy. No effect-pool mutations occur
+	// until the attack and its resource reservations have been accepted.
+	shieldPreview := targetSession
+	shield, shieldErr := shieldPreview.absorbTCShield(damage, attackTime, nil)
+	if shieldErr != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("arenaShieldPreview: %w", shieldErr)
+	}
+	damage = shield.Damage
 	damage = max(float32(0), min(damage, targetSession.deployedHitPoint()))
 	hitPoint := max(float32(0), targetSession.deployedHitPoint()-damage)
 	targetObjectID := targetSession.deployedObjectID
@@ -463,6 +472,14 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("arenaAttackEvent: %w", err)
+	}
+	if shield.Absorbed > 0 {
+		eventPacket, err = shieldCombatEvent(peerSession.deployedObjectID, targetObjectID,
+			damage, shield.Absorbed, hitPoint, critical.IsCritical)
+		if err != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("arenaShieldEvent: %w", err)
+		}
 	}
 	impactPacket, err := arenaImpactPresentation(
 		projected, peerSession.deployedObjectID, targetObjectID,
@@ -553,6 +570,26 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 			"arenaAttackDamage: %w", errors.Join(err, rollbackErr),
 		)
 	}
+	if hitPoint > 0 {
+		index := targetSession.deployedCreatureIndex
+		targetSession.tcShieldAmount[index] = shieldPreview.tcShieldAmount[index]
+		targetSession.tcShieldReadyAt[index] = shieldPreview.tcShieldReadyAt[index]
+		if targetSession.tcShieldAmount[index] <= 0 {
+			stopPackets, stopErr := targetSession.stopTCShield(index, r.effectPool)
+			if stopErr != nil {
+				r.logger.Printf("Arena shield cleanup: %v", stopErr)
+			}
+			shield.Packets = append(shield.Packets, stopPackets...)
+		} else {
+			attachPacket, attachErr := targetSession.attachTCShield(index, r.effectPool)
+			if attachErr != nil {
+				r.logger.Printf("Arena shield presentation: %v", attachErr)
+			}
+			if attachPacket != nil {
+				shield.Packets = append(shield.Packets, attachPacket)
+			}
+		}
+	}
 	privateTransitionPackets := arenaTargetPrivateTransitionPackets(transitionPackets)
 	if len(privateTransitionPackets) != 0 {
 		targetSession.queuePackets(privateTransitionPackets)
@@ -561,6 +598,7 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 	r.registry.sessions[targetKey] = targetSession
 	r.registry.mutex.Unlock()
 	packets := [][]byte{acceptPacket, releasePacket}
+	packets = append(packets, shield.Packets...)
 	packets = append(packets, presentationPackets...)
 	packets = append(packets, eventPacket)
 	if len(impactPacket) != 0 {

@@ -941,7 +941,7 @@ func (s *Session) DamageAreaFromPosition(
 func (s *Session) damage(
 	sourceObjectID uint32, targetObjectID uint32, damage float32,
 	sourcePosition *game.Vec3, isAreaAttack bool, isDamageOverTime bool,
-	damageSource []uint32,
+	damageSource []uint32, metadata ...DamageMetadata,
 ) (DamageResult, error) {
 	if s == nil {
 		return DamageResult{}, errors.New("nil npc session")
@@ -962,9 +962,15 @@ func (s *Session) damage(
 	if npc.IsDefeated {
 		return DamageResult{}, fmt.Errorf("npcDefeated: %d", targetObjectID)
 	}
+	meta := DamageMetadata{}
+	if len(metadata) > 0 {
+		meta = metadata[0]
+	}
+	isAreaAttack = isAreaAttack || meta.DescriptorMask&8 != 0
+	isDamageOverTime = isDamageOverTime || meta.DescriptorMask&4 != 0
 	now := time.Now()
-	if now.Before(npc.status.intangibleExpiresAt) ||
-		now.Before(npc.status.banishExpiresAt) {
+	if !meta.isForcedDefeat && (now.Before(npc.status.intangibleExpiresAt) ||
+		now.Before(npc.status.banishExpiresAt)) {
 		return DamageResult{
 			ObjectID: targetObjectID, LocusID: npc.Plan.LocusID,
 			MarkerSetName: npc.Plan.MarkerSetName, PreviousHealth: npc.HitPoint,
@@ -972,7 +978,7 @@ func (s *Session) damage(
 		}, nil
 	}
 	isAbsorptionShieldRenewed := false
-	if npc.status.absorptionShieldMaximum > 0 &&
+	if !meta.isForcedDefeat && npc.status.absorptionShieldMaximum > 0 &&
 		npc.status.absorptionShieldAmount <= 0 &&
 		!npc.status.absorptionShieldReadyAt.IsZero() &&
 		!now.Before(npc.status.absorptionShieldReadyAt) {
@@ -984,23 +990,28 @@ func (s *Session) damage(
 	species := nounSpecies(npc.Plan.NounName)
 	isPhysicalDamage := len(damageSource) == 0 || damageSource[0] == 0
 	isEnergyDamage := len(damageSource) > 0 && damageSource[0] == 1
-	damage = s.reduceDamage(npc, actionProfile, damage, sourcePosition,
-		isPhysicalDamage, isEnergyDamage, isAreaAttack, isDamageOverTime, now)
-	damage *= 1 + npc.status.damageTakenIncrease
-	if npc.Plan.OwnerObjectID != 0 && IsNashiraNoun(npc.Plan.NounName) &&
-		(isPhysicalDamage || isEnergyDamage) {
-		// ShadowBossPassive.SetIsDuplicate adds 3 to both incoming damage
-		// attributes. This is the illusion's identity, not a cleansable debuff.
-		damage *= 4
+	if !meta.isForcedDefeat {
+		damage = s.reduceDamage(npc, actionProfile, damage, sourcePosition,
+			isPhysicalDamage, isEnergyDamage, isAreaAttack, isDamageOverTime, now)
+		damage *= 1 + npc.status.damageTakenIncrease
+		if npc.Plan.OwnerObjectID != 0 && IsNashiraNoun(npc.Plan.NounName) &&
+			(isPhysicalDamage || isEnergyDamage) {
+			// ShadowBossPassive.SetIsDuplicate adds 3 to both incoming damage
+			// attributes. This is the illusion's identity, not a cleansable debuff.
+			damage *= 4
+		}
+		if isPhysicalDamage && now.Before(npc.status.physicalVulnerabilityEnd) {
+			damage *= 1 + npc.status.physicalTakenIncrease
+		}
+		if len(damageSource) > 0 && damageSource[0] == 1 &&
+			time.Now().Before(npc.status.energyVulnerabilityEnd) {
+			damage *= 1 + npc.status.energyTakenIncrease
+		}
 	}
-	if isPhysicalDamage && now.Before(npc.status.physicalVulnerabilityEnd) {
-		damage *= 1 + npc.status.physicalTakenIncrease
+	absorbedDamage := float32(0)
+	if !meta.isForcedDefeat {
+		absorbedDamage = min(damage, npc.status.absorptionShieldAmount)
 	}
-	if len(damageSource) > 0 && damageSource[0] == 1 &&
-		time.Now().Before(npc.status.energyVulnerabilityEnd) {
-		damage *= 1 + npc.status.energyTakenIncrease
-	}
-	absorbedDamage := min(damage, npc.status.absorptionShieldAmount)
 	if absorbedDamage > 0 {
 		npc.status.absorptionShieldAmount -= absorbedDamage
 		damage -= absorbedDamage
@@ -1012,8 +1023,12 @@ func (s *Session) damage(
 		}
 	}
 	previousHealth := npc.HitPoint
+	if meta.isForcedDefeat {
+		damage = previousHealth
+		absorbedDamage = 0
+	}
 	appliedDamage := min(damage, previousHealth)
-	if !npc.IsTurtleTriggered && isNomadSpecialThreeNoun(npc.Plan.NounName) &&
+	if !meta.isForcedDefeat && !npc.IsTurtleTriggered && isNomadSpecialThreeNoun(npc.Plan.NounName) &&
 		npc.Plan.NPCProfile.HitPoint > 0 {
 		turtleThreshold := npc.Plan.NPCProfile.HitPoint * 0.5
 		isTurtleThresholdCrossed := previousHealth > turtleThreshold &&
@@ -1028,13 +1043,13 @@ func (s *Session) damage(
 		species == "cryoselementalspecialthree" {
 		npc.status.isDamageFleePending = true
 	}
-	isSelfResurrectionStarted := npc.IsDefeated &&
+	isSelfResurrectionStarted := !meta.isForcedDefeat && npc.IsDefeated &&
 		!npc.IsSelfResurrectionTriggered &&
 		nounSpecies(npc.Plan.NounName) == "nomadbiospecialtwo"
 	if isSelfResurrectionStarted {
 		npc.IsSelfResurrectionTriggered = true
 	}
-	isCorruptorStageTwoStarted := npc.IsDefeated &&
+	isCorruptorStageTwoStarted := !meta.isForcedDefeat && npc.IsDefeated &&
 		!npc.IsCorruptorStageTwo &&
 		nounSpecies(npc.Plan.NounName) == "scaldronboss"
 	if isCorruptorStageTwoStarted {

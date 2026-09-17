@@ -245,8 +245,8 @@ func (e campaignNPCManaDrainSchedule) produce() ([][]byte, error) {
 	damageResult := zonenpc.DamageResult{}
 	transition := campaignDamageTransition{}
 	if isOverloaded {
-		damageResult, err = current.zone.NPCs().Damage(
-			e.request.objectID, e.request.objectID, updatedSource.HitPoint,
+		damageResult, err = current.zone.NPCs().Defeat(
+			e.request.objectID, e.request.objectID,
 		)
 		if err == nil {
 			transition, err = current.applyCampaignNPCSelfDamageTransition(

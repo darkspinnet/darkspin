@@ -39,10 +39,12 @@ func (e *gameplayPeerSession) commitThornBarkReflection(
 	if !isFound || target.IsDefeated || target.HitPoint <= 0 {
 		return thornBarkReflection{}, nil
 	}
-	damage, err := e.zone.NPCs().Damage(
-		e.deployedObjectID, plan.SourceObjectID,
-		acceptedDamage*creature.DamageReflection, 0,
-	)
+	damage, err := e.zone.NPCs().Hit(zonenpc.HitRequest{
+		SourceObjectID: e.deployedObjectID,
+		TargetObjectID: plan.SourceObjectID,
+		Damage:         acceptedDamage * creature.DamageReflection,
+		Metadata:       zonenpc.DamageMetadata{DamageSource: 0},
+	})
 	if err != nil {
 		return thornBarkReflection{}, fmt.Errorf("damage: %w", err)
 	}

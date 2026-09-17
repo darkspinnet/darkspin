@@ -6,8 +6,23 @@ import (
 	"github.com/darkspinnet/darkspin/server/combat"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
+	"github.com/darkspinnet/darkspin/server/zone"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
+
+func (e campaignNPCActionRuntime) reduceCompanionDamage(session gameplayPeerSession,
+	target zone.NPCTarget, damage float32, source uint8,
+) float32 {
+	if target.IsHero || session.zone == nil || session.zone.Companion() == nil {
+		return damage
+	}
+	companion, isFound := session.zone.Companion().Snapshot(target.ObjectID)
+	if !isFound {
+		return damage
+	}
+	profile := e.program.NonPlayerDefenses[companion.Noun]
+	return session.zone.NPCs().ReduceCompanionDamage(damage, profile, uint32(source))
+}
 
 func (e gameplayPeerSession) equipmentDefense() combat.DefenseProfile {
 	if e.deployedCreatureIndex >= uint32(len(e.binding.Creatures)) {

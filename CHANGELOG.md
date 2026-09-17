@@ -2,6 +2,7 @@
 
 ### 2026-09-17
 
+- Preserve pet and burn damage classifications and combined area/periodic defenses, apply companions' own defense ratings, honor finite TC shields in duels, and keep scripted deaths independent of combat resistance.
 - Apply enemy physical and energy defense ratings with difficulty scaling, cap ordinary stacked mitigation at 50%, and change defensive shields and stances from damage immunity to at most 75% reduction.
 - Fix shifted equipment suffix stats that incorrectly granted extreme damage reduction and misapplied physical and energy modifiers; refresh the server content cache automatically.
 - Fix Shadow Doppler effects, The Corruptor's combat behavior, and Enemy Portal visuals; rebalance stacked defenses to prevent immunity.

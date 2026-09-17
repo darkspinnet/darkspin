@@ -1671,8 +1671,8 @@ func (s *gameplayPeerSession) applyDeveloperKillCommand() (
 				return nil, nil, fmt.Errorf("killTurtle[%d]: %w", index, err)
 			}
 		}
-		damage, err := s.zone.NPCs().Damage(
-			s.deployedObjectID, enemy.Plan.ObjectID, enemy.HitPoint,
+		damage, err := s.zone.NPCs().Defeat(
+			s.deployedObjectID, enemy.Plan.ObjectID,
 		)
 		if err != nil {
 			return nil, nil, fmt.Errorf("killDamage[%d]: %w", index, err)

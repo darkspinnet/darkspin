@@ -274,10 +274,10 @@ func CommitBasic(
 	if err != nil {
 		return BasicResult{}, fmt.Errorf("commitCritical: %w", err)
 	}
-	damage, err := enemies.DamageFromPosition(
-		plan.SourceObjectID, plan.TargetObjectID, critical.Damage, plan.SourcePosition,
-		plan.Definition.DamageSource,
-	)
+	damage, err := enemies.Hit(zonenpc.HitRequest{
+		SourceObjectID: plan.SourceObjectID, TargetObjectID: plan.TargetObjectID, Damage: critical.Damage,
+		SourcePosition: &plan.SourcePosition, Metadata: NPCDamageMetadata(plan.Definition),
+	})
 	if err != nil {
 		return BasicResult{}, fmt.Errorf("commitDamage: %w", err)
 	}
