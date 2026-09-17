@@ -1,0 +1,1 @@
+{"$schema":"https://wails.io/schemas/config.v2.json","author":{"name":"darkspin"},"frontend:build":"pnpm run build","frontend:dev:serverUrl":"auto","frontend:dev:watcher":"pnpm run dev","frontend:install":"pnpm install","info":{"productVersion":"0.7.8"},"name":"darkspinner","outputfilename":"darkspinner"}

@@ -19,6 +19,9 @@ profile.cov
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
+node_modules/
+app/darkspin/frontend/dist/
+app/darkspinner/frontend/dist/
 
 # Go workspace file
 go.work
@@ -30,3 +33,17 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+bin
+!/bin/
+/bin/*
+!/bin/game/
+/bin/game/*
+!/bin/game/logs/
+/bin/game/logs/*
+!/bin/game/logs/AGENTS.md
+mage_output_file.go
+.pnpm-store/
+.cache/
+tmp/
+*.syso
+scripts/

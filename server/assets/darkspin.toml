@@ -1,0 +1,43 @@
+# Darkspin server configuration.
+# This file is written automatically when the configured path does not exist.
+
+[game]
+# Reject clients whose detected Game version differs from the server.
+is_version_locked = false
+# Restrict the web UI and matchmaking flow to single-player content.
+is_singleplayer_only = false
+locale = ""
+
+[server]
+is_multiplayer_enabled = false
+port = 42127
+# Maximum simultaneously authenticated players across the server. This is
+# separate from the four-player limit of an individual Game game instance.
+# The default is conservative for local SQLite. A PostgreSQL deployment may
+# raise this (for example, to 1000) after sizing its database and host.
+world_player_limit = 25
+
+[chat]
+# Accepted messages are always written to chat_log when SQLite is active.
+# Stdout and this append-only JSONL file provide convenient live diagnostics.
+is_stdout_enabled = true
+file_path = "chat.log"
+
+[storage]
+# SQLite is the current embedded adapter. PostgreSQL is planned.
+driver = "sqlite"
+
+[auth]
+# Shared HS256 signing secret used by the desktop auth broker and game server.
+# Replace this development value before exposing a server beyond localhost.
+# The secret must contain at least 32 bytes.
+jwt_secret = "darkspin-local-development-secret-do-not-use-in-production"
+jwt_issuer = "darkspin-web"
+jwt_audience = "darkspin"
+
+[snapshot]
+# Off keeps no rolling sync diagnostics. Manual records the rolling buffer for
+# /ss dump. Auto also snapshots detected RakNet ordering anomalies.
+mode = "off"
+buffer_duration_seconds = 30
+delay_seconds = 30
