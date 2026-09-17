@@ -2,6 +2,7 @@
 
 ### 2026-09-17
 
+- Shorten commit hashes in unstable CI build versions from 12 characters with a g prefix to 7 characters without a prefix.
 - Respect account squad unlocks in profile responses so campaign selection does not offer empty, unpurchased squads as unlocked with hero level zero.
 - Explicitly gate unstable artifact builds on pushes to main, excluding pull requests and other branches.
 - Reject RW4 vertex declarations with more than 65,535 elements before allocating or encoding their 16-bit element count.

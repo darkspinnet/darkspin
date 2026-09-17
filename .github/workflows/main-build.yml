@@ -34,7 +34,7 @@ jobs:
             echo "Unable to resolve the Mage release version" >&2
             exit 1
           fi
-          echo "version=${version_core}-unstable.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}+g${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+          echo "version=${version_core}-unstable.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}+${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.name }}
