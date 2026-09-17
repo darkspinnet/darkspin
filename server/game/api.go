@@ -671,7 +671,7 @@ func (a *API) accountProfileViewResponse(
 		view = user.View()
 	}
 	if !isPublic && (values.Get("cookie") == "true" || values.Get("cookie") == "1") {
-		http.SetCookie(writer, &http.Cookie{Name: "token", Value: view.AuthToken, Path: "/", HttpOnly: true})
+		http.SetCookie(writer, &http.Cookie{Name: "token", Value: view.AuthToken, Path: "/", HttpOnly: true, Secure: true})
 	}
 	accountNode := a.accountNode(user, view, isPublic)
 	nodes := []string{xmlText("timestamp", strconv.FormatInt(time.Now().UnixMilli(), 10)), accountNode}
@@ -768,6 +768,13 @@ func (a *API) accountNode(user *sporenet.User, view sporenet.UserView, isPublic 
 
 func (a *API) privateAccountFields(user *sporenet.User, view sporenet.UserView) []string {
 	account := view.Account
+	capLevel := number(account.CapLevel)
+	if account.CapLevel == 0 {
+		// Build 103 checks the account cap as signed, but compares the live
+		// player level against it as unsigned (0x41C73A and 0x41C758).
+		// -1 disables both checks; zero incorrectly caps every active player.
+		capLevel = "-1"
+	}
 	return []string{
 		xmlText("blaze_id", strconv.FormatInt(account.ID, 10)),
 		xmlText("name", view.DisplayName),
@@ -798,7 +805,7 @@ func (a *API) privateAccountFields(user *sporenet.User, view sporenet.UserView) 
 		xmlText("unlock_inventory_identify", number(account.UnlockInventory)),
 		xmlText("unlock_editor_flair_slots", number(account.UnlockEditorFlairSlots)),
 		xmlText("upsell", number(account.Upsell)),
-		xmlText("cap_level", number(account.CapLevel)),
+		xmlText("cap_level", capLevel),
 		xmlText("cap_progression", number(account.CapProgression)),
 		xmlText("grant_all_access", boolNumber(account.IsAllAccessGranted)),
 		xmlText("grant_online_access", boolNumber(account.IsOnlineAccessGranted)),
@@ -874,7 +881,7 @@ func (a *API) partList(writer http.ResponseWriter, user *sporenet.User, values i
 	}
 	query := parsePartListQuery(values)
 	view := user.View()
-	nodes := make([]string, 0, min(query.count, len(view.Parts)))
+	nodes := make([]string, 0)
 	for index := range view.Parts {
 		if len(nodes) >= query.count {
 			break
@@ -1014,8 +1021,11 @@ func (a *API) qos(writer http.ResponseWriter, request *http.Request, uri *recaph
 func (a *API) firewall(writer http.ResponseWriter, request *http.Request, uri *recaphttp.URI) {
 	values := requestValues(request, uri)
 	count, err := strconv.Atoi(values.Get("nint"))
-	if err != nil || count < 0 {
-		count = 0
+	// Bound the reflected interface list independently of the request.
+	const maximumInterfaceCount = 64
+	if err != nil || count < 0 || count > maximumInterfaceCount {
+		writeXML(writer, http.StatusOK, xmlResponse(false))
+		return
 	}
 	ips := make([]string, count)
 	ports := make([]string, count)

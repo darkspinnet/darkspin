@@ -5,6 +5,7 @@ package window
 import (
 	"errors"
 	"fmt"
+	"math"
 	"syscall"
 	"time"
 )
@@ -35,6 +36,9 @@ func StopAll(executableName string) error {
 
 // StopProcess terminates one process ID and waits for exit.
 func StopProcess(processID uint32) error {
+	if processID == 0 || processID > math.MaxInt32 {
+		return fmt.Errorf("processID: %d outside positive PID range", processID)
+	}
 	err := syscall.Kill(int(processID), syscall.SIGTERM)
 	if err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("processSignal: %w", err)

@@ -199,7 +199,7 @@ func parseTypeScriptExpression(source string, constants []string) ([][]any, erro
 		if err != nil {
 			return nil, fmt.Errorf("callArguments: %w", err)
 		}
-		rows := make([][]any, 0, len(arguments)*2+len(pathParts)*2+2)
+		rows := make([][]any, 0)
 		for argumentIndex := len(arguments) - 1; argumentIndex >= 0; argumentIndex-- {
 			argumentRows, expressionErr := parseTypeScriptExpression(arguments[argumentIndex], constants)
 			if expressionErr != nil {
@@ -240,7 +240,7 @@ func parseReferencePath(parts []string, constants []string) ([][]any, error) {
 	if len(parts) == 0 || !isTypeScriptReferencePath(strings.Join(parts, ".")) {
 		return nil, errors.New("referencePath")
 	}
-	rows := make([][]any, 0, len(parts)*2)
+	rows := make([][]any, 0)
 	if strings.HasPrefix(parts[0], "register") {
 		register, err := strconv.ParseUint(strings.TrimPrefix(parts[0], "register"), 10, 8)
 		if err != nil {

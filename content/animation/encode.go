@@ -99,7 +99,7 @@ func (e *encoder) writeChannel(channel Channel) (int, error) {
 		return 0, fmt.Errorf("nameLength: %d", len(channel.Name))
 	}
 	for componentIndex, component := range channel.Components {
-		if len(component.Keyframes) != int(channel.KeyframeCount) {
+		if uint64(len(component.Keyframes)) != uint64(channel.KeyframeCount) {
 			return 0, fmt.Errorf("component[%d]Frames: got %d, want %d", componentIndex, len(component.Keyframes), channel.KeyframeCount)
 		}
 	}

@@ -2,6 +2,13 @@
 
 ### 2026-09-17
 
+- Remove overflow-prone Scaleform allocation sizing, guard accumulated instruction offsets, and require HTTPS for authentication cookies with the Secure attribute.
+- Reject invalid Unix process IDs, bound firewall interface responses, and validate content offsets, sizes, and narrow integer fields before conversion to prevent overflow and excessive request-driven allocation.
+- Reject out-of-range DSE animation event indexes, event counts, and interpolation modes instead of silently truncating them.
+- Reject DSE animation counts that exceed the platform integer range before allocation, preventing integer overflow on 32-bit builds.
+- Remove unchecked allocation-size arithmetic when parsing Scaleform action arguments to address CodeQL alert #8.
+- Fix the false tutorial XP-bar “Capped” warning by sending uncapped accounts with the client's compatible no-cap value instead of zero.
+- Default new local and remote Crogenitors to skipping the tutorial, while retaining the option to play it.
 - Change tutorial Return to Ship from a forced scene switch to the native Blaze post-game and player-removal exchange, clearing the joined tutorial session and refreshing the profile before ship interaction.
 - Split large launcher reports into independently openable ZIPs of at most 25 MB, preserve oversized logs as numbered chunks, and list every attachment in the report dialog and GitHub issue draft.
 - Change the in-game Fullscreen checkbox from exclusive fullscreen to the same saved borderless mode as Alt+Enter, keeping native rendering windowed and the options state synchronized.
