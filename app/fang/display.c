@@ -8,7 +8,7 @@
  * switch. The approved compatibility hook instead toggles a borderless
  * window, with native windowed rendering and the normal preference saver.
  * Window changes, including committed resolution selections, run on the
- * client thread after App::Update. */
+ * client thread before App::Update prepares the next frame. */
 enum {
     option_screen_size = 0x046170A1,
     option_fullscreen = 0x046170A2,
@@ -265,9 +265,9 @@ static void FANG_THISCALL hooked_option_write(void* settings,
     original_option_write(settings, option, selection);
     if (option == option_screen_size && previous != selection && read(settings, option) == selection) {
         /* Graphics Apply (and its revert path) commits the selection here.
-         * Resize after App::Update, outside the option/UI callback. Startup
-         * preference loading also uses this setter. Unchanged selections must
-         * not replace the remembered windowed size while in borderless mode. */
+         * Resize before the next App::Update, outside the option/UI callback.
+         * Startup preference loading also uses this setter. Unchanged selections
+         * must not replace the remembered windowed size while in borderless mode. */
         display_preference.is_resolution_pending = 1;
     }
 }
@@ -317,9 +317,9 @@ static void apply_window_resolution(void* app, HWND window) {
     if (!fang_render_resolution(client_base, app, &resolution)) {
         return;
     }
-    /* WM_SIZE reaches the native handler (0xB31600), which updates its window
-     * rectangle and emits resize event 0x01EE1003. Keep normal window messages
-     * enabled so native consumers follow the new client area. */
+    /* Keep WM_SIZE enabled for native window bookkeeping and input scaling.
+     * The separate UI resize queued by fang_render_resolution is consumed
+     * during the next update, after these final window bounds are in place. */
     if (!SetWindowPos(window, NULL, previous_window.left, previous_window.top,
         frame.right - frame.left, frame.bottom - frame.top, SWP_NOZORDER | SWP_NOACTIVATE)) {
         trace_client_state("display_resolution_resize_error", GetLastError());
@@ -344,10 +344,9 @@ static unsigned char __cdecl hooked_shortcut(unsigned int key, unsigned int modi
     return 1;
 }
 
-static void FANG_THISCALL hooked_app_update(void* app, unsigned int elapsed) {
+static void apply_display_preference(void* app) {
     HWND window;
     int is_fullscreen;
-    original_app_update(app, elapsed);
     if ((!display_preference.is_pending && !display_preference.is_resolution_pending) ||
         !readable_range(app, app_vsync_offset + 1) ||
         *(unsigned int*)((BYTE*)app + app_busy_offset) != 0 ||
@@ -395,6 +394,14 @@ static void FANG_THISCALL hooked_app_update(void* app, unsigned int elapsed) {
         display_preference.is_preference_dirty = 0;
         save_display_preference();
     }
+}
+
+static void FANG_THISCALL hooked_app_update(void* app, unsigned int elapsed) {
+    /* Reset the renderer and queue the matching UI size before the native
+     * update, as the native mode-switch path does. Resetting afterward leaves
+     * the prepared scene/UI frame using the previous render target dimensions. */
+    apply_display_preference(app);
+    original_app_update(app, elapsed);
 }
 
 static void load_display_preference(void) {
@@ -465,7 +472,8 @@ int fang_install_display_preferences(HMODULE executable) {
         setting_slots[0x54 / 4] != base + 0x454620 ||
         setting_slots[0x58 / 4] != base + resolution_read_rva ||
         *(void**)(base + 0xC0F558 + 0x18) != base + 0x48E8C0 ||
-        *(void**)(base + 0xC0F558 + 0x1C) != base + 0x48DC90) {
+        *(void**)(base + 0xC0F558 + 0x1C) != base + 0x48DC90 ||
+        *(void**)(base + 0xC5E798 + 0x0C) != base + 0x7E4020) {
         return 0;
     }
     client_base = base;

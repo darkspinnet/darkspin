@@ -2,6 +2,12 @@
 
 ### 2026-09-17
 
+- Hide the cinematics toggle in both launchers and disable cinematic skipping for normal, automatic, remote, and detached launches.
+- Show the running build version in the Darkspinner window title.
+- Use the supplied green emblem across both Wails launchers, with dedicated 16-pixel artwork, larger Windows icon sizes, desktop app icons, and frontend favicons.
+- Add browser links to create prefilled GitHub bug reports and manage past reports, with a bug-folder shortcut for attaching diagnostic ZIPs.
+- Resize the legacy UI and Flash HUD with the render target, notify Flash layout handlers, and apply windowed/borderless transitions before frame updates to avoid stale layouts and black output when returning to windowed mode.
+- Let the launcher version label expand to fit unstable build identifiers by shortening the adjacent progress bar.
 - Change player dodge and energy resistance ratings from linear scaling to diminishing returns with a 75% avoidance ceiling, and cap combined passive, aura, resistance, and armor mitigation at 90% so stacked defenses cannot grant immunity.
 - Match borderless rendering and the saved graphics resolution to the current monitor, and restore the remembered windowed resolution when switching back.
 - Apply in-game resolution changes to the window size immediately and retain the selected size when returning from borderless to windowed mode.

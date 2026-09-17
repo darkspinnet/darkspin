@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { CancelPatch, CloseDetachedGameInstances, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetStatus, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, RefreshInstallationStatus, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, RestartLauncher, ScanRemoteServers, SendReport, SetIdentity, SetServerConfiguration, SetSkipCinematic, StartDetachedGameInstance, UninstallDarkspinner } from '../wailsjs/go/main/App'
-import { ClipboardSetText, EventsOn, Quit } from '../wailsjs/runtime/runtime'
+import { CancelPatch, CloseDetachedGameInstances, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetStatus, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, RefreshInstallationStatus, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, RestartLauncher, ScanRemoteServers, SendReport, SetIdentity, SetServerConfiguration, StartDetachedGameInstance, UninstallDarkspinner } from '../wailsjs/go/main/App'
+import { BrowserOpenURL, ClipboardSetText, EventsOn, Quit } from '../wailsjs/runtime/runtime'
 
 const status = ref({ state:'starting', message:'Starting DarkSpinner', identity:'', auth:'Starting', server:'Starting', patch:'Pending', game:'Checking', avatar:'Preparing', profile:'Starting', content:'Pending', identityError:'', authError:'', serverError:'', patchError:'', gameError:'', avatarError:'', profileError:'', contentError:'', lastRun:'', launcherNotice:'', version:'', progress:0, patchProgress:0, avatarProgress:0, contentProgress:0, isAuthenticated:false, isAuthOnline:false, isServerOnline:false, isPatchComplete:false, isPatchActive:false, isGameReady:false, isAvatarReady:false, isProfileStoreReady:false, isContentReady:false, isPlayReady:false, isCinematicSkipped:false, isLastRunFailure:false, isStartupBlocked:false })
 const retainedProfileName = localStorage.getItem('darkspinner.selectedProfile') || localStorage.getItem('darkspinner.identity') || ''
@@ -70,6 +70,23 @@ const isReportComposerOpen = ref(false)
 const reportTitle = ref('')
 const reportDescription = ref('')
 const reportResult = ref(null)
+const reportShareMessage = ref('')
+const myReportsURL = 'https://github.com/darkspinnet/darkspin/issues?q=is%3Aissue%20author%3A%40me%20sort%3Aupdated-desc'
+const reportIssueBody = computed(() => {
+  const report = reportResult.value
+  if (!report) return ''
+  return `## ${report.title}\n\n${report.description}\n\n### Darkspinner build\n${report.version || 'Unknown'}\n\n### Diagnostic archive\n${report.name}\n\nAttach the ZIP from the bug folder before submitting this issue.`
+})
+const reportIssueDraft = computed(() => {
+  const report = reportResult.value
+  if (!report) return { url:'', isLong:false }
+  const url = new URL('https://github.com/darkspinnet/darkspin/issues/new')
+  url.searchParams.set('title', Array.from(report.title).slice(0, 160).join(''))
+  url.searchParams.set('body', reportIssueBody.value)
+  const isLong = url.href.length > 7000
+  if (isLong) url.searchParams.set('body', 'Paste the complete report copied by Darkspinner here, then attach the ZIP from the bug folder before submitting.')
+  return { url:url.href, isLong }
+})
 const isChangelogOpen = ref(false)
 const isChangelogLoading = ref(false)
 const changelogText = ref('')
@@ -78,8 +95,6 @@ const profileSelect = ref(null)
 const detachedProfileSelect = ref(null)
 const remoteProfileSelect = ref(null)
 const remoteServerSelect = ref(null)
-const retainedSkipCinematic = localStorage.getItem('darkspinner.skipCinematic')
-const isSkipCinematic = ref(retainedSkipCinematic === 'true')
 const retainedAutoPatch = localStorage.getItem('darkspinner.autoPatch')
 const isAutoPatchEnabled = ref(retainedAutoPatch === null || retainedAutoPatch === 'true')
 const isAutoLaunchEnabled = ref(localStorage.getItem('darkspinner.autoLaunch') === 'true')
@@ -102,7 +117,6 @@ let autoLaunchTimer = null
 let processStateTimer = null
 let preparationProgressTimer = null
 let isProcessStateRefreshing = false
-let isCinematicLaunchOverridePending = false
 const preparationProgressClock = ref(Date.now())
 const contentPhaseStartedAt = ref(Date.now())
 const contentPhaseEstimates = {
@@ -288,13 +302,6 @@ watch(detachedProfile, next => {
   void refreshRunningProfiles()
   void refreshDetachedInterruptedMission()
 })
-watch(isSkipCinematic, next => {
-  if (isCinematicLaunchOverridePending) {
-    isCinematicLaunchOverridePending = false
-    return
-  }
-  localStorage.setItem('darkspinner.skipCinematic', String(next))
-})
 watch(isAutoPatchEnabled, next => {
   localStorage.setItem('darkspinner.autoPatch', String(next))
   if (next) void maybeAutoPatch()
@@ -388,10 +395,6 @@ onMounted(async () => {
   })
   status.value = { ...status.value, ...(await GetStatus()) }
   showLauncherNotice(status.value.launcherNotice)
-  if (retainedSkipCinematic === null && status.value.isCinematicSkipped && !isSkipCinematic.value) {
-    isCinematicLaunchOverridePending = true
-    isSkipCinematic.value = true
-  }
   installation.value = await GetInstallationStatus()
   integrationStatus.value = await GetLauncherIntegrationStatus()
   isInstallationLoaded.value = true
@@ -631,7 +634,6 @@ async function launchRemote() {
   if (!isRemoteFormReady.value || isRemoteBusy.value) return
   isRemoteBusy.value = true
   try {
-    await SetSkipCinematic(isSkipCinematic.value)
     await LaunchRemoteProfile(remoteServerAddress.value, remoteIdentity.value.trim(), remotePassword.value, isRemotePasswordRemembered.value)
     activeClientRoute.value = 'remote'
     remoteMessage.value = 'Remote game launch requested.'
@@ -755,7 +757,6 @@ async function launchStandardGame() {
     const profileName = selectedProfile.value
     if (!profileName || profileName === '__create__') return
     await applyIdentity(profileName)
-    await SetSkipCinematic(isSkipCinematic.value)
     const mission = await GetInterruptedMission(profileName)
     interruptedMission.value = mission?.isAvailable ? mission : null
     await launchSelectedProfile()
@@ -902,7 +903,9 @@ async function sendReport() {
   if (!title || !description || isReportBusy.value) return
   isReportBusy.value = true
   try {
-    reportResult.value = await SendReport(title, description)
+    const report = await SendReport(title, description)
+    reportResult.value = { ...report, title, description, version:status.value.version }
+    reportShareMessage.value = ''
     isReportComposerOpen.value = false
     reportTitle.value = ''
     reportDescription.value = ''
@@ -914,6 +917,26 @@ async function sendReport() {
 async function openReportFolder() {
   try { await OpenReportFolder() }
   catch (error) { recordError(error) }
+}
+
+function openMyReports() {
+  BrowserOpenURL(myReportsURL)
+}
+
+async function openReportIssue() {
+  if (!reportResult.value) return
+  reportShareMessage.value = ''
+  try {
+    if (reportIssueDraft.value.isLong) {
+      const isCopied = await ClipboardSetText(reportIssueBody.value)
+      if (!isCopied) throw new Error('Could not copy the report. The complete description is also in report.txt inside the ZIP.')
+      reportShareMessage.value = 'Full report copied. Paste it into the GitHub description, then attach the ZIP.'
+    } else {
+      reportShareMessage.value = 'GitHub opened with your report details. Open the bug folder and drag the ZIP into the issue before submitting.'
+    }
+    BrowserOpenURL(reportIssueDraft.value.url)
+  }
+  catch (error) { reportShareMessage.value = visibleLauncherText(error) }
 }
 
 async function openChangelog() {
@@ -1107,7 +1130,6 @@ async function startDetachedGame() {
 }
 
 async function launchDetachedProfile(profileName) {
-  await SetSkipCinematic(isSkipCinematic.value)
   await StartDetachedGameInstance(profileName)
   isGameLaunchedThisSession.value = true
 }
@@ -1261,10 +1283,6 @@ async function copyLauncherFailure() {
           </select>
           <p v-if="serverConfigurationMessage" class="management-message">{{ serverConfigurationMessage }}</p>
           <button class="config-save" type="button" :disabled="!isServerPortValid || !configuredLocale || isServerConfigurationBusy" @click="saveServerConfiguration">{{ isServerConfigurationBusy ? 'SAVING...' : 'SAVE CONFIGURATION' }}</button>
-          <div class="config-preferences">
-            <span>GAME STARTUP</span>
-            <label class="management-toggle"><input v-model="isSkipCinematic" type="checkbox"><span><strong>SKIP CINEMATICS</strong><small>Skip startup and transition cinematics for every launch mode.</small></span></label>
-          </div>
         </article>
         <article class="management-card shortcuts-card">
           <div class="management-heading"><span>02</span><div><h2>SHORTCUTS</h2><p>REPAIR OR REMOVE LAUNCH ENTRY POINTS</p></div></div>
@@ -1515,7 +1533,10 @@ async function copyLauncherFailure() {
 
     <section v-if="isReportComposerOpen" class="fullscreen-notice" role="dialog" aria-modal="true" aria-labelledby="report-composer-title" @click.self="closeReportComposer">
       <article class="notice-card report-composer">
-        <p class="eyebrow">LOCAL DIAGNOSTIC REPORT</p>
+        <div class="report-composer-header">
+          <p class="eyebrow">LOCAL DIAGNOSTIC REPORT</p>
+          <a class="report-manage-link" :href="myReportsURL" @click.prevent="openMyReports">MANAGE MY REPORTS ↗</a>
+        </div>
         <h2 id="report-composer-title">WHAT HAPPENED?</h2>
         <p>Give the report a short title, then describe exactly what you were doing, what you expected, and what happened instead. More detail makes the captured logs easier to understand.</p>
         <form class="report-form" @submit.prevent="sendReport">
@@ -1580,9 +1601,13 @@ async function copyLauncherFailure() {
         <p><strong>{{ reportResult.name }}</strong> contains all available Darkspinner and protocol logs. Nothing was uploaded automatically; review the ZIP before sharing it.</p>
         <button class="report-path" type="button" title="Open report folder" @click="openReportFolder">{{ reportResult.directory }}</button>
         <p class="report-count">{{ reportResult.fileCount }} COMPLETE LOG FILES INCLUDED</p>
+        <p>Sign in to GitHub to create an issue with your report details. Then open the bug folder and drag this ZIP into the issue before submitting. ZIP attachments can be up to 25 MB.</p>
+        <p v-if="reportIssueDraft.isLong">Your description is too long for a browser link. Create GitHub issue will copy the full report for you to paste into the issue.</p>
+        <p v-if="reportShareMessage" class="report-share-message" role="status">{{ reportShareMessage }}</p>
         <div class="notice-actions">
           <button class="onboarding-cancel" type="button" @click="reportResult = null">CLOSE</button>
-          <button class="report-folder-button" type="button" @click="openReportFolder">OPEN REPORT FOLDER</button>
+          <button class="report-folder-button" type="button" @click="openReportIssue">1. CREATE GITHUB ISSUE</button>
+          <button class="report-folder-button" type="button" @click="openReportFolder">2. OPEN BUG FOLDER</button>
         </div>
       </article>
     </section>

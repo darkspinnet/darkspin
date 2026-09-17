@@ -127,7 +127,7 @@ func main() {
 		app.integrationError = integrationErr.Error()
 	}
 	err = wails.Run(&wailsoptions.App{
-		Title:            "DarkSpinner",
+		Title:            "DarkSpinner v" + Version,
 		Width:            800,
 		Height:           560,
 		MinWidth:         680,

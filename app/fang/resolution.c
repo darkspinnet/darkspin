@@ -8,6 +8,92 @@ typedef unsigned char (FANG_THISCALL* resolution_read_fn)(void*, unsigned int, i
 typedef void (FANG_THISCALL* render_resize_fn)(void*, unsigned char, int, int, int);
 typedef BYTE* (FANG_THISCALL* render_read_fn)(void*);
 typedef void (FANG_THISCALL* camera_aspect_fn)(void*, float);
+typedef void (FANG_THISCALL* ui_resize_fn)(void*, float, float);
+
+/* GFxViewport in the shipped Scaleform runtime (13 four-byte fields). */
+struct flash_viewport {
+    int buffer_width;
+    int buffer_height;
+    int left;
+    int top;
+    int width;
+    int height;
+    int scissor_left;
+    int scissor_top;
+    int scissor_width;
+    int scissor_height;
+    float scale;
+    float aspect_ratio;
+    unsigned int flags;
+};
+
+typedef void (FANG_THISCALL* viewport_read_fn)(void*, struct flash_viewport*);
+typedef void (FANG_THISCALL* viewport_write_fn)(void*, const struct flash_viewport*);
+
+static int resize_flash_resolution(BYTE* base, const struct fang_resolution* resolution) {
+    void* flash = ((manager_getter_fn)(base + 0x25920))();
+    void* movie;
+    void* view;
+    void** methods;
+    struct flash_viewport viewport = {0};
+    viewport_read_fn read;
+    viewport_write_fn write;
+    /* Before Flash initialization, cMovie::Load (0xCF7B20) takes its viewport
+     * from the current render buffer. A later resize must update it explicitly. */
+    if (flash == NULL) {
+        return 1;
+    }
+    if (!readable_range(flash, 0x80) ||
+        *(void***)flash != (void**)(base + 0xC77630)) {
+        trace_client_state("display_flash_manager_invalid", 1);
+        return 0;
+    }
+    movie = *(void**)((BYTE*)flash + 0x64);
+    if (movie == NULL) {
+        return 1;
+    }
+    if (!readable_range(movie, 0x1C)) {
+        trace_client_state("display_flash_movie_invalid", 1);
+        return 0;
+    }
+    view = *(void**)((BYTE*)movie + 4);
+    if (!readable_range(view, sizeof(void*))) {
+        trace_client_state("display_flash_view_missing", 1);
+        return 0;
+    }
+    methods = *(void***)view;
+    if (methods != (void**)(base + 0xBE9D68) ||
+        methods[0x64 / 4] != base + 0x1A8930 ||
+        methods[0x68 / 4] != base + 0x19D500) {
+        trace_client_state("display_flash_view_invalid", 1);
+        return 0;
+    }
+    read = (viewport_read_fn)methods[0x68 / 4];
+    write = (viewport_write_fn)methods[0x64 / 4];
+    read(view, &viewport);
+    if (viewport.buffer_width == resolution->width && viewport.buffer_height == resolution->height &&
+        viewport.left == 0 && viewport.top == 0 &&
+        viewport.width == resolution->width && viewport.height == resolution->height) {
+        return 1;
+    }
+    /* Match cMovie::Load's viewport setup while retaining its scale, aspect,
+     * clipping and flags. SetViewport also queues the ActionScript stage resize
+     * (0x5A8930); copying dimensions alone would leave HUD anchors and input stale. */
+    viewport.buffer_width = viewport.width = resolution->width;
+    viewport.buffer_height = viewport.height = resolution->height;
+    viewport.left = viewport.top = 0;
+    write(view, &viewport);
+    read(view, &viewport);
+    if (viewport.buffer_width != resolution->width || viewport.buffer_height != resolution->height ||
+        viewport.left != 0 || viewport.top != 0 ||
+        viewport.width != resolution->width || viewport.height != resolution->height) {
+        trace_client_state("display_flash_resize_failed", 1);
+        return 0;
+    }
+    trace_client_state("display_flash_resolution_applied",
+        ((unsigned int)viewport.width << 16) | (unsigned int)viewport.height);
+    return 1;
+}
 
 static void* resolution_settings(BYTE* base) {
     void* settings = ((manager_getter_fn)(base + 0x3AEBD0))();
@@ -79,9 +165,11 @@ int fang_select_resolution(BYTE* base, const struct fang_resolution* resolution)
 
 int fang_render_resolution(BYTE* base, void* app, const struct fang_resolution* resolution) {
     void* renderer = ((manager_getter_fn)(base + 0x3AEBF0))();
+    void* ui = ((manager_getter_fn)(base + 0x3B6F70))();
     render_resize_fn resize = (render_resize_fn)(base + 0x48E8C0);
     render_read_fn read = (render_read_fn)(base + 0x48DC90);
     camera_aspect_fn set_aspect = (camera_aspect_fn)(base + 0x3B3720);
+    ui_resize_fn resize_ui = (ui_resize_fn)(base + 0x7E4020);
     BYTE* mode;
     void* camera;
     if (resolution->width <= 0 || resolution->height <= 0 ||
@@ -90,6 +178,11 @@ int fang_render_resolution(BYTE* base, void* app, const struct fang_resolution* 
         *(void***)renderer != (void**)(base + 0xC0F558) ||
         !readable_range(app, 0x54)) {
         trace_client_state("display_renderer_missing", 1);
+        return 0;
+    }
+    if (ui != NULL && (!readable_range(ui, 0x838) ||
+        *(void***)ui != (void**)(base + 0xC5E798))) {
+        trace_client_state("display_ui_manager_invalid", 1);
         return 0;
     }
     camera = *(void**)((BYTE*)app + 0x50);
@@ -116,6 +209,22 @@ int fang_render_resolution(BYTE* base, void* app, const struct fang_resolution* 
         return 0;
     }
     set_aspect(camera, ((float)resolution->width / resolution->height) * *(float*)(mode + 0x1C));
+    /* The game HUD lives in Flash's Container movie, separate from MainWin.
+     * Resize it before App::Update advances the movie and handles stage resize. */
+    if (!resize_flash_resolution(base, resolution)) {
+        return 0;
+    }
+    /* WM_SIZE only updates MainWin's mouse-coordinate scale (0x9193A0).
+     * WindowManager::SetScreenSize (0xBE4020) queues the separate UI resize.
+     * Its consumer at 0xBE2D90 updates the UI projection and MainWin's area,
+     * relayouts its children, and recalculates input scaling. Queue this even
+     * when the render size already matches, including startup and rollback.
+     * Before UI initialization, MainWin reads the renderer size at 0x91BADE. */
+    if (ui != NULL) {
+        resize_ui(ui, (float)resolution->width, (float)resolution->height);
+        trace_client_state("display_ui_resolution_queued",
+            ((unsigned int)resolution->width << 16) | (unsigned int)resolution->height);
+    }
     trace_client_state("display_render_resolution",
         ((unsigned int)resolution->width << 16) | (unsigned int)resolution->height);
     return 1;
