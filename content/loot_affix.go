@@ -13,10 +13,11 @@ import (
 )
 
 const (
-	LootAttributeCount     = 115
-	lootModifierOffset     = 36
-	lootPrefixPropertyType = uint32(0x6a1812c6)
-	lootSuffixPropertyType = uint32(0x447dc2e5)
+	LootAttributeCount       = 115
+	lootPrefixModifierOffset = 36
+	lootSuffixModifierOffset = 56
+	lootPrefixPropertyType   = uint32(0x6a1812c6)
+	lootSuffixPropertyType   = uint32(0x447dc2e5)
 )
 
 // LootAffix is one authored build-103 prefix or suffix definition.
@@ -94,7 +95,15 @@ func LoadLootAffixes(ctx context.Context, packagePath string) ([]LootAffix, erro
 }
 
 func parseLootAffix(payload []byte, kind string, minimumOffset, maximumOffset int) (LootAffix, error) {
-	modifierEnd := lootModifierOffset + LootAttributeCount*4
+	// Build-103 sub_9CD3D0 copies suffix attributes from +56 and prefix
+	// attributes from +36 through sub_9C9640. The suffix header includes
+	// references and eligibility flags; treating it as attributes shifts every
+	// stat by five slots, including Dexterity into DamageReduction.
+	modifierOffset := lootPrefixModifierOffset
+	if kind == "suffix" {
+		modifierOffset = lootSuffixModifierOffset
+	}
+	modifierEnd := modifierOffset + LootAttributeCount*4
 	if len(payload) < modifierEnd {
 		return LootAffix{}, fmt.Errorf("payloadSize: got %d, need %d", len(payload), modifierEnd)
 	}
@@ -150,7 +159,7 @@ func parseLootAffix(payload []byte, kind string, minimumOffset, maximumOffset in
 	}
 	affix.Modifier = make([]float32, LootAttributeCount)
 	for attributeIndex := range affix.Modifier {
-		offset := lootModifierOffset + attributeIndex*4
+		offset := modifierOffset + attributeIndex*4
 		modifier := math.Float32frombits(binary.LittleEndian.Uint32(payload[offset:]))
 		if math.IsNaN(float64(modifier)) || math.IsInf(float64(modifier), 0) {
 			return LootAffix{}, fmt.Errorf("modifier[%d]: %g", attributeIndex, modifier)

@@ -19,7 +19,7 @@ import (
 const (
 	SourceVersion  = "5.3.0.103"
 	SourceBuild    = 103
-	RecipeVersion  = 55
+	RecipeVersion  = 56
 	ContentRelease = "build-103-content"
 	RuntimeRole    = "runtime-content"
 )
