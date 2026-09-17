@@ -15,18 +15,20 @@ import (
 )
 
 type Session struct {
-	mu            sync.RWMutex
-	objectIDLimit uint32
-	aggroRadius   float32
-	objectIDs     []uint32
-	npcs          map[uint32]Snapshot
+	mu                sync.RWMutex
+	objectIDLimit     uint32
+	aggroRadius       float32
+	defenseConversion float32
+	objectIDs         []uint32
+	npcs              map[uint32]Snapshot
 }
 
 func NewSession(objectIDLimit uint32, aggroRadius float32) *Session {
 	return &Session{
-		objectIDLimit: objectIDLimit,
-		aggroRadius:   aggroRadius,
-		npcs:          make(map[uint32]Snapshot),
+		objectIDLimit:     objectIDLimit,
+		aggroRadius:       aggroRadius,
+		defenseConversion: 10,
+		npcs:              make(map[uint32]Snapshot),
 	}
 }
 
@@ -962,23 +964,7 @@ func (s *Session) damage(
 	}
 	now := time.Now()
 	if now.Before(npc.status.intangibleExpiresAt) ||
-		now.Before(npc.status.chargeProtectionEnd) ||
 		now.Before(npc.status.banishExpiresAt) {
-		return DamageResult{
-			ObjectID: targetObjectID, LocusID: npc.Plan.LocusID,
-			MarkerSetName: npc.Plan.MarkerSetName, PreviousHealth: npc.HitPoint,
-			HitPoint: npc.HitPoint, IsDamageImmune: true,
-		}, nil
-	}
-	if npc.IsTurtleActive &&
-		(len(damageSource) == 0 || damageSource[0] == 0) {
-		return DamageResult{
-			ObjectID: targetObjectID, LocusID: npc.Plan.LocusID,
-			MarkerSetName: npc.Plan.MarkerSetName, PreviousHealth: npc.HitPoint,
-			HitPoint: npc.HitPoint, IsDamageImmune: true,
-		}, nil
-	}
-	if npc.IsShieldActive && isShieldDamageImmune(npc, sourcePosition) {
 		return DamageResult{
 			ObjectID: targetObjectID, LocusID: npc.Plan.LocusID,
 			MarkerSetName: npc.Plan.MarkerSetName, PreviousHealth: npc.HitPoint,
@@ -996,34 +982,10 @@ func (s *Session) damage(
 	}
 	actionProfile, isActionProfileFound := ActionProfileForPlan(npc.Plan)
 	species := nounSpecies(npc.Plan.NounName)
-	if isAreaAttack && species == "zelemspecialone" {
-		damage *= 0.25
-	}
-	if isAreaAttack && species == "zelembasicflyingmelee" &&
-		now.Before(npc.status.areaShiftExpiresAt) {
-		damage *= 0.25
-	}
 	isPhysicalDamage := len(damageSource) == 0 || damageSource[0] == 0
 	isEnergyDamage := len(damageSource) > 0 && damageSource[0] == 1
-	if isPhysicalDamage && isActionProfileFound &&
-		actionProfile.PassivePhysicalDamageReduction > 0 {
-		damage *= max(
-			0, 1-actionProfile.PassivePhysicalDamageReduction,
-		)
-	}
-	if isEnergyDamage && isActionProfileFound &&
-		actionProfile.PassiveEnergyDefense > 0 {
-		energyReduction := actionProfile.PassiveEnergyDefense /
-			(actionProfile.PassiveEnergyDefense + 100)
-		damage *= max(0, 1-energyReduction)
-	}
-	if isDamageOverTime && isActionProfileFound &&
-		actionProfile.PassiveDamageOverTimeReduction > 0 {
-		damage *= max(0, 1-actionProfile.PassiveDamageOverTimeReduction)
-	}
-	if now.Before(npc.status.damageReductionEnd) {
-		damage *= max(0, 1-npc.status.damageReduction)
-	}
+	damage = s.reduceDamage(npc, actionProfile, damage, sourcePosition,
+		isPhysicalDamage, isEnergyDamage, isAreaAttack, isDamageOverTime, now)
 	damage *= 1 + npc.status.damageTakenIncrease
 	if npc.Plan.OwnerObjectID != 0 && IsNashiraNoun(npc.Plan.NounName) &&
 		(isPhysicalDamage || isEnergyDamage) {
@@ -1037,9 +999,6 @@ func (s *Session) damage(
 	if len(damageSource) > 0 && damageSource[0] == 1 &&
 		time.Now().Before(npc.status.energyVulnerabilityEnd) {
 		damage *= 1 + npc.status.energyTakenIncrease
-	}
-	if npc.status.carapaceDamageMaximum > 0 {
-		damage = min(damage, npc.status.carapaceDamageMaximum)
 	}
 	absorbedDamage := min(damage, npc.status.absorptionShieldAmount)
 	if absorbedDamage > 0 {

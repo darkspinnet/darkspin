@@ -5435,6 +5435,10 @@ func (p campaignPreparation) initialize(
 		creatureFootprints[creatureIndex] = footprintRadius
 	}
 	enemySession := newCampaignNPCSession()
+	defenseErr := enemySession.ConfigureDefense(binding.Difficulty, p.program.Critical.RatingConversions)
+	if defenseErr != nil {
+		return fmt.Errorf("statusChainDefense: %w", defenseErr)
+	}
 	objectIDSession, objectIDErr := zoneobjectid.NewSession(
 		nextObjectID, zoneobject.ProjectileIDStart,
 	)
