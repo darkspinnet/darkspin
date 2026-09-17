@@ -10,6 +10,7 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
 
 int fang_install_display_preferences(HMODULE executable);
 void fang_set_display_window(HWND window);
+int fang_install_exception_trace(HANDLE trace, HMODULE executable);
 
 __declspec(dllexport) DWORD WINAPI RecapInitializeThread(LPVOID parameter);
 

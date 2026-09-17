@@ -13,7 +13,7 @@ const maximumProfileNameLength = 20
 const profiles = ref([])
 const profileAvatars = ref([])
 const selectedAvatarId = ref(1)
-const isTutorialSkipped = ref(false)
+const isTutorialSkipped = ref(true)
 const installation = ref({ isLocalReady:true, isSteamInstalled:false, isGameInstalled:false, canRelocate:false, message:'' })
 const isInstallationLoaded = ref(false)
 const isInstallationBusy = ref(false)
@@ -596,7 +596,7 @@ function beginRemoteRegistration() {
   remoteIdentity.value = ''
   remotePassword.value = ''
   isRemotePasswordRemembered.value = true
-  isTutorialSkipped.value = false
+  isTutorialSkipped.value = true
   remoteMessage.value = 'Choose a Crogenitor photo, name, and password for this server.'
 }
 
@@ -604,7 +604,7 @@ function cancelRemoteRegistration() {
   isRemoteRegistration.value = false
   isRemoteServerMenuOpen.value = false
   remotePassword.value = ''
-  isTutorialSkipped.value = false
+  isTutorialSkipped.value = true
   const profile = remoteProfiles.value.find(candidate =>
     isSameRemoteServer(candidate.serverAddress, remoteServerAddress.value)) || remoteProfiles.value[0]
   if (profile) selectRemoteProfile(profile)
@@ -618,7 +618,7 @@ async function submitRemoteAccount() {
       await RegisterRemoteProfile(remoteServerAddress.value, remoteIdentity.value.trim(), remotePassword.value, selectedAvatarId.value, isRemotePasswordRemembered.value, isTutorialSkipped.value)
       remoteMessage.value = 'Remote Crogenitor registered or signed in and saved.'
       isRemoteRegistration.value = false
-      isTutorialSkipped.value = false
+      isTutorialSkipped.value = true
     } else {
       await LoginRemoteProfile(remoteServerAddress.value, remoteIdentity.value.trim(), remotePassword.value, isRemotePasswordRemembered.value)
       remoteMessage.value = 'Remote credentials verified.'
@@ -673,7 +673,7 @@ async function createProfile() {
     selectedProfile.value = name
     await refreshProfiles()
     newProfileName.value = ''
-    isTutorialSkipped.value = false
+    isTutorialSkipped.value = true
   }
   catch (error) { recordError(error) }
   finally { isProfileCreationBusy.value = false }
@@ -972,7 +972,7 @@ function cancelProfileCreation() {
   if (isFirstRunOnboarding.value) return
   selectedProfile.value = identity.value || profiles.value[0]?.loginName || ''
   newProfileName.value = ''
-  isTutorialSkipped.value = false
+  isTutorialSkipped.value = true
 }
 
 async function maybeAutoLaunch() {

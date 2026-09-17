@@ -5979,6 +5979,8 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
 		 InitializeCriticalSection(&trace_lock);
 		 trace_lock_ready = 1;
 		 trace_file = CreateFileA(trace_path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+		 trace_client_state("exception_observer",
+		     (unsigned int)fang_install_exception_trace(trace_file, executable));
 	 }
 #else
     (void)trace_path;

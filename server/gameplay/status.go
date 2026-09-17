@@ -62,13 +62,14 @@ type gameplayStatusContext struct {
 }
 
 type tutorialCompletionStep struct {
-	runtime    gameplayStatusRuntime
-	sessionKey string
-	generation uint64
-	packet     []byte
+	runtime     gameplayStatusRuntime
+	sessionKey  string
+	generation  uint64
+	packets     [][]byte
+	isPublished bool
 }
 
-func (e tutorialCompletionStep) produce() ([][]byte, error) {
+func (e *tutorialCompletionStep) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.RLock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
@@ -78,23 +79,40 @@ func (e tutorialCompletionStep) produce() ([][]byte, error) {
 	if !isCurrent {
 		return nil, nil
 	}
-	if e.runtime.gameplayJoin == nil {
-		return nil, errors.New("tutorial completion retirement unavailable")
-	}
-	err := e.runtime.gameplayJoin.RetireTutorial(
-		int64(peerSession.binding.UserID), peerSession.binding.GameID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("tutorialRetire: %w", err)
-	}
+	e.isPublished = true
 	if e.runtime.logger != nil {
 		e.runtime.logger.Printf(
-			"RakNet tutorial delayed completion published for %s generation=%d game=%d delay_ms=%d transition=TutorialGame/0 retired=true",
+			"RakNet tutorial completion snapshot queued for %s generation=%d game=%d delay_ms=%d snapshot=TutorialGame/0",
 			e.sessionKey, e.generation, peerSession.binding.GameID,
 			tutorialCompletionBeamDuration.Milliseconds(),
 		)
 	}
-	return [][]byte{e.packet}, nil
+	return e.packets, nil
+}
+
+func (e *tutorialCompletionStep) finish() {
+	if !e.isPublished {
+		return
+	}
+	e.runtime.registry.mutex.RLock()
+	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isCurrent := isFound && peerSession.generation == e.generation
+	e.runtime.registry.mutex.RUnlock()
+	if !isCurrent {
+		return
+	}
+	// This autonomous scheduled continuation outlives the initiating request.
+	// Publish POST_GAME only after transport writes the completion snapshot.
+	// Its native callback sends RemovePlayer; that handshake owns retirement.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := e.runtime.gameplayJoin.EndTutorial(ctx,
+		int64(peerSession.binding.UserID), peerSession.binding.GameID)
+	if err != nil {
+		e.runtime.logger.Printf("RakNet tutorial post-game publication failed for %s: %v", e.sessionKey, err)
+		return
+	}
+	e.runtime.logger.Printf("RakNet tutorial post-game published for %s game=%d; awaiting Blaze RemovePlayer", e.sessionKey, peerSession.binding.GameID)
 }
 
 func (r gameplayStatusRuntime) handle(
@@ -748,6 +766,9 @@ func (r gameplayStatusRuntime) completeTutorial(
 	if err != nil {
 		return nil, fmt.Errorf("statusTutorialSnapshot: %w", err)
 	}
+	// TutorialGame/0 applies XP and starts the fade. It does not leave the
+	// network game. POST_GAME on Blaze must trigger the native leave handshake;
+	// QuickGame/0 only switches scenes and leaves the client marked as joined.
 	r.registry.mutex.Lock()
 	currentSession, isFound = r.registry.sessions[sessionKey]
 	isCommitted := false
@@ -766,14 +787,20 @@ func (r gameplayStatusRuntime) completeTutorial(
 	}
 	completionStep := tutorialCompletionStep{
 		runtime: r, sessionKey: sessionKey, generation: generation,
-		packet: completionPacket,
+		packets: [][]byte{completionPacket},
 	}
 	autonomousPacket := packet.Autonomous()
 	isCompletionScheduled := false
-	if autonomousPacket.ScheduleFunc != nil {
-		err = autonomousPacket.ScheduleFunc(
-			tutorialCompletionBeamDuration, completionStep.produce,
-		)
+	if autonomousPacket.ScheduleGroup != nil || autonomousPacket.ScheduleGroupResult != nil {
+		cancelCompletion, scheduleErr := autonomousPacket.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+			Delay: tutorialCompletionBeamDuration, Produce: completionStep.produce,
+			AfterCommit: completionStep.finish,
+		}})
+		err = scheduleErr
+		if err == nil && cancelCompletion == nil {
+			err = errors.New("tutorial completion cancellation unavailable")
+		}
+		// The completion is autonomous; transport disconnect cancels its timer.
 		isCompletionScheduled = err == nil
 		if err != nil && r.logger != nil {
 			r.logger.Printf(
@@ -789,7 +816,7 @@ func (r gameplayStatusRuntime) completeTutorial(
 	}
 	stopGameplayPeerSession(currentSession, r.modifierPool, r.effectPool)
 	r.logger.Printf(
-		"RakNet tutorial Beam Out accepted for %s; progression persisted cumulativeXP=%d changed=%t transition=TutorialGame/0 transition_delay_ms=%d transition_scheduled=%t tutorialSnapshot=true",
+		"RakNet tutorial Beam Out accepted for %s; progression persisted cumulativeXP=%d changed=%t transition=BlazePostGame transition_delay_ms=%d transition_scheduled=%t tutorialSnapshot=true",
 		packet.Address, completion.CumulativeXP, completion.IsChanged,
 		tutorialCompletionBeamDuration.Milliseconds(), isCompletionScheduled,
 	)

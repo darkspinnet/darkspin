@@ -2,6 +2,9 @@
 
 ### 2026-09-17
 
+- Change tutorial Return to Ship from a forced scene switch to the native Blaze post-game and player-removal exchange, clearing the joined tutorial session and refreshing the profile before ship interaction.
+- Split large launcher reports into independently openable ZIPs of at most 25 MB, preserve oversized logs as numbered chunks, and list every attachment in the report dialog and GitHub issue draft.
+- Change the in-game Fullscreen checkbox from exclusive fullscreen to the same saved borderless mode as Alt+Enter, keeping native rendering windowed and the options state synchronized.
 - Hide the cinematics toggle in both launchers and disable cinematic skipping for normal, automatic, remote, and detached launches.
 - Show the running build version in the Darkspinner window title.
 - Use the supplied green emblem across both Wails launchers, with dedicated 16-pixel artwork, larger Windows icon sizes, desktop app icons, and frontend favicons.
