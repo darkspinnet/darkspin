@@ -72,11 +72,8 @@ func (e *Session) reduceDamage(npc Snapshot, profile ActionProfile, damage float
 	if now.Before(npc.status.damageReductionEnd) {
 		damage *= npcDefenseRemaining(npc.status.damageReduction, maximumPhaseReduction)
 	}
-	isProtected := now.Before(npc.status.chargeProtectionEnd) ||
-		(npc.IsTurtleActive && isPhysical) ||
-		(npc.IsShieldActive && isShieldDamageImmune(npc, sourcePosition)) ||
-		(isArea && nounSpecies(npc.Plan.NounName) == "zelembasicflyingmelee" &&
-			now.Before(npc.status.areaShiftExpiresAt))
+	isProtected := isArea && nounSpecies(npc.Plan.NounName) == "zelembasicflyingmelee" &&
+		now.Before(npc.status.areaShiftExpiresAt)
 	if isProtected {
 		damage *= 1 - maximumPhaseReduction
 	}
@@ -93,9 +90,10 @@ func npcDefenseRemaining(reduction, ceiling float32) float32 {
 
 // ReduceCompanionDamage uses the companion's own authored noun ratings, never
 // its owner's gear. It shares the zone's difficulty conversion and rating curve.
-func (e *Session) ReduceCompanionDamage(damage float32, profile game.CampaignNPCProfile, source uint32) float32 {
+func (e *Session) ReduceCompanionDamage(damage, incoming float32, profile game.CampaignNPCProfile, source uint32) float32 {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return e.reduceDamage(Snapshot{Plan: SpawnPlan{NPCProfile: profile}},
+	remaining := e.reduceDamage(Snapshot{Plan: SpawnPlan{NPCProfile: profile}},
 		ActionProfile{}, damage, nil, source == 0, source == 1, false, false, time.Now())
+	return max(remaining, incoming*(1-maximumPassiveReduction))
 }

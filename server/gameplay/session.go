@@ -499,6 +499,7 @@ type gameplayPeerSession struct {
 	dungeonSetup                         zonemember.Setup
 	transportGeneration                  uint64
 	schedulePackets                      func(time.Duration, [][]byte) error
+	schedulePacket                       raknet.Packet
 	pendingPacketBatches                 []pendingPeerPacketBatch
 	nextPendingPacketID                  uint64
 	isPendingPacketOverflow              bool
@@ -572,6 +573,29 @@ func (s *gameplayPeerSession) setCrystalInventory(inventory sim.CrystalInventory
 		creature.LifeSteal += next[35] - previous[35]
 		creature.CriticalDamageIncrease += next[22] - previous[22]
 		creature.PassiveMovementIncrease += next[48] - previous[48]
+		// Apply the same inventory delta to the combat snapshots as to the
+		// raw attributes. Rebuilding the profiles would erase active buffs.
+		primaryDelta := float32(0)
+		switch creature.ClassType {
+		case "ravager":
+			primaryDelta = next[0] - previous[0]
+		case "sentinel":
+			primaryDelta = next[1] - previous[1]
+		case "tempest":
+			primaryDelta = next[2] - previous[2]
+		}
+		if creature.DamageProfile.IsPrimaryAttributeFound {
+			creature.DamageProfile.PrimaryAttribute += primaryDelta
+		}
+		if creature.HealingProfile.IsPrimaryAttributeFound {
+			creature.HealingProfile.PrimaryAttribute += primaryDelta
+		}
+		creature.DamageProfile.PhysicalDefenseBoost += next[7] - previous[7]
+		creature.DamageProfile.EnergyDefenseBoost += next[9] - previous[9]
+		for index := range creature.DamageProfile.ScienceDamage {
+			attributeIndex := 38 + index
+			creature.DamageProfile.ScienceDamage[index] += next[attributeIndex] - previous[attributeIndex]
+		}
 		creature.DamageProfile.AreaDamage += next[37] - previous[37]
 		creature.DamageProfile.DirectAttackDamagePercent += next[109] - previous[109]
 		creature.TimingProfile.AttackSpeed += next[23] - previous[23]
@@ -2933,6 +2957,7 @@ func restartTutorialSession(
 		binding:             binding,
 		transportGeneration: previous.transportGeneration,
 		schedulePackets:     previous.schedulePackets,
+		schedulePacket:      previous.schedulePacket,
 	}
 }
 

@@ -970,7 +970,9 @@ func (s *Session) damage(
 	isDamageOverTime = isDamageOverTime || meta.DescriptorMask&4 != 0
 	now := time.Now()
 	if !meta.isForcedDefeat && (now.Before(npc.status.intangibleExpiresAt) ||
-		now.Before(npc.status.banishExpiresAt)) {
+		now.Before(npc.status.banishExpiresAt) || now.Before(npc.status.chargeProtectionEnd) ||
+		(npc.IsTurtleActive && (len(damageSource) == 0 || damageSource[0] == 0)) ||
+		(npc.IsShieldActive && isShieldDamageImmune(npc, sourcePosition))) {
 		return DamageResult{
 			ObjectID: targetObjectID, LocusID: npc.Plan.LocusID,
 			MarkerSetName: npc.Plan.MarkerSetName, PreviousHealth: npc.HitPoint,

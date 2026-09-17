@@ -22,10 +22,8 @@ func (e campaignNPCProjectileStep) selectStatusLocked(
 	if !isEligible || plan.Profile.ModifierName == "" {
 		return nil
 	}
-	for _, candidate := range e.schedule.runtime.registry.sessions {
-		if candidate.zone == current.zone && candidate.isHeroDebuffImmune(plan.TargetObjectID) {
-			return nil
-		}
+	if e.schedule.runtime.isTargetDebuffImmuneLocked(current, plan.TargetObjectID) {
+		return nil
 	}
 	isStun := plan.Profile.ModifierName == "StalkerShock"
 	isSilence := plan.Profile.ModifierName == "NocturnaBasicRanged_SilenceModifier"

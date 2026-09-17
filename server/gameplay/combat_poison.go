@@ -256,7 +256,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCDisease(
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
-	if peerSession.isHeroDebuffImmune(plan.TargetObjectID) {
+	if r.isTargetDebuffImmuneLocked(&peerSession, plan.TargetObjectID) {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}

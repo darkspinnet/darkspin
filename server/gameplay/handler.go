@@ -1835,6 +1835,7 @@ func (r gameplayJoinRuntime) handle(
 		currentSession.binding.Slot = binding.Slot
 		currentSession.binding.Team = binding.Team
 		currentSession.schedulePackets = autonomousPacket.Schedule
+		currentSession.schedulePacket = gameplaySchedulePacket(autonomousPacket)
 		r.registry.sessions[sessionKey] = currentSession
 		r.registry.memberTransports[gameplaySessionMemberKey(currentSession)] =
 			currentSession.transportGeneration
@@ -1955,6 +1956,7 @@ func (r gameplayJoinRuntime) handle(
 		},
 		binding: binding, transportGeneration: transportGeneration,
 		schedulePackets: packet.Autonomous().Schedule,
+		schedulePacket:  gameplaySchedulePacket(packet),
 	}
 	if binding.Slot < 32 {
 		nextSession.knownPlayerMask = uint32(1) << binding.Slot
@@ -1970,6 +1972,7 @@ func (r gameplayJoinRuntime) handle(
 		nextSession.binding.Team = binding.Team
 		nextSession.transportGeneration = transportGeneration
 		nextSession.schedulePackets = packet.Autonomous().Schedule
+		nextSession.schedulePacket = gameplaySchedulePacket(packet)
 		nextSession.isPartyMerged = false
 		nextSession.isArenaLobbyTransitionSent = false
 		nextSession.isArenaLobbyEntered = false

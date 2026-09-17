@@ -125,7 +125,7 @@ func ResolveAbilityDamageRange(ability AbilityDamage, profile DamageProfile) (Da
 func damageProfile(primaryAttribute float32, isPrimaryAttributeFound bool, attribute [partAttributeCount]float32) DamageProfile {
 	return DamageProfile{
 		PrimaryAttribute: primaryAttribute, IsPrimaryAttributeFound: isPrimaryAttributeFound,
-		BasicDefenseBoost: attribute[16], PhysicalDefenseBoost: attribute[9], EnergyDefenseBoost: attribute[7],
+		BasicDefenseBoost: attribute[16], PhysicalDefenseBoost: attribute[7], EnergyDefenseBoost: attribute[9],
 		DamageBuff: attribute[13], ProjectileDamage: attribute[99], EnergyDamageBuff: attribute[28],
 		AreaDamage: attribute[37], DamageOverTimeIncrease: attribute[85],
 		DirectAttackDamagePercent: attribute[109], PhysicalDamage: attribute[88],

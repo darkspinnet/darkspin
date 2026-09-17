@@ -1862,6 +1862,7 @@ func (r campaignResultRuntime) continueChain(
 			binding:             nextBinding,
 			transportGeneration: continueSession.transportGeneration,
 			schedulePackets:     continueSession.schedulePackets,
+			schedulePacket:      continueSession.schedulePacket,
 			crystalInventory:    crystalInventory,
 		}
 	}

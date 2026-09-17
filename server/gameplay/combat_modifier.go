@@ -93,7 +93,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 			generation, plan.TargetObjectID,
 		)
 	}
-	if isCurrent && peerSession.isHeroDebuffImmune(plan.TargetObjectID) {
+	if isCurrent && r.isTargetDebuffImmuneLocked(&peerSession, plan.TargetObjectID) {
 		isCurrent = false
 	}
 	if isCurrent {

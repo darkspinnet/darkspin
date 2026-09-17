@@ -570,6 +570,9 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 			"arenaAttackDamage: %w", errors.Join(err, rollbackErr),
 		)
 	}
+	if hitPoint > 0 && damage > 0 && targetSession.deployedObjectID == targetObjectID {
+		targetSession.applyPassiveDamageTaken(attackTime)
+	}
 	if hitPoint > 0 {
 		index := targetSession.deployedCreatureIndex
 		targetSession.tcShieldAmount[index] = shieldPreview.tcShieldAmount[index]

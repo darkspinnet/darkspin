@@ -130,16 +130,16 @@ func (r campaignNPCActionRuntime) applyEnemyProjectileDamage(
 	shieldPackets := [][]byte(nil)
 	absorbedAmount := float32(0)
 	defenseReq.Damage = result.Damage
-	result.Damage = r.reduceCompanionDamage(*peerSession, target, result.Damage, defenseReq.DamageSource)
 	if target.IsHero {
 		result.Damage = targetSession.applyPassiveDamageReduction(
 			result.Damage, plan.Profile.DamageSource, plan.SourceObjectID, r.now(),
 		)
 	}
-	result.Damage = r.applyCrushingDreadAllyReduction(
-		*peerSession, target, plan.SourceObjectID, result.Damage,
+	result.Damage = r.applyCrushingDreadReduction(
+		*peerSession, plan.SourceObjectID, result.Damage,
 		plan.Profile.DamageSource,
 	)
+	result.Damage = r.reduceCompanionDamage(*peerSession, target, result.Damage, defenseReq)
 	if target.IsHero {
 		result.Damage = combat.ReduceIncomingDamage(result.Damage, targetSession.equipmentDefense(), defenseReq)
 		if result.Damage <= 0 {
@@ -311,7 +311,7 @@ func (r campaignNPCActionRuntime) applyEnemyProjectileDamage(
 		return hitPackets, sporenet.PlayerStatDelta{}, !damage.IsDefeated, nil
 	}
 	packets, statDelta, err := r.commitHeroTargetDamage(
-		peerSession, targetSession, targetSessionKey, hitPackets, damage, timestamp,
+		peerSession, targetSession, targetSessionKey, hitPackets, damage, distribution, timestamp,
 	)
 	if err != nil {
 		return nil, sporenet.PlayerStatDelta{}, false,
@@ -319,7 +319,7 @@ func (r campaignNPCActionRuntime) applyEnemyProjectileDamage(
 	}
 	packets, statDelta, err = r.commitHeroTargetReactions(
 		peerSession, targetSession, targetSessionKey, packets, statDelta,
-		distribution, damage, plan, timestamp,
+		damage, plan, timestamp,
 	)
 	if err != nil {
 		return nil, sporenet.PlayerStatDelta{}, false,

@@ -21,6 +21,9 @@ type AreaPlan struct {
 	Target         []zonenpc.Snapshot
 	DamageScale    map[uint32]float32
 	TargetDamage   map[uint32]game.DamageRange
+	// Single-target secondary hits can share damage selection and publication
+	// without inheriting area mitigation from this executor.
+	IsSingleTarget bool
 }
 
 type AreaResult struct {
@@ -524,6 +527,9 @@ func CommitArea(
 	if random == nil || enemies == nil || plan.SourceObjectID == 0 || plan.AbilityID == 0 {
 		return nil, errors.New("invalid area ability commit")
 	}
+	if plan.IsSingleTarget && len(plan.Target) > 1 {
+		return nil, errors.New("single target hit has multiple targets")
+	}
 	results := make([]AreaResult, 0, len(plan.Target))
 	for _, target := range plan.Target {
 		live, isFound := enemies.NPC(target.Plan.ObjectID)
@@ -565,7 +571,7 @@ func CommitArea(
 		}
 		damage, err := enemies.Hit(zonenpc.HitRequest{
 			SourceObjectID: plan.SourceObjectID, TargetObjectID: target.Plan.ObjectID, Damage: critical.Damage,
-			IsArea: true, SourcePosition: &plan.Center, Metadata: NPCDamageMetadata(plan.Definition),
+			IsArea: !plan.IsSingleTarget, SourcePosition: &plan.Center, Metadata: NPCDamageMetadata(plan.Definition),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("areaApply[%d]: %w", target.Plan.ObjectID, err)

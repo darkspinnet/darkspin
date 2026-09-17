@@ -268,7 +268,10 @@ func (e campaignNPCDrainSchedule) tick(
 		remainingHitPoint = 0
 	}
 	appliedDamage := max(float32(0), currentTarget.HitPoint-remainingHitPoint)
-	if appliedDamage > 0 {
+	// A damage reaction can kill the draining enemy before its healing stage.
+	healingSource, isHealingSourceFound := current.zone.NPCs().NPC(req.objectID)
+	if appliedDamage > 0 && isHealingSourceFound &&
+		!healingSource.IsDefeated && healingSource.HitPoint > 0 {
 		healedNPC, healedAmount, healErr := current.zone.NPCs().Heal(
 			req.objectID, appliedDamage*e.plan.Profile.LifeSteal,
 		)

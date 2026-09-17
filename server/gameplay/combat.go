@@ -1453,7 +1453,7 @@ func (e campaignCompanionAttackStep) hit() ([][]byte, error) {
 	if isHitValid {
 		result, err = peerSession.zone.NPCs().Hit(zonenpc.HitRequest{
 			SourceObjectID: e.plan.ObjectID, TargetObjectID: e.plan.TargetObjectID, Damage: damage,
-			SourcePosition: nil, Metadata: zoneability.NPCDamageMetadata(e.runtime.npc.program.SupportHealerPetBasic),
+			SourcePosition: &companion.Position, Metadata: zoneability.NPCDamageMetadata(e.ability),
 		})
 		if err == nil {
 			transition, err = peerSession.applyCampaignDamageTransition(result)
@@ -1483,6 +1483,7 @@ func (e campaignCompanionAttackStep) hit() ([][]byte, error) {
 		),
 		binding, []zoneability.AreaResult{{
 			Snapshot: target, Damage: result, IsCritical: isCritical,
+			Definition: e.ability,
 		}},
 		[]campaignDamageTransition{transition}, nil, false,
 	)
@@ -7408,34 +7409,6 @@ func isCampaignNPCSecondaryPursuit(abilityName string) bool {
 	}
 }
 
-func (r campaignNPCActionRuntime) applyEnemyAttackDamage(
-	peerSession *gameplayPeerSession,
-	generation uint64,
-	plan zonenpc.AttackPlan,
-	result zonenpc.AttackResult,
-	timestamp uint64,
-) ([][]byte, sporenet.PlayerStatDelta, thornBarkReflection, bool, error) {
-	previousHitPoint := float32(0)
-	if peerSession != nil && plan.TargetObjectID == peerSession.deployedObjectID {
-		previousHitPoint = peerSession.deployedHitPoint()
-	}
-	packets, statDelta, isApplied, err := r.applyEnemyDamage(
-		peerSession, generation, plan, result, timestamp, false, false, false,
-	)
-	if err != nil || !isApplied {
-		return packets, statDelta, thornBarkReflection{}, isApplied, err
-	}
-	acceptedDamage := max(
-		float32(0), previousHitPoint-peerSession.deployedHitPoint(),
-	)
-	reflection, err := peerSession.commitThornBarkReflection(plan, acceptedDamage)
-	if err != nil {
-		return nil, sporenet.PlayerStatDelta{}, thornBarkReflection{}, false,
-			fmt.Errorf("thornBarkCommit: %w", err)
-	}
-	return packets, statDelta, reflection, true, nil
-}
-
 func (r campaignNPCActionRuntime) applyEnemyAreaAttackDamage(
 	peerSession *gameplayPeerSession,
 	generation uint64,
@@ -7519,17 +7492,25 @@ func (r campaignNPCActionRuntime) commitHeroTargetDamage(
 	targetSessionKey string,
 	hitPackets [][]byte,
 	damage zone.NPCTargetDamage,
+	distribution soulLinkDistribution,
 	timestamp uint64,
 ) ([][]byte, sporenet.PlayerStatDelta, error) {
 	if targetSession == nil {
 		return hitPackets, sporenet.PlayerStatDelta{},
 			errors.New("enemy target session unavailable")
 	}
+	// Reserve heroes must take their share before a lethal active hit selects
+	// a replacement or decides whether the whole squad has been defeated.
+	sharePackets, sharedDamage, err := distribution.commit(targetSession)
+	if err != nil {
+		return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("targetSoulLink: %w", err)
+	}
 	isLocalTarget := targetSession == peerSession
 	transitionPackets := hitPackets
 	if !isLocalTarget {
 		transitionPackets = append([][]byte(nil), hitPackets...)
 	}
+	transitionPackets = append(transitionPackets, sharePackets...)
 	packets, statDelta, err := targetSession.applyCampaignCommittedDamageHitPackets(
 		transitionPackets, damage.PreviousHitPoint, damage.HitPoint,
 		timestamp, r.now(),
@@ -7537,6 +7518,7 @@ func (r campaignNPCActionRuntime) commitHeroTargetDamage(
 	if err != nil {
 		return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("targetTransition: %w", err)
 	}
+	statDelta.PVEDamageTaken += float64(sharedDamage)
 	if isLocalTarget {
 		return packets, statDelta, nil
 	}
@@ -7568,21 +7550,22 @@ func (r campaignNPCActionRuntime) commitHeroTargetReactions(
 	targetSessionKey string,
 	packets [][]byte,
 	statDelta sporenet.PlayerStatDelta,
-	distribution soulLinkDistribution,
 	damage zone.NPCTargetDamage,
 	plan zonenpc.AttackPlan,
 	timestamp uint64,
 ) ([][]byte, sporenet.PlayerStatDelta, error) {
-	sharePackets, sharedDamage, err := distribution.commit(targetSession)
-	if err != nil {
-		return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("soulLinkCommit: %w", err)
+	// The transition may already have deployed a reserve hero. Reactions
+	// belong only to the surviving hero who actually received this hit.
+	if targetSession == nil || damage.HitPoint <= 0 ||
+		damage.PreviousHitPoint <= damage.HitPoint ||
+		targetSession.deployedObjectID != plan.TargetObjectID {
+		return packets, statDelta, nil
 	}
-	reactionPackets := append([][]byte(nil), sharePackets...)
 	plasmaPackets, err := r.triggerPlasmaSentinelActive(targetSession, timestamp)
 	if err != nil {
 		return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("plasmaSentinel: %w", err)
 	}
-	reactionPackets = append(reactionPackets, plasmaPackets...)
+	reactionPackets := plasmaPackets
 	err = reserveQuantumStateReactionLocked(
 		targetSession, targetSession.deployedObjectID, plan.SourceObjectID, timestamp,
 	)
@@ -7593,13 +7576,9 @@ func (r campaignNPCActionRuntime) commitHeroTargetReactions(
 		targetSession.applyPassiveDamageTaken(r.now())
 	}
 	if targetSession == peerSession {
-		statDelta.PVEDamageTaken += float64(sharedDamage)
 		return append(packets, reactionPackets...), statDelta, nil
 	}
 	targetSession.queuePackets(reactionPackets)
-	targetSession.queueStatDelta(sporenet.PlayerStatDelta{
-		PVEDamageTaken: float64(sharedDamage),
-	})
 	r.registry.sessions[targetSessionKey] = *targetSession
 	return append(packets, reactionPackets...), statDelta, nil
 }
@@ -7760,16 +7739,16 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 	shieldPackets := [][]byte(nil)
 	absorbedAmount := float32(0)
 	defenseReq.Damage = result.Damage
-	result.Damage = r.reduceCompanionDamage(*peerSession, target, result.Damage, defenseReq.DamageSource)
 	if target.IsHero {
 		result.Damage = targetSession.applyPassiveDamageReduction(
 			result.Damage, plan.Profile.DamageSource, plan.SourceObjectID, r.now(),
 		)
 	}
-	result.Damage = r.applyCrushingDreadAllyReduction(
-		*peerSession, target, plan.SourceObjectID, result.Damage,
+	result.Damage = r.applyCrushingDreadReduction(
+		*peerSession, plan.SourceObjectID, result.Damage,
 		plan.Profile.DamageSource,
 	)
+	result.Damage = r.reduceCompanionDamage(*peerSession, target, result.Damage, defenseReq)
 	if target.IsHero {
 		result.Damage = combat.ReduceIncomingDamage(result.Damage, targetSession.equipmentDefense(), defenseReq)
 		if result.Damage <= 0 {
@@ -7927,7 +7906,7 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 		return hitPackets, sporenet.PlayerStatDelta{}, true, nil
 	}
 	packets, statDelta, err := r.commitHeroTargetDamage(
-		peerSession, targetSession, targetSessionKey, hitPackets, damage, timestamp,
+		peerSession, targetSession, targetSessionKey, hitPackets, damage, distribution, timestamp,
 	)
 	if err != nil {
 		return nil, sporenet.PlayerStatDelta{}, false,
@@ -7935,7 +7914,7 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 	}
 	packets, statDelta, err = r.commitHeroTargetReactions(
 		peerSession, targetSession, targetSessionKey, packets, statDelta,
-		distribution, damage, plan, timestamp,
+		damage, plan, timestamp,
 	)
 	if err != nil {
 		return nil, sporenet.PlayerStatDelta{}, false,

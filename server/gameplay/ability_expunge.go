@@ -67,6 +67,8 @@ func (e campaignMeleeSchedule) expunge() ([][]byte, error) {
 			Definition:     remaining.definition,
 			Damage:         damage,
 			Target:         []zonenpc.Snapshot{live},
+			Center:         game.Vec3(peerSession.playerPosition),
+			IsSingleTarget: true,
 		}
 		committed, err := zoneability.CommitArea(
 			peerSession.zone.Population().Random(), peerSession.zone.NPCs(),
