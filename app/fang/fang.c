@@ -5778,7 +5778,8 @@ static BOOL CALLBACK rename_game_window(HWND window, LPARAM parameter) {
     if (GetWindowTextA(window, current_title, sizeof(current_title)) <= 0) {
         return TRUE;
     }
-    if (_strnicmp(current_title, "Game", 4) != 0 && _strnicmp(current_title, "Dark Spin", 9) != 0) {
+    /* Match the shipped title before branding so the chat handler can attach. */
+    if (_strnicmp(current_title, "Darkspore", 9) != 0 && _strnicmp(current_title, "Dark Spin", 9) != 0) {
         return TRUE;
     }
     install_chat_wndproc(window);

@@ -256,6 +256,11 @@ func run(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("clientEnvironment: %w", err)
 	}
+	// All launch modes, including explicit profile directories, use this boundary.
+	err = ensureWindowedClientPreference(clientProfilePath)
+	if err != nil {
+		return fmt.Errorf("clientPreferences: %w", err)
+	}
 	gameArguments = append(gameArguments, "-userDataDir:"+clientProfilePath)
 	err = configureLaunchJWT(jwt)
 	if err != nil {

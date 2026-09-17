@@ -2,6 +2,8 @@
 
 ### 2026-09-17
 
+- Correct client preferences from GameData to DarksporeData across launcher modes, preserve saved settings, and initialize new profiles with valid windowed defaults.
+- Restore Enter-to-chat by correcting game-window detection from Game to the shipped Darkspore title.
 - Keep launcher self-update checks silent and show update progress only when an update is found, without holding content preparation at zero.
 - Fix content preparation failing at tutorialAlias by restoring authored tutorial names in content imports and runtime lookups.
 - Add standalone Darkrun Windows amd64 and Linux amd64 ZIPs to stable releases and unstable build artifacts.

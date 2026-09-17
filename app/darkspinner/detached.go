@@ -132,61 +132,37 @@ func prepareClientConfig(basePath, identity string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("configPath: %w", err)
 	}
-	err = ensureWindowedClientPreference(path)
-	if err != nil {
-		return "", fmt.Errorf("configWindowed: %w", err)
-	}
 	return path, nil
 }
 
 func ensureWindowedClientPreference(rootPath string) error {
 	preferencePath := filepath.Join(
-		rootPath, "AppData", "Roaming", "GameData", "Preferences", "Preferences.prop",
+		rootPath, "AppData", "Roaming", "DarksporeData", "Preferences", "Preferences.prop",
 	)
-	contents, err := os.ReadFile(preferencePath)
-	if errors.Is(err, os.ErrNotExist) {
-		err = os.MkdirAll(filepath.Dir(preferencePath), 0o755)
-		if err != nil {
-			return fmt.Errorf("windowedMkdir: %w", err)
-		}
-		err = os.WriteFile(preferencePath, []byte("OptionFullScreen 0\r\n"), 0o600)
-		if err != nil {
-			return fmt.Errorf("windowedCreate: %w", err)
-		}
+	err := os.MkdirAll(filepath.Dir(preferencePath), 0o755)
+	if err != nil {
+		return fmt.Errorf("windowedMkdir: %w", err)
+	}
+	// Seed new profiles only; existing preferences belong to the client and player.
+	w, err := os.OpenFile(preferencePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if errors.Is(err, os.ErrExist) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("windowedRead: %w", err)
+		return fmt.Errorf("windowedCreate: %w", err)
 	}
-	lineEnding := "\n"
-	if strings.Contains(string(contents), "\r\n") {
-		lineEnding = "\r\n"
+	// Build 103 discards preferences without the current format version.
+	const preference = "OptionVersion 5\r\nOptionFullScreen 0\r\n"
+	written, writeErr := w.WriteString(preference)
+	closeErr := w.Close()
+	if writeErr != nil {
+		return fmt.Errorf("windowedWrite: %w", errors.Join(writeErr, closeErr))
 	}
-	lines := strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n")
-	isFound := false
-	isChanged := false
-	for index, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) == 0 || !strings.EqualFold(fields[0], "OptionFullScreen") {
-			continue
-		}
-		isFound = true
-		if len(fields) == 2 && fields[1] == "0" {
-			continue
-		}
-		lines[index] = "OptionFullScreen 0"
-		isChanged = true
+	if closeErr != nil {
+		return fmt.Errorf("windowedClose: %w", closeErr)
 	}
-	if !isFound {
-		lines = append(lines, "OptionFullScreen 0")
-		isChanged = true
-	}
-	if !isChanged {
-		return nil
-	}
-	err = os.WriteFile(preferencePath, []byte(strings.Join(lines, lineEnding)), 0o600)
-	if err != nil {
-		return fmt.Errorf("windowedWrite: %w", err)
+	if written != len(preference) {
+		return fmt.Errorf("windowedSize: wrote %d of %d bytes", written, len(preference))
 	}
 	return nil
 }
