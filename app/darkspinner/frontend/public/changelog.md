@@ -1,7 +1,15 @@
 # Changelog
 
+### 2026-09-17
+
+- Expand stable releases and unstable artifacts from Windows x86 and Linux x64 to Windows amd64/win32, macOS amd64/arm64, and Linux amd64/arm64, with architecture-specific Windows self-updates.
+- Fix The Corruptor's stalled movement, missing elemental attacks, and mocking poses; change elemental phase transitions from replaying his spawn to continuing combat in place.
+- Restore Enemy Portal visuals and their authored explosion effect.
+
 ### 2026-09-16
 
+- Use fixed stable release ZIP filenames so permanent Windows and Linux download links follow the latest release.
+- Change stable launcher downloads from a standalone executable to the Windows ZIP for both release assets and self-updates.
 - Fix duel lobbies stalling before squad selection by removing malformed character data from initial player updates.
 - Generate main artifacts with unstable build numbers and commit labels, permanent download links, and Windows artifact self-updates while keeping GitHub releases exclusive to release.
 - Prepare for darkspinnet org public launch

@@ -83,45 +83,47 @@ mage darkspinner:run
 mage darkspinner:buildrun
 ```
 
-On Windows the application is `darkspinner.exe`. On Linux it is the native,
-single-file `darkspinner` executable and launches the Windows game through Wine
-using an embedded startup proxy for Fang initialization. `mage darkspinner:run`
-launches the native application for the current host without rebuilding it and
-overrides the retail default to skip cinematics for development.
-Use `mage darkspinner:buildrun` to rebuild and immediately launch DarkSpinner,
-or `mage darkspinner:build` when only a fresh binary is needed. Direct and CI
-launches play cinematics by default unless the player enables the saved skip option.
+On Windows the application is `darkspinner.exe`; Linux uses the native `darkspinner` executable, and macOS uses `darkspinner.app`. Place the launcher beside the game installation. On macOS the runtime configuration, cache, saves, and game paths resolve beside the `.app` bundle, outside its contents. Linux and macOS launch the Windows game through the existing Wine startup proxy. They require a Wine environment capable of running the 32-bit x86 game; an ARM64 launcher does not supply x86 emulation. macOS bundles are not notarized, and Linux/macOS updates are manual.
 
-Stable Windows builds of DarkSpinner check [the latest release update manifest](https://github.com/darkspinnet/darkspin/releases/latest/download/darkspinner-update.json) during startup. They download only a newer semantic version, verify the executable's SHA-256 checksum, and replace themselves before restarting. Failed update checks are logged and startup continues. Linux continues to use manual downloads.
+`mage darkspinner:run` starts the existing native application without rebuilding, with cinematics skipped for development. Use `mage darkspinner:buildrun` to rebuild and launch, or `mage darkspinner:build` to build only. Direct and CI launches play cinematics unless the player's saved setting skips them.
 
-To publish an update, bump `releaseSemver` in `magefile.go` and merge the completed change through a pull request targeting `release`. The release workflow publishes the `v<version>` tag, Windows and Linux ZIPs, and `darkspinner-update.json`. The manifest uses `format: "zip"`, pins the Windows ZIP URL to that version's release, and records the extracted executable's SHA-256; no standalone executable is published. Stable releases advance the latest feed, while versions such as `1.1.0-rc.1` are marked as prereleases and do not advance it. `DARKSPINNER_UPDATE_URL` remains a build-time override for a custom manifest endpoint.
+Both workflows build six targets on native OS runners. The `windows-win32` download uses Go's `386` architecture; all other suffixes use Go's OS/architecture names. The Windows amd64 launcher embeds a small x86 loader helper so Fang still loads into the 32-bit game. Fang remains x86 on every platform. `DARKSPINNER_GOARCH` selects the launcher architecture for `mage darkspinner:buildcinative` (for example `amd64`, `386`, or `arm64`). Local Windows builds default to `386`; Linux and macOS default to the host architecture.
 
-Stable release ZIP assets use fixed names so these links always resolve to the latest stable release after its first publication with the new names:
+Merge into `release` after bumping `releaseSemver` in `magefile.go` to publish a stable `v<version>` release. Stable asset names omit the version; manifests pin downloads to their exact release tag. A version such as `1.1.0-rc.1` is a prerelease and does not advance the latest stable feed. The workflow publishes ZIPs and Windows update manifests, with no standalone executable asset.
 
-- [Latest stable Windows ZIP](https://github.com/darkspinnet/darkspin/releases/latest/download/darkspinner-win32.zip)
-- [Latest stable Linux ZIP](https://github.com/darkspinnet/darkspin/releases/latest/download/darkspinner-linux.zip)
+Pushes to `main` create unstable Actions artifacts only, with no GitHub release or tag. Versions such as `1.0.0-unstable.42.1+gabcdef123456` identify the workflow run, attempt, and commit without manual version bumps. The launcher displays the full version. New pushes cancel unfinished runs; the latest-successful download links advance when the entire workflow succeeds.
 
-Version numbers remain in release tags, executable metadata, and update manifests. Self-updates use the specific release tag's ZIP URL so a newer release cannot change an in-progress download.
+These permanent download links become available after the first successful run of the corresponding updated workflow:
 
-Pushes to `main` run `.github/workflows/main-build.yml`, which produces unstable artifacts without creating Git tags or GitHub releases. Each run automatically generates a version such as `1.0.0-unstable.42.1+gabcdef123456`: the base comes from `releaseSemver`, the counters identify the workflow run and attempt, and the suffix identifies the commit. No manual version bump is needed for main updates. The launcher's version footer and changelog dialog display this full version. New pushes cancel unfinished builds; the latest-successful links advance only when both platform builds and manifest uploads succeed.
+| Target | Latest stable release | Latest unstable main artifact |
+| --- | --- | --- |
+| `windows-amd64` | [Download ZIP](https://github.com/darkspinnet/darkspin/releases/latest/download/darkspinner-windows-amd64.zip) | [Download artifact](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkspinner-windows-amd64-unstable.zip) |
+| `windows-win32` | [Download ZIP](https://github.com/darkspinnet/darkspin/releases/latest/download/darkspinner-windows-win32.zip) | [Download artifact](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkspinner-windows-win32-unstable.zip) |
+| `darwin-amd64` | [Download ZIP](https://github.com/darkspinnet/darkspin/releases/latest/download/darkspinner-darwin-amd64.zip) | [Download artifact](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkspinner-darwin-amd64-unstable.zip) |
+| `darwin-arm64` | [Download ZIP](https://github.com/darkspinnet/darkspin/releases/latest/download/darkspinner-darwin-arm64.zip) | [Download artifact](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkspinner-darwin-arm64-unstable.zip) |
+| `linux-amd64` | [Download ZIP](https://github.com/darkspinnet/darkspin/releases/latest/download/darkspinner-linux-amd64.zip) | [Download artifact](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkspinner-linux-amd64-unstable.zip) |
+| `linux-arm64` | [Download ZIP](https://github.com/darkspinnet/darkspin/releases/latest/download/darkspinner-linux-arm64.zip) | [Download artifact](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkspinner-linux-arm64-unstable.zip) |
 
-Permanent links for Discord, available after the first successful main build:
+The Windows unstable artifact contains `darkspinner.exe` directly. Linux and macOS artifacts contain an inner ZIP that preserves executable permissions and macOS bundle structure; extract that inner ZIP as well. Unstable links use [nightly.link](https://nightly.link/), require a public repository for anonymous downloads, and expire with the 14-day artifact retention period if no new successful build replaces them.
 
-- [Latest unstable Windows download](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkspinner-win32-unstable.zip)
-- [Latest unstable Linux download](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkspinner-linux-unstable.zip)
-- [Latest unstable update manifest ZIP](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkspinner-update-unstable.zip)
+Windows self-updates stay on their installed channel and architecture. They compare versions and verify the extracted executable's SHA-256 before replacement; failed checks are logged and startup continues. Each unstable manifest pins its binary download to a specific artifact ID, so another run cannot change an in-progress download. The unstable manifest artifact contains `darkspinner-update.json`.
 
-The unstable Windows executable checks that manifest ZIP at startup and remains on the unstable channel. The JSON inside contains `version`, `url`, `sha256`, and `format: "zip"`; its executable URL pins a specific artifact ID so another build cannot change the expected download. The updater accepts only a single `darkspinner.exe` inside the executable artifact and verifies the extracted binary's SHA-256 before replacement. Stable builds keep the stable release endpoint.
+| Windows target | Stable manifest | Unstable manifest ZIP |
+| --- | --- | --- |
+| `windows-amd64` | [JSON](https://github.com/darkspinnet/darkspin/releases/latest/download/darkspinner-update-windows-amd64.json) | [ZIP](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkspinner-update-windows-amd64-unstable.zip) |
+| `windows-win32` | [JSON](https://github.com/darkspinnet/darkspin/releases/latest/download/darkspinner-update-windows-win32.json) | [ZIP](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkspinner-update-windows-win32-unstable.zip) |
 
-These artifact links use the third-party [nightly.link](https://nightly.link/) service, require a public repository for anonymous downloads, and remain subject to the 14-day artifact retention period. Installing its read-only GitHub App is recommended by the service to avoid shared API rate limits. The Windows artifact contains the executable directly; the Linux artifact contains the native ZIP preserving executable permissions. Download from the run's Artifacts section as an alternative, or use an authenticated GitHub CLI:
+The original `darkspinner-update.json` stable endpoint and `darkspinner-update-unstable` artifact remain x86 aliases for existing installations. `DARKSPIN_BUILD_VERSION` and `DARKSPINNER_UPDATE_URL` are build-time overrides; ordinary builds use the source version and stable endpoint. Merging main into `release` merges source changes, not tags. Publishing a different stable commit requires a fresh stable version.
+
+Artifacts are also available from the successful run's Artifacts section or through authenticated GitHub CLI downloads:
 
 ```powershell
 $runId = gh run list --repo darkspinnet/darkspin --workflow main-build.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId'
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($runId)) { throw 'No successful main build found.' }
-gh run download $runId --repo darkspinnet/darkspin --name darkspinner-win32-unstable --dir downloads
+gh run download $runId --repo darkspinnet/darkspin --name darkspinner-windows-amd64-unstable --dir downloads
 ```
 
-Use `darkspinner-linux-unstable` for Linux. The selected artifact must still be retained. `DARKSPIN_BUILD_VERSION` and `DARKSPINNER_UPDATE_URL` are build-time overrides used by the main workflow; ordinary stable builds use the source version and stable endpoint. Merging main into `release` merges source changes, not tags: the stable workflow creates its own `v<version>` tag and requires a fresh stable version when publishing a different commit.
+Substitute any target from the table in the artifact name. The selected artifact must still be retained.
 
 A fresh
 `bin/game/darkspin/saves/darkspin.db` starts without development seed users; create a

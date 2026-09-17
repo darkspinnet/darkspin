@@ -240,6 +240,10 @@ func continueDebugEvents(processID uint32) (func() error, error) {
 }
 
 func injectDLL(process windows.Handle, dllPath string) (uint32, error) {
+	loaderAddress, err := gameLoaderAddress()
+	if err != nil {
+		return 0, fmt.Errorf("gameLoader: %w", err)
+	}
 	encodedPath, err := windows.UTF16FromString(dllPath)
 	if err != nil {
 		return 0, fmt.Errorf("dllPath: %w", err)
@@ -259,7 +263,7 @@ func injectDLL(process windows.Handle, dllPath string) (uint32, error) {
 		return 0, errors.New("hook path was only partially written into game")
 	}
 	var threadID uint32
-	thread, _, callErr := procCreateRemoteThread.Call(uintptr(process), 0, 0, procLoadLibraryW.Addr(), remoteAddress, 0, uintptr(unsafe.Pointer(&threadID)))
+	thread, _, callErr := procCreateRemoteThread.Call(uintptr(process), 0, 0, loaderAddress, remoteAddress, 0, uintptr(unsafe.Pointer(&threadID)))
 	if thread == 0 {
 		return 0, fmt.Errorf("loaderStart: %w", callErr)
 	}

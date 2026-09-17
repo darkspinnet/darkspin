@@ -39,20 +39,31 @@ jobs:
     name: Build ${{ matrix.name }}
     needs: version
     env:
+      DARKSPINNER_GOARCH: ${{ matrix.arch }}
       DARKSPIN_BUILD_VERSION: ${{ needs.version.outputs.version }}
-      DARKSPINNER_UPDATE_URL: https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkspinner-update-unstable.zip
+      DARKSPINNER_UPDATE_URL: https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkspinner-update-${{ matrix.name }}-unstable.zip
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Windows
+          - name: windows-amd64
             os: windows-2022
-            artifact: darkspinner-win32-unstable
-            path: bin/darkspinnerci/darkspinner.exe
-          - name: Linux
+            arch: amd64
+          - name: windows-win32
+            os: windows-2022
+            arch: 386
+          - name: darwin-amd64
+            os: macos-15-intel
+            arch: amd64
+          - name: darwin-arm64
+            os: macos-15
+            arch: arm64
+          - name: linux-amd64
             os: ubuntu-24.04
-            artifact: darkspinner-linux-unstable
-            path: bin/darkspinnerci/darkspinner-linux-v*.zip
+            arch: amd64
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            arch: arm64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
 
@@ -81,6 +92,10 @@ jobs:
             libwebkit2gtk-4.1-dev \
             mingw-w64 \
             pkg-config
+
+      - name: Install macOS cross compiler
+        if: runner.os == 'macOS'
+        run: brew install mingw-w64
 
       - name: Set up 32-bit MinGW
         if: runner.os == 'Windows'
@@ -114,8 +129,8 @@ jobs:
         id: binary
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.path }}
+          name: darkspinner-${{ matrix.name }}-unstable
+          path: ${{ runner.os == 'Windows' && 'bin/darkspinnerci/darkspinner.exe' || format('bin/darkspinnerci/darkspinner-{0}-v*.zip', matrix.name) }}
           if-no-files-found: error
           retention-days: 14
 
@@ -136,6 +151,15 @@ jobs:
 
       - name: Upload unstable update manifest
         if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: darkspinner-update-${{ matrix.name }}-unstable
+          path: bin/darkspinnerci/darkspinner-update.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Preserve the original unstable x86 update endpoint
+        if: matrix.name == 'windows-win32'
         uses: actions/upload-artifact@v4
         with:
           name: darkspinner-update-unstable

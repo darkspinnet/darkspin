@@ -205,6 +205,9 @@ func darkSpinnerLinkerFlags(base string) (string, error) {
 		return "", fmt.Errorf("desktopFlags: %w", err)
 	}
 	updateURL := strings.TrimSpace(os.Getenv("DARKSPINNER_UPDATE_URL"))
+	if updateURL == "" && darkSpinnerArchitecture("windows") == "amd64" {
+		updateURL = "https://github.com/darkspinnet/darkspin/releases/latest/download/darkspinner-update-windows-amd64.json"
+	}
 	if updateURL != "" && strings.ContainsAny(updateURL, " \t\r\n") {
 		return "", errors.New("DARKSPINNER_UPDATE_URL cannot contain whitespace")
 	}
@@ -282,6 +285,18 @@ func buildLauncher(linkerFlags string) error {
 }
 
 func buildDarkSpinner(linkerFlags, outputPath, targetOS string) error {
+	targetArch := darkSpinnerArchitecture(targetOS)
+	if targetOS == "windows" && targetArch == "amd64" {
+		helperPath := filepath.Join("app", "darkspinner", "fangloader.exe")
+		environment := map[string]string{"GOOS": "windows", "GOARCH": "386", "CGO_ENABLED": "0"}
+		err := runCommandWithEnvironment("", environment, "go", "build", "-trimpath",
+			"-ldflags", "-s -w", "-o", helperPath, "./app/fangloader")
+		if err != nil {
+			return fmt.Errorf("loaderBuild: %w", err)
+		}
+		defer removeDarkSpinnerLoader(helperPath)
+	}
+
 	projectPath := filepath.Join("app", "darkspinner")
 	embeddedFangPath := filepath.Join(projectPath, "fang.dll")
 	err := copyFile(filepath.Join("bin", "game", "fang.dll"), embeddedFangPath)
@@ -290,7 +305,7 @@ func buildDarkSpinner(linkerFlags, outputPath, targetOS string) error {
 	}
 	embeddedProxyPath := ""
 	embeddedSteamProxyPath := ""
-	if targetOS == "linux" {
+	if targetOS != "windows" {
 		embeddedProxyPath = filepath.Join(projectPath, darkSpinnerProxyBinaryName)
 		err = buildFangProxy(embeddedProxyPath)
 		if err != nil {
@@ -305,15 +320,20 @@ func buildDarkSpinner(linkerFlags, outputPath, targetOS string) error {
 			return fmt.Errorf("steamProxyBuild: %w", err)
 		}
 	}
-	platform := "windows/386"
+	platform := targetOS + "/" + targetArch
 	outputName := darkSpinnerBinaryName
 	buildTags := "frontend,fang"
-	if targetOS == "linux" {
-		platform = "linux/amd64"
+	if targetOS != "windows" {
 		outputName = darkSpinnerLinuxBinaryName
-		buildTags += ",proxy,webkit2_41"
+		buildTags += ",proxy"
+		if targetOS == "linux" {
+			buildTags += ",webkit2_41"
+		}
 	} else {
 		buildTags += ",steamproxy"
+		if targetArch == "amd64" {
+			buildTags += ",loader"
+		}
 	}
 	arguments := []string{
 		"build", "-clean", "-s", "-platform", platform,
@@ -347,7 +367,13 @@ func buildDarkSpinner(linkerFlags, outputPath, targetOS string) error {
 		return fmt.Errorf("outputMkdir: %w", err)
 	}
 	sourcePath := filepath.Join(projectPath, "build", "bin", outputName)
-	err = copyFile(sourcePath, filepath.Join(outputPath, outputName))
+	if targetOS == "darwin" {
+		outputName = "darkspinner.app"
+		sourcePath = filepath.Join(projectPath, "build", "bin", outputName)
+		err = runCommand("", "ditto", sourcePath, filepath.Join(outputPath, outputName))
+	} else {
+		err = copyFile(sourcePath, filepath.Join(outputPath, outputName))
+	}
 	if err != nil {
 		return fmt.Errorf("binaryCopy: %w", err)
 	}
@@ -557,65 +583,75 @@ func flushDarkSpinnerLogs() error {
 	return nil
 }
 
-// BuildCI builds stripped Windows and Linux desktop runtimes with Fang
-// diagnostics retained so early player bug reports include the richest evidence.
-func (Darkspinner) BuildCI() error {
-	mg.SerialDeps(Version)
+func removeDarkSpinnerLoader(path string) {
+	err := os.Remove(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "loader cleanup: %v\n", err)
+	}
+}
 
-	targetPlatforms := []string{"windows"}
-	if runtime.GOOS == "linux" {
-		targetPlatforms = append(targetPlatforms, "linux")
-	}
-	err := buildDarkSpinnerTarget(false, true, targetPlatforms...)
+// BuildCI builds the selected native CI target.
+func (Darkspinner) BuildCI() error {
+	err := (Darkspinner{}).BuildCINative()
 	if err != nil {
-		return fmt.Errorf("darkSpinnerBuildCI: %w", err)
-	}
-	outputPath := filepath.Join("bin", "darkspinnerci")
-	err = archiveDarkSpinnerBinary(outputPath, darkSpinnerBinaryName, "win32")
-	if err != nil {
-		return fmt.Errorf("darkSpinnerWindowsArchiveCI: %w", err)
-	}
-	if runtime.GOOS != "linux" {
-		return nil
-	}
-	err = archiveDarkSpinnerBinary(outputPath, darkSpinnerLinuxBinaryName, "linux")
-	if err != nil {
-		return fmt.Errorf("darkSpinnerLinuxArchiveCI: %w", err)
+		return fmt.Errorf("nativeBuild: %w", err)
 	}
 	return nil
 }
 
-// BuildCINative builds and archives only the host platform for parallel CI jobs.
+// CI selects the launcher architecture independently; Fang always remains x86.
+func darkSpinnerArchitecture(targetOS string) string {
+	targetArch := strings.TrimSpace(os.Getenv("DARKSPINNER_GOARCH"))
+	if targetArch != "" {
+		return targetArch
+	}
+	if targetOS == "windows" {
+		return "386"
+	}
+	return runtime.GOARCH
+}
+
+// BuildCINative builds and archives a launcher on its native operating system.
 func (Darkspinner) BuildCINative() error {
 	mg.SerialDeps(Version)
-
 	targetOS := runtime.GOOS
-	platformName := ""
-	binaryName := ""
-	switch targetOS {
-	case "windows":
-		platformName = "win32"
+	targetArch := darkSpinnerArchitecture(targetOS)
+	platformName := targetOS + "-" + targetArch
+	binaryName := darkSpinnerLinuxBinaryName
+	switch platformName {
+	case "windows-386":
+		platformName = "windows-win32"
 		binaryName = darkSpinnerBinaryName
-	case "linux":
-		platformName = "linux"
-		binaryName = darkSpinnerLinuxBinaryName
+	case "windows-amd64":
+		binaryName = darkSpinnerBinaryName
+	case "darwin-amd64", "darwin-arm64":
+		binaryName = "darkspinner.app"
+	case "linux-amd64", "linux-arm64":
 	default:
-		return fmt.Errorf("darkSpinnerBuildCINative: unsupported host %s", targetOS)
+		return fmt.Errorf("unsupported launcher platform %s", platformName)
 	}
 	err := buildDarkSpinnerTarget(false, true, targetOS)
 	if err != nil {
-		return fmt.Errorf("darkSpinnerBuildCINative: %w", err)
+		return fmt.Errorf("nativeBuild: %w", err)
 	}
 	outputPath := filepath.Join("bin", "darkspinnerci")
 	err = archiveDarkSpinnerBinary(outputPath, binaryName, platformName)
 	if err != nil {
-		return fmt.Errorf("darkSpinnerArchiveCINative: %w", err)
+		return fmt.Errorf("nativeArchive: %w", err)
 	}
 	return nil
 }
 
 func archiveDarkSpinnerBinary(outputPath, binaryName, platformName string) error {
 	binaryPath := filepath.Join(outputPath, binaryName)
+	if strings.HasSuffix(binaryName, ".app") {
+		archivePath := filepath.Join(outputPath, "darkspinner-"+platformName+"-v"+buildVersion()+".zip")
+		err := runCommand("", "ditto", "-c", "-k", "--keepParent", binaryPath, archivePath)
+		if err != nil {
+			return fmt.Errorf("bundleArchive: %w", err)
+		}
+		return nil
+	}
 	r, err := os.Open(binaryPath)
 	if err != nil {
 		return fmt.Errorf("archiveOpen: %w", err)
@@ -777,8 +813,11 @@ func buildFangProxy(outputPath string) error {
 // Run launches the existing all-in-one desktop runtime.
 func (Darkspinner) Run() error {
 	binaryName := darkSpinnerBinaryName
-	if runtime.GOOS == "linux" {
+	if runtime.GOOS != "windows" {
 		binaryName = darkSpinnerLinuxBinaryName
+	}
+	if runtime.GOOS == "darwin" {
+		binaryName = filepath.Join("darkspinner.app", "Contents", "MacOS", "darkspinner")
 	}
 	binaryPath, err := filepath.Abs(filepath.Join("bin", "game", binaryName))
 	if err != nil {

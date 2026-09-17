@@ -2,6 +2,7 @@
 
 ### 2026-09-17
 
+- Expand stable releases and unstable artifacts from Windows x86 and Linux x64 to Windows amd64/win32, macOS amd64/arm64, and Linux amd64/arm64, with architecture-specific Windows self-updates.
 - Fix The Corruptor's stalled movement, missing elemental attacks, and mocking poses; change elemental phase transitions from replaying his spawn to continuing combat in place.
 - Restore Enemy Portal visuals and their authored explosion effect.
 

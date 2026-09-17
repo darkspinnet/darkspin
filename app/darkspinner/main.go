@@ -177,11 +177,10 @@ func run(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("versionConfigure: %w", err)
 	}
-	executable, err := os.Executable()
+	baseDirectory, err := executableDirectory()
 	if err != nil {
 		return fmt.Errorf("launcherPath: %w", err)
 	}
-	baseDirectory := filepath.Dir(executable)
 	pathSet, err := resolveSpinnerPaths(baseDirectory)
 	if err != nil {
 		return fmt.Errorf("runtimePath: %w", err)
