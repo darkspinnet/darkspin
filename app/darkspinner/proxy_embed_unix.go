@@ -1,4 +1,4 @@
-//go:build linux && proxy
+//go:build (linux || darwin) && proxy
 
 package main
 

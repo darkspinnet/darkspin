@@ -29,6 +29,7 @@ type launcherUpdateManifest struct {
 	Version string `json:"version"`
 	URL     string `json:"url"`
 	SHA256  string `json:"sha256"`
+	Format  string `json:"format,omitempty"`
 }
 
 func (a *App) prepareLauncherUpdate(ctx context.Context) (bool, error) {
@@ -113,6 +114,10 @@ func checkLauncherUpdate(
 	if len(contents) > maximumUpdateManifestSize {
 		return nil, errors.New("manifest exceeds size limit")
 	}
+	contents, err = unwrapUpdateManifest(contents)
+	if err != nil {
+		return nil, fmt.Errorf("manifestUnwrap: %w", err)
+	}
 	decoder := json.NewDecoder(strings.NewReader(string(contents)))
 	decoder.DisallowUnknownFields()
 	release := launcherUpdateManifest{}
@@ -127,6 +132,9 @@ func checkLauncherUpdate(
 	}
 	if !semanticVersionPattern.MatchString(release.Version) {
 		return nil, fmt.Errorf("manifestVersion: %q", release.Version)
+	}
+	if release.Format != "" && release.Format != "zip" {
+		return nil, fmt.Errorf("manifestFormat: unsupported %q", release.Format)
 	}
 	err = validateUpdateURL(release.URL)
 	if err != nil {
@@ -174,7 +182,7 @@ func downloadLauncherUpdate(
 		return "", fmt.Errorf("artifactCreate: %w", err)
 	}
 	hasher := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(w, hasher), io.LimitReader(response.Body, maximumLauncherUpdateSize+1))
+	written, copyErr := copyLauncherUpdate(io.MultiWriter(w, hasher), response.Body, release.Format)
 	closeErr := w.Close()
 	if copyErr != nil {
 		_ = os.Remove(stagedPath)

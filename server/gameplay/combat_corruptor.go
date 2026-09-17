@@ -390,10 +390,15 @@ func (r campaignNPCActionRuntime) advanceCorruptorPhase(
 		return nil, err
 	}
 	packets = append(packets, spawnPackets...)
-	actionPlans := []zonenpc.SpawnPlan{boss.Plan}
-	actionPlans = append(actionPlans, spawnedActionPlans...)
+	resumePackets, err := r.restartCorruptorAction(
+		step.packet, step.sessionKey, step.generation, boss, step.timestamp,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("phaseResume: %w", err)
+	}
+	packets = append(packets, resumePackets...)
 	actionPackets, err := r.scheduleFirstActions(
-		step.packet, step.sessionKey, step.generation, actionPlans, step.timestamp,
+		step.packet, step.sessionKey, step.generation, spawnedActionPlans, step.timestamp,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("corruptorPhaseAction: %w", err)
@@ -484,6 +489,11 @@ func (r campaignNPCActionRuntime) planCorruptorPhasePopulation(
 			Position:  position,
 			LocusID:   boss.Plan.LocusID,
 			IsFixture: true, IsRewardSuppressed: true, NPCProfile: portalProfile,
+			IsActionKnown: true,
+			ActionProfile: zonenpc.ActionProfile{
+				PassiveCreateEffectName: "scaldron_portal_rampUp_effect.ServerEventDef",
+				PassiveEffectName:       "scaldron_boss_portal_effect.ServerEventDef",
+			},
 		}
 		plans = append(plans, campaignCorruptorSpawnPlan{Plan: plan})
 		state.portalObjectIDs[index] = objectID

@@ -1896,27 +1896,10 @@ func (m LabsPlayerStatusMessage) EncodePayload() []byte {
 		payload = binary.LittleEndian.AppendUint32(payload, 0)
 		payload = append(payload, 2)
 		payload = binary.LittleEndian.AppendUint32(payload, 0)
-		payload = append(payload, 3)
-		payload = appendLabsFixedCharacter(
-			payload, m.HeroNoun, m.HeroAsset, m.HeroVersion, m.HeroType,
-			initialLabsCharacterResource(m.CharacterResources[0]),
-		)
-		if m.SecondHeroNoun != 0 && m.SecondHeroAsset != 0 {
-			payload = appendLabsFixedCharacter(
-				payload, m.SecondHeroNoun, m.SecondHeroAsset, m.SecondHeroVersion, m.SecondHeroType,
-				initialLabsCharacterResource(m.CharacterResources[1]),
-			)
-		} else {
-			payload = appendLabsUnreflectedFixedCharacter(payload, m.HeroNoun, m.HeroAsset, m.HeroVersion)
-		}
-		if m.ThirdHeroNoun != 0 && m.ThirdHeroAsset != 0 {
-			payload = appendLabsFixedCharacter(
-				payload, m.ThirdHeroNoun, m.ThirdHeroAsset, m.ThirdHeroVersion, m.ThirdHeroType,
-				initialLabsCharacterResource(m.CharacterResources[2]),
-			)
-		} else {
-			payload = appendLabsUnreflectedFixedCharacter(payload, m.HeroNoun, m.HeroAsset, m.HeroVersion)
-		}
+		// Field 3 is the native character array and is marked never-reflect.
+		// Its build-103 stride is 0x5e8, not the old 0x620 server layout;
+		// emitting it shifts later player fields and blocks Arena readiness.
+		// The three character reflections below carry their wire state.
 		payload = append(payload, 4, m.Slot)
 		team := m.Team
 		if team == 0 {
@@ -2199,54 +2182,6 @@ func appendLabsCharacterReflectionValues(
 		payload = binary.LittleEndian.AppendUint32(payload, math.Float32bits(amount))
 	}
 	return append(payload, 0xff)
-}
-
-func appendLabsFixedCharacter(
-	payload []byte, noun uint32, asset uint64, version int32, creatureType uint32,
-	resource LabsCharacterResource,
-) []byte {
-	character := make([]byte, 0x620)
-	binary.LittleEndian.PutUint64(character[0x008:0x010], asset)
-	binary.LittleEndian.PutUint32(character[0x010:0x014], uint32(version))
-	binary.LittleEndian.PutUint32(character[0x0b4:0x0b8], noun)
-	for attributeIndex, amount := range resource.PartAttribute {
-		offset := labsFixedCharacterAttributeOffset(attributeIndex)
-		binary.LittleEndian.PutUint32(character[offset:offset+4], math.Float32bits(amount))
-	}
-	binary.LittleEndian.PutUint32(character[0x388:0x38c], creatureType)
-	binary.LittleEndian.PutUint32(character[0x398:0x39c], 10)
-	for index := 0; index < 9; index++ {
-		binary.LittleEndian.PutUint32(character[0x39c+index*4:0x3a0+index*4], 1)
-	}
-	for index, amount := range [...]float32{resource.Health, resource.MaxHealth, resource.Mana, resource.MaxMana} {
-		offset := 0x3f0 + index*4
-		binary.LittleEndian.PutUint32(character[offset:offset+4], math.Float32bits(amount))
-	}
-	binary.LittleEndian.PutUint32(character[0x400:0x404], math.Float32bits(resource.GearScore))
-	binary.LittleEndian.PutUint32(character[0x404:0x408], math.Float32bits(resource.FlattenedGearScore))
-	return append(payload, character...)
-}
-
-func labsFixedCharacterAttributeOffset(attributeIndex int) int {
-	switch {
-	case attributeIndex <= 73:
-		return 0x0b8 + attributeIndex*4
-	case attributeIndex == 74:
-		return 0x1e4
-	case attributeIndex <= 97:
-		return 0x1ec + (attributeIndex-75)*4
-	default:
-		return 0x24c + (attributeIndex-98)*4
-	}
-}
-
-func appendLabsUnreflectedFixedCharacter(payload []byte, noun uint32, asset uint64, version int32) []byte {
-	character := make([]byte, 0x620)
-	binary.LittleEndian.PutUint64(character[0x008:0x010], asset)
-	binary.LittleEndian.PutUint32(character[0x010:0x014], uint32(version))
-	binary.LittleEndian.PutUint32(character[0x0b4:0x0b8], noun)
-	binary.LittleEndian.PutUint32(character[0x388:0x38c], 6)
-	return append(payload, character...)
 }
 
 func (m PrepareForStartMessage) PacketID() PacketID { return GamePrepareForStart }

@@ -193,6 +193,19 @@ func (e campaignConeSchedule) hit() ([][]byte, error) {
 			if e.hitDelay > 0 {
 				hitDelay = e.hitDelay
 			}
+			if e.isCorruptor {
+				// Retire the dodged beam and resume the boss's cooldown-aware
+				// selector. Re-entering the cone producer after releasing its
+				// action owner leaves the boss permanently inactive.
+				nextPackets, nextErr := e.runtime.restartCorruptorAction(
+					e.packet, e.sessionKey, e.generation, source,
+					e.timestamp+uint64(hitDelay/time.Millisecond),
+				)
+				if nextErr != nil {
+					return nil, fmt.Errorf("laserRestart: %w", nextErr)
+				}
+				return append(cleanupPackets, nextPackets...), nil
+			}
 			resumePackets, err := e.resume(
 				e.timestamp + uint64(hitDelay/time.Millisecond),
 			)
@@ -682,6 +695,9 @@ func (r campaignNPCActionRuntime) produceEnemyCone(
 	_, resume.isCorruptor = zonenpc.ScaldronBossMeleeProfile(
 		enemy.Plan.NounName, profile,
 	)
+	if resume.isCorruptor {
+		nextDelay = max(profile.HitDelay, profile.ReleaseDelay)
+	}
 	if profile.AbilityName == "CryosBasicLightningRanged" &&
 		target.Position.Sub(enemy.Plan.Position).Length() < profile.MinimumRange {
 		fizzlePacket, fizzleErr := npcraknet.AnimationState(
@@ -746,16 +762,27 @@ func (r campaignNPCActionRuntime) produceEnemyCone(
 		profile.Cooldown = profile.ReleaseDelay
 		nextDelay = profile.ReleaseDelay
 	}
-	plan, err := zonenpc.PlanAttackWithProfile(
-		enemy, target.ObjectID, target.Position, profile, target.FootprintRadius,
-	)
+	var plan zonenpc.AttackPlan
+	if profile.AbilityName == "VerdanthBossDiseaseCone" {
+		// The breath applies disease without a direct damage hit.
+		plan, err = zonenpc.PlanControlWithProfile(
+			enemy, target.ObjectID, target.Position, profile, target.FootprintRadius,
+		)
+	} else {
+		plan, err = zonenpc.PlanAttackWithProfile(
+			enemy, target.ObjectID, target.Position, profile, target.FootprintRadius,
+		)
+	}
 	if err != nil {
 		action, actionErr := campaignNPCActionWithProfile(
 			enemy.Plan, target.ObjectID, target.Position, profile,
 			target.FootprintRadius,
 		)
-		if actionErr != nil || !action.IsPursuitNeeded {
-			return nil, nil
+		if actionErr != nil {
+			return nil, fmt.Errorf("conePursuit: %w", actionErr)
+		}
+		if !action.IsPursuitNeeded {
+			return nil, fmt.Errorf("coneAttack: %w", err)
 		}
 		packets, marshalErr := npcraknet.Pursuit(action)
 		if marshalErr != nil {

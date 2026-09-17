@@ -481,9 +481,6 @@ func (r campaignNPCActionRuntime) producePolarisGravityOrb(
 		nextDelay:   max(profile.Cast.HitDelay, profile.Cast.ReleaseDelay),
 		isCorruptor: isCorruptor, run: run,
 	}
-	if isCorruptor {
-		schedule.nextDelay = profile.Cast.Cooldown
-	}
 	spawnDelay := profile.Cast.HitDelay
 	producers := []raknet.ScheduledPacketProducer{
 		{Delay: spawnDelay, Produce: schedule.spawn},

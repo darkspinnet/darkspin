@@ -126,17 +126,25 @@ func (r campaignNPCActionRuntime) produceNashiraPanic(
 	nashira, isNashiraFound := s.zone.NPCs().NPC(objectID)
 	profile, isProfileFound := zonenpc.NashiraPanicProfile(nashira.Plan.NounName)
 	if !isProfileFound {
-		profile, isProfileFound = zonenpc.ScaldronBossPhaseProfile(
-			nashira.Plan.NounName, zonenpc.CorruptorPhaseNecro, false,
-		)
+		profile, isProfileFound = zonenpc.ActionProfileForPlan(nashira.Plan)
+		isProfileFound = isProfileFound && zonenpc.IsCorruptorNoun(nashira.Plan.NounName) &&
+			profile.AbilityName == "ShadowPanic"
 	}
 	target, isTargetFound := s.campaignNPCTarget(
 		generation, nashira.TargetObjectID,
 	)
 	isReady := s.campaignNashiraPanicReadiness[objectID] <= timestamp
+	if zonenpc.IsCorruptorNoun(nashira.Plan.NounName) {
+		// Corruptor selection already owns the current phase's cooldown.
+		isReady = true
+	}
+	sourceFootprint := float32(0)
+	if zonenpc.IsCorruptorNoun(nashira.Plan.NounName) {
+		sourceFootprint = nashira.Plan.NPCProfile.FootprintRadius
+	}
 	isInRange := isTargetFound && target.Position.Sub(
 		nashira.Plan.Position,
-	).Length() <= profile.Range+target.FootprintRadius
+	).Length() <= profile.Range+sourceFootprint+target.FootprintRadius
 	if !isNashiraFound || nashira.Plan.OwnerObjectID != 0 || !isProfileFound ||
 		!isReady || !isInRange {
 		r.registry.mutex.Unlock()

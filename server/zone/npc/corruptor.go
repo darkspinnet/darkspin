@@ -222,7 +222,7 @@ func scaldronBossDiseaseConeProfile(nounName string) (ActionProfile, bool) {
 		ModifierDescriptorMask: 36, ModifierDamageType: 2, ModifierDamageSource: 1,
 		ModifierMaximumStack: 1,
 		TargetEffectName:     "status_diseased.ServerEventDef",
-		Radius:               5, Angle: 45,
+		Radius:               10, Angle: 45,
 		IsModifierDamageProfileKnown: true, IsFirstAggroDurationKnown: true,
 	}, true
 }

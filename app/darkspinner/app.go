@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"time"
@@ -1068,5 +1069,12 @@ func executableDirectory() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("executablePath: %w", err)
 	}
-	return filepath.Dir(executable), nil
+	directory := filepath.Dir(executable)
+	if goruntime.GOOS == "darwin" && filepath.Base(directory) == "MacOS" && filepath.Base(filepath.Dir(directory)) == "Contents" {
+		bundlePath := filepath.Dir(filepath.Dir(directory))
+		if strings.HasSuffix(bundlePath, ".app") {
+			return filepath.Dir(bundlePath), nil
+		}
+	}
+	return directory, nil
 }

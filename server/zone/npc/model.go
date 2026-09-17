@@ -130,6 +130,7 @@ type Snapshot struct {
 	IsNavigationCollisionEnabled    bool
 	IsInvisibleToSecurityTeleporter bool
 	status                          status
+	corruptorCombat                 corruptorCombat
 }
 
 type DamageResult struct {

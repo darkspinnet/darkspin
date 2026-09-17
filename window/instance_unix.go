@@ -1,4 +1,4 @@
-//go:build linux && !bindings
+//go:build (linux || darwin) && !bindings
 
 package window
 

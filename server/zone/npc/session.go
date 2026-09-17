@@ -1393,6 +1393,10 @@ func (s *Session) SetActionProfile(
 	}
 	npc.Plan.ActionProfile = profile.Clone()
 	npc.Plan.IsActionKnown = true
+	if IsCorruptorNoun(npc.Plan.NounName) {
+		npc.corruptorCombat.specialProfile = profile.Clone()
+		npc.corruptorCombat.specialReadyTimestamp = 0
+	}
 	npc.IsActionStarted = false
 	npc.ActionOwner = ActionOwner{}
 	npc.ActionGeneration++

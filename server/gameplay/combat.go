@@ -200,6 +200,9 @@ type zoneNPCDeathDefinition struct {
 func destructibleDeathPresentation(
 	snapshot zonenpc.Snapshot, physics zoneNounPhysics,
 ) (string, time.Duration) {
+	if strings.EqualFold(snapshot.Plan.NounName, campaignCorruptorPortalNounName) {
+		return "scaldron_boss_portal_explosion_effect.ServerEventDef", time.Millisecond
+	}
 	if snapshot.Plan.NounName == "ZelemGravityOrb.Noun" {
 		// GravityOrbPassive.Deactivate emits its fizzle and marks the orb
 		// for deletion; it is not an ordinary exploding scenery fixture.
@@ -4121,20 +4124,6 @@ func campaignNPCActionProfile(
 			return zonenpc.ArcturusSawBladeProfile(plan.NounName)
 		}
 	}
-	corruptorMeleeProfile, isCorruptorMeleeFound :=
-		zonenpc.ScaldronBossMeleeProfile(plan.NounName, profile)
-	if isCorruptorMeleeFound {
-		deltaX := targetPosition.X - plan.Position.X
-		deltaY := targetPosition.Y - plan.Position.Y
-		centerDistance := float32(math.Hypot(float64(deltaX), float64(deltaY)))
-		surfaceDistance := max(
-			float32(0), centerDistance-plan.NPCProfile.FootprintRadius-
-				targetFootprintRadius,
-		)
-		if surfaceDistance <= corruptorMeleeProfile.Range {
-			return corruptorMeleeProfile, true
-		}
-	}
 	nashiraSwipeProfile, isNashiraSwipeFound :=
 		zonenpc.NashiraSwipeProfile(plan.NounName)
 	if isNashiraSwipeFound {
@@ -4972,6 +4961,15 @@ func (e campaignNPCAttackSchedule) next() ([][]byte, error) {
 		return e.fail("enemyAttackTimeline", err)
 	}
 	timestamp := e.request.timestamp + uint64(timeline.NextDelay/time.Millisecond)
+	if strings.HasPrefix(e.plan.Profile.AbilityName, "ScaldronBoss_Melee") {
+		step := campaignNPCFirstActionStep{
+			runtime: e.request.runtime, packet: e.request.packet,
+			sessionKey: e.request.sessionKey, generation: e.request.generation,
+			objectID: e.request.objectID, actionGeneration: e.plan.ActionGeneration,
+			timestamp: timestamp,
+		}
+		return step.produce()
+	}
 	if e.plan.Profile.AbilityName == "DrainerMelee" {
 		packets, produceErr := e.request.runtime.produceManaDrain(
 			e.request.packet, e.request.sessionKey, e.request.generation,
@@ -5313,6 +5311,21 @@ func (e campaignNPCFirstActionStep) produce() ([][]byte, error) {
 	if !isTargetFound {
 		e.releaseAction(latest)
 		return nil, nil
+	}
+	if zonenpc.IsCorruptorNoun(npc.Plan.NounName) {
+		randomRoll := 0.5
+		if latest.zone.NPCRandom() != nil {
+			randomRoll = latest.zone.NPCRandom().Float64()
+		}
+		npc, isNPCFound = latest.zone.NPCs().SelectCorruptorAction(zonenpc.CorruptorActionRequest{
+			ObjectID: e.objectID, ActionGeneration: e.actionGeneration,
+			Timestamp: e.timestamp, TargetPosition: target.Position,
+			RandomRoll: randomRoll,
+		})
+		if !isNPCFound {
+			e.releaseAction(latest)
+			return nil, nil
+		}
 	}
 	repairPackets, isRepairHandled, repairErr := e.runtime.produceZelemBasicRepair(
 		e.packet, e.sessionKey, e.generation, e.objectID, e.timestamp,
@@ -5719,6 +5732,15 @@ func (r campaignNPCActionRuntime) producePlunge(
 	if isDeferred {
 		return nil, nil
 	}
+	posePackets, isPoseHandled, poseErr := r.produceCorruptorPose(
+		packet, sessionKey, generation, objectID, timestamp,
+	)
+	if poseErr != nil {
+		return nil, fmt.Errorf("corruptorPose: %w", poseErr)
+	}
+	if isPoseHandled {
+		return posePackets, nil
+	}
 	gravityPackets, isGravityHandled, gravityErr := r.produceCorruptorGravityOrb(
 		packet, sessionKey, generation, objectID, timestamp,
 	)
@@ -5898,6 +5920,12 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 	spawnPresentationObjectIDs := make(map[uint32]struct{}, len(plans))
 	spawnPresentationRuns := make(map[uint32]*spawnraknet.Run, len(plans))
 	for index, plan := range plans {
+		if zonenpc.IsCorruptorNoun(plan.NounName) {
+			npc, isNPCFound := npcSession.NPC(plan.ObjectID)
+			if isNPCFound && npc.IsFirstActionStarted {
+				continue
+			}
+		}
 		if plan.IsFixture {
 			continue
 		}

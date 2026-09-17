@@ -65,5 +65,8 @@ func marshalNPCAttack(
 	if !npcSession.CommitFacing(plan) {
 		return nil, nil
 	}
+	if !npcSession.CommitCorruptorAction(plan, timestamp) {
+		return nil, nil
+	}
 	return packets, nil
 }

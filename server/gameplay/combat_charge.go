@@ -62,6 +62,9 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 	isCurrent := isFound && peerSession.isCampaignNPCAttackActiveAt(
 		e.generation, e.objectID, e.plan.TargetObjectID, e.runtime.now(),
 	)
+	isCurrent = isCurrent && peerSession.isCampaignNPCSourceGenerationActive(
+		e.generation, e.objectID, e.plan.ActionGeneration,
+	)
 	if !isCurrent {
 		e.runtime.registry.mutex.RUnlock()
 		return nil, nil
@@ -226,7 +229,8 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 }
 
 func isTemplateContactCharge(abilityName string) bool {
-	return abilityName == "DartingAttack" || abilityName == "CryosBasicCharge"
+	return abilityName == "DartingAttack" || abilityName == "CryosBasicCharge" ||
+		abilityName == "ScaldronBoss_ShadowCharge"
 }
 
 func verdanthBasicPickyFarthestTarget(
@@ -386,8 +390,7 @@ func (e campaignChargeSchedule) followup(timestamp uint64) ([][]byte, error) {
 			e.packet, e.sessionKey, e.generation, e.objectID, timestamp, e.plan,
 		)
 	}
-	if e.plan.Profile.AbilityName == "DartingAttack" ||
-		e.plan.Profile.AbilityName == "CryosBasicCharge" {
+	if isTemplateContactCharge(e.plan.Profile.AbilityName) {
 		return e.runtime.produceChargeContactHit(
 			e.packet, e.sessionKey, e.generation, e.objectID, timestamp, e.plan,
 		)
@@ -586,6 +589,17 @@ func (r campaignNPCActionRuntime) produceChargeContactHit(
 	packets, err := schedule.hit()
 	if err != nil {
 		return nil, fmt.Errorf("enemyDartingHit: %w", err)
+	}
+	if chargePlan.Profile.AbilityName == "ScaldronBoss_ShadowCharge" {
+		next := campaignNPCFirstActionStep{
+			runtime: r, packet: packet, sessionKey: sessionKey, generation: generation,
+			objectID: objectID, actionGeneration: chargePlan.ActionGeneration, timestamp: timestamp,
+		}
+		nextPackets, nextErr := next.produce()
+		if nextErr != nil {
+			return nil, fmt.Errorf("chargeNext: %w", nextErr)
+		}
+		return append(packets, nextPackets...), nil
 	}
 	nextTimestamp := max(timestamp, readyTimestamp)
 	if chargePlan.Profile.AbilityName == "CryosBasicCharge" {
@@ -953,7 +967,7 @@ func (r campaignNPCActionRuntime) produceEnemyCharge(
 		)
 	}
 	readyTimestamp := peerSession.campaignNPCChargeReadiness[objectID]
-	if readyTimestamp > timestamp {
+	if readyTimestamp > timestamp && profile.AbilityName != "ScaldronBoss_ShadowCharge" {
 		r.registry.mutex.Unlock()
 		if isProfileFound && profile.AbilityName == "CryosBasicCharge" {
 			return r.scheduleEnemyChargeRetry(
@@ -1004,6 +1018,9 @@ func (r campaignNPCActionRuntime) produceEnemyCharge(
 	packets, err := npcraknet.ChargeStart(plan, timestamp)
 	if err != nil {
 		return nil, fmt.Errorf("enemyChargeStart: %w", err)
+	}
+	if !peerSession.zone.NPCs().CommitCorruptorAction(plan, timestamp) {
+		return nil, nil
 	}
 	schedule := campaignChargeSchedule{
 		runtime: r, packet: packet, sessionKey: sessionKey, generation: generation,
