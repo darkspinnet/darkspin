@@ -96,7 +96,7 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 			generation: e.generation, objectID: e.objectID,
 			expiresAt: expiresAt,
 		}
-		cancel, scheduleErr := e.packet.ScheduleProducers(
+		cancel, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet,
 			[]raknet.ScheduledPacketProducer{{
 				Delay: 8 * time.Second, Produce: expiry.produce,
 			}},
@@ -617,7 +617,7 @@ func (r campaignNPCActionRuntime) produceChargeContactHit(
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID, timestamp: nextTimestamp,
 	}
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay:   time.Duration(nextTimestamp-timestamp) * time.Millisecond,
 		Produce: next.produce,
 	}})
@@ -699,7 +699,7 @@ func (r campaignNPCActionRuntime) produceChargeSegmentCollision(
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID, timestamp: nextTimestamp,
 	}
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: nextDelay, Produce: next.produce,
 	}})
 	if err == nil && cancel == nil {
@@ -1026,7 +1026,7 @@ func (r campaignNPCActionRuntime) produceEnemyCharge(
 		runtime: r, packet: packet, sessionKey: sessionKey, generation: generation,
 		objectID: objectID, timestamp: timestamp, plan: plan,
 	}
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: profile.HitDelay, Produce: schedule.move,
 	}})
 	if err == nil && cancel == nil {
@@ -1063,7 +1063,7 @@ func (r campaignNPCActionRuntime) produceNoctGhostChargerPose(
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID, timestamp: nextTimestamp,
 	}
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay:   time.Duration(nextTimestamp-timestamp) * time.Millisecond,
 		Produce: next.produce,
 	}})
@@ -1234,7 +1234,7 @@ func (r campaignNPCActionRuntime) produceVerdanthBasicPickyAttack(
 		generation: generation, objectID: objectID,
 		timestamp: timestamp + uint64(timeline.NextDelay/time.Millisecond),
 	}
-	_, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	_, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: timeline.HitDelay, Produce: schedule.hit},
 		{Delay: timeline.NextDelay, Produce: next.produce},
 	})
@@ -1258,7 +1258,7 @@ func (r campaignNPCActionRuntime) scheduleEnemyChargeRetry(
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID, timestamp: readyTimestamp,
 	}
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay:   time.Duration(readyTimestamp-timestamp) * time.Millisecond,
 		Produce: next.produce,
 	}})
@@ -1362,7 +1362,7 @@ func (r campaignNPCActionRuntime) produceCryosBasicChargeHeadbutt(
 		generation: generation, objectID: objectID,
 		timestamp: timestamp + uint64(timeline.NextDelay/time.Millisecond),
 	}
-	_, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	_, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: timeline.HitDelay, Produce: schedule.hit},
 		{Delay: timeline.NextDelay, Produce: next.produce},
 	})
@@ -1471,7 +1471,7 @@ func (r campaignNPCActionRuntime) produceNomadChargeAttack(
 		attack:    campaignNPCAttackSchedule{request: request, plan: plan},
 		nextDelay: nextDelay,
 	}
-	_, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	_, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: timeline.HitDelay, Produce: schedule.attack.hit},
 		{Delay: nextDelay, Produce: schedule.next},
 	})
@@ -1548,7 +1548,7 @@ func (r campaignNPCActionRuntime) produceBoomerSmash(
 		kind: campaignNPCAttackBoomerSmash,
 	}
 	schedule := campaignNPCAttackSchedule{request: request, plan: plan}
-	_, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	_, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: timeline.HitDelay, Produce: schedule.hit},
 		{Delay: timeline.NextDelay, Produce: schedule.next},
 	})

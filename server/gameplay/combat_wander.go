@@ -94,7 +94,7 @@ func (e campaignScaldronNestleWanderStep) produce() ([][]byte, error) {
 		next := e
 		next.stepIndex++
 		next.timestamp += uint64(e.profile.HitDelay / time.Millisecond)
-		_, scheduleErr := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+		_, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 			Delay: e.profile.HitDelay, Produce: next.produce,
 		}})
 		if scheduleErr != nil {
@@ -106,7 +106,7 @@ func (e campaignScaldronNestleWanderStep) produce() ([][]byte, error) {
 	resume.timestamp += uint64(
 		(e.profile.HitDelay + e.profile.ReleaseDelay) / time.Millisecond,
 	)
-	_, scheduleErr := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	_, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay:   e.profile.HitDelay + e.profile.ReleaseDelay,
 		Produce: resume.resume,
 	}})

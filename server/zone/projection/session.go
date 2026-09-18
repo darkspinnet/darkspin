@@ -32,6 +32,8 @@ const (
 	EventHeroRoster
 	EventHeroDeploy
 	EventHeroLeave
+	EventNPCTarget
+	EventNPCSnapshot
 )
 
 type NPCSpawn struct {
@@ -111,6 +113,32 @@ type Event struct {
 	HeroRoster        HeroRoster
 	HeroDeploy        HeroDeploy
 	HeroLeave         HeroLeave
+	NPCTarget         zonenpc.Snapshot
+	NPCSnapshot       zonenpc.Snapshot
+}
+
+func (e *Session) PublishNPCTargets(
+	snapshots []zonenpc.Snapshot, excluded Subscriber,
+) {
+	if e == nil || len(snapshots) == 0 {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, snapshot := range snapshots {
+		if snapshot.IsDefeated || snapshot.Plan.IsFixture || snapshot.Plan.ObjectID == 0 {
+			continue
+		}
+		e.next++
+		event := Event{
+			Sequence: e.next, Kind: EventNPCTarget, NPCTarget: snapshot,
+		}
+		for subscriber := range e.eventsBySubscriber {
+			if subscriber != excluded {
+				e.enqueueLocked(subscriber, event)
+			}
+		}
+	}
 }
 
 func (s *Session) PublishHeroLeave(leave HeroLeave) {
@@ -204,18 +232,20 @@ func (s *Session) PublishNPCForcedMovement(
 // Session retains instance events until each active member's transport adapter
 // consumes its own projection.
 type Session struct {
-	mu                     sync.Mutex
-	next                   uint64
-	eventsBySubscriber     map[Subscriber][]Event
-	isBaselineBySubscriber map[Subscriber]bool
-	deletedNPCObjectIDs    map[uint32]struct{}
+	mu                       sync.Mutex
+	next                     uint64
+	eventsBySubscriber       map[Subscriber][]Event
+	isBaselineBySubscriber   map[Subscriber]bool
+	deletedNPCObjectIDs      map[uint32]struct{}
+	npcObjectIDsBySubscriber map[Subscriber]map[uint32]struct{}
 }
 
 func NewSession() *Session {
 	return &Session{
-		eventsBySubscriber:     make(map[Subscriber][]Event),
-		isBaselineBySubscriber: make(map[Subscriber]bool),
-		deletedNPCObjectIDs:    make(map[uint32]struct{}),
+		eventsBySubscriber:       make(map[Subscriber][]Event),
+		isBaselineBySubscriber:   make(map[Subscriber]bool),
+		deletedNPCObjectIDs:      make(map[uint32]struct{}),
+		npcObjectIDsBySubscriber: make(map[Subscriber]map[uint32]struct{}),
 	}
 }
 
@@ -262,10 +292,12 @@ func (s *Session) Join(subscriber Subscriber) error {
 		if current.UserID == subscriber.UserID && current != subscriber {
 			delete(s.eventsBySubscriber, current)
 			delete(s.isBaselineBySubscriber, current)
+			delete(s.npcObjectIDsBySubscriber, current)
 		}
 	}
 	if _, isFound := s.eventsBySubscriber[subscriber]; !isFound {
 		s.eventsBySubscriber[subscriber] = nil
+		s.npcObjectIDsBySubscriber[subscriber] = make(map[uint32]struct{})
 	}
 	s.isBaselineBySubscriber[subscriber] = false
 	return nil
@@ -282,6 +314,7 @@ func (s *Session) Leave(subscriber Subscriber) bool {
 	}
 	delete(s.eventsBySubscriber, subscriber)
 	delete(s.isBaselineBySubscriber, subscriber)
+	delete(s.npcObjectIDsBySubscriber, subscriber)
 	return true
 }
 
@@ -383,6 +416,9 @@ func (s *Session) PublishNPCDeath(
 				continue
 			}
 			s.deletedNPCObjectIDs[current.TargetObjectID] = struct{}{}
+			for _, objectIDs := range s.npcObjectIDsBySubscriber {
+				delete(objectIDs, current.TargetObjectID)
+			}
 		}
 		s.next++
 		event := Event{
@@ -413,9 +449,26 @@ func (s *Session) PublishNPCSpawn(spawn NPCSpawn, excluded Subscriber) {
 		Sequence: s.next, Kind: EventNPCSpawn, Spawn: spawn,
 	}
 	for subscriber := range s.eventsBySubscriber {
+		plans := make([]zonenpc.SpawnPlan, 0, len(spawn.Plans))
+		objectIDs := s.npcObjectIDsBySubscriber[subscriber]
+		if objectIDs == nil {
+			objectIDs = make(map[uint32]struct{})
+			s.npcObjectIDsBySubscriber[subscriber] = objectIDs
+		}
+		for _, plan := range spawn.Plans {
+			if _, isKnown := objectIDs[plan.ObjectID]; isKnown {
+				continue
+			}
+			objectIDs[plan.ObjectID] = struct{}{}
+			plans = append(plans, plan)
+		}
 		if subscriber == excluded {
 			continue
 		}
+		if len(plans) == 0 {
+			continue
+		}
+		event.Spawn.Plans = plans
 		s.enqueueLocked(subscriber, event)
 	}
 }

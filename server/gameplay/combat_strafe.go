@@ -165,7 +165,7 @@ func (r campaignNPCActionRuntime) produceBoundedStrafeOrIdle(
 			actionGeneration: actionGeneration, objectID: objectID,
 			timestamp: timestamp + uint64(idleDelay/time.Millisecond), resume: resume,
 		}
-		cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+		cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 			Delay: idleDelay, Produce: step.produce,
 		}})
 		if err == nil && cancel == nil {
@@ -282,7 +282,7 @@ func (e campaignNPCStrafeStep) schedule() error {
 	next := e
 	next.elapsed += campaignNPCStrafeTick
 	next.timestamp += uint64(campaignNPCStrafeTick / time.Millisecond)
-	cancel, err := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: campaignNPCStrafeTick, Produce: next.produce,
 	}})
 	if err == nil && cancel == nil {

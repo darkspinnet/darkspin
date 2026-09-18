@@ -53,7 +53,7 @@ func (r campaignNPCActionRuntime) scheduleZelemVolleyBoundary(
 		timestamp: timestamp, nextDelay: nextDelay,
 		kind: campaignNPCProjectileZelem, plan: volley.plan,
 	}
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: nextDelay, Produce: schedule.next,
 	}})
 	if err != nil {
@@ -762,7 +762,7 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		})
 		sortScheduledPacketProducersByDelay(producers)
 	}
-	cancel, scheduleErr := packet.ScheduleProducers(producers)
+	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, producers)
 	if scheduleErr == nil && cancel == nil {
 		scheduleErr = errors.New("nil cancellation")
 	}

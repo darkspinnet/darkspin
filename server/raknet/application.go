@@ -1796,6 +1796,7 @@ type LabsPlayerStatusMessage struct {
 	Status              uint32
 	Progress            float32
 	IsInitial           bool
+	IsStatusPreserved   bool
 	ControlledObjectID  uint32
 	HeroNoun            uint32
 	HeroAsset           uint64
@@ -1909,10 +1910,14 @@ func (m LabsPlayerStatusMessage) EncodePayload() []byte {
 		payload = append(payload, 6)
 		payload = binary.LittleEndian.AppendUint64(payload, m.OnlineID)
 	}
-	payload = append(payload, 7)
-	payload = binary.LittleEndian.AppendUint32(payload, m.Status)
-	payload = append(payload, 8)
-	payload = binary.LittleEndian.AppendUint32(payload, math.Float32bits(m.Progress))
+	// Roster refreshes must not rewind the client's loading/cinematic state.
+	// These tagged fields are independently optional in the player reflection.
+	if !m.IsStatusPreserved {
+		payload = append(payload, 7)
+		payload = binary.LittleEndian.AppendUint32(payload, m.Status)
+		payload = append(payload, 8)
+		payload = binary.LittleEndian.AppendUint32(payload, math.Float32bits(m.Progress))
+	}
 	if m.IsInitial {
 		payload = append(payload, 9)
 		payload = binary.LittleEndian.AppendUint32(payload, m.ControlledObjectID)

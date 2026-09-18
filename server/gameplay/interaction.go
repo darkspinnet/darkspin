@@ -523,6 +523,22 @@ func (r campaignInteractionRuntime) handlePickup(
 			r.registry.mutex.Unlock()
 			return r.rejectPickup(command, "scheduler unavailable")
 		}
+		movementPackets, movementErr := currentSession.stopCampaignPickup(r.now())
+		if movementErr != nil {
+			crystalRun.Stop()
+			currentSession.zone.Pickups().Release(command.Value)
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("crystalPickupPose: %w", movementErr)
+		}
+		animationPacket, animationErr := abilityraknet.Animation(
+			currentSession.deployedObjectID, "pickup_catalyst", packet.SourceTime,
+		)
+		if animationErr != nil {
+			crystalRun.Stop()
+			currentSession.zone.Pickups().Release(command.Value)
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("crystalPickupAnimation: %w", animationErr)
+		}
 		acceptPacket, marshalErr := actionraknet.Accept(
 			command, "PickUpCrystal", packet.SourceTime,
 			300*time.Millisecond, zoneinteract.CrystalPickupReleaseDuration,
@@ -598,6 +614,18 @@ func (r campaignInteractionRuntime) handlePickup(
 			return nil, fmt.Errorf("campaignCrystalTrack: %w", crystalErr)
 		}
 		r.registry.sessions[sessionKey] = currentSession
+		peerPackets := append(append([][]byte(nil), movementPackets...), animationPacket)
+		for candidateKey, candidate := range r.registry.sessions {
+			if candidateKey == sessionKey || candidate.zone != currentSession.zone {
+				continue
+			}
+			publishErr := candidate.publishPackets(peerPackets)
+			if publishErr != nil && r.logger != nil {
+				r.logger.Printf("RakNet catalyst animation peer delivery queued user=%d: %v",
+					candidate.binding.UserID, publishErr)
+			}
+			r.registry.sessions[candidateKey] = candidate
+		}
 		r.registry.mutex.Unlock()
 		r.logger.Printf(
 			"RakNet campaign crystal pickup accepted source=%d target=%d distance=%g surface=%g authored_range=%g pose_tolerance=%g",
@@ -605,7 +633,7 @@ func (r campaignInteractionRuntime) handlePickup(
 			currentSession.campaignPickupSurfaceDistance(distance),
 			campaignPickupAbilityRange, campaignPickupPoseTolerance,
 		)
-		return [][]byte{acceptPacket}, nil
+		return append([][]byte{acceptPacket}, movementPackets...), nil
 	}
 	r.registry.mutex.Unlock()
 	return nil, errCampaignPickupNotFound
@@ -999,7 +1027,10 @@ func (s campaignCrystalPickupStep) produce() ([][]byte, error) {
 			*s.pendingInventory,
 		)
 		if err == nil {
-			worldPackets = append(worldPackets, packet[0])
+			// Deletion and player-indexed inventory/bonus state are shared.
+			// The final CrystalAcquired packet has no player selector and must
+			// remain local to the collecting player's HUD.
+			worldPackets = append(worldPackets, packet[:3]...)
 			err = peerSession.zone.SetCrystalInventory(
 				peerSession.binding.UserID, peerSession.generation,
 				*s.pendingInventory,

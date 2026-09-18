@@ -379,7 +379,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCDisease(
 			Delay: delay, Produce: step.produce,
 		})
 	}
-	cancel, scheduleErr := packet.ScheduleProducers(producers)
+	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, producers)
 	if scheduleErr == nil && cancel == nil {
 		scheduleErr = errors.New("nil cancellation")
 	}

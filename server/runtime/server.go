@@ -25,6 +25,7 @@ import (
 	chatlocal "github.com/darkspinnet/darkspin/server/chat/local"
 	"github.com/darkspinnet/darkspin/server/chat/textlog"
 	"github.com/darkspinnet/darkspin/server/game"
+	"github.com/darkspinnet/darkspin/server/game/appearancefs"
 	gamecontentsqlite "github.com/darkspinnet/darkspin/server/game/contentsqlite"
 	"github.com/darkspinnet/darkspin/server/gameplay"
 	recaphttp "github.com/darkspinnet/darkspin/server/http"
@@ -782,6 +783,7 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("gameplayJoin: %w", err)
 	}
 	gameplayJoin.UseTutorialEndPublisher(tutorialEndPublisher{servers: allBlazeServers})
+	gameplayJoin.SetAppearanceStore(appearancefs.Store{Root: runtimePath})
 	directorSource, err := gamecontentsqlite.NewDirectorSource(contentStore)
 	if err != nil {
 		return nil, fmt.Errorf("directorSource: %w", err)

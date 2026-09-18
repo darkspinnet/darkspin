@@ -83,7 +83,7 @@ func (e campaignNPCManaDrainSchedule) end(
 	next := campaignNPCManaDrainNextStep{
 		request: e.request, timestamp: nextTimestamp,
 	}
-	cancel, err := e.request.packet.ScheduleProducers(
+	cancel, err := scheduleNPCProducers(e.request.runtime.registry, e.request.packet,
 		[]raknet.ScheduledPacketProducer{{
 			Delay: e.plan.Profile.EndAnimationDelay, Produce: next.produce,
 		}},
@@ -118,7 +118,7 @@ func (e campaignNPCManaDrainSchedule) effectRemovals() ([][]byte, error) {
 func (e campaignNPCManaDrainSchedule) scheduleNext() error {
 	next := e
 	next.tick++
-	cancel, err := e.request.packet.ScheduleProducers(
+	cancel, err := scheduleNPCProducers(e.request.runtime.registry, e.request.packet,
 		[]raknet.ScheduledPacketProducer{{
 			Delay: e.plan.Profile.TickDuration, Produce: next.produce,
 		}},
@@ -507,7 +507,7 @@ func (r campaignNPCActionRuntime) produceManaDrain(
 	schedule := campaignNPCManaDrainSchedule{
 		request: request, plan: plan, run: run,
 	}
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: profile.HitDelay, Produce: schedule.produce,
 	}})
 	if err == nil && cancel == nil {

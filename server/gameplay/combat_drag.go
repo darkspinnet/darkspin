@@ -68,7 +68,7 @@ func (e campaignNomadDragResumeStep) afterStrafe(timestamp uint64) ([][]byte, er
 		}
 		return packets, nil
 	}
-	cancel, err := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay:   time.Duration(e.readyTimestamp-timestamp) * time.Millisecond,
 		Produce: e.produce,
 	}})
@@ -261,7 +261,7 @@ func (r campaignNPCActionRuntime) produceNomadDragPostMeteorTaunt(
 		timestamp: timestamp + uint64(nomadDragTauntRelease/time.Millisecond),
 		profile:   profile, resume: cooldownResume.afterStrafe,
 	}
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: nomadDragTauntRelease, Produce: reset.produce,
 	}})
 	if err == nil && cancel == nil {
@@ -325,7 +325,7 @@ func (r campaignNPCActionRuntime) scheduleNomadDragShield(
 		runtime: r, sessionKey: sessionKey, generation: generation,
 		objectID: objectID, effectSlot: effectSlot,
 	}
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: nomadDragSlowShieldRelease, Produce: phase.produce},
 		{Delay: nomadDragSlowShieldCooldown, Produce: cleanup.produce},
 	})

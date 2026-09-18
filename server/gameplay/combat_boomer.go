@@ -114,7 +114,7 @@ func (r campaignNPCActionRuntime) scheduleBoomerDeathDetonation(
 		objectID:  objectID,
 		timestamp: timestamp + uint64(profile.HitDelay.Milliseconds()),
 	}
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: profile.HitDelay, Produce: schedule.detonate,
 	}})
 	if err == nil && cancel == nil {

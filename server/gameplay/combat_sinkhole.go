@@ -343,7 +343,7 @@ func (r campaignNPCActionRuntime) produceScaldronBasicSinkhole(
 	producers = append(producers, raknet.ScheduledPacketProducer{
 		Delay: profile.ReleaseDelay, Produce: end.produce,
 	})
-	_, scheduleErr := packet.ScheduleProducers(producers)
+	_, scheduleErr := scheduleNPCProducers(r.registry, packet, producers)
 	if scheduleErr != nil {
 		if isEffectAllocated && r.effectPool != nil {
 			isEffectReleased := r.effectPool.Release(objectID, effectSlot)

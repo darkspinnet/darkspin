@@ -124,7 +124,7 @@ func (e campaignNPCProjectileStep) produceFlight() ([][]byte, error) {
 			return schedule.fail("enemyFlightResume", errors.New("scheduler unavailable"))
 		}
 		next := campaignNPCProjectileStep{schedule: schedule, deadline: e.deadline + abilityraknet.ProjectileCollisionTick, isFlightPoll: true}
-		err = schedule.packet.ScheduleFunc(abilityraknet.ProjectileCollisionTick, next.produce)
+		err = scheduleNPCProducer(schedule.runtime.registry, schedule.packet, abilityraknet.ProjectileCollisionTick, next.produce)
 		if err != nil {
 			return schedule.fail("enemyFlightResume", err)
 		}

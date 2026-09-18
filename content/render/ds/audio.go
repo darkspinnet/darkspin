@@ -300,5 +300,7 @@ func audioDecoderPath() (string, error) {
 			return candidatePath, nil
 		}
 	}
-	return "", errors.New("audioDecoderMissing: install vgmstream-cli in PATH or beside darkrun")
+	return "", errors.New("audioDecoderMissing: download vgmstream-cli from " +
+		"https://github.com/vgmstream/vgmstream/releases " +
+		"and install it in PATH or beside darkrun")
 }

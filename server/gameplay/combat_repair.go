@@ -233,7 +233,7 @@ func (r campaignNPCActionRuntime) produceZelemBasicRepair(
 		profile:        profile, minionThreshold: minionThreshold,
 		otherThreshold: otherThreshold,
 	}
-	_, err = packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	_, err = scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: profile.HitDelay, Produce: schedule.hit},
 		{Delay: profile.ReleaseDelay, Produce: schedule.next},
 	})

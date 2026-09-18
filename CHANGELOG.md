@@ -1,7 +1,24 @@
 # Changelog
 
+### 2026-09-18
+
+- Create a safe mission checkpoint after deployment so Continue is available before the first defeated enemy group or pickup, including newly initialized co-op members.
+- Seed players joining an already-populated co-op zone with existing NPC positions, facing, resources and targets, instead of sending only later updates for enemies they never received.
+- Honor party leave requests followed by trailing shutdown RPCs, remove disconnected heroes and companions from teammates' scenes immediately, and restore them on successful reconnect.
+- Hold co-op NPC spawns and world updates until each player's dungeon scene is ready, and preserve queued packets across loading transitions so enemies cannot attack a client that missed their spawn.
+- Send co-op teammates the same beam-in position, effect and animation after hero creation, and keep missing player entry markers near the current map's entrance.
+- Preserve teammate readiness during hero roster refreshes instead of resetting already-entered players to loading and causing misleading cinematic wait messages.
+- Deliver delayed NPC movement, attacks and effects to every campaign teammate, preserve spawn-before-movement ordering, and use the actual shared pursuit target instead of reconstructing it per player.
+- Add an Open Bug Folder link at the top left of the report dialog, available before creating a report.
+- Resolve multiplayer hero appearances from available saved image versions instead of stat revisions, falling back to the hero's shipped template when the saved appearance is missing.
+- Remove a quitting player from the multiplayer party when their leave request is followed by disconnect, and notify teammates of the removal and any leader change.
+- Synchronize enemy target and combat state with teammates, and deliver pursuit arrivals and Arc Welding Melee attack continuations to every player in the zone.
+- Show catalyst pickup poses and animations to teammates, and synchronize player-indexed catalyst inventories and link bonuses after pickups, moves and drops.
+
 ### 2026-09-17
 
+- Infer Darkrun conversion destinations from package names: Creatures.package extracts to Creatures.ds, and Creatures.ds repacks to Creatures.package.
+- Link to the vgmstream GitHub releases page when Darkrun audio conversion cannot find vgmstream-cli.
 - Preserve each companion attack's damage classification and position, carry Sprout's poison element into resistance checks, and stop applying area mitigation to Expunge's single-target remaining-damage burst.
 - Fix multiplayer Thorn Bark reflection and attribute its damage, rewards and feedback to the struck hero; prevent life-drain healing after a damage reaction kills the enemy.
 - Honor the struck hero's debuff immunity for multiplayer enemy poison, vulnerabilities and control effects, and apply only the strongest overlapping Crushing Dread aura to campaign damage.

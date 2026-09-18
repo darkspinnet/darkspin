@@ -55,7 +55,7 @@ func (e campaignArcturusMissile) poll() ([][]byte, error) {
 	if err != nil {
 		return e.retire(fmt.Errorf("missileShadowMove: %w", err))
 	}
-	err = run.packet.ScheduleFunc(50*time.Millisecond, e.poll)
+	err = scheduleNPCProducer(run.runtime.registry, run.packet, 50*time.Millisecond, e.poll)
 	if err != nil {
 		return e.retire(fmt.Errorf("missilePoll: %w", err))
 	}

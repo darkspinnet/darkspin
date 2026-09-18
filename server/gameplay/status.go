@@ -301,6 +301,16 @@ func (r gameplayStatusRuntime) startCampaign(
 		peerSession.arePassiveModifiersAllocated = true
 	}
 	r.registry.mutex.Lock()
+	currentSession, isFound := r.registry.sessions[packet.Address.String()]
+	if !isFound || currentSession.generation != peerSession.generation {
+		r.registry.mutex.Unlock()
+		return nil, errors.New("campaign start session stale")
+	}
+	// Another member may already be spawning enemies while this client loads.
+	// Preserve those queued world packets across the loading-state transition.
+	peerSession.pendingPacketBatches = currentSession.pendingPacketBatches
+	peerSession.nextPendingPacketID = currentSession.nextPendingPacketID
+	peerSession.isPendingPacketOverflow = currentSession.isPendingPacketOverflow
 	peerSession.stage.EnterDungeon()
 	r.registry.sessions[packet.Address.String()] = peerSession
 	r.registry.mutex.Unlock()

@@ -121,7 +121,7 @@ func (e *campaignScaldronCopterRun) fail(
 func (e *campaignScaldronCopterRun) schedule(
 	producer func() ([][]byte, error),
 ) error {
-	cancel, err := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: campaignScaldronCopterTick, Produce: producer,
 	}})
 	if err == nil && cancel == nil {

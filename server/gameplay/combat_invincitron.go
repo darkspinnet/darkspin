@@ -133,7 +133,7 @@ func invincitronDronePosition(owner game.Vec3, elapsed time.Duration) game.Vec3 
 }
 
 func (e campaignDroneFollowStep) schedule() error {
-	cancel, err := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: 100 * time.Millisecond, Produce: e.produce,
 	}})
 	if err != nil {

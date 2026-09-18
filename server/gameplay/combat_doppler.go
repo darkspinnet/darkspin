@@ -209,7 +209,7 @@ func (e campaignDopplerCloneStep) spawn() ([][]byte, error) {
 	producers = append(producers, raknet.ScheduledPacketProducer{
 		Delay: expiryDelay, Produce: expiry.produce,
 	})
-	_, err = e.packet.ScheduleProducers(producers)
+	_, err = scheduleNPCProducers(e.runtime.registry, e.packet, producers)
 	if err != nil {
 		return nil, fmt.Errorf("dopplerCloneExpirySchedule: %w", err)
 	}
@@ -428,7 +428,7 @@ func (r campaignNPCActionRuntime) produceScaldronBasicDopplerClone(
 		fakeObjectID: fakeObjectID, timestamp: timestamp, profile: profile,
 	}
 	resumeDelay := max(profile.HitDelay, profile.ReleaseDelay)
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: profile.HitDelay, Produce: step.spawn},
 		{Delay: resumeDelay, Produce: step.next},
 	})

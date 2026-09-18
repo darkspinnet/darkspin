@@ -521,7 +521,7 @@ func (e campaignConeSchedule) hit() ([][]byte, error) {
 		if cleanupDelay <= 0 {
 			return nil, errors.New("enemy cone Cryos chain cleanup delay invalid")
 		}
-		err := e.packet.ScheduleFunc(cleanupDelay, e.releaseCryosBossChain)
+		err := scheduleNPCProducer(e.runtime.registry, e.packet, cleanupDelay, e.releaseCryosBossChain)
 		if err != nil {
 			return nil, fmt.Errorf("enemyConeCryosChainCleanupSchedule: %w", err)
 		}
@@ -712,7 +712,7 @@ func (r campaignNPCActionRuntime) produceEnemyCone(
 			generation: generation, objectID: objectID,
 			timestamp: timestamp + uint64(fizzleDelay/time.Millisecond),
 		}
-		cancel, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+		cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 			Delay: fizzleDelay, Produce: step.produce,
 		}})
 		if scheduleErr == nil && cancel == nil {
@@ -935,7 +935,7 @@ func (r campaignNPCActionRuntime) produceEnemyCone(
 		}
 	}
 	sortScheduledPacketProducersByDelay(producers)
-	cancel, err := packet.ScheduleProducers(producers)
+	cancel, err := scheduleNPCProducers(r.registry, packet, producers)
 	if err == nil && cancel == nil {
 		err = errors.New("nil cancellation")
 	}

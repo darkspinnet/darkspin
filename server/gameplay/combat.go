@@ -440,7 +440,7 @@ func (r campaignDamageRuntime) publishNPCStuns(
 			Delay:   duration,
 			Produce: expiryStep.produce,
 		}
-		_, scheduleErr := packet.ScheduleProducers(
+		_, scheduleErr := scheduleNPCProducers(r.registry, packet,
 			[]raknet.ScheduledPacketProducer{deleteProducer},
 		)
 		if scheduleErr != nil {
@@ -1663,7 +1663,7 @@ func (r campaignDamageRuntime) publishTransition(
 			generation: generation, plan: *respawn,
 			timestamp: timestamp + uint64(respawn.delay/time.Millisecond),
 		}
-		scheduleErr := step.packet.ScheduleFunc(respawn.delay, step.produce)
+		scheduleErr := scheduleNPCProducer(r.registry, step.packet, respawn.delay, step.produce)
 		if scheduleErr != nil {
 			fallbackPackets, fallbackErr := step.produce()
 			if fallbackErr != nil {
@@ -1689,7 +1689,7 @@ func (r campaignDamageRuntime) publishTransition(
 			runtime: r, sessionKey: sessionKey, generation: generation,
 			packet: transition.bossCompletionPacket,
 		}
-		scheduleErr := packet.ScheduleFunc(
+		scheduleErr := scheduleNPCProducer(r.registry, packet,
 			transition.bossCompletionDelay, step.produce,
 		)
 		if scheduleErr != nil {
@@ -1720,7 +1720,7 @@ func (r campaignDamageRuntime) publishTransition(
 			timestamp: timestamp +
 				uint64(campaignNashiraPreSplitDuration/time.Millisecond),
 		}
-		scheduleErr := step.packet.ScheduleFunc(
+		scheduleErr := scheduleNPCProducer(r.registry, step.packet,
 			campaignNashiraPreSplitDuration, step.produce,
 		)
 		if scheduleErr != nil {
@@ -1746,7 +1746,7 @@ func (r campaignDamageRuntime) publishTransition(
 			timestamp: timestamp +
 				uint64(campaignSelfResurrectionDuration/time.Millisecond),
 		}
-		scheduleErr := step.packet.ScheduleFunc(
+		scheduleErr := scheduleNPCProducer(r.registry, step.packet,
 			campaignSelfResurrectionDuration, step.produce,
 		)
 		if scheduleErr != nil {
@@ -1773,7 +1773,7 @@ func (r campaignDamageRuntime) publishTransition(
 			timestamp: timestamp +
 				uint64(campaignCorruptorStageTwoDuration/time.Millisecond),
 		}
-		scheduleErr := step.packet.ScheduleFunc(
+		scheduleErr := scheduleNPCProducer(r.registry, step.packet,
 			campaignCorruptorStageTwoDuration, step.produce,
 		)
 		if scheduleErr != nil {
@@ -2060,19 +2060,7 @@ func (r campaignDamageRuntime) publishTransition(
 			Delay:   delay,
 			Produce: step.produce,
 		}
-		var cancel raknet.CancelSchedule
-		var scheduleErr error
-		if packet.ScheduleGroupResult != nil {
-			cancel, scheduleErr = packet.ScheduleGroupResult(
-				[]raknet.ScheduledPacketProducer{producer}, nil,
-			)
-		} else if packet.ScheduleGroup != nil {
-			cancel, scheduleErr = packet.ScheduleGroup(
-				[]raknet.ScheduledPacketProducer{producer},
-			)
-		} else {
-			scheduleErr = errors.New("scheduler unavailable")
-		}
+		cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{producer})
 		if scheduleErr == nil && cancel == nil {
 			scheduleErr = errors.New("nil cancellation")
 		}
@@ -2101,15 +2089,7 @@ func (r campaignDamageRuntime) publishTransition(
 		Delay:   delay,
 		Produce: step.produce,
 	}
-	var cancel raknet.CancelSchedule
-	var scheduleErr error
-	if packet.ScheduleGroupResult != nil {
-		cancel, scheduleErr = packet.ScheduleGroupResult([]raknet.ScheduledPacketProducer{producer}, nil)
-	} else if packet.ScheduleGroup != nil {
-		cancel, scheduleErr = packet.ScheduleGroup([]raknet.ScheduledPacketProducer{producer})
-	} else {
-		scheduleErr = errors.New("scheduler unavailable")
-	}
+	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{producer})
 	if scheduleErr == nil && cancel == nil {
 		scheduleErr = errors.New("nil cancellation")
 	}
@@ -3106,7 +3086,7 @@ func (r campaignNPCActionRuntime) spawnLoot(
 			registry: r.registry, sessionKey: sessionKey,
 			generation: generation, objectID: orbObjectID,
 		}
-		err := packet.ScheduleFunc(campaignOrbLifetime, expiry.produce)
+		err := scheduleNPCProducer(r.registry, packet, campaignOrbLifetime, expiry.produce)
 		if err != nil {
 			r.logger.Printf(
 				"RakNet campaign enemy orb expiry not scheduled object=%d: %v",
@@ -3765,7 +3745,7 @@ func (r campaignDamageRuntime) publishPlasmaModifier(
 		Produce: expiryStep.produce,
 	})
 	sortScheduledPacketProducersByDelay(producers)
-	cancel, scheduleErr := packet.ScheduleProducers(producers)
+	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, producers)
 	if scheduleErr != nil {
 		_, releaseErr := modifier.release(r.npc.modifierPool)
 		return nil, fmt.Errorf("plasmaModifierSchedule: %w", errors.Join(scheduleErr, releaseErr))
@@ -5482,21 +5462,6 @@ func (e campaignNPCFirstActionStep) releaseAction(
 	)
 }
 
-type campaignNPCFirstPursuitStep struct {
-	runtime    campaignNPCActionRuntime
-	zone       *zone.Zone
-	userID     uint64
-	generation uint64
-	objectID   uint32
-	timestamp  uint64
-}
-
-func (e campaignNPCFirstPursuitStep) publish() {
-	e.runtime.publishFirstPursuit(
-		e.zone, e.userID, e.generation, e.objectID, e.timestamp,
-	)
-}
-
 func (r campaignNPCActionRuntime) produceDronePunch(
 	packet raknet.Packet, sessionKey string, generation uint64,
 	objectID uint32, timestamp uint64,
@@ -5690,9 +5655,11 @@ func (r campaignNPCActionRuntime) produceDronePunch(
 			})
 		}
 	}
-	_, scheduleErr := packet.ScheduleProducers(
-		producers,
-	)
+	producers = r.registry.producerGuard.scheduledProducers(sessionKey, producers)
+	cancel, scheduleErr := packet.ScheduleProducers(producers)
+	if scheduleErr == nil && cancel == nil {
+		scheduleErr = errors.New("nil cancellation")
+	}
 	if scheduleErr != nil {
 		if isVoltroidEffectAllocated {
 			isEffectReleased := r.effectPool.Release(
@@ -5859,7 +5826,7 @@ func (r campaignNPCActionRuntime) producePlunge(
 			Delay: nomadDragMeteorTargetDelay, Produce: schedule.sampleNomadDragMeteor,
 		}}, producers...)
 	}
-	_, scheduleErr := packet.ScheduleProducers(producers)
+	_, scheduleErr := scheduleNPCProducers(r.registry, packet, producers)
 	if scheduleErr != nil {
 		r.releaseAction(sessionKey, generation, objectID)
 		r.logger.Printf(
@@ -6132,25 +6099,6 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 		if _, isSpawnPresentation := spawnPresentationObjectIDs[plan.ObjectID]; isSpawnPresentation {
 			actionTimestamp += uint64(zonespawn.Duration / time.Millisecond)
 		}
-		if zone != nil && r.timer != nil {
-			key := zonenpc.FirstActionTimelineKey(objectID)
-			presentationTimestamp := timestamp +
-				uint64(firstAggroDelay/time.Millisecond)
-			pursuitStep := campaignNPCFirstPursuitStep{
-				runtime: r, zone: zone, userID: userID, generation: generation,
-				objectID: objectID, timestamp: presentationTimestamp,
-			}
-			scheduleErr := zone.Timeline().Schedule(
-				key, firstAggroDelay, pursuitStep.publish,
-				r.timer.Schedule,
-			)
-			if scheduleErr != nil {
-				r.logger.Printf(
-					"Campaign enemy first pursuit projection not scheduled object=%d: %v",
-					objectID, scheduleErr,
-				)
-			}
-		}
 		step := campaignNPCFirstActionStep{
 			runtime: r, packet: packet, sessionKey: sessionKey,
 			generation: generation, actionGeneration: npc.ActionGeneration,
@@ -6171,9 +6119,10 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 		producers = append(producers, producer)
 		startedObjectIDs = append(startedObjectIDs, objectID)
 	}
+	// Publish target state before a zero-delay producer can commit movement.
+	r.publishFirstAggro(zone, userID, generation, aggroEvents)
 	if len(producers) == 0 {
 		spawnPresentationGuard.isCommitted = true
-		r.publishFirstAggro(zone, userID, generation, aggroEvents)
 		return immediatePackets, nil
 	}
 	sortScheduledPacketProducersByDelay(producers)
@@ -6194,7 +6143,6 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 	}
 	if scheduleErr == nil {
 		spawnPresentationGuard.isCommitted = true
-		r.publishFirstAggro(zone, userID, generation, aggroEvents)
 		return immediatePackets, nil
 	}
 	for index, producer := range producers {
@@ -6207,7 +6155,6 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 	}
 	r.logger.Printf("RakNet campaign enemy pursuit published immediately after schedule failure: %v", scheduleErr)
 	spawnPresentationGuard.isCommitted = true
-	r.publishFirstAggro(zone, userID, generation, aggroEvents)
 	return immediatePackets, nil
 }
 
@@ -6346,42 +6293,6 @@ func (campaignNPCActionRuntime) publishFirstAggro(
 	for _, current := range events {
 		zone.PublishNPCAction(current, userID, generation)
 	}
-}
-
-func (r campaignNPCActionRuntime) publishFirstPursuit(
-	zone *zone.Zone, userID uint64, generation uint64,
-	objectID uint32, timestamp uint64,
-) {
-	if zone == nil || userID == 0 || generation == 0 || objectID == 0 {
-		return
-	}
-	actor, isActorFound := zone.Hero().Snapshot(userID, generation)
-	enemy, isEnemyFound := zone.NPCs().NPC(objectID)
-	if !isActorFound || !isEnemyFound || enemy.IsDefeated ||
-		!enemy.IsActionStarted ||
-		enemy.ActionOwner != (zonenpc.ActionOwner{
-			UserID: userID, PeerGeneration: generation,
-		}) {
-		return
-	}
-	action, isActionFound, err := campaignNPCFirstAction(
-		enemy.Plan, actor.ObjectID, actor.Position, actor.FootprintRadius,
-	)
-	if err != nil {
-		r.logger.Printf(
-			"Campaign enemy first pursuit projection failed object=%d: %v",
-			objectID, err,
-		)
-		return
-
-	}
-	if !isActionFound || !action.IsPursuitNeeded {
-		return
-	}
-	zone.PublishNPCAction(zonenpc.ActionEvent{
-		Kind: zonenpc.ActionEventPursuit, Plan: action,
-		Timestamp: timestamp,
-	}, userID, generation)
 }
 
 type campaignNPCModifierRun struct {
@@ -6751,7 +6662,7 @@ func (r campaignNPCActionRuntime) produceSnipeMelee(
 	nextProducer := raknet.ScheduledPacketProducer{
 		Delay: timeline.NextDelay, Produce: schedule.next,
 	}
-	_, scheduleErr := packet.ScheduleProducers(
+	_, scheduleErr := scheduleNPCProducers(r.registry, packet,
 		[]raknet.ScheduledPacketProducer{hitProducer, nextProducer},
 	)
 	if scheduleErr != nil {
@@ -7077,7 +6988,7 @@ func (r campaignNPCActionRuntime) produceSnipeSlow(
 		Delay:   slowPlan.Profile.HitDelay + slowPlan.Profile.ModifierDuration,
 		Produce: schedule.remove,
 	}
-	_, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	_, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		hitProducer, meleeProducer, deleteProducer,
 	})
 	if scheduleErr != nil {
@@ -7378,7 +7289,7 @@ func (r campaignNPCActionRuntime) produceHasterBuff(
 		Delay:   plan.Profile.HitDelay + plan.Profile.ModifierDuration,
 		Produce: schedule.remove,
 	}
-	cancel, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		hitProducer, releaseProducer, deleteProducer,
 	})
 	if scheduleErr == nil && cancel == nil {
@@ -8109,7 +8020,7 @@ func (e campaignNPCPushPullSchedule) resumeAfterCooldown(
 	step := campaignNPCPushPullResumeSchedule{
 		schedule: e, timestamp: cooldownTimestamp,
 	}
-	cancel, err := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: delay, Produce: step.produce,
 	}})
 	if err == nil && cancel == nil {
@@ -8247,7 +8158,7 @@ func (e campaignNPCPushPullSchedule) hit() ([][]byte, error) {
 			cleanup := campaignNPCPullEffectSchedule{
 				runtime: runtime, objectID: target.ObjectID, slot: effectSlot,
 			}
-			cancel, scheduleErr := e.packet.ScheduleProducers(
+			cancel, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet,
 				[]raknet.ScheduledPacketProducer{{
 					Delay: campaignNPCPullEffectDuration, Produce: cleanup.remove,
 				}},
@@ -8506,7 +8417,7 @@ func (r campaignNPCActionRuntime) producePushPull(
 	nextProducer := raknet.ScheduledPacketProducer{
 		Delay: profile.ReleaseDelay, Produce: schedule.next,
 	}
-	_, scheduleErr := packet.ScheduleProducers(
+	_, scheduleErr := scheduleNPCProducers(r.registry, packet,
 		[]raknet.ScheduledPacketProducer{hitProducer, nextProducer},
 	)
 	if scheduleErr != nil {
@@ -8670,7 +8581,7 @@ func (r campaignNPCActionRuntime) produceZelemBlink(
 	nextProducer := raknet.ScheduledPacketProducer{
 		Delay: plan.Profile.Cooldown, Produce: schedule.next,
 	}
-	_, scheduleErr := packet.ScheduleProducers(
+	_, scheduleErr := scheduleNPCProducers(r.registry, packet,
 		[]raknet.ScheduledPacketProducer{hitProducer, nextProducer},
 	)
 	if scheduleErr != nil {

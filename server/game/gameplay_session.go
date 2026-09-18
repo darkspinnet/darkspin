@@ -104,6 +104,7 @@ type GameplayCreature struct {
 	Name                       string
 	Noun                       uint32
 	Version                    uint32
+	AppearanceVersion          uint32
 	PassiveAbility             uint32
 	ElementType                string
 	ClassType                  string
@@ -157,6 +158,7 @@ type GameplayJoin struct {
 	gameManager          *Manager
 	partCatalog          *PartCatalog
 	tutorialEndPublisher TutorialEndPublisher
+	appearanceStore      AppearanceStore
 }
 
 func NewGameplayJoin(
@@ -310,6 +312,10 @@ func (o *GameplayJoin) Execute(ctx context.Context, userID int64) (GameplayBindi
 			binding.ChainLevelIndex = chainLevelIndex
 		}
 	}
+	err = o.resolveAppearances(ctx, &binding, view)
+	if err != nil {
+		return GameplayBinding{}, fmt.Errorf("joinAppearance: %w", err)
+	}
 	binding.RefreshReplay()
 	binding.IsCatalystUnlocked = binding.Mode == ModeChain &&
 		(binding.ChainProgression >= 3 || binding.ChainLevelIndex >= 3)
@@ -353,8 +359,25 @@ func (o *GameplayJoin) SelectCampaignSquad(
 		}
 	}
 	binding.SquadID = squadID
+	for index := range creatures {
+		for _, activated := range binding.ActivatedCreatures {
+			if creatures[index].ID == activated.ID {
+				creatures[index].AppearanceVersion = activated.AppearanceVersion
+				break
+			}
+		}
+	}
 	binding.Creatures = creatures
-	binding.ActivatedCreatures = activatedGameplayCreatures(view, o.partCatalog)
+	activatedCreatures := activatedGameplayCreatures(view, o.partCatalog)
+	for index := range activatedCreatures {
+		for _, previous := range binding.ActivatedCreatures {
+			if activatedCreatures[index].ID == previous.ID {
+				activatedCreatures[index].AppearanceVersion = previous.AppearanceVersion
+				break
+			}
+		}
+	}
+	binding.ActivatedCreatures = activatedCreatures
 	return binding, nil
 }
 

@@ -215,7 +215,7 @@ func (r campaignNPCActionRuntime) produceVerdanthBasicOozeGrowth(
 		targetObjectID: target.Plan.ObjectID, timestamp: timestamp,
 		profile: profile,
 	}
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: profile.HitDelay, Produce: schedule.hit},
 		{Delay: profile.Cooldown, Produce: schedule.next},
 	})

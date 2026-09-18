@@ -475,7 +475,10 @@ func (r campaignNPCActionRuntime) produceHealthDrain(
 		Delay:   finalTickDeadline + profile.EndAnimationDelay,
 		Produce: schedule.next,
 	})
-	_, scheduleErr := packet.ScheduleGroup(producers)
+	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, producers)
+	if scheduleErr == nil && cancel == nil {
+		scheduleErr = errors.New("nil cancellation")
+	}
 	if scheduleErr != nil {
 		run.End()
 		run.ReleaseEffects()

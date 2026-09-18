@@ -123,7 +123,7 @@ func (e campaignNPCEnergyBuffSchedule) hit() ([][]byte, error) {
 		runtime: e.runtime, sessionKey: e.sessionKey,
 		generation: e.generation, run: run,
 	}
-	cancel, scheduleErr := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: e.profile.Cast.ModifierDuration, Produce: expiry.produce,
 	}})
 	if scheduleErr == nil && cancel == nil {
@@ -295,7 +295,7 @@ func (r campaignNPCActionRuntime) produceZelemSpecialThreeEnergyBuff(
 		generation: generation, sourceID: source.Plan.ObjectID,
 		targetID: target.Plan.ObjectID, timestamp: timestamp, profile: profile,
 	}
-	cancel, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: profile.Cast.HitDelay, Produce: schedule.hit},
 		{Delay: max(profile.Cast.Cooldown, profile.Cast.ReleaseDelay), Produce: schedule.next},
 	})

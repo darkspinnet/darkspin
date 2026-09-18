@@ -120,7 +120,7 @@ func (e campaignConsumeSchedule) rescheduleApproach() ([][]byte, error) {
 		e.releaseClaim()
 		return e.next()
 	}
-	cancel, err := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: campaignPursuitFallbackTick, Produce: e.approach,
 	}})
 	if err == nil && cancel == nil {
@@ -139,7 +139,7 @@ func (e campaignConsumeSchedule) cast() ([][]byte, error) {
 	if err != nil {
 		return e.fail("consumeAnimation", err)
 	}
-	cancel, err := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{
 		{Delay: e.profile.HitDelay, Produce: e.hit},
 		{Delay: e.profile.ReleaseDelay, Produce: e.fade},
 	})
@@ -241,7 +241,7 @@ func (e campaignConsumeSchedule) hit() ([][]byte, error) {
 		runtime: e.runtime, sessionKey: e.sessionKey, generation: e.generation,
 		objectID: e.sourceObjectID, run: run, expiresAt: result.ExpiresAt,
 	}
-	_, err = e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	_, err = scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: e.profile.ModifierDuration, Produce: expiry.produce,
 	}})
 	if err != nil {
@@ -495,7 +495,7 @@ func (r campaignNPCActionRuntime) produceCarrionConsume(
 		schedule.releaseClaim()
 		return nil, false, fmt.Errorf("consumePursuitMarshal: %w", err)
 	}
-	_, err = packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	_, err = scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: campaignPursuitFallbackTick, Produce: schedule.approach,
 	}})
 	if err != nil {

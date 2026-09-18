@@ -1707,6 +1707,12 @@ func playgroupLeaveHandler(
 		isTeamMatchmakingHandoff := user.CurrentPlaygroupID() == partyID &&
 			isPlaygroupMatchmaking(before, user.Account.ID, matchmaking)
 		if isGameHandoff || isTeamMatchmakingHandoff {
+			if request.Session != nil {
+				request.Session.pendingPlaygroupLeave = &playgroupDisconnectLeave{
+					partyService: partyService, networkRegistry: networkRegistry,
+					partyID: partyID, userID: user.Account.ID,
+				}
+			}
 			reason := "indirect_game_handoff"
 			if isTeamMatchmakingHandoff && !isGameHandoff {
 				reason = "team_matchmaking_handoff"
@@ -1720,51 +1726,61 @@ func playgroupLeaveHandler(
 			}
 			return &Response{}, nil
 		}
-		partySnapshot, err := partyService.Leave(ctx, party.MemberRequest{PartyID: partyID, ActorID: user.Account.ID})
-		if errors.Is(err, party.ErrPartyMissing) || errors.Is(err, party.ErrMemberMissing) {
-			return &Response{ErrorCode: 0x0006}, nil
-		}
-		if err != nil {
-			return nil, fmt.Errorf("playgroupLeave: %w", err)
-		}
-		removedSlotID := playgroupMemberSlotIDForUser(before, user.Account.ID)
-		networkRegistry.removeMember(partyID, user.Account.ID)
-		if len(partySnapshot.Members) == 0 {
-			networkRegistry.removeParty(partyID)
-		}
-		removedFields := []tdf.Field{
-			tdf.FieldNamed("MLST", tdf.ListValue(tdf.Integer, tdf.IntegerValue(removedSlotID))),
-			tdf.FieldNamed("PGID", tdf.IntegerValue(uint64(partyID))),
-			tdf.FieldNamed("REAS", tdf.IntegerValue(0)),
-		}
-		if request.Session != nil && request.Session.server != nil &&
-			request.Session.server.logger != nil {
-			request.Session.server.logger.Printf(
-				"playgroup_leave_projection party_id=%d member_id=%d slot_id=%d recipients=%d",
-				partyID, user.Account.ID, removedSlotID, len(before.Members),
-			)
-		}
-		for _, member := range before.Members {
-			err = request.QueueUserNotification(member.ID, PlaygroupsComponentID, 0x35, removedFields)
-			if err != nil {
-				return nil, fmt.Errorf("playgroupLeaveNotify[%d]: %w", member.JoinOrdinal, err)
-			}
-		}
-		if partySnapshot.LeaderID != 0 && partySnapshot.LeaderID != before.LeaderID {
-			leaderFields := []tdf.Field{
-				tdf.FieldNamed("HSID", tdf.IntegerValue(playgroupLeaderSlotID(partySnapshot))),
-				tdf.FieldNamed("LID", tdf.IntegerValue(uint64(partySnapshot.LeaderID))),
-				tdf.FieldNamed("PGID", tdf.IntegerValue(uint64(partyID))),
-			}
-			for _, member := range partySnapshot.Members {
-				err = request.QueueUserNotification(member.ID, PlaygroupsComponentID, 0x4f, leaderFields)
-				if err != nil {
-					return nil, fmt.Errorf("playgroupLeaderNotify[%d]: %w", member.JoinOrdinal, err)
-				}
-			}
-		}
-		return &Response{}, nil
+		return completePlaygroupLeave(
+			ctx, request, partyService, networkRegistry, before, user.Account.ID,
+		)
 	}
+}
+
+func completePlaygroupLeave(
+	ctx context.Context, request *Request, partyService *party.Service,
+	networkRegistry *playgroupNetworkRegistry, before party.Snapshot, userID int64,
+) (*Response, error) {
+	partyID := before.ID
+	partySnapshot, err := partyService.Leave(ctx, party.MemberRequest{PartyID: partyID, ActorID: userID})
+	if errors.Is(err, party.ErrPartyMissing) || errors.Is(err, party.ErrMemberMissing) {
+		return &Response{ErrorCode: 0x0006}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("playgroupLeave: %w", err)
+	}
+	removedSlotID := playgroupMemberSlotIDForUser(before, userID)
+	networkRegistry.removeMember(partyID, userID)
+	if len(partySnapshot.Members) == 0 {
+		networkRegistry.removeParty(partyID)
+	}
+	removedFields := []tdf.Field{
+		tdf.FieldNamed("MLST", tdf.ListValue(tdf.Integer, tdf.IntegerValue(removedSlotID))),
+		tdf.FieldNamed("PGID", tdf.IntegerValue(uint64(partyID))),
+		tdf.FieldNamed("REAS", tdf.IntegerValue(0)),
+	}
+	if request.Session != nil && request.Session.server != nil &&
+		request.Session.server.logger != nil {
+		request.Session.server.logger.Printf(
+			"playgroup_leave_projection party_id=%d member_id=%d slot_id=%d recipients=%d",
+			partyID, userID, removedSlotID, len(before.Members),
+		)
+	}
+	for _, member := range before.Members {
+		err = request.QueueUserNotification(member.ID, PlaygroupsComponentID, 0x35, removedFields)
+		if err != nil {
+			return nil, fmt.Errorf("playgroupLeaveNotify[%d]: %w", member.JoinOrdinal, err)
+		}
+	}
+	if partySnapshot.LeaderID != 0 && partySnapshot.LeaderID != before.LeaderID {
+		leaderFields := []tdf.Field{
+			tdf.FieldNamed("HSID", tdf.IntegerValue(playgroupLeaderSlotID(partySnapshot))),
+			tdf.FieldNamed("LID", tdf.IntegerValue(uint64(partySnapshot.LeaderID))),
+			tdf.FieldNamed("PGID", tdf.IntegerValue(uint64(partyID))),
+		}
+		for _, member := range partySnapshot.Members {
+			err = request.QueueUserNotification(member.ID, PlaygroupsComponentID, 0x4f, leaderFields)
+			if err != nil {
+				return nil, fmt.Errorf("playgroupLeaderNotify[%d]: %w", member.JoinOrdinal, err)
+			}
+		}
+	}
+	return &Response{}, nil
 }
 
 func isPlaygroupMatchmaking(

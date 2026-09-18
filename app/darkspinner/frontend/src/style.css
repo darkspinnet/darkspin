@@ -1139,9 +1139,10 @@ footer {
 .report-button:hover:not(:disabled) { border-color: rgba(151, 224, 238, .65); color: #d2f7fc; }
 .report-button:disabled { opacity: .5; }
 
-.report-composer { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); text-align: left; }
+.report-composer { display: grid; grid-template-rows: auto auto auto auto minmax(0, 1fr); text-align: left; }
 .report-composer-header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .report-manage-link { color: #9bcbd5; font-size: 8px; letter-spacing: .06em; text-decoration: underline; }
+.report-open-folder { padding: 0; border: 0; background: none; font-family: inherit; cursor: pointer; }
 .report-manage-link:hover { color: #e7fbff; }
 .report-manage-link:focus-visible { outline: 1px solid #9bcbd5; outline-offset: 4px; }
 .report-composer h2,

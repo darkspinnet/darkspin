@@ -87,26 +87,25 @@ var tutorialPlayerSpawnPosition = raknet.Vector3{
 
 func campaignEntryPosition(director game.CampaignDirector, playerSlot uint16) raknet.Vector3 {
 	if strings.EqualFold(director.Level, "zelems_1") {
-		position := initialChainSpawnPosition
-		switch playerSlot {
-		case 1:
-			position.X += 3
-		case 2:
-			position.Y += 3
-		case 3:
-			position.X -= 3
-		}
-		return position
+		return campaignEntryOffset(initialChainSpawnPosition, playerSlot)
 	}
 	index := int(playerSlot)
-	if index < 0 || index >= len(director.EntryPositions) {
-		return initialChainSpawnPosition
+	if index < len(director.EntryPositions) {
+		position := director.EntryPositions[index]
+		if isFiniteCampaignPopulationPosition(position) {
+			return raknet.Vector3{X: position.X, Y: position.Y, Z: position.Z}
+		}
 	}
-	position := director.EntryPositions[index]
-	if !isFiniteCampaignPopulationPosition(position) {
-		return initialChainSpawnPosition
+	// Some maps only provide one entry marker. Keep the party at that map's
+	// entrance instead of sending missing slots to another map's fallback.
+	for _, position := range director.EntryPositions {
+		if isFiniteCampaignPopulationPosition(position) {
+			return campaignEntryOffset(raknet.Vector3{
+				X: position.X, Y: position.Y, Z: position.Z,
+			}, playerSlot)
+		}
 	}
-	return raknet.Vector3{X: position.X, Y: position.Y, Z: position.Z}
+	return campaignEntryOffset(initialChainSpawnPosition, playerSlot)
 }
 
 func normalizeCampaignPickupCommand(command raknet.ActionCommandData) (raknet.ActionCommandData, bool) {
@@ -831,6 +830,24 @@ func (r gameplayCrystalRuntime) acceptedResult(
 	if err != nil {
 		return nil, fmt.Errorf("crystalAcceptedResult: %w", err)
 	}
+	// Teammates track this player's catalyst records too. The drag response
+	// itself is local, but inventory and link updates include the player slot.
+	r.registry.mutex.Lock()
+	for candidateKey, candidate := range r.registry.sessions {
+		if candidate.zone != peerSession.zone ||
+			candidate.binding.UserID == peerSession.binding.UserID {
+			continue
+		}
+		publishErr := candidate.publishPackets(statePackets)
+		if publishErr != nil && r.logger != nil {
+			r.logger.Printf(
+				"RakNet catalyst state peer delivery queued game=%d user=%d: %v",
+				candidate.binding.GameID, candidate.binding.UserID, publishErr,
+			)
+		}
+		r.registry.sessions[candidateKey] = candidate
+	}
+	r.registry.mutex.Unlock()
 	// A drag response changes the HUD, but does not refresh the player-owned
 	// crystal records used by subsequent tooltips and drag admission.
 	return append(resultPackets, statePackets...), nil
@@ -1464,12 +1481,12 @@ func marshalCampaignDungeonSetup(
 }
 
 func marshalCampaignInitialPlayer(binding game.GameplayBinding, status raknet.PlayerStatus) ([]byte, error) {
-	return marshalCampaignPlayer(binding, status, true)
+	return marshalCampaignPlayer(binding, status, true, false)
 }
 
 func marshalCampaignPlayer(
 	binding game.GameplayBinding, status raknet.PlayerStatus,
-	isResourceFallbackAllowed bool,
+	isResourceFallbackAllowed, isStatusPreserved bool,
 ) ([]byte, error) {
 	creatures := binding.Creatures
 	if creatures[0].Noun == 0 {
@@ -1485,13 +1502,14 @@ func marshalCampaignPlayer(
 		ChainProgression: binding.ChainProgression, DNA: binding.DNA,
 		Slot: uint8(binding.Slot), Team: uint8(binding.Team),
 		Status: status.Status, Progress: status.Progress,
-		IsInitial: true, ControlledObjectID: zonehero.ObjectID(binding.Slot, 0),
+		IsStatusPreserved: isStatusPreserved,
+		IsInitial:         true, ControlledObjectID: zonehero.ObjectID(binding.Slot, 0),
 		HeroNoun: creatures[0].Noun, HeroAsset: zonehero.AppearanceAsset(creatures[0]),
-		HeroVersion: int32(creatures[0].Version), HeroType: 2,
+		HeroVersion: int32(max(uint32(1), creatures[0].AppearanceVersion)), HeroType: 2,
 		SecondHeroNoun: creatures[1].Noun, SecondHeroAsset: zonehero.AppearanceAsset(creatures[1]),
-		SecondHeroVersion: int32(creatures[1].Version), SecondHeroType: 2,
+		SecondHeroVersion: int32(max(uint32(1), creatures[1].AppearanceVersion)), SecondHeroType: 2,
 		ThirdHeroNoun: creatures[2].Noun, ThirdHeroAsset: zonehero.AppearanceAsset(creatures[2]),
-		ThirdHeroVersion: int32(creatures[2].Version), ThirdHeroType: 2,
+		ThirdHeroVersion: int32(max(uint32(1), creatures[2].AppearanceVersion)), ThirdHeroType: 2,
 		AbilityCount:        zoneunlock.InitialAbilityCount(binding),
 		LockedDeckMinimum:   zonehero.CreatureCount(binding),
 		EnergyPoint:         campaignInitialOverdriveEnergy(binding),
@@ -1527,7 +1545,7 @@ func marshalZoneHeroRoster(
 		DNA:                 roster.Roster.DNA, Creatures: roster.Roster.Creatures,
 	}
 	statusPacket, err := marshalCampaignPlayer(
-		binding, raknet.PlayerStatus{Status: 2, Progress: 1}, false,
+		binding, raknet.PlayerStatus{}, false, true,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("rosterStatus: %w", err)
@@ -1600,7 +1618,7 @@ func marshalOtherZoneHeroRosters(
 	}
 	packets := make([][]byte, 0)
 	for index, member := range campaignZone.Snapshot().Members {
-		if member.UserID == userID {
+		if member.UserID == userID || !member.IsConnected {
 			continue
 		}
 		actor, isFound := campaignZone.Hero().Snapshot(
@@ -3459,7 +3477,8 @@ func (r gameplayProjectionRuntime) drain(
 	if !isFound || peerSession.zone == nil {
 		return nil, nil
 	}
-	if peerSession.isRejoinPending {
+	if peerSession.isRejoinPending || !peerSession.dungeonSetup.IsCommitted() ||
+		len(peerSession.pendingPacketBatches) != 0 {
 		return nil, nil
 	}
 	if peerSession.zone.IsProjectionBaselineRequired(
@@ -3487,33 +3506,9 @@ func (r gameplayProjectionRuntime) drain(
 		}
 		return packets, nil
 	}
-	event := peerSession.zone.PeekProjection(
-		peerSession.binding.UserID, peerSession.generation,
-	)
-	packets := make([][]byte, 0, len(event))
-	for index, current := range event {
-		encoded, err := marshalCampaignProjection(current)
-		if err != nil {
-			if r.logger != nil {
-				r.logger.Printf(
-					"RakNet projection event discarded remote=%s index=%d sequence=%d: %v",
-					sessionKey, index, current.Sequence, err,
-				)
-			}
-			continue
-		}
-		packets = append(packets, encoded...)
-	}
-	if len(event) != 0 {
-		sequence := event[len(event)-1].Sequence
-		err := request.AfterResponseCommit(func() {
-			r.commitProjectionDelivery(
-				sessionKey, peerSession, sequence, false,
-			)
-		})
-		if err != nil {
-			return nil, fmt.Errorf("projectionCommit: %w", err)
-		}
+	packets, err := r.drainQueuedProjection(request, sessionKey)
+	if err != nil {
+		return nil, fmt.Errorf("projectionDrain: %w", err)
 	}
 	return packets, nil
 }
@@ -3649,6 +3644,18 @@ func marshalCampaignProjection(event zoneprojection.Event) ([][]byte, error) {
 			packet = append(packet, activePacket)
 		}
 		return packet, nil
+	case zoneprojection.EventNPCTarget:
+		packets, err := npcraknet.TargetUpdates([]zonenpc.Snapshot{event.NPCTarget})
+		if err != nil {
+			return nil, fmt.Errorf("npcTarget: %w", err)
+		}
+		return packets, nil
+	case zoneprojection.EventNPCSnapshot:
+		packets, err := marshalCampaignNPCSnapshot(event.NPCSnapshot)
+		if err != nil {
+			return nil, fmt.Errorf("npcSnapshot: %w", err)
+		}
+		return packets, nil
 	case zoneprojection.EventNPCAction:
 		action := event.Action
 		switch action.Kind {
@@ -4363,6 +4370,9 @@ func (e campaignPopulationRuntime) activateOpening(
 		err = errors.New("opening setup commit stale")
 	}
 	if err == nil {
+		peerSession.zone.PublishNPCTargets(
+			transition.Acquired, peerSession.binding.UserID, generation,
+		)
 		e.registry.sessions[sessionKey] = peerSession
 	}
 	e.registry.mutex.Unlock()
@@ -4380,6 +4390,10 @@ func (e campaignPopulationRuntime) activateOpening(
 		return result, fmt.Errorf("openingFirstAction: %w", err)
 	}
 	result.packets = append(result.packets, firstActionPackets...)
+	err = publishCampaignPeersAfterCommit(e.registry, packet, firstActionPackets)
+	if err != nil {
+		return result, fmt.Errorf("openingNPCPresentation: %w", err)
+	}
 	for _, decision := range result.decisions {
 		spawnCount := max(
 			decision.ProvisionalCount, int(decision.Wanderer.ClumpSize),
@@ -4522,6 +4536,11 @@ func (r gameplaySetupRuntime) publishCampaign(
 	isCurrent := isFound && currentSession.generation == peerSession.generation &&
 		currentSession.dungeonSetup.IsReserved(setupEpoch)
 	if isCurrent {
+		// Peers can queue scene updates while this setup prepares its local
+		// copy. Preserve that delivery queue when publishing the hero state.
+		peerSession.pendingPacketBatches = currentSession.pendingPacketBatches
+		peerSession.nextPendingPacketID = currentSession.nextPendingPacketID
+		peerSession.isPendingPacketOverflow = currentSession.isPendingPacketOverflow
 		err = peerSession.syncZoneHero()
 		if err == nil {
 			r.registry.sessions[packet.Address.String()] = peerSession
@@ -4720,18 +4739,13 @@ func (r gameplaySetupRuntime) publishCampaign(
 				peerSession.binding.UserID, rosterErr,
 			)
 		} else {
-			recipients := r.registry.queuePeerPresentation(
-				gameplayProducerIdentityFromSession(
-					packet.Address.String(), peerSession, true,
-				),
-				rosterPackets,
-			)
-			r.logger.Printf(
-				"RakNet co-op hero roster fanned out game=%d user=%d slot=%d position=(%.3f,%.3f,%.3f) peers=%d",
-				peerSession.binding.GameID, peerSession.binding.UserID,
-				peerSession.binding.Slot, heroActor.Position.X,
-				heroActor.Position.Y, heroActor.Position.Z, recipients,
-			)
+			// Match the owner's arrival exactly: create/deploy before the same
+			// beam position, effect and animation, after its setup is delivered.
+			rosterPackets = append(rosterPackets, beamPackets...)
+			publishErr := publishCampaignPeersAfterCommit(r.registry, packet, rosterPackets)
+			if publishErr != nil {
+				return nil, false, fmt.Errorf("pingCampaignPeerArrival: %w", publishErr)
+			}
 		}
 	} else {
 		r.logger.Printf(
@@ -4741,6 +4755,10 @@ func (r gameplaySetupRuntime) publishCampaign(
 	}
 	if isHeroCheckpointFound {
 		peerSession.zone.ConsumeRestoredHero(peerSession.binding.UserID)
+	}
+	err = packet.AfterResponseCommit(peerSession.zone.SaveDeploymentCheckpoint)
+	if err != nil {
+		return nil, false, fmt.Errorf("deploymentCheckpointCommit: %w", err)
 	}
 	return response, true, nil
 }

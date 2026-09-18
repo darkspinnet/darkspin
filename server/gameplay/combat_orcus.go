@@ -256,7 +256,7 @@ func (r campaignNPCActionRuntime) produceOrcusSpawn(
 	state.nextSpawnTimestamp = timestamp + uint64(definition.Cooldown/time.Millisecond)
 	peerSession.campaignNPCOrcusStates[objectID] = state
 	r.registry.sessions[sessionKey] = peerSession
-	cancel, err := packet.ScheduleProducers(steps)
+	cancel, err := scheduleNPCProducers(r.registry, packet, steps)
 	if err == nil && cancel == nil {
 		err = errors.New("nil cancellation")
 	}
@@ -477,7 +477,7 @@ func (r campaignNPCActionRuntime) startOrcusAbility(
 	producers = append(producers, raknet.ScheduledPacketProducer{
 		Delay: plan.Profile.ReleaseDelay, Produce: schedule.next,
 	})
-	cancel, err := request.packet.ScheduleProducers(producers)
+	cancel, err := scheduleNPCProducers(r.registry, request.packet, producers)
 	if err == nil && cancel == nil {
 		err = errors.New("nil cancellation")
 	}

@@ -1534,9 +1534,10 @@ async function copyLauncherFailure() {
     <section v-if="isReportComposerOpen" class="fullscreen-notice" role="dialog" aria-modal="true" aria-labelledby="report-composer-title" @click.self="closeReportComposer">
       <article class="notice-card report-composer">
         <div class="report-composer-header">
-          <p class="eyebrow">LOCAL DIAGNOSTIC REPORT</p>
+          <button class="report-manage-link report-open-folder" type="button" @click="openReportFolder">OPEN BUG FOLDER ↗</button>
           <a class="report-manage-link" :href="myReportsURL" @click.prevent="openMyReports">MANAGE MY REPORTS ↗</a>
         </div>
+        <p class="eyebrow">LOCAL DIAGNOSTIC REPORT</p>
         <h2 id="report-composer-title">WHAT HAPPENED?</h2>
         <p>Give the report a short title, then describe exactly what you were doing, what you expected, and what happened instead. More detail makes the captured logs easier to understand.</p>
         <form class="report-form" @submit.prevent="sendReport">

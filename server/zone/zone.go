@@ -455,6 +455,11 @@ func (e *Zone) Join(member Member) error {
 		})
 	}
 	e.members[member.UserID] = member
+	if !isFound && e.isPopulationPrimed && !e.isRestored {
+		e.projection.SeedNPCs(zoneprojection.Subscriber{
+			UserID: member.UserID, PeerGeneration: member.PeerGeneration,
+		}, e.info.NPCs.Snapshots())
+	}
 	if _, isFound := e.crystals[member.UserID]; !isFound {
 		e.crystals[member.UserID] = sim.CrystalInventory{}
 	}
@@ -538,6 +543,18 @@ func (e *Zone) Disconnect(
 	}
 	member.IsConnected = false
 	e.members[userID] = member
+	removedObjectIDs := make([]uint32, 0, squad.Size)
+	for creatureIndex := uint32(0); creatureIndex < squad.Size; creatureIndex++ {
+		removedObjectIDs = append(removedObjectIDs, zonehero.ObjectID(member.Slot, creatureIndex))
+	}
+	for _, companion := range e.info.Companion.Snapshots() {
+		if companion.UserID == userID && companion.PeerGeneration == peerGeneration {
+			removedObjectIDs = append(removedObjectIDs, companion.ObjectID)
+		}
+	}
+	// Retain semantic state for rejoin, but remove disconnected actors from
+	// teammates' live scenes immediately.
+	e.projection.PublishHeroLeave(zoneprojection.HeroLeave{ObjectIDs: removedObjectIDs})
 	released := e.info.NPCs.ReleaseActions(zonenpc.ActionOwner{
 		UserID: userID, PeerGeneration: peerGeneration,
 	})
@@ -604,6 +621,12 @@ func (e *Zone) CommitReconnect(
 	}
 	member.IsConnected = true
 	e.members[userID] = member
+	if actor, isFound := e.info.Hero.Snapshot(userID, peerGeneration); isFound {
+		e.projection.PublishHeroRoster(zoneprojection.HeroRoster{
+			UserID: userID, PlayerSlot: member.Slot,
+			Roster: member.Roster, Position: actor.Position, CreatureIndex: actor.CreatureIndex,
+		}, zoneprojection.Subscriber{UserID: userID, PeerGeneration: peerGeneration})
+	}
 	e.mu.Unlock()
 	return nil
 }
@@ -2935,6 +2958,17 @@ func (e *Zone) PublishNPCSpawn(
 		UserID: sourceUserID, PeerGeneration: sourceGeneration,
 	})
 	return nil
+}
+
+func (e *Zone) PublishNPCTargets(
+	snapshots []zonenpc.Snapshot, userID uint64, generation uint64,
+) {
+	if e == nil || e.projection == nil {
+		return
+	}
+	e.projection.PublishNPCTargets(snapshots, zoneprojection.Subscriber{
+		UserID: userID, PeerGeneration: generation,
+	})
 }
 
 func (e *Zone) PublishNPCAction(

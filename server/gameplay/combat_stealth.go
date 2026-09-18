@@ -165,7 +165,7 @@ func (e *campaignStealtherSchedule) beginTravelStealth(profile zonenpc.ActionPro
 		e.rollbackStealth(modifier)
 		return nil, fmt.Errorf("travelCreate: %w", err)
 	}
-	cancel, err := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: profile.Cooldown, Produce: e.expireTravelStealth,
 	}})
 	if err != nil || cancel == nil {
@@ -264,7 +264,7 @@ func (e campaignStealtherSchedule) cast(timestamp uint64) ([][]byte, error) {
 	e.plan = plan
 	e.modifier = modifier
 	e.timestamp = timestamp
-	cancel, scheduleErr := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: profile.HitDelay, Produce: e.hit,
 	}, {
 		Delay: profile.ReleaseDelay, Produce: e.resetAnimation,
@@ -391,7 +391,7 @@ func (e campaignStealtherSchedule) hit() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("enemyFearAnimation: %w", err)
 	}
-	cancel, scheduleErr := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: stealtherFearHitDelay, Produce: e.fear,
 	}})
 	if scheduleErr == nil && cancel == nil {
@@ -461,7 +461,7 @@ func (e campaignStealtherSchedule) scheduleNext(timestamp uint64) {
 		actionGeneration: e.plan.ActionGeneration,
 		timestamp:        timestamp + uint64(delay/time.Millisecond),
 	}
-	cancel, err := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: delay, Produce: next.produce,
 	}})
 	if err == nil && cancel == nil {
@@ -600,7 +600,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCFear(
 		runtime: r, sessionKey: sessionKey, generation: generation,
 		revision: revision, run: run,
 	}
-	cancel, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: profile.ModifierDuration, Produce: expiry.produce,
 	}})
 	if scheduleErr == nil && cancel == nil {

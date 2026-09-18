@@ -133,7 +133,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 		runtime: r, sessionKey: sessionKey, generation: generation,
 		targetObjectID: plan.TargetObjectID, run: run,
 	}
-	cancel, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: profile.ModifierDuration, Produce: expiry.produce,
 	}})
 	if scheduleErr == nil && cancel == nil {
