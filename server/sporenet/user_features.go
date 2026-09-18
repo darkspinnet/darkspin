@@ -189,14 +189,16 @@ type DeckUpdate struct {
 
 // CreatureUpdate is the application command decoded from api.creature.updateCreature.
 type CreatureUpdate struct {
-	CreatureID     uint32
-	GearScore      float32
-	ItemPoints     float32
-	Stats          string
-	AbilityStats   string
-	EquippedPartID []uint64
-	LargeImageURL  string
-	ThumbImageURL  string
+	CreatureID      uint32
+	PreviousVersion uint32
+	SavedVersion    uint32
+	GearScore       float32
+	ItemPoints      float32
+	Stats           string
+	AbilityStats    string
+	EquippedPartID  []uint64
+	LargeImageURL   string
+	ThumbImageURL   string
 }
 
 // UpdateCreature durably applies one editor save, including its authoritative equipped-part set.
@@ -222,6 +224,11 @@ func (m *UserManager) UpdateCreature(ctx context.Context, user *User, command Cr
 	if creature == nil {
 		user.mu.Unlock()
 		return nil, ErrCreatureNotFound
+	}
+	if command.SavedVersion != 0 && (command.PreviousVersion != creature.Version ||
+		command.SavedVersion <= creature.Version || command.SavedVersion > 0x7fffffff) {
+		user.mu.Unlock()
+		return nil, errors.New("creature revision changed or invalid")
 	}
 	selected := make(map[uint64]struct{}, len(command.EquippedPartID))
 	for _, itemID := range command.EquippedPartID {
@@ -277,6 +284,9 @@ func (m *UserManager) UpdateCreature(ctx context.Context, user *User, command Cr
 	}
 	creature.Update(gearScore, itemPoints, command.Stats, command.AbilityStats)
 	creature.Version++
+	if command.SavedVersion != 0 {
+		creature.Version = command.SavedVersion
+	}
 	if command.LargeImageURL != "" {
 		creature.LargeImageURL = command.LargeImageURL
 	}

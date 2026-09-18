@@ -2,6 +2,11 @@
 
 ### 2026-09-18
 
+- Use available saved appearance revisions in Arsenal account, deck and hero responses so legacy saves do not request nonexistent image revisions; use noun templates when the saved appearance is missing.
+- Synchronize enemy pull and knockback endpoints with the client physics mover, cancel stale melee pursuit, and refresh current health and power after the forced reaction.
+- Play a death animation for killed Dendrones before removing their corpses, while preserving their existing respawn delay.
+- Keep editor image filenames, saved hero revisions and save responses synchronized, reserve revisions across accounts to prevent appearance overwrites, and log rejected saves.
+- Restore Wraith's Pummel impact event when recovering its melee definition so accepted hits include the authored visual and sound effects.
 - Create a safe mission checkpoint after deployment so Continue is available before the first defeated enemy group or pickup, including newly initialized co-op members.
 - Seed players joining an already-populated co-op zone with existing NPC positions, facing, resources and targets, instead of sending only later updates for enemies they never received.
 - Honor party leave requests followed by trailing shutdown RPCs, remove disconnected heroes and companions from teammates' scenes immediately, and restore them on successful reconnect.

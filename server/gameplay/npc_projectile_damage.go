@@ -11,7 +11,6 @@ import (
 	"github.com/darkspinnet/darkspin/server/sporenet"
 	zone "github.com/darkspinnet/darkspin/server/zone"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
-	companionraknet "github.com/darkspinnet/darkspin/server/zone/companion/raknet103"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
@@ -292,13 +291,13 @@ func (r campaignNPCActionRuntime) applyEnemyProjectileDamage(
 	hitPackets = append(hitPackets, energyVulnerabilityPackets...)
 	if !damage.IsHero {
 		if damage.IsDefeated {
-			deletePacket, deleteErr := companionraknet.Defeat(
-				plan.TargetObjectID,
+			deathPackets, deathErr := r.companionDefeat(
+				peerSession, plan.TargetObjectID, timestamp,
 			)
-			if deleteErr != nil {
-				return nil, sporenet.PlayerStatDelta{}, false, deleteErr
+			if deathErr != nil {
+				return nil, sporenet.PlayerStatDelta{}, false, fmt.Errorf("companionDeath: %w", deathErr)
 			}
-			hitPackets = append(hitPackets, deletePacket)
+			hitPackets = append(hitPackets, deathPackets...)
 		}
 		teleportPackets, teleportErr := r.applyEnemyProjectileTeleport(
 			peerSession, plan, target, damage.HitPoint, timestamp,

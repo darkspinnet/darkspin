@@ -289,7 +289,7 @@ func (a *API) game(writer http.ResponseWriter, request *http.Request, uri *recap
 		}
 		writeXML(writer, http.StatusOK, xmlResponse(isSuccess))
 	case "api.creature.getCreature":
-		a.creatureResponse(writer, user, values)
+		a.creatureResponse(request.Context(), writer, user, values)
 	case "api.creature.getTemplate":
 		a.templateResponse(writer, values.Get("id"))
 	case "api.creature.unlockCreature":
@@ -535,7 +535,34 @@ func (a *API) updateCreature(writer http.ResponseWriter, request *http.Request, 
 		return
 	}
 	creatureID := parseUint32(values.Get("id"))
-	version := parseUint32(values.Get("version")) + 1
+	var savedCreature *sporenet.Creature
+	for _, creature := range user.View().Creatures {
+		if creature != nil && creature.ID == creatureID {
+			savedCreature = creature
+			break
+		}
+	}
+	if savedCreature == nil {
+		writeXML(writer, http.StatusOK, xmlResponse(false))
+		return
+	}
+	// A new native revision must have both images; otherwise it would publish
+	// a revision whose reconstructed filename cannot load the saved creature.
+	if values.Get("large") == "" || values.Get("thumb") == "" {
+		if a.logger != nil {
+			a.logger.Printf("creature_update missing image account=%q creature_id=%d", userLoginName(user), creatureID)
+		}
+		writeXML(writer, http.StatusOK, xmlResponse(false))
+		return
+	}
+	version, err := a.reserveCreatureVersion(creatureID, savedCreature.Version)
+	if err != nil {
+		if a.logger != nil {
+			a.logger.Printf("creature_update reserve account=%q creature_id=%d error=%q", userLoginName(user), creatureID, err)
+		}
+		writeXML(writer, http.StatusOK, xmlResponse(false))
+		return
+	}
 	partID := parseUint64List(values.Get("parts"))
 	if a.logger != nil {
 		a.logger.Printf(
@@ -546,11 +573,17 @@ func (a *API) updateCreature(writer http.ResponseWriter, request *http.Request, 
 	}
 	largeURL, err := a.storeCreatureImage(creatureID, version, "large", values.Get("large"), values.Get("large_crc"))
 	if err != nil {
+		if a.logger != nil {
+			a.logger.Printf("creature_update large image account=%q creature_id=%d error=%q", userLoginName(user), creatureID, err)
+		}
 		writeXML(writer, http.StatusOK, xmlResponse(false))
 		return
 	}
 	thumbURL, err := a.storeCreatureImage(creatureID, version, "thumb", values.Get("thumb"), values.Get("thumb_crc"))
 	if err != nil {
+		if a.logger != nil {
+			a.logger.Printf("creature_update thumb image account=%q creature_id=%d error=%q", userLoginName(user), creatureID, err)
+		}
 		writeXML(writer, http.StatusOK, xmlResponse(false))
 		return
 	}
@@ -572,10 +605,14 @@ func (a *API) updateCreature(writer http.ResponseWriter, request *http.Request, 
 	}
 	creature, err := a.userManager.UpdateCreature(request.Context(), user, sporenet.CreatureUpdate{
 		CreatureID: creatureID, GearScore: float32(gearScore), ItemPoints: float32(itemPoints),
+		PreviousVersion: savedCreature.Version, SavedVersion: version,
 		Stats: values.Get("stats"), AbilityStats: values.Get("stats_ability_keyvalues"), EquippedPartID: partID,
 		LargeImageURL: largeURL, ThumbImageURL: thumbURL,
 	})
 	if err != nil {
+		if a.logger != nil {
+			a.logger.Printf("creature_update rejected account=%q creature_id=%d error=%q", userLoginName(user), creatureID, err)
+		}
 		writeXML(writer, http.StatusOK, xmlResponse(false))
 		return
 	}
@@ -596,10 +633,19 @@ func (a *API) storeCreatureImage(creatureID, version uint32, kind, encoded, rawC
 	if err != nil {
 		return "", fmt.Errorf("imageDirectory: %w", err)
 	}
+	// Native clients construct this exact filename from creature ID and revision.
 	name := fmt.Sprintf("%d_%d_%s.png", creatureID, version, kind)
-	err = os.WriteFile(filepath.Join(directory, name), contents, 0o600)
+	imageWriter, err := os.OpenFile(filepath.Join(directory, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("imageCreate: %w", err)
+	}
+	_, err = imageWriter.Write(contents)
+	closeErr := imageWriter.Close()
 	if err != nil {
 		return "", fmt.Errorf("imageWrite: %w", err)
+	}
+	if closeErr != nil {
+		return "", fmt.Errorf("imageClose: %w", closeErr)
 	}
 	return fmt.Sprintf("http://%s:%d/creature_png/%s", a.host, a.httpPort, name), nil
 }
@@ -674,6 +720,21 @@ func (a *API) accountProfileViewResponse(
 		http.SetCookie(writer, &http.Cookie{Name: "token", Value: view.AuthToken, Path: "/", HttpOnly: true, Secure: true})
 	}
 	accountNode := a.accountNode(user, view, isPublic)
+	if values.Get("include_creatures") == "true" || values.Get("include_decks") == "true" {
+		creatures := make([]*sporenet.Creature, len(view.Creatures))
+		for index, creature := range view.Creatures {
+			presentation, err := a.appearanceCreature(ctx, creature)
+			if err != nil {
+				if a.logger != nil {
+					a.logger.Printf("account appearance failed: %v", err)
+				}
+				writeXML(writer, http.StatusInternalServerError, xmlResponse(false))
+				return
+			}
+			creatures[index] = presentation
+		}
+		view.Creatures = creatures
+	}
 	nodes := []string{xmlText("timestamp", strconv.FormatInt(time.Now().UnixMilli(), 10)), accountNode}
 	if !isPublic && queryBool(values, "include_settings", "includeSettings") {
 		settings := make([]string, 0)
@@ -952,7 +1013,7 @@ func (a *API) partOffers(writer http.ResponseWriter) {
 	writeXML(writer, http.StatusOK, xmlResponse(true, xmlNode("parts")))
 }
 
-func (a *API) creatureResponse(writer http.ResponseWriter, user *sporenet.User, values interface{ Get(string) string }) {
+func (a *API) creatureResponse(ctx context.Context, writer http.ResponseWriter, user *sporenet.User, values interface{ Get(string) string }) {
 	id, err := strconv.ParseUint(values.Get("id"), 10, 32)
 	if err != nil || user == nil {
 		writeXML(writer, http.StatusOK, xmlResponse(false))
@@ -968,6 +1029,14 @@ func (a *API) creatureResponse(writer http.ResponseWriter, user *sporenet.User, 
 	}
 	if creature == nil {
 		writeXML(writer, http.StatusOK, xmlResponse(false))
+		return
+	}
+	creature, err = a.appearanceCreature(ctx, creature)
+	if err != nil {
+		if a.logger != nil {
+			a.logger.Printf("creature appearance failed: %v", err)
+		}
+		writeXML(writer, http.StatusInternalServerError, xmlResponse(false))
 		return
 	}
 	equippedPart := make([]sporenet.Part, 0)

@@ -7806,13 +7806,13 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 				return append(hitPackets, trapPackets...),
 					sporenet.PlayerStatDelta{}, true, nil
 			}
-			deletePacket, deleteErr := companionraknet.Defeat(
-				plan.TargetObjectID,
+			deathPackets, deathErr := r.companionDefeat(
+				peerSession, plan.TargetObjectID, timestamp,
 			)
-			if deleteErr != nil {
-				return nil, sporenet.PlayerStatDelta{}, false, deleteErr
+			if deathErr != nil {
+				return nil, sporenet.PlayerStatDelta{}, false, fmt.Errorf("companionDeath: %w", deathErr)
 			}
-			hitPackets = append(hitPackets, deletePacket)
+			hitPackets = append(hitPackets, deathPackets...)
 		}
 		return hitPackets, sporenet.PlayerStatDelta{}, true, nil
 	}
@@ -8299,6 +8299,19 @@ func (r campaignNPCActionRuntime) applyEnemyForcedMovement(
 		},
 		peerSession.binding.UserID, peerSession.generation,
 	)
+	targetSession.playerMovementGoal = targetSession.playerPosition
+	interruptedBasic := targetSession.interruptBasicForMovement()
+	if interruptedBasic != nil {
+		interruptedBasic.Stop()
+	}
+	resourcePackets, resourceErr := targetSession.forcedMovementResources()
+	if resourceErr != nil {
+		return nil, fmt.Errorf("forcedResources: %w", resourceErr)
+	}
+	packets = append(packets, resourcePackets...)
+	if targetSession != peerSession {
+		r.registry.sessions[targetSessionKey] = *targetSession
+	}
 	return packets, nil
 }
 

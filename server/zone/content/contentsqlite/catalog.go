@@ -1769,6 +1769,12 @@ func loadPlayerBasicAbilities(
 		// a point-blank special and disables index-zero attacks at runtime.
 		if definition.Name == "Pummel" {
 			definition.Kind = sim.AbilityKindMelee
+			// The point-blank classification can also return before recovering
+			// Pummel's authored hitEffect preload. Restore its impact event so
+			// accepted hits produce the packaged visual and audio presentation.
+			if definition.HitEffectName == "" {
+				definition.HitEffectName = "necro_common_hit_large_player.ServerEventDef"
+			}
 		}
 		// EnergySentinelBasic is Goliath's authored sword melee basic. Some
 		// indexed Lua variants omit its inherited melee discriminator from the
