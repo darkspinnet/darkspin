@@ -540,6 +540,7 @@ static DWORD WINAPI watch_snapshot_control(LPVOID parameter) {
                         WaitForSingleObject(snapshot_keyframe_event, 250);
                         InterlockedExchange(&snapshot_keyframe_pending, 0);
                     }
+                    fang_trace_arsenal_snapshot(executable_module);
                     snapshot_ring_marker(
                         "snapshot_boundary", request, server_time_unix_nano,
                         buffer_ms);

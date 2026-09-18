@@ -202,3 +202,30 @@ jobs:
           path: bin/darkrunci/${{ matrix.platform }}-amd64/darkrun-${{ matrix.platform }}-amd64-v*.zip
           if-no-files-found: error
           retention-days: 14
+
+  notify:
+    name: Notify Discord
+    needs: [version, build, darkrun]
+    if: success()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Notify Discord
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_UNSTABLE_WEBHOOK }}
+          BUILD_VERSION: ${{ needs.version.outputs.version }}
+        shell: bash
+        run: |
+          if [[ -z "${DISCORD_WEBHOOK}" ]]; then
+            echo "DISCORD_WEBHOOK is not configured; skipping notification."
+            exit 0
+          fi
+          message="🌙 Darkspinner v${BUILD_VERSION} unstable build artifacts are available!"
+          message+=$'\n'
+          message+="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          payload="$(jq -n --arg content "${message}" '{content: $content, allowed_mentions: {parse: []}}')"
+          curl --fail --silent --show-error --connect-timeout 10 --max-time 30 \
+            -H "Content-Type: application/json" \
+            --data "${payload}" \
+            --output /dev/null \
+            "${DISCORD_WEBHOOK}"

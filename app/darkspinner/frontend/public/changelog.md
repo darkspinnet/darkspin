@@ -2,6 +2,7 @@
 
 ### 2026-09-18
 
+- Capture Arsenal collection counts, filters and scroll position in manual snapshots even while the gameplay clock is inactive.
 - Use available saved appearance revisions in Arsenal account, deck and hero responses so legacy saves do not request nonexistent image revisions; use noun templates when the saved appearance is missing.
 - Synchronize enemy pull and knockback endpoints with the client physics mover, cancel stale melee pursuit, and refresh current health and power after the forced reaction.
 - Play a death animation for killed Dendrones before removing their corpses, while preserving their existing respawn delay.
