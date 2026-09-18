@@ -142,7 +142,7 @@ func (e campaignCircleTargetStep) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("enemyCircleRedirect: %w", err)
 	}
-	cancel, err := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: campaignCircleTargetTick, Produce: e.next,
 	}})
 	if err == nil && cancel == nil {

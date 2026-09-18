@@ -25,6 +25,7 @@ type Reason string
 const (
 	ReasonSpawnGroupCleared Reason = "spawn-group-cleared"
 	ReasonSafePickup        Reason = "safe-pickup"
+	ReasonDeployment        Reason = "deployment"
 )
 
 type Member struct {
@@ -134,7 +135,7 @@ func Validate(
 		return errors.New("checkpoint mission mismatch")
 	}
 	if snapshot.Reason != ReasonSpawnGroupCleared &&
-		snapshot.Reason != ReasonSafePickup {
+		snapshot.Reason != ReasonSafePickup && snapshot.Reason != ReasonDeployment {
 		return fmt.Errorf("checkpointReason: %q", snapshot.Reason)
 	}
 	err := zonesecurity.ValidateSnapshot(snapshot.Security)

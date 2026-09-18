@@ -769,6 +769,10 @@ func (r campaignMovementCommandRuntime) handle(
 				return nil, fmt.Errorf("moveCampaignPopulationPublish: %w", populationErr)
 			}
 		}
+		peerSession.zone.PublishNPCTargets(
+			populationResult.Acquired,
+			peerSession.binding.UserID, commandSession.generation,
+		)
 		if len(namedBossPlans) != 0 {
 			populationErr = peerSession.zone.PublishNPCSpawn(
 				zoneprojection.NPCSpawn{
@@ -988,6 +992,10 @@ func (r campaignMovementCommandRuntime) handle(
 	)
 	if err != nil {
 		return nil, fmt.Errorf("moveCampaignNPCFirstAction: %w", err)
+	}
+	err = publishCampaignPeersAfterCommit(r.registry, packet, firstActionPackets)
+	if err != nil {
+		return nil, fmt.Errorf("moveNPCPresentation: %w", err)
 	}
 	companionAttackPackets, err := r.damage.startCompanionAttacks(
 		packet, packet.Address.String(), commandSession.generation,

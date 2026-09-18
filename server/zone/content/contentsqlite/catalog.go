@@ -1096,6 +1096,16 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		return zonecontent.Programs{}, fmt.Errorf("nonPlayerClass: %w", err)
 	}
 	nonPlayerHitPoint := make(map[uint32]float32, len(nonPlayerClasses))
+	defenseProfiles, defenseErr := store.NonPlayerNounProfiles(ctx)
+	if defenseErr != nil {
+		return zonecontent.Programs{}, fmt.Errorf("defenseProfiles: %w", defenseErr)
+	}
+	nonPlayerDefenses := make(map[uint32]game.CampaignNPCProfile, len(defenseProfiles))
+	for _, profile := range defenseProfiles {
+		nonPlayerDefenses[util.HashID(profile.NounName)] = game.CampaignNPCProfile{
+			DodgeRating: profile.DodgeRating, ResistRating: profile.ResistRating,
+		}
+	}
 	nonPlayerCritical := make(map[uint32]sim.CriticalProfile, len(nonPlayerClasses))
 	for _, class := range nonPlayerClasses {
 		nonPlayerHitPoint[class.InstanceID] = class.HitPoint
@@ -1630,6 +1640,7 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		PlayerBasicUnsupported: playerBasicUnsupported,
 		HeroKits:               heroKits,
 		NonPlayerHitPoint:      nonPlayerHitPoint,
+		NonPlayerDefenses:      nonPlayerDefenses,
 		NonPlayerCritical:      nonPlayerCritical,
 		NounPhysics:            nounPhysics,
 		NounPhysicsByID:        nounPhysicsByID,
@@ -1758,6 +1769,12 @@ func loadPlayerBasicAbilities(
 		// a point-blank special and disables index-zero attacks at runtime.
 		if definition.Name == "Pummel" {
 			definition.Kind = sim.AbilityKindMelee
+			// The point-blank classification can also return before recovering
+			// Pummel's authored hitEffect preload. Restore its impact event so
+			// accepted hits produce the packaged visual and audio presentation.
+			if definition.HitEffectName == "" {
+				definition.HitEffectName = "necro_common_hit_large_player.ServerEventDef"
+			}
 		}
 		// EnergySentinelBasic is Goliath's authored sword melee basic. Some
 		// indexed Lua variants omit its inherited melee discriminator from the

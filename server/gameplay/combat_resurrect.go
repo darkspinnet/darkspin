@@ -211,7 +211,7 @@ func (e campaignResurrectionSchedule) hit() ([][]byte, error) {
 			actionGeneration: revived.ActionGeneration,
 			timestamp:        e.timestamp + uint64(e.profile.HitDelay/time.Millisecond),
 		}
-		scheduleErr := e.packet.ScheduleFunc(0, step.produce)
+		scheduleErr := scheduleNPCProducer(e.runtime.registry, e.packet, 0, step.produce)
 		if scheduleErr != nil {
 			e.runtime.releaseAction(
 				e.sessionKey, e.generation, revived.Plan.ObjectID,
@@ -274,7 +274,7 @@ func (r campaignNPCActionRuntime) produceResurrection(
 			generation: generation, sourceObjectID: objectID,
 			timestamp: timestamp, profile: profile,
 		}
-		cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+		cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 			Delay: silenceRemaining, Produce: schedule.retry,
 		}})
 		if err == nil && cancel == nil {
@@ -339,7 +339,7 @@ func (r campaignNPCActionRuntime) produceResurrection(
 	producer = append([]raknet.ScheduledPacketProducer{{
 		Delay: profile.HitDelay, Produce: schedule.hit,
 	}}, producer...)
-	cancel, err := packet.ScheduleProducers(producer)
+	cancel, err := scheduleNPCProducers(r.registry, packet, producer)
 	if err == nil && cancel == nil {
 		err = errors.New("nil cancellation")
 	}

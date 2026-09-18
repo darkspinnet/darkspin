@@ -499,6 +499,7 @@ type gameplayPeerSession struct {
 	dungeonSetup                         zonemember.Setup
 	transportGeneration                  uint64
 	schedulePackets                      func(time.Duration, [][]byte) error
+	schedulePacket                       raknet.Packet
 	pendingPacketBatches                 []pendingPeerPacketBatch
 	nextPendingPacketID                  uint64
 	isPendingPacketOverflow              bool
@@ -572,6 +573,29 @@ func (s *gameplayPeerSession) setCrystalInventory(inventory sim.CrystalInventory
 		creature.LifeSteal += next[35] - previous[35]
 		creature.CriticalDamageIncrease += next[22] - previous[22]
 		creature.PassiveMovementIncrease += next[48] - previous[48]
+		// Apply the same inventory delta to the combat snapshots as to the
+		// raw attributes. Rebuilding the profiles would erase active buffs.
+		primaryDelta := float32(0)
+		switch creature.ClassType {
+		case "ravager":
+			primaryDelta = next[0] - previous[0]
+		case "sentinel":
+			primaryDelta = next[1] - previous[1]
+		case "tempest":
+			primaryDelta = next[2] - previous[2]
+		}
+		if creature.DamageProfile.IsPrimaryAttributeFound {
+			creature.DamageProfile.PrimaryAttribute += primaryDelta
+		}
+		if creature.HealingProfile.IsPrimaryAttributeFound {
+			creature.HealingProfile.PrimaryAttribute += primaryDelta
+		}
+		creature.DamageProfile.PhysicalDefenseBoost += next[7] - previous[7]
+		creature.DamageProfile.EnergyDefenseBoost += next[9] - previous[9]
+		for index := range creature.DamageProfile.ScienceDamage {
+			attributeIndex := 38 + index
+			creature.DamageProfile.ScienceDamage[index] += next[attributeIndex] - previous[attributeIndex]
+		}
 		creature.DamageProfile.AreaDamage += next[37] - previous[37]
 		creature.DamageProfile.DirectAttackDamagePercent += next[109] - previous[109]
 		creature.TimingProfile.AttackSpeed += next[23] - previous[23]
@@ -583,8 +607,9 @@ func (s *gameplayPeerSession) setCrystalInventory(inventory sim.CrystalInventory
 }
 
 type pendingPeerPacketBatch struct {
-	id      uint64
-	packets [][]byte
+	id                     uint64
+	packets                [][]byte
+	isCampaignPresentation bool
 }
 
 func (s *gameplayPeerSession) queuePackets(packets [][]byte) {
@@ -717,10 +742,17 @@ func (s *gameplayPeerSession) pendingPackets() ([][]byte, uint64) {
 		packetCount += len(batch.packets)
 	}
 	packets := make([][]byte, 0, packetCount)
+	var batchID uint64
 	for _, batch := range s.pendingPacketBatches {
+		// A connected peer may still be loading its scene. Keep world packets
+		// queued until its dungeon setup, and retain their original ordering.
+		if batch.isCampaignPresentation && !s.dungeonSetup.IsCommitted() {
+			break
+		}
 		packets = append(packets, batch.packets...)
+		batchID = batch.id
 	}
-	return packets, s.pendingPacketBatches[len(s.pendingPacketBatches)-1].id
+	return packets, batchID
 }
 
 func (s *gameplayPeerSession) commitPendingPackets(batchID uint64) {
@@ -2517,6 +2549,7 @@ func gameplayPeerPresentationPackets(packets [][]byte) [][]byte {
 			raknet.LocomotionUpdate, raknet.LocomotionUnreliable,
 			raknet.LootDataUpdate,
 			raknet.AttributeDataUpdate, raknet.CombatantDataUpdate,
+			raknet.AgentBlackboardUpdate,
 			raknet.ServerEvent, raknet.ModifierCreated, raknet.ModifierUpdated,
 			raknet.ModifierDeleted, raknet.SetAnimationState,
 			raknet.SetObjectGFXState, raknet.PlayerCharacterDeploy,
@@ -2558,15 +2591,22 @@ func (e *gameplaySessionRegistry) queuePeerPresentation(
 			!candidate.isZoneTerminal()
 		if sessionKey == identity.sessionKey ||
 			candidate.binding.GameID != peerSession.binding.GameID ||
-			!candidate.stage.IsDungeon() ||
+			(!candidate.stage.IsDungeon() && !isCandidateCampaign) ||
 			(!isCandidateArena && !isCandidateCampaign) {
 			continue
 		}
 		candidatePackets := presentationPackets
 		if isCandidateCampaign {
-			candidatePackets = campaignPacketsWithoutProjectionDuplicates(
-				candidate, presentationPackets,
-			)
+			// Queue prerequisite zone events before the exact presentation. In
+			// particular, a delayed movement must not overtake its NPC spawn.
+			queueErr := candidate.queueCampaignPresentation(presentationPackets)
+			if queueErr != nil && e.logger != nil {
+				e.logger.Printf("RakNet co-op presentation queue failed game=%d user=%d: %v",
+					candidate.binding.GameID, candidate.binding.UserID, queueErr)
+			}
+			e.sessions[sessionKey] = candidate
+			recipients++
+			continue
 		}
 		if len(candidatePackets) == 0 {
 			continue
@@ -2582,40 +2622,6 @@ func (e *gameplaySessionRegistry) queuePeerPresentation(
 		recipients++
 	}
 	return recipients
-}
-
-func campaignPacketsWithoutProjectionDuplicates(
-	peerSession gameplayPeerSession, packets [][]byte,
-) [][]byte {
-	if peerSession.zone == nil || len(packets) == 0 {
-		return packets
-	}
-	events := peerSession.zone.PeekProjection(
-		peerSession.binding.UserID, peerSession.generation,
-	)
-	if len(events) == 0 {
-		return packets
-	}
-	projectedPacketCounts := make(map[string]int)
-	for _, event := range events {
-		projectedPackets, err := marshalCampaignProjection(event)
-		if err != nil {
-			continue
-		}
-		for _, projectedPacket := range projectedPackets {
-			projectedPacketCounts[string(projectedPacket)]++
-		}
-	}
-	filteredPackets := make([][]byte, 0, len(packets))
-	for _, packet := range packets {
-		key := string(packet)
-		if projectedPacketCounts[key] == 0 {
-			filteredPackets = append(filteredPackets, packet)
-			continue
-		}
-		projectedPacketCounts[key]--
-	}
-	return filteredPackets
 }
 
 type gameplayProducerIdentity struct {
@@ -2933,6 +2939,7 @@ func restartTutorialSession(
 		binding:             binding,
 		transportGeneration: previous.transportGeneration,
 		schedulePackets:     previous.schedulePackets,
+		schedulePacket:      previous.schedulePacket,
 	}
 }
 

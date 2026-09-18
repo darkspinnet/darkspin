@@ -126,7 +126,7 @@ func (e campaignNPCProjectileSchedule) recover(
 	producer := raknet.ScheduledPacketProducer{
 		Delay: profile.RecoveryDuration, Produce: step.produce,
 	}
-	cancel, err := e.packet.ScheduleProducers(
+	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet,
 		[]raknet.ScheduledPacketProducer{producer},
 	)
 	if err != nil {

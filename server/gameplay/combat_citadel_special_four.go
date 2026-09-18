@@ -134,7 +134,7 @@ func (e campaignCitadelRepairSchedule) produce() ([][]byte, error) {
 	next := e
 	next.tick++
 	next.request.timestamp = timestamp
-	cancel, scheduleErr := e.request.packet.ScheduleProducers(
+	cancel, scheduleErr := scheduleNPCProducers(e.request.runtime.registry, e.request.packet,
 		[]raknet.ScheduledPacketProducer{{
 			Delay: e.profile.TickDuration, Produce: next.produce,
 		}},
@@ -331,7 +331,7 @@ func (r campaignNPCActionRuntime) startCitadelSpecialFourRepair(
 	schedule := campaignCitadelRepairSchedule{
 		request: request, profile: profile, tick: 1,
 	}
-	cancel, err := request.packet.ScheduleProducers(
+	cancel, err := scheduleNPCProducers(r.registry, request.packet,
 		[]raknet.ScheduledPacketProducer{{
 			Delay: profile.TickDuration, Produce: schedule.produce,
 		}},
@@ -359,7 +359,7 @@ func (r campaignNPCActionRuntime) startCitadelSpecialFourSlam(
 		timestamp: request.timestamp, nextDelay: plan.Profile.ReleaseDelay,
 		plan: plan,
 	}
-	cancel, err := request.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	cancel, err := scheduleNPCProducers(r.registry, request.packet, []raknet.ScheduledPacketProducer{
 		{Delay: plan.Profile.HitDelay, Produce: schedule.hit},
 		{Delay: plan.Profile.ReleaseDelay, Produce: schedule.next},
 	})
@@ -392,7 +392,7 @@ func (r campaignNPCActionRuntime) startCitadelSpecialFourPunch(
 		},
 		plan: plan,
 	}
-	cancel, err := request.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	cancel, err := scheduleNPCProducers(r.registry, request.packet, []raknet.ScheduledPacketProducer{
 		{Delay: timeline.HitDelay, Produce: schedule.hit},
 		{Delay: timeline.NextDelay, Produce: schedule.next},
 	})

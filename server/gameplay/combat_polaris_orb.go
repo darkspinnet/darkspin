@@ -502,7 +502,7 @@ func (r campaignNPCActionRuntime) producePolarisGravityOrb(
 		})
 	}
 	sortScheduledPacketProducersByDelay(producers)
-	cancel, err := packet.ScheduleProducers(producers)
+	cancel, err := scheduleNPCProducers(r.registry, packet, producers)
 	if err == nil && cancel == nil {
 		err = errors.New("nil cancellation")
 	}

@@ -56,7 +56,7 @@ func (e *campaignNomadShielderShieldRun) schedulePoll() error {
 	producer := raknet.ScheduledPacketProducer{
 		Delay: campaignNomadShielderShieldPoll, Produce: e.poll,
 	}
-	cancel, err := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{producer})
+	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{producer})
 	if err == nil && cancel == nil {
 		err = errors.New("nil cancellation")
 	}
@@ -164,7 +164,7 @@ func (e *campaignNomadShielderShieldRun) finish(isAlive bool) ([][]byte, error) 
 			uint64(e.profile.StopReleaseDelay/time.Millisecond),
 		resume: e.resume,
 	}
-	cancel, scheduleErr := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: e.profile.StopReleaseDelay, Produce: step.produce,
 	}})
 	if scheduleErr == nil && cancel == nil {
@@ -444,7 +444,7 @@ func (r campaignNPCActionRuntime) produceNomadShielderShield(
 		{Delay: profile.SetupWait + profile.SetupHitDelay, Produce: setup.activate},
 		{Delay: profile.SetupWait + profile.SetupReleaseDelay, Produce: setup.next},
 	}
-	cancel, scheduleErr := packet.ScheduleProducers(producer)
+	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, producer)
 	if scheduleErr == nil && cancel == nil {
 		scheduleErr = errors.New("nil cancellation")
 	}

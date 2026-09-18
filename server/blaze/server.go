@@ -56,15 +56,16 @@ type Server struct {
 
 // Session is one connected Blaze client.
 type Session struct {
-	ID             uint32
-	server         *Server
-	conn           net.Conn
-	write          sync.Mutex
-	data           sync.Map
-	userID         int64
-	account        string
-	displayName    string
-	recentRequests map[requestKey]requestRecord
+	ID                    uint32
+	server                *Server
+	conn                  net.Conn
+	write                 sync.Mutex
+	data                  sync.Map
+	userID                int64
+	account               string
+	displayName           string
+	recentRequests        map[requestKey]requestRecord
+	pendingPlaygroupLeave *playgroupDisconnectLeave
 }
 
 type requestKey struct {
@@ -279,6 +280,7 @@ func (s *Session) serve(ctx context.Context) {
 		s.server.traceConnection(s, "close")
 		_ = s.conn.Close()
 		s.server.removeSession(s.ID)
+		s.completeDisconnectedPlaygroupLeave(context.WithoutCancel(ctx))
 	}()
 	err := s.prepareConnection(ctx)
 	if err != nil {
@@ -312,6 +314,11 @@ func (s *Session) serve(ctx context.Context) {
 				)
 				continue
 			}
+		}
+		// Cleanup/attribute RPCs can trail LeavePlaygroup during shutdown.
+		// Only an actual new game/party transition supersedes that leave.
+		if isPlaygroupHandoffFrame(frame) {
+			s.pendingPlaygroupLeave = nil
 		}
 		result := s.server.registry.dispatch(ctx, s, frame)
 		for _, notification := range result.beforeReplyFrames {

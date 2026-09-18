@@ -136,7 +136,13 @@ func (r campaignNPCPursuitRuntime) deferAction(
 		Delay:   remaining,
 		Produce: step.produce,
 	}
-	_, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{producer})
+	producers := r.registry.producerGuard.scheduledProducers(
+		sessionKey, []raknet.ScheduledPacketProducer{producer},
+	)
+	cancel, err := packet.ScheduleProducers(producers)
+	if err == nil && cancel == nil {
+		err = errors.New("nil cancellation")
+	}
 	if err != nil {
 		return false, fmt.Errorf("enemyStunResumeSchedule: %w", err)
 	}
@@ -165,9 +171,12 @@ func (r campaignNPCPursuitRuntime) deferCommit(
 	if remaining <= 0 {
 		return false, nil
 	}
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
-		Delay: remaining, Produce: resume,
-	}})
+	producers := r.registry.producerGuard.scheduledProducers(
+		sessionKey, []raknet.ScheduledPacketProducer{{
+			Delay: remaining, Produce: resume,
+		}},
+	)
+	cancel, err := packet.ScheduleProducers(producers)
 	if err == nil && cancel == nil {
 		err = errors.New("nil cancellation")
 	}
@@ -265,7 +274,10 @@ func (r campaignNPCPursuitRuntime) scheduleActionCorrection(
 		Delay:   campaignPursuitFallbackTick,
 		Produce: step.produce,
 	}
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{producer})
+	producers := r.registry.producerGuard.scheduledProducers(
+		sessionKey, []raknet.ScheduledPacketProducer{producer},
+	)
+	cancel, err := packet.ScheduleProducers(producers)
 	if err == nil && cancel == nil {
 		err = errors.New("nil cancellation")
 	}
@@ -474,8 +486,6 @@ func (r campaignNPCPursuitRuntime) produceStep(
 		}
 	}
 	r.registry.sessions[sessionKey] = peerSession
-	campaignZone := peerSession.zone
-	sourceUserID := peerSession.binding.UserID
 	r.registry.mutex.Unlock()
 
 	nextTimestamp := timestamp +
@@ -496,12 +506,6 @@ func (r campaignNPCPursuitRuntime) produceStep(
 			return nil, fmt.Errorf("stalkerLeapPosition: %w", positionErr)
 		}
 		stepPackets = append(stepPackets, positionPacket)
-	}
-	projectionPlan := zonenpc.FirstActionPlan{
-		ObjectID: objectID, TargetObjectID: resolvedTargetObjectID,
-		ActionGeneration: actionGeneration,
-		SourcePosition:   step.Position, TargetPosition: targetPosition,
-		Profile: profile,
 	}
 	sincePublication := timestamp - lastPublicationTimestamp
 	redirectInterval := uint64(campaignPursuitRedirectInterval / time.Millisecond)
@@ -535,10 +539,6 @@ func (r campaignNPCPursuitRuntime) produceStep(
 			return nil, fmt.Errorf("enemyPursuitGoal: %w", goalErr)
 		}
 		stepPackets = append(stepPackets, goalPacket)
-		campaignZone.PublishNPCAction(zonenpc.ActionEvent{
-			Kind: zonenpc.ActionEventPursuitRedirect,
-			Plan: projectionPlan, Timestamp: nextTimestamp,
-		}, sourceUserID, generation)
 		publishedGoal = targetPosition
 		lastPublicationTimestamp = timestamp
 	}

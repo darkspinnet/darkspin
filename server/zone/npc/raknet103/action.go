@@ -87,14 +87,19 @@ func ForcedMovement(
 		profile.ForcedMovementSpeed <= 0 || !isFiniteVec3(destination) {
 		return nil, errors.New("npc forced movement invalid")
 	}
+	facing := plan.SourcePosition.Sub(plan.TargetPosition)
+	yaw := math.Atan2(-float64(facing.X), float64(facing.Y))
 	messages := []raknet.ApplicationMessage{
 		raknet.ObjectPlayerMoveMessage{
 			ObjectID: plan.TargetObjectID, GoalFlags: 0x20, GoalPosition: vector(destination),
 		},
-		raknet.ObjectUpdateMessage{
-			ObjectID: plan.TargetObjectID, PositionX: destination.X,
-			PositionY: destination.Y, PositionZ: destination.Z,
-			IsVisible: true,
+		// A reflected pose does not reset the locally controlled physics mover.
+		// Match the authoritative teleport used by the server's motion state.
+		raknet.ObjectTeleportMessage{
+			ObjectID: plan.TargetObjectID, Position: vector(destination),
+			Orientation: raknet.Quaternion{
+				Z: float32(math.Sin(yaw / 2)), W: float32(math.Cos(yaw / 2)),
+			},
 		},
 	}
 	if profile.ForcedMovementReactionName != "" {

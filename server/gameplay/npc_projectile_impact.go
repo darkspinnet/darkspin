@@ -38,7 +38,7 @@ func (e campaignNPCProjectileStep) produce() ([][]byte, error) {
 				)
 			}
 			resumeDelay := min(remainingFlight, campaignProjectileMotionPollInterval)
-			err := schedule.packet.ScheduleFunc(resumeDelay, e.produce)
+			err := scheduleNPCProducer(runtime.registry, schedule.packet, resumeDelay, e.produce)
 			if err != nil {
 				return schedule.fail("enemyProjectileResume", err)
 			}

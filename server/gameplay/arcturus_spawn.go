@@ -61,7 +61,7 @@ func (e campaignNPCActionRuntime) startArcturusControllers(packet raknet.Packet,
 		step := campaignArcturusSpawnStep{runtime: e, packet: packet.Autonomous(),
 			sessionKey: sessionKey, generation: generation, objectID: plan.ObjectID,
 			timestamp: timestamp + 1000, state: state}
-		err := step.packet.ScheduleFunc(time.Second, step.produce)
+		err := scheduleNPCProducer(e.registry, step.packet, time.Second, step.produce)
 		if err != nil {
 			e.registry.mutex.Lock()
 			current = e.registry.sessions[sessionKey]
@@ -120,7 +120,7 @@ func (e campaignArcturusSpawnStep) produce() ([][]byte, error) {
 		}
 	}
 	e.timestamp += 1000
-	err := e.packet.ScheduleFunc(time.Second, e.produce)
+	err := scheduleNPCProducer(e.runtime.registry, e.packet, time.Second, e.produce)
 	if err != nil {
 		return packets, fmt.Errorf("arcturusSpawnTick: %w", err)
 	}

@@ -502,6 +502,10 @@ func (s *Store) enrichCreatureAbilityToken(ctx context.Context, templates map[ui
 	if !isBindingStored {
 		return nil
 	}
+	coefficients, err := s.creatureAbilityCoefficients(ctx)
+	if err != nil {
+		return fmt.Errorf("coefficientRead: %w", err)
+	}
 	rows, err := s.database.QueryContext(ctx, `
 		SELECT DISTINCT creature_template_ability.creature_template_id,
 		       creature_template_ability.slot,
@@ -515,18 +519,6 @@ func (s *Store) enrichCreatureAbilityToken(ctx context.Context, templates map[ui
 		        END) * lua_token_binding.multiplier,
 		       lua_static_property.minimum,
 		       lua_static_property.maximum,
-		       COALESCE(
-		         (SELECT coefficient.minimum FROM lua_static_property AS coefficient
-		          WHERE coefficient.table_name = lua_token_binding.source_table_name
-		            AND coefficient.property_name = lua_token_binding.property_name || 'Coefficient'
-		          LIMIT 1),
-		         (SELECT coefficient.minimum FROM lua_static_property AS coefficient
-		          WHERE coefficient.table_name = lua_token_binding.source_table_name
-		            AND coefficient.property_name =
-		              CASE WHEN LOWER(lua_token_binding.token_name) IN ('minhealing', 'maxhealing', 'healing')
-		                   THEN 'healingCoefficient' ELSE 'damageCoefficient' END
-		          LIMIT 1),
-		         0),
 		       lua_token_binding.evidence
 		FROM creature_template_ability
 		JOIN lua_string_constant AS ability_identity
@@ -550,11 +542,21 @@ func (s *Store) enrichCreatureAbilityToken(ctx context.Context, templates map[ui
 		var property CreatureAbilityProperty
 		err = rows.Scan(&creatureTemplateID, &slot, &property.Name, &property.SourceTableName, &property.SourceName,
 			&property.Minimum, &property.AuthoredMinimum, &property.AuthoredMaximum,
-			&property.Coefficient, &property.Evidence)
+			&property.Evidence)
 		if err != nil {
 			return fmt.Errorf("tokenScan: %w", err)
 		}
 		property.Maximum = property.Minimum
+		coefficient, isFound := coefficients[[2]string{property.SourceTableName, property.SourceName + "Coefficient"}]
+		if !isFound {
+			coefficientName := "damageCoefficient"
+			switch strings.ToLower(property.Name) {
+			case "minhealing", "maxhealing", "healing":
+				coefficientName = "healingCoefficient"
+			}
+			coefficient = coefficients[[2]string{property.SourceTableName, coefficientName}]
+		}
+		property.Coefficient = coefficient
 		template := templates[creatureTemplateID]
 		if template == nil {
 			continue
@@ -574,6 +576,39 @@ func (s *Store) enrichCreatureAbilityToken(ctx context.Context, templates map[ui
 		return fmt.Errorf("tokenRows: %w", err)
 	}
 	return nil
+}
+
+// creatureAbilityCoefficients avoids unindexed, correlated property scans for
+// every token. Load once so existing content caches need no schema migration.
+func (e *Store) creatureAbilityCoefficients(ctx context.Context) (map[[2]string]float64, error) {
+	rows, err := e.database.QueryContext(ctx, `
+		SELECT table_name, property_name, minimum
+		FROM lua_static_property
+		WHERE property_name LIKE '%Coefficient'
+		ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("coefficientQuery: %w", err)
+	}
+	defer rows.Close()
+	coefficients := make(map[[2]string]float64)
+	for rows.Next() {
+		var tableName, propertyName string
+		var coefficient float64
+		err = rows.Scan(&tableName, &propertyName, &coefficient)
+		if err != nil {
+			return nil, fmt.Errorf("coefficientScan: %w", err)
+		}
+		// Preserve the first stored property when multiple chunks define it.
+		key := [2]string{tableName, propertyName}
+		if _, isFound := coefficients[key]; !isFound {
+			coefficients[key] = coefficient
+		}
+	}
+	err = rows.Err()
+	if err != nil {
+		return nil, fmt.Errorf("coefficientRows: %w", err)
+	}
+	return coefficients, nil
 }
 
 // NonPlayerClasses reads the immutable non-player combat-stat projection.

@@ -119,7 +119,7 @@ func (r campaignNPCActionRuntime) producePolarisPhaseTransition(
 		generation: generation, objectID: objectID, timestamp: timestamp,
 		plan: plan, nextPhase: nextPhase,
 	}
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: profile.HitDelay, Produce: schedule.hit},
 		{Delay: profile.ReleaseDelay, Produce: schedule.next},
 	})

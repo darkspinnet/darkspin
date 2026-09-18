@@ -88,7 +88,7 @@ func (r campaignNPCActionRuntime) deferNoctBasicMeleeDogDistraction(
 		generation: generation, objectID: objectID, timestamp: timestamp,
 		kind: campaignNPCAttackMelee,
 	}}
-	_, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	_, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: noctBasicMeleeDogDistractionRetry, Produce: schedule.retry,
 	}})
 	if err != nil {
@@ -439,13 +439,13 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 		producers = append(producers, raknet.ScheduledPacketProducer{
 			Delay: timeline.NextDelay, Produce: schedule.next,
 		})
-		_, scheduleErr := packet.ScheduleProducers(producers)
+		_, scheduleErr := scheduleNPCProducers(r.registry, packet, producers)
 		if scheduleErr != nil {
 			return nil, fmt.Errorf("enemyFastSwipeSchedule: %w", scheduleErr)
 		}
 		return startPackets, nil
 	}
-	_, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	_, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: timeline.HitDelay, Produce: schedule.hit},
 		{Delay: timeline.NextDelay, Produce: schedule.next},
 	})
@@ -539,7 +539,7 @@ func (r campaignNPCActionRuntime) produceCryosRezMelee(
 		return nil, fmt.Errorf("enemyRezMeleeTimeline: %w", err)
 	}
 	schedule := campaignNPCAttackSchedule{request: request, plan: plan}
-	_, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	_, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: timeline.HitDelay, Produce: schedule.hit},
 		{Delay: timeline.NextDelay, Produce: schedule.next},
 	})

@@ -240,7 +240,7 @@ func (r campaignNPCActionRuntime) produceHasterProjectile(
 	producers = append(producers, raknet.ScheduledPacketProducer{
 		Delay: ability.Cooldown, Produce: projectileSchedule.next,
 	})
-	cancel, scheduleErr := packet.ScheduleProducers(producers)
+	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, producers)
 	if scheduleErr == nil && cancel == nil {
 		scheduleErr = errors.New("nil cancellation")
 	}

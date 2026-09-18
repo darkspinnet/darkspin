@@ -87,7 +87,7 @@ func (e *campaignSuppressionRun) produce() ([][]byte, error) {
 		packets = append(packets, modifierPackets...)
 	}
 	e.timestamp += uint64(campaignSuppressionTick / time.Millisecond)
-	cancel, err := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: campaignSuppressionTick, Produce: e.produce,
 	}})
 	if err == nil && cancel == nil {
@@ -133,7 +133,7 @@ func (r campaignNPCActionRuntime) startCampaignSuppressionAura(
 	peerSession.campaignNPCSuppressionRuns[objectID] = run
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: time.Millisecond, Produce: run.produce,
 	}})
 	if err == nil && cancel == nil {

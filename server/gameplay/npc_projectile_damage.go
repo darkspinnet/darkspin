@@ -11,7 +11,6 @@ import (
 	"github.com/darkspinnet/darkspin/server/sporenet"
 	zone "github.com/darkspinnet/darkspin/server/zone"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
-	companionraknet "github.com/darkspinnet/darkspin/server/zone/companion/raknet103"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
@@ -40,6 +39,7 @@ func (r campaignNPCActionRuntime) applyEnemyProjectileDamage(
 		return nil, sporenet.PlayerStatDelta{}, false, nil
 	}
 	defenseReq := enemyDefenseRequest(plan.Profile, result.Damage, false, false)
+	plan.Profile.DamageSource = defenseReq.DamageSource
 	defenseFlags := uint16(0)
 	if target.IsHero {
 		var defenseErr error
@@ -134,10 +134,11 @@ func (r campaignNPCActionRuntime) applyEnemyProjectileDamage(
 			result.Damage, plan.Profile.DamageSource, plan.SourceObjectID, r.now(),
 		)
 	}
-	result.Damage = r.applyCrushingDreadAllyReduction(
-		*peerSession, target, plan.SourceObjectID, result.Damage,
+	result.Damage = r.applyCrushingDreadReduction(
+		*peerSession, plan.SourceObjectID, result.Damage,
 		plan.Profile.DamageSource,
 	)
+	result.Damage = r.reduceCompanionDamage(*peerSession, target, result.Damage, defenseReq)
 	if target.IsHero {
 		result.Damage = combat.ReduceIncomingDamage(result.Damage, targetSession.equipmentDefense(), defenseReq)
 		if result.Damage <= 0 {
@@ -290,13 +291,13 @@ func (r campaignNPCActionRuntime) applyEnemyProjectileDamage(
 	hitPackets = append(hitPackets, energyVulnerabilityPackets...)
 	if !damage.IsHero {
 		if damage.IsDefeated {
-			deletePacket, deleteErr := companionraknet.Defeat(
-				plan.TargetObjectID,
+			deathPackets, deathErr := r.companionDefeat(
+				peerSession, plan.TargetObjectID, timestamp,
 			)
-			if deleteErr != nil {
-				return nil, sporenet.PlayerStatDelta{}, false, deleteErr
+			if deathErr != nil {
+				return nil, sporenet.PlayerStatDelta{}, false, fmt.Errorf("companionDeath: %w", deathErr)
 			}
-			hitPackets = append(hitPackets, deletePacket)
+			hitPackets = append(hitPackets, deathPackets...)
 		}
 		teleportPackets, teleportErr := r.applyEnemyProjectileTeleport(
 			peerSession, plan, target, damage.HitPoint, timestamp,
@@ -309,7 +310,7 @@ func (r campaignNPCActionRuntime) applyEnemyProjectileDamage(
 		return hitPackets, sporenet.PlayerStatDelta{}, !damage.IsDefeated, nil
 	}
 	packets, statDelta, err := r.commitHeroTargetDamage(
-		peerSession, targetSession, targetSessionKey, hitPackets, damage, timestamp,
+		peerSession, targetSession, targetSessionKey, hitPackets, damage, distribution, timestamp,
 	)
 	if err != nil {
 		return nil, sporenet.PlayerStatDelta{}, false,
@@ -317,7 +318,7 @@ func (r campaignNPCActionRuntime) applyEnemyProjectileDamage(
 	}
 	packets, statDelta, err = r.commitHeroTargetReactions(
 		peerSession, targetSession, targetSessionKey, packets, statDelta,
-		distribution, damage, plan, timestamp,
+		damage, plan, timestamp,
 	)
 	if err != nil {
 		return nil, sporenet.PlayerStatDelta{}, false,

@@ -150,13 +150,12 @@ func (e campaignDopplerCloneStep) spawn() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dopplerCloneSplit: %w", err)
 	}
-	shaderPacket, err := npcraknet.PositionedEffect(
-		e.profile.RetainedEffectName, plan.Position,
-	)
+	shaderPackets, err := npcraknet.DopplerShaders(e.objectID, e.fakeObjectID, false)
 	if err != nil {
 		return nil, fmt.Errorf("dopplerCloneShader: %w", err)
 	}
-	packets = append(packets, splitPacket, shaderPacket)
+	packets = append(packets, splitPacket)
+	packets = append(packets, shaderPackets...)
 	strafeDuration := time.Duration(0)
 	producers := make([]raknet.ScheduledPacketProducer, 0, 2)
 	if isStrafeAvailable {
@@ -194,6 +193,11 @@ func (e campaignDopplerCloneStep) spawn() ([][]byte, error) {
 			Delay: strafeDuration, Produce: arrival.produce,
 		})
 	}
+	// The authored clone ability removes both attached shaders when the
+	// split/strafe ends, independently of the fake's remaining lifetime.
+	producers = append(producers, raknet.ScheduledPacketProducer{
+		Delay: strafeDuration, Produce: e.removeShaders,
+	})
 	expiryDelay := strafeDuration + campaignDopplerFakeLifetime
 	expiry := campaignDopplerFakeExpiry{
 		runtime: e.runtime, packet: e.packet, sessionKey: e.sessionKey,
@@ -205,9 +209,24 @@ func (e campaignDopplerCloneStep) spawn() ([][]byte, error) {
 	producers = append(producers, raknet.ScheduledPacketProducer{
 		Delay: expiryDelay, Produce: expiry.produce,
 	})
-	_, err = e.packet.ScheduleProducers(producers)
+	_, err = scheduleNPCProducers(e.runtime.registry, e.packet, producers)
 	if err != nil {
 		return nil, fmt.Errorf("dopplerCloneExpirySchedule: %w", err)
+	}
+	return packets, nil
+}
+
+func (e campaignDopplerCloneStep) removeShaders() ([][]byte, error) {
+	e.runtime.registry.mutex.RLock()
+	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isCurrent := isFound && peerSession.generation == e.generation
+	e.runtime.registry.mutex.RUnlock()
+	if !isCurrent {
+		return nil, nil
+	}
+	packets, err := npcraknet.DopplerShaders(e.objectID, e.fakeObjectID, true)
+	if err != nil {
+		return nil, fmt.Errorf("dopplerShaderRemove: %w", err)
 	}
 	return packets, nil
 }
@@ -303,14 +322,14 @@ func (e campaignDopplerFakeExpiry) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	fake, isFakeFound := peerSession.zone.NPCs().LiveNPC(e.fakeObjectID)
-	if !isFakeFound {
+	if !isFakeFound || fake.IsDefeated {
 		delete(peerSession.campaignNPCDopplerFakeObjectIDs, e.sourceObjectID)
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	result, err := peerSession.zone.NPCs().Damage(
-		e.fakeObjectID, e.fakeObjectID, fake.HitPoint,
+	result, err := peerSession.zone.NPCs().Defeat(
+		e.fakeObjectID, e.fakeObjectID,
 	)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
@@ -409,7 +428,7 @@ func (r campaignNPCActionRuntime) produceScaldronBasicDopplerClone(
 		fakeObjectID: fakeObjectID, timestamp: timestamp, profile: profile,
 	}
 	resumeDelay := max(profile.HitDelay, profile.ReleaseDelay)
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: profile.HitDelay, Produce: step.spawn},
 		{Delay: resumeDelay, Produce: step.next},
 	})

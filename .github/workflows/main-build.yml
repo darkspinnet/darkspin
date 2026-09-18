@@ -15,6 +15,7 @@ concurrency:
 jobs:
   version:
     name: Resolve unstable version
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -33,7 +34,7 @@ jobs:
             echo "Unable to resolve the Mage release version" >&2
             exit 1
           fi
-          echo "version=${version_core}-unstable.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}+g${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+          echo "version=${version_core}-unstable.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}+${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.name }}
@@ -201,3 +202,28 @@ jobs:
           path: bin/darkrunci/${{ matrix.platform }}-amd64/darkrun-${{ matrix.platform }}-amd64-v*.zip
           if-no-files-found: error
           retention-days: 14
+
+  notify:
+    name: Notify Discord
+    needs: [version, build, darkrun]
+    if: success()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Notify Discord
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_UNSTABLE_WEBHOOK }}
+          BUILD_VERSION: ${{ needs.version.outputs.version }}
+        shell: bash
+        run: |
+          if [[ -z "${DISCORD_WEBHOOK}" ]]; then
+            echo "DISCORD_WEBHOOK is not configured; skipping notification."
+            exit 0
+          fi
+          message="🌙 Darkspinner v${BUILD_VERSION} unstable build artifacts is [now available!](<https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}>)"
+          payload="$(jq -n --arg content "${message}" '{content: $content, allowed_mentions: {parse: []}}')"
+          curl --fail --silent --show-error --connect-timeout 10 --max-time 30 \
+            -H "Content-Type: application/json" \
+            --data "${payload}" \
+            --output /dev/null \
+            "${DISCORD_WEBHOOK}"

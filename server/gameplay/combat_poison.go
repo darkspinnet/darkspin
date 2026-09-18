@@ -256,7 +256,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCDisease(
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
-	if peerSession.isHeroDebuffImmune(plan.TargetObjectID) {
+	if r.isTargetDebuffImmuneLocked(&peerSession, plan.TargetObjectID) {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
@@ -379,7 +379,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCDisease(
 			Delay: delay, Produce: step.produce,
 		})
 	}
-	cancel, scheduleErr := packet.ScheduleProducers(producers)
+	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, producers)
 	if scheduleErr == nil && cancel == nil {
 		scheduleErr = errors.New("nil cancellation")
 	}

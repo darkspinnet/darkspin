@@ -148,6 +148,17 @@ func (r gameplaySetupRuntime) commitRejoin(
 		)
 		return
 	}
+	companionPackets, companionErr := marshalGameplayCompanions(peerSession, peerSession.binding.UserID)
+	if companionErr != nil {
+		if r.logger != nil {
+			r.logger.Printf("RakNet reconnect companion publication failed user=%d: %v",
+				peerSession.binding.UserID, companionErr)
+		}
+		return
+	}
+	r.registry.queuePeerPresentation(
+		gameplayProducerIdentityFromSession(sessionKey, peerSession, true), companionPackets,
+	)
 }
 
 func marshalGameplayRejoinBaseline(
@@ -304,11 +315,18 @@ func marshalGameplayRejoinBaselineState(
 		if !npc.IsPublished {
 			continue
 		}
-		spawnPackets, marshalErr := npcraknet.Spawn(npc.Plan)
+		spawnPackets, marshalErr := npcraknet.Spawn(npc.FacingSpawnPlan())
 		if marshalErr != nil {
 			return nil, fmt.Errorf("rejoinNPC[%d]: %w", index, marshalErr)
 		}
 		packets = append(packets, spawnPackets...)
+		facingPackets, facingErr := npcraknet.RestoreFacing(
+			npc.Plan.ObjectID, npc.Plan.Position, npc.Facing,
+		)
+		if facingErr != nil {
+			return nil, fmt.Errorf("rejoinNPCFacing[%d]: %w", index, facingErr)
+		}
+		packets = append(packets, facingPackets...)
 		resourcePacket, marshalErr := raknet.MarshalApplication(
 			raknet.CombatantDataUpdateMessage{
 				ObjectID: npc.Plan.ObjectID, HitPoints: npc.HitPoint,
@@ -585,12 +603,30 @@ func marshalGameplayRejoinSimplePickup(
 func marshalGameplayRejoinCompanions(
 	peerSession gameplayPeerSession,
 ) ([][]byte, error) {
+	packets, err := marshalGameplayCompanions(peerSession, 0)
+	if err != nil {
+		return nil, fmt.Errorf("rejoinCompanions: %w", err)
+	}
+	return packets, nil
+}
+
+func marshalGameplayCompanions(
+	peerSession gameplayPeerSession, ownerUserID uint64,
+) ([][]byte, error) {
 	if peerSession.zone == nil || peerSession.zone.Companion() == nil {
 		return nil, nil
 	}
+	connectedGenerations := make(map[uint64]uint64)
+	for _, member := range peerSession.zone.Snapshot().Members {
+		if member.IsConnected || member.UserID == peerSession.binding.UserID {
+			connectedGenerations[member.UserID] = member.PeerGeneration
+		}
+	}
 	packets := make([][]byte, 0)
 	for index, companion := range peerSession.zone.Companion().Snapshots() {
-		if companion.HitPoint <= 0 {
+		if companion.HitPoint <= 0 ||
+			(ownerUserID != 0 && companion.UserID != ownerUserID) ||
+			connectedGenerations[companion.UserID] != companion.PeerGeneration {
 			continue
 		}
 		create, err := raknet.MarshalApplication(raknet.ObjectCreateMessage{

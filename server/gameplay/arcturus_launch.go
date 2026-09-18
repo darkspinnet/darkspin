@@ -107,7 +107,7 @@ func (e campaignNPCActionRuntime) produceArcturusLaunch(packet raknet.Packet, se
 		producers = append(producers, raknet.ScheduledPacketProducer{Delay: delay, Produce: step.produce})
 	}
 	sortScheduledPacketProducersByDelay(producers)
-	cancel, err := run.packet.ScheduleProducers(producers)
+	cancel, err := scheduleNPCProducers(e.registry, run.packet, producers)
 	if err == nil && cancel == nil {
 		err = errors.New("nil cancellation")
 	}
@@ -301,7 +301,7 @@ func (e *campaignArcturusLaunch) dropMissile(current *gameplayPeerSession, boss 
 		projectile.Stop()
 		return nil, fmt.Errorf("missileTrack: %w", err)
 	}
-	err = e.packet.ScheduleFunc(50*time.Millisecond, step.poll)
+	err = scheduleNPCProducer(e.runtime.registry, e.packet, 50*time.Millisecond, step.poll)
 	if err != nil {
 		current.untrackCampaignNPCProjectile(objectID, projectile)
 		projectile.Stop()

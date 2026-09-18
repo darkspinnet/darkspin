@@ -15,18 +15,20 @@ import (
 )
 
 type Session struct {
-	mu            sync.RWMutex
-	objectIDLimit uint32
-	aggroRadius   float32
-	objectIDs     []uint32
-	npcs          map[uint32]Snapshot
+	mu                sync.RWMutex
+	objectIDLimit     uint32
+	aggroRadius       float32
+	defenseConversion float32
+	objectIDs         []uint32
+	npcs              map[uint32]Snapshot
 }
 
 func NewSession(objectIDLimit uint32, aggroRadius float32) *Session {
 	return &Session{
-		objectIDLimit: objectIDLimit,
-		aggroRadius:   aggroRadius,
-		npcs:          make(map[uint32]Snapshot),
+		objectIDLimit:     objectIDLimit,
+		aggroRadius:       aggroRadius,
+		defenseConversion: 10,
+		npcs:              make(map[uint32]Snapshot),
 	}
 }
 
@@ -939,7 +941,7 @@ func (s *Session) DamageAreaFromPosition(
 func (s *Session) damage(
 	sourceObjectID uint32, targetObjectID uint32, damage float32,
 	sourcePosition *game.Vec3, isAreaAttack bool, isDamageOverTime bool,
-	damageSource []uint32,
+	damageSource []uint32, metadata ...DamageMetadata,
 ) (DamageResult, error) {
 	if s == nil {
 		return DamageResult{}, errors.New("nil npc session")
@@ -960,25 +962,17 @@ func (s *Session) damage(
 	if npc.IsDefeated {
 		return DamageResult{}, fmt.Errorf("npcDefeated: %d", targetObjectID)
 	}
+	meta := DamageMetadata{}
+	if len(metadata) > 0 {
+		meta = metadata[0]
+	}
+	isAreaAttack = isAreaAttack || meta.DescriptorMask&8 != 0
+	isDamageOverTime = isDamageOverTime || meta.DescriptorMask&4 != 0
 	now := time.Now()
-	if now.Before(npc.status.intangibleExpiresAt) ||
-		now.Before(npc.status.chargeProtectionEnd) ||
-		now.Before(npc.status.banishExpiresAt) {
-		return DamageResult{
-			ObjectID: targetObjectID, LocusID: npc.Plan.LocusID,
-			MarkerSetName: npc.Plan.MarkerSetName, PreviousHealth: npc.HitPoint,
-			HitPoint: npc.HitPoint, IsDamageImmune: true,
-		}, nil
-	}
-	if npc.IsTurtleActive &&
-		(len(damageSource) == 0 || damageSource[0] == 0) {
-		return DamageResult{
-			ObjectID: targetObjectID, LocusID: npc.Plan.LocusID,
-			MarkerSetName: npc.Plan.MarkerSetName, PreviousHealth: npc.HitPoint,
-			HitPoint: npc.HitPoint, IsDamageImmune: true,
-		}, nil
-	}
-	if npc.IsShieldActive && isShieldDamageImmune(npc, sourcePosition) {
+	if !meta.isForcedDefeat && (now.Before(npc.status.intangibleExpiresAt) ||
+		now.Before(npc.status.banishExpiresAt) || now.Before(npc.status.chargeProtectionEnd) ||
+		(npc.IsTurtleActive && (len(damageSource) == 0 || damageSource[0] == 0)) ||
+		(npc.IsShieldActive && isShieldDamageImmune(npc, sourcePosition))) {
 		return DamageResult{
 			ObjectID: targetObjectID, LocusID: npc.Plan.LocusID,
 			MarkerSetName: npc.Plan.MarkerSetName, PreviousHealth: npc.HitPoint,
@@ -986,7 +980,7 @@ func (s *Session) damage(
 		}, nil
 	}
 	isAbsorptionShieldRenewed := false
-	if npc.status.absorptionShieldMaximum > 0 &&
+	if !meta.isForcedDefeat && npc.status.absorptionShieldMaximum > 0 &&
 		npc.status.absorptionShieldAmount <= 0 &&
 		!npc.status.absorptionShieldReadyAt.IsZero() &&
 		!now.Before(npc.status.absorptionShieldReadyAt) {
@@ -996,52 +990,30 @@ func (s *Session) damage(
 	}
 	actionProfile, isActionProfileFound := ActionProfileForPlan(npc.Plan)
 	species := nounSpecies(npc.Plan.NounName)
-	if isAreaAttack && species == "zelemspecialone" {
-		damage *= 0.25
-	}
-	if isAreaAttack && species == "zelembasicflyingmelee" &&
-		now.Before(npc.status.areaShiftExpiresAt) {
-		damage *= 0.25
-	}
 	isPhysicalDamage := len(damageSource) == 0 || damageSource[0] == 0
 	isEnergyDamage := len(damageSource) > 0 && damageSource[0] == 1
-	if isPhysicalDamage && isActionProfileFound &&
-		actionProfile.PassivePhysicalDamageReduction > 0 {
-		damage *= max(
-			0, 1-actionProfile.PassivePhysicalDamageReduction,
-		)
+	if !meta.isForcedDefeat {
+		damage = s.reduceDamage(npc, actionProfile, damage, sourcePosition,
+			isPhysicalDamage, isEnergyDamage, isAreaAttack, isDamageOverTime, now)
+		damage *= 1 + npc.status.damageTakenIncrease
+		if npc.Plan.OwnerObjectID != 0 && IsNashiraNoun(npc.Plan.NounName) &&
+			(isPhysicalDamage || isEnergyDamage) {
+			// ShadowBossPassive.SetIsDuplicate adds 3 to both incoming damage
+			// attributes. This is the illusion's identity, not a cleansable debuff.
+			damage *= 4
+		}
+		if isPhysicalDamage && now.Before(npc.status.physicalVulnerabilityEnd) {
+			damage *= 1 + npc.status.physicalTakenIncrease
+		}
+		if len(damageSource) > 0 && damageSource[0] == 1 &&
+			time.Now().Before(npc.status.energyVulnerabilityEnd) {
+			damage *= 1 + npc.status.energyTakenIncrease
+		}
 	}
-	if isEnergyDamage && isActionProfileFound &&
-		actionProfile.PassiveEnergyDefense > 0 {
-		energyReduction := actionProfile.PassiveEnergyDefense /
-			(actionProfile.PassiveEnergyDefense + 100)
-		damage *= max(0, 1-energyReduction)
+	absorbedDamage := float32(0)
+	if !meta.isForcedDefeat {
+		absorbedDamage = min(damage, npc.status.absorptionShieldAmount)
 	}
-	if isDamageOverTime && isActionProfileFound &&
-		actionProfile.PassiveDamageOverTimeReduction > 0 {
-		damage *= max(0, 1-actionProfile.PassiveDamageOverTimeReduction)
-	}
-	if now.Before(npc.status.damageReductionEnd) {
-		damage *= max(0, 1-npc.status.damageReduction)
-	}
-	damage *= 1 + npc.status.damageTakenIncrease
-	if npc.Plan.OwnerObjectID != 0 && IsNashiraNoun(npc.Plan.NounName) &&
-		(isPhysicalDamage || isEnergyDamage) {
-		// ShadowBossPassive.SetIsDuplicate adds 3 to both incoming damage
-		// attributes. This is the illusion's identity, not a cleansable debuff.
-		damage *= 4
-	}
-	if isPhysicalDamage && now.Before(npc.status.physicalVulnerabilityEnd) {
-		damage *= 1 + npc.status.physicalTakenIncrease
-	}
-	if len(damageSource) > 0 && damageSource[0] == 1 &&
-		time.Now().Before(npc.status.energyVulnerabilityEnd) {
-		damage *= 1 + npc.status.energyTakenIncrease
-	}
-	if npc.status.carapaceDamageMaximum > 0 {
-		damage = min(damage, npc.status.carapaceDamageMaximum)
-	}
-	absorbedDamage := min(damage, npc.status.absorptionShieldAmount)
 	if absorbedDamage > 0 {
 		npc.status.absorptionShieldAmount -= absorbedDamage
 		damage -= absorbedDamage
@@ -1053,8 +1025,12 @@ func (s *Session) damage(
 		}
 	}
 	previousHealth := npc.HitPoint
+	if meta.isForcedDefeat {
+		damage = previousHealth
+		absorbedDamage = 0
+	}
 	appliedDamage := min(damage, previousHealth)
-	if !npc.IsTurtleTriggered && isNomadSpecialThreeNoun(npc.Plan.NounName) &&
+	if !meta.isForcedDefeat && !npc.IsTurtleTriggered && isNomadSpecialThreeNoun(npc.Plan.NounName) &&
 		npc.Plan.NPCProfile.HitPoint > 0 {
 		turtleThreshold := npc.Plan.NPCProfile.HitPoint * 0.5
 		isTurtleThresholdCrossed := previousHealth > turtleThreshold &&
@@ -1069,13 +1045,13 @@ func (s *Session) damage(
 		species == "cryoselementalspecialthree" {
 		npc.status.isDamageFleePending = true
 	}
-	isSelfResurrectionStarted := npc.IsDefeated &&
+	isSelfResurrectionStarted := !meta.isForcedDefeat && npc.IsDefeated &&
 		!npc.IsSelfResurrectionTriggered &&
 		nounSpecies(npc.Plan.NounName) == "nomadbiospecialtwo"
 	if isSelfResurrectionStarted {
 		npc.IsSelfResurrectionTriggered = true
 	}
-	isCorruptorStageTwoStarted := npc.IsDefeated &&
+	isCorruptorStageTwoStarted := !meta.isForcedDefeat && npc.IsDefeated &&
 		!npc.IsCorruptorStageTwo &&
 		nounSpecies(npc.Plan.NounName) == "scaldronboss"
 	if isCorruptorStageTwoStarted {

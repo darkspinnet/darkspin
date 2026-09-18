@@ -164,7 +164,7 @@ func (r campaignNPCActionRuntime) startCorruptorControllers(
 			generation: generation, objectID: plan.ObjectID,
 			timestamp: timestamp + uint64(campaignCorruptorActivationDelay/time.Millisecond),
 		}
-		err := step.packet.ScheduleFunc(campaignCorruptorActivationDelay, step.produce)
+		err := scheduleNPCProducer(r.registry, step.packet, campaignCorruptorActivationDelay, step.produce)
 		if err != nil {
 			return fmt.Errorf("corruptorActivationSchedule: %w", err)
 		}
@@ -409,7 +409,7 @@ func (r campaignNPCActionRuntime) advanceCorruptorPhase(
 		next := step
 		next.timestamp += uint64(period / time.Millisecond)
 		next.isStageTwoStart = false
-		err = step.packet.ScheduleFunc(period, next.produce)
+		err = scheduleNPCProducer(r.registry, step.packet, period, next.produce)
 		if err != nil {
 			return nil, fmt.Errorf("corruptorPhaseSchedule: %w", err)
 		}

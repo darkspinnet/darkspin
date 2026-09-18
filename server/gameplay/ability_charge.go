@@ -340,10 +340,13 @@ func (e heroChargeSchedule) commitBeastPetTerminal(
 		return zoneability.AreaResult{}, campaignDamageTransition{}, false,
 			fmt.Errorf("critical: %w", err)
 	}
-	damage, err := peerSession.zone.NPCs().Damage(
-		pet.ObjectID, target.Plan.ObjectID, critical.Damage,
-		uint32(physicalDamageSource),
-	)
+	damage, err := peerSession.zone.NPCs().Hit(zonenpc.HitRequest{
+		SourceObjectID: pet.ObjectID,
+		TargetObjectID: target.Plan.ObjectID,
+		Damage:         critical.Damage,
+		SourcePosition: &pet.Position,
+		Metadata:       zonenpc.DamageMetadata{DamageSource: uint32(physicalDamageSource)},
+	})
 	if err != nil {
 		return zoneability.AreaResult{}, campaignDamageTransition{}, false,
 			fmt.Errorf("commit: %w", err)

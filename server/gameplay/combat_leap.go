@@ -78,7 +78,7 @@ func (e campaignLeapSchedule) launch() ([][]byte, error) {
 			target.FootprintRadius,
 	)
 	if surfaceDistance < e.plan.Profile.MinimumRange {
-		cancel, scheduleErr := e.packet.ScheduleProducers(
+		cancel, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet,
 			[]raknet.ScheduledPacketProducer{{
 				Delay: campaignHopperAirTime, Produce: e.landWithoutDamage,
 			}},
@@ -246,7 +246,7 @@ func (e campaignLeapSchedule) land(
 	nextDelay := max(e.plan.Profile.EndAnimationDelay, e.plan.Profile.Cooldown)
 	nextSchedule := e
 	nextSchedule.timestamp = timestamp
-	cancel, scheduleErr := e.packet.ScheduleProducers(
+	cancel, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet,
 		[]raknet.ScheduledPacketProducer{{Delay: nextDelay, Produce: nextSchedule.next}},
 	)
 	if scheduleErr == nil && cancel == nil {
@@ -366,7 +366,7 @@ func (r campaignNPCActionRuntime) produceEnemyLeap(
 		return nil, fmt.Errorf("enemyLeapStart: %w", err)
 	}
 	resume.plan = plan
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: profile.HitDelay, Produce: resume.launch,
 	}})
 	if err == nil && cancel == nil {

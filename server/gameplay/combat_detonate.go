@@ -32,7 +32,7 @@ func (e campaignExploderScarabSchedule) explode() ([][]byte, error) {
 	if err != nil {
 		return e.fail("firebombStart", err)
 	}
-	_, scheduleErr := e.request.packet.ScheduleProducers(
+	_, scheduleErr := scheduleNPCProducers(e.request.runtime.registry, e.request.packet,
 		[]raknet.ScheduledPacketProducer{{
 			Delay: e.plan.Profile.HitDelay, Produce: e.hit,
 		}},
@@ -150,8 +150,8 @@ func (e campaignExploderScarabSchedule) hit() ([][]byte, error) {
 			modifierPlans = append(modifierPlans, plan)
 		}
 	}
-	damageResult, err := peerSession.zone.NPCs().Damage(
-		req.objectID, req.objectID, source.HitPoint,
+	damageResult, err := peerSession.zone.NPCs().Defeat(
+		req.objectID, req.objectID,
 	)
 	if err != nil {
 		runtime.registry.mutex.Unlock()
@@ -293,7 +293,7 @@ func (r campaignNPCActionRuntime) produceExploderScarab(
 		request.timestamp = timestamp + uint64(profile.EmergeDelay/time.Millisecond)
 		plan.Profile = profile
 		schedule := campaignExploderScarabSchedule{request: request, plan: plan}
-		_, scheduleErr := packet.ScheduleProducers(
+		_, scheduleErr := scheduleNPCProducers(r.registry, packet,
 			[]raknet.ScheduledPacketProducer{{
 				Delay: profile.EmergeDelay, Produce: schedule.explode,
 			}},
@@ -313,7 +313,7 @@ func (r campaignNPCActionRuntime) produceExploderScarab(
 		return nil, fmt.Errorf("exploderScarabStart: %w", err)
 	}
 	schedule := campaignExploderScarabSchedule{request: request, plan: plan}
-	_, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	_, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: profile.HitDelay, Produce: schedule.hit,
 	}})
 	if scheduleErr != nil {

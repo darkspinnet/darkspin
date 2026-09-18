@@ -23,7 +23,13 @@ func newConvertCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "convert <source[:entry]> [destination]",
 		Short: "Convert a DBPF package to or from a strict .ds directory",
-		Args:  cobra.RangeArgs(1, 2),
+		Long: "Convert a DBPF package to or from a strict .ds directory.\n\n" +
+			"Without a destination, Creatures.package converts to Creatures.ds in the\n" +
+			"current directory, and a <name>.ds directory converts back to <name>.package\n" +
+			"in the current directory. Existing destinations are not overwritten.\n" +
+			"Audio bundles repack both packages into their parent directory by default.\n" +
+			"Selected entries and other DS directories require an explicit destination.",
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(command *cobra.Command, args []string) error {
 			target := parsePackageTarget(args[0])
 			if target.Selector == "" && strings.EqualFold(filepath.Base(target.Path), "AudioProps.package") {
@@ -37,21 +43,11 @@ func newConvertCommand() *cobra.Command {
 			if len(args) == 2 {
 				destinationPath = args[1]
 			} else {
-				fi, statErr := os.Stat(target.Path)
-				if statErr != nil {
-					return fmt.Errorf("convertSourceStat: %w", statErr)
+				var destinationErr error
+				destinationPath, destinationErr = defaultConvertDestination(target)
+				if destinationErr != nil {
+					return fmt.Errorf("convertDestination: %w", destinationErr)
 				}
-				if !fi.IsDir() {
-					return errors.New("convertDestination: destination is required unless the source is an Audio.ds bundle")
-				}
-				isAudioBundle, bundleErr := ds.IsAudioBundlePath(target.Path)
-				if bundleErr != nil {
-					return fmt.Errorf("convertBundle: %w", bundleErr)
-				}
-				if !isAudioBundle {
-					return errors.New("convertDestination: destination is required unless the source is an Audio.ds bundle")
-				}
-				destinationPath = filepath.Dir(filepath.Clean(target.Path))
 			}
 			names, err := discoverRenderNames(target.Path)
 			if err != nil {
@@ -106,6 +102,32 @@ func newConvertCommand() *cobra.Command {
 		},
 	}
 	return command
+}
+
+func defaultConvertDestination(target packageTarget) (string, error) {
+	if target.Selector != "" {
+		return "", errors.New("destination is required for a selected entry")
+	}
+	fi, err := os.Stat(target.Path)
+	if err != nil {
+		return "", fmt.Errorf("sourceStat: %w", err)
+	}
+	sourceName := filepath.Base(filepath.Clean(target.Path))
+	sourceExtension := filepath.Ext(sourceName)
+	if !fi.IsDir() {
+		return strings.TrimSuffix(sourceName, sourceExtension) + ".ds", nil
+	}
+	isAudioBundle, err := ds.IsAudioBundlePath(target.Path)
+	if err != nil {
+		return "", fmt.Errorf("bundleRead: %w", err)
+	}
+	if isAudioBundle {
+		return filepath.Dir(filepath.Clean(target.Path)), nil
+	}
+	if strings.EqualFold(sourceExtension, ".ds") {
+		return strings.TrimSuffix(sourceName, sourceExtension) + ".package", nil
+	}
+	return "", errors.New("destination is required unless the directory has a .ds extension or is an audio bundle")
 }
 
 func newGLTFCommand() *cobra.Command {

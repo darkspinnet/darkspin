@@ -93,7 +93,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 			generation, plan.TargetObjectID,
 		)
 	}
-	if isCurrent && peerSession.isHeroDebuffImmune(plan.TargetObjectID) {
+	if isCurrent && r.isTargetDebuffImmuneLocked(&peerSession, plan.TargetObjectID) {
 		isCurrent = false
 	}
 	if isCurrent {
@@ -133,7 +133,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 		runtime: r, sessionKey: sessionKey, generation: generation,
 		targetObjectID: plan.TargetObjectID, run: run,
 	}
-	cancel, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: profile.ModifierDuration, Produce: expiry.produce,
 	}})
 	if scheduleErr == nil && cancel == nil {

@@ -169,7 +169,7 @@ func (e campaignVoltroidSchedule) hit() ([][]byte, error) {
 		generation: e.generation, objectID: e.targetID,
 		effectSlot: effectSlot, expiresAt: expiresAt,
 	}
-	cancelCleanup, scheduleErr := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancelCleanup, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: 15 * time.Second, Produce: cleanup.produce,
 	}})
 	if scheduleErr != nil {
@@ -271,7 +271,7 @@ func (r campaignNPCActionRuntime) produceCitadelSpecificOne(
 		plan:      zonenpc.AttackPlan{},
 	}
 	if target.Plan.ObjectID == 0 {
-		_, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+		_, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 			Delay: time.Second, Produce: schedule.next,
 		}})
 		if err != nil {
@@ -347,7 +347,7 @@ func (r campaignNPCActionRuntime) produceCitadelSpecificOne(
 	cleanup := campaignVoltroidVisualCleanupStep{
 		runtime: r, objectID: objectID, effectSlot: effectSlot,
 	}
-	_, err = packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	_, err = scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: profile.HitDelay, Produce: schedule.hit},
 		{Delay: profile.ReleaseDelay, Produce: cleanup.produce},
 		{Delay: repeatDelay, Produce: schedule.next},

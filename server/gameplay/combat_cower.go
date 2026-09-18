@@ -77,7 +77,7 @@ func (r campaignNPCActionRuntime) producePackMeleeCower(
 		generation: generation, objectID: objectID,
 		timestamp: timestamp + uint64(profile.Cooldown/time.Millisecond),
 	}
-	_, err = packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	_, err = scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: profile.Cooldown, Produce: schedule.next,
 	}})
 	if err != nil {

@@ -111,7 +111,7 @@ func (e campaignScaldronBlinkTeleportStep) produce() ([][]byte, error) {
 		generation: e.generation, objectID: e.objectID,
 		timestamp: e.timestamp + uint64(profile.TeleportAnimationDelay/time.Millisecond),
 	}
-	_, scheduleErr := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	_, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: profile.TeleportAnimationDelay, Produce: resume.produce,
 	}})
 	if scheduleErr != nil {
@@ -171,7 +171,7 @@ func (e campaignScaldronBlinkAwayStep) produce() ([][]byte, error) {
 		generation: e.generation, objectID: e.objectID,
 		timestamp: e.timestamp + uint64(scaldronBlinkOutDuration/time.Millisecond),
 	}
-	_, scheduleErr := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	_, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: scaldronBlinkOutDuration, Produce: teleport.produce,
 	}})
 	if scheduleErr != nil {
@@ -234,7 +234,7 @@ func (r campaignNPCActionRuntime) produceScaldronBasicBlink(
 		generation: generation, objectID: objectID,
 		timestamp: timestamp + uint64(profile.ReleaseDelay/time.Millisecond),
 	}
-	_, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	_, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: profile.HitDelay, Produce: attack.hit},
 		{Delay: profile.ReleaseDelay, Produce: away.produce},
 		{Delay: profile.Cooldown, Produce: attack.next},
@@ -266,7 +266,7 @@ func (r campaignNPCActionRuntime) startScaldronBlinkNearTeleport(
 		timestamp: timestamp + uint64(scaldronBlinkOutDuration/time.Millisecond),
 		isNear:    true,
 	}
-	_, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	_, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: scaldronBlinkOutDuration, Produce: teleport.produce,
 	}})
 	if scheduleErr != nil {

@@ -175,7 +175,7 @@ func (r campaignNPCActionRuntime) produceNashiraPanic(
 	}
 	hit := campaignNashiraFearStep{step: next, profile: profile}
 	hit.step.timestamp = timestamp + uint64(profile.HitDelay/time.Millisecond)
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: profile.HitDelay, Produce: hit.produce},
 		{Delay: profile.ReleaseDelay, Produce: next.produce},
 	})

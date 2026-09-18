@@ -189,14 +189,16 @@ type DeckUpdate struct {
 
 // CreatureUpdate is the application command decoded from api.creature.updateCreature.
 type CreatureUpdate struct {
-	CreatureID     uint32
-	GearScore      float32
-	ItemPoints     float32
-	Stats          string
-	AbilityStats   string
-	EquippedPartID []uint64
-	LargeImageURL  string
-	ThumbImageURL  string
+	CreatureID      uint32
+	PreviousVersion uint32
+	SavedVersion    uint32
+	GearScore       float32
+	ItemPoints      float32
+	Stats           string
+	AbilityStats    string
+	EquippedPartID  []uint64
+	LargeImageURL   string
+	ThumbImageURL   string
 }
 
 // UpdateCreature durably applies one editor save, including its authoritative equipped-part set.
@@ -222,6 +224,11 @@ func (m *UserManager) UpdateCreature(ctx context.Context, user *User, command Cr
 	if creature == nil {
 		user.mu.Unlock()
 		return nil, ErrCreatureNotFound
+	}
+	if command.SavedVersion != 0 && (command.PreviousVersion != creature.Version ||
+		command.SavedVersion <= creature.Version || command.SavedVersion > 0x7fffffff) {
+		user.mu.Unlock()
+		return nil, errors.New("creature revision changed or invalid")
 	}
 	selected := make(map[uint64]struct{}, len(command.EquippedPartID))
 	for _, itemID := range command.EquippedPartID {
@@ -277,6 +284,9 @@ func (m *UserManager) UpdateCreature(ctx context.Context, user *User, command Cr
 	}
 	creature.Update(gearScore, itemPoints, command.Stats, command.AbilityStats)
 	creature.Version++
+	if command.SavedVersion != 0 {
+		creature.Version = command.SavedVersion
+	}
 	if command.LargeImageURL != "" {
 		creature.LargeImageURL = command.LargeImageURL
 	}
@@ -375,8 +385,9 @@ func (u *User) updateDecks(command DeckUpdate) (Account, []Squad, bool, error) {
 			ownedIDs[creature.ID] = struct{}{}
 		}
 	}
-	isPVERequested := hasCreatureID(command.PVECreatures)
-	isPVPRequested := hasCreatureID(command.PVPCreatures)
+	// An explicitly empty deck (0,0,0) is an update, not an omitted field.
+	isPVERequested := len(command.PVECreatures) != 0
+	isPVPRequested := len(command.PVPCreatures) != 0
 	isChanged := false
 	var err error
 	if isPVERequested {
@@ -542,9 +553,9 @@ func (m *UserManager) prepareProfileStart(ctx context.Context, user *User) error
 	return nil
 }
 
-// repairPVEDeck keeps the selected campaign squad playable by preserving its
-// distinct owned members and filling invalid positions before the native
-// editor validates the selected group.
+// repairPVEDeck validates the selected campaign squad without filling empty
+// slots. Empty slots are saved player choices; starter assignment belongs to
+// onboarding, not profile loading.
 func (e *User) repairPVEDeck() bool {
 	if e == nil {
 		return false
@@ -555,19 +566,11 @@ func (e *User) repairPVEDeck() bool {
 		return false
 	}
 	ownedIDs := make(map[uint32]struct{}, len(e.Creatures))
-	orderedOwnedIDs := make([]uint32, 0, len(e.Creatures))
 	for _, creature := range e.Creatures {
 		if creature == nil || creature.ID == 0 {
 			continue
 		}
-		if _, isOwned := ownedIDs[creature.ID]; isOwned {
-			continue
-		}
 		ownedIDs[creature.ID] = struct{}{}
-		orderedOwnedIDs = append(orderedOwnedIDs, creature.ID)
-	}
-	if len(orderedOwnedIDs) < 3 {
-		return false
 	}
 	targetIndex := -1
 	for squadIndex := range e.Squads {
@@ -600,8 +603,8 @@ func (e *User) repairPVEDeck() bool {
 		return false
 	}
 	isChanged := false
-	assignedIDs := make(map[uint32]struct{}, len(orderedOwnedIDs))
 	targetSquad := &e.Squads[targetIndex]
+	assignedIDs := make(map[uint32]struct{}, len(targetSquad.CreatureIDs))
 	for creatureIndex, creatureID := range targetSquad.CreatureIDs {
 		_, isOwned := ownedIDs[creatureID]
 		_, isAssigned := assignedIDs[creatureID]
@@ -614,20 +617,6 @@ func (e *User) repairPVEDeck() bool {
 		}
 		assignedIDs[creatureID] = struct{}{}
 	}
-	for creatureIndex, creatureID := range targetSquad.CreatureIDs {
-		if creatureID != 0 {
-			continue
-		}
-		for _, ownedID := range orderedOwnedIDs {
-			if _, isAssigned := assignedIDs[ownedID]; isAssigned {
-				continue
-			}
-			targetSquad.CreatureIDs[creatureIndex] = ownedID
-			assignedIDs[ownedID] = struct{}{}
-			isChanged = true
-			break
-		}
-	}
 	if targetSquad.Category != "pve" {
 		targetSquad.Category = "pve"
 		isChanged = true
@@ -639,94 +628,69 @@ func (e *User) repairPVEDeck() bool {
 	return isChanged
 }
 
-// repairPVPDeck provisions the unlocked native Arena destination with one
-// selectable three-creature squad while preserving every authored PVE squad.
+// repairPVPDeck provisions the Arena destination without copying campaign
+// heroes. Build 103 suppresses a collection model if either deck assignment
+// is set, so a copied PVP assignment hides heroes removed from their PVE squad.
 func (e *User) repairPVPDeck() bool {
 	if e == nil {
 		return false
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.Account.UnlockPVPDecks == 0 {
-		return false
+	campaignIDs := make(map[uint32]struct{})
+	for _, squad := range e.Squads {
+		if !isSquadDestination(squad, "pve") {
+			continue
+		}
+		for _, creatureID := range squad.CreatureIDs {
+			if creatureID != 0 {
+				campaignIDs[creatureID] = struct{}{}
+			}
+		}
 	}
-	existingPVPIndex := -1
+	isChanged := false
+	targetIndex := -1
 	for squadIndex := range e.Squads {
-		squad := e.Squads[squadIndex]
+		squad := &e.Squads[squadIndex]
 		if squad.Category != "pvp" {
 			continue
 		}
-		if squad.ID == e.Account.DefaultDeckPVPID {
-			if squad.Slot == 1 {
-				return false
+		// Repair old automatically copied memberships while preserving unique
+		// Arena heroes, campaign loadouts, equipment and the hero records.
+		for creatureIndex, creatureID := range squad.CreatureIDs {
+			if _, isDuplicated := campaignIDs[creatureID]; isDuplicated {
+				squad.CreatureIDs[creatureIndex] = 0
+				isChanged = true
 			}
-			e.Squads[squadIndex].Slot = 1
-			return true
 		}
-		if existingPVPIndex < 0 {
-			existingPVPIndex = squadIndex
-		}
-	}
-	if existingPVPIndex >= 0 {
-		targetSquad := &e.Squads[existingPVPIndex]
-		targetSquad.Slot = 1
-		e.Account.DefaultDeckPVPID = targetSquad.ID
-		return true
-	}
-	ownedIDs := make(map[uint32]struct{}, len(e.Creatures))
-	for _, creature := range e.Creatures {
-		if creature != nil {
-			ownedIDs[creature.ID] = struct{}{}
-		}
-	}
-	sourceIndex := -1
-	targetIndex := -1
-	for squadIndex := range e.Squads {
-		squad := e.Squads[squadIndex]
-		if squad.ID == e.Account.DefaultDeckPVEID && squad.Category == "pve" &&
-			isCompleteOwnedSquad(squad, ownedIDs) {
-			sourceIndex = squadIndex
-		}
-		if targetIndex < 0 && squad.Category == "" && !squad.IsLocked {
+		if targetIndex < 0 || squad.ID == e.Account.DefaultDeckPVPID {
 			targetIndex = squadIndex
 		}
 	}
-	if sourceIndex < 0 {
-		for squadIndex := range e.Squads {
-			squad := e.Squads[squadIndex]
-			if squad.Category == "pve" && isCompleteOwnedSquad(squad, ownedIDs) {
-				sourceIndex = squadIndex
+	if e.Account.UnlockPVPDecks == 0 {
+		return isChanged
+	}
+	if targetIndex < 0 {
+		for squadIndex, squad := range e.Squads {
+			if squad.Category == "" && !squad.IsLocked &&
+				!hasCreatureID(squad.CreatureIDs[:]) {
+				targetIndex = squadIndex
 				break
 			}
 		}
 	}
-	if sourceIndex < 0 || targetIndex < 0 {
-		return false
+	if targetIndex < 0 {
+		return isChanged
 	}
-	sourceSquad := e.Squads[sourceIndex]
-	targetSquad := &e.Squads[targetIndex]
-	targetSquad.Category = "pvp"
-	targetSquad.Slot = 1
-	targetSquad.CreatureIDs = sourceSquad.CreatureIDs
-	e.Account.DefaultDeckPVPID = targetSquad.ID
-	return true
-}
-
-func isCompleteOwnedSquad(squad Squad, ownedIDs map[uint32]struct{}) bool {
-	assignedIDs := make(map[uint32]struct{}, len(squad.CreatureIDs))
-	for _, creatureID := range squad.CreatureIDs {
-		if creatureID == 0 {
-			return false
-		}
-		if _, isOwned := ownedIDs[creatureID]; !isOwned {
-			return false
-		}
-		if _, isAssigned := assignedIDs[creatureID]; isAssigned {
-			return false
-		}
-		assignedIDs[creatureID] = struct{}{}
+	squad := &e.Squads[targetIndex]
+	if squad.Category != "pvp" || squad.Slot != 1 ||
+		e.Account.DefaultDeckPVPID != squad.ID {
+		squad.Category = "pvp"
+		squad.Slot = 1
+		e.Account.DefaultDeckPVPID = squad.ID
+		isChanged = true
 	}
-	return true
+	return isChanged
 }
 
 func (u *User) recoverThirdHeroLesson() (Account, []Squad, bool) {

@@ -145,7 +145,7 @@ func (r campaignNPCActionRuntime) produceScaldronBasicMaserCleanse(
 		generation: generation, objectID: objectID, timestamp: timestamp,
 		profile: profile,
 	}
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: profile.HitDelay, Produce: step.hit},
 		{Delay: profile.Cooldown, Produce: step.next},
 	})

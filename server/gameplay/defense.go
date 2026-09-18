@@ -6,8 +6,23 @@ import (
 	"github.com/darkspinnet/darkspin/server/combat"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
+	"github.com/darkspinnet/darkspin/server/zone"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
+
+func (e campaignNPCActionRuntime) reduceCompanionDamage(session gameplayPeerSession,
+	target zone.NPCTarget, damage float32, req combat.DefenseRequest,
+) float32 {
+	if target.IsHero || session.zone == nil || session.zone.Companion() == nil {
+		return damage
+	}
+	companion, isFound := session.zone.Companion().Snapshot(target.ObjectID)
+	if !isFound {
+		return damage
+	}
+	profile := e.program.NonPlayerDefenses[companion.Noun]
+	return session.zone.NPCs().ReduceCompanionDamage(damage, req.Damage, profile, uint32(req.DamageSource))
+}
 
 func (e gameplayPeerSession) equipmentDefense() combat.DefenseProfile {
 	if e.deployedCreatureIndex >= uint32(len(e.binding.Creatures)) {
@@ -23,6 +38,30 @@ func (e gameplayPeerSession) equipmentDefense() combat.DefenseProfile {
 	}
 	copy(profile.ScienceResistances[:], attributes[43:48])
 	return profile
+}
+
+// The caller holds registry.mutex. Enemy action state can belong to another
+// connection, while immunity always belongs to the hero receiving the debuff.
+func (e campaignNPCActionRuntime) isTargetDebuffImmuneLocked(
+	session *gameplayPeerSession, targetObjectID uint32,
+) bool {
+	if session == nil || session.zone == nil {
+		return true
+	}
+	target, isFound := session.campaignNPCTarget(session.generation, targetObjectID)
+	if !isFound || target.HitPoint <= 0 {
+		return true
+	}
+	if !target.IsHero {
+		return false
+	}
+	targetSession, targetSessionKey := e.heroTargetSession(session, target)
+	// The key is only needed when mutating a remote session; this is read-only.
+	if targetSession == nil {
+		return true
+	}
+	_ = targetSessionKey
+	return targetSession.isHeroDebuffImmune(targetObjectID)
 }
 
 func enemyDefenseRequest(profile zonenpc.ActionProfile, damage float32, isArea, isPeriodic bool) combat.DefenseRequest {

@@ -34,7 +34,7 @@ type campaignNPCRootedHealSchedule struct {
 func (e campaignNPCRootedHealSchedule) schedule(
 	delay time.Duration, produce func() ([][]byte, error),
 ) error {
-	cancel, err := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: delay, Produce: produce,
 	}})
 	if err == nil && cancel == nil {
@@ -294,7 +294,7 @@ func (r campaignNPCActionRuntime) produceVerdanthSpecialTwoHeal(
 		targetObjectID: target.Plan.ObjectID, timestamp: timestamp,
 		profile: profile,
 	}
-	cancel, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: profile.HitDelay, Produce: schedule.hit},
 		{Delay: profile.Cooldown, Produce: schedule.next},
 	})

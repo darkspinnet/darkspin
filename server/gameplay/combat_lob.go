@@ -1066,7 +1066,7 @@ func (r campaignNPCActionRuntime) produceEnemyLob(
 		})
 	}
 	sortScheduledPacketProducersByDelay(producers)
-	cancel, scheduleErr := packet.ScheduleProducers(producers)
+	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, producers)
 	if scheduleErr == nil && cancel == nil {
 		scheduleErr = errors.New("nil cancellation")
 	}

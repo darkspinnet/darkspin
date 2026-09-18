@@ -151,7 +151,7 @@ func PlanCloudLob(
 		SourceObjectID: sourceObjectID,
 		TargetObjectID: targetObjectID,
 		AbilityID:      util.HashID(projected.Name),
-		Definition:     projected,
+		Definition:     damageDefinition,
 		Destination:    destination,
 		LaunchPosition: launchPosition,
 		Lob:            lob,

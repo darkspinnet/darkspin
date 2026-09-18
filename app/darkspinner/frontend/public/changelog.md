@@ -1,48 +1,54 @@
 # Changelog
 
+### 2026-09-18
+
+- Preserve removed campaign squad members across relaunches by leaving saved empty slots empty during login repair.
+- Stop automatically duplicating campaign heroes into PvP squads, repair overlapping PvP assignments on login, and save explicitly emptied squads so removed heroes remain available in the Arsenal.
+- Include Arsenal slot model IDs, suppression state and pending model resources in snapshots to diagnose invisible heroes with an intact catalogue.
+- Avoid server startup timeouts by loading ability coefficients once instead of repeatedly scanning the content cache for each token.
+- Correct the Arsenal snapshot controller address and capture catalogue counts even when the collection UI cannot be read.
+- Capture Arsenal collection counts, filters and scroll position in manual snapshots even while the gameplay clock is inactive.
+- Use available saved appearance revisions in Arsenal account, deck and hero responses so legacy saves do not request nonexistent image revisions; use noun templates when the saved appearance is missing.
+- Synchronize enemy pull and knockback endpoints with the client physics mover, cancel stale melee pursuit, and refresh current health and power after the forced reaction.
+- Play a death animation for killed Dendrones before removing their corpses, while preserving their existing respawn delay.
+- Keep editor image filenames, saved hero revisions and save responses synchronized, reserve revisions across accounts to prevent appearance overwrites, and log rejected saves.
+- Restore Wraith's Pummel impact event when recovering its melee definition so accepted hits include the authored visual and sound effects.
+- Create a safe mission checkpoint after deployment so Continue is available before the first defeated enemy group or pickup, including newly initialized co-op members.
+- Seed players joining an already-populated co-op zone with existing NPC positions, facing, resources and targets, instead of sending only later updates for enemies they never received.
+- Honor party leave requests followed by trailing shutdown RPCs, remove disconnected heroes and companions from teammates' scenes immediately, and restore them on successful reconnect.
+- Hold co-op NPC spawns and world updates until each player's dungeon scene is ready, and preserve queued packets across loading transitions so enemies cannot attack a client that missed their spawn.
+- Send co-op teammates the same beam-in position, effect and animation after hero creation, and keep missing player entry markers near the current map's entrance.
+- Preserve teammate readiness during hero roster refreshes instead of resetting already-entered players to loading and causing misleading cinematic wait messages.
+- Deliver delayed NPC movement, attacks and effects to every campaign teammate, preserve spawn-before-movement ordering, and use the actual shared pursuit target instead of reconstructing it per player.
+- Add an Open Bug Folder link at the top left of the report dialog, available before creating a report.
+- Resolve multiplayer hero appearances from available saved image versions instead of stat revisions, falling back to the hero's shipped template when the saved appearance is missing.
+- Remove a quitting player from the multiplayer party when their leave request is followed by disconnect, and notify teammates of the removal and any leader change.
+- Synchronize enemy target and combat state with teammates, and deliver pursuit arrivals and Arc Welding Melee attack continuations to every player in the zone.
+- Show catalyst pickup poses and animations to teammates, and synchronize player-indexed catalyst inventories and link bonuses after pickups, moves and drops.
+
 ### 2026-09-17
 
-- Reject RW4 vertex declarations with more than 65,535 elements before allocating or encoding their 16-bit element count.
-- Enforce portable signed 32-bit bounds for DSE counts and layout offsets, and calculate Fang mana-cost trace products in double precision.
-- Add a security policy directing vulnerability reports to GitHub's private reporting flow.
-- Remove overflow-prone Scaleform allocation sizing, guard accumulated instruction offsets, and require HTTPS for authentication cookies with the Secure attribute.
-- Reject invalid Unix process IDs, bound firewall interface responses, and validate content offsets, sizes, and narrow integer fields before conversion to prevent overflow and excessive request-driven allocation.
-- Reject out-of-range DSE animation event indexes, event counts, and interpolation modes instead of silently truncating them.
-- Reject DSE animation counts that exceed the platform integer range before allocation, preventing integer overflow on 32-bit builds.
-- Remove unchecked allocation-size arithmetic when parsing Scaleform action arguments to address CodeQL alert #8.
-- Fix the false tutorial XP-bar “Capped” warning by sending uncapped accounts with the client's compatible no-cap value instead of zero.
-- Default new local and remote Crogenitors to skipping the tutorial, while retaining the option to play it.
-- Change tutorial Return to Ship from a forced scene switch to the native Blaze post-game and player-removal exchange, clearing the joined tutorial session and refreshing the profile before ship interaction.
-- Split large launcher reports into independently openable ZIPs of at most 25 MB, preserve oversized logs as numbered chunks, and list every attachment in the report dialog and GitHub issue draft.
-- Change the in-game Fullscreen checkbox from exclusive fullscreen to the same saved borderless mode as Alt+Enter, keeping native rendering windowed and the options state synchronized.
-- Hide the cinematics toggle in both launchers and disable cinematic skipping for normal, automatic, remote, and detached launches.
-- Show the running build version in the Darkspinner window title.
-- Use the supplied green emblem across both Wails launchers, with dedicated 16-pixel artwork, larger Windows icon sizes, desktop app icons, and frontend favicons.
-- Add browser links to create prefilled GitHub bug reports and manage past reports, with a bug-folder shortcut for attaching diagnostic ZIPs.
-- Resize the legacy UI and Flash HUD with the render target, notify Flash layout handlers, and apply windowed/borderless transitions before frame updates to avoid stale layouts and black output when returning to windowed mode.
-- Let the launcher version label expand to fit unstable build identifiers by shortening the adjacent progress bar.
-- Change player dodge and energy resistance ratings from linear scaling to diminishing returns with a 75% avoidance ceiling, and cap combined passive, aura, resistance, and armor mitigation at 90% so stacked defenses cannot grant immunity.
-- Match borderless rendering and the saved graphics resolution to the current monitor, and restore the remembered windowed resolution when switching back.
-- Apply in-game resolution changes to the window size immediately and retain the selected size when returning from borderless to windowed mode.
-- Change Alt+Enter from an unsaved exclusive-fullscreen toggle to a saved windowed/borderless toggle, default to windowed, and restore the previous window placement when leaving borderless.
-- Correct client preferences from GameData to DarksporeData across launcher modes, preserve saved settings, and initialize new profiles with valid windowed defaults.
-- Restore Enter-to-chat by correcting game-window detection from Game to the shipped Darkspore title.
-- Keep launcher self-update checks silent and show update progress only when an update is found, without holding content preparation at zero.
-- Fix content preparation failing at tutorialAlias by restoring authored tutorial names in content imports and runtime lookups.
-- Add standalone Darkrun Windows amd64 and Linux amd64 ZIPs to stable releases and unstable build artifacts.
-- Upgrade Echo from v4.13.3 to v4.15.3 to fix the static-file route middleware bypass vulnerability.
-- Update launcher build dependencies from Nano ID 3.3.16 to 3.3.19 and PostCSS 8.5.19 to 8.5.28 to resolve their security advisories.
-- Expand stable releases and unstable artifacts from Windows x86 and Linux x64 to Windows amd64/win32, macOS amd64/arm64, and Linux amd64/arm64, with architecture-specific Windows self-updates.
-- Fix The Corruptor's stalled movement, missing elemental attacks, and mocking poses; change elemental phase transitions from replaying his spawn to continuing combat in place.
-- Restore Enemy Portal visuals and their authored explosion effect.
+- Infer Darkrun conversion destinations from package names: Creatures.package extracts to Creatures.ds, and Creatures.ds repacks to Creatures.package.
+- Link to the vgmstream GitHub releases page when Darkrun audio conversion cannot find vgmstream-cli.
+- Preserve each companion attack's damage classification and position, carry Sprout's poison element into resistance checks, and stop applying area mitigation to Expunge's single-target remaining-damage burst.
+- Fix multiplayer Thorn Bark reflection and attribute its damage, rewards and feedback to the struck hero; prevent life-drain healing after a damage reaction kills the enemy.
+- Honor the struck hero's debuff immunity for multiplayer enemy poison, vulnerabilities and control effects, and apply only the strongest overlapping Crushing Dread aura to campaign damage.
+- Apply catalyst primary-stat bonuses to damage and healing, propagate elemental damage and defense-based attack bonuses through inventory changes, and respect shield direction for Thorn Bark reflection.
+- Preserve pet and burn damage classifications and combined area/periodic defenses, apply companions' own defense ratings, honor finite TC shields in duels, and keep scripted deaths independent of combat resistance.
+- Apply enemy physical and energy defense ratings with difficulty scaling, cap ordinary stacked mitigation at 50% and temporary damage reduction at 75%, and preserve scripted immunity phases.
+- Apply Soul Link damage before selecting a replacement hero, prevent hit reactions on replacements, enable defensive hit stacks in duels, and include ally auras in companions' mitigation cap.
+- Fix shifted equipment suffix stats that incorrectly granted extreme damage reduction and misapplied physical and energy modifiers; refresh the server content cache automatically.
+- Fix Shadow Doppler effects, The Corruptor's combat behavior, and Enemy Portal visuals; rebalance stacked defenses to prevent immunity.
+- Improve windowed and borderless modes, resolution changes, saved settings, and HUD resizing; restore Enter-to-chat.
+- Fix tutorial loading, XP display, Return to Ship, and squad unlocks; default new Crogenitors to skipping the tutorial while keeping it available.
+- Improve launcher bug reporting, icons, version display, and update progress; disable cinematic skipping.
+- Expand releases to more Windows, macOS, and Linux architectures, add standalone Darkrun downloads, and simplify unstable build labels.
+- Strengthen security with dependency updates, safer content parsing, authentication hardening, and private vulnerability reporting.
 
 ### 2026-09-16
 
-- Use fixed stable release ZIP filenames so permanent Windows and Linux download links follow the latest release.
-- Change stable launcher downloads from a standalone executable to the Windows ZIP for both release assets and self-updates.
-- Fix duel lobbies stalling before squad selection by removing malformed character data from initial player updates.
-- Generate main artifacts with unstable build numbers and commit labels, permanent download links, and Windows artifact self-updates while keeping GitHub releases exclusive to release.
-- Prepare for darkspinnet org public launch
+- Prepare the darkspinnet public launch with permanent download links, stable release ZIPs, and unstable builds with Windows self-updates.
+- Fix duel lobbies stalling before squad selection.
 
 ### 2026-09-07
 

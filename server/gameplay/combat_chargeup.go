@@ -145,7 +145,7 @@ func (r campaignNPCActionRuntime) produceZelemChargeupBuild(
 		objectID: objectID, timestamp: timestamp, revision: state.revision,
 		profile: profile,
 	}
-	_, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{
+	_, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: profile.HitDelay, Produce: schedule.hit},
 		{Delay: profile.ReleaseDelay, Produce: schedule.next},
 	})

@@ -11,6 +11,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/util"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
+	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
 const poisonNovaName = "LFPoisonRavager_PoisonNova"
@@ -79,10 +80,10 @@ func (e heroHitPoisonStep) produce() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("hitPoisonDamage: %w", err)
 	}
-	damageResult, err := peerSession.zone.NPCs().DamageOverTime(
-		e.run.sourceObjectID, e.run.targetObjectID, damage.Minimum,
-		tickDefinition.DamageSource,
-	)
+	damageResult, err := peerSession.zone.NPCs().Hit(zonenpc.HitRequest{
+		SourceObjectID: e.run.sourceObjectID, TargetObjectID: e.run.targetObjectID, Damage: damage.Minimum,
+		SourcePosition: nil, Metadata: zoneability.NPCDamageMetadata(tickDefinition),
+	})
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("hitPoisonApply: %w", err)

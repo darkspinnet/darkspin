@@ -154,7 +154,7 @@ func (e campaignScaldronDeathMineSchedule) explode() ([][]byte, error) {
 			e.run.mineObjectID, err,
 		)
 	}
-	_, scheduleErr := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	_, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: scaldronMineExplosionDuration, Produce: e.cleanup,
 	}})
 	if scheduleErr != nil {
@@ -346,7 +346,7 @@ func (r campaignNPCActionRuntime) spawnScaldronDeathMines(
 			Produce: schedule.timeout,
 		})
 	}
-	_, scheduleErr := packet.ScheduleProducers(producers)
+	_, scheduleErr := scheduleNPCProducers(r.registry, packet, producers)
 	if scheduleErr != nil {
 		r.clearScaldronDeathMineSchedules(sessionKey, generation, schedules)
 		return nil, false, fmt.Errorf("deathMineSchedule: %w", scheduleErr)

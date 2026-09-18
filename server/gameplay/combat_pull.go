@@ -88,7 +88,7 @@ func (r campaignNPCActionRuntime) startGrapplingPulsarPullEffect(
 	cleanup := campaignNPCPullEffectSchedule{
 		runtime: r, objectID: objectID, slot: effectSlot,
 	}
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: duration, Produce: cleanup.remove,
 	}})
 	if err == nil && cancel == nil {

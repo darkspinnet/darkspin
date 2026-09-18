@@ -352,3 +352,22 @@ jobs:
             echo "::error title=Latest release mismatch::Expected ${VERSION_TAG}, but GitHub reports ${published_latest_tag}."
             exit 1
           fi
+
+      - name: Notify Discord
+        if: success()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          VERSION_TAG: v${{ steps.archives.outputs.version }}
+        shell: bash
+        run: |
+          if [[ -z "${DISCORD_WEBHOOK}" ]]; then
+            echo "DISCORD_WEBHOOK is not configured; skipping notification."
+            exit 0
+          fi
+          message="🚀 Darkspinner ${VERSION_TAG} is [now available!](<https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION_TAG}>)"
+          payload="$(jq -n --arg content "${message}" '{content: $content, allowed_mentions: {parse: []}}')"
+          curl --fail --silent --show-error --connect-timeout 10 --max-time 30 \
+            -H "Content-Type: application/json" \
+            --data "${payload}" \
+            --output /dev/null \
+            "${DISCORD_WEBHOOK}"

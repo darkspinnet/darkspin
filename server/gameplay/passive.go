@@ -10,7 +10,6 @@ import (
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/util"
-	"github.com/darkspinnet/darkspin/server/zone"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
@@ -236,6 +235,12 @@ func (s gameplayPeerSession) applyPassiveDamageReduction(
 		return damage
 	}
 	creature := s.binding.Creatures[s.deployedCreatureIndex]
+	// Crushing Dread is selected once across the whole party below, including
+	// this hero's aura, rather than stacking a personal and an allied copy.
+	if creature.PassiveAbility == util.HashID("CrushingDread") {
+		creature.PhysicalDamageReduction = 0
+		creature.EnergyDamageReduction = 0
+	}
 	if s.isOverdriveActiveAt(now) &&
 		creature.PassiveAbility == util.HashID("QuantumPositioning") {
 		creature.EnergyDamageReduction += 0.50
@@ -265,8 +270,8 @@ func (s gameplayPeerSession) applyPassiveDamageReduction(
 	return combat.ApplyDamageReduction(damage, reduction)
 }
 
-func (r campaignNPCActionRuntime) applyCrushingDreadAllyReduction(
-	peerSession gameplayPeerSession, target zone.NPCTarget,
+func (r campaignNPCActionRuntime) applyCrushingDreadReduction(
+	peerSession gameplayPeerSession,
 	sourceObjectID uint32, damage float32, damageSource uint8,
 ) float32 {
 	if damage <= 0 || peerSession.zone == nil || sourceObjectID == 0 {
@@ -276,29 +281,36 @@ func (r campaignNPCActionRuntime) applyCrushingDreadAllyReduction(
 	if !isFound {
 		return damage
 	}
-	reduction := float32(0)
+	reduction := peerSession.crushingDreadReduction(npc.Plan.Position, damageSource)
 	for _, candidate := range r.registry.sessions {
 		if candidate.zone != peerSession.zone ||
-			candidate.deployedObjectID == target.ObjectID ||
-			candidate.deployedHitPoint() <= 0 ||
-			candidate.deployedCreatureIndex >=
-				uint32(len(candidate.binding.Creatures)) {
+			(candidate.binding.UserID == peerSession.binding.UserID &&
+				candidate.generation == peerSession.generation) {
 			continue
 		}
-		creature := candidate.binding.Creatures[candidate.deployedCreatureIndex]
-		if creature.PassiveAbility != util.HashID("CrushingDread") ||
-			creature.PassiveAuraRadius <= 0 ||
-			npc.Plan.Position.Sub(game.Vec3(candidate.playerPosition)).Length() >
-				creature.PassiveAuraRadius {
-			continue
-		}
-		candidateReduction := creature.PhysicalDamageReduction
-		if damageSource == energyDamageSource {
-			candidateReduction = creature.EnergyDamageReduction
-		}
-		reduction = max(reduction, candidateReduction)
+		reduction = max(reduction, candidate.crushingDreadReduction(npc.Plan.Position, damageSource))
 	}
 	return combat.ApplyDamageReduction(damage, reduction)
+}
+
+func (e gameplayPeerSession) crushingDreadReduction(sourcePosition game.Vec3, damageSource uint8) float32 {
+	if e.deployedHitPoint() <= 0 || e.deployedCreatureIndex >= uint32(len(e.binding.Creatures)) {
+		return 0
+	}
+	creature := e.binding.Creatures[e.deployedCreatureIndex]
+	if creature.PassiveAbility != util.HashID("CrushingDread") ||
+		creature.PassiveAuraRadius <= 0 ||
+		sourcePosition.Sub(game.Vec3(e.playerPosition)).Length() > creature.PassiveAuraRadius {
+		return 0
+	}
+	switch damageSource {
+	case physicalDamageSource:
+		return creature.PhysicalDamageReduction
+	case energyDamageSource:
+		return creature.EnergyDamageReduction
+	default:
+		return 0
+	}
 }
 
 func (s gameplayPeerSession) passiveDamageReduction(now time.Time) float32 {

@@ -11,6 +11,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/util"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
+	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
 const (
@@ -82,10 +83,13 @@ func (e heroPassivePoisonStep) produce() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("passivePoisonDamage: %w", err)
 	}
-	damageResult, err := peerSession.zone.NPCs().DamageOverTime(
-		e.run.sourceObjectID, e.run.targetObjectID, damage.Minimum,
-		definition.DamageSource,
-	)
+	damageResult, err := peerSession.zone.NPCs().Hit(zonenpc.HitRequest{
+		SourceObjectID: e.run.sourceObjectID,
+		TargetObjectID: e.run.targetObjectID,
+		Damage:         damage.Minimum,
+		IsPeriodic:     true,
+		Metadata:       zoneability.NPCDamageMetadata(definition),
+	})
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("passivePoisonApply: %w", err)

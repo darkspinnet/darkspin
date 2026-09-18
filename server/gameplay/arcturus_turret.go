@@ -99,7 +99,7 @@ func (e campaignArcturusSpawnStep) startTurret(current *gameplayPeerSession, bos
 		run.isProtected = err == nil
 	}
 	if err == nil {
-		err = e.packet.ScheduleFunc(100*time.Millisecond, run.tick)
+		err = scheduleNPCProducer(e.runtime.registry, e.packet, 100*time.Millisecond, run.tick)
 	}
 	if err != nil {
 		despawnErr := current.zone.NPCs().Despawn([]uint32{objectID})
@@ -221,7 +221,7 @@ func (e *campaignArcturusTurret) tick() ([][]byte, error) {
 	if err != nil {
 		owner.runtime.logger.Printf("Arcturus turret tick omitted: %v", err)
 	}
-	err = owner.packet.ScheduleFunc(100*time.Millisecond, e.tick)
+	err = scheduleNPCProducer(owner.runtime.registry, owner.packet, 100*time.Millisecond, e.tick)
 	if err != nil {
 		owner.runtime.logger.Printf("Arcturus turret stopped after scheduler failure: %v", err)
 		owner.runtime.registry.mutex.Lock()
