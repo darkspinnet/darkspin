@@ -220,9 +220,7 @@ jobs:
             echo "DISCORD_WEBHOOK is not configured; skipping notification."
             exit 0
           fi
-          message="🌙 Darkspinner v${BUILD_VERSION} unstable build artifacts are available!"
-          message+=$'\n'
-          message+="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          message="🌙 Darkspinner v${BUILD_VERSION} unstable build artifacts is [now available!](<https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}>)"
           payload="$(jq -n --arg content "${message}" '{content: $content, allowed_mentions: {parse: []}}')"
           curl --fail --silent --show-error --connect-timeout 10 --max-time 30 \
             -H "Content-Type: application/json" \

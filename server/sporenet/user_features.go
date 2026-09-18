@@ -553,9 +553,9 @@ func (m *UserManager) prepareProfileStart(ctx context.Context, user *User) error
 	return nil
 }
 
-// repairPVEDeck keeps the selected campaign squad playable by preserving its
-// distinct owned members and filling invalid positions before the native
-// editor validates the selected group.
+// repairPVEDeck validates the selected campaign squad without filling empty
+// slots. Empty slots are saved player choices; starter assignment belongs to
+// onboarding, not profile loading.
 func (e *User) repairPVEDeck() bool {
 	if e == nil {
 		return false
@@ -566,19 +566,11 @@ func (e *User) repairPVEDeck() bool {
 		return false
 	}
 	ownedIDs := make(map[uint32]struct{}, len(e.Creatures))
-	orderedOwnedIDs := make([]uint32, 0, len(e.Creatures))
 	for _, creature := range e.Creatures {
 		if creature == nil || creature.ID == 0 {
 			continue
 		}
-		if _, isOwned := ownedIDs[creature.ID]; isOwned {
-			continue
-		}
 		ownedIDs[creature.ID] = struct{}{}
-		orderedOwnedIDs = append(orderedOwnedIDs, creature.ID)
-	}
-	if len(orderedOwnedIDs) < 3 {
-		return false
 	}
 	targetIndex := -1
 	for squadIndex := range e.Squads {
@@ -611,8 +603,8 @@ func (e *User) repairPVEDeck() bool {
 		return false
 	}
 	isChanged := false
-	assignedIDs := make(map[uint32]struct{}, len(orderedOwnedIDs))
 	targetSquad := &e.Squads[targetIndex]
+	assignedIDs := make(map[uint32]struct{}, len(targetSquad.CreatureIDs))
 	for creatureIndex, creatureID := range targetSquad.CreatureIDs {
 		_, isOwned := ownedIDs[creatureID]
 		_, isAssigned := assignedIDs[creatureID]
@@ -624,20 +616,6 @@ func (e *User) repairPVEDeck() bool {
 			continue
 		}
 		assignedIDs[creatureID] = struct{}{}
-	}
-	for creatureIndex, creatureID := range targetSquad.CreatureIDs {
-		if creatureID != 0 {
-			continue
-		}
-		for _, ownedID := range orderedOwnedIDs {
-			if _, isAssigned := assignedIDs[ownedID]; isAssigned {
-				continue
-			}
-			targetSquad.CreatureIDs[creatureIndex] = ownedID
-			assignedIDs[ownedID] = struct{}{}
-			isChanged = true
-			break
-		}
 	}
 	if targetSquad.Category != "pve" {
 		targetSquad.Category = "pve"

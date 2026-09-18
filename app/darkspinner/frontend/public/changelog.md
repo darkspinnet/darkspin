@@ -2,6 +2,7 @@
 
 ### 2026-09-18
 
+- Preserve removed campaign squad members across relaunches by leaving saved empty slots empty during login repair.
 - Stop automatically duplicating campaign heroes into PvP squads, repair overlapping PvP assignments on login, and save explicitly emptied squads so removed heroes remain available in the Arsenal.
 - Include Arsenal slot model IDs, suppression state and pending model resources in snapshots to diagnose invisible heroes with an intact catalogue.
 - Avoid server startup timeouts by loading ability coefficients once instead of repeatedly scanning the content cache for each token.
