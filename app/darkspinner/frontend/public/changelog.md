@@ -2,6 +2,10 @@
 
 ### 2026-09-18
 
+- Stop automatically duplicating campaign heroes into PvP squads, repair overlapping PvP assignments on login, and save explicitly emptied squads so removed heroes remain available in the Arsenal.
+- Include Arsenal slot model IDs, suppression state and pending model resources in snapshots to diagnose invisible heroes with an intact catalogue.
+- Avoid server startup timeouts by loading ability coefficients once instead of repeatedly scanning the content cache for each token.
+- Correct the Arsenal snapshot controller address and capture catalogue counts even when the collection UI cannot be read.
 - Capture Arsenal collection counts, filters and scroll position in manual snapshots even while the gameplay clock is inactive.
 - Use available saved appearance revisions in Arsenal account, deck and hero responses so legacy saves do not request nonexistent image revisions; use noun templates when the saved appearance is missing.
 - Synchronize enemy pull and knockback endpoints with the client physics mover, cancel stale melee pursuit, and refresh current health and power after the forced reaction.
