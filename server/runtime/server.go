@@ -821,6 +821,7 @@ func New(options Options) (*Server, error) {
 	snapshotService.UseStateProvider(gameplayLifecycle)
 	snapshotService.UseNotifier(snapshotNotifier{servers: allBlazeServers})
 	gameManager.UseRemovalObserver(gameplayLifecycle.DiscardGame)
+	gameManager.UseMemberRemovalObserver(gameplayLifecycle.DiscardMember)
 	gameManager.UseMemberResumePolicy(gameplayLifecycle)
 	udpServer := sharedudp.NewSharedServer(
 		net.JoinHostPort(bindHost, fmt.Sprintf("%d", ports.qos)), logger, gameplayHandler,

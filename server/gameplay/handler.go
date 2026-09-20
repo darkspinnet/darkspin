@@ -212,14 +212,25 @@ type gameplayActionRuntime struct {
 func (r gameplayActionRuntime) handle(
 	ctx context.Context, packet raknet.Packet,
 ) ([][]byte, error) {
-	startedAt := r.now()
 	command, err := raknet.DecodeActionCommand(packet.Payload)
 	if err != nil {
 		return nil, fmt.Errorf("actionDecode: %w", err)
 	}
+	return r.handleCommand(ctx, packet, command, false)
+}
+
+func (r gameplayActionRuntime) handleCommand(
+	ctx context.Context, packet raknet.Packet, command raknet.ActionCommandData,
+	isAutonomous bool,
+) ([][]byte, error) {
+	startedAt := r.now()
 	r.registry.mutex.RLock()
 	peerSession, isSessionFound := r.registry.sessions[packet.Address.String()]
 	r.registry.mutex.RUnlock()
+	if isSessionFound && !isAutonomous && (command.Common.Type == raknet.ActionMovement ||
+		command.Common.Type == raknet.ActionStopMovement) {
+		r.registry.cancelPlayerAI(packet.Address.String(), peerSession.transportGeneration)
+	}
 	inputLockRemaining := peerSession.heroInputLockRemaining(startedAt)
 	if isSessionFound && inputLockRemaining > 0 &&
 		command.Common.ObjectID == peerSession.heroInputLockedObjectID {
@@ -254,6 +265,13 @@ func (r gameplayActionRuntime) handle(
 			)
 		}
 		peerSession = currentSession
+		if isAutonomous && !peerSession.playerAI.isEnabled {
+			return nil, nil
+		}
+		if !isAutonomous && (command.Common.Type == raknet.ActionMovement ||
+			command.Common.Type == raknet.ActionStopMovement) {
+			r.registry.cancelPlayerAI(packet.Address.String(), peerSession.transportGeneration)
+		}
 		key = gameplayActionLeaseKey{
 			sessionKey:          packet.Address.String(),
 			memberKey:           memberKey,
@@ -332,6 +350,18 @@ func (r gameplayActionRuntime) handle(
 		return protected, err
 	}
 	scheduleSet.seal()
+	if command.Ability != nil && command.Ability.TargetID != 0 &&
+		command.Ability.TargetID != command.Common.ObjectID && !isProtectedRejected {
+		r.registry.mutex.Lock()
+		current := r.registry.sessions[packet.Address.String()]
+		if current.generation == peerSession.generation &&
+			current.transportGeneration == peerSession.transportGeneration {
+			current.assistTargetObjectID = command.Ability.TargetID
+			current.assistTargetAt = r.now()
+			r.registry.sessions[packet.Address.String()] = current
+		}
+		r.registry.mutex.Unlock()
+	}
 	isArenaPresentation := peerSession.binding.Mode == game.ModeArena
 	if isArenaPresentation ||
 		(command.Common.Type != raknet.ActionMovement &&
@@ -1224,6 +1254,7 @@ func newGameplayHandlerWithDependencies(
 		},
 		now: dependency.now, logger: logger,
 	}
+	pendingRuntime.action = actionRuntime
 	if dependency.registerPoll != nil {
 		dependency.registerPoll(pendingRuntime.poll)
 	}
@@ -2032,6 +2063,8 @@ func (r gameplayJoinRuntime) handle(
 			nextSession.knownPlayerMask = uint32(1) << binding.Slot
 		}
 		nextSession.isRejoinPending = true
+		nextSession.lastPlayerStatus = raknet.PlayerStatus{}
+		nextSession.isPlayerStatusKnown = false
 		// The world survives a disconnect, but the new client process has not
 		// loaded its level or object resources. Repeat the loading handshake.
 		nextSession.stage.AwaitResume()
@@ -2274,6 +2307,7 @@ func (r gameplayJoinRuntime) retainReplacedEndpoint(
 
 type gameplayPendingRuntime struct {
 	registry             *gameplaySessionRegistry
+	action               gameplayActionRuntime
 	projection           gameplayProjectionRuntime
 	setup                gameplaySetupRuntime
 	gameplayJoin         *game.GameplayJoin
@@ -2538,7 +2572,10 @@ func (r gameplayPendingRuntime) poll(
 	if err != nil {
 		return nil, fmt.Errorf("itemPoll: %w", err)
 	}
-	return responses, nil
+	if len(responses) != 0 {
+		return responses, nil
+	}
+	return r.pollPlayerAI(ctx, packet)
 }
 
 func (r gameplayPendingRuntime) persistOverdriveUnlock(
@@ -2847,6 +2884,9 @@ func (r gameplayPendingRuntime) consumePlayerEventCommand(
 	}
 	if command.Name == "follow" {
 		return r.activatePlayerFollow(packet, queuedSession, command)
+	}
+	if command.Name == "ai" {
+		return r.togglePlayerAI(packet, queuedSession)
 	}
 	if command.Name == "recap" {
 		return r.recapParty(packet, queuedSession)
@@ -3933,7 +3973,17 @@ func marshalCampaignProjection(event zoneprojection.Event) ([][]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("heroLeave: %w", err)
 		}
-		return [][]byte{packet}, nil
+		packets := [][]byte{packet}
+		if event.HeroLeave.IsMemberRemoved {
+			departedPacket, departureErr := raknet.MarshalApplication(raknet.PlayerSlotMessage{
+				ID: raknet.PlayerDeparted, Slot: uint8(event.HeroLeave.PlayerSlot),
+			})
+			if departureErr != nil {
+				return nil, fmt.Errorf("heroDepart: %w", departureErr)
+			}
+			packets = append(packets, departedPacket)
+		}
+		return packets, nil
 	default:
 		return nil, fmt.Errorf("projectionKind: %d", event.Kind)
 	}

@@ -241,7 +241,11 @@ func (r gameplayStatusRuntime) handleChain(
 		"RakNet campaign player prepare sent to %s level=%q peers=%d",
 		packet.Address, peerSession.binding.Level, statusRecipients,
 	)
-	return [][]byte{playerPacket, setupPacket}, nil
+	peerStatusPackets, err := r.rejoinPeerStatuses(packet.Address.String(), peerSession)
+	if err != nil {
+		return nil, fmt.Errorf("statusRejoinPeers: %w", err)
+	}
+	return append([][]byte{playerPacket, setupPacket}, peerStatusPackets...), nil
 }
 
 func (r gameplayStatusRuntime) queueMemberStatus(
@@ -843,9 +847,14 @@ func (r gameplayStatusRuntime) begin(
 		"RakNet gameplay status from %s status=%d progress=%g",
 		packet.Address, status.Status, status.Progress,
 	)
-	r.registry.mutex.RLock()
+	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[packet.Address.String()]
-	r.registry.mutex.RUnlock()
+	if isFound {
+		peerSession.lastPlayerStatus = status
+		peerSession.isPlayerStatusKnown = true
+		r.registry.sessions[packet.Address.String()] = peerSession
+	}
+	r.registry.mutex.Unlock()
 	result := gameplayStatusContext{
 		status: status, peerSession: peerSession, isFound: isFound,
 	}

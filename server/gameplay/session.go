@@ -265,6 +265,9 @@ type controlledHeroState struct {
 	playerMotion                  *zoneaction.Motion
 	followTargetUserID            uint64
 	followUpdatedAt               time.Time
+	playerAI                      playerAIState
+	assistTargetObjectID          uint32
+	assistTargetAt                time.Time
 	isPartyDefeatQueued           bool
 	deployedCreatureIndex         uint32
 	deployedObjectID              uint32
@@ -498,6 +501,8 @@ type gameplayPeerSession struct {
 	zoneMembership
 	binding                              game.GameplayBinding
 	stage                                zonemember.Stage
+	lastPlayerStatus                     raknet.PlayerStatus
+	isPlayerStatusKnown                  bool
 	dungeonSetup                         zonemember.Setup
 	transportGeneration                  uint64
 	schedulePackets                      func(time.Duration, [][]byte) error
@@ -709,7 +714,7 @@ func isCriticalPendingPacket(packet []byte) bool {
 		raknet.InteractableUpdate,
 		raknet.AttributeDataUpdate,
 		raknet.CombatantDataUpdate, raknet.PlayerCharacterDeploy,
-		raknet.LabsPlayerUpdate, raknet.ArenaGameMsgs,
+		raknet.LabsPlayerUpdate, raknet.PlayerDeparted, raknet.ArenaGameMsgs,
 		raknet.ArenaResultsMsgs, raknet.ChainGameMsgs:
 		return true
 	default:
@@ -1412,6 +1417,7 @@ func (s *gameplayPeerSession) resetRetainedTransportState() {
 		return
 	}
 	s.resetAbilityRelease()
+	s.playerAI = playerAIState{}
 	// The rejoin baseline supersedes packets encoded for the retired transport.
 	// Durable stat deltas remain queued for the replacement peer.
 	s.pendingPacketBatches = nil
@@ -3195,7 +3201,7 @@ func (s *gameplayPeerSession) healLivingZoneSquad(amount float32) ([]zoneSquadHe
 }
 
 func (s *gameplayPeerSession) healLivingZoneCompanions(
-	amount float32,
+	amount float32, position raknet.Vector3, radius float32,
 ) ([]zoneSquadHealing, error) {
 	if s == nil || s.zone == nil || amount <= 0 {
 		return nil, errors.New("invalid zone companion healing")
@@ -3207,6 +3213,7 @@ func (s *gameplayPeerSession) healLivingZoneCompanions(
 	pending := make([]pendingHealing, 0)
 	for _, companion := range s.zone.Companion().Snapshots() {
 		if companion.UserID != s.binding.UserID ||
+			!isInsideZoneTrigger(raknet.Vector3(companion.Position), position, radius) ||
 			companion.PeerGeneration != s.generation ||
 			!companion.IsTargetable || companion.HitPoint <= 0 ||
 			companion.HitPoint >= companion.MaximumHitPoint {

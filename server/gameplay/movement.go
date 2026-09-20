@@ -1003,6 +1003,19 @@ func (r campaignMovementCommandRuntime) handle(
 	if err != nil {
 		return nil, fmt.Errorf("moveDNAPresentation: %w", err)
 	}
+	// Pad state and the initial transfer presentation are shared, even though
+	// movement itself has a separate projection. Delayed transfer steps are
+	// published by the producer guard after their delivery commits.
+	teleportPackets := make([][]byte, 0)
+	teleportPackets = append(teleportPackets, securityDeactivationPackets...)
+	teleportPackets = append(teleportPackets, securityActivationPackets...)
+	teleportPackets = append(teleportPackets, securityTransferPackets...)
+	teleportPackets = append(teleportPackets, tutorialTeleporterPackets...)
+	teleportPackets = append(teleportPackets, campaignTunnelPackets...)
+	err = publishCampaignPeersAfterCommit(r.registry, packet, teleportPackets)
+	if err != nil {
+		return nil, fmt.Errorf("moveTeleportPresentation: %w", err)
+	}
 	companionAttackPackets, err := r.damage.startCompanionAttacks(
 		packet, packet.Address.String(), commandSession.generation,
 		packet.SourceTime,

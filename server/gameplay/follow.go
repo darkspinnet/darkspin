@@ -208,6 +208,10 @@ func (r gameplayPendingRuntime) activatePlayerFollow(
 		return nil, false, fmt.Errorf("followHero: %w", err)
 	}
 	follower.followTargetUserID = command.TargetUserID
+	if follower.playerAI.isEnabled {
+		follower.playerAI = playerAIState{}
+		r.registry.clearActionLeasesLocked(packet.Address.String(), follower.transportGeneration)
+	}
 	follower.followUpdatedAt = now
 	goal = follower.playerMovementGoal
 	r.registry.sessions[packet.Address.String()] = follower

@@ -2,6 +2,15 @@
 
 ### 2026-09-20
 
+- Remove Tree of Life from every connected co-op client if a healing tick fails, rather than leaving its animation running after the server stops the effect.
+- Remove an aborting co-op player's party slot, heroes, and summons from teammates' clients while preserving the remaining party's mission, including when the host leaves.
+- Keep ranged /ai firing between evasive moves instead of repeatedly extending dodges, and stop special-ability cooldowns from delaying basic attacks.
+- Initialize Dendrones with their actual owner's player slot, explicit position, and stopped movement on co-op spawn and rejoin.
+- Fix Tree of Life stopping on the second co-op player's healing tick, heal nearby allied squads and companions, and synchronize their health using the correct owning player.
+- Let ranged heroes in /ai sidestep approaching projectiles and reposition between attacks while respecting movement restrictions and attack cooldowns.
+- Replay teammates' current loading status when rejoining co-op so an already-ready ally does not remain at 0% in the reconnecting client.
+- Keep unlocked teleporters usable by every co-op member after allies cross or backtrack, and synchronize pad activation and teleport presentation across clients.
+- Add /ai for multiplayer co-op and PvP to assist allies with basic attacks, occasional abilities, and nearby following; movement, /follow, or another /ai returns control to the player.
 - Preserve Continue and the shared co-op mission when a defeated player returns to ship or exits while an ally's squad is still alive, including when the departing player is the host.
 - Change /recap from restoring only the caller's reserves to resurrecting fallen heroes across the connected co-op party, restoring control and synchronizing revived allies on every client.
 - Send equipment pickup interaction data to teammates so dropped items respond to clicks on every client.
