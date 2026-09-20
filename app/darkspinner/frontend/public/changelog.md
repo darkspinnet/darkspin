@@ -2,6 +2,7 @@
 
 ### 2026-09-20
 
+- Add co-op Omicron and Gravitic Confiner encounters with a shared one-or-two-per-map budget, channeled cage damage, ally-rescue controls, and cleanup when the captor is disabled or no rescuer remains.
 - Remove Tree of Life from every connected co-op client if a healing tick fails, rather than leaving its animation running after the server stops the effect.
 - Remove an aborting co-op player's party slot, heroes, and summons from teammates' clients while preserving the remaining party's mission, including when the host leaves.
 - Keep ranged /ai firing between evasive moves instead of repeatedly extending dodges, and stop special-ability cooldowns from delaying basic attacks.

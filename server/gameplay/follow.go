@@ -166,6 +166,10 @@ func (r gameplayPendingRuntime) activatePlayerFollow(
 		r.registry.mutex.Unlock()
 		return nil, false, errors.New("follow session unavailable")
 	}
+	if follower.isOperativeCaged(r.now()) {
+		r.registry.mutex.Unlock()
+		return nil, false, errors.New("follow unavailable while trapped by an Operative")
+	}
 	target := gameplayPeerSession{}
 	isTargetFound := false
 	for _, candidate := range r.registry.sessions {

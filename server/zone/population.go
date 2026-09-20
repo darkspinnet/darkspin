@@ -158,10 +158,16 @@ func (e *Zone) planPopulation(
 	decisions []zonepopulation.Decision,
 ) ([]zonenpc.SpawnPlan, error) {
 	occupiedSpawnGroups := make(map[uint32]struct{})
+	operativeCount := 0
 	for spawnGroupID := range e.clearedSpawnGroups {
 		occupiedSpawnGroups[spawnGroupID] = struct{}{}
 	}
 	for _, npc := range e.info.NPCs.Snapshots() {
+		// Defeated actors remain in durable snapshots and spend the map budget.
+		profile, isOperative := zonenpc.OperativeProfile(npc.Plan.NounName)
+		if isOperative && zonenpc.IsOperativeCage(profile.ModifierName) {
+			operativeCount++
+		}
 		if npc.Plan.LocusID != 0 {
 			occupiedSpawnGroups[npc.Plan.LocusID] = struct{}{}
 		}
@@ -185,6 +191,15 @@ func (e *Zone) planPopulation(
 	if len(plans) == 0 {
 		return nil, nil
 	}
+	connectedCount := 0
+	for _, member := range e.members {
+		if member.IsConnected {
+			connectedCount++
+		}
+	}
+	plans = e.info.Population.AddOperatives(
+		e.info.DirectorDefinition, plans, connectedCount > 1, operativeCount,
+	)
 	firstObjectID, err := e.info.ObjectID.Reserve(uint32(len(plans)))
 	if err != nil {
 		return nil, fmt.Errorf("objectIDReserve: %w", err)

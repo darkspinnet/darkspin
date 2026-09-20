@@ -3565,6 +3565,10 @@ func ActionProfileFromAbility(
 }
 
 func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
+	operative, isOperative := OperativeProfile(nounName)
+	if isOperative {
+		return operative, true
+	}
 	fiendProfile, isFiendFound := NashiraFiendProfile(nounName)
 	if isFiendFound {
 		return fiendProfile, true

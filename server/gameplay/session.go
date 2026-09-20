@@ -287,6 +287,7 @@ type controlledHeroState struct {
 	enemySleepExpiresAt           time.Time
 	enemyStunExpiresAt            time.Time
 	enemyStunTargetObjectID       uint32
+	operativeCage                 *campaignNPCModifierRun
 	enemyRootExpiresAt            time.Time
 	enemyRootTargetObjectID       uint32
 	enemyFearExpiresAt            time.Time
@@ -372,6 +373,9 @@ func (s *gameplayPeerSession) extendEnemyStun(
 }
 
 func (s *gameplayPeerSession) isEnemyStunActive(at time.Time) bool {
+	if s != nil && s.isOperativeCaged(at) {
+		return true
+	}
 	return s != nil && !at.IsZero() &&
 		s.deployedObjectID == s.enemyStunTargetObjectID &&
 		at.Before(s.enemyStunExpiresAt)
@@ -1416,6 +1420,7 @@ func (s *gameplayPeerSession) resetRetainedTransportState() {
 	if s == nil {
 		return
 	}
+	s.operativeCage = nil
 	s.resetAbilityRelease()
 	s.playerAI = playerAIState{}
 	// The rejoin baseline supersedes packets encoded for the retired transport.

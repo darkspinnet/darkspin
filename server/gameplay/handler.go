@@ -232,6 +232,9 @@ func (r gameplayActionRuntime) handleCommand(
 		r.registry.cancelPlayerAI(packet.Address.String(), peerSession.transportGeneration)
 	}
 	inputLockRemaining := peerSession.heroInputLockRemaining(startedAt)
+	if isSessionFound && peerSession.isOperativeCaged(startedAt) {
+		return nil, nil
+	}
 	if isSessionFound && inputLockRemaining > 0 &&
 		command.Common.ObjectID == peerSession.heroInputLockedObjectID {
 		r.logger.Printf(
@@ -265,6 +268,9 @@ func (r gameplayActionRuntime) handleCommand(
 			)
 		}
 		peerSession = currentSession
+		if peerSession.isOperativeCaged(r.now()) {
+			return nil, nil
+		}
 		if isAutonomous && !peerSession.playerAI.isEnabled {
 			return nil, nil
 		}
@@ -2370,6 +2376,10 @@ func (r gameplayPendingRuntime) poll(
 		// World packets must wait until the fresh client can consume a baseline.
 		return nil, nil
 	}
+	err := r.pollOperativeCages(packet)
+	if err != nil {
+		return nil, fmt.Errorf("operativePoll: %w", err)
+	}
 	r.registry.mutex.Lock()
 	peerSession, isFound = r.registry.sessions[packet.Address.String()]
 	// Follow must advance while the ally is moving, even between input packets.
@@ -4120,6 +4130,10 @@ func stopGameplayPeerRuntime(
 	peerSession gameplayPeerSession, modifierInstancePool *modifierPool,
 	effectPool *attachedEffectPool,
 ) {
+	cageErr := peerSession.releaseOperativeCage(modifierInstancePool)
+	if cageErr != nil {
+		log.Printf("RakNet operative cage cleanup failed user=%d: %v", peerSession.binding.UserID, cageErr)
+	}
 	peerSession.basicSequenceSession().ReleaseHeld()
 	peerSession.campaignPlayerPursuitSession().Cancel()
 	peerSession.resetAbilityRelease()
