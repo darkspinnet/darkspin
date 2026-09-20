@@ -689,6 +689,7 @@ func (s *gameplayPeerSession) spawnCampaignEquipment(
 	invocation game.CampaignScriptInvocation,
 	gameplayJoin *game.GameplayJoin,
 	sourceTime uint64,
+	isGuaranteed bool,
 ) ([][]byte, uint32, error) {
 	if s == nil || gameplayJoin == nil || invocation.Challenge <= 0 {
 		return nil, 0, errors.New("campaign equipment unavailable")
@@ -703,7 +704,7 @@ func (s *gameplayPeerSession) spawnCampaignEquipment(
 	if err != nil {
 		return nil, 0, fmt.Errorf("equipmentDecision: %w", err)
 	}
-	if !isDrop {
+	if !isDrop && !isGuaranteed {
 		return nil, 0, nil
 	}
 	if s.deployedCreatureIndex >= uint32(len(s.binding.Creatures)) {
@@ -788,9 +789,11 @@ func (s *gameplayPeerSession) spawnCampaignNPCEquipment(
 	if !isReserved {
 		return nil, 0, nil
 	}
+	// A map boss awards equipment once through the shared NPC reservation;
+	// ordinary enemies and interactables retain their normal chance roll.
 	packets, objectID, err := s.spawnCampaignEquipment(game.CampaignScriptInvocation{
 		Position: enemy.Plan.Position, Challenge: campaignNPCEquipmentSourceAmount,
-	}, gameplayJoin, sourceTime)
+	}, gameplayJoin, sourceTime, enemy.Plan.IsBoss)
 	if err != nil {
 		reservation.Release()
 		return nil, 0, fmt.Errorf("enemyEquipmentSpawn: %w", err)
@@ -2281,7 +2284,7 @@ func (s campaignInteractableDropStep) produce() ([][]byte, error) {
 	case "InteractWithObelisk":
 		var equipmentPacket [][]byte
 		equipmentPacket, _, err = peerSession.spawnCampaignEquipment(
-			s.use.Invocation, s.runtime.gameplayJoin, dropSourceTime,
+			s.use.Invocation, s.runtime.gameplayJoin, dropSourceTime, false,
 		)
 		if err != nil {
 			s.runtime.logger.Printf(

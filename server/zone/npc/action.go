@@ -3292,7 +3292,7 @@ func nocturnaSpecialDriftChargeProfile(
 		NonCombatMovementSpeed:     nonCombatMovementSpeed,
 		MinimumDamage:              8,
 		MaximumDamage:              14,
-		DescriptorMask:             1<<3 | 1<<7 | 1<<13,
+		DescriptorMask:             1<<3 | 1<<7 | 1<<14,
 		DamageType:                 4,
 		DamageSource:               1,
 		ModifierName:               "SilenceModifier",
