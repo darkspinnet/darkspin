@@ -826,6 +826,13 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 						"campaignBasicPursuitResponse: %w", responseErr,
 					)
 				}
+				peerErr := r.publishPursuitToPeers(
+					packet, command.Common.ObjectID, peerSession.playerPosition,
+					targetObjectID, targetEnemy.Plan.Position, stopDistance,
+				)
+				if peerErr != nil {
+					return nil, fmt.Errorf("pursuitRetryPeers: %w", peerErr)
+				}
 				return pursuitResponse, nil
 			}
 			pursuitPackets, marshalErr := actionraknet.PursuitTransfer(
@@ -904,6 +911,13 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 			}
 			r.logger.Printf("RakNet campaign basic pursuit transferred source=%d target=%d stop=%g noun=%q",
 				command.Common.ObjectID, targetObjectID, stopDistance, targetEnemy.Plan.NounName)
+			peerErr := r.publishPursuitToPeers(
+				packet, command.Common.ObjectID, peerSession.playerPosition,
+				targetObjectID, targetEnemy.Plan.Position, stopDistance,
+			)
+			if peerErr != nil {
+				return nil, fmt.Errorf("pursuitStartPeers: %w", peerErr)
+			}
 			return directAggro.publish(pursuitPackets)
 		}
 		r.registry.mutex.Unlock()

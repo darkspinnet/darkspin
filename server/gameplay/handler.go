@@ -393,6 +393,7 @@ func (r gameplayActionRuntime) dispatch(
 	commandSession, isSessionFound := r.registry.sessions[packet.Address.String()]
 	isRejoinPending := isSessionFound && commandSession.isRejoinPending
 	isTerminal := isSessionFound && (commandSession.isZoneTerminal() ||
+		(commandSession.squad != nil && commandSession.squad.IsGameOver()) ||
 		(commandSession.zone != nil && commandSession.zone.Boss() != nil &&
 			commandSession.zone.Boss().IsBeamOutCommitted()))
 	r.registry.mutex.RUnlock()
@@ -646,6 +647,7 @@ type gameplayHandlerDependencies struct {
 	registerDisconnect    func(func(string, uint64))
 	registerDiscard       func(func(uint32))
 	registerDiscardMember func(func(uint32, uint64))
+	registerMemberResume  func(game.MemberResumePolicy)
 	registerPoll          func(raknet.PollHandler)
 	registerBugContext    func(chat.BugContextProvider)
 	registerHint          func(chat.HintProvider)
@@ -657,15 +659,16 @@ type gameplayHandlerDependencies struct {
 }
 
 type Lifecycle struct {
-	cleanup           func()
-	disconnectAddress func(string, uint64)
-	discardGame       func(uint32)
-	discardMember     func(uint32, uint64)
-	poll              raknet.PollHandler
-	bugContext        chat.BugContextProvider
-	hintProvider      chat.HintProvider
-	locationProvider  chat.LocationProvider
-	syncSnapshot      snapshot.StateProvider
+	cleanup            func()
+	disconnectAddress  func(string, uint64)
+	discardGame        func(uint32)
+	discardMember      func(uint32, uint64)
+	memberResumePolicy game.MemberResumePolicy
+	poll               raknet.PollHandler
+	bugContext         chat.BugContextProvider
+	hintProvider       chat.HintProvider
+	locationProvider   chat.LocationProvider
+	syncSnapshot       snapshot.StateProvider
 }
 
 type gameplayPacketHandler struct {
@@ -982,6 +985,9 @@ func NewHandler(
 	dependency.registerDiscardMember = func(registered func(uint32, uint64)) {
 		lifecycle.discardMember = registered
 	}
+	dependency.registerMemberResume = func(policy game.MemberResumePolicy) {
+		lifecycle.memberResumePolicy = policy
+	}
 	dependency.registerPoll = func(registered raknet.PollHandler) {
 		lifecycle.poll = registered
 	}
@@ -1221,6 +1227,9 @@ func newGameplayHandlerWithDependencies(
 	if dependency.registerPoll != nil {
 		dependency.registerPoll(pendingRuntime.poll)
 	}
+	if dependency.registerMemberResume != nil {
+		dependency.registerMemberResume(zoneRegistry)
+	}
 	if dependency.registerDiscard != nil {
 		dependency.registerDiscard(func(gameID uint32) {
 			sessionRegistry.lifecycle.discardGame(
@@ -1421,6 +1430,13 @@ func marshalCampaignDungeonSetup(
 	if err != nil {
 		return nil, fmt.Errorf("deploy: %w", err)
 	}
+	placementPacket, err := raknet.MarshalApplication(raknet.ObjectTeleportMessage{
+		ObjectID: deployedObjectID, Position: entryPosition,
+		Orientation: raknet.Quaternion{W: 1},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("deployPlacement: %w", err)
+	}
 	response := [][]byte{gameStatePacket, directorPacket}
 	for index, creature := range creatures {
 		if creature.Noun == 0 {
@@ -1467,7 +1483,9 @@ func marshalCampaignDungeonSetup(
 			response = append(response, passivePacket)
 		}
 		if uint32(index) == deployedCreatureIndex {
-			response = append(response, controlledObjectPacket, deployPacket)
+			// Deploy first, then synchronize the physics/render root as well as
+			// the reflected position. Each client must use the same slot position.
+			response = append(response, controlledObjectPacket, deployPacket, placementPacket)
 		}
 	}
 	for index, plan := range scriptObjectPlans {
@@ -1607,7 +1625,14 @@ func marshalZoneHeroRoster(
 	if err != nil {
 		return nil, fmt.Errorf("rosterDeploy: %w", err)
 	}
-	return append(packets, deployPacket), nil
+	placementPacket, err := raknet.MarshalApplication(raknet.ObjectTeleportMessage{
+		ObjectID: zonehero.ObjectID(roster.PlayerSlot, roster.CreatureIndex),
+		Position: raknet.Vector3(roster.Position), Orientation: raknet.Quaternion{W: 1},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("rosterPlacement: %w", err)
+	}
+	return append(packets, deployPacket, placementPacket), nil
 }
 
 func marshalOtherZoneHeroRosters(
@@ -1999,10 +2024,18 @@ func (r gameplayJoinRuntime) handle(
 		nextSession.isArenaPreparationAcknowledged = false
 		nextSession.arenaLobbyTransitionAt = time.Time{}
 		nextSession.arenaLobbyTransitionCount = 0
+		// PlayerJoined allocates the native owning-player records used by hero
+		// health bars. A fresh transport must relearn every teammate's slot;
+		// retaining this mask skips their creation in the replacement client.
+		nextSession.knownPlayerMask = 0
 		if binding.Slot < 32 {
-			nextSession.knownPlayerMask |= uint32(1) << binding.Slot
+			nextSession.knownPlayerMask = uint32(1) << binding.Slot
 		}
 		nextSession.isRejoinPending = true
+		// The world survives a disconnect, but the new client process has not
+		// loaded its level or object resources. Repeat the loading handshake.
+		nextSession.stage.AwaitResume()
+		nextSession.isPartyDefeatQueued = false
 	}
 	if binding.IsCheckpointRestore {
 		nextSession.binding.IsCheckpointRestore = true
@@ -2123,22 +2156,28 @@ func (r gameplayJoinRuntime) synchronizeRoster(sessionKey string) ([][]byte, err
 	if err != nil {
 		return nil, fmt.Errorf("partyMarshal: %w", err)
 	}
-	var arenaPlayerPackets [][]byte
+	var playerPackets [][]byte
 	var arenaBranchPacket []byte
-	if joiningSession.binding.Mode == game.ModeArena {
-		arenaPlayerPackets = make([][]byte, 0, len(peerSessionKeys))
+	isArena := joiningSession.binding.Mode == game.ModeArena
+	isCampaignParty := joiningSession.binding.Mode == game.ModeChain && len(peerSessionKeys) > 1
+	if isArena || isCampaignParty {
+		// Slot announcements create the roster entries, but campaign party
+		// readiness also needs their identities and squads before the merge.
+		playerPackets = make([][]byte, 0, len(peerSessionKeys))
 		for _, peerSessionKey := range peerSessionKeys {
 			peerSession := r.registry.sessions[peerSessionKey]
-			playerPacket, marshalErr := marshalCampaignInitialPlayer(
-				peerSession.binding, raknet.PlayerStatus{},
+			playerPacket, marshalErr := marshalCampaignPlayer(
+				peerSession.binding, raknet.PlayerStatus{}, true, isCampaignParty,
 			)
 			if marshalErr != nil {
 				return nil, fmt.Errorf(
-					"arenaPlayer[%d]: %w", peerSession.binding.Slot, marshalErr,
+					"mergePlayer[%d]: %w", peerSession.binding.Slot, marshalErr,
 				)
 			}
-			arenaPlayerPackets = append(arenaPlayerPackets, playerPacket)
+			playerPackets = append(playerPackets, playerPacket)
 		}
+	}
+	if isArena {
 		arenaBranchPacket, err = raknet.MarshalApplication(raknet.ArenaGameBranchMessage{})
 		if err != nil {
 			return nil, fmt.Errorf("arenaBranchMarshal: %w", err)
@@ -2151,8 +2190,8 @@ func (r gameplayJoinRuntime) synchronizeRoster(sessionKey string) ([][]byte, err
 			continue
 		}
 		peerSession.isPartyMerged = true
-		packets := make([][]byte, 0, len(arenaPlayerPackets)+2)
-		packets = append(packets, arenaPlayerPackets...)
+		packets := make([][]byte, 0, len(playerPackets)+2)
+		packets = append(packets, playerPackets...)
 		packets = append(packets, partyPacket)
 		if len(arenaBranchPacket) != 0 && !peerSession.isArenaLobbyTransitionSent {
 			packets = append(packets, arenaBranchPacket)
@@ -2169,9 +2208,9 @@ func (r gameplayJoinRuntime) synchronizeRoster(sessionKey string) ([][]byte, err
 	}
 	if r.logger != nil {
 		r.logger.Printf(
-			"RakNet gameplay roster merged game=%d connected=%d mask=%#x",
+			"RakNet gameplay roster merged game=%d connected=%d mask=%#x player_records=%d",
 			joiningSession.binding.GameID, len(peerSessionKeys),
-			joiningSession.binding.PlayerMask,
+			joiningSession.binding.PlayerMask, len(playerPackets),
 		)
 	}
 	return responses, nil
@@ -2292,8 +2331,26 @@ func (r gameplayPendingRuntime) poll(
 		}
 		return packets, nil
 	}
+	if isFound && peerSession.isRejoinPending {
+		// Debug-ping preparation and the client's loaded status advance rejoin.
+		// World packets must wait until the fresh client can consume a baseline.
+		return nil, nil
+	}
 	r.registry.mutex.Lock()
 	peerSession, isFound = r.registry.sessions[packet.Address.String()]
+	// Follow must advance while the ally is moving, even between input packets.
+	playerFollowPublications := r.registry.updatePlayerFollowersLocked(
+		peerSession, r.now(), packet.SourceTime,
+	)
+	peerSession, isFound = r.registry.sessions[packet.Address.String()]
+	if isFound {
+		err := peerSession.queuePartyDefeat()
+		if err != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("partyDefeatQueue: %w", err)
+		}
+		r.registry.sessions[packet.Address.String()] = peerSession
+	}
 	queuedPackets, pendingPacketBatchID := peerSession.pendingPackets()
 	isPendingPacketOverflow := peerSession.isPendingPacketOverflow
 	peerSession.isPendingPacketOverflow = false
@@ -2317,6 +2374,7 @@ func (r gameplayPendingRuntime) poll(
 		r.registry.sessions[packet.Address.String()] = peerSession
 	}
 	r.registry.mutex.Unlock()
+	publishPlayerFollowMovements(playerFollowPublications)
 	if isPendingPacketOverflow {
 		if peerSession.zone != nil && peerSession.binding.Mode != game.ModeArena {
 			err := peerSession.zone.RequireProjectionBaseline(
@@ -2789,6 +2847,9 @@ func (r gameplayPendingRuntime) consumePlayerEventCommand(
 	}
 	if command.Name == "follow" {
 		return r.activatePlayerFollow(packet, queuedSession, command)
+	}
+	if command.Name == "recap" {
+		return r.recapParty(packet, queuedSession)
 	}
 	if command.Name == "victory" && queuedSession.binding.Mode == game.ModeArena {
 		return r.completeDeveloperArenaVictory(packet, queuedSession)
@@ -5233,6 +5294,9 @@ func (p campaignPreparation) prepare(
 	preparationMembers := make([]preparationMember, 0)
 	for memberSessionKey, memberSession := range p.session.sessions {
 		if memberSession.binding.GameID != peerSession.binding.GameID {
+			continue
+		}
+		if peerSession.isRejoinPending && memberSessionKey != sessionKey {
 			continue
 		}
 		preparationMembers = append(preparationMembers, preparationMember{

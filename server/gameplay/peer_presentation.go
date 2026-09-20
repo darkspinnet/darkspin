@@ -6,6 +6,13 @@ import (
 	"github.com/darkspinnet/darkspin/server/raknet"
 )
 
+// Defeat stops new gameplay producers, but must not discard the final death
+// or disconnect presentation produced by the transition itself.
+func (e gameplayPeerSession) isCampaignPresentationAvailable() bool {
+	return e.zone != nil &&
+		(e.zone.Boss() == nil || !e.zone.Boss().IsBeamOutCommitted())
+}
+
 // Use the same queue for ordinary projection drains and delayed presentation.
 // Transferring under the registry lock prevents a concurrent producer from
 // copying an already in-flight spawn or replaying it after a movement update.

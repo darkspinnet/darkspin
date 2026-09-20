@@ -264,6 +264,8 @@ type controlledHeroState struct {
 	playerMovementGoal            raknet.Vector3
 	playerMotion                  *zoneaction.Motion
 	followTargetUserID            uint64
+	followUpdatedAt               time.Time
+	isPartyDefeatQueued           bool
 	deployedCreatureIndex         uint32
 	deployedObjectID              uint32
 	heroInputLockedObjectID       uint32
@@ -704,6 +706,7 @@ func isCriticalPendingPacket(packet []byte) bool {
 	switch raknet.PacketID(packet[0]) {
 	case raknet.ObjectCreate, raknet.ObjectUpdate, raknet.ObjectDelete,
 		raknet.ObjectTeleport, raknet.LootDataUpdate,
+		raknet.InteractableUpdate,
 		raknet.AttributeDataUpdate,
 		raknet.CombatantDataUpdate, raknet.PlayerCharacterDeploy,
 		raknet.LabsPlayerUpdate, raknet.ArenaGameMsgs,
@@ -2548,7 +2551,7 @@ func gameplayPeerPresentationPackets(packets [][]byte) [][]byte {
 			raknet.ObjectJump, raknet.ObjectTeleport, raknet.ObjectPlayerMove,
 			raknet.ForcePhysicsUpdate, raknet.PhysicsChanged,
 			raknet.LocomotionUpdate, raknet.LocomotionUnreliable,
-			raknet.LootDataUpdate,
+			raknet.LootDataUpdate, raknet.InteractableUpdate,
 			raknet.AttributeDataUpdate, raknet.CombatantDataUpdate,
 			raknet.AgentBlackboardUpdate,
 			raknet.ServerEvent, raknet.ModifierCreated, raknet.ModifierUpdated,
@@ -2577,7 +2580,7 @@ func (e *gameplaySessionRegistry) queuePeerPresentation(
 		peerSession.generation == identity.zoneGeneration &&
 		peerSession.transportGeneration == identity.transportGeneration &&
 		peerSession.stage.IsDungeon() &&
-		(isArena || peerSession.zone != nil && !peerSession.isZoneTerminal())
+		(isArena || peerSession.isCampaignPresentationAvailable())
 	if !isCurrent {
 		return 0
 	}
@@ -2589,8 +2592,9 @@ func (e *gameplaySessionRegistry) queuePeerPresentation(
 	for sessionKey, candidate := range e.sessions {
 		isCandidateArena := isArena && candidate.binding.Mode == game.ModeArena
 		isCandidateCampaign := !isArena && candidate.zone == peerSession.zone &&
-			!candidate.isZoneTerminal()
+			candidate.isCampaignPresentationAvailable()
 		if sessionKey == identity.sessionKey ||
+			candidate.isRejoinPending ||
 			candidate.binding.GameID != peerSession.binding.GameID ||
 			(!candidate.stage.IsDungeon() && !isCandidateCampaign) ||
 			(!isCandidateArena && !isCandidateCampaign) {
@@ -2873,6 +2877,9 @@ func zoneHealingStatDelta(healing []zoneSquadHealing) sporenet.PlayerStatDelta {
 }
 
 func (s gameplayPeerSession) isZoneGameOver() bool {
+	if s.binding.Mode == game.ModeChain && s.zone != nil {
+		return s.zone.IsPartyDefeated()
+	}
 	return s.squad != nil && s.squad.IsGameOver()
 }
 
@@ -3076,13 +3083,13 @@ func (s *gameplayPeerSession) applyDamageHitPointsWithOutcome(
 	isExpectedGameOver := isLethal && s.squad.LivingCount() == 1
 	var transitionPackets [][]byte
 	livingIndex := uint32(squad.Size)
-	if isExpectedGameOver && isGameOverPacketEnabled {
+	if isExpectedGameOver && isGameOverPacketEnabled && s.binding.Mode != game.ModeChain {
 		packet, err := outcomeraknet.GameOver()
 		if err != nil {
 			return nil, fmt.Errorf("gameOverMarshal: %w", err)
 		}
 		transitionPackets = [][]byte{packet}
-	} else if isLethal {
+	} else if isLethal && !isExpectedGameOver {
 		for index := uint32(0); index < squad.Size; index++ {
 			character, isFound := s.squad.Character(index)
 			if isFound && character.IsAvailable && character.HitPoints > 0 {
@@ -4623,7 +4630,7 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 		deathPackets = [][]byte{deathPacket}
 	}
 	var gameOverPacket []byte
-	if isExpectedGameOver {
+	if isExpectedGameOver && s.binding.Mode != game.ModeChain {
 		gameOverPacket, err = outcomeraknet.GameOver()
 		if err != nil {
 			return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("campaignGameOverMarshal: %w", err)
@@ -4751,6 +4758,18 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 		}
 	}
 	if isGameOver {
+		if s.binding.Mode == game.ModeChain && s.zone != nil {
+			s.isHeroSelectionPending = false
+			s.isHeroSelectionScheduled = false
+			s.heroSelectionReadyAt = time.Time{}
+			_, err = s.zone.ReleaseHeroTarget(
+				s.binding.UserID, s.generation, s.deployedObjectID,
+			)
+			if err != nil {
+				return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("partyDeathTarget: %w", err)
+			}
+			return s.finishCampaignDamage(hitPackets, statDelta)
+		}
 		s.stopCampaignNPCProjectiles()
 		s.isHeroSelectionPending = false
 		s.isHeroSelectionScheduled = false

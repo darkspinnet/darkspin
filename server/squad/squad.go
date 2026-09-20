@@ -34,7 +34,8 @@ type State struct {
 }
 
 // Squad owns the three selected match characters and the terminal solo-player
-// wipe latch. Once latched, later health changes cannot resume the same match.
+// wipe latch. Only an explicit resurrection can clear it; ordinary health
+// changes cannot resume the same match.
 type Session struct {
 	characterIndex    uint32
 	characters        [Size]Character

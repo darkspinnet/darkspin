@@ -997,6 +997,12 @@ func (r campaignMovementCommandRuntime) handle(
 	if err != nil {
 		return nil, fmt.Errorf("moveNPCPresentation: %w", err)
 	}
+	// Movement responses bypass the general action broadcast. DNA collection
+	// still removes a shared object; the peer filter excludes the balance update.
+	err = publishCampaignPeersAfterCommit(r.registry, packet, campaignDNAPackets)
+	if err != nil {
+		return nil, fmt.Errorf("moveDNAPresentation: %w", err)
+	}
 	companionAttackPackets, err := r.damage.startCompanionAttacks(
 		packet, packet.Address.String(), commandSession.generation,
 		packet.SourceTime,

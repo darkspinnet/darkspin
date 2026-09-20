@@ -24,7 +24,6 @@ import (
 	memberraknet "github.com/darkspinnet/darkspin/server/zone/member/raknet103"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 	zoneobjective "github.com/darkspinnet/darkspin/server/zone/objective"
-	outcomeraknet "github.com/darkspinnet/darkspin/server/zone/outcome/raknet103"
 	zonepreview "github.com/darkspinnet/darkspin/server/zone/preview"
 	zoneresult "github.com/darkspinnet/darkspin/server/zone/result"
 	resultraknet "github.com/darkspinnet/darkspin/server/zone/result/raknet103"
@@ -1341,8 +1340,6 @@ func (s *gameplayPeerSession) applyDeveloperEventCommand(
 	switch plan.Kind {
 	case developerfeature.EventReset:
 		return s.applyDeveloperResetCommand(now)
-	case developerfeature.EventRecap:
-		return s.applyDeveloperRecapCommand()
 	case developerfeature.EventGoto:
 		destination := raknet.Vector3{
 			X: plan.Position.X, Y: plan.Position.Y, Z: plan.Position.Z,
@@ -1477,48 +1474,6 @@ func (s *gameplayPeerSession) applyDeveloperEventCommand(
 	}
 	response := append(activationPackets, packets...)
 	return append(response, contactPackets...), nil
-}
-
-func (s *gameplayPeerSession) applyDeveloperRecapCommand() ([][]byte, error) {
-	if s == nil || s.squad == nil || s.binding.Mode != game.ModeChain ||
-		s.deployedHitPoint() <= 0 || s.isHeroSelectionPending || s.isZoneTerminal() {
-		return nil, errors.New("recap session unavailable")
-	}
-	packets := make([][]byte, 0, squad.Size)
-	revivedIndexes := make([]uint32, 0, squad.Size-1)
-	for index := uint32(0); index < squad.Size; index++ {
-		character, isFound := s.squad.Character(index)
-		if !isFound || !character.IsAvailable || character.HitPoints > 0 {
-			continue
-		}
-		maximumHitPoint := s.characterHitPointMaximum(index)
-		if maximumHitPoint <= 0 {
-			return nil, fmt.Errorf("recapMaximum[%d]: invalid", index)
-		}
-		packet, err := s.marshalCampaignCharacterResourceValues(
-			index, maximumHitPoint, character.ManaPoints,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("recapMarshal[%d]: %w", index, err)
-		}
-		packets = append(packets, packet)
-		revivedIndexes = append(revivedIndexes, index)
-	}
-	for _, index := range revivedIndexes {
-		maximumHitPoint := s.characterHitPointMaximum(index)
-		_, err := s.squad.SetHitPoints(index, maximumHitPoint)
-		if err != nil {
-			return nil, fmt.Errorf("recapHealth[%d]: %w", index, err)
-		}
-	}
-	if len(revivedIndexes) == 0 {
-		return nil, nil
-	}
-	err := s.syncZoneSquadCheckpoint()
-	if err != nil {
-		return nil, fmt.Errorf("recapCheckpoint: %w", err)
-	}
-	return packets, nil
 }
 
 // applyDeveloperResetCommand releases transient player-side admission gates
@@ -1782,27 +1737,16 @@ func (s *gameplayPeerSession) applyDeveloperDefeatCommand() ([][]byte, error) {
 	if !s.squad.IsGameOver() {
 		return nil, errors.New("defeat did not latch game over")
 	}
-	if s.zone.NPCs() != nil {
-		err = s.zone.NPCs().ClearTargets()
-		if err != nil {
-			return nil, fmt.Errorf("defeatTargets: %w", err)
-		}
-		targetPackets, marshalErr := npcraknet.TargetUpdates(
-			s.zone.NPCs().Snapshots(),
-		)
-		if marshalErr != nil {
-			return nil, fmt.Errorf("defeatTargetMarshal: %w", marshalErr)
-		}
-		packets = append(packets, targetPackets...)
-	}
 	s.isHeroSelectionPending = false
 	s.isHeroSelectionScheduled = false
 	s.heroSelectionReadyAt = time.Time{}
-	gameOverPacket, err := outcomeraknet.GameOver()
+	_, err = s.zone.ReleaseHeroTarget(
+		s.binding.UserID, s.generation, s.deployedObjectID,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("defeatGameOver: %w", err)
+		return nil, fmt.Errorf("defeatPartyTarget: %w", err)
 	}
-	return append(packets, gameOverPacket), nil
+	return packets, nil
 }
 
 func (r campaignResultRuntime) continueChain(

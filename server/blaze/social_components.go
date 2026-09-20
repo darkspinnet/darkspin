@@ -708,7 +708,7 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 						GameID: user.CurrentGameID(), Name: "recap",
 					})
 					if eventErr == nil {
-						responseBody = "Restoring defeated reserve squad members"
+						responseBody = "Resurrecting fallen heroes across the party"
 					} else if !errors.Is(eventErr, chat.ErrEventUnavailable) {
 						return nil, fmt.Errorf("commandRecap: %w", eventErr)
 					}

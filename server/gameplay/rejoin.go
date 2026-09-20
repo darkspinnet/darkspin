@@ -386,6 +386,16 @@ func marshalGameplayRejoinBaselineState(
 		return nil, fmt.Errorf("rejoinPlayer: %w", err)
 	}
 	packets = append(packets, resourcePackets...)
+	if activeHitPoint <= 0 {
+		deathPacket, marshalErr := raknet.MarshalApplication(raknet.SetAnimationStateMessage{
+			ObjectID: peerSession.deployedObjectID,
+			State:    util.HashID("gen_player_death"), Timestamp: sourceTime, Scale: 1,
+		})
+		if marshalErr != nil {
+			return nil, fmt.Errorf("rejoinDeath: %w", marshalErr)
+		}
+		return append(packets, deathPacket), nil
+	}
 	beamPackets, err := heroraknet.BeamIn(
 		peerSession.deployedObjectID,
 		campaignCharacterBeam(

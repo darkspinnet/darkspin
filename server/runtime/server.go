@@ -280,7 +280,7 @@ func (s *Server) BugContext(
 	return bugContext, nil
 }
 
-// FindInterruptedMission resolves restart-safe zone state without activating
+// FindInterruptedMission resolves live membership or saved state without activating
 // the selected profile.
 func (s *Server) FindInterruptedMission(
 	ctx context.Context, loginName string,
@@ -292,7 +292,13 @@ func (s *Server) FindInterruptedMission(
 	if err != nil {
 		return InterruptedMission{}, false, fmt.Errorf("missionUser: %w", err)
 	}
-	resume, isFound, err := s.checkpoint.FindResume(ctx, userID)
+	resume, isFound, err := s.gameManager.FindLiveResume(userID)
+	if err != nil {
+		return InterruptedMission{}, false, fmt.Errorf("missionLive: %w", err)
+	}
+	if !isFound {
+		resume, isFound, err = s.checkpoint.FindResume(ctx, userID)
+	}
 	if err != nil {
 		return InterruptedMission{}, false, fmt.Errorf("missionCheckpoint: %w", err)
 	}
@@ -342,6 +348,15 @@ func (s *Server) DiscardInterruptedMission(
 	if err != nil {
 		return fmt.Errorf("missionMember: %w", err)
 	}
+	// A pre-loading game can have members without a durable checkpoint.
+	// Remove only this player before deciding whether the shared game is empty.
+	if s.gameManager != nil {
+		instance := s.gameManager.Game(mission.GameID)
+		if instance != nil {
+			instance.RemovePlayer(userID)
+			remainingMemberCount = max(remainingMemberCount, len(instance.Players()))
+		}
+	}
 	if remainingMemberCount == 0 {
 		if s.gameManager != nil && s.gameManager.Game(mission.GameID) != nil {
 			s.gameManager.Remove(mission.GameID)
@@ -359,7 +374,6 @@ func (s *Server) DiscardInterruptedMission(
 		s.gameManager.ReserveGameID(mission.GameID)
 		instance := s.gameManager.Game(mission.GameID)
 		if instance != nil {
-			instance.RemovePlayer(userID)
 			instance.SetExpectedPlayerCount(uint16(remainingMemberCount))
 		}
 	}
@@ -807,6 +821,7 @@ func New(options Options) (*Server, error) {
 	snapshotService.UseStateProvider(gameplayLifecycle)
 	snapshotService.UseNotifier(snapshotNotifier{servers: allBlazeServers})
 	gameManager.UseRemovalObserver(gameplayLifecycle.DiscardGame)
+	gameManager.UseMemberResumePolicy(gameplayLifecycle)
 	udpServer := sharedudp.NewSharedServer(
 		net.JoinHostPort(bindHost, fmt.Sprintf("%d", ports.qos)), logger, gameplayHandler,
 	)

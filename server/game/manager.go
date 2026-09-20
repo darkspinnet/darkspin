@@ -1039,6 +1039,7 @@ type Manager struct {
 	pendingCampaignWarps map[int64]string
 	games                map[uint32]*Instance
 	removalObserver      func(uint32)
+	memberResumePolicy   MemberResumePolicy
 }
 
 func NewManager() *Manager {

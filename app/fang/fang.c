@@ -3281,6 +3281,10 @@ static char* find_darkspin_chat_command(const char* text, int* command) {
                 *command = 25;
                 return (char*)cursor;
             }
+            if (is_darkspin_chat_command(cursor, "/follow")) {
+                *command = 26;
+                return (char*)cursor;
+            }
             if (is_darkspin_chat_command(cursor, "/ss")) {
                 *command = 22;
                 return (char*)cursor;

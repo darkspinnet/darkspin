@@ -2447,13 +2447,13 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("campaignRideTeleport: %w", marshalErr)
 		}
-		spendPackets, marshalErr := abilityraknet.SpendPresentation(
-			command.Common.ObjectID, abilityID, cooldown,
+		startPackets, marshalErr := abilityraknet.StartSpendPresentation(
+			command.Common.ObjectID, abilityID, definition.AnimationName, cooldown,
 			packet.SourceTime, remainingManaPoint,
 		)
 		if marshalErr != nil {
 			r.registry.mutex.Unlock()
-			return nil, fmt.Errorf("campaignRideSpend: %w", marshalErr)
+			return nil, fmt.Errorf("campaignRideStart: %w", marshalErr)
 		}
 		releaseAnimationPacket, marshalErr := abilityraknet.Animation(
 			command.Common.ObjectID, definition.OutAnimationName,
@@ -2560,13 +2560,15 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			destination.X, destination.Y, destination.Z, remainingManaPoint,
 			cooldown,
 		)
-		packets := make([][]byte, 0, 1+len(teleportPackets)+len(spendPackets))
+		packets := make([][]byte, 0, 1+len(startPackets)+len(teleportPackets))
 		packets = append(packets, ackPacket)
+		// Teammates do not run the caster's predicted ability animation.
+		// Publish its authored start explicitly before the teleport correction.
+		packets = append(packets, startPackets...)
 		packets = append(packets, teleportPackets...)
 		if len(abilityLessonCompletePacket) != 0 {
 			packets = append(packets, abilityLessonCompletePacket)
 		}
-		packets = append(packets, spendPackets...)
 		return packets, nil
 	}
 	return nil, errCampaignAbilityNotSpecial

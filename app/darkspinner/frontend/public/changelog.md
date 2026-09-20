@@ -1,5 +1,29 @@
 # Changelog
 
+### 2026-09-20
+
+- Reannounce teammate player slots when rejoining co-op so their hero health bars have valid owning-player records in the new client.
+- Drive the following player's own hero through reliable locomotion updates because ordinary movement replication is ignored for locally controlled heroes.
+- Reload mission resources before sending a retained co-op rejoin snapshot on Continue, and restore defeated heroes with their death pose instead of a living beam-in.
+- Deliver the final hero's death presentation to teammates after a party wipe instead of leaving that hero visibly alive, and flush queued removals before mission failure.
+- Wait until every connected party member's entire squad is defeated before showing mission failure, keeping surviving allies and enemies active after an individual squad wipe.
+- Remove Sage's Dendrones from every teammate's view when he dies, including deaths caused by NPCs simulated through another party member.
+- Remove collected DNA pickups from teammates' views and show the collector's pickup effect when an ally gathers them.
+- Send Ride the Lightning's authored start animation to teammates along with its teleport so allies can see the cast.
+- Refresh ally-follow movement between input commands, maintain a three-unit gap, and send the navigation-resolved destination to the following client and teammates.
+- Forward /follow through Fang to the server's ally-follow command instead of rejecting it as unrecognized.
+- Replicate attack pursuit movement to teammates immediately when a hero starts approaching an out-of-range enemy.
+- Synchronize deployed heroes' rendered positions with the server's placement after local and teammate creation, including mission entry and reconnect rosters.
+- Show Continue and Start Fresh for live campaign sessions as well as saved checkpoints, reattach live membership after login, and preserve other party members when starting fresh.
+- Send every campaign party member's identity and squad before completing the multiplayer roster merge, preserving each client's loading status.
+
+### 2026-09-19
+
+- Restore missing Nightmare Vines as destructible fixtures at their authored positions and scales, preserving the roots beneath them from the same Nocturna map variant.
+- Publish hero combat-state transitions so the client's authored victory-idle animations can play after fights, while preserving stealth state.
+- Keep Healing Sprite healing ticks running when it follows its hero by accepting follow updates without scheduled-arrival metadata.
+- Clear Pterodyne's movement goal after its scream before returning animation control to idle during cooldown.
+
 ### 2026-09-18
 
 - Preserve removed campaign squad members across relaunches by leaving saved empty slots empty during login repair.

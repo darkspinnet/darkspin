@@ -530,6 +530,15 @@ func removePlayerHandler(
 			}
 			isExplicitAbort := reason == returnToShipReason && user != nil &&
 				user.Account.ID == personaID && instance.HostUserID() == personaID
+			if reason == returnToShipReason && user != nil &&
+				user.Account.ID == personaID &&
+				gameManager.CanResumeDefeatedMember(gameID, personaID) {
+				logGameRequest(request,
+					"game_remove_preserved account=%q game_id=%d persona_id=%d reason=%d transition=%q",
+					user.LoginName, gameID, personaID, reason, "defeated_coop_resume",
+				)
+				return &Response{}, nil
+			}
 			isTutorialReturn := reason == returnToShipReason && instance.Info.Mode == game.ModeTutorial &&
 				instance.Info.Level == game.TutorialLevel && instance.IsTutorialComplete(personaID) &&
 				user != nil && user.Account.ID == personaID
