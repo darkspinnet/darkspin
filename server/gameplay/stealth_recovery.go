@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/raknet"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
 
@@ -18,10 +19,23 @@ func (e campaignStealtherSchedule) resetAnimation() ([][]byte, error) {
 	) {
 		return nil, nil
 	}
+	enemy, isEnemyFound := peerSession.zone.NPCs().NPC(e.objectID)
+	if !isEnemyFound {
+		return nil, nil
+	}
+	// The scream's turn goal outlives its forced animation. Clear locomotion
+	// before handing animation control back to idle during the cooldown.
+	stopPacket, err := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
+		ObjectID: e.objectID, GoalFlags: 0x20,
+		GoalPosition: raknet.Vector3(enemy.Plan.Position),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("stealthRecoveryStop: %w", err)
+	}
 	timestamp := e.timestamp + uint64(e.plan.Profile.ReleaseDelay/time.Millisecond)
 	packet, err := npcraknet.ResetAnimation(e.objectID, timestamp)
 	if err != nil {
 		return nil, fmt.Errorf("stealthRecoveryReset: %w", err)
 	}
-	return [][]byte{packet}, nil
+	return [][]byte{stopPacket, packet}, nil
 }

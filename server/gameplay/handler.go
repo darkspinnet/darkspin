@@ -2433,6 +2433,11 @@ func (r gameplayPendingRuntime) poll(
 	if err != nil {
 		return nil, fmt.Errorf("projectionPoll: %w", err)
 	}
+	combatPackets, err := r.heroCombatPackets(packet)
+	if err != nil {
+		return nil, fmt.Errorf("heroCombatPoll: %w", err)
+	}
+	projected = append(projected, combatPackets...)
 	if len(projected) != 0 {
 		return projected, nil
 	}
@@ -5393,17 +5398,21 @@ func (p campaignPreparation) initialize(
 			return fmt.Errorf("statusTutorialHordePlans: %w", markerErr)
 		}
 	}
+	fixtureMarkers := make([]game.CampaignDirectorMarker, 0)
+	var fixtureErr error
 	if strings.EqualFold(binding.Level, game.InitialChainLevel) {
-		fixtureMarkers := make([]game.CampaignDirectorMarker, 0)
-		var fixtureErr error
 		if zoneunlock.IsFirstClear(binding) {
 			fixtureMarkers, fixtureErr = director.InitialChainFirstClearFixtures()
 		} else {
 			fixtureMarkers, fixtureErr = director.InitialChainFixtures(contentSelectionID)
 		}
-		if fixtureErr != nil {
-			return fmt.Errorf("statusChainFixtures: %w", fixtureErr)
-		}
+	} else if binding.Mode == game.ModeChain {
+		fixtureMarkers, fixtureErr = director.NightmareVineFixtures(contentSelectionID)
+	}
+	if fixtureErr != nil {
+		return fmt.Errorf("statusChainFixtures: %w", fixtureErr)
+	}
+	if len(fixtureMarkers) != 0 {
 		fixturePlans, nextObjectID, fixtureErr = zonenpc.PlanFixtures(
 			fixtureMarkers, nextObjectID, zoneobject.ProjectileIDStart,
 		)

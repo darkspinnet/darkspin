@@ -13,10 +13,11 @@ func Follow(plans []zonecompanion.Follow) ([][]byte, error) {
 	packets := make([][]byte, 0, len(plans)*2)
 	for index, current := range plans {
 		if current.ObjectID == 0 || current.OwnerObjectID == 0 ||
-			current.DesiredStopDistance <= 0 || current.TravelDuration <= 0 ||
-			current.Revision == 0 {
+			current.DesiredStopDistance <= 0 {
 			return nil, fmt.Errorf("follow[%d]: invalid", index)
 		}
+		// TravelDuration and Revision belong to scheduled server arrival. The
+		// Healing Sprite commits its position on its tick and has no arrival job.
 		facingX := current.Goal.X - current.Position.X
 		facingY := current.Goal.Y - current.Position.Y
 		facingZ := current.Goal.Z - current.Position.Z

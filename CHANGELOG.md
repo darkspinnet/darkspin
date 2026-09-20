@@ -1,5 +1,12 @@
 # Changelog
 
+### 2026-09-19
+
+- Restore missing Nightmare Vines as destructible fixtures at their authored positions and scales, preserving the roots beneath them from the same Nocturna map variant.
+- Publish hero combat-state transitions so the client's authored victory-idle animations can play after fights, while preserving stealth state.
+- Keep Healing Sprite healing ticks running when it follows its hero by accepting follow updates without scheduled-arrival metadata.
+- Clear Pterodyne's movement goal after its scream before returning animation control to idle during cooldown.
+
 ### 2026-09-18
 
 - Preserve removed campaign squad members across relaunches by leaving saved empty slots empty during login repair.

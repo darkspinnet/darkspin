@@ -52,6 +52,9 @@ func planMarkers(
 			MarkerSetName:    currentMarker.MarkerSetName,
 			NPCProfile:       currentMarker.NPCProfile,
 		}
+		if isFixture {
+			currentPlan.PlacementScale = currentMarker.Scale
+		}
 		err := ValidateSpawnPlan(currentPlan, objectIDLimit)
 		if err != nil {
 			return nil, firstObjectID, fmt.Errorf(

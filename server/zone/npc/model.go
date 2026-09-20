@@ -35,6 +35,7 @@ type SpawnPlan struct {
 	AuthoredNounName   string
 	Position           game.Vec3
 	Rotation           game.Vec3
+	PlacementScale     float32 // Authored marker multiplier; zero means one.
 	Experience         uint32
 	LocusID            uint32
 	Kind               sim.DirectorLocusKind
@@ -63,6 +64,7 @@ func (e SpawnPlan) IsEqual(other SpawnPlan) bool {
 		e.AuthoredNounName == other.AuthoredNounName &&
 		e.Position == other.Position &&
 		e.Rotation == other.Rotation &&
+		e.PlacementScale == other.PlacementScale &&
 		e.Experience == other.Experience &&
 		e.LocusID == other.LocusID &&
 		e.Kind == other.Kind &&
@@ -249,6 +251,10 @@ type DeathEvent struct {
 
 func ValidateSpawnPlan(plan SpawnPlan, objectIDLimit uint32) error {
 	profile := plan.NPCProfile
+	if plan.PlacementScale < 0 || math.IsNaN(float64(plan.PlacementScale)) ||
+		math.IsInf(float64(plan.PlacementScale), 0) {
+		return errors.New("invalid placement scale")
+	}
 	if objectIDLimit == 0 || plan.ObjectID == 0 || plan.ObjectID >= objectIDLimit ||
 		plan.NounName == "" || !profile.IsKnown || profile.HitPoint <= 0 ||
 		profile.PowerPoint < 0 || !zonegeometry.IsFinite(plan.Position) ||

@@ -505,6 +505,7 @@ type gameplayPeerSession struct {
 	isPendingPacketOverflow              bool
 	pendingStatDeltas                    []sporenet.PlayerStatDelta
 	knownPlayerMask                      uint32
+	heroCombatPresentation               *heroCombatPresentation
 	isPartyMerged                        bool
 	isArenaLobbyTransitionSent           bool
 	isArenaLobbyEntered                  bool
