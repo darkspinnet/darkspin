@@ -136,12 +136,13 @@ type ResourceMutator interface {
 
 // EventCommand requests one named allowlisted gameplay event.
 type EventCommand struct {
-	Sender Participant
-	GameID uint32
-	Name   string
-	X      float32
-	Y      float32
-	Z      float32
+	Sender   Participant
+	GameID   uint32
+	Name     string
+	Category string
+	X        float32
+	Y        float32
+	Z        float32
 }
 
 // EventTriggerer queues developer events for gameplay-owned execution.

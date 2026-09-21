@@ -2,6 +2,8 @@ package game
 
 import (
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -17,6 +19,7 @@ import (
 // game before its zone state is restored by gameplay.
 type ResumeCheckpoint struct {
 	GameID              uint32
+	RunSeed             uint64
 	Level               string
 	Difficulty          uint32
 	Slot                uint16
@@ -125,6 +128,7 @@ type NetworkPair struct {
 type Instance struct {
 	mu                         sync.RWMutex
 	ID                         uint32
+	RunSeed                    uint64
 	Info                       Info
 	CreatedAt                  time.Time
 	StartedAt                  time.Time
@@ -177,6 +181,7 @@ type PlayerResourceCommand struct {
 type PlayerEventCommand struct {
 	Name         string
 	NounName     string
+	Category     string
 	Position     Vec3
 	TargetUserID uint64
 }
@@ -892,11 +897,13 @@ func (g *Instance) RequestPlayerEventCommand(id int64, command PlayerEventComman
 	isFollow := command.Name == "follow" && command.TargetUserID != 0 &&
 		command.TargetUserID != uint64(id)
 	isSpawn := command.Name == "spawn" && isValidPlayerEventNoun(command.NounName)
+	isDropCreate := command.Name == "drop-create" &&
+		isValidPlayerEventCategory(command.Category)
 	if command.Name != "security-next" && command.Name != "boss-start" &&
 		command.Name != "boss-complete" && command.Name != "kill" &&
 		command.Name != "reset" && command.Name != "victory" &&
 		command.Name != "defeat" && command.Name != "recap" && !isGoto && !isFollow &&
-		command.Name != "ai" && !isSpawn {
+		command.Name != "ai" && !isDropCreate && !isSpawn {
 		return false
 	}
 	g.mu.Lock()
@@ -905,6 +912,9 @@ func (g *Instance) RequestPlayerEventCommand(id int64, command PlayerEventComman
 		return false
 	}
 	if isSpawn && !g.Info.IsWarped {
+		return false
+	}
+	if isDropCreate && g.Info.Mode != ModeChain {
 		return false
 	}
 	if command.Name == "ai" && (len(g.players) < 2 ||
@@ -946,6 +956,15 @@ func isValidPlayerEventNoun(nounName string) bool {
 		return false
 	}
 	return true
+}
+
+func isValidPlayerEventCategory(category string) bool {
+	switch category {
+	case "", "weapon", "grasper", "foot", "offense", "defense", "utility":
+		return true
+	default:
+		return false
+	}
 }
 
 // ConsumePlayerEventCommand returns and clears one pending developer event.
@@ -1059,9 +1078,11 @@ func (m *Manager) Create() *Instance {
 	id := m.nextID
 	m.nextID++
 	hostNetwork := m.hostNetwork
+	createdAt := time.Now()
 	instance := &Instance{
-		ID: id, CreatedAt: time.Now(), players: make(map[int64]*sporenet.User),
-		slots: make(map[int64]uint16), teams: make(map[int64]uint16),
+		ID: id, RunSeed: newCampaignRunSeed(id, createdAt), CreatedAt: createdAt,
+		players: make(map[int64]*sporenet.User),
+		slots:   make(map[int64]uint16), teams: make(map[int64]uint16),
 		readyPlayers:        make(map[int64]struct{}),
 		joinPublications:    make(map[int64]struct{}),
 		tutorialCompletions: make(map[int64]struct{}),
@@ -1076,6 +1097,32 @@ func (m *Manager) Create() *Instance {
 	return instance
 }
 
+func newCampaignRunSeed(gameID uint32, createdAt time.Time) uint64 {
+	var seedBytes [8]byte
+	byteCount, err := cryptorand.Read(seedBytes[:])
+	if err != nil {
+		// Game creation remains available when the operating-system entropy
+		// source is temporarily unavailable.
+		return fallbackCampaignRunSeed(gameID, createdAt)
+	}
+	if byteCount != len(seedBytes) {
+		return fallbackCampaignRunSeed(gameID, createdAt)
+	}
+	seed := binary.LittleEndian.Uint64(seedBytes[:])
+	if seed == 0 {
+		return fallbackCampaignRunSeed(gameID, createdAt)
+	}
+	return seed
+}
+
+func fallbackCampaignRunSeed(gameID uint32, createdAt time.Time) uint64 {
+	seed := uint64(createdAt.UnixNano()) ^ uint64(gameID)<<32 ^ 0x9e3779b97f4a7c15
+	if seed == 0 {
+		return 1
+	}
+	return seed
+}
+
 // Restore recreates the Blaze-visible shell for a durable zone checkpoint.
 // Gameplay restores the richer world state after RakNet identity binding.
 func (m *Manager) Restore(
@@ -1085,7 +1132,7 @@ func (m *Manager) Restore(
 		strings.EqualFold(checkpoint.Level, TutorialDirectorLevel)
 	isDifficultyValid := isTutorial && checkpoint.Difficulty == 0 ||
 		!isTutorial && checkpoint.Difficulty > 0
-	if m == nil || user == nil || checkpoint.GameID == 0 ||
+	if m == nil || user == nil || checkpoint.GameID == 0 || checkpoint.RunSeed == 0 ||
 		checkpoint.Level == "" || !isDifficultyValid ||
 		checkpoint.Slot >= MaxGamePlayers ||
 		checkpoint.ExpectedPlayerCount == 0 ||
@@ -1102,7 +1149,7 @@ func (m *Manager) Restore(
 			mode = ModeTutorial
 		}
 		instance = &Instance{
-			ID: checkpoint.GameID, CreatedAt: time.Now(),
+			ID: checkpoint.GameID, RunSeed: checkpoint.RunSeed, CreatedAt: time.Now(),
 			players: make(map[int64]*sporenet.User), slots: make(map[int64]uint16),
 			teams:               make(map[int64]uint16),
 			readyPlayers:        make(map[int64]struct{}),
@@ -1176,6 +1223,9 @@ func (g *Instance) validateRestore(checkpoint ResumeCheckpoint) error {
 	defer g.mu.RUnlock()
 	if !strings.EqualFold(g.Info.Level, checkpoint.Level) {
 		return errors.New("game restore level mismatch")
+	}
+	if g.RunSeed == 0 || g.RunSeed != checkpoint.RunSeed {
+		return errors.New("game restore run seed mismatch")
 	}
 	difficulty := fmt.Sprintf("%d", checkpoint.Difficulty)
 	if g.Info.Attributes["SelectedDifficulty"] != difficulty {

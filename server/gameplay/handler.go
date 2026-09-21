@@ -2895,6 +2895,9 @@ func (r gameplayPendingRuntime) consumePlayerEventCommand(
 	if command.Name == "ai" {
 		return r.togglePlayerAI(packet, queuedSession)
 	}
+	if command.Name == "drop-create" {
+		return r.createDeveloperEquipmentDrop(ctx, packet, queuedSession, command)
+	}
 	if command.Name == "recap" {
 		return r.recapParty(packet, queuedSession)
 	}
@@ -5638,6 +5641,10 @@ func (p campaignPreparation) initialize(
 			}
 		}
 	}
+	dropRandom, randomErr := newCampaignDropRandom(binding, restoreSnapshot)
+	if randomErr != nil {
+		return fmt.Errorf("statusChainDropRandom: %w", randomErr)
+	}
 	zone, _, zoneErr := zoneRegistry.Resolve(
 		uint64(binding.GameID),
 		zone.Member{
@@ -5652,6 +5659,7 @@ func (p campaignPreparation) initialize(
 		zone.ZoneInfo{
 			Level:               binding.Level,
 			Difficulty:          binding.Difficulty,
+			RunSeed:             binding.RunSeed,
 			ChainLevelIndex:     binding.ChainLevelIndex,
 			MemberLimit:         binding.MemberLimit,
 			DirectorDefinition:  director,
@@ -5696,9 +5704,7 @@ func (p campaignPreparation) initialize(
 			NPCRandom: sim.NewSimulatorRandom(
 				binding.GameID ^ (binding.Difficulty << 24) ^ 0xd20e,
 			),
-			DropRandom: sim.NewSimulatorRandom(
-				binding.GameID ^ (binding.Difficulty << 24) ^ 0xd40f,
-			),
+			DropRandom: dropRandom,
 			Checkpoint: p.checkpoint,
 			Restore:    restoreSnapshot,
 		},

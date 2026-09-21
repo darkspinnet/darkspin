@@ -98,6 +98,7 @@ export namespace main {
 	    manifestUrl: string;
 	    gameDirectory: string;
 	    version: string;
+	    buildChannel: string;
 	    progress: number;
 	    patchProgress: number;
 	    avatarProgress: number;
@@ -150,6 +151,7 @@ export namespace main {
 	        this.manifestUrl = source["manifestUrl"];
 	        this.gameDirectory = source["gameDirectory"];
 	        this.version = source["version"];
+	        this.buildChannel = source["buildChannel"];
 	        this.progress = source["progress"];
 	        this.patchProgress = source["patchProgress"];
 	        this.avatarProgress = source["avatarProgress"];

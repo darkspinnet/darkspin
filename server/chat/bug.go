@@ -19,6 +19,7 @@ type BugContext struct {
 	UserID              int64          `json:"user_id"`
 	UserName            string         `json:"user_name"`
 	GameID              uint32         `json:"game_id"`
+	RunSeed             uint64         `json:"run_seed,omitempty"`
 	SessionGeneration   uint64         `json:"session_generation,omitempty"`
 	TransportGeneration uint64         `json:"transport_generation,omitempty"`
 	SessionStage        string         `json:"session_stage,omitempty"`

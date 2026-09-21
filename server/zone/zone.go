@@ -51,6 +51,7 @@ const (
 type ZoneInfo struct {
 	Level               string
 	Difficulty          uint32
+	RunSeed             uint64
 	ChainLevelIndex     uint32
 	MemberLimit         uint16
 	DirectorDefinition  game.CampaignDirector
@@ -208,7 +209,7 @@ func (e npcReturnStep) execute() {
 }
 
 func New(id uint64, generation uint64, info ZoneInfo) (*Zone, error) {
-	if id == 0 || generation == 0 {
+	if id == 0 || generation == 0 || info.RunSeed == 0 {
 		return nil, errors.New("campaign zone identity invalid")
 	}
 	if info.NPCs == nil || info.Hero == nil || info.Companion == nil ||
@@ -2147,6 +2148,7 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 	}
 	zoneID := e.id
 	generation := e.generation
+	runSeed := e.info.RunSeed
 	level := e.info.Level
 	difficulty := e.info.Difficulty
 	now := time.Now().UTC()
@@ -2155,6 +2157,7 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 		elapsed = 0
 	}
 	recorder := e.info.Checkpoint
+	dropRandom := e.info.DropRandom.Snapshot()
 	e.mu.Unlock()
 	sort.Slice(members, func(left int, right int) bool {
 		return members[left].UserID < members[right].UserID
@@ -2218,7 +2221,7 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 	security := e.info.Security.Snapshot()
 	hordes := e.info.Horde.Snapshots()
 	snapshot := zonecheckpoint.Snapshot{
-		Version: zonecheckpoint.Version, ZoneID: zoneID,
+		Version: zonecheckpoint.Version, ZoneID: zoneID, RunSeed: runSeed,
 		ZoneGeneration: generation, CompletionID: e.CompletionID(),
 		Level: level, Difficulty: difficulty, Reason: reason,
 		SavedAt: now, Elapsed: elapsed, Members: members, Heroes: heroes,
@@ -2226,6 +2229,7 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 		ExperienceAwards: experienceAwards,
 		Security:         security, Objectives: objectives, ScriptUses: scriptUses,
 		ClearedSpawnGroupIDs: clearedSpawnGroupIDs,
+		DropRandom:           dropRandom, IsDropRandomSet: true,
 	}
 	// Serialize the queue operation with terminal state. Without this final
 	// fence, completion could discard a checkpoint while an older capture was

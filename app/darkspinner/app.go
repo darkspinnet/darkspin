@@ -71,6 +71,7 @@ type LauncherStatus struct {
 	ManifestURL         string `json:"manifestUrl"`
 	GameDirectory       string `json:"gameDirectory"`
 	Version             string `json:"version"`
+	BuildChannel        string `json:"buildChannel"`
 	Progress            int    `json:"progress"`
 	PatchProgress       int    `json:"patchProgress"`
 	AvatarProgress      int    `json:"avatarProgress"`
@@ -114,6 +115,7 @@ func NewApp(arguments []string) *App {
 			LastRun:             "",
 			ManifestURL:         strings.TrimSpace(patchManifestURL),
 			Version:             Version,
+			BuildChannel:        BuildChannel,
 			IsAutoPlayRequested: hasLaunchArgument(arguments, "auto-play"),
 			IsPatchEnabled:      strings.TrimSpace(patchManifestURL) != "",
 			IsCinematicSkipped:  false,

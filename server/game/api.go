@@ -184,7 +184,7 @@ mission context. Use it immediately after a problem and briefly describe the act
 <h2>Developer tools</h2>
 <p class="muted">Campaign testing commands include <code>/dna</code>, <code>/damage</code>,
 <code>/heal</code>, <code>/power</code>, <code>/goto</code>,
-<code>/spawn</code>, <code>/summon</code>, <code>/level</code>, <code>/victory</code>,
+<code>/spawn</code>, <code>/drop create [category]</code>, <code>/summon</code>, <code>/level</code>, <code>/victory</code>,
 and <code>/defeat</code>. Use <code>/help</code> for exact syntax.</p>
 <p class="note">The <code>/help</code> response is the authoritative list of currently available commands.</p>
 </main></body></html>`)

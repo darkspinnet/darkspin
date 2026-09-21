@@ -1,9 +1,19 @@
 <script setup>
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Card } from '@/components/ui/card'
+import { DialogTitle } from '@/components/ui/dialog'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Progress } from '@/components/ui/progress'
+import LauncherDialog from '@/components/LauncherDialog.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { CancelPatch, CloseDetachedGameInstances, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetStatus, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, RefreshInstallationStatus, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, RestartLauncher, ScanRemoteServers, SendReport, SetIdentity, SetServerConfiguration, StartDetachedGameInstance, UninstallDarkspinner } from '../wailsjs/go/main/App'
 import { BrowserOpenURL, ClipboardSetText, EventsOn, Quit } from '../wailsjs/runtime/runtime'
 
-const status = ref({ state:'starting', message:'Starting DarkSpinner', identity:'', auth:'Starting', server:'Starting', patch:'Pending', game:'Checking', avatar:'Preparing', profile:'Starting', content:'Pending', identityError:'', authError:'', serverError:'', patchError:'', gameError:'', avatarError:'', profileError:'', contentError:'', lastRun:'', launcherNotice:'', version:'', progress:0, patchProgress:0, avatarProgress:0, contentProgress:0, isAuthenticated:false, isAuthOnline:false, isServerOnline:false, isPatchComplete:false, isPatchActive:false, isGameReady:false, isAvatarReady:false, isProfileStoreReady:false, isContentReady:false, isPlayReady:false, isCinematicSkipped:false, isLastRunFailure:false, isStartupBlocked:false })
+const status = ref({ state:'starting', message:'Starting DarkSpinner', identity:'', auth:'Starting', server:'Starting', patch:'Pending', game:'Checking', avatar:'Preparing', profile:'Starting', content:'Pending', identityError:'', authError:'', serverError:'', patchError:'', gameError:'', avatarError:'', profileError:'', contentError:'', lastRun:'', launcherNotice:'', version:'', buildChannel:'production', progress:0, patchProgress:0, avatarProgress:0, contentProgress:0, isAuthenticated:false, isAuthOnline:false, isServerOnline:false, isPatchComplete:false, isPatchActive:false, isGameReady:false, isAvatarReady:false, isProfileStoreReady:false, isContentReady:false, isPlayReady:false, isCinematicSkipped:false, isLastRunFailure:false, isStartupBlocked:false })
 const retainedProfileName = localStorage.getItem('darkspinner.selectedProfile') || localStorage.getItem('darkspinner.identity') || ''
 const retainedDetachedProfileName = localStorage.getItem('darkspinner.detachedProfile') || ''
 const identity = ref(localStorage.getItem('darkspinner.identity') || '')
@@ -59,9 +69,6 @@ const isRunningGameConfirmOpen = ref(false)
 const isRunningGameConfirmBusy = ref(false)
 const launcherNotice = ref('')
 let dismissedLauncherNotice = ''
-const isProfileMenuOpen = ref(false)
-const isDetachedProfileMenuOpen = ref(false)
-const isRemoteProfileMenuOpen = ref(false)
 const isRemoteServerMenuOpen = ref(false)
 const isProfileListLoaded = ref(false)
 const isProfileCreationBusy = ref(false)
@@ -91,10 +98,6 @@ const isChangelogOpen = ref(false)
 const isChangelogLoading = ref(false)
 const changelogText = ref('')
 const changelogError = ref('')
-const profileSelect = ref(null)
-const detachedProfileSelect = ref(null)
-const remoteProfileSelect = ref(null)
-const remoteServerSelect = ref(null)
 const retainedAutoPatch = localStorage.getItem('darkspinner.autoPatch')
 const isAutoPatchEnabled = ref(retainedAutoPatch === null || retainedAutoPatch === 'true')
 const isAutoLaunchEnabled = ref(localStorage.getItem('darkspinner.autoLaunch') === 'true')
@@ -285,6 +288,8 @@ const isRemoteFormReady = computed(() => !!remoteServerAddress.value &&
   /^[A-Za-z0-9]{1,20}$/.test(remoteIdentity.value.trim()) &&
   (!!remotePassword.value || (!isRemoteRegistration.value && selectedRemoteProfile.value?.isPasswordRemembered)))
 const isServerPortValid = computed(() => isPortValid(configuredServerPort.value) && Number(configuredServerPort.value) <= 65534)
+// Remove this channel gate when remote, detached, and multiplayer configuration are ready for every build.
+const isExperimentalLauncherFeatureVisible = computed(() => ['development', 'unstable'].includes(status.value.buildChannel))
 
 watch(identity, next => localStorage.setItem('darkspinner.identity', next))
 watch(remoteServerAddress, next => localStorage.setItem('darkspinner.remoteServer', next))
@@ -384,7 +389,6 @@ watch(isDetachedReady, next => {
 })
 
 onMounted(async () => {
-  document.addEventListener('pointerdown', closeProfileMenu)
   EventsOn('darkspinner:status', next => {
     status.value = { ...status.value, ...next }
     showLauncherNotice(next.launcherNotice)
@@ -412,7 +416,6 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', closeProfileMenu)
   cancelAutoLaunchCountdown()
   if (processStateTimer !== null) window.clearInterval(processStateTimer)
   if (preparationProgressTimer !== null) window.clearInterval(preparationProgressTimer)
@@ -579,18 +582,26 @@ async function applyServerConfiguration() {
   finally { isServerConfigurationBusy.value = false }
 }
 
+function chooseRemoteProfileKey(key) {
+  const profile = remoteProfiles.value.find(candidate => `${candidate.serverAddress}:${candidate.loginName}` === key)
+  if (profile) selectRemoteProfile(profile)
+}
+
+function chooseRemoteServerAddress(address) {
+  const server = remoteServers.value.find(candidate => candidate.address === address)
+  if (server) selectRemoteServer(server)
+}
+
 function selectRemoteProfile(profile) {
   remoteServerAddress.value = profile.serverAddress
   remoteIdentity.value = profile.loginName
   remotePassword.value = ''
   isRemotePasswordRemembered.value = profile.isPasswordRemembered
   isRemoteRegistration.value = false
-  isRemoteProfileMenuOpen.value = false
   remoteMessage.value = profile.isPasswordRemembered ? 'Saved password ready.' : 'Enter the password for this Crogenitor.'
 }
 
 function beginRemoteRegistration() {
-  isRemoteProfileMenuOpen.value = false
   isRemoteServerMenuOpen.value = false
   isRemoteRegistration.value = true
   remoteIdentity.value = ''
@@ -719,24 +730,15 @@ async function refreshDetachedInterruptedMission() {
 
 async function chooseProfile(profileName) {
   selectedProfile.value = profileName
-  isProfileMenuOpen.value = false
   if (profileName !== '__create__') await selectProfile()
 }
 
-function closeProfileMenu(event) {
-  if (!profileSelect.value?.contains(event.target)) isProfileMenuOpen.value = false
-  if (!detachedProfileSelect.value?.contains(event.target)) isDetachedProfileMenuOpen.value = false
-  if (!remoteProfileSelect.value?.contains(event.target)) isRemoteProfileMenuOpen.value = false
-  if (!remoteServerSelect.value?.contains(event.target)) isRemoteServerMenuOpen.value = false
-}
 
 function chooseDetachedProfile(profileName) {
   detachedProfile.value = profileName
-  isDetachedProfileMenuOpen.value = false
 }
 
 async function createDetachedProfile() {
-  isDetachedProfileMenuOpen.value = false
   showPage('play')
   await chooseProfile('__create__')
 }
@@ -835,20 +837,17 @@ async function deleteProfile() {
 function requestDeleteProfile() {
   if (!selectedProfileRecord.value || isBusy.value) return
   profilePendingDelete.value = selectedProfileRecord.value
-  isProfileMenuOpen.value = false
 }
 
 function requestDetachedProfileDelete() {
   if (!detachedProfileRecord.value || isBusy.value || isDetachedLaunchBusy.value) return
   profilePendingDelete.value = detachedProfileRecord.value
-  isDetachedProfileMenuOpen.value = false
 }
 
 function requestRemoteProfileDelete() {
   if (!selectedRemoteProfile.value || isRemoteBusy.value) return
   remoteProfilePendingDelete.value = selectedRemoteProfile.value
   remoteDeletionError.value = ''
-  isRemoteProfileMenuOpen.value = false
 }
 
 function cancelRemoteProfileDelete() {
@@ -1183,21 +1182,20 @@ async function copyLauncherFailure() {
 
 <template>
   <main class="spinner-shell" :class="{ onboarding:isInstallationRequired, management:activePage === 'launcher' || activePage === 'remote' || activePage === 'config' }" @pointerdown.capture="handleLauncherInteraction" @keydown.capture="handleLauncherInteraction">
-    <div class="backdrop-grid"></div>
-    <div class="workspace" :class="{ 'navigation-hidden':isInstallationRequired }">
+    <Tabs :model-value="activePage" @update:model-value="showPage" class="workspace" :class="{ 'navigation-hidden':isInstallationRequired }">
       <div v-if="!isInstallationRequired" class="workspace-navigation">
         <div class="workspace-wordmark" aria-label="Dark Spin"><span>DARK</span><strong>SPIN</strong></div>
-        <nav class="page-tabs" aria-label="Launcher pages">
-          <button :class="{ active:activePage === 'play' }" @click="showPage('play')">LAUNCH</button>
-          <button :class="{ active:activePage === 'remote' }" @click="showPage('remote')">REMOTE</button>
-          <button :class="{ active:activePage === 'launcher' }" @click="showPage('launcher')">DETACHED</button>
-          <button :class="{ active:activePage === 'config' }" @click="showPage('config')">CONFIG</button>
-        </nav>
-        <button class="report-button" type="button" :disabled="isReportBusy" @click="openReportComposer">SEND REPORT</button>
+        <TabsList aria-label="Launcher pages">
+            <TabsTrigger value="play">Launch</TabsTrigger>
+            <TabsTrigger v-if="isExperimentalLauncherFeatureVisible" value="remote">Remote</TabsTrigger>
+            <TabsTrigger v-if="isExperimentalLauncherFeatureVisible" value="launcher">Detached</TabsTrigger>
+            <TabsTrigger value="config">Config</TabsTrigger>
+        </TabsList>
+        <Button variant="outline" class="report-button" type="button" :disabled="isReportBusy" @click="openReportComposer">SEND REPORT</Button>
       </div>
 
       <section v-if="isInstallationRequired" class="onboarding-frame install-frame">
-      <article class="onboarding-card install-card">
+      <Card class="onboarding-card install-card">
         <div class="onboarding-index">00</div>
         <p class="eyebrow">INSTALLATION CHECK</p>
         <template v-if="!installation.isSteamInstalled">
@@ -1216,56 +1214,55 @@ async function copyLauncherFailure() {
           <p v-else class="onboarding-copy">DarkSpinner found the game, but automatic relocation is unavailable on this platform. Move this launcher beside the detected game folders, then restart it.</p>
           <div class="install-state ready-state"><span></span><strong>INSTALLATION READY</strong><small>No shipped game file will be replaced.</small></div>
           <div v-if="installation.canRelocate" class="integration-options">
-            <label><input v-model="isStartMenuShortcut" type="checkbox"><span><strong>START MENU SHORTCUT</strong><small>Add Darkspinner to your personal Start menu.</small></span></label>
-            <label><input v-model="isDesktopShortcut" type="checkbox"><span><strong>DESKTOP SHORTCUT</strong><small>Add Darkspinner to your personal desktop.</small></span></label>
-            <label><input v-model="isSteamLaunch" type="checkbox"><span><strong>STEAM PLAY INTEGRATION</strong><small>Make Steam's Play button open Darkspinner using an additive compatibility DLL.</small></span></label>
+            <label><Checkbox v-model="isStartMenuShortcut" /><span><strong>START MENU SHORTCUT</strong><small>Add Darkspinner to your personal Start menu.</small></span></label>
+            <label><Checkbox v-model="isDesktopShortcut" /><span><strong>DESKTOP SHORTCUT</strong><small>Add Darkspinner to your personal desktop.</small></span></label>
+            <label><Checkbox v-model="isSteamLaunch" /><span><strong>STEAM PLAY INTEGRATION</strong><small>Make Steam's Play button open Darkspinner using an additive compatibility DLL.</small></span></label>
           </div>
         </template>
         <p class="install-message">{{ installation.message }}</p>
         <div class="install-actions">
-          <button v-if="installation.isSteamInstalled && !installation.isGameInstalled" class="onboarding-create" :disabled="isInstallationBusy" @click="openSteamInstall">OPEN STEAM INSTALL <span>&rsaquo;</span></button>
-          <button v-if="installation.canRelocate" class="onboarding-create" :disabled="isInstallationBusy" @click="relocateLauncher">{{ isInstallationBusy ? 'RESTARTING...' : isIntegrationSelected ? 'INSTALL AND RESTART' : 'COPY AND RESTART' }} <span>&rsaquo;</span></button>
-          <button class="onboarding-cancel" :disabled="isInstallationBusy" @click="refreshInstallation">{{ installation.isSteamInstalled ? 'REFRESH' : 'RETRY SCAN' }}</button>
+          <Button variant="default" type="button" v-if="installation.isSteamInstalled && !installation.isGameInstalled" class="onboarding-create" :disabled="isInstallationBusy" @click="openSteamInstall">OPEN STEAM INSTALL <span>&rsaquo;</span></Button>
+          <Button variant="default" type="button" v-if="installation.canRelocate" class="onboarding-create" :disabled="isInstallationBusy" @click="relocateLauncher">{{ isInstallationBusy ? 'RESTARTING...' : isIntegrationSelected ? 'INSTALL AND RESTART' : 'COPY AND RESTART' }} <span>&rsaquo;</span></Button>
+          <Button variant="outline" type="button" class="onboarding-cancel" :disabled="isInstallationBusy" @click="refreshInstallation">{{ installation.isSteamInstalled ? 'REFRESH' : 'RETRY SCAN' }}</Button>
         </div>
-      </article>
+      </Card>
     </section>
 
-    <section v-else-if="activePage === 'remote'" class="command-frame launch-command-frame remote-command-frame">
-      <div class="remote-playability-warning" role="alert">
-        <strong>REMOTE PLAY IS NOT YET PLAYABLE</strong>
-        <span>This feature is still under development.</span>
-      </div>
+    <TabsContent v-else-if="activePage === 'remote'" value="remote" as-child><section class="command-frame launch-command-frame remote-command-frame">
       <div class="launch-main">
-        <article class="bay launcher-bay">
+        <Card class="bay launcher-bay">
           <div class="launch-pane">
             <div class="profile-core remote-profile-core">
               <div class="pilot-select-row">
-                <button class="identity-create" type="button" :disabled="isRemoteBusy || !profileAvatars.length" @click="beginRemoteRegistration">+ NEW</button>
-                <div v-if="remoteProfiles.length" ref="remoteProfileSelect" class="profile-select" :class="{ open:isRemoteProfileMenuOpen }">
-                  <button class="profile-select-trigger" type="button" :disabled="isRemoteBusy" aria-label="Remote Crogenitor" :aria-expanded="isRemoteProfileMenuOpen" @click="isRemoteProfileMenuOpen = !isRemoteProfileMenuOpen">
-                    <span>{{ selectedRemoteProfileLabel }}</span><i></i>
-                  </button>
-                  <div v-if="isRemoteProfileMenuOpen" class="profile-select-menu" role="listbox" aria-label="Remote Crogenitors">
-                    <button v-for="profile in remoteProfiles" :key="`${profile.serverAddress}:${profile.loginName}`" class="profile-select-option" :class="{ selected:selectedRemoteProfile === profile }" type="button" role="option" :aria-selected="selectedRemoteProfile === profile" @click="selectRemoteProfile(profile)">
-                      <img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt=""><span><strong>{{ profile.displayName }}</strong><small>{{ profile.serverAddress }}</small></span>
-                    </button>
-                  </div>
-                </div>
-                <button v-if="remoteProfiles.length" class="identity-delete" type="button" :disabled="isRemoteBusy || !selectedRemoteProfile" @click="requestRemoteProfileDelete">DELETE</button>
+                <Button variant="outline" class="identity-create" type="button" :disabled="isRemoteBusy || !profileAvatars.length" @click="beginRemoteRegistration">+ NEW</Button>
+                <Select v-if="remoteProfiles.length" :model-value="selectedRemoteProfile ? `${selectedRemoteProfile.serverAddress}:${selectedRemoteProfile.loginName}` : undefined" @update:model-value="chooseRemoteProfileKey" :disabled="isRemoteBusy">
+                  <SelectTrigger class="profile-select-trigger" aria-label="Remote Crogenitor"><SelectValue>{{ selectedRemoteProfileLabel }}</SelectValue></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="profile in remoteProfiles" :key="`${profile.serverAddress}:${profile.loginName}`" :value="`${profile.serverAddress}:${profile.loginName}`">
+                      <span class="profile-option"><img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt=""><span><strong>{{ profile.displayName }}</strong><small>{{ profile.serverAddress }}</small></span></span>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" v-if="remoteProfiles.length" class="identity-delete" type="button" :disabled="isRemoteBusy || !selectedRemoteProfile" @click="requestRemoteProfileDelete">DELETE</Button>
               </div>
               <div v-if="selectedRemoteProfile" class="launch-profile-summary">
-                <div class="selected-profile-avatar" :class="{ empty:!selectedRemoteProfileAvatar }">
-                  <img v-if="selectedRemoteProfileAvatar" :src="selectedRemoteProfileAvatar" :alt="`${selectedRemoteProfileLabel} Crogenitor photo`">
-                </div>
-                <div class="profile-progress">
-                  <span><small>CROGENITOR</small><strong>LEVEL {{ selectedRemoteProfile.crogenitorLevel }}</strong><em>{{ selectedRemoteProfile.cumulativeXp }} XP</em></span>
-                  <span><small>PROGRESS</small><strong>{{ selectedRemoteCampaignLabel }}</strong><em>{{ selectedRemoteCampaignDetail }}</em></span>
-                </div>
-                <div class="remote-profile-server"><small>SERVER</small><strong>{{ selectedRemoteProfile.serverAddress }}</strong></div>
-                <div v-if="!selectedRemoteProfile.isPasswordRemembered" class="remote-profile-password">
-                  <label for="remote-profile-password">PASSWORD</label>
-                  <input id="remote-profile-password" v-model="remotePassword" type="password" placeholder="ENTER PASSWORD" autocomplete="current-password" :disabled="isRemoteBusy" @keyup.enter="launchRemote">
-                  <label class="management-toggle remote-remember"><input v-model="isRemotePasswordRemembered" type="checkbox"><span><strong>REMEMBER PASSWORD</strong></span></label>
+                <div class="profile-info-card remote-profile-info-card" :aria-label="`${selectedRemoteProfileLabel} remote profile summary`">
+                  <div class="selected-profile-avatar" :class="{ empty:!selectedRemoteProfileAvatar }">
+                    <img v-if="selectedRemoteProfileAvatar" :src="selectedRemoteProfileAvatar" :alt="`${selectedRemoteProfileLabel} Crogenitor photo`">
+                  </div>
+                  <div class="profile-info-content">
+                    <div class="profile-info-heading"><small>REMOTE CROGENITOR</small><strong>{{ selectedRemoteProfileLabel }}</strong></div>
+                    <div class="profile-progress">
+                      <span><small>CROGENITOR</small><strong>LEVEL {{ selectedRemoteProfile.crogenitorLevel }}</strong><em>{{ selectedRemoteProfile.cumulativeXp }} XP</em></span>
+                      <span><small>PROGRESS</small><strong>{{ selectedRemoteCampaignLabel }}</strong><em>{{ selectedRemoteCampaignDetail }}</em></span>
+                    </div>
+                    <div class="remote-profile-server"><small>SERVER</small><strong>{{ selectedRemoteProfile.serverAddress }}</strong></div>
+                    <div v-if="!selectedRemoteProfile.isPasswordRemembered" class="remote-profile-password">
+                      <label for="remote-profile-password">PASSWORD</label>
+                      <Input id="remote-profile-password" v-model="remotePassword" type="password" placeholder="ENTER PASSWORD" autocomplete="current-password" :disabled="isRemoteBusy" @keyup.enter="launchRemote" />
+                      <label class="management-toggle remote-remember"><Checkbox v-model="isRemotePasswordRemembered" /><span><strong>REMEMBER PASSWORD</strong></span></label>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div v-else class="remote-empty-state">
@@ -1274,371 +1271,379 @@ async function copyLauncherFailure() {
               </div>
             </div>
           </div>
-        </article>
+        </Card>
       </div>
-    </section>
+    </section></TabsContent>
 
-    <section v-else-if="activePage === 'config'" class="management-frame config-frame">
+    <TabsContent v-else-if="activePage === 'config'" value="config" as-child><section class="management-frame config-frame">
       <div class="config-grid">
-        <article class="management-card config-port-card">
-          <div class="management-heading"><span>01</span><div><h2>CONFIGURATION</h2></div></div>
-          <label class="management-toggle config-multiplayer"><input v-model="isConfiguredMultiplayerEnabled" type="checkbox" :disabled="isServerConfigurationBusy"><span><strong>ALLOW MULTIPLAYER CONNECTIONS</strong><small>Still under development. Listen on LAN interfaces. Windows may request firewall access when enabled.</small></span></label>
-          <label for="config-server-port">PORT</label>
-          <input id="config-server-port" v-model.number="configuredServerPort" type="number" min="1" max="65534" inputmode="numeric" :disabled="isServerConfigurationBusy">
+        <Card class="management-card config-port-card">
+          <template v-if="isExperimentalLauncherFeatureVisible">
+            <label class="management-toggle config-multiplayer"><Checkbox v-model="isConfiguredMultiplayerEnabled" :disabled="isServerConfigurationBusy" /><span><strong>ALLOW MULTIPLAYER CONNECTIONS</strong><small>Still under development. Listen on LAN interfaces. Windows may request firewall access when enabled.</small></span></label>
+            <label for="config-server-port">PORT</label>
+            <Input id="config-server-port" v-model.number="configuredServerPort" type="number" min="1" max="65534" inputmode="numeric" :disabled="isServerConfigurationBusy" />
+          </template>
           <label class="config-locale" for="config-client-locale"><strong>LANGUAGE</strong></label>
-          <select id="config-client-locale" v-model="configuredLocale" :disabled="isServerConfigurationBusy">
-            <option v-for="locale in serverConfiguration.locales" :key="locale.code" :value="locale.code">{{ locale.label }} — {{ locale.code }}</option>
-          </select>
+          <Select v-model="configuredLocale" :disabled="isServerConfigurationBusy">
+            <SelectTrigger id="config-client-locale" class="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+            <SelectItem v-for="locale in serverConfiguration.locales" :key="locale.code" :value="locale.code">{{ locale.label }} — {{ locale.code }}</SelectItem>
+          </SelectContent>
+          </Select>
           <label class="config-locale" for="config-snapshot-mode"><strong>SYNC SNAPSHOT</strong></label>
-          <select id="config-snapshot-mode" v-model="configuredSnapshotMode" :disabled="isServerConfigurationBusy">
-            <option value="off">OFF — no rolling capture</option>
-            <option value="manual">MANUAL — capture for /ss dump</option>
-            <option value="auto">AUTO — capture and detect ordering anomalies</option>
-          </select>
+          <Select v-model="configuredSnapshotMode" :disabled="isServerConfigurationBusy">
+            <SelectTrigger id="config-snapshot-mode" class="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+            <SelectItem value="off">OFF — no rolling capture</SelectItem>
+            <SelectItem value="manual">MANUAL — capture for /ss dump</SelectItem>
+            <SelectItem value="auto">AUTO — capture and detect ordering anomalies</SelectItem>
+          </SelectContent>
+          </Select>
           <p v-if="serverConfigurationMessage" class="management-message">{{ serverConfigurationMessage }}</p>
-          <button class="config-save" type="button" :disabled="!isServerPortValid || !configuredLocale || isServerConfigurationBusy" @click="saveServerConfiguration">{{ isServerConfigurationBusy ? 'SAVING...' : 'SAVE CONFIGURATION' }}</button>
-        </article>
-        <article class="management-card shortcuts-card">
-          <div class="management-heading"><span>02</span><div><h2>SHORTCUTS</h2><p>REPAIR OR REMOVE LAUNCH ENTRY POINTS</p></div></div>
+          <Button variant="default" class="config-save" type="button" :disabled="!isServerPortValid || !configuredLocale || isServerConfigurationBusy" @click="saveServerConfiguration">{{ isServerConfigurationBusy ? 'SAVING...' : 'SAVE CONFIGURATION' }}</Button>
+        </Card>
+        <Card class="management-card shortcuts-card">
           <div class="integration-row">
             <div><strong>START MENU</strong><small>Personal Darkspinner shortcut</small></div>
             <span :class="{ installed:integrationStatus.isStartMenuInstalled }">{{ integrationStatus.isStartMenuInstalled ? 'INSTALLED' : 'NOT INSTALLED' }}</span>
-            <button :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('start-menu')">{{ integrationStatus.isStartMenuInstalled ? 'REPAIR' : 'INSTALL' }}</button>
-            <button :disabled="isManagementBusy || !integrationStatus.isStartMenuInstalled" @click="removeIntegration('start-menu')">REMOVE</button>
+            <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('start-menu')">{{ integrationStatus.isStartMenuInstalled ? 'REPAIR' : 'INSTALL' }}</Button>
+            <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isStartMenuInstalled" @click="removeIntegration('start-menu')">REMOVE</Button>
           </div>
           <div class="integration-row">
             <div><strong>DESKTOP</strong><small>Personal Darkspinner shortcut</small></div>
             <span :class="{ installed:integrationStatus.isDesktopInstalled }">{{ integrationStatus.isDesktopInstalled ? 'INSTALLED' : 'NOT INSTALLED' }}</span>
-            <button :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('desktop')">{{ integrationStatus.isDesktopInstalled ? 'REPAIR' : 'INSTALL' }}</button>
-            <button :disabled="isManagementBusy || !integrationStatus.isDesktopInstalled" @click="removeIntegration('desktop')">REMOVE</button>
+            <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('desktop')">{{ integrationStatus.isDesktopInstalled ? 'REPAIR' : 'INSTALL' }}</Button>
+            <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isDesktopInstalled" @click="removeIntegration('desktop')">REMOVE</Button>
           </div>
           <div class="integration-row">
             <div><strong>STEAM PLAY</strong><small>Route Steam launch through Darkspinner</small></div>
             <span :class="{ installed:integrationStatus.isSteamLaunchInstalled }">{{ integrationStatus.isSteamLaunchInstalled ? 'INSTALLED' : 'NOT INSTALLED' }}</span>
-            <button :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('steam')">{{ integrationStatus.isSteamLaunchInstalled ? 'REPAIR' : 'INSTALL' }}</button>
-            <button :disabled="isManagementBusy || !integrationStatus.isSteamLaunchInstalled" @click="removeIntegration('steam')">REMOVE</button>
+            <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('steam')">{{ integrationStatus.isSteamLaunchInstalled ? 'REPAIR' : 'INSTALL' }}</Button>
+            <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isSteamLaunchInstalled" @click="removeIntegration('steam')">REMOVE</Button>
           </div>
           <p class="management-message">{{ integrationStatus.message }}</p>
           <div class="shortcut-danger">
             <p><strong>UNINSTALL DARKSPINNER</strong><small>Remove local runtime data and owned shortcuts while preserving the installed game.</small></p>
-            <button class="danger-confirm" :disabled="isManagementBusy" @click="isUninstallConfirmOpen = true">UNINSTALL</button>
+            <Button variant="destructive" type="button" class="danger-confirm" :disabled="isManagementBusy" @click="isUninstallConfirmOpen = true">UNINSTALL</Button>
           </div>
-        </article>
+        </Card>
       </div>
-    </section>
+    </section></TabsContent>
 
-    <section v-else-if="activePage === 'play'" class="command-frame launch-command-frame">
+    <TabsContent v-else-if="activePage === 'play'" value="play" as-child><section class="command-frame launch-command-frame">
       <div class="launch-main">
-        <article class="bay launcher-bay">
+        <Card class="bay launcher-bay">
           <div class="launch-pane">
             <div class="profile-core">
               <template v-if="profiles.length">
                 <div class="pilot-select-row">
-                  <button class="identity-create" type="button" :disabled="isBusy" @click="chooseProfile('__create__')">+ NEW</button>
-                  <div ref="profileSelect" class="profile-select" :class="{ open:isProfileMenuOpen }">
-                    <button class="profile-select-trigger" type="button" :disabled="isBusy" aria-label="Crogenitor" :aria-expanded="isProfileMenuOpen" @click="isProfileMenuOpen = !isProfileMenuOpen">
-                      <span>{{ selectedProfileLabel }}</span><i></i>
-                    </button>
-                    <div v-if="isProfileMenuOpen" class="profile-select-menu" role="listbox" aria-label="Crogenitors">
-                      <button v-for="profile in profiles" :key="profile.loginName" class="profile-select-option" :class="{ selected:profile.loginName === selectedProfile }" type="button" role="option" :aria-selected="profile.loginName === selectedProfile" @click="chooseProfile(profile.loginName)">
-                        <img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt=""><span><strong>{{ profile.displayName }}</strong><small v-if="profile.isTutorialCompletionPending">STARTER LOADOUT QUEUED</small><small v-else-if="profile.displayName !== profile.loginName">{{ profile.loginName }}</small></span>
-                      </button>
-                    </div>
-                  </div>
-                  <button class="identity-delete" type="button" :disabled="isBusy || !selectedProfileRecord" @click="requestDeleteProfile">DELETE</button>
+                  <Button variant="outline" class="identity-create" type="button" :disabled="isBusy" @click="chooseProfile('__create__')">+ NEW</Button>
+                  <Select :model-value="selectedProfile" @update:model-value="chooseProfile" :disabled="isBusy">
+                  <SelectTrigger class="profile-select-trigger" aria-label="Crogenitor"><SelectValue>{{ selectedProfileLabel }}</SelectValue></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="profile in profiles" :key="profile.loginName" :value="profile.loginName">
+                      <span class="profile-option"><img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt=""><span><strong>{{ profile.displayName }}</strong><small v-if="profile.isTutorialCompletionPending || profile.displayName !== profile.loginName">{{ profile.isTutorialCompletionPending ? 'Starter loadout queued' : profile.loginName }}</small></span></span>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                  <Button variant="outline" class="identity-delete" type="button" :disabled="isBusy || !selectedProfileRecord" @click="requestDeleteProfile">DELETE</Button>
                 </div>
                 <div class="launch-profile-summary">
-                  <div class="selected-profile-avatar" :class="{ empty:!selectedProfileAvatar }">
-                    <img v-if="selectedProfileAvatar" :src="selectedProfileAvatar" :alt="`${selectedProfileLabel} Crogenitor photo`">
-                  </div>
-                  <div v-if="selectedProfileRecord" class="profile-progress">
-                    <span><small>CROGENITOR</small><strong>LEVEL {{ selectedProfileRecord.crogenitorLevel }}</strong><em>{{ selectedProfileRecord.cumulativeXp }} XP</em></span>
-                    <span><small>PROGRESS</small><strong>{{ selectedCampaignLabel }}</strong><em>{{ selectedCampaignDetail }}</em></span>
+                  <div v-if="selectedProfileRecord" class="profile-info-card" :aria-label="`${selectedProfileLabel} profile summary`">
+                    <div class="selected-profile-avatar" :class="{ empty:!selectedProfileAvatar }">
+                      <img v-if="selectedProfileAvatar" :src="selectedProfileAvatar" :alt="`${selectedProfileLabel} Crogenitor photo`">
+                    </div>
+                    <div class="profile-info-content">
+                      <div class="profile-info-heading"><small>LOCAL CROGENITOR</small><strong>{{ selectedProfileLabel }}</strong></div>
+                      <div class="profile-progress">
+                        <span><small>CROGENITOR</small><strong>LEVEL {{ selectedProfileRecord.crogenitorLevel }}</strong><em>{{ selectedProfileRecord.cumulativeXp }} XP</em></span>
+                        <span><small>PROGRESS</small><strong>{{ selectedCampaignLabel }}</strong><em>{{ selectedCampaignDetail }}</em></span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </template>
             </div>
           </div>
-        </article>
+        </Card>
       </div>
-    </section>
+    </section></TabsContent>
 
-    <section v-else class="management-frame detached-frame">
+    <TabsContent v-else value="launcher" as-child><section class="management-frame detached-frame">
       <div class="management-grid detached-grid">
-        <article class="management-card detached-card">
+        <Card class="management-card detached-card">
           <div class="launch-pane">
             <div class="profile-core">
               <template v-if="profiles.length">
                 <div class="pilot-select-row">
-                  <button class="identity-create" type="button" :disabled="isBusy || isDetachedLaunchBusy || isMissionChoiceBusy" @click="createDetachedProfile">+ NEW</button>
-                  <div ref="detachedProfileSelect" class="profile-select" :class="{ open:isDetachedProfileMenuOpen }">
-                    <button class="profile-select-trigger" type="button" :disabled="isDetachedLaunchBusy || isMissionChoiceBusy" aria-label="Detached Crogenitor" :aria-expanded="isDetachedProfileMenuOpen" @click="isDetachedProfileMenuOpen = !isDetachedProfileMenuOpen">
-                      <span>{{ detachedProfileLabel }}</span><i></i>
-                    </button>
-                    <div v-if="isDetachedProfileMenuOpen" class="profile-select-menu" role="listbox" aria-label="Detached Crogenitors">
-                      <button v-for="profile in profiles" :key="profile.loginName" class="profile-select-option" :class="{ selected:profile.loginName === detachedProfile }" type="button" role="option" :aria-selected="profile.loginName === detachedProfile" @click="chooseDetachedProfile(profile.loginName)">
-                        <img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt=""><span><strong>{{ profile.displayName }}</strong><small v-if="profile.isTutorialCompletionPending">STARTER LOADOUT QUEUED</small><small v-else-if="profile.displayName !== profile.loginName">{{ profile.loginName }}</small></span>
-                      </button>
-                    </div>
-                  </div>
-                  <button class="identity-delete" type="button" :disabled="isBusy || isDetachedLaunchBusy || !detachedProfileRecord" @click="requestDetachedProfileDelete">DELETE</button>
+                  <Button variant="outline" class="identity-create" type="button" :disabled="isBusy || isDetachedLaunchBusy || isMissionChoiceBusy" @click="createDetachedProfile">+ NEW</Button>
+                  <Select :model-value="detachedProfile" @update:model-value="chooseDetachedProfile" :disabled="isDetachedLaunchBusy || isMissionChoiceBusy">
+                  <SelectTrigger class="profile-select-trigger" aria-label="Detached Crogenitor"><SelectValue>{{ detachedProfileLabel }}</SelectValue></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="profile in profiles" :key="profile.loginName" :value="profile.loginName">
+                      <span class="profile-option"><img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt=""><span><strong>{{ profile.displayName }}</strong><small v-if="profile.isTutorialCompletionPending || profile.displayName !== profile.loginName">{{ profile.isTutorialCompletionPending ? 'Starter loadout queued' : profile.loginName }}</small></span></span>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                  <Button variant="outline" class="identity-delete" type="button" :disabled="isBusy || isDetachedLaunchBusy || !detachedProfileRecord" @click="requestDetachedProfileDelete">DELETE</Button>
                 </div>
                 <div class="launch-profile-summary">
-                  <div class="selected-profile-avatar" :class="{ empty:!detachedProfileAvatar }">
-                    <img v-if="detachedProfileAvatar" :src="detachedProfileAvatar" :alt="`${detachedProfileLabel} Crogenitor photo`">
-                  </div>
-                  <div v-if="detachedProfileRecord" class="profile-progress">
-                    <span><small>CROGENITOR</small><strong>LEVEL {{ detachedProfileRecord.crogenitorLevel }}</strong><em>{{ detachedProfileRecord.cumulativeXp }} XP</em></span>
-                    <span><small>PROGRESS</small><strong>{{ detachedCampaignLabel }}</strong><em>{{ detachedCampaignDetail }}</em></span>
+                  <div v-if="detachedProfileRecord" class="profile-info-card" :aria-label="`${detachedProfileLabel} detached profile summary`">
+                    <div class="selected-profile-avatar" :class="{ empty:!detachedProfileAvatar }">
+                      <img v-if="detachedProfileAvatar" :src="detachedProfileAvatar" :alt="`${detachedProfileLabel} Crogenitor photo`">
+                    </div>
+                    <div class="profile-info-content">
+                      <div class="profile-info-heading"><small>DETACHED CROGENITOR</small><strong>{{ detachedProfileLabel }}</strong></div>
+                      <div class="profile-progress">
+                        <span><small>CROGENITOR</small><strong>LEVEL {{ detachedProfileRecord.crogenitorLevel }}</strong><em>{{ detachedProfileRecord.cumulativeXp }} XP</em></span>
+                        <span><small>PROGRESS</small><strong>{{ detachedCampaignLabel }}</strong><em>{{ detachedCampaignDetail }}</em></span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </template>
             </div>
           </div>
-        </article>
+        </Card>
       </div>
-    </section>
+    </section></TabsContent>
 
-    </div>
+    </Tabs>
 
     <footer :class="{ 'launch-footer':!isInstallationRequired }">
       <div v-if="!isInstallationRequired" class="launcher-dock">
         <div v-if="launcherFailure" class="launcher-failure" role="alert">
           <p>{{ launcherFailure }}</p>
-          <button class="launcher-failure-copy" type="button" :class="{ copied:isLauncherFailureCopied }" :title="isLauncherFailureCopied ? 'Status copied' : 'Copy status'" :aria-label="isLauncherFailureCopied ? 'Status copied' : 'Copy status to clipboard'" @click="copyLauncherFailure">
+          <Button variant="outline" class="launcher-failure-copy" type="button" :class="{ copied:isLauncherFailureCopied }" :title="isLauncherFailureCopied ? 'Status copied' : 'Copy status'" :aria-label="isLauncherFailureCopied ? 'Status copied' : 'Copy status to clipboard'" @click="copyLauncherFailure">
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 4V2.75C5 1.78 5.78 1 6.75 1h5.5C13.22 1 14 1.78 14 2.75v7.5c0 .97-.78 1.75-1.75 1.75H11V6.75C11 5.23 9.77 4 8.25 4H5Zm-3 2.75C2 5.78 2.78 5 3.75 5h4.5C9.22 5 10 5.78 10 6.75v6.5c0 .97-.78 1.75-1.75 1.75h-4.5C2.78 15 2 14.22 2 13.25v-6.5Z"/></svg>
-          </button>
+          </Button>
         </div>
         <div class="launcher-progress-row">
-          <button class="footer-build" type="button" title="View changelog" aria-label="View build changelog" aria-haspopup="dialog" @click="openChangelog">{{ status.version || '—' }}</button>
-          <div class="launcher-progress" :class="{ indeterminate:isLauncherProgressIndeterminate }" :title="launcherProgressLabel">
-            <i :style="isLauncherProgressIndeterminate ? {} : { width:`${launcherProgress}%` }"></i>
-          </div>
+          <Button variant="ghost" class="footer-build" type="button" title="View changelog" aria-label="View build changelog" aria-haspopup="dialog" @click="openChangelog">{{ status.version || '—' }}</Button>
+          <Progress class="launcher-progress" :class="{ indeterminate:isLauncherProgressIndeterminate }" :model-value="isLauncherProgressIndeterminate ? null : launcherProgress" :aria-label="launcherProgressLabel" :title="launcherProgressLabel" />
           <div class="launcher-status-dots" aria-label="System readiness">
-            <span v-for="row in statusRows" :key="row.label" tabindex="0" :class="{ ready:row.ready, error:!!row.error }" :data-tooltip="`${row.label}: ${row.error || row.detail}`"></span>
+            <span v-for="row in statusRows" :key="row.label" tabindex="0" :class="{ ready:row.ready, error:!!row.error }" :aria-label="`${row.label}: ${row.error || row.detail}`" :data-tooltip="`${row.label}: ${row.error || row.detail}`"></span>
           </div>
         </div>
         <div class="launcher-control-row">
-          <button class="launcher-action patch-action" type="button" :disabled="isPatchCancelRequested || status.state === 'cancelling' || (!isPatchBusy && status.state !== 'cancelled' && (!status.isGameReady || status.isStartupBlocked))" @click="requestPatch">{{ status.state === 'cancelling' || isPatchCancelRequested ? 'CANCELLING...' : isPatchBusy ? 'CANCEL' : 'PATCH' }}</button>
+          <Button variant="outline" class="launcher-action patch-action" type="button" :disabled="isPatchCancelRequested || status.state === 'cancelling' || (!isPatchBusy && status.state !== 'cancelled' && (!status.isGameReady || status.isStartupBlocked))" @click="requestPatch">{{ status.state === 'cancelling' || isPatchCancelRequested ? 'CANCELLING...' : isPatchBusy ? 'CANCEL' : 'PATCH' }}</Button>
           <div class="launcher-control-center">
             <div class="launcher-progress-status" :title="launcherProgressLabel">{{ launcherProgressLabel }}</div>
             <div class="launcher-auto-options">
-              <label><input v-model="isAutoPatchEnabled" type="checkbox"><span>AUTO PATCH</span></label>
-              <label><input v-model="isAutoLaunchEnabled" type="checkbox"><span>AUTO PLAY</span></label>
+              <label><Checkbox v-model="isAutoPatchEnabled" /><span>AUTO PATCH</span></label>
+              <label><Checkbox v-model="isAutoLaunchEnabled" /><span>AUTO PLAY</span></label>
             </div>
           </div>
           <div class="launcher-play-group">
-            <button v-if="isDetachedKillVisible" class="launcher-action detach-action kill-detached-action" type="button" :disabled="isClientStopBusy" title="Close every detached or untracked game client" @click="stopActiveClient">{{ isClientStopBusy ? 'CLOSING...' : 'KILL ALL' }}</button>
-			<button v-else-if="isAttachedKillVisible" class="launcher-action detach-action kill-detached-action" type="button" :disabled="isClientStopBusy" title="Close the active game client" @click="stopActiveClient">{{ isClientStopBusy ? 'CLOSING...' : 'KILL' }}</button>
-            <button v-else-if="activeInterruptedMission" class="launcher-action detach-action mission-fresh" type="button" :disabled="!isHeaderPlayEnabled || isMissionChoiceBusy" title="Discard the interrupted deployment and start fresh" @click="startFresh">{{ isMissionChoiceBusy ? 'STARTING...' : 'START FRESH' }}</button>
-            <button class="launcher-action play-action" type="button" :class="{ counting:isAutoLaunchCounting }" :disabled="activePage === 'config' || (!isHeaderPlayEnabled && !isAutoLaunchCounting)" :title="dockPlayTitle" @click="handlePlayButton">{{ dockPlayLabel }}</button>
+            <Button variant="destructive" v-if="isDetachedKillVisible" class="launcher-action detach-action kill-detached-action" type="button" :disabled="isClientStopBusy" title="Close every detached or untracked game client" @click="stopActiveClient">{{ isClientStopBusy ? 'CLOSING...' : 'KILL ALL' }}</Button>
+			<Button variant="destructive" v-else-if="isAttachedKillVisible" class="launcher-action detach-action kill-detached-action" type="button" :disabled="isClientStopBusy" title="Close the active game client" @click="stopActiveClient">{{ isClientStopBusy ? 'CLOSING...' : 'KILL' }}</Button>
+            <Button variant="outline" v-else-if="activeInterruptedMission" class="launcher-action detach-action mission-fresh" type="button" :disabled="!isHeaderPlayEnabled || isMissionChoiceBusy" title="Discard the interrupted deployment and start fresh" @click="startFresh">{{ isMissionChoiceBusy ? 'STARTING...' : 'START FRESH' }}</Button>
+            <Button variant="default" class="launcher-action play-action" type="button" :class="{ counting:isAutoLaunchCounting }" :disabled="activePage === 'config' || (!isHeaderPlayEnabled && !isAutoLaunchCounting)" :title="dockPlayTitle" @click="handlePlayButton">{{ dockPlayLabel }}</Button>
           </div>
         </div>
       </div>
-      <button v-else class="footer-build" type="button" title="View changelog" aria-label="View build changelog" aria-haspopup="dialog" @click="openChangelog">{{ status.version || '—' }}</button>
+      <Button variant="ghost" v-else class="footer-build" type="button" title="View changelog" aria-label="View build changelog" aria-haspopup="dialog" @click="openChangelog">{{ status.version || '—' }}</Button>
       <div v-if="isInstallationRequired && footerStatus" class="footer-status" :class="footerStatus.level" role="status" aria-live="polite" :title="footerStatus.message">
         <span>{{ footerStatus.label }}</span>
         <small>{{ footerStatus.message }}</small>
       </div>
     </footer>
 
-    <section v-if="isCreatingProfile && activePage !== 'remote' && activePage !== 'config'" class="fullscreen-notice" role="dialog" aria-modal="true" aria-labelledby="profile-creation-title" @click.self="cancelProfileCreation">
-      <article class="notice-card onboarding-card profile-creation-notice">
+    <LauncherDialog @interact="handleLauncherInteraction" v-if="isCreatingProfile && activePage !== 'remote' && activePage !== 'config'" :is-dismissible="!isFirstRunOnboarding && !isProfileCreationBusy" @close="cancelProfileCreation">
+      <div class="notice-card onboarding-card profile-creation-notice">
         <div class="onboarding-index">01</div>
         <p class="eyebrow">{{ isFirstRunOnboarding ? 'FIRST CONTACT' : 'LOCAL CROGENITOR REGISTRATION' }}</p>
-        <h2 id="profile-creation-title">{{ isFirstRunOnboarding ? 'CREATE YOUR CROGENITOR' : 'ADD A CROGENITOR' }}</h2>
+        <DialogTitle as="h2">{{ isFirstRunOnboarding ? 'CREATE YOUR CROGENITOR' : 'ADD A CROGENITOR' }}</DialogTitle>
         <p class="onboarding-copy">Choose the name used for this local Crogenitor.</p>
         <label>CROGENITOR PHOTO</label>
         <div v-if="profileAvatars.length" class="avatar-picker" role="radiogroup" aria-label="Crogenitor photo">
-          <button v-for="avatar in profileAvatars" :key="avatar.id" type="button" role="radio" :aria-checked="avatar.id === selectedAvatarId" :class="{ selected:avatar.id === selectedAvatarId }" @click="selectedAvatarId = avatar.id">
+          <Button variant="outline" v-for="avatar in profileAvatars" :key="avatar.id" type="button" role="radio" :aria-checked="avatar.id === selectedAvatarId" :class="{ selected:avatar.id === selectedAvatarId }" @click="selectedAvatarId = avatar.id">
             <img :src="avatar.url" :alt="`Crogenitor photo ${avatar.id}`">
-          </button>
+          </Button>
         </div>
         <div v-else class="avatar-preparing">{{ status.avatarError ? 'CROGENITOR PHOTOS UNAVAILABLE' : 'RECOVERING CROGENITOR PHOTOS...' }}</div>
         <label for="onboarding-profile">CROGENITOR NAME</label>
-        <input id="onboarding-profile" v-model="newProfileName" type="text" autofocus placeholder="ENTER NAME" :maxlength="maximumProfileNameLength" pattern="[A-Za-z0-9]*" autocomplete="off" spellcheck="false" :disabled="isProfileCreationBusy" @keyup.enter="createProfile">
+        <Input id="onboarding-profile" v-model="newProfileName" type="text" autofocus placeholder="ENTER NAME" :maxlength="maximumProfileNameLength" pattern="[A-Za-z0-9]*" autocomplete="off" spellcheck="false" :disabled="isProfileCreationBusy" @keyup.enter="createProfile" />
         <p class="onboarding-rule">Use 1–20 letters or numbers.</p>
-        <label class="tutorial-skip"><input v-model="isTutorialSkipped" type="checkbox"><span><strong>SKIP TUTORIAL</strong><small>Begin on the ship with tutorial progression, starter heroes, DNA, and reward gear already granted.</small></span></label>
+        <label class="tutorial-skip"><Checkbox v-model="isTutorialSkipped" /><span><strong>SKIP TUTORIAL</strong><small>Begin on the ship with tutorial progression, starter heroes, DNA, and reward gear already granted.</small></span></label>
         <p v-if="isTutorialSkipped && !status.isContentReady" class="onboarding-rule waiting">The Crogenitor will be created now. Starter heroes and rewards will finish automatically when content preparation completes.</p>
         <div class="onboarding-actions">
-          <button v-if="!isFirstRunOnboarding" class="onboarding-cancel" :disabled="isProfileCreationBusy" @click="cancelProfileCreation">CANCEL</button>
-          <button class="onboarding-create" :disabled="isProfileCreationBusy || !isProfileCreationReady" @click="createProfile">
+          <Button variant="outline" type="button" v-if="!isFirstRunOnboarding" class="onboarding-cancel" :disabled="isProfileCreationBusy" @click="cancelProfileCreation">CANCEL</Button>
+          <Button variant="default" type="button" class="onboarding-create" :disabled="isProfileCreationBusy || !isProfileCreationReady" @click="createProfile">
             {{ isProfileCreationBusy ? 'CREATING...' : 'CREATE CROGENITOR' }} <span>&rsaquo;</span>
-          </button>
+          </Button>
         </div>
-      </article>
-    </section>
+      </div>
+    </LauncherDialog>
 
-    <section v-if="isRemoteRegistration" class="fullscreen-notice" role="dialog" aria-modal="true" aria-labelledby="remote-registration-title" @click.self="cancelRemoteRegistration">
-      <article class="notice-card onboarding-card profile-creation-notice remote-registration-notice">
+    <LauncherDialog @interact="handleLauncherInteraction" v-if="isRemoteRegistration" :is-dismissible="!isRemoteBusy" @close="cancelRemoteRegistration">
+      <div class="notice-card onboarding-card profile-creation-notice remote-registration-notice">
         <p class="eyebrow">REMOTE CROGENITOR REGISTRATION</p>
-        <h2 id="remote-registration-title">ADD A CROGENITOR</h2>
+        <DialogTitle as="h2">ADD A CROGENITOR</DialogTitle>
         <p class="onboarding-copy">Enter a server and credentials. If that account already exists, Darkspinner signs into it instead.</p>
         <label for="remote-server">SERVER</label>
         <div class="remote-registration-server">
-          <button type="button" :disabled="isRemoteBusy" @click="scanRemoteServers">{{ isRemoteBusy ? 'SUGGESTING...' : 'SUGGEST' }}</button>
-          <input id="remote-server" v-model="remoteServerAddress" type="text" placeholder="darkspin.local:42127" autocomplete="off" spellcheck="false" :disabled="isRemoteBusy">
+          <Button variant="outline" type="button" :disabled="isRemoteBusy" @click="scanRemoteServers">{{ isRemoteBusy ? 'SUGGESTING...' : 'SUGGEST' }}</Button>
+          <Input id="remote-server" v-model="remoteServerAddress" type="text" placeholder="darkspin.local:42127" autocomplete="off" spellcheck="false" :disabled="isRemoteBusy" />
         </div>
-        <div v-if="remoteServers.length" ref="remoteServerSelect" class="profile-select remote-server-select" :class="{ open:isRemoteServerMenuOpen }">
-          <button class="profile-select-trigger" type="button" :disabled="isRemoteBusy" aria-label="Detected Darkspinner instances" :aria-expanded="isRemoteServerMenuOpen" @click="isRemoteServerMenuOpen = !isRemoteServerMenuOpen">
-            <span>{{ selectedRemoteServer?.address || remoteServerAddress }}</span><i></i>
-          </button>
-          <div v-if="isRemoteServerMenuOpen" class="profile-select-menu" role="listbox" aria-label="Detected Darkspinner instances">
-            <button v-for="server in remoteServers" :key="server.address" class="profile-select-option remote-server-option" :class="{ selected:selectedRemoteServer === server }" type="button" role="option" :aria-selected="selectedRemoteServer === server" @click="selectRemoteServer(server)">
-              <span><strong>{{ server.address }}</strong><small>{{ server.serverVersion || 'Darkspin' }}</small></span>
-            </button>
-          </div>
-        </div>
+        <Select v-if="remoteServers.length" v-model:open="isRemoteServerMenuOpen" :model-value="remoteServerAddress" @update:model-value="chooseRemoteServerAddress" :disabled="isRemoteBusy">
+                  <SelectTrigger class="profile-select-trigger" aria-label="Detected Darkspinner instances"><SelectValue>{{ selectedRemoteServer?.address || remoteServerAddress }}</SelectValue></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="server in remoteServers" :key="server.address" :value="server.address">
+                      <span class="profile-option"><span><strong>{{ server.address }}</strong><small>{{ server.serverVersion || 'Darkspin' }}</small></span></span>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
         <label>CROGENITOR PHOTO</label>
         <div class="avatar-picker" role="radiogroup" aria-label="Remote Crogenitor photo">
-          <button v-for="avatar in profileAvatars" :key="avatar.id" type="button" role="radio" :aria-checked="avatar.id === selectedAvatarId" :class="{ selected:avatar.id === selectedAvatarId }" @click="selectedAvatarId = avatar.id">
+          <Button variant="outline" v-for="avatar in profileAvatars" :key="avatar.id" type="button" role="radio" :aria-checked="avatar.id === selectedAvatarId" :class="{ selected:avatar.id === selectedAvatarId }" @click="selectedAvatarId = avatar.id">
             <img :src="avatar.url" :alt="`Crogenitor photo ${avatar.id}`">
-          </button>
+          </Button>
         </div>
         <label for="remote-identity">CROGENITOR NAME</label>
-        <input id="remote-identity" v-model="remoteIdentity" type="text" placeholder="ENTER NAME" maxlength="20" pattern="[A-Za-z0-9]*" autocomplete="username" spellcheck="false" :disabled="isRemoteBusy">
+        <Input id="remote-identity" v-model="remoteIdentity" type="text" placeholder="ENTER NAME" maxlength="20" pattern="[A-Za-z0-9]*" autocomplete="username" spellcheck="false" :disabled="isRemoteBusy" />
         <label for="remote-password">PASSWORD</label>
-        <input id="remote-password" v-model="remotePassword" type="password" placeholder="ENTER PASSWORD" autocomplete="new-password" :disabled="isRemoteBusy" @keyup.enter="submitRemoteAccount">
-        <label class="tutorial-skip"><input v-model="isTutorialSkipped" type="checkbox" :disabled="isRemoteBusy"><span><strong>SKIP TUTORIAL</strong><small>Begin on the ship with tutorial progression, starter heroes, DNA, and reward gear already granted.</small></span></label>
-        <label class="management-toggle remote-remember"><input v-model="isRemotePasswordRemembered" type="checkbox"><span><strong>REMEMBER PASSWORD</strong><small>Store this password in darkspin/saves/remote.db on this computer.</small></span></label>
+        <Input id="remote-password" v-model="remotePassword" type="password" placeholder="ENTER PASSWORD" autocomplete="new-password" :disabled="isRemoteBusy" @keyup.enter="submitRemoteAccount" />
+        <label class="tutorial-skip"><Checkbox v-model="isTutorialSkipped" :disabled="isRemoteBusy" /><span><strong>SKIP TUTORIAL</strong><small>Begin on the ship with tutorial progression, starter heroes, DNA, and reward gear already granted.</small></span></label>
+        <label class="management-toggle remote-remember"><Checkbox v-model="isRemotePasswordRemembered" /><span><strong>REMEMBER PASSWORD</strong><small>Store this password in darkspin/saves/remote.db on this computer.</small></span></label>
         <p class="onboarding-rule">{{ remoteMessage }}</p>
         <div class="onboarding-actions">
-          <button class="onboarding-cancel" type="button" :disabled="isRemoteBusy" @click="cancelRemoteRegistration">CANCEL</button>
-          <button class="onboarding-create" type="button" :disabled="!isRemoteFormReady || isRemoteBusy" @click="submitRemoteAccount">{{ isRemoteBusy ? 'WORKING...' : 'REGISTER OR SIGN IN' }} <span>&rsaquo;</span></button>
+          <Button variant="outline" class="onboarding-cancel" type="button" :disabled="isRemoteBusy" @click="cancelRemoteRegistration">CANCEL</Button>
+          <Button variant="default" class="onboarding-create" type="button" :disabled="!isRemoteFormReady || isRemoteBusy" @click="submitRemoteAccount">{{ isRemoteBusy ? 'WORKING...' : 'REGISTER OR SIGN IN' }} <span>&rsaquo;</span></Button>
         </div>
-      </article>
-    </section>
+      </div>
+    </LauncherDialog>
 
-    <section v-if="isRunningGameConfirmOpen" class="fullscreen-notice" role="dialog" aria-modal="true" aria-labelledby="running-game-title">
-      <article class="notice-card">
+    <LauncherDialog @interact="handleLauncherInteraction" v-if="isRunningGameConfirmOpen" :is-dismissible="!isRunningGameConfirmBusy" @close="isRunningGameConfirmOpen = false">
+      <div class="notice-card">
         <p class="eyebrow">ACTIVE GAME SESSION</p>
-        <h2 id="running-game-title">REPLACE RUNNING CLIENT?</h2>
+        <DialogTitle as="h2">REPLACE RUNNING CLIENT?</DialogTitle>
         <p>The selected Crogenitor already owns a running client. Close only that Crogenitor's client before relaunching it, or keep the current session open.</p>
         <div class="notice-actions">
-          <button class="onboarding-cancel" type="button" :disabled="isRunningGameConfirmBusy" @click="isRunningGameConfirmOpen = false">KEEP CURRENT CLIENT</button>
-          <button class="danger-confirm" type="button" :disabled="isRunningGameConfirmBusy" @click="replaceRunningGame">{{ isRunningGameConfirmBusy ? 'CLOSING...' : 'CLOSE & START SELECTED' }}</button>
+          <Button variant="outline" class="onboarding-cancel" type="button" :disabled="isRunningGameConfirmBusy" @click="isRunningGameConfirmOpen = false">KEEP CURRENT CLIENT</Button>
+          <Button variant="destructive" class="danger-confirm" type="button" :disabled="isRunningGameConfirmBusy" @click="replaceRunningGame">{{ isRunningGameConfirmBusy ? 'CLOSING...' : 'CLOSE & START SELECTED' }}</Button>
         </div>
-      </article>
-    </section>
+      </div>
+    </LauncherDialog>
 
-    <section v-if="isMultiplayerConfirmOpen" class="fullscreen-notice" role="dialog" aria-modal="true" aria-labelledby="multiplayer-confirm-title">
-      <article class="notice-card network-notice">
+    <LauncherDialog @interact="handleLauncherInteraction" v-if="isMultiplayerConfirmOpen" :is-dismissible="true" @close="cancelMultiplayerConfiguration">
+      <div class="notice-card network-notice">
         <p class="eyebrow">WINDOWS NETWORK ACCESS</p>
-        <h2 id="multiplayer-confirm-title">ENABLE LAN MULTIPLAYER?</h2>
+        <DialogTitle as="h2">ENABLE LAN MULTIPLAYER?</DialogTitle>
         <p>After Darkspinner restarts, Windows may ask which networks can reach it. Enable <strong>Private networks</strong>, then choose <strong>Allow access</strong>. Public networks are not required for normal LAN play.</p>
         <p class="network-recovery">If the Windows prompt does not appear or was previously dismissed, use <strong>Open Firewall</strong> in Config.</p>
         <div class="notice-actions">
-          <button class="onboarding-cancel" type="button" @click="cancelMultiplayerConfiguration">CANCEL</button>
-          <button class="onboarding-create" type="button" @click="confirmMultiplayerConfiguration">ENABLE &amp; RESTART</button>
+          <Button variant="outline" class="onboarding-cancel" type="button" @click="cancelMultiplayerConfiguration">CANCEL</Button>
+          <Button variant="default" class="onboarding-create" type="button" @click="confirmMultiplayerConfiguration">ENABLE &amp; RESTART</Button>
         </div>
-      </article>
-    </section>
+      </div>
+    </LauncherDialog>
 
-    <section v-if="launcherNotice" class="fullscreen-notice" role="alertdialog" aria-modal="true" aria-labelledby="launcher-notice-title">
-      <article class="notice-card danger-notice">
+    <LauncherDialog @interact="handleLauncherInteraction" v-if="launcherNotice">
+      <div class="notice-card danger-notice">
         <p class="eyebrow">{{ status.isStartupBlocked ? 'PRIVILEGE CHECK' : 'LAUNCHER ATTENTION REQUIRED' }}</p>
-        <h2 id="launcher-notice-title">{{ status.isStartupBlocked ? 'STANDARD USER REQUIRED' : 'SETUP COULD NOT FINISH' }}</h2>
+        <DialogTitle as="h2">{{ status.isStartupBlocked ? 'STANDARD USER REQUIRED' : 'SETUP COULD NOT FINISH' }}</DialogTitle>
         <p>{{ launcherNotice }}</p>
         <div class="notice-actions">
-          <button class="onboarding-cancel" type="button" @click="dismissLauncherNotice">{{ status.isStartupBlocked ? 'EXIT DARKSPINNER' : 'CLOSE' }}</button>
+          <Button variant="outline" class="onboarding-cancel" type="button" @click="dismissLauncherNotice">{{ status.isStartupBlocked ? 'EXIT DARKSPINNER' : 'CLOSE' }}</Button>
         </div>
-      </article>
-    </section>
+      </div>
+    </LauncherDialog>
 
-    <section v-if="isReportComposerOpen" class="fullscreen-notice" role="dialog" aria-modal="true" aria-labelledby="report-composer-title" @click.self="closeReportComposer">
-      <article class="notice-card report-composer">
+    <LauncherDialog @interact="handleLauncherInteraction" v-if="isReportComposerOpen" :is-dismissible="!isReportBusy" @close="closeReportComposer">
+      <div class="notice-card report-composer">
         <div class="report-composer-header">
-          <button class="report-manage-link report-open-folder" type="button" @click="openReportFolder">OPEN BUG FOLDER ↗</button>
+          <Button variant="ghost" class="report-manage-link report-open-folder" type="button" @click="openReportFolder">OPEN BUG FOLDER ↗</Button>
           <a class="report-manage-link" :href="myReportsURL" @click.prevent="openMyReports">MANAGE MY REPORTS ↗</a>
         </div>
         <p class="eyebrow">LOCAL DIAGNOSTIC REPORT</p>
-        <h2 id="report-composer-title">WHAT HAPPENED?</h2>
+        <DialogTitle as="h2">WHAT HAPPENED?</DialogTitle>
         <p>Give the report a short title, then describe exactly what you were doing, what you expected, and what happened instead. More detail makes the captured logs easier to understand.</p>
         <form class="report-form" @submit.prevent="sendReport">
           <label for="report-title-input">TITLE</label>
-          <input id="report-title-input" v-model="reportTitle" type="text" autocomplete="off" placeholder="Example: Revenant ability crashed the game" :disabled="isReportBusy">
+          <Input id="report-title-input" v-model="reportTitle" type="text" autocomplete="off" placeholder="Example: Revenant ability crashed the game" :disabled="isReportBusy" />
           <label for="report-description-input">DESCRIPTION</label>
-          <textarea id="report-description-input" v-model="reportDescription" placeholder="Describe everything that may be relevant. You can write as much as you need." :disabled="isReportBusy"></textarea>
+          <Textarea id="report-description-input" v-model="reportDescription" placeholder="Describe everything that may be relevant. You can write as much as you need." :disabled="isReportBusy"></Textarea>
           <div class="notice-actions">
-            <button class="onboarding-cancel" type="button" :disabled="isReportBusy" @click="closeReportComposer">CANCEL</button>
-            <button class="report-folder-button" type="submit" :disabled="!isReportReady">{{ isReportBusy ? 'PREPARING...' : 'CREATE REPORT' }}</button>
+            <Button variant="outline" class="onboarding-cancel" type="button" :disabled="isReportBusy" @click="closeReportComposer">CANCEL</Button>
+            <Button variant="default" class="report-folder-button" type="submit" :disabled="!isReportReady">{{ isReportBusy ? 'PREPARING...' : 'CREATE REPORT' }}</Button>
           </div>
         </form>
-      </article>
-    </section>
+      </div>
+    </LauncherDialog>
 
-    <section v-if="profilePendingDelete" class="fullscreen-notice" role="dialog" aria-modal="true" aria-labelledby="delete-profile-title">
-      <article class="notice-card danger-notice">
+    <LauncherDialog @interact="handleLauncherInteraction" v-if="profilePendingDelete" :is-dismissible="!isProfileDeletionBusy" @close="profilePendingDelete = null">
+      <div class="notice-card danger-notice">
         <p class="eyebrow">IRREVERSIBLE ACTION</p>
-        <h2 id="delete-profile-title">DELETE {{ profilePendingDelete.displayName }}?</h2>
+        <DialogTitle as="h2">DELETE {{ profilePendingDelete.displayName }}?</DialogTitle>
         <p>This permanently removes the Crogenitor and all locally saved progress. This action cannot be undone.</p>
         <div class="notice-actions">
-          <button class="onboarding-cancel" :disabled="isProfileDeletionBusy" @click="profilePendingDelete = null">KEEP CROGENITOR</button>
-          <button class="danger-confirm" :disabled="isProfileDeletionBusy" @click="deleteProfile">{{ isProfileDeletionBusy ? 'DELETING...' : 'DELETE PERMANENTLY' }}</button>
+          <Button variant="outline" type="button" class="onboarding-cancel" :disabled="isProfileDeletionBusy" @click="profilePendingDelete = null">KEEP CROGENITOR</Button>
+          <Button variant="destructive" type="button" class="danger-confirm" :disabled="isProfileDeletionBusy" @click="deleteProfile">{{ isProfileDeletionBusy ? 'DELETING...' : 'DELETE PERMANENTLY' }}</Button>
         </div>
-      </article>
-    </section>
+      </div>
+    </LauncherDialog>
 
-    <section v-if="remoteProfilePendingDelete" class="fullscreen-notice" role="dialog" aria-modal="true" aria-labelledby="remote-delete-profile-title" @click.self="cancelRemoteProfileDelete">
-      <article class="notice-card danger-notice remote-delete-notice">
+    <LauncherDialog @interact="handleLauncherInteraction" v-if="remoteProfilePendingDelete" :is-dismissible="!isRemoteDeletionBusy" @close="cancelRemoteProfileDelete">
+      <div class="notice-card danger-notice remote-delete-notice">
         <p class="eyebrow">REMOTE IRREVERSIBLE ACTION</p>
-        <h2 id="remote-delete-profile-title">DELETE {{ remoteProfilePendingDelete.displayName }}?</h2>
+        <DialogTitle as="h2">DELETE {{ remoteProfilePendingDelete.displayName }}?</DialogTitle>
         <p>This permanently removes the Crogenitor and all progress from <strong>{{ remoteProfilePendingDelete.serverAddress }}</strong>, then removes its cached connection from this launcher.</p>
         <div v-if="!remoteProfilePendingDelete.isPasswordRemembered" class="remote-delete-password">
           <label for="remote-delete-password">PASSWORD</label>
-          <input id="remote-delete-password" v-model="remotePassword" type="password" autocomplete="current-password" placeholder="ENTER PASSWORD" :disabled="isRemoteDeletionBusy" @keyup.enter="deleteRemoteProfile">
+          <Input id="remote-delete-password" v-model="remotePassword" type="password" autocomplete="current-password" placeholder="ENTER PASSWORD" :disabled="isRemoteDeletionBusy" @keyup.enter="deleteRemoteProfile" />
         </div>
         <p v-if="remoteDeletionError" class="remote-delete-error">{{ remoteDeletionError }}</p>
         <div class="notice-actions">
-          <button class="onboarding-cancel" type="button" :disabled="isRemoteDeletionBusy" @click="cancelRemoteProfileDelete">KEEP CROGENITOR</button>
-          <button class="danger-confirm" type="button" :disabled="isRemoteDeletionBusy || (!remoteProfilePendingDelete.isPasswordRemembered && !remotePassword)" @click="deleteRemoteProfile">{{ isRemoteDeletionBusy ? 'DELETING...' : 'DELETE REMOTELY' }}</button>
+          <Button variant="outline" class="onboarding-cancel" type="button" :disabled="isRemoteDeletionBusy" @click="cancelRemoteProfileDelete">KEEP CROGENITOR</Button>
+          <Button variant="destructive" class="danger-confirm" type="button" :disabled="isRemoteDeletionBusy || (!remoteProfilePendingDelete.isPasswordRemembered && !remotePassword)" @click="deleteRemoteProfile">{{ isRemoteDeletionBusy ? 'DELETING...' : 'DELETE REMOTELY' }}</Button>
         </div>
-      </article>
-    </section>
+      </div>
+    </LauncherDialog>
 
-    <section v-if="isChangelogOpen" class="fullscreen-notice" role="dialog" aria-modal="true" aria-labelledby="changelog-title" @click.self="isChangelogOpen = false">
-      <article class="notice-card changelog-notice">
+    <LauncherDialog @interact="handleLauncherInteraction" v-if="isChangelogOpen" :is-dismissible="true" @close="isChangelogOpen = false">
+      <div class="notice-card changelog-notice">
         <p class="eyebrow">RELEASE HISTORY</p>
-        <h2 id="changelog-title">DARK SPIN {{ status.version }}</h2>
+        <DialogTitle as="h2">DARK SPIN {{ status.version }}</DialogTitle>
         <p v-if="isChangelogLoading" class="changelog-state">LOADING CHANGELOG...</p>
         <p v-else-if="changelogError" class="changelog-state changelog-error">{{ changelogError }}</p>
         <pre v-else>{{ changelogText }}</pre>
         <div class="notice-actions">
-          <button class="onboarding-cancel" type="button" @click="isChangelogOpen = false">CLOSE</button>
+          <Button variant="outline" class="onboarding-cancel" type="button" @click="isChangelogOpen = false">CLOSE</Button>
         </div>
-      </article>
-    </section>
+      </div>
+    </LauncherDialog>
 
-    <section v-if="reportResult" class="fullscreen-notice" role="dialog" aria-modal="true" aria-labelledby="report-title" @click.self="reportResult = null">
-      <article class="notice-card report-notice">
+    <LauncherDialog @interact="handleLauncherInteraction" v-if="reportResult" :is-dismissible="true" @close="reportResult = null">
+      <div class="notice-card report-notice">
         <p class="eyebrow">DIAGNOSTIC ARCHIVE READY</p>
-        <h2 id="report-title">REPORT CREATED</h2>
+        <DialogTitle as="h2">REPORT CREATED</DialogTitle>
         <p>{{ reportResult.names.length }} ZIP(s) contain all available Darkspinner and protocol logs, with each ZIP at most 25 MB. Nothing was uploaded automatically; review all parts before sharing them.</p>
         <ul class="report-archives"><li v-for="name in reportResult.names" :key="name">{{ name }}</li></ul>
-        <button class="report-path" type="button" title="Open report folder" @click="openReportFolder">{{ reportResult.directory }}</button>
+        <Button variant="outline" class="report-path" type="button" title="Open report folder" @click="openReportFolder">{{ reportResult.directory }}</Button>
         <p class="report-count">{{ reportResult.fileCount }} COMPLETE LOG FILES INCLUDED</p>
         <p>Sign in to GitHub to create an issue with your report details. Then open the bug folder and attach every listed ZIP before submitting. Large logs may span numbered chunks; the ZIPs include reassembly instructions.</p>
         <p v-if="reportIssueDraft.isLong">Your description is too long for a browser link. Create GitHub issue will copy the full report for you to paste into the issue.</p>
         <p v-if="reportShareMessage" class="report-share-message" role="status">{{ reportShareMessage }}</p>
         <div class="notice-actions">
-          <button class="onboarding-cancel" type="button" @click="reportResult = null">CLOSE</button>
-          <button class="report-folder-button" type="button" @click="openReportIssue">1. CREATE GITHUB ISSUE</button>
-          <button class="report-folder-button" type="button" @click="openReportFolder">2. OPEN BUG FOLDER</button>
+          <Button variant="outline" class="onboarding-cancel" type="button" @click="reportResult = null">CLOSE</Button>
+          <Button variant="default" class="report-folder-button" type="button" @click="openReportIssue">1. CREATE GITHUB ISSUE</Button>
+          <Button variant="default" class="report-folder-button" type="button" @click="openReportFolder">2. OPEN BUG FOLDER</Button>
         </div>
-      </article>
-    </section>
+      </div>
+    </LauncherDialog>
 
-    <section v-if="isUninstallConfirmOpen" class="fullscreen-notice" role="dialog" aria-modal="true" aria-labelledby="uninstall-title">
-      <article class="notice-card danger-notice">
+    <LauncherDialog @interact="handleLauncherInteraction" v-if="isUninstallConfirmOpen" :is-dismissible="!isManagementBusy" @close="isUninstallConfirmOpen = false">
+      <div class="notice-card danger-notice">
         <p class="eyebrow">IRREVERSIBLE ACTION</p>
-        <h2 id="uninstall-title">UNINSTALL DARKSPINNER?</h2>
+        <DialogTitle as="h2">UNINSTALL DARKSPINNER?</DialogTitle>
         <p>This removes Darkspinner, all local Crogenitors and runtime data, its shortcuts, and its owned Steam launch integration. The original game installation remains intact.</p>
         <div class="notice-actions">
-          <button class="onboarding-cancel" :disabled="isManagementBusy" @click="isUninstallConfirmOpen = false">CANCEL</button>
-          <button class="danger-confirm" :disabled="isManagementBusy" @click="uninstallDarkspinner">{{ isManagementBusy ? 'UNINSTALLING...' : 'UNINSTALL PERMANENTLY' }}</button>
+          <Button variant="outline" type="button" class="onboarding-cancel" :disabled="isManagementBusy" @click="isUninstallConfirmOpen = false">CANCEL</Button>
+          <Button variant="destructive" type="button" class="danger-confirm" :disabled="isManagementBusy" @click="uninstallDarkspinner">{{ isManagementBusy ? 'UNINSTALLING...' : 'UNINSTALL PERMANENTLY' }}</Button>
         </div>
-      </article>
-    </section>
+      </div>
+    </LauncherDialog>
 
   </main>
 </template>

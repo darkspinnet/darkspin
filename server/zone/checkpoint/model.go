@@ -71,6 +71,7 @@ type ExperienceAward struct {
 type Snapshot struct {
 	Version              uint32
 	ZoneID               uint64
+	RunSeed              uint64
 	ZoneGeneration       uint64
 	CompletionID         uint64
 	Revision             uint64
@@ -90,6 +91,8 @@ type Snapshot struct {
 	Objectives           []sim.ObjectiveSnapshot
 	ScriptUses           []game.CampaignScriptUse
 	ClearedSpawnGroupIDs []uint32
+	DropRandom           sim.RandomSnapshot
+	IsDropRandomSet      bool
 }
 
 type Store interface {
@@ -118,6 +121,15 @@ func Validate(
 ) error {
 	if snapshot.Version != Version {
 		return fmt.Errorf("checkpointVersion[%d]: unsupported", snapshot.Version)
+	}
+	if snapshot.IsDropRandomSet {
+		restoredRandom, err := sim.NewSimulatorRandomFromSnapshot(snapshot.DropRandom)
+		if err != nil {
+			return fmt.Errorf("checkpointDropRandom: %w", err)
+		}
+		if restoredRandom == nil {
+			return errors.New("checkpoint drop random unavailable")
+		}
 	}
 	if snapshot.ZoneID == 0 || snapshot.ZoneID != zoneID {
 		return errors.New("checkpoint zone mismatch")

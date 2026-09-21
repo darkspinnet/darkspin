@@ -19,7 +19,7 @@ func (e *Manager) FindLiveResume(userID int64) (ResumeCheckpoint, bool, error) {
 		}
 		difficulty, err := resolveGameplayDifficulty(instance.Info)
 		resume := ResumeCheckpoint{
-			GameID: instance.ID, Level: instance.Info.Level,
+			GameID: instance.ID, RunSeed: instance.RunSeed, Level: instance.Info.Level,
 			Difficulty: difficulty, Slot: slot,
 			ExpectedPlayerCount: instance.Info.ExpectedPlayerCount,
 		}

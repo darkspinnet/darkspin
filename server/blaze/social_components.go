@@ -329,7 +329,7 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 		}
 		commandName, isCommand := messagingCommandName(body)
 		if isCommand {
-			responseBody := fmt.Sprintf("Unknown command %s. Available: /help, /ss, /bug, /b, /ping, /hint, /loc, /follow, /ai, /effect, /summon, /level, /warp, /spawn, /dna, /damage, /heal, /power, /mana, /event, /goto, /kill, /reset, /recap, /victory, /defeat, /exit", commandName)
+			responseBody := fmt.Sprintf("Unknown command %s. Available: /help, /ss, /bug, /b, /ping, /hint, /loc, /follow, /ai, /effect, /summon, /level, /warp, /spawn, /drop, /dna, /damage, /heal, /power, /mana, /event, /goto, /kill, /reset, /recap, /victory, /defeat, /exit", commandName)
 			if commandName == "/help" {
 				responseBody = darkspinChatHelp
 			}
@@ -562,6 +562,32 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 						responseBody = "Spawn only works inside a campaign mission entered with /warp"
 					} else {
 						return nil, fmt.Errorf("commandNPCSpawn: %w", spawnErr)
+					}
+				}
+			}
+			if commandName == "/drop" {
+				responseBody = dropCommandHelp
+				field := strings.Fields(body)
+				category := ""
+				isCreate := len(field) >= 2 && strings.EqualFold(field[1], "create")
+				if len(field) == 3 {
+					category = dropCategory(field[2])
+				}
+				isCategoryValid := len(field) == 2 || len(field) == 3 && category != ""
+				if isCreate && isCategoryValid {
+					dropErr := messenger.TriggerEvent(ctx, chat.EventCommand{
+						Sender: chat.Participant{ID: user.Account.ID, Name: user.DisplayName},
+						GameID: user.CurrentGameID(), Name: "drop-create", Category: category,
+					})
+					if dropErr == nil {
+						responseBody = "Campaign equipment drop debug queued"
+						if category != "" {
+							responseBody += " for " + dropCategoryDisplay(category)
+						}
+					} else if errors.Is(dropErr, chat.ErrEventUnavailable) {
+						responseBody = "Drop creation only works during an active campaign mission"
+					} else {
+						return nil, fmt.Errorf("commandDropCreate: %w", dropErr)
 					}
 				}
 			}
@@ -894,6 +920,8 @@ const warpAreaCatalog = "Warp areas: " +
 
 const npcSpawnSyntax = "Syntax: /spawn <Fang combat noun or unique partial match>"
 
+const dropCommandHelp = "Drop commands: /drop create [weapon|hand|foot|offense|defense|utility]"
+
 const locSyntax = "Syntax: /loc"
 
 const dnaSyntax = "Syntax: /dna <positive amount>"
@@ -927,7 +955,7 @@ const victorySyntax = "Syntax: /victory"
 const defeatSyntax = "Syntax: /defeat"
 
 const darkspinChatHelp = "Darkspin: /help | " + snapshotSyntax + " | /bug <what happened> | /b <what happened> | /ping | /hint | /loc | /follow [ally name] | /ai | /effect <exact-authored-name> [world] | " +
-	"/summon <rigid> <primary> <secondary> <suffix> | /level <1-100> | /warp [area] | /spawn <noun> | /dna <amount> | " +
+	"/summon <rigid> <primary> <secondary> <suffix> | /level <1-100> | /warp [area] | /spawn <noun> | /drop create [weapon|hand|foot|offense|defense|utility] | /dna <amount> | " +
 	"/damage <amount> | /heal | /power [negative amount] | /mana [negative amount] | /event [1|security-next|2|boss-start|3|boss-complete] | /goto <x> <y> <z> | /kill | /reset | /recap | /victory | /defeat | /exit | " +
 	"Built-in: /tell <player> <message> | /party <message> | /game <message> | /lobby <message> | " +
 	"/invite <player> | /leave | /friend <player> | /unfriend <player> | /block <player> | " +
@@ -947,6 +975,24 @@ func messagingCommandName(body string) (string, bool) {
 		return "", false
 	}
 	return "/" + strings.ToLower(commandName), true
+}
+
+func dropCategory(category string) string {
+	switch strings.ToLower(category) {
+	case "weapon", "foot", "offense", "defense", "utility":
+		return strings.ToLower(category)
+	case "hand":
+		return "grasper"
+	default:
+		return ""
+	}
+}
+
+func dropCategoryDisplay(category string) string {
+	if category == "grasper" {
+		return "hand"
+	}
+	return category
 }
 
 func commandRemainder(body string) string {

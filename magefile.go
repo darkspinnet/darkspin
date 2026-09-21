@@ -55,6 +55,8 @@ const darkSpinnerUpdateURLVariable = "main.launcherUpdateManifestURL"
 
 const darkSpinnerVersionVariable = "main.Version"
 
+const darkSpinnerBuildChannelVariable = "main.BuildChannel"
+
 const darkSpinnerServiceVersionVariable = "github.com/darkspinnet/darkspin/server/buildinfo.Version"
 
 const primaryLocalAccount = "darkrun"
@@ -69,6 +71,8 @@ var Aliases = map[string]interface{}{
 var semanticVersionPattern = regexp.MustCompile(
 	`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`,
 )
+
+var gitRevisionPattern = regexp.MustCompile(`^[0-9a-fA-F]{7}$`)
 
 // Version validates the version used by build-time injection.
 func Version() error {
@@ -85,6 +89,23 @@ func buildVersion() string {
 		return version
 	}
 	return releaseSemver
+}
+
+func localDarkSpinnerVersion() (string, error) {
+	configuredVersion := strings.TrimSpace(os.Getenv("DARKSPIN_BUILD_VERSION"))
+	if configuredVersion != "" {
+		return configuredVersion, nil
+	}
+	command := exec.Command("git", "rev-parse", "--short=7", "HEAD")
+	output, err := command.Output()
+	if err != nil {
+		return "", fmt.Errorf("gitRevision: %w", err)
+	}
+	gitRevision := strings.TrimSpace(string(output))
+	if !gitRevisionPattern.MatchString(gitRevision) {
+		return "", fmt.Errorf("gitRevision: unexpected %q", gitRevision)
+	}
+	return releaseSemver + "-dev-" + strings.ToLower(gitRevision), nil
 }
 
 // Darkrun groups standalone server commands.
@@ -135,7 +156,11 @@ func Build() error {
 	if err != nil {
 		return fmt.Errorf("fangBuild: %w", err)
 	}
-	spinnerLinkerFlags, err := darkSpinnerLinkerFlags(linkerFlags)
+	spinnerVersion, err := localDarkSpinnerVersion()
+	if err != nil {
+		return fmt.Errorf("darkSpinnerVersion: %w", err)
+	}
+	spinnerLinkerFlags, err := darkSpinnerLinkerFlags(linkerFlags, "development", spinnerVersion)
 	if err != nil {
 		return fmt.Errorf("darkSpinnerFlags: %w", err)
 	}
@@ -199,7 +224,7 @@ func desktopLinkerFlags(base, authVariable, patchVariable string) (string, error
 	return flags, nil
 }
 
-func darkSpinnerLinkerFlags(base string) (string, error) {
+func darkSpinnerLinkerFlags(base, buildChannel, version string) (string, error) {
 	flags, err := desktopLinkerFlags(base, darkSpinnerAuthURLVariable, darkSpinnerPatchURLVariable)
 	if err != nil {
 		return "", fmt.Errorf("desktopFlags: %w", err)
@@ -214,7 +239,8 @@ func darkSpinnerLinkerFlags(base string) (string, error) {
 	if updateURL != "" {
 		flags += " -X " + darkSpinnerUpdateURLVariable + "=" + updateURL
 	}
-	return flags + " -X " + darkSpinnerVersionVariable + "=" + buildVersion(), nil
+	return flags + " -X " + darkSpinnerVersionVariable + "=" + version +
+		" -X " + darkSpinnerBuildChannelVariable + "=" + buildChannel, nil
 }
 
 func buildFang(isDiagnostics bool) error {
@@ -757,7 +783,18 @@ func buildDarkSpinnerTarget(isDevelopment bool, isFangDiagnostics bool, targetPl
 	if !isDevelopment {
 		linkerFlags = "-s -w " + linkerFlags
 	}
-	linkerFlags, err = darkSpinnerLinkerFlags(linkerFlags)
+	buildChannel := "production"
+	spinnerVersion := buildVersion()
+	if isDevelopment {
+		buildChannel = "development"
+		spinnerVersion, err = localDarkSpinnerVersion()
+		if err != nil {
+			return fmt.Errorf("developmentVersion: %w", err)
+		}
+	} else if strings.Contains(buildVersion(), "-unstable.") {
+		buildChannel = "unstable"
+	}
+	linkerFlags, err = darkSpinnerLinkerFlags(linkerFlags, buildChannel, spinnerVersion)
 	if err != nil {
 		return fmt.Errorf("darkSpinnerFlags: %w", err)
 	}

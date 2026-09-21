@@ -38,6 +38,7 @@ type ActiveUserFinder interface {
 type GameplayBinding struct {
 	Endpoint                   NetworkEndpoint
 	GameID                     uint32
+	RunSeed                    uint64
 	Level                      string
 	PlayerMask                 uint32
 	UserID                     uint64
@@ -159,6 +160,7 @@ type GameplayJoin struct {
 	partCatalog          *PartCatalog
 	tutorialEndPublisher TutorialEndPublisher
 	inventoryPublisher   InventoryPublisher
+	systemChatPublisher  SystemChatPublisher
 	appearanceStore      AppearanceStore
 }
 
@@ -206,6 +208,34 @@ func (o *GameplayJoin) GenerateCampaignPart(
 		return sporenet.Part{}, fmt.Errorf("campaignPartGenerate: %w", err)
 	}
 	return part, nil
+}
+
+// GenerateCampaignPartForSlot applies the ordinary campaign drop policy while
+// restricting compatible bases to one equipment slot.
+func (o *GameplayJoin) GenerateCampaignPartForSlot(
+	creature GameplayCreature, difficulty uint32, accountLevel uint32, choice uint32,
+	slotType string,
+) (sporenet.Part, error) {
+	if o == nil || o.partCatalog == nil {
+		return sporenet.Part{}, errors.New("campaign part catalog unavailable")
+	}
+	part, err := o.partCatalog.GenerateCampaignPartForSlot(
+		creature.ClassType, creature.ElementType, max(uint32(1), difficulty),
+		max(uint32(1), accountLevel), choice, slotType,
+	)
+	if err != nil {
+		return sporenet.Part{}, fmt.Errorf("campaignPartSlotGenerate: %w", err)
+	}
+	return part, nil
+}
+
+// CampaignPartDefinition returns the immutable base-item metadata used to
+// explain a generated campaign drop without exposing the catalog itself.
+func (o *GameplayJoin) CampaignPartDefinition(rigblockID uint16) (PartDefinition, bool) {
+	if o == nil || o.partCatalog == nil {
+		return PartDefinition{}, false
+	}
+	return o.partCatalog.ByRigblock(rigblockID)
 }
 
 func (o *GameplayJoin) GenerateCampaignSpecialPart(
@@ -284,7 +314,8 @@ func (o *GameplayJoin) Execute(ctx context.Context, userID int64) (GameplayBindi
 		return GameplayBinding{}, fmt.Errorf("joinDifficulty: %w", err)
 	}
 	binding := GameplayBinding{
-		Endpoint: endpoint, GameID: instance.ID, Level: instance.Info.Level,
+		Endpoint: endpoint, GameID: instance.ID, RunSeed: instance.RunSeed,
+		Level:      instance.Info.Level,
 		PlayerMask: playerMask, UserID: uint64(user.Account.ID),
 		AvatarID:    user.Account.AvatarID,
 		AvatarLevel: user.Account.Level, AvatarXP: float32(user.Account.XP),

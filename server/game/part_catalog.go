@@ -186,7 +186,26 @@ func (c *PartCatalog) GenerateCampaignPart(
 	itemLevel := campaignItemLevel(difficulty)
 	dropLevel := campaignDropLevel(itemLevel, rarity)
 	return c.generateCampaignPart(
-		classType, scienceType, dropLevel, accountLevel, choice, rarity,
+		classType, scienceType, dropLevel, accountLevel, choice, rarity, "",
+	)
+}
+
+// GenerateCampaignPartForSlot chooses an ordinary campaign drop from one
+// equipment slot while retaining the normal rarity, level, and affix policy.
+func (c *PartCatalog) GenerateCampaignPartForSlot(
+	classType string, scienceType string, difficulty uint32, accountLevel uint32,
+	choice uint32, slotType string,
+) (sporenet.Part, error) {
+	if !isCampaignPartSlotType(slotType) {
+		return sporenet.Part{}, errors.New("campaign part slot invalid")
+	}
+	rarity := c.campaignPartRarity(
+		difficulty, campaignPartChoice(choice, campaignRarityStream),
+	)
+	itemLevel := campaignItemLevel(difficulty)
+	dropLevel := campaignDropLevel(itemLevel, rarity)
+	return c.generateCampaignPart(
+		classType, scienceType, dropLevel, accountLevel, choice, rarity, slotType,
 	)
 }
 
@@ -264,13 +283,13 @@ func (c *PartCatalog) GenerateCampaignRewardPart(
 		return sporenet.Part{}, errors.New("campaign part rarity invalid")
 	}
 	return c.generateCampaignPart(
-		classType, scienceType, level, accountLevel, choice, rarity,
+		classType, scienceType, level, accountLevel, choice, rarity, "",
 	)
 }
 
 func (c *PartCatalog) generateCampaignPart(
 	classType string, scienceType string, level uint32, accountLevel uint32, choice uint32,
-	rarity sporenet.PartRarity,
+	rarity sporenet.PartRarity, slotType string,
 ) (sporenet.Part, error) {
 	if c == nil || classType == "" || scienceType == "" {
 		return sporenet.Part{}, errors.New("campaign part catalog unavailable")
@@ -283,6 +302,7 @@ func (c *PartCatalog) generateCampaignPart(
 		if !partCategoryContains(definition.ClassType, classType) ||
 			!partCategoryContains(definition.ScienceType, scienceType) ||
 			definition.IsUniqueFamily != isUniqueFamily ||
+			(slotType != "" && definition.SlotType != slotType) ||
 			!c.isPartSlotUnlocked(definition, accountLevel) {
 			continue
 		}
@@ -320,6 +340,15 @@ func (c *PartCatalog) generateCampaignPart(
 		return part, nil
 	}
 	return sporenet.Part{}, errors.New("campaign item budget has no complete eligible roll")
+}
+
+func isCampaignPartSlotType(slotType string) bool {
+	switch slotType {
+	case "weapon", "grasper", "foot", "defense", "offense", "utility":
+		return true
+	default:
+		return false
+	}
 }
 
 func campaignPartLevelDistance(level uint32, definition PartDefinition) uint32 {
