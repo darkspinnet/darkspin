@@ -8,6 +8,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/util"
 	zonecompanion "github.com/darkspinnet/darkspin/server/zone/companion"
+	companionraknet "github.com/darkspinnet/darkspin/server/zone/companion/raknet103"
 	zonenavigation "github.com/darkspinnet/darkspin/server/zone/navigation"
 )
 
@@ -60,7 +61,7 @@ func (e *gameplayPeerSession) spawnFieldMedicDrone(
 	if err != nil {
 		return nil, fmt.Errorf("fieldMedicDronePut: %w", err)
 	}
-	createPacket, err := raknet.MarshalApplication(raknet.ObjectCreateMessage{
+	createPackets, err := companionraknet.Create(raknet.ObjectCreateMessage{
 		ObjectID: objectID, Noun: util.HashID("SentryDrone.Noun"),
 		PositionX: position.X, PositionY: position.Y, PositionZ: position.Z,
 		Scale: 1, Team: 1, OwnerID: e.deployedObjectID,
@@ -83,7 +84,8 @@ func (e *gameplayPeerSession) spawnFieldMedicDrone(
 		return nil, fmt.Errorf("fieldMedicDroneAttribute: %w", err)
 	}
 	e.fieldMedicDroneObjectID = objectID
-	packets := append(stalePackets, createPacket, attributePacket)
+	packets := append(stalePackets, createPackets...)
+	packets = append(packets, attributePacket)
 	return packets, nil
 }
 

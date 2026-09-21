@@ -93,11 +93,11 @@ func (p *Part) SetPrefix(prefix uint16, isSecondary bool) {
 	if prefix < 1 || prefix > 338 {
 		prefix = 0
 	}
-	name := ""
+	hash := uint32(0)
 	if prefix > 0 {
-		name = fmt.Sprintf("_Generated/LootPrefix%d.LootPrefix", prefix)
+		name := fmt.Sprintf("_Generated/LootPrefix%d.LootPrefix", prefix)
+		hash = util.HashID(name)
 	}
-	hash := util.HashID(name)
 	if isSecondary {
 		p.PrefixSecondaryAssetID = prefix
 		p.PrefixSecondaryAssetHash = hash
@@ -111,12 +111,13 @@ func (p *Part) SetSuffix(suffix uint16) {
 	if !((suffix >= 1 && suffix <= 83) || (suffix >= 10001 && suffix <= 10275)) {
 		suffix = 0
 	}
-	name := ""
+	hash := uint32(0)
 	if suffix > 0 {
-		name = fmt.Sprintf("_Generated/LootSuffix%d.LootSuffix", suffix)
+		name := fmt.Sprintf("_Generated/LootSuffix%d.LootSuffix", suffix)
+		hash = util.HashID(name)
 	}
 	p.SuffixAssetID = suffix
-	p.SuffixAssetHash = util.HashID(name)
+	p.SuffixAssetHash = hash
 }
 
 func (p Part) hasGrantIdentity(other Part) bool {

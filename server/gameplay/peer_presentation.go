@@ -4,7 +4,15 @@ import (
 	"fmt"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
+	zoneprojection "github.com/darkspinnet/darkspin/server/zone/projection"
 )
+
+// Defeat stops new gameplay producers, but must not discard the final death
+// or disconnect presentation produced by the transition itself.
+func (e gameplayPeerSession) isCampaignPresentationAvailable() bool {
+	return e.zone != nil &&
+		(e.zone.Boss() == nil || !e.zone.Boss().IsBeamOutCommitted())
+}
 
 // Use the same queue for ordinary projection drains and delayed presentation.
 // Transferring under the registry lock prevents a concurrent producer from
@@ -121,6 +129,11 @@ func (e *gameplayPeerSession) queueCampaignPresentation(packets [][]byte) error 
 		queuedPackets = append(queuedPackets, packet)
 	}
 	e.queueCampaignPackets(queuedPackets)
+	for _, event := range events {
+		if event.Kind == zoneprojection.EventHeroLeave && event.HeroLeave.IsMemberRemoved {
+			e.knownPlayerMask &^= uint32(1) << event.HeroLeave.PlayerSlot
+		}
+	}
 	if len(events) == 0 {
 		return nil
 	}

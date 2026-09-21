@@ -969,17 +969,17 @@ func (r campaignNPCActionRuntime) produceEnemyCharge(
 	readyTimestamp := peerSession.campaignNPCChargeReadiness[objectID]
 	if readyTimestamp > timestamp && profile.AbilityName != "ScaldronBoss_ShadowCharge" {
 		r.registry.mutex.Unlock()
-		if isProfileFound && profile.AbilityName == "CryosBasicCharge" {
-			return r.scheduleEnemyChargeRetry(
-				packet, sessionKey, generation, objectID, timestamp, readyTimestamp,
-			)
-		}
 		if isProfileFound && profile.AbilityName == "NoctGhostCharge" {
 			return r.produceNoctGhostChargerPose(
 				packet, sessionKey, generation, objectID, timestamp, readyTimestamp,
 			)
 		}
-		return nil, nil
+		// Retargeting or pursuit can resume before the previous charge's
+		// cooldown expires. Keep a continuation while the action is owned;
+		// otherwise the NPC stays claimed with no attack left to run.
+		return r.scheduleEnemyChargeRetry(
+			packet, sessionKey, generation, objectID, timestamp, readyTimestamp,
+		)
 	}
 	if isProfileFound && profile.AbilityName == "DartingAttack" {
 		if peerSession.zone.NPCRandom() == nil {

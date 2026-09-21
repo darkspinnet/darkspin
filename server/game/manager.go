@@ -896,7 +896,7 @@ func (g *Instance) RequestPlayerEventCommand(id int64, command PlayerEventComman
 		command.Name != "boss-complete" && command.Name != "kill" &&
 		command.Name != "reset" && command.Name != "victory" &&
 		command.Name != "defeat" && command.Name != "recap" && !isGoto && !isFollow &&
-		!isSpawn {
+		command.Name != "ai" && !isSpawn {
 		return false
 	}
 	g.mu.Lock()
@@ -905,6 +905,10 @@ func (g *Instance) RequestPlayerEventCommand(id int64, command PlayerEventComman
 		return false
 	}
 	if isSpawn && !g.Info.IsWarped {
+		return false
+	}
+	if command.Name == "ai" && (len(g.players) < 2 ||
+		(g.Info.Mode != ModeChain && g.Info.Mode != ModeArena)) {
 		return false
 	}
 	if isFollow {
@@ -1032,13 +1036,15 @@ func (g *Instance) SetState(state SessionState) {
 
 // Manager owns active game instances.
 type Manager struct {
-	mu                   sync.RWMutex
-	nextID               uint32
-	hostNetwork          NetworkPair
-	chainLevels          []string
-	pendingCampaignWarps map[int64]string
-	games                map[uint32]*Instance
-	removalObserver      func(uint32)
+	mu                    sync.RWMutex
+	nextID                uint32
+	hostNetwork           NetworkPair
+	chainLevels           []string
+	pendingCampaignWarps  map[int64]string
+	games                 map[uint32]*Instance
+	removalObserver       func(uint32)
+	memberRemovalObserver func(uint32, uint64)
+	memberResumePolicy    MemberResumePolicy
 }
 
 func NewManager() *Manager {

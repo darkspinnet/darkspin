@@ -409,7 +409,7 @@ func (r campaignNPCActionRuntime) spawnPlasmaSentinelPet(
 		rollbackPlasmaSentinelPet(peerSession, run, objectID)
 		return nil, fmt.Errorf("plasmaSentinelPetModifierCreate: %w", err)
 	}
-	createPacket, err := raknet.MarshalApplication(raknet.ObjectCreateMessage{
+	createPackets, err := companionraknet.Create(raknet.ObjectCreateMessage{
 		ObjectID: objectID, Noun: util.HashID("PlasmaSentinelPet.Noun"),
 		PositionX: position.X, PositionY: position.Y, PositionZ: position.Z,
 		Scale: 1, Team: 1, OwnerID: run.ownerObjectID, IsCollisionEnabled: true,
@@ -447,7 +447,9 @@ func (r campaignNPCActionRuntime) spawnPlasmaSentinelPet(
 		return nil, fmt.Errorf("plasmaSentinelPetSchedule: %w", err)
 	}
 	run.pets[petIndex].cancel = cancel
-	return [][]byte{modifierPacket, createPacket, attributePacket, spawnPacket}, nil
+	packets := append([][]byte{modifierPacket}, createPackets...)
+	packets = append(packets, attributePacket, spawnPacket)
+	return packets, nil
 }
 
 func rollbackPlasmaSentinelPet(

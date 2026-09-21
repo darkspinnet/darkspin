@@ -329,7 +329,7 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 		}
 		commandName, isCommand := messagingCommandName(body)
 		if isCommand {
-			responseBody := fmt.Sprintf("Unknown command %s. Available: /help, /ss, /bug, /b, /ping, /hint, /loc, /follow, /effect, /summon, /level, /warp, /spawn, /dna, /damage, /heal, /power, /mana, /event, /goto, /kill, /reset, /recap, /victory, /defeat, /exit", commandName)
+			responseBody := fmt.Sprintf("Unknown command %s. Available: /help, /ss, /bug, /b, /ping, /hint, /loc, /follow, /ai, /effect, /summon, /level, /warp, /spawn, /dna, /damage, /heal, /power, /mana, /event, /goto, /kill, /reset, /recap, /victory, /defeat, /exit", commandName)
 			if commandName == "/help" {
 				responseBody = darkspinChatHelp
 			}
@@ -419,6 +419,22 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 						responseBody = "Location only works during an active deployment"
 					} else {
 						return nil, fmt.Errorf("commandLocation: %w", locationErr)
+					}
+				}
+			}
+			if commandName == "/ai" {
+				responseBody = "Syntax: /ai (toggle assistance; movement cancels)"
+				if len(strings.Fields(body)) == 1 {
+					err := messenger.TriggerEvent(ctx, chat.EventCommand{
+						Sender: chat.Participant{ID: user.Account.ID, Name: user.DisplayName},
+						GameID: user.CurrentGameID(), Name: "ai",
+					})
+					if err == nil {
+						responseBody = "AI toggle requested: assist allies with basic attacks and occasional abilities; move to take control"
+					} else if errors.Is(err, chat.ErrEventUnavailable) {
+						responseBody = "AI only works in multiplayer co-op or PvP"
+					} else {
+						return nil, fmt.Errorf("commandAI: %w", err)
 					}
 				}
 			}
@@ -708,7 +724,7 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 						GameID: user.CurrentGameID(), Name: "recap",
 					})
 					if eventErr == nil {
-						responseBody = "Restoring defeated reserve squad members"
+						responseBody = "Resurrecting fallen heroes across the party"
 					} else if !errors.Is(eventErr, chat.ErrEventUnavailable) {
 						return nil, fmt.Errorf("commandRecap: %w", eventErr)
 					}
@@ -910,7 +926,7 @@ const victorySyntax = "Syntax: /victory"
 
 const defeatSyntax = "Syntax: /defeat"
 
-const darkspinChatHelp = "Darkspin: /help | " + snapshotSyntax + " | /bug <what happened> | /b <what happened> | /ping | /hint | /loc | /follow [ally name] | /effect <exact-authored-name> [world] | " +
+const darkspinChatHelp = "Darkspin: /help | " + snapshotSyntax + " | /bug <what happened> | /b <what happened> | /ping | /hint | /loc | /follow [ally name] | /ai | /effect <exact-authored-name> [world] | " +
 	"/summon <rigid> <primary> <secondary> <suffix> | /level <1-100> | /warp [area] | /spawn <noun> | /dna <amount> | " +
 	"/damage <amount> | /heal | /power [negative amount] | /mana [negative amount] | /event [1|security-next|2|boss-start|3|boss-complete] | /goto <x> <y> <z> | /kill | /reset | /recap | /victory | /defeat | /exit | " +
 	"Built-in: /tell <player> <message> | /party <message> | /game <message> | /lobby <message> | " +

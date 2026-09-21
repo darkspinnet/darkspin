@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
+	"github.com/darkspinnet/darkspin/server/squad"
 	"github.com/darkspinnet/darkspin/server/util"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	barrierraknet "github.com/darkspinnet/darkspin/server/zone/barrier/raknet103"
@@ -386,6 +387,16 @@ func marshalGameplayRejoinBaselineState(
 		return nil, fmt.Errorf("rejoinPlayer: %w", err)
 	}
 	packets = append(packets, resourcePackets...)
+	if activeHitPoint <= 0 {
+		deathPacket, marshalErr := raknet.MarshalApplication(raknet.SetAnimationStateMessage{
+			ObjectID: peerSession.deployedObjectID,
+			State:    util.HashID("gen_player_death"), Timestamp: sourceTime, Scale: 1,
+		})
+		if marshalErr != nil {
+			return nil, fmt.Errorf("rejoinDeath: %w", marshalErr)
+		}
+		return append(packets, deathPacket), nil
+	}
 	beamPackets, err := heroraknet.BeamIn(
 		peerSession.deployedObjectID,
 		campaignCharacterBeam(
@@ -629,11 +640,15 @@ func marshalGameplayCompanions(
 			connectedGenerations[companion.UserID] != companion.PeerGeneration {
 			continue
 		}
+		if companion.OwnerObjectID == 0 || companion.OwnerObjectID >= zonehero.FirstSharedObjectID() {
+			return nil, fmt.Errorf("companionOwner[%d]: invalid hero", index)
+		}
 		create, err := raknet.MarshalApplication(raknet.ObjectCreateMessage{
 			ObjectID: companion.ObjectID, Noun: companion.Noun,
 			PositionX: companion.Position.X, PositionY: companion.Position.Y,
 			PositionZ: companion.Position.Z, Scale: 1, Team: 1,
 			OwnerID: companion.OwnerObjectID, IsCollisionEnabled: true,
+			PlayerIndex: uint8((companion.OwnerObjectID - 1) / squad.Size),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create[%d]: %w", index, err)
@@ -655,7 +670,20 @@ func marshalGameplayCompanions(
 		if err != nil {
 			return nil, fmt.Errorf("resource[%d]: %w", index, err)
 		}
-		packets = append(packets, create, attribute, resource)
+		position, err := raknet.MarshalApplication(raknet.ObjectUpdateMessage{
+			ObjectID: companion.ObjectID, PositionX: companion.Position.X,
+			PositionY: companion.Position.Y, PositionZ: companion.Position.Z, IsVisible: true,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("companionPosition[%d]: %w", index, err)
+		}
+		stop, err := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
+			ObjectID: companion.ObjectID, GoalFlags: 0x20, GoalPosition: raknet.Vector3(companion.Position),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("companionStop[%d]: %w", index, err)
+		}
+		packets = append(packets, create, position, stop, attribute, resource)
 	}
 	return packets, nil
 }

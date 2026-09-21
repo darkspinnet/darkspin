@@ -699,7 +699,8 @@ func (e *Zone) Leave(userID uint64, peerGeneration uint64) bool {
 		removedObjectIDs = append(removedObjectIDs, actor.ObjectID)
 	}
 	e.projection.PublishHeroLeave(zoneprojection.HeroLeave{
-		ObjectIDs: removedObjectIDs,
+		ObjectIDs:  removedObjectIDs,
+		PlayerSlot: current.Slot, IsMemberRemoved: true,
 	})
 	releasedTarget := make([]zonenpc.Snapshot, 0)
 	if isHeroFound {

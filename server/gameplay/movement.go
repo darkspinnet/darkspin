@@ -997,12 +997,43 @@ func (r campaignMovementCommandRuntime) handle(
 	if err != nil {
 		return nil, fmt.Errorf("moveNPCPresentation: %w", err)
 	}
+	// Movement responses bypass the general action broadcast. DNA collection
+	// still removes a shared object; the peer filter excludes the balance update.
+	err = publishCampaignPeersAfterCommit(r.registry, packet, campaignDNAPackets)
+	if err != nil {
+		return nil, fmt.Errorf("moveDNAPresentation: %w", err)
+	}
+	// Pad state and the initial transfer presentation are shared, even though
+	// movement itself has a separate projection. Delayed transfer steps are
+	// published by the producer guard after their delivery commits.
+	teleportPackets := make([][]byte, 0)
+	teleportPackets = append(teleportPackets, securityDeactivationPackets...)
+	teleportPackets = append(teleportPackets, securityActivationPackets...)
+	teleportPackets = append(teleportPackets, securityTransferPackets...)
+	teleportPackets = append(teleportPackets, tutorialTeleporterPackets...)
+	teleportPackets = append(teleportPackets, campaignTunnelPackets...)
+	err = publishCampaignPeersAfterCommit(r.registry, packet, teleportPackets)
+	if err != nil {
+		return nil, fmt.Errorf("moveTeleportPresentation: %w", err)
+	}
 	companionAttackPackets, err := r.damage.startCompanionAttacks(
 		packet, packet.Address.String(), commandSession.generation,
 		packet.SourceTime,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("moveCampaignCompanionAttack: %w", err)
+	}
+	// These side effects ride on a movement response, which deliberately skips
+	// the general action broadcast. Hero motion has its own zone projection;
+	// companion motion, channel interruption, and pickup presentation do not.
+	movementSideEffectPackets := make([][]byte, 0)
+	movementSideEffectPackets = append(movementSideEffectPackets, companionFollowPackets...)
+	movementSideEffectPackets = append(movementSideEffectPackets, companionAttackPackets...)
+	movementSideEffectPackets = append(movementSideEffectPackets, drainStopPackets...)
+	movementSideEffectPackets = append(movementSideEffectPackets, campaignOrbPackets...)
+	err = publishCampaignPeersAfterCommit(r.registry, packet, movementSideEffectPackets)
+	if err != nil {
+		return nil, fmt.Errorf("moveSideEffectPresentation: %w", err)
 	}
 	immediateUnlockPackets, immediateBossPackets, err := r.encounter.schedulePublications(
 		packet, commandSession, campaignEncounterAdvance{

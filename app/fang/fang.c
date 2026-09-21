@@ -2208,17 +2208,28 @@ static void trace_locomotion_snapshot(const char* phase,
 static void trace_client_object_memory(
     unsigned int object_id, const BYTE* object) {
     char header[512];
+    char render_position[96] = "null";
+    const BYTE* render;
     const char suffix[] = "\"}\r\n";
     int length;
     if (!readable_range(object, 668)) {
         return;
+    }
+    // ServerEvent presentation uses the render transform when one exists,
+    // rather than the simulation position already captured below.
+    render = *(const BYTE* const*)(object + 652);
+    if (readable_range(render, 28)) {
+        snprintf(render_position, sizeof(render_position), "[%u,%u,%u]",
+            *(const unsigned int*)(render + 16),
+            *(const unsigned int*)(render + 20),
+            *(const unsigned int*)(render + 24));
     }
     length = snprintf(header, sizeof(header),
         "{\"time_ms\":%llu,\"protocol\":\"client_state\","
         "\"kind\":\"object_memory\",\"phase\":\"snapshot_boundary\","
         "\"thread\":%lu,\"frame_sequence\":%lu,"
         "\"frame_delta_bits\":%lu,\"frame_time_ms\":%lu,\"object_id\":%u,"
-        "\"position_bits\":[%u,%u,%u],\"object_size\":668,"
+        "\"position_bits\":[%u,%u,%u],\"render_position_bits\":%s,\"object_size\":668,"
         "\"object_hex\":\"",
         (unsigned long long)GetTickCount64(),
         (unsigned long)GetCurrentThreadId(),
@@ -2227,8 +2238,8 @@ static void trace_client_object_memory(
         (unsigned long)InterlockedCompareExchange(&snapshot_frame_time_ms, 0, 0),
         object_id, *(const unsigned int*)(object + 24),
         *(const unsigned int*)(object + 28),
-        *(const unsigned int*)(object + 32));
-    if (length <= 0) {
+        *(const unsigned int*)(object + 32), render_position);
+    if (length <= 0 || (size_t)length >= sizeof(header)) {
         return;
     }
     trace_hex_line(header, length, object, 668, suffix);
@@ -3268,6 +3279,14 @@ static char* find_darkspin_chat_command(const char* text, int* command) {
             }
             if (is_darkspin_chat_command(cursor, "/loc")) {
                 *command = 25;
+                return (char*)cursor;
+            }
+            if (is_darkspin_chat_command(cursor, "/follow")) {
+                *command = 26;
+                return (char*)cursor;
+            }
+            if (is_darkspin_chat_command(cursor, "/ai")) {
+                *command = 27;
                 return (char*)cursor;
             }
             if (is_darkspin_chat_command(cursor, "/ss")) {

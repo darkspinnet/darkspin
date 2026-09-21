@@ -285,6 +285,10 @@ func (e areaSpecialSchedule) fail(scheduleErr error) {
 	}
 	e.runtime.registry.mutex.Unlock()
 	if isCurrent {
+		e.runtime.registry.queuePeerPresentation(
+			gameplayProducerIdentityFromSession(e.sessionKey, peerSession, true),
+			[][]byte{e.releaseAnimation},
+		)
 		e.runtime.logger.Printf(
 			"RakNet campaign Shockwave stopped after schedule failure for %s: %v",
 			e.sessionKey, scheduleErr,
@@ -620,6 +624,15 @@ func (e treeOfLifeSchedule) producer(
 }
 
 func (e treeOfLifeSchedule) fail(scheduleErr error) {
+	if scheduleErr == nil {
+		return
+	}
+	cleanupPacket, cleanupErr := raknet.MarshalApplication(raknet.ObjectDeleteMessage{
+		ObjectID: []uint32{e.objectID},
+	})
+	if cleanupErr != nil {
+		e.runtime.logger.Printf("RakNet Tree of Life cleanup marshal failed object=%d: %v", e.objectID, cleanupErr)
+	}
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := e.isCurrent(peerSession, isFound)
@@ -628,8 +641,21 @@ func (e treeOfLifeSchedule) fail(scheduleErr error) {
 		peerSession.treeOfLifeRun = nil
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 	}
+	// A failed producer never reaches its normal final despawn or peer
+	// publication callback. Queue cleanup directly, including for the caster.
+	// Keep it within the original session generation to avoid a newer zone.
+	isSameGeneration := isFound && peerSession.generation == e.generation
+	if isSameGeneration && cleanupErr == nil {
+		for sessionKey, candidate := range e.runtime.registry.sessions {
+			if candidate.binding.GameID != peerSession.binding.GameID || candidate.zone != peerSession.zone {
+				continue
+			}
+			candidate.queueCampaignPackets([][]byte{cleanupPacket})
+			e.runtime.registry.sessions[sessionKey] = candidate
+		}
+	}
 	e.runtime.registry.mutex.Unlock()
-	if isCurrent {
+	if isSameGeneration {
 		e.run.Stop()
 		e.runtime.logger.Printf(
 			"RakNet campaign Tree of Life stopped after schedule failure for %s: %v",
@@ -704,63 +730,16 @@ func (e treeOfLifeStep) produce() ([][]byte, error) {
 				"campaignTreeProjection: %w", projectionErr,
 			)
 		}
-		pulseHealing, healErr :=
-			peerSession.healLivingZoneSquad(projectedHealing)
+		pulseHealing, pulsePackets, healErr := schedule.healPartyLocked(&peerSession, pulse, projectedHealing)
 		if healErr != nil {
 			schedule.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("campaignTreeHeal: %w", healErr)
 		}
-		pulseStatDelta := zoneHealingStatDelta(pulseHealing)
-		statDelta.PVEHealing += pulseStatDelta.PVEHealing
-		statDelta.PVEHealingReceived +=
-			pulseStatDelta.PVEHealingReceived
+		for _, healed := range pulseHealing {
+			statDelta.PVEHealing += float64(healed.amount)
+		}
 		healing = append(healing, pulseHealing...)
-		companionHealing, companionHealErr :=
-			peerSession.healLivingZoneCompanions(projectedHealing)
-		if companionHealErr != nil {
-			schedule.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf(
-				"campaignTreeCompanionHeal: %w", companionHealErr,
-			)
-		}
-		companionStatDelta := zoneHealingStatDelta(companionHealing)
-		statDelta.PVEHealing += companionStatDelta.PVEHealing
-		statDelta.PVEHealingReceived +=
-			companionStatDelta.PVEHealingReceived
-		healing = append(healing, companionHealing...)
-	}
-	for _, healedCharacter := range healing {
-		if healedCharacter.objectID == 0 {
-			continue
-		}
-		if healedCharacter.isCompanion {
-			resourcePacket, resourceErr := raknet.MarshalApplication(
-				raknet.CombatantDataDeltaMessage{
-					ObjectID:          healedCharacter.objectID,
-					HitPoints:         healedCharacter.hitPoint,
-					IsHitPointChanged: true,
-				},
-			)
-			if resourceErr != nil {
-				schedule.runtime.registry.mutex.Unlock()
-				return nil, fmt.Errorf(
-					"campaignTreeCompanionResource: %w", resourceErr,
-				)
-			}
-			resourcePackets = append(resourcePackets, resourcePacket)
-			continue
-		}
-		resourcePacket, resourceErr :=
-			peerSession.marshalCampaignCharacterResource(
-				healedCharacter.objectID - 1,
-			)
-		if resourceErr != nil {
-			schedule.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf(
-				"campaignTreeResource: %w", resourceErr,
-			)
-		}
-		resourcePackets = append(resourcePackets, resourcePacket)
+		resourcePackets = append(resourcePackets, pulsePackets...)
 	}
 	isFinal := len(output.Cleanup) != 0
 	if isFinal {
@@ -2447,13 +2426,13 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("campaignRideTeleport: %w", marshalErr)
 		}
-		spendPackets, marshalErr := abilityraknet.SpendPresentation(
-			command.Common.ObjectID, abilityID, cooldown,
+		startPackets, marshalErr := abilityraknet.StartSpendPresentation(
+			command.Common.ObjectID, abilityID, definition.AnimationName, cooldown,
 			packet.SourceTime, remainingManaPoint,
 		)
 		if marshalErr != nil {
 			r.registry.mutex.Unlock()
-			return nil, fmt.Errorf("campaignRideSpend: %w", marshalErr)
+			return nil, fmt.Errorf("campaignRideStart: %w", marshalErr)
 		}
 		releaseAnimationPacket, marshalErr := abilityraknet.Animation(
 			command.Common.ObjectID, definition.OutAnimationName,
@@ -2560,13 +2539,15 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			destination.X, destination.Y, destination.Z, remainingManaPoint,
 			cooldown,
 		)
-		packets := make([][]byte, 0, 1+len(teleportPackets)+len(spendPackets))
+		packets := make([][]byte, 0, 1+len(startPackets)+len(teleportPackets))
 		packets = append(packets, ackPacket)
+		// Teammates do not run the caster's predicted ability animation.
+		// Publish its authored start explicitly before the teleport correction.
+		packets = append(packets, startPackets...)
 		packets = append(packets, teleportPackets...)
 		if len(abilityLessonCompletePacket) != 0 {
 			packets = append(packets, abilityLessonCompletePacket)
 		}
-		packets = append(packets, spendPackets...)
 		return packets, nil
 	}
 	return nil, errCampaignAbilityNotSpecial

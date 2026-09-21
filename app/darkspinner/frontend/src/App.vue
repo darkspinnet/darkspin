@@ -698,6 +698,7 @@ async function refreshInterruptedMission() {
     const mission = await GetInterruptedMission(profileName)
     if (selectedProfile.value === profileName && mission?.isAvailable) {
       interruptedMission.value = mission
+      cancelAutoLaunchCountdown()
     }
   }
   catch (error) { recordError(error) }
@@ -756,9 +757,13 @@ async function play() {
 async function launchStandardGame() {
     const profileName = selectedProfile.value
     if (!profileName || profileName === '__create__') return
+    const offeredGameID = interruptedMission.value?.gameId
     await applyIdentity(profileName)
     const mission = await GetInterruptedMission(profileName)
+    if (selectedProfile.value !== profileName) return
     interruptedMission.value = mission?.isAvailable ? mission : null
+    // A newly discovered resume must expose Continue / Start Fresh first.
+    if (mission?.isAvailable && offeredGameID !== mission.gameId) return
     await launchSelectedProfile()
 }
 
@@ -794,6 +799,7 @@ async function startFresh() {
       await refreshRunningProfiles()
     } else {
       interruptedMission.value = null
+      await applyIdentity(profileName)
       await launchSelectedProfile()
     }
   }
@@ -978,6 +984,8 @@ function cancelProfileCreation() {
 async function maybeAutoLaunch() {
   if (activePage.value !== 'play' || !isAutoLaunchEnabled.value || hasAutoLaunchAttempted.value || !isPlayEnabled.value) return
   if (statusRows.value.some(row => row.error)) return
+  await refreshInterruptedMission()
+  if (interruptedMission.value || activePage.value !== 'play' || !isAutoLaunchEnabled.value || !isPlayEnabled.value || hasAutoLaunchAttempted.value) return
   hasAutoLaunchAttempted.value = true
   autoLaunchCountdown.value = 3
   autoLaunchTimer = window.setInterval(async () => {
@@ -1119,9 +1127,11 @@ async function startDetachedGame() {
   isDetachedLaunchBusy.value = true
   try {
     const profileName = detachedProfile.value
+    const offeredGameID = detachedInterruptedMission.value?.gameId
     const mission = await GetInterruptedMission(profileName)
     if (detachedProfile.value !== profileName) return
     detachedInterruptedMission.value = mission?.isAvailable ? mission : null
+    if (mission?.isAvailable && offeredGameID !== mission.gameId) return
     await launchDetachedProfile(profileName)
     await refreshRunningProfiles()
   }
@@ -1221,6 +1231,10 @@ async function copyLauncherFailure() {
     </section>
 
     <section v-else-if="activePage === 'remote'" class="command-frame launch-command-frame remote-command-frame">
+      <div class="remote-playability-warning" role="alert">
+        <strong>REMOTE PLAY IS NOT YET PLAYABLE</strong>
+        <span>This feature is still under development.</span>
+      </div>
       <div class="launch-main">
         <article class="bay launcher-bay">
           <div class="launch-pane">
@@ -1268,7 +1282,7 @@ async function copyLauncherFailure() {
       <div class="config-grid">
         <article class="management-card config-port-card">
           <div class="management-heading"><span>01</span><div><h2>CONFIGURATION</h2></div></div>
-          <label class="management-toggle config-multiplayer"><input v-model="isConfiguredMultiplayerEnabled" type="checkbox" :disabled="isServerConfigurationBusy"><span><strong>ALLOW MULTIPLAYER CONNECTIONS</strong><small>Listen on LAN interfaces. Windows may request firewall access when enabled.</small></span></label>
+          <label class="management-toggle config-multiplayer"><input v-model="isConfiguredMultiplayerEnabled" type="checkbox" :disabled="isServerConfigurationBusy"><span><strong>ALLOW MULTIPLAYER CONNECTIONS</strong><small>Still under development. Listen on LAN interfaces. Windows may request firewall access when enabled.</small></span></label>
           <label for="config-server-port">PORT</label>
           <input id="config-server-port" v-model.number="configuredServerPort" type="number" min="1" max="65534" inputmode="numeric" :disabled="isServerConfigurationBusy">
           <label class="config-locale" for="config-client-locale"><strong>LANGUAGE</strong></label>

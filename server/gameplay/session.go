@@ -264,6 +264,11 @@ type controlledHeroState struct {
 	playerMovementGoal            raknet.Vector3
 	playerMotion                  *zoneaction.Motion
 	followTargetUserID            uint64
+	followUpdatedAt               time.Time
+	playerAI                      playerAIState
+	assistTargetObjectID          uint32
+	assistTargetAt                time.Time
+	isPartyDefeatQueued           bool
 	deployedCreatureIndex         uint32
 	deployedObjectID              uint32
 	heroInputLockedObjectID       uint32
@@ -282,6 +287,7 @@ type controlledHeroState struct {
 	enemySleepExpiresAt           time.Time
 	enemyStunExpiresAt            time.Time
 	enemyStunTargetObjectID       uint32
+	operativeCage                 *campaignNPCModifierRun
 	enemyRootExpiresAt            time.Time
 	enemyRootTargetObjectID       uint32
 	enemyFearExpiresAt            time.Time
@@ -367,6 +373,9 @@ func (s *gameplayPeerSession) extendEnemyStun(
 }
 
 func (s *gameplayPeerSession) isEnemyStunActive(at time.Time) bool {
+	if s != nil && s.isOperativeCaged(at) {
+		return true
+	}
 	return s != nil && !at.IsZero() &&
 		s.deployedObjectID == s.enemyStunTargetObjectID &&
 		at.Before(s.enemyStunExpiresAt)
@@ -496,6 +505,8 @@ type gameplayPeerSession struct {
 	zoneMembership
 	binding                              game.GameplayBinding
 	stage                                zonemember.Stage
+	lastPlayerStatus                     raknet.PlayerStatus
+	isPlayerStatusKnown                  bool
 	dungeonSetup                         zonemember.Setup
 	transportGeneration                  uint64
 	schedulePackets                      func(time.Duration, [][]byte) error
@@ -505,6 +516,7 @@ type gameplayPeerSession struct {
 	isPendingPacketOverflow              bool
 	pendingStatDeltas                    []sporenet.PlayerStatDelta
 	knownPlayerMask                      uint32
+	heroCombatPresentation               *heroCombatPresentation
 	isPartyMerged                        bool
 	isArenaLobbyTransitionSent           bool
 	isArenaLobbyEntered                  bool
@@ -703,9 +715,10 @@ func isCriticalPendingPacket(packet []byte) bool {
 	switch raknet.PacketID(packet[0]) {
 	case raknet.ObjectCreate, raknet.ObjectUpdate, raknet.ObjectDelete,
 		raknet.ObjectTeleport, raknet.LootDataUpdate,
+		raknet.InteractableUpdate,
 		raknet.AttributeDataUpdate,
 		raknet.CombatantDataUpdate, raknet.PlayerCharacterDeploy,
-		raknet.LabsPlayerUpdate, raknet.ArenaGameMsgs,
+		raknet.LabsPlayerUpdate, raknet.PlayerDeparted, raknet.ArenaGameMsgs,
 		raknet.ArenaResultsMsgs, raknet.ChainGameMsgs:
 		return true
 	default:
@@ -1407,7 +1420,9 @@ func (s *gameplayPeerSession) resetRetainedTransportState() {
 	if s == nil {
 		return
 	}
+	s.operativeCage = nil
 	s.resetAbilityRelease()
+	s.playerAI = playerAIState{}
 	// The rejoin baseline supersedes packets encoded for the retired transport.
 	// Durable stat deltas remain queued for the replacement peer.
 	s.pendingPacketBatches = nil
@@ -2547,7 +2562,7 @@ func gameplayPeerPresentationPackets(packets [][]byte) [][]byte {
 			raknet.ObjectJump, raknet.ObjectTeleport, raknet.ObjectPlayerMove,
 			raknet.ForcePhysicsUpdate, raknet.PhysicsChanged,
 			raknet.LocomotionUpdate, raknet.LocomotionUnreliable,
-			raknet.LootDataUpdate,
+			raknet.LootDataUpdate, raknet.InteractableUpdate,
 			raknet.AttributeDataUpdate, raknet.CombatantDataUpdate,
 			raknet.AgentBlackboardUpdate,
 			raknet.ServerEvent, raknet.ModifierCreated, raknet.ModifierUpdated,
@@ -2576,7 +2591,7 @@ func (e *gameplaySessionRegistry) queuePeerPresentation(
 		peerSession.generation == identity.zoneGeneration &&
 		peerSession.transportGeneration == identity.transportGeneration &&
 		peerSession.stage.IsDungeon() &&
-		(isArena || peerSession.zone != nil && !peerSession.isZoneTerminal())
+		(isArena || peerSession.isCampaignPresentationAvailable())
 	if !isCurrent {
 		return 0
 	}
@@ -2588,8 +2603,9 @@ func (e *gameplaySessionRegistry) queuePeerPresentation(
 	for sessionKey, candidate := range e.sessions {
 		isCandidateArena := isArena && candidate.binding.Mode == game.ModeArena
 		isCandidateCampaign := !isArena && candidate.zone == peerSession.zone &&
-			!candidate.isZoneTerminal()
+			candidate.isCampaignPresentationAvailable()
 		if sessionKey == identity.sessionKey ||
+			candidate.isRejoinPending ||
 			candidate.binding.GameID != peerSession.binding.GameID ||
 			(!candidate.stage.IsDungeon() && !isCandidateCampaign) ||
 			(!isCandidateArena && !isCandidateCampaign) {
@@ -2872,6 +2888,9 @@ func zoneHealingStatDelta(healing []zoneSquadHealing) sporenet.PlayerStatDelta {
 }
 
 func (s gameplayPeerSession) isZoneGameOver() bool {
+	if s.binding.Mode == game.ModeChain && s.zone != nil {
+		return s.zone.IsPartyDefeated()
+	}
 	return s.squad != nil && s.squad.IsGameOver()
 }
 
@@ -3075,13 +3094,13 @@ func (s *gameplayPeerSession) applyDamageHitPointsWithOutcome(
 	isExpectedGameOver := isLethal && s.squad.LivingCount() == 1
 	var transitionPackets [][]byte
 	livingIndex := uint32(squad.Size)
-	if isExpectedGameOver && isGameOverPacketEnabled {
+	if isExpectedGameOver && isGameOverPacketEnabled && s.binding.Mode != game.ModeChain {
 		packet, err := outcomeraknet.GameOver()
 		if err != nil {
 			return nil, fmt.Errorf("gameOverMarshal: %w", err)
 		}
 		transitionPackets = [][]byte{packet}
-	} else if isLethal {
+	} else if isLethal && !isExpectedGameOver {
 		for index := uint32(0); index < squad.Size; index++ {
 			character, isFound := s.squad.Character(index)
 			if isFound && character.IsAvailable && character.HitPoints > 0 {
@@ -3187,7 +3206,7 @@ func (s *gameplayPeerSession) healLivingZoneSquad(amount float32) ([]zoneSquadHe
 }
 
 func (s *gameplayPeerSession) healLivingZoneCompanions(
-	amount float32,
+	amount float32, position raknet.Vector3, radius float32,
 ) ([]zoneSquadHealing, error) {
 	if s == nil || s.zone == nil || amount <= 0 {
 		return nil, errors.New("invalid zone companion healing")
@@ -3199,6 +3218,7 @@ func (s *gameplayPeerSession) healLivingZoneCompanions(
 	pending := make([]pendingHealing, 0)
 	for _, companion := range s.zone.Companion().Snapshots() {
 		if companion.UserID != s.binding.UserID ||
+			!isInsideZoneTrigger(raknet.Vector3(companion.Position), position, radius) ||
 			companion.PeerGeneration != s.generation ||
 			!companion.IsTargetable || companion.HitPoint <= 0 ||
 			companion.HitPoint >= companion.MaximumHitPoint {
@@ -4622,7 +4642,7 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 		deathPackets = [][]byte{deathPacket}
 	}
 	var gameOverPacket []byte
-	if isExpectedGameOver {
+	if isExpectedGameOver && s.binding.Mode != game.ModeChain {
 		gameOverPacket, err = outcomeraknet.GameOver()
 		if err != nil {
 			return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("campaignGameOverMarshal: %w", err)
@@ -4750,6 +4770,18 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 		}
 	}
 	if isGameOver {
+		if s.binding.Mode == game.ModeChain && s.zone != nil {
+			s.isHeroSelectionPending = false
+			s.isHeroSelectionScheduled = false
+			s.heroSelectionReadyAt = time.Time{}
+			_, err = s.zone.ReleaseHeroTarget(
+				s.binding.UserID, s.generation, s.deployedObjectID,
+			)
+			if err != nil {
+				return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("partyDeathTarget: %w", err)
+			}
+			return s.finishCampaignDamage(hitPackets, statDelta)
+		}
 		s.stopCampaignNPCProjectiles()
 		s.isHeroSelectionPending = false
 		s.isHeroSelectionScheduled = false

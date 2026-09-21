@@ -280,13 +280,17 @@ func (e *gameplayPeerSession) spawnBeastPet(
 	if err != nil {
 		return nil, fmt.Errorf("beastPetPut: %w", err)
 	}
+	packets, err := companionraknet.Create(raknet.ObjectCreateMessage{
+		ObjectID: objectID, Noun: util.HashID("BeastSentinelPet.Noun"),
+		PositionX: position.X, PositionY: position.Y, PositionZ: position.Z,
+		Scale: 1, Team: 1, OwnerID: ownerObjectID,
+		IsCollisionEnabled: true,
+	})
+	if err != nil {
+		e.zone.Companion().Remove(objectID)
+		return nil, fmt.Errorf("beastPetCreate: %w", err)
+	}
 	message := []raknet.ApplicationMessage{
-		raknet.ObjectCreateMessage{
-			ObjectID: objectID, Noun: util.HashID("BeastSentinelPet.Noun"),
-			PositionX: position.X, PositionY: position.Y, PositionZ: position.Z,
-			Scale: 1, Team: 1, OwnerID: ownerObjectID,
-			IsCollisionEnabled: true,
-		},
 		raknet.AttributeDataUpdateMessage{
 			ObjectID: objectID,
 			Value: map[uint8]float32{
@@ -305,18 +309,17 @@ func (e *gameplayPeerSession) spawnBeastPet(
 			Scale: 1,
 		},
 	}
-	packet := make([][]byte, 0, len(message))
 	for index, current := range message {
 		encoded, marshalErr := raknet.MarshalApplication(current)
 		if marshalErr != nil {
 			e.zone.Companion().Remove(objectID)
 			return nil, fmt.Errorf("beastPetMarshal[%d]: %w", index, marshalErr)
 		}
-		packet = append(packet, encoded)
+		packets = append(packets, encoded)
 	}
 	e.beastPetObjectID = objectID
 	e.beastPetDamage = petDamage
-	return packet, nil
+	return packets, nil
 }
 
 func (e *gameplayPeerSession) stopBeastPet() ([][]byte, error) {

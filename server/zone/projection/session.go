@@ -80,7 +80,9 @@ type HeroDeploy struct {
 }
 
 type HeroLeave struct {
-	ObjectIDs []uint32
+	ObjectIDs       []uint32
+	PlayerSlot      uint16
+	IsMemberRemoved bool
 }
 
 type CompanionDamage struct {

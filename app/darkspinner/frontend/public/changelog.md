@@ -1,5 +1,50 @@
 # Changelog
 
+### 2026-09-20
+
+- Reject campaign equipment pickups before their animation when inventory is full, keep the item available, and report the current capacity in game chat.
+- Encode absent item prefixes and suffixes as null assets so pickup cards, Editor inventory, and subsequent mission loading do not resolve a bogus empty-string asset.
+- Mark Remote play and the multiplayer-connections setting as still under development in the launcher.
+- Extend Dendrone co-op spawn initialization to Healing Sprite, Beast Sentinel, Fire Tempest, Sentry Drone, and Plasma Sentinel summons, and send Sentry Drone's dungeon-entry spawn to allies.
+- Replicate companion follow and attack starts, Dendrone respawns, movement-canceled channel effects, orb pickup presentation, and timed-area or Shockwave failure cleanup to co-op allies.
+- Change map bosses from the ordinary equipment-drop chance to one guaranteed equipment drop per kill.
+- Resume charging enemies after interrupted cooldown waits instead of leaving their attack action stalled.
+- Correct Shade Drifter charge damage from projectile classification to its authored IgnorePlayerCount descriptor.
+- Add co-op Omicron and Gravitic Confiner encounters with a shared one-or-two-per-map budget, channeled cage damage, ally-rescue controls, and cleanup when the captor is disabled or no rescuer remains.
+- Remove Tree of Life from every connected co-op client if a healing tick fails, rather than leaving its animation running after the server stops the effect.
+- Remove an aborting co-op player's party slot, heroes, and summons from teammates' clients while preserving the remaining party's mission, including when the host leaves.
+- Keep ranged /ai firing between evasive moves instead of repeatedly extending dodges, and stop special-ability cooldowns from delaying basic attacks.
+- Initialize Dendrones with their actual owner's player slot, explicit position, and stopped movement on co-op spawn and rejoin.
+- Fix Tree of Life stopping on the second co-op player's healing tick, heal nearby allied squads and companions, and synchronize their health using the correct owning player.
+- Let ranged heroes in /ai sidestep approaching projectiles and reposition between attacks while respecting movement restrictions and attack cooldowns.
+- Replay teammates' current loading status when rejoining co-op so an already-ready ally does not remain at 0% in the reconnecting client.
+- Keep unlocked teleporters usable by every co-op member after allies cross or backtrack, and synchronize pad activation and teleport presentation across clients.
+- Add /ai for multiplayer co-op and PvP to assist allies with basic attacks, occasional abilities, and nearby following; movement, /follow, or another /ai returns control to the player.
+- Preserve Continue and the shared co-op mission when a defeated player returns to ship or exits while an ally's squad is still alive, including when the departing player is the host.
+- Change /recap from restoring only the caller's reserves to resurrecting fallen heroes across the connected co-op party, restoring control and synchronizing revived allies on every client.
+- Send equipment pickup interaction data to teammates so dropped items respond to clicks on every client.
+- Reannounce teammate player slots when rejoining co-op so their hero health bars have valid owning-player records in the new client.
+- Drive the following player's own hero through reliable locomotion updates because ordinary movement replication is ignored for locally controlled heroes.
+- Reload mission resources before sending a retained co-op rejoin snapshot on Continue, and restore defeated heroes with their death pose instead of a living beam-in.
+- Deliver the final hero's death presentation to teammates after a party wipe instead of leaving that hero visibly alive, and flush queued removals before mission failure.
+- Wait until every connected party member's entire squad is defeated before showing mission failure, keeping surviving allies and enemies active after an individual squad wipe.
+- Remove Sage's Dendrones from every teammate's view when he dies, including deaths caused by NPCs simulated through another party member.
+- Remove collected DNA pickups from teammates' views and show the collector's pickup effect when an ally gathers them.
+- Send Ride the Lightning's authored start animation to teammates along with its teleport so allies can see the cast.
+- Refresh ally-follow movement between input commands, maintain a three-unit gap, and send the navigation-resolved destination to the following client and teammates.
+- Forward /follow through Fang to the server's ally-follow command instead of rejecting it as unrecognized.
+- Replicate attack pursuit movement to teammates immediately when a hero starts approaching an out-of-range enemy.
+- Synchronize deployed heroes' rendered positions with the server's placement after local and teammate creation, including mission entry and reconnect rosters.
+- Show Continue and Start Fresh for live campaign sessions as well as saved checkpoints, reattach live membership after login, and preserve other party members when starting fresh.
+- Send every campaign party member's identity and squad before completing the multiplayer roster merge, preserving each client's loading status.
+
+### 2026-09-19
+
+- Restore missing Nightmare Vines as destructible fixtures at their authored positions and scales, preserving the roots beneath them from the same Nocturna map variant.
+- Publish hero combat-state transitions so the client's authored victory-idle animations can play after fights, while preserving stealth state.
+- Keep Healing Sprite healing ticks running when it follows its hero by accepting follow updates without scheduled-arrival metadata.
+- Clear Pterodyne's movement goal after its scream before returning animation control to idle during cooldown.
+
 ### 2026-09-18
 
 - Preserve removed campaign squad members across relaunches by leaving saved empty slots empty during login repair.

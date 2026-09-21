@@ -73,8 +73,8 @@ func (e gameplayPeerSession) setShadowRavagerStealth(
 	if isStealthed {
 		stealth = shadowRavagerSupernaturalStealth
 	}
-	packet, err := raknet.MarshalApplication(raknet.AgentBlackboardUpdateMessage{
-		ObjectID: objectID, Stealth: stealth, IsTargetable: true,
+	packet, err := raknet.MarshalApplication(raknet.HeroStealthMessage{
+		ObjectID: objectID, Stealth: stealth,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("shadowStealthMarshal: %w", err)

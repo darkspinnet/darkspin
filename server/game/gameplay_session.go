@@ -158,6 +158,7 @@ type GameplayJoin struct {
 	gameManager          *Manager
 	partCatalog          *PartCatalog
 	tutorialEndPublisher TutorialEndPublisher
+	inventoryPublisher   InventoryPublisher
 	appearanceStore      AppearanceStore
 }
 

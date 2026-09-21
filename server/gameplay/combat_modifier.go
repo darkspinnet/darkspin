@@ -60,6 +60,10 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 	timestamp uint64,
 ) ([][]byte, error) {
 	profile := plan.Profile
+	if zonenpc.IsOperativeCage(profile.ModifierName) &&
+		!r.canApplyOperativeCage(sessionKey, generation, plan) {
+		return nil, nil
+	}
 	if sessionKey == "" || generation == 0 || plan.SourceObjectID == 0 ||
 		plan.TargetObjectID == 0 || profile.ModifierName == "" ||
 		profile.ModifierDuration <= 0 {
@@ -168,6 +172,18 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 		}
 	}
 	packets := [][]byte{createPacket}
+	if zonenpc.IsOperativeCage(profile.ModifierName) {
+		stopPackets, isBound, bindErr := r.bindOperativeCage(peerSession, run)
+		if bindErr != nil || !isBound {
+			cancel()
+			r.rollbackCampaignNPCTimedModifier(sessionKey, generation, run)
+			if bindErr != nil {
+				return nil, fmt.Errorf("cageBind: %w", bindErr)
+			}
+			return nil, nil
+		}
+		packets = append(packets, stopPackets...)
+	}
 	if profile.ModifierName == "SleepModifier" {
 		at := r.now()
 		expiresAt := at.Add(profile.ModifierDuration)

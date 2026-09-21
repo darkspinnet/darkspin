@@ -260,6 +260,7 @@ func (s *Store) LevelDirector(ctx context.Context, levelName string) (LevelDirec
 		  AND (marker.noun_name LIKE 'SpawnPoint_Director%.Noun' COLLATE NOCASE
 		       OR marker.noun_name LIKE 'Tutorial%.Noun' COLLATE NOCASE
 		       OR marker.noun_name='DEST_prefab_islands_instrument_scitech_11.Noun' COLLATE NOCASE
+		       OR marker.noun_name='DEST_nocturna_herotree_yellow_1.Noun' COLLATE NOCASE
 		       OR marker.noun_name='HordeGateTeleporter.Noun' COLLATE NOCASE
 		       OR marker.noun_name='TestDoor_design_blockin_horde_open.Noun' COLLATE NOCASE
 		       OR marker.noun_name='Teleporter.Noun' COLLATE NOCASE

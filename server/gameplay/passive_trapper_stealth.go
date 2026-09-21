@@ -178,8 +178,8 @@ func trapperStealthPackets(objectID uint32, isStealthed bool) ([][]byte, error) 
 		effectName = "cyber_trapper_enter_stealth.ServerEventDef"
 	}
 	message := []raknet.ApplicationMessage{
-		raknet.AgentBlackboardUpdateMessage{
-			ObjectID: objectID, Stealth: stealth, IsTargetable: true,
+		raknet.HeroStealthMessage{
+			ObjectID: objectID, Stealth: stealth,
 		},
 		raknet.ServerEventMessage{Asset: util.HashID(effectName), ObjectID: objectID},
 	}

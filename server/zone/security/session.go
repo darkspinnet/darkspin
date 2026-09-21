@@ -9,7 +9,8 @@ import (
 )
 
 type Snapshot struct {
-	ObjectID   [RouteCount]uint32
+	ObjectID [RouteCount]uint32
+	// RouteIndex is the furthest unlocked area shared by the party.
 	RouteIndex int
 	Presented  [RouteCount]bool
 }
@@ -175,7 +176,7 @@ func (e *Session) ObserveMovement(
 		e.reservedRouteIndex = routeIndex
 		decision.Teleport = teleport
 		decision.IsActivation = true
-		decision.IsTeleport = isTeleport
+		decision.IsTeleport = isTeleport && !req.IsTransferActive
 		return decision, nil
 	}
 	return MovementDecision{}, nil
@@ -261,7 +262,7 @@ func (s *Session) Advance(routeIndex int) error {
 		routeIndex >= len(s.objectID) || s.objectID[routeIndex] == 0 {
 		return errors.New("security advance route unavailable")
 	}
-	s.routeIndex = destinationArea(routeIndex)
+	s.routeIndex = max(s.routeIndex, destinationArea(routeIndex))
 	return nil
 }
 
@@ -275,21 +276,24 @@ func (s *Session) Complete(routeIndex int) error {
 		routeIndex >= len(s.objectID) || s.objectID[routeIndex] == 0 {
 		return errors.New("security completion route unavailable")
 	}
-	s.routeIndex = destinationArea(routeIndex)
+	s.routeIndex = max(s.routeIndex, destinationArea(routeIndex))
 	s.presented[routeIndex] = true
 	return nil
 }
 
 func activeRoutes(areaIndex int) []int {
+	// Crossing unlocks the next area without closing earlier pads. Members
+	// can cross independently, including when transfers finish concurrently
+	// or another member has already returned to a previous area.
 	switch areaIndex {
 	case 0:
 		return []int{0}
 	case 1:
-		return []int{1, 2}
+		return []int{0, 1, 2}
 	case 2:
-		return []int{3, 4}
-	case 3:
-		return []int{5, 6}
+		return []int{0, 1, 2, 3, 4}
+	case 3, 4:
+		return []int{0, 1, 2, 3, 4, 5, 6}
 	default:
 		return nil
 	}

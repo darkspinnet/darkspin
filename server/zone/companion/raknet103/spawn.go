@@ -10,6 +10,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/util"
 	zonecompanion "github.com/darkspinnet/darkspin/server/zone/companion"
+	zonehero "github.com/darkspinnet/darkspin/server/zone/hero"
 )
 
 type SpawnRequest struct {
@@ -20,7 +21,7 @@ type SpawnRequest struct {
 }
 
 func Spawn(req SpawnRequest) ([][]byte, error) {
-	if req.ObjectID == 0 || req.OwnerObjectID == 0 ||
+	if req.ObjectID == 0 || req.OwnerObjectID == 0 || req.OwnerObjectID >= zonehero.FirstSharedObjectID() ||
 		req.Intent.NounName == "" || req.Intent.SpawnEffectID == 0 ||
 		req.Intent.SpawnAbilityID == 0 || req.Intent.BurrowModifierID == 0 ||
 		!isFinitePosition(req.Position) {
@@ -29,7 +30,7 @@ func Spawn(req SpawnRequest) ([][]byte, error) {
 	position := raknet.Vector3{
 		X: req.Position.X, Y: req.Position.Y, Z: req.Position.Z,
 	}
-	createPacket, err := raknet.MarshalApplication(raknet.ObjectCreateMessage{
+	createPackets, err := Create(raknet.ObjectCreateMessage{
 		ObjectID: req.ObjectID, Noun: util.HashID(req.Intent.NounName),
 		PositionX: req.Position.X, PositionY: req.Position.Y,
 		PositionZ: req.Position.Z, Scale: 1, Team: 1,
@@ -58,7 +59,7 @@ func Spawn(req SpawnRequest) ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("spawnEffect: %w", err)
 	}
-	return [][]byte{createPacket, attributePacket, effectPacket}, nil
+	return append(createPackets, attributePacket, effectPacket), nil
 }
 
 func isFinitePosition(position game.Vec3) bool {

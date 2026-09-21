@@ -1728,6 +1728,26 @@ footer {
 }
 
 .remote-profile-core .pilot-select-row .profile-select { max-width: 450px; }
+.remote-command-frame {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+}
+.remote-playability-warning {
+  width: min(100%, 610px);
+  margin: 0 auto;
+  padding: 9px 14px;
+  border: 1px solid #9b6550;
+  border-radius: 5px;
+  color: #f3c7a6;
+  background: #34251f;
+  text-align: center;
+  box-shadow: inset 0 1px rgba(255, 231, 207, .08);
+}
+.remote-playability-warning strong,
+.remote-playability-warning span { display: block; }
+.remote-playability-warning strong { font-size: 9px; letter-spacing: .14em; }
+.remote-playability-warning span { margin-top: 3px; color: #bd9580; font: 8px Consolas, monospace; }
 .remote-profile-server {
   width: min(100%, 360px);
   padding: 9px 11px;

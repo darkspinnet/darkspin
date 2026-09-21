@@ -4396,6 +4396,9 @@ func (e campaignSageCompanionRespawnStep) execute() {
 	peerSession.queuePackets(packets)
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
+	e.runtime.registry.queuePeerPresentation(
+		gameplayProducerIdentityFromSession(e.sessionKey, peerSession, true), packets,
+	)
 	e.runtime.logger.Printf(
 		"RakNet Sage companion respawned remote=%s prior_object=%d object=%d",
 		e.sessionKey, e.objectID, replacementObjectID,
@@ -7436,7 +7439,10 @@ func (r campaignNPCActionRuntime) commitHeroTargetDamage(
 	targetSession.queuePackets(packets)
 	targetSession.queueStatDelta(statDelta)
 	r.registry.sessions[targetSessionKey] = *targetSession
-	return hitPackets, sporenet.PlayerStatDelta{}, nil
+	// The target receives its private squad transition above. Preserve the
+	// shared death presentation too, including removal of Sage's Dendrones,
+	// for the NPC simulation's client and its normal teammate broadcast.
+	return gameplayPeerPresentationPackets(packets), sporenet.PlayerStatDelta{}, nil
 }
 
 func (r campaignNPCActionRuntime) deliverHeroTargetPackets(

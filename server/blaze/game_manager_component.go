@@ -528,8 +528,20 @@ func removePlayerHandler(
 				)
 				return &Response{}, nil
 			}
-			isExplicitAbort := reason == returnToShipReason && user != nil &&
-				user.Account.ID == personaID && instance.HostUserID() == personaID
+			// Aborting leaves only this member while a co-op teammate remains.
+			// RemoveMember transfers host ownership through the normal roster path.
+			isGameAbort := reason == returnToShipReason && user != nil &&
+				user.Account.ID == personaID && instance.HostUserID() == personaID &&
+				(instance.Info.Mode != game.ModeChain || len(players) <= 1)
+			if reason == returnToShipReason && user != nil &&
+				user.Account.ID == personaID &&
+				gameManager.CanResumeDefeatedMember(gameID, personaID) {
+				logGameRequest(request,
+					"game_remove_preserved account=%q game_id=%d persona_id=%d reason=%d transition=%q",
+					user.LoginName, gameID, personaID, reason, "defeated_coop_resume",
+				)
+				return &Response{}, nil
+			}
 			isTutorialReturn := reason == returnToShipReason && instance.Info.Mode == game.ModeTutorial &&
 				instance.Info.Level == game.TutorialLevel && instance.IsTutorialComplete(personaID) &&
 				user != nil && user.Account.ID == personaID
@@ -539,12 +551,12 @@ func removePlayerHandler(
 					return nil, fmt.Errorf("removeTutorial: %w", err)
 				}
 			}
-			if isExplicitAbort {
+			if isGameAbort {
 				gameManager.Remove(gameID)
 				discardGameCheckpoint(resumeSource, gameID)
 				isGameDestroyed = true
 			} else {
-				instance.RemovePlayer(personaID)
+				gameManager.RemoveMember(gameID, personaID)
 			}
 		}
 		if isGameDestroyed {
