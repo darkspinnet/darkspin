@@ -4872,6 +4872,7 @@ func (r gameplaySetupRuntime) publishCampaign(
 			// Match the owner's arrival exactly: create/deploy before the same
 			// beam position, effect and animation, after its setup is delivered.
 			rosterPackets = append(rosterPackets, beamPackets...)
+			rosterPackets = append(rosterPackets, fieldMedicPackets...)
 			publishErr := publishCampaignPeersAfterCommit(r.registry, packet, rosterPackets)
 			if publishErr != nil {
 				return nil, false, fmt.Errorf("pingCampaignPeerArrival: %w", publishErr)

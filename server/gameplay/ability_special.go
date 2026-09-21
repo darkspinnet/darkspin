@@ -285,6 +285,10 @@ func (e areaSpecialSchedule) fail(scheduleErr error) {
 	}
 	e.runtime.registry.mutex.Unlock()
 	if isCurrent {
+		e.runtime.registry.queuePeerPresentation(
+			gameplayProducerIdentityFromSession(e.sessionKey, peerSession, true),
+			[][]byte{e.releaseAnimation},
+		)
 		e.runtime.logger.Printf(
 			"RakNet campaign Shockwave stopped after schedule failure for %s: %v",
 			e.sessionKey, scheduleErr,

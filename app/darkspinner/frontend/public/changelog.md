@@ -2,6 +2,11 @@
 
 ### 2026-09-20
 
+- Reject campaign equipment pickups before their animation when inventory is full, keep the item available, and report the current capacity in game chat.
+- Encode absent item prefixes and suffixes as null assets so pickup cards, Editor inventory, and subsequent mission loading do not resolve a bogus empty-string asset.
+- Mark Remote play and the multiplayer-connections setting as still under development in the launcher.
+- Extend Dendrone co-op spawn initialization to Healing Sprite, Beast Sentinel, Fire Tempest, Sentry Drone, and Plasma Sentinel summons, and send Sentry Drone's dungeon-entry spawn to allies.
+- Replicate companion follow and attack starts, Dendrone respawns, movement-canceled channel effects, orb pickup presentation, and timed-area or Shockwave failure cleanup to co-op allies.
 - Change map bosses from the ordinary equipment-drop chance to one guaranteed equipment drop per kill.
 - Resume charging enemies after interrupted cooldown waits instead of leaving their attack action stalled.
 - Correct Shade Drifter charge damage from projectile classification to its authored IgnorePlayerCount descriptor.

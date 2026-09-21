@@ -329,16 +329,50 @@ func (r campaignInteractionRuntime) handlePickup(
 				)
 			}
 		}
+		if r.progression == nil {
+			currentSession.zone.Pickups().Release(command.Value)
+			r.registry.mutex.Unlock()
+			return nil, errors.New("campaignEquipmentProgression: unavailable")
+		}
+		inventoryReader, isInventoryReader := r.progression.(campaignInventoryReader)
+		if isInventoryReader {
+			inventoryStatus, statusErr := inventoryReader.PartInventoryStatus(
+				ctx, int64(equipmentPickup.WinnerUserID),
+			)
+			if statusErr != nil {
+				currentSession.zone.Pickups().Release(command.Value)
+				r.registry.mutex.Unlock()
+				return nil, fmt.Errorf("campaignEquipmentCapacity: %w", statusErr)
+			}
+			if inventoryStatus.IsFull {
+				currentSession.zone.Pickups().Release(command.Value)
+				gameID := currentSession.binding.GameID
+				r.registry.mutex.Unlock()
+				notificationErr := r.gameplayJoin.PublishInventoryFull(
+					context.WithoutCancel(ctx), int64(equipmentPickup.WinnerUserID), gameID,
+					inventoryStatus.OwnedCount, inventoryStatus.Capacity,
+				)
+				if notificationErr != nil && r.logger != nil {
+					r.logger.Printf(
+						"RakNet campaign equipment full-inventory notice failed user=%d object=%d: %v",
+						equipmentPickup.WinnerUserID, equipmentPickup.ObjectID, notificationErr,
+					)
+				}
+				if r.logger != nil {
+					r.logger.Printf(
+						"RakNet campaign equipment rejected for full inventory user=%d object=%d owned=%d capacity=%d",
+						equipmentPickup.WinnerUserID, equipmentPickup.ObjectID,
+						inventoryStatus.OwnedCount, inventoryStatus.Capacity,
+					)
+				}
+				return r.rejectPickup(command, "inventory full")
+			}
+		}
 		movementPackets, movementErr := currentSession.stopCampaignPickup(r.now())
 		if movementErr != nil {
 			currentSession.zone.Pickups().Release(command.Value)
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("campaignEquipmentStop: %w", movementErr)
-		}
-		if r.progression == nil {
-			currentSession.zone.Pickups().Release(command.Value)
-			r.registry.mutex.Unlock()
-			return nil, errors.New("campaignEquipmentProgression: unavailable")
 		}
 		deletePacket, marshalErr := interactraknet.DeletePickup(equipmentPickup.ObjectID)
 		if marshalErr != nil {
@@ -683,6 +717,10 @@ func (s *gameplayPeerSession) campaignPartAttribute(attributeIndex int) float32 
 
 type campaignLootProgression interface {
 	GrantPartWithinCapacity(context.Context, int64, sporenet.Part) (sporenet.Part, error)
+}
+
+type campaignInventoryReader interface {
+	PartInventoryStatus(context.Context, int64) (sporenet.PartInventoryStatus, error)
 }
 
 func (s *gameplayPeerSession) spawnCampaignEquipment(

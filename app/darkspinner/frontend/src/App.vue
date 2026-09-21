@@ -1231,6 +1231,10 @@ async function copyLauncherFailure() {
     </section>
 
     <section v-else-if="activePage === 'remote'" class="command-frame launch-command-frame remote-command-frame">
+      <div class="remote-playability-warning" role="alert">
+        <strong>REMOTE PLAY IS NOT YET PLAYABLE</strong>
+        <span>This feature is still under development.</span>
+      </div>
       <div class="launch-main">
         <article class="bay launcher-bay">
           <div class="launch-pane">
@@ -1278,7 +1282,7 @@ async function copyLauncherFailure() {
       <div class="config-grid">
         <article class="management-card config-port-card">
           <div class="management-heading"><span>01</span><div><h2>CONFIGURATION</h2></div></div>
-          <label class="management-toggle config-multiplayer"><input v-model="isConfiguredMultiplayerEnabled" type="checkbox" :disabled="isServerConfigurationBusy"><span><strong>ALLOW MULTIPLAYER CONNECTIONS</strong><small>Listen on LAN interfaces. Windows may request firewall access when enabled.</small></span></label>
+          <label class="management-toggle config-multiplayer"><input v-model="isConfiguredMultiplayerEnabled" type="checkbox" :disabled="isServerConfigurationBusy"><span><strong>ALLOW MULTIPLAYER CONNECTIONS</strong><small>Still under development. Listen on LAN interfaces. Windows may request firewall access when enabled.</small></span></label>
           <label for="config-server-port">PORT</label>
           <input id="config-server-port" v-model.number="configuredServerPort" type="number" min="1" max="65534" inputmode="numeric" :disabled="isServerConfigurationBusy">
           <label class="config-locale" for="config-client-locale"><strong>LANGUAGE</strong></label>

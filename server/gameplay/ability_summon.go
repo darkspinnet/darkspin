@@ -419,12 +419,15 @@ func marshalHeroSummonSpawn(
 	if run == nil || run.objectID == 0 || run.ownerID == 0 || footprintRadius <= 0 {
 		return nil, errors.New("hero summon spawn invalid")
 	}
+	packets, err := companionraknet.Create(raknet.ObjectCreateMessage{
+		ObjectID: run.objectID, Noun: util.HashID(run.definition.SpawnNoun),
+		PositionX: position.X, PositionY: position.Y, PositionZ: position.Z,
+		Scale: 1, Team: 1, OwnerID: run.ownerID, IsCollisionEnabled: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("heroSummonCreate: %w", err)
+	}
 	message := []raknet.ApplicationMessage{
-		raknet.ObjectCreateMessage{
-			ObjectID: run.objectID, Noun: util.HashID(run.definition.SpawnNoun),
-			PositionX: position.X, PositionY: position.Y, PositionZ: position.Z,
-			Scale: 1, Team: 1, OwnerID: run.ownerID, IsCollisionEnabled: true,
-		},
 		raknet.AttributeDataUpdateMessage{
 			ObjectID: run.objectID,
 			Value: map[uint8]float32{
@@ -447,7 +450,6 @@ func marshalHeroSummonSpawn(
 			Asset: util.HashID(run.definition.HitEffectName), ObjectID: run.objectID,
 		},
 	}
-	packets := make([][]byte, 0, len(message))
 	for index, current := range message {
 		packet, err := raknet.MarshalApplication(current)
 		if err != nil {

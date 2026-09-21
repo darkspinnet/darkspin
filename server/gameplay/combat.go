@@ -4396,6 +4396,9 @@ func (e campaignSageCompanionRespawnStep) execute() {
 	peerSession.queuePackets(packets)
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
+	e.runtime.registry.queuePeerPresentation(
+		gameplayProducerIdentityFromSession(e.sessionKey, peerSession, true), packets,
+	)
 	e.runtime.logger.Printf(
 		"RakNet Sage companion respawned remote=%s prior_object=%d object=%d",
 		e.sessionKey, e.objectID, replacementObjectID,

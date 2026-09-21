@@ -14,6 +14,7 @@ import (
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
 	zoneaction "github.com/darkspinnet/darkspin/server/zone/action"
 	zonecompanion "github.com/darkspinnet/darkspin/server/zone/companion"
+	companionraknet "github.com/darkspinnet/darkspin/server/zone/companion/raknet103"
 	zonecontent "github.com/darkspinnet/darkspin/server/zone/content"
 	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
 	geometryraknet "github.com/darkspinnet/darkspin/server/zone/geometry/raknet103"
@@ -535,12 +536,15 @@ func (e fireTempestStep) enrageExpire() ([][]byte, error) {
 func marshalFireTempestSpawn(
 	run *fireTempestActiveRun, definition sim.AbilityDefinition, position game.Vec3,
 ) ([][]byte, error) {
+	packets, err := companionraknet.Create(raknet.ObjectCreateMessage{
+		ObjectID: run.petObjectID, Noun: util.HashID(definition.SpawnNoun),
+		PositionX: position.X, PositionY: position.Y, PositionZ: position.Z,
+		Scale: 1, Team: 1, OwnerID: run.ownerObjectID, IsCollisionEnabled: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("fireTempestCreate: %w", err)
+	}
 	messages := []raknet.ApplicationMessage{
-		raknet.ObjectCreateMessage{
-			ObjectID: run.petObjectID, Noun: util.HashID(definition.SpawnNoun),
-			PositionX: position.X, PositionY: position.Y, PositionZ: position.Z,
-			Scale: 1, Team: 1, OwnerID: run.ownerObjectID, IsCollisionEnabled: true,
-		},
 		raknet.AttributeDataUpdateMessage{
 			ObjectID: run.petObjectID,
 			Value:    map[uint8]float32{11: 0, 12: 0, 48: 0},
@@ -550,7 +554,6 @@ func marshalFireTempestSpawn(
 		},
 		raknet.ServerEventMessage{Asset: util.HashID(definition.HitEffectName), ObjectID: run.petObjectID},
 	}
-	packets := make([][]byte, 0, len(messages))
 	for index, message := range messages {
 		packet, err := raknet.MarshalApplication(message)
 		if err != nil {

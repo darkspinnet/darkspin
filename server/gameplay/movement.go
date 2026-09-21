@@ -1023,6 +1023,18 @@ func (r campaignMovementCommandRuntime) handle(
 	if err != nil {
 		return nil, fmt.Errorf("moveCampaignCompanionAttack: %w", err)
 	}
+	// These side effects ride on a movement response, which deliberately skips
+	// the general action broadcast. Hero motion has its own zone projection;
+	// companion motion, channel interruption, and pickup presentation do not.
+	movementSideEffectPackets := make([][]byte, 0)
+	movementSideEffectPackets = append(movementSideEffectPackets, companionFollowPackets...)
+	movementSideEffectPackets = append(movementSideEffectPackets, companionAttackPackets...)
+	movementSideEffectPackets = append(movementSideEffectPackets, drainStopPackets...)
+	movementSideEffectPackets = append(movementSideEffectPackets, campaignOrbPackets...)
+	err = publishCampaignPeersAfterCommit(r.registry, packet, movementSideEffectPackets)
+	if err != nil {
+		return nil, fmt.Errorf("moveSideEffectPresentation: %w", err)
+	}
 	immediateUnlockPackets, immediateBossPackets, err := r.encounter.schedulePublications(
 		packet, commandSession, campaignEncounterAdvance{
 			bossPlans: bossPlans, bossPackets: bossPackets,

@@ -797,6 +797,7 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("gameplayJoin: %w", err)
 	}
 	gameplayJoin.UseTutorialEndPublisher(tutorialEndPublisher{servers: allBlazeServers})
+	gameplayJoin.UseInventoryPublisher(inventoryPublisher{servers: allBlazeServers})
 	gameplayJoin.SetAppearanceStore(appearancefs.Store{Root: runtimePath})
 	directorSource, err := gamecontentsqlite.NewDirectorSource(contentStore)
 	if err != nil {

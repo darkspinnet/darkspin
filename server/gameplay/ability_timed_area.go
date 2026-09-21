@@ -169,6 +169,10 @@ func (e heroTimedAreaSchedule) fail(scheduleErr error) {
 	if !isCurrent {
 		return
 	}
+	e.runtime.registry.queuePeerPresentation(
+		gameplayProducerIdentityFromSession(e.sessionKey, peerSession, true),
+		[][]byte{e.run.removalPacket},
+	)
 	e.run.ReleaseEffect()
 	e.runtime.logger.Printf(
 		"RakNet hero timed area stopped after schedule failure for %s: %v",

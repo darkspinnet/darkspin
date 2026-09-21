@@ -1309,6 +1309,38 @@ func (m *UserManager) GrantPart(ctx context.Context, userID int64, part Part) (P
 	return part, nil
 }
 
+// PartInventoryStatus describes equipment storage admission.
+type PartInventoryStatus struct {
+	OwnedCount uint32
+	Capacity   uint32
+	IsFull     bool
+}
+
+// PartInventoryStatus reports the same owned-item count and capacity used by
+// campaign pickup admission without mutating the account.
+func (m *UserManager) PartInventoryStatus(
+	ctx context.Context, userID int64,
+) (PartInventoryStatus, error) {
+	err := ctx.Err()
+	if err != nil {
+		return PartInventoryStatus{}, fmt.Errorf("inventoryContext: %w", err)
+	}
+	user := m.UserByID(userID)
+	if user == nil {
+		return PartInventoryStatus{}, ErrInvalidUser
+	}
+	user.mu.RLock()
+	defer user.mu.RUnlock()
+	status := PartInventoryStatus{Capacity: user.Account.UnlockInventoryIdentify}
+	for index := range user.Parts {
+		if user.Parts[index].MarketStatus == PartMarketOwned {
+			status.OwnedCount++
+		}
+	}
+	status.IsFull = status.Capacity == 0 || status.OwnedCount >= status.Capacity
+	return status, nil
+}
+
 // GrantPartWithinCapacity durably appends one generated pickup only when the
 // account has an available inventory slot. Capacity admission and persistence
 // share the user's mutation lock so concurrent pickups cannot overbook it.
