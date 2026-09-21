@@ -132,21 +132,65 @@ func RegisterAPI(router *recaphttp.Router, options APIOptions) error {
 func (a *API) manual(writer http.ResponseWriter, _ *http.Request, _ *recaphttp.URI) {
 	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 	writer.WriteHeader(http.StatusOK)
-	_, _ = io.WriteString(writer, `<!doctype html>
+	byteCount, err := io.WriteString(writer, `<!doctype html>
 <html><head><meta charset="utf-8"><style>
-body{margin:0;background:#050a0e;color:#d7e6ec;font:16px Arial,sans-serif}
-main{padding:28px 40px}h1{font-size:24px;letter-spacing:2px;color:#fff}
-h2{font-size:16px;color:#9ed9e8;margin-top:24px}p,li{line-height:1.5}
-code{color:#fff;background:#15242b;padding:2px 5px}
+html{background:#050a0e}
+body{margin:0;background:#050a0e;color:#d7e6ec;font:15px Arial,sans-serif}
+main{padding:24px 34px 36px;max-width:940px}
+h1{font-size:24px;letter-spacing:2px;color:#fff;margin:8px 0 6px}
+.intro{color:#a9c0c9;margin:0 0 20px}
+h2{font-size:16px;color:#9ed9e8;margin:22px 0 8px;border-bottom:1px solid #233840;padding-bottom:5px}
+p,li,td{line-height:1.45}ul{margin:8px 0;padding-left:24px}li{margin:4px 0}
+table{border-collapse:collapse;width:100%;margin-top:8px}td{border-bottom:1px solid #17272e;padding:7px 8px;vertical-align:top}
+td:first-child{width:160px;white-space:nowrap}
+code{color:#fff;background:#15242b;border:1px solid #263b45;padding:2px 5px}
+.note{background:#0b151a;border-left:3px solid #65bfd7;padding:9px 12px;margin:12px 0}
+.muted{color:#8da3ac}
 </style></head><body><main><h1>FIELD MANUAL</h1>
-<p>This local restoration is still rebuilding the original online manual.</p>
-<h2>Core controls</h2><ul><li>Left click to move or attack.</li>
-<li>Hold Shift while attacking to remain in place.</li>
-<li>Use the squad portraits to deploy another available hero.</li></ul>
-<h2>Testing commands</h2><p><code>/help</code> lists available chat commands.
-Use <code>/dna #</code>, <code>/damage #</code>, <code>/heal</code>, <code>/power</code>, or
-<code>/event</code> while testing a campaign. If transient movement, ability,
-or squad state becomes stuck, use <code>/reset</code>.</p></main></body></html>`)
+<p class="intro">A quick reference for campaign, squad, and multiplayer play.</p>
+
+<h2>Mission controls</h2><ul>
+<li><strong>Left click</strong> the ground to move, or a hostile target to attack.</li>
+<li>Hold <strong>Shift</strong> while attacking to stand your ground.</li>
+<li>Select an ability from the action bar, then choose its target when prompted.</li>
+<li>Select an available squad portrait to deploy that hero. Defeated heroes cannot deploy until revived.</li>
+</ul>
+
+<h2>Campaign</h2><ul>
+<li>Follow the objective marker, clear security encounters, and defeat the mission boss.</li>
+<li>Equipment drops are awarded directly to an eligible inventory. Bosses always award equipment.</li>
+<li>Health, power, and DNA pickups benefit the connected co-op party.</li>
+<li>After victory, choose the next mission or Beam Out to return to the ship with your rewards.</li>
+</ul>
+
+<h2>Multiplayer</h2><ul>
+<li>Use the Friends panel to invite players before deployment.</li>
+</ul>
+
+<h2>Report a problem</h2>
+<p class="note"><code>/bug &lt;what happened&gt;</code> captures a diagnostic report with your current
+mission context. Use it immediately after a problem and briefly describe the action that failed.
+<code>/b</code> is a shorter alias.</p>
+
+<h2>Recovery and diagnostics</h2><table>
+<tr><td><code>/help</code></td><td>Show the complete command list in chat.</td></tr>
+<tr><td><code>/hint</code></td><td>Point toward a remaining hostile during a deployment.</td></tr>
+<tr><td><code>/loc</code></td><td>Show your current world coordinates.</td></tr>
+<tr><td><code>/ping</code></td><td>Show server response and current game information.</td></tr>
+<tr><td><code>/reset</code></td><td>Recover transient movement, ability, and squad state.</td></tr>
+<tr><td><code>/recap</code></td><td>Revive defeated heroes in the connected co-op party.</td></tr>
+</table>
+
+<h2>Developer tools</h2>
+<p class="muted">Campaign testing commands include <code>/dna</code>, <code>/damage</code>,
+<code>/heal</code>, <code>/power</code>, <code>/goto</code>,
+<code>/spawn</code>, <code>/summon</code>, <code>/level</code>, <code>/victory</code>,
+and <code>/defeat</code>. Use <code>/help</code> for exact syntax.</p>
+<p class="note">The <code>/help</code> response is the authoritative list of currently available commands.</p>
+</main></body></html>`)
+	if err != nil {
+		a.logger.Printf("field manual write failed after %d bytes: %v", byteCount, err)
+	}
 }
 
 func (a *API) empty(writer http.ResponseWriter, _ *http.Request, _ *recaphttp.URI) {
@@ -882,7 +926,7 @@ func accountStatsNode(account sporenet.Account, stats sporenet.PlayerStats) stri
 		xmlText("pve_bossKills", number(stats.PVEBossKill)),
 		xmlText("pve_totalKills", number(stats.PVETotalKill)),
 		xmlText("pve_deaths", number(stats.PVEDeath)),
-		xmlText("pve_killDeathRatio", profileRatio(stats.PVETotalKill, stats.PVEDeath)),
+		xmlText("pve_killDeathRatio", profileKillDeathRatio(stats.PVETotalKill, stats.PVEDeath)),
 		xmlText("pve_damageDealt", profileWholeStatNumber(stats.PVEDamageDealt)),
 		xmlText("pve_damageTaken", profileWholeStatNumber(stats.PVEDamageTaken)),
 		xmlText("pve_damageMax", profileWholeStatNumber(stats.PVEDamageMaximum)),
@@ -896,7 +940,7 @@ func accountStatsNode(account sporenet.Account, stats sporenet.PlayerStats) stri
 		xmlText("pvp_winLossRatio", profileRatio(stats.PVPWin, stats.PVPLoss)),
 		xmlText("pvp_playerKills", number(stats.PVPPlayerKill)),
 		xmlText("pvp_deaths", number(stats.PVPDeath)),
-		xmlText("pvp_killDeathRatio", profileRatio(stats.PVPPlayerKill, stats.PVPDeath)),
+		xmlText("pvp_killDeathRatio", profileKillDeathRatio(stats.PVPPlayerKill, stats.PVPDeath)),
 		xmlText("pvp_damageDealt", profileStatNumber(stats.PVPDamageDealt)),
 		xmlText("pvp_damageTaken", profileStatNumber(stats.PVPDamageTaken)),
 		xmlText("pvp_damageMax", profileStatNumber(stats.PVPDamageMaximum)),
@@ -925,6 +969,14 @@ func profileRatio(numerator, denominator uint64) string {
 		return profileStatNumber(float64(numerator))
 	}
 	return profileStatNumber(float64(numerator) / float64(denominator))
+}
+
+func profileKillDeathRatio(kill, death uint64) string {
+	ratio := float64(kill)
+	if death != 0 {
+		ratio /= float64(death)
+	}
+	return strconv.FormatFloat(ratio, 'f', 2, 64)
 }
 
 func profileStatNumber(number float64) string {

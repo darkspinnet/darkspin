@@ -2,6 +2,9 @@
 
 ### 2026-09-21
 
+- Replace the Field Manual placeholder with current campaign controls, mission flow, party setup, prominent bug reporting, recovery commands, and a separate developer-tools reference.
+- Encode Campaign leaderboard progression with separate threat and star ranks so levels display correctly instead of values such as `0-4★3`.
+- Round profile and Campaign leaderboard Kill/Death Ratio values to two decimal places.
 - Give boss equipment drops a rare chance to use the Hyperspatial Protector, Galactic Eviscerator, or Darkmatter Starhelm base with mission-scaled levels, rarity, and affixes.
 - Restore Quantum Blink's authored slide animation, five randomized strike poses, one-second ending pose, and final animation reset.
 - Keep each co-op campaign member active after another player enters or aborts from victory results, allowing every ally to finish their own Beam Out instead of becoming stranded on a black screen.
