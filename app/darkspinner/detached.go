@@ -49,6 +49,10 @@ func (e *App) StartDetachedGameInstance(identity string) error {
 	if !isFound {
 		return errors.New("selected Crogenitor does not exist")
 	}
+	err = e.recordProfileConnection(identity)
+	if err != nil {
+		return fmt.Errorf("detachedConnection: %w", err)
+	}
 	err = e.startDetachedGame(detachedGameRequest{
 		account: identity, clientProfile: identity, serverAddress: serverAddress,
 		arguments: arguments,

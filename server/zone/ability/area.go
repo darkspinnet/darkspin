@@ -82,12 +82,11 @@ func PlanShockwave(
 	if err != nil {
 		return AreaPlan{}, fmt.Errorf("shockwaveDamage: %w", err)
 	}
-	const additionalRange = float32(4.5)
 	eligible := make([]zonenpc.Snapshot, 0)
 	primaryIndex := -1
-	primaryDistance := projected.Radius + 1
+	primaryDistance := float32(math.MaxFloat32)
 	for _, enemy := range enemies.LiveSnapshots() {
-		if enemy.TargetObjectID != sourceObjectID {
+		if enemy.Faction != zonenpc.FactionNonPlayerAligned {
 			continue
 		}
 		deltaX := enemy.Plan.Position.X - sourcePosition.X
@@ -95,7 +94,8 @@ func PlanShockwave(
 		deltaZ := enemy.Plan.Position.Z - sourcePosition.Z
 		distance := positionDistance(sourcePosition, enemy.Plan.Position)
 		dot := deltaX*directionX + deltaY*directionY + deltaZ*directionZ
-		if distance > projected.Radius || dot < 0 {
+		footprintRadius := max(float32(0), enemy.Plan.NPCProfile.FootprintRadius)
+		if distance > projected.Radius+footprintRadius || dot < 0 {
 			continue
 		}
 		eligible = append(eligible, enemy)
@@ -115,8 +115,7 @@ func PlanShockwave(
 		target = append(target, eligible[primaryIndex])
 	}
 	for index, enemy := range eligible {
-		if index == primaryIndex ||
-			positionDistance(sourcePosition, enemy.Plan.Position) > additionalRange {
+		if index == primaryIndex {
 			continue
 		}
 		target = append(target, enemy)
@@ -171,7 +170,7 @@ func PlanZetawattBeam(
 	}
 	target := make([]zonenpc.Snapshot, 0)
 	for _, enemy := range enemies.LiveSnapshots() {
-		if enemy.TargetObjectID != sourceObjectID {
+		if enemy.Faction != zonenpc.FactionNonPlayerAligned {
 			continue
 		}
 		deltaX := enemy.Plan.Position.X - sourcePosition.X

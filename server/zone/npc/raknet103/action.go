@@ -189,6 +189,53 @@ func Pursuit(plan zonenpc.FirstActionPlan) ([][]byte, error) {
 	}, "pursuit")
 }
 
+// BurrowTravel preserves the authored underground animation while the
+// Tunneler moves to the point where its poison nova will emerge.
+func BurrowTravel(plan zonenpc.AttackPlan) ([][]byte, error) {
+	if plan.SourceObjectID == 0 || !isFiniteVec3(plan.SourcePosition) ||
+		!isFiniteVec3(plan.TargetPosition) {
+		return nil, errors.New("npc burrow travel invalid")
+	}
+	source := vector(plan.SourcePosition)
+	target := vector(plan.TargetPosition)
+	return marshalMessages([]raknet.ApplicationMessage{
+		raknet.ObjectPlayerMoveMessage{
+			ObjectID: plan.SourceObjectID, GoalFlags: 0x01,
+			GoalPosition: target, Facing: direction(source, target),
+		},
+		raknet.LocomotionUnreliableMessage{
+			ObjectID: plan.SourceObjectID, GoalPosition: target,
+		},
+	}, "burrowTravel")
+}
+
+// BurrowArrival reconciles the moving client root with the authoritative
+// destination before playing the emerge attack.
+func BurrowArrival(
+	objectID uint32, position game.Vec3, facing game.Vec3, timestamp uint64,
+) ([][]byte, error) {
+	if objectID == 0 || !isFiniteVec3(position) || !isFiniteVec3(facing) ||
+		facing.Length() <= 0 {
+		return nil, errors.New("npc burrow arrival invalid")
+	}
+	yaw := math.Atan2(-float64(facing.X), float64(facing.Y))
+	return marshalMessages([]raknet.ApplicationMessage{
+		raknet.ObjectPlayerMoveMessage{
+			ObjectID: objectID, GoalFlags: 0x20, GoalPosition: vector(position),
+		},
+		raknet.ObjectTeleportMessage{
+			ObjectID: objectID, Position: vector(position),
+			Orientation: raknet.Quaternion{
+				Z: float32(math.Sin(yaw / 2)), W: float32(math.Cos(yaw / 2)),
+			},
+		},
+		raknet.SetAnimationStateMessage{
+			ObjectID: objectID, State: util.HashID("burrow_attack1"),
+			Timestamp: timestamp, Scale: 1,
+		},
+	}, "burrowArrival")
+}
+
 func FleeRedirect(
 	objectID uint32, sourcePosition game.Vec3, targetPosition game.Vec3,
 ) ([][]byte, error) {

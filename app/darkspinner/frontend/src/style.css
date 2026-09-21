@@ -85,27 +85,47 @@
 .profile-option strong, .profile-option small { display: block; }
 .profile-option strong { font-size: 13px; }
 .profile-option small { font-size: 10px; }
+.profile-detail-option { width: 100%; display: grid; grid-template-columns: 28px minmax(80px, 1fr) auto auto; gap: 10px; }
+.profile-option-photo { width: 28px; height: 28px; border-radius: 5px; background: var(--muted); overflow: hidden; }
+.profile-option-copy { min-width: 0; }
+.profile-option-copy strong, .profile-option-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-option-level { color: var(--foreground); font-size: 10px; font-weight: 400; white-space: nowrap; }
+.profile-option-last-played { justify-self: end; margin-left: 18px; color: var(--muted-foreground); white-space: nowrap; }
 .launch-profile-summary { flex: 1; min-height: 0; display: grid; place-items: center; }
-.profile-info-card { width: min(100%, 580px); padding: 20px; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 22px; border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px); background: linear-gradient(145deg, #1a1a1e, #111114); box-shadow: inset 0 1px #ffffff0a, 0 12px 32px #00000026; }
+.profile-info-card { position: relative; width: min(100%, 580px); padding: 20px; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 22px; border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px); background: linear-gradient(145deg, #1a1a1e, #111114); box-shadow: inset 0 1px #ffffff0a, 0 12px 32px #00000026; }
+.profile-create-date { position: absolute; top: 12px; right: 14px; padding: 3px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-foreground); background: #09090b99; font-size: 9px; font-weight: 600; line-height: 1; letter-spacing: .06em; }
 .profile-info-content { min-width: 0; display: grid; gap: 14px; }
-.profile-info-heading { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.profile-info-heading { min-width: 0; padding-right: 94px; display: flex; flex-direction: column; gap: 3px; }
 .profile-info-heading small { color: var(--primary); font-size: 9px; font-weight: 600; letter-spacing: .12em; }
 .profile-info-heading strong { overflow: hidden; color: var(--foreground); font-size: 20px; line-height: 1.15; text-overflow: ellipsis; white-space: nowrap; }
+.selected-profile-avatar-frame { position: relative; width: fit-content; }
 .selected-profile-avatar { width: 112px; height: 112px; flex-shrink: 0; border: 1px solid #33951f; border-radius: 18px; background: var(--muted); overflow: hidden; box-shadow: 0 0 0 3px #18520d40; }
 .selected-profile-avatar img { width: 100%; height: 100%; object-fit: cover; }
-.profile-progress { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.profile-progress > span { display: flex; flex-direction: column; gap: 4px; padding: 0 16px; }
-.profile-progress > span:first-child { padding-left: 0; }
-.profile-progress > span:last-child { padding-right: 0; }
-.profile-progress > span + span { border-left: 1px solid var(--border); }
-.profile-progress small { font-size: 10px; letter-spacing: .09em; }
-.profile-progress strong { font-size: 16px; }
-.profile-progress em { font-size: 12px; font-style: normal; color: var(--muted-foreground); }
+.profile-level-badge { position: absolute; right: 6px; bottom: 6px; min-width: 24px; height: 24px; padding: 0 6px; display: grid; place-items: center; border: 1px solid #4ade80; border-radius: 999px; color: #f4f4f5; background: #09090be6; box-shadow: 0 2px 8px #00000080; font-size: 11px; font-weight: 500; line-height: 1; }
+.profile-progress { width: 100%; display: grid; }
+.profile-progress > span { display: grid; grid-template-columns: minmax(90px, .85fr) minmax(90px, .9fr) minmax(0, 1.25fr); align-items: center; }
+.profile-progress > span + span { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px; }
+.profile-progress small, .profile-progress strong, .profile-progress em { min-width: 0; padding-inline: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-progress small { padding-left: 0; font-size: 10px; letter-spacing: .09em; }
+.profile-progress strong, .profile-progress em { border-left: 1px solid var(--border); }
+.profile-progress strong { font-size: 16px; font-weight: 400; }
+.profile-progress em { padding-right: 0; font-size: 12px; font-style: normal; color: var(--muted-foreground); }
+.remote-accent [data-slot="tabs-trigger"][data-state="active"] { border-color: #3b82f6; }
+.remote-accent .selected-profile-avatar { border-color: #3b82f6; box-shadow: 0 0 0 3px #1d4ed840; }
+.remote-accent .profile-level-badge { border-color: #60a5fa; }
+.remote-accent .profile-info-heading small { color: #60a5fa; }
+.remote-accent .play-action { border-color: #3b82f6; background: #1d4ed8; }
+.remote-accent .play-action:hover { background: #2563eb; }
+.detached-accent [data-slot="tabs-trigger"][data-state="active"] { border-color: #8b5cf6; }
+.detached-accent .selected-profile-avatar { border-color: #8b5cf6; box-shadow: 0 0 0 3px #6d28d940; }
+.detached-accent .profile-level-badge { border-color: #a78bfa; }
+.detached-accent .profile-info-heading small { color: #a78bfa; }
+.detached-accent .play-action { border-color: #8b5cf6; background: #6d28d9; }
+.detached-accent .play-action:hover { background: #7c3aed; }
 .remote-command-frame { display: flex; flex-direction: column; gap: 12px; }
 .remote-command-frame .launch-main { min-height: 260px; flex: 1; }
 .remote-empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; }
-.remote-profile-server { display: flex; align-items: center; gap: 12px; }
-.remote-profile-server strong { font-size: 12px; overflow-wrap: anywhere; }
+.profile-progress > .remote-profile-server strong { font-size: 12px; overflow-wrap: anywhere; }
 .remote-profile-password { width: 100%; }
 .remote-profile-password > label { display: block; margin-bottom: 6px; }
 .remote-profile-info-card { align-items: start; }

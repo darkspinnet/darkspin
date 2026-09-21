@@ -2,9 +2,18 @@
 
 ### 2026-09-21
 
+- Persist each Crogenitor's creation timestamp, show it on launcher profile cards, and record the latest successful remote connection date beside its server address.
+- Record the last local launch for each Crogenitor and show profile level and last-played date in local, Detached, and Remote selectors.
+- Cache remote Crogenitor and server metadata locally, refresh servers in the background every two days, and refresh profile progress when a launched remote game exits.
+- Move Botanical Tunnelers toward their target during the visible underground burrow, then emerge with their poison attack and wait through the authored cooldown before burrowing again.
+- Restore Goliath's Shockwave to its full authored 4-metre reach and 6-metre hit arc, and let Zetawatt Beam pierce every enemy along its 35-metre path regardless of aggro target.
+- Use Nightmare Vines' authored dead graphics state without overlaying generic creature-death and Zelem explosion effects.
 - Tag locally built Darkspinner versions with the current seven-character Git commit, such as `1.0.4-dev-db3367e`, while preserving stable and unstable release versioning.
 - Change the launcher readiness message from `DarkSpinner ready` to `DarkSpinner is ready`.
 - Limit Remote, Detached, LAN multiplayer, and server-port controls to development and unstable Darkspinner builds while keeping production focused on Launch and Config.
+- Match the Detached Crogenitor selector spacing and card inset to the Launch and Remote selectors.
+- Give Remote a blue tab, portrait, profile-label, and Play accent and Detached a matching purple accent while retaining green for Launch.
+- Reformat launcher profile details, including the remote server address, into aligned property and regular-weight value rows with dividers between fields, concise numeric Crogenitor levels, and level badges on selected portraits.
 - Add `/drop` command help and `/drop create [weapon|hand|foot|offense|defense|utility]` to generate a collectible campaign item from the current map, difficulty, nearby enemy context, active squad, and optional equipment category while reporting every drop roll in chat.
 - Give every campaign run a unique persisted loot seed, derive mission streams from the map and difficulty, and restore the exact drop random state when continuing from a checkpoint.
 - Replace the launcher's custom UI with shadcn-vue in dark mode with an emerald green accent, deep green action buttons, centered underline navigation, a wider launch panel, grouped profile controls, profile information cards, compact headerless configuration cards, keyboard-accessible menus, and themed dialogs.

@@ -21,6 +21,8 @@ type User struct {
 	DisplayName                 string
 	LoginName                   string
 	Password                    string
+	CreateDT                    time.Time
+	LastConnectionDT            time.Time
 	AuthToken                   string
 	IsTutorialCompletionPending bool
 	Account                     Account
@@ -176,6 +178,7 @@ func (u *User) AssociationSnapshot(listType uint32) []AssociationMember {
 func NewUser(displayName, loginName, password string) *User {
 	return &User{
 		DisplayName: displayName, LoginName: loginName, Password: password,
+		CreateDT:     time.Now().UTC(),
 		Account:      defaultAccount(),
 		Squads:       []Squad{NewSquad(1), NewSquad(2), NewSquad(3)},
 		Associations: make(map[uint32][]AssociationMember),
@@ -467,6 +470,7 @@ func (m *UserManager) Authenticate(
 	}
 	return UserIdentity{
 		LoginName: record.LoginName, DisplayName: record.DisplayName,
+		CreateDT: record.CreateDT, LastConnectionDT: record.LastConnectionDT,
 		AvatarID: record.Account.AvatarID, Level: record.Account.Level,
 		XP: record.Account.XP, ChainProgression: record.Account.ChainProgression,
 		IsTutorialCompleted:         record.Account.IsTutorialCompleted(),
@@ -571,8 +575,10 @@ func (m *UserManager) login(ctx context.Context, loginName string, verify func(s
 		m.mu.Unlock()
 		return LoginResult{User: user, IsWorldFull: true}
 	}
+	playStartedAt := time.Now()
 	user.AuthToken = token
-	user.startPlayTime(time.Now())
+	user.LastConnectionDT = playStartedAt.UTC()
+	user.startPlayTime(playStartedAt)
 	m.activeUsers[loginKey(user.LoginName)] = user
 	m.activeUsersByID[user.Account.ID] = user
 	m.usersByToken[user.AuthToken] = user

@@ -179,6 +179,8 @@ export namespace main {
 	export class Profile {
 	    loginName: string;
 	    displayName: string;
+	    createDt: string;
+	    lastConnectionDt: string;
 	    avatarId: number;
 	    avatarUrl: string;
 	    crogenitorLevel: number;
@@ -195,6 +197,8 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.loginName = source["loginName"];
 	        this.displayName = source["displayName"];
+	        this.createDt = source["createDt"];
+	        this.lastConnectionDt = source["lastConnectionDt"];
 	        this.avatarId = source["avatarId"];
 	        this.avatarUrl = source["avatarUrl"];
 	        this.crogenitorLevel = source["crogenitorLevel"];
@@ -238,12 +242,20 @@ export namespace main {
 	    serverAddress: string;
 	    loginName: string;
 	    displayName: string;
+	    createDt: string;
+	    lastConnectedDt: string;
+	    serverVersion: string;
+	    gameVersion: string;
+	    lastCheckedDt: string;
+	    lastOnlineDt: string;
+	    lastProfileRefreshDt: string;
 	    avatarId: number;
 	    avatarUrl: string;
 	    crogenitorLevel: number;
 	    cumulativeXp: number;
 	    highestCampaignUnlocked: number;
 	    isPasswordRemembered: boolean;
+	    isServerOnline: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new RemoteProfile(source);
@@ -254,12 +266,20 @@ export namespace main {
 	        this.serverAddress = source["serverAddress"];
 	        this.loginName = source["loginName"];
 	        this.displayName = source["displayName"];
+	        this.createDt = source["createDt"];
+	        this.lastConnectedDt = source["lastConnectedDt"];
+	        this.serverVersion = source["serverVersion"];
+	        this.gameVersion = source["gameVersion"];
+	        this.lastCheckedDt = source["lastCheckedDt"];
+	        this.lastOnlineDt = source["lastOnlineDt"];
+	        this.lastProfileRefreshDt = source["lastProfileRefreshDt"];
 	        this.avatarId = source["avatarId"];
 	        this.avatarUrl = source["avatarUrl"];
 	        this.crogenitorLevel = source["crogenitorLevel"];
 	        this.cumulativeXp = source["cumulativeXp"];
 	        this.highestCampaignUnlocked = source["highestCampaignUnlocked"];
 	        this.isPasswordRemembered = source["isPasswordRemembered"];
+	        this.isServerOnline = source["isServerOnline"];
 	    }
 	}
 	export class RemoteServer {

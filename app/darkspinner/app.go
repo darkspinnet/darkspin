@@ -26,6 +26,7 @@ type App struct {
 	lifecycleCtx       context.Context
 	mu                 sync.Mutex
 	serverMu           sync.Mutex
+	remoteRefreshMu    sync.Mutex
 	logMu              sync.Mutex
 	timingMu           sync.Mutex
 	cancel             context.CancelFunc
@@ -452,6 +453,11 @@ func (a *App) Play() error {
 	if err != nil {
 		a.mu.Unlock()
 		return fmt.Errorf("serverAddress: %w", err)
+	}
+	err = a.recordProfileConnection(account)
+	if err != nil {
+		a.mu.Unlock()
+		return fmt.Errorf("profileConnection: %w", err)
 	}
 	gameCtx, gameDone, gameCancel := a.beginGameLaunchLocked()
 	a.status.State = "launching"

@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Progress } from '@/components/ui/progress'
 import LauncherDialog from '@/components/LauncherDialog.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { CancelPatch, CloseDetachedGameInstances, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetStatus, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, RefreshInstallationStatus, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, RestartLauncher, ScanRemoteServers, SendReport, SetIdentity, SetServerConfiguration, StartDetachedGameInstance, UninstallDarkspinner } from '../wailsjs/go/main/App'
+import { CancelPatch, CloseDetachedGameInstances, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetStatus, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, RefreshInstallationStatus, RefreshRemoteProfiles, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, RestartLauncher, ScanRemoteServers, SendReport, SetIdentity, SetServerConfiguration, StartDetachedGameInstance, UninstallDarkspinner } from '../wailsjs/go/main/App'
 import { BrowserOpenURL, ClipboardSetText, EventsOn, Quit } from '../wailsjs/runtime/runtime'
 
 const status = ref({ state:'starting', message:'Starting DarkSpinner', identity:'', auth:'Starting', server:'Starting', patch:'Pending', game:'Checking', avatar:'Preparing', profile:'Starting', content:'Pending', identityError:'', authError:'', serverError:'', patchError:'', gameError:'', avatarError:'', profileError:'', contentError:'', lastRun:'', launcherNotice:'', version:'', buildChannel:'production', progress:0, patchProgress:0, avatarProgress:0, contentProgress:0, isAuthenticated:false, isAuthOnline:false, isServerOnline:false, isPatchComplete:false, isPatchActive:false, isGameReady:false, isAvatarReady:false, isProfileStoreReady:false, isContentReady:false, isPlayReady:false, isCinematicSkipped:false, isLastRunFailure:false, isStartupBlocked:false })
@@ -359,6 +359,32 @@ function campaignLevelFor(profile) {
   if (!profile?.isTutorialCompleted) return 0
   return Math.min(campaignPlanets.length, Math.max(1, profile.highestCampaignUnlocked || 1))
 }
+
+function profileCreateDate(profile) {
+  if (!profile?.createDt) return ''
+  const createDT = new Date(profile.createDt)
+  if (Number.isNaN(createDT.getTime())) return ''
+  return createDT.toISOString().slice(0, 10)
+}
+function profileLastConnectedDate(profile) {
+  if (!profile?.lastConnectedDt) return ''
+  const lastConnectedDT = new Date(profile.lastConnectedDt)
+  if (Number.isNaN(lastConnectedDT.getTime())) return ''
+  return lastConnectedDT.toISOString().slice(0, 10)
+}
+function profileLastPlayedDate(profile) {
+  const connectionDT = profile?.lastConnectionDt || profile?.lastConnectedDt
+  if (!connectionDT) return 'NEVER'
+  const lastPlayedDT = new Date(connectionDT)
+  if (Number.isNaN(lastPlayedDT.getTime())) return 'NEVER'
+  return lastPlayedDT.toISOString().slice(0, 10)
+}
+function markProfilePlayed(loginName) {
+  const connectionDT = new Date().toISOString()
+  profiles.value = profiles.value.map(profile =>
+    profile.loginName === loginName ? { ...profile, lastConnectionDt:connectionDT } : profile,
+  )
+}
 function campaignLabelFor(chainLevel) {
   if (!chainLevel) return 'TUTORIAL'
   const planet = Math.floor((chainLevel - 1) / 4) + 1
@@ -482,8 +508,14 @@ async function refreshRemoteProfiles() {
       remoteProfiles.value.find(profile => isSameRemoteServer(profile.serverAddress, remoteServerAddress.value)) ||
       remoteProfiles.value[0]
     if (selected && !selectedRemoteProfile.value) selectRemoteProfile(selected)
+    void refreshStaleRemoteProfiles()
   }
   catch (error) { recordError(error) }
+}
+
+async function refreshStaleRemoteProfiles() {
+  try { remoteProfiles.value = await RefreshRemoteProfiles() || remoteProfiles.value }
+  catch { /* Cached remote profiles remain usable while their server is offline. */ }
 }
 
 async function scanRemoteServers() {
@@ -783,6 +815,7 @@ async function replaceRunningGame() {
 
 async function launchSelectedProfile() {
   await Play()
+  markProfilePlayed(selectedProfile.value)
   activeClientRoute.value = 'play'
   isGameLaunchedThisSession.value = true
 }
@@ -1140,6 +1173,7 @@ async function startDetachedGame() {
 
 async function launchDetachedProfile(profileName) {
   await StartDetachedGameInstance(profileName)
+  markProfilePlayed(profileName)
   isGameLaunchedThisSession.value = true
 }
 
@@ -1181,7 +1215,7 @@ async function copyLauncherFailure() {
 </script>
 
 <template>
-  <main class="spinner-shell" :class="{ onboarding:isInstallationRequired, management:activePage === 'launcher' || activePage === 'remote' || activePage === 'config' }" @pointerdown.capture="handleLauncherInteraction" @keydown.capture="handleLauncherInteraction">
+  <main class="spinner-shell" :class="{ onboarding:isInstallationRequired, management:activePage === 'launcher' || activePage === 'remote' || activePage === 'config', 'remote-accent':activePage === 'remote', 'detached-accent':activePage === 'launcher' }" @pointerdown.capture="handleLauncherInteraction" @keydown.capture="handleLauncherInteraction">
     <Tabs :model-value="activePage" @update:model-value="showPage" class="workspace" :class="{ 'navigation-hidden':isInstallationRequired }">
       <div v-if="!isInstallationRequired" class="workspace-navigation">
         <div class="workspace-wordmark" aria-label="Dark Spin"><span>DARK</span><strong>SPIN</strong></div>
@@ -1239,7 +1273,7 @@ async function copyLauncherFailure() {
                   <SelectTrigger class="profile-select-trigger" aria-label="Remote Crogenitor"><SelectValue>{{ selectedRemoteProfileLabel }}</SelectValue></SelectTrigger>
                   <SelectContent>
                     <SelectItem v-for="profile in remoteProfiles" :key="`${profile.serverAddress}:${profile.loginName}`" :value="`${profile.serverAddress}:${profile.loginName}`">
-                      <span class="profile-option"><img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt=""><span><strong>{{ profile.displayName }}</strong><small>{{ profile.serverAddress }}</small></span></span>
+                      <span class="profile-option profile-detail-option"><span class="profile-option-photo"><img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt=""></span><span class="profile-option-copy"><strong>{{ profile.displayName }}</strong><small>{{ profile.serverAddress }}</small></span><span class="profile-option-level">LEVEL {{ profile.crogenitorLevel }}</span><small class="profile-option-last-played">LAST PLAYED {{ profileLastPlayedDate(profile) }}</small></span>
                     </SelectItem>
                   </SelectContent>
                 </Select>
@@ -1247,16 +1281,20 @@ async function copyLauncherFailure() {
               </div>
               <div v-if="selectedRemoteProfile" class="launch-profile-summary">
                 <div class="profile-info-card remote-profile-info-card" :aria-label="`${selectedRemoteProfileLabel} remote profile summary`">
-                  <div class="selected-profile-avatar" :class="{ empty:!selectedRemoteProfileAvatar }">
-                    <img v-if="selectedRemoteProfileAvatar" :src="selectedRemoteProfileAvatar" :alt="`${selectedRemoteProfileLabel} Crogenitor photo`">
+                  <time v-if="profileCreateDate(selectedRemoteProfile)" class="profile-create-date" :datetime="selectedRemoteProfile.createDt">{{ profileCreateDate(selectedRemoteProfile) }}</time>
+                  <div class="selected-profile-avatar-frame">
+                    <div class="selected-profile-avatar" :class="{ empty:!selectedRemoteProfileAvatar }">
+                      <img v-if="selectedRemoteProfileAvatar" :src="selectedRemoteProfileAvatar" :alt="`${selectedRemoteProfileLabel} Crogenitor photo`">
+                    </div>
+                    <span class="profile-level-badge" :aria-label="`Crogenitor level ${selectedRemoteProfile.crogenitorLevel}`">{{ selectedRemoteProfile.crogenitorLevel }}</span>
                   </div>
                   <div class="profile-info-content">
                     <div class="profile-info-heading"><small>REMOTE CROGENITOR</small><strong>{{ selectedRemoteProfileLabel }}</strong></div>
                     <div class="profile-progress">
-                      <span><small>CROGENITOR</small><strong>LEVEL {{ selectedRemoteProfile.crogenitorLevel }}</strong><em>{{ selectedRemoteProfile.cumulativeXp }} XP</em></span>
+                      <span><small>CROGENITOR</small><strong>{{ selectedRemoteProfile.crogenitorLevel }}</strong><em>{{ selectedRemoteProfile.cumulativeXp }} XP</em></span>
                       <span><small>PROGRESS</small><strong>{{ selectedRemoteCampaignLabel }}</strong><em>{{ selectedRemoteCampaignDetail }}</em></span>
+                      <span class="remote-profile-server"><small>SERVER</small><strong>{{ selectedRemoteProfile.serverAddress }}</strong><em>{{ profileLastConnectedDate(selectedRemoteProfile) }}</em></span>
                     </div>
-                    <div class="remote-profile-server"><small>SERVER</small><strong>{{ selectedRemoteProfile.serverAddress }}</strong></div>
                     <div v-if="!selectedRemoteProfile.isPasswordRemembered" class="remote-profile-password">
                       <label for="remote-profile-password">PASSWORD</label>
                       <Input id="remote-profile-password" v-model="remotePassword" type="password" placeholder="ENTER PASSWORD" autocomplete="current-password" :disabled="isRemoteBusy" @keyup.enter="launchRemote" />
@@ -1342,7 +1380,7 @@ async function copyLauncherFailure() {
                   <SelectTrigger class="profile-select-trigger" aria-label="Crogenitor"><SelectValue>{{ selectedProfileLabel }}</SelectValue></SelectTrigger>
                   <SelectContent>
                     <SelectItem v-for="profile in profiles" :key="profile.loginName" :value="profile.loginName">
-                      <span class="profile-option"><img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt=""><span><strong>{{ profile.displayName }}</strong><small v-if="profile.isTutorialCompletionPending || profile.displayName !== profile.loginName">{{ profile.isTutorialCompletionPending ? 'Starter loadout queued' : profile.loginName }}</small></span></span>
+                      <span class="profile-option profile-detail-option"><span class="profile-option-photo"><img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt=""></span><span class="profile-option-copy"><strong>{{ profile.displayName }}</strong><small v-if="profile.isTutorialCompletionPending || profile.displayName !== profile.loginName">{{ profile.isTutorialCompletionPending ? 'Starter loadout queued' : profile.loginName }}</small></span><span class="profile-option-level">LEVEL {{ profile.crogenitorLevel }}</span><small class="profile-option-last-played">LAST PLAYED {{ profileLastPlayedDate(profile) }}</small></span>
                     </SelectItem>
                   </SelectContent>
                 </Select>
@@ -1350,13 +1388,17 @@ async function copyLauncherFailure() {
                 </div>
                 <div class="launch-profile-summary">
                   <div v-if="selectedProfileRecord" class="profile-info-card" :aria-label="`${selectedProfileLabel} profile summary`">
-                    <div class="selected-profile-avatar" :class="{ empty:!selectedProfileAvatar }">
-                      <img v-if="selectedProfileAvatar" :src="selectedProfileAvatar" :alt="`${selectedProfileLabel} Crogenitor photo`">
+                    <time v-if="profileCreateDate(selectedProfileRecord)" class="profile-create-date" :datetime="selectedProfileRecord.createDt">{{ profileCreateDate(selectedProfileRecord) }}</time>
+                    <div class="selected-profile-avatar-frame">
+                      <div class="selected-profile-avatar" :class="{ empty:!selectedProfileAvatar }">
+                        <img v-if="selectedProfileAvatar" :src="selectedProfileAvatar" :alt="`${selectedProfileLabel} Crogenitor photo`">
+                      </div>
+                      <span class="profile-level-badge" :aria-label="`Crogenitor level ${selectedProfileRecord.crogenitorLevel}`">{{ selectedProfileRecord.crogenitorLevel }}</span>
                     </div>
                     <div class="profile-info-content">
                       <div class="profile-info-heading"><small>LOCAL CROGENITOR</small><strong>{{ selectedProfileLabel }}</strong></div>
                       <div class="profile-progress">
-                        <span><small>CROGENITOR</small><strong>LEVEL {{ selectedProfileRecord.crogenitorLevel }}</strong><em>{{ selectedProfileRecord.cumulativeXp }} XP</em></span>
+                        <span><small>CROGENITOR</small><strong>{{ selectedProfileRecord.crogenitorLevel }}</strong><em>{{ selectedProfileRecord.cumulativeXp }} XP</em></span>
                         <span><small>PROGRESS</small><strong>{{ selectedCampaignLabel }}</strong><em>{{ selectedCampaignDetail }}</em></span>
                       </div>
                     </div>
@@ -1371,7 +1413,7 @@ async function copyLauncherFailure() {
 
     <TabsContent v-else value="launcher" as-child><section class="management-frame detached-frame">
       <div class="management-grid detached-grid">
-        <Card class="management-card detached-card">
+        <Card class="bay launcher-bay detached-card">
           <div class="launch-pane">
             <div class="profile-core">
               <template v-if="profiles.length">
@@ -1381,7 +1423,7 @@ async function copyLauncherFailure() {
                   <SelectTrigger class="profile-select-trigger" aria-label="Detached Crogenitor"><SelectValue>{{ detachedProfileLabel }}</SelectValue></SelectTrigger>
                   <SelectContent>
                     <SelectItem v-for="profile in profiles" :key="profile.loginName" :value="profile.loginName">
-                      <span class="profile-option"><img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt=""><span><strong>{{ profile.displayName }}</strong><small v-if="profile.isTutorialCompletionPending || profile.displayName !== profile.loginName">{{ profile.isTutorialCompletionPending ? 'Starter loadout queued' : profile.loginName }}</small></span></span>
+                      <span class="profile-option profile-detail-option"><span class="profile-option-photo"><img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt=""></span><span class="profile-option-copy"><strong>{{ profile.displayName }}</strong><small v-if="profile.isTutorialCompletionPending || profile.displayName !== profile.loginName">{{ profile.isTutorialCompletionPending ? 'Starter loadout queued' : profile.loginName }}</small></span><span class="profile-option-level">LEVEL {{ profile.crogenitorLevel }}</span><small class="profile-option-last-played">LAST PLAYED {{ profileLastPlayedDate(profile) }}</small></span>
                     </SelectItem>
                   </SelectContent>
                 </Select>
@@ -1389,13 +1431,17 @@ async function copyLauncherFailure() {
                 </div>
                 <div class="launch-profile-summary">
                   <div v-if="detachedProfileRecord" class="profile-info-card" :aria-label="`${detachedProfileLabel} detached profile summary`">
-                    <div class="selected-profile-avatar" :class="{ empty:!detachedProfileAvatar }">
-                      <img v-if="detachedProfileAvatar" :src="detachedProfileAvatar" :alt="`${detachedProfileLabel} Crogenitor photo`">
+                    <time v-if="profileCreateDate(detachedProfileRecord)" class="profile-create-date" :datetime="detachedProfileRecord.createDt">{{ profileCreateDate(detachedProfileRecord) }}</time>
+                    <div class="selected-profile-avatar-frame">
+                      <div class="selected-profile-avatar" :class="{ empty:!detachedProfileAvatar }">
+                        <img v-if="detachedProfileAvatar" :src="detachedProfileAvatar" :alt="`${detachedProfileLabel} Crogenitor photo`">
+                      </div>
+                      <span class="profile-level-badge" :aria-label="`Crogenitor level ${detachedProfileRecord.crogenitorLevel}`">{{ detachedProfileRecord.crogenitorLevel }}</span>
                     </div>
                     <div class="profile-info-content">
                       <div class="profile-info-heading"><small>DETACHED CROGENITOR</small><strong>{{ detachedProfileLabel }}</strong></div>
                       <div class="profile-progress">
-                        <span><small>CROGENITOR</small><strong>LEVEL {{ detachedProfileRecord.crogenitorLevel }}</strong><em>{{ detachedProfileRecord.cumulativeXp }} XP</em></span>
+                        <span><small>CROGENITOR</small><strong>{{ detachedProfileRecord.crogenitorLevel }}</strong><em>{{ detachedProfileRecord.cumulativeXp }} XP</em></span>
                         <span><small>PROGRESS</small><strong>{{ detachedCampaignLabel }}</strong><em>{{ detachedCampaignDetail }}</em></span>
                       </div>
                     </div>

@@ -56,6 +56,7 @@ const destructibleSmallDeleteDelay = 1500 * time.Millisecond
 const destructibleLargeDeleteDelay = 2500 * time.Millisecond
 
 const nocturnaThornNounName = "PHYS_moon1_plant_thorny_1.Noun"
+const nightmareVineNounName = "DEST_nocturna_herotree_yellow_1.Noun"
 
 func applyNPCSlowTiming(
 	profile zonenpc.ActionProfile, attackScale float32,
@@ -200,6 +201,11 @@ type zoneNPCDeathDefinition struct {
 func destructibleDeathPresentation(
 	snapshot zonenpc.Snapshot, physics zoneNounPhysics,
 ) (string, time.Duration) {
+	if strings.EqualFold(snapshot.Plan.NounName, nightmareVineNounName) {
+		// The Vine noun's dead graphics state selects its authored destruction
+		// marker set. A generic explosion would cover that presentation.
+		return "", destructibleSmallDeleteDelay
+	}
 	if strings.EqualFold(snapshot.Plan.NounName, campaignCorruptorPortalNounName) {
 		return "scaldron_boss_portal_explosion_effect.ServerEventDef", time.Millisecond
 	}
@@ -279,6 +285,7 @@ func campaignNPCDeathDefinition(
 			snapshot, physics,
 		)
 	}
+	isNightmareVine := strings.EqualFold(snapshot.Plan.NounName, nightmareVineNounName)
 	isIllusion := snapshot.Plan.OwnerObjectID != 0 && zonenpc.IsNashiraNoun(snapshot.Plan.NounName)
 	if isIllusion {
 		// Duplicates dissolve; only the real boss owns the long death scene.
@@ -299,7 +306,7 @@ func campaignNPCDeathDefinition(
 		isCreatureTypeKnown:        physics.IsCreatureTypeKnown,
 		isFixture:                  isFixture,
 		isBoss:                     snapshot.Plan.IsBoss || isDestructor,
-		isDeathAnimationSuppressed: isIllusion,
+		isDeathAnimationSuppressed: isIllusion || isNightmareVine,
 		ordinaryDeathAnimation:     ordinaryDeathAnimation,
 		corpseFadeDelay:            deathPresentation.PresentationDuration,
 		graphicsState:              graphicsState,

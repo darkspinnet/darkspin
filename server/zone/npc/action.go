@@ -2358,7 +2358,7 @@ func stagnantNovaAboveProfile(cooldown time.Duration) ActionProfile {
 		EmergeDelay:            1500 * time.Millisecond,
 		HitDelay:               2800 * time.Millisecond,
 		ReleaseDelay:           3400 * time.Millisecond,
-		Cooldown:               max(cooldown, 3400*time.Millisecond),
+		Cooldown:               3400*time.Millisecond + cooldown,
 		Range:                  8,
 		Radius:                 8,
 		Angle:                  360,

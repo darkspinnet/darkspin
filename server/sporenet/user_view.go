@@ -6,6 +6,8 @@ import "time"
 type UserIdentity struct {
 	LoginName                   string
 	DisplayName                 string
+	CreateDT                    time.Time
+	LastConnectionDT            time.Time
 	AvatarID                    uint32
 	Level                       uint32
 	XP                          uint32
@@ -19,17 +21,19 @@ type UserIdentity struct {
 // Protocol adapters must still explicitly select the fields their client
 // response requires instead of serializing this value directly.
 type UserView struct {
-	DisplayName  string
-	LoginName    string
-	AuthToken    string
-	Account      Account
-	Stats        PlayerStats
-	Squads       []Squad
-	Creatures    []*Creature
-	Parts        []Part
-	Events       []UserEvent
-	Associations map[uint32][]AssociationMember
-	Settings     map[string]string
+	DisplayName      string
+	LoginName        string
+	CreateDT         time.Time
+	LastConnectionDT time.Time
+	AuthToken        string
+	Account          Account
+	Stats            PlayerStats
+	Squads           []Squad
+	Creatures        []*Creature
+	Parts            []Part
+	Events           []UserEvent
+	Associations     map[uint32][]AssociationMember
+	Settings         map[string]string
 }
 
 // View returns a detached and internally consistent client-safe projection.
@@ -46,17 +50,19 @@ func (u *User) View() UserView {
 		}
 	}
 	view := UserView{
-		DisplayName:  u.DisplayName,
-		LoginName:    u.LoginName,
-		AuthToken:    u.AuthToken,
-		Account:      u.Account,
-		Stats:        stats,
-		Squads:       append([]Squad(nil), u.Squads...),
-		Creatures:    cloneCreatures(u.Creatures),
-		Parts:        append([]Part(nil), u.Parts...),
-		Events:       append([]UserEvent(nil), u.Events...),
-		Associations: cloneAssociations(u.Associations),
-		Settings:     cloneSettings(u.Settings),
+		DisplayName:      u.DisplayName,
+		LoginName:        u.LoginName,
+		CreateDT:         u.CreateDT,
+		LastConnectionDT: u.LastConnectionDT,
+		AuthToken:        u.AuthToken,
+		Account:          u.Account,
+		Stats:            stats,
+		Squads:           append([]Squad(nil), u.Squads...),
+		Creatures:        cloneCreatures(u.Creatures),
+		Parts:            append([]Part(nil), u.Parts...),
+		Events:           append([]UserEvent(nil), u.Events...),
+		Associations:     cloneAssociations(u.Associations),
+		Settings:         cloneSettings(u.Settings),
 	}
 	u.mu.RUnlock()
 	return view

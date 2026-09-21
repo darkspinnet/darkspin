@@ -8,6 +8,8 @@ var schemaStatements = []string{
 		login_name TEXT NOT NULL COLLATE NOCASE UNIQUE,
 		display_name TEXT NOT NULL,
 		password TEXT NOT NULL,
+		create_dt TEXT NOT NULL,
+		last_connection_dt TEXT NOT NULL DEFAULT '',
 		is_tutorial_completion_pending INTEGER NOT NULL DEFAULT 0,
 		is_all_access_granted INTEGER NOT NULL DEFAULT 1,
 		is_online_access_granted INTEGER NOT NULL DEFAULT 1,

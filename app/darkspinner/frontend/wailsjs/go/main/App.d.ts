@@ -60,6 +60,8 @@ export function Play():Promise<void>;
 
 export function RefreshInstallationStatus():Promise<main.InstallationStatus>;
 
+export function RefreshRemoteProfiles():Promise<Array<main.RemoteProfile>>;
+
 export function RegisterRemoteProfile(arg1:string,arg2:string,arg3:string,arg4:number,arg5:boolean,arg6:boolean):Promise<void>;
 
 export function RelocateToGameRoot(arg1:main.RelocationRequest):Promise<void>;
