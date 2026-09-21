@@ -428,10 +428,7 @@ func (r gameplayActionRuntime) dispatch(
 	r.registry.mutex.RLock()
 	commandSession, isSessionFound := r.registry.sessions[packet.Address.String()]
 	isRejoinPending := isSessionFound && commandSession.isRejoinPending
-	isTerminal := isSessionFound && (commandSession.isZoneTerminal() ||
-		(commandSession.squad != nil && commandSession.squad.IsGameOver()) ||
-		(commandSession.zone != nil && commandSession.zone.Boss() != nil &&
-			commandSession.zone.Boss().IsBeamOutCommitted()))
+	isTerminal := isSessionFound && commandSession.isZoneTerminal()
 	r.registry.mutex.RUnlock()
 	if isRejoinPending {
 		return nil, errors.New("rejoin baseline pending")
@@ -1171,7 +1168,7 @@ func newGameplayHandlerWithDependencies(
 		program: program, modifierPool: modifierInstancePool,
 	}
 	securityRuntime := securityraknet.NewTransferRuntime(
-		campaignSecurityTransferAuthority{registry: sessionRegistry},
+		campaignSecurityTransferAuthority{registry: sessionRegistry, logger: logger},
 		dependency.now,
 		logger,
 	)
@@ -2942,8 +2939,14 @@ func (r gameplayPendingRuntime) consumePlayerEventCommand(
 		}
 		r.registry.sessions[packet.Address.String()] = currentSession
 		r.registry.mutex.Unlock()
+		publishErr := publishCampaignPeersAfterCommit(
+			r.registry, packet, [][]byte{completionPacket},
+		)
+		if publishErr != nil {
+			return nil, false, fmt.Errorf("eventVictoryPublish: %w", publishErr)
+		}
 		r.logger.Printf(
-			"RakNet developer victory published boss completion boss=%d for %s; awaiting Return to Ship",
+			"RakNet developer victory published shared boss completion boss=%d for %s; awaiting Return to Ship",
 			bossObjectID, packet.Address,
 		)
 		return [][]byte{completionPacket}, true, nil
@@ -2989,7 +2992,7 @@ func (r gameplayPendingRuntime) consumePlayerEventCommand(
 		)
 	}
 	packets, applyErr := currentSession.applyDeveloperEventCommand(
-		command, r.now(), packet.SourceTime,
+		r.registry, command, r.now(), packet.SourceTime,
 	)
 	if applyErr != nil {
 		r.registry.mutex.Unlock()

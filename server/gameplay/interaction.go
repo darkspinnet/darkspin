@@ -293,10 +293,70 @@ func (r campaignInteractionRuntime) handlePickup(
 			}
 			return r.rejectPickup(command, campaignPickupRejectionReason(admission))
 		}
+		if r.progression == nil {
+			currentSession.zone.Pickups().Release(command.Value)
+			r.registry.mutex.Unlock()
+			return nil, errors.New("campaignEquipmentProgression: unavailable")
+		}
+		inventoryReader, isInventoryReader := r.progression.(campaignInventoryReader)
+		if !isInventoryReader {
+			currentSession.zone.Pickups().Release(command.Value)
+			r.registry.mutex.Unlock()
+			return nil, errors.New("campaignEquipmentCapacity: unavailable")
+		}
 		if equipmentPickup.WinnerUserID == 0 {
 			participants := r.equipmentRollParticipantsLocked(currentSession)
+			eligibleParticipants := make(
+				[]zoneloot.EquipmentRollParticipant, 0, len(participants),
+			)
+			inventoryStatuses := make(
+				map[uint64]sporenet.PartInventoryStatus, len(participants),
+			)
+			for _, participant := range participants {
+				inventoryStatus, statusErr := inventoryReader.PartInventoryStatus(
+					ctx, int64(participant.UserID),
+				)
+				if statusErr != nil {
+					currentSession.zone.Pickups().Release(command.Value)
+					r.registry.mutex.Unlock()
+					return nil, fmt.Errorf(
+						"campaignEquipmentCapacity[%d]: %w", participant.UserID, statusErr,
+					)
+				}
+				inventoryStatuses[participant.UserID] = inventoryStatus
+				if inventoryStatus.IsFull {
+					if r.logger != nil {
+						r.logger.Printf(
+							"RakNet campaign equipment roll excluded full inventory game=%d user=%d object=%d owned=%d capacity=%d",
+							currentSession.binding.GameID, participant.UserID,
+							equipmentPickup.ObjectID, inventoryStatus.OwnedCount,
+							inventoryStatus.Capacity,
+						)
+					}
+					continue
+				}
+				eligibleParticipants = append(eligibleParticipants, participant)
+			}
+			if len(eligibleParticipants) == 0 {
+				currentSession.zone.Pickups().Release(command.Value)
+				gameID := currentSession.binding.GameID
+				userID := currentSession.binding.UserID
+				inventoryStatus := inventoryStatuses[userID]
+				r.registry.mutex.Unlock()
+				notificationErr := r.gameplayJoin.PublishInventoryFull(
+					context.WithoutCancel(ctx), int64(userID), gameID,
+					inventoryStatus.OwnedCount, inventoryStatus.Capacity,
+				)
+				if notificationErr != nil && r.logger != nil {
+					r.logger.Printf(
+						"RakNet campaign equipment all-full notice failed user=%d object=%d: %v",
+						userID, equipmentPickup.ObjectID, notificationErr,
+					)
+				}
+				return r.rejectPickup(command, "inventory full")
+			}
 			rollResult, rollErr := zoneloot.RollEquipment(
-				participants, currentSession.zone.DropRandom(),
+				eligibleParticipants, currentSession.zone.DropRandom(),
 			)
 			if rollErr != nil {
 				currentSession.zone.Pickups().Release(command.Value)
@@ -329,44 +389,45 @@ func (r campaignInteractionRuntime) handlePickup(
 				)
 			}
 		}
-		if r.progression == nil {
+		inventoryStatus, statusErr := inventoryReader.PartInventoryStatus(
+			ctx, int64(equipmentPickup.WinnerUserID),
+		)
+		if statusErr != nil {
 			currentSession.zone.Pickups().Release(command.Value)
 			r.registry.mutex.Unlock()
-			return nil, errors.New("campaignEquipmentProgression: unavailable")
+			return nil, fmt.Errorf("campaignEquipmentCapacity: %w", statusErr)
 		}
-		inventoryReader, isInventoryReader := r.progression.(campaignInventoryReader)
-		if isInventoryReader {
-			inventoryStatus, statusErr := inventoryReader.PartInventoryStatus(
-				ctx, int64(equipmentPickup.WinnerUserID),
+		if inventoryStatus.IsFull {
+			clearErr := currentSession.zone.PickupPayload().ClearEquipmentRoll(
+				equipmentPickup.ObjectID, equipmentPickup.WinnerUserID,
 			)
-			if statusErr != nil {
-				currentSession.zone.Pickups().Release(command.Value)
-				r.registry.mutex.Unlock()
-				return nil, fmt.Errorf("campaignEquipmentCapacity: %w", statusErr)
+			currentSession.zone.Pickups().Release(command.Value)
+			gameID := currentSession.binding.GameID
+			r.registry.mutex.Unlock()
+			if clearErr != nil && r.logger != nil {
+				r.logger.Printf(
+					"RakNet campaign equipment full winner reset failed user=%d object=%d: %v",
+					equipmentPickup.WinnerUserID, equipmentPickup.ObjectID, clearErr,
+				)
 			}
-			if inventoryStatus.IsFull {
-				currentSession.zone.Pickups().Release(command.Value)
-				gameID := currentSession.binding.GameID
-				r.registry.mutex.Unlock()
-				notificationErr := r.gameplayJoin.PublishInventoryFull(
-					context.WithoutCancel(ctx), int64(equipmentPickup.WinnerUserID), gameID,
+			notificationErr := r.gameplayJoin.PublishInventoryFull(
+				context.WithoutCancel(ctx), int64(equipmentPickup.WinnerUserID), gameID,
+				inventoryStatus.OwnedCount, inventoryStatus.Capacity,
+			)
+			if notificationErr != nil && r.logger != nil {
+				r.logger.Printf(
+					"RakNet campaign equipment full-inventory notice failed user=%d object=%d: %v",
+					equipmentPickup.WinnerUserID, equipmentPickup.ObjectID, notificationErr,
+				)
+			}
+			if r.logger != nil {
+				r.logger.Printf(
+					"RakNet campaign equipment rejected for full inventory user=%d object=%d owned=%d capacity=%d",
+					equipmentPickup.WinnerUserID, equipmentPickup.ObjectID,
 					inventoryStatus.OwnedCount, inventoryStatus.Capacity,
 				)
-				if notificationErr != nil && r.logger != nil {
-					r.logger.Printf(
-						"RakNet campaign equipment full-inventory notice failed user=%d object=%d: %v",
-						equipmentPickup.WinnerUserID, equipmentPickup.ObjectID, notificationErr,
-					)
-				}
-				if r.logger != nil {
-					r.logger.Printf(
-						"RakNet campaign equipment rejected for full inventory user=%d object=%d owned=%d capacity=%d",
-						equipmentPickup.WinnerUserID, equipmentPickup.ObjectID,
-						inventoryStatus.OwnedCount, inventoryStatus.Capacity,
-					)
-				}
-				return r.rejectPickup(command, "inventory full")
 			}
+			return r.rejectPickup(command, "inventory full")
 		}
 		movementPackets, movementErr := currentSession.stopCampaignPickup(r.now())
 		if movementErr != nil {
@@ -415,7 +476,8 @@ func (r campaignInteractionRuntime) handlePickup(
 		step := campaignEquipmentPickupStep{
 			runtime: r, ctx: context.WithoutCancel(ctx), sessionKey: sessionKey,
 			generation: generation, userID: equipmentPickup.WinnerUserID,
-			pickup: equipmentPickup, deletePacket: deletePacket,
+			sourceTime: packet.SourceTime,
+			pickup:     equipmentPickup, deletePacket: deletePacket,
 			releasePacket: releasePacket, rejectPacket: rejectPacket,
 			progression: r.progression,
 		}
@@ -696,6 +758,7 @@ func (r campaignInteractionRuntime) equipmentRollParticipantsLocked(
 
 const campaignEquipmentPickupDelay = 400 * time.Millisecond
 const campaignEquipmentPickupCommitDelay = 100 * time.Millisecond
+const campaignEquipmentPickupAnimation = "pickup_catalyst"
 
 const campaignNPCEquipmentSourceAmount = 10
 const campaignNPCOrbSourceAmount = 25
@@ -861,6 +924,7 @@ type campaignEquipmentPickupStep struct {
 	sessionKey    string
 	generation    uint64
 	userID        uint64
+	sourceTime    uint64
 	pickup        zoneinteract.EquipmentPickup
 	deletePacket  []byte
 	releasePacket []byte
@@ -903,6 +967,17 @@ func (s campaignEquipmentPickupStep) produce() ([][]byte, error) {
 		s.runtime.registry.sessions[s.sessionKey] = peerSession
 	}
 	if err != nil {
+		if errors.Is(err, sporenet.ErrInventoryFull) {
+			clearErr := sourceSession.zone.PickupPayload().ClearEquipmentRoll(
+				s.pickup.ObjectID, s.userID,
+			)
+			if clearErr != nil && s.runtime.logger != nil {
+				s.runtime.logger.Printf(
+					"RakNet campaign equipment delayed full winner reset failed user=%d object=%d: %v",
+					s.userID, s.pickup.ObjectID, clearErr,
+				)
+			}
+		}
 		sourceSession.zone.Pickups().Release(s.pickup.ObjectID)
 		s.runtime.registry.mutex.Unlock()
 		if errors.Is(err, sporenet.ErrInventoryFull) {
@@ -944,6 +1019,19 @@ func (s campaignEquipmentPickupStep) produce() ([][]byte, error) {
 			return nil, fmt.Errorf("campaignEquipmentAward: %w", err)
 		}
 	}
+	pickupAnimationPacket := []byte(nil)
+	isRemoteWinner := winnerSessionKey != "" && winnerSessionKey != s.sessionKey
+	if isRemoteWinner {
+		pickupAnimationPacket, err = abilityraknet.Animation(
+			winnerSession.deployedObjectID,
+			campaignEquipmentPickupAnimation,
+			s.sourceTime,
+		)
+		if err != nil {
+			s.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("campaignEquipmentAnimation: %w", err)
+		}
+	}
 	rollPackets := make([][]byte, 0, len(s.pickup.Rolls))
 	if len(s.pickup.Rolls) > 1 {
 		for index, roll := range s.pickup.Rolls {
@@ -965,6 +1053,9 @@ func (s campaignEquipmentPickupStep) produce() ([][]byte, error) {
 			continue
 		}
 		packets := append([][]byte(nil), rollPackets...)
+		if pickupAnimationPacket != nil {
+			packets = append(packets, pickupAnimationPacket)
+		}
 		if candidateSessionKey == winnerSessionKey {
 			packets = append(packets, awardPacket)
 		}
@@ -1285,6 +1376,7 @@ func (s *gameplayPeerSession) spawnCampaignNPCDNA(
 
 func (s *gameplayPeerSession) collectCampaignDNA(
 	ctx context.Context, progression zoneloot.DNAGranter,
+	registry *gameplaySessionRegistry,
 	start raknet.Vector3, end raknet.Vector3, now time.Time,
 ) ([][]byte, error) {
 	if s == nil || progression == nil || s.zone == nil || s.zone.DNA() == nil {
@@ -1299,9 +1391,20 @@ func (s *gameplayPeerSession) collectCampaignDNA(
 		return nil, nil
 	}
 	pickup := dnaReservation.Pickup()
-	nextDNA := s.binding.DNA + pickup.Amount
+	if pickup.Amount > ^uint32(0)-s.binding.DNA {
+		dnaReservation.Release()
+		return nil, errors.New("DNA overflow")
+	}
+	grantedDNA, err := progression.GrantDNA(
+		ctx, int64(s.binding.UserID), pickup.Amount,
+	)
+	if err != nil {
+		dnaReservation.Release()
+		return nil, fmt.Errorf("dnaGrant: %w", err)
+	}
+	s.binding.DNA = grantedDNA
 	packets, err := lootraknet.MarshalDNACollection(lootraknet.DNACollectionRequest{
-		Slot: uint8(s.binding.Slot), DNA: nextDNA, Amount: pickup.Amount,
+		Slot: uint8(s.binding.Slot), DNA: grantedDNA, Amount: pickup.Amount,
 		ActorObjectID: s.deployedObjectID, PickupObjectID: pickup.ObjectID,
 		Position: raknet.Vector3{
 			X: pickup.Position.X,
@@ -1310,17 +1413,96 @@ func (s *gameplayPeerSession) collectCampaignDNA(
 		},
 	})
 	if err != nil {
-		dnaReservation.Release()
+		if !dnaReservation.Commit() {
+			return nil, errors.Join(
+				fmt.Errorf("dnaCollectionMarshal: %w", err),
+				errors.New("DNA reservation commit missing"),
+			)
+		}
 		return nil, fmt.Errorf("dnaCollectionMarshal: %w", err)
 	}
-	grantedDNA, err := dnaReservation.Grant(
-		ctx, progression, int64(s.binding.UserID), s.binding.DNA,
-	)
-	if err != nil {
-		dnaReservation.Release()
-		return nil, fmt.Errorf("dnaGrant: %w", err)
+	if registry != nil {
+		type allyDNAUpdate struct {
+			sessionKey string
+			packet     []byte
+		}
+		allyUpdates := make([]allyDNAUpdate, 0, len(registry.sessions))
+		sessionKeys := make([]string, 0, len(registry.sessions))
+		for sessionKey, candidate := range registry.sessions {
+			if !isActiveCoopPickupAlly(candidate, *s) {
+				continue
+			}
+			sessionKeys = append(sessionKeys, sessionKey)
+		}
+		sort.Strings(sessionKeys)
+		allyUserIDs := make(map[uint64]struct{}, len(sessionKeys))
+		for _, sessionKey := range sessionKeys {
+			candidate := registry.sessions[sessionKey]
+			if _, isFound := allyUserIDs[candidate.binding.UserID]; isFound {
+				continue
+			}
+			allyUserIDs[candidate.binding.UserID] = struct{}{}
+			if pickup.Amount > ^uint32(0)-candidate.binding.DNA {
+				if registry.logger != nil {
+					registry.logger.Printf(
+						"RakNet co-op DNA grant skipped for overflow game=%d user=%d",
+						candidate.binding.GameID, candidate.binding.UserID,
+					)
+				}
+				continue
+			}
+			allyDNA, grantErr := progression.GrantDNA(
+				ctx, int64(candidate.binding.UserID), pickup.Amount,
+			)
+			if grantErr != nil {
+				if registry.logger != nil {
+					registry.logger.Printf(
+						"RakNet co-op DNA grant failed game=%d user=%d: %v",
+						candidate.binding.GameID, candidate.binding.UserID, grantErr,
+					)
+				}
+				continue
+			}
+			candidate.binding.DNA = allyDNA
+			updatePacket, marshalErr := raknet.MarshalApplication(
+				raknet.LabsPlayerDNAUpdateMessage{
+					Slot: uint8(candidate.binding.Slot), DNA: allyDNA,
+				},
+			)
+			if marshalErr != nil {
+				registry.sessions[sessionKey] = candidate
+				if registry.logger != nil {
+					registry.logger.Printf(
+						"RakNet co-op DNA update marshal failed game=%d user=%d: %v",
+						candidate.binding.GameID, candidate.binding.UserID, marshalErr,
+					)
+				}
+				continue
+			}
+			registry.sessions[sessionKey] = candidate
+			allyUpdates = append(allyUpdates, allyDNAUpdate{
+				sessionKey: sessionKey, packet: updatePacket,
+			})
+		}
+		if !dnaReservation.Commit() {
+			return nil, errors.New("DNA reservation commit missing")
+		}
+		for _, update := range allyUpdates {
+			candidate := registry.sessions[update.sessionKey]
+			publishErr := candidate.publishPackets([][]byte{update.packet})
+			if publishErr != nil && registry.logger != nil {
+				registry.logger.Printf(
+					"RakNet co-op DNA update queued game=%d user=%d: %v",
+					candidate.binding.GameID, candidate.binding.UserID, publishErr,
+				)
+			}
+			registry.sessions[update.sessionKey] = candidate
+		}
+		return packets, nil
 	}
-	s.binding.DNA = grantedDNA
+	if !dnaReservation.Commit() {
+		return nil, errors.New("DNA reservation commit missing")
+	}
 	return packets, nil
 }
 
@@ -1457,6 +1639,7 @@ func (s *gameplayPeerSession) spawnCampaignNPCOrb(
 }
 
 func (s *gameplayPeerSession) collectCampaignOrbs(
+	registry *gameplaySessionRegistry,
 	start raknet.Vector3, end raknet.Vector3, now time.Time,
 ) ([][]byte, error) {
 	if s == nil || s.zone.Orbs() == nil || s.squad == nil {
@@ -1483,9 +1666,12 @@ func (s *gameplayPeerSession) collectCampaignOrbs(
 		}
 		kind := zoneHealthOrb
 		isFull := false
-		restored := uint32(0)
+		restoredAmount := float32(0)
 		healing := make([]zoneSquadHealing, 0)
 		manaRestorations := make([]zoneSquadManaRestoration, 0)
+		alliedRestorations := make([]alliedZoneSquadRestoration, 0)
+		partyResourcePackets := make([][]byte, 0)
+		alliedWorldPackets := make([][]byte, 0)
 		resurrections := make([]zoneSquadResurrection, 0)
 		restoreFraction := campaignOrbRestoreFraction *
 			(1 + s.campaignPartAttribute(campaignOrbEffectAttribute))
@@ -1504,10 +1690,7 @@ func (s *gameplayPeerSession) collectCampaignOrbs(
 			}
 			isFull = len(healing) == 0
 			for _, healedCharacter := range healing {
-				if healedCharacter.objectID == s.deployedObjectID {
-					restored = campaignOrbRestoredText(healedCharacter.amount)
-					break
-				}
+				restoredAmount += healedCharacter.amount
 			}
 		}
 		if kind == zoneManaOrb {
@@ -1521,10 +1704,7 @@ func (s *gameplayPeerSession) collectCampaignOrbs(
 			}
 			isFull = len(manaRestorations) == 0
 			for _, restoration := range manaRestorations {
-				if restoration.objectID == s.deployedObjectID {
-					restored = campaignOrbRestoredText(restoration.amount)
-					break
-				}
+				restoredAmount += restoration.amount
 			}
 		}
 		if kind == zoneResurrectionOrb {
@@ -1536,9 +1716,29 @@ func (s *gameplayPeerSession) collectCampaignOrbs(
 			}
 			isFull = len(resurrections) == 0
 		}
-		if isFull && (kind == zoneHealthOrb || kind == zoneManaOrb) {
-			isFull = !s.hasAlliedZoneHeroResourceNeed(kind)
+		if registry != nil && (kind == zoneHealthOrb || kind == zoneManaOrb) {
+			var allyPackets [][]byte
+			var allyErr error
+			alliedRestorations, allyPackets, alliedWorldPackets, allyErr =
+				registry.restoreAlliedZoneSquadsLocked(*s, kind, restoreFraction)
+			if allyErr != nil {
+				s.rollbackZoneSquadHealing(healing)
+				s.rollbackZoneSquadManaRestoration(manaRestorations)
+				s.zone.Pickups().Release(pickup.ObjectID)
+				return nil, fmt.Errorf("orbAllies: %w", allyErr)
+			}
+			partyResourcePackets = append(partyResourcePackets, allyPackets...)
+			for _, alliedRestoration := range alliedRestorations {
+				for _, healedCharacter := range alliedRestoration.healing {
+					restoredAmount += healedCharacter.amount
+				}
+				for _, manaRestoration := range alliedRestoration.manaRestorations {
+					restoredAmount += manaRestoration.amount
+				}
+			}
+			isFull = isFull && len(alliedRestorations) == 0
 		}
+		restored := campaignOrbRestoredText(restoredAmount)
 		encoded, err := marshalCampaignOrbPickup(
 			pickup, s.deployedObjectID, kind, isFull,
 			s.deployedHitPoint(), s.deployedManaPoint(), restored,
@@ -1547,6 +1747,7 @@ func (s *gameplayPeerSession) collectCampaignOrbs(
 			s.rollbackZoneSquadHealing(healing)
 			s.rollbackZoneSquadManaRestoration(manaRestorations)
 			s.rollbackZoneSquadResurrection(resurrections)
+			registry.rollbackAlliedZoneSquadRestorationsLocked(alliedRestorations)
 			s.zone.Pickups().Release(pickup.ObjectID)
 			return nil, fmt.Errorf("orbPickupMarshal: %w", err)
 		}
@@ -1562,16 +1763,20 @@ func (s *gameplayPeerSession) collectCampaignOrbs(
 		for _, resurrection := range resurrections {
 			encoded = append(encoded, resurrection.packet)
 		}
+		encoded = append(encoded, partyResourcePackets...)
+		encoded = append(encoded, alliedWorldPackets...)
 		for _, healedCharacter := range healing {
 			resourcePacket, resourceErr := s.marshalCampaignCharacterResource(
 				healedCharacter.creatureIndex,
 			)
 			if resourceErr != nil {
 				s.rollbackZoneSquadHealing(healing)
+				registry.rollbackAlliedZoneSquadRestorationsLocked(alliedRestorations)
 				s.zone.Pickups().Release(pickup.ObjectID)
 				return nil, fmt.Errorf("orbSquadResource: %w", resourceErr)
 			}
 			encoded = append(encoded, resourcePacket)
+			partyResourcePackets = append(partyResourcePackets, resourcePacket)
 		}
 		for _, restoration := range manaRestorations {
 			resourcePacket, resourceErr := s.marshalCampaignCharacterResource(
@@ -1579,23 +1784,23 @@ func (s *gameplayPeerSession) collectCampaignOrbs(
 			)
 			if resourceErr != nil {
 				s.rollbackZoneSquadManaRestoration(manaRestorations)
+				registry.rollbackAlliedZoneSquadRestorationsLocked(alliedRestorations)
 				s.zone.Pickups().Release(pickup.ObjectID)
 				return nil, fmt.Errorf("orbSquadMana: %w", resourceErr)
 			}
 			encoded = append(encoded, resourcePacket)
+			partyResourcePackets = append(partyResourcePackets, resourcePacket)
 		}
 		if !s.zone.Pickups().Commit(pickup.ObjectID) {
 			s.rollbackZoneSquadHealing(healing)
 			s.rollbackZoneSquadManaRestoration(manaRestorations)
 			s.rollbackZoneSquadResurrection(resurrections)
+			registry.rollbackAlliedZoneSquadRestorationsLocked(alliedRestorations)
 			return nil, errors.New("campaign orb commit missing")
 		}
 		s.zone.Orbs().Remove(pickup.ObjectID)
-		if kind == zoneHealthOrb || kind == zoneManaOrb {
-			err = s.restoreAlliedZoneHeroes(kind, restoreFraction)
-			if err != nil {
-				return nil, fmt.Errorf("orbAllies: %w", err)
-			}
+		if registry != nil {
+			registry.publishAlliedPickupResourcesLocked(*s, partyResourcePackets)
 		}
 		packets = append(packets, encoded...)
 	}
@@ -1649,52 +1854,6 @@ func (s *gameplayPeerSession) clearExitedCampaignOrbFullContacts(
 		}
 		delete(s.fullOrbContactObjectIDs, objectID)
 	}
-}
-
-func (s *gameplayPeerSession) hasAlliedZoneHeroResourceNeed(kind zoneOrbKind) bool {
-	if s == nil || s.zone == nil || s.zone.Hero() == nil {
-		return false
-	}
-	for _, actor := range s.zone.Hero().Snapshots() {
-		if actor.UserID == s.binding.UserID || actor.HitPoint <= 0 {
-			continue
-		}
-		if kind == zoneHealthOrb && actor.HitPoint < actor.MaximumHitPoint {
-			return true
-		}
-		if kind == zoneManaOrb && actor.ManaPoint < actor.MaximumManaPoint {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *gameplayPeerSession) restoreAlliedZoneHeroes(
-	kind zoneOrbKind, restoreFraction float32,
-) error {
-	if s == nil || s.zone == nil || s.zone.Hero() == nil || restoreFraction <= 0 {
-		return nil
-	}
-	for _, actor := range s.zone.Hero().Snapshots() {
-		if actor.UserID == s.binding.UserID || actor.HitPoint <= 0 {
-			continue
-		}
-		hitPoint := actor.HitPoint
-		manaPoint := actor.ManaPoint
-		if kind == zoneHealthOrb {
-			hitPoint = min(actor.MaximumHitPoint, hitPoint+actor.MaximumHitPoint*restoreFraction)
-		}
-		if kind == zoneManaOrb {
-			manaPoint = min(actor.MaximumManaPoint, manaPoint+actor.MaximumManaPoint*restoreFraction)
-		}
-		_, err := s.zone.SetHeroResources(
-			actor.UserID, actor.PeerGeneration, actor.ObjectID, hitPoint, manaPoint,
-		)
-		if err != nil {
-			return fmt.Errorf("ally[%d]: %w", actor.UserID, err)
-		}
-	}
-	return nil
 }
 
 func (s *gameplayPeerSession) rollbackZoneSquadHealing(healing []zoneSquadHealing) {
@@ -1801,7 +1960,12 @@ const (
 )
 
 func campaignOrbRestoredText(amount float32) uint32 {
-	return uint32(math.Round(float64(max(float32(0), amount))))
+	amount = max(float32(0), amount)
+	restored := uint32(math.Round(float64(amount)))
+	if amount > 0 && restored == 0 {
+		return 1
+	}
+	return restored
 }
 
 func marshalCampaignOrbPickup(

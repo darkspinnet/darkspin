@@ -1,7 +1,17 @@
 # Changelog
 
+### 2026-09-21
+
+- Keep each co-op campaign member active after another player enters or aborts from victory results, allowing every ally to finish their own Beam Out instead of becoming stranded on a black screen.
+- Send `/victory` boss completion to every connected co-op ally so each player can enter the shared victory and Beam Out result flow.
+- Exclude full inventories before multiplayer equipment rolls, reroll if the selected inventory fills before grant, and play the pickup emote on the winning hero after a successful award.
+
 ### 2026-09-20
 
+- Share collected DNA, health capsules, and power capsules across every connected co-op ally, including persistent DNA balances and synchronized active and reserve hero resources.
+- Replace zero-value capsule pickup notices with the party's actual restored amount, and leave unneeded power capsules available after the Power full error.
+- Remove Terrified gameplay state and modifier effects from defeated enemies across every co-op session while preserving the remaining duration on living splash targets.
+- Move AI-controlled co-op allies and their summons through a teleporter when a human ally uses it so assistance resumes on the destination side.
 - Reject campaign equipment pickups before their animation when inventory is full, keep the item available, and report the current capacity in game chat.
 - Encode absent item prefixes and suffixes as null assets so pickup cards, Editor inventory, and subsequent mission loading do not resolve a bogus empty-string asset.
 - Mark Remote play and the multiplayer-connections setting as still under development in the launcher.

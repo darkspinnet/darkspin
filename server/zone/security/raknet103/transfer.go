@@ -34,6 +34,7 @@ type Transfer struct {
 	routeIndex  int
 	instanceID  uint32
 	destination raknet.Vector3
+	sourceTime  uint64
 	isReleased  bool
 }
 
@@ -80,12 +81,21 @@ func NewTransfer(req TransferRequest) (*Transfer, [][]byte, error) {
 	transfer := &Transfer{
 		run: run, pool: req.Pool, routeIndex: req.RouteIndex,
 		instanceID: instanceID,
+		sourceTime: req.SourceTime,
 		destination: raknet.Vector3{
 			X: req.Teleport.Destination.X, Y: req.Teleport.Destination.Y,
 			Z: req.Teleport.Destination.Z,
 		},
 	}
 	return transfer, append([][]byte{created}, packets...), nil
+}
+
+// SourceTime returns the client timeline used to start the transfer.
+func (e *Transfer) SourceTime() uint64 {
+	if e == nil {
+		return 0
+	}
+	return e.sourceTime
 }
 
 func (e *Transfer) Advance(deadline time.Duration) ([][]byte, error) {

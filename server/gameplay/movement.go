@@ -52,6 +52,7 @@ func (e gameplayPeerSession) deployedCampaignFootprintRadius() float32 {
 
 type campaignSecurityTransferAuthority struct {
 	registry *gameplaySessionRegistry
+	logger   *log.Logger
 }
 
 func (e campaignSecurityTransferAuthority) AdvanceSecurityTransfer(
@@ -85,6 +86,26 @@ func (e campaignSecurityTransferAuthority) AdvanceSecurityTransfer(
 			return nil, fmt.Errorf("campaignSecurityCompanion: %w", companionErr)
 		}
 		packets = append(packets, companionPackets...)
+		securityTeleport, isTeleportFound := zonesecurity.Route(req.Transfer.RouteIndex())
+		if isTeleportFound {
+			route := game.CampaignTeleportRoute{
+				Source: securityTeleport.Source, Destination: securityTeleport.Destination,
+				IsSecurity: true, IsBoss: securityTeleport.IsBoss,
+			}
+			aiPackets, followCount, followErr := e.registry.followPlayerAITeleporterLocked(
+				req.SessionKey, peerSession, route, raknet.Quaternion{W: 1},
+				req.Transfer.SourceTime(), req.Now,
+			)
+			packets = append(packets, aiPackets...)
+			if followErr != nil && e.logger != nil {
+				e.logger.Printf("RakNet player AI security teleporter follow incomplete game=%d source_user=%d: %v",
+					peerSession.binding.GameID, peerSession.binding.UserID, followErr)
+			}
+			if followCount > 0 && e.logger != nil {
+				e.logger.Printf("RakNet player AI security teleporter follow game=%d source_user=%d followers=%d",
+					peerSession.binding.GameID, peerSession.binding.UserID, followCount)
+			}
+		}
 		if peerSession.zone.Security() == nil {
 			return nil, errors.New("campaignSecurityRoute: unavailable")
 		}
@@ -214,14 +235,15 @@ func (r campaignMovementCommandRuntime) cancelCompanionFollows(
 }
 
 func (s *gameplayPeerSession) collectCampaignTeleportContacts(
-	destination raknet.Vector3, now time.Time, timestamp uint64,
+	registry *gameplaySessionRegistry, destination raknet.Vector3,
+	now time.Time, timestamp uint64,
 	orientation raknet.Quaternion,
 ) ([][]byte, error) {
 	if s == nil {
 		return nil, nil
 	}
 	packets, err := s.collectCampaignOrbs(
-		destination, destination, now.Add(campaignOrbLobDuration),
+		registry, destination, destination, now.Add(campaignOrbLobDuration),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("teleportOrb: %w", err)
@@ -680,6 +702,19 @@ func (r campaignMovementCommandRuntime) handle(
 			current = campaignTunnel.Destination
 			publishedGoal = raknet.Vector3{
 				X: current.X, Y: current.Y, Z: current.Z,
+			}
+			aiPackets, followCount, followErr := r.registry.followPlayerAITeleporterLocked(
+				packet.Address.String(), peerSession, campaignTunnel,
+				raknet.Quaternion{W: 1}, packet.SourceTime, movementNow,
+			)
+			campaignTunnelPackets = append(campaignTunnelPackets, aiPackets...)
+			if followErr != nil && r.logger != nil {
+				r.logger.Printf("RakNet player AI campaign teleporter follow incomplete game=%d source_user=%d: %v",
+					peerSession.binding.GameID, peerSession.binding.UserID, followErr)
+			}
+			if followCount > 0 && r.logger != nil {
+				r.logger.Printf("RakNet player AI campaign teleporter follow game=%d source_user=%d followers=%d",
+					peerSession.binding.GameID, peerSession.binding.UserID, followCount)
 			}
 		}
 		syncErr := peerSession.syncZoneHeroPose()
@@ -1960,6 +1995,7 @@ func (r campaignEncounterRuntime) advance(
 			)
 		}
 		result.orbPackets, err = peerSession.collectCampaignOrbs(
+			r.registry,
 			previousPosition,
 			raknet.Vector3{X: result.current.X, Y: result.current.Y, Z: result.current.Z},
 			movementNow,
@@ -1968,7 +2004,7 @@ func (r campaignEncounterRuntime) advance(
 			return result, fmt.Errorf("moveCampaignOrb: %w", err)
 		}
 		result.dnaPackets, err = peerSession.collectCampaignDNA(
-			ctx, r.progression, previousPosition,
+			ctx, r.progression, r.registry, previousPosition,
 			raknet.Vector3{X: result.current.X, Y: result.current.Y, Z: result.current.Z},
 			movementNow,
 		)
