@@ -208,6 +208,23 @@ func (o *GameplayJoin) GenerateCampaignPart(
 	return part, nil
 }
 
+func (o *GameplayJoin) GenerateCampaignSpecialPart(
+	creature GameplayCreature, difficulty uint32, accountLevel uint32, choice uint32,
+	rigblockID uint16,
+) (sporenet.Part, error) {
+	if o == nil || o.partCatalog == nil {
+		return sporenet.Part{}, errors.New("campaign special part catalog unavailable")
+	}
+	part, err := o.partCatalog.GenerateCampaignSpecialPart(
+		creature.ClassType, creature.ElementType, max(uint32(1), difficulty),
+		max(uint32(1), accountLevel), choice, rigblockID,
+	)
+	if err != nil {
+		return sporenet.Part{}, fmt.Errorf("campaignSpecialPartGenerate: %w", err)
+	}
+	return part, nil
+}
+
 func (o *GameplayJoin) GenerateCampaignRewardPart(
 	creature GameplayCreature, difficulty uint32, accountLevel uint32, choice uint32,
 	rarity sporenet.PartRarity,

@@ -190,6 +190,38 @@ func (c *PartCatalog) GenerateCampaignPart(
 	)
 }
 
+// GenerateCampaignSpecialPart applies ordinary campaign level, rarity, and
+// affix budgets to a specific compatible base item. This lets promotional
+// bases participate in gameplay drops without inheriting their entitlement
+// sentinel level or bypassing normal item-power limits.
+func (c *PartCatalog) GenerateCampaignSpecialPart(
+	classType string, scienceType string, difficulty uint32, accountLevel uint32,
+	choice uint32, rigblockID uint16,
+) (sporenet.Part, error) {
+	if c == nil || classType == "" || scienceType == "" || difficulty == 0 {
+		return sporenet.Part{}, errors.New("campaign special part unavailable")
+	}
+	definition, isFound := c.ByRigblock(rigblockID)
+	if !isFound || !partCategoryContains(definition.ClassType, classType) ||
+		!partCategoryContains(definition.ScienceType, scienceType) ||
+		!c.isPartSlotUnlocked(definition, accountLevel) {
+		return sporenet.Part{}, errors.New("campaign special part incompatible")
+	}
+	rarity := c.campaignPartRarity(
+		difficulty, campaignPartChoice(choice, campaignRarityStream),
+	)
+	itemLevel := campaignItemLevel(difficulty)
+	dropLevel := campaignDropLevel(itemLevel, rarity)
+	part := sporenet.NewPart(rigblockID)
+	part.Level = uint16(max(uint32(1), min(dropLevel, uint32(^uint16(0)))))
+	part.Rarity = rarity
+	if !c.rollBudgetedCampaignAffixes(&part, classType, scienceType, choice) {
+		return sporenet.Part{}, errors.New("campaign special item budget incomplete")
+	}
+	part.Cost = c.partCost(part.Level)
+	return part, nil
+}
+
 // campaignItemLevel maps the one-based authored campaign selection to build
 // 103's item-level coordinate. The fourth mission receives the native boundary
 // bonus, keeping it immediately below the next campaign major.

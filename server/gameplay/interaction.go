@@ -762,6 +762,10 @@ const campaignEquipmentPickupAnimation = "pickup_catalyst"
 
 const campaignNPCEquipmentSourceAmount = 10
 const campaignNPCOrbSourceAmount = 25
+const campaignBossLimitedEditionChanceBasis = uint32(100)
+const campaignBossLimitedEditionChanceThreshold = uint32(10)
+
+var campaignBossLimitedEditionRigblockIDs = [...]uint16{10782, 10783, 10784}
 
 const (
 	campaignCrystalFindAttribute = 65
@@ -790,7 +794,7 @@ func (s *gameplayPeerSession) spawnCampaignEquipment(
 	invocation game.CampaignScriptInvocation,
 	gameplayJoin *game.GameplayJoin,
 	sourceTime uint64,
-	isGuaranteed bool,
+	isBoss bool,
 ) ([][]byte, uint32, error) {
 	if s == nil || gameplayJoin == nil || invocation.Challenge <= 0 {
 		return nil, 0, errors.New("campaign equipment unavailable")
@@ -805,7 +809,7 @@ func (s *gameplayPeerSession) spawnCampaignEquipment(
 	if err != nil {
 		return nil, 0, fmt.Errorf("equipmentDecision: %w", err)
 	}
-	if !isDrop && !isGuaranteed {
+	if !isDrop && !isBoss {
 		return nil, 0, nil
 	}
 	if s.deployedCreatureIndex >= uint32(len(s.binding.Creatures)) {
@@ -829,12 +833,36 @@ func (s *gameplayPeerSession) spawnCampaignEquipment(
 	}
 	partChoice := s.zone.DropRandom().Uint32()
 	partSubject := partSubjects[partChoice%uint32(len(partSubjects))]
-	part, err := gameplayJoin.GenerateCampaignPart(
-		partSubject,
-		s.binding.Difficulty,
-		s.binding.AvatarLevel,
-		partChoice,
-	)
+	limitedEditionRigblockID := uint16(0)
+	if isBoss {
+		chanceDraw, drawErr := s.zone.DropRandom().Index(
+			campaignBossLimitedEditionChanceBasis,
+		)
+		if drawErr != nil {
+			return nil, 0, fmt.Errorf("equipmentLimitedChance: %w", drawErr)
+		}
+		if chanceDraw < campaignBossLimitedEditionChanceThreshold {
+			rigblockDraw, rigblockErr := s.zone.DropRandom().Index(
+				uint32(len(campaignBossLimitedEditionRigblockIDs)),
+			)
+			if rigblockErr != nil {
+				return nil, 0, fmt.Errorf("equipmentLimitedRigblock: %w", rigblockErr)
+			}
+			limitedEditionRigblockID =
+				campaignBossLimitedEditionRigblockIDs[rigblockDraw]
+		}
+	}
+	var part sporenet.Part
+	if limitedEditionRigblockID != 0 {
+		part, err = gameplayJoin.GenerateCampaignSpecialPart(
+			partSubject, s.binding.Difficulty, s.binding.AvatarLevel,
+			partChoice, limitedEditionRigblockID,
+		)
+	} else {
+		part, err = gameplayJoin.GenerateCampaignPart(
+			partSubject, s.binding.Difficulty, s.binding.AvatarLevel, partChoice,
+		)
+	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("equipmentGenerate: %w", err)
 	}

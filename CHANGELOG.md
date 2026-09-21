@@ -2,6 +2,8 @@
 
 ### 2026-09-21
 
+- Give boss equipment drops a rare chance to use the Hyperspatial Protector, Galactic Eviscerator, or Darkmatter Starhelm base with mission-scaled levels, rarity, and affixes.
+- Restore Quantum Blink's authored slide animation, five randomized strike poses, one-second ending pose, and final animation reset.
 - Keep each co-op campaign member active after another player enters or aborts from victory results, allowing every ally to finish their own Beam Out instead of becoming stranded on a black screen.
 - Send `/victory` boss completion to every connected co-op ally so each player can enter the shared victory and Beam Out result flow.
 - Exclude full inventories before multiplayer equipment rolls, reroll if the selected inventory fills before grant, and play the pickup emote on the winning hero after a successful award.
