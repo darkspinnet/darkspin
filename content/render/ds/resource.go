@@ -575,6 +575,7 @@ func writeAudioResource(destinationPath, identity string, ordinal int, resourceT
 	if resourceType == audio.SNSResourceType {
 		declaration = "SNS"
 	}
+	isRaw := false
 	var definition strings.Builder
 	_, err := fmt.Fprintf(&definition, "%s %q\n\tVERSION %d\n\tORDINAL %d\n", declaration, identity, version, ordinal)
 	if err == nil && resourceType == audio.SNRResourceType {
@@ -583,9 +584,17 @@ func writeAudioResource(destinationPath, identity string, ordinal int, resourceT
 			err = fmt.Errorf("headerDecode: %w", headerErr)
 		} else {
 			_, err = fmt.Fprintf(&definition, "\tAUDIOVERSION %d\n\tCODEC %q\n\tCHANNELS %d\n\tSAMPLERATE %d\n\tNUMSAMPLES %d\n\tISLOOPED %d\n\tSTORAGE %q\n", header.Version, header.Codec, header.Channels, header.SampleRate, header.SampleCount, boolNumber(header.IsLooped), header.Storage)
+			isRaw = header.Codec == "NONE" || header.Codec == "RESERVED"
 		}
 	}
-	if err == nil {
+	if err == nil && isRaw {
+		rawName := identity + ".snr"
+		_, err = fmt.Fprintf(&definition, "\tRAW %q\n", rawName)
+		if err == nil {
+			rawPath := filepath.Join(filepath.Dir(destinationPath), rawName)
+			err = os.WriteFile(rawPath, payload, 0o644)
+		}
+	} else if err == nil {
 		_, err = fmt.Fprintf(&definition, "\tWAV %q\n", identity+".wav")
 	}
 	if err != nil {
@@ -641,15 +650,30 @@ func readAudioResource(sourcePath, identity string, ordinal int, resourceType ui
 			return nil, fmt.Errorf("headerRead: %w", err)
 		}
 	}
+	rawFields, isRaw, err := parser.optionalProperty("RAW", 1)
+	if err != nil {
+		return nil, fmt.Errorf("rawRead: %w", err)
+	}
+	dsRoot, err := audioDSRoot(sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("dsRoot: %w", err)
+	}
+	if isRaw {
+		rawPath, pathErr := safeAudioPath(dsRoot, filepath.Dir(sourcePath), rawFields[0])
+		if pathErr != nil {
+			return nil, fmt.Errorf("rawPath: %w", pathErr)
+		}
+		payload, readErr := os.ReadFile(rawPath)
+		if readErr != nil {
+			return nil, fmt.Errorf("rawOpen: %w", readErr)
+		}
+		return payload, nil
+	}
 	wavFields, err := parser.property("WAV", 1)
 	if err != nil {
 		return nil, fmt.Errorf("waveRead: %w", err)
 	}
 	wavPathField := wavFields[0]
-	dsRoot, err := audioDSRoot(sourcePath)
-	if err != nil {
-		return nil, fmt.Errorf("dsRoot: %w", err)
-	}
 	wavPath, err := safeAudioPath(dsRoot, filepath.Dir(sourcePath), wavPathField)
 	if err != nil {
 		return nil, fmt.Errorf("wavePath: %w", err)

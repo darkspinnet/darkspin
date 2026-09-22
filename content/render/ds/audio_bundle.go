@@ -728,7 +728,7 @@ func verifyAudioBundleFiles(sourcePath string, document *audioBundleDocument) er
 			if tokenizeErr != nil {
 				return fmt.Errorf("definitionToken[%s]: %w", filepath.ToSlash(relativePath), tokenizeErr)
 			}
-			if len(fields) != 2 || fields[0] != "WAV" {
+			if len(fields) != 2 || fields[0] != "WAV" && fields[0] != "RAW" {
 				continue
 			}
 			wavPath, pathErr := safeAudioPath(rootPath, filepath.Dir(definitionPath), fields[1])

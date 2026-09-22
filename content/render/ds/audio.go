@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -39,22 +40,42 @@ func projectAudioResources(ctx context.Context, pkg *dbpf.Reader, destinationPat
 			snsResources[resource.Entry.Instance] = audioManifestResource{ordinal: ordinal, resource: resource}
 		}
 	}
-	if len(snrResources) == 0 {
-		return nil
-	}
-	decoderPath, err := audioDecoderPath()
-	if err != nil {
-		return fmt.Errorf("audioDecoder: %w", err)
-	}
 	jobs := make([]audioProjectionJob, 0, len(snrResources))
 	for instanceID, snrRecord := range snrResources {
+		header, err := audioResourceHeader(pkg, snrRecord.ordinal)
+		if err != nil {
+			return fmt.Errorf("audioHeader[%016X]: %w", instanceID, err)
+		}
+		isRaw := header.Codec == "NONE" || header.Codec == "RESERVED"
+		if isRaw {
+			continue
+		}
 		snsRecord, isSNSFound := snsResources[instanceID]
+		if header.Storage != "RAM" && !isSNSFound {
+			definitionPath, pathErr := safePath(destinationPath, snrRecord.resource.PayloadPath)
+			if pathErr != nil {
+				return fmt.Errorf("rawPath[%016X]: %w", instanceID, pathErr)
+			}
+			identity := resourceDefinitionIdentity(snrRecord.resource.PayloadPath)
+			pathErr = preserveRawAudioResource(pkg, snrRecord.ordinal, definitionPath, identity+".snr")
+			if pathErr != nil {
+				return fmt.Errorf("rawWrite[%016X]: %w", instanceID, pathErr)
+			}
+			continue
+		}
 		jobs = append(jobs, audioProjectionJob{
 			instanceID: instanceID,
 			snr:        snrRecord,
 			sns:        snsRecord,
 			isSNSFound: isSNSFound,
 		})
+	}
+	if len(jobs) == 0 {
+		return nil
+	}
+	decoderPath, err := audioDecoderPath()
+	if err != nil {
+		return fmt.Errorf("audioDecoder: %w", err)
 	}
 	jobChannel := make(chan audioProjectionJob, len(jobs))
 	resultChannel := make(chan error, len(jobs))
@@ -142,6 +163,9 @@ func copyAudioWAVs(sourcePath, destinationPath string, manifest *dbpf.Manifest) 
 		sourceWAVPath := strings.TrimSuffix(sourceDefinitionPath, filepath.Ext(sourceDefinitionPath)) + ".wav"
 		destinationWAVPath := strings.TrimSuffix(destinationDefinitionPath, filepath.Ext(destinationDefinitionPath)) + ".wav"
 		r, err := os.Open(sourceWAVPath)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
 		if err != nil {
 			return fmt.Errorf("waveOpen[%d]: %w", ordinal, err)
 		}
@@ -191,6 +215,22 @@ func projectPackageAudioResource(ctx context.Context, pkg *dbpf.Reader, ordinal 
 	if snrOrdinal < 0 {
 		return fmt.Errorf("snrMissing: instance 0x%016X", entry.Instance)
 	}
+	header, err := audioResourceHeader(pkg, snrOrdinal)
+	if err != nil {
+		return fmt.Errorf("audioHeader: %w", err)
+	}
+	isRaw := header.Codec == "NONE" || header.Codec == "RESERVED"
+	if isRaw {
+		return nil
+	}
+	if header.Storage != "RAM" && snsOrdinal < 0 {
+		rawName := strings.TrimSuffix(filepath.Base(definitionPath), filepath.Ext(definitionPath)) + ".snr"
+		err = preserveRawAudioResource(pkg, snrOrdinal, definitionPath, rawName)
+		if err != nil {
+			return fmt.Errorf("rawWrite: %w", err)
+		}
+		return nil
+	}
 	decoderPath, err := audioDecoderPath()
 	if err != nil {
 		return fmt.Errorf("audioDecoder: %w", err)
@@ -220,6 +260,104 @@ func projectPackageAudioResource(ctx context.Context, pkg *dbpf.Reader, ordinal 
 	err = replaceAudioWAV(definitionPath, filepath.Base(wavPath))
 	if err != nil {
 		return fmt.Errorf("waveReference: %w", err)
+	}
+	return nil
+}
+
+func audioResourceHeader(pkg *dbpf.Reader, ordinal int) (audio.Header, error) {
+	if ordinal < 0 || ordinal >= len(pkg.Entries) {
+		return audio.Header{}, fmt.Errorf("ordinalRange: %d", ordinal)
+	}
+	r, err := pkg.Open(pkg.Entries[ordinal])
+	if err != nil {
+		return audio.Header{}, fmt.Errorf("resourceOpen: %w", err)
+	}
+	headerPayload := make([]byte, 8)
+	_, err = io.ReadFull(r, headerPayload)
+	if err != nil {
+		return audio.Header{}, fmt.Errorf("headerRead: %w", err)
+	}
+	header, err := audio.DecodeHeader(headerPayload)
+	if err != nil {
+		return audio.Header{}, fmt.Errorf("headerDecode: %w", err)
+	}
+	return header, nil
+}
+
+func preserveRawAudioResource(pkg *dbpf.Reader, ordinal int, definitionPath, rawName string) error {
+	rawPath := filepath.Join(filepath.Dir(definitionPath), rawName)
+	err := writeDecodedAudioPath(pkg, ordinal, rawPath)
+	if err != nil {
+		return fmt.Errorf("payloadWrite: %w", err)
+	}
+	err = replaceAudioProperty(definitionPath, ordinal, "WAV", "RAW", rawName)
+	if err != nil {
+		return fmt.Errorf("definitionWrite: %w", err)
+	}
+	return nil
+}
+
+func replaceAudioProperty(definitionPath string, ordinal int, oldProperty, newProperty, relativePath string) error {
+	payload, err := os.ReadFile(definitionPath)
+	if err != nil {
+		return fmt.Errorf("definitionRead: %w", err)
+	}
+	body, blocks, err := parseRenderDefinitions(payload)
+	if err != nil {
+		return fmt.Errorf("definitionParse: %w", err)
+	}
+	matchCount := 0
+	var rewritten strings.Builder
+	position := 0
+	for _, block := range blocks {
+		rewritten.WriteString(body[position:block.start])
+		definition := body[block.start:block.end]
+		parser := newParser(strings.NewReader(definition))
+		_, readErr := parser.next()
+		if readErr != nil {
+			return fmt.Errorf("definitionHeader: %w", readErr)
+		}
+		_, readErr = parser.property("VERSION", 1)
+		if readErr != nil {
+			return fmt.Errorf("definitionVersion: %w", readErr)
+		}
+		ordinalFields, isOrdinalPresent, readErr := parser.optionalProperty("ORDINAL", 1)
+		if readErr != nil {
+			return fmt.Errorf("definitionOrdinal: %w", readErr)
+		}
+		isMatch := false
+		if isOrdinalPresent {
+			parsedOrdinal, parseErr := strconv.Atoi(ordinalFields[0])
+			if parseErr != nil {
+				return fmt.Errorf("definitionOrdinal: %w", parseErr)
+			}
+			isMatch = parsedOrdinal == ordinal
+		}
+		if isMatch {
+			oldPrefix := "\t" + oldProperty + " "
+			lineStart := strings.Index(definition, oldPrefix)
+			if lineStart < 0 {
+				return fmt.Errorf("propertyMissing: %s", oldProperty)
+			}
+			lineEnd := strings.IndexByte(definition[lineStart:], '\n')
+			if lineEnd < 0 {
+				lineEnd = len(definition)
+			} else {
+				lineEnd += lineStart
+			}
+			definition = definition[:lineStart] + fmt.Sprintf("\t%s %q", newProperty, relativePath) + definition[lineEnd:]
+			matchCount++
+		}
+		rewritten.WriteString(definition)
+		position = block.end
+	}
+	rewritten.WriteString(body[position:])
+	if matchCount != 1 {
+		return fmt.Errorf("definitionMatches: got %d, want 1", matchCount)
+	}
+	err = os.WriteFile(definitionPath, []byte(resourceDSEHeader+rewritten.String()), 0o644)
+	if err != nil {
+		return fmt.Errorf("definitionOutput: %w", err)
 	}
 	return nil
 }

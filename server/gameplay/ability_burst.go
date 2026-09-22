@@ -1136,6 +1136,15 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("heroBurstMana: %w", err)
 	}
+	cooldownPacket, err := abilityraknet.Cooldown(abilityraknet.CooldownRequest{
+		ObjectID: command.Common.ObjectID, AbilityID: activeAbilityID,
+		Duration: definition.Cooldown, StartTime: packet.SourceTime,
+	})
+	if err != nil {
+		run.Stop()
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("heroBurstCooldown: %w", err)
+	}
 	previousManaPoint := peerSession.deployedManaPoint()
 	cooldownReservation, isCooldownReserved :=
 		peerSession.abilityCooldownSession().Reserve(
@@ -1244,7 +1253,9 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 		definition.Name, command.Common.ObjectID, targetObjectID,
 		len(definition.HitDelays),
 	)
-	return append([][]byte{ackPacket, manaPacket}, immediatePackets...), nil
+	return append(
+		[][]byte{ackPacket, cooldownPacket, manaPacket}, immediatePackets...,
+	), nil
 }
 
 func projectRetargetBurstCadence(

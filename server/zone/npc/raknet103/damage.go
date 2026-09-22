@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	deathraknet "github.com/darkspinnet/darkspin/server/zone/death/raknet103"
+	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
 )
 
 type DamageRequest struct {
@@ -42,15 +44,28 @@ func Damage(req DamageRequest) (DamagePublication, error) {
 		req.Damage <= 0 || req.EffectPool == nil {
 		return DamagePublication{}, errors.New("invalid npc damage publication")
 	}
+	textPacket, err := effectraknet.CombatText(effectraknet.CombatTextRequest{
+		ObjectID: req.Target.ObjectID,
+		Position: game.Vec3{
+			X: req.Target.Position.X,
+			Y: req.Target.Position.Y,
+			Z: req.Target.Position.Z,
+		},
+		Amount: req.Damage, IsCritical: req.IsCritical,
+	})
+	if err != nil {
+		return DamagePublication{}, fmt.Errorf("combatText: %w", err)
+	}
 	if req.IsDefeated {
-		deathRun, packet, err := deathraknet.NewRun(
+		deathRun, packets, err := deathraknet.NewRun(
 			req.Target, req.SourceObjectID, req.Damage, req.IsCritical,
 			req.SourceTime, req.EffectPool,
 		)
 		if err != nil {
 			return DamagePublication{}, fmt.Errorf("deathSimulation: %w", err)
 		}
-		return DamagePublication{Packet: packet, DeathRun: deathRun}, nil
+		packets = append(packets, textPacket)
+		return DamagePublication{Packet: packets, DeathRun: deathRun}, nil
 	}
 	flags := uint16(0x0001)
 	if req.IsCritical {
@@ -72,6 +87,6 @@ func Damage(req DamageRequest) (DamagePublication, error) {
 		return DamagePublication{}, fmt.Errorf("healthMarshal: %w", err)
 	}
 	return DamagePublication{
-		Packet: [][]byte{eventPacket, healthPacket},
+		Packet: [][]byte{eventPacket, healthPacket, textPacket},
 	}, nil
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 const ResourceType uint32 = 0x376840D7
@@ -229,7 +230,7 @@ func decodeHeader(payload []byte) (Header, error) {
 		TimeBaseDen:  binary.LittleEndian.Uint32(payload[16:20]),
 		TimeBaseNum:  binary.LittleEndian.Uint32(payload[20:24]),
 	}
-	if header.Codec != "VP60" && header.Codec != "VP61" && header.Codec != "VP62" {
+	if !strings.EqualFold(header.Codec, "VP60") && !strings.EqualFold(header.Codec, "VP61") && !strings.EqualFold(header.Codec, "VP62") {
 		return Header{}, fmt.Errorf("codec: unsupported %q", header.Codec)
 	}
 	if header.Width == 0 || header.Height == 0 {
@@ -263,7 +264,7 @@ func encode(header Header, packets []Packet, audio *AVIAudio) ([]byte, error) {
 	if len(packets) == 0 {
 		return nil, errors.New("packets: empty")
 	}
-	if header.Codec != "VP60" && header.Codec != "VP61" && header.Codec != "VP62" {
+	if !strings.EqualFold(header.Codec, "VP60") && !strings.EqualFold(header.Codec, "VP61") && !strings.EqualFold(header.Codec, "VP62") {
 		return nil, fmt.Errorf("codec: unsupported %q", header.Codec)
 	}
 	if header.Width == 0 || header.Height == 0 {

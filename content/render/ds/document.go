@@ -556,13 +556,15 @@ func verifyFiles(sourcePath string, manifest *dbpf.Manifest) error {
 		for directoryPath := filepath.Dir(resourcePath); directoryPath != "."; directoryPath = filepath.Dir(directoryPath) {
 			expectedPaths[filepath.Join(directoryPath, ManifestName)] = struct{}{}
 		}
-		if resource.Entry.Type == audio.SNRResourceType {
-			wavResourcePath := strings.TrimSuffix(resourcePath, filepath.Ext(resourcePath)) + ".wav"
-			expectedPaths[wavResourcePath] = struct{}{}
-		}
-		if resource.Entry.Type == movie.ResourceType {
-			aviResourcePath := strings.TrimSuffix(resourcePath, filepath.Ext(resourcePath)) + ".avi"
-			expectedPaths[aviResourcePath] = struct{}{}
+		if audio.IsStreamType(resource.Entry.Type) || audio.IsPatchType(resource.Entry.Type) || resource.Entry.Type == movie.ResourceType {
+			definitionPath := filepath.Join(sourcePath, resourcePath)
+			sidecarPaths, sidecarErr := renderSidecarPaths(sourcePath, definitionPath)
+			if sidecarErr != nil {
+				return fmt.Errorf("resourceFiles[%d]: %w", ordinal, sidecarErr)
+			}
+			for _, sidecarPath := range sidecarPaths {
+				expectedPaths[sidecarPath] = struct{}{}
+			}
 		}
 		if scaleform.IsResourceType(resource.Entry.Type) {
 			if resource.Entry.Type == scaleform.MovieResourceType {
@@ -611,6 +613,41 @@ func verifyFiles(sourcePath string, manifest *dbpf.Manifest) error {
 		return fmt.Errorf("fileCount: got %d, want %d", len(foundPaths), len(expectedPaths))
 	}
 	return nil
+}
+
+func renderSidecarPaths(rootPath, definitionPath string) ([]string, error) {
+	payload, err := os.ReadFile(definitionPath)
+	if err != nil {
+		return nil, fmt.Errorf("definitionRead: %w", err)
+	}
+	sidecarPaths := make([]string, 0, 1)
+	scanner := bufio.NewScanner(bytes.NewReader(payload))
+	for scanner.Scan() {
+		fields, tokenizeErr := tokenize(scanner.Text())
+		if tokenizeErr != nil {
+			return nil, fmt.Errorf("definitionToken: %w", tokenizeErr)
+		}
+		if len(fields) != 2 || fields[0] != "WAV" && fields[0] != "MKV" && fields[0] != "RAW" {
+			continue
+		}
+		sidecarPath, pathErr := safePath(filepath.Dir(definitionPath), fields[1])
+		if pathErr != nil {
+			return nil, fmt.Errorf("sidecarPath: %w", pathErr)
+		}
+		relativePath, pathErr := filepath.Rel(rootPath, sidecarPath)
+		if pathErr != nil {
+			return nil, fmt.Errorf("sidecarRelative: %w", pathErr)
+		}
+		if relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("sidecarEscape: %q", fields[1])
+		}
+		sidecarPaths = append(sidecarPaths, filepath.Clean(relativePath))
+	}
+	err = scanner.Err()
+	if err != nil {
+		return nil, fmt.Errorf("definitionScan: %w", err)
+	}
+	return sidecarPaths, nil
 }
 
 type resourcePackSource struct {

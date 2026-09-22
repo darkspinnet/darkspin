@@ -26,7 +26,7 @@ const MaxCampaignNPCAffixCount = 6
 
 // CampaignNPCIdentity is immutable presentation metadata decoded from one
 // packaged non-player ClassAttributes resource. Encounter policy decides
-// whether that noun is selected as a boss.
+// whether that noun is selected as a captain, elite, or boss.
 type CampaignNPCIdentity struct {
 	DisplayName   string
 	NPCAffixNames [MaxCampaignNPCAffixCount]string

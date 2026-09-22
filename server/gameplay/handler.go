@@ -35,6 +35,7 @@ import (
 	zonedeath "github.com/darkspinnet/darkspin/server/zone/death"
 	zonedifficulty "github.com/darkspinnet/darkspin/server/zone/difficulty"
 	zoneeffect "github.com/darkspinnet/darkspin/server/zone/effect"
+	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
 	zoneencounter "github.com/darkspinnet/darkspin/server/zone/encounter"
 	zonehero "github.com/darkspinnet/darkspin/server/zone/hero"
 	heroraknet "github.com/darkspinnet/darkspin/server/zone/hero/raknet103"
@@ -3726,7 +3727,14 @@ func marshalCampaignProjection(event zoneprojection.Event) ([][]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("damageHealthMarshal: %w", err)
 		}
-		return [][]byte{eventPacket, healthPacket}, nil
+		textPacket, err := effectraknet.CombatText(effectraknet.CombatTextRequest{
+			ObjectID: damage.TargetObjectID, Position: damage.Position,
+			Amount: damage.Damage, IsCritical: damage.IsCritical,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("damageCombatText: %w", err)
+		}
+		return [][]byte{eventPacket, healthPacket, textPacket}, nil
 	case zoneprojection.EventNPCDeath:
 		return marshalCampaignDeathProjection(event.Death)
 	case zoneprojection.EventNPCSpawn:
@@ -4023,7 +4031,14 @@ func marshalCampaignDeathProjection(
 		if err != nil {
 			return nil, fmt.Errorf("deathDamageMarshal: %w", err)
 		}
-		return [][]byte{eventPacket}, nil
+		textPacket, err := effectraknet.CombatText(effectraknet.CombatTextRequest{
+			ObjectID: death.TargetObjectID, Position: death.Position,
+			Amount: death.Damage, IsCritical: death.IsCritical,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("deathCombatText: %w", err)
+		}
+		return [][]byte{eventPacket, textPacket}, nil
 	case zonenpc.DeathHitPoint:
 		message = raknet.CombatantDataDeltaMessage{
 			ObjectID: death.TargetObjectID, HitPoints: death.HitPoint,

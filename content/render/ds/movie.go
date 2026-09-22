@@ -2,6 +2,7 @@ package ds
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -76,7 +77,11 @@ func projectPackageMovieResource(ctx context.Context, pkg *dbpf.Reader, ordinal 
 	}
 	videoDecoderPath, err := movieVideoDecoderPath()
 	if err != nil {
-		return fmt.Errorf("movieVideoDecoder: %w", err)
+		err = preserveRawMovieResource(definitionPath, payload)
+		if err != nil {
+			return fmt.Errorf("movieRaw: %w", err)
+		}
+		return nil
 	}
 	temporaryPath, err := os.MkdirTemp(filepath.Dir(definitionPath), ".movie-decode-*")
 	if err != nil {
@@ -111,6 +116,33 @@ func projectPackageMovieResource(ctx context.Context, pkg *dbpf.Reader, ordinal 
 	if encodeErr != nil {
 		_ = os.Remove(mkvPath)
 		return fmt.Errorf("movieMKVEncode: %w: %s", encodeErr, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func preserveRawMovieResource(definitionPath string, payload []byte) error {
+	definitionPayload, err := os.ReadFile(definitionPath)
+	if err != nil {
+		return fmt.Errorf("definitionRead: %w", err)
+	}
+	parser := newParser(bytes.NewReader(definitionPayload))
+	definition, err := parser.next()
+	if err != nil {
+		return fmt.Errorf("definitionParse: %w", err)
+	}
+	if len(definition) != 2 || definition[0] != "MOVIE" {
+		return fmt.Errorf("definition: got %v", definition)
+	}
+	rawName := strings.TrimSuffix(filepath.Base(definitionPath), filepath.Ext(definitionPath)) + ".vp6"
+	rawPath := filepath.Join(filepath.Dir(definitionPath), rawName)
+	err = os.WriteFile(rawPath, payload, 0o644)
+	if err != nil {
+		return fmt.Errorf("rawWrite: %w", err)
+	}
+	contents := fmt.Sprintf("%sMOVIE %s\n\tVERSION %d\n\tRAW %s\n", resourceDSEHeader, strconv.Quote(definition[1]), version, strconv.Quote(rawName))
+	err = os.WriteFile(definitionPath, []byte(contents), 0o644)
+	if err != nil {
+		return fmt.Errorf("definitionWrite: %w", err)
 	}
 	return nil
 }
@@ -174,6 +206,21 @@ func readMovieResource(sourcePath, identity string) ([]byte, error) {
 	}
 	if parsedVersion != version {
 		return nil, fmt.Errorf("versionUnsupported: %d", parsedVersion)
+	}
+	rawFields, isRaw, err := parser.optionalProperty("RAW", 1)
+	if err != nil {
+		return nil, fmt.Errorf("rawRead: %w", err)
+	}
+	if isRaw {
+		rawPath, pathErr := safePath(filepath.Dir(sourcePath), rawFields[0])
+		if pathErr != nil {
+			return nil, fmt.Errorf("rawPath: %w", pathErr)
+		}
+		payload, readErr := os.ReadFile(rawPath)
+		if readErr != nil {
+			return nil, fmt.Errorf("rawOpen: %w", readErr)
+		}
+		return payload, nil
 	}
 	mkvFields, err := parser.property("MKV", 1)
 	if err != nil {

@@ -93,6 +93,12 @@ func Spawn(plan zonenpc.SpawnPlan) ([][]byte, error) {
 		},
 	}
 	if isElite {
+		// Establish the agent component before attaching its permanent status so
+		// HUD_NPCBar observes the modifier against an initialized agent.
+		messages = append(messages, raknet.AgentBlackboardUpdateMessage{
+			ObjectID: plan.ObjectID, IsTargetable: profile.IsTargetable,
+			Stealth: uint8(actionStealthType(plan)),
+		})
 		messages = append(messages, raknet.ModifierCreatedMessage{
 			TargetID:     plan.ObjectID,
 			ModifierGUID: util.HashID(zonenpc.EliteModifierName),
