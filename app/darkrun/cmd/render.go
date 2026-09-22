@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	compiled "github.com/darkspinnet/darkspin/content/animation"
 	"github.com/darkspinnet/darkspin/content/dbpf"
@@ -31,6 +32,7 @@ func newConvertCommand() *cobra.Command {
 			"Selected entries and other DS directories require an explicit destination.",
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(command *cobra.Command, args []string) error {
+			startedAt := time.Now()
 			target := parsePackageTarget(args[0])
 			if target.Selector == "" && strings.EqualFold(filepath.Base(target.Path), "AudioProps.package") {
 				_, err := fmt.Fprintf(command.ErrOrStderr(), "Skipping %s: convert Audio.package instead; it includes the sibling AudioProps.package in one Audio.ds bundle.\n", target.Path)
@@ -53,7 +55,7 @@ func newConvertCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("convertNames: %w", err)
 			}
-			names, err = discoverAudioNames(target.Path, names)
+			names, audioAliases, err := discoverAudioNames(target.Path, names)
 			if err != nil {
 				return fmt.Errorf("convertAudioNames: %w", err)
 			}
@@ -66,7 +68,7 @@ func newConvertCommand() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("convertResource: %w", err)
 				}
-				_, err = fmt.Fprintf(command.OutOrStdout(), "Converted %s entry %d to %s\n", target.Path, ordinal, destinationPath)
+				_, err = fmt.Fprintf(command.OutOrStdout(), "Converted %s entry %d to %s in %.2f seconds\n", target.Path, ordinal, destinationPath, time.Since(startedAt).Seconds())
 				if err != nil {
 					return fmt.Errorf("convertOutput: %w", err)
 				}
@@ -76,11 +78,11 @@ func newConvertCommand() *cobra.Command {
 				propertyPath := filepath.Join(filepath.Dir(target.Path), "AudioProps.package")
 				_, propertyErr := os.Stat(propertyPath)
 				if propertyErr == nil {
-					err = ds.ExtractAudioBundlePath(command.Context(), target.Path, propertyPath, destinationPath, names)
+					err = ds.ExtractAudioBundlePath(command.Context(), target.Path, propertyPath, destinationPath, names, audioAliases)
 					if err != nil {
 						return fmt.Errorf("convertAudioBundle: %w", err)
 					}
-					_, err = fmt.Fprintf(command.OutOrStdout(), "Converted %s and %s to %s\n", target.Path, propertyPath, destinationPath)
+					_, err = fmt.Fprintf(command.OutOrStdout(), "Converted %s and %s to %s in %.2f seconds\n", target.Path, propertyPath, destinationPath, time.Since(startedAt).Seconds())
 					if err != nil {
 						return fmt.Errorf("convertOutput: %w", err)
 					}
@@ -94,7 +96,7 @@ func newConvertCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("convertPath: %w", err)
 			}
-			_, err = fmt.Fprintf(command.OutOrStdout(), "Converted %s to %s\n", args[0], destinationPath)
+			_, err = fmt.Fprintf(command.OutOrStdout(), "Converted %s to %s in %.2f seconds\n", args[0], destinationPath, time.Since(startedAt).Seconds())
 			if err != nil {
 				return fmt.Errorf("convertOutput: %w", err)
 			}

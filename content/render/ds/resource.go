@@ -136,7 +136,7 @@ func readResourceWithPropertyDeclaration(sourcePath, identity string, ordinal in
 				return payload, nil
 			}
 		}
-		document, readErr := readPropertyResource(sourcePath, identity, selectedDeclaration)
+		document, readErr := readPropertyResource(sourcePath, identity, ordinal, selectedDeclaration)
 		if readErr != nil {
 			return nil, fmt.Errorf("propertyRead: %w", readErr)
 		}
@@ -281,6 +281,59 @@ func readRenderDefinition(sourcePath, declaration string) ([]byte, error) {
 	return readResourceDefinitions(sourcePath, map[string]bool{declaration: true})
 }
 
+func readOrdinalRenderDefinition(sourcePath string, declarations map[string]bool, identity string, ordinal int) ([]byte, error) {
+	payload, err := os.ReadFile(sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("definitionRead: %w", err)
+	}
+	body, blocks, err := parseRenderDefinitions(payload)
+	if err != nil {
+		return nil, fmt.Errorf("definitionParse: %w", err)
+	}
+	selected := ""
+	for _, block := range blocks {
+		if !declarations[block.declaration] {
+			continue
+		}
+		definitionText := strings.TrimRight(body[block.start:block.end], "\r\n")
+		parser := newParser(strings.NewReader(definitionText))
+		definition, readErr := parser.next()
+		if readErr != nil {
+			return nil, fmt.Errorf("definitionHeader: %w", readErr)
+		}
+		if len(definition) != 2 {
+			return nil, fmt.Errorf("definitionHeader: got %v", definition)
+		}
+		_, readErr = parser.property("VERSION", 1)
+		if readErr != nil {
+			return nil, fmt.Errorf("definitionVersion: %w", readErr)
+		}
+		ordinalFields, isOrdinalPresent, readErr := parser.optionalProperty("ORDINAL", 1)
+		if readErr != nil {
+			return nil, fmt.Errorf("definitionOrdinal: %w", readErr)
+		}
+		isMatch := !isOrdinalPresent && definition[1] == identity
+		if isOrdinalPresent {
+			parsedOrdinal, parseErr := strconv.Atoi(ordinalFields[0])
+			if parseErr != nil || parsedOrdinal < 0 {
+				return nil, fmt.Errorf("definitionOrdinal: %q", ordinalFields[0])
+			}
+			isMatch = parsedOrdinal == ordinal
+		}
+		if !isMatch {
+			continue
+		}
+		if selected != "" {
+			return nil, fmt.Errorf("definitionDuplicate: ordinal %d", ordinal)
+		}
+		selected = definitionText
+	}
+	if selected == "" {
+		return nil, fmt.Errorf("definitionMissing: ordinal %d", ordinal)
+	}
+	return []byte(resourceDSEHeader + selected + "\n"), nil
+}
+
 func readResourceDefinitions(sourcePath string, declarations map[string]bool) ([]byte, error) {
 	payload, err := os.ReadFile(sourcePath)
 	if err != nil {
@@ -319,6 +372,14 @@ func parseRenderDefinitions(payload []byte) (string, []renderDefinitionBlock, er
 		}
 		line := strings.TrimSuffix(body[lineStart:lineEnd], "\r")
 		declaration := ""
+		trimmedLine := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmedLine, "//") {
+			if lineEnd == len(body) {
+				break
+			}
+			lineStart = lineEnd + 1
+			continue
+		}
 		if line != "" && line[0] != '\t' && line[0] != ' ' {
 			separator := strings.IndexByte(line, ' ')
 			if separator < 0 {
@@ -496,7 +557,7 @@ func writeResourceWithPropertyDeclaration(destinationPath, identity string, ordi
 			}
 			return nil
 		}
-		err = writePropertyResource(destinationPath, identity, document, names, propertyDeclaration)
+		err = writePropertyResource(destinationPath, identity, ordinal, document, names, propertyDeclaration)
 		if err != nil {
 			return fmt.Errorf("propertyWrite: %w", err)
 		}
@@ -510,13 +571,12 @@ func writeResourceWithPropertyDeclaration(destinationPath, identity string, ordi
 }
 
 func writeAudioResource(destinationPath, identity string, ordinal int, resourceType uint32, payload []byte) error {
-	_ = ordinal
 	declaration := "SNR"
 	if resourceType == audio.SNSResourceType {
 		declaration = "SNS"
 	}
 	var definition strings.Builder
-	_, err := fmt.Fprintf(&definition, "%s %q\n\tVERSION %d\n", declaration, identity, version)
+	_, err := fmt.Fprintf(&definition, "%s %q\n\tVERSION %d\n\tORDINAL %d\n", declaration, identity, version, ordinal)
 	if err == nil && resourceType == audio.SNRResourceType {
 		header, headerErr := audio.DecodeHeader(payload)
 		if headerErr != nil {
@@ -540,88 +600,52 @@ func writeAudioResource(destinationPath, identity string, ordinal int, resourceT
 }
 
 func readAudioResource(sourcePath, identity string, ordinal int, resourceType uint32) ([]byte, error) {
-	_ = ordinal
 	expectedDeclaration := "SNR"
 	if resourceType == audio.SNSResourceType {
 		expectedDeclaration = "SNS"
 	} else if resourceType != audio.SNRResourceType {
 		return nil, fmt.Errorf("resourceType: 0x%08X", resourceType)
 	}
-	audioDefinitions, err := readResourceDefinitions(sourcePath, map[string]bool{"SNR": true, "SNS": true, "DARKSPINSNR": true, "DARKSPINSNS": true})
+	declarations := map[string]bool{expectedDeclaration: true, "DARKSPIN" + expectedDeclaration: true}
+	audioDefinitions, err := readOrdinalRenderDefinition(sourcePath, declarations, identity, ordinal)
 	if err != nil {
-		return nil, fmt.Errorf("definitionFilter: %w", err)
+		return nil, fmt.Errorf("definitionSelect: %w", err)
 	}
 	parser := newParser(bytes.NewReader(audioDefinitions))
+	definition, err := parser.next()
+	if err != nil {
+		return nil, fmt.Errorf("definitionRead: %w", err)
+	}
+	if len(definition) != 2 || !declarations[definition[0]] {
+		return nil, fmt.Errorf("definition: got %v, want %q", definition, expectedDeclaration)
+	}
+	versionFields, err := parser.property("VERSION", 1)
+	if err != nil {
+		return nil, fmt.Errorf("versionRead: %w", err)
+	}
+	parsedVersion, err := parseUint(versionFields[0], 32)
+	if err != nil {
+		return nil, fmt.Errorf("versionParse: %w", err)
+	}
+	if parsedVersion != version {
+		return nil, fmt.Errorf("versionUnsupported: %q", versionFields[0])
+	}
+	_, _, err = parser.optionalProperty("ORDINAL", 1)
+	if err != nil {
+		return nil, fmt.Errorf("ordinalRead: %w", err)
+	}
 	header := audio.Header{}
-	wavPathField := ""
-	sharedWAVPath := ""
-	lastOrder := 0
-	isFound := false
-	for {
-		definition, readErr := parser.next()
-		if errors.Is(readErr, io.EOF) {
-			break
-		}
-		if readErr != nil {
-			return nil, fmt.Errorf("definitionRead: %w", readErr)
-		}
-		if len(definition) != 2 || definition[1] != identity {
-			return nil, fmt.Errorf("definition: got %v, want audio declaration and %q", definition, identity)
-		}
-		definitionOrder := 0
-		switch definition[0] {
-		case "SNR", "DARKSPINSNR":
-			definitionOrder = 1
-		case "SNS", "DARKSPINSNS":
-			definitionOrder = 2
-		default:
-			return nil, fmt.Errorf("definitionUnsupported: %q", definition[0])
-		}
-		if definitionOrder <= lastOrder {
-			return nil, fmt.Errorf("definitionOrder: %q", definition[0])
-		}
-		lastOrder = definitionOrder
-		versionFields, versionErr := parser.property("VERSION", 1)
-		if versionErr != nil {
-			return nil, fmt.Errorf("versionRead: %w", versionErr)
-		}
-		parsedVersion, versionErr := parseUint(versionFields[0], 32)
-		if versionErr != nil {
-			return nil, fmt.Errorf("versionParse: %w", versionErr)
-		}
-		if parsedVersion != version {
-			return nil, fmt.Errorf("versionUnsupported: %q", versionFields[0])
-		}
-		definitionHeader := audio.Header{}
-		isSNRDefinition := definition[0] == "SNR" || definition[0] == "DARKSPINSNR"
-		if isSNRDefinition {
-			definitionHeader, versionErr = readAudioHeader(parser)
-			if versionErr != nil {
-				return nil, fmt.Errorf("headerRead: %w", versionErr)
-			}
-		}
-		wavFields, waveErr := parser.property("WAV", 1)
-		if waveErr != nil {
-			return nil, fmt.Errorf("waveRead: %w", waveErr)
-		}
-		if sharedWAVPath != "" && sharedWAVPath != wavFields[0] {
-			return nil, fmt.Errorf("waveMismatch: %q and %q", sharedWAVPath, wavFields[0])
-		}
-		sharedWAVPath = wavFields[0]
-		isExpectedDefinition := resourceType == audio.SNRResourceType && isSNRDefinition ||
-			resourceType == audio.SNSResourceType && !isSNRDefinition
-		if isExpectedDefinition {
-			if isFound {
-				return nil, fmt.Errorf("definitionDuplicate: %q", expectedDeclaration)
-			}
-			isFound = true
-			header = definitionHeader
-			wavPathField = wavFields[0]
+	if resourceType == audio.SNRResourceType {
+		header, err = readAudioHeader(parser)
+		if err != nil {
+			return nil, fmt.Errorf("headerRead: %w", err)
 		}
 	}
-	if !isFound {
-		return nil, fmt.Errorf("definitionMissing: %q", expectedDeclaration)
+	wavFields, err := parser.property("WAV", 1)
+	if err != nil {
+		return nil, fmt.Errorf("waveRead: %w", err)
 	}
+	wavPathField := wavFields[0]
 	dsRoot, err := audioDSRoot(sourcePath)
 	if err != nil {
 		return nil, fmt.Errorf("dsRoot: %w", err)
@@ -832,7 +856,7 @@ func readOpaqueResource(sourcePath, identity string) ([]byte, error) {
 	return payload, nil
 }
 
-func writePropertyResource(destinationPath, identity string, document *prop.Document, names map[uint32]string, declaration string) error {
+func writePropertyResource(destinationPath, identity string, ordinal int, document *prop.Document, names map[uint32]string, declaration string) error {
 	var definition bytes.Buffer
 	writer := bufio.NewWriter(&definition)
 	var err error
@@ -842,6 +866,9 @@ func writePropertyResource(destinationPath, identity string, document *prop.Docu
 	}
 	if err == nil {
 		_, err = fmt.Fprintf(writer, "\tVERSION %d\n", version)
+	}
+	if err == nil {
+		_, err = fmt.Fprintf(writer, "\tORDINAL %d\n", ordinal)
 	}
 	if err == nil {
 		_, err = fmt.Fprintf(writer, "\tNUMPROPERTIES %d\n", len(document.Properties))
@@ -922,8 +949,8 @@ func writePropertyResource(destinationPath, identity string, document *prop.Docu
 	return nil
 }
 
-func readPropertyResource(sourcePath, identity, declaration string) (*prop.Document, error) {
-	definitionPayload, err := readRenderDefinition(sourcePath, declaration)
+func readPropertyResource(sourcePath, identity string, ordinal int, declaration string) (*prop.Document, error) {
+	definitionPayload, err := readOrdinalRenderDefinition(sourcePath, map[string]bool{declaration: true}, identity, ordinal)
 	if err != nil {
 		return nil, fmt.Errorf("definitionSelect: %w", err)
 	}
@@ -932,8 +959,8 @@ func readPropertyResource(sourcePath, identity, declaration string) (*prop.Docum
 	if err != nil {
 		return nil, fmt.Errorf("definitionRead: %w", err)
 	}
-	if len(definition) != 2 || definition[0] != declaration || definition[1] != identity {
-		return nil, fmt.Errorf("definition: got %v, want %s %q", definition, declaration, identity)
+	if len(definition) != 2 || definition[0] != declaration {
+		return nil, fmt.Errorf("definition: got %v, want %s", definition, declaration)
 	}
 	versionFields, err := parser.property("VERSION", 1)
 	if err != nil {
@@ -945,6 +972,10 @@ func readPropertyResource(sourcePath, identity, declaration string) (*prop.Docum
 	}
 	if parsedVersion != version {
 		return nil, fmt.Errorf("versionUnsupported: %d", parsedVersion)
+	}
+	_, _, err = parser.optionalProperty("ORDINAL", 1)
+	if err != nil {
+		return nil, fmt.Errorf("ordinalRead: %w", err)
 	}
 	countFields, err := parser.property("NUMPROPERTIES", 1)
 	if err != nil {

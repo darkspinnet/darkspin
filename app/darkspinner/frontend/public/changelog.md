@@ -2,6 +2,7 @@
 
 ### 2026-09-21
 
+- Give converted audio streams deterministic `ds_` aliases derived from event, inherited parent, loop, and shared-reference context; organize effects into family folders such as `effect/sfx` and `effect/scom`; annotate each WAV's DSE with searchable source keys, pointer roles, tags, and every AudioProps reference; consolidate numbered WAV derivatives with their event property list in one reconstructable DSE; and accelerate conversion with parallel WAV decoding and direct package streaming while reporting elapsed time.
 - Persist each Crogenitor's creation timestamp, show it on launcher profile cards, and record the latest successful remote connection date beside its server address.
 - Record the last local launch for each Crogenitor and show profile level and last-played date in local, Detached, and Remote selectors.
 - Cache remote Crogenitor and server metadata locally, refresh servers in the background every two days, and refresh profile progress when a launched remote game exits.

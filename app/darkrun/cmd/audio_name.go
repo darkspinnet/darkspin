@@ -10,17 +10,17 @@ import (
 	"github.com/darkspinnet/darkspin/content/audio"
 )
 
-func discoverAudioNames(sourcePath string, names map[uint32]string) (map[uint32]string, error) {
+func discoverAudioNames(sourcePath string, names map[uint32]string) (map[uint32]string, map[uint32]audio.SampleAlias, error) {
 	sourceName := filepath.Base(sourcePath)
 	if !strings.EqualFold(sourceName, "Audio.package") && !strings.EqualFold(sourceName, "AudioProps.package") {
-		return names, nil
+		return names, nil, nil
 	}
 	propertyPath, err := findAudioPropertyPath(sourcePath)
 	if err != nil {
-		return nil, fmt.Errorf("propertyPath: %w", err)
+		return nil, nil, fmt.Errorf("propertyPath: %w", err)
 	}
 	if propertyPath == "" {
-		return names, nil
+		return names, nil, nil
 	}
 	mergedNames := make(map[uint32]string, len(names)+16)
 	for nameID, name := range names {
@@ -39,7 +39,7 @@ func discoverAudioNames(sourcePath string, names map[uint32]string) (map[uint32]
 	if strings.EqualFold(sourceName, "Audio.package") {
 		patchAliases, patchErr := audio.PatchParameterAliases(sourcePath, mergedNames)
 		if patchErr != nil {
-			return nil, fmt.Errorf("patchAliases: %w", patchErr)
+			return nil, nil, fmt.Errorf("patchAliases: %w", patchErr)
 		}
 		for nameID, name := range patchAliases {
 			if mergedNames[nameID] == "" {
@@ -49,7 +49,7 @@ func discoverAudioNames(sourcePath string, names map[uint32]string) (map[uint32]
 	}
 	referenceAliases, err := audio.ReferencedPropertyAliases(filepath.Dir(propertyPath), propertyPath, mergedNames)
 	if err != nil {
-		return nil, fmt.Errorf("propertyAliases: %w", err)
+		return nil, nil, fmt.Errorf("propertyAliases: %w", err)
 	}
 	for nameID, name := range referenceAliases {
 		if mergedNames[nameID] == "" {
@@ -58,7 +58,7 @@ func discoverAudioNames(sourcePath string, names map[uint32]string) (map[uint32]
 	}
 	inheritedAliases, err := audio.InheritedPropertyAliases(propertyPath, mergedNames)
 	if err != nil {
-		return nil, fmt.Errorf("propertyInheritance: %w", err)
+		return nil, nil, fmt.Errorf("propertyInheritance: %w", err)
 	}
 	for nameID, name := range inheritedAliases {
 		if mergedNames[nameID] == "" {
@@ -66,18 +66,18 @@ func discoverAudioNames(sourcePath string, names map[uint32]string) (map[uint32]
 		}
 	}
 	if strings.EqualFold(sourceName, "AudioProps.package") {
-		return mergedNames, nil
+		return mergedNames, nil, nil
 	}
-	sampleAliases, err := audio.SampleAliases(propertyPath, mergedNames)
+	sampleRecords, err := audio.SampleAliasRecords(propertyPath, mergedNames)
 	if err != nil {
-		return nil, fmt.Errorf("sampleAliases: %w", err)
+		return nil, nil, fmt.Errorf("sampleAliases: %w", err)
 	}
-	for nameID, name := range sampleAliases {
+	for nameID, record := range sampleRecords {
 		if mergedNames[nameID] == "" {
-			mergedNames[nameID] = name
+			mergedNames[nameID] = record.Name
 		}
 	}
-	return mergedNames, nil
+	return mergedNames, sampleRecords, nil
 }
 
 func findAudioPropertyPath(sourcePath string) (string, error) {

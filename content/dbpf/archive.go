@@ -412,14 +412,35 @@ func PackPath(ctx context.Context, sourcePath, destinationPath string) error {
 // PackManifestPath rebuilds a package from stored payloads and an in-memory
 // lossless archive manifest.
 func PackManifestPath(ctx context.Context, sourcePath, destinationPath string, manifest *Manifest) error {
+	return PackManifestReaders(ctx, destinationPath, manifest, func(ordinal int, resource Resource) (io.ReadCloser, Resource, error) {
+		payloadPath, err := archivePath(sourcePath, resource.PayloadPath)
+		if err != nil {
+			return nil, Resource{}, fmt.Errorf("payloadPath[%d]: %w", ordinal, err)
+		}
+		r, err := os.Open(payloadPath)
+		if err != nil {
+			return nil, Resource{}, fmt.Errorf("payloadOpen[%d]: %w", ordinal, err)
+		}
+		return r, resource, nil
+	})
+}
+
+// ResourceOpener provides one stored payload and its rebuilt index metadata.
+type ResourceOpener func(ordinal int, resource Resource) (io.ReadCloser, Resource, error)
+
+// PackManifestReaders rebuilds a package directly from resource readers.
+func PackManifestReaders(ctx context.Context, destinationPath string, manifest *Manifest, openResource ResourceOpener) error {
 	if ctx == nil {
 		return errors.New("nil context")
 	}
-	if sourcePath == "" || destinationPath == "" {
+	if destinationPath == "" {
 		return errors.New("empty archive path")
 	}
 	if manifest == nil {
 		return errors.New("nil archive manifest")
+	}
+	if openResource == nil {
+		return errors.New("nil resource opener")
 	}
 	_, err := os.Stat(destinationPath)
 	if err == nil {
@@ -434,7 +455,7 @@ func PackManifestPath(ctx context.Context, sourcePath, destinationPath string, m
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
-	err = Write(ctx, temporary, sourcePath, manifest)
+	err = WriteReaders(ctx, temporary, manifest, openResource)
 	if err != nil {
 		_ = temporary.Close()
 		return fmt.Errorf("packageWrite: %w", err)
@@ -472,11 +493,29 @@ func PackManifestPath(ctx context.Context, sourcePath, destinationPath string, m
 
 // Write streams archive resources and rebuilds the DBPF index.
 func Write(ctx context.Context, w io.WriteSeeker, sourcePath string, manifest *Manifest) error {
+	return WriteReaders(ctx, w, manifest, func(ordinal int, resource Resource) (io.ReadCloser, Resource, error) {
+		payloadPath, err := archivePath(sourcePath, resource.PayloadPath)
+		if err != nil {
+			return nil, Resource{}, fmt.Errorf("payloadPath[%d]: %w", ordinal, err)
+		}
+		r, err := os.Open(payloadPath)
+		if err != nil {
+			return nil, Resource{}, fmt.Errorf("payloadOpen[%d]: %w", ordinal, err)
+		}
+		return r, resource, nil
+	})
+}
+
+// WriteReaders streams supplied archive resources and rebuilds the DBPF index.
+func WriteReaders(ctx context.Context, w io.WriteSeeker, manifest *Manifest, openResource ResourceOpener) error {
 	if ctx == nil {
 		return errors.New("nil context")
 	}
 	if w == nil || manifest == nil {
 		return errors.New("nil package output")
+	}
+	if openResource == nil {
+		return errors.New("nil resource opener")
 	}
 	if len(manifest.HeaderBytes) != HeaderSize {
 		return fmt.Errorf("manifestHeader: got %d bytes", len(manifest.HeaderBytes))
@@ -507,13 +546,9 @@ func Write(ctx context.Context, w io.WriteSeeker, sourcePath string, manifest *M
 		if position > int64(^uint32(0)) {
 			return fmt.Errorf("payloadOffset[%d]: %d exceeds DBPF limit", ordinal, position)
 		}
-		payloadPath, pathErr := archivePath(sourcePath, resource.PayloadPath)
-		if pathErr != nil {
-			return fmt.Errorf("payloadPath[%d]: %w", ordinal, pathErr)
-		}
-		r, openErr := os.Open(payloadPath)
+		r, rebuiltResource, openErr := openResource(ordinal, resource)
 		if openErr != nil {
-			return fmt.Errorf("payloadOpen[%d]: %w", ordinal, openErr)
+			return fmt.Errorf("payloadSource[%d]: %w", ordinal, openErr)
 		}
 		count, copyErr := io.CopyBuffer(w, r, buffer)
 		closeErr := r.Close()
@@ -526,10 +561,10 @@ func Write(ctx context.Context, w io.WriteSeeker, sourcePath string, manifest *M
 		if count > int64(0x7fffffff) {
 			return fmt.Errorf("payloadSize[%d]: %d exceeds DBPF limit", ordinal, count)
 		}
-		entry := resource.Entry
+		entry := rebuiltResource.Entry
 		entry.Offset = uint32(position)
 		entry.StoredSize = uint32(count)
-		entry.isStoredSizeFlag = resource.IsStoredSizeFlag
+		entry.isStoredSizeFlag = rebuiltResource.IsStoredSizeFlag
 		entries[ordinal] = entry
 	}
 	indexPosition, err := w.Seek(0, io.SeekCurrent)

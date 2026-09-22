@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/darkspinnet/darkspin/content/dbpf"
@@ -24,33 +23,23 @@ func ReferencedPropertyAliases(directoryPath, audioPropertyPath string, names ma
 	if err != nil {
 		return nil, fmt.Errorf("directoryRead: %w", err)
 	}
-	candidatesByInstance := make(map[uint32]map[string]bool)
+	references := make([]propertyReference, 0, len(targets)*2)
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".package") {
 			continue
 		}
 		packagePath := filepath.Join(directoryPath, entry.Name())
-		if strings.EqualFold(packagePath, audioPropertyPath) || strings.EqualFold(entry.Name(), "Audio.package") {
+		if strings.EqualFold(entry.Name(), "Audio.package") {
 			continue
 		}
-		err = collectPropertyReferences(packagePath, targets, names, candidatesByInstance)
+		packageReferences, referenceErr := collectPropertyReferences(packagePath, targets)
+		err = referenceErr
 		if err != nil {
 			return nil, fmt.Errorf("packageReferences[%s]: %w", entry.Name(), err)
 		}
+		references = append(references, packageReferences...)
 	}
-	aliases := make(map[uint32]string)
-	for instanceID, candidates := range candidatesByInstance {
-		if names[instanceID] != "" || len(candidates) != 1 {
-			continue
-		}
-		orderedCandidates := make([]string, 0, len(candidates))
-		for candidate := range candidates {
-			orderedCandidates = append(orderedCandidates, candidate)
-		}
-		sort.Strings(orderedCandidates)
-		aliases[instanceID] = orderedCandidates[0]
-	}
-	return aliases, nil
+	return resolveReferencedPropertyAliases(references, targets, names), nil
 }
 
 func audioPropertyInstances(sourcePath string) (map[uint32]bool, error) {
@@ -68,27 +57,24 @@ func audioPropertyInstances(sourcePath string) (map[uint32]bool, error) {
 	return instances, nil
 }
 
-func collectPropertyReferences(sourcePath string, targets map[uint32]bool, names map[uint32]string, candidatesByInstance map[uint32]map[string]bool) error {
+func collectPropertyReferences(sourcePath string, audioTargets map[uint32]bool) ([]propertyReference, error) {
 	pkg, r, err := openPackage(sourcePath)
 	if err != nil {
-		return fmt.Errorf("packageOpen: %w", err)
+		return nil, fmt.Errorf("packageOpen: %w", err)
 	}
 	defer r.Close()
+	references := make([]propertyReference, 0)
 	for ordinal, entry := range pkg.Entries {
-		if !prop.IsResourceType(entry.Type) || entry.Type == prop.AudioResourceType {
-			continue
-		}
-		ownerName := strings.TrimSuffix(names[uint32(entry.Instance)], "~")
-		if ownerName == "" {
+		if !prop.IsResourceType(entry.Type) {
 			continue
 		}
 		payloadReader, openErr := pkg.Open(entry)
 		if openErr != nil {
-			return fmt.Errorf("resourceOpen[%d]: %w", ordinal, openErr)
+			return nil, fmt.Errorf("resourceOpen[%d]: %w", ordinal, openErr)
 		}
 		payload, readErr := io.ReadAll(payloadReader)
 		if readErr != nil {
-			return fmt.Errorf("resourceRead[%d]: %w", ordinal, readErr)
+			return nil, fmt.Errorf("resourceRead[%d]: %w", ordinal, readErr)
 		}
 		document, decodeErr := prop.Decode(payload)
 		if decodeErr != nil {
@@ -97,47 +83,97 @@ func collectPropertyReferences(sourcePath string, targets map[uint32]bool, names
 		for _, property := range document.Properties {
 			roleName, isFound := prop.Name(property.ID)
 			if !isFound {
-				continue
+				roleName = ""
 			}
+			roleName = ReadablePointerName(roleName)
 			for itemIndex, item := range property.Items {
-				instanceID, alias, isReference := propertyAudioReference(property.Type, item, ownerName, roleName)
-				if !isReference || !targets[instanceID] {
+				instanceID, isReference := propertyReferenceInstance(property.Type, item, roleName, audioTargets)
+				if !isReference {
 					continue
 				}
-				if len(property.Items) > 1 {
-					alias += fmt.Sprintf("_%02d", itemIndex+1)
-				}
-				if candidatesByInstance[instanceID] == nil {
-					candidatesByInstance[instanceID] = make(map[string]bool)
-				}
-				candidatesByInstance[instanceID][alias] = true
+				references = append(references, propertyReference{
+					ownerID: uint32(entry.Instance), targetID: instanceID, roleName: roleName,
+					itemIndex: itemIndex, itemCount: len(property.Items),
+				})
 			}
 		}
 	}
-	return nil
+	return references, nil
 }
 
-func propertyAudioReference(propertyType uint16, item []byte, ownerName, roleName string) (uint32, string, bool) {
+func propertyReferenceInstance(propertyType uint16, item []byte, roleName string, audioTargets map[uint32]bool) (uint32, bool) {
 	switch propertyType {
 	case prop.TypeKey:
 		if len(item) < 4 {
-			return 0, "", false
+			return 0, false
 		}
-		return binary.LittleEndian.Uint32(item[:4]), ownerName + "_" + roleName, true
+		return binary.LittleEndian.Uint32(item[:4]), true
 	case prop.TypeInt32, prop.TypeUInt32:
 		if len(item) != 4 || !isAudioRole(roleName) {
-			return 0, "", false
+			return 0, false
 		}
-		return binary.BigEndian.Uint32(item), ownerName + "_" + roleName, true
+		instanceID := binary.BigEndian.Uint32(item)
+		return instanceID, audioTargets[instanceID]
 	case prop.TypeString8:
 		if len(item) < 4 || !isAudioRole(roleName) {
-			return 0, "", false
+			return 0, false
 		}
 		audioName := string(item[4:])
-		return hashName(audioName), audioName, true
+		instanceID := hashName(audioName)
+		return instanceID, audioTargets[instanceID]
 	default:
-		return 0, "", false
+		return 0, false
 	}
+}
+
+func resolveReferencedPropertyAliases(references []propertyReference, targets map[uint32]bool, names map[uint32]string) map[uint32]string {
+	resolvedNames := make(map[uint32]string, len(names)+len(references))
+	for instanceID, name := range names {
+		resolvedNames[instanceID] = strings.TrimSuffix(name, "~")
+	}
+	for {
+		candidatesByInstance := make(map[uint32]map[string]bool)
+		for _, reference := range references {
+			if resolvedNames[reference.targetID] != "" {
+				continue
+			}
+			ownerName := resolvedNames[reference.ownerID]
+			if ownerName == "" {
+				continue
+			}
+			alias := ownerName
+			if reference.roleName != "" {
+				alias += "_" + reference.roleName
+			}
+			if reference.itemCount > 1 {
+				alias += fmt.Sprintf("_%02d", reference.itemIndex+1)
+			}
+			if candidatesByInstance[reference.targetID] == nil {
+				candidatesByInstance[reference.targetID] = make(map[string]bool)
+			}
+			candidatesByInstance[reference.targetID][alias] = true
+		}
+		addedCount := 0
+		for instanceID, candidates := range candidatesByInstance {
+			if len(candidates) != 1 {
+				continue
+			}
+			for alias := range candidates {
+				resolvedNames[instanceID] = alias
+				addedCount++
+			}
+		}
+		if addedCount == 0 {
+			break
+		}
+	}
+	aliases := make(map[uint32]string)
+	for instanceID := range targets {
+		if names[instanceID] == "" && resolvedNames[instanceID] != "" {
+			aliases[instanceID] = resolvedNames[instanceID]
+		}
+	}
+	return aliases
 }
 
 func isAudioRole(roleName string) bool {

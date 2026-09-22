@@ -35,6 +35,7 @@ func packageResourcePaths(resources []dbpf.Resource, names map[uint32]string) []
 	aliases := packageResourceAliases(resources, names)
 	paths := make([]string, len(resources))
 	usedPaths := make(map[string]bool, len(resources))
+	aliasOrdinalsByPath := make(map[string]int)
 	typeCountsByPair := make(map[resourcePairKey]map[uint32]int)
 	for _, resource := range resources {
 		pairKey, isPairable := resourcePair(resource.Entry)
@@ -96,12 +97,30 @@ func packageResourcePaths(resources []dbpf.Resource, names map[uint32]string) []
 		}
 		pathKey := strings.ToLower(path)
 		if usedPaths[pathKey] {
-			name += fmt.Sprintf("__%08x_%08x_%016x", resource.Entry.Type, resource.Entry.Group, resource.Entry.Instance)
-			path = filepath.ToSlash(filepath.Join(alias.category, kind, name+".dse"))
-			if resource.Entry.Type == prop.AudioResourceType || audio.IsStreamType(resource.Entry.Type) || audio.IsPatchType(resource.Entry.Type) || isMovieAsset || isAnimationAsset || isScaleformAsset || isPaired && pairKey.family == "render" {
-				path = filepath.ToSlash(filepath.Join(alias.category, name+".dse"))
+			if strings.HasPrefix(strings.ToLower(alias.name), "ds_") {
+				basePathKey := pathKey
+				aliasOrdinal := aliasOrdinalsByPath[basePathKey] + 2
+				for {
+					candidateName := fmt.Sprintf("%s_%02d", name, aliasOrdinal)
+					candidatePath := filepath.ToSlash(filepath.Join(alias.category, candidateName+".dse"))
+					candidatePathKey := strings.ToLower(candidatePath)
+					if !usedPaths[candidatePathKey] {
+						name = candidateName
+						path = candidatePath
+						pathKey = candidatePathKey
+						aliasOrdinalsByPath[basePathKey] = aliasOrdinal - 1
+						break
+					}
+					aliasOrdinal++
+				}
+			} else {
+				name += fmt.Sprintf("__%08x_%08x_%016x", resource.Entry.Type, resource.Entry.Group, resource.Entry.Instance)
+				path = filepath.ToSlash(filepath.Join(alias.category, kind, name+".dse"))
+				if resource.Entry.Type == prop.AudioResourceType || audio.IsStreamType(resource.Entry.Type) || audio.IsPatchType(resource.Entry.Type) || isMovieAsset || isAnimationAsset || isScaleformAsset || isPaired && pairKey.family == "render" {
+					path = filepath.ToSlash(filepath.Join(alias.category, name+".dse"))
+				}
+				pathKey = strings.ToLower(path)
 			}
-			pathKey = strings.ToLower(path)
 		}
 		usedPaths[pathKey] = true
 		paths[ordinal] = path
@@ -357,10 +376,24 @@ func audioCategory(name string) string {
 	case strings.HasPrefix(lowerName, "ui_") || strings.HasPrefix(lowerName, "editor_"):
 		return filepath.Join("audio", "ui")
 	case name != "":
-		return filepath.Join("audio", "effect")
+		category := filepath.Join("audio", "effect")
+		family := audioFamily(lowerName)
+		if family != "" {
+			category = filepath.Join(category, family)
+		}
+		return category
 	default:
 		return filepath.Join("audio", "unresolved")
 	}
+}
+
+func audioFamily(name string) string {
+	name = strings.TrimPrefix(strings.ToLower(name), "ds_")
+	separator := strings.IndexByte(name, '_')
+	if separator <= 0 {
+		return ""
+	}
+	return safeResourceName(name[:separator])
 }
 
 func resourceDefinitionIdentity(payloadPath string) string {

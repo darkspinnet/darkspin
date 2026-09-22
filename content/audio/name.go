@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/darkspinnet/darkspin/content/dbpf"
@@ -216,74 +215,18 @@ func EncodeHeader(payload []byte, header Header) ([]byte, error) {
 	return encodedPayload, nil
 }
 
-// SampleAliases derives stable stream names from unambiguous named audioProp
-// sample references. Existing registry names always remain authoritative.
+// SampleAliases derives stable stream names from AudioProps sample references.
+// Existing registry names always remain authoritative.
 func SampleAliases(sourcePath string, names map[uint32]string) (map[uint32]string, error) {
-	r, err := os.Open(sourcePath)
+	records, err := SampleAliasRecords(sourcePath, names)
 	if err != nil {
-		return nil, fmt.Errorf("packageOpen: %w", err)
+		return nil, fmt.Errorf("aliasRecords: %w", err)
 	}
-	defer r.Close()
-	fi, err := r.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("packageStat: %w", err)
-	}
-	pkg, err := dbpf.NewReader(r, fi.Size())
-	if err != nil {
-		return nil, fmt.Errorf("packageRead: %w", err)
-	}
-	candidatesByInstance := make(map[uint32]map[string]bool)
-	for ordinal, entry := range pkg.Entries {
-		if entry.Type != prop.AudioResourceType {
-			continue
+	aliases := make(map[uint32]string, len(records))
+	for instanceID, record := range records {
+		if names[instanceID] == "" {
+			aliases[instanceID] = record.Name
 		}
-		eventName := names[uint32(entry.Instance)]
-		if eventName == "" {
-			continue
-		}
-		payloadReader, openErr := pkg.Open(entry)
-		if openErr != nil {
-			return nil, fmt.Errorf("resourceOpen[%d]: %w", ordinal, openErr)
-		}
-		payload, readErr := io.ReadAll(payloadReader)
-		if readErr != nil {
-			return nil, fmt.Errorf("resourceRead[%d]: %w", ordinal, readErr)
-		}
-		document, decodeErr := prop.Decode(payload)
-		if decodeErr != nil {
-			return nil, fmt.Errorf("resourceDecode[%d]: %w", ordinal, decodeErr)
-		}
-		for _, property := range document.Properties {
-			if property.ID != samplesProperty || property.Type != prop.TypeKey {
-				continue
-			}
-			for sampleIndex, item := range property.Items {
-				if len(item) < 4 {
-					return nil, fmt.Errorf("sampleKey[%d:%d]: got %d bytes", ordinal, sampleIndex, len(item))
-				}
-				instanceID := binary.LittleEndian.Uint32(item[:4])
-				alias := eventName
-				if len(property.Items) > 1 {
-					alias = fmt.Sprintf("%s_sample_%02d", eventName, sampleIndex+1)
-				}
-				if candidatesByInstance[instanceID] == nil {
-					candidatesByInstance[instanceID] = make(map[string]bool)
-				}
-				candidatesByInstance[instanceID][alias] = true
-			}
-		}
-	}
-	aliases := make(map[uint32]string)
-	for instanceID, candidates := range candidatesByInstance {
-		if names[instanceID] != "" || len(candidates) != 1 {
-			continue
-		}
-		orderedCandidates := make([]string, 0, len(candidates))
-		for candidate := range candidates {
-			orderedCandidates = append(orderedCandidates, candidate)
-		}
-		sort.Strings(orderedCandidates)
-		aliases[instanceID] = orderedCandidates[0]
 	}
 	return aliases, nil
 }
@@ -384,10 +327,11 @@ func InheritedPropertyAliases(sourcePath string, names map[uint32]string) (map[u
 			}
 			roleName, isFound := prop.Name(property.ID)
 			if !isFound {
-				continue
+				roleName = ""
 			}
+			roleName = ReadablePointerName(roleName)
 			for itemIndex, item := range property.Items {
-				if len(item) < 12 || binary.LittleEndian.Uint32(item[4:8]) != 0 || binary.LittleEndian.Uint32(item[8:12]) != 0 {
+				if len(item) < 4 {
 					continue
 				}
 				targetID := binary.LittleEndian.Uint32(item[:4])
@@ -416,7 +360,10 @@ func InheritedPropertyAliases(sourcePath string, names map[uint32]string) (map[u
 			if ownerName == "" {
 				continue
 			}
-			alias := ownerName + "_" + reference.roleName
+			alias := ownerName
+			if reference.roleName != "" {
+				alias += "_" + reference.roleName
+			}
 			if reference.itemCount > 1 {
 				alias += fmt.Sprintf("_%02d", reference.itemIndex+1)
 			}

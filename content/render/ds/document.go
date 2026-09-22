@@ -516,12 +516,7 @@ func PackPath(ctx context.Context, sourcePath, destinationPath string, document 
 	if document == nil || document.Manifest == nil {
 		return errors.New("nil document")
 	}
-	temporaryPath, materializedManifest, err := materializeResources(ctx, sourcePath, destinationPath, document.Manifest)
-	if err != nil {
-		return fmt.Errorf("resourceMaterialize: %w", err)
-	}
-	defer os.RemoveAll(temporaryPath)
-	err = dbpf.PackManifestPath(ctx, temporaryPath, destinationPath, materializedManifest)
+	err := packResourcesWithPropertyDeclaration(ctx, sourcePath, destinationPath, document.Manifest, "PROPERTYLIST")
 	if err != nil {
 		return fmt.Errorf("packageRebuild: %w", err)
 	}
@@ -618,66 +613,41 @@ func verifyFiles(sourcePath string, manifest *dbpf.Manifest) error {
 	return nil
 }
 
-func materializeResources(ctx context.Context, sourcePath, destinationPath string, manifest *dbpf.Manifest) (string, *dbpf.Manifest, error) {
-	return materializeResourcesWithPropertyDeclaration(ctx, sourcePath, destinationPath, manifest, "PROPERTYLIST")
+type resourcePackSource struct {
+	ctx                 context.Context
+	sourcePath          string
+	propertyDeclaration string
 }
 
-func materializeResourcesWithPropertyDeclaration(ctx context.Context, sourcePath, destinationPath string, manifest *dbpf.Manifest, propertyDeclaration string) (string, *dbpf.Manifest, error) {
-	temporaryPath, err := os.MkdirTemp(filepath.Dir(destinationPath), ".ds-resource-*")
+func (e resourcePackSource) open(ordinal int, resource dbpf.Resource) (io.ReadCloser, dbpf.Resource, error) {
+	err := e.ctx.Err()
 	if err != nil {
-		return "", nil, fmt.Errorf("temporaryCreate: %w", err)
+		return nil, dbpf.Resource{}, fmt.Errorf("resourceContext[%d]: %w", ordinal, err)
 	}
-	isComplete := false
-	defer func() {
-		if !isComplete {
-			_ = os.RemoveAll(temporaryPath)
-		}
-	}()
-	materializedManifest := &dbpf.Manifest{
-		HeaderBytes:      append([]byte(nil), manifest.HeaderBytes...),
-		IndexFlags:       manifest.IndexFlags,
-		SharedType:       manifest.SharedType,
-		SharedGroup:      manifest.SharedGroup,
-		SharedInstanceHi: manifest.SharedInstanceHi,
-		Resources:        make([]dbpf.Resource, len(manifest.Resources)),
-	}
-	resourcePath := filepath.Join(temporaryPath, "resource")
-	err = os.MkdirAll(resourcePath, 0o755)
+	definitionPath, err := safePath(e.sourcePath, resource.PayloadPath)
 	if err != nil {
-		return "", nil, fmt.Errorf("resourceMkdir: %w", err)
+		return nil, dbpf.Resource{}, fmt.Errorf("definitionPath[%d]: %w", ordinal, err)
 	}
-	for ordinal, resource := range manifest.Resources {
-		err = ctx.Err()
-		if err != nil {
-			return "", nil, fmt.Errorf("resourceContext[%d]: %w", ordinal, err)
-		}
-		definitionPath, pathErr := safePath(sourcePath, resource.PayloadPath)
-		if pathErr != nil {
-			return "", nil, fmt.Errorf("definitionPath[%d]: %w", ordinal, pathErr)
-		}
-		storedPayload, readErr := readResourceWithPropertyDeclaration(definitionPath, resourceDefinitionIdentity(resource.PayloadPath), ordinal, resource.Entry.Type, propertyDeclaration)
-		if readErr != nil {
-			return "", nil, fmt.Errorf("definitionRead[%d]: %w", ordinal, readErr)
-		}
-		payloadName := dbpf.ResourceName(ordinal, resource.Entry)
-		payloadRelativePath := filepath.ToSlash(filepath.Join("resource", payloadName))
-		payloadPath := filepath.Join(resourcePath, payloadName)
-		err = os.WriteFile(payloadPath, storedPayload, 0o644)
-		if err != nil {
-			return "", nil, fmt.Errorf("payloadWrite[%d]: %w", ordinal, err)
-		}
-		materializedResource := resource
-		materializedResource.PayloadPath = payloadRelativePath
-		if isDecodedDSEType(resource.Entry.Type) {
-			materializedResource.Entry.StoredSize = uint32(len(storedPayload))
-			materializedResource.Entry.Size = uint32(len(storedPayload))
-			materializedResource.Entry.Compression = 0
-			materializedResource.IsStoredSizeFlag = false
-		}
-		materializedManifest.Resources[ordinal] = materializedResource
+	storedPayload, err := readResourceWithPropertyDeclaration(definitionPath, resourceDefinitionIdentity(resource.PayloadPath), ordinal, resource.Entry.Type, e.propertyDeclaration)
+	if err != nil {
+		return nil, dbpf.Resource{}, fmt.Errorf("definitionRead[%d]: %w", ordinal, err)
 	}
-	isComplete = true
-	return temporaryPath, materializedManifest, nil
+	if isDecodedDSEType(resource.Entry.Type) {
+		resource.Entry.StoredSize = uint32(len(storedPayload))
+		resource.Entry.Size = uint32(len(storedPayload))
+		resource.Entry.Compression = 0
+		resource.IsStoredSizeFlag = false
+	}
+	return io.NopCloser(bytes.NewReader(storedPayload)), resource, nil
+}
+
+func packResourcesWithPropertyDeclaration(ctx context.Context, sourcePath, destinationPath string, manifest *dbpf.Manifest, propertyDeclaration string) error {
+	source := resourcePackSource{ctx: ctx, sourcePath: sourcePath, propertyDeclaration: propertyDeclaration}
+	err := dbpf.PackManifestReaders(ctx, destinationPath, manifest, source.open)
+	if err != nil {
+		return fmt.Errorf("packageWrite: %w", err)
+	}
+	return nil
 }
 
 // StoredResource reads and decodes one DS resource by package ordinal.
@@ -714,6 +684,7 @@ func isDecodedDSEType(resourceType uint32) bool {
 type parser struct {
 	scanner *bufio.Scanner
 	line    int
+	pending []string
 }
 
 func newParser(r io.Reader) *parser {
@@ -721,6 +692,11 @@ func newParser(r io.Reader) *parser {
 }
 
 func (e *parser) next() ([]string, error) {
+	if e.pending != nil {
+		fields := e.pending
+		e.pending = nil
+		return fields, nil
+	}
 	for e.scanner.Scan() {
 		e.line++
 		fields, err := tokenize(e.scanner.Text())
@@ -737,6 +713,21 @@ func (e *parser) next() ([]string, error) {
 		return nil, fmt.Errorf("lineRead: %w", err)
 	}
 	return nil, io.EOF
+}
+
+func (e *parser) optionalProperty(name string, count int) ([]string, bool, error) {
+	fields, err := e.next()
+	if err != nil {
+		return nil, false, fmt.Errorf("%sRead: %w", name, err)
+	}
+	if len(fields) == 0 || fields[0] != name {
+		e.pending = fields
+		return nil, false, nil
+	}
+	if len(fields) != count+1 {
+		return nil, false, fmt.Errorf("line[%d]: expected %s with %d arguments, got %v", e.line, name, count, fields)
+	}
+	return fields[1:], true, nil
 }
 
 func (e *parser) property(name string, count int) ([]string, error) {
