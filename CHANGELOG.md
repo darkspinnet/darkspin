@@ -2,6 +2,11 @@
 
 ### 2026-09-21
 
+- Replace Darkrun's external vgmstream dependency with native Go decoding and the Darkspin-maintained MP3 module for EA PCM16BE, XAS1, and MPEG-1/MPEG-2 EALayer3 v1 audio while continuing to encode edited WAVs as EA PCM16BE.
+- Remove Draining Simian leech visuals from heroes when the draining enemy dies, even if shared effect-slot bookkeeping was cleared first.
+- Anchor the Lightning Juggernaut's delayed death explosion to its rendered corpse and scale its damage from strongest nearby to weakest at the blast edge.
+- Give each Space Barracuda an independent blink destination based on its own position, with a new direction on subsequent teleports.
+- Aim ranged basic attacks at the cursor instead of redirecting them to a nearby enemy.
 - Show Thunderstorm's cooldown on the ability HUD when its projectile storm begins.
 - Initialize captain agent state before applying the Elite status and attach packaged affix modifiers to named population captains.
 - Restore floating damage numbers for regular, critical, and killing hits against enemies, including co-op ally projections.
@@ -9,9 +14,9 @@
 - Persist each Crogenitor's creation timestamp, show it on launcher profile cards, and record the latest successful remote connection date beside its server address.
 - Record the last local launch for each Crogenitor and show profile level and last-played date in local, Detached, and Remote selectors.
 - Cache remote Crogenitor and server metadata locally, refresh servers in the background every two days, and refresh profile progress when a launched remote game exits.
-- Move Botanical Tunnelers toward their target during the visible underground burrow, then emerge with their poison attack and wait through the authored cooldown before burrowing again.
+- Move Botanical Tunnelers toward their target with the underground dirt-trail animation active, then emerge with their poison attack and wait through the authored cooldown before burrowing again.
 - Restore Goliath's Shockwave to its full authored 4-metre reach and 6-metre hit arc, and let Zetawatt Beam pierce every enemy along its 35-metre path regardless of aggro target.
-- Use Nightmare Vines' authored dead graphics state without overlaying generic creature-death and Zelem explosion effects.
+- Use Nightmare Vines' authored dead graphics state, retain their destroyed tree remnants, and avoid overlaying generic creature-death and Zelem explosion effects.
 - Tag locally built Darkspinner versions with the current seven-character Git commit, such as `1.0.4-dev-db3367e`, while preserving stable and unstable release versioning.
 - Change the launcher readiness message from `DarkSpinner ready` to `DarkSpinner is ready`.
 - Limit Remote, Detached, LAN multiplayer, and server-port controls to development and unstable Darkspinner builds while keeping production focused on Launch and Config.

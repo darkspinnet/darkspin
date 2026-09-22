@@ -90,12 +90,24 @@ func (e *campaignNPCDrainRun) ReleaseEffects() (campaignNPCDrainEffectLease, boo
 	if lease == nil || lease.pool == nil {
 		return campaignNPCDrainEffectLease{}, false
 	}
-	isSourceReleased := false
+	// The lease records presentation already sent to the client. Another cleanup
+	// path can clear the shared slot pool first, but the client still needs the
+	// matching removal for this lease.
 	if lease.sourceObjectID != 0 {
-		isSourceReleased = lease.pool.Release(lease.sourceObjectID, lease.sourceSlot)
+		isSourceSlotReleased := lease.pool.Release(
+			lease.sourceObjectID, lease.sourceSlot,
+		)
+		if !isSourceSlotReleased {
+			// A prior actor cleanup already cleared the shared source slot.
+		}
 	}
-	isTargetReleased := lease.pool.Release(lease.targetObjectID, lease.targetSlot)
-	return *lease, isSourceReleased || isTargetReleased
+	isTargetSlotReleased := lease.pool.Release(
+		lease.targetObjectID, lease.targetSlot,
+	)
+	if !isTargetSlotReleased {
+		// A prior actor cleanup already cleared the shared target slot.
+	}
+	return *lease, true
 }
 
 func (e *campaignNPCDrainRun) targets(objectID uint32) bool {
@@ -120,8 +132,8 @@ func (s *gameplayPeerSession) stopCampaignNPCDrainsTargeting(
 		}
 		delete(s.campaignNPCDrainRuns, sourceObjectID)
 		run.End()
-		lease, isReleased := run.ReleaseEffects()
-		if !isReleased {
+		lease, isLeaseFound := run.ReleaseEffects()
+		if !isLeaseFound {
 			continue
 		}
 		removalPackets, err := zoneabilityraknet.ChannelDrainTargetEffectRemoval(
@@ -192,8 +204,8 @@ func (e campaignNPCDrainSchedule) endPacket(
 }
 
 func (e campaignNPCDrainSchedule) effectRemovals() ([][]byte, error) {
-	lease, isReleased := e.run.ReleaseEffects()
-	if !isReleased {
+	lease, isLeaseFound := e.run.ReleaseEffects()
+	if !isLeaseFound {
 		return nil, nil
 	}
 	packets, err := zoneabilityraknet.ChannelDrainTargetEffectRemoval(
@@ -548,8 +560,8 @@ func (r campaignNPCActionRuntime) stopHealthDrain(
 		return nil, nil
 	}
 	run.End()
-	lease, isReleased := run.ReleaseEffects()
-	if !isReleased {
+	lease, isLeaseFound := run.ReleaseEffects()
+	if !isLeaseFound {
 		return nil, nil
 	}
 	packets, err := zoneabilityraknet.ChannelDrainTargetEffectRemoval(

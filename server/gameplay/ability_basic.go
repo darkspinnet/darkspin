@@ -28,6 +28,7 @@ import (
 )
 
 const campaignHeldMeleeCursorRadius = float32(3)
+const campaignProjectileCursorRadius = float32(3)
 
 const campaignIdleTargetCursorRadius = float32(6)
 const campaignIdleTargetRecoveryRadius = float32(20)
@@ -496,6 +497,22 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 		r.registry.mutex.Unlock()
 		return request.reject(reason)
 	}
+	if !isActiveRequest && definition.Kind == sim.AbilityKindProjectile {
+		targetObjectID = zoneability.CursorTarget(
+			peerSession.zone.NPCs(), command.Common.ObjectID,
+			game.Vec3(command.Ability.CursorPosition),
+			game.Vec3(command.Ability.TargetPosition),
+			campaignProjectileCursorRadius,
+		)
+		command.Ability.TargetID = targetObjectID
+		if targetObjectID == 0 &&
+			isReportedZonePosition(command.Ability.CursorPosition) &&
+			isFiniteZonePosition(command.Ability.CursorPosition) {
+			command.Ability.TargetPosition = command.Ability.CursorPosition
+		}
+		request.command = command
+		request.targetObjectID = targetObjectID
+	}
 	err = peerSession.advancePlayerPosition(abilityStartTime, command.Common.Position)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -767,6 +784,13 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 		},
 		creature, definition, maximumRange,
 	)
+	if planErr == nil && !isActiveRequest &&
+		definition.Kind == sim.AbilityKindProjectile && targetObjectID == 0 {
+		// Targetless projectile basics are cursor-fired. The generic planner's
+		// nearby-attacker fallback is useful for autonomous attacks, but would
+		// redirect a player's missed cursor shot to an unrelated enemy.
+		plan.TargetObjectID = 0
+	}
 	if planErr == nil && targetObjectID != 0 &&
 		definition.Name == "SupportHealerBasic" {
 		target, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)

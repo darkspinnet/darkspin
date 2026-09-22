@@ -101,8 +101,8 @@ func (e campaignNPCManaDrainSchedule) end(
 }
 
 func (e campaignNPCManaDrainSchedule) effectRemovals() ([][]byte, error) {
-	lease, isReleased := e.run.ReleaseEffects()
-	if !isReleased {
+	lease, isLeaseFound := e.run.ReleaseEffects()
+	if !isLeaseFound {
 		return nil, nil
 	}
 	packets, err := zoneabilityraknet.ChannelDrainEffectRemovals(

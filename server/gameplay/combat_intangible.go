@@ -157,7 +157,7 @@ func (r campaignNPCActionRuntime) prepareStagnantNovaIntangible(
 		r.rollbackStagnantNovaIntangible(sessionKey, generation, run)
 		return nil, nil, fmt.Errorf("intangibleCreate: %w", err)
 	}
-	travelPackets, err := npcraknet.BurrowTravel(plan)
+	travelPackets, err := npcraknet.BurrowTravel(plan, timestamp)
 	if err != nil {
 		r.rollbackStagnantNovaIntangible(sessionKey, generation, run)
 		return nil, nil, fmt.Errorf("intangibleTravel: %w", err)

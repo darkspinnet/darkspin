@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -73,10 +72,6 @@ func projectAudioResources(ctx context.Context, pkg *dbpf.Reader, destinationPat
 	if len(jobs) == 0 {
 		return nil
 	}
-	decoderPath, err := audioDecoderPath()
-	if err != nil {
-		return fmt.Errorf("audioDecoder: %w", err)
-	}
 	jobChannel := make(chan audioProjectionJob, len(jobs))
 	resultChannel := make(chan error, len(jobs))
 	for _, job := range jobs {
@@ -93,7 +88,7 @@ func projectAudioResources(ctx context.Context, pkg *dbpf.Reader, destinationPat
 	var workers sync.WaitGroup
 	workers.Add(workerCount)
 	for workerIndex := 0; workerIndex < workerCount; workerIndex++ {
-		go projectAudioWorker(ctx, pkg, decoderPath, destinationPath, jobChannel, resultChannel, &workers)
+		go projectAudioWorker(ctx, pkg, destinationPath, jobChannel, resultChannel, &workers)
 	}
 	workers.Wait()
 	close(resultChannel)
@@ -105,15 +100,15 @@ func projectAudioResources(ctx context.Context, pkg *dbpf.Reader, destinationPat
 	return nil
 }
 
-func projectAudioWorker(ctx context.Context, pkg *dbpf.Reader, decoderPath, destinationPath string, jobs <-chan audioProjectionJob, results chan<- error, workers *sync.WaitGroup) {
+func projectAudioWorker(ctx context.Context, pkg *dbpf.Reader, destinationPath string, jobs <-chan audioProjectionJob, results chan<- error, workers *sync.WaitGroup) {
 	defer workers.Done()
 	for job := range jobs {
-		err := projectAudioJob(ctx, pkg, decoderPath, destinationPath, job)
+		err := projectAudioJob(ctx, pkg, destinationPath, job)
 		results <- err
 	}
 }
 
-func projectAudioJob(ctx context.Context, pkg *dbpf.Reader, decoderPath, destinationPath string, job audioProjectionJob) error {
+func projectAudioJob(ctx context.Context, pkg *dbpf.Reader, destinationPath string, job audioProjectionJob) error {
 	err := ctx.Err()
 	if err != nil {
 		return fmt.Errorf("audioContext: %w", err)
@@ -123,26 +118,29 @@ func projectAudioJob(ctx context.Context, pkg *dbpf.Reader, decoderPath, destina
 		return fmt.Errorf("snrPath: %w", err)
 	}
 	identity := resourceDefinitionIdentity(job.snr.resource.PayloadPath)
-	temporaryBasePath := filepath.Join(filepath.Dir(snrDefinitionPath), "."+identity+".darkrun")
-	temporarySNRPath := temporaryBasePath + ".snr"
-	err = writeDecodedAudioTemporaryPath(pkg, job.snr.ordinal, temporarySNRPath)
+	snrPayload, err := readDecodedAudioPayload(pkg, job.snr.ordinal)
 	if err != nil {
-		return fmt.Errorf("snrWrite: %w", err)
+		return fmt.Errorf("snrRead: %w", err)
 	}
-	defer os.Remove(temporarySNRPath)
+	var snsPayload []byte
 	if job.isSNSFound {
-		temporarySNSPath := temporaryBasePath + ".sns"
-		err = writeDecodedAudioTemporaryPath(pkg, job.sns.ordinal, temporarySNSPath)
+		snsPayload, err = readDecodedAudioPayload(pkg, job.sns.ordinal)
 		if err != nil {
-			return fmt.Errorf("snsWrite: %w", err)
+			return fmt.Errorf("snsRead: %w", err)
 		}
-		defer os.Remove(temporarySNSPath)
+	}
+	wav, err := audio.DecodeSNR(snrPayload, snsPayload)
+	if err != nil {
+		return fmt.Errorf("audioDecode[%016X]: %w", job.instanceID, err)
+	}
+	wavPayload, err := audio.EncodeWAV(wav)
+	if err != nil {
+		return fmt.Errorf("waveEncode[%016X]: %w", job.instanceID, err)
 	}
 	wavPath := filepath.Join(filepath.Dir(snrDefinitionPath), identity+".wav")
-	command := exec.CommandContext(ctx, decoderPath, "-i", "-o", wavPath, temporarySNRPath)
-	output, decodeErr := command.CombinedOutput()
-	if decodeErr != nil {
-		return fmt.Errorf("audioDecode[%016X]: %w: %s", job.instanceID, decodeErr, strings.TrimSpace(string(output)))
+	err = os.WriteFile(wavPath, wavPayload, 0o644)
+	if err != nil {
+		return fmt.Errorf("waveWrite[%016X]: %w", job.instanceID, err)
 	}
 	return nil
 }
@@ -231,31 +229,29 @@ func projectPackageAudioResource(ctx context.Context, pkg *dbpf.Reader, ordinal 
 		}
 		return nil
 	}
-	decoderPath, err := audioDecoderPath()
+	snrPayload, err := readDecodedAudioPayload(pkg, snrOrdinal)
 	if err != nil {
-		return fmt.Errorf("audioDecoder: %w", err)
+		return fmt.Errorf("snrRead: %w", err)
 	}
-	identity := resourceDefinitionIdentity(definitionPath)
-	temporaryBasePath := filepath.Join(filepath.Dir(definitionPath), "."+identity+".darkrun")
-	temporarySNRPath := temporaryBasePath + ".snr"
-	err = writeDecodedAudioTemporaryPath(pkg, snrOrdinal, temporarySNRPath)
-	if err != nil {
-		return fmt.Errorf("snrWrite: %w", err)
-	}
-	defer os.Remove(temporarySNRPath)
+	var snsPayload []byte
 	if snsOrdinal >= 0 {
-		temporarySNSPath := temporaryBasePath + ".sns"
-		err = writeDecodedAudioTemporaryPath(pkg, snsOrdinal, temporarySNSPath)
+		snsPayload, err = readDecodedAudioPayload(pkg, snsOrdinal)
 		if err != nil {
-			return fmt.Errorf("snsWrite: %w", err)
+			return fmt.Errorf("snsRead: %w", err)
 		}
-		defer os.Remove(temporarySNSPath)
+	}
+	wav, err := audio.DecodeSNR(snrPayload, snsPayload)
+	if err != nil {
+		return fmt.Errorf("audioDecode: %w", err)
+	}
+	wavPayload, err := audio.EncodeWAV(wav)
+	if err != nil {
+		return fmt.Errorf("waveEncode: %w", err)
 	}
 	wavPath := strings.TrimSuffix(definitionPath, filepath.Ext(definitionPath)) + ".wav"
-	command := exec.CommandContext(ctx, decoderPath, "-i", "-o", wavPath, temporarySNRPath)
-	output, decodeErr := command.CombinedOutput()
-	if decodeErr != nil {
-		return fmt.Errorf("audioDecode: %w: %s", decodeErr, strings.TrimSpace(string(output)))
+	err = os.WriteFile(wavPath, wavPayload, 0o644)
+	if err != nil {
+		return fmt.Errorf("waveWrite: %w", err)
 	}
 	err = replaceAudioWAV(definitionPath, filepath.Base(wavPath))
 	if err != nil {
@@ -393,10 +389,6 @@ func writeDecodedAudioPath(pkg *dbpf.Reader, ordinal int, destinationPath string
 	return writeDecodedAudioPathWithFlags(pkg, ordinal, destinationPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 }
 
-func writeDecodedAudioTemporaryPath(pkg *dbpf.Reader, ordinal int, destinationPath string) error {
-	return writeDecodedAudioPathWithFlags(pkg, ordinal, destinationPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
-}
-
 func writeDecodedAudioPathWithFlags(pkg *dbpf.Reader, ordinal int, destinationPath string, flags int) error {
 	if ordinal < 0 || ordinal >= len(pkg.Entries) {
 		return fmt.Errorf("ordinalRange: %d", ordinal)
@@ -418,6 +410,21 @@ func writeDecodedAudioPathWithFlags(pkg *dbpf.Reader, ordinal int, destinationPa
 		return fmt.Errorf("destinationClose: %w", closeErr)
 	}
 	return nil
+}
+
+func readDecodedAudioPayload(pkg *dbpf.Reader, ordinal int) ([]byte, error) {
+	if ordinal < 0 || ordinal >= len(pkg.Entries) {
+		return nil, fmt.Errorf("ordinalRange: %d", ordinal)
+	}
+	r, err := pkg.Open(pkg.Entries[ordinal])
+	if err != nil {
+		return nil, fmt.Errorf("resourceOpen: %w", err)
+	}
+	payload, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("resourceRead: %w", err)
+	}
+	return payload, nil
 }
 
 func audioDSRoot(definitionPath string) (string, error) {
@@ -470,32 +477,4 @@ func safeAudioPath(dsRoot, definitionDirectory, relativePath string) (string, er
 		return "", fmt.Errorf("pathEscape: %q", relativePath)
 	}
 	return candidatePath, nil
-}
-
-func audioDecoderPath() (string, error) {
-	decoderName := "vgmstream-cli"
-	if runtime.GOOS == "windows" {
-		decoderName += ".exe"
-	}
-	decoderPath, err := exec.LookPath(decoderName)
-	if err == nil {
-		return decoderPath, nil
-	}
-	executablePath, executableErr := os.Executable()
-	if executableErr == nil {
-		candidatePath := filepath.Join(filepath.Dir(executablePath), decoderName)
-		if _, statErr := os.Stat(candidatePath); statErr == nil {
-			return candidatePath, nil
-		}
-	}
-	workingPath, workingErr := os.Getwd()
-	if workingErr == nil {
-		candidatePath := filepath.Join(workingPath, ".cache", "vgmstream", decoderName)
-		if _, statErr := os.Stat(candidatePath); statErr == nil {
-			return candidatePath, nil
-		}
-	}
-	return "", errors.New("audioDecoderMissing: download vgmstream-cli from " +
-		"https://github.com/vgmstream/vgmstream/releases " +
-		"and install it in PATH or beside darkrun")
 }

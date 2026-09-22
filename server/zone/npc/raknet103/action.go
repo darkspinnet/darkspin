@@ -191,9 +191,9 @@ func Pursuit(plan zonenpc.FirstActionPlan) ([][]byte, error) {
 
 // BurrowTravel preserves the authored underground animation while the
 // Tunneler moves to the point where its poison nova will emerge.
-func BurrowTravel(plan zonenpc.AttackPlan) ([][]byte, error) {
+func BurrowTravel(plan zonenpc.AttackPlan, timestamp uint64) ([][]byte, error) {
 	if plan.SourceObjectID == 0 || !isFiniteVec3(plan.SourcePosition) ||
-		!isFiniteVec3(plan.TargetPosition) {
+		!isFiniteVec3(plan.TargetPosition) || plan.Profile.AnimationName == "" {
 		return nil, errors.New("npc burrow travel invalid")
 	}
 	source := vector(plan.SourcePosition)
@@ -205,6 +205,10 @@ func BurrowTravel(plan zonenpc.AttackPlan) ([][]byte, error) {
 		},
 		raknet.LocomotionUnreliableMessage{
 			ObjectID: plan.SourceObjectID, GoalPosition: target,
+		},
+		raknet.SetAnimationStateMessage{
+			ObjectID: plan.SourceObjectID, State: util.HashID(plan.Profile.AnimationName),
+			Timestamp: timestamp, Scale: 1,
 		},
 	}, "burrowTravel")
 }
@@ -1344,6 +1348,19 @@ func PositionedEffect(effectName string, position game.Vec3) ([]byte, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("positionedEffectMarshal: %w", err)
+	}
+	return packet, nil
+}
+
+func DeathDetonation(objectID uint32, effectName string) ([]byte, error) {
+	if objectID == 0 || effectName == "" {
+		return nil, errors.New("npc death detonation invalid")
+	}
+	packet, err := raknet.MarshalApplication(raknet.ObjectEffectMessage{
+		Asset: util.HashID(effectName), ObjectID: objectID, AttackerID: objectID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("deathDetonationMarshal: %w", err)
 	}
 	return packet, nil
 }

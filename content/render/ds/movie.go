@@ -96,17 +96,11 @@ func projectPackageMovieResource(ctx context.Context, pkg *dbpf.Reader, ordinal 
 	mkvPath := strings.TrimSuffix(definitionPath, filepath.Ext(definitionPath)) + ".mkv"
 	arguments := []string{"-y", "-v", "error", "-i", temporaryMoviePath}
 	if movieHasAudio(document) {
-		audioDecoderPath, decoderErr := audioDecoderPath()
-		if decoderErr != nil {
-			return fmt.Errorf("movieAudioDecoder: %w", decoderErr)
+		err = preserveRawMovieResource(definitionPath, payload)
+		if err != nil {
+			return fmt.Errorf("movieAudioRaw: %w", err)
 		}
-		temporaryWAVPath := filepath.Join(temporaryPath, "source.wav")
-		command := exec.CommandContext(ctx, audioDecoderPath, "-i", "-o", temporaryWAVPath, temporaryMoviePath)
-		output, decodeErr := command.CombinedOutput()
-		if decodeErr != nil {
-			return fmt.Errorf("movieAudioDecode: %w: %s", decodeErr, strings.TrimSpace(string(output)))
-		}
-		arguments = append(arguments, "-i", temporaryWAVPath, "-map", "0:v:0", "-map", "1:a:0", "-c:a", "flac")
+		return nil
 	} else {
 		arguments = append(arguments, "-map", "0:v:0", "-an")
 	}

@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/deepteams/webp v1.2.7
+	github.com/darkspinnet/mp3 v0.4.1
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/magefile/mage v1.15.0
 	github.com/spf13/cobra v1.10.1
