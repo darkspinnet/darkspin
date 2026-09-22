@@ -2,12 +2,13 @@
 
 ### 2026-09-22
 
+- Change Darkrun-generated audio aliases, including registry-backed names, from the `ds_` prefix to a trailing `~` so inferred filenames are immediately distinguishable from authored names.
 - Show the Darkrun build version at the start of root and subcommand help output, including bare general invocation.
 - Decode structurally verified Spore XAS0 resources with their channel-interleaved frame layout, including shortened final frames, instead of misreading them as garbled XAS1 audio or preserving them as raw SNR files.
 - Consolidate directly suffixed indexes, `_vN` versions, numbered variants, and numbered loop families into one normalized folder and family DSE while preserving each WAV definition and its reconstruction metadata.
 - Reduce successful Darkrun conversion output to the elapsed time without repeating source and destination paths.
 - Treat `darkrun convert <source> .` like an omitted destination so conversion writes the default local `.ds` directory or package.
-- Give every retail Spore WAV a pinned human-readable `ds_` alias without runtime lookup, remove hash identity suffixes from aliased files, and annotate DSE files with searchable audio-event, animation, package, and resource references for reconstruction.
+- Give every retail Spore WAV a pinned human-readable `~` alias without runtime lookup, remove hash identity suffixes from aliased files, and annotate DSE files with searchable audio-event, animation, package, and resource references for reconstruction.
 - Trace Darkspore audio events through shipped animation, noun, level, UI, effect, and pre-baked resources, pin exact names and resource-owner contexts into searchable conversion metadata, and replace ambiguous unresolved audio trees with resource-role and event-identity folders.
 
 ### 2026-09-21
@@ -20,7 +21,7 @@
 - Show Thunderstorm's cooldown on the ability HUD when its projectile storm begins.
 - Initialize captain agent state before applying the Elite status and attach packaged affix modifiers to named population captains.
 - Restore floating damage numbers for regular, critical, and killing hits against enemies, including co-op ally projections.
-- Give converted audio streams deterministic `ds_` aliases derived from event, inherited parent, loop, and shared-reference context; organize effects into family folders such as `effect/sfx` and `effect/scom`; annotate each WAV's DSE with searchable source keys, pointer roles, tags, and every AudioProps reference; consolidate numbered WAV derivatives with their event property list in one reconstructable DSE; and accelerate conversion with parallel WAV decoding and direct package streaming while reporting elapsed time.
+- Give converted audio streams deterministic `~` aliases derived from event, inherited parent, loop, registry, and shared-reference context; organize effects into family folders such as `effect/sfx` and `effect/scom`; annotate each WAV's DSE with searchable source keys, pointer roles, tags, and every AudioProps reference; consolidate numbered WAV derivatives with their event property list in one reconstructable DSE; and accelerate conversion with parallel WAV decoding and direct package streaming while reporting elapsed time.
 - Persist each Crogenitor's creation timestamp, show it on launcher profile cards, and record the latest successful remote connection date beside its server address.
 - Record the last local launch for each Crogenitor and show profile level and last-played date in local, Detached, and Remote selectors.
 - Cache remote Crogenitor and server metadata locally, refresh servers in the background every two days, and refresh profile progress when a launched remote game exits.

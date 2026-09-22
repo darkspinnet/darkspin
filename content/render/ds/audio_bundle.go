@@ -203,6 +203,16 @@ func consolidateAudioDerivativeManifests(destinationPath string, manifests ...*d
 }
 
 func audioDerivativeStem(name string) (string, bool) {
+	isAlias := audio.IsSampleAlias(name)
+	name = audio.StripSampleAliasSuffix(name)
+	stem, isDerivative := audioDerivativeStemBase(name, isAlias)
+	if isAlias && isDerivative {
+		stem += audio.SampleAliasSuffix
+	}
+	return stem, isDerivative
+}
+
+func audioDerivativeStemBase(name string, isAlias bool) (string, bool) {
 	lowerName := strings.ToLower(name)
 	variantIndex := strings.LastIndex(lowerName, "_variant_")
 	if variantIndex >= 0 {
@@ -231,16 +241,13 @@ func audioDerivativeStem(name string) (string, bool) {
 	if start == end || start == 0 {
 		return name, false
 	}
-	if strings.HasPrefix(strings.ToLower(name), "ds_") {
+	if isAlias {
 		ordinal, err := strconv.Atoi(name[start:])
 		if err != nil || ordinal < 1 {
 			return name, false
 		}
 	}
 	stem := strings.TrimRight(name[:start], "_")
-	if strings.EqualFold(stem, "ds") {
-		return name, false
-	}
 	return stem, true
 }
 
@@ -258,9 +265,6 @@ func isAudioDecimalSuffix(suffix string) bool {
 
 func audioIndexedFamilyStem(name string) (string, bool) {
 	familyStart := 0
-	if strings.HasPrefix(strings.ToLower(name), "ds_") {
-		familyStart = len("ds_")
-	}
 	separatorOffset := strings.IndexByte(name[familyStart:], '_')
 	if separatorOffset <= 0 {
 		return name, false

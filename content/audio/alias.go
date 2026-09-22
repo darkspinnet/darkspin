@@ -37,6 +37,23 @@ type SampleAlias struct {
 	References []SampleReference
 }
 
+// SampleAliasSuffix marks a human-readable name synthesized from a resource
+// hash, registry entry, or reference context rather than retained by DBPF.
+const SampleAliasSuffix = "~"
+
+// IsSampleAlias reports whether a name uses the synthesized-name marker.
+func IsSampleAlias(name string) bool {
+	return strings.HasSuffix(name, SampleAliasSuffix)
+}
+
+// StripSampleAliasSuffix removes the synthesized-name marker.
+func StripSampleAliasSuffix(name string) string {
+	if strings.HasSuffix(name, SampleAliasSuffix) {
+		return strings.TrimSuffix(name, SampleAliasSuffix)
+	}
+	return name
+}
+
 var readablePointerNames = map[string]string{
 	"foot_step":     "footstep",
 	"samples":       "sample",
@@ -175,19 +192,20 @@ func SampleAliasRecords(sourcePath string, names map[uint32]string) (map[uint32]
 // HumanSampleAlias converts a recovered authored stream name into the stable
 // noun/action form used by editable DS audio aliases.
 func HumanSampleAlias(name string, isLooped bool) string {
-	tokens := audioAliasTokens(strings.TrimSuffix(name, "~"))
+	name = StripSampleAliasSuffix(name)
+	tokens := audioAliasTokens(name)
 	if len(tokens) == 0 {
 		return ""
 	}
 	if isLooped && !containsAliasToken(tokens, "loop") {
 		tokens = append(tokens, "loop")
 	}
-	return "ds_" + strings.Join(moveAudioVerbLast(tokens), "_")
+	return strings.Join(moveAudioVerbLast(tokens), "_") + SampleAliasSuffix
 }
 
 func unresolvedSampleAlias(instanceID uint32, references []SampleReference) (string, string) {
 	if len(references) == 0 {
-		return fmt.Sprintf("ds_sample_%08x", instanceID), "unreferenced sample identity"
+		return fmt.Sprintf("sample_%08x%s", instanceID, SampleAliasSuffix), "unreferenced sample identity"
 	}
 	eventInstances := make(map[uint32]bool)
 	isLooped := false
@@ -206,7 +224,7 @@ func unresolvedSampleAlias(instanceID uint32, references []SampleReference) (str
 	if isLooped {
 		tokens = append(tokens, "loop")
 	}
-	return "ds_" + strings.Join(tokens, "_"), "AudioProps event identity"
+	return strings.Join(tokens, "_") + SampleAliasSuffix, "AudioProps event identity"
 }
 
 func audioEventContext(document *prop.Document, documentsByInstance map[uint32]*prop.Document, names map[uint32]string) ([]string, bool) {
@@ -328,7 +346,7 @@ func preferredSampleAlias(references []SampleReference) (string, bool) {
 		variant := fmt.Sprintf("variant_%02d", references[0].ItemIndex+1)
 		tokens = insertBeforeAudioVerb(tokens, variant)
 	}
-	return "ds_" + strings.Join(moveAudioVerbLast(tokens), "_"), isResourceReference
+	return strings.Join(moveAudioVerbLast(tokens), "_") + SampleAliasSuffix, isResourceReference
 }
 
 func isUsefulUsageContext(usage SampleUsage) bool {

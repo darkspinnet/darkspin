@@ -62,7 +62,11 @@ func loadSporeData() {
 				panic(fmt.Sprintf("invalid Spore name record %q", record))
 			}
 			instanceID := uint32(sporeDataUint(fields[1], 16, 32))
-			sporeNames[instanceID] = sporeDataText(fields[2])
+			name := sporeDataText(fields[2])
+			if strings.HasPrefix(strings.ToLower(name), "ds_") {
+				name = name[len("ds_"):] + SampleAliasSuffix
+			}
+			sporeNames[instanceID] = name
 		}
 		loadSporeUsages()
 
@@ -78,8 +82,13 @@ func loadSporeData() {
 				if len(fields) != 2 {
 					panic(fmt.Sprintf("invalid Spore alias identity %q", record))
 				}
+				name := sporeNames[instanceID]
+				if name != "" && !IsSampleAlias(name) {
+					name += SampleAliasSuffix
+					sporeNames[instanceID] = name
+				}
 				sporeAliases[instanceID] = SampleAlias{
-					Name:   sporeNames[instanceID],
+					Name:   name,
 					Source: "SporeModder-FX name registry",
 				}
 			case "A":

@@ -97,7 +97,7 @@ func packageResourcePaths(resources []dbpf.Resource, names map[uint32]string) []
 		}
 		pathKey := strings.ToLower(path)
 		if usedPaths[pathKey] {
-			if strings.HasPrefix(strings.ToLower(alias.name), "ds_") {
+			if audio.IsSampleAlias(alias.name) {
 				basePathKey := pathKey
 				aliasOrdinal := aliasOrdinalsByPath[basePathKey] + 2
 				for {
@@ -371,7 +371,7 @@ func resourceKind(typeCode uint32) string {
 
 func audioCategory(name string) string {
 	lowerName := strings.ToLower(name)
-	categoryName := strings.TrimPrefix(lowerName, "ds_")
+	categoryName := strings.ToLower(audio.StripSampleAliasSuffix(name))
 	contextParts := strings.Split(categoryName, "_")
 	if len(contextParts) >= 2 && contextParts[0] == "event" && isHexIdentity(contextParts[1]) {
 		return filepath.Join("audio", "event", contextParts[1])
@@ -433,7 +433,7 @@ func isHexIdentity(name string) bool {
 }
 
 func audioFamily(name string) string {
-	name = strings.TrimPrefix(strings.ToLower(name), "ds_")
+	name = strings.ToLower(audio.StripSampleAliasSuffix(name))
 	separator := strings.IndexByte(name, '_')
 	if separator <= 0 {
 		return ""
@@ -464,7 +464,7 @@ func resourceDisplayName(name string) string {
 	if strings.HasPrefix(name, "@") {
 		return ""
 	}
-	return strings.TrimSuffix(name, "~")
+	return name
 }
 
 func resourceCategory(name string) string {
@@ -541,7 +541,7 @@ func resourceRole(parts []string) string {
 
 func safeResourceName(name string) string {
 	name = strings.Map(func(character rune) rune {
-		if unicode.IsLetter(character) || unicode.IsDigit(character) || character == '-' || character == '_' || character == '.' {
+		if unicode.IsLetter(character) || unicode.IsDigit(character) || character == '-' || character == '_' || character == '.' || character == '~' {
 			return character
 		}
 		return '_'
