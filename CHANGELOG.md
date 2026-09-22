@@ -2,6 +2,7 @@
 
 ### 2026-09-22
 
+- Replace raw Spore and Darkspore audio registry literals with packed string, resource, reference, and usage indexes, reducing the embedded registry from about 6 MiB to 1.49 MiB without compression while preserving searchable conversion metadata.
 - Change Darkrun-generated audio aliases, including registry-backed names, from the `ds_` prefix to a trailing `~` so inferred filenames are immediately distinguishable from authored names.
 - Show the Darkrun build version at the start of root and subcommand help output, including bare general invocation.
 - Decode structurally verified Spore XAS0 resources with their channel-interleaved frame layout, including shortened final frames, instead of misreading them as garbled XAS1 audio or preserving them as raw SNR files.

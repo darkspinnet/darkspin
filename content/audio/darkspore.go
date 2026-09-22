@@ -16,17 +16,6 @@ type SampleUsage struct {
 	ResourceInstance uint64
 }
 
-type darksporeNameRecord struct {
-	eventInstance uint32
-	name          string
-	usage         SampleUsage
-}
-
-type darksporeUsageRecord struct {
-	eventInstance uint32
-	usage         SampleUsage
-}
-
 var (
 	darksporeDataOnce sync.Once
 	darksporeNames    map[uint32]string
@@ -57,21 +46,10 @@ func DarksporeUsages() map[uint32][]SampleUsage {
 
 func loadDarksporeData() {
 	darksporeDataOnce.Do(func() {
-		darksporeNames = make(map[uint32]string)
-		darksporeUsages = make(map[uint32][]SampleUsage)
-		for _, record := range darksporeNameRecords {
-			if darksporeNames[record.eventInstance] == "" {
-				darksporeNames[record.eventInstance] = record.name
-			}
-			darksporeUsages[record.eventInstance] = append(darksporeUsages[record.eventInstance], record.usage)
-		}
-		for eventInstance, name := range darksporeReferenceNames {
-			if darksporeNames[eventInstance] == "" {
-				darksporeNames[eventInstance] = name
-			}
-		}
-		for _, record := range darksporeReferenceUsageRecords {
-			darksporeUsages[record.eventInstance] = append(darksporeUsages[record.eventInstance], record.usage)
+		var err error
+		darksporeNames, darksporeUsages, err = decodeDarksporeRegistry(darksporeRegistryData)
+		if err != nil {
+			panic(err)
 		}
 	})
 }
