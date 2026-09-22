@@ -56,8 +56,8 @@ func packageResourcePaths(resources []dbpf.Resource, names map[uint32]string) []
 		isMovieAsset := resource.Entry.Type == movie.ResourceType
 		isAnimationAsset := resource.Entry.Type == animation.ResourceType
 		isScaleformAsset := scaleform.IsResourceType(resource.Entry.Type)
-		if isAudioAsset {
-			alias.category = audioCategory(alias.name)
+		if isAudioAsset || isAudioProperty {
+			alias.category = audioResourceCategory(resource.Entry.Type, alias.name)
 		}
 		if isMovieAsset {
 			alias.category = "movie"
@@ -293,6 +293,11 @@ func resourcePair(entry dbpf.Entry) (resourcePairKey, bool) {
 }
 
 func areResourceCompanions(first, second dbpf.Entry) bool {
+	isFirstAudioDefinition := audio.IsStreamType(first.Type) || first.Type == prop.AudioResourceType
+	isSecondAudioDefinition := audio.IsStreamType(second.Type) || second.Type == prop.AudioResourceType
+	if isFirstAudioDefinition && isSecondAudioDefinition {
+		return true
+	}
 	firstKey, isFirstPairable := resourcePair(first)
 	secondKey, isSecondPairable := resourcePair(second)
 	if !isFirstPairable || !isSecondPairable || firstKey != secondKey || first.Type == second.Type {
@@ -366,14 +371,19 @@ func resourceKind(typeCode uint32) string {
 
 func audioCategory(name string) string {
 	lowerName := strings.ToLower(name)
+	categoryName := strings.TrimPrefix(lowerName, "ds_")
+	contextParts := strings.Split(categoryName, "_")
+	if len(contextParts) >= 2 && contextParts[0] == "event" && isHexIdentity(contextParts[1]) {
+		return filepath.Join("audio", "event", contextParts[1])
+	}
 	switch {
-	case strings.HasPrefix(lowerName, "music_") || strings.Contains(lowerName, "_music_"):
+	case strings.HasPrefix(categoryName, "music_") || strings.Contains(categoryName, "_music_"):
 		return filepath.Join("audio", "music")
-	case strings.HasPrefix(lowerName, "vo_") || strings.Contains(lowerName, "_vo_") || strings.Contains(lowerName, "voice"):
+	case strings.HasPrefix(categoryName, "vo_") || strings.Contains(categoryName, "_vo_") || strings.Contains(categoryName, "voice"):
 		return filepath.Join("audio", "voice")
-	case strings.HasPrefix(lowerName, "amb_") || strings.HasPrefix(lowerName, "ambience_"):
+	case strings.HasPrefix(categoryName, "amb_") || strings.HasPrefix(categoryName, "ambience_"):
 		return filepath.Join("audio", "ambience")
-	case strings.HasPrefix(lowerName, "ui_") || strings.HasPrefix(lowerName, "editor_"):
+	case strings.HasPrefix(categoryName, "ui_") || strings.HasPrefix(categoryName, "editor_"):
 		return filepath.Join("audio", "ui")
 	case name != "":
 		category := filepath.Join("audio", "effect")
@@ -387,13 +397,63 @@ func audioCategory(name string) string {
 	}
 }
 
+func audioResourceCategory(typeCode uint32, name string) string {
+	if name != "" {
+		return audioCategory(name)
+	}
+	switch typeCode {
+	case prop.AudioResourceType:
+		return filepath.Join("audio", "event")
+	case audio.SNRResourceType, audio.SNSResourceType:
+		return filepath.Join("audio", "sample")
+	case audio.PDResourceType, audio.PDRResourceType:
+		return filepath.Join("audio", "patch")
+	case prop.SubmixResourceType:
+		return filepath.Join("audio", "submix")
+	case prop.ModeResourceType:
+		return filepath.Join("audio", "mode")
+	case prop.ChildrenResourceType:
+		return filepath.Join("audio", "children")
+	default:
+		return filepath.Join("audio", "resource")
+	}
+}
+
+func isHexIdentity(name string) bool {
+	if len(name) != 8 {
+		return false
+	}
+	for _, character := range name {
+		if character >= '0' && character <= '9' || character >= 'a' && character <= 'f' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func audioFamily(name string) string {
 	name = strings.TrimPrefix(strings.ToLower(name), "ds_")
 	separator := strings.IndexByte(name, '_')
 	if separator <= 0 {
 		return ""
 	}
-	return safeResourceName(name[:separator])
+	return safeResourceName(trimAudioFamilyIndex(name[:separator]))
+}
+
+func trimAudioFamilyIndex(family string) string {
+	digitStart := len(family)
+	for digitStart > 0 && family[digitStart-1] >= '0' && family[digitStart-1] <= '9' {
+		digitStart--
+	}
+	if digitStart == 0 || digitStart == len(family) {
+		return family
+	}
+	baseFamily := family[:digitStart]
+	if !strings.HasSuffix(baseFamily, "loop") {
+		return family
+	}
+	return baseFamily
 }
 
 func resourceDefinitionIdentity(payloadPath string) string {

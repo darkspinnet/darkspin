@@ -1,5 +1,14 @@
 # Changelog
 
+### 2026-09-22
+
+- Decode structurally verified Spore XAS1 resources whose shipped codec nibble is unset, including shortened final frames, instead of preserving them as raw SNR files.
+- Consolidate directly suffixed indexes, `_vN` versions, numbered variants, and numbered loop families into one normalized folder and family DSE while preserving each WAV definition and its reconstruction metadata.
+- Reduce successful Darkrun conversion output to the elapsed time without repeating source and destination paths.
+- Treat `darkrun convert <source> .` like an omitted destination so conversion writes the default local `.ds` directory or package.
+- Give every retail Spore WAV a pinned human-readable `ds_` alias without runtime lookup, remove hash identity suffixes from aliased files, and annotate DSE files with searchable audio-event, animation, package, and resource references for reconstruction.
+- Trace Darkspore audio events through shipped animation, noun, level, UI, effect, and pre-baked resources, pin exact names and resource-owner contexts into searchable conversion metadata, and replace ambiguous unresolved audio trees with resource-role and event-identity folders.
+
 ### 2026-09-21
 
 - Replace Darkrun's external vgmstream dependency with native Go decoding and the Darkspin-maintained MP3 module for EA PCM16BE, XAS1, and MPEG-1/MPEG-2 EALayer3 v1 audio while continuing to encode edited WAVs as EA PCM16BE.

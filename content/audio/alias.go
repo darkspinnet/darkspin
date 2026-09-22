@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"path/filepath"
 	"sort"
 	"strings"
 	"unicode"
@@ -15,9 +16,11 @@ import (
 // The pointer and owner names are searchable provenance, not authored stream
 // names, and are therefore emitted as comments by the DS renderer.
 type SampleReference struct {
+	ArchiveName   string
 	EventInstance uint32
 	EventName     string
 	ContextNames  []string
+	Usages        []SampleUsage
 	PropertyID    uint32
 	PropertyName  string
 	PointerName   string
@@ -81,6 +84,10 @@ func SampleAliasRecords(sourcePath string, names map[uint32]string) (map[uint32]
 		documentsByInstance[uint32(entry.Instance)] = document
 	}
 
+	usagesByEvent := make(map[uint32][]SampleUsage)
+	if strings.EqualFold(filepath.Base(sourcePath), "AudioProps.package") {
+		usagesByEvent = DarksporeUsages()
+	}
 	referencesByInstance := make(map[uint32][]SampleReference)
 	for ordinal, entry := range pkg.Entries {
 		if entry.Type != prop.AudioResourceType {
@@ -116,9 +123,11 @@ func SampleAliasRecords(sourcePath string, names map[uint32]string) (map[uint32]
 				}
 				instanceID := binary.LittleEndian.Uint32(item[:4])
 				referencesByInstance[instanceID] = append(referencesByInstance[instanceID], SampleReference{
+					ArchiveName:   filepath.Base(sourcePath),
 					EventInstance: uint32(entry.Instance),
 					EventName:     strings.TrimSuffix(names[uint32(entry.Instance)], "~"),
 					ContextNames:  contextNames,
+					Usages:        append([]SampleUsage(nil), usagesByEvent[uint32(entry.Instance)]...),
 					PropertyID:    property.ID,
 					PropertyName:  propertyName,
 					PointerName:   ReadablePointerName(propertyName),
@@ -141,11 +150,19 @@ func SampleAliasRecords(sourcePath string, names map[uint32]string) (map[uint32]
 			}
 			return references[first].ItemIndex < references[second].ItemIndex
 		})
-		name := strings.TrimSuffix(names[instanceID], "~")
+		isLooped := false
+		for _, reference := range references {
+			isLooped = isLooped || reference.IsLooped
+		}
+		name := HumanSampleAlias(names[instanceID], isLooped)
 		source := "name registry"
 		if name == "" {
-			name = preferredSampleAlias(references)
+			var isResourceReference bool
+			name, isResourceReference = preferredSampleAlias(references)
 			source = "AudioProps event pointer"
+			if isResourceReference {
+				source = "resource reference"
+			}
 		}
 		if name == "" {
 			name, source = unresolvedSampleAlias(instanceID, references)
@@ -155,18 +172,41 @@ func SampleAliasRecords(sourcePath string, names map[uint32]string) (map[uint32]
 	return records, nil
 }
 
+// HumanSampleAlias converts a recovered authored stream name into the stable
+// noun/action form used by editable DS audio aliases.
+func HumanSampleAlias(name string, isLooped bool) string {
+	tokens := audioAliasTokens(strings.TrimSuffix(name, "~"))
+	if len(tokens) == 0 {
+		return ""
+	}
+	if isLooped && !containsAliasToken(tokens, "loop") {
+		tokens = append(tokens, "loop")
+	}
+	return "ds_" + strings.Join(moveAudioVerbLast(tokens), "_")
+}
+
 func unresolvedSampleAlias(instanceID uint32, references []SampleReference) (string, string) {
+	if len(references) == 0 {
+		return fmt.Sprintf("ds_sample_%08x", instanceID), "unreferenced sample identity"
+	}
+	eventInstances := make(map[uint32]bool)
 	isLooped := false
 	for _, reference := range references {
+		eventInstances[reference.EventInstance] = true
 		isLooped = isLooped || reference.IsLooped
 	}
-	if len(references) > 1 && isLooped {
-		return fmt.Sprintf("ds_shared_event_%08x_loop", instanceID), "shared looping AudioProps fallback"
+	primaryEvent := references[0].EventInstance
+	tokens := []string{"event", fmt.Sprintf("%08x", primaryEvent)}
+	if len(eventInstances) > 1 {
+		tokens = append(tokens, fmt.Sprintf("shared_%02d", len(eventInstances)))
+	}
+	if references[0].ItemCount > 1 {
+		tokens = append(tokens, fmt.Sprintf("variant_%02d", references[0].ItemIndex+1))
 	}
 	if isLooped {
-		return fmt.Sprintf("ds_unresolved_event_%08x_loop", instanceID), "looping AudioProps fallback"
+		tokens = append(tokens, "loop")
 	}
-	return fmt.Sprintf("ds_unresolved_event_%08x", instanceID), "AudioProps instance fallback"
+	return "ds_" + strings.Join(tokens, "_"), "AudioProps event identity"
 }
 
 func audioEventContext(document *prop.Document, documentsByInstance map[uint32]*prop.Document, names map[uint32]string) ([]string, bool) {
@@ -181,7 +221,7 @@ func audioEventContext(document *prop.Document, documentsByInstance map[uint32]*
 			if isFound && propertyName == "islooped" && property.Type == prop.TypeBool && len(property.Items) != 0 && len(property.Items[0]) != 0 {
 				isLooped = isLooped || property.Items[0][0] != 0
 			}
-			if property.Type != prop.TypeKey || property.ID == samplesProperty {
+			if property.Type != prop.TypeKey || !isFound || propertyName != "parent" {
 				continue
 			}
 			for _, item := range property.Items {
@@ -190,7 +230,7 @@ func audioEventContext(document *prop.Document, documentsByInstance map[uint32]*
 				}
 				instanceID := binary.LittleEndian.Uint32(item[:4])
 				contextName := strings.TrimSuffix(names[instanceID], "~")
-				if contextName != "" && !strings.HasPrefix(contextName, "@") && !seenNames[contextName] {
+				if isUsefulAudioContextName(contextName) && !seenNames[contextName] {
 					contextNames = append(contextNames, contextName)
 					seenNames[contextName] = true
 				}
@@ -208,37 +248,65 @@ func audioEventContext(document *prop.Document, documentsByInstance map[uint32]*
 	return contextNames, isLooped
 }
 
-func preferredSampleAlias(references []SampleReference) string {
-	tokenSets := make([][]string, 0, len(references))
-	isAuthoredContext := false
+func isUsefulAudioContextName(name string) bool {
+	if name == "" || strings.HasPrefix(name, "@") {
+		return false
+	}
+	normalizedName := strings.TrimLeft(strings.ToLower(name), "_")
+	return !strings.HasPrefix(normalizedName, "footsteps_parent")
+}
+
+func preferredSampleAlias(references []SampleReference) (string, bool) {
+	eventTokenSets := make([][]string, 0, len(references))
+	contextTokenSets := make([][]string, 0, len(references))
+	usageTokenSets := make([][]string, 0, len(references))
 	isLooped := false
 	for _, reference := range references {
 		isLooped = isLooped || reference.IsLooped
 		if reference.EventName != "" && !strings.HasPrefix(reference.EventName, "@") {
 			tokens := audioAliasTokens(reference.EventName)
 			if len(tokens) != 0 {
-				tokenSets = append(tokenSets, tokens)
-				isAuthoredContext = true
+				eventTokenSets = append(eventTokenSets, tokens)
 			}
 			continue
 		}
 		for _, contextName := range reference.ContextNames {
 			tokens := audioAliasTokens(contextName)
 			if len(tokens) != 0 {
-				tokenSets = append(tokenSets, tokens)
+				contextTokenSets = append(contextTokenSets, tokens)
+			}
+		}
+		for _, usage := range reference.Usages {
+			if !isUsefulUsageContext(usage) {
+				continue
+			}
+			tokens := audioAliasTokens(usage.Context)
+			if len(tokens) != 0 {
+				usageTokenSets = append(usageTokenSets, tokens)
 			}
 		}
 	}
+	tokenSets := eventTokenSets
+	isSharedContext := len(eventTokenSets) != 0
+	isResourceReference := false
 	if len(tokenSets) == 0 {
-		return ""
+		tokenSets = contextTokenSets
+	}
+	if len(tokenSets) == 0 {
+		tokenSets = usageTokenSets
+		isSharedContext = true
+		isResourceReference = len(usageTokenSets) != 0
+	}
+	if len(tokenSets) == 0 {
+		return "", false
 	}
 	tokens := tokenSets[0]
-	if isAuthoredContext && len(tokenSets) > 1 {
+	if isSharedContext && len(tokenSets) > 1 {
 		tokens = sharedAliasTokens(tokenSets)
-		if len(tokens) == 0 {
+		if !isUsefulSharedAlias(tokens) {
 			sort.Slice(tokenSets, func(first, second int) bool {
 				if len(tokenSets[first]) != len(tokenSets[second]) {
-					return len(tokenSets[first]) < len(tokenSets[second])
+					return len(tokenSets[first]) > len(tokenSets[second])
 				}
 				return strings.Join(tokenSets[first], "_") < strings.Join(tokenSets[second], "_")
 			})
@@ -260,18 +328,33 @@ func preferredSampleAlias(references []SampleReference) string {
 		variant := fmt.Sprintf("variant_%02d", references[0].ItemIndex+1)
 		tokens = insertBeforeAudioVerb(tokens, variant)
 	}
-	return "ds_" + strings.Join(moveAudioVerbLast(tokens), "_")
+	return "ds_" + strings.Join(moveAudioVerbLast(tokens), "_"), isResourceReference
+}
+
+func isUsefulUsageContext(usage SampleUsage) bool {
+	if usage.ReferenceKind != "binary event id" || usage.Context == "" {
+		return false
+	}
+	switch strings.ToLower(usage.Context) {
+	case "base", "editors", "games":
+		return false
+	default:
+		return true
+	}
 }
 
 var ignoredAudioAliasTokens = map[string]bool{
-	"audio":   true,
-	"base":    true,
-	"event":   true,
-	"sample":  true,
-	"samples": true,
-	"sfx":     true,
-	"sound":   true,
-	"sounds":  true,
+	"aggregation": true,
+	"all":         true,
+	"audio":       true,
+	"base":        true,
+	"event":       true,
+	"sample":      true,
+	"samples":     true,
+	"sfx":         true,
+	"sound":       true,
+	"sounds":      true,
+	"system":      true,
 }
 
 func containsAliasToken(tokens []string, expected string) bool {
@@ -351,6 +434,15 @@ func sharedAliasTokens(tokenSets [][]string) []string {
 		}
 	}
 	return sharedTokens
+}
+
+func isUsefulSharedAlias(tokens []string) bool {
+	for _, token := range tokens {
+		if len(token) >= 3 && token != "variant" && token != "shared" {
+			return true
+		}
+	}
+	return false
 }
 
 func insertBeforeAudioVerb(tokens []string, token string) []string {

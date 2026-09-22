@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/darkspinnet/darkspin/content/audio"
 	"github.com/darkspinnet/darkspin/content/dbpf"
 	"github.com/darkspinnet/darkspin/content/movie"
 	"github.com/darkspinnet/darkspin/content/render/gmsh"
@@ -55,6 +56,9 @@ func readRenderNames(sourcePath string) (map[uint32]string, error) {
 }
 
 func discoverRenderNames(sourcePath string) (map[uint32]string, error) {
+	if isSporeAudioPackageName(filepath.Base(sourcePath)) {
+		return audio.SporeNames(), nil
+	}
 	names, err := discoverNames(sourcePath, "reg_file.txt")
 	if err != nil {
 		return nil, fmt.Errorf("fileRegistry: %w", err)

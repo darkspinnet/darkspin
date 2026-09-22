@@ -579,7 +579,7 @@ func writeAudioResource(destinationPath, identity string, ordinal int, resourceT
 	var definition strings.Builder
 	_, err := fmt.Fprintf(&definition, "%s %q\n\tVERSION %d\n\tORDINAL %d\n", declaration, identity, version, ordinal)
 	if err == nil && resourceType == audio.SNRResourceType {
-		header, headerErr := audio.DecodeHeader(payload)
+		header, headerErr := audio.DecodeResolvedHeader(payload)
 		if headerErr != nil {
 			err = fmt.Errorf("headerDecode: %w", headerErr)
 		} else {

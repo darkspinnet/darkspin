@@ -277,6 +277,21 @@ func audioResourceHeader(pkg *dbpf.Reader, ordinal int) (audio.Header, error) {
 	if err != nil {
 		return audio.Header{}, fmt.Errorf("headerDecode: %w", err)
 	}
+	if header.Codec != "NONE" && header.Codec != "RESERVED" {
+		return header, nil
+	}
+	r, err = pkg.Open(pkg.Entries[ordinal])
+	if err != nil {
+		return audio.Header{}, fmt.Errorf("resourceReopen: %w", err)
+	}
+	payload, err := io.ReadAll(r)
+	if err != nil {
+		return audio.Header{}, fmt.Errorf("resourceRead: %w", err)
+	}
+	header, err = audio.DecodeResolvedHeader(payload)
+	if err != nil {
+		return audio.Header{}, fmt.Errorf("headerResolve: %w", err)
+	}
 	return header, nil
 }
 

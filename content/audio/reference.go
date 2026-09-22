@@ -91,8 +91,12 @@ func collectPropertyReferences(sourcePath string, audioTargets map[uint32]bool) 
 				if !isReference {
 					continue
 				}
+				targetName := ""
+				if property.Type == prop.TypeString8 {
+					targetName = string(item[4:])
+				}
 				references = append(references, propertyReference{
-					ownerID: uint32(entry.Instance), targetID: instanceID, roleName: roleName,
+					ownerID: uint32(entry.Instance), targetID: instanceID, targetName: targetName, roleName: roleName,
 					itemIndex: itemIndex, itemCount: len(property.Items),
 				})
 			}
@@ -130,6 +134,11 @@ func resolveReferencedPropertyAliases(references []propertyReference, targets ma
 	resolvedNames := make(map[uint32]string, len(names)+len(references))
 	for instanceID, name := range names {
 		resolvedNames[instanceID] = strings.TrimSuffix(name, "~")
+	}
+	for _, reference := range references {
+		if reference.targetName != "" && resolvedNames[reference.targetID] == "" {
+			resolvedNames[reference.targetID] = reference.targetName
+		}
 	}
 	for {
 		candidatesByInstance := make(map[uint32]map[string]bool)

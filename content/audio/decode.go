@@ -9,7 +9,7 @@ import (
 // DecodeSNR converts the EA AudioCore codecs used by Spore and Darkspore to
 // canonical interleaved PCM16LE. snsPayload is required for streamed assets.
 func DecodeSNR(snrPayload, snsPayload []byte) (WAV, error) {
-	header, err := DecodeHeader(snrPayload)
+	header, err := DecodeResolvedHeader(snrPayload)
 	if err != nil {
 		return WAV{}, fmt.Errorf("headerDecode: %w", err)
 	}
@@ -54,6 +54,52 @@ func DecodeSNR(snrPayload, snsPayload []byte) (WAV, error) {
 	}
 	pcm = pcm[:expectedSize]
 	return WAV{Channels: uint16(header.Channels), SampleRate: header.SampleRate, PCM: pcm}, nil
+}
+
+// DecodeResolvedHeader reads an SNR header and recognizes shipped resources
+// whose codec nibble is unset even though their block layout is unambiguously
+// XAS1. Unknown NONE and RESERVED payloads remain raw.
+func DecodeResolvedHeader(payload []byte) (Header, error) {
+	header, err := DecodeHeader(payload)
+	if err != nil {
+		return Header{}, fmt.Errorf("headerDecode: %w", err)
+	}
+	if (header.Codec != "NONE" && header.Codec != "RESERVED") || header.Storage != "RAM" {
+		return header, nil
+	}
+	headerSize, sizeErr := audioHeaderSize(payload, header)
+	if sizeErr != nil {
+		return header, nil
+	}
+	blocks, blockErr := decodeAudioBlocks(payload[headerSize:], header.Version)
+	if blockErr != nil {
+		return header, nil
+	}
+	if areXAS1Blocks(blocks, header.Channels) {
+		header.Codec = "XAS1"
+	}
+	return header, nil
+}
+
+func areXAS1Blocks(blocks []audioBlock, channels uint8) bool {
+	const frameSize = 0x4C
+	const samplesPerFrame = 128
+	if channels == 0 {
+		return false
+	}
+	for _, block := range blocks {
+		if block.samples == 0 {
+			return false
+		}
+		frameCount := (uint64(block.samples) + samplesPerFrame - 1) / samplesPerFrame
+		minimumSize := (frameCount - 1) * frameSize * uint64(channels)
+		expectedSize := frameCount * frameSize * uint64(channels)
+		payloadSize := uint64(len(block.payload))
+		if payloadSize <= minimumSize || payloadSize > expectedSize {
+			return false
+		}
+	}
+	return len(blocks) != 0
 }
 
 type audioBlock struct {
@@ -152,10 +198,14 @@ func decodeXAS1Blocks(blocks []audioBlock, channels uint8) ([]byte, error) {
 	const samplesPerFrame = 128
 	pcm := make([]byte, 0)
 	for blockIndex, block := range blocks {
+		if block.samples == 0 {
+			return nil, fmt.Errorf("block[%d]: samples missing", blockIndex)
+		}
 		frameGroupSize := frameSize * int(channels)
 		frameCount := (int(block.samples) + samplesPerFrame - 1) / samplesPerFrame
-		if len(block.payload) < frameCount*frameGroupSize {
-			return nil, fmt.Errorf("block[%d]: got %d bytes, want %d", blockIndex, len(block.payload), frameCount*frameGroupSize)
+		minimumSize := (frameCount - 1) * frameGroupSize
+		if len(block.payload) <= minimumSize {
+			return nil, fmt.Errorf("block[%d]: got %d bytes, want more than %d", blockIndex, len(block.payload), minimumSize)
 		}
 		blockPCM := make([][]int16, channels)
 		for channel := range blockPCM {
@@ -164,7 +214,11 @@ func decodeXAS1Blocks(blocks []audioBlock, channels uint8) ([]byte, error) {
 		for frameIndex := 0; frameIndex < frameCount; frameIndex++ {
 			for channel := 0; channel < int(channels); channel++ {
 				frameOffset := frameIndex*frameGroupSize + channel*frameSize
-				framePCM, err := decodeXAS1Frame(block.payload[frameOffset : frameOffset+frameSize])
+				frame := make([]byte, frameSize)
+				if frameOffset < len(block.payload) {
+					copy(frame, block.payload[frameOffset:])
+				}
+				framePCM, err := decodeXAS1Frame(frame)
 				if err != nil {
 					return nil, fmt.Errorf("frame[%d:%d]: %w", blockIndex, frameIndex, err)
 				}

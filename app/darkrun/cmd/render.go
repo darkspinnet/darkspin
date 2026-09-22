@@ -27,7 +27,8 @@ func newConvertCommand() *cobra.Command {
 		Long: "Convert a DBPF package to or from a strict .ds directory.\n\n" +
 			"Without a destination, Creatures.package converts to Creatures.ds in the\n" +
 			"current directory, and a <name>.ds directory converts back to <name>.package\n" +
-			"in the current directory. Existing destinations are not overwritten.\n" +
+			"in the current directory. An explicit . uses the same default destination.\n" +
+			"Existing destinations are not overwritten.\n" +
 			"Audio bundles repack both packages into their parent directory by default.\n" +
 			"Selected entries and other DS directories require an explicit destination.",
 		Args: cobra.RangeArgs(1, 2),
@@ -42,7 +43,7 @@ func newConvertCommand() *cobra.Command {
 				return nil
 			}
 			destinationPath := ""
-			if len(args) == 2 {
+			if len(args) == 2 && filepath.Clean(args[1]) != "." {
 				destinationPath = args[1]
 			} else {
 				var destinationErr error
@@ -68,7 +69,7 @@ func newConvertCommand() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("convertResource: %w", err)
 				}
-				_, err = fmt.Fprintf(command.OutOrStdout(), "Converted %s entry %d to %s in %.2f seconds\n", target.Path, ordinal, destinationPath, time.Since(startedAt).Seconds())
+				_, err = fmt.Fprintf(command.OutOrStdout(), "Converted in %.2f seconds\n", time.Since(startedAt).Seconds())
 				if err != nil {
 					return fmt.Errorf("convertOutput: %w", err)
 				}
@@ -82,7 +83,7 @@ func newConvertCommand() *cobra.Command {
 					if err != nil {
 						return fmt.Errorf("convertAudioBundle: %w", err)
 					}
-					_, err = fmt.Fprintf(command.OutOrStdout(), "Converted %s and %s to %s in %.2f seconds\n", target.Path, propertyPath, destinationPath, time.Since(startedAt).Seconds())
+					_, err = fmt.Fprintf(command.OutOrStdout(), "Converted in %.2f seconds\n", time.Since(startedAt).Seconds())
 					if err != nil {
 						return fmt.Errorf("convertOutput: %w", err)
 					}
@@ -92,11 +93,11 @@ func newConvertCommand() *cobra.Command {
 					return fmt.Errorf("convertAudioPropertyStat: %w", propertyErr)
 				}
 			}
-			err = ds.ConvertPathWithNames(command.Context(), target.Path, destinationPath, names)
+			err = ds.ConvertPathWithNamesAndAudioAliases(command.Context(), target.Path, destinationPath, names, audioAliases)
 			if err != nil {
 				return fmt.Errorf("convertPath: %w", err)
 			}
-			_, err = fmt.Fprintf(command.OutOrStdout(), "Converted %s to %s in %.2f seconds\n", args[0], destinationPath, time.Since(startedAt).Seconds())
+			_, err = fmt.Fprintf(command.OutOrStdout(), "Converted in %.2f seconds\n", time.Since(startedAt).Seconds())
 			if err != nil {
 				return fmt.Errorf("convertOutput: %w", err)
 			}

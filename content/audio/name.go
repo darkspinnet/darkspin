@@ -21,13 +21,15 @@ const (
 	samplesProperty = 0x701ED91E
 )
 
-// ClientNames contains audio resource identities proven by string-to-key calls
-// in the retail client. Each key is the lowercase FNV identity of its name.
+// ClientNames contains audio resource identities recovered from retail client
+// string tables and string-to-key calls. Each key is the lowercase FNV
+// identity of its name.
 func ClientNames() map[uint32]string {
 	return map[uint32]string{
 		0x72B275A3: "mixmode_inReplay",
 		0x80504C15: "mixmode_inEditor",
 		0xAEAF88A9: "mixmode_inPrePvp",
+		0xAD7F8693: "listener_editor",
 		0xD261BB69: "mixmode_inCashout",
 		0xEDD98567: "listener_ingame",
 	}
@@ -283,11 +285,12 @@ func SampleInstances(sourcePath string) (map[uint32]bool, error) {
 }
 
 type propertyReference struct {
-	ownerID   uint32
-	targetID  uint32
-	roleName  string
-	itemIndex int
-	itemCount int
+	ownerID    uint32
+	targetID   uint32
+	targetName string
+	roleName   string
+	itemIndex  int
+	itemCount  int
 }
 
 // InheritedPropertyAliases follows zero-scope keys between AudioProps entries

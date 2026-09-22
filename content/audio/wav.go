@@ -87,7 +87,7 @@ func EncodeSNRPCM(wav WAV, storage string, isLooped bool) ([]byte, error) {
 	if storage != "RAM" {
 		return payload, nil
 	}
-	block, err := encodePCMBlocks(wav, true)
+	block, err := encodePCMBlocks(wav)
 	if err != nil {
 		return nil, fmt.Errorf("ramBlocks: %w", err)
 	}
@@ -96,16 +96,13 @@ func EncodeSNRPCM(wav WAV, storage string, isLooped bool) ([]byte, error) {
 
 // EncodeSNSPCM creates the blocked PCM16BE body paired with a streamed SNR.
 func EncodeSNSPCM(wav WAV) ([]byte, error) {
-	return encodePCMBlocks(wav, false)
+	return encodePCMBlocks(wav)
 }
 
-func encodePCMBlocks(wav WAV, isRAM bool) ([]byte, error) {
+func encodePCMBlocks(wav WAV) ([]byte, error) {
 	const maxBlockData = 0x00F00000
 	frameSize := int(wav.Channels) * 2
 	chunkSize := maxBlockData - maxBlockData%frameSize
-	if isRAM && len(wav.PCM) > chunkSize {
-		return nil, fmt.Errorf("ramSize: %d exceeds %d", len(wav.PCM), chunkSize)
-	}
 	blocks := make([]byte, 0, len(wav.PCM)+8)
 	for offset := 0; offset < len(wav.PCM) || offset == 0; {
 		remaining := len(wav.PCM) - offset

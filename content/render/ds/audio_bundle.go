@@ -101,7 +101,7 @@ func ExtractAudioBundlePath(ctx context.Context, audioPath, propertyPath, destin
 	if err != nil {
 		return fmt.Errorf("audioProject: %w", err)
 	}
-	err = writeAudioAliasComments(destinationPath, audioManifest, aliases)
+	err = writeAudioAliasComments(destinationPath, filepath.Base(audioPath), audioManifest, aliases)
 	if err != nil {
 		return fmt.Errorf("audioMetadata: %w", err)
 	}
@@ -123,8 +123,11 @@ type audioDefinitionFamily struct {
 }
 
 func consolidateAudioDerivativeDefinitions(destinationPath string, document *audioBundleDocument) error {
+	return consolidateAudioDerivativeManifests(destinationPath, document.audioManifest, document.propertyManifest)
+}
+
+func consolidateAudioDerivativeManifests(destinationPath string, manifests ...*dbpf.Manifest) error {
 	families := make(map[string]*audioDefinitionFamily)
-	manifests := []*dbpf.Manifest{document.audioManifest, document.propertyManifest}
 	for _, manifest := range manifests {
 		for _, resource := range manifest.Resources {
 			if !audio.IsStreamType(resource.Entry.Type) && resource.Entry.Type != prop.AudioResourceType {
@@ -200,6 +203,26 @@ func consolidateAudioDerivativeDefinitions(destinationPath string, document *aud
 }
 
 func audioDerivativeStem(name string) (string, bool) {
+	lowerName := strings.ToLower(name)
+	variantIndex := strings.LastIndex(lowerName, "_variant_")
+	if variantIndex >= 0 {
+		digitStart := variantIndex + len("_variant_")
+		digitEnd := digitStart
+		for digitEnd < len(name) && name[digitEnd] >= '0' && name[digitEnd] <= '9' {
+			digitEnd++
+		}
+		if digitEnd > digitStart && (digitEnd == len(name) || name[digitEnd] == '_') {
+			return name[:variantIndex] + name[digitEnd:], true
+		}
+	}
+	versionIndex := strings.LastIndex(lowerName, "_v")
+	if versionIndex >= 0 && isAudioDecimalSuffix(name[versionIndex+len("_v"):]) {
+		return name[:versionIndex], true
+	}
+	indexedStem, isIndexed := audioIndexedFamilyStem(name)
+	if isIndexed {
+		return indexedStem, true
+	}
 	end := len(name)
 	start := end
 	for start > 0 && name[start-1] >= '0' && name[start-1] <= '9' {
@@ -209,31 +232,53 @@ func audioDerivativeStem(name string) (string, bool) {
 		return name, false
 	}
 	if strings.HasPrefix(strings.ToLower(name), "ds_") {
-		variantIndex := strings.LastIndex(strings.ToLower(name), "_variant_")
-		if variantIndex >= 0 && isDecimalName(name[variantIndex+len("_variant_"):]) {
-			return name, false
-		}
-		if name[start-1] != '_' {
-			return name, false
-		}
 		ordinal, err := strconv.Atoi(name[start:])
-		if err != nil || ordinal < 2 {
+		if err != nil || ordinal < 1 {
 			return name, false
 		}
 	}
-	return strings.TrimRight(name[:start], "_"), true
+	stem := strings.TrimRight(name[:start], "_")
+	if strings.EqualFold(stem, "ds") {
+		return name, false
+	}
+	return stem, true
 }
 
-func isDecimalName(name string) bool {
-	if name == "" {
+func isAudioDecimalSuffix(suffix string) bool {
+	if suffix == "" {
 		return false
 	}
-	for _, character := range name {
+	for _, character := range suffix {
 		if character < '0' || character > '9' {
 			return false
 		}
 	}
 	return true
+}
+
+func audioIndexedFamilyStem(name string) (string, bool) {
+	familyStart := 0
+	if strings.HasPrefix(strings.ToLower(name), "ds_") {
+		familyStart = len("ds_")
+	}
+	separatorOffset := strings.IndexByte(name[familyStart:], '_')
+	if separatorOffset <= 0 {
+		return name, false
+	}
+	separator := familyStart + separatorOffset
+	digitStart := separator
+	for digitStart > familyStart && name[digitStart-1] >= '0' && name[digitStart-1] <= '9' {
+		digitStart--
+	}
+	if digitStart == separator || digitStart == familyStart {
+		return name, false
+	}
+	stem := name[:digitStart]
+	suffix := name[separator:]
+	if strings.EqualFold(suffix, "_loop") && strings.HasSuffix(strings.ToLower(stem), "loop") {
+		return stem, true
+	}
+	return name, false
 }
 
 func consolidateAudioDefinitionFamily(destinationPath string, family *audioDefinitionFamily) error {
@@ -297,7 +342,7 @@ func consolidateAudioDefinitionFamily(destinationPath string, family *audioDefin
 	return nil
 }
 
-func writeAudioAliasComments(destinationPath string, manifest *dbpf.Manifest, aliases map[uint32]audio.SampleAlias) error {
+func writeAudioAliasComments(destinationPath, archiveName string, manifest *dbpf.Manifest, aliases map[uint32]audio.SampleAlias) error {
 	resourcesByInstance := make(map[uint64][]dbpf.Resource)
 	for _, resource := range manifest.Resources {
 		if !audio.IsStreamType(resource.Entry.Type) {
@@ -318,7 +363,7 @@ func writeAudioAliasComments(destinationPath string, manifest *dbpf.Manifest, al
 			return fmt.Errorf("definitionOpen[%d]: %w", ordinal, err)
 		}
 		alias := aliases[uint32(resource.Entry.Instance)]
-		err = writeAudioAliasCommentBlock(w, resource, resourcesByInstance[resource.Entry.Instance], alias)
+		err = writeAudioAliasCommentBlock(w, archiveName, resource, resourcesByInstance[resource.Entry.Instance], alias)
 		closeErr := w.Close()
 		if err != nil {
 			return fmt.Errorf("definitionMetadata[%d]: %w", ordinal, err)
@@ -330,7 +375,7 @@ func writeAudioAliasComments(destinationPath string, manifest *dbpf.Manifest, al
 	return nil
 }
 
-func writeAudioAliasCommentBlock(w io.Writer, primary dbpf.Resource, resources []dbpf.Resource, alias audio.SampleAlias) error {
+func writeAudioAliasCommentBlock(w io.Writer, archiveName string, primary dbpf.Resource, resources []dbpf.Resource, alias audio.SampleAlias) error {
 	_, err := fmt.Fprintln(w, "// DARKSPIN METADATA BEGIN")
 	wavName := strings.TrimSuffix(filepath.Base(primary.PayloadPath), filepath.Ext(primary.PayloadPath)) + ".wav"
 	if err == nil {
@@ -346,9 +391,10 @@ func writeAudioAliasCommentBlock(w io.Writer, primary dbpf.Resource, resources [
 		if err != nil {
 			break
 		}
-		_, err = fmt.Fprintf(w, "// RESOURCE Audio.package TYPE 0x%08X GROUP 0x%08X INSTANCE 0x%016X\n", resource.Entry.Type, resource.Entry.Group, resource.Entry.Instance)
+		_, err = fmt.Fprintf(w, "// RESOURCE %s TYPE 0x%08X GROUP 0x%08X INSTANCE 0x%016X\n", archiveName, resource.Entry.Type, resource.Entry.Group, resource.Entry.Instance)
 	}
 	seenTags := make(map[string]bool)
+	seenUsages := make(map[string]bool)
 	for _, reference := range alias.References {
 		if err != nil {
 			break
@@ -368,8 +414,31 @@ func writeAudioAliasCommentBlock(w io.Writer, primary dbpf.Resource, resources [
 			_, err = fmt.Fprintf(w, "// TAG context %q\n", contextName)
 			seenTags[contextName] = true
 		}
+		for _, usage := range reference.Usages {
+			if err != nil {
+				break
+			}
+			usageKey := fmt.Sprintf("%s:%d:%08x:%s:%d", usage.PackageName, usage.Ordinal, reference.EventInstance, usage.ReferenceKind, usage.ByteOffset)
+			if seenUsages[usageKey] {
+				continue
+			}
+			seenUsages[usageKey] = true
+			if usage.ReferenceKind == "" {
+				_, err = fmt.Fprintf(w, "// USAGE %s ORDINAL %d TYPE 0x%08X GROUP 0x%08X INSTANCE 0x%016X CONTEXT %q EVENTNAME %q\n",
+					usage.PackageName, usage.Ordinal, usage.ResourceType, usage.ResourceGroup, usage.ResourceInstance, usage.Context, reference.EventName)
+				continue
+			}
+			_, err = fmt.Fprintf(w, "// USAGE %s ORDINAL %d TYPE 0x%08X GROUP 0x%08X INSTANCE 0x%016X CONTEXT %q REFERENCEKIND %q BYTEOFFSET %d EVENTNAME %q\n",
+				usage.PackageName, usage.Ordinal, usage.ResourceType, usage.ResourceGroup, usage.ResourceInstance, usage.Context,
+				usage.ReferenceKind, usage.ByteOffset, reference.EventName)
+		}
 		if err == nil {
-			_, err = fmt.Fprintf(w, "// REFERENCE AudioProps.package EVENT 0x%08X NAME %q PROPERTY 0x%08X PROPERTYNAME %q POINTER %q ITEM %d OF %d\n",
+			archiveName := reference.ArchiveName
+			if archiveName == "" {
+				archiveName = "AudioProps.package"
+			}
+			_, err = fmt.Fprintf(w, "// REFERENCE %s EVENT 0x%08X NAME %q PROPERTY 0x%08X PROPERTYNAME %q POINTER %q ITEM %d OF %d\n",
+				archiveName,
 				reference.EventInstance, reference.EventName, reference.PropertyID, reference.PropertyName,
 				reference.PointerName, reference.ItemIndex+1, reference.ItemCount)
 		}
