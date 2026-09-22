@@ -38,6 +38,8 @@ func DecodeSNR(snrPayload, snsPayload []byte) (WAV, error) {
 	switch header.Codec {
 	case "PCM16BE":
 		pcm, err = decodePCM16BEBlocks(blocks, header.Channels)
+	case "XAS0":
+		pcm, err = decodeXAS0Blocks(blocks, header.Channels)
 	case "XAS1":
 		pcm, err = decodeXAS1Blocks(blocks, header.Channels)
 	case "EALAYER3_V1":
@@ -56,15 +58,15 @@ func DecodeSNR(snrPayload, snsPayload []byte) (WAV, error) {
 	return WAV{Channels: uint16(header.Channels), SampleRate: header.SampleRate, PCM: pcm}, nil
 }
 
-// DecodeResolvedHeader reads an SNR header and recognizes shipped resources
-// whose codec nibble is unset even though their block layout is unambiguously
-// XAS1. Unknown NONE and RESERVED payloads remain raw.
+// DecodeResolvedHeader reads an SNR header and recognizes Spore's XAS0
+// resources, which use codec nibble zero and channel-interleaved frames.
+// Unknown NONE and RESERVED payloads remain raw.
 func DecodeResolvedHeader(payload []byte) (Header, error) {
 	header, err := DecodeHeader(payload)
 	if err != nil {
 		return Header{}, fmt.Errorf("headerDecode: %w", err)
 	}
-	if (header.Codec != "NONE" && header.Codec != "RESERVED") || header.Storage != "RAM" {
+	if header.Codec != "NONE" || header.Storage != "RAM" {
 		return header, nil
 	}
 	headerSize, sizeErr := audioHeaderSize(payload, header)
@@ -75,15 +77,15 @@ func DecodeResolvedHeader(payload []byte) (Header, error) {
 	if blockErr != nil {
 		return header, nil
 	}
-	if areXAS1Blocks(blocks, header.Channels) {
-		header.Codec = "XAS1"
+	if areXAS0Blocks(blocks, header.Channels) {
+		header.Codec = "XAS0"
 	}
 	return header, nil
 }
 
-func areXAS1Blocks(blocks []audioBlock, channels uint8) bool {
-	const frameSize = 0x4C
-	const samplesPerFrame = 128
+func areXAS0Blocks(blocks []audioBlock, channels uint8) bool {
+	const frameSize = 0x13
+	const samplesPerFrame = 32
 	if channels == 0 {
 		return false
 	}
@@ -97,6 +99,18 @@ func areXAS1Blocks(blocks []audioBlock, channels uint8) bool {
 		payloadSize := uint64(len(block.payload))
 		if payloadSize <= minimumSize || payloadSize > expectedSize {
 			return false
+		}
+		frameGroupSize := frameSize * int(channels)
+		for frameOffset := 0; frameOffset < len(block.payload); frameOffset += frameGroupSize {
+			for channel := 0; channel < int(channels); channel++ {
+				headerOffset := frameOffset + channel*2
+				if headerOffset >= len(block.payload) {
+					continue
+				}
+				if block.payload[headerOffset]&0x0F > 3 {
+					return false
+				}
+			}
 		}
 	}
 	return len(blocks) != 0
@@ -189,6 +203,100 @@ func decodePCM16BEBlocks(blocks []audioBlock, channels uint8) ([]byte, error) {
 		for offset := 0; offset < int(expectedSize); offset += 2 {
 			pcm = append(pcm, block.payload[offset+1], block.payload[offset])
 		}
+	}
+	return pcm, nil
+}
+
+func decodeXAS0Blocks(blocks []audioBlock, channels uint8) ([]byte, error) {
+	const frameSize = 0x13
+	const samplesPerFrame = 32
+	pcm := make([]byte, 0)
+	for blockIndex, block := range blocks {
+		if block.samples == 0 {
+			return nil, fmt.Errorf("block[%d]: samples missing", blockIndex)
+		}
+		frameGroupSize := frameSize * int(channels)
+		frameCount := (int(block.samples) + samplesPerFrame - 1) / samplesPerFrame
+		minimumSize := (frameCount - 1) * frameGroupSize
+		if len(block.payload) <= minimumSize {
+			return nil, fmt.Errorf("block[%d]: got %d bytes, want more than %d", blockIndex, len(block.payload), minimumSize)
+		}
+		blockPCM := make([][]int16, channels)
+		for channel := range blockPCM {
+			blockPCM[channel] = make([]int16, 0, frameCount*samplesPerFrame)
+		}
+		for frameIndex := 0; frameIndex < frameCount; frameIndex++ {
+			frameOffset := frameIndex * frameGroupSize
+			for channel := 0; channel < int(channels); channel++ {
+				frame := make([]byte, frameSize)
+				copyInterleavedXAS0Frame(frame, block.payload, frameOffset, channel, int(channels))
+				framePCM, frameErr := decodeXAS0Frame(frame)
+				if frameErr != nil {
+					return nil, fmt.Errorf("frame[%d:%d]: %w", blockIndex, frameIndex, frameErr)
+				}
+				blockPCM[channel] = append(blockPCM[channel], framePCM...)
+			}
+		}
+		for sampleIndex := 0; sampleIndex < int(block.samples); sampleIndex++ {
+			for channel := 0; channel < int(channels); channel++ {
+				sample := blockPCM[channel][sampleIndex]
+				pcm = binary.LittleEndian.AppendUint16(pcm, uint16(sample))
+			}
+		}
+	}
+	return pcm, nil
+}
+
+func copyInterleavedXAS0Frame(frame, payload []byte, frameOffset, channel, channels int) {
+	history2Offset := frameOffset + channel*2
+	history1Offset := frameOffset + channels*2 + channel*2
+	if history2Offset+2 <= len(payload) {
+		copy(frame[0:2], payload[history2Offset:history2Offset+2])
+	}
+	if history1Offset+2 <= len(payload) {
+		copy(frame[2:4], payload[history1Offset:history1Offset+2])
+	}
+	dataOffset := frameOffset + channels*4
+	for row := 0; row < 15; row++ {
+		sourceOffset := dataOffset + row*channels + channel
+		if sourceOffset < len(payload) {
+			frame[4+row] = payload[sourceOffset]
+		}
+	}
+}
+
+func decodeXAS0Frame(frame []byte) ([]int16, error) {
+	if len(frame) != 0x13 {
+		return nil, fmt.Errorf("size: %d", len(frame))
+	}
+	coefficients := [4][2]float32{{0, 0}, {0.9375, 0}, {1.796875, -0.8125}, {1.53125, -0.859375}}
+	header := binary.LittleEndian.Uint32(frame[0:4])
+	coefficientIndex := int(header & 0x0F)
+	if coefficientIndex >= len(coefficients) {
+		return nil, fmt.Errorf("coefficient: %d", coefficientIndex)
+	}
+	history2 := int16(header & 0xFFF0)
+	history1 := int16((header >> 16) & 0xFFF0)
+	shift := uint((header >> 16) & 0x0F)
+	pcm := make([]int16, 0, 32)
+	pcm = append(pcm, history2, history1)
+	for nibbleIndex := 0; nibbleIndex < 30; nibbleIndex++ {
+		nibbles := frame[4+nibbleIndex/2]
+		nibble := nibbles >> 4
+		if nibbleIndex&1 != 0 {
+			nibble = nibbles & 0x0F
+		}
+		scaled := int(int16(uint16(nibble)<<12) >> shift)
+		sample := scaled + int(float32(history1)*coefficients[coefficientIndex][0]+float32(history2)*coefficients[coefficientIndex][1])
+		if sample > 32767 {
+			sample = 32767
+		}
+		if sample < -32768 {
+			sample = -32768
+		}
+		history2 = history1
+		history1 = int16(sample)
+		pcm = append(pcm, history1)
 	}
 	return pcm, nil
 }

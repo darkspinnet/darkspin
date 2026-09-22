@@ -190,7 +190,7 @@ func EncodeHeader(payload []byte, header Header) ([]byte, error) {
 		return nil, fmt.Errorf("sampleCountRange: %d", header.SampleCount)
 	}
 	codecCodes := map[string]uint8{
-		"NONE": 0x00, "RESERVED": 0x01, "PCM16BE": 0x02, "EAXMA": 0x03,
+		"NONE": 0x00, "XAS0": 0x00, "RESERVED": 0x01, "PCM16BE": 0x02, "EAXMA": 0x03,
 		"XAS1": 0x04, "EALAYER3_V1": 0x05, "EALAYER3_V2_PCM": 0x06,
 		"EALAYER3_V2_SPIKE": 0x07, "GCADPCM": 0x08, "EASPEEX": 0x09,
 		"EATRAX": 0x0A, "EAMP3": 0x0B, "EAOPUS": 0x0C, "EAATRAC9": 0x0D,

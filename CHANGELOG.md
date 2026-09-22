@@ -3,7 +3,7 @@
 ### 2026-09-22
 
 - Show the Darkrun build version at the start of root and subcommand help output, including bare general invocation.
-- Decode structurally verified Spore XAS1 resources whose shipped codec nibble is unset, including shortened final frames, instead of preserving them as raw SNR files.
+- Decode structurally verified Spore XAS0 resources with their channel-interleaved frame layout, including shortened final frames, instead of misreading them as garbled XAS1 audio or preserving them as raw SNR files.
 - Consolidate directly suffixed indexes, `_vN` versions, numbered variants, and numbered loop families into one normalized folder and family DSE while preserving each WAV definition and its reconstruction metadata.
 - Reduce successful Darkrun conversion output to the elapsed time without repeating source and destination paths.
 - Treat `darkrun convert <source> .` like an omitted destination so conversion writes the default local `.ds` directory or package.
