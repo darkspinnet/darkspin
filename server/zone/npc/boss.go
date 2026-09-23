@@ -44,7 +44,7 @@ func BossIdentityFromContent(
 			return BossIdentity{}, false
 		}
 		identity.AffixNames[affixIndex] = affixName
-		identity.ModifierNames[modifierIndex] = assetStem + "_NPCAffixModifier"
+		identity.ModifierNames[modifierIndex] = npcAffixModifierName(assetStem)
 		modifierIndex++
 		if strings.HasPrefix(assetStem, "Aura_") {
 			identity.AuraRadius = 12
@@ -52,6 +52,13 @@ func BossIdentityFromContent(
 	}
 	identity.ModifierNames[modifierIndex] = EliteModifierName
 	return identity, true
+}
+
+func npcAffixModifierName(assetStem string) string {
+	if strings.EqualFold(assetStem, "Spiky") {
+		return "Aura_Spiky_NPCAffixModifier"
+	}
+	return assetStem + "_NPCAffixModifier"
 }
 
 func IsBossIdentityValid(identity BossIdentity) bool {

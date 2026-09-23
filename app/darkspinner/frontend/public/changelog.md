@@ -2,6 +2,15 @@
 
 ### 2026-09-22
 
+- Disable Shade Drifter collision during its charge so it can complete the authored pass-through movement, then restore collision afterward.
+- Reject overlapping melee basic requests instead of acknowledging hits the server did not execute, preventing false health and power feedback.
+- Let Raytheoid piercing lasers continue through players to their full range instead of ending at the selected target.
+- Keep Botanical Tunnelers visible to their authored burrow animation while preserving server-side intangibility and their emerge attack.
+- Accept post-mission Continue requests using the active squad instead of confusing the client selection token with a squad database ID.
+- Present Magnos's Kinetic Wave effect on the caster when the ability begins.
+- Keep mission 2-2 scenery and enemy placements on its canonical authored smart-object layout, restoring missing trees and removing conflicting models.
+- Show captains' packaged Spiky elite affix using its valid aura modifier asset.
+- Replace raw Spore and Darkspore audio registry literals with packed string, resource, reference, and usage indexes, reducing the embedded registry from about 6 MiB to 1.49 MiB without compression while preserving searchable conversion metadata.
 - Change Darkrun-generated audio aliases, including registry-backed names, from the `ds_` prefix to a trailing `~` so inferred filenames are immediately distinguishable from authored names.
 - Show the Darkrun build version at the start of root and subcommand help output, including bare general invocation.
 - Decode structurally verified Spore XAS0 resources with their channel-interleaved frame layout, including shortened final frames, instead of misreading them as garbled XAS1 audio or preserving them as raw SNR files.

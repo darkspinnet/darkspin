@@ -7,8 +7,6 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
-	"github.com/darkspinnet/darkspin/server/util"
-	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
@@ -65,20 +63,14 @@ func (e campaignNPCIntangibleExpiry) produce() ([][]byte, error) {
 	if !isCreated {
 		return nil, nil
 	}
-	packet, err := effectraknet.ModifierDelete(
-		e.run.objectID, e.run.modifier.instanceID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("intangibleDelete: %w", err)
-	}
 	if positionErr != nil {
-		return [][]byte{packet}, fmt.Errorf("intangiblePosition: %w", positionErr)
+		return nil, fmt.Errorf("intangiblePosition: %w", positionErr)
 	}
 	if !isEnemyFound {
-		return [][]byte{packet}, nil
+		return nil, nil
 	}
 	if enemy.IsDefeated || enemy.HitPoint <= 0 {
-		return [][]byte{packet}, nil
+		return nil, nil
 	}
 	arrivalPackets, err := npcraknet.BurrowArrival(
 		e.run.objectID, enemy.Plan.Position, enemy.Facing, e.run.timestamp+1500,
@@ -86,7 +78,7 @@ func (e campaignNPCIntangibleExpiry) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("intangibleEmerge: %w", err)
 	}
-	return append([][]byte{packet}, arrivalPackets...), nil
+	return arrivalPackets, nil
 }
 
 func (r campaignNPCActionRuntime) prepareStagnantNovaIntangible(
@@ -145,18 +137,9 @@ func (r campaignNPCActionRuntime) prepareStagnantNovaIntangible(
 	peerSession.campaignNPCIntangibles[run.objectID] = run
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
-	modifierPlan := plan
-	modifierPlan.TargetObjectID = plan.SourceObjectID
-	modifierPlan.Profile.ModifierName = "Intangible_StagnantNovaModifier"
-	modifierPlan.Profile.ModifierID = util.HashID("Intangible_StagnantNovaModifier")
-	modifierPlan.Profile.ModifierDuration = profile.EmergeDelay
-	packet, err := npcraknet.ModifierCreate(
-		modifierPlan, modifier.instanceID, timestamp,
-	)
-	if err != nil {
-		r.rollbackStagnantNovaIntangible(sessionKey, generation, run)
-		return nil, nil, fmt.Errorf("intangibleCreate: %w", err)
-	}
+	// The server-side intangible state rejects hits during travel. Publishing the
+	// corresponding client modifier hides the entire Tunneler and suppresses its
+	// authored burrow and emerge animation states.
 	travelPackets, err := npcraknet.BurrowTravel(plan, timestamp)
 	if err != nil {
 		r.rollbackStagnantNovaIntangible(sessionKey, generation, run)
@@ -171,7 +154,7 @@ func (r campaignNPCActionRuntime) prepareStagnantNovaIntangible(
 		r.rollbackStagnantNovaIntangible(sessionKey, generation, run)
 		return nil, nil, fmt.Errorf("intangibleRecovery: %w", err)
 	}
-	return append([][]byte{packet}, travelPackets...), run, nil
+	return travelPackets, run, nil
 }
 
 func (r campaignNPCActionRuntime) activateStagnantNovaIntangible(

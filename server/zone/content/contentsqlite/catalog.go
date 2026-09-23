@@ -163,6 +163,7 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 			MinimumDamagePercent: 0.5,
 			DescriptorMask:       136, DamageType: 1, DamageSource: 1,
 			IsDescriptorFound: true, IsDamageTypeFound: true, IsDamageSourceFound: true,
+			MuzzleEffectName: "spacetime_push_effect.ServerEventDef",
 			ImpactEffectName: "spacetime_push_effect.ServerEventDef",
 			HitEffectName:    "spacetime_knockback_vsLarge_effect.ServerEventDef",
 		},

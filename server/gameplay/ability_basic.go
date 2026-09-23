@@ -34,7 +34,6 @@ const campaignIdleTargetCursorRadius = float32(6)
 const campaignIdleTargetRecoveryRadius = float32(20)
 const campaignPursuitCheckInterval = 100 * time.Millisecond
 const campaignPlayerPursuitRedirectDistance = float32(0.75)
-const campaignBasicCoalesceMinimumDuration = 25 * time.Millisecond
 
 type campaignPursuitTimeoutProducer struct {
 	action              campaignActionAuthority
@@ -470,14 +469,7 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 		r.registry.mutex.Unlock()
 		if isSessionCurrent && !isActiveRequest && isBasicHeldCurrent &&
 			basicCycleRemaining > 0 {
-			definition, isDefinitionFound :=
-				r.program.PlayerBasicAbility[deployedCreature.Noun]
-			if isDefinitionFound && definition.Name != "" {
-				return request.coalesce(
-					definition.Name, basicCycleRemaining,
-					"basic cycle already active",
-				)
-			}
+			return request.reject("basic cycle already active")
 		}
 		return request.reject("session unavailable or busy")
 	}
@@ -1116,36 +1108,6 @@ type campaignCharacterAbilityRequest struct {
 	deployedCreature game.GameplayCreature
 }
 
-type campaignCoalescedBasicRelease struct {
-	registry            *gameplaySessionRegistry
-	sessionKey          string
-	sessionGeneration   uint64
-	transportGeneration uint64
-	sourceObjectID      uint32
-	cycleEnd            time.Time
-	releasePacket       []byte
-	rejectPacket        []byte
-}
-
-func (e campaignCoalescedBasicRelease) produce() ([][]byte, error) {
-	e.registry.mutex.RLock()
-	peerSession, isFound := e.registry.sessions[e.sessionKey]
-	isSessionCurrent := isFound &&
-		peerSession.generation == e.sessionGeneration &&
-		peerSession.transportGeneration == e.transportGeneration &&
-		peerSession.deployedObjectID == e.sourceObjectID
-	isCycleCurrent := isSessionCurrent && peerSession.basicSequence != nil &&
-		peerSession.basicSequence.CooldownEnd().Equal(e.cycleEnd)
-	e.registry.mutex.RUnlock()
-	if isCycleCurrent {
-		return [][]byte{e.releasePacket}, nil
-	}
-	if isSessionCurrent {
-		return [][]byte{e.rejectPacket}, nil
-	}
-	return nil, nil
-}
-
 func (r campaignCharacterAbilityRequest) reject(
 	reason string,
 ) ([][]byte, error) {
@@ -1162,59 +1124,6 @@ func (r campaignCharacterAbilityRequest) reject(
 		r.command.Ability.CursorPosition.Y, r.command.Ability.CursorPosition.Z,
 		r.command.Ability.TargetPosition.X, r.command.Ability.TargetPosition.Y,
 		r.command.Ability.TargetPosition.Z,
-	)
-	return [][]byte{ackPacket}, nil
-}
-
-func (r campaignCharacterAbilityRequest) coalesce(
-	abilityName string, remaining time.Duration, reason string,
-) ([][]byte, error) {
-	cycleEnd := r.startTime.Add(remaining)
-	remaining = max(remaining, campaignBasicCoalesceMinimumDuration)
-	ackPacket, err := actionraknet.Accept(
-		r.command, abilityName, r.packet.SourceTime, 0, remaining,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("campaignAbilityCoalesce: %w", err)
-	}
-	releasePacket, err := abilityraknet.ReleaseResponse(
-		r.command.Common.Unknown[0], util.HashID(abilityName),
-		r.command.Ability.Index, r.packet.SourceTime, 0, remaining,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("campaignAbilityCoalesceRelease: %w", err)
-	}
-	rejectPacket, err := actionraknet.Reject(r.command)
-	if err != nil {
-		return nil, fmt.Errorf("campaignAbilityCoalesceReject: %w", err)
-	}
-	release := campaignCoalescedBasicRelease{
-		registry: r.runtime.registry, sessionKey: r.packet.Address.String(),
-		sessionGeneration:   r.commandSession.generation,
-		transportGeneration: r.commandSession.transportGeneration,
-		sourceObjectID:      r.command.Common.ObjectID,
-		cycleEnd:            cycleEnd,
-		releasePacket:       releasePacket,
-		rejectPacket:        rejectPacket,
-	}
-	cancel, err := r.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
-		Delay: remaining, Produce: release.produce,
-	}})
-	if err == nil && cancel == nil {
-		err = errors.New("nil cancellation")
-	}
-	if err != nil {
-		r.runtime.logger.Printf(
-			"RakNet campaign ability coalesce scheduling rejected source=%d target=%d index=%d: %v",
-			r.command.Common.ObjectID, r.targetObjectID,
-			r.command.Ability.Index, err,
-		)
-		return r.reject("basic coalescing unavailable")
-	}
-	r.runtime.logger.Printf(
-		"RakNet campaign ability coalesced source=%d noun=%#08x target=%d index=%d response=accepted remaining_ms=%d reason=%s",
-		r.command.Common.ObjectID, r.deployedCreature.Noun, r.targetObjectID,
-		r.command.Ability.Index, remaining.Milliseconds(), reason,
 	)
 	return [][]byte{ackPacket}, nil
 }
@@ -1643,19 +1552,8 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 	e.runtime.registry.sessions[e.sessionKey] = current
 	e.runtime.registry.mutex.Unlock()
 
-	prefix := make([][]byte, 0, 1+len(projectilePackets))
+	prefix := make([][]byte, 0, len(projectilePackets))
 	prefix = append(prefix, projectilePackets...)
-	if plan.Definition.Name == binarySentinelSupportName {
-		wavePacket, waveErr := raknet.MarshalApplication(raknet.ServerEventMessage{
-			Asset:    util.HashID(plan.Definition.ImpactEffectName),
-			ObjectID: e.command.Common.ObjectID,
-			Position: raknet.Vector3(e.sourcePosition),
-		})
-		if waveErr != nil {
-			return nil, fmt.Errorf("kineticWaveCast: %w", waveErr)
-		}
-		prefix = append(prefix, wavePacket)
-	}
 	var effect func(zoneability.AreaResult) ([]byte, error)
 	isEffectAfterDamage := e.definition.Kind == sim.AbilityKindPointBlank
 	if e.definition.Kind == sim.AbilityKindCursorArea {

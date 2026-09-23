@@ -1266,6 +1266,7 @@ func ChargeStart(
 
 func ChargeMovementState(
 	objectID uint32, movementSpeedBuff float32, stealthType game.StealthType,
+	isCollisionEnabled bool,
 ) ([][]byte, error) {
 	if objectID == 0 || math.IsNaN(float64(movementSpeedBuff)) ||
 		math.IsInf(float64(movementSpeedBuff), 0) {
@@ -1277,6 +1278,9 @@ func ChargeMovementState(
 		},
 		raknet.AgentBlackboardUpdateMessage{
 			ObjectID: objectID, Stealth: uint8(stealthType), IsTargetable: true,
+		},
+		raknet.ObjectCollisionUpdateMessage{
+			ObjectID: objectID, IsCollisionEnabled: isCollisionEnabled,
 		},
 	}, "chargeMovementState")
 }

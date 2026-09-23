@@ -1418,6 +1418,7 @@ func tutorialSageBinding(binding game.GameplayBinding) game.GameplayBinding {
 
 func marshalCampaignDungeonSetup(
 	binding game.GameplayBinding, scriptObjectPlans []zoneobject.ScriptPlan,
+	sceneryPlans []zoneobject.SceneryPlan, sceneryDeleteObjectIDs []uint32,
 	passiveModifierInstance [3]uint32, entryPosition raknet.Vector3, gameTime uint64,
 	timeElapsed uint64, deployedCreatureIndex uint32, isDeployedVisible bool,
 ) ([][]byte, error) {
@@ -1527,6 +1528,20 @@ func marshalCampaignDungeonSetup(
 		objectPackets, marshalErr := objectraknet.Script(plan)
 		if marshalErr != nil {
 			return nil, fmt.Errorf("scriptObject[%d]: %w", index, marshalErr)
+		}
+		response = append(response, objectPackets...)
+	}
+	deletePacket, err := objectraknet.DeleteScenery(sceneryDeleteObjectIDs)
+	if err != nil {
+		return nil, fmt.Errorf("sceneryDelete: %w", err)
+	}
+	if len(deletePacket) != 0 {
+		response = append(response, deletePacket)
+	}
+	for index, plan := range sceneryPlans {
+		objectPackets, marshalErr := objectraknet.Scenery(plan)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("sceneryObject[%d]: %w", index, marshalErr)
 		}
 		response = append(response, objectPackets...)
 	}
@@ -4722,6 +4737,7 @@ func (r gameplaySetupRuntime) publishCampaign(
 	}
 	response, err := marshalCampaignDungeonSetup(
 		peerSession.binding, peerSession.zone.ScriptObjectPlans(),
+		peerSession.zone.SceneryPlans(), peerSession.zone.SceneryDeleteObjectIDs(),
 		peerSession.passiveModifierInstance, entryPosition, packet.SourceTime,
 		campaignElapsedMilliseconds(peerSession.zone, r.now()),
 		peerSession.deployedCreatureIndex, false,
@@ -5169,7 +5185,7 @@ func (r gameplaySetupRuntime) publishArena(
 	peerSession.passiveStationarySince[peerSession.deployedCreatureIndex] = r.now()
 	peerSession.startTCShieldRecharge(peerSession.deployedCreatureIndex, r.now())
 	packets, err := marshalCampaignDungeonSetup(
-		peerSession.binding, nil, peerSession.passiveModifierInstance,
+		peerSession.binding, nil, nil, nil, peerSession.passiveModifierInstance,
 		entryPosition, packet.SourceTime, 0,
 		peerSession.deployedCreatureIndex, true,
 	)
@@ -5475,7 +5491,7 @@ func (p campaignPreparation) initialize(
 		return fmt.Errorf("statusChainDirectorSession: %w", sessionErr)
 	}
 	populationSession, sessionErr := newCampaignPopulationSession(
-		director, binding, campaignNav,
+		director.VerdanthPopulationDirector(), binding, campaignNav,
 	)
 	if sessionErr != nil {
 		return fmt.Errorf("statusChainPopulationSession: %w", sessionErr)
@@ -5507,6 +5523,14 @@ func (p campaignPreparation) initialize(
 	)
 	if planErr != nil {
 		return fmt.Errorf("statusChainScriptObjectPlans: %w", planErr)
+	}
+	sceneryMarkers, sceneryDeleteObjectIDs, sceneryErr := director.VerdanthScenery()
+	if sceneryErr != nil {
+		return fmt.Errorf("statusChainScenery: %w", sceneryErr)
+	}
+	sceneryPlans, sceneryErr := zoneobject.PlanScenery(sceneryMarkers)
+	if sceneryErr != nil {
+		return fmt.Errorf("statusChainSceneryPlans: %w", sceneryErr)
 	}
 	tutorialCapsulePlans := make([]tutorialCapsulePlan, 0)
 	if binding.Mode == game.ModeTutorial {
@@ -5672,46 +5696,48 @@ func (p campaignPreparation) initialize(
 			CreatureFootprints: creatureFootprints,
 		},
 		zone.ZoneInfo{
-			Level:               binding.Level,
-			Difficulty:          binding.Difficulty,
-			RunSeed:             binding.RunSeed,
-			ChainLevelIndex:     binding.ChainLevelIndex,
-			MemberLimit:         binding.MemberLimit,
-			DirectorDefinition:  director,
-			Navigation:          campaignNav,
-			HordeBarrierPlans:   hordeBarrierPlans,
-			ScriptObjects:       scriptObjects,
-			ScriptObjectPlans:   scriptObjectPlans,
-			InitialNPCPlans:     initialNPCPlans,
-			FixturePlans:        fixturePlans,
-			CatalystProgram:     p.program.CatalystUnlock,
-			OverdriveProgram:    p.program.OverdriveUnlock,
-			CrystalDefinitions:  p.program.CrystalDefinitions,
-			CrystalLevelOffsets: p.program.CrystalLevelOffsets,
-			Security:            zonesecurity.NewSession(securityObjectID),
-			Effect:              zoneeffect.NewInventory(),
-			NPCs:                enemySession,
-			Hero:                zonehero.NewSession(),
-			Companion:           zonecompanion.NewSession(),
-			Interactable:        zoneinteract.NewUseSession(),
-			Pickups:             zoneinteract.NewPickupRegistry(),
-			PickupPayload:       zoneinteract.NewPickupPayloadRegistry(),
-			Orbs:                zoneinteract.NewOrbRegistry(),
-			Loot:                zoneloot.NewSession(),
-			DNA:                 zoneloot.NewDNASession(),
-			Population:          populationSession,
-			Director:            directorSession,
-			Script:              scriptRegistry,
-			Encounter:           zoneencounter.NewStageSession(),
-			Horde:               zonehorde.NewSession(),
-			Boss:                zoneboss.NewSession(),
-			Death:               zonedeath.NewSession(),
-			Objective:           objectiveSession,
-			ObjectiveProgress:   objectiveProgress,
-			ObjectID:            objectIDSession,
-			ProjectileID:        projectileIDSession,
-			Outcome:             zoneoutcome.NewSession(),
-			Result:              zoneresult.NewLedger(),
+			Level:                  binding.Level,
+			Difficulty:             binding.Difficulty,
+			RunSeed:                binding.RunSeed,
+			ChainLevelIndex:        binding.ChainLevelIndex,
+			MemberLimit:            binding.MemberLimit,
+			DirectorDefinition:     director,
+			Navigation:             campaignNav,
+			HordeBarrierPlans:      hordeBarrierPlans,
+			ScriptObjects:          scriptObjects,
+			ScriptObjectPlans:      scriptObjectPlans,
+			SceneryPlans:           sceneryPlans,
+			SceneryDeleteObjectIDs: sceneryDeleteObjectIDs,
+			InitialNPCPlans:        initialNPCPlans,
+			FixturePlans:           fixturePlans,
+			CatalystProgram:        p.program.CatalystUnlock,
+			OverdriveProgram:       p.program.OverdriveUnlock,
+			CrystalDefinitions:     p.program.CrystalDefinitions,
+			CrystalLevelOffsets:    p.program.CrystalLevelOffsets,
+			Security:               zonesecurity.NewSession(securityObjectID),
+			Effect:                 zoneeffect.NewInventory(),
+			NPCs:                   enemySession,
+			Hero:                   zonehero.NewSession(),
+			Companion:              zonecompanion.NewSession(),
+			Interactable:           zoneinteract.NewUseSession(),
+			Pickups:                zoneinteract.NewPickupRegistry(),
+			PickupPayload:          zoneinteract.NewPickupPayloadRegistry(),
+			Orbs:                   zoneinteract.NewOrbRegistry(),
+			Loot:                   zoneloot.NewSession(),
+			DNA:                    zoneloot.NewDNASession(),
+			Population:             populationSession,
+			Director:               directorSession,
+			Script:                 scriptRegistry,
+			Encounter:              zoneencounter.NewStageSession(),
+			Horde:                  zonehorde.NewSession(),
+			Boss:                   zoneboss.NewSession(),
+			Death:                  zonedeath.NewSession(),
+			Objective:              objectiveSession,
+			ObjectiveProgress:      objectiveProgress,
+			ObjectID:               objectIDSession,
+			ProjectileID:           projectileIDSession,
+			Outcome:                zoneoutcome.NewSession(),
+			Result:                 zoneresult.NewLedger(),
 
 			ResultVote: zoneresult.NewVoteSession(),
 			Timeline:   zonetimeline.NewSession(),

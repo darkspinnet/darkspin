@@ -49,54 +49,56 @@ const (
 )
 
 type ZoneInfo struct {
-	Level               string
-	Difficulty          uint32
-	RunSeed             uint64
-	ChainLevelIndex     uint32
-	MemberLimit         uint16
-	DirectorDefinition  game.CampaignDirector
-	Navigation          *navigation.Mesh
-	HordeBarrierPlans   map[string][]zonebarrier.Plan
-	ScriptObjects       []game.CampaignScriptObject
-	ScriptObjectPlans   []zoneobject.ScriptPlan
-	InitialNPCPlans     []zonenpc.SpawnPlan
-	FixturePlans        []zonenpc.SpawnPlan
-	CatalystProgram     sim.Program
-	OverdriveProgram    sim.Program
-	CrystalDefinitions  []sim.CrystalDefinition
-	CrystalLevelOffsets []sim.CrystalLevelOffset
-	Security            *zonesecurity.Session
-	Effect              *zoneeffect.Inventory
-	NPCs                *zonenpc.Session
-	Hero                *zonehero.Session
-	Companion           *zonecompanion.Session
-	Interactable        *zoneinteract.UseSession
-	Pickups             *zoneinteract.PickupRegistry
-	PickupPayload       *zoneinteract.PickupPayloadRegistry
-	Orbs                *zoneinteract.OrbRegistry
-	Loot                *zoneloot.Session
-	DNA                 *zoneloot.DNASession
-	Population          *zonepopulation.Session
-	Director            *game.CampaignDirectorSession
-	Route               *sim.DirectorSession
-	Script              *game.CampaignScriptRegistry
-	Encounter           *zoneencounter.StageSession
-	Horde               *zonehorde.Session
-	Boss                *zoneboss.Session
-	Death               *zonedeath.Session
-	Objective           *zoneobjective.Session
-	ObjectiveProgress   *zoneobjective.Progress
-	ObjectID            *zoneobjectid.Session
-	ProjectileID        *zoneobjectid.Session
-	Outcome             *zoneoutcome.Session
-	Result              *zoneresult.Ledger
-	ResultVote          *zoneresult.VoteSession
-	Timeline            *zonetimeline.Session
-	Timer               Timer
-	NPCRandom           *sim.SimulatorRandom
-	DropRandom          *sim.SimulatorRandom
-	Checkpoint          zonecheckpoint.Repository
-	Restore             *zonecheckpoint.Snapshot
+	Level                  string
+	Difficulty             uint32
+	RunSeed                uint64
+	ChainLevelIndex        uint32
+	MemberLimit            uint16
+	DirectorDefinition     game.CampaignDirector
+	Navigation             *navigation.Mesh
+	HordeBarrierPlans      map[string][]zonebarrier.Plan
+	ScriptObjects          []game.CampaignScriptObject
+	ScriptObjectPlans      []zoneobject.ScriptPlan
+	SceneryPlans           []zoneobject.SceneryPlan
+	SceneryDeleteObjectIDs []uint32
+	InitialNPCPlans        []zonenpc.SpawnPlan
+	FixturePlans           []zonenpc.SpawnPlan
+	CatalystProgram        sim.Program
+	OverdriveProgram       sim.Program
+	CrystalDefinitions     []sim.CrystalDefinition
+	CrystalLevelOffsets    []sim.CrystalLevelOffset
+	Security               *zonesecurity.Session
+	Effect                 *zoneeffect.Inventory
+	NPCs                   *zonenpc.Session
+	Hero                   *zonehero.Session
+	Companion              *zonecompanion.Session
+	Interactable           *zoneinteract.UseSession
+	Pickups                *zoneinteract.PickupRegistry
+	PickupPayload          *zoneinteract.PickupPayloadRegistry
+	Orbs                   *zoneinteract.OrbRegistry
+	Loot                   *zoneloot.Session
+	DNA                    *zoneloot.DNASession
+	Population             *zonepopulation.Session
+	Director               *game.CampaignDirectorSession
+	Route                  *sim.DirectorSession
+	Script                 *game.CampaignScriptRegistry
+	Encounter              *zoneencounter.StageSession
+	Horde                  *zonehorde.Session
+	Boss                   *zoneboss.Session
+	Death                  *zonedeath.Session
+	Objective              *zoneobjective.Session
+	ObjectiveProgress      *zoneobjective.Progress
+	ObjectID               *zoneobjectid.Session
+	ProjectileID           *zoneobjectid.Session
+	Outcome                *zoneoutcome.Session
+	Result                 *zoneresult.Ledger
+	ResultVote             *zoneresult.VoteSession
+	Timeline               *zonetimeline.Session
+	Timer                  Timer
+	NPCRandom              *sim.SimulatorRandom
+	DropRandom             *sim.SimulatorRandom
+	Checkpoint             zonecheckpoint.Repository
+	Restore                *zonecheckpoint.Snapshot
 }
 
 type Member struct {
@@ -2518,6 +2520,20 @@ func (e *Zone) ScriptObjectPlans() []zoneobject.ScriptPlan {
 		return nil
 	}
 	return append([]zoneobject.ScriptPlan(nil), e.info.ScriptObjectPlans...)
+}
+
+func (e *Zone) SceneryPlans() []zoneobject.SceneryPlan {
+	if e == nil {
+		return nil
+	}
+	return append([]zoneobject.SceneryPlan(nil), e.info.SceneryPlans...)
+}
+
+func (e *Zone) SceneryDeleteObjectIDs() []uint32 {
+	if e == nil {
+		return nil
+	}
+	return append([]uint32(nil), e.info.SceneryDeleteObjectIDs...)
 }
 
 func (e *Zone) FixturePlans() []zonenpc.SpawnPlan {

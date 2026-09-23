@@ -998,11 +998,13 @@ func (r campaignResultRuntime) handleActiveResult(
 		chainCommand.Type == raknet.ChainPlayerSelectContinue &&
 		chainCommand.Choice == 1 &&
 		chainCommand.SelectedRecordID != 0
-	squadID := chainCommand.SelectedRecordID
+	// The result screen sends its local selection record here. It is not the
+	// durable squad ID used during the initial chain preparation.
+	squadID := peerSession.binding.SquadID
 	nextLevel := resultSnapshot.NextLevel
 	isContinuePhase := resultSnapshot.Phase == zoneresult.ChainVoting ||
 		resultSnapshot.IsContinueReplay(squadID, nextLevel)
-	if isContinueRequest && isContinuePhase && squadID == peerSession.binding.SquadID {
+	if isContinueRequest && isContinuePhase && squadID != 0 {
 		if resultSnapshot.IsTerminal {
 			return r.castVote(
 				ctx, packet, peerSession, resultSnapshot,

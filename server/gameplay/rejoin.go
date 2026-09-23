@@ -224,6 +224,7 @@ func marshalGameplayRejoinBaselineState(
 	}
 	packets, err := marshalCampaignDungeonSetup(
 		binding, peerSession.zone.ScriptObjectPlans(),
+		peerSession.zone.SceneryPlans(), peerSession.zone.SceneryDeleteObjectIDs(),
 		peerSession.passiveModifierInstance, peerSession.playerPosition,
 		sourceTime, campaignElapsedMilliseconds(peerSession.zone, time.Now()),
 		peerSession.deployedCreatureIndex, true,

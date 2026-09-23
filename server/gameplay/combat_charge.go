@@ -194,6 +194,7 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 		movementProfile.AbilityName == "BoomerCharge" {
 		statePackets, stateErr := npcraknet.ChargeMovementState(
 			e.objectID, movementProfile.ForcedMovementSpeed, 0,
+			movementProfile.AbilityName != "NocturnaSpecialDriftCharge",
 		)
 		if stateErr != nil {
 			return e.fail("enemyDriftMovementState", stateErr)
@@ -379,7 +380,7 @@ func (e campaignChargeSchedule) followup(timestamp uint64) ([][]byte, error) {
 		e.plan.Profile.AbilityName == "BoomerCharge" {
 		var stateErr error
 		restoredStatePackets, stateErr = npcraknet.ChargeMovementState(
-			e.objectID, 0, e.plan.Profile.StealthType,
+			e.objectID, 0, e.plan.Profile.StealthType, true,
 		)
 		if stateErr != nil {
 			return e.fail("enemyDriftRestoreState", stateErr)
