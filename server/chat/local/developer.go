@@ -215,7 +215,7 @@ func (a eventTriggerer) RequestEvent(_ context.Context, command chat.EventComman
 	}
 	instance := a.gameManager.Game(command.GameID)
 	if instance == nil || !instance.RequestPlayerEventCommand(command.Sender.ID, game.PlayerEventCommand{
-		Name: command.Name,
+		Name: command.Name, Category: command.Category,
 		Position: game.Vec3{
 			X: command.X,
 			Y: command.Y,

@@ -43,6 +43,7 @@ func bugContextForSession(
 	binding := peerSession.binding
 	result.IsGameplayActive = true
 	result.GameID = binding.GameID
+	result.RunSeed = binding.RunSeed
 	result.SessionGeneration = peerSession.generation
 	result.TransportGeneration = peerSession.transportGeneration
 	result.SessionStage = bugSessionStage(peerSession.stage)

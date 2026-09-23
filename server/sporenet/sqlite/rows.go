@@ -1,10 +1,16 @@
 package sqlite
 
-import "github.com/darkspinnet/darkspin/server/sporenet"
+import (
+	"time"
+
+	"github.com/darkspinnet/darkspin/server/sporenet"
+)
 
 type userIdentityRow struct {
 	LoginName                   string `db:"login_name"`
 	DisplayName                 string `db:"display_name"`
+	CreateDT                    string `db:"create_dt"`
+	LastConnectionDT            string `db:"last_connection_dt"`
 	AvatarID                    uint32 `db:"avatar_id"`
 	Level                       uint32 `db:"level"`
 	XP                          uint32 `db:"xp"`
@@ -18,6 +24,8 @@ type userRow struct {
 	LoginName                   string `db:"login_name"`
 	DisplayName                 string `db:"display_name"`
 	Password                    string `db:"password"`
+	CreateDT                    string `db:"create_dt"`
+	LastConnectionDT            string `db:"last_connection_dt"`
 	IsTutorialCompletionPending int64  `db:"is_tutorial_completion_pending"`
 	IsAllAccessGranted          int64  `db:"is_all_access_granted"`
 	IsOnlineAccessGranted       int64  `db:"is_online_access_granted"`
@@ -221,8 +229,14 @@ type extensionRow struct {
 
 func userRowFromRecord(record sporenet.UserRecord) userRow {
 	account := record.Account
+	lastConnectionDT := ""
+	if !record.LastConnectionDT.IsZero() {
+		lastConnectionDT = record.LastConnectionDT.UTC().Format(time.RFC3339Nano)
+	}
 	return userRow{
 		ID: account.ID, LoginName: record.LoginName, DisplayName: record.DisplayName, Password: record.Password,
+		CreateDT:                    record.CreateDT.UTC().Format(time.RFC3339Nano),
+		LastConnectionDT:            lastConnectionDT,
 		IsTutorialCompletionPending: boolInteger(record.IsTutorialCompletionPending),
 		IsAllAccessGranted:          boolInteger(account.IsAllAccessGranted), IsOnlineAccessGranted: boolInteger(account.IsOnlineAccessGranted),
 		IsOverdriveUnlocked: boolInteger(account.IsOverdriveUnlocked),

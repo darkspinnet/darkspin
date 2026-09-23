@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -30,7 +31,6 @@ type patchEnvelope struct {
 }
 
 func writePatchResource(destinationPath, identity string, ordinal int, resourceType uint32, payload []byte) error {
-	_ = ordinal
 	declaration := "PD"
 	envelope := patchEnvelope{
 		patches: []patchRecord{{name: identity, contents: append([]byte(nil), payload...)}},
@@ -40,13 +40,13 @@ func writePatchResource(destinationPath, identity string, ordinal int, resourceT
 		var err error
 		envelope, err = decodePatchEnvelope(payload)
 		if err != nil {
-			return fmt.Errorf("envelopeDecode: %w", err)
+			return writeRawPatchResource(destinationPath, identity, ordinal, declaration, payload)
 		}
 	}
-	for patchIndex, patch := range envelope.patches {
+	for _, patch := range envelope.patches {
 		err := validatePatchRecord(patch)
 		if err != nil {
-			return fmt.Errorf("patchValidate[%d]: %w", patchIndex, err)
+			return writeRawPatchResource(destinationPath, identity, ordinal, declaration, payload)
 		}
 	}
 
@@ -66,12 +66,12 @@ func writePatchResource(destinationPath, identity string, ordinal int, resourceT
 		if err != nil {
 			break
 		}
-		lines, lineErr := splitPatchLines(patch.contents)
+		lines, lineEnding, isTrailingNewline, lineErr := splitPatchLines(patch.contents)
 		if lineErr != nil {
 			err = fmt.Errorf("patchLines[%d]: %w", patchIndex, lineErr)
 			break
 		}
-		_, err = fmt.Fprintf(&definition, "\t\t\tNUMLINES %d\n", len(lines))
+		_, err = fmt.Fprintf(&definition, "\t\t\tLINEENDING %q\n\t\t\tISTRAILINGNEWLINE %d\n\t\t\tNUMLINES %d\n", lineEnding, boolNumber(isTrailingNewline), len(lines))
 		for _, line := range lines {
 			if err != nil {
 				break
@@ -108,6 +108,22 @@ func writePatchResource(destinationPath, identity string, ordinal int, resourceT
 	err = os.WriteFile(destinationPath, []byte(contents), 0o644)
 	if err != nil {
 		return fmt.Errorf("definitionWrite: %w", err)
+	}
+	return nil
+}
+
+func writeRawPatchResource(destinationPath, identity string, ordinal int, declaration string, payload []byte) error {
+	extension := "." + strings.ToLower(declaration)
+	rawName := identity + extension
+	rawPath := filepath.Join(filepath.Dir(destinationPath), rawName)
+	err := os.WriteFile(rawPath, payload, 0o644)
+	if err != nil {
+		return fmt.Errorf("rawWrite: %w", err)
+	}
+	definition := fmt.Sprintf("%s%s %q\n\tVERSION %d\n\tORDINAL %d\n\tRAW %q\n", resourceDSEHeader, declaration, identity, version, ordinal, rawName)
+	err = writeRenderDefinition(destinationPath, declaration, []byte(definition))
+	if err != nil {
+		return fmt.Errorf("definitionMerge: %w", err)
 	}
 	return nil
 }
@@ -149,7 +165,7 @@ func readPatchResource(sourcePath, identity string, ordinal int, resourceType ui
 			return nil, fmt.Errorf("definitionOrder: %q", definition[0])
 		}
 		lastOrder = definitionOrder
-		definitionPayload, parseErr := readPatchDefinition(parser, definition, identity)
+		definitionPayload, parseErr := readPatchDefinition(parser, definition, sourcePath, identity)
 		if parseErr != nil {
 			return nil, parseErr
 		}
@@ -170,7 +186,7 @@ func readPatchResource(sourcePath, identity string, ordinal int, resourceType ui
 	return payload, nil
 }
 
-func readPatchDefinition(parser *parser, definition []string, identity string) ([]byte, error) {
+func readPatchDefinition(parser *parser, definition []string, sourcePath, identity string) ([]byte, error) {
 	if len(definition) != 2 || definition[1] != identity {
 		return nil, fmt.Errorf("definition: got %v, want Pure Data declaration and %q", definition, identity)
 	}
@@ -193,6 +209,29 @@ func readPatchDefinition(parser *parser, definition []string, identity string) (
 	}
 	if parsedVersion != version {
 		return nil, fmt.Errorf("versionUnsupported: %q", versionFields[0])
+	}
+	_, _, err = parser.optionalProperty("ORDINAL", 1)
+	if err != nil {
+		return nil, fmt.Errorf("ordinalRead: %w", err)
+	}
+	rawFields, isRaw, err := parser.optionalProperty("RAW", 1)
+	if err != nil {
+		return nil, fmt.Errorf("rawRead: %w", err)
+	}
+	if isRaw {
+		dsRoot, rootErr := audioDSRoot(sourcePath)
+		if rootErr != nil {
+			return nil, fmt.Errorf("dsRoot: %w", rootErr)
+		}
+		rawPath, pathErr := safeAudioPath(dsRoot, filepath.Dir(sourcePath), rawFields[0])
+		if pathErr != nil {
+			return nil, fmt.Errorf("rawPath: %w", pathErr)
+		}
+		payload, readErr := os.ReadFile(rawPath)
+		if readErr != nil {
+			return nil, fmt.Errorf("rawOpen: %w", readErr)
+		}
+		return payload, nil
 	}
 	envelope := patchEnvelope{}
 	if format == "PDR" {
@@ -226,6 +265,40 @@ func readPatchDefinition(parser *parser, definition []string, identity string) (
 		if readErr != nil {
 			return nil, fmt.Errorf("patchRead[%d]: %w", patchIndex, readErr)
 		}
+		lineEnding := "CRLF"
+		lineEndingFields, isLineEndingPresent, readErr := parser.optionalProperty("LINEENDING", 1)
+		if readErr != nil {
+			return nil, fmt.Errorf("lineEnding[%d]: %w", patchIndex, readErr)
+		}
+		if isLineEndingPresent {
+			lineEnding = lineEndingFields[0]
+		}
+		separator := ""
+		switch lineEnding {
+		case "NONE":
+		case "LF":
+			separator = "\n"
+		case "CRLF":
+			separator = "\r\n"
+		case "CR":
+			separator = "\r"
+		default:
+			return nil, fmt.Errorf("lineEnding[%d]: unsupported %q", patchIndex, lineEnding)
+		}
+		isTrailingNewline := true
+		trailingFields, isTrailingPresent, readErr := parser.optionalProperty("ISTRAILINGNEWLINE", 1)
+		if readErr != nil {
+			return nil, fmt.Errorf("trailingNewline[%d]: %w", patchIndex, readErr)
+		}
+		if isTrailingPresent {
+			switch trailingFields[0] {
+			case "0":
+				isTrailingNewline = false
+			case "1":
+			default:
+				return nil, fmt.Errorf("trailingNewline[%d]: expected 0 or 1, got %q", patchIndex, trailingFields[0])
+			}
+		}
 		lineCount, readErr := parser.uint32Property("NUMLINES")
 		if readErr != nil {
 			return nil, fmt.Errorf("lineCount[%d]: %w", patchIndex, readErr)
@@ -237,7 +310,12 @@ func readPatchDefinition(parser *parser, definition []string, identity string) (
 				return nil, fmt.Errorf("lineRead[%d][%d]: %w", patchIndex, lineIndex, lineErr)
 			}
 			contents.WriteString(lineFields[0])
-			contents.WriteString("\r\n")
+			if lineIndex+1 < lineCount || isTrailingNewline {
+				contents.WriteString(separator)
+			}
+		}
+		if lineEnding == "NONE" && (lineCount > 1 || isTrailingNewline) {
+			return nil, fmt.Errorf("lineEnding[%d]: NONE requires at most one unterminated line", patchIndex)
 		}
 		patch := patchRecord{name: patchFields[0], contents: contents.Bytes()}
 		readErr = validatePatchRecord(patch)
@@ -356,15 +434,42 @@ func validatePatchRecord(patch patchRecord) error {
 	return nil
 }
 
-func splitPatchLines(contents []byte) ([]string, error) {
-	lines := make([]string, 0, bytes.Count(contents, []byte{'\n'}))
-	for len(contents) > 0 {
-		lineEnd := bytes.IndexByte(contents, '\n')
-		if lineEnd < 1 || contents[lineEnd-1] != '\r' {
-			return nil, errors.New("lineEnding: expected CRLF")
-		}
-		lines = append(lines, string(contents[:lineEnd-1]))
-		contents = contents[lineEnd+1:]
+func splitPatchLines(contents []byte) ([]string, string, bool, error) {
+	if len(contents) == 0 {
+		return nil, "NONE", false, nil
 	}
-	return lines, nil
+	lines := make([]string, 0, bytes.Count(contents, []byte{'\n'})+1)
+	lineStart := 0
+	lineEnding := ""
+	for offset := 0; offset < len(contents); offset++ {
+		ending := ""
+		endingSize := 1
+		switch contents[offset] {
+		case '\n':
+			ending = "LF"
+		case '\r':
+			ending = "CR"
+			if offset+1 < len(contents) && contents[offset+1] == '\n' {
+				ending = "CRLF"
+				endingSize = 2
+			}
+		default:
+			continue
+		}
+		if lineEnding != "" && lineEnding != ending {
+			return nil, "", false, errors.New("lineEnding: mixed")
+		}
+		lineEnding = ending
+		lines = append(lines, string(contents[lineStart:offset]))
+		offset += endingSize - 1
+		lineStart = offset + 1
+	}
+	if lineEnding == "" {
+		return []string{string(contents)}, "NONE", false, nil
+	}
+	isTrailingNewline := lineStart == len(contents)
+	if !isTrailingNewline {
+		lines = append(lines, string(contents[lineStart:]))
+	}
+	return lines, lineEnding, isTrailingNewline, nil
 }

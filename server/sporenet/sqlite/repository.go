@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/sporenet"
@@ -98,6 +99,8 @@ func (r *Repository) Create(ctx context.Context, record sporenet.UserRecord) (in
 	if record.LoginName == "" {
 		return 0, fmt.Errorf("createRecord: %w", sporenet.ErrInvalidUser)
 	}
+	record.CreateDT = time.Now().UTC()
+	record.LastConnectionDT = time.Time{}
 	tx, err := r.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("createBegin: %w", err)
@@ -279,7 +282,7 @@ func (r *Repository) ListIdentities(ctx context.Context) ([]sporenet.UserIdentit
 	rows := make([]userIdentityRow, 0)
 	err := r.db.SelectContext(ctx, &rows, `
 		SELECT login_name, display_name, avatar_id, level, xp, chain_progression,
-			onboarding_progress,
+			create_dt, last_connection_dt, onboarding_progress,
 			is_tutorial_completion_pending
 		FROM user
 		ORDER BY display_name, login_name
@@ -289,8 +292,20 @@ func (r *Repository) ListIdentities(ctx context.Context) ([]sporenet.UserIdentit
 	}
 	identities := make([]sporenet.UserIdentity, 0, len(rows))
 	for _, row := range rows {
+		createDT, parseErr := time.Parse(time.RFC3339Nano, row.CreateDT)
+		if parseErr != nil {
+			return nil, fmt.Errorf("identityCreateDT: %w", parseErr)
+		}
+		lastConnectionDT := time.Time{}
+		if row.LastConnectionDT != "" {
+			lastConnectionDT, parseErr = time.Parse(time.RFC3339Nano, row.LastConnectionDT)
+			if parseErr != nil {
+				return nil, fmt.Errorf("identityLastConnectionDT: %w", parseErr)
+			}
+		}
 		identities = append(identities, sporenet.UserIdentity{
 			LoginName: row.LoginName, DisplayName: row.DisplayName, AvatarID: row.AvatarID,
+			CreateDT: createDT, LastConnectionDT: lastConnectionDT,
 			Level: row.Level, XP: row.XP, ChainProgression: row.ChainProgression,
 			IsTutorialCompleted: sporenet.Account{
 				OnboardingProgress: row.OnboardingProgress,
@@ -299,6 +314,30 @@ func (r *Repository) ListIdentities(ctx context.Context) ([]sporenet.UserIdentit
 		})
 	}
 	return identities, nil
+}
+
+// RecordConnection records when a launcher accepted a game launch for a profile.
+func (r *Repository) RecordConnection(ctx context.Context, loginName string, connectionDT time.Time) error {
+	if ctx == nil {
+		return errors.New("nil context")
+	}
+	if strings.TrimSpace(loginName) == "" || connectionDT.IsZero() {
+		return fmt.Errorf("connectionRecord: %w", sporenet.ErrInvalidUser)
+	}
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE user SET last_connection_dt = ? WHERE login_name = ? COLLATE NOCASE`,
+		connectionDT.UTC().Format(time.RFC3339Nano), loginName)
+	if err != nil {
+		return fmt.Errorf("connectionUpdate: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("connectionAffected: %w", err)
+	}
+	if affected != 1 {
+		return fmt.Errorf("connectionMissing: %w", sporenet.ErrUserNotFound)
+	}
+	return nil
 }
 
 // PendingTutorialCompletionLoginNames returns durable deferred tutorial work
@@ -385,6 +424,14 @@ func (r *Repository) initializeSchema(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("schemaTutorialCompletion: %w", err)
 	}
+	err = ensureUserCreateDTColumn(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("schemaUserCreateDT: %w", err)
+	}
+	err = ensureUserLastConnectionDTColumn(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("schemaUserLastConnectionDT: %w", err)
+	}
 	err = ensureOverdriveUnlockColumn(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("schemaOverdriveUnlock: %w", err)
@@ -400,6 +447,53 @@ func (r *Repository) initializeSchema(ctx context.Context) error {
 	err = tx.Commit()
 	if err != nil {
 		return fmt.Errorf("schemaCommit: %w", err)
+	}
+	return nil
+}
+
+func ensureUserLastConnectionDTColumn(ctx context.Context, tx *sqlx.Tx) error {
+	var count int
+	err := tx.GetContext(ctx, &count,
+		`SELECT COUNT(*) FROM pragma_table_info('user') WHERE name = 'last_connection_dt'`)
+	if err != nil {
+		return fmt.Errorf("columnCheck: %w", err)
+	}
+	if count != 0 {
+		return nil
+	}
+	result, err := tx.ExecContext(ctx, `
+		ALTER TABLE user
+		ADD COLUMN last_connection_dt TEXT NOT NULL DEFAULT ''`)
+	if err != nil {
+		return fmt.Errorf("columnAdd: %w", err)
+	}
+	if result == nil {
+		return errors.New("columnAdd: missing result")
+	}
+	return nil
+}
+
+func ensureUserCreateDTColumn(ctx context.Context, tx *sqlx.Tx) error {
+	var count int
+	err := tx.GetContext(ctx, &count,
+		`SELECT COUNT(*) FROM pragma_table_info('user') WHERE name = 'create_dt'`)
+	if err != nil {
+		return fmt.Errorf("columnCheck: %w", err)
+	}
+	if count == 0 {
+		_, err = tx.ExecContext(ctx, `
+			ALTER TABLE user
+			ADD COLUMN create_dt TEXT NOT NULL DEFAULT ''`)
+		if err != nil {
+			return fmt.Errorf("columnAdd: %w", err)
+		}
+	}
+	_, err = tx.ExecContext(ctx, `
+		UPDATE user
+		SET create_dt = ?
+		WHERE create_dt = ''`, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("legacyTimestamp: %w", err)
 	}
 	return nil
 }

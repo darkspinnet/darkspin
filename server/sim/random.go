@@ -43,6 +43,27 @@ func NewSimulatorRandom(seed uint32) *SimulatorRandom {
 	return random
 }
 
+// NewSimulatorRandomFromSnapshot restores the exact point in a simulator
+// stream captured at a durable gameplay boundary.
+func NewSimulatorRandomFromSnapshot(snapshot RandomSnapshot) (*SimulatorRandom, error) {
+	if snapshot.Index > simulatorRandomWordCount {
+		return nil, errors.New("simulator random index invalid")
+	}
+	isStatePresent := false
+	for _, word := range snapshot.Words {
+		if word != 0 {
+			isStatePresent = true
+			break
+		}
+	}
+	if !isStatePresent {
+		return nil, errors.New("simulator random state unavailable")
+	}
+	return &SimulatorRandom{
+		state: snapshot.Words, index: snapshot.Index, draw: snapshot.DrawCount,
+	}, nil
+}
+
 func (r *SimulatorRandom) Uint32() uint32 {
 	r.mu.Lock()
 	defer r.mu.Unlock()

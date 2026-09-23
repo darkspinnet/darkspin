@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode"
 
 	contentcache "github.com/darkspinnet/darkspin/content"
@@ -24,6 +25,8 @@ const maximumProfileIdentityLength = 20
 type Profile struct {
 	LoginName                   string `json:"loginName"`
 	DisplayName                 string `json:"displayName"`
+	CreateDT                    string `json:"createDt"`
+	LastConnectionDT            string `json:"lastConnectionDt"`
 	AvatarID                    uint32 `json:"avatarId"`
 	AvatarURL                   string `json:"avatarUrl"`
 	CrogenitorLevel             uint32 `json:"crogenitorLevel"`
@@ -115,8 +118,13 @@ func (a *App) GetProfiles() ([]Profile, error) {
 		if avatarErr != nil && !errors.Is(avatarErr, os.ErrNotExist) {
 			return nil, fmt.Errorf("profileAvatar[%d]: %w", identity.AvatarID, avatarErr)
 		}
+		lastConnectionDT := ""
+		if !identity.LastConnectionDT.IsZero() {
+			lastConnectionDT = identity.LastConnectionDT.UTC().Format(time.RFC3339Nano)
+		}
 		profiles = append(profiles, Profile{
 			LoginName: identity.LoginName, DisplayName: identity.DisplayName,
+			CreateDT: identity.CreateDT.UTC().Format(time.RFC3339Nano), LastConnectionDT: lastConnectionDT,
 			AvatarID: identity.AvatarID, AvatarURL: avatarURL,
 			CrogenitorLevel: identity.Level, CumulativeXP: identity.XP,
 			HighestCampaignUnlocked:     identity.ChainProgression + 1,
@@ -125,6 +133,28 @@ func (a *App) GetProfiles() ([]Profile, error) {
 		})
 	}
 	return profiles, nil
+}
+
+func (a *App) recordProfileConnection(identity string) (resultErr error) {
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.TODO()
+	}
+	repository, err := a.openProfileRepository(ctx)
+	if err != nil {
+		return fmt.Errorf("connectionOpen: %w", err)
+	}
+	defer func() {
+		closeErr := repository.Close()
+		if closeErr != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("connectionClose: %w", closeErr))
+		}
+	}()
+	err = repository.RecordConnection(ctx, identity, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("connectionRecord: %w", err)
+	}
+	return nil
 }
 
 // GetProfileAvatars returns every retail portrait already available in cache.

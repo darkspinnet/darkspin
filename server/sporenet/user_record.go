@@ -1,5 +1,7 @@
 package sporenet
 
+import "time"
+
 // UserRecord is the storage-neutral representation consumed by the feature's
 // repository port. It deliberately excludes active session and transport state.
 // Storage adapters translate this data to XML documents, SQL rows, or another
@@ -8,6 +10,8 @@ type UserRecord struct {
 	DisplayName                 string
 	LoginName                   string
 	Password                    string
+	CreateDT                    time.Time
+	LastConnectionDT            time.Time
 	IsTutorialCompletionPending bool
 	Account                     Account
 	Stats                       PlayerStats
@@ -39,6 +43,8 @@ func (u *User) Record() UserRecord {
 		DisplayName:                 u.DisplayName,
 		LoginName:                   u.LoginName,
 		Password:                    u.Password,
+		CreateDT:                    u.CreateDT,
+		LastConnectionDT:            u.LastConnectionDT,
 		IsTutorialCompletionPending: u.IsTutorialCompletionPending,
 		Account:                     u.Account,
 		Stats:                       u.Stats,
@@ -61,6 +67,8 @@ func NewUserFromRecord(record UserRecord, templateDatabase *TemplateDatabase) *U
 		DisplayName:                 record.DisplayName,
 		LoginName:                   record.LoginName,
 		Password:                    record.Password,
+		CreateDT:                    record.CreateDT,
+		LastConnectionDT:            record.LastConnectionDT,
 		IsTutorialCompletionPending: record.IsTutorialCompletionPending,
 		Account:                     normalizeAccount(record.Account),
 		Stats:                       record.Stats,

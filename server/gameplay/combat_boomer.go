@@ -7,6 +7,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sporenet"
+	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
@@ -48,6 +49,7 @@ func (e campaignBoomerDeathSchedule) detonate() ([][]byte, error) {
 		if err != nil {
 			continue
 		}
+		plan = scaleBoomerDeathDamage(plan, target.FootprintRadius)
 		result, err := zonenpc.CommitAttack(
 			peerSession.zone.NPCRandom(), plan,
 			source.Plan.NPCProfile.CriticalRating, e.runtime.program.Critical,
@@ -69,8 +71,8 @@ func (e campaignBoomerDeathSchedule) detonate() ([][]byte, error) {
 	binding := peerSession.binding
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
-	effectPacket, err := npcraknet.PositionedEffect(
-		profile.ImpactEffectName, source.Plan.Position,
+	effectPacket, err := npcraknet.DeathDetonation(
+		source.Plan.ObjectID, profile.ImpactEffectName,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("boomerDetonationEffect: %w", err)
@@ -84,6 +86,26 @@ func (e campaignBoomerDeathSchedule) detonate() ([][]byte, error) {
 		)
 	}
 	return packets, nil
+}
+
+func scaleBoomerDeathDamage(
+	plan zonenpc.AttackPlan, targetFootprintRadius float32,
+) zonenpc.AttackPlan {
+	radius := plan.Profile.Radius
+	if radius <= 0 || plan.Damage.Maximum <= plan.Damage.Minimum {
+		return plan
+	}
+	distance := max(
+		float32(0),
+		zonegeometry.Distance(plan.SourcePosition, plan.TargetPosition)-
+			max(float32(0), targetFootprintRadius),
+	)
+	distanceRatio := min(float32(1), distance/radius)
+	damage := plan.Damage.Maximum -
+		(plan.Damage.Maximum-plan.Damage.Minimum)*distanceRatio
+	plan.Damage.Minimum = damage
+	plan.Damage.Maximum = damage
+	return plan
 }
 
 func (r campaignNPCActionRuntime) scheduleBoomerDeathDetonation(

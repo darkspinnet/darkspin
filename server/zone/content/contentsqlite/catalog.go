@@ -163,6 +163,7 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 			MinimumDamagePercent: 0.5,
 			DescriptorMask:       136, DamageType: 1, DamageSource: 1,
 			IsDescriptorFound: true, IsDamageTypeFound: true, IsDamageSourceFound: true,
+			MuzzleEffectName: "spacetime_push_effect.ServerEventDef",
 			ImpactEffectName: "spacetime_push_effect.ServerEventDef",
 			HitEffectName:    "spacetime_knockback_vsLarge_effect.ServerEventDef",
 		},
@@ -258,7 +259,8 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 		"QuantumBlink": {
 			Name: "QuantumBlink", Kind: sim.AbilityKindQuantumBlink,
 			Cooldown: 12 * time.Second, Range: 35, Radius: 10,
-			AnimationName: "sp_quantumRavager_active_start",
+			AnimationName:      "sp_quantumRavager_active_start",
+			SlideAnimationName: "nomad_lieu_lf_4_jump_part_2",
 			AnimationNames: []string{
 				"sp_quantumRavager_active_pose_1",
 				"sp_quantumRavager_active_pose_2",

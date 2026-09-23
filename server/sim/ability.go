@@ -168,6 +168,7 @@ type AbilityDefinition struct {
 	Cooldown                        time.Duration
 	Range                           float32
 	AnimationName                   string
+	SlideAnimationName              string
 	OutAnimationName                string
 	AnimationNames                  []string
 	AnimationProjectileOffsets      [][]Position

@@ -72,14 +72,20 @@ func leaderboardResponse(
 func leaderboardPVEStats(view sporenet.UserView) []string {
 	stats := view.Stats
 	return []string{
-		xmlText("progression", number(view.Account.ChainProgression)),
+		xmlText("progression", number(leaderboardProgression(view.Account))),
 		xmlText("xp", number(view.Account.XP)),
 		xmlText("totalKills", number(stats.PVETotalKill)),
 		xmlText("deaths", number(stats.PVEDeath)),
-		xmlText("killDeathRatio", profileRatio(stats.PVETotalKill, stats.PVEDeath)),
+		xmlText("killDeathRatio", profileKillDeathRatio(stats.PVETotalKill, stats.PVEDeath)),
 		xmlText("damageMax", profileWholeStatNumber(stats.PVEDamageMaximum)),
 		xmlText("healingMax", profileWholeStatNumber(stats.PVEHealingMaximum)),
 	}
+}
+
+func leaderboardProgression(account sporenet.Account) uint32 {
+	// Build 103 reads campaign progression from the upper word and star rank
+	// from the lower word before formatting the leaderboard level.
+	return account.ChainProgression<<16 | account.StarLevel&0xffff
 }
 
 func leaderboardPVPStats(view sporenet.UserView) []string {

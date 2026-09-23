@@ -2562,6 +2562,7 @@ func gameplayPeerPresentationPackets(packets [][]byte) [][]byte {
 			raknet.ObjectJump, raknet.ObjectTeleport, raknet.ObjectPlayerMove,
 			raknet.ForcePhysicsUpdate, raknet.PhysicsChanged,
 			raknet.LocomotionUpdate, raknet.LocomotionUnreliable,
+			raknet.DirectorState,
 			raknet.LootDataUpdate, raknet.InteractableUpdate,
 			raknet.AttributeDataUpdate, raknet.CombatantDataUpdate,
 			raknet.AgentBlackboardUpdate,
@@ -2895,9 +2896,14 @@ func (s gameplayPeerSession) isZoneGameOver() bool {
 }
 
 func (s gameplayPeerSession) isZoneTerminal() bool {
-	return s.isArenaResultReady || s.isZoneGameOver() ||
-		(s.zone != nil && s.zone.Boss() != nil &&
-			s.zone.Boss().IsBeamOutCommitted())
+	if s.isArenaResultReady || s.isZoneGameOver() {
+		return true
+	}
+	if s.binding.Mode == game.ModeChain {
+		return s.chainResult != nil
+	}
+	return s.zone != nil && s.zone.Boss() != nil &&
+		s.zone.Boss().IsBeamOutCommitted()
 }
 
 func (s *gameplayPeerSession) beginTutorialRestart() bool {

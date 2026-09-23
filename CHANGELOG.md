@@ -1,7 +1,66 @@
 # Changelog
 
+### 2026-09-22
+
+- Disable Shade Drifter collision during its charge so it can complete the authored pass-through movement, then restore collision afterward.
+- Reject overlapping melee basic requests instead of acknowledging hits the server did not execute, preventing false health and power feedback.
+- Let Raytheoid piercing lasers continue through players to their full range instead of ending at the selected target.
+- Keep Botanical Tunnelers visible to their authored burrow animation while preserving server-side intangibility and their emerge attack.
+- Accept post-mission Continue requests using the active squad instead of confusing the client selection token with a squad database ID.
+- Present Magnos's Kinetic Wave effect on the caster when the ability begins.
+- Keep mission 2-2 scenery and enemy placements on its canonical authored smart-object layout, restoring missing trees and removing conflicting models.
+- Show captains' packaged Spiky elite affix using its valid aura modifier asset.
+- Replace raw Spore and Darkspore audio registry literals with packed string, resource, reference, and usage indexes, reducing the embedded registry from about 6 MiB to 1.49 MiB without compression while preserving searchable conversion metadata.
+- Change Darkrun-generated audio aliases, including registry-backed names, from the `ds_` prefix to a trailing `~` so inferred filenames are immediately distinguishable from authored names.
+- Show the Darkrun build version at the start of root and subcommand help output, including bare general invocation.
+- Decode structurally verified Spore XAS0 resources with their channel-interleaved frame layout, including shortened final frames, instead of misreading them as garbled XAS1 audio or preserving them as raw SNR files.
+- Consolidate directly suffixed indexes, `_vN` versions, numbered variants, and numbered loop families into one normalized folder and family DSE while preserving each WAV definition and its reconstruction metadata.
+- Reduce successful Darkrun conversion output to the elapsed time without repeating source and destination paths.
+- Treat `darkrun convert <source> .` like an omitted destination so conversion writes the default local `.ds` directory or package.
+- Give every retail Spore WAV a pinned human-readable `~` alias without runtime lookup, remove hash identity suffixes from aliased files, and annotate DSE files with searchable audio-event, animation, package, and resource references for reconstruction.
+- Trace Darkspore audio events through shipped animation, noun, level, UI, effect, and pre-baked resources, pin exact names and resource-owner contexts into searchable conversion metadata, and replace ambiguous unresolved audio trees with resource-role and event-identity folders.
+
+### 2026-09-21
+
+- Replace Darkrun's external vgmstream dependency with native Go decoding and the Darkspin-maintained MP3 module for EA PCM16BE, XAS1, and MPEG-1/MPEG-2 EALayer3 v1 audio while continuing to encode edited WAVs as EA PCM16BE.
+- Remove Draining Simian leech visuals from heroes when the draining enemy dies, even if shared effect-slot bookkeeping was cleared first.
+- Anchor the Lightning Juggernaut's delayed death explosion to its rendered corpse and scale its damage from strongest nearby to weakest at the blast edge.
+- Give each Space Barracuda an independent blink destination based on its own position, with a new direction on subsequent teleports.
+- Aim ranged basic attacks at the cursor instead of redirecting them to a nearby enemy.
+- Show Thunderstorm's cooldown on the ability HUD when its projectile storm begins.
+- Initialize captain agent state before applying the Elite status and attach packaged affix modifiers to named population captains.
+- Restore floating damage numbers for regular, critical, and killing hits against enemies, including co-op ally projections.
+- Give converted audio streams deterministic `~` aliases derived from event, inherited parent, loop, registry, and shared-reference context; organize effects into family folders such as `effect/sfx` and `effect/scom`; annotate each WAV's DSE with searchable source keys, pointer roles, tags, and every AudioProps reference; consolidate numbered WAV derivatives with their event property list in one reconstructable DSE; and accelerate conversion with parallel WAV decoding and direct package streaming while reporting elapsed time.
+- Persist each Crogenitor's creation timestamp, show it on launcher profile cards, and record the latest successful remote connection date beside its server address.
+- Record the last local launch for each Crogenitor and show profile level and last-played date in local, Detached, and Remote selectors.
+- Cache remote Crogenitor and server metadata locally, refresh servers in the background every two days, and refresh profile progress when a launched remote game exits.
+- Move Botanical Tunnelers toward their target with the underground dirt-trail animation active, then emerge with their poison attack and wait through the authored cooldown before burrowing again.
+- Restore Goliath's Shockwave to its full authored 4-metre reach and 6-metre hit arc, and let Zetawatt Beam pierce every enemy along its 35-metre path regardless of aggro target.
+- Use Nightmare Vines' authored dead graphics state, retain their destroyed tree remnants, and avoid overlaying generic creature-death and Zelem explosion effects.
+- Tag locally built Darkspinner versions with the current seven-character Git commit, such as `1.0.4-dev-db3367e`, while preserving stable and unstable release versioning.
+- Change the launcher readiness message from `DarkSpinner ready` to `DarkSpinner is ready`.
+- Limit Remote, Detached, LAN multiplayer, and server-port controls to development and unstable Darkspinner builds while keeping production focused on Launch and Config.
+- Match the Detached Crogenitor selector spacing and card inset to the Launch and Remote selectors.
+- Give Remote a blue tab, portrait, profile-label, and Play accent and Detached a matching purple accent while retaining green for Launch.
+- Reformat launcher profile details, including the remote server address, into aligned property and regular-weight value rows with dividers between fields, concise numeric Crogenitor levels, and level badges on selected portraits.
+- Add `/drop` command help and `/drop create [weapon|hand|foot|offense|defense|utility]` to generate a collectible campaign item from the current map, difficulty, nearby enemy context, active squad, and optional equipment category while reporting every drop roll in chat.
+- Give every campaign run a unique persisted loot seed, derive mission streams from the map and difficulty, and restore the exact drop random state when continuing from a checkpoint.
+- Replace the launcher's custom UI with shadcn-vue in dark mode with an emerald green accent, deep green action buttons, centered underline navigation, a wider launch panel, grouped profile controls, profile information cards, compact headerless configuration cards, keyboard-accessible menus, and themed dialogs.
+- Replace the Field Manual placeholder with current campaign controls, mission flow, party setup, prominent bug reporting, recovery commands, and a separate developer-tools reference.
+- Encode Campaign leaderboard progression with separate threat and star ranks so levels display correctly instead of values such as `0-4★3`.
+- Round profile and Campaign leaderboard Kill/Death Ratio values to two decimal places.
+- Give boss equipment drops a rare chance to use the Hyperspatial Protector, Galactic Eviscerator, or Darkmatter Starhelm base with mission-scaled levels, rarity, and affixes.
+- Restore Quantum Blink's authored slide animation, five randomized strike poses, one-second ending pose, and final animation reset.
+- Keep each co-op campaign member active after another player enters or aborts from victory results, allowing every ally to finish their own Beam Out instead of becoming stranded on a black screen.
+- Send `/victory` boss completion to every connected co-op ally so each player can enter the shared victory and Beam Out result flow.
+- Exclude full inventories before multiplayer equipment rolls, reroll if the selected inventory fills before grant, and play the pickup emote on the winning hero after a successful award.
+
 ### 2026-09-20
 
+- Share collected DNA, health capsules, and power capsules across every connected co-op ally, including persistent DNA balances and synchronized active and reserve hero resources.
+- Replace zero-value capsule pickup notices with the party's actual restored amount, and leave unneeded power capsules available after the Power full error.
+- Remove Terrified gameplay state and modifier effects from defeated enemies across every co-op session while preserving the remaining duration on living splash targets.
+- Move AI-controlled co-op allies and their summons through a teleporter when a human ally uses it so assistance resumes on the destination side.
 - Reject campaign equipment pickups before their animation when inventory is full, keep the item available, and report the current capacity in game chat.
 - Encode absent item prefixes and suffixes as null assets so pickup cards, Editor inventory, and subsequent mission loading do not resolve a bogus empty-string asset.
 - Mark Remote play and the multiplayer-connections setting as still under development in the launcher.

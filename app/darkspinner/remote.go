@@ -22,6 +22,8 @@ import (
 
 const defaultRemoteServerPort uint16 = 42127
 
+const remoteRefreshInterval = 48 * time.Hour
+
 // RemoteServer is one Darkspinner instance found on the local network.
 type RemoteServer struct {
 	Address       string `json:"address"`
@@ -34,17 +36,33 @@ type RemoteProfile struct {
 	ServerAddress           string `json:"serverAddress"`
 	LoginName               string `json:"loginName"`
 	DisplayName             string `json:"displayName"`
+	CreateDT                string `json:"createDt"`
+	LastConnectedDT         string `json:"lastConnectedDt"`
+	ServerVersion           string `json:"serverVersion"`
+	GameVersion             string `json:"gameVersion"`
+	LastCheckedDT           string `json:"lastCheckedDt"`
+	LastOnlineDT            string `json:"lastOnlineDt"`
+	LastProfileRefreshDT    string `json:"lastProfileRefreshDt"`
 	AvatarID                uint32 `json:"avatarId"`
 	AvatarURL               string `json:"avatarUrl"`
 	CrogenitorLevel         uint32 `json:"crogenitorLevel"`
 	CumulativeXP            uint32 `json:"cumulativeXp"`
 	HighestCampaignUnlocked uint32 `json:"highestCampaignUnlocked"`
 	IsPasswordRemembered    bool   `json:"isPasswordRemembered"`
+	IsServerOnline          bool   `json:"isServerOnline"`
+}
+
+type remoteRefreshEntry struct {
+	ServerAddress string
+	LoginName     string
+	Password      string
+	LastCheckedDT string
 }
 
 type remoteProfileResponse struct {
 	LoginName               string `json:"login_name"`
 	DisplayName             string `json:"display_name"`
+	CreateDT                string `json:"create_dt"`
 	AvatarID                uint32 `json:"avatar_id"`
 	CrogenitorLevel         uint32 `json:"crogenitor_level"`
 	CumulativeXP            uint32 `json:"cumulative_xp"`
@@ -214,7 +232,9 @@ func (a *App) GetRemoteProfiles() ([]RemoteProfile, error) {
 	defer database.Close()
 	rows, err := database.QueryContext(ctx, `
 		SELECT server_address, login_name, display_name, password, avatar_id,
-			crogenitor_level, cumulative_xp, highest_campaign_unlocked
+			crogenitor_level, cumulative_xp, highest_campaign_unlocked, create_dt,
+			last_connected_dt, server_version, game_version, last_checked_dt,
+			last_online_dt, last_profile_refresh_dt, is_server_online
 		FROM remote_profile ORDER BY server_address, display_name`)
 	if err != nil {
 		return nil, fmt.Errorf("remoteQuery: %w", err)
@@ -227,7 +247,10 @@ func (a *App) GetRemoteProfiles() ([]RemoteProfile, error) {
 		err = rows.Scan(
 			&profile.ServerAddress, &profile.LoginName, &profile.DisplayName, &password,
 			&profile.AvatarID, &profile.CrogenitorLevel, &profile.CumulativeXP,
-			&profile.HighestCampaignUnlocked,
+			&profile.HighestCampaignUnlocked, &profile.CreateDT,
+			&profile.LastConnectedDT, &profile.ServerVersion, &profile.GameVersion,
+			&profile.LastCheckedDT, &profile.LastOnlineDT, &profile.LastProfileRefreshDT,
+			&profile.IsServerOnline,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("remoteScan: %w", err)
@@ -241,6 +264,22 @@ func (a *App) GetRemoteProfiles() ([]RemoteProfile, error) {
 		return nil, fmt.Errorf("remoteRows: %w", err)
 	}
 	return profiles, nil
+}
+
+// RefreshRemoteProfiles refreshes cached servers that have not been checked in
+// the last two days, then returns the current cache without creating a launch grant.
+func (a *App) RefreshRemoteProfiles() ([]RemoteProfile, error) {
+	a.remoteRefreshMu.Lock()
+	defer a.remoteRefreshMu.Unlock()
+	ctx := a.lifecycleCtx
+	if ctx == nil {
+		ctx = context.TODO()
+	}
+	err := a.refreshRemoteCache(ctx, "", "", "", false)
+	if err != nil {
+		return nil, fmt.Errorf("remoteRefresh: %w", err)
+	}
+	return a.GetRemoteProfiles()
 }
 
 // RegisterRemoteProfile signs into an existing matching account or creates a
@@ -406,11 +445,27 @@ func (a *App) LaunchRemoteProfile(
 	arguments := append([]string(nil), a.arguments...)
 	a.emitStatusLocked()
 	a.mu.Unlock()
-	go a.runGameLaunch(ctx, gameLaunchRequest{
+	go a.runRemoteGameLaunch(ctx, gameLaunchRequest{
 		account: identity, clientProfile: clientProfile, serverAddress: serverAddress,
 		token: token, arguments: arguments, done: gameDone, cancel: gameCancel,
-	})
+	}, resolvedPassword)
 	return nil
+}
+
+func (a *App) runRemoteGameLaunch(ctx context.Context, req gameLaunchRequest, password string) {
+	a.runGameLaunch(ctx, req)
+	refreshCtx := a.lifecycleCtx
+	if refreshCtx == nil {
+		refreshCtx = context.TODO()
+	}
+	refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(refreshCtx), 10*time.Second)
+	defer cancel()
+	a.remoteRefreshMu.Lock()
+	err := a.refreshRemoteCache(refreshCtx, req.serverAddress, req.account, password, true)
+	a.remoteRefreshMu.Unlock()
+	if err != nil {
+		a.log(fmt.Sprintf("Remote profile refresh after game exit failed: %v", err))
+	}
 }
 
 func (a *App) remoteCredential(
@@ -560,11 +615,103 @@ func (a *App) openRemoteDatabase(ctx context.Context) (*sql.DB, error) {
 		crogenitor_level INTEGER NOT NULL DEFAULT 0,
 		cumulative_xp INTEGER NOT NULL DEFAULT 0,
 		highest_campaign_unlocked INTEGER NOT NULL DEFAULT 1,
+		create_dt TEXT NOT NULL DEFAULT '',
+		last_connected_dt TEXT NOT NULL DEFAULT '',
+		server_version TEXT NOT NULL DEFAULT '',
+		game_version TEXT NOT NULL DEFAULT '',
+		last_checked_dt TEXT NOT NULL DEFAULT '',
+		last_online_dt TEXT NOT NULL DEFAULT '',
+		last_profile_refresh_dt TEXT NOT NULL DEFAULT '',
+		is_server_online INTEGER NOT NULL DEFAULT 0,
 		PRIMARY KEY (server_address, login_name)
 	)`)
 	if err != nil {
 		_ = database.Close()
 		return nil, fmt.Errorf("schemaCreate: %w", err)
+	}
+	createDTColumnCount := 0
+	err = database.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM pragma_table_info('remote_profile')
+		WHERE name = 'create_dt'`).Scan(&createDTColumnCount)
+	if err != nil {
+		_ = database.Close()
+		return nil, fmt.Errorf("schemaColumnCheck: %w", err)
+	}
+	if createDTColumnCount == 0 {
+		_, err = database.ExecContext(ctx, `
+			ALTER TABLE remote_profile
+			ADD COLUMN create_dt TEXT NOT NULL DEFAULT ''`)
+		if err != nil {
+			_ = database.Close()
+			return nil, fmt.Errorf("schemaColumnAdd: %w", err)
+		}
+	}
+	migrationDT := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err = database.ExecContext(ctx, `
+		UPDATE remote_profile
+		SET create_dt = ?
+		WHERE create_dt = ''`, migrationDT)
+	if err != nil {
+		_ = database.Close()
+		return nil, fmt.Errorf("schemaCreateDT: %w", err)
+	}
+	lastConnectedDTColumnCount := 0
+	err = database.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM pragma_table_info('remote_profile')
+		WHERE name = 'last_connected_dt'`).Scan(&lastConnectedDTColumnCount)
+	if err != nil {
+		_ = database.Close()
+		return nil, fmt.Errorf("schemaLastConnectedCheck: %w", err)
+	}
+	if lastConnectedDTColumnCount == 0 {
+		_, err = database.ExecContext(ctx, `
+			ALTER TABLE remote_profile
+			ADD COLUMN last_connected_dt TEXT NOT NULL DEFAULT ''`)
+		if err != nil {
+			_ = database.Close()
+			return nil, fmt.Errorf("schemaLastConnectedAdd: %w", err)
+		}
+	}
+	_, err = database.ExecContext(ctx, `
+		UPDATE remote_profile
+		SET last_connected_dt = ?
+		WHERE last_connected_dt = ''`, migrationDT)
+	if err != nil {
+		_ = database.Close()
+		return nil, fmt.Errorf("schemaLastConnectedDT: %w", err)
+	}
+	cacheColumns := []struct {
+		name       string
+		definition string
+	}{
+		{name: "server_version", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "game_version", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "last_checked_dt", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "last_online_dt", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "last_profile_refresh_dt", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "is_server_online", definition: "INTEGER NOT NULL DEFAULT 0"},
+	}
+	for _, cacheColumn := range cacheColumns {
+		columnCount := 0
+		err = database.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM pragma_table_info('remote_profile')
+			WHERE name = ?`, cacheColumn.name).Scan(&columnCount)
+		if err != nil {
+			_ = database.Close()
+			return nil, fmt.Errorf("schemaCacheCheck[%s]: %w", cacheColumn.name, err)
+		}
+		if columnCount != 0 {
+			continue
+		}
+		statement := "ALTER TABLE remote_profile ADD COLUMN " + cacheColumn.name + " " + cacheColumn.definition
+		_, err = database.ExecContext(ctx, statement)
+		if err != nil {
+			_ = database.Close()
+			return nil, fmt.Errorf("schemaCacheAdd[%s]: %w", cacheColumn.name, err)
+		}
 	}
 	return database, nil
 }
@@ -575,6 +722,11 @@ func (a *App) saveRemoteProfile(
 	if !isPasswordRemembered {
 		password = ""
 	}
+	createDT := strings.TrimSpace(profile.CreateDT)
+	if createDT == "" {
+		createDT = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	lastConnectedDT := time.Now().UTC().Format(time.RFC3339Nano)
 	ctx := a.ctx
 	if ctx == nil {
 		ctx = context.TODO()
@@ -586,22 +738,172 @@ func (a *App) saveRemoteProfile(
 	defer database.Close()
 	_, err = database.ExecContext(ctx, `INSERT INTO remote_profile (
 		server_address, login_name, display_name, password, avatar_id,
-		crogenitor_level, cumulative_xp, highest_campaign_unlocked
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		crogenitor_level, cumulative_xp, highest_campaign_unlocked, create_dt,
+		last_connected_dt, last_online_dt, last_profile_refresh_dt, is_server_online
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
 	ON CONFLICT(server_address, login_name) DO UPDATE SET
 		display_name = excluded.display_name,
 		password = excluded.password,
 		avatar_id = excluded.avatar_id,
 		crogenitor_level = excluded.crogenitor_level,
 		cumulative_xp = excluded.cumulative_xp,
-		highest_campaign_unlocked = excluded.highest_campaign_unlocked`,
+		highest_campaign_unlocked = excluded.highest_campaign_unlocked,
+		create_dt = excluded.create_dt,
+		last_connected_dt = excluded.last_connected_dt,
+		last_online_dt = excluded.last_connected_dt,
+		last_profile_refresh_dt = excluded.last_connected_dt,
+		is_server_online = 1`,
 		serverAddress, profile.LoginName, profile.DisplayName, password, profile.AvatarID,
 		profile.CrogenitorLevel, profile.CumulativeXP, profile.HighestCampaignUnlocked,
+		createDT, lastConnectedDT, lastConnectedDT, lastConnectedDT,
 	)
 	if err != nil {
 		return fmt.Errorf("profileUpsert: %w", err)
 	}
 	return nil
+}
+
+func (a *App) refreshRemoteCache(
+	ctx context.Context, targetServerAddress, targetIdentity, targetPassword string, isForced bool,
+) error {
+	database, err := a.openRemoteDatabase(ctx)
+	if err != nil {
+		return fmt.Errorf("databaseOpen: %w", err)
+	}
+	defer database.Close()
+	query := `SELECT server_address, login_name, password, last_checked_dt FROM remote_profile`
+	queryArgs := make([]any, 0)
+	if targetServerAddress != "" && targetIdentity != "" {
+		query += ` WHERE server_address = ? AND login_name = ?`
+		queryArgs = append(queryArgs, targetServerAddress, targetIdentity)
+	}
+	rows, err := database.QueryContext(ctx, query, queryArgs...)
+	if err != nil {
+		return fmt.Errorf("entryQuery: %w", err)
+	}
+	entries := make([]remoteRefreshEntry, 0)
+	for rows.Next() {
+		entry := remoteRefreshEntry{}
+		err = rows.Scan(&entry.ServerAddress, &entry.LoginName, &entry.Password, &entry.LastCheckedDT)
+		if err != nil {
+			closeErr := rows.Close()
+			if closeErr != nil {
+				return fmt.Errorf("entryScanClose: %v: %w", closeErr, err)
+			}
+			return fmt.Errorf("entryScan: %w", err)
+		}
+		if targetPassword != "" {
+			entry.Password = targetPassword
+		}
+		if !isForced && !isRemoteRefreshDue(entry.LastCheckedDT, time.Now()) {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	err = rows.Err()
+	closeErr := rows.Close()
+	if err != nil {
+		return fmt.Errorf("entryRows: %w", err)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("entryClose: %w", closeErr)
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	serversByAddress := make(map[string]RemoteServer)
+	offlineServers := make(map[string]bool)
+	for _, entry := range entries {
+		server, isCached := serversByAddress[entry.ServerAddress]
+		isOffline := offlineServers[entry.ServerAddress]
+		checkedDT := time.Now().UTC().Format(time.RFC3339Nano)
+		if !isCached && !isOffline {
+			server, err = probeRemoteServer(ctx, client, entry.ServerAddress)
+			if err != nil {
+				offlineServers[entry.ServerAddress] = true
+				updateResult, updateErr := database.ExecContext(ctx, `
+					UPDATE remote_profile SET last_checked_dt = ?, is_server_online = 0
+					WHERE server_address = ?`, checkedDT, entry.ServerAddress)
+				if updateErr != nil {
+					return fmt.Errorf("offlineUpdate: %w", updateErr)
+				}
+				updatedCount, updateErr := updateResult.RowsAffected()
+				if updateErr != nil {
+					return fmt.Errorf("offlineCount: %w", updateErr)
+				}
+				if updatedCount < 1 {
+					return errors.New("offlineCount: no cached remote profiles updated")
+				}
+				continue
+			}
+			serversByAddress[entry.ServerAddress] = server
+			onlineResult, updateErr := database.ExecContext(ctx, `
+				UPDATE remote_profile SET server_version = ?, game_version = ?,
+					last_checked_dt = ?, last_online_dt = ?, is_server_online = 1
+				WHERE server_address = ?`, server.ServerVersion, server.GameVersion,
+				checkedDT, checkedDT, entry.ServerAddress)
+			if updateErr != nil {
+				return fmt.Errorf("onlineUpdate: %w", updateErr)
+			}
+			updatedCount, updateErr := onlineResult.RowsAffected()
+			if updateErr != nil {
+				return fmt.Errorf("onlineCount: %w", updateErr)
+			}
+			if updatedCount < 1 {
+				return errors.New("onlineCount: no cached remote profiles updated")
+			}
+		}
+		if isOffline || entry.Password == "" {
+			continue
+		}
+		profile, err := fetchRemoteProfile(ctx, client, entry.ServerAddress, entry.LoginName, entry.Password)
+		if err != nil {
+			continue
+		}
+		profileRefreshDT := time.Now().UTC().Format(time.RFC3339Nano)
+		profileResult, updateErr := database.ExecContext(ctx, `
+			UPDATE remote_profile SET display_name = ?, avatar_id = ?, crogenitor_level = ?,
+				cumulative_xp = ?, highest_campaign_unlocked = ?, create_dt = ?,
+				last_profile_refresh_dt = ?
+			WHERE server_address = ? AND login_name = ?`, profile.DisplayName, profile.AvatarID,
+			profile.CrogenitorLevel, profile.CumulativeXP, profile.HighestCampaignUnlocked,
+			profile.CreateDT, profileRefreshDT, entry.ServerAddress, entry.LoginName)
+		if updateErr != nil {
+			return fmt.Errorf("profileUpdate: %w", updateErr)
+		}
+		updatedCount, updateErr := profileResult.RowsAffected()
+		if updateErr != nil {
+			return fmt.Errorf("profileCount: %w", updateErr)
+		}
+		if updatedCount != 1 {
+			return fmt.Errorf("profileCount: updated %d cached profiles", updatedCount)
+		}
+	}
+	return nil
+}
+
+func isRemoteRefreshDue(lastCheckedDT string, now time.Time) bool {
+	lastCheckedDT = strings.TrimSpace(lastCheckedDT)
+	if lastCheckedDT == "" {
+		return true
+	}
+	checkedDT, err := time.Parse(time.RFC3339Nano, lastCheckedDT)
+	if err != nil {
+		return true
+	}
+	return !now.Before(checkedDT.Add(remoteRefreshInterval))
+}
+
+func fetchRemoteProfile(
+	ctx context.Context, client *http.Client, serverAddress, identity, password string,
+) (remoteProfileResponse, error) {
+	response := struct {
+		Profile remoteProfileResponse `json:"profile"`
+	}{}
+	err := postAuthJSON(ctx, client, "http://"+serverAddress+"/api/desktop/profile",
+		map[string]string{"account": identity, "password": password}, &response)
+	if err != nil {
+		return remoteProfileResponse{}, fmt.Errorf("profileFetch: %w", err)
+	}
+	return response.Profile, nil
 }
 
 func (a *App) loadRemotePassword(serverAddress, identity string) (string, error) {

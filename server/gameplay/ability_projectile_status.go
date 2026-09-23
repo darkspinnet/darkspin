@@ -187,6 +187,50 @@ func (e *heroProjectileStatusRun) RemoveSplash(
 	return heroProjectileStatusDelete{}
 }
 
+// RemoveFearTarget detaches one Terrified modifier without ending the shared
+// projectile run. Splash targets that remain alive keep their own duration.
+func (e *heroProjectileStatusRun) RemoveFearTarget(
+	targetID uint32,
+) (heroProjectileStatusDelete, error) {
+	if e == nil || targetID == 0 {
+		return heroProjectileStatusDelete{}, nil
+	}
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	if e.statusKind != sim.AbilityStatusKindFear || e.isCleaned {
+		return heroProjectileStatusDelete{}, nil
+	}
+	if e.targetID == targetID && e.isApplied {
+		deleted := heroProjectileStatusDelete{
+			targetID: e.targetID, instanceID: e.instanceID, expiresAt: e.expiresAt,
+		}
+		e.npc.ClearFear(e.targetID, e.expiresAt)
+		releaseErr := e.modifierPool.Release(e.instanceID)
+		e.instanceID = 0
+		e.expiresAt = time.Time{}
+		e.isApplied = false
+		if releaseErr != nil {
+			return deleted, fmt.Errorf("fearModifierRelease: %w", releaseErr)
+		}
+		return deleted, nil
+	}
+	for index, target := range e.splashTargets {
+		if target.targetID != targetID {
+			continue
+		}
+		e.clearSplashStatus(target)
+		releaseErr := e.modifierPool.Release(target.instanceID)
+		e.splashTargets = append(
+			e.splashTargets[:index], e.splashTargets[index+1:]...,
+		)
+		if releaseErr != nil {
+			return target, fmt.Errorf("fearSplashRelease: %w", releaseErr)
+		}
+		return target, nil
+	}
+	return heroProjectileStatusDelete{}, nil
+}
+
 func (e *heroProjectileStatusRun) Cleanup() heroProjectileStatusDelete {
 	if e == nil {
 		return heroProjectileStatusDelete{}

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/darkspinnet/darkspin/content/dbpf"
@@ -22,13 +21,15 @@ const (
 	samplesProperty = 0x701ED91E
 )
 
-// ClientNames contains audio resource identities proven by string-to-key calls
-// in the retail client. Each key is the lowercase FNV identity of its name.
+// ClientNames contains audio resource identities recovered from retail client
+// string tables and string-to-key calls. Each key is the lowercase FNV
+// identity of its name.
 func ClientNames() map[uint32]string {
 	return map[uint32]string{
 		0x72B275A3: "mixmode_inReplay",
 		0x80504C15: "mixmode_inEditor",
 		0xAEAF88A9: "mixmode_inPrePvp",
+		0xAD7F8693: "listener_editor",
 		0xD261BB69: "mixmode_inCashout",
 		0xEDD98567: "listener_ingame",
 	}
@@ -189,7 +190,7 @@ func EncodeHeader(payload []byte, header Header) ([]byte, error) {
 		return nil, fmt.Errorf("sampleCountRange: %d", header.SampleCount)
 	}
 	codecCodes := map[string]uint8{
-		"NONE": 0x00, "RESERVED": 0x01, "PCM16BE": 0x02, "EAXMA": 0x03,
+		"NONE": 0x00, "XAS0": 0x00, "RESERVED": 0x01, "PCM16BE": 0x02, "EAXMA": 0x03,
 		"XAS1": 0x04, "EALAYER3_V1": 0x05, "EALAYER3_V2_PCM": 0x06,
 		"EALAYER3_V2_SPIKE": 0x07, "GCADPCM": 0x08, "EASPEEX": 0x09,
 		"EATRAX": 0x0A, "EAMP3": 0x0B, "EAOPUS": 0x0C, "EAATRAC9": 0x0D,
@@ -216,74 +217,18 @@ func EncodeHeader(payload []byte, header Header) ([]byte, error) {
 	return encodedPayload, nil
 }
 
-// SampleAliases derives stable stream names from unambiguous named audioProp
-// sample references. Existing registry names always remain authoritative.
+// SampleAliases derives stable stream names from AudioProps sample references.
+// Existing registry names always remain authoritative.
 func SampleAliases(sourcePath string, names map[uint32]string) (map[uint32]string, error) {
-	r, err := os.Open(sourcePath)
+	records, err := SampleAliasRecords(sourcePath, names)
 	if err != nil {
-		return nil, fmt.Errorf("packageOpen: %w", err)
+		return nil, fmt.Errorf("aliasRecords: %w", err)
 	}
-	defer r.Close()
-	fi, err := r.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("packageStat: %w", err)
-	}
-	pkg, err := dbpf.NewReader(r, fi.Size())
-	if err != nil {
-		return nil, fmt.Errorf("packageRead: %w", err)
-	}
-	candidatesByInstance := make(map[uint32]map[string]bool)
-	for ordinal, entry := range pkg.Entries {
-		if entry.Type != prop.AudioResourceType {
-			continue
+	aliases := make(map[uint32]string, len(records))
+	for instanceID, record := range records {
+		if names[instanceID] == "" {
+			aliases[instanceID] = record.Name
 		}
-		eventName := names[uint32(entry.Instance)]
-		if eventName == "" {
-			continue
-		}
-		payloadReader, openErr := pkg.Open(entry)
-		if openErr != nil {
-			return nil, fmt.Errorf("resourceOpen[%d]: %w", ordinal, openErr)
-		}
-		payload, readErr := io.ReadAll(payloadReader)
-		if readErr != nil {
-			return nil, fmt.Errorf("resourceRead[%d]: %w", ordinal, readErr)
-		}
-		document, decodeErr := prop.Decode(payload)
-		if decodeErr != nil {
-			return nil, fmt.Errorf("resourceDecode[%d]: %w", ordinal, decodeErr)
-		}
-		for _, property := range document.Properties {
-			if property.ID != samplesProperty || property.Type != prop.TypeKey {
-				continue
-			}
-			for sampleIndex, item := range property.Items {
-				if len(item) < 4 {
-					return nil, fmt.Errorf("sampleKey[%d:%d]: got %d bytes", ordinal, sampleIndex, len(item))
-				}
-				instanceID := binary.LittleEndian.Uint32(item[:4])
-				alias := eventName
-				if len(property.Items) > 1 {
-					alias = fmt.Sprintf("%s_sample_%02d", eventName, sampleIndex+1)
-				}
-				if candidatesByInstance[instanceID] == nil {
-					candidatesByInstance[instanceID] = make(map[string]bool)
-				}
-				candidatesByInstance[instanceID][alias] = true
-			}
-		}
-	}
-	aliases := make(map[uint32]string)
-	for instanceID, candidates := range candidatesByInstance {
-		if names[instanceID] != "" || len(candidates) != 1 {
-			continue
-		}
-		orderedCandidates := make([]string, 0, len(candidates))
-		for candidate := range candidates {
-			orderedCandidates = append(orderedCandidates, candidate)
-		}
-		sort.Strings(orderedCandidates)
-		aliases[instanceID] = orderedCandidates[0]
 	}
 	return aliases, nil
 }
@@ -340,11 +285,12 @@ func SampleInstances(sourcePath string) (map[uint32]bool, error) {
 }
 
 type propertyReference struct {
-	ownerID   uint32
-	targetID  uint32
-	roleName  string
-	itemIndex int
-	itemCount int
+	ownerID    uint32
+	targetID   uint32
+	targetName string
+	roleName   string
+	itemIndex  int
+	itemCount  int
 }
 
 // InheritedPropertyAliases follows zero-scope keys between AudioProps entries
@@ -384,10 +330,11 @@ func InheritedPropertyAliases(sourcePath string, names map[uint32]string) (map[u
 			}
 			roleName, isFound := prop.Name(property.ID)
 			if !isFound {
-				continue
+				roleName = ""
 			}
+			roleName = ReadablePointerName(roleName)
 			for itemIndex, item := range property.Items {
-				if len(item) < 12 || binary.LittleEndian.Uint32(item[4:8]) != 0 || binary.LittleEndian.Uint32(item[8:12]) != 0 {
+				if len(item) < 4 {
 					continue
 				}
 				targetID := binary.LittleEndian.Uint32(item[:4])
@@ -416,7 +363,10 @@ func InheritedPropertyAliases(sourcePath string, names map[uint32]string) (map[u
 			if ownerName == "" {
 				continue
 			}
-			alias := ownerName + "_" + reference.roleName
+			alias := ownerName
+			if reference.roleName != "" {
+				alias += "_" + reference.roleName
+			}
 			if reference.itemCount > 1 {
 				alias += fmt.Sprintf("_%02d", reference.itemIndex+1)
 			}

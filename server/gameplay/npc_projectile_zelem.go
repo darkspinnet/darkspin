@@ -580,7 +580,7 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 			profile.ProjectileSpeed, maximumLeadAngle,
 		)
 	}
-	if profile.IsProjectilePiercing && profile.AbilityName != "ZelemSpecialThree" &&
+	if profile.IsProjectilePiercing &&
 		profile.AbilityName != "CryosElementalSpecialThree" {
 		targetPosition = campaignNPCProjectileRangeEndpoint(
 			sourcePosition, targetPosition, profile.ProjectileDistance,

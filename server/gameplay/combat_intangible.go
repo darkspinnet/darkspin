@@ -5,9 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
-	"github.com/darkspinnet/darkspin/server/util"
-	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
@@ -18,6 +17,7 @@ type campaignNPCIntangibleRun struct {
 	expiresAt    time.Time
 	cancel       raknet.CancelSchedule
 	timestamp    uint64
+	destination  game.Vec3
 	revealPacket []byte
 }
 
@@ -36,8 +36,17 @@ func (e campaignNPCIntangibleExpiry) produce() ([][]byte, error) {
 		peerSession.campaignNPCIntangibles[e.run.objectID] == e.run
 	var enemy zonenpc.Snapshot
 	isEnemyFound := false
+	var positionErr error
 	if isCurrent {
 		enemy, isEnemyFound = peerSession.zone.NPCs().NPC(e.run.objectID)
+		if isEnemyFound && !enemy.IsDefeated && enemy.HitPoint > 0 {
+			positionErr = peerSession.zone.NPCs().SetPosition(
+				e.run.objectID, e.run.destination,
+			)
+			if positionErr == nil {
+				enemy, isEnemyFound = peerSession.zone.NPCs().NPC(e.run.objectID)
+			}
+		}
 		delete(peerSession.campaignNPCIntangibles, e.run.objectID)
 		peerSession.zone.NPCs().ClearIntangible(e.run.objectID, e.run.expiresAt)
 		peerSession.untrackCampaignNPCModifier(e.run.modifier)
@@ -54,33 +63,22 @@ func (e campaignNPCIntangibleExpiry) produce() ([][]byte, error) {
 	if !isCreated {
 		return nil, nil
 	}
-	packet, err := effectraknet.ModifierDelete(
-		e.run.objectID, e.run.modifier.instanceID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("intangibleDelete: %w", err)
+	if positionErr != nil {
+		return nil, fmt.Errorf("intangiblePosition: %w", positionErr)
 	}
 	if !isEnemyFound {
-		return [][]byte{packet}, nil
-	}
-	revealPacket, err := raknet.MarshalApplication(raknet.ObjectUpdateMessage{
-		ObjectID: e.run.objectID, IsVisible: true,
-		PositionX: enemy.Plan.Position.X, PositionY: enemy.Plan.Position.Y,
-		PositionZ: enemy.Plan.Position.Z,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("intangibleReveal: %w", err)
+		return nil, nil
 	}
 	if enemy.IsDefeated || enemy.HitPoint <= 0 {
-		return [][]byte{packet, revealPacket}, nil
+		return nil, nil
 	}
-	animationPacket, err := npcraknet.AnimationState(
-		e.run.objectID, "burrow_attack1", e.run.timestamp+1500,
+	arrivalPackets, err := npcraknet.BurrowArrival(
+		e.run.objectID, enemy.Plan.Position, enemy.Facing, e.run.timestamp+1500,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("intangibleEmerge: %w", err)
 	}
-	return [][]byte{packet, revealPacket, animationPacket}, nil
+	return arrivalPackets, nil
 }
 
 func (r campaignNPCActionRuntime) prepareStagnantNovaIntangible(
@@ -117,6 +115,7 @@ func (r campaignNPCActionRuntime) prepareStagnantNovaIntangible(
 	run := &campaignNPCIntangibleRun{
 		modifier: modifier, objectID: plan.SourceObjectID,
 		expiresAt: r.now().Add(profile.EmergeDelay), timestamp: timestamp,
+		destination: plan.TargetPosition,
 	}
 	err = peerSession.zone.NPCs().ApplyIntangible(run.objectID, run.expiresAt)
 	if err != nil {
@@ -138,26 +137,13 @@ func (r campaignNPCActionRuntime) prepareStagnantNovaIntangible(
 	peerSession.campaignNPCIntangibles[run.objectID] = run
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
-	modifierPlan := plan
-	modifierPlan.TargetObjectID = plan.SourceObjectID
-	modifierPlan.Profile.ModifierName = "Intangible_StagnantNovaModifier"
-	modifierPlan.Profile.ModifierID = util.HashID("Intangible_StagnantNovaModifier")
-	modifierPlan.Profile.ModifierDuration = profile.EmergeDelay
-	packet, err := npcraknet.ModifierCreate(
-		modifierPlan, modifier.instanceID, timestamp,
-	)
+	// The server-side intangible state rejects hits during travel. Publishing the
+	// corresponding client modifier hides the entire Tunneler and suppresses its
+	// authored burrow and emerge animation states.
+	travelPackets, err := npcraknet.BurrowTravel(plan, timestamp)
 	if err != nil {
 		r.rollbackStagnantNovaIntangible(sessionKey, generation, run)
-		return nil, nil, fmt.Errorf("intangibleCreate: %w", err)
-	}
-	hidePacket, err := raknet.MarshalApplication(raknet.ObjectUpdateMessage{
-		ObjectID: plan.SourceObjectID, IsVisible: false,
-		PositionX: plan.SourcePosition.X, PositionY: plan.SourcePosition.Y,
-		PositionZ: plan.SourcePosition.Z,
-	})
-	if err != nil {
-		r.rollbackStagnantNovaIntangible(sessionKey, generation, run)
-		return nil, nil, fmt.Errorf("intangibleHide: %w", err)
+		return nil, nil, fmt.Errorf("intangibleTravel: %w", err)
 	}
 	run.revealPacket, err = raknet.MarshalApplication(raknet.ObjectUpdateMessage{
 		ObjectID: plan.SourceObjectID, IsVisible: true,
@@ -166,9 +152,9 @@ func (r campaignNPCActionRuntime) prepareStagnantNovaIntangible(
 	})
 	if err != nil {
 		r.rollbackStagnantNovaIntangible(sessionKey, generation, run)
-		return nil, nil, fmt.Errorf("intangibleRevealPrepare: %w", err)
+		return nil, nil, fmt.Errorf("intangibleRecovery: %w", err)
 	}
-	return [][]byte{packet, hidePacket}, run, nil
+	return travelPackets, run, nil
 }
 
 func (r campaignNPCActionRuntime) activateStagnantNovaIntangible(

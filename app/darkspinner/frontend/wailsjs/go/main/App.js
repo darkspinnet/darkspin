@@ -118,6 +118,10 @@ export function RefreshInstallationStatus() {
   return window['go']['main']['App']['RefreshInstallationStatus']();
 }
 
+export function RefreshRemoteProfiles() {
+  return window['go']['main']['App']['RefreshRemoteProfiles']();
+}
+
 export function RegisterRemoteProfile(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['RegisterRemoteProfile'](arg1, arg2, arg3, arg4, arg5, arg6);
 }

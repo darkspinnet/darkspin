@@ -85,9 +85,42 @@ func (b *LocalBroker) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/desktop/register", b.register)
 	mux.HandleFunc("/api/desktop/start", b.start)
+	mux.HandleFunc("/api/desktop/profile", b.profile)
 	mux.HandleFunc("/api/desktop/exchange", b.exchange)
 	mux.HandleFunc("/api/desktop/delete", b.delete)
 	return mux
+}
+
+func (b *LocalBroker) profile(writer http.ResponseWriter, request *http.Request) {
+	_, isAllowed := b.requestAccess(request)
+	if !isAllowed || b.accountManager == nil {
+		writeAuthError(writer, http.StatusForbidden, "local network request required")
+		return
+	}
+	if request.Method != http.MethodPost {
+		writeAuthError(writer, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	payload := struct {
+		Account  string `json:"account"`
+		Password string `json:"password"`
+	}{}
+	err := decodeAuthRequest(request, &payload)
+	if err != nil {
+		writeAuthError(writer, http.StatusBadRequest, "invalid request")
+		return
+	}
+	identity := strings.TrimSpace(payload.Account)
+	if identity == "" || payload.Password == "" || len(identity) > 320 {
+		writeAuthError(writer, http.StatusBadRequest, "account and password are required")
+		return
+	}
+	profile, err := b.accountManager.Authenticate(request.Context(), identity, payload.Password)
+	if err != nil || profile.LoginName == "" {
+		writeAuthError(writer, http.StatusUnauthorized, "invalid account or password")
+		return
+	}
+	writeAuthJSON(writer, http.StatusOK, map[string]any{"profile": desktopProfile(profile)})
 }
 
 func (b *LocalBroker) delete(writer http.ResponseWriter, request *http.Request) {
@@ -228,6 +261,7 @@ func (b *LocalBroker) register(writer http.ResponseWriter, request *http.Request
 	view := user.View()
 	writeAuthJSON(writer, http.StatusCreated, map[string]any{"profile": desktopProfile(sporenet.UserIdentity{
 		LoginName: view.LoginName, DisplayName: view.DisplayName,
+		CreateDT: view.CreateDT,
 		AvatarID: view.Account.AvatarID, Level: view.Account.Level,
 		XP: view.Account.XP, ChainProgression: view.Account.ChainProgression,
 	})})
@@ -290,12 +324,16 @@ func (b *LocalBroker) requestAccess(request *http.Request) (bool, bool) {
 }
 
 func desktopProfile(identity sporenet.UserIdentity) map[string]any {
-	return map[string]any{
+	profile := map[string]any{
 		"login_name": identity.LoginName, "display_name": identity.DisplayName,
 		"avatar_id": identity.AvatarID, "crogenitor_level": identity.Level,
 		"cumulative_xp":             identity.XP,
 		"highest_campaign_unlocked": identity.ChainProgression + 1,
 	}
+	if !identity.CreateDT.IsZero() {
+		profile["create_dt"] = identity.CreateDT.UTC().Format(time.RFC3339Nano)
+	}
+	return profile
 }
 
 func remoteIP(remoteAddress string) string {

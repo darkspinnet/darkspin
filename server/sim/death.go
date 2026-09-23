@@ -26,6 +26,7 @@ type DeathBehaviorInput struct {
 	IsFastCriticalDeath  bool
 	IsPlayerControlled   bool
 	IsBoss               bool
+	IsRemnantRetained    bool
 	CorpseFadeDelay      time.Duration
 	DeleteDelay          time.Duration
 	DamageProvenance     Provenance
@@ -60,6 +61,9 @@ func StartDeathBehavior(
 		(!input.IsFastCriticalDeath || input.IsBoss)
 	if isOrdinaryNPC && input.FadeEffectName == "" {
 		return nil, errors.New("fade effect missing")
+	}
+	if input.IsRemnantRetained && input.DeleteDelay <= 0 {
+		return nil, errors.New("retained remnant delay missing")
 	}
 	if !simulator.isScopeActive(scope) {
 		return nil, errors.New("inactive scope")
@@ -141,6 +145,13 @@ func (b *DeathBehavior) scheduleBranch() error {
 	if b.input.IsPlayerControlled {
 		return b.emit(DeathStateIntent{Role: b.input.TargetRole, Action: DeathWaitingForRevival})
 	}
+	if b.input.IsRemnantRetained {
+		err = b.emit(WaitIntent{Duration: b.input.DeleteDelay})
+		if err != nil {
+			return fmt.Errorf("remnantWaitEmit: %w", err)
+		}
+		return b.schedule(b.input.DeleteDelay, b.finishRetainedRemnant)
+	}
 	if b.input.DeleteDelay > 0 {
 		err = b.emit(WaitIntent{Duration: b.input.DeleteDelay})
 		if err != nil {
@@ -157,6 +168,15 @@ func (b *DeathBehavior) scheduleBranch() error {
 		return fmt.Errorf("revivalWaitEmit: %w", err)
 	}
 	return b.schedule(corpseFadeDelay, b.finishRevivalWindow)
+}
+
+func (b *DeathBehavior) finishRetainedRemnant() error {
+	if !b.isActive {
+		return nil
+	}
+	b.pendingTask = 0
+	b.isActive = false
+	return nil
 }
 
 func (b *DeathBehavior) finishRevivalWindow() error {

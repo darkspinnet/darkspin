@@ -36,6 +36,9 @@ func (a *App) prepareLauncherUpdate(ctx context.Context) (bool, error) {
 	if goruntime.GOOS != "windows" {
 		return false, nil
 	}
+	if BuildChannel == "development" {
+		return false, nil
+	}
 	manifestURL := strings.TrimSpace(launcherUpdateManifestURL)
 	if manifestURL == "" {
 		return false, nil

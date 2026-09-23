@@ -30,6 +30,9 @@ import (
 // Version is replaced by Mage release builds and remains useful in direct Go builds.
 var Version = "0.5.0"
 
+// BuildChannel is replaced by Mage builds. Direct Go builds are development builds.
+var BuildChannel = "development"
+
 // authServiceURL is replaced at link time for distributed DarkSpinner builds. It
 // has no runtime override so one darkspinner.exe always targets its trusted service.
 var authServiceURL = "http://127.0.0.1:42127"

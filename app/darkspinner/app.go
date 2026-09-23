@@ -26,6 +26,7 @@ type App struct {
 	lifecycleCtx       context.Context
 	mu                 sync.Mutex
 	serverMu           sync.Mutex
+	remoteRefreshMu    sync.Mutex
 	logMu              sync.Mutex
 	timingMu           sync.Mutex
 	cancel             context.CancelFunc
@@ -71,6 +72,7 @@ type LauncherStatus struct {
 	ManifestURL         string `json:"manifestUrl"`
 	GameDirectory       string `json:"gameDirectory"`
 	Version             string `json:"version"`
+	BuildChannel        string `json:"buildChannel"`
 	Progress            int    `json:"progress"`
 	PatchProgress       int    `json:"patchProgress"`
 	AvatarProgress      int    `json:"avatarProgress"`
@@ -114,6 +116,7 @@ func NewApp(arguments []string) *App {
 			LastRun:             "",
 			ManifestURL:         strings.TrimSpace(patchManifestURL),
 			Version:             Version,
+			BuildChannel:        BuildChannel,
 			IsAutoPlayRequested: hasLaunchArgument(arguments, "auto-play"),
 			IsPatchEnabled:      strings.TrimSpace(patchManifestURL) != "",
 			IsCinematicSkipped:  false,
@@ -450,6 +453,11 @@ func (a *App) Play() error {
 	if err != nil {
 		a.mu.Unlock()
 		return fmt.Errorf("serverAddress: %w", err)
+	}
+	err = a.recordProfileConnection(account)
+	if err != nil {
+		a.mu.Unlock()
+		return fmt.Errorf("profileConnection: %w", err)
 	}
 	gameCtx, gameDone, gameCancel := a.beginGameLaunchLocked()
 	a.status.State = "launching"

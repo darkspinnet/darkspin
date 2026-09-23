@@ -115,8 +115,10 @@ func (s *Session) planSpawns(
 					fmt.Errorf("spawnPlanNoun[%d]: %w", index, selectionErr)
 			}
 			profile := selectedEntry.NPCProfile
+			bossIdentity := zonenpc.BossIdentity{}
 			if isCaptain {
 				profile = zonenpc.ApplyEliteProfile(profile)
+				bossIdentity = captainIdentity(director, selectedEntry.NounName)
 			}
 			plans = append(plans, zonenpc.SpawnPlan{
 				ObjectID: nextObjectID, NounName: selectedEntry.NounName,
@@ -124,7 +126,7 @@ func (s *Session) planSpawns(
 				Rotation: GroupRotation(decision.Rotations, index),
 				Kind:     decision.Kind, IsCaptain: isCaptain,
 				MarkerSetName: decision.MarkerSetName,
-				NPCProfile:    profile,
+				NPCProfile:    profile, BossIdentity: bossIdentity,
 			})
 			nextObjectID++
 		}
@@ -455,8 +457,10 @@ func appendAuthoredPlans(
 		}
 		isCaptain := strings.EqualFold(configKind, "captain")
 		profile := selectedEntry.NPCProfile
+		bossIdentity := zonenpc.BossIdentity{}
 		if isCaptain {
 			profile = zonenpc.ApplyEliteProfile(profile)
+			bossIdentity = captainIdentity(director, selectedEntry.NounName)
 		}
 		plans = append(plans, zonenpc.SpawnPlan{
 			ObjectID: nextObjectID, NounName: selectedEntry.NounName,
@@ -464,11 +468,44 @@ func appendAuthoredPlans(
 			Rotation: GroupRotation(decision.Rotations, index),
 			Kind:     decision.Kind, IsCaptain: isCaptain,
 			MarkerSetName: decision.MarkerSetName,
-			NPCProfile:    profile,
+			NPCProfile:    profile, BossIdentity: bossIdentity,
 		})
 		nextObjectID++
 	}
 	return plans, nextObjectID, nil
+}
+
+func captainIdentity(
+	director game.CampaignDirector, nounName string,
+) zonenpc.BossIdentity {
+	nounKey := strings.ToLower(strings.TrimSpace(nounName))
+	identityKey := captainIdentityNounKey(nounKey)
+	identity, isFound := director.NPCIdentitiesByNoun[identityKey]
+	if !isFound && identityKey != nounKey {
+		identity, isFound = director.NPCIdentitiesByNoun[nounKey]
+	}
+	if !isFound {
+		return zonenpc.BossIdentity{}
+	}
+	bossIdentity, isIdentityValid := zonenpc.BossIdentityFromContent(identity)
+	if !isIdentityValid {
+		return zonenpc.BossIdentity{}
+	}
+	return bossIdentity
+}
+
+func captainIdentityNounKey(nounName string) string {
+	baseName := strings.TrimSuffix(nounName, ".noun")
+	if strings.Contains(baseName, "_captain") {
+		return baseName + ".noun"
+	}
+	for _, rankSuffix := range []string{"_2", "_3"} {
+		if strings.HasSuffix(baseName, rankSuffix) {
+			return strings.TrimSuffix(baseName, rankSuffix) +
+				"_captain" + rankSuffix + ".noun"
+		}
+	}
+	return baseName + "_captain.noun"
 }
 
 func decisionSpawnCount(decision Decision) (int, int, error) {

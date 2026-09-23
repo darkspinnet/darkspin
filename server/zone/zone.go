@@ -49,53 +49,56 @@ const (
 )
 
 type ZoneInfo struct {
-	Level               string
-	Difficulty          uint32
-	ChainLevelIndex     uint32
-	MemberLimit         uint16
-	DirectorDefinition  game.CampaignDirector
-	Navigation          *navigation.Mesh
-	HordeBarrierPlans   map[string][]zonebarrier.Plan
-	ScriptObjects       []game.CampaignScriptObject
-	ScriptObjectPlans   []zoneobject.ScriptPlan
-	InitialNPCPlans     []zonenpc.SpawnPlan
-	FixturePlans        []zonenpc.SpawnPlan
-	CatalystProgram     sim.Program
-	OverdriveProgram    sim.Program
-	CrystalDefinitions  []sim.CrystalDefinition
-	CrystalLevelOffsets []sim.CrystalLevelOffset
-	Security            *zonesecurity.Session
-	Effect              *zoneeffect.Inventory
-	NPCs                *zonenpc.Session
-	Hero                *zonehero.Session
-	Companion           *zonecompanion.Session
-	Interactable        *zoneinteract.UseSession
-	Pickups             *zoneinteract.PickupRegistry
-	PickupPayload       *zoneinteract.PickupPayloadRegistry
-	Orbs                *zoneinteract.OrbRegistry
-	Loot                *zoneloot.Session
-	DNA                 *zoneloot.DNASession
-	Population          *zonepopulation.Session
-	Director            *game.CampaignDirectorSession
-	Route               *sim.DirectorSession
-	Script              *game.CampaignScriptRegistry
-	Encounter           *zoneencounter.StageSession
-	Horde               *zonehorde.Session
-	Boss                *zoneboss.Session
-	Death               *zonedeath.Session
-	Objective           *zoneobjective.Session
-	ObjectiveProgress   *zoneobjective.Progress
-	ObjectID            *zoneobjectid.Session
-	ProjectileID        *zoneobjectid.Session
-	Outcome             *zoneoutcome.Session
-	Result              *zoneresult.Ledger
-	ResultVote          *zoneresult.VoteSession
-	Timeline            *zonetimeline.Session
-	Timer               Timer
-	NPCRandom           *sim.SimulatorRandom
-	DropRandom          *sim.SimulatorRandom
-	Checkpoint          zonecheckpoint.Repository
-	Restore             *zonecheckpoint.Snapshot
+	Level                  string
+	Difficulty             uint32
+	RunSeed                uint64
+	ChainLevelIndex        uint32
+	MemberLimit            uint16
+	DirectorDefinition     game.CampaignDirector
+	Navigation             *navigation.Mesh
+	HordeBarrierPlans      map[string][]zonebarrier.Plan
+	ScriptObjects          []game.CampaignScriptObject
+	ScriptObjectPlans      []zoneobject.ScriptPlan
+	SceneryPlans           []zoneobject.SceneryPlan
+	SceneryDeleteObjectIDs []uint32
+	InitialNPCPlans        []zonenpc.SpawnPlan
+	FixturePlans           []zonenpc.SpawnPlan
+	CatalystProgram        sim.Program
+	OverdriveProgram       sim.Program
+	CrystalDefinitions     []sim.CrystalDefinition
+	CrystalLevelOffsets    []sim.CrystalLevelOffset
+	Security               *zonesecurity.Session
+	Effect                 *zoneeffect.Inventory
+	NPCs                   *zonenpc.Session
+	Hero                   *zonehero.Session
+	Companion              *zonecompanion.Session
+	Interactable           *zoneinteract.UseSession
+	Pickups                *zoneinteract.PickupRegistry
+	PickupPayload          *zoneinteract.PickupPayloadRegistry
+	Orbs                   *zoneinteract.OrbRegistry
+	Loot                   *zoneloot.Session
+	DNA                    *zoneloot.DNASession
+	Population             *zonepopulation.Session
+	Director               *game.CampaignDirectorSession
+	Route                  *sim.DirectorSession
+	Script                 *game.CampaignScriptRegistry
+	Encounter              *zoneencounter.StageSession
+	Horde                  *zonehorde.Session
+	Boss                   *zoneboss.Session
+	Death                  *zonedeath.Session
+	Objective              *zoneobjective.Session
+	ObjectiveProgress      *zoneobjective.Progress
+	ObjectID               *zoneobjectid.Session
+	ProjectileID           *zoneobjectid.Session
+	Outcome                *zoneoutcome.Session
+	Result                 *zoneresult.Ledger
+	ResultVote             *zoneresult.VoteSession
+	Timeline               *zonetimeline.Session
+	Timer                  Timer
+	NPCRandom              *sim.SimulatorRandom
+	DropRandom             *sim.SimulatorRandom
+	Checkpoint             zonecheckpoint.Repository
+	Restore                *zonecheckpoint.Snapshot
 }
 
 type Member struct {
@@ -208,7 +211,7 @@ func (e npcReturnStep) execute() {
 }
 
 func New(id uint64, generation uint64, info ZoneInfo) (*Zone, error) {
-	if id == 0 || generation == 0 {
+	if id == 0 || generation == 0 || info.RunSeed == 0 {
 		return nil, errors.New("campaign zone identity invalid")
 	}
 	if info.NPCs == nil || info.Hero == nil || info.Companion == nil ||
@@ -2147,6 +2150,7 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 	}
 	zoneID := e.id
 	generation := e.generation
+	runSeed := e.info.RunSeed
 	level := e.info.Level
 	difficulty := e.info.Difficulty
 	now := time.Now().UTC()
@@ -2155,6 +2159,7 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 		elapsed = 0
 	}
 	recorder := e.info.Checkpoint
+	dropRandom := e.info.DropRandom.Snapshot()
 	e.mu.Unlock()
 	sort.Slice(members, func(left int, right int) bool {
 		return members[left].UserID < members[right].UserID
@@ -2218,7 +2223,7 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 	security := e.info.Security.Snapshot()
 	hordes := e.info.Horde.Snapshots()
 	snapshot := zonecheckpoint.Snapshot{
-		Version: zonecheckpoint.Version, ZoneID: zoneID,
+		Version: zonecheckpoint.Version, ZoneID: zoneID, RunSeed: runSeed,
 		ZoneGeneration: generation, CompletionID: e.CompletionID(),
 		Level: level, Difficulty: difficulty, Reason: reason,
 		SavedAt: now, Elapsed: elapsed, Members: members, Heroes: heroes,
@@ -2226,6 +2231,7 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 		ExperienceAwards: experienceAwards,
 		Security:         security, Objectives: objectives, ScriptUses: scriptUses,
 		ClearedSpawnGroupIDs: clearedSpawnGroupIDs,
+		DropRandom:           dropRandom, IsDropRandomSet: true,
 	}
 	// Serialize the queue operation with terminal state. Without this final
 	// fence, completion could discard a checkpoint while an older capture was
@@ -2514,6 +2520,20 @@ func (e *Zone) ScriptObjectPlans() []zoneobject.ScriptPlan {
 		return nil
 	}
 	return append([]zoneobject.ScriptPlan(nil), e.info.ScriptObjectPlans...)
+}
+
+func (e *Zone) SceneryPlans() []zoneobject.SceneryPlan {
+	if e == nil {
+		return nil
+	}
+	return append([]zoneobject.SceneryPlan(nil), e.info.SceneryPlans...)
+}
+
+func (e *Zone) SceneryDeleteObjectIDs() []uint32 {
+	if e == nil {
+		return nil
+	}
+	return append([]uint32(nil), e.info.SceneryDeleteObjectIDs...)
 }
 
 func (e *Zone) FixturePlans() []zonenpc.SpawnPlan {

@@ -156,7 +156,7 @@ func (a *App) initialize(ctx context.Context, basePath string) {
 	}
 	a.mu.Lock()
 	a.status.State = "ready"
-	a.status.Message = "DarkSpinner ready"
+	a.status.Message = "DarkSpinner is ready"
 	a.updatePlayReadyLocked()
 	a.emitStatusLocked()
 	a.mu.Unlock()

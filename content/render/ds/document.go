@@ -41,12 +41,18 @@ type Document struct {
 // ConvertPath converts between an immutable DBPF package and an editable DS
 // directory according to the source kind.
 func ConvertPath(ctx context.Context, sourcePath, destinationPath string) error {
-	return ConvertPathWithNames(ctx, sourcePath, destinationPath, nil)
+	return ConvertPathWithNamesAndAudioAliases(ctx, sourcePath, destinationPath, nil, nil)
 }
 
 // ConvertPathWithNames converts a package with optional recovered instance
 // names used only for human-readable DS paths.
 func ConvertPathWithNames(ctx context.Context, sourcePath, destinationPath string, names map[uint32]string) error {
+	return ConvertPathWithNamesAndAudioAliases(ctx, sourcePath, destinationPath, names, nil)
+}
+
+// ConvertPathWithNamesAndAudioAliases converts a package while applying
+// recovered names and searchable audio-reference metadata.
+func ConvertPathWithNamesAndAudioAliases(ctx context.Context, sourcePath, destinationPath string, names map[uint32]string, aliases map[uint32]audio.SampleAlias) error {
 	if ctx == nil {
 		return errors.New("nil context")
 	}
@@ -83,7 +89,7 @@ func ConvertPathWithNames(ctx context.Context, sourcePath, destinationPath strin
 		}
 		return nil
 	}
-	err = extractPackagePath(ctx, sourcePath, destinationPath, names)
+	err = extractPackagePath(ctx, sourcePath, destinationPath, names, aliases)
 	if err != nil {
 		return fmt.Errorf("dsWrite: %w", err)
 	}
@@ -176,7 +182,7 @@ func rewritePath(ctx context.Context, sourcePath, destinationPath string, docume
 
 // ExtractPackagePath writes a package as a lossless DS directory.
 func ExtractPackagePath(ctx context.Context, sourcePath, destinationPath string) error {
-	return extractPackagePath(ctx, sourcePath, destinationPath, nil)
+	return extractPackagePath(ctx, sourcePath, destinationPath, nil, nil)
 }
 
 // ExtractPackageResourcePath converts one selected package entry into DSE.
@@ -254,11 +260,11 @@ func ExtractPackageResourcePathWithNames(ctx context.Context, sourcePath, destin
 	return nil
 }
 
-func extractPackagePath(ctx context.Context, sourcePath, destinationPath string, names map[uint32]string) error {
-	return extractPackagePathWithLinkRoot(ctx, sourcePath, destinationPath, names, "@/")
+func extractPackagePath(ctx context.Context, sourcePath, destinationPath string, names map[uint32]string, aliases map[uint32]audio.SampleAlias) error {
+	return extractPackagePathWithLinkRoot(ctx, sourcePath, destinationPath, names, aliases, "@/")
 }
 
-func extractPackagePathWithLinkRoot(ctx context.Context, sourcePath, destinationPath string, names map[uint32]string, linkRoot string) error {
+func extractPackagePathWithLinkRoot(ctx context.Context, sourcePath, destinationPath string, names map[uint32]string, aliases map[uint32]audio.SampleAlias, linkRoot string) error {
 	if ctx == nil {
 		return errors.New("nil context")
 	}
@@ -340,6 +346,16 @@ func extractPackagePathWithLinkRoot(ctx context.Context, sourcePath, destination
 	err = projectAudioResources(ctx, reader, destinationPath, manifest)
 	if err != nil {
 		return fmt.Errorf("audioProject: %w", err)
+	}
+	if len(aliases) != 0 {
+		err = writeAudioAliasComments(destinationPath, filepath.Base(sourcePath), manifest, aliases)
+		if err != nil {
+			return fmt.Errorf("audioMetadata: %w", err)
+		}
+		err = consolidateAudioDerivativeManifests(destinationPath, manifest)
+		if err != nil {
+			return fmt.Errorf("audioConsolidate: %w", err)
+		}
 	}
 	err = projectMovieResources(ctx, reader, destinationPath, manifest)
 	if err != nil {
@@ -516,12 +532,7 @@ func PackPath(ctx context.Context, sourcePath, destinationPath string, document 
 	if document == nil || document.Manifest == nil {
 		return errors.New("nil document")
 	}
-	temporaryPath, materializedManifest, err := materializeResources(ctx, sourcePath, destinationPath, document.Manifest)
-	if err != nil {
-		return fmt.Errorf("resourceMaterialize: %w", err)
-	}
-	defer os.RemoveAll(temporaryPath)
-	err = dbpf.PackManifestPath(ctx, temporaryPath, destinationPath, materializedManifest)
+	err := packResourcesWithPropertyDeclaration(ctx, sourcePath, destinationPath, document.Manifest, "PROPERTYLIST")
 	if err != nil {
 		return fmt.Errorf("packageRebuild: %w", err)
 	}
@@ -543,6 +554,10 @@ func hashPath(sourcePath string) (string, error) {
 }
 
 func verifyFiles(sourcePath string, manifest *dbpf.Manifest) error {
+	rootPath, err := filepath.Abs(sourcePath)
+	if err != nil {
+		return fmt.Errorf("sourcePath: %w", err)
+	}
 	expectedPaths := map[string]struct{}{
 		filepath.Clean(ManifestName): {},
 	}
@@ -561,19 +576,21 @@ func verifyFiles(sourcePath string, manifest *dbpf.Manifest) error {
 		for directoryPath := filepath.Dir(resourcePath); directoryPath != "."; directoryPath = filepath.Dir(directoryPath) {
 			expectedPaths[filepath.Join(directoryPath, ManifestName)] = struct{}{}
 		}
-		if resource.Entry.Type == audio.SNRResourceType {
-			wavResourcePath := strings.TrimSuffix(resourcePath, filepath.Ext(resourcePath)) + ".wav"
-			expectedPaths[wavResourcePath] = struct{}{}
-		}
-		if resource.Entry.Type == movie.ResourceType {
-			aviResourcePath := strings.TrimSuffix(resourcePath, filepath.Ext(resourcePath)) + ".avi"
-			expectedPaths[aviResourcePath] = struct{}{}
+		if audio.IsStreamType(resource.Entry.Type) || audio.IsPatchType(resource.Entry.Type) || resource.Entry.Type == movie.ResourceType {
+			definitionPath := filepath.Join(rootPath, resourcePath)
+			sidecarPaths, sidecarErr := renderSidecarPaths(rootPath, definitionPath)
+			if sidecarErr != nil {
+				return fmt.Errorf("resourceFiles[%d]: %w", ordinal, sidecarErr)
+			}
+			for _, sidecarPath := range sidecarPaths {
+				expectedPaths[sidecarPath] = struct{}{}
+			}
 		}
 		if scaleform.IsResourceType(resource.Entry.Type) {
 			if resource.Entry.Type == scaleform.MovieResourceType {
 				isScaleformWorkspace = true
 			}
-			definitionPath := filepath.Join(sourcePath, resourcePath)
+			definitionPath := filepath.Join(rootPath, resourcePath)
 			sidecarNames, sidecarErr := scaleformSidecarNames(definitionPath, resource.Entry.Type)
 			if sidecarErr != nil {
 				return fmt.Errorf("scaleformFiles[%d]: %w", ordinal, sidecarErr)
@@ -588,7 +605,7 @@ func verifyFiles(sourcePath string, manifest *dbpf.Manifest) error {
 		expectedPaths[filepath.Clean("tsconfig.json")] = struct{}{}
 	}
 	foundPaths := make(map[string]struct{}, len(expectedPaths))
-	err := filepath.WalkDir(sourcePath, func(path string, entry fs.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(rootPath, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return fmt.Errorf("pathWalk: %w", walkErr)
 		}
@@ -598,7 +615,7 @@ func verifyFiles(sourcePath string, manifest *dbpf.Manifest) error {
 		if entry.IsDir() {
 			return nil
 		}
-		relativePath, relativeErr := filepath.Rel(sourcePath, path)
+		relativePath, relativeErr := filepath.Rel(rootPath, path)
 		if relativeErr != nil {
 			return fmt.Errorf("pathRelative: %w", relativeErr)
 		}
@@ -618,66 +635,76 @@ func verifyFiles(sourcePath string, manifest *dbpf.Manifest) error {
 	return nil
 }
 
-func materializeResources(ctx context.Context, sourcePath, destinationPath string, manifest *dbpf.Manifest) (string, *dbpf.Manifest, error) {
-	return materializeResourcesWithPropertyDeclaration(ctx, sourcePath, destinationPath, manifest, "PROPERTYLIST")
+func renderSidecarPaths(rootPath, definitionPath string) ([]string, error) {
+	payload, err := os.ReadFile(definitionPath)
+	if err != nil {
+		return nil, fmt.Errorf("definitionRead: %w", err)
+	}
+	sidecarPaths := make([]string, 0, 1)
+	scanner := bufio.NewScanner(bytes.NewReader(payload))
+	for scanner.Scan() {
+		fields, tokenizeErr := tokenize(scanner.Text())
+		if tokenizeErr != nil {
+			return nil, fmt.Errorf("definitionToken: %w", tokenizeErr)
+		}
+		if len(fields) != 2 || fields[0] != "WAV" && fields[0] != "MKV" && fields[0] != "RAW" {
+			continue
+		}
+		sidecarPath, pathErr := safePath(filepath.Dir(definitionPath), fields[1])
+		if pathErr != nil {
+			return nil, fmt.Errorf("sidecarPath: %w", pathErr)
+		}
+		relativePath, pathErr := filepath.Rel(rootPath, sidecarPath)
+		if pathErr != nil {
+			return nil, fmt.Errorf("sidecarRelative: %w", pathErr)
+		}
+		if relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("sidecarEscape: %q", fields[1])
+		}
+		sidecarPaths = append(sidecarPaths, filepath.Clean(relativePath))
+	}
+	err = scanner.Err()
+	if err != nil {
+		return nil, fmt.Errorf("definitionScan: %w", err)
+	}
+	return sidecarPaths, nil
 }
 
-func materializeResourcesWithPropertyDeclaration(ctx context.Context, sourcePath, destinationPath string, manifest *dbpf.Manifest, propertyDeclaration string) (string, *dbpf.Manifest, error) {
-	temporaryPath, err := os.MkdirTemp(filepath.Dir(destinationPath), ".ds-resource-*")
+type resourcePackSource struct {
+	ctx                 context.Context
+	sourcePath          string
+	propertyDeclaration string
+}
+
+func (e resourcePackSource) open(ordinal int, resource dbpf.Resource) (io.ReadCloser, dbpf.Resource, error) {
+	err := e.ctx.Err()
 	if err != nil {
-		return "", nil, fmt.Errorf("temporaryCreate: %w", err)
+		return nil, dbpf.Resource{}, fmt.Errorf("resourceContext[%d]: %w", ordinal, err)
 	}
-	isComplete := false
-	defer func() {
-		if !isComplete {
-			_ = os.RemoveAll(temporaryPath)
-		}
-	}()
-	materializedManifest := &dbpf.Manifest{
-		HeaderBytes:      append([]byte(nil), manifest.HeaderBytes...),
-		IndexFlags:       manifest.IndexFlags,
-		SharedType:       manifest.SharedType,
-		SharedGroup:      manifest.SharedGroup,
-		SharedInstanceHi: manifest.SharedInstanceHi,
-		Resources:        make([]dbpf.Resource, len(manifest.Resources)),
-	}
-	resourcePath := filepath.Join(temporaryPath, "resource")
-	err = os.MkdirAll(resourcePath, 0o755)
+	definitionPath, err := safePath(e.sourcePath, resource.PayloadPath)
 	if err != nil {
-		return "", nil, fmt.Errorf("resourceMkdir: %w", err)
+		return nil, dbpf.Resource{}, fmt.Errorf("definitionPath[%d]: %w", ordinal, err)
 	}
-	for ordinal, resource := range manifest.Resources {
-		err = ctx.Err()
-		if err != nil {
-			return "", nil, fmt.Errorf("resourceContext[%d]: %w", ordinal, err)
-		}
-		definitionPath, pathErr := safePath(sourcePath, resource.PayloadPath)
-		if pathErr != nil {
-			return "", nil, fmt.Errorf("definitionPath[%d]: %w", ordinal, pathErr)
-		}
-		storedPayload, readErr := readResourceWithPropertyDeclaration(definitionPath, resourceDefinitionIdentity(resource.PayloadPath), ordinal, resource.Entry.Type, propertyDeclaration)
-		if readErr != nil {
-			return "", nil, fmt.Errorf("definitionRead[%d]: %w", ordinal, readErr)
-		}
-		payloadName := dbpf.ResourceName(ordinal, resource.Entry)
-		payloadRelativePath := filepath.ToSlash(filepath.Join("resource", payloadName))
-		payloadPath := filepath.Join(resourcePath, payloadName)
-		err = os.WriteFile(payloadPath, storedPayload, 0o644)
-		if err != nil {
-			return "", nil, fmt.Errorf("payloadWrite[%d]: %w", ordinal, err)
-		}
-		materializedResource := resource
-		materializedResource.PayloadPath = payloadRelativePath
-		if isDecodedDSEType(resource.Entry.Type) {
-			materializedResource.Entry.StoredSize = uint32(len(storedPayload))
-			materializedResource.Entry.Size = uint32(len(storedPayload))
-			materializedResource.Entry.Compression = 0
-			materializedResource.IsStoredSizeFlag = false
-		}
-		materializedManifest.Resources[ordinal] = materializedResource
+	storedPayload, err := readResourceWithPropertyDeclaration(definitionPath, resourceDefinitionIdentity(resource.PayloadPath), ordinal, resource.Entry.Type, e.propertyDeclaration)
+	if err != nil {
+		return nil, dbpf.Resource{}, fmt.Errorf("definitionRead[%d]: %w", ordinal, err)
 	}
-	isComplete = true
-	return temporaryPath, materializedManifest, nil
+	if isDecodedDSEType(resource.Entry.Type) {
+		resource.Entry.StoredSize = uint32(len(storedPayload))
+		resource.Entry.Size = uint32(len(storedPayload))
+		resource.Entry.Compression = 0
+		resource.IsStoredSizeFlag = false
+	}
+	return io.NopCloser(bytes.NewReader(storedPayload)), resource, nil
+}
+
+func packResourcesWithPropertyDeclaration(ctx context.Context, sourcePath, destinationPath string, manifest *dbpf.Manifest, propertyDeclaration string) error {
+	source := resourcePackSource{ctx: ctx, sourcePath: sourcePath, propertyDeclaration: propertyDeclaration}
+	err := dbpf.PackManifestReaders(ctx, destinationPath, manifest, source.open)
+	if err != nil {
+		return fmt.Errorf("packageWrite: %w", err)
+	}
+	return nil
 }
 
 // StoredResource reads and decodes one DS resource by package ordinal.
@@ -714,6 +741,7 @@ func isDecodedDSEType(resourceType uint32) bool {
 type parser struct {
 	scanner *bufio.Scanner
 	line    int
+	pending []string
 }
 
 func newParser(r io.Reader) *parser {
@@ -721,6 +749,11 @@ func newParser(r io.Reader) *parser {
 }
 
 func (e *parser) next() ([]string, error) {
+	if e.pending != nil {
+		fields := e.pending
+		e.pending = nil
+		return fields, nil
+	}
 	for e.scanner.Scan() {
 		e.line++
 		fields, err := tokenize(e.scanner.Text())
@@ -737,6 +770,21 @@ func (e *parser) next() ([]string, error) {
 		return nil, fmt.Errorf("lineRead: %w", err)
 	}
 	return nil, io.EOF
+}
+
+func (e *parser) optionalProperty(name string, count int) ([]string, bool, error) {
+	fields, err := e.next()
+	if err != nil {
+		return nil, false, fmt.Errorf("%sRead: %w", name, err)
+	}
+	if len(fields) == 0 || fields[0] != name {
+		e.pending = fields
+		return nil, false, nil
+	}
+	if len(fields) != count+1 {
+		return nil, false, fmt.Errorf("line[%d]: expected %s with %d arguments, got %v", e.line, name, count, fields)
+	}
+	return fields[1:], true, nil
 }
 
 func (e *parser) property(name string, count int) ([]string, error) {

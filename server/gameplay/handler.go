@@ -35,6 +35,7 @@ import (
 	zonedeath "github.com/darkspinnet/darkspin/server/zone/death"
 	zonedifficulty "github.com/darkspinnet/darkspin/server/zone/difficulty"
 	zoneeffect "github.com/darkspinnet/darkspin/server/zone/effect"
+	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
 	zoneencounter "github.com/darkspinnet/darkspin/server/zone/encounter"
 	zonehero "github.com/darkspinnet/darkspin/server/zone/hero"
 	heroraknet "github.com/darkspinnet/darkspin/server/zone/hero/raknet103"
@@ -428,10 +429,7 @@ func (r gameplayActionRuntime) dispatch(
 	r.registry.mutex.RLock()
 	commandSession, isSessionFound := r.registry.sessions[packet.Address.String()]
 	isRejoinPending := isSessionFound && commandSession.isRejoinPending
-	isTerminal := isSessionFound && (commandSession.isZoneTerminal() ||
-		(commandSession.squad != nil && commandSession.squad.IsGameOver()) ||
-		(commandSession.zone != nil && commandSession.zone.Boss() != nil &&
-			commandSession.zone.Boss().IsBeamOutCommitted()))
+	isTerminal := isSessionFound && commandSession.isZoneTerminal()
 	r.registry.mutex.RUnlock()
 	if isRejoinPending {
 		return nil, errors.New("rejoin baseline pending")
@@ -1171,7 +1169,7 @@ func newGameplayHandlerWithDependencies(
 		program: program, modifierPool: modifierInstancePool,
 	}
 	securityRuntime := securityraknet.NewTransferRuntime(
-		campaignSecurityTransferAuthority{registry: sessionRegistry},
+		campaignSecurityTransferAuthority{registry: sessionRegistry, logger: logger},
 		dependency.now,
 		logger,
 	)
@@ -1420,6 +1418,7 @@ func tutorialSageBinding(binding game.GameplayBinding) game.GameplayBinding {
 
 func marshalCampaignDungeonSetup(
 	binding game.GameplayBinding, scriptObjectPlans []zoneobject.ScriptPlan,
+	sceneryPlans []zoneobject.SceneryPlan, sceneryDeleteObjectIDs []uint32,
 	passiveModifierInstance [3]uint32, entryPosition raknet.Vector3, gameTime uint64,
 	timeElapsed uint64, deployedCreatureIndex uint32, isDeployedVisible bool,
 ) ([][]byte, error) {
@@ -1529,6 +1528,20 @@ func marshalCampaignDungeonSetup(
 		objectPackets, marshalErr := objectraknet.Script(plan)
 		if marshalErr != nil {
 			return nil, fmt.Errorf("scriptObject[%d]: %w", index, marshalErr)
+		}
+		response = append(response, objectPackets...)
+	}
+	deletePacket, err := objectraknet.DeleteScenery(sceneryDeleteObjectIDs)
+	if err != nil {
+		return nil, fmt.Errorf("sceneryDelete: %w", err)
+	}
+	if len(deletePacket) != 0 {
+		response = append(response, deletePacket)
+	}
+	for index, plan := range sceneryPlans {
+		objectPackets, marshalErr := objectraknet.Scenery(plan)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("sceneryObject[%d]: %w", index, marshalErr)
 		}
 		response = append(response, objectPackets...)
 	}
@@ -2898,6 +2911,9 @@ func (r gameplayPendingRuntime) consumePlayerEventCommand(
 	if command.Name == "ai" {
 		return r.togglePlayerAI(packet, queuedSession)
 	}
+	if command.Name == "drop-create" {
+		return r.createDeveloperEquipmentDrop(ctx, packet, queuedSession, command)
+	}
 	if command.Name == "recap" {
 		return r.recapParty(packet, queuedSession)
 	}
@@ -2942,8 +2958,14 @@ func (r gameplayPendingRuntime) consumePlayerEventCommand(
 		}
 		r.registry.sessions[packet.Address.String()] = currentSession
 		r.registry.mutex.Unlock()
+		publishErr := publishCampaignPeersAfterCommit(
+			r.registry, packet, [][]byte{completionPacket},
+		)
+		if publishErr != nil {
+			return nil, false, fmt.Errorf("eventVictoryPublish: %w", publishErr)
+		}
 		r.logger.Printf(
-			"RakNet developer victory published boss completion boss=%d for %s; awaiting Return to Ship",
+			"RakNet developer victory published shared boss completion boss=%d for %s; awaiting Return to Ship",
 			bossObjectID, packet.Address,
 		)
 		return [][]byte{completionPacket}, true, nil
@@ -2989,7 +3011,7 @@ func (r gameplayPendingRuntime) consumePlayerEventCommand(
 		)
 	}
 	packets, applyErr := currentSession.applyDeveloperEventCommand(
-		command, r.now(), packet.SourceTime,
+		r.registry, command, r.now(), packet.SourceTime,
 	)
 	if applyErr != nil {
 		r.registry.mutex.Unlock()
@@ -3720,7 +3742,14 @@ func marshalCampaignProjection(event zoneprojection.Event) ([][]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("damageHealthMarshal: %w", err)
 		}
-		return [][]byte{eventPacket, healthPacket}, nil
+		textPacket, err := effectraknet.CombatText(effectraknet.CombatTextRequest{
+			ObjectID: damage.TargetObjectID, Position: damage.Position,
+			Amount: damage.Damage, IsCritical: damage.IsCritical,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("damageCombatText: %w", err)
+		}
+		return [][]byte{eventPacket, healthPacket, textPacket}, nil
 	case zoneprojection.EventNPCDeath:
 		return marshalCampaignDeathProjection(event.Death)
 	case zoneprojection.EventNPCSpawn:
@@ -4017,7 +4046,14 @@ func marshalCampaignDeathProjection(
 		if err != nil {
 			return nil, fmt.Errorf("deathDamageMarshal: %w", err)
 		}
-		return [][]byte{eventPacket}, nil
+		textPacket, err := effectraknet.CombatText(effectraknet.CombatTextRequest{
+			ObjectID: death.TargetObjectID, Position: death.Position,
+			Amount: death.Damage, IsCritical: death.IsCritical,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("deathCombatText: %w", err)
+		}
+		return [][]byte{eventPacket, textPacket}, nil
 	case zonenpc.DeathHitPoint:
 		message = raknet.CombatantDataDeltaMessage{
 			ObjectID: death.TargetObjectID, HitPoints: death.HitPoint,
@@ -4701,6 +4737,7 @@ func (r gameplaySetupRuntime) publishCampaign(
 	}
 	response, err := marshalCampaignDungeonSetup(
 		peerSession.binding, peerSession.zone.ScriptObjectPlans(),
+		peerSession.zone.SceneryPlans(), peerSession.zone.SceneryDeleteObjectIDs(),
 		peerSession.passiveModifierInstance, entryPosition, packet.SourceTime,
 		campaignElapsedMilliseconds(peerSession.zone, r.now()),
 		peerSession.deployedCreatureIndex, false,
@@ -5148,7 +5185,7 @@ func (r gameplaySetupRuntime) publishArena(
 	peerSession.passiveStationarySince[peerSession.deployedCreatureIndex] = r.now()
 	peerSession.startTCShieldRecharge(peerSession.deployedCreatureIndex, r.now())
 	packets, err := marshalCampaignDungeonSetup(
-		peerSession.binding, nil, peerSession.passiveModifierInstance,
+		peerSession.binding, nil, nil, nil, peerSession.passiveModifierInstance,
 		entryPosition, packet.SourceTime, 0,
 		peerSession.deployedCreatureIndex, true,
 	)
@@ -5454,7 +5491,7 @@ func (p campaignPreparation) initialize(
 		return fmt.Errorf("statusChainDirectorSession: %w", sessionErr)
 	}
 	populationSession, sessionErr := newCampaignPopulationSession(
-		director, binding, campaignNav,
+		director.VerdanthPopulationDirector(), binding, campaignNav,
 	)
 	if sessionErr != nil {
 		return fmt.Errorf("statusChainPopulationSession: %w", sessionErr)
@@ -5486,6 +5523,14 @@ func (p campaignPreparation) initialize(
 	)
 	if planErr != nil {
 		return fmt.Errorf("statusChainScriptObjectPlans: %w", planErr)
+	}
+	sceneryMarkers, sceneryDeleteObjectIDs, sceneryErr := director.VerdanthScenery()
+	if sceneryErr != nil {
+		return fmt.Errorf("statusChainScenery: %w", sceneryErr)
+	}
+	sceneryPlans, sceneryErr := zoneobject.PlanScenery(sceneryMarkers)
+	if sceneryErr != nil {
+		return fmt.Errorf("statusChainSceneryPlans: %w", sceneryErr)
 	}
 	tutorialCapsulePlans := make([]tutorialCapsulePlan, 0)
 	if binding.Mode == game.ModeTutorial {
@@ -5635,6 +5680,10 @@ func (p campaignPreparation) initialize(
 			}
 		}
 	}
+	dropRandom, randomErr := newCampaignDropRandom(binding, restoreSnapshot)
+	if randomErr != nil {
+		return fmt.Errorf("statusChainDropRandom: %w", randomErr)
+	}
 	zone, _, zoneErr := zoneRegistry.Resolve(
 		uint64(binding.GameID),
 		zone.Member{
@@ -5647,45 +5696,48 @@ func (p campaignPreparation) initialize(
 			CreatureFootprints: creatureFootprints,
 		},
 		zone.ZoneInfo{
-			Level:               binding.Level,
-			Difficulty:          binding.Difficulty,
-			ChainLevelIndex:     binding.ChainLevelIndex,
-			MemberLimit:         binding.MemberLimit,
-			DirectorDefinition:  director,
-			Navigation:          campaignNav,
-			HordeBarrierPlans:   hordeBarrierPlans,
-			ScriptObjects:       scriptObjects,
-			ScriptObjectPlans:   scriptObjectPlans,
-			InitialNPCPlans:     initialNPCPlans,
-			FixturePlans:        fixturePlans,
-			CatalystProgram:     p.program.CatalystUnlock,
-			OverdriveProgram:    p.program.OverdriveUnlock,
-			CrystalDefinitions:  p.program.CrystalDefinitions,
-			CrystalLevelOffsets: p.program.CrystalLevelOffsets,
-			Security:            zonesecurity.NewSession(securityObjectID),
-			Effect:              zoneeffect.NewInventory(),
-			NPCs:                enemySession,
-			Hero:                zonehero.NewSession(),
-			Companion:           zonecompanion.NewSession(),
-			Interactable:        zoneinteract.NewUseSession(),
-			Pickups:             zoneinteract.NewPickupRegistry(),
-			PickupPayload:       zoneinteract.NewPickupPayloadRegistry(),
-			Orbs:                zoneinteract.NewOrbRegistry(),
-			Loot:                zoneloot.NewSession(),
-			DNA:                 zoneloot.NewDNASession(),
-			Population:          populationSession,
-			Director:            directorSession,
-			Script:              scriptRegistry,
-			Encounter:           zoneencounter.NewStageSession(),
-			Horde:               zonehorde.NewSession(),
-			Boss:                zoneboss.NewSession(),
-			Death:               zonedeath.NewSession(),
-			Objective:           objectiveSession,
-			ObjectiveProgress:   objectiveProgress,
-			ObjectID:            objectIDSession,
-			ProjectileID:        projectileIDSession,
-			Outcome:             zoneoutcome.NewSession(),
-			Result:              zoneresult.NewLedger(),
+			Level:                  binding.Level,
+			Difficulty:             binding.Difficulty,
+			RunSeed:                binding.RunSeed,
+			ChainLevelIndex:        binding.ChainLevelIndex,
+			MemberLimit:            binding.MemberLimit,
+			DirectorDefinition:     director,
+			Navigation:             campaignNav,
+			HordeBarrierPlans:      hordeBarrierPlans,
+			ScriptObjects:          scriptObjects,
+			ScriptObjectPlans:      scriptObjectPlans,
+			SceneryPlans:           sceneryPlans,
+			SceneryDeleteObjectIDs: sceneryDeleteObjectIDs,
+			InitialNPCPlans:        initialNPCPlans,
+			FixturePlans:           fixturePlans,
+			CatalystProgram:        p.program.CatalystUnlock,
+			OverdriveProgram:       p.program.OverdriveUnlock,
+			CrystalDefinitions:     p.program.CrystalDefinitions,
+			CrystalLevelOffsets:    p.program.CrystalLevelOffsets,
+			Security:               zonesecurity.NewSession(securityObjectID),
+			Effect:                 zoneeffect.NewInventory(),
+			NPCs:                   enemySession,
+			Hero:                   zonehero.NewSession(),
+			Companion:              zonecompanion.NewSession(),
+			Interactable:           zoneinteract.NewUseSession(),
+			Pickups:                zoneinteract.NewPickupRegistry(),
+			PickupPayload:          zoneinteract.NewPickupPayloadRegistry(),
+			Orbs:                   zoneinteract.NewOrbRegistry(),
+			Loot:                   zoneloot.NewSession(),
+			DNA:                    zoneloot.NewDNASession(),
+			Population:             populationSession,
+			Director:               directorSession,
+			Script:                 scriptRegistry,
+			Encounter:              zoneencounter.NewStageSession(),
+			Horde:                  zonehorde.NewSession(),
+			Boss:                   zoneboss.NewSession(),
+			Death:                  zonedeath.NewSession(),
+			Objective:              objectiveSession,
+			ObjectiveProgress:      objectiveProgress,
+			ObjectID:               objectIDSession,
+			ProjectileID:           projectileIDSession,
+			Outcome:                zoneoutcome.NewSession(),
+			Result:                 zoneresult.NewLedger(),
 
 			ResultVote: zoneresult.NewVoteSession(),
 			Timeline:   zonetimeline.NewSession(),
@@ -5693,9 +5745,7 @@ func (p campaignPreparation) initialize(
 			NPCRandom: sim.NewSimulatorRandom(
 				binding.GameID ^ (binding.Difficulty << 24) ^ 0xd20e,
 			),
-			DropRandom: sim.NewSimulatorRandom(
-				binding.GameID ^ (binding.Difficulty << 24) ^ 0xd40f,
-			),
+			DropRandom: dropRandom,
 			Checkpoint: p.checkpoint,
 			Restore:    restoreSnapshot,
 		},

@@ -56,6 +56,7 @@ const destructibleSmallDeleteDelay = 1500 * time.Millisecond
 const destructibleLargeDeleteDelay = 2500 * time.Millisecond
 
 const nocturnaThornNounName = "PHYS_moon1_plant_thorny_1.Noun"
+const nightmareVineNounName = "DEST_nocturna_herotree_yellow_1.Noun"
 
 func applyNPCSlowTiming(
 	profile zonenpc.ActionProfile, attackScale float32,
@@ -189,6 +190,7 @@ type zoneNPCDeathDefinition struct {
 	isCreatureTypeKnown        bool
 	isFixture                  bool
 	isBoss                     bool
+	isRemnantRetained          bool
 	isDeathAnimationSuppressed bool
 	ordinaryDeathAnimation     string
 	corpseFadeDelay            time.Duration
@@ -200,6 +202,11 @@ type zoneNPCDeathDefinition struct {
 func destructibleDeathPresentation(
 	snapshot zonenpc.Snapshot, physics zoneNounPhysics,
 ) (string, time.Duration) {
+	if strings.EqualFold(snapshot.Plan.NounName, nightmareVineNounName) {
+		// The Vine noun's dead graphics state selects its authored destruction
+		// marker set. A generic explosion would cover that presentation.
+		return "", destructibleSmallDeleteDelay
+	}
 	if strings.EqualFold(snapshot.Plan.NounName, campaignCorruptorPortalNounName) {
 		return "scaldron_boss_portal_explosion_effect.ServerEventDef", time.Millisecond
 	}
@@ -279,6 +286,7 @@ func campaignNPCDeathDefinition(
 			snapshot, physics,
 		)
 	}
+	isNightmareVine := strings.EqualFold(snapshot.Plan.NounName, nightmareVineNounName)
 	isIllusion := snapshot.Plan.OwnerObjectID != 0 && zonenpc.IsNashiraNoun(snapshot.Plan.NounName)
 	if isIllusion {
 		// Duplicates dissolve; only the real boss owns the long death scene.
@@ -299,7 +307,8 @@ func campaignNPCDeathDefinition(
 		isCreatureTypeKnown:        physics.IsCreatureTypeKnown,
 		isFixture:                  isFixture,
 		isBoss:                     snapshot.Plan.IsBoss || isDestructor,
-		isDeathAnimationSuppressed: isIllusion,
+		isRemnantRetained:          isNightmareVine,
+		isDeathAnimationSuppressed: isIllusion || isNightmareVine,
 		ordinaryDeathAnimation:     ordinaryDeathAnimation,
 		corpseFadeDelay:            deathPresentation.PresentationDuration,
 		graphicsState:              graphicsState,
@@ -2973,9 +2982,10 @@ func campaignDeathTarget(target zoneNPCDeathDefinition) deathraknet.Target {
 		GraphicsState:          target.graphicsState,
 		ExplosionEffectName:    target.explosionEffectName,
 		CreatureType:           target.creatureType, IsCreatureTypeKnown: target.isCreatureTypeKnown,
-		IsFixture:   target.isFixture,
-		IsBoss:      target.isBoss,
-		DeleteDelay: target.deleteDelay,
+		IsFixture:         target.isFixture,
+		IsBoss:            target.isBoss,
+		IsRemnantRetained: target.isRemnantRetained,
+		DeleteDelay:       target.deleteDelay,
 	}
 }
 
@@ -3904,6 +3914,7 @@ func campaignNPCZelemBlinkDestination(
 	plan zonenpc.AttackPlan,
 ) (game.Vec3, error) {
 	if plan.SourceObjectID == 0 || plan.TargetObjectID == 0 ||
+		!isFiniteCampaignPopulationPosition(plan.SourcePosition) ||
 		!isFiniteCampaignPopulationPosition(plan.TargetPosition) ||
 		plan.Profile.TeleportMinimumDistance <= 0 ||
 		plan.Profile.TeleportNormalDistance <
@@ -3912,12 +3923,16 @@ func campaignNPCZelemBlinkDestination(
 			plan.Profile.TeleportMaximumDistance {
 		return game.Vec3{}, errors.New("enemy blink destination invalid")
 	}
-	angle := float64(plan.SourceObjectID%360) * math.Pi / 180
+	// Consecutively spawned Barracudas have nearby object IDs. A direct ID angle
+	// makes the whole pack converge on one side of their shared target. Give each
+	// source its own direction and rotate that direction on subsequent blinks.
+	angleStep := uint64(plan.SourceObjectID)*137 + plan.ActionGeneration*83
+	angle := float64(angleStep%360) * math.Pi / 180
 	distance := float64(plan.Profile.TeleportNormalDistance)
 	return game.Vec3{
-		X: plan.TargetPosition.X + float32(math.Cos(angle)*distance),
-		Y: plan.TargetPosition.Y + float32(math.Sin(angle)*distance),
-		Z: plan.TargetPosition.Z,
+		X: plan.SourcePosition.X + float32(math.Cos(angle)*distance),
+		Y: plan.SourcePosition.Y + float32(math.Sin(angle)*distance),
+		Z: plan.SourcePosition.Z,
 	}, nil
 }
 

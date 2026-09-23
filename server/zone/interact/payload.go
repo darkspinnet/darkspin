@@ -87,6 +87,27 @@ func (e *PickupPayloadRegistry) SetEquipmentRoll(
 	return cloneEquipmentPickup(pickup), nil
 }
 
+func (e *PickupPayloadRegistry) ClearEquipmentRoll(
+	objectID uint32, userID uint64,
+) error {
+	if e == nil || objectID == 0 || userID == 0 {
+		return errors.New("invalid equipment winner reset")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	pickup, isFound := e.equipmentPickups[objectID]
+	if !isFound {
+		return errors.New("equipment pickup unavailable")
+	}
+	if pickup.WinnerUserID != userID {
+		return errors.New("equipment winner changed")
+	}
+	pickup.WinnerUserID = 0
+	pickup.Rolls = nil
+	e.equipmentPickups[objectID] = cloneEquipmentPickup(pickup)
+	return nil
+}
+
 func cloneEquipmentPickup(pickup EquipmentPickup) EquipmentPickup {
 	pickup.Rolls = append([]EquipmentPickupRoll(nil), pickup.Rolls...)
 	return pickup

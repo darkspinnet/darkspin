@@ -213,26 +213,44 @@ func (r campaignDamageRuntime) stopHeroNPCFear(
 		return nil, nil
 	}
 	runs := make([]*campaignNPCModifierRun, 0)
-	for _, run := range peerSession.campaignNPCModifiers {
-		if run == nil || run.fearTargetObjectID != targetObjectID {
+	projectileDeletes := make([]heroProjectileStatusDelete, 0)
+	for candidateKey, candidate := range r.registry.sessions {
+		if candidate.zone == nil || candidate.zone != peerSession.zone {
 			continue
 		}
-		if run.cancel != nil {
-			run.cancel()
-			run.cancel = nil
+		for _, run := range candidate.campaignNPCModifiers {
+			if run == nil || run.fearTargetObjectID != targetObjectID {
+				continue
+			}
+			if run.cancel != nil {
+				run.cancel()
+				run.cancel = nil
+			}
+			if candidate.zone.NPCs() != nil {
+				candidate.zone.NPCs().ClearFear(targetObjectID, run.fearExpiresAt)
+			}
+			if candidate.zone.Effect() != nil {
+				candidate.zone.Effect().Remove(run.instanceID)
+			}
+			candidate.untrackCampaignNPCModifier(run)
+			runs = append(runs, run)
 		}
-		if peerSession.zone != nil && peerSession.zone.NPCs() != nil {
-			peerSession.zone.NPCs().ClearFear(targetObjectID, run.fearExpiresAt)
+		for _, projectileRun := range candidate.heroProjectileRuns {
+			deleted, releaseErr := projectileRun.RemoveFearTarget(targetObjectID)
+			if releaseErr != nil && r.logger != nil {
+				r.logger.Printf(
+					"RakNet Terrified corpse modifier release incomplete target=%d instance=%d: %v",
+					targetObjectID, deleted.instanceID, releaseErr,
+				)
+			}
+			if deleted.instanceID != 0 {
+				projectileDeletes = append(projectileDeletes, deleted)
+			}
 		}
-		if peerSession.zone != nil && peerSession.zone.Effect() != nil {
-			peerSession.zone.Effect().Remove(run.instanceID)
-		}
-		peerSession.untrackCampaignNPCModifier(run)
-		runs = append(runs, run)
+		r.registry.sessions[candidateKey] = candidate
 	}
-	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
-	packets := make([][]byte, 0, len(runs))
+	packets := make([][]byte, 0, len(runs)+len(projectileDeletes))
 	for index, run := range runs {
 		isCreated, err := run.release(r.npc.modifierPool)
 		if err != nil {
@@ -246,6 +264,15 @@ func (r campaignDamageRuntime) stopHeroNPCFear(
 		)
 		if err != nil {
 			return nil, fmt.Errorf("heroFearCleanupDelete[%d]: %w", index, err)
+		}
+		packets = append(packets, deletePacket)
+	}
+	for index, deleted := range projectileDeletes {
+		deletePacket, err := effectraknet.ModifierDelete(
+			deleted.targetID, deleted.instanceID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("projectileFearCleanupDelete[%d]: %w", index, err)
 		}
 		packets = append(packets, deletePacket)
 	}

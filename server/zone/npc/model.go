@@ -264,12 +264,15 @@ func ValidateSpawnPlan(plan SpawnPlan, objectIDLimit uint32) error {
 	if plan.Introduction > SpawnIntroductionAmbush {
 		return errors.New("invalid introduction")
 	}
-	if plan.IsBoss {
+	if plan.BossIdentity.IsKnown {
 		if !IsBossIdentityValid(plan.BossIdentity) {
-			return errors.New("invalid boss identity")
+			return errors.New("invalid elite identity")
 		}
-	} else if plan.BossIdentity.IsKnown {
-		return errors.New("unexpected boss identity")
+		if !plan.IsBoss && !plan.IsCaptain && !plan.IsElite {
+			return errors.New("unexpected elite identity")
+		}
+	} else if plan.IsBoss {
+		return errors.New("missing boss identity")
 	}
 	for _, stat := range []float32{
 		profile.HitPoint, profile.PowerPoint, profile.Strength, profile.Dexterity,

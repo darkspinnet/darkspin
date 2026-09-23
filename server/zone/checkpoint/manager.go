@@ -127,8 +127,17 @@ func resumeCheckpoint(
 		return game.ResumeCheckpoint{}, false,
 			errors.New("resume game id out of range")
 	}
+	runSeed := snapshot.RunSeed
+	if runSeed == 0 {
+		// Version-5 checkpoints created before run seeds use their durable,
+		// cryptographically random completion identity for a stable migration.
+		runSeed = snapshot.CompletionID
+	}
+	if runSeed == 0 {
+		return game.ResumeCheckpoint{}, false, errors.New("resume run seed unavailable")
+	}
 	return game.ResumeCheckpoint{
-		GameID: uint32(snapshot.ZoneID), Level: snapshot.Level,
+		GameID: uint32(snapshot.ZoneID), RunSeed: runSeed, Level: snapshot.Level,
 		Difficulty: snapshot.Difficulty, Slot: member.Slot,
 		ExpectedPlayerCount: uint16(len(snapshot.Members)),
 	}, true, nil

@@ -189,6 +189,57 @@ func Pursuit(plan zonenpc.FirstActionPlan) ([][]byte, error) {
 	}, "pursuit")
 }
 
+// BurrowTravel preserves the authored underground animation while the
+// Tunneler moves to the point where its poison nova will emerge.
+func BurrowTravel(plan zonenpc.AttackPlan, timestamp uint64) ([][]byte, error) {
+	if plan.SourceObjectID == 0 || !isFiniteVec3(plan.SourcePosition) ||
+		!isFiniteVec3(plan.TargetPosition) || plan.Profile.AnimationName == "" {
+		return nil, errors.New("npc burrow travel invalid")
+	}
+	source := vector(plan.SourcePosition)
+	target := vector(plan.TargetPosition)
+	return marshalMessages([]raknet.ApplicationMessage{
+		raknet.ObjectPlayerMoveMessage{
+			ObjectID: plan.SourceObjectID, GoalFlags: 0x01,
+			GoalPosition: target, Facing: direction(source, target),
+		},
+		raknet.LocomotionUnreliableMessage{
+			ObjectID: plan.SourceObjectID, GoalPosition: target,
+		},
+		raknet.SetAnimationStateMessage{
+			ObjectID: plan.SourceObjectID, State: util.HashID(plan.Profile.AnimationName),
+			Timestamp: timestamp, Scale: 1,
+		},
+	}, "burrowTravel")
+}
+
+// BurrowArrival reconciles the moving client root with the authoritative
+// destination before playing the emerge attack.
+func BurrowArrival(
+	objectID uint32, position game.Vec3, facing game.Vec3, timestamp uint64,
+) ([][]byte, error) {
+	if objectID == 0 || !isFiniteVec3(position) || !isFiniteVec3(facing) ||
+		facing.Length() <= 0 {
+		return nil, errors.New("npc burrow arrival invalid")
+	}
+	yaw := math.Atan2(-float64(facing.X), float64(facing.Y))
+	return marshalMessages([]raknet.ApplicationMessage{
+		raknet.ObjectPlayerMoveMessage{
+			ObjectID: objectID, GoalFlags: 0x20, GoalPosition: vector(position),
+		},
+		raknet.ObjectTeleportMessage{
+			ObjectID: objectID, Position: vector(position),
+			Orientation: raknet.Quaternion{
+				Z: float32(math.Sin(yaw / 2)), W: float32(math.Cos(yaw / 2)),
+			},
+		},
+		raknet.SetAnimationStateMessage{
+			ObjectID: objectID, State: util.HashID("burrow_attack1"),
+			Timestamp: timestamp, Scale: 1,
+		},
+	}, "burrowArrival")
+}
+
 func FleeRedirect(
 	objectID uint32, sourcePosition game.Vec3, targetPosition game.Vec3,
 ) ([][]byte, error) {
@@ -1215,6 +1266,7 @@ func ChargeStart(
 
 func ChargeMovementState(
 	objectID uint32, movementSpeedBuff float32, stealthType game.StealthType,
+	isCollisionEnabled bool,
 ) ([][]byte, error) {
 	if objectID == 0 || math.IsNaN(float64(movementSpeedBuff)) ||
 		math.IsInf(float64(movementSpeedBuff), 0) {
@@ -1226,6 +1278,9 @@ func ChargeMovementState(
 		},
 		raknet.AgentBlackboardUpdateMessage{
 			ObjectID: objectID, Stealth: uint8(stealthType), IsTargetable: true,
+		},
+		raknet.ObjectCollisionUpdateMessage{
+			ObjectID: objectID, IsCollisionEnabled: isCollisionEnabled,
 		},
 	}, "chargeMovementState")
 }
@@ -1297,6 +1352,19 @@ func PositionedEffect(effectName string, position game.Vec3) ([]byte, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("positionedEffectMarshal: %w", err)
+	}
+	return packet, nil
+}
+
+func DeathDetonation(objectID uint32, effectName string) ([]byte, error) {
+	if objectID == 0 || effectName == "" {
+		return nil, errors.New("npc death detonation invalid")
+	}
+	packet, err := raknet.MarshalApplication(raknet.ObjectEffectMessage{
+		Asset: util.HashID(effectName), ObjectID: objectID, AttackerID: objectID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("deathDetonationMarshal: %w", err)
 	}
 	return packet, nil
 }

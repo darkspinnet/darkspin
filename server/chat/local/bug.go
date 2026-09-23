@@ -163,14 +163,14 @@ func addBugText(archive *zip.Writer, req chat.BugCommand) error {
 	gameplay := req.Context
 	_, err = fmt.Fprintf(
 		w,
-		"\nCaptured gameplay context\nActive: %t\nCrogenitor: %s (%d)\nMission: %s [%s]\nHero: %s, level %d, creature %d, noun %#x, squad index %d\nLocation: %.3f, %.3f, %.3f; nearest %s / %s (%.3f)\nGame: %d; difficulty %d; mode %s; stage %s; session generation %d; transport generation %d; zone generation %d\nResources: %.3f/%.3f health, %.3f/%.3f power\n",
+		"\nCaptured gameplay context\nActive: %t\nCrogenitor: %s (%d)\nMission: %s [%s]\nHero: %s, level %d, creature %d, noun %#x, squad index %d\nLocation: %.3f, %.3f, %.3f; nearest %s / %s (%.3f)\nGame: %d; run seed %016x; difficulty %d; mode %s; stage %s; session generation %d; transport generation %d; zone generation %d\nResources: %.3f/%.3f health, %.3f/%.3f power\n",
 		gameplay.IsGameplayActive, gameplay.UserName, gameplay.UserID,
 		gameplay.Mission.Label, gameplay.Mission.Asset,
 		gameplay.Hero.Name, gameplay.Hero.Level, gameplay.Hero.CreatureID,
 		gameplay.Hero.NounID, gameplay.Hero.SquadIndex,
 		gameplay.Location.X, gameplay.Location.Y, gameplay.Location.Z,
 		gameplay.Location.NearestMarkerSet, gameplay.Location.NearestMarker,
-		gameplay.Location.MarkerDistance, gameplay.GameID,
+		gameplay.Location.MarkerDistance, gameplay.GameID, gameplay.RunSeed,
 		gameplay.Mission.Difficulty, gameplay.Mission.Mode, gameplay.SessionStage,
 		gameplay.SessionGeneration, gameplay.TransportGeneration,
 		gameplay.ZoneGeneration,

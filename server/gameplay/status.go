@@ -998,11 +998,13 @@ func (r campaignResultRuntime) handleActiveResult(
 		chainCommand.Type == raknet.ChainPlayerSelectContinue &&
 		chainCommand.Choice == 1 &&
 		chainCommand.SelectedRecordID != 0
-	squadID := chainCommand.SelectedRecordID
+	// The result screen sends its local selection record here. It is not the
+	// durable squad ID used during the initial chain preparation.
+	squadID := peerSession.binding.SquadID
 	nextLevel := resultSnapshot.NextLevel
 	isContinuePhase := resultSnapshot.Phase == zoneresult.ChainVoting ||
 		resultSnapshot.IsContinueReplay(squadID, nextLevel)
-	if isContinueRequest && isContinuePhase && squadID == peerSession.binding.SquadID {
+	if isContinueRequest && isContinuePhase && squadID != 0 {
 		if resultSnapshot.IsTerminal {
 			return r.castVote(
 				ctx, packet, peerSession, resultSnapshot,
@@ -1331,7 +1333,8 @@ func (s *gameplayPeerSession) healLivingSquadToFull() ([][]byte, error) {
 var campaignBossDeveloperPosition = raknet.Vector3{X: 948.3736, Y: 674.0089, Z: 0.0880}
 
 func (s *gameplayPeerSession) applyDeveloperEventCommand(
-	command game.PlayerEventCommand, now time.Time, timestamp uint64,
+	registry *gameplaySessionRegistry, command game.PlayerEventCommand,
+	now time.Time, timestamp uint64,
 ) ([][]byte, error) {
 	if s == nil || s.binding.Mode != game.ModeChain || s.squad == nil ||
 		s.deployedObjectID == 0 || s.isZoneTerminal() {
@@ -1362,7 +1365,7 @@ func (s *gameplayPeerSession) applyDeveloperEventCommand(
 			return nil, fmt.Errorf("gotoMove: %w", err)
 		}
 		contactPackets, err := s.collectCampaignTeleportContacts(
-			destination, now, timestamp, raknet.Quaternion{W: 1},
+			registry, destination, now, timestamp, raknet.Quaternion{W: 1},
 		)
 		if err != nil {
 			return nil, fmt.Errorf("gotoContact: %w", err)
@@ -1476,7 +1479,7 @@ func (s *gameplayPeerSession) applyDeveloperEventCommand(
 		return nil, fmt.Errorf("eventSecurityComplete: %w", err)
 	}
 	contactPackets, err := s.collectCampaignTeleportContacts(
-		destination, now, timestamp, raknet.Quaternion{W: 1},
+		registry, destination, now, timestamp, raknet.Quaternion{W: 1},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("eventSecurityContact: %w", err)

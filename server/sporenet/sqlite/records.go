@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/darkspinnet/darkspin/server/sporenet"
 	"github.com/jmoiron/sqlx"
@@ -12,7 +13,8 @@ import (
 
 const insertUserQuery = `
 	INSERT INTO user (
-		login_name, display_name, password, is_tutorial_completion_pending,
+		login_name, display_name, password, create_dt, last_connection_dt,
+		is_tutorial_completion_pending,
 		is_all_access_granted, is_online_access_granted,
 		is_overdrive_unlocked,
 		chain_progression, creature_reward, current_game_id,
@@ -24,7 +26,8 @@ const insertUserQuery = `
 		unlock_inventory_identify, unlock_editor_flair_slot, upsell,
 		cap_level, cap_progression
 	) VALUES (
-		:login_name, :display_name, :password, :is_tutorial_completion_pending,
+		:login_name, :display_name, :password, :create_dt, :last_connection_dt,
+		:is_tutorial_completion_pending,
 		:is_all_access_granted, :is_online_access_granted,
 		:is_overdrive_unlocked,
 		:chain_progression, :creature_reward, :current_game_id,
@@ -41,6 +44,7 @@ const updateUserQuery = `
 	UPDATE user SET
 		display_name = :display_name,
 		password = :password,
+		last_connection_dt = :last_connection_dt,
 		is_tutorial_completion_pending = :is_tutorial_completion_pending,
 		is_all_access_granted = :is_all_access_granted,
 		is_online_access_granted = :is_online_access_granted,
@@ -279,8 +283,21 @@ func loadRecord(ctx context.Context, tx *sqlx.Tx, loginName string) (sporenet.Us
 	if err != nil {
 		return sporenet.UserRecord{}, fmt.Errorf("userSelect: %w", err)
 	}
+	createDT, err := time.Parse(time.RFC3339Nano, user.CreateDT)
+	if err != nil {
+		return sporenet.UserRecord{}, fmt.Errorf("userCreateDT: %w", err)
+	}
+	lastConnectionDT := time.Time{}
+	if user.LastConnectionDT != "" {
+		lastConnectionDT, err = time.Parse(time.RFC3339Nano, user.LastConnectionDT)
+		if err != nil {
+			return sporenet.UserRecord{}, fmt.Errorf("userLastConnectionDT: %w", err)
+		}
+	}
 	record := sporenet.UserRecord{
 		DisplayName: user.DisplayName, LoginName: user.LoginName, Password: user.Password,
+		CreateDT:                    createDT,
+		LastConnectionDT:            lastConnectionDT,
 		IsTutorialCompletionPending: user.IsTutorialCompletionPending != 0,
 		Account:                     user.account(), Associations: make(map[uint32][]sporenet.AssociationMember),
 		Settings: make(map[string]string),

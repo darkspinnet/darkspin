@@ -3,15 +3,22 @@ package gameplay
 import (
 	"fmt"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	zoneprojection "github.com/darkspinnet/darkspin/server/zone/projection"
 )
 
-// Defeat stops new gameplay producers, but must not discard the final death
-// or disconnect presentation produced by the transition itself.
+// A campaign result is personal even though encounter completion is shared.
+// Keep presenting the completed zone to each member until that member enters
+// the result flow, then stop connection-local gameplay producers for them.
 func (e gameplayPeerSession) isCampaignPresentationAvailable() bool {
-	return e.zone != nil &&
-		(e.zone.Boss() == nil || !e.zone.Boss().IsBeamOutCommitted())
+	if e.zone == nil {
+		return false
+	}
+	if e.binding.Mode == game.ModeChain {
+		return e.chainResult == nil
+	}
+	return e.zone.Boss() == nil || !e.zone.Boss().IsBeamOutCommitted()
 }
 
 // Use the same queue for ordinary projection drains and delayed presentation.

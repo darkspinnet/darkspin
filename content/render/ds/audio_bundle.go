@@ -2,6 +2,7 @@ package ds
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -27,7 +29,7 @@ type audioBundleDocument struct {
 
 // ExtractAudioBundlePath converts Audio.package and its required sibling
 // AudioProps.package into one flattened, navigable DS namespace.
-func ExtractAudioBundlePath(ctx context.Context, audioPath, propertyPath, destinationPath string, names map[uint32]string) error {
+func ExtractAudioBundlePath(ctx context.Context, audioPath, propertyPath, destinationPath string, names map[uint32]string, aliases map[uint32]audio.SampleAlias) error {
 	if ctx == nil {
 		return errors.New("nil context")
 	}
@@ -99,11 +101,358 @@ func ExtractAudioBundlePath(ctx context.Context, audioPath, propertyPath, destin
 	if err != nil {
 		return fmt.Errorf("audioProject: %w", err)
 	}
+	err = writeAudioAliasComments(destinationPath, filepath.Base(audioPath), audioManifest, aliases)
+	if err != nil {
+		return fmt.Errorf("audioMetadata: %w", err)
+	}
+	err = consolidateAudioDerivativeDefinitions(destinationPath, document)
+	if err != nil {
+		return fmt.Errorf("audioConsolidate: %w", err)
+	}
 	err = writeAudioBundlePath(destinationPath, document)
 	if err != nil {
 		return fmt.Errorf("bundleWrite: %w", err)
 	}
 	isComplete = true
+	return nil
+}
+
+type audioDefinitionFamily struct {
+	hostPath    string
+	memberPaths map[string]bool
+}
+
+func consolidateAudioDerivativeDefinitions(destinationPath string, document *audioBundleDocument) error {
+	return consolidateAudioDerivativeManifests(destinationPath, document.audioManifest, document.propertyManifest)
+}
+
+func consolidateAudioDerivativeManifests(destinationPath string, manifests ...*dbpf.Manifest) error {
+	families := make(map[string]*audioDefinitionFamily)
+	for _, manifest := range manifests {
+		for _, resource := range manifest.Resources {
+			if !audio.IsStreamType(resource.Entry.Type) && resource.Entry.Type != prop.AudioResourceType {
+				continue
+			}
+			path := filepath.ToSlash(resource.PayloadPath)
+			stem, isDerivative := audioDerivativeStem(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+			familyKey := strings.ToLower(filepath.ToSlash(filepath.Join(filepath.Dir(path), stem)))
+			family := families[familyKey]
+			if family == nil {
+				family = &audioDefinitionFamily{
+					hostPath:    filepath.ToSlash(filepath.Join(filepath.Dir(path), stem+".dse")),
+					memberPaths: make(map[string]bool),
+				}
+				families[familyKey] = family
+			}
+			if isDerivative {
+				family.memberPaths[path] = true
+			} else if strings.EqualFold(path, family.hostPath) {
+				family.memberPaths[path] = true
+			}
+		}
+	}
+	familiesByHost := make(map[string]*audioDefinitionFamily, len(families))
+	for _, family := range families {
+		familiesByHost[strings.ToLower(family.hostPath)] = family
+	}
+	for _, family := range families {
+		derivativeCount := 0
+		isHostPresent := false
+		for path := range family.memberPaths {
+			if strings.EqualFold(path, family.hostPath) {
+				isHostPresent = true
+			} else {
+				derivativeCount++
+			}
+		}
+		if derivativeCount < 2 && !(derivativeCount == 1 && isHostPresent) {
+			continue
+		}
+		isOuterFamily := false
+		for path := range family.memberPaths {
+			nestedFamily := familiesByHost[strings.ToLower(path)]
+			if nestedFamily == nil || nestedFamily == family {
+				continue
+			}
+			nestedDerivativeCount := len(nestedFamily.memberPaths)
+			if nestedFamily.memberPaths[nestedFamily.hostPath] {
+				nestedDerivativeCount--
+			}
+			if nestedDerivativeCount >= 2 || nestedDerivativeCount == 1 && nestedFamily.memberPaths[nestedFamily.hostPath] {
+				isOuterFamily = true
+				break
+			}
+		}
+		if isOuterFamily {
+			continue
+		}
+		err := consolidateAudioDefinitionFamily(destinationPath, family)
+		if err != nil {
+			return fmt.Errorf("family[%s]: %w", family.hostPath, err)
+		}
+		for _, manifest := range manifests {
+			for ordinal := range manifest.Resources {
+				resource := &manifest.Resources[ordinal]
+				if family.memberPaths[filepath.ToSlash(resource.PayloadPath)] {
+					resource.PayloadPath = family.hostPath
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func audioDerivativeStem(name string) (string, bool) {
+	isAlias := audio.IsSampleAlias(name)
+	name = audio.StripSampleAliasSuffix(name)
+	stem, isDerivative := audioDerivativeStemBase(name, isAlias)
+	if isAlias && isDerivative {
+		stem += audio.SampleAliasSuffix
+	}
+	return stem, isDerivative
+}
+
+func audioDerivativeStemBase(name string, isAlias bool) (string, bool) {
+	lowerName := strings.ToLower(name)
+	variantIndex := strings.LastIndex(lowerName, "_variant_")
+	if variantIndex >= 0 {
+		digitStart := variantIndex + len("_variant_")
+		digitEnd := digitStart
+		for digitEnd < len(name) && name[digitEnd] >= '0' && name[digitEnd] <= '9' {
+			digitEnd++
+		}
+		if digitEnd > digitStart && (digitEnd == len(name) || name[digitEnd] == '_') {
+			return name[:variantIndex] + name[digitEnd:], true
+		}
+	}
+	versionIndex := strings.LastIndex(lowerName, "_v")
+	if versionIndex >= 0 && isAudioDecimalSuffix(name[versionIndex+len("_v"):]) {
+		return name[:versionIndex], true
+	}
+	indexedStem, isIndexed := audioIndexedFamilyStem(name)
+	if isIndexed {
+		return indexedStem, true
+	}
+	end := len(name)
+	start := end
+	for start > 0 && name[start-1] >= '0' && name[start-1] <= '9' {
+		start--
+	}
+	if start == end || start == 0 {
+		return name, false
+	}
+	if isAlias {
+		ordinal, err := strconv.Atoi(name[start:])
+		if err != nil || ordinal < 1 {
+			return name, false
+		}
+	}
+	stem := strings.TrimRight(name[:start], "_")
+	return stem, true
+}
+
+func isAudioDecimalSuffix(suffix string) bool {
+	if suffix == "" {
+		return false
+	}
+	for _, character := range suffix {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func audioIndexedFamilyStem(name string) (string, bool) {
+	familyStart := 0
+	separatorOffset := strings.IndexByte(name[familyStart:], '_')
+	if separatorOffset <= 0 {
+		return name, false
+	}
+	separator := familyStart + separatorOffset
+	digitStart := separator
+	for digitStart > familyStart && name[digitStart-1] >= '0' && name[digitStart-1] <= '9' {
+		digitStart--
+	}
+	if digitStart == separator || digitStart == familyStart {
+		return name, false
+	}
+	stem := name[:digitStart]
+	suffix := name[separator:]
+	if strings.EqualFold(suffix, "_loop") && strings.HasSuffix(strings.ToLower(stem), "loop") {
+		return stem, true
+	}
+	return name, false
+}
+
+func consolidateAudioDefinitionFamily(destinationPath string, family *audioDefinitionFamily) error {
+	paths := make([]string, 0, len(family.memberPaths))
+	for path := range family.memberPaths {
+		paths = append(paths, path)
+	}
+	sort.SliceStable(paths, func(firstIndex, secondIndex int) bool {
+		firstIsHost := strings.EqualFold(paths[firstIndex], family.hostPath)
+		secondIsHost := strings.EqualFold(paths[secondIndex], family.hostPath)
+		if firstIsHost != secondIsHost {
+			return firstIsHost
+		}
+		return strings.ToLower(paths[firstIndex]) < strings.ToLower(paths[secondIndex])
+	})
+	definitions := make([]string, 0, len(paths)*2)
+	for _, path := range paths {
+		absolutePath, err := safePath(destinationPath, path)
+		if err != nil {
+			return fmt.Errorf("definitionPath[%s]: %w", path, err)
+		}
+		payload, err := os.ReadFile(absolutePath)
+		if err != nil {
+			return fmt.Errorf("definitionRead[%s]: %w", path, err)
+		}
+		body, blocks, err := parseRenderDefinitions(payload)
+		if err != nil {
+			return fmt.Errorf("definitionParse[%s]: %w", path, err)
+		}
+		for _, block := range blocks {
+			definitions = append(definitions, strings.TrimRight(body[block.start:block.end], "\r\n"))
+		}
+	}
+	sort.SliceStable(definitions, func(firstIndex, secondIndex int) bool {
+		firstDeclaration := strings.SplitN(definitions[firstIndex], " ", 2)[0]
+		secondDeclaration := strings.SplitN(definitions[secondIndex], " ", 2)[0]
+		return resourceDefinitionOrder(firstDeclaration) < resourceDefinitionOrder(secondDeclaration)
+	})
+	hostPath, err := safePath(destinationPath, family.hostPath)
+	if err != nil {
+		return fmt.Errorf("hostPath: %w", err)
+	}
+	contents := resourceDSEHeader + strings.Join(definitions, "\n\n") + "\n"
+	err = os.WriteFile(hostPath, []byte(contents), 0o644)
+	if err != nil {
+		return fmt.Errorf("hostWrite: %w", err)
+	}
+	for _, path := range paths {
+		if strings.EqualFold(path, family.hostPath) {
+			continue
+		}
+		absolutePath, pathErr := safePath(destinationPath, path)
+		if pathErr != nil {
+			return fmt.Errorf("memberPath[%s]: %w", path, pathErr)
+		}
+		pathErr = os.Remove(absolutePath)
+		if pathErr != nil {
+			return fmt.Errorf("memberRemove[%s]: %w", path, pathErr)
+		}
+	}
+	return nil
+}
+
+func writeAudioAliasComments(destinationPath, archiveName string, manifest *dbpf.Manifest, aliases map[uint32]audio.SampleAlias) error {
+	resourcesByInstance := make(map[uint64][]dbpf.Resource)
+	for _, resource := range manifest.Resources {
+		if !audio.IsStreamType(resource.Entry.Type) {
+			continue
+		}
+		resourcesByInstance[resource.Entry.Instance] = append(resourcesByInstance[resource.Entry.Instance], resource)
+	}
+	for ordinal, resource := range manifest.Resources {
+		if resource.Entry.Type != audio.SNRResourceType {
+			continue
+		}
+		definitionPath, err := safePath(destinationPath, resource.PayloadPath)
+		if err != nil {
+			return fmt.Errorf("definitionPath[%d]: %w", ordinal, err)
+		}
+		w, err := os.OpenFile(definitionPath, os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return fmt.Errorf("definitionOpen[%d]: %w", ordinal, err)
+		}
+		alias := aliases[uint32(resource.Entry.Instance)]
+		err = writeAudioAliasCommentBlock(w, archiveName, resource, resourcesByInstance[resource.Entry.Instance], alias)
+		closeErr := w.Close()
+		if err != nil {
+			return fmt.Errorf("definitionMetadata[%d]: %w", ordinal, err)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("definitionClose[%d]: %w", ordinal, closeErr)
+		}
+	}
+	return nil
+}
+
+func writeAudioAliasCommentBlock(w io.Writer, archiveName string, primary dbpf.Resource, resources []dbpf.Resource, alias audio.SampleAlias) error {
+	_, err := fmt.Fprintln(w, "// DARKSPIN METADATA BEGIN")
+	wavName := strings.TrimSuffix(filepath.Base(primary.PayloadPath), filepath.Ext(primary.PayloadPath)) + ".wav"
+	if err == nil {
+		_, err = fmt.Fprintf(w, "// WAV %q\n", wavName)
+	}
+	if err == nil {
+		_, err = fmt.Fprintf(w, "// TAG alias %q\n", alias.Name)
+	}
+	if err == nil {
+		_, err = fmt.Fprintf(w, "// TAG source %q\n", alias.Source)
+	}
+	for _, resource := range resources {
+		if err != nil {
+			break
+		}
+		_, err = fmt.Fprintf(w, "// RESOURCE %s TYPE 0x%08X GROUP 0x%08X INSTANCE 0x%016X\n", archiveName, resource.Entry.Type, resource.Entry.Group, resource.Entry.Instance)
+	}
+	seenTags := make(map[string]bool)
+	seenUsages := make(map[string]bool)
+	for _, reference := range alias.References {
+		if err != nil {
+			break
+		}
+		if reference.EventName != "" && !seenTags[reference.EventName] {
+			_, err = fmt.Fprintf(w, "// TAG event %q\n", reference.EventName)
+			seenTags[reference.EventName] = true
+		}
+		if err == nil && !seenTags[reference.PointerName] {
+			_, err = fmt.Fprintf(w, "// TAG pointer %q\n", reference.PointerName)
+			seenTags[reference.PointerName] = true
+		}
+		for _, contextName := range reference.ContextNames {
+			if err != nil || seenTags[contextName] {
+				continue
+			}
+			_, err = fmt.Fprintf(w, "// TAG context %q\n", contextName)
+			seenTags[contextName] = true
+		}
+		for _, usage := range reference.Usages {
+			if err != nil {
+				break
+			}
+			usageKey := fmt.Sprintf("%s:%d:%08x:%s:%d", usage.PackageName, usage.Ordinal, reference.EventInstance, usage.ReferenceKind, usage.ByteOffset)
+			if seenUsages[usageKey] {
+				continue
+			}
+			seenUsages[usageKey] = true
+			if usage.ReferenceKind == "" {
+				_, err = fmt.Fprintf(w, "// USAGE %s ORDINAL %d TYPE 0x%08X GROUP 0x%08X INSTANCE 0x%016X CONTEXT %q EVENTNAME %q\n",
+					usage.PackageName, usage.Ordinal, usage.ResourceType, usage.ResourceGroup, usage.ResourceInstance, usage.Context, reference.EventName)
+				continue
+			}
+			_, err = fmt.Fprintf(w, "// USAGE %s ORDINAL %d TYPE 0x%08X GROUP 0x%08X INSTANCE 0x%016X CONTEXT %q REFERENCEKIND %q BYTEOFFSET %d EVENTNAME %q\n",
+				usage.PackageName, usage.Ordinal, usage.ResourceType, usage.ResourceGroup, usage.ResourceInstance, usage.Context,
+				usage.ReferenceKind, usage.ByteOffset, reference.EventName)
+		}
+		if err == nil {
+			archiveName := reference.ArchiveName
+			if archiveName == "" {
+				archiveName = "AudioProps.package"
+			}
+			_, err = fmt.Fprintf(w, "// REFERENCE %s EVENT 0x%08X NAME %q PROPERTY 0x%08X PROPERTYNAME %q POINTER %q ITEM %d OF %d\n",
+				archiveName,
+				reference.EventInstance, reference.EventName, reference.PropertyID, reference.PropertyName,
+				reference.PointerName, reference.ItemIndex+1, reference.ItemCount)
+		}
+	}
+	if err == nil {
+		_, err = fmt.Fprintln(w, "// DARKSPIN METADATA END")
+	}
+	if err != nil {
+		return fmt.Errorf("commentWrite: %w", err)
+	}
 	return nil
 }
 
@@ -231,17 +580,9 @@ func PackAudioBundlePath(ctx context.Context, sourcePath, destinationPath string
 		if !errors.Is(statErr, os.ErrNotExist) {
 			return fmt.Errorf("packageStat: %w", statErr)
 		}
-		temporaryPath, materializedManifest, materializeErr := materializeResourcesWithPropertyDeclaration(ctx, sourcePath, packagePath, archive.manifest, archive.propertyDeclaration)
-		if materializeErr != nil {
-			return fmt.Errorf("%sMaterialize: %w", archive.name, materializeErr)
-		}
-		packErr := dbpf.PackManifestPath(ctx, temporaryPath, packagePath, materializedManifest)
-		removeErr := os.RemoveAll(temporaryPath)
+		packErr := packResourcesWithPropertyDeclaration(ctx, sourcePath, packagePath, archive.manifest, archive.propertyDeclaration)
 		if packErr != nil {
 			return fmt.Errorf("%sWrite: %w", archive.name, packErr)
-		}
-		if removeErr != nil {
-			return fmt.Errorf("%sCleanup: %w", archive.name, removeErr)
 		}
 		writtenPaths = append(writtenPaths, packagePath)
 	}
@@ -431,6 +772,10 @@ func assignAudioBundleResources(manifest *dbpf.Manifest, resourcesByOrdinal map[
 }
 
 func verifyAudioBundleFiles(sourcePath string, document *audioBundleDocument) error {
+	rootPath, err := filepath.Abs(sourcePath)
+	if err != nil {
+		return fmt.Errorf("rootPath: %w", err)
+	}
 	expectedPaths := map[string]bool{filepath.Clean(ManifestName): true}
 	for _, manifest := range []*dbpf.Manifest{document.audioManifest, document.propertyManifest} {
 		for _, resource := range manifest.Resources {
@@ -439,13 +784,47 @@ func verifyAudioBundleFiles(sourcePath string, document *audioBundleDocument) er
 			for directoryPath := filepath.Dir(resourcePath); directoryPath != "."; directoryPath = filepath.Dir(directoryPath) {
 				expectedPaths[filepath.Join(directoryPath, ManifestName)] = true
 			}
-			if resource.Entry.Type == audio.SNRResourceType {
-				expectedPaths[strings.TrimSuffix(resourcePath, filepath.Ext(resourcePath))+".wav"] = true
-			}
 		}
 	}
-	foundPaths := make(map[string]bool, len(expectedPaths))
-	err := filepath.WalkDir(sourcePath, func(path string, entry fs.DirEntry, walkErr error) error {
+	for relativePath := range expectedPaths {
+		if !strings.EqualFold(filepath.Ext(relativePath), ".dse") || filepath.Base(relativePath) == ManifestName {
+			continue
+		}
+		definitionPath := filepath.Join(rootPath, relativePath)
+		payload, err := os.ReadFile(definitionPath)
+		if err != nil {
+			return fmt.Errorf("definitionRead[%s]: %w", filepath.ToSlash(relativePath), err)
+		}
+		scanner := bufio.NewScanner(bytes.NewReader(payload))
+		for scanner.Scan() {
+			fields, tokenizeErr := tokenize(scanner.Text())
+			if tokenizeErr != nil {
+				return fmt.Errorf("definitionToken[%s]: %w", filepath.ToSlash(relativePath), tokenizeErr)
+			}
+			if len(fields) != 2 || fields[0] != "WAV" && fields[0] != "RAW" {
+				continue
+			}
+			wavPath, pathErr := safeAudioPath(rootPath, filepath.Dir(definitionPath), fields[1])
+			if pathErr != nil {
+				return fmt.Errorf("wavePath[%s]: %w", filepath.ToSlash(relativePath), pathErr)
+			}
+			wavRelativePath, pathErr := filepath.Rel(rootPath, wavPath)
+			if pathErr != nil {
+				return fmt.Errorf("waveRelative[%s]: %w", filepath.ToSlash(relativePath), pathErr)
+			}
+			expectedPaths[filepath.Clean(wavRelativePath)] = true
+		}
+		err = scanner.Err()
+		if err != nil {
+			return fmt.Errorf("definitionScan[%s]: %w", filepath.ToSlash(relativePath), err)
+		}
+	}
+	expectedPathKeys := make(map[string]bool, len(expectedPaths))
+	for expectedPath := range expectedPaths {
+		expectedPathKeys[strings.ToLower(filepath.Clean(expectedPath))] = true
+	}
+	foundPathKeys := make(map[string]bool, len(expectedPathKeys))
+	err = filepath.WalkDir(rootPath, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return fmt.Errorf("pathWalk: %w", walkErr)
 		}
@@ -455,22 +834,23 @@ func verifyAudioBundleFiles(sourcePath string, document *audioBundleDocument) er
 		if entry.IsDir() {
 			return nil
 		}
-		relativePath, relativeErr := filepath.Rel(sourcePath, path)
+		relativePath, relativeErr := filepath.Rel(rootPath, path)
 		if relativeErr != nil {
 			return fmt.Errorf("pathRelative: %w", relativeErr)
 		}
 		relativePath = filepath.Clean(relativePath)
-		if !expectedPaths[relativePath] {
+		pathKey := strings.ToLower(relativePath)
+		if !expectedPathKeys[pathKey] {
 			return fmt.Errorf("unexpectedFile: %q", filepath.ToSlash(relativePath))
 		}
-		foundPaths[relativePath] = true
+		foundPathKeys[pathKey] = true
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	if len(foundPaths) != len(expectedPaths) {
-		return fmt.Errorf("fileCount: got %d, want %d", len(foundPaths), len(expectedPaths))
+	if len(foundPathKeys) != len(expectedPathKeys) {
+		return fmt.Errorf("fileCount: got %d, want %d", len(foundPathKeys), len(expectedPathKeys))
 	}
 	return nil
 }
