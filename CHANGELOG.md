@@ -1,5 +1,9 @@
 # Changelog
 
+### 2026-09-23
+
+- Disable WebKitGTK's DMA-BUF renderer by default in Wayland sessions to prevent the Linux launcher from exiting with a display protocol error while preserving explicit environment overrides.
+
 ### 2026-09-22
 
 - Disable Shade Drifter collision during its charge so it can complete the authored pass-through movement, then restore collision afterward.

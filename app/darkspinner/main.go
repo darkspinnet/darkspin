@@ -78,8 +78,13 @@ type options struct {
 }
 
 func main() {
+	err := configureWebViewEnvironment()
+	if err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner display setup failed:", err)
+		os.Exit(1)
+	}
 	privilegeErr := ensureStandardUser()
-	err := configureDarkSpinnerVersion()
+	err = configureDarkSpinnerVersion()
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner version failed:", err)
 		os.Exit(1)
