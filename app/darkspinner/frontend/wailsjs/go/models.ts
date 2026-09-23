@@ -322,6 +322,7 @@ export namespace main {
 	    locale: string;
 	    locales: ClientLocale[];
 	    snapshotMode: string;
+	    isBorderlessFullscreenEnabled: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ServerConfiguration(source);
@@ -334,6 +335,7 @@ export namespace main {
 	        this.locale = source["locale"];
 	        this.locales = this.convertValues(source["locales"], ClientLocale);
 	        this.snapshotMode = source["snapshotMode"];
+	        this.isBorderlessFullscreenEnabled = source["isBorderlessFullscreenEnabled"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

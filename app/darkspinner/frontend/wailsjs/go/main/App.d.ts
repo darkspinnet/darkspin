@@ -78,7 +78,7 @@ export function SendReport(arg1:string,arg2:string):Promise<main.ReportResult>;
 
 export function SetIdentity(arg1:string):Promise<main.LauncherStatus>;
 
-export function SetServerConfiguration(arg1:number,arg2:boolean,arg3:string,arg4:string):Promise<main.ServerConfiguration>;
+export function SetServerConfiguration(arg1:number,arg2:boolean,arg3:string,arg4:string,arg5:boolean):Promise<main.ServerConfiguration>;
 
 export function SetServerPort(arg1:number):Promise<main.ServerConfiguration>;
 

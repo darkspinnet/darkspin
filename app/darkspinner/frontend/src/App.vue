@@ -48,11 +48,12 @@ const isRemotePasswordRemembered = ref(true)
 const isRemoteRegistration = ref(false)
 const isRemoteBusy = ref(false)
 const remoteMessage = ref('Enter a server address or ask for LAN suggestions.')
-const serverConfiguration = ref({ port:42127, isMultiplayerEnabled:false, locale:'en-us', locales:[], snapshotMode:'off' })
+const serverConfiguration = ref({ port:42127, isMultiplayerEnabled:false, locale:'en-us', locales:[], snapshotMode:'off', isBorderlessFullscreenEnabled:false })
 const configuredServerPort = ref(42127)
 const isConfiguredMultiplayerEnabled = ref(false)
 const configuredLocale = ref('en-us')
 const configuredSnapshotMode = ref('off')
+const isConfiguredBorderlessFullscreenEnabled = ref(false)
 const isServerConfigurationBusy = ref(false)
 const serverConfigurationMessage = ref('')
 const integrationStatus = ref({ isStartMenuInstalled:false, isDesktopInstalled:false, isSteamLaunchInstalled:false, isManagementSupported:false, message:'' })
@@ -564,6 +565,7 @@ async function refreshServerConfiguration() {
     isConfiguredMultiplayerEnabled.value = serverConfiguration.value.isMultiplayerEnabled
     configuredLocale.value = serverConfiguration.value.locale
     configuredSnapshotMode.value = serverConfiguration.value.snapshotMode
+    isConfiguredBorderlessFullscreenEnabled.value = serverConfiguration.value.isBorderlessFullscreenEnabled
   }
   catch (error) { serverConfigurationMessage.value = visibleLauncherText(error) }
 }
@@ -598,11 +600,13 @@ async function applyServerConfiguration() {
     serverConfiguration.value = await SetServerConfiguration(
       Number(configuredServerPort.value), isConfiguredMultiplayerEnabled.value,
       configuredLocale.value, configuredSnapshotMode.value,
+      isConfiguredBorderlessFullscreenEnabled.value,
     )
     configuredServerPort.value = serverConfiguration.value.port
     isConfiguredMultiplayerEnabled.value = serverConfiguration.value.isMultiplayerEnabled
     configuredLocale.value = serverConfiguration.value.locale
     configuredSnapshotMode.value = serverConfiguration.value.snapshotMode
+    isConfiguredBorderlessFullscreenEnabled.value = serverConfiguration.value.isBorderlessFullscreenEnabled
     if (isNetworkChanged) {
       const interfaceLabel = serverConfiguration.value.isMultiplayerEnabled ? 'all network interfaces' : 'loopback only'
       serverConfigurationMessage.value = `Local server restarted on ${interfaceLabel}, port ${serverConfiguration.value.port}. Language: ${serverConfiguration.value.locale}.`
@@ -1337,6 +1341,7 @@ async function copyLauncherFailure() {
             <SelectItem value="auto">AUTO — capture and detect ordering anomalies</SelectItem>
           </SelectContent>
           </Select>
+          <label v-if="status.buildChannel === 'development'" class="management-toggle config-borderless"><Checkbox v-model="isConfiguredBorderlessFullscreenEnabled" :disabled="isServerConfigurationBusy" /><span><strong>EXPERIMENTAL BORDERLESS FULLSCREEN</strong><small>Use Fang's borderless window and live-resolution compatibility hooks on the next game launch.</small></span></label>
           <p v-if="serverConfigurationMessage" class="management-message">{{ serverConfigurationMessage }}</p>
           <Button variant="default" class="config-save" type="button" :disabled="!isServerPortValid || !configuredLocale || isServerConfigurationBusy" @click="saveServerConfiguration">{{ isServerConfigurationBusy ? 'SAVING...' : 'SAVE CONFIGURATION' }}</Button>
         </Card>
@@ -1497,8 +1502,7 @@ async function copyLauncherFailure() {
 
     <LauncherDialog @interact="handleLauncherInteraction" v-if="isCreatingProfile && activePage !== 'remote' && activePage !== 'config'" :is-dismissible="!isFirstRunOnboarding && !isProfileCreationBusy" @close="cancelProfileCreation">
       <div class="notice-card onboarding-card profile-creation-notice">
-        <div class="onboarding-index">01</div>
-        <p class="eyebrow">{{ isFirstRunOnboarding ? 'FIRST CONTACT' : 'LOCAL CROGENITOR REGISTRATION' }}</p>
+        <p v-if="isFirstRunOnboarding" class="eyebrow">FIRST CONTACT</p>
         <DialogTitle as="h2">{{ isFirstRunOnboarding ? 'CREATE YOUR CROGENITOR' : 'ADD A CROGENITOR' }}</DialogTitle>
         <p class="onboarding-copy">Choose the name used for this local Crogenitor.</p>
         <label>CROGENITOR PHOTO</label>

@@ -5834,8 +5834,8 @@ static DWORD WINAPI brand_game_window(LPVOID parameter) {
 }
 
 int fang_install(const char* hostname, unsigned short port, unsigned short party_port,
-    const char* trace_path, int skip_intro, int skip_cinematic, const char* jwt,
-    const char* window_title) {
+    const char* trace_path, int skip_intro, int skip_cinematic,
+    int enable_borderless_fullscreen, const char* jwt, const char* window_title) {
     static const BYTE ssl_ctx_signature[] = {0x8B, 0x44, 0x24, 0x04, 0x8B, 0x4C, 0x24, 0x08, 0x8B, 0x54, 0x24, 0x0C, 0x89, 0x88};
     static const BYTE ssl_result_signature[] = {0x8B, 0x44, 0x24, 0x04, 0x8B, 0x80, 0xE0, 0x00, 0x00, 0x00, 0xC3};
     static const BYTE wildcard_signature[] = {0x53, 0x56, 0x8B, 0x74, 0x24, 0x10, 0x57, 0x8B, 0x7C, 0x24, 0x10, 0xEB, 0x03};
@@ -6023,7 +6023,7 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
     trace_client_state("snapshot_capture_mode",
         (unsigned int)InterlockedCompareExchange(
             &snapshot_capture_enabled, 0, 0));
-    {
+    if (enable_borderless_fullscreen) {
         int is_display_hook_installed = fang_install_display_preferences(executable);
         trace_client_state("display_preferences_hook", (unsigned int)is_display_hook_installed);
         if (!is_display_hook_installed) {

@@ -7,6 +7,9 @@ is_version_locked = false
 # Restrict the web UI and matchmaking flow to single-player content.
 is_singleplayer_only = false
 locale = ""
+# Development builds only. Replace exclusive fullscreen with the experimental
+# borderless implementation when the launcher passes the setting to Fang.
+is_borderless_fullscreen_enabled = false
 
 [server]
 is_multiplayer_enabled = false

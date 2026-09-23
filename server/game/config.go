@@ -22,39 +22,41 @@ const DefaultConfigFilename = "darkspin.toml"
 type ConfigKey string
 
 const (
-	ConfigIsVersionLocked      ConfigKey = "IS_VERSION_LOCKED"
-	ConfigIsSingleplayerOnly   ConfigKey = "IS_SINGLEPLAYER_ONLY"
-	ConfigClientLocale         ConfigKey = "CLIENT_LOCALE"
-	ConfigIsMultiplayerEnabled ConfigKey = "IS_MULTIPLAYER_ENABLED"
-	ConfigServerPort           ConfigKey = "SERVER_PORT"
-	ConfigWorldPlayerLimit     ConfigKey = "WORLD_PLAYER_LIMIT"
-	ConfigIsChatStdoutEnabled  ConfigKey = "IS_CHAT_STDOUT_ENABLED"
-	ConfigChatFilePath         ConfigKey = "CHAT_FILE_PATH"
-	ConfigStorageDriver        ConfigKey = "STORAGE_DRIVER"
-	ConfigAuthJWTSecret        ConfigKey = "AUTH_JWT_SECRET"
-	ConfigAuthJWTIssuer        ConfigKey = "AUTH_JWT_ISSUER"
-	ConfigAuthJWTAudience      ConfigKey = "AUTH_JWT_AUDIENCE"
-	ConfigSnapshotMode         ConfigKey = "SNAPSHOT_MODE"
-	ConfigSnapshotBufferSecond ConfigKey = "SNAPSHOT_BUFFER_SECOND"
-	ConfigSnapshotDelaySecond  ConfigKey = "SNAPSHOT_DELAY_SECOND"
+	ConfigIsVersionLocked               ConfigKey = "IS_VERSION_LOCKED"
+	ConfigIsSingleplayerOnly            ConfigKey = "IS_SINGLEPLAYER_ONLY"
+	ConfigClientLocale                  ConfigKey = "CLIENT_LOCALE"
+	ConfigIsBorderlessFullscreenEnabled ConfigKey = "IS_BORDERLESS_FULLSCREEN_ENABLED"
+	ConfigIsMultiplayerEnabled          ConfigKey = "IS_MULTIPLAYER_ENABLED"
+	ConfigServerPort                    ConfigKey = "SERVER_PORT"
+	ConfigWorldPlayerLimit              ConfigKey = "WORLD_PLAYER_LIMIT"
+	ConfigIsChatStdoutEnabled           ConfigKey = "IS_CHAT_STDOUT_ENABLED"
+	ConfigChatFilePath                  ConfigKey = "CHAT_FILE_PATH"
+	ConfigStorageDriver                 ConfigKey = "STORAGE_DRIVER"
+	ConfigAuthJWTSecret                 ConfigKey = "AUTH_JWT_SECRET"
+	ConfigAuthJWTIssuer                 ConfigKey = "AUTH_JWT_ISSUER"
+	ConfigAuthJWTAudience               ConfigKey = "AUTH_JWT_AUDIENCE"
+	ConfigSnapshotMode                  ConfigKey = "SNAPSHOT_MODE"
+	ConfigSnapshotBufferSecond          ConfigKey = "SNAPSHOT_BUFFER_SECOND"
+	ConfigSnapshotDelaySecond           ConfigKey = "SNAPSHOT_DELAY_SECOND"
 )
 
 var defaultConfigValues = map[ConfigKey]string{
-	ConfigIsVersionLocked:      "false",
-	ConfigIsSingleplayerOnly:   "false",
-	ConfigClientLocale:         "",
-	ConfigIsMultiplayerEnabled: "false",
-	ConfigServerPort:           "42127",
-	ConfigWorldPlayerLimit:     "25",
-	ConfigIsChatStdoutEnabled:  "true",
-	ConfigChatFilePath:         "chat.log",
-	ConfigStorageDriver:        "sqlite",
-	ConfigAuthJWTSecret:        "darkspin-local-development-secret-do-not-use-in-production",
-	ConfigAuthJWTIssuer:        "darkspin-web",
-	ConfigAuthJWTAudience:      "darkspin",
-	ConfigSnapshotMode:         "off",
-	ConfigSnapshotBufferSecond: "30",
-	ConfigSnapshotDelaySecond:  "30",
+	ConfigIsVersionLocked:               "false",
+	ConfigIsSingleplayerOnly:            "false",
+	ConfigClientLocale:                  "",
+	ConfigIsBorderlessFullscreenEnabled: "false",
+	ConfigIsMultiplayerEnabled:          "false",
+	ConfigServerPort:                    "42127",
+	ConfigWorldPlayerLimit:              "25",
+	ConfigIsChatStdoutEnabled:           "true",
+	ConfigChatFilePath:                  "chat.log",
+	ConfigStorageDriver:                 "sqlite",
+	ConfigAuthJWTSecret:                 "darkspin-local-development-secret-do-not-use-in-production",
+	ConfigAuthJWTIssuer:                 "darkspin-web",
+	ConfigAuthJWTAudience:               "darkspin",
+	ConfigSnapshotMode:                  "off",
+	ConfigSnapshotBufferSecond:          "30",
+	ConfigSnapshotDelaySecond:           "30",
 }
 
 // Config is a concurrency-safe representation of darkspin.toml.
@@ -84,9 +86,10 @@ type configChat struct {
 }
 
 type configGame struct {
-	IsVersionLocked    *bool   `toml:"is_version_locked"`
-	IsSingleplayerOnly *bool   `toml:"is_singleplayer_only"`
-	ClientLocale       *string `toml:"locale"`
+	IsVersionLocked               *bool   `toml:"is_version_locked"`
+	IsSingleplayerOnly            *bool   `toml:"is_singleplayer_only"`
+	ClientLocale                  *string `toml:"locale"`
+	IsBorderlessFullscreenEnabled *bool   `toml:"is_borderless_fullscreen_enabled"`
 }
 
 type configServer struct {
@@ -147,6 +150,7 @@ func LoadConfig(path string) (*Config, bool, error) {
 	config.setBool(ConfigIsVersionLocked, document.Game.IsVersionLocked)
 	config.setBool(ConfigIsSingleplayerOnly, document.Game.IsSingleplayerOnly)
 	config.setString(ConfigClientLocale, document.Game.ClientLocale)
+	config.setBool(ConfigIsBorderlessFullscreenEnabled, document.Game.IsBorderlessFullscreenEnabled)
 	config.setBool(ConfigIsMultiplayerEnabled, document.Server.IsMultiplayerEnabled)
 	config.setInt(ConfigServerPort, document.Server.Port)
 	config.setInt(ConfigWorldPlayerLimit, document.Server.WorldPlayerLimit)
@@ -216,9 +220,10 @@ func encodeConfigDocument(values map[ConfigKey]string) (configDocument, error) {
 	}
 	return configDocument{
 		Game: configGame{
-			IsVersionLocked:    configPointer(configBool(values[ConfigIsVersionLocked])),
-			IsSingleplayerOnly: configPointer(configBool(values[ConfigIsSingleplayerOnly])),
-			ClientLocale:       configPointer(values[ConfigClientLocale]),
+			IsVersionLocked:               configPointer(configBool(values[ConfigIsVersionLocked])),
+			IsSingleplayerOnly:            configPointer(configBool(values[ConfigIsSingleplayerOnly])),
+			ClientLocale:                  configPointer(values[ConfigClientLocale]),
+			IsBorderlessFullscreenEnabled: configPointer(configBool(values[ConfigIsBorderlessFullscreenEnabled])),
 		},
 		Server: configServer{
 			IsMultiplayerEnabled: configPointer(configBool(values[ConfigIsMultiplayerEnabled])),

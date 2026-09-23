@@ -154,8 +154,8 @@ export function SetIdentity(arg1) {
   return window['go']['main']['App']['SetIdentity'](arg1);
 }
 
-export function SetServerConfiguration(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['SetServerConfiguration'](arg1, arg2, arg3, arg4);
+export function SetServerConfiguration(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SetServerConfiguration'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function SetServerPort(arg1) {

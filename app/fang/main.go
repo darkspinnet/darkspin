@@ -45,6 +45,10 @@ func GoRecapInitialize() C.int {
 	if os.Getenv("DARKSPIN_SKIP_CINEMATIC") == "1" {
 		isCinematicSkipped = 1
 	}
+	isBorderlessFullscreenEnabled := C.int(0)
+	if os.Getenv("DARKSPIN_BORDERLESS_FULLSCREEN") == "1" {
+		isBorderlessFullscreenEnabled = 1
+	}
 	jwt := C.CString(os.Getenv("DARKSPIN_LAUNCH_JWT"))
 	defer C.free(unsafe.Pointer(jwt))
 	_ = os.Unsetenv("DARKSPIN_LAUNCH_JWT")
@@ -56,7 +60,7 @@ func GoRecapInitialize() C.int {
 	defer C.free(unsafe.Pointer(windowTitle))
 	result := C.fang_install(
 		host, C.ushort(configuredPort), C.ushort(configuredPort+1), tracePath,
-		isIntroSkipped, isCinematicSkipped, jwt, windowTitle,
+		isIntroSkipped, isCinematicSkipped, isBorderlessFullscreenEnabled, jwt, windowTitle,
 	)
 	return C.int(result)
 }

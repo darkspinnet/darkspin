@@ -138,6 +138,10 @@
 .management-toggle [data-slot="checkbox"], .tutorial-skip [data-slot="checkbox"], .integration-options [data-slot="checkbox"] { margin-top: 2px; }
 .management-toggle strong, .tutorial-skip strong, .integration-options strong { display: block; font-size: 11px; }
 .management-toggle small, .tutorial-skip small, .integration-options small { display: block; line-height: 1.5; margin-top: 4px; font-weight: 400; }
+.config-borderless { margin-top: 18px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--muted) 28%, transparent); }
+.config-borderless > span { min-width: 0; }
+.config-borderless strong { line-height: 1.35; }
+.config-borderless small { color: var(--muted-foreground); }
 .config-save { margin-top: 16px; width: 100%; font-size: 11px; }
 .integration-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding-block: 12px; border-bottom: 1px solid var(--border); }
 .integration-row > div { grid-column: 1 / -1; }

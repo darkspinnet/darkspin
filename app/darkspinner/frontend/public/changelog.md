@@ -2,6 +2,7 @@
 
 ### 2026-09-23
 
+- Disable experimental borderless fullscreen by default, expose it only as a development-build opt-in, and initialize new client profiles in windowed mode without overwriting existing display preferences.
 - Disable WebKitGTK's DMA-BUF renderer by default in Wayland sessions to prevent the Linux launcher from exiting with a display protocol error while preserving explicit environment overrides.
 
 ### 2026-09-22
