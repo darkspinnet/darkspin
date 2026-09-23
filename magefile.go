@@ -23,7 +23,7 @@ import (
 
 // releaseSemver is the single source of truth for Dark Spin release versions.
 // Build targets inject it without rewriting application or frontend sources.
-const releaseSemver = "1.0.4"
+const releaseSemver = "1.0.5"
 
 const binaryName = "darkrun.exe"
 
