@@ -3321,6 +3321,10 @@ static char* find_darkspin_chat_command(const char* text, int* command) {
                 *command = 24;
                 return (char*)cursor;
             }
+            if (is_darkspin_chat_command(cursor, "/drop")) {
+                *command = 28;
+                return (char*)cursor;
+            }
             if (is_darkspin_chat_command(cursor, "/dna")) {
                 *command = 19;
                 return (char*)cursor;

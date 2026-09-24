@@ -2,6 +2,7 @@
 
 ### 2026-09-23
 
+- Register `/drop` with Fang's chat-command transport so `/drop create` reaches the server instead of being rejected by the native client.
 - Disable experimental borderless fullscreen by default, expose it only as a development-build opt-in, and initialize new client profiles in windowed mode without overwriting existing display preferences.
 - Disable WebKitGTK's DMA-BUF renderer by default in Wayland sessions to prevent the Linux launcher from exiting with a display protocol error while preserving explicit environment overrides.
 
