@@ -1,10 +1,14 @@
 package npc
 
 import (
+	"cmp"
+	"math"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
+	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
 )
 
 type OrcusSpawnDefinition struct {
@@ -84,8 +88,9 @@ func OrcusFallbackProfile(nounName string) (ActionProfile, bool) {
 	}
 	return ActionProfile{
 		Family: ActionNomadDrone, AbilityName: "VerdanthBossFallbackMelee",
-		AnimationName: "attack", HitDelay: 466667 * time.Microsecond,
-		ReleaseDelay: 1500 * time.Millisecond, Cooldown: 1500 * time.Millisecond,
+		AnimationName: "ver_boss_lf_spawneater_melee",
+		HitDelay:      466667 * time.Microsecond,
+		ReleaseDelay:  1500 * time.Millisecond, Cooldown: 1500 * time.Millisecond,
 		Range: 2.25, MovementSpeed: movementSpeed,
 		NonCombatMovementSpeed: nonCombatMovementSpeed,
 		MinimumDamage:          5, MaximumDamage: 8,
@@ -138,4 +143,70 @@ func OrcusDiseaseConeProfile(nounName string) (ActionProfile, bool) {
 		TargetEffectName: "status_diseased.ServerEventDef",
 		Radius:           10, Angle: 55, IsModifierDamageProfileKnown: true,
 	}, true
+}
+
+func OrcusConsumeProfile(nounName string) (ActionProfile, bool) {
+	fallback, isFound := OrcusFallbackProfile(nounName)
+	if !isFound {
+		return ActionProfile{}, false
+	}
+	minimumHealing := float32(0)
+	maximumHealing := float32(0)
+	switch strings.ToLower(nounName) {
+	case "verdanthboss.noun":
+		minimumHealing, maximumHealing = 40, 60
+	case "verdanthboss_2.noun":
+		minimumHealing, maximumHealing = 60, 100
+	case "verdanthboss_3.noun":
+		minimumHealing, maximumHealing = 80, 140
+	default:
+		return ActionProfile{}, false
+	}
+	return ActionProfile{
+		AbilityName: "Consume", AnimationName: "ver_boss_lf_spawneater_eat_spawn",
+		HitDelay: 1567 * time.Millisecond, ReleaseDelay: 4200 * time.Millisecond,
+		Radius: 4, MovementSpeed: fallback.MovementSpeed,
+		NonCombatMovementSpeed: fallback.NonCombatMovementSpeed,
+		MinimumHealing:         minimumHealing, MaximumHealing: maximumHealing,
+		IsFirstAggroDurationKnown: true,
+	}, true
+}
+
+// OwnedActiveCandidates returns living actors created by one NPC within the
+// authored consume radius, ordered from nearest to farthest.
+func (s *Session) OwnedActiveCandidates(
+	ownerObjectID uint32, maximumRange float32,
+) []Snapshot {
+	if s == nil || ownerObjectID == 0 || maximumRange <= 0 ||
+		math.IsNaN(float64(maximumRange)) || math.IsInf(float64(maximumRange), 0) {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	owner, isFound := s.npcs[ownerObjectID]
+	if !isFound || owner.IsDefeated || !owner.IsPublished || owner.HitPoint <= 0 {
+		return nil
+	}
+	candidates := make([]Snapshot, 0)
+	for _, objectID := range s.objectIDs {
+		candidate := s.npcs[objectID]
+		if candidate.Plan.OwnerObjectID != ownerObjectID || candidate.IsDefeated ||
+			!candidate.IsPublished || candidate.HitPoint <= 0 ||
+			zonegeometry.Distance(owner.Plan.Position, candidate.Plan.Position) > maximumRange {
+			continue
+		}
+		candidates = append(candidates, candidate)
+	}
+	slices.SortFunc(candidates, func(left Snapshot, right Snapshot) int {
+		leftDistance := zonegeometry.Distance(owner.Plan.Position, left.Plan.Position)
+		rightDistance := zonegeometry.Distance(owner.Plan.Position, right.Plan.Position)
+		if leftDistance < rightDistance {
+			return -1
+		}
+		if leftDistance > rightDistance {
+			return 1
+		}
+		return cmp.Compare(left.Plan.ObjectID, right.Plan.ObjectID)
+	})
+	return candidates
 }

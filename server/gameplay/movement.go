@@ -652,6 +652,7 @@ func (r campaignMovementCommandRuntime) handle(
 	companionFollows := make([]zonecompanion.Follow, 0)
 	var companionFollowErr error
 	playerFollowPublications := make([]playerFollowPublication, 0)
+	lavaPackets := make([][]byte, 0)
 	if isCurrent {
 		peerSession.followTargetUserID = 0
 		movementNow := r.now()
@@ -722,6 +723,14 @@ func (r campaignMovementCommandRuntime) handle(
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("moveCampaignHero: %w", syncErr)
 		}
+		lavaPackets, lavaStatDelta, lavaErr := peerSession.applyCryosLavaContact(
+			current, packet.SourceTime, movementNow,
+		)
+		if lavaErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("moveCampaignLava: %w", lavaErr)
+		}
+		peerSession.queueStatDelta(lavaStatDelta)
 		companionFollows, companionFollowErr = peerSession.zone.Companion().FollowOwner(
 			peerSession.binding.UserID, peerSession.generation,
 			command.Common.ObjectID, current, peerSession.zone.NPCs().Snapshots(),
@@ -1066,6 +1075,9 @@ func (r campaignMovementCommandRuntime) handle(
 	movementSideEffectPackets = append(movementSideEffectPackets, companionAttackPackets...)
 	movementSideEffectPackets = append(movementSideEffectPackets, drainStopPackets...)
 	movementSideEffectPackets = append(movementSideEffectPackets, campaignOrbPackets...)
+	movementSideEffectPackets = append(
+		movementSideEffectPackets, gameplayPeerPresentationPackets(lavaPackets)...,
+	)
 	err = publishCampaignPeersAfterCommit(r.registry, packet, movementSideEffectPackets)
 	if err != nil {
 		return nil, fmt.Errorf("moveSideEffectPresentation: %w", err)
@@ -1134,6 +1146,7 @@ func (r campaignMovementCommandRuntime) handle(
 	response = append(response, populationPackets...)
 	response = append(response, populationAggroPackets...)
 	response = append(response, campaignOrbPackets...)
+	response = append(response, lavaPackets...)
 	response = append(response, campaignDNAPackets...)
 	response = append(response, tutorialCapsulePackets...)
 	response = append(response, tutorialHordePackets...)

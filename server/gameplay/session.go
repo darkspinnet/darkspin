@@ -179,6 +179,7 @@ type zoneEffectPresentation struct {
 	campaignNPCMunches                  map[uint32]*campaignNPCMunchRun
 	campaignNPCMunchReadiness           map[uint32]uint64
 	campaignNPCDrainRuns                map[uint32]*campaignNPCDrainRun
+	campaignNPCPullEffects              map[uint32]*campaignNPCPullEffectRun
 	campaignNPCOozeGrowths              map[uint32]*campaignNPCOozeGrowthRun
 	campaignNPCPhysicalVulnerabilities  map[uint32]*campaignNPCPhysicalVulnerabilityRun
 	campaignNPCEnergyVulnerabilities    map[uint32]*campaignNPCEnergyVulnerabilityRun
@@ -292,6 +293,7 @@ type controlledHeroState struct {
 	enemyRootTargetObjectID       uint32
 	enemyFearExpiresAt            time.Time
 	enemyFearTargetObjectID       uint32
+	cryosLavaReadyAt              time.Time
 	passiveKillStack              [squad.Size]uint32
 	passiveReductionStack         [squad.Size]uint32
 	passiveReductionExpiresAt     [squad.Size]time.Time
@@ -1029,6 +1031,13 @@ func (s *gameplayPeerSession) stopCampaignNPCProjectiles() {
 		run.End()
 		run.ReleaseEffects()
 		delete(s.campaignNPCDrainRuns, objectID)
+	}
+	for objectID, run := range s.campaignNPCPullEffects {
+		_, _, isReleased := run.release()
+		if !isReleased {
+			// The scheduled cleanup already released this presentation lease.
+		}
+		delete(s.campaignNPCPullEffects, objectID)
 	}
 	s.campaignNPCPolarisStates = make(map[uint32]campaignNPCPolarisState)
 	for objectID, run := range s.campaignNPCGravityOrbs {
@@ -4742,6 +4751,14 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 				fmt.Errorf("campaignDeathDrain: %w", drainErr)
 		}
 		hitPackets = append(hitPackets, drainPackets...)
+		pullPackets, pullErr := s.stopCampaignNPCPullEffectsTargeting(
+			s.deployedObjectID,
+		)
+		if pullErr != nil {
+			return nil, sporenet.PlayerStatDelta{},
+				fmt.Errorf("campaignDeathPullEffect: %w", pullErr)
+		}
+		hitPackets = append(hitPackets, pullPackets...)
 		s.squad.ResetDeployCooldown()
 		s.clearEnemyHeroStatuses()
 		// The native death transition can replace the controlled object's local

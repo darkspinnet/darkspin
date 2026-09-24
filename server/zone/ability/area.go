@@ -189,7 +189,12 @@ func PlanZetawattBeam(
 		if halfExtent <= 0 {
 			halfExtent = 0.5
 		}
-		if positionDistance(closest, enemy.Plan.Position) > halfExtent {
+		deltaClosestX := closest.X - enemy.Plan.Position.X
+		deltaClosestY := closest.Y - enemy.Plan.Position.Y
+		horizontalDistance := float32(math.Sqrt(float64(
+			deltaClosestX*deltaClosestX + deltaClosestY*deltaClosestY,
+		)))
+		if horizontalDistance > halfExtent {
 			continue
 		}
 		target = append(target, enemy)

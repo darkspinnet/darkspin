@@ -7,6 +7,8 @@ import (
 
 const verdanthCypressLevel = "verdanth_3"
 const verdanthSceneryMarkerSet = "verdanth_3_smart_objects_1.markerset"
+const cryosCaveLevel = "cryos_3"
+const cryosCaveSceneryMarkerSet = "cryos_3_smart_object_3.markerset"
 
 // NightmareVineFixtures keeps the destructible trees in the same authored
 // variant as their root scenery. Trees have no level-script callback, so they
@@ -89,6 +91,64 @@ func (e CampaignDirector) VerdanthScenery() (
 		)
 	}
 	return selected, deletedObjectIDs, nil
+}
+
+// CryosCaveScenery projects one complete authored cave layout for 3-2. The
+// third variant contains the lava-crack fixtures used by the cave hazards.
+func (e CampaignDirector) CryosCaveScenery() (
+	[]CampaignDirectorMarker, []uint32, error,
+) {
+	if !strings.EqualFold(e.Level, cryosCaveLevel) {
+		return nil, nil, nil
+	}
+	selected := make([]CampaignDirectorMarker, 0)
+	deletedObjectIDs := make([]uint32, 0)
+	markerSetCount := 0
+	for _, markerSet := range e.MarkerSets {
+		name := strings.ToLower(markerSet.Name)
+		if !strings.HasPrefix(name, "cryos_3_smart_object_") {
+			continue
+		}
+		markerSetCount++
+		for _, marker := range markerSet.Markers {
+			if !isCampaignSceneryMarker(marker) {
+				continue
+			}
+			if name == cryosCaveSceneryMarkerSet {
+				selected = append(selected, marker)
+				continue
+			}
+			deletedObjectIDs = append(deletedObjectIDs, marker.MarkerID)
+		}
+	}
+	if markerSetCount != 3 || len(selected) == 0 || len(deletedObjectIDs) == 0 {
+		return nil, nil, fmt.Errorf(
+			"cryosCaveSceneryComposition: sets=%d selected=%d deleted=%d",
+			markerSetCount, len(selected), len(deletedObjectIDs),
+		)
+	}
+	return selected, deletedObjectIDs, nil
+}
+
+// CryosLavaCracks returns the authored crack objects from the cave layout
+// projected by CryosCaveScenery.
+func (e CampaignDirector) CryosLavaCracks() []CampaignDirectorMarker {
+	if !strings.EqualFold(e.Level, cryosCaveLevel) {
+		return nil
+	}
+	markers := make([]CampaignDirectorMarker, 0)
+	for _, markerSet := range e.MarkerSets {
+		if !strings.EqualFold(markerSet.Name, cryosCaveSceneryMarkerSet) {
+			continue
+		}
+		for _, marker := range markerSet.Markers {
+			if strings.EqualFold(marker.NounName, "DEST_prefab_cryos_ice_crack1.Noun") &&
+				marker.MarkerID != 0 && isFiniteCampaignPosition(marker.Position) {
+				markers = append(markers, marker)
+			}
+		}
+	}
+	return markers
 }
 
 // VerdanthPopulationDirector keeps population anchors aligned with the same

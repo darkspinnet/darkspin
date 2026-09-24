@@ -12,6 +12,8 @@ import (
 	zoneobject "github.com/darkspinnet/darkspin/server/zone/object"
 )
 
+const permanentModifierStartMilliseconds = 1
+
 func Spawn(plan zonenpc.SpawnPlan) ([][]byte, error) {
 	err := zonenpc.ValidateSpawnPlan(plan, zoneobject.ProjectileIDStart)
 	if err != nil {
@@ -100,9 +102,10 @@ func Spawn(plan zonenpc.SpawnPlan) ([][]byte, error) {
 			Stealth: uint8(actionStealthType(plan)),
 		})
 		messages = append(messages, raknet.ModifierCreatedMessage{
-			TargetID:     plan.ObjectID,
-			ModifierGUID: util.HashID(zonenpc.EliteModifierName),
-			InstanceID:   zoneeffect.NounModifierInstanceID(plan.ObjectID),
+			TargetID:          plan.ObjectID,
+			ModifierGUID:      util.HashID(zonenpc.EliteModifierName),
+			InstanceID:        zoneeffect.NounModifierInstanceID(plan.ObjectID),
+			StartMilliseconds: permanentModifierStartMilliseconds,
 			DurationMilliseconds: uint32(
 				zonenpc.EliteModifierDuration.Milliseconds(),
 			),
@@ -124,6 +127,7 @@ func Spawn(plan zonenpc.SpawnPlan) ([][]byte, error) {
 			TargetID:             plan.ObjectID,
 			ModifierGUID:         util.HashID(plan.BossIdentity.ModifierNames[affixIndex]),
 			InstanceID:           instanceID,
+			StartMilliseconds:    permanentModifierStartMilliseconds,
 			DurationMilliseconds: uint32(zonenpc.EliteModifierDuration.Milliseconds()),
 			StackCount:           1, SourceID: plan.ObjectID,
 		})

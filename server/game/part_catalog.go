@@ -19,6 +19,7 @@ const (
 	campaignSuffixStream
 	campaignPrefixStream
 	campaignSecondaryPrefixStream
+	campaignSlotStream
 )
 
 const (
@@ -26,6 +27,10 @@ const (
 	campaignMajorItemLevelScale    = uint32(10)
 	campaignBoundaryItemLevelBonus = uint32(6)
 )
+
+var campaignPartSlotTypes = [...]string{
+	"weapon", "grasper", "foot", "defense", "offense", "utility",
+}
 
 // PartDefinition contains profile-facing base-item metadata proven by content.
 type PartDefinition struct {
@@ -295,14 +300,21 @@ func (c *PartCatalog) generateCampaignPart(
 		return sporenet.Part{}, errors.New("campaign part catalog unavailable")
 	}
 	isUniqueFamily := isCampaignUniqueRarity(rarity)
+	if slotType == "" {
+		slotType = c.campaignPartSlotType(
+			classType, scienceType, accountLevel, choice, isUniqueFamily,
+		)
+		if slotType == "" {
+			return sporenet.Part{}, errors.New("campaign part slot eligibility empty")
+		}
+	}
 	eligibleIDs := make([]uint16, 0, len(c.partsByRigblock))
 	nearestIDs := make([]uint16, 0, len(c.partsByRigblock))
 	nearestDistance := ^uint32(0)
 	for rigblockID, definition := range c.partsByRigblock {
 		if !partCategoryContains(definition.ClassType, classType) ||
 			!partCategoryContains(definition.ScienceType, scienceType) ||
-			definition.IsUniqueFamily != isUniqueFamily ||
-			(slotType != "" && definition.SlotType != slotType) ||
+			definition.IsUniqueFamily != isUniqueFamily || definition.SlotType != slotType ||
 			!c.isPartSlotUnlocked(definition, accountLevel) {
 			continue
 		}
@@ -340,6 +352,31 @@ func (c *PartCatalog) generateCampaignPart(
 		return part, nil
 	}
 	return sporenet.Part{}, errors.New("campaign item budget has no complete eligible roll")
+}
+
+func (c *PartCatalog) campaignPartSlotType(
+	classType string, scienceType string, accountLevel uint32, choice uint32,
+	isUniqueFamily bool,
+) string {
+	availableSlotTypes := make([]string, 0, len(campaignPartSlotTypes))
+	for _, slotType := range campaignPartSlotTypes {
+		for _, definition := range c.partsByRigblock {
+			if definition.SlotType != slotType ||
+				!partCategoryContains(definition.ClassType, classType) ||
+				!partCategoryContains(definition.ScienceType, scienceType) ||
+				definition.IsUniqueFamily != isUniqueFamily ||
+				!c.isPartSlotUnlocked(definition, accountLevel) {
+				continue
+			}
+			availableSlotTypes = append(availableSlotTypes, slotType)
+			break
+		}
+	}
+	if len(availableSlotTypes) == 0 {
+		return ""
+	}
+	slotChoice := campaignPartChoice(choice, campaignSlotStream)
+	return availableSlotTypes[slotChoice%uint32(len(availableSlotTypes))]
 }
 
 func isCampaignPartSlotType(slotType string) bool {

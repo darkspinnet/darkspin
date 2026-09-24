@@ -83,12 +83,12 @@ func (e campaignOrcusSpawnEnd) produce() ([][]byte, error) {
 	return append(presentationPackets, followupPackets...), nil
 }
 
-type campaignOrcusGroundSlamEnd struct {
+type campaignOrcusReductionEnd struct {
 	request   campaignOrcusRequest
 	expiresAt time.Time
 }
 
-func (e campaignOrcusGroundSlamEnd) produce() ([][]byte, error) {
+func (e campaignOrcusReductionEnd) produce() ([][]byte, error) {
 	e.request.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.request.runtime.registry.sessions[e.request.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.request.generation &&
@@ -108,6 +108,172 @@ func (e campaignOrcusGroundSlamEnd) produce() ([][]byte, error) {
 		return nil, fmt.Errorf("orcusGroundSlamShieldRemove: %w", err)
 	}
 	return [][]byte{packet}, nil
+}
+
+type campaignOrcusConsumeSchedule struct {
+	request          campaignOrcusRequest
+	actionGeneration uint64
+	profile          zonenpc.ActionProfile
+}
+
+func (e campaignOrcusConsumeSchedule) hit() ([][]byte, error) {
+	e.request.runtime.registry.mutex.Lock()
+	peerSession, isFound := e.request.runtime.registry.sessions[e.request.sessionKey]
+	isCurrent := isFound && peerSession.isCampaignNPCSourceGenerationActive(
+		e.request.generation, e.request.objectID, e.actionGeneration,
+	)
+	if !isCurrent {
+		e.request.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	candidates := peerSession.zone.NPCs().OwnedActiveCandidates(
+		e.request.objectID, e.profile.Radius,
+	)
+	if len(candidates) == 0 {
+		e.request.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	objectIDs := make([]uint32, 0, len(candidates))
+	healing := float32(0)
+	random := peerSession.zone.NPCRandom()
+	for _, candidate := range candidates {
+		objectIDs = append(objectIDs, candidate.Plan.ObjectID)
+		selectedHealing := e.profile.MinimumHealing
+		if random != nil && e.profile.MaximumHealing > e.profile.MinimumHealing {
+			selectedHealing += float32(random.Float64()) *
+				(e.profile.MaximumHealing - e.profile.MinimumHealing)
+		}
+		healing += selectedHealing
+	}
+	err := peerSession.zone.NPCs().Despawn(objectIDs)
+	if err != nil {
+		e.request.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("orcusConsumeDespawn: %w", err)
+	}
+	orcus, healedAmount, err := peerSession.zone.NPCs().Heal(
+		e.request.objectID, healing,
+	)
+	if err != nil {
+		e.request.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("orcusConsumeHeal: %w", err)
+	}
+	deaths := make([]zonenpc.DeathEvent, 0, len(objectIDs))
+	for _, objectID := range objectIDs {
+		deaths = append(deaths, zonenpc.DeathEvent{
+			Kind: zonenpc.DeathDelete, TargetObjectID: objectID,
+		})
+	}
+	peerSession.zone.PublishNPCDeath(
+		deaths, peerSession.binding.UserID, e.request.generation,
+	)
+	if healedAmount > 0 {
+		objectiveErr := peerSession.zone.RecordNPCHeal(
+			peerSession.zone.Context(), e.request.objectID,
+			e.request.objectID, healedAmount,
+		)
+		if objectiveErr != nil {
+			e.request.runtime.logger.Printf(
+				"RakNet Orcus consume heal objective omitted source=%d: %v",
+				e.request.objectID, objectiveErr,
+			)
+		}
+	}
+	e.request.runtime.registry.sessions[e.request.sessionKey] = peerSession
+	e.request.runtime.registry.mutex.Unlock()
+
+	deletePacket, err := raknet.MarshalApplication(raknet.ObjectDeleteMessage{
+		ObjectID: objectIDs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("orcusConsumeDelete: %w", err)
+	}
+	packets := [][]byte{deletePacket}
+	if healedAmount <= 0 {
+		return packets, nil
+	}
+	healPackets, err := npcraknet.HealDelta(
+		e.request.objectID, orcus, healedAmount,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("orcusConsumeHealMarshal: %w", err)
+	}
+	return append(healPackets, packets...), nil
+}
+
+func (e campaignOrcusConsumeSchedule) next() ([][]byte, error) {
+	e.request.timestamp += uint64(e.profile.ReleaseDelay / time.Millisecond)
+	return e.request.resume(e.request.timestamp)
+}
+
+func (r campaignNPCActionRuntime) produceOrcusConsume(
+	packet raknet.Packet, sessionKey string, generation uint64,
+	objectID uint32, timestamp uint64,
+) ([][]byte, bool, error) {
+	r.registry.mutex.Lock()
+	peerSession, isFound := r.registry.sessions[sessionKey]
+	isCurrent := isFound && peerSession.isCampaignNPCSourceActive(generation, objectID)
+	if !isCurrent {
+		r.registry.mutex.Unlock()
+		return nil, false, nil
+	}
+	orcus, isOrcusFound := peerSession.zone.NPCs().NPC(objectID)
+	profile, isProfileFound := zonenpc.OrcusConsumeProfile(orcus.Plan.NounName)
+	isAvailable := isOrcusFound && isProfileFound && !orcus.IsDefeated &&
+		peerSession.zone.NPCs().SilenceRemaining(objectID, r.now()) == 0
+	if !isAvailable || len(peerSession.zone.NPCs().OwnedActiveCandidates(
+		objectID, profile.Radius,
+	)) == 0 {
+		r.registry.mutex.Unlock()
+		return nil, false, nil
+	}
+	reductionExpiresAt := r.now().Add(profile.ReleaseDelay)
+	err := peerSession.zone.NPCs().ApplyDamageReduction(
+		objectID, 0.75, reductionExpiresAt,
+	)
+	if err != nil {
+		r.registry.mutex.Unlock()
+		return nil, true, fmt.Errorf("orcusConsumeReduction: %w", err)
+	}
+	r.registry.sessions[sessionKey] = peerSession
+	r.registry.mutex.Unlock()
+
+	request := campaignOrcusRequest{
+		runtime: r, packet: packet, sessionKey: sessionKey,
+		generation: generation, objectID: objectID, timestamp: timestamp,
+	}
+	animationPacket, err := npcraknet.AnimationState(
+		objectID, profile.AnimationName, timestamp,
+	)
+	if err != nil {
+		r.clearOrcusDamageReduction(request, reductionExpiresAt)
+		return nil, true, fmt.Errorf("orcusConsumeAnimation: %w", err)
+	}
+	shieldPacket, err := npcraknet.ShieldEffectAsset(
+		objectID, 0, "verdanth_boss_shield.ServerEventDef", false,
+	)
+	if err != nil {
+		r.clearOrcusDamageReduction(request, reductionExpiresAt)
+		return nil, true, fmt.Errorf("orcusConsumeShield: %w", err)
+	}
+	schedule := campaignOrcusConsumeSchedule{
+		request: request, actionGeneration: orcus.ActionGeneration, profile: profile,
+	}
+	end := campaignOrcusReductionEnd{request: request, expiresAt: reductionExpiresAt}
+	producers := []raknet.ScheduledPacketProducer{
+		{Delay: profile.HitDelay, Produce: schedule.hit},
+		{Delay: profile.ReleaseDelay, Produce: end.produce},
+		{Delay: profile.ReleaseDelay, Produce: schedule.next},
+	}
+	cancel, err := scheduleNPCProducers(r.registry, packet, producers)
+	if err == nil && cancel == nil {
+		err = errors.New("nil cancellation")
+	}
+	if err != nil {
+		r.clearOrcusDamageReduction(request, reductionExpiresAt)
+		r.releaseAction(sessionKey, generation, objectID)
+		return nil, true, fmt.Errorf("orcusConsumeSchedule: %w", err)
+	}
+	return [][]byte{animationPacket, shieldPacket}, true, nil
 }
 
 func (e campaignOrcusServantStep) spawn() ([][]byte, error) {
@@ -417,7 +583,8 @@ func (r campaignNPCActionRuntime) startOrcusAbility(
 	schedule := campaignConeSchedule{
 		runtime: r, packet: request.packet, sessionKey: request.sessionKey,
 		generation: request.generation, objectID: request.objectID,
-		timestamp: request.timestamp, nextDelay: plan.Profile.ReleaseDelay,
+		actionGeneration: plan.ActionGeneration,
+		timestamp:        request.timestamp, nextDelay: plan.Profile.ReleaseDelay,
 		plan: plan,
 	}
 	producers := make([]raknet.ScheduledPacketProducer, 0, 8)
@@ -447,18 +614,18 @@ func (r campaignNPCActionRuntime) startOrcusAbility(
 			request.objectID, 0, "verdanth_boss_shield.ServerEventDef", false,
 		)
 		if shieldErr != nil {
-			r.clearOrcusGroundSlamReduction(request, reductionExpiresAt)
+			r.clearOrcusDamageReduction(request, reductionExpiresAt)
 			return nil, fmt.Errorf("orcusGroundSlamShield: %w", shieldErr)
 		}
 		castPacket, castErr := npcraknet.PositionedEffect(
 			"verdanth_bosspit_effect.ServerEventDef", plan.SourcePosition,
 		)
 		if castErr != nil {
-			r.clearOrcusGroundSlamReduction(request, reductionExpiresAt)
+			r.clearOrcusDamageReduction(request, reductionExpiresAt)
 			return nil, fmt.Errorf("orcusGroundSlamCast: %w", castErr)
 		}
 		packets = append(packets, shieldPacket, castPacket)
-		end := campaignOrcusGroundSlamEnd{
+		end := campaignOrcusReductionEnd{
 			request: request, expiresAt: reductionExpiresAt,
 		}
 		producers = append(producers,
@@ -483,14 +650,14 @@ func (r campaignNPCActionRuntime) startOrcusAbility(
 	}
 	if err != nil {
 		if isGroundSlam {
-			r.clearOrcusGroundSlamReduction(request, reductionExpiresAt)
+			r.clearOrcusDamageReduction(request, reductionExpiresAt)
 		}
 		return nil, fmt.Errorf("orcusAbilitySchedule: %w", err)
 	}
 	return packets, nil
 }
 
-func (r campaignNPCActionRuntime) clearOrcusGroundSlamReduction(
+func (r campaignNPCActionRuntime) clearOrcusDamageReduction(
 	request campaignOrcusRequest, expiresAt time.Time,
 ) {
 	r.registry.mutex.Lock()

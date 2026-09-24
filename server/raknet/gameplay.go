@@ -22,6 +22,7 @@ const (
 	ActionCancel              ActionCommand = 10
 	ActionUseInteractable     ActionCommand = 11
 	ActionDance               ActionCommand = 12
+	ActionTaunt               ActionCommand = 13
 )
 
 type ActionCommon struct {
@@ -59,7 +60,7 @@ type ActionCommandData struct {
 
 func actionCommandTailLength(action ActionCommand) (int, bool) {
 	switch action {
-	case ActionReserved0, ActionDance:
+	case ActionReserved0, ActionDance, ActionTaunt:
 		return 0, true
 	case ActionReserved1:
 		return 12, true

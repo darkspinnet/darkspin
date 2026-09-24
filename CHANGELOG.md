@@ -2,10 +2,22 @@
 
 ### 2026-09-24
 
+- Play Orcus's authored melee animation when his basic attack deals damage.
+- Make each Protoplasm apply its growth stacks to itself so its size, health, and damage visibly increase over time.
+- Detach Grappling Pulsar's pull beam from its target when the effect expires or the casting enemy dies.
+- Restore mission 3-2's authored lava-crack cave layout and apply contact damage when heroes move onto an active crack.
+- Apply the Dimensionist Slow Shield debuff while its targeted hero is inside the moving time bubble, including authoritative movement-speed reduction.
+- Aim Zetawatt Beam damage at its authored cursor position and ignore navigation-height offsets when checking enemies along the beam.
+- Accept the build-103 `/taunt` action and play its shared hero taunt animation for the local player and multiplayer allies.
+- Choose mission equipment loot by available slot before selecting a compatible base item, giving weapons the same category chance as other equipment.
+- Give captain Elite and authored affix modifiers a valid lifecycle start time so the client retains and displays their buffs.
+- Keep empty PvP squads unavailable until the player assigns a hero, preventing the client from crashing when the second squad is selected in the Arsenal.
 - Keep mission 1-1 security portals visually dormant while enemies prevent their use, including when a new encounter spawns beside a portal.
 - Keep NPC positions synchronized during direct pursuit fallback so enemies remain damageable when an authored navigation route cannot be projected.
 - Let melee basic attacks pursue enemies near authored navigation edges instead of repeatedly rejecting the attack when the enemy position falls outside the normal movement projection range.
 - Reconcile an idle returning enemy from the player's clicked position when the client omits its target position, preventing the enemy from snapping toward a stale origin and becoming unhittable.
+- Apply Orcus's disease breath and ground-slam pulses through their active attack generation so their damage, disease status, and ground-slam thorn-spike effects are no longer discarded after the cast animation.
+- Restore Orcus's Consume sequence so he eats nearby summoned minions with the authored animation, removes them from the encounter, and heals for each one consumed.
 - Add cross-platform `-headless` Darkspinner presentation that opens the launcher in the default browser, serves it securely from `/launcher/` on the configured game port, and hands that listener from startup progress to the shared HTTP/Blaze server without requiring a Wails window.
 - Add a `-headless`-only system tray menu for reopening the browser launcher or shutting down Darkspinner cleanly.
 

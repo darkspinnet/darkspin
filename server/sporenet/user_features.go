@@ -388,6 +388,12 @@ func (u *User) updateDecks(command DeckUpdate) (Account, []Squad, bool, error) {
 	// An explicitly empty deck (0,0,0) is an update, not an omitted field.
 	isPVERequested := len(command.PVECreatures) != 0
 	isPVPRequested := len(command.PVPCreatures) != 0
+	if isPVERequested && command.PVEActiveSlot > max(uint32(1), u.Account.UnlockPVEDecks) {
+		return previousAccount, previousSquads, false, ErrSquadLocked
+	}
+	if isPVPRequested && command.PVPActiveSlot > u.Account.UnlockPVPDecks {
+		return previousAccount, previousSquads, false, ErrSquadLocked
+	}
 	isChanged := false
 	var err error
 	if isPVERequested {
@@ -413,6 +419,12 @@ func (u *User) updateDecks(command DeckUpdate) (Account, []Squad, bool, error) {
 		isPVPActiveChanged := updateActiveDeck(
 			u.Squads, command.PVPActiveSlot, "pvp", &u.Account.DefaultDeckPVPID,
 		)
+		activeRequestLimit := min(len(command.PVPCreatures), 3)
+		if !hasCreatureID(command.PVPCreatures[:activeRequestLimit]) &&
+			u.Account.DefaultDeckPVPID != u.Account.DefaultDeckPVEID {
+			u.Account.DefaultDeckPVPID = u.Account.DefaultDeckPVEID
+			isPVPActiveChanged = true
+		}
 		isChanged = isChanged || isPVPChanged || isPVPActiveChanged
 	}
 	return previousAccount, previousSquads, isChanged, nil
@@ -456,6 +468,18 @@ func updateSquadSlots(
 			break
 		}
 	}
+	if len(indexes) == 0 && category == "pvp" && hasCreatureID(requestedIDs) {
+		for index := range squads {
+			if squads[index].Category != "" || squads[index].IsLocked ||
+				hasCreatureID(squads[index].CreatureIDs[:]) {
+				continue
+			}
+			squads[index].Category = category
+			squads[index].Slot = activeSlot
+			indexes = append(indexes, index)
+			break
+		}
+	}
 	if len(indexes) == 0 {
 		return false, nil
 	}
@@ -485,15 +509,20 @@ func updateSquadSlots(
 			}
 			creatures[creatureIndex] = creatureID
 		}
+		isEmptyPVP := category == "pvp" && !hasCreatureID(creatures[:])
 		isCategoryChanged := hasCreatureID(creatures[:]) && squads[squadIndex].Category != category
-		if squads[squadIndex].CreatureIDs == creatures && !isCategoryChanged {
+		isReleased := isEmptyPVP && squads[squadIndex].Category == "pvp"
+		if squads[squadIndex].CreatureIDs == creatures && !isCategoryChanged && !isReleased {
 			continue
 		}
 		if squads[squadIndex].IsLocked {
 			return false, ErrSquadLocked
 		}
 		squads[squadIndex].CreatureIDs = creatures
-		if isCategoryChanged {
+		if isReleased {
+			squads[squadIndex].Category = ""
+			squads[squadIndex].Slot = squads[squadIndex].ID
+		} else if isCategoryChanged {
 			squads[squadIndex].Category = category
 		}
 		isChanged = true
@@ -628,9 +657,9 @@ func (e *User) repairPVEDeck() bool {
 	return isChanged
 }
 
-// repairPVPDeck provisions the Arena destination without copying campaign
-// heroes. Build 103 suppresses a collection model if either deck assignment
-// is set, so a copied PVP assignment hides heroes removed from their PVE squad.
+// repairPVPDeck preserves populated Arena squads without exposing an empty
+// selectable deck. Build 103 crashes when the Arsenal opens a zero-member PVP
+// deck, so the first client-authored PVP assignment claims an unused slot.
 func (e *User) repairPVPDeck() bool {
 	if e == nil {
 		return false
@@ -663,23 +692,21 @@ func (e *User) repairPVPDeck() bool {
 				isChanged = true
 			}
 		}
+		if !hasCreatureID(squad.CreatureIDs[:]) {
+			squad.Category = ""
+			squad.Slot = squad.ID
+			isChanged = true
+			continue
+		}
 		if targetIndex < 0 || squad.ID == e.Account.DefaultDeckPVPID {
 			targetIndex = squadIndex
 		}
 	}
-	if e.Account.UnlockPVPDecks == 0 {
-		return isChanged
-	}
 	if targetIndex < 0 {
-		for squadIndex, squad := range e.Squads {
-			if squad.Category == "" && !squad.IsLocked &&
-				!hasCreatureID(squad.CreatureIDs[:]) {
-				targetIndex = squadIndex
-				break
-			}
+		if e.Account.DefaultDeckPVPID != e.Account.DefaultDeckPVEID {
+			e.Account.DefaultDeckPVPID = e.Account.DefaultDeckPVEID
+			isChanged = true
 		}
-	}
-	if targetIndex < 0 {
 		return isChanged
 	}
 	squad := &e.Squads[targetIndex]

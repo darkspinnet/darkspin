@@ -1856,6 +1856,13 @@ func (r campaignDamageRuntime) publishTransition(
 			return nil, fmt.Errorf("transitionHealthDrain: %w", err)
 		}
 		packets = append(packets, drainPackets...)
+		pullPackets, err := r.npc.stopGrapplingPulsarPullEffects(
+			sessionKey, generation, transition.defeatedObjectID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("transitionPullEffect: %w", err)
+		}
+		packets = append(packets, pullPackets...)
 		modifierPackets, err := r.npc.stopZelemEnergyBuff(
 			sessionKey, generation, transition.defeatedObjectID,
 		)
@@ -5493,6 +5500,15 @@ func (r campaignNPCActionRuntime) produceDronePunch(
 	if isOrcusHandled {
 		return orcusPackets, nil
 	}
+	orcusPackets, isOrcusHandled, orcusErr = r.produceOrcusConsume(
+		packet, sessionKey, generation, objectID, timestamp,
+	)
+	if orcusErr != nil {
+		return nil, fmt.Errorf("enemyPunchOrcusConsume: %w", orcusErr)
+	}
+	if isOrcusHandled {
+		return orcusPackets, nil
+	}
 	orcusPackets, isOrcusHandled, orcusErr = r.produceOrcusAbility(
 		packet, sessionKey, generation, objectID, timestamp,
 	)
@@ -7973,9 +7989,11 @@ type campaignNPCPushPullSchedule struct {
 const campaignNPCPullEffectDuration = 400 * time.Millisecond
 
 type campaignNPCPullEffectSchedule struct {
-	runtime  campaignNPCActionRuntime
-	objectID uint32
-	slot     uint8
+	runtime        campaignNPCActionRuntime
+	sessionKey     string
+	generation     uint64
+	sourceObjectID uint32
+	run            *campaignNPCPullEffectRun
 }
 
 type campaignNPCPushPullResumeSchedule struct {
@@ -7988,14 +8006,27 @@ func (e campaignNPCPushPullResumeSchedule) produce() ([][]byte, error) {
 }
 
 func (e campaignNPCPullEffectSchedule) remove() ([][]byte, error) {
+	if e.run == nil {
+		return nil, nil
+	}
+	e.runtime.registry.mutex.Lock()
+	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isCurrent := isFound && peerSession.generation == e.generation &&
+		peerSession.campaignNPCPullEffects[e.sourceObjectID] == e.run
+	if isCurrent {
+		delete(peerSession.campaignNPCPullEffects, e.sourceObjectID)
+		e.runtime.registry.sessions[e.sessionKey] = peerSession
+	}
+	e.runtime.registry.mutex.Unlock()
+	objectID, slot, isReleased := e.run.release()
+	if !isReleased {
+		return nil, nil
+	}
 	packet, err := npcraknet.ForcedMovementEffect(
-		e.objectID, e.slot, "", true,
+		objectID, slot, "", true,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("enemyPullEffectRemove: %w", err)
-	}
-	if !e.runtime.effectPool.Release(e.objectID, e.slot) {
-		return [][]byte{packet}, nil
 	}
 	return [][]byte{packet}, nil
 }
@@ -8163,35 +8194,18 @@ func (e campaignNPCPushPullSchedule) hit() ([][]byte, error) {
 	packets = append(packets, forcedPackets...)
 	if len(forcedPackets) != 0 && runtime.effectPool != nil &&
 		e.plan.Profile.ForcedMovementEffectName != "" {
-		effectSlot, isEffectAllocated :=
-			runtime.effectPool.Allocate(target.ObjectID)
-		if isEffectAllocated {
-			effectPacket, effectErr := npcraknet.ForcedMovementEffect(
-				target.ObjectID, effectSlot,
-				e.plan.Profile.ForcedMovementEffectName, false,
-			)
-			if effectErr != nil {
-				runtime.effectPool.Release(target.ObjectID, effectSlot)
-				runtime.registry.mutex.Unlock()
-				return nil, fmt.Errorf("enemyPullEffectStart: %w", effectErr)
-			}
+		effectPacket, effectErr := runtime.startGrapplingPulsarPullEffect(
+			e.packet, &current, e.sessionKey, e.generation,
+			e.objectID, target.ObjectID,
+			e.plan.Profile.ForcedMovementEffectName,
+			campaignNPCPullEffectDuration,
+		)
+		if effectErr != nil {
+			runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("enemyPullEffectStart: %w", effectErr)
+		}
+		if effectPacket != nil {
 			packets = append(packets, effectPacket)
-			cleanup := campaignNPCPullEffectSchedule{
-				runtime: runtime, objectID: target.ObjectID, slot: effectSlot,
-			}
-			cancel, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet,
-				[]raknet.ScheduledPacketProducer{{
-					Delay: campaignNPCPullEffectDuration, Produce: cleanup.remove,
-				}},
-			)
-			if scheduleErr == nil && cancel == nil {
-				scheduleErr = errors.New("nil cancellation")
-			}
-			if scheduleErr != nil {
-				runtime.effectPool.Release(target.ObjectID, effectSlot)
-				runtime.registry.mutex.Unlock()
-				return nil, fmt.Errorf("enemyPullEffectSchedule: %w", scheduleErr)
-			}
 		}
 	}
 	runtime.registry.sessions[e.sessionKey] = current

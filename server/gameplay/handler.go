@@ -440,6 +440,9 @@ func (r gameplayActionRuntime) dispatch(
 	if command.Common.Type == raknet.ActionDance {
 		return r.simple.dance(packet, command)
 	}
+	if command.Common.Type == raknet.ActionTaunt {
+		return r.simple.taunt(packet, command)
+	}
 	if command.Common.Type == raknet.ActionCancel {
 		return r.simple.cancel(
 			packet, command, isSessionFound,
@@ -536,7 +539,8 @@ func (r gameplayActionRuntime) reject(
 func isActionTerminalResponseRequired(command raknet.ActionCommand) bool {
 	switch command {
 	case raknet.ActionMovement, raknet.ActionStopMovement,
-		raknet.ActionSwitchCharacter, raknet.ActionCancel, raknet.ActionDance:
+		raknet.ActionSwitchCharacter, raknet.ActionCancel, raknet.ActionDance,
+		raknet.ActionTaunt:
 		return false
 	default:
 		return true
@@ -592,6 +596,44 @@ func (r gameplaySimpleActionRuntime) dance(
 		command.Common.ObjectID, danceAnimation,
 	)
 	return [][]byte{dancePacket}, nil
+}
+
+func (r gameplaySimpleActionRuntime) taunt(
+	packet raknet.Packet, command raknet.ActionCommandData,
+) ([][]byte, error) {
+	tauntNow := r.now()
+	r.registry.mutex.Lock()
+	peerSession, isFound := r.registry.sessions[packet.Address.String()]
+	isAccepted := isFound && peerSession.stage.IsDungeon() &&
+		command.Common.ObjectID == peerSession.deployedObjectID &&
+		isFiniteZonePosition(command.Common.Position) &&
+		peerSession.isAbilityReleaseReady(tauntNow) &&
+		peerSession.basicAttack == nil && peerSession.deployedHitPoint() > 0
+	var err error
+	if isAccepted {
+		err = peerSession.advancePlayerPosition(tauntNow, command.Common.Position)
+		if err == nil {
+			peerSession.isDancing = true
+			r.registry.sessions[packet.Address.String()] = peerSession
+		}
+	}
+	r.registry.mutex.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("tauntPosition: %w", err)
+	}
+	if !isAccepted {
+		r.logger.Printf("RakNet taunt rejected object=%d", command.Common.ObjectID)
+		return nil, nil
+	}
+	tauntPacket, err := raknet.MarshalApplication(raknet.SetAnimationStateMessage{
+		ObjectID: command.Common.ObjectID, State: util.HashID("emote_taunt_all"),
+		Timestamp: packet.SourceTime, Scale: 1,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("tauntMarshal: %w", err)
+	}
+	r.logger.Printf("RakNet taunt accepted object=%d", command.Common.ObjectID)
+	return [][]byte{tauntPacket}, nil
 }
 
 func (r gameplaySimpleActionRuntime) cancel(
@@ -5528,6 +5570,12 @@ func (p campaignPreparation) initialize(
 	if sceneryErr != nil {
 		return fmt.Errorf("statusChainScenery: %w", sceneryErr)
 	}
+	cryosSceneryMarkers, cryosDeleteObjectIDs, sceneryErr := director.CryosCaveScenery()
+	if sceneryErr != nil {
+		return fmt.Errorf("statusChainCryosScenery: %w", sceneryErr)
+	}
+	sceneryMarkers = append(sceneryMarkers, cryosSceneryMarkers...)
+	sceneryDeleteObjectIDs = append(sceneryDeleteObjectIDs, cryosDeleteObjectIDs...)
 	sceneryPlans, sceneryErr := zoneobject.PlanScenery(sceneryMarkers)
 	if sceneryErr != nil {
 		return fmt.Errorf("statusChainSceneryPlans: %w", sceneryErr)

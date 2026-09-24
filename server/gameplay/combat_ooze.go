@@ -179,8 +179,8 @@ func (r campaignNPCActionRuntime) produceVerdanthBasicOozeGrowth(
 		r.registry.mutex.Unlock()
 		return nil, true, nil
 	}
-	target, isTargetFound := peerSession.zone.NPCs().FirstOozeGrowthTarget(
-		source.Plan.ObjectID, profile.Range,
+	target, isTargetFound := peerSession.zone.NPCs().OozeGrowthTarget(
+		source.Plan.ObjectID,
 	)
 	if !isTargetFound {
 		r.registry.mutex.Unlock()

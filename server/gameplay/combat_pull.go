@@ -3,6 +3,7 @@ package gameplay
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
@@ -11,6 +12,67 @@ import (
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
+
+type campaignNPCPullEffectRun struct {
+	mutex      sync.Mutex
+	pool       *attachedEffectPool
+	objectID   uint32
+	slot       uint8
+	isReleased bool
+}
+
+func (e *campaignNPCPullEffectRun) release() (uint32, uint8, bool) {
+	if e == nil {
+		return 0, 0, false
+	}
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	if e.isReleased {
+		return 0, 0, false
+	}
+	e.isReleased = true
+	if e.pool != nil {
+		isReleased := e.pool.Release(e.objectID, e.slot)
+		if !isReleased {
+			// A concurrent actor cleanup may already have cleared this slot.
+		}
+	}
+	return e.objectID, e.slot, true
+}
+
+func (e *campaignNPCPullEffectRun) targets(objectID uint32) bool {
+	if e == nil || objectID == 0 {
+		return false
+	}
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	return !e.isReleased && e.objectID == objectID
+}
+
+func (s *gameplayPeerSession) stopCampaignNPCPullEffectsTargeting(
+	targetObjectID uint32,
+) ([][]byte, error) {
+	if s == nil || targetObjectID == 0 {
+		return nil, nil
+	}
+	packets := make([][]byte, 0)
+	for sourceObjectID, run := range s.campaignNPCPullEffects {
+		if !run.targets(targetObjectID) {
+			continue
+		}
+		delete(s.campaignNPCPullEffects, sourceObjectID)
+		objectID, slot, isReleased := run.release()
+		if !isReleased {
+			continue
+		}
+		packet, err := npcraknet.ForcedMovementEffect(objectID, slot, "", true)
+		if err != nil {
+			return nil, fmt.Errorf("pullerTargetEffect: %w", err)
+		}
+		packets = append(packets, packet)
+	}
+	return packets, nil
+}
 
 func (r campaignNPCActionRuntime) produceGrapplingPulsarPull(
 	packet raknet.Packet, sessionKey string, generation uint64,
@@ -68,10 +130,13 @@ func (r campaignNPCActionRuntime) rollbackGrapplingPulsarPull(
 }
 
 func (r campaignNPCActionRuntime) startGrapplingPulsarPullEffect(
-	packet raknet.Packet, objectID uint32, effectName string,
-	duration time.Duration,
+	packet raknet.Packet, peerSession *gameplayPeerSession,
+	sessionKey string, generation uint64, sourceObjectID uint32,
+	objectID uint32, effectName string, duration time.Duration,
 ) ([]byte, error) {
-	if r.effectPool == nil || objectID == 0 || effectName == "" || duration <= 0 {
+	if r.effectPool == nil || peerSession == nil || sessionKey == "" ||
+		generation == 0 || sourceObjectID == 0 || objectID == 0 ||
+		effectName == "" || duration <= 0 {
 		return nil, nil
 	}
 	effectSlot, isAllocated := r.effectPool.Allocate(objectID)
@@ -85,8 +150,16 @@ func (r campaignNPCActionRuntime) startGrapplingPulsarPullEffect(
 		r.effectPool.Release(objectID, effectSlot)
 		return nil, fmt.Errorf("pullerEffectStart: %w", err)
 	}
+	run := &campaignNPCPullEffectRun{
+		pool: r.effectPool, objectID: objectID, slot: effectSlot,
+	}
+	if peerSession.campaignNPCPullEffects == nil {
+		peerSession.campaignNPCPullEffects = make(map[uint32]*campaignNPCPullEffectRun)
+	}
+	peerSession.campaignNPCPullEffects[sourceObjectID] = run
 	cleanup := campaignNPCPullEffectSchedule{
-		runtime: r, objectID: objectID, slot: effectSlot,
+		runtime: r, sessionKey: sessionKey, generation: generation,
+		sourceObjectID: sourceObjectID, run: run,
 	}
 	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: duration, Produce: cleanup.remove,
@@ -95,10 +168,53 @@ func (r campaignNPCActionRuntime) startGrapplingPulsarPullEffect(
 		err = errors.New("nil cancellation")
 	}
 	if err != nil {
-		r.effectPool.Release(objectID, effectSlot)
+		delete(peerSession.campaignNPCPullEffects, sourceObjectID)
+		_, _, isReleased := run.release()
+		if !isReleased {
+			// The scheduler failed before another cleanup path could own the run.
+		}
 		return nil, fmt.Errorf("pullerEffectSchedule: %w", err)
 	}
 	return effectPacket, nil
+}
+
+func (r campaignNPCActionRuntime) stopGrapplingPulsarPullEffects(
+	sessionKey string, generation uint64, sourceObjectID uint32,
+) ([][]byte, error) {
+	r.registry.mutex.Lock()
+	peerSession, isFound := r.registry.sessions[sessionKey]
+	isCurrent := isFound && peerSession.generation == generation
+	if !isCurrent {
+		r.registry.mutex.Unlock()
+		return nil, nil
+	}
+	runs := make([]*campaignNPCPullEffectRun, 0)
+	for candidateKey, candidate := range r.registry.sessions {
+		if candidate.zone != peerSession.zone {
+			continue
+		}
+		run := candidate.campaignNPCPullEffects[sourceObjectID]
+		if run == nil {
+			continue
+		}
+		delete(candidate.campaignNPCPullEffects, sourceObjectID)
+		r.registry.sessions[candidateKey] = candidate
+		runs = append(runs, run)
+	}
+	r.registry.mutex.Unlock()
+	packets := make([][]byte, 0, len(runs))
+	for index, run := range runs {
+		objectID, slot, isReleased := run.release()
+		if !isReleased {
+			continue
+		}
+		packet, err := npcraknet.ForcedMovementEffect(objectID, slot, "", true)
+		if err != nil {
+			return nil, fmt.Errorf("pullerDefeatEffect[%d]: %w", index, err)
+		}
+		packets = append(packets, packet)
+	}
+	return packets, nil
 }
 
 func (r campaignNPCActionRuntime) applyGrapplingPulsarPull(
@@ -154,8 +270,9 @@ func (r campaignNPCActionRuntime) applyGrapplingPulsarPull(
 	}
 	if len(movementPackets) != 0 {
 		effectPacket, effectErr := r.startGrapplingPulsarPullEffect(
-			packet, liveTarget.ObjectID, plan.Profile.ForcedMovementEffectName,
-			plan.Profile.ForcedMovementDuration,
+			packet, &peerSession, sessionKey, generation,
+			plan.SourceObjectID, liveTarget.ObjectID,
+			plan.Profile.ForcedMovementEffectName, plan.Profile.ForcedMovementDuration,
 		)
 		if effectErr != nil {
 			r.logger.Printf(

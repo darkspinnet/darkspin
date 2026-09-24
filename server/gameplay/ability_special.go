@@ -1582,7 +1582,8 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			definition = randomAbility.Definition
 		}
 		targetPosition := command.Ability.TargetPosition
-		if !isReportedZonePosition(targetPosition) {
+		if definition.IsAlwaysUseCursorPosition ||
+			!isReportedZonePosition(targetPosition) {
 			targetPosition = command.Ability.CursorPosition
 		}
 		err = peerSession.advancePlayerPosition(abilityStartTime, command.Common.Position)
