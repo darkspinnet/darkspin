@@ -3,6 +3,7 @@
 ### 2026-09-24
 
 - Add cross-platform `-headless` Darkspinner presentation that opens the launcher in the default browser, serves it securely from `/launcher/` on the configured game port, and hands that listener from startup progress to the shared HTTP/Blaze server without requiring a Wails window.
+- Add a `-headless`-only system tray menu for reopening the browser launcher or shutting down Darkspinner cleanly.
 
 ### 2026-09-23
 

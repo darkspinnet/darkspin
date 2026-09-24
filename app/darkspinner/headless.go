@@ -87,11 +87,8 @@ func runHeadless(app *App) error {
 	app.startup(ctx)
 	defer app.shutdown(context.Background())
 	fmt.Println("DarkSpinner browser launcher:", address)
-	openErr := openSystemBrowser(address)
-	if openErr != nil {
-		fmt.Fprintln(os.Stderr, "DarkSpinner could not open the browser:", openErr)
-	}
-	<-ctx.Done()
+	runHeadlessTray(ctx, app, address, cancel)
+	cancel()
 	return nil
 }
 
