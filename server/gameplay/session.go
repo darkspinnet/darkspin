@@ -1160,6 +1160,25 @@ func (e *gameplayPeerSession) advancePlayerMovement(
 	now time.Time, reportedPosition raknet.Vector3,
 	goal raknet.Vector3, isStop bool, movementIncrease float32,
 ) (raknet.Vector3, raknet.Vector3, error) {
+	return e.advancePlayerMovementMode(
+		now, reportedPosition, goal, isStop, movementIncrease, false,
+	)
+}
+
+func (e *gameplayPeerSession) advancePlayerPursuitMovement(
+	now time.Time, reportedPosition raknet.Vector3,
+	goal raknet.Vector3, movementIncrease float32,
+) (raknet.Vector3, raknet.Vector3, error) {
+	return e.advancePlayerMovementMode(
+		now, reportedPosition, goal, false, movementIncrease, true,
+	)
+}
+
+func (e *gameplayPeerSession) advancePlayerMovementMode(
+	now time.Time, reportedPosition raknet.Vector3,
+	goal raknet.Vector3, isStop bool, movementIncrease float32,
+	isPursuit bool,
+) (raknet.Vector3, raknet.Vector3, error) {
 	if e.playerMotion == nil {
 		if !isFiniteZonePosition(reportedPosition) {
 			return raknet.Vector3{}, raknet.Vector3{},
@@ -1190,11 +1209,22 @@ func (e *gameplayPeerSession) advancePlayerMovement(
 	if e.zone != nil {
 		e.playerMotion.SetNavigation(e.zone.Navigation(), e.deployedCampaignFootprintRadius())
 	}
-	previous, position, err := e.playerMotion.Advance(
-		now, toSimPosition(reportedPosition), toSimPosition(goal),
-		isReportedZonePosition(reportedPosition), isStop,
-		correctionRange, moveSpeed,
-	)
+	previous := sim.Position{}
+	position := sim.Position{}
+	var err error
+	if isPursuit {
+		previous, position, err = e.playerMotion.AdvancePursuit(
+			now, toSimPosition(reportedPosition), toSimPosition(goal),
+			isReportedZonePosition(reportedPosition), false,
+			correctionRange, moveSpeed,
+		)
+	} else {
+		previous, position, err = e.playerMotion.Advance(
+			now, toSimPosition(reportedPosition), toSimPosition(goal),
+			isReportedZonePosition(reportedPosition), isStop,
+			correctionRange, moveSpeed,
+		)
+	}
 	if err != nil {
 		return raknet.Vector3{}, raknet.Vector3{},
 			fmt.Errorf("movementAdvance: %w", err)

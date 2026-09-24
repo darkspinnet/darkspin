@@ -26,6 +26,7 @@ func (e *Motion) SetNavigation(mesh *navigation.Mesh, footprintRadius float32) {
 func (e *Motion) setGoal(
 	movement *sim.LinearMovement, at time.Duration,
 	position sim.Position, goal sim.Position, speed float32,
+	projectionRange float32,
 ) (sim.Position, error) {
 	if e.navigation == nil {
 		result, err := movement.SetGoal(at, goal, speed)
@@ -44,7 +45,7 @@ func (e *Motion) setGoal(
 		navigation.Vec3(position), navigation.Vec3(goal),
 		navigation.PathOptions{
 			ProjectionOptions: navigation.ProjectionOptions{
-				PlanLayer: planLayer, MaxDistance: zonenavigation.ProjectionDistance,
+				PlanLayer: planLayer, MaxDistance: projectionRange,
 			},
 			MaxVisitedPolygon: maximumVisitedPolygon,
 		},

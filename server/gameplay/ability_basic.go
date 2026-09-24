@@ -143,14 +143,14 @@ func (e campaignPursuitProgressProducer) produce() ([][]byte, error) {
 		return append(packets, stopPackets...), nil
 	}
 	targetPosition := target.Plan.Position
-	_, playerPosition, err := peerSession.advancePlayerMovement(
+	_, playerPosition, err := peerSession.advancePlayerPursuitMovement(
 		now, raknet.Vector3{},
 		raknet.Vector3{
 			X: targetPosition.X,
 			Y: targetPosition.Y,
 			Z: targetPosition.Z,
 		},
-		false, e.runtime.registry.passiveMovementIncrease(peerSession),
+		e.runtime.registry.passiveMovementIncrease(peerSession),
 	)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
@@ -858,14 +858,14 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 				r.registry.mutex.Unlock()
 				return nil, fmt.Errorf("campaignBasicPursuitTransfer: %w", marshalErr)
 			}
-			_, _, movementErr := peerSession.advancePlayerMovement(
+			_, _, movementErr := peerSession.advancePlayerPursuitMovement(
 				abilityStartTime, peerSession.playerPosition,
 				raknet.Vector3{
 					X: targetEnemy.Plan.Position.X,
 					Y: targetEnemy.Plan.Position.Y,
 					Z: targetEnemy.Plan.Position.Z,
 				},
-				false, r.registry.passiveMovementIncrease(peerSession),
+				r.registry.passiveMovementIncrease(peerSession),
 			)
 			if movementErr != nil {
 				r.registry.mutex.Unlock()
@@ -973,16 +973,18 @@ func reconcileCampaignIdleTargetPosition(
 		return target, false, nil
 	}
 	if !isReportedZonePosition(cursorPosition) ||
-		!isFiniteZonePosition(cursorPosition) ||
-		!isReportedZonePosition(reportedPosition) ||
-		!isFiniteZonePosition(reportedPosition) {
+		!isFiniteZonePosition(cursorPosition) {
 		return target, false, nil
 	}
 	cursor := game.Vec3{
 		X: cursorPosition.X, Y: cursorPosition.Y, Z: cursorPosition.Z,
 	}
-	reported := game.Vec3{
-		X: reportedPosition.X, Y: reportedPosition.Y, Z: reportedPosition.Z,
+	reported := cursor
+	if isReportedZonePosition(reportedPosition) &&
+		isFiniteZonePosition(reportedPosition) {
+		reported = game.Vec3{
+			X: reportedPosition.X, Y: reportedPosition.Y, Z: reportedPosition.Z,
+		}
 	}
 	if zonegeometry.Distance(cursor, reported) > campaignIdleTargetCursorRadius ||
 		zonegeometry.Distance(actorPosition, reported) > maximumRange ||

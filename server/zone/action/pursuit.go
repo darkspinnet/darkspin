@@ -14,7 +14,7 @@ import (
 
 const maximumVisitedPolygon = 2048
 const PursuitTimeout = 8 * time.Second
-const npcPursuitProjectionDistance = 12
+const pursuitProjectionDistance = 12
 
 func NPCProjectPosition(
 	mesh *basenavigation.Mesh, position game.Vec3, footprintRadius float32,
@@ -35,7 +35,7 @@ func NPCProjectPosition(
 	projection, err := mesh.Project(
 		basenavigation.Vec3{X: position.X, Y: position.Y, Z: position.Z},
 		basenavigation.ProjectionOptions{
-			PlanLayer: planLayer, MaxDistance: npcPursuitProjectionDistance,
+			PlanLayer: planLayer, MaxDistance: pursuitProjectionDistance,
 		},
 	)
 	if err != nil {
@@ -70,7 +70,7 @@ func NPCDirectMovementDestination(
 		basenavigation.Vec3{X: desired.X, Y: desired.Y, Z: desired.Z},
 		basenavigation.PathOptions{
 			ProjectionOptions: basenavigation.ProjectionOptions{
-				PlanLayer: planLayer, MaxDistance: npcPursuitProjectionDistance,
+				PlanLayer: planLayer, MaxDistance: pursuitProjectionDistance,
 			},
 			MaxVisitedPolygon: maximumVisitedPolygon,
 		},
@@ -107,7 +107,7 @@ func NPCPathClear(
 		basenavigation.Vec3{X: target.X, Y: target.Y, Z: target.Z},
 		basenavigation.PathOptions{
 			ProjectionOptions: basenavigation.ProjectionOptions{
-				PlanLayer: planLayer, MaxDistance: npcPursuitProjectionDistance,
+				PlanLayer: planLayer, MaxDistance: pursuitProjectionDistance,
 			},
 			MaxVisitedPolygon: maximumVisitedPolygon,
 		},
@@ -182,7 +182,7 @@ func AdvancePursuitPath(
 		basenavigation.Vec3{X: target.X, Y: target.Y, Z: target.Z},
 		basenavigation.PathOptions{
 			ProjectionOptions: basenavigation.ProjectionOptions{
-				PlanLayer: planLayer, MaxDistance: npcPursuitProjectionDistance,
+				PlanLayer: planLayer, MaxDistance: pursuitProjectionDistance,
 			},
 			MaxVisitedPolygon: maximumVisitedPolygon,
 		},

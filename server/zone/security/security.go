@@ -199,10 +199,14 @@ func PublishState(
 	if objectID == 0 || !zonepopulation.IsFinitePosition(teleport.Source) {
 		return StatePublication{}, errors.New("security activation invalid")
 	}
-	effectName := effectPrefix(teleport) + "_inactive.ServerEventDef"
-	if isActive {
-		effectName = effectPrefix(teleport) + ".ServerEventDef"
+	// The packaged inactive effects still render a live portal loop. A locked
+	// route must remain dormant until its local encounter has been cleared.
+	if !isActive {
+		return StatePublication{
+			ObjectID: objectID, Position: teleport.Source,
+		}, nil
 	}
+	effectName := effectPrefix(teleport) + ".ServerEventDef"
 	effectNames := make([]string, 0, 2)
 	if isPowerUp {
 		effectNames = append(

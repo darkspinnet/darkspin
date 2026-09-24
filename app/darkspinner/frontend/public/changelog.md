@@ -2,6 +2,10 @@
 
 ### 2026-09-24
 
+- Keep mission 1-1 security portals visually dormant while enemies prevent their use, including when a new encounter spawns beside a portal.
+- Keep NPC positions synchronized during direct pursuit fallback so enemies remain damageable when an authored navigation route cannot be projected.
+- Let melee basic attacks pursue enemies near authored navigation edges instead of repeatedly rejecting the attack when the enemy position falls outside the normal movement projection range.
+- Reconcile an idle returning enemy from the player's clicked position when the client omits its target position, preventing the enemy from snapping toward a stale origin and becoming unhittable.
 - Add cross-platform `-headless` Darkspinner presentation that opens the launcher in the default browser, serves it securely from `/launcher/` on the configured game port, and hands that listener from startup progress to the shared HTTP/Blaze server without requiring a Wails window.
 - Add a `-headless`-only system tray menu for reopening the browser launcher or shutting down Darkspinner cleanly.
 
