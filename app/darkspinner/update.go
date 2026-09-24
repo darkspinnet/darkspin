@@ -16,8 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const (
@@ -60,7 +58,7 @@ func (a *App) prepareLauncherUpdate(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("updateDownload: %w", err)
 	}
-	err = replaceAndRestart(stagedPath, executablePath)
+	err = replaceAndRestart(stagedPath, executablePath, a.presentationArguments())
 	if err != nil {
 		_ = os.Remove(stagedPath)
 		return false, fmt.Errorf("updateReplace: %w", err)
@@ -71,9 +69,7 @@ func (a *App) prepareLauncherUpdate(ctx context.Context) (bool, error) {
 	a.emitStatusLocked()
 	a.mu.Unlock()
 	a.beginShutdown()
-	if a.ctx != nil {
-		runtime.Quit(a.ctx)
-	}
+	a.quit()
 	return true, nil
 }
 

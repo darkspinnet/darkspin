@@ -1,5 +1,9 @@
 # Changelog
 
+### 2026-09-24
+
+- Add cross-platform `-headless` Darkspinner presentation that opens the launcher in the default browser, serves it securely from `/launcher/` on the configured game port, and hands that listener from startup progress to the shared HTTP/Blaze server without requiring a Wails window.
+
 ### 2026-09-23
 
 - Register `/drop` with Fang's chat-command transport so `/drop create` reaches the server instead of being rejected by the native client.

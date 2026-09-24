@@ -191,7 +191,15 @@ type Options struct {
 	BlazePrivateKeyPath   string
 	TracePath             string
 	RuntimePath           string
+	HTTPRoutes            []HTTPRoute
 	workingDirectory      string
+}
+
+// HTTPRoute mounts an optional host-owned handler on the server's HTTP ports.
+type HTTPRoute struct {
+	Pattern string
+	Methods []string
+	Handler http.Handler
 }
 
 // Environment contains the normalized paths and detected game version used by
@@ -709,6 +717,19 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("gamesRegister: %w", err)
 	}
 	router := recaphttp.NewRouter()
+	for index, route := range options.HTTPRoutes {
+		if route.Handler == nil {
+			return nil, fmt.Errorf("httpRoute[%d]: nil handler", index)
+		}
+		err = router.Add(route.Pattern, route.Methods, func(
+			writer http.ResponseWriter, request *http.Request, _ *recaphttp.URI,
+		) {
+			route.Handler.ServeHTTP(writer, request)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("httpRoute[%d]: %w", index, err)
+		}
+	}
 	if localAuthHandler != nil {
 		for _, route := range []string{
 			"/api/desktop/register", "/api/desktop/start", "/api/desktop/exchange",

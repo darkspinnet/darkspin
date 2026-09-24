@@ -79,13 +79,8 @@ type options struct {
 }
 
 func main() {
-	err := configureWebViewEnvironment()
-	if err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner display setup failed:", err)
-		os.Exit(1)
-	}
 	privilegeErr := ensureStandardUser()
-	err = configureDarkSpinnerVersion()
+	err := configureDarkSpinnerVersion()
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner version failed:", err)
 		os.Exit(1)
@@ -104,6 +99,14 @@ func main() {
 			_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner detached launch failed:", err)
 		}
 		return
+	}
+	isHeadless := hasLaunchArgument(os.Args[1:], "headless")
+	if !isHeadless {
+		err = configureWebViewEnvironment()
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner display setup failed:", err)
+			os.Exit(1)
+		}
 	}
 	releaseInstance, isExistingInstance, err := appwindow.Acquire(appwindow.InstanceOptions{
 		MutexName: `Local\darkspin-darkspinner-single-instance-v1`,
@@ -128,12 +131,20 @@ func main() {
 		_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner startup failed:", err)
 		os.Exit(1)
 	}
-	app := NewApp(removeInstallationArguments(os.Args[1:]))
+	app := NewApp(removePresentationArguments(removeInstallationArguments(os.Args[1:])))
 	if privilegeErr != nil {
 		app.startupError = privilegeLaunchMessage(privilegeErr)
 	}
 	if integrationErr != nil {
 		app.integrationError = integrationErr.Error()
+	}
+	if isHeadless {
+		err = runHeadless(app)
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner browser mode failed:", err)
+			os.Exit(1)
+		}
+		return
 	}
 	err = wails.Run(&wailsoptions.App{
 		Title:            "DarkSpinner v" + Version,
@@ -156,6 +167,17 @@ func main() {
 		_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner failed:", err)
 		os.Exit(1)
 	}
+}
+
+func removePresentationArguments(arguments []string) []string {
+	filteredArguments := make([]string, 0, len(arguments))
+	for _, argument := range arguments {
+		if argument == "--headless" || argument == "-headless" || argument == "--headless=true" {
+			continue
+		}
+		filteredArguments = append(filteredArguments, argument)
+	}
+	return filteredArguments
 }
 
 func privilegeLaunchMessage(err error) string {

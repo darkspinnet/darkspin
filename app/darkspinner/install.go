@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const (
@@ -98,14 +96,12 @@ func (a *App) RestartLauncher() error {
 	if err != nil {
 		return fmt.Errorf("restartExecutable: %w", err)
 	}
-	err = restartAfterExit(executablePath)
+	err = restartAfterExit(executablePath, a.presentationArguments())
 	if err != nil {
 		return fmt.Errorf("restartStart: %w", err)
 	}
 	a.beginShutdown()
-	if a.ctx != nil {
-		runtime.Quit(a.ctx)
-	}
+	a.quit()
 	return nil
 }
 
@@ -117,10 +113,10 @@ func (a *App) OpenSteamDemoInstall() error {
 	if !isSteamInstalled {
 		return errors.New("Steam is not installed")
 	}
-	if a.ctx == nil {
-		return errors.New("launcher is not ready")
+	err := a.openURL("steam://install/" + steamDemoAppID)
+	if err != nil {
+		return fmt.Errorf("steamOpen: %w", err)
 	}
-	runtime.BrowserOpenURL(a.ctx, "steam://install/"+steamDemoAppID)
 	return nil
 }
 
@@ -150,13 +146,19 @@ func (a *App) RelocateToGameRoot(req RelocationRequest) error {
 		return errors.New("DarkSpinner is already beside the game")
 	}
 	restartArguments := relocationArguments(req)
+	restartArguments = append(restartArguments, a.presentationArguments()...)
 	err = relocateAndRestart(sourcePath, destinationPath, restartArguments)
 	if err != nil {
 		return fmt.Errorf("relocateStart: %w", err)
 	}
 	a.beginShutdown()
-	if a.ctx != nil {
-		runtime.Quit(a.ctx)
+	a.quit()
+	return nil
+}
+
+func (e *App) presentationArguments() []string {
+	if e.isHeadless {
+		return []string{"--headless"}
 	}
 	return nil
 }

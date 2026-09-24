@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	appwindow "github.com/darkspinnet/darkspin/window"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const (
@@ -131,9 +130,7 @@ func (e *App) UninstallDarkspinner() error {
 		return fmt.Errorf("uninstallSchedule: %w", err)
 	}
 	e.beginShutdown()
-	if e.ctx != nil {
-		runtime.Quit(e.ctx)
-	}
+	e.quit()
 	return nil
 }
 

@@ -287,6 +287,7 @@ func (a *App) startGameServer(ctx context.Context, pathSet *spinnerPathSet) erro
 		Logger:      logger,
 		RuntimePath: pathSet.runtimePath,
 		TracePath:   "server.jsonl",
+		HTTPRoutes:  a.launcherHTTPRoutes(),
 	})
 	if err != nil {
 		return fmt.Errorf("serverCreate: %w", err)
@@ -301,6 +302,12 @@ func (a *App) startGameServer(ctx context.Context, pathSet *spinnerPathSet) erro
 		a.log("Starter loadout reconciliation remains queued: " + reconcileErr.Error())
 	} else if completedProfileCount != 0 {
 		a.log(fmt.Sprintf("Completed %d queued starter loadouts", completedProfileCount))
+	}
+	if a.beforeServerStart != nil {
+		err = a.beforeServerStart()
+		if err != nil {
+			return fmt.Errorf("listenerHandoff: %w", err)
+		}
 	}
 	go func() {
 		defer close(serverDone)
