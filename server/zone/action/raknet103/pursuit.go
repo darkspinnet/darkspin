@@ -79,14 +79,17 @@ func ChargeMove(
 	objectID uint32, source game.Vec3, destination game.Vec3,
 	targetObjectID uint32, target game.Vec3,
 ) ([][]byte, error) {
-	if objectID == 0 || targetObjectID == 0 ||
-		!isFinitePosition(source) || !isFinitePosition(destination) ||
+	if objectID == 0 || !isFinitePosition(source) || !isFinitePosition(destination) ||
 		!isFinitePosition(target) {
 		return nil, errors.New("invalid charge move")
 	}
 	facing := pursuitDirection(source, destination)
+	goalFlags := uint32(0x01)
+	if targetObjectID != 0 {
+		goalFlags |= 0x40
+	}
 	movePacket, err := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
-		ObjectID: objectID, GoalFlags: 0x41,
+		ObjectID: objectID, GoalFlags: goalFlags,
 		GoalPosition:        vector(destination),
 		Facing:              facing,
 		DesiredStopDistance: 0.1,

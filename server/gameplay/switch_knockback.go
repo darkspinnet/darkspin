@@ -96,6 +96,16 @@ func (r gameplaySwitchRuntime) heroSwapArrivalKnockback(
 		if !isDestinationFound {
 			continue
 		}
+		interruptionPackets, err :=
+			r.registry.interruptCampaignNPCForForcedMovementLocked(
+				sessionKey, &peerSession, target.Plan.ObjectID,
+			)
+		if err != nil {
+			return packets, fmt.Errorf(
+				"swapKnockbackInterrupt[%d]: %w", target.Plan.ObjectID, err,
+			)
+		}
+		packets = append(packets, interruptionPackets...)
 		plan := zonenpc.AttackPlan{
 			SourceObjectID: targetObjectID,
 			TargetObjectID: target.Plan.ObjectID,

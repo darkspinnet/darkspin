@@ -1360,7 +1360,7 @@ func (m *UserManager) PartInventoryStatus(
 	defer user.mu.RUnlock()
 	status := PartInventoryStatus{Capacity: user.Account.UnlockInventoryIdentify}
 	for index := range user.Parts {
-		if user.Parts[index].MarketStatus == PartMarketOwned {
+		if user.Parts[index].OccupiesInventorySlot() {
 			status.OwnedCount++
 		}
 	}
@@ -1386,7 +1386,7 @@ func (m *UserManager) GrantPartWithinCapacity(ctx context.Context, userID int64,
 	capacity := user.Account.UnlockInventoryIdentify
 	ownedCount := uint32(0)
 	for index := range user.Parts {
-		if user.Parts[index].MarketStatus == PartMarketOwned {
+		if user.Parts[index].OccupiesInventorySlot() {
 			ownedCount++
 		}
 	}

@@ -284,7 +284,7 @@ func (m *UserManager) CommitCampaignCashOut(
 	capacity := user.Account.UnlockInventoryIdentify
 	ownedCount := uint64(0)
 	for index := range user.Parts {
-		if user.Parts[index].MarketStatus == PartMarketOwned {
+		if user.Parts[index].OccupiesInventorySlot() {
 			ownedCount++
 		}
 	}

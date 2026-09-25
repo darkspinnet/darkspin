@@ -2,12 +2,15 @@ package npc
 
 import "time"
 
-const MutationAgentTransformDuration = time.Second
+const (
+	MutationAgentNounName          = "MutationAgent.Noun"
+	MutationAgentTransformDuration = time.Second
+)
 
-// MutationAgentActionProfile keeps the controller stationary while its
-// selected escort performs the authored transform. The population planner
-// retains a renderable escort body because MutationAgent.Noun has no render
-// record, while this attached hostile aura preserves its packaged presentation.
+// MutationAgentActionProfile keeps an explicitly spawned developer actor
+// stationary. The developer spawn adapter supplies a renderable body because
+// MutationAgent.Noun has no render record, while this attached hostile aura
+// preserves its packaged presentation.
 func MutationAgentActionProfile() ActionProfile {
 	return ActionProfile{
 		Family: ActionUnknown, AbilityName: "MutationAgentPassive",

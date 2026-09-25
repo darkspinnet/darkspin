@@ -1341,6 +1341,10 @@ func (s *Session) Resurrect(
 	npc.TargetOwner = ActionOwner{}
 	npc.IsActionStarted = false
 	npc.ActionOwner = ActionOwner{}
+	npc.ActionGeneration++
+	if npc.ActionGeneration == 0 {
+		npc.ActionGeneration = 1
+	}
 	npc.status = status{}
 	if npc.IsCorruptorStageTwo {
 		profile, isProfileFound := scaldronBossChainLightningProfile(npc.Plan.NounName)

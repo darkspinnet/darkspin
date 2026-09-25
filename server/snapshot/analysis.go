@@ -458,10 +458,14 @@ func analyzeTimeline(report *analysisReport, events []replayEvent) {
 	flowsByObjectID := make(map[uint32]lifecycleCursor)
 	lifecycleFindings := make([]analysisFinding, 0)
 	serverEmitsByDigest := make(map[string][]replayEvent)
+	clientApplicationsByDigest := make(map[string][]replayEvent)
 	clientApplyCounts := make(map[uint32][2]int)
 	for _, event := range events {
 		switch event.Kind {
 		case "application_emit":
+			if event.PacketID < uint8(raknet.HelloPlayerRequest) {
+				continue
+			}
 			report.Metrics.ApplicationEmitCount++
 			if event.Direction == raknet.ObservationServerToClient && event.PayloadSHA256 != "" {
 				serverEmitsByDigest[event.PayloadSHA256] = append(
@@ -472,7 +476,11 @@ func analyzeTimeline(report *analysisReport, events []replayEvent) {
 			report.Metrics.ApplicationDeliverCount++
 		case "application_receive":
 			report.Metrics.ClientApplicationCount++
-			matchClientApplication(report, serverEmitsByDigest, event)
+			if event.PayloadSHA256 != "" {
+				clientApplicationsByDigest[event.PayloadSHA256] = append(
+					clientApplicationsByDigest[event.PayloadSHA256], event,
+				)
+			}
 		case "locomotion_snapshot":
 			if event.ObjectID == 0 {
 				continue
@@ -509,9 +517,16 @@ func analyzeTimeline(report *analysisReport, events []replayEvent) {
 		lifecycleFindings = analyzeLifecycleEvent(lifecycleFindings, flowsByObjectID, event)
 	}
 	if report.Metrics.ClientApplicationCount > 0 {
+		matchedStartOffsetMS, isMatchedStartFound := matchClientApplications(
+			report, serverEmitsByDigest, clientApplicationsByDigest,
+		)
 		for _, emits := range serverEmitsByDigest {
 			for _, event := range emits {
 				if event.OffsetMS != nil && *event.OffsetMS > -500 {
+					continue
+				}
+				if isMatchedStartFound && event.OffsetMS != nil &&
+					*event.OffsetMS < matchedStartOffsetMS {
 					continue
 				}
 				report.Metrics.ServerClientMissingCount++
@@ -1020,30 +1035,48 @@ func recommendationsForCause(cause string) []string {
 	}
 }
 
-func matchClientApplication(
-	report *analysisReport, serverEmitsByDigest map[string][]replayEvent, client replayEvent,
-) {
-	if client.PayloadSHA256 == "" {
-		return
+func matchClientApplications(
+	report *analysisReport, serverEmitsByDigest map[string][]replayEvent,
+	clientApplicationsByDigest map[string][]replayEvent,
+) (float64, bool) {
+	matchedStartOffsetMS := float64(0)
+	isMatchedStartFound := false
+	for digest, emits := range serverEmitsByDigest {
+		applications := clientApplicationsByDigest[digest]
+		matchCount := min(len(emits), len(applications))
+		if matchCount == 0 {
+			continue
+		}
+		// The aligned client clock may place a receive slightly before its
+		// server emit in the merged timeline. Match complete digest histories
+		// from the shared snapshot boundary instead of depending on traversal
+		// order, which otherwise reports delivered packets as missing.
+		emitStart := len(emits) - matchCount
+		applicationStart := len(applications) - matchCount
+		for index := range matchCount {
+			server := emits[emitStart+index]
+			client := applications[applicationStart+index]
+			if server.OffsetMS != nil &&
+				(!isMatchedStartFound || *server.OffsetMS < matchedStartOffsetMS) {
+				matchedStartOffsetMS = *server.OffsetMS
+				isMatchedStartFound = true
+			}
+			if server.OffsetMS == nil || client.OffsetMS == nil {
+				continue
+			}
+			delayMS := *client.OffsetMS - *server.OffsetMS
+			if delayMS > report.Metrics.MaximumClientDelayMS {
+				report.Metrics.MaximumClientDelayMS = delayMS
+			}
+		}
+		report.Metrics.ServerClientMatchCount += matchCount
+		if emitStart == 0 {
+			delete(serverEmitsByDigest, digest)
+			continue
+		}
+		serverEmitsByDigest[digest] = emits[:emitStart]
 	}
-	emits := serverEmitsByDigest[client.PayloadSHA256]
-	if len(emits) == 0 {
-		return
-	}
-	server := emits[0]
-	if len(emits) == 1 {
-		delete(serverEmitsByDigest, client.PayloadSHA256)
-	} else {
-		serverEmitsByDigest[client.PayloadSHA256] = emits[1:]
-	}
-	report.Metrics.ServerClientMatchCount++
-	if server.OffsetMS == nil || client.OffsetMS == nil {
-		return
-	}
-	delayMS := *client.OffsetMS - *server.OffsetMS
-	if delayMS > report.Metrics.MaximumClientDelayMS {
-		report.Metrics.MaximumClientDelayMS = delayMS
-	}
+	return matchedStartOffsetMS, isMatchedStartFound
 }
 
 func lifecycleFinding(event replayEvent, suffix string, title string) analysisFinding {

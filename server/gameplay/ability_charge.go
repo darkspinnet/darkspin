@@ -28,20 +28,25 @@ type heroChargeModifier struct {
 }
 
 type heroChargeRun struct {
-	mutex        sync.Mutex
-	npc          *zonenpc.Session
-	companion    *zonecompanion.Session
-	modifierPool *modifierPool
-	assetName    string
-	modifier     []heroChargeModifier
-	petPursuit   zonecompanion.Pursuit
-	cancel       raknet.CancelSchedule
-	isCleaned    bool
+	mutex            sync.Mutex
+	npc              *zonenpc.Session
+	companion        *zonecompanion.Session
+	modifierPool     *modifierPool
+	effectPool       *attachedEffectPool
+	assetName        string
+	modifier         []heroChargeModifier
+	petPursuit       zonecompanion.Pursuit
+	effectPackets    [][]byte
+	effectObjectID   uint32
+	effectSlot       uint8
+	isEffectAttached bool
+	cancel           raknet.CancelSchedule
+	isCleaned        bool
 }
 
-func (e *heroChargeRun) Stop() {
+func (e *heroChargeRun) Stop() [][]byte {
 	if e == nil {
-		return
+		return nil
 	}
 	e.mutex.Lock()
 	cancel := e.cancel
@@ -50,23 +55,24 @@ func (e *heroChargeRun) Stop() {
 	if cancel != nil {
 		cancel()
 	}
-	e.cleanup()
+	_, packets := e.cleanup()
+	return packets
 }
 
 // Interrupt stops a charge which has not reached impact. Once modifiers have
 // been published, their scheduled deletion remains authoritative even if the
 // player starts another interruptible action.
-func (e *heroChargeRun) Interrupt() {
+func (e *heroChargeRun) Interrupt() [][]byte {
 	if e == nil {
-		return
+		return nil
 	}
 	e.mutex.Lock()
 	isImpacted := len(e.modifier) != 0
 	e.mutex.Unlock()
 	if isImpacted {
-		return
+		return nil
 	}
-	e.Stop()
+	return e.Stop()
 }
 
 func (e *heroChargeRun) addModifier(modifier heroChargeModifier) bool {
@@ -83,14 +89,33 @@ func (e *heroChargeRun) addModifier(modifier heroChargeModifier) bool {
 	return true
 }
 
-func (e *heroChargeRun) cleanup() []heroChargeModifier {
+func (e *heroChargeRun) releaseEffect() [][]byte {
 	if e == nil {
 		return nil
 	}
 	e.mutex.Lock()
+	if !e.isEffectAttached {
+		e.mutex.Unlock()
+		return nil
+	}
+	e.isEffectAttached = false
+	packets := clonePendingPackets(e.effectPackets)
+	e.mutex.Unlock()
+	if e.effectPool != nil {
+		e.effectPool.Release(e.effectObjectID, e.effectSlot)
+	}
+	return packets
+}
+
+func (e *heroChargeRun) cleanup() ([]heroChargeModifier, [][]byte) {
+	if e == nil {
+		return nil, nil
+	}
+	effectPackets := e.releaseEffect()
+	e.mutex.Lock()
 	defer e.mutex.Unlock()
 	if e.isCleaned {
-		return nil
+		return nil, effectPackets
 	}
 	e.isCleaned = true
 	if e.petPursuit.ObjectID != 0 && e.companion != nil {
@@ -113,7 +138,7 @@ func (e *heroChargeRun) cleanup() []heroChargeModifier {
 		}
 		_ = e.modifierPool.Release(current.instanceID)
 	}
-	return modifier
+	return modifier, effectPackets
 }
 
 type heroChargeSchedule struct {
@@ -681,6 +706,9 @@ func (e heroChargeSchedule) release() ([][]byte, error) {
 		return nil, nil
 	}
 	packets := make([][]byte, 0, 2)
+	if e.definition.Name == "PhantomCharge" {
+		packets = append(packets, e.run.releaseEffect()...)
+	}
 	if e.definition.Name == "EntanglingRush" {
 		animationPacket, err := abilityraknet.AnimationReset(
 			e.sourceObjectID,
@@ -717,8 +745,9 @@ func (e heroChargeSchedule) finish() ([][]byte, error) {
 	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
-	modifier := e.run.cleanup()
+	modifier, effectPackets := e.run.cleanup()
 	packets := make([][]byte, 0, len(modifier))
+	packets = append(packets, effectPackets...)
 	for _, current := range modifier {
 		packet, err := effectraknet.ModifierDelete(
 			current.targetObjectID, current.instanceID,
@@ -748,7 +777,16 @@ func (e heroChargeSchedule) fail(scheduleErr error) {
 	if !isCurrent {
 		return
 	}
-	e.run.Stop()
+	cleanupPackets := e.run.Stop()
+	if len(cleanupPackets) != 0 {
+		publishErr := peerSession.publishPackets(cleanupPackets)
+		if publishErr != nil {
+			e.runtime.logger.Printf(
+				"RakNet Phantom Charge cleanup omitted for %s: %v",
+				e.sessionKey, publishErr,
+			)
+		}
+	}
 	e.runtime.logger.Printf(
 		"RakNet hero charge stopped after schedule failure for %s: %v",
 		e.sessionKey, scheduleErr,
@@ -758,7 +796,10 @@ func (e heroChargeSchedule) fail(scheduleErr error) {
 func (e heroChargeSchedule) damageTargets(npc *zonenpc.Session) []zonenpc.Snapshot {
 	if e.definition.Name == "EntanglingRush" {
 		target, isFound := npc.NPC(e.targetObjectID)
-		if !isFound || target.IsDefeated || target.HitPoint <= 0 {
+		if !isFound || target.IsDefeated || target.HitPoint <= 0 ||
+			target.Faction != zonenpc.FactionNonPlayerAligned ||
+			game.Vec3(e.targetPosition).Sub(target.Plan.Position).Length() >
+				e.definition.Radius+target.Plan.NPCProfile.FootprintRadius {
 			return nil
 		}
 		return []zonenpc.Snapshot{target}
@@ -944,10 +985,16 @@ func (r campaignAbilityCommandRuntime) handleHeroCharge(
 		return req.reject("charge definition or runtime unavailable")
 	}
 	target, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
-	if !isTargetFound || target.IsDefeated || target.HitPoint <= 0 ||
-		target.Faction != zonenpc.FactionNonPlayerAligned {
+	isTargetAvailable := isTargetFound && !target.IsDefeated && target.HitPoint > 0 &&
+		target.Faction == zonenpc.FactionNonPlayerAligned
+	isCursorDirected := definition.Name == "EntanglingRush" ||
+		definition.Name == "PhantomCharge"
+	if !isTargetAvailable && !isCursorDirected {
 		r.registry.mutex.Unlock()
 		return req.reject("charge target unavailable")
+	}
+	if !isTargetAvailable || definition.Name == "PhantomCharge" {
+		targetObjectID = 0
 	}
 	projected, err := zoneability.ProjectTiming(creature, definition)
 	if err != nil {
@@ -965,7 +1012,16 @@ func (r campaignAbilityCommandRuntime) handleHeroCharge(
 		}
 	}
 	startPosition := peerSession.playerPosition
-	targetPosition := raknet.Vector3(target.Plan.Position)
+	targetPosition := req.command.Ability.CursorPosition
+	if !isCursorDirected {
+		targetPosition = raknet.Vector3(target.Plan.Position)
+	} else if !isReportedZonePosition(targetPosition) {
+		targetPosition = req.command.Ability.TargetPosition
+	}
+	if !isReportedZonePosition(targetPosition) || !isFiniteZonePosition(targetPosition) {
+		r.registry.mutex.Unlock()
+		return req.reject("charge position unavailable")
+	}
 	distance := chargeDistance(startPosition, targetPosition)
 	admissionRange := heroAbilityAdmissionRange(creature, projected)
 	if distance > admissionRange {
@@ -1047,9 +1103,13 @@ func (r campaignAbilityCommandRuntime) handleHeroCharge(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("heroChargeAnimation: %w", err)
 	}
+	movementTargetPosition := target.Plan.Position
+	if projected.Name == "PhantomCharge" {
+		movementTargetPosition = game.Vec3(targetPosition)
+	}
 	movePackets, err := actionraknet.ChargeMove(
 		req.command.Common.ObjectID, game.Vec3(startPosition),
-		game.Vec3(destination), targetObjectID, target.Plan.Position,
+		game.Vec3(destination), targetObjectID, movementTargetPosition,
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -1111,10 +1171,32 @@ func (r campaignAbilityCommandRuntime) handleHeroCharge(
 			cleanupDelay, petImpactDelay+projected.StatusDuration,
 		)
 	}
+	var chargeEffectPacket []byte
+	var chargeEffectPackets [][]byte
+	var chargeEffectSlot uint8
+	if projected.Name == "PhantomCharge" {
+		chargeEffectPacket, chargeEffectPackets, chargeEffectSlot, err =
+			preparePhantomChargeEffect(
+				r.effectPool, req.command.Common.ObjectID,
+				projected.ActivationEffectName,
+				req.packet.SourceTime+uint64(finishDelay/time.Millisecond),
+			)
+		if err != nil {
+			_ = peerSession.setDeployedManaPoints(previousManaPoint)
+			peerSession.abilityCooldownSession().Rollback(cooldownReservation)
+			peerSession.abilityReleaseSession().Rollback(releaseReservation)
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("heroChargePhantomEffect: %w", err)
+		}
+	}
 	run := &heroChargeRun{
 		npc: peerSession.zone.NPCs(), companion: peerSession.zone.Companion(),
 		modifierPool: r.modifierPool, assetName: projected.Name,
-		petPursuit: petPursuit,
+		effectPool: r.effectPool, petPursuit: petPursuit,
+		effectPackets:    chargeEffectPackets,
+		effectObjectID:   req.command.Common.ObjectID,
+		effectSlot:       chargeEffectSlot,
+		isEffectAttached: chargeEffectPacket != nil,
 	}
 	peerSession.heroCharge = run
 	generation := peerSession.generation
@@ -1167,7 +1249,11 @@ func (r campaignAbilityCommandRuntime) handleHeroCharge(
 	packets := [][]byte{ackPacket, cooldownPacket, manaPacket, animationPacket, speedPacket}
 	packets = append(packets, movePackets...)
 	packets = append(packets, petPackets...)
+	if chargeEffectPacket != nil {
+		packets = append(packets, chargeEffectPacket)
+	}
 	if projected.Name != "BioRandom2" && projected.Name != "EntanglingRush" &&
+		projected.Name != "PhantomCharge" &&
 		(projected.ActivationEffectName != "" || projected.MuzzleEffectName != "") {
 		assetName := projected.ActivationEffectName
 		if assetName == "" {
@@ -1184,6 +1270,41 @@ func (r campaignAbilityCommandRuntime) handleHeroCharge(
 		packets = append(packets, effectPacket)
 	}
 	return packets, nil
+}
+
+func preparePhantomChargeEffect(
+	effectPool *attachedEffectPool, objectID uint32, effectName string,
+	finishTimestamp uint64,
+) ([]byte, [][]byte, uint8, error) {
+	if effectPool == nil || objectID == 0 || effectName == "" {
+		return nil, nil, 0, errors.New("phantom charge effect unavailable")
+	}
+	effectSlot, isAllocated := effectPool.Allocate(objectID)
+	if !isAllocated {
+		return nil, nil, 0, errors.New("phantom charge effect slot unavailable")
+	}
+	startPacket, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
+		Slot: effectSlot + 1, IsForceAttached: true,
+		Asset: util.HashID(effectName), ObjectID: objectID,
+	})
+	if err != nil {
+		effectPool.Release(objectID, effectSlot)
+		return nil, nil, 0, fmt.Errorf("phantomEffectStart: %w", err)
+	}
+	removePacket, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
+		Slot: effectSlot + 1, IsRemovalRequested: true,
+		IsHardStop: true, ObjectID: objectID,
+	})
+	if err != nil {
+		effectPool.Release(objectID, effectSlot)
+		return nil, nil, 0, fmt.Errorf("phantomEffectRemove: %w", err)
+	}
+	animationPacket, err := abilityraknet.AnimationReset(objectID, finishTimestamp)
+	if err != nil {
+		effectPool.Release(objectID, effectSlot)
+		return nil, nil, 0, fmt.Errorf("phantomAnimationReset: %w", err)
+	}
+	return startPacket, [][]byte{removePacket, animationPacket}, effectSlot, nil
 }
 
 func heroChargeSpeedPacket(objectID uint32, speed float32) ([]byte, error) {

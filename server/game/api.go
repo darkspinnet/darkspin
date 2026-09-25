@@ -818,9 +818,16 @@ func (a *API) accountProfileViewResponse(
 					creatures = append(creatures, a.accountCreatureNode(creature))
 				}
 			}
+			category := squad.Category
+			if category == "" {
+				// Empty categories are internal unassigned records that may later
+				// be claimed by Arena. Build 103 still requires them to identify
+				// as PVE while rendering the campaign squad carousel.
+				category = "pve"
+			}
 			decks = append(decks, xmlNode("deck",
 				xmlText("name", squad.Name),
-				xmlText("category", squad.Category),
+				xmlText("category", category),
 				xmlText("id", number(squad.ID)),
 				xmlText("slot", number(squad.Slot)),
 				xmlText("locked", boolNumber(squad.IsLockedFor(view.Account))),

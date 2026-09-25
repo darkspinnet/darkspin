@@ -723,13 +723,14 @@ func (r campaignMovementCommandRuntime) handle(
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("moveCampaignHero: %w", syncErr)
 		}
-		lavaPackets, lavaStatDelta, lavaErr := peerSession.applyCryosLavaContact(
+		lavaContactPackets, lavaStatDelta, lavaErr := peerSession.applyCampaignLavaContact(
 			current, packet.SourceTime, movementNow,
 		)
 		if lavaErr != nil {
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("moveCampaignLava: %w", lavaErr)
 		}
+		lavaPackets = append(lavaPackets, lavaContactPackets...)
 		peerSession.queueStatDelta(lavaStatDelta)
 		companionFollows, companionFollowErr = peerSession.zone.Companion().FollowOwner(
 			peerSession.binding.UserID, peerSession.generation,
@@ -1065,7 +1066,11 @@ func (r campaignMovementCommandRuntime) handle(
 		packet.SourceTime,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("moveCampaignCompanionAttack: %w", err)
+		r.logger.Printf(
+			"RakNet campaign companion attack omitted after movement remote=%s: %v",
+			packet.Address, err,
+		)
+		companionAttackPackets = nil
 	}
 	// These side effects ride on a movement response, which deliberately skips
 	// the general action broadcast. Hero motion has its own zone projection;

@@ -96,7 +96,7 @@ func (m *UserManager) ApplyVendorTransactions(
 			}
 			ownedCount := uint32(0)
 			for index := range user.Parts {
-				if user.Parts[index].MarketStatus == PartMarketOwned {
+				if user.Parts[index].OccupiesInventorySlot() {
 					ownedCount++
 				}
 			}
@@ -171,7 +171,7 @@ func (m *UserManager) ApplyVendorTransactions(
 			}
 			ownedCount := uint32(0)
 			for index := range user.Parts {
-				if user.Parts[index].MarketStatus == PartMarketOwned {
+				if user.Parts[index].OccupiesInventorySlot() {
 					ownedCount++
 				}
 			}

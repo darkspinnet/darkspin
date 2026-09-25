@@ -104,7 +104,8 @@ func StartPoisonCloud(simulator *Simulator, scope CancelScope, input PoisonCloud
 		input.ProjectileNoun == "" ||
 		input.TrailEffectName == "" || input.ImpactEffectName == "" ||
 		(input.Damage <= 0 && !input.IsControl) ||
-		input.FootprintRadius < 0 || input.ShotDelay < 0 || input.ReleaseDelay < input.ShotDelay ||
+		input.FootprintRadius < 0 || input.ShotDelay < 0 ||
+		(!input.IsReleaseSuppressed && input.ReleaseDelay < input.ShotDelay) ||
 		input.Cooldown < 0 || input.ProjectileSpeed <= 0 ||
 		input.ProjectileAcceleration < 0 || input.ProjectileDistance <= 0 ||
 		input.CollisionDelay < 0 || input.RangeIncrease < 0 {

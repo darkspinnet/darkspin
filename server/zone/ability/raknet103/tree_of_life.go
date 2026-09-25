@@ -260,7 +260,7 @@ func MarshalTreeOfLifeHealing(
 	healing []Healing, isFinal bool,
 ) ([][]byte, error) {
 	messages := make([]raknet.ApplicationMessage, 0, 2+len(healing))
-	if len(healing) != 0 || isFinal {
+	if ability.HealEffectName != "" && (len(healing) != 0 || isFinal) {
 		messages = append(messages, raknet.PositionedEffectMessage{
 			Asset: util.HashID(ability.HealEffectName), Position: position,
 		})

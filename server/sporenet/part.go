@@ -51,6 +51,13 @@ type Part struct {
 	SuffixAssetHash          uint32
 }
 
+// OccupiesInventorySlot reports whether the item belongs to the unequipped
+// storage counted by the client. Equipped items remain owned, but their hero
+// loadout holds them outside the inventory capacity shown in the Arsenal.
+func (p Part) OccupiesInventorySlot() bool {
+	return p.MarketStatus == PartMarketOwned && p.EquippedToCreatureID == 0
+}
+
 // NewPart creates a part and validates its rigblock.
 func NewPart(rigblock uint16) Part {
 	part := Part{}

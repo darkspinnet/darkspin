@@ -264,7 +264,13 @@ func (s *Store) LevelDirector(ctx context.Context, levelName string) (LevelDirec
 		       OR level_marker_set.asset_name COLLATE NOCASE IN (
 		              'verdanth_3_Smart_Objects_1.Markerset',
 		              'verdanth_3_Smart_Objects_2.Markerset',
-		              'verdanth_3_Smart_Objects_3.Markerset')
+		              'verdanth_3_Smart_Objects_3.Markerset',
+		              'infinity_2_Obelisk_1.Markerset',
+		              'infinity_2_Obelisk_2.Markerset',
+		              'infinity_2_Obelisk_3.Markerset',
+		              'infinity_2_Smart_Object_1.Markerset',
+		              'infinity_2_Smart_Object_2.Markerset',
+		              'infinity_2_Smart_Object_3.Markerset')
 		       OR marker.noun_name='HordeGateTeleporter.Noun' COLLATE NOCASE
 		       OR marker.noun_name='TestDoor_design_blockin_horde_open.Noun' COLLATE NOCASE
 		       OR marker.noun_name='Teleporter.Noun' COLLATE NOCASE

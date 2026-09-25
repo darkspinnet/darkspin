@@ -9,10 +9,14 @@ import (
 )
 
 type EquipmentPickup struct {
-	ObjectID     uint32
-	WinnerUserID uint64
-	Rolls        []EquipmentPickupRoll
-	Part         sporenet.Part
+	ObjectID               uint32
+	WinnerUserID           uint64
+	WinnerRewardChoice     uint32
+	WinnerRewardDifficulty uint32
+	WinnerRewardRigblockID uint16
+	Rolls                  []EquipmentPickupRoll
+	Part                   sporenet.Part
+	IsWinnerReward         bool
 }
 
 type EquipmentPickupRoll struct {
@@ -106,6 +110,28 @@ func (e *PickupPayloadRegistry) ClearEquipmentRoll(
 	pickup.Rolls = nil
 	e.equipmentPickups[objectID] = cloneEquipmentPickup(pickup)
 	return nil
+}
+
+// SetEquipmentWinnerPart replaces a multiplayer pickup's neutral preview with
+// the reward generated for its selected winner.
+func (e *PickupPayloadRegistry) SetEquipmentWinnerPart(
+	objectID uint32, userID uint64, part sporenet.Part,
+) (EquipmentPickup, error) {
+	if e == nil || objectID == 0 || userID == 0 || part.RigblockAssetID == 0 {
+		return EquipmentPickup{}, errors.New("invalid equipment winner part")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	pickup, isFound := e.equipmentPickups[objectID]
+	if !isFound {
+		return EquipmentPickup{}, errors.New("equipment pickup unavailable")
+	}
+	if pickup.WinnerUserID != userID || !pickup.IsWinnerReward {
+		return EquipmentPickup{}, errors.New("equipment winner unavailable")
+	}
+	pickup.Part = part
+	e.equipmentPickups[objectID] = cloneEquipmentPickup(pickup)
+	return cloneEquipmentPickup(pickup), nil
 }
 
 func cloneEquipmentPickup(pickup EquipmentPickup) EquipmentPickup {

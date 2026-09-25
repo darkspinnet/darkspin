@@ -17,15 +17,16 @@ const lootAssetPackage = "AssetData_Binary.package"
 
 // LootRigblock is the immutable profile-facing projection of one base item.
 type LootRigblock struct {
-	ID             uint16
-	ContentFlags   uint8
-	MinimumLevel   uint32
-	MaximumLevel   uint32
-	IsUniqueFamily bool
-	SlotType       string
-	ClassType      string
-	ScienceType    string
-	WeaponSlotType string
+	ID              uint16
+	ContentFlags    uint8
+	MinimumLevel    uint32
+	MaximumLevel    uint32
+	IsUniqueFamily  bool
+	SlotType        string
+	ClassType       string
+	ScienceType     string
+	WeaponSlotType  string
+	WeaponOwnerName string
 }
 
 // LootAffix is the immutable authored modifier vector for one prefix or suffix.
@@ -260,7 +261,8 @@ func (s *Store) LootRigblocks(ctx context.Context) ([]LootRigblock, error) {
 		       CASE WHEN slot_type != 'weapon' THEN ''
 		            WHEN creature_template.is_hand_present=1 THEN 'grasper'
 		            WHEN creature_template.is_foot_present=1 THEN 'foot'
-		            ELSE '' END
+		            ELSE '' END,
+		       CASE WHEN slot_type='weapon' THEN COALESCE(creature_template.name, '') ELSE '' END
 		FROM loot_rigblock
 		LEFT JOIN creature_template ON creature_template.id=loot_rigblock.weapon_noun_id
 		ORDER BY loot_rigblock.id`)
@@ -274,7 +276,7 @@ func (s *Store) LootRigblocks(ctx context.Context) ([]LootRigblock, error) {
 		err = rows.Scan(&rigblock.ID, &rigblock.SlotType, &rigblock.ClassType, &rigblock.ScienceType,
 			&rigblock.ContentFlags, &rigblock.MinimumLevel, &rigblock.MaximumLevel,
 			&rigblock.IsUniqueFamily,
-			&rigblock.WeaponSlotType)
+			&rigblock.WeaponSlotType, &rigblock.WeaponOwnerName)
 		if err != nil {
 			return nil, fmt.Errorf("rigblockScan: %w", err)
 		}

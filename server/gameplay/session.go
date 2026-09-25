@@ -200,6 +200,7 @@ type zoneEffectPresentation struct {
 	campaignNPCChargeups                map[uint32]campaignNPCChargeupState
 	campaignNPCVoltroidCharges          map[uint32]uint32
 	campaignNPCVoltroidChargeExpires    map[uint32]uint64
+	campaignNPCVoltroidChargeReadiness  map[uint32]uint64
 	campaignNPCVoltroidEffectSlots      map[uint32]uint8
 	campaignNPCRepairStacks             map[uint32]uint32
 	campaignNPCRepairLockouts           map[uint32]uint64
@@ -207,6 +208,7 @@ type zoneEffectPresentation struct {
 	campaignNPCPolarisStates            map[uint32]campaignNPCPolarisState
 	campaignNPCCitadelSpecialFourStates map[uint32]campaignCitadelSpecialFourState
 	campaignNPCOrcusStates              map[uint32]campaignOrcusState
+	campaignNPCLaserZones               map[uint32]*campaignLaserZone
 	campaignTwinLaserEndpointIDs        map[uint32]uint32
 	campaignArcturusStates              map[uint32]*campaignArcturusState
 	pickupPursuit                       *campaignPickupTimeout
@@ -293,8 +295,13 @@ type controlledHeroState struct {
 	enemyRootTargetObjectID       uint32
 	enemyFearExpiresAt            time.Time
 	enemyFearTargetObjectID       uint32
-	cryosLavaReadyAt              time.Time
+	campaignLavaReadyAt           time.Time
+	campaignLavaWarningKey        uint64
+	campaignLavaSpoutKey          uint64
 	passiveKillStack              [squad.Size]uint32
+	soulRavagerObjectIDs          [5]uint32
+	soulRavagerOwnerObjectID      uint32
+	soulRavagerVisualStack        uint32
 	passiveReductionStack         [squad.Size]uint32
 	passiveReductionExpiresAt     [squad.Size]time.Time
 	passiveStationarySince        [squad.Size]time.Time
@@ -537,6 +544,9 @@ type gameplayPeerSession struct {
 	tutorialCapsulePlans                 []tutorialCapsulePlan
 	tutorialHorde                        *tutorialHordeSession
 	crystalInventory                     sim.CrystalInventory
+	campaignPartSlotBag                  game.CampaignPartSlotBag
+	campaignEquipmentDropBag             campaignEquipmentDropBag
+	campaignPartRarityBag                game.CampaignPartRarityBag
 	campaignNashiraSplitObjectIDs        map[uint32][]uint32
 	campaignNashiraSplitPendingObjectIDs map[uint32]uint32
 	campaignNashiraPanicReadiness        map[uint32]uint64
@@ -1075,11 +1085,13 @@ func (s *gameplayPeerSession) stopCampaignNPCProjectiles() {
 	clear(s.campaignNPCChargeups)
 	clear(s.campaignNPCVoltroidCharges)
 	clear(s.campaignNPCVoltroidChargeExpires)
+	clear(s.campaignNPCVoltroidChargeReadiness)
 	clear(s.campaignNPCVoltroidEffectSlots)
 	clear(s.campaignNPCRepairStacks)
 	clear(s.campaignNPCRepairLockouts)
 	clear(s.campaignNPCCitadelSpecialFourStates)
 	clear(s.campaignNPCOrcusStates)
+	clear(s.campaignNPCLaserZones)
 	clear(s.campaignTwinLaserEndpointIDs)
 	clear(s.campaignArcturusStates)
 	s.pickupPursuit = nil
@@ -1619,7 +1631,8 @@ func (s *gameplayPeerSession) resetInterruptibleActionAdmission() *abilityraknet
 		s.heroQuantumBlink = nil
 	}
 	if s.heroCharge != nil {
-		s.heroCharge.Interrupt()
+		cleanupPackets := s.heroCharge.Interrupt()
+		s.queuePackets(cleanupPackets)
 		s.heroCharge = nil
 	}
 	return run
@@ -3873,7 +3886,8 @@ func (r gameplaySwitchRuntime) handle(
 	stoppedHeroModifierPackets := make([][]byte, 0)
 	stoppedFlakPackets := make([][]byte, 0)
 	stoppedPoisonNovaPackets := make([][]byte, 0)
-	fieldMedicPackets := make([][]byte, 0)
+	fieldMedicDeparturePackets := make([][]byte, 0)
+	fieldMedicArrivalPackets := make([][]byte, 0)
 	beastPetPackets := make([][]byte, 0)
 	heroSummonPackets := make([][]byte, 0)
 	trapperStealthPackets := make([][]byte, 0)
@@ -3908,7 +3922,15 @@ func (r gameplaySwitchRuntime) handle(
 	}
 	stoppedFieldMedicPackets, fieldMedicErr := peerSession.stopFieldMedicDrone()
 	if fieldMedicErr == nil {
-		fieldMedicPackets = append(fieldMedicPackets, stoppedFieldMedicPackets...)
+		if isVoluntarySwitch {
+			fieldMedicDeparturePackets = append(
+				fieldMedicDeparturePackets, stoppedFieldMedicPackets...,
+			)
+		} else {
+			fieldMedicArrivalPackets = append(
+				fieldMedicArrivalPackets, stoppedFieldMedicPackets...,
+			)
+		}
 	} else {
 		r.logger.Printf("RakNet Field Medic cleanup omitted during switch remote=%s: %v", packet.Address, fieldMedicErr)
 	}
@@ -3996,6 +4018,7 @@ func (r gameplaySwitchRuntime) handle(
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("switchDeparture: %w", err)
 		}
+		departurePackets = append(fieldMedicDeparturePackets, departurePackets...)
 	}
 	previousCreatureIndex := peerSession.deployedCreatureIndex
 	peerSession.resetPassiveDamageReduction(previousCreatureIndex)
@@ -4148,7 +4171,9 @@ func (r gameplaySwitchRuntime) handle(
 					packet.Address, spawnErr,
 				)
 			} else {
-				fieldMedicPackets = append(fieldMedicPackets, spawnPackets...)
+				fieldMedicArrivalPackets = append(
+					fieldMedicArrivalPackets, spawnPackets...,
+				)
 			}
 		}
 	}
@@ -4222,7 +4247,7 @@ func (r gameplaySwitchRuntime) handle(
 	switchPackets = append(switchPackets, stoppedHeroModifierPackets...)
 	switchPackets = append(switchPackets, stoppedFlakPackets...)
 	switchPackets = append(switchPackets, stoppedPoisonNovaPackets...)
-	switchPackets = append(switchPackets, fieldMedicPackets...)
+	switchPackets = append(switchPackets, fieldMedicArrivalPackets...)
 	switchPackets = append(switchPackets, beastPetPackets...)
 	switchPackets = append(switchPackets, heroSummonPackets...)
 	switchPackets = append(switchPackets, trapperStealthPackets...)
@@ -4302,6 +4327,17 @@ func (r gameplaySwitchRuntime) handle(
 		lightspeedPackets = nil
 	}
 	switchPackets = append(switchPackets, lightspeedPackets...)
+	soulPackets, err := startSoulRavagerPresentation(
+		r.damage, packet.Address.String(), commandSession.generation,
+	)
+	if err != nil {
+		r.logger.Printf(
+			"RakNet campaign Soul Ravager passive omitted after switch remote=%s: %v",
+			packet.Address, err,
+		)
+		soulPackets = nil
+	}
+	switchPackets = append(switchPackets, soulPackets...)
 	restartedEnemyPackets, restartErr := r.npc.scheduleFirstActions(
 		packet, packet.Address.String(), commandSession.generation,
 		restartedEnemyPlans, packet.SourceTime,
@@ -4724,6 +4760,10 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 			)
 		}
 		s.resetPassiveKill(s.deployedCreatureIndex)
+		soulPackets, soulErr := s.syncSoulRavagerPresentation()
+		if soulErr == nil {
+			hitPackets = append(hitPackets, soulPackets...)
+		}
 		s.resetPassiveDamageReduction(s.deployedCreatureIndex)
 		s.resetFireRavagerBasic(s.deployedCreatureIndex)
 		s.resetTCShield(s.deployedCreatureIndex)

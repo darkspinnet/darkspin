@@ -296,41 +296,13 @@ func noctGhostChargeMovementDestination(
 	desired := noctGhostChargeDestination(
 		source, target, sourceFootprintRadius, targetFootprintRadius,
 	)
-	if mesh == nil {
-		return desired, true, nil
-	}
-	direction := target.Sub(source)
-	directionLength := direction.Length()
-	if directionLength <= 0 {
-		return source, false, nil
-	}
-	direction = direction.Scale(1 / directionLength)
-	const obstacleRayDistance = float32(1000)
-	rayEndpoint := source.Add(direction.Scale(obstacleRayDistance))
-	obstacle, isObstacleFound, err := navigationClippedMovementDestination(
-		mesh, source, rayEndpoint, sourceFootprintRadius,
+	destination, isDestinationFound, err := navigationClippedMovementDestination(
+		mesh, source, desired, sourceFootprintRadius,
 	)
 	if err != nil {
-		return game.Vec3{}, false, fmt.Errorf("ghostObstacleRay: %w", err)
+		return game.Vec3{}, false, fmt.Errorf("ghostDestinationClip: %w", err)
 	}
-	if !isObstacleFound {
-		return source, false, nil
-	}
-	desiredDistance := zonegeometry.Distance(source, desired)
-	obstacleDistance := zonegeometry.Distance(source, obstacle)
-	if obstacleDistance < desiredDistance {
-		return obstacle, true, nil
-	}
-	projected, isProjected, err := zoneaction.NPCProjectPosition(
-		mesh, desired, sourceFootprintRadius,
-	)
-	if err != nil {
-		return game.Vec3{}, false, fmt.Errorf("ghostDestinationProject: %w", err)
-	}
-	if !isProjected {
-		return source, false, nil
-	}
-	return projected, true, nil
+	return destination, isDestinationFound, nil
 }
 
 func navigationClippedMovementDestination(
@@ -451,6 +423,12 @@ func (e campaignChargeSchedule) followup(timestamp uint64) ([][]byte, error) {
 	if e.plan.Profile.AbilityName == "NocturnaSpecialDriftCharge" {
 		if relaxPacket != nil {
 			followupPackets = append(followupPackets, relaxPacket)
+		}
+		return append(followupPackets, restoredStatePackets...), nil
+	}
+	if e.plan.Profile.AbilityName == "BoomerCharge" {
+		if relaxPacket != nil {
+			followupPackets = append([][]byte{relaxPacket}, followupPackets...)
 		}
 		return append(followupPackets, restoredStatePackets...), nil
 	}

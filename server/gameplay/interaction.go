@@ -304,6 +304,7 @@ func (r campaignInteractionRuntime) handlePickup(
 			r.registry.mutex.Unlock()
 			return nil, errors.New("campaignEquipmentCapacity: unavailable")
 		}
+		partBagCommit := campaignPartBagCommit{}
 		if equipmentPickup.WinnerUserID == 0 {
 			participants := r.equipmentRollParticipantsLocked(currentSession)
 			eligibleParticipants := make(
@@ -429,6 +430,55 @@ func (r campaignInteractionRuntime) handlePickup(
 			}
 			return r.rejectPickup(command, "inventory full")
 		}
+		if equipmentPickup.IsWinnerReward {
+			winnerSession := gameplayPeerSession{}
+			isWinnerFound := false
+			for _, candidate := range r.registry.sessions {
+				if candidate.zone != currentSession.zone ||
+					candidate.binding.UserID != equipmentPickup.WinnerUserID ||
+					candidate.isZoneTerminal() {
+					continue
+				}
+				winnerSession = candidate
+				isWinnerFound = true
+				break
+			}
+			if !isWinnerFound {
+				clearErr := currentSession.zone.PickupPayload().ClearEquipmentRoll(
+					equipmentPickup.ObjectID, equipmentPickup.WinnerUserID,
+				)
+				currentSession.zone.Pickups().Release(command.Value)
+				r.registry.mutex.Unlock()
+				if clearErr != nil {
+					return nil, fmt.Errorf("campaignEquipmentWinnerReset: %w", clearErr)
+				}
+				return nil, errors.New("campaign equipment winner session unavailable")
+			}
+			winnerPart, pendingCommit, winnerErr := winnerSession.materializeCampaignWinnerPart(
+				r.gameplayJoin, equipmentPickup,
+			)
+			if winnerErr == nil {
+				equipmentPickup, winnerErr = currentSession.zone.PickupPayload().
+					SetEquipmentWinnerPart(
+						equipmentPickup.ObjectID, equipmentPickup.WinnerUserID, winnerPart,
+					)
+			}
+			if winnerErr != nil {
+				clearErr := currentSession.zone.PickupPayload().ClearEquipmentRoll(
+					equipmentPickup.ObjectID, equipmentPickup.WinnerUserID,
+				)
+				currentSession.zone.Pickups().Release(command.Value)
+				r.registry.mutex.Unlock()
+				if clearErr != nil {
+					winnerErr = errors.Join(
+						winnerErr,
+						fmt.Errorf("winnerReset: %w", clearErr),
+					)
+				}
+				return nil, fmt.Errorf("campaignEquipmentWinnerPart: %w", winnerErr)
+			}
+			partBagCommit = pendingCommit
+		}
 		movementPackets, movementErr := currentSession.stopCampaignPickup(r.now())
 		if movementErr != nil {
 			currentSession.zone.Pickups().Release(command.Value)
@@ -479,7 +529,7 @@ func (r campaignInteractionRuntime) handlePickup(
 			sourceTime: packet.SourceTime,
 			pickup:     equipmentPickup, deletePacket: deletePacket,
 			releasePacket: releasePacket, rejectPacket: rejectPacket,
-			progression: r.progression,
+			progression: r.progression, partBagCommit: partBagCommit,
 		}
 		producer := raknet.ScheduledPacketProducer{
 			Delay:   campaignEquipmentPickupDelay,
@@ -764,6 +814,8 @@ const campaignNPCEquipmentSourceAmount = 10
 const campaignNPCOrbSourceAmount = 25
 const campaignBossLimitedEditionChanceBasis = uint32(100)
 const campaignBossLimitedEditionChanceThreshold = uint32(10)
+const campaignEquipmentPityMaximumMisses = uint32(30)
+const campaignEquipmentPityScalePerMiss = float32(0.10)
 
 var campaignBossLimitedEditionRigblockIDs = [...]uint16{10782, 10783, 10784}
 
@@ -780,6 +832,27 @@ func (s *gameplayPeerSession) campaignPartAttribute(attributeIndex int) float32 
 		return 0
 	}
 	return s.binding.Creatures[s.deployedCreatureIndex].PartAttribute[attributeIndex]
+}
+
+func (s *gameplayPeerSession) campaignPartSubjects() []game.GameplayCreature {
+	if s == nil {
+		return nil
+	}
+	partSubjects := make([]game.GameplayCreature, 0, len(s.binding.ActivatedCreatures))
+	for _, creature := range s.binding.ActivatedCreatures {
+		if creature.Noun != 0 && creature.ClassType != "" && creature.ElementType != "" {
+			partSubjects = append(partSubjects, creature)
+		}
+	}
+	if len(partSubjects) != 0 {
+		return partSubjects
+	}
+	for _, creature := range s.binding.Creatures {
+		if creature.Noun != 0 && creature.ClassType != "" && creature.ElementType != "" {
+			partSubjects = append(partSubjects, creature)
+		}
+	}
+	return partSubjects
 }
 
 type campaignLootProgression interface {
@@ -806,6 +879,77 @@ type campaignEquipmentRoll struct {
 	IsLimitedEditionRolled   bool
 }
 
+type campaignEquipmentDropBag struct {
+	missCount uint32
+}
+
+type campaignEquipmentSlotCandidate struct {
+	Part         sporenet.Part
+	PartSubject  game.GameplayCreature
+	SubjectIndex int
+}
+
+type campaignPartBagCommit struct {
+	partSlotBag   game.CampaignPartSlotBag
+	partRarityBag game.CampaignPartRarityBag
+	isPending     bool
+}
+
+func (s *gameplayPeerSession) materializeCampaignWinnerPart(
+	gameplayJoin *game.GameplayJoin,
+	pickup zoneinteract.EquipmentPickup,
+) (sporenet.Part, campaignPartBagCommit, error) {
+	commit := campaignPartBagCommit{}
+	if s == nil || gameplayJoin == nil || !pickup.IsWinnerReward {
+		return sporenet.Part{}, commit, errors.New("campaign winner reward unavailable")
+	}
+	partSubjects := s.campaignPartSubjects()
+	if len(partSubjects) == 0 {
+		return sporenet.Part{}, commit, errors.New("campaign winner roster unavailable")
+	}
+	partSubjectIndex := int(pickup.WinnerRewardChoice % uint32(len(partSubjects)))
+	partSubject := partSubjects[partSubjectIndex]
+	commit.partSlotBag = s.campaignPartSlotBag.Clone()
+	commit.partRarityBag = s.campaignPartRarityBag.Clone()
+	var part sporenet.Part
+	var err error
+	if pickup.WinnerRewardRigblockID != 0 {
+		part, err = gameplayJoin.GenerateCampaignSpecialPartFromBag(
+			partSubject, pickup.WinnerRewardDifficulty, s.binding.AvatarLevel,
+			pickup.WinnerRewardChoice, pickup.WinnerRewardRigblockID,
+			&commit.partRarityBag,
+		)
+	} else {
+		part, err = gameplayJoin.GenerateCampaignPartFromBag(
+			partSubject, pickup.WinnerRewardDifficulty, s.binding.AvatarLevel,
+			pickup.WinnerRewardChoice, &commit.partSlotBag, &commit.partRarityBag,
+		)
+	}
+	if err != nil {
+		return sporenet.Part{}, campaignPartBagCommit{}, fmt.Errorf(
+			"winnerPartGenerate: %w", err,
+		)
+	}
+	commit.isPending = true
+	return part, commit, nil
+}
+
+func (e campaignEquipmentDropBag) chanceThreshold(baseThreshold float32) float32 {
+	if e.missCount >= campaignEquipmentPityMaximumMisses {
+		return 1
+	}
+	boost := 1 + float32(e.missCount)*campaignEquipmentPityScalePerMiss
+	return min(float32(1), baseThreshold*boost)
+}
+
+func (e *campaignEquipmentDropBag) recordDrop(isDropped bool) {
+	if isDropped {
+		e.missCount = 0
+		return
+	}
+	e.missCount = min(e.missCount+1, campaignEquipmentPityMaximumMisses)
+}
+
 func (s *gameplayPeerSession) spawnCampaignEquipment(
 	invocation game.CampaignScriptInvocation,
 	gameplayJoin *game.GameplayJoin,
@@ -813,7 +957,7 @@ func (s *gameplayPeerSession) spawnCampaignEquipment(
 	isBoss bool,
 ) ([][]byte, uint32, error) {
 	packets, objectID, roll, err := s.spawnCampaignEquipmentWithPolicy(
-		invocation, gameplayJoin, sourceTime, isBoss, false, "",
+		invocation, gameplayJoin, sourceTime, isBoss, false, "", nil, nil, nil, false,
 	)
 	if err != nil {
 		return nil, 0, fmt.Errorf("equipmentSpawn: %w", err)
@@ -831,6 +975,10 @@ func (s *gameplayPeerSession) spawnCampaignEquipmentWithPolicy(
 	isBoss bool,
 	isForced bool,
 	slotType string,
+	partSlotBag *game.CampaignPartSlotBag,
+	equipmentDropBag *campaignEquipmentDropBag,
+	partRarityBag *game.CampaignPartRarityBag,
+	isWinnerReward bool,
 ) ([][]byte, uint32, campaignEquipmentRoll, error) {
 	roll := campaignEquipmentRoll{RequestedSlotType: slotType}
 	if s == nil || gameplayJoin == nil || invocation.Challenge <= 0 {
@@ -848,11 +996,18 @@ func (s *gameplayPeerSession) spawnCampaignEquipmentWithPolicy(
 	if err != nil {
 		return nil, 0, roll, fmt.Errorf("equipmentThreshold: %w", err)
 	}
-	roll.IsNaturalDrop, err = zoneloot.IsEquipmentDrop(
-		invocation.Challenge, roll.ChanceScale, roll.ChanceDraw,
-	)
-	if err != nil {
-		return nil, 0, roll, fmt.Errorf("equipmentDecision: %w", err)
+	if equipmentDropBag != nil {
+		roll.ChanceThreshold = equipmentDropBag.chanceThreshold(
+			roll.ChanceThreshold,
+		)
+		roll.IsNaturalDrop = float32(roll.ChanceDraw) < roll.ChanceThreshold
+	} else {
+		roll.IsNaturalDrop, err = zoneloot.IsEquipmentDrop(
+			invocation.Challenge, roll.ChanceScale, roll.ChanceDraw,
+		)
+		if err != nil {
+			return nil, 0, roll, fmt.Errorf("equipmentDecision: %w", err)
+		}
 	}
 	if !roll.IsNaturalDrop && !isBoss && !isForced {
 		return nil, 0, roll, nil
@@ -860,26 +1015,16 @@ func (s *gameplayPeerSession) spawnCampaignEquipmentWithPolicy(
 	if s.deployedCreatureIndex >= uint32(len(s.binding.Creatures)) {
 		return nil, 0, roll, errors.New("campaign equipment creature unavailable")
 	}
-	partSubjects := make([]game.GameplayCreature, 0, len(s.binding.ActivatedCreatures))
-	for _, creature := range s.binding.ActivatedCreatures {
-		if creature.Noun != 0 && creature.ClassType != "" && creature.ElementType != "" {
-			partSubjects = append(partSubjects, creature)
-		}
-	}
-	if len(partSubjects) == 0 {
-		for _, creature := range s.binding.Creatures {
-			if creature.Noun != 0 && creature.ClassType != "" && creature.ElementType != "" {
-				partSubjects = append(partSubjects, creature)
-			}
-		}
-	}
+	partSubjects := s.campaignPartSubjects()
 	if len(partSubjects) == 0 {
 		return nil, 0, roll, errors.New("campaign equipment roster unavailable")
 	}
 	roll.PartChoice = s.zone.DropRandom().Uint32()
 	roll.PartSubjectCount = len(partSubjects)
-	roll.PartSubjectIndex = int(roll.PartChoice % uint32(len(partSubjects)))
-	roll.PartSubject = partSubjects[roll.PartSubjectIndex]
+	if slotType == "" {
+		roll.PartSubjectIndex = int(roll.PartChoice % uint32(len(partSubjects)))
+		roll.PartSubject = partSubjects[roll.PartSubjectIndex]
+	}
 	limitedEditionRigblockID := uint16(0)
 	if isBoss && slotType == "" {
 		chanceDraw, drawErr := s.zone.DropRandom().Index(
@@ -903,14 +1048,35 @@ func (s *gameplayPeerSession) spawnCampaignEquipmentWithPolicy(
 		}
 	}
 	if limitedEditionRigblockID != 0 {
-		roll.Part, err = gameplayJoin.GenerateCampaignSpecialPart(
-			roll.PartSubject, s.binding.Difficulty, s.binding.AvatarLevel,
-			roll.PartChoice, limitedEditionRigblockID,
-		)
+		if partRarityBag != nil {
+			roll.Part, err = gameplayJoin.GenerateCampaignSpecialPartFromBag(
+				roll.PartSubject, s.binding.Difficulty, s.binding.AvatarLevel,
+				roll.PartChoice, limitedEditionRigblockID, partRarityBag,
+			)
+		} else {
+			roll.Part, err = gameplayJoin.GenerateCampaignSpecialPart(
+				roll.PartSubject, s.binding.Difficulty, s.binding.AvatarLevel,
+				roll.PartChoice, limitedEditionRigblockID,
+			)
+		}
 	} else if slotType != "" {
-		roll.Part, err = gameplayJoin.GenerateCampaignPartForSlot(
-			roll.PartSubject, s.binding.Difficulty, s.binding.AvatarLevel,
+		candidate, candidateErr := campaignEquipmentCandidateForSlot(
+			gameplayJoin, partSubjects, s.binding.Difficulty, s.binding.AvatarLevel,
 			roll.PartChoice, slotType,
+		)
+		err = candidateErr
+		roll.Part = candidate.Part
+		roll.PartSubject = candidate.PartSubject
+		roll.PartSubjectIndex = candidate.SubjectIndex
+	} else if partSlotBag != nil {
+		roll.Part, err = gameplayJoin.GenerateCampaignPartFromBag(
+			roll.PartSubject, s.binding.Difficulty, s.binding.AvatarLevel,
+			roll.PartChoice, partSlotBag, partRarityBag,
+		)
+	} else if partRarityBag != nil {
+		roll.Part, err = gameplayJoin.GenerateCampaignPartFromBag(
+			roll.PartSubject, s.binding.Difficulty, s.binding.AvatarLevel,
+			roll.PartChoice, nil, partRarityBag,
 		)
 	} else {
 		roll.Part, err = gameplayJoin.GenerateCampaignPart(
@@ -950,6 +1116,10 @@ func (s *gameplayPeerSession) spawnCampaignEquipmentWithPolicy(
 	}
 	err = s.zone.PickupPayload().AddEquipment(zoneinteract.EquipmentPickup{
 		ObjectID: objectID, Part: roll.Part,
+		WinnerRewardChoice:     roll.PartChoice,
+		WinnerRewardDifficulty: s.binding.Difficulty,
+		WinnerRewardRigblockID: roll.LimitedEditionRigblockID,
+		IsWinnerReward:         isWinnerReward,
 	})
 	if err != nil {
 		s.zone.Pickups().Remove(objectID)
@@ -958,10 +1128,47 @@ func (s *gameplayPeerSession) spawnCampaignEquipmentWithPolicy(
 	return packets, objectID, roll, nil
 }
 
+func campaignEquipmentCandidateForSlot(
+	gameplayJoin *game.GameplayJoin,
+	partSubjects []game.GameplayCreature,
+	difficulty uint32,
+	accountLevel uint32,
+	choice uint32,
+	slotType string,
+) (campaignEquipmentSlotCandidate, error) {
+	candidates := make([]campaignEquipmentSlotCandidate, 0, len(partSubjects))
+	var candidateErr error
+	for subjectIndex, partSubject := range partSubjects {
+		part, err := gameplayJoin.GenerateCampaignPartForSlot(
+			partSubject, difficulty, accountLevel, choice, slotType,
+		)
+		if err != nil {
+			candidateErr = err
+			continue
+		}
+		candidates = append(candidates, campaignEquipmentSlotCandidate{
+			Part: part, PartSubject: partSubject, SubjectIndex: subjectIndex,
+		})
+	}
+	if len(candidates) == 0 {
+		if candidateErr != nil {
+			return campaignEquipmentSlotCandidate{}, fmt.Errorf(
+				"slotCandidates: %w", candidateErr,
+			)
+		}
+		return campaignEquipmentSlotCandidate{}, errors.New(
+			"campaign equipment slot candidates empty",
+		)
+	}
+	candidateIndex := int(choice % uint32(len(candidates)))
+	return candidates[candidateIndex], nil
+}
+
 func (s *gameplayPeerSession) spawnCampaignNPCEquipment(
 	enemy zonenpc.Snapshot,
 	gameplayJoin *game.GameplayJoin,
 	sourceTime uint64,
+	isLootBagEnabled bool,
 ) ([][]byte, uint32, error) {
 	if s == nil || !enemy.IsDefeated || enemy.Plan.ObjectID == 0 {
 		return nil, 0, errors.New("campaign enemy equipment unavailable")
@@ -974,16 +1181,46 @@ func (s *gameplayPeerSession) spawnCampaignNPCEquipment(
 	}
 	// A map boss awards equipment once through the shared NPC reservation;
 	// ordinary enemies and interactables retain their normal chance roll.
-	packets, objectID, err := s.spawnCampaignEquipment(game.CampaignScriptInvocation{
-		Position: enemy.Plan.Position, Challenge: campaignNPCEquipmentSourceAmount,
-	}, gameplayJoin, sourceTime, enemy.Plan.IsBoss)
+	pendingPartSlotBag := game.CampaignPartSlotBag{}
+	partSlotBag := (*game.CampaignPartSlotBag)(nil)
+	pendingEquipmentDropBag := campaignEquipmentDropBag{}
+	equipmentDropBag := (*campaignEquipmentDropBag)(nil)
+	pendingPartRarityBag := game.CampaignPartRarityBag{}
+	partRarityBag := (*game.CampaignPartRarityBag)(nil)
+	if isLootBagEnabled {
+		pendingPartSlotBag = s.campaignPartSlotBag.Clone()
+		partSlotBag = &pendingPartSlotBag
+		pendingEquipmentDropBag = s.campaignEquipmentDropBag
+		equipmentDropBag = &pendingEquipmentDropBag
+		pendingPartRarityBag = s.campaignPartRarityBag.Clone()
+		partRarityBag = &pendingPartRarityBag
+	}
+	packets, objectID, roll, err := s.spawnCampaignEquipmentWithPolicy(
+		game.CampaignScriptInvocation{
+			Position: enemy.Plan.Position, Challenge: campaignNPCEquipmentSourceAmount,
+		},
+		gameplayJoin, sourceTime, enemy.Plan.IsBoss, false, "", partSlotBag,
+		equipmentDropBag, partRarityBag, !isLootBagEnabled,
+	)
 	if err != nil {
 		reservation.Release()
 		return nil, 0, fmt.Errorf("enemyEquipmentSpawn: %w", err)
 	}
+	if objectID != 0 && roll.Part.RigblockAssetID == 0 {
+		reservation.Release()
+		return nil, 0, errors.New("campaign equipment roll incomplete")
+	}
 	err = reservation.Commit()
 	if err != nil {
 		return nil, 0, fmt.Errorf("enemyEquipmentCommit: %w", err)
+	}
+	if isLootBagEnabled {
+		pendingEquipmentDropBag.recordDrop(objectID != 0)
+		s.campaignEquipmentDropBag = pendingEquipmentDropBag
+		if objectID != 0 {
+			s.campaignPartSlotBag = pendingPartSlotBag
+			s.campaignPartRarityBag = pendingPartRarityBag
+		}
 	}
 	return packets, objectID, nil
 }
@@ -1012,6 +1249,7 @@ type campaignEquipmentPickupStep struct {
 	releasePacket []byte
 	rejectPacket  []byte
 	progression   campaignLootProgression
+	partBagCommit campaignPartBagCommit
 }
 
 type campaignPickupScheduleCleaner struct {
@@ -1073,6 +1311,16 @@ func (s campaignEquipmentPickupStep) produce() ([][]byte, error) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("campaignEquipmentGrant: %w", err)
+	}
+	if s.partBagCommit.isPending {
+		for candidateSessionKey, candidate := range s.runtime.registry.sessions {
+			if candidate.zone != sourceSession.zone || candidate.binding.UserID != s.userID {
+				continue
+			}
+			candidate.campaignPartSlotBag = s.partBagCommit.partSlotBag
+			candidate.campaignPartRarityBag = s.partBagCommit.partRarityBag
+			s.runtime.registry.sessions[candidateSessionKey] = candidate
+		}
 	}
 	if !sourceSession.zone.Pickups().Commit(s.pickup.ObjectID) {
 		s.runtime.registry.mutex.Unlock()

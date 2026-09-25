@@ -200,12 +200,53 @@ func (o *GameplayJoin) GenerateCampaignPart(
 	if o == nil || o.partCatalog == nil {
 		return sporenet.Part{}, errors.New("campaign part catalog unavailable")
 	}
-	part, err := o.partCatalog.GenerateCampaignPart(
-		creature.ClassType, creature.ElementType, max(uint32(1), difficulty),
+	part, err := o.partCatalog.GenerateCampaignCreaturePart(
+		creature.ClassType, creature.ElementType, creature.Name,
+		max(uint32(1), difficulty),
 		max(uint32(1), accountLevel), choice,
 	)
 	if err != nil {
 		return sporenet.Part{}, fmt.Errorf("campaignPartGenerate: %w", err)
+	}
+	return part, nil
+}
+
+// GenerateCampaignPartFromBag applies the ordinary campaign drop policy with
+// player-local category rotation and rarity pity owned by the gameplay session.
+func (e *GameplayJoin) GenerateCampaignPartFromBag(
+	creature GameplayCreature, difficulty uint32, accountLevel uint32, choice uint32,
+	slotBag *CampaignPartSlotBag, rarityBag *CampaignPartRarityBag,
+) (sporenet.Part, error) {
+	if e == nil || e.partCatalog == nil {
+		return sporenet.Part{}, errors.New("campaign part catalog unavailable")
+	}
+	part, err := e.partCatalog.GenerateCampaignPartFromBag(
+		creature.ClassType, creature.ElementType, creature.Name,
+		max(uint32(1), difficulty),
+		max(uint32(1), accountLevel), choice, slotBag, rarityBag,
+	)
+	if err != nil {
+		return sporenet.Part{}, fmt.Errorf("campaignPartBagGenerate: %w", err)
+	}
+	return part, nil
+}
+
+// GenerateCampaignSpecialPartFromBag applies player-local rarity pity to a
+// compatible limited-edition campaign drop.
+func (e *GameplayJoin) GenerateCampaignSpecialPartFromBag(
+	creature GameplayCreature, difficulty uint32, accountLevel uint32, choice uint32,
+	rigblockID uint16, rarityBag *CampaignPartRarityBag,
+) (sporenet.Part, error) {
+	if e == nil || e.partCatalog == nil {
+		return sporenet.Part{}, errors.New("campaign special part catalog unavailable")
+	}
+	part, err := e.partCatalog.GenerateCampaignSpecialPartFromBag(
+		creature.ClassType, creature.ElementType, creature.Name,
+		max(uint32(1), difficulty),
+		max(uint32(1), accountLevel), choice, rigblockID, rarityBag,
+	)
+	if err != nil {
+		return sporenet.Part{}, fmt.Errorf("campaignSpecialPartBagGenerate: %w", err)
 	}
 	return part, nil
 }
@@ -219,8 +260,9 @@ func (o *GameplayJoin) GenerateCampaignPartForSlot(
 	if o == nil || o.partCatalog == nil {
 		return sporenet.Part{}, errors.New("campaign part catalog unavailable")
 	}
-	part, err := o.partCatalog.GenerateCampaignPartForSlot(
-		creature.ClassType, creature.ElementType, max(uint32(1), difficulty),
+	part, err := o.partCatalog.GenerateCampaignCreaturePartForSlot(
+		creature.ClassType, creature.ElementType, creature.Name,
+		max(uint32(1), difficulty),
 		max(uint32(1), accountLevel), choice, slotType,
 	)
 	if err != nil {
@@ -262,8 +304,9 @@ func (o *GameplayJoin) GenerateCampaignRewardPart(
 	if o == nil || o.partCatalog == nil {
 		return sporenet.Part{}, errors.New("campaign reward part catalog unavailable")
 	}
-	part, err := o.partCatalog.GenerateCampaignRewardPart(
-		creature.ClassType, creature.ElementType, max(uint32(1), difficulty),
+	part, err := o.partCatalog.GenerateCampaignCreatureRewardPart(
+		creature.ClassType, creature.ElementType, creature.Name,
+		max(uint32(1), difficulty),
 		max(uint32(1), accountLevel), choice, rarity,
 	)
 	if err != nil {

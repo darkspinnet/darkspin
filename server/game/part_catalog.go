@@ -32,17 +32,54 @@ var campaignPartSlotTypes = [...]string{
 	"weapon", "grasper", "foot", "defense", "offense", "utility",
 }
 
+const campaignRarityPityMaximumMisses = uint32(20)
+
+var campaignRarityPityScales = [...]float64{0, 0.05, 0.10, 0.20}
+
+// CampaignPartSlotBag prevents a campaign player from repeatedly drawing one
+// equipment category while other compatible categories remain available.
+type CampaignPartSlotBag struct {
+	usedSlotTypes map[string]struct{}
+	lastSlotType  string
+}
+
+// CampaignPartRarityBag progressively weights an authored rarity when that
+// exact rarity has not appeared among a player's recent campaign equipment.
+type CampaignPartRarityBag struct {
+	dryDrawCounts [4]uint32
+}
+
+// Clone creates an independent bag so callers can commit a draw only after the
+// corresponding world pickup has been registered successfully.
+func (e CampaignPartSlotBag) Clone() CampaignPartSlotBag {
+	clone := CampaignPartSlotBag{lastSlotType: e.lastSlotType}
+	if len(e.usedSlotTypes) == 0 {
+		return clone
+	}
+	clone.usedSlotTypes = make(map[string]struct{}, len(e.usedSlotTypes))
+	for slotType := range e.usedSlotTypes {
+		clone.usedSlotTypes[slotType] = struct{}{}
+	}
+	return clone
+}
+
+// Clone creates an independent rarity bag for transactional drop generation.
+func (e CampaignPartRarityBag) Clone() CampaignPartRarityBag {
+	return e
+}
+
 // PartDefinition contains profile-facing base-item metadata proven by content.
 type PartDefinition struct {
-	RigblockID     uint16
-	ContentFlags   uint8
-	MinimumLevel   uint32
-	MaximumLevel   uint32
-	IsUniqueFamily bool
-	SlotType       string
-	ClassType      string
-	ScienceType    string
-	WeaponSlotType string
+	RigblockID      uint16
+	ContentFlags    uint8
+	MinimumLevel    uint32
+	MaximumLevel    uint32
+	IsUniqueFamily  bool
+	SlotType        string
+	ClassType       string
+	ScienceType     string
+	WeaponSlotType  string
+	WeaponOwnerName string
 }
 
 // PartAffixDefinition contains one immutable prefix or suffix input vector.
@@ -133,9 +170,11 @@ func NewPartStatCatalog(definitions []PartDefinition, affixes []PartAffixDefinit
 		if definition.SlotType == "" || definition.ClassType == "" || definition.ScienceType == "" {
 			return nil, fmt.Errorf("definitionFields[%d]: incomplete", index)
 		}
-		if definition.SlotType == "weapon" && definition.WeaponSlotType != "" &&
-			definition.WeaponSlotType != "grasper" && definition.WeaponSlotType != "foot" {
-			return nil, fmt.Errorf("definitionWeaponSlot[%d]: %s", index, definition.WeaponSlotType)
+		if definition.SlotType == "weapon" {
+			if definition.WeaponSlotType != "" && definition.WeaponSlotType != "grasper" &&
+				definition.WeaponSlotType != "foot" {
+				return nil, fmt.Errorf("definitionWeaponSlot[%d]: %s", index, definition.WeaponSlotType)
+			}
 		}
 		if _, isFound := catalog.partsByRigblock[definition.RigblockID]; isFound {
 			return nil, fmt.Errorf("definitionDuplicate[%d]: %d", index, definition.RigblockID)
@@ -191,8 +230,78 @@ func (c *PartCatalog) GenerateCampaignPart(
 	itemLevel := campaignItemLevel(difficulty)
 	dropLevel := campaignDropLevel(itemLevel, rarity)
 	return c.generateCampaignPart(
-		classType, scienceType, dropLevel, accountLevel, choice, rarity, "",
+		classType, scienceType, "", dropLevel, accountLevel, choice, rarity, "",
 	)
+}
+
+// GenerateCampaignCreaturePart restricts weapon candidates to the selected
+// hero family while retaining ordinary compatibility for non-weapon items.
+func (e *PartCatalog) GenerateCampaignCreaturePart(
+	classType string, scienceType string, creatureName string,
+	difficulty uint32, accountLevel uint32, choice uint32,
+) (sporenet.Part, error) {
+	rarity := e.campaignPartRarity(
+		difficulty, campaignPartChoice(choice, campaignRarityStream),
+	)
+	itemLevel := campaignItemLevel(difficulty)
+	dropLevel := campaignDropLevel(itemLevel, rarity)
+	return e.generateCampaignPart(
+		classType, scienceType, creatureName, dropLevel, accountLevel, choice, rarity, "",
+	)
+}
+
+// GenerateCampaignPartFromBag applies player-local category rotation and
+// rarity pity while retaining the ordinary campaign item policy.
+func (e *PartCatalog) GenerateCampaignPartFromBag(
+	classType string, scienceType string, creatureName string,
+	difficulty uint32, accountLevel uint32,
+	choice uint32, slotBag *CampaignPartSlotBag, rarityBag *CampaignPartRarityBag,
+) (sporenet.Part, error) {
+	if slotBag == nil && rarityBag == nil {
+		part, err := e.GenerateCampaignCreaturePart(
+			classType, scienceType, creatureName, difficulty, accountLevel, choice,
+		)
+		if err != nil {
+			return sporenet.Part{}, fmt.Errorf("bagFallback: %w", err)
+		}
+		return part, nil
+	}
+	rarity := e.campaignPartRarityFromBag(
+		difficulty, campaignPartChoice(choice, campaignRarityStream),
+		rarityBag,
+	)
+	availableSlotTypes := e.campaignPartSlotTypes(
+		classType, scienceType, creatureName, accountLevel,
+		isCampaignUniqueRarity(rarity),
+	)
+	if len(availableSlotTypes) == 0 {
+		return sporenet.Part{}, errors.New("campaign part slot eligibility empty")
+	}
+	slotChoice := campaignPartChoice(choice, campaignSlotStream)
+	slotType := e.campaignPartSlotType(
+		classType, scienceType, creatureName, accountLevel, choice,
+		isCampaignUniqueRarity(rarity),
+	)
+	isRefill := false
+	if slotBag != nil {
+		slotType, isRefill = slotBag.selectSlotType(availableSlotTypes, slotChoice)
+	}
+	itemLevel := campaignItemLevel(difficulty)
+	dropLevel := campaignDropLevel(itemLevel, rarity)
+	part, err := e.generateCampaignPart(
+		classType, scienceType, creatureName, dropLevel, accountLevel, choice,
+		rarity, slotType,
+	)
+	if err != nil {
+		return sporenet.Part{}, fmt.Errorf("bagGenerate: %w", err)
+	}
+	if slotBag != nil {
+		slotBag.recordSlotType(slotType, isRefill)
+	}
+	if rarityBag != nil {
+		rarityBag.recordRarity(rarity)
+	}
+	return part, nil
 }
 
 // GenerateCampaignPartForSlot chooses an ordinary campaign drop from one
@@ -210,7 +319,27 @@ func (c *PartCatalog) GenerateCampaignPartForSlot(
 	itemLevel := campaignItemLevel(difficulty)
 	dropLevel := campaignDropLevel(itemLevel, rarity)
 	return c.generateCampaignPart(
-		classType, scienceType, dropLevel, accountLevel, choice, rarity, slotType,
+		classType, scienceType, "", dropLevel, accountLevel, choice, rarity, slotType,
+	)
+}
+
+// GenerateCampaignCreaturePartForSlot applies an explicit developer slot while
+// preserving the selected hero's authored weapon family.
+func (e *PartCatalog) GenerateCampaignCreaturePartForSlot(
+	classType string, scienceType string, creatureName string,
+	difficulty uint32, accountLevel uint32, choice uint32, slotType string,
+) (sporenet.Part, error) {
+	if !isCampaignPartSlotType(slotType) {
+		return sporenet.Part{}, errors.New("campaign part slot invalid")
+	}
+	rarity := e.campaignPartRarity(
+		difficulty, campaignPartChoice(choice, campaignRarityStream),
+	)
+	itemLevel := campaignItemLevel(difficulty)
+	dropLevel := campaignDropLevel(itemLevel, rarity)
+	return e.generateCampaignPart(
+		classType, scienceType, creatureName, dropLevel, accountLevel, choice,
+		rarity, slotType,
 	)
 }
 
@@ -222,27 +351,68 @@ func (c *PartCatalog) GenerateCampaignSpecialPart(
 	classType string, scienceType string, difficulty uint32, accountLevel uint32,
 	choice uint32, rigblockID uint16,
 ) (sporenet.Part, error) {
-	if c == nil || classType == "" || scienceType == "" || difficulty == 0 {
-		return sporenet.Part{}, errors.New("campaign special part unavailable")
-	}
-	definition, isFound := c.ByRigblock(rigblockID)
-	if !isFound || !partCategoryContains(definition.ClassType, classType) ||
-		!partCategoryContains(definition.ScienceType, scienceType) ||
-		!c.isPartSlotUnlocked(definition, accountLevel) {
-		return sporenet.Part{}, errors.New("campaign special part incompatible")
-	}
 	rarity := c.campaignPartRarity(
 		difficulty, campaignPartChoice(choice, campaignRarityStream),
 	)
+	return c.generateCampaignSpecialPart(
+		classType, scienceType, "", difficulty, accountLevel, choice, rigblockID, rarity,
+	)
+}
+
+// GenerateCampaignSpecialPartFromBag applies player-local rarity pity to a
+// compatible limited-edition campaign base while retaining its item budget.
+func (e *PartCatalog) GenerateCampaignSpecialPartFromBag(
+	classType string, scienceType string, creatureName string,
+	difficulty uint32, accountLevel uint32,
+	choice uint32, rigblockID uint16, rarityBag *CampaignPartRarityBag,
+) (sporenet.Part, error) {
+	if rarityBag == nil {
+		part, err := e.GenerateCampaignSpecialPart(
+			classType, scienceType, difficulty, accountLevel, choice, rigblockID,
+		)
+		if err != nil {
+			return sporenet.Part{}, fmt.Errorf("specialBagFallback: %w", err)
+		}
+		return part, nil
+	}
+	rarity := e.campaignPartRarityFromBag(
+		difficulty, campaignPartChoice(choice, campaignRarityStream), rarityBag,
+	)
+	part, err := e.generateCampaignSpecialPart(
+		classType, scienceType, creatureName, difficulty, accountLevel, choice,
+		rigblockID, rarity,
+	)
+	if err != nil {
+		return sporenet.Part{}, fmt.Errorf("specialBagGenerate: %w", err)
+	}
+	rarityBag.recordRarity(rarity)
+	return part, nil
+}
+
+func (e *PartCatalog) generateCampaignSpecialPart(
+	classType string, scienceType string, creatureName string,
+	difficulty uint32, accountLevel uint32,
+	choice uint32, rigblockID uint16, rarity sporenet.PartRarity,
+) (sporenet.Part, error) {
+	if e == nil || classType == "" || scienceType == "" || difficulty == 0 {
+		return sporenet.Part{}, errors.New("campaign special part unavailable")
+	}
+	definition, isFound := e.ByRigblock(rigblockID)
+	if !isFound || !isCampaignPartCompatible(
+		definition, classType, scienceType, creatureName,
+	) ||
+		!e.isPartSlotUnlocked(definition, accountLevel) {
+		return sporenet.Part{}, errors.New("campaign special part incompatible")
+	}
 	itemLevel := campaignItemLevel(difficulty)
 	dropLevel := campaignDropLevel(itemLevel, rarity)
 	part := sporenet.NewPart(rigblockID)
 	part.Level = uint16(max(uint32(1), min(dropLevel, uint32(^uint16(0)))))
 	part.Rarity = rarity
-	if !c.rollBudgetedCampaignAffixes(&part, classType, scienceType, choice) {
+	if !e.rollBudgetedCampaignAffixes(&part, classType, scienceType, choice) {
 		return sporenet.Part{}, errors.New("campaign special item budget incomplete")
 	}
-	part.Cost = c.partCost(part.Level)
+	part.Cost = e.partCost(part.Level)
 	return part, nil
 }
 
@@ -288,12 +458,27 @@ func (c *PartCatalog) GenerateCampaignRewardPart(
 		return sporenet.Part{}, errors.New("campaign part rarity invalid")
 	}
 	return c.generateCampaignPart(
-		classType, scienceType, level, accountLevel, choice, rarity, "",
+		classType, scienceType, "", level, accountLevel, choice, rarity, "",
+	)
+}
+
+// GenerateCampaignCreatureRewardPart restricts cash-out weapons to the selected
+// hero family while retaining the chosen unique rarity band.
+func (e *PartCatalog) GenerateCampaignCreatureRewardPart(
+	classType string, scienceType string, creatureName string,
+	level uint32, accountLevel uint32, choice uint32, rarity sporenet.PartRarity,
+) (sporenet.Part, error) {
+	if rarity < sporenet.PartUnique || rarity > sporenet.PartEpicUnique {
+		return sporenet.Part{}, errors.New("campaign part rarity invalid")
+	}
+	return e.generateCampaignPart(
+		classType, scienceType, creatureName, level, accountLevel, choice, rarity, "",
 	)
 }
 
 func (c *PartCatalog) generateCampaignPart(
-	classType string, scienceType string, level uint32, accountLevel uint32, choice uint32,
+	classType string, scienceType string, creatureName string,
+	level uint32, accountLevel uint32, choice uint32,
 	rarity sporenet.PartRarity, slotType string,
 ) (sporenet.Part, error) {
 	if c == nil || classType == "" || scienceType == "" {
@@ -302,7 +487,7 @@ func (c *PartCatalog) generateCampaignPart(
 	isUniqueFamily := isCampaignUniqueRarity(rarity)
 	if slotType == "" {
 		slotType = c.campaignPartSlotType(
-			classType, scienceType, accountLevel, choice, isUniqueFamily,
+			classType, scienceType, creatureName, accountLevel, choice, isUniqueFamily,
 		)
 		if slotType == "" {
 			return sporenet.Part{}, errors.New("campaign part slot eligibility empty")
@@ -312,8 +497,7 @@ func (c *PartCatalog) generateCampaignPart(
 	nearestIDs := make([]uint16, 0, len(c.partsByRigblock))
 	nearestDistance := ^uint32(0)
 	for rigblockID, definition := range c.partsByRigblock {
-		if !partCategoryContains(definition.ClassType, classType) ||
-			!partCategoryContains(definition.ScienceType, scienceType) ||
+		if !isCampaignPartCompatible(definition, classType, scienceType, creatureName) ||
 			definition.IsUniqueFamily != isUniqueFamily || definition.SlotType != slotType ||
 			!c.isPartSlotUnlocked(definition, accountLevel) {
 			continue
@@ -355,15 +539,29 @@ func (c *PartCatalog) generateCampaignPart(
 }
 
 func (c *PartCatalog) campaignPartSlotType(
-	classType string, scienceType string, accountLevel uint32, choice uint32,
+	classType string, scienceType string, creatureName string,
+	accountLevel uint32, choice uint32,
 	isUniqueFamily bool,
 ) string {
+	availableSlotTypes := c.campaignPartSlotTypes(
+		classType, scienceType, creatureName, accountLevel, isUniqueFamily,
+	)
+	if len(availableSlotTypes) == 0 {
+		return ""
+	}
+	slotChoice := campaignPartChoice(choice, campaignSlotStream)
+	return availableSlotTypes[slotChoice%uint32(len(availableSlotTypes))]
+}
+
+func (c *PartCatalog) campaignPartSlotTypes(
+	classType string, scienceType string, creatureName string,
+	accountLevel uint32, isUniqueFamily bool,
+) []string {
 	availableSlotTypes := make([]string, 0, len(campaignPartSlotTypes))
 	for _, slotType := range campaignPartSlotTypes {
 		for _, definition := range c.partsByRigblock {
 			if definition.SlotType != slotType ||
-				!partCategoryContains(definition.ClassType, classType) ||
-				!partCategoryContains(definition.ScienceType, scienceType) ||
+				!isCampaignPartCompatible(definition, classType, scienceType, creatureName) ||
 				definition.IsUniqueFamily != isUniqueFamily ||
 				!c.isPartSlotUnlocked(definition, accountLevel) {
 				continue
@@ -372,11 +570,61 @@ func (c *PartCatalog) campaignPartSlotType(
 			break
 		}
 	}
-	if len(availableSlotTypes) == 0 {
-		return ""
+	return availableSlotTypes
+}
+
+func isCampaignPartCompatible(
+	definition PartDefinition, classType string, scienceType string, creatureName string,
+) bool {
+	if !partCategoryContains(definition.ClassType, classType) ||
+		!partCategoryContains(definition.ScienceType, scienceType) {
+		return false
 	}
-	slotChoice := campaignPartChoice(choice, campaignSlotStream)
-	return availableSlotTypes[slotChoice%uint32(len(availableSlotTypes))]
+	if definition.SlotType != "weapon" || creatureName == "" {
+		return true
+	}
+	return campaignHeroFamilyName(definition.WeaponOwnerName) ==
+		campaignHeroFamilyName(creatureName)
+}
+
+func campaignHeroFamilyName(creatureName string) string {
+	familyName := strings.ToLower(strings.TrimSpace(creatureName))
+	for _, suffix := range [...]string{" alpha", " beta", " gamma", " delta"} {
+		familyName = strings.TrimSuffix(familyName, suffix)
+	}
+	return strings.TrimSpace(familyName)
+}
+
+func (e *CampaignPartSlotBag) selectSlotType(
+	availableSlotTypes []string, choice uint32,
+) (string, bool) {
+	candidateSlotTypes := make([]string, 0, len(availableSlotTypes))
+	for _, slotType := range availableSlotTypes {
+		if _, isUsed := e.usedSlotTypes[slotType]; !isUsed {
+			candidateSlotTypes = append(candidateSlotTypes, slotType)
+		}
+	}
+	isRefill := len(candidateSlotTypes) == 0
+	if isRefill {
+		for _, slotType := range availableSlotTypes {
+			if len(availableSlotTypes) > 1 && slotType == e.lastSlotType {
+				continue
+			}
+			candidateSlotTypes = append(candidateSlotTypes, slotType)
+		}
+	}
+	if len(candidateSlotTypes) == 0 {
+		candidateSlotTypes = append(candidateSlotTypes, availableSlotTypes...)
+	}
+	return candidateSlotTypes[choice%uint32(len(candidateSlotTypes))], isRefill
+}
+
+func (e *CampaignPartSlotBag) recordSlotType(slotType string, isRefill bool) {
+	if isRefill || e.usedSlotTypes == nil {
+		e.usedSlotTypes = make(map[string]struct{}, len(campaignPartSlotTypes))
+	}
+	e.usedSlotTypes[slotType] = struct{}{}
+	e.lastSlotType = slotType
 }
 
 func isCampaignPartSlotType(slotType string) bool {
@@ -498,6 +746,63 @@ func (c *PartCatalog) campaignPartRarity(difficulty uint32, choice uint32) spore
 		return sporenet.PartUncommon
 	default:
 		return sporenet.PartBasic
+	}
+}
+
+func (e *PartCatalog) campaignPartRarityFromBag(
+	difficulty uint32, choice uint32, bag *CampaignPartRarityBag,
+) sporenet.PartRarity {
+	if bag == nil {
+		return e.campaignPartRarity(difficulty, choice)
+	}
+	weights := e.campaignPartRarityWeights(difficulty)
+	totalWeight := float64(0)
+	for index := range weights {
+		if index > int(sporenet.PartBasic) {
+			dryDrawCount := min(
+				bag.dryDrawCounts[index], campaignRarityPityMaximumMisses,
+			)
+			weights[index] *= 1 +
+				float64(dryDrawCount)*campaignRarityPityScales[index]
+		}
+		totalWeight += weights[index]
+	}
+	draw := float64(choice) / (float64(^uint32(0)) + 1) * totalWeight
+	accumulatedWeight := float64(0)
+	for index, weight := range weights {
+		accumulatedWeight += weight
+		if draw < accumulatedWeight {
+			return sporenet.PartRarity(index)
+		}
+	}
+	return sporenet.PartEpic
+}
+
+func (e *PartCatalog) campaignPartRarityWeights(difficulty uint32) [4]float64 {
+	if e == nil || e.tuning == nil {
+		return [4]float64{65, 27, 7, 1}
+	}
+	major := min((max(difficulty, uint32(1))+3)/4, uint32(18))
+	uncommonChance := float64(e.tuning.UncommonChances[major])
+	rareChance := float64(e.tuning.RareChances[major])
+	epicChance := float64(e.tuning.EpicChances[major])
+	return [4]float64{
+		100 - uncommonChance,
+		uncommonChance - rareChance,
+		rareChance - epicChance,
+		epicChance,
+	}
+}
+
+func (e *CampaignPartRarityBag) recordRarity(rarity sporenet.PartRarity) {
+	for index := int(sporenet.PartUncommon); index <= int(sporenet.PartEpic); index++ {
+		if sporenet.PartRarity(index) == rarity {
+			e.dryDrawCounts[index] = 0
+			continue
+		}
+		e.dryDrawCounts[index] = min(
+			e.dryDrawCounts[index]+1, campaignRarityPityMaximumMisses,
+		)
 	}
 }
 

@@ -1,5 +1,42 @@
 # Changelog
 
+### 2026-09-25
+
+- Apply category rotation and rarity pity to multiplayer equipment when the roll winner receives it, using that player's activated heroes for compatible weapons while retaining one party-neutral mob-drop opportunity.
+- Count only unequipped owned items against inventory capacity, matching the Arsenal counter so equipped hero gear no longer prevents loot pickup.
+- Give Shade Drifters the authored transparent ghostform shader already used by Ghostly Trackers, including every difficulty and captain variant.
+- Let Charging Grendels pursue into headbutt range without cancelling their melee sub-action and restarting it every recovery cycle.
+- Restore mission 4-3's authored Cryos geysers with staggered warning and eruption cycles, damaging heroes caught over an erupting lava crack.
+- Clip Ghostly Tracker charges against their actual through-hero travel segment, preventing distant navigation geometry from cancelling or prematurely shortening the charge.
+- Preserve Lightning Juggernaut death-detonation damage across its distance falloff instead of rejecting fractional falloff results at the integer damage-selection boundary.
+- Compose Nocturna tree variants per placement, deduplicating Nightmare Vines with their root clusters while preserving normal trees where most authored layouts use one.
+- Restore Lightning Juggernauts to their normal movement speed after completing a charge instead of leaving the temporary charge-speed state active.
+- Compose mission 1-4's smart-object scenery as a deduplicated union, restoring missing roots and environmental models without overlapping repeated markers.
+- Aim Phantom Charge at Arakna's cursor instead of tracking a selected enemy, damage and silence every enemy crossed, then remove its shader and release the charging pose.
+- Restore Arakna's five orbiting trapped-soul slots, fill them as Soul Ravager gains kill stacks, and empty them when Phantom Burst spends those souls.
+- Resolve Phantom Burst hits along each radial projectile's full path and play its authored impact effect when a projectile reaches open ground, while retaining the six-to-twelve-shot soul scaling and four-hit-per-enemy cap.
+- Aim Entangling Rush at Arborus's cursor position while preserving direct-hit damage and the authored area root when enemies occupy the destination.
+- Choose requested `/drop` equipment categories uniformly from squad heroes with an eligible base item, preventing valid hero weapons from being crowded out by incompatible rolls.
+- Keep Voltroid Charge Friend pursuit locked to its selected ally until arrival, preventing paired Voltroids from repeatedly exchanging client locomotion positions.
+- Remove Meditron's Sentry Drone during the outgoing hero's departure instead of the next hero's arrival, preventing orphaned drone visuals from accumulating across squad switches.
+- Preserve committed enemy spawn packets when an optional companion attack cannot start, preventing active enemies from becoming invisible, and allow presentation-suppressed projectiles to use their authored zero release delay.
+- Keep Reconstruct's looping target presentation owned by its removable attached effect instead of recreating untracked visual and audio loops on every healing tick.
+- Stop Pouncing Stalkers' spent self-resurrection ring from being recreated as an untracked effect, so it disappears after defeat.
+- Restore Pouncing Stalkers' health, collision, and targetability in a stable order before playing their resurrection animation, while invalidating unfinished pre-death attacks.
+- Interrupt Laser Tank attacks and remove their active beams immediately when the enemy is knocked back.
+- Keep mission 4-1's Obelisk and smart-object scenery on the same authored layout, removing structures from conflicting variants that have no matching navigation collision.
+- Normalize restored squad resources against each hero's current maxima so an over-cap reserve hero cannot block health-capsule pickups and movement.
+- Damage heroes who walk through mission 4-1's molten-metal pool, including each independently controlled multiplayer hero.
+- Add solo campaign loot bags that raise equipment chances after mob dry streaks, progressively weight overdue higher rarities, and rotate successful drops through compatible categories without replacement while leaving multiplayer and developer drops unchanged.
+- Restrict generated weapon loot to the selected hero's authored family, preventing heroes that share a class and genesis type from receiving each other's weapon versions.
+- Deliver Cryos lava contact damage presentation packets to the moving player and nearby peers instead of losing them to a shadowed response collection.
+- Present unassigned squad records as campaign squads so newly unlocked squad slots resolve correctly instead of showing `undefined` and crashing the Arsenal.
+- Match Sync Snapshot client receives across the complete shared emission window while excluding capture-edge traffic and RakNet heartbeats, so aligned-clock skew no longer reports delivered payloads as missing.
+- Let Voltroids attack players between ally-recharge attempts, and immediately when no eligible ally is nearby, instead of repeatedly waiting on support behavior.
+- Let Sinkhole enemies finish their gravity-well recovery animation before starting another attack.
+- Give developer-spawned Mutation Agents a visible level-appropriate body and their authored passive effect instead of an invisible generic melee fallback.
+- Remove chance-based Mutation Agents from natural campaign populations while retaining explicit developer spawning.
+
 ### 2026-09-24
 
 - Play Orcus's authored melee animation when his basic attack deals damage.

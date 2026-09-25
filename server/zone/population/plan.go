@@ -13,11 +13,6 @@ import (
 )
 
 const (
-	mutationAgentNounName          = "MutationAgent.Noun"
-	mutationAgentMinimumChainLevel = uint32(5)
-	mutationAgentMaximumChainLevel = uint32(24)
-	mutationAgentMinimumChance     = uint32(5)
-	mutationAgentMaximumChance     = uint32(10)
 	initialInfinityChainLevelIndex = uint32(13)
 	exploderScarabSelectionChance  = uint32(25)
 	exploderScarabNounSpecies      = "citadelbasicsuicide"
@@ -31,9 +26,7 @@ func (s *Session) PlanSpawns(
 	return s.planSpawns(director, decisions, firstObjectID, 0)
 }
 
-// PlanCampaignSpawns applies campaign-only population policies. Mutation
-// Agents can replace one ordinary escort in an eligible population cluster;
-// boss, named-Captain, horde, and follow-up planners never enter this path.
+// PlanCampaignSpawns applies campaign-only population policies.
 func (s *Session) PlanCampaignSpawns(
 	director game.CampaignDirector, decisions []Decision, firstObjectID uint32,
 	chainLevelIndex uint32,
@@ -87,13 +80,6 @@ func (s *Session) planSpawns(
 				return nil, firstObjectID,
 					fmt.Errorf("spawnRoboBomber: %w", planErr)
 			}
-			plans, planErr = s.applyMutationAgent(
-				director, plans, firstDecisionPlanIndex, decision, chainLevelIndex,
-			)
-			if planErr != nil {
-				return nil, firstObjectID,
-					fmt.Errorf("spawnMutationAgent: %w", planErr)
-			}
 			applySpawnIntroductions(plans[firstDecisionPlanIndex:], decision)
 			continue
 		}
@@ -136,13 +122,6 @@ func (s *Session) planSpawns(
 		if countErr != nil {
 			return nil, firstObjectID,
 				fmt.Errorf("spawnRoboBomber: %w", countErr)
-		}
-		plans, countErr = s.applyMutationAgent(
-			director, plans, firstDecisionPlanIndex, decision, chainLevelIndex,
-		)
-		if countErr != nil {
-			return nil, firstObjectID,
-				fmt.Errorf("spawnMutationAgent: %w", countErr)
 		}
 		applySpawnIntroductions(plans[firstDecisionPlanIndex:], decision)
 	}
@@ -233,122 +212,6 @@ func isExploderScarabNoun(nounName string) bool {
 	normalized = strings.TrimSuffix(normalized, "_3")
 	normalized = strings.TrimSuffix(normalized, "_captain")
 	return normalized == exploderScarabNounSpecies
-}
-
-func (s *Session) applyMutationAgent(
-	director game.CampaignDirector, plans []zonenpc.SpawnPlan,
-	firstDecisionPlanIndex int, decision Decision, chainLevelIndex uint32,
-) ([]zonenpc.SpawnPlan, error) {
-	chance := mutationAgentChance(chainLevelIndex)
-	isEligibleCluster := decision.Kind == sim.DirectorLocusSpike ||
-		decision.IsProvisionalCaptain
-	if chance == 0 || !isEligibleCluster ||
-		len(plans)-firstDecisionPlanIndex < 3 {
-		return plans, nil
-	}
-	mutationAgentNounKey := strings.ToLower(mutationAgentNounName)
-	profile, isProfileFound := director.NPCProfilesByNoun[mutationAgentNounKey]
-	if !isProfileFound || !profile.IsKnown || profile.HitPoint <= 0 {
-		return nil, errors.New("profile unavailable")
-	}
-	roll, err := s.Random().Index(100)
-	if err != nil {
-		return nil, fmt.Errorf("roll: %w", err)
-	}
-	if roll >= chance {
-		return plans, nil
-	}
-	agentPlanIndex := -1
-	for planIndex := len(plans) - 1; planIndex >= firstDecisionPlanIndex; planIndex-- {
-		if plans[planIndex].IsCaptain || plans[planIndex].IsBoss {
-			continue
-		}
-		agentPlanIndex = planIndex
-		break
-	}
-	if agentPlanIndex < 0 {
-		return plans, nil
-	}
-	mutationTargetIndex := nearestMutationTargetPlan(
-		plans, firstDecisionPlanIndex, agentPlanIndex,
-	)
-	if mutationTargetIndex < 0 {
-		return plans, nil
-	}
-	targetPlan := &plans[mutationTargetIndex]
-	// MutationAgent.Noun has authored class and AI records but no render noun.
-	// A naturally selected Mutation Agent cannot retain its own invisible noun,
-	// so borrow the nearby mutation target's known-renderable body. Otherwise
-	// retain the selected escort body. Preserve the authored identity separately
-	// for behavior and diagnostics.
-	if strings.EqualFold(plans[agentPlanIndex].NounName, mutationAgentNounName) {
-		plans[agentPlanIndex].NounName = targetPlan.NounName
-	}
-	plans[agentPlanIndex].AuthoredNounName = mutationAgentNounName
-	plans[agentPlanIndex].NPCProfile = profile
-	plans[agentPlanIndex].BossIdentity = zonenpc.BossIdentity{}
-	plans[agentPlanIndex].ActionProfile = zonenpc.MutationAgentActionProfile()
-	plans[agentPlanIndex].IsActionKnown = true
-
-	targetAction, isTargetActionFound := zonenpc.ActionProfileForPlan(*targetPlan)
-	if !isTargetActionFound {
-		return nil, fmt.Errorf(
-			"targetAction[%s]: unavailable", targetPlan.NounName,
-		)
-	}
-	targetPlan.IsElite = true
-	targetPlan.NPCProfile = zonenpc.ApplyEliteProfile(targetPlan.NPCProfile)
-	targetAction.FirstAggroAnimationName = "npc_mutationagent_infected_grow"
-	targetAction.FirstAggroDelay = zonenpc.MutationAgentTransformDuration
-	targetAction.FirstAggroRevealDelay = 0
-	targetAction.FirstAggroCinematicDuration = 0
-	targetAction.FirstAggroCinematicRadius = 0
-	targetAction.FirstAggroEffectName = ""
-	targetAction.FirstAggroEffectDelay = 0
-	targetAction.IsFirstAggroDurationKnown = true
-	targetPlan.ActionProfile = targetAction
-	targetPlan.IsActionKnown = true
-	return plans, nil
-}
-
-func nearestMutationTargetPlan(
-	plans []zonenpc.SpawnPlan, firstPlanIndex int, agentPlanIndex int,
-) int {
-	if firstPlanIndex < 0 || firstPlanIndex >= len(plans) ||
-		agentPlanIndex < firstPlanIndex || agentPlanIndex >= len(plans) {
-		return -1
-	}
-	agentPosition := plans[agentPlanIndex].Position
-	targetPlanIndex := -1
-	targetDistance := float32(math.MaxFloat32)
-	for planIndex := firstPlanIndex; planIndex < len(plans); planIndex++ {
-		candidate := plans[planIndex]
-		if planIndex == agentPlanIndex || candidate.IsCaptain || candidate.IsBoss ||
-			candidate.IsFixture || !candidate.NPCProfile.IsTargetable ||
-			strings.EqualFold(candidate.NounName, mutationAgentNounName) {
-			continue
-		}
-		distance := candidate.Position.Sub(agentPosition).Length()
-		if distance > 15 || distance >= targetDistance {
-			continue
-		}
-		targetPlanIndex = planIndex
-		targetDistance = distance
-	}
-	return targetPlanIndex
-}
-
-func mutationAgentChance(chainLevelIndex uint32) uint32 {
-	if chainLevelIndex < mutationAgentMinimumChainLevel {
-		return 0
-	}
-	if chainLevelIndex >= mutationAgentMaximumChainLevel {
-		return mutationAgentMaximumChance
-	}
-	progress := chainLevelIndex - mutationAgentMinimumChainLevel
-	span := mutationAgentMaximumChainLevel - mutationAgentMinimumChainLevel
-	chanceSpan := mutationAgentMaximumChance - mutationAgentMinimumChance
-	return mutationAgentMinimumChance + progress*chanceSpan/span
 }
 
 func requestedSpawnCount(decisions []Decision) (int, error) {

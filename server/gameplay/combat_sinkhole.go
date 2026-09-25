@@ -203,6 +203,17 @@ type campaignScaldronSinkholeEnd struct {
 	profile    zonenpc.ActionProfile
 }
 
+func (e campaignScaldronSinkholeEnd) next() ([][]byte, error) {
+	packets, err := e.runtime.produceZelemShot(
+		e.packet, e.sessionKey, e.generation, e.objectID, e.timestamp,
+	)
+	if err != nil {
+		e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
+		return nil, fmt.Errorf("sinkholeNext: %w", err)
+	}
+	return packets, nil
+}
+
 func (e campaignScaldronSinkholeEnd) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.RLock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
@@ -220,14 +231,15 @@ func (e campaignScaldronSinkholeEnd) produce() ([][]byte, error) {
 		e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
 		return nil, fmt.Errorf("sinkholeEndAnimation: %w", err)
 	}
-	nextPackets, err := e.runtime.produceZelemShot(
-		e.packet, e.sessionKey, e.generation, e.objectID, e.timestamp,
-	)
+	e.timestamp += uint64(e.profile.EndAnimationDelay / time.Millisecond)
+	_, err = scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
+		Delay: e.profile.EndAnimationDelay, Produce: e.next,
+	}})
 	if err != nil {
 		e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
-		return nil, fmt.Errorf("sinkholeNext: %w", err)
+		return nil, fmt.Errorf("sinkholeRecoverySchedule: %w", err)
 	}
-	return append([][]byte{animationPacket}, nextPackets...), nil
+	return [][]byte{animationPacket}, nil
 }
 
 func (r campaignNPCActionRuntime) produceScaldronBasicSinkhole(

@@ -297,6 +297,10 @@ func (e campaignConeSchedule) hit() ([][]byte, error) {
 			return nil, fmt.Errorf("enemyConeLaserBeam: %w", err)
 		}
 		e.laserZone.isActive = true
+		if peerSession.campaignNPCLaserZones == nil {
+			peerSession.campaignNPCLaserZones = make(map[uint32]*campaignLaserZone)
+		}
+		peerSession.campaignNPCLaserZones[e.objectID] = e.laserZone
 		packets = append(packets, beamPackets...)
 	}
 	maserEndpoint := primary.Position

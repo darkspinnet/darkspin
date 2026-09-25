@@ -1609,19 +1609,6 @@ func (r campaignDamageRuntime) publishTransition(
 			return nil, fmt.Errorf("transitionSinkholeCleanup: %w", err)
 		}
 	}
-	if len(transition.selfResurrectionPlans) != 0 {
-		for index, plan := range transition.selfResurrectionPlans {
-			animationPacket, err := npcraknet.AnimationState(
-				plan.ObjectID, campaignSelfResurrectionAnimation, timestamp,
-			)
-			if err != nil {
-				return nil, fmt.Errorf(
-					"transitionSelfResurrectAnimation[%d]: %w", index, err,
-				)
-			}
-			packets = append(packets, animationPacket)
-		}
-	}
 	if len(transition.corruptorStageTwoPlans) != 0 {
 		for index, plan := range transition.corruptorStageTwoPlans {
 			deletePacket, err := raknet.MarshalApplication(
@@ -1685,6 +1672,19 @@ func (r campaignDamageRuntime) publishTransition(
 		}
 	}
 	packets = append(packets, transition.immediatePackets...)
+	if len(transition.selfResurrectionPlans) != 0 {
+		for index, plan := range transition.selfResurrectionPlans {
+			animationPacket, err := npcraknet.AnimationState(
+				plan.ObjectID, campaignSelfResurrectionAnimation, timestamp,
+			)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"transitionSelfResurrectAnimation[%d]: %w", index, err,
+				)
+			}
+			packets = append(packets, animationPacket)
+		}
+	}
 	if sinkholeCleanupPacket != nil {
 		packets = append(packets, sinkholeCleanupPacket)
 	}
@@ -2601,12 +2601,7 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 			return campaignDamageTransition{},
 				errors.New("self resurrection target not acquired")
 		}
-		profile := zonenpc.ActionProfile{
-			ImpactEffectName: "self_rez_aura_effect.ServerEventDef",
-		}
-		resurrectionPackets, marshalErr := npcraknet.ResurrectionHit(
-			revived.Plan.ObjectID, revived, profile,
-		)
+		resurrectionPackets, marshalErr := npcraknet.ResurrectionState(revived)
 		if marshalErr != nil {
 			return campaignDamageTransition{},
 				fmt.Errorf("selfResurrectMarshal: %w", marshalErr)
@@ -2752,7 +2747,17 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 	if isPlayerKill && result.IsDefeated && isDefeatedNPCFound &&
 		!defeatedNPC.Plan.IsFixture {
 		transition.experience = defeatedNPC.Plan.Experience
-		_, _ = s.applyPassiveKill()
+		_, isPassiveChanged := s.applyPassiveKill()
+		if isPassiveChanged {
+			passivePackets, passiveErr := s.syncSoulRavagerPresentation()
+			if passiveErr != nil {
+				return campaignDamageTransition{},
+					fmt.Errorf("passiveKillPresentation: %w", passiveErr)
+			}
+			transition.immediatePackets = append(
+				transition.immediatePackets, passivePackets...,
+			)
+		}
 	}
 	if result.IsDefeated && s.zone.Security() != nil {
 		decision, activationErr := s.zone.Security().
@@ -3046,6 +3051,7 @@ func (r campaignNPCActionRuntime) spawnLoot(
 	if !isTutorial && !enemy.Plan.IsFixture {
 		equipmentPackets, _, equipmentErr = peerSession.spawnCampaignNPCEquipment(
 			enemy, r.gameplayJoin, sourceTime,
+			peerSession.binding.ParticipantCount <= 1,
 		)
 	}
 	orbPackets := make([][]byte, 0)
@@ -7346,8 +7352,8 @@ func (r campaignNPCActionRuntime) produceHasterBuff(
 
 func isCampaignNPCSecondaryPursuit(abilityName string) bool {
 	switch abilityName {
-	case "GhostlyBoltFlee", "NomadBioSpecialTwoJumpAttack", "Smash",
-		"StealthAttack", "RezMelee":
+	case "CryosBasicChargeHeadbutt", "GhostlyBoltFlee",
+		"NomadBioSpecialTwoJumpAttack", "Smash", "StealthAttack", "RezMelee":
 		return true
 	default:
 		return false

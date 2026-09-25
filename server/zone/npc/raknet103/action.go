@@ -1096,18 +1096,17 @@ func ResurrectionCast(
 	return marshalMessages(messages, "resurrectionCast")
 }
 
-func ResurrectionHit(
-	sourceObjectID uint32, target zonenpc.Snapshot,
-	profile zonenpc.ActionProfile,
-) ([][]byte, error) {
-	if sourceObjectID == 0 || target.Plan.ObjectID == 0 ||
-		target.HitPoint <= 0 || profile.ImpactEffectName == "" {
-		return nil, errors.New("npc resurrection hit invalid")
+func ResurrectionState(target zonenpc.Snapshot) ([][]byte, error) {
+	if target.Plan.ObjectID == 0 || target.HitPoint <= 0 {
+		return nil, errors.New("npc resurrection state invalid")
 	}
 	return marshalMessages([]raknet.ApplicationMessage{
-		raknet.ObjectEffectMessage{
-			Asset:    util.HashID(profile.ImpactEffectName),
-			ObjectID: target.Plan.ObjectID, AttackerID: sourceObjectID,
+		raknet.CombatantDataDeltaMessage{
+			ObjectID: target.Plan.ObjectID, HitPoints: target.HitPoint,
+			IsHitPointChanged: true,
+		},
+		raknet.ObjectCollisionUpdateMessage{
+			ObjectID: target.Plan.ObjectID, IsCollisionEnabled: true,
 		},
 		raknet.AgentBlackboardUpdateMessage{
 			ObjectID: target.Plan.ObjectID, TargetID: target.TargetObjectID,
@@ -1115,14 +1114,28 @@ func ResurrectionHit(
 			IsTargetable:  target.Plan.NPCProfile.IsTargetable,
 			AttackerCount: 1,
 		},
-		raknet.ObjectCollisionUpdateMessage{
-			ObjectID: target.Plan.ObjectID, IsCollisionEnabled: true,
-		},
-		raknet.CombatantDataDeltaMessage{
-			ObjectID: target.Plan.ObjectID, HitPoints: target.HitPoint,
-			IsHitPointChanged: true,
-		},
-	}, "resurrectionHit")
+	}, "resurrectionState")
+}
+
+func ResurrectionHit(
+	sourceObjectID uint32, target zonenpc.Snapshot,
+	profile zonenpc.ActionProfile,
+) ([][]byte, error) {
+	if sourceObjectID == 0 || profile.ImpactEffectName == "" {
+		return nil, errors.New("npc resurrection hit invalid")
+	}
+	packets, err := ResurrectionState(target)
+	if err != nil {
+		return nil, fmt.Errorf("resurrectionHitState: %w", err)
+	}
+	effectPacket, err := raknet.MarshalApplication(raknet.ObjectEffectMessage{
+		Asset: util.HashID(profile.ImpactEffectName), ObjectID: target.Plan.ObjectID,
+		AttackerID: sourceObjectID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("resurrectionHitEffect: %w", err)
+	}
+	return append(packets, effectPacket), nil
 }
 
 func HealCast(

@@ -42,7 +42,7 @@ func (r gameplayPendingRuntime) createDeveloperEquipmentDrop(
 	}
 	packets, objectID, roll, err := currentSession.spawnCampaignEquipmentWithPolicy(
 		invocation, r.gameplayJoin, packet.SourceTime, source.NPC.Plan.IsBoss, true,
-		command.Category,
+		command.Category, nil, nil, nil, false,
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()

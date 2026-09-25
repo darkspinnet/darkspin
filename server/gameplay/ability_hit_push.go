@@ -97,6 +97,16 @@ func (e campaignDamageRuntime) applyAcceptedHitPushes(
 		if !isDestinationFound {
 			continue
 		}
+		interruptionPackets, err :=
+			e.registry.interruptCampaignNPCForForcedMovementLocked(
+				sessionKey, &peerSession, target.Plan.ObjectID,
+			)
+		if err != nil {
+			return packets, fmt.Errorf(
+				"heroPushInterrupt[%d]: %w", target.Plan.ObjectID, err,
+			)
+		}
+		packets = append(packets, interruptionPackets...)
 		attackPlan := zonenpc.AttackPlan{
 			SourceObjectID: sourceObjectID,
 			TargetObjectID: target.Plan.ObjectID,

@@ -11,7 +11,10 @@ import (
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
 
-const campaignVoltroidDischargeStackCount = 5
+const (
+	campaignVoltroidDischargeStackCount  = 5
+	campaignVoltroidChargeFriendCooldown = 15 * time.Second
+)
 
 type campaignVoltroidVisualCleanupStep struct {
 	runtime    campaignNPCActionRuntime
@@ -70,14 +73,15 @@ func (e campaignVoltroidChargeCleanupStep) produce() ([][]byte, error) {
 }
 
 type campaignVoltroidSchedule struct {
-	runtime    campaignNPCActionRuntime
-	packet     raknet.Packet
-	sessionKey string
-	generation uint64
-	objectID   uint32
-	targetID   uint32
-	timestamp  uint64
-	plan       zonenpc.AttackPlan
+	runtime              campaignNPCActionRuntime
+	packet               raknet.Packet
+	sessionKey           string
+	generation           uint64
+	objectID             uint32
+	targetID             uint32
+	timestamp            uint64
+	chargeReadyTimestamp uint64
+	plan                 zonenpc.AttackPlan
 }
 
 func (e campaignVoltroidSchedule) fail(
@@ -131,6 +135,9 @@ func (e campaignVoltroidSchedule) hit() ([][]byte, error) {
 	if peerSession.campaignNPCVoltroidChargeExpires == nil {
 		peerSession.campaignNPCVoltroidChargeExpires = make(map[uint32]uint64)
 	}
+	if peerSession.campaignNPCVoltroidChargeReadiness == nil {
+		peerSession.campaignNPCVoltroidChargeReadiness = make(map[uint32]uint64)
+	}
 	if peerSession.campaignNPCVoltroidEffectSlots == nil {
 		peerSession.campaignNPCVoltroidEffectSlots = make(map[uint32]uint8)
 	}
@@ -139,8 +146,10 @@ func (e campaignVoltroidSchedule) hit() ([][]byte, error) {
 		stackCount++
 		peerSession.campaignNPCVoltroidCharges[e.targetID] = stackCount
 	}
-	expiresAt := e.timestamp + 15000
+	expiresAt := e.chargeReadyTimestamp
 	peerSession.campaignNPCVoltroidChargeExpires[e.targetID] = expiresAt
+	peerSession.campaignNPCVoltroidChargeReadiness[e.objectID] =
+		e.chargeReadyTimestamp
 	effectSlot, isEffectFound :=
 		peerSession.campaignNPCVoltroidEffectSlots[e.targetID]
 	isEffectReplacement := isEffectFound
@@ -170,7 +179,7 @@ func (e campaignVoltroidSchedule) hit() ([][]byte, error) {
 		effectSlot: effectSlot, expiresAt: expiresAt,
 	}
 	cancelCleanup, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
-		Delay: 15 * time.Second, Produce: cleanup.produce,
+		Delay: campaignVoltroidChargeFriendCooldown, Produce: cleanup.produce,
 	}})
 	if scheduleErr != nil {
 		e.runtime.logger.Printf(
@@ -233,6 +242,15 @@ func (r campaignNPCActionRuntime) produceCitadelSpecificOne(
 	if peerSession.campaignNPCVoltroidChargeExpires == nil {
 		peerSession.campaignNPCVoltroidChargeExpires = make(map[uint32]uint64)
 	}
+	if peerSession.campaignNPCVoltroidChargeReadiness == nil {
+		peerSession.campaignNPCVoltroidChargeReadiness = make(map[uint32]uint64)
+	}
+	if timestamp < peerSession.campaignNPCVoltroidChargeReadiness[objectID] {
+		r.registry.sessions[sessionKey] = peerSession
+		r.registry.mutex.Unlock()
+		return nil, false, nil
+	}
+	delete(peerSession.campaignNPCVoltroidChargeReadiness, objectID)
 	_, isChargeEffectFound :=
 		peerSession.campaignNPCVoltroidEffectSlots[objectID]
 	if timestamp >= peerSession.campaignNPCVoltroidChargeExpires[objectID] &&
@@ -264,21 +282,16 @@ func (r campaignNPCActionRuntime) produceCitadelSpecificOne(
 	}
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
+	if target.Plan.ObjectID == 0 {
+		return nil, false, nil
+	}
 	schedule := campaignVoltroidSchedule{
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID, targetID: target.Plan.ObjectID,
 		timestamp: timestamp + uint64(time.Second/time.Millisecond),
-		plan:      zonenpc.AttackPlan{},
-	}
-	if target.Plan.ObjectID == 0 {
-		_, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
-			Delay: time.Second, Produce: schedule.next,
-		}})
-		if err != nil {
-			r.releaseAction(sessionKey, generation, objectID)
-			return nil, true, fmt.Errorf("voltroidRetrySchedule: %w", err)
-		}
-		return nil, true, nil
+		chargeReadyTimestamp: timestamp +
+			uint64(campaignVoltroidChargeFriendCooldown/time.Millisecond),
+		plan: zonenpc.AttackPlan{},
 	}
 	profile, isProfileFound := zonenpc.CitadelSpecificOneChargeFriendProfile(
 		source.Plan.NounName,
@@ -303,9 +316,9 @@ func (r campaignNPCActionRuntime) produceCitadelSpecificOne(
 			r.releaseAction(sessionKey, generation, objectID)
 			return nil, true, fmt.Errorf("voltroidChargePursuit: %w", marshalErr)
 		}
-		scheduleErr := r.pursuit.schedule(
-			packet, sessionKey, generation, objectID, timestamp,
-			action.TargetPosition, profile, schedule.arrive,
+		scheduleErr := r.pursuit.scheduleTarget(
+			packet, sessionKey, generation, objectID, target.Plan.ObjectID,
+			timestamp, action.TargetPosition, profile, schedule.arrive,
 		)
 		if scheduleErr != nil {
 			r.releaseAction(sessionKey, generation, objectID)

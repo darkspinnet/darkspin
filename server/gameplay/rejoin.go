@@ -248,6 +248,11 @@ func marshalGameplayRejoinBaselineState(
 		return nil, fmt.Errorf("rejoinMembers: %w", err)
 	}
 	packets = append(packets, memberPackets...)
+	soulPackets, err := peerSession.marshalSoulRavagerPresentation()
+	if err != nil {
+		return nil, fmt.Errorf("rejoinSoulRavager: %w", err)
+	}
+	packets = append(packets, soulPackets...)
 	for index := uint32(0); index < uint32(len(binding.Creatures)); index++ {
 		if binding.Creatures[index].Noun == 0 {
 			continue

@@ -690,7 +690,28 @@ func (e heroBurstStep) produceRadialImpact(
 	if schedule.definition.BurstTargeting == sim.ProjectileBurstTargetingRadial {
 		impactPosition = schedule.planTargetPosition(peerSession, e.index)
 	}
-	if schedule.definition.BurstTargeting != sim.ProjectileBurstTargetingArc {
+	if schedule.definition.BurstTargeting == sim.ProjectileBurstTargetingRadial {
+		targetObjectID = 0
+		minimumTravelDistance := schedule.definition.Distance +
+			schedule.definition.Radius
+		shotSourcePosition := schedule.shotSourcePositions[e.index]
+		for _, npc := range peerSession.zone.NPCs().LiveSnapshots() {
+			if npc.Faction != zonenpc.FactionNonPlayerAligned ||
+				npc.Plan.IsFixture || !npc.IsPublished || npc.IsDefeated ||
+				npc.HitPoint <= 0 || schedule.hitCounts[npc.Plan.ObjectID] >= 4 ||
+				chargeSegmentDistance(
+					shotSourcePosition, game.Vec3(impactPosition), npc.Plan.Position,
+				) > schedule.definition.Radius+npc.Plan.NPCProfile.FootprintRadius {
+				continue
+			}
+			travelDistance := npc.Plan.Position.Sub(shotSourcePosition).Length()
+			if travelDistance >= minimumTravelDistance {
+				continue
+			}
+			minimumTravelDistance = travelDistance
+			targetObjectID = npc.Plan.ObjectID
+		}
+	} else if schedule.definition.BurstTargeting != sim.ProjectileBurstTargetingArc {
 		targetObjectID = 0
 		minimumDistance := schedule.definition.Radius
 		for _, npc := range peerSession.zone.NPCs().LiveSnapshots() {
@@ -713,7 +734,8 @@ func (e heroBurstStep) produceRadialImpact(
 		liveNPC.HitPoint <= 0 {
 		webbedTargetObjectIDs := schedule.webbedTargetObjectIDs(peerSession)
 		isGroundImpact := schedule.definition.BurstTargeting ==
-			sim.ProjectileBurstTargetingCursorArea
+			sim.ProjectileBurstTargetingCursorArea ||
+			schedule.definition.BurstTargeting == sim.ProjectileBurstTargetingRadial
 		impactFacing := sim.Position{X: 1}
 		if schedule.definition.Name == "MissileTempestActive" {
 			impactFacing = sim.Position{Z: -1}
@@ -864,6 +886,21 @@ func (e heroBurstSchedule) fail(scheduleErr error) {
 			e.creatureIndex, e.previousManaPoint,
 		)
 		peerSession.restorePassiveKill(e.creatureIndex, e.passiveKillStack)
+		soulPackets, soulErr := peerSession.syncSoulRavagerPresentation()
+		if soulErr == nil {
+			publishErr := peerSession.publishPackets(soulPackets)
+			if publishErr != nil && e.runtime.logger != nil {
+				e.runtime.logger.Printf(
+					"RakNet Soul Ravager rollback presentation omitted for %s: %v",
+					e.sessionKey, publishErr,
+				)
+			}
+		} else if e.runtime.logger != nil {
+			e.runtime.logger.Printf(
+				"RakNet Soul Ravager rollback presentation failed for %s: %v",
+				e.sessionKey, soulErr,
+			)
+		}
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 	}
 	e.runtime.registry.mutex.Unlock()
@@ -1195,6 +1232,21 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 		r.registry.mutex.Unlock()
 		return request.reject("passive soul state unavailable")
 	}
+	soulPackets, soulErr := peerSession.syncSoulRavagerPresentation()
+	if soulErr != nil {
+		peerSession.restorePassiveKill(creatureIndex, passiveKillStack)
+		delete(peerSession.heroBurstAttacks, firstProjectileObjectID)
+		peerSession.restoreCampaignProjectileID(previousProjectileObjectID)
+		peerSession.abilityCooldownSession().Rollback(cooldownReservation)
+		peerSession.abilityReleaseSession().Rollback(releaseReservation)
+		_ = peerSession.setCampaignCharacterManaPoints(
+			creatureIndex, previousManaPoint,
+		)
+		run.Stop()
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("heroBurstSoulPresentation: %w", soulErr)
+	}
+	immediatePackets = append(immediatePackets, soulPackets...)
 	binding := peerSession.binding
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()

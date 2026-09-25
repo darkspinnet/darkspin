@@ -3135,16 +3135,28 @@ func (r gameplayPendingRuntime) spawnDeveloperNPC(
 	profile = zoneboss.NormalizeFinalBossProfile(command.NounName, profile)
 	position := game.Vec3(currentSession.playerPosition)
 	position.X += 5
-	plans, err := currentSession.zone.AssignSpawnPlanIDs([]zonenpc.SpawnPlan{{
+	plan := zonenpc.SpawnPlan{
 		NounName: command.NounName, Position: position,
 		IsCaptain:          strings.Contains(strings.ToLower(command.NounName), "_captain"),
 		IsRewardSuppressed: true, NPCProfile: profile,
-	}})
+	}
+	if strings.EqualFold(command.NounName, zonenpc.MutationAgentNounName) {
+		bodyNounName, isBodyFound := developerMutationAgentBodyNoun(director)
+		if !isBodyFound {
+			r.registry.mutex.Unlock()
+			return nil, false, errors.New("npcSpawnMutationBody: unavailable")
+		}
+		plan.NounName = bodyNounName
+		plan.AuthoredNounName = command.NounName
+		plan.ActionProfile = zonenpc.MutationAgentActionProfile()
+		plan.IsActionKnown = true
+	}
+	plans, err := currentSession.zone.AssignSpawnPlanIDs([]zonenpc.SpawnPlan{plan})
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, false, fmt.Errorf("npcSpawnAllocate: %w", err)
 	}
-	plan := plans[0]
+	plan = plans[0]
 	targetObjectID := currentSession.deployedObjectID
 	packets, err := npcraknet.TargetedSpawn(plan, targetObjectID)
 	if err != nil {
@@ -3181,10 +3193,35 @@ func (r gameplayPendingRuntime) spawnDeveloperNPC(
 		packets = append(packets, actionPackets...)
 	}
 	r.logger.Printf(
-		"RakNet developer NPC spawn accepted object=%d noun=%q for %s",
-		plan.ObjectID, plan.NounName, packet.Address,
+		"RakNet developer NPC spawn accepted object=%d noun=%q presentation_noun=%q for %s",
+		plan.ObjectID, command.NounName, plan.NounName, packet.Address,
 	)
 	return packets, true, nil
+}
+
+func developerMutationAgentBodyNoun(
+	director game.CampaignDirector,
+) (string, bool) {
+	entries := zonepopulation.PoolEntries(director, "minion")
+	for _, entry := range entries {
+		if strings.EqualFold(entry.NounName, zonenpc.MutationAgentNounName) ||
+			!entry.NPCProfile.IsKnown || !entry.NPCProfile.IsTargetable ||
+			entry.NPCProfile.HitPoint <= 0 {
+			continue
+		}
+		return entry.NounName, true
+	}
+	for _, pool := range director.Pools {
+		for _, entry := range pool.Entries {
+			if strings.EqualFold(entry.NounName, zonenpc.MutationAgentNounName) ||
+				!entry.NPCProfile.IsKnown || !entry.NPCProfile.IsTargetable ||
+				entry.NPCProfile.HitPoint <= 0 {
+				continue
+			}
+			return entry.NounName, true
+		}
+	}
+	return "", false
 }
 
 func developerNPCProfile(
@@ -4396,6 +4433,9 @@ func resetGameplayPeerRuntime(
 	peerSession.enemyFearExpiresAt = time.Time{}
 	peerSession.enemyFearTargetObjectID = 0
 	peerSession.passiveKillStack = [squad.Size]uint32{}
+	peerSession.soulRavagerObjectIDs = [soulRavagerSlotCount]uint32{}
+	peerSession.soulRavagerOwnerObjectID = 0
+	peerSession.soulRavagerVisualStack = 0
 	peerSession.passiveReductionStack = [squad.Size]uint32{}
 	peerSession.passiveReductionExpiresAt = [squad.Size]time.Time{}
 	peerSession.fireRavagerBasicCount = [squad.Size]uint32{}
@@ -4709,6 +4749,12 @@ func (r gameplaySetupRuntime) publishCampaign(
 		if !isFound || !character.IsAvailable {
 			continue
 		}
+		character, err = peerSession.normalizeCampaignCharacterResources(creatureIndex)
+		if err != nil {
+			return nil, false, fmt.Errorf(
+				"pingCampaignResource[%d]: %w", creatureIndex, err,
+			)
+		}
 		peerSession.binding.Creatures[creatureIndex].HitPoint = character.HitPoints
 		peerSession.binding.Creatures[creatureIndex].PowerPoint = character.ManaPoints
 	}
@@ -4923,6 +4969,13 @@ func (r gameplaySetupRuntime) publishCampaign(
 		return nil, false, fmt.Errorf("pingLightspeedPassive: %w", err)
 	}
 	response = append(response, lightspeedPackets...)
+	soulPackets, err := startSoulRavagerPresentation(
+		r.damage, packet.Address.String(), peerSession.generation,
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("pingSoulRavagerPassive: %w", err)
+	}
+	response = append(response, soulPackets...)
 	err = r.startCampaignClock(packet, peerSession)
 	if err != nil {
 		return nil, false, fmt.Errorf("pingCampaignClock: %w", err)
@@ -5576,6 +5629,24 @@ func (p campaignPreparation) initialize(
 	}
 	sceneryMarkers = append(sceneryMarkers, cryosSceneryMarkers...)
 	sceneryDeleteObjectIDs = append(sceneryDeleteObjectIDs, cryosDeleteObjectIDs...)
+	nocturnaSceneryMarkers, nocturnaDeleteObjectIDs, sceneryErr :=
+		director.NocturnaScenery(contentSelectionID)
+	if sceneryErr != nil {
+		return fmt.Errorf("statusChainNocturnaScenery: %w", sceneryErr)
+	}
+	sceneryMarkers = append(sceneryMarkers, nocturnaSceneryMarkers...)
+	sceneryDeleteObjectIDs = append(
+		sceneryDeleteObjectIDs, nocturnaDeleteObjectIDs...,
+	)
+	infinitySceneryMarkers, infinityDeleteObjectIDs, sceneryErr :=
+		director.InfinityScenery(contentSelectionID)
+	if sceneryErr != nil {
+		return fmt.Errorf("statusChainInfinityScenery: %w", sceneryErr)
+	}
+	sceneryMarkers = append(sceneryMarkers, infinitySceneryMarkers...)
+	sceneryDeleteObjectIDs = append(
+		sceneryDeleteObjectIDs, infinityDeleteObjectIDs...,
+	)
 	sceneryPlans, sceneryErr := zoneobject.PlanScenery(sceneryMarkers)
 	if sceneryErr != nil {
 		return fmt.Errorf("statusChainSceneryPlans: %w", sceneryErr)
@@ -5629,7 +5700,7 @@ func (p campaignPreparation) initialize(
 			fixtureMarkers, fixtureErr = director.InitialChainFixtures(contentSelectionID)
 		}
 	} else if binding.Mode == game.ModeChain {
-		fixtureMarkers, fixtureErr = director.NightmareVineFixtures(contentSelectionID)
+		fixtureMarkers, fixtureErr = director.NightmareVineFixtures()
 	}
 	if fixtureErr != nil {
 		return fmt.Errorf("statusChainFixtures: %w", fixtureErr)

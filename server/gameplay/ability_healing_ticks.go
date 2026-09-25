@@ -303,8 +303,15 @@ func (e heroHealingTicksSchedule) tick(
 	if healedAmount <= 0 {
 		return packets, nil
 	}
+	healingDefinition := e.definition
+	if healingDefinition.Name == "FieldMedicSupport" {
+		// Reconstruct's target effect is a looping attached effect owned by the
+		// run. Re-emitting it as a positioned effect on every tick creates
+		// untracked visual and audio loops that cannot be stopped at release.
+		healingDefinition.HealEffectName = ""
+	}
 	healingPackets, err := abilityraknet.MarshalTreeOfLifeHealing(
-		e.definition, e.position,
+		healingDefinition, e.position,
 		[]abilityraknet.Healing{{
 			SourceObjectID: e.sourceObjectID, ObjectID: e.target.objectID,
 			HitPoint: hitPoint, Amount: healedAmount,

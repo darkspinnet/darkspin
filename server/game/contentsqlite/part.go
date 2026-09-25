@@ -33,7 +33,8 @@ func LoadPartCatalog(ctx context.Context, store lootRigblockStore) (*game.PartCa
 			RigblockID: rigblock.ID, ContentFlags: rigblock.ContentFlags,
 			SlotType:  rigblock.SlotType,
 			ClassType: rigblock.ClassType, ScienceType: rigblock.ScienceType,
-			WeaponSlotType: rigblock.WeaponSlotType, MinimumLevel: rigblock.MinimumLevel,
+			WeaponSlotType: rigblock.WeaponSlotType, WeaponOwnerName: rigblock.WeaponOwnerName,
+			MinimumLevel: rigblock.MinimumLevel,
 			MaximumLevel: rigblock.MaximumLevel, IsUniqueFamily: rigblock.IsUniqueFamily,
 		})
 	}
