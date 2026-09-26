@@ -3524,8 +3524,7 @@ func (s gameplaySwitchArrivalStep) produce() ([][]byte, error) {
 		isCurrent = isFound && peerSession.generation == s.generation &&
 			peerSession.deployedObjectID == s.targetObjectID
 		if isCurrent {
-			peerSession.heroInputLockedObjectID = 0
-			peerSession.heroInputLockedUntil = time.Time{}
+			peerSession.beginHeroArrival(s.runtime.now())
 			s.runtime.registry.sessions[s.sessionKey] = peerSession
 		}
 		s.runtime.registry.mutex.Unlock()
@@ -4015,13 +4014,17 @@ func (r gameplaySwitchRuntime) handle(
 	if err != nil {
 		r.logger.Printf("RakNet player movement cleanup omitted during switch remote=%s: %v", packet.Address, err)
 	}
+	arrivalTimestamp := packet.SourceTime
+	if isVoluntarySwitch {
+		arrivalTimestamp += uint64(campaignCreatureWarpOutDelay / time.Millisecond)
+	}
 	switchPackets, err = marshalCampaignCharacterSwitch(
 		uint8(peerSession.binding.Slot), sourceObjectID, targetObjectID,
 		command.Value, sourceCreature, targetCreature,
 		sourceCharacter.HitPoints, sourceCharacter.ManaPoints,
 		targetCharacter.HitPoints, targetCharacter.ManaPoints,
 		peerSession.playerPosition, command.Common.Orientation,
-		uint64(switchPresentationTime.UnixMilli()),
+		arrivalTimestamp,
 		isDeathSelection || isVoluntarySwitch,
 	)
 	if err != nil {
@@ -4031,7 +4034,7 @@ func (r gameplaySwitchRuntime) handle(
 	if isVoluntarySwitch {
 		departurePackets, err = marshalCampaignCharacterDeparture(
 			sourceObjectID, sourceCreature, peerSession.playerPosition,
-			uint64(switchStartTime.UnixMilli()),
+			packet.SourceTime,
 		)
 		if err != nil {
 			r.registry.mutex.Unlock()

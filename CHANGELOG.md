@@ -2,6 +2,7 @@
 
 ### 2026-09-26
 
+- Restore mission spawning and hero switching from the short teleporter animation to the authored beam-in landing sequence, with matching effects and sound cues, consistent timing, and a brief input lock through landing.
 - Save campaign squad edits when the unused Arena deck field is blank instead of rejecting the complete deck update and restoring Blitz, Sage, and Wraith.
 
 ### 2026-09-25

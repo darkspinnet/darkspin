@@ -94,7 +94,7 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 		sourceCharacter.HitPoints, sourceCharacter.ManaPoints,
 		targetCharacter.HitPoints, targetCharacter.ManaPoints,
 		peerSession.playerPosition, command.Common.Orientation,
-		uint64(switchStartTime.UnixMilli()), true,
+		packet.SourceTime+uint64(campaignCreatureWarpOutDelay/time.Millisecond), true,
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -102,7 +102,7 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 	}
 	departurePackets, err := marshalCampaignCharacterDeparture(
 		sourceObjectID, peerSession.binding.Creatures[sourceCreatureIndex],
-		peerSession.playerPosition, uint64(switchStartTime.UnixMilli()),
+		peerSession.playerPosition, packet.SourceTime,
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -128,6 +128,8 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 	interruptedBasic := peerSession.resetAbilityAdmissionForSwitch()
 	peerSession.deployedCreatureIndex = command.Value
 	peerSession.deployedObjectID = targetObjectID
+	peerSession.heroInputLockedObjectID = sourceObjectID
+	peerSession.heroInputLockedUntil = switchStartTime.Add(campaignCreatureWarpOutDelay)
 	peerSession.isHeroSelectionPending = false
 	peerSession.isHeroSelectionScheduled = false
 	peerSession.heroSelectionReadyAt = time.Time{}
@@ -145,7 +147,10 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 			sourceObjectID, targetObjectID, command.Value,
 		)
 	}
-	step := gameplaySwitchArrivalStep{packets: switchPackets}
+	step := gameplaySwitchArrivalStep{
+		runtime: r, packets: switchPackets, sessionKey: sessionKey,
+		generation: commandSession.generation, targetObjectID: targetObjectID,
+	}
 	producer := raknet.ScheduledPacketProducer{
 		Delay: campaignCreatureWarpOutDelay, Produce: step.produce,
 	}
@@ -165,7 +170,11 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 			sourceObjectID, targetObjectID, scheduleErr,
 		)
 	}
-	return append(departurePackets, switchPackets...), nil
+	arrivalPackets, err := step.produce()
+	if err != nil {
+		return nil, fmt.Errorf("arenaArrivalFallback: %w", err)
+	}
+	return append(departurePackets, arrivalPackets...), nil
 }
 
 func (r gameplaySwitchRuntime) rejectArenaSwitch(

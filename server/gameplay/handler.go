@@ -250,7 +250,7 @@ func (r gameplayActionRuntime) handleCommand(
 	if isSessionFound && inputLockRemaining > 0 &&
 		command.Common.ObjectID == peerSession.heroInputLockedObjectID {
 		r.logger.Printf(
-			"RakNet campaign action quarantined during hero switch type=%d source=%d outgoing=%d remaining=%s",
+			"RakNet campaign action quarantined during hero deployment type=%d source=%d locked=%d remaining=%s",
 			command.Common.Type, command.Common.ObjectID,
 			peerSession.heroInputLockedObjectID, inputLockRemaining,
 		)
@@ -1851,123 +1851,6 @@ func sortScheduledPacketProducersByDelay(producers []raknet.ScheduledPacketProdu
 			return 0
 		}
 	})
-}
-
-func marshalCampaignCharacterSwitch(
-	playerIndex uint8, sourceObjectID uint32, targetObjectID uint32, creatureIndex uint32,
-	sourceCreature, targetCreature game.GameplayCreature,
-	sourceHitPoint, sourcePowerPoint, targetHitPoint, targetPowerPoint float32,
-	position raknet.Vector3, orientation raknet.Quaternion, animationTimestamp uint64,
-	isDeathSelection bool,
-) ([][]byte, error) {
-	sourceBeam := campaignCharacterBeam(sourceCreature, false)
-	messages := make([]raknet.ApplicationMessage, 0, 15)
-	if !isDeathSelection {
-		messages = append(messages,
-			raknet.PositionedEffectMessage{
-				Asset: util.HashID(sourceBeam + ".ServerEventDef"), Position: position,
-			},
-			raknet.SetAnimationStateMessage{
-				ObjectID: sourceObjectID, State: util.HashID("character_teleport_out"),
-				Timestamp: animationTimestamp, Scale: 1,
-			},
-		)
-	}
-	messages = append(messages, raknet.ObjectUpdateMessage{
-		ObjectID: sourceObjectID, PositionX: position.X, PositionY: position.Y, PositionZ: position.Z,
-		IsVisible: false,
-	})
-	messages = append(messages,
-		raknet.CombatantDataDeltaMessage{
-			ObjectID: sourceObjectID, HitPoints: sourceHitPoint, IsHitPointChanged: true,
-			ManaPoints: sourcePowerPoint, IsManaPointChanged: true,
-		},
-		raknet.LabsPlayerControlledObjectMessage{Slot: playerIndex, ObjectID: targetObjectID},
-		raknet.PlayerCharacterDeployMessage{
-			PlayerIndex: playerIndex, CreatureIndex: creatureIndex, ObjectID: targetObjectID,
-		},
-		raknet.LabsPlayerDeployCooldownMessage{
-			PlayerSlot: playerIndex, DeployedCreatureIndex: creatureIndex,
-			// Build 103 compares this field directly with a private local
-			// gameplay clock that no client request publishes. Keep the
-			// authoritative cooldown in the squad session and clear the
-			// client field rather than extending its lock with another epoch.
-			DeadlineMilliseconds: 0,
-		},
-	)
-	messages = append(messages, campaignCharacterArrivalMessages(
-		targetObjectID, targetCreature, position, orientation,
-		animationTimestamp,
-	)...)
-	// Deploy can replace the target object's local combatant state. Publish the
-	// authoritative resource state after arrival so the power bar and the
-	// client's ability admission read the same value.
-	messages = append(messages, raknet.CombatantDataDeltaMessage{
-		ObjectID: targetObjectID, HitPoints: targetHitPoint, IsHitPointChanged: true,
-		ManaPoints: targetPowerPoint, IsManaPointChanged: true,
-	})
-	packets := make([][]byte, 0, len(messages))
-	for index, message := range messages {
-		packet, err := raknet.MarshalApplication(message)
-		if err != nil {
-			return nil, fmt.Errorf("switchPacket[%d]: %w", index, err)
-		}
-		packets = append(packets, packet)
-	}
-	return packets, nil
-}
-
-func campaignCharacterArrivalMessages(
-	targetObjectID uint32, targetCreature game.GameplayCreature,
-	position raknet.Vector3, orientation raknet.Quaternion,
-	animationTimestamp uint64,
-) []raknet.ApplicationMessage {
-	if orientation.X == 0 && orientation.Y == 0 &&
-		orientation.Z == 0 && orientation.W == 0 {
-		orientation.W = 1
-	}
-	targetBeam := campaignCharacterBeam(targetCreature, true)
-	return []raknet.ApplicationMessage{
-		raknet.ObjectTeleportMessage{
-			ObjectID: targetObjectID, Position: position, Orientation: orientation,
-		},
-		raknet.ObjectUpdateMessage{
-			ObjectID: targetObjectID, PositionX: position.X, PositionY: position.Y, PositionZ: position.Z,
-			IsVisible: true,
-		},
-		raknet.PositionedEffectMessage{
-			Asset: util.HashID(targetBeam + ".ServerEventDef"), Position: position,
-		},
-		raknet.SetAnimationStateMessage{
-			ObjectID: targetObjectID, State: util.HashID("character_teleport_in"),
-			Timestamp: animationTimestamp, Scale: 1,
-		},
-	}
-}
-
-func marshalCampaignCharacterDeparture(
-	sourceObjectID uint32, sourceCreature game.GameplayCreature,
-	position raknet.Vector3, animationTimestamp uint64,
-) ([][]byte, error) {
-	sourceBeam := campaignCharacterBeam(sourceCreature, false)
-	messages := []raknet.ApplicationMessage{
-		raknet.PositionedEffectMessage{
-			Asset: util.HashID(sourceBeam + ".ServerEventDef"), Position: position,
-		},
-		raknet.SetAnimationStateMessage{
-			ObjectID: sourceObjectID, State: util.HashID("character_teleport_out"),
-			Timestamp: animationTimestamp, Scale: 1,
-		},
-	}
-	packets := make([][]byte, 0, len(messages))
-	for index, message := range messages {
-		packet, err := raknet.MarshalApplication(message)
-		if err != nil {
-			return nil, fmt.Errorf("departurePacket[%d]: %w", index, err)
-		}
-		packets = append(packets, packet)
-	}
-	return packets, nil
 }
 
 type gameplayJoinRuntime struct {
@@ -4894,8 +4777,8 @@ func (r gameplaySetupRuntime) publishCampaign(
 	response = append(response, memberPackets...)
 	beamPackets, err := heroraknet.BeamIn(
 		peerSession.deployedObjectID,
-		campaignCharacterBeam(
-			peerSession.binding.Creatures[peerSession.deployedCreatureIndex], true,
+		campaignCharacterEntry(
+			peerSession.binding.Creatures[peerSession.deployedCreatureIndex],
 		),
 		zonePosition(entryPosition), packet.SourceTime,
 	)
@@ -5067,6 +4950,15 @@ func (r gameplaySetupRuntime) publishCampaign(
 	err = packet.AfterResponseCommit(peerSession.zone.SaveDeploymentCheckpoint)
 	if err != nil {
 		return nil, false, fmt.Errorf("deploymentCheckpointCommit: %w", err)
+	}
+	arrival := heroArrivalCommit{
+		registry: r.registry, sessionKey: packet.Address.String(),
+		generation: peerSession.generation, objectID: peerSession.deployedObjectID,
+		now: r.now,
+	}
+	err = packet.AfterResponseCommit(arrival.commit)
+	if err != nil {
+		return nil, false, fmt.Errorf("deploymentArrivalCommit: %w", err)
 	}
 	return response, true, nil
 }

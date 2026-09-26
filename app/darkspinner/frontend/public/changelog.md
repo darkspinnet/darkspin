@@ -2,10 +2,12 @@
 
 ### 2026-09-26
 
+- Restore mission spawning and hero switching from the short teleporter animation to the authored beam-in landing sequence, with matching effects and sound cues, consistent timing, and a brief input lock through landing.
 - Save campaign squad edits when the unused Arena deck field is blank instead of rejecting the complete deck update and restoring Blitz, Sage, and Wraith.
 
 ### 2026-09-25
 
+- Show positive fractional hits as at least 1 damage in combat text for normal and critical hits while preserving their actual health reduction.
 - Remove Elite and authored affix modifiers after an enemy's death state so their hand and status effects do not remain on the corpse.
 - Preserve Sync Snapshot movement incidents at detection time across capture cooldowns, retain timestamped client/server movement history, detect persistent small offsets, and distinguish the triggering object's divergence from unrelated findings.
 - Show killing blows at their full resolved damage instead of the enemy's remaining health, preventing fractional-health kills from displaying a zero-damage critical hit.
