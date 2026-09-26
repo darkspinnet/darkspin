@@ -95,6 +95,7 @@ const reportIssueDraft = computed(() => {
   return { url:url.href, isLong }
 })
 const isChangelogOpen = ref(false)
+const isCreditsOpen = ref(false)
 const isChangelogLoading = ref(false)
 const changelogText = ref('')
 const changelogError = ref('')
@@ -1221,7 +1222,7 @@ async function copyLauncherFailure() {
   <main class="spinner-shell" :class="{ onboarding:isInstallationRequired, management:activePage === 'launcher' || activePage === 'remote' || activePage === 'config', 'remote-accent':activePage === 'remote', 'detached-accent':activePage === 'launcher' }" @pointerdown.capture="handleLauncherInteraction" @keydown.capture="handleLauncherInteraction">
     <Tabs :model-value="activePage" @update:model-value="showPage" class="workspace" :class="{ 'navigation-hidden':isInstallationRequired }">
       <div v-if="!isInstallationRequired" class="workspace-navigation">
-        <div class="workspace-wordmark" aria-label="Dark Spin"><span>DARK</span><strong>SPIN</strong></div>
+        <button class="workspace-wordmark" type="button" aria-label="Show Dark Spin credits" @click="isCreditsOpen = true"><span>DARK</span><strong>SPIN</strong></button>
         <TabsList aria-label="Launcher pages">
             <TabsTrigger value="play">Launch</TabsTrigger>
             <TabsTrigger v-if="isExperimentalLauncherFeatureVisible" value="remote">Remote</TabsTrigger>
@@ -1646,6 +1647,21 @@ async function copyLauncherFailure() {
         <div class="notice-actions">
           <Button variant="outline" class="onboarding-cancel" type="button" :disabled="isRemoteDeletionBusy" @click="cancelRemoteProfileDelete">KEEP CROGENITOR</Button>
           <Button variant="destructive" class="danger-confirm" type="button" :disabled="isRemoteDeletionBusy || (!remoteProfilePendingDelete.isPasswordRemembered && !remotePassword)" @click="deleteRemoteProfile">{{ isRemoteDeletionBusy ? 'DELETING...' : 'DELETE REMOTELY' }}</Button>
+        </div>
+      </div>
+    </LauncherDialog>
+
+    <LauncherDialog @interact="handleLauncherInteraction" v-if="isCreditsOpen" :is-dismissible="true" @close="isCreditsOpen = false">
+      <div class="notice-card credits-notice">
+        <p class="eyebrow">CREDITS</p>
+        <DialogTitle class="sr-only">Dark Spin credits</DialogTitle>
+        <p><a class="credits-inline-link" href="https://darkspin.net" @click.prevent="BrowserOpenURL('https://darkspin.net')">Darkspin</a> was written with help from ChatGPT 5.6 Sol and 6.0 Astra and the following testers:</p>
+        <div class="credits-list" aria-label="Contributors">
+          <Button variant="link" class="credits-link" type="button" @click="BrowserOpenURL('https://github.com/xackery/')">Xackery</Button>
+          <Button variant="link" class="credits-link" type="button" @click="BrowserOpenURL('https://github.com/Haminator69')">häminator</Button>
+        </div>
+        <div class="notice-actions">
+          <Button variant="outline" class="onboarding-cancel" type="button" @click="isCreditsOpen = false">CLOSE</Button>
         </div>
       </div>
     </LauncherDialog>

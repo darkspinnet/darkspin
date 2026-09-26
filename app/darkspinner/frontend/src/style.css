@@ -62,9 +62,10 @@
 .workspace { min-height: 0; display: flex; flex-direction: column; gap: 20px; }
 .workspace-navigation { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; }
 .workspace-navigation [data-slot="tabs-list"] { justify-self: center; }
-.workspace-wordmark { display: flex; align-items: baseline; gap: 5px; justify-self: start; font-size: 19px; letter-spacing: -.07em; white-space: nowrap; }
+.workspace-wordmark { display: flex; align-items: baseline; gap: 5px; justify-self: start; padding: 0; border: 0; background: transparent; font-family: inherit; font-size: 19px; letter-spacing: -.07em; white-space: nowrap; cursor: pointer; }
 .workspace-wordmark span { color: var(--primary); font-weight: 400; }
 .workspace-wordmark strong { color: var(--primary); font-weight: 750; }
+.workspace-wordmark:hover span, .workspace-wordmark:hover strong { color: var(--accent-foreground); }
 .report-button { justify-self: end; font-size: 11px; padding-inline: 12px; }
 .command-frame, .management-frame, .onboarding-frame { flex: 1; min-height: 0; overflow: auto; }
 .launch-main, .detached-grid { width: 100%; height: 100%; margin-inline: auto; }
@@ -205,6 +206,11 @@
 .report-form textarea { min-height: 140px; resize: vertical; }
 .report-archives { padding-left: 18px; list-style: disc; font-size: 11px; color: var(--muted-foreground); overflow-wrap: anywhere; }
 .report-path { width: 100%; height: auto; white-space: normal; overflow-wrap: anywhere; text-align: left; font-size: 11px; margin-top: 12px; }
+.credits-list { display: flex; align-items: center; gap: 14px; margin-top: 16px; }
+.credits-inline-link { color: var(--primary); text-decoration: underline; text-underline-offset: 3px; }
+.credits-inline-link:hover { color: var(--foreground); }
+.credits-link { height: auto; padding: 0; color: var(--primary); font-size: 13px; }
+.credits-link:hover { color: var(--foreground); }
 .changelog-notice pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.7 "Segoe UI", sans-serif; color: var(--muted-foreground); max-height: 55vh; overflow: auto; }
 .remote-delete-error, .changelog-error { color: var(--destructive); }
 .install-frame { display: grid; align-items: center; }
