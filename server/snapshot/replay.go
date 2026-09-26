@@ -58,6 +58,7 @@ type replayEvent struct {
 	PacketName              string                      `json:"packet_name,omitempty"`
 	ObjectID                uint32                      `json:"object_id,omitempty"`
 	ClientObjectID          uint32                      `json:"client_object_id,omitempty"`
+	MappingProvenance       string                      `json:"mapping_provenance,omitempty"`
 	TargetObjectID          uint32                      `json:"target_object_id,omitempty"`
 	ClientTargetObjectID    uint32                      `json:"client_target_object_id,omitempty"`
 	PayloadSize             int                         `json:"payload_size,omitempty"`
@@ -88,6 +89,7 @@ type replayTimeline struct {
 }
 
 type clientTraceEvent struct {
+	SampleUnixNano            int64    `json:"sample_unix_nano"`
 	TimeMS                    uint64   `json:"time_ms"`
 	ServerTimeUnixNano        int64    `json:"server_time_unix_nano"`
 	Protocol                  string   `json:"protocol"`
@@ -102,6 +104,9 @@ type clientTraceEvent struct {
 	FrameTimeMS               uint64   `json:"frame_time_ms"`
 	MessageID                 uint8    `json:"message_id"`
 	ObjectID                  uint32   `json:"object_id"`
+	NetworkObjectID           uint32   `json:"network_object_id"`
+	HandleSlot                uint32   `json:"handle_slot"`
+	HandleGeneration          uint32   `json:"handle_generation"`
 	Size                      int      `json:"size"`
 	PayloadHex                string   `json:"payload_hex"`
 	ObjectHex                 string   `json:"object_hex"`
@@ -121,6 +126,10 @@ type clientTraceEvent struct {
 	CapacityDroppedByteCount  uint64   `json:"capacity_dropped_byte_count"`
 	CapacityLastDroppedTimeMS uint64   `json:"capacity_last_dropped_time_ms"`
 	BufferMS                  uint64   `json:"buffer_ms"`
+	KeyframeStatus            string   `json:"keyframe_status"`
+	ClientReceivedTimeMS      uint64   `json:"client_received_time_ms"`
+	KeyframeStartedTimeMS     uint64   `json:"keyframe_started_time_ms"`
+	KeyframeCompletedTimeMS   uint64   `json:"keyframe_completed_time_ms"`
 }
 
 type clientTraceRecord struct {
@@ -130,6 +139,7 @@ type clientTraceRecord struct {
 
 type clientObjectMapper struct {
 	networkObjectIDsByHandle map[uint32]uint32
+	provenanceByHandle       map[uint32]string
 	pendingNetworkObjectID   uint32
 }
 
@@ -168,6 +178,10 @@ func buildReplayTimeline(
 	timeline.ClientCapacityDroppedByteCount = clientBoundary.CapacityDroppedByteCount
 	timeline.ClientCapacityLastDroppedTimeMS = clientBoundary.CapacityLastDroppedTimeMS
 	timeline.IsClientAligned = isAligned
+	clientAnchorTimeMS := clientBoundary.TimeMS
+	if clientBoundary.ClientReceivedTimeMS != 0 {
+		clientAnchorTimeMS = clientBoundary.ClientReceivedTimeMS
+	}
 	if clientBoundary.CapacityLastDroppedTimeMS != 0 && clientBoundary.BufferMS != 0 &&
 		clientBoundary.TimeMS >= clientBoundary.CapacityLastDroppedTimeMS {
 		timeline.IsClientRingTruncated =
@@ -175,6 +189,7 @@ func buildReplayTimeline(
 	}
 	objectMapper := clientObjectMapper{
 		networkObjectIDsByHandle: make(map[uint32]uint32),
+		provenanceByHandle:       make(map[uint32]string),
 	}
 	clientEventStart := len(timeline.Events)
 	for index, record := range clientRecords {
@@ -198,11 +213,12 @@ func buildReplayTimeline(
 			ClientLastDroppedTimeMS: event.CapacityLastDroppedTimeMS,
 			PacketID:                packetID, ObjectID: networkObjectID,
 			ClientObjectID: event.ObjectID, ClientTargetObjectID: event.TargetObjectID,
-			PayloadSize:     clientPayloadSize(event),
-			PositionBits:    append([]uint32(nil), event.PositionBits...),
-			GoalBits:        append([]uint32(nil), event.GoalBits...),
-			PartialGoalBits: append([]uint32(nil), event.PartialGoalBits...),
-			ordinal:         uint64(len(timeline.Events) + index),
+			MappingProvenance: objectMapper.provenance(event.ObjectID),
+			PayloadSize:       clientPayloadSize(event),
+			PositionBits:      append([]uint32(nil), event.PositionBits...),
+			GoalBits:          append([]uint32(nil), event.GoalBits...),
+			PartialGoalBits:   append([]uint32(nil), event.PartialGoalBits...),
+			ordinal:           uint64(len(timeline.Events) + index),
 		}
 		if event.Kind == "locomotion_snapshot" {
 			locomotionFlags := event.LocomotionFlags
@@ -221,7 +237,7 @@ func buildReplayTimeline(
 		}
 		replay.PayloadSHA256 = clientPayloadDigest(event)
 		if isAligned {
-			deltaMS := clientTimeDelta(event.TimeMS, clientBoundary.TimeMS)
+			deltaMS := clientTimeDelta(event.TimeMS, clientAnchorTimeMS)
 			replay.sortTime = clientBoundaryAt.Add(time.Duration(deltaMS) * time.Millisecond)
 			replay.OccurredAt = replay.sortTime.UTC().Format(time.RFC3339Nano)
 			replay.TimeBasis = "client_boundary"
@@ -261,6 +277,13 @@ func (e *clientObjectMapper) networkObjectID(clientObjectID uint32) uint32 {
 	return e.networkObjectIDsByHandle[clientObjectID]
 }
 
+func (e *clientObjectMapper) provenance(clientObjectID uint32) string {
+	if e == nil || clientObjectID == 0 {
+		return ""
+	}
+	return e.provenanceByHandle[clientObjectID]
+}
+
 func cloneUint32(number *uint32) *uint32 {
 	if number == nil {
 		return nil
@@ -273,6 +296,9 @@ func (e *clientObjectMapper) mapEvent(
 	event clientTraceEvent, packetID uint8, payloadObjectID uint32,
 ) uint32 {
 	if event.Kind == "application_receive" {
+		if raknet.PacketID(packetID) == raknet.ObjectDelete && payloadObjectID != 0 {
+			e.removeNetworkObjectID(payloadObjectID)
+		}
 		if isClientObjectMappingPacket(packetID) {
 			e.pendingNetworkObjectID = payloadObjectID
 		}
@@ -280,6 +306,16 @@ func (e *clientObjectMapper) mapEvent(
 	}
 	if event.ObjectID == 0 {
 		return 0
+	}
+	if event.Kind == "object_disassociation" {
+		delete(e.networkObjectIDsByHandle, event.ObjectID)
+		delete(e.provenanceByHandle, event.ObjectID)
+		return event.NetworkObjectID
+	}
+	if event.NetworkObjectID != 0 {
+		e.networkObjectIDsByHandle[event.ObjectID] = event.NetworkObjectID
+		e.provenanceByHandle[event.ObjectID] = "explicit"
+		return event.NetworkObjectID
 	}
 	networkObjectID := e.networkObjectIDsByHandle[event.ObjectID]
 	if event.Kind != "locomotion_snapshot" ||
@@ -289,11 +325,22 @@ func (e *clientObjectMapper) mapEvent(
 	if e.pendingNetworkObjectID != 0 {
 		networkObjectID = e.pendingNetworkObjectID
 		e.networkObjectIDsByHandle[event.ObjectID] = networkObjectID
+		e.provenanceByHandle[event.ObjectID] = "inferred_movement_apply"
 	}
 	if event.Phase == "after_apply" {
 		e.pendingNetworkObjectID = 0
 	}
 	return networkObjectID
+}
+
+func (e *clientObjectMapper) removeNetworkObjectID(networkObjectID uint32) {
+	for clientObjectID, current := range e.networkObjectIDsByHandle {
+		if current != networkObjectID {
+			continue
+		}
+		delete(e.networkObjectIDsByHandle, clientObjectID)
+		delete(e.provenanceByHandle, clientObjectID)
+	}
 }
 
 func clientApplicationIdentity(event clientTraceEvent) (uint8, uint32) {
@@ -461,6 +508,28 @@ func clientReplayBoundary(
 		return event, boundaryAt, true
 	}
 	return clientTraceEvent{}, time.Time{}, false
+}
+
+func clientCaptureFromBoundary(
+	capture clientCapture, records []clientTraceRecord, request string,
+) clientCapture {
+	boundary, _, isFound := clientReplayBoundary(records, request, capture.RequestedAt)
+	if !isFound {
+		capture.IsCaptured = false
+		capture.Status = "missing_boundary"
+		return capture
+	}
+	capture.Status = boundary.KeyframeStatus
+	capture.ClientReceivedTimeMS = boundary.ClientReceivedTimeMS
+	capture.KeyframeStartedTimeMS = boundary.KeyframeStartedTimeMS
+	capture.KeyframeCompletedTimeMS = boundary.KeyframeCompletedTimeMS
+	if capture.Status == "" {
+		capture.Status = "legacy_unknown"
+		capture.IsCaptured = false
+		return capture
+	}
+	capture.IsCaptured = capture.Status == "complete"
+	return capture
 }
 
 func clientTimeDelta(current uint64, boundary uint64) int64 {

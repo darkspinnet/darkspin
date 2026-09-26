@@ -841,6 +841,7 @@ func New(options Options) (*Server, error) {
 	chatService.UseBugContextProvider(gameplayLifecycle)
 	chatService.UseHintProvider(gameplayLifecycle)
 	chatService.UseLocationProvider(gameplayLifecycle)
+	chatService.UseResourceStatusProvider(gameplayLifecycle)
 	snapshotService.UseStateProvider(gameplayLifecycle)
 	snapshotService.UseNotifier(snapshotNotifier{servers: allBlazeServers})
 	gameManager.UseRemovalObserver(gameplayLifecycle.DiscardGame)
@@ -849,6 +850,7 @@ func New(options Options) (*Server, error) {
 	udpServer := sharedudp.NewSharedServer(
 		net.JoinHostPort(bindHost, fmt.Sprintf("%d", ports.qos)), logger, gameplayHandler,
 	)
+	snapshotService.UseTransportDiagnosticsProvider(snapshotTransportProvider{server: udpServer})
 	udpServer.SetPollHandler(gameplayLifecycle.Poll)
 	udpServer.SetRakNetObserver(snapshotService)
 	udpServer.SetPeerReplacedHandler(func(address *net.UDPAddr, generation uint64) {

@@ -329,7 +329,7 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 		}
 		commandName, isCommand := messagingCommandName(body)
 		if isCommand {
-			responseBody := fmt.Sprintf("Unknown command %s. Available: /help, /ss, /bug, /b, /ping, /hint, /loc, /follow, /ai, /effect, /summon, /level, /warp, /spawn, /drop, /dna, /damage, /heal, /power, /mana, /event, /goto, /kill, /reset, /recap, /victory, /defeat, /exit", commandName)
+			responseBody := fmt.Sprintf("Unknown command %s. Available: /help, /ss, /bug, /b, /ping, /hint, /loc, /stat, /follow, /ai, /effect, /summon, /level, /warp, /spawn, /drop, /dna, /damage, /heal, /power, /mana, /event, /goto, /kill, /reset, /recap, /victory, /defeat, /exit", commandName)
 			if commandName == "/help" {
 				responseBody = darkspinChatHelp
 			}
@@ -419,6 +419,41 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 						responseBody = "Location only works during an active deployment"
 					} else {
 						return nil, fmt.Errorf("commandLocation: %w", locationErr)
+					}
+				}
+			}
+			if commandName == "/stat" {
+				responseBody = "Stats only work during an active deployment"
+				field := strings.Fields(body)
+				req := chat.ResourceStatusRequest{
+					Sender: chat.Participant{ID: user.Account.ID, Name: user.DisplayName},
+					GameID: user.CurrentGameID(),
+				}
+				if len(field) == 5 {
+					objectID, isObjectValid := parseCommandUint(field[1], 32)
+					hitPointBits, isHitPointValid := parseCommandUint(field[2], 32)
+					powerPointBits, isPowerPointValid := parseCommandUint(field[3], 32)
+					mask, isMaskValid := parseCommandUint(field[4], 8)
+					if isObjectValid && isHitPointValid && isPowerPointValid && isMaskValid {
+						req.ClientObjectID = uint32(objectID)
+						req.ClientHitPoint = math.Float32frombits(uint32(hitPointBits))
+						req.ClientPowerPoint = math.Float32frombits(uint32(powerPointBits))
+						req.IsClientHitPointSet = mask&1 != 0 &&
+							!math.IsNaN(float64(req.ClientHitPoint)) &&
+							!math.IsInf(float64(req.ClientHitPoint), 0) &&
+							req.ClientHitPoint >= 0
+						req.IsClientPowerPointSet = mask&2 != 0 &&
+							!math.IsNaN(float64(req.ClientPowerPoint)) &&
+							!math.IsInf(float64(req.ClientPowerPoint), 0) &&
+							req.ClientPowerPoint >= 0
+					}
+				}
+				if len(field) == 1 || len(field) == 5 {
+					status, statusErr := messenger.ResourceStatus(ctx, req)
+					if statusErr == nil {
+						responseBody = formatResourceStatus(status, req)
+					} else if !errors.Is(statusErr, chat.ErrResourceStatusUnavailable) {
+						return nil, fmt.Errorf("commandResourceStatus: %w", statusErr)
 					}
 				}
 			}
@@ -924,6 +959,43 @@ const dropCommandHelp = "Drop commands: /drop create [weapon|hand|foot|offense|d
 
 const locSyntax = "Syntax: /loc"
 
+func formatResourceStatus(
+	status chat.ResourceStatusResult, req chat.ResourceStatusRequest,
+) string {
+	server := fmt.Sprintf(
+		"Stats object=%d | server HP=%.3f/%.3f Power=%.3f/%.3f",
+		status.ObjectID, status.HitPoint, status.MaximumHitPoint,
+		status.PowerPoint, status.MaximumPowerPoint,
+	)
+	if req.ClientObjectID == 0 ||
+		(!req.IsClientHitPointSet && !req.IsClientPowerPointSet) {
+		return server + " | client-received=unavailable"
+	}
+	if req.ClientObjectID != status.ObjectID {
+		return fmt.Sprintf(
+			"%s | client-received=stale object=%d", server, req.ClientObjectID,
+		)
+	}
+	client := " | client-received"
+	if req.IsClientHitPointSet {
+		client += fmt.Sprintf(
+			" HP=%.3f delta=%+.3f", req.ClientHitPoint,
+			req.ClientHitPoint-status.HitPoint,
+		)
+	} else {
+		client += " HP=unknown"
+	}
+	if req.IsClientPowerPointSet {
+		client += fmt.Sprintf(
+			" Power=%.3f delta=%+.3f", req.ClientPowerPoint,
+			req.ClientPowerPoint-status.PowerPoint,
+		)
+	} else {
+		client += " Power=unknown"
+	}
+	return server + client
+}
+
 const dnaSyntax = "Syntax: /dna <positive amount>"
 
 const bugReportSyntax = "Syntax: /bug <what happened> | alias: /b"
@@ -954,7 +1026,7 @@ const victorySyntax = "Syntax: /victory"
 
 const defeatSyntax = "Syntax: /defeat"
 
-const darkspinChatHelp = "Darkspin: /help | " + snapshotSyntax + " | /bug <what happened> | /b <what happened> | /ping | /hint | /loc | /follow [ally name] | /ai | /effect <exact-authored-name> [world] | " +
+const darkspinChatHelp = "Darkspin: /help | " + snapshotSyntax + " | /bug <what happened> | /b <what happened> | /ping | /hint | /loc | /stat | /follow [ally name] | /ai | /effect <exact-authored-name> [world] | " +
 	"/summon <rigid> <primary> <secondary> <suffix> | /level <1-100> | /warp [area] | /spawn <noun> | /drop create [weapon|hand|foot|offense|defense|utility] | /dna <amount> | " +
 	"/damage <amount> | /heal | /power [negative amount] | /mana [negative amount] | /event [1|security-next|2|boss-start|3|boss-complete] | /goto <x> <y> <z> | /kill | /reset | /recap | /victory | /defeat | /exit | " +
 	"Built-in: /tell <player> <message> | /party <message> | /game <message> | /lobby <message> | " +

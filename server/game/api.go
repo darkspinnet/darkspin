@@ -176,6 +176,7 @@ mission context. Use it immediately after a problem and briefly describe the act
 <tr><td><code>/help</code></td><td>Show the complete command list in chat.</td></tr>
 <tr><td><code>/hint</code></td><td>Point toward a remaining hostile during a deployment.</td></tr>
 <tr><td><code>/loc</code></td><td>Show your current world coordinates.</td></tr>
+<tr><td><code>/stat</code></td><td>Compare authoritative hero health and power with Fang's latest client-received values.</td></tr>
 <tr><td><code>/ping</code></td><td>Show server response and current game information.</td></tr>
 <tr><td><code>/reset</code></td><td>Recover transient movement, ability, and squad state.</td></tr>
 <tr><td><code>/recap</code></td><td>Revive defeated heroes in the connected co-op party.</td></tr>

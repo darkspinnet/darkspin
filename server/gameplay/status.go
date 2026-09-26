@@ -1825,11 +1825,17 @@ func (r campaignResultRuntime) continueChain(
 				maximumHitPoints:  continueSession.maximumHitPoints,
 				maximumManaPoints: continueSession.maximumManaPoints,
 			},
-			binding:             nextBinding,
-			transportGeneration: continueSession.transportGeneration,
-			schedulePackets:     continueSession.schedulePackets,
-			schedulePacket:      continueSession.schedulePacket,
-			crystalInventory:    crystalInventory,
+			binding:                     nextBinding,
+			transportGeneration:         continueSession.transportGeneration,
+			schedulePackets:             continueSession.schedulePackets,
+			schedulePacket:              continueSession.schedulePacket,
+			crystalInventory:            crystalInventory,
+			campaignPartSlotBag:         continueSession.campaignPartSlotBag.Clone(),
+			campaignEquipmentDropBag:    continueSession.campaignEquipmentDropBag,
+			campaignPartRarityBag:       continueSession.campaignPartRarityBag.Clone(),
+			campaignEquipmentWinnerBag:  continueSession.campaignEquipmentWinnerBag.Clone(),
+			campaignCrystalDropBag:      continueSession.campaignCrystalDropBag,
+			campaignCrystalSelectionBag: continueSession.campaignCrystalSelectionBag.Clone(),
 		}
 	}
 	r.registry.mutex.Unlock()

@@ -17,6 +17,7 @@ type EquipmentPickup struct {
 	Rolls                  []EquipmentPickupRoll
 	Part                   sporenet.Part
 	IsWinnerReward         bool
+	IsWinnerRewardBoss     bool
 }
 
 type EquipmentPickupRoll struct {
@@ -26,9 +27,10 @@ type EquipmentPickupRoll struct {
 }
 
 type CrystalPickup struct {
-	ObjectID uint32
-	Request  sim.CrystalPickupRequest
-	Object   sim.CrystalPickupObject
+	ObjectID        uint32
+	Request         sim.CrystalPickupRequest
+	Object          sim.CrystalPickupObject
+	IsLootBagReward bool
 }
 
 // PickupPayloadRegistry owns the world data represented by registered pickup

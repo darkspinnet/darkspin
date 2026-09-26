@@ -24,7 +24,8 @@ const insertUserQuery = `
 		unlock_diagonal_catalyst, unlock_inventory, unlock_fuel_tank,
 		unlock_pve_deck, unlock_pvp_deck, unlock_stat,
 		unlock_inventory_identify, unlock_editor_flair_slot, upsell,
-		cap_level, cap_progression
+		cap_level, cap_progression,
+		limited_edition_miss_count, limited_edition_used_mask
 	) VALUES (
 		:login_name, :display_name, :password, :create_dt, :last_connection_dt,
 		:is_tutorial_completion_pending,
@@ -37,7 +38,8 @@ const insertUserQuery = `
 		:unlock_diagonal_catalyst, :unlock_inventory, :unlock_fuel_tank,
 		:unlock_pve_deck, :unlock_pvp_deck, :unlock_stat,
 		:unlock_inventory_identify, :unlock_editor_flair_slot, :upsell,
-		:cap_level, :cap_progression
+		:cap_level, :cap_progression,
+		:limited_edition_miss_count, :limited_edition_used_mask
 	)`
 
 const updateUserQuery = `
@@ -74,7 +76,9 @@ const updateUserQuery = `
 		unlock_editor_flair_slot = :unlock_editor_flair_slot,
 		upsell = :upsell,
 		cap_level = :cap_level,
-		cap_progression = :cap_progression
+		cap_progression = :cap_progression,
+		limited_edition_miss_count = :limited_edition_miss_count,
+		limited_edition_used_mask = :limited_edition_used_mask
 	WHERE login_name = :login_name`
 
 func clearDependents(ctx context.Context, tx *sqlx.Tx, userID int64) error {

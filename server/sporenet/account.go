@@ -37,6 +37,8 @@ type Account struct {
 	Upsell                  uint32
 	CapLevel                uint32
 	CapProgression          uint32
+	LimitedEditionMissCount uint32
+	LimitedEditionUsedMask  uint32
 }
 
 func defaultAccount() Account {

@@ -2,6 +2,12 @@
 
 ### 2026-09-25
 
+- Remove Elite and authored affix modifiers after an enemy's death state so their hand and status effects do not remain on the corpse.
+- Preserve Sync Snapshot movement incidents at detection time across capture cooldowns, retain timestamped client/server movement history, detect persistent small offsets, and distinguish the triggering object's divergence from unrelated findings.
+- Show killing blows at their full resolved damage instead of the enemy's remaining health, preventing fractional-health kills from displaying a zero-damage critical hit.
+- Upgrade Sync Snapshot captures with retained incidents, connection-scoped analysis, explicit client object mappings, paired trigger and aftermath keyframes, gameplay decision history, transport and worker backlog state, broader drift detection, and completeness-limited confidence.
+- Add `/stat` diagnostics that compare authoritative current-hero health and power against Fang's latest client-received resource values, including object identity and deltas for spotting desyncs.
+- Extend campaign loot protection across solo and multiplayer with party winner rotation, shared equipment and catalyst dry-streak relief, catalyst type and rarity rotation, and durable per-account limited-edition boss pity that cycles compatible bases.
 - Apply category rotation and rarity pity to multiplayer equipment when the roll winner receives it, using that player's activated heroes for compatible weapons while retaining one party-neutral mob-drop opportunity.
 - Count only unequipped owned items against inventory capacity, matching the Arsenal counter so equipped hero gear no longer prevents loot pickup.
 - Give Shade Drifters the authored transparent ghostform shader already used by Ghostly Trackers, including every difficulty and captain variant.

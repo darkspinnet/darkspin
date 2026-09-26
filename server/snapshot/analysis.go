@@ -16,23 +16,38 @@ const (
 )
 
 type analysisReport struct {
-	FormatVersion         uint32               `json:"format_version"`
-	SnapshotID            string               `json:"snapshot_id"`
-	CreatedAt             time.Time            `json:"created_at"`
-	Trigger               string               `json:"trigger"`
-	Context               string               `json:"context"`
-	LikelyCause           string               `json:"likely_cause"`
-	Confidence            string               `json:"confidence"`
-	Summary               string               `json:"summary"`
-	Metrics               analysisMetrics      `json:"metrics"`
-	Findings              []analysisFinding    `json:"findings"`
-	ClientBoundaryStates  []clientStateSample  `json:"client_boundary_states,omitempty"`
-	ServerSessions        []serverSessionState `json:"server_sessions,omitempty"`
-	ServerNPCStates       []ObjectState        `json:"server_npc_states,omitempty"`
-	LocomotionStalls      []objectComparison   `json:"locomotion_stalls,omitempty"`
-	ProjectileComparisons []objectComparison   `json:"projectile_comparisons,omitempty"`
-	ObjectComparisons     []objectComparison   `json:"object_comparisons,omitempty"`
-	Recommendations       []string             `json:"recommendations"`
+	TriggerObjectID             uint32                      `json:"trigger_object_id,omitempty"`
+	TriggerStateDelayMS         *float64                    `json:"trigger_state_delay_ms,omitempty"`
+	MovementSummaries           []movementSummary           `json:"movement_summaries,omitempty"`
+	MovementEvents              []analysisEvidence          `json:"movement_events,omitempty"`
+	FormatVersion               uint32                      `json:"format_version"`
+	SnapshotID                  string                      `json:"snapshot_id"`
+	CreatedAt                   time.Time                   `json:"created_at"`
+	Trigger                     string                      `json:"trigger"`
+	Context                     string                      `json:"context"`
+	LikelyCause                 string                      `json:"likely_cause"`
+	Confidence                  string                      `json:"confidence"`
+	Summary                     string                      `json:"summary"`
+	Metrics                     analysisMetrics             `json:"metrics"`
+	Findings                    []analysisFinding           `json:"findings"`
+	ClientBoundaryStates        []clientStateSample         `json:"client_boundary_states,omitempty"`
+	ServerSessions              []serverSessionState        `json:"server_sessions,omitempty"`
+	ServerNPCStates             []ObjectState               `json:"server_npc_states,omitempty"`
+	LocomotionStalls            []objectComparison          `json:"locomotion_stalls,omitempty"`
+	ProjectileComparisons       []objectComparison          `json:"projectile_comparisons,omitempty"`
+	ObjectComparisons           []objectComparison          `json:"object_comparisons,omitempty"`
+	Recommendations             []string                    `json:"recommendations"`
+	Completeness                evidenceCompleteness        `json:"completeness"`
+	TransportDiagnostics        []TransportDiagnosticsState `json:"transport_diagnostics,omitempty"`
+	TriggerTransportDiagnostics []TransportDiagnosticsState `json:"trigger_transport_diagnostics,omitempty"`
+}
+
+type evidenceCompleteness struct {
+	TransportWindow string `json:"transport_window"`
+	ClientKeyframe  string `json:"client_keyframe"`
+	TimingAlignment string `json:"timing_alignment"`
+	ObjectMapping   string `json:"object_mapping"`
+	GameplayHistory string `json:"gameplay_history"`
 }
 
 // serverSessionState keeps deterministic and command-admission context in the
@@ -110,6 +125,9 @@ type analysisMetrics struct {
 	ServerObjectCount              int     `json:"server_object_count"`
 	ClientObjectCount              int     `json:"client_object_count"`
 	MappedClientObjectCount        int     `json:"mapped_client_object_count"`
+	ExplicitMappedObjectCount      int     `json:"explicit_mapped_object_count"`
+	InferredMappedObjectCount      int     `json:"inferred_mapped_object_count"`
+	UnknownClientObjectCount       int     `json:"unknown_client_object_count"`
 	ComparedObjectCount            int     `json:"compared_object_count"`
 	DriftedObjectCount             int     `json:"drifted_object_count"`
 	ClientLocomotionStallCount     int     `json:"client_locomotion_stall_count"`
@@ -159,11 +177,12 @@ type clientStateSample struct {
 }
 
 type objectComparison struct {
-	ObjectID       uint32 `json:"object_id"`
-	ClientObjectID uint32 `json:"client_object_id,omitempty"`
-	Kind           string `json:"kind,omitempty"`
-	NounName       string `json:"noun_name,omitempty"`
-	AbilityName    string `json:"ability_name,omitempty"`
+	ObjectID          uint32 `json:"object_id"`
+	ClientObjectID    uint32 `json:"client_object_id,omitempty"`
+	MappingProvenance string `json:"mapping_provenance,omitempty"`
+	Kind              string `json:"kind,omitempty"`
+	NounName          string `json:"noun_name,omitempty"`
+	AbilityName       string `json:"ability_name,omitempty"`
 
 	ServerPosition            [3]float32  `json:"server_position"`
 	ClientPosition            [3]float32  `json:"client_position"`
@@ -195,10 +214,30 @@ type lifecycleCursor struct {
 	isDeleted     bool
 }
 
+type transportSequenceKey struct {
+	direction      raknet.ObservationDirection
+	remote         string
+	peerGeneration uint64
+}
+
+type applicationOrderKey struct {
+	direction      raknet.ObservationDirection
+	remote         string
+	peerGeneration uint64
+	channel        uint8
+}
+
+type objectLifecycleKey struct {
+	remote         string
+	peerGeneration uint64
+	objectID       uint32
+}
+
 type clientPosition struct {
-	clientObjectID uint32
-	position       [3]float32
-	line           int
+	clientObjectID    uint32
+	mappingProvenance string
+	position          [3]float32
+	line              int
 }
 
 type clientLocomotionGoal struct {
@@ -220,9 +259,10 @@ func analyzeSnapshot(
 		createdAt = time.Now().UTC()
 	}
 	report := analysisReport{
-		FormatVersion: 9, SnapshotID: id, CreatedAt: createdAt.UTC(),
+		FormatVersion: 10, SnapshotID: id, CreatedAt: createdAt.UTC(),
 		Trigger: req.Trigger, Context: req.Context,
-		Findings: make([]analysisFinding, 0),
+		TriggerObjectID: req.ObjectID,
+		Findings:        make([]analysisFinding, 0),
 		Metrics: analysisMetrics{
 			TrafficEventCount: len(events), ClientEventCount: timeline.ClientEventCount,
 			MalformedClientLineCount:       timeline.ClientMalformedLineCount,
@@ -244,8 +284,25 @@ func analyzeSnapshot(
 		capture.IsCaptured && timeline.IsClientAligned,
 	)
 	analyzeCompleteness(&report, capture, timeline)
+	report.Completeness = evidenceCompleteness{
+		TransportWindow: completenessState(droppedEventCount == 0),
+		ClientKeyframe:  completenessState(capture.IsCaptured),
+		TimingAlignment: completenessState(timeline.IsClientAligned),
+		ObjectMapping: completenessState(
+			report.Metrics.UnknownClientObjectCount == 0 && report.Metrics.ClientObjectCount > 0,
+		),
+		GameplayHistory: completenessState(len(state.GameplayDecisions) > 0),
+	}
+	analyzeMovementHistory(&report, req, timeline.Events)
 	classifyAnalysis(&report)
 	return report
+}
+
+func completenessState(isComplete bool) string {
+	if isComplete {
+		return "complete"
+	}
+	return "partial"
 }
 
 func analyzeServerSessions(report *analysisReport, state StateFrame) {
@@ -377,7 +434,7 @@ func analyzePendingServerPackets(report *analysisReport, state StateFrame) {
 }
 
 func analyzeTransport(report *analysisReport, events []trafficEvent) {
-	cursors := make(map[string]sequenceCursor)
+	cursors := make(map[transportSequenceKey]sequenceCursor)
 	gapEvidence := make([]analysisEvidence, 0, maximumFindingEvidence)
 	orderEvidence := make([]analysisEvidence, 0, maximumFindingEvidence)
 	for index, event := range events {
@@ -409,7 +466,10 @@ func analyzeTransport(report *analysisReport, events []trafficEvent) {
 			report.Metrics.DatagramDecodeErrorCount++
 			continue
 		}
-		key := string(event.Direction) + "|" + event.Remote
+		key := transportSequenceKey{
+			direction: event.Direction, remote: event.Remote,
+			peerGeneration: event.PeerGeneration,
+		}
 		currentEvidence := trafficEvidence(event, index+1, "RakNet data sequence")
 		cursor, isFound := cursors[key]
 		if isFound {
@@ -453,9 +513,9 @@ func analyzeTransport(report *analysisReport, events []trafficEvent) {
 }
 
 func analyzeTimeline(report *analysisReport, events []replayEvent) {
-	orderIndexes := make(map[string]uint32)
+	orderIndexes := make(map[applicationOrderKey]uint32)
 	orderEvidence := make([]analysisEvidence, 0, maximumFindingEvidence)
-	flowsByObjectID := make(map[uint32]lifecycleCursor)
+	flowsByObject := make(map[objectLifecycleKey]lifecycleCursor)
 	lifecycleFindings := make([]analysisFinding, 0)
 	serverEmitsByDigest := make(map[string][]replayEvent)
 	clientApplicationsByDigest := make(map[string][]replayEvent)
@@ -497,7 +557,10 @@ func analyzeTimeline(report *analysisReport, events []replayEvent) {
 			continue
 		}
 		if isOrderedReliability(event.Reliability) {
-			key := string(event.Direction) + "|" + event.Remote + fmt.Sprintf("|%d", event.OrderChannel)
+			key := applicationOrderKey{
+				direction: event.Direction, remote: event.Remote,
+				peerGeneration: event.PeerGeneration, channel: event.OrderChannel,
+			}
 			previous, isFound := orderIndexes[key]
 			isForward := true
 			if isFound {
@@ -514,7 +577,7 @@ func analyzeTimeline(report *analysisReport, events []replayEvent) {
 				orderIndexes[key] = event.OrderIndex
 			}
 		}
-		lifecycleFindings = analyzeLifecycleEvent(lifecycleFindings, flowsByObjectID, event)
+		lifecycleFindings = analyzeLifecycleEvent(lifecycleFindings, flowsByObject, event)
 	}
 	if report.Metrics.ClientApplicationCount > 0 {
 		matchedStartOffsetMS, isMatchedStartFound := matchClientApplications(
@@ -580,13 +643,17 @@ func analyzeTimeline(report *analysisReport, events []replayEvent) {
 }
 
 func analyzeLifecycleEvent(
-	findings []analysisFinding, flowsByObjectID map[uint32]lifecycleCursor,
+	findings []analysisFinding, flowsByObject map[objectLifecycleKey]lifecycleCursor,
 	event replayEvent,
 ) []analysisFinding {
 	if event.Direction != raknet.ObservationServerToClient || event.ObjectID == 0 {
 		return findings
 	}
-	flow := flowsByObjectID[event.ObjectID]
+	key := objectLifecycleKey{
+		remote: event.Remote, peerGeneration: event.PeerGeneration,
+		objectID: event.ObjectID,
+	}
+	flow := flowsByObject[key]
 	switch raknet.PacketID(event.PacketID) {
 	case raknet.ObjectCreate:
 		flow = lifecycleCursor{isCreated: true}
@@ -607,7 +674,7 @@ func analyzeLifecycleEvent(
 		}
 		flow.isDeleted = true
 	}
-	flowsByObjectID[event.ObjectID] = flow
+	flowsByObject[key] = flow
 	return findings
 }
 
@@ -687,9 +754,10 @@ func analyzeObjectState(
 			continue
 		}
 		clientPositionsByID[event.ObjectID] = clientPosition{
-			clientObjectID: event.ClientObjectID,
-			position:       position,
-			line:           event.ClientLine,
+			clientObjectID:    event.ClientObjectID,
+			mappingProvenance: event.MappingProvenance,
+			position:          position,
+			line:              event.ClientLine,
 		}
 	}
 	sampleDeltaMS := float64(0)
@@ -698,7 +766,19 @@ func analyzeObjectState(
 	}
 	report.Metrics.ClientObjectCount = len(clientObjectIDs)
 	report.Metrics.MappedClientObjectCount = len(clientPositionsByID)
-	if isClientBoundaryCaptured {
+	for _, client := range clientPositionsByID {
+		if client.mappingProvenance == "explicit" {
+			report.Metrics.ExplicitMappedObjectCount++
+		} else {
+			report.Metrics.InferredMappedObjectCount++
+		}
+	}
+	report.Metrics.UnknownClientObjectCount = report.Metrics.ClientObjectCount -
+		report.Metrics.MappedClientObjectCount
+	if report.Metrics.UnknownClientObjectCount < 0 {
+		report.Metrics.UnknownClientObjectCount = 0
+	}
+	if isClientBoundaryCaptured && report.Metrics.UnknownClientObjectCount == 0 {
 		missingProjectileEvidence := make([]analysisEvidence, 0, maximumFindingEvidence)
 		for _, objectID := range serverObjectIDs {
 			object := serverObjectsByID[objectID]
@@ -753,7 +833,8 @@ func analyzeObjectState(
 		isClientOrbitPresented := isClientOrbitPresentedNPC(serverObject.NounName)
 		comparison := objectComparison{
 			ObjectID: objectID, ClientObjectID: client.clientObjectID,
-			Kind: serverObject.Kind, NounName: serverObject.NounName,
+			MappingProvenance: client.mappingProvenance,
+			Kind:              serverObject.Kind, NounName: serverObject.NounName,
 			AbilityName:    serverObject.AbilityName,
 			ServerPosition: serverObject.Position, ClientPosition: client.position,
 			ServerTargetObjectID: serverObject.TargetObjectID,
@@ -948,10 +1029,17 @@ func analyzeCompleteness(report *analysisReport, capture clientCapture, timeline
 		})
 	}
 	if !capture.IsCaptured {
+		detail := "The report uses the persistent Fang trace tail and cannot make a complete client object-state comparison."
+		if capture.Status != "" && capture.Status != "unavailable" {
+			detail = fmt.Sprintf(
+				"The client boundary status was %q, so client keyframe rows are partial and cannot support absence or exact-state conclusions.",
+				capture.Status,
+			)
+		}
 		addFinding(report, analysisFinding{
 			ID: "client-memory-unavailable", Severity: "warning", Category: "capture",
 			Title:  "Client in-memory boundary dump was unavailable",
-			Detail: "The report uses the persistent Fang trace tail and cannot make a complete client object-state comparison.",
+			Detail: detail,
 		})
 	} else if !timeline.IsClientAligned {
 		addFinding(report, analysisFinding{
@@ -981,13 +1069,16 @@ func analyzeCompleteness(report *analysisReport, capture clientCapture, timeline
 }
 
 func classifyAnalysis(report *analysisReport) {
+	if classifyTriggerMovement(report) {
+		return
+	}
 	cause := "not_isolated"
 	confidence := "low"
 	summary := "The capture did not isolate one dominant desync mechanism."
 	if report.Metrics.ClientLocomotionStallCount > 0 {
 		cause = "client_locomotion_stalled"
-		confidence = "high"
-		summary = "The server position matches the client locomotion goal, but the client object root remains elsewhere."
+		confidence = "low"
+		summary = "The server position matches a client locomotion goal, but the object root remains elsewhere. A boundary sample alone cannot distinguish a stopped movement from a persistent placement offset."
 	} else if report.Metrics.OrderRegressionCount > 0 || report.Metrics.LifecycleAnomalyCount > 0 {
 		cause = "server_packet_ordering"
 		confidence = "high"
@@ -1011,6 +1102,19 @@ func classifyAnalysis(report *analysisReport) {
 		summary = "Some server-emitted application bytes have no matching client receive observation."
 	}
 	report.LikelyCause = cause
+	if confidence == "high" && (cause == "client_locomotion_stalled" ||
+		cause == "client_server_state_divergence") &&
+		(report.Completeness.ClientKeyframe != "complete" ||
+			report.Completeness.TimingAlignment != "complete" ||
+			report.Completeness.ObjectMapping != "complete") {
+		confidence = "low"
+		summary += " Client identity, timing, or mapping coverage is partial, so the mechanism remains provisional."
+	}
+	if confidence == "high" && cause == "server_packet_ordering" &&
+		report.Completeness.TransportWindow != "complete" {
+		confidence = "medium"
+		summary += " The transport window is incomplete."
+	}
 	report.Confidence = confidence
 	report.Summary = summary
 	report.Recommendations = recommendationsForCause(cause)
@@ -1081,9 +1185,16 @@ func matchClientApplications(
 
 func lifecycleFinding(event replayEvent, suffix string, title string) analysisFinding {
 	return analysisFinding{
-		ID:       fmt.Sprintf("object-%d-%s", event.ObjectID, suffix),
+		ID: fmt.Sprintf(
+			"peer-%s-%d-object-%d-%s", event.Remote,
+			event.PeerGeneration, event.ObjectID, suffix,
+		),
 		Severity: "critical", Category: "lifecycle", Title: title,
-		Detail:   fmt.Sprintf("Object %d received %s at replay event %d.", event.ObjectID, event.PacketName, event.Sequence),
+		Detail: fmt.Sprintf(
+			"Peer %s generation %d object %d received %s at replay event %d.",
+			event.Remote, event.PeerGeneration, event.ObjectID,
+			event.PacketName, event.Sequence,
+		),
 		ObjectID: event.ObjectID,
 		Evidence: []analysisEvidence{replayEvidence(event, title)},
 	}
@@ -1132,6 +1243,9 @@ func isOrderedReliability(reliability raknet.Reliability) bool {
 }
 
 func decodePosition(bits []uint32) ([3]float32, bool) {
+	if len(bits) != 3 {
+		return [3]float32{}, false
+	}
 	position := [3]float32{
 		math.Float32frombits(bits[0]),
 		math.Float32frombits(bits[1]),

@@ -1372,6 +1372,44 @@ func (m *UserManager) PartInventoryStatus(
 // account has an available inventory slot. Capacity admission and persistence
 // share the user's mutation lock so concurrent pickups cannot overbook it.
 func (m *UserManager) GrantPartWithinCapacity(ctx context.Context, userID int64, part Part) (Part, error) {
+	return m.grantPartWithinCapacity(ctx, userID, part, nil)
+}
+
+type LimitedEditionPity struct {
+	MissCount uint32
+	UsedMask  uint32
+}
+
+func (m *UserManager) LimitedEditionPityStatus(
+	ctx context.Context, userID int64,
+) (LimitedEditionPity, error) {
+	err := ctx.Err()
+	if err != nil {
+		return LimitedEditionPity{}, fmt.Errorf("limitedContext: %w", err)
+	}
+	user := m.UserByID(userID)
+	if user == nil {
+		return LimitedEditionPity{}, ErrInvalidUser
+	}
+	user.mu.RLock()
+	defer user.mu.RUnlock()
+	return LimitedEditionPity{
+		MissCount: user.Account.LimitedEditionMissCount,
+		UsedMask:  user.Account.LimitedEditionUsedMask,
+	}, nil
+}
+
+// GrantPartWithinCapacityWithLimitedEditionPity commits the granted boss item
+// and its durable pity transition through one aggregate save.
+func (m *UserManager) GrantPartWithinCapacityWithLimitedEditionPity(
+	ctx context.Context, userID int64, part Part, pity LimitedEditionPity,
+) (Part, error) {
+	return m.grantPartWithinCapacity(ctx, userID, part, &pity)
+}
+
+func (m *UserManager) grantPartWithinCapacity(
+	ctx context.Context, userID int64, part Part, pity *LimitedEditionPity,
+) (Part, error) {
 	user := m.UserByID(userID)
 	if user == nil {
 		return Part{}, ErrInvalidUser
@@ -1416,6 +1454,12 @@ func (m *UserManager) GrantPartWithinCapacity(ctx context.Context, userID int64,
 		}
 	}
 	user.Parts = append(user.Parts, part)
+	previousMissCount := user.Account.LimitedEditionMissCount
+	previousUsedMask := user.Account.LimitedEditionUsedMask
+	if pity != nil {
+		user.Account.LimitedEditionMissCount = pity.MissCount
+		user.Account.LimitedEditionUsedMask = pity.UsedMask
+	}
 	user.mu.Unlock()
 	err := m.repository.Save(ctx, user.Record())
 	if err != nil {
@@ -1424,6 +1468,8 @@ func (m *UserManager) GrantPartWithinCapacity(ctx context.Context, userID int64,
 		if last >= 0 && user.Parts[last] == part {
 			user.Parts = user.Parts[:last]
 		}
+		user.Account.LimitedEditionMissCount = previousMissCount
+		user.Account.LimitedEditionUsedMask = previousUsedMask
 		user.mu.Unlock()
 		return Part{}, fmt.Errorf("partSave: %w", err)
 	}

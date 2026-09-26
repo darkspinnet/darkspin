@@ -184,6 +184,7 @@ type zoneNPCDamageResult struct {
 type zoneNPCDeathDefinition struct {
 	objectID                   uint32
 	noun                       string
+	permanentModifierIDs       []uint32
 	position                   raknet.Vector3
 	hitPoint                   float32
 	creatureType               uint32
@@ -245,6 +246,20 @@ func marshalZoneNPCDamage(
 	if err != nil {
 		return zoneNPCDamagePublication{}, fmt.Errorf("damageProject: %w", err)
 	}
+	if damageResult.isDefeated {
+		for index, instanceID := range definition.permanentModifierIDs {
+			deletePacket, marshalErr := raknet.MarshalApplication(
+				raknet.ModifierDeletedMessage{
+					TargetID: definition.objectID, InstanceID: instanceID,
+				},
+			)
+			if marshalErr != nil {
+				return zoneNPCDamagePublication{},
+					fmt.Errorf("defeatModifier[%d]: %w", index, marshalErr)
+			}
+			publication.Packet = append(publication.Packet, deletePacket)
+		}
+	}
 	return zoneNPCDamagePublication{
 		packets: publication.Packet, deathRun: publication.DeathRun,
 	}, nil
@@ -294,9 +309,30 @@ func campaignNPCDeathDefinition(
 		deleteDelay = 100 * time.Millisecond
 		deathPresentation.PresentationDuration = 0
 	}
+	permanentModifierIDs := make([]uint32, 0, 1+game.MaxCampaignNPCAffixCount)
+	plan := snapshot.Plan
+	if plan.IsCaptain || plan.IsElite || plan.IsBoss ||
+		plan.BossIdentity.HasModifier(zonenpc.EliteModifierName) {
+		permanentModifierIDs = append(permanentModifierIDs,
+			zoneeffect.NounModifierInstanceID(plan.ObjectID))
+	}
+	for affixIndex, affixName := range plan.BossIdentity.AffixNames {
+		if affixName == "" {
+			continue
+		}
+		instanceID, instanceErr := zoneeffect.NounAffixModifierInstanceID(
+			plan.ObjectID, affixIndex,
+		)
+		if instanceErr != nil {
+			return zoneNPCDeathDefinition{},
+				fmt.Errorf("deathAffixInstance[%d]: %w", affixIndex, instanceErr)
+		}
+		permanentModifierIDs = append(permanentModifierIDs, instanceID)
+	}
 	return zoneNPCDeathDefinition{
-		objectID: snapshot.Plan.ObjectID,
-		noun:     snapshot.Plan.NounName,
+		objectID:             snapshot.Plan.ObjectID,
+		noun:                 snapshot.Plan.NounName,
+		permanentModifierIDs: permanentModifierIDs,
 		position: raknet.Vector3{
 			X: snapshot.Plan.Position.X,
 			Y: snapshot.Plan.Position.Y,
@@ -541,7 +577,7 @@ func (r campaignDamageRuntime) publishAreaResults(
 					hitPoint:   result.Damage.HitPoint,
 					isDefeated: true, isFound: true,
 				},
-				sourceObjectID, result.Damage.Damage, result.IsCritical,
+				sourceObjectID, result.Damage.ResolvedDamage, result.IsCritical,
 				timestamp, r.effectPool,
 			)
 			if err != nil {
@@ -3050,9 +3086,17 @@ func (r campaignNPCActionRuntime) spawnLoot(
 	var equipmentErr error
 	if !isTutorial && !enemy.Plan.IsFixture {
 		equipmentPackets, _, equipmentErr = peerSession.spawnCampaignNPCEquipment(
-			enemy, r.gameplayJoin, sourceTime,
-			peerSession.binding.ParticipantCount <= 1,
+			enemy, r.gameplayJoin, sourceTime, true,
 		)
+		if equipmentErr == nil {
+			for candidateSessionKey, candidate := range r.registry.sessions {
+				if candidate.zone != peerSession.zone {
+					continue
+				}
+				candidate.campaignEquipmentDropBag = peerSession.campaignEquipmentDropBag
+				r.registry.sessions[candidateSessionKey] = candidate
+			}
+		}
 	}
 	orbPackets := make([][]byte, 0)
 	var orbObjectID uint32
@@ -3069,6 +3113,15 @@ func (r campaignNPCActionRuntime) spawnLoot(
 			enemy, r.program.CrystalDefinitions,
 			r.program.CrystalLevelOffsets, sourceTime,
 		)
+		if crystalErr == nil {
+			for candidateSessionKey, candidate := range r.registry.sessions {
+				if candidate.zone != peerSession.zone {
+					continue
+				}
+				candidate.campaignCrystalDropBag = peerSession.campaignCrystalDropBag
+				r.registry.sessions[candidateSessionKey] = candidate
+			}
+		}
 	}
 	dnaPackets := make([][]byte, 0)
 	var dnaErr error

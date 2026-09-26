@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,11 +17,17 @@ import (
 )
 
 type dumpRequest struct {
-	Actor       Actor
-	Trigger     string
-	Context     string
-	Fingerprint string
-	ObjectID    uint32
+	Actor                       Actor
+	Trigger                     string
+	Context                     string
+	Fingerprint                 string
+	ObjectID                    uint32
+	TriggerState                *StateFrame
+	TriggerStateCapture         stateCapture
+	TriggerTransportDiagnostics []TransportDiagnosticsState
+	TriggerMovements            []movementSample
+	Movements                   []movementSample
+	TriggeredAt                 time.Time
 }
 
 type dumpResult struct {
@@ -33,41 +38,59 @@ type dumpResult struct {
 }
 
 type manifest struct {
-	FormatVersion                  uint32     `json:"format_version"`
-	ID                             string     `json:"id"`
-	CreatedAt                      time.Time  `json:"created_at"`
-	BuildVersion                   string     `json:"build_version,omitempty"`
-	Trigger                        string     `json:"trigger"`
-	Context                        string     `json:"context"`
-	Fingerprint                    string     `json:"fingerprint,omitempty"`
-	ObjectID                       uint32     `json:"object_id,omitempty"`
-	Actor                          Actor      `json:"actor"`
-	Mode                           Mode       `json:"mode"`
-	BufferDuration                 string     `json:"buffer_duration"`
-	Delay                          string     `json:"automatic_delay"`
-	WindowStartedAt                time.Time  `json:"window_started_at"`
-	WindowEndedAt                  time.Time  `json:"window_ended_at"`
-	TrafficEventCount              int        `json:"traffic_event_count"`
-	TrafficByteCount               int        `json:"traffic_byte_count"`
-	DroppedEventCount              uint64     `json:"dropped_event_count"`
-	ClientLineCount                int        `json:"client_line_count"`
-	IsClientMemoryCaptured         bool       `json:"is_client_memory_captured"`
-	ClientBoundaryAt               *time.Time `json:"client_boundary_at,omitempty"`
-	ClientRingLineCount            uint64     `json:"client_ring_line_count,omitempty"`
-	ClientRingByteCount            uint64     `json:"client_ring_byte_count,omitempty"`
-	ClientCapacityDroppedLineCount uint64     `json:"client_capacity_dropped_line_count,omitempty"`
-	ClientCapacityDroppedByteCount uint64     `json:"client_capacity_dropped_byte_count,omitempty"`
-	IsClientRingTruncated          bool       `json:"is_client_ring_truncated,omitempty"`
-	ReplayEventCount               int        `json:"replay_event_count"`
-	ClientReplayEventCount         int        `json:"client_replay_event_count"`
-	ClientMalformedCount           int        `json:"client_malformed_line_count"`
-	IsClientTimelineAligned        bool       `json:"is_client_timeline_aligned"`
-	FindingCount                   int        `json:"finding_count"`
-	LikelyCause                    string     `json:"likely_cause,omitempty"`
-	Confidence                     string     `json:"confidence,omitempty"`
-	ArchiveName                    string     `json:"archive_name,omitempty"`
-	ClientSources                  []string   `json:"client_sources,omitempty"`
-	Files                          []fileInfo `json:"files"`
+	TriggerObservedAt              *time.Time                  `json:"trigger_observed_at,omitempty"`
+	FormatVersion                  uint32                      `json:"format_version"`
+	ID                             string                      `json:"id"`
+	CreatedAt                      time.Time                   `json:"created_at"`
+	BuildVersion                   string                      `json:"build_version,omitempty"`
+	Trigger                        string                      `json:"trigger"`
+	Context                        string                      `json:"context"`
+	Fingerprint                    string                      `json:"fingerprint,omitempty"`
+	ObjectID                       uint32                      `json:"object_id,omitempty"`
+	Actor                          Actor                       `json:"actor"`
+	Mode                           Mode                        `json:"mode"`
+	BufferDuration                 string                      `json:"buffer_duration"`
+	Delay                          string                      `json:"automatic_delay"`
+	WindowStartedAt                time.Time                   `json:"window_started_at"`
+	WindowEndedAt                  time.Time                   `json:"window_ended_at"`
+	TrafficEventCount              int                         `json:"traffic_event_count"`
+	TrafficByteCount               int                         `json:"traffic_byte_count"`
+	DroppedEventCount              uint64                      `json:"dropped_event_count"`
+	ClientLineCount                int                         `json:"client_line_count"`
+	IsClientMemoryCaptured         bool                        `json:"is_client_memory_captured"`
+	IsClientMemoryAvailable        bool                        `json:"is_client_memory_available,omitempty"`
+	ClientBoundaryAt               *time.Time                  `json:"client_boundary_at,omitempty"`
+	ClientCaptureStatus            string                      `json:"client_capture_status,omitempty"`
+	ClientResponseAt               *time.Time                  `json:"client_response_at,omitempty"`
+	ClientReceivedTimeMS           uint64                      `json:"client_received_time_ms,omitempty"`
+	ClientKeyframeStartedTimeMS    uint64                      `json:"client_keyframe_started_time_ms,omitempty"`
+	ClientKeyframeCompletedTimeMS  uint64                      `json:"client_keyframe_completed_time_ms,omitempty"`
+	ClientRoundTripMS              float64                     `json:"client_round_trip_ms,omitempty"`
+	ClientClockUncertaintyMS       float64                     `json:"client_clock_uncertainty_ms,omitempty"`
+	ServerStateCapture             stateCapture                `json:"server_state_capture"`
+	TriggerStateCapture            stateCapture                `json:"trigger_state_capture"`
+	AftermathDurationMS            float64                     `json:"aftermath_duration_ms,omitempty"`
+	TransportDiagnostics           []TransportDiagnosticsState `json:"transport_diagnostics,omitempty"`
+	TriggerTransportDiagnostics    []TransportDiagnosticsState `json:"trigger_transport_diagnostics,omitempty"`
+	ClientRingLineCount            uint64                      `json:"client_ring_line_count,omitempty"`
+	ClientRingByteCount            uint64                      `json:"client_ring_byte_count,omitempty"`
+	ClientCapacityDroppedLineCount uint64                      `json:"client_capacity_dropped_line_count,omitempty"`
+	ClientCapacityDroppedByteCount uint64                      `json:"client_capacity_dropped_byte_count,omitempty"`
+	IsClientRingTruncated          bool                        `json:"is_client_ring_truncated,omitempty"`
+	AutomaticIncidents             []automaticIncidentRecord   `json:"automatic_incidents,omitempty"`
+	AutomaticSuppressedCount       uint64                      `json:"automatic_suppressed_count,omitempty"`
+	AutomaticEvictedCount          uint64                      `json:"automatic_evicted_count,omitempty"`
+	AutomaticIgnoredCount          uint64                      `json:"automatic_ignored_count,omitempty"`
+	ReplayEventCount               int                         `json:"replay_event_count"`
+	ClientReplayEventCount         int                         `json:"client_replay_event_count"`
+	ClientMalformedCount           int                         `json:"client_malformed_line_count"`
+	IsClientTimelineAligned        bool                        `json:"is_client_timeline_aligned"`
+	FindingCount                   int                         `json:"finding_count"`
+	LikelyCause                    string                      `json:"likely_cause,omitempty"`
+	Confidence                     string                      `json:"confidence,omitempty"`
+	ArchiveName                    string                      `json:"archive_name,omitempty"`
+	ClientSources                  []string                    `json:"client_sources,omitempty"`
+	Files                          []fileInfo                  `json:"files"`
 }
 
 type fileInfo struct {
@@ -83,8 +106,21 @@ type clientTail struct {
 }
 
 type clientCapture struct {
-	IsCaptured  bool
-	RequestedAt time.Time
+	IsCaptured              bool
+	Status                  string
+	RequestedAt             time.Time
+	RespondedAt             time.Time
+	ClientReceivedTimeMS    uint64
+	KeyframeStartedTimeMS   uint64
+	KeyframeCompletedTimeMS uint64
+}
+
+type stateCapture struct {
+	Status      string    `json:"status"`
+	RequestedAt time.Time `json:"requested_at"`
+	CompletedAt time.Time `json:"completed_at"`
+	DurationMS  float64   `json:"duration_ms"`
+	Failure     string    `json:"failure,omitempty"`
 }
 
 func (e *Service) dump(ctx context.Context, req dumpRequest) (dumpResult, error) {
@@ -96,27 +132,25 @@ func (e *Service) dump(ctx context.Context, req dumpRequest) (dumpResult, error)
 	id := fmt.Sprintf("SS-%06d", e.nextIncident.Add(1))
 	e.mu.Lock()
 	e.pruneLocked(now)
+	e.pruneMovementsLocked(now)
+	req.Movements = mergeMovements(e.movements, req.TriggerMovements, req.Actor)
 	events := cloneTrafficEvents(e.events)
 	mode := e.mode
 	bufferDuration := e.bufferDuration
 	delay := e.delay
 	droppedEventCount := uint64(len(e.droppedEventTimes))
-	provider := e.provider
+	automaticIncidents := e.automaticIncidentRecordsLocked()
+	automaticSuppressedCount := e.suppressedCount
+	automaticEvictedCount := e.evictedIncidentCount
+	automaticIgnoredCount := e.ignoredIncidentCount
 	e.mu.Unlock()
 
-	state := StateFrame{CapturedAt: now, Actor: req.Actor}
-	if provider != nil {
-		stateResult, stateErr := provider.SyncSnapshot(ctx, StateRequest{Actor: req.Actor})
-		if stateErr != nil {
-			return dumpResult{}, fmt.Errorf("stateCapture: %w", stateErr)
-		}
-		state = stateResult
-		if state.CapturedAt.IsZero() {
-			state.CapturedAt = now
-		}
-		if state.Actor.UserID != 0 || state.Actor.Remote != "" {
-			req.Actor = state.Actor
-		}
+	state, stateResult := e.captureState(ctx, req.Actor)
+	if state.CapturedAt.IsZero() {
+		state.CapturedAt = now
+	}
+	if state.Actor.UserID != 0 || state.Actor.Remote != "" {
+		req.Actor = state.Actor
 	}
 	if req.Actor.UserName == "" && req.Actor.UserID != 0 && e.resolveUserName != nil {
 		req.Actor.UserName = e.resolveUserName(req.Actor.UserID)
@@ -139,6 +173,19 @@ func (e *Service) dump(ctx context.Context, req dumpRequest) (dumpResult, error)
 	if err != nil {
 		return dumpResult{}, fmt.Errorf("stateWrite: %w", err)
 	}
+	if len(req.Movements) > 0 {
+		err = writeJSON(filepath.Join(directory, "movement.json"), req.Movements)
+		if err != nil {
+			return dumpResult{}, fmt.Errorf("movementWrite: %w", err)
+		}
+	}
+	if req.TriggerState != nil {
+		triggerStatePath := filepath.Join(directory, "server-state-trigger.json")
+		err = writeJSON(triggerStatePath, *req.TriggerState)
+		if err != nil {
+			return dumpResult{}, fmt.Errorf("triggerStateWrite: %w", err)
+		}
+	}
 	clientMemoryPath := filepath.Join(directory, "client-memory.jsonl")
 	clientCaptureResult := e.requestClientMemory(
 		ctx, directoryName, clientMemoryPath, bufferDuration, mode,
@@ -155,7 +202,8 @@ func (e *Service) dump(ctx context.Context, req dumpRequest) (dumpResult, error)
 	}
 	timelineClientLines := client.lines
 	timelineClientFile := "client.jsonl"
-	if clientCaptureResult.IsCaptured {
+	isClientMemoryAvailable := clientCaptureResult.IsCaptured
+	if isClientMemoryAvailable {
 		clientMemoryLines, readErr := readSnapshotLines(clientMemoryPath)
 		if readErr != nil {
 			return dumpResult{}, fmt.Errorf("clientMemoryRead: %w", readErr)
@@ -165,10 +213,15 @@ func (e *Service) dump(ctx context.Context, req dumpRequest) (dumpResult, error)
 			clientRecords, directoryName, clientCaptureResult.RequestedAt,
 		)
 		if isBoundaryFound {
+			clientCaptureResult = clientCaptureFromBoundary(
+				clientCaptureResult, clientRecords, directoryName,
+			)
 			timelineClientLines = clientMemoryLines
 			timelineClientFile = "client-memory.jsonl"
 		} else {
 			clientCaptureResult.IsCaptured = false
+			clientCaptureResult.Status = "missing_boundary"
+			isClientMemoryAvailable = false
 			e.logger.Printf(
 				"Sync Snapshot client response ignored request=%s malformed=%d: matching boundary unavailable",
 				directoryName, malformedCount,
@@ -187,8 +240,15 @@ func (e *Service) dump(ctx context.Context, req dumpRequest) (dumpResult, error)
 	if err != nil {
 		return dumpResult{}, fmt.Errorf("timelineWrite: %w", err)
 	}
+	transportDiagnostics := e.captureTransportDiagnostics(state)
 	analysis := analyzeSnapshot(
 		id, req, state, events, timeline, clientCaptureResult, droppedEventCount, now,
+	)
+	analysis.TransportDiagnostics = append(
+		[]TransportDiagnosticsState(nil), transportDiagnostics...,
+	)
+	analysis.TriggerTransportDiagnostics = append(
+		[]TransportDiagnosticsState(nil), req.TriggerTransportDiagnostics...,
 	)
 	analysisPath := filepath.Join(directory, "analysis.json")
 	err = writeJSON(analysisPath, analysis)
@@ -213,7 +273,19 @@ func (e *Service) dump(ctx context.Context, req dumpRequest) (dumpResult, error)
 		{Name: "analysis.json", Description: "Machine-readable transport, pending-output, action/input, lifecycle, delivery, projectile-position, and client locomotion-stall comparisons"},
 		{Name: "report.md", Description: "Readable root-cause summary with cited source lines and next checks"},
 	}
-	if clientCaptureResult.IsCaptured {
+	if req.TriggerState != nil {
+		files = append(files, fileInfo{
+			Name:        "server-state-trigger.json",
+			Description: "Authoritative keyframe captured when the automatic detector first retained the incident",
+		})
+	}
+	if len(req.Movements) > 0 {
+		files = append(files, fileInfo{
+			Name:        "movement.json",
+			Description: "Bounded per-object client/server movement samples with local sample age, identity, goals and retained incident lead-in",
+		})
+	}
+	if isClientMemoryAvailable {
 		files = append(files, fileInfo{
 			Name:        "client-memory.jsonl",
 			Description: "Exact client in-memory packet, frame, action/input, object, and locomotion buffer dumped by Fang at the snapshot boundary",
@@ -228,7 +300,7 @@ func (e *Service) dump(ctx context.Context, req dumpRequest) (dumpResult, error)
 		archiveName = snapshotArchiveName(id, e.buildVersion, now)
 	}
 	metadata := manifest{
-		FormatVersion: 13, ID: id, CreatedAt: now,
+		FormatVersion: 16, ID: id, CreatedAt: now,
 		BuildVersion: e.buildVersion, Trigger: req.Trigger, Context: req.Context,
 		Fingerprint: req.Fingerprint, ObjectID: req.ObjectID, Actor: req.Actor,
 		Mode: mode, BufferDuration: bufferDuration.String(), Delay: delay.String(),
@@ -236,11 +308,22 @@ func (e *Service) dump(ctx context.Context, req dumpRequest) (dumpResult, error)
 		TrafficEventCount: len(events), TrafficByteCount: trafficByteCount,
 		DroppedEventCount: droppedEventCount, ClientLineCount: len(client.lines),
 		IsClientMemoryCaptured:         clientCaptureResult.IsCaptured,
+		IsClientMemoryAvailable:        isClientMemoryAvailable,
+		ClientCaptureStatus:            clientCaptureResult.Status,
+		ClientReceivedTimeMS:           clientCaptureResult.ClientReceivedTimeMS,
+		ClientKeyframeStartedTimeMS:    clientCaptureResult.KeyframeStartedTimeMS,
+		ClientKeyframeCompletedTimeMS:  clientCaptureResult.KeyframeCompletedTimeMS,
+		ServerStateCapture:             stateResult,
+		TriggerStateCapture:            req.TriggerStateCapture,
 		ClientRingLineCount:            timeline.ClientRingLineCount,
 		ClientRingByteCount:            timeline.ClientRingByteCount,
 		ClientCapacityDroppedLineCount: timeline.ClientCapacityDroppedLineCount,
 		ClientCapacityDroppedByteCount: timeline.ClientCapacityDroppedByteCount,
 		IsClientRingTruncated:          timeline.IsClientRingTruncated,
+		AutomaticIncidents:             automaticIncidents,
+		AutomaticSuppressedCount:       automaticSuppressedCount,
+		AutomaticEvictedCount:          automaticEvictedCount,
+		AutomaticIgnoredCount:          automaticIgnoredCount,
 		ReplayEventCount:               len(timeline.Events),
 		ClientReplayEventCount:         timeline.ClientEventCount,
 		ClientMalformedCount:           timeline.ClientMalformedLineCount,
@@ -250,9 +333,29 @@ func (e *Service) dump(ctx context.Context, req dumpRequest) (dumpResult, error)
 		ClientSources: client.sources,
 		Files:         files,
 	}
+	metadata.TransportDiagnostics = transportDiagnostics
+	if !req.TriggeredAt.IsZero() {
+		metadata.TriggerObservedAt = &req.TriggeredAt
+	}
+	metadata.TriggerTransportDiagnostics = append(
+		[]TransportDiagnosticsState(nil), req.TriggerTransportDiagnostics...,
+	)
+	if req.TriggerState != nil && !req.TriggerState.CapturedAt.IsZero() {
+		metadata.AftermathDurationMS = float64(
+			state.CapturedAt.Sub(req.TriggerState.CapturedAt),
+		) / float64(time.Millisecond)
+	}
 	if !clientCaptureResult.RequestedAt.IsZero() {
 		boundaryCopy := clientCaptureResult.RequestedAt
 		metadata.ClientBoundaryAt = &boundaryCopy
+	}
+	if !clientCaptureResult.RespondedAt.IsZero() {
+		responseCopy := clientCaptureResult.RespondedAt
+		metadata.ClientResponseAt = &responseCopy
+		metadata.ClientRoundTripMS = float64(
+			clientCaptureResult.RespondedAt.Sub(clientCaptureResult.RequestedAt),
+		) / float64(time.Millisecond)
+		metadata.ClientClockUncertaintyMS = metadata.ClientRoundTripMS / 2
 	}
 	manifestPath := filepath.Join(directory, "manifest.json")
 	err = writeJSON(manifestPath, metadata)
@@ -273,6 +376,58 @@ func (e *Service) dump(ctx context.Context, req dumpRequest) (dumpResult, error)
 	return dumpResult{
 		ID: id, Directory: directory, ArchiveName: archiveName, Actor: req.Actor,
 	}, nil
+}
+
+func (e *Service) captureTransportDiagnostics(
+	state StateFrame,
+) []TransportDiagnosticsState {
+	e.mu.Lock()
+	provider := e.transportProvider
+	e.mu.Unlock()
+	if provider == nil {
+		return nil
+	}
+	diagnostics := make([]TransportDiagnosticsState, 0, len(state.Sessions))
+	now := time.Now().UTC()
+	for _, session := range state.Sessions {
+		current, isFound := provider.SnapshotTransportDiagnostics(
+			session.Remote, session.TransportGeneration, now,
+		)
+		if isFound {
+			diagnostics = append(diagnostics, current)
+		}
+	}
+	return diagnostics
+}
+
+func (e *Service) captureState(
+	ctx context.Context, actor Actor,
+) (StateFrame, stateCapture) {
+	now := time.Now().UTC()
+	state := StateFrame{CapturedAt: now, Actor: actor}
+	result := stateCapture{Status: "unavailable", RequestedAt: now}
+	e.mu.Lock()
+	provider := e.provider
+	e.mu.Unlock()
+	if provider == nil {
+		result.CompletedAt = time.Now().UTC()
+		return state, result
+	}
+	stateCtx, cancelState := context.WithTimeout(ctx, 750*time.Millisecond)
+	capturedState, err := provider.SyncSnapshot(stateCtx, StateRequest{Actor: actor})
+	cancelState()
+	result.CompletedAt = time.Now().UTC()
+	result.DurationMS = float64(
+		result.CompletedAt.Sub(result.RequestedAt),
+	) / float64(time.Millisecond)
+	if err != nil {
+		result.Status = "partial"
+		result.Failure = err.Error()
+		e.logger.Printf("Sync Snapshot authoritative state unavailable: %v", err)
+		return state, result
+	}
+	result.Status = "complete"
+	return capturedState, result
 }
 
 func snapshotArchiveName(id string, buildVersion string, createdAt time.Time) string {
@@ -410,7 +565,7 @@ func (e *Service) requestClientMemory(
 	bufferDuration time.Duration, mode Mode,
 ) clientCapture {
 	if strings.TrimSpace(e.controlPath) == "" || mode == ModeOff {
-		return clientCapture{}
+		return clientCapture{Status: "unavailable"}
 	}
 	e.controlMu.Lock()
 	defer e.controlMu.Unlock()
@@ -422,7 +577,7 @@ func (e *Service) requestClientMemory(
 	err := os.WriteFile(e.controlPath, []byte(control), 0o644)
 	if err != nil {
 		e.logger.Printf("Sync Snapshot client request failed: %v", err)
-		return clientCapture{RequestedAt: requestedAt}
+		return clientCapture{Status: "request_failed", RequestedAt: requestedAt}
 	}
 	deadline := time.Now().Add(750 * time.Millisecond)
 	lastSize := int64(-1)
@@ -438,19 +593,22 @@ func (e *Service) requestClientMemory(
 				stableCount = 0
 			}
 			if stableCount >= 2 {
-				return clientCapture{IsCaptured: true, RequestedAt: requestedAt}
+				return clientCapture{
+					IsCaptured: true, RequestedAt: requestedAt,
+					RespondedAt: time.Now().UTC(),
+				}
 			}
 		}
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			e.logger.Printf("Sync Snapshot client response failed: %v", err)
-			return clientCapture{RequestedAt: requestedAt}
+			return clientCapture{Status: "response_failed", RequestedAt: requestedAt}
 		}
 		if ctx.Err() != nil {
-			return clientCapture{RequestedAt: requestedAt}
+			return clientCapture{Status: "canceled", RequestedAt: requestedAt}
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	return clientCapture{RequestedAt: requestedAt}
+	return clientCapture{Status: "response_timeout", RequestedAt: requestedAt}
 }
 
 func readSnapshotLines(path string) ([][]byte, error) {
@@ -561,23 +719,33 @@ func readClientTail(traceDirectory string, duration time.Duration) (clientTail, 
 		return clientTail{}, fmt.Errorf("traceRead: %w", err)
 	}
 	tail := clientTail{}
+	var selectedEntry os.DirEntry
+	var selectedModifiedAt time.Time
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".jsonl") ||
 			strings.EqualFold(entry.Name(), "server.jsonl") {
 			continue
 		}
-		path := filepath.Join(traceDirectory, entry.Name())
-		lines, readErr := readClientFileTail(path, duration)
-		if readErr != nil {
-			return clientTail{}, fmt.Errorf("clientRead[%s]: %w", entry.Name(), readErr)
+		fi, infoErr := entry.Info()
+		if infoErr != nil {
+			return clientTail{}, fmt.Errorf("clientStat[%s]: %w", entry.Name(), infoErr)
 		}
-		if len(lines) == 0 {
+		if selectedEntry != nil && !fi.ModTime().After(selectedModifiedAt) {
 			continue
 		}
-		tail.lines = append(tail.lines, lines...)
-		tail.sources = append(tail.sources, entry.Name())
+		selectedEntry = entry
+		selectedModifiedAt = fi.ModTime()
 	}
-	sort.Strings(tail.sources)
+	if selectedEntry == nil {
+		return tail, nil
+	}
+	path := filepath.Join(traceDirectory, selectedEntry.Name())
+	lines, err := readClientFileTail(path, duration)
+	if err != nil {
+		return clientTail{}, fmt.Errorf("clientRead[%s]: %w", selectedEntry.Name(), err)
+	}
+	tail.lines = append(tail.lines, lines...)
+	tail.sources = append(tail.sources, selectedEntry.Name())
 	return tail, nil
 }
 

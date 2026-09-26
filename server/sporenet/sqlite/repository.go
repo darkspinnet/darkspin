@@ -436,6 +436,10 @@ func (r *Repository) initializeSchema(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("schemaOverdriveUnlock: %w", err)
 	}
+	err = ensureLimitedEditionColumns(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("schemaLimitedEdition: %w", err)
+	}
 	err = normalizeInventoryCapacity(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("schemaInventoryCapacity: %w", err)
@@ -447,6 +451,32 @@ func (r *Repository) initializeSchema(ctx context.Context) error {
 	err = tx.Commit()
 	if err != nil {
 		return fmt.Errorf("schemaCommit: %w", err)
+	}
+	return nil
+}
+
+func ensureLimitedEditionColumns(ctx context.Context, tx *sqlx.Tx) error {
+	columns := []struct {
+		name string
+	}{
+		{name: "limited_edition_miss_count"},
+		{name: "limited_edition_used_mask"},
+	}
+	for index, column := range columns {
+		var count int
+		err := tx.GetContext(ctx, &count,
+			`SELECT COUNT(*) FROM pragma_table_info('user') WHERE name = ?`, column.name)
+		if err != nil {
+			return fmt.Errorf("columnCheck[%d]: %w", index, err)
+		}
+		if count != 0 {
+			continue
+		}
+		_, err = tx.ExecContext(ctx, `ALTER TABLE user ADD COLUMN `+column.name+
+			` INTEGER NOT NULL DEFAULT 0`)
+		if err != nil {
+			return fmt.Errorf("columnAdd[%d]: %w", index, err)
+		}
 	}
 	return nil
 }

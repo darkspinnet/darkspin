@@ -23,6 +23,17 @@ func writeAnalysisMarkdown(path string, report analysisReport) error {
 	document.WriteString(markdownText(report.Context))
 	document.WriteString("\n- Summary: ")
 	document.WriteString(markdownText(report.Summary))
+	document.WriteString("\n- Completeness: transport `")
+	document.WriteString(report.Completeness.TransportWindow)
+	document.WriteString("`, client `")
+	document.WriteString(report.Completeness.ClientKeyframe)
+	document.WriteString("`, timing `")
+	document.WriteString(report.Completeness.TimingAlignment)
+	document.WriteString("`, mapping `")
+	document.WriteString(report.Completeness.ObjectMapping)
+	document.WriteString("`, gameplay history `")
+	document.WriteString(report.Completeness.GameplayHistory)
+	document.WriteString("`")
 	document.WriteString("\n\n## Capture metrics\n\n")
 	document.WriteString("| Signal | Count |\n| --- | ---: |\n")
 	metrics := []struct {
@@ -41,6 +52,7 @@ func writeAnalysisMarkdown(path string, report analysisReport) error {
 		{name: "Sessions with pending output overflow", count: report.Metrics.PendingServerOverflowCount},
 		{name: "Server / client boundary objects", count: fmt.Sprintf("%d / %d", report.Metrics.ServerObjectCount, report.Metrics.ClientObjectCount)},
 		{name: "Client boundary / RakNet-mapped objects", count: fmt.Sprintf("%d / %d", report.Metrics.ClientObjectCount, report.Metrics.MappedClientObjectCount)},
+		{name: "Explicit / inferred / unknown client mappings", count: fmt.Sprintf("%d / %d / %d", report.Metrics.ExplicitMappedObjectCount, report.Metrics.InferredMappedObjectCount, report.Metrics.UnknownClientObjectCount)},
 		{name: "Compared / drifted objects", count: fmt.Sprintf("%d / %d", report.Metrics.ComparedObjectCount, report.Metrics.DriftedObjectCount)},
 		{name: "Client locomotion stalls", count: report.Metrics.ClientLocomotionStallCount},
 		{name: "Server / compared / drifted projectiles", count: fmt.Sprintf("%d / %d / %d", report.Metrics.ServerProjectileCount, report.Metrics.ComparedProjectileCount, report.Metrics.DriftedProjectileCount)},
@@ -58,6 +70,9 @@ func writeAnalysisMarkdown(path string, report analysisReport) error {
 		document.WriteString(fmt.Sprint(metric.count))
 		document.WriteString(" |\n")
 	}
+	writeTransportDiagnostics(&document, "Trigger transport and worker state", report.TriggerTransportDiagnostics)
+	writeTransportDiagnostics(&document, "Boundary transport and worker state", report.TransportDiagnostics)
+	writeMovementAnalysis(&document, report)
 	document.WriteString("\n## Findings\n\n")
 	if len(report.Findings) == 0 {
 		document.WriteString("No automatic outlier crossed the current diagnostic thresholds.\n")
@@ -287,6 +302,29 @@ func writeAnalysisMarkdown(path string, report analysisReport) error {
 		return fmt.Errorf("reportWrite: %w", err)
 	}
 	return nil
+}
+
+func writeTransportDiagnostics(
+	document *strings.Builder, title string, diagnostics []TransportDiagnosticsState,
+) {
+	if len(diagnostics) == 0 {
+		return
+	}
+	document.WriteString("\n## ")
+	document.WriteString(title)
+	document.WriteString("\n\n| Peer | Reliable pending / oldest ms | Future / missing | Ordered / splits / bytes | Worker queue / trace / request | Queue / dispatch / last ms | Last failure |\n| --- | ---: | ---: | ---: | ---: | ---: | --- |\n")
+	for _, current := range diagnostics {
+		document.WriteString(fmt.Sprintf(
+			"| %s gen %d | %d / %d | %d / %d | %d / %d / %d | %d / %d / %#x | %d / %d / %d | %s |\n",
+			markdownText(current.Remote), current.PeerGeneration,
+			current.PendingDatagramCount, current.OldestPendingDatagramMS,
+			current.FutureDatagramCount, current.MissingDatagramCount,
+			current.PendingOrderCount, current.SplitAssemblyCount, current.SplitByteCount,
+			current.GameplayWorkerQueueDepth, current.CurrentTraceID, current.CurrentRequestID,
+			current.CurrentQueueDelayMS, current.CurrentDispatchDurationMS,
+			current.LastDispatchDurationMS, markdownText(current.LastFailure),
+		))
+	}
 }
 
 func writeSquadReport(document *strings.Builder, sessions []serverSessionState) {

@@ -1151,6 +1151,7 @@ func (s *Session) damage(
 		LocusID: npc.Plan.LocusID, MarkerSetName: npc.Plan.MarkerSetName,
 		PreviousHealth: previousHealth, HitPoint: npc.HitPoint,
 		Damage:                   appliedDamage + absorbedDamage,
+		ResolvedDamage:           damage + absorbedDamage,
 		AbsorbedDamage:           absorbedDamage,
 		RemainingLocusActorCount: remainingLocusActorCount, RemainingActorCount: remainingActorCount,
 		RemainingMarkerSetCount:    remainingMarkerSetCount,

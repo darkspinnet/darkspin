@@ -33,10 +33,20 @@ func (e *gameplaySessionRegistry) SyncSnapshot(
 	if e == nil {
 		return frame, nil
 	}
-	e.mutex.RLock()
+	for !e.mutex.TryRLock() {
+		select {
+		case <-ctx.Done():
+			return frame, fmt.Errorf("snapshotLock: %w", ctx.Err())
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
 	defer e.mutex.RUnlock()
 	selectedZone := selectSnapshotZone(e.sessions, req.Actor)
 	for remote, peerSession := range e.sessions {
+		err = ctx.Err()
+		if err != nil {
+			return frame, fmt.Errorf("snapshotSession: %w", err)
+		}
 		if !isSnapshotSessionSelected(peerSession, remote, req.Actor, selectedZone) {
 			continue
 		}
@@ -50,6 +60,23 @@ func (e *gameplaySessionRegistry) SyncSnapshot(
 			snapshotSession(remote, peerSession, frame.CapturedAt),
 		)
 	}
+	for _, decision := range e.diagnosticDecisions {
+		if req.Actor.Remote != "" && decision.remote != req.Actor.Remote {
+			continue
+		}
+		frame.GameplayDecisions = append(
+			frame.GameplayDecisions,
+			snapshot.GameplayDecisionState{
+				OccurredAt: decision.occurredAt, Kind: decision.kind,
+				TraceID: decision.traceID, Remote: decision.remote,
+				TransportGeneration: decision.transportGeneration,
+				ZoneGeneration:      decision.zoneGeneration, ObjectID: decision.objectID,
+				ActionType: decision.actionType, SyncStamp: decision.syncStamp,
+				Outcome: decision.outcome, Reason: decision.reason,
+				PacketCount: decision.packetCount,
+			},
+		)
+	}
 	sort.Slice(frame.Sessions, func(left int, right int) bool {
 		if frame.Sessions[left].GameID != frame.Sessions[right].GameID {
 			return frame.Sessions[left].GameID < frame.Sessions[right].GameID
@@ -57,6 +84,23 @@ func (e *gameplaySessionRegistry) SyncSnapshot(
 		return frame.Sessions[left].UserID < frame.Sessions[right].UserID
 	})
 	return frame, nil
+}
+
+const maximumGameplayDiagnosticDecisionCount = 256
+
+func (e *gameplaySessionRegistry) recordDiagnosticDecision(
+	decision gameplayDiagnosticDecision,
+) {
+	if e == nil {
+		return
+	}
+	e.mutex.Lock()
+	e.diagnosticDecisions = append(e.diagnosticDecisions, decision)
+	if len(e.diagnosticDecisions) > maximumGameplayDiagnosticDecisionCount {
+		copy(e.diagnosticDecisions, e.diagnosticDecisions[1:])
+		e.diagnosticDecisions = e.diagnosticDecisions[:maximumGameplayDiagnosticDecisionCount]
+	}
+	e.mutex.Unlock()
 }
 
 func selectSnapshotZone(

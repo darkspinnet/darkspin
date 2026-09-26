@@ -143,6 +143,7 @@ type DamageResult struct {
 	PreviousHealth             float32
 	HitPoint                   float32
 	Damage                     float32
+	ResolvedDamage             float32 // Mitigated hit before remaining health caps it.
 	AbsorbedDamage             float32
 	RemainingLocusActorCount   int
 	RemainingMarkerSetCount    int

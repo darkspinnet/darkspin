@@ -16,16 +16,23 @@ import (
 const (
 	clientProbePollInterval       = 100 * time.Millisecond
 	automaticNPCDriftDistance     = 5.0
-	automaticNPCMotionDistance    = 0.25
 	automaticNPCDriftSampleCount  = 3
 	automaticStateCaptureDeadline = 500 * time.Millisecond
 )
 
 type clientObjectProbe struct {
+	source          string
 	networkObjectID uint32
 	clientObjectID  uint32
 	position        [3]float32
 	timeMS          uint64
+	line            int
+	sampleAt        time.Time
+	goal            *[3]float32
+	partialGoal     *[3]float32
+	flags           uint32
+	targetHandle    uint32
+	desiredStop     float32
 }
 
 type clientTraceSource struct {
@@ -33,6 +40,7 @@ type clientTraceSource struct {
 	pending       []byte
 	objectMapper  clientObjectMapper
 	isInitialized bool
+	lineCount     int
 }
 
 type clientProbeMonitor struct {
@@ -43,7 +51,8 @@ type clientObjectDriftFlow struct {
 	clientPosition [3]float32
 	outlierCount   uint8
 	isInitialized  bool
-	isReported     bool
+	firstOutlierAt time.Time
+	lastSampleAt   time.Time
 }
 
 type serverNPCProbe struct {
@@ -80,6 +89,7 @@ func (e *clientProbeMonitor) poll(traceDirectory string) ([]clientObjectProbe, e
 			source = &clientTraceSource{
 				objectMapper: clientObjectMapper{
 					networkObjectIDsByHandle: make(map[uint32]uint32),
+					provenanceByHandle:       make(map[uint32]string),
 				},
 			}
 			e.sourcesByPath[path] = source
@@ -103,8 +113,13 @@ func (e *clientTraceSource) poll(path string) ([]clientObjectProbe, error) {
 		e.pending = nil
 		e.objectMapper = clientObjectMapper{
 			networkObjectIDsByHandle: make(map[uint32]uint32),
+			provenanceByHandle:       make(map[uint32]string),
 		}
 		e.isInitialized = false
+		e.lineCount = 0
+	}
+	if time.Since(fi.ModTime()) > 5*time.Second {
+		return nil, nil
 	}
 	r, err := os.Open(path)
 	if err != nil {
@@ -148,6 +163,7 @@ func (e *clientTraceSource) poll(path string) ([]clientObjectProbe, error) {
 	lines := bytes.Split(combined[:lastNewline], []byte{'\n'})
 	probes := make([]clientObjectProbe, 0)
 	for _, line := range lines {
+		e.lineCount++
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
 			continue
@@ -167,12 +183,31 @@ func (e *clientTraceSource) poll(path string) ([]clientObjectProbe, error) {
 		if !isValid {
 			continue
 		}
-		probes = append(probes, clientObjectProbe{
+		probe := clientObjectProbe{
+			source:          filepath.Base(path),
 			networkObjectID: networkObjectID,
 			clientObjectID:  event.ObjectID,
 			position:        position,
 			timeMS:          event.TimeMS,
-		})
+			line:            e.lineCount, flags: event.LocomotionFlags,
+			targetHandle: event.TargetObjectID,
+		}
+		if event.SampleUnixNano > 0 {
+			probe.sampleAt = time.Unix(0, event.SampleUnixNano).UTC()
+		}
+		goal, isGoalValid := decodePosition(event.GoalBits)
+		if isGoalValid {
+			probe.goal = &goal
+		}
+		partialGoal, isPartialGoalValid := decodePosition(event.PartialGoalBits)
+		if isPartialGoalValid {
+			probe.partialGoal = &partialGoal
+		}
+		stop, isStopValid := decodePosition([]uint32{event.DesiredStopBits, 0, 0})
+		if isStopValid {
+			probe.desiredStop = stop[0]
+		}
+		probes = append(probes, probe)
 	}
 	return probes, nil
 }
@@ -190,9 +225,10 @@ func (e *Service) pollClientObjectDrift() {
 	mode := e.mode
 	provider := e.provider
 	e.mu.Unlock()
-	if mode != ModeAuto || provider == nil {
+	if mode == ModeOff || provider == nil {
 		return
 	}
+	requestedAt := time.Now().UTC()
 	ctx, cancel := context.WithTimeout(context.Background(), automaticStateCaptureDeadline)
 	state, err := provider.SyncSnapshot(ctx, StateRequest{})
 	cancel()
@@ -201,20 +237,35 @@ func (e *Service) pollClientObjectDrift() {
 		return
 	}
 	requests := e.detectNPCDriftRequests(state, probes)
+	if len(requests) == 0 {
+		return
+	}
+	completedAt := time.Now().UTC()
+	transport := e.captureTransportDiagnostics(state)
 	for _, request := range requests {
-		select {
-		case e.autoRequests <- request:
-		default:
-			e.mu.Lock()
-			e.suppressedCount++
-			e.mu.Unlock()
+		request.triggerState = &state
+		request.triggerCapture = stateCapture{
+			Status: "complete", RequestedAt: requestedAt, CompletedAt: completedAt,
+			DurationMS: float64(completedAt.Sub(requestedAt)) / float64(time.Millisecond),
 		}
+		request.triggerTransport = transport
+		e.retainAutomatic(request)
 	}
 }
 
 func (e *Service) detectNPCDriftRequests(
 	state StateFrame, probes []clientObjectProbe,
 ) []autoRequest {
+	probeSources := make(map[string]struct{})
+	for _, probe := range probes {
+		probeSources[probe.source] = struct{}{}
+	}
+	// A client trace source cannot be assigned to one server-side peer until
+	// the capture carries an explicit connection identity. Avoid comparing one
+	// client's probes with another player's authoritative state in co-op.
+	if len(probeSources) != 1 || len(state.Sessions) != 1 {
+		return nil
+	}
 	latestProbesByObjectID := make(map[uint32]clientObjectProbe)
 	for _, probe := range probes {
 		current, isFound := latestProbesByObjectID[probe.networkObjectID]
@@ -230,7 +281,9 @@ func (e *Service) detectNPCDriftRequests(
 			Remote: session.Remote,
 		}
 		for _, object := range session.Objects {
-			if object.Kind != "npc" || object.ObjectID == 0 || object.IsDefeated ||
+			if (object.Kind != "npc" && object.Kind != "hero" &&
+				object.Kind != "companion" && object.Kind != "projectile") ||
+				object.ObjectID == 0 || object.IsDefeated ||
 				!object.IsPublished {
 				continue
 			}
@@ -242,7 +295,7 @@ func (e *Service) detectNPCDriftRequests(
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.mode != ModeAuto {
+	if e.mode == ModeOff {
 		return nil
 	}
 	requests := make([]autoRequest, 0, 1)
@@ -254,24 +307,28 @@ func (e *Service) detectNPCDriftRequests(
 		if !isFound {
 			continue
 		}
-		key := fmt.Sprintf("%s:%d", npc.actor.Remote, objectID)
-		distance := positionDistance(npc.object.Position, probe.position)
-		if distance <= automaticNPCDriftDistance {
+		sample := newMovementSample(state, state.Sessions[0], npc.object, probe)
+		e.retainMovementLocked(sample)
+		if e.mode != ModeAuto {
+			continue
+		}
+		key := movementIdentity(sample)
+		fingerprint := key + ":object-position-drift"
+		if !sample.IsTimingValid {
+			delete(e.clientObjectDriftFlows, key)
+			continue
+		}
+		distance := sample.Distance
+		if distance <= sample.AllowedDistance {
+			e.resolveAutomaticIncidentLocked(fingerprint, state.CapturedAt)
 			delete(e.clientObjectDriftFlows, key)
 			continue
 		}
 		flow := e.clientObjectDriftFlows[key]
-		if flow.isReported {
-			continue
+		if flow.firstOutlierAt.IsZero() || state.CapturedAt.Sub(flow.lastSampleAt) > time.Second {
+			flow = clientObjectDriftFlow{firstOutlierAt: state.CapturedAt}
 		}
-		if flow.isInitialized &&
-			positionDistance(flow.clientPosition, probe.position) >
-				automaticNPCMotionDistance {
-			flow.clientPosition = probe.position
-			flow.outlierCount = 1
-			e.clientObjectDriftFlows[key] = flow
-			continue
-		}
+		flow.lastSampleAt = state.CapturedAt
 		flow.clientPosition = probe.position
 		flow.isInitialized = true
 		if flow.outlierCount < ^uint8(0) {
@@ -281,18 +338,26 @@ func (e *Service) detectNPCDriftRequests(
 		if flow.outlierCount < automaticNPCDriftSampleCount {
 			continue
 		}
-		flow.isReported = true
-		e.clientObjectDriftFlows[key] = flow
+		if distance <= automaticNPCDriftDistance && state.CapturedAt.Sub(flow.firstOutlierAt) < 2*time.Second {
+			continue
+		}
 		contextText := fmt.Sprintf(
-			"client/server NPC position divergence object=%d noun=%q distance=%.2f allowance=%.2f client_handle=%d",
-			objectID, npc.object.NounName, distance, automaticNPCDriftDistance,
+			"client/server %s position divergence object=%d noun=%q distance=%.2f allowance=%.2f client_handle=%d",
+			npc.object.Kind, objectID, npc.object.NounName, distance, sample.AllowedDistance,
 			probe.clientObjectID,
 		)
-		fingerprint := fmt.Sprintf("%s:npc-position-drift:%d", npc.actor.Remote, objectID)
 		requests = append(requests, autoRequest{anomaly: anomaly{
 			Actor: npc.actor, Context: contextText,
-			Fingerprint: fingerprint, ObjectID: objectID,
+			Fingerprint: fingerprint, ObjectID: objectID, IsPersistent: true,
+			TriggeredAt: state.CapturedAt, Detector: "object_position_drift",
+			Threshold: sample.AllowedDistance, Measured: distance,
 		}})
+	}
+	e.pruneMovementsLocked(state.CapturedAt)
+	for key, flow := range e.clientObjectDriftFlows {
+		if state.CapturedAt.Sub(flow.lastSampleAt) > time.Second {
+			delete(e.clientObjectDriftFlows, key)
+		}
 	}
 	return requests
 }

@@ -39,7 +39,9 @@ var schemaStatements = []string{
 		unlock_editor_flair_slot INTEGER NOT NULL DEFAULT 0,
 		upsell INTEGER NOT NULL DEFAULT 0,
 		cap_level INTEGER NOT NULL DEFAULT 0,
-		cap_progression INTEGER NOT NULL DEFAULT 0
+		cap_progression INTEGER NOT NULL DEFAULT 0,
+		limited_edition_miss_count INTEGER NOT NULL DEFAULT 0,
+		limited_edition_used_mask INTEGER NOT NULL DEFAULT 0
 	)`,
 	`CREATE TABLE IF NOT EXISTS setting (
 		user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,

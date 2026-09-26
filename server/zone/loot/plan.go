@@ -69,16 +69,26 @@ func PlanDNA(input DNAPlanInput) (DNAPlan, error) {
 }
 
 type CrystalPlanInput struct {
-	Challenge   int32
-	ChanceScale float32
-	RandomDraw  uint32
-	World       sim.CrystalDropInput
+	Challenge       int32
+	ChanceScale     float32
+	RandomDraw      uint32
+	ChanceThreshold float32
+	World           sim.CrystalDropInput
 }
 
 func PlanCrystal(input CrystalPlanInput) (sim.CrystalPickupRequest, bool, error) {
-	isDrop, err := IsCrystalDrop(input.Challenge, input.ChanceScale, input.RandomDraw)
-	if err != nil {
-		return sim.CrystalPickupRequest{}, false, fmt.Errorf("crystalDecision: %w", err)
+	isDrop := false
+	if input.ChanceThreshold > 0 {
+		if input.ChanceThreshold > 1 || input.RandomDraw >= 100 {
+			return sim.CrystalPickupRequest{}, false, errors.New("invalid crystal chance override")
+		}
+		isDrop = float32(input.RandomDraw) < input.ChanceThreshold
+	} else {
+		var err error
+		isDrop, err = IsCrystalDrop(input.Challenge, input.ChanceScale, input.RandomDraw)
+		if err != nil {
+			return sim.CrystalPickupRequest{}, false, fmt.Errorf("crystalDecision: %w", err)
+		}
 	}
 	if !isDrop {
 		return sim.CrystalPickupRequest{}, false, nil

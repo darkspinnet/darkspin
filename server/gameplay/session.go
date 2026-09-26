@@ -547,6 +547,9 @@ type gameplayPeerSession struct {
 	campaignPartSlotBag                  game.CampaignPartSlotBag
 	campaignEquipmentDropBag             campaignEquipmentDropBag
 	campaignPartRarityBag                game.CampaignPartRarityBag
+	campaignEquipmentWinnerBag           campaignEquipmentWinnerBag
+	campaignCrystalDropBag               campaignCrystalDropBag
+	campaignCrystalSelectionBag          campaignCrystalSelectionBag
 	campaignNashiraSplitObjectIDs        map[uint32][]uint32
 	campaignNashiraSplitPendingObjectIDs map[uint32]uint32
 	campaignNashiraPanicReadiness        map[uint32]uint64
@@ -1801,12 +1804,28 @@ type gameplaySessionRegistry struct {
 	actionLeases         map[gameplayActionLeaseKey]gameplayActionLease
 	actionAdmissions     map[gameplayActionLeaseKey]struct{}
 	actionTerminals      map[gameplayActionLeaseKey]struct{}
+	diagnosticDecisions  []gameplayDiagnosticDecision
 	arenaMatches         map[uint32]*arenaMatchState
 	producerGuard        gameplayProducerGuard
 	lifecycle            gameplaySessionLifecycle
 	timer                zone.Timer
 	now                  func() time.Time
 	logger               *log.Logger
+}
+
+type gameplayDiagnosticDecision struct {
+	occurredAt          time.Time
+	kind                string
+	traceID             uint64
+	remote              string
+	transportGeneration uint64
+	zoneGeneration      uint64
+	objectID            uint32
+	actionType          uint32
+	syncStamp           uint8
+	outcome             string
+	reason              string
+	packetCount         int
 }
 
 type gameplayMemberKey struct {

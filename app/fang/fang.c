@@ -288,11 +288,24 @@ static volatile LONG player_reflection_traced;
 static volatile LONG ability_blink_trace_pending;
 static volatile LONG action_response_trace_pending;
 static volatile LONG diagnostic_controlled_object_id;
+static volatile LONG diagnostic_resource_object_id;
+static volatile LONG diagnostic_hit_point_bits;
+static volatile LONG diagnostic_power_point_bits;
+static volatile LONG diagnostic_resource_mask;
+static volatile LONG diagnostic_candidate_resource_object_id;
+static volatile LONG diagnostic_candidate_hit_point_bits;
+static volatile LONG diagnostic_candidate_power_point_bits;
+static volatile LONG diagnostic_candidate_resource_mask;
 static volatile LONG snapshot_capture_enabled;
 static volatile LONG snapshot_auto_probe_enabled;
 static volatile LONG snapshot_frame_sequence;
 static volatile LONG snapshot_frame_delta_bits;
 static volatile LONG snapshot_frame_time_ms;
+static volatile LONG snapshot_keyframe_started_time_ms;
+static volatile LONG snapshot_keyframe_completed_time_ms;
+static volatile LONG snapshot_pending_network_object_id;
+static volatile LONG snapshot_network_object_ids_by_slot[65536];
+static volatile LONG snapshot_client_handles_by_slot[65536];
 static volatile LONG snapshot_keyframe_pending;
 static HANDLE snapshot_keyframe_event;
 static DWORD snapshot_last_probe_time;
@@ -433,13 +446,87 @@ static int is_party_socket(SOCKET socket);
 static void snapshot_ring_clear(void);
 static void snapshot_ring_append(const char* contents, unsigned int size);
 static void snapshot_ring_marker(const char* kind, const char* request,
-    unsigned long long server_time_unix_nano, unsigned int buffer_ms);
+    unsigned long long server_time_unix_nano, unsigned int buffer_ms,
+    const char* keyframe_status, unsigned long long client_received_time_ms);
 static int valid_snapshot_directory_name(const char* name);
 static void snapshot_ring_dump(
     const char* directory_name, unsigned int buffer_ms);
 static void trace_client_object_registry(void);
 static void trace_client_object_probe_registry(void);
 static void trace_snapshot_action_state(void);
+
+static void trace_object_association(const char* kind,
+    unsigned int network_object_id, unsigned int client_handle) {
+    char line[384];
+    DWORD written;
+    int length;
+    unsigned int slot = client_handle & 0xffffu;
+    if (kind == NULL || network_object_id == 0 || client_handle == 0) {
+        return;
+    }
+    length = snprintf(line, sizeof(line),
+        "{\"time_ms\":%llu,\"protocol\":\"client_state\","
+        "\"kind\":\"%s\",\"thread\":%lu,\"frame_sequence\":%lu,"
+        "\"network_object_id\":%u,\"object_id\":%u,"
+        "\"handle_slot\":%u,\"handle_generation\":%u}\r\n",
+        (unsigned long long)GetTickCount64(), kind,
+        (unsigned long)GetCurrentThreadId(),
+        (unsigned long)InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0),
+        network_object_id, client_handle, slot, client_handle >> 16);
+    if (length <= 0 || (size_t)length >= sizeof(line)) {
+        return;
+    }
+    if (trace_file != INVALID_HANDLE_VALUE && trace_lock_ready) {
+        EnterCriticalSection(&trace_lock);
+        WriteFile(trace_file, line, (DWORD)length, &written, NULL);
+        LeaveCriticalSection(&trace_lock);
+    }
+    snapshot_ring_append(line, (unsigned int)length);
+}
+
+static unsigned int mapped_network_object_id(unsigned int client_handle) {
+    unsigned int slot = client_handle & 0xffffu;
+    if ((unsigned int)InterlockedCompareExchange(
+            &snapshot_client_handles_by_slot[slot], 0, 0) != client_handle) {
+        return 0;
+    }
+    return (unsigned int)InterlockedCompareExchange(
+        &snapshot_network_object_ids_by_slot[slot], 0, 0);
+}
+
+static void remember_object_association(
+    unsigned int network_object_id, unsigned int client_handle) {
+    unsigned int slot;
+    if (network_object_id == 0 || client_handle == 0) {
+        return;
+    }
+    slot = client_handle & 0xffffu;
+    InterlockedExchange(
+        &snapshot_network_object_ids_by_slot[slot], (LONG)network_object_id);
+    InterlockedExchange(&snapshot_client_handles_by_slot[slot], (LONG)client_handle);
+    trace_object_association("object_association", network_object_id, client_handle);
+}
+
+static void forget_object_association(unsigned int network_object_id) {
+    unsigned int slot;
+    if (network_object_id == 0) {
+        return;
+    }
+    for (slot = 0; slot < 65536; slot++) {
+        unsigned int current = (unsigned int)InterlockedCompareExchange(
+            &snapshot_network_object_ids_by_slot[slot], 0, 0);
+        if (current != network_object_id) {
+            continue;
+        }
+        {
+            unsigned int client_handle = (unsigned int)InterlockedExchange(
+                &snapshot_client_handles_by_slot[slot], 0);
+            InterlockedExchange(&snapshot_network_object_ids_by_slot[slot], 0);
+            trace_object_association(
+                "object_disassociation", network_object_id, client_handle);
+        }
+    }
+}
 
 static float __cdecl hooked_frame_delta(void* frame) {
     float delta = original_frame_delta(frame);
@@ -450,8 +537,10 @@ static float __cdecl hooked_frame_delta(void* frame) {
     InterlockedExchange(&snapshot_frame_delta_bits, (LONG)delta_bits);
     InterlockedExchange(&snapshot_frame_time_ms, (LONG)GetTickCount());
     if (InterlockedCompareExchange(&snapshot_keyframe_pending, 2, 1) == 1) {
+        InterlockedExchange(&snapshot_keyframe_started_time_ms, (LONG)GetTickCount());
         trace_client_object_registry();
         trace_snapshot_action_state();
+        InterlockedExchange(&snapshot_keyframe_completed_time_ms, (LONG)GetTickCount());
         if (snapshot_keyframe_event != NULL) {
             SetEvent(snapshot_keyframe_event);
         }
@@ -480,6 +569,7 @@ static DWORD WINAPI watch_snapshot_control(LPVOID parameter) {
         DWORD read_count = 0;
         unsigned int buffer_ms = 30000;
         unsigned long long server_time_unix_nano = 0;
+        unsigned long long client_received_time_ms = 0;
         ZeroMemory(contents, sizeof(contents));
         ZeroMemory(request, sizeof(request));
         control = CreateFileA(
@@ -499,7 +589,7 @@ static DWORD WINAPI watch_snapshot_control(LPVOID parameter) {
                     InterlockedExchange(&snapshot_auto_probe_enabled, 1);
                 } else if (mode != NULL && _strnicmp(mode, "manual", 6) == 0) {
                     InterlockedExchange(&snapshot_capture_enabled, 1);
-                    InterlockedExchange(&snapshot_auto_probe_enabled, 0);
+                    InterlockedExchange(&snapshot_auto_probe_enabled, 1);
                 } else if (mode != NULL && _strnicmp(mode, "off", 3) == 0) {
                     InterlockedExchange(&snapshot_auto_probe_enabled, 0);
                     if (InterlockedExchange(&snapshot_capture_enabled, 0) != 0) {
@@ -534,16 +624,30 @@ static DWORD WINAPI watch_snapshot_control(LPVOID parameter) {
                     InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) != 0) {
                     strncpy(last_request, request, sizeof(last_request) - 1);
                     last_request[sizeof(last_request) - 1] = '\0';
+                    client_received_time_ms = GetTickCount64();
+                    InterlockedExchange(&snapshot_keyframe_started_time_ms, 0);
+                    InterlockedExchange(&snapshot_keyframe_completed_time_ms, 0);
+                    {
+                        const char* keyframe_status = "unavailable";
                     if (snapshot_keyframe_event != NULL) {
+                        DWORD wait_result;
                         ResetEvent(snapshot_keyframe_event);
                         InterlockedExchange(&snapshot_keyframe_pending, 1);
-                        WaitForSingleObject(snapshot_keyframe_event, 250);
+                        wait_result = WaitForSingleObject(snapshot_keyframe_event, 250);
                         InterlockedExchange(&snapshot_keyframe_pending, 0);
+                        if (wait_result == WAIT_OBJECT_0) {
+                            keyframe_status = "complete";
+                        } else if (wait_result == WAIT_TIMEOUT) {
+                            keyframe_status = "timeout";
+                        } else {
+                            keyframe_status = "wait_failed";
+                        }
                     }
                     fang_trace_arsenal_snapshot(executable_module);
                     snapshot_ring_marker(
                         "snapshot_boundary", request, server_time_unix_nano,
-                        buffer_ms);
+                        buffer_ms, keyframe_status, client_received_time_ms);
+                    }
                     snapshot_ring_dump(request, buffer_ms);
                 }
             }
@@ -1676,7 +1780,8 @@ static void snapshot_ring_clear(void) {
 }
 
 static void snapshot_ring_marker(const char* kind, const char* request,
-    unsigned long long server_time_unix_nano, unsigned int buffer_ms) {
+    unsigned long long server_time_unix_nano, unsigned int buffer_ms,
+    const char* keyframe_status, unsigned long long client_received_time_ms) {
     char line[768];
     int length;
     ULONGLONG oldest_time_ms = 0;
@@ -1687,7 +1792,7 @@ static void snapshot_ring_marker(const char* kind, const char* request,
     size_t byte_count;
     unsigned int line_count = 0;
     snapshot_line* ring_line;
-    if (kind == NULL || request == NULL) {
+    if (kind == NULL || request == NULL || keyframe_status == NULL) {
         return;
     }
     AcquireSRWLockShared(&snapshot_ring_lock);
@@ -1714,7 +1819,9 @@ static void snapshot_ring_marker(const char* kind, const char* request,
         "\"ring_byte_count\":%llu,\"capacity_dropped_line_count\":%llu,"
         "\"capacity_dropped_byte_count\":%llu,\"oldest_time_ms\":%llu,"
         "\"newest_time_ms\":%llu,\"capacity_last_dropped_time_ms\":%llu,"
-        "\"buffer_ms\":%u}\r\n",
+        "\"buffer_ms\":%u,\"keyframe_status\":\"%s\","
+        "\"client_received_time_ms\":%llu,\"keyframe_started_time_ms\":%lu,"
+        "\"keyframe_completed_time_ms\":%lu}\r\n",
         (unsigned long long)GetTickCount64(), kind,
         (unsigned long)GetCurrentThreadId(),
         (unsigned long)InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0),
@@ -1726,7 +1833,12 @@ static void snapshot_ring_marker(const char* kind, const char* request,
         (unsigned long long)dropped_byte_count,
         (unsigned long long)oldest_time_ms,
         (unsigned long long)newest_time_ms,
-        (unsigned long long)last_dropped_time_ms, buffer_ms);
+        (unsigned long long)last_dropped_time_ms, buffer_ms, keyframe_status,
+        client_received_time_ms,
+        (unsigned long)InterlockedCompareExchange(
+            &snapshot_keyframe_started_time_ms, 0, 0),
+        (unsigned long)InterlockedCompareExchange(
+            &snapshot_keyframe_completed_time_ms, 0, 0));
     if (length <= 0 || (size_t)length >= sizeof(line)) {
         return;
     }
@@ -1924,6 +2036,15 @@ static void trace_message_receive(unsigned char id, const void* data, unsigned i
     char prefix[33];
     unsigned int index;
     unsigned int objective_id = 0;
+    unsigned int network_object_id = 0;
+    if ((id == 0x91 || id == 0x94 || id == 0x95) && data != NULL && size >= 4) {
+        memcpy(&network_object_id, data, sizeof(network_object_id));
+        InterlockedExchange(
+            &snapshot_pending_network_object_id, (LONG)network_object_id);
+    } else if (id == 0x8e && data != NULL && size >= 4) {
+        memcpy(&network_object_id, data, sizeof(network_object_id));
+        forget_object_association(network_object_id);
+    }
     if (id == 0xB8 && data != NULL && size >= 11) {
         memcpy(&objective_id, data, sizeof(objective_id));
         if (objective_id == 0xAC4273F3 && byte[10] != 0 &&
@@ -2212,6 +2333,7 @@ static void trace_client_object_memory(
     const BYTE* render;
     const char suffix[] = "\"}\r\n";
     int length;
+    unsigned int network_object_id;
     if (!readable_range(object, 668)) {
         return;
     }
@@ -2224,11 +2346,13 @@ static void trace_client_object_memory(
             *(const unsigned int*)(render + 20),
             *(const unsigned int*)(render + 24));
     }
+    network_object_id = mapped_network_object_id(object_id);
     length = snprintf(header, sizeof(header),
         "{\"time_ms\":%llu,\"protocol\":\"client_state\","
         "\"kind\":\"object_memory\",\"phase\":\"snapshot_boundary\","
         "\"thread\":%lu,\"frame_sequence\":%lu,"
         "\"frame_delta_bits\":%lu,\"frame_time_ms\":%lu,\"object_id\":%u,"
+        "\"network_object_id\":%u,"
         "\"position_bits\":[%u,%u,%u],\"render_position_bits\":%s,\"object_size\":668,"
         "\"object_hex\":\"",
         (unsigned long long)GetTickCount64(),
@@ -2236,7 +2360,7 @@ static void trace_client_object_memory(
         (unsigned long)InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0),
         (unsigned long)InterlockedCompareExchange(&snapshot_frame_delta_bits, 0, 0),
         (unsigned long)InterlockedCompareExchange(&snapshot_frame_time_ms, 0, 0),
-        object_id, *(const unsigned int*)(object + 24),
+        object_id, network_object_id, *(const unsigned int*)(object + 24),
         *(const unsigned int*)(object + 28),
         *(const unsigned int*)(object + 32), render_position);
     if (length <= 0 || (size_t)length >= sizeof(header)) {
@@ -2247,26 +2371,49 @@ static void trace_client_object_memory(
 
 static void trace_client_object_probe(
     unsigned int object_id, const BYTE* object) {
-    char line[512];
+    char line[1024];
+    const BYTE* locomotion;
+    FILETIME sample_time;
+    ULARGE_INTEGER sample_ticks;
     DWORD written;
     int length;
     if (!readable_range(object, 668)) {
         return;
     }
+    locomotion = *(const BYTE* const*)(object + 664);
+    if (!readable_range(locomotion, 440)) {
+        return;
+    }
+    GetSystemTimeAsFileTime(&sample_time);
+    sample_ticks.LowPart = sample_time.dwLowDateTime;
+    sample_ticks.HighPart = sample_time.dwHighDateTime;
     length = snprintf(line, sizeof(line),
         "{\"time_ms\":%llu,\"protocol\":\"client_state\","
         "\"kind\":\"object_probe\",\"phase\":\"automatic\","
         "\"thread\":%lu,\"frame_sequence\":%lu,"
         "\"frame_delta_bits\":%lu,\"frame_time_ms\":%lu,\"object_id\":%u,"
-        "\"position_bits\":[%u,%u,%u]}\r\n",
+        "\"sample_unix_nano\":%llu,\"position_bits\":[%u,%u,%u],"
+        "\"flags\":%u,\"goal_bits\":[%u,%u,%u],"
+        "\"partial_goal_bits\":[%u,%u,%u],\"target_object_id\":%u,"
+        "\"desired_stop_bits\":%u}\r\n",
         (unsigned long long)GetTickCount64(),
         (unsigned long)GetCurrentThreadId(),
         (unsigned long)InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0),
         (unsigned long)InterlockedCompareExchange(&snapshot_frame_delta_bits, 0, 0),
         (unsigned long)InterlockedCompareExchange(&snapshot_frame_time_ms, 0, 0),
-        object_id, *(const unsigned int*)(object + 24),
+        object_id, (sample_ticks.QuadPart - 116444736000000000ULL) * 100ULL,
+        *(const unsigned int*)(object + 24),
         *(const unsigned int*)(object + 28),
-        *(const unsigned int*)(object + 32));
+        *(const unsigned int*)(object + 32),
+        *(const unsigned int*)(locomotion + 324),
+        *(const unsigned int*)(locomotion + 328),
+        *(const unsigned int*)(locomotion + 332),
+        *(const unsigned int*)(locomotion + 336),
+        *(const unsigned int*)(locomotion + 340),
+        *(const unsigned int*)(locomotion + 344),
+        *(const unsigned int*)(locomotion + 348),
+        *(const unsigned int*)(locomotion + 144),
+        *(const unsigned int*)(locomotion + 416));
     if (length <= 0 || (size_t)length >= sizeof(line)) {
         return;
     }
@@ -2399,12 +2546,17 @@ static void* __cdecl hooked_movement_object_resolve(unsigned int object_id) {
     const BYTE* object;
     const BYTE* locomotion;
     movement_trace_context* context;
+    unsigned int network_object_id = (unsigned int)InterlockedExchange(
+        &snapshot_pending_network_object_id, 0);
     trace_client_state("locomotion_resolve_object", object_id);
     if (!readable_range(result, 668)) {
         trace_client_state("locomotion_resolve_missing", object_id);
         return result;
     }
     object = (const BYTE*)result;
+    if (network_object_id != 0) {
+        remember_object_association(network_object_id, object_id);
+    }
     locomotion = *(const BYTE* const*)(object + 664);
     if (!readable_range(locomotion, 440)) {
         trace_client_state("locomotion_resolve_component_missing", object_id);
@@ -2459,6 +2611,7 @@ static void* __stdcall hooked_player_move_receiver(void* message) {
     void* result;
     reset_movement_trace_context();
     result = original_player_move_receiver(message);
+    InterlockedExchange(&snapshot_pending_network_object_id, 0);
     trace_resolved_movement_context("after_apply");
     reset_movement_trace_context();
     return result;
@@ -2468,6 +2621,7 @@ static void* __stdcall hooked_locomotion_update_receiver(void* message) {
     void* result;
     reset_movement_trace_context();
     result = original_locomotion_update_receiver(message);
+    InterlockedExchange(&snapshot_pending_network_object_id, 0);
     trace_resolved_movement_context("after_apply");
     reset_movement_trace_context();
     return result;
@@ -2477,9 +2631,59 @@ static void* __stdcall hooked_locomotion_unreliable_receiver(void* message) {
     void* result;
     reset_movement_trace_context();
     result = original_locomotion_unreliable_receiver(message);
+    InterlockedExchange(&snapshot_pending_network_object_id, 0);
     trace_resolved_movement_context("after_apply");
     reset_movement_trace_context();
     return result;
+}
+
+static void observe_controlled_resource_update(
+    unsigned char id, const void* data, unsigned int size) {
+    const BYTE* payload = (const BYTE*)data;
+    unsigned int object_id;
+    unsigned int controlled_object_id;
+    unsigned int candidate_object_id;
+    unsigned int offset = 5;
+    unsigned int mask;
+    if (id != 0x97 || payload == NULL || size < 5) {
+        return;
+    }
+    memcpy(&object_id, payload, sizeof(object_id));
+    controlled_object_id = (unsigned int)InterlockedCompareExchange(
+        &diagnostic_controlled_object_id, 0, 0);
+    if (object_id == 0) {
+        return;
+    }
+    mask = payload[4];
+    candidate_object_id = (unsigned int)InterlockedExchange(
+        &diagnostic_candidate_resource_object_id, (LONG)object_id);
+    if (candidate_object_id != object_id) {
+        InterlockedExchange(&diagnostic_candidate_resource_mask, 0);
+    }
+    if ((mask & 1u) != 0 && size >= offset + sizeof(unsigned int)) {
+        unsigned int hit_point_bits;
+        memcpy(&hit_point_bits, payload + offset, sizeof(hit_point_bits));
+        InterlockedExchange(&diagnostic_candidate_hit_point_bits, (LONG)hit_point_bits);
+        InterlockedOr(&diagnostic_candidate_resource_mask, 1);
+        if (object_id == controlled_object_id || controlled_object_id == 0) {
+            InterlockedExchange(&diagnostic_hit_point_bits, (LONG)hit_point_bits);
+            InterlockedOr(&diagnostic_resource_mask, 1);
+        }
+        offset += sizeof(unsigned int);
+    }
+    if ((mask & 2u) != 0 && size >= offset + sizeof(unsigned int)) {
+        unsigned int power_point_bits;
+        memcpy(&power_point_bits, payload + offset, sizeof(power_point_bits));
+        InterlockedExchange(&diagnostic_candidate_power_point_bits, (LONG)power_point_bits);
+        InterlockedOr(&diagnostic_candidate_resource_mask, 2);
+        if (object_id == controlled_object_id || controlled_object_id == 0) {
+            InterlockedExchange(&diagnostic_power_point_bits, (LONG)power_point_bits);
+            InterlockedOr(&diagnostic_resource_mask, 2);
+        }
+    }
+    if (object_id == controlled_object_id || controlled_object_id == 0) {
+        InterlockedExchange(&diagnostic_resource_object_id, (LONG)object_id);
+    }
 }
 
 #if defined(__GNUC__)
@@ -2512,6 +2716,7 @@ static void* __fastcall hooked_message_construct(
     if (id >= 0x80) {
         trace_message_receive(id, data, size);
     }
+    observe_controlled_resource_update(id, data, size);
     if (id == 0xA1) {
         if (data != NULL && size == 9 &&
             *((const unsigned char*)data + 1) == 0x00 &&
@@ -2519,10 +2724,26 @@ static void* __fastcall hooked_message_construct(
             *((const unsigned char*)data + 3) == 0x09 &&
             *((const unsigned char*)data + 8) == 0xFF) {
             unsigned int controlled_object_id;
+            LONG previous_controlled_object_id;
             memcpy(&controlled_object_id, (const BYTE*)data + 4, sizeof(controlled_object_id));
-            InterlockedExchange(
+            previous_controlled_object_id = InterlockedExchange(
                 &diagnostic_controlled_object_id,
                 (LONG)controlled_object_id);
+            if ((unsigned int)InterlockedCompareExchange(
+                    &diagnostic_candidate_resource_object_id, 0, 0) == controlled_object_id) {
+                InterlockedExchange(&diagnostic_resource_object_id, (LONG)controlled_object_id);
+                InterlockedExchange(&diagnostic_hit_point_bits,
+                    InterlockedCompareExchange(&diagnostic_candidate_hit_point_bits, 0, 0));
+                InterlockedExchange(&diagnostic_power_point_bits,
+                    InterlockedCompareExchange(&diagnostic_candidate_power_point_bits, 0, 0));
+                InterlockedExchange(&diagnostic_resource_mask,
+                    InterlockedCompareExchange(&diagnostic_candidate_resource_mask, 0, 0));
+            } else if ((unsigned int)InterlockedCompareExchange(
+                           &diagnostic_resource_object_id, 0, 0) != controlled_object_id &&
+                (unsigned int)previous_controlled_object_id != controlled_object_id) {
+                InterlockedExchange(&diagnostic_resource_object_id, 0);
+                InterlockedExchange(&diagnostic_resource_mask, 0);
+            }
             trace_client_state("combat_controlled_binding", controlled_object_id);
         }
         trace_player_reflection();
@@ -3281,6 +3502,10 @@ static char* find_darkspin_chat_command(const char* text, int* command) {
                 *command = 25;
                 return (char*)cursor;
             }
+            if (is_darkspin_chat_command(cursor, "/stat")) {
+                *command = 29;
+                return (char*)cursor;
+            }
             if (is_darkspin_chat_command(cursor, "/follow")) {
                 *command = 26;
                 return (char*)cursor;
@@ -3435,6 +3660,47 @@ static int normalize_fang_warp_command(
     return (int)output_length;
 }
 
+static int normalize_fang_stat_command(
+    const char* text, const char* command_text, char* output, size_t output_capacity) {
+    size_t prefix_length;
+    unsigned int object_id;
+    unsigned int resource_object_id;
+    unsigned int hit_point_bits;
+    unsigned int power_point_bits;
+    unsigned int resource_mask;
+    int written;
+    if (!readable_pointer(text) || command_text < text || output == NULL || output_capacity == 0) {
+        return -1;
+    }
+    prefix_length = (size_t)(command_text - text);
+    if (prefix_length >= output_capacity) {
+        return -1;
+    }
+    if (prefix_length != 0) {
+        memcpy(output, text, prefix_length);
+    }
+    object_id = (unsigned int)InterlockedCompareExchange(
+        &diagnostic_controlled_object_id, 0, 0);
+    resource_object_id = (unsigned int)InterlockedCompareExchange(
+        &diagnostic_resource_object_id, 0, 0);
+    hit_point_bits = (unsigned int)InterlockedCompareExchange(
+        &diagnostic_hit_point_bits, 0, 0);
+    power_point_bits = (unsigned int)InterlockedCompareExchange(
+        &diagnostic_power_point_bits, 0, 0);
+    resource_mask = (unsigned int)InterlockedCompareExchange(
+        &diagnostic_resource_mask, 0, 0);
+    if (object_id == 0 || resource_object_id != object_id) {
+        resource_mask = 0;
+    }
+    written = snprintf(output + prefix_length, output_capacity - prefix_length,
+        "/stat %u %u %u %u", object_id, hit_point_bits, power_point_bits,
+        resource_mask & 3u);
+    if (written < 0 || (size_t)written >= output_capacity - prefix_length) {
+        return -1;
+    }
+    return (int)prefix_length + written;
+}
+
 static int normalize_fang_spawn_command(
     const char* text, const char* command_text, char* output, size_t output_capacity) {
     const char* cursor = command_text + 6;
@@ -3508,6 +3774,16 @@ static void* __cdecl hooked_chat_text_convert(void* output, const char* text, in
     }
     if (command == 24) {
         converted_length = normalize_fang_spawn_command(
+            text, command_text, normalized_text, sizeof(normalized_text));
+        if (converted_length < 0) {
+            return original_chat_text_convert(output, text, length);
+        }
+        converted_source = normalized_text;
+        command_text = find_darkspin_chat_command(converted_source, &command);
+        is_normalized = 1;
+    }
+    if (command == 29) {
+        converted_length = normalize_fang_stat_command(
             text, command_text, normalized_text, sizeof(normalized_text));
         if (converted_length < 0) {
             return original_chat_text_convert(output, text, length);
@@ -5874,7 +6150,8 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
         (_stricmp(snapshot_mode, "manual") == 0 ||
          _stricmp(snapshot_mode, "auto") == 0) ? 1 : 0);
     InterlockedExchange(&snapshot_auto_probe_enabled,
-        _stricmp(snapshot_mode, "auto") == 0 ? 1 : 0);
+        (_stricmp(snapshot_mode, "manual") == 0 ||
+         _stricmp(snapshot_mode, "auto") == 0) ? 1 : 0);
     if (movement_trace_tls_index == TLS_OUT_OF_INDEXES) {
         movement_trace_tls_index = TlsAlloc();
     }

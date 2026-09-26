@@ -50,7 +50,14 @@ type CrystalDropInput struct {
 	PickupRoles       []Role
 	Definitions       []CrystalDefinition
 	LevelOffsets      []CrystalLevelOffset
+	RecentTypes       []int32
+	RarityMisses      []uint32
 	Random            *SimulatorRandom
+}
+
+type weightedCrystalDefinition struct {
+	definition CrystalDefinition
+	weight     float64
 }
 
 type CrystalLob struct {
@@ -133,7 +140,10 @@ func BuildCrystalDropWorldRequest(input CrystalDropInput) (CrystalDropWorldReque
 		if levelErr != nil {
 			return CrystalDropWorldRequest{}, fmt.Errorf("levelSelect[%d]: %w", index, levelErr)
 		}
-		definition, totalWeight, definitionErr := eligibleCrystalDefinition(input.Definitions, uint32(crystalLevel))
+		definition, totalWeight, definitionErr := eligibleCrystalDefinition(
+			input.Definitions, uint32(crystalLevel), input.RecentTypes,
+			input.RarityMisses,
+		)
 		if definitionErr != nil {
 			return CrystalDropWorldRequest{}, fmt.Errorf("definitionSelect[%d]: %w", index, definitionErr)
 		}
@@ -155,9 +165,9 @@ func BuildCrystalDropWorldRequest(input CrystalDropInput) (CrystalDropWorldReque
 
 func eligibleCrystalDefinition(
 	definitions []CrystalDefinition, crystalLevel uint32,
-) ([]CrystalDefinition, float64, error) {
-	eligible := make([]CrystalDefinition, 0, len(definitions))
-	var totalWeight uint64
+	recentTypes []int32, rarityMisses []uint32,
+) ([]weightedCrystalDefinition, float64, error) {
+	baseEligible := make([]CrystalDefinition, 0, len(definitions))
 	for index, candidate := range definitions {
 		if candidate.NounName == "" || candidate.MaximumLevel < candidate.MinimumLevel {
 			return nil, 0, fmt.Errorf("definition[%d]: invalid", index)
@@ -165,27 +175,66 @@ func eligibleCrystalDefinition(
 		if crystalLevel < candidate.MinimumLevel || crystalLevel > candidate.MaximumLevel || candidate.Weight == 0 {
 			continue
 		}
-		totalWeight += uint64(candidate.Weight)
-		if totalWeight > math.MaxUint32 {
-			return nil, 0, errors.New("weight overflow")
-		}
-		eligible = append(eligible, candidate)
+		baseEligible = append(baseEligible, candidate)
 	}
-	if len(eligible) == 0 {
+	if len(baseEligible) == 0 {
 		return nil, 0, errors.New("no eligible crystal definition")
 	}
-	return eligible, float64(totalWeight), nil
-}
-
-func selectCrystalDefinition(definitions []CrystalDefinition, choice float64) CrystalDefinition {
-	var cumulativeWeight float64
-	for _, candidate := range definitions {
-		cumulativeWeight += float64(candidate.Weight)
-		if cumulativeWeight > choice {
-			return candidate
+	recentTypeSet := make(map[int32]struct{}, len(recentTypes))
+	for _, crystalType := range recentTypes {
+		recentTypeSet[crystalType] = struct{}{}
+	}
+	isAlternativeFound := false
+	for _, candidate := range baseEligible {
+		if _, isRecent := recentTypeSet[candidate.CrystalType]; !isRecent {
+			isAlternativeFound = true
+			break
 		}
 	}
-	return definitions[len(definitions)-1]
+	eligible := make([]weightedCrystalDefinition, 0, len(baseEligible))
+	var totalWeight float64
+	for _, candidate := range baseEligible {
+		_, isRecent := recentTypeSet[candidate.CrystalType]
+		if isAlternativeFound && isRecent {
+			continue
+		}
+		weightScale := float64(1)
+		if candidate.Rarity >= 0 && int(candidate.Rarity) < len(rarityMisses) {
+			missCount := min(rarityMisses[candidate.Rarity], uint32(20))
+			scalePerMiss := float64(0)
+			if candidate.Rarity == 1 {
+				scalePerMiss = 0.12
+			} else if candidate.Rarity >= 2 {
+				scalePerMiss = 0.18
+			}
+			weightScale += float64(missCount) * scalePerMiss
+		}
+		weight := float64(candidate.Weight) * weightScale
+		if math.IsNaN(weight) || math.IsInf(weight, 0) || weight <= 0 {
+			return nil, 0, errors.New("invalid crystal weight")
+		}
+		totalWeight += weight
+		eligible = append(eligible, weightedCrystalDefinition{
+			definition: candidate, weight: weight,
+		})
+	}
+	if len(eligible) == 0 || math.IsNaN(totalWeight) || math.IsInf(totalWeight, 0) {
+		return nil, 0, errors.New("no weighted crystal definition")
+	}
+	return eligible, totalWeight, nil
+}
+
+func selectCrystalDefinition(
+	definitions []weightedCrystalDefinition, choice float64,
+) CrystalDefinition {
+	var cumulativeWeight float64
+	for _, candidate := range definitions {
+		cumulativeWeight += candidate.weight
+		if cumulativeWeight > choice {
+			return candidate.definition
+		}
+	}
+	return definitions[len(definitions)-1].definition
 }
 
 func selectCrystalLevel(

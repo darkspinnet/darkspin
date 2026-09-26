@@ -228,6 +228,17 @@ func (r gameplayActionRuntime) handleCommand(
 	r.registry.mutex.RLock()
 	peerSession, isSessionFound := r.registry.sessions[packet.Address.String()]
 	r.registry.mutex.RUnlock()
+	decision := gameplayDiagnosticDecision{
+		occurredAt: startedAt, kind: "command_admission", traceID: packet.TraceID,
+		remote: packet.Address.String(), objectID: command.Common.ObjectID,
+		actionType: uint32(command.Common.Type), syncStamp: command.Common.Unknown[0],
+		outcome: "received",
+	}
+	if isSessionFound {
+		decision.transportGeneration = peerSession.transportGeneration
+		decision.zoneGeneration = peerSession.generation
+	}
+	r.registry.recordDiagnosticDecision(decision)
 	if isSessionFound && !isAutonomous && (command.Common.Type == raknet.ActionMovement ||
 		command.Common.Type == raknet.ActionStopMovement) {
 		r.registry.cancelPlayerAI(packet.Address.String(), peerSession.transportGeneration)
@@ -388,6 +399,13 @@ func (r gameplayActionRuntime) handleCommand(
 			)
 		}
 	}
+	r.registry.recordDiagnosticDecision(gameplayDiagnosticDecision{
+		occurredAt: r.now(), kind: "action_publication", traceID: packet.TraceID,
+		remote: packet.Address.String(), transportGeneration: peerSession.transportGeneration,
+		zoneGeneration: peerSession.generation, objectID: command.Common.ObjectID,
+		actionType: uint32(command.Common.Type), syncStamp: command.Common.Unknown[0],
+		outcome: "accepted", packetCount: len(protected),
+	})
 	return protected, nil
 }
 
@@ -492,6 +510,12 @@ func (r gameplayActionRuntime) reject(
 	request raknet.Packet, command raknet.ActionCommandData,
 	duration time.Duration, cause error,
 ) ([][]byte, error) {
+	r.registry.recordDiagnosticDecision(gameplayDiagnosticDecision{
+		occurredAt: r.now(), kind: "command_admission", traceID: request.TraceID,
+		remote: request.Address.String(), transportGeneration: request.TransportGeneration,
+		objectID: command.Common.ObjectID, actionType: uint32(command.Common.Type),
+		syncStamp: command.Common.Unknown[0], outcome: "rejected", reason: cause.Error(),
+	})
 	if command.Common.Type == raknet.ActionMovement ||
 		command.Common.Type == raknet.ActionStopMovement {
 		r.registry.mutex.Lock()
@@ -716,35 +740,37 @@ type NavigationSource interface {
 }
 
 type gameplayHandlerDependencies struct {
-	campaignSetup         *game.CampaignSetup
-	campaignNavigation    NavigationSource
-	publishCampaignEvent  func(game.CampaignDirectorPublication)
-	registerCleanup       func(func())
-	registerDisconnect    func(func(string, uint64))
-	registerDiscard       func(func(uint32))
-	registerDiscardMember func(func(uint32, uint64))
-	registerMemberResume  func(game.MemberResumePolicy)
-	registerPoll          func(raknet.PollHandler)
-	registerBugContext    func(chat.BugContextProvider)
-	registerHint          func(chat.HintProvider)
-	registerLocation      func(chat.LocationProvider)
-	registerSyncSnapshot  func(snapshot.StateProvider)
-	zoneTimer             zone.Timer
-	checkpoint            zonecheckpoint.Repository
-	now                   func() time.Time
+	campaignSetup          *game.CampaignSetup
+	campaignNavigation     NavigationSource
+	publishCampaignEvent   func(game.CampaignDirectorPublication)
+	registerCleanup        func(func())
+	registerDisconnect     func(func(string, uint64))
+	registerDiscard        func(func(uint32))
+	registerDiscardMember  func(func(uint32, uint64))
+	registerMemberResume   func(game.MemberResumePolicy)
+	registerPoll           func(raknet.PollHandler)
+	registerBugContext     func(chat.BugContextProvider)
+	registerHint           func(chat.HintProvider)
+	registerLocation       func(chat.LocationProvider)
+	registerResourceStatus func(chat.ResourceStatusProvider)
+	registerSyncSnapshot   func(snapshot.StateProvider)
+	zoneTimer              zone.Timer
+	checkpoint             zonecheckpoint.Repository
+	now                    func() time.Time
 }
 
 type Lifecycle struct {
-	cleanup            func()
-	disconnectAddress  func(string, uint64)
-	discardGame        func(uint32)
-	discardMember      func(uint32, uint64)
-	memberResumePolicy game.MemberResumePolicy
-	poll               raknet.PollHandler
-	bugContext         chat.BugContextProvider
-	hintProvider       chat.HintProvider
-	locationProvider   chat.LocationProvider
-	syncSnapshot       snapshot.StateProvider
+	cleanup                func()
+	disconnectAddress      func(string, uint64)
+	discardGame            func(uint32)
+	discardMember          func(uint32, uint64)
+	memberResumePolicy     game.MemberResumePolicy
+	poll                   raknet.PollHandler
+	bugContext             chat.BugContextProvider
+	hintProvider           chat.HintProvider
+	locationProvider       chat.LocationProvider
+	resourceStatusProvider chat.ResourceStatusProvider
+	syncSnapshot           snapshot.StateProvider
 }
 
 type gameplayPacketHandler struct {
@@ -1007,6 +1033,19 @@ func (e Lifecycle) Location(
 	return result, nil
 }
 
+func (e Lifecycle) ResourceStatus(
+	ctx context.Context, req chat.ResourceStatusRequest,
+) (chat.ResourceStatusResult, error) {
+	if e.resourceStatusProvider == nil {
+		return chat.ResourceStatusResult{}, chat.ErrResourceStatusUnavailable
+	}
+	result, err := e.resourceStatusProvider.ResourceStatus(ctx, req)
+	if err != nil {
+		return chat.ResourceStatusResult{}, fmt.Errorf("resourceStatusGameplay: %w", err)
+	}
+	return result, nil
+}
+
 // SyncSnapshot returns a high-fidelity authoritative gameplay keyframe.
 func (e Lifecycle) SyncSnapshot(
 	ctx context.Context, req snapshot.StateRequest,
@@ -1076,6 +1115,9 @@ func NewHandler(
 	dependency.registerLocation = func(registered chat.LocationProvider) {
 		lifecycle.locationProvider = registered
 	}
+	dependency.registerResourceStatus = func(registered chat.ResourceStatusProvider) {
+		lifecycle.resourceStatusProvider = registered
+	}
 	dependency.registerSyncSnapshot = func(registered snapshot.StateProvider) {
 		lifecycle.syncSnapshot = registered
 	}
@@ -1119,6 +1161,9 @@ func newGameplayHandlerWithDependencies(
 	}
 	if dependency.registerLocation != nil {
 		dependency.registerLocation(sessionRegistry)
+	}
+	if dependency.registerResourceStatus != nil {
+		dependency.registerResourceStatus(sessionRegistry)
 	}
 	if dependency.registerSyncSnapshot != nil {
 		dependency.registerSyncSnapshot(sessionRegistry)
