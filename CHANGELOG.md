@@ -1,5 +1,9 @@
 # Changelog
 
+### 2026-09-26
+
+- Save campaign squad edits when the unused Arena deck field is blank instead of rejecting the complete deck update and restoring Blitz, Sage, and Wraith.
+
 ### 2026-09-25
 
 - Show positive fractional hits as at least 1 damage in combat text for normal and critical hits while preserving their actual health reduction.

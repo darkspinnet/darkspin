@@ -1,5 +1,9 @@
 # Changelog
 
+### 2026-09-26
+
+- Save campaign squad edits when the unused Arena deck field is blank instead of rejecting the complete deck update and restoring Blitz, Sage, and Wraith.
+
 ### 2026-09-25
 
 - Remove Elite and authored affix modifiers after an enemy's death state so their hand and status effects do not remain on the corpse.

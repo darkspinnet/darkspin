@@ -1853,8 +1853,11 @@ func parseUint32(value string) uint32 {
 	return uint32(parsed)
 }
 
-func parseUint32List(value string) []uint32 {
-	fields := strings.Split(value, ",")
+func parseUint32List(encoded string) []uint32 {
+	if strings.TrimSpace(encoded) == "" {
+		return nil
+	}
+	fields := strings.Split(encoded, ",")
 	result := make([]uint32, 0, len(fields))
 	for _, field := range fields {
 		result = append(result, parseUint32(field))
