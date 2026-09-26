@@ -260,7 +260,13 @@ func MarshalTreeOfLifeHealing(
 	healing []Healing, isFinal bool,
 ) ([][]byte, error) {
 	messages := make([]raknet.ApplicationMessage, 0, 2+len(healing))
-	if ability.HealEffectName != "" && (len(healing) != 0 || isFinal) {
+	isEffectVisible := len(healing) != 0 || isFinal
+	if ability.Name == "TreeOfLife" {
+		// The authored heal event is the tree's final burst and disappearance
+		// sound. Ordinary healing ticks must not replay it.
+		isEffectVisible = isFinal
+	}
+	if ability.HealEffectName != "" && isEffectVisible {
 		messages = append(messages, raknet.PositionedEffectMessage{
 			Asset: util.HashID(ability.HealEffectName), Position: position,
 		})

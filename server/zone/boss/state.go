@@ -28,6 +28,7 @@ const (
 type Transition struct {
 	LeaderObjectID     uint32
 	NextWaveActorCount int
+	IsLeaderDefeated   bool
 	IsComplete         bool
 }
 
@@ -226,7 +227,10 @@ func (s *Session) ObserveDamage(
 	if result.IsDefeated {
 		delete(s.liveObjectIDs, result.ObjectID)
 	}
-	transition := Transition{LeaderObjectID: s.leaderObjectID}
+	transition := Transition{
+		LeaderObjectID:   s.leaderObjectID,
+		IsLeaderDefeated: result.IsDefeated && result.ObjectID == s.leaderObjectID,
+	}
 	if s.isLeaderDeferred && !s.isSecondWaveRequested &&
 		s.isFirstWaveAddClear() {
 		s.isSecondWaveRequested = true

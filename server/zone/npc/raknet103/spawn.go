@@ -35,6 +35,11 @@ func Spawn(plan zonenpc.SpawnPlan) ([][]byte, error) {
 			nonCombatMovementSpeed = actionProfile.MovementSpeed
 		}
 		attribute[11] = nonCombatMovementSpeed
+		if plan.Introduction == zonenpc.SpawnIntroductionDormant && plan.OwnerObjectID == 0 {
+			// Preplaced enemies stay at their authoritative idle positions.
+			// Combat uses attribute 12 when target acquisition starts pursuit.
+			attribute[11] = 0
+		}
 		attribute[12] = actionProfile.MovementSpeed
 		attribute[48] = 0
 	}

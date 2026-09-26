@@ -21,6 +21,7 @@ import (
 	bossraknet "github.com/darkspinnet/darkspin/server/zone/boss/raknet103"
 	zonehero "github.com/darkspinnet/darkspin/server/zone/hero"
 	heroraknet "github.com/darkspinnet/darkspin/server/zone/hero/raknet103"
+	lootsporenet "github.com/darkspinnet/darkspin/server/zone/loot/sporenet"
 	memberraknet "github.com/darkspinnet/darkspin/server/zone/member/raknet103"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 	zoneobjective "github.com/darkspinnet/darkspin/server/zone/objective"
@@ -545,6 +546,18 @@ func (r gameplayStatusRuntime) campaignBeamOut(
 		return nil, fmt.Errorf(
 			"statusCampaignVotingTransition: %w", errors.Join(err, rollbackErr),
 		)
+	}
+	lootProgression, isLootSupported := r.progression.(lootsporenet.EquipmentProgression)
+	if !isLootSupported {
+		rollbackErr := r.rollbackCampaignBeamOut(sessionKey, generation)
+		return nil, fmt.Errorf("missionLootStore: %w", errors.Join(
+			errors.New("mission loot store unavailable"), rollbackErr))
+	}
+	err = currentSession.zone.CommitMissionEquipment(ctx, zoneResultMember(currentSession),
+		lootsporenet.EquipmentStore{Progression: lootProgression})
+	if err != nil {
+		rollbackErr := r.rollbackCampaignBeamOut(sessionKey, generation)
+		return nil, fmt.Errorf("missionLootCommit: %w", errors.Join(err, rollbackErr))
 	}
 	committedSession, isCommitted := r.commitCampaignBeamOut(
 		sessionKey, generation, snapshot,
@@ -1584,15 +1597,16 @@ func (s *gameplayPeerSession) marshalResetBaselineAt(
 	if err != nil {
 		return nil, fmt.Errorf("resetObject: %w", err)
 	}
-	packets := [][]byte{updatePacket}
-	for index, message := range raknet.HeroStateMessages(
-		s.deployedObjectID, hitPoint, manaPoint,
+	resourcePackets := make([][]byte, 0, 2)
+	maximumHitPoint, maximumManaPoint := s.characterResourceMaximum(s.deployedCreatureIndex)
+	for index, message := range raknet.HeroResourceStateMessages(
+		s.deployedObjectID, hitPoint, manaPoint, maximumHitPoint, maximumManaPoint,
 	) {
 		packet, marshalErr := raknet.MarshalApplication(message)
 		if marshalErr != nil {
 			return nil, fmt.Errorf("resetResource[%d]: %w", index, marshalErr)
 		}
-		packets = append(packets, packet)
+		resourcePackets = append(resourcePackets, packet)
 	}
 	resourcePacket, err := s.marshalCampaignCharacterResourceValues(
 		s.deployedCreatureIndex, hitPoint, manaPoint,
@@ -1618,7 +1632,10 @@ func (s *gameplayPeerSession) marshalResetBaselineAt(
 	if err != nil {
 		return nil, fmt.Errorf("resetDeploy: %w", err)
 	}
-	return append(packets, resourcePacket, controlledPacket, deployPacket), nil
+	packets := [][]byte{updatePacket, resourcePacket, controlledPacket, deployPacket}
+	// Deploy can reset native combatant resources; restore current amounts and
+	// their independent caps after the controlled object has been selected.
+	return append(packets, resourcePackets...), nil
 }
 
 // applyDeveloperKillCommand defeats the current live campaign population

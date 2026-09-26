@@ -18,6 +18,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/sporenet"
 	"github.com/darkspinnet/darkspin/server/squad"
 	"github.com/darkspinnet/darkspin/server/util"
+	"github.com/darkspinnet/darkspin/server/zone"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
 	zoneaction "github.com/darkspinnet/darkspin/server/zone/action"
@@ -326,6 +327,7 @@ func (r campaignInteractionRuntime) handlePickup(
 						"campaignEquipmentCapacity[%d]: %w", participant.UserID, statusErr,
 					)
 				}
+				inventoryStatus = campaignMissionInventoryStatus(currentSession.zone, participant.UserID, inventoryStatus)
 				inventoryStatuses[participant.UserID] = inventoryStatus
 				if inventoryStatus.IsFull {
 					if r.logger != nil {
@@ -402,6 +404,7 @@ func (r campaignInteractionRuntime) handlePickup(
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("campaignEquipmentCapacity: %w", statusErr)
 		}
+		inventoryStatus = campaignMissionInventoryStatus(currentSession.zone, equipmentPickup.WinnerUserID, inventoryStatus)
 		if inventoryStatus.IsFull {
 			clearErr := currentSession.zone.PickupPayload().ClearEquipmentRoll(
 				equipmentPickup.ObjectID, equipmentPickup.WinnerUserID,
@@ -598,6 +601,10 @@ func (r campaignInteractionRuntime) handlePickup(
 			currentSession.zone.PickupPayload().Crystal(command.Value)
 	}
 	if isCurrentFound && isCrystalPickup {
+		if !zoneunlock.AreCatalystDropsUnlocked(currentSession.binding) {
+			r.registry.mutex.Unlock()
+			return r.rejectPickup(command, "catalysts locked")
+		}
 		if !crystalPickup.Object.IsLive {
 			r.registry.mutex.Unlock()
 			return r.rejectPickup(command, "crystal unavailable")
@@ -865,10 +872,6 @@ func (s *gameplayPeerSession) campaignPartSubjects() []game.GameplayCreature {
 }
 
 type campaignLootProgression interface {
-	GrantPartWithinCapacity(context.Context, int64, sporenet.Part) (sporenet.Part, error)
-	GrantPartWithinCapacityWithLimitedEditionPity(
-		context.Context, int64, sporenet.Part, sporenet.LimitedEditionPity,
-	) (sporenet.Part, error)
 	LimitedEditionPityStatus(
 		context.Context, int64,
 	) (sporenet.LimitedEditionPity, error)
@@ -942,6 +945,13 @@ func (s *gameplayPeerSession) materializeCampaignWinnerPart(
 			)
 		}
 		commit.limitedEditionPity = pity
+		pending := s.zone.MissionEquipment(s.binding.UserID)
+		if pending.IsLimitedEditionPending {
+			pity = sporenet.LimitedEditionPity{
+				MissCount: pending.LimitedEditionMissCount, UsedMask: pending.LimitedEditionUsedMask,
+			}
+			commit.limitedEditionPity = pity
+		}
 		commit.isLimitedEditionPending = true
 		isLimitedEdition := pity.MissCount >= campaignBossLimitedEditionPityMaximumMisses ||
 			pickup.WinnerRewardChoice%campaignBossLimitedEditionChanceBasis <
@@ -1380,36 +1390,27 @@ func (e *campaignPickupScheduleCleaner) Cleanup() {
 }
 
 func (s campaignEquipmentPickupStep) produce() ([][]byte, error) {
-	s.runtime.registry.mutex.RLock()
-	sourceSession, isFound := s.runtime.registry.sessions[s.sessionKey]
-	isCurrent := isFound && sourceSession.generation == s.generation
-	s.runtime.registry.mutex.RUnlock()
-	if !isCurrent {
-		return nil, nil
-	}
-	var grantedPart sporenet.Part
-	var err error
-	if s.partBagCommit.isLimitedEditionPending {
-		grantedPart, err = s.progression.GrantPartWithinCapacityWithLimitedEditionPity(
-			s.ctx, int64(s.userID), s.pickup.Part,
-			s.partBagCommit.limitedEditionPity,
-		)
-	} else {
-		grantedPart, err = s.progression.GrantPartWithinCapacity(
-			s.ctx, int64(s.userID), s.pickup.Part,
-		)
-	}
 	s.runtime.registry.mutex.Lock()
 	peerSession, isFound := s.runtime.registry.sessions[s.sessionKey]
-	isCurrent = isFound && peerSession.generation == s.generation
-	if isCurrent {
-		peerSession.campaignScheduleSession().Remove(
-			zoneaction.ScheduleEquipment, s.pickup.ObjectID, nil,
-		)
-		s.runtime.registry.sessions[s.sessionKey] = peerSession
+	isCurrent := isFound && peerSession.generation == s.generation && !peerSession.isZoneTerminal()
+	if !isCurrent {
+		s.runtime.registry.mutex.Unlock()
+		return nil, nil
 	}
+	sourceSession := peerSession
+	peerSession.campaignScheduleSession().Remove(zoneaction.ScheduleEquipment, s.pickup.ObjectID, nil)
+	s.runtime.registry.sessions[s.sessionKey] = peerSession
+	winnerMember := zone.Member{}
+	for _, candidate := range s.runtime.registry.sessions {
+		if candidate.zone == sourceSession.zone && candidate.binding.UserID == s.userID &&
+			!candidate.isZoneTerminal() {
+			winnerMember = zoneResultMember(candidate)
+			break
+		}
+	}
+	grantedPart, err := s.collectMissionEquipment(sourceSession.zone, winnerMember)
 	if err != nil {
-		if errors.Is(err, sporenet.ErrInventoryFull) {
+		if errors.Is(err, zone.ErrMissionInventoryFull) {
 			clearErr := sourceSession.zone.PickupPayload().ClearEquipmentRoll(
 				s.pickup.ObjectID, s.userID,
 			)
@@ -1422,7 +1423,7 @@ func (s campaignEquipmentPickupStep) produce() ([][]byte, error) {
 		}
 		sourceSession.zone.Pickups().Release(s.pickup.ObjectID)
 		s.runtime.registry.mutex.Unlock()
-		if errors.Is(err, sporenet.ErrInventoryFull) {
+		if errors.Is(err, zone.ErrMissionInventoryFull) {
 			s.runtime.logger.Printf(
 				"RakNet campaign equipment retained for full inventory user=%d object=%d",
 				s.userID, s.pickup.ObjectID,
@@ -1453,11 +1454,6 @@ func (s campaignEquipmentPickupStep) produce() ([][]byte, error) {
 			s.runtime.registry.sessions[candidateSessionKey] = candidate
 		}
 	}
-	if !sourceSession.zone.Pickups().Commit(s.pickup.ObjectID) {
-		s.runtime.registry.mutex.Unlock()
-		return nil, errors.New("campaign equipment pickup commit missing")
-	}
-	sourceSession.zone.PickupPayload().RemoveEquipment(s.pickup.ObjectID)
 	winnerSessionKey := ""
 	winnerSession := gameplayPeerSession{}
 	for candidateSessionKey, candidate := range s.runtime.registry.sessions {
@@ -2568,6 +2564,9 @@ func (s *gameplayPeerSession) spawnCampaignCrystal(
 	if s == nil || invocation.Challenge <= 0 {
 		return nil, 0, errors.New("campaign crystal unavailable")
 	}
+	if !zoneunlock.AreCatalystDropsUnlocked(s.binding) {
+		return nil, 0, nil
+	}
 	// Focused transport fixtures may omit the content-owned weighted catalog.
 	// Production program loading validates the complete 192-row/offset set.
 	if len(definitions) == 0 || len(offsets) == 0 {
@@ -2587,6 +2586,11 @@ func (s *gameplayPeerSession) spawnCampaignCrystal(
 	}
 	destination := s.reachableCampaignDropDestination(source)
 	challenge := invocation.Challenge * int32(max(uint16(1), s.binding.ParticipantCount))
+	if invocation.CallbackName == "InteractWithObelisk" {
+		// Equipment uses the obelisk's large reward budget. Catalysts have
+		// a separate small chance for this single shared world pickup.
+		challenge = campaignObeliskCrystalSourceAmount
+	}
 	chanceScale := 1 + s.campaignPartAttribute(campaignCrystalFindAttribute)
 	chanceThreshold := float32(0)
 	if dropBag != nil {

@@ -43,6 +43,7 @@ type Target struct {
 	IsFixture              bool
 	IsBoss                 bool
 	IsRemnantRetained      bool
+	IsCollisionRetained    bool
 	DeleteDelay            time.Duration
 }
 
@@ -133,9 +134,10 @@ func NewRun(
 		Position:             target.Position,
 		FadeEffectName:       FadeEffect(target.CreatureType, target.IsCreatureTypeKnown),
 		IsCritical:           isCritical, IsFastCriticalDeath: isFastCriticalDeath,
-		IsBoss:               target.IsBoss,
-		IsRemnantRetained:    target.IsRemnantRetained,
-		DeleteDelay:          deleteDelay,
+		IsBoss:              target.IsBoss,
+		IsRemnantRetained:   target.IsRemnantRetained,
+		IsCollisionRetained: target.IsCollisionRetained,
+		DeleteDelay:         deleteDelay,
 		DamageProvenance: sim.Provenance{
 			FunctionName: "sub_9E4D90", Confidence: sim.ConfidenceNative,
 		},

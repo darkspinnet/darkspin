@@ -16,9 +16,10 @@ const (
 	RouteCount             = 7
 	TriggerRadius          = float32(2)
 	DefaultFootprintRadius = float32(0.8)
-	ContactRadius          = TriggerRadius + DefaultFootprintRadius
-	ThreatRadius           = float32(20)
-	ActivationRadius       = float32(12)
+	ContactRadius          = TriggerRadius - DefaultFootprintRadius
+	// Approximate three Blitz lengths using its authored collision diameter.
+	ThreatRadius     = 3 * 2 * DefaultFootprintRadius
+	ActivationRadius = float32(12)
 )
 
 var firstSource = game.Vec3{X: -141.3413, Y: 83.7317, Z: 0.0340}
@@ -137,6 +138,7 @@ func PlanFirstTeleport(
 
 func PlanTeleport(
 	previous, current game.Vec3, threats []Threat, routeIndex int,
+	footprints ...float32,
 ) (Teleport, bool, error) {
 	if !zonepopulation.IsFinitePosition(previous) ||
 		!zonepopulation.IsFinitePosition(current) {
@@ -146,14 +148,35 @@ func PlanTeleport(
 	if !isFound {
 		return Teleport{}, false, nil
 	}
-	contactDistance := segmentDistanceSquared(previous, current, teleport.Source)
-	if contactDistance > ContactRadius*ContactRadius {
+	footprint := DefaultFootprintRadius
+	if len(footprints) > 0 && footprints[0] > 0 {
+		footprint = footprints[0]
+	}
+	if !IsInsideTrigger(previous, current, teleport.Source, TriggerRadius, footprint) {
 		return Teleport{}, false, nil
 	}
 	if HasThreat(teleport, threats) {
 		return Teleport{}, false, nil
 	}
 	return teleport, true, nil
+}
+
+// IsInsideTrigger requires the hero's whole collision footprint to fit inside
+// the sphere. Sweeping the accepted movement catches entry between updates.
+func IsInsideTrigger(
+	previous, current, source game.Vec3, triggerRadius, footprintRadius float32,
+) bool {
+	if !zonepopulation.IsFinitePosition(previous) ||
+		!zonepopulation.IsFinitePosition(current) ||
+		!zonepopulation.IsFinitePosition(source) {
+		return false
+	}
+	if triggerRadius <= 0 {
+		triggerRadius = TriggerRadius
+	}
+	entryRadius := triggerRadius - max(float32(0), footprintRadius)
+	return entryRadius >= 0 &&
+		segmentDistanceSquared(previous, current, source) <= entryRadius*entryRadius
 }
 
 func PlanActivation(

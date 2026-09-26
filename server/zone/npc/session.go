@@ -204,7 +204,7 @@ func (s *Session) Restore(snapshots []Snapshot) error {
 			HitPoint: snapshot.HitPoint, ManaPoint: snapshot.ManaPoint,
 			IsDefeated: isDefeated, IsPublished: snapshot.IsPublished,
 			IsSpawnStealthActive:            isSpawnStealthedPlan(plan) && !isDefeated,
-			IsNavigationCollisionEnabled:    !isDefeated,
+			IsNavigationCollisionEnabled:    !isDefeated || IsGraviticRegulator(plan),
 			IsInvisibleToSecurityTeleporter: isPreAggroInvisibleNoun(plan.NounName) && !isDefeated,
 			status:                          initialStatus(plan),
 		}

@@ -171,7 +171,10 @@ func (r *EnrageRun) Apply(
 	if err != nil {
 		return nil, 0, fmt.Errorf("enrageReduction: %w", err)
 	}
-	maximumHitPoint := target.Creature.HitPoint
+	maximumHitPoint := target.Creature.MaximumHitPoint
+	if maximumHitPoint <= 0 {
+		maximumHitPoint = target.Creature.HitPoint
+	}
 	if maximumHitPoint <= 0 {
 		maximumHitPoint = 200
 	}

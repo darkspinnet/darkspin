@@ -14,6 +14,10 @@ import (
 
 var ErrControlTargetOutOfRange = errors.New("npc control target out of range")
 
+// Build 103's MagicNumbers resource stores this signed stat baseline at
+// offset 52. sub_9E4E60 subtracts it before applying an ability coefficient.
+const nonPlayerPrimaryAttributeBaseline = float32(8)
+
 type AttackPlan struct {
 	SourceObjectID   uint32
 	TargetObjectID   uint32
@@ -135,8 +139,10 @@ func resolveAttackDamage(
 		return game.DamageRange{}, errors.New("npc attack profile invalid")
 	}
 	damageProfile := game.DamageProfile{
-		PrimaryAttribute:        npc.Plan.NPCProfile.Mind,
-		IsPrimaryAttributeFound: true,
+		PrimaryAttribute:                npc.Plan.NPCProfile.Mind,
+		IsPrimaryAttributeFound:         true,
+		PrimaryAttributeBaseline:        nonPlayerPrimaryAttributeBaseline,
+		IsPrimaryAttributeBaselineFound: true,
 	}
 	at := time.Now()
 	if at.Before(npc.status.curseExpiresAt) {

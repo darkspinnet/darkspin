@@ -362,7 +362,6 @@ static volatile LONG chat_create_attempted;
 static volatile LONG chat_initialize_attempted;
 static volatile LONG chat_open_pending;
 static volatile LONG chat_exit_pending;
-static volatile LONG basic_reconcile_pending;
 static unsigned int chat_open_retry_count;
 static DWORD chat_rooms_bootstrap_time;
 static WNDPROC original_game_wndproc;
@@ -370,8 +369,6 @@ static HWND chat_game_window;
 
 #define CHAT_OPEN_MESSAGE (WM_APP + 0x45)
 #define CHAT_RESET_MESSAGE (WM_APP + 0x46)
-#define BASIC_RECONCILE_MESSAGE (WM_APP + 0x47)
-#define BASIC_RELEASE_GRACE_MS 750u
 
 typedef struct effect_preview_offsets {
     unsigned int force_attached;
@@ -1411,31 +1408,6 @@ static unsigned int reset_combat_input_state(void) {
     }
 }
 
-static int held_basic_needs_reconcile(void) {
-    const BYTE* input;
-    if (executable_module == NULL || (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0) {
-        return 0;
-    }
-    input = (const BYTE*)executable_module + INPUT_INTENT_RVA;
-    return readable_range(input, 69) && input[68] != 0;
-}
-
-static unsigned int reconcile_released_basic_input(void) {
-    BYTE* input;
-    unsigned int state;
-    if (!held_basic_needs_reconcile()) {
-        return 0;
-    }
-    input = (BYTE*)executable_module + INPUT_INTENT_RVA;
-    state = (unsigned int)input[60] | ((unsigned int)input[68] << 8);
-    input[0] = 0;
-    *(unsigned int*)(input + 4) = 0;
-    *(unsigned int*)(input + 8) = 0;
-    input[60] = 0;
-    input[68] = 0;
-    return state;
-}
-
 static LRESULT CALLBACK hooked_game_wndproc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     static const UINT_PTR chat_timer = 0xD45C;
     if (message == WM_KEYDOWN && (wparam == 'V' || wparam == 'v') &&
@@ -1488,15 +1460,6 @@ static LRESULT CALLBACK hooked_game_wndproc(HWND window, UINT message, WPARAM wp
         }
         return 0;
     }
-    if (message == BASIC_RECONCILE_MESSAGE) {
-        unsigned int held_state = reconcile_released_basic_input();
-        InterlockedExchange(&basic_reconcile_pending, 0);
-        if (held_state != 0) {
-            trace_client_state("input_basic_release_reconciled", held_state);
-            trace_input_action_state("input_basic_release_after");
-        }
-        return 0;
-    }
     return CallWindowProcA(original_game_wndproc, window, message, wparam, lparam);
 }
 
@@ -1519,9 +1482,6 @@ static void install_chat_wndproc(HWND window) {
 
 static DWORD WINAPI poll_chat_key(LPVOID parameter) {
     LONG is_return_down = 0;
-#if FANG_DIAGNOSTICS
-    DWORD basic_release_since = 0;
-#endif
     (void)parameter;
     trace_client_state("chat_key_poll", 1);
     for (;;) {
@@ -1537,21 +1497,8 @@ static DWORD WINAPI poll_chat_key(LPVOID parameter) {
                 PostMessageA(window, CHAT_OPEN_MESSAGE, 0, 0);
             }
         }
-#if FANG_DIAGNOSTICS
-        if (!held_basic_needs_reconcile()) {
-            basic_release_since = 0;
-        } else if (basic_release_since == 0) {
-            basic_release_since = GetTickCount();
-        } else if (window != NULL &&
-            GetTickCount() - basic_release_since >= BASIC_RELEASE_GRACE_MS &&
-            InterlockedCompareExchange(&basic_reconcile_pending, 1, 0) == 0) {
-            if (PostMessageA(window, BASIC_RECONCILE_MESSAGE, 0, 0) != 0) {
-                basic_release_since = 0;
-            } else {
-                InterlockedExchange(&basic_reconcile_pending, 0);
-            }
-        }
-#endif
+        /* Native input owns basic-attack repetition and release. Diagnostics
+         * must not clear that state based on a physical mouse-button guess. */
         Sleep(10);
     }
 }
@@ -6308,6 +6255,13 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
         int is_display_hook_installed = fang_install_display_preferences(executable);
         trace_client_state("display_preferences_hook", (unsigned int)is_display_hook_installed);
         if (!is_display_hook_installed) {
+            result |= 0x8;
+        }
+    }
+    {
+        int is_camera_zoom_installed = fang_install_camera_zoom(executable);
+        trace_client_state("camera_zoom_hook", (unsigned int)is_camera_zoom_installed);
+        if (!is_camera_zoom_installed) {
             result |= 0x8;
         }
     }

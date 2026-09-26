@@ -320,6 +320,12 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		profile = volley.plan.Profile
 		isProfileFound = true
 	}
+	if profile.Family == zonenpc.ActionZelemRanged &&
+		profile.TeleportNormalDistance > 0 {
+		// The engagement opener owns the blink. Pursuit, strafing, and shot
+		// cooldowns must resume the basic attack, not start another blink loop.
+		profile = zonenpc.ZelemRangedShotProfile()
+	}
 	_, isHomerFamily := zonenpc.NocturnaSpecialHomerMeleeProfile(enemy.Plan.NounName)
 	if isHomerFamily {
 		profile = scaleNocturnaSpecialHomerCooldown(
@@ -335,15 +341,6 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 			objectID, r.now(),
 		)
 		profile = applyNPCSlowTiming(profile, slowAttackScale)
-	}
-	if !volley.isActive && profile.Family == zonenpc.ActionZelemRanged &&
-		profile.TeleportNormalDistance > 0 {
-		// A ranged Zelem can select its authored blink again after a strafe.
-		// Route that profile through blink instead of validating it as a shot.
-		r.registry.mutex.Unlock()
-		return r.produceZelemBlink(
-			packet, sessionKey, generation, objectID, timestamp,
-		)
 	}
 	if profile.AbilityName == "CryosElementalSpecialThree" && !volley.isActive {
 		targetObjectIDs := make([]uint32, 0)

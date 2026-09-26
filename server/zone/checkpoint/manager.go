@@ -10,6 +10,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/sim"
+	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
 )
 
 const closeTimeout = 5 * time.Second
@@ -23,16 +24,18 @@ type Manager struct {
 	wake   chan struct{}
 	done   chan struct{}
 
-	storeMu          sync.Mutex
-	memberMu         sync.Mutex
-	mu               sync.Mutex
-	pendingSnapshots map[uint64]Snapshot
-	pendingDeletes   map[uint64]struct{}
-	discardedZones   map[uint64]struct{}
-	declinedMembers  map[uint64]map[uint64]struct{}
-	revision         uint64
-	isClosing        bool
-	closeErr         error
+	storeMu             sync.Mutex
+	memberMu            sync.Mutex
+	mu                  sync.Mutex
+	pendingSnapshots    map[uint64]Snapshot
+	pendingDeletes      map[uint64]struct{}
+	discardedZones      map[uint64]struct{}
+	declinedMembers     map[uint64]map[uint64]struct{}
+	forfeitedEquipments map[uint64]map[uint64]struct{}
+	pendingForfeits     map[uint64]struct{}
+	revision            uint64
+	isClosing           bool
+	closeErr            error
 }
 
 func (e *Manager) FindResume(
@@ -147,10 +150,12 @@ func NewManager(store Store, logger *log.Logger) *Manager {
 	e := &Manager{
 		store: store, logger: logger, wake: make(chan struct{}, 1),
 		done: make(chan struct{}), pendingSnapshots: make(map[uint64]Snapshot),
-		pendingDeletes:  make(map[uint64]struct{}),
-		discardedZones:  make(map[uint64]struct{}),
-		declinedMembers: make(map[uint64]map[uint64]struct{}),
-		revision:        uint64(time.Now().UnixNano()),
+		pendingDeletes:      make(map[uint64]struct{}),
+		discardedZones:      make(map[uint64]struct{}),
+		declinedMembers:     make(map[uint64]map[uint64]struct{}),
+		forfeitedEquipments: make(map[uint64]map[uint64]struct{}),
+		pendingForfeits:     make(map[uint64]struct{}),
+		revision:            uint64(time.Now().UnixNano()),
 	}
 	go e.run()
 	return e
@@ -177,6 +182,7 @@ func (e *Manager) Record(snapshot Snapshot) {
 	snapshot = checkpointWithoutMembers(
 		snapshot, e.declinedMembers[snapshot.ZoneID],
 	)
+	snapshot = checkpointWithoutEquipment(snapshot, e.forfeitedEquipments[snapshot.ZoneID])
 	if len(snapshot.Members) == 0 {
 		e.mu.Unlock()
 		return
@@ -424,6 +430,10 @@ func (e *Manager) flushUntil(deadline time.Time) bool {
 // one operation. Rejected work is restored to the queue for the periodic or
 // shutdown retry path.
 func (e *Manager) flush() bool {
+	isForfeited := e.flushEquipmentForfeits()
+	if !isForfeited {
+		return false
+	}
 	for {
 		e.mu.Lock()
 		var deletedZoneID uint64
@@ -503,6 +513,7 @@ func (e *Manager) save(
 	defer e.storeMu.Unlock()
 	e.mu.Lock()
 	_, isDiscarded := e.discardedZones[snapshot.ZoneID]
+	snapshot = checkpointWithoutEquipment(snapshot, e.forfeitedEquipments[snapshot.ZoneID])
 	e.mu.Unlock()
 	if isDiscarded {
 		return false, nil
@@ -523,6 +534,9 @@ func (e *Manager) load(
 	if err != nil {
 		return Snapshot{}, false, fmt.Errorf("storeLoad: %w", err)
 	}
+	e.mu.Lock()
+	snapshot = checkpointWithoutEquipment(snapshot, e.forfeitedEquipments[zoneID])
+	e.mu.Unlock()
 	return snapshot, isFound, nil
 }
 
@@ -535,6 +549,9 @@ func (e *Manager) loadMember(
 	if err != nil {
 		return Snapshot{}, false, fmt.Errorf("storeMember: %w", err)
 	}
+	e.mu.Lock()
+	snapshot = checkpointWithoutEquipment(snapshot, e.forfeitedEquipments[snapshot.ZoneID])
+	e.mu.Unlock()
 	return snapshot, isFound, nil
 }
 
@@ -557,6 +574,10 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 		snapshot.NPCs[index].State.Plan = snapshot.NPCs[index].State.Plan.Clone()
 	}
 	snapshot.Crystals = append([]Crystal(nil), snapshot.Crystals...)
+	snapshot.MissionEquipments = append([]zoneloot.EquipmentInventory(nil), snapshot.MissionEquipments...)
+	for index := range snapshot.MissionEquipments {
+		snapshot.MissionEquipments[index] = snapshot.MissionEquipments[index].Clone()
+	}
 	snapshot.ExperienceAwards = append(
 		[]ExperienceAward(nil), snapshot.ExperienceAwards...,
 	)
@@ -628,6 +649,13 @@ func checkpointWithoutMembers(
 		}
 	}
 	snapshot.Crystals = crystals
+	missionEquipments := make([]zoneloot.EquipmentInventory, 0, len(snapshot.MissionEquipments))
+	for _, inventory := range snapshot.MissionEquipments {
+		if _, isRemoved := removedMembers[inventory.UserID]; !isRemoved {
+			missionEquipments = append(missionEquipments, inventory)
+		}
+	}
+	snapshot.MissionEquipments = missionEquipments
 	experienceAwards := make(
 		[]ExperienceAward, 0, len(snapshot.ExperienceAwards),
 	)

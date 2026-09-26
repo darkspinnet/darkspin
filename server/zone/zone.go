@@ -186,6 +186,7 @@ type Zone struct {
 	info                ZoneInfo
 	members             map[uint64]Member
 	crystals            map[uint64]sim.CrystalInventory
+	missionEquipments   map[uint64]zoneloot.EquipmentInventory
 	unlocks             map[uint64]*zoneunlock.Session
 	experienceAwards    map[uint32]ExperienceAward
 	experienceTotals    map[uint64]uint32
@@ -246,6 +247,7 @@ func New(id uint64, generation uint64, info ZoneInfo) (*Zone, error) {
 		state: StateActive, startedAt: time.Now(),
 		info: info, members: make(map[uint64]Member),
 		crystals:           make(map[uint64]sim.CrystalInventory),
+		missionEquipments:  make(map[uint64]zoneloot.EquipmentInventory),
 		unlocks:            make(map[uint64]*zoneunlock.Session),
 		experienceAwards:   make(map[uint32]ExperienceAward),
 		experienceTotals:   make(map[uint64]uint32),
@@ -668,7 +670,9 @@ func (e *Zone) Leave(userID uint64, peerGeneration uint64) bool {
 		return false
 	}
 	delete(e.members, userID)
+	e.forfeitMissionEquipment(userID)
 	delete(e.crystals, userID)
+	delete(e.missionEquipments, userID)
 	delete(e.unlocks, userID)
 	delete(e.checkpointHeroes, userID)
 	delete(e.checkpointSquads, userID)
@@ -1898,6 +1902,9 @@ func (e *Zone) restoreCheckpoint(snapshot zonecheckpoint.Snapshot) error {
 		len(snapshot.Members) > int(e.info.MemberLimit) {
 		return errors.New("checkpoint member capacity exceeded")
 	}
+	for _, inventory := range snapshot.MissionEquipments {
+		e.missionEquipments[inventory.UserID] = inventory.Clone()
+	}
 	for index, member := range snapshot.Members {
 		restoredMember := Member{
 			UserID: member.UserID, Slot: member.Slot,
@@ -1917,6 +1924,11 @@ func (e *Zone) restoreCheckpoint(snapshot zonecheckpoint.Snapshot) error {
 	objectiveNPCObjectIDs := make([]uint32, 0, len(snapshot.NPCs))
 	defeatedObjectiveNPCObjectIDs := make([]uint32, 0, len(snapshot.NPCs))
 	var maximumObjectID uint32
+	for _, inventory := range snapshot.MissionEquipments {
+		for _, equipment := range inventory.Equipments {
+			maximumObjectID = max(maximumObjectID, equipment.ObjectID)
+		}
+	}
 	for _, npc := range snapshot.NPCs {
 		npcStates = append(npcStates, npc.State)
 		maximumObjectID = max(maximumObjectID, npc.State.Plan.ObjectID)
@@ -2050,6 +2062,9 @@ func (e *Zone) SetCheckpointSquad(
 	e.checkpointSquads[userID] = zonecheckpoint.Squad{
 		UserID: userID, Position: position, State: state,
 	}
+	if state.IsGameOver {
+		e.forfeitMissionEquipment(userID)
+	}
 	return nil
 }
 
@@ -2122,6 +2137,10 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 		crystals = append(crystals, zonecheckpoint.Crystal{
 			UserID: userID, Inventory: inventory,
 		})
+	}
+	missionEquipments := make([]zoneloot.EquipmentInventory, 0, len(e.missionEquipments))
+	for _, inventory := range e.missionEquipments {
+		missionEquipments = append(missionEquipments, inventory.Clone())
 	}
 	squads := make([]zonecheckpoint.Squad, 0, len(e.checkpointSquads))
 	for _, current := range e.checkpointSquads {
@@ -2228,8 +2247,9 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 		Level: level, Difficulty: difficulty, Reason: reason,
 		SavedAt: now, Elapsed: elapsed, Members: members, Heroes: heroes,
 		Squads: squads, NPCs: npcs, Hordes: hordes, Crystals: crystals,
-		ExperienceAwards: experienceAwards,
-		Security:         security, Objectives: objectives, ScriptUses: scriptUses,
+		ExperienceAwards:  experienceAwards,
+		MissionEquipments: missionEquipments,
+		Security:          security, Objectives: objectives, ScriptUses: scriptUses,
 		ClearedSpawnGroupIDs: clearedSpawnGroupIDs,
 		DropRandom:           dropRandom, IsDropRandomSet: true,
 	}
@@ -2540,7 +2560,15 @@ func (e *Zone) FixturePlans() []zonenpc.SpawnPlan {
 	if e == nil {
 		return nil
 	}
-	return append([]zonenpc.SpawnPlan(nil), e.info.FixturePlans...)
+	plans := make([]zonenpc.SpawnPlan, 0, len(e.info.FixturePlans))
+	for _, plan := range e.info.FixturePlans {
+		npc, isFound := e.info.NPCs.NPC(plan.ObjectID)
+		if isFound && npc.IsDefeated {
+			continue
+		}
+		plans = append(plans, plan)
+	}
+	return plans
 }
 
 func (e *Zone) CatalystProgram() sim.Program {

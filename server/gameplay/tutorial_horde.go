@@ -10,6 +10,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
+	"github.com/darkspinnet/darkspin/server/sim"
 	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
@@ -74,6 +75,8 @@ func planTutorialHorde(
 				Position:      positions[actorIndex],
 				LocusID:       uint32(waveIndex*len(waveNouns) + actorIndex + 1),
 				MarkerSetName: tutorialHordeMarkerSetName,
+				Kind:          sim.DirectorLocusHorde,
+				Introduction:  zonenpc.SpawnIntroductionFloorWarp,
 				NPCProfile:    profile,
 			}
 			if waveIndex == 1 && actorIndex == 1 {

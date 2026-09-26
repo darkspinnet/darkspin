@@ -199,6 +199,9 @@ func marshalGameplayRejoinBaselineState(
 		}
 		binding.Creatures[index].HitPoint = character.HitPoints
 		binding.Creatures[index].PowerPoint = character.ManaPoints
+		maximum := peerSession.characterResourceMaximums(index)
+		binding.Creatures[index].MaximumHitPoint = maximum.hitPoint
+		binding.Creatures[index].MaximumPowerPoint = maximum.manaPoint
 	}
 	activeHitPoint := binding.Creatures[peerSession.deployedCreatureIndex].HitPoint
 	activeManaPoint := binding.Creatures[peerSession.deployedCreatureIndex].PowerPoint
@@ -211,6 +214,8 @@ func marshalGameplayRejoinBaselineState(
 		activeManaPoint = actor.ManaPoint
 		binding.Creatures[peerSession.deployedCreatureIndex].HitPoint = activeHitPoint
 		binding.Creatures[peerSession.deployedCreatureIndex].PowerPoint = activeManaPoint
+		binding.Creatures[peerSession.deployedCreatureIndex].MaximumHitPoint = actor.MaximumHitPoint
+		binding.Creatures[peerSession.deployedCreatureIndex].MaximumPowerPoint = actor.MaximumManaPoint
 	}
 	err := peerSession.zone.UpdateMemberRoster(
 		binding.UserID, peerSession.generation, binding.Roster(),
@@ -345,6 +350,11 @@ func marshalGameplayRejoinBaselineState(
 		}
 		packets = append(packets, resourcePacket)
 	}
+	remnantPackets, err := npcraknet.Remnants(peerSession.zone.NPCs().Snapshots())
+	if err != nil {
+		return nil, fmt.Errorf("rejoinRemnants: %w", err)
+	}
+	packets = append(packets, remnantPackets...)
 	targetPackets, err := npcraknet.TargetUpdates(
 		peerSession.zone.NPCs().Snapshots(),
 	)

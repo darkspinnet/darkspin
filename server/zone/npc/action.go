@@ -237,11 +237,11 @@ func PlanFirstAction(command FirstActionCommand) (FirstActionPlan, bool, error) 
 
 func ActionProfileForPlan(plan SpawnPlan) (ActionProfile, bool) {
 	if plan.IsActionKnown {
-		return plan.ActionProfile, true
+		return mapIntroductionProfile(plan, plan.ActionProfile), true
 	}
 	profile, isFound := ActionProfileForNoun(plan.NounName)
 	if isFound {
-		return profile, true
+		return mapIntroductionProfile(plan, profile), true
 	}
 	if plan.IsFixture || plan.NounName == "" {
 		return ActionProfile{}, false

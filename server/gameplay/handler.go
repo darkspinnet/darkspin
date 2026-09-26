@@ -49,6 +49,7 @@ import (
 	objectraknet "github.com/darkspinnet/darkspin/server/zone/object/raknet103"
 	zoneobjectid "github.com/darkspinnet/darkspin/server/zone/objectid"
 	zoneobjective "github.com/darkspinnet/darkspin/server/zone/objective"
+	objectiveraknet "github.com/darkspinnet/darkspin/server/zone/objective/raknet103"
 	zoneoutcome "github.com/darkspinnet/darkspin/server/zone/outcome"
 	zonepopulation "github.com/darkspinnet/darkspin/server/zone/population"
 	zonepreview "github.com/darkspinnet/darkspin/server/zone/preview"
@@ -801,7 +802,8 @@ func (r gameplayCrystalRuntime) handle(packet raknet.Packet) ([][]byte, error) {
 	sessionKey := packet.Address.String()
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
-	if !isFound || peerSession.zone == nil || peerSession.isZoneTerminal() {
+	if !isFound || peerSession.zone == nil || peerSession.isZoneTerminal() ||
+		!zoneunlock.AreCatalystDropsUnlocked(peerSession.binding) {
 		r.registry.mutex.Unlock()
 		return r.result(command, false)
 	}
@@ -1585,7 +1587,7 @@ func marshalCampaignDungeonSetup(
 			return nil, fmt.Errorf("objectUpdate[%d]: %w", index, marshalErr)
 		}
 		response = append(response, updatePacket)
-		for _, message := range raknet.HeroStateMessages(objectID, creature.HitPoint, creature.PowerPoint) {
+		for _, message := range campaignHeroResourceStateMessages(objectID, creature) {
 			heroStatePacket, marshalErr := raknet.MarshalApplication(message)
 			if marshalErr != nil {
 				return nil, fmt.Errorf("heroState[%d]: %w", index, marshalErr)
@@ -1669,6 +1671,7 @@ func marshalCampaignPlayer(
 		LockedDeckMinimum:   zonehero.CreatureCount(binding),
 		EnergyPoint:         campaignInitialOverdriveEnergy(binding),
 		IsOverdriveUnlocked: binding.IsOverdriveUnlocked,
+		IsCatalystUnlocked:  binding.IsCatalystUnlocked,
 		CharacterResources: campaignCharacterResources(
 			creatures, isResourceFallbackAllowed,
 		),
@@ -1742,9 +1745,7 @@ func marshalZoneHeroRoster(
 			return nil, fmt.Errorf("rosterUpdate[%d]: %w", index, marshalErr)
 		}
 		packets = append(packets, updatePacket)
-		for _, message := range raknet.HeroStateMessages(
-			objectID, creature.HitPoint, creature.PowerPoint,
-		) {
+		for _, message := range campaignHeroResourceStateMessages(objectID, creature) {
 			statePacket, marshalErr := raknet.MarshalApplication(message)
 			if marshalErr != nil {
 				return nil, fmt.Errorf("rosterState[%d]: %w", index, marshalErr)
@@ -1793,6 +1794,8 @@ func marshalOtherZoneHeroRosters(
 		if actor.CreatureIndex < uint32(len(roster.Creatures)) {
 			roster.Creatures[actor.CreatureIndex].HitPoint = actor.HitPoint
 			roster.Creatures[actor.CreatureIndex].PowerPoint = actor.ManaPoint
+			roster.Creatures[actor.CreatureIndex].MaximumHitPoint = actor.MaximumHitPoint
+			roster.Creatures[actor.CreatureIndex].MaximumPowerPoint = actor.MaximumManaPoint
 		}
 		rosterPackets, err := marshalZoneHeroRoster(
 			zoneprojection.HeroRoster{
@@ -1822,15 +1825,23 @@ func campaignCharacterResources(
 	resources := [squad.Size]raknet.LabsCharacterResource{}
 	for index, creature := range creatures {
 		hitPoint := creature.HitPoint
-		if isFallbackAllowed && hitPoint <= 0 {
+		if isFallbackAllowed && hitPoint <= 0 && creature.MaximumHitPoint <= 0 {
 			hitPoint = campaignHeroResourceFallback
 		}
 		manaPoint := creature.PowerPoint
-		if isFallbackAllowed && manaPoint <= 0 {
+		if isFallbackAllowed && manaPoint <= 0 && creature.MaximumPowerPoint <= 0 {
 			manaPoint = campaignHeroResourceFallback
 		}
+		maximumHitPoint := creature.MaximumHitPoint
+		if maximumHitPoint <= 0 {
+			maximumHitPoint = hitPoint
+		}
+		maximumManaPoint := creature.MaximumPowerPoint
+		if maximumManaPoint <= 0 {
+			maximumManaPoint = manaPoint
+		}
 		resources[index] = raknet.LabsCharacterResource{
-			Health: hitPoint, MaxHealth: hitPoint, Mana: manaPoint, MaxMana: manaPoint,
+			Health: hitPoint, MaxHealth: maximumHitPoint, Mana: manaPoint, MaxMana: maximumManaPoint,
 			GearScore: creature.GearScore, FlattenedGearScore: creature.FlattenedGearScore,
 			PartAttribute: creature.PartAttribute,
 		}
@@ -2490,6 +2501,13 @@ func (r gameplayPendingRuntime) poll(
 		}
 
 		return responses, nil
+	}
+	teleporterPackets, err := r.pollTeleporters(packet)
+	if err != nil {
+		return nil, fmt.Errorf("teleporterPoll: %w", err)
+	}
+	if len(teleporterPackets) != 0 {
+		return teleporterPackets, nil
 	}
 	recoveryPackets, err := r.recoverNPCs(packet)
 	if err != nil {
@@ -3710,15 +3728,11 @@ func (r gameplayProjectionRuntime) commitProjectionDelivery(
 func marshalCampaignProjection(event zoneprojection.Event) ([][]byte, error) {
 	switch event.Kind {
 	case zoneprojection.EventObjective:
-		update := event.Objective
-		packet, err := raknet.MarshalApplication(raknet.ObjectiveUpdatedMessage{
-			ObjectiveID: update.ObjectiveID, PlayerIndex: update.PlayerIndex,
-			Medal: update.Medal, Token: update.Token,
-		})
+		packets, err := objectiveraknet.UpdatePackets([]zoneobjective.Update{event.Objective})
 		if err != nil {
 			return nil, fmt.Errorf("objectiveMarshal: %w", err)
 		}
-		return [][]byte{packet}, nil
+		return packets, nil
 	case zoneprojection.EventNPCDamage:
 		damage := event.Damage
 		if damage.IsDamageImmune {
@@ -4798,6 +4812,11 @@ func (r gameplaySetupRuntime) publishCampaign(
 		return nil, false, fmt.Errorf("pingCampaignFixtures: %w", err)
 	}
 	response = append(response, fixturePackets...)
+	remnantPackets, err := npcraknet.Remnants(peerSession.zone.NPCs().Snapshots())
+	if err != nil {
+		return nil, false, fmt.Errorf("pingCampaignRemnants: %w", err)
+	}
+	response = append(response, remnantPackets...)
 	// The objective update owns the first-pass HELIX cue. Publish it only after
 	// the hero and level fixtures exist so the client cannot discard the cue
 	// while it is still constructing the campaign scene.

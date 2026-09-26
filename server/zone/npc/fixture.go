@@ -3,9 +3,17 @@ package npc
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/darkspinnet/darkspin/server/game"
 )
+
+// Gravitic Regulators leave a solid base after their machinery is destroyed.
+func IsGraviticRegulator(plan SpawnPlan) bool {
+	return plan.IsFixture && strings.EqualFold(
+		plan.NounName, "DEST_prefab_islands_instrument_scitech_11.Noun",
+	)
+}
 
 func PlanFixtures(
 	markers []game.CampaignDirectorMarker, firstObjectID uint32,

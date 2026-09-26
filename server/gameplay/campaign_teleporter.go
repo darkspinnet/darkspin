@@ -180,22 +180,7 @@ func isCampaignTeleporterLinkActive(
 	teleport := zonesecurity.Teleport{
 		Source: route.Source, Destination: route.Destination, IsBoss: route.IsBoss,
 	}
-	if !zonesecurity.HasThreat(teleport, threats) {
-		return true
-	}
-	for _, linkedRoute := range routes {
-		if linkedRoute.MarkerID != route.DestinationMarkerID ||
-			linkedRoute.DestinationMarkerID != route.MarkerID ||
-			!linkedRoute.IsSecurity {
-			continue
-		}
-		linkedTeleport := zonesecurity.Teleport{
-			Source: linkedRoute.Source, Destination: linkedRoute.Destination,
-			IsBoss: linkedRoute.IsBoss,
-		}
-		return !zonesecurity.HasThreat(linkedTeleport, threats)
-	}
-	return false
+	return !zonesecurity.HasThreat(teleport, threats)
 }
 
 func campaignTeleportPackets(
@@ -223,27 +208,7 @@ func isCampaignTunnelContact(
 	previous game.Vec3, current game.Vec3, source game.Vec3,
 	triggerRadius float32, footprintRadius float32,
 ) bool {
-	delta := game.Vec3{
-		X: current.X - previous.X,
-		Y: current.Y - previous.Y,
-		Z: current.Z - previous.Z,
-	}
-	lengthSquared := delta.X*delta.X + delta.Y*delta.Y + delta.Z*delta.Z
-	projection := float32(0)
-	if lengthSquared > 0 {
-		projection = ((source.X-previous.X)*delta.X +
-			(source.Y-previous.Y)*delta.Y +
-			(source.Z-previous.Z)*delta.Z) / lengthSquared
-		projection = min(float32(1), max(float32(0), projection))
-	}
-	x := previous.X + projection*delta.X - source.X
-	y := previous.Y + projection*delta.Y - source.Y
-	z := previous.Z + projection*delta.Z - source.Z
-	if triggerRadius <= 0 {
-		triggerRadius = zonesecurity.TriggerRadius
-	}
-	contactRadius := triggerRadius + max(float32(0), footprintRadius)
-	return x*x+y*y+z*z <= contactRadius*contactRadius
+	return zonesecurity.IsInsideTrigger(previous, current, source, triggerRadius, footprintRadius)
 }
 
 func campaignTunnelExitTrigger(

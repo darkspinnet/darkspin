@@ -28,10 +28,11 @@ type Session struct {
 
 // Update is one immutable, protocol-independent objective projection.
 type Update struct {
-	ObjectiveID uint32
-	PlayerIndex uint8
-	Medal       uint8
-	Token       [3]uint32
+	ObjectiveID       uint32
+	PlayerIndex       uint8
+	Medal             uint8
+	Token             [3]uint32
+	IsObeliskAccessed bool
 }
 
 func NewSessionState(
@@ -444,6 +445,12 @@ func ApplyState(
 	updates, err := applyProgram(ctx, state, objectiveID, program)
 	if err != nil {
 		return nil, fmt.Errorf("objectiveProgram: %w", err)
+	}
+	// One access writes three tokens for each active player. Announce it
+	// once after those updates, rather than once for every token or player.
+	if objectiveID == ObeliskID && event.Kind == sim.LuaObjectiveEventTouchedObelisk &&
+		len(updates) > 0 {
+		updates[len(updates)-1].IsObeliskAccessed = true
 	}
 	return updates, nil
 }

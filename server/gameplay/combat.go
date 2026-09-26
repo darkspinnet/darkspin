@@ -20,7 +20,6 @@ import (
 	zone "github.com/darkspinnet/darkspin/server/zone"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
-	zoneaction "github.com/darkspinnet/darkspin/server/zone/action"
 	barrierraknet "github.com/darkspinnet/darkspin/server/zone/barrier/raknet103"
 	zoneboss "github.com/darkspinnet/darkspin/server/zone/boss"
 	bossraknet "github.com/darkspinnet/darkspin/server/zone/boss/raknet103"
@@ -192,6 +191,7 @@ type zoneNPCDeathDefinition struct {
 	isFixture                  bool
 	isBoss                     bool
 	isRemnantRetained          bool
+	isCollisionRetained        bool
 	isDeathAnimationSuppressed bool
 	ordinaryDeathAnimation     string
 	corpseFadeDelay            time.Duration
@@ -302,6 +302,7 @@ func campaignNPCDeathDefinition(
 		)
 	}
 	isNightmareVine := strings.EqualFold(snapshot.Plan.NounName, nightmareVineNounName)
+	isGraviticRegulator := zonenpc.IsGraviticRegulator(snapshot.Plan)
 	isIllusion := snapshot.Plan.OwnerObjectID != 0 && zonenpc.IsNashiraNoun(snapshot.Plan.NounName)
 	if isIllusion {
 		// Duplicates dissolve; only the real boss owns the long death scene.
@@ -343,8 +344,9 @@ func campaignNPCDeathDefinition(
 		isCreatureTypeKnown:        physics.IsCreatureTypeKnown,
 		isFixture:                  isFixture,
 		isBoss:                     snapshot.Plan.IsBoss || isDestructor,
-		isRemnantRetained:          isNightmareVine,
-		isDeathAnimationSuppressed: isIllusion || isNightmareVine,
+		isRemnantRetained:          isNightmareVine || isGraviticRegulator,
+		isCollisionRetained:        isGraviticRegulator,
+		isDeathAnimationSuppressed: isIllusion || isNightmareVine || isGraviticRegulator,
 		ordinaryDeathAnimation:     ordinaryDeathAnimation,
 		corpseFadeDelay:            deathPresentation.PresentationDuration,
 		graphicsState:              graphicsState,
@@ -2900,6 +2902,13 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 	}
 	bossTransition := encounterTransition.Boss
 	transition.bossTransition = bossTransition
+	if bossTransition.IsLeaderDefeated {
+		packet, err := bossraknet.LeaderDefeated()
+		if err != nil {
+			return campaignDamageTransition{}, fmt.Errorf("bossDefeated: %w", err)
+		}
+		transition.immediatePackets = append(transition.immediatePackets, packet)
+	}
 	if bossTransition.NextWaveActorCount != 0 {
 		plans, packets, err := s.planCampaignBossFollowup(
 			bossTransition.NextWaveActorCount,
@@ -3030,10 +3039,11 @@ func campaignDeathTarget(target zoneNPCDeathDefinition) deathraknet.Target {
 		GraphicsState:          target.graphicsState,
 		ExplosionEffectName:    target.explosionEffectName,
 		CreatureType:           target.creatureType, IsCreatureTypeKnown: target.isCreatureTypeKnown,
-		IsFixture:         target.isFixture,
-		IsBoss:            target.isBoss,
-		IsRemnantRetained: target.isRemnantRetained,
-		DeleteDelay:       target.deleteDelay,
+		IsFixture:           target.isFixture,
+		IsBoss:              target.isBoss,
+		IsRemnantRetained:   target.isRemnantRetained,
+		IsCollisionRetained: target.isCollisionRetained,
+		DeleteDelay:         target.deleteDelay,
 	}
 }
 
@@ -3938,68 +3948,6 @@ func (s *gameplayPeerSession) admitReservedCampaignBoss(
 		return fmt.Errorf("bossAdmit: %w", err)
 	}
 	return nil
-}
-
-func planCampaignNPCZelemBlink(
-	enemy zonenpc.Snapshot, targetObjectID uint32,
-	targetPosition game.Vec3, targetFootprintRadius float32,
-) (zonenpc.AttackPlan, error) {
-	profile, isFound := zonenpc.ActionProfileForPlan(enemy.Plan)
-	if !isFound || profile.Family != zonenpc.ActionZelemRanged ||
-		profile.TeleportNormalDistance <= 0 {
-		return zonenpc.AttackPlan{}, errors.New("enemy blink unsupported")
-	}
-	if enemy.IsDefeated || enemy.HitPoint <= 0 || targetObjectID == 0 ||
-		enemy.TargetObjectID != targetObjectID {
-		return zonenpc.AttackPlan{},
-			errors.New("enemy blink target unavailable")
-	}
-	stopDistance, err := zoneaction.NPCStopDistance(
-		profile.Range, enemy.Plan.NPCProfile.FootprintRadius,
-		targetFootprintRadius,
-	)
-	if err != nil {
-		return zonenpc.AttackPlan{},
-			fmt.Errorf("enemyBlinkRange: %w", err)
-	}
-	profile.Range = stopDistance
-	if zoneability.Distance(enemy.Plan.Position, targetPosition) >=
-		profile.Range {
-		return zonenpc.AttackPlan{},
-			errors.New("enemy blink target out of range")
-	}
-	return zonenpc.AttackPlan{
-		SourceObjectID: enemy.Plan.ObjectID, TargetObjectID: targetObjectID,
-		ActionGeneration: enemy.ActionGeneration,
-		SourcePosition:   enemy.Plan.Position, TargetPosition: targetPosition,
-		Profile: profile,
-	}, nil
-}
-
-func campaignNPCZelemBlinkDestination(
-	plan zonenpc.AttackPlan,
-) (game.Vec3, error) {
-	if plan.SourceObjectID == 0 || plan.TargetObjectID == 0 ||
-		!isFiniteCampaignPopulationPosition(plan.SourcePosition) ||
-		!isFiniteCampaignPopulationPosition(plan.TargetPosition) ||
-		plan.Profile.TeleportMinimumDistance <= 0 ||
-		plan.Profile.TeleportNormalDistance <
-			plan.Profile.TeleportMinimumDistance ||
-		plan.Profile.TeleportNormalDistance >
-			plan.Profile.TeleportMaximumDistance {
-		return game.Vec3{}, errors.New("enemy blink destination invalid")
-	}
-	// Consecutively spawned Barracudas have nearby object IDs. A direct ID angle
-	// makes the whole pack converge on one side of their shared target. Give each
-	// source its own direction and rotate that direction on subsequent blinks.
-	angleStep := uint64(plan.SourceObjectID)*137 + plan.ActionGeneration*83
-	angle := float64(angleStep%360) * math.Pi / 180
-	distance := float64(plan.Profile.TeleportNormalDistance)
-	return game.Vec3{
-		X: plan.SourcePosition.X + float32(math.Cos(angle)*distance),
-		Y: plan.SourcePosition.Y + float32(math.Sin(angle)*distance),
-		Z: plan.SourcePosition.Z,
-	}, nil
 }
 
 func campaignNPCProjectileAbility(
@@ -5989,40 +5937,11 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 				continue
 			}
 		}
-		if plan.IsFixture {
+		if plan.IsFixture || plan.Kind != sim.DirectorLocusHorde {
 			continue
 		}
-		_, isIntroductionRequested := introductionObjectIDs[plan.ObjectID]
-		isIntroductionConsumed :=
-			plan.Introduction == zonenpc.SpawnIntroductionFloorWarp ||
-				plan.Introduction == zonenpc.SpawnIntroductionAmbush
-		if isIntroductionConsumed && !isIntroductionRequested {
-			continue
-		}
-		isFloorWarpRequested := isIntroductionRequested &&
-			plan.Introduction == zonenpc.SpawnIntroductionFloorWarp
-		profile, isProfileFound := zonenpc.ActionProfileForPlan(plan)
-		isAuthoredPresentationAvailable := false
-		if !isFloorWarpRequested && isProfileFound &&
-			profile.FirstAggroAnimationName != "" &&
-			isCampaignNPCFirstActionSupported(profile.Family) {
-			npc, isNPCFound := npcSession.NPC(plan.ObjectID)
-			if isNPCFound && !npc.IsDefeated {
-				target, isTargetFound := peerSession.campaignNPCTarget(
-					generation, npc.TargetObjectID,
-				)
-				if isTargetFound {
-					_, isActionFound, actionErr := campaignNPCFirstAction(
-						plan, target.ObjectID, target.Position, target.FootprintRadius,
-					)
-					if actionErr != nil {
-						return nil, fmt.Errorf("enemySpawnAction[%d]: %w", index, actionErr)
-					}
-					isAuthoredPresentationAvailable = isActionFound
-				}
-			}
-		}
-		if isAuthoredPresentationAvailable {
+		npc, isNPCFound := npcSession.NPC(plan.ObjectID)
+		if !isNPCFound || npc.IsDefeated || npc.IsFirstActionStarted {
 			continue
 		}
 		spawnRun, spawnPackets, spawnErr := spawnraknet.New(
@@ -6133,7 +6052,7 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 		}
 		action.ActionGeneration = npc.ActionGeneration
 		isFloorWarpIntroduction :=
-			plan.Introduction == zonenpc.SpawnIntroductionFloorWarp
+			plan.Kind == sim.DirectorLocusHorde
 		firstAggroDelay := time.Duration(0)
 		if isFirstAction && !isFloorWarpIntroduction &&
 			action.Profile.IsFirstAggroDurationKnown {
@@ -8529,170 +8448,6 @@ func (r campaignNPCActionRuntime) producePushPull(
 	)
 	if scheduleErr != nil {
 		return nil, fmt.Errorf("enemyPushPullSchedule: %w", scheduleErr)
-	}
-	return startPackets, nil
-}
-
-type campaignZelemBlinkSchedule struct {
-	runtime    campaignNPCActionRuntime
-	packet     raknet.Packet
-	sessionKey string
-	generation uint64
-	objectID   uint32
-	timestamp  uint64
-	plan       zonenpc.AttackPlan
-}
-
-func (e campaignZelemBlinkSchedule) resume(
-	timestamp uint64,
-) ([][]byte, error) {
-	return e.runtime.produceZelemBlink(
-		e.packet, e.sessionKey, e.generation, e.objectID, timestamp,
-	)
-}
-
-func (e campaignZelemBlinkSchedule) hit() ([][]byte, error) {
-	e.runtime.registry.mutex.Lock()
-	current, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := isFound && current.isCampaignNPCAttackActiveAt(
-		e.generation, e.objectID, e.plan.TargetObjectID, e.runtime.now(),
-	)
-	if !isCurrent {
-		e.runtime.registry.mutex.Unlock()
-		return nil, nil
-	}
-	currentNPC, isNPCFound := current.zone.NPCs().NPC(e.objectID)
-	target, isTargetFound := current.campaignNPCTarget(
-		e.generation, currentNPC.TargetObjectID,
-	)
-	if !isNPCFound || !isTargetFound {
-		e.runtime.registry.mutex.Unlock()
-		e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
-		return nil, nil
-	}
-	plan, err := planCampaignNPCZelemBlink(
-		currentNPC, target.ObjectID, target.Position, target.FootprintRadius,
-	)
-	if err != nil {
-		e.runtime.registry.mutex.Unlock()
-		return nil, nil
-	}
-	destination, err := campaignNPCZelemBlinkDestination(plan)
-	if err != nil {
-		e.runtime.registry.mutex.Unlock()
-		return nil, fmt.Errorf("enemyZelemDestination: %w", err)
-	}
-	err = current.zone.NPCs().SetPosition(e.objectID, destination)
-	if err != nil {
-		e.runtime.registry.mutex.Unlock()
-		return nil, fmt.Errorf("enemyZelemPosition: %w", err)
-	}
-	e.runtime.registry.sessions[e.sessionKey] = current
-	e.runtime.registry.mutex.Unlock()
-	timestamp := e.timestamp + uint64(plan.Profile.HitDelay/time.Millisecond)
-	packets, err := npcraknet.Blink(plan, destination, timestamp)
-	if err != nil {
-		return nil, fmt.Errorf("enemyZelemBlink: %w", err)
-	}
-	shotPackets, err := e.runtime.produceZelemShotWithProfile(
-		e.packet, e.sessionKey, e.generation, e.objectID, timestamp,
-		zonenpc.ZelemRangedShotProfile(),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("enemyZelemShot: %w", err)
-	}
-	return append(packets, shotPackets...), nil
-}
-
-func (e campaignZelemBlinkSchedule) next() ([][]byte, error) {
-	timestamp := e.timestamp + uint64(e.plan.Profile.Cooldown/time.Millisecond)
-	return e.resume(timestamp)
-}
-
-func (r campaignNPCActionRuntime) produceZelemBlink(
-	packet raknet.Packet, sessionKey string, generation uint64,
-	objectID uint32, timestamp uint64,
-) ([][]byte, error) {
-	resume := campaignZelemBlinkSchedule{
-		runtime: r, packet: packet, sessionKey: sessionKey,
-		generation: generation, objectID: objectID, timestamp: timestamp,
-	}
-	isDeferred, err := r.pursuit.deferAction(
-		packet, sessionKey, generation, objectID, timestamp,
-		resume.resume,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("enemyZelemBlinkStun: %w", err)
-	}
-	if isDeferred {
-		return nil, nil
-	}
-	r.registry.mutex.RLock()
-	peerSession, isFound := r.registry.sessions[sessionKey]
-	isCurrent := isFound &&
-		peerSession.isCampaignNPCSourceActive(generation, objectID)
-	if !isCurrent {
-		r.registry.mutex.RUnlock()
-		return nil, nil
-	}
-	enemy, isEnemyFound := peerSession.zone.NPCs().NPC(objectID)
-	target, isTargetFound := peerSession.campaignNPCTarget(
-		generation, enemy.TargetObjectID,
-	)
-	r.registry.mutex.RUnlock()
-	if !isEnemyFound || enemy.IsDefeated || !isTargetFound {
-		r.releaseAction(sessionKey, generation, objectID)
-		return nil, nil
-	}
-	plan, err := planCampaignNPCZelemBlink(
-		enemy, target.ObjectID, target.Position, target.FootprintRadius,
-	)
-	if err != nil {
-		profile, isProfileFound := zonenpc.ActionProfileForNoun(enemy.Plan.NounName)
-		if !isProfileFound {
-			return nil, nil
-		}
-		action, actionErr := campaignNPCActionWithProfile(
-			enemy.Plan, target.ObjectID, target.Position, profile,
-			target.FootprintRadius,
-		)
-		if actionErr != nil || !action.IsPursuitNeeded {
-			return nil, nil
-		}
-		pursuitPackets, marshalErr := npcraknet.Pursuit(action)
-		if marshalErr != nil {
-			return nil, fmt.Errorf("enemyZelemPursuitMarshal: %w", marshalErr)
-		}
-		scheduleErr := r.pursuit.schedule(
-			packet, sessionKey, generation, objectID, timestamp,
-			action.TargetPosition, action.Profile, resume.resume,
-		)
-		if scheduleErr != nil {
-			r.releaseAction(sessionKey, generation, objectID)
-			r.logger.Printf("RakNet campaign Zelem pursuit not scheduled object=%d: %v", objectID, scheduleErr)
-		}
-		return pursuitPackets, nil
-	}
-	startPackets, err := r.startNPCAttack(sessionKey, generation, plan, timestamp)
-	if err != nil {
-		return nil, fmt.Errorf("enemyZelemBlinkStart: %w", err)
-	}
-	schedule := campaignZelemBlinkSchedule{
-		runtime: r, packet: packet, sessionKey: sessionKey,
-		generation: generation, objectID: objectID, timestamp: timestamp,
-		plan: plan,
-	}
-	hitProducer := raknet.ScheduledPacketProducer{
-		Delay: plan.Profile.HitDelay, Produce: schedule.hit,
-	}
-	nextProducer := raknet.ScheduledPacketProducer{
-		Delay: plan.Profile.Cooldown, Produce: schedule.next,
-	}
-	_, scheduleErr := scheduleNPCProducers(r.registry, packet,
-		[]raknet.ScheduledPacketProducer{hitProducer, nextProducer},
-	)
-	if scheduleErr != nil {
-		return nil, fmt.Errorf("enemyZelemBlinkSchedule: %w", scheduleErr)
 	}
 	return startPackets, nil
 }

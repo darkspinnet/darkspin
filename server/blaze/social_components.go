@@ -329,9 +329,12 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 		}
 		commandName, isCommand := messagingCommandName(body)
 		if isCommand {
-			responseBody := fmt.Sprintf("Unknown command %s. Available: /help, /ss, /bug, /b, /ping, /hint, /loc, /stat, /follow, /ai, /effect, /summon, /level, /warp, /spawn, /drop, /dna, /damage, /heal, /power, /mana, /event, /goto, /kill, /reset, /recap, /victory, /defeat, /exit", commandName)
+			responseBody := fmt.Sprintf("Unknown command %s. Available: /help, /taunt, /ss, /bug, /b, /ping, /hint, /loc, /stat, /follow, /ai, /effect, /summon, /level, /warp, /spawn, /drop, /dna, /damage, /heal, /power, /mana, /event, /goto, /kill, /reset, /recap, /victory, /defeat, /exit", commandName)
 			if commandName == "/help" {
 				responseBody = darkspinChatHelp
+			}
+			if commandName == "/taunt" {
+				responseBody = "Unfortunately, /taunt was added in a newer Darkspore build than Darkspin supports, so taunt animations are unavailable."
 			}
 			if commandName == "/bug" || commandName == "/b" {
 				responseBody = bugReportSyntax
@@ -1026,12 +1029,12 @@ const victorySyntax = "Syntax: /victory"
 
 const defeatSyntax = "Syntax: /defeat"
 
-const darkspinChatHelp = "Darkspin: /help | " + snapshotSyntax + " | /bug <what happened> | /b <what happened> | /ping | /hint | /loc | /stat | /follow [ally name] | /ai | /effect <exact-authored-name> [world] | " +
+const darkspinChatHelp = "Darkspin: /help | /taunt (availability info) | " + snapshotSyntax + " | /bug <what happened> | /b <what happened> | /ping | /hint | /loc | /stat | /follow [ally name] | /ai | /effect <exact-authored-name> [world] | " +
 	"/summon <rigid> <primary> <secondary> <suffix> | /level <1-100> | /warp [area] | /spawn <noun> | /drop create [weapon|hand|foot|offense|defense|utility] | /dna <amount> | " +
 	"/damage <amount> | /heal | /power [negative amount] | /mana [negative amount] | /event [1|security-next|2|boss-start|3|boss-complete] | /goto <x> <y> <z> | /kill | /reset | /recap | /victory | /defeat | /exit | " +
 	"Built-in: /tell <player> <message> | /party <message> | /game <message> | /lobby <message> | " +
 	"/invite <player> | /leave | /friend <player> | /unfriend <player> | /block <player> | " +
-	"/unblock <player> | /reply <message> | /setprofanityfilter 0|1 | /dance | /taunt"
+	"/unblock <player> | /reply <message> | /setprofanityfilter 0|1 | /dance"
 
 func messagingCommandName(body string) (string, bool) {
 	field := strings.Fields(body)

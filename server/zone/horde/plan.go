@@ -101,6 +101,7 @@ func PlanWave(
 			Rotation:      zonepopulation.GroupRotation(authoredRotations, index),
 			LocusID:       publication.TriggerMarkerID,
 			Kind:          sim.DirectorLocusHorde,
+			Introduction:  zonenpc.SpawnIntroductionFloorWarp,
 			MarkerSetName: publication.MarkerSetName,
 			NPCProfile:    entry.NPCProfile,
 		})

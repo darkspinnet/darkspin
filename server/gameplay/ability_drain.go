@@ -26,6 +26,7 @@ type heroDrainRun struct {
 	targetEffectSlot   uint8
 	areEffectsAttached bool
 	isEffectsReleased  bool
+	isStopped          bool
 	releasePacket      []byte
 	cancel             raknet.CancelSchedule
 }
@@ -35,6 +36,7 @@ func (e *heroDrainRun) Stop() {
 		return
 	}
 	e.mutex.Lock()
+	e.isStopped = true
 	cancel := e.cancel
 	e.cancel = nil
 	e.mutex.Unlock()
@@ -52,7 +54,7 @@ func (e *heroDrainRun) attachEffects(
 	}
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
-	if e.areEffectsAttached || e.isEffectsReleased {
+	if e.areEffectsAttached || e.isEffectsReleased || e.isStopped {
 		return nil, nil
 	}
 	packets, err := abilityraknet.ChannelDrainAttachedEffects(
@@ -71,6 +73,13 @@ func (e *heroDrainRun) setCancel(cancel raknet.CancelSchedule) {
 		return
 	}
 	e.mutex.Lock()
+	if e.isStopped || e.isEffectsReleased {
+		e.mutex.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		return
+	}
 	e.cancel = cancel
 	e.mutex.Unlock()
 }
@@ -148,7 +157,6 @@ type heroDrainSchedule struct {
 	run                 *heroDrainRun
 	cooldownReservation zoneability.CooldownReservation
 	releaseReservation  zoneaction.ReleaseReservation
-	releasePacket       []byte
 }
 
 type heroDrainTickStep struct {
@@ -189,7 +197,7 @@ func (e heroDrainSchedule) tick(deadline time.Duration) ([][]byte, error) {
 		) {
 		peerSession.heroDrain = nil
 		peerSession.abilityReleaseSession().Rollback(e.releaseReservation)
-		e.run.cancel = nil
+		e.run.clearCancel()
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 		e.runtime.registry.mutex.Unlock()
 		return e.endPackets(deadline)
@@ -315,7 +323,7 @@ func (e heroDrainSchedule) finish() ([][]byte, error) {
 	e.run.clearCancel()
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
-	return e.endPackets(e.definition.ReleaseDelay)
+	return e.endPackets(e.definition.HitDelay + e.definition.Duration)
 }
 
 func (e heroDrainSchedule) fail(scheduleErr error) {
@@ -378,7 +386,7 @@ func (r campaignAbilityCommandRuntime) handleHeroChannelDrain(
 		r.registry.mutex.Unlock()
 		return req.reject("channel drain target unavailable")
 	}
-	projected, err := zoneability.ProjectTiming(creature, definition)
+	projected, err := zoneability.ProjectChannelDrainTiming(creature, definition)
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("heroDrainTiming: %w", err)
@@ -397,14 +405,18 @@ func (r campaignAbilityCommandRuntime) handleHeroChannelDrain(
 	}
 	remainingManaPoint := peerSession.deployedManaPoint() - manaCost
 	previousManaPoint := peerSession.deployedManaPoint()
+	channelStart := req.packet.SourceTime + uint64(projected.HitDelay/time.Millisecond)
+	channelEnd := channelStart + uint64(projected.Duration/time.Millisecond)
+	// Build 103's response handler (0x4D64D0) copies wire offsets 16 and 24
+	// into the channel HUD's start/end timestamps. Sending the first-hit time
+	// at offset 24 expires both the bar and native key-release handling at 0.3s.
 	ackPacket, err := abilityraknet.Acknowledge(abilityraknet.AcknowledgeRequest{
 		SyncStamp: req.command.Common.Unknown[0], ResponseType: raknet.ActionResponseAccepted,
 		ObjectID: activeAbilityID, AbilityIndex: req.command.Ability.Index,
-		SourceStartMilliseconds: req.packet.SourceTime,
-		SourceCommitMilliseconds: req.packet.SourceTime +
-			uint64(projected.HitDelay/time.Millisecond),
-		SourceEndMilliseconds: req.packet.SourceTime +
-			uint64(projected.ReleaseDelay/time.Millisecond),
+		SourceStartMilliseconds:  channelStart,
+		SourceCommitMilliseconds: channelEnd,
+		SourceEndMilliseconds: channelStart +
+			uint64(projected.Cooldown/time.Millisecond),
 	})
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -514,7 +526,7 @@ func (r campaignAbilityCommandRuntime) handleHeroChannelDrain(
 		previousManaPoint: previousManaPoint, creature: creature,
 		definition: projected, binding: binding, run: run,
 		cooldownReservation: cooldownReservation,
-		releaseReservation:  releaseReservation, releasePacket: releasePacket,
+		releaseReservation:  releaseReservation,
 	}
 	producers := make([]raknet.ScheduledPacketProducer, 0, projected.NumberOfTicks+1)
 	for tick := uint32(0); tick < projected.NumberOfTicks; tick++ {
@@ -525,7 +537,7 @@ func (r campaignAbilityCommandRuntime) handleHeroChannelDrain(
 		})
 	}
 	producers = append(producers, raknet.ScheduledPacketProducer{
-		Delay: projected.ReleaseDelay, Produce: schedule.finish,
+		Delay: projected.HitDelay + projected.Duration, Produce: schedule.finish,
 	})
 	producers = r.registry.producerGuard.scheduledProducers(sessionKey, producers)
 	var cancel raknet.CancelSchedule
@@ -540,9 +552,9 @@ func (r campaignAbilityCommandRuntime) handleHeroChannelDrain(
 	}
 	run.setCancel(cancel)
 	r.logger.Printf(
-		"RakNet hero channel drain accepted ability=%s source=%d target=%d ticks=%d",
+		"RakNet hero channel drain accepted ability=%s source=%d target=%d ticks=%d channel=%s",
 		projected.Name, req.command.Common.ObjectID, targetObjectID,
-		projected.NumberOfTicks,
+		projected.NumberOfTicks, projected.Duration,
 	)
 	return append([][]byte{ackPacket}, startPackets...), nil
 }

@@ -27,6 +27,7 @@ type DeathBehaviorInput struct {
 	IsPlayerControlled   bool
 	IsBoss               bool
 	IsRemnantRetained    bool
+	IsCollisionRetained  bool
 	CorpseFadeDelay      time.Duration
 	DeleteDelay          time.Duration
 	DamageProvenance     Provenance
@@ -95,11 +96,11 @@ func (b *DeathBehavior) emitEntry() error {
 		},
 		PhysicsStateIntent{
 			Role: b.input.TargetRole, CollisionKind: CollisionStatePhysics,
-			IsCollisionEnabled: false,
+			IsCollisionEnabled: b.input.IsCollisionRetained,
 		},
 		PhysicsStateIntent{
 			Role: b.input.TargetRole, CollisionKind: CollisionStateNavigation,
-			IsCollisionEnabled: false,
+			IsCollisionEnabled: b.input.IsCollisionRetained,
 		},
 	}
 	if b.input.GraphicsState != 0 {

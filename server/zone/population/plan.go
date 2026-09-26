@@ -130,15 +130,9 @@ func (s *Session) planSpawns(
 
 func applySpawnIntroductions(plans []zonenpc.SpawnPlan, decision Decision) {
 	for index := range plans {
-		profile, isProfileFound := zonenpc.ActionProfileForPlan(plans[index])
-		switch {
-		case isProfileFound && profile.PreAggroAnimationName != "":
-			plans[index].Introduction = zonenpc.SpawnIntroductionDormant
-		case decision.IsAmbush:
-			plans[index].Introduction = zonenpc.SpawnIntroductionAmbush
-		case decision.IsFloorIntroduction:
-			plans[index].Introduction = zonenpc.SpawnIntroductionFloorWarp
-		}
+		// Ordinary map population is already present, including groups whose
+		// authored pre-aggro pose keeps them dormant until approached.
+		plans[index].Introduction = zonenpc.SpawnIntroductionDormant
 	}
 }
 

@@ -2,6 +2,23 @@
 
 ### 2026-09-26
 
+- Add a private `/taunt` reply explaining that taunt animations were introduced in a newer Darkspore build than Darkspin supports, and correct its command-help listing.
+- Restore mission mouse-wheel zoom from a fixed distance to the native minimum through the mission's default distance, retaining the selected zoom while moving and switching heroes.
+- Restore Sage's Enrage self-cast animation and buff metadata, use the ally-cast animation for companions, and cap regeneration at the recipient's maximum health.
+- Change boss music to normal horde combat music when the boss dies by clearing the active boss flags immediately, while preserving encounter completion and Beam Out timing.
+- Keep Wraith's Lifeforce Siphon channel bar active for its six-second drain window and preserve release-to-stop input, separating channel timing from cooldown reduction and the end animation.
+- Populate ordinary enemies before mission exploration without arrival effects, and reserve the generic beam-in animation and spawn sound for campaign and tutorial horde waves.
+- Restore continuous basic attacks while the right mouse button is held by removing a diagnostic input reset that incorrectly treated a released left mouse button as the end of the attack hold.
+- Change Sage's Tree of Life from five repeated growth stages and a six-second lifetime to one full-growth effect and an eight-minute lifetime, playing its disappearance effect only at expiry and retaining the tree after a hero falls.
+- Hold mission equipment pickups until successful completion, forfeiting them on abort or squad defeat and preventing reconnects or checkpoint restoration from recovering lost loot.
+- Change Space Barracudas from overlapping teleport loops to one opening blink followed by ranged attacks, choosing reachable landings around the target with a preference for its rear.
+
+- Correct enemy damage scaling from stat plus 1 to the authored stat minus 8, reducing inflated early-campaign hits while preserving hero damage.
+- Preserve separate current and maximum health and energy through reconnects, checkpoint restoration, and party snapshots so recovered bars do not exceed 100% and keep flashing.
+- Make sphere teleporters transfer heroes immediately once their collision footprint fits inside, and keep each gate inactive while enemies remain within roughly three Blitz collision lengths.
+- Keep destroyed Gravitic Regulator bases visible and solid for the mission, including after reconnects and checkpoint restoration.
+- Gate catalyst drops, pickups, and use behind campaign unlock progression, reduce obelisk catalyst drops from a 75% base chance to 5% while retaining equipment rewards, and restore HELIX's obelisk-access announcement.
+- Move Ride the Lightning's teleport and arrival animation from immediate movement and late recovery to the authored impact time, and allow cursor-directed teleports to walkable ground without an enemy target or walking path.
 - Restore mission spawning and hero switching from the short teleporter animation to the authored beam-in landing sequence, with matching effects and sound cues, consistent timing, and a brief input lock through landing.
 - Save campaign squad edits when the unused Arena deck field is blank instead of rejecting the complete deck update and restoring Blitz, Sage, and Wraith.
 

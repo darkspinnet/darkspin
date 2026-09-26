@@ -400,72 +400,34 @@ func applyInitialChainFirstClearPopulation(candidates []candidate) []candidate {
 	return candidates
 }
 
-// PrimeOpening introduces every ordinary pre-baked group connected to the
-// entrance. When navigation or pre-baked population is unavailable, it falls
-// back to the nearest authored Wanderer only inside that locus' activation
-// radius. The retail opening selector remains server-owned and unrecovered.
-func (s *Session) PrimeOpening(
-	position game.Vec3,
-) ([]Decision, error) {
-	if s == nil {
+// PrimeOpening resolves ordinary map population before exploration. Horde marker
+// sets are excluded when candidates are built and remain encounter-triggered.
+func (e *Session) PrimeOpening(position game.Vec3) ([]Decision, error) {
+	if e == nil {
 		return nil, errors.New("populationPrime: nil session")
 	}
 	if !IsFinitePosition(position) {
 		return nil, errors.New("populationPrime: invalid position")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.isOpeningPrimed {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.isOpeningPrimed {
 		return nil, nil
 	}
-	floorDecisions := s.resolveFloorIntroduction(position)
-	if len(floorDecisions) != 0 {
-		s.isOpeningPrimed = true
-		return floorDecisions, nil
-	}
-	selected := candidate{}
-	selectedDistance := float32(math.MaxFloat32)
-	isSelected := false
-	for _, candidate := range s.candidates {
-		if candidate.kind != sim.DirectorLocusWanderer || s.resolvedDirectorPointIDs[candidate.locusID] {
+	decisions := make([]Decision, 0, len(e.candidates))
+	for _, candidate := range e.candidates {
+		if e.resolvedDirectorPointIDs[candidate.locusID] {
 			continue
 		}
-		distanceSquared := candidateDistanceSquared(candidate, position)
-		if isSelected && (distanceSquared > selectedDistance ||
-			(distanceSquared == selectedDistance && !candidateBefore(candidate, selected))) {
-			continue
+		decision, err := e.resolveCandidate(candidate, true)
+		if err != nil {
+			return nil, fmt.Errorf("openingResolve[%d]: %w", candidate.locusID, err)
 		}
-		selected = candidate
-		selectedDistance = distanceSquared
-		isSelected = true
+		decisions = append(decisions, decision)
+		e.resolvedDirectorPointIDs[candidate.locusID] = true
 	}
-	if !isSelected {
-		return nil, nil
-	}
-	if selectedDistance > selected.radius*selected.radius {
-		s.isOpeningPrimed = true
-		return nil, nil
-	}
-	clumpRoll, err := s.random.Index(100)
-	if err != nil {
-		return nil, fmt.Errorf("populationPrimeClump: %w", err)
-	}
-	wanderer, err := s.policy.ResolveLocalWanderer(selected.locusID, 0, clumpRoll)
-	if err != nil {
-		return nil, fmt.Errorf("populationPrimeWanderer: %w", err)
-	}
-	s.resolvedDirectorPointIDs[selected.locusID] = true
-	s.isOpeningPrimed = true
-	return []Decision{{
-		LocusID: selected.locusID, MarkerSetName: selected.markerSetName,
-		Kind: selected.kind, Section: selected.section, Wanderer: wanderer,
-		NavigationComponentID: selected.navigationComponentID,
-		Positions:             append([]game.Vec3(nil), selected.positions...),
-		Rotations:             append([]game.Vec3(nil), selected.rotations...),
-		ProvisionalCount:      selected.provisionalCount,
-		IsProvisionalCaptain:  selected.isProvisionalCaptain,
-		ProvisionalNounNames:  append([]string(nil), selected.provisionalNounNames...),
-	}}, nil
+	e.isOpeningPrimed = true
+	return decisions, nil
 }
 
 // Observe evaluates the reported current hero position, never the future move
@@ -509,54 +471,61 @@ func (s *Session) Observe(
 		if !isSelected {
 			continue
 		}
-		decision := Decision{
-			LocusID: candidate.locusID, MarkerSetName: candidate.markerSetName,
-			Kind: candidate.kind, Section: candidate.section,
-			NavigationComponentID: candidate.navigationComponentID,
-			Positions:             append([]game.Vec3(nil), candidate.positions...),
-			Rotations:             append([]game.Vec3(nil), candidate.rotations...),
-			ProvisionalCount:      candidate.provisionalCount,
-			IsProvisionalCaptain:  candidate.isProvisionalCaptain,
-			IsAmbush:              candidate.isAmbush,
-			ProvisionalNounNames:  append([]string(nil), candidate.provisionalNounNames...),
-		}
-		if len(candidate.provisionalNounNames) != 0 {
-			decisions = append(decisions, decision)
-			s.resolvedDirectorPointIDs[candidate.locusID] = true
-			continue
-		}
-		switch kind {
-		case sim.DirectorLocusWanderer:
-			spawnRoll, err := s.random.Index(100)
-			if err != nil {
-				return nil, fmt.Errorf("populationSpawnRoll: %w", err)
-			}
-			clumpRoll, err := s.random.Index(100)
-			if err != nil {
-				return nil, fmt.Errorf("populationClumpRoll: %w", err)
-			}
-			decision.Wanderer, err = s.policy.ResolveLocalWanderer(
-				candidate.locusID, spawnRoll, clumpRoll,
-			)
-			if err != nil {
-				return nil, fmt.Errorf("populationWanderer: %w", err)
-			}
-		case sim.DirectorLocusSpike:
-			outcome, err := s.policy.HitSpike(candidate.locusID, s.spikeHistory, isDoingWell)
-			if err != nil {
-				return nil, fmt.Errorf("populationSpike: %w", err)
-			}
-			challenge, err := sim.LocalSpikeChallenge(candidate.section, outcome)
-			if err != nil {
-				return nil, fmt.Errorf("populationChallenge: %w", err)
-			}
-			decision.SpikeOutcome = outcome
-			decision.Challenge = challenge
+		decision, err := s.resolveCandidate(candidate, isDoingWell)
+		if err != nil {
+			return nil, fmt.Errorf("candidateResolve[%d]: %w", candidate.locusID, err)
 		}
 		decisions = append(decisions, decision)
 		s.resolvedDirectorPointIDs[candidate.locusID] = true
 	}
 	return decisions, nil
+}
+
+// resolveCandidate is called with the population session locked.
+func (e *Session) resolveCandidate(candidate candidate, isDoingWell bool) (Decision, error) {
+	decision := Decision{
+		LocusID: candidate.locusID, MarkerSetName: candidate.markerSetName,
+		Kind: candidate.kind, Section: candidate.section,
+		NavigationComponentID: candidate.navigationComponentID,
+		Positions:             append([]game.Vec3(nil), candidate.positions...),
+		Rotations:             append([]game.Vec3(nil), candidate.rotations...),
+		ProvisionalCount:      candidate.provisionalCount,
+		IsProvisionalCaptain:  candidate.isProvisionalCaptain,
+		IsAmbush:              candidate.isAmbush,
+		ProvisionalNounNames:  append([]string(nil), candidate.provisionalNounNames...),
+	}
+	if len(candidate.provisionalNounNames) != 0 {
+		return decision, nil
+	}
+	switch candidate.kind {
+	case sim.DirectorLocusWanderer:
+		spawnRoll, err := e.random.Index(100)
+		if err != nil {
+			return Decision{}, fmt.Errorf("populationSpawnRoll: %w", err)
+		}
+		clumpRoll, err := e.random.Index(100)
+		if err != nil {
+			return Decision{}, fmt.Errorf("populationClumpRoll: %w", err)
+		}
+		decision.Wanderer, err = e.policy.ResolveLocalWanderer(
+			candidate.locusID, spawnRoll, clumpRoll,
+		)
+		if err != nil {
+			return Decision{}, fmt.Errorf("populationWanderer: %w", err)
+		}
+	case sim.DirectorLocusSpike:
+		outcome, err := e.policy.HitSpike(candidate.locusID, e.spikeHistory, isDoingWell)
+		if err != nil {
+			return Decision{}, fmt.Errorf("populationSpike: %w", err)
+		}
+		challenge, err := sim.LocalSpikeChallenge(candidate.section, outcome)
+		if err != nil {
+			return Decision{}, fmt.Errorf("populationChallenge: %w", err)
+		}
+		decision.SpikeOutcome = outcome
+		decision.Challenge = challenge
+	}
+	return decision, nil
 }
 
 func (s *Session) resolveFloorIntroduction(position game.Vec3) []Decision {

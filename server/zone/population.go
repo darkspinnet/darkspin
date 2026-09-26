@@ -32,7 +32,7 @@ func (e *Zone) PrimePopulation(
 	}
 	transition := PopulationTransition{}
 	if !e.isPopulationPrimed {
-		initialNPCPlans, err := e.introduceInitialNPCs(req.Position)
+		initialNPCPlans, err := e.introduceInitialNPCs()
 		if err != nil {
 			return PopulationTransition{}, fmt.Errorf("initialNPCIntroduce: %w", err)
 		}
@@ -81,7 +81,7 @@ func (e *Zone) AdvancePopulation(
 	if e.state != StateActive {
 		return PopulationTransition{}, errors.New("zone inactive")
 	}
-	initialNPCPlans, err := e.introduceInitialNPCs(req.Position)
+	initialNPCPlans, err := e.introduceInitialNPCs()
 	if err != nil {
 		return PopulationTransition{}, fmt.Errorf("initialNPCIntroduce: %w", err)
 	}
@@ -114,10 +114,9 @@ func (e *Zone) AdvancePopulation(
 	}, nil
 }
 
-// introduceInitialNPCs publishes authored fixed actors only when they can also
-// acquire the approaching player. An untargeted publication lets the retail
-// client move the actor autonomously before server authority starts pursuit.
-func (e *Zone) introduceInitialNPCs(position game.Vec3) ([]zonenpc.SpawnPlan, error) {
+// introduceInitialNPCs publishes fixed map actors before the player approaches.
+// Target acquisition remains governed by the ordinary aggro boundary.
+func (e *Zone) introduceInitialNPCs() ([]zonenpc.SpawnPlan, error) {
 	if len(e.info.InitialNPCPlans) == 0 {
 		return nil, nil
 	}
@@ -125,23 +124,12 @@ func (e *Zone) introduceInitialNPCs(position game.Vec3) ([]zonenpc.SpawnPlan, er
 	for _, npc := range e.info.NPCs.Snapshots() {
 		introducedObjectIDs[npc.Plan.ObjectID] = true
 	}
-	introductionRadius := e.info.NPCs.AggroRadius()
-	if introductionRadius <= 0 {
-		return nil, errors.New("initial npc aggro radius unavailable")
-	}
-	radiusSquared := introductionRadius * introductionRadius
 	plans := make([]zonenpc.SpawnPlan, 0)
 	for _, plan := range e.info.InitialNPCPlans {
 		if introducedObjectIDs[plan.ObjectID] {
 			continue
 		}
-		deltaX := position.X - plan.Position.X
-		deltaY := position.Y - plan.Position.Y
-		deltaZ := position.Z - plan.Position.Z
-		distanceSquared := deltaX*deltaX + deltaY*deltaY + deltaZ*deltaZ
-		if distanceSquared > radiusSquared {
-			continue
-		}
+		plan.Introduction = zonenpc.SpawnIntroductionDormant
 		plans = append(plans, plan)
 	}
 	if len(plans) == 0 {

@@ -56,7 +56,7 @@ func UpdatePackets(update []zoneobjective.Update) ([][]byte, error) {
 	packet := make([][]byte, 0, len(update))
 	for index, current := range update {
 		voiceover := uint32(0)
-		if current.ObjectiveID == zoneobjective.ObeliskID {
+		if current.IsObeliskAccessed {
 			voiceover = util.HashID(obeliskAccessedVoiceName)
 		}
 		encoded, err := raknet.MarshalApplication(raknet.ObjectiveUpdatedMessage{

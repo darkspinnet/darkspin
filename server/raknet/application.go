@@ -189,8 +189,11 @@ func (m TimestampMessage) EncodePayload() []byte {
 // signal nGameDirector.IsBossDead and reveal the normal Beam Out HUD.
 type DirectorStateMessage struct {
 	IsBossSpawned            bool
+	IsBossSpawnedPresent     bool
 	IsBossHorde              bool
+	IsBossHordePresent       bool
 	IsCaptainSpawned         bool
+	IsCaptainSpawnedPresent  bool
 	IsBossComplete           bool
 	IsHordeSpawned           bool
 	IsHordeSpawnedPresent    bool
@@ -202,13 +205,13 @@ type DirectorStateMessage struct {
 func (DirectorStateMessage) PacketID() PacketID { return DirectorState }
 func (m DirectorStateMessage) EncodePayload() []byte {
 	mask := byte(0)
-	if m.IsBossSpawned {
+	if m.IsBossSpawned || m.IsBossSpawnedPresent {
 		mask |= 1 << 0
 	}
-	if m.IsBossHorde {
+	if m.IsBossHorde || m.IsBossHordePresent {
 		mask |= 1 << 1
 	}
-	if m.IsCaptainSpawned {
+	if m.IsCaptainSpawned || m.IsCaptainSpawnedPresent {
 		mask |= 1 << 2
 	}
 	if m.IsBossComplete {
@@ -1192,10 +1195,19 @@ func HeroStateMessages(objectID uint32, hitPoint, powerPoint float32) []Applicat
 	if powerPoint <= 0 {
 		powerPoint = 200
 	}
+	return HeroResourceStateMessages(objectID, hitPoint, powerPoint, hitPoint, powerPoint)
+}
+
+// Current resources and their caps are independent during reconnects and
+// roster refreshes. Using a depleted amount as the cap makes later recovery
+// exceed 100 percent, leaving the native HUD's regeneration tween running.
+func HeroResourceStateMessages(
+	objectID uint32, hitPoint, powerPoint, maximumHitPoint, maximumPowerPoint float32,
+) []ApplicationMessage {
 	return []ApplicationMessage{
 		CombatantDataUpdateMessage{ObjectID: objectID, HitPoints: hitPoint, ManaPoints: powerPoint},
 		AttributeDataUpdateMessage{ObjectID: objectID, Value: map[uint8]float32{
-			0: 23, 1: 12, 2: 15, 4: hitPoint, 5: powerPoint, 7: 50, 9: 50, 10: 50,
+			0: 23, 1: 12, 2: 15, 4: maximumHitPoint, 5: maximumPowerPoint, 7: 50, 9: 50, 10: 50,
 			11: 8.25, 12: 7.5, 109: 1, 111: 1, 112: 5,
 		}},
 	}
@@ -1815,6 +1827,7 @@ type LabsPlayerStatusMessage struct {
 	DeckScore           uint32
 	EnergyPoint         float32
 	IsOverdriveUnlocked bool
+	IsCatalystUnlocked  bool
 	CharacterResources  [3]LabsCharacterResource
 	CrystalResources    [9]LabsCrystalResource
 	CrystalBonuses      [8]bool
@@ -1941,6 +1954,9 @@ func (m LabsPlayerStatusMessage) EncodePayload() []byte {
 		payload = binary.LittleEndian.AppendUint32(payload, m.ChainProgression)
 		payload = append(payload, 18, 0)
 		payload = append(payload, 19, boolByte(!m.IsOverdriveUnlocked))
+		if !m.IsStatusPreserved {
+			payload = append(payload, 20, boolByte(!m.IsCatalystUnlocked))
+		}
 		payload = append(payload, 21)
 		payload = binary.LittleEndian.AppendUint32(payload, m.AbilityCount)
 		payload = append(payload, 22)
@@ -1996,15 +2012,15 @@ func appendLabsCrystalReflection(payload []byte, crystal LabsCrystalResource) []
 func initialLabsCharacterResource(resource LabsCharacterResource) LabsCharacterResource {
 	if resource.MaxHealth <= 0 {
 		resource.MaxHealth = 200
-	}
-	if resource.Health <= 0 {
-		resource.Health = resource.MaxHealth
+		if resource.Health <= 0 {
+			resource.Health = resource.MaxHealth
+		}
 	}
 	if resource.MaxMana <= 0 {
 		resource.MaxMana = 200
-	}
-	if resource.Mana <= 0 {
-		resource.Mana = resource.MaxMana
+		if resource.Mana <= 0 {
+			resource.Mana = resource.MaxMana
+		}
 	}
 	return resource
 }

@@ -65,6 +65,20 @@ func (m *Motion) Position() sim.Position {
 	return m.position
 }
 
+// SamplePosition follows the retained path without consuming movement that
+// command-driven encounter observers still need to process.
+func (e *Motion) SamplePosition(now time.Time) (sim.Position, error) {
+	e.mu.RLock()
+	movement := e.movement.Clone()
+	at := max(now.Sub(e.startedAt), movement.Snapshot().At)
+	e.mu.RUnlock()
+	position, err := movement.Position(at)
+	if err != nil {
+		return sim.Position{}, fmt.Errorf("motionSample: %w", err)
+	}
+	return position, nil
+}
+
 func (m *Motion) Revision() uint64 {
 	if m == nil {
 		return 0

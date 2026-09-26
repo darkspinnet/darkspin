@@ -14,6 +14,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/squad"
 	zonehero "github.com/darkspinnet/darkspin/server/zone/hero"
 	zonehorde "github.com/darkspinnet/darkspin/server/zone/horde"
+	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	zonesecurity "github.com/darkspinnet/darkspin/server/zone/security"
 )
@@ -87,6 +88,7 @@ type Snapshot struct {
 	Hordes               []zonehorde.Snapshot
 	Crystals             []Crystal
 	ExperienceAwards     []ExperienceAward
+	MissionEquipments    []zoneloot.EquipmentInventory
 	Security             zonesecurity.Snapshot
 	Objectives           []sim.ObjectiveSnapshot
 	ScriptUses           []game.CampaignScriptUse
@@ -113,6 +115,7 @@ type Repository interface {
 	Recorder
 	Load(context.Context, uint64) (Snapshot, bool, error)
 	Discard(uint64)
+	ForfeitEquipment(uint64, uint64)
 }
 
 func Validate(
@@ -182,6 +185,29 @@ func Validate(
 		}
 	}
 	npcsByObjectID := make(map[uint32]zonenpc.Snapshot, len(snapshot.NPCs))
+	equipmentUserIDs := make(map[uint64]struct{}, len(snapshot.MissionEquipments))
+	equipmentObjectIDs := make(map[uint32]struct{})
+	for _, inventory := range snapshot.MissionEquipments {
+		if _, isMember := memberIDs[inventory.UserID]; !isMember {
+			return errors.New("checkpoint loot owner unavailable")
+		}
+		if _, isDuplicate := equipmentUserIDs[inventory.UserID]; isDuplicate {
+			return errors.New("checkpoint loot owner duplicated")
+		}
+		equipmentUserIDs[inventory.UserID] = struct{}{}
+		if inventory.IsForfeited && len(inventory.Equipments) != 0 {
+			return errors.New("checkpoint forfeited loot retained")
+		}
+		for _, equipment := range inventory.Equipments {
+			if equipment.ObjectID == 0 || equipment.RigblockID == 0 {
+				return errors.New("checkpoint loot item invalid")
+			}
+			if _, isDuplicate := equipmentObjectIDs[equipment.ObjectID]; isDuplicate {
+				return errors.New("checkpoint loot item duplicated")
+			}
+			equipmentObjectIDs[equipment.ObjectID] = struct{}{}
+		}
+	}
 	for index, npc := range snapshot.NPCs {
 		objectID := npc.State.Plan.ObjectID
 		if objectID == 0 {

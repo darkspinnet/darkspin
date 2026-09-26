@@ -111,6 +111,8 @@ type GameplayCreature struct {
 	ClassType                  string
 	HitPoint                   float32
 	PowerPoint                 float32
+	MaximumHitPoint            float32
+	MaximumPowerPoint          float32
 	GearScore                  float32
 	FlattenedGearScore         float32
 	FunctionalItemCount        uint32
@@ -595,8 +597,10 @@ func gameplayCreature(
 		switch stat.Name {
 		case "HLTH":
 			selected.HitPoint = float32(stat.Maximum)
+			selected.MaximumHitPoint = selected.HitPoint
 		case "MANA":
 			selected.PowerPoint = float32(stat.Maximum)
+			selected.MaximumPowerPoint = selected.PowerPoint
 		case "CRTR":
 			selected.CriticalRating = float32(stat.Maximum)
 		case "PDEF":

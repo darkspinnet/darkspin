@@ -9,6 +9,10 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 )
 
+// Compatibility tuning: 33 * 0.15 on the integer [0,100) draw gives a 5%
+// base catalyst chance, independently of the equipment budget and party size.
+const campaignObeliskCrystalSourceAmount = int32(33)
+
 func (e *gameplayPeerSession) spawnHealthObeliskCapsules(
 	req game.CampaignScriptInvocation, sourceTime uint64, now time.Time,
 ) ([][]byte, []uint32, error) {

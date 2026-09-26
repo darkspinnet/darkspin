@@ -1953,10 +1953,12 @@ func loadHeroKits(
 					definitionsByAsset[active.assetName] = definition
 				}
 			}
-			// These custom callbacks expose a generic modifier-shaped registration,
-			// but their actual payload is owned by a recovered specialized runtime.
+			// These custom callbacks expose generic registrations, but their actual
+			// payload is owned by a recovered specialized runtime. CastEnrage's
+			// hitEffect otherwise classifies it as melee, losing its self animation,
+			// muzzle effect, and Enrage modifier identity.
 			switch active.assetName {
-			case "RootingPlague", "Sporogenesis", "FieldMedicSupport",
+			case "CastEnrage", "RootingPlague", "Sporogenesis", "FieldMedicSupport",
 				"Psistorm", "SleepingCloud", "SoulRavagerActive", "SpacetimeRandom2",
 				"Terrify", "TimeRavagerSupport", "TurretTrap", "RepulsionWave",
 				"GravityStorm", "QuantumBlink", "QuantumState",

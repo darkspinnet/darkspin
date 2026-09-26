@@ -844,6 +844,7 @@ func (e campaignEnrageState) EnrageTarget(
 		}
 		creature := e.session.binding.Creatures[creatureIndex]
 		creature.HitPoint = actor.MaximumHitPoint
+		creature.MaximumHitPoint = actor.MaximumHitPoint
 		creature.DamageProfile.PrimaryAttribute = creature.PetDamage
 		creature.DamageProfile.IsPrimaryAttributeFound = true
 		return abilityraknet.EnrageTarget{
@@ -1547,6 +1548,9 @@ func (s *gameplayPeerSession) syncZoneSquadCheckpoint() error {
 		}
 		s.binding.Creatures[creatureIndex].HitPoint = character.HitPoints
 		s.binding.Creatures[creatureIndex].PowerPoint = character.ManaPoints
+		maximum := s.characterResourceMaximums(creatureIndex)
+		s.binding.Creatures[creatureIndex].MaximumHitPoint = maximum.hitPoint
+		s.binding.Creatures[creatureIndex].MaximumPowerPoint = maximum.manaPoint
 	}
 	err := s.zone.UpdateMemberRoster(
 		s.binding.UserID, s.generation, s.binding.Roster(),
@@ -4557,17 +4561,30 @@ func (s *gameplayPeerSession) initializeCampaignResourceMaximums() {
 			continue
 		}
 		if s.maximumHitPoints[creatureIndex] <= 0 {
-			s.maximumHitPoints[creatureIndex] = creature.HitPoint
+			s.maximumHitPoints[creatureIndex] = creature.MaximumHitPoint
+			if s.maximumHitPoints[creatureIndex] <= 0 {
+				s.maximumHitPoints[creatureIndex] = creature.HitPoint
+			}
 			if s.maximumHitPoints[creatureIndex] <= 0 {
 				s.maximumHitPoints[creatureIndex] = campaignHeroResourceFallback
 			}
 		}
 		if s.maximumManaPoints[creatureIndex] <= 0 {
-			s.maximumManaPoints[creatureIndex] = creature.PowerPoint
+			s.maximumManaPoints[creatureIndex] = creature.MaximumPowerPoint
+			if s.maximumManaPoints[creatureIndex] <= 0 {
+				s.maximumManaPoints[creatureIndex] = creature.PowerPoint
+			}
 			if s.maximumManaPoints[creatureIndex] <= 0 {
 				s.maximumManaPoints[creatureIndex] = campaignHeroResourceFallback
 			}
 		}
+		maximum := s.characterResourceMaximums(uint32(creatureIndex))
+		if s.binding.Mode == game.ModeArena {
+			maximum.hitPoint = s.maximumHitPoints[creatureIndex]
+			maximum.manaPoint = s.maximumManaPoints[creatureIndex]
+		}
+		s.binding.Creatures[creatureIndex].MaximumHitPoint = maximum.hitPoint
+		s.binding.Creatures[creatureIndex].MaximumPowerPoint = maximum.manaPoint
 	}
 }
 
@@ -4844,10 +4861,8 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 		// some playable rigs return to their ordinary locomotion state when it
 		// follows SetAnimationState in the same ordered batch.
 		hitPackets = append(hitPackets, deathPackets...)
-		treePackets, treeErr := s.stopCampaignTreeOfLife()
-		if treeErr == nil {
-			hitPackets = append(hitPackets, treePackets...)
-		}
+		// Tree of Life owns its lifetime independently of the deployed hero.
+		// Mission teardown still cancels it with the other world effects.
 		passivePackets, passiveErr := s.stopCampaignSagePassive()
 		if passiveErr == nil {
 			hitPackets = append(hitPackets, passivePackets...)

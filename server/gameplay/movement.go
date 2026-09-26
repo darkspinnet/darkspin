@@ -248,33 +248,56 @@ func (s *gameplayPeerSession) collectCampaignTeleportContacts(
 	if err != nil {
 		return nil, fmt.Errorf("teleportOrb: %w", err)
 	}
-	if s.securityTransfer != nil ||
-		s.zone.Security() == nil {
+	contactPackets, err := s.observeSecurityTeleporter(game.Vec3(destination), destination, now, timestamp, orientation)
+	if err != nil {
+		return nil, fmt.Errorf("teleportContact: %w", err)
+	}
+	return append(packets, contactPackets...), nil
+}
+
+func (e *gameplayPeerSession) observeSecurityTeleporter(
+	previous game.Vec3, position raknet.Vector3, now time.Time,
+	timestamp uint64, orientation raknet.Quaternion,
+) ([][]byte, error) {
+	packets := make([][]byte, 0)
+	if e.securityTransfer != nil || e.zone == nil ||
+		e.zone.Security() == nil {
 		return packets, nil
 	}
-	threats := s.zone.SecurityThreats()
-	previous := game.Vec3{
-		X: destination.X, Y: destination.Y, Z: destination.Z,
+	threats := e.zone.SecurityThreats()
+	current := game.Vec3{
+		X: position.X, Y: position.Y, Z: position.Z,
 	}
-	decision, err := s.zone.Security().ObserveMovement(
+	decision, err := e.zone.Security().ObserveMovement(
 		zonesecurity.MovementRequest{
-			Previous: previous, Current: previous, Threats: threats,
+			Previous: previous, Current: current, Threats: threats,
+			FootprintRadius: e.deployedCampaignFootprintRadius(),
 		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("teleportSecurityObserve: %w", err)
+	}
+	if decision.IsDeactivation {
+		statePackets, stateErr := securityraknet.State(
+			decision.ObjectID, decision.Teleport, false, false,
+		)
+		if stateErr != nil {
+			e.zone.Security().RollbackDeactivation(decision.RouteIndex)
+			return nil, fmt.Errorf("teleportSecurityDeactivate: %w", stateErr)
+		}
+		return append(packets, statePackets...), nil
 	}
 	if decision.IsActivation {
 		activationPackets, marshalErr := securityraknet.State(
 			decision.ObjectID, decision.Teleport, true, true,
 		)
 		if marshalErr != nil {
-			s.zone.Security().CancelPresentation(decision.RouteIndex)
+			e.zone.Security().CancelPresentation(decision.RouteIndex)
 			return nil, fmt.Errorf(
 				"teleportSecurityActivationMarshal: %w", marshalErr,
 			)
 		}
-		commitErr := s.zone.Security().CommitPresentation(decision.RouteIndex)
+		commitErr := e.zone.Security().CommitPresentation(decision.RouteIndex)
 		if commitErr != nil {
 			return nil, fmt.Errorf(
 				"teleportSecurityActivationCommit: %w", commitErr,
@@ -288,9 +311,20 @@ func (s *gameplayPeerSession) collectCampaignTeleportContacts(
 	if !decision.IsTeleport {
 		return packets, nil
 	}
+	securityPackets, err := e.applySecurityTeleport(decision, now, timestamp, orientation)
+	if err != nil {
+		return nil, fmt.Errorf("teleportSecurityApply: %w", err)
+	}
+	return append(packets, securityPackets...), nil
+}
+
+func (e *gameplayPeerSession) applySecurityTeleport(
+	decision zonesecurity.MovementDecision, now time.Time,
+	timestamp uint64, orientation raknet.Quaternion,
+) ([][]byte, error) {
 	securityPackets, err := securityraknet.Teleport(
 		securityraknet.TeleportRequest{
-			ObjectID: s.deployedObjectID, Teleport: decision.Teleport,
+			ObjectID: e.deployedObjectID, Teleport: decision.Teleport,
 			Orientation: orientation, Timestamp: timestamp,
 		},
 	)
@@ -302,11 +336,11 @@ func (s *gameplayPeerSession) collectCampaignTeleportContacts(
 		Y: decision.Teleport.Destination.Y,
 		Z: decision.Teleport.Destination.Z,
 	}
-	err = s.teleportPlayer(now, securityDestination)
+	err = e.teleportPlayer(now, securityDestination)
 	if err != nil {
 		return nil, fmt.Errorf("teleportSecurityMove: %w", err)
 	}
-	companionPackets, err := s.teleportOwnedCompanions(
+	companionPackets, err := e.teleportOwnedCompanions(
 		game.Vec3(securityDestination),
 		game.Quaternion{
 			X: orientation.X, Y: orientation.Y,
@@ -316,13 +350,16 @@ func (s *gameplayPeerSession) collectCampaignTeleportContacts(
 	if err != nil {
 		return nil, fmt.Errorf("teleportSecurityCompanion: %w", err)
 	}
-	err = s.zone.Security().Advance(decision.RouteIndex)
+	err = e.zone.Security().Advance(decision.RouteIndex)
 	if err != nil {
 		return nil, fmt.Errorf("teleportSecurityAdvance: %w", err)
 	}
-	packets = append(packets, securityPackets...)
-	packets = append(packets, companionPackets...)
-	return packets, nil
+	e.playerMovementGoal = e.playerPosition
+	err = e.syncZoneHeroPose()
+	if err != nil {
+		return nil, fmt.Errorf("teleportSecurityPose: %w", err)
+	}
+	return append(securityPackets, companionPackets...), nil
 }
 
 type campaignMovementInterruption struct {
@@ -628,7 +665,6 @@ func (r campaignMovementCommandRuntime) handle(
 	encounterUnlockPackets := make([][]byte, 0)
 	securityTeleport := zonesecurity.Teleport{}
 	isSecurityTeleport := false
-	var securityTransfer *securityraknet.Transfer
 	securityTransferPackets := make([][]byte, 0)
 	securityActivationPackets := make([][]byte, 0)
 	securityDeactivationPackets := make([][]byte, 0)
@@ -701,6 +737,7 @@ func (r campaignMovementCommandRuntime) handle(
 		}
 		if isCampaignTunnel {
 			current = campaignTunnel.Destination
+			previous = current
 			publishedGoal = raknet.Vector3{
 				X: current.X, Y: current.Y, Z: current.Z,
 			}
@@ -835,6 +872,7 @@ func (r campaignMovementCommandRuntime) handle(
 			decision, observationErr := peerSession.zone.Security().ObserveMovement(
 				zonesecurity.MovementRequest{
 					Previous: previous, Current: current, Threats: threats,
+					FootprintRadius:  peerSession.deployedCampaignFootprintRadius(),
 					IsTransferActive: peerSession.securityTransfer != nil,
 				},
 			)
@@ -889,29 +927,25 @@ func (r campaignMovementCommandRuntime) handle(
 			if decision.IsTeleport {
 				securityTeleport = decision.Teleport
 				isSecurityTeleport = true
-				teleportProgram, compileErr := zonesecurity.CompileTeleport(
-					r.program.TeleporterModifier, securityTeleport,
+				securityTransferPackets, movementErr = peerSession.applySecurityTeleport(
+					decision, movementNow, packet.SourceTime, raknet.Quaternion{W: 1},
 				)
-				if compileErr != nil {
-					r.registry.mutex.Unlock()
-					return nil, fmt.Errorf("moveCampaignSecurityCompile: %w", compileErr)
-				}
-				securityTransfer, securityTransferPackets, movementErr =
-					securityraknet.NewTransfer(securityraknet.TransferRequest{
-						Program: teleportProgram, Pool: r.modifierPool,
-						ObjectID: command.Common.ObjectID,
-						Position: raknet.Vector3{
-							X: current.X, Y: current.Y, Z: current.Z,
-						},
-						Teleport:   securityTeleport,
-						RouteIndex: decision.RouteIndex,
-						SourceTime: packet.SourceTime,
-					})
 				if movementErr != nil {
 					r.registry.mutex.Unlock()
 					return nil, fmt.Errorf("moveCampaignSecurityTransfer: %w", movementErr)
 				}
-				peerSession.securityTransfer = securityTransfer
+				current = securityTeleport.Destination
+				publishedGoal = peerSession.playerPosition
+				aiPackets, followCount, followErr := r.registry.followPlayerAITeleporterLocked(
+					sessionKey, peerSession, game.CampaignTeleportRoute{
+						Source: securityTeleport.Source, Destination: securityTeleport.Destination,
+						IsSecurity: true, IsBoss: securityTeleport.IsBoss,
+					}, raknet.Quaternion{W: 1}, packet.SourceTime, movementNow,
+				)
+				securityTransferPackets = append(securityTransferPackets, aiPackets...)
+				if followErr != nil && r.logger != nil {
+					r.logger.Printf("RakNet security teleporter follow incomplete followers=%d: %v", followCount, followErr)
+				}
 			}
 		}
 		tutorialTeleporterPackets, isTutorialTeleport, movementErr =
@@ -995,33 +1029,6 @@ func (r campaignMovementCommandRuntime) handle(
 			return nil, fmt.Errorf("moveCampaignHordePublish: %w", err)
 		}
 	}
-	if securityTransfer != nil {
-		producers := r.security.Producers(
-			sessionKey, commandSession.generation, securityTransfer,
-		)
-		producers = r.registry.producerGuard.scheduledProducers(sessionKey, producers)
-		schedule := r.security.Failure(
-			sessionKey, commandSession.generation, securityTransfer,
-		)
-		var cancel raknet.CancelSchedule
-		if packet.ScheduleGroupResult != nil {
-			cancel, err = packet.ScheduleGroupResult(producers, schedule.Handle)
-		} else if packet.ScheduleGroup != nil {
-			cancel, err = packet.ScheduleGroup(producers)
-		} else {
-			err = errors.New("schedule unavailable")
-		}
-		if err != nil {
-			schedule.Handle(err)
-			r.logger.Printf("RakNet campaign security transfer rejected after schedule failure for %s: %v",
-				sessionKey, err)
-			securityTransfer = nil
-			securityTransferPackets = nil
-			isSecurityTeleport = false
-		} else {
-			securityTransfer.SetCancel(cancel)
-		}
-	}
 	populationFirstActionPlans, introductionObjectIDs :=
 		campaignPopulationFirstActionPlans(populationPlans, populationAggroPlans)
 	firstActionPlans := make(
@@ -1048,9 +1055,8 @@ func (r campaignMovementCommandRuntime) handle(
 	if err != nil {
 		return nil, fmt.Errorf("moveDNAPresentation: %w", err)
 	}
-	// Pad state and the initial transfer presentation are shared, even though
-	// movement itself has a separate projection. Delayed transfer steps are
-	// published by the producer guard after their delivery commits.
+	// Pad state and the instant transfer presentation are shared, even though
+	// movement itself has a separate projection.
 	teleportPackets := make([][]byte, 0)
 	teleportPackets = append(teleportPackets, securityDeactivationPackets...)
 	teleportPackets = append(teleportPackets, securityActivationPackets...)
