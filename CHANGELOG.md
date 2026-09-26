@@ -2,6 +2,7 @@
 
 ### 2026-09-26
 
+- Stop automatic Sync Snapshot capture from treating normal hero movement toward the server-issued goal as position divergence, and suppress repeat archives for an already captured object incident in the same session.
 - Add a private `/taunt` reply explaining that taunt animations were introduced in a newer Darkspore build than Darkspin supports, and correct its command-help listing.
 - Restore mission mouse-wheel zoom from a fixed distance to the native minimum through the mission's default distance, retaining the selected zoom while moving and switching heroes.
 - Restore Sage's Enrage self-cast animation and buff metadata, use the ally-cast animation for companions, and cap regeneration at the recipient's maximum health.

@@ -309,7 +309,11 @@ func (e *Service) detectNPCDriftRequests(
 		}
 		sample := newMovementSample(state, state.Sessions[0], npc.object, probe)
 		e.retainMovementLocked(sample)
-		if e.mode != ModeAuto {
+		// A hero's authoritative position is the origin of its current movement
+		// intent while the client advances the rendered root toward GoalPosition.
+		// Retain those samples for manual diagnosis, but do not treat normal
+		// client-side traversal as an automatic position divergence.
+		if e.mode != ModeAuto || npc.object.Kind == "hero" {
 			continue
 		}
 		key := movementIdentity(sample)

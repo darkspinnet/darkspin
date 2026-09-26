@@ -790,7 +790,9 @@ func (e *Service) resolveAutomaticIncidentLocked(fingerprint string, resolvedAt 
 	}
 	current.resolvedAt = resolvedAt
 	if current.state == automaticIncidentCaptured {
-		e.removeAutomaticIncidentLocked(fingerprint)
+		// Keep a captured fingerprint for the rest of its object identity. A
+		// brief recovery followed by another outlier should not create the same
+		// archive again after the global capture delay.
 		return
 	}
 	if current.state == automaticIncidentPending {
