@@ -20,6 +20,7 @@ type AreaBasicStartRequest struct {
 	HitDelay         time.Duration
 	ReleaseDelay     time.Duration
 	Cooldown         time.Duration
+	ChannelDuration  time.Duration
 }
 
 type AreaBasicStart struct {
@@ -38,12 +39,22 @@ type PointBlankImpactRequest struct {
 }
 
 func StartAreaBasic(req AreaBasicStartRequest) (AreaBasicStart, error) {
+	startTime := req.SourceTime
+	commitTime := req.SourceTime + uint64(req.HitDelay/time.Millisecond)
+	endTime := req.SourceTime + uint64(req.ReleaseDelay/time.Millisecond)
+	if req.ChannelDuration > 0 {
+		// Build 103 reads offsets 16/24 as channel start/end, just as for
+		// Lifeforce Siphon. First-hit timing alone instantly expires the bar.
+		startTime = commitTime
+		commitTime = startTime + uint64(req.ChannelDuration/time.Millisecond)
+		endTime = startTime + uint64(req.Cooldown/time.Millisecond)
+	}
 	acknowledge, err := raknet.MarshalApplication(raknet.ActionCommandResponseMessage{
 		SyncStamp: req.SyncStamp, ResponseType: raknet.ActionResponseAccepted,
 		ObjectID: req.AbilityID, AbilityIndex: req.AbilityIndex,
-		SourceStartMilliseconds:  req.SourceTime,
-		SourceCommitMilliseconds: req.SourceTime + uint64(req.HitDelay/time.Millisecond),
-		SourceEndMilliseconds:    req.SourceTime + uint64(req.ReleaseDelay/time.Millisecond),
+		SourceStartMilliseconds:  startTime,
+		SourceCommitMilliseconds: commitTime,
+		SourceEndMilliseconds:    endTime,
 		UserData:                 0xffffffff,
 	})
 	if err != nil {
@@ -64,7 +75,7 @@ func StartAreaBasic(req AreaBasicStartRequest) (AreaBasicStart, error) {
 		raknet.CooldownUpdateMessage{
 			ObjectID: req.SourceID, AbilityKey: uint64(req.AbilityID),
 			DurationMilliseconds:    req.Cooldown.Milliseconds(),
-			SourceStartMilliseconds: int64(req.SourceTime),
+			SourceStartMilliseconds: int64(startTime),
 		},
 	}
 	if req.MuzzleEffectName != "" {

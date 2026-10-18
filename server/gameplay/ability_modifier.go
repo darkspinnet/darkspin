@@ -473,7 +473,7 @@ func (r campaignAbilityCommandRuntime) handleHeroSelfModifier(
 	}
 
 	creatureIndex := peerSession.deployedCreatureIndex
-	creature := peerSession.binding.Creatures[creatureIndex]
+	creature := r.registry.projectPassiveCreature(peerSession, creatureIndex, req.startTime)
 	abilityRank := req.command.Ability.Rank
 	if abilityRank <= 0 {
 		abilityRank = 1
@@ -957,6 +957,13 @@ func (r campaignAbilityCommandRuntime) purgeHeroDebuffs(
 		}
 	}
 	if run := peerSession.campaignNPCFears[objectID]; run != nil {
+		if peerSession.deployedObjectID == objectID {
+			stopPackets, stopErr := peerSession.stopHeroFearMovement(r.now())
+			if stopErr != nil {
+				return nil, fmt.Errorf("heroFearStop: %w", stopErr)
+			}
+			packets = append(packets, stopPackets...)
+		}
 		if run.cancel != nil {
 			run.cancel()
 			run.cancel = nil

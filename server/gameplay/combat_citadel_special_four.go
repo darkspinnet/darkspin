@@ -255,7 +255,7 @@ func (r campaignNPCActionRuntime) produceCitadelSpecialFour(
 		return nil, true, errors.New("citadel ground slam profile unavailable")
 	}
 	slamPlan, slamErr := zonenpc.PlanAttackWithProfile(
-		enemy, target.ObjectID, target.Position, slamProfile, target.FootprintRadius,
+		enemy, target.ObjectID, target.Position, slamProfile, target.ActorFootprintRadius,
 	)
 	if timestamp >= state.nextSlamTimestamp && slamErr == nil {
 		previousState := state
@@ -279,14 +279,14 @@ func (r campaignNPCActionRuntime) produceCitadelSpecialFour(
 		return nil, true, errors.New("citadel piston punch profile unavailable")
 	}
 	punchPlan, punchErr := zonenpc.PlanAttackWithProfile(
-		enemy, target.ObjectID, target.Position, punchProfile, target.FootprintRadius,
+		enemy, target.ObjectID, target.Position, punchProfile, target.ActorFootprintRadius,
 	)
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
 	if punchErr != nil {
 		action, actionErr := campaignNPCActionWithProfile(
 			enemy.Plan, target.ObjectID, target.Position,
-			punchProfile, target.FootprintRadius,
+			punchProfile, target.ActorFootprintRadius,
 		)
 		if actionErr != nil || !action.IsPursuitNeeded {
 			return nil, true, nil

@@ -2,12 +2,14 @@ package npc
 
 import "time"
 
-const MutationAgentTransformDuration = time.Second
+const (
+	MutationAgentNounName          = "MutationAgent.Noun"
+	MutationAgentTransformDuration = time.Second
+)
 
-// MutationAgentActionProfile keeps the controller stationary while its
-// selected escort performs the authored transform. The population planner
-// retains a renderable escort body because MutationAgent.Noun has no render
-// record, while this attached hostile aura preserves its packaged presentation.
+// MutationAgentActionProfile supplies the agent's passive aura. Horde agents
+// receive their packaged smoke model from the spawn projection because the
+// noun has no ordinary render record.
 func MutationAgentActionProfile() ActionProfile {
 	return ActionProfile{
 		Family: ActionUnknown, AbilityName: "MutationAgentPassive",

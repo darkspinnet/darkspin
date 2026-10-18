@@ -1,6 +1,7 @@
 package gameplay
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -172,20 +173,13 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 	projectileRuns := make([]*abilityraknet.ProjectileRun, 0, len(projectileOffsets))
 	projectileSchedules := make([]campaignProjectileSchedule, 0, len(projectileOffsets))
 	immediatePackets := make([][]byte, 0, len(projectileOffsets)*2)
-	isMissileTempestHoming := isEnemyFound && peerSession.isMissileTempestHoming(
-		peerSession.deployedCreatureIndex, abilityStartTime,
-	)
-	missileTempestHomingDelay := time.Duration(0)
-	if isMissileTempestHoming {
-		missileTempestHomingDelay = time.Millisecond
-	}
 	for projectileIndex, projectileOffset := range projectileOffsets {
 		projectileObjectID := firstProjectileObjectID + uint32(projectileIndex)
 		projectileSource := campaignHeroProjectileSource(
 			actorPosition, facing, projectileOffset,
 		)
 		projectileTarget, projectileFacing := campaignProjectileSpreadTarget(
-			projectileSource, targetPosition, projectileAngles[projectileIndex],
+			actorPosition, projectileSource, targetPosition, projectileAngles[projectileIndex],
 		)
 		launchPosition := campaignProjectileLaunchPosition(
 			game.Vec3(projectileSource), game.Vec3(projectileTarget), actorFootprint,
@@ -194,7 +188,7 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 			launchPosition, game.Vec3(projectileTarget),
 		)
 		var flight *sim.ProjectileFlight
-		if !isElectronSphereRequest && !isMissileTempestHoming {
+		if !isElectronSphereRequest {
 			travelDistance = projectileDefinition.Distance
 			flight, err = sim.NewProjectileFlight(sim.ProjectileFlightInput{
 				Position: sim.Position(launchPosition),
@@ -260,7 +254,6 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 				},
 				FootprintRadius: actorFootprint,
 				CollisionDelay:  collisionDelay, IsDirectHit: isEnemyFound,
-				HomingDelay: missileTempestHomingDelay, IsHoming: isMissileTempestHoming,
 				IsCollisionExternallyDriven: true, Damage: projectilePlan.Damage.Maximum,
 				IsCollisionSampled: flight != nil,
 				TargetHitPoint:     targetHitPoint, ActorTeam: 1, SourceTime: packet.SourceTime,
@@ -298,6 +291,9 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 			binding: peerSession.binding, run: projectileRun,
 			isElectronSphere: isElectronSphereRequest,
 			flight:           flight, startedAt: abilityStartTime,
+			retirement: &campaignProjectileRetirement{
+				originalZone: peerSession.zone, generation: peerSession.generation, objectID: projectileObjectID, run: projectileRun,
+			},
 		})
 	}
 	err = peerSession.stopPlayerMovement(abilityStartTime)
@@ -308,7 +304,6 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 	}
 	movementPackets, marshalErr := marshalZonePlayerAttackPose(
 		command.Common.ObjectID, peerSession.playerPosition, facing, targetPosition,
-		targetObjectID,
 	)
 	if marshalErr != nil {
 		stopProjectileRuns(projectileRuns)
@@ -443,7 +438,8 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 		}
 	}
 	releaseStep := campaignProjectileReleaseStep{
-		registry: r.registry, sessionKey: sessionKey,
+		releaseReservation: releaseReservation,
+		registry:           r.registry, sessionKey: sessionKey,
 		generation: generation, sourceObjectID: command.Common.ObjectID,
 		timestamp: packet.SourceTime +
 			uint64(projectileDefinition.ReleaseDelay/time.Millisecond),
@@ -499,6 +495,9 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 		cooldownReservation: cooldownReservation,
 		releaseReservation:  releaseReservation,
 	}
+	for _, projectileSchedule := range projectileSchedules {
+		scheduleFailure.retirements = append(scheduleFailure.retirements, projectileSchedule.retirement)
+	}
 	var cancel raknet.CancelSchedule
 	if packet.ScheduleGroupResult != nil {
 		cancel, err = packet.ScheduleGroupResult(
@@ -512,8 +511,30 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 		scheduleFailure.rollbackAdmission()
 		return nil, fmt.Errorf("campaignProjectileSchedule: %w", err)
 	}
-	for _, projectileRun := range projectileRuns {
-		projectileRun.SetCancel(cancel)
+	r.registry.mutex.Lock()
+	current, isCurrentFound := r.registry.sessions[sessionKey]
+	isCurrent := isCurrentFound && current.generation == generation && current.zone == peerSession.zone
+	for _, projectileSchedule := range projectileSchedules {
+		if projectileSchedule.retirement.isRetired || projectileSchedule.retirement.isRetirementPending || current.sageAttacks[projectileSchedule.projectileObjectID] != projectileSchedule.run {
+			isCurrent = false
+		}
+	}
+	if isCurrent {
+		r.registry.queueCampaignProjectilePublicationLocked(projectileSchedules[0].retirement, sessionKey, immediatePackets)
+		for _, projectileSchedule := range projectileSchedules {
+			projectileSchedule.retirement.recordPublication(immediatePackets)
+			r.registry.admitCampaignProjectilePublicationLocked(projectileSchedule.retirement, sessionKey)
+			projectileSchedule.run.SetCancel(cancel)
+		}
+	}
+	r.registry.mutex.Unlock()
+	if !isCurrent {
+		if cancel != nil {
+			cancel()
+		}
+		scheduleFailure.handle(errors.New("projectile admission no longer current"))
+		scheduleFailure.rollbackAdmission()
+		return nil, nil
 	}
 	for _, projectileSchedule := range projectileSchedules {
 		r.logger.Printf(
@@ -532,7 +553,7 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 			facing.X, facing.Y, facing.Z,
 		)
 	}
-	startPackets := append(immediatePackets, cooldownPacket)
+	startPackets := [][]byte{cooldownPacket}
 	if len(manaPacket) != 0 {
 		startPackets = append(startPackets, manaPacket)
 	}

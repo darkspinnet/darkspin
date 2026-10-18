@@ -26,16 +26,25 @@ const NonPlayerAffixLimit = 6
 type nonPlayerClassAsset struct {
 	instanceID             uint32
 	nounName               string
+	attributeName          string
 	displayName            string
 	displayNameLocaleKey   string
 	description            string
 	descriptionLocaleKey   string
-	affixNames             []string
+	affixes                []NonPlayerClassAffix
 	challengeValue         int32
 	npcRank                int32
+	npcType                uint32
+	creatureType           uint32
+	dropTypes              []uint32
 	isTargetable           bool
 	isPlayerPet            bool
 	playerCountHealthScale float32
+	aggroRange             float32
+	alertRange             float32
+	dropAggroRange         float32
+	idleMovementSpeed      float32
+	baseCombatSpeed        float32
 	hitPoint               float32
 	powerPoint             float32
 	strength               float32
@@ -57,20 +66,30 @@ func writeNonPlayerClasses(ctx context.Context, transaction *sql.Tx, installPath
 	if err != nil {
 		return fmt.Errorf("packageStat: %w", err)
 	}
-	pkg, err := dbpf.NewReader(r, fi.Size())
+	pkg, err := importPackageReader(ctx, r, fi.Size())
 	if err != nil {
 		return fmt.Errorf("packageRead: %w", err)
 	}
+	nounNamesByInstance, nounReferences, err := readNonPlayerNounReferences(pkg)
+	if err != nil {
+		return fmt.Errorf("nounReferences: %w", err)
+	}
 	statement, err := transaction.PrepareContext(ctx, `
 		INSERT INTO non_player_class (
-			content_source_resource_id, instance_id, noun_name,
+			content_source_resource_id, instance_id, noun_name, class_attribute_resource_id,
 			display_name, display_name_locale_key, description, description_locale_key,
-			challenge_value, npc_rank,
+			challenge_value, npc_rank, npc_type, creature_type,
 			is_targetable, is_player_pet, player_count_health_scale,
+			aggro_range, alert_range, drop_aggro_range,
+			idle_movement_speed, base_combat_speed,
 			hit_point, power_point,
 			strength, dexterity, mind, dodge_rating, resist_rating, critical_rating
 		)
-		SELECT id, instance_id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		SELECT id, instance_id, ?, (
+			SELECT attribute.id FROM content_source_resource AS attribute
+			WHERE attribute.content_source_package_id=content_source_resource.content_source_package_id
+			  AND attribute.type_id=? AND attribute.group_id=? AND attribute.instance_id=?
+		), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		FROM content_source_resource
 		WHERE content_source_package_id=(
 			SELECT id FROM content_source_package WHERE package_name='AssetData_Binary.package'
@@ -81,9 +100,9 @@ func writeNonPlayerClasses(ctx context.Context, transaction *sql.Tx, installPath
 	defer statement.Close()
 	affixStatement, err := transaction.PrepareContext(ctx, `
 		INSERT INTO non_player_class_affix (
-			non_player_class_resource_id, ordinal, asset_name
+			non_player_class_resource_id, ordinal, asset_name, minimum_difficulty, maximum_difficulty
 		)
-		SELECT id, ?, ? FROM content_source_resource
+		SELECT id, ?, ?, ?, ? FROM content_source_resource
 		WHERE content_source_package_id=(
 			SELECT id FROM content_source_package WHERE package_name='AssetData_Binary.package'
 		) AND type_id=? AND group_id=? AND instance_id=?`)
@@ -91,7 +110,17 @@ func writeNonPlayerClasses(ctx context.Context, transaction *sql.Tx, installPath
 		return fmt.Errorf("affixPrepare: %w", err)
 	}
 	defer affixStatement.Close()
-	attributeByInstance := make(map[uint32]nonPlayerClassAsset)
+	dropStatement, err := transaction.PrepareContext(ctx, `
+		INSERT INTO non_player_class_drop_type (non_player_class_resource_id, ordinal, drop_type)
+		SELECT id, ?, ? FROM content_source_resource
+		WHERE content_source_package_id=(
+			SELECT id FROM content_source_package WHERE package_name='AssetData_Binary.package'
+		) AND type_id=? AND group_id=? AND instance_id=?`)
+	if err != nil {
+		return fmt.Errorf("dropPrepare: %w", err)
+	}
+	defer dropStatement.Close()
+	attributesByInstance := make(map[uint32]nonPlayerClassAsset)
 	for ordinal, entry := range pkg.Entries {
 		if entry.Type != combatAttributeAssetType || entry.Group != nonPlayerClassAssetGroup {
 			continue
@@ -108,7 +137,7 @@ func writeNonPlayerClasses(ctx context.Context, transaction *sql.Tx, installPath
 		if decodeErr != nil {
 			return fmt.Errorf("payloadDecode[%d]: %w", ordinal, decodeErr)
 		}
-		attributeByInstance[class.instanceID] = class
+		attributesByInstance[class.instanceID] = class
 	}
 	for ordinal, entry := range pkg.Entries {
 		if entry.Type != nonPlayerClassAssetType || entry.Group != nonPlayerClassAssetGroup {
@@ -126,22 +155,34 @@ func writeNonPlayerClasses(ctx context.Context, transaction *sql.Tx, installPath
 		if decodeErr != nil {
 			return fmt.Errorf("classDecode[%d]: %w", ordinal, decodeErr)
 		}
-		attributes, isAttributeFound := attributeByInstance[class.instanceID]
-		if isAttributeFound {
-			class.hitPoint = attributes.hitPoint
-			class.powerPoint = attributes.powerPoint
-			class.strength = attributes.strength
-			class.dexterity = attributes.dexterity
-			class.mind = attributes.mind
-			class.dodgeRating = attributes.dodgeRating
-			class.resistRating = attributes.resistRating
-			class.criticalRating = attributes.criticalRating
+		class.nounName = nounNamesByInstance[class.instanceID]
+		if class.nounName == "" {
+			return fmt.Errorf("classNoun[%d]: missing %#x", ordinal, class.instanceID)
 		}
+		attributeInstanceID := hashID(strings.TrimSuffix(class.attributeName, ".ClassAttributes"))
+		attributes, isAttributeFound := attributesByInstance[attributeInstanceID]
+		if !isAttributeFound {
+			return fmt.Errorf("attributeMissing[%d]: %s", ordinal, class.attributeName)
+		}
+		class.hitPoint = attributes.hitPoint
+		class.powerPoint = attributes.powerPoint
+		class.strength = attributes.strength
+		class.dexterity = attributes.dexterity
+		class.mind = attributes.mind
+		class.dodgeRating = attributes.dodgeRating
+		class.resistRating = attributes.resistRating
+		class.criticalRating = attributes.criticalRating
+		class.idleMovementSpeed = attributes.idleMovementSpeed
+		class.baseCombatSpeed = attributes.baseCombatSpeed
 		result, insertErr := statement.ExecContext(
-			ctx, class.nounName, class.displayName, class.displayNameLocaleKey,
+			ctx, class.nounName, int64(combatAttributeAssetType),
+			int64(nonPlayerClassAssetGroup), int64(attributeInstanceID),
+			class.displayName, class.displayNameLocaleKey,
 			class.description, class.descriptionLocaleKey,
-			class.challengeValue, class.npcRank, class.isTargetable,
+			class.challengeValue, class.npcRank, class.npcType, class.creatureType, class.isTargetable,
 			class.isPlayerPet, class.playerCountHealthScale,
+			class.aggroRange, class.alertRange, class.dropAggroRange,
+			class.idleMovementSpeed, class.baseCombatSpeed,
 			class.hitPoint, class.powerPoint, class.strength, class.dexterity, class.mind,
 			class.dodgeRating, class.resistRating, class.criticalRating,
 			int64(entry.Type), int64(entry.Group), int64(entry.Instance),
@@ -156,9 +197,9 @@ func writeNonPlayerClasses(ctx context.Context, transaction *sql.Tx, installPath
 		if count != 1 {
 			return fmt.Errorf("insertCount[%d]: got %d", ordinal, count)
 		}
-		for affixIndex, affixName := range class.affixNames {
+		for affixIndex, affix := range class.affixes {
 			affixResult, affixErr := affixStatement.ExecContext(
-				ctx, affixIndex, affixName,
+				ctx, affixIndex, affix.AssetName, affix.MinimumDifficulty, affix.MaximumDifficulty,
 				int64(entry.Type), int64(entry.Group), int64(entry.Instance),
 			)
 			if affixErr != nil {
@@ -174,6 +215,36 @@ func writeNonPlayerClasses(ctx context.Context, transaction *sql.Tx, installPath
 				)
 			}
 		}
+		for dropIndex, dropType := range class.dropTypes {
+			dropResult, dropErr := dropStatement.ExecContext(ctx, dropIndex, dropType,
+				int64(entry.Type), int64(entry.Group), int64(entry.Instance))
+			if dropErr != nil {
+				return fmt.Errorf("dropInsert[%d:%d]: %w", ordinal, dropIndex, dropErr)
+			}
+			dropCount, countErr := dropResult.RowsAffected()
+			if countErr != nil {
+				return fmt.Errorf("dropCount[%d:%d]: %w", ordinal, dropIndex, countErr)
+			}
+			if dropCount != 1 {
+				return fmt.Errorf("dropCount[%d:%d]: got %d", ordinal, dropIndex, dropCount)
+			}
+		}
+	}
+	err = writeNPCAffixes(ctx, transaction, pkg)
+	if err != nil {
+		return fmt.Errorf("npcAffixWrite: %w", err)
+	}
+	err = writeNonPlayerNounReferences(ctx, transaction, nounReferences)
+	if err != nil {
+		return fmt.Errorf("nounInsert: %w", err)
+	}
+	err = writeNounSpawnExtents(ctx, transaction, pkg, nounNamesByInstance)
+	if err != nil {
+		return fmt.Errorf("spawnExtentWrite: %w", err)
+	}
+	err = writeNounNavigations(ctx, transaction, pkg)
+	if err != nil {
+		return fmt.Errorf("nounNavigationWrite: %w", err)
 	}
 	return nil
 }
@@ -202,6 +273,14 @@ func decodeNonPlayerClass(entry dbpf.Entry, payload []byte) (nonPlayerClassAsset
 		playerCountHealthScale < 0 {
 		return nonPlayerClassAsset{}, errors.New("player count health scale invalid")
 	}
+	aggroRange := math.Float32frombits(binary.LittleEndian.Uint32(payload[0x38:0x3c]))
+	alertRange := math.Float32frombits(binary.LittleEndian.Uint32(payload[0x3c:0x40]))
+	dropAggroRange := math.Float32frombits(binary.LittleEndian.Uint32(payload[0x40:0x44]))
+	for _, radius := range []float32{aggroRange, alertRange, dropAggroRange} {
+		if math.IsNaN(float64(radius)) || math.IsInf(float64(radius), 0) || radius < 0 {
+			return nonPlayerClassAsset{}, errors.New("non-player awareness range invalid")
+		}
+	}
 	challengeValue := int32(binary.LittleEndian.Uint32(payload[0x24:0x28]))
 	npcRank := int32(binary.LittleEndian.Uint32(payload[0x48:0x4c]))
 	if challengeValue < 0 || npcRank < 0 {
@@ -214,91 +293,65 @@ func decodeNonPlayerClass(entry dbpf.Entry, payload []byte) (nonPlayerClassAsset
 	metadata.instanceID = uint32(entry.Instance)
 	metadata.challengeValue = challengeValue
 	metadata.npcRank = npcRank
+	metadata.npcType = binary.LittleEndian.Uint32(payload[0x44:0x48])
+	metadata.creatureType = binary.LittleEndian.Uint32(payload[0x04:0x08])
+	if metadata.creatureType > 5 {
+		return nonPlayerClassAsset{}, fmt.Errorf("creatureType: %d", metadata.creatureType)
+	}
 	metadata.isTargetable = isTargetable
 	metadata.isPlayerPet = isPlayerPet
 	metadata.playerCountHealthScale = playerCountHealthScale
+	metadata.aggroRange = aggroRange
+	metadata.alertRange = alertRange
+	metadata.dropAggroRange = dropAggroRange
 	return metadata, nil
 }
 
-func decodeNonPlayerClassMetadata(payload []byte) (nonPlayerClassAsset, error) {
-	const classSuffix = ".ClassAttributes"
-	firstMetadata, offset, err := readNonPlayerClassString(payload, nonPlayerClassPrefixSize)
-	if err != nil {
-		return nonPlayerClassAsset{}, fmt.Errorf("firstMetadata: %w", err)
+// The packaged pointer is a runtime address, not a file offset. The raw
+// values remain in the serialized tail; prefer its suffix when zeros overlap.
+func decodeNonPlayerDropTypes(payload []byte) ([]uint32, error) {
+	count := int(binary.LittleEndian.Uint32(payload[0x2c:0x30]))
+	mask := binary.LittleEndian.Uint32(payload[0x30:0x34])
+	if count == 0 {
+		if mask != 0 && mask != math.MaxUint32 {
+			return nil, fmt.Errorf("emptyMask: %d", mask)
+		}
+		return nil, nil
 	}
-	displayName := ""
-	displayReference := ""
-	className := ""
-	if strings.HasSuffix(firstMetadata, classSuffix) {
-		className = firstMetadata
-	} else if strings.HasPrefix(firstMetadata, "AssetStrings!") {
-		displayReference = firstMetadata
-		className, offset, err = readNonPlayerClassString(payload, offset)
-		if err != nil {
-			return nonPlayerClassAsset{}, fmt.Errorf("className: %w", err)
-		}
-	} else {
-		displayName = firstMetadata
-		classCandidate, nextOffset, classErr := readNonPlayerClassString(payload, offset)
-		if classErr != nil {
-			return nonPlayerClassAsset{}, fmt.Errorf("classCandidate: %w", classErr)
-		}
-		offset = nextOffset
-		if strings.HasPrefix(classCandidate, "AssetStrings!") {
-			displayReference = classCandidate
-			className, offset, err = readNonPlayerClassString(payload, offset)
-			if err != nil {
-				return nonPlayerClassAsset{}, fmt.Errorf("className: %w", err)
+	if count > 16 || len(payload)-nonPlayerClassPrefixSize < count*4 {
+		return nil, fmt.Errorf("count: %d", count)
+	}
+	var matches []uint32
+	matchCount := 0
+	var suffixMatches []uint32
+	for offset := nonPlayerClassPrefixSize; offset+count*4 <= len(payload); offset++ {
+		dropTypes := make([]uint32, 0, count)
+		combined := uint32(0)
+		for index := range count {
+			dropType := binary.LittleEndian.Uint32(payload[offset+index*4:])
+			if dropType != 0 && dropType != 1 && dropType != 2 && dropType != 4 &&
+				dropType != 8 && dropType != 16 {
+				break
 			}
-		} else {
-			className = classCandidate
+			dropTypes = append(dropTypes, dropType)
+			combined |= dropType
+		}
+		if len(dropTypes) != count || combined != mask {
+			continue
+		}
+		matches = dropTypes
+		matchCount++
+		if offset+count*4 == len(payload) {
+			suffixMatches = dropTypes
 		}
 	}
-	description := ""
-	descriptionReference := ""
-	if offset < len(payload) && payload[offset] >= 0x20 && payload[offset] <= 0x7e {
-		description, offset, err = readNonPlayerClassString(payload, offset)
-		if err != nil {
-			return nonPlayerClassAsset{}, fmt.Errorf("description: %w", err)
-		}
-		if offset < len(payload) && strings.HasPrefix(
-			string(payload[offset:]), "AssetStrings!",
-		) {
-			descriptionReference, _, err = readNonPlayerClassString(payload, offset)
-			if err != nil {
-				return nonPlayerClassAsset{}, fmt.Errorf("descriptionReference: %w", err)
-			}
-		}
+	if matchCount > 1 && suffixMatches != nil {
+		return suffixMatches, nil
 	}
-	if !strings.HasSuffix(className, classSuffix) {
-		return nonPlayerClassAsset{}, fmt.Errorf("className: invalid %q", className)
+	if matchCount != 1 {
+		return nil, fmt.Errorf("matchCount: %d for count %d mask %d", matchCount, count, mask)
 	}
-	displayNameLocaleKey := ""
-	if displayReference != "" {
-		displayNameLocaleKey, err = nonPlayerLocaleKey(displayReference)
-		if err != nil {
-			return nonPlayerClassAsset{}, fmt.Errorf("displayKey: %w", err)
-		}
-	}
-	descriptionLocaleKey := ""
-	if descriptionReference != "" {
-		descriptionLocaleKey, err = nonPlayerLocaleKey(descriptionReference)
-		if err != nil {
-			return nonPlayerClassAsset{}, fmt.Errorf("descriptionKey: %w", err)
-		}
-	}
-	affixNames := nonPlayerAffixNames(payload)
-	if len(affixNames) > NonPlayerAffixLimit {
-		return nonPlayerClassAsset{}, fmt.Errorf(
-			"affixCount: got %d, want <=%d", len(affixNames), NonPlayerAffixLimit,
-		)
-	}
-	return nonPlayerClassAsset{
-		nounName:    strings.TrimSuffix(className, classSuffix) + ".Noun",
-		displayName: displayName, displayNameLocaleKey: displayNameLocaleKey,
-		description: description, descriptionLocaleKey: descriptionLocaleKey,
-		affixNames: affixNames,
-	}, nil
+	return matches, nil
 }
 
 func readNonPlayerClassString(payload []byte, offset int) (string, int, error) {
@@ -335,29 +388,6 @@ func nonPlayerLocaleKey(reference string) (string, error) {
 	return key, nil
 }
 
-func nonPlayerAffixNames(payload []byte) []string {
-	affixNames := make([]string, 0, 2)
-	for offset := 0; offset < len(payload); {
-		if payload[offset] < 0x20 || payload[offset] > 0x7e {
-			offset++
-			continue
-		}
-		end := offset
-		for end < len(payload) && payload[end] >= 0x20 && payload[end] <= 0x7e {
-			end++
-		}
-		if end < len(payload) && payload[end] == 0 {
-			candidate := string(payload[offset:end])
-			if strings.HasSuffix(candidate, ".NPCAffix") &&
-				isNonPlayerAffixName(candidate) {
-				affixNames = append(affixNames, candidate)
-			}
-		}
-		offset = max(end+1, offset+1)
-	}
-	return affixNames
-}
-
 func isNonPlayerAffixName(name string) bool {
 	stem := strings.TrimSuffix(name, ".NPCAffix")
 	if stem == "" {
@@ -385,15 +415,19 @@ func decodeClassAttributes(entry dbpf.Entry, payload []byte) (nonPlayerClassAsse
 	asset := nonPlayerClassAsset{
 		instanceID: uint32(entry.Instance), hitPoint: field(0), powerPoint: field(1),
 		strength: field(2), dexterity: field(3), mind: field(4),
-		dodgeRating:    field(5) + field(3)*6,
-		resistRating:   field(7) + field(4)*6,
-		criticalRating: field(8) + field(3)*4,
+		dodgeRating:       field(5) + field(3)*6,
+		resistRating:      field(7) + field(4)*6,
+		criticalRating:    field(8) + field(3)*4,
+		idleMovementSpeed: field(10),
+		baseCombatSpeed:   field(9),
 	}
 	for name, stat := range map[string]float32{
 		"hitPoint": asset.hitPoint, "powerPoint": asset.powerPoint,
 		"strength": asset.strength, "dexterity": asset.dexterity, "mind": asset.mind,
 		"dodgeRating": asset.dodgeRating, "resistRating": asset.resistRating,
-		"criticalRating": asset.criticalRating,
+		"criticalRating":    asset.criticalRating,
+		"idleMovementSpeed": asset.idleMovementSpeed,
+		"baseCombatSpeed":   asset.baseCombatSpeed,
 	} {
 		if math.IsNaN(float64(stat)) || math.IsInf(float64(stat), 0) || stat < 0 {
 			return nonPlayerClassAsset{}, fmt.Errorf("%s: invalid", name)

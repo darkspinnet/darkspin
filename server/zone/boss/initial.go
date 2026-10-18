@@ -18,11 +18,13 @@ import (
 const (
 	InitialMarkerSetName   = "zelems_1_design_spawners.Markerset"
 	InitialTriggerCallback = "nTutorial_SoloSupportUnlockClient.main"
-	InitialArmingDelay     = 2 * time.Second
+	// The native delay after ActivateHordeSpawn is not recovered. Immediate
+	// local admission is a separate server policy, not a script wait.
+	InitialAdmissionDelay  = time.Duration(0)
 	InitialSecondWaveDelay = 2 * time.Second
 )
 
-var ErrSecondHordeIncomplete = errors.New("boss order: second horde incomplete")
+var ErrHordeActive = errors.New("boss order: horde still active")
 
 func SelectInitialLeader(
 	entries []game.CampaignDirectorEntry, chainLevelIndex uint32,
@@ -68,12 +70,18 @@ func PlanInitialEncounter(
 	if err != nil {
 		return nil, firstObjectID, fmt.Errorf("bossMarkers: %w", err)
 	}
-	specialEntry := zonepopulation.PoolEntries(director, "special")
-	agentEntry := eligibleInitialAgents(director)
-	if len(specialEntry) == 0 || len(agentEntry) == 0 {
+	addMarker = expandOpeningMarkers(addMarker, director.BossSpawnRules.Resolved().OpeningAddsPerAnchor)
+	if uint32(len(addMarker)+1) > zoneobject.ProjectileIDStart-firstObjectID {
+		return nil, firstObjectID, errors.New("boss plan: object IDs exhausted")
+	}
+	// Named captains belong to the boss roster, not the lieutenant pool used
+	// for ordinary population. Use the same prepared roster as admission audit.
+	leaderEntries := NamedBossEntries(director, chainLevelIndex)
+	agentEntry := bossAddEntries(director)
+	if len(agentEntry) == 0 {
 		return nil, firstObjectID, errors.New("boss plan: empty pool")
 	}
-	leaderEntry, err := SelectInitialLeader(specialEntry, chainLevelIndex)
+	leaderEntry, err := SelectInitialLeader(leaderEntries, chainLevelIndex)
 	if err != nil {
 		return nil, firstObjectID, fmt.Errorf("boss plan leader: %w", err)
 	}
@@ -93,11 +101,13 @@ func PlanInitialEncounter(
 		NPCProfile:    leaderEntry.NPCProfile,
 		BossIdentity:  bossIdentity,
 	}}
-	startIndex := int(
-		(gameID ^ bossMarker.MarkerID) % uint32(len(agentEntry)),
-	)
+	random := initialAddRandom(director, gameID, bossMarker.MarkerID, 1)
 	for index, marker := range addMarker {
-		entry := agentEntry[(startIndex+index)%len(agentEntry)]
+		entryIndex, choiceErr := random.Index(uint32(len(agentEntry)))
+		if choiceErr != nil {
+			return nil, firstObjectID, fmt.Errorf("bossAddChoice[%d]: %w", index, choiceErr)
+		}
+		entry := agentEntry[entryIndex]
 		plans = append(plans, zonenpc.SpawnPlan{
 			ObjectID: firstObjectID + 1 + uint32(index),
 			NounName: entry.NounName, Position: marker.Position,
@@ -126,21 +136,31 @@ func PlanInitialSecondWave(
 	if err != nil {
 		return nil, firstObjectID, fmt.Errorf("bossSecondMarkers: %w", err)
 	}
-	agentEntry := eligibleInitialAgents(director)
+	agentEntry := bossAddEntries(director)
 	if len(agentEntry) == 0 {
 		return nil, firstObjectID, errors.New("boss second plan: empty pool")
 	}
-	startIndex := int(
-		(gameID ^ publication.TriggerMarkerID ^ 0x206) %
-			uint32(len(agentEntry)),
-	)
-	plans := make([]zonenpc.SpawnPlan, 0, 2)
-	for index := 0; index < 2; index++ {
-		entry := agentEntry[(startIndex+index)%len(agentEntry)]
+	random := initialAddRandom(director, gameID, publication.TriggerMarkerID, 2)
+	addCount := int(director.BossSpawnRules.Resolved().InitialBossAddCount)
+	if uint32(addCount) > zoneobject.ProjectileIDStart-firstObjectID {
+		return nil, firstObjectID, errors.New("boss second plan: object IDs exhausted")
+	}
+	plans := make([]zonenpc.SpawnPlan, 0, addCount)
+	for index := 0; index < addCount; index++ {
+		marker := addMarker[index%len(addMarker)]
+		positions := zonepopulation.GroupPositions(
+			[]game.Vec3{marker.Position}, (addCount+len(addMarker)-1)/len(addMarker),
+		)
+		marker.Position = positions[index/len(addMarker)]
+		entryIndex, choiceErr := random.Index(uint32(len(agentEntry)))
+		if choiceErr != nil {
+			return nil, firstObjectID, fmt.Errorf("bossSecondChoice[%d]: %w", index, choiceErr)
+		}
+		entry := agentEntry[entryIndex]
 		plans = append(plans, zonenpc.SpawnPlan{
 			ObjectID: firstObjectID + uint32(index),
-			NounName: entry.NounName, Position: addMarker[index].Position,
-			Rotation:      addMarker[index].Rotation,
+			NounName: entry.NounName, Position: marker.Position,
+			Rotation:      marker.Rotation,
 			LocusID:       publication.TriggerMarkerID,
 			Kind:          sim.DirectorLocusBoss,
 			MarkerSetName: publication.MarkerSetName,
@@ -161,13 +181,7 @@ func InitialDeveloperPublication(
 			continue
 		}
 		bossMarkerSet = markerSet
-		for _, marker := range markerSet.Markers {
-			if strings.EqualFold(
-				marker.NounName, "SpawnPoint_DirectorBoss.Noun",
-			) {
-				bossMarker = marker
-			}
-		}
+		bossMarker = initialBossAnchor(markerSet)
 		for _, trigger := range markerSet.Triggers {
 			for _, event := range trigger.Events {
 				if event.CallbackName != InitialTriggerCallback {
@@ -201,18 +215,28 @@ func InitialDeveloperPublication(
 
 func ValidateInitialOrder(hordeSession *zonehorde.Session) error {
 	if hordeSession == nil {
-		return ErrSecondHordeIncomplete
+		return errors.New("boss horde state unavailable")
 	}
-	if hordeSession.IsComplete("zelems_1_Ai_Horde_2.Markerset") {
-		return nil
-	}
-	// A first-clear route can enter the final arena without intersecting the
-	// tiny Horde 2 trigger sphere. Do not leave the authored support boundary
-	// retrying forever after the earlier horde has conclusively completed.
-	if !hordeSession.IsComplete("zelems_1_Ai_Horde_1.Markerset") {
-		return ErrSecondHordeIncomplete
+	// Hordes are alternatives, not mandatory predecessors of the boss. Only
+	// an encounter already in progress owns the route; absent/untriggered
+	// hordes impose no completion requirement on the final arena trigger.
+	if hordeSession.IsActive() {
+		return ErrHordeActive
 	}
 	return nil
+}
+
+// Encounter streams are deliberately independent of the native layout draws.
+// Phase/marker salts are server policy; they do not claim to reproduce the
+// original director's unrecovered challenge-budget call sequence.
+func initialAddRandom(
+	director game.CampaignDirector, fallbackSeed, markerID, waveOrdinal uint32,
+) *sim.SimulatorRandom {
+	seed := fallbackSeed
+	if director.IsInitialLayoutSelected {
+		seed = director.MapVariantSeed
+	}
+	return sim.NewSimulatorRandom(seed ^ markerID ^ waveOrdinal*0x103 ^ 0x424f5353)
 }
 
 func initialMarkers(
@@ -225,14 +249,7 @@ func initialMarkers(
 			!strings.EqualFold(markerSet.Name, publication.MarkerSetName) {
 			continue
 		}
-		for _, marker := range markerSet.Markers {
-			switch {
-			case strings.EqualFold(
-				marker.NounName, "SpawnPoint_DirectorBoss.Noun",
-			):
-				bossMarker = marker
-			}
-		}
+		bossMarker = initialBossAnchor(markerSet)
 	}
 	addMarker, err := initialAddMarkers(director, publication)
 	if err != nil {
@@ -245,6 +262,29 @@ func initialMarkers(
 			errors.New("incomplete")
 	}
 	return bossMarker, addMarker, nil
+}
+
+// The authored boss anchor also owns a trigger volume. The content loader
+// retains that placement in Triggers rather than Markers; both roles still
+// refer to the same spawn position and rotation.
+func initialBossAnchor(markerSet game.CampaignDirectorMarkerSet) game.CampaignDirectorMarker {
+	for _, marker := range markerSet.Markers {
+		if strings.EqualFold(marker.NounName, "SpawnPoint_DirectorBoss.Noun") {
+			return marker
+		}
+	}
+	for _, trigger := range markerSet.Triggers {
+		if !strings.EqualFold(trigger.NounName, "SpawnPoint_DirectorBoss.Noun") {
+			continue
+		}
+		return game.CampaignDirectorMarker{
+			Ordinal: trigger.Ordinal, MarkerID: trigger.MarkerID,
+			MarkerSetName: markerSet.Name, Name: trigger.Name,
+			NounName: trigger.NounName, Position: trigger.Position,
+			Rotation: trigger.Rotation,
+		}
+	}
+	return game.CampaignDirectorMarker{}
 }
 
 func initialAddMarkers(
@@ -276,21 +316,6 @@ func initialAddMarkers(
 		},
 	)
 	return addMarker, nil
-}
-
-func eligibleInitialAgents(
-	director game.CampaignDirector,
-) []game.CampaignDirectorEntry {
-	authoredEntry := zonepopulation.PoolEntries(director, "agent")
-	eligibleEntry := make([]game.CampaignDirectorEntry, 0, len(authoredEntry))
-	for _, entry := range authoredEntry {
-		if !entry.IsHordeLegal || entry.NounName == "" ||
-			!entry.NPCProfile.IsKnown {
-			continue
-		}
-		eligibleEntry = append(eligibleEntry, entry)
-	}
-	return eligibleEntry
 }
 
 func isInitialAddMarker(marker game.CampaignDirectorMarker) bool {

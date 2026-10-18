@@ -43,6 +43,13 @@ func Create(plans []zonebarrier.Plan) ([][]byte, error) {
 			return nil, fmt.Errorf("updateMarshal[%d]: %w", index, err)
 		}
 		packets = append(packets, createPacket, updatePacket)
+		closedPacket, closeErr := raknet.MarshalApplication(raknet.SetObjectGFXStateMessage{
+			ObjectID: object.ObjectID, State: util.HashID("closed"), Timestamp: 1,
+		})
+		if closeErr != nil {
+			return nil, fmt.Errorf("closeMarshal[%d]: %w", index, closeErr)
+		}
+		packets = append(packets, closedPacket)
 	}
 	return packets, nil
 }

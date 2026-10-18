@@ -7,11 +7,16 @@ import (
 	"strings"
 	"sync"
 
+	contentstore "github.com/darkspinnet/darkspin/content/sqlite"
 	"github.com/darkspinnet/darkspin/server/navigation"
 )
 
 type levelNavigationStore interface {
 	LevelNavigation(context.Context, string) ([]byte, error)
+}
+
+type navigationTuningStore interface {
+	NavigationTuning(context.Context) ([]contentstore.NavigationTuningRow, error)
 }
 
 type Source struct {
@@ -47,6 +52,27 @@ func (s *Source) LoadCampaignNavigation(ctx context.Context, levelName string) (
 	mesh, err := navigation.ParseBFX(data)
 	if err != nil {
 		return nil, fmt.Errorf("navigationParse: %w", err)
+	}
+	tuningStore, isAvailable := s.store.(navigationTuningStore)
+	if !isAvailable {
+		return nil, errors.New("navigation tuning source unavailable")
+	}
+	rows, err := tuningStore.NavigationTuning(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("navigationTuning: %w", err)
+	}
+	tunings := make([]navigation.LayerTuning, 0, len(rows))
+	for _, row := range rows {
+		if row.Ordinal < 0 || row.Ordinal > 255 {
+			return nil, errors.New("navigation tuning ordinal invalid")
+		}
+		tunings = append(tunings, navigation.LayerTuning{
+			Ordinal: uint8(row.Ordinal), AgentRadius: row.AgentRadius,
+		})
+	}
+	err = mesh.AttachTuning(tunings)
+	if err != nil {
+		return nil, fmt.Errorf("navigationAttach: %w", err)
 	}
 	s.mutex.Lock()
 	cached = s.meshesByLevel[levelKey]

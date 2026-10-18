@@ -15,30 +15,38 @@ import (
 
 const lootAssetPackage = "AssetData_Binary.package"
 
+// Includes the 120 weapon definitions recovered from prefixed identity strings.
+const build103LootRigblockCount = 2408
+
 // LootRigblock is the immutable profile-facing projection of one base item.
 type LootRigblock struct {
-	ID             uint16
-	ContentFlags   uint8
-	MinimumLevel   uint32
-	MaximumLevel   uint32
-	IsUniqueFamily bool
-	SlotType       string
-	ClassType      string
-	ScienceType    string
-	WeaponSlotType string
+	ID              uint16
+	CatalogOrdinal  *uint32
+	ContentFlags    uint8
+	MinimumLevel    uint32
+	MaximumLevel    uint32
+	IsUniqueFamily  bool
+	SlotType        string
+	ClassType       string
+	ScienceType     string
+	WeaponSlotType  string
+	WeaponOwnerName string
 }
 
 // LootAffix is the immutable authored modifier vector for one prefix or suffix.
 type LootAffix struct {
-	Kind            string
-	ID              uint16
-	MinimumLevel    uint32
-	MaximumLevel    uint32
-	ClassType       string
-	ScienceType     string
-	Modifier        []float32
-	IsUniqueFamily  bool
-	IsBasicEligible bool
+	ContentSourceResourceID int64
+	CatalogOrdinal          *uint32
+	PartTypes               []string
+	Kind                    string
+	ID                      uint16
+	MinimumLevel            uint32
+	MaximumLevel            uint32
+	ClassType               string
+	ScienceType             string
+	Modifier                []float32
+	IsUniqueFamily          bool
+	IsBasicEligible         bool
 }
 
 func writeLootRigblocks(ctx context.Context, transaction *sql.Tx, installPath string) error {
@@ -117,8 +125,8 @@ func writeLootAffixes(ctx context.Context, transaction *sql.Tx, installPath stri
 	statement, err := transaction.PrepareContext(ctx, `
 		INSERT INTO loot_affix
 		(kind, id, content_source_resource_id, minimum_level, maximum_level,
-		 class_type, science_type, modifier, is_unique_family, is_basic_eligible)
-		SELECT ?, ?, id, ?, ?, ?, ?, ?, ?, ?
+		 part_type, class_type, science_type, modifier, is_unique_family, is_basic_eligible)
+		SELECT ?, ?, id, ?, ?, ?, ?, ?, ?, ?, ?
 		FROM content_source_resource
 		WHERE content_source_package_id=? AND ordinal=?`)
 	if err != nil {
@@ -129,6 +137,7 @@ func writeLootAffixes(ctx context.Context, transaction *sql.Tx, installPath stri
 		modifier := encodeLootModifier(affix.Modifier)
 		result, execErr := statement.ExecContext(ctx,
 			affix.Kind, affix.ID, affix.MinimumLevel, affix.MaximumLevel,
+			strings.Join(affix.PartTypes, ","),
 			strings.Join(affix.ClassTypes, ","), strings.Join(affix.ScienceTypes, ","),
 			modifier, affix.IsUniqueFamily, affix.IsBasicEligible, packageID, affix.SourceOrdinal,
 		)
@@ -260,23 +269,37 @@ func (s *Store) LootRigblocks(ctx context.Context) ([]LootRigblock, error) {
 		       CASE WHEN slot_type != 'weapon' THEN ''
 		            WHEN creature_template.is_hand_present=1 THEN 'grasper'
 		            WHEN creature_template.is_foot_present=1 THEN 'foot'
-		            ELSE '' END
+		            ELSE '' END,
+		       CASE WHEN slot_type='weapon' THEN COALESCE(creature_template.name, '') ELSE '' END,
+		       catalog.ordinal
 		FROM loot_rigblock
 		LEFT JOIN creature_template ON creature_template.id=loot_rigblock.weapon_noun_id
-		ORDER BY loot_rigblock.id`)
+		LEFT JOIN content_source_resource AS resource ON resource.id=loot_rigblock.content_source_resource_id
+		LEFT JOIN (SELECT content_source_resource_id, MIN(ordinal) AS ordinal FROM asset_catalog
+		           WHERE content_source_resource_id IS NOT NULL GROUP BY content_source_resource_id) AS catalog
+		           ON catalog.content_source_resource_id=loot_rigblock.content_source_resource_id
+		ORDER BY catalog.ordinal IS NULL, catalog.ordinal, resource.id`)
 	if err != nil {
 		return nil, fmt.Errorf("rigblockQuery: %w", err)
 	}
 	defer rows.Close()
-	rigblocks := make([]LootRigblock, 0, 2288)
+	rigblocks := make([]LootRigblock, 0, build103LootRigblockCount)
 	for rows.Next() {
 		var rigblock LootRigblock
+		var catalogOrdinal sql.NullInt64
 		err = rows.Scan(&rigblock.ID, &rigblock.SlotType, &rigblock.ClassType, &rigblock.ScienceType,
 			&rigblock.ContentFlags, &rigblock.MinimumLevel, &rigblock.MaximumLevel,
 			&rigblock.IsUniqueFamily,
-			&rigblock.WeaponSlotType)
+			&rigblock.WeaponSlotType, &rigblock.WeaponOwnerName, &catalogOrdinal)
 		if err != nil {
 			return nil, fmt.Errorf("rigblockScan: %w", err)
+		}
+		if catalogOrdinal.Valid {
+			if catalogOrdinal.Int64 < 0 || catalogOrdinal.Int64 > int64(^uint32(0)) {
+				return nil, fmt.Errorf("rigblockCatalogOrdinal[%d]: %d", rigblock.ID, catalogOrdinal.Int64)
+			}
+			ordinal := uint32(catalogOrdinal.Int64)
+			rigblock.CatalogOrdinal = &ordinal
 		}
 		rigblocks = append(rigblocks, rigblock)
 	}
@@ -300,10 +323,16 @@ func (s *Store) LootAffixes(ctx context.Context) ([]LootAffix, error) {
 		return nil, errors.New("nil context")
 	}
 	rows, err := s.database.QueryContext(ctx, `
-		SELECT kind, id, minimum_level, maximum_level, class_type, science_type, modifier,
-		       is_unique_family, is_basic_eligible
+		SELECT loot_affix.kind, loot_affix.id, loot_affix.minimum_level, loot_affix.maximum_level,
+		       loot_affix.part_type, loot_affix.class_type, loot_affix.science_type, loot_affix.modifier,
+		       loot_affix.content_source_resource_id,
+		       loot_affix.is_unique_family, loot_affix.is_basic_eligible, catalog.ordinal
 		FROM loot_affix
-		ORDER BY kind, id`)
+		LEFT JOIN content_source_resource AS resource ON resource.id=loot_affix.content_source_resource_id
+		LEFT JOIN (SELECT content_source_resource_id, MIN(ordinal) AS ordinal FROM asset_catalog
+		           WHERE content_source_resource_id IS NOT NULL GROUP BY content_source_resource_id) AS catalog
+		           ON catalog.content_source_resource_id=loot_affix.content_source_resource_id
+		ORDER BY catalog.ordinal IS NULL, catalog.ordinal, resource.id`)
 	if err != nil {
 		return nil, fmt.Errorf("affixQuery: %w", err)
 	}
@@ -312,11 +341,24 @@ func (s *Store) LootAffixes(ctx context.Context) ([]LootAffix, error) {
 	for rows.Next() {
 		var affix LootAffix
 		var payload []byte
+		var partType string
+		var catalogOrdinal sql.NullInt64
 		err = rows.Scan(&affix.Kind, &affix.ID, &affix.MinimumLevel, &affix.MaximumLevel,
-			&affix.ClassType, &affix.ScienceType, &payload,
-			&affix.IsUniqueFamily, &affix.IsBasicEligible)
+			&partType, &affix.ClassType, &affix.ScienceType, &payload, &affix.ContentSourceResourceID,
+			&affix.IsUniqueFamily, &affix.IsBasicEligible, &catalogOrdinal)
 		if err != nil {
 			return nil, fmt.Errorf("affixScan: %w", err)
+		}
+		if catalogOrdinal.Valid {
+			if catalogOrdinal.Int64 < 0 || catalogOrdinal.Int64 > int64(^uint32(0)) {
+				return nil, fmt.Errorf("affixCatalogOrdinal[%s/%d]: %d", affix.Kind, affix.ID, catalogOrdinal.Int64)
+			}
+			ordinal := uint32(catalogOrdinal.Int64)
+			affix.CatalogOrdinal = &ordinal
+		}
+		affix.PartTypes = make([]string, 0)
+		if partType != "" {
+			affix.PartTypes = strings.Split(partType, ",")
 		}
 		if len(payload) != contentdata.LootAttributeCount*4 {
 			return nil, fmt.Errorf("affixModifier[%s/%d]: got %d bytes", affix.Kind, affix.ID, len(payload))

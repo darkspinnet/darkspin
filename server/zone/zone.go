@@ -17,6 +17,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/squad"
 	"github.com/darkspinnet/darkspin/server/util"
+	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	zonebarrier "github.com/darkspinnet/darkspin/server/zone/barrier"
 	zoneboss "github.com/darkspinnet/darkspin/server/zone/boss"
 	zonecheckpoint "github.com/darkspinnet/darkspin/server/zone/checkpoint"
@@ -49,56 +50,59 @@ const (
 )
 
 type ZoneInfo struct {
-	Level                  string
-	Difficulty             uint32
-	RunSeed                uint64
-	ChainLevelIndex        uint32
-	MemberLimit            uint16
-	DirectorDefinition     game.CampaignDirector
-	Navigation             *navigation.Mesh
-	HordeBarrierPlans      map[string][]zonebarrier.Plan
-	ScriptObjects          []game.CampaignScriptObject
-	ScriptObjectPlans      []zoneobject.ScriptPlan
-	SceneryPlans           []zoneobject.SceneryPlan
-	SceneryDeleteObjectIDs []uint32
-	InitialNPCPlans        []zonenpc.SpawnPlan
-	FixturePlans           []zonenpc.SpawnPlan
-	CatalystProgram        sim.Program
-	OverdriveProgram       sim.Program
-	CrystalDefinitions     []sim.CrystalDefinition
-	CrystalLevelOffsets    []sim.CrystalLevelOffset
-	Security               *zonesecurity.Session
-	Effect                 *zoneeffect.Inventory
-	NPCs                   *zonenpc.Session
-	Hero                   *zonehero.Session
-	Companion              *zonecompanion.Session
-	Interactable           *zoneinteract.UseSession
-	Pickups                *zoneinteract.PickupRegistry
-	PickupPayload          *zoneinteract.PickupPayloadRegistry
-	Orbs                   *zoneinteract.OrbRegistry
-	Loot                   *zoneloot.Session
-	DNA                    *zoneloot.DNASession
-	Population             *zonepopulation.Session
-	Director               *game.CampaignDirectorSession
-	Route                  *sim.DirectorSession
-	Script                 *game.CampaignScriptRegistry
-	Encounter              *zoneencounter.StageSession
-	Horde                  *zonehorde.Session
-	Boss                   *zoneboss.Session
-	Death                  *zonedeath.Session
-	Objective              *zoneobjective.Session
-	ObjectiveProgress      *zoneobjective.Progress
-	ObjectID               *zoneobjectid.Session
-	ProjectileID           *zoneobjectid.Session
-	Outcome                *zoneoutcome.Session
-	Result                 *zoneresult.Ledger
-	ResultVote             *zoneresult.VoteSession
-	Timeline               *zonetimeline.Session
-	Timer                  Timer
-	NPCRandom              *sim.SimulatorRandom
-	DropRandom             *sim.SimulatorRandom
-	Checkpoint             zonecheckpoint.Repository
-	Restore                *zonecheckpoint.Snapshot
+	Level                   string
+	Difficulty              uint32
+	RunSeed                 uint64
+	ChainLevelIndex         uint32
+	MemberLimit             uint16
+	DirectorDefinition      game.CampaignDirector
+	Navigation              *navigation.Mesh
+	HordeBarrierPlans       map[string][]zonebarrier.Plan
+	ScriptObjects           []game.CampaignScriptObject
+	ScriptObjectPlans       []zoneobject.ScriptPlan
+	SceneryPlans            []zoneobject.SceneryPlan
+	SceneryDeleteObjectIDs  []uint32
+	InitialNPCPlans         []zonenpc.SpawnPlan
+	FixturePlans            []zonenpc.SpawnPlan
+	CatalystProgram         sim.Program
+	OverdriveProgram        sim.Program
+	CrystalDefinitions      []sim.CrystalDefinition
+	CrystalLevelOffsets     []sim.CrystalLevelOffset
+	TutorialMajorStageCount uint32
+	CrystalMinorStageCount  uint32
+	Security                *zonesecurity.Session
+	Effect                  *zoneeffect.Inventory
+	NPCs                    *zonenpc.Session
+	Hero                    *zonehero.Session
+	Companion               *zonecompanion.Session
+	Interactable            *zoneinteract.UseSession
+	Pickups                 *zoneinteract.PickupRegistry
+	PickupPayload           *zoneinteract.PickupPayloadRegistry
+	Orbs                    *zoneinteract.OrbRegistry
+	Loot                    *zoneloot.Session
+	DNA                     *zoneloot.DNASession
+	Population              *zonepopulation.Session
+	Director                *game.CampaignDirectorSession
+	Route                   *sim.DirectorSession
+	Script                  *game.CampaignScriptRegistry
+	Encounter               *zoneencounter.StageSession
+	Horde                   *zonehorde.Session
+	Boss                    *zoneboss.Session
+	Death                   *zonedeath.Session
+	Objective               *zoneobjective.Session
+	ObjectiveProgress       *zoneobjective.Progress
+	ObjectID                *zoneobjectid.Session
+	ProjectileID            *zoneobjectid.Session
+	Outcome                 *zoneoutcome.Session
+	Result                  *zoneresult.Ledger
+	ResultVote              *zoneresult.VoteSession
+	Timeline                *zonetimeline.Session
+	Timer                   Timer
+	NPCRandom               *sim.SimulatorRandom
+	DropRandom              *sim.SimulatorRandom
+	CapsuleRandom           *sim.CapsuleRandom
+	Checkpoint              zonecheckpoint.Repository
+	Restore                 *zonecheckpoint.Snapshot
 }
 
 type Member struct {
@@ -153,15 +157,16 @@ type objectiveActor struct {
 }
 
 type NPCTarget struct {
-	UserID          uint64
-	PeerGeneration  uint64
-	ObjectID        uint32
-	Position        game.Vec3
-	LinearVelocity  game.Vec3
-	FootprintRadius float32
-	HitPoint        float32
-	ManaPoint       float32
-	IsHero          bool
+	ActorFootprintRadius float32
+	UserID               uint64
+	PeerGeneration       uint64
+	ObjectID             uint32
+	Position             game.Vec3
+	LinearVelocity       game.Vec3
+	FootprintRadius      float32
+	HitPoint             float32
+	ManaPoint            float32
+	IsHero               bool
 }
 
 type NPCTargetDamage struct {
@@ -174,29 +179,33 @@ type NPCTargetDamage struct {
 // Zone owns the state shared by every peer participating in one campaign
 // run. Connection-local presentation and transport state remain outside it.
 type Zone struct {
-	mu                  sync.RWMutex
-	ctx                 context.Context
-	cancel              context.CancelFunc
-	registry            *Registry
-	id                  uint64
-	generation          uint64
-	completionID        uint64
-	state               State
-	startedAt           time.Time
-	info                ZoneInfo
-	members             map[uint64]Member
-	crystals            map[uint64]sim.CrystalInventory
-	unlocks             map[uint64]*zoneunlock.Session
-	experienceAwards    map[uint32]ExperienceAward
-	experienceTotals    map[uint64]uint32
-	experienceCommits   map[uint64]ExperienceCommit
-	projection          *zoneprojection.Session
-	clearedSpawnGroups  map[uint32]struct{}
-	checkpointHeroes    map[uint64]zonecheckpoint.Hero
-	checkpointSquads    map[uint64]zonecheckpoint.Squad
-	isPopulationPrimed  bool
-	isRestored          bool
-	isObjectiveComplete bool
+	treeOfLife           *zoneability.TreeOfLifePresentationSession
+	mu                   sync.RWMutex
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	registry             *Registry
+	id                   uint64
+	generation           uint64
+	completionID         uint64
+	state                State
+	startedAt            time.Time
+	info                 ZoneInfo
+	tutorialActivations  *zoneunlock.ActivationSession
+	members              map[uint64]Member
+	crystals             map[uint64]sim.CrystalInventory
+	missionEquipments    map[uint64]zoneloot.EquipmentInventory
+	unlocks              map[uint64]*zoneunlock.Session
+	experienceAwards     map[uint32]ExperienceAward
+	experienceTotals     map[uint64]uint32
+	experienceCommits    map[uint64]ExperienceCommit
+	projection           *zoneprojection.Session
+	clearedSpawnGroups   map[uint32]struct{}
+	checkpointHeroes     map[uint64]zonecheckpoint.Hero
+	checkpointSquads     map[uint64]zonecheckpoint.Squad
+	isPopulationPrimed   bool
+	isPickupSweepStarted bool
+	isRestored           bool
+	isObjectiveComplete  bool
 }
 
 const npcReturnIdleDelay = 10 * time.Second
@@ -226,9 +235,15 @@ func New(id uint64, generation uint64, info ZoneInfo) (*Zone, error) {
 		info.ProjectileID == nil || info.Outcome == nil || info.Result == nil ||
 		info.Timeline == nil || info.ResultVote == nil || info.Timer == nil ||
 		info.NPCRandom == nil || info.DropRandom == nil ||
+		info.CapsuleRandom == nil ||
 		info.Security == nil || info.Effect == nil {
 		return nil, errors.New("zone info incomplete")
 	}
+	// Native NPC operations, rewards and live Lua callbacks share one MT stream.
+	// Keep the checkpointed stream as the owner; binding itself consumes no draw.
+	info.NPCRandom = info.DropRandom
+	info.Objective.BindRandom(info.DropRandom)
+	info.NPCs.BindStartupRandom(info.DropRandom)
 	completionID := uint64(0)
 	if info.Restore != nil {
 		completionID = info.Restore.CompletionID
@@ -241,11 +256,13 @@ func New(id uint64, generation uint64, info ZoneInfo) (*Zone, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	zone := &Zone{
-		ctx: ctx, cancel: cancel,
+		treeOfLife: zoneability.NewTreeOfLifePresentationSession(),
+		ctx:        ctx, cancel: cancel,
 		id: id, generation: generation, completionID: completionID,
 		state: StateActive, startedAt: time.Now(),
 		info: info, members: make(map[uint64]Member),
 		crystals:           make(map[uint64]sim.CrystalInventory),
+		missionEquipments:  make(map[uint64]zoneloot.EquipmentInventory),
 		unlocks:            make(map[uint64]*zoneunlock.Session),
 		experienceAwards:   make(map[uint32]ExperienceAward),
 		experienceTotals:   make(map[uint64]uint32),
@@ -262,6 +279,12 @@ func New(id uint64, generation uint64, info ZoneInfo) (*Zone, error) {
 			return nil, fmt.Errorf("zoneRestore: %w", err)
 		}
 	}
+	navigationErr := info.NPCs.ConfigureNavigation(info.Navigation, info.DirectorDefinition.NounFootprintsByInstance)
+	if navigationErr != nil {
+		cancel()
+		return nil, fmt.Errorf("zoneNavigation: %w", navigationErr)
+	}
+	info.Companion.ConfigureActorFootprints(info.DirectorDefinition.NounFootprintsByNoun)
 	return zone, nil
 }
 
@@ -546,6 +569,16 @@ func (e *Zone) Disconnect(
 	}
 	member.IsConnected = false
 	e.members[userID] = member
+	isAnyConnected := false
+	for _, participant := range e.members {
+		if participant.IsConnected {
+			isAnyConnected = true
+			break
+		}
+	}
+	if !isAnyConnected && e.info.Director != nil {
+		e.info.Director.SuspendTriggers()
+	}
 	removedObjectIDs := make([]uint32, 0, squad.Size)
 	for creatureIndex := uint32(0); creatureIndex < squad.Size; creatureIndex++ {
 		removedObjectIDs = append(removedObjectIDs, zonehero.ObjectID(member.Slot, creatureIndex))
@@ -668,7 +701,19 @@ func (e *Zone) Leave(userID uint64, peerGeneration uint64) bool {
 		return false
 	}
 	delete(e.members, userID)
+	isAnyConnected := false
+	for _, participant := range e.members {
+		if participant.IsConnected {
+			isAnyConnected = true
+			break
+		}
+	}
+	if !isAnyConnected && e.info.Director != nil {
+		e.info.Director.SuspendTriggers()
+	}
+	e.forfeitMissionEquipment(userID)
 	delete(e.crystals, userID)
+	delete(e.missionEquipments, userID)
 	delete(e.unlocks, userID)
 	delete(e.checkpointHeroes, userID)
 	delete(e.checkpointSquads, userID)
@@ -767,6 +812,29 @@ func (e *Zone) Context() context.Context {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.ctx
+}
+
+func (e *Zone) IsActive() bool {
+	if e == nil {
+		return false
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.state == StateActive
+}
+
+// StartPickupSweep admits one lifetime worker for this shared zone.
+func (e *Zone) StartPickupSweep() bool {
+	if e == nil {
+		return false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.state != StateActive || e.isPickupSweepStarted {
+		return false
+	}
+	e.isPickupSweepStarted = true
+	return true
 }
 
 func (e *Zone) CrystalInventory(
@@ -1217,7 +1285,8 @@ func (e *Zone) NPCTarget(objectID uint32) (NPCTarget, bool) {
 	hero, isHeroFound := e.info.Hero.SnapshotByObjectID(objectID)
 	if isHeroFound && hero.HitPoint > 0 && !hero.IsStealthed {
 		return NPCTarget{
-			UserID: hero.UserID, PeerGeneration: hero.PeerGeneration,
+			ActorFootprintRadius: e.CreatureActorFootprintRadius(hero.UserID, hero.PeerGeneration, hero.CreatureIndex),
+			UserID:               hero.UserID, PeerGeneration: hero.PeerGeneration,
 			ObjectID: hero.ObjectID, Position: hero.Position,
 			LinearVelocity:  hero.LinearVelocity,
 			FootprintRadius: hero.FootprintRadius,
@@ -1230,7 +1299,8 @@ func (e *Zone) NPCTarget(objectID uint32) (NPCTarget, bool) {
 		return NPCTarget{}, false
 	}
 	return NPCTarget{
-		UserID: companion.UserID, PeerGeneration: companion.PeerGeneration,
+		ActorFootprintRadius: companion.ActorFootprintRadius(),
+		UserID:               companion.UserID, PeerGeneration: companion.PeerGeneration,
 		ObjectID: companion.ObjectID, Position: companion.Position,
 		FootprintRadius: companion.FootprintRadius,
 		HitPoint:        companion.HitPoint,
@@ -1898,6 +1968,9 @@ func (e *Zone) restoreCheckpoint(snapshot zonecheckpoint.Snapshot) error {
 		len(snapshot.Members) > int(e.info.MemberLimit) {
 		return errors.New("checkpoint member capacity exceeded")
 	}
+	for _, inventory := range snapshot.MissionEquipments {
+		e.missionEquipments[inventory.UserID] = inventory.Clone()
+	}
 	for index, member := range snapshot.Members {
 		restoredMember := Member{
 			UserID: member.UserID, Slot: member.Slot,
@@ -1917,10 +1990,15 @@ func (e *Zone) restoreCheckpoint(snapshot zonecheckpoint.Snapshot) error {
 	objectiveNPCObjectIDs := make([]uint32, 0, len(snapshot.NPCs))
 	defeatedObjectiveNPCObjectIDs := make([]uint32, 0, len(snapshot.NPCs))
 	var maximumObjectID uint32
+	for _, inventory := range snapshot.MissionEquipments {
+		for _, equipment := range inventory.Equipments {
+			maximumObjectID = max(maximumObjectID, equipment.ObjectID)
+		}
+	}
 	for _, npc := range snapshot.NPCs {
 		npcStates = append(npcStates, npc.State)
 		maximumObjectID = max(maximumObjectID, npc.State.Plan.ObjectID)
-		if npc.State.Plan.IsFixture || npc.State.Plan.IsRewardSuppressed {
+		if npc.State.Plan.IsFixture || npc.State.Plan.IsEncounterAuxiliary {
 			continue
 		}
 		objectiveNPCObjectIDs = append(
@@ -2010,6 +2088,9 @@ func (e *Zone) restoreCheckpoint(snapshot zonecheckpoint.Snapshot) error {
 	if err != nil {
 		return fmt.Errorf("checkpointScript: %w", err)
 	}
+	for _, use := range snapshot.ScriptUses {
+		e.info.Navigation.DisableObstacle(use.Invocation.MarkerID)
+	}
 	err = e.info.Security.Restore(snapshot.Security)
 	if err != nil {
 		return fmt.Errorf("checkpointSecurity: %w", err)
@@ -2017,6 +2098,10 @@ func (e *Zone) restoreCheckpoint(snapshot zonecheckpoint.Snapshot) error {
 	err = e.info.Horde.RestoreCompleted(snapshot.Hordes)
 	if err != nil {
 		return fmt.Errorf("checkpointHorde: %w", err)
+	}
+	err = e.info.Director.RestoreTriggerProgress(snapshot.TriggerProgresses)
+	if err != nil {
+		return fmt.Errorf("checkpointTrigger: %w", err)
 	}
 	if snapshot.Elapsed > 0 {
 		e.startedAt = time.Now().Add(-snapshot.Elapsed)
@@ -2049,6 +2134,9 @@ func (e *Zone) SetCheckpointSquad(
 	}
 	e.checkpointSquads[userID] = zonecheckpoint.Squad{
 		UserID: userID, Position: position, State: state,
+	}
+	if state.IsGameOver {
+		e.forfeitMissionEquipment(userID)
 	}
 	return nil
 }
@@ -2123,6 +2211,10 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 			UserID: userID, Inventory: inventory,
 		})
 	}
+	missionEquipments := make([]zoneloot.EquipmentInventory, 0, len(e.missionEquipments))
+	for _, inventory := range e.missionEquipments {
+		missionEquipments = append(missionEquipments, inventory.Clone())
+	}
 	squads := make([]zonecheckpoint.Squad, 0, len(e.checkpointSquads))
 	for _, current := range e.checkpointSquads {
 		squads = append(squads, current)
@@ -2160,6 +2252,7 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 	}
 	recorder := e.info.Checkpoint
 	dropRandom := e.info.DropRandom.Snapshot()
+	capsuleRandom := e.info.CapsuleRandom.Snapshot()
 	e.mu.Unlock()
 	sort.Slice(members, func(left int, right int) bool {
 		return members[left].UserID < members[right].UserID
@@ -2222,16 +2315,20 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 	scriptUses := e.info.Script.SnapshotUses()
 	security := e.info.Security.Snapshot()
 	hordes := e.info.Horde.Snapshots()
+	triggerProgresses := e.info.Director.TriggerProgress()
 	snapshot := zonecheckpoint.Snapshot{
 		Version: zonecheckpoint.Version, ZoneID: zoneID, RunSeed: runSeed,
 		ZoneGeneration: generation, CompletionID: e.CompletionID(),
 		Level: level, Difficulty: difficulty, Reason: reason,
 		SavedAt: now, Elapsed: elapsed, Members: members, Heroes: heroes,
 		Squads: squads, NPCs: npcs, Hordes: hordes, Crystals: crystals,
-		ExperienceAwards: experienceAwards,
-		Security:         security, Objectives: objectives, ScriptUses: scriptUses,
+		TriggerProgresses: triggerProgresses,
+		ExperienceAwards:  experienceAwards,
+		MissionEquipments: missionEquipments,
+		Security:          security, Objectives: objectives, ScriptUses: scriptUses,
 		ClearedSpawnGroupIDs: clearedSpawnGroupIDs,
 		DropRandom:           dropRandom, IsDropRandomSet: true,
+		CapsuleRandom: capsuleRandom, IsCapsuleRandomSet: true,
 	}
 	// Serialize the queue operation with terminal state. Without this final
 	// fence, completion could discard a checkpoint while an older capture was
@@ -2483,6 +2580,13 @@ func (e *Zone) DropRandom() *sim.SimulatorRandom {
 	return e.info.DropRandom
 }
 
+func (e *Zone) CapsuleRandom() *sim.CapsuleRandom {
+	if e == nil {
+		return nil
+	}
+	return e.info.CapsuleRandom
+}
+
 func (e *Zone) HordeBarrierPlans(markerSetName string) []zonebarrier.Plan {
 	if e == nil {
 		return nil
@@ -2540,7 +2644,15 @@ func (e *Zone) FixturePlans() []zonenpc.SpawnPlan {
 	if e == nil {
 		return nil
 	}
-	return append([]zonenpc.SpawnPlan(nil), e.info.FixturePlans...)
+	plans := make([]zonenpc.SpawnPlan, 0, len(e.info.FixturePlans))
+	for _, plan := range e.info.FixturePlans {
+		npc, isFound := e.info.NPCs.NPC(plan.ObjectID)
+		if isFound && npc.IsDefeated {
+			continue
+		}
+		plans = append(plans, plan)
+	}
+	return plans
 }
 
 func (e *Zone) CatalystProgram() sim.Program {
@@ -2564,6 +2676,29 @@ func (e *Zone) CrystalDefinitions() []sim.CrystalDefinition {
 	return append([]sim.CrystalDefinition(nil), e.info.CrystalDefinitions...)
 }
 
+func (e *Zone) TutorialMajorStageCount() uint32 {
+	if e == nil {
+		return 0
+	}
+	return e.info.TutorialMajorStageCount
+}
+
+func (e *Zone) TutorialActivations() *zoneunlock.ActivationSession {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.tutorialActivations == nil {
+		e.tutorialActivations = zoneunlock.NewActivationSession()
+	}
+	return e.tutorialActivations
+}
+
+func (e *Zone) CrystalMinorStageCount() uint32 {
+	if e == nil {
+		return 0
+	}
+	return e.info.CrystalMinorStageCount
+}
+
 func (e *Zone) CrystalLevelOffsets() []sim.CrystalLevelOffset {
 	if e == nil {
 		return nil
@@ -2585,6 +2720,9 @@ func (e *Zone) SecurityThreats() []zonesecurity.Threat {
 	npcs := e.info.NPCs.LiveSnapshots()
 	threats := make([]zonesecurity.Threat, 0, len(npcs))
 	for _, npc := range npcs {
+		if npc.Faction == zonenpc.FactionPlayerAligned {
+			continue
+		}
 		threats = append(threats, zonesecurity.Threat{
 			Position:    npc.Plan.Position,
 			Footprint:   npc.Plan.NPCProfile.FootprintRadius,
@@ -2861,6 +2999,7 @@ func (e *Zone) RecordNPCDeaths(
 	if ctx == nil {
 		return errors.New("npc death context unavailable")
 	}
+	e.destroyDeletedFixtureListeners(deaths)
 	var objectiveErr error
 	for _, death := range deaths {
 		if death.Kind != zonenpc.DeathHitPoint || death.HitPoint > 0 {
@@ -2921,11 +3060,34 @@ func (e *Zone) RecordNPCDeaths(
 func (e *Zone) ResurrectNPC(
 	ctx context.Context, objectID uint32, hitPointFraction float32,
 ) (zonenpc.Snapshot, bool, error) {
+	npc, isRevived, err := e.resurrectNPC(ctx, objectID, hitPointFraction, false)
+	if err != nil {
+		return zonenpc.Snapshot{}, false, fmt.Errorf("resurrectApply: %w", err)
+	}
+	return npc, isRevived, nil
+}
+
+func (e *Zone) ResurrectNPCWithoutLoot(
+	ctx context.Context, objectID uint32, hitPointFraction float32,
+) (zonenpc.Snapshot, bool, error) {
+	npc, isRevived, err := e.resurrectNPC(ctx, objectID, hitPointFraction, true)
+	if err != nil {
+		return zonenpc.Snapshot{}, false, fmt.Errorf("resurrectLootApply: %w", err)
+	}
+	return npc, isRevived, nil
+}
+
+func (e *Zone) resurrectNPC(
+	ctx context.Context, objectID uint32, hitPointFraction float32, isLootSuppressed bool,
+) (zonenpc.Snapshot, bool, error) {
 	if e == nil || ctx == nil || objectID == 0 || e.NPCs() == nil || e.Death() == nil {
 		return zonenpc.Snapshot{}, false, errors.New("npc resurrection unavailable")
 	}
 	defeated, isFound := e.NPCs().NPC(objectID)
 	if !isFound || !defeated.IsDefeated || defeated.Plan.IsFixture {
+		return zonenpc.Snapshot{}, false, nil
+	}
+	if e.Boss() != nil && !e.Boss().CanRevive(defeated) {
 		return zonenpc.Snapshot{}, false, nil
 	}
 	event, isRevived, err := e.Death().Revive(ctx, objectID)
@@ -2935,9 +3097,20 @@ func (e *Zone) ResurrectNPC(
 	if !isRevived {
 		return zonenpc.Snapshot{}, false, nil
 	}
-	revived, err := e.NPCs().Resurrect(objectID, hitPointFraction)
+	var revived zonenpc.Snapshot
+	if isLootSuppressed {
+		revived, err = e.NPCs().ResurrectWithoutLoot(objectID, hitPointFraction)
+	} else {
+		revived, err = e.NPCs().Resurrect(objectID, hitPointFraction)
+	}
 	if err != nil {
 		return zonenpc.Snapshot{}, false, fmt.Errorf("resurrectNPC: %w", err)
+	}
+	if e.Boss() != nil {
+		err = e.Boss().Revive(revived)
+		if err != nil {
+			return zonenpc.Snapshot{}, false, fmt.Errorf("resurrectBoss: %w", err)
+		}
 	}
 	if e.Horde() != nil {
 		err = e.Horde().Revive(revived)
@@ -2945,7 +3118,7 @@ func (e *Zone) ResurrectNPC(
 			return zonenpc.Snapshot{}, false, fmt.Errorf("resurrectHorde: %w", err)
 		}
 	}
-	if e.Loot() != nil {
+	if revived.Plan.IsLootSuppressed && e.Loot() != nil {
 		err = e.Loot().SuppressNPCDrops(objectID)
 		if err != nil {
 			return zonenpc.Snapshot{}, false, fmt.Errorf("resurrectLoot: %w", err)
@@ -2965,7 +3138,7 @@ func (e *Zone) PublishNPCSpawn(
 	if e.info.ObjectiveProgress != nil {
 		objectIDs := make([]uint32, 0, len(spawn.Plans))
 		for _, plan := range spawn.Plans {
-			if plan.IsFixture || plan.IsRewardSuppressed {
+			if plan.IsFixture || plan.IsEncounterAuxiliary {
 				continue
 			}
 			objectIDs = append(objectIDs, plan.ObjectID)

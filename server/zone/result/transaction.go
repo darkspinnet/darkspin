@@ -19,9 +19,8 @@ const (
 	ContinueReserved
 	ChainCashOut
 
-	// Build 103 clamps the current-run fuel progression to five. Offering a
-	// sixth Continue leaves the client repeatedly replacing full dungeon scenes
-	// beyond the capacity represented by its planet-screen state.
+	// Server policy caps a run at five planets. The native vote record's
+	// sentinel five bypasses its continuation limit and does not prove this cap.
 	maximumChainRunLength = 5
 )
 
@@ -244,7 +243,7 @@ func (s *Snapshot) acceptCashOut() bool {
 }
 
 func (s *Snapshot) acceptContinue(squadID uint32, nextLevel string) bool {
-	if s == nil || s.Phase != ChainVoting || squadID == 0 || nextLevel == "" {
+	if s == nil || s.Phase != ChainVoting || s.IsTerminal || squadID == 0 || nextLevel == "" {
 		return false
 	}
 	s.Phase = ContinueReserved

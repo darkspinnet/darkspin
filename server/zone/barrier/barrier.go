@@ -16,6 +16,10 @@ type Plan struct {
 	marker        game.CampaignDirectorMarker
 }
 
+func (e Plan) MarkerID() uint32 {
+	return e.marker.MarkerID
+}
+
 type ObjectPublication struct {
 	ObjectID           uint32
 	NounName           string

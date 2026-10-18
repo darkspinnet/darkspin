@@ -24,13 +24,15 @@ type Progression interface {
 }
 
 // PartGenerator adapts the gameplay part catalog to result reward generation.
+// The feature supplies a presentation level; descriptors use authored tuning
+// with the completed mission stage and explicit chain adjustment instead.
 type PartGenerator struct {
 	GameplayJoin *game.GameplayJoin
 }
 
 func (e PartGenerator) GenerateCampaignPart(
 	subject result.RewardSubject,
-	level uint32,
+	presentationLevel uint32,
 	choice uint32,
 	tier result.RewardTier,
 ) (result.RewardPart, error) {
@@ -51,14 +53,16 @@ func (e PartGenerator) GenerateCampaignPart(
 	if len(eligible) == 0 {
 		return result.RewardPart{}, errors.New("campaign reward subject unavailable")
 	}
+	campaignStage := subject.CampaignStage
+	chainArgument := subject.ChainArgument
 	subject = eligible[choice%uint32(len(eligible))]
 	part, err := e.GameplayJoin.GenerateCampaignRewardPart(
 		game.GameplayCreature{
 			ClassType:   subject.ClassType,
 			ElementType: subject.ElementType,
 		},
-		level,
-		subject.AccountLevel,
+		chainArgument,
+		campaignStage,
 		choice,
 		rarity,
 	)

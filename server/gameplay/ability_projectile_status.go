@@ -352,6 +352,46 @@ func (e heroProjectileStatusSchedule) isCurrent(
 }
 
 func (e heroProjectileStatusSchedule) impact() ([][]byte, error) {
+	e.runtime.registry.mutex.RLock()
+	member, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isCurrent := e.isCurrent(member, isFound)
+	e.runtime.registry.mutex.RUnlock()
+	if !isCurrent {
+		return nil, nil
+	}
+	remaining := e.run.projectile.RemainingFlightDelay(e.runtime.now())
+	if remaining > abilityraknet.ProjectileCollisionTick {
+		err := scheduleNPCProducer(e.runtime.registry, e.packet,
+			min(remaining, campaignProjectileMotionPollInterval), e.impact)
+		if err != nil {
+			return nil, fmt.Errorf("statusSlowResume: %w", err)
+		}
+		return nil, nil
+	}
+	e.impactDeadline = max(e.impactDeadline, e.run.projectile.Now())
+	packets, err := e.impactNow()
+	if err != nil {
+		return nil, fmt.Errorf("statusImpactNow: %w", err)
+	}
+	// Status duration and periodic damage start on contact, not at the
+	// original arrival estimate of a projectile that may have been slowed.
+	producers := make([]raknet.ScheduledPacketProducer, 0, len(e.definition.HitDelays)+1)
+	for _, offset := range e.definition.HitDelays {
+		step := heroProjectileStatusStep{schedule: e, deadline: e.impactDeadline + offset}
+		producers = append(producers, raknet.ScheduledPacketProducer{Delay: offset, Produce: step.tick})
+	}
+	producers = append(producers, raknet.ScheduledPacketProducer{Delay: e.definition.StatusDuration, Produce: e.finish})
+	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, producers)
+	if err != nil {
+		return nil, fmt.Errorf("statusContactSchedule: %w", err)
+	}
+	if cancel == nil {
+		return nil, errors.New("status contact cancellation unavailable")
+	}
+	return packets, nil
+}
+
+func (e heroProjectileStatusSchedule) impactNow() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	if !e.isCurrent(peerSession, isFound) {
@@ -961,23 +1001,10 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 		}
 		producers = append(producers, raknet.ScheduledPacketProducer{
 			Delay: flightDeadline, Produce: schedule.finishAfflictionFlight,
-		}, raknet.ScheduledPacketProducer{
-			Delay:   flightDeadline + projected.StatusDuration,
-			Produce: schedule.finish,
 		})
 	} else {
 		producers = append(producers, raknet.ScheduledPacketProducer{
 			Delay: impactDeadline, Produce: schedule.impact,
-		})
-		for _, tickOffset := range projected.HitDelays {
-			deadline := impactDeadline + tickOffset
-			step := heroProjectileStatusStep{schedule: schedule, deadline: deadline}
-			producers = append(producers, raknet.ScheduledPacketProducer{
-				Delay: deadline, Produce: step.tick,
-			})
-		}
-		producers = append(producers, raknet.ScheduledPacketProducer{
-			Delay: impactDeadline + projected.StatusDuration, Produce: schedule.finish,
 		})
 	}
 	sortScheduledPacketProducersByDelay(producers)

@@ -39,12 +39,30 @@ func Complete(leaderObjectID uint32) ([]byte, error) {
 		return nil, errors.New("boss complete: zero leader")
 	}
 	packet, err := raknet.MarshalApplication(raknet.DirectorStateMessage{
-		IsBossComplete:        true,
-		IsHordeSpawnedPresent: true,
-		BossID:                leaderObjectID,
+		IsBossSpawnedPresent:    true,
+		IsBossHordePresent:      true,
+		IsCaptainSpawnedPresent: true,
+		IsBossComplete:          true,
+		IsHordeSpawnedPresent:   true,
+		BossID:                  leaderObjectID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("bossCompleteMarshal: %w", err)
+	}
+	return packet, nil
+}
+
+// LeaderDefeated ends boss music immediately, independently of add clearance
+// and the death presentation that gates encounter completion and Beam Out.
+func LeaderDefeated() ([]byte, error) {
+	packet, err := raknet.MarshalApplication(raknet.DirectorStateMessage{
+		IsBossSpawnedPresent:    true,
+		IsBossHordePresent:      true,
+		IsCaptainSpawnedPresent: true,
+		IsHordeSpawned:          true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bossDefeatedMarshal: %w", err)
 	}
 	return packet, nil
 }

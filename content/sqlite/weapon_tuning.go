@@ -44,7 +44,7 @@ func writeWeaponTuning(ctx context.Context, transaction *sql.Tx, installPath str
 	if resourceCount == 0 {
 		return nil
 	}
-	offers, err := loadWeaponTuning(filepath.Join(installPath, "Data", "AssetData_Binary.package"))
+	offers, err := loadWeaponTuning(ctx, filepath.Join(installPath, "Data", "AssetData_Binary.package"))
 	if err != nil {
 		return fmt.Errorf("resourceLoad: %w", err)
 	}
@@ -84,7 +84,7 @@ func writeWeaponTuning(ctx context.Context, transaction *sql.Tx, installPath str
 	return nil
 }
 
-func loadWeaponTuning(packagePath string) ([]VendorOffer, error) {
+func loadWeaponTuning(ctx context.Context, packagePath string) ([]VendorOffer, error) {
 	r, err := os.Open(packagePath)
 	if err != nil {
 		return nil, fmt.Errorf("packageOpen: %w", err)
@@ -94,7 +94,7 @@ func loadWeaponTuning(packagePath string) ([]VendorOffer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("packageStat: %w", err)
 	}
-	pkg, err := dbpf.NewReader(r, fi.Size())
+	pkg, err := importPackageReader(ctx, r, fi.Size())
 	if err != nil {
 		return nil, fmt.Errorf("packageRead: %w", err)
 	}
@@ -113,7 +113,7 @@ func loadWeaponTuning(packagePath string) ([]VendorOffer, error) {
 	if resource == nil {
 		return nil, errors.New("resource missing")
 	}
-	payload, err := readDecodedResource(pkg, *resource)
+	payload, err := readDecodedResource(ctx, pkg, *resource)
 	if err != nil {
 		return nil, fmt.Errorf("resourceRead: %w", err)
 	}

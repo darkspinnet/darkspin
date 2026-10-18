@@ -10,14 +10,16 @@ import (
 	"github.com/darkspinnet/darkspin/server/navigation"
 	zoneaction "github.com/darkspinnet/darkspin/server/zone/action"
 	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
-	zonenavigation "github.com/darkspinnet/darkspin/server/zone/navigation"
 )
 
 const minimumNavigationFootprintRadius = 0.1
 
 type PursuitStep struct {
 	Position                 game.Vec3
+	Waypoint                 game.Vec3
+	IsWaypointKnown          bool
 	IsInRange                bool
+	IsBlocked                bool
 	IsNavigationFallback     bool
 	NavigationFallbackReason string
 }
@@ -115,29 +117,30 @@ func (s *Session) AdvancePursuit(
 	// instead of spending that entire interval moving into the target's center.
 	travel = min(travel, max(float32(0.0001), distance-stopDistance+0.0001))
 	if mesh != nil {
-		destination, pathErr := zoneaction.AdvancePursuitPath(
-			mesh, source, targetPosition, footprintRadius, travel,
+		pathStep, pathErr := zoneaction.AdvancePursuitPathStep(
+			mesh, source, targetPosition, max(npc.NavigationRadius(), minimumNavigationFootprintRadius), travel, npc.Navigation,
 		)
+		destination := pathStep.Position
 		if pathErr == nil && destination != source {
 			npc.Facing = directionTo(source, destination)
 			npc.Plan.Position = destination
 			s.npcs[objectID] = npc
 			return PursuitStep{
-				Position:  destination,
+				Position: destination,
+				Waypoint: pathStep.Waypoint, IsWaypointKnown: true,
 				IsInRange: zonegeometry.Distance(destination, targetPosition) < stopDistance,
 			}, nil
-		}
-		planarDistance := float32(math.Hypot(float64(deltaX), float64(deltaY)))
-		if planarDistance < stopDistance &&
-			float32(math.Abs(float64(deltaZ))) <= zonenavigation.ProjectionDistance {
-			return PursuitStep{Position: source, IsInRange: true}, nil
 		}
 		navigationFallbackReason := "path did not advance"
 		if pathErr != nil {
 			navigationFallbackReason = pathErr.Error()
 		}
+		// Native A64700 installs idle through A62AD0 when the replacement
+		// corridor fails. Never invent movement through a wall or between floors,
+		// or accept a planar-only arrival after the full 3D range check failed.
 		return PursuitStep{
 			Position:                 source,
+			IsBlocked:                true,
 			IsNavigationFallback:     true,
 			NavigationFallbackReason: navigationFallbackReason,
 		}, nil

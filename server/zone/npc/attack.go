@@ -14,6 +14,10 @@ import (
 
 var ErrControlTargetOutOfRange = errors.New("npc control target out of range")
 
+// Build 103's MagicNumbers resource stores this signed stat baseline at
+// offset 52. sub_9E4E60 subtracts it before applying an ability coefficient.
+const nonPlayerPrimaryAttributeBaseline = float32(8)
+
 type AttackPlan struct {
 	SourceObjectID   uint32
 	TargetObjectID   uint32
@@ -135,8 +139,10 @@ func resolveAttackDamage(
 		return game.DamageRange{}, errors.New("npc attack profile invalid")
 	}
 	damageProfile := game.DamageProfile{
-		PrimaryAttribute:        npc.Plan.NPCProfile.Mind,
-		IsPrimaryAttributeFound: true,
+		PrimaryAttribute:                npc.Plan.NPCProfile.Mind,
+		IsPrimaryAttributeFound:         true,
+		PrimaryAttributeBaseline:        nonPlayerPrimaryAttributeBaseline,
+		IsPrimaryAttributeBaselineFound: true,
 	}
 	at := time.Now()
 	if at.Before(npc.status.curseExpiresAt) {
@@ -156,7 +162,7 @@ func resolveAttackDamage(
 	damageProfile.DamageBuff += npc.status.oozeGrowthDamageIncrease
 	if npc.Plan.IsCaptain || npc.Plan.IsElite || npc.Plan.IsBoss ||
 		npc.Plan.BossIdentity.HasModifier(EliteModifierName) {
-		damageProfile.DamageBuff += EliteDamageBonus
+		damageProfile.DamageBuff += EliteBonusForType(npc.Plan.NPCProfile.NPCType).Damage
 	}
 	descriptorMask := uint32(1 | 1<<6)
 	damageType := uint8(0)
@@ -208,14 +214,15 @@ func PlanControlWithProfile(
 		return AttackPlan{}, errors.New("npc control target unavailable")
 	}
 	stopDistance, err := zoneaction.NPCStopDistance(
-		profile.Range, npc.Plan.NPCProfile.FootprintRadius,
+		profile.Range, npc.Plan.ActorFootprintRadius(),
 		targetFootprintRadius,
 	)
 	if err != nil {
 		return AttackPlan{}, fmt.Errorf("npcControlRange: %w", err)
 	}
-	profile.Range = stopDistance
-	if zonegeometry.Distance(npc.Plan.Position, targetPosition) >= profile.Range {
+	// Keep the authored range in the plan. Impact-time validation reuses this
+	// profile and must not adjust the range or add actor footprints twice.
+	if zonegeometry.Distance(npc.Plan.Position, targetPosition) >= stopDistance {
 		return AttackPlan{}, ErrControlTargetOutOfRange
 	}
 	return AttackPlan{

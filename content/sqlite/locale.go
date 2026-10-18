@@ -9,8 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/darkspinnet/darkspin/content/dbpf"
 )
 
 type localizationText struct {
@@ -36,7 +34,7 @@ func writeLocalizationText(ctx context.Context, transaction *sql.Tx, installPath
 			_ = r.Close()
 			return fmt.Errorf("packageStat[%s]: %w", locale, err)
 		}
-		pkg, err := dbpf.NewReader(r, fi.Size())
+		pkg, err := importPackageReader(ctx, r, fi.Size())
 		if err != nil {
 			_ = r.Close()
 			return fmt.Errorf("packageRead[%s]: %w", locale, err)

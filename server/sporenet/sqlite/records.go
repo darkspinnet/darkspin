@@ -24,7 +24,8 @@ const insertUserQuery = `
 		unlock_diagonal_catalyst, unlock_inventory, unlock_fuel_tank,
 		unlock_pve_deck, unlock_pvp_deck, unlock_stat,
 		unlock_inventory_identify, unlock_editor_flair_slot, upsell,
-		cap_level, cap_progression
+		cap_level, cap_progression,
+		limited_edition_miss_count, limited_edition_used_mask
 	) VALUES (
 		:login_name, :display_name, :password, :create_dt, :last_connection_dt,
 		:is_tutorial_completion_pending,
@@ -37,7 +38,8 @@ const insertUserQuery = `
 		:unlock_diagonal_catalyst, :unlock_inventory, :unlock_fuel_tank,
 		:unlock_pve_deck, :unlock_pvp_deck, :unlock_stat,
 		:unlock_inventory_identify, :unlock_editor_flair_slot, :upsell,
-		:cap_level, :cap_progression
+		:cap_level, :cap_progression,
+		:limited_edition_miss_count, :limited_edition_used_mask
 	)`
 
 const updateUserQuery = `
@@ -74,13 +76,15 @@ const updateUserQuery = `
 		unlock_editor_flair_slot = :unlock_editor_flair_slot,
 		upsell = :upsell,
 		cap_level = :cap_level,
-		cap_progression = :cap_progression
+		cap_progression = :cap_progression,
+		limited_edition_miss_count = :limited_edition_miss_count,
+		limited_edition_used_mask = :limited_edition_used_mask
 	WHERE login_name = :login_name`
 
 func clearDependents(ctx context.Context, tx *sqlx.Tx, userID int64) error {
 	tables := []string{
 		"setting", "user_stat", "user_event", "campaign_experience",
-		"user_association", "squad", "creature", "part", "extension",
+		"user_association", "squad", "creature", "part", "part_shop", "extension",
 	}
 	for index, table := range tables {
 		_, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE user_id = ?`, userID)
@@ -240,12 +244,12 @@ func writeDependents(ctx context.Context, tx *sqlx.Tx, record sporenet.UserRecor
 		_, err = tx.NamedExecContext(ctx, `
 			INSERT INTO part (
 				user_id, position, item_id, reference_id, is_flair, cost, creature_id, level,
-				market_status, rarity, status, usage, creation_date,
+				market_status, rarity, status, usage, creation_date, buyback_expires_at,
 				rigblock_asset_id, prefix_asset_id, prefix_secondary_asset_id,
 				suffix_asset_id
 			) VALUES (
 				:user_id, :position, :item_id, :reference_id, :is_flair, :cost, :creature_id, :level,
-				:market_status, :rarity, :status, :usage, :creation_date,
+				:market_status, :rarity, :status, :usage, :creation_date, :buyback_expires_at,
 				:rigblock_asset_id, :prefix_asset_id, :prefix_secondary_asset_id,
 				:suffix_asset_id
 			)`, partRow{
@@ -254,12 +258,17 @@ func writeDependents(ctx context.Context, tx *sqlx.Tx, record sporenet.UserRecor
 			Cost: part.Cost, CreatureID: part.EquippedToCreatureID, Level: part.Level,
 			MarketStatus: part.MarketStatus, Rarity: part.Rarity, Status: part.Status,
 			Usage: part.Usage, CreationDate: part.CreationDate, RigblockAssetID: part.RigblockAssetID,
-			PrefixAssetID: part.PrefixAssetID, PrefixSecondaryAssetID: part.PrefixSecondaryAssetID,
+			BuybackExpiresAt: part.BuybackExpiresAt,
+			PrefixAssetID:    part.PrefixAssetID, PrefixSecondaryAssetID: part.PrefixSecondaryAssetID,
 			SuffixAssetID: part.SuffixAssetID,
 		})
 		if err != nil {
 			return fmt.Errorf("partInsert[%d]: %w", index, err)
 		}
+	}
+	err = writePartShop(ctx, tx, record)
+	if err != nil {
+		return fmt.Errorf("shopWrite: %w", err)
 	}
 	for index, extension := range record.Extensions {
 		_, err = tx.NamedExecContext(ctx, `
@@ -445,9 +454,14 @@ func loadRecord(ctx context.Context, tx *sqlx.Tx, loginName string) (sporenet.Us
 			IsFlair: row.IsFlair != 0, Cost: row.Cost, EquippedToCreatureID: row.CreatureID,
 			Level: row.Level, MarketStatus: row.MarketStatus, Rarity: row.Rarity,
 			Status: row.Status, Usage: row.Usage, CreationDate: row.CreationDate,
-			RigblockAssetID: row.RigblockAssetID, PrefixAssetID: row.PrefixAssetID,
+			BuybackExpiresAt: row.BuybackExpiresAt,
+			RigblockAssetID:  row.RigblockAssetID, PrefixAssetID: row.PrefixAssetID,
 			PrefixSecondaryAssetID: row.PrefixSecondaryAssetID, SuffixAssetID: row.SuffixAssetID,
 		})
+	}
+	record.PartShop, err = loadPartShop(ctx, tx, user.ID)
+	if err != nil {
+		return sporenet.UserRecord{}, fmt.Errorf("shopLoad: %w", err)
 	}
 	extensions := []extensionRow{}
 	err = tx.SelectContext(ctx, &extensions, `SELECT * FROM extension WHERE user_id = ? ORDER BY position`, user.ID)

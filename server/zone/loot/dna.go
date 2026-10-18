@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
+	"github.com/darkspinnet/darkspin/server/sim"
 )
 
 type DNAPickup struct {
+	Flight      sim.DropFlight
 	ObjectID    uint32
 	Amount      uint32
 	Position    game.Vec3
@@ -79,7 +81,7 @@ func (s *DNASession) Lookup(objectID uint32) (DNAPickup, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	pickup, isFound := s.pickups[objectID]
-	return pickup, isFound
+	return pickup.at(time.Now()), isFound
 }
 
 func (s *DNASession) Snapshots() []DNAPickup {
@@ -93,7 +95,7 @@ func (s *DNASession) Snapshots() []DNAPickup {
 		if s.reservedObjectIDs[objectID] {
 			continue
 		}
-		pickup = append(pickup, current)
+		pickup = append(pickup, current.at(time.Now()))
 	}
 	sort.Slice(pickup, func(left int, right int) bool {
 		return pickup[left].ObjectID < pickup[right].ObjectID
@@ -104,32 +106,73 @@ func (s *DNASession) Snapshots() []DNAPickup {
 func (s *DNASession) ReserveContact(
 	start game.Vec3, end game.Vec3, now time.Time, radius float32,
 ) (*DNAReservation, bool) {
-	if s == nil || radius <= 0 ||
+	return s.ReserveContactID(0, start, end, now, radius)
+}
+
+func (e *DNASession) IsReserved(objectID uint32) bool {
+	if e == nil {
+		return false
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.reservedObjectIDs[objectID]
+}
+
+func (e *DNASession) ReserveContactID(
+	requestedObjectID uint32, start game.Vec3, end game.Vec3, now time.Time, radius float32,
+) (*DNAReservation, bool) {
+	if e == nil || radius <= 0 ||
 		!isFiniteDNA(positionComponents(start)) ||
 		!isFiniteDNA(positionComponents(end)) {
 		return nil, false
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	objectID := make([]uint32, 0, len(s.pickups))
-	for id, pickup := range s.pickups {
-		if s.reservedObjectIDs[id] || now.Before(pickup.AvailableAt) ||
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	objectIDs := make([]uint32, 0, len(e.pickups))
+	for id, pickup := range e.pickups {
+		if requestedObjectID != 0 && id != requestedObjectID {
+			continue
+		}
+		pickup = pickup.at(now)
+		e.pickups[id] = pickup
+		if e.reservedObjectIDs[id] || now.Before(pickup.AvailableAt) ||
 			dnaSegmentDistance(start, end, pickup.Position) > radius {
 			continue
 		}
-		objectID = append(objectID, id)
+		objectIDs = append(objectIDs, id)
 	}
-	if len(objectID) == 0 {
+	if len(objectIDs) == 0 {
 		return nil, false
 	}
-	sort.Slice(objectID, func(left int, right int) bool {
-		return objectID[left] < objectID[right]
+	sort.Slice(objectIDs, func(left int, right int) bool {
+		return objectIDs[left] < objectIDs[right]
 	})
-	pickup := s.pickups[objectID[0]]
-	s.reservedObjectIDs[pickup.ObjectID] = true
+	pickup := e.pickups[objectIDs[0]]
+	e.reservedObjectIDs[pickup.ObjectID] = true
 	return &DNAReservation{
-		session: s, pickup: pickup, isLive: true,
+		session: e, pickup: pickup, isLive: true,
 	}, true
+}
+
+// Contacts captures eligible crossings without retaining a reservation across
+// polls. Exact-ID reservation revalidates existence and availability at grant.
+func (e *DNASession) Contacts(start game.Vec3, end game.Vec3, now time.Time, radius float32) []DNAPickup {
+	if e == nil || now.IsZero() || radius <= 0 || !isFiniteDNA(positionComponents(start)) || !isFiniteDNA(positionComponents(end)) {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	pickups := make([]DNAPickup, 0)
+	for objectID, pickup := range e.pickups {
+		pickup = pickup.at(now)
+		e.pickups[objectID] = pickup
+		if now.Before(pickup.AvailableAt) || dnaSegmentDistance(start, end, pickup.Position) > radius {
+			continue
+		}
+		pickups = append(pickups, pickup)
+	}
+	sort.Slice(pickups, func(left int, right int) bool { return pickups[left].ObjectID < pickups[right].ObjectID })
+	return pickups
 }
 
 func (r *DNAReservation) Pickup() DNAPickup {
@@ -240,4 +283,13 @@ func dnaDistance(first game.Vec3, second game.Vec3) float32 {
 	return float32(math.Sqrt(float64(
 		deltaX*deltaX + deltaY*deltaY + deltaZ*deltaZ,
 	)))
+}
+
+func (e DNAPickup) at(now time.Time) DNAPickup {
+	if e.Flight.StartedAt.IsZero() || e.Flight.IsProjectilePresent {
+		return e
+	}
+	e.Flight = e.Flight.At(now)
+	e.Position = game.Vec3(e.Flight.Position)
+	return e
 }

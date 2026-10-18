@@ -41,8 +41,8 @@ func (r gameplayPendingRuntime) createDeveloperEquipmentDrop(
 		Challenge: source.Challenge,
 	}
 	packets, objectID, roll, err := currentSession.spawnCampaignEquipmentWithPolicy(
-		invocation, r.gameplayJoin, packet.SourceTime, source.NPC.Plan.IsBoss, true,
-		command.Category,
+		invocation, r.gameplayJoin, packet.SourceTime, 0, source.NPC.Plan.IsBoss, true,
+		command.Category, nil, nil, nil, false,
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -89,7 +89,7 @@ func nearestDeveloperDropSource(peerSession gameplayPeerSession) developerDropSo
 	position := game.Vec3(peerSession.playerPosition)
 	for _, candidate := range peerSession.zone.NPCs().LiveSnapshots() {
 		if candidate.Faction != zonenpc.FactionNonPlayerAligned ||
-			candidate.Plan.IsFixture || candidate.Plan.IsRewardSuppressed {
+			candidate.Plan.IsFixture || candidate.Plan.IsLootSuppressed {
 			continue
 		}
 		distance := zonegeometry.Distance(position, candidate.Plan.Position)

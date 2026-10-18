@@ -15,13 +15,104 @@ import (
 	"strings"
 )
 
+// wineRunner is the Wine executable set and environment one launch runs in:
+// either the system Wine on PATH with its default prefix, or an installed Wine
+// or Proton build with its launcher-owned prefix exported as WINEPREFIX.
+type wineRunner struct {
+	winePath    string
+	environment []string
+}
+
+func newWineRunner(wineLaunch wineLaunchEnvironment) (*wineRunner, error) {
+	runner := &wineRunner{environment: os.Environ()}
+	if wineLaunch.prefixPath != "" {
+		runner.environment = replaceEnvironment(runner.environment, "WINEPREFIX", wineLaunch.prefixPath)
+	}
+	if wineLaunch.runnerPath == "" {
+		winePath, err := exec.LookPath("wine")
+		if err != nil {
+			return nil, errors.New("wine is required to launch the game")
+		}
+		runner.winePath = winePath
+		return runner, nil
+	}
+	binPath := filepath.Join(wineLaunch.runnerPath, "bin")
+	runner.winePath = filepath.Join(binPath, "wine")
+	fi, err := os.Stat(runner.winePath)
+	if err != nil || fi.IsDir() {
+		return nil, fmt.Errorf("Wine runtime is missing %s", runner.winePath)
+	}
+	runner.environment = prependEnvironmentPath(runner.environment, "PATH", []string{binPath})
+	// Mirror the proton script: Proton 10 keeps native libraries under
+	// lib/<triplet>, older builds under lib64 and lib, and the PE vkd3d
+	// libraries that wined3d imports under lib/vkd3d beside lib/wine.
+	libPath := filepath.Join(wineLaunch.runnerPath, "lib")
+	lib64Path := filepath.Join(wineLaunch.runnerPath, "lib64")
+	libraryPaths := existingDirectories(
+		filepath.Join(libPath, "x86_64-linux-gnu"), filepath.Join(libPath, "i386-linux-gnu"), lib64Path, libPath,
+	)
+	runner.environment = prependEnvironmentPath(runner.environment, "LD_LIBRARY_PATH", libraryPaths)
+	dllPaths := existingDirectories(
+		filepath.Join(libPath, "vkd3d"), filepath.Join(lib64Path, "vkd3d"),
+		filepath.Join(lib64Path, "wine"), filepath.Join(libPath, "wine"),
+	)
+	if len(dllPaths) > 0 {
+		runner.environment = replaceEnvironment(runner.environment, "WINEDLLPATH", strings.Join(dllPaths, ":"))
+	}
+	pluginPaths := existingDirectories(
+		filepath.Join(libPath, "x86_64-linux-gnu", "gstreamer-1.0"), filepath.Join(libPath, "i386-linux-gnu", "gstreamer-1.0"),
+		filepath.Join(lib64Path, "gstreamer-1.0"), filepath.Join(libPath, "gstreamer-1.0"),
+	)
+	if len(pluginPaths) > 0 {
+		runner.environment = replaceEnvironment(runner.environment, "GST_PLUGIN_SYSTEM_PATH_1_0", strings.Join(pluginPaths, ":"))
+	}
+	runner.environment = replaceEnvironment(runner.environment, "WINELOADER", runner.winePath)
+	runner.environment = replaceEnvironment(runner.environment, "WINESERVER", filepath.Join(binPath, "wineserver"))
+	if wineLaunch.isProton {
+		runner.environment = replaceEnvironment(runner.environment, "WINEESYNC", "1")
+		runner.environment = replaceEnvironment(runner.environment, "WINEFSYNC", "1")
+	}
+	return runner, nil
+}
+
+func (e *wineRunner) command(ctx context.Context, arguments ...string) *exec.Cmd {
+	command := exec.CommandContext(ctx, e.winePath, arguments...)
+	command.Env = e.environment
+	return command
+}
+
+// windowsPath converts a host path to the Windows form seen inside the prefix.
+func (e *wineRunner) windowsPath(ctx context.Context, path string) (string, error) {
+	return e.convertPath(ctx, "-w", path)
+}
+
+// unixPath converts a Windows path inside the prefix to its host location.
+func (e *wineRunner) unixPath(ctx context.Context, path string) (string, error) {
+	return e.convertPath(ctx, "-u", path)
+}
+
+// convertPath runs the built-in winepath program through the Wine loader, since
+// Proton builds ship no winepath wrapper script in their bin directory.
+func (e *wineRunner) convertPath(ctx context.Context, flag, path string) (string, error) {
+	command := e.command(ctx, "winepath", flag, path)
+	contents, err := command.Output()
+	if err != nil {
+		return "", fmt.Errorf("winepathRun: %w", err)
+	}
+	resolvedPath := strings.TrimSpace(string(contents))
+	if resolvedPath == "" {
+		return "", errors.New("winepath returned an empty path")
+	}
+	return resolvedPath, nil
+}
+
 func launchInjected(
 	ctx context.Context, gamePath, gameWorkingDirectory, fangPath string,
-	gameArguments []string, serverAddress string,
+	gameArguments []string, serverAddress string, wineLaunch wineLaunchEnvironment,
 ) error {
-	winePath, err := exec.LookPath("wine")
+	runner, err := newWineRunner(wineLaunch)
 	if err != nil {
-		return errors.New("wine is required to launch the game")
+		return fmt.Errorf("wineRunner: %w", err)
 	}
 	proxyPath := filepath.Join(filepath.Dir(gamePath), "VERSION.dll")
 	cleanupProxy, err := installProxy(proxyPath, embeddedProxy)
@@ -29,26 +120,25 @@ func launchInjected(
 		return fmt.Errorf("proxyPrepare: %w", err)
 	}
 	defer cleanupProxy()
-	fangWinePath, err := resolveWinePath(ctx, fangPath)
+	fangWinePath, err := runner.windowsPath(ctx, fangPath)
 	if err != nil {
 		return fmt.Errorf("fangWinePath: %w", err)
 	}
-	versionPath, err := materializeWineVersion(ctx, filepath.Dir(fangPath))
+	versionPath, err := materializeWineVersion(ctx, runner, filepath.Dir(fangPath))
 	if err != nil {
 		return fmt.Errorf("versionPrepare: %w", err)
 	}
-	versionWinePath, err := resolveWinePath(ctx, versionPath)
+	versionWinePath, err := runner.windowsPath(ctx, versionPath)
 	if err != nil {
 		return fmt.Errorf("versionWinePath: %w", err)
 	}
 	arguments := []string{gamePath}
 	arguments = append(arguments, gameArguments...)
-	command := exec.CommandContext(ctx, winePath, arguments...)
+	command := runner.command(ctx, arguments...)
 	command.Dir = gameWorkingDirectory
 	command.Stdin = os.Stdin
 	command.Stdout = os.Stdout
 	var standardError bytes.Buffer
-	command.Env = os.Environ()
 	command.Env = replaceEnvironment(command.Env, "DARKSPIN_FANG_DLL", fangWinePath)
 	command.Env = replaceEnvironment(command.Env, "DARKSPIN_VERSION_DLL", versionWinePath)
 	command.Env = replaceEnvironment(command.Env, serverAddressEnvironment, serverAddress)
@@ -69,14 +159,14 @@ func launchInjected(
 	}
 	defer wineLog.Close()
 	command.Stderr = io.MultiWriter(&standardError, wineLog)
-	proxyLogWinePath, err := resolveWinePath(ctx, proxyLogPath)
+	proxyLogWinePath, err := runner.windowsPath(ctx, proxyLogPath)
 	if err != nil {
 		return fmt.Errorf("proxyLogWinePath: %w", err)
 	}
 	command.Env = replaceEnvironment(command.Env, "DARKSPIN_PROXY_LOG", proxyLogWinePath)
 	tracePath := os.Getenv("DARKSPIN_CLIENT_TRACE")
 	if tracePath != "" {
-		traceWinePath, traceErr := resolveWinePath(ctx, tracePath)
+		traceWinePath, traceErr := runner.windowsPath(ctx, tracePath)
 		if traceErr != nil {
 			return fmt.Errorf("traceWinePath: %w", traceErr)
 		}
@@ -84,7 +174,7 @@ func launchInjected(
 	}
 	snapshotControlPath := os.Getenv(snapshotControlEnvironment)
 	if snapshotControlPath != "" {
-		snapshotControlWinePath, controlErr := resolveWinePath(ctx, snapshotControlPath)
+		snapshotControlWinePath, controlErr := runner.windowsPath(ctx, snapshotControlPath)
 		if controlErr != nil {
 			return fmt.Errorf("snapshotControlWinePath: %w", controlErr)
 		}
@@ -103,14 +193,14 @@ func launchInjected(
 	return nil
 }
 
-func materializeWineVersion(ctx context.Context, cachePath string) (string, error) {
+func materializeWineVersion(ctx context.Context, runner *wineRunner, cachePath string) (string, error) {
 	candidate := []string{
 		`C:\windows\syswow64\version.dll`,
 		`C:\windows\system32\version.dll`,
 	}
 	var contents []byte
 	for _, windowsPath := range candidate {
-		unixPath, err := resolveWineUnixPath(ctx, windowsPath)
+		unixPath, err := runner.unixPath(ctx, windowsPath)
 		if err != nil {
 			continue
 		}
@@ -134,23 +224,6 @@ func materializeWineVersion(ctx context.Context, cachePath string) (string, erro
 		return "", fmt.Errorf("versionWrite: %w", err)
 	}
 	return path, nil
-}
-
-func resolveWineUnixPath(ctx context.Context, path string) (string, error) {
-	winePath, err := exec.LookPath("winepath")
-	if err != nil {
-		return "", errors.New("winepath is required to launch the game")
-	}
-	command := exec.CommandContext(ctx, winePath, "-u", path)
-	contents, err := command.Output()
-	if err != nil {
-		return "", fmt.Errorf("winepathRun: %w", err)
-	}
-	resolvedPath := strings.TrimSpace(string(contents))
-	if resolvedPath == "" {
-		return "", errors.New("winepath returned an empty path")
-	}
-	return resolvedPath, nil
 }
 
 func isPE32DLL(contents []byte) bool {
@@ -216,21 +289,37 @@ func preparePlatformGame(pathSet *spinnerPathSet) error {
 	return nil
 }
 
-func resolveWinePath(ctx context.Context, path string) (string, error) {
-	winePath, err := exec.LookPath("winepath")
-	if err != nil {
-		return "", errors.New("winepath is required to launch the game")
+// prependEnvironmentPath puts directories ahead of a colon-separated list such
+// as PATH or LD_LIBRARY_PATH, keeping the existing entries after them.
+func prependEnvironmentPath(environment []string, name string, directories []string) []string {
+	if len(directories) == 0 {
+		return environment
 	}
-	command := exec.CommandContext(ctx, winePath, "-w", path)
-	contents, err := command.Output()
-	if err != nil {
-		return "", fmt.Errorf("winepathRun: %w", err)
+	content := strings.Join(directories, ":")
+	prefix := name + "="
+	for _, entry := range environment {
+		if !strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		current := strings.TrimPrefix(entry, prefix)
+		if current != "" {
+			content += ":" + current
+		}
+		break
 	}
-	resolvedPath := strings.TrimSpace(string(contents))
-	if resolvedPath == "" {
-		return "", errors.New("winepath returned an empty path")
+	return replaceEnvironment(environment, name, content)
+}
+
+func existingDirectories(paths ...string) []string {
+	directories := make([]string, 0, len(paths))
+	for _, path := range paths {
+		fi, err := os.Stat(path)
+		if err != nil || !fi.IsDir() {
+			continue
+		}
+		directories = append(directories, path)
 	}
-	return resolvedPath, nil
+	return directories
 }
 
 func replaceEnvironment(environment []string, name, content string) []string {

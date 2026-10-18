@@ -57,6 +57,8 @@ type LuaObjectInput struct {
 // LuaAbilityInput supplies the allowlisted bytecode and authoritative values
 // needed to compile one ability activation into a typed simulation program.
 type LuaAbilityInput struct {
+	// Random is supplied only by live execution, never content import.
+	Random                           *SimulatorRandom
 	Root                             LuaBytecode
 	Modules                          map[string]LuaBytecode
 	Role                             Role
@@ -95,6 +97,8 @@ type LuaAbilityInput struct {
 // job may enumerate. PreloadedModules names dependencies whose behavior is
 // provided entirely by typed Go bindings rather than another bytecode chunk.
 type LuaJobInput struct {
+	// Random is supplied only by live execution, never content import.
+	Random                 *SimulatorRandom
 	Root                   LuaBytecode
 	Modules                map[string]LuaBytecode
 	EntryGlobal            string
@@ -113,6 +117,8 @@ type LuaJobInput struct {
 // LuaObjectiveInput supplies one packaged objective definition and the stable
 // identity assigned to its match-session instance.
 type LuaObjectiveInput struct {
+	// Random is supplied only by live execution, never content import.
+	Random                  *SimulatorRandom
 	Root                    LuaBytecode
 	Modules                 map[string]LuaBytecode
 	ObjectiveID             uint32
@@ -197,6 +203,8 @@ type LuaObjectiveRuntime struct {
 }
 
 type LuaModifierInput struct {
+	// Random is supplied only by live execution, never content import.
+	Random                  *SimulatorRandom
 	Root                    LuaBytecode
 	Modules                 map[string]LuaBytecode
 	Role                    Role
@@ -215,6 +223,8 @@ type LuaModifierInput struct {
 // LuaBehaviorInput supplies one packaged behavior and the stable object whose
 // behavior callbacks are being compiled.
 type LuaBehaviorInput struct {
+	// Random is supplied only by live execution, never content import.
+	Random            *SimulatorRandom
 	Root              LuaBytecode
 	Modules           map[string]LuaBytecode
 	EntryGlobal       string
@@ -457,7 +467,8 @@ func CompileLuaJob(input LuaJobInput) (program Program, err error) {
 		preloadedModules[name] = true
 	}
 	compiler, err := newLuaCompiler(LuaAbilityInput{
-		Root: input.Root, Modules: input.Modules, InstructionBudget: input.InstructionBudget,
+		Random: input.Random,
+		Root:   input.Root, Modules: input.Modules, InstructionBudget: input.InstructionBudget,
 		MemoryBudget: input.MemoryBudget, IsObjectCreationFailed: input.IsObjectCreationFailed,
 		preloadedModules: preloadedModules, playerRoles: append([]Role(nil), input.PlayerRoles...),
 		initiatingRole: input.InitiatingRole, initiatingPlayerIndex: input.InitiatingPlayerIndex,
@@ -548,7 +559,8 @@ func prepareLuaObjective(input LuaObjectiveInput) (*luaCompiler, int, error) {
 		instructionBudget = defaultLuaInstructionBudget
 	}
 	compiler, err := newLuaCompiler(LuaAbilityInput{
-		Root: input.Root, Modules: input.Modules, InstructionBudget: instructionBudget,
+		Random: input.Random,
+		Root:   input.Root, Modules: input.Modules, InstructionBudget: instructionBudget,
 		MemoryBudget:                     input.MemoryBudget,
 		preloadedModules:                 map[string]bool{"Lua!GlobalDefinitions.lua": true},
 		objectiveID:                      input.ObjectiveID,
@@ -776,7 +788,8 @@ func CompileLuaBehaviorLifecycle(
 		}
 	}
 	compiler, err := newLuaCompiler(LuaAbilityInput{
-		Root: input.Root, Modules: input.Modules, Role: input.Role,
+		Random: input.Random,
+		Root:   input.Root, Modules: input.Modules, Role: input.Role,
 		InstructionBudget: input.InstructionBudget, MemoryBudget: input.MemoryBudget,
 	})
 	if err != nil {
@@ -898,7 +911,8 @@ func createLuaModifierCompiler(input LuaModifierInput, triggerRole Role) (*luaCo
 		nearbyObjectScans[index] = append([]LuaObjectInput(nil), nearbyObjects...)
 	}
 	compiler, err := newLuaCompiler(LuaAbilityInput{
-		Root: input.Root, Modules: input.Modules, Role: input.Role, Position: input.Position,
+		Random: input.Random,
+		Root:   input.Root, Modules: input.Modules, Role: input.Role, Position: input.Position,
 		InstructionBudget: input.InstructionBudget, MemoryBudget: input.MemoryBudget,
 		destination: input.Destination, triggerRole: triggerRole,
 		isTriggerModifierActive: input.IsTriggerModifierActive,
@@ -1055,6 +1069,7 @@ func (c *luaCompiler) registerGlobals() {
 	c.global.set(stringLuaKey("Class"), tableLuaValue(class))
 	c.global.set(stringLuaKey("nAbility_FirstAggro_Template"), tableLuaValue(templateSeed))
 	mathLibrary := newLuaTable(nil)
+	c.setNative(mathLibrary, "random", c.scriptRandom)
 	c.setNative(mathLibrary, "floor", func(arguments []luaValue) ([]luaValue, error) {
 		if len(arguments) != 1 || arguments[0].kind != luaNumber {
 			return nil, fmt.Errorf("math floor arguments: %s", luaKinds(arguments))
@@ -3055,4 +3070,14 @@ func luaFieldText(field luaValue) string {
 	default:
 		return field.kind.String()
 	}
+}
+
+// BindRandom connects retained callbacks to the owning match's live MT stream.
+func (e *LuaObjectiveRuntime) BindRandom(random *SimulatorRandom) {
+	if e == nil || e.compiler == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.compiler.input.Random = random
 }

@@ -83,17 +83,10 @@ func Switch(req SwitchRequest) ([][]byte, error) {
 			CreatureIndex: req.CreatureIndex,
 			ObjectID:      req.TargetObjectID,
 		},
-		raknet.PositionedEffectMessage{
-			Asset:    util.HashID(req.TargetBeamName + ".ServerEventDef"),
-			Position: position,
-		},
-		raknet.SetAnimationStateMessage{
-			ObjectID:  req.TargetObjectID,
-			State:     util.HashID("character_teleport_in"),
-			Timestamp: req.Timestamp,
-			Scale:     1,
-		},
 	}
+	messages = append(messages, ArrivalMessages(
+		req.TargetObjectID, req.TargetBeamName, req.Timestamp,
+	)...)
 	return marshalMessages(messages, "heroSwitch")
 }
 
@@ -104,10 +97,6 @@ func BeamIn(
 		return nil, errors.New("hero beam in invalid")
 	}
 	messages := []raknet.ApplicationMessage{
-		raknet.PositionedEffectMessage{
-			Asset:    util.HashID(beamName + ".ServerEventDef"),
-			Position: vector(position),
-		},
 		raknet.ObjectUpdateMessage{
 			ObjectID:  objectID,
 			PositionX: position.X,
@@ -115,14 +104,29 @@ func BeamIn(
 			PositionZ: position.Z,
 			IsVisible: true,
 		},
+	}
+	messages = append(messages, ArrivalMessages(objectID, beamName, timestamp)...)
+	return marshalMessages(messages, "heroBeamIn")
+}
+
+// ArrivalMessages follows DeployModifier (Lua chunk 703): the beam animation
+// owns its landing markers and the element effect is bound to the hero. The
+// shorter teleporter animation emits a second beam and skips the deploy landing.
+func ArrivalMessages(
+	objectID uint32, beamName string, timestamp uint64,
+) []raknet.ApplicationMessage {
+	asset := util.HashID(beamName + ".ServerEventDef")
+	return []raknet.ApplicationMessage{
 		raknet.SetAnimationStateMessage{
 			ObjectID:  objectID,
-			State:     util.HashID("character_teleport_in"),
+			State:     util.HashID("character_beam_in"),
 			Timestamp: timestamp,
 			Scale:     1,
 		},
+		raknet.ServerEventContractMessage{
+			Asset: &asset, ObjectID: &objectID,
+		},
 	}
-	return marshalMessages(messages, "heroBeamIn")
 }
 
 func BeamOut(

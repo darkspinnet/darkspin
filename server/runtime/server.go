@@ -191,7 +191,15 @@ type Options struct {
 	BlazePrivateKeyPath   string
 	TracePath             string
 	RuntimePath           string
+	HTTPRoutes            []HTTPRoute
 	workingDirectory      string
+}
+
+// HTTPRoute mounts an optional host-owned handler on the server's HTTP ports.
+type HTTPRoute struct {
+	Pattern string
+	Methods []string
+	Handler http.Handler
 }
 
 // Environment contains the normalized paths and detected game version used by
@@ -209,6 +217,7 @@ type Environment struct {
 type Server struct {
 	environment           Environment
 	config                *game.Config
+	serverRuleStore       *serverRuleStore
 	isConfigGenerated     bool
 	scheduler             *scheduler.Scheduler
 	blazeServers          []*blaze.Server
@@ -218,6 +227,7 @@ type Server struct {
 	gameplayDiscard       func(uint32)
 	gameplayDiscardMember func(uint32, uint64)
 	bugContext            chat.BugContextProvider
+	reportContext         chat.BugContextProvider
 	httpServers           []*recaphttp.Server
 	httpRouter            *recaphttp.Router
 	userManager           *sporenet.UserManager
@@ -271,11 +281,15 @@ func (s *Server) BugContext(
 			userName = view.DisplayName
 		}
 	}
-	bugContext, err := s.bugContext.BugContext(ctx, chat.BugContextRequest{
+	provider := s.reportContext
+	if provider == nil {
+		provider = s.bugContext
+	}
+	bugContext, err := provider.BugContext(ctx, chat.BugContextRequest{
 		Sender: chat.Participant{ID: userID, Name: userName},
 	})
 	if err != nil {
-		return chat.BugContext{}, fmt.Errorf("bugGameplay: %w", err)
+		return bugContext, fmt.Errorf("bugGameplay: %w", err)
 	}
 	return bugContext, nil
 }
@@ -474,6 +488,10 @@ func New(options Options) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configLoad: %w", err)
 	}
+	serverRuleStore, err := loadServerRuleStore(context.Background(), configPath)
+	if err != nil {
+		return nil, fmt.Errorf("serverRulesLoad: %w", err)
+	}
 
 	logger := options.Logger
 	if logger == nil {
@@ -624,6 +642,7 @@ func New(options Options) (*Server, error) {
 		localAuthHandler = broker.Handler()
 	}
 	roomManager := sporenet.NewRoomManager()
+	userManager.SetRoomManager(roomManager)
 	gameManager := game.NewManager()
 	partyService := party.NewService(partylocal.NewMembership(userManager))
 	relayAddress, err := netip.ParseAddrPort(
@@ -665,7 +684,9 @@ func New(options Options) (*Server, error) {
 	chatService.UseWarpRequester(chatlocal.NewWarpRequester(gameManager))
 	chatService.UseNPCSpawner(chatlocal.NewNPCSpawner(gameManager))
 	chatService.UseDNAGranter(chatlocal.NewDNAGranter(userManager, gameManager))
-	chatService.UseBugReporter(chatlocal.NewBugReporter(runtimePath))
+	bugReporter := chatlocal.NewBugReporter(runtimePath)
+	bugReporter.UseSnapshotProvider(snapshotService)
+	chatService.UseBugReporter(bugReporter)
 	chatService.UseSnapshotManager(snapshotService)
 	vendorContext, vendorCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	vendor, err := gamecontentsqlite.LoadVendor(vendorContext, contentStore)
@@ -709,6 +730,19 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("gamesRegister: %w", err)
 	}
 	router := recaphttp.NewRouter()
+	for index, route := range options.HTTPRoutes {
+		if route.Handler == nil {
+			return nil, fmt.Errorf("httpRoute[%d]: nil handler", index)
+		}
+		err = router.Add(route.Pattern, route.Methods, func(
+			writer http.ResponseWriter, request *http.Request, _ *recaphttp.URI,
+		) {
+			route.Handler.ServeHTTP(writer, request)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("httpRoute[%d]: %w", index, err)
+		}
+	}
 	if localAuthHandler != nil {
 		for _, route := range []string{
 			"/api/desktop/register", "/api/desktop/start", "/api/desktop/exchange",
@@ -732,12 +766,14 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("partCatalogLoad: %w", err)
 	}
 	userManager.SetPartScorer(partCatalog)
+	vendor.IsPartShopEnabled = serverRuleStore.shopRules.IsEnabled
 	resumeCoordinator, err := game.NewResumeCoordinator(gameManager, checkpointManager)
 	if err != nil {
 		return nil, fmt.Errorf("resumeCoordinator: %w", err)
 	}
 	err = game.RegisterAPI(router, game.APIOptions{
 		UserManager: userManager, Template: templateDatabase, PartCatalog: partCatalog, Vendor: vendor,
+		PartShopRules:   serverRuleStore.shopRules,
 		ResumeActivator: resumeCoordinator,
 		Storage:         runtimePath, StaticFileSystem: webFileSystem,
 		Host: host, HTTPPort: ports.http, QoSPort: ports.qos,
@@ -813,13 +849,19 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("navigationSource: %w", err)
 	}
 	taskScheduler := scheduler.New()
+	allyAlertRules := serverRuleStore.AllyAlertRules()
+	logger.Printf("NPC ally alert policy enabled=%t range_percent=%d range_owner=%s max_hops=%d diagnostics=%t",
+		allyAlertRules.IsEnabled, allyAlertRules.RangePercent, allyAlertRules.RangeOwner,
+		allyAlertRules.MaxHops, allyAlertRules.IsDiagnosticLoggingEnabled)
 	gameplayHandler, gameplayLifecycle := gameplay.NewHandler(
 		gameplayJoin, userManager, simulationProgram, logger, campaignSetup, navigationSource,
-		zone.NewSchedulerTimer(taskScheduler), checkpointManager,
+		zone.NewSchedulerTimer(taskScheduler), checkpointManager, serverRuleStore,
 	)
-	chatService.UseBugContextProvider(gameplayLifecycle)
+	reportContext := reportContextProvider{gameplay: gameplayLifecycle, presence: presenceRegistry}
+	chatService.UseBugContextProvider(reportContext)
 	chatService.UseHintProvider(gameplayLifecycle)
 	chatService.UseLocationProvider(gameplayLifecycle)
+	chatService.UseResourceStatusProvider(gameplayLifecycle)
 	snapshotService.UseStateProvider(gameplayLifecycle)
 	snapshotService.UseNotifier(snapshotNotifier{servers: allBlazeServers})
 	gameManager.UseRemovalObserver(gameplayLifecycle.DiscardGame)
@@ -828,6 +870,7 @@ func New(options Options) (*Server, error) {
 	udpServer := sharedudp.NewSharedServer(
 		net.JoinHostPort(bindHost, fmt.Sprintf("%d", ports.qos)), logger, gameplayHandler,
 	)
+	snapshotService.UseTransportDiagnosticsProvider(snapshotTransportProvider{server: udpServer})
 	udpServer.SetPollHandler(gameplayLifecycle.Poll)
 	udpServer.SetRakNetObserver(snapshotService)
 	udpServer.SetPeerReplacedHandler(func(address *net.UDPAddr, generation uint64) {
@@ -852,6 +895,7 @@ func New(options Options) (*Server, error) {
 			GameVersion:      gameVersion,
 		},
 		config:                config,
+		serverRuleStore:       serverRuleStore,
 		isConfigGenerated:     isConfigGenerated,
 		scheduler:             taskScheduler,
 		blazeServers:          blazeServers,
@@ -861,6 +905,7 @@ func New(options Options) (*Server, error) {
 		gameplayDiscard:       gameplayLifecycle.DiscardGame,
 		gameplayDiscardMember: gameplayLifecycle.DiscardMember,
 		bugContext:            gameplayLifecycle,
+		reportContext:         reportContext,
 		httpServers:           httpServers,
 		httpRouter:            router,
 		userManager:           userManager,

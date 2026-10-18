@@ -36,6 +36,7 @@ type ActiveUserFinder interface {
 // GameplayBinding is the authorized game membership needed by a gameplay
 // transport. It deliberately contains no RakNet representation details.
 type GameplayBinding struct {
+	scenarioMapBinding
 	Endpoint                   NetworkEndpoint
 	GameID                     uint32
 	RunSeed                    uint64
@@ -47,6 +48,8 @@ type GameplayBinding struct {
 	AvatarXP                   float32
 	StartingAvatarXP           float32
 	ChainProgression           uint32
+	PartyCompletedStages       []uint32
+	IsFirstTimeDirectorEnabled bool
 	ChainLevelIndex            uint32
 	IsOverdriveUnlocked        bool
 	IsCatalystUnlocked         bool
@@ -76,6 +79,12 @@ func (e *GameplayBinding) RefreshReplay() {
 	}
 	e.IsReplay = e.IsWarped || e.Mode == ModeChain && e.ChainLevelIndex != 0 &&
 		e.ChainProgression >= e.ChainLevelIndex
+}
+
+// IsFirstRunLevel reports whether the selected chain level has not been cleared.
+func (e GameplayBinding) IsFirstRunLevel() bool {
+	return e.Mode == ModeChain && !e.IsWarped && e.ChainLevelIndex != 0 &&
+		e.ChainProgression < e.ChainLevelIndex
 }
 
 // GameplayRoster is the transport-neutral player presentation retained by a
@@ -111,6 +120,8 @@ type GameplayCreature struct {
 	ClassType                  string
 	HitPoint                   float32
 	PowerPoint                 float32
+	MaximumHitPoint            float32
+	MaximumPowerPoint          float32
 	GearScore                  float32
 	FlattenedGearScore         float32
 	FunctionalItemCount        uint32
@@ -121,6 +132,9 @@ type GameplayCreature struct {
 	WeaponItemLevel            uint32
 	WeaponDamageModifier       float32
 	PartAttribute              [111]float32
+	Strength                   float32
+	Dexterity                  float32
+	Mind                       float32
 	MinimumWeaponDamage        float32
 	MaximumWeaponDamage        float32
 	DamageProfile              DamageProfile
@@ -134,6 +148,7 @@ type GameplayCreature struct {
 	PetHealthIncrease          float32
 	RangeIncrease              float32
 	AreaDurationIncrease       float32
+	OverdriveBuildupIncrease   float32
 	OverdriveDurationIncrease  float32
 	LifeSteal                  float32
 	AutoCrit                   float32
@@ -195,14 +210,15 @@ func (o *GameplayJoin) ReserveCampaignLaunchHandoff(gameID uint32) error {
 }
 
 func (o *GameplayJoin) GenerateCampaignPart(
-	creature GameplayCreature, difficulty uint32, accountLevel uint32, choice uint32,
+	creature GameplayCreature, difficulty uint32, campaignStage uint32, choice uint32, isBoss bool,
 ) (sporenet.Part, error) {
 	if o == nil || o.partCatalog == nil {
 		return sporenet.Part{}, errors.New("campaign part catalog unavailable")
 	}
-	part, err := o.partCatalog.GenerateCampaignPart(
-		creature.ClassType, creature.ElementType, max(uint32(1), difficulty),
-		max(uint32(1), accountLevel), choice,
+	part, err := o.partCatalog.GenerateCampaignCreaturePart(
+		creature.ClassType, creature.ElementType, creature.Name,
+		max(uint32(1), difficulty),
+		max(uint32(1), campaignStage), choice, isBoss,
 	)
 	if err != nil {
 		return sporenet.Part{}, fmt.Errorf("campaignPartGenerate: %w", err)
@@ -210,18 +226,59 @@ func (o *GameplayJoin) GenerateCampaignPart(
 	return part, nil
 }
 
+// GenerateCampaignPartFromBag applies the ordinary campaign drop policy with
+// player-local category rotation and rarity pity owned by the gameplay session.
+func (e *GameplayJoin) GenerateCampaignPartFromBag(
+	creature GameplayCreature, difficulty uint32, campaignStage uint32, choice uint32,
+	slotBag *CampaignPartSlotBag, rarityBag *CampaignPartRarityBag, isBoss bool,
+) (sporenet.Part, error) {
+	if e == nil || e.partCatalog == nil {
+		return sporenet.Part{}, errors.New("campaign part catalog unavailable")
+	}
+	part, err := e.partCatalog.GenerateCampaignPartFromBag(
+		creature.ClassType, creature.ElementType, creature.Name,
+		max(uint32(1), difficulty),
+		max(uint32(1), campaignStage), choice, slotBag, rarityBag, isBoss,
+	)
+	if err != nil {
+		return sporenet.Part{}, fmt.Errorf("campaignPartBagGenerate: %w", err)
+	}
+	return part, nil
+}
+
+// GenerateCampaignSpecialPartFromBag applies player-local rarity pity to a
+// compatible limited-edition campaign drop.
+func (e *GameplayJoin) GenerateCampaignSpecialPartFromBag(
+	creature GameplayCreature, difficulty uint32, campaignStage uint32, choice uint32,
+	rigblockID uint16, rarityBag *CampaignPartRarityBag, isBoss bool,
+) (sporenet.Part, error) {
+	if e == nil || e.partCatalog == nil {
+		return sporenet.Part{}, errors.New("campaign special part catalog unavailable")
+	}
+	part, err := e.partCatalog.GenerateCampaignSpecialPartFromBag(
+		creature.ClassType, creature.ElementType, creature.Name,
+		max(uint32(1), difficulty),
+		max(uint32(1), campaignStage), choice, rigblockID, rarityBag, isBoss,
+	)
+	if err != nil {
+		return sporenet.Part{}, fmt.Errorf("campaignSpecialPartBagGenerate: %w", err)
+	}
+	return part, nil
+}
+
 // GenerateCampaignPartForSlot applies the ordinary campaign drop policy while
 // restricting compatible bases to one equipment slot.
 func (o *GameplayJoin) GenerateCampaignPartForSlot(
-	creature GameplayCreature, difficulty uint32, accountLevel uint32, choice uint32,
-	slotType string,
+	creature GameplayCreature, difficulty uint32, campaignStage uint32, choice uint32,
+	slotType string, isBoss bool,
 ) (sporenet.Part, error) {
 	if o == nil || o.partCatalog == nil {
 		return sporenet.Part{}, errors.New("campaign part catalog unavailable")
 	}
-	part, err := o.partCatalog.GenerateCampaignPartForSlot(
-		creature.ClassType, creature.ElementType, max(uint32(1), difficulty),
-		max(uint32(1), accountLevel), choice, slotType,
+	part, err := o.partCatalog.GenerateCampaignCreaturePartForSlot(
+		creature.ClassType, creature.ElementType, creature.Name,
+		max(uint32(1), difficulty),
+		max(uint32(1), campaignStage), choice, slotType, isBoss,
 	)
 	if err != nil {
 		return sporenet.Part{}, fmt.Errorf("campaignPartSlotGenerate: %w", err)
@@ -238,16 +295,29 @@ func (o *GameplayJoin) CampaignPartDefinition(rigblockID uint16) (PartDefinition
 	return o.partCatalog.ByRigblock(rigblockID)
 }
 
+// ValidateGeneratedCampaignPart checks a generated descriptor at a gameplay
+// publication boundary against the loaded catalog.
+func (e *GameplayJoin) ValidateGeneratedCampaignPart(part sporenet.Part) error {
+	if e == nil || e.partCatalog == nil {
+		return errors.New("campaign part catalog unavailable")
+	}
+	err := e.partCatalog.ValidateGeneratedCampaignPart(part)
+	if err != nil {
+		return fmt.Errorf("campaignPartValidate: %w", err)
+	}
+	return nil
+}
+
 func (o *GameplayJoin) GenerateCampaignSpecialPart(
-	creature GameplayCreature, difficulty uint32, accountLevel uint32, choice uint32,
-	rigblockID uint16,
+	creature GameplayCreature, difficulty uint32, campaignStage uint32, choice uint32,
+	rigblockID uint16, isBoss bool,
 ) (sporenet.Part, error) {
 	if o == nil || o.partCatalog == nil {
 		return sporenet.Part{}, errors.New("campaign special part catalog unavailable")
 	}
 	part, err := o.partCatalog.GenerateCampaignSpecialPart(
 		creature.ClassType, creature.ElementType, max(uint32(1), difficulty),
-		max(uint32(1), accountLevel), choice, rigblockID,
+		max(uint32(1), campaignStage), choice, rigblockID, isBoss,
 	)
 	if err != nil {
 		return sporenet.Part{}, fmt.Errorf("campaignSpecialPartGenerate: %w", err)
@@ -256,15 +326,16 @@ func (o *GameplayJoin) GenerateCampaignSpecialPart(
 }
 
 func (o *GameplayJoin) GenerateCampaignRewardPart(
-	creature GameplayCreature, difficulty uint32, accountLevel uint32, choice uint32,
+	creature GameplayCreature, chainArgument uint32, campaignStage uint32, choice uint32,
 	rarity sporenet.PartRarity,
 ) (sporenet.Part, error) {
 	if o == nil || o.partCatalog == nil {
 		return sporenet.Part{}, errors.New("campaign reward part catalog unavailable")
 	}
-	part, err := o.partCatalog.GenerateCampaignRewardPart(
-		creature.ClassType, creature.ElementType, max(uint32(1), difficulty),
-		max(uint32(1), accountLevel), choice, rarity,
+	part, err := o.partCatalog.GenerateCampaignCreatureRewardPart(
+		creature.ClassType, creature.ElementType, creature.Name,
+		max(uint32(1), chainArgument),
+		max(uint32(1), campaignStage), choice, rarity,
 	)
 	if err != nil {
 		return sporenet.Part{}, fmt.Errorf("campaignRewardPartGenerate: %w", err)
@@ -308,7 +379,7 @@ func (o *GameplayJoin) Execute(ctx context.Context, userID int64) (GameplayBindi
 	if instance.Info.Mode == ModeArena {
 		squadID = view.Account.DefaultDeckPVPID
 	}
-	creatures := selectedGameplayCreatures(view, o.partCatalog, squadID)
+	creatures := selectedGameplayCreatures(view, o.partCatalog.forGameplayMode(instance.Info.Mode), squadID)
 	difficulty, err := resolveGameplayDifficulty(instance.Info)
 	if err != nil {
 		return GameplayBinding{}, fmt.Errorf("joinDifficulty: %w", err)
@@ -329,7 +400,7 @@ func (o *GameplayJoin) Execute(ctx context.Context, userID int64) (GameplayBindi
 		IsCheckpointRestore: instance.IsCheckpointRestore(),
 		SquadID:             squadID,
 		Creatures:           creatures,
-		ActivatedCreatures:  activatedGameplayCreatures(view, o.partCatalog),
+		ActivatedCreatures:  activatedGameplayCreatures(view, o.partCatalog.forGameplayMode(instance.Info.Mode)),
 	}
 	if binding.Mode == ModeChain && binding.Level != "" {
 		selectedLevel, isSelected := o.gameManager.ChainLevelForSelection(binding.Difficulty)
@@ -367,9 +438,13 @@ func (o *GameplayJoin) Execute(ctx context.Context, userID int64) (GameplayBindi
 	}
 	binding.RefreshReplay()
 	binding.IsCatalystUnlocked = binding.Mode == ModeChain &&
-		(binding.ChainProgression >= 3 || binding.ChainLevelIndex >= 3)
+		binding.ChainProgression >= 3
 	binding.IsDiagonalCatalystUnlocked = user.Account.UnlockDiagonalCatalysts != 0
 	binding.CatalystSlotCount = min(uint32(9), max(uint32(3), user.Account.UnlockCatalysts))
+	err = o.gameManager.attachScenarioMap(&binding)
+	if err != nil {
+		return GameplayBinding{}, fmt.Errorf("joinScenario: %w", err)
+	}
 	return binding, nil
 }
 
@@ -379,7 +454,7 @@ func (o *GameplayJoin) SelectCampaignSquad(
 	binding GameplayBinding, squadID uint32,
 ) (GameplayBinding, error) {
 	if o == nil || o.userFinder == nil || binding.Mode != ModeChain || squadID == 0 {
-		return GameplayBinding{}, ErrGameplaySquadInvalid
+		return GameplayBinding{}, fmt.Errorf("squadRequest: %w", ErrGameplaySquadInvalid)
 	}
 	user := o.userFinder.UserByID(int64(binding.UserID))
 	if user == nil {
@@ -395,16 +470,31 @@ func (o *GameplayJoin) SelectCampaignSquad(
 		selectedSquad = squad
 		break
 	}
-	unlockedSquadCount := max(uint32(1), view.Account.UnlockPVEDecks)
-	if selectedSquad == nil || selectedSquad.IsLocked ||
-		selectedSquad.Slot > unlockedSquadCount ||
-		!strings.EqualFold(selectedSquad.Category, "pve") {
-		return GameplayBinding{}, ErrGameplaySquadInvalid
+	if selectedSquad == nil {
+		return GameplayBinding{}, fmt.Errorf("squadMissing[%d]: %w", squadID, ErrGameplaySquadInvalid)
 	}
-	creatures := selectedGameplayCreatures(view, o.partCatalog, squadID)
+	// Account projection and deck updates both treat an empty legacy category
+	// as PVE. Build 103's PlanetScreen sends the persistent deck ID after its
+	// sub_4E4C40 full-roster/lock check, so rejecting that category here strands
+	// an otherwise selectable squad after the screen has closed.
+	if selectedSquad.Category != "" && !strings.EqualFold(selectedSquad.Category, "pve") {
+		return GameplayBinding{}, fmt.Errorf(
+			"squadCategory[%d:%q]: %w", squadID, selectedSquad.Category, ErrGameplaySquadInvalid,
+		)
+	}
+	if selectedSquad.IsLockedFor(view.Account) {
+		return GameplayBinding{}, fmt.Errorf(
+			"squadLocked[%d:%d:%d]: %w", squadID, selectedSquad.Slot,
+			max(uint32(1), view.Account.UnlockPVEDecks), ErrGameplaySquadInvalid,
+		)
+	}
+	creatures := selectedGameplayCreatures(view, o.partCatalog.forGameplayMode(binding.Mode), squadID)
 	for index := range creatures {
-		if creatures[index].ID == 0 {
-			return GameplayBinding{}, ErrGameplaySquadInvalid
+		if creatures[index].ID == 0 || creatures[index].Noun == 0 {
+			return GameplayBinding{}, fmt.Errorf(
+				"squadCreature[%d:%d:%d]: %w", squadID, index,
+				selectedSquad.CreatureIDs[index], ErrGameplaySquadInvalid,
+			)
 		}
 	}
 	binding.SquadID = squadID
@@ -417,7 +507,7 @@ func (o *GameplayJoin) SelectCampaignSquad(
 		}
 	}
 	binding.Creatures = creatures
-	activatedCreatures := activatedGameplayCreatures(view, o.partCatalog)
+	activatedCreatures := activatedGameplayCreatures(view, o.partCatalog.forGameplayMode(binding.Mode))
 	for index := range activatedCreatures {
 		for _, previous := range binding.ActivatedCreatures {
 			if activatedCreatures[index].ID == previous.ID {
@@ -427,6 +517,10 @@ func (o *GameplayJoin) SelectCampaignSquad(
 		}
 	}
 	binding.ActivatedCreatures = activatedCreatures
+	err := o.gameManager.attachScenarioMap(&binding)
+	if err != nil {
+		return GameplayBinding{}, fmt.Errorf("squadScenario: %w", err)
+	}
 	return binding, nil
 }
 
@@ -550,10 +644,18 @@ func gameplayCreature(
 	stats := gameplayCreatureStats(creature, partAttribute)
 	for _, stat := range stats {
 		switch stat.Name {
+		case "STR":
+			selected.Strength = float32(stat.Maximum)
+		case "DEX":
+			selected.Dexterity = float32(stat.Maximum)
+		case "MIND":
+			selected.Mind = float32(stat.Maximum)
 		case "HLTH":
 			selected.HitPoint = float32(stat.Maximum)
+			selected.MaximumHitPoint = selected.HitPoint
 		case "MANA":
 			selected.PowerPoint = float32(stat.Maximum)
+			selected.MaximumPowerPoint = selected.PowerPoint
 		case "CRTR":
 			selected.CriticalRating = float32(stat.Maximum)
 		case "PDEF":
@@ -566,6 +668,7 @@ func gameplayCreature(
 	selected.PetHealthIncrease += partAttribute[64]
 	selected.RangeIncrease += partAttribute[67]
 	selected.AreaDurationIncrease += partAttribute[95]
+	selected.OverdriveBuildupIncrease += partAttribute[69]
 	selected.OverdriveDurationIncrease += partAttribute[70]
 	selected.LifeSteal += partAttribute[35]
 	selected.AutoCrit += partAttribute[19]
@@ -588,6 +691,8 @@ func gameplayCreature(
 	}
 	selected.HealingTargetProfile = healingTargetProfile(partAttribute)
 	selected.TimingProfile = timingProfile(partAttribute)
+	selected.DamageProfile.PhysicalDefenseBoost = selected.PhysicalDefense
+	selected.DamageProfile.EnergyDefenseBoost = selected.EnergyDefense
 	return selected
 }
 
@@ -619,7 +724,7 @@ func gameplayEquippedParts(
 	seenPartIDs := make(map[uint64]struct{}, maximumGameplayFunctionalItemCount)
 	ignoredPartCount := uint32(0)
 	for _, part := range parts {
-		if part.EquippedToCreatureID != creatureID || part.IsFlair {
+		if part.MarketStatus != sporenet.PartMarketOwned || part.EquippedToCreatureID != creatureID || part.IsFlair {
 			continue
 		}
 		if _, isSeen := seenPartIDs[part.ID]; isSeen {
@@ -642,7 +747,7 @@ func gameplayEquippedParts(
 // it can be stale when a mission is entered immediately after an equipment
 // change.
 func gameplayCreatureStats(
-	creature *sporenet.Creature, partAttribute [partAttributeCount]float32,
+	creature *sporenet.Creature, partAttributes [partAttributeCount]float32,
 ) []sporenet.Stat {
 	if creature == nil {
 		return nil
@@ -650,13 +755,22 @@ func gameplayCreatureStats(
 	if creature.Template == nil || len(creature.Template.Stats) == 0 {
 		return creature.Stats
 	}
+	// Native 103 sub_9E2580 / 127 sub_9E7360 derives health, energy,
+	// defenses and critical rating from core attributes. MagicNumbers supplies
+	// coefficients 5/6/4/6/1 at offsets 12/16/20/24/28. Template stats already
+	// include base attributes, so convert only equipment deltas here.
+	partAttributes[4] += partAttributes[0] * 5
+	partAttributes[5] += partAttributes[2]
+	partAttributes[7] += partAttributes[1] * 6
+	partAttributes[9] += partAttributes[2] * 6
+	partAttributes[10] += partAttributes[1] * 4
 	stats := append([]sporenet.Stat(nil), creature.Template.Stats...)
 	for index := range stats {
 		attributeIndex, isFound := gameplayCorePartAttribute(stats[index].Name)
 		if !isFound {
 			continue
 		}
-		maximum := max(float32(0), float32(stats[index].Maximum)+partAttribute[attributeIndex])
+		maximum := max(float32(0), float32(stats[index].Maximum)+partAttributes[attributeIndex])
 		stats[index].Maximum = uint32(maximum)
 		stats[index].Current = stats[index].Maximum
 	}

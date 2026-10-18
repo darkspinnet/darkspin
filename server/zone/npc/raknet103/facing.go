@@ -10,6 +10,36 @@ import (
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
+// StopAtPose reconciles a failed path with the last accepted server pose before
+// clearing the client's movement goal. A goal-only stop does not undo drift.
+func StopAtPose(objectID uint32, position game.Vec3, facing game.Vec3) ([][]byte, error) {
+	posePacket, err := RestorePose(objectID, position, facing)
+	if err != nil {
+		return nil, fmt.Errorf("stopPose: %w", err)
+	}
+	packets, err := MovementStop(objectID, position)
+	if err != nil {
+		return nil, fmt.Errorf("stopMovement: %w", err)
+	}
+	return append([][]byte{posePacket}, packets...), nil
+}
+
+// MovementPause clears an active pursuit without changing visibility or the
+// status animation. Preserve stealth and hidden presentation during a hold.
+func MovementPause(objectID uint32, position game.Vec3, facing game.Vec3) ([][]byte, error) {
+	posePacket, err := RestorePose(objectID, position, facing)
+	if err != nil {
+		return nil, fmt.Errorf("pausePose: %w", err)
+	}
+	stopPacket, err := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
+		ObjectID: objectID, GoalFlags: 0x20, GoalPosition: vector(position),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pauseStop: %w", err)
+	}
+	return [][]byte{posePacket, stopPacket}, nil
+}
+
 // RestorePose relocates the rendered root, unlike a locomotion goal update.
 // Preserve the saved heading; the subsequent ability owns any intentional turn.
 func RestorePose(objectID uint32, position game.Vec3, facing game.Vec3) ([]byte, error) {

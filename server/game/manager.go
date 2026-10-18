@@ -1055,6 +1055,7 @@ func (g *Instance) SetState(state SessionState) {
 
 // Manager owns active game instances.
 type Manager struct {
+	scenarioMapState
 	mu                    sync.RWMutex
 	nextID                uint32
 	hostNetwork           NetworkPair

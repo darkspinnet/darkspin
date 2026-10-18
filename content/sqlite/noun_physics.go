@@ -14,8 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/darkspinnet/darkspin/content/dbpf"
 )
 
 const nounAssetType = uint32(0x76a8f7d8)
@@ -65,6 +63,7 @@ type nounPhysicsAsset struct {
 }
 
 var tutorialNounPhysicsSpec = map[uint32]nounPhysicsSpec{
+	0x385532b7: {assetName: "DEST_prefab_islands_instrument_scitech_7.Noun", instanceID: 0x385532b7, decodedSize: 1028, decodedSHA256: "2fa952d9562380fd5f654ea622e4446760aa9c283a3bf51fa97226f55bd19b83", footprintRadius: 6.403125, geometry: "builtins!sphere"},
 	0x09a3ac7f: {assetName: "TutorialBasicPoison.Noun", instanceID: 0x09a3ac7f, decodedSize: 703, decodedSHA256: "ab0ed9b141763a95afae20e6699f6e0f07e7a8ad81ffdc0f5c9b0be674336d14", footprintRadius: 1.3, geometry: "builtins!sphere", classAttributeSize: 261, classAttributeSHA256: "f4cb7e94d90a6de3ed1f3db253501488159cfd7062b7d9251cb81fcdb43e1c3e", characterAnimationInstanceID: 0x1c3ce813, characterAnimationSize: 1207, characterAnimationSHA256: "12177aa70f47a28eb949a93f0a9a1020dcdc7ab999fa9db53308d9ee3e6e97fd", ordinaryDeathAnimation: "zlm_minn_sp_3_death_melee"},
 	0x52c73d4d: {assetName: "TutorialBasicDiseased.Noun", instanceID: 0x52c73d4d, decodedSize: 729, decodedSHA256: "7fa30e9983ea108ef0462c91c4b7da8870c0982439dd37c94c58ae9c7d19211c", footprintRadius: 1.4, geometry: "builtins!sphere", classAttributeSize: 268, classAttributeSHA256: "9568e825e66b0207558cef2ba6e7317d2f77fceb24ca90f004ce923aa6d890c7", characterAnimationInstanceID: 0xdd914f51, characterAnimationSize: 1207, characterAnimationSHA256: "c14922d1d5d9dec6658941c4dcba96e815126a0d61927ce4a9230fb435cac085", ordinaryDeathAnimation: "zlm_minn_sp_3_death_melee"},
 	0x3aec5fe2: {assetName: "TutorialBasicRanged.Noun", instanceID: 0x3aec5fe2, decodedSize: 690, decodedSHA256: "f3530e2d3f0d7f346b906ace41dac76457fc4c1cab44d5f175aaf69e3362c82c", footprintRadius: 1.45, geometry: "builtins!sphere", classAttributeSize: 266, classAttributeSHA256: "642ba57f0025e7c43b767592153884bba4f8370830140a685512ad7aae0c08cf", characterAnimationInstanceID: 0x957c88a3, characterAnimationSize: 1197, characterAnimationSHA256: "12c875ab6b728182f054799ac4ca7b34d7e592a68f262082eee0c17134b51046", ordinaryDeathAnimation: "gen_death_melee"},
@@ -106,7 +105,7 @@ func writeNounPhysics(ctx context.Context, transaction *sql.Tx, installPath stri
 	if err != nil {
 		return fmt.Errorf("packageStat: %w", err)
 	}
-	pkg, err := dbpf.NewReader(r, fi.Size())
+	pkg, err := importPackageReader(ctx, r, fi.Size())
 	if err != nil {
 		return fmt.Errorf("packageRead: %w", err)
 	}

@@ -41,6 +41,26 @@ type crystalLevelOffsetAsset struct {
 	weight  float32
 }
 
+// CrystalTuning preserves the scalar authored alongside the drop selection arrays.
+type CrystalTuning struct {
+	ResourceID              int64
+	ThreeInARowBonusPercent float32
+}
+
+func (e *Store) CrystalTuning(ctx context.Context) (CrystalTuning, error) {
+	if e == nil || e.database == nil || ctx == nil {
+		return CrystalTuning{}, errors.New("crystal tuning store or context unavailable")
+	}
+	var tuning CrystalTuning
+	err := e.database.QueryRowContext(ctx, `
+		SELECT content_source_resource_id, three_in_a_row_bonus_percent
+		FROM crystal_tuning WHERE id=1`).Scan(&tuning.ResourceID, &tuning.ThreeInARowBonusPercent)
+	if err != nil {
+		return CrystalTuning{}, fmt.Errorf("crystalTuningQuery: %w", err)
+	}
+	return tuning, nil
+}
+
 func writeCrystalTuning(ctx context.Context, transaction *sql.Tx, installPath string) error {
 	packagePath := filepath.Join(installPath, "Data", "AssetData_Binary.package")
 	r, err := os.Open(packagePath)
@@ -52,7 +72,7 @@ func writeCrystalTuning(ctx context.Context, transaction *sql.Tx, installPath st
 	if err != nil {
 		return fmt.Errorf("packageStat: %w", err)
 	}
-	pkg, err := dbpf.NewReader(r, fi.Size())
+	pkg, err := importPackageReader(ctx, r, fi.Size())
 	if err != nil {
 		return fmt.Errorf("packageRead: %w", err)
 	}
@@ -73,13 +93,38 @@ func writeCrystalTuning(ctx context.Context, transaction *sql.Tx, installPath st
 	if resource == nil {
 		return errors.New("resource missing")
 	}
-	payload, err := readDecodedResource(pkg, *resource)
+	payload, err := readDecodedResource(ctx, pkg, *resource)
 	if err != nil {
 		return fmt.Errorf("resourceRead: %w", err)
 	}
 	digest := sha256.Sum256(payload)
 	if hex.EncodeToString(digest[:]) != crystalTuningAssetSHA256 {
 		return fmt.Errorf("resourceHash: got %x", digest)
+	}
+	if len(payload) < crystalTuningHeaderSize {
+		return fmt.Errorf("tuningSize: got %d", len(payload))
+	}
+	bonusPercent := math.Float32frombits(binary.LittleEndian.Uint32(payload))
+	if !isFinite(bonusPercent) || bonusPercent < 0 {
+		return fmt.Errorf("tuningBonus: invalid %g", bonusPercent)
+	}
+	result, err := transaction.ExecContext(ctx, `
+		INSERT INTO crystal_tuning (id, content_source_resource_id, three_in_a_row_bonus_percent)
+		SELECT 1, resource.id, ?
+		FROM content_source_resource AS resource
+		JOIN content_source_package AS package ON package.id=resource.content_source_package_id
+		WHERE package.package_name=? AND resource.type_id=? AND resource.group_id=? AND resource.instance_id=?`,
+		bonusPercent, lootAssetPackage, int64(crystalTuningAssetType),
+		int64(crystalTuningAssetGroup), int64(crystalTuningAssetInstance))
+	if err != nil {
+		return fmt.Errorf("tuningInsert: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("tuningCount: %w", err)
+	}
+	if count != 1 {
+		return fmt.Errorf("tuningCount: got %d", count)
 	}
 	definitions, err := decodeCrystalTuningAsset(payload)
 	if err != nil {

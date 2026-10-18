@@ -12,9 +12,10 @@ import (
 )
 
 type campaignNPCChargeupState struct {
-	isCharged          bool
-	nextBuildTimestamp uint64
-	revision           uint64
+	isCharged                 bool
+	isStandardAttackPerformed bool
+	nextBuildTimestamp        uint64
+	revision                  uint64
 }
 
 type campaignNPCChargeupSchedule struct {
@@ -135,6 +136,7 @@ func (r campaignNPCActionRuntime) produceZelemChargeupBuild(
 		return nil, fmt.Errorf("enemyChargeupStart: %w", err)
 	}
 	state := previous
+	state.isStandardAttackPerformed = false
 	state.nextBuildTimestamp = timestamp + uint64(cooldown/time.Millisecond)
 	state.revision++
 	peerSession.campaignNPCChargeups[objectID] = state

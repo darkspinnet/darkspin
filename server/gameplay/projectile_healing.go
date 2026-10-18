@@ -20,6 +20,10 @@ func (e campaignProjectileSchedule) applyDamageHealingLocked(
 		e.definition.HealingRadius <= 0 || damage <= 0 {
 		return nil, nil
 	}
+	// The impact caller already validates flight ownership. Keep the accepted
+	// source team/game even if its hero changed while the projectile travelled.
+	sourceSession := gameplayPeerSession{binding: e.binding}
+	sourceSession.zone = sourceZone
 	projectedHealing, err := zoneability.ProjectHealing(
 		e.creature, e.definition, damage*e.definition.DamageHealingFraction,
 	)
@@ -28,7 +32,7 @@ func (e campaignProjectileSchedule) applyDamageHealingLocked(
 	}
 	packets := make([][]byte, 0)
 	for sessionKey, targetSession := range e.runtime.registry.sessions {
-		if targetSession.zone != sourceZone || targetSession.deployedObjectID == 0 ||
+		if !isActivePartyRecipient(targetSession, sourceSession) || targetSession.deployedObjectID == 0 ||
 			targetSession.deployedCreatureIndex >=
 				uint32(len(targetSession.binding.Creatures)) ||
 			targetSession.deployedHitPoint() <= 0 ||
@@ -80,7 +84,8 @@ func (e campaignProjectileSchedule) applyDamageHealingLocked(
 		e.runtime.registry.sessions[sessionKey] = targetSession
 	}
 	for _, companion := range sourceZone.Companion().Snapshots() {
-		if !companion.IsTargetable || companion.HitPoint <= 0 ||
+		if !e.runtime.registry.isActivePartyCompanionLocked(companion, sourceSession) ||
+			!companion.IsTargetable || companion.HitPoint <= 0 ||
 			companion.HitPoint >= companion.MaximumHitPoint ||
 			zonegeometry.Distance(center, companion.Position) >
 				e.definition.HealingRadius {

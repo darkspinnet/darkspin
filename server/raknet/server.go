@@ -231,6 +231,9 @@ func (p Packet) ScheduleProducers(
 	if p.ScheduleGroupResult != nil {
 		cancel, err := p.ScheduleGroupResult(producers, nil)
 		if err != nil {
+			if cancel != nil {
+				cancel()
+			}
 			return nil, fmt.Errorf("scheduleResult: %w", err)
 		}
 		return cancel, nil
@@ -238,6 +241,9 @@ func (p Packet) ScheduleProducers(
 	if p.ScheduleGroup != nil {
 		cancel, err := p.ScheduleGroup(producers)
 		if err != nil {
+			if cancel != nil {
+				cancel()
+			}
 			return nil, fmt.Errorf("schedule: %w", err)
 		}
 		return cancel, nil

@@ -31,7 +31,8 @@ func Scenery(plan zoneobject.SceneryPlan) ([][]byte, error) {
 		return nil, fmt.Errorf("sceneryPublication: %w", err)
 	}
 	createPacket, err := raknet.MarshalApplication(raknet.EnemyObjectCreateMessage{
-		ObjectID: publication.ObjectID, Noun: util.HashID(publication.NounName),
+		IsInitiallyHidden: !publication.IsVisible,
+		ObjectID:          publication.ObjectID, Noun: util.HashID(publication.NounName),
 		Position: raknet.Vector3{
 			X: publication.Position.X, Y: publication.Position.Y, Z: publication.Position.Z,
 		},

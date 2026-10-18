@@ -280,9 +280,25 @@ func (e heroProjectileStatusSchedule) finishAfflictionFlight() ([][]byte, error)
 	if !isCurrent {
 		return nil, nil
 	}
+	if e.run.projectile.RemainingFlightDelay(e.runtime.now()) > afflictionBoltScanInterval {
+		step := heroAfflictionBoltStep{schedule: e, deadline: e.run.projectile.Now()}
+		packets, err := step.scan()
+		if err != nil {
+			return nil, fmt.Errorf("afflictionSlowScan: %w", err)
+		}
+		err = scheduleNPCProducer(e.runtime.registry, e.packet, afflictionBoltScanInterval, e.finishAfflictionFlight)
+		if err != nil {
+			return nil, fmt.Errorf("afflictionSlowResume: %w", err)
+		}
+		return packets, nil
+	}
 	packets, _, err := e.run.projectile.DeleteProjectile(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("afflictionProjectileDelete: %w", err)
+	}
+	err = scheduleNPCProducer(e.runtime.registry, e.packet, e.definition.StatusDuration, e.finish)
+	if err != nil {
+		return nil, fmt.Errorf("afflictionSlowFinish: %w", err)
 	}
 	return packets, nil
 }

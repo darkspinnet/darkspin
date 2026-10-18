@@ -9,33 +9,30 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 	basenavigation "github.com/darkspinnet/darkspin/server/navigation"
 	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
-	zonenavigation "github.com/darkspinnet/darkspin/server/zone/navigation"
 )
 
 const maximumVisitedPolygon = 2048
 const PursuitTimeout = 8 * time.Second
-const npcPursuitProjectionDistance = 12
+const pursuitProjectionDistance = 12
 
 func NPCProjectPosition(
-	mesh *basenavigation.Mesh, position game.Vec3, footprintRadius float32,
+	mesh *basenavigation.Mesh, position game.Vec3, footprintRadius float32, actors ...basenavigation.ActorNavigation,
 ) (game.Vec3, bool, error) {
 	if !zonegeometry.IsFinite(position) ||
-		!zonegeometry.IsFinitePositiveScalar(footprintRadius) {
+		(!zonegeometry.IsFiniteScalar(footprintRadius) || footprintRadius < 0) {
 		return game.Vec3{}, false, errors.New("invalid npc projection")
 	}
 	if mesh == nil {
 		return position, false, nil
 	}
-	planLayer, isLayerFound := mesh.SelectLayer(
-		footprintRadius, zonenavigation.HeroHeight,
-	)
+	planLayer, isLayerFound := mesh.ActorLayer(footprintRadius, actors...)
 	if !isLayerFound {
 		return position, false, nil
 	}
 	projection, err := mesh.Project(
 		basenavigation.Vec3{X: position.X, Y: position.Y, Z: position.Z},
 		basenavigation.ProjectionOptions{
-			PlanLayer: planLayer, MaxDistance: npcPursuitProjectionDistance,
+			PlanLayer: planLayer, MaxDistance: pursuitProjectionDistance,
 		},
 	)
 	if err != nil {
@@ -50,18 +47,16 @@ func NPCProjectPosition(
 
 func NPCDirectMovementDestination(
 	mesh *basenavigation.Mesh, source game.Vec3, desired game.Vec3,
-	footprintRadius float32,
+	footprintRadius float32, actors ...basenavigation.ActorNavigation,
 ) (game.Vec3, bool, error) {
 	if !zonegeometry.IsFinite(source) || !zonegeometry.IsFinite(desired) ||
-		!zonegeometry.IsFinitePositiveScalar(footprintRadius) {
+		(!zonegeometry.IsFiniteScalar(footprintRadius) || footprintRadius < 0) {
 		return game.Vec3{}, false, errors.New("invalid npc direct movement")
 	}
 	if mesh == nil {
 		return source, false, nil
 	}
-	planLayer, isLayerFound := mesh.SelectLayer(
-		footprintRadius, zonenavigation.HeroHeight,
-	)
+	planLayer, isLayerFound := mesh.ActorLayer(footprintRadius, actors...)
 	if !isLayerFound {
 		return source, false, nil
 	}
@@ -70,7 +65,7 @@ func NPCDirectMovementDestination(
 		basenavigation.Vec3{X: desired.X, Y: desired.Y, Z: desired.Z},
 		basenavigation.PathOptions{
 			ProjectionOptions: basenavigation.ProjectionOptions{
-				PlanLayer: planLayer, MaxDistance: npcPursuitProjectionDistance,
+				PlanLayer: planLayer, MaxDistance: pursuitProjectionDistance,
 			},
 			MaxVisitedPolygon: maximumVisitedPolygon,
 		},
@@ -87,18 +82,16 @@ func NPCDirectMovementDestination(
 
 func NPCPathClear(
 	mesh *basenavigation.Mesh, source game.Vec3, target game.Vec3,
-	footprintRadius float32,
+	footprintRadius float32, actors ...basenavigation.ActorNavigation,
 ) (bool, error) {
 	if !zonegeometry.IsFinite(source) || !zonegeometry.IsFinite(target) ||
-		!zonegeometry.IsFinitePositiveScalar(footprintRadius) {
+		(!zonegeometry.IsFiniteScalar(footprintRadius) || footprintRadius < 0) {
 		return false, errors.New("invalid npc path visibility")
 	}
 	if mesh == nil {
 		return true, nil
 	}
-	planLayer, isLayerFound := mesh.SelectLayer(
-		footprintRadius, zonenavigation.HeroHeight,
-	)
+	planLayer, isLayerFound := mesh.ActorLayer(footprintRadius, actors...)
 	if !isLayerFound {
 		return false, nil
 	}
@@ -107,7 +100,7 @@ func NPCPathClear(
 		basenavigation.Vec3{X: target.X, Y: target.Y, Z: target.Z},
 		basenavigation.PathOptions{
 			ProjectionOptions: basenavigation.ProjectionOptions{
-				PlanLayer: planLayer, MaxDistance: npcPursuitProjectionDistance,
+				PlanLayer: planLayer, MaxDistance: pursuitProjectionDistance,
 			},
 			MaxVisitedPolygon: maximumVisitedPolygon,
 		},
@@ -158,40 +151,52 @@ func NPCStopDistance(
 
 func AdvancePursuitPath(
 	mesh *basenavigation.Mesh, source game.Vec3, target game.Vec3,
-	footprintRadius float32, travel float32,
+	footprintRadius float32, travel float32, actors ...basenavigation.ActorNavigation,
 ) (game.Vec3, error) {
+	step, err := AdvancePursuitPathStep(mesh, source, target, footprintRadius, travel, actors...)
+	if err != nil {
+		return game.Vec3{}, fmt.Errorf("pursuitPathStep: %w", err)
+	}
+	return step.Position, nil
+}
+
+type PursuitPathStep struct {
+	Position game.Vec3
+	Waypoint game.Vec3
+}
+
+// Return the same next corridor point used to advance the server actor, so
+// remote locomotion can follow that segment rather than steering through walls.
+func AdvancePursuitPathStep(
+	mesh *basenavigation.Mesh, source game.Vec3, target game.Vec3,
+	footprintRadius float32, travel float32, actors ...basenavigation.ActorNavigation,
+) (PursuitPathStep, error) {
 	if mesh == nil || !zonegeometry.IsFinite(source) ||
 		!zonegeometry.IsFinite(target) ||
-		!zonegeometry.IsFinitePositiveScalar(footprintRadius) ||
+		(!zonegeometry.IsFiniteScalar(footprintRadius) || footprintRadius < 0) ||
 		!zonegeometry.IsFinitePositiveScalar(travel) {
-		return game.Vec3{}, errors.New("invalid campaign pursuit path")
+		return PursuitPathStep{}, errors.New("invalid campaign pursuit path")
 	}
-	planLayer, isLayerFound := mesh.SelectLayer(
-		footprintRadius, zonenavigation.HeroHeight,
-	)
+	planLayer, isLayerFound := mesh.ActorLayer(footprintRadius, actors...)
 	if !isLayerFound {
-		planLayer, isLayerFound = mesh.SelectLargestLayer(
-			zonenavigation.HeroHeight,
-		)
-	}
-	if !isLayerFound {
-		return game.Vec3{}, errors.New("campaign pursuit layer unavailable")
+		return PursuitPathStep{}, errors.New("campaign pursuit layer unavailable")
 	}
 	path, err := mesh.CreatePath(
 		basenavigation.Vec3{X: source.X, Y: source.Y, Z: source.Z},
 		basenavigation.Vec3{X: target.X, Y: target.Y, Z: target.Z},
 		basenavigation.PathOptions{
 			ProjectionOptions: basenavigation.ProjectionOptions{
-				PlanLayer: planLayer, MaxDistance: npcPursuitProjectionDistance,
+				PlanLayer: planLayer, MaxDistance: pursuitProjectionDistance,
 			},
 			MaxVisitedPolygon: maximumVisitedPolygon,
 		},
 	)
 	if err != nil {
-		return game.Vec3{}, fmt.Errorf("campaignPursuitCreate: %w", err)
+		return PursuitPathStep{}, fmt.Errorf("campaignPursuitCreate: %w", err)
 	}
 
 	position := basenavigation.Vec3{X: source.X, Y: source.Y, Z: source.Z}
+	waypoint := target
 	for _, point := range path.Points {
 		deltaX := point.X - position.X
 		deltaY := point.Y - position.Y
@@ -208,6 +213,7 @@ func AdvancePursuitPath(
 			continue
 		}
 		scale := travel / distance
+		waypoint = game.Vec3{X: point.X, Y: point.Y, Z: point.Z}
 		position = basenavigation.Vec3{
 			X: position.X + deltaX*scale,
 			Y: position.Y + deltaY*scale,
@@ -215,5 +221,7 @@ func AdvancePursuitPath(
 		}
 		break
 	}
-	return game.Vec3{X: position.X, Y: position.Y, Z: position.Z}, nil
+	return PursuitPathStep{
+		Position: game.Vec3{X: position.X, Y: position.Y, Z: position.Z}, Waypoint: waypoint,
+	}, nil
 }

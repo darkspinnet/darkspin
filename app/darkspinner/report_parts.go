@@ -21,7 +21,9 @@ Ordinary entries keep their original paths. Oversized entries are stored under
 split-files/<original path>/part-000001, part-000002, ... . Concatenate those
 chunks in numerical order as binary data to restore the original file exactly.
 Chunks may split a line or UTF-8 character; no bytes have been discarded.
-report.json describes the complete report, across all ZIPs.
+When present, report.json describes the complete report across all ZIPs.
+Snapshot bundles contain the original snapshot ZIPs; restore any split ZIP
+before opening it.
 `
 
 type reportPartWriter struct {

@@ -20,6 +20,7 @@ func LaserZoneStart(plan zonenpc.AttackPlan, objectIDs []uint32, endpoints []gam
 	positions := append([]game.Vec3{plan.SourcePosition}, endpoints...)
 	messages := make([]raknet.ApplicationMessage, 0, len(positions)+len(endpoints))
 	for index, position := range positions {
+		position.Z += 2.7 // CitadelSpecialThree_LaserZone.beamHeight.
 		if objectIDs[index] == 0 || !isFiniteVec3(position) {
 			return nil, errors.New("laser zone marker invalid")
 		}

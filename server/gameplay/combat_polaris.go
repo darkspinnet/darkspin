@@ -23,6 +23,7 @@ const (
 type campaignNPCPolarisState struct {
 	lastBlinkBand      uint8
 	nextBlinkTimestamp uint64
+	nextMarkTimestamp  uint64
 }
 
 type campaignNPCPolarisBlinkSchedule struct {
@@ -39,7 +40,9 @@ type campaignNPCPolarisBlinkSchedule struct {
 func (e campaignNPCPolarisBlinkSchedule) fail(
 	step string, err error,
 ) ([][]byte, error) {
-	e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
+	e.runtime.releaseActionGeneration(
+		e.sessionKey, e.generation, e.objectID, e.plan.ActionGeneration,
+	)
 	return nil, fmt.Errorf("%s: %w", step, err)
 }
 
@@ -155,8 +158,8 @@ func (r campaignNPCActionRuntime) restoreCampaignNPCPolarisState(
 func (e campaignNPCPolarisBlinkSchedule) hit() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := isFound && peerSession.isCampaignNPCSourceActive(
-		e.generation, e.objectID,
+	isCurrent := isFound && peerSession.isCampaignNPCSourceGenerationActive(
+		e.generation, e.objectID, e.plan.ActionGeneration,
 	)
 	if !isCurrent {
 		e.runtime.registry.mutex.Unlock()
@@ -167,10 +170,24 @@ func (e campaignNPCPolarisBlinkSchedule) hit() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	// BeforeRelease uses the captured target's current position, falling back
+	// to the caster only when that target no longer exists (Lua chunk 983).
+	var err error
+	peerSession, err = e.runtime.pursuit.advanceTargetPoseLocked(peerSession, e.plan.TargetObjectID)
+	if err != nil {
+		e.runtime.registry.mutex.Unlock()
+		return e.fail("enemyPolarisTargetPose", err)
+	}
+	e.runtime.registry.sessions[e.sessionKey] = peerSession
+	center := npc.Plan.Position
+	target, isTargetFound := peerSession.campaignNPCTarget(e.generation, e.plan.TargetObjectID)
+	if isTargetFound {
+		center = target.Position
+	}
 	destination, isDestinationFound, err := zonenavigation.RandomTeleportDestination(
 		peerSession.zone.Navigation(), peerSession.zone.NPCRandom(),
 		zonenavigation.RandomTeleportRequest{
-			SourcePosition:  npc.Plan.Position,
+			SourcePosition:  center,
 			FootprintRadius: npc.Plan.NPCProfile.FootprintRadius,
 			MinimumDistance: e.plan.Profile.TeleportMinimumDistance,
 			NormalDistance:  e.plan.Profile.TeleportNormalDistance,
@@ -185,6 +202,14 @@ func (e campaignNPCPolarisBlinkSchedule) hit() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	packets, err := npcraknet.BlinkWithFacing(
+		e.plan, destination, npc.Facing,
+		e.timestamp+uint64(e.plan.Profile.HitDelay/time.Millisecond),
+	)
+	if err != nil {
+		e.runtime.registry.mutex.Unlock()
+		return e.fail("enemyPolarisBlinkPresentation", err)
+	}
 	err = peerSession.zone.NPCs().SetPosition(e.objectID, destination)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
@@ -192,13 +217,19 @@ func (e campaignNPCPolarisBlinkSchedule) hit() ([][]byte, error) {
 	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
-	return npcraknet.Blink(
-		e.plan, destination,
-		e.timestamp+uint64(e.plan.Profile.HitDelay/time.Millisecond),
-	)
+	return packets, nil
 }
 
 func (e campaignNPCPolarisBlinkSchedule) next() ([][]byte, error) {
+	e.runtime.registry.mutex.RLock()
+	current, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isCurrent := isFound && current.isCampaignNPCSourceGenerationActive(
+		e.generation, e.objectID, e.plan.ActionGeneration,
+	)
+	e.runtime.registry.mutex.RUnlock()
+	if !isCurrent {
+		return nil, nil
+	}
 	timestamp := e.timestamp + uint64(e.plan.Profile.ReleaseDelay/time.Millisecond)
 	packets, err := e.runtime.producePolarisPhase(
 		e.packet, e.sessionKey, e.generation, e.objectID, timestamp, e.nextPhase,
@@ -233,6 +264,20 @@ func (r campaignNPCActionRuntime) producePolarisMarkSeeker(
 	packet raknet.Packet, sessionKey string, generation uint64,
 	objectID uint32, timestamp uint64,
 ) ([][]byte, error) {
+	packets, isHandled, err := r.producePolarisMark(packet, sessionKey, generation, objectID, timestamp)
+	if err != nil {
+		return nil, fmt.Errorf("polarisMark: %w", err)
+	}
+	if isHandled {
+		return packets, nil
+	}
+	return r.producePolarisSeeker(packet, sessionKey, generation, objectID, timestamp)
+}
+
+func (r campaignNPCActionRuntime) producePolarisSeeker(
+	packet raknet.Packet, sessionKey string, generation uint64,
+	objectID uint32, timestamp uint64,
+) ([][]byte, error) {
 	r.registry.mutex.RLock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.isCampaignNPCSourceActive(generation, objectID)
@@ -255,7 +300,7 @@ func (r campaignNPCActionRuntime) producePolarisMarkSeeker(
 		return nil, errors.New("enemy Polaris mark seeker profile unavailable")
 	}
 	plan, err := zonenpc.PlanAttackWithProfile(
-		npc, target.ObjectID, target.Position, profile, target.FootprintRadius,
+		npc, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
 	if err != nil {
 		r.releaseAction(sessionKey, generation, objectID)

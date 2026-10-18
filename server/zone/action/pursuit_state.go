@@ -1,6 +1,10 @@
 package action
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/darkspinnet/darkspin/server/game"
+)
 
 type Pursuit struct {
 	mu             sync.RWMutex
@@ -10,6 +14,8 @@ type Pursuit struct {
 	abilityIndex   uint32
 	syncStamp      uint8
 	stopDistance   float32
+	isGround       bool
+	groundPosition game.Vec3
 }
 
 type PursuitSnapshot struct {
@@ -20,6 +26,8 @@ type PursuitSnapshot struct {
 	SyncStamp      uint8
 	StopDistance   float32
 	IsActive       bool
+	IsGround       bool
+	GroundPosition game.Vec3
 }
 
 func (p *Pursuit) Begin(
@@ -37,7 +45,30 @@ func (p *Pursuit) Begin(
 	p.abilityIndex = abilityIndex
 	p.syncStamp = syncStamp
 	p.stopDistance = stopDistance
+	p.isGround = false
+	p.groundPosition = game.Vec3{}
 	return p.generation
+}
+
+// BeginGround retains a fixed cast location while the actor walks into range.
+func (e *Pursuit) BeginGround(
+	sourceObjectID uint32, abilityIndex uint32, syncStamp uint8,
+	position game.Vec3, stopDistance float32,
+) uint64 {
+	if e == nil {
+		return 0
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.generation++
+	e.sourceObjectID = sourceObjectID
+	e.targetObjectID = 0
+	e.abilityIndex = abilityIndex
+	e.syncStamp = syncStamp
+	e.stopDistance = stopDistance
+	e.isGround = true
+	e.groundPosition = position
+	return e.generation
 }
 
 func (p *Pursuit) IsTarget(
@@ -62,7 +93,7 @@ func (p *Pursuit) IsAbility(sourceObjectID uint32, abilityIndex uint32) bool {
 }
 
 func (p *Pursuit) isAbility(sourceObjectID uint32, abilityIndex uint32) bool {
-	return p.targetObjectID != 0 && p.sourceObjectID == sourceObjectID &&
+	return (p.targetObjectID != 0 || p.isGround) && p.sourceObjectID == sourceObjectID &&
 		p.abilityIndex == abilityIndex
 }
 
@@ -99,6 +130,8 @@ func (p *Pursuit) clear() {
 	p.abilityIndex = 0
 	p.syncStamp = 0
 	p.stopDistance = 0
+	p.isGround = false
+	p.groundPosition = game.Vec3{}
 }
 
 func (p *Pursuit) Expire(generation uint64) bool {
@@ -107,7 +140,7 @@ func (p *Pursuit) Expire(generation uint64) bool {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.generation != generation || p.targetObjectID == 0 {
+	if p.generation != generation || (p.targetObjectID == 0 && !p.isGround) {
 		return false
 	}
 	p.clear()
@@ -127,6 +160,8 @@ func (p *Pursuit) Snapshot() PursuitSnapshot {
 		AbilityIndex:   p.abilityIndex,
 		SyncStamp:      p.syncStamp,
 		StopDistance:   p.stopDistance,
-		IsActive:       p.targetObjectID != 0,
+		IsActive:       p.targetObjectID != 0 || p.isGround,
+		IsGround:       p.isGround,
+		GroundPosition: p.groundPosition,
 	}
 }

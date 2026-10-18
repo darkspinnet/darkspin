@@ -18,6 +18,12 @@ func (w *traceResponseWriter) WriteHeader(status int) {
 	if w.status != 0 {
 		return
 	}
+	// Preserve the handler's declared XML, JSON, HTML or image type. An
+	// untyped response must not become HTML through content sniffing.
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
 }

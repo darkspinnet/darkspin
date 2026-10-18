@@ -21,7 +21,6 @@ const (
 	SupportAbilityBoundary    = 9
 	RandomDelay               = 6 * time.Second
 	FirstClearSupportDelay    = 6 * time.Second
-	FirstClearBossArmingDelay = 13 * time.Second
 	SupportMutationDeadline   = 6 * time.Second
 	SupportFinalDeadline      = 19 * time.Second
 	CatalystMutationDeadline  = 6 * time.Second

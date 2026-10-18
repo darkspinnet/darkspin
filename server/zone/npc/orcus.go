@@ -1,10 +1,14 @@
 package npc
 
 import (
+	"cmp"
+	"math"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
+	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
 )
 
 type OrcusSpawnDefinition struct {
@@ -22,19 +26,18 @@ type OrcusSpawnDefinition struct {
 func OrcusSpawnProfile(nounName string) (OrcusSpawnDefinition, bool) {
 	servantNoun := ""
 	maximumServant := 0
-	hitPoint := float32(0)
 	movementSpeed := float32(0)
 	nonCombatMovementSpeed := float32(0)
 	switch strings.ToLower(nounName) {
 	case "verdanthboss.noun":
 		servantNoun, maximumServant = "Verdanth_Boss_Spawn.Noun", 10
-		hitPoint, movementSpeed, nonCombatMovementSpeed = 20, 6, 3
+		movementSpeed, nonCombatMovementSpeed = 6, 3
 	case "verdanthboss_2.noun":
 		servantNoun, maximumServant = "Verdanth_Boss_Spawn2.Noun", 15
-		hitPoint, movementSpeed, nonCombatMovementSpeed = 30, 9, 4
+		movementSpeed, nonCombatMovementSpeed = 9, 4
 	case "verdanthboss_3.noun":
 		servantNoun, maximumServant = "Verdanth_Boss_Spawn3.Noun", 20
-		hitPoint, movementSpeed, nonCombatMovementSpeed = 40, 12, 5
+		movementSpeed, nonCombatMovementSpeed = 12, 5
 	default:
 		return OrcusSpawnDefinition{}, false
 	}
@@ -43,11 +46,6 @@ func OrcusSpawnProfile(nounName string) (OrcusSpawnDefinition, bool) {
 		ServantCountPerCast: 3, FirstSpawnDelay: 769999981 * time.Nanosecond,
 		SpawnInterval: 1370000005 * time.Nanosecond, Cooldown: 18 * time.Second,
 		AnimationName: "boss_lf_spawneater_attack1",
-		ServantProfile: game.CampaignNPCProfile{
-			IsTargetable: true, HitPoint: hitPoint, PowerPoint: 75,
-			Strength: 10, Dexterity: 10, Mind: 10, CriticalRating: 5,
-			GraphicsScale: 1, FootprintRadius: 0.75, IsKnown: true,
-		},
 		ServantAction: ActionProfile{
 			Family: ActionMelee, AbilityName: "VerdanthBossMinionMelee",
 			AnimationName:           "cast_tailzap",
@@ -84,8 +82,9 @@ func OrcusFallbackProfile(nounName string) (ActionProfile, bool) {
 	}
 	return ActionProfile{
 		Family: ActionNomadDrone, AbilityName: "VerdanthBossFallbackMelee",
-		AnimationName: "attack", HitDelay: 466667 * time.Microsecond,
-		ReleaseDelay: 1500 * time.Millisecond, Cooldown: 1500 * time.Millisecond,
+		AnimationName: "ver_boss_lf_spawneater_melee",
+		HitDelay:      466667 * time.Microsecond,
+		ReleaseDelay:  1500 * time.Millisecond, Cooldown: 1500 * time.Millisecond,
 		Range: 2.25, MovementSpeed: movementSpeed,
 		NonCombatMovementSpeed: nonCombatMovementSpeed,
 		MinimumDamage:          5, MaximumDamage: 8,
@@ -138,4 +137,70 @@ func OrcusDiseaseConeProfile(nounName string) (ActionProfile, bool) {
 		TargetEffectName: "status_diseased.ServerEventDef",
 		Radius:           10, Angle: 55, IsModifierDamageProfileKnown: true,
 	}, true
+}
+
+func OrcusConsumeProfile(nounName string) (ActionProfile, bool) {
+	fallback, isFound := OrcusFallbackProfile(nounName)
+	if !isFound {
+		return ActionProfile{}, false
+	}
+	minimumHealing := float32(0)
+	maximumHealing := float32(0)
+	switch strings.ToLower(nounName) {
+	case "verdanthboss.noun":
+		minimumHealing, maximumHealing = 40, 60
+	case "verdanthboss_2.noun":
+		minimumHealing, maximumHealing = 60, 100
+	case "verdanthboss_3.noun":
+		minimumHealing, maximumHealing = 80, 140
+	default:
+		return ActionProfile{}, false
+	}
+	return ActionProfile{
+		AbilityName: "Consume", AnimationName: "ver_boss_lf_spawneater_eat_spawn",
+		HitDelay: 1567 * time.Millisecond, ReleaseDelay: 4200 * time.Millisecond,
+		Radius: 4, MovementSpeed: fallback.MovementSpeed,
+		NonCombatMovementSpeed: fallback.NonCombatMovementSpeed,
+		MinimumHealing:         minimumHealing, MaximumHealing: maximumHealing,
+		IsFirstAggroDurationKnown: true,
+	}, true
+}
+
+// OwnedActiveCandidates returns living actors created by one NPC within the
+// authored consume radius, ordered from nearest to farthest.
+func (s *Session) OwnedActiveCandidates(
+	ownerObjectID uint32, maximumRange float32,
+) []Snapshot {
+	if s == nil || ownerObjectID == 0 || maximumRange <= 0 ||
+		math.IsNaN(float64(maximumRange)) || math.IsInf(float64(maximumRange), 0) {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	owner, isFound := s.npcs[ownerObjectID]
+	if !isFound || owner.IsDefeated || !owner.IsPublished || owner.HitPoint <= 0 {
+		return nil
+	}
+	candidates := make([]Snapshot, 0)
+	for _, objectID := range s.objectIDs {
+		candidate := s.npcs[objectID]
+		if candidate.Plan.OwnerObjectID != ownerObjectID || candidate.IsDefeated ||
+			!candidate.IsPublished || candidate.HitPoint <= 0 ||
+			zonegeometry.Distance(owner.Plan.Position, candidate.Plan.Position) > maximumRange {
+			continue
+		}
+		candidates = append(candidates, candidate)
+	}
+	slices.SortFunc(candidates, func(left Snapshot, right Snapshot) int {
+		leftDistance := zonegeometry.Distance(owner.Plan.Position, left.Plan.Position)
+		rightDistance := zonegeometry.Distance(owner.Plan.Position, right.Plan.Position)
+		if leftDistance < rightDistance {
+			return -1
+		}
+		if leftDistance > rightDistance {
+			return 1
+		}
+		return cmp.Compare(left.Plan.ObjectID, right.Plan.ObjectID)
+	})
+	return candidates
 }

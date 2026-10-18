@@ -73,14 +73,10 @@ func (e campaignLeapSchedule) launch() ([][]byte, error) {
 	deltaX := target.Position.X - enemy.Plan.Position.X
 	deltaY := target.Position.Y - enemy.Plan.Position.Y
 	centerDistance := float32(math.Hypot(float64(deltaX), float64(deltaY)))
-	surfaceDistance := max(
-		float32(0), centerDistance-enemy.Plan.NPCProfile.FootprintRadius-
-			target.FootprintRadius,
-	)
-	if surfaceDistance < e.plan.Profile.MinimumRange {
+	if centerDistance < e.plan.Profile.MinimumRange {
 		cancel, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet,
 			[]raknet.ScheduledPacketProducer{{
-				Delay: campaignHopperAirTime, Produce: e.landWithoutDamage,
+				Delay: campaignHopperAirTime, Produce: e.landAtCloseRange,
 			}},
 		)
 		if scheduleErr == nil && cancel == nil {
@@ -96,7 +92,7 @@ func (e campaignLeapSchedule) launch() ([][]byte, error) {
 	movementProfile.MovementSpeed = e.plan.Profile.ForcedMovementSpeed
 	action, err := campaignNPCActionWithProfile(
 		enemy.Plan, target.ObjectID, target.Position, movementProfile,
-		target.FootprintRadius,
+		target.ActorFootprintRadius,
 	)
 	if err != nil {
 		return e.fail("enemyLeapMovePlan", err)
@@ -113,7 +109,7 @@ func (e campaignLeapSchedule) launch() ([][]byte, error) {
 	var pursuitPackets [][]byte
 	if e.plan.Profile.AbilityName == "NomadBioSpecialTwoJumpAttack" {
 		// This leap is server-driven; ordinary pursuit cannot move its jump root.
-		pursuitPackets, err = npcraknet.MovementStop(e.objectID, enemy.Plan.Position)
+		pursuitPackets, err = npcraknet.StopAtPose(e.objectID, enemy.Plan.Position, enemy.Facing)
 	} else {
 		pursuitPackets, err = npcraknet.Pursuit(action)
 	}
@@ -137,10 +133,10 @@ func (e campaignLeapSchedule) landWithDamage(
 	return e.land(timestamp, true)
 }
 
-func (e campaignLeapSchedule) landWithoutDamage() ([][]byte, error) {
+func (e campaignLeapSchedule) landAtCloseRange() ([][]byte, error) {
 	timestamp := e.timestamp +
 		uint64((e.plan.Profile.HitDelay+campaignHopperAirTime)/time.Millisecond)
-	return e.land(timestamp, false)
+	return e.land(timestamp, true)
 }
 
 func isCampaignLeapTarget(
@@ -189,7 +185,7 @@ func (e campaignLeapSchedule) land(
 			}
 			plan, err := zonenpc.PlanAttackWithProfile(
 				source, target.ObjectID, target.Position, damageProfile,
-				target.FootprintRadius,
+				target.ActorFootprintRadius,
 			)
 			if err != nil {
 				continue
@@ -310,7 +306,7 @@ func (r campaignNPCActionRuntime) produceEnemyLeap(
 		generation, enemy.TargetObjectID,
 	)
 	profile, isProfileFound := campaignNPCActionProfile(
-		enemy.Plan, target.Position, target.FootprintRadius,
+		enemy.Plan, target.Position, target.ActorFootprintRadius,
 	)
 	r.registry.mutex.RUnlock()
 	if !isEnemyFound || !isTargetFound || !isProfileFound {
@@ -334,12 +330,12 @@ func (r campaignNPCActionRuntime) produceEnemyLeap(
 		return nil, nil
 	}
 	plan, err := zonenpc.PlanAttackWithProfile(
-		enemy, target.ObjectID, target.Position, profile, target.FootprintRadius,
+		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
 	if err != nil {
 		action, actionErr := campaignNPCActionWithProfile(
 			enemy.Plan, target.ObjectID, target.Position, profile,
-			target.FootprintRadius,
+			target.ActorFootprintRadius,
 		)
 		if actionErr != nil || !action.IsPursuitNeeded {
 			r.releaseAction(sessionKey, generation, objectID)

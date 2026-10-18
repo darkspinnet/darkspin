@@ -22,12 +22,14 @@ type Session struct {
 	presented              [RouteCount]bool
 	isPresentationReserved bool
 	reservedRouteIndex     int
+	anchorsBySourceID      map[uint32]uint32
 }
 
 type MovementRequest struct {
 	Previous         game.Vec3
 	Current          game.Vec3
 	Threats          []Threat
+	FootprintRadius  float32
 	IsTransferActive bool
 }
 
@@ -142,7 +144,7 @@ func (e *Session) ObserveMovement(
 				continue
 			}
 			teleport, isTeleport, err := PlanTeleport(
-				req.Previous, req.Current, req.Threats, routeIndex,
+				req.Previous, req.Current, req.Threats, routeIndex, req.FootprintRadius,
 			)
 			if err != nil {
 				return MovementDecision{}, fmt.Errorf("securityTeleport: %w", err)
@@ -167,7 +169,7 @@ func (e *Session) ObserveMovement(
 			continue
 		}
 		_, isTeleport, err := PlanTeleport(
-			req.Previous, req.Current, req.Threats, routeIndex,
+			req.Previous, req.Current, req.Threats, routeIndex, req.FootprintRadius,
 		)
 		if err != nil {
 			return MovementDecision{}, fmt.Errorf("securityContact: %w", err)

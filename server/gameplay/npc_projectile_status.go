@@ -22,7 +22,7 @@ func (e campaignNPCProjectileStep) selectStatusLocked(
 	if !isEligible || plan.Profile.ModifierName == "" {
 		return nil
 	}
-	if e.schedule.runtime.isTargetDebuffImmuneLocked(current, plan.TargetObjectID) {
+	if e.schedule.runtime.isTargetStatusImmuneLocked(current, plan.TargetObjectID) {
 		return nil
 	}
 	isStun := plan.Profile.ModifierName == "StalkerShock"

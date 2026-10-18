@@ -30,6 +30,10 @@ export function CloseRunningProfile(arg1) {
   return window['go']['main']['App']['CloseRunningProfile'](arg1);
 }
 
+export function CompactSnapshots() {
+  return window['go']['main']['App']['CompactSnapshots']();
+}
+
 export function CreateProfile(arg1, arg2, arg3) {
   return window['go']['main']['App']['CreateProfile'](arg1, arg2, arg3);
 }
@@ -74,8 +78,16 @@ export function GetServerConfiguration() {
   return window['go']['main']['App']['GetServerConfiguration']();
 }
 
+export function GetServerRulesConfiguration() {
+  return window['go']['main']['App']['GetServerRulesConfiguration']();
+}
+
 export function GetStatus() {
   return window['go']['main']['App']['GetStatus']();
+}
+
+export function GetWineRunnerConfiguration() {
+  return window['go']['main']['App']['GetWineRunnerConfiguration']();
 }
 
 export function HasDetachedGameInstances() {
@@ -146,24 +158,36 @@ export function ScanRemoteServers(arg1) {
   return window['go']['main']['App']['ScanRemoteServers'](arg1);
 }
 
-export function SendReport(arg1, arg2) {
-  return window['go']['main']['App']['SendReport'](arg1, arg2);
+export function ScanWineRunners() {
+  return window['go']['main']['App']['ScanWineRunners']();
+}
+
+export function SendReport(arg1) {
+  return window['go']['main']['App']['SendReport'](arg1);
 }
 
 export function SetIdentity(arg1) {
   return window['go']['main']['App']['SetIdentity'](arg1);
 }
 
-export function SetServerConfiguration(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['SetServerConfiguration'](arg1, arg2, arg3, arg4);
+export function SetServerConfiguration(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SetServerConfiguration'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function SetServerPort(arg1) {
   return window['go']['main']['App']['SetServerPort'](arg1);
 }
 
+export function SetServerRulesConfiguration(arg1) {
+  return window['go']['main']['App']['SetServerRulesConfiguration'](arg1);
+}
+
 export function SetSkipCinematic(arg1) {
   return window['go']['main']['App']['SetSkipCinematic'](arg1);
+}
+
+export function SetWineRunner(arg1) {
+  return window['go']['main']['App']['SetWineRunner'](arg1);
 }
 
 export function SignOut() {

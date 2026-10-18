@@ -17,6 +17,7 @@ const lobMovementType = uint8(4)
 
 type OrbDrop struct {
 	CreatePacket       []byte
+	InteractablePacket []byte
 	PresentationPacket []byte
 	LocomotionPacket   []byte
 }
@@ -84,6 +85,16 @@ func MarshalOrbDrop(request sim.OrbPickupRequest, pickupObjectID uint32) (OrbDro
 	if err != nil {
 		return OrbDrop{}, fmt.Errorf("createMarshal: %w", err)
 	}
+	var interactablePacket []byte
+	if request.Kind == sim.ResurrectionOrbDrop {
+		interactablePacket, err = raknet.MarshalApplication(raknet.InteractableDataUpdateMessage{
+			ObjectID: pickupObjectID, UsesAllowed: 1,
+			Ability: util.HashID("PickUpResurrectOrb"),
+		})
+		if err != nil {
+			return OrbDrop{}, fmt.Errorf("orbInteractable: %w", err)
+		}
+	}
 	presentationPacket, err := raknet.MarshalApplication(raknet.DropPresentationMessage{
 		Asset: util.HashID(request.EventName),
 		Position: raknet.Vector3{
@@ -106,7 +117,8 @@ func MarshalOrbDrop(request sim.OrbPickupRequest, pickupObjectID uint32) (OrbDro
 	}
 	return OrbDrop{
 		CreatePacket: createPacket, PresentationPacket: presentationPacket,
-		LocomotionPacket: locomotionPacket,
+		InteractablePacket: interactablePacket,
+		LocomotionPacket:   locomotionPacket,
 	}, nil
 }
 
@@ -178,6 +190,10 @@ func MarshalEquipmentDrop(
 	if plan.ObjectID == 0 || plan.NounName == "" || part.RigblockAssetID == 0 {
 		return nil, errors.New("invalid campaign equipment drop")
 	}
+	nounName, isSupported := plan.PresentationPolicy.ContainerNoun(zoneloot.Rarity(part.Rarity))
+	if !isSupported || nounName != plan.NounName {
+		return nil, errors.New("invalid equipment rarity presentation")
+	}
 	createPacket, err := raknet.MarshalApplication(raknet.EnemyObjectCreateMessage{
 		ObjectID: plan.ObjectID, Noun: util.HashID(plan.NounName),
 		Position: raknet.Vector3{X: plan.Source.X, Y: plan.Source.Y, Z: plan.Source.Z},
@@ -225,7 +241,7 @@ func MarshalEquipmentDrop(
 }
 
 func MarshalEquipmentAward(
-	part sporenet.Part, objectID uint32, position raknet.Vector3,
+	part sporenet.Part, playerID uint8, objectID uint32, position raknet.Vector3,
 ) ([]byte, error) {
 	if part.ID == 0 || part.ReferenceID == 0 || part.RigblockAssetHash == 0 ||
 		objectID == 0 || !isFinitePosition(position) {
@@ -234,7 +250,7 @@ func MarshalEquipmentAward(
 	packet, err := raknet.MarshalApplication(raknet.ServerEventMessage{
 		Asset:    util.HashID("loot_acquired.ServerEventDef"),
 		ObjectID: objectID, Position: position,
-		ClientEventID: util.HashID("LootAwarded"),
+		TextValue: uint32(playerID), ClientEventID: util.HashID("LootAwarded"),
 		Loot: &raknet.ServerEventLoot{
 			ReferenceID: part.ReferenceID, InstanceID: part.ID,
 			RigblockID: part.RigblockAssetHash, SuffixAsset: part.SuffixAssetHash,

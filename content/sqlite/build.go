@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/darkspinnet/darkspin/content/dbpf"
 )
@@ -19,16 +20,54 @@ import (
 const (
 	SourceVersion  = "5.3.0.103"
 	SourceBuild    = 103
-	RecipeVersion  = 56
+	RecipeVersion  = 90
 	ContentRelease = "build-103-content"
 	RuntimeRole    = "runtime-content"
 )
 
 // BuildOptions identifies the installed client and destination database.
 type BuildOptions struct {
-	GamePath     string
-	DatabasePath string
-	OnProgress   func(BuildProgress)
+	GamePath      string
+	DatabasePath  string
+	OnProgress    func(BuildProgress)
+	OnStageTiming func(BuildStageTiming)
+}
+
+// BuildStageTiming reports elapsed time for one completed import phase.
+type BuildStageTiming struct {
+	Phase      string
+	Duration   time.Duration
+	IsComplete bool
+}
+
+type buildProgressReporter struct {
+	onProgress    func(BuildProgress)
+	onStageTiming func(BuildStageTiming)
+	phase         string
+	startedAt     time.Time
+	timings       []BuildStageTiming
+}
+
+func (e *buildProgressReporter) next(phase string, completed, total int) {
+	e.finish(true)
+	e.phase = phase
+	e.startedAt = time.Now()
+	if e.onProgress != nil {
+		e.onProgress(BuildProgress{Phase: phase, Completed: completed, Total: total})
+	}
+}
+
+func (e *buildProgressReporter) finish(isComplete bool) {
+	if e == nil || e.phase == "" {
+		return
+	}
+	timing := BuildStageTiming{Phase: e.phase,
+		Duration: time.Since(e.startedAt), IsComplete: isComplete}
+	e.timings = append(e.timings, timing)
+	if e.onStageTiming != nil {
+		e.onStageTiming(timing)
+	}
+	e.phase = ""
 }
 
 // BuildProgress reports one coarse, stable content preparation phase.
@@ -87,6 +126,7 @@ var buildPackages = []packageSpec{
 	{name: "AssetData_Binary.package", relativePath: filepath.Join("Data", "AssetData_Binary.package"), isResourceStored: true},
 	{name: "Levels.package", relativePath: filepath.Join("Data", "Levels.package")},
 	{name: "ServerData.package", relativePath: filepath.Join("Data", "ServerData.package"), isResourceStored: true},
+	{name: "Config_Ship.package", relativePath: filepath.Join("Data", "Config_Ship.package"), isResourceStored: true},
 	{name: "Text.de-de.package", relativePath: filepath.Join("Data", "Locale", "de-de", "Text.package"), isResourceStored: true},
 	{name: "Text.en-us.package", relativePath: filepath.Join("Data", "Locale", "en-us", "Text.package"), isResourceStored: true},
 	{name: "Text.fr-fr.package", relativePath: filepath.Join("Data", "Locale", "fr-fr", "Text.package"), isResourceStored: true},
@@ -96,7 +136,7 @@ var buildPackages = []packageSpec{
 
 // Build creates the first recipe/version manifest and package inventory for a
 // future full content projection. The target must not already exist.
-func Build(ctx context.Context, options BuildOptions) error {
+func Build(ctx context.Context, options BuildOptions) (resultErr error) {
 	if ctx == nil {
 		return errors.New("nil context")
 	}
@@ -111,7 +151,9 @@ func Build(ctx context.Context, options BuildOptions) error {
 		return fmt.Errorf("databaseStat: %w", err)
 	}
 
-	reportBuildProgress(options.OnProgress, "Validating installed content", 0, 20)
+	progress := &buildProgressReporter{onProgress: options.OnProgress, onStageTiming: options.OnStageTiming}
+	defer progress.finish(false)
+	progress.next("Validating installed content", 0, 20)
 	installPath, err := resolveInstallPath(options.GamePath)
 	if err != nil {
 		return fmt.Errorf("installResolve: %w", err)
@@ -120,7 +162,7 @@ func Build(ctx context.Context, options BuildOptions) error {
 	if err != nil {
 		return fmt.Errorf("sourceVersion: %w", err)
 	}
-	reportBuildProgress(options.OnProgress, "Indexing content packages", 1, 20)
+	progress.next("Indexing content packages", 1, 20)
 	packages, err := inspectPackages(ctx, installPath)
 	if err != nil {
 		return fmt.Errorf("packageInspect: %w", err)
@@ -144,12 +186,20 @@ func Build(ctx context.Context, options BuildOptions) error {
 		return fmt.Errorf("temporaryClose: %w", err)
 	}
 	defer os.Remove(temporaryPath)
+	cache := newImportPackageCache()
+	defer func() {
+		closeErr := cache.close()
+		if closeErr != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("packageCacheClose: %w", closeErr))
+		}
+	}()
+	ctx = context.WithValue(ctx, importCacheKey{}, cache)
 
-	err = writeContentDatabase(ctx, temporaryPath, installPath, packages, options.OnProgress)
+	err = writeContentDatabase(ctx, temporaryPath, installPath, packages, progress)
 	if err != nil {
 		return fmt.Errorf("databaseWrite: %w", err)
 	}
-	reportBuildProgress(options.OnProgress, "Verifying prepared content", 19, 20)
+	progress.next("Verifying prepared content", 19, 20)
 	_, err = Verify(ctx, temporaryPath)
 	if err != nil {
 		return fmt.Errorf("databaseVerify: %w", err)
@@ -158,15 +208,9 @@ func Build(ctx context.Context, options BuildOptions) error {
 	if err != nil {
 		return fmt.Errorf("databaseInstall: %w", err)
 	}
-	reportBuildProgress(options.OnProgress, "Prepared content ready", 20, 20)
+	progress.next("Prepared content ready", 20, 20)
+	progress.finish(true)
 	return nil
-}
-
-func reportBuildProgress(report func(BuildProgress), phase string, completed int, total int) {
-	if report == nil {
-		return
-	}
-	report(BuildProgress{Phase: phase, Completed: completed, Total: total})
 }
 
 // Verify checks the stable manifest and SQLite structural integrity.
@@ -330,7 +374,7 @@ func Verify(ctx context.Context, path string) (*Verification, error) {
 	}
 	expectedLootRigblockCount := 0
 	if lootSourceCount != 0 {
-		expectedLootRigblockCount = 2288
+		expectedLootRigblockCount = build103LootRigblockCount
 	}
 	if lootRigblockCount != expectedLootRigblockCount {
 		return nil, fmt.Errorf("lootRigblockCount: got %d, want %d", lootRigblockCount, expectedLootRigblockCount)
@@ -417,6 +461,53 @@ func Verify(ctx context.Context, path string) (*Verification, error) {
 	if combatTuningCount != expectedCombatTuningCount || ratingConversionCount != expectedRatingConversionCount {
 		return nil, fmt.Errorf("combatTuningCount: got %d/%d, want %d/%d",
 			combatTuningCount, ratingConversionCount, expectedCombatTuningCount, expectedRatingConversionCount)
+	}
+	isNavigationTuningStored, err := hasTable(ctx, database, "navigation_tuning")
+	if err != nil {
+		return nil, fmt.Errorf("navigationTuningTable: %w", err)
+	}
+	if !isNavigationTuningStored {
+		return nil, errors.New("navigationTuningTable: missing")
+	}
+	var navigationTuningCount int
+	err = database.QueryRowContext(ctx, "SELECT COUNT(*) FROM navigation_tuning").Scan(&navigationTuningCount)
+	if err != nil {
+		return nil, fmt.Errorf("navigationTuningCount: %w", err)
+	}
+	expectedNavigationTuningCount := 0
+	if lootSourceCount != 0 {
+		expectedNavigationTuningCount = 7
+	}
+	if navigationTuningCount != expectedNavigationTuningCount {
+		return nil, fmt.Errorf("navigationTuningCount: got %d, want %d", navigationTuningCount, expectedNavigationTuningCount)
+	}
+	var sectionBucketCount int
+	err = database.QueryRowContext(ctx, "SELECT COUNT(*) FROM section_bucket").Scan(&sectionBucketCount)
+	if err != nil {
+		return nil, fmt.Errorf("sectionBucketCount: %w", err)
+	}
+	if sectionBucketCount != 72 {
+		return nil, fmt.Errorf("sectionBucketCount: got %d, want 72", sectionBucketCount)
+	}
+	err = verifyNounNavigations(ctx, database)
+	if err != nil {
+		return nil, fmt.Errorf("nounNavigationVerify: %w", err)
+	}
+	err = verifyEquipmentDropSetting(ctx, database)
+	if err != nil {
+		return nil, fmt.Errorf("equipmentGateVerify: %w", err)
+	}
+	err = verifyAssetCatalog(ctx, database)
+	if err != nil {
+		return nil, fmt.Errorf("catalogVerify: %w", err)
+	}
+	err = verifyNPCAffixes(ctx, database)
+	if err != nil {
+		return nil, fmt.Errorf("npcAffixVerify: %w", err)
+	}
+	err = verifyDNARewardTuning(ctx, database)
+	if err != nil {
+		return nil, fmt.Errorf("dnaRewardVerify: %w", err)
 	}
 	isCreatureStored, err := hasTable(ctx, database, "creature_template")
 	if err != nil {
@@ -798,23 +889,21 @@ func Verify(ctx context.Context, path string) (*Verification, error) {
 		if markerCount == 0 {
 			return nil, errors.New("markerCount: empty")
 		}
-		var invalidTeleporterDestinationCount int
+		// Definition presence is independent of noun name. Missing destinations
+		// prevent native runtime link creation; they do not invalidate the asset.
+		var invalidTeleporterDefinitionCount int
 		err = database.QueryRowContext(ctx, `
 			SELECT COUNT(*)
-			FROM marker AS teleporter
-			LEFT JOIN marker AS destination
-			  ON destination.level_marker_set_id=teleporter.level_marker_set_id
-			 AND destination.marker_id=teleporter.target_marker_id
-			WHERE teleporter.noun_name='Teleporter.Noun' COLLATE NOCASE
-			  AND (teleporter.target_marker_id=0 OR destination.id IS NULL)`,
-		).Scan(&invalidTeleporterDestinationCount)
+			FROM marker
+			WHERE (teleporter_definition IS NULL) <> (is_trigger_creation_deferred IS NULL)`,
+		).Scan(&invalidTeleporterDefinitionCount)
 		if err != nil {
-			return nil, fmt.Errorf("teleporterDestination: %w", err)
+			return nil, fmt.Errorf("teleporterDefinitionQuery: %w", err)
 		}
-		if invalidTeleporterDestinationCount != 0 {
+		if invalidTeleporterDefinitionCount != 0 {
 			return nil, fmt.Errorf(
-				"teleporterDestination: %d invalid routes",
-				invalidTeleporterDestinationCount,
+				"teleporterDefinitionCount: %d inconsistent definitions",
+				invalidTeleporterDefinitionCount,
 			)
 		}
 	}
@@ -921,6 +1010,18 @@ func Verify(ctx context.Context, path string) (*Verification, error) {
 	if crystalDefinitionCount != expectedCrystalDefinitionCount {
 		return nil, fmt.Errorf("crystalDefinitionCount: got %d, want %d",
 			crystalDefinitionCount, expectedCrystalDefinitionCount)
+	}
+	var crystalTuningCount int
+	err = database.QueryRowContext(ctx, "SELECT COUNT(*) FROM crystal_tuning").Scan(&crystalTuningCount)
+	if err != nil {
+		return nil, fmt.Errorf("crystalTuningCount: %w", err)
+	}
+	expectedCrystalTuningCount := 1
+	if assetResourceCount == 0 {
+		expectedCrystalTuningCount = 0
+	}
+	if crystalTuningCount != expectedCrystalTuningCount {
+		return nil, fmt.Errorf("crystalTuningCount: got %d, want %d", crystalTuningCount, expectedCrystalTuningCount)
 	}
 	if crystalDefinitionCount > 0 {
 		var minimumOrdinal, maximumOrdinal, distinctOrdinal int
@@ -1222,7 +1323,7 @@ func inspectPackage(
 		}
 		return
 	}
-	pkg, err := dbpf.NewReader(r, fi.Size())
+	pkg, err := importPackageReader(ctx, r, fi.Size())
 	if err != nil {
 		resultChannel <- packageInspectionResult{
 			err: fmt.Errorf("packageRead[%s]: %w", spec.name, err),
@@ -1243,9 +1344,9 @@ func inspectPackage(
 
 func writeContentDatabase(
 	ctx context.Context, path, installPath string, packages []inspectedPackage,
-	report func(BuildProgress),
+	progress *buildProgressReporter,
 ) error {
-	reportBuildProgress(report, "Creating content database", 2, 20)
+	progress.next("Creating content database", 2, 20)
 	database, err := sql.Open("sqlite", path)
 	if err != nil {
 		return fmt.Errorf("databaseOpen: %w", err)
@@ -1263,6 +1364,10 @@ func writeContentDatabase(
 			recipe_version INTEGER NOT NULL,
 			input_fingerprint TEXT NOT NULL,
 			is_runtime_required INTEGER NOT NULL CHECK (is_runtime_required IN (0, 1))
+		);
+		CREATE TABLE content_import_stage (
+			stage_name TEXT PRIMARY KEY,
+			duration_ns INTEGER NOT NULL CHECK (duration_ns >= 0)
 		);
 		CREATE TABLE content_source_package (
 			id INTEGER PRIMARY KEY,
@@ -1290,8 +1395,7 @@ func writeContentDatabase(
 			compression INTEGER NOT NULL,
 			entry_flag INTEGER NOT NULL,
 			raw_sha256 TEXT NOT NULL,
-			decoded_sha256 TEXT NOT NULL,
-			raw_payload BLOB NOT NULL
+			decoded_sha256 TEXT NOT NULL
 		);
 		CREATE TABLE server_data (
 			content_source_resource_id INTEGER PRIMARY KEY REFERENCES content_source_resource(id) ON DELETE CASCADE,
@@ -1302,6 +1406,26 @@ func writeContentDatabase(
 			decoded_compression TEXT NOT NULL,
 			decoded_payload BLOB NOT NULL,
 			is_compiled_lua INTEGER NOT NULL CHECK (is_compiled_lua IN (0, 1))
+		);
+		CREATE TABLE asset_catalog (
+			ordinal INTEGER PRIMARY KEY,
+			catalog_source_resource_id INTEGER NOT NULL REFERENCES content_source_resource(id),
+			asset_name TEXT,
+			asset_name_hash INTEGER,
+			source_file_name TEXT,
+			compile_time BLOB NOT NULL CHECK (length(compile_time) = 8),
+			version INTEGER NOT NULL,
+			type_crc INTEGER NOT NULL,
+			data_crc INTEGER NOT NULL,
+			tag TEXT NOT NULL,
+			content_source_resource_id INTEGER REFERENCES content_source_resource(id)
+		);
+		CREATE TABLE dna_reward_property (
+			property_id INTEGER PRIMARY KEY,
+			content_source_resource_id INTEGER NOT NULL REFERENCES content_source_resource(id),
+			property_type INTEGER,
+			encoded_item BLOB,
+			CHECK ((property_type IS NULL) = (encoded_item IS NULL))
 		);
 		CREATE TABLE creature_template (
 			id INTEGER PRIMARY KEY,
@@ -1334,8 +1458,9 @@ func writeContentDatabase(
 			image_name TEXT NOT NULL,
 			weapon_noun_id INTEGER NOT NULL,
 			content_flags INTEGER NOT NULL CHECK (content_flags >= 0 AND content_flags <= 255),
-			minimum_level INTEGER NOT NULL CHECK (minimum_level >= 0),
-			maximum_level INTEGER NOT NULL CHECK (maximum_level >= minimum_level),
+			-- Empty authored ranges disable drops but retain item metadata.
+			minimum_level INTEGER NOT NULL CHECK (minimum_level BETWEEN 0 AND 1000),
+			maximum_level INTEGER NOT NULL CHECK (maximum_level BETWEEN 0 AND 1000),
 			is_unique_family INTEGER NOT NULL CHECK (is_unique_family IN (0, 1))
 		);
 		CREATE TABLE loot_affix (
@@ -1345,6 +1470,7 @@ func writeContentDatabase(
 				REFERENCES content_source_resource(id) ON DELETE CASCADE,
 			minimum_level INTEGER NOT NULL CHECK (minimum_level > 0),
 			maximum_level INTEGER NOT NULL CHECK (maximum_level >= minimum_level),
+			part_type TEXT NOT NULL,
 			class_type TEXT NOT NULL,
 			science_type TEXT NOT NULL,
 			modifier BLOB NOT NULL CHECK (length(modifier) = 460),
@@ -1410,19 +1536,58 @@ func writeContentDatabase(
 			expected_avatar_level INTEGER NOT NULL CHECK (expected_avatar_level >= 0),
 			rating_conversion REAL NOT NULL CHECK (rating_conversion > 0)
 		);
+		CREATE TABLE section_bucket (
+			ordinal INTEGER PRIMARY KEY CHECK (ordinal BETWEEN 0 AND 71),
+			content_source_resource_id INTEGER NOT NULL
+				REFERENCES content_source_resource(id) ON DELETE CASCADE,
+			difficulty INTEGER NOT NULL CHECK (difficulty BETWEEN 1 AND 18),
+			minion_count INTEGER NOT NULL CHECK (minion_count >= 0),
+			special_count INTEGER NOT NULL CHECK (special_count >= 0),
+			chance REAL NOT NULL
+		);
+		CREATE TABLE director_tuning (
+			difficulty INTEGER PRIMARY KEY CHECK (difficulty BETWEEN 1 AND 72),
+			content_source_resource_id INTEGER NOT NULL REFERENCES content_source_resource(id) ON DELETE CASCADE,
+			orb_difficulty_scale REAL NOT NULL CHECK (orb_difficulty_scale >= 0),
+			horde_difficulty_wave INTEGER NOT NULL CHECK (horde_difficulty_wave >= 0)
+		);
+		CREATE TABLE navigation_tuning (
+			ordinal INTEGER PRIMARY KEY CHECK (ordinal >= 0),
+			content_source_resource_id INTEGER NOT NULL REFERENCES content_source_resource(id) ON DELETE CASCADE,
+			name TEXT NOT NULL,
+			voxel_test_size REAL NOT NULL CHECK (voxel_test_size > 0),
+			agent_radius REAL NOT NULL CHECK (agent_radius > 0),
+			agent_height REAL NOT NULL CHECK (agent_height > 0),
+			max_step_size REAL NOT NULL CHECK (max_step_size > 0),
+			max_walkable_slope_degrees REAL NOT NULL CHECK (max_walkable_slope_degrees > 0)
+		);
+		CREATE TABLE director_composition_property (
+			property_id INTEGER PRIMARY KEY,
+			content_source_resource_id INTEGER NOT NULL REFERENCES content_source_resource(id) ON DELETE CASCADE,
+			property_type INTEGER NOT NULL,
+			encoded_item BLOB NOT NULL
+		);
 		CREATE TABLE non_player_class (
 			content_source_resource_id INTEGER PRIMARY KEY REFERENCES content_source_resource(id) ON DELETE CASCADE,
 			instance_id INTEGER NOT NULL UNIQUE,
 			noun_name TEXT NOT NULL COLLATE NOCASE,
+			class_attribute_resource_id INTEGER NOT NULL REFERENCES content_source_resource(id) ON DELETE CASCADE,
 			display_name TEXT NOT NULL,
 			display_name_locale_key TEXT NOT NULL,
 			description TEXT NOT NULL,
 			description_locale_key TEXT NOT NULL,
 			challenge_value INTEGER NOT NULL CHECK (challenge_value >= 0),
 			npc_rank INTEGER NOT NULL CHECK (npc_rank >= 0),
+			npc_type INTEGER NOT NULL CHECK (npc_type >= 0),
+			creature_type INTEGER NOT NULL CHECK (creature_type BETWEEN 0 AND 5),
 			is_targetable INTEGER NOT NULL CHECK (is_targetable IN (0, 1)),
 			is_player_pet INTEGER NOT NULL CHECK (is_player_pet IN (0, 1)),
 			player_count_health_scale REAL NOT NULL CHECK (player_count_health_scale >= 0),
+			aggro_range REAL NOT NULL CHECK (aggro_range >= 0),
+			alert_range REAL NOT NULL CHECK (alert_range >= 0),
+			drop_aggro_range REAL NOT NULL CHECK (drop_aggro_range >= 0),
+			idle_movement_speed REAL NOT NULL CHECK (idle_movement_speed >= 0),
+			base_combat_speed REAL NOT NULL CHECK (base_combat_speed >= 0),
 			hit_point REAL NOT NULL CHECK (hit_point >= 0),
 			power_point REAL NOT NULL CHECK (power_point >= 0),
 			strength REAL NOT NULL CHECK (strength >= 0),
@@ -1432,18 +1597,135 @@ func writeContentDatabase(
 			resist_rating REAL NOT NULL CHECK (resist_rating >= 0),
 			critical_rating REAL NOT NULL CHECK (critical_rating >= 0)
 		);
+		CREATE TABLE non_player_noun (
+			content_source_resource_id INTEGER PRIMARY KEY REFERENCES content_source_resource(id) ON DELETE CASCADE,
+			noun_name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+			non_player_class_resource_id INTEGER NOT NULL REFERENCES non_player_class(content_source_resource_id) ON DELETE CASCADE,
+			aggro_type INTEGER CHECK (aggro_type BETWEEN 0 AND 4294967295),
+			ai_definition_instance_id INTEGER CHECK (ai_definition_instance_id BETWEEN 0 AND 4294967295),
+			ai_definition_resource_id INTEGER REFERENCES ai_asset(content_source_resource_id)
+		);
+		CREATE TABLE ai_asset (
+			content_source_resource_id INTEGER PRIMARY KEY REFERENCES content_source_resource(id) ON DELETE CASCADE,
+			asset_type INTEGER NOT NULL,
+			instance_id INTEGER NOT NULL,
+			asset_name TEXT NOT NULL,
+			decoded_asset TEXT NOT NULL,
+			UNIQUE(asset_type, instance_id)
+		);
+		CREATE TABLE ability_metadata (
+			lua_chunk_id INTEGER NOT NULL REFERENCES lua_chunk(id) ON DELETE CASCADE,
+			table_name TEXT NOT NULL,
+			decoded_metadata TEXT NOT NULL,
+			PRIMARY KEY(lua_chunk_id, table_name)
+		);
+		CREATE TABLE elite_stage_tuning (
+			stage INTEGER PRIMARY KEY CHECK (stage BETWEEN 0 AND 72),
+			content_source_resource_id INTEGER NOT NULL REFERENCES content_source_resource(id) ON DELETE CASCADE,
+			minimum_affix_count INTEGER NOT NULL,
+			maximum_affix_count INTEGER NOT NULL,
+			chance REAL NOT NULL,
+			special_minimum_affix_count INTEGER NOT NULL,
+			special_maximum_affix_count INTEGER NOT NULL,
+			special_chance REAL NOT NULL
+		);
+		CREATE TABLE elite_promotion_tuning (
+			id INTEGER PRIMARY KEY CHECK (id=1),
+			content_source_resource_id INTEGER NOT NULL REFERENCES content_source_resource(id) ON DELETE CASCADE,
+			star_mode_elite_chance_add REAL NOT NULL
+		);
+		CREATE TABLE reward_tuning (
+			id INTEGER PRIMARY KEY CHECK (id=1),
+			content_source_resource_id INTEGER NOT NULL REFERENCES content_source_resource(id) ON DELETE CASCADE,
+			decoded_tuning TEXT NOT NULL
+		);
+		CREATE TABLE equipment_drop_setting (
+			id INTEGER PRIMARY KEY CHECK (id=1),
+			content_source_resource_id INTEGER REFERENCES content_source_resource(id) ON DELETE CASCADE,
+			property_id INTEGER NOT NULL CHECK (property_id=857227576),
+			is_equipment_drop_enabled INTEGER CHECK (is_equipment_drop_enabled IN (0, 1)),
+			CHECK (content_source_resource_id IS NOT NULL OR is_equipment_drop_enabled IS NULL)
+		);
+		CREATE TABLE npc_affix (
+			content_source_resource_id INTEGER PRIMARY KEY REFERENCES content_source_resource(id),
+			catalog_ordinal INTEGER NOT NULL REFERENCES asset_catalog(ordinal),
+			asset_name TEXT NOT NULL,
+			modifier_hash INTEGER NOT NULL CHECK (modifier_hash BETWEEN 0 AND 4294967295),
+			modifier_name TEXT,
+			child_name TEXT,
+			parent_name TEXT,
+			description TEXT,
+			description_locale TEXT,
+			child_resource_id INTEGER REFERENCES content_source_resource(id),
+			parent_resource_id INTEGER REFERENCES content_source_resource(id)
+		);
 		CREATE TABLE non_player_class_affix (
 			id INTEGER PRIMARY KEY,
 			non_player_class_resource_id INTEGER NOT NULL
 				REFERENCES non_player_class(content_source_resource_id) ON DELETE CASCADE,
 			ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 5),
 			asset_name TEXT NOT NULL,
+			minimum_difficulty INTEGER NOT NULL,
+			maximum_difficulty INTEGER NOT NULL,
 			UNIQUE (non_player_class_resource_id, ordinal),
 			UNIQUE (non_player_class_resource_id, asset_name)
+		);
+		CREATE TABLE non_player_class_drop_type (
+			non_player_class_resource_id INTEGER NOT NULL REFERENCES non_player_class(content_source_resource_id) ON DELETE CASCADE,
+			ordinal INTEGER NOT NULL,
+			drop_type INTEGER NOT NULL CHECK (drop_type IN (0, 1, 2, 4, 8, 16)),
+			PRIMARY KEY (non_player_class_resource_id, ordinal)
 		);
 		CREATE TABLE npc_death_animation (
 			noun_name TEXT PRIMARY KEY COLLATE NOCASE,
 			animation_name TEXT NOT NULL
+		);
+		CREATE TABLE noun_navigation (
+			content_source_resource_id INTEGER PRIMARY KEY REFERENCES content_source_resource(id) ON DELETE CASCADE,
+			noun_type INTEGER NOT NULL CHECK (noun_type BETWEEN 0 AND 4294967295),
+			is_fixed INTEGER NOT NULL CHECK (is_fixed IN (0, 1)),
+			minimum_x REAL NOT NULL,
+			minimum_y REAL NOT NULL,
+			minimum_z REAL NOT NULL,
+			maximum_x REAL NOT NULL,
+			maximum_y REAL NOT NULL,
+			maximum_z REAL NOT NULL,
+			preset_extents INTEGER NOT NULL CHECK (preset_extents BETWEEN 0 AND 4294967295),
+			physics_type INTEGER NOT NULL CHECK (physics_type BETWEEN 0 AND 4294967295),
+			is_dynamic_wall INTEGER NOT NULL CHECK (is_dynamic_wall IN (0, 1)),
+			is_door INTEGER NOT NULL CHECK (is_door IN (0, 1)),
+			is_switch INTEGER NOT NULL CHECK (is_switch IN (0, 1)),
+			is_pressure_switch INTEGER NOT NULL CHECK (is_pressure_switch IN (0, 1)),
+			is_projectile_present INTEGER CHECK (is_projectile_present IN (0, 1)),
+			lifetime_seconds REAL NOT NULL CHECK (lifetime_seconds >= 0),
+			is_click_to_open INTEGER CHECK (is_click_to_open IN (0, 1)),
+			is_click_to_close INTEGER CHECK (is_click_to_close IN (0, 1)),
+			door_initial_state INTEGER CHECK (door_initial_state BETWEEN 0 AND 4294967295),
+			acceleration REAL,
+			deceleration REAL,
+			turn_rate REAL,
+			trigger_definition TEXT,
+			event_listener_definition TEXT,
+			interactable_definition TEXT,
+			combatant_definition TEXT,
+			is_combatant_component_present INTEGER NOT NULL CHECK (is_combatant_component_present IN (0, 1)),
+			CHECK ((is_door=0 AND is_click_to_open IS NULL AND is_click_to_close IS NULL AND door_initial_state IS NULL)
+			    OR (is_door=1 AND is_click_to_open IS NOT NULL AND is_click_to_close IS NOT NULL AND door_initial_state IS NOT NULL)),
+			CHECK ((acceleration IS NULL AND deceleration IS NULL AND turn_rate IS NULL)
+			    OR (acceleration IS NOT NULL AND deceleration IS NOT NULL AND turn_rate IS NOT NULL))
+		);
+		CREATE TABLE noun_crystal_definition (
+			content_source_resource_id INTEGER PRIMARY KEY REFERENCES noun_navigation(content_source_resource_id) ON DELETE CASCADE,
+			modifier_hash INTEGER NOT NULL CHECK (modifier_hash BETWEEN 0 AND 4294967295),
+			modifier_name TEXT,
+			color INTEGER NOT NULL CHECK (color BETWEEN 0 AND 4294967295),
+			rarity INTEGER NOT NULL CHECK (rarity BETWEEN 0 AND 4294967295)
+		);
+		CREATE TABLE noun_spawn_extent (
+			noun_name TEXT PRIMARY KEY COLLATE NOCASE,
+			size_x REAL NOT NULL CHECK (size_x > 0),
+			size_y REAL NOT NULL CHECK (size_y > 0),
+			size_z REAL NOT NULL CHECK (size_z > 0)
 		);
 		CREATE TABLE noun_physics (
 			id INTEGER PRIMARY KEY,
@@ -1523,9 +1805,11 @@ func writeContentDatabase(
 			planet_config TEXT NOT NULL,
 			primary_type INTEGER NOT NULL,
 			secondary_type INTEGER NOT NULL,
-			camera_pitch REAL NOT NULL,
-			camera_yaw REAL NOT NULL,
-			camera_distance REAL NOT NULL,
+			tertiary_type INTEGER NOT NULL,
+			quaternary_type INTEGER NOT NULL,
+			camera_pitch REAL,
+			camera_yaw REAL,
+			camera_distance REAL,
 			source_sha256 TEXT NOT NULL,
 			source_size INTEGER NOT NULL,
 			source_compression TEXT NOT NULL,
@@ -1555,6 +1839,11 @@ func writeContentDatabase(
 			level_reference TEXT NOT NULL COLLATE NOCASE,
 			level_id INTEGER REFERENCES level(id) ON DELETE SET NULL,
 			UNIQUE (content_source_resource_id, ordinal)
+		);
+		CREATE TABLE crystal_tuning (
+			id INTEGER PRIMARY KEY CHECK (id=1),
+			content_source_resource_id INTEGER NOT NULL REFERENCES content_source_resource(id) ON DELETE CASCADE,
+			three_in_a_row_bonus_percent REAL NOT NULL CHECK (three_in_a_row_bonus_percent >= 0)
 		);
 		CREATE TABLE crystal_definition (
 			id INTEGER PRIMARY KEY,
@@ -1592,6 +1881,12 @@ func writeContentDatabase(
 			UNIQUE (level_id, ordinal),
 			UNIQUE (level_id, asset_name)
 		);
+		CREATE TABLE level_marker_set_condition (
+			level_marker_set_id INTEGER NOT NULL REFERENCES level_marker_set(id) ON DELETE CASCADE,
+			ordinal INTEGER NOT NULL,
+			condition INTEGER NOT NULL CHECK (condition IN (0, 1)),
+			PRIMARY KEY (level_marker_set_id, ordinal)
+		);
 		CREATE TABLE marker (
 			id INTEGER PRIMARY KEY,
 			level_marker_set_id INTEGER NOT NULL REFERENCES level_marker_set(id) ON DELETE CASCADE,
@@ -1614,9 +1909,19 @@ func writeContentDatabase(
 			asset_override_id TEXT NOT NULL,
 			target_marker_id INTEGER NOT NULL,
 			teleporter_trigger_radius REAL NOT NULL,
+			teleporter_definition TEXT,
+			is_trigger_creation_deferred INTEGER CHECK (is_trigger_creation_deferred IN (0, 1)),
 			interactable_ability TEXT,
 			interactable_use_limit INTEGER,
 			interactable_challenge INTEGER,
+			spawn_section_type INTEGER,
+			is_spike_active INTEGER CHECK (is_spike_active IN (0, 1)),
+			spatial_radius REAL NOT NULL CHECK (spatial_radius >= 0),
+			exclusion_radius REAL CHECK (exclusion_radius >= 0),
+			spawn_trigger_definition TEXT,
+			event_listener_definition TEXT,
+			interactable_definition TEXT,
+			combatant_definition TEXT,
 			UNIQUE (level_marker_set_id, ordinal)
 		);
 		CREATE TABLE level_event (
@@ -1628,15 +1933,35 @@ func writeContentDatabase(
 			 event_slot TEXT NOT NULL,
 			 event_name TEXT NOT NULL,
 			 callback_name TEXT NOT NULL,
+			 event_hash INTEGER NOT NULL CHECK (event_hash BETWEEN 0 AND 4294967295),
+			 native_callback_hash INTEGER NOT NULL CHECK (native_callback_hash BETWEEN 0 AND 4294967295),
+			 lua_callback_name TEXT,
 			 trigger_radius REAL NOT NULL,
 			 is_trigger_once_only INTEGER NOT NULL CHECK (is_trigger_once_only IN (0, 1)),
 			 is_server_only INTEGER NOT NULL CHECK (is_server_only IN (0, 1)),
 			 UNIQUE (marker_id, ordinal)
 		);
+		CREATE TABLE external_config (
+			id INTEGER PRIMARY KEY,
+			content_source_resource_id INTEGER NOT NULL UNIQUE REFERENCES content_source_resource(id) ON DELETE CASCADE,
+			name TEXT NOT NULL UNIQUE COLLATE NOCASE
+		);
+		CREATE TABLE external_config_entry (
+			external_config_id INTEGER NOT NULL REFERENCES external_config(id) ON DELETE CASCADE,
+			configuration_ordinal INTEGER NOT NULL CHECK (configuration_ordinal BETWEEN 0 AND 4),
+			configuration_entry_ordinal INTEGER NOT NULL CHECK (configuration_entry_ordinal >= 0),
+			config_kind TEXT NOT NULL,
+			noun_name TEXT NOT NULL,
+			minimum_difficulty INTEGER NOT NULL,
+			maximum_difficulty INTEGER NOT NULL,
+			is_horde_legal INTEGER NOT NULL CHECK (is_horde_legal IN (0, 1)),
+			PRIMARY KEY (external_config_id, configuration_ordinal, configuration_entry_ordinal)
+		);
 		CREATE TABLE level_director_entry (
 			id INTEGER PRIMARY KEY,
 			level_id INTEGER NOT NULL REFERENCES level(id) ON DELETE CASCADE,
 			config_kind TEXT NOT NULL,
+			configuration_name TEXT NOT NULL,
 			spawn_kind TEXT NOT NULL,
 			configuration_ordinal INTEGER NOT NULL CHECK (configuration_ordinal >= 0),
 			configuration_entry_ordinal INTEGER NOT NULL CHECK (configuration_entry_ordinal >= 0),
@@ -1738,7 +2063,7 @@ func writeContentDatabase(
 	if err != nil {
 		return fmt.Errorf("packagePrepare: %w", err)
 	}
-	reportBuildProgress(report, "Recording package inventory", 3, 20)
+	progress.next("Recording package inventory", 3, 20)
 	for _, packageInst := range packages {
 		_, err = statement.ExecContext(ctx,
 			packageInst.spec.name,
@@ -1762,27 +2087,32 @@ func writeContentDatabase(
 	if err != nil {
 		return fmt.Errorf("packageClose: %w", err)
 	}
-	reportBuildProgress(report, "Importing runtime resources", 4, 20)
+	progress.next("Importing runtime resources", 4, 20)
 	err = insertResources(ctx, transaction, installPath, packages)
 	if err != nil {
 		return fmt.Errorf("resourceInsert: %w", err)
 	}
-	reportBuildProgress(report, "Indexing Lua content", 5, 20)
+	progress.next("Indexing resource identities", 4, 20)
+	err = createResourceIndexes(ctx, transaction)
+	if err != nil {
+		return fmt.Errorf("resourceIndexCreate: %w", err)
+	}
+	progress.next("Indexing Lua content", 5, 20)
 	err = writeLuaChunks(ctx, transaction)
 	if err != nil {
 		return fmt.Errorf("luaInsert: %w", err)
 	}
-	reportBuildProgress(report, "Importing equipment models", 6, 20)
+	progress.next("Importing equipment models", 6, 20)
 	err = writeLootRigblocks(ctx, transaction, installPath)
 	if err != nil {
 		return fmt.Errorf("lootRigblockInsert: %w", err)
 	}
-	reportBuildProgress(report, "Importing equipment affixes", 7, 20)
+	progress.next("Importing equipment affixes", 7, 20)
 	err = writeLootAffixes(ctx, transaction, installPath)
 	if err != nil {
 		return fmt.Errorf("lootAffixInsert: %w", err)
 	}
-	reportBuildProgress(report, "Importing loot tuning", 8, 20)
+	progress.next("Importing loot tuning", 8, 20)
 	err = writeLootTuning(ctx, transaction, installPath)
 	if err != nil {
 		return fmt.Errorf("lootTuningInsert: %w", err)
@@ -1791,42 +2121,78 @@ func writeContentDatabase(
 	if err != nil {
 		return fmt.Errorf("weaponTuningInsert: %w", err)
 	}
-	reportBuildProgress(report, "Importing combat tuning", 9, 20)
+	progress.next("Importing combat tuning", 9, 20)
 	err = writeCombatTuning(ctx, transaction, installPath)
 	if err != nil {
 		return fmt.Errorf("combatTuningInsert: %w", err)
 	}
-	reportBuildProgress(report, "Importing levels and navigation", 10, 20)
+	err = writeSectionBuckets(ctx, transaction, installPath)
+	if err != nil {
+		return fmt.Errorf("sectionBucketInsert: %w", err)
+	}
+	err = writeDirectorTuning(ctx, transaction, installPath)
+	if err != nil {
+		return fmt.Errorf("directorTuningInsert: %w", err)
+	}
+	err = writeNavigationTuning(ctx, transaction, installPath)
+	if err != nil {
+		return fmt.Errorf("navigationTuningInsert: %w", err)
+	}
+	progress.next("Importing levels and navigation", 10, 20)
 	err = writeLevels(ctx, transaction, installPath)
 	if err != nil {
 		return fmt.Errorf("levelInsert: %w", err)
 	}
-	reportBuildProgress(report, "Importing campaign chain", 11, 20)
+	progress.next("Importing campaign chain", 11, 20)
 	err = writeChainLevels(ctx, transaction, installPath)
 	if err != nil {
 		return fmt.Errorf("chainLevelInsert: %w", err)
 	}
-	reportBuildProgress(report, "Importing crystal tuning", 12, 20)
+	progress.next("Importing crystal tuning", 12, 20)
 	err = writeCrystalTuning(ctx, transaction, installPath)
 	if err != nil {
 		return fmt.Errorf("crystalTuningInsert: %w", err)
 	}
-	reportBuildProgress(report, "Linking level scripts", 13, 20)
+	progress.next("Linking level scripts", 13, 20)
 	err = writeLevelScripts(ctx, transaction)
 	if err != nil {
 		return fmt.Errorf("levelScriptInsert: %w", err)
 	}
-	reportBuildProgress(report, "Importing hero templates", 14, 20)
+	progress.next("Importing hero templates", 14, 20)
 	err = writeCreatureTemplates(ctx, transaction, installPath)
 	if err != nil {
 		return fmt.Errorf("creatureInsert: %w", err)
 	}
-	reportBuildProgress(report, "Importing enemy attributes", 15, 20)
+	progress.next("Importing enemy attributes", 15, 20)
+	err = writeAIAssets(ctx, transaction, installPath)
+	if err != nil {
+		return fmt.Errorf("aiWrite: %w", err)
+	}
+	err = writeEliteTuning(ctx, transaction, installPath)
+	if err != nil {
+		return fmt.Errorf("eliteWrite: %w", err)
+	}
+	err = writeRewardTuning(ctx, transaction, installPath)
+	if err != nil {
+		return fmt.Errorf("rewardWrite: %w", err)
+	}
+	err = writeDNARewardTuning(ctx, transaction, installPath)
+	if err != nil {
+		return fmt.Errorf("dnaRewardWrite: %w", err)
+	}
+	err = writeAssetCatalog(ctx, transaction, installPath)
+	if err != nil {
+		return fmt.Errorf("catalogWrite: %w", err)
+	}
+	err = writeEquipmentDropSetting(ctx, transaction, installPath)
+	if err != nil {
+		return fmt.Errorf("equipmentGateWrite: %w", err)
+	}
 	err = writeNonPlayerClasses(ctx, transaction, installPath)
 	if err != nil {
 		return fmt.Errorf("nonPlayerClassInsert: %w", err)
 	}
-	reportBuildProgress(report, "Importing object physics", 16, 20)
+	progress.next("Importing object physics", 16, 20)
 	err = writeNounPhysics(ctx, transaction, installPath)
 	if err != nil {
 		return fmt.Errorf("nounPhysicsInsert: %w", err)
@@ -1835,15 +2201,20 @@ func writeContentDatabase(
 	if err != nil {
 		return fmt.Errorf("npcDeathInsert: %w", err)
 	}
-	reportBuildProgress(report, "Importing localized text", 17, 20)
+	progress.next("Importing localized text", 17, 20)
 	err = writeLocalizationText(ctx, transaction, installPath)
 	if err != nil {
 		return fmt.Errorf("localeInsert: %w", err)
 	}
-	reportBuildProgress(report, "Building content indexes", 18, 20)
+	progress.next("Building content indexes", 18, 20)
 	err = createContentIndexes(ctx, transaction)
 	if err != nil {
 		return fmt.Errorf("indexCreate: %w", err)
+	}
+	progress.next("Recording import stages", 18, 20)
+	err = writeImportStages(ctx, transaction, progress.timings)
+	if err != nil {
+		return fmt.Errorf("stageInsert: %w", err)
 	}
 	err = transaction.Commit()
 	if err != nil {
@@ -1853,7 +2224,7 @@ func writeContentDatabase(
 	return nil
 }
 
-func createContentIndexes(ctx context.Context, transaction *sql.Tx) error {
+func createResourceIndexes(ctx context.Context, transaction *sql.Tx) error {
 	_, err := transaction.ExecContext(ctx, `
 		CREATE UNIQUE INDEX content_source_resource_package_ordinal_uidx
 		ON content_source_resource (content_source_package_id, ordinal);
@@ -1863,6 +2234,15 @@ func createContentIndexes(ctx context.Context, transaction *sql.Tx) error {
 		ON content_source_resource (type_id, group_id, instance_id);
 		CREATE UNIQUE INDEX server_data_identity_uidx
 		ON server_data (resource_group, resource_name);
+	`)
+	if err != nil {
+		return fmt.Errorf("resourceIndexExec: %w", err)
+	}
+	return nil
+}
+
+func createContentIndexes(ctx context.Context, transaction *sql.Tx) error {
+	_, err := transaction.ExecContext(ctx, `
 		CREATE UNIQUE INDEX localization_text_identity_uidx
 		ON localization_text (locale, table_id, locale_key);
 		CREATE INDEX localization_text_key_idx
@@ -1901,6 +2281,8 @@ func createContentIndexes(ctx context.Context, transaction *sql.Tx) error {
 		ON loot_rigblock (slot_type);
 		CREATE INDEX loot_affix_level_idx
 		ON loot_affix (kind, minimum_level, maximum_level);
+		CREATE INDEX asset_catalog_resource_idx
+		ON asset_catalog (content_source_resource_id, ordinal);
 	`)
 	if err != nil {
 		return fmt.Errorf("indexExec: %w", err)
@@ -1934,7 +2316,7 @@ func insertResources(ctx context.Context, transaction *sql.Tx, installPath strin
 			_ = r.Close()
 			return fmt.Errorf("resourceStat[%s]: %w", packageInst.spec.name, err)
 		}
-		pkg, err := dbpf.NewReader(r, fi.Size())
+		pkg, err := importPackageReader(ctx, r, fi.Size())
 		if err != nil {
 			_ = r.Close()
 			return fmt.Errorf("resourcePackage[%s]: %w", packageInst.spec.name, err)
@@ -1970,7 +2352,6 @@ func insertResources(ctx context.Context, transaction *sql.Tx, installPath strin
 				Entry:                  entry,
 				RawSHA256:              hex.EncodeToString(rawDigest[:]),
 				DecodedSHA256:          hex.EncodeToString(decodedDigest[:]),
-				RawPayload:             rawPayload,
 			})
 			if packageInst.spec.name == "ServerData.package" {
 				resourceGroup, resourceName, resourceFormat, isCompiledLua := serverDataIdentity(entry)

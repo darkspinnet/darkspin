@@ -12,6 +12,9 @@ type ProjectionOptions struct {
 	MaxDistance            float32
 	ComponentID            uint32
 	IsComponentConstrained bool
+	// IsPlanar measures click displacement in XY while recovering surface Z.
+	// The input height remains a tie-breaker for overlapping walkable surfaces.
+	IsPlanar bool
 }
 
 type Projection struct {
@@ -20,6 +23,8 @@ type Projection struct {
 	ComponentID uint32
 	Distance    float32
 }
+
+var ErrProjectionObstructed = errors.New("navigation projection obstructed")
 
 type PathOptions struct {
 	ProjectionOptions
@@ -42,7 +47,14 @@ func (m *Mesh) Project(point Vec3, options ProjectionOptions) (Projection, error
 	polygonIndexes := selected.spatial.candidatePolygonIndexes(
 		point, options.MaxDistance, len(selected.polygons),
 	)
-	return projectPolygonIndexes(selected, point, options, polygonIndexes)
+	projection, err := projectPolygonIndexes(selected, point, options, polygonIndexes)
+	if err != nil {
+		return Projection{}, fmt.Errorf("projectPolygon: %w", err)
+	}
+	if m.isObstructed(projection.Position, options.PlanLayer) {
+		return Projection{}, ErrProjectionObstructed
+	}
+	return projection, nil
 }
 
 func projectPolygonIndexes(
@@ -50,26 +62,45 @@ func projectPolygonIndexes(
 ) (Projection, error) {
 	maximumSquared := options.MaxDistance * options.MaxDistance
 	bestSquared := float32(math.Inf(1))
+	bestHeight := float32(math.Inf(1))
 	best := Projection{}
 	for _, polygonIndex := range polygonIndexes {
 		polygon := selected.polygons[polygonIndex]
 		if options.IsComponentConstrained && polygon.ComponentID != options.ComponentID {
 			continue
 		}
-		if squaredDistance(point, polygon.Center) >
+		centerDelta := subtract(point, polygon.Center)
+		if options.IsPlanar {
+			centerDelta.Z = 0
+		}
+		if dot(centerDelta, centerDelta) >
 			(polygon.Radius+options.MaxDistance)*(polygon.Radius+options.MaxDistance) {
 			continue
 		}
 		candidate := closestPointOnPolygon(point, polygon)
-		candidateSquared := squaredDistance(point, candidate)
+		if options.IsPlanar {
+			var isCandidateFound bool
+			candidate, isCandidateFound = closestPlanarPointOnPolygon(point, polygon)
+			if !isCandidateFound {
+				continue
+			}
+		}
+		candidateDelta := subtract(point, candidate)
+		candidateHeight := float32(math.Abs(float64(candidateDelta.Z)))
+		if options.IsPlanar {
+			candidateDelta.Z = 0
+		}
+		candidateSquared := dot(candidateDelta, candidateDelta)
 		if candidateSquared > maximumSquared {
 			continue
 		}
-		if candidateSquared > bestSquared ||
-			candidateSquared == bestSquared && polygon.Offset >= best.PolygonID {
+		if candidateSquared > bestSquared || candidateSquared == bestSquared &&
+			(options.IsPlanar && candidateHeight > bestHeight ||
+				(!options.IsPlanar || candidateHeight == bestHeight) && polygon.Offset >= best.PolygonID) {
 			continue
 		}
 		bestSquared = candidateSquared
+		bestHeight = candidateHeight
 		best = Projection{
 			Position: candidate, PolygonID: polygon.Offset, ComponentID: polygon.ComponentID,
 			Distance: float32(math.Sqrt(float64(candidateSquared))),
@@ -92,7 +123,7 @@ func (m *Mesh) IsReachable(start Projection, goal Projection, planLayer uint8) b
 	return isStartFound && isGoalFound
 }
 
-func (m *Mesh) CreatePath(start Vec3, goal Vec3, options PathOptions) (Path, error) {
+func (m *Mesh) terrainPath(start Vec3, goal Vec3, options PathOptions) (Path, error) {
 	if options.MaxVisitedPolygon <= 0 {
 		return Path{}, errors.New("navigation path limit invalid")
 	}

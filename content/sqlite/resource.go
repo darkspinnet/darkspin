@@ -18,7 +18,6 @@ type contentResourceRow struct {
 	Entry                  dbpf.Entry
 	RawSHA256              string
 	DecodedSHA256          string
-	RawPayload             []byte
 }
 
 type serverDataResourceRow struct {
@@ -63,13 +62,13 @@ func insertResourceBatch(ctx context.Context, transaction *sql.Tx, resourceRows 
 	query := strings.Builder{}
 	query.WriteString(`INSERT INTO content_source_resource
 		(id, content_source_package_id, ordinal, type_id, group_id, instance_id, stored_size,
-		 decoded_size, compression, entry_flag, raw_sha256, decoded_sha256, raw_payload) VALUES `)
-	arguments := make([]any, 0, len(resourceRows)*13)
+		 decoded_size, compression, entry_flag, raw_sha256, decoded_sha256) VALUES `)
+	arguments := make([]any, 0, len(resourceRows)*12)
 	for index, row := range resourceRows {
 		if index > 0 {
 			query.WriteString(", ")
 		}
-		query.WriteString("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		query.WriteString("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 		arguments = append(arguments,
 			row.ID,
 			row.ContentSourcePackageID,
@@ -83,7 +82,6 @@ func insertResourceBatch(ctx context.Context, transaction *sql.Tx, resourceRows 
 			row.Entry.Flags,
 			row.RawSHA256,
 			row.DecodedSHA256,
-			row.RawPayload,
 		)
 	}
 	_, err := transaction.ExecContext(ctx, query.String(), arguments...)

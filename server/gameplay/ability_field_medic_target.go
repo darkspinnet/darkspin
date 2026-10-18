@@ -36,7 +36,7 @@ func fieldMedicSupportTargetLocked(
 	nearestDistance := float32(math.MaxFloat32)
 	selected := fieldMedicHealingTarget{}
 	for sessionKey, candidate := range registry.sessions {
-		if candidate.zone != sourceSession.zone || candidate.squad == nil ||
+		if !isActivePartyRecipient(candidate, sourceSession) ||
 			candidate.deployedObjectID == 0 ||
 			candidate.deployedHitPoint() <= 0 ||
 			candidate.deployedCreatureIndex >= uint32(len(candidate.binding.Creatures)) {
@@ -79,9 +79,8 @@ func fieldMedicSupportTargetLocked(
 		ownerSessionKey := ""
 		ownerSession := gameplayPeerSession{}
 		for sessionKey, candidate := range registry.sessions {
-			if candidate.zone == sourceSession.zone &&
-				candidate.binding.UserID == companion.UserID &&
-				candidate.generation == companion.PeerGeneration {
+			if isPartyCompanionOwner(companion, candidate) &&
+				isActivePartyRecipient(candidate, sourceSession) {
 				ownerSessionKey = sessionKey
 				ownerSession = candidate
 				break

@@ -62,9 +62,10 @@
 .workspace { min-height: 0; display: flex; flex-direction: column; gap: 20px; }
 .workspace-navigation { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; }
 .workspace-navigation [data-slot="tabs-list"] { justify-self: center; }
-.workspace-wordmark { display: flex; align-items: baseline; gap: 5px; justify-self: start; font-size: 19px; letter-spacing: -.07em; white-space: nowrap; }
+.workspace-wordmark { display: flex; align-items: baseline; gap: 5px; justify-self: start; padding: 0; border: 0; background: transparent; font-family: inherit; font-size: 19px; letter-spacing: -.07em; white-space: nowrap; cursor: pointer; }
 .workspace-wordmark span { color: var(--primary); font-weight: 400; }
 .workspace-wordmark strong { color: var(--primary); font-weight: 750; }
+.workspace-wordmark:hover span, .workspace-wordmark:hover strong { color: var(--accent-foreground); }
 .report-button { justify-self: end; font-size: 11px; padding-inline: 12px; }
 .command-frame, .management-frame, .onboarding-frame { flex: 1; min-height: 0; overflow: auto; }
 .launch-main, .detached-grid { width: 100%; height: 100%; margin-inline: auto; }
@@ -131,6 +132,7 @@
 .remote-profile-info-card { align-items: start; }
 .remote-profile-core .selected-profile-avatar { width: 88px; height: 88px; }
 .config-grid { display: grid; grid-template-columns: minmax(240px, .9fr) minmax(0, 1.1fr); align-items: start; gap: 16px; }
+.config-toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
 .management-card { padding: 18px; gap: 0; }
 .onboarding-index { color: var(--muted-foreground); font-size: 11px; border: 1px solid var(--border); border-radius: 5px; padding: 3px 6px; width: fit-content; }
 .config-port-card > label:not(.management-toggle) { display: block; margin: 14px 0 6px; font-size: 11px; }
@@ -138,7 +140,13 @@
 .management-toggle [data-slot="checkbox"], .tutorial-skip [data-slot="checkbox"], .integration-options [data-slot="checkbox"] { margin-top: 2px; }
 .management-toggle strong, .tutorial-skip strong, .integration-options strong { display: block; font-size: 11px; }
 .management-toggle small, .tutorial-skip small, .integration-options small { display: block; line-height: 1.5; margin-top: 4px; font-weight: 400; }
+.config-borderless { margin-top: 18px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--muted) 28%, transparent); }
+.config-borderless > span { min-width: 0; }
+.config-borderless strong { line-height: 1.35; }
+.config-borderless small { color: var(--muted-foreground); }
 .config-save { margin-top: 16px; width: 100%; font-size: 11px; }
+.config-wine-runner-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; }
+.config-wine-runner-heading > label { margin: 0 0 6px; }
 .integration-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding-block: 12px; border-bottom: 1px solid var(--border); }
 .integration-row > div { grid-column: 1 / -1; }
 .integration-row strong { display: block; font-size: 11px; }
@@ -195,13 +203,20 @@
 .remote-registration-server { display: flex; gap: 8px; }
 .remote-registration-server button { font-size: 11px; }
 .remote-registration-notice > .profile-select-trigger { width: 100%; margin-top: 8px; }
-.report-composer-header { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+.report-composer-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+.report-header-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .report-manage-link { color: var(--muted-foreground); font-size: 10px; height: auto; padding: 0; }
 .report-manage-link:hover { color: var(--foreground); }
-.report-form textarea { min-height: 140px; resize: vertical; }
 .report-archives { padding-left: 18px; list-style: disc; font-size: 11px; color: var(--muted-foreground); overflow-wrap: anywhere; }
 .report-path { width: 100%; height: auto; white-space: normal; overflow-wrap: anywhere; text-align: left; font-size: 11px; margin-top: 12px; }
+.credits-list { display: flex; align-items: center; gap: 14px; margin-top: 16px; }
+.credits-inline-link { color: var(--primary); text-decoration: underline; text-underline-offset: 3px; }
+.credits-inline-link:hover { color: var(--foreground); }
+.credits-link { height: auto; padding: 0; color: var(--primary); font-size: 13px; }
+.credits-link:hover { color: var(--foreground); }
 .changelog-notice pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.7 "Segoe UI", sans-serif; color: var(--muted-foreground); max-height: 55vh; overflow: auto; }
+.changelog-notice pre a { color: var(--primary); text-decoration: underline; }
+.changelog-notice pre a:hover { color: var(--foreground); }
 .remote-delete-error, .changelog-error { color: var(--destructive); }
 .install-frame { display: grid; align-items: center; }
 .install-card { width: min(100%, 580px); margin-inline: auto; padding: 24px; gap: 0; }

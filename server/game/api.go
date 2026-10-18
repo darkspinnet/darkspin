@@ -59,6 +59,9 @@ type API struct {
 	template            *sporenet.TemplateDatabase
 	partCatalog         *PartCatalog
 	vendor              *sporenet.Vendor
+	partShopRules       sporenet.PartShopRules
+	partShopPreparer    PartShopPreparer
+	buybackExpirer      BuybackExpirer
 	storage             string
 	staticFileSystem    fs.FS
 	host                string
@@ -75,6 +78,7 @@ type APIOptions struct {
 	Template         *sporenet.TemplateDatabase
 	PartCatalog      *PartCatalog
 	Vendor           *sporenet.Vendor
+	PartShopRules    sporenet.PartShopRules
 	Storage          string
 	StaticFileSystem fs.FS
 	Host             string
@@ -94,7 +98,16 @@ func RegisterAPI(router *recaphttp.Router, options APIOptions) error {
 		storage: options.Storage, staticFileSystem: options.StaticFileSystem,
 		host: options.Host, httpPort: options.HTTPPort, qosPort: options.QoSPort, logger: logger,
 		resumeActivator:     options.ResumeActivator,
+		partShopRules:       options.PartShopRules,
 		broadcastRecipients: make(map[string]struct{}),
+	}
+	partShopPreparer, isPartShopSupported := options.UserManager.(PartShopPreparer)
+	if isPartShopSupported {
+		api.partShopPreparer = partShopPreparer
+	}
+	buybackExpirer, isBuybackSupported := options.UserManager.(BuybackExpirer)
+	if isBuybackSupported {
+		api.buybackExpirer = buybackExpirer
 	}
 	routes := []struct {
 		path    string
@@ -176,6 +189,7 @@ mission context. Use it immediately after a problem and briefly describe the act
 <tr><td><code>/help</code></td><td>Show the complete command list in chat.</td></tr>
 <tr><td><code>/hint</code></td><td>Point toward a remaining hostile during a deployment.</td></tr>
 <tr><td><code>/loc</code></td><td>Show your current world coordinates.</td></tr>
+<tr><td><code>/stat</code></td><td>Compare authoritative hero health and power with Fang's latest client-received values.</td></tr>
 <tr><td><code>/ping</code></td><td>Show server response and current game information.</td></tr>
 <tr><td><code>/reset</code></td><td>Recover transient movement, ability, and squad state.</td></tr>
 <tr><td><code>/recap</code></td><td>Revive defeated heroes in the connected co-op party.</td></tr>
@@ -299,13 +313,14 @@ func (a *API) game(writer http.ResponseWriter, request *http.Request, uri *recap
 		}
 		writeXML(writer, http.StatusOK, xmlResponse(true))
 	case "api.inventory.getPartList":
-		a.partList(writer, user, values)
+		a.partList(request.Context(), writer, user, values)
 	case "api.inventory.getPartOfferList":
-		a.partOffers(writer)
+		a.partOffers(writer, request, user)
 	case "api.inventory.vendorParts":
 		a.vendorParts(writer, request, user, values.Get("transactions"))
 	case "api.inventory.updatePartStatus":
 		partIDs, partIDErr := parseUint64CSV(values.Get("part_id"))
+		canonicalizePartStatusIDs(partIDs)
 		statusCodes, statusErr := parseUint64CSV(values.Get("status"))
 		isDetailStatus := len(statusCodes) != 0
 		for _, currentStatus := range statusCodes {
@@ -377,8 +392,22 @@ func (a *API) game(writer http.ResponseWriter, request *http.Request, uri *recap
 		}
 		err := a.userManager.UpdateDecks(request.Context(), user, command)
 		if err != nil {
+			if a.logger != nil {
+				a.logger.Printf(
+					"deck_update account=%q pve_slot=%d pve_creatures=%v pvp_slot=%d pvp_creatures=%v result=%q error=%v",
+					userLoginName(user), command.PVEActiveSlot, command.PVECreatures,
+					command.PVPActiveSlot, command.PVPCreatures, "rejected", err,
+				)
+			}
 			writeXML(writer, http.StatusOK, xmlResponse(false))
 			return
+		}
+		if a.logger != nil {
+			a.logger.Printf(
+				"deck_update account=%q pve_slot=%d pve_creatures=%v pvp_slot=%d pvp_creatures=%v result=%q",
+				userLoginName(user), command.PVEActiveSlot, command.PVECreatures,
+				command.PVPActiveSlot, command.PVPCreatures, "accepted",
+			)
 		}
 		writeXML(writer, http.StatusOK, xmlResponse(true))
 	// These methods acknowledge the request but intentionally do not write
@@ -607,7 +636,22 @@ func (a *API) updateCreature(writer http.ResponseWriter, request *http.Request, 
 		writeXML(writer, http.StatusOK, xmlResponse(false))
 		return
 	}
-	partID := parseUint64List(values.Get("parts"))
+	// The native save always includes parts, even when deliberately empty.
+	// Missing or malformed IDs must not silently erase the saved loadout.
+	if !values.Has("parts") {
+		a.logger.Printf("creature_update missing parts account=%q creature_id=%d", userLoginName(user), creatureID)
+		writeXML(writer, http.StatusOK, xmlResponse(false))
+		return
+	}
+	partIDs := make([]uint64, 0)
+	if values.Get("parts") != "" {
+		partIDs, err = parseUint64CSV(values.Get("parts"))
+		if err != nil {
+			a.logger.Printf("creature_update invalid parts account=%q creature_id=%d error=%q", userLoginName(user), creatureID, err)
+			writeXML(writer, http.StatusOK, xmlResponse(false))
+			return
+		}
+	}
 	if a.logger != nil {
 		a.logger.Printf(
 			"creature_update account=%q creature_id=%d version=%d gear=%q points=%q parts=%q stats_length=%d ability_stats_length=%d thumb_length=%d large_length=%d",
@@ -650,7 +694,7 @@ func (a *API) updateCreature(writer http.ResponseWriter, request *http.Request, 
 	creature, err := a.userManager.UpdateCreature(request.Context(), user, sporenet.CreatureUpdate{
 		CreatureID: creatureID, GearScore: float32(gearScore), ItemPoints: float32(itemPoints),
 		PreviousVersion: savedCreature.Version, SavedVersion: version,
-		Stats: values.Get("stats"), AbilityStats: values.Get("stats_ability_keyvalues"), EquippedPartID: partID,
+		Stats: values.Get("stats"), AbilityStats: values.Get("stats_ability_keyvalues"), EquippedPartID: partIDs,
 		LargeImageURL: largeURL, ThumbImageURL: thumbURL,
 	})
 	if err != nil {
@@ -721,6 +765,17 @@ func parseUint64CSV(encoded string) ([]uint64, error) {
 	return numbers, nil
 }
 
+func canonicalizePartStatusIDs(partIDs []uint64) {
+	const clientPartStatusNamespace = uint64(1) << 32
+	const clientPartStatusLimit = clientPartStatusNamespace << 1
+	for index, partID := range partIDs {
+		if partID < clientPartStatusNamespace || partID >= clientPartStatusLimit {
+			continue
+		}
+		partIDs[index] = partID - clientPartStatusNamespace
+	}
+}
+
 func requestRemoteIP(remoteAddress string) string {
 	address, _, err := net.SplitHostPort(remoteAddress)
 	if err == nil {
@@ -764,7 +819,14 @@ func (a *API) accountProfileViewResponse(
 		http.SetCookie(writer, &http.Cookie{Name: "token", Value: view.AuthToken, Path: "/", HttpOnly: true, Secure: true})
 	}
 	accountNode := a.accountNode(user, view, isPublic)
-	if values.Get("include_creatures") == "true" || values.Get("include_decks") == "true" {
+	// The post-tutorial ship refresh requests only the player's account ID.
+	// Include the durable roster/decks so temporary tutorial characters are
+	// replaced immediately, without requiring another authentication request.
+	isTutorialRosterIncluded := !isPublic && view.Account.IsTutorialCompleted() &&
+		values.Get("include_creatures") == "" && values.Get("include_decks") == ""
+	areCreaturesIncluded := values.Get("include_creatures") == "true" || isTutorialRosterIncluded
+	areDecksIncluded := values.Get("include_decks") == "true" || isTutorialRosterIncluded
+	if areCreaturesIncluded || areDecksIncluded {
 		creatures := make([]*sporenet.Creature, len(view.Creatures))
 		for index, creature := range view.Creatures {
 			presentation, err := a.appearanceCreature(ctx, creature)
@@ -789,14 +851,14 @@ func (a *API) accountProfileViewResponse(
 		}
 		nodes = append(nodes, xmlNode("settings", settings...))
 	}
-	if values.Get("include_creatures") == "true" {
+	if areCreaturesIncluded {
 		creatures := make([]string, 0, len(view.Creatures))
 		for _, creature := range view.Creatures {
 			creatures = append(creatures, a.accountCreatureNode(creature))
 		}
 		nodes = append(nodes, xmlNode("creatures", creatures...))
 	}
-	if values.Get("include_decks") == "true" {
+	if areDecksIncluded {
 		creatureByID := make(map[uint32]*sporenet.Creature, len(view.Creatures))
 		for _, creature := range view.Creatures {
 			if creature != nil {
@@ -804,10 +866,13 @@ func (a *API) accountProfileViewResponse(
 			}
 		}
 		squads := append([]sporenet.Squad(nil), view.Squads...)
+		// The native squad selector indexes this list before sending the deck
+		// ID. Changing its order when the active deck changes swaps UI slots.
 		sort.SliceStable(squads, func(firstIndex, secondIndex int) bool {
-			isFirstActive := squads[firstIndex].ID == view.Account.DefaultDeckPVEID
-			isSecondActive := squads[secondIndex].ID == view.Account.DefaultDeckPVEID
-			return isFirstActive && !isSecondActive
+			if squads[firstIndex].Slot != squads[secondIndex].Slot {
+				return squads[firstIndex].Slot < squads[secondIndex].Slot
+			}
+			return squads[firstIndex].ID < squads[secondIndex].ID
 		})
 		decks := make([]string, 0, len(squads))
 		for _, squad := range squads {
@@ -818,9 +883,16 @@ func (a *API) accountProfileViewResponse(
 					creatures = append(creatures, a.accountCreatureNode(creature))
 				}
 			}
+			category := squad.Category
+			if category == "" {
+				// Empty categories are internal unassigned records that may later
+				// be claimed by Arena. Build 103 still requires them to identify
+				// as PVE while rendering the campaign squad carousel.
+				category = "pve"
+			}
 			decks = append(decks, xmlNode("deck",
 				xmlText("name", squad.Name),
-				xmlText("category", squad.Category),
+				xmlText("category", category),
 				xmlText("id", number(squad.ID)),
 				xmlText("slot", number(squad.Slot)),
 				xmlText("locked", boolNumber(squad.IsLockedFor(view.Account))),
@@ -987,15 +1059,39 @@ func profileWholeStatNumber(number float64) string {
 	return strconv.FormatFloat(math.Ceil(max(0, number)), 'f', 0, 64)
 }
 
-func (a *API) partList(writer http.ResponseWriter, user *sporenet.User, values interface{ Get(string) string }) {
+func (a *API) partList(ctx context.Context, writer http.ResponseWriter, user *sporenet.User, values interface{ Get(string) string }) {
 	if user == nil {
 		writeXML(writer, http.StatusOK, xmlResponse(false))
 		return
 	}
+	if a.buybackExpirer != nil {
+		err := a.buybackExpirer.ExpireBuyback(ctx, user, time.Now())
+		if err != nil {
+			if a.logger != nil {
+				a.logger.Printf("buyback_expire_failed account=%q error=%q", userLoginName(user), err)
+			}
+			writeXML(writer, http.StatusOK, xmlResponse(false))
+			return
+		}
+	}
 	query := parsePartListQuery(values)
+	isShopAvailable := a.partShopRules.IsEnabled && a.partShopPreparer != nil
+	if isShopAvailable && !query.isOwnedOnly && !query.isCreatureFiltered {
+		stock, shopErr := a.partShopPreparer.PreparePartShop(ctx, user, a.partCatalog, a.vendor, a.partShopRules, time.Now())
+		if shopErr != nil {
+			isShopAvailable = false
+			a.logger.Printf("part_shop_prepare_failed account=%q error=%q", userLoginName(user), shopErr)
+		} else if stock.IsRefreshed {
+			a.logger.Printf("part_shop_refreshed account=%q count=%d item_level=%d expires_at=%d",
+				userLoginName(user), len(stock.Parts), stock.ItemLevel, stock.ExpiresAt)
+		}
+	}
 	view := user.View()
 	nodes := make([]string, 0)
 	for index := range view.Parts {
+		if view.Parts[index].MarketStatus == sporenet.PartMarketOffer && !isShopAvailable {
+			continue
+		}
 		if len(nodes) >= query.count {
 			break
 		}
@@ -1050,19 +1146,13 @@ func parsePartListQuery(values interface{ Get(string) string }) partListQuery {
 }
 
 func (query partListQuery) matches(part sporenet.Part) bool {
-	if query.isOwnedOnly && part.MarketStatus != 0 {
+	if (query.isOwnedOnly || query.isCreatureFiltered) && part.MarketStatus != sporenet.PartMarketOwned {
 		return false
 	}
 	if query.isCreatureFiltered && part.EquippedToCreatureID != query.equippedCreatureID {
 		return false
 	}
 	return true
-}
-
-func (a *API) partOffers(writer http.ResponseWriter) {
-	// Build 103 consumes packaged offers locally and has no retail XML schema
-	// for this compatibility-only endpoint.
-	writeXML(writer, http.StatusOK, xmlResponse(true, xmlNode("parts")))
 }
 
 func (a *API) creatureResponse(ctx context.Context, writer http.ResponseWriter, user *sporenet.User, values interface{ Get(string) string }) {
@@ -1092,11 +1182,9 @@ func (a *API) creatureResponse(ctx context.Context, writer http.ResponseWriter, 
 		return
 	}
 	equippedPart := make([]sporenet.Part, 0)
-	if queryBool(values, "include_parts", "includeParts") {
-		for _, part := range view.Parts {
-			if part.EquippedToCreatureID == creature.ID {
-				equippedPart = append(equippedPart, part)
-			}
+	for _, part := range view.Parts {
+		if part.MarketStatus == sporenet.PartMarketOwned && part.EquippedToCreatureID == creature.ID {
+			equippedPart = append(equippedPart, part)
 		}
 	}
 	if a.logger != nil {
@@ -1104,7 +1192,8 @@ func (a *API) creatureResponse(ctx context.Context, writer http.ResponseWriter, 
 	}
 	imageURL := fmt.Sprintf("http://%s:%d/template_png/%d_thumb.png", a.host, a.httpPort, creature.Noun())
 	partImageBaseURL := fmt.Sprintf("http://%s:%d/assets/images/loot/", a.host, a.httpPort)
-	profileXML := profileCreatureNode(creature, equippedPart, imageURL, partImageBaseURL, a.partCatalog)
+	profileXML := profileCreatureNode(creature, equippedPart, imageURL, partImageBaseURL, a.partCatalog,
+		queryBool(values, "include_parts", "includeParts"))
 	writeXML(writer, http.StatusOK, xmlResponse(true, profileXML))
 }
 
@@ -1234,7 +1323,12 @@ func (a *API) serveStaticFile(writer http.ResponseWriter, request *http.Request,
 }
 
 func (a *API) creatureImage(writer http.ResponseWriter, request *http.Request, uri *recaphttp.URI) {
-	a.serveStorageFile(writer, request, a.storage, uri.Resource())
+	resource, err := gameplayAppearanceResource(uri.Resource())
+	if err != nil {
+		http.NotFound(writer, request)
+		return
+	}
+	a.serveStorageFile(writer, request, a.storage, resource)
 }
 
 func (a *API) serveStorageFile(writer http.ResponseWriter, request *http.Request, root, resource string) {
@@ -1388,31 +1482,41 @@ func creatureNodeWithImages(creature *sporenet.Creature, largeImageURL, thumbIma
 	)
 }
 
-func profileCreatureNode(creature *sporenet.Creature, parts []sporenet.Part, fallbackImageURL, partImageBaseURL string, partCatalog *PartCatalog) string {
-	return profileNode("creature", creature, parts, fallbackImageURL, partImageBaseURL, partCatalog)
+func profileCreatureNode(creature *sporenet.Creature, parts []sporenet.Part, fallbackImageURL, partImageBaseURL string, partCatalog *PartCatalog, isPartsIncluded bool) string {
+	return profileNode("creature", creature, parts, fallbackImageURL, partImageBaseURL, partCatalog, isPartsIncluded)
 }
 
 func profileTemplateNode(creature *sporenet.Creature, fallbackImageURL string, partCatalog *PartCatalog) string {
-	return profileNode("template", creature, nil, fallbackImageURL, "", partCatalog)
+	return profileNode("template", creature, nil, fallbackImageURL, "", partCatalog, true)
 }
 
-func profileNode(nodeName string, creature *sporenet.Creature, parts []sporenet.Part, fallbackImageURL, partImageBaseURL string, partCatalog *PartCatalog) string {
+func profileNode(nodeName string, creature *sporenet.Creature, parts []sporenet.Part, fallbackImageURL, partImageBaseURL string, partCatalog *PartCatalog, isPartsIncluded bool) string {
 	if creature == nil || creature.Template == nil {
 		return ""
 	}
 	template := creature.Template
 	profile := creatureProfileFieldsFor(template)
+	stats := creature.Stats
+	attributes := [partAttributeCount]float32{}
+	if nodeName == "creature" {
+		functionalParts, ignoredPartCount := gameplayEquippedParts(parts, creature.ID)
+		// The same functional-item limit owns profile and mission statistics.
+		_ = ignoredPartCount
+		attributes = profilePartAttributes(functionalParts, partCatalog)
+		stats = gameplayCreatureStats(creature, attributes)
+	}
 	abilityStats := encodeAbilityStats(creature.AbilityStats)
-	if abilityStats == "" && template.Noun != 1667741389 && len(creature.Stats) > 0 {
-		attributes := profilePartAttributes(parts, partCatalog)
-		abilityStats = profileAbilityStatsWithAttributes(template, profile.abilityID, creature.Stats, attributes)
+	if abilityStats == "" && template.Noun != 1667741389 && len(stats) > 0 {
+		abilityStats = profileAbilityStatsWithAttributes(template, profile.abilityID, stats, attributes)
 	}
 	creatorID := creature.CreatorID
 	largeImageURL := defaultText(creature.LargeImageURL, fallbackImageURL)
 	thumbImageURL := defaultText(creature.ThumbImageURL, fallbackImageURL)
 	partNodes := make([]string, 0, len(parts))
-	for index := range parts {
-		partNodes = append(partNodes, profilePartNode(&parts[index], partImageBaseURL, partCatalog))
+	if isPartsIncluded {
+		for index := range parts {
+			partNodes = append(partNodes, profilePartNode(&parts[index], partImageBaseURL, partCatalog))
+		}
 	}
 	abilityNodes := make([]string, 0, 5)
 	for _, abilityID := range profile.abilityID {
@@ -1427,7 +1531,7 @@ func profileNode(nodeName string, creature *sporenet.Creature, parts []sporenet.
 		xmlText("weapon_min_damage", fmt.Sprint(template.WeaponMinDamage)), xmlText("weapon_max_damage", fmt.Sprint(template.WeaponMaxDamage)),
 		xmlText("gear_score", fmt.Sprint(creature.GearScore)), xmlText("item_points", fmt.Sprint(creature.ItemPoints)),
 		xmlText("class", strings.ToLower(template.ClassType)),
-		xmlText("stats", profileStatsText(creature.Stats, profile.stats)),
+		xmlText("stats", profileStatsText(stats, profile.stats)),
 		xmlText("stats_template", profileStatsText(template.Stats, profile.stats)),
 		xmlText("stats_template_ability", profile.abilityBase),
 		xmlText("stats_template_ability_keyvalues", profile.abilityStats),
@@ -1751,12 +1855,17 @@ func profilePartNode(part *sporenet.Part, partImageBaseURL string, partCatalog *
 	}
 	return xmlNode("part",
 		xmlText("type_full", partType), xmlText("is_flair", boolNumber(part.IsFlair)), xmlText("stats", partCatalog.Stats(part)),
-		xmlText("cost", number(part.Cost)), xmlText("level", number(part.Level)), xmlText("class_types_full", classType),
+		xmlText("cost", number(part.Cost)), xmlText("creature_id", number(part.EquippedToCreatureID)),
+		xmlText("id", number(part.ID)), xmlText("reference_id", number(part.ReferenceID)),
+		xmlText("level", number(part.Level)), xmlText("market_status", number(uint16(part.MarketStatus)+1)),
+		xmlText("class_types_full", classType),
 		xmlText("science_types_full", scienceType), xmlText("rarity_full", rarityName[rarity]),
 		xmlText("rigblock_asset_id", number(part.RigblockAssetHash)), xmlText("png_key", profilePartIcon(part, partType, partImageBaseURL, isDefined)),
 		xmlText("suffix_asset_id", number(part.SuffixAssetHash)), xmlText("prefix_asset_id", number(part.PrefixAssetHash)),
 		xmlText("prefix_secondary_asset_id", number(part.PrefixSecondaryAssetHash)),
 		xmlText("rarity", number(uint16(part.Rarity)+1)),
+		xmlText("status", number(part.Status)), xmlText("usage", number(part.Usage)),
+		xmlText("creation_date", number(part.CreationDate)),
 		xmlText("weapon_damage_modifier", profilePartNumber(partCatalog.WeaponDamageModifier(part))),
 	)
 }
@@ -1845,8 +1954,11 @@ func parseUint32(value string) uint32 {
 	return uint32(parsed)
 }
 
-func parseUint32List(value string) []uint32 {
-	fields := strings.Split(value, ",")
+func parseUint32List(encoded string) []uint32 {
+	if strings.TrimSpace(encoded) == "" {
+		return nil
+	}
+	fields := strings.Split(encoded, ",")
 	result := make([]uint32, 0, len(fields))
 	for _, field := range fields {
 		result = append(result, parseUint32(field))

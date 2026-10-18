@@ -54,7 +54,7 @@ func (e gameplayPendingRuntime) playerAITargetLocked(
 				continue
 			}
 			targets = append(targets, playerAITarget{objectID: candidate.deployedObjectID,
-				position: candidate.playerPosition, radius: candidate.deployedCampaignFootprintRadius()})
+				position: candidate.playerPosition, radius: candidate.deployedCampaignActorFootprintRadius()})
 		}
 	} else if member.zone != nil && member.zone.NPCs() != nil {
 		for _, npc := range member.zone.NPCs().Snapshots() {
@@ -63,10 +63,7 @@ func (e gameplayPendingRuntime) playerAITargetLocked(
 				!npc.Plan.NPCProfile.IsTargetable {
 				continue
 			}
-			radius, radiusErr := e.action.ability.program.FootprintRadius(npc.Plan.NounName)
-			if radiusErr != nil {
-				radius = 0
-			}
+			radius := npc.Plan.ActorFootprintRadius()
 			targets = append(targets, playerAITarget{objectID: npc.Plan.ObjectID,
 				position: raknet.Vector3(npc.Plan.Position), radius: radius, aggroTargetID: npc.TargetObjectID})
 		}

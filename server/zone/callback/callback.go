@@ -48,13 +48,11 @@ func PublicationBindings(
 	publication game.CampaignDirectorPublication,
 ) []Binding {
 	callbacks := make([]Binding, 0, len(publication.Listeners)+1)
-	seen := make(map[Binding]bool, len(publication.Listeners)+1)
 	appendCallback := func(callback Binding) {
-		if callback.MarkerID == 0 || callback.CallbackName == "" || seen[callback] {
+		if callback.MarkerID == 0 || callback.CallbackName == "" {
 			return
 		}
 		callbacks = append(callbacks, callback)
-		seen[callback] = true
 	}
 	appendCallback(Binding{
 		MarkerID: publication.TriggerMarkerID, CallbackName: publication.CallbackName,
@@ -63,6 +61,9 @@ func PublicationBindings(
 		appendCallback(Binding{
 			MarkerID: listener.MarkerID, CallbackName: listener.CallbackName,
 		})
+		if listener.LuaCallbackName != "" && listener.NativeCallbackName != "" {
+			appendCallback(Binding{MarkerID: listener.MarkerID, CallbackName: listener.LuaCallbackName})
+		}
 	}
 	return callbacks
 }
@@ -71,16 +72,17 @@ func NamedEventBindings(
 	publication game.CampaignDirectorNamedEventPublication,
 ) []Binding {
 	callbacks := make([]Binding, 0, len(publication.Listeners))
-	seen := make(map[Binding]bool, len(publication.Listeners))
 	for _, listener := range publication.Listeners {
 		callback := Binding{
 			MarkerID: listener.MarkerID, CallbackName: listener.CallbackName,
 		}
-		if callback.MarkerID == 0 || callback.CallbackName == "" || seen[callback] {
+		if callback.MarkerID == 0 || callback.CallbackName == "" {
 			continue
 		}
 		callbacks = append(callbacks, callback)
-		seen[callback] = true
+		if listener.LuaCallbackName != "" && listener.NativeCallbackName != "" {
+			callbacks = append(callbacks, Binding{MarkerID: listener.MarkerID, CallbackName: listener.LuaCallbackName})
+		}
 	}
 	return callbacks
 }

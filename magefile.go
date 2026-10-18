@@ -23,7 +23,7 @@ import (
 
 // releaseSemver is the single source of truth for Dark Spin release versions.
 // Build targets inject it without rewriting application or frontend sources.
-const releaseSemver = "1.0.5"
+const releaseSemver = "1.1.5"
 
 const binaryName = "darkrun.exe"
 
@@ -117,6 +117,10 @@ type Darkspinner mg.Namespace
 // Darkspin groups generic launcher commands.
 type Darkspin mg.Namespace
 
+// Scenario groups explicit development-only scenario builds. Diagnostics and
+// development version strings alone never select scenario compilation.
+type Scenario mg.Namespace
+
 // Tutorial groups local profile and traced development workflows.
 type Tutorial mg.Namespace
 
@@ -139,7 +143,7 @@ func Build() error {
 		return fmt.Errorf("legacyRemove: %w", err)
 	}
 
-	linkerFlags, err := buildDarkrun()
+	linkerFlags, err := buildDarkrun(false)
 	if err != nil {
 		return fmt.Errorf("serverBuild: %w", err)
 	}
@@ -152,7 +156,7 @@ func Build() error {
 	if err != nil {
 		return fmt.Errorf("launcherBuild: %w", err)
 	}
-	err = buildFang(true)
+	err = buildFang(true, false, linkerFlags)
 	if err != nil {
 		return fmt.Errorf("fangBuild: %w", err)
 	}
@@ -168,7 +172,7 @@ func Build() error {
 	if err != nil {
 		return fmt.Errorf("darkSpinnerFrontend: %w", err)
 	}
-	err = buildDarkSpinner(spinnerLinkerFlags, filepath.Join("bin", "game"), runtime.GOOS)
+	err = buildDarkSpinner(spinnerLinkerFlags, filepath.Join("bin", "game"), runtime.GOOS, false)
 	if err != nil {
 		return fmt.Errorf("darkSpinnerBuild: %w", err)
 	}
@@ -176,7 +180,7 @@ func Build() error {
 	return nil
 }
 
-func buildDarkrun() (string, error) {
+func buildDarkrun(isScenario bool) (string, error) {
 	outputDirectory := filepath.Join("bin", "server")
 	err := os.MkdirAll(outputDirectory, 0o755)
 	if err != nil {
@@ -184,7 +188,13 @@ func buildDarkrun() (string, error) {
 	}
 	outputPath := filepath.Join(outputDirectory, binaryName)
 	linkerFlags := buildVersionLinkerFlags()
-	err = sh.RunV("go", "build", "-ldflags", linkerFlags, "-o", outputPath, "./app/darkrun")
+	buildTags := ""
+	if isScenario {
+		buildTags = "scenario"
+	}
+	arguments := []string{"build", "-ldflags", linkerFlags, "-o", outputPath, "-tags", buildTags}
+	arguments = append(arguments, "./app/darkrun")
+	err = sh.RunV("go", arguments...)
 	if err != nil {
 		return "", fmt.Errorf("goBuild: %w", err)
 	}
@@ -243,13 +253,21 @@ func darkSpinnerLinkerFlags(base, buildChannel, version string) (string, error) 
 		" -X " + darkSpinnerBuildChannelVariable + "=" + buildChannel, nil
 }
 
-func buildFang(isDiagnostics bool) error {
+func buildFang(isDiagnostics, isScenario bool, linkerFlags string) error {
+	if isScenario && !isDiagnostics {
+		return errors.New("scenario Fang requires fangdebug diagnostics")
+	}
 	fangPath := filepath.Join("bin", "game", "fang.dll")
 	environment := map[string]string{"GOOS": "windows", "GOARCH": "386", "CGO_ENABLED": "1"}
-	arguments := []string{"build", "-ldflags", "-s -w", "-buildmode=c-shared", "-o", fangPath}
+	arguments := []string{"build", "-ldflags", "-s -w " + linkerFlags, "-buildmode=c-shared", "-o", fangPath}
+	buildTags := ""
 	if isDiagnostics {
-		arguments = append(arguments, "-tags", "fangdebug")
+		buildTags = "fangdebug"
+		if isScenario {
+			buildTags += ",scenario"
+		}
 	}
+	arguments = append(arguments, "-tags", buildTags)
 	arguments = append(arguments, "./app/fang")
 	if runtime.GOOS != "windows" {
 		compiler := "i686-w64-mingw32-gcc"
@@ -310,7 +328,7 @@ func buildLauncher(linkerFlags string) error {
 	return nil
 }
 
-func buildDarkSpinner(linkerFlags, outputPath, targetOS string) error {
+func buildDarkSpinner(linkerFlags, outputPath, targetOS string, isScenario bool) error {
 	targetArch := darkSpinnerArchitecture(targetOS)
 	if targetOS == "windows" && targetArch == "amd64" {
 		helperPath := filepath.Join("app", "darkspinner", "fangloader.exe")
@@ -349,6 +367,9 @@ func buildDarkSpinner(linkerFlags, outputPath, targetOS string) error {
 	platform := targetOS + "/" + targetArch
 	outputName := darkSpinnerBinaryName
 	buildTags := "frontend,fang"
+	if isScenario {
+		buildTags += ",scenario"
+	}
 	if targetOS != "windows" {
 		outputName = darkSpinnerLinuxBinaryName
 		buildTags += ",proxy"
@@ -429,9 +450,17 @@ func prepareDarkSpinnerFrontend() error {
 	if err != nil {
 		return fmt.Errorf("changelogMkdir: %w", err)
 	}
-	err = copyFile("CHANGELOG.md", filepath.Join(publicPath, "changelog.md"))
+	changelog, err := os.ReadFile("CHANGELOG.md")
 	if err != nil {
-		return fmt.Errorf("changelogCopy: %w", err)
+		return fmt.Errorf("changelogRead: %w", err)
+	}
+	// Leave existing Markdown links and URL fragments alone.
+	issueReferences := regexp.MustCompile(`(^|[^[:alnum:]_/#\[])#([0-9]+)\b`)
+	changelog = issueReferences.ReplaceAll(changelog,
+		[]byte(`${1}[#${2}](https://github.com/darkspinnet/darkspin/issues/${2})`))
+	err = os.WriteFile(filepath.Join(publicPath, "changelog.md"), changelog, 0o644)
+	if err != nil {
+		return fmt.Errorf("changelogWrite: %w", err)
 	}
 	environment := map[string]string{"CI": "true"}
 	pnpmStorePath := filepath.Join(os.TempDir(), "darkspin-pnpm-store")
@@ -561,9 +590,30 @@ func BuildWasmAuth() error {
 func (Darkrun) Build() error {
 	mg.SerialDeps(Version)
 
-	_, err := buildDarkrun()
+	linkerFlags, err := buildDarkrun(false)
 	if err != nil {
 		return fmt.Errorf("darkrunBuild: %w", err)
+	}
+	if linkerFlags == "" {
+		return errors.New("Darkrun build returned empty provenance flags")
+	}
+	return nil
+}
+
+// Build explicitly compiles scenario support in Darkrun, the bundled server,
+// launcher and diagnostic Fang. Invoke with mage scenario:build when execution
+// is authorized. Reuse normal packaging and give every component the same ID;
+// this build never starts the client or claims live capability verification.
+func (Scenario) Build() error {
+	mg.SerialDeps(Version)
+
+	linkerFlags, err := buildDarkrun(true)
+	if err != nil {
+		return fmt.Errorf("scenarioRunner: %w", err)
+	}
+	err = buildDarkSpinnerTarget(true, true, true, linkerFlags, runtime.GOOS)
+	if err != nil {
+		return fmt.Errorf("scenarioLauncher: %w", err)
 	}
 	return nil
 }
@@ -587,7 +637,7 @@ func (Darkrun) BuildCI(targetOS string) error {
 	executablePath := filepath.Join(outputPath, executableName)
 	environment := map[string]string{"GOOS": targetOS, "GOARCH": "amd64", "CGO_ENABLED": "0"}
 	err = runCommandWithEnvironment("", environment, "go", "build", "-trimpath",
-		"-ldflags", "-s -w "+buildVersionLinkerFlags(), "-o", executablePath, "./app/darkrun")
+		"-tags", "", "-ldflags", "-s -w "+buildVersionLinkerFlags(), "-o", executablePath, "./app/darkrun")
 	if err != nil {
 		return fmt.Errorf("serverBuild: %w", err)
 	}
@@ -608,7 +658,7 @@ func (Darkrun) BuildCI(targetOS string) error {
 func (Darkspinner) Build() error {
 	mg.SerialDeps(Version)
 
-	err := buildDarkSpinnerTarget(true, true, runtime.GOOS)
+	err := buildDarkSpinnerTarget(true, true, false, buildVersionLinkerFlags(), runtime.GOOS)
 	if err != nil {
 		return fmt.Errorf("darkSpinnerBuild: %w", err)
 	}
@@ -692,7 +742,7 @@ func (Darkspinner) BuildCINative() error {
 	default:
 		return fmt.Errorf("unsupported launcher platform %s", platformName)
 	}
-	err := buildDarkSpinnerTarget(false, true, targetOS)
+	err := buildDarkSpinnerTarget(false, true, false, buildVersionLinkerFlags(), targetOS)
 	if err != nil {
 		return fmt.Errorf("nativeBuild: %w", err)
 	}
@@ -770,16 +820,18 @@ func archiveBinary(outputPath, binaryName, archiveName string) error {
 	return nil
 }
 
-func buildDarkSpinnerTarget(isDevelopment bool, isFangDiagnostics bool, targetPlatforms ...string) error {
+func buildDarkSpinnerTarget(isDevelopment, isFangDiagnostics, isScenario bool, linkerFlags string, targetPlatforms ...string) error {
+	if isScenario && !isDevelopment {
+		return errors.New("scenario composition requires an explicit development build")
+	}
 	err := os.MkdirAll(filepath.Join("bin", "game"), 0o755)
 	if err != nil {
 		return fmt.Errorf("gameMkdir: %w", err)
 	}
-	err = buildFang(isFangDiagnostics)
+	err = buildFang(isFangDiagnostics, isScenario, linkerFlags)
 	if err != nil {
 		return fmt.Errorf("fangBuild: %w", err)
 	}
-	linkerFlags := buildVersionLinkerFlags()
 	if !isDevelopment {
 		linkerFlags = "-s -w " + linkerFlags
 	}
@@ -807,7 +859,7 @@ func buildDarkSpinnerTarget(isDevelopment bool, isFangDiagnostics bool, targetPl
 		outputPath = filepath.Join("bin", "darkspinnerci")
 	}
 	for index, targetOS := range targetPlatforms {
-		err = buildDarkSpinner(linkerFlags, outputPath, targetOS)
+		err = buildDarkSpinner(linkerFlags, outputPath, targetOS, isScenario)
 		if err != nil {
 			return fmt.Errorf("darkSpinnerBuild[%d]: %w", index, err)
 		}
@@ -921,9 +973,12 @@ func (Darkspinner) Run() error {
 func (Darkrun) Auth() error {
 	mg.SerialDeps(Version)
 
-	_, err := buildDarkrun()
+	linkerFlags, err := buildDarkrun(false)
 	if err != nil {
 		return fmt.Errorf("authBuild: %w", err)
+	}
+	if linkerFlags == "" {
+		return errors.New("Darkrun auth build returned empty provenance flags")
 	}
 	binaryPath, err := filepath.Abs(filepath.Join("bin", "server", binaryName))
 	if err != nil {
@@ -946,9 +1001,12 @@ func (Darkrun) Auth() error {
 func (Darkrun) Server() error {
 	mg.SerialDeps(Version)
 
-	_, err := buildDarkrun()
+	linkerFlags, err := buildDarkrun(false)
 	if err != nil {
 		return fmt.Errorf("serverBuild: %w", err)
+	}
+	if linkerFlags == "" {
+		return errors.New("Darkrun server build returned empty provenance flags")
 	}
 	binaryPath, err := filepath.Abs(filepath.Join("bin", "server", binaryName))
 	if err != nil {
@@ -1020,7 +1078,7 @@ func (Darkspin) Build() error {
 	if err != nil {
 		return fmt.Errorf("launcherBuild: %w", err)
 	}
-	err = buildFang(true)
+	err = buildFang(true, false, linkerFlags)
 	if err != nil {
 		return fmt.Errorf("fangBuild: %w", err)
 	}

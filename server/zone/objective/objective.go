@@ -75,9 +75,7 @@ func LevelScriptObjects(
 	if err != nil {
 		return nil, fmt.Errorf("levelScriptObjects: %w", err)
 	}
-	levelObjects, err := director.CampaignCallbackObjects(
-		matchID, "nLevelObject.OnTreeDeath",
-	)
+	levelObjects, err := director.CampaignTreeObjects(matchID)
 	if err != nil {
 		return nil, fmt.Errorf("levelVisualObjects: %w", err)
 	}

@@ -54,8 +54,16 @@ func CreatureCount(binding game.GameplayBinding) uint32 {
 }
 
 func AppearanceAsset(creature game.GameplayCreature) uint64 {
-	if creature.ID != 0 {
-		return uint64(creature.ID)
+	if creature.ID != 0 && creature.AppearanceVersion > 1 {
+		// Build 103's native appearance cache is keyed by asset ID alone,
+		// not by revision. Saved revisions are reserved across accounts, so
+		// include that revision to distinguish account-local creature IDs.
+		return uint64(creature.AppearanceVersion)<<32 | uint64(creature.ID)
+	}
+	if creature.ID != 0 && creature.Noun != 0 {
+		// Revision 1 loads the noun's shipped template. Different nouns must
+		// not share an account-local ID in the native appearance cache either.
+		return uint64(creature.Noun)
 	}
 	if creature.Noun == util.HashID("PC_LF_Mage.Noun") {
 		return sageAppearanceAsset

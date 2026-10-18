@@ -263,6 +263,7 @@ func (r campaignNPCActionRuntime) produceZelemSpecialThreeEnergyBuff(
 			runtime: r, packet: packet, sessionKey: sessionKey,
 			generation: generation, sourceObjectID: source.Plan.ObjectID,
 			kind: campaignNPCProjectileZelem,
+			plan: zonenpc.AttackPlan{ActionGeneration: source.ActionGeneration},
 		}
 		err = r.pursuit.scheduleTarget(
 			packet, sessionKey, generation, source.Plan.ObjectID,

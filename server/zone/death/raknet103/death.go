@@ -23,11 +23,13 @@ var criticalEnemyDeathDeadlines = []time.Duration{100 * time.Millisecond, 3100 *
 const fixtureDeathDeleteDelay = time.Second
 
 type Run struct {
-	session   *sim.Session
-	behavior  *sim.DeathBehavior
-	outbox    *enemyDeathOutbox
-	deadlines []time.Duration
-	cancel    raknet.CancelSchedule
+	session         *sim.Session
+	behavior        *sim.DeathBehavior
+	outbox          *enemyDeathOutbox
+	deadlines       []time.Duration
+	cancel          raknet.CancelSchedule
+	startedAt       time.Time
+	isCriticalDeath bool
 }
 
 type Target struct {
@@ -43,6 +45,7 @@ type Target struct {
 	IsFixture              bool
 	IsBoss                 bool
 	IsRemnantRetained      bool
+	IsCollisionRetained    bool
 	DeleteDelay            time.Duration
 }
 
@@ -133,9 +136,10 @@ func NewRun(
 		Position:             target.Position,
 		FadeEffectName:       FadeEffect(target.CreatureType, target.IsCreatureTypeKnown),
 		IsCritical:           isCritical, IsFastCriticalDeath: isFastCriticalDeath,
-		IsBoss:               target.IsBoss,
-		IsRemnantRetained:    target.IsRemnantRetained,
-		DeleteDelay:          deleteDelay,
+		IsBoss:              target.IsBoss,
+		IsRemnantRetained:   target.IsRemnantRetained,
+		IsCollisionRetained: target.IsCollisionRetained,
+		DeleteDelay:         deleteDelay,
 		DamageProvenance: sim.Provenance{
 			FunctionName: "sub_9E4D90", Confidence: sim.ConfidenceNative,
 		},
@@ -164,7 +168,9 @@ func NewRun(
 	}
 	run := &Run{
 		session: session, behavior: behavior, outbox: outbox,
-		deadlines: append([]time.Duration(nil), deadlines...),
+		deadlines:       append([]time.Duration(nil), deadlines...),
+		startedAt:       time.Now(),
+		isCriticalDeath: isCritical,
 	}
 	return run, outbox.drain(), nil
 }
@@ -174,6 +180,13 @@ func (r *Run) Deadlines() []time.Duration {
 		return nil
 	}
 	return append([]time.Duration(nil), r.deadlines...)
+}
+
+// IsRepairableCorpse implements ShouldRepair's killing-hit and fade checks.
+// Critical bosses are excluded even when their death branch does not fade.
+func (e *Run) IsRepairableCorpse() bool {
+	return e != nil && e.outbox != nil && !e.isCriticalDeath &&
+		!e.outbox.isCorpseFading && !e.outbox.isMarkedForDeletion
 }
 
 func (r *Run) IsFinalDeadline(deadline time.Duration) bool {
@@ -233,11 +246,50 @@ func (r *Run) Advance(ctx context.Context, deadline time.Duration) ([][]byte, er
 func (r *Run) AdvanceDeath(
 	ctx context.Context, deadline time.Duration,
 ) ([]zonenpc.DeathEvent, error) {
+	isDeadlineFound := false
+	for _, current := range r.deadlines {
+		if current == deadline {
+			isDeadlineFound = true
+			break
+		}
+	}
+	if !isDeadlineFound {
+		return nil, nil
+	}
 	_, err := r.Advance(ctx, deadline)
 	if err != nil {
 		return nil, fmt.Errorf("deathAdvance: %w", err)
 	}
 	return r.outbox.drainProjection(), nil
+}
+
+func (e *Run) ResetDeathTimer(ctx context.Context, delay time.Duration) ([]time.Duration, bool, error) {
+	if e == nil || e.session == nil || e.behavior == nil || e.outbox == nil || ctx == nil || delay <= 0 {
+		return nil, false, errors.New("invalid death timer reset")
+	}
+	elapsed := time.Since(e.startedAt)
+	if len(e.deadlines) < 2 || elapsed >= e.deadlines[0] || e.outbox.isCorpseFading || e.outbox.isMarkedForDeletion {
+		return nil, false, nil
+	}
+	packets, err := e.Advance(ctx, max(elapsed, e.session.Director().Simulator().Now()))
+	if err != nil {
+		return nil, false, fmt.Errorf("timerAdvance: %w", err)
+	}
+	// A timer refresh emits no presentation; death projections remain owned
+	// by the scheduled death path if the revival window already expired.
+	if len(packets) != 0 {
+		return nil, false, errors.New("death timer advanced presentation unexpectedly")
+	}
+	isReset, err := e.behavior.ResetTimer(delay)
+	if err != nil {
+		return nil, false, fmt.Errorf("timerReset: %w", err)
+	}
+	if !isReset {
+		return nil, false, nil
+	}
+	elapsed = e.session.Director().Simulator().Now()
+	e.deadlines = []time.Duration{elapsed + delay, elapsed + delay + 5*time.Second}
+	return []time.Duration{delay, delay + 5*time.Second}, true, nil
 }
 
 func (r *Run) DrainProjection() []zonenpc.DeathEvent {
@@ -455,15 +507,22 @@ func (o *enemyDeathOutbox) ApplyPositionedEffect(
 	if intent.EffectName == "" {
 		return errors.New("positioned effect empty")
 	}
-	packet, err := raknet.MarshalApplication(raknet.PositionedEffectMessage{
-		Asset: util.HashID(intent.EffectName),
-		Position: raknet.Vector3{
-			X: intent.Position.X, Y: intent.Position.Y, Z: intent.Position.Z,
-		},
+	position := raknet.Vector3{
+		X: intent.Position.X, Y: intent.Position.Y, Z: intent.Position.Z,
+	}
+	var message raknet.ApplicationMessage = raknet.PositionedEffectMessage{
+		Asset:    util.HashID(intent.EffectName),
+		Position: position,
 		Facing: raknet.Vector3{
 			X: intent.Facing.X, Y: intent.Facing.Y, Z: intent.Facing.Z,
 		},
-	})
+	}
+	if intent.IsFacingOmitted {
+		message = raknet.DropPresentationMessage{
+			Asset: util.HashID(intent.EffectName), Position: position,
+		}
+	}
+	packet, err := raknet.MarshalApplication(message)
 	if err != nil {
 		return fmt.Errorf("positionedEffectMarshal: %w", err)
 	}
@@ -638,7 +697,9 @@ func (o *enemyDeathOutbox) ApplyDeathState(
 	case sim.DeathWaitingForRevival:
 		return nil
 	case sim.DeathMarkedForDeletion:
-		o.isMarkedForDeletion = true
+		if o.isMarkedForDeletion {
+			return nil
+		}
 	default:
 		return fmt.Errorf("deathAction: %s", intent.Action)
 	}
@@ -648,6 +709,7 @@ func (o *enemyDeathOutbox) ApplyDeathState(
 	if err != nil {
 		return fmt.Errorf("deleteMarshal: %w", err)
 	}
+	o.isMarkedForDeletion = true
 	o.packets = append(o.packets, packet)
 	o.projections = append(o.projections, zonenpc.DeathEvent{
 		Kind: zonenpc.DeathDelete, TargetObjectID: o.target.ObjectID,

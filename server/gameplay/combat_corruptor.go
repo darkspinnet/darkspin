@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 	"time"
 
@@ -30,6 +29,7 @@ type campaignCorruptorState struct {
 	portalPositions  []game.Vec3
 	portalObjectIDs  []uint32
 	portalReadyAts   []time.Time
+	portals          map[uint32]campaignCorruptorPortalState
 	isStageTwo       bool
 	isPhasePending   bool
 	isPhaseActivated bool
@@ -251,6 +251,7 @@ func (s *gameplayPeerSession) requestCampaignCorruptorPortalRespawn(
 		return nil
 	}
 	state.portalObjectIDs[portalIndex] = 0
+	delete(state.portals, portal.Plan.ObjectID)
 	state.portalReadyAts[portalIndex] = time.Now().Add(delay)
 	s.campaignCorruptorStates[portal.Plan.OwnerObjectID] = state
 	return &campaignCorruptorPortalRespawnPlan{
@@ -282,6 +283,7 @@ func (e campaignCorruptorPortalRespawnStep) produce() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	state = state.clonePortals()
 	state.portalReadyAts[e.plan.portalIndex] = time.Time{}
 	phase := state.phases[state.phaseIndex]
 	targetObjectID := corruptorPopulationTarget(peerSession, boss)
@@ -305,6 +307,11 @@ func (e campaignCorruptorPortalRespawnStep) produce() ([][]byte, error) {
 	peerSession.campaignCorruptorStates[e.plan.bossObjectID] = state
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
+	err = e.runtime.scheduleCorruptorPortals(e.packet, e.sessionKey, e.generation,
+		e.plan.bossObjectID, plans, e.timestamp)
+	if err != nil {
+		return nil, fmt.Errorf("portalTimers: %w", err)
+	}
 	actionPackets, err := e.runtime.scheduleFirstActions(
 		e.packet, e.sessionKey, e.generation, actionPlans, e.timestamp,
 	)
@@ -384,6 +391,11 @@ func (r campaignNPCActionRuntime) advanceCorruptorPhase(
 	peerSession.campaignCorruptorStates[step.objectID] = state
 	r.registry.sessions[step.sessionKey] = peerSession
 	r.registry.mutex.Unlock()
+	err = r.scheduleCorruptorPortals(step.packet, step.sessionKey, step.generation,
+		step.objectID, plans, step.timestamp)
+	if err != nil {
+		return nil, fmt.Errorf("phasePortalTimers: %w", err)
+	}
 
 	packets, err := corruptorPhasePackets(boss.Plan.ObjectID, phase)
 	if err != nil {
@@ -441,6 +453,13 @@ func (r campaignNPCActionRuntime) planCorruptorPhasePopulation(
 	if targetObjectID == 0 {
 		return nil, state, errors.New("corruptor population target unavailable")
 	}
+	minionEntries, specialEntries, err := corruptorPopulationEntries(
+		peerSession.zone.DirectorDefinition(), phase, peerSession.binding.ChainLevelIndex,
+	)
+	if err != nil {
+		return nil, state, fmt.Errorf("corruptorRoster: %w", err)
+	}
+	state = state.clonePortals()
 	plans := make([]campaignCorruptorSpawnPlan, 0)
 	if len(state.portalObjectIDs) != len(state.portalPositions) {
 		portalObjectIDs := make([]uint32, len(state.portalPositions))
@@ -452,13 +471,12 @@ func (r campaignNPCActionRuntime) planCorruptorPhasePopulation(
 		copy(portalReadyAts, state.portalReadyAts)
 		state.portalReadyAts = portalReadyAts
 	}
-	existingPortalCount := 0
 	for index, objectID := range state.portalObjectIDs {
 		portal, isPortalFound := peerSession.zone.NPCs().NPC(objectID)
 		if isPortalFound && !portal.IsDefeated {
-			existingPortalCount++
 			continue
 		}
+		delete(state.portals, objectID)
 		state.portalObjectIDs[index] = 0
 	}
 	portalProfile := boss.Plan.NPCProfile
@@ -488,11 +506,10 @@ func (r campaignNPCActionRuntime) planCorruptorPhasePopulation(
 			NounName:  campaignCorruptorPortalNounName,
 			Position:  position,
 			LocusID:   boss.Plan.LocusID,
-			IsFixture: true, IsRewardSuppressed: true, NPCProfile: portalProfile,
+			IsFixture: true, IsLootSuppressed: true, IsExperienceSuppressed: true, IsEncounterAuxiliary: true, NPCProfile: portalProfile,
 			IsActionKnown: true,
 			ActionProfile: zonenpc.ActionProfile{
-				PassiveCreateEffectName: "scaldron_portal_rampUp_effect.ServerEventDef",
-				PassiveEffectName:       "scaldron_boss_portal_effect.ServerEventDef",
+				PassiveEffectName: "scaldron_portal_rampUp_effect.ServerEventDef",
 			},
 		}
 		plans = append(plans, campaignCorruptorSpawnPlan{Plan: plan})
@@ -502,56 +519,16 @@ func (r campaignNPCActionRuntime) planCorruptorPhasePopulation(
 	minionCount, specialCount := corruptorPortalPopulation(
 		corruptorRank(boss.Plan.NounName), state.isStageTwo,
 	)
-	minionNouns, specialNouns := corruptorPopulationNouns(
-		peerSession.zone.DirectorDefinition(), phase, corruptorRank(boss.Plan.NounName),
-	)
-	livePortalObjectIDs := make([]uint32, 0, len(state.portalObjectIDs))
-	for _, objectID := range state.portalObjectIDs {
-		if objectID != 0 {
-			livePortalObjectIDs = append(livePortalObjectIDs, objectID)
-		}
-	}
-	requestedCount := len(livePortalObjectIDs) * (minionCount + specialCount)
-	activeOwnedCount := peerSession.zone.NPCs().OwnedActiveCount(boss.Plan.ObjectID)
-	activeMinionCount := max(0, activeOwnedCount-existingPortalCount)
-	availableCount := max(0, requestedCount-activeMinionCount)
-	spawnIndex := 0
-	for portalIndex, portalObjectID := range state.portalObjectIDs {
+	for _, portalObjectID := range state.portalObjectIDs {
 		if portalObjectID == 0 {
 			continue
 		}
-		for index := 0; index < minionCount && availableCount > 0; index++ {
-			if len(minionNouns) == 0 {
-				break
-			}
-			nounName := minionNouns[spawnIndex%len(minionNouns)]
-			plan, err := r.corruptorMinionPlan(
-				peerSession, boss, state.portalPositions[portalIndex], nounName,
-				spawnIndex,
-			)
-			if err != nil {
-				return nil, state, err
-			}
-			plans = append(plans, campaignCorruptorSpawnPlan{Plan: plan})
-			spawnIndex++
-			availableCount--
+		portalState, isFound := state.portals[portalObjectID]
+		if !isFound {
+			portalState = newCampaignCorruptorPortalState()
 		}
-		for index := 0; index < specialCount && availableCount > 0; index++ {
-			if len(specialNouns) == 0 {
-				break
-			}
-			nounName := specialNouns[spawnIndex%len(specialNouns)]
-			plan, err := r.corruptorMinionPlan(
-				peerSession, boss, state.portalPositions[portalIndex], nounName,
-				spawnIndex,
-			)
-			if err != nil {
-				return nil, state, err
-			}
-			plans = append(plans, campaignCorruptorSpawnPlan{Plan: plan})
-			spawnIndex++
-			availableCount--
-		}
+		portalState.setNpcList(minionEntries, specialEntries, minionCount, specialCount)
+		state.portals[portalObjectID] = portalState
 	}
 	return plans, state, nil
 }
@@ -608,19 +585,23 @@ func admitCorruptorPopulation(
 func (r campaignNPCActionRuntime) corruptorMinionPlan(
 	s *gameplayPeerSession,
 	boss zonenpc.Snapshot, position game.Vec3,
-	nounName string, spawnIndex int,
+	entry game.CampaignDirectorEntry, pendingPlans []campaignCorruptorSpawnPlan,
 ) (zonenpc.SpawnPlan, error) {
 	objectID, err := s.reserveCampaignObjectID()
 	if err != nil {
 		return zonenpc.SpawnPlan{}, fmt.Errorf("corruptorMinionReserve: %w", err)
 	}
+	nounName := entry.NounName
 	director := s.zone.DirectorDefinition()
 	npcProfile, isProfileFound := director.NPCProfilesByNoun[strings.ToLower(nounName)]
+	if !isProfileFound {
+		npcProfile = entry.NPCProfile
+	}
 	actionProfile, isActionFound := zonenpc.ActionProfileForNoun(nounName)
 	if !isActionFound {
 		return zonenpc.SpawnPlan{}, fmt.Errorf("corruptorMinionProfile: %s", nounName)
 	}
-	if !isProfileFound || !npcProfile.IsKnown {
+	if !npcProfile.IsKnown {
 		npcProfile = boss.Plan.NPCProfile
 		hitPoint := r.program.NonPlayerHitPoint[util.HashID(
 			strings.TrimSuffix(nounName, ".Noun"),
@@ -638,14 +619,12 @@ func (r campaignNPCActionRuntime) corruptorMinionPlan(
 		npcProfile.IsTargetable = true
 		npcProfile.IsKnown = true
 	}
-	angle := float64(spawnIndex%8) * math.Pi / 4
-	position.X += float32(math.Cos(angle)) * 1.5
-	position.Y += float32(math.Sin(angle)) * 1.5
+	position = r.corruptorScatterPosition(s, position, nounName, pendingPlans)
 	return zonenpc.SpawnPlan{
 		ObjectID: objectID, OwnerObjectID: boss.Plan.ObjectID,
 		NounName: nounName, Position: position,
-		LocusID:            boss.Plan.LocusID,
-		IsRewardSuppressed: true, NPCProfile: npcProfile,
+		LocusID:              boss.Plan.LocusID,
+		IsEncounterAuxiliary: true, NPCProfile: npcProfile,
 		ActionProfile: actionProfile, IsActionKnown: true,
 	}, nil
 }
@@ -680,114 +659,65 @@ func campaignCorruptorPortalPositions(
 	return positions
 }
 
-func corruptorPopulationNouns(
-	director game.CampaignDirector, phase zonenpc.CorruptorPhase, rank int,
-) ([]string, []string) {
-	minionNouns := make([]string, 0)
-	specialNouns := make([]string, 0)
-	seenNouns := make(map[string]bool)
-	for _, pool := range director.Pools {
+// Boss Lua chunks 305/81 supply these explicit LevelConfig references. The
+// EnemyPortal passive's unconfigured default is TNX-173.LevelConfig.
+func corruptorPhaseConfigName(phase zonenpc.CorruptorPhase) string {
+	switch phase {
+	case zonenpc.CorruptorPhaseQuantum:
+		return "Zelem.LevelConfig"
+	case zonenpc.CorruptorPhaseNecro:
+		return "Nocturna.LevelConfig"
+	case zonenpc.CorruptorPhasePlasma:
+		return "Cryos.LevelConfig"
+	case zonenpc.CorruptorPhaseLife:
+		return "Verdanth.LevelConfig"
+	case zonenpc.CorruptorPhaseTech:
+		return "Sentios.LevelConfig"
+	default:
+		return "TNX-173.LevelConfig"
+	}
+}
+
+func corruptorPopulationEntries(
+	director game.CampaignDirector, phase zonenpc.CorruptorPhase, stage uint32,
+) ([]game.CampaignDirectorEntry, []game.CampaignDirectorEntry, error) {
+	if stage == 0 {
+		return nil, nil, errors.New("corruptor roster stage unavailable")
+	}
+	configName := corruptorPhaseConfigName(phase)
+	minionEntries, err := corruptorRosterEntries(director, configName, "minion", stage)
+	if err != nil {
+		return nil, nil, fmt.Errorf("minionRoster: %w", err)
+	}
+	specialEntries, err := corruptorRosterEntries(director, configName, "special", stage)
+	if err != nil {
+		return nil, nil, fmt.Errorf("specialRoster: %w", err)
+	}
+	return minionEntries, specialEntries, nil
+}
+
+func corruptorRosterEntries(
+	director game.CampaignDirector, configName, configKind string, stage uint32,
+) ([]game.CampaignDirectorEntry, error) {
+	for _, pool := range director.ExternalPools {
+		if !strings.EqualFold(pool.ConfigurationName, configName) ||
+			!strings.EqualFold(pool.ConfigKind, configKind) {
+			continue
+		}
+		entries := make([]game.CampaignDirectorEntry, 0, len(pool.Entries))
+		// sub_9F9550 -> sub_9F7A50 retains authored order and duplicates,
+		// gates by the inclusive stage range, and never checks horde legality.
+		// Each spawn draws from this unchanged list with replacement.
 		for _, entry := range pool.Entries {
-			nounName := entry.NounName
-			lowerName := strings.ToLower(nounName)
-			if seenNouns[lowerName] || !corruptorPhaseNoun(lowerName, phase) ||
-				!corruptorRankNoun(lowerName, rank) ||
-				strings.Contains(lowerName, "captain") ||
-				strings.Contains(lowerName, "boss") {
+			if stage < entry.MinimumDifficulty || stage > entry.MaximumDifficulty {
 				continue
 			}
-			seenNouns[lowerName] = true
-			if strings.Contains(lowerName, "special") {
-				specialNouns = append(specialNouns, nounName)
-			} else if strings.Contains(lowerName, "basic") {
-				minionNouns = append(minionNouns, nounName)
-			}
+			entries = append(entries, entry)
 		}
+		// An authored empty role (or no eligible entries) safely skips spawning.
+		return entries, nil
 	}
-	sort.Strings(minionNouns)
-	sort.Strings(specialNouns)
-	if len(minionNouns) == 0 || len(specialNouns) == 0 {
-		fallbackMinions, fallbackSpecials := corruptorFallbackNouns(phase, rank)
-		if len(minionNouns) == 0 {
-			minionNouns = fallbackMinions
-		}
-		if len(specialNouns) == 0 {
-			specialNouns = fallbackSpecials
-		}
-	}
-	return minionNouns, specialNouns
-}
-
-func corruptorFallbackNouns(
-	phase zonenpc.CorruptorPhase, rank int,
-) ([]string, []string) {
-	var minionBases []string
-	var specialBases []string
-	switch phase {
-	case zonenpc.CorruptorPhaseQuantum:
-		minionBases = []string{"ZelemBasicPackMelee", "ZelemBasicPackFly"}
-		specialBases = []string{"ZelemSpecialThree"}
-	case zonenpc.CorruptorPhaseNecro:
-		minionBases = []string{"NocturnaBasicHealthDrain", "NocturnaBasicRangedSilence"}
-		specialBases = []string{"NocturnaSpecialHomer"}
-	case zonenpc.CorruptorPhasePlasma:
-		minionBases = []string{"CryosBasicFiery", "CryosBasicRanged"}
-		specialBases = []string{"CryosSpecialOne"}
-	case zonenpc.CorruptorPhaseLife:
-		minionBases = []string{"VerdanthBasicMelee", "VerdanthBasicRanged"}
-		specialBases = []string{"VerdanthSpecialTwo"}
-	case zonenpc.CorruptorPhaseTech:
-		minionBases = []string{"CitadelBasicMelee", "CitadelBasicGunner"}
-		specialBases = []string{"CitadelSpecialTwo"}
-	}
-	minionNouns := make([]string, 0, len(minionBases))
-	for _, nounBase := range minionBases {
-		minionNouns = append(minionNouns, corruptorRankedNoun(nounBase, rank))
-	}
-	specialNouns := make([]string, 0, len(specialBases))
-	for _, nounBase := range specialBases {
-		specialNouns = append(specialNouns, corruptorRankedNoun(nounBase, rank))
-	}
-	return minionNouns, specialNouns
-}
-
-func corruptorRankedNoun(nounBase string, rank int) string {
-	if rank <= 1 {
-		return nounBase + ".Noun"
-	}
-	return fmt.Sprintf("%s_%d.Noun", nounBase, rank)
-}
-
-func corruptorPhaseNoun(nounName string, phase zonenpc.CorruptorPhase) bool {
-	switch phase {
-	case zonenpc.CorruptorPhaseQuantum:
-		return strings.HasPrefix(nounName, "zelem")
-	case zonenpc.CorruptorPhaseNecro:
-		return strings.HasPrefix(nounName, "nocturna")
-	case zonenpc.CorruptorPhasePlasma:
-		return strings.HasPrefix(nounName, "cryos")
-	case zonenpc.CorruptorPhaseLife:
-		return strings.HasPrefix(nounName, "verdanth")
-	case zonenpc.CorruptorPhaseTech:
-		return strings.HasPrefix(nounName, "citadel") ||
-			strings.HasPrefix(nounName, "nomad")
-	default:
-		return false
-	}
-}
-
-func corruptorRankNoun(nounName string, rank int) bool {
-	switch rank {
-	case 1:
-		return !strings.HasSuffix(nounName, "_2.noun") &&
-			!strings.HasSuffix(nounName, "_3.noun")
-	case 2:
-		return strings.HasSuffix(nounName, "_2.noun")
-	case 3:
-		return strings.HasSuffix(nounName, "_3.noun")
-	default:
-		return false
-	}
+	return nil, fmt.Errorf("corruptor roster missing: %s/%s", configName, configKind)
 }
 
 func corruptorPhasePackets(

@@ -58,6 +58,10 @@ func (e campaignNPCProjectileStep) produceFlight() ([][]byte, error) {
 	schedule := e.schedule
 	schedule.runtime.registry.mutex.Lock()
 	current, isFound := schedule.runtime.registry.sessions[schedule.sessionKey]
+	if schedule.retirement != nil && (schedule.retirement.isRetired || schedule.retirement.isRetirementPending) {
+		schedule.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
 	if !isFound || current.generation != schedule.generation ||
 		current.campaignNPCProjectiles[schedule.projectileObjectID] != schedule.run {
 		schedule.runtime.registry.mutex.Unlock()
@@ -124,7 +128,7 @@ func (e campaignNPCProjectileStep) produceFlight() ([][]byte, error) {
 			return schedule.fail("enemyFlightResume", errors.New("scheduler unavailable"))
 		}
 		next := campaignNPCProjectileStep{schedule: schedule, deadline: e.deadline + abilityraknet.ProjectileCollisionTick, isFlightPoll: true}
-		err = scheduleNPCProducer(schedule.runtime.registry, schedule.packet, abilityraknet.ProjectileCollisionTick, next.produce)
+		err = scheduleNPCProducer(schedule.runtime.registry, schedule.packet, abilityraknet.ProjectileCollisionTick, next.produceTracked)
 		if err != nil {
 			return schedule.fail("enemyFlightResume", err)
 		}

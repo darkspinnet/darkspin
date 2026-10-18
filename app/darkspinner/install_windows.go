@@ -111,8 +111,8 @@ func relocateAndRestart(sourcePath, destinationPath string, restartArguments []s
 	return nil
 }
 
-func replaceAndRestart(stagedPath, destinationPath string) error {
-	return replaceAndRestartWithArguments(stagedPath, destinationPath, nil)
+func replaceAndRestart(stagedPath, destinationPath string, restartArguments []string) error {
+	return replaceAndRestartWithArguments(stagedPath, destinationPath, restartArguments)
 }
 
 func replaceAndRestartWithArguments(stagedPath, destinationPath string, restartArguments []string) error {
@@ -165,26 +165,43 @@ Remove-Item -LiteralPath $PSCommandPath -Force
 	return nil
 }
 
-func restartAfterExit(executablePath string) error {
+func restartAfterExit(executablePath string, restartArguments []string) error {
 	scriptPath := filepath.Join(os.TempDir(), "darkspinner-restart-"+strconv.Itoa(os.Getpid())+".ps1")
 	script := `param(
     [Parameter(Mandatory=$true)][string]$ExecutablePath,
-    [Parameter(Mandatory=$true)][int]$ParentPid
+    [Parameter(Mandatory=$true)][int]$ParentPid,
+    [string]$RestartArguments
 )
 $ErrorActionPreference = 'Stop'
 Wait-Process -Id $ParentPid -ErrorAction SilentlyContinue
 $WorkingDirectory = Split-Path -Parent $ExecutablePath
-Start-Process -FilePath $ExecutablePath -WorkingDirectory $WorkingDirectory
+$Arguments = @()
+if ($RestartArguments) {
+    $Arguments = ($RestartArguments -split ',') | ForEach-Object { '--' + $_ }
+}
+if ($Arguments.Count -gt 0) {
+    Start-Process -FilePath $ExecutablePath -WorkingDirectory $WorkingDirectory -ArgumentList $Arguments
+} else {
+    Start-Process -FilePath $ExecutablePath -WorkingDirectory $WorkingDirectory
+}
 Remove-Item -LiteralPath $PSCommandPath -Force
 `
 	err := os.WriteFile(scriptPath, []byte(script), 0o600)
 	if err != nil {
 		return fmt.Errorf("scriptWrite: %w", err)
 	}
-	command := exec.Command(
+	arguments := []string{
 		"powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
 		"-File", scriptPath, "-ExecutablePath", executablePath, "-ParentPid", strconv.Itoa(os.Getpid()),
-	)
+	}
+	if len(restartArguments) > 0 {
+		restartNames := make([]string, 0, len(restartArguments))
+		for _, argument := range restartArguments {
+			restartNames = append(restartNames, strings.TrimPrefix(argument, "--"))
+		}
+		arguments = append(arguments, "-RestartArguments", strings.Join(restartNames, ","))
+	}
+	command := exec.Command(arguments[0], arguments[1:]...)
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	err = command.Start()
 	if err != nil {

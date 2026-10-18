@@ -25,7 +25,6 @@ import (
 var errCampaignAbilityNotSpecial = errors.New("campaign ability is not special")
 
 const tutorialAbilityLessonObjectiveID = uint32(0xac4273f3)
-const rideLightningShockDuration = 3 * time.Second
 
 type plasmaWreathSchedule struct {
 	runtime             campaignAbilityCommandRuntime
@@ -585,6 +584,7 @@ func (e wraithActiveSchedule) fail(scheduleErr error) {
 }
 
 type treeOfLifeSchedule struct {
+	startedAt           time.Duration
 	runtime             campaignAbilityCommandRuntime
 	sessionKey          string
 	generation          uint64
@@ -627,36 +627,18 @@ func (e treeOfLifeSchedule) fail(scheduleErr error) {
 	if scheduleErr == nil {
 		return
 	}
-	cleanupPacket, cleanupErr := raknet.MarshalApplication(raknet.ObjectDeleteMessage{
-		ObjectID: []uint32{e.objectID},
-	})
-	if cleanupErr != nil {
-		e.runtime.logger.Printf("RakNet Tree of Life cleanup marshal failed object=%d: %v", e.objectID, cleanupErr)
-	}
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := e.isCurrent(peerSession, isFound)
 	if isCurrent {
-		peerSession.treeOfLifeObjectID = 0
-		peerSession.treeOfLifeRun = nil
+		e.runtime.registry.retireCampaignTreeOfLifeLocked(&peerSession)
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 	}
-	// A failed producer never reaches its normal final despawn or peer
-	// publication callback. Queue cleanup directly, including for the caster.
-	// Keep it within the original session generation to avoid a newer zone.
-	isSameGeneration := isFound && peerSession.generation == e.generation
-	if isSameGeneration && cleanupErr == nil {
-		for sessionKey, candidate := range e.runtime.registry.sessions {
-			if candidate.binding.GameID != peerSession.binding.GameID || candidate.zone != peerSession.zone {
-				continue
-			}
-			candidate.queueCampaignPackets([][]byte{cleanupPacket})
-			e.runtime.registry.sessions[sessionKey] = candidate
-		}
-	}
 	e.runtime.registry.mutex.Unlock()
-	if isSameGeneration {
-		e.run.Stop()
+	// Only the matching run may retire the retained tree. A late failure from
+	// an older activation cannot clear or remove a replacement activation.
+	e.run.Stop()
+	if isCurrent {
 		e.runtime.logger.Printf(
 			"RakNet campaign Tree of Life stopped after schedule failure for %s: %v",
 			e.sessionKey, scheduleErr,
@@ -695,6 +677,23 @@ func (e treeOfLifeStep) produce() ([][]byte, error) {
 	if err != nil {
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignTreeAdvance: %w", err)
+	}
+	if output.IsSpawned {
+		err = peerSession.zone.TreeOfLife().Commit(zoneability.TreeOfLifePresentation{
+			ObjectID: schedule.objectID, SourceObjectID: schedule.actorObjectID,
+			NounName: schedule.definition.SpawnNoun,
+			Position: game.Vec3{X: schedule.position.X, Y: schedule.position.Y, Z: schedule.position.Z},
+			Team:     1, Phase: zoneability.TreeOfLifeSpawned,
+			SpawnedAt: schedule.startedAt + schedule.definition.HitDelay,
+			ExpiresAt: schedule.startedAt + schedule.definition.HitDelay + schedule.definition.Duration,
+		})
+		if err != nil {
+			schedule.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("campaignTreePresentation: %w", err)
+		}
+	}
+	if e.deadline >= schedule.definition.ReleaseDelay {
+		peerSession.zone.TreeOfLife().Release(schedule.objectID)
 	}
 	healing := make([]zoneSquadHealing, 0)
 	resourcePackets := make([][]byte, 0)
@@ -743,6 +742,11 @@ func (e treeOfLifeStep) produce() ([][]byte, error) {
 	}
 	isFinal := len(output.Cleanup) != 0
 	if isFinal {
+		peerSession.zone.TreeOfLife().Retire(schedule.objectID)
+		// Queue removal before clearing ownership or performing fallible stats
+		// publication. A failed final producer must not strand its tree.
+		schedule.runtime.registry.queueCampaignTreeRemovalLocked(&peerSession, output.Cleanup)
+		output.Cleanup = nil
 		peerSession.treeOfLifeObjectID = 0
 		peerSession.treeOfLifeRun = nil
 		schedule.run.ClearCancel()
@@ -928,170 +932,6 @@ func (e enrageSchedule) fail(scheduleErr error) {
 			"RakNet campaign Enrage stopped after schedule failure for %s: %v",
 			e.sessionKey, scheduleErr,
 		)
-	}
-}
-
-type rideLightningSchedule struct {
-	runtime             campaignAbilityCommandRuntime
-	packet              raknet.Packet
-	sessionKey          string
-	generation          uint64
-	sourceObjectID      uint32
-	abilityID           uint32
-	cooldownKey         zoneability.CooldownKey
-	creatureIndex       uint32
-	previousManaPoint   float32
-	motionRevision      uint64
-	previousMotion      zoneaction.MotionSnapshot
-	hitDelay            time.Duration
-	creature            game.GameplayCreature
-	binding             game.GameplayBinding
-	plan                zoneability.BasicPlan
-	cooldownReservation zoneability.CooldownReservation
-	releaseReservation  zoneaction.ReleaseReservation
-	releaseAnimation    []byte
-	releaseResponse     []byte
-}
-
-func (e rideLightningSchedule) produceImpact() ([][]byte, error) {
-	e.runtime.registry.mutex.Lock()
-	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := isFound && peerSession.generation == e.generation &&
-		peerSession.deployedObjectID == e.sourceObjectID &&
-		peerSession.zone != nil && peerSession.zone.NPCs() != nil &&
-		peerSession.zone.Population() != nil
-	if !isCurrent {
-		e.runtime.registry.mutex.Unlock()
-		return nil, nil
-	}
-	liveNPC, isTargetFound := peerSession.zone.NPCs().NPC(e.plan.TargetObjectID)
-	if !isTargetFound || liveNPC.IsDefeated || liveNPC.HitPoint <= 0 {
-		e.runtime.registry.mutex.Unlock()
-		return nil, nil
-	}
-	result, err := zoneability.CommitBasic(
-		peerSession.zone.Population().Random(), peerSession.zone.NPCs(), e.plan,
-		e.creature, peerSession.binding.Difficulty, e.runtime.program.Critical,
-	)
-	if err != nil {
-		e.runtime.registry.mutex.Unlock()
-		return nil, fmt.Errorf("campaignRideDamage: %w", err)
-	}
-	transition, err := peerSession.applyCampaignDamageTransition(result.Damage)
-	if err != nil {
-		e.runtime.registry.mutex.Unlock()
-		return nil, fmt.Errorf("campaignRideTransition: %w", err)
-	}
-	isCooldownReset := false
-	if result.Damage.IsDefeated {
-		isCooldownReset = peerSession.abilityCooldownSession().Reset(e.cooldownKey)
-	}
-	e.runtime.registry.sessions[e.sessionKey] = peerSession
-	e.runtime.registry.mutex.Unlock()
-
-	timestamp := e.packet.SourceTime + uint64(e.hitDelay/time.Millisecond)
-	areaResult := zoneability.AreaResult{
-		Snapshot: liveNPC, Damage: result.Damage, IsCritical: result.IsCritical,
-		Definition: e.plan.Definition,
-	}
-	packets, err := e.runtime.damage.publishAreaResults(
-		e.packet, e.sessionKey, e.generation, e.sourceObjectID, timestamp,
-		e.binding, []zoneability.AreaResult{areaResult},
-		[]campaignDamageTransition{transition}, nil, false,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("campaignRidePublish: %w", err)
-	}
-	if !result.Damage.IsDefeated {
-		shockPackets, shockErr := e.runtime.damage.publishNPCStuns(
-			e.packet, e.sessionKey, e.generation, e.sourceObjectID, timestamp,
-			[]zoneability.AreaResult{areaResult}, util.HashID("ShockModifier"),
-			rideLightningShockDuration,
-		)
-		if shockErr != nil {
-			return nil, fmt.Errorf("campaignRideShock: %w", shockErr)
-		}
-		packets = append(packets, shockPackets...)
-	}
-	if isCooldownReset {
-		resetPacket, resetErr := abilityraknet.CooldownReset(
-			e.sourceObjectID, e.abilityID,
-		)
-		if resetErr != nil {
-			return nil, fmt.Errorf("campaignRideCooldownReset: %w", resetErr)
-		}
-		packets = append([][]byte{resetPacket}, packets...)
-	}
-	e.runtime.logger.Printf(
-		"RakNet campaign Ride the Lightning landed source=%d target=%d damage=%g defeated=%t",
-		e.sourceObjectID, e.plan.TargetObjectID, result.Damage.Damage,
-		result.Damage.IsDefeated,
-	)
-	return packets, nil
-}
-
-func (e rideLightningSchedule) produceRelease() ([][]byte, error) {
-	e.runtime.registry.mutex.Lock()
-	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := isFound && peerSession.generation == e.generation &&
-		peerSession.deployedObjectID == e.sourceObjectID
-	if isCurrent {
-		peerSession.rideCancel = nil
-		e.runtime.registry.sessions[e.sessionKey] = peerSession
-	}
-	e.runtime.registry.mutex.Unlock()
-	if !isCurrent {
-		return nil, nil
-	}
-	return [][]byte{e.releaseAnimation, e.releaseResponse}, nil
-}
-
-func (e rideLightningSchedule) fail(scheduleErr error) {
-	e.runtime.registry.mutex.Lock()
-	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	if isFound && peerSession.generation == e.generation {
-		peerSession.rideCancel = nil
-		e.runtime.registry.sessions[e.sessionKey] = peerSession
-	}
-	e.runtime.registry.mutex.Unlock()
-	e.runtime.logger.Printf(
-		"RakNet campaign Ride the Lightning release stopped after schedule failure for %s: %v",
-		e.sessionKey, scheduleErr,
-	)
-}
-
-func (e rideLightningSchedule) rollbackAdmission() error {
-	e.runtime.registry.mutex.Lock()
-	defer e.runtime.registry.mutex.Unlock()
-	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	if !isFound || peerSession.generation != e.generation {
-		return nil
-	}
-	err := peerSession.setCampaignCharacterManaPoints(
-		e.creatureIndex, e.previousManaPoint,
-	)
-	if err != nil {
-		return fmt.Errorf("campaignRideRollback: %w", err)
-	}
-	peerSession.restorePlayerMotion(e.previousMotion, e.motionRevision)
-	peerSession.abilityCooldownSession().Rollback(e.cooldownReservation)
-	peerSession.abilityReleaseSession().Rollback(e.releaseReservation)
-	e.runtime.registry.sessions[e.sessionKey] = peerSession
-	return nil
-}
-
-func (e rideLightningSchedule) bindCancel(cancel raknet.CancelSchedule) {
-	e.runtime.registry.mutex.Lock()
-	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := isFound && peerSession.generation == e.generation &&
-		peerSession.deployedObjectID == e.sourceObjectID
-	if isCurrent {
-		peerSession.rideCancel = cancel
-		e.runtime.registry.sessions[e.sessionKey] = peerSession
-	}
-	e.runtime.registry.mutex.Unlock()
-	if !isCurrent {
-		cancel()
 	}
 }
 
@@ -1582,7 +1422,8 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			definition = randomAbility.Definition
 		}
 		targetPosition := command.Ability.TargetPosition
-		if !isReportedZonePosition(targetPosition) {
+		if definition.IsAlwaysUseCursorPosition ||
+			!isReportedZonePosition(targetPosition) {
 			targetPosition = command.Ability.CursorPosition
 		}
 		err = peerSession.advancePlayerPosition(abilityStartTime, command.Common.Position)
@@ -1938,7 +1779,11 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("campaignTreePosition: %w", err)
 		}
-		definition := specialTwoAbility.Definition
+		definition, definitionErr := zoneability.ProjectTreeOfLife(specialTwoAbility.Definition)
+		if definitionErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("campaignTreeDefinition: %w", definitionErr)
+		}
 		admissionRange := heroAbilityAdmissionRange(creature, definition)
 		isPositionAccepted := isReportedZonePosition(position) &&
 			isFiniteZonePosition(position) && isInsideZoneTrigger(
@@ -2057,7 +1902,8 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 		slices.Sort(deadlines)
 		deadlines = slices.Compact(deadlines)
 		schedule := treeOfLifeSchedule{
-			runtime: r, sessionKey: sessionKey,
+			startedAt: peerSession.zone.Elapsed(abilityStartTime),
+			runtime:   r, sessionKey: sessionKey,
 			generation: generation, objectID: objectID,
 			actorObjectID:     command.Common.ObjectID,
 			creatureIndex:     peerSession.deployedCreatureIndex,
@@ -2140,6 +1986,7 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			if isCompanionTarget {
 				targetCreature = creature
 				targetCreature.HitPoint = companion.MaximumHitPoint
+				targetCreature.MaximumHitPoint = companion.MaximumHitPoint
 				targetCreature.DamageProfile.PrimaryAttribute = creature.PetDamage
 				targetCreature.DamageProfile.IsPrimaryAttributeFound = true
 			}
@@ -2217,7 +2064,7 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			return nil, fmt.Errorf("campaignEnrageRelease: %w", marshalErr)
 		}
 		animationName := definition.AnimationName
-		if targetCreatureIndex == creatureIndex {
+		if targetObjectID == command.Common.ObjectID {
 			animationName = definition.OutAnimationName
 		}
 		startPackets, marshalErr := abilityraknet.StartSpendPresentation(
@@ -2318,237 +2165,7 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 		return append([][]byte{ackPacket}, startPackets...), nil
 	}
 	if isTeleportStrikeRequest {
-		if packet.ScheduleGroup == nil && packet.ScheduleGroupResult == nil {
-			return nil, errors.New("campaignRideSchedule: unavailable")
-		}
-		sessionKey := packet.Address.String()
-		r.registry.mutex.Lock()
-		peerSession, isFound := r.registry.sessions[sessionKey]
-		isFound = isFound && peerSession.generation == commandSession.generation &&
-			command.Common.ObjectID == peerSession.deployedObjectID &&
-			peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures))
-		if !isFound {
-			r.registry.mutex.Unlock()
-			return request.reject("session unavailable")
-		}
-		creatureIndex := peerSession.deployedCreatureIndex
-		creature := r.registry.projectPassiveCreature(
-			peerSession, creatureIndex, abilityStartTime,
-		)
-		destination := command.Ability.TargetPosition
-		if !isReportedZonePosition(destination) {
-			destination = command.Ability.CursorPosition
-		}
-		err = peerSession.advancePlayerPosition(abilityStartTime, command.Common.Position)
-		if err != nil {
-			r.registry.mutex.Unlock()
-			return nil, fmt.Errorf("campaignRidePosition: %w", err)
-		}
-		definition := specialTwoAbility.Definition
-		admissionRange := heroAbilityAdmissionRange(creature, definition)
-		cooldownKey := zoneability.HeroAbilityCooldown(specialTwoAbility.ID)
-		isDestinationValid := isReportedZonePosition(destination) &&
-			isFiniteZonePosition(destination)
-		isDestinationInRange := isDestinationValid && isInsideZoneTrigger(
-			peerSession.playerPosition, destination, admissionRange,
-		)
-		isCooldownReady := peerSession.abilityCooldownSession().IsReady(
-			cooldownKey, abilityStartTime,
-		) &&
-			peerSession.isAbilityReleaseReady(abilityStartTime)
-		manaCost, manaErr := game.ResolveAbilityManaCost(
-			definition.ManaCost, creature.DamageProfile.PrimaryAttribute, definition.ManaCoefficient,
-			peerSession.isOverdriveActiveAt(abilityStartTime),
-		)
-		if manaErr != nil {
-			r.registry.mutex.Unlock()
-			return nil, fmt.Errorf("campaignRideManaProjection: %w", manaErr)
-		}
-		if !isDestinationInRange || !isCooldownReady || peerSession.deployedManaPoint() < manaCost {
-			r.registry.mutex.Unlock()
-			return request.reject("destination, cooldown, or power unavailable")
-		}
-		ridePlan := zoneability.BasicPlan{}
-		if targetObjectID != 0 {
-			if peerSession.zone == nil || peerSession.zone.NPCs() == nil {
-				r.registry.mutex.Unlock()
-				return request.reject("target authority unavailable")
-			}
-			ridePlan, err = zoneability.PlanProjected(
-				peerSession.zone.NPCs(), command.Common.ObjectID, targetObjectID,
-				game.Vec3(peerSession.playerPosition), creature, definition, admissionRange,
-			)
-			if err != nil {
-				r.registry.mutex.Unlock()
-				return request.reject("target unavailable or out of range")
-			}
-			// The authored strike resolves damage from the melee landing point,
-			// while admission range is measured from the pre-teleport position.
-			ridePlan.SourcePosition = game.Vec3{
-				X: destination.X, Y: destination.Y, Z: destination.Z,
-			}
-		}
-		cooldown, cooldownErr := zoneability.ProjectCooldown(creature, definition)
-		if cooldownErr != nil {
-			r.registry.mutex.Unlock()
-			return nil, fmt.Errorf("campaignRideCooldown: %w", cooldownErr)
-		}
-		remainingManaPoint := peerSession.deployedManaPoint() - manaCost
-		abilityID := util.HashID(definition.Name)
-		ackPacket, marshalErr := abilityraknet.Acknowledge(abilityraknet.AcknowledgeRequest{
-			SyncStamp: command.Common.Unknown[0], ResponseType: raknet.ActionResponseAccepted,
-			ObjectID: abilityID, AbilityIndex: command.Ability.Index,
-			SourceStartMilliseconds:  packet.SourceTime,
-			SourceCommitMilliseconds: packet.SourceTime + uint64(definition.HitDelay/time.Millisecond),
-			SourceEndMilliseconds:    packet.SourceTime + uint64(definition.ReleaseDelay/time.Millisecond),
-		})
-		if marshalErr != nil {
-			r.registry.mutex.Unlock()
-			return nil, fmt.Errorf("campaignRideAck: %w", marshalErr)
-		}
-		releaseResponsePacket, marshalErr := abilityraknet.ReleaseResponse(
-			command.Common.Unknown[0], abilityID, command.Ability.Index,
-			packet.SourceTime, definition.HitDelay, definition.ReleaseDelay,
-		)
-		if marshalErr != nil {
-			r.registry.mutex.Unlock()
-			return nil, fmt.Errorf("campaignRideReleaseResponse: %w", marshalErr)
-		}
-		teleportPackets, marshalErr := actionraknet.Teleport(actionraknet.TeleportRequest{
-			ObjectID: command.Common.ObjectID,
-			Position: game.Vec3{X: destination.X, Y: destination.Y, Z: destination.Z},
-			Orientation: game.Quaternion{
-				X: command.Common.Orientation.X, Y: command.Common.Orientation.Y,
-				Z: command.Common.Orientation.Z, W: command.Common.Orientation.W,
-			},
-		})
-		if marshalErr != nil {
-			r.registry.mutex.Unlock()
-			return nil, fmt.Errorf("campaignRideTeleport: %w", marshalErr)
-		}
-		startPackets, marshalErr := abilityraknet.StartSpendPresentation(
-			command.Common.ObjectID, abilityID, definition.AnimationName, cooldown,
-			packet.SourceTime, remainingManaPoint,
-		)
-		if marshalErr != nil {
-			r.registry.mutex.Unlock()
-			return nil, fmt.Errorf("campaignRideStart: %w", marshalErr)
-		}
-		releaseAnimationPacket, marshalErr := abilityraknet.Animation(
-			command.Common.ObjectID, definition.OutAnimationName,
-			packet.SourceTime+uint64(definition.ReleaseDelay/time.Millisecond),
-		)
-		if marshalErr != nil {
-			r.registry.mutex.Unlock()
-			return nil, fmt.Errorf("campaignRideReleaseMarshal: %w", marshalErr)
-		}
-		abilityLessonCompletePacket := []byte(nil)
-		isTutorialRide := peerSession.binding.Mode == game.ModeTutorial &&
-			specialTwoAbility.AssetName == "LightningRogueActive"
-		if isTutorialRide {
-			abilityLessonCompletePacket, marshalErr = raknet.MarshalApplication(
-				raknet.TutorialAbilityLessonCompleteMessage(
-					tutorialAbilityLessonObjectiveID,
-					uint8(peerSession.binding.Slot),
-				),
-			)
-			if marshalErr != nil {
-				r.registry.mutex.Unlock()
-				return nil, fmt.Errorf("campaignRideLessonComplete: %w", marshalErr)
-			}
-		}
-		previousMotion := peerSession.playerMotionSnapshot()
-		previousManaPoint := peerSession.deployedManaPoint()
-		cooldownReservation, isCooldownReserved :=
-			peerSession.abilityCooldownSession().Reserve(
-				cooldownKey,
-				abilityStartTime,
-				cooldown,
-			)
-		if !isCooldownReserved {
-			r.registry.mutex.Unlock()
-			return request.reject("cooldown unavailable")
-		}
-		releaseReservation, isReleaseReserved :=
-			peerSession.abilityReleaseSession().Reserve(
-				abilityStartTime, definition.ReleaseDelay,
-			)
-		if !isReleaseReserved {
-			peerSession.abilityCooldownSession().Rollback(cooldownReservation)
-			r.registry.mutex.Unlock()
-			return request.reject("release unavailable")
-		}
-		err = peerSession.teleportPlayer(abilityStartTime, destination)
-		if err == nil {
-			err = peerSession.setDeployedManaPoints(remainingManaPoint)
-		}
-		if err != nil {
-			peerSession.abilityCooldownSession().Rollback(cooldownReservation)
-			peerSession.abilityReleaseSession().Rollback(releaseReservation)
-			r.registry.mutex.Unlock()
-			return nil, fmt.Errorf("campaignRideCommit: %w", err)
-		}
-		playerMotionRevision := peerSession.playerMotionRevision()
-		generation := peerSession.generation
-		r.registry.sessions[sessionKey] = peerSession
-		r.registry.mutex.Unlock()
-		schedule := rideLightningSchedule{
-			runtime: r, packet: packet, sessionKey: sessionKey,
-			generation: generation, sourceObjectID: command.Common.ObjectID,
-			abilityID: abilityID, cooldownKey: cooldownKey,
-			creatureIndex: creatureIndex, previousManaPoint: previousManaPoint,
-			motionRevision:      playerMotionRevision,
-			previousMotion:      previousMotion,
-			hitDelay:            definition.HitDelay,
-			creature:            creature,
-			binding:             peerSession.binding,
-			plan:                ridePlan,
-			cooldownReservation: cooldownReservation,
-			releaseReservation:  releaseReservation,
-			releaseAnimation:    releaseAnimationPacket,
-			releaseResponse:     releaseResponsePacket,
-		}
-		var cancel raknet.CancelSchedule
-		producers := make([]raknet.ScheduledPacketProducer, 0, 2)
-		if ridePlan.TargetObjectID != 0 {
-			producers = append(producers, raknet.ScheduledPacketProducer{
-				Delay: definition.HitDelay, Produce: schedule.produceImpact,
-			})
-		}
-		producers = append(producers, raknet.ScheduledPacketProducer{
-			Delay: definition.ReleaseDelay, Produce: schedule.produceRelease,
-		})
-		producers = r.registry.producerGuard.scheduledProducers(
-			sessionKey, producers,
-		)
-		if packet.ScheduleGroupResult != nil {
-			cancel, err = packet.ScheduleGroupResult(producers, schedule.fail)
-		} else {
-			cancel, err = packet.ScheduleGroup(producers)
-		}
-		if err != nil {
-			rollbackErr := schedule.rollbackAdmission()
-			return nil, fmt.Errorf(
-				"campaignRideSchedule: %w", errors.Join(err, rollbackErr),
-			)
-		}
-		schedule.bindCancel(cancel)
-		r.logger.Printf(
-			"RakNet campaign teleport strike accepted ability=%s source=%d target=%d destination=(%g,%g,%g) mana=%g cooldown=%s",
-			definition.Name, command.Common.ObjectID, targetObjectID,
-			destination.X, destination.Y, destination.Z, remainingManaPoint,
-			cooldown,
-		)
-		packets := make([][]byte, 0, 1+len(startPackets)+len(teleportPackets))
-		packets = append(packets, ackPacket)
-		// Teammates do not run the caster's predicted ability animation.
-		// Publish its authored start explicitly before the teleport correction.
-		packets = append(packets, startPackets...)
-		packets = append(packets, teleportPackets...)
-		if len(abilityLessonCompletePacket) != 0 {
-			packets = append(packets, abilityLessonCompletePacket)
-		}
-		return packets, nil
+		return r.handleRideLightning(request, specialTwoAbility)
 	}
 	return nil, errCampaignAbilityNotSpecial
 }
@@ -2691,6 +2308,10 @@ func (r campaignAbilityCommandRuntime) handleSquad(
 	if peerSession.isEnemyStunActive(abilityStartTime) {
 		r.registry.mutex.Unlock()
 		return r.rejectSquadAbility(command, "stunned")
+	}
+	if peerSession.isScarabDazed() {
+		r.registry.mutex.Unlock()
+		return r.rejectSquadAbility(command, "dazed")
 	}
 	if peerSession.isEnemyFearActive(abilityStartTime) {
 		r.registry.mutex.Unlock()

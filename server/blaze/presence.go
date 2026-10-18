@@ -25,6 +25,29 @@ func NewPresenceRegistry() *PresenceRegistry {
 	return &PresenceRegistry{records: make(map[int64]presenceRecord)}
 }
 
+// ReportLocation returns only ship locations distinguished by the client's
+// presence publisher (build 103 sub_4E5300 -> sub_4E5270). Collection room 1
+// publishes 3, navigation room 2 publishes 4, and GameEditor publishes 7.
+func (e *PresenceRegistry) ReportLocation(userID int64) string {
+	if e == nil {
+		return ""
+	}
+	record, isFound := e.lookup(userID)
+	if !isFound {
+		return ""
+	}
+	switch fieldInteger(presenceVariableDataFields(record.variables), "STAT") {
+	case 3:
+		return "arsenal"
+	case 4:
+		return "navigation"
+	case 7:
+		return "editor"
+	default:
+		return ""
+	}
+}
+
 func (e *PresenceRegistry) update(userID int64, variables []tdf.Field) (presenceRecord, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

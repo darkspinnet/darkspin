@@ -52,12 +52,16 @@ func CombatText(req CombatTextRequest) ([]byte, error) {
 			assetName = "combattext_enemy_damage_critical.ServerEventDef"
 		}
 	}
+	textAmount := uint32(req.Amount)
+	if textAmount == 0 {
+		textAmount = 1
+	}
 	packet, err := raknet.MarshalApplication(raknet.ServerEventMessage{
 		Asset: util.HashID(assetName), ObjectID: req.ObjectID,
 		Position: raknet.Vector3{
 			X: req.Position.X, Y: req.Position.Y, Z: req.Position.Z,
 		},
-		TextValue: uint32(req.Amount),
+		TextValue: textAmount,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("combatTextMarshal: %w", err)

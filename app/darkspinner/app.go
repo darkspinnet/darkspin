@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,7 +15,6 @@ import (
 
 	"github.com/darkspinnet/darkspin/patcher"
 	appwindow "github.com/darkspinnet/darkspin/window"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const gameProcessName = "Darkspore.exe"
@@ -27,6 +27,7 @@ type App struct {
 	mu                 sync.Mutex
 	serverMu           sync.Mutex
 	remoteRefreshMu    sync.Mutex
+	snapshotCompactMu  sync.Mutex
 	logMu              sync.Mutex
 	timingMu           sync.Mutex
 	cancel             context.CancelFunc
@@ -46,6 +47,11 @@ type App struct {
 	integrationError   string
 	startupError       string
 	preparationTiming  *preparationTimingRecorder
+	presentation       launcherPresentation
+	launcherHandler    http.Handler
+	beforeServerStart  func() error
+	isHeadless         bool
+	wineRunnerCache    wineRunnerCache
 }
 
 type LauncherStatus struct {
@@ -100,8 +106,9 @@ type LauncherStatus struct {
 func NewApp(arguments []string) *App {
 	identity := launchArgumentValue(arguments, "account")
 	return &App{
-		arguments: setBooleanLaunchArgument(arguments, "skip-cinematic", false),
-		authURL:   authServiceURL,
+		arguments:    setBooleanLaunchArgument(arguments, "skip-cinematic", false),
+		authURL:      authServiceURL,
+		presentation: wailsPresentation{},
 		status: LauncherStatus{
 			State:               "starting",
 			Message:             "Starting DarkSpinner",
@@ -296,7 +303,10 @@ func (a *App) Authorize(identity string) error {
 	a.setState("authorizing", "Signing in", 0)
 	token, err := requestLaunchJWTWithBrowserContext(lifecycleCtx, authURL, identity, func(address string) {
 		if a.ctx != nil {
-			runtime.BrowserOpenURL(a.ctx, address)
+			openErr := a.openURL(address)
+			if openErr != nil {
+				a.log("Authorization browser: " + openErr.Error())
+			}
 		}
 	})
 	if err != nil {
@@ -364,6 +374,13 @@ func (a *App) runPatch(ctx context.Context) (err error) {
 	defer func() {
 		a.finishPatchOperation(err)
 	}()
+	isRestarting, err := a.prepareLauncherUpdate(ctx)
+	if err != nil {
+		return fmt.Errorf("launcherUpdate: %w", err)
+	}
+	if isRestarting {
+		return nil
+	}
 	err = a.verifyGameIntegrity(ctx, a.gameDirectory(), "checking")
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -956,7 +973,7 @@ func (a *App) gameDirectory() string {
 
 func (a *App) emitStatusLocked() {
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "darkspinner:status", visibleLauncherStatus(a.status))
+		a.presentation.EmitStatus(a.ctx, visibleLauncherStatus(a.status))
 	}
 }
 

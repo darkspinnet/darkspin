@@ -23,6 +23,7 @@ type BugContext struct {
 	SessionGeneration   uint64         `json:"session_generation,omitempty"`
 	TransportGeneration uint64         `json:"transport_generation,omitempty"`
 	SessionStage        string         `json:"session_stage,omitempty"`
+	LocationLabel       string         `json:"location_label,omitempty"`
 	ZoneGeneration      uint64         `json:"zone_generation,omitempty"`
 	ZoneState           uint32         `json:"zone_state,omitempty"`
 	PlayerSlot          uint16         `json:"player_slot"`

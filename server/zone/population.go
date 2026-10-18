@@ -3,6 +3,7 @@ package zone
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
@@ -32,7 +33,7 @@ func (e *Zone) PrimePopulation(
 	}
 	transition := PopulationTransition{}
 	if !e.isPopulationPrimed {
-		initialNPCPlans, err := e.introduceInitialNPCs(req.Position)
+		initialNPCPlans, err := e.introduceInitialNPCs()
 		if err != nil {
 			return PopulationTransition{}, fmt.Errorf("initialNPCIntroduce: %w", err)
 		}
@@ -81,7 +82,7 @@ func (e *Zone) AdvancePopulation(
 	if e.state != StateActive {
 		return PopulationTransition{}, errors.New("zone inactive")
 	}
-	initialNPCPlans, err := e.introduceInitialNPCs(req.Position)
+	initialNPCPlans, err := e.introduceInitialNPCs()
 	if err != nil {
 		return PopulationTransition{}, fmt.Errorf("initialNPCIntroduce: %w", err)
 	}
@@ -114,10 +115,9 @@ func (e *Zone) AdvancePopulation(
 	}, nil
 }
 
-// introduceInitialNPCs publishes authored fixed actors only when they can also
-// acquire the approaching player. An untargeted publication lets the retail
-// client move the actor autonomously before server authority starts pursuit.
-func (e *Zone) introduceInitialNPCs(position game.Vec3) ([]zonenpc.SpawnPlan, error) {
+// introduceInitialNPCs publishes fixed map actors before the player approaches.
+// Target acquisition remains governed by the ordinary aggro boundary.
+func (e *Zone) introduceInitialNPCs() ([]zonenpc.SpawnPlan, error) {
 	if len(e.info.InitialNPCPlans) == 0 {
 		return nil, nil
 	}
@@ -125,28 +125,18 @@ func (e *Zone) introduceInitialNPCs(position game.Vec3) ([]zonenpc.SpawnPlan, er
 	for _, npc := range e.info.NPCs.Snapshots() {
 		introducedObjectIDs[npc.Plan.ObjectID] = true
 	}
-	introductionRadius := e.info.NPCs.AggroRadius()
-	if introductionRadius <= 0 {
-		return nil, errors.New("initial npc aggro radius unavailable")
-	}
-	radiusSquared := introductionRadius * introductionRadius
 	plans := make([]zonenpc.SpawnPlan, 0)
 	for _, plan := range e.info.InitialNPCPlans {
 		if introducedObjectIDs[plan.ObjectID] {
 			continue
 		}
-		deltaX := position.X - plan.Position.X
-		deltaY := position.Y - plan.Position.Y
-		deltaZ := position.Z - plan.Position.Z
-		distanceSquared := deltaX*deltaX + deltaY*deltaY + deltaZ*deltaZ
-		if distanceSquared > radiusSquared {
-			continue
-		}
+		plan.Introduction = zonenpc.SpawnIntroductionDormant
 		plans = append(plans, plan)
 	}
 	if len(plans) == 0 {
 		return nil, nil
 	}
+	plans = e.info.NPCs.PrepareIntroductions(plans)
 	err := e.info.NPCs.AddDormant(plans)
 	if err != nil {
 		return nil, fmt.Errorf("initialNPCAdd: %w", err)
@@ -159,10 +149,26 @@ func (e *Zone) planPopulation(
 ) ([]zonenpc.SpawnPlan, error) {
 	occupiedSpawnGroups := make(map[uint32]struct{})
 	operativeCount := 0
+	compositionContext := zonepopulation.GroupCompositionContext{}
+	agentEntries := zonepopulation.PoolEntries(e.info.DirectorDefinition, "agent")
+	for _, hero := range e.info.Hero.Snapshots() {
+		member, isMemberFound := e.members[hero.UserID]
+		if isMemberFound && member.IsConnected && member.PeerGeneration == hero.PeerGeneration && hero.HitPoint > 0 {
+			compositionContext.AlivePartyCount++
+		}
+	}
 	for spawnGroupID := range e.clearedSpawnGroups {
 		occupiedSpawnGroups[spawnGroupID] = struct{}{}
 	}
 	for _, npc := range e.info.NPCs.Snapshots() {
+		if !npc.IsDefeated && npc.HitPoint > 0 {
+			for _, entry := range agentEntries {
+				if strings.EqualFold(entry.NounName, npc.Plan.NounName) {
+					compositionContext.ActiveAgentCount++
+					break
+				}
+			}
+		}
 		// Defeated actors remain in durable snapshots and spend the map budget.
 		profile, isOperative := zonenpc.OperativeProfile(npc.Plan.NounName)
 		if isOperative && zonenpc.IsOperativeCage(profile.ModifierName) {
@@ -181,9 +187,9 @@ func (e *Zone) planPopulation(
 		}
 		filteredDecisions = append(filteredDecisions, decision)
 	}
-	plans, _, err := e.info.Population.PlanCampaignSpawns(
+	plans, _, err := e.info.Population.PlanCampaignSpawnsWithContext(
 		e.info.DirectorDefinition, filteredDecisions, e.info.ObjectID.Next(),
-		e.info.ChainLevelIndex,
+		e.info.ChainLevelIndex, compositionContext,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("spawnPlan: %w", err)
@@ -211,6 +217,7 @@ func (e *Zone) planPopulation(
 	if err != nil {
 		return nil, fmt.Errorf("enemyValidate: %w", err)
 	}
+	plans = e.info.NPCs.PrepareIntroductions(plans)
 	introducedPlans := make([]zonenpc.SpawnPlan, 0, len(plans))
 	stagedPlans := make([]zonenpc.SpawnPlan, 0, len(plans))
 	for _, plan := range plans {

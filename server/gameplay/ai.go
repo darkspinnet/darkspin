@@ -195,7 +195,7 @@ func (e gameplayPendingRuntime) planPlayerAILocked(
 	target, isTargetFound := e.playerAITargetLocked(*member, ally, isAllyFound, now)
 	distance := zonegeometry.Distance(game.Vec3(member.playerPosition), game.Vec3(target.position))
 	attackRange := heroAbilityAdmissionRange(creature, definition)
-	attackRange += member.deployedCampaignFootprintRadius() + target.radius
+	attackRange += member.deployedCampaignActorFootprintRadius() + target.radius
 	isAttackReady := isBasicFound && isTargetFound && definition.Range > 0 &&
 		distance <= max(float32(1), attackRange*0.9) &&
 		!now.Before(member.playerAI.nextAttackAt) &&

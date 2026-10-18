@@ -20,6 +20,7 @@ import (
 )
 
 const campaignScaldronCopterTick = 500 * time.Millisecond
+const campaignScaldronCopterMoveTick = 200 * time.Millisecond
 
 type campaignScaldronCopterRun struct {
 	runtime          campaignNPCActionRuntime
@@ -30,6 +31,12 @@ type campaignScaldronCopterRun struct {
 	passiveTimestamp uint64
 	strafeTimestamp  uint64
 	isClockwise      bool
+	circleRadius     float32
+	circleExpiresAt  time.Time
+	spawnPosition    game.Vec3
+	idleDestination  game.Vec3
+	idlePauseUntil   time.Time
+	isIdleMoving     bool
 	effectSlots      map[uint32]uint8
 }
 
@@ -40,9 +47,7 @@ func (e *campaignScaldronCopterRun) releaseLinks() ([][]byte, error) {
 	packets := make([][]byte, 0, len(e.effectSlots))
 	for targetObjectID, effectSlot := range e.effectSlots {
 		delete(e.effectSlots, targetObjectID)
-		if !e.runtime.effectPool.Release(e.objectID, effectSlot) {
-			continue
-		}
+		e.runtime.effectPool.Release(e.objectID, effectSlot)
 		packet, err := npcraknet.CopterLinkEffect(
 			e.objectID, 0, effectSlot, "", true,
 		)
@@ -52,16 +57,6 @@ func (e *campaignScaldronCopterRun) releaseLinks() ([][]byte, error) {
 		packets = append(packets, packet)
 	}
 	return packets, nil
-}
-
-func (e *campaignScaldronCopterRun) releaseLinkSlots() {
-	if e == nil {
-		return
-	}
-	for targetObjectID, effectSlot := range e.effectSlots {
-		e.runtime.effectPool.Release(e.objectID, effectSlot)
-		delete(e.effectSlots, targetObjectID)
-	}
 }
 
 func (e *campaignScaldronCopterRun) syncLinks(
@@ -77,9 +72,7 @@ func (e *campaignScaldronCopterRun) syncLinks(
 			continue
 		}
 		delete(e.effectSlots, targetObjectID)
-		if !e.runtime.effectPool.Release(e.objectID, effectSlot) {
-			continue
-		}
+		e.runtime.effectPool.Release(e.objectID, effectSlot)
 		packet, err := npcraknet.CopterLinkEffect(
 			e.objectID, 0, effectSlot, "", true,
 		)
@@ -115,14 +108,27 @@ func (e *campaignScaldronCopterRun) fail(
 	step string, err error,
 ) ([][]byte, error) {
 	e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
+	e.runtime.registry.mutex.Lock()
+	member, isFound := e.runtime.registry.sessions[e.sessionKey]
+	if isFound && member.generation == e.generation && member.campaignNPCCopterRuns[e.objectID] == e {
+		packets, cleanupErr := e.releaseLinks()
+		if cleanupErr != nil {
+			err = errors.Join(err, cleanupErr)
+		}
+		member.queueCampaignPackets(packets)
+		delete(member.campaignNPCCopterRuns, e.objectID)
+		e.runtime.registry.sessions[e.sessionKey] = member
+	}
+	e.runtime.registry.mutex.Unlock()
 	return nil, fmt.Errorf("%s: %w", step, err)
 }
 
 func (e *campaignScaldronCopterRun) schedule(
+	delay time.Duration,
 	producer func() ([][]byte, error),
 ) error {
 	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
-		Delay: campaignScaldronCopterTick, Produce: producer,
+		Delay: delay, Produce: producer,
 	}})
 	if err == nil && cancel == nil {
 		err = errors.New("nil cancellation")
@@ -135,32 +141,33 @@ func (e *campaignScaldronCopterRun) schedule(
 
 func campaignScaldronCopterDestination(
 	source game.Vec3, target game.Vec3, distance float32,
+	speed float32,
 	isClockwise bool,
 ) (game.Vec3, bool) {
 	deltaX := source.X - target.X
 	deltaY := source.Y - target.Y
 	length := float32(math.Hypot(float64(deltaX), float64(deltaY)))
-	if length <= 0 || distance < 0 {
+	if length <= 0 || distance <= 0 {
 		return game.Vec3{}, false
 	}
 	directionX := deltaX / length
 	directionY := deltaY / length
-	if length < 8 {
-		lateralX := directionY
-		lateralY := -directionX
-		if isClockwise {
-			lateralX = -lateralX
-			lateralY = -lateralY
-		}
-		return game.Vec3{
-			X: target.X + lateralX*distance,
-			Y: target.Y + lateralY*distance,
-			Z: target.Z,
-		}, true
+	// CircleTarget (chunk 75): project onto the 7-9 unit ring, add the
+	// tangential step, then normalize back onto that ring. Never cross the
+	// target's center as the old 90-degree destination shortcut did.
+	lateral := speed * 0.25
+	if length > distance {
+		lateral = length / distance * 5
 	}
+	if isClockwise {
+		lateral = -lateral
+	}
+	radialX := directionX*distance + directionY*lateral
+	radialY := directionY*distance - directionX*lateral
+	radialLength := float32(math.Hypot(float64(radialX), float64(radialY)))
 	return game.Vec3{
-		X: target.X + directionX*distance,
-		Y: target.Y + directionY*distance,
+		X: target.X + radialX/radialLength*distance,
+		Y: target.Y + radialY/radialLength*distance,
 		Z: target.Z,
 	}, true
 }
@@ -171,6 +178,7 @@ func campaignScaldronCopterHelpers(
 ) []zonenpc.Snapshot {
 	family := campaignDifficultyNounFamily(source.Plan.NounName)
 	helpers := make([]zonenpc.Snapshot, 0, profile.MaximumTargetCount)
+	helperCount := uint32(0)
 	for _, candidate := range snapshots {
 		if candidate.Plan.ObjectID == source.Plan.ObjectID || candidate.IsDefeated ||
 			!candidate.IsPublished ||
@@ -178,8 +186,13 @@ func campaignScaldronCopterHelpers(
 			zonegeometry.Distance(source.Plan.Position, candidate.Plan.Position) > profile.Radius {
 			continue
 		}
-		helpers = append(helpers, candidate)
-		if uint32(len(helpers)) >= profile.MaximumTargetCount {
+		// The client counts eligible helpers before CompareIDs selects one
+		// owner for each link. The reverse link must not deal a second hit.
+		helperCount++
+		if source.Plan.ObjectID > candidate.Plan.ObjectID {
+			helpers = append(helpers, candidate)
+		}
+		if helperCount >= profile.MaximumTargetCount {
 			break
 		}
 	}
@@ -205,9 +218,7 @@ func campaignScaldronCopterBeamTargets(
 func (e *campaignScaldronCopterRun) passive() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := isFound && peerSession.isCampaignNPCActionActiveAt(
-		e.generation, e.objectID, e.runtime.now(),
-	) && peerSession.campaignNPCCopterRuns[e.objectID] == e
+	isCurrent := isFound && e.isCurrent(peerSession)
 	if !isCurrent {
 		packets, err := e.releaseLinks()
 		if isFound && peerSession.campaignNPCCopterRuns[e.objectID] == e {
@@ -244,17 +255,15 @@ func (e *campaignScaldronCopterRun) passive() ([][]byte, error) {
 	}
 	statDelta := sporenet.PlayerStatDelta{}
 	for _, helper := range helpers {
+		// TargetUtils queries the objects' positions, not the visual beam's
+		// attachment offset. Raising this segment misses small footprints.
 		start := source.Plan.Position
-		start.Z += profile.ProjectileOffset.Z
 		end := helper.Plan.Position
-		end.Z += profile.ProjectileOffset.Z
 		for _, target := range campaignScaldronCopterBeamTargets(targets, start, end) {
-			plan := zonenpc.AttackPlan{
-				SourceObjectID: source.Plan.ObjectID,
-				TargetObjectID: target.ObjectID,
-				SourcePosition: start,
-				TargetPosition: target.Position,
-				Profile:        profile,
+			plan, planErr := zonenpc.PlanAreaAttackWithProfile(source, target.ObjectID, target.Position, profile)
+			if planErr != nil {
+				e.runtime.registry.mutex.Unlock()
+				return e.fail("copterBeamPlan", planErr)
 			}
 			result, commitErr := zonenpc.CommitAttack(
 				peerSession.zone.NPCRandom(), plan,
@@ -302,7 +311,7 @@ func (e *campaignScaldronCopterRun) passive() ([][]byte, error) {
 			)
 		}
 	}
-	err = e.schedule(e.passive)
+	err = e.schedule(campaignScaldronCopterTick, e.passive)
 	if err != nil {
 		return e.fail("copterBeamNext", err)
 	}
@@ -312,15 +321,37 @@ func (e *campaignScaldronCopterRun) passive() ([][]byte, error) {
 func (e *campaignScaldronCopterRun) strafe() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := isFound && peerSession.isCampaignNPCActionActiveAt(
-		e.generation, e.objectID, e.runtime.now(),
-	) && peerSession.campaignNPCCopterRuns[e.objectID] == e &&
+	isCurrent := isFound && e.isCurrent(peerSession) &&
 		peerSession.zone.NPCRandom() != nil
 	if !isCurrent {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	npcSession := peerSession.zone.NPCs()
+	now := e.runtime.now()
+	if npcSession.StunRemaining(e.objectID, now) > 0 ||
+		npcSession.SleepRemaining(e.objectID, now) > 0 || npcSession.FearRemaining(e.objectID, now) > 0 {
+		e.runtime.registry.mutex.Unlock()
+		err := e.schedule(campaignScaldronCopterMoveTick, e.strafe)
+		if err != nil {
+			return e.fail("copterDisabledNext", err)
+		}
+		return nil, nil
+	}
 	source, isSourceFound := peerSession.zone.NPCs().NPC(e.objectID)
+	if isSourceFound && !source.IsActionStarted {
+		packets, err := e.idleLocked(&peerSession, source)
+		e.runtime.registry.sessions[e.sessionKey] = peerSession
+		e.runtime.registry.mutex.Unlock()
+		if err != nil {
+			return e.fail("copterIdle", err)
+		}
+		err = e.schedule(campaignScaldronCopterMoveTick, e.strafe)
+		if err != nil {
+			return e.fail("copterIdleNext", err)
+		}
+		return packets, nil
+	}
 	target, isTargetFound := peerSession.campaignNPCTarget(
 		e.generation, source.TargetObjectID,
 	)
@@ -329,45 +360,55 @@ func (e *campaignScaldronCopterRun) strafe() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	distance := profile.MinimumRange +
-		float32(peerSession.zone.NPCRandom().Float64())*
-			(profile.Range-profile.MinimumRange)
-	if zonegeometry.Distance(source.Plan.Position, target.Position) < 8 {
-		distance = float32(peerSession.zone.NPCRandom().Float64()) * 5
+	if !e.runtime.now().Before(e.circleExpiresAt) {
+		e.circleRadius = 7 + float32(peerSession.zone.NPCRandom().Float64())*2
+		e.circleExpiresAt = e.runtime.now().Add(time.Duration(
+			(1 + peerSession.zone.NPCRandom().Float64()) * float64(time.Second),
+		))
 	}
 	destination, isDestinationFound := campaignScaldronCopterDestination(
-		source.Plan.Position, target.Position, distance, e.isClockwise,
+		source.Plan.Position, target.Position, e.circleRadius, profile.MovementSpeed, e.isClockwise,
 	)
 	if isDestinationFound {
-		destination, isDestinationFound, _ =
+		var navigationErr error
+		destination, isDestinationFound, navigationErr =
 			zoneaction.NPCDirectMovementDestination(
 				peerSession.zone.Navigation(), source.Plan.Position, destination,
-				source.Plan.NPCProfile.FootprintRadius,
+				source.NavigationRadius(), source.Navigation,
 			)
+		if navigationErr != nil {
+			e.runtime.registry.mutex.Unlock()
+			return e.fail("copterStrafeNavigation", navigationErr)
+		}
 	}
 	if !isDestinationFound {
 		e.isClockwise = !e.isClockwise
-		destination = target.Position
+		destination = source.Plan.Position
 	}
 	step, err := peerSession.zone.NPCs().AdvancePursuit(
 		peerSession.zone.Navigation(), e.objectID, destination, 0.1,
 		profile.MovementSpeed, source.Plan.NPCProfile.FootprintRadius,
-		campaignScaldronCopterTick,
+		campaignScaldronCopterMoveTick,
 	)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
 		return e.fail("copterStrafeAdvance", err)
 	}
-	e.strafeTimestamp += uint64(campaignScaldronCopterTick / time.Millisecond)
+	e.strafeTimestamp += uint64(campaignScaldronCopterMoveTick / time.Millisecond)
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
-	packets, err := npcraknet.PursuitRedirect(
-		e.objectID, step.Position, target.ObjectID, target.Position, 0.1,
-	)
+	var packets [][]byte
+	if step.IsBlocked {
+		packets, err = npcraknet.StopAtPose(e.objectID, step.Position, source.Facing)
+	} else {
+		packets, err = npcraknet.BoundedStrafe(
+			e.objectID, step.Position, destination, target.ObjectID, target.Position, 0.1,
+		)
+	}
 	if err != nil {
 		return e.fail("copterStrafeRedirect", err)
 	}
-	err = e.schedule(e.strafe)
+	err = e.schedule(campaignScaldronCopterMoveTick, e.strafe)
 	if err != nil {
 		return e.fail("copterStrafeNext", err)
 	}
@@ -380,12 +421,22 @@ func (r campaignNPCActionRuntime) produceScaldronBasicCopter(
 ) ([][]byte, error) {
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
-	isCurrent := isFound && peerSession.isCampaignNPCActionActiveAt(
-		generation, objectID, r.now(),
-	)
+	isCurrent := isFound && peerSession.generation == generation && peerSession.zone != nil &&
+		!peerSession.isZoneTerminal() && peerSession.zone.NPCs() != nil
 	if !isCurrent {
 		r.registry.mutex.Unlock()
 		return nil, nil
+	}
+	source, isSourceFound := peerSession.zone.NPCs().NPC(objectID)
+	if !isSourceFound || source.IsDefeated || !source.IsPublished || source.Plan.IsIntroductionHidden {
+		r.registry.mutex.Unlock()
+		return nil, nil
+	}
+	for _, other := range r.registry.sessions {
+		if other.zone == peerSession.zone && other.campaignNPCCopterRuns[objectID] != nil {
+			r.registry.mutex.Unlock()
+			return nil, nil
+		}
 	}
 	if peerSession.campaignNPCCopterRuns == nil {
 		peerSession.campaignNPCCopterRuns = make(
@@ -402,7 +453,8 @@ func (r campaignNPCActionRuntime) produceScaldronBasicCopter(
 		passiveTimestamp: timestamp, strafeTimestamp: timestamp,
 		isClockwise: peerSession.zone.NPCRandom() != nil &&
 			peerSession.zone.NPCRandom().Float64() < 0.5,
-		effectSlots: make(map[uint32]uint8),
+		effectSlots:   make(map[uint32]uint8),
+		spawnPosition: source.Plan.Position,
 	}
 	peerSession.campaignNPCCopterRuns[objectID] = run
 	r.registry.sessions[sessionKey] = peerSession

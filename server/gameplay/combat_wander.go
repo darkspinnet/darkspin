@@ -83,9 +83,14 @@ func (e campaignScaldronNestleWanderStep) produce() ([][]byte, error) {
 	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
-	packets, err := npcraknet.PursuitRedirect(
-		e.objectID, step.Position, target.ObjectID, destination, 0.1,
-	)
+	var packets [][]byte
+	if step.IsBlocked {
+		packets, err = npcraknet.StopAtPose(e.objectID, step.Position, enemy.Facing)
+	} else {
+		packets, err = npcraknet.PursuitRedirect(
+			e.objectID, step.Position, target.ObjectID, destination, 0.1,
+		)
+	}
 	if err != nil {
 		return e.fail("nestleWanderRedirect", err)
 	}

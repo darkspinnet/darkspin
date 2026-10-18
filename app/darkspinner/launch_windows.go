@@ -98,20 +98,61 @@ func (e *debugEventLoop) detach() error {
 
 func launchInjected(
 	ctx context.Context, gamePath, gameWorkingDirectory, fangPath string,
-	gameArguments []string, serverAddress string,
-) error {
-	err := ctx.Err()
+	gameArguments []string, serverAddress string, _ wineLaunchEnvironment,
+) (err error) {
+	process, err := startInjectedProcess(ctx, gamePath, gameWorkingDirectory, fangPath, gameArguments, serverAddress, nil)
 	if err != nil {
-		return fmt.Errorf("launchContext: %w", err)
+		return fmt.Errorf("launchStart: %w", err)
+	}
+	defer process.closeHandles()
+	defer process.closeOnFailure(&err)
+	cancellation := process.watch(ctx)
+	defer cancellation.stop()
+	err = process.resume(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("launchResume: %w", err)
+	}
+	err = waitInjectedHandle(ctx, process.process, process.process)
+	if err != nil {
+		return fmt.Errorf("gameWait: %w", err)
+	}
+	err = ctx.Err()
+	if err != nil {
+		return fmt.Errorf("gameCancel: %w", err)
+	}
+	var exitCode uint32
+	err = windows.GetExitCodeProcess(process.process, &exitCode)
+	if err != nil {
+		return fmt.Errorf("exitCode: %w", err)
+	}
+	if exitCode != 0 {
+		return gameExitError(exitCode)
+	}
+	return nil
+}
+
+// The observer is absent for ordinary launch. It never replaces the injector.
+type injectedLaunchObserver interface {
+	BeforeResume(ctx context.Context, process uintptr, moduleHandle uint32, fangPath string) error
+	AfterResume(ctx context.Context, processID uint32) error
+}
+
+func startInjectedProcess(
+	ctx context.Context, gamePath, gameWorkingDirectory, fangPath string,
+	gameArguments []string, serverAddress string, observer injectedLaunchObserver,
+) (ownedProcess *injectedProcess, err error) {
+	err = ctx.Err()
+	if err != nil {
+		return nil, fmt.Errorf("launchContext: %w", err)
 	}
 	commandLine := windows.ComposeCommandLine(append([]string{gamePath}, gameArguments...))
 	commandLinePointer, err := windows.UTF16PtrFromString(commandLine)
 	if err != nil {
-		return fmt.Errorf("commandLine: %w", err)
+		return nil, fmt.Errorf("commandLine: %w", err)
 	}
 	workingDirectory, err := windows.UTF16PtrFromString(gameWorkingDirectory)
 	if err != nil {
-		return fmt.Errorf("workingDir: %w", err)
+		return nil, fmt.Errorf("workingDir: %w", err)
 	}
 	startup := windows.StartupInfo{Cb: uint32(unsafe.Sizeof(windows.StartupInfo{}))}
 	process := windows.ProcessInformation{}
@@ -123,85 +164,52 @@ func launchInjected(
 	}
 	err = windows.CreateProcess(nil, commandLinePointer, nil, nil, false, creationFlags, &environmentBlock[0], workingDirectory, &startup, &process)
 	if err != nil {
-		return fmt.Errorf("processCreate: %w", err)
+		return nil, fmt.Errorf("processCreate: %w", err)
 	}
-	defer windows.CloseHandle(process.Process)
-	defer windows.CloseHandle(process.Thread)
+	ownedProcess = &injectedProcess{process: process.Process, thread: process.Thread, processID: process.ProcessId}
+	defer ownedProcess.closeOnFailure(&err)
+	cancellation := ownedProcess.watch(ctx)
+	defer cancellation.stop()
 	err = writeClientProcessRegistration(process.ProcessId)
 	if err != nil {
-		_ = windows.TerminateProcess(process.Process, 1)
-		return fmt.Errorf("processRegister: %w", err)
+		return nil, fmt.Errorf("processRegister: %w", err)
 	}
-	stopDebug := func() error { return nil }
-	isDebugActive := false
 	if isWineDebugLaunch {
-		stopDebug, err = continueDebugEvents(process.ProcessId)
+		ownedProcess.stopDebug, err = continueDebugEvents(ctx, process.ProcessId)
 		if err != nil {
-			_ = windows.TerminateProcess(process.Process, 1)
-			return fmt.Errorf("debugStart: %w", err)
+			return nil, fmt.Errorf("debugStart: %w", err)
 		}
-		isDebugActive = true
 	}
-	defer func() {
-		if isDebugActive {
-			_ = stopDebug()
-		}
-	}()
-	cancellationDone := make(chan struct{})
-	stopCancellation := context.AfterFunc(ctx, func() {
-		defer close(cancellationDone)
-		_ = windows.TerminateProcess(process.Process, 1)
-	})
-	defer func() {
-		if !stopCancellation() {
-			<-cancellationDone
-		}
-	}()
 	err = os.Unsetenv(launchJWTEnvironment)
 	if err != nil {
-		_ = windows.TerminateProcess(process.Process, 1)
-		return fmt.Errorf("jwtParentClear: %w", err)
+		return nil, fmt.Errorf("jwtParentClear: %w", err)
 	}
-	moduleHandle, err := injectDLL(process.Process, fangPath)
+	moduleHandle, err := injectDLL(ctx, process.Process, fangPath)
 	if err != nil {
-		_ = windows.TerminateProcess(process.Process, 1)
-		return fmt.Errorf("fangInject: %w", err)
+		return nil, fmt.Errorf("fangInject: %w", err)
 	}
-	err = callRemoteInitializer(process.Process, moduleHandle, fangPath)
+	err = callRemoteInitializer(ctx, process.Process, moduleHandle, fangPath)
 	if err != nil {
-		_ = windows.TerminateProcess(process.Process, 1)
-		return fmt.Errorf("fangInit: %w", err)
+		return nil, fmt.Errorf("fangInit: %w", err)
 	}
-	if isDebugActive {
-		err = stopDebug()
+	if ownedProcess.stopDebug != nil {
+		err = ownedProcess.stopDebug()
+		ownedProcess.stopDebug = nil
 		if err != nil {
-			_ = windows.TerminateProcess(process.Process, 1)
-			return fmt.Errorf("debugStop: %w", err)
+			return nil, fmt.Errorf("debugStop: %w", err)
 		}
-		isDebugActive = false
 	}
-	_, err = windows.ResumeThread(process.Thread)
-	if err != nil {
-		_ = windows.TerminateProcess(process.Process, 1)
-		return fmt.Errorf("gameResume: %w", err)
-	}
-	_, err = windows.WaitForSingleObject(process.Process, windows.INFINITE)
-	if err != nil {
-		return fmt.Errorf("gameWait: %w", err)
+	if observer != nil {
+		err = observer.BeforeResume(ctx, uintptr(process.Process), moduleHandle, fangPath)
+		if err != nil {
+			return nil, fmt.Errorf("suspendedObserve: %w", err)
+		}
 	}
 	err = ctx.Err()
 	if err != nil {
-		return fmt.Errorf("gameCancel: %w", err)
+		return nil, fmt.Errorf("startupContext: %w", err)
 	}
-	var exitCode uint32
-	err = windows.GetExitCodeProcess(process.Process, &exitCode)
-	if err != nil {
-		return fmt.Errorf("exitCode: %w", err)
-	}
-	if exitCode != 0 {
-		return gameExitError(exitCode)
-	}
-	return nil
+	return ownedProcess, nil
 }
 
 func managedGameEnvironment(serverAddress string) []uint16 {
@@ -227,10 +235,15 @@ func managedGameEnvironment(serverAddress string) []uint16 {
 	return utf16.Encode([]rune(contents))
 }
 
-func continueDebugEvents(processID uint32) (func() error, error) {
+func continueDebugEvents(ctx context.Context, processID uint32) (func() error, error) {
 	eventLoop := newDebugEventLoop(processID)
 	go eventLoop.run()
-	err := <-eventLoop.ready
+	var err error
+	select {
+	case err = <-eventLoop.ready:
+	case <-ctx.Done():
+		err = fmt.Errorf("debugContext: %w", ctx.Err())
+	}
 	if err != nil {
 		close(eventLoop.stop)
 		<-eventLoop.done
@@ -239,8 +252,8 @@ func continueDebugEvents(processID uint32) (func() error, error) {
 	return eventLoop.detach, nil
 }
 
-func injectDLL(process windows.Handle, dllPath string) (uint32, error) {
-	loaderAddress, err := gameLoaderAddress()
+func injectDLL(ctx context.Context, process windows.Handle, dllPath string) (uint32, error) {
+	loaderAddress, err := gameLoaderAddress(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("gameLoader: %w", err)
 	}
@@ -249,11 +262,12 @@ func injectDLL(process windows.Handle, dllPath string) (uint32, error) {
 		return 0, fmt.Errorf("dllPath: %w", err)
 	}
 	size := uintptr(len(encodedPath) * 2)
-	remoteAddress, _, callErr := procVirtualAllocEx.Call(uintptr(process), 0, size, windows.MEM_COMMIT|windows.MEM_RESERVE, windows.PAGE_READWRITE)
+	remoteAddress, status, callErr := procVirtualAllocEx.Call(uintptr(process), 0, size, windows.MEM_COMMIT|windows.MEM_RESERVE, windows.PAGE_READWRITE)
 	if remoteAddress == 0 {
-		return 0, fmt.Errorf("remoteAlloc: %w", callErr)
+		return 0, fmt.Errorf("remoteAlloc[%d]: %w", status, callErr)
 	}
-	defer procVirtualFreeEx.Call(uintptr(process), remoteAddress, 0, windows.MEM_RELEASE)
+	allocation := injectedRemoteAllocation{process: process, address: remoteAddress}
+	defer allocation.release()
 	var written uintptr
 	err = windows.WriteProcessMemory(process, remoteAddress, (*byte)(unsafe.Pointer(&encodedPath[0])), size, &written)
 	if err != nil {
@@ -263,20 +277,22 @@ func injectDLL(process windows.Handle, dllPath string) (uint32, error) {
 		return 0, errors.New("hook path was only partially written into game")
 	}
 	var threadID uint32
-	thread, _, callErr := procCreateRemoteThread.Call(uintptr(process), 0, 0, loaderAddress, remoteAddress, 0, uintptr(unsafe.Pointer(&threadID)))
+	thread, status, callErr := procCreateRemoteThread.Call(uintptr(process), 0, 0, loaderAddress, remoteAddress, 0, uintptr(unsafe.Pointer(&threadID)))
 	if thread == 0 {
-		return 0, fmt.Errorf("loaderStart: %w", callErr)
+		return 0, fmt.Errorf("loaderStart[%d]: %w", status, callErr)
 	}
 	threadHandle := windows.Handle(thread)
-	defer windows.CloseHandle(threadHandle)
-	_, err = windows.WaitForSingleObject(threadHandle, windows.INFINITE)
+	defer closeInjectedThread(threadHandle)
+	allocation.isThreadRunning = true
+	err = waitInjectedHandle(ctx, process, threadHandle)
 	if err != nil {
 		return 0, fmt.Errorf("loaderWait: %w", err)
 	}
+	allocation.isThreadRunning = false
 	var moduleHandle uint32
-	result, _, callErr := procGetExitCodeThread.Call(thread, uintptr(unsafe.Pointer(&moduleHandle)))
+	result, status, callErr := procGetExitCodeThread.Call(thread, uintptr(unsafe.Pointer(&moduleHandle)))
 	if result == 0 {
-		return 0, fmt.Errorf("loaderResult: %w", callErr)
+		return 0, fmt.Errorf("loaderResult[%d]: %w", status, callErr)
 	}
 	if moduleHandle == 0 {
 		return 0, errors.New("fang.dll failed to load in the game process")
@@ -284,7 +300,7 @@ func injectDLL(process windows.Handle, dllPath string) (uint32, error) {
 	return moduleHandle, nil
 }
 
-func callRemoteInitializer(process windows.Handle, moduleHandle uint32, dllPath string) error {
+func callRemoteInitializer(ctx context.Context, process windows.Handle, moduleHandle uint32, dllPath string) error {
 	functionRVA, err := exportedFunctionRVA(dllPath, "RecapInitializeThread")
 	if err != nil {
 		functionRVA, err = exportedFunctionRVA(dllPath, "RecapInitializeThread@4")
@@ -294,20 +310,20 @@ func callRemoteInitializer(process windows.Handle, moduleHandle uint32, dllPath 
 	}
 	initializerAddress := uintptr(moduleHandle) + uintptr(functionRVA)
 	var threadID uint32
-	thread, _, callErr := procCreateRemoteThread.Call(uintptr(process), 0, 0, initializerAddress, 0, 0, uintptr(unsafe.Pointer(&threadID)))
+	thread, status, callErr := procCreateRemoteThread.Call(uintptr(process), 0, 0, initializerAddress, 0, 0, uintptr(unsafe.Pointer(&threadID)))
 	if thread == 0 {
-		return fmt.Errorf("initializerStart: %w", callErr)
+		return fmt.Errorf("initializerStart[%d]: %w", status, callErr)
 	}
 	threadHandle := windows.Handle(thread)
-	defer windows.CloseHandle(threadHandle)
-	_, err = windows.WaitForSingleObject(threadHandle, windows.INFINITE)
+	defer closeInjectedThread(threadHandle)
+	err = waitInjectedHandle(ctx, process, threadHandle)
 	if err != nil {
 		return fmt.Errorf("initializerWait: %w", err)
 	}
 	var exitCode uint32
-	result, _, callErr := procGetExitCodeThread.Call(thread, uintptr(unsafe.Pointer(&exitCode)))
+	result, status, callErr := procGetExitCodeThread.Call(thread, uintptr(unsafe.Pointer(&exitCode)))
 	if result == 0 {
-		return fmt.Errorf("initializerResult: %w", callErr)
+		return fmt.Errorf("initializerResult[%d]: %w", status, callErr)
 	}
 	if exitCode != 0 {
 		return fmt.Errorf("fang.dll hook initialization failed with code 0x%x", exitCode)

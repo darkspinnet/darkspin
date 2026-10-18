@@ -9,6 +9,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/util"
+	"github.com/darkspinnet/darkspin/server/zone"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
 	zonecompanion "github.com/darkspinnet/darkspin/server/zone/companion"
 	companionraknet "github.com/darkspinnet/darkspin/server/zone/companion/raknet103"
@@ -26,7 +27,7 @@ const plasmaSentinelFallbackFootprint = float32(0.75)
 type plasmaSentinelPetRun struct {
 	objectID           uint32
 	modifierInstanceID uint32
-	cancel             raknet.CancelSchedule
+	cancel             func()
 }
 
 type plasmaSentinelActiveRun struct {
@@ -45,11 +46,30 @@ type plasmaSentinelActiveRun struct {
 
 type plasmaSentinelPetExpiryStep struct {
 	run      *plasmaSentinelActiveRun
+	zone     *zone.Zone
 	objectID uint32
 }
 
-func (e plasmaSentinelPetExpiryStep) produce() ([][]byte, error) {
-	return e.run.expirePet(e.objectID)
+func (e plasmaSentinelPetExpiryStep) execute() {
+	packets, err := e.run.expirePet(e.objectID)
+	if err != nil {
+		e.run.runtime.logger.Printf(
+			"RakNet Pain Hound expiry failed object=%d: %v", e.objectID, err,
+		)
+		return
+	}
+	if len(packets) == 0 {
+		return
+	}
+	e.run.runtime.registry.mutex.Lock()
+	defer e.run.runtime.registry.mutex.Unlock()
+	for sessionKey, peerSession := range e.run.runtime.registry.sessions {
+		if peerSession.zone != e.zone || peerSession.isZoneTerminal() {
+			continue
+		}
+		peerSession.queueCampaignPackets(packets)
+		e.run.runtime.registry.sessions[sessionKey] = peerSession
+	}
 }
 
 func (e *plasmaSentinelActiveRun) hasPets() bool {
@@ -355,6 +375,9 @@ func (r campaignNPCActionRuntime) spawnPlasmaSentinelPet(
 	if petIndex < 0 || petIndex >= len(run.pets) || run.pets[petIndex].objectID != 0 {
 		return nil, fmt.Errorf("petIndex: %d", petIndex)
 	}
+	if r.timer == nil {
+		return nil, fmt.Errorf("plasmaSentinelPetTimer: unavailable")
+	}
 	objectID, err := peerSession.reserveCampaignObjectID()
 	if err != nil {
 		return nil, fmt.Errorf("plasmaSentinelPetObjectID: %w", err)
@@ -438,13 +461,17 @@ func (r campaignNPCActionRuntime) spawnPlasmaSentinelPet(
 		rollbackPlasmaSentinelPet(peerSession, run, objectID)
 		return nil, fmt.Errorf("plasmaSentinelPetSpawn: %w", err)
 	}
-	expiry := plasmaSentinelPetExpiryStep{run: run, objectID: objectID}
-	cancel, err := run.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
-		Delay: plasmaSentinelPetDuration, Produce: expiry.produce,
-	}})
+	expiry := plasmaSentinelPetExpiryStep{
+		run: run, zone: peerSession.zone, objectID: objectID,
+	}
+	cancel, err := r.timer.Schedule(plasmaSentinelPetDuration, expiry.execute)
 	if err != nil {
 		rollbackPlasmaSentinelPet(peerSession, run, objectID)
 		return nil, fmt.Errorf("plasmaSentinelPetSchedule: %w", err)
+	}
+	if cancel == nil {
+		rollbackPlasmaSentinelPet(peerSession, run, objectID)
+		return nil, fmt.Errorf("plasmaSentinelPetSchedule: missing cancellation")
 	}
 	run.pets[petIndex].cancel = cancel
 	packets := append([][]byte{modifierPacket}, createPackets...)
@@ -585,6 +612,7 @@ func (r campaignDamageRuntime) startPlasmaSentinelPetActorAttack(
 				objectID, peerSession.zone.NPCs().LiveSnapshots(), ability.Range,
 				zonecompanion.CompatibilityAggroRadius,
 				zonecompanion.CompatibilityMovementSpeed,
+				r.npc.now(),
 			)
 		r.registry.mutex.Unlock()
 		if pursuitErr != nil {
@@ -597,7 +625,7 @@ func (r campaignDamageRuntime) startPlasmaSentinelPetActorAttack(
 		if marshalErr != nil {
 			r.cancelCompanionPursuit(
 				sessionKey, generation, pursuit.ObjectID,
-				pursuit.TargetObjectID, pursuit.Position,
+				pursuit.TargetObjectID, pursuit.Position, pursuit.Revision,
 			)
 			return nil, fmt.Errorf("plasmaSentinelPetPursuitMarshal: %w", marshalErr)
 		}

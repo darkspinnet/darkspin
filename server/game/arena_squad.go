@@ -25,7 +25,7 @@ func (e *GameplayJoin) SelectArenaSquad(
 			!strings.EqualFold(squad.Category, "pvp") {
 			return GameplayBinding{}, ErrGameplaySquadInvalid
 		}
-		creatures := selectedGameplayCreatures(view, e.partCatalog, squadID)
+		creatures := selectedGameplayCreatures(view, e.partCatalog.forGameplayMode(binding.Mode), squadID)
 		for index, creature := range creatures {
 			if creature.ID == 0 || creature.Noun == 0 {
 				return GameplayBinding{}, ErrGameplaySquadInvalid
@@ -38,7 +38,7 @@ func (e *GameplayJoin) SelectArenaSquad(
 		}
 		binding.SquadID = squadID
 		binding.Creatures = creatures
-		binding.ActivatedCreatures = activatedGameplayCreatures(view, e.partCatalog)
+		binding.ActivatedCreatures = activatedGameplayCreatures(view, e.partCatalog.forGameplayMode(binding.Mode))
 		return binding, nil
 	}
 	return GameplayBinding{}, ErrGameplaySquadInvalid

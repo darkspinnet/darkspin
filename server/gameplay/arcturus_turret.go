@@ -51,7 +51,7 @@ func (e campaignArcturusSpawnStep) startTurret(current *gameplayPeerSession, bos
 		DescriptorMask: 1024, DamageSource: 1, DamageType: 0, IsDamageProfileKnown: true}
 	plans := []zonenpc.SpawnPlan{{ObjectID: objectID, OwnerObjectID: boss.Plan.ObjectID,
 		NounName: nounName, Position: e.state.center, NPCProfile: profile,
-		ActionProfile: action, IsActionKnown: true, IsRewardSuppressed: true,
+		ActionProfile: action, IsActionKnown: true, IsEncounterAuxiliary: true,
 		LocusID: boss.Plan.LocusID, MarkerSetName: boss.Plan.MarkerSetName}}
 	packets, err := npcraknet.TargetedSpawn(plans[0], boss.TargetObjectID)
 	if err != nil {

@@ -3,6 +3,7 @@ package gameplay
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
@@ -83,12 +84,12 @@ func (e campaignOrcusSpawnEnd) produce() ([][]byte, error) {
 	return append(presentationPackets, followupPackets...), nil
 }
 
-type campaignOrcusGroundSlamEnd struct {
+type campaignOrcusReductionEnd struct {
 	request   campaignOrcusRequest
 	expiresAt time.Time
 }
 
-func (e campaignOrcusGroundSlamEnd) produce() ([][]byte, error) {
+func (e campaignOrcusReductionEnd) produce() ([][]byte, error) {
 	e.request.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.request.runtime.registry.sessions[e.request.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.request.generation &&
@@ -110,6 +111,100 @@ func (e campaignOrcusGroundSlamEnd) produce() ([][]byte, error) {
 	return [][]byte{packet}, nil
 }
 
+type campaignOrcusConsumeSchedule struct {
+	request          campaignOrcusRequest
+	actionGeneration uint64
+	profile          zonenpc.ActionProfile
+	candidates       []zonenpc.Snapshot
+}
+
+func (e campaignOrcusConsumeSchedule) hit() ([][]byte, error) {
+	e.request.runtime.registry.mutex.Lock()
+	peerSession, isFound := e.request.runtime.registry.sessions[e.request.sessionKey]
+	isCurrent := isFound && peerSession.isCampaignNPCSourceGenerationActive(
+		e.request.generation, e.request.objectID, e.actionGeneration,
+	)
+	if !isCurrent {
+		e.request.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	candidates := e.candidates
+	if len(candidates) == 0 {
+		e.request.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	objectIDs := make([]uint32, 0, len(candidates))
+	healedAmount := float32(0)
+	healPackets := make([][]byte, 0, len(candidates)*2)
+	random := peerSession.zone.NPCRandom()
+	for _, candidate := range candidates {
+		liveServant, isFound := peerSession.zone.NPCs().NPC(candidate.Plan.ObjectID)
+		if !isFound || liveServant.IsDefeated || liveServant.HitPoint <= 0 {
+			continue
+		}
+		objectIDs = append(objectIDs, candidate.Plan.ObjectID)
+		selectedHealing := e.profile.MinimumHealing
+		if random != nil && e.profile.MaximumHealing > e.profile.MinimumHealing {
+			selectedHealing += float32(random.Float64()) *
+				(e.profile.MaximumHealing - e.profile.MinimumHealing)
+		}
+		orcus, amount, healErr := peerSession.zone.NPCs().Heal(e.request.objectID, selectedHealing)
+		if healErr != nil {
+			e.request.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("orcusConsumeHeal: %w", healErr)
+		}
+		healedAmount += amount
+		if amount > 0 {
+			packets, marshalErr := npcraknet.HealDelta(e.request.objectID, orcus, amount)
+			if marshalErr != nil {
+				e.request.runtime.registry.mutex.Unlock()
+				return nil, fmt.Errorf("orcusConsumeHealMarshal: %w", marshalErr)
+			}
+			healPackets = append(healPackets, packets...)
+		}
+	}
+	if len(objectIDs) == 0 {
+		e.request.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	err := peerSession.zone.NPCs().Despawn(objectIDs)
+	if err != nil {
+		e.request.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("orcusConsumeDespawn: %w", err)
+	}
+	deaths := make([]zonenpc.DeathEvent, 0, len(objectIDs))
+	for _, objectID := range objectIDs {
+		deaths = append(deaths, zonenpc.DeathEvent{
+			Kind: zonenpc.DeathDelete, TargetObjectID: objectID,
+		})
+	}
+	peerSession.zone.PublishNPCDeath(
+		deaths, peerSession.binding.UserID, e.request.generation,
+	)
+	if healedAmount > 0 {
+		objectiveErr := peerSession.zone.RecordNPCHeal(
+			peerSession.zone.Context(), e.request.objectID,
+			e.request.objectID, healedAmount,
+		)
+		if objectiveErr != nil {
+			e.request.runtime.logger.Printf(
+				"RakNet Orcus consume heal objective omitted source=%d: %v",
+				e.request.objectID, objectiveErr,
+			)
+		}
+	}
+	e.request.runtime.registry.sessions[e.request.sessionKey] = peerSession
+	e.request.runtime.registry.mutex.Unlock()
+
+	deletePacket, err := raknet.MarshalApplication(raknet.ObjectDeleteMessage{
+		ObjectID: objectIDs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("orcusConsumeDelete: %w", err)
+	}
+	return append(healPackets, deletePacket), nil
+}
+
 func (e campaignOrcusServantStep) spawn() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
@@ -129,7 +224,7 @@ func (e campaignOrcusServantStep) spawn() ([][]byte, error) {
 	plan := zonenpc.SpawnPlan{
 		ObjectID: e.objectID, OwnerObjectID: e.orcusObjectID,
 		NounName: e.definition.ServantNoun, Position: orcus.Plan.Position,
-		IsRewardSuppressed: true, NPCProfile: e.definition.ServantProfile,
+		IsEncounterAuxiliary: true, NPCProfile: e.definition.ServantProfile,
 		ActionProfile: e.definition.ServantAction, IsActionKnown: true,
 	}
 	err := peerSession.zone.NPCs().Add(
@@ -184,6 +279,17 @@ func (r campaignNPCActionRuntime) produceOrcusSpawn(
 		r.registry.mutex.Unlock()
 		return nil, false, nil
 	}
+	director := peerSession.zone.DirectorDefinition()
+	nounKey := strings.ToLower(definition.ServantNoun)
+	authoredProfile, isAuthoredProfileFound := director.NPCProfilesByNoun[nounKey]
+	if !isAuthoredProfileFound || !authoredProfile.IsKnown || !authoredProfile.IsClassKnown ||
+		authoredProfile.HitPoint <= 0 {
+		r.registry.mutex.Unlock()
+		return nil, true, fmt.Errorf("orcusServantDefinition: unavailable %q", definition.ServantNoun)
+	}
+	// ProjectDirector has already applied the selected run difficulty to this
+	// child's authored profile. The servant action and placement remain separate.
+	definition.ServantProfile = authoredProfile
 	isAbilityAvailable := peerSession.isCampaignNPCActionActiveAt(
 		generation, objectID, r.now(),
 	) && peerSession.zone.NPCs().SilenceRemaining(objectID, r.now()) == 0
@@ -199,16 +305,6 @@ func (r campaignNPCActionRuntime) produceOrcusSpawn(
 		r.registry.mutex.Unlock()
 		return nil, false, nil
 	}
-	footprintRadius := definition.ServantProfile.FootprintRadius
-	importedFootprintRadius, err := r.program.FootprintRadius(definition.ServantNoun)
-	if err != nil && footprintRadius <= 0 {
-		r.registry.mutex.Unlock()
-		return nil, true, fmt.Errorf("orcusServantFootprint: %w", err)
-	}
-	if err == nil {
-		footprintRadius = importedFootprintRadius
-	}
-	definition.ServantProfile.FootprintRadius = footprintRadius
 	ownedCount := peerSession.zone.NPCs().OwnedActiveCount(objectID)
 	spawnCount := min(definition.ServantCountPerCast, definition.MaximumServant-ownedCount)
 	if spawnCount <= 0 {
@@ -231,7 +327,8 @@ func (r campaignNPCActionRuntime) produceOrcusSpawn(
 	}
 	steps := make([]raknet.ScheduledPacketProducer, 0, spawnCount+1)
 	for index := 0; index < spawnCount; index++ {
-		delay := definition.FirstSpawnDelay + time.Duration(index)*definition.SpawnInterval
+		// Spawn creates the batch at its contact frame, then waits once (chunk 725).
+		delay := definition.FirstSpawnDelay
 		step := campaignOrcusServantStep{
 			runtime: r, packet: packet, sessionKey: sessionKey, generation: generation,
 			actionGeneration: orcus.ActionGeneration,
@@ -240,8 +337,7 @@ func (r campaignNPCActionRuntime) produceOrcusSpawn(
 		}
 		steps = append(steps, raknet.ScheduledPacketProducer{Delay: delay, Produce: step.spawn})
 	}
-	castDuration := definition.FirstSpawnDelay +
-		time.Duration(spawnCount)*definition.SpawnInterval
+	castDuration := definition.FirstSpawnDelay + definition.SpawnInterval
 	end := campaignOrcusSpawnEnd{
 		request: campaignOrcusRequest{
 			runtime: r, packet: packet, sessionKey: sessionKey, generation: generation,
@@ -365,7 +461,7 @@ func (r campaignNPCActionRuntime) planOrcusAbility(
 ) (zonenpc.AttackPlan, error) {
 	if isGroundSlam {
 		plan, err := zonenpc.PlanAttackWithProfile(
-			orcus, target.ObjectID, target.Position, profile, target.FootprintRadius,
+			orcus, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 		)
 		if err != nil {
 			return zonenpc.AttackPlan{}, fmt.Errorf("orcusGroundSlamPlan: %w", err)
@@ -373,7 +469,7 @@ func (r campaignNPCActionRuntime) planOrcusAbility(
 		return plan, nil
 	}
 	plan, err := zonenpc.PlanControlWithProfile(
-		orcus, target.ObjectID, target.Position, profile, target.FootprintRadius,
+		orcus, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
 	if err != nil {
 		return zonenpc.AttackPlan{}, fmt.Errorf("orcusDiseasePlan: %w", err)
@@ -387,7 +483,7 @@ func (r campaignNPCActionRuntime) pursueOrcusAbility(
 ) ([][]byte, bool, error) {
 	action, err := campaignNPCActionWithProfile(
 		orcus.Plan, target.ObjectID, target.Position, profile,
-		target.FootprintRadius,
+		target.ActorFootprintRadius,
 	)
 	if err != nil || !action.IsPursuitNeeded {
 		return nil, true, nil
@@ -417,7 +513,8 @@ func (r campaignNPCActionRuntime) startOrcusAbility(
 	schedule := campaignConeSchedule{
 		runtime: r, packet: request.packet, sessionKey: request.sessionKey,
 		generation: request.generation, objectID: request.objectID,
-		timestamp: request.timestamp, nextDelay: plan.Profile.ReleaseDelay,
+		actionGeneration: plan.ActionGeneration,
+		timestamp:        request.timestamp, nextDelay: plan.Profile.ReleaseDelay,
 		plan: plan,
 	}
 	producers := make([]raknet.ScheduledPacketProducer, 0, 8)
@@ -447,18 +544,18 @@ func (r campaignNPCActionRuntime) startOrcusAbility(
 			request.objectID, 0, "verdanth_boss_shield.ServerEventDef", false,
 		)
 		if shieldErr != nil {
-			r.clearOrcusGroundSlamReduction(request, reductionExpiresAt)
+			r.clearOrcusDamageReduction(request, reductionExpiresAt)
 			return nil, fmt.Errorf("orcusGroundSlamShield: %w", shieldErr)
 		}
 		castPacket, castErr := npcraknet.PositionedEffect(
 			"verdanth_bosspit_effect.ServerEventDef", plan.SourcePosition,
 		)
 		if castErr != nil {
-			r.clearOrcusGroundSlamReduction(request, reductionExpiresAt)
+			r.clearOrcusDamageReduction(request, reductionExpiresAt)
 			return nil, fmt.Errorf("orcusGroundSlamCast: %w", castErr)
 		}
 		packets = append(packets, shieldPacket, castPacket)
-		end := campaignOrcusGroundSlamEnd{
+		end := campaignOrcusReductionEnd{
 			request: request, expiresAt: reductionExpiresAt,
 		}
 		producers = append(producers,
@@ -483,14 +580,14 @@ func (r campaignNPCActionRuntime) startOrcusAbility(
 	}
 	if err != nil {
 		if isGroundSlam {
-			r.clearOrcusGroundSlamReduction(request, reductionExpiresAt)
+			r.clearOrcusDamageReduction(request, reductionExpiresAt)
 		}
 		return nil, fmt.Errorf("orcusAbilitySchedule: %w", err)
 	}
 	return packets, nil
 }
 
-func (r campaignNPCActionRuntime) clearOrcusGroundSlamReduction(
+func (r campaignNPCActionRuntime) clearOrcusDamageReduction(
 	request campaignOrcusRequest, expiresAt time.Time,
 ) {
 	r.registry.mutex.Lock()

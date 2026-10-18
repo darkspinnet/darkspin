@@ -2304,7 +2304,7 @@ func resolveMemberPath(row []any, constants []string) ([][]any, error) {
 	if len(row) < 2 {
 		return nil, errors.New("memberPathMissing")
 	}
-	rows := make([][]any, 0, (len(row)-1)*2)
+	rows := make([][]any, 0, len(row))
 	for memberIndex := 1; memberIndex < len(row); memberIndex++ {
 		memberName, isMemberName := rowFieldString(row, memberIndex)
 		if !isMemberName || memberName == "" {

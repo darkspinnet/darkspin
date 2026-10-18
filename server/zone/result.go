@@ -3,6 +3,7 @@ package zone
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	zoneboss "github.com/darkspinnet/darkspin/server/zone/boss"
 	zoneoutcome "github.com/darkspinnet/darkspin/server/zone/outcome"
@@ -155,6 +156,19 @@ func (e *Zone) ResultVoteDecision(
 	return e.info.ResultVote.Decision(
 		resultVoter(member), voteSnapshot.Epoch,
 	)
+}
+
+func (e *Zone) ResultVoteCountdown(member Member) (time.Duration, bool) {
+	if e == nil {
+		return 0, false
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if !e.isCurrentMember(member) || e.info.ResultVote == nil {
+		return 0, false
+	}
+	voteSnapshot := e.info.ResultVote.Snapshot()
+	return e.info.ResultVote.Countdown(resultVoter(member), voteSnapshot.Epoch)
 }
 
 // CompleteForDeveloper advances the ordinary boss authority to its completed

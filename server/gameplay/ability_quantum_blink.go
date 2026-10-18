@@ -358,7 +358,7 @@ func (r campaignAbilityCommandRuntime) handleHeroQuantumBlink(
 	}
 	err := zonenavigation.ValidateMovement(
 		peerSession.zone.Navigation(), game.Vec3(peerSession.playerPosition),
-		game.Vec3(initialDestination), peerSession.deployedCampaignFootprintRadius(),
+		game.Vec3(initialDestination), peerSession.deployedCampaignNavigationRadius(),
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()

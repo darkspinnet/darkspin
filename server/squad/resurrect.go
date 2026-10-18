@@ -32,3 +32,24 @@ func (e *Session) Resurrect(maximumHitPoints [Size]float32) ([]uint32, error) {
 	}
 	return indexes, nil
 }
+
+// ResurrectCharacter applies an explicit recovery to one selected character.
+// The caller chooses the fallen slot and computes its clamped recovery amount.
+// Ordinary healing continues to respect the squad's terminal latch.
+func (e *Session) ResurrectCharacter(index uint32, hitPoint float32) error {
+	if e == nil || index >= Size {
+		return errors.New("resurrection character unavailable")
+	}
+	if !e.characters[index].IsAvailable {
+		return fmt.Errorf("resurrectionCharacter: %w", ErrCharacterUnavailable)
+	}
+	if hitPoint < 0 || math.IsNaN(float64(hitPoint)) || math.IsInf(float64(hitPoint), 0) {
+		return errors.New("resurrection health invalid")
+	}
+	e.characters[index].HitPoints = hitPoint
+	if hitPoint > 0 {
+		e.isGameOver = false
+		e.isRestartReserved = false
+	}
+	return nil
+}

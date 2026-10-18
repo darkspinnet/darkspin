@@ -13,7 +13,7 @@ func (e gameplayPeerSession) isOperativeCaged(at time.Time) bool {
 	run := e.operativeCage
 	if run == nil || !run.isActive() || e.zone == nil ||
 		run.record.TargetObjectID != e.deployedObjectID || e.deployedHitPoint() <= 0 ||
-		e.isHeroDebuffImmune(e.deployedObjectID) {
+		e.isHeroDebuffImmune(e.deployedObjectID) || e.isOverdriveActiveAt(at) {
 		return false
 	}
 	sourceID := run.record.SourceObjectID

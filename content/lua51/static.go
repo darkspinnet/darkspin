@@ -165,7 +165,11 @@ func staticRuntimeGlobals() map[string]staticValue {
 	bitTable := &staticTable{fields: map[string]staticValue{
 		"Or": {builtin: staticBuiltinBitOr},
 	}}
+	cooldownTypeTable := staticNumberTable(map[string]uint32{
+		"Default": 0, "Deactivate": 1, "Manual": 2,
+	})
 	return map[string]staticValue{
+		"nCooldownType":  {kind: StaticTable, table: cooldownTypeTable},
 		"nDescriptors":   {kind: StaticTable, table: descriptorTable},
 		"nDamageSources": {kind: StaticTable, table: damageSourceTable},
 		"nDamageTypes":   {kind: StaticTable, table: damageTypeTable},

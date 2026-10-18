@@ -15,22 +15,31 @@ import (
 func Blink(
 	plan zonenpc.AttackPlan, destination game.Vec3, timestamp uint64,
 ) ([][]byte, error) {
+	facing := plan.TargetPosition.Sub(destination)
+	facing.Z = 0
+	if facing.Length() <= 0 {
+		facing.Y = 1
+	}
+	return BlinkWithFacing(plan, destination, facing, timestamp)
+}
+
+// BlinkWithFacing models TeleportObject, which retains the actor's orientation.
+// Abilities that explicitly turn on arrival can continue to use Blink.
+func BlinkWithFacing(
+	plan zonenpc.AttackPlan, destination game.Vec3, facing game.Vec3, timestamp uint64,
+) ([][]byte, error) {
 	if plan.SourceObjectID == 0 || plan.Profile.TeleportAnimationName == "" ||
 		!isFiniteVec3(destination) {
 		return nil, errors.New("npc blink invalid")
 	}
+	posePacket, err := RestorePose(plan.SourceObjectID, destination, facing)
+	if err != nil {
+		return nil, fmt.Errorf("blinkPose: %w", err)
+	}
 	position := raknet.Vector3{
 		X: destination.X, Y: destination.Y, Z: destination.Z,
 	}
-	facing := plan.TargetPosition.Sub(destination)
-	yaw := math.Atan2(-float64(facing.X), float64(facing.Y))
 	messages := []raknet.ApplicationMessage{
-		raknet.ObjectTeleportMessage{
-			ObjectID: plan.SourceObjectID, Position: position,
-			Orientation: raknet.Quaternion{
-				Z: float32(math.Sin(yaw / 2)), W: float32(math.Cos(yaw / 2)),
-			},
-		},
 		raknet.ObjectUpdateMessage{
 			ObjectID: plan.SourceObjectID, PositionX: destination.X,
 			PositionY: destination.Y, PositionZ: destination.Z,
@@ -46,7 +55,11 @@ func Blink(
 			Timestamp: timestamp, Scale: 1,
 		},
 	}
-	return marshalMessages(messages, "blink")
+	packets, err := marshalMessages(messages, "blink")
+	if err != nil {
+		return nil, fmt.Errorf("blinkPresentation: %w", err)
+	}
+	return append([][]byte{posePacket}, packets...), nil
 }
 
 func RandomTeleport(
@@ -83,6 +96,15 @@ func ForcedMovement(
 	plan zonenpc.AttackPlan, destination game.Vec3, timestamp uint64,
 ) ([][]byte, error) {
 	profile := plan.Profile
+	if profile.ModifierName == "NomadShielderBashKnockback" {
+		// The bash inherits nModifier_Knockback_Template's JumpInDirection
+		// arc. A teleport followed by react_knockback never plays that jump.
+		packets, err := ForcedJump(plan, destination, timestamp, [3]float32{2, 2, 4})
+		if err != nil {
+			return nil, fmt.Errorf("bashJump: %w", err)
+		}
+		return packets, nil
+	}
 	if plan.SourceObjectID == 0 || plan.TargetObjectID == 0 ||
 		profile.ForcedMovementSpeed <= 0 || !isFiniteVec3(destination) {
 		return nil, errors.New("npc forced movement invalid")
@@ -149,11 +171,14 @@ func Pursuit(plan zonenpc.FirstActionPlan) ([][]byte, error) {
 	}
 	source := vector(plan.SourcePosition)
 	target := vector(plan.TargetPosition)
-	if plan.Profile.AbilityName == "Flee" {
-		return fleeMovement(plan.ObjectID, source, target)
+	if plan.Profile.AbilityName == "Flee" || plan.Profile.AbilityName == "GhostlyBoltFlee" {
+		return fleeMovement(plan.ObjectID, source, target, plan.Profile.Range)
 	}
-	if plan.Profile.AbilityName == "StealthAttack" {
-		// Stealth travel has a fixed destination, not a live hero-follow goal.
+	if plan.Profile.AbilityName == "StealthAttack" ||
+		plan.Profile.AbilityName == "NocturnaSpecialDriftCharge" ||
+		plan.Profile.AbilityName == "NoctGhostCharge" {
+		// These actions travel to a fixed point. Following the target object
+		// instead stops pass-through charges at the hero's collision footprint.
 		return marshalMessages([]raknet.ApplicationMessage{
 			raknet.ObjectPlayerMoveMessage{
 				ObjectID: plan.ObjectID, GoalFlags: 0x01, GoalPosition: target,
@@ -162,7 +187,7 @@ func Pursuit(plan zonenpc.FirstActionPlan) ([][]byte, error) {
 			raknet.LocomotionUnreliableMessage{
 				ObjectID: plan.ObjectID, GoalPosition: target,
 			},
-		}, "stealthTravel")
+		}, "fixedTravel")
 	}
 	if plan.Profile.Family == zonenpc.ActionProjectile {
 		goal := pursuitGoal(source, target, plan.Profile.Range)
@@ -175,6 +200,9 @@ func Pursuit(plan zonenpc.FirstActionPlan) ([][]byte, error) {
 			},
 		}, "projectilePursuit")
 	}
+	// Native A149C0 installs the target center and a separate stopping distance.
+	// Shortening the goal here applies that distance twice in client movement.
+	// Let 0x91 build its own path; 0x95 would overwrite its corridor waypoint.
 	return marshalMessages([]raknet.ApplicationMessage{
 		raknet.ObjectPlayerMoveMessage{
 			ObjectID: plan.ObjectID, GoalFlags: 0x41, GoalPosition: target,
@@ -182,9 +210,6 @@ func Pursuit(plan zonenpc.FirstActionPlan) ([][]byte, error) {
 			AllowedStopDistance: plan.Profile.Range,
 			DesiredStopDistance: plan.Profile.Range,
 			TargetPosition:      target, TargetObjectID: plan.TargetObjectID,
-		},
-		raknet.LocomotionUnreliableMessage{
-			ObjectID: plan.ObjectID, GoalPosition: target,
 		},
 	}, "pursuit")
 }
@@ -211,6 +236,26 @@ func BurrowTravel(plan zonenpc.AttackPlan, timestamp uint64) ([][]byte, error) {
 			Timestamp: timestamp, Scale: 1,
 		},
 	}, "burrowTravel")
+}
+
+// BurrowEffect follows the moving actor and is explicitly stopped on emergence.
+func BurrowEffect(objectID uint32, slot uint8, isRemovalRequested bool) ([]byte, error) {
+	if objectID == 0 {
+		return nil, errors.New("npc burrow effect invalid")
+	}
+	message := raknet.AttachedEffectMessage{
+		ObjectID: objectID, Slot: slot + 1,
+		IsRemovalRequested: isRemovalRequested, IsHardStop: isRemovalRequested,
+	}
+	if !isRemovalRequested {
+		message.Asset = util.HashID("burrower_tunnelling.ServerEventDef")
+		message.IsForceAttached = true
+	}
+	packet, err := raknet.MarshalApplication(message)
+	if err != nil {
+		return nil, fmt.Errorf("burrowEffectMarshal: %w", err)
+	}
+	return packet, nil
 }
 
 // BurrowArrival reconciles the moving client root with the authoritative
@@ -248,20 +293,21 @@ func FleeRedirect(
 		return nil, errors.New("npc flee redirect invalid")
 	}
 	return fleeMovement(
-		objectID, vector(sourcePosition), vector(targetPosition),
+		objectID, vector(sourcePosition), vector(targetPosition), 0,
 	)
 }
 
 func fleeMovement(
 	objectID uint32, source raknet.Vector3, target raknet.Vector3,
+	stopDistance float32,
 ) ([][]byte, error) {
+	// MoveToPointWithinRange installs a fixed goal and separate stop distances
+	// (103 A148C0). A goal-only 0x95 would replace its corridor waypoint.
 	return marshalMessages([]raknet.ApplicationMessage{
 		raknet.ObjectPlayerMoveMessage{
 			ObjectID: objectID, GoalFlags: 0x01, GoalPosition: target,
-			Facing: direction(source, target),
-		},
-		raknet.LocomotionUnreliableMessage{
-			ObjectID: objectID, GoalPosition: target,
+			Facing:              direction(source, target),
+			AllowedStopDistance: stopDistance, DesiredStopDistance: stopDistance,
 		},
 	}, "flee")
 }
@@ -346,9 +392,6 @@ func pursuitRedirect(
 			DesiredStopDistance: stopDistance,
 			TargetPosition:      target, TargetObjectID: targetObjectID,
 		},
-		raknet.LocomotionUnreliableMessage{
-			ObjectID: objectID, GoalPosition: target,
-		},
 	}, "pursuitRedirect")
 }
 
@@ -389,6 +432,7 @@ func PursuitProgress(
 		}
 		source := vector(step.Position)
 		target := vector(step.TargetPosition)
+		goal := pursuitGoal(source, target, step.StopDistance)
 		stepPackets, err := marshalMessages([]raknet.ApplicationMessage{
 			raknet.ObjectPositionUpdateMessage{
 				ObjectID: step.ObjectID, PositionX: source.X,
@@ -396,14 +440,11 @@ func PursuitProgress(
 			},
 			raknet.ObjectPlayerMoveMessage{
 				ObjectID: step.ObjectID, GoalFlags: 0x41,
-				GoalPosition: target, Facing: direction(source, target),
+				GoalPosition: goal, Facing: direction(source, target),
 				AllowedStopDistance: step.StopDistance,
 				DesiredStopDistance: step.StopDistance,
 				TargetPosition:      target,
 				TargetObjectID:      targetObjectID,
-			},
-			raknet.LocomotionUnreliableMessage{
-				ObjectID: step.ObjectID, GoalPosition: target,
 			},
 		}, "pursuitProgress")
 		if err != nil {
@@ -429,9 +470,10 @@ func FirstAggro(plan zonenpc.FirstActionPlan, timestamp uint64) ([][]byte, error
 		))
 	}
 	isDelayedReveal := plan.Profile.FirstAggroRevealDelay > 0
+	isCinematic := plan.Profile.FirstAggroCinematicDuration > 0
 	targetObjectID := plan.TargetObjectID
 	attackerCount := uint32(1)
-	if isDelayedReveal {
+	if isDelayedReveal || isCinematic {
 		targetObjectID = 0
 		attackerCount = 0
 	}
@@ -443,11 +485,17 @@ func FirstAggro(plan zonenpc.FirstActionPlan, timestamp uint64) ([][]byte, error
 		},
 		raknet.AgentBlackboardUpdateMessage{
 			ObjectID: plan.ObjectID, TargetID: targetObjectID,
-			IsInCombat: !isDelayedReveal, IsTargetable: !isDelayedReveal,
+			IsInCombat: !isDelayedReveal && !isCinematic, IsTargetable: !isDelayedReveal && !isCinematic,
 			AttackerCount: attackerCount,
 		},
-		attackTurn(plan.FirstAggroFacingPlan()),
 	)
+	turn := attackTurn(plan.FirstAggroFacingPlan())
+	if plan.Profile.FirstAggroAnimationName == "shadowboss_onaggro" {
+		// TurnToFace(..., true): build 103 sub_A0A800 adds 0x800 to the
+		// captured-point goal produced by sub_A15610.
+		turn.GoalFlags |= 0x800
+	}
+	messages = append(messages, turn)
 	if plan.Profile.FirstAggroRevealDelay <= 0 && plan.Profile.FirstAggroAnimationName != "" {
 		messages = append(messages, raknet.SetAnimationStateMessage{
 			ObjectID:  plan.ObjectID,
@@ -510,7 +558,7 @@ func FirstAggroReveal(plan zonenpc.FirstActionPlan, timestamp uint64) ([][]byte,
 func FirstAggroActivate(plan zonenpc.FirstActionPlan) ([][]byte, error) {
 	if plan.ObjectID == 0 || plan.TargetObjectID == 0 ||
 		!isFiniteVec3(plan.SourcePosition) ||
-		plan.Profile.FirstAggroRevealDelay <= 0 {
+		(plan.Profile.FirstAggroRevealDelay <= 0 && plan.Profile.FirstAggroCinematicDuration <= 0) {
 		return nil, errors.New("npc first aggro activation invalid")
 	}
 	source := vector(plan.SourcePosition)
@@ -1096,33 +1144,46 @@ func ResurrectionCast(
 	return marshalMessages(messages, "resurrectionCast")
 }
 
-func ResurrectionHit(
-	sourceObjectID uint32, target zonenpc.Snapshot,
-	profile zonenpc.ActionProfile,
-) ([][]byte, error) {
-	if sourceObjectID == 0 || target.Plan.ObjectID == 0 ||
-		target.HitPoint <= 0 || profile.ImpactEffectName == "" {
-		return nil, errors.New("npc resurrection hit invalid")
+func ResurrectionState(target zonenpc.Snapshot) ([][]byte, error) {
+	if target.Plan.ObjectID == 0 || target.HitPoint <= 0 {
+		return nil, errors.New("npc resurrection state invalid")
 	}
 	return marshalMessages([]raknet.ApplicationMessage{
-		raknet.ObjectEffectMessage{
-			Asset:    util.HashID(profile.ImpactEffectName),
-			ObjectID: target.Plan.ObjectID, AttackerID: sourceObjectID,
-		},
-		raknet.AgentBlackboardUpdateMessage{
-			ObjectID: target.Plan.ObjectID, TargetID: target.TargetObjectID,
-			IsInCombat:    target.TargetObjectID != 0,
-			IsTargetable:  target.Plan.NPCProfile.IsTargetable,
-			AttackerCount: 1,
-		},
-		raknet.ObjectCollisionUpdateMessage{
-			ObjectID: target.Plan.ObjectID, IsCollisionEnabled: true,
-		},
 		raknet.CombatantDataDeltaMessage{
 			ObjectID: target.Plan.ObjectID, HitPoints: target.HitPoint,
 			IsHitPointChanged: true,
 		},
-	}, "resurrectionHit")
+		raknet.ObjectCollisionUpdateMessage{
+			ObjectID: target.Plan.ObjectID, IsCollisionEnabled: true,
+		},
+		raknet.AgentBlackboardUpdateMessage{
+			ObjectID: target.Plan.ObjectID, TargetID: target.TargetObjectID,
+			IsInCombat:    zonenpc.IsCombatMovementState(target.Plan, target.TargetObjectID),
+			IsTargetable:  target.Plan.NPCProfile.IsTargetable,
+			AttackerCount: 1,
+		},
+	}, "resurrectionState")
+}
+
+func ResurrectionHit(
+	sourceObjectID uint32, target zonenpc.Snapshot,
+	profile zonenpc.ActionProfile,
+) ([][]byte, error) {
+	if sourceObjectID == 0 || profile.ImpactEffectName == "" {
+		return nil, errors.New("npc resurrection hit invalid")
+	}
+	packets, err := ResurrectionState(target)
+	if err != nil {
+		return nil, fmt.Errorf("resurrectionHitState: %w", err)
+	}
+	effectPacket, err := raknet.MarshalApplication(raknet.ObjectEffectMessage{
+		Asset: util.HashID(profile.ImpactEffectName), ObjectID: target.Plan.ObjectID,
+		AttackerID: sourceObjectID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("resurrectionHitEffect: %w", err)
+	}
+	return append(packets, effectPacket), nil
 }
 
 func HealCast(
@@ -1184,11 +1245,24 @@ func RootedHealStart(
 			ObjectID: sourceObjectID, State: util.HashID(profile.LoopAnimationName),
 			Timestamp: timestamp, Scale: 1,
 		},
-		raknet.ObjectEffectMessage{
+		raknet.AttachedEffectMessage{
+			Slot: 16, IsForceAttached: true,
 			Asset: util.HashID(profile.TrailEffectName), ObjectID: sourceObjectID,
-			AttackerID: sourceObjectID,
 		},
 	}, "rootedHealStart")
+}
+
+func RootedHealStop(sourceObjectID uint32) ([][]byte, error) {
+	if sourceObjectID == 0 {
+		return nil, errors.New("npc rooted heal stop invalid")
+	}
+	// RootedHeal's client Tick and Deactivate both remove auraEffect.
+	return marshalMessages([]raknet.ApplicationMessage{
+		raknet.AttachedEffectMessage{
+			Slot: 16, ObjectID: sourceObjectID,
+			IsRemovalRequested: true, IsHardStop: true,
+		},
+	}, "rootedHealStop")
 }
 
 func HealDelta(
@@ -1266,21 +1340,26 @@ func ChargeStart(
 
 func ChargeMovementState(
 	objectID uint32, movementSpeedBuff float32, stealthType game.StealthType,
-	isCollisionEnabled bool,
+	isNavCollisionDisabled bool,
 ) ([][]byte, error) {
+	// Preserve the locomotion agent. ObjectUpdate field 17 toggles the whole
+	// physics/navigation object, not the authored SetNavCollision avoidance.
+	// SetNavCollision(false) writes object+644 (sub_A03CC0), the same byte
+	// reflected by field 20's setter sub_A1C5D0.
 	if objectID == 0 || math.IsNaN(float64(movementSpeedBuff)) ||
 		math.IsInf(float64(movementSpeedBuff), 0) {
 		return nil, errors.New("npc charge movement state invalid")
 	}
 	return marshalMessages([]raknet.ApplicationMessage{
+		raknet.ObjectUpdateContractMessage{
+			ObjectID: objectID,
+			Object:   raknet.ObjectReflection{IsRepulsionDisabled: &isNavCollisionDisabled},
+		},
 		raknet.AttributeDataUpdateMessage{
 			ObjectID: objectID, Value: map[uint8]float32{48: movementSpeedBuff},
 		},
 		raknet.AgentBlackboardUpdateMessage{
 			ObjectID: objectID, Stealth: uint8(stealthType), IsTargetable: true,
-		},
-		raknet.ObjectCollisionUpdateMessage{
-			ObjectID: objectID, IsCollisionEnabled: isCollisionEnabled,
 		},
 	}, "chargeMovementState")
 }
@@ -1396,15 +1475,19 @@ func marshalMessages(
 	packets := make([][]byte, 0, len(messages))
 	for index, message := range messages {
 		move, isMove := message.(raknet.ObjectPlayerMoveMessage)
-		if isMove && (move.GoalFlags == 0x42 || move.GoalFlags == 0x102 || move.GoalFlags == 0x06) {
-			// Remote NPC movement consumes the partial goal even for turns.
-			// 0x91 leaves it untouched; initialize it before enabling the turn.
+		isPartialGoalNeeded := isMove && (move.GoalFlags&0x01 != 0 ||
+			move.GoalFlags == 0x42 || move.GoalFlags == 0x102 || move.GoalFlags == 0x06)
+		if isPartialGoalNeeded {
+			// Remote movement in native 103 consumes component+340, while
+			// 5393D0 (0x91) updates only the ultimate goal at component+328.
+			// Initialize the partial goal before movement or a turn starts.
+			// Reflection preserves the ultimate goal, unlike goal-only 0x95.
 			goalPacket, err := raknet.MarshalApplication(raknet.LocomotionUpdateContractMessage{
 				ObjectID:   move.ObjectID,
 				Locomotion: raknet.LocomotionReflection{PartialGoalPosition: &move.GoalPosition},
 			})
 			if err != nil {
-				return nil, fmt.Errorf("%sTurnGoal[%d]: %w", operation, index, err)
+				return nil, fmt.Errorf("%sPartialGoal[%d]: %w", operation, index, err)
 			}
 			packets = append(packets, goalPacket)
 		}

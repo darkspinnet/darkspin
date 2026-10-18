@@ -74,6 +74,17 @@ func (s *ReleaseSession) Rollback(reservation ReleaseReservation) bool {
 	return true
 }
 
+// IsCurrent prevents delayed release presentation from resetting a newer cast.
+func (s *ReleaseSession) IsCurrent(reservation ReleaseReservation) bool {
+	if s == nil || reservation.currentRevision == 0 {
+		return false
+	}
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.revision == reservation.currentRevision &&
+		s.end.Equal(reservation.currentEnd)
+}
+
 func (s *ReleaseSession) Reset() bool {
 	if s == nil {
 		return false

@@ -86,6 +86,8 @@ func projectEvenHeroAbilityRank(
 	definition sim.AbilityDefinition,
 ) sim.AbilityDefinition {
 	switch definition.Name {
+	case "LightningTempest_Support":
+		definition.ChainLightning.LeapRadius = definition.ChainLightning.UpgradedLeapRadius
 	case "PlasmaRandom":
 		definition.StatusDuration = 2 * time.Second
 	case "ClaymoreTrap":

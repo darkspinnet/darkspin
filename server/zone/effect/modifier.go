@@ -12,6 +12,7 @@ const (
 	modifierPoolCapacity     = 2048
 	nounModifierGeneration   = uint16(0xfffe)
 	nounAffixGenerationStart = nounModifierGeneration - game.MaxCampaignNPCAffixCount
+	nounSwiftGeneration      = nounAffixGenerationStart - 1
 )
 
 type modifierSlot struct {
@@ -51,7 +52,7 @@ func (p *ModifierPool) Allocate() (uint32, error) {
 	p.freeSlots = p.freeSlots[:last]
 	p.nextGeneration++
 	for p.nextGeneration == 0 ||
-		(p.nextGeneration >= nounAffixGenerationStart && p.nextGeneration <= nounModifierGeneration) {
+		(p.nextGeneration >= nounSwiftGeneration && p.nextGeneration <= nounModifierGeneration) {
 		p.nextGeneration++
 	}
 	p.slot[slot] = modifierSlot{
@@ -64,6 +65,12 @@ func (p *ModifierPool) Allocate() (uint32, error) {
 // constructed with an NPC noun rather than allocated by an ability runtime.
 func NounModifierInstanceID(objectID uint32) uint32 {
 	return uint32(nounModifierGeneration)<<16 | uint32(uint16(objectID))
+}
+
+// NounSwiftModifierInstanceID is separate from permanent class affixes and
+// pooled ability instances, and survives replay of the retained aura state.
+func NounSwiftModifierInstanceID(objectID uint32) uint32 {
+	return uint32(nounSwiftGeneration)<<16 | uint32(uint16(objectID))
 }
 
 // NounAffixModifierInstanceID gives each authored affix a distinct permanent

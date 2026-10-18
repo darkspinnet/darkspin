@@ -25,8 +25,7 @@ func Nouns(
 	if level == "" || difficulty == 0 {
 		return [6]uint32{}, errors.New("campaign preview: invalid selection")
 	}
-	if strings.EqualFold(level, game.InitialChainLevel) ||
-		strings.EqualFold(level, game.TutorialLevel) {
+	if strings.EqualFold(level, game.TutorialLevel) {
 		return HashNouns(initialNounNames), nil
 	}
 	if !strings.EqualFold(director.Level, level) {
@@ -34,13 +33,15 @@ func Nouns(
 			director.Level, level)
 	}
 	entries := make([]game.CampaignDirectorEntry, 0)
-	for _, pool := range director.Pools {
-		for _, entry := range pool.Entries {
-			if difficulty < entry.MinimumDifficulty || difficulty > entry.MaximumDifficulty {
-				continue
-			}
-			entries = append(entries, entry)
+	// Preview the same composed minion/special pools used by population.
+	// Unselected first-time entries and captain equivalents are not additional
+	// mission archetypes and must not displace the six selected enemy portraits.
+	for _, poolKind := range []string{"minion", "special"} {
+		poolEntries, err := director.EligibleEntries(poolKind, difficulty)
+		if err != nil {
+			return [6]uint32{}, fmt.Errorf("previewPool[%s]: %w", poolKind, err)
 		}
+		entries = append(entries, poolEntries...)
 	}
 	slices.SortFunc(entries, func(left game.CampaignDirectorEntry, right game.CampaignDirectorEntry) int {
 		return left.Ordinal - right.Ordinal

@@ -4,11 +4,47 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/darkspinnet/darkspin/server/blaze"
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/snapshot"
+	sharedudp "github.com/darkspinnet/darkspin/server/udp"
 )
+
+type snapshotTransportProvider struct {
+	server *sharedudp.SharedServer
+}
+
+func (e snapshotTransportProvider) SnapshotTransportDiagnostics(
+	remote string, generation uint64, now time.Time,
+) (snapshot.TransportDiagnosticsState, bool) {
+	if e.server == nil {
+		return snapshot.TransportDiagnosticsState{}, false
+	}
+	diagnostics, isFound := e.server.SnapshotDiagnostics(remote, generation, now)
+	if !isFound {
+		return snapshot.TransportDiagnosticsState{}, false
+	}
+	peer := diagnostics.Peer
+	return snapshot.TransportDiagnosticsState{
+		Remote: remote, PeerGeneration: peer.Generation,
+		IsConnected:             peer.IsConnected,
+		PendingDatagramCount:    peer.PendingDatagramCount,
+		OldestPendingDatagramMS: peer.OldestPendingDatagramAge.Milliseconds(),
+		FutureDatagramCount:     peer.FutureDatagramCount,
+		MissingDatagramCount:    peer.MissingDatagramCount,
+		PendingOrderCount:       peer.PendingOrderCount,
+		SplitAssemblyCount:      peer.SplitAssemblyCount, SplitByteCount: peer.SplitByteCount,
+		GameplayWorkerQueueDepth:  diagnostics.QueueDepth,
+		CurrentTraceID:            diagnostics.CurrentTraceID,
+		CurrentRequestID:          diagnostics.CurrentRequestID,
+		CurrentQueueDelayMS:       diagnostics.CurrentQueueDelay.Milliseconds(),
+		CurrentDispatchDurationMS: diagnostics.CurrentDispatchDuration.Milliseconds(),
+		LastDispatchDurationMS:    diagnostics.LastDispatchDuration.Milliseconds(),
+		LastFailure:               diagnostics.LastFailure,
+	}, true
+}
 
 type snapshotNotifier struct {
 	servers []*blaze.Server

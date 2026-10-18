@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	zoneunlock "github.com/darkspinnet/darkspin/server/zone/unlock"
 )
 
 const PlayerRole = zoneunlock.PlayerRole
-const playerOverdriveMaximumEnergy = float32(100)
+const playerOverdriveMaximumEnergy = float32(game.OverdriveMaximumEnergy)
 const playerFeatureUnlockPhase sim.Phase = "playerFeatureUnlock"
 
 type Run struct {

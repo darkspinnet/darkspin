@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/darkspinnet/darkspin/server/util"
 )
 
 type campaignDirectorEventKey struct {
@@ -22,15 +24,10 @@ type campaignDirectorRuntimeEvent struct {
 	event         CampaignDirectorEvent
 }
 
-type campaignDirectorListenerKey struct {
-	markerSetOrdinal int
-	eventName        string
-}
-
 type campaignDirectorNamedEventKey struct {
 	markerSetOrdinal int
 	sourceObjectID   uint32
-	eventName        string
+	eventHash        uint32
 }
 
 // CampaignDirectorPublication is one server-observed entry into an authored
@@ -38,6 +35,9 @@ type campaignDirectorNamedEventKey struct {
 // claiming that build 103 published the event locally; consumers still own
 // acceptance, spawn, gate, objective, or presentation policy.
 type CampaignDirectorPublication struct {
+	ActorObjectID    uint32
+	IsDwellComplete  bool
+	EventHash        uint32
 	MarkerSetOrdinal int
 	MarkerSetName    string
 	TriggerOrdinal   int
@@ -53,26 +53,31 @@ type CampaignDirectorPublication struct {
 // listener selected by a trigger's named event. It does not choose a noun,
 // budget, count, object ID, or packet policy.
 type CampaignDirectorListenerPublication struct {
-	Rotation         Vec3
-	MarkerSetOrdinal int
-	MarkerSetName    string
-	MarkerOrdinal    int
-	MarkerID         uint32
-	MarkerName       string
-	NounName         string
-	SpawnKind        uint32
-	PoolKind         string
-	IsSpawnKindKnown bool
-	Position         Vec3
-	EventOrdinal     int
-	CallbackName     string
+	EventHash          uint32
+	NativeCallbackHash uint32
+	NativeCallbackName string
+	LuaCallbackName    string
+	Rotation           Vec3
+	MarkerSetOrdinal   int
+	MarkerSetName      string
+	MarkerOrdinal      int
+	MarkerID           uint32
+	MarkerName         string
+	NounName           string
+	SpawnKind          uint32
+	PoolKind           string
+	IsSpawnKindKnown   bool
+	Position           Vec3
+	EventOrdinal       int
+	CallbackName       string
 }
 
 // CampaignDirectorNamedEventPublication is one server-authoritative named
-// event prepared for the authored listeners in its marker set. The encounter
+// event prepared for live listeners across the simulator. The encounter
 // that owns SourceObjectID decides when the event exists; the director session
-// only scopes listeners and makes preparation/acceptance transactional.
+// retains provenance and makes preparation/acceptance transactional.
 type CampaignDirectorNamedEventPublication struct {
+	EventHash        uint32
 	PublicationID    uint64
 	MarkerSetOrdinal int
 	MarkerSetName    string
@@ -91,9 +96,11 @@ type CampaignDirectorSnapshot struct {
 
 // CampaignDirectorSession owns movement-trigger state for one campaign match.
 type CampaignDirectorSession struct {
+	triggerStates           map[campaignDirectorEventKey]campaignTriggerState
 	mu                      sync.RWMutex
 	events                  []campaignDirectorRuntimeEvent
-	listenersByEvent        map[campaignDirectorListenerKey][]CampaignDirectorListenerPublication
+	listenersByEvent        map[uint32][]CampaignDirectorListenerPublication
+	listenerOwners          map[campaignDirectorListenerOwnerKey]struct{}
 	insideStates            map[campaignDirectorEventKey]bool
 	onceOnlyEventPolicies   map[campaignDirectorEventKey]bool
 	pendingPublications     map[campaignDirectorEventKey]CampaignDirectorPublication
@@ -110,54 +117,55 @@ func NewCampaignDirectorSession(director CampaignDirector) (*CampaignDirectorSes
 		return nil, errors.New("create campaign director: empty level")
 	}
 	session := &CampaignDirectorSession{
+		triggerStates:           make(map[campaignDirectorEventKey]campaignTriggerState),
 		insideStates:            make(map[campaignDirectorEventKey]bool),
 		onceOnlyEventPolicies:   make(map[campaignDirectorEventKey]bool),
 		pendingPublications:     make(map[campaignDirectorEventKey]CampaignDirectorPublication),
 		firedPublications:       make(map[campaignDirectorEventKey]CampaignDirectorPublication),
-		listenersByEvent:        make(map[campaignDirectorListenerKey][]CampaignDirectorListenerPublication),
+		listenersByEvent:        make(map[uint32][]CampaignDirectorListenerPublication),
+		listenerOwners:          make(map[campaignDirectorListenerOwnerKey]struct{}),
 		markerSetNamesByOrdinal: make(map[int]string),
 		pendingNamedEvents:      make(map[campaignDirectorNamedEventKey]CampaignDirectorNamedEventPublication),
 		nextNamedPublicationID:  1,
 	}
-	for _, markerSet := range director.MarkerSets {
+	markerSets := slices.Clone(director.MarkerSets)
+	slices.SortStableFunc(markerSets, func(a, b CampaignDirectorMarkerSet) int {
+		if a.Ordinal < b.Ordinal {
+			return -1
+		}
+		if a.Ordinal > b.Ordinal {
+			return 1
+		}
+		return 0
+	})
+	for _, markerSet := range markerSets {
 		if _, isFound := session.markerSetNamesByOrdinal[markerSet.Ordinal]; isFound {
 			return nil, fmt.Errorf("createMarkerSet[%d]: duplicate", markerSet.Ordinal)
 		}
 		session.markerSetNamesByOrdinal[markerSet.Ordinal] = markerSet.Name
-		for _, marker := range markerSet.Markers {
-			for _, event := range marker.Events {
-				if event.CallbackName == "" {
-					continue
-				}
-				eventKey := campaignDirectorEventName(event.EventName)
-				if eventKey == "" {
-					eventKey = campaignDirectorEventName(
-						CampaignDirectorCallbackEventName(
-							marker.MarkerID, event.CallbackName,
-						),
-					)
-				}
-				if eventKey == "" {
-					continue
-				}
-				listenerKey := campaignDirectorListenerKey{
-					markerSetOrdinal: markerSet.Ordinal, eventName: eventKey,
-				}
-				session.listenersByEvent[listenerKey] = append(session.listenersByEvent[listenerKey],
-					CampaignDirectorListenerPublication{
-						MarkerSetOrdinal: markerSet.Ordinal, MarkerSetName: markerSet.Name,
-						MarkerOrdinal: marker.Ordinal, MarkerID: marker.MarkerID,
-						MarkerName: marker.Name, NounName: marker.NounName,
-						SpawnKind: marker.SpawnKind, PoolKind: marker.PoolKind,
-						IsSpawnKindKnown: marker.IsSpawnKindKnown, Position: marker.Position,
-						Rotation:     marker.Rotation,
-						EventOrdinal: event.Ordinal, CallbackName: event.CallbackName,
-					})
-			}
-		}
+		// Selected placements instantiate server-owned listener components even
+		// when their scenery presentation remains client-owned. No unselected
+		// marker set contributes an owner.
+		session.instantiateMarkerSetListeners(markerSet)
 		for _, trigger := range markerSet.Triggers {
 			if !isFiniteCampaignPosition(trigger.Position) {
 				return nil, fmt.Errorf("createTriggerPosition[%d]: invalid", trigger.MarkerID)
+			}
+			if trigger.SpawnTrigger != nil && trigger.SpawnTrigger.TriggerVolume != nil {
+				volume := trigger.SpawnTrigger.TriggerVolume
+				if !isFiniteCampaignPosition(trigger.Rotation) ||
+					!isFiniteCampaignPosition(volume.Offset) ||
+					!isFiniteCampaignPosition(volume.BoxDimensions) ||
+					math.IsNaN(float64(volume.SphereRadius)) ||
+					math.IsInf(float64(volume.SphereRadius), 0) ||
+					(volume.Shape == uint32(TriggerSphere) && volume.SphereRadius <= 0) ||
+					(volume.Shape == uint32(TriggerBox) &&
+						(volume.BoxDimensions.X <= 0 || volume.BoxDimensions.Y <= 0 || volume.BoxDimensions.Z <= 0)) ||
+					math.IsNaN(float64(volume.TimeToActivate)) ||
+					math.IsInf(float64(volume.TimeToActivate), 0) || volume.TimeToActivate < 0 ||
+					float64(volume.TimeToActivate) >= float64(math.MaxInt64)/1e9 {
+					return nil, fmt.Errorf("createTriggerVolume[%d]: invalid", trigger.MarkerID)
+				}
 			}
 			for _, event := range trigger.Events {
 				if math.IsNaN(float64(event.TriggerRadius)) || math.IsInf(float64(event.TriggerRadius), 0) ||
@@ -180,6 +188,9 @@ func NewCampaignDirectorSession(director CampaignDirector) (*CampaignDirectorSes
 					event:         event,
 				})
 				session.onceOnlyEventPolicies[key] = event.IsTriggerOnceOnly
+				if trigger.SpawnTrigger != nil && trigger.SpawnTrigger.TriggerVolume != nil {
+					session.onceOnlyEventPolicies[key] = trigger.SpawnTrigger.TriggerVolume.IsTriggerOnceOnly
+				}
 			}
 		}
 	}
@@ -189,6 +200,16 @@ func NewCampaignDirectorSession(director CampaignDirector) (*CampaignDirectorSes
 // Advance evaluates one accepted authoritative movement segment. A repeatable
 // event fires only on entry; a once-only event cannot fire again after exit.
 func (s *CampaignDirectorSession) Advance(previous Vec3, current Vec3) ([]CampaignDirectorPublication, error) {
+	publications, err := s.advanceMovement(previous, current, false)
+	if err != nil {
+		return nil, fmt.Errorf("directorMovement: %w", err)
+	}
+	return publications, nil
+}
+
+func (s *CampaignDirectorSession) advanceMovement(
+	previous Vec3, current Vec3, isPartySample bool,
+) ([]CampaignDirectorPublication, error) {
 	if s == nil {
 		return nil, errors.New("advance campaign director: nil session")
 	}
@@ -199,6 +220,11 @@ func (s *CampaignDirectorSession) Advance(previous Vec3, current Vec3) ([]Campai
 	defer s.mu.Unlock()
 	publications := make([]CampaignDirectorPublication, 0)
 	for _, runtimeEvent := range s.events {
+		if isPartySample && runtimeEvent.trigger.SpawnTrigger != nil &&
+			runtimeEvent.trigger.SpawnTrigger.TriggerVolume != nil {
+			// Production spawn triggers require party and elapsed-time input.
+			continue
+		}
 		radius := runtimeEvent.event.TriggerRadius
 		isCurrentInside := campaignDistanceSquared(current, runtimeEvent.trigger.Position) <= radius*radius
 		wasInside := s.insideStates[runtimeEvent.key]
@@ -231,11 +257,9 @@ func (s *CampaignDirectorSession) Advance(previous Vec3, current Vec3) ([]Campai
 			EventOrdinal:     runtimeEvent.key.eventOrdinal,
 			EventName:        runtimeEvent.event.EventName,
 			CallbackName:     runtimeEvent.event.CallbackName,
+			EventHash:        campaignDirectorEventHash(runtimeEvent.event),
 			Listeners: append([]CampaignDirectorListenerPublication(nil),
-				s.listenersByEvent[campaignDirectorListenerKey{
-					markerSetOrdinal: runtimeEvent.key.markerSetOrdinal,
-					eventName:        campaignDirectorEventName(runtimeEvent.event.EventName),
-				}]...),
+				s.listenersByEvent[campaignDirectorEventHash(runtimeEvent.event)]...),
 		}
 		publications = append(publications, publication)
 		s.pendingPublications[runtimeEvent.key] = cloneCampaignDirectorPublication(publication)
@@ -290,6 +314,7 @@ func (s *CampaignDirectorSession) canAccept(
 	}
 	pendingPublication, isFound := s.pendingPublications[key]
 	if !isFound || pendingPublication.TriggerMarkerID != publication.TriggerMarkerID ||
+		pendingPublication.EventHash != publication.EventHash ||
 		pendingPublication.EventName != publication.EventName ||
 		pendingPublication.CallbackName != publication.CallbackName {
 		return errors.New("accept campaign director: unknown publication")
@@ -297,8 +322,8 @@ func (s *CampaignDirectorSession) canAccept(
 	return nil
 }
 
-// PrepareNamedEvent resolves one encounter-owned event to the authored
-// listeners in the same marker set. Repeating the same preparation before
+// PrepareNamedEvent resolves an encounter-owned event to live listeners under
+// the full simulator event hash. Repeating the same preparation before
 // acceptance returns the original publication and does not allocate a second
 // transaction.
 func (s *CampaignDirectorSession) PrepareNamedEvent(
@@ -307,9 +332,24 @@ func (s *CampaignDirectorSession) PrepareNamedEvent(
 	if s == nil {
 		return CampaignDirectorNamedEventPublication{}, errors.New("prepare named event: nil session")
 	}
-	eventKey := campaignDirectorEventName(eventName)
-	if sourceObjectID == 0 || eventKey == "" {
-		return CampaignDirectorNamedEventPublication{}, errors.New("prepare named event: invalid identity")
+	if strings.TrimSpace(eventName) == "" {
+		return CampaignDirectorNamedEventPublication{}, errors.New("prepare named event: empty name")
+	}
+	publication, err := s.PrepareNamedEventHash(markerSetOrdinal, sourceObjectID, util.HashID(eventName), eventName)
+	if err != nil {
+		return CampaignDirectorNamedEventPublication{}, fmt.Errorf("namedEventHash: %w", err)
+	}
+	return publication, nil
+}
+
+// PrepareNamedEventHash permits unnamed authored IDs as well as named events.
+// Dispatch takes a snapshot: callbacks may remove owners safely, and removal
+// affects subsequent publications rather than invalidating this iteration.
+func (s *CampaignDirectorSession) PrepareNamedEventHash(
+	markerSetOrdinal int, sourceObjectID, eventHash uint32, eventName string,
+) (CampaignDirectorNamedEventPublication, error) {
+	if s == nil || sourceObjectID == 0 {
+		return CampaignDirectorNamedEventPublication{}, errors.New("prepare named event: invalid source")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -318,20 +358,15 @@ func (s *CampaignDirectorSession) PrepareNamedEvent(
 		return CampaignDirectorNamedEventPublication{}, errors.New("prepare named event: marker set unavailable")
 	}
 	key := campaignDirectorNamedEventKey{
-		markerSetOrdinal: markerSetOrdinal, sourceObjectID: sourceObjectID, eventName: eventKey,
+		markerSetOrdinal: markerSetOrdinal, sourceObjectID: sourceObjectID, eventHash: eventHash,
 	}
 	pending, isPending := s.pendingNamedEvents[key]
 	if isPending {
 		return cloneCampaignDirectorNamedEventPublication(pending), nil
 	}
-	listeners := s.listenersByEvent[campaignDirectorListenerKey{
-		markerSetOrdinal: markerSetOrdinal, eventName: eventKey,
-	}]
-	if len(listeners) == 0 {
-		return CampaignDirectorNamedEventPublication{}, errors.New("prepare named event: listener unavailable")
-	}
+	listeners := s.listenersByEvent[eventHash]
 	publication := CampaignDirectorNamedEventPublication{
-		PublicationID: s.nextNamedPublicationID, MarkerSetOrdinal: markerSetOrdinal,
+		EventHash: eventHash, PublicationID: s.nextNamedPublicationID, MarkerSetOrdinal: markerSetOrdinal,
 		MarkerSetName: markerSetName, SourceObjectID: sourceObjectID, EventName: eventName,
 		Listeners: append([]CampaignDirectorListenerPublication(nil), listeners...),
 	}
@@ -355,7 +390,7 @@ func (s *CampaignDirectorSession) AcceptNamedEvent(
 	key := campaignDirectorNamedEventKey{
 		markerSetOrdinal: publication.MarkerSetOrdinal,
 		sourceObjectID:   publication.SourceObjectID,
-		eventName:        campaignDirectorEventName(publication.EventName),
+		eventHash:        publication.EventHash,
 	}
 	pending := s.pendingNamedEvents[key]
 	delete(s.pendingNamedEvents, key)
@@ -382,11 +417,12 @@ func (s *CampaignDirectorSession) canAcceptNamedEvent(
 	key := campaignDirectorNamedEventKey{
 		markerSetOrdinal: publication.MarkerSetOrdinal,
 		sourceObjectID:   publication.SourceObjectID,
-		eventName:        campaignDirectorEventName(publication.EventName),
+		eventHash:        publication.EventHash,
 	}
 	pending, isPending := s.pendingNamedEvents[key]
 	if !isPending || pending.PublicationID != publication.PublicationID ||
 		pending.MarkerSetName != publication.MarkerSetName ||
+		pending.EventName != publication.EventName ||
 		!slices.Equal(pending.Listeners, publication.Listeners) {
 		return errors.New("accept named event: unknown publication")
 	}

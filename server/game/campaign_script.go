@@ -55,6 +55,7 @@ const (
 type CampaignScriptRegistry struct {
 	mu                      sync.RWMutex
 	director                CampaignDirector
+	interactablesByMarkerID map[uint32]CampaignScriptObject
 	registrationsByObjectID map[uint32]CampaignScriptRegistration
 	useCountsByObjectID     map[uint32]int32
 }
@@ -69,14 +70,28 @@ func NewCampaignScriptRegistry(director CampaignDirector) (*CampaignScriptRegist
 			return nil, fmt.Errorf("createScript[%d]: invalid", index)
 		}
 	}
+	objects, err := director.obeliskObjects()
+	if err != nil {
+		return nil, fmt.Errorf("registryInteractables: %w", err)
+	}
+	interactablesByMarkerID := make(map[uint32]CampaignScriptObject, len(objects))
+	for _, object := range objects {
+		_, isDuplicate := interactablesByMarkerID[object.MarkerID]
+		if isDuplicate {
+			return nil, fmt.Errorf("registryInteractable[%d]: duplicate", object.MarkerID)
+		}
+		interactablesByMarkerID[object.MarkerID] = object
+	}
 	return &CampaignScriptRegistry{
 		director: director, registrationsByObjectID: make(map[uint32]CampaignScriptRegistration),
-		useCountsByObjectID: make(map[uint32]int32),
+		interactablesByMarkerID: interactablesByMarkerID,
+		useCountsByObjectID:     make(map[uint32]int32),
 	}, nil
 }
 
 // Register records an object only after its replication owner has allocated
-// the object ID. The callback must exist exactly on the authored marker.
+// the object ID. The callback must be an authored component ability or an
+// actual level-event binding; component abilities do not require listeners.
 func (r *CampaignScriptRegistry) Register(registration CampaignScriptRegistration) error {
 	if r == nil {
 		return errors.New("register campaign script: nil registry")
@@ -90,7 +105,7 @@ func (r *CampaignScriptRegistry) Register(registration CampaignScriptRegistratio
 		return fmt.Errorf("register campaign script: duplicate object %d", registration.ObjectID)
 	}
 	bindings := r.director.ScriptBindings(registration.MarkerID, registration.CallbackName)
-	if len(bindings) == 0 {
+	if len(bindings) == 0 && !r.isComponentRegistration(registration) {
 		return fmt.Errorf("register campaign script: marker callback missing %d/%s",
 			registration.MarkerID, registration.CallbackName)
 	}
@@ -254,7 +269,7 @@ func (r *CampaignScriptRegistry) resolve(
 		return CampaignScriptInvocation{}, false, nil
 	}
 	bindings := r.director.ScriptBindings(registration.MarkerID, registration.CallbackName)
-	if len(bindings) == 0 {
+	if len(bindings) == 0 && !r.isComponentRegistration(registration) {
 		return CampaignScriptInvocation{}, false,
 			fmt.Errorf("resolve campaign script: binding missing %d/%s",
 				registration.MarkerID, registration.CallbackName)

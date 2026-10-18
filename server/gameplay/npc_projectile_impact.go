@@ -22,6 +22,10 @@ func (e campaignNPCProjectileStep) produce() ([][]byte, error) {
 	if e.deadline == schedule.impactDeadline {
 		runtime.registry.mutex.RLock()
 		current, isFound := runtime.registry.sessions[schedule.sessionKey]
+		if schedule.retirement != nil && (schedule.retirement.isRetired || schedule.retirement.isRetirementPending) {
+			runtime.registry.mutex.RUnlock()
+			return nil, nil
+		}
 		// Released homing shots outlive the boss's current cast/phase.
 		isSourceActive := schedule.isReleasedFlightCurrent(current, isFound)
 		runtime.registry.mutex.RUnlock()
@@ -38,7 +42,7 @@ func (e campaignNPCProjectileStep) produce() ([][]byte, error) {
 				)
 			}
 			resumeDelay := min(remainingFlight, campaignProjectileMotionPollInterval)
-			err := scheduleNPCProducer(runtime.registry, schedule.packet, resumeDelay, e.produce)
+			err := scheduleNPCProducer(runtime.registry, schedule.packet, resumeDelay, e.produceTracked)
 			if err != nil {
 				return schedule.fail("enemyProjectileResume", err)
 			}
@@ -48,6 +52,10 @@ func (e campaignNPCProjectileStep) produce() ([][]byte, error) {
 	if e.deadline != schedule.impactDeadline {
 		runtime.registry.mutex.RLock()
 		current, isFound := runtime.registry.sessions[schedule.sessionKey]
+		if schedule.retirement != nil && (schedule.retirement.isRetired || schedule.retirement.isRetirementPending) {
+			runtime.registry.mutex.RUnlock()
+			return nil, nil
+		}
 		isCurrent := schedule.isReleasedFlightCurrent(current, isFound) &&
 			(e.deadline > schedule.plan.Profile.HitDelay ||
 				current.isCampaignNPCSourceGenerationActive(
@@ -71,6 +79,10 @@ func (e campaignNPCProjectileStep) produce() ([][]byte, error) {
 	}
 	runtime.registry.mutex.Lock()
 	current, isFound := runtime.registry.sessions[schedule.sessionKey]
+	if schedule.retirement != nil && (schedule.retirement.isRetired || schedule.retirement.isRetirementPending) {
+		runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
 	isSourceActive := schedule.isReleasedFlightCurrent(current, isFound)
 	if !isSourceActive {
 		runtime.registry.mutex.Unlock()
@@ -158,22 +170,30 @@ func (e campaignNPCProjectileStep) produce() ([][]byte, error) {
 			},
 		)
 	} else if isHomingActive {
-		currentSourcePosition, currentAimPosition := campaignNPCProjectileEndpoints(
-			schedule.source, currentTarget, schedule.geometry,
-			runtime.program.NounPhysics[schedule.source.Plan.NounName],
-		)
-		currentLaunchPosition := campaignProjectileLaunchPosition(
-			currentSourcePosition, currentAimPosition,
+		projectileLaunchPosition := campaignProjectileLaunchPosition(
+			schedule.projectileSourcePosition, schedule.projectileTargetPosition,
 			schedule.source.Plan.NPCProfile.FootprintRadius,
 		)
-		travelDistance := zoneability.Distance(
-			currentLaunchPosition, currentAimPosition,
-		)
-		collision = sim.ProjectileBoxCollision{
-			Position:       sim.Position(currentAimPosition),
-			TravelDistance: travelDistance,
-			IsDirectHit:    travelDistance < schedule.plan.Profile.ProjectileDistance,
+		projectileTargetPosition := schedule.projectileTargetPosition
+		if schedule.plan.Profile.AbilityName == "NocturnaSpecialHomer" {
+			// Arachno Striker's fear projectile follows its selected target.
+			// Preserve the authored aim offset while tracking the target's move;
+			// the original launch ray would incorrectly turn that move into a miss.
+			projectileTargetPosition = projectileTargetPosition.Add(
+				currentTarget.Position.Sub(schedule.target.Position),
+			)
 		}
+		// Other homing profiles retain their dodgeable launched trajectory.
+		collision, err = zonenpc.ResolveProjectileCollision(
+			projectileLaunchPosition, projectileTargetPosition,
+			currentTarget.Position,
+			zoneability.Distance(projectileLaunchPosition, projectileTargetPosition),
+			zonenpc.ProjectileGeometry{
+				ProjectileHalfExtent: schedule.geometry.ProjectileHalfExtent,
+				TargetMinimum:        schedule.geometry.TargetMinimum,
+				TargetMaximum:        schedule.geometry.TargetMaximum,
+			},
+		)
 	} else {
 		projectileSourcePosition := schedule.source.Plan.Position
 		projectileTargetPosition := schedule.target.Position

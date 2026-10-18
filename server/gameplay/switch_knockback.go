@@ -12,11 +12,38 @@ import (
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
 
-const heroSwapKnockbackRadius = float32(6)
+// DeployModifier's authored knockbackRadius is 3.
+const heroSwapKnockbackRadius = float32(3)
 const heroSwapKnockbackDistance = float32(4)
 const heroSwapKnockbackSpeed = float32(20)
 const heroSwapKnockbackOutro = time.Second
 const surefootedNPCAffixModifierName = "Surefooted_NPCAffixModifier"
+
+type gameplaySwitchLandingStep struct {
+	arrival gameplaySwitchArrivalStep
+}
+
+func (e gameplaySwitchLandingStep) produce() ([][]byte, error) {
+	return e.arrival.runtime.heroSwapArrivalKnockback(
+		e.arrival.packet, e.arrival.sessionKey, e.arrival.generation,
+		e.arrival.targetObjectID,
+		e.arrival.timestamp+uint64(heroArrivalKnockbackDelay/time.Millisecond),
+	)
+}
+
+func (e gameplaySwitchArrivalStep) scheduleLanding() {
+	landing := gameplaySwitchLandingStep{arrival: e}
+	if e.packet.ScheduleFunc == nil {
+		if e.runtime.logger != nil {
+			e.runtime.logger.Printf("RakNet hero swap landing schedule unavailable target=%d", e.targetObjectID)
+		}
+		return
+	}
+	err := e.packet.ScheduleFunc(heroArrivalKnockbackDelay, landing.produce)
+	if err != nil && e.runtime.logger != nil {
+		e.runtime.logger.Printf("RakNet hero swap landing schedule failed target=%d: %v", e.targetObjectID, err)
+	}
+}
 
 type gameplaySwitchKnockbackResetStep struct {
 	runtime    gameplaySwitchRuntime
@@ -80,22 +107,41 @@ func (r gameplaySwitchRuntime) heroSwapArrivalKnockback(
 			delta = game.Vec3{X: 1}
 			distance = 1
 		}
-		desired := target.Plan.Position.Add(
-			delta.Scale(heroSwapKnockbackDistance / distance),
-		)
-		destination, isDestinationFound, err :=
-			zoneaction.NPCDirectMovementDestination(
-				peerSession.zone.Navigation(), target.Plan.Position, desired,
-				max(target.Plan.NPCProfile.FootprintRadius, float32(0.25)),
+		var destination game.Vec3
+		isDestinationFound := false
+		knockbackDistances := [...]float32{heroSwapKnockbackDistance, 3, 2, 1}
+		for _, knockbackDistance := range knockbackDistances {
+			desired := target.Plan.Position.Add(
+				delta.Scale(knockbackDistance / distance),
 			)
-		if err != nil {
-			return packets, fmt.Errorf(
-				"swapKnockbackDestination[%d]: %w", target.Plan.ObjectID, err,
-			)
+			var err error
+			destination, isDestinationFound, err =
+				zoneaction.NPCDirectMovementDestination(
+					peerSession.zone.Navigation(), target.Plan.Position, desired,
+					max(target.NavigationRadius(), float32(0.25)), target.Navigation,
+				)
+			if err != nil {
+				return packets, fmt.Errorf(
+					"swapKnockbackDestination[%d]: %w", target.Plan.ObjectID, err,
+				)
+			}
+			if isDestinationFound {
+				break
+			}
 		}
 		if !isDestinationFound {
 			continue
 		}
+		interruptionPackets, err :=
+			r.registry.interruptCampaignNPCForForcedMovementLocked(
+				sessionKey, &peerSession, target.Plan.ObjectID,
+			)
+		if err != nil {
+			return packets, fmt.Errorf(
+				"swapKnockbackInterrupt[%d]: %w", target.Plan.ObjectID, err,
+			)
+		}
+		packets = append(packets, interruptionPackets...)
 		plan := zonenpc.AttackPlan{
 			SourceObjectID: targetObjectID,
 			TargetObjectID: target.Plan.ObjectID,

@@ -87,7 +87,7 @@ func (e heroRepulsionSchedule) hit() ([][]byte, error) {
 		destination, isDestinationFound, err :=
 			zoneaction.NPCDirectMovementDestination(
 				peerSession.zone.Navigation(), target.Plan.Position, desired,
-				max(target.Plan.NPCProfile.FootprintRadius, float32(0.25)),
+				max(target.NavigationRadius(), float32(0.25)), target.Navigation,
 			)
 		if err != nil {
 			e.runtime.registry.mutex.Unlock()
@@ -96,6 +96,15 @@ func (e heroRepulsionSchedule) hit() ([][]byte, error) {
 		if !isDestinationFound {
 			continue
 		}
+		interruptionPackets, err :=
+			e.runtime.registry.interruptCampaignNPCForForcedMovementLocked(
+				e.sessionKey, &peerSession, target.Plan.ObjectID,
+			)
+		if err != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("heroRepulsionInterrupt: %w", err)
+		}
+		packets = append(packets, interruptionPackets...)
 		plan := zonenpc.AttackPlan{
 			SourceObjectID: e.sourceObjectID,
 			TargetObjectID: target.Plan.ObjectID,

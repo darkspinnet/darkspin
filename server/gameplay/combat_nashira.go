@@ -4,11 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
-	"github.com/darkspinnet/darkspin/server/util"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 	zoneprojection "github.com/darkspinnet/darkspin/server/zone/projection"
@@ -19,8 +19,6 @@ const (
 	campaignNashiraSecondSplitHealthFraction = float32(0.33)
 	campaignNashiraMaximumCloneCount         = 2
 	campaignNashiraCloneOffset               = float32(3)
-	campaignNashiraMaximumFiendCount         = 12
-	campaignNashiraFiendCooldown             = 12 * time.Second
 	campaignNashiraPreSplitDuration          = 1700 * time.Millisecond
 )
 
@@ -140,11 +138,11 @@ func (r campaignNPCActionRuntime) produceNashiraPanic(
 	}
 	sourceFootprint := float32(0)
 	if zonenpc.IsCorruptorNoun(nashira.Plan.NounName) {
-		sourceFootprint = nashira.Plan.NPCProfile.FootprintRadius
+		sourceFootprint = nashira.Plan.ActorFootprintRadius()
 	}
 	isInRange := isTargetFound && target.Position.Sub(
 		nashira.Plan.Position,
-	).Length() <= profile.Range+sourceFootprint+target.FootprintRadius
+	).Length() <= profile.Range+sourceFootprint+target.ActorFootprintRadius
 	if !isNashiraFound || nashira.Plan.OwnerObjectID != 0 || !isProfileFound ||
 		!isReady || !isInRange {
 		r.registry.mutex.Unlock()
@@ -192,52 +190,49 @@ func (r campaignNPCActionRuntime) produceNashiraPanic(
 }
 
 func (r campaignNPCActionRuntime) planCampaignNashiraFiend(
-	s *gameplayPeerSession, ownerObjectID uint32, position game.Vec3,
-	timestamp uint64,
+	s *gameplayPeerSession, casterObjectID uint32, position game.Vec3,
 ) ([]zonenpc.SpawnPlan, [][]byte, error) {
-	if s == nil || s.zone == nil || s.zone.NPCs() == nil || ownerObjectID == 0 {
+	if s == nil || s.zone == nil || s.zone.NPCs() == nil || casterObjectID == 0 {
 		return nil, nil, errors.New("fiend spawn unavailable")
 	}
-	owner, isFound := s.zone.NPCs().NPC(ownerObjectID)
-	if !isFound || owner.IsDefeated || owner.Plan.OwnerObjectID != 0 ||
-		s.zone.NPCs().OwnedActiveCount(ownerObjectID) >= campaignNashiraMaximumFiendCount {
+	caster, isFound := s.zone.NPCs().NPC(casterObjectID)
+	if !isFound || caster.IsDefeated {
 		return nil, nil, nil
 	}
-	if s.campaignNashiraFiendReadiness[ownerObjectID] > timestamp {
-		return nil, nil, nil
+	ownerObjectID := caster.Plan.OwnerObjectID
+	if ownerObjectID == 0 {
+		ownerObjectID = casterObjectID
 	}
-	nounName, isNounFound := zonenpc.NashiraFiendNoun(owner.Plan.NounName)
+	nounName, isNounFound := zonenpc.NashiraFiendNoun(caster.Plan.NounName)
 	profile, isProfileFound := zonenpc.NashiraFiendProfile(nounName)
 	if !isNounFound || !isProfileFound {
 		return nil, nil, nil
 	}
+	director := s.zone.DirectorDefinition()
+	npcProfile, isNPCProfileFound := director.NPCProfilesByNoun[strings.ToLower(nounName)]
+	if !isNPCProfileFound || !npcProfile.IsKnown || !npcProfile.IsClassKnown ||
+		npcProfile.HitPoint <= 0 {
+		return nil, nil, fmt.Errorf("fiendDefinition: unavailable %q", nounName)
+	}
+	// ProjectDirector already applies run difficulty and party health scaling
+	// to the child profile, including its DifficultyDamageMultiplier. Retain
+	// that projection rather than inheriting any caster stats or loot metadata.
 	objectID, err := s.reserveCampaignObjectID()
 	if err != nil {
 		return nil, nil, fmt.Errorf("fiendReserve: %w", err)
 	}
-	hitPoint := r.program.NonPlayerHitPoint[util.HashID(
-		nounName[:len(nounName)-len(".Noun")],
-	)]
-	if hitPoint <= 0 {
-		hitPoint = 16
+	spawnEffect, err := npcraknet.PositionedEffect("shadow_lob_impact_spawn_creature", position)
+	if err != nil {
+		return nil, nil, fmt.Errorf("fiendEffect: %w", err)
 	}
-	footprintRadius, footprintErr := r.program.FootprintRadius(nounName)
-	if footprintErr != nil || footprintRadius <= 0 {
-		footprintRadius = 0.5
-	}
-	npcProfile := owner.Plan.NPCProfile
-	npcProfile.HitPoint = hitPoint
-	npcProfile.FootprintRadius = footprintRadius
-	npcProfile.GraphicsScale = 1
-	npcProfile.IsTargetable = true
 	position.X += 0.1
 	plan := zonenpc.SpawnPlan{
 		ObjectID: objectID, OwnerObjectID: ownerObjectID,
 		NounName: nounName, Position: position,
-		IsRewardSuppressed: true, NPCProfile: npcProfile,
+		IsEncounterAuxiliary: true, NPCProfile: npcProfile,
 		ActionProfile: profile, IsActionKnown: true,
 	}
-	targetObjectID := owner.TargetObjectID
+	targetObjectID := caster.TargetObjectID
 	if targetObjectID == 0 {
 		targetObjectID = s.deployedObjectID
 	}
@@ -248,9 +243,12 @@ func (r campaignNPCActionRuntime) planCampaignNashiraFiend(
 	if err != nil {
 		return nil, nil, fmt.Errorf("fiendMarshal: %w", err)
 	}
-	err = s.zone.NPCs().Add([]zonenpc.SpawnPlan{plan}, targetObjectID)
+	isAdded, err := s.zone.NPCs().AddNashiraFiend(plan, casterObjectID, targetObjectID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("fiendAdd: %w", err)
+	}
+	if !isAdded {
+		return nil, [][]byte{spawnEffect}, nil
 	}
 	err = s.zone.PublishNPCSpawn(zoneprojection.NPCSpawn{
 		Plans: []zonenpc.SpawnPlan{plan}, TargetObjectID: targetObjectID,
@@ -260,17 +258,6 @@ func (r campaignNPCActionRuntime) planCampaignNashiraFiend(
 		return nil, nil, fmt.Errorf(
 			"fiendPublish: %w", errors.Join(err, rollbackErr),
 		)
-	}
-	if s.campaignNashiraFiendReadiness == nil {
-		s.campaignNashiraFiendReadiness = make(map[uint32]uint64)
-	}
-	s.campaignNashiraFiendReadiness[ownerObjectID] = timestamp +
-		uint64(campaignNashiraFiendCooldown/time.Millisecond)
-	spawnEffect, err := npcraknet.PositionedEffect(
-		"shadow_lob_impact_spawn_creature", position,
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf("fiendEffect: %w", err)
 	}
 	return []zonenpc.SpawnPlan{plan}, append([][]byte{spawnEffect}, packets...), nil
 }
@@ -377,7 +364,10 @@ func campaignNashiraClonePlan(
 	plan.IsCaptain = false
 	plan.IsElite = false
 	plan.IsBoss = false
-	plan.IsRewardSuppressed = true
+	// Chunk 970 PCs 122/126 separately mark loot and XP ineligible.
+	plan.IsLootSuppressed = true
+	plan.IsExperienceSuppressed = true
+	plan.IsEncounterAuxiliary = true
 	plan.BossIdentity = zonenpc.BossIdentity{}
 	// ShadowBossDuplicate copies remaining health; SetIsDuplicate supplies
 	// the physical/energy vulnerability in the NPC damage path instead.

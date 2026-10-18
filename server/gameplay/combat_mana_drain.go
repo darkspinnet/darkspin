@@ -346,7 +346,7 @@ func (r campaignNPCActionRuntime) publishNPCSelfDeath(
 	defeatedSource.IsDefeated = true
 	defeatedSource.HitPoint = 0
 	lootPackets, err := r.spawnLoot(
-		packet, sessionKey, generation, defeatedSource, timestamp,
+		sessionKey, generation, defeatedSource, timestamp,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("npcSelfDeathLoot: %w", err)
@@ -448,12 +448,12 @@ func (r campaignNPCActionRuntime) produceManaDrain(
 	}
 	plan, err := zonenpc.PlanControlWithProfile(
 		enemy, target.ObjectID, target.Position, profile,
-		target.FootprintRadius,
+		target.ActorFootprintRadius,
 	)
 	if err != nil {
 		action, actionErr := campaignNPCActionWithProfile(
 			enemy.Plan, target.ObjectID, target.Position,
-			profile, target.FootprintRadius,
+			profile, target.ActorFootprintRadius,
 		)
 		if actionErr != nil {
 			return request.fail("enemyManaDrainPursuitAction", actionErr)

@@ -16,9 +16,11 @@ const (
 	RouteCount             = 7
 	TriggerRadius          = float32(2)
 	DefaultFootprintRadius = float32(0.8)
-	ContactRadius          = TriggerRadius + DefaultFootprintRadius
-	ThreatRadius           = float32(20)
-	ActivationRadius       = float32(12)
+	ContactRadius          = TriggerRadius - DefaultFootprintRadius
+	// nModifier_Security_Teleporter_Template.securityZoneRadius, shared by normal
+	// and boss security teleporters.
+	ThreatRadius     = float32(20)
+	ActivationRadius = float32(12)
 )
 
 var firstSource = game.Vec3{X: -141.3413, Y: 83.7317, Z: 0.0340}
@@ -137,6 +139,7 @@ func PlanFirstTeleport(
 
 func PlanTeleport(
 	previous, current game.Vec3, threats []Threat, routeIndex int,
+	footprints ...float32,
 ) (Teleport, bool, error) {
 	if !zonepopulation.IsFinitePosition(previous) ||
 		!zonepopulation.IsFinitePosition(current) {
@@ -146,14 +149,35 @@ func PlanTeleport(
 	if !isFound {
 		return Teleport{}, false, nil
 	}
-	contactDistance := segmentDistanceSquared(previous, current, teleport.Source)
-	if contactDistance > ContactRadius*ContactRadius {
+	footprint := DefaultFootprintRadius
+	if len(footprints) > 0 && footprints[0] > 0 {
+		footprint = footprints[0]
+	}
+	if !IsInsideTrigger(previous, current, teleport.Source, TriggerRadius, footprint) {
 		return Teleport{}, false, nil
 	}
 	if HasThreat(teleport, threats) {
 		return Teleport{}, false, nil
 	}
 	return teleport, true, nil
+}
+
+// IsInsideTrigger requires the hero's whole collision footprint to fit inside
+// the sphere. Sweeping the accepted movement catches entry between updates.
+func IsInsideTrigger(
+	previous, current, source game.Vec3, triggerRadius, footprintRadius float32,
+) bool {
+	if !zonepopulation.IsFinitePosition(previous) ||
+		!zonepopulation.IsFinitePosition(current) ||
+		!zonepopulation.IsFinitePosition(source) {
+		return false
+	}
+	if triggerRadius <= 0 {
+		triggerRadius = TriggerRadius
+	}
+	entryRadius := triggerRadius - max(float32(0), footprintRadius)
+	return entryRadius >= 0 &&
+		segmentDistanceSquared(previous, current, source) <= entryRadius*entryRadius
 }
 
 func PlanActivation(
@@ -179,7 +203,7 @@ func PlanActivation(
 
 func HasThreat(teleport Teleport, threats []Threat) bool {
 	for _, threat := range threats {
-		if threat.IsDefeated || threat.IsFixture {
+		if threat.IsDefeated || threat.IsFixture || threat.IsInvisible {
 			continue
 		}
 		deltaX := threat.Position.X - teleport.Source.X
@@ -193,25 +217,29 @@ func HasThreat(teleport Teleport, threats []Threat) bool {
 	return false
 }
 
+// PublishState owns only the steady loop. isPowerUp remains part of the caller
+// contract, but timed power choreography requires a separate scheduled owner.
 func PublishState(
 	objectID uint32, teleport Teleport, isActive bool, isPowerUp bool,
 ) (StatePublication, error) {
 	if objectID == 0 || !zonepopulation.IsFinitePosition(teleport.Source) {
 		return StatePublication{}, errors.New("security activation invalid")
 	}
-	effectName := effectPrefix(teleport) + "_inactive.ServerEventDef"
-	if isActive {
-		effectName = effectPrefix(teleport) + ".ServerEventDef"
+	// The packaged inactive effects still render a live portal loop. A locked
+	// route must remain dormant until its local encounter has been cleared.
+	if !isActive {
+		return StatePublication{
+			ObjectID: objectID, Position: teleport.Source,
+		}, nil
 	}
-	effectNames := make([]string, 0, 2)
-	if isPowerUp {
-		effectNames = append(
-			effectNames, effectPrefix(teleport)+"_powerup.ServerEventDef",
-		)
-	}
-	effectNames = append(effectNames, effectName)
+	effectName := effectPrefix(teleport) + ".ServerEventDef"
+	// Keep the persistent loop in one owned slot. Authored power transitions
+	// retain a separate effect index until their delayed replacement; emitting
+	// those without the delay/removal owner would create another untracked loop.
+	effectNames := []string{effectName}
 	return StatePublication{
-		ObjectID: objectID, Position: teleport.Source, EffectNames: effectNames,
+		ObjectID: objectID, Position: teleport.Source,
+		EffectNames: effectNames,
 	}, nil
 }
 

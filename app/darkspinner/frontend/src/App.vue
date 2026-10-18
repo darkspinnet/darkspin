@@ -1,7 +1,6 @@
 <script setup>
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Card } from '@/components/ui/card'
 import { DialogTitle } from '@/components/ui/dialog'
@@ -9,9 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Progress } from '@/components/ui/progress'
 import LauncherDialog from '@/components/LauncherDialog.vue'
+import ServerRulesConfiguration from '@/components/ServerRulesConfiguration.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { CancelPatch, CloseDetachedGameInstances, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetStatus, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, RefreshInstallationStatus, RefreshRemoteProfiles, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, RestartLauncher, ScanRemoteServers, SendReport, SetIdentity, SetServerConfiguration, StartDetachedGameInstance, UninstallDarkspinner } from '../wailsjs/go/main/App'
-import { BrowserOpenURL, ClipboardSetText, EventsOn, Quit } from '../wailsjs/runtime/runtime'
+import { BrowserOpenURL, CancelPatch, ClipboardSetText, CompactSnapshots, CloseDetachedGameInstances, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RefreshRemoteProfiles, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetIdentity, SetServerConfiguration, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
 
 const status = ref({ state:'starting', message:'Starting DarkSpinner', identity:'', auth:'Starting', server:'Starting', patch:'Pending', game:'Checking', avatar:'Preparing', profile:'Starting', content:'Pending', identityError:'', authError:'', serverError:'', patchError:'', gameError:'', avatarError:'', profileError:'', contentError:'', lastRun:'', launcherNotice:'', version:'', buildChannel:'production', progress:0, patchProgress:0, avatarProgress:0, contentProgress:0, isAuthenticated:false, isAuthOnline:false, isServerOnline:false, isPatchComplete:false, isPatchActive:false, isGameReady:false, isAvatarReady:false, isProfileStoreReady:false, isContentReady:false, isPlayReady:false, isCinematicSkipped:false, isLastRunFailure:false, isStartupBlocked:false })
 const retainedProfileName = localStorage.getItem('darkspinner.selectedProfile') || localStorage.getItem('darkspinner.identity') || ''
@@ -48,12 +47,18 @@ const isRemotePasswordRemembered = ref(true)
 const isRemoteRegistration = ref(false)
 const isRemoteBusy = ref(false)
 const remoteMessage = ref('Enter a server address or ask for LAN suggestions.')
-const serverConfiguration = ref({ port:42127, isMultiplayerEnabled:false, locale:'en-us', locales:[], snapshotMode:'off' })
+const serverConfiguration = ref({ port:42127, isMultiplayerEnabled:false, locale:'en-us', locales:[], snapshotMode:'auto', isBorderlessFullscreenEnabled:false })
 const configuredServerPort = ref(42127)
 const isConfiguredMultiplayerEnabled = ref(false)
 const configuredLocale = ref('en-us')
-const configuredSnapshotMode = ref('off')
+const configuredSnapshotMode = ref('auto')
+const isConfiguredBorderlessFullscreenEnabled = ref(false)
+const systemWineRunner = 'system'
+const wineRunnerConfiguration = ref({ isSupported:false, selectedPath:'', runners:[] })
+const configuredWineRunner = ref(systemWineRunner)
+const isWineRunnerBusy = ref(false)
 const isServerConfigurationBusy = ref(false)
+const isServerRulesOpen = ref(false)
 const serverConfigurationMessage = ref('')
 const integrationStatus = ref({ isStartMenuInstalled:false, isDesktopInstalled:false, isSteamLaunchInstalled:false, isManagementSupported:false, message:'' })
 const isManagementBusy = ref(false)
@@ -73,16 +78,17 @@ const isRemoteServerMenuOpen = ref(false)
 const isProfileListLoaded = ref(false)
 const isProfileCreationBusy = ref(false)
 const isReportBusy = ref(false)
+const isSnapshotCompactBusy = ref(false)
+const isSnapshotCompactComplete = ref(false)
 const isReportComposerOpen = ref(false)
 const reportTitle = ref('')
-const reportDescription = ref('')
 const reportResult = ref(null)
 const reportShareMessage = ref('')
 const myReportsURL = 'https://github.com/darkspinnet/darkspin/issues?q=is%3Aissue%20author%3A%40me%20sort%3Aupdated-desc'
 const reportIssueBody = computed(() => {
   const report = reportResult.value
   if (!report) return ''
-  return `## ${report.title}\n\n${report.description}\n\n### Darkspinner build\n${report.version || 'Unknown'}\n\n### Diagnostic archives\n${report.names.map(name => `- ${name}`).join('\n')}\n\nAttach all ${report.names.length} ZIP(s) from the bug folder before submitting this issue. Each ZIP is at most 25 MB.`
+  return `### What happened\n\n<!-- Describe what you were doing, what you expected, and what happened instead. -->\n\n### Darkspinner build\n${report.version || 'Unknown'}\n\n### Diagnostic archives\n${report.names.map(name => `- ${name}`).join('\n')}\n\nAttach all ${report.names.length} ZIP(s) from the bug folder before submitting this issue. Each ZIP is at most 25 MB.`
 })
 const reportIssueDraft = computed(() => {
   const report = reportResult.value
@@ -95,8 +101,21 @@ const reportIssueDraft = computed(() => {
   return { url:url.href, isLong }
 })
 const isChangelogOpen = ref(false)
+const isCreditsOpen = ref(false)
 const isChangelogLoading = ref(false)
 const changelogText = ref('')
+const changelogSegments = computed(() => {
+  const segments = []
+  const issueLinks = /\[#(\d+)\]\((https:\/\/github\.com\/darkspinnet\/darkspin\/issues\/\1)\)/g
+  let offset = 0
+  for (const match of changelogText.value.matchAll(issueLinks)) {
+    if (match.index > offset) segments.push({ text: changelogText.value.slice(offset, match.index) })
+    segments.push({ text: `#${match[1]}`, url: match[2] })
+    offset = match.index + match[0].length
+  }
+  if (offset < changelogText.value.length) segments.push({ text: changelogText.value.slice(offset) })
+  return segments
+})
 const changelogError = ref('')
 const retainedAutoPatch = localStorage.getItem('darkspinner.autoPatch')
 const isAutoPatchEnabled = ref(retainedAutoPatch === null || retainedAutoPatch === 'true')
@@ -157,7 +176,7 @@ const isCreatingProfile = computed(() =>
 const isFirstRunOnboarding = computed(() => isProfileListLoaded.value && profiles.value.length === 0)
 const isInstallationRequired = computed(() => isInstallationLoaded.value && !installation.value.isLocalReady)
 const isIntegrationSelected = computed(() => isStartMenuShortcut.value || isDesktopShortcut.value || isSteamLaunch.value)
-const isReportReady = computed(() => !!reportTitle.value.trim() && !!reportDescription.value.trim() && !isReportBusy.value)
+const isReportReady = computed(() => !!reportTitle.value.trim() && !isReportBusy.value)
 const isNewProfileNameValid = computed(() => {
   const name = newProfileName.value.trim()
   return /^[A-Za-z0-9]{1,20}$/.test(name)
@@ -564,9 +583,37 @@ async function refreshServerConfiguration() {
     isConfiguredMultiplayerEnabled.value = serverConfiguration.value.isMultiplayerEnabled
     configuredLocale.value = serverConfiguration.value.locale
     configuredSnapshotMode.value = serverConfiguration.value.snapshotMode
+    isConfiguredBorderlessFullscreenEnabled.value = serverConfiguration.value.isBorderlessFullscreenEnabled
   }
   catch (error) { serverConfigurationMessage.value = visibleLauncherText(error) }
+  await refreshWineRunnerConfiguration()
 }
+
+function applyWineRunnerConfiguration(configuration) {
+  wineRunnerConfiguration.value = configuration
+  configuredWineRunner.value = configuration.selectedPath || systemWineRunner
+}
+
+async function refreshWineRunnerConfiguration() {
+  try { applyWineRunnerConfiguration(await GetWineRunnerConfiguration()) }
+  catch (error) { serverConfigurationMessage.value = visibleLauncherText(error) }
+}
+
+async function scanWineRunners() {
+  if (isWineRunnerBusy.value) return
+  isWineRunnerBusy.value = true
+  try { applyWineRunnerConfiguration(await ScanWineRunners()) }
+  catch (error) { serverConfigurationMessage.value = visibleLauncherText(error) }
+  finally { isWineRunnerBusy.value = false }
+}
+
+function wineRunnerLabel(runner) {
+  const version = runner.version && runner.version !== runner.label ? ` (${runner.version})` : ''
+  const suffix = runner.isMissing ? ' — not installed' : ''
+  return `${runner.kind} — ${runner.label}${version}${suffix}`
+}
+
+const selectedWineRunner = computed(() => wineRunnerConfiguration.value.runners.find(runner => (runner.path || systemWineRunner) === configuredWineRunner.value))
 
 async function saveServerConfiguration() {
   if (!isServerPortValid.value || isServerConfigurationBusy.value) return
@@ -591,6 +638,15 @@ async function applyServerConfiguration() {
   isServerConfigurationBusy.value = true
   const isNetworkChanged = Number(configuredServerPort.value) !== Number(serverConfiguration.value.port) ||
     isConfiguredMultiplayerEnabled.value !== serverConfiguration.value.isMultiplayerEnabled
+  const selectedWineRunnerPath = configuredWineRunner.value === systemWineRunner ? '' : configuredWineRunner.value
+  if (wineRunnerConfiguration.value.isSupported && selectedWineRunnerPath !== wineRunnerConfiguration.value.selectedPath) {
+    try { applyWineRunnerConfiguration(await SetWineRunner(selectedWineRunnerPath)) }
+    catch (error) {
+      serverConfigurationMessage.value = visibleLauncherText(error)
+      isServerConfigurationBusy.value = false
+      return
+    }
+  }
   serverConfigurationMessage.value = isNetworkChanged
     ? 'Saving darkspin.toml and restarting the local server...'
     : 'Saving darkspin.toml...'
@@ -598,16 +654,21 @@ async function applyServerConfiguration() {
     serverConfiguration.value = await SetServerConfiguration(
       Number(configuredServerPort.value), isConfiguredMultiplayerEnabled.value,
       configuredLocale.value, configuredSnapshotMode.value,
+      isConfiguredBorderlessFullscreenEnabled.value,
     )
     configuredServerPort.value = serverConfiguration.value.port
     isConfiguredMultiplayerEnabled.value = serverConfiguration.value.isMultiplayerEnabled
     configuredLocale.value = serverConfiguration.value.locale
     configuredSnapshotMode.value = serverConfiguration.value.snapshotMode
+    isConfiguredBorderlessFullscreenEnabled.value = serverConfiguration.value.isBorderlessFullscreenEnabled
     if (isNetworkChanged) {
       const interfaceLabel = serverConfiguration.value.isMultiplayerEnabled ? 'all network interfaces' : 'loopback only'
       serverConfigurationMessage.value = `Local server restarted on ${interfaceLabel}, port ${serverConfiguration.value.port}. Language: ${serverConfiguration.value.locale}.`
     } else {
-      serverConfigurationMessage.value = `Configuration saved. Game language: ${serverConfiguration.value.locale}. Sync Snapshot: ${serverConfiguration.value.snapshotMode}.`
+      const wineRunnerSummary = wineRunnerConfiguration.value.isSupported
+        ? ` Wine runtime: ${selectedWineRunner.value?.label || 'System Wine'}.`
+        : ''
+      serverConfigurationMessage.value = `Configuration saved. Game language: ${serverConfiguration.value.locale}. Sync Snapshot: ${serverConfiguration.value.snapshotMode}.${wineRunnerSummary}`
     }
   }
   catch (error) { serverConfigurationMessage.value = visibleLauncherText(error) }
@@ -937,16 +998,14 @@ function closeReportComposer() {
 
 async function sendReport() {
   const title = reportTitle.value.trim()
-  const description = reportDescription.value.trim()
-  if (!title || !description || isReportBusy.value) return
+  if (!title || isReportBusy.value) return
   isReportBusy.value = true
   try {
-    const report = await SendReport(title, description)
-    reportResult.value = { ...report, title, description, version:status.value.version }
+    const report = await SendReport(title)
+    reportResult.value = { ...report, title, version:status.value.version }
     reportShareMessage.value = ''
     isReportComposerOpen.value = false
     reportTitle.value = ''
-    reportDescription.value = ''
   }
   catch (error) { recordError(error) }
   finally { isReportBusy.value = false }
@@ -955,6 +1014,19 @@ async function sendReport() {
 async function openReportFolder() {
   try { await OpenReportFolder() }
   catch (error) { recordError(error) }
+}
+
+async function compactSnapshots() {
+  if (isSnapshotCompactBusy.value) return
+  isSnapshotCompactBusy.value = true
+  isSnapshotCompactComplete.value = false
+  try {
+    const result = await CompactSnapshots()
+    isSnapshotCompactComplete.value = !result.warning
+    if (result.warning) console.warn('Snapshot compaction warning', result.warning)
+  }
+  catch (error) { console.warn('Snapshot compaction failed', error) }
+  finally { isSnapshotCompactBusy.value = false }
 }
 
 function openMyReports() {
@@ -967,8 +1039,8 @@ async function openReportIssue() {
   try {
     if (reportIssueDraft.value.isLong) {
       const isCopied = await ClipboardSetText(reportIssueBody.value)
-      if (!isCopied) throw new Error('Could not copy the report. The complete description is also in report.txt inside the ZIP.')
-      reportShareMessage.value = 'Full report copied. Paste it into the GitHub description, then attach every report ZIP.'
+      if (!isCopied) throw new Error('Could not copy the GitHub issue template.')
+      reportShareMessage.value = 'Issue template copied. Paste it into GitHub, add the bug details, then attach every report ZIP.'
     } else {
       reportShareMessage.value = 'GitHub opened with your report details. Open the bug folder and drag the ZIP into the issue before submitting.'
     }
@@ -983,7 +1055,7 @@ async function openChangelog() {
   isChangelogLoading.value = true
   changelogError.value = ''
   try {
-    const response = await fetch('/changelog.md', { cache:'no-store' })
+    const response = await fetch('./changelog.md', { cache:'no-store' })
     if (!response.ok) throw new Error(`Changelog unavailable (${response.status})`)
     changelogText.value = await response.text()
   }
@@ -1119,6 +1191,7 @@ async function stopActiveClient() {
 
 function showPage(page) {
   if (page === activePage.value) return
+  isServerRulesOpen.value = false
   suppressAutoLaunch()
   if (page === 'launcher') {
     void refreshDetachedInterruptedMission()
@@ -1210,7 +1283,8 @@ function recordError(error) {
 }
 async function copyLauncherFailure() {
   if (!launcherFailure.value) return
-  isLauncherFailureCopied.value = await ClipboardSetText(launcherFailure.value)
+  const errorReport = `Darkspinner ${status.value.version || 'unknown version'}\n${launcherFailure.value}`
+  isLauncherFailureCopied.value = await ClipboardSetText(errorReport)
 }
 </script>
 
@@ -1218,7 +1292,7 @@ async function copyLauncherFailure() {
   <main class="spinner-shell" :class="{ onboarding:isInstallationRequired, management:activePage === 'launcher' || activePage === 'remote' || activePage === 'config', 'remote-accent':activePage === 'remote', 'detached-accent':activePage === 'launcher' }" @pointerdown.capture="handleLauncherInteraction" @keydown.capture="handleLauncherInteraction">
     <Tabs :model-value="activePage" @update:model-value="showPage" class="workspace" :class="{ 'navigation-hidden':isInstallationRequired }">
       <div v-if="!isInstallationRequired" class="workspace-navigation">
-        <div class="workspace-wordmark" aria-label="Dark Spin"><span>DARK</span><strong>SPIN</strong></div>
+        <button class="workspace-wordmark" type="button" aria-label="Show Dark Spin credits" @click="isCreditsOpen = true"><span>DARK</span><strong>SPIN</strong></button>
         <TabsList aria-label="Launcher pages">
             <TabsTrigger value="play">Launch</TabsTrigger>
             <TabsTrigger v-if="isExperimentalLauncherFeatureVisible" value="remote">Remote</TabsTrigger>
@@ -1314,6 +1388,9 @@ async function copyLauncherFailure() {
     </section></TabsContent>
 
     <TabsContent v-else-if="activePage === 'config'" value="config" as-child><section class="management-frame config-frame">
+      <div class="config-toolbar">
+        <Button variant="outline" type="button" @click="isServerRulesOpen = true">SERVER RULES</Button>
+      </div>
       <div class="config-grid">
         <Card class="management-card config-port-card">
           <template v-if="isExperimentalLauncherFeatureVisible">
@@ -1337,6 +1414,19 @@ async function copyLauncherFailure() {
             <SelectItem value="auto">AUTO — capture and detect ordering anomalies</SelectItem>
           </SelectContent>
           </Select>
+          <template v-if="wineRunnerConfiguration.isSupported">
+            <div class="config-wine-runner-heading">
+              <label class="config-locale" for="config-wine-runner"><strong>WINE RUNTIME</strong></label>
+              <Button variant="outline" size="sm" type="button" :disabled="isWineRunnerBusy || isServerConfigurationBusy" @click="scanWineRunners">{{ isWineRunnerBusy ? 'SCANNING...' : 'RESCAN' }}</Button>
+            </div>
+            <Select v-model="configuredWineRunner" :disabled="isWineRunnerBusy || isServerConfigurationBusy">
+              <SelectTrigger id="config-wine-runner" class="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+              <SelectItem v-for="runner in wineRunnerConfiguration.runners" :key="runner.path || systemWineRunner" :value="runner.path || systemWineRunner" :title="runner.path">{{ wineRunnerLabel(runner) }}</SelectItem>
+            </SelectContent>
+            </Select>
+          </template>
+          <label v-if="status.buildChannel === 'development'" class="management-toggle config-borderless"><Checkbox v-model="isConfiguredBorderlessFullscreenEnabled" :disabled="isServerConfigurationBusy" /><span><strong>EXPERIMENTAL BORDERLESS FULLSCREEN</strong><small>Use Fang's borderless window and live-resolution compatibility hooks on the next game launch.</small></span></label>
           <p v-if="serverConfigurationMessage" class="management-message">{{ serverConfigurationMessage }}</p>
           <Button variant="default" class="config-save" type="button" :disabled="!isServerPortValid || !configuredLocale || isServerConfigurationBusy" @click="saveServerConfiguration">{{ isServerConfigurationBusy ? 'SAVING...' : 'SAVE CONFIGURATION' }}</Button>
         </Card>
@@ -1495,10 +1585,11 @@ async function copyLauncherFailure() {
       </div>
     </footer>
 
+    <ServerRulesConfiguration v-if="isServerRulesOpen && activePage === 'config'" :build-version="status.version" @interact="handleLauncherInteraction" @close="isServerRulesOpen = false" />
+
     <LauncherDialog @interact="handleLauncherInteraction" v-if="isCreatingProfile && activePage !== 'remote' && activePage !== 'config'" :is-dismissible="!isFirstRunOnboarding && !isProfileCreationBusy" @close="cancelProfileCreation">
       <div class="notice-card onboarding-card profile-creation-notice">
-        <div class="onboarding-index">01</div>
-        <p class="eyebrow">{{ isFirstRunOnboarding ? 'FIRST CONTACT' : 'LOCAL CROGENITOR REGISTRATION' }}</p>
+        <p v-if="isFirstRunOnboarding" class="eyebrow">FIRST CONTACT</p>
         <DialogTitle as="h2">{{ isFirstRunOnboarding ? 'CREATE YOUR CROGENITOR' : 'ADD A CROGENITOR' }}</DialogTitle>
         <p class="onboarding-copy">Choose the name used for this local Crogenitor.</p>
         <label>CROGENITOR PHOTO</label>
@@ -1600,16 +1691,17 @@ async function copyLauncherFailure() {
       <div class="notice-card report-composer">
         <div class="report-composer-header">
           <Button variant="ghost" class="report-manage-link report-open-folder" type="button" @click="openReportFolder">OPEN BUG FOLDER ↗</Button>
-          <a class="report-manage-link" :href="myReportsURL" @click.prevent="openMyReports">MANAGE MY REPORTS ↗</a>
+          <div class="report-header-actions">
+            <a class="report-manage-link" :href="myReportsURL" @click.prevent="openMyReports">MANAGE MY REPORTS ↗</a>
+            <Button variant="ghost" class="report-manage-link" type="button" :disabled="isSnapshotCompactBusy" :aria-busy="isSnapshotCompactBusy" :aria-label="isSnapshotCompactComplete ? 'Compact snapshots completed' : 'Compact snapshots'" @click="compactSnapshots">Compact snapshots <span v-if="isSnapshotCompactComplete" aria-hidden="true">✓</span></Button>
+          </div>
         </div>
         <p class="eyebrow">LOCAL DIAGNOSTIC REPORT</p>
-        <DialogTitle as="h2">WHAT HAPPENED?</DialogTitle>
-        <p>Give the report a short title, then describe exactly what you were doing, what you expected, and what happened instead. More detail makes the captured logs easier to understand.</p>
+        <DialogTitle as="h2">NAME THIS REPORT</DialogTitle>
+        <p>Give the report a short title. This title identifies the ZIP; add the full details when you create the GitHub issue.</p>
         <form class="report-form" @submit.prevent="sendReport">
           <label for="report-title-input">TITLE</label>
           <Input id="report-title-input" v-model="reportTitle" type="text" autocomplete="off" placeholder="Example: Revenant ability crashed the game" :disabled="isReportBusy" />
-          <label for="report-description-input">DESCRIPTION</label>
-          <Textarea id="report-description-input" v-model="reportDescription" placeholder="Describe everything that may be relevant. You can write as much as you need." :disabled="isReportBusy"></Textarea>
           <div class="notice-actions">
             <Button variant="outline" class="onboarding-cancel" type="button" :disabled="isReportBusy" @click="closeReportComposer">CANCEL</Button>
             <Button variant="default" class="report-folder-button" type="submit" :disabled="!isReportReady">{{ isReportBusy ? 'PREPARING...' : 'CREATE REPORT' }}</Button>
@@ -1647,13 +1739,28 @@ async function copyLauncherFailure() {
       </div>
     </LauncherDialog>
 
+    <LauncherDialog @interact="handleLauncherInteraction" v-if="isCreditsOpen" :is-dismissible="true" @close="isCreditsOpen = false">
+      <div class="notice-card credits-notice">
+        <p class="eyebrow">CREDITS</p>
+        <DialogTitle class="sr-only">Dark Spin credits</DialogTitle>
+        <p><a class="credits-inline-link" href="https://darkspin.net" @click.prevent="BrowserOpenURL('https://darkspin.net')">Darkspin</a> was written with help from ChatGPT 5.6 Sol and 6.0 Astra and the following testers:</p>
+        <div class="credits-list" aria-label="Contributors">
+          <Button variant="link" class="credits-link" type="button" @click="BrowserOpenURL('https://github.com/xackery/')">Xackery</Button>
+          <Button variant="link" class="credits-link" type="button" @click="BrowserOpenURL('https://github.com/Haminator69')">häminator</Button>
+        </div>
+        <div class="notice-actions">
+          <Button variant="outline" class="onboarding-cancel" type="button" @click="isCreditsOpen = false">CLOSE</Button>
+        </div>
+      </div>
+    </LauncherDialog>
+
     <LauncherDialog @interact="handleLauncherInteraction" v-if="isChangelogOpen" :is-dismissible="true" @close="isChangelogOpen = false">
       <div class="notice-card changelog-notice">
         <p class="eyebrow">RELEASE HISTORY</p>
         <DialogTitle as="h2">DARK SPIN {{ status.version }}</DialogTitle>
         <p v-if="isChangelogLoading" class="changelog-state">LOADING CHANGELOG...</p>
         <p v-else-if="changelogError" class="changelog-state changelog-error">{{ changelogError }}</p>
-        <pre v-else>{{ changelogText }}</pre>
+        <pre v-else><template v-for="(segment, index) in changelogSegments" :key="index"><a v-if="segment.url" :href="segment.url" @click.prevent="BrowserOpenURL(segment.url)">{{ segment.text }}</a><template v-else>{{ segment.text }}</template></template></pre>
         <div class="notice-actions">
           <Button variant="outline" class="onboarding-cancel" type="button" @click="isChangelogOpen = false">CLOSE</Button>
         </div>

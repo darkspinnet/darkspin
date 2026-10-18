@@ -36,7 +36,7 @@ func (s *Session) PublishInTargetRange(targets []Target) ([]Snapshot, error) {
 			if !target.IsAlive || target.Faction == npc.Faction {
 				continue
 			}
-			distance := s.aggroRadius + target.FootprintRadius +
+			distance := AcquisitionRange(npc.Plan, s.aggroRadius) + target.FootprintRadius +
 				max(float32(0), npc.Plan.NPCProfile.FootprintRadius)
 			if npc.Plan.Position.Sub(target.Position).Length() > distance {
 				continue

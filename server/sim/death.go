@@ -27,6 +27,7 @@ type DeathBehaviorInput struct {
 	IsPlayerControlled   bool
 	IsBoss               bool
 	IsRemnantRetained    bool
+	IsCollisionRetained  bool
 	CorpseFadeDelay      time.Duration
 	DeleteDelay          time.Duration
 	DamageProvenance     Provenance
@@ -95,11 +96,11 @@ func (b *DeathBehavior) emitEntry() error {
 		},
 		PhysicsStateIntent{
 			Role: b.input.TargetRole, CollisionKind: CollisionStatePhysics,
-			IsCollisionEnabled: false,
+			IsCollisionEnabled: b.input.IsCollisionRetained,
 		},
 		PhysicsStateIntent{
 			Role: b.input.TargetRole, CollisionKind: CollisionStateNavigation,
-			IsCollisionEnabled: false,
+			IsCollisionEnabled: b.input.IsCollisionRetained,
 		},
 	}
 	if b.input.GraphicsState != 0 {
@@ -237,6 +238,24 @@ func (b *DeathBehavior) markForDeletion() error {
 	b.isMarkedDelete = true
 	b.isActive = false
 	return nil
+}
+
+// ResetTimer implements BeingRepairedModifier's SetDeathTimer while the
+// corpse is still in its revival window.
+func (e *DeathBehavior) ResetTimer(delay time.Duration) (bool, error) {
+	if e == nil || e.simulator == nil || delay <= 0 {
+		return false, errors.New("invalid death timer")
+	}
+	if !e.isActive || e.isMarkedDelete || e.isCorpseFading {
+		return false, nil
+	}
+	e.simulator.Cancel(e.pendingTask)
+	e.pendingTask = 0
+	err := e.schedule(delay, e.finishRevivalWindow)
+	if err != nil {
+		return false, fmt.Errorf("timerSchedule: %w", err)
+	}
+	return true, nil
 }
 
 // Revive cancels pending deletion and emits Behavior_Death cleanup. It returns

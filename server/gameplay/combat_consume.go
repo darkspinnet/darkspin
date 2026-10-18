@@ -99,6 +99,18 @@ func (e campaignConsumeSchedule) approach() ([][]byte, error) {
 	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
+	if step.IsBlocked {
+		e.releaseClaim()
+		packets, stopErr := npcraknet.StopAtPose(e.sourceObjectID, step.Position, source.Facing)
+		if stopErr != nil {
+			return e.fail("consumeBlockedStop", stopErr)
+		}
+		nextPackets, nextErr := e.next()
+		if nextErr != nil {
+			return nil, fmt.Errorf("consumeBlockedNext: %w", nextErr)
+		}
+		return append(packets, nextPackets...), nil
+	}
 	if step.IsInRange {
 		positionPacket, marshalErr := npcraknet.Position(
 			e.sourceObjectID, step.Position,

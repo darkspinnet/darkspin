@@ -16,8 +16,7 @@ func Follow(plans []zonecompanion.Follow) ([][]byte, error) {
 			current.DesiredStopDistance <= 0 {
 			return nil, fmt.Errorf("follow[%d]: invalid", index)
 		}
-		// TravelDuration and Revision belong to scheduled server arrival. The
-		// Healing Sprite commits its position on its tick and has no arrival job.
+		// TravelDuration and Revision belong to scheduled server arrival.
 		facingX := current.Goal.X - current.Position.X
 		facingY := current.Goal.Y - current.Position.Y
 		facingZ := current.Goal.Z - current.Position.Z
@@ -64,4 +63,27 @@ func Follow(plans []zonecompanion.Follow) ([][]byte, error) {
 		packets = append(packets, movePacket, correctionPacket)
 	}
 	return packets, nil
+}
+
+// FollowArrival fixes the final authoritative pose before retiring the goal.
+func FollowArrival(plan zonecompanion.Follow) ([][]byte, error) {
+	if plan.ObjectID == 0 || plan.Revision == 0 {
+		return nil, errors.New("companion follow arrival invalid")
+	}
+	position, err := raknet.MarshalApplication(raknet.ObjectUpdateMessage{
+		ObjectID: plan.ObjectID, PositionX: plan.Destination.X,
+		PositionY: plan.Destination.Y, PositionZ: plan.Destination.Z,
+		IsVisible: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("arrivalPosition: %w", err)
+	}
+	stop, err := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
+		ObjectID: plan.ObjectID, GoalFlags: 0x20,
+		GoalPosition: raknet.Vector3(plan.Destination),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("arrivalStop: %w", err)
+	}
+	return [][]byte{position, stop}, nil
 }

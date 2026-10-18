@@ -18,10 +18,13 @@ import (
 )
 
 type heroHealingTicksRun struct {
-	mutex      sync.Mutex
-	cancel     raknet.CancelSchedule
-	effectPool *attachedEffectPool
-	effects    []fieldMedicEffectLease
+	mutex          sync.Mutex
+	cancel         raknet.CancelSchedule
+	effectPool     *attachedEffectPool
+	effects        []fieldMedicEffectLease
+	isChanneled    bool
+	sourceObjectID uint32
+	releasePacket  []byte
 }
 
 type fieldMedicEffectLease struct {
@@ -191,13 +194,24 @@ func (e heroHealingTicksSchedule) tick(
 			return e.stopPackets(cancel, deadline), nil
 		}
 	}
+	if e.definition.Name == "FieldMedicSupport" &&
+		(!isActivePartyRecipient(targetSession, peerSession) ||
+			targetSession.generation != e.target.generation ||
+			(!e.target.isCompanion &&
+				(targetSession.deployedObjectID != e.target.objectID ||
+					targetSession.deployedCreatureIndex != e.target.creatureIndex))) {
+		cancel := e.stopLocked(peerSession)
+		e.runtime.registry.mutex.Unlock()
+		return e.stopPackets(cancel, deadline), nil
+	}
 	hitPointBefore := float32(0)
 	maximumHitPoint := float32(0)
 	healingTargetProfile := game.HealingTargetProfile{}
 	if e.target.isCompanion {
 		companion, isCompanionFound :=
 			targetSession.zone.Companion().Snapshot(e.target.objectID)
-		if !isCompanionFound || !companion.IsTargetable || companion.HitPoint <= 0 {
+		if !isCompanionFound || !isPartyCompanionOwner(companion, targetSession) ||
+			!companion.IsTargetable || companion.HitPoint <= 0 {
 			cancel := e.stopLocked(peerSession)
 			e.runtime.registry.mutex.Unlock()
 			return e.stopPackets(cancel, deadline), nil
@@ -268,7 +282,7 @@ func (e heroHealingTicksSchedule) tick(
 	} else {
 		peerSession = targetSession
 	}
-	if isFinal {
+	if isFinal && !e.run.isChanneled {
 		peerSession.heroHealingTicks = nil
 		e.run.cancel = nil
 	}
@@ -292,6 +306,18 @@ func (e heroHealingTicksSchedule) tick(
 		packets = append(packets, effectPacket)
 	}
 	if isFirst && e.definition.Name == "Sporogenesis" {
+		// Abilities/0x9E4F00F1.lua notifies the caster's Shroom_Cloud
+		// once before applying SporogenesisHot. Its five healing ticks do
+		// not replay the activation effect or animation.
+		assetID := util.HashID(e.definition.HealEffectName)
+		objectID := e.sourceObjectID
+		cloudPacket, err := raknet.MarshalApplication(raknet.ServerEventContractMessage{
+			Asset: &assetID, ObjectID: &objectID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("sporogenesisCloud: %w", err)
+		}
+		packets = append(packets, cloudPacket)
 		purgePackets, err := e.runtime.purgeHeroDebuffs(
 			e.sessionKey, e.generation, e.sourceObjectID,
 		)
@@ -303,8 +329,18 @@ func (e heroHealingTicksSchedule) tick(
 	if healedAmount <= 0 {
 		return packets, nil
 	}
+	healingDefinition := e.definition
+	if healingDefinition.Name == "Sporogenesis" {
+		healingDefinition.HealEffectName = ""
+	}
+	if healingDefinition.Name == "FieldMedicSupport" {
+		// Reconstruct's target effect is a looping attached effect owned by the
+		// run. Re-emitting it as a positioned effect on every tick creates
+		// untracked visual and audio loops that cannot be stopped at release.
+		healingDefinition.HealEffectName = ""
+	}
 	healingPackets, err := abilityraknet.MarshalTreeOfLifeHealing(
-		e.definition, e.position,
+		healingDefinition, e.position,
 		[]abilityraknet.Healing{{
 			SourceObjectID: e.sourceObjectID, ObjectID: e.target.objectID,
 			HitPoint: hitPoint, Amount: healedAmount,
@@ -378,10 +414,17 @@ func (e heroHealingTicksSchedule) resourcePacket() ([]byte, error) {
 }
 
 func (e heroHealingTicksSchedule) release() ([][]byte, error) {
-	e.runtime.registry.mutex.RLock()
+	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation
-	e.runtime.registry.mutex.RUnlock()
+	if e.run.isChanneled {
+		isCurrent = e.isCurrent(peerSession, isFound)
+		if isCurrent {
+			peerSession.heroHealingTicks = nil
+			e.runtime.registry.sessions[e.sessionKey] = peerSession
+		}
+	}
+	e.runtime.registry.mutex.Unlock()
 	if !isCurrent {
 		return nil, nil
 	}
@@ -448,7 +491,13 @@ func (r campaignAbilityCommandRuntime) handleHeroHealingTicks(
 		)
 		targetObjectID = target.objectID
 	}
-	projected, err := zoneability.ProjectTiming(creature, definition)
+	var projected sim.AbilityDefinition
+	var err error
+	if definition.Name == "FieldMedicSupport" {
+		projected, err = zoneability.ProjectHealingChannelTiming(creature, definition)
+	} else {
+		projected, err = zoneability.ProjectTiming(creature, definition)
+	}
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("healingTicksTiming: %w", err)
@@ -479,13 +528,17 @@ func (r campaignAbilityCommandRuntime) handleHeroHealingTicks(
 	}
 	remainingManaPoint := peerSession.deployedManaPoint() - manaCost
 	previousManaPoint := peerSession.deployedManaPoint()
+	channelDuration := time.Duration(0)
+	if isFieldMedicSupport {
+		channelDuration = projected.Duration
+	}
 	start, err := abilityraknet.StartAreaBasic(abilityraknet.AreaBasicStartRequest{
 		SyncStamp: req.command.Common.Unknown[0], SourceID: req.command.Common.ObjectID,
 		AbilityID: activeAbilityID, AbilityIndex: req.command.Ability.Index,
 		SourceTime: req.packet.SourceTime, AnimationName: projected.AnimationName,
 		MuzzleEffectName: projected.MuzzleEffectName,
 		HitDelay:         projected.HitDelay, ReleaseDelay: projected.ReleaseDelay,
-		Cooldown: projected.Cooldown,
+		Cooldown: projected.Cooldown, ChannelDuration: channelDuration,
 	})
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -526,7 +579,10 @@ func (r campaignAbilityCommandRuntime) handleHeroHealingTicks(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("healingTicksCommit: %w", err)
 	}
-	run := &heroHealingTicksRun{}
+	run := &heroHealingTicksRun{
+		isChanneled: isFieldMedicSupport, sourceObjectID: req.command.Common.ObjectID,
+		releasePacket: start.Release,
+	}
 	startPresentation := make([][]byte, 0, 2)
 	if isFieldMedicSupport {
 		effectSlot, isEffectAllocated := r.effectPool.Allocate(target.objectID)

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	_ "embed"
@@ -86,71 +85,10 @@ func isGameIntegrityVerificationDue(configPath string, now time.Time) (bool, err
 }
 
 func recordGameIntegrityVerification(configPath string, verifiedAt time.Time) error {
-	contents, err := os.ReadFile(configPath)
-	if err != nil {
-		return fmt.Errorf("scheduleRead: %w", err)
-	}
-	lineEnding := "\n"
-	if bytes.Contains(contents, []byte("\r\n")) {
-		lineEnding = "\r\n"
-	}
-	lines := strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n")
-	sectionStart := -1
-	sectionEnd := len(lines)
-	keyIndex := -1
-	for index, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-			if sectionStart >= 0 {
-				sectionEnd = index
-				break
-			}
-			if strings.EqualFold(trimmed, "[launcher]") {
-				sectionStart = index
-			}
-			continue
-		}
-		if sectionStart >= 0 && strings.HasPrefix(strings.ToLower(trimmed), "last_integrity_verification_at") {
-			keyIndex = index
-		}
-	}
 	timestampLine := `last_integrity_verification_at = "` + verifiedAt.UTC().Format(time.RFC3339) + `"`
-	switch {
-	case keyIndex >= 0:
-		lines[keyIndex] = timestampLine
-	case sectionStart >= 0:
-		lines = append(lines[:sectionEnd], append([]string{timestampLine}, lines[sectionEnd:]...)...)
-	default:
-		for len(lines) > 0 && lines[len(lines)-1] == "" {
-			lines = lines[:len(lines)-1]
-		}
-		lines = append(lines, "", "[launcher]", timestampLine, "")
-	}
-	updated := []byte(strings.Join(lines, lineEnding))
-	directory := filepath.Dir(configPath)
-	r, err := os.CreateTemp(directory, ".darkspin-*.toml")
+	err := writeLauncherConfigLine(configPath, "last_integrity_verification_at", timestampLine)
 	if err != nil {
-		return fmt.Errorf("scheduleTemp: %w", err)
-	}
-	tempPath := r.Name()
-	defer os.Remove(tempPath)
-	_, err = r.Write(updated)
-	if err != nil {
-		_ = r.Close()
 		return fmt.Errorf("scheduleWrite: %w", err)
-	}
-	err = r.Sync()
-	if err != nil {
-		_ = r.Close()
-		return fmt.Errorf("scheduleSync: %w", err)
-	}
-	err = r.Close()
-	if err != nil {
-		return fmt.Errorf("scheduleClose: %w", err)
-	}
-	err = os.Rename(tempPath, configPath)
-	if err != nil {
-		return fmt.Errorf("scheduleReplace: %w", err)
 	}
 	return nil
 }

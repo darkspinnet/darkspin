@@ -9,6 +9,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
+	"github.com/darkspinnet/darkspin/server/zone"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
 	zonecompanion "github.com/darkspinnet/darkspin/server/zone/companion"
@@ -24,9 +25,13 @@ type fireTempestPetAttackStep struct {
 	generation         uint64
 	sourceTime         uint64
 	ownerRun           *fireTempestActiveRun
+	zone               *zone.Zone
+	attackRevision     uint64
+	movementRevision   uint64
 	plan               zonecompanion.Attack
 	projectileObjectID uint32
 	damage             float32
+	launchDeadline     time.Duration
 	impactDeadline     time.Duration
 	repeatDeadline     time.Duration
 	launchPosition     game.Vec3
@@ -47,6 +52,9 @@ func (r campaignDamageRuntime) startFireTempestPetAttack(
 	ownerRun := peerSession.fireTempestActive
 	isCurrent := isFound && peerSession.generation == generation && ownerRun != nil &&
 		ownerRun.attack == nil && peerSession.zone != nil &&
+		ownerRun.generation == generation &&
+		peerSession.deployedObjectID == ownerRun.ownerObjectID &&
+		peerSession.deployedHitPoint() > 0 &&
 		peerSession.zone.Companion() != nil && peerSession.zone.NPCs() != nil
 	if !isCurrent {
 		r.registry.mutex.Unlock()
@@ -65,6 +73,16 @@ func (r campaignDamageRuntime) startFireTempestPetAttack(
 		return nil, fmt.Errorf("fireTempestPetReserve: %w", err)
 	}
 	if !isPlanFound {
+		r.registry.mutex.Unlock()
+		return nil, nil
+	}
+	pet, isPetFound := peerSession.zone.Companion().Snapshot(plan.ObjectID)
+	if !isPetFound || pet.HitPoint <= 0 ||
+		pet.UserID != peerSession.binding.UserID ||
+		pet.PeerGeneration != generation ||
+		pet.OwnerObjectID != ownerRun.ownerObjectID ||
+		peerSession.deployedObjectID != ownerRun.ownerObjectID {
+		peerSession.zone.Companion().ReleaseAttack(plan.ObjectID, plan.TargetObjectID)
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
@@ -147,13 +165,20 @@ func (r campaignDamageRuntime) startFireTempestPetAttack(
 	}
 	ownerRun.attack = projectileRun
 	ownerRun.attackTargetObjectID = plan.TargetObjectID
+	ownerRun.attackRevision++
+	ownerRun.isAttackLaunched = false
+	ownerRun.isAttackResumeNeeded = false
+	attackRevision := ownerRun.attackRevision
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
 
 	step := fireTempestPetAttackStep{
 		runtime: r, packet: packet, sessionKey: sessionKey, generation: generation,
 		sourceTime: sourceTime, ownerRun: ownerRun, plan: plan,
+		zone: peerSession.zone, attackRevision: attackRevision,
+		movementRevision:   pet.FollowRevision,
 		projectileObjectID: projectileObjectID, damage: damage,
+		launchDeadline: ability.HitDelay,
 		impactDeadline: impactDeadline, launchPosition: launchPosition,
 		repeatDeadline: repeatDeadline,
 		targetPosition: targetPosition, travelDistance: distance,
@@ -175,7 +200,19 @@ func (r campaignDamageRuntime) startFireTempestPetAttack(
 		step.fail(err)
 		return nil, fmt.Errorf("fireTempestPetSchedule: %w", err)
 	}
-	projectileRun.SetCancel(cancel)
+	r.registry.mutex.Lock()
+	latest, isLatestFound := r.registry.sessions[sessionKey]
+	isAttackCurrent := step.isCurrent(latest, isLatestFound)
+	if isAttackCurrent {
+		projectileRun.SetCancel(cancel)
+	}
+	r.registry.mutex.Unlock()
+	if !isAttackCurrent {
+		if cancel != nil {
+			cancel()
+		}
+		return nil, nil
+	}
 	r.logger.Printf(
 		"RakNet projectile trajectory launched kind=fire-tempest-pet projectile=%d source=%d target=%d ability=%q origin=(%.3f,%.3f,%.3f) aim=(%.3f,%.3f,%.3f) travel=%.3f delay_ms=%d",
 		projectileObjectID, plan.ObjectID, plan.TargetObjectID, ability.Name,
@@ -188,20 +225,55 @@ func (r campaignDamageRuntime) startFireTempestPetAttack(
 
 func (e fireTempestPetAttackStep) isCurrent(peerSession gameplayPeerSession, isFound bool) bool {
 	return isFound && peerSession.generation == e.generation &&
-		peerSession.fireTempestActive == e.ownerRun && e.ownerRun.attack == e.run
+		peerSession.fireTempestActive == e.ownerRun && e.ownerRun.attack == e.run &&
+		e.ownerRun.attackRevision == e.attackRevision
 }
 
 func (e fireTempestPetAttackStep) launch() ([][]byte, error) {
-	e.runtime.registry.mutex.RLock()
+	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := e.isCurrent(peerSession, isFound)
-	e.runtime.registry.mutex.RUnlock()
 	if !isCurrent {
+		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	if e.ownerRun.isAttackLaunched {
+		e.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	isPetCurrent := peerSession.zone == e.zone && e.zone != nil &&
+		e.zone.Companion() != nil &&
+		peerSession.deployedObjectID == e.ownerRun.ownerObjectID &&
+		peerSession.deployedHitPoint() > 0 &&
+		e.ownerRun.petObjectID == e.plan.ObjectID
+	if isPetCurrent {
+		pet, isPetFound := e.zone.Companion().Snapshot(e.plan.ObjectID)
+		isPetCurrent = isPetFound && pet.HitPoint > 0 &&
+			pet.UserID == peerSession.binding.UserID &&
+			pet.PeerGeneration == e.generation &&
+			pet.OwnerObjectID == e.ownerRun.ownerObjectID &&
+			pet.FollowRevision == e.movementRevision &&
+			pet.TargetObjectID == e.plan.TargetObjectID && pet.Position == e.plan.Position
+	}
+	if !isPetCurrent {
+		e.ownerRun.attack = nil
+		e.ownerRun.attackTargetObjectID = 0
+		e.ownerRun.isAttackResumeNeeded = true
+		if e.zone != nil && e.zone.Companion() != nil {
+			e.zone.Companion().ReleaseAttack(e.plan.ObjectID, e.plan.TargetObjectID)
+		}
+		e.run.Stop()
+		e.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	// Serialize launch with teleport invalidation and pose mutation.
 	packets, err := e.run.Advance(
-		context.Background(), e.runtime.npc.program.FireTempestPetBasic.HitDelay,
+		context.Background(), e.launchDeadline,
 	)
+	if err == nil {
+		e.ownerRun.isAttackLaunched = true
+	}
+	e.runtime.registry.mutex.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("fireTempestPetLaunch: %w", err)
 	}
@@ -211,9 +283,20 @@ func (e fireTempestPetAttackStep) launch() ([][]byte, error) {
 func (e fireTempestPetAttackStep) impact() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := e.isCurrent(peerSession, isFound) && peerSession.zone != nil
+	isCurrent := e.isCurrent(peerSession, isFound) && peerSession.zone != nil &&
+		e.ownerRun.isAttackLaunched
 	if !isCurrent {
 		e.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	remaining := e.run.RemainingFlightDelay(e.runtime.npc.now())
+	if remaining > abilityraknet.ProjectileCollisionTick {
+		e.runtime.registry.mutex.Unlock()
+		err := scheduleNPCProducer(e.runtime.registry, e.packet,
+			min(remaining, campaignProjectileMotionPollInterval), e.impact)
+		if err != nil {
+			return nil, fmt.Errorf("tempestSlowResume: %w", err)
+		}
 		return nil, nil
 	}
 	target, isTargetFound := peerSession.zone.NPCs().NPC(e.plan.TargetObjectID)
@@ -261,6 +344,7 @@ func (e fireTempestPetAttackStep) impact() ([][]byte, error) {
 	)
 	e.ownerRun.attack = nil
 	e.ownerRun.attackTargetObjectID = 0
+	e.ownerRun.isAttackLaunched = false
 	peerSession.zone.Companion().ReleaseAttack(e.plan.ObjectID, e.plan.TargetObjectID)
 	binding := peerSession.binding
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
@@ -305,7 +389,8 @@ func (e fireTempestPetAttackStep) repeat() ([][]byte, error) {
 	e.runtime.registry.mutex.RLock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
-		peerSession.fireTempestActive == e.ownerRun && e.ownerRun.attack == nil
+		peerSession.fireTempestActive == e.ownerRun && e.ownerRun.attack == nil &&
+		e.ownerRun.attackRevision == e.attackRevision
 	e.runtime.registry.mutex.RUnlock()
 	if !isCurrent {
 		return nil, nil
@@ -327,6 +412,7 @@ func (e fireTempestPetAttackStep) fail(scheduleErr error) {
 	if isCurrent {
 		e.ownerRun.attack = nil
 		e.ownerRun.attackTargetObjectID = 0
+		e.ownerRun.isAttackLaunched = false
 		if peerSession.zone != nil && peerSession.zone.Companion() != nil {
 			peerSession.zone.Companion().ReleaseAttack(
 				e.plan.ObjectID, e.plan.TargetObjectID,

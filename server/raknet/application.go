@@ -189,8 +189,11 @@ func (m TimestampMessage) EncodePayload() []byte {
 // signal nGameDirector.IsBossDead and reveal the normal Beam Out HUD.
 type DirectorStateMessage struct {
 	IsBossSpawned            bool
+	IsBossSpawnedPresent     bool
 	IsBossHorde              bool
+	IsBossHordePresent       bool
 	IsCaptainSpawned         bool
+	IsCaptainSpawnedPresent  bool
 	IsBossComplete           bool
 	IsHordeSpawned           bool
 	IsHordeSpawnedPresent    bool
@@ -202,13 +205,13 @@ type DirectorStateMessage struct {
 func (DirectorStateMessage) PacketID() PacketID { return DirectorState }
 func (m DirectorStateMessage) EncodePayload() []byte {
 	mask := byte(0)
-	if m.IsBossSpawned {
+	if m.IsBossSpawned || m.IsBossSpawnedPresent {
 		mask |= 1 << 0
 	}
-	if m.IsBossHorde {
+	if m.IsBossHorde || m.IsBossHordePresent {
 		mask |= 1 << 1
 	}
-	if m.IsCaptainSpawned {
+	if m.IsCaptainSpawned || m.IsCaptainSpawnedPresent {
 		mask |= 1 << 2
 	}
 	if m.IsBossComplete {
@@ -329,6 +332,7 @@ func (m CinematicMessage) EncodePayload() []byte {
 }
 
 type ObjectCreateMessage struct {
+	IsInitiallyHidden  bool
 	Rotation           Vector3
 	ObjectID           uint32
 	Noun               uint32
@@ -345,13 +349,14 @@ type ObjectCreateMessage struct {
 }
 
 type EnemyObjectCreateMessage struct {
-	ObjectID     uint32
-	Noun         uint32
-	Position     Vector3
-	Rotation     Vector3
-	Scale        float32
-	IsCollidable bool
-	MovementType uint8
+	IsInitiallyHidden bool
+	ObjectID          uint32
+	Noun              uint32
+	Position          Vector3
+	Rotation          Vector3
+	Scale             float32
+	IsCollidable      bool
+	MovementType      uint8
 }
 
 // ProjectileObjectCreateMessage is the generic build-103 projectile creation
@@ -530,6 +535,10 @@ func (m EnemyObjectCreateMessage) EncodePayload() []byte {
 	payload = append(payload, 6)
 	payload = appendVector3(payload, m.Position.X, m.Position.Y, m.Position.Z)
 	// The create prefix owns rotation; an identity reflection would overwrite it.
+	if m.IsInitiallyHidden {
+		// Reflected visibility is applied with creation, before the first frame.
+		payload = append(payload, 16, 0)
+	}
 	if m.MovementType != 0 {
 		payload = append(payload, 19, m.MovementType)
 	}
@@ -550,6 +559,9 @@ func (m ObjectCreateMessage) EncodePayload() []byte {
 	payload = append(payload, 0, m.Team)
 	payload = append(payload, 1, boolByte(m.IsPlayerControlled))
 	payload = append(payload, 3, m.PlayerIndex)
+	if m.IsInitiallyHidden {
+		payload = append(payload, 16, 0)
+	}
 	payload = append(payload, 17, boolByte(m.IsCollisionEnabled))
 	if m.OwnerID != 0 {
 		payload = append(payload, 18)
@@ -1192,10 +1204,19 @@ func HeroStateMessages(objectID uint32, hitPoint, powerPoint float32) []Applicat
 	if powerPoint <= 0 {
 		powerPoint = 200
 	}
+	return HeroResourceStateMessages(objectID, hitPoint, powerPoint, hitPoint, powerPoint)
+}
+
+// Current resources and their caps are independent during reconnects and
+// roster refreshes. Using a depleted amount as the cap makes later recovery
+// exceed 100 percent, leaving the native HUD's regeneration tween running.
+func HeroResourceStateMessages(
+	objectID uint32, hitPoint, powerPoint, maximumHitPoint, maximumPowerPoint float32,
+) []ApplicationMessage {
 	return []ApplicationMessage{
 		CombatantDataUpdateMessage{ObjectID: objectID, HitPoints: hitPoint, ManaPoints: powerPoint},
 		AttributeDataUpdateMessage{ObjectID: objectID, Value: map[uint8]float32{
-			0: 23, 1: 12, 2: 15, 4: hitPoint, 5: powerPoint, 7: 50, 9: 50, 10: 50,
+			0: 23, 1: 12, 2: 15, 4: maximumHitPoint, 5: maximumPowerPoint, 7: 50, 9: 50, 10: 50,
 			11: 8.25, 12: 7.5, 109: 1, 111: 1, 112: 5,
 		}},
 	}
@@ -1275,8 +1296,14 @@ type ModifierCreatedMessage struct {
 	Overdrive            uint32
 	StackCount           uint32
 	StartMilliseconds    uint64
-	SourceID             uint32
-	IsBound              bool
+	// NPCAffixAssetID is the asset reference at wire offset 32. Build 103's
+	// sub_537780 resolves it through sub_9C5FF0; HUD_NPCBar compares the resolved
+	// asset against Elite.NPCAffix, independently of ModifierGUID.
+	NPCAffixAssetID uint32
+	// SourceID retains the legacy wire-field alias for existing callers. This
+	// field is not the modifier's originating object ID on the retail client.
+	SourceID uint32
+	IsBound  bool
 }
 
 func (ModifierCreatedMessage) PacketID() PacketID { return ModifierCreated }
@@ -1289,7 +1316,11 @@ func (m ModifierCreatedMessage) EncodePayload() []byte {
 	payload = binary.LittleEndian.AppendUint32(payload, m.Overdrive)
 	payload = binary.LittleEndian.AppendUint32(payload, m.StackCount)
 	payload = binary.LittleEndian.AppendUint64(payload, m.StartMilliseconds)
-	payload = binary.LittleEndian.AppendUint32(payload, m.SourceID)
+	affixAssetID := m.NPCAffixAssetID
+	if affixAssetID == 0 {
+		affixAssetID = m.SourceID
+	}
+	payload = binary.LittleEndian.AppendUint32(payload, affixAssetID)
 	return append(payload, boolByte(m.IsBound))
 }
 
@@ -1624,9 +1655,10 @@ type ChainVoteMessage struct {
 	EnemyNouns         [6]uint32
 	FirstPresentation  [3]uint32
 	FirstVoice         uint32
-	UnlockOrdinal      uint32
-	NextPresentation   [3]uint32
-	NextLevel          uint32
+	// Record +0x49: L <= completed planets forces Cash Out unless L == 5.
+	ContinuationLimit int32
+	NextPresentation  [3]uint32
+	NextLevel         uint32
 }
 
 func (m ChainVoteMessage) PacketID() PacketID { return ChainVoteMsgs }
@@ -1647,7 +1679,7 @@ func (m ChainVoteMessage) EncodePayload() []byte {
 		binary.LittleEndian.PutUint32(data[offset:offset+4], presentation)
 	}
 	binary.LittleEndian.PutUint32(data[0x045:0x049], m.FirstVoice)
-	binary.LittleEndian.PutUint32(data[0x049:0x04d], m.UnlockOrdinal)
+	binary.LittleEndian.PutUint32(data[0x049:0x04d], uint32(m.ContinuationLimit))
 	for index, presentation := range m.NextPresentation {
 		offset := 0x0d9 + index*4
 		binary.LittleEndian.PutUint32(data[offset:offset+4], presentation)
@@ -1779,10 +1811,10 @@ func (m ChainCashOutMessage) EncodePayload() []byte {
 }
 
 type PrepareForStartMessage struct {
-	Level      uint32
-	Markerset  uint32
-	PlayerMask uint32
-	LevelIndex uint32
+	Level         uint32
+	VariantSeed   uint32
+	ConditionMask uint32
+	LevelIndex    uint32
 }
 
 type LabsPlayerStatusMessage struct {
@@ -1815,6 +1847,7 @@ type LabsPlayerStatusMessage struct {
 	DeckScore           uint32
 	EnergyPoint         float32
 	IsOverdriveUnlocked bool
+	IsCatalystUnlocked  bool
 	CharacterResources  [3]LabsCharacterResource
 	CrystalResources    [9]LabsCrystalResource
 	CrystalBonuses      [8]bool
@@ -1849,6 +1882,22 @@ type LabsPlayerCrystalInventoryMessage struct {
 type LabsPlayerCrystalBonusesMessage struct {
 	PlayerSlot       uint8
 	AreBonusesActive [8]bool
+}
+
+// LabsPlayerChainProgressionMessage updates only the native player's completed
+// campaign index. Navigation uses this field to gate first-pass Helix narration.
+type LabsPlayerChainProgressionMessage struct {
+	PlayerSlot       uint8
+	ChainProgression uint32
+}
+
+func (LabsPlayerChainProgressionMessage) PacketID() PacketID { return LabsPlayerUpdate }
+func (m LabsPlayerChainProgressionMessage) EncodePayload() []byte {
+	// Outer bit 12 selects the player reflection; tagged field 17 is
+	// mChainProgression (build 103 offset 4700). No roster/status reset.
+	payload := []byte{m.PlayerSlot, 0, 0x10, 17}
+	payload = binary.LittleEndian.AppendUint32(payload, m.ChainProgression)
+	return append(payload, 0xff)
 }
 
 func (LabsPlayerCrystalInventoryMessage) PacketID() PacketID { return LabsPlayerUpdate }
@@ -1941,6 +1990,9 @@ func (m LabsPlayerStatusMessage) EncodePayload() []byte {
 		payload = binary.LittleEndian.AppendUint32(payload, m.ChainProgression)
 		payload = append(payload, 18, 0)
 		payload = append(payload, 19, boolByte(!m.IsOverdriveUnlocked))
+		if !m.IsStatusPreserved {
+			payload = append(payload, 20, boolByte(!m.IsCatalystUnlocked))
+		}
 		payload = append(payload, 21)
 		payload = binary.LittleEndian.AppendUint32(payload, m.AbilityCount)
 		payload = append(payload, 22)
@@ -1996,15 +2048,15 @@ func appendLabsCrystalReflection(payload []byte, crystal LabsCrystalResource) []
 func initialLabsCharacterResource(resource LabsCharacterResource) LabsCharacterResource {
 	if resource.MaxHealth <= 0 {
 		resource.MaxHealth = 200
-	}
-	if resource.Health <= 0 {
-		resource.Health = resource.MaxHealth
+		if resource.Health <= 0 {
+			resource.Health = resource.MaxHealth
+		}
 	}
 	if resource.MaxMana <= 0 {
 		resource.MaxMana = 200
-	}
-	if resource.Mana <= 0 {
-		resource.Mana = resource.MaxMana
+		if resource.Mana <= 0 {
+			resource.Mana = resource.MaxMana
+		}
 	}
 	return resource
 }
@@ -2134,6 +2186,38 @@ func (m LabsPlayerOverdriveUnlockMessage) EncodePayload() []byte {
 	return append(payload, 0xff)
 }
 
+// LabsPlayerOverdriveEnergyMessage refreshes only the mutable Overdrive meter
+// without replaying the unlock presentation or changing its entitlement.
+type LabsPlayerOverdriveEnergyMessage struct {
+	Slot   uint8
+	Energy float32
+}
+
+func (LabsPlayerOverdriveEnergyMessage) PacketID() PacketID { return LabsPlayerUpdate }
+func (m LabsPlayerOverdriveEnergyMessage) EncodePayload() []byte {
+	payload := []byte{m.Slot, 0, 0x10, 10}
+	payload = binary.LittleEndian.AppendUint32(payload, math.Float32bits(m.Energy))
+	return append(payload, 0xff)
+}
+
+// Build 103's cLabsPlayer reflection uses field 10 for energy (offset 4668)
+// and field 11 for the one-byte active flag (offset 4676). The native drain
+// at offset 4672 is not reflected. Field 18 belongs to another player flag.
+// Runtime metadata: type 0x15FF16E2, active name hash 0x91632BE4.
+type LabsPlayerOverdriveStateMessage struct {
+	Slot     uint8
+	Energy   float32
+	IsActive bool
+}
+
+func (LabsPlayerOverdriveStateMessage) PacketID() PacketID { return LabsPlayerUpdate }
+func (m LabsPlayerOverdriveStateMessage) EncodePayload() []byte {
+	payload := []byte{m.Slot, 0, 0x10, 10}
+	payload = binary.LittleEndian.AppendUint32(payload, math.Float32bits(m.Energy))
+	payload = append(payload, 11, boolByte(m.IsActive))
+	return append(payload, 0xff)
+}
+
 // LabsPlayerCrystalUnlockMessage applies the exact sparse reflection written
 // by build 103's nPlayer.UnlockCrystals native: clear locked-crystals field 20.
 type LabsPlayerCrystalUnlockMessage struct {
@@ -2193,8 +2277,8 @@ func (m PrepareForStartMessage) PacketID() PacketID { return GamePrepareForStart
 func (m PrepareForStartMessage) EncodePayload() []byte {
 	payload := make([]byte, 16)
 	binary.LittleEndian.PutUint32(payload[0:4], m.Level)
-	binary.LittleEndian.PutUint32(payload[4:8], m.Markerset)
-	binary.LittleEndian.PutUint32(payload[8:12], m.PlayerMask)
+	binary.LittleEndian.PutUint32(payload[4:8], m.VariantSeed)
+	binary.LittleEndian.PutUint32(payload[8:12], m.ConditionMask)
 	binary.LittleEndian.PutUint32(payload[12:16], m.LevelIndex)
 	return payload
 }

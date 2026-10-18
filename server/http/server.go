@@ -49,6 +49,7 @@ func NewServer(host string, port uint16, handler http.Handler) *Server {
 
 func (s *Server) trackRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("X-Content-Type-Options", "nosniff")
 		if !s.beginRequest() {
 			http.Error(response, "server shutting down", http.StatusServiceUnavailable)
 			return

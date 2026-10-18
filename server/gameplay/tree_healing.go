@@ -16,13 +16,11 @@ func (e treeOfLifeSchedule) healPartyLocked(
 	healings := make([]zoneSquadHealing, 0)
 	packets := make([][]byte, 0)
 	for sessionKey, candidate := range e.runtime.registry.sessions {
-		if candidate.binding.GameID != caster.binding.GameID || candidate.zone != caster.zone ||
-			candidate.binding.Team != caster.binding.Team || candidate.squad == nil ||
-			!candidate.stage.IsDungeon() || candidate.isRejoinPending {
-			continue
-		}
 		if sessionKey == e.sessionKey {
 			candidate = *caster
+		}
+		if !isActivePartyRecipient(candidate, *caster) {
+			continue
 		}
 		memberHealings := make([]zoneSquadHealing, 0)
 		if isInsideZoneTrigger(candidate.playerPosition, raknet.Vector3(pulse.Position), pulse.Radius) {

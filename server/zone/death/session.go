@@ -23,6 +23,80 @@ type entry struct {
 	cancels []Cancel
 }
 
+type timerRun interface {
+	ResetDeathTimer(context.Context, time.Duration) ([]time.Duration, bool, error)
+}
+
+type deadlineRun interface {
+	IsFinalDeadline(time.Duration) bool
+}
+
+type repairRun interface {
+	IsRepairableCorpse() bool
+}
+
+func (e *Session) IsRepairableCorpse(objectID uint32) bool {
+	if e == nil || objectID == 0 {
+		return false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	current, isFound := e.entries[objectID]
+	if !isFound {
+		return false
+	}
+	run, isSupported := current.run.(repairRun)
+	return isSupported && run.IsRepairableCorpse()
+}
+
+func (e *Session) CompleteDeadline(objectID uint32, run Run, deadline time.Duration) bool {
+	if e == nil {
+		return false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	current, isFound := e.entries[objectID]
+	if !isFound || current.run != run {
+		return false
+	}
+	timedRun, isSupported := run.(deadlineRun)
+	if !isSupported || !timedRun.IsFinalDeadline(deadline) {
+		return false
+	}
+	delete(e.entries, objectID)
+	return true
+}
+
+// ResetTimer retains the shared corpse across repeated repair applications.
+func (e *Session) ResetTimer(ctx context.Context, objectID uint32, delay time.Duration) (Run, []time.Duration, bool, error) {
+	if e == nil || ctx == nil || objectID == 0 || delay <= 0 {
+		return nil, nil, false, errors.New("invalid death timer reset")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	current, isFound := e.entries[objectID]
+	if !isFound {
+		return nil, nil, false, nil
+	}
+	run, isSupported := current.run.(timerRun)
+	if !isSupported {
+		return nil, nil, false, errors.New("death timer unsupported")
+	}
+	delays, isReset, err := run.ResetDeathTimer(ctx, delay)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("deathTimer: %w", err)
+	}
+	if !isReset {
+		return current.run, nil, false, nil
+	}
+	for _, cancel := range current.cancels {
+		cancel()
+	}
+	current.cancels = nil
+	e.entries[objectID] = current
+	return current.run, delays, true, nil
+}
+
 // Session owns retained enemy-death simulations for one campaign instance.
 type Session struct {
 	mu      sync.Mutex

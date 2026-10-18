@@ -47,7 +47,8 @@ func PlanElectronSphereImpact(
 	}
 	targets := make([]zonenpc.Snapshot, 0)
 	for _, enemy := range enemies.LiveSnapshots() {
-		if positionDistance(impactPosition, enemy.Plan.Position) > radius {
+		if !isElectronSphereTarget(enemy) ||
+			positionDistance(impactPosition, enemy.Plan.Position) > radius {
 			continue
 		}
 		targets = append(targets, enemy)
@@ -129,7 +130,11 @@ func PlanElectronSphereSecondary(
 	}
 	targets := make([]zonenpc.Snapshot, 0, secondary.MaximumCandidates)
 	for _, enemy := range enemies.LiveSnapshots() {
-		if positionDistance(projectilePosition, enemy.Plan.Position) > radius {
+		// Lua checks CanBeDamaged and ValidateHostileTarget before spending
+		// lightningNumTargets. Unpublished or allied objects must not occupy
+		// a slot that CommitArea would subsequently discard.
+		if !isElectronSphereTarget(enemy) ||
+			positionDistance(projectilePosition, enemy.Plan.Position) > radius {
 			continue
 		}
 		targets = append(targets, enemy)
@@ -162,6 +167,11 @@ func PlanElectronSphereSecondary(
 		Center:         projectilePosition,
 		Target:         targets,
 	}, nil
+}
+
+func isElectronSphereTarget(enemy zonenpc.Snapshot) bool {
+	return enemy.IsPublished && !enemy.IsDefeated && enemy.HitPoint > 0 &&
+		enemy.Faction == zonenpc.FactionNonPlayerAligned
 }
 
 func CommitElectronSphereSecondary(

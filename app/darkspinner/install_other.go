@@ -12,10 +12,10 @@ func relocateAndRestart(string, string, []string) error {
 	return errors.New("automatic relocation is supported on Windows only")
 }
 
-func replaceAndRestart(string, string) error {
+func replaceAndRestart(string, string, []string) error {
 	return errors.New("automatic replacement is supported on Windows only")
 }
 
-func restartAfterExit(string) error {
+func restartAfterExit(string, []string) error {
 	return errors.New("automatic restart is supported on Windows only")
 }

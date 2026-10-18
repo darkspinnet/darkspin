@@ -3,10 +3,12 @@ package gameplay
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
+	"github.com/darkspinnet/darkspin/server/zone"
 	zonecompanion "github.com/darkspinnet/darkspin/server/zone/companion"
 	zoneeffect "github.com/darkspinnet/darkspin/server/zone/effect"
 	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
@@ -14,66 +16,76 @@ import (
 )
 
 type fieldMedicCompanionBuffRun struct {
+	mutex          sync.Mutex
+	zone           *zone.Zone
+	userID         uint64
+	generation     uint64
+	ownerObjectID  uint32
+	expiresAt      time.Time
+	isRetired      bool
+	isReleased     bool
 	instanceID     uint32
 	targetObjectID uint32
 	buff           zonecompanion.Buff
 	cancel         raknet.CancelSchedule
 }
 
-func (e *gameplayPeerSession) stopFieldMedicCompanionBuffs(pool *modifierPool) {
+func (e *gameplayPeerSession) stopFieldMedicCompanionBuffs(pool *modifierPool) ([][]byte, error) {
 	if e == nil {
-		return
+		return nil, nil
 	}
-	for instanceID, run := range e.fieldMedicCompanionBuffs {
-		if run.cancel != nil {
-			run.cancel()
-			run.cancel = nil
+	packets := make([][]byte, 0)
+	var retirementErr error
+	for _, run := range e.fieldMedicCompanionBuffs {
+		retiredPackets, err := run.retire()
+		packets = append(packets, retiredPackets...)
+		if err != nil {
+			retirementErr = errors.Join(retirementErr, err)
 		}
-		if e.zone != nil {
-			e.zone.Companion().RemoveBuff(run.targetObjectID, run.buff)
-			e.zone.Effect().Remove(instanceID)
-		}
-		if pool != nil {
-			_ = pool.Release(instanceID)
-		}
-		delete(e.fieldMedicCompanionBuffs, instanceID)
 	}
+	if retirementErr != nil {
+		return packets, fmt.Errorf("companionRetire: %w", retirementErr)
+	}
+	return packets, nil
 }
 
 type fieldMedicCompanionBuffExpiry struct {
-	runtime    campaignAbilityCommandRuntime
-	sessionKey string
-	generation uint64
-	run        *fieldMedicCompanionBuffRun
+	runtime campaignAbilityCommandRuntime
+	run     *fieldMedicCompanionBuffRun
 }
 
 func (e fieldMedicCompanionBuffExpiry) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
-	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := isFound && peerSession.generation == e.generation &&
-		peerSession.fieldMedicCompanionBuffs[e.run.instanceID] == e.run &&
-		peerSession.zone != nil
-	if isCurrent {
-		peerSession.zone.Companion().RemoveBuff(e.run.targetObjectID, e.run.buff)
-		peerSession.zone.Effect().Remove(e.run.instanceID)
-		delete(peerSession.fieldMedicCompanionBuffs, e.run.instanceID)
-		e.runtime.registry.sessions[e.sessionKey] = peerSession
+	defer e.runtime.registry.mutex.Unlock()
+	packets, err := e.run.retire()
+	e.runtime.registry.queueFieldMedicPacketsLocked(e.run.zone, packets)
+	releaseErr := e.run.release(e.runtime.modifierPool)
+	if releaseErr != nil {
+		err = errors.Join(err, releaseErr)
 	}
-	e.runtime.registry.mutex.Unlock()
-	if !isCurrent {
-		return nil, nil
+	if e.run.isRetired {
+		for sessionKey, candidate := range e.runtime.registry.sessions {
+			if candidate.fieldMedicCompanionBuffs[e.run.instanceID] == e.run {
+				delete(candidate.fieldMedicCompanionBuffs, e.run.instanceID)
+				e.runtime.registry.sessions[sessionKey] = candidate
+			}
+		}
 	}
-	err := e.runtime.modifierPool.Release(e.run.instanceID)
 	if err != nil {
-		return nil, fmt.Errorf("fieldMedicCompanionRelease: %w", err)
+		return nil, fmt.Errorf("companionExpiry: %w", err)
 	}
-	packet, err := effectraknet.ModifierDelete(
-		e.run.targetObjectID, e.run.instanceID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("fieldMedicCompanionDelete: %w", err)
+	return nil, nil
+}
+
+func (e fieldMedicCompanionBuffExpiry) execute() {
+	packets, err := e.produce()
+	if err != nil && e.runtime.logger != nil {
+		e.runtime.logger.Printf("RakNet Field Medic pet expiry failed instance=%d: %v", e.run.instanceID, err)
 	}
-	return [][]byte{packet}, nil
+	if len(packets) != 0 && e.runtime.logger != nil {
+		e.runtime.logger.Printf("RakNet Field Medic pet expiry returned unqueued packets instance=%d", e.run.instanceID)
+	}
+	e.run.retryRetirement(e.runtime, e.execute)
 }
 
 func (e fieldMedicActiveSchedule) transferBuffsToCompanionsLocked(
@@ -83,7 +95,8 @@ func (e fieldMedicActiveSchedule) transferBuffsToCompanionsLocked(
 	packets := make([][]byte, 0)
 	targetObjectIDs := make([]uint32, 0)
 	for _, actor := range peerSession.zone.Companion().Snapshots() {
-		if !actor.IsTargetable || actor.HitPoint <= 0 ||
+		if !e.runtime.registry.isActivePartyCompanionLocked(actor, *peerSession) ||
+			!actor.IsTargetable || actor.HitPoint <= 0 ||
 			zonegeometry.Distance(center, actor.Position) > e.definition.Radius {
 			continue
 		}
@@ -112,6 +125,14 @@ func (e fieldMedicActiveSchedule) transferBuffToCompanionLocked(
 	peerSession *gameplayPeerSession, targetObjectID uint32,
 	modifier zoneeffect.Modifier,
 ) ([]byte, bool, error) {
+	if peerSession == nil || peerSession.zone == nil {
+		return nil, false, nil
+	}
+	actor, isActorFound := peerSession.zone.Companion().Snapshot(targetObjectID)
+	if !isActorFound || !actor.IsTargetable || actor.HitPoint <= 0 ||
+		!e.runtime.registry.isActivePartyCompanionLocked(actor, *peerSession) {
+		return nil, false, nil
+	}
 	buff := zonecompanion.Buff{
 		DamageBuff:        modifier.DamageBuff,
 		EnergyDamageBuff:  modifier.EnergyDamageBuff,
@@ -127,6 +148,8 @@ func (e fieldMedicActiveSchedule) transferBuffToCompanionLocked(
 		return nil, false, fmt.Errorf("allocate: %w", err)
 	}
 	run := &fieldMedicCompanionBuffRun{
+		zone: peerSession.zone, userID: actor.UserID, generation: actor.PeerGeneration,
+		ownerObjectID: actor.OwnerObjectID, expiresAt: e.runtime.now().Add(modifier.Duration),
 		instanceID: instanceID, targetObjectID: targetObjectID, buff: buff,
 	}
 	packet, err := effectraknet.ModifierCreate(effectraknet.ModifierCreateRequest{
@@ -137,12 +160,14 @@ func (e fieldMedicActiveSchedule) transferBuffToCompanionLocked(
 			uint64(e.definition.HitDelay/time.Millisecond),
 	})
 	if err != nil {
-		_ = e.runtime.modifierPool.Release(instanceID)
+		releaseErr := e.runtime.modifierPool.Release(instanceID)
+		err = errors.Join(err, releaseErr)
 		return nil, false, fmt.Errorf("create: %w", err)
 	}
 	err = peerSession.zone.Companion().AddBuff(targetObjectID, buff)
 	if err != nil {
-		_ = e.runtime.modifierPool.Release(instanceID)
+		releaseErr := e.runtime.modifierPool.Release(instanceID)
+		err = errors.Join(err, releaseErr)
 		return nil, false, fmt.Errorf("apply: %w", err)
 	}
 	if peerSession.fieldMedicCompanionBuffs == nil {
@@ -159,18 +184,14 @@ func (e fieldMedicActiveSchedule) transferBuffToCompanionLocked(
 	if err != nil {
 		peerSession.zone.Companion().RemoveBuff(targetObjectID, buff)
 		delete(peerSession.fieldMedicCompanionBuffs, instanceID)
-		_ = e.runtime.modifierPool.Release(instanceID)
+		releaseErr := e.runtime.modifierPool.Release(instanceID)
+		err = errors.Join(err, releaseErr)
 		return nil, false, fmt.Errorf("inventory: %w", err)
 	}
 	expiry := fieldMedicCompanionBuffExpiry{
-		runtime: e.runtime, sessionKey: e.sessionKey,
-		generation: e.generation, run: run,
+		runtime: e.runtime, run: run,
 	}
-	cancel, scheduleErr := e.packet.ScheduleProducers(
-		[]raknet.ScheduledPacketProducer{{
-			Delay: modifier.Duration, Produce: expiry.produce,
-		}},
-	)
+	cancel, scheduleErr := scheduleFieldMedicExpiry(e.runtime, run.expiresAt, expiry.execute)
 	if scheduleErr == nil && cancel == nil {
 		scheduleErr = errors.New("nil cancellation")
 	}
@@ -178,8 +199,9 @@ func (e fieldMedicActiveSchedule) transferBuffToCompanionLocked(
 		peerSession.zone.Effect().Remove(instanceID)
 		peerSession.zone.Companion().RemoveBuff(targetObjectID, buff)
 		delete(peerSession.fieldMedicCompanionBuffs, instanceID)
-		_ = e.runtime.modifierPool.Release(instanceID)
-		return nil, false, fmt.Errorf("schedule: %w", scheduleErr)
+		releaseErr := e.runtime.modifierPool.Release(instanceID)
+		err = errors.Join(err, releaseErr)
+		return nil, false, fmt.Errorf("schedule: %w", errors.Join(scheduleErr, err))
 	}
 	run.cancel = cancel
 	return packet, true, nil

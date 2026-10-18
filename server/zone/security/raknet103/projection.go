@@ -28,6 +28,15 @@ func InitialState(objectID [zonesecurity.RouteCount]uint32) ([][]byte, error) {
 	}
 	packets := make([][]byte, 0, len(publications))
 	for index, publication := range publications {
+		teleport, isFound := zonesecurity.Route(index)
+		if !isFound {
+			return nil, fmt.Errorf("initialRoute[%d]: unavailable", index)
+		}
+		anchorPacket, err := Anchor(publication.ObjectID, teleport)
+		if err != nil {
+			return nil, fmt.Errorf("initialAnchor[%d]: %w", index, err)
+		}
+		packets = append(packets, anchorPacket)
 		statePackets, err := statePublication(publication)
 		if err != nil {
 			return nil, fmt.Errorf("initialMarshal[%d]: %w", index, err)
@@ -37,7 +46,9 @@ func InitialState(objectID [zonesecurity.RouteCount]uint32) ([][]byte, error) {
 	return packets, nil
 }
 
-func SnapshotState(snapshot zonesecurity.Snapshot) ([][]byte, error) {
+func SnapshotState(
+	snapshot zonesecurity.Snapshot, threatGroups ...[]zonesecurity.Threat,
+) ([][]byte, error) {
 	if snapshot.ObjectID == ([zonesecurity.RouteCount]uint32{}) {
 		return nil, nil
 	}
@@ -47,8 +58,20 @@ func SnapshotState(snapshot zonesecurity.Snapshot) ([][]byte, error) {
 		if !isFound {
 			return nil, fmt.Errorf("snapshotRoute[%d]: unavailable", index)
 		}
+		anchorPacket, err := Anchor(objectID, teleport)
+		if err != nil {
+			return nil, fmt.Errorf("snapshotAnchor[%d]: %w", index, err)
+		}
+		packets = append(packets, anchorPacket)
+		isActive := snapshot.Presented[index]
+		for _, threats := range threatGroups {
+			if zonesecurity.HasThreat(teleport, threats) {
+				isActive = false
+				break
+			}
+		}
 		statePackets, err := State(
-			objectID, teleport, snapshot.Presented[index], false,
+			objectID, teleport, isActive, false,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("snapshotState[%d]: %w", index, err)
@@ -87,10 +110,6 @@ func Teleport(req TeleportRequest) ([][]byte, error) {
 		Z: publication.Destination.Z,
 	}
 	messages := []raknet.ApplicationMessage{
-		raknet.PositionedEffectMessage{
-			Asset:    util.HashID(publication.ActiveEffectName),
-			Position: source,
-		},
 		raknet.PositionedEffectMessage{
 			Asset:    util.HashID("character_teleport_beam_out.ServerEventDef"),
 			Position: source,
@@ -136,15 +155,18 @@ func Teleport(req TeleportRequest) ([][]byte, error) {
 func statePublication(
 	publication zonesecurity.StatePublication,
 ) ([][]byte, error) {
-	position := raknet.Vector3{
-		X: publication.Position.X, Y: publication.Position.Y,
-		Z: publication.Position.Z,
+	removePacket, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
+		Slot: 1, ObjectID: publication.ObjectID,
+		IsRemovalRequested: true, IsHardStop: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("stateRemove: %w", err)
 	}
-	packets := make([][]byte, 0, len(publication.EffectNames))
+	packets := [][]byte{removePacket}
 	for index, effectName := range publication.EffectNames {
-		packet, err := raknet.MarshalApplication(raknet.ServerEventMessage{
-			Asset: util.HashID(effectName), ObjectID: publication.ObjectID,
-			Position: position,
+		packet, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
+			Slot: 1, IsForceAttached: true, ObjectID: publication.ObjectID,
+			Asset: util.HashID(effectName),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("stateMarshal[%d]: %w", index, err)

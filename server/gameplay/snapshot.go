@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"sort"
 	"time"
 
@@ -33,10 +34,20 @@ func (e *gameplaySessionRegistry) SyncSnapshot(
 	if e == nil {
 		return frame, nil
 	}
-	e.mutex.RLock()
+	for !e.mutex.TryRLock() {
+		select {
+		case <-ctx.Done():
+			return frame, fmt.Errorf("snapshotLock: %w", ctx.Err())
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
 	defer e.mutex.RUnlock()
 	selectedZone := selectSnapshotZone(e.sessions, req.Actor)
 	for remote, peerSession := range e.sessions {
+		err = ctx.Err()
+		if err != nil {
+			return frame, fmt.Errorf("snapshotSession: %w", err)
+		}
 		if !isSnapshotSessionSelected(peerSession, remote, req.Actor, selectedZone) {
 			continue
 		}
@@ -50,6 +61,23 @@ func (e *gameplaySessionRegistry) SyncSnapshot(
 			snapshotSession(remote, peerSession, frame.CapturedAt),
 		)
 	}
+	for _, decision := range e.diagnosticDecisions {
+		if req.Actor.Remote != "" && decision.remote != req.Actor.Remote {
+			continue
+		}
+		frame.GameplayDecisions = append(
+			frame.GameplayDecisions,
+			snapshot.GameplayDecisionState{
+				OccurredAt: decision.occurredAt, Kind: decision.kind,
+				TraceID: decision.traceID, Remote: decision.remote,
+				TransportGeneration: decision.transportGeneration,
+				ZoneGeneration:      decision.zoneGeneration, ObjectID: decision.objectID,
+				ActionType: decision.actionType, SyncStamp: decision.syncStamp,
+				Outcome: decision.outcome, Reason: decision.reason,
+				PacketCount: decision.packetCount,
+			},
+		)
+	}
 	sort.Slice(frame.Sessions, func(left int, right int) bool {
 		if frame.Sessions[left].GameID != frame.Sessions[right].GameID {
 			return frame.Sessions[left].GameID < frame.Sessions[right].GameID
@@ -57,6 +85,23 @@ func (e *gameplaySessionRegistry) SyncSnapshot(
 		return frame.Sessions[left].UserID < frame.Sessions[right].UserID
 	})
 	return frame, nil
+}
+
+const maximumGameplayDiagnosticDecisionCount = 256
+
+func (e *gameplaySessionRegistry) recordDiagnosticDecision(
+	decision gameplayDiagnosticDecision,
+) {
+	if e == nil {
+		return
+	}
+	e.mutex.Lock()
+	e.diagnosticDecisions = append(e.diagnosticDecisions, decision)
+	if len(e.diagnosticDecisions) > maximumGameplayDiagnosticDecisionCount {
+		copy(e.diagnosticDecisions, e.diagnosticDecisions[1:])
+		e.diagnosticDecisions = e.diagnosticDecisions[:maximumGameplayDiagnosticDecisionCount]
+	}
+	e.mutex.Unlock()
 }
 
 func selectSnapshotZone(
@@ -178,6 +223,17 @@ func snapshotSession(
 			object.TargetObjectID = peerSession.attackPose.targetObjectID
 			if peerSession.playerMotion != nil {
 				object.ActionRevision = peerSession.playerMotion.Revision()
+				// The retained motion advances between commands, while the
+				// shared hero pose can still be the last command's position.
+				// Compare the client against the capture-time sample without
+				// consuming movement needed by gameplay observers. PlayerControl
+				// retains the raw cached pose and segment time for diagnosis.
+				position, sampleErr := peerSession.playerMotion.SamplePosition(capturedAt)
+				if sampleErr != nil {
+					log.Printf("Sync Snapshot hero position sample failed object=%d: %v", hero.ObjectID, sampleErr)
+				} else {
+					object.Position = simPosition(position)
+				}
 			}
 			if pursuit.IsActive && pursuit.SourceObjectID == hero.ObjectID {
 				object.TargetObjectID = pursuit.TargetObjectID
@@ -194,9 +250,10 @@ func snapshotSession(
 		}
 		state.Objects = append(state.Objects, object)
 	}
-	companions := peerSession.zone.Companion().Snapshots()
-	for _, companion := range companions {
-		state.Objects = append(state.Objects, snapshot.ObjectState{
+	companions := peerSession.zone.Companion().MotionSnapshots(capturedAt)
+	for _, motion := range companions {
+		companion := motion.Actor
+		object := snapshot.ObjectState{
 			Kind: "companion", ObjectID: companion.ObjectID,
 			OwnerObjectID: companion.OwnerObjectID, UserID: companion.UserID,
 			PeerGeneration: companion.PeerGeneration,
@@ -204,7 +261,16 @@ func snapshotSession(
 			TargetObjectID: companion.TargetObjectID,
 			IsDefeated:     companion.HitPoint <= 0, IsPublished: true,
 			IsTargetable: companion.IsTargetable,
-		})
+		}
+		if motion.IsFollowing {
+			object.GoalPosition = vec3(motion.Follow.Goal)
+			object.TargetPosition = vec3(motion.Follow.Destination)
+			object.Speed = motion.MovementSpeed
+			object.StopDistance = motion.Follow.DesiredStopDistance
+			object.RemainingDurationMS = snapshotDurationMS(motion.Follow.TravelDuration)
+			object.IsPursuing = true
+		}
+		state.Objects = append(state.Objects, object)
 	}
 	npcs := peerSession.zone.NPCs().Snapshots()
 	for _, npc := range npcs {
@@ -259,12 +325,18 @@ func snapshotSession(
 		}
 		state.Objects = append(state.Objects, object)
 	}
-	pickups := peerSession.zone.Pickups().Snapshots()
+	zoneElapsed := peerSession.zone.Elapsed(capturedAt)
+	pickups := peerSession.zone.Pickups().SnapshotsAt(zoneElapsed)
 	for _, pickup := range pickups {
+		remainingDurationMS := int64(0)
+		if pickup.ExpiresAt > 0 {
+			remainingDurationMS = int64((pickup.ExpiresAt - zoneElapsed) / time.Millisecond)
+		}
 		state.Objects = append(state.Objects, snapshot.ObjectState{
 			Kind: "pickup", SubType: uint32(pickup.Kind),
 			ObjectID: pickup.ObjectID, Position: vec3(pickup.Position),
 			TargetPosition: vec3(pickup.SourcePosition), IsPublished: true,
+			RemainingDurationMS: remainingDurationMS,
 		})
 	}
 	dnaPickups := peerSession.zone.DNA().Snapshots()
@@ -276,6 +348,14 @@ func snapshotSession(
 	}
 	orbs := peerSession.zone.Orbs().Orbs()
 	for _, orb := range orbs {
+		pickup, isPickupFound := peerSession.zone.Pickups().Pickup(orb.ObjectID)
+		if !isPickupFound || (pickup.ExpiresAt > 0 && zoneElapsed >= pickup.ExpiresAt) {
+			continue
+		}
+		remainingDurationMS := int64(0)
+		if pickup.ExpiresAt > 0 {
+			remainingDurationMS = int64((pickup.ExpiresAt - zoneElapsed) / time.Millisecond)
+		}
 		state.Objects = append(state.Objects, snapshot.ObjectState{
 			Kind: "orb", SubType: uint32(orb.Request.Kind),
 			ObjectID: orb.ObjectID, NounName: orb.Request.NounName,
@@ -284,7 +364,7 @@ func snapshotSession(
 				orb.Request.Destination.Y,
 				orb.Request.Destination.Z,
 			},
-			IsPublished: true,
+			IsPublished: true, RemainingDurationMS: remainingDurationMS,
 		})
 	}
 	state.Objects = append(
@@ -336,6 +416,7 @@ func snapshotPlayerControl(
 		EnemyFearRemainingMS:          snapshotDurationMS(peerSession.enemyFearExpiresAt.Sub(capturedAt)),
 		EnemyFearTargetObjectID:       peerSession.enemyFearTargetObjectID,
 		OverdriveRemainingMS:          snapshotDurationMS(peerSession.overdriveExpiresAt.Sub(capturedAt)),
+		OverdriveEnergy:               peerSession.presentedOverdriveEnergy(capturedAt),
 		FollowTargetUserID:            peerSession.followTargetUserID,
 		NextProjectileObjectID:        peerSession.nextProjectileObjectID,
 		IsAttackPoseActive:            peerSession.attackPose.isActiveAt(capturedAt),

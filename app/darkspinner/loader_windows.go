@@ -3,16 +3,21 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"runtime"
 )
 
-func gameLoaderAddress() (uintptr, error) {
+func gameLoaderAddress(ctx context.Context) (uintptr, error) {
+	err := ctx.Err()
+	if err != nil {
+		return 0, fmt.Errorf("loaderContext: %w", err)
+	}
 	if runtime.GOARCH != "386" {
 		return 0, errors.New("build the 64-bit launcher with Mage to embed the x86 loader helper")
 	}
-	err := procLoadLibraryW.Find()
+	err = procLoadLibraryW.Find()
 	if err != nil {
 		return 0, fmt.Errorf("loaderFind: %w", err)
 	}

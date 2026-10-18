@@ -43,5 +43,11 @@ func (e campaignBossIntroStep) produce() ([][]byte, error) {
 		return nil, fmt.Errorf("bossIntroActive: %w", err)
 	}
 	current.zone.PublishNPCAction(zonenpc.ActionEvent{Kind: zonenpc.ActionEventBossActive, Plan: e.plan}, current.binding.UserID, current.generation)
+	if e.runtime.logger != nil {
+		e.runtime.logger.Printf(
+			"Campaign boss admission stage=active level=%q marker_set=%q leader=%d source=intro",
+			current.binding.Level, boss.Plan.MarkerSetName, e.plan.ObjectID,
+		)
+	}
 	return [][]byte{packet}, nil
 }

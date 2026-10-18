@@ -56,6 +56,8 @@ type userRow struct {
 	Upsell                      uint32 `db:"upsell"`
 	CapLevel                    uint32 `db:"cap_level"`
 	CapProgression              uint32 `db:"cap_progression"`
+	LimitedEditionMissCount     uint32 `db:"limited_edition_miss_count"`
+	LimitedEditionUsedMask      uint32 `db:"limited_edition_used_mask"`
 }
 
 type settingRow struct {
@@ -214,6 +216,7 @@ type partRow struct {
 	Status                 uint8               `db:"status"`
 	Usage                  uint8               `db:"usage"`
 	CreationDate           uint64              `db:"creation_date"`
+	BuybackExpiresAt       int64               `db:"buyback_expires_at"`
 	RigblockAssetID        uint16              `db:"rigblock_asset_id"`
 	PrefixAssetID          uint16              `db:"prefix_asset_id"`
 	PrefixSecondaryAssetID uint16              `db:"prefix_secondary_asset_id"`
@@ -252,6 +255,8 @@ func userRowFromRecord(record sporenet.UserRecord) userRow {
 		UnlockStats: account.UnlockStats, UnlockInventoryIdentify: account.UnlockInventoryIdentify,
 		UnlockEditorFlairSlots: account.UnlockEditorFlairSlots, Upsell: account.Upsell,
 		CapLevel: account.CapLevel, CapProgression: account.CapProgression,
+		LimitedEditionMissCount: account.LimitedEditionMissCount,
+		LimitedEditionUsedMask:  account.LimitedEditionUsedMask,
 	}
 }
 
@@ -272,6 +277,8 @@ func (row userRow) account() sporenet.Account {
 		UnlockStats: row.UnlockStats, UnlockInventoryIdentify: row.UnlockInventoryIdentify,
 		UnlockEditorFlairSlots: row.UnlockEditorFlairSlots, Upsell: row.Upsell,
 		CapLevel: row.CapLevel, CapProgression: row.CapProgression,
+		LimitedEditionMissCount: row.LimitedEditionMissCount,
+		LimitedEditionUsedMask:  row.LimitedEditionUsedMask,
 	}
 }
 

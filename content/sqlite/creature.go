@@ -13,8 +13,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/darkspinnet/darkspin/content/dbpf"
 )
 
 const (
@@ -75,7 +73,7 @@ func writeCreatureTemplates(ctx context.Context, transaction *sql.Tx, installPat
 	if err != nil {
 		return fmt.Errorf("packageStat: %w", err)
 	}
-	pkg, err := dbpf.NewReader(r, fi.Size())
+	pkg, err := importPackageReader(ctx, r, fi.Size())
 	if err != nil {
 		return fmt.Errorf("packageRead: %w", err)
 	}
@@ -366,6 +364,22 @@ func localeKey(authored string) string {
 		return ""
 	}
 	return strings.ToLower(parts[1])
+}
+
+// writeCreatureTemplates stores the authored localization table name followed
+// by a variant suffix, not translated display text. Recover that table for
+// existing content databases: beta/gamma/delta keys are shared by every hero.
+func creatureLocalizationTableID(name string) (uint32, error) {
+	separator := strings.LastIndexByte(name, ' ')
+	if separator <= 0 {
+		return 0, fmt.Errorf("creature localization name %q has no variant", name)
+	}
+	switch name[separator+1:] {
+	case "Alpha", "Beta", "Gamma", "Delta":
+		return hashID(name[:separator]), nil
+	default:
+		return 0, fmt.Errorf("creature localization name %q has an unknown variant", name)
+	}
 }
 
 func creatureVariant(baseName string) string {

@@ -1,4 +1,4 @@
-// Package snapshot owns opt-in rolling RakNet and gameplay-state captures.
+// Package snapshot owns bounded rolling RakNet and gameplay-state captures.
 package snapshot
 
 import (
@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	DefaultBufferDuration = 30 * time.Second
+	DefaultBufferDuration = 60 * time.Second
 	DefaultDelay          = 30 * time.Second
 	minimumDelay          = time.Second
 	maximumDelay          = time.Hour
@@ -150,6 +150,7 @@ type PlayerControlState struct {
 	EnemyFearRemainingMS          int64              `json:"enemy_fear_remaining_ms,omitempty"`
 	EnemyFearTargetObjectID       uint32             `json:"enemy_fear_target_object_id,omitempty"`
 	OverdriveRemainingMS          int64              `json:"overdrive_remaining_ms,omitempty"`
+	OverdriveEnergy               float32            `json:"overdrive_energy,omitempty"`
 	FollowTargetUserID            uint64             `json:"follow_target_user_id,omitempty"`
 	NextProjectileObjectID        uint32             `json:"next_projectile_object_id,omitempty"`
 	BasicSequence                 BasicSequenceState `json:"basic_sequence"`
@@ -402,9 +403,50 @@ type PendingPacketState struct {
 
 // StateFrame is an authoritative server keyframe captured with an incident.
 type StateFrame struct {
-	CapturedAt time.Time      `json:"captured_at"`
-	Actor      Actor          `json:"actor"`
-	Sessions   []SessionState `json:"sessions"`
+	CapturedAt        time.Time               `json:"captured_at"`
+	Actor             Actor                   `json:"actor"`
+	Sessions          []SessionState          `json:"sessions"`
+	GameplayDecisions []GameplayDecisionState `json:"gameplay_decisions,omitempty"`
+}
+
+// GameplayDecisionState is one allowlisted command or publication outcome.
+type GameplayDecisionState struct {
+	OccurredAt          time.Time `json:"occurred_at"`
+	Kind                string    `json:"kind"`
+	TraceID             uint64    `json:"trace_id,omitempty"`
+	Remote              string    `json:"remote,omitempty"`
+	TransportGeneration uint64    `json:"transport_generation,omitempty"`
+	ZoneGeneration      uint64    `json:"zone_generation,omitempty"`
+	ObjectID            uint32    `json:"object_id,omitempty"`
+	ActionType          uint32    `json:"action_type,omitempty"`
+	SyncStamp           uint8     `json:"sync_stamp,omitempty"`
+	Outcome             string    `json:"outcome"`
+	Reason              string    `json:"reason,omitempty"`
+	PacketCount         int       `json:"packet_count,omitempty"`
+}
+
+type TransportDiagnosticsState struct {
+	Remote                    string `json:"remote"`
+	PeerGeneration            uint64 `json:"peer_generation"`
+	IsConnected               bool   `json:"is_connected"`
+	PendingDatagramCount      int    `json:"pending_datagram_count"`
+	OldestPendingDatagramMS   int64  `json:"oldest_pending_datagram_ms"`
+	FutureDatagramCount       int    `json:"future_datagram_count"`
+	MissingDatagramCount      int    `json:"missing_datagram_count"`
+	PendingOrderCount         int    `json:"pending_order_count"`
+	SplitAssemblyCount        int    `json:"split_assembly_count"`
+	SplitByteCount            int    `json:"split_byte_count"`
+	GameplayWorkerQueueDepth  int    `json:"gameplay_worker_queue_depth"`
+	CurrentTraceID            uint64 `json:"current_trace_id,omitempty"`
+	CurrentRequestID          uint8  `json:"current_request_id,omitempty"`
+	CurrentQueueDelayMS       int64  `json:"current_queue_delay_ms,omitempty"`
+	CurrentDispatchDurationMS int64  `json:"current_dispatch_duration_ms,omitempty"`
+	LastDispatchDurationMS    int64  `json:"last_dispatch_duration_ms,omitempty"`
+	LastFailure               string `json:"last_failure,omitempty"`
+}
+
+type TransportDiagnosticsProvider interface {
+	SnapshotTransportDiagnostics(string, uint64, time.Time) (TransportDiagnosticsState, bool)
 }
 
 // StateProvider supplies gameplay-owned state without exposing internal

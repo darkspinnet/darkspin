@@ -6,13 +6,11 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
-	"github.com/darkspinnet/darkspin/server/zone"
-	zonenavigation "github.com/darkspinnet/darkspin/server/zone/navigation"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
 
-func (e campaignConeSchedule) twinLaserEndpoints(campaignZone *zone.Zone) ([2]game.Vec3, error) {
+func (e campaignConeSchedule) twinLaserEndpoints() [2]game.Vec3 {
 	direction := e.plan.TargetPosition.Sub(e.plan.SourcePosition)
 	length := float32(math.Hypot(float64(direction.X), float64(direction.Y)))
 	if length == 0 {
@@ -26,17 +24,9 @@ func (e campaignConeSchedule) twinLaserEndpoints(campaignZone *zone.Zone) ([2]ga
 	// 2*sweepLength/sweepTime^2 (24) for the half-second inward sweep.
 	sweep := min(0.5, max(0, elapsed-hold))
 	distance := max(float32(0), 3-float32(min(elapsed, hold)*0.001+sweep*0.001+12*sweep*sweep))
-	endpoints := [2]game.Vec3{e.plan.TargetPosition.Add(side.Scale(distance)), e.plan.TargetPosition.Sub(side.Scale(distance))}
-	for index, endpoint := range endpoints {
-		projected, isProjected, err := zonenavigation.ProjectPosition(campaignZone.Navigation(), endpoint, 0.1)
-		if err != nil {
-			return endpoints, fmt.Errorf("laserProject: %w", err)
-		}
-		if isProjected {
-			endpoints[index] = projected
-		}
-	}
-	return endpoints, nil
+	// TrackProjectile explicitly sets mIgnoreGroundCollide=true. Projecting
+	// these markers onto navigation terrain changes both beam height and hits.
+	return [2]game.Vec3{e.plan.TargetPosition.Add(side.Scale(distance)), e.plan.TargetPosition.Sub(side.Scale(distance))}
 }
 
 func (e campaignConeSchedule) twinLaserOrigin(source zonenpc.Snapshot, index int) game.Vec3 {
@@ -71,10 +61,7 @@ func (e campaignConeSchedule) moveTwinLaser() ([][]byte, error) {
 	if !current.isCampaignNPCAttackGenerationActiveAt(e.generation, e.objectID, e.plan.TargetObjectID, e.actionGeneration, e.runtime.now()) {
 		return nil, nil
 	}
-	endpoints, err := e.twinLaserEndpoints(current.zone)
-	if err != nil {
-		return nil, fmt.Errorf("laserMoveEndpoints: %w", err)
-	}
+	endpoints := e.twinLaserEndpoints()
 	packets := make([][]byte, 0, 2)
 	for index, objectID := range [2]uint32{e.twinLaserEndpointID, e.twinLaserSecondID} {
 		packet, moveErr := npcraknet.RestorePose(objectID, endpoints[index], game.Vec3{Y: 1})

@@ -40,3 +40,4 @@ mage_output_file.go
 tmp/
 *.syso
 scripts/
+notes/

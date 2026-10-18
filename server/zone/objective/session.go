@@ -28,10 +28,11 @@ type Session struct {
 
 // Update is one immutable, protocol-independent objective projection.
 type Update struct {
-	ObjectiveID uint32
-	PlayerIndex uint8
-	Medal       uint8
-	Token       [3]uint32
+	ObjectiveID       uint32
+	PlayerIndex       uint8
+	Medal             uint8
+	Token             [3]uint32
+	IsObeliskAccessed bool
 }
 
 func NewSessionState(
@@ -515,4 +516,15 @@ func Updates(
 		})
 	}
 	return updates, nil
+}
+
+func (e *Session) BindRandom(random *sim.SimulatorRandom) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, runtime := range e.runtimes {
+		runtime.BindRandom(random)
+	}
 }

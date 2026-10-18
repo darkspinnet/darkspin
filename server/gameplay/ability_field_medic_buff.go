@@ -4,12 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/util"
+	"github.com/darkspinnet/darkspin/server/zone"
 	zoneeffect "github.com/darkspinnet/darkspin/server/zone/effect"
 	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
 	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
@@ -22,39 +24,54 @@ type fieldMedicBuffCapture struct {
 }
 
 type fieldMedicHeroBuffRun struct {
-	instanceID        uint32
-	targetObjectID    uint32
-	creatureIndex     uint32
-	damageBuff        float32
-	energyDamageBuff  float32
-	attackSpeed       float32
-	cooldownReduction float32
-	movementSpeedBuff float32
-	maximumHitPoint   float32
-	isCompanion       bool
-	cancel            raknet.CancelSchedule
+	mutex               sync.Mutex
+	zone                *zone.Zone
+	userID              uint64
+	generation          uint64
+	expiresAt           time.Time
+	isRetired           bool
+	isReleased          bool
+	instanceID          uint32
+	targetObjectID      uint32
+	targetOwnerObjectID uint32
+	creatureIndex       uint32
+	damageBuff          float32
+	energyDamageBuff    float32
+	attackSpeed         float32
+	cooldownReduction   float32
+	movementSpeedBuff   float32
+	maximumHitPoint     float32
+	isCompanion         bool
+	cancel              raknet.CancelSchedule
 }
 
-func (e *fieldMedicHeroBuffRun) remove(peerSession *gameplayPeerSession) {
+func (e *fieldMedicHeroBuffRun) remove(peerSession *gameplayPeerSession) error {
 	if e == nil || peerSession == nil ||
 		(!e.isCompanion &&
 			e.creatureIndex >= uint32(len(peerSession.binding.Creatures))) {
-		return
+		return nil
 	}
 	if e.isCompanion {
 		if peerSession.zone == nil {
-			return
+			return nil
 		}
 		companion, isFound :=
 			peerSession.zone.Companion().Snapshot(e.targetObjectID)
-		if isFound {
-			_, _, _ = peerSession.zone.Companion().SetMaximumHitPoint(
+		if isFound && companion.UserID == e.userID && companion.PeerGeneration == e.generation &&
+			companion.OwnerObjectID == e.targetOwnerObjectID {
+			previousCompanion, updatedCompanion, err := peerSession.zone.Companion().SetMaximumHitPoint(
 				e.targetObjectID,
 				max(float32(1), companion.MaximumHitPoint-e.maximumHitPoint),
 			)
+			if err != nil {
+				return fmt.Errorf("companionCapacity: %w", err)
+			}
+			// The companion operation clamps current health to its new capacity.
+			_ = previousCompanion
+			_ = updatedCompanion
 		}
 		e.maximumHitPoint = 0
-		return
+		return nil
 	}
 	profile := &peerSession.binding.Creatures[e.creatureIndex].DamageProfile
 	profile.DamageBuff = max(float32(0), profile.DamageBuff-e.damageBuff)
@@ -79,35 +96,26 @@ func (e *fieldMedicHeroBuffRun) remove(peerSession *gameplayPeerSession) {
 	e.cooldownReduction = 0
 	e.movementSpeedBuff = 0
 	e.maximumHitPoint = 0
+	return nil
 }
 
-func (e *gameplayPeerSession) stopFieldMedicHeroBuffs(pool *modifierPool) {
+func (e *gameplayPeerSession) stopFieldMedicHeroBuffs(pool *modifierPool) ([][]byte, error) {
 	if e == nil {
-		return
+		return nil, nil
 	}
-	for instanceID, run := range e.fieldMedicHeroBuffs {
-		if run.cancel != nil {
-			run.cancel()
-			run.cancel = nil
+	packets := make([][]byte, 0)
+	var retirementErr error
+	for _, run := range e.fieldMedicHeroBuffs {
+		retiredPackets, err := run.retire(e, pool)
+		packets = append(packets, retiredPackets...)
+		if err != nil {
+			retirementErr = errors.Join(retirementErr, err)
 		}
-		run.remove(e)
-		if !run.isCompanion && e.squad != nil {
-			maximumHitPoint := e.characterHitPointMaximum(run.creatureIndex)
-			character, isCharacterFound := e.squad.Character(run.creatureIndex)
-			if isCharacterFound && character.HitPoints > maximumHitPoint {
-				_, _ = e.setCampaignCharacterHitPoints(
-					run.creatureIndex, maximumHitPoint,
-				)
-			}
-		}
-		if e.zone != nil && e.zone.Effect() != nil {
-			e.zone.Effect().Remove(instanceID)
-		}
-		if pool != nil {
-			_ = pool.Release(instanceID)
-		}
-		delete(e.fieldMedicHeroBuffs, instanceID)
 	}
+	if retirementErr != nil {
+		return packets, fmt.Errorf("heroRetire: %w", retirementErr)
+	}
+	return packets, nil
 }
 
 func fieldMedicCapturedBuffs(
@@ -227,74 +235,53 @@ func (e fieldMedicActiveSchedule) releaseEnemyBuffOriginal(
 }
 
 type fieldMedicHeroBuffExpiry struct {
-	runtime          campaignAbilityCommandRuntime
-	sourceSessionKey string
-	targetSessionKey string
-	generation       uint64
-	run              *fieldMedicHeroBuffRun
+	runtime campaignAbilityCommandRuntime
+	run     *fieldMedicHeroBuffRun
+}
+
+func (e fieldMedicHeroBuffExpiry) execute() {
+	packets, err := e.produce()
+	if err != nil && e.runtime.logger != nil {
+		e.runtime.logger.Printf("RakNet Field Medic buff expiry failed instance=%d: %v", e.run.instanceID, err)
+	}
+	if len(packets) != 0 && e.runtime.logger != nil {
+		e.runtime.logger.Printf("RakNet Field Medic expiry returned unqueued packets instance=%d", e.run.instanceID)
+	}
+	e.run.retryRetirement(e.runtime, e.execute)
 }
 
 func (e fieldMedicHeroBuffExpiry) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
-	peerSession, isFound := e.runtime.registry.sessions[e.targetSessionKey]
-	isCurrent := isFound && peerSession.generation == e.generation &&
-		peerSession.fieldMedicHeroBuffs[e.run.instanceID] == e.run
-	if isCurrent {
-		e.run.remove(&peerSession)
-		if !e.run.isCompanion && peerSession.squad != nil {
-			maximumHitPoint :=
-				peerSession.characterHitPointMaximum(e.run.creatureIndex)
-			character, isCharacterFound :=
-				peerSession.squad.Character(e.run.creatureIndex)
-			if isCharacterFound && character.HitPoints > maximumHitPoint {
-				_, _ = peerSession.setCampaignCharacterHitPoints(
-					e.run.creatureIndex, maximumHitPoint,
-				)
-			}
+	defer e.runtime.registry.mutex.Unlock()
+	for sessionKey, peerSession := range e.runtime.registry.sessions {
+		if peerSession.zone != e.run.zone || peerSession.generation != e.run.generation ||
+			peerSession.binding.UserID != e.run.userID ||
+			peerSession.fieldMedicHeroBuffs[e.run.instanceID] != e.run {
+			continue
 		}
-		delete(peerSession.fieldMedicHeroBuffs, e.run.instanceID)
-		if peerSession.zone != nil && peerSession.zone.Effect() != nil {
-			peerSession.zone.Effect().Remove(e.run.instanceID)
+		packets, err := e.run.retire(&peerSession, e.runtime.modifierPool)
+		e.runtime.registry.sessions[sessionKey] = peerSession
+		e.runtime.registry.queueFieldMedicPacketsLocked(e.run.zone, packets)
+		releaseErr := e.run.release(e.runtime.modifierPool)
+		if releaseErr != nil {
+			err = errors.Join(err, releaseErr)
 		}
-		if !e.run.isCompanion {
-			_ = peerSession.syncZoneHero()
+		if e.run.isRetired {
+			delete(peerSession.fieldMedicHeroBuffs, e.run.instanceID)
 		}
-		if peerSession.zone != nil &&
-			e.targetSessionKey != e.sourceSessionKey {
-			if e.run.isCompanion {
-				peerSession.zone.PublishCompanionResourceTo(
-					peerSession.binding.UserID, peerSession.generation,
-					e.run.targetObjectID,
-				)
-			} else {
-				peerSession.zone.PublishHeroResourceTo(
-					peerSession.binding.UserID, peerSession.generation,
-				)
-			}
+		if err != nil {
+			return nil, fmt.Errorf("heroExpiry: %w", err)
 		}
-		e.runtime.registry.sessions[e.targetSessionKey] = peerSession
-	}
-	e.runtime.registry.mutex.Unlock()
-	if !isCurrent {
 		return nil, nil
 	}
-	err := e.runtime.modifierPool.Release(e.run.instanceID)
-	if err != nil {
-		return nil, fmt.Errorf("fieldMedicHeroBuffRelease: %w", err)
+	packets, err := e.run.retireMissingRecipient()
+	e.runtime.registry.queueFieldMedicPacketsLocked(e.run.zone, packets)
+	releaseErr := e.run.release(e.runtime.modifierPool)
+	if err != nil || releaseErr != nil {
+		return nil, fmt.Errorf("missingRecipient: %w", errors.Join(err, releaseErr))
 	}
-	packet, err := effectraknet.ModifierDelete(
-		e.run.targetObjectID, e.run.instanceID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("fieldMedicHeroBuffDelete: %w", err)
-	}
-	resourcePackets, err := fieldMedicTargetResourcePackets(peerSession, e.run)
-	if err != nil {
-		return nil, fmt.Errorf("fieldMedicHeroBuffResource: %w", err)
-	}
-	return append([][]byte{packet}, resourcePackets...), nil
+	return nil, nil
 }
-
 func fieldMedicTargetResourcePackets(
 	peerSession gameplayPeerSession, run *fieldMedicHeroBuffRun,
 ) ([][]byte, error) {
@@ -314,7 +301,8 @@ func fieldMedicTargetResourcePackets(
 	}
 	companion, isFound :=
 		peerSession.zone.Companion().Snapshot(run.targetObjectID)
-	if !isFound {
+	if !isFound || companion.UserID != run.userID || companion.PeerGeneration != run.generation ||
+		companion.OwnerObjectID != run.targetOwnerObjectID {
 		return nil, nil
 	}
 	healthPacket, err := raknet.MarshalApplication(raknet.CombatantDataDeltaMessage{
@@ -348,43 +336,47 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 	r.registry.mutex.Lock()
 	defer r.registry.mutex.Unlock()
 	peerSession, isFound := r.registry.sessions[target.sessionKey]
+	sourceSession, isSourceFound := r.registry.sessions[sourceSessionKey]
 	if !isFound || peerSession.generation != target.generation ||
+		!isSourceFound || sourceSession.deployedObjectID != sourceObjectID ||
+		!isActivePartyRecipient(peerSession, sourceSession) ||
 		peerSession.zone == nil || peerSession.zone.Effect() == nil ||
 		(!target.isCompanion &&
 			(target.creatureIndex >= uint32(len(peerSession.binding.Creatures)) ||
 				peerSession.deployedCreatureIndex != target.creatureIndex ||
-				peerSession.deployedObjectID != target.objectID)) {
+				peerSession.deployedObjectID != target.objectID ||
+				peerSession.deployedHitPoint() <= 0)) {
 		return nil, nil
 	}
 
 	packets := make([][]byte, 0, 3)
+	isHealthReplacement := false
 	for instanceID, previous := range peerSession.fieldMedicHeroBuffs {
 		if previous == nil || previous.maximumHitPoint <= 0 ||
 			previous.targetObjectID != target.objectID {
 			continue
 		}
-		if previous.cancel != nil {
-			previous.cancel()
-			previous.cancel = nil
-		}
-		previous.remove(&peerSession)
-		peerSession.zone.Effect().Remove(instanceID)
-		delete(peerSession.fieldMedicHeroBuffs, instanceID)
-		_ = r.modifierPool.Release(instanceID)
-		deletePacket, err := effectraknet.ModifierDelete(
-			previous.targetObjectID, instanceID,
-		)
+		retiredPackets, err := previous.retire(&peerSession, r.modifierPool)
+		peerSession.queueCampaignPackets(retiredPackets)
+		r.registry.sessions[target.sessionKey] = peerSession
+		r.registry.queueFieldMedicPacketsLocked(peerSession.zone, retiredPackets, peerSession.binding.UserID)
 		if err != nil {
 			return nil, fmt.Errorf("fieldMedicHealthReplace: %w", err)
 		}
-		packets = append(packets, deletePacket)
+		err = previous.release(r.modifierPool)
+		if err != nil {
+			return nil, fmt.Errorf("healthReplaceRelease: %w", err)
+		}
+		delete(peerSession.fieldMedicHeroBuffs, instanceID)
+		isHealthReplacement = true
 	}
 
 	baseMaximumHitPoint := float32(0)
 	if target.isCompanion {
 		companion, isCompanionFound :=
 			peerSession.zone.Companion().Snapshot(target.objectID)
-		if !isCompanionFound || !companion.IsTargetable || companion.HitPoint <= 0 {
+		if !isCompanionFound || !isPartyCompanionOwner(companion, peerSession) ||
+			!companion.IsTargetable || companion.HitPoint <= 0 {
 			return nil, nil
 		}
 		baseMaximumHitPoint = companion.MaximumHitPoint
@@ -401,8 +393,11 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 		return nil, fmt.Errorf("fieldMedicHealthAllocate: %w", err)
 	}
 	run := &fieldMedicHeroBuffRun{
+		zone: peerSession.zone, userID: peerSession.binding.UserID,
+		generation: peerSession.generation, expiresAt: r.now().Add(definition.StatusDuration),
 		instanceID: instanceID, targetObjectID: target.objectID,
-		creatureIndex: target.creatureIndex, maximumHitPoint: maximumHitPoint,
+		targetOwnerObjectID: peerSession.deployedObjectID,
+		creatureIndex:       target.creatureIndex, maximumHitPoint: maximumHitPoint,
 		isCompanion: target.isCompanion,
 	}
 	createPacket, err := effectraknet.ModifierCreate(
@@ -414,18 +409,24 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 		},
 	)
 	if err != nil {
-		_ = r.modifierPool.Release(instanceID)
+		releaseErr := r.modifierPool.Release(instanceID)
+		err = errors.Join(err, releaseErr)
 		return nil, fmt.Errorf("fieldMedicHealthCreate: %w", err)
 	}
 	if target.isCompanion {
-		_, _, err = peerSession.zone.Companion().SetMaximumHitPoint(
+		previousCompanion, updatedCompanion, capacityErr := peerSession.zone.Companion().SetMaximumHitPoint(
 			target.objectID, baseMaximumHitPoint+maximumHitPoint,
 		)
+		err = capacityErr
+		// Capacity application leaves the existing health unchanged.
+		_ = previousCompanion
+		_ = updatedCompanion
 	} else {
 		peerSession.maximumHitPoints[target.creatureIndex] += maximumHitPoint
 	}
 	if err != nil {
-		_ = r.modifierPool.Release(instanceID)
+		releaseErr := r.modifierPool.Release(instanceID)
+		err = errors.Join(err, releaseErr)
 		return nil, fmt.Errorf("fieldMedicHealthCapacity: %w", err)
 	}
 	if peerSession.fieldMedicHeroBuffs == nil {
@@ -439,63 +440,57 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 		Kind: zoneeffect.ModifierKindBuff, StackCount: 1,
 	})
 	if err != nil {
-		run.remove(&peerSession)
-		delete(peerSession.fieldMedicHeroBuffs, instanceID)
-		_ = r.modifierPool.Release(instanceID)
+		rollbackErr := rollbackFieldMedicHeroBuff(&peerSession, run, r.modifierPool)
+		err = errors.Join(err, rollbackErr)
+		r.registry.sessions[target.sessionKey] = peerSession
 		return nil, fmt.Errorf("fieldMedicHealthInventory: %w", err)
 	}
 	if !target.isCompanion {
 		err = peerSession.syncZoneHero()
 	}
 	if err != nil {
-		peerSession.zone.Effect().Remove(instanceID)
-		run.remove(&peerSession)
-		delete(peerSession.fieldMedicHeroBuffs, instanceID)
-		_ = r.modifierPool.Release(instanceID)
+		rollbackErr := rollbackFieldMedicHeroBuff(&peerSession, run, r.modifierPool)
+		err = errors.Join(err, rollbackErr)
+		r.registry.sessions[target.sessionKey] = peerSession
 		return nil, fmt.Errorf("fieldMedicHealthSync: %w", err)
 	}
 	resourcePackets, err := fieldMedicTargetResourcePackets(peerSession, run)
 	if err != nil {
-		peerSession.zone.Effect().Remove(instanceID)
-		run.remove(&peerSession)
-		delete(peerSession.fieldMedicHeroBuffs, instanceID)
-		_ = r.modifierPool.Release(instanceID)
+		rollbackErr := rollbackFieldMedicHeroBuff(&peerSession, run, r.modifierPool)
+		err = errors.Join(err, rollbackErr)
+		r.registry.sessions[target.sessionKey] = peerSession
 		return nil, fmt.Errorf("fieldMedicHealthResource: %w", err)
 	}
-	if target.sessionKey != sourceSessionKey {
-		if target.isCompanion {
-			peerSession.zone.PublishCompanionResourceTo(
-				target.userID, target.generation, target.objectID,
-			)
-		} else {
-			peerSession.zone.PublishHeroResourceTo(target.userID, target.generation)
-		}
-	}
 	r.registry.sessions[target.sessionKey] = peerSession
-	expiry := fieldMedicHeroBuffExpiry{
-		runtime: r, sourceSessionKey: sourceSessionKey,
-		targetSessionKey: target.sessionKey,
-		generation:       target.generation, run: run,
-	}
-	cancel, scheduleErr := packet.ScheduleProducers(
-		[]raknet.ScheduledPacketProducer{{
-			Delay: definition.StatusDuration, Produce: expiry.produce,
-		}},
-	)
+	expiry := fieldMedicHeroBuffExpiry{runtime: r, run: run}
+	cancel, scheduleErr := scheduleFieldMedicExpiry(r, run.expiresAt, expiry.execute)
 	if scheduleErr == nil && cancel == nil {
 		scheduleErr = errors.New("nil cancellation")
 	}
 	if scheduleErr != nil {
-		peerSession.zone.Effect().Remove(instanceID)
-		run.remove(&peerSession)
-		delete(peerSession.fieldMedicHeroBuffs, instanceID)
+		rollbackErr := rollbackFieldMedicHeroBuff(&peerSession, run, r.modifierPool)
+		err = errors.Join(err, rollbackErr)
 		r.registry.sessions[target.sessionKey] = peerSession
-		_ = r.modifierPool.Release(instanceID)
-		return nil, fmt.Errorf("fieldMedicHealthSchedule: %w", scheduleErr)
+		return nil, fmt.Errorf("fieldMedicHealthSchedule: %w", errors.Join(scheduleErr, err))
 	}
 	run.cancel = cancel
+	if target.sessionKey != sourceSessionKey {
+		if target.isCompanion {
+			peerSession.zone.PublishCompanionResourceTo(target.userID, target.generation, target.objectID)
+		} else {
+			peerSession.zone.PublishHeroResourceTo(target.userID, target.generation)
+		}
+	}
 	packets = append(packets, createPacket)
 	packets = append(packets, resourcePackets...)
+	if isHealthReplacement {
+		// Old retirement and the replacement share the same reliable pending
+		// stream so an old resource snapshot cannot follow the new capacity.
+		peerSession.queueCampaignPackets(packets)
+		r.registry.sessions[target.sessionKey] = peerSession
+		r.registry.queueFieldMedicPacketsLocked(peerSession.zone, packets, peerSession.binding.UserID)
+		return nil, nil
+	}
 	return packets, nil
 }
 
@@ -509,8 +504,7 @@ func (e fieldMedicActiveSchedule) transferBuffsLocked(
 	packets := make([][]byte, 0)
 	targetObjectIDs := make([]uint32, 0)
 	for sessionKey, candidate := range e.runtime.registry.sessions {
-		if candidate.zone != peerSession.zone ||
-			!fieldMedicLivingHeroInRange(candidate, center, e.definition.Radius) {
+		if !fieldMedicLivingHeroInRange(candidate, *peerSession, center, e.definition.Radius) {
 			continue
 		}
 		isEffectAdded := false
@@ -548,9 +542,9 @@ func (e fieldMedicActiveSchedule) transferBuffsLocked(
 }
 
 func fieldMedicLivingHeroInRange(
-	peerSession gameplayPeerSession, center game.Vec3, radius float32,
+	peerSession, sourceSession gameplayPeerSession, center game.Vec3, radius float32,
 ) bool {
-	return peerSession.zone != nil && peerSession.deployedObjectID != 0 &&
+	return isActivePartyRecipient(peerSession, sourceSession) && peerSession.deployedObjectID != 0 &&
 		peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures)) &&
 		peerSession.deployedHitPoint() > 0 &&
 		zonegeometry.Distance(center, game.Vec3(peerSession.playerPosition)) <= radius
@@ -560,7 +554,10 @@ func (e fieldMedicActiveSchedule) transferBuffToHeroLocked(
 	targetSessionKey string, peerSession *gameplayPeerSession,
 	modifier zoneeffect.Modifier,
 ) ([]byte, bool, error) {
-	if peerSession == nil || peerSession.zone == nil ||
+	sourceSession, isSourceFound := e.runtime.registry.sessions[e.sessionKey]
+	if peerSession == nil || !isSourceFound ||
+		!isActivePartyRecipient(*peerSession, sourceSession) ||
+		peerSession.deployedHitPoint() <= 0 ||
 		peerSession.deployedCreatureIndex >= uint32(len(peerSession.binding.Creatures)) ||
 		(modifier.DamageBuff <= 0 && modifier.EnergyDamageBuff <= 0 &&
 			modifier.AttackSpeed <= 0 && modifier.CooldownReduction <= 0 &&
@@ -572,6 +569,8 @@ func (e fieldMedicActiveSchedule) transferBuffToHeroLocked(
 		return nil, false, fmt.Errorf("fieldMedicHeroBuffAllocate: %w", err)
 	}
 	run := &fieldMedicHeroBuffRun{
+		zone: peerSession.zone, userID: peerSession.binding.UserID,
+		generation: peerSession.generation, expiresAt: e.runtime.now().Add(modifier.Duration),
 		instanceID: instanceID, targetObjectID: peerSession.deployedObjectID,
 		creatureIndex:     peerSession.deployedCreatureIndex,
 		damageBuff:        modifier.DamageBuff,
@@ -588,7 +587,8 @@ func (e fieldMedicActiveSchedule) transferBuffToHeroLocked(
 			uint64(e.definition.HitDelay/time.Millisecond),
 	})
 	if err != nil {
-		_ = e.runtime.modifierPool.Release(instanceID)
+		releaseErr := e.runtime.modifierPool.Release(instanceID)
+		err = errors.Join(err, releaseErr)
 		return nil, false, fmt.Errorf("fieldMedicHeroBuffCreate: %w", err)
 	}
 	if peerSession.fieldMedicHeroBuffs == nil {
@@ -610,30 +610,19 @@ func (e fieldMedicActiveSchedule) transferBuffToHeroLocked(
 	record.Kind = zoneeffect.ModifierKindBuff
 	err = peerSession.zone.Effect().Put(record)
 	if err != nil {
-		run.remove(peerSession)
-		delete(peerSession.fieldMedicHeroBuffs, instanceID)
-		_ = e.runtime.modifierPool.Release(instanceID)
+		rollbackErr := rollbackFieldMedicHeroBuff(peerSession, run, e.runtime.modifierPool)
+		err = errors.Join(err, rollbackErr)
 		return nil, false, fmt.Errorf("fieldMedicHeroBuffInventory: %w", err)
 	}
-	expiry := fieldMedicHeroBuffExpiry{
-		runtime: e.runtime, sourceSessionKey: e.sessionKey,
-		targetSessionKey: targetSessionKey,
-		generation:       peerSession.generation, run: run,
-	}
-	cancel, scheduleErr := e.packet.ScheduleProducers(
-		[]raknet.ScheduledPacketProducer{{
-			Delay: modifier.Duration, Produce: expiry.produce,
-		}},
-	)
+	expiry := fieldMedicHeroBuffExpiry{runtime: e.runtime, run: run}
+	cancel, scheduleErr := scheduleFieldMedicExpiry(e.runtime, run.expiresAt, expiry.execute)
 	if scheduleErr == nil && cancel == nil {
 		scheduleErr = errors.New("nil cancellation")
 	}
 	if scheduleErr != nil {
-		peerSession.zone.Effect().Remove(instanceID)
-		run.remove(peerSession)
-		delete(peerSession.fieldMedicHeroBuffs, instanceID)
-		_ = e.runtime.modifierPool.Release(instanceID)
-		return nil, false, fmt.Errorf("fieldMedicHeroBuffSchedule: %w", scheduleErr)
+		rollbackErr := rollbackFieldMedicHeroBuff(peerSession, run, e.runtime.modifierPool)
+		err = errors.Join(err, rollbackErr)
+		return nil, false, fmt.Errorf("fieldMedicHeroBuffSchedule: %w", errors.Join(scheduleErr, err))
 	}
 	run.cancel = cancel
 	return packet, true, nil

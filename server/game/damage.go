@@ -2,6 +2,7 @@ package game
 
 import (
 	"errors"
+	"fmt"
 	"math"
 )
 
@@ -22,23 +23,26 @@ type AbilityDamage struct {
 // DamageProfile is the authenticated attacker snapshot used by the recovered
 // build-103 descriptor multiplier and direct-damage stages.
 type DamageProfile struct {
-	PrimaryAttribute              float32
-	IsPrimaryAttributeFound       bool
-	BasicDefenseBoost             float32
-	PhysicalDefenseBoost          float32
-	EnergyDefenseBoost            float32
-	DamageBuff                    float32
-	ScienceDamage                 [5]float32
-	ProjectileDamage              float32
-	EnergyDamageBuff              float32
-	AreaDamage                    float32
-	DamageOverTimeIncrease        float32
-	DirectAttackDamagePercent     float32
-	PhysicalDamage                float32
-	PhysicalAbilityDamageIncrease float32
-	EnergyDamage                  float32
-	EnergyAbilityDamageIncrease   float32
-	DirectAttackDamage            float32
+	PrimaryAttribute                float32
+	IsPrimaryAttributeFound         bool
+	PrimaryAttributeBaseline        float32
+	IsPrimaryAttributeBaselineFound bool
+	BasicDefenseBoost               float32
+	DefenseRatingPerPercent         float32
+	PhysicalDefenseBoost            float32 // Total derived physical defense rating.
+	EnergyDefenseBoost              float32 // Total derived energy defense rating.
+	DamageBuff                      float32
+	ScienceDamage                   [5]float32
+	ProjectileDamage                float32
+	EnergyDamageBuff                float32
+	AreaDamage                      float32
+	DamageOverTimeIncrease          float32
+	DirectAttackDamagePercent       float32
+	PhysicalDamage                  float32
+	PhysicalAbilityDamageIncrease   float32
+	EnergyDamage                    float32
+	EnergyAbilityDamageIncrease     float32
+	DirectAttackDamage              float32
 }
 
 type DamageRange struct {
@@ -58,7 +62,8 @@ func ResolveAbilityDamageRange(ability AbilityDamage, profile DamageProfile) (Da
 		return DamageRange{}, errors.New("invalid damage type")
 	}
 	profileNumber := []float32{
-		profile.PrimaryAttribute, profile.BasicDefenseBoost, profile.PhysicalDefenseBoost,
+		profile.PrimaryAttribute, profile.PrimaryAttributeBaseline,
+		profile.BasicDefenseBoost, profile.DefenseRatingPerPercent, profile.PhysicalDefenseBoost,
 		profile.EnergyDefenseBoost, profile.DamageBuff, profile.ProjectileDamage,
 		profile.EnergyDamageBuff, profile.AreaDamage, profile.DamageOverTimeIncrease,
 		profile.DirectAttackDamagePercent, profile.PhysicalDamage,
@@ -73,7 +78,14 @@ func ResolveAbilityDamageRange(ability AbilityDamage, profile DamageProfile) (Da
 	}
 	multiplier := float32(1) + profile.DamageBuff
 	if ability.IsDescriptorFound && ability.Descriptor&2 != 0 {
-		multiplier += profile.BasicDefenseBoost * (profile.PhysicalDefenseBoost + profile.EnergyDefenseBoost)
+		// Resonance follows its client Lua tooltip's capped dodge/resist
+		// chances. This intentionally replaces the raw-defense multiplication
+		// in native builds 103/127, which disagrees with that authored effect.
+		defenseBonus, err := resolveDefenseDamageBonus(profile)
+		if err != nil {
+			return DamageRange{}, fmt.Errorf("defenseBonus: %w", err)
+		}
+		multiplier += defenseBonus
 	}
 	if ability.IsDamageTypeFound {
 		multiplier += profile.ScienceDamage[ability.DamageType]
@@ -107,7 +119,13 @@ func ResolveAbilityDamageRange(ability AbilityDamage, profile DamageProfile) (Da
 	minimum := ability.Minimum
 	maximum := ability.Maximum
 	if profile.IsPrimaryAttributeFound && ability.Coefficient != 0 {
-		primaryMultiplier := 1 + (profile.PrimaryAttribute+1)*ability.Coefficient
+		// Callers with recovered tuning supply the baseline subtracted by
+		// sub_9E4E60. Preserve the existing hero balance for other callers.
+		baseline := float32(-1)
+		if profile.IsPrimaryAttributeBaselineFound {
+			baseline = profile.PrimaryAttributeBaseline
+		}
+		primaryMultiplier := 1 + (profile.PrimaryAttribute-baseline)*ability.Coefficient
 		minimum *= primaryMultiplier
 		maximum *= primaryMultiplier
 	}

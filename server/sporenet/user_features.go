@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"time"
 
 	tutorialprogress "github.com/darkspinnet/darkspin/server/zone/tutorial/progression"
@@ -35,6 +36,8 @@ var (
 	ErrPartNotFound = errors.New("part not found")
 	// ErrPartLoadoutLimit protects the six functional equipment slots.
 	ErrPartLoadoutLimit = errors.New("part loadout exceeds six functional items")
+	// ErrPartFlairLoadoutLimit protects the profile's unlocked Detail slots.
+	ErrPartFlairLoadoutLimit = errors.New("part loadout exceeds unlocked detail items")
 	// ErrCreatureNotFound indicates that a creature mutation references an unowned instance.
 	ErrCreatureNotFound = errors.New("creature not found")
 	// ErrOnboardingTransition protects the recovered first-session milestone graph.
@@ -49,7 +52,6 @@ const tutorialCompletionDNA = uint32(100)
 const tutorialCompletionMaximumExperience = uint32(1<<31 - 1)
 const tutorialBlitzTemplateName = "Blitz Alpha"
 const tutorialSageTemplateName = "Sage Alpha"
-const tutorialWraithTemplateName = "Wraith Alpha"
 const tutorialElectroClawsRigblock = uint16(268)
 const tutorialElectroClawsLevel = uint16(5)
 const maximumFunctionalItemCount = 6
@@ -230,28 +232,44 @@ func (m *UserManager) UpdateCreature(ctx context.Context, user *User, command Cr
 		user.mu.Unlock()
 		return nil, errors.New("creature revision changed or invalid")
 	}
+	partsByID := make(map[uint64]Part, len(user.Parts))
+	for index := range user.Parts {
+		partsByID[user.Parts[index].ID] = user.Parts[index]
+	}
 	selected := make(map[uint64]struct{}, len(command.EquippedPartID))
 	for _, itemID := range command.EquippedPartID {
+		part, isFound := partsByID[itemID]
+		if !isFound || part.MarketStatus != PartMarketOwned {
+			user.mu.Unlock()
+			return nil, fmt.Errorf("equipPart[%d]: %w", itemID, ErrPartNotFound)
+		}
+		if part.EquippedToCreatureID != 0 && part.EquippedToCreatureID != command.CreatureID {
+			user.mu.Unlock()
+			return nil, fmt.Errorf("equipPart[%d]: %w", itemID, ErrPartEquipped)
+		}
+		if _, isDuplicate := selected[itemID]; isDuplicate {
+			user.mu.Unlock()
+			return nil, fmt.Errorf("equipPart[%d]: duplicate item", itemID)
+		}
 		selected[itemID] = struct{}{}
 	}
-	for itemID := range selected {
-		isOwned := false
-		for index := range user.Parts {
-			if user.Parts[index].ID == itemID &&
-				user.Parts[index].MarketStatus == PartMarketOwned {
-				isOwned = true
-				break
-			}
-		}
-		if !isOwned {
-			user.mu.Unlock()
-			return nil, ErrPartNotFound
-		}
-	}
 	functionalItemCount := 0
+	flairItemCount := uint32(0)
+	maximumFlairItemCount := max(
+		defaultEditorFlairSlotCount, user.Account.UnlockEditorFlairSlots,
+	)
 	for index := range user.Parts {
 		part := &user.Parts[index]
-		if _, isSelected := selected[part.ID]; !isSelected || part.IsFlair {
+		_, isSelected := selected[part.ID]
+		if !isSelected {
+			continue
+		}
+		if part.IsFlair {
+			flairItemCount++
+			if flairItemCount > maximumFlairItemCount {
+				user.mu.Unlock()
+				return nil, ErrPartFlairLoadoutLimit
+			}
 			continue
 		}
 		functionalItemCount++
@@ -263,6 +281,9 @@ func (m *UserManager) UpdateCreature(ctx context.Context, user *User, command Cr
 	for index := range user.Parts {
 		if _, isSelected := selected[user.Parts[index].ID]; isSelected {
 			user.Parts[index].EquippedToCreatureID = command.CreatureID
+			// Native 4C1990's successful-save event sets usage to 1 when
+			// equipping an item; it remains used after later removal.
+			user.Parts[index].Usage = 1
 		} else if user.Parts[index].EquippedToCreatureID == command.CreatureID {
 			user.Parts[index].EquippedToCreatureID = 0
 		}
@@ -385,9 +406,22 @@ func (u *User) updateDecks(command DeckUpdate) (Account, []Squad, bool, error) {
 			ownedIDs[creature.ID] = struct{}{}
 		}
 	}
-	// An explicitly empty deck (0,0,0) is an update, not an omitted field.
+	// An explicitly empty deck (0,0,0) is an update when its destination
+	// exists. Build 103 also submits an all-zero Arena placeholder before the
+	// player has created an Arena squad; that field must not reject a campaign
+	// edit because its placeholder slot is not an Arena destination.
 	isPVERequested := len(command.PVECreatures) != 0
 	isPVPRequested := len(command.PVPCreatures) != 0
+	if isPVPRequested && !hasCreatureID(command.PVPCreatures) &&
+		!hasSquadCategory(u.Squads, "pvp") {
+		isPVPRequested = false
+	}
+	if isPVERequested && command.PVEActiveSlot > max(uint32(1), u.Account.UnlockPVEDecks) {
+		return previousAccount, previousSquads, false, ErrSquadLocked
+	}
+	if isPVPRequested && command.PVPActiveSlot > u.Account.UnlockPVPDecks {
+		return previousAccount, previousSquads, false, ErrSquadLocked
+	}
 	isChanged := false
 	var err error
 	if isPVERequested {
@@ -413,6 +447,12 @@ func (u *User) updateDecks(command DeckUpdate) (Account, []Squad, bool, error) {
 		isPVPActiveChanged := updateActiveDeck(
 			u.Squads, command.PVPActiveSlot, "pvp", &u.Account.DefaultDeckPVPID,
 		)
+		activeRequestLimit := min(len(command.PVPCreatures), 3)
+		if !hasCreatureID(command.PVPCreatures[:activeRequestLimit]) &&
+			u.Account.DefaultDeckPVPID != u.Account.DefaultDeckPVEID {
+			u.Account.DefaultDeckPVPID = u.Account.DefaultDeckPVEID
+			isPVPActiveChanged = true
+		}
 		isChanged = isChanged || isPVPChanged || isPVPActiveChanged
 	}
 	return previousAccount, previousSquads, isChanged, nil
@@ -421,6 +461,15 @@ func (u *User) updateDecks(command DeckUpdate) (Account, []Squad, bool, error) {
 func hasCreatureID(creatureIDs []uint32) bool {
 	for _, creatureID := range creatureIDs {
 		if creatureID != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSquadCategory(squads []Squad, category string) bool {
+	for _, squad := range squads {
+		if squad.Category == category {
 			return true
 		}
 	}
@@ -448,10 +497,21 @@ func updateSquadSlots(
 		}
 	}
 	indexes := make([]int, 0, len(squads))
-	// Build 103 serializes the active deck first, followed by the remaining
-	// records from the same PVE or PVP destination in account-response order.
+	// Locate the selected destination before collecting the other decks.
 	for index := range squads {
 		if isSquadDestination(squads[index], category) && squads[index].Slot == activeSlot {
+			indexes = append(indexes, index)
+			break
+		}
+	}
+	if len(indexes) == 0 && category == "pvp" && hasCreatureID(requestedIDs) {
+		for index := range squads {
+			if squads[index].Category != "" || squads[index].IsLocked ||
+				hasCreatureID(squads[index].CreatureIDs[:]) {
+				continue
+			}
+			squads[index].Category = category
+			squads[index].Slot = activeSlot
 			indexes = append(indexes, index)
 			break
 		}
@@ -464,6 +524,17 @@ func updateSquadSlots(
 			indexes = append(indexes, index)
 		}
 	}
+	// Build 103 sub_4E9360 serializes the complete deck vector in order;
+	// pve_active_slot selects a deck without moving its three creature IDs.
+	// Match the stable slot/ID order used by the account response.
+	sort.Slice(indexes, func(firstIndex, secondIndex int) bool {
+		firstSquad := squads[indexes[firstIndex]]
+		secondSquad := squads[indexes[secondIndex]]
+		if firstSquad.Slot != secondSquad.Slot {
+			return firstSquad.Slot < secondSquad.Slot
+		}
+		return firstSquad.ID < secondSquad.ID
+	})
 	isChanged := false
 	for requestIndex, squadIndex := range indexes {
 		requestOffset := requestIndex * len(squads[squadIndex].CreatureIDs)
@@ -485,15 +556,20 @@ func updateSquadSlots(
 			}
 			creatures[creatureIndex] = creatureID
 		}
+		isEmptyPVP := category == "pvp" && !hasCreatureID(creatures[:])
 		isCategoryChanged := hasCreatureID(creatures[:]) && squads[squadIndex].Category != category
-		if squads[squadIndex].CreatureIDs == creatures && !isCategoryChanged {
+		isReleased := isEmptyPVP && squads[squadIndex].Category == "pvp"
+		if squads[squadIndex].CreatureIDs == creatures && !isCategoryChanged && !isReleased {
 			continue
 		}
 		if squads[squadIndex].IsLocked {
 			return false, ErrSquadLocked
 		}
 		squads[squadIndex].CreatureIDs = creatures
-		if isCategoryChanged {
+		if isReleased {
+			squads[squadIndex].Category = ""
+			squads[squadIndex].Slot = squads[squadIndex].ID
+		} else if isCategoryChanged {
 			squads[squadIndex].Category = category
 		}
 		isChanged = true
@@ -628,9 +704,9 @@ func (e *User) repairPVEDeck() bool {
 	return isChanged
 }
 
-// repairPVPDeck provisions the Arena destination without copying campaign
-// heroes. Build 103 suppresses a collection model if either deck assignment
-// is set, so a copied PVP assignment hides heroes removed from their PVE squad.
+// repairPVPDeck preserves populated Arena squads without exposing an empty
+// selectable deck. Build 103 crashes when the Arsenal opens a zero-member PVP
+// deck, so the first client-authored PVP assignment claims an unused slot.
 func (e *User) repairPVPDeck() bool {
 	if e == nil {
 		return false
@@ -663,23 +739,21 @@ func (e *User) repairPVPDeck() bool {
 				isChanged = true
 			}
 		}
+		if !hasCreatureID(squad.CreatureIDs[:]) {
+			squad.Category = ""
+			squad.Slot = squad.ID
+			isChanged = true
+			continue
+		}
 		if targetIndex < 0 || squad.ID == e.Account.DefaultDeckPVPID {
 			targetIndex = squadIndex
 		}
 	}
-	if e.Account.UnlockPVPDecks == 0 {
-		return isChanged
-	}
 	if targetIndex < 0 {
-		for squadIndex, squad := range e.Squads {
-			if squad.Category == "" && !squad.IsLocked &&
-				!hasCreatureID(squad.CreatureIDs[:]) {
-				targetIndex = squadIndex
-				break
-			}
+		if e.Account.DefaultDeckPVPID != e.Account.DefaultDeckPVEID {
+			e.Account.DefaultDeckPVPID = e.Account.DefaultDeckPVEID
+			isChanged = true
 		}
-	}
-	if targetIndex < 0 {
 		return isChanged
 	}
 	squad := &e.Squads[targetIndex]
@@ -701,9 +775,8 @@ func (u *User) recoverThirdHeroLesson() (Account, []Squad, bool) {
 	if u.Account.OnboardingProgress != tutorialCompletedProgress {
 		return previousAccount, previousSquad, false
 	}
-	if len(u.Creatures) >= 4 {
+	if len(u.Creatures) >= 3 {
 		u.Account.OnboardingProgress = 4000
-		u.Account.CreatureRewards = 0
 		for index := range u.Squads {
 			squad := &u.Squads[index]
 			if squad.ID != u.Account.DefaultDeckPVEID || squad.Category != "pve" ||
@@ -726,16 +799,15 @@ func (u *User) recoverThirdHeroLesson() (Account, []Squad, bool) {
 		return previousAccount, previousSquad,
 			u.Account != previousAccount || !slices.Equal(u.Squads, previousSquad)
 	}
-	if len(u.Creatures) != 3 || u.Account.CreatureRewards != 0 {
+	if len(u.Creatures) != 2 || u.Account.CreatureRewards != 0 {
 		return previousAccount, previousSquad, false
 	}
 	for index := range u.Squads {
 		squad := &u.Squads[index]
 		if squad.ID != u.Account.DefaultDeckPVEID || squad.Category != "pve" ||
-			squad.CreatureIDs[0] == 0 || squad.CreatureIDs[1] == 0 || squad.CreatureIDs[2] == 0 {
+			squad.CreatureIDs[0] == 0 || squad.CreatureIDs[1] == 0 || squad.CreatureIDs[2] != 0 {
 			continue
 		}
-		squad.CreatureIDs[2] = 0
 		u.Account.CreatureRewards = 1
 		return previousAccount, previousSquad, true
 	}
@@ -750,8 +822,11 @@ func (e *User) repairHeroRewards(maximumCreatureCount int) bool {
 		earned++
 	}
 	unlocked := uint32(0)
-	if len(e.Creatures) > 3 {
-		unlocked = uint32(len(e.Creatures) - 3)
+	for _, creature := range e.Creatures {
+		if creature != nil && creature.TemplateName != tutorialBlitzTemplateName &&
+			creature.TemplateName != tutorialSageTemplateName {
+			unlocked++
+		}
 	}
 	expected := uint32(0)
 	maximumAccountLevel := uint32(len(accountExperienceUpperBound) + 1)
@@ -860,8 +935,8 @@ func isOnboardingTransition(current uint32, requested uint32) bool {
 
 // CompleteTutorial advances the server-owned onboarding boundary and persists
 // the cumulative XP/level snapshot consumed by TutorialGameMsgs subtype 0.
-// The floor is the video-observed 335/level-3 tutorial result, which also
-// normalizes compatibility routes that permit an optional encounter bypass.
+// First completion uses the video-observed 335/level-3 tutorial result,
+// including skipped tutorials and optional encounter bypasses.
 // Replays are idempotent and never reduce later account progression.
 func (m *UserManager) CompleteTutorial(ctx context.Context, userID int64) (TutorialCompletion, error) {
 	user := m.UserByID(userID)
@@ -872,12 +947,10 @@ func (m *UserManager) CompleteTutorial(ctx context.Context, userID int64) (Tutor
 	defer user.mutation.Unlock()
 	var blitzTemplate *TemplateCreature
 	var sageTemplate *TemplateCreature
-	var wraithTemplate *TemplateCreature
 	if m.template != nil {
 		blitzTemplate = m.template.ByName(tutorialBlitzTemplateName)
 		sageTemplate = m.template.ByName(tutorialSageTemplateName)
-		wraithTemplate = m.template.ByName(tutorialWraithTemplateName)
-		if blitzTemplate == nil || sageTemplate == nil || wraithTemplate == nil {
+		if blitzTemplate == nil || sageTemplate == nil {
 			return TutorialCompletion{}, ErrCreatureTemplateNotFound
 		}
 	}
@@ -890,11 +963,11 @@ func (m *UserManager) CompleteTutorial(ctx context.Context, userID int64) (Tutor
 	}
 	isChanged := completeTutorialAccount(&user.Account)
 	blitzID := uint32(0)
-	if blitzTemplate != nil && sageTemplate != nil && wraithTemplate != nil {
-		starterChanged := user.completeTutorialStarterSquad(blitzTemplate, sageTemplate, wraithTemplate)
+	if blitzTemplate != nil && sageTemplate != nil {
+		starterChanged := user.completeTutorialStarterSquad(blitzTemplate, sageTemplate)
 		isChanged = isChanged || starterChanged
 		blitzID = user.creatureIDByTemplateName(blitzTemplate.Name)
-		if isFirstCompletion && user.Account.CreatureRewards == 0 {
+		if isFirstCompletion && user.Account.CreatureRewards != 1 {
 			user.Account.CreatureRewards = 1
 			isChanged = true
 		}
@@ -987,7 +1060,7 @@ func (u *User) equipTutorialPart(part Part, creatureID uint32) bool {
 		return false
 	}
 	for index := range u.Parts {
-		if !u.Parts[index].hasGrantIdentity(part) {
+		if u.Parts[index].MarketStatus != PartMarketOwned || !u.Parts[index].hasGrantIdentity(part) {
 			continue
 		}
 		if u.Parts[index].EquippedToCreatureID != 0 {
@@ -1004,26 +1077,35 @@ func completeTutorialAccount(account *Account) bool {
 		return false
 	}
 	previous := *account
+	isFirstCompletion := account.IsTutorialPending()
 	// Build 103 continues from combat completion at 3000 through mandatory ship
 	// guides. The local server deliberately completes that onboarding chain so a
 	// victorious player reaches an immediately usable ship instead of another
 	// resumable soft-lock boundary.
 	account.OnboardingProgress = max(account.OnboardingProgress, shipOnboardingCompletedProgress)
 	account.NewPlayerInventory = max(account.NewPlayerInventory, uint32(1))
-	account.CreatureRewards = 0
-	account.XP = max(account.XP, tutorialCompletionExperience)
-	account.Level = max(account.Level, tutorialCompletionLevel)
+	if isFirstCompletion {
+		account.XP = tutorialCompletionExperience
+		account.Level = tutorialCompletionLevel
+	} else {
+		account.XP = max(account.XP, tutorialCompletionExperience)
+		account.Level = max(account.Level, tutorialCompletionLevel)
+	}
 	account.DNA = max(account.DNA, tutorialCompletionDNA)
 	return *account != previous
 }
 
-// completeTutorialStarterSquad ensures Blitz, Sage, and Wraith occupy the first
-// PvE squad. First completion separately grants the live client's native
-// post-tutorial Arsenal activation choice.
+// completeTutorialStarterSquad grants the two tutorial heroes. The third slot
+// stays empty for the player's post-tutorial Arsenal activation choice.
+// Existing starter rosters and player-authored deck assignments are preserved.
 func (u *User) completeTutorialStarterSquad(
-	blitzTemplate *TemplateCreature, sageTemplate *TemplateCreature, wraithTemplate *TemplateCreature,
+	blitzTemplate *TemplateCreature, sageTemplate *TemplateCreature,
 ) bool {
-	if u == nil || blitzTemplate == nil || sageTemplate == nil || wraithTemplate == nil {
+	if u == nil || blitzTemplate == nil || sageTemplate == nil {
+		return false
+	}
+	if u.creatureIDByTemplateName(blitzTemplate.Name) != 0 &&
+		u.creatureIDByTemplateName(sageTemplate.Name) != 0 {
 		return false
 	}
 	builder := tutorialStarterSquadBuilder{user: u, nextCreatureID: 1}
@@ -1034,7 +1116,6 @@ func (u *User) completeTutorialStarterSquad(
 	}
 	blitzID := builder.ensureCreature(blitzTemplate)
 	sageID := builder.ensureCreature(sageTemplate)
-	wraithID := builder.ensureCreature(wraithTemplate)
 	squadIndex := -1
 	for index := range u.Squads {
 		if u.Squads[index].Slot == 1 {
@@ -1051,13 +1132,6 @@ func (u *User) completeTutorialStarterSquad(
 	thirdCreatureID := squad.CreatureIDs[2]
 	if thirdCreatureID == blitzID || thirdCreatureID == sageID {
 		thirdCreatureID = 0
-	}
-	if thirdCreatureID == 0 {
-		thirdCreatureID = wraithID
-	}
-	if u.Account.CreatureRewards != 0 {
-		u.Account.CreatureRewards = 0
-		builder.isChanged = true
 	}
 	expectedCreatureIDs := [3]uint32{blitzID, sageID, thirdCreatureID}
 	if squad.CreatureIDs != expectedCreatureIDs || squad.Category != "pve" || squad.IsLocked {
@@ -1235,11 +1309,11 @@ func (m *UserManager) GrantPartOnce(ctx context.Context, userID int64, part Part
 func (u *User) grantPartOnce(userID int64, part Part) (bool, error) {
 	part.Normalize()
 	for _, existing := range u.Parts {
-		if existing.hasGrantIdentity(part) {
+		if existing.MarketStatus != PartMarketOffer && existing.hasGrantIdentity(part) {
 			return false, nil
 		}
 	}
-	part.ID = 1
+	part.ID = max(uint64(1), u.PartShop.NextPartID)
 	for _, existing := range u.Parts {
 		if existing.ID >= part.ID {
 			if existing.ID >= uint64(^uint32(0)) {
@@ -1274,7 +1348,7 @@ func (m *UserManager) GrantPart(ctx context.Context, userID int64, part Part) (P
 	defer user.mutation.Unlock()
 	user.mu.Lock()
 	if part.ID == 0 {
-		part.ID = 1
+		part.ID = max(uint64(1), user.PartShop.NextPartID)
 		for _, existing := range user.Parts {
 			if existing.ID >= part.ID {
 				part.ID = existing.ID + 1
@@ -1333,7 +1407,7 @@ func (m *UserManager) PartInventoryStatus(
 	defer user.mu.RUnlock()
 	status := PartInventoryStatus{Capacity: user.Account.UnlockInventoryIdentify}
 	for index := range user.Parts {
-		if user.Parts[index].MarketStatus == PartMarketOwned {
+		if user.Parts[index].OccupiesInventorySlot() {
 			status.OwnedCount++
 		}
 	}
@@ -1345,6 +1419,44 @@ func (m *UserManager) PartInventoryStatus(
 // account has an available inventory slot. Capacity admission and persistence
 // share the user's mutation lock so concurrent pickups cannot overbook it.
 func (m *UserManager) GrantPartWithinCapacity(ctx context.Context, userID int64, part Part) (Part, error) {
+	return m.grantPartWithinCapacity(ctx, userID, part, nil)
+}
+
+type LimitedEditionPity struct {
+	MissCount uint32
+	UsedMask  uint32
+}
+
+func (m *UserManager) LimitedEditionPityStatus(
+	ctx context.Context, userID int64,
+) (LimitedEditionPity, error) {
+	err := ctx.Err()
+	if err != nil {
+		return LimitedEditionPity{}, fmt.Errorf("limitedContext: %w", err)
+	}
+	user := m.UserByID(userID)
+	if user == nil {
+		return LimitedEditionPity{}, ErrInvalidUser
+	}
+	user.mu.RLock()
+	defer user.mu.RUnlock()
+	return LimitedEditionPity{
+		MissCount: user.Account.LimitedEditionMissCount,
+		UsedMask:  user.Account.LimitedEditionUsedMask,
+	}, nil
+}
+
+// GrantPartWithinCapacityWithLimitedEditionPity commits the granted boss item
+// and its durable pity transition through one aggregate save.
+func (m *UserManager) GrantPartWithinCapacityWithLimitedEditionPity(
+	ctx context.Context, userID int64, part Part, pity LimitedEditionPity,
+) (Part, error) {
+	return m.grantPartWithinCapacity(ctx, userID, part, &pity)
+}
+
+func (m *UserManager) grantPartWithinCapacity(
+	ctx context.Context, userID int64, part Part, pity *LimitedEditionPity,
+) (Part, error) {
 	user := m.UserByID(userID)
 	if user == nil {
 		return Part{}, ErrInvalidUser
@@ -1359,7 +1471,7 @@ func (m *UserManager) GrantPartWithinCapacity(ctx context.Context, userID int64,
 	capacity := user.Account.UnlockInventoryIdentify
 	ownedCount := uint32(0)
 	for index := range user.Parts {
-		if user.Parts[index].MarketStatus == PartMarketOwned {
+		if user.Parts[index].OccupiesInventorySlot() {
 			ownedCount++
 		}
 	}
@@ -1368,7 +1480,7 @@ func (m *UserManager) GrantPartWithinCapacity(ctx context.Context, userID int64,
 		return Part{}, ErrInventoryFull
 	}
 	if part.ID == 0 {
-		part.ID = 1
+		part.ID = max(uint64(1), user.PartShop.NextPartID)
 		for _, existing := range user.Parts {
 			if existing.ID >= part.ID {
 				part.ID = existing.ID + 1
@@ -1389,6 +1501,12 @@ func (m *UserManager) GrantPartWithinCapacity(ctx context.Context, userID int64,
 		}
 	}
 	user.Parts = append(user.Parts, part)
+	previousMissCount := user.Account.LimitedEditionMissCount
+	previousUsedMask := user.Account.LimitedEditionUsedMask
+	if pity != nil {
+		user.Account.LimitedEditionMissCount = pity.MissCount
+		user.Account.LimitedEditionUsedMask = pity.UsedMask
+	}
 	user.mu.Unlock()
 	err := m.repository.Save(ctx, user.Record())
 	if err != nil {
@@ -1397,6 +1515,8 @@ func (m *UserManager) GrantPartWithinCapacity(ctx context.Context, userID int64,
 		if last >= 0 && user.Parts[last] == part {
 			user.Parts = user.Parts[:last]
 		}
+		user.Account.LimitedEditionMissCount = previousMissCount
+		user.Account.LimitedEditionUsedMask = previousUsedMask
 		user.mu.Unlock()
 		return Part{}, fmt.Errorf("partSave: %w", err)
 	}
@@ -1488,18 +1608,13 @@ func (m *UserManager) SetAccountLevel(ctx context.Context, userID int64, level u
 }
 
 func heroRewardEntitlementCount(level uint32) uint32 {
-	milestones := [...]uint32{
-		4, 5, 8, 11, 14, 17, 18, 20, 22, 23, 25, 27, 28, 30, 32, 33,
-		35, 37, 38, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+	// The tutorial supplies the first three heroes: Blitz, Sage, and one
+	// activation choice. Each subsequent Crogenitor level earns another choice.
+	// Hero availability levels are separate from this activation allowance.
+	if level <= tutorialCompletionLevel {
+		return 0
 	}
-	count := uint32(0)
-	for _, milestone := range milestones {
-		if milestone > level {
-			break
-		}
-		count++
-	}
-	return count
+	return level - tutorialCompletionLevel
 }
 
 func minimumExperienceForLevel(level uint32) (uint32, bool) {

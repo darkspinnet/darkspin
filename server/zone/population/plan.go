@@ -13,37 +13,38 @@ import (
 )
 
 const (
-	mutationAgentNounName          = "MutationAgent.Noun"
-	mutationAgentMinimumChainLevel = uint32(5)
-	mutationAgentMaximumChainLevel = uint32(24)
-	mutationAgentMinimumChance     = uint32(5)
-	mutationAgentMaximumChance     = uint32(10)
 	initialInfinityChainLevelIndex = uint32(13)
 	exploderScarabSelectionChance  = uint32(25)
 	exploderScarabNounSpecies      = "citadelbasicsuicide"
 	roboBomberNounName             = "CitadelSpecificThree.Noun"
-	roboBomberConfigKind           = "agent"
 )
 
 func (s *Session) PlanSpawns(
 	director game.CampaignDirector, decisions []Decision, firstObjectID uint32,
 ) ([]zonenpc.SpawnPlan, uint32, error) {
-	return s.planSpawns(director, decisions, firstObjectID, 0)
+	return s.planSpawns(director, decisions, firstObjectID, 0, GroupCompositionContext{})
 }
 
-// PlanCampaignSpawns applies campaign-only population policies. Mutation
-// Agents can replace one ordinary escort in an eligible population cluster;
-// boss, named-Captain, horde, and follow-up planners never enter this path.
+// PlanCampaignSpawns applies campaign-only population policies.
 func (s *Session) PlanCampaignSpawns(
 	director game.CampaignDirector, decisions []Decision, firstObjectID uint32,
 	chainLevelIndex uint32,
 ) ([]zonenpc.SpawnPlan, uint32, error) {
-	return s.planSpawns(director, decisions, firstObjectID, chainLevelIndex)
+	return s.planSpawns(director, decisions, firstObjectID, chainLevelIndex, GroupCompositionContext{})
+}
+
+// PlanCampaignSpawnsWithContext supplies live party and agent counts for the
+// conditional mixed-group agent branch.
+func (s *Session) PlanCampaignSpawnsWithContext(
+	director game.CampaignDirector, decisions []Decision, firstObjectID uint32,
+	chainLevelIndex uint32, compositionContext GroupCompositionContext,
+) ([]zonenpc.SpawnPlan, uint32, error) {
+	return s.planSpawns(director, decisions, firstObjectID, chainLevelIndex, compositionContext)
 }
 
 func (s *Session) planSpawns(
 	director game.CampaignDirector, decisions []Decision, firstObjectID uint32,
-	chainLevelIndex uint32,
+	chainLevelIndex uint32, compositionContext GroupCompositionContext,
 ) ([]zonenpc.SpawnPlan, uint32, error) {
 	if s == nil || s.Random() == nil {
 		return nil, firstObjectID, errors.New("spawnPlan: nil population session")
@@ -53,7 +54,7 @@ func (s *Session) planSpawns(
 	}
 	minionEntries := PoolEntries(director, "minion")
 	captainEntries := PoolEntries(director, "captain")
-	requestedCount, err := requestedSpawnCount(decisions)
+	requestedCount, err := maximumSpawnCount(decisions)
 	if err != nil {
 		return nil, firstObjectID, fmt.Errorf("spawnCount: %w", err)
 	}
@@ -62,7 +63,6 @@ func (s *Session) planSpawns(
 	}
 	err = validateSpawnPools(
 		director, decisions, minionEntries, captainEntries,
-		firstObjectID, requestedCount,
 	)
 	if err != nil {
 		return nil, firstObjectID, fmt.Errorf("spawnValidate: %w", err)
@@ -71,7 +71,17 @@ func (s *Session) planSpawns(
 	nextObjectID := firstObjectID
 	for _, decision := range decisions {
 		firstDecisionPlanIndex := len(plans)
+		sectionMinions := minionEntries
+		for _, roster := range s.sectionRosters {
+			if roster.Section == decision.Section {
+				sectionMinions = roster.Minions
+				break
+			}
+		}
 		if len(decision.ProvisionalNounNames) > 0 {
+			if len(decision.ProvisionalNounNames) > int(zoneobject.ProjectileIDStart-nextObjectID) {
+				return nil, firstObjectID, errors.New("spawnAuthoredID: exhausted")
+			}
 			var planErr error
 			plans, nextObjectID, planErr = appendAuthoredPlans(
 				plans, director, decision, nextObjectID,
@@ -87,32 +97,47 @@ func (s *Session) planSpawns(
 				return nil, firstObjectID,
 					fmt.Errorf("spawnRoboBomber: %w", planErr)
 			}
-			plans, planErr = s.applyMutationAgent(
-				director, plans, firstDecisionPlanIndex, decision, chainLevelIndex,
-			)
-			if planErr != nil {
-				return nil, firstObjectID,
-					fmt.Errorf("spawnMutationAgent: %w", planErr)
-			}
 			applySpawnIntroductions(plans[firstDecisionPlanIndex:], decision)
 			continue
 		}
+		var selectedMembers []groupMember
 		count, captainCount, countErr := decisionSpawnCount(decision)
+		if decision.Kind == sim.DirectorLocusSpike && decision.ProvisionalCount == 0 {
+			selectedMembers, countErr = s.composeSpikeGroup(
+				director, decision, compositionContext,
+			)
+			count = len(selectedMembers)
+		}
 		if countErr != nil {
 			return nil, firstObjectID,
 				fmt.Errorf("spawnDecision: %w", countErr)
 		}
+		for _, member := range selectedMembers {
+			if member.isAgent {
+				compositionContext.ActiveAgentCount++
+			}
+		}
+		if count > int(zoneobject.ProjectileIDStart-nextObjectID) {
+			return nil, firstObjectID, errors.New("spawnGroupID: exhausted")
+		}
 		positions := GroupPositions(decision.Positions, count)
 		for index := 0; index < count; index++ {
 			isCaptain := index < captainCount
-			entries := minionEntries
+			entries := sectionMinions
 			if isCaptain {
 				entries = captainEntries
 			}
-			selectedEntry, selectionErr := s.selectPopulationEntry(entries)
-			if selectionErr != nil {
-				return nil, firstObjectID,
-					fmt.Errorf("spawnPlanNoun[%d]: %w", index, selectionErr)
+			var selectedEntry game.CampaignDirectorEntry
+			if len(selectedMembers) > 0 {
+				selectedEntry = selectedMembers[index].entry
+				isCaptain = selectedMembers[index].isCaptain
+			} else {
+				var selectionErr error
+				selectedEntry, selectionErr = s.selectPopulationEntry(entries)
+				if selectionErr != nil {
+					return nil, firstObjectID,
+						fmt.Errorf("spawnPlanNoun[%d]: %w", index, selectionErr)
+				}
 			}
 			profile := selectedEntry.NPCProfile
 			bossIdentity := zonenpc.BossIdentity{}
@@ -137,29 +162,24 @@ func (s *Session) planSpawns(
 			return nil, firstObjectID,
 				fmt.Errorf("spawnRoboBomber: %w", countErr)
 		}
-		plans, countErr = s.applyMutationAgent(
-			director, plans, firstDecisionPlanIndex, decision, chainLevelIndex,
-		)
-		if countErr != nil {
-			return nil, firstObjectID,
-				fmt.Errorf("spawnMutationAgent: %w", countErr)
-		}
 		applySpawnIntroductions(plans[firstDecisionPlanIndex:], decision)
+	}
+	plans, nextObjectID, err = pairCopterSpawns(plans, nextObjectID)
+	if err != nil {
+		return nil, firstObjectID, fmt.Errorf("spawnCopterPair: %w", err)
 	}
 	return plans, nextObjectID, nil
 }
 
 func applySpawnIntroductions(plans []zonenpc.SpawnPlan, decision Decision) {
 	for index := range plans {
-		profile, isProfileFound := zonenpc.ActionProfileForPlan(plans[index])
-		switch {
-		case isProfileFound && profile.PreAggroAnimationName != "":
-			plans[index].Introduction = zonenpc.SpawnIntroductionDormant
-		case decision.IsAmbush:
-			plans[index].Introduction = zonenpc.SpawnIntroductionAmbush
-		case decision.IsFloorIntroduction:
+		if decision.Kind == sim.DirectorLocusSpike && decision.IsAmbush {
 			plans[index].Introduction = zonenpc.SpawnIntroductionFloorWarp
+			continue
 		}
+		// Ordinary map population is already present, including groups whose
+		// authored pre-aggro pose keeps them dormant until approached.
+		plans[index].Introduction = zonenpc.SpawnIntroductionDormant
 	}
 }
 
@@ -204,22 +224,41 @@ func replaceInitialInfinityExploderScarabs(
 	director game.CampaignDirector, plans []zonenpc.SpawnPlan,
 	chainLevelIndex uint32,
 ) ([]zonenpc.SpawnPlan, error) {
+	// First-time population must retain the authored roster shown in the
+	// mission preview. Stage 13 explicitly includes both Scarabs and Robo-Bombers;
+	// the legacy server replacement must not collapse those two archetypes.
+	if director.IsFirstTimeRosterSelected {
+		return plans, nil
+	}
 	if chainLevelIndex != initialInfinityChainLevelIndex ||
 		!strings.EqualFold(director.Level, "infinity_2") {
 		return plans, nil
 	}
-	replacementEntry, configKind, isFound := EntryByNoun(director, roboBomberNounName)
-	if !isFound || !strings.EqualFold(configKind, roboBomberConfigKind) ||
-		!replacementEntry.NPCProfile.IsKnown {
+	isReplacementNeeded := false
+	for _, plan := range plans {
+		if isExploderScarabNoun(plan.NounName) {
+			isReplacementNeeded = true
+			break
+		}
+	}
+	if !isReplacementNeeded {
+		return plans, nil
+	}
+	// This fixed campaign replacement is independent of the selected roster.
+	// Robo-Bomber is authored as a first-time minion, not an agent, and normal
+	// roster composition can discard that pool entirely. Resolve its profile
+	// from the complete noun catalog retained by the director instead.
+	replacementProfile, isFound := director.NPCProfilesByNoun[strings.ToLower(roboBomberNounName)]
+	if !isFound || !replacementProfile.IsKnown || replacementProfile.HitPoint <= 0 {
 		return nil, errors.New("4-1 Robo-Bomber unavailable")
 	}
 	for index := range plans {
 		if !isExploderScarabNoun(plans[index].NounName) {
 			continue
 		}
-		plans[index].NounName = replacementEntry.NounName
+		plans[index].NounName = roboBomberNounName
 		plans[index].AuthoredNounName = ""
-		plans[index].NPCProfile = replacementEntry.NPCProfile
+		plans[index].NPCProfile = replacementProfile
 		plans[index].ActionProfile = zonenpc.ActionProfile{}
 		plans[index].IsActionKnown = false
 	}
@@ -235,123 +274,9 @@ func isExploderScarabNoun(nounName string) bool {
 	return normalized == exploderScarabNounSpecies
 }
 
-func (s *Session) applyMutationAgent(
-	director game.CampaignDirector, plans []zonenpc.SpawnPlan,
-	firstDecisionPlanIndex int, decision Decision, chainLevelIndex uint32,
-) ([]zonenpc.SpawnPlan, error) {
-	chance := mutationAgentChance(chainLevelIndex)
-	isEligibleCluster := decision.Kind == sim.DirectorLocusSpike ||
-		decision.IsProvisionalCaptain
-	if chance == 0 || !isEligibleCluster ||
-		len(plans)-firstDecisionPlanIndex < 3 {
-		return plans, nil
-	}
-	mutationAgentNounKey := strings.ToLower(mutationAgentNounName)
-	profile, isProfileFound := director.NPCProfilesByNoun[mutationAgentNounKey]
-	if !isProfileFound || !profile.IsKnown || profile.HitPoint <= 0 {
-		return nil, errors.New("profile unavailable")
-	}
-	roll, err := s.Random().Index(100)
-	if err != nil {
-		return nil, fmt.Errorf("roll: %w", err)
-	}
-	if roll >= chance {
-		return plans, nil
-	}
-	agentPlanIndex := -1
-	for planIndex := len(plans) - 1; planIndex >= firstDecisionPlanIndex; planIndex-- {
-		if plans[planIndex].IsCaptain || plans[planIndex].IsBoss {
-			continue
-		}
-		agentPlanIndex = planIndex
-		break
-	}
-	if agentPlanIndex < 0 {
-		return plans, nil
-	}
-	mutationTargetIndex := nearestMutationTargetPlan(
-		plans, firstDecisionPlanIndex, agentPlanIndex,
-	)
-	if mutationTargetIndex < 0 {
-		return plans, nil
-	}
-	targetPlan := &plans[mutationTargetIndex]
-	// MutationAgent.Noun has authored class and AI records but no render noun.
-	// A naturally selected Mutation Agent cannot retain its own invisible noun,
-	// so borrow the nearby mutation target's known-renderable body. Otherwise
-	// retain the selected escort body. Preserve the authored identity separately
-	// for behavior and diagnostics.
-	if strings.EqualFold(plans[agentPlanIndex].NounName, mutationAgentNounName) {
-		plans[agentPlanIndex].NounName = targetPlan.NounName
-	}
-	plans[agentPlanIndex].AuthoredNounName = mutationAgentNounName
-	plans[agentPlanIndex].NPCProfile = profile
-	plans[agentPlanIndex].BossIdentity = zonenpc.BossIdentity{}
-	plans[agentPlanIndex].ActionProfile = zonenpc.MutationAgentActionProfile()
-	plans[agentPlanIndex].IsActionKnown = true
-
-	targetAction, isTargetActionFound := zonenpc.ActionProfileForPlan(*targetPlan)
-	if !isTargetActionFound {
-		return nil, fmt.Errorf(
-			"targetAction[%s]: unavailable", targetPlan.NounName,
-		)
-	}
-	targetPlan.IsElite = true
-	targetPlan.NPCProfile = zonenpc.ApplyEliteProfile(targetPlan.NPCProfile)
-	targetAction.FirstAggroAnimationName = "npc_mutationagent_infected_grow"
-	targetAction.FirstAggroDelay = zonenpc.MutationAgentTransformDuration
-	targetAction.FirstAggroRevealDelay = 0
-	targetAction.FirstAggroCinematicDuration = 0
-	targetAction.FirstAggroCinematicRadius = 0
-	targetAction.FirstAggroEffectName = ""
-	targetAction.FirstAggroEffectDelay = 0
-	targetAction.IsFirstAggroDurationKnown = true
-	targetPlan.ActionProfile = targetAction
-	targetPlan.IsActionKnown = true
-	return plans, nil
-}
-
-func nearestMutationTargetPlan(
-	plans []zonenpc.SpawnPlan, firstPlanIndex int, agentPlanIndex int,
-) int {
-	if firstPlanIndex < 0 || firstPlanIndex >= len(plans) ||
-		agentPlanIndex < firstPlanIndex || agentPlanIndex >= len(plans) {
-		return -1
-	}
-	agentPosition := plans[agentPlanIndex].Position
-	targetPlanIndex := -1
-	targetDistance := float32(math.MaxFloat32)
-	for planIndex := firstPlanIndex; planIndex < len(plans); planIndex++ {
-		candidate := plans[planIndex]
-		if planIndex == agentPlanIndex || candidate.IsCaptain || candidate.IsBoss ||
-			candidate.IsFixture || !candidate.NPCProfile.IsTargetable ||
-			strings.EqualFold(candidate.NounName, mutationAgentNounName) {
-			continue
-		}
-		distance := candidate.Position.Sub(agentPosition).Length()
-		if distance > 15 || distance >= targetDistance {
-			continue
-		}
-		targetPlanIndex = planIndex
-		targetDistance = distance
-	}
-	return targetPlanIndex
-}
-
-func mutationAgentChance(chainLevelIndex uint32) uint32 {
-	if chainLevelIndex < mutationAgentMinimumChainLevel {
-		return 0
-	}
-	if chainLevelIndex >= mutationAgentMaximumChainLevel {
-		return mutationAgentMaximumChance
-	}
-	progress := chainLevelIndex - mutationAgentMinimumChainLevel
-	span := mutationAgentMaximumChainLevel - mutationAgentMinimumChainLevel
-	chanceSpan := mutationAgentMaximumChance - mutationAgentMinimumChance
-	return mutationAgentMinimumChance + progress*chanceSpan/span
-}
-
-func requestedSpawnCount(decisions []Decision) (int, error) {
+// maximumSpawnCount reserves capacity without consuming composition draws.
+// Object-ID limits are checked against each group's actual accepted members.
+func maximumSpawnCount(decisions []Decision) (int, error) {
 	requestedCount := 0
 	for _, decision := range decisions {
 		if len(decision.ProvisionalNounNames) > 0 {
@@ -368,7 +293,9 @@ func requestedSpawnCount(decisions []Decision) (int, error) {
 				requestedCount += int(decision.Wanderer.ClumpSize)
 			}
 		case sim.DirectorLocusSpike:
-			requestedCount += SpikeGroupSize(decision.Challenge)
+			if decision.Challenge != 0 {
+				requestedCount += maximumGroupMemberCount
+			}
 		default:
 			return 0, fmt.Errorf("spawnPlanKind: %d", decision.Kind)
 		}
@@ -380,7 +307,6 @@ func validateSpawnPools(
 	director game.CampaignDirector, decisions []Decision,
 	minionEntries []game.CampaignDirectorEntry,
 	captainEntries []game.CampaignDirectorEntry,
-	firstObjectID uint32, requestedCount int,
 ) error {
 	if len(minionEntries) == 0 {
 		return errors.New("spawnPlanMinion: empty pool")
@@ -388,9 +314,6 @@ func validateSpawnPools(
 	err := validateEntryProfiles("spawnPlanMinionProfile", minionEntries)
 	if err != nil {
 		return fmt.Errorf("spawnMinion: %w", err)
-	}
-	if requestedCount > int(zoneobject.ProjectileIDStart-firstObjectID) {
-		return errors.New("spawnPlanObjectID: exhausted")
 	}
 	for _, decision := range decisions {
 		err = validateDecision(director, decision, captainEntries)
@@ -414,8 +337,7 @@ func validateDecision(
 			return fmt.Errorf("spawnPlanFixtureProfile[%s]: missing", nounName)
 		}
 	}
-	isCaptainNeeded := decision.IsProvisionalCaptain ||
-		(decision.Kind == sim.DirectorLocusSpike && decision.Challenge != 0)
+	isCaptainNeeded := decision.IsProvisionalCaptain && len(decision.ProvisionalNounNames) == 0
 	if isCaptainNeeded && len(captainEntries) == 0 {
 		return errors.New("spawnPlanCaptain: empty pool")
 	}
@@ -438,6 +360,9 @@ func validateEntryProfiles(
 		if !entry.NPCProfile.IsKnown {
 			return fmt.Errorf("%s[%s]: missing", errorName, entry.NounName)
 		}
+		if entry.NPCProfile.ChallengeValue < 0 {
+			return fmt.Errorf("%s[%s]: negative challenge", errorName, entry.NounName)
+		}
 	}
 	return nil
 }
@@ -455,6 +380,8 @@ func appendAuthoredPlans(
 			return nil, nextObjectID,
 				fmt.Errorf("spawnPlanFixtureNoun[%d]: %s", index, nounName)
 		}
+		// A special-roster enemy is an archetype, not an elite rank. The
+		// provisional encounter role must not add captain stats or affixes.
 		isCaptain := strings.EqualFold(configKind, "captain")
 		profile := selectedEntry.NPCProfile
 		bossIdentity := zonenpc.BossIdentity{}
@@ -526,11 +453,8 @@ func decisionSpawnCount(decision Decision) (int, int, error) {
 		}
 		return int(decision.Wanderer.ClumpSize), 0, nil
 	case sim.DirectorLocusSpike:
-		count := SpikeGroupSize(decision.Challenge)
-		if count == 0 {
-			return 0, 0, nil
-		}
-		return count, 1, nil
+		// Budgeted spikes select their entries through composeSpikeGroup.
+		return 0, 0, nil
 	default:
 		return 0, 0, fmt.Errorf("spawnPlanKind: %d", decision.Kind)
 	}
@@ -539,12 +463,45 @@ func decisionSpawnCount(decision Decision) (int, int, error) {
 func PoolEntries(
 	director game.CampaignDirector, configKind string,
 ) []game.CampaignDirectorEntry {
+	var selectedEntries []game.CampaignDirectorEntry
 	for _, pool := range director.Pools {
-		if strings.EqualFold(pool.ConfigKind, configKind) {
+		if !strings.EqualFold(pool.ConfigKind, configKind) {
+			continue
+		}
+		if strings.EqualFold(pool.ConfigurationName, "firstTimeConfig") {
+			if director.IsFirstTimeRosterSelected {
+				return pool.Entries
+			}
+			continue
+		}
+		if selectedEntries == nil || strings.EqualFold(pool.ConfigurationName, "levelConfig") {
+			selectedEntries = pool.Entries
+		}
+	}
+	if director.IsFirstTimeRosterSelected &&
+		(strings.EqualFold(configKind, "minion") || strings.EqualFold(configKind, "special")) {
+		return nil
+	}
+	return selectedEntries
+}
+
+// HordeEntries uses the mission's minion roster for horde and boss-add
+// markers when no separate agent pool is authored.
+func HordeEntries(director game.CampaignDirector) []game.CampaignDirectorEntry {
+	entries := PoolEntries(director, "agent")
+	if len(entries) != 0 {
+		return entries
+	}
+	if !strings.EqualFold(director.Level, game.InitialChainLevel) {
+		return PoolEntries(director, "minion")
+	}
+	for _, pool := range director.Pools {
+		if strings.EqualFold(pool.ConfigurationName, "firstTimeConfig") &&
+			strings.EqualFold(pool.ConfigKind, "minion") {
 			return pool.Entries
 		}
 	}
-	return nil
+	return PoolEntries(director, "minion")
 }
 
 func EntryByNoun(
@@ -558,13 +515,6 @@ func EntryByNoun(
 		}
 	}
 	return game.CampaignDirectorEntry{}, "", false
-}
-
-func SpikeGroupSize(challenge uint32) int {
-	if challenge == 0 {
-		return 0
-	}
-	return int(min(uint32(6), max(uint32(2), (challenge+19)/20)))
 }
 
 func GroupPositions(authored []game.Vec3, count int) []game.Vec3 {

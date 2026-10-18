@@ -84,7 +84,7 @@ func InspectBundle(ctx context.Context, req InspectRequest) (BundleInspection, e
 		return BundleInspection{}, fmt.Errorf("inspectState: %w", err)
 	}
 	clientFile := "client.jsonl"
-	if metadata.IsClientMemoryCaptured {
+	if metadata.IsClientMemoryCaptured || metadata.IsClientMemoryAvailable {
 		clientFile = "client-memory.jsonl"
 	}
 	clientLines, err := readSnapshotLines(filepath.Join(directory, clientFile))
@@ -96,20 +96,61 @@ func InspectBundle(ctx context.Context, req InspectRequest) (BundleInspection, e
 		boundaryAt = *metadata.ClientBoundaryAt
 	}
 	requestName := metadata.ID + "_" + metadata.CreatedAt.UTC().Format("20060102T150405.000000000Z")
+	movements := make([]movementSample, 0)
+	for _, artifact := range metadata.Files {
+		if artifact.Name != "movement.json" {
+			continue
+		}
+		err = readJSONFile(filepath.Join(directory, artifact.Name), &movements)
+		if err != nil {
+			return BundleInspection{}, fmt.Errorf("inspectBindings: %w", err)
+		}
+	}
 	timeline := buildReplayTimeline(
 		events, clientLines, clientFile, requestName, boundaryAt,
+		retainedMovementBindings(movements, state),
 	)
 	capture := clientCapture{
-		IsCaptured: metadata.IsClientMemoryCaptured, RequestedAt: boundaryAt,
+		IsCaptured: metadata.IsClientMemoryCaptured, Status: metadata.ClientCaptureStatus,
+		RequestedAt: boundaryAt, ClientReceivedTimeMS: metadata.ClientReceivedTimeMS,
+		KeyframeStartedTimeMS:   metadata.ClientKeyframeStartedTimeMS,
+		KeyframeCompletedTimeMS: metadata.ClientKeyframeCompletedTimeMS,
+	}
+	if metadata.ClientResponseAt != nil {
+		capture.RespondedAt = *metadata.ClientResponseAt
+	}
+	analysisRequest := dumpRequest{
+		Actor: metadata.Actor, Trigger: metadata.Trigger, Context: metadata.Context,
+		Fingerprint: metadata.Fingerprint, ObjectID: metadata.ObjectID,
+		Movements: movements,
+	}
+	if metadata.TriggerObservedAt != nil {
+		analysisRequest.TriggeredAt = *metadata.TriggerObservedAt
+	} else {
+		for _, incident := range metadata.AutomaticIncidents {
+			if incident.Fingerprint == metadata.Fingerprint {
+				analysisRequest.TriggeredAt = incident.TriggeredAt
+				break
+			}
+		}
+	}
+	for _, artifact := range metadata.Files {
+		switch artifact.Name {
+		case "server-state-trigger.json":
+			triggerState := StateFrame{}
+			err = readJSONFile(filepath.Join(directory, artifact.Name), &triggerState)
+			if err != nil {
+				return BundleInspection{}, fmt.Errorf("inspectTrigger: %w", err)
+			}
+			analysisRequest.TriggerState = &triggerState
+		}
 	}
 	analysis := analyzeSnapshot(
-		metadata.ID,
-		dumpRequest{
-			Actor: metadata.Actor, Trigger: metadata.Trigger, Context: metadata.Context,
-			Fingerprint: metadata.Fingerprint, ObjectID: metadata.ObjectID,
-		},
+		metadata.ID, analysisRequest,
 		state, events, timeline, capture, metadata.DroppedEventCount, metadata.CreatedAt,
 	)
+	analysis.TransportDiagnostics = metadata.TransportDiagnostics
+	analysis.TriggerTransportDiagnostics = metadata.TriggerTransportDiagnostics
 	inspection := BundleInspection{
 		Directory: directory, SnapshotID: metadata.ID,
 		FormatVersion: metadata.FormatVersion, LikelyCause: analysis.LikelyCause,
@@ -183,7 +224,7 @@ func rewriteDerivedFiles(
 	if err != nil {
 		return fmt.Errorf("rewriteReport: %w", err)
 	}
-	metadata.FormatVersion = 13
+	metadata.FormatVersion = 16
 	metadata.ReplayEventCount = len(timeline.Events)
 	metadata.ClientReplayEventCount = timeline.ClientEventCount
 	metadata.ClientMalformedCount = timeline.ClientMalformedLineCount

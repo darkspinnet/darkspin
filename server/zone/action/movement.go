@@ -13,6 +13,7 @@ import (
 )
 
 type MovementCommand struct {
+	NavigationActor  basenavigation.ActorNavigation
 	ObjectID         uint32
 	DeployedObjectID uint32
 	Position         game.Vec3
@@ -22,6 +23,7 @@ type MovementCommand struct {
 }
 
 type MovementAdmission struct {
+	Goal            game.Vec3
 	IsObjectOwned   bool
 	IsPositionValid bool
 	IsGoalValid     bool
@@ -30,6 +32,7 @@ type MovementAdmission struct {
 
 func AdmitMovement(command MovementCommand) (MovementAdmission, error) {
 	admission := MovementAdmission{
+		Goal:            command.Goal,
 		IsObjectOwned:   command.ObjectID == command.DeployedObjectID,
 		IsPositionValid: zonegeometry.IsFinite(command.Position),
 		IsGoalValid:     zonegeometry.IsFinite(command.Goal),
@@ -37,12 +40,14 @@ func AdmitMovement(command MovementCommand) (MovementAdmission, error) {
 	if !admission.IsObjectOwned || !admission.IsPositionValid || !admission.IsGoalValid {
 		return admission, nil
 	}
-	err := zonenavigation.ValidateMovement(
-		command.Navigation, command.Position, command.Goal, command.FootprintRadius,
+	goal, err := zonenavigation.ResolveMovementGoal(
+		command.Navigation, command.Position, command.Goal,
+		command.FootprintRadius, command.NavigationActor,
 	)
 	if err != nil {
 		return admission, fmt.Errorf("movementNavigation: %w", err)
 	}
+	admission.Goal = goal
 	admission.IsAccepted = true
 	return admission, nil
 }

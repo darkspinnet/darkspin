@@ -96,7 +96,7 @@ func (m *UserManager) ApplyVendorTransactions(
 			}
 			ownedCount := uint32(0)
 			for index := range user.Parts {
-				if user.Parts[index].MarketStatus == PartMarketOwned {
+				if user.Parts[index].OccupiesInventorySlot() {
 					ownedCount++
 				}
 			}
@@ -107,6 +107,9 @@ func (m *UserManager) ApplyVendorTransactions(
 			}
 			part := offer.Part
 			part.ID = nextVendorPartID(user.Parts)
+			if part.ID != 0 {
+				part.ID = max(user.PartShop.NextPartID, part.ID)
+			}
 			if part.ID == 0 || user.Account.ID <= 0 ||
 				uint64(user.Account.ID) > uint64(^uint32(0)>>1) || part.ID > uint64(^uint32(0)) {
 				rollback()
@@ -157,6 +160,7 @@ func (m *UserManager) ApplyVendorTransactions(
 				return VendorTransactionResult{}, errors.New("vendor DNA overflow")
 			}
 			part.MarketStatus = PartMarketBuyback
+			part.BuybackExpiresAt = time.Now().Add(buybackLifetime).Unix()
 			user.Account.DNA += price
 		case VendorBuyback:
 			if part.MarketStatus != PartMarketOffer && part.MarketStatus != PartMarketBuyback {
@@ -164,14 +168,30 @@ func (m *UserManager) ApplyVendorTransactions(
 				user.mu.Unlock()
 				return VendorTransactionResult{}, ErrVendorPartStatus
 			}
-			if user.Account.DNA <= price {
+			isOffer := part.MarketStatus == PartMarketOffer
+			if !isOffer && part.BuybackExpiresAt <= time.Now().Unix() {
+				rollback()
+				user.mu.Unlock()
+				return VendorTransactionResult{}, ErrVendorPartStatus
+			}
+			if isOffer && (vendor == nil || !vendor.IsPartShopEnabled || user.PartShop.ExpiresAt <= time.Now().Unix()) {
+				rollback()
+				user.mu.Unlock()
+				return VendorTransactionResult{}, ErrVendorPartStatus
+			}
+			if isOffer && (partPolicy == nil || part.IsFlair || price == 0 || price > PartOfferMaximumPrice) {
+				rollback()
+				user.mu.Unlock()
+				return VendorTransactionResult{}, ErrVendorOperation
+			}
+			if user.Account.DNA < price || (!isOffer && user.Account.DNA == price) {
 				rollback()
 				user.mu.Unlock()
 				return VendorTransactionResult{}, ErrVendorFunds
 			}
 			ownedCount := uint32(0)
 			for index := range user.Parts {
-				if user.Parts[index].MarketStatus == PartMarketOwned {
+				if user.Parts[index].OccupiesInventorySlot() {
 					ownedCount++
 				}
 			}
@@ -180,7 +200,18 @@ func (m *UserManager) ApplyVendorTransactions(
 				user.mu.Unlock()
 				return VendorTransactionResult{}, ErrInventoryFull
 			}
+			if isOffer {
+				// The purchase price must not become the part's resale valuation.
+				ownedCost := partPolicy.PartCost(part.Level)
+				if ownedCost == 0 {
+					rollback()
+					user.mu.Unlock()
+					return VendorTransactionResult{}, ErrVendorOperation
+				}
+				part.Cost = ownedCost
+			}
 			part.MarketStatus = PartMarketOwned
+			part.BuybackExpiresAt = 0
 			user.Account.DNA -= price
 		case VendorFlair:
 			if partPolicy == nil || part.IsFlair ||
@@ -251,6 +282,9 @@ func nextVendorPartID(parts []Part) uint64 {
 }
 
 func vendorPartPrice(part *Part) uint32 {
+	if part.MarketStatus == PartMarketOffer {
+		return part.Cost
+	}
 	if part.IsFlair {
 		return 5
 	}

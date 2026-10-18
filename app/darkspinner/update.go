@@ -16,8 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const (
@@ -32,21 +30,29 @@ type launcherUpdateManifest struct {
 	Format  string `json:"format,omitempty"`
 }
 
-func (a *App) prepareLauncherUpdate(ctx context.Context) (bool, error) {
+func availableLauncherUpdate(ctx context.Context) (*launcherUpdateManifest, error) {
 	if goruntime.GOOS != "windows" {
-		return false, nil
+		return nil, nil
 	}
 	if BuildChannel == "development" {
-		return false, nil
+		return nil, nil
 	}
 	manifestURL := strings.TrimSpace(launcherUpdateManifestURL)
 	if manifestURL == "" {
-		return false, nil
+		return nil, nil
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	release, err := checkLauncherUpdate(ctx, client, manifestURL, Version)
 	if err != nil {
-		return false, fmt.Errorf("updateCheck: %w", err)
+		return nil, fmt.Errorf("updateCheck: %w", err)
+	}
+	return release, nil
+}
+
+func (a *App) prepareLauncherUpdate(ctx context.Context) (bool, error) {
+	release, err := availableLauncherUpdate(ctx)
+	if err != nil {
+		return false, fmt.Errorf("updateAvailable: %w", err)
 	}
 	if release == nil {
 		return false, nil
@@ -56,13 +62,17 @@ func (a *App) prepareLauncherUpdate(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("updateExecutable: %w", err)
 	}
 	a.setSubsystem("Patch", "Downloading launcher update", false)
+	client := &http.Client{Timeout: 30 * time.Second}
 	stagedPath, err := downloadLauncherUpdate(ctx, client, *release, executablePath)
 	if err != nil {
 		return false, fmt.Errorf("updateDownload: %w", err)
 	}
-	err = replaceAndRestart(stagedPath, executablePath)
+	err = replaceAndRestart(stagedPath, executablePath, a.presentationArguments())
 	if err != nil {
-		_ = os.Remove(stagedPath)
+		removeErr := os.Remove(stagedPath)
+		if removeErr != nil {
+			a.log("Launcher update cleanup failed: " + removeErr.Error())
+		}
 		return false, fmt.Errorf("updateReplace: %w", err)
 	}
 	a.mu.Lock()
@@ -71,9 +81,7 @@ func (a *App) prepareLauncherUpdate(ctx context.Context) (bool, error) {
 	a.emitStatusLocked()
 	a.mu.Unlock()
 	a.beginShutdown()
-	if a.ctx != nil {
-		runtime.Quit(a.ctx)
-	}
+	a.quit()
 	return true, nil
 }
 

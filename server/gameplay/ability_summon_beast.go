@@ -165,6 +165,17 @@ func (e *beastPetEnrageRun) activate() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("beastPetEnrageTauntSchedule: %w", err)
 	}
+	e.runtime.registry.mutex.Lock()
+	latest, isFound := e.runtime.registry.sessions[e.sessionKey]
+	if !e.isCurrent(latest, isFound) || latest.zone != peerSession.zone {
+		e.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	err = latest.zone.Companion().SetBodyScale(e.objectID, beastPetEnrageBodyScale)
+	e.runtime.registry.mutex.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("beastPetEnrageScaleCommit: %w", err)
+	}
 	packets := append([][]byte{modifierPacket, effectPacket, attributePacket}, healPacket...)
 	return append(packets, actionPackets...), nil
 }
@@ -234,6 +245,9 @@ func (e *beastPetEnrageRun) expire() ([][]byte, error) {
 	}
 	peerSession.beastPetDamageIncrease = 0
 	peerSession.beastPetEnrage = nil
+	if peerSession.zone != nil && peerSession.zone.Companion() != nil {
+		peerSession.zone.Companion().ClearBodyScale(e.objectID)
+	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
 	e.cancel = nil
@@ -475,6 +489,9 @@ func (r campaignAbilityCommandRuntime) handleSummonBeastEnrage(
 		if run.isCurrent(latest, isFound) {
 			latest.beastPetEnrage = nil
 			latest.beastPetDamageIncrease = 0
+			if latest.zone != nil && latest.zone.Companion() != nil {
+				latest.zone.Companion().ClearBodyScale(run.objectID)
+			}
 			_ = latest.setDeployedManaPoints(previousManaPoint)
 			latest.abilityCooldownSession().Rollback(cooldownReservation)
 			latest.abilityReleaseSession().Rollback(releaseReservation)
@@ -735,6 +752,7 @@ func (r campaignDamageRuntime) startBeastPetAttack(
 				peerSession.zone.NPCs().LiveSnapshots(), ability.Range,
 				zonecompanion.CompatibilityAggroRadius,
 				zonecompanion.CompatibilityMovementSpeed,
+				r.npc.now(),
 			)
 		r.registry.mutex.Unlock()
 		if pursuitErr != nil {
@@ -747,7 +765,7 @@ func (r campaignDamageRuntime) startBeastPetAttack(
 		if marshalErr != nil {
 			r.cancelCompanionPursuit(
 				sessionKey, generation, pursuit.ObjectID,
-				pursuit.TargetObjectID, pursuit.Position,
+				pursuit.TargetObjectID, pursuit.Position, pursuit.Revision,
 			)
 			return nil, fmt.Errorf("beastPetPursuitMarshal: %w", marshalErr)
 		}

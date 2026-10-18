@@ -198,33 +198,22 @@ func AdditionalMeleeTargets(
 		invalidNumber(angle) || angle <= 0 || angle > 360 {
 		return nil, errors.New("invalid melee arc")
 	}
-	forward := targetPosition.Sub(sourcePosition)
-	forwardLength := forward.Length()
-	if forwardLength <= 0 {
-		return nil, errors.New("zero melee facing")
+	arc, err := NewMeleeArc(sourcePosition, targetPosition.Sub(sourcePosition), maximumRange, angle)
+	if err != nil {
+		return nil, fmt.Errorf("additionalArc: %w", err)
 	}
-	forward = forward.Scale(1 / forwardLength)
-	halfAngleCosine := float32(math.Cos(float64(angle) * math.Pi / 360))
 	type candidate struct {
 		snapshot zonenpc.Snapshot
 		distance float32
 	}
 	candidates := make([]candidate, 0)
 	for _, enemy := range enemies.LiveSnapshots() {
-		if enemy.Plan.ObjectID == primaryObjectID || enemy.IsDefeated ||
-			!enemy.IsPublished ||
-			enemy.HitPoint <= 0 || enemy.Faction != zonenpc.FactionNonPlayerAligned {
+		if enemy.Plan.ObjectID == primaryObjectID || !IsHostileMeleeTarget(enemy) {
 			continue
 		}
 		toEnemy := enemy.Plan.Position.Sub(sourcePosition)
 		distance := toEnemy.Length()
-		footprintRadius := max(float32(0), enemy.Plan.NPCProfile.FootprintRadius)
-		if distance <= 0 || distance > maximumRange+footprintRadius {
-			continue
-		}
-		direction := toEnemy.Scale(1 / distance)
-		dot := forward.X*direction.X + forward.Y*direction.Y + forward.Z*direction.Z
-		if dot < halfAngleCosine {
+		if !arc.Contains(enemy.Plan.Position, enemy.Plan.ActorFootprintRadius()) {
 			continue
 		}
 		candidates = append(candidates, candidate{snapshot: enemy, distance: distance})

@@ -13,6 +13,46 @@ import (
 
 const campaignDropStreamSalt = uint64(0xd40f)
 
+const campaignCapsuleStreamSalt = uint64(0xca95)
+
+func newCampaignCapsuleRandom(
+	binding game.GameplayBinding, restore *zonecheckpoint.Snapshot,
+) (*sim.CapsuleRandom, error) {
+	if binding.RunSeed == 0 || binding.Level == "" || binding.Difficulty == 0 {
+		return nil, errors.New("campaign capsule seed unavailable")
+	}
+	if restore != nil && restore.RunSeed != 0 && restore.RunSeed != binding.RunSeed {
+		return nil, errors.New("campaign capsule run seed mismatch")
+	}
+	if restore != nil && restore.IsCapsuleRandomSet {
+		random, err := sim.NewCapsuleRandomFromSnapshot(restore.CapsuleRandom)
+		if err != nil {
+			return nil, fmt.Errorf("capsuleRandomRestore: %w", err)
+		}
+		return random, nil
+	}
+	// Older checkpoints contain no selector history. Initialize that new
+	// stream deterministically without changing the restored drop MT state.
+	return sim.NewCapsuleRandom(campaignCapsuleSeed(binding)), nil
+}
+
+func campaignCapsuleSeed(binding game.GameplayBinding) uint32 {
+	// Independent salt and zone identity are explicit server ownership policy.
+	levelHash := uint64(util.HashID(strings.ToLower(binding.Level)))
+	mixed := binding.RunSeed ^ levelHash<<32 ^ uint64(binding.Difficulty)<<16 ^
+		campaignCapsuleStreamSalt
+	mixed ^= mixed >> 30
+	mixed *= 0xbf58476d1ce4e5b9
+	mixed ^= mixed >> 27
+	mixed *= 0x94d049bb133111eb
+	mixed ^= mixed >> 31
+	seed := uint32(mixed) ^ uint32(mixed>>32)
+	if seed == 0 {
+		return uint32(campaignCapsuleStreamSalt)
+	}
+	return seed
+}
+
 func newCampaignDropRandom(
 	binding game.GameplayBinding, restore *zonecheckpoint.Snapshot,
 ) (*sim.SimulatorRandom, error) {

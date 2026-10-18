@@ -1,6 +1,7 @@
 package game
 
 import (
+	"errors"
 	"math"
 
 	"github.com/darkspinnet/darkspin/server/sporenet"
@@ -9,15 +10,21 @@ import (
 // New-item policy only: select complete packaged affix combinations, never
 // rewrite stored parts, combat attributes, or the client's stat calculation.
 func (e *PartCatalog) rollBudgetedCampaignAffixes(
-	part *sporenet.Part, classType string, scienceType string, choice uint32,
-) bool {
+	part *sporenet.Part, choice uint32,
+) error {
 	if e == nil || e.tuning == nil || part == nil ||
 		part.Rarity < sporenet.PartBasic || part.Rarity > sporenet.PartEpicUnique {
-		return false
+		return errors.New("campaign affix input invalid")
+	}
+	rigblock, isFound := e.ByRigblock(part.RigblockAssetID)
+	if !isFound {
+		return errors.New("campaign affix rigblock missing")
 	}
 	rarity := campaignAffixRarity(part.Rarity)
-	suffixIDs := e.budgetAffixIDs(*part, "suffix", classType, scienceType)
-	prefixIDs := e.budgetAffixIDs(*part, "prefix", classType, scienceType)
+	slotMask := partSlotBit(rigblock.SlotType)
+	scienceMask := partScienceMask(rigblock.ScienceType)
+	suffixIDs := e.budgetAffixIDs(*part, "suffix", slotMask, scienceMask)
+	prefixIDs := e.budgetAffixIDs(*part, "prefix", slotMask, scienceMask)
 	slots := [][]uint16{suffixIDs}
 	if rarity >= sporenet.PartRare {
 		slots = append(slots, prefixIDs)
@@ -25,10 +32,11 @@ func (e *PartCatalog) rollBudgetedCampaignAffixes(
 	if rarity >= sporenet.PartEpic {
 		slots = append(slots, prefixIDs)
 	}
-	for _, ids := range slots {
-		if len(ids) == 0 {
-			return false
-		}
+	if len(suffixIDs) == 0 {
+		return errors.New("campaign suffix pool empty")
+	}
+	if rarity >= sporenet.PartRare && len(prefixIDs) == 0 {
+		return errors.New("campaign required prefix pool empty")
 	}
 	baseBudget := generatedItemBudget(*part)
 	// Packaged affixes are discrete. Use the smallest bounded ceiling that can
@@ -37,28 +45,23 @@ func (e *PartCatalog) rollBudgetedCampaignAffixes(
 	// the available combinations.
 	for _, multiplier := range [...]float32{1, 1.25, 1.5, 2, 3, 4} {
 		candidate := *part
+		random := newCampaignAffixRandom(choice)
 		if e.fillBudgetedAffixes(
-			&candidate, slots, 0, choice, baseBudget*multiplier,
+			&candidate, slots, 0, &random, baseBudget*multiplier,
 		) {
 			*part = candidate
-			return true
+			return nil
 		}
 	}
-	return false
+	return errors.New("campaign affix budget has no complete roll")
 }
 
 func (e *PartCatalog) budgetAffixIDs(
-	part sporenet.Part, kind string, classType string, scienceType string,
+	part sporenet.Part, kind string, slotMask uint32, scienceMask uint32,
 ) []uint16 {
 	ids := make([]uint16, 0, len(e.affixesByKind[kind]))
 	for _, affix := range e.affixesByKind[kind] {
-		if uint32(part.Level) < affix.MinimumLevel || uint32(part.Level) > affix.MaximumLevel ||
-			!partCategoryContains(affix.ClassType, classType) ||
-			!partCategoryContains(affix.ScienceType, scienceType) {
-			continue
-		}
-		if kind == "suffix" && (affix.IsUniqueFamily != isCampaignUniqueRarity(part.Rarity) ||
-			part.Rarity == sporenet.PartBasic && !affix.IsBasicEligible) {
+		if !isCampaignAffixEligible(affix, slotMask, scienceMask, uint32(part.Level), part.Rarity) {
 			continue
 		}
 		ids = append(ids, affix.ID)
@@ -70,17 +73,22 @@ func (e *PartCatalog) budgetAffixIDs(
 // Randomized starting positions allow an expensive affix to claim budget first;
 // subsequent slots then find weaker companions. Catalog order is stable.
 func (e *PartCatalog) fillBudgetedAffixes(
-	part *sporenet.Part, slots [][]uint16, slot int, choice uint32,
+	part *sporenet.Part, slots [][]uint16, slot int, random *campaignAffixRandom,
 	maximumBudget float32,
 ) bool {
 	if slot == len(slots) {
 		return true
 	}
 	ids := slots[slot]
-	start := int(campaignPartChoice(choice, uint32(slot)+campaignSuffixStream) % uint32(len(ids)))
+	start := int(random.index(uint32(len(ids))))
+	if slot == 2 {
+		for len(ids) > 1 && ids[start] == part.PrefixAssetID {
+			start = int(random.index(uint32(len(ids))))
+		}
+	}
 	for offset := range ids {
 		id := ids[(start+offset)%len(ids)]
-		if slot == 2 && id == part.PrefixAssetID {
+		if slot == 2 && len(ids) > 1 && id == part.PrefixAssetID {
 			continue
 		}
 		candidate := *part
@@ -94,14 +102,32 @@ func (e *PartCatalog) fillBudgetedAffixes(
 			continue
 		}
 		if e.fillBudgetedAffixes(
-			&candidate, slots, slot+1,
-			campaignPartChoice(choice, uint32(id)), maximumBudget,
+			&candidate, slots, slot+1, random, maximumBudget,
 		) {
 			*part = candidate
 			return true
 		}
 	}
 	return false
+}
+
+// campaignAffixRandom uses the recovered global LCG index calculation. Its
+// per-item seed remains local policy until encounter RNG ownership is shared.
+type campaignAffixRandom struct {
+	state uint32
+}
+
+func newCampaignAffixRandom(seed uint32) campaignAffixRandom {
+	if seed == 0 {
+		seed = 0xAAAAAAAA
+	}
+	return campaignAffixRandom{state: seed}
+}
+
+func (e *campaignAffixRandom) index(count uint32) uint32 {
+	product := uint64(1103515245)*uint64(e.state) + 12345
+	e.state = uint32(product)
+	return uint32(uint64(count) * uint64(uint32(product>>16)) >> 32)
 }
 
 func (e *PartCatalog) generatedItemPower(part sporenet.Part) (float32, bool) {
@@ -118,8 +144,11 @@ func (e *PartCatalog) generatedItemPower(part sporenet.Part) (float32, bool) {
 	e.copyAffixModifiers(&blocks[1], "prefix", part.PrefixAssetID)
 	e.copyAffixModifiers(&blocks[2], "prefix", part.PrefixSecondaryAssetID)
 	e.standardModifiers(&blocks[3], definition, uint32(part.Level), part.Rarity)
-	// Negatives cannot finance extra positives or suppress the stat-count
-	// premium. Partial-roll pruning therefore remains monotonic and safe.
+	// Budget policy clamps negatives before the shared affix-only count:
+	// negatives cannot finance positives or suppress the stat-count premium.
+	// Runtime attributes retain signed cancellation. Standard block 3 still
+	// contributes to the budget's later stat calculation, not to this count.
+	// Partial-roll pruning therefore remains monotonic and safe.
 	for blockIndex := range blocks {
 		for index, amount := range blocks[blockIndex] {
 			if math.IsNaN(float64(amount)) || math.IsInf(float64(amount), 0) {
@@ -131,8 +160,8 @@ func (e *PartCatalog) generatedItemPower(part sporenet.Part) (float32, bool) {
 	rarity := campaignAffixRarity(part.Rarity)
 	distribution := e.tuning.RarityDistributions[rarity]
 	shares := [4]float32{distribution.Suffix, distribution.Prefix, distribution.Prefix2, distribution.Standard}
-	pointScale := scale * e.tuning.BasePoint *
-		(1 + float32(positiveModifierCount(blocks))*e.tuning.ExtraStatBonusFactor)
+	pointScale := scale *
+		((float32(positiveModifierCount(blocks))*e.tuning.ExtraStatBonusFactor + 1) * e.tuning.BasePoint)
 	var attributes [partAttributeCount]float32
 	specials := [...]int{0, 1, 2, 4, 5, 10, 7, 9, 102, 103, 104, 105, 108}
 	for blockIndex, modifiers := range blocks {

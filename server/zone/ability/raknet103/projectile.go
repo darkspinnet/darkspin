@@ -76,13 +76,25 @@ type ProjectileRun struct {
 	motionUpdated      time.Time
 	motionRemaining    float32
 	motionSpeedScale   float32
+	timeBubbleLeases   map[*ProjectileTimeBubbleLease]struct{}
 	isCollisionSampled bool
 	motionSegments     []sim.ProjectileMotionSegment
 	frozenUntil        time.Time
+	freezeRevision     uint64
+	isFinished         bool
 	isGravityDeflected bool
 	gravityPosition    sim.Position
 	gravityDirection   sim.Position
 	gravityDistance    float32
+}
+
+// ProjectileFreezeReservation owns one proposed deadline extension. It is
+// invisible to motion until commit; rollback never rewinds sampled time or pose.
+type ProjectileFreezeReservation struct {
+	run                 *ProjectileRun
+	revision            uint64
+	previousFrozenUntil time.Time
+	frozenUntil         time.Time
 }
 
 type ProjectileSnapshot struct {
@@ -304,7 +316,7 @@ func (r *ProjectileRun) snapshotLocked(now time.Time) ProjectileSnapshot {
 	}
 	r.advanceMotionLocked(now)
 	position := r.motionPosition
-	motionSpeed := r.speed * r.motionSpeedScale
+	motionSpeed := r.speed * r.effectiveSpeedScaleLocked()
 	speed := motionSpeed
 	isFrozen := now.Before(r.frozenUntil)
 	remainingDuration := time.Duration(0)
@@ -348,13 +360,13 @@ func (r *ProjectileRun) advanceMotionLocked(now time.Time) {
 	}
 	duration := float32(now.Sub(startedAt).Seconds())
 	distance := (r.speed*duration + 0.5*r.acceleration*duration*duration) *
-		r.motionSpeedScale
+		r.effectiveSpeedScaleLocked()
 	distance = min(r.motionRemaining, max(float32(0), distance))
 	if r.isCollisionSampled && distance > 0 {
 		r.motionSegments = append(r.motionSegments, sim.ProjectileMotionSegment{
 			Position: r.motionPosition, Direction: r.direction, Distance: distance,
-			Speed:        r.speed * r.motionSpeedScale,
-			Acceleration: r.acceleration * r.motionSpeedScale,
+			Speed:        r.speed * r.effectiveSpeedScaleLocked(),
+			Acceleration: r.acceleration * r.effectiveSpeedScaleLocked(),
 		})
 	}
 	r.motionPosition.X += r.direction.X * distance
@@ -367,20 +379,62 @@ func (r *ProjectileRun) advanceMotionLocked(now time.Time) {
 
 // Freeze preserves the projectile's live position and remaining flight while
 // native Frozen presentation owns the client-side pause.
-func (r *ProjectileRun) Freeze(now time.Time, duration time.Duration) bool {
-	if r == nil || now.IsZero() || duration <= 0 {
+func (e *ProjectileRun) Freeze(now time.Time, duration time.Duration) bool {
+	reservation, isReserved := e.ReserveFreeze(now, duration)
+	if !isReserved {
 		return false
 	}
-	r.motionMutex.Lock()
-	defer r.motionMutex.Unlock()
-	r.advanceMotionLocked(now)
-	if r.motionRemaining <= 0 {
-		return false
+	return e.CommitFreeze(reservation)
+}
+
+func (e *ProjectileRun) ReserveFreeze(now time.Time, duration time.Duration) (ProjectileFreezeReservation, bool) {
+	if e == nil || now.IsZero() || duration <= 0 || e.behavior == nil || !e.behavior.IsProjectileActive() {
+		return ProjectileFreezeReservation{}, false
+	}
+	e.motionMutex.Lock()
+	defer e.motionMutex.Unlock()
+	e.advanceMotionLocked(now)
+	if e.isFinished || e.motionRemaining <= 0 {
+		return ProjectileFreezeReservation{}, false
+	}
+	e.freezeRevision++
+	reservation := ProjectileFreezeReservation{
+		run: e, revision: e.freezeRevision,
+		previousFrozenUntil: e.frozenUntil, frozenUntil: e.frozenUntil,
 	}
 	expiresAt := now.Add(duration)
-	if expiresAt.After(r.frozenUntil) {
-		r.frozenUntil = expiresAt
+	if expiresAt.After(reservation.frozenUntil) {
+		reservation.frozenUntil = expiresAt
 	}
+	return reservation, true
+}
+
+func (e *ProjectileRun) CommitFreeze(reservation ProjectileFreezeReservation) bool {
+	if e == nil || reservation.run != e {
+		return false
+	}
+	e.motionMutex.Lock()
+	defer e.motionMutex.Unlock()
+	if e.isFinished || e.motionRemaining <= 0 || e.behavior == nil || !e.behavior.IsProjectileActive() ||
+		reservation.revision == 0 || reservation.revision != e.freezeRevision {
+		return false
+	}
+	e.frozenUntil = reservation.frozenUntil
+	e.freezeRevision++
+	return true
+}
+
+func (e *ProjectileRun) RollbackFreeze(reservation ProjectileFreezeReservation) bool {
+	if e == nil || reservation.run != e {
+		return false
+	}
+	e.motionMutex.Lock()
+	defer e.motionMutex.Unlock()
+	if e.isFinished || reservation.revision == 0 || reservation.revision != e.freezeRevision {
+		return false
+	}
+	e.frozenUntil = reservation.previousFrozenUntil
+	e.freezeRevision++
 	return true
 }
 
@@ -412,6 +466,7 @@ func (r *ProjectileRun) Thaw(now time.Time) {
 		r.motionUpdated = r.frozenUntil
 	}
 	r.frozenUntil = time.Time{}
+	r.freezeRevision++
 }
 
 // RemainingFlightDelay returns the wall-clock delay before authoritative
@@ -434,8 +489,8 @@ func (r *ProjectileRun) RemainingFlightDelay(now time.Time) time.Duration {
 }
 
 func (e *ProjectileRun) remainingMotionDurationLocked() time.Duration {
-	speed := float64(e.speed * e.motionSpeedScale)
-	acceleration := float64(e.acceleration * e.motionSpeedScale)
+	speed := float64(e.speed * e.effectiveSpeedScaleLocked())
+	acceleration := float64(e.acceleration * e.effectiveSpeedScaleLocked())
 	if e.motionRemaining <= 0 || speed <= 0 || acceleration < 0 {
 		return 0
 	}
@@ -453,7 +508,7 @@ func (r *ProjectileRun) Retarget(
 	r.motionMutex.Lock()
 	isAlreadyTargeted := r.retargetID == targetObjectID
 	r.motionMutex.Unlock()
-	if isAlreadyTargeted {
+	if isAlreadyTargeted && targetObjectID == 0 {
 		return nil, nil
 	}
 	snapshot := r.Snapshot(now)
@@ -503,6 +558,11 @@ func (r *ProjectileRun) Retarget(
 	r.motionRemaining = remainingDistance
 	projectileSpeed := r.speed
 	r.motionMutex.Unlock()
+	// The client follows its target object automatically. Keep authoritative
+	// collision motion aimed at that moving object without repeating wire updates.
+	if isAlreadyTargeted {
+		return nil, nil
+	}
 	target := raknet.Vector3{
 		X: targetPosition.X, Y: targetPosition.Y, Z: targetPosition.Z,
 	}
@@ -591,9 +651,9 @@ func (r *ProjectileRun) ApplyGravity(
 	r.motionUpdated = now
 	r.motionRemaining = remainingDistance
 	r.isGravityDeflected = true
-	// The replacement native locomotion has a constant speed. Preserve that
-	// same speed after changing direction instead of continuing acceleration
-	// which is absent from the packet below.
+	// Retain the integrated velocity in both simulations. Keeping the old
+	// speed here discarded acceleration towards/away from the gravity source.
+	r.speed = velocityLength / r.effectiveSpeedScaleLocked()
 	r.acceleration = 0
 	r.gravityPosition = snapshot.Position
 	r.gravityDirection = direction
@@ -611,7 +671,7 @@ func (r *ProjectileRun) ApplyGravity(
 		ObjectID: r.objectID,
 		Locomotion: raknet.LocomotionReflection{
 			Projectile: &raknet.ProjectileParameter{
-				Speed: snapshot.Speed, Range: remainingDistance,
+				Speed: velocityLength, Range: remainingDistance,
 				Direction:                initialDirection,
 				IsGroundCollisionIgnored: true, IsCreatureCollisionIgnored: true,
 			},
@@ -649,6 +709,9 @@ func (r *ProjectileRun) DeleteProjectile(
 	if ctx == nil {
 		return nil, false, errors.New("nil projectile context")
 	}
+	r.motionMutex.Lock()
+	r.freezeRevision++
+	r.motionMutex.Unlock()
 	if r.cancel != nil {
 		r.cancel()
 		r.cancel = nil
@@ -843,6 +906,10 @@ func (r *ProjectileRun) Finish() {
 	if r == nil {
 		return
 	}
+	r.motionMutex.Lock()
+	r.isFinished = true
+	r.freezeRevision++
+	r.motionMutex.Unlock()
 	r.cancel = nil
 	if r.behavior != nil {
 		_ = r.behavior.Cancel()

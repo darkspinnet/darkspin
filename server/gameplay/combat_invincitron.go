@@ -14,6 +14,15 @@ import (
 	zoneprojection "github.com/darkspinnet/darkspin/server/zone/projection"
 )
 
+const (
+	invincitronDroneOrbitRadius   = float32(2)
+	invincitronDroneOrbitHeight   = float32(2)
+	invincitronDroneOrbitDuration = 6 * time.Second
+	invincitronDroneOrbitSpeed    = float32(2 * math.Pi * 2 / 6)
+	invincitronDroneFollowDelay   = 100 * time.Millisecond
+	invincitronDroneGoalLead      = 300 * time.Millisecond
+)
+
 func (r campaignNPCActionRuntime) ensureInvincitronDrone(
 	packet raknet.Packet, sessionKey string, generation uint64,
 	ownerObjectID uint32, timestamp uint64,
@@ -42,6 +51,8 @@ func (r campaignNPCActionRuntime) ensureInvincitronDrone(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("invincitronDroneProfile: %w", err)
 	}
+	profile.MovementSpeed = invincitronDroneOrbitSpeed
+	profile.NonCombatMovementSpeed = invincitronDroneOrbitSpeed
 	objectID, err := peerSession.reserveCampaignObjectID()
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -55,16 +66,22 @@ func (r campaignNPCActionRuntime) ensureInvincitronDrone(
 	if footprintErr != nil || footprintRadius <= 0 {
 		footprintRadius = 0.5
 	}
+	authoredProfile := peerSession.zone.DirectorDefinition().NPCProfilesByNoun["nomaddrone.noun"]
 	plan := zonenpc.SpawnPlan{
 		ObjectID: objectID, OwnerObjectID: ownerObjectID,
 		NounName: "NomadDrone.Noun", Position: invincitronDronePosition(owner.Plan.Position, 0),
 		LocusID: owner.Plan.LocusID, MarkerSetName: owner.Plan.MarkerSetName,
-		IsRewardSuppressed: true,
+		IsEncounterAuxiliary: true,
 		NPCProfile: game.CampaignNPCProfile{
 			NPCRank:      owner.Plan.NPCProfile.NPCRank,
+			NPCType:      authoredProfile.NPCType,
+			IsClassKnown: authoredProfile.IsClassKnown,
 			IsTargetable: false, HitPoint: hitPoint,
-			Mind:          owner.Plan.NPCProfile.Mind,
-			GraphicsScale: 1, FootprintRadius: footprintRadius,
+			AggroRange: authoredProfile.AggroRange, AlertRange: authoredProfile.AlertRange,
+			DropAggroRange:    authoredProfile.DropAggroRange,
+			IdleMovementSpeed: authoredProfile.IdleMovementSpeed,
+			Mind:              owner.Plan.NPCProfile.Mind,
+			GraphicsScale:     1, FootprintRadius: footprintRadius,
 			DifficultyDamageMultiplier: owner.Plan.NPCProfile.DifficultyDamageMultiplier,
 			IsKnown:                    true,
 		},
@@ -124,17 +141,31 @@ type campaignDroneFollowStep struct {
 // The packaged description requires an orbit, but its native trajectory is
 // unrecovered. Keep the visual and authoritative firing origin on one circle.
 func invincitronDronePosition(owner game.Vec3, elapsed time.Duration) game.Vec3 {
-	angle := elapsed.Seconds() * 2 * math.Pi / 6
+	angle := elapsed.Seconds() * 2 * math.Pi /
+		invincitronDroneOrbitDuration.Seconds()
 	return owner.Add(game.Vec3{
-		X: 2 * float32(math.Cos(angle)),
-		Y: 2 * float32(math.Sin(angle)),
-		Z: 2,
+		X: invincitronDroneOrbitRadius * float32(math.Cos(angle)),
+		Y: invincitronDroneOrbitRadius * float32(math.Sin(angle)),
+		Z: invincitronDroneOrbitHeight,
 	})
+}
+
+func invincitronDroneFacing(position game.Vec3, goal game.Vec3) raknet.Vector3 {
+	delta := goal.Sub(position)
+	length := float32(math.Sqrt(float64(
+		delta.X*delta.X + delta.Y*delta.Y + delta.Z*delta.Z,
+	)))
+	if length == 0 {
+		return raknet.Vector3{X: 1}
+	}
+	return raknet.Vector3{
+		X: delta.X / length, Y: delta.Y / length, Z: delta.Z / length,
+	}
 }
 
 func (e campaignDroneFollowStep) schedule() error {
 	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
-		Delay: 100 * time.Millisecond, Produce: e.produce,
+		Delay: invincitronDroneFollowDelay, Produce: e.produce,
 	}})
 	if err != nil {
 		return fmt.Errorf("droneFollowSchedule: %w", err)
@@ -159,7 +190,11 @@ func (e campaignDroneFollowStep) produce() ([][]byte, error) {
 		e.runtime.registry.mutex.RUnlock()
 		return nil, nil
 	}
-	position := invincitronDronePosition(owner.Plan.Position, e.runtime.now().Sub(e.startedAt))
+	elapsed := e.runtime.now().Sub(e.startedAt)
+	position := invincitronDronePosition(owner.Plan.Position, elapsed)
+	goal := invincitronDronePosition(
+		owner.Plan.Position, elapsed+invincitronDroneGoalLead,
+	)
 	isMoved := position != drone.Plan.Position
 	var err error
 	if isMoved {
@@ -171,21 +206,23 @@ func (e campaignDroneFollowStep) produce() ([][]byte, error) {
 	}
 	packets := make([][]byte, 0, 2)
 	if isMoved {
-		position := raknet.Vector3(position)
-		updatePacket, marshalErr := raknet.MarshalApplication(raknet.ObjectPositionUpdateMessage{
-			ObjectID: e.objectID, PositionX: position.X, PositionY: position.Y,
-			PositionZ: position.Z,
-		})
-		if marshalErr != nil {
-			return nil, fmt.Errorf("droneFollowUpdate: %w", marshalErr)
-		}
+		goalPosition := raknet.Vector3(goal)
 		goalPacket, marshalErr := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
-			ObjectID: e.objectID, GoalFlags: 0x20, GoalPosition: position,
+			ObjectID: e.objectID, GoalFlags: 0x01, GoalPosition: goalPosition,
+			Facing: invincitronDroneFacing(position, goal),
 		})
 		if marshalErr != nil {
 			return nil, fmt.Errorf("droneFollowGoal: %w", marshalErr)
 		}
-		packets = append(packets, updatePacket, goalPacket)
+		locomotionPacket, marshalErr := raknet.MarshalApplication(
+			raknet.LocomotionUnreliableMessage{
+				ObjectID: e.objectID, GoalPosition: goalPosition,
+			},
+		)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("droneFollowLocomotion: %w", marshalErr)
+		}
+		packets = append(packets, goalPacket, locomotionPacket)
 	}
 	err = e.schedule()
 	if err != nil {

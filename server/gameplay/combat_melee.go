@@ -237,8 +237,15 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 		generation, enemy.TargetObjectID,
 	)
 	profile, isProfileFound := campaignNPCActionProfile(
-		enemy.Plan, target.Position, target.FootprintRadius,
+		enemy.Plan, target.Position, target.ActorFootprintRadius,
 	)
+	if profile.AbilityName == "CitadelDischarge" {
+		// GetChannelEffect clamps the retained charge counter to four authored
+		// visual strengths, starting at one when no counter is present.
+		stackCount := min(max(uint32(1), peerSession.campaignNPCVoltroidCharges[objectID]), uint32(4))
+		profile.TrailEffectName = fmt.Sprintf("citadel_zap_discharge_%d.ServerEventDef", stackCount)
+		profile.ImpactEffectName = fmt.Sprintf("citadel_zap_hit_%d.ServerEventDef", stackCount)
+	}
 	isOperativeChannel := zonenpc.IsOperativeCage(profile.ModifierName) &&
 		r.registry.isOperativeChannelLocked(peerSession, objectID, target.ObjectID)
 	if isOperativeChannel {
@@ -341,7 +348,7 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 	if profile.AbilityName == "ZelemChargeupStandardAttack" && !isSilenced {
 		if chargeupState.isCharged {
 			profile = zonenpc.ZelemChargeupDischargeProfile()
-		} else if chargeupState.nextBuildTimestamp == 0 ||
+		} else if chargeupState.isStandardAttackPerformed &&
 			timestamp >= chargeupState.nextBuildTimestamp {
 			return r.produceZelemChargeupBuild(
 				packet, sessionKey, generation, objectID, timestamp,
@@ -367,7 +374,7 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 		return fleePackets, nil
 	}
 	attackPlan, err := zonenpc.PlanAttackWithProfile(
-		enemy, target.ObjectID, target.Position, profile, target.FootprintRadius,
+		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
 	if err != nil {
 		pursuitPosition := target.Position
@@ -378,7 +385,7 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 		}
 		action, actionErr := campaignNPCActionWithProfile(
 			enemy.Plan, target.ObjectID, pursuitPosition, profile,
-			target.FootprintRadius,
+			target.ActorFootprintRadius,
 		)
 		if actionErr != nil {
 			return nil, fmt.Errorf("enemyMeleePursuitPlan: %w", actionErr)
@@ -473,6 +480,22 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 		}
 		return nil, fmt.Errorf("enemyMeleeSchedule: %w", scheduleErr)
 	}
+	if profile.AbilityName == "ZelemChargeupStandardAttack" {
+		// Pursuit alone must not unlock another charge: commit the basic
+		// attack only once its hit and release have been scheduled.
+		r.registry.mutex.Lock()
+		latest, isLatestFound := r.registry.sessions[sessionKey]
+		if isLatestFound && latest.generation == generation {
+			if latest.campaignNPCChargeups == nil {
+				latest.campaignNPCChargeups = make(map[uint32]campaignNPCChargeupState)
+			}
+			latestState := latest.campaignNPCChargeups[objectID]
+			latestState.isStandardAttackPerformed = true
+			latest.campaignNPCChargeups[objectID] = latestState
+			r.registry.sessions[sessionKey] = latest
+		}
+		r.registry.mutex.Unlock()
+	}
 	return startPackets, nil
 }
 
@@ -514,12 +537,12 @@ func (r campaignNPCActionRuntime) produceCryosRezMelee(
 		return nil, nil
 	}
 	plan, err := zonenpc.PlanAttackWithProfile(
-		enemy, target.ObjectID, target.Position, profile, target.FootprintRadius,
+		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
 	if err != nil {
 		action, actionErr := campaignNPCActionWithProfile(
 			enemy.Plan, target.ObjectID, target.Position, profile,
-			target.FootprintRadius,
+			target.ActorFootprintRadius,
 		)
 		if actionErr != nil {
 			return nil, fmt.Errorf("enemyRezMeleePursuitPlan: %w", actionErr)

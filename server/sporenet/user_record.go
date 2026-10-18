@@ -18,6 +18,7 @@ type UserRecord struct {
 	Squads                      []Squad
 	Creatures                   []*Creature
 	Parts                       []Part
+	PartShop                    PartShopState
 	Events                      []UserEvent
 	CampaignExperiences         []CampaignExperience
 	Associations                map[uint32][]AssociationMember
@@ -51,6 +52,7 @@ func (u *User) Record() UserRecord {
 		Squads:                      append([]Squad(nil), u.Squads...),
 		Creatures:                   cloneCreatures(u.Creatures),
 		Parts:                       append([]Part(nil), u.Parts...),
+		PartShop:                    u.PartShop,
 		Events:                      append([]UserEvent(nil), u.Events...),
 		CampaignExperiences:         append([]CampaignExperience(nil), u.CampaignExperiences...),
 		Associations:                cloneAssociations(u.Associations),
@@ -75,6 +77,7 @@ func NewUserFromRecord(record UserRecord, templateDatabase *TemplateDatabase) *U
 		Squads:                      append([]Squad(nil), record.Squads...),
 		Creatures:                   cloneCreatures(record.Creatures),
 		Parts:                       append([]Part(nil), record.Parts...),
+		PartShop:                    record.PartShop,
 		Events:                      append([]UserEvent(nil), record.Events...),
 		CampaignExperiences:         append([]CampaignExperience(nil), record.CampaignExperiences...),
 		Associations:                cloneAssociations(record.Associations),

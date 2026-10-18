@@ -18,21 +18,24 @@ type campaignNPCOozeGrowthRun struct {
 }
 
 type campaignNPCOozeGrowthSchedule struct {
-	runtime        campaignNPCActionRuntime
-	packet         raknet.Packet
-	sessionKey     string
-	generation     uint64
-	sourceObjectID uint32
-	targetObjectID uint32
-	timestamp      uint64
-	profile        zonenpc.ActionProfile
+	runtime          campaignNPCActionRuntime
+	packet           raknet.Packet
+	sessionKey       string
+	generation       uint64
+	actionGeneration uint64
+	sourceObjectID   uint32
+	targetObjectID   uint32
+	timestamp        uint64
+	profile          zonenpc.ActionProfile
 }
 
 func (e campaignNPCOozeGrowthSchedule) hit() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
-		peerSession.isCampaignNPCSourceActive(e.generation, e.sourceObjectID) &&
+		peerSession.isCampaignNPCSourceGenerationActive(
+			e.generation, e.sourceObjectID, e.actionGeneration,
+		) &&
 		peerSession.zone != nil && peerSession.zone.NPCs() != nil
 	if !isCurrent {
 		e.runtime.registry.mutex.Unlock()
@@ -95,7 +98,7 @@ func (e campaignNPCOozeGrowthSchedule) hit() ([][]byte, error) {
 	targetPlan := result.Target.Plan
 	if targetPlan.IsCaptain || targetPlan.IsElite || targetPlan.IsBoss ||
 		targetPlan.BossIdentity.HasModifier(zonenpc.EliteModifierName) {
-		bodyScaleBonus += zonenpc.EliteBodyScaleBonus
+		bodyScaleBonus += zonenpc.EliteBonusForType(targetPlan.NPCProfile.NPCType).BodyScale
 	}
 	bodyScalePacket, bodyScaleErr := raknet.MarshalApplication(
 		raknet.AttributeDataUpdateMessage{
@@ -140,12 +143,23 @@ func (e campaignNPCOozeGrowthSchedule) hit() ([][]byte, error) {
 }
 
 func (e campaignNPCOozeGrowthSchedule) next() ([][]byte, error) {
-	timestamp := e.timestamp + uint64(e.profile.Cooldown/time.Millisecond)
+	e.runtime.registry.mutex.RLock()
+	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isCurrent := isFound && peerSession.isCampaignNPCSourceGenerationActive(
+		e.generation, e.sourceObjectID, e.actionGeneration,
+	)
+	e.runtime.registry.mutex.RUnlock()
+	if !isCurrent {
+		return nil, nil
+	}
+	timestamp := e.timestamp + uint64(e.profile.ReleaseDelay/time.Millisecond)
 	packets, err := e.runtime.produceEnemyMelee(
 		e.packet, e.sessionKey, e.generation, e.sourceObjectID, timestamp,
 	)
 	if err != nil {
-		e.runtime.releaseAction(e.sessionKey, e.generation, e.sourceObjectID)
+		e.runtime.releaseActionGeneration(
+			e.sessionKey, e.generation, e.sourceObjectID, e.actionGeneration,
+		)
 		return nil, fmt.Errorf("oozeGrowthNext: %w", err)
 	}
 	return packets, nil
@@ -173,23 +187,29 @@ func (r campaignNPCActionRuntime) produceVerdanthBasicOozeGrowth(
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation &&
-		peerSession.isCampaignNPCSourceActive(generation, source.Plan.ObjectID) &&
+		peerSession.isCampaignNPCSourceGenerationActive(
+			generation, source.Plan.ObjectID, source.ActionGeneration,
+		) &&
 		peerSession.zone != nil && peerSession.zone.NPCs() != nil
 	if !isCurrent {
 		r.registry.mutex.Unlock()
 		return nil, true, nil
 	}
-	target, isTargetFound := peerSession.zone.NPCs().FirstOozeGrowthTarget(
-		source.Plan.ObjectID, profile.Range,
+	target, isTargetFound := peerSession.zone.NPCs().OozeGrowthTarget(
+		source.Plan.ObjectID,
 	)
 	if !isTargetFound {
+		r.registry.mutex.Unlock()
+		return nil, false, nil
+	}
+	if !target.IsOozeGrowthReady(timestamp) {
 		r.registry.mutex.Unlock()
 		return nil, false, nil
 	}
 	retreatPosition := oozeRetreatPosition(source.Plan.Position, target.Plan.Position)
 	projectedPosition, _, err := zoneaction.NPCProjectPosition(
 		peerSession.zone.Navigation(), retreatPosition,
-		source.Plan.NPCProfile.FootprintRadius,
+		source.NavigationRadius(), source.Navigation,
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -212,19 +232,30 @@ func (r campaignNPCActionRuntime) produceVerdanthBasicOozeGrowth(
 	schedule := campaignNPCOozeGrowthSchedule{
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, sourceObjectID: source.Plan.ObjectID,
-		targetObjectID: target.Plan.ObjectID, timestamp: timestamp,
+		actionGeneration: source.ActionGeneration,
+		targetObjectID:   target.Plan.ObjectID, timestamp: timestamp,
 		profile: profile,
 	}
 	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: profile.HitDelay, Produce: schedule.hit},
-		{Delay: profile.Cooldown, Produce: schedule.next},
+		{Delay: profile.ReleaseDelay, Produce: schedule.next},
 	})
 	if err == nil && cancel == nil {
 		err = errors.New("nil cancellation")
 	}
 	if err != nil {
-		r.releaseAction(sessionKey, generation, source.Plan.ObjectID)
+		r.releaseActionGeneration(
+			sessionKey, generation, source.Plan.ObjectID, source.ActionGeneration,
+		)
 		return nil, true, fmt.Errorf("oozeGrowthSchedule: %w", err)
+	}
+	isCommitted := peerSession.zone.NPCs().CommitOozeGrowthAction(source, timestamp)
+	if !isCommitted {
+		cancel()
+		r.releaseActionGeneration(
+			sessionKey, generation, source.Plan.ObjectID, source.ActionGeneration,
+		)
+		return nil, true, nil
 	}
 	return castPackets, true, nil
 }

@@ -105,7 +105,7 @@ func (e campaignCircleTargetStep) produce() ([][]byte, error) {
 	if isDestinationFound {
 		destination, isDestinationFound, _ = zoneaction.NPCDirectMovementDestination(
 			peerSession.zone.Navigation(), enemy.Plan.Position, destination,
-			enemy.Plan.NPCProfile.FootprintRadius,
+			enemy.NavigationRadius(), enemy.Navigation,
 		)
 	}
 	if !isDestinationFound {
@@ -118,7 +118,7 @@ func (e campaignCircleTargetStep) produce() ([][]byte, error) {
 			destination, isDestinationFound, _ =
 				zoneaction.NPCDirectMovementDestination(
 					peerSession.zone.Navigation(), enemy.Plan.Position, destination,
-					enemy.Plan.NPCProfile.FootprintRadius,
+					enemy.NavigationRadius(), enemy.Navigation,
 				)
 		}
 	}
@@ -136,9 +136,14 @@ func (e campaignCircleTargetStep) produce() ([][]byte, error) {
 	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
-	packets, err := npcraknet.PursuitRedirect(
-		e.objectID, step.Position, target.ObjectID, target.Position, 0.1,
-	)
+	var packets [][]byte
+	if step.IsBlocked {
+		packets, err = npcraknet.StopAtPose(e.objectID, step.Position, enemy.Facing)
+	} else {
+		packets, err = npcraknet.PursuitRedirect(
+			e.objectID, step.Position, target.ObjectID, target.Position, 0.1,
+		)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("enemyCircleRedirect: %w", err)
 	}

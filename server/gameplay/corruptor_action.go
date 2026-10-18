@@ -20,7 +20,7 @@ func (e campaignNPCActionRuntime) restartCorruptorAction(
 	if err != nil {
 		return nil, fmt.Errorf("phasePose: %w", err)
 	}
-	packets, err := npcraknet.MovementStop(boss.Plan.ObjectID, boss.Plan.Position)
+	packets, err := npcraknet.StopAtPose(boss.Plan.ObjectID, boss.Plan.Position, boss.Facing)
 	if err != nil {
 		return nil, fmt.Errorf("phaseStop: %w", err)
 	}

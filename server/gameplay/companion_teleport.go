@@ -5,6 +5,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/game"
 	actionraknet "github.com/darkspinnet/darkspin/server/zone/action/raknet103"
+	zonecompanion "github.com/darkspinnet/darkspin/server/zone/companion"
 )
 
 // teleportOwnedCompanions keeps living player-owned summons on the same side
@@ -24,6 +25,23 @@ func (e *gameplayPeerSession) teleportOwnedCompanions(
 			companion.OwnerObjectID != e.deployedObjectID ||
 			companion.HitPoint <= 0 {
 			continue
+		}
+		// Only the unlaunched Fire Tempest shot belongs to the old pose.
+		// Keep its cooldown and any already launched flight intact.
+		run := e.fireTempestActive
+		if run != nil && run.petObjectID == companion.ObjectID &&
+			run.ownerObjectID == companion.OwnerObjectID &&
+			run.generation == companion.PeerGeneration &&
+			run.attack != nil && !run.isAttackLaunched {
+			attack := run.attack
+			e.zone.Companion().ReleaseAttack(
+				companion.ObjectID, run.attackTargetObjectID,
+			)
+			run.attackRevision++
+			run.attack = nil
+			run.attackTargetObjectID = 0
+			run.isAttackResumeNeeded = true
+			attack.Stop()
 		}
 		if companion.TargetObjectID != 0 {
 			e.zone.Companion().ReleaseAttack(
@@ -59,6 +77,15 @@ func (e *gameplayPeerSession) teleportOwnedCompanions(
 			)
 		}
 		packets = append(packets, companionPackets...)
+		if companion.ObjectID == e.beastPetObjectID {
+			// Teleport supersedes a charge leg's pose, including its deferred
+			// retirement correction. Restore the owned Beast's ordinary speed here.
+			speedPacket, speedErr := heroChargeSpeedPacket(companion.ObjectID, zonecompanion.CompatibilityMovementSpeed)
+			if speedErr != nil {
+				return nil, fmt.Errorf("beastTeleportSpeed: %w", speedErr)
+			}
+			packets = append(packets, speedPacket)
+		}
 	}
 	return packets, nil
 }

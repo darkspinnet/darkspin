@@ -51,6 +51,12 @@ type LayerInfo struct {
 	SpatialCellCount int
 }
 
+// LayerTuning retains the authored NavPowerTuning row ordinal and radius.
+type LayerTuning struct {
+	Ordinal     uint8
+	AgentRadius float32
+}
+
 type Edge struct {
 	NeighborOffset uint32
 	Vertex         Vec3
@@ -77,7 +83,9 @@ type layer struct {
 }
 
 type Mesh struct {
-	layers []layer
+	layers    []layer
+	tunings   []LayerTuning
+	obstacles []Obstacle
 }
 
 func ParseBFX(data []byte) (*Mesh, error) {
@@ -321,17 +329,45 @@ func (m *Mesh) LayerInfo(planLayer uint8) (LayerInfo, bool) {
 	return m.layers[planLayer].info, true
 }
 
-func (m *Mesh) SelectLayer(radius float32, height float32) (uint8, bool) {
-	if m == nil || !isFinitePositive(radius) || !isFinitePositive(height) {
-		return 0, false
+func (m *Mesh) AttachTuning(tunings []LayerTuning) error {
+	if m == nil || len(tunings) == 0 || len(tunings) != len(m.layers) {
+		return errors.New("navigation tuning or mesh layers unavailable")
 	}
-	for layerIndex := range m.layers {
-		info := m.layers[layerIndex].info
-		if info.Radius >= radius && info.Height >= height {
-			return uint8(layerIndex), true
+	for index, tuning := range tunings {
+		if int(tuning.Ordinal) != index || !isFinitePositive(tuning.AgentRadius) {
+			return fmt.Errorf("navigation tuning[%d] invalid", index)
 		}
 	}
-	return 0, false
+	m.tunings = append([]LayerTuning(nil), tunings...)
+	return nil
+}
+
+// SelectLayer keeps the legacy call shape; native selection ignores height.
+func (e *Mesh) SelectLayer(radius float32, height float32) (uint8, bool) {
+	return e.SelectLayerForMode(radius, 0)
+}
+
+// SelectLayerForMode follows the authored tuning ordinals, not mesh radii or
+// heights. Mode 3 is Arena; its previous-selected-radius branch caps large actors.
+func (e *Mesh) SelectLayerForMode(radius float32, mode uint8) (uint8, bool) {
+	if e == nil || len(e.tunings) == 0 || !isFiniteScalar(radius) || radius < 0 {
+		return 0, false
+	}
+	selected := len(e.tunings) - 1
+	for index := len(e.tunings) - 1; index >= 0; index-- {
+		if radius > e.tunings[index].AgentRadius {
+			if mode != 3 || e.tunings[selected].AgentRadius < 2.5 {
+				break
+			}
+		}
+		selected = index
+	}
+	layer := e.tunings[selected].Ordinal
+	layerInfo, isFound := e.LayerInfo(layer)
+	if !isFound || layerInfo.PlanLayer != layer {
+		return 0, false
+	}
+	return layer, true
 }
 
 // SelectLargestLayer returns the widest authored layer that accepts the actor's height.

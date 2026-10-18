@@ -522,8 +522,14 @@ func (r campaignAbilityCommandRuntime) handleHeroTrap(
 		position = req.command.Ability.CursorPosition
 	}
 	admissionRange := heroAbilityAdmissionRange(creature, definition)
-	if !isReportedZonePosition(position) || !isFiniteZonePosition(position) ||
-		!isInsideZoneTrigger(peerSession.playerPosition, position, admissionRange) {
+	if !isReportedZonePosition(position) || !isFiniteZonePosition(position) {
+		r.registry.mutex.Unlock()
+		return req.reject("trap position unavailable")
+	}
+	if !isInsideZoneTrigger(peerSession.playerPosition, position, admissionRange) {
+		if definition.Name == "ClaymoreTrap" {
+			return r.pursueTrapLocked(req, peerSession, sessionKey, position, admissionRange)
+		}
 		r.registry.mutex.Unlock()
 		return req.reject("trap position unavailable")
 	}
@@ -543,6 +549,11 @@ func (r campaignAbilityCommandRuntime) handleHeroTrap(
 	if peerSession.deployedManaPoint() < manaCost {
 		r.registry.mutex.Unlock()
 		return req.reject("power unavailable")
+	}
+	stopPackets, err := marshalZonePlayerStop(req.command.Common.ObjectID, peerSession.playerPosition)
+	if err != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("trapStop: %w", err)
 	}
 	objectID, err := peerSession.reserveCampaignObjectID()
 	if err != nil {
@@ -661,6 +672,7 @@ func (r campaignAbilityCommandRuntime) handleHeroTrap(
 		assetName: projected.Name, objectID: objectID,
 		ownerObjectID: req.command.Common.ObjectID,
 	}
+	peerSession.campaignPlayerPursuitSession().Cancel()
 	if peerSession.heroTraps == nil {
 		peerSession.heroTraps = make(map[uint32]*heroTrapRun)
 	}
@@ -723,6 +735,7 @@ func (r campaignAbilityCommandRuntime) handleHeroTrap(
 		position.X, position.Y, position.Z,
 	)
 	packets := [][]byte{ackPacket, cooldownPacket, manaPacket}
+	packets = append(packets, stopPackets...)
 	if len(animationPacket) != 0 {
 		packets = append(packets, animationPacket)
 	}

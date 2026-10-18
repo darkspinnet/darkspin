@@ -95,11 +95,20 @@ func (e SpawnPlan) InitialFacing() game.Vec3 {
 func (e FirstActionPlan) FirstAggroFacingPlan() AttackPlan {
 	profile := ActionProfile{AbilityName: e.Profile.FirstAggroAbilityName}
 	profile.IsFacingSuppressed = e.Profile.IsFirstAggroFacingSuppressed ||
-		e.Profile.PreAggroAnimationName != "" || e.Profile.FirstAggroRevealDelay > 0
+		e.Profile.PreAggroAnimationName != "" || e.Profile.FirstAggroRevealDelay > 0 ||
+		e.Profile.FirstAggroCinematicDuration > 0
+	targetPosition := e.TargetPosition
+	if e.Profile.FirstAggroAnimationName == "shadowboss_onaggro" {
+		// FirstAggro_ShadowBoss turns southwest before its reveal, independently
+		// of the player. Use the same heading for live packets and late joins.
+		profile.IsFacingSuppressed = false
+		profile.IsFacingPolicyKnown = true
+		targetPosition = e.SourcePosition.Add(game.Vec3{X: -1, Y: -1}.Scale(1 / float32(math.Sqrt2)))
+	}
 	return AttackPlan{
 		SourceObjectID: e.ObjectID, TargetObjectID: e.TargetObjectID,
 		ActionGeneration: e.ActionGeneration, SourcePosition: e.SourcePosition,
-		TargetPosition: e.TargetPosition, Profile: profile,
+		TargetPosition: targetPosition, Profile: profile,
 	}
 }
 

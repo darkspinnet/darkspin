@@ -45,6 +45,8 @@ var (
 	ErrHintUnavailable = errors.New("hint unavailable")
 	// ErrLocationUnavailable means the actor has no deployed gameplay position.
 	ErrLocationUnavailable = errors.New("location unavailable")
+	// ErrResourceStatusUnavailable means the actor has no deployed hero resources.
+	ErrResourceStatusUnavailable = errors.New("resource status unavailable")
 	// ErrBugReportUnavailable means the server cannot create a local diagnostic bundle.
 	ErrBugReportUnavailable = errors.New("bug report unavailable")
 	// ErrSnapshotUnavailable means the sync snapshot service is disabled or unavailable.
@@ -205,6 +207,30 @@ type LocationProvider interface {
 	Location(context.Context, LocationRequest) (LocationResult, error)
 }
 
+// ResourceStatusRequest identifies the authoritative hero and optional Fang
+// sample captured from the client immediately before sending the command.
+type ResourceStatusRequest struct {
+	Sender                Participant
+	GameID                uint32
+	ClientObjectID        uint32
+	ClientHitPoint        float32
+	ClientPowerPoint      float32
+	IsClientHitPointSet   bool
+	IsClientPowerPointSet bool
+}
+
+type ResourceStatusResult struct {
+	ObjectID          uint32
+	HitPoint          float32
+	MaximumHitPoint   float32
+	PowerPoint        float32
+	MaximumPowerPoint float32
+}
+
+type ResourceStatusProvider interface {
+	ResourceStatus(context.Context, ResourceStatusRequest) (ResourceStatusResult, error)
+}
+
 // ItemSummonCommand describes one explicit persistent inventory item.
 type ItemSummonCommand struct {
 	Sender          Participant
@@ -313,24 +339,25 @@ type Message struct {
 
 // Service validates chat intent before transport notifications are emitted.
 type Service struct {
-	directory        Directory
-	recorders        []Recorder
-	nextID           atomic.Uint64
-	now              func() time.Time
-	previewer        EffectPreviewer
-	resourceMutator  ResourceMutator
-	eventTriggerer   EventTriggerer
-	followRequester  FollowRequester
-	hintProvider     HintProvider
-	locationProvider LocationProvider
-	summoner         ItemSummoner
-	leveler          LevelSetter
-	warpRequester    WarpRequester
-	npcSpawner       NPCSpawner
-	dnaGranter       DNAGranter
-	bugReporter      BugReporter
-	bugContext       BugContextProvider
-	snapshotManager  SnapshotManager
+	directory              Directory
+	recorders              []Recorder
+	nextID                 atomic.Uint64
+	now                    func() time.Time
+	previewer              EffectPreviewer
+	resourceMutator        ResourceMutator
+	eventTriggerer         EventTriggerer
+	followRequester        FollowRequester
+	hintProvider           HintProvider
+	locationProvider       LocationProvider
+	resourceStatusProvider ResourceStatusProvider
+	summoner               ItemSummoner
+	leveler                LevelSetter
+	warpRequester          WarpRequester
+	npcSpawner             NPCSpawner
+	dnaGranter             DNAGranter
+	bugReporter            BugReporter
+	bugContext             BugContextProvider
+	snapshotManager        SnapshotManager
 }
 
 // UseEffectPreviewer installs the gameplay-owned effect preview adapter.
@@ -361,6 +388,10 @@ func (s *Service) UseHintProvider(hintProvider HintProvider) {
 // UseLocationProvider installs the gameplay-owned live position source.
 func (s *Service) UseLocationProvider(locationProvider LocationProvider) {
 	s.locationProvider = locationProvider
+}
+
+func (s *Service) UseResourceStatusProvider(provider ResourceStatusProvider) {
+	s.resourceStatusProvider = provider
 }
 
 // UseItemSummoner installs the persistent inventory command adapter.
@@ -700,6 +731,32 @@ func (s *Service) Location(
 		return result, nil
 	}
 	return LocationResult{}, ErrSenderNotMember
+}
+
+func (s *Service) ResourceStatus(
+	ctx context.Context, req ResourceStatusRequest,
+) (ResourceStatusResult, error) {
+	if req.Sender.ID == 0 || req.Sender.Name == "" {
+		return ResourceStatusResult{}, ErrSenderNotMember
+	}
+	if req.GameID == 0 || s.resourceStatusProvider == nil {
+		return ResourceStatusResult{}, ErrResourceStatusUnavailable
+	}
+	members, err := s.directory.Members(ctx, Target{Scope: ScopeGame, ID: uint64(req.GameID)})
+	if err != nil {
+		return ResourceStatusResult{}, fmt.Errorf("resourceStatusAudience: %w", err)
+	}
+	for _, member := range members {
+		if member.ID != req.Sender.ID {
+			continue
+		}
+		result, statusErr := s.resourceStatusProvider.ResourceStatus(ctx, req)
+		if statusErr != nil {
+			return ResourceStatusResult{}, fmt.Errorf("resourceStatusInspect: %w", statusErr)
+		}
+		return result, nil
+	}
+	return ResourceStatusResult{}, ErrSenderNotMember
 }
 
 // SummonItem validates the authenticated actor before granting inventory.

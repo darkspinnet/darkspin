@@ -22,16 +22,19 @@ const (
 
 // LootAffix is one authored build-103 prefix or suffix definition.
 type LootAffix struct {
-	ID              uint16
-	Kind            string
-	IsUniqueFamily  bool
-	IsBasicEligible bool
-	MinimumLevel    uint32
-	MaximumLevel    uint32
-	ClassTypes      []string
-	ScienceTypes    []string
-	Modifier        []float32
-	SourceOrdinal   int
+	ID                  uint16
+	Kind                string
+	IsUniqueFamily      bool
+	IsBasicEligible     bool
+	MinimumLevel        uint32
+	MaximumLevel        uint32
+	PartTypes           []string
+	ClassTypes          []string
+	ScienceTypes        []string
+	ModifierGrants      []string
+	AbilityImprovements []string
+	Modifier            []float32
+	SourceOrdinal       int
 }
 
 // LoadLootAffixes reads every generated loot prefix and suffix from AssetData_Binary.package.
@@ -41,7 +44,7 @@ func LoadLootAffixes(ctx context.Context, packagePath string) ([]LootAffix, erro
 		return nil, fmt.Errorf("packageOpen: %w", err)
 	}
 	defer r.Close()
-	affixByKey := make(map[string]LootAffix, 666)
+	affixesByKey := make(map[string]LootAffix, 666)
 	for ordinal, entry := range pkg.Entries {
 		kind := ""
 		minimumOffset := 0
@@ -76,13 +79,13 @@ func LoadLootAffixes(ctx context.Context, packagePath string) ([]LootAffix, erro
 		}
 		affix.SourceOrdinal = ordinal
 		key := fmt.Sprintf("%s/%d", affix.Kind, affix.ID)
-		if _, isFound := affixByKey[key]; isFound {
+		if _, isFound := affixesByKey[key]; isFound {
 			return nil, fmt.Errorf("affixDuplicate[%s]", key)
 		}
-		affixByKey[key] = affix
+		affixesByKey[key] = affix
 	}
-	affixes := make([]LootAffix, 0, len(affixByKey))
-	for _, affix := range affixByKey {
+	affixes := make([]LootAffix, 0, len(affixesByKey))
+	for _, affix := range affixesByKey {
 		affixes = append(affixes, affix)
 	}
 	sort.Slice(affixes, func(first, second int) bool {
@@ -100,14 +103,26 @@ func parseLootAffix(payload []byte, kind string, minimumOffset, maximumOffset in
 	// references and eligibility flags; treating it as attributes shifts every
 	// stat by five slots, including Dexterity into DamageReduction.
 	modifierOffset := lootPrefixModifierOffset
+	headerSize := 560
+	arrayOffset := 4
 	if kind == "suffix" {
 		modifierOffset = lootSuffixModifierOffset
+		headerSize = 580
+		arrayOffset = 28
 	}
-	modifierEnd := modifierOffset + LootAttributeCount*4
-	if len(payload) < modifierEnd {
-		return LootAffix{}, fmt.Errorf("payloadSize: got %d, need %d", len(payload), modifierEnd)
+	if len(payload) < headerSize {
+		return LootAffix{}, fmt.Errorf("payloadSize: got %d, need %d", len(payload), headerSize)
 	}
 	affix := LootAffix{Kind: kind}
+	cursor := lootAffixCursor{payload: payload, offset: headerSize}
+	name := ""
+	if kind == "suffix" {
+		var err error
+		name, err = cursor.reference(16)
+		if err != nil {
+			return LootAffix{}, fmt.Errorf("suffixName: %w", err)
+		}
+	}
 	switch kind {
 	case "prefix":
 		id := binary.LittleEndian.Uint32(payload)
@@ -116,7 +131,7 @@ func parseLootAffix(payload []byte, kind string, minimumOffset, maximumOffset in
 		}
 		affix.ID = uint16(id)
 	case "suffix":
-		id, isUniqueFamily, err := lootSuffixIdentity(printableNullStrings(payload))
+		id, isUniqueFamily, err := lootSuffixIdentity([]string{name})
 		if err != nil {
 			return LootAffix{}, fmt.Errorf("suffixID: %w", err)
 		}
@@ -134,28 +149,33 @@ func parseLootAffix(payload []byte, kind string, minimumOffset, maximumOffset in
 	if affix.MinimumLevel == 0 || affix.MinimumLevel > affix.MaximumLevel || affix.MaximumLevel > 1000 {
 		return LootAffix{}, fmt.Errorf("levels: %d..%d", affix.MinimumLevel, affix.MaximumLevel)
 	}
-	classSet := make(map[string]bool, 3)
-	scienceSet := make(map[string]bool, 5)
-	for _, field := range printableNullStrings(payload) {
-		if field == "ravager" || field == "sentinel" || field == "tempest" {
-			classSet[field] = true
-		}
-		if field == "plasma" || field == "bio" || field == "cyber" || field == "necro" || field == "chrono" {
-			scienceSet[field] = true
-		}
+	var err error
+	affix.PartTypes, err = cursor.strings(arrayOffset)
+	if err != nil {
+		return LootAffix{}, fmt.Errorf("partTypes: %w", err)
 	}
-	for _, classType := range []string{"ravager", "sentinel", "tempest"} {
-		if classSet[classType] {
-			affix.ClassTypes = append(affix.ClassTypes, classType)
-		}
+	affix.ClassTypes, err = cursor.strings(arrayOffset + 8)
+	if err != nil {
+		return LootAffix{}, fmt.Errorf("classTypes: %w", err)
 	}
-	for _, scienceType := range []string{"plasma", "bio", "cyber", "necro", "chrono"} {
-		if scienceSet[scienceType] {
-			affix.ScienceTypes = append(affix.ScienceTypes, scienceType)
-		}
+	affix.ScienceTypes, err = cursor.strings(arrayOffset + 16)
+	if err != nil {
+		return LootAffix{}, fmt.Errorf("scienceTypes: %w", err)
 	}
-	if len(affix.ClassTypes) == 0 || len(affix.ScienceTypes) == 0 {
-		return LootAffix{}, errors.New("compatibilityMissing")
+	// The reflected LootData arrays follow eligibility in the shared tail.
+	// Build 103 places their headers immediately after its 115 stat floats:
+	// prefix +496/+504, suffix +516/+524 (build 127 shifts these by four).
+	modifierEnd := modifierOffset + LootAttributeCount*4
+	affix.ModifierGrants, err = cursor.strings(modifierEnd)
+	if err != nil {
+		return LootAffix{}, fmt.Errorf("modifierGrants: %w", err)
+	}
+	affix.AbilityImprovements, err = cursor.strings(modifierEnd + 8)
+	if err != nil {
+		return LootAffix{}, fmt.Errorf("abilityImprovements: %w", err)
+	}
+	if cursor.offset != len(payload) {
+		return LootAffix{}, fmt.Errorf("tailRemaining: %d", len(payload)-cursor.offset)
 	}
 	affix.Modifier = make([]float32, LootAttributeCount)
 	for attributeIndex := range affix.Modifier {

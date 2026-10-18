@@ -28,6 +28,11 @@ const (
 	PartMarketBuyback
 )
 
+// PartOfferMaximumPrice keeps build 103's Fang price bridge exact through the
+// native float32 half-cost helper. Cost is the final purchase price for an
+// offer, and the normal item valuation for an owned or buyback part.
+const PartOfferMaximumPrice uint32 = 1 << 23
+
 // Part is one persistent inventory item.
 type Part struct {
 	ID                       uint64
@@ -41,6 +46,7 @@ type Part struct {
 	Status                   uint8
 	Usage                    uint8
 	CreationDate             uint64
+	BuybackExpiresAt         int64
 	RigblockAssetID          uint16
 	PrefixAssetID            uint16
 	PrefixSecondaryAssetID   uint16
@@ -49,6 +55,13 @@ type Part struct {
 	PrefixAssetHash          uint32
 	PrefixSecondaryAssetHash uint32
 	SuffixAssetHash          uint32
+}
+
+// OccupiesInventorySlot reports whether the item belongs to the unequipped
+// storage counted by the client. Equipped items remain owned, but their hero
+// loadout holds them outside the inventory capacity shown in the Arsenal.
+func (p Part) OccupiesInventorySlot() bool {
+	return p.MarketStatus == PartMarketOwned && p.EquippedToCreatureID == 0
 }
 
 // NewPart creates a part and validates its rigblock.
@@ -142,8 +155,9 @@ type PartOffer struct {
 
 // Vendor owns the rotating offers and per-user buyback inventory.
 type Vendor struct {
-	Offers  []PartOffer
-	Buyback map[int64][]Part
+	Offers            []PartOffer
+	Buyback           map[int64][]Part
+	IsPartShopEnabled bool
 }
 
 func NewVendor(offers ...PartOffer) *Vendor {

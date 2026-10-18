@@ -87,6 +87,20 @@ func (m *LinearMovement) SetGoal(at time.Duration, goal Position, speed float32)
 	return position, nil
 }
 
+// SetSpeed preserves the remaining path and whether the actor is moving.
+func (e *LinearMovement) SetSpeed(at time.Duration, speed float32) error {
+	if math.IsNaN(float64(speed)) || math.IsInf(float64(speed), 0) || speed <= 0 {
+		return errors.New("invalid movement speed")
+	}
+	position, err := e.Position(at)
+	if err != nil {
+		return fmt.Errorf("speedAdvance: %w", err)
+	}
+	e.position = position
+	e.speed = speed
+	return nil
+}
+
 // SetPath copies the remaining navigation corners, including the final goal.
 func (e *LinearMovement) SetPath(at time.Duration, points []Position, speed float32) (Position, error) {
 	if len(points) == 0 {

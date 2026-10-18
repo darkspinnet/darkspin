@@ -26,9 +26,10 @@ type AreaHealingInput struct {
 }
 
 type AreaHealingOutput struct {
-	Packet  [][]byte
-	Pulse   []sim.AreaPulseIntent
-	Cleanup [][]byte
+	IsSpawned bool
+	Packet    [][]byte
+	Pulse     []sim.AreaPulseIntent
+	Cleanup   [][]byte
 }
 
 type AreaHealingRun struct {
@@ -139,6 +140,7 @@ func (e *areaHealingEncoder) encode(
 	for index, event := range result.Events {
 		switch intent := event.Intent.(type) {
 		case sim.SpawnIntent:
+			output.IsSpawned = true
 			packet, err := e.encodeSpawn(intent)
 			if err != nil {
 				return AreaHealingOutput{}, fmt.Errorf("spawn[%d]: %w", index, err)
@@ -195,14 +197,39 @@ func (e *areaHealingEncoder) encodeSpawn(intent sim.SpawnIntent) ([]byte, error)
 	if intent.NounName != e.req.Ability.SpawnNoun {
 		return nil, errors.New("unexpected noun")
 	}
+	packet, err := marshalTreeOfLifeCreate(e.req.EffectObjectID, intent.NounName, e.req.Position, e.req.Team)
+	if err != nil {
+		return nil, fmt.Errorf("spawnCreate: %w", err)
+	}
+	return packet, nil
+}
+
+// MarshalTreeOfLifePresentation creates only the retained object. The original
+// server deadline supplies removal; no animation, healing or resource event is
+// replayed and this packet does not give the tree a new client-owned lifetime.
+func MarshalTreeOfLifePresentation(tree zoneability.TreeOfLifePresentation, now time.Duration) ([]byte, error) {
+	if tree.ObjectID == 0 || tree.SourceObjectID == 0 || tree.NounName == "" ||
+		(tree.Phase != zoneability.TreeOfLifeSpawned && tree.Phase != zoneability.TreeOfLifeReleased) ||
+		now < tree.SpawnedAt || now >= tree.ExpiresAt {
+		return nil, errors.New("inactive tree presentation")
+	}
+	packet, err := marshalTreeOfLifeCreate(tree.ObjectID, tree.NounName,
+		sim.Position{X: tree.Position.X, Y: tree.Position.Y, Z: tree.Position.Z}, tree.Team)
+	if err != nil {
+		return nil, fmt.Errorf("treeCreate: %w", err)
+	}
+	return packet, nil
+}
+
+func marshalTreeOfLifeCreate(objectID uint32, nounName string, position sim.Position, team uint8) ([]byte, error) {
 	packet, err := raknet.MarshalApplication(raknet.ObjectCreateMessage{
-		ObjectID:  e.req.EffectObjectID,
-		Noun:      util.HashID(intent.NounName),
-		PositionX: e.req.Position.X,
-		PositionY: e.req.Position.Y,
-		PositionZ: e.req.Position.Z,
+		ObjectID:  objectID,
+		Noun:      util.HashID(nounName),
+		PositionX: position.X,
+		PositionY: position.Y,
+		PositionZ: position.Z,
 		Scale:     treeOfLifeWorldScale,
-		Team:      e.req.Team,
+		Team:      team,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal: %w", err)
@@ -260,7 +287,13 @@ func MarshalTreeOfLifeHealing(
 	healing []Healing, isFinal bool,
 ) ([][]byte, error) {
 	messages := make([]raknet.ApplicationMessage, 0, 2+len(healing))
-	if len(healing) != 0 || isFinal {
+	isEffectVisible := len(healing) != 0 || isFinal
+	if ability.Name == "TreeOfLife" {
+		// The authored heal event is the tree's final burst and disappearance
+		// sound. Ordinary healing ticks must not replay it.
+		isEffectVisible = isFinal
+	}
+	if ability.HealEffectName != "" && isEffectVisible {
 		messages = append(messages, raknet.PositionedEffectMessage{
 			Asset: util.HashID(ability.HealEffectName), Position: position,
 		})

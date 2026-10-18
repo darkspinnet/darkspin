@@ -32,6 +32,7 @@ type MeleeInput struct {
 }
 
 type MeleeRun struct {
+	roles           timedMeleeRoleResolver
 	simulator       *sim.Simulator
 	session         *sim.Session
 	behavior        *sim.TimedMeleeBehavior
@@ -122,6 +123,7 @@ func NewMeleeRun(input MeleeInput) (*MeleeRun, [][]byte, error) {
 		return nil, nil, fmt.Errorf("behaviorStart: %w", err)
 	}
 	run := &MeleeRun{
+		roles:     resolver,
 		simulator: simulator, session: session, behavior: behavior, outbox: outbox,
 		hitDeadline: input.Ability.HitDelay, releaseDeadline: input.Ability.ReleaseDelay,
 	}
@@ -181,6 +183,28 @@ func (r *MeleeRun) PrepareHitAt(
 	if err != nil {
 		return fmt.Errorf("behaviorPrepare[%d]: %w", hitIndex, err)
 	}
+	return nil
+}
+
+// PrepareTargetHitAt binds a fallback victim before the scheduled intents are
+// encoded, so authoritative target selection and packet identity agree.
+func (e *MeleeRun) PrepareTargetHitAt(
+	hitIndex int, targetObjectID uint32, isTargetValid bool, targetHitPoint float32,
+	damage float32, isCritical bool, targetPosition sim.Position, targetFacing sim.Position,
+) error {
+	if e == nil || e.roles == nil || targetObjectID == 0 {
+		return errors.New("invalid melee target")
+	}
+	err := e.PrepareHitAt(hitIndex, isTargetValid, targetHitPoint, damage, isCritical, targetPosition, targetFacing)
+	if err != nil {
+		return fmt.Errorf("targetPrepare: %w", err)
+	}
+	binding := e.roles[timedMeleeTargetRole]
+	if binding.ObjectID != targetObjectID {
+		binding.ManaPoints = 0
+	}
+	binding.ObjectID, binding.Position = targetObjectID, targetPosition
+	e.roles[timedMeleeTargetRole] = binding
 	return nil
 }
 

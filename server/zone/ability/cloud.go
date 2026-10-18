@@ -47,8 +47,50 @@ func PlanCloudLob(
 	sourcePosition game.Vec3, creature game.GameplayCreature,
 	definition sim.AbilityDefinition, simulationTime time.Duration,
 ) (CloudLobPlan, error) {
-	if enemies == nil || sourceObjectID == 0 || creature.Noun == 0 ||
-		simulationTime < 0 || !isFinitePosition(sourcePosition) {
+	if enemies == nil {
+		return CloudLobPlan{}, errors.New("invalid cloud lob identity")
+	}
+	if targetObjectID == 0 {
+		targetObjectID = NearestTarget(enemies, sourceObjectID, sourcePosition,
+			game.AbilityAdmissionRange(definition.Range, creature.RangeIncrease,
+				definition.DescriptorMask, definition.IsDescriptorFound))
+	}
+	target, isFound := enemies.NPC(targetObjectID)
+	if !isFound || target.IsDefeated || target.HitPoint <= 0 ||
+		target.Faction != zonenpc.FactionNonPlayerAligned {
+		return CloudLobPlan{}, fmt.Errorf("targetUnavailable: %d", targetObjectID)
+	}
+	plan, err := PlanCloudLobAt(CloudLobRequest{
+		SourceObjectID: sourceObjectID, TargetObjectID: targetObjectID,
+		SourcePosition: sourcePosition, TargetPosition: target.Plan.Position,
+		Creature: creature, Definition: definition, SimulationTime: simulationTime,
+	})
+	if err != nil {
+		return CloudLobPlan{}, fmt.Errorf("cloudTargetPlan: %w", err)
+	}
+	return plan, nil
+}
+
+type CloudLobRequest struct {
+	SourceObjectID uint32
+	TargetObjectID uint32
+	SourcePosition game.Vec3
+	TargetPosition game.Vec3
+	Creature       game.GameplayCreature
+	Definition     sim.AbilityDefinition
+	SimulationTime time.Duration
+}
+
+// Sprout (Abilities/0x009B7C57.lua) launches at GetTargetPosition without
+// requiring GetTargetID to resolve a combatant. The projectile hits terrain
+// and creates its persistent cloud even when the area contains no enemies.
+func PlanCloudLobAt(req CloudLobRequest) (CloudLobPlan, error) {
+	sourceObjectID, targetObjectID := req.SourceObjectID, req.TargetObjectID
+	sourcePosition, targetPosition := req.SourcePosition, req.TargetPosition
+	creature, definition := req.Creature, req.Definition
+	simulationTime := req.SimulationTime
+	if sourceObjectID == 0 || creature.Noun == 0 || simulationTime < 0 ||
+		!isFinitePosition(sourcePosition) || !isFinitePosition(targetPosition) {
 		return CloudLobPlan{}, errors.New("invalid cloud lob identity")
 	}
 	cloud := definition.CloudLob
@@ -66,18 +108,7 @@ func PlanCloudLob(
 		definition.Range, creature.RangeIncrease, definition.DescriptorMask,
 		definition.IsDescriptorFound,
 	)
-	if targetObjectID == 0 {
-		targetObjectID = NearestTarget(
-			enemies, sourceObjectID, sourcePosition, admissionRange,
-		)
-	}
-	target, isFound := enemies.NPC(targetObjectID)
-	if !isFound || target.IsDefeated || target.HitPoint <= 0 ||
-		target.TargetObjectID != sourceObjectID {
-		return CloudLobPlan{},
-			fmt.Errorf("targetUnavailable: %d", targetObjectID)
-	}
-	distance := Distance(sourcePosition, target.Plan.Position)
+	distance := Distance(sourcePosition, targetPosition)
 	if distance > admissionRange {
 		return CloudLobPlan{},
 			fmt.Errorf("targetRange: got %g, want <= %g", distance, admissionRange)
@@ -119,9 +150,9 @@ func PlanCloudLob(
 		return CloudLobPlan{}, errors.New("invalid cloud lob damage")
 	}
 	destination := sim.Position{
-		X: target.Plan.Position.X,
-		Y: target.Plan.Position.Y,
-		Z: target.Plan.Position.Z,
+		X: targetPosition.X,
+		Y: targetPosition.Y,
+		Z: targetPosition.Z,
 	}
 	offset := [2]sim.Position{
 		projected.CloudLob.LeftOffset,
@@ -131,7 +162,7 @@ func PlanCloudLob(
 	var lob [2]sim.CrystalLob
 	for index := range offset {
 		launchPosition[index], err = TossLaunchPosition(
-			sourcePosition, target.Plan.Position, offset[index],
+			sourcePosition, targetPosition, offset[index],
 		)
 		if err != nil {
 			return CloudLobPlan{},
@@ -177,7 +208,7 @@ func ResolveCloudLobLanding(
 		Z: plan.Destination.Z,
 	}
 	for _, enemy := range enemies.LiveSnapshots() {
-		if enemy.TargetObjectID != plan.SourceObjectID ||
+		if enemy.Faction != zonenpc.FactionNonPlayerAligned || !enemy.IsPublished ||
 			enemy.IsDefeated || enemy.HitPoint <= 0 ||
 			Distance(center, enemy.Plan.Position) >
 				plan.Definition.CloudLob.CloudRadius {
@@ -309,7 +340,7 @@ func (e *CloudPoisonRuntime) resolve(
 	target := make([]zonenpc.Snapshot, 0)
 	enteredObjectID := make([]uint32, 0)
 	for _, enemy := range enemies.LiveSnapshots() {
-		if enemy.TargetObjectID != plan.SourceObjectID ||
+		if enemy.Faction != zonenpc.FactionNonPlayerAligned || !enemy.IsPublished ||
 			enemy.IsDefeated || enemy.HitPoint <= 0 {
 			delete(e.state.tailTicksByObjectID, enemy.Plan.ObjectID)
 			continue

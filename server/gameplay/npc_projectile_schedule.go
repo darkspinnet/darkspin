@@ -48,6 +48,7 @@ type campaignNPCProjectileSchedule struct {
 	projectileSourcePosition    game.Vec3
 	projectileTargetPosition    game.Vec3
 	isProjectileTrajectoryFound bool
+	retirement                  *campaignProjectileRetirement
 }
 
 type campaignNPCRecoveryStep struct {
@@ -151,7 +152,6 @@ type campaignNPCProjectileVolley struct {
 	shotIndex              int
 	startTimestamp         uint64
 	retainedTargetPosition game.Vec3
-	targetObjectIDs        []uint32
 	plan                   zonenpc.AttackPlan
 }
 
@@ -175,6 +175,7 @@ func (e campaignNPCProjectileSchedule) deleteAfterSourceLoss(
 	if !isDeleted {
 		e.runtime.projectile.retire(
 			e.sessionKey, e.generation, e.projectileObjectID, e.run,
+			e.retirement,
 		)
 		return nil, nil
 	}
@@ -204,7 +205,7 @@ func (e campaignNPCProjectileSchedule) producer(
 	deadline time.Duration,
 ) raknet.ScheduledPacketProducer {
 	step := campaignNPCProjectileStep{schedule: e, deadline: deadline}
-	return raknet.ScheduledPacketProducer{Delay: deadline, Produce: step.produce}
+	return raknet.ScheduledPacketProducer{Delay: deadline, Produce: step.produceTracked}
 }
 
 func (e campaignNPCProjectileSchedule) fail(
@@ -212,12 +213,44 @@ func (e campaignNPCProjectileSchedule) fail(
 ) ([][]byte, error) {
 	e.runtime.projectile.retire(
 		e.sessionKey, e.generation, e.projectileObjectID, e.run,
+		e.retirement,
 	)
 	e.runtime.releaseActionGeneration(
 		e.sessionKey, e.generation, e.sourceObjectID,
 		e.plan.ActionGeneration,
 	)
 	return nil, fmt.Errorf("%s: %w", step, err)
+}
+
+func (e campaignNPCProjectileStep) produceTracked() ([][]byte, error) {
+	retirement := e.schedule.retirement
+	if retirement == nil {
+		packets, err := e.produce()
+		if err != nil {
+			return nil, fmt.Errorf("enemyFlightProduce: %w", err)
+		}
+		return packets, nil
+	}
+	e.schedule.runtime.registry.mutex.Lock()
+	member, isFound := e.schedule.runtime.registry.sessions[e.schedule.sessionKey]
+	isCurrent := isFound && member.generation == e.schedule.generation && member.zone == retirement.originalZone &&
+		member.campaignNPCProjectiles[e.schedule.projectileObjectID] == e.schedule.run
+	isStarted := isCurrent && e.schedule.runtime.registry.beginCampaignProjectilePublicationLocked(retirement)
+	e.schedule.runtime.registry.mutex.Unlock()
+	if !isStarted {
+		return nil, nil
+	}
+	packets, err := e.produce()
+	e.schedule.runtime.registry.mutex.Lock()
+	retireErr := e.schedule.runtime.registry.finishCampaignProjectilePublicationLocked(retirement, e.schedule.sessionKey, packets, err)
+	e.schedule.runtime.registry.mutex.Unlock()
+	if retireErr != nil && e.schedule.runtime.logger != nil {
+		e.schedule.runtime.logger.Printf("RakNet NPC projectile producer cleanup failed projectile=%d: %v", e.schedule.projectileObjectID, retireErr)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("enemyFlightProduce: %w", err)
+	}
+	return nil, nil
 }
 
 func (e campaignNPCProjectileSchedule) resume(
@@ -235,12 +268,38 @@ func (e campaignNPCProjectileSchedule) resume(
 			timestamp, e.hasteEndTimestamp,
 		)
 	case campaignNPCProjectileZelem:
-		return e.runtime.produceZelemShot(
-			e.packet, e.sessionKey, e.generation, e.sourceObjectID, timestamp,
-		)
+		return e.resumeZelem(timestamp)
 	default:
 		return nil, errors.New("enemy projectile kind unsupported")
 	}
+}
+
+func (e campaignNPCProjectileSchedule) resumeZelem(
+	timestamp uint64,
+) ([][]byte, error) {
+	e.runtime.registry.mutex.RLock()
+	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isCurrent := isFound && peerSession.isCampaignNPCSourceGenerationActive(
+		e.generation, e.sourceObjectID, e.plan.ActionGeneration,
+	)
+	enemy, isEnemyFound := zonenpc.Snapshot{}, false
+	if isCurrent && peerSession.zone != nil && peerSession.zone.NPCs() != nil {
+		enemy, isEnemyFound = peerSession.zone.NPCs().NPC(e.sourceObjectID)
+	}
+	e.runtime.registry.mutex.RUnlock()
+	if !isCurrent || !isEnemyFound || enemy.IsDefeated {
+		return nil, nil
+	}
+	profile, isProfileFound := zonenpc.ActionProfileForPlan(enemy.Plan)
+	if isProfileFound && profile.Family == zonenpc.ActionZelemRanged &&
+		profile.TeleportNormalDistance > 0 {
+		return e.runtime.produceZelemBlink(
+			e.packet, e.sessionKey, e.generation, e.sourceObjectID, timestamp,
+		)
+	}
+	return e.runtime.produceZelemShot(
+		e.packet, e.sessionKey, e.generation, e.sourceObjectID, timestamp,
+	)
 }
 
 func (e campaignNPCProjectileSchedule) next() ([][]byte, error) {
@@ -249,6 +308,23 @@ func (e campaignNPCProjectileSchedule) next() ([][]byte, error) {
 	isCurrent := isFound && current.isCampaignNPCSourceGenerationActive(
 		e.generation, e.sourceObjectID, e.plan.ActionGeneration,
 	)
+	if e.source.Plan.IsBoss && e.runtime.logger != nil {
+		isActionStarted := false
+		actionGeneration := uint64(0)
+		if isFound && current.zone != nil && current.zone.NPCs() != nil {
+			source, isSourceFound := current.zone.NPCs().NPC(e.sourceObjectID)
+			if isSourceFound {
+				isActionStarted = source.IsActionStarted
+				actionGeneration = source.ActionGeneration
+			}
+		}
+		e.runtime.logger.Printf(
+			"RakNet boss projectile continuation source=%d ability=%q ready=%t action_started=%t action_generation=%d expected_generation=%d delay_ms=%d",
+			e.sourceObjectID, e.plan.Profile.AbilityName, isCurrent,
+			isActionStarted, actionGeneration, e.plan.ActionGeneration,
+			e.nextDelay.Milliseconds(),
+		)
+	}
 	e.runtime.registry.mutex.RUnlock()
 	if !isCurrent {
 		return nil, nil
@@ -294,6 +370,12 @@ func (e campaignNPCProjectileSchedule) next() ([][]byte, error) {
 		)
 	} else {
 		packets, err = e.resume(timestamp)
+	}
+	if e.source.Plan.IsBoss && e.runtime.logger != nil {
+		e.runtime.logger.Printf(
+			"RakNet boss projectile continuation result source=%d ability=%q packets=%d error=%v",
+			e.sourceObjectID, e.plan.Profile.AbilityName, len(packets), err,
+		)
 	}
 	if err != nil {
 		return e.fail("enemyProjectileNext", err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	contentstore "github.com/darkspinnet/darkspin/content/sqlite"
@@ -149,8 +150,11 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 			Name: "BinarySentinelActive", Kind: sim.AbilityKindCone,
 			Cooldown: 6 * time.Second, Radius: 20, Angle: 90,
 			AnimationName: "cast_binarysentinelactive",
+			HitDelay:      200 * time.Millisecond, ReleaseDelay: time.Second,
 			MinimumDamage: 20, MaximumDamage: 20, DamageCoefficient: 0.05,
 			ManaCost: 14, ManaCoefficient: 0.07, MinimumDamagePercent: 0.25,
+			DescriptorMask: 136, DamageType: 1, DamageSource: 1,
+			IsDescriptorFound: true, IsDamageTypeFound: true, IsDamageSourceFound: true,
 			RootModifierID: util.HashID("BinarySentinelPullModifier"),
 		},
 		"BinarySentinelSupport": {
@@ -334,9 +338,11 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 			Name: "FireRavagerSupport", Kind: sim.AbilityKindProjectileBurst,
 			Cooldown: 3 * time.Second, Range: 20, Distance: 21,
 			Speed: 40, Radius: 1.5,
-			AnimationName: "el_fireravager_support_warmup",
-			ReleaseDelay:  950 * time.Millisecond,
-			MinimumDamage: 10, MaximumDamage: 16, DamageCoefficient: 0.05,
+			AnimationName:          "el_fireravager_support_warmup",
+			SecondaryAnimationName: "el_fireravager_support_shot1",
+			OutAnimationName:       "el_fireravager_support_shot2",
+			ReleaseDelay:           950 * time.Millisecond,
+			MinimumDamage:          10, MaximumDamage: 16, DamageCoefficient: 0.05,
 			ManaCost: 8, ManaCoefficient: 0.04,
 			DescriptorMask: 72, DamageType: 3, DamageSource: 0,
 			IsDescriptorFound: true, IsDamageTypeFound: true, IsDamageSourceFound: true,
@@ -373,7 +379,8 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 		},
 		"ClaymoreTrap": {
 			Name: "ClaymoreTrap", Kind: sim.AbilityKindTrap,
-			Cooldown: 12 * time.Second, Range: 2.5, Radius: 4,
+			AnimationName: "tc_random02_claymore",
+			Cooldown:      12 * time.Second, Range: 2.5, Radius: 4,
 			HitDelay: 200 * time.Millisecond, ReleaseDelay: 700 * time.Millisecond,
 			Duration: 15 * time.Second, TickDuration: 200 * time.Millisecond,
 			MinimumDamage: 15, MaximumDamage: 21, DamageCoefficient: 0.05,
@@ -643,7 +650,9 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 		"SoulRavagerSupport": {
 			Name: "SoulRavagerSupport", Kind: sim.AbilityKindProjectileBurst,
 			Cooldown: 4 * time.Second, Range: 20,
-			AnimationName: "soulravager_active",
+			AnimationName:          "soulravager_active",
+			SecondaryAnimationName: "soulravager_active_loop",
+			OutAnimationName:       "soulravager_active_loop_end",
 			HitDelays: []time.Duration{
 				300 * time.Millisecond, 700 * time.Millisecond,
 				1100 * time.Millisecond,
@@ -763,11 +772,12 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 			ManaCost: 14, ManaCoefficient: 0.07,
 			DescriptorMask: 136, DamageType: 4, DamageSource: 1,
 			IsDescriptorFound: true, IsDamageTypeFound: true, IsDamageSourceFound: true,
-			MovementSpeedMultiplier: 8,
-			HitEffectName:           "ver_minn_lf_03_tailSting_hit.ServerEventDef",
-			ActivationEffectName:    "shadow_ghostform_shader_effect.ServerEventDef",
-			RootModifierID:          util.HashID("PhantomSilence"),
-			StatusDuration:          2 * time.Second,
+			MovementSpeedMultiplier:   8,
+			HitEffectName:             "ver_minn_lf_03_tailSting_hit.ServerEventDef",
+			ActivationEffectName:      "shadow_ghostform_shader_effect.ServerEventDef",
+			RootModifierID:            util.HashID("PhantomSilence"),
+			StatusDuration:            2 * time.Second,
+			IsAlwaysUseCursorPosition: true,
 		},
 		"PlasmaSentinelSupport": {
 			Name: "PlasmaSentinelSupport", Kind: sim.AbilityKindTimedArea,
@@ -891,7 +901,7 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 			ManaCost: 12, ManaCoefficient: 0.06,
 			DescriptorMask: 72, DamageType: 2, DamageSource: 0,
 			IsDescriptorFound: true, IsDamageTypeFound: true, IsDamageSourceFound: true,
-			ImpactEffectName:     "Thornado_Spines.ServerEventDef",
+			MuzzleEffectName:     "Thornado_Spines.ServerEventDef",
 			RootModifierID:       0x548abb1c,
 			StatusDuration:       10 * time.Second,
 			TickDuration:         2 * time.Second,
@@ -995,6 +1005,13 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 		},
 	}
 	for assetName, ability := range definition {
+		if ability.Kind == sim.AbilityKindMelee {
+			// Recovered registrations retain the common melee template defaults
+			// when their custom registration cannot be executed by the compiler.
+			ability.MissMovementAmount = 1
+			ability.HitAngle = 90
+			definition[assetName] = ability
+		}
 		if ability.Kind != sim.AbilityKindProjectileBurst ||
 			ability.ShotCount == 0 || ability.FiringRate <= 0 {
 			continue
@@ -1016,7 +1033,7 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 
 func applyRecoveredAreaRadiusPolicy(definition sim.AbilityDefinition) sim.AbilityDefinition {
 	switch definition.Name {
-	case "BinarySentinelSupport", "GravityStorm", "LFPoisonRavager_PoisonNova",
+	case "BinarySentinelActive", "BinarySentinelSupport", "GravityStorm", "LFPoisonRavager_PoisonNova",
 		"MissileTempestSupport", "PlasmaRandom", "PlasmaRandom_LightningBall",
 		"Sprout", "TCShieldedSentinelActive", "TCShieldedSentinelBasic",
 		"TCShieldedSentinelSupport":
@@ -1117,6 +1134,32 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 	if err != nil {
 		return zonecontent.Programs{}, fmt.Errorf("nounPhysics: %w", err)
 	}
+	spawnExtents, err := store.NounSpawnExtents(ctx)
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("spawnExtents: %w", err)
+	}
+	spawnExtentsByNoun := make(map[string]game.Vec3, len(spawnExtents))
+	for _, extent := range spawnExtents {
+		spawnExtentsByNoun[strings.ToLower(extent.NounName)] = game.Vec3{
+			X: extent.X, Y: extent.Y, Z: extent.Z,
+		}
+	}
+	footprints, footprintErr := store.NounFootprints(ctx)
+	if footprintErr != nil {
+		return zonecontent.Programs{}, fmt.Errorf("navigationFootprints: %w", footprintErr)
+	}
+	navigationFootprintsByNoun := make(map[uint32]game.NavigationFootprint, len(footprints))
+	for _, footprint := range footprints {
+		if footprint.NounName == "" {
+			continue
+		}
+		navigationFootprintsByNoun[util.HashID(footprint.NounName)] = game.NavigationFootprint{
+			SizeClass: footprint.SizeClass,
+			Extents:   game.Vec3{X: footprint.ExtentX, Y: footprint.ExtentY, Z: footprint.ExtentZ},
+			Minimum:   game.Vec3{X: footprint.MinimumX, Y: footprint.MinimumY, Z: footprint.MinimumZ},
+			Maximum:   game.Vec3{X: footprint.MaximumX, Y: footprint.MaximumY, Z: footprint.MaximumZ},
+		}
+	}
 	npcDeathAnimations, err := store.NPCDeathAnimations(ctx)
 	if err != nil {
 		return zonecontent.Programs{}, fmt.Errorf("npcDeathAnimations: %w", err)
@@ -1194,10 +1237,37 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 			return zonecontent.Programs{}, fmt.Errorf("orbPhysics[%s]: incomplete", assetName)
 		}
 	}
+	rewardTuning, err := store.RewardTuning(ctx)
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("crystalProgression: %w", err)
+	}
+	if rewardTuning.Progression.MinorStageCount == 0 {
+		return zonecontent.Programs{}, errors.New("crystal minor stage count unavailable")
+	}
 	contentCrystalDefinitions, err := store.CrystalDefinitions(ctx)
 	if err != nil {
 		return zonecontent.Programs{}, fmt.Errorf("crystalDefinition: %w", err)
 	}
+	contentCrystalEffects, err := store.NounCrystalDefinitions(ctx)
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("nounCrystalDefinition: %w", err)
+	}
+	crystalEffectsByAsset := make(map[uint32]zonecontent.CrystalEffect, len(contentCrystalEffects))
+	for _, entry := range contentCrystalEffects {
+		if entry.InstanceID > uint64(^uint32(0)) {
+			return zonecontent.Programs{}, fmt.Errorf("nounCrystalInstance[%d]: out of range", entry.ResourceID)
+		}
+		nounAsset := uint32(entry.InstanceID)
+		if _, isDuplicate := crystalEffectsByAsset[nounAsset]; isDuplicate {
+			return zonecontent.Programs{}, fmt.Errorf("nounCrystalInstance[%d]: duplicate", entry.ResourceID)
+		}
+		crystalEffectsByAsset[nounAsset] = zonecontent.CrystalEffect{
+			ResourceID: entry.ResourceID, NounAsset: nounAsset,
+			ModifierHash: entry.ModifierHash, ModifierName: entry.ModifierName,
+			Color: entry.Color, Rarity: entry.Rarity,
+		}
+	}
+	crystalEffectsByNoun := make(map[string]zonecontent.CrystalEffect, len(contentCrystalDefinitions))
 	crystalDefinitions := make([]sim.CrystalDefinition, 0, len(contentCrystalDefinitions))
 	for _, definition := range contentCrystalDefinitions {
 		if definition.MinimumLevel < 0 || definition.MaximumLevel < definition.MinimumLevel {
@@ -1210,12 +1280,22 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 				definition.Ordinal, definition.NounReference,
 			)
 		}
+		nounAsset := util.HashID(strings.TrimSuffix(strings.ToLower(definition.NounReference), ".noun"))
+		effect, isEffectFound := crystalEffectsByAsset[nounAsset]
+		if !isEffectFound {
+			return zonecontent.Programs{}, fmt.Errorf("crystalEffect[%d]: missing noun %q", definition.Ordinal, definition.NounReference)
+		}
+		crystalEffectsByNoun[definition.NounReference] = effect
 		crystalDefinitions = append(crystalDefinitions, sim.CrystalDefinition{
 			NounName: definition.NounReference, CrystalType: int32(catalyst.Type),
 			Rarity:       int32(catalyst.Rarity),
 			MinimumLevel: uint32(definition.MinimumLevel),
 			MaximumLevel: uint32(definition.MaximumLevel), Weight: definition.Weight,
 		})
+	}
+	crystalTuning, err := store.CrystalTuning(ctx)
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("crystalTuning: %w", err)
 	}
 	contentCrystalLevelOffsets, err := store.CrystalLevelOffsets(ctx)
 	if err != nil {
@@ -1634,51 +1714,57 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		objectiveInput = append(objectiveInput, loadedInput)
 	}
 	return zonecontent.Programs{
-		ChainLevel:             chainLevel,
-		ArenaLevels:            arenaLevels,
-		Critical:               critical,
-		Difficulty:             difficulty,
-		PlayerBasicAbility:     playerBasicAbility,
-		PlayerBasicUnsupported: playerBasicUnsupported,
-		HeroKits:               heroKits,
-		NonPlayerHitPoint:      nonPlayerHitPoint,
-		NonPlayerDefenses:      nonPlayerDefenses,
-		NonPlayerCritical:      nonPlayerCritical,
-		NounPhysics:            nounPhysics,
-		NounPhysicsByID:        nounPhysicsByID,
-		NPCDeathAnimations:     npcDeathAnimations,
-		ProjectileHalfExtent:   projectileHalfExtent,
-		QuadraFirstAggro:       program,
-		LightningBasic:         lightningBasic,
-		ElectronSphere:         electronSphere,
-		SupportHealerBasic:     supportHealerBasic,
-		SupportHealerPassive:   supportHealerPassiveDefinition,
-		SupportHealerPetBasic:  supportHealerPetBasic,
-		SentryDroneLaser:       sentryDroneLaser,
-		FireTempestPetBasic:    fireTempestPetBasic,
-		BeastPetBasic:          beastPetBasic,
-		PlasmaSentinelPetBasic: plasmaSentinelPetBasic,
-		PoisonMelee:            poisonMelee,
-		PoisonCloud:            poisonCloud,
-		PlasmaLightning:        plasmaLightning,
-		TailZap:                tailZap,
-		BurstShot:              burstShot,
-		InteractWithObelisk:    interactWithObelisk,
-		InteractHealthObelisk:  interactHealthObelisk,
-		SecurityTeleporter:     securityTeleporter,
-		TeleporterModifier:     teleporterModifier,
-		BossTeleporter:         bossTeleporter,
-		InvisibleBehavior:      invisibleLifecycle,
-		SpawnModifier:          spawnLifecycle,
-		SoloSupportUnlock:      soloSupportUnlock,
-		SupportUnlock:          supportUnlock,
-		OverdriveUnlock:        overdriveUnlock,
-		CatalystUnlock:         catalystUnlock,
-		CrystalPickup:          crystalPickup,
-		ObjectiveInitializers:  objectiveInitializers,
-		ObjectiveInput:         objectiveInput,
-		CrystalDefinitions:     crystalDefinitions,
-		CrystalLevelOffsets:    crystalLevelOffsets,
+		ChainLevel:                 chainLevel,
+		ArenaLevels:                arenaLevels,
+		Critical:                   critical,
+		Difficulty:                 difficulty,
+		PlayerBasicAbility:         playerBasicAbility,
+		PlayerBasicUnsupported:     playerBasicUnsupported,
+		HeroKits:                   heroKits,
+		NonPlayerHitPoint:          nonPlayerHitPoint,
+		NonPlayerDefenses:          nonPlayerDefenses,
+		NonPlayerCritical:          nonPlayerCritical,
+		NounPhysics:                nounPhysics,
+		NounPhysicsByID:            nounPhysicsByID,
+		NavigationFootprintsByNoun: navigationFootprintsByNoun,
+		SpawnExtentsByNoun:         spawnExtentsByNoun,
+		NPCDeathAnimations:         npcDeathAnimations,
+		ProjectileHalfExtent:       projectileHalfExtent,
+		QuadraFirstAggro:           program,
+		LightningBasic:             lightningBasic,
+		ElectronSphere:             electronSphere,
+		SupportHealerBasic:         supportHealerBasic,
+		SupportHealerPassive:       supportHealerPassiveDefinition,
+		SupportHealerPetBasic:      supportHealerPetBasic,
+		SentryDroneLaser:           sentryDroneLaser,
+		FireTempestPetBasic:        fireTempestPetBasic,
+		BeastPetBasic:              beastPetBasic,
+		PlasmaSentinelPetBasic:     plasmaSentinelPetBasic,
+		PoisonMelee:                poisonMelee,
+		PoisonCloud:                poisonCloud,
+		PlasmaLightning:            plasmaLightning,
+		TailZap:                    tailZap,
+		BurstShot:                  burstShot,
+		InteractWithObelisk:        interactWithObelisk,
+		InteractHealthObelisk:      interactHealthObelisk,
+		SecurityTeleporter:         securityTeleporter,
+		TeleporterModifier:         teleporterModifier,
+		BossTeleporter:             bossTeleporter,
+		InvisibleBehavior:          invisibleLifecycle,
+		SpawnModifier:              spawnLifecycle,
+		SoloSupportUnlock:          soloSupportUnlock,
+		SupportUnlock:              supportUnlock,
+		OverdriveUnlock:            overdriveUnlock,
+		CatalystUnlock:             catalystUnlock,
+		CrystalPickup:              crystalPickup,
+		ObjectiveInitializers:      objectiveInitializers,
+		ObjectiveInput:             objectiveInput,
+		CrystalDefinitions:         crystalDefinitions,
+		CrystalEffectsByNoun:       crystalEffectsByNoun,
+		CrystalLevelOffsets:        crystalLevelOffsets,
+		CrystalLineBonusPercent:    crystalTuning.ThreeInARowBonusPercent,
+		CrystalMinorStageCount:     rewardTuning.Progression.MinorStageCount,
+		TutorialMajorStageCount:    rewardTuning.Progression.MajorStageCount,
 		IntroAbilitySecond: zonecontent.MarkerProgram{
 			Program: abilitySecondProgram,
 			Trigger: sim.MarkerTrigger{
@@ -1952,10 +2038,13 @@ func loadHeroKits(
 					definitionsByAsset[active.assetName] = definition
 				}
 			}
-			// These custom callbacks expose a generic modifier-shaped registration,
-			// but their actual payload is owned by a recovered specialized runtime.
+			// These custom callbacks expose generic registrations, but their actual
+			// payload is owned by a recovered specialized runtime. CastEnrage's
+			// hitEffect otherwise classifies it as melee, losing its self animation,
+			// muzzle effect, and Enrage modifier identity.
 			switch active.assetName {
-			case "RootingPlague", "Sporogenesis", "FieldMedicSupport",
+			case "BinarySentinelActive", "BinarySentinelSupport",
+				"CastEnrage", "RootingPlague", "Sporogenesis", "FieldMedicSupport",
 				"Psistorm", "SleepingCloud", "SoulRavagerActive", "SpacetimeRandom2",
 				"Terrify", "TimeRavagerSupport", "TurretTrap", "RepulsionWave",
 				"GravityStorm", "QuantumBlink", "QuantumState",

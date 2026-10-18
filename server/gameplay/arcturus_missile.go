@@ -9,12 +9,44 @@ import (
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
 
+func (e campaignArcturusMissile) pollTracked() ([][]byte, error) {
+	run := e.launch
+	run.runtime.registry.mutex.Lock()
+	current, isFound := run.runtime.registry.sessions[run.sessionKey]
+	if e.retirement != nil && (e.retirement.isRetired || e.retirement.isRetirementPending) {
+		run.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	isCurrent := isFound && current.generation == run.generation && current.zone == e.zone &&
+		current.campaignNPCProjectiles[e.projectileObjectID] == e.projectile
+	isStarted := isCurrent && run.runtime.registry.beginCampaignProjectilePublicationLocked(e.retirement)
+	run.runtime.registry.mutex.Unlock()
+	if !isStarted {
+		return nil, nil
+	}
+	packets, err := e.poll()
+	run.runtime.registry.mutex.Lock()
+	retireErr := run.runtime.registry.finishCampaignProjectilePublicationLocked(e.retirement, run.sessionKey, packets, err)
+	run.runtime.registry.mutex.Unlock()
+	if retireErr != nil && run.runtime.logger != nil {
+		run.runtime.logger.Printf("RakNet Arcturus missile cleanup failed projectile=%d: %v", e.projectileObjectID, retireErr)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("missilePollProduce: %w", err)
+	}
+	return nil, nil
+}
+
 // Poll the shared motion owner: freeze, gravity, slowing and destruction must
 // change impact authority as well as the rendered missile.
 func (e campaignArcturusMissile) poll() ([][]byte, error) {
 	run := e.launch
 	run.runtime.registry.mutex.Lock()
 	current, isFound := run.runtime.registry.sessions[run.sessionKey]
+	if e.retirement != nil && (e.retirement.isRetired || e.retirement.isRetirementPending) {
+		run.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
 	if !isFound || current.generation != run.generation || current.zone != e.zone {
 		run.runtime.registry.mutex.Unlock()
 		e.projectile.Stop()
@@ -55,7 +87,7 @@ func (e campaignArcturusMissile) poll() ([][]byte, error) {
 	if err != nil {
 		return e.retire(fmt.Errorf("missileShadowMove: %w", err))
 	}
-	err = scheduleNPCProducer(run.runtime.registry, run.packet, 50*time.Millisecond, e.poll)
+	err = scheduleNPCProducer(run.runtime.registry, run.packet, 50*time.Millisecond, e.pollTracked)
 	if err != nil {
 		return e.retire(fmt.Errorf("missilePoll: %w", err))
 	}
@@ -65,17 +97,13 @@ func (e campaignArcturusMissile) poll() ([][]byte, error) {
 func (e campaignArcturusMissile) retire(cause error) ([][]byte, error) {
 	run := e.launch
 	run.runtime.registry.mutex.Lock()
-	current, isFound := run.runtime.registry.sessions[run.sessionKey]
-	isCurrent := isFound && current.generation == run.generation && current.zone == e.zone
-	if isCurrent {
-		current.untrackCampaignNPCProjectile(e.projectileObjectID, e.projectile)
-		run.runtime.registry.sessions[run.sessionKey] = current
-	}
+	err := run.runtime.registry.retireCampaignProjectileLocked(e.retirement)
 	run.runtime.registry.mutex.Unlock()
-	e.projectile.Stop()
-	run.runtime.logger.Printf("Arcturus missile retired projectile=%d: %v", e.projectileObjectID, cause)
-	if !isCurrent {
-		return nil, nil
+	if run.runtime.logger != nil {
+		run.runtime.logger.Printf("Arcturus missile retired projectile=%d: %v", e.projectileObjectID, cause)
+		if err != nil {
+			run.runtime.logger.Printf("Arcturus missile retirement failed projectile=%d: %v", e.projectileObjectID, err)
+		}
 	}
-	return e.cleanupPackets()
+	return nil, nil
 }

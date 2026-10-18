@@ -88,7 +88,7 @@ func (e *campaignNomadShielderShieldRun) poll() ([][]byte, error) {
 		}
 		return nil, nil
 	}
-	if isCurrent {
+	if isCurrent && (!isEnemyFound || enemy.IsDefeated) {
 		delete(peerSession.campaignNPCShielderShields, e.objectID)
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 	}
@@ -105,9 +105,15 @@ func (e *campaignNomadShielderShieldRun) finishAfterPollFailure(
 		peerSession.campaignNPCShielderShields[e.objectID] == e &&
 		peerSession.zone != nil && peerSession.zone.NPCs() != nil
 	if isCurrent {
-		_ = peerSession.zone.NPCs().EndShield(e.objectID)
-		delete(peerSession.campaignNPCShielderShields, e.objectID)
-		e.runtime.registry.sessions[e.sessionKey] = peerSession
+		shieldErr := peerSession.zone.NPCs().EndShield(e.objectID)
+		if shieldErr != nil {
+			delete(peerSession.campaignNPCShielderShields, e.objectID)
+			e.runtime.registry.sessions[e.sessionKey] = peerSession
+			isCurrent = false
+			if e.runtime.logger != nil {
+				e.runtime.logger.Printf("RakNet shielder cleanup failed object=%d: %v", e.objectID, shieldErr)
+			}
+		}
 	}
 	e.runtime.registry.mutex.Unlock()
 	if e.runtime.logger != nil {
@@ -185,6 +191,16 @@ func (e *campaignNomadShielderShieldRun) finish(isAlive bool) ([][]byte, error) 
 func (e *campaignNomadShielderShieldRun) resume(
 	timestamp uint64,
 ) ([][]byte, error) {
+	e.runtime.registry.mutex.Lock()
+	member, isFound := e.runtime.registry.sessions[e.sessionKey]
+	if !isFound || member.generation != e.generation ||
+		member.campaignNPCShielderShields[e.objectID] != e {
+		e.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	delete(member.campaignNPCShielderShields, e.objectID)
+	e.runtime.registry.sessions[e.sessionKey] = member
+	e.runtime.registry.mutex.Unlock()
 	packets, err := e.runtime.produceEnemyMelee(
 		e.packet, e.sessionKey, e.generation, e.objectID, timestamp,
 	)
@@ -354,7 +370,9 @@ func (r campaignNPCActionRuntime) produceNomadShielderShield(
 		return nil, false, nil
 	}
 	if enemy.IsShieldActive {
-		return nil, false, nil
+		return r.produceShieldedNomadAction(
+			packet, sessionKey, generation, enemy, target, isTargetFound, timestamp,
+		)
 	}
 	if isSetup {
 		return nil, true, nil
@@ -385,9 +403,15 @@ func (r campaignNPCActionRuntime) produceNomadShielderShield(
 		Family: zonenpc.ActionMelee, AbilityName: "NomadShielderPositionForAttack",
 		Range: profile.Range, MovementSpeed: profile.MovementSpeed,
 	}
+	grenadeProfile, isGrenadeFound := zonenpc.NomadShielderGrenadeProfile(enemy.Plan.NounName)
+	if isGrenadeFound {
+		// PositionForAttack allows up to 20; also stay inside the rank's
+		// grenade range so the primary attack never requests shielded pursuit.
+		actionProfile.Range = min(actionProfile.Range, grenadeProfile.Range)
+	}
 	action, err := campaignNPCActionWithProfile(
 		enemy.Plan, target.ObjectID, target.Position, actionProfile,
-		target.FootprintRadius,
+		target.ActorFootprintRadius,
 	)
 	if err != nil {
 		r.releaseAction(sessionKey, generation, objectID)
@@ -430,6 +454,12 @@ func (r campaignNPCActionRuntime) produceNomadShielderShield(
 		r.releaseAction(sessionKey, generation, objectID)
 		return nil, true, fmt.Errorf("shielderShieldFace: %w", err)
 	}
+	stopPackets, stopErr := npcraknet.StopAtPose(objectID, enemy.Plan.Position, enemy.Facing)
+	if stopErr != nil {
+		r.registry.mutex.Unlock()
+		r.releaseAction(sessionKey, generation, objectID)
+		return nil, true, fmt.Errorf("shielderSetupStop: %w", stopErr)
+	}
 	peerSession.campaignNPCShielderShieldSetups[objectID] = true
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
@@ -452,5 +482,5 @@ func (r campaignNPCActionRuntime) produceNomadShielderShield(
 		packets, failErr := setup.fail("shielderShieldSchedule", scheduleErr)
 		return packets, true, failErr
 	}
-	return nil, true, nil
+	return stopPackets, true, nil
 }

@@ -81,6 +81,10 @@ func (r campaignNPCActionRuntime) isNomadShielderGrenadeReady(
 		return false
 	}
 	_, isFamilyFound := zonenpc.NomadShielderGrenadeProfile(enemy.Plan.NounName)
+	target, isTargetFound := peerSession.campaignNPCTarget(generation, enemy.TargetObjectID)
+	if isTargetFound && isNomadShielderBashTarget(enemy, target) {
+		return false
+	}
 	return isFamilyFound && timestamp >= peerSession.campaignNPCShielderNextGrenades[objectID]
 }
 
@@ -328,7 +332,7 @@ func (e campaignNPCLobSchedule) landing() ([][]byte, error) {
 				peerSession.ghostFormRun.IsActive(
 					peerSession.deployedCreatureIndex,
 					peerSession.deployedHitPoint() > 0,
-				)) || peerSession.heroModifierRun.IsDamageImmune())
+				)) || peerSession.isHeroDamageImmune(e.runtime.now()))
 		var isApplied bool
 		var err error
 		damagePackets, statDelta, reflection, isApplied, err =
@@ -354,7 +358,6 @@ func (e campaignNPCLobSchedule) landing() ([][]byte, error) {
 				X: e.toss.Destination.X, Y: e.toss.Destination.Y,
 				Z: e.toss.Destination.Z,
 			},
-			e.landingTimestamp(),
 		)
 		if spawnErr != nil {
 			e.runtime.registry.mutex.Unlock()
@@ -842,18 +845,18 @@ func (r campaignNPCActionRuntime) produceEnemyLob(
 	if isSleepMushroom {
 		plan, planErr = zonenpc.PlanControlWithProfile(
 			enemy, target.ObjectID, target.Position, profile,
-			target.FootprintRadius,
+			target.ActorFootprintRadius,
 		)
 	} else {
 		plan, planErr = zonenpc.PlanAttackWithProfile(
 			enemy, target.ObjectID, target.Position, profile,
-			target.FootprintRadius,
+			target.ActorFootprintRadius,
 		)
 	}
 	if planErr != nil {
 		action, actionErr := campaignNPCActionWithProfile(
 			enemy.Plan, target.ObjectID, target.Position, profile,
-			target.FootprintRadius,
+			target.ActorFootprintRadius,
 		)
 		if actionErr != nil || !action.IsPursuitNeeded {
 			r.registry.mutex.Unlock()

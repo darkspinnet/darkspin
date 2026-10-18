@@ -9,6 +9,30 @@ import (
 )
 
 const CrystalSlotCount = 9
+
+// IsCrystalSlotAvailable preserves the authored grid identity. Tutorial
+// admission is a separate gate; the first three indices are always available.
+func IsCrystalSlotAvailable(index, slotCount int) bool {
+	switch index {
+	case 0, 1, 2:
+		return true
+	case 3:
+		return slotCount >= 4
+	case 4:
+		return slotCount >= 6
+	case 5:
+		return slotCount >= 7
+	case 6:
+		return slotCount >= 5
+	case 7:
+		return slotCount >= 8
+	case 8:
+		return slotCount >= 9
+	default:
+		return false
+	}
+}
+
 const crystalPickupRange = float32(2)
 const crystalPickupReleaseDelay = time.Second
 const crystalFullEventID uint32 = 0x6ea4091e
@@ -152,10 +176,10 @@ type CrystalCollectionResult struct {
 	Actions []CrystalCollectionAction
 }
 
-func (i *CrystalInventory) ReleasePickup(
+func (e *CrystalInventory) ReleasePickup(
 	now time.Duration, token CrystalPickupToken, pickup *CrystalPickupObject,
 ) (CrystalCollectionResult, error) {
-	if i == nil || now < token.ReleaseAt || token.PlayerRole == "" || token.AgentRole == "" ||
+	if e == nil || now < token.ReleaseAt || token.PlayerRole == "" || token.AgentRole == "" ||
 		token.TargetRole == "" || token.PlayerIndex >= 8 {
 		return CrystalCollectionResult{}, errors.New("invalid crystal pickup release")
 	}
@@ -166,13 +190,12 @@ func (i *CrystalInventory) ReleasePickup(
 		!isFinitePosition(pickup.Position) {
 		return CrystalCollectionResult{}, errors.New("invalid crystal pickup object")
 	}
-	i.IsDiagonalUnlocked = token.IsDiagonalUnlocked
-	slotCount := min(token.SlotCount, len(i.Slots))
-	for index := 0; index < slotCount; index++ {
-		if i.Slots[index].IsOccupied {
+	e.IsDiagonalUnlocked = token.IsDiagonalUnlocked
+	for index := range e.Slots {
+		if !IsCrystalSlotAvailable(index, token.SlotCount) || e.Slots[index].IsOccupied {
 			continue
 		}
-		i.Slots[index] = CrystalSlot{
+		e.Slots[index] = CrystalSlot{
 			IsOccupied: true, NounName: pickup.NounName,
 			NounAsset: pickup.NounAsset, CrystalType: pickup.CrystalType,
 			CrystalLevel: pickup.CrystalLevel, Rarity: pickup.Rarity,
@@ -208,23 +231,24 @@ func (i *CrystalInventory) ReleasePickup(
 }
 
 // Move swaps an occupied catalyst into one of the player's unlocked slots.
-func (i *CrystalInventory) Move(source int, destination int, slotCount int) bool {
-	if i == nil || source < 0 || destination < 0 || source >= slotCount ||
-		destination >= slotCount || slotCount > len(i.Slots) || !i.Slots[source].IsOccupied {
+func (e *CrystalInventory) Move(source int, destination int, slotCount int) bool {
+	if e == nil || slotCount < 1 || slotCount > len(e.Slots) ||
+		!IsCrystalSlotAvailable(source, slotCount) ||
+		!IsCrystalSlotAvailable(destination, slotCount) || !e.Slots[source].IsOccupied {
 		return false
 	}
-	i.Slots[source], i.Slots[destination] = i.Slots[destination], i.Slots[source]
+	e.Slots[source], e.Slots[destination] = e.Slots[destination], e.Slots[source]
 	return true
 }
 
 // Remove releases one catalyst from an unlocked slot for a world drop.
-func (i *CrystalInventory) Remove(source int, slotCount int) (CrystalSlot, bool) {
-	if i == nil || source < 0 || source >= slotCount || slotCount > len(i.Slots) ||
-		!i.Slots[source].IsOccupied {
+func (e *CrystalInventory) Remove(source int, slotCount int) (CrystalSlot, bool) {
+	if e == nil || slotCount < 1 || slotCount > len(e.Slots) ||
+		!IsCrystalSlotAvailable(source, slotCount) || !e.Slots[source].IsOccupied {
 		return CrystalSlot{}, false
 	}
-	slot := i.Slots[source]
-	i.Slots[source] = CrystalSlot{}
+	slot := e.Slots[source]
+	e.Slots[source] = CrystalSlot{}
 	return slot, true
 }
 

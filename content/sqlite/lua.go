@@ -87,6 +87,10 @@ func writeLuaChunks(ctx context.Context, transaction *sql.Tx) error {
 	if err != nil {
 		return fmt.Errorf("propertyWrite: %w", err)
 	}
+	err = writeAbilityMetadata(ctx, transaction, chunks)
+	if err != nil {
+		return fmt.Errorf("abilityMetadataWrite: %w", err)
+	}
 	err = writeLuaTokenBindings(ctx, transaction, chunks)
 	if err != nil {
 		return fmt.Errorf("tokenWrite: %w", err)

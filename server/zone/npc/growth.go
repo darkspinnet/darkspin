@@ -2,12 +2,37 @@ package npc
 
 import (
 	"errors"
-	"math"
-
-	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
+	"time"
 )
 
 const oozeGrowthMaximumStack = 4
+
+func (e Snapshot) IsOozeGrowthReady(timestamp uint64) bool {
+	return timestamp >= e.status.oozeGrowthReadyTimestamp
+}
+
+// CommitOozeGrowthAction keeps growth's cooldown independent of melee while
+// retaining it across retargeting and changes of the action's party owner.
+func (e *Session) CommitOozeGrowthAction(source Snapshot, timestamp uint64) bool {
+	if e == nil {
+		return false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	npc, isFound := e.npcs[source.Plan.ObjectID]
+	if !isFound || npc.IsDefeated || !npc.IsActionStarted ||
+		npc.ActionGeneration != source.ActionGeneration ||
+		!npc.IsOozeGrowthReady(timestamp) {
+		return false
+	}
+	profile, isProfileFound := VerdanthBasicOozeGrowProfile(npc.Plan.NounName)
+	if !isProfileFound {
+		return false
+	}
+	npc.status.oozeGrowthReadyTimestamp = timestamp + uint64(profile.Cooldown/time.Millisecond)
+	e.npcs[source.Plan.ObjectID] = npc
+	return true
+}
 
 type OozeGrowthResult struct {
 	Target       Snapshot
@@ -15,31 +40,19 @@ type OozeGrowthResult struct {
 	HealedAmount float32
 }
 
-func (s *Session) FirstOozeGrowthTarget(
-	sourceObjectID uint32, maximumRange float32,
-) (Snapshot, bool) {
-	if s == nil || sourceObjectID == 0 || maximumRange <= 0 ||
-		math.IsNaN(float64(maximumRange)) || math.IsInf(float64(maximumRange), 0) {
+func (s *Session) OozeGrowthTarget(sourceObjectID uint32) (Snapshot, bool) {
+	if s == nil || sourceObjectID == 0 {
 		return Snapshot{}, false
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	source, isFound := s.npcs[sourceObjectID]
-	if !isFound || source.IsDefeated || !source.IsPublished || source.HitPoint <= 0 {
+	target, isFound := s.npcs[sourceObjectID]
+	if !isFound || target.IsDefeated || !target.IsPublished ||
+		target.Plan.IsFixture || target.HitPoint <= 0 ||
+		target.status.oozeGrowthStack >= oozeGrowthMaximumStack {
 		return Snapshot{}, false
 	}
-	for _, objectID := range s.objectIDs {
-		candidate := s.npcs[objectID]
-		if candidate.Faction != source.Faction || candidate.IsDefeated ||
-			!candidate.IsPublished || candidate.Plan.IsFixture ||
-			candidate.HitPoint <= 0 ||
-			candidate.status.oozeGrowthStack >= oozeGrowthMaximumStack ||
-			zonegeometry.Distance(source.Plan.Position, candidate.Plan.Position) > maximumRange {
-			continue
-		}
-		return candidate, true
-	}
-	return Snapshot{}, false
+	return target, true
 }
 
 func (s *Session) ApplyOozeGrowth(
@@ -56,7 +69,7 @@ func (s *Session) ApplyOozeGrowth(
 		source.HitPoint <= 0 {
 		return OozeGrowthResult{}, errors.New("ooze growth source unavailable")
 	}
-	if !isTargetFound || target.Faction != source.Faction || target.IsDefeated ||
+	if !isTargetFound || targetObjectID != sourceObjectID || target.IsDefeated ||
 		!target.IsPublished || target.Plan.IsFixture || target.HitPoint <= 0 {
 		return OozeGrowthResult{}, errors.New("ooze growth target unavailable")
 	}

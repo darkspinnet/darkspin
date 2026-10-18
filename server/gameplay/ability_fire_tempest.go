@@ -27,6 +27,7 @@ const fireTempestOwnerPoll = 250 * time.Millisecond
 const fireTempestEnrageWarmup = 1250 * time.Millisecond
 const fireTempestEnrageDuration = 15 * time.Second
 const fireTempestEnrageDamageBuff = float32(0.50)
+const fireTempestEnrageBodyScale = float32(0.20)
 const fireTempestBeamOutDuration = 800 * time.Millisecond
 const fireTempestFallbackHitPoint = float32(50)
 const fireTempestFallbackFootprint = float32(0.75)
@@ -48,6 +49,9 @@ type fireTempestActiveRun struct {
 	replacementCancel    raknet.CancelSchedule
 	attack               *abilityraknet.ProjectileRun
 	attackTargetObjectID uint32
+	attackRevision       uint64
+	isAttackLaunched     bool
+	isAttackResumeNeeded bool
 	orientation          raknet.Quaternion
 }
 
@@ -124,10 +128,21 @@ func (e fireTempestStep) monitor() ([][]byte, error) {
 	}
 	ownerPosition := game.Vec3(peerSession.playerPosition)
 	if pet.Position.Sub(ownerPosition).Length() <= 50 {
+		isAttackResumeNeeded := e.run.isAttackResumeNeeded
 		e.run.runtime.registry.mutex.Unlock()
 		err := e.scheduleMonitor()
 		if err != nil {
 			return nil, fmt.Errorf("fireTempestMonitorContinue: %w", err)
+		}
+		if isAttackResumeNeeded {
+			packets, attackErr := e.run.runtime.damage.startFireTempestPetAttack(
+				e.run.packet, e.run.sessionKey, e.run.generation,
+				e.timestamp+uint64(e.deadline/time.Millisecond),
+			)
+			if attackErr != nil {
+				return nil, fmt.Errorf("fireTempestResume: %w", attackErr)
+			}
+			return packets, nil
 		}
 		return nil, nil
 	}
@@ -201,7 +216,8 @@ func (e fireTempestStep) scheduleMonitor() error {
 		Produce: fireTempestStep{
 			run: e.run, definition: e.definition, creature: e.creature,
 			binding: e.binding, timestamp: e.timestamp,
-			kind: fireTempestStepMonitor,
+			deadline: e.deadline + fireTempestOwnerPoll,
+			kind:     fireTempestStepMonitor,
 		}.produce,
 	}
 	cancel, err := e.run.packet.ScheduleProducers(
@@ -219,19 +235,22 @@ func (e fireTempestStep) scheduleReplacement(position game.Vec3) error {
 		{Delay: fireTempestSpawnDelay, Produce: fireTempestStep{
 			run: e.run, definition: e.definition, creature: e.creature,
 			binding: e.binding, timestamp: e.timestamp, position: position,
-			kind: fireTempestStepSpawn,
+			deadline: e.deadline + fireTempestSpawnDelay,
+			kind:     fireTempestStepSpawn,
 		}.produce},
 		{Delay: fireTempestSpawnDelay + fireTempestSpawnAnimationDuration,
 			Produce: fireTempestStep{
 				run: e.run, definition: e.definition, creature: e.creature,
 				binding: e.binding, timestamp: e.timestamp, position: position,
-				kind: fireTempestStepSpawnRelease,
+				deadline: e.deadline + fireTempestSpawnDelay + fireTempestSpawnAnimationDuration,
+				kind:     fireTempestStepSpawnRelease,
 			}.produce},
 		{Delay: fireTempestSpawnDelay + fireTempestSpawnAnimationDuration,
 			Produce: fireTempestStep{
 				run: e.run, definition: e.definition, creature: e.creature,
 				binding: e.binding, timestamp: e.timestamp,
-				kind: fireTempestStepMonitor,
+				deadline: e.deadline + fireTempestSpawnDelay + fireTempestSpawnAnimationDuration,
+				kind:     fireTempestStepMonitor,
 			}.produce},
 	}
 	cancel, err := e.run.packet.ScheduleProducers(steps)
@@ -411,31 +430,24 @@ func (e fireTempestStep) enragePulse() ([][]byte, error) {
 		e.run.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	enrageInstanceID := e.run.enrageInstanceID
 	var attributePacket []byte
+	if enrageInstanceID == 0 {
+		e.run.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
 	if !e.run.isEnrageBuffApplied {
-		err := peerSession.zone.Companion().AddBuff(
-			e.run.petObjectID,
-			zonecompanion.Buff{DamageBuff: fireTempestEnrageDamageBuff},
-		)
-		if err != nil {
-			e.run.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf("fireTempestEnrageDamageBuff: %w", err)
-		}
+		var err error
 		attributePacket, err = raknet.MarshalApplication(
 			raknet.AttributeDataUpdateMessage{
 				ObjectID: e.run.petObjectID,
-				Value:    map[uint8]float32{113: 0.20},
+				Value:    map[uint8]float32{113: fireTempestEnrageBodyScale},
 			},
 		)
 		if err != nil {
-			peerSession.zone.Companion().RemoveBuff(
-				e.run.petObjectID,
-				zonecompanion.Buff{DamageBuff: fireTempestEnrageDamageBuff},
-			)
 			e.run.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("fireTempestEnrageScale: %w", err)
 		}
-		e.run.isEnrageBuffApplied = true
 	}
 	creature := e.creature
 	creature.DamageProfile.PrimaryAttribute = creature.PetDamage
@@ -489,6 +501,45 @@ func (e fireTempestStep) enragePulse() ([][]byte, error) {
 		return nil, fmt.Errorf("fireTempestEnragePublish: %w", err)
 	}
 	if len(attributePacket) != 0 {
+		e.run.runtime.registry.mutex.Lock()
+		latest, isFound := e.run.runtime.registry.sessions[e.run.sessionKey]
+		if !e.run.isCurrent(latest, isFound) || latest.zone != peerSession.zone ||
+			e.run.petObjectID != pet.ObjectID || e.run.enrageInstanceID != enrageInstanceID {
+			e.run.runtime.registry.mutex.Unlock()
+			return packets, nil
+		}
+		if !e.run.isEnrageBuffApplied {
+			currentPet, isPetFound := latest.zone.Companion().Snapshot(pet.ObjectID)
+			if !isPetFound || currentPet.HitPoint <= 0 {
+				e.run.runtime.registry.mutex.Unlock()
+				return packets, nil
+			}
+			err = latest.zone.Companion().AddBuff(
+				pet.ObjectID, zonecompanion.Buff{DamageBuff: fireTempestEnrageDamageBuff},
+			)
+			if err != nil {
+				currentPet, isPetFound = latest.zone.Companion().Snapshot(pet.ObjectID)
+				e.run.runtime.registry.mutex.Unlock()
+				if !isPetFound || currentPet.HitPoint <= 0 {
+					return packets, nil
+				}
+				return nil, fmt.Errorf("fireTempestEnrageDamageBuff: %w", err)
+			}
+			err = latest.zone.Companion().SetBodyScale(pet.ObjectID, fireTempestEnrageBodyScale)
+			if err != nil {
+				latest.zone.Companion().RemoveBuff(
+					pet.ObjectID, zonecompanion.Buff{DamageBuff: fireTempestEnrageDamageBuff},
+				)
+				currentPet, isPetFound = latest.zone.Companion().Snapshot(pet.ObjectID)
+				e.run.runtime.registry.mutex.Unlock()
+				if !isPetFound || currentPet.HitPoint <= 0 {
+					return packets, nil
+				}
+				return nil, fmt.Errorf("fireTempestEnrageScaleCommit: %w", err)
+			}
+			e.run.isEnrageBuffApplied = true
+		}
+		e.run.runtime.registry.mutex.Unlock()
 		packets = append([][]byte{attributePacket}, packets...)
 	}
 	return packets, nil
@@ -505,16 +556,17 @@ func (e fireTempestStep) enrageExpire() ([][]byte, error) {
 	e.run.enrageInstanceID = 0
 	e.run.enrageCancel = nil
 	isEnrageBuffApplied := e.run.isEnrageBuffApplied
-	e.run.runtime.registry.sessions[e.run.sessionKey] = peerSession
-	e.run.runtime.registry.mutex.Unlock()
 	if isEnrageBuffApplied && peerSession.zone != nil &&
 		peerSession.zone.Companion() != nil {
+		peerSession.zone.Companion().ClearBodyScale(e.run.petObjectID)
 		peerSession.zone.Companion().RemoveBuff(
 			e.run.petObjectID,
 			zonecompanion.Buff{DamageBuff: fireTempestEnrageDamageBuff},
 		)
 	}
 	e.run.isEnrageBuffApplied = false
+	e.run.runtime.registry.sessions[e.run.sessionKey] = peerSession
+	e.run.runtime.registry.mutex.Unlock()
 	_ = e.run.runtime.modifierPool.Release(instanceID)
 	modifierPacket, err := effectraknet.ModifierDelete(e.run.petObjectID, instanceID)
 	if err != nil {
@@ -852,7 +904,8 @@ func (r campaignAbilityCommandRuntime) startFireTempestSummon(
 			Produce: fireTempestStep{
 				run: run, definition: definition, creature: creature,
 				binding: peerSession.binding, timestamp: req.packet.SourceTime,
-				kind: fireTempestStepMonitor,
+				deadline: definition.HitDelay + fireTempestSpawnDelay + fireTempestSpawnAnimationDuration,
+				kind:     fireTempestStepMonitor,
 			}.produce},
 		{Delay: definition.ReleaseDelay, Produce: fireTempestStaticProducer{
 			packet: releasePacket,

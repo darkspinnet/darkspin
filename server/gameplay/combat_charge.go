@@ -31,11 +31,48 @@ type campaignChargeSchedule struct {
 func (e campaignChargeSchedule) fail(
 	step string, err error,
 ) ([][]byte, error) {
+	restorePackets, restoreErr := e.restoreMovementState()
+	if restoreErr != nil {
+		err = errors.Join(err, fmt.Errorf("chargeRestore: %w", restoreErr))
+	}
+	if len(restorePackets) > 0 {
+		e.runtime.registry.mutex.Lock()
+		member, isFound := e.runtime.registry.sessions[e.sessionKey]
+		if isFound && member.generation == e.generation {
+			e.runtime.registry.queueChargePacketsLocked(member.zone, restorePackets)
+		}
+		e.runtime.registry.mutex.Unlock()
+	}
 	e.runtime.clearNoctGhostChargeProtection(
 		e.sessionKey, e.generation, e.objectID,
 	)
 	e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
 	return nil, fmt.Errorf("%s: %w", step, err)
+}
+
+func (e campaignChargeSchedule) restoreMovementState() ([][]byte, error) {
+	if e.plan.Profile.AbilityName != "BoomerCharge" &&
+		e.plan.Profile.AbilityName != "NocturnaSpecialDriftCharge" {
+		return nil, nil
+	}
+	e.runtime.registry.mutex.RLock()
+	member, isFound := e.runtime.registry.sessions[e.sessionKey]
+	if !isFound || member.generation != e.generation || member.zone == nil {
+		e.runtime.registry.mutex.RUnlock()
+		return nil, nil
+	}
+	enemy, isEnemyFound := member.zone.NPCs().NPC(e.objectID)
+	e.runtime.registry.mutex.RUnlock()
+	if !isEnemyFound || (e.plan.ActionGeneration != 0 && enemy.ActionGeneration != e.plan.ActionGeneration) {
+		return nil, nil
+	}
+	packets, err := npcraknet.ChargeMovementState(
+		e.objectID, zonenpc.EffectiveMovementSpeedBuff(enemy.Plan), e.plan.Profile.StealthType, false,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("chargeMovementRestore: %w", err)
+	}
+	return packets, nil
 }
 
 type campaignGhostProtectionExpiryStep struct {
@@ -82,6 +119,16 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 	movementProfile.Range = movementProfile.ForcedMovementStopDistance
 	movementProfile.MovementSpeed *= 1 + movementProfile.MovementSpeedBuff
 	movementProfile.MovementSpeed += movementProfile.ForcedMovementSpeed
+	if movementProfile.AbilityName == "BoomerCharge" {
+		// The charge template adds speedIncrease to attribute 48, which native
+		// locomotion applies as a multiplier, not as flat world units/second.
+		baseSpeed := enemy.Plan.NPCProfile.BaseCombatSpeed
+		if baseSpeed <= 0 {
+			baseSpeed = 3
+		}
+		movementProfile.MovementSpeed = baseSpeed *
+			(1 + zonenpc.EffectiveMovementSpeedBuff(enemy.Plan) + movementProfile.ForcedMovementSpeed)
+	}
 	isGhostCharge := movementProfile.AbilityName == "NoctGhostCharge"
 	if isGhostCharge {
 		expiresAt := e.runtime.now().Add(8 * time.Second)
@@ -115,7 +162,7 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 		destination, isDestinationFound, destinationErr :=
 			noctGhostChargeMovementDestination(
 				peerSession.zone.Navigation(), enemy.Plan.Position, target.Position,
-				enemy.Plan.NPCProfile.FootprintRadius, target.FootprintRadius,
+				enemy.Plan.ActorFootprintRadius(), target.ActorFootprintRadius,
 			)
 		if destinationErr != nil {
 			return e.fail("enemyGhostDestination", destinationErr)
@@ -133,12 +180,12 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 	} else if movementProfile.AbilityName == "NocturnaSpecialDriftCharge" {
 		desired := noctGhostChargeDestination(
 			enemy.Plan.Position, target.Position,
-			enemy.Plan.NPCProfile.FootprintRadius, target.FootprintRadius,
+			enemy.Plan.ActorFootprintRadius(), target.ActorFootprintRadius,
 		)
 		destination, isDestinationFound, destinationErr :=
 			navigationClippedMovementDestination(
 				peerSession.zone.Navigation(), enemy.Plan.Position, desired,
-				enemy.Plan.NPCProfile.FootprintRadius,
+				enemy.NavigationRadius(), enemy.Navigation,
 			)
 		if destinationErr != nil {
 			return e.fail("enemyDriftDestination", destinationErr)
@@ -171,7 +218,7 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 	} else {
 		action, err = campaignNPCActionWithProfile(
 			enemy.Plan, target.ObjectID, target.Position, movementProfile,
-			target.FootprintRadius,
+			target.ActorFootprintRadius,
 		)
 	}
 	if err != nil {
@@ -192,9 +239,12 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 	}
 	if movementProfile.AbilityName == "NocturnaSpecialDriftCharge" ||
 		movementProfile.AbilityName == "BoomerCharge" {
+		movementSpeedBuff := movementProfile.ForcedMovementSpeed
+		if movementProfile.AbilityName == "BoomerCharge" {
+			movementSpeedBuff += zonenpc.EffectiveMovementSpeedBuff(enemy.Plan)
+		}
 		statePackets, stateErr := npcraknet.ChargeMovementState(
-			e.objectID, movementProfile.ForcedMovementSpeed, 0,
-			movementProfile.AbilityName != "NocturnaSpecialDriftCharge",
+			e.objectID, movementSpeedBuff, 0, true,
 		)
 		if stateErr != nil {
 			return e.fail("enemyDriftMovementState", stateErr)
@@ -226,7 +276,8 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 		)
 		return packets, nil
 	}
-	return append([][]byte{loopPacket}, packets...), nil
+	// Set locomotion first so its default pose cannot replace the charge loop.
+	return append(packets, loopPacket), nil
 }
 
 func isTemplateContactCharge(abilityName string) bool {
@@ -296,52 +347,24 @@ func noctGhostChargeMovementDestination(
 	desired := noctGhostChargeDestination(
 		source, target, sourceFootprintRadius, targetFootprintRadius,
 	)
-	if mesh == nil {
-		return desired, true, nil
-	}
-	direction := target.Sub(source)
-	directionLength := direction.Length()
-	if directionLength <= 0 {
-		return source, false, nil
-	}
-	direction = direction.Scale(1 / directionLength)
-	const obstacleRayDistance = float32(1000)
-	rayEndpoint := source.Add(direction.Scale(obstacleRayDistance))
-	obstacle, isObstacleFound, err := navigationClippedMovementDestination(
-		mesh, source, rayEndpoint, sourceFootprintRadius,
+	destination, isDestinationFound, err := navigationClippedMovementDestination(
+		mesh, source, desired, sourceFootprintRadius,
 	)
 	if err != nil {
-		return game.Vec3{}, false, fmt.Errorf("ghostObstacleRay: %w", err)
+		return game.Vec3{}, false, fmt.Errorf("ghostDestinationClip: %w", err)
 	}
-	if !isObstacleFound {
-		return source, false, nil
-	}
-	desiredDistance := zonegeometry.Distance(source, desired)
-	obstacleDistance := zonegeometry.Distance(source, obstacle)
-	if obstacleDistance < desiredDistance {
-		return obstacle, true, nil
-	}
-	projected, isProjected, err := zoneaction.NPCProjectPosition(
-		mesh, desired, sourceFootprintRadius,
-	)
-	if err != nil {
-		return game.Vec3{}, false, fmt.Errorf("ghostDestinationProject: %w", err)
-	}
-	if !isProjected {
-		return source, false, nil
-	}
-	return projected, true, nil
+	return destination, isDestinationFound, nil
 }
 
 func navigationClippedMovementDestination(
 	mesh *basenavigation.Mesh, source game.Vec3, desired game.Vec3,
-	footprintRadius float32,
+	footprintRadius float32, actors ...basenavigation.ActorNavigation,
 ) (game.Vec3, bool, error) {
 	if mesh == nil {
 		return desired, true, nil
 	}
 	destination, isFound, err := zoneaction.NPCDirectMovementDestination(
-		mesh, source, desired, footprintRadius,
+		mesh, source, desired, footprintRadius, actors...,
 	)
 	if err != nil {
 		return game.Vec3{}, false, fmt.Errorf("chargeDirect: %w", err)
@@ -358,7 +381,7 @@ func navigationClippedMovementDestination(
 		candidate := source.Add(delta.Scale(portion))
 		projected, isProjected, projectionErr :=
 			zoneaction.NPCDirectMovementDestination(
-				mesh, source, candidate, footprintRadius,
+				mesh, source, candidate, footprintRadius, actors...,
 			)
 		if projectionErr != nil {
 			return game.Vec3{}, false,
@@ -379,9 +402,7 @@ func (e campaignChargeSchedule) followup(timestamp uint64) ([][]byte, error) {
 	if e.plan.Profile.AbilityName == "NocturnaSpecialDriftCharge" ||
 		e.plan.Profile.AbilityName == "BoomerCharge" {
 		var stateErr error
-		restoredStatePackets, stateErr = npcraknet.ChargeMovementState(
-			e.objectID, 0, e.plan.Profile.StealthType, true,
-		)
+		restoredStatePackets, stateErr = e.restoreMovementState()
 		if stateErr != nil {
 			return e.fail("enemyDriftRestoreState", stateErr)
 		}
@@ -454,6 +475,12 @@ func (e campaignChargeSchedule) followup(timestamp uint64) ([][]byte, error) {
 		}
 		return append(followupPackets, restoredStatePackets...), nil
 	}
+	if e.plan.Profile.AbilityName == "BoomerCharge" {
+		if relaxPacket != nil {
+			followupPackets = append([][]byte{relaxPacket}, followupPackets...)
+		}
+		return append(followupPackets, restoredStatePackets...), nil
+	}
 	if relaxPacket == nil {
 		return followupPackets, nil
 	}
@@ -490,7 +517,7 @@ func (r campaignNPCActionRuntime) finishNoctGhostCharge(
 	}
 	position, isProjected, err := zoneaction.NPCProjectPosition(
 		peerSession.zone.Navigation(), enemy.Plan.Position,
-		enemy.Plan.NPCProfile.FootprintRadius,
+		enemy.NavigationRadius(), enemy.Navigation,
 	)
 	if err != nil {
 		peerSession.zone.NPCs().ClearChargeProtection(objectID)
@@ -644,7 +671,7 @@ func campaignChargeSegmentTargets(
 		if target.ObjectID == 0 || target.HitPoint <= 0 ||
 			!zonegeometry.SegmentIntersectsSphere(
 				start, end, target.Position,
-				triggerRadius+target.FootprintRadius,
+				triggerRadius+target.ActorFootprintRadius,
 			) {
 			continue
 		}
@@ -700,9 +727,16 @@ func (r campaignNPCActionRuntime) produceChargeSegmentCollision(
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID, timestamp: nextTimestamp,
 	}
-	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
-		Delay: nextDelay, Produce: next.produce,
-	}})
+	poseEnd := campaignChargePoseEnd{
+		runtime: r, sessionKey: sessionKey, generation: generation,
+		objectID: objectID, actionGeneration: chargePlan.ActionGeneration,
+		readyTimestamp: readyTimestamp,
+		timestamp:      timestamp + uint64(profile.EndAnimationDelay/time.Millisecond),
+	}
+	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
+		{Delay: profile.EndAnimationDelay, Produce: poseEnd.produce},
+		{Delay: nextDelay, Produce: next.produce},
+	})
 	if err == nil && cancel == nil {
 		err = errors.New("nil cancellation")
 	}
@@ -784,7 +818,7 @@ func (r campaignNPCActionRuntime) produceChargeSegmentCollision(
 		for _, target := range peerSession.zone.LiveNPCTargets() {
 			if zonegeometry.Distance(enemy.Plan.Position, target.Position) >
 				auraProfile.Radius+enemy.Plan.NPCProfile.FootprintRadius+
-					target.FootprintRadius {
+					target.ActorFootprintRadius {
 				continue
 			}
 			plan, planErr := zonenpc.PlanAreaAttackWithProfile(
@@ -911,7 +945,7 @@ func (r campaignNPCActionRuntime) produceEnemyCharge(
 		var actionErr error
 		chargePursuit, actionErr = campaignNPCActionWithProfile(
 			enemy.Plan, target.ObjectID, target.Position, profile,
-			target.FootprintRadius,
+			target.ActorFootprintRadius,
 		)
 		if actionErr != nil {
 			r.registry.mutex.Unlock()
@@ -942,7 +976,7 @@ func (r campaignNPCActionRuntime) produceEnemyCharge(
 	if isEnemyFound && isTargetFound {
 		pickySurfaceDistance = max(
 			float32(0), zonegeometry.Distance(enemy.Plan.Position, target.Position)-
-				enemy.Plan.NPCProfile.FootprintRadius-target.FootprintRadius,
+				enemy.Plan.ActorFootprintRadius()-target.ActorFootprintRadius,
 		)
 	}
 	isPickyMelee := isEnemyFound && isTargetFound && isProfileFound &&
@@ -1125,7 +1159,7 @@ func (r campaignNPCActionRuntime) produceVerdanthBasicPickyLanding(
 	movementProfile.MovementSpeed += movementProfile.ForcedMovementSpeed
 	action, err := campaignNPCActionWithProfile(
 		enemy.Plan, target.ObjectID, target.Position, movementProfile,
-		target.FootprintRadius,
+		target.ActorFootprintRadius,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("enemyPickyFinalApproachPlan: %w", err)
@@ -1198,12 +1232,12 @@ func (r campaignNPCActionRuntime) produceVerdanthBasicPickyAttack(
 		return nil, nil
 	}
 	plan, err := zonenpc.PlanAttackWithProfile(
-		enemy, target.ObjectID, target.Position, profile, target.FootprintRadius,
+		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
 	if err != nil {
 		action, actionErr := campaignNPCActionWithProfile(
 			enemy.Plan, target.ObjectID, target.Position, profile,
-			target.FootprintRadius,
+			target.ActorFootprintRadius,
 		)
 		if actionErr != nil {
 			return nil, fmt.Errorf("enemyPickyAttackPursuitPlan: %w", actionErr)
@@ -1326,12 +1360,12 @@ func (r campaignNPCActionRuntime) produceCryosBasicChargeHeadbutt(
 		chargeProfile.NonCombatMovementSpeed,
 	)
 	plan, err := zonenpc.PlanAttackWithProfile(
-		enemy, target.ObjectID, target.Position, profile, target.FootprintRadius,
+		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
 	if err != nil {
 		action, actionErr := campaignNPCActionWithProfile(
 			enemy.Plan, target.ObjectID, target.Position, profile,
-			target.FootprintRadius,
+			target.ActorFootprintRadius,
 		)
 		if actionErr != nil {
 			return nil, fmt.Errorf("enemyHeadbuttPursuitPlan: %w", actionErr)
@@ -1429,12 +1463,12 @@ func (r campaignNPCActionRuntime) produceNomadChargeAttack(
 	}
 	profile := zonenpc.NomadSpecialOneChargingAttackProfile()
 	plan, err := zonenpc.PlanAttackWithProfile(
-		enemy, target.ObjectID, target.Position, profile, target.FootprintRadius,
+		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
 	if err != nil {
 		action, actionErr := campaignNPCActionWithProfile(
 			enemy.Plan, target.ObjectID, target.Position, profile,
-			target.FootprintRadius,
+			target.ActorFootprintRadius,
 		)
 		if actionErr != nil {
 			return nil, fmt.Errorf("enemyChargeAttackPursuitPlan: %w", actionErr)
@@ -1504,7 +1538,7 @@ func (r campaignNPCActionRuntime) produceBoomerSmash(
 	}
 	profile := zonenpc.BoomerSmashProfile()
 	plan, err := zonenpc.PlanAttackWithProfile(
-		enemy, target.ObjectID, target.Position, profile, target.FootprintRadius,
+		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
 	if err != nil {
 		if timestamp >= chargeReadyTimestamp {
@@ -1512,7 +1546,7 @@ func (r campaignNPCActionRuntime) produceBoomerSmash(
 		}
 		action, actionErr := campaignNPCActionWithProfile(
 			enemy.Plan, target.ObjectID, target.Position, profile,
-			target.FootprintRadius,
+			target.ActorFootprintRadius,
 		)
 		if actionErr != nil {
 			return nil, fmt.Errorf("enemySmashPursuitPlan: %w", actionErr)

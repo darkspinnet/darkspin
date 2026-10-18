@@ -12,13 +12,30 @@ import (
 )
 
 type campaignNPCIntangibleRun struct {
-	modifier     *campaignNPCModifierRun
-	objectID     uint32
-	expiresAt    time.Time
-	cancel       raknet.CancelSchedule
-	timestamp    uint64
-	destination  game.Vec3
-	revealPacket []byte
+	modifier          *campaignNPCModifierRun
+	objectID          uint32
+	expiresAt         time.Time
+	cancel            raknet.CancelSchedule
+	timestamp         uint64
+	destination       game.Vec3
+	revealPacket      []byte
+	effectPool        *attachedEffectPool
+	effectSlot        uint8
+	isEffectAllocated bool
+	effectStopPacket  []byte
+}
+
+// Call while holding the registry lock, alongside removal of the burrow run.
+func (e *campaignNPCIntangibleRun) releaseEffect() []byte {
+	if !e.isEffectAllocated {
+		return nil
+	}
+	e.isEffectAllocated = false
+	if !e.effectPool.Release(e.objectID, e.effectSlot) {
+		// Object cleanup already reclaimed this slot; do not stop a new owner.
+		return nil
+	}
+	return e.effectStopPacket
 }
 
 type campaignNPCIntangibleExpiry struct {
@@ -37,7 +54,12 @@ func (e campaignNPCIntangibleExpiry) produce() ([][]byte, error) {
 	var enemy zonenpc.Snapshot
 	isEnemyFound := false
 	var positionErr error
+	packets := make([][]byte, 0, 4)
 	if isCurrent {
+		stopPacket := e.run.releaseEffect()
+		if stopPacket != nil {
+			packets = append(packets, stopPacket)
+		}
 		enemy, isEnemyFound = peerSession.zone.NPCs().NPC(e.run.objectID)
 		if isEnemyFound && !enemy.IsDefeated && enemy.HitPoint > 0 {
 			positionErr = peerSession.zone.NPCs().SetPosition(
@@ -61,16 +83,16 @@ func (e campaignNPCIntangibleExpiry) produce() ([][]byte, error) {
 		return nil, fmt.Errorf("intangibleRelease: %w", err)
 	}
 	if !isCreated {
-		return nil, nil
+		return packets, nil
 	}
 	if positionErr != nil {
 		return nil, fmt.Errorf("intangiblePosition: %w", positionErr)
 	}
 	if !isEnemyFound {
-		return nil, nil
+		return packets, nil
 	}
 	if enemy.IsDefeated || enemy.HitPoint <= 0 {
-		return nil, nil
+		return packets, nil
 	}
 	arrivalPackets, err := npcraknet.BurrowArrival(
 		e.run.objectID, enemy.Plan.Position, enemy.Facing, e.run.timestamp+1500,
@@ -78,7 +100,7 @@ func (e campaignNPCIntangibleExpiry) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("intangibleEmerge: %w", err)
 	}
-	return arrivalPackets, nil
+	return append(packets, arrivalPackets...), nil
 }
 
 func (r campaignNPCActionRuntime) prepareStagnantNovaIntangible(
@@ -115,10 +137,32 @@ func (r campaignNPCActionRuntime) prepareStagnantNovaIntangible(
 	run := &campaignNPCIntangibleRun{
 		modifier: modifier, objectID: plan.SourceObjectID,
 		expiresAt: r.now().Add(profile.EmergeDelay), timestamp: timestamp,
-		destination: plan.TargetPosition,
+		destination: plan.TargetPosition, effectPool: r.effectPool,
+	}
+	run.effectSlot, run.isEffectAllocated = r.effectPool.Allocate(run.objectID)
+	var effectPacket []byte
+	var effectErr error
+	if run.isEffectAllocated {
+		effectPacket, effectErr = npcraknet.BurrowEffect(run.objectID, run.effectSlot, false)
+		if effectErr == nil {
+			run.effectStopPacket, effectErr = npcraknet.BurrowEffect(run.objectID, run.effectSlot, true)
+		}
+	} else if r.logger != nil {
+		// Presentation slot exhaustion must not cancel the working attack.
+		r.logger.Printf("RakNet burrow trail omitted object=%d: attachment slots exhausted", run.objectID)
+	}
+	if effectErr != nil {
+		run.releaseEffect()
+		r.registry.mutex.Unlock()
+		isReleased, releaseErr := modifier.release(r.modifierPool)
+		if isReleased {
+			return nil, nil, errors.New("burrow modifier unexpectedly published")
+		}
+		return nil, nil, fmt.Errorf("burrowEffect: %w", errors.Join(effectErr, releaseErr))
 	}
 	err = peerSession.zone.NPCs().ApplyIntangible(run.objectID, run.expiresAt)
 	if err != nil {
+		run.releaseEffect()
 		r.registry.mutex.Unlock()
 		_, releaseErr := modifier.release(r.modifierPool)
 		return nil, nil, fmt.Errorf(
@@ -128,6 +172,7 @@ func (r campaignNPCActionRuntime) prepareStagnantNovaIntangible(
 	err = peerSession.trackCampaignNPCModifier(modifier)
 	if err != nil {
 		peerSession.zone.NPCs().ClearIntangible(run.objectID, run.expiresAt)
+		run.releaseEffect()
 		r.registry.mutex.Unlock()
 		_, releaseErr := modifier.release(r.modifierPool)
 		return nil, nil, fmt.Errorf(
@@ -153,6 +198,9 @@ func (r campaignNPCActionRuntime) prepareStagnantNovaIntangible(
 	if err != nil {
 		r.rollbackStagnantNovaIntangible(sessionKey, generation, run)
 		return nil, nil, fmt.Errorf("intangibleRecovery: %w", err)
+	}
+	if effectPacket != nil {
+		travelPackets = append(travelPackets, effectPacket)
 	}
 	return travelPackets, run, nil
 }
@@ -189,6 +237,7 @@ func (r campaignNPCActionRuntime) rollbackStagnantNovaIntangible(
 		peerSession.zone != nil && peerSession.zone.NPCs() != nil &&
 		peerSession.campaignNPCIntangibles[run.objectID] == run
 	if isCurrent {
+		run.releaseEffect()
 		delete(peerSession.campaignNPCIntangibles, run.objectID)
 		peerSession.zone.NPCs().ClearIntangible(run.objectID, run.expiresAt)
 		peerSession.untrackCampaignNPCModifier(run.modifier)

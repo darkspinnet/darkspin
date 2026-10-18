@@ -11,6 +11,7 @@ import (
 )
 
 type campaignTossRun struct {
+	lob           *graviticLob
 	cancel        raknet.CancelSchedule
 	landingCancel raknet.CancelSchedule
 	isLaunched    bool
@@ -79,6 +80,7 @@ func (e campaignTossSchedule) produceLaunch() ([][]byte, error) {
 	}
 	e.run.landingCancel = cancel
 	e.run.isLaunched = true
+	e.run.lob = newGraviticLob(e.runtime.now(), e.plan.LaunchPosition, e.plan.Lob)
 	e.runtime.logger.Printf(
 		"RakNet projectile trajectory launched kind=hero-toss projectile=%d source=%d target=%d ability=%q launch=(%.3f,%.3f,%.3f) destination=(%.3f,%.3f,%.3f) flight_ms=%d release_ms=%d launch_ms=%d target_refreshed=%t",
 		e.projectileObjectID, e.sourceObjectID, e.plan.TargetObjectID,

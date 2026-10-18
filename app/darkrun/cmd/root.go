@@ -48,5 +48,6 @@ func NewRootCommand() *cobra.Command {
 	rootCmd.AddCommand(newSnapshotCommand())
 	rootCmd.AddCommand(newConvertCommand())
 	rootCmd.AddCommand(newGLTFCommand())
+	registerScenarioCommand(rootCmd)
 	return rootCmd
 }

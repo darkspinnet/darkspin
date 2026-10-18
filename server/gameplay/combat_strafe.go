@@ -43,7 +43,6 @@ type campaignNPCStrafeStep struct {
 	timestamp        uint64
 	destination      game.Vec3
 	stopDistance     float32
-	movementSpeed    float32
 	elapsed          time.Duration
 	maximumPeriod    time.Duration
 	mode             campaignNPCStrafeMode
@@ -200,15 +199,10 @@ func (r campaignNPCActionRuntime) produceBoundedStrafeOrIdle(
 		lateralX = -lateralX
 		lateralY = -lateralY
 	}
-	movementSpeed := graspingDeadMovementSpeed(
-		peerSession, enemy.Plan.Position, profile.MovementSpeed,
-	)
-	slowMovementScale := peerSession.zone.NPCs().SlowMovementScale(
-		objectID, r.now(),
-	)
-	movementSpeed = max(movementSpeed*slowMovementScale, float32(0.1))
-	if isNomadDrag {
-		movementSpeed = max(movementSpeed-0.2, float32(0.1))
+	movementSpeed := r.strafeMovementSpeed(peerSession, enemy, profile.AbilityName)
+	if movementSpeed <= 0 {
+		r.registry.mutex.Unlock()
+		return produceCampaignNPCStrafeResume(resume, timestamp)
 	}
 	movementPeriod := campaignNPCStrafeMinimumPeriod + time.Duration(
 		npcRandom.Float64()*float64(
@@ -227,7 +221,7 @@ func (r campaignNPCActionRuntime) produceBoundedStrafeOrIdle(
 	desired.Y += lateralY * distance
 	destination, isDestinationFound, err := navigationClippedMovementDestination(
 		peerSession.zone.Navigation(), enemy.Plan.Position, desired,
-		max(enemy.Plan.NPCProfile.FootprintRadius, float32(0.25)),
+		max(enemy.NavigationRadius(), float32(0.25)), enemy.Navigation,
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -261,8 +255,8 @@ func (r campaignNPCActionRuntime) produceBoundedStrafeOrIdle(
 		objectID:       objectID,
 		targetObjectID: target.ObjectID, timestamp: timestamp,
 		destination: destination, stopDistance: stopDistance,
-		movementSpeed: movementSpeed, maximumPeriod: maximumPeriod,
-		mode: mode, profile: profile, resume: resume,
+		maximumPeriod: maximumPeriod,
+		mode:          mode, profile: profile, resume: resume,
 	}
 	packets, err := npcraknet.BoundedStrafe(
 		objectID, enemy.Plan.Position, destination,
@@ -292,6 +286,27 @@ func (e campaignNPCStrafeStep) schedule() error {
 		return fmt.Errorf("enemyStrafeSchedule: %w", err)
 	}
 	return nil
+}
+
+func (r campaignNPCActionRuntime) strafeMovementSpeed(
+	peerSession gameplayPeerSession, enemy zonenpc.Snapshot, abilityName string,
+) float32 {
+	// Native sub_9E9960 reads the actor's current base speed and attribute 48.
+	// A retained attack profile can predate Swift aura entry or haste changes.
+	profile, isProfileFound := zonenpc.ActionProfileForPlan(enemy.Plan)
+	if !isProfileFound {
+		return 0
+	}
+	movementSpeed := graspingDeadMovementSpeed(
+		peerSession, enemy.Plan.Position, profile.MovementSpeed,
+	)
+	movementSpeed *= peerSession.zone.NPCs().SlowMovementScale(
+		enemy.Plan.ObjectID, r.now(),
+	)
+	if abilityName == "NomadDrag_Meteor" {
+		movementSpeed -= 0.2
+	}
+	return max(movementSpeed, float32(0.1))
 }
 
 func (e campaignNPCStrafeStep) produce() ([][]byte, error) {
@@ -334,34 +349,49 @@ func (e campaignNPCStrafeStep) produce() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return produceCampaignNPCStrafeResume(e.resume, e.timestamp)
 	}
+	movementSpeed := e.runtime.strafeMovementSpeed(peerSession, enemy, e.profile.AbilityName)
+	if movementSpeed <= 0 {
+		e.runtime.registry.mutex.Unlock()
+		return produceCampaignNPCStrafeResume(e.resume, e.timestamp)
+	}
 	step, err := peerSession.zone.NPCs().AdvancePursuit(
 		peerSession.zone.Navigation(), e.objectID, e.destination,
-		e.stopDistance, e.movementSpeed,
+		e.stopDistance, movementSpeed,
 		enemy.Plan.NPCProfile.FootprintRadius, campaignNPCStrafeTick,
 	)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
 		return produceCampaignNPCStrafeResume(e.resume, e.timestamp)
 	}
-	isFacingCommitted := peerSession.zone.NPCs().CommitFacing(zonenpc.AttackPlan{
-		SourceObjectID: e.objectID, TargetObjectID: target.ObjectID,
-		ActionGeneration: e.actionGeneration, SourcePosition: step.Position,
-		TargetPosition: target.Position,
-	})
+	isFacingCommitted := true
+	if !step.IsBlocked {
+		isFacingCommitted = peerSession.zone.NPCs().CommitFacing(zonenpc.AttackPlan{
+			SourceObjectID: e.objectID, TargetObjectID: target.ObjectID,
+			ActionGeneration: e.actionGeneration, SourcePosition: step.Position,
+			TargetPosition: target.Position,
+		})
+	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
 	if !isFacingCommitted {
 		return nil, nil
 	}
 
-	packets, err := npcraknet.BoundedStrafe(
-		e.objectID, step.Position, e.destination,
-		target.ObjectID, target.Position, e.stopDistance,
-	)
+	var packets [][]byte
+	if step.IsBlocked {
+		packets, err = npcraknet.StopAtPose(e.objectID, step.Position, enemy.Facing)
+	} else if step.IsWaypointKnown && !step.IsInRange {
+		packets, err = npcraknet.PursuitWaypoint(e.objectID, step.Waypoint)
+	} else {
+		packets, err = npcraknet.BoundedStrafe(
+			e.objectID, step.Position, e.destination,
+			target.ObjectID, target.Position, e.stopDistance,
+		)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("enemyStrafeProgress: %w", err)
 	}
-	if step.IsInRange || e.elapsed >= e.maximumPeriod {
+	if step.IsBlocked || step.IsInRange || e.elapsed >= e.maximumPeriod {
 		if e.mode == campaignNPCStrafeModeRetreat {
 			followupPackets, followupErr := e.runtime.produceBoundedStrafeOrIdle(
 				e.packet, e.sessionKey, e.generation, e.objectID,

@@ -1,18 +1,22 @@
 package gameplay
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
+	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	zoneaction "github.com/darkspinnet/darkspin/server/zone/action"
 )
 
 type campaignPickupTimeout struct {
-	runtime    campaignInteractionRuntime
-	sessionKey string
-	generation uint64
-	command    raknet.ActionCommandData
+	runtime        campaignInteractionRuntime
+	sessionKey     string
+	generation     uint64
+	motionRevision uint64
+	command        raknet.ActionCommandData
 }
 
 func (e campaignInteractionRuntime) schedulePickupTimeout(
@@ -26,7 +30,7 @@ func (e campaignInteractionRuntime) schedulePickupTimeout(
 	}
 	step := &campaignPickupTimeout{
 		runtime: e, sessionKey: sessionKey, generation: session.generation,
-		command: command,
+		command: command, motionRevision: session.playerMotionRevision(),
 	}
 	session.pickupPursuit = step
 	e.registry.sessions[sessionKey] = session
@@ -48,6 +52,57 @@ func (e campaignInteractionRuntime) schedulePickupTimeout(
 		return fmt.Errorf("pickupTimeout: %w", err)
 	}
 	return nil
+}
+
+func (e gameplayPendingRuntime) pollPickupPursuit(ctx context.Context, packet raknet.Packet) ([][]byte, error) {
+	e.registry.mutex.Lock()
+	session, isFound := e.registry.sessions[packet.Address.String()]
+	if !isFound || session.pickupPursuit == nil {
+		e.registry.mutex.Unlock()
+		return nil, nil
+	}
+	pursuit := session.pickupPursuit
+	if session.generation != pursuit.generation || session.transportGeneration != packet.TransportGeneration ||
+		!session.isPickupActorAvailable() || session.playerMotionRevision() != pursuit.motionRevision {
+		session.pickupPursuit = nil
+		e.registry.sessions[packet.Address.String()] = session
+		e.registry.mutex.Unlock()
+		return nil, nil
+	}
+	pickup, isPickupFound := session.zone.Pickups().Pickup(pursuit.command.Value)
+	if !isPickupFound {
+		session.pickupPursuit = nil
+		e.registry.sessions[packet.Address.String()] = session
+		e.registry.mutex.Unlock()
+		return nil, nil
+	}
+	position := game.Vec3(session.playerPosition)
+	if session.playerMotion != nil {
+		sampledPosition, err := session.playerMotion.SamplePosition(e.now())
+		if err != nil {
+			e.registry.mutex.Unlock()
+			return nil, fmt.Errorf("pickupPursuitPosition: %w", err)
+		}
+		position = game.Vec3(sampledPosition)
+	}
+	distance := zoneability.Distance(position, pickup.Position)
+	if pickup.IsSourcePositionKnown {
+		distance = min(distance, zoneability.Distance(position, pickup.SourcePosition))
+	}
+	if distance > session.campaignPickupMaximumDistance() {
+		e.registry.mutex.Unlock()
+		return nil, nil
+	}
+	command := pursuit.command
+	command.Common.Position = raknet.Vector3(position)
+	session.pickupPursuit = nil
+	e.registry.sessions[packet.Address.String()] = session
+	e.registry.mutex.Unlock()
+	packets, err := pursuit.runtime.handlePickup(ctx, packet, command, pursuit.sessionKey)
+	if err != nil {
+		return nil, fmt.Errorf("pickupPursuitArrival: %w", err)
+	}
+	return packets, nil
 }
 
 func (e *campaignPickupTimeout) produce() ([][]byte, error) {

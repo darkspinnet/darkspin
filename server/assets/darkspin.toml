@@ -7,6 +7,9 @@ is_version_locked = false
 # Restrict the web UI and matchmaking flow to single-player content.
 is_singleplayer_only = false
 locale = ""
+# Development builds only. Replace exclusive fullscreen with the experimental
+# borderless implementation when the launcher passes the setting to Fang.
+is_borderless_fullscreen_enabled = false
 
 [server]
 is_multiplayer_enabled = false
@@ -37,7 +40,7 @@ jwt_audience = "darkspin"
 
 [snapshot]
 # Off keeps no rolling sync diagnostics. Manual records the rolling buffer for
-# /ss dump. Auto also snapshots detected RakNet ordering anomalies.
-mode = "off"
-buffer_duration_seconds = 30
+# /ss dump. Auto also snapshots detected anomalies silently and is the default.
+mode = "auto"
+buffer_duration_seconds = 60
 delay_seconds = 30

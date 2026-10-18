@@ -36,6 +36,9 @@ const (
 )
 
 type ActionProfile struct {
+	// IsRetainedVolumeDamage admits an already selected world-volume hit without
+	// requiring a current attack owner or treating it as damage over time.
+	IsRetainedVolumeDamage           bool
 	FirstAggroAbilityName            string
 	IsFirstAggroFacingSuppressed     bool
 	IsFacingSuppressed               bool
@@ -237,16 +240,44 @@ func PlanFirstAction(command FirstActionCommand) (FirstActionPlan, bool, error) 
 
 func ActionProfileForPlan(plan SpawnPlan) (ActionProfile, bool) {
 	if plan.IsActionKnown {
-		return plan.ActionProfile, true
+		profile := zelemSpecialTwoDecisionProfile(plan, plan.ActionProfile)
+		return authoredCombatSpeed(plan, IntroductionProfile(plan, profile)), true
 	}
 	profile, isFound := ActionProfileForNoun(plan.NounName)
 	if isFound {
-		return profile, true
+		profile = zelemSpecialTwoDecisionProfile(plan, profile)
+		return authoredCombatSpeed(plan, IntroductionProfile(plan, profile)), true
 	}
 	if plan.IsFixture || plan.NounName == "" {
 		return ActionProfile{}, false
 	}
-	return fallbackActionProfile(plan.NounName), true
+	return authoredCombatSpeed(plan, IntroductionProfile(plan, fallbackActionProfile(plan.NounName))), true
+}
+
+func authoredCombatSpeed(plan SpawnPlan, profile ActionProfile) ActionProfile {
+	combatSpeed := profile.MovementSpeed
+	if plan.NPCProfile.BaseCombatSpeed > 0 {
+		combatSpeed = plan.NPCProfile.BaseCombatSpeed
+	}
+	idleSpeed := profile.NonCombatMovementSpeed
+	if plan.NPCProfile.IdleMovementSpeed > 0 {
+		idleSpeed = plan.NPCProfile.IdleMovementSpeed
+	}
+	if idleSpeed <= 0 {
+		idleSpeed = combatSpeed
+	}
+	// sub_9E9960 selects attribute 12 in combat or Arena, otherwise 11,
+	// then multiplies the selected base by 1 + attribute 48.
+	speedScale := 1 + EffectiveMovementSpeedBuff(plan)
+	profile.MovementSpeed = combatSpeed * speedScale
+	profile.NonCombatMovementSpeed = idleSpeed * speedScale
+	return profile
+}
+
+// IsCombatMovementState is the state currently owned by the server. Native
+// automatic combat-state transitions beyond target acquisition are unknown.
+func IsCombatMovementState(plan SpawnPlan, targetObjectID uint32) bool {
+	return plan.IsArena || targetObjectID != 0
 }
 
 func fallbackActionProfile(nounName string) ActionProfile {
@@ -743,10 +774,14 @@ func citadelBossTwinLaserProfile(nounName string) (ActionProfile, bool) {
 	}
 	return ActionProfile{
 		Family: ActionCone, AbilityName: "TwinLaser",
-		AnimationName:     "ctd_boss_tc_attack2_part_1",
-		LoopAnimationName: "ctd_boss_tc_attack2_part_2",
-		EndAnimationName:  "ctd_boss_tc_attack2_part_3",
-		HitDelay:          time.Second,
+		AnimationName:               "ctd_boss_tc_attack2_part_1",
+		FirstAggroAnimationName:     "ctd_boss_tc_aggro",
+		FirstAggroDelay:             7125 * time.Millisecond,
+		FirstAggroCinematicDuration: 7125 * time.Millisecond,
+		FirstAggroCinematicRadius:   100,
+		LoopAnimationName:           "ctd_boss_tc_attack2_part_2",
+		EndAnimationName:            "ctd_boss_tc_attack2_part_3",
+		HitDelay:                    time.Second,
 		// The cone scheduler adds the distance-dependent hold to this
 		// wind-up plus end-animation duration; there is no extra idle cooldown.
 		ReleaseDelay:              2900 * time.Millisecond,
@@ -783,33 +818,36 @@ func scaldronBossTwinLaserProfile(nounName string) (ActionProfile, bool) {
 	ranges := [...]float32{15, 17.5, 20}
 	return ActionProfile{
 		Family: ActionCone, AbilityName: "TwinLaser",
-		AnimationName:             "sca_boss_attack_tc_part_1",
-		LoopAnimationName:         "sca_boss_attack_tc_part_2",
-		EndAnimationName:          "sca_boss_attack_tc_part_3",
-		HitDelay:                  1260 * time.Millisecond,
-		ReleaseDelay:              4760 * time.Millisecond,
-		Cooldown:                  cooldowns[rank-1],
-		Range:                     ranges[rank-1],
-		Radius:                    ranges[rank-1],
-		Angle:                     30,
-		MovementSpeed:             5,
-		NonCombatMovementSpeed:    3,
-		MinimumDamage:             5,
-		MaximumDamage:             5,
-		DescriptorMask:            1160,
-		DamageType:                0,
-		DamageSource:              1,
-		TrailEffectName:           "scaldron_boss_twin_laser_right.ServerEventDef",
-		SecondaryTrailEffectName:  "scaldron_boss_twin_laser_left.ServerEventDef",
-		SourceEffectName:          "scaldron_boss_twin_laser_muzzle_right.ServerEventDef",
-		SecondarySourceEffectName: "scaldron_boss_twin_laser_muzzle_left.ServerEventDef",
-		GroundEffectName:          "citadel_boss_twin_laser_ground_hit.ServerEventDef",
-		ImpactEffectName:          "citadel_boss_twin_laser_hit.ServerEventDef",
-		TickDuration:              500 * time.Millisecond,
-		NumberOfTicks:             7,
-		FirstAggroDelay:           10 * time.Second,
-		IsDamageProfileKnown:      true,
-		IsFirstAggroDurationKnown: true,
+		AnimationName:               "sca_boss_attack_tc_part_1",
+		LoopAnimationName:           "sca_boss_attack_tc_part_2",
+		EndAnimationName:            "sca_boss_attack_tc_part_3",
+		HitDelay:                    1260 * time.Millisecond,
+		ReleaseDelay:                4760 * time.Millisecond,
+		Cooldown:                    cooldowns[rank-1],
+		Range:                       ranges[rank-1],
+		Radius:                      ranges[rank-1],
+		Angle:                       30,
+		MovementSpeed:               5,
+		NonCombatMovementSpeed:      3,
+		MinimumDamage:               5,
+		MaximumDamage:               5,
+		DescriptorMask:              1160,
+		DamageType:                  0,
+		DamageSource:                1,
+		TrailEffectName:             "scaldron_boss_twin_laser_right.ServerEventDef",
+		SecondaryTrailEffectName:    "scaldron_boss_twin_laser_left.ServerEventDef",
+		SourceEffectName:            "scaldron_boss_twin_laser_muzzle_right.ServerEventDef",
+		SecondarySourceEffectName:   "scaldron_boss_twin_laser_muzzle_left.ServerEventDef",
+		GroundEffectName:            "citadel_boss_twin_laser_ground_hit.ServerEventDef",
+		ImpactEffectName:            "citadel_boss_twin_laser_hit.ServerEventDef",
+		TickDuration:                500 * time.Millisecond,
+		NumberOfTicks:               7,
+		FirstAggroAnimationName:     "sca_boss_aggro",
+		FirstAggroDelay:             14433334 * time.Microsecond,
+		FirstAggroCinematicDuration: 14433334 * time.Microsecond,
+		FirstAggroCinematicRadius:   100,
+		IsDamageProfileKnown:        true,
+		IsFirstAggroDurationKnown:   true,
 	}, true
 }
 
@@ -1523,20 +1561,25 @@ func cryosElementalSpecialThreeProfile(
 		Range:         attackRange,
 		MovementSpeed: movementSpeed, NonCombatMovementSpeed: nonCombatMovementSpeed,
 		MinimumDamage: 4, MaximumDamage: 16,
-		DamageCoefficient:         0.05,
-		DescriptorMask:            1<<7 | 1<<13 | 1<<14,
-		DamageType:                3,
-		DamageSource:              1,
-		ProjectileNoun:            "Ability_PiercingLaser.Noun",
-		TrailEffectName:           "cry_lieu_el_3_electric_projectile.ServerEventDef",
-		ImpactEffectName:          "plasma_common_electric_hit_small_effect.ServerEventDef",
-		ProjectileExitEffectName:  "plasma_common_electric_hit_medium_effect.ServerEventDef",
-		MissEffectName:            "ineffective_common_small.ServerEventDef",
-		ProjectileSpeed:           projectileSpeed,
-		ProjectileDistance:        50,
-		IsProjectilePiercing:      true,
-		IsDamageProfileKnown:      true,
-		IsFirstAggroDurationKnown: true,
+		DamageCoefficient:        0.05,
+		DescriptorMask:           1<<7 | 1<<13 | 1<<14,
+		DamageType:               3,
+		DamageSource:             1,
+		ProjectileNoun:           "Ability_PiercingLaser.Noun",
+		TrailEffectName:          "cry_lieu_el_3_electric_projectile.ServerEventDef",
+		SourceEffectName:         "cry_lieu_el_3_electric_muzzle.ServerEventDef",
+		ImpactEffectName:         "plasma_common_electric_hit_small_effect.ServerEventDef",
+		ProjectileExitEffectName: "plasma_common_electric_hit_medium_effect.ServerEventDef",
+		MissEffectName:           "ineffective_common_small.ServerEventDef",
+		ProjectileSpeed:          projectileSpeed,
+		ProjectileDistance:       50,
+		// Keep a forward fan even when only one hero is in range.
+		ProjectileShotAngles:       []float32{-45, -30, -15, 0, 15, 30, 45},
+		ProjectileShotCount:        7,
+		IsProjectileParallelVolley: true,
+		IsProjectilePiercing:       true,
+		IsDamageProfileKnown:       true,
+		IsFirstAggroDurationKnown:  true,
 	}
 }
 
@@ -2354,7 +2397,7 @@ func VerdanthBasicHealerRootedHealProfile(
 func stagnantNovaAboveProfile(cooldown time.Duration) ActionProfile {
 	return ActionProfile{
 		Family: ActionCone, AbilityName: "StagnantNovaAbove",
-		AnimationName:          "burrow_idle",
+		AnimationName:          "burrow_tunnelling",
 		EmergeDelay:            1500 * time.Millisecond,
 		HitDelay:               2800 * time.Millisecond,
 		ReleaseDelay:           3400 * time.Millisecond,
@@ -2480,6 +2523,7 @@ func nocturnaBasicStealthMeleeProfile(
 }
 
 func noctFlyerLobProfile(
+	cooldown time.Duration, damage float32, projectileSpeed float32,
 	movementSpeed float32, nonCombatMovementSpeed float32,
 ) ActionProfile {
 	return ActionProfile{
@@ -2487,12 +2531,12 @@ func noctFlyerLobProfile(
 		AnimationName:             "nct_minn_su_05_attack",
 		HitDelay:                  606061 * time.Microsecond,
 		ReleaseDelay:              1600 * time.Millisecond,
-		Cooldown:                  3 * time.Second,
+		Cooldown:                  cooldown,
 		Range:                     15,
 		MovementSpeed:             movementSpeed,
 		NonCombatMovementSpeed:    nonCombatMovementSpeed,
-		MinimumDamage:             1,
-		MaximumDamage:             1,
+		MinimumDamage:             damage,
+		MaximumDamage:             damage,
 		DescriptorMask:            8320,
 		DamageType:                4,
 		DamageSource:              1,
@@ -2505,7 +2549,7 @@ func noctFlyerLobProfile(
 		TrailEffectName:           "shadow_minion_lob_effect.ServerEventDef",
 		ImpactEffectName:          "shadow_minion_lob_explosion.ServerEventDef",
 		MissEffectName:            "ineffective_common_small.ServerEventDef",
-		ProjectileSpeed:           10,
+		ProjectileSpeed:           projectileSpeed,
 		ProjectileDistance:        15,
 		ProjectileHeight:          2,
 		Radius:                    0.005,
@@ -2657,6 +2701,7 @@ func verdanthBasicOozeMeleeProfile(cooldown time.Duration) ActionProfile {
 		DamageSource:              0,
 		Radius:                    1.5,
 		ImpactEffectName:          "ver_minn_lf_x4_oozeKiss_hit.ServerEventDef",
+		PassiveEffectName:         "ver_minn_lf_x4_centerDrips.ServerEventDef",
 		IsDamageProfileKnown:      true,
 		IsFirstAggroDurationKnown: true,
 	}
@@ -3298,6 +3343,7 @@ func nocturnaSpecialDriftChargeProfile(
 		ModifierName:               "SilenceModifier",
 		ModifierDuration:           silenceDuration,
 		ImpactEffectName:           "shadow_pass_thru_damage_effect.ServerEventDef",
+		PassiveEffectName:          "shadow_ghostform_shader_effect.ServerEventDef",
 		ForcedMovementSpeed:        10,
 		ForcedMovementStopDistance: 0.1,
 		EndAnimationDelay:          1033333 * time.Microsecond,
@@ -3419,8 +3465,10 @@ func CryosSpecialThreeRezMeleeProfile(nounName string) (ActionProfile, bool) {
 }
 
 func citadelFireBreathProfile(
-	minimumDamage float32, maximumDamage float32, radius float32,
+	cooldown time.Duration,
 ) ActionProfile {
+	// Abilities/0x52ABE07B.lua: all three ranks deal 4-7 damage in a
+	// four-metre, ninety-degree cone; only the cooldown changes by rank.
 	return ActionProfile{
 		Family: ActionCone, AbilityName: "CitadelMinionMelee_Flamethrower",
 		AnimationName:             "cry_minn_el_1_attack1",
@@ -3428,15 +3476,15 @@ func citadelFireBreathProfile(
 		FirstAggroDelay:           1630 * time.Millisecond,
 		HitDelay:                  430 * time.Millisecond,
 		ReleaseDelay:              1200 * time.Millisecond,
-		Cooldown:                  3 * time.Second,
-		Range:                     radius,
-		Radius:                    radius,
-		Angle:                     120,
+		Cooldown:                  cooldown,
+		Range:                     4,
+		Radius:                    4,
+		Angle:                     90,
 		MovementSpeed:             6.5,
 		NonCombatMovementSpeed:    5,
-		MinimumDamage:             minimumDamage,
-		MaximumDamage:             maximumDamage,
-		DescriptorMask:            128,
+		MinimumDamage:             4,
+		MaximumDamage:             7,
+		DescriptorMask:            136,
 		DamageType:                3,
 		DamageSource:              1,
 		IsDamageProfileKnown:      true,
@@ -3479,6 +3527,51 @@ func ZelemSpecialTwoActionProfile(distance float32) (ActionProfile, error) {
 		return ZelemSpecialTwoPushProfile(), nil
 	}
 	return ZelemSpecialTwoPullProfile(), nil
+}
+
+// ZelemSpecialTwoActionProfileForPlan projects the packaged push/pull rank
+// arrays and current authored movement attributes for all Magnetic Master nouns.
+func ZelemSpecialTwoActionProfileForPlan(
+	plan SpawnPlan, distance float32,
+) (ActionProfile, error) {
+	profile, err := ZelemSpecialTwoActionProfile(distance)
+	if err != nil {
+		return ActionProfile{}, fmt.Errorf("magneticProfile: %w", err)
+	}
+	rank := zelemSpecialTwoRank(plan)
+	if profile.IsPull {
+		cooldowns := [...]time.Duration{12 * time.Second, 10 * time.Second, 8 * time.Second}
+		ranges := [...]float32{10, 12, 14}
+		profile.Cooldown = cooldowns[rank-1]
+		profile.Range = ranges[rank-1]
+	} else {
+		cooldowns := [...]time.Duration{8 * time.Second, 6 * time.Second, 4 * time.Second}
+		profile.Cooldown = cooldowns[rank-1]
+	}
+	return authoredCombatSpeed(plan, profile), nil
+}
+
+func zelemSpecialTwoRank(plan SpawnPlan) int32 {
+	rank := plan.NPCProfile.NPCRank
+	if rank < 1 || rank > 3 {
+		rank = 1
+		noun := strings.ToLower(plan.NounName)
+		if strings.HasSuffix(noun, "_2.noun") {
+			rank = 2
+		} else if strings.HasSuffix(noun, "_3.noun") {
+			rank = 3
+		}
+	}
+	return rank
+}
+
+func zelemSpecialTwoDecisionProfile(plan SpawnPlan, profile ActionProfile) ActionProfile {
+	if profile.AbilityName != "ZelemSpecialTwo" {
+		return profile
+	}
+	ranges := [...]float32{10, 12, 14}
+	profile.Range = ranges[zelemSpecialTwoRank(plan)-1]
+	return profile
 }
 
 func ActionProfileFromAbility(
@@ -3614,13 +3707,9 @@ func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
 		return citadelSpecificTwoMeleeTauntProfile(
 			1500*time.Millisecond, 6, 12,
 		), true
-	case "citadelbasicsuicide.noun":
+	case "citadelbasicsuicide.noun", "citadelbasicsuicide_2.noun", "citadelbasicsuicide_3.noun":
 		return citadelBasicSuicideProfile(
-			"NomadSnipe_SlowDebuff", 4*time.Second,
-		), true
-	case "citadelbasicsuicide_2.noun", "citadelbasicsuicide_3.noun":
-		return citadelBasicSuicideProfile(
-			"StalkerShock", 3*time.Second,
+			"CitadelMinionSuicide_Daze", 3*time.Second,
 		), true
 	case "scaldronbasicmonk.noun":
 		return scaldronBasicMonkFirebombProfile(2), true
@@ -3693,15 +3782,15 @@ func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
 		), true
 	case "scaldronbasicblink.noun":
 		return scaldronBasicBlinkAttackProfile(
-			8*time.Second, 15, 133*time.Millisecond, 266*time.Millisecond,
+			8*time.Second, 15,
 		), true
 	case "scaldronbasicblink_2.noun":
 		return scaldronBasicBlinkAttackProfile(
-			7*time.Second, 18, 266*time.Millisecond, 532*time.Millisecond,
+			7*time.Second, 18,
 		), true
 	case "scaldronbasicblink_3.noun":
 		return scaldronBasicBlinkAttackProfile(
-			6*time.Second, 21, 400*time.Millisecond, 800*time.Millisecond,
+			6*time.Second, 21,
 		), true
 	case "scaldronbasicsinkhole.noun":
 		return scaldronBasicSinkholeProjectileProfile(
@@ -3722,7 +3811,7 @@ func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
 	case "citadelspecialthree_2.noun", "citadelspecialthree_captain_2.noun":
 		return citadelSpecialThreeLaserZoneProfile(4*time.Second, 500, 4), true
 	case "citadelspecialthree_3.noun", "citadelspecialthree_captain_3.noun":
-		return citadelSpecialThreeLaserZoneProfile(2*time.Second, 750, 4), true
+		return citadelSpecialThreeLaserZoneProfile(2*time.Second, 750, 5), true
 	case "citadelspecialtwo.noun", "citadelspecialtwo_captain.noun":
 		return citadelSpecialTwoHomingStunProfile(12*time.Second, 5, 3.5), true
 	case "citadelspecialtwo_2.noun", "citadelspecialtwo_captain_2.noun":
@@ -3930,11 +4019,11 @@ func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
 	case "nocturnabasicrangedsilence_3.noun":
 		return nocturnaBasicRangedSilenceProfile(4*time.Second, 17.5), true
 	case "citadelbasicmelee.noun":
-		return citadelFireBreathProfile(24, 36, 10), true
+		return citadelFireBreathProfile(3 * time.Second), true
 	case "citadelbasicmelee_2.noun":
-		return citadelFireBreathProfile(28, 42, 12), true
+		return citadelFireBreathProfile(2500 * time.Millisecond), true
 	case "citadelbasicmelee_3.noun":
-		return citadelFireBreathProfile(32, 48, 14), true
+		return citadelFireBreathProfile(2 * time.Second), true
 	case "citadelbasicgunner.noun":
 		return citadelBasicGunnerShotProfile(8, false, 0, 5, 3.5, 250), true
 	case "citadelbasicgunner_2.noun":
@@ -4042,11 +4131,11 @@ func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
 	case "nocturnabasicstealth_3.noun":
 		return nocturnaBasicStealthMeleeProfile(1500*time.Millisecond, 14, 7.5), true
 	case "noctbasicflyer.noun":
-		return noctFlyerLobProfile(6, 4.5), true
+		return noctFlyerLobProfile(3*time.Second, 1, 10, 6, 4.5), true
 	case "noctbasicflyer_2.noun":
-		return noctFlyerLobProfile(9, 5.5), true
+		return noctFlyerLobProfile(2500*time.Millisecond, 2, 15, 9, 5.5), true
 	case "noctbasicflyer_3.noun":
-		return noctFlyerLobProfile(12, 6.5), true
+		return noctFlyerLobProfile(2*time.Second, 3, 20, 12, 6.5), true
 	case "verdanthbasicranged.noun":
 		return verdanthBasicRangedProfile(5*time.Second, 8), true
 	case "verdanthbasicranged_2.noun":
@@ -4228,8 +4317,8 @@ func scaldronBasicCopterPassiveProfile(
 		Family: ActionMelee, AbilityName: "ScaldronBasicCopter_Passive",
 		HitDelay:                  500 * time.Millisecond,
 		Cooldown:                  500 * time.Millisecond,
-		Range:                     7,
-		MinimumRange:              4,
+		Range:                     35, // CircleTarget.range, not FollowStrafe's 4-7 interval.
+		MinimumRange:              7,
 		MovementSpeed:             7,
 		NonCombatMovementSpeed:    5.5,
 		MinimumDamage:             minimumDamage,
@@ -4427,28 +4516,29 @@ func citadelBasicSuicideProfile(
 	modifierName string, modifierDuration time.Duration,
 ) ActionProfile {
 	return ActionProfile{
-		Family: ActionDetonate, AbilityName: "CitadelMinionSuicide",
-		AnimationName:             "zlm_minn_tc_2_shutdown",
+		Family: ActionDetonate, AbilityName: "CitadelMinionSuicide_Suicide",
+		AnimationName:             "ctd_minn_tc_2_explode",
 		PreAggroAnimationName:     "zlm_minn_tc_2_shutdown",
 		FirstAggroAbilityName:     "FirstAggro_ActivateRobot",
 		FirstAggroAnimationName:   "zlm_minn_tc_2_aggro",
 		FirstAggroDelay:           1300 * time.Millisecond,
-		HitDelay:                  400 * time.Millisecond,
-		ReleaseDelay:              time.Second,
-		Cooldown:                  time.Second,
-		Range:                     0.75,
-		Radius:                    4,
+		HitDelay:                  1540 * time.Millisecond,
+		ReleaseDelay:              1540 * time.Millisecond,
+		Cooldown:                  3 * time.Second,
+		Range:                     5,
+		Radius:                    3,
 		MovementSpeed:             4,
 		NonCombatMovementSpeed:    2.5,
-		MinimumDamage:             5,
-		MaximumDamage:             8,
-		DamageCoefficient:         0.05,
+		MinimumDamage:             12,
+		MaximumDamage:             24,
 		DescriptorMask:            1<<3 | 1<<7,
 		DamageType:                0,
 		DamageSource:              1,
 		ModifierName:              modifierName,
 		ModifierDuration:          modifierDuration,
-		ImpactEffectName:          "cyber_trapper_tauntBombExplosion.ServerEventDef",
+		MovementSpeedBuff:         -0.5,
+		TargetEffectName:          "ctd_minn_tc_2_countdownFlash.ServerEventDef",
+		ImpactEffectName:          "ctd_minn_tc_2_explosion.ServerEventDef",
 		IsDamageProfileKnown:      true,
 		IsFirstAggroDurationKnown: true,
 	}
@@ -4579,7 +4669,7 @@ func scaldronBasicMinesMeleeProfile() ActionProfile {
 func ScaldronBasicMinesDeathProfile(nounName string) (ActionProfile, bool) {
 	switch strings.ToLower(strings.TrimSpace(nounName)) {
 	case "scaldronbasicmines.noun":
-		return scaldronBasicMinesDeathProfile(4, 2*time.Second), true
+		return scaldronBasicMinesDeathProfile(4, time.Second), true
 	case "scaldronbasicmines_2.noun":
 		return scaldronBasicMinesDeathProfile(6, time.Second), true
 	case "scaldronbasicmines_3.noun":
@@ -4611,7 +4701,7 @@ func scaldronBasicMinesDeathProfile(
 		RetainedObjectNoun:       "Ability_Fireball.Noun",
 		RetainedEffectName:       "ScaldronBasicMines_MineExplosion.ServerEventDef",
 		MinimumRange:             1,
-		Radius:                   16,
+		Radius:                   2.5,
 		ProjectileHeight:         2,
 		IsDamageProfileKnown:     true,
 	}
@@ -4683,14 +4773,15 @@ func scaldronBasicThornoNovaProfile(
 
 func scaldronBasicBlinkAttackProfile(
 	cooldown time.Duration, attackRange float32,
-	hitDelay time.Duration, releaseDelay time.Duration,
 ) ActionProfile {
 	return ActionProfile{
 		Family: ActionMelee, AbilityName: "ScaldronBasicBlink_AttackBlink",
-		AnimationName:             "sca_minn_sp_02_attack1",
-		EndAnimationName:          "sca_minn_sp_02_attack1_end",
-		HitDelay:                  hitDelay,
-		ReleaseDelay:              releaseDelay,
+		AnimationName:    "sca_minn_sp_02_attack1",
+		EndAnimationName: "sca_minn_sp_02_attack1_end",
+		// timetohit is an eight-hit sequence shared by all ranks. AttackBlink
+		// adds 250ms to every hit, then rests 400ms after the final 1066ms hit.
+		HitDelay:                  383 * time.Millisecond,
+		ReleaseDelay:              1716 * time.Millisecond,
 		Cooldown:                  cooldown,
 		Range:                     attackRange,
 		Radius:                    3,
@@ -4764,6 +4855,7 @@ func scaldronBasicSinkholeWellProfile(
 		Family: ActionPushPull, AbilityName: "ScaldronBasicSinkhole_Sinkhole",
 		AnimationName:             "sca_minn_sp_01_attack2",
 		EndAnimationName:          "sca_minn_sp_01_attack2_end",
+		EndAnimationDelay:         2 * time.Second,
 		HitDelay:                  time.Second,
 		ReleaseDelay:              10 * time.Second,
 		Cooldown:                  cooldown,
@@ -4816,7 +4908,7 @@ func citadelSpecialThreeLaserZoneProfile(
 }
 
 func mgpLaserZoneProfile() ActionProfile {
-	profile := citadelSpecialThreeLaserZoneProfile(6*time.Second, 250, 4)
+	profile := citadelSpecialThreeLaserZoneProfile(6*time.Second, 250, 3)
 	profile.PassiveCreateEffectName = "cyber_shield_generate_shield.ServerEventDef"
 	profile.PassiveEffectName = "citadelBasicShield_Shield.ServerEventDef"
 	return profile

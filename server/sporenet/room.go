@@ -161,6 +161,19 @@ func (m *RoomManager) RemoveRoom(id uint32) {
 	m.mu.Unlock()
 }
 
+// RemoveUser removes one profile instance from every lobby it joined. Use all
+// rooms because older clients can join another lobby without sending a leave.
+func (e *RoomManager) RemoveUser(user *User) {
+	if user == nil {
+		return
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	for _, room := range e.rooms {
+		room.RemoveUser(user)
+	}
+}
+
 // AddUser joins a user and updates both sides of the relationship.
 func (r *Room) AddUser(user *User) bool {
 	if user == nil {
@@ -185,6 +198,10 @@ func (r *Room) RemoveUser(user *User) {
 		return
 	}
 	r.mu.Lock()
+	if r.users[user.Account.ID] != user {
+		r.mu.Unlock()
+		return
+	}
 	delete(r.users, user.Account.ID)
 	r.mu.Unlock()
 	user.mu.Lock()

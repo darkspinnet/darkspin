@@ -59,7 +59,8 @@ func isBundleFileName(name string) bool {
 
 func isSourceBundleFile(name string) bool {
 	switch name {
-	case "raknet.jsonl", "server-state.json", "client.jsonl", "client-memory.jsonl":
+	case "raknet.jsonl", "server-state.json", "server-state-trigger.json",
+		"client.jsonl", "client-memory.jsonl", "movement.json":
 		return true
 	default:
 		return false

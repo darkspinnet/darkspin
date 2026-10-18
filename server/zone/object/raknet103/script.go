@@ -10,6 +10,23 @@ import (
 )
 
 func ScriptUse(use game.CampaignScriptUse) ([][]byte, error) {
+	packets, err := scriptUse(use, false)
+	if err != nil {
+		return nil, fmt.Errorf("scriptUse: %w", err)
+	}
+	return packets, nil
+}
+
+// ScriptUseSnapshot restores consumed state without replaying the use effect.
+func ScriptUseSnapshot(use game.CampaignScriptUse) ([][]byte, error) {
+	packets, err := scriptUse(use, true)
+	if err != nil {
+		return nil, fmt.Errorf("scriptSnapshot: %w", err)
+	}
+	return packets, nil
+}
+
+func scriptUse(use game.CampaignScriptUse, isSnapshot bool) ([][]byte, error) {
 	publication, err := zoneobject.PublishScriptUse(use)
 	if err != nil {
 		return nil, fmt.Errorf("scriptUsePublication: %w", err)
@@ -29,7 +46,23 @@ func ScriptUse(use game.CampaignScriptUse) ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("scriptUseStateMarshal: %w", err)
 	}
-	return [][]byte{dataPacket, statePacket}, nil
+	packets := [][]byte{dataPacket, statePacket}
+	if isSnapshot {
+		// Restored uses represent the completed interaction, including the
+		// authored final RemovePhysicsForObject call.
+		collisionPacket, collisionErr := raknet.MarshalApplication(raknet.ObjectCollisionUpdateMessage{
+			ObjectID: publication.ObjectID, IsCollisionEnabled: false,
+		})
+		if collisionErr != nil {
+			return nil, fmt.Errorf("scriptSnapshotCollision: %w", collisionErr)
+		}
+		packets = append(packets, collisionPacket)
+	}
+	effectPackets, err := obeliskEffects(publication.ObjectID, publication.AbilityName, false, !isSnapshot)
+	if err != nil {
+		return nil, fmt.Errorf("scriptUseEffect: %w", err)
+	}
+	return append(packets, effectPackets...), nil
 }
 
 func Script(plan zoneobject.ScriptPlan) ([][]byte, error) {
@@ -79,5 +112,13 @@ func Script(plan zoneobject.ScriptPlan) ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("scriptStateMarshal: %w", err)
 	}
-	return append(packets, dataPacket, statePacket), nil
+	packets = append(packets, dataPacket, statePacket)
+	if !publication.IsVisible {
+		return packets, nil
+	}
+	effectPackets, err := obeliskEffects(publication.ObjectID, publication.AbilityName, true, false)
+	if err != nil {
+		return nil, fmt.Errorf("scriptEffect: %w", err)
+	}
+	return append(packets, effectPackets...), nil
 }

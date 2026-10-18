@@ -470,8 +470,13 @@ func joinGameHandler(gameManager *game.Manager) Handler {
 		if !instance.AddPlayer(user) {
 			return &Response{ErrorCode: 0x0004}, nil
 		}
+		setupContext := gameSetupContextJoin
+		if gameManager.IsScenarioContinueHost(gameID, user.Account.ID) {
+			setupContext = gameSetupContextCreate
+			logGameRequest(request, "scenario_continue_setup game_id=%d context=%d", gameID, setupContext)
+		}
 		setupFields, err := gameSetupFields(
-			instance, user, gameSetupContextJoin, 0, 0, hostNetwork, nil,
+			instance, user, setupContext, 0, 0, hostNetwork, nil,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("joinSetupFields: %w", err)

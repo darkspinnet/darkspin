@@ -66,6 +66,14 @@ func (e campaignNPCActionRuntime) produceArcturusLaunch(packet raknet.Packet, se
 		e.registry.mutex.Unlock()
 		return nil, true, errors.New("arcturus launch scheduler unavailable")
 	}
+	// The client runs one agent-owned ability at a time. Retire the previous
+	// cast's delayed animation/hit callbacks before publishing the launch pose.
+	var isSuperseded bool
+	boss, isSuperseded = current.zone.NPCs().SupersedeAction(objectID, boss.ActionGeneration)
+	if !isSuperseded {
+		e.registry.mutex.Unlock()
+		return nil, true, nil
+	}
 	run := &campaignArcturusLaunch{runtime: e, packet: packet.Autonomous(),
 		sessionKey: sessionKey, generation: generation, objectID: objectID,
 		timestamp: timestamp, state: state, protectedUntil: e.now().Add(9200 * time.Millisecond)}
@@ -83,7 +91,7 @@ func (e campaignNPCActionRuntime) produceArcturusLaunch(packet raknet.Packet, se
 		run.abort()
 		return nil, true, fmt.Errorf("arcturusLaunchAnimation: %w", err)
 	}
-	startPackets, err := npcraknet.MovementStop(objectID, boss.Plan.Position)
+	startPackets, err := npcraknet.StopAtPose(objectID, boss.Plan.Position, boss.Facing)
 	if err != nil {
 		run.abort()
 		return nil, true, fmt.Errorf("arcturusLaunchStop: %w", err)
@@ -143,31 +151,36 @@ func (e campaignArcturusLaunchStep) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	isAlive := !boss.IsDefeated && boss.HitPoint > 0
+	if !isAlive {
+		// A delayed landing must never reveal a dead boss or replace its death
+		// pose. Death owns visibility, corpse fading and removal from here.
+		run.state.launch = nil
+		current.zone.NPCs().ClearIntangible(run.objectID, run.protectedUntil)
+		run.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
 	packets := make([][]byte, 0)
 	var err error
 	switch {
-	case e.phase == 0 && isAlive:
+	case e.phase == 0:
 		err = current.zone.NPCs().ApplyIntangible(run.objectID, run.protectedUntil)
-	case e.phase == 1 && isAlive:
+	case e.phase == 1:
 		var packet []byte
 		packet, err = raknet.MarshalApplication(raknet.ObjectUpdateMessage{ObjectID: run.objectID,
 			IsVisible: false, PositionX: boss.Plan.Position.X, PositionY: boss.Plan.Position.Y, PositionZ: boss.Plan.Position.Z})
 		packets = append(packets, packet)
-	case e.phase >= 2 && e.phase <= 13 && isAlive:
+	case e.phase >= 2 && e.phase <= 13:
 		packets, err = run.dropMissile(&current, boss, run.timestamp+1500+uint64(e.phase-2)*500)
 	case e.phase == 14:
-		position := boss.Plan.Position
-		if isAlive {
-			position = run.state.center
-			err = current.zone.NPCs().SetPosition(run.objectID, position)
-		}
+		position := run.state.center
+		err = current.zone.NPCs().SetPosition(run.objectID, position)
 		if err == nil {
 			var packet []byte
 			packet, err = raknet.MarshalApplication(raknet.ObjectUpdateMessage{ObjectID: run.objectID,
 				IsVisible: true, PositionX: position.X, PositionY: position.Y, PositionZ: position.Z})
 			packets = append(packets, packet)
 		}
-		if err == nil && isAlive {
+		if err == nil {
 			var packet []byte
 			packet, err = npcraknet.RestorePose(run.objectID, position, boss.Facing)
 			packets = append(packets, packet)
@@ -176,7 +189,7 @@ func (e campaignArcturusLaunchStep) produce() ([][]byte, error) {
 				packets = append(packets, packet)
 			}
 		}
-	case e.phase == 15 && isAlive:
+	case e.phase == 15:
 		profile := zonenpc.ActionProfile{AbilityName: "CitadelBossLaunch", Family: zonenpc.ActionCone,
 			MinimumDamage: 20, MaximumDamage: 30, Radius: 1 + boss.Plan.NPCProfile.FootprintRadius,
 			// Native GUID 0x0139de24 has no recovered displacement contract.
@@ -197,7 +210,7 @@ func (e campaignArcturusLaunchStep) produce() ([][]byte, error) {
 		run.runtime.logger.Printf("Arcturus launch phase omitted source=%d phase=%d: %v", run.objectID, e.phase, err)
 		return packets, nil
 	}
-	if e.phase == 16 && isAlive {
+	if e.phase == 16 {
 		return run.runtime.produceEnemyCone(run.packet, run.sessionKey, run.generation, run.objectID, run.timestamp+10280)
 	}
 	return packets, nil
@@ -214,6 +227,7 @@ type campaignArcturusMissile struct {
 	timestamp          uint64
 	shadowObjectID     uint32
 	projectileObjectID uint32
+	retirement         *campaignProjectileRetirement
 }
 
 func (e *campaignArcturusLaunch) dropMissile(current *gameplayPeerSession, boss zonenpc.Snapshot, timestamp uint64) ([][]byte, error) {
@@ -295,20 +309,33 @@ func (e *campaignArcturusLaunch) dropMissile(current *gameplayPeerSession, boss 
 		return nil, fmt.Errorf("missileLaunch: %w", err)
 	}
 	step := campaignArcturusMissile{launch: e, zone: current.zone, startedAt: e.runtime.now(), direction: sim.Position{Z: -1}, projectile: projectile, position: position, timestamp: timestamp,
-		shadowObjectID: shadowObjectID, projectileObjectID: objectID}
+		shadowObjectID: shadowObjectID, projectileObjectID: objectID,
+		retirement: &campaignProjectileRetirement{originalZone: current.zone, generation: e.generation, objectID: objectID, run: projectile},
+	}
+	cleanupPackets, cleanupErr := step.cleanupPackets()
+	if cleanupErr != nil {
+		projectile.Stop()
+		return nil, fmt.Errorf("missileCleanupPrepare: %w", cleanupErr)
+	}
+	step.retirement.extraPackets = cleanupPackets[:2]
 	err = current.trackCampaignNPCProjectile(objectID, projectile)
 	if err != nil {
 		projectile.Stop()
 		return nil, fmt.Errorf("missileTrack: %w", err)
 	}
-	err = scheduleNPCProducer(e.runtime.registry, e.packet, 50*time.Millisecond, step.poll)
+	err = scheduleNPCProducer(e.runtime.registry, e.packet, 50*time.Millisecond, step.pollTracked)
 	if err != nil {
 		current.untrackCampaignNPCProjectile(objectID, projectile)
 		projectile.Stop()
 		return nil, fmt.Errorf("missileSchedule: %w", err)
 	}
 	packets = append(packets, shadowPacket, shadowEffect)
-	return append(packets, shotPackets...), nil
+	packets = append(packets, shotPackets...)
+	e.runtime.registry.sessions[e.sessionKey] = *current
+	e.runtime.registry.queueCampaignProjectilePublicationLocked(step.retirement, e.sessionKey, packets)
+	e.runtime.registry.admitCampaignProjectilePublicationLocked(step.retirement, e.sessionKey)
+	*current = e.runtime.registry.sessions[e.sessionKey]
+	return nil, nil
 }
 
 func (e campaignArcturusMissile) impact() ([][]byte, error) {
@@ -316,6 +343,9 @@ func (e campaignArcturusMissile) impact() ([][]byte, error) {
 	run.runtime.registry.mutex.Lock()
 	defer run.runtime.registry.mutex.Unlock()
 	current, isFound := run.runtime.registry.sessions[run.sessionKey]
+	if e.retirement != nil && (e.retirement.isRetired || e.retirement.isRetirementPending) {
+		return nil, nil
+	}
 	if !isFound || current.generation != run.generation || current.zone != e.zone {
 		e.projectile.Stop()
 		return nil, nil

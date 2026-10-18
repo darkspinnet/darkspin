@@ -125,10 +125,13 @@ func (m *UserManager) GrantCampaignExperience(
 		if receipt.ResultID != resultID {
 			continue
 		}
-		if receipt.Amount != amount || receipt.Level == 0 {
+		if receipt.Level == 0 {
 			user.mu.Unlock()
 			return TutorialExperience{}, errors.New("campaign experience receipt conflict")
 		}
+		// A restored zone can have a different provisional XP total after
+		// an interrupted result flow. The durable receipt owns this award;
+		// replay its result without granting or replacing experience again.
 		experience := TutorialExperience{
 			CumulativeXP: receipt.CumulativeXP, Level: receipt.Level,
 		}
@@ -284,7 +287,7 @@ func (m *UserManager) CommitCampaignCashOut(
 	capacity := user.Account.UnlockInventoryIdentify
 	ownedCount := uint64(0)
 	for index := range user.Parts {
-		if user.Parts[index].MarketStatus == PartMarketOwned {
+		if user.Parts[index].OccupiesInventorySlot() {
 			ownedCount++
 		}
 	}
@@ -295,7 +298,7 @@ func (m *UserManager) CommitCampaignCashOut(
 	previousAccount := user.Account
 	previousParts := append([]Part(nil), user.Parts...)
 	previousEvents := append([]UserEvent(nil), user.Events...)
-	nextPartID := uint64(1)
+	nextPartID := max(uint64(1), user.PartShop.NextPartID)
 	for _, existing := range user.Parts {
 		if existing.ID >= nextPartID {
 			if existing.ID >= uint64(^uint32(0)) {

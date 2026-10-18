@@ -14,11 +14,12 @@ import (
 	"github.com/darkspinnet/darkspin/server/squad"
 	zonehero "github.com/darkspinnet/darkspin/server/zone/hero"
 	zonehorde "github.com/darkspinnet/darkspin/server/zone/horde"
+	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	zonesecurity "github.com/darkspinnet/darkspin/server/zone/security"
 )
 
-const Version = uint32(5)
+const Version = uint32(7)
 
 type Reason string
 
@@ -85,14 +86,18 @@ type Snapshot struct {
 	Squads               []Squad
 	NPCs                 []NPC
 	Hordes               []zonehorde.Snapshot
+	TriggerProgresses    []game.CampaignTriggerProgress
 	Crystals             []Crystal
 	ExperienceAwards     []ExperienceAward
+	MissionEquipments    []zoneloot.EquipmentInventory
 	Security             zonesecurity.Snapshot
 	Objectives           []sim.ObjectiveSnapshot
 	ScriptUses           []game.CampaignScriptUse
 	ClearedSpawnGroupIDs []uint32
 	DropRandom           sim.RandomSnapshot
 	IsDropRandomSet      bool
+	CapsuleRandom        sim.CapsuleRandomSnapshot
+	IsCapsuleRandomSet   bool
 }
 
 type Store interface {
@@ -113,6 +118,7 @@ type Repository interface {
 	Recorder
 	Load(context.Context, uint64) (Snapshot, bool, error)
 	Discard(uint64)
+	ForfeitEquipment(uint64, uint64)
 }
 
 func Validate(
@@ -129,6 +135,15 @@ func Validate(
 		}
 		if restoredRandom == nil {
 			return errors.New("checkpoint drop random unavailable")
+		}
+	}
+	if snapshot.IsCapsuleRandomSet {
+		restoredRandom, err := sim.NewCapsuleRandomFromSnapshot(snapshot.CapsuleRandom)
+		if err != nil {
+			return fmt.Errorf("checkpointCapsuleRandom: %w", err)
+		}
+		if restoredRandom == nil {
+			return errors.New("checkpoint capsule random unavailable")
 		}
 	}
 	if snapshot.ZoneID == 0 || snapshot.ZoneID != zoneID {
@@ -182,7 +197,34 @@ func Validate(
 		}
 	}
 	npcsByObjectID := make(map[uint32]zonenpc.Snapshot, len(snapshot.NPCs))
+	equipmentUserIDs := make(map[uint64]struct{}, len(snapshot.MissionEquipments))
+	equipmentObjectIDs := make(map[uint32]struct{})
+	for _, inventory := range snapshot.MissionEquipments {
+		if _, isMember := memberIDs[inventory.UserID]; !isMember {
+			return errors.New("checkpoint loot owner unavailable")
+		}
+		if _, isDuplicate := equipmentUserIDs[inventory.UserID]; isDuplicate {
+			return errors.New("checkpoint loot owner duplicated")
+		}
+		equipmentUserIDs[inventory.UserID] = struct{}{}
+		if inventory.IsForfeited && len(inventory.Equipments) != 0 {
+			return errors.New("checkpoint forfeited loot retained")
+		}
+		for _, equipment := range inventory.Equipments {
+			if equipment.ObjectID == 0 || equipment.RigblockID == 0 {
+				return errors.New("checkpoint loot item invalid")
+			}
+			if _, isDuplicate := equipmentObjectIDs[equipment.ObjectID]; isDuplicate {
+				return errors.New("checkpoint loot item duplicated")
+			}
+			equipmentObjectIDs[equipment.ObjectID] = struct{}{}
+		}
+	}
 	for index, npc := range snapshot.NPCs {
+		err := npc.State.GraphState.Validate(npc.State.Plan.NPCProfile.AIGraph)
+		if err != nil {
+			return fmt.Errorf("checkpointGraph[%d]: %w", index, err)
+		}
 		objectID := npc.State.Plan.ObjectID
 		if objectID == 0 {
 			return fmt.Errorf("checkpointNPC[%d]: object invalid", index)
@@ -191,6 +233,14 @@ func Validate(
 			return fmt.Errorf("checkpointNPC[%d]: duplicate object", index)
 		}
 		npcsByObjectID[objectID] = npc.State
+	}
+	fiendSnapshots := make([]zonenpc.Snapshot, 0, len(snapshot.NPCs))
+	for _, npc := range snapshot.NPCs {
+		fiendSnapshots = append(fiendSnapshots, npc.State)
+	}
+	err = zonenpc.ValidateNashiraFiends(fiendSnapshots)
+	if err != nil {
+		return fmt.Errorf("checkpointFiends: %w", err)
 	}
 	experienceObjectIDs := make(map[uint32]struct{}, len(snapshot.ExperienceAwards))
 	experienceTotals := make(map[uint64]uint32, len(snapshot.Members))
@@ -204,7 +254,7 @@ func Validate(
 		}
 		npc, isNPCFound := npcsByObjectID[award.ObjectID]
 		if !isNPCFound || !npc.IsDefeated || npc.HitPoint > 0 ||
-			npc.Plan.IsFixture || npc.Plan.IsRewardSuppressed ||
+			npc.Plan.IsFixture || npc.Plan.IsExperienceSuppressed ||
 			npc.Plan.Experience != award.BaseExperience {
 			return fmt.Errorf("checkpointExperience[%d]: npc mismatch", index)
 		}

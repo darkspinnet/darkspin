@@ -40,6 +40,7 @@ const (
 	DirectorRouteSectionA DirectorRouteSection = iota + 1
 	DirectorRouteSectionB
 	DirectorRouteSectionC
+	DirectorRouteSectionAny
 )
 
 const (
@@ -214,6 +215,10 @@ func LocalSpikeChallenge(section DirectorRouteSection, outcome SpikeOutcome) (ui
 		hardChallenge = 80
 	case DirectorRouteSectionC:
 		hardChallenge = 110
+	case DirectorRouteSectionAny:
+		// Authored Any points have no route-specific challenge; use the local
+		// middle target while retaining Any in the population decision.
+		hardChallenge = 80
 	default:
 		return 0, errors.New("local spike challenge: invalid section")
 	}

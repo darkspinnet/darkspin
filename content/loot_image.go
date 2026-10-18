@@ -113,7 +113,11 @@ func LoadLootRigblocks(ctx context.Context, packagePath string) ([]LootRigblock,
 			return nil, fmt.Errorf("propertyParse[%d]: %w", ordinal, parseErr)
 		}
 		if !isLoot {
-			continue
+			return nil, fmt.Errorf("rigblockIdentity[%d]: missing", ordinal)
+		}
+		expectedInstance := uint64(webHashID(fmt.Sprintf("LootRigblock%d", rigblock.ID)))
+		if entry.Instance != expectedInstance {
+			return nil, fmt.Errorf("rigblockResource[%d]: got %x, want %x", ordinal, entry.Instance, expectedInstance)
 		}
 		rigblock.SourceOrdinal = ordinal
 		existing, isFound := rigblocksByID[rigblock.ID]
@@ -133,8 +137,8 @@ func LoadLootRigblocks(ctx context.Context, packagePath string) ([]LootRigblock,
 }
 
 func parseLootRigblock(payload []byte) (LootRigblock, bool, error) {
-	if len(payload) < 120 {
-		return LootRigblock{}, false, fmt.Errorf("payloadSize: got %d, need 120", len(payload))
+	if len(payload) < 140 {
+		return LootRigblock{}, false, fmt.Errorf("payloadSize: got %d, need 140", len(payload))
 	}
 	var rigblock LootRigblock
 	isRigblockFound := false
@@ -173,12 +177,6 @@ func parseLootRigblock(payload []byte) (LootRigblock, bool, error) {
 			scienceSet[field] = true
 			continue
 		}
-		if strings.HasPrefix(strings.ToLower(field), "pc_") && strings.HasSuffix(field, ".Noun") {
-			if rigblock.WeaponNoun == "" {
-				rigblock.WeaponNoun = field
-			}
-			continue
-		}
 		separator := strings.IndexByte(field, '!')
 		if separator != 10 || !strings.HasPrefix(field, "0x") ||
 			!strings.EqualFold(filepath.Ext(field), ".png") {
@@ -203,10 +201,16 @@ func parseLootRigblock(payload []byte) (LootRigblock, bool, error) {
 	if !isRigblockFound {
 		return LootRigblock{}, false, nil
 	}
+	if headerID := binary.LittleEndian.Uint32(payload); headerID != uint32(rigblock.ID) {
+		return LootRigblock{}, false, fmt.Errorf("rigblockHeader: got %d, want %d", headerID, rigblock.ID)
+	}
 	rigblock.MinimumLevel = binary.LittleEndian.Uint32(payload[64:])
 	rigblock.MaximumLevel = binary.LittleEndian.Uint32(payload[68:])
 	rigblock.ContentFlags = payload[108]
-	if rigblock.MinimumLevel > rigblock.MaximumLevel || rigblock.MaximumLevel > 1000 {
+	// Authored disabled items can have an empty range (for example, unique
+	// rigblock 10200 uses 999..100). Keep their metadata and image references;
+	// loot selection excludes empty ranges rather than widening them.
+	if rigblock.MinimumLevel > 1000 || rigblock.MaximumLevel > 1000 {
 		return LootRigblock{}, false, fmt.Errorf("levels: %d..%d", rigblock.MinimumLevel, rigblock.MaximumLevel)
 	}
 	if (payload[104] != 0) != rigblock.IsUniqueFamily {
@@ -234,6 +238,31 @@ func parseLootRigblock(payload []byte) (LootRigblock, bool, error) {
 	if len(rigblock.ScienceTypes) == 0 {
 		return LootRigblock{}, false, errors.New("scienceMissing")
 	}
+	if rigblock.SlotType == "weapon" {
+		// Reflected pointer words mark presence; their descendants follow in
+		// field order. Resolve the first authored owner, not a scanned noun.
+		// The 140-byte fixed record includes the four inline hero hashes.
+		cursor := lootAffixCursor{payload: payload, offset: 140}
+		for _, fieldOffset := range []int{16, 32, 36} {
+			reference, err := cursor.reference(fieldOffset)
+			if err != nil {
+				return LootRigblock{}, false, fmt.Errorf("ownerReference[%d]: %w", fieldOffset, err)
+			}
+			// These name, rigblock and category references precede owner data.
+			if reference == "" {
+				return LootRigblock{}, false, fmt.Errorf("ownerReference[%d]: missing", fieldOffset)
+			}
+		}
+		for _, fieldOffset := range []int{40, 48, 56} {
+			references, err := cursor.strings(fieldOffset)
+			if err != nil {
+				return LootRigblock{}, false, fmt.Errorf("ownerArray[%d]: %w", fieldOffset, err)
+			}
+			if fieldOffset == 56 && len(references) > 0 {
+				rigblock.WeaponNoun = references[0]
+			}
+		}
+	}
 	if rigblock.SlotType == "weapon" && rigblock.WeaponNoun == "" {
 		return LootRigblock{}, false, errors.New("weaponNounMissing")
 	}
@@ -241,13 +270,19 @@ func parseLootRigblock(payload []byte) (LootRigblock, bool, error) {
 }
 
 func lootRigblockIdentity(field string) (string, bool, bool) {
+	// Build-103 stores the name immediately after the binary hero-hash array.
+	// Its final bytes can be printable (Zrin ends in "X9"), so the string
+	// scanner may include them. Locate the marker instead of requiring it at
+	// the start; the header ID and package resource identity are checked too.
 	const ordinaryPrefix = "LootRigblockNames!0x"
-	if strings.HasPrefix(field, ordinaryPrefix) {
-		return strings.TrimPrefix(field, ordinaryPrefix), false, true
+	ordinaryIndex := strings.Index(field, ordinaryPrefix)
+	if ordinaryIndex >= 0 {
+		return field[ordinaryIndex+len(ordinaryPrefix):], false, true
 	}
 	const uniquePrefix = "LootUniqueRigblockNames!0x"
-	if strings.HasPrefix(field, uniquePrefix) {
-		return strings.TrimPrefix(field, uniquePrefix), true, true
+	uniqueIndex := strings.Index(field, uniquePrefix)
+	if uniqueIndex >= 0 {
+		return field[uniqueIndex+len(uniquePrefix):], true, true
 	}
 	return "", false, false
 }

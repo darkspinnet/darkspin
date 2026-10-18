@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
+	"github.com/darkspinnet/darkspin/server/zone"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
@@ -29,6 +30,7 @@ type campaignNPCRootedHealSchedule struct {
 	sourceObjectID uint32
 	timestamp      uint64
 	profile        zonenpc.ActionProfile
+	instance       *zone.Zone
 }
 
 func (e campaignNPCRootedHealSchedule) schedule(
@@ -47,6 +49,14 @@ func (e campaignNPCRootedHealSchedule) schedule(
 }
 
 func (e campaignNPCRootedHealSchedule) next() ([][]byte, error) {
+	e.runtime.registry.mutex.RLock()
+	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isCurrent := isFound && peerSession.generation == e.generation &&
+		peerSession.zone == e.instance
+	e.runtime.registry.mutex.RUnlock()
+	if !isCurrent {
+		return nil, nil
+	}
 	timestamp := e.timestamp + uint64(e.profile.Cooldown/time.Millisecond)
 	packets, err := e.runtime.produceZelemShot(
 		e.packet, e.sessionKey, e.generation, e.sourceObjectID, timestamp,
@@ -71,22 +81,35 @@ func (e campaignNPCRootedHealSchedule) tick() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
-		peerSession.isCampaignNPCSourceActive(e.generation, e.sourceObjectID) &&
-		peerSession.zone != nil && peerSession.zone.NPCs() != nil
+		peerSession.zone == e.instance && peerSession.zone != nil &&
+		peerSession.zone.NPCs() != nil
 	if !isCurrent {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
+	}
+	if !peerSession.isCampaignNPCSourceActive(e.generation, e.sourceObjectID) {
+		e.runtime.registry.mutex.Unlock()
+		e.runtime.releaseAction(e.sessionKey, e.generation, e.sourceObjectID)
+		packets, err := npcraknet.RootedHealStop(e.sourceObjectID)
+		if err != nil {
+			return nil, fmt.Errorf("rootedHealDeactivate: %w", err)
+		}
+		return packets, nil
 	}
 	targets := peerSession.zone.NPCs().WoundedOtherSpeciesAllies(
 		e.sourceObjectID, e.profile.Radius,
 	)
 	if len(targets) == 0 {
 		e.runtime.registry.mutex.Unlock()
+		packets, stopErr := npcraknet.RootedHealStop(e.sourceObjectID)
+		if stopErr != nil {
+			return nil, fmt.Errorf("rootedHealStop: %w", stopErr)
+		}
 		err := e.schedule(e.profile.Cooldown, e.next)
 		if err != nil {
 			return nil, fmt.Errorf("rootedHealNext: %w", err)
 		}
-		return nil, nil
+		return packets, nil
 	}
 	type healing struct {
 		target zonenpc.Snapshot
@@ -173,6 +196,7 @@ func (r campaignNPCActionRuntime) produceVerdanthBasicHealerRootedHeal(
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, sourceObjectID: source.Plan.ObjectID,
 		timestamp: timestamp, profile: profile,
+		instance: peerSession.zone,
 	}
 	err = schedule.schedule(profile.TickDuration, schedule.tick)
 	if err != nil {

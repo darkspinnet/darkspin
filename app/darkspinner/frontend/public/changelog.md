@@ -1,5 +1,590 @@
 # Changelog
 
+### 2026-10-18
+
+- [#86](https://github.com/darkspinnet/darkspin/issues/86) Change Resonance's basic attack damage bonus from raw defense ratings to converted, capped dodge and resist chances, matching its client-authored tooltip.
+- [#80](https://github.com/darkspinnet/darkspin/issues/80) Restore client-authored pursuit for ranged support bursts, keeping the server hero alongside the client before the ability fires.
+- [#80](https://github.com/darkspinnet/darkspin/issues/80) Keep Rezzers retreating toward their chosen flee point instead of redirecting into the hero during Ghostly Bolt recovery.
+- [#80](https://github.com/darkspinnet/darkspin/issues/80) Approach reachable collider edges for walking clicks deep inside obstacles instead of repeatedly rejecting and correcting the hero.
+- [#85](https://github.com/darkspinnet/darkspin/issues/85) Restore Hardened Mantle's damage-triggered effects and stack display, and increase its Overdrive damage reduction from 4% to 10% per stack.
+- [#85](https://github.com/darkspinnet/darkspin/issues/85) Restore Lumin's Chain Lightning from a single impact to its authored beam and two chained damage jumps.
+- [#85](https://github.com/darkspinnet/darkspin/issues/85) Apply the strongest nearby friendly Charge Field bonus and increase its critical-rating contribution from 50% to 75% during the source's Overdrive.
+- [#85](https://github.com/darkspinnet/darkspin/issues/85) Stop Nightmare Vine root damage after mission completion, preventing inactive-zone errors from disconnecting players on the mission-complete screen.
+- [#85](https://github.com/darkspinnet/darkspin/issues/85) Handle the client's lobby leave request with its native response and member-left notification instead of returning command not found.
+- [#81](https://github.com/darkspinnet/darkspin/issues/81) Restore Chrono Blink's native teleport message so the client hero moves with the server position.
+- [#81](https://github.com/darkspinnet/darkspin/issues/81) Keep completed melee damage and destructible destruction synchronized when movement interrupts an attack before its hit packets are published.
+- [#81](https://github.com/darkspinnet/darkspin/issues/81) Enable client-authored pursuit for ranged basic attacks, preventing Krel and other pursuing projectile users from repeatedly rejecting reachable targets as out of range.
+- [#81](https://github.com/darkspinnet/darkspin/issues/81) Remove Enrage's modifier, visual effect, size increase and damage bonus when failed-action recovery cancels its expiry timer.
+- [#81](https://github.com/darkspinnet/darkspin/issues/81) Remove Pain Hounds from clients when failed-action recovery retires their server objects, preventing stationary summons from lingering after their timers are canceled.
+- [#81](https://github.com/darkspinnet/darkspin/issues/81) Restore Ride the Lightning's client-authored target-based landing and damage against destructibles instead of rejecting selected targets using an unrelated cursor position.
+- [#84](https://github.com/darkspinnet/darkspin/issues/84) Restore the Corruptor's second-stage target after resurrection instead of aborting the transition on its retained threat entry, allowing queued encounter cleanup and stage-two publication to complete.
+- [#84](https://github.com/darkspinnet/darkspin/issues/84) Enforce Grappling Pulsars' client-authored pull cooldown across initial shots and pursuit recovery, and select their fast melee attack for targets already within reach.
+- [#84](https://github.com/darkspinnet/darkspin/issues/84) Keep Destructor modifiers while removing the generic Elite nameplate affix from their spawn and reconnect packets.
+- [#84](https://github.com/darkspinnet/darkspin/issues/84) Populate build 103's actual interlevel cinematic field, restoring the authored Corruptor epilogue and following planet presentations.
+- [#82](https://github.com/darkspinnet/darkspin/issues/82) Spread health-obelisk and enemy capsule batches across client-authored shuffled navigation-projected rings instead of landing every capsule at the same point.
+- [#82](https://github.com/darkspinnet/darkspin/issues/82) Deliver queued NPC spawns before starting recovered actions, preventing Nashira's entrance setup from arriving before her object exists and leaving her moving during the reveal.
+- [#82](https://github.com/darkspinnet/darkspin/issues/82) Retire authored teleporter duplicates when loading or rejoining mission 1-1, retaining one server-controlled pad at each of its seven security teleporter locations.
+- [#82](https://github.com/darkspinnet/darkspin/issues/82) Restore Twinblaze's client-authored first and second firing animations after its warmup for all heroes using the shared ability.
+- [#82](https://github.com/darkspinnet/darkspin/issues/82) Keep Exploder Scarab fuse chases on the client's pursuit path instead of overwriting intermediate waypoints with the hero's position.
+- [#82](https://github.com/darkspinnet/darkspin/issues/82) Preserve Destructor equipment drops' displayed item type, rarity, level and affixes when collected instead of replacing them with a deferred pickup roll.
+- [#82](https://github.com/darkspinnet/darkspin/issues/82) Synchronize Lightning Juggernaut charge speed with the client's multiplicative speed modifier and replicate the charge template's actor-avoidance toggle, restoring normal movement afterward.
+- [#82](https://github.com/darkspinnet/darkspin/issues/82) Give Magnetic Master's push and pull their separate client-authored cooldown deadlines, allowing a ready push during pull recovery and preventing early pulls after a push across all variants.
+- [#82](https://github.com/darkspinnet/darkspin/issues/82) Restore the client-authored fade-out, two-second transfer delay and fade-in for campaign tunnel teleporters, with input locked and damage immunity during transfer.
+- [#83](https://github.com/darkspinnet/darkspin/issues/83) Give saved gameplay appearances revision-qualified identities so players with the same account-local hero ID no longer share the wrong multiplayer model; keep template appearances distinct by hero noun.
+- [#83](https://github.com/darkspinnet/darkspin/issues/83) Send the full hero roster once per loading session and use sparse progress updates afterward, preventing repeated co-op roster refreshes from restarting hero asset loading.
+- [#83](https://github.com/darkspinnet/darkspin/issues/83) Place mission-end rewards, XP and daily bonuses in the recipient's actual multiplayer slot instead of always player 1, and calculate reward rarity using that player's medals.
+- [#83](https://github.com/darkspinnet/darkspin/issues/83) Drain queued co-op animation and world updates on ordinary gameplay requests instead of waiting for a separate poll, while preventing duplicate batch delivery within the same request.
+
+### 2026-10-17
+
+- [#76](https://github.com/darkspinnet/darkspin/issues/76) Preserve displayed enemy and captain equipment drops when awarding them instead of rerolling their item type, rarity, level and affixes after pickup.
+- [#77](https://github.com/darkspinnet/darkspin/issues/77) Restore normal walking speed when Beast Charge or another hero charge is interrupted or fails, preventing Savage's charge speed from persisting after the ability ends.
+- [#78](https://github.com/darkspinnet/darkspin/issues/78) Fix editor items incorrectly showing Out of item by reading the correct live creature model and retaining native availability checks when model inspection is inconclusive.
+- [#79](https://github.com/darkspinnet/darkspin/issues/79) Keep squad lists and saved hero assignments in stable slot order instead of moving the active squad first, so selecting squads 1, 2 or 3 deploys the matching lineup.
+- [#74](https://github.com/darkspinnet/darkspin/issues/74) Make first tutorial completion and tutorial skip finish at Crogenitor level 3 with Blitz, Sage and one hero activation credit, preserving later progression on repeated completion calls.
+- [#74](https://github.com/darkspinnet/darkspin/issues/74) Change hero activation rewards from selected milestones to one per Crogenitor level after the three tutorial heroes, restoring missing credits for existing accounts on profile load.
+- [#75](https://github.com/darkspinnet/darkspin/issues/75) Correct Overdrive's malformed active-state packet to restore native glow, sound and HELIX activation/ending cues, and share active-state changes with co-op peers while retaining the six-second base duration.
+- [#75](https://github.com/darkspinnet/darkspin/issues/75) Synchronize mission HUD core attributes and weapon damage with equipped hero stats instead of fixed placeholder values, preserve them during recovery, and align profile/combat defense and critical ratings with the client's Dexterity and Mind contributions.
+- [#75](https://github.com/darkspinnet/darkspin/issues/75) Resolve movement clicks onto the connected stair or ramp surface instead of rejecting goals carrying the hero's previous height, preventing repeated movement corrections while preserving horizontal tolerance and obstacle checks across maps.
+- [#75](https://github.com/darkspinnet/darkspin/issues/75) Restore all Electric Striker variants' client-authored eight-hit melee bursts and recovery before retreating, restrict damage to their short forward melee arc instead of teleport activation range, and prevent repeated approach blinks from replacing the attack.
+- [#75](https://github.com/darkspinnet/darkspin/issues/75) Restore the client-authored source-object and target-point fields for all Maser Tank laser shots, replacing detached world-position effects with beams emitted by the attacking creature.
+- [#75](https://github.com/darkspinnet/darkspin/issues/75) Prevent placing the same physical item twice from the editor palette by checking the live model and mirrored attachments, persist equipped-item usage, and reject incomplete or invalid loadout saves instead of silently dropping equipment.
+- [#75](https://github.com/darkspinnet/darkspin/issues/75) Exclude unpurchased Parts shop offers and sold buyback items from the editor's functional and detail palettes, and require owned items for creature equipment responses and calculations.
+- [#75](https://github.com/darkspinnet/darkspin/issues/75) Display Parts shop purchase prices as Cost instead of Sell Value while retaining normal owned-item and buyback valuations.
+- [#75](https://github.com/darkspinnet/darkspin/issues/75) Expire buyback items two hours after sale, persist their deadlines across restarts, and remove expired or legacy undated sold items on the next inventory load without reusing their IDs.
+
+### 2026-10-16
+
+- [#73](https://github.com/darkspinnet/darkspin/issues/73) Add a Parts tab to build 103's DNA Converter with rotating server stock, single-item selection, purchases and native tab transition effects, keeping inventory images and tooltip queries intact.
+- [#73](https://github.com/darkspinnet/darkspin/issues/73) Add persistent server-side Parts shop stock across all five genesis types, rotating 22–30 non-weapon offers every two hours by default with a configurable 5% green chance per offer capped at five greens, weapon-level pricing and one purchase per offer.
+- [#73](https://github.com/darkspinnet/darkspin/issues/73) Add Fang compatibility for server-priced Parts shop offers in build 103, aligning tooltips, selection totals and purchase charges while allowing exact-DNA purchases and preserving normal resale and buyback valuations.
+- [#72](https://github.com/darkspinnet/darkspin/issues/72) Restore Warp Totems' client-authored charge/discharge cycle, nearby random teleports and spatial effect events; replace generic explosions with their collapse effect and retain destroyed models across reconnects.
+- [#72](https://github.com/darkspinnet/darkspin/issues/72) Replace Sinkhole's repeated hero teleports with directional movement influence, restore client-authored well timing and effect cleanup across co-op peers, and preserve NPC projectile speed changes under gravity.
+- [#72](https://github.com/darkspinnet/darkspin/issues/72) Restore Hover Bots' client-authored circling, idle wandering and linked-beam damage, remove links when either bot dies without duplicate hits, and spawn selected campaign Hover Bots with at least one partner as a server encounter rule.
+- [#70](https://github.com/darkspinnet/darkspin/issues/70) Restore Overdrive's initiation animation, 50% damage reduction, 20% attack-speed bonus, client-authored 40% cooldown reduction and status immunity; preserve charge through its windup and prevent switching or transferring its buffs to another hero.
+- [#70](https://github.com/darkspinnet/darkspin/issues/70) Publish Sentry Drone deletion during action recovery and runtime cleanup so retired Meditron drones cannot linger and accumulate across hero switches.
+- [#70](https://github.com/darkspinnet/darkspin/issues/70) Restore Kinetic Mine death-drop sector placement and flight timing, correct the explosion radius from 16 to 2.5 units, and retire owned plasma effects with the client-authored burst after the 5-second armed timeout.
+- [#70](https://github.com/darkspinnet/darkspin/issues/70) Restore Contagion Pustules' client-authored disease burst to poison nearby enemies within 6 units for 6 seconds, using Life/Energy damage instead of a generic explosion hit.
+- [#70](https://github.com/darkspinnet/darkspin/issues/70) Restore Scaldron plants' client-authored destruction bursts instead of generic Zelem explosions, immediately removing small plants and retaining large plants' dead models across campaign maps.
+- [#70](https://github.com/darkspinnet/darkspin/issues/70) Restore security and red boss teleporter glows by replacing null-model effect anchors with their authored teleporter models, including campaign reconnect baselines.
+- [#70](https://github.com/darkspinnet/darkspin/issues/70) Restore client-authored static blockers marked as dynamic walls, including Infinity's machinery collision boxes, using selected-layout footprints instead of oversized visual bounds.
+- [#70](https://github.com/darkspinnet/darkspin/issues/70) Prevent Arcturus's delayed landing from revealing him after death, retire superseded attack callbacks at takeoff, and preserve Twin Laser's client-authored airborne endpoint path instead of snapping it to navigation terrain across all ranks.
+- [#70](https://github.com/darkspinnet/darkspin/issues/70) Anchor Dimensionist's Slow Shield bubble and slowing field to the client-authored stationary object instead of the moving caster, restoring cast timing, rank-one visuals and independent field expiry across campaign maps.
+
+### 2026-10-15
+
+- [#71](https://github.com/darkspinnet/darkspin/issues/71) Retire opened obelisks' server collision at the client-authored physics-removal step and preserve that state across Continue and reconnects, preventing lingering blockers in the tutorial and campaign.
+- [#69](https://github.com/darkspinnet/darkspin/issues/69) Restore ordinary campaign portals' authored box and sphere trigger geometry, including height, orientation and offsets, fixing narrow portals such as mission 6-4 that failed to transport heroes.
+- Add Compact snapshots below the GitHub link in Send Report, moving completed snapshot ZIPs into numbered bundles capped at 25 MB in the background, dimming the button while running and showing a checkmark on success, while retaining originals if packing fails or a source changes.
+- [#68](https://github.com/darkspinnet/darkspin/issues/68) Preserve SRS-42's confirmed regular-missile collision target in its explosion damage, fixing direct hits discarded when a destructor or other large enemy's center lies outside the blast radius.
+- [#67](https://github.com/darkspinnet/darkspin/issues/67) Allow full, unlocked legacy campaign squads with an unassigned category to enter missions as advertised by the client account response, and identify specific squad validation failures in loading logs.
+- Name bug and launcher report ZIPs as message-location-version-timestamp using mission levels or client-reported Arsenal, Navigation and Editor locations, retaining known levels during partial diagnostic failures and using unknown-level when unavailable.
+
+### 2026-10-13
+
+- [#66](https://github.com/darkspinnet/darkspin/issues/66) Remove Menace Weed's healing aura when healing ends or the enemy dies, restoring client-authored effect cleanup across all ranks and captain variants.
+- [#66](https://github.com/darkspinnet/darkspin/issues/66) Prevent equipment pickup failures from selecting categories whose compatible catalog items are outside the rolled item-level range, across hero families and campaign maps.
+- [#66](https://github.com/darkspinnet/darkspin/issues/66) Prevent Pterodyne's interrupted stealth approaches from retaining overlapping modifiers whose delayed expiry reveals a newer cast, across its ranks and captain variants.
+- [#66](https://github.com/darkspinnet/darkspin/issues/66) Restore Necrodactyl's higher-rank attacks from rank-one values to client-authored cooldowns of 2.5/2 seconds, projectile speeds of 15/20 and direct damage of 2/3 across campaign maps.
+- [#65](https://github.com/darkspinnet/darkspin/issues/65) Send NPC pursuit and strafing along the server's navigation waypoints and reconcile their physical pose at movement stops, addressing enemies stuck behind obstacles while their server hitboxes advance.
+- [#65](https://github.com/darkspinnet/darkspin/issues/65) Restore Caustic Stingers' Homing Swarm attack range from 22 to the client-authored 35 and projectile travel from 28 to 40 across campaign variants.
+- [#65](https://github.com/darkspinnet/darkspin/issues/65) Improve Sync Snapshot identity recovery from retained movement samples in the same session and zone, and distinguish removed trigger objects from missing identity mappings.
+- [#65](https://github.com/darkspinnet/darkspin/issues/65) Restore Gravity Storm's enemy lift, slam, get-up and interrupted-drop animations, synchronize its channel bar and storm effect position, and preserve damage at landing with control ending after the authored recovery.
+- [#65](https://github.com/darkspinnet/darkspin/issues/65) Restore Healing Sprite's sting animation and healing impact with the client-authored three-second cadence, replace snapping with smooth pet following, and synchronize its health and effects with co-op players while retaining the existing heal amount.
+- [#65](https://github.com/darkspinnet/darkspin/issues/65) Restore Sleeping Cloud's six-second channel bar, keep its caster stationary throughout the cast, and finish with the authored relax animation and sleep-field cleanup.
+- [#65](https://github.com/darkspinnet/darkspin/issues/65) Stop replaying Sporogenesis's activation cloud on every healing tick by emitting one caster-bound effect, preserving the existing healing amounts and timing.
+- [#65](https://github.com/darkspinnet/darkspin/issues/65) Restore Tork's Toxic Spores projectiles and poison pools when aiming at empty ground within attack range, and let their poison affect hostile enemies regardless of which co-op hero they target.
+- [#65](https://github.com/darkspinnet/darkspin/issues/65) Keep Shielded Grenadiers stationary during shield setup, active stance and teardown; use grenades as their normal attack and reserve shield bash for nearby frontal targets across all ranks and captain variants.
+- [#65](https://github.com/darkspinnet/darkspin/issues/65) Fix mission 5-3 Return disconnecting gameplay while preparing the 5-4 preview by excluding unresolved marker-set references from layout selection across campaign maps, while preserving valid empty variants.
+- [#65](https://github.com/darkspinnet/darkspin/issues/65) Fix Overdrive activation crashes by sending its ability identity and authored cast timing instead of the hero object ID, and synchronize its active meter through expiration.
+- [#65](https://github.com/darkspinnet/darkspin/issues/65) Start campaign missions with empty Overdrive and replace XP-scaled charging with 5 energy per minion and 20 per non-minion, filling the meter after 84 ordinary kills before equipment bonuses.
+
+### 2026-10-11
+
+- [#64](https://github.com/darkspinnet/darkspin/issues/64) Restore Pyro's client-authored fire-breath damage, reach, cone angle, area descriptor and rank cooldowns across all missions instead of the inflated server profile.
+- [#64](https://github.com/darkspinnet/darkspin/issues/64) Correct Overdrive capacity from 100 to the packaged 420 so the client can reach charged state, and restore the packaged 70-per-second drain for activation duration and tutorial unlocks.
+- [#64](https://github.com/darkspinnet/darkspin/issues/64) Protect heroes from damage during switching and deployment, and move nearby-enemy knockback from arrival start to the client-authored landing time with its authored radius.
+- [#64](https://github.com/darkspinnet/darkspin/issues/64) Restore revived enemies to their boss-wave roster so subsequent hits publish their death correctly and the mission waits for them to be defeated; prevent delayed resurrection from reopening a completed arena.
+- [#64](https://github.com/darkspinnet/darkspin/issues/64) Restore omitted server-owned tree scenery at its authored placements across campaign maps, including Spectral Forest's yellow trees, while preserving client-owned trees and sharing the restored scenery with co-op and reconnecting players.
+- [#63](https://github.com/darkspinnet/darkspin/issues/63) Add a Boss Spawning accordion to launcher Server Settings with saved controls for opening adds per anchor, adds alongside Illust and captain-entry delay; changes apply to new missions and are included when sharing settings to GitHub.
+- [#63](https://github.com/darkspinnet/darkspin/issues/63) Include difficulty-eligible, horde-legal special enemies alongside minions in captain-arena waves across campaign maps, restoring candidates such as Hasters, Decelerators and Invincitrons that were excluded from boss adds.
+- [#63](https://github.com/darkspinnet/darkspin/issues/63) Resolve hero movement destinations inside static blockers to nearby walkable contact points instead of repeatedly stopping and snapping the hero back, while retaining collision and navigation limits.
+- [#63](https://github.com/darkspinnet/darkspin/issues/63) Initialize the native remote-NPC partial movement goal for pursuit, retreat and other movement commands, preventing enemies from remaining at spawn on the client while their server hitboxes advance and then snapping forward when attacking.
+- [#63](https://github.com/darkspinnet/darkspin/issues/63) Align Chrono Striker retreat stopping distance with the client Flee script and native footprint calculation, and send fixed-point retreat stopping distances so enemies do not overshoot their server position before attacking.
+- [#63](https://github.com/darkspinnet/darkspin/issues/63) Restore Space Barracuda blink landing selection from a preferred rear flank to client-authored random points around the target, checking terrain reachability from the Barracuda and rejecting excessive edge projection.
+- [#63](https://github.com/darkspinnet/darkspin/issues/63) Reconcile predicted movement from the incoming hero during deployment instead of silently discarding it, preventing client/server position drift while switching heroes.
+- [#63](https://github.com/darkspinnet/darkspin/issues/63) Align NPC object pursuit and redirects with the native target-center goal and separate stopping distance, correcting premature client stops that can lead to drift and visible position corrections for Reparatrons and other enemies.
+- [#57](https://github.com/darkspinnet/darkspin/issues/57) Preserve both Exploder Scarabs and Robo-Bombers in Uranium Heights' authored first-run roster instead of replacing Scarabs after the mission preview is selected.
+- [#57](https://github.com/darkspinnet/darkspin/issues/57) Change campaign enemy previews from the hard-coded 1-1 list and mixed configuration pools to the selected gameplay minion/special roster, preserving authored first-run enemies and excluding captain equivalents.
+- [#59](https://github.com/darkspinnet/darkspin/issues/59) Correct rejected hero movement through the native local-player physics and locomotion receivers, preventing persistent position drift reported alongside tutorial camera-follow failures and keeping co-op peers aligned.
+- [#59](https://github.com/darkspinnet/darkspin/issues/59) Initialize Blitz Alpha and Sage Alpha before authentication so completing the tutorial, including with `/victory`, leaves them available in the Arsenal; repair missing starters on existing profiles at login.
+- [#59](https://github.com/darkspinnet/darkspin/issues/59) Improve static-obstacle detours on narrow walkways by searching connected navigation-edge points when box-corner routes fail, addressing movement rejection before the tutorial boss teleporter.
+- [#60](https://github.com/darkspinnet/darkspin/issues/60) Extend Sync Snapshot packet history from 30 to 60 seconds for snapshots and attached bug-report diagnostics while retaining the 30-second automatic capture interval.
+- [#60](https://github.com/darkspinnet/darkspin/issues/60) Restore Helix's first-campaign planet-reinfection narration during Continue navigation by publishing completed progression before the client checks the offered planet's voice cue.
+- [#60](https://github.com/darkspinnet/darkspin/issues/60) Fix equipped heroes entering missions with base health and energy by applying the client-authored Strength and Mind resource bonuses for Sage Alpha and all other heroes.
+- [#60](https://github.com/darkspinnet/darkspin/issues/60) Prevent delayed NPC actions, target updates, and join snapshots from restarting defeated enemies or recreating their live models after death.
+- [#60](https://github.com/darkspinnet/darkspin/issues/60) Give valid movement priority over an active melee swing by cancelling its pending hit and held repeat, and prevent targetless player melee inputs from automatically selecting a nearby enemy.
+- [#60](https://github.com/darkspinnet/darkspin/issues/60) Fix enemy attacks gaining extra reach at impact by preserving authored ability ranges instead of applying footprint and stopping-distance adjustments twice.
+- [#61](https://github.com/darkspinnet/darkspin/issues/61) Fix attacks sticking immediately after a hero switch by replying to attacks blocked during deployment so the client clears their pending action state.
+- [#61](https://github.com/darkspinnet/darkspin/issues/61) Prevent queued damage feedback from restoring a defeated enemy's earlier health, fixing exploding enemies appearing to return after death for players and co-op allies.
+- [#61](https://github.com/darkspinnet/darkspin/issues/61) Fix blue and green obelisk hover effects surviving interaction by attaching them to the client object so the authored effect-removal request can stop them.
+- [#61](https://github.com/darkspinnet/darkspin/issues/61) Change NPC pursuit redirects from goal-only updates to complete movement commands, preserving client path waypoints and refreshing movement state and stopping distances to address enemies stalling and snapping during combat.
+
+### 2026-10-07
+
+- [#58](https://github.com/darkspinnet/darkspin/issues/58) Add a Wine Runtime option to the launcher Config tab that detects the system Wine, Lutris, Heroic and Bottles Wine builds, Steam Proton and Proton-GE, and starts the game with the selected build in its own launcher-owned prefix.
+- [#58](https://github.com/darkspinnet/darkspin/issues/58) Fix Wine Runtime scans skipping Wine and Proton installations linked through directory symlinks.
+
+### 2026-10-06
+
+- [#56](https://github.com/darkspinnet/darkspin/issues/56) Restore Polaris's higher-rank Mark of Zelem cast, thirty-second target mark and reticle cleanup.
+- [#56](https://github.com/darkspinnet/darkspin/issues/56) Restore Merak's higher-rank dynamic plasma geysers, accelerating spawn cadence, entry-triggered burning, co-op publication and cleanup.
+- [#56](https://github.com/darkspinnet/darkspin/issues/56) Change Orcus's Consume from a nearby-servant opportunistic action to one activation at each authored health threshold, with rank-specific servant rings, following, repeated channel/eat cycles and individual healing; correct normal servant spawning from staggered births to one contact-frame batch.
+- [#56](https://github.com/darkspinnet/darkspin/issues/56) Correct Arcturus's minion spawn chance from 20% at every rank to the authored 20%, 25% and 30% progression.
+- [#55](https://github.com/darkspinnet/darkspin/issues/55) Fix empty mission 1-3 boss arenas and the same callback-slot mismatch on other boss triggers by resolving the authored boss callback instead of stopping at its event-only entry.
+- [#55](https://github.com/darkspinnet/darkspin/issues/55)  Fix empty mission 1-3 boss arenas and the same callback-slot mismatch on other boss triggers by resolving the authored boss callback instead of stopping at its event-only entry.
+- Fix repeated attacks retaining an old facing by applying captured turns to the controlling client as well as observers, and prevent delayed projectile releases from resetting a newer attack animation.
+- Fix blue and green obelisks rejecting interaction by checking reachable contact beside their collision bounds instead of requiring their centers to be walkable.
+- Fix post-tutorial heroes appearing locked by refreshing the owned roster, granting Blitz Alpha and Sage Alpha by default, and preserving the third-hero activation credit across duplicate completion calls.
+- Correct elite minions from +75% health, +50% damage and +25% size to the client-authored +400%, +150% and +50%, including Mutation Agent promotion and co-op presentation.
+- Group Ally Alert controls into a collapsible section with a scrollable settings area in the Server Rules dialog.
+- Move Server Rules into a dialog opened from Config and add Share to GitHub with the displayed settings in a TOML code block.
+- Move ally-alert tuning from manual configuration edits to live launcher controls backed by server.toml, with section versions that reset outdated overrides to validated defaults.
+- Match Reparatron's client-authored repair selection: prioritize eligible friendly Cyber corpses, exclude fading and critical-hit deaths, and share the two-second failed-roll block across co-op ownership changes.
+- [#53](https://github.com/darkspinnet/darkspin/issues/53) Add configurable NPC ally-alert propagation for nearby idle enemies, with authored range scaling, bounded relay depth, and optional diagnostics for gameplay comparisons.
+- [#53](https://github.com/darkspinnet/darkspin/issues/53) Restore Reparatron's client-authored approach, repeated repair and revival animations, shared co-op repair stacks, corpse-timer refresh and revived enemies' return to combat.
+- [#53](https://github.com/darkspinnet/darkspin/issues/53) Fix hero projectile muzzle offsets changing shot direction, preventing close cursor shots from pitching downward and preserving the client-authored spread for Krel and other ranged heroes.
+- [#53](https://github.com/darkspinnet/darkspin/issues/53) Fix hero projectile muzzle offsets changing shot direction, preventing close cursor shots from pitching downward and preserving the client-authored spread for Krel and other ranged heroes.
+- [#53](https://github.com/darkspinnet/darkspin/issues/53) Restore Magnetic Master variants' client-authored rank-dependent pull ranges and push/pull cooldowns, and use their current movement attributes during pursuit.
+- [#53](https://github.com/darkspinnet/darkspin/issues/53) Restore Magnetic Master variants' client-authored rank-dependent pull ranges and push/pull cooldowns, and use their current movement attributes during pursuit.
+- [#53](https://github.com/darkspinnet/darkspin/issues/53) Enable automatic Sync Snapshots by default and keep automatic captures silent in chat, while preserving explicit `/ss` command feedback.
+- Include a fresh Sync Snapshot with automatic capture history in `/bug` reports when `/ss` auto mode is enabled, recording capture failures without blocking the report.
+- Fix Dendrones and other combat pets repeatedly chasing instead of attacking by keeping pursuit destinations inside the hit-range acceptance margin.
+- Improve sync reports by sampling companions at capture time and including their active owner-follow goal, speed, and remaining travel time instead of comparing stale committed positions.
+- Fix enemy strafing desync by refreshing movement speed from current authored attributes and Swift, haste, and slow effects instead of retaining an older attack speed.
+- [#52](https://github.com/darkspinnet/darkspin/issues/52) Fix heroes moving toward enemies while attacking by matching the client's captured-point facing command instead of sending a pursuit target.
+- [#52](https://github.com/darkspinnet/darkspin/issues/52) Fix Exploder Scarabs repeatedly restarting instead of exploding when arming and movement processing occur in the same clock tick, preserving their authored 1.54-second fuse.
+- [#52](https://github.com/darkspinnet/darkspin/issues/52) Keep Electron Sphere's lightning target budget for living hostile enemies instead of consuming it on allied or unpublished objects.
+- [#52](https://github.com/darkspinnet/darkspin/issues/52) Fix ranged attacks briefly refusing to fire near enemies by using the client-authored actor footprints for attack range checks, matching the existing melee path.
+- [#52](https://github.com/darkspinnet/darkspin/issues/52) Restore the client-authored blue loot-obelisk and green health-obelisk hovering effects, with shutdown on use and consumed-state cleanup on co-op rejoin.
+- [#52](https://github.com/darkspinnet/darkspin/issues/52) Fix captain and elite HUD presentation from unrecognized object IDs to authored NPC affix references, restoring elite name colors and affix descriptions on spawn and rejoin.
+- [#52](https://github.com/darkspinnet/darkspin/issues/52) Restore the Horde incoming warning for live miniboss arena waves, including Illust's opening waves, and broadcast it to co-op players without replaying it on rejoin.
+- Honor authored captain affix difficulty bands instead of applying every band together, preserving explicit paired affixes such as Illust's Swift and Swift Aura.
+- Restore Swift's movement-speed bonus and Swift Aura propagation to nearby friendly enemies, with non-stacking overlap, departure/death cleanup, and synchronized co-op/rejoin state.
+- Fix the 1-1 boss failing to appear by resolving its trigger-owned spawn anchor and selecting its named captain from the boss roster instead of the lieutenant pool.
+- [#51](https://github.com/darkspinnet/darkspin/issues/51) Restore Voltroid's discharge beam on the shared attack-impact path, using the authored visual strength for its charge count.
+- [#51](https://github.com/darkspinnet/darkspin/issues/51) Restore Terminal Haven's scenery fire vents and plasma-pond damage through shared hazard handling across selected campaign layouts.
+- [#51](https://github.com/darkspinnet/darkspin/issues/51) Fix Gravity Well leaving pulled enemies floating by resetting their reaction at landing before the authored recovery ends.
+- [#51](https://github.com/darkspinnet/darkspin/issues/51) Restore Shielded Grenadier's frontal shield-bash damage and animated knockback, and allow field and periodic damage through its directional shield while retaining special full-immunity shields.
+- [#51](https://github.com/darkspinnet/darkspin/issues/51) Restore authored static collision blockers around Infinity mining machines so movement routes around them instead of passing through them.
+- [#51](https://github.com/darkspinnet/darkspin/issues/51) Fix stuck Phantom Charge and Shade Drifter movement by preserving client navigation agents, and retire charge poses after completion or interruption without resetting newer actions.
+
+### 2026-10-05
+
+- Remove reflected request text from HTTP URI errors and prevent untyped traced responses from being interpreted as HTML.
+- Restore factory fire vents with repeated warning, eruption and hero damage cycles, synchronized across co-op players.
+- Change Laser Tank from cast-limited beams to persistent simultaneous laser zones with client-authored rank limits and cleanup.
+- Restore factory pipes' enemy-damaging explosions and persistent wrecks, and fuel canisters' authored blast and burning chain reactions.
+- Restore Exploder Scarab's timed accelerated chase and explosion, and apply a three-second daze that blocks actions while allowing slowed walking in solo and co-op.
+- Restore selected Citadel plasma ponds' authored burning status, effect and damage while heroes stand in them, including stationary contact and co-op presentation.
+- Change Phantom Charge from walking around enemies to the client-authored flat slide through them, restoring collision when the charge ends or is interrupted.
+- Restore Gravity Well's pull to scaled footprint contact and Kinetic Wave's animated knockback, preventing enemy pursuit from interrupting their displacement.
+- Restore Essence Volley's firing and ending animations across heroes, and extend untargeted projectiles from cursor distance to the authored 25-unit travel budget.
+- Correct Grappling Pulsar's Puller follow-up from projectile travel plus pull duration to its authored 1.25-second release, and require footprint contact for each Fast Swipe hit.
+- Correct Protoplasm's attack pauses from the full OozeGrow cooldown to its animation release, keeping growth on an independent cooldown, and restore the authored OozePassive green drip effect.
+
+### 2026-10-04
+
+- Remove logged-out profiles from lobby rosters, preventing a crash when a deleted Crogenitor is recreated with the same name.
+- Fix Uranium Heights (4-1) failing before heroes spawn by resolving Robo-Bomber replacements from the full noun catalog instead of requiring them in the selected agent pool.
+- Keep tutorial arena progression in its wave controller instead of repeatedly attempting to spawn an unavailable campaign boss.
+- Align the tutorial horde's western spawn point with the position accepted by the client, preventing enemies from starting several units away from their server position.
+- Sample the local hero's retained movement at capture time in Sync Snapshots, avoiding false position discrepancies from stale command-time coordinates.
+- Fix tutorial obelisks and other equipment drops failing because temporary Blitz and Sage lacked their loot-selection identity.
+- Prevent stale attack cursor positions from relocating idle enemies and causing client/server desynchronization.
+- Prevent duplicate Health full and Power full notices when movement commands recheck capsule contacts already processed by movement polling.
+- Fix Infectors, Quadra, Shocker and other projectile enemies becoming idle after a stun or chase, and restore the related energy-buff chase continuation.
+- Stop and resume enemy pursuit on clients when stun, sleep, root or zero movement speed pauses it on the server, preventing enemies from walking away during crowd control in solo and co-op.
+- Honor authored invisible enemy starts and alternate visible idles across campaign variants, restore entrance animations, and retain reveal state across co-op rejoin and Continue.
+- Keep tutorial enemies hidden until their teleport entrance reveals them, preserving pending reveals across rejoin and interrupted entrances.
+- Correct Seraph-XS and other hero variant profiles showing Jinx's name and description by resolving localization keys within each hero's authored text table.
+- Restore Toxicactus's authored destruction event and 0.2-second removal timing instead of the generic scenery explosion.
+- Correct HELIX return-to-planet narration from one-mission-late assignments to the authored campaign stages, and select the next mission's narration on the post-mission screen.
+- Change Destructor equipment drops from six fixed points to client-derived party-scaled attempts and shuffled expanding rings with navigation checks, retaining authored catalyst eligibility.
+- Advance unanswered post-mission Continue/Rewards countdowns to rewards for the party when time expires, preserving the remaining time across repeated voting-screen requests.
+- Restore Plasmatic Seed's plasma explosion and Necrotic Plant's bursting effect from their authored death scripts, replacing the machinery explosion and missing burst with correctly positioned effects and deletion timing.
+- Correct Cryos geysers from disappearing ice debris to persistent opened vents that erupt after being broken, with owner-bound warning audio, authored burst orientation and restored vents on reconnect.
+- Restore loot and health obelisks across campaign maps from authored component placements, preserving seeded variants, use limits and noun-inherited reward budgets without requiring nonexistent event-script bindings.
+- Change campaign horde and boss activation from immediate radius checks to authored trigger shapes, party-entry requirements and wait times, preserving unfinished persistent waits across checkpoints and preventing early boss fallback activation.
+- Stop spurious "Objective 00:02" arrival notifications by removing the forced HELIX introduction that incorrectly announced the mission timer.
+- Restore Herbipod detection from the shortened 5/7/9-unit aggro ranges to their authored 19/20/21-unit perception ranges, consistently across visibility, acquisition, and retargeting.
+- Correct campaign enemy composition from shifted science fields and fixed map rosters to the client's authored auxiliary science fields and per-section enemy choices.
+- Prevent delayed miniboss admissions from replacing an active or completed encounter and spawning its enemies again.
+- Restore miniboss opening enemies at authored arena spawn points before the captain appears, including Catalyst and Overdrive tutorial arenas.
+- Restore the correct miniboss phase when reconnecting during the wave transition or after the captain appears.
+- Change ordinary lieutenant population from captain variants to the authored special-enemy roster, preserving separate captain and boss encounters.
+- Stop NPC movement at the last accepted position when pathfinding fails instead of advancing through blocked terrain and accepting false attack arrivals.
+
+### 2026-10-03
+
+- Restore Nashira's scripted entrance facing, correct Polaris's teleport center and orientation, and prevent interrupted boss callbacks from applying stale movement or activation.
+- Complete distant pickup commands on arrival without requiring a second click, canceling retained pickup pursuit when movement changes.
+- Limit each capsule drop batch to one resurrection capsule so consuming it does not expose an overlapping spare.
+- Keep /kill processing after an owner's defeat also defeats its owned NPCs, skipping those stale batch targets instead of aborting publication.
+- Use authored NPC loot budgets and client-backed co-op equipment/catalyst attempt counts, replacing fixed budgets, ordinary drop-chance pity, and guaranteed ordinary boss equipment.
+- Choose health and power capsules using the whole co-op party's squad resources, with a separate selection RNG preserved across checkpoint restores.
+- Remove inflated Gravitic DNA and capsule overrides, and match client rounding when calculating capsule drop budgets.
+- Use authored DNA drop chance and minimum stage, reducing ordinary drops from 50% to the installed 25%.
+- Reduce health obelisks from four or five capsule batches to one authored batch, and use each enemy's authored challenge for capsule drop budgets.
+- Collect landed capsules and DNA while standing still, retain pickups crossed in large groups, and prevent premature collection after teleporting.
+- Keep aura status effects synchronized across co-op clients when a scan fails or the caster leaves, and queue removals before reusing modifier handles.
+- Preserve capsule and DNA pickup messages when a later operation fails, including full-resource notices and accepted DNA balance updates.
+- Prevent persistent aura failures from refunding already activated casts or overwriting later power changes; refund failed startup only once.
+- Make Time Bubble slow shared co-op projectiles and preserve the slow until the last overlapping bubble releases them, without overwriting other speed changes.
+- Prevent late drain and Gravity Storm failures from refunding activated casts or overwriting newer power changes; refund failed unpublished admission only once.
+- Apply projectile freeze and destruction across co-op players, including Arcturus missiles, with ordered projectile and effect cleanup.
+- Let shared freezes expire after the caster disconnects or switches heroes while preserving later overlapping deadlines.
+- Remove interrupted drain and Gravity Storm effects for co-op allies and prevent canceled callbacks from recreating them or applying damage.
+- Preserve existing projectile freezes and movement when another freeze fails to initialize, and retain updates for earlier successful freezes.
+- Preserve charge-applied statuses across later actions, expire each at its own deadline, and remove statuses and attached effects reliably for co-op allies on departure.
+- Prevent an expired charge effect from resetting a newer hero animation, and keep charge-release command responses private to the caster.
+- Expire transferred buffs and temporary maximum-health bonuses after caster disconnects, and show their removal to co-op allies.
+- Keep an admitted pet charge running after the hero's impact when the hero starts another action, while canceling stale pet movement safely.
+- Remove failed hero and enemy projectile flights from co-op clients, with ordered cleanup of remaining freeze effects.
+- Detect teleporter crossings between movement polls while preventing false crossings after teleports or hero changes.
+- Stop enemies' old attacks and lingering laser beams when pulled, and leave their pose and attack unchanged if pull setup fails.
+- Restore companions' ongoing follow movement on reconnect and publish their final position to co-op peers.
+- Restrict allied healing and transferred buffs to active participants and their current companions, excluding players in results, reconnect or disconnected states.
+- Prevent stale companion pursuit callbacks from moving pets or canceling newer pursuits after teleport, replacement or death.
+- Restore companion maximum health and active enrage size changes on reconnect without replaying healing or restarting effects.
+- Restore remaining active and squad-support ability cooldowns after reconnect without restarting their timers.
+- Restrict Sage's Dendrone attacks and pursuits to that player's current summons so allies' pets keep their own targets and cooldowns.
+- Make qualifying allied hits wake Sleeping Cloud targets and remove the matching sleep effects for all players in the zone.
+- Retain Field Medic's first transferred companion buffs in session tracking so their expiry can remove the buffs and release their modifier instances.
+- Refresh surviving squad portraits and clear client deploy cooldowns after a hero dies, and handle death selection as an immediate replacement instead of a voluntary swap.
+- Stop active security and boss teleporter effects when enemies block the pad, prevent duplicate portal loops, and refresh their displayed state after reconnect.
+- Make enemy cleanses remove physical vulnerability and its extra physical damage taken.
+- Calculate shared health and power capsule bonuses per receiving player, and exclude disconnected, reconnecting or finished players from capsule and DNA sharing.
+- Cancel Fire Tempest pet shots still winding up when the pet teleports, then resume targeting from its new position after the existing cooldown.
+- Change security teleporter enemy detection from a 4.8-unit estimate to the authored 20-unit radius, excluding allies and enemies explicitly hidden from security checks.
+- Restore 1-2 boss progression after the red portal by honoring the authored four-second arena trigger and publishing the encounter to all players.
+- Show still-active allied Trees of Life after reconnect using their retained objects and original simulation expiry, without replaying growth, costs, cooldowns or healing.
+- Audit selected campaign layouts with per-section population counts and fixture identity, transform, and load/rejoin takeover logs.
+- Remove Tree of Life reliably for watching allies when its caster beams out or disconnects, clear retired tree state before rejoin, and prevent late cleanup from affecting a replacement tree.
+- Restore mission 1-2 enemy spawn candidates by reading authored marker sections before falling back to marker-set filenames.
+- Fix the Gravitic Stabilizer debuff visual lingering after leaving its shield by using the client's one-based effect slot for attachment and removal.
+- Fix Return to Ship retries after an interrupted victory by reusing the saved XP receipt and preparing the next-mission preview before committing XP.
+- Fix Return to Ship disconnecting during the next-mission preview when horde markers lack an agent pool; use the mission's minion roster for horde and boss adds.
+
+### 2026-10-02
+- Change campaign melee impacts from a fresh distance veto to authored start-range movement grace, retained multi-hit arcs and hostile fallback selection; use native footprint overlap at arc edges and publish the selected victim through the normal damage path.
+- Change hero, NPC and companion melee admission, pursuit and hit-arc radii from legacy physics fallbacks to authored noun footprints and live object scale, completing noun mappings and preserving separate projectile geometry without requiring navigation meshes.
+- Fix content.db import failures by passing the build context into combat, weapon, and spike resource readers.
+- Track content.db import stage durations, index resource identities before projections, reuse bounded package readers, and remove unused duplicate raw resource blobs while retaining Lua and navigation payloads.
+- Fix campaign startup going black when a seeded zelems_1 layout has no obelisks by replacing the legacy fixed-count requirement with the authored selection.
+- Use each Orcus servant's complete authored, difficulty-adjusted NPC profile in place of the hard-coded stat scaffold, including defenses, AI graph and drop metadata.
+- Apply Merak's authored rank thresholds of 15%, 10% and 5%, retain accrued damage at equality, and spend earned add budgets before capacity limiting.
+- Fix content.db verification from requiring all catalyst noun definitions to equal the 192 drop candidates to checking candidate coverage while retaining additional authored definitions; advance the import recipe to 88.
+- Recover percent-named AI conditions from exact authored graph references during content.db import, preserving spaces and punctuation and rebuilding older imports with recipe 87.
+- Change catalyst pickup, movement and removal from contiguous slot limits to the native grid unlock order, preserving tutorial gates and saved and replicated slot identities.
+- Share Nashira's 12-fiend budget across the original and duplicates through explicit passive membership, removing the separate fiend cooldown and preserving registration, rollback and owner teardown across checkpoints.
+- Resolve Nashira fiend stats, AI and loot metadata from the full rank-selected child noun profile, preserving run scaling and diagnosing missing definitions.
+- Resolve teleport endpoints from all seeded selected marker definitions instead of filtered director placements, preserving full IDs, later-selected duplicate overwrites and missing-destination behavior.
+- Retain authored catalyst noun modifier identity and line-bonus tuning in content.db, exposing both to pickup and effect consumers without changing current effect calculations.
+- Route campaign named events by full simulator event hash across selected live listener owners, retaining duplicate subscriptions, empty dispatches and native swap-removal on owner destruction.
+
+- Separate scaled actor navigation footprints from unscaled noun spawn radii, retaining actor navigation layers across movement and restore while preserving combat footprints.
+- Retain authored NPC AI graphs and gambit overrides, initialize the first start phase without RNG, and preserve node/gambit cursors through version-6 checkpoints without inferring phase execution behavior.
+- Select navigation layers from imported NavPower tuning radii with the native backward scan, including oversized actors and the Arena radius cap.
+- Use party completion and imported campaign bounds for support, catalyst and overdrive tutorial activation, rechecking unbeaten players at mutation time and resolving the triggering player�s current hero after the authored waits.
+- Expire shared catalyst and orb pickups from their original zone deadline, stop cleanup at zone completion, and prevent reconnects, full-inventory hops or delayed collection from extending pickup life.
+- Use the shared simulator RNG for native Lua random bounds and float32 draws, preserving equal-bound draws and correcting Corruptor portals from one-or-two attempts to one.
+- Filter generated equipment catalogs by native slot/science intersections, inclusive item levels and rarity flags, selecting affixes from the chosen base item science mask instead of hero class/science.
+- Land ordinary loot from elapsed lob duration at the exact destination with zero movement, retaining flight state for shared pickup validation and rejoin while preserving projectile collision locomotion.
+- Require the imported equipment-enable setting and equipment category mask before NPC or object equipment RNG draws, preserving independent drop categories and explicit developer guarantees.
+- Reject unsupported ordinary equipment rarities before world registration or presentation and on rejoin, preserving inventory and unique reward ground drops through explicit server policies.
+- Preserve native ground-only flight flags for orb, DNA and equipment drops while keeping ordinary catalyst flight flags false.
+- Calculate equipment levels from authored LootPreferences and explicit boss source context instead of granting every fourth mission a boss bonus, preserving unique-rarity and Cash Out chain adjustments.
+- Let same-position loot drops hop vertically with the recovered lob fallback, and serialize adjusted height for upward destinations.
+- Preserve next-stage reward previews when a campaign chain ends, using the separate continuation limit to force Cash Out at terminal stages and the five-planet server cap.
+- Reproduce catalyst level and noun selection with configured campaign minor counts, authored-order float32 draws and cumulative weights, preserving empty-pool draws and no-pickup tails with explicit server pity policy.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Resolve spawned NPC affix modifiers from imported asset names and stored IDs instead of synthesized names, correcting Spiky and persistent-aura bindings while preserving explicit parent/child co-occurrence.
+- Separate NPC perception queries from acquisition, using authored aggro/alert ranges and an owner-centered pet offset derived from level yaw and retained across restore.
+- Show catalog asset and source identities for levels and selected marker sets in map diagnostics while keeping authored layout reference order.
+- Separate ordinary catalyst drops from tutorial attempts, rejecting stages below the minimum before the chance draw and selecting once without a stage clamp or extra guaranteed roll.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Change campaign resurrection capsules from picker-only full-squad restoration to each eligible party member's first fallen slot, using authored recovery fractions and recipient orb effectiveness with party rollback and ally resource publication.
+- Fix catalyst pity from a maximum 1% chance to percentage-point boosts and a guaranteed chance roll after 55 misses, preserving native truncation and explicit zero overrides.
+- Separate NPC loot and XP suppression, retain loot-only resurrection and Doppler clone flags, preserve both Nashira duplicate flags, and allow ordinary summons to reward independently of encounter cleanup.
+- Preserve packaged catalog order when selecting campaign equipment bases, prefixes, and suffixes, appending entries without catalog ordinals after authored entries.
+- Gate campaign equipment drop categories by authored mission-stage minimums instead of account level, unlocking feet at stage 9 and graspers at stage 17 while preserving item-level checks.
+- Select a second prefix for epic campaign equipment with repeated distinct-index draws, retaining duplicate prefixes when the eligible pool contains one entry.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Resolve interactable zero challenge budgets from authored noun definitions instead of ability-specific 500/100 defaults, preserving whole marker overrides and nonzero budgets.
+- Carry authored noun-category IDs into spawn metadata and validate loot creation and rejoin projections against native categories, keeping DNA and equipment payloads explicit.
+- Reject incomplete generated campaign equipment before world pickup or inventory publication, preserving the selected rarity and base item when catalog definitions are missing.
+- Unlock campaign weapon implicit stats from signed item-derived campaign stages and the first authored weapon owner, preserving Arena weapon calculations.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Move equipment winner selection, materialization, and collection from pre-wait selection and 400 ms grants to the 100 ms commit boundary, starting the picker animation immediately and retaining release at 400 ms.
+- Calculate item stat bonuses from positive combined affix attributes instead of including standard slot stats, preserving signed cancellation and float32 addition order.
+- Preserve native item-price float32 boundaries, signed truncation, and integer increment rounding when calculating new prices, retaining invalid-value fallback and overflow saturation.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Import complete marker and noun interactable definitions, preserving ability and emitted-event slots while removing false listener subscriptions.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Preserve authored combatant death-event bindings separately from noun combatant admission, including non-combatant scenery definitions.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Import marker spawn triggers and ordered event listeners from reflected records, preserving geometry, timing, flags, callback slots, hashes and overrides instead of guessing from strings.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Preserve noun pickup triggers and event listeners in content.db, and expose authored resurrection health fractions with a separate missing-property fallback.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Import NPC affix definitions with modifier mappings and parent/child links, and preserve captain-affix difficulty bounds through structural class decoding.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Allow server startup with authored affixes whose eligibility lists are empty, preserving their identity and stats while requiring nonempty category matches during selection.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Validate asset-catalog links from authored entries to packaged resources, allowing uncataloged package assets during content preparation.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Preserve finite authored noun bounds with reversed endpoints in content.db instead of rejecting shipped assets during content preparation.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Fix content preparation when a marker's noun-shaped name differs from its noun reference, keeping adjacent component bindings out of the marker count.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Fix content preparation for marker sets with adjacent component bindings and repeated noun-name references, preventing spurious extra markers.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Fix content preparation for affixes with modifier-grant or ability-improvement arrays by decoding their complete reflected tails.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Import the campaign minor-stage count and recipient sidekicking settings into content.db, exposing validated reward tuning with separate authored values and native defaults.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Fix content preparation for teleporters with custom marker names by reading both authored references before their component data.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Import ordered asset identities, DNA reward properties, affix slot eligibility, and every noun's lifetime and projectile-definition presence into content.db with source provenance.
+- Prefix errors copied from the launcher with the Darkspinner version.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Preserve authored movement tuning, door interaction inputs, generic teleporter definitions and the packaged equipment-drop gate in content.db, retaining absent definitions and settings.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Allow launcher content preparation to retain unresolved noun AI references instead of rejecting shipped nouns whose AI definition is absent.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Expose navigation-obstacle inputs for every noun in content.db, including unnamed resources and nouns without NPC classes, while preserving authored enums and bounds.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Fix launcher content preparation by decoding level roster headers from authored presence fields instead of ambiguous header scanning.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Preserve absent level cameras instead of decoding filename text, and expose authored AI graphs, idle/death hooks, cooldown operands, elite settings, and reward tuning through content.db readers.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Scale orb drop budgets by the authored stage tuning and roll every 100-point attempt, including guaranteed drops, retaining and expiring all emitted pickups.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Import authored NPC aggro modes and gate explicit alerts and added threat, preserving duplicate alerts, first-alert state, and reciprocal attacker tracking.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Align NPC idle and combat movement with authored speeds and movement buffs, and replicate combat state consistently with target acquisition and Arena mode.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Change Corruptor portals from boss-wide batch filling to individual timed spawn attempts with per-portal live counts and authored roster/cap overrides.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Gate enemy orb, catalyst, equipment, and DNA rewards by authored drop-category masks before their individual reward rolls.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Replace portal summons from a fixed ring to eight scatter attempts using a separate native LCG, authored size-class bounds, navigation and collision checks, and origin fallback.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Select Corruptor portal enemies from each phase's authored LevelConfig and the TNX-173 default using stage-eligible uniform random draws instead of inferred rank rosters and cyclic selection, including entries excluded from hordes.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Move mission 1-1 support activation from a 13-second boss admission estimate to the scripted 15-second first-clear or 2-second replay call, retaining the 6-second first-clear unlock.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Compose horde groups from authored minion and special rosters with challenge budgets, stage-dependent special ceilings, section-pool expansion, and a 15-member limit.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Compose budgeted spike groups from section rosters and authored challenge costs, replacing forced captains with mixed minion, special, and conditional agent selection.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Extend native seeded layout selection from mission 1-1 to every loaded map, sharing selected marker sets across NPCs, destructibles, obelisks, and teleporters while preserving empty alternatives.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Remove ordinary spike markers that overlap authored horde-trigger or boss exclusion volumes before campaign group planning.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Import the director's consumed ServerData composition properties and load group-cost scaling from the packaged 0.2 override instead of executable fallback or fixed server constants.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Select first-time campaign enemy rosters from every party member's progress instead of only the requesting player's, falling back to normal composition when no first-time minion qualifies.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Share minion and special roster bags across campaign sections A/B/C, refilling each only after its eligible archetypes have been drawn.
+- Resolve NPC profiles from authored noun and class references instead of shared stat filenames, preserving captain identities and ZelemSpecialThree_3's rank-3 awareness ranges.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Import external planet and science enemy rosters and compose campaign enemies from local-only selection to authored mixed sources, including the stage-25 and stage-49 transitions.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Replace spike group sizing from a fixed 2–6 estimate to challenge-budget composition with repeat-eligible noun draws, float32 group costs, and a 15-member cap.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Import authored normal and first-time enemy rosters for every map with local configuration data, replacing string-scanned pools while preserving stage limits and horde eligibility.
+- Select campaign section buckets from the stage's chapter instead of always using chapter 1, while retaining full-stage enemy roster limits.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Persist HELIX's pending mission introduction in the active session so it can play after hero arrival.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Remove Haster buffs from defeated enemies and prevent delayed buff expiry from deleting a reused modifier.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Stop promoting first-clear 1-1 special-roster enemies to captains with elite stats and affixes; retain elite treatment for authored captain entries.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Fix mission 1-1's black loading screen by retaining every authored marker set during map-layout selection, including obelisks, script-only sets, and empty alternatives.
+
+### 2026-10-01
+
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Align 1-1 destructibles, obelisks, and ordinary enemy placement variants with the client's map seed, replacing independent layout rolls and the forced first-clear health-obelisk position.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Select 1-1's authored horde alternative, including the empty variant, remove boss prerequisites on unselected hordes, and preserve horde and boss-add choices from the run seed across restoration.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Correct mission prepare/start packets from player slots and party masks to campaign stages and map conditions, with a shared map seed preserved through rejoin and checkpoint restore.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Preserve authored creature type, drop-type choices, combat speed, planet-config references, director difficulty tuning, and marker-set conditions in campaign content; use authored combat speed for NPC movement.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Import authored NPC type and noncombat movement speed for campaign enemies, using the speed for mobile idle movement while keeping preplaced dormant enemies stationary.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Replace the fixed 12-unit campaign enemy aggro boundary across all levels with each noun's authored NonPlayerClass range, including bosses and scripted adds, retaining 12 only for missing ranges.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Import authored SectionConfig buckets and use their difficulty-1 archetype counts to give first-run 1-1 sections distinct enemy rosters while retaining the provisional entrance placement.
+- [#43](https://github.com/darkspinnet/darkspin/issues/43) Make first-run opening enemy selection repeatable for every chain mission, with per-level seeds and spawn-point logging for placement checks.
+- [#43](https://github.com/darkspinnet/darkspin/issues/43)  Remove Vex's Time Bubble visual and affected-target modifiers when an aura is stopped by a reset or scheduling failure, using the same client cleanup as normal expiry.
+- [#43](https://github.com/darkspinnet/darkspin/issues/43) Restore Vex's Time Lapse from a single-target melee hit to a nearby area attack that repeats each enemy's last 10 seconds of damage up to its Dexterity-scaled cap, with the authored hit effects.
+- [#43](https://github.com/darkspinnet/darkspin/issues/43) Recheck melee reach at impact for Protonic Sword and other melee basics, preventing damage to targets that have moved out of reach and using the hero's current position for cleave selection.
+- [#43](https://github.com/darkspinnet/darkspin/issues/43) Restore Rocket Barrage's cast-duration bar and animation cleanup, allow cancellation throughout the cast, and stop further launches without discarding rockets already in flight.
+- [#43](https://github.com/darkspinnet/darkspin/issues/43) Restore SRS-42's rocket proximity homing without a stationary prerequisite and apply the authored 3-meter explosion radius, including area-radius bonuses, instead of single-target damage.
+- [#43](https://github.com/darkspinnet/darkspin/issues/43) Keep Rooted heroes at their authoritative position, stop existing pursuit, and block attack pursuit, distant trap placement, and following until the root expires while preserving attacks already in range.
+- [#43](https://github.com/darkspinnet/darkspin/issues/43) Send Chrono Blink's Frozen state to enemies and projectiles so their client animations and flight pause until the freeze expires, preserving overlapping freeze durations.
+- [#43](https://github.com/darkspinnet/darkspin/issues/43) Move SRS-42's Targeting Computer radar from invalid attachment slot 31 to an allocated client-supported slot, allowing movement and hero switching to remove it without stacking scans.
+- [#43](https://github.com/darkspinnet/darkspin/issues/43) Preserve ranged attack animation recovery when held fire is released, preventing a following movement command from clearing the current attack's release timer.
+- [#43](https://github.com/darkspinnet/darkspin/issues/43) Remove Death's Embrace's duplicate, untracked Terrified visual so its status modifier alone controls cleanup on expiry and enemy death.
+- [#43](https://github.com/darkspinnet/darkspin/issues/43) Enable the client notification flag required to play HELIX's blue-obelisk access and mission-introduction voice cues; keep health obelisks and silent objective updates excluded.
+-[#42](https://github.com/darkspinnet/darkspin/issues/42) Defer HELIX's mission introduction until dungeon setup commits and hero arrival finishes, instead of sending it in the first gameplay frame; log delivery for playback diagnosis.
+- Run launcher self-updates first through the Patch button and Auto Patch; startup only checks availability, and an update restarts the launcher before game patching begins.
+- [#41](https://github.com/darkspinnet/darkspin/issues/41) Restore authored targetable destructibles across missions 1-1 through 6-4 with matching scenery layouts and shared destruction state.
+- [#42](https://github.com/darkspinnet/darkspin/issues/42) Move mission 1-1's first-clear population from synthetic formations to authored spawn candidates and roster pools, including horde and boss adds; preserve marker sections and weighted alternatives, restore its first standing repair mob and nearby elite group, and replace the speculative on-screen Haster beam-in with standing section population.
+- [#37](https://github.com/darkspinnet/darkspin/issues/37) Update content verification from 2,288 to all 2,408 shipped loot definitions, including the 120 restored weapons.
+- [#37](https://github.com/darkspinnet/darkspin/issues/37) Allow shipped loot definitions with empty level ranges such as 999..100 through content parsing and database storage, rebuild older content schemas, and exclude these items from generated drops and nearest-level fallback.
+- [#40](https://github.com/darkspinnet/darkspin/issues/40) Expand hordes from Outer Rings onward to three independently spawned waves with a final Mutation Agent that promotes nearby enemies to elites; close authored arena gates, publish horde state through completion and reconnect, and move HELIX's Zelem reinfection cue to mission 2-3.
+- [#38](https://github.com/darkspinnet/darkspin/issues/38) Give Dimensionist shields the Gravitic Stabilizer's hero status and projectile slowing behavior for every nearby player, using each shield's own radius and lifetime.
+- [#38](https://github.com/darkspinnet/darkspin/issues/38) Make Frigid Caverns' Toxic Fungus attackable with its authored 5 HP and death graphics, poison-stalk explosion, and a short-lived cloud that poisons heroes on contact.
+- [#38](https://github.com/darkspinnet/darkspin/issues/38) Correct Cryos geyser particle packets, repeat bursts every ten seconds, and apply damage and lingering burns even when heroes stand still.
+- [#38](https://github.com/darkspinnet/darkspin/issues/38) Allow Overdrive to recharge whenever its meter is below full, double kill energy gains, and award at least four energy per kill before equipment bonuses.
+- [#38](https://github.com/darkspinnet/darkspin/issues/38) Honor squad changes when continuing between missions, retain each player's selection through party voting, and initialize the new squad's own health and energy limits.
+- [#38](https://github.com/darkspinnet/darkspin/issues/38) Balance Chaos Fields' planned small-enemy population across Strafing Drakon, Chrono Striker, and Blasting Fiend in equal shares while preserving spawn locations and total population.
+- [#38](https://github.com/darkspinnet/darkspin/issues/38) Balance Outer Rings' planned small-enemy population across Pincering Carapace, Sting Raider, and Robo-Bomber in equal shares while preserving spawn locations and total population.
+- [#38](https://github.com/darkspinnet/darkspin/issues/38) Restrict Gravitic Regulator and Gravitic Stabilizer loot to a 75% DNA chance and a separate 10% health-or-energy chance, and allow catalyst drops from totems only among destructibles.
+- [#38](https://github.com/darkspinnet/darkspin/issues/38) Make Pincering Carapace use its basic bite before charging its knockback and between charge cycles, preventing long pursuits from skipping its simpler attack.
+- [#37](https://github.com/darkspinnet/darkspin/issues/37) Restore 120 missing weapon definitions across Zrin, Goliath, and ten other hero families, fixing missing drops and incorrect Utility Slot metadata, and restrict hero weapon drops to their authored family instead of cross-family substitutes.
+- [#38](https://github.com/darkspinnet/darkspin/issues/38) Finish enemy knockback reactions on heroes with the native landing/outro transition instead of leaving the airborne animation looping, including for multiplayer allies.
+- [#38](https://github.com/darkspinnet/darkspin/issues/38) Restore Gravitic Stabilizer shield status presentation on heroes and clear it when they leave the field or the stabilizer is destroyed.
+- [#38](https://github.com/darkspinnet/darkspin/issues/38) Expand Gravitic Stabilizer combat bounds from the small fallback footprint to its authored body and corners, and retain its destroyed model and collision after death and reconnect.
+- [#38](https://github.com/darkspinnet/darkspin/issues/38) Slow hero projectiles inside Gravitic Stabilizer shields, including bursts, thrown shots, cloud lobs, and companion shots, while delaying impact damage and starting ground effects on arrival.
+
+### 2026-09-30
+
+- Let melee swings finish as misses when their target dies before impact, preserving the attack release instead of aborting the animation schedule.
+- Fix enemy projectiles subtracting damage twice from client world health, preventing false hero-death cues while the server and squad HUD still show surviving health.
+- Apply Decelerator's attack-speed debuff to authoritative hero attack timing and restore normal timing when the modifier is removed.
+- Fix Titan's Proximity Mine walking into range without placing the mine, retain the selected ground destination, and stop movement before playing its authored placement animation.
+- Make Toxicactus destructible across Verdanth by replacing scenery-only instances with damageable objects using its authored health and targetability.
+- Keep PvP available from level 1 with the first Arena squad automatically unlocked.
+- Retire health-drain channels before restarting enemy attacks and prevent stale channel callbacks from interrupting or restarting a newer attack.
+- Restore clickable resurrection capsules with their native pickup animation and timing, including after reconnecting, and share capsule removal and revived squad health with allies.
+- Fix Shade Drifter charges stopping at the hero by sending their authored destination beyond the target and preserving the charge animation and travel direction.
+- Restore Botanical Tunneler's underground digging animation and moving earth effect, clearing the effect on emergence or cancellation without changing its attack timing or damage.
+- Restore large and small Ancient Totems across Verdanth at their authored placements and sizes, play their destruction effect and sound, and restrict their loot to catalysts with a 75% base drop chance.
+- Fix mission 3-2 Frigid Caverns hanging on a black loading screen by loading its three authored cave scenery sets before mission initialization.
+- Change Ray Killer's single-target lightning shot to a seven-bolt forward fan with muzzle effects, and fix retreating from damage or nearby heroes before resuming ranged attacks, including captain variants.
+- Keep Reconstruct's channel bar visible for its default three-second healing window, independent of cooldown reduction, and stop healing and effects when the button is released or movement interrupts it.
+- Restore authored Gravitic Regulators and destructible Gravitic Stabilizers in Outer Ring and Chaos Fields, including stabilizer shields that slow heroes by 40% within 12.5 units and clear on exit or destruction.
+- Increase Destructor rewards from one equipment item to six arranged around the fallen boss, with 60% rare and 15% epic odds per item.
+- Resume idle Destructor combat automatically while a living target remains and restart Arcturus correctly after an interrupted Twin Laser.
+- Hold Destructors in place during their entrance cinematics, restore Arcturus and Corruptor entrance animations, and keep entrance timing independent of the selected attack.
+- Make Arachno Striker's homing projectiles track moving heroes when resolving hits so movement alone no longer prevents terror.
+- Make terrified heroes automatically panic-walk around where fear began and stop when fear expires or is removed.
+
+### 2026-09-29
+
+- Make Swarming Herbipods engage from a shorter range and let Homing Swarm projectiles miss moving heroes and expire promptly.
+- Attach SRS-42's Targeting Computer effect to the hero and remove it immediately when movement or hero switching begins.
+- Require an explicit pickup interaction to consume resurrection capsules, leaving them available when no squad hero is defeated.
+- Restore the hero portrait cooldown wipe after switching and keep held right-click attacks aimed at the latest cursor target without interrupting the active strike.
+- Stop ordinary enemy pursuit locomotion at its collision-safe attack goal so enemies do not physically shove heroes while approaching.
+- Simplify launcher bug reports to a title-only form used for the diagnostic ZIP name, with full issue details entered on GitHub.
+- Let Space Barracudas teleport again after each ranged shot instead of remaining at their first blink destination.
+- Remove Zrin's Pain Hounds at the end of their lifetime for every player in the mission.
+- Recover hero saves containing stale client inventory rows while retaining only equipped parts the account owns.
+- Restore Nightmare Vine root damage and Nocturna supernatural plants' authored spectral death presentation, and prevent their terror effect from crashing scheduled combat.
+- Correct the completed and next mission names shown by the campaign reward vote.
+- Restore Verdanth's destructible ancient stone totems with their destroyed model and a high catalyst drop chance.
+- Keep Rezzers engaged by pursuing into Ghostly Bolt range when no resurrection target is available.
+- Allow Nocturna missions with fixture-only smart-object sets to finish loading instead of disconnecting at a black screen when their scenery composition contains only deletions.
+- Keep each in-mission equipment reward visually distinct in Recently Acquired while reserving its permanent inventory identity until mission completion.
+- Restore Invincitron's hover-drone flight animation by driving its orbit through moving locomotion goals instead of repeated stop-position snaps.
+- Select mission equipment for the deployed squad and rotate weapon rewards across its heroes before repeating one, preventing an unlocked hero's weapon family from dominating drops.
+
+### 2026-09-28
+
+- Restore Nocturna's destructive plants and Nightmare Vines as attackable fixtures across missions 1-3 and 1-4, including vine collapse effects, damaging live roots, dead-root transitions, and nearby enemy terror on destruction.
+- Start Nashira's boss state and music with her reveal and camera focus instead of waiting for her entrance sequence to finish.
+- Keep hero-switch landing knockback working in tight terrain by falling back to shorter reachable push distances.
+- Make Vampiric Leapers hop toward nearby heroes and deal their landing damage instead of repeatedly jumping in place without hitting.
+- Restore missing tree scenery in Nocturna mission 5-2 by composing all three authored smart-object sets.
+- Stop Sync Snapshot from treating the Field Medic drone's normal client-authored orbit as a client/server position divergence.
+- Restore in-mission equipment dropping by resolving temporary client identities against collected mission loot and returning the item to the ground.
+- Show the generated equipment's correct visual when it is picked up by using the native recipient field and keeping transient ground loot out of the client's persistent item identity cache.
+- Restore authored Nightmare Vine fixtures and their matching destructible roots throughout Nocturna, including mission 5-2.
+- Restore the missing exterior roots, trees, and other authored smart-object scenery in Nocturna mission 5-1.
+- Allow mission 1-4 to finish loading by including all authored Nocturna obelisk and smart-object scenery sets in campaign setup.
+- Restore SRS-42's Targeting Computer scanner presentation and scanning sound when becoming stationary, and let its damage bonus build each second up to five stacks at 5% normally or 12% during Overdrive until movement resumes.
+- Change Thornado's green tornado from one effect on every struck enemy to one caster-centered effect that also plays when no enemies are nearby.
+- Restore HELIX's authored map introduction and portrait for every squad on campaign mission entry, plus the authored return-to-planet narration at the corresponding first-pass campaign transitions.
+- Keep the mission-entry landing animation synchronized with its sound and ground shake even when zone initialization or setup preparation takes longer than usual.
+- Play HELIX's authored obelisk-access line immediately after each successful blue loot-obelisk activation while keeping green health and energy obelisks silent.
+- Keep catalysts locked while entering mission 1-3, then enable their drops, pickups, inventory controls, and bonuses when the scripted catalyst unlock occurs.
+- Keep weapons in campaign loot rotation for heroes without a dedicated packaged weapon family by selecting the closest authored family, preferring matching class and science.
+- Preserve each equipped item's identity and ownership fields in hero profile responses so weapons remain visible, retain their correct equipment slot, and submit valid inventory IDs when the hero is saved.
+
+### 2026-09-27
+
+- Recharge spent Overdrive from enemy kills, apply equipped and catalyst Overdrive Recharge bonuses, extend active Overdrive from kills, and preserve the meter across reconnects.
+- Resume a targeted but idle enemy's action loop when directly attacked so Polaris engages instead of remaining passive.
+- Restore the three starting Detail slots, preserve the four-through-six-slot upgrades, and reject hero saves that exceed the unlocked Detail limit.
+- Alert an enemy and its immediately adjacent group when a ranged basic attack targets it, even when the group has not entered its normal awareness range.
+- Restore Tree of Life's authored lifetime so its healing explosion and disappearance play at expiry and the ability becomes available again.
+- Restore Voltroid discharge visuals by sending their authored zap as a one-shot source-to-target beam instead of a persistent attached effect.
+- Save campaign squad edits when build 103 submits an all-zero placeholder for an Arena squad that does not exist yet, while retaining explicit clearing for an existing Arena squad.
+- Accept build 103's namespaced inventory part identifiers when creating item details so owned equipment resolves to its stored part.
+- Keep Citadel Special Two's close-range melee pursuit active instead of restarting its locomotion on every server poll.
+
+### 2026-09-26
+
+- Add a compact credits dialog to the Dark Spin launcher wordmark with a Darkspin website link, the project model note, and callouts
+- Stop automatic Sync Snapshot capture from treating normal hero movement toward the server-issued goal as position divergence, and suppress repeat archives for an already captured object incident in the same session.
+- Add a private `/taunt` reply explaining that taunt animations were introduced in a newer Darkspore build than Darkspin supports, and correct its command-help listing.
+- Restore mission mouse-wheel zoom from a fixed distance to the native minimum through the mission's default distance, retaining the selected zoom while moving and switching heroes.
+- Restore Sage's Enrage self-cast animation and buff metadata, use the ally-cast animation for companions, and cap regeneration at the recipient's maximum health.
+- Change boss music to normal horde combat music when the boss dies by clearing the active boss flags immediately, while preserving encounter completion and Beam Out timing.
+- Keep Wraith's Lifeforce Siphon channel bar active for its six-second drain window and preserve release-to-stop input, separating channel timing from cooldown reduction and the end animation.
+- Populate ordinary enemies before mission exploration without arrival effects, and reserve the generic beam-in animation and spawn sound for campaign and tutorial horde waves.
+- Restore continuous basic attacks while the right mouse button is held by removing a diagnostic input reset that incorrectly treated a released left mouse button as the end of the attack hold.
+- Change Sage's Tree of Life from five repeated growth stages and a six-second lifetime to one full-growth effect and an eight-minute lifetime, playing its disappearance effect only at expiry and retaining the tree after a hero falls.
+- Hold mission equipment pickups until successful completion, forfeiting them on abort or squad defeat and preventing reconnects or checkpoint restoration from recovering lost loot.
+- Change Space Barracudas from overlapping teleport loops to one opening blink followed by ranged attacks, choosing reachable landings around the target with a preference for its rear.
+
+- Correct enemy damage scaling from stat plus 1 to the authored stat minus 8, reducing inflated early-campaign hits while preserving hero damage.
+- Preserve separate current and maximum health and energy through reconnects, checkpoint restoration, and party snapshots so recovered bars do not exceed 100% and keep flashing.
+- Make sphere teleporters transfer heroes immediately once their collision footprint fits inside, and keep each gate inactive while enemies remain within roughly three Blitz collision lengths.
+- Keep destroyed Gravitic Regulator bases visible and solid for the mission, including after reconnects and checkpoint restoration.
+- Gate catalyst drops, pickups, and use behind campaign unlock progression and reduce obelisk catalyst drops from a 75% base chance to 5% while retaining equipment rewards.
+- Move Ride the Lightning's teleport and arrival animation from immediate movement and late recovery to the authored impact time, and allow cursor-directed teleports to walkable ground without an enemy target or walking path.
+- Restore mission spawning and hero switching from the short teleporter animation to the authored beam-in landing sequence, with matching effects and sound cues, consistent timing, and a brief input lock through landing.
+- Save campaign squad edits when the unused Arena deck field is blank instead of rejecting the complete deck update and restoring Blitz, Sage, and Wraith.
+
+### 2026-09-25
+
+- Show positive fractional hits as at least 1 damage in combat text for normal and critical hits while preserving their actual health reduction.
+- Remove Elite and authored affix modifiers after an enemy's death state so their hand and status effects do not remain on the corpse.
+- Preserve Sync Snapshot movement incidents at detection time across capture cooldowns, retain timestamped client/server movement history, detect persistent small offsets, and distinguish the triggering object's divergence from unrelated findings.
+- Show killing blows at their full resolved damage instead of the enemy's remaining health, preventing fractional-health kills from displaying a zero-damage critical hit.
+- Upgrade Sync Snapshot captures with retained incidents, connection-scoped analysis, explicit client object mappings, paired trigger and aftermath keyframes, gameplay decision history, transport and worker backlog state, broader drift detection, and completeness-limited confidence.
+- Add `/stat` diagnostics that compare authoritative current-hero health and power against Fang's latest client-received resource values, including object identity and deltas for spotting desyncs.
+- Extend campaign loot protection across solo and multiplayer with party winner rotation, shared equipment and catalyst dry-streak relief, catalyst type and rarity rotation, and durable per-account limited-edition boss pity that cycles compatible bases.
+- Apply category rotation and rarity pity to multiplayer equipment when the roll winner receives it, using that player's activated heroes for compatible weapons while retaining one party-neutral mob-drop opportunity.
+- Count only unequipped owned items against inventory capacity, matching the Arsenal counter so equipped hero gear no longer prevents loot pickup.
+- Give Shade Drifters the authored transparent ghostform shader already used by Ghostly Trackers, including every difficulty and captain variant.
+- Let Charging Grendels pursue into headbutt range without cancelling their melee sub-action and restarting it every recovery cycle.
+- Restore mission 4-3's authored Cryos geysers with staggered warning and eruption cycles, damaging heroes caught over an erupting lava crack.
+- Clip Ghostly Tracker charges against their actual through-hero travel segment, preventing distant navigation geometry from cancelling or prematurely shortening the charge.
+- Preserve Lightning Juggernaut death-detonation damage across its distance falloff instead of rejecting fractional falloff results at the integer damage-selection boundary.
+- Compose Nocturna tree variants per placement, deduplicating Nightmare Vines with their root clusters while preserving normal trees where most authored layouts use one.
+- Restore Lightning Juggernauts to their normal movement speed after completing a charge instead of leaving the temporary charge-speed state active.
+- Compose mission 1-4's smart-object scenery as a deduplicated union, restoring missing roots and environmental models without overlapping repeated markers.
+- Aim Phantom Charge at Arakna's cursor instead of tracking a selected enemy, damage and silence every enemy crossed, then remove its shader and release the charging pose.
+- Restore Arakna's five orbiting trapped-soul slots, fill them as Soul Ravager gains kill stacks, and empty them when Phantom Burst spends those souls.
+- Resolve Phantom Burst hits along each radial projectile's full path and play its authored impact effect when a projectile reaches open ground, while retaining the six-to-twelve-shot soul scaling and four-hit-per-enemy cap.
+- Aim Entangling Rush at Arborus's cursor position while preserving direct-hit damage and the authored area root when enemies occupy the destination.
+- Choose requested `/drop` equipment categories uniformly from squad heroes with an eligible base item, preventing valid hero weapons from being crowded out by incompatible rolls.
+- Keep Voltroid Charge Friend pursuit locked to its selected ally until arrival, preventing paired Voltroids from repeatedly exchanging client locomotion positions.
+- Remove Meditron's Sentry Drone during the outgoing hero's departure instead of the next hero's arrival, preventing orphaned drone visuals from accumulating across squad switches.
+- Preserve committed enemy spawn packets when an optional companion attack cannot start, preventing active enemies from becoming invisible, and allow presentation-suppressed projectiles to use their authored zero release delay.
+- Keep Reconstruct's looping target presentation owned by its removable attached effect instead of recreating untracked visual and audio loops on every healing tick.
+- Stop Pouncing Stalkers' spent self-resurrection ring from being recreated as an untracked effect, so it disappears after defeat.
+- Restore Pouncing Stalkers' health, collision, and targetability in a stable order before playing their resurrection animation, while invalidating unfinished pre-death attacks.
+- Interrupt Laser Tank attacks and remove their active beams immediately when the enemy is knocked back.
+- Keep mission 4-1's Obelisk and smart-object scenery on the same authored layout, removing structures from conflicting variants that have no matching navigation collision.
+- Normalize restored squad resources against each hero's current maxima so an over-cap reserve hero cannot block health-capsule pickups and movement.
+- Damage heroes who walk through mission 4-1's molten-metal pool, including each independently controlled multiplayer hero.
+- Add solo campaign loot bags that raise equipment chances after mob dry streaks, progressively weight overdue higher rarities, and rotate successful drops through compatible categories without replacement while leaving multiplayer and developer drops unchanged.
+- Restrict generated weapon loot to the selected hero's authored family, preventing heroes that share a class and genesis type from receiving each other's weapon versions.
+- Deliver Cryos lava contact damage presentation packets to the moving player and nearby peers instead of losing them to a shadowed response collection.
+- Present unassigned squad records as campaign squads so newly unlocked squad slots resolve correctly instead of showing `undefined` and crashing the Arsenal.
+- Match Sync Snapshot client receives across the complete shared emission window while excluding capture-edge traffic and RakNet heartbeats, so aligned-clock skew no longer reports delivered payloads as missing.
+- Let Voltroids attack players between ally-recharge attempts, and immediately when no eligible ally is nearby, instead of repeatedly waiting on support behavior.
+- Let Sinkhole enemies finish their gravity-well recovery animation before starting another attack.
+- Give developer-spawned Mutation Agents a visible level-appropriate body and their authored passive effect instead of an invisible generic melee fallback.
+- Remove chance-based Mutation Agents from natural campaign populations while retaining explicit developer spawning.
+
+### 2026-09-24
+
+- Play Orcus's authored melee animation when his basic attack deals damage.
+- Make each Protoplasm apply its growth stacks to itself so its size, health, and damage visibly increase over time.
+- Detach Grappling Pulsar's pull beam from its target when the effect expires or the casting enemy dies.
+- Restore mission 3-2's authored lava-crack cave layout and apply contact damage when heroes move onto an active crack.
+- Apply the Dimensionist Slow Shield debuff while its targeted hero is inside the moving time bubble, including authoritative movement-speed reduction.
+- Aim Zetawatt Beam damage at its authored cursor position and ignore navigation-height offsets when checking enemies along the beam.
+- Accept the build-103 `/taunt` action and play its shared hero taunt animation for the local player and multiplayer allies.
+- Choose mission equipment loot by available slot before selecting a compatible base item, giving weapons the same category chance as other equipment.
+- Give captain Elite and authored affix modifiers a valid lifecycle start time so the client retains and displays their buffs.
+- Keep empty PvP squads unavailable until the player assigns a hero, preventing the client from crashing when the second squad is selected in the Arsenal.
+- Keep mission 1-1 security portals visually dormant while enemies prevent their use, including when a new encounter spawns beside a portal.
+- Keep NPC positions synchronized during direct pursuit fallback so enemies remain damageable when an authored navigation route cannot be projected.
+- Let melee basic attacks pursue enemies near authored navigation edges instead of repeatedly rejecting the attack when the enemy position falls outside the normal movement projection range.
+- Reconcile an idle returning enemy from the player's clicked position when the client omits its target position, preventing the enemy from snapping toward a stale origin and becoming unhittable.
+- Apply Orcus's disease breath and ground-slam pulses through their active attack generation so their damage, disease status, and ground-slam thorn-spike effects are no longer discarded after the cast animation.
+- Restore Orcus's Consume sequence so he eats nearby summoned minions with the authored animation, removes them from the encounter, and heals for each one consumed.
+- Add cross-platform `-headless` Darkspinner presentation that opens the launcher in the default browser, serves it securely from `/launcher/` on the configured game port, and hands that listener from startup progress to the shared HTTP/Blaze server without requiring a Wails window.
+- Add a `-headless`-only system tray menu for reopening the browser launcher or shutting down Darkspinner cleanly.
+
+### 2026-09-23
+
+- Register `/drop` with Fang's chat-command transport so `/drop create` reaches the server instead of being rejected by the native client.
+- Disable experimental borderless fullscreen by default, expose it only as a development-build opt-in, and initialize new client profiles in windowed mode without overwriting existing display preferences.
+- Disable WebKitGTK's DMA-BUF renderer by default in Wayland sessions to prevent the Linux launcher from exiting with a display protocol error while preserving explicit environment overrides.
+
 ### 2026-09-22
 
 - Disable Shade Drifter collision during its charge so it can complete the authored pass-through movement, then restore collision afterward.

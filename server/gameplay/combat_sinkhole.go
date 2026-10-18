@@ -14,8 +14,10 @@ import (
 )
 
 const (
-	scaldronSinkholeActiveDuration = 8 * time.Second
-	scaldronSinkholePulseDuration  = 500 * time.Millisecond
+	// Ability chunk 579 waits until cast time 8s to remove the well; modifier
+	// chunk 17 waits 1s after its creation at the 1s hit point before stabilizing.
+	scaldronSinkholeActiveDuration = 6 * time.Second
+	scaldronSinkholePulseDuration  = 50 * time.Millisecond
 )
 
 type campaignScaldronSinkholePulse struct {
@@ -34,9 +36,7 @@ type campaignScaldronSinkholePulse struct {
 func (e campaignScaldronSinkholePulse) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := isFound && peerSession.isCampaignNPCActionActiveAt(
-		e.generation, e.objectID, e.runtime.now(),
-	)
+	isCurrent := isFound && peerSession.isCampaignNPCSourceActive(e.generation, e.objectID)
 	if !isCurrent {
 		if isFound && peerSession.zone != nil && peerSession.zone.NPCs() != nil {
 			peerSession.zone.NPCs().ClearDamageReduction(
@@ -52,6 +52,12 @@ func (e campaignScaldronSinkholePulse) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	if e.isFirst {
+		if peerSession.campaignNPCSinkholeFields == nil {
+			peerSession.campaignNPCSinkholeFields = make(map[uint32]sinkholeField)
+		}
+		peerSession.campaignNPCSinkholeFields[e.objectID] = sinkholeField{
+			expiresAt: e.reductionExpiresAt, radius: e.profile.Radius, strength: e.profile.ForcedMovementSpeed,
+		}
 		err := peerSession.zone.NPCs().ApplyDamageReduction(
 			e.objectID, e.profile.SelfDamageReduction, e.reductionExpiresAt,
 		)
@@ -62,6 +68,12 @@ func (e campaignScaldronSinkholePulse) produce() ([][]byte, error) {
 	}
 	packets := make([][]byte, 0)
 	if e.isFirst && e.isEffectAllocated {
+		removePacket, err := npcraknet.ForcedMovementEffect(e.objectID, e.effectSlot, "", true)
+		if err != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("sinkholeStartupRemove: %w", err)
+		}
+		packets = append(packets, removePacket)
 		stablePacket, err := npcraknet.ForcedMovementEffect(
 			e.objectID, e.effectSlot,
 			"spacetime_ScaldronBasicSinkhole_well_stable.ServerEventDef",
@@ -74,48 +86,39 @@ func (e campaignScaldronSinkholePulse) produce() ([][]byte, error) {
 		packets = append(packets, stablePacket)
 	}
 	now := e.runtime.now()
-	for projectileObjectID, run := range peerSession.campaignNPCProjectiles {
-		snapshot := run.Snapshot(now)
-		if !snapshot.IsActive || zonegeometry.Distance(
-			source.Plan.Position,
-			game.Vec3{X: snapshot.Position.X, Y: snapshot.Position.Y, Z: snapshot.Position.Z},
-		) > e.profile.Radius {
+	seenProjectiles := make(map[uint32]struct{})
+	for _, member := range e.runtime.registry.sessions {
+		if member.zone != peerSession.zone {
 			continue
 		}
-		gravityPackets, err := run.ApplyGravity(
-			now,
-			sim.Position{
-				X: source.Plan.Position.X, Y: source.Plan.Position.Y,
-				Z: source.Plan.Position.Z,
-			},
-			e.profile.ProjectileGravity, scaldronSinkholePulseDuration,
-		)
-		if err != nil {
-			e.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf(
-				"sinkholeProjectileGravity[%d]: %w", projectileObjectID, err,
+		for projectileObjectID, run := range member.campaignNPCProjectiles {
+			if _, isSeen := seenProjectiles[projectileObjectID]; isSeen {
+				continue
+			}
+			seenProjectiles[projectileObjectID] = struct{}{}
+			snapshot := run.Snapshot(now)
+			if !snapshot.IsActive || zonegeometry.Distance(
+				source.Plan.Position,
+				game.Vec3{X: snapshot.Position.X, Y: snapshot.Position.Y, Z: snapshot.Position.Z},
+			) > e.profile.Radius {
+				continue
+			}
+			gravityPackets, err := run.ApplyGravity(
+				now,
+				sim.Position{
+					X: source.Plan.Position.X, Y: source.Plan.Position.Y,
+					Z: source.Plan.Position.Z,
+				},
+				e.profile.ProjectileGravity, scaldronSinkholePulseDuration,
 			)
+			if err != nil {
+				e.runtime.registry.mutex.Unlock()
+				return nil, fmt.Errorf(
+					"sinkholeProjectileGravity[%d]: %w", projectileObjectID, err,
+				)
+			}
+			packets = append(packets, gravityPackets...)
 		}
-		packets = append(packets, gravityPackets...)
-	}
-	for _, target := range peerSession.zone.LiveNPCTargets() {
-		if zonegeometry.Distance(source.Plan.Position, target.Position) >
-			e.profile.Radius+target.FootprintRadius {
-			continue
-		}
-		plan := zonenpc.AttackPlan{
-			SourceObjectID: e.objectID, TargetObjectID: target.ObjectID,
-			SourcePosition: source.Plan.Position, TargetPosition: target.Position,
-			Profile: e.profile,
-		}
-		movementPackets, err := e.runtime.applyEnemyForcedMovement(
-			&peerSession, plan, target, e.timestamp,
-		)
-		if err != nil {
-			e.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf("sinkholePull: %w", err)
-		}
-		packets = append(packets, movementPackets...)
 	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
@@ -149,36 +152,13 @@ func (e campaignScaldronSinkholeFizzle) produce() ([][]byte, error) {
 	}
 	peerSession.zone.NPCs().ClearDamageReduction(e.objectID, e.reductionExpiresAt)
 	source, isSourceFound := peerSession.zone.NPCs().NPC(e.objectID)
-	ownedEffectSlot, isEffectTracked :=
-		peerSession.campaignNPCSinkholeEffectSlots[e.objectID]
-	isEffectOwned := e.isEffectAllocated && isEffectTracked &&
-		ownedEffectSlot == e.effectSlot
-	if isEffectOwned {
-		delete(peerSession.campaignNPCSinkholeEffectSlots, e.objectID)
-	}
-	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
-	packets := make([][]byte, 0, 2)
-	if isEffectOwned {
-		removePacket, err := npcraknet.ForcedMovementEffect(
-			e.objectID, e.effectSlot, "", true,
-		)
-		if err != nil {
-			if e.runtime.effectPool != nil {
-				isEffectReleased := e.runtime.effectPool.Release(e.objectID, e.effectSlot)
-				if !isEffectReleased {
-					// The slot was concurrently reclaimed with the failed cleanup.
-				}
-			}
-			return nil, fmt.Errorf("sinkholeStableRemove: %w", err)
-		}
-		if e.runtime.effectPool != nil {
-			isEffectReleased := e.runtime.effectPool.Release(e.objectID, e.effectSlot)
-			if !isEffectReleased {
-				// Presentation cleanup remains required after ownership was reclaimed.
-			}
-		}
-		packets = append(packets, removePacket)
+	cleanup := campaignDamageRuntime{
+		registry: e.runtime.registry, npc: e.runtime, effectPool: e.runtime.effectPool,
+	}
+	packets, err := cleanup.stopSinkholeFields(e.sessionKey, e.generation, e.objectID)
+	if err != nil {
+		return nil, fmt.Errorf("sinkholeExpiry: %w", err)
 	}
 	if !isSourceFound || source.IsDefeated {
 		return packets, nil
@@ -203,6 +183,17 @@ type campaignScaldronSinkholeEnd struct {
 	profile    zonenpc.ActionProfile
 }
 
+func (e campaignScaldronSinkholeEnd) next() ([][]byte, error) {
+	packets, err := e.runtime.produceZelemShot(
+		e.packet, e.sessionKey, e.generation, e.objectID, e.timestamp,
+	)
+	if err != nil {
+		e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
+		return nil, fmt.Errorf("sinkholeNext: %w", err)
+	}
+	return packets, nil
+}
+
 func (e campaignScaldronSinkholeEnd) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.RLock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
@@ -220,14 +211,15 @@ func (e campaignScaldronSinkholeEnd) produce() ([][]byte, error) {
 		e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
 		return nil, fmt.Errorf("sinkholeEndAnimation: %w", err)
 	}
-	nextPackets, err := e.runtime.produceZelemShot(
-		e.packet, e.sessionKey, e.generation, e.objectID, e.timestamp,
-	)
+	e.timestamp += uint64(e.profile.EndAnimationDelay / time.Millisecond)
+	_, err = scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
+		Delay: e.profile.EndAnimationDelay, Produce: e.next,
+	}})
 	if err != nil {
 		e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
-		return nil, fmt.Errorf("sinkholeNext: %w", err)
+		return nil, fmt.Errorf("sinkholeRecoverySchedule: %w", err)
 	}
-	return append([][]byte{animationPacket}, nextPackets...), nil
+	return [][]byte{animationPacket}, nil
 }
 
 func (r campaignNPCActionRuntime) produceScaldronBasicSinkhole(
@@ -292,27 +284,18 @@ func (r campaignNPCActionRuntime) produceScaldronBasicSinkhole(
 		r.releaseAction(sessionKey, generation, objectID)
 		return nil, false, fmt.Errorf("sinkholeStart: %w", err)
 	}
-	startupPacket, err := npcraknet.PositionedEffect(
-		"spacetime_ScaldronBasicSinkhole_well_startup.ServerEventDef",
-		plan.SourcePosition,
-	)
-	if err != nil {
-		if isEffectAllocated && r.effectPool != nil {
-			isEffectReleased := r.effectPool.Release(objectID, effectSlot)
-			if !isEffectReleased {
-				// The slot was concurrently reclaimed with the failed action.
-			}
-		}
-		r.releaseAction(sessionKey, generation, objectID)
-		return nil, false, fmt.Errorf("sinkholeStartupEffect: %w", err)
-	}
 	reductionExpiresAt := r.now().Add(
-		profile.HitDelay + scaldronSinkholeActiveDuration,
+		profile.HitDelay + time.Second + scaldronSinkholeActiveDuration,
 	)
-	producers := make([]raknet.ScheduledPacketProducer, 0, 18)
+	producers := make([]raknet.ScheduledPacketProducer, 0, 123)
+	startup := campaignScaldronSinkholePulse{
+		runtime: r, sessionKey: sessionKey, generation: generation,
+		objectID: objectID, effectSlot: effectSlot, isEffectAllocated: isEffectAllocated,
+	}
+	producers = append(producers, raknet.ScheduledPacketProducer{Delay: profile.HitDelay, Produce: startup.startup})
 	pulseCount := int(scaldronSinkholeActiveDuration / scaldronSinkholePulseDuration)
 	for pulseIndex := 0; pulseIndex < pulseCount; pulseIndex++ {
-		delay := profile.HitDelay +
+		delay := profile.HitDelay + time.Second +
 			time.Duration(pulseIndex)*scaldronSinkholePulseDuration
 		pulse := campaignScaldronSinkholePulse{
 			runtime: r, sessionKey: sessionKey, generation: generation,
@@ -331,17 +314,17 @@ func (r campaignNPCActionRuntime) produceScaldronBasicSinkhole(
 		effectSlot: effectSlot, isEffectAllocated: isEffectAllocated,
 	}
 	producers = append(producers, raknet.ScheduledPacketProducer{
-		Delay:   profile.HitDelay + scaldronSinkholeActiveDuration,
+		Delay:   profile.HitDelay + time.Second + scaldronSinkholeActiveDuration,
 		Produce: fizzle.produce,
 	})
 	end := campaignScaldronSinkholeEnd{
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID,
-		timestamp: timestamp + uint64(profile.ReleaseDelay/time.Millisecond),
+		timestamp: timestamp + uint64((profile.ReleaseDelay-2*time.Second)/time.Millisecond),
 		profile:   profile,
 	}
 	producers = append(producers, raknet.ScheduledPacketProducer{
-		Delay: profile.ReleaseDelay, Produce: end.produce,
+		Delay: profile.ReleaseDelay - 2*time.Second, Produce: end.produce,
 	})
 	_, scheduleErr := scheduleNPCProducers(r.registry, packet, producers)
 	if scheduleErr != nil {
@@ -373,7 +356,7 @@ func (r campaignNPCActionRuntime) produceScaldronBasicSinkhole(
 			}
 		}
 	}
-	return append(startPackets, startupPacket), true, nil
+	return startPackets, true, nil
 }
 
 func (s *gameplayPeerSession) stopCampaignSinkholeEffect(
@@ -396,4 +379,20 @@ func (s *gameplayPeerSession) stopCampaignSinkholeEffect(
 		return nil, fmt.Errorf("sinkholeDeathRemove: %w", err)
 	}
 	return packet, nil
+}
+
+func (e campaignScaldronSinkholePulse) startup() ([][]byte, error) {
+	e.runtime.registry.mutex.RLock()
+	member, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isCurrent := isFound && member.isCampaignNPCSourceActive(e.generation, e.objectID)
+	e.runtime.registry.mutex.RUnlock()
+	if !isCurrent || !e.isEffectAllocated {
+		return nil, nil
+	}
+	packet, err := npcraknet.ForcedMovementEffect(e.objectID, e.effectSlot,
+		"spacetime_ScaldronBasicSinkhole_well_startup.ServerEventDef", false)
+	if err != nil {
+		return nil, fmt.Errorf("sinkholeStartup: %w", err)
+	}
+	return [][]byte{packet}, nil
 }

@@ -14,6 +14,7 @@ import (
 const campaignClockPublishInterval = time.Second
 
 type campaignClockRun struct {
+	landedPickups       map[uint32]bool
 	registry            *gameplaySessionRegistry
 	packet              raknet.Packet
 	sessionKey          string
@@ -110,6 +111,9 @@ func (e campaignClockRun) publish() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("campaignClockPublish: %w", err)
 	}
+	if e.landedPickups == nil {
+		e.landedPickups = make(map[uint32]bool)
+	}
 	scheduleErr := e.schedule()
 	if scheduleErr != nil && e.logger != nil {
 		e.logger.Printf(
@@ -118,14 +122,40 @@ func (e campaignClockRun) publish() ([][]byte, error) {
 			e.sessionKey, scheduleErr,
 		)
 	}
-	return [][]byte{packet}, nil
+	packets := [][]byte{packet}
+	for _, pickup := range peerSession.zone.Pickups().SnapshotsAt(zoneElapsed) {
+		flight := pickup.Flight
+		if flight.StartedAt.IsZero() || flight.IsProjectilePresent || flight.MovementType != 6 || e.landedPickups[pickup.ObjectID] {
+			continue
+		}
+		landingPackets, landingErr := marshalPickupFlight(pickup.ObjectID, flight, false)
+		if landingErr != nil {
+			return nil, fmt.Errorf("pickupLanding: %w", landingErr)
+		}
+		packets = append(packets, landingPackets...)
+		e.landedPickups[pickup.ObjectID] = true
+	}
+	for _, pickup := range peerSession.zone.DNA().Snapshots() {
+		flight := pickup.Flight
+		if flight.StartedAt.IsZero() || flight.IsProjectilePresent || flight.MovementType != 6 || e.landedPickups[pickup.ObjectID] {
+			continue
+		}
+		landingPackets, landingErr := marshalPickupFlight(pickup.ObjectID, flight, false)
+		if landingErr != nil {
+			return nil, fmt.Errorf("dnaLanding: %w", landingErr)
+		}
+		packets = append(packets, landingPackets...)
+		e.landedPickups[pickup.ObjectID] = true
+	}
+	return packets, nil
 }
 
 func (r gameplaySetupRuntime) campaignClockRun(
 	packet raknet.Packet, peerSession gameplayPeerSession,
 ) campaignClockRun {
 	return campaignClockRun{
-		registry: r.registry, packet: packet.Autonomous(),
+		landedPickups: make(map[uint32]bool),
+		registry:      r.registry, packet: packet.Autonomous(),
 		sessionKey: packet.Address.String(), generation: peerSession.generation,
 		transportGeneration: peerSession.transportGeneration,
 		sourceTime:          packet.SourceTime, sourceStartedAt: r.now(),

@@ -72,7 +72,9 @@ func (r *Router) Remove(path, method string) {
 func (r *Router) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	uri, err := ParseURI(request.RequestURI)
 	if err != nil {
-		http.Error(writer, err.Error(), http.StatusBadRequest)
+		// Parser errors can contain the original request target. Keep that
+		// attacker-controlled text out of the response, including trace wrappers.
+		http.Error(writer, "invalid request URI", http.StatusBadRequest)
 		return
 	}
 

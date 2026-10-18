@@ -128,9 +128,14 @@ func (e fieldMedicActiveSchedule) hit() ([][]byte, error) {
 	transferredBuffs, buffTargets, err := e.transferBuffsLocked(
 		&peerSession, center, buffs.winners,
 	)
+	// Hero transfers commit their own session updates. Merge only the pet-run
+	// map before any reload or error exit, including a partially applied transfer.
+	current := e.runtime.registry.sessions[e.sessionKey]
+	current.fieldMedicCompanionBuffs = peerSession.fieldMedicCompanionBuffs
+	e.runtime.registry.sessions[e.sessionKey] = current
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
-		return nil, err
+		return nil, fmt.Errorf("fieldMedicBuffTransfer: %w", err)
 	}
 	packets = append(packets, transferredBuffs...)
 	for _, targetObjectID := range buffTargets {

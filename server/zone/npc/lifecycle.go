@@ -24,6 +24,10 @@ func (s *Session) RetireMarkerSet(
 		}
 		npc.HitPoint = 0
 		npc.IsDefeated = true
+		fiendObjectIDs := s.deactivateNashiraPassive(&npc)
+		for _, fiendObjectID := range fiendObjectIDs {
+			retired = append(retired, s.npcs[fiendObjectID])
+		}
 		npc.TargetObjectID = 0
 		npc.TargetFaction = FactionUnknown
 		npc.TargetOwner = ActionOwner{}

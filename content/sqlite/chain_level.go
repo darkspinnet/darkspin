@@ -65,7 +65,7 @@ func writeChainLevels(ctx context.Context, transaction *sql.Tx, installPath stri
 	if err != nil {
 		return fmt.Errorf("assetStat: %w", err)
 	}
-	pkg, err := dbpf.NewReader(r, fi.Size())
+	pkg, err := importPackageReader(ctx, r, fi.Size())
 	if err != nil {
 		return fmt.Errorf("assetPackage: %w", err)
 	}
@@ -76,7 +76,7 @@ func writeChainLevels(ctx context.Context, transaction *sql.Tx, installPath stri
 	if err != nil {
 		return fmt.Errorf("resourceFind: %w", err)
 	}
-	payload, err := readDecodedResource(pkg, entry)
+	payload, err := readDecodedResource(ctx, pkg, entry)
 	if err != nil {
 		return fmt.Errorf("resourceRead: %w", err)
 	}

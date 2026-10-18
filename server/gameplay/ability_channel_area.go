@@ -3,6 +3,7 @@ package gameplay
 import (
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -10,9 +11,9 @@ import (
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/util"
+	"github.com/darkspinnet/darkspin/server/zone"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
-	zoneaction "github.com/darkspinnet/darkspin/server/zone/action"
 	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
@@ -23,9 +24,10 @@ const gravityStormEffectShutdownDelay = 75 * time.Millisecond
 const gravityStormEffectDeleteDelay = 2 * time.Second
 
 type heroChannelAreaTarget struct {
-	snapshot   zonenpc.Snapshot
-	instanceID uint32
-	expiresAt  time.Time
+	snapshot    zonenpc.Snapshot
+	instanceID  uint32
+	expiresAt   time.Time
+	isPublished bool
 }
 
 type heroChannelAreaRun struct {
@@ -40,6 +42,15 @@ type heroChannelAreaRun struct {
 	isEffectObjectDeleted bool
 	cancel                raknet.CancelSchedule
 	isCleaned             bool
+	isEffectPublished     bool
+	isAdmitted            bool
+	isGettingUp           bool
+	sourceTime            uint64
+	startedAt             time.Time
+	registry              *gameplaySessionRegistry
+	zone                  *zone.Zone
+	timer                 zone.Timer
+	cast                  *channelCast
 }
 
 func (e *heroChannelAreaRun) SetTargets(targets []heroChannelAreaTarget) bool {
@@ -70,24 +81,11 @@ func (e *heroChannelAreaRun) ReleaseTargets(targets []heroChannelAreaTarget) {
 	}
 	for _, target := range targets {
 		e.npc.ClearStun(target.snapshot.Plan.ObjectID, target.expiresAt)
-		_ = e.modifierPool.Release(target.instanceID)
+		err := e.modifierPool.Release(target.instanceID)
+		if err != nil {
+			log.Printf("RakNet channel modifier release failed instance=%d: %v", target.instanceID, err)
+		}
 	}
-}
-
-func (e *heroChannelAreaRun) Cleanup() []heroChannelAreaTarget {
-	if e == nil {
-		return nil
-	}
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-	if e.isCleaned {
-		return nil
-	}
-	e.isCleaned = true
-	targets := e.targets
-	e.targets = nil
-	e.ReleaseTargets(targets)
-	return targets
 }
 
 func (e *heroChannelAreaRun) Stop() {
@@ -95,69 +93,52 @@ func (e *heroChannelAreaRun) Stop() {
 		return
 	}
 	e.mutex.Lock()
-	cancel := e.cancel
-	e.cancel = nil
+	isCleaned := e.isCleaned
 	e.mutex.Unlock()
-	if cancel != nil {
-		cancel()
+	if isCleaned {
+		return
 	}
-	e.Cleanup()
-	e.ReleaseEffect()
-	e.DeleteEffectObject()
+	retirement := channelRetirement{registry: e.registry, area: e}
+	retirement.schedule(e.timer)
 }
 
-func (e *heroChannelAreaRun) ReleaseEffect() bool {
-	if e == nil {
-		return false
-	}
+func (e *heroChannelAreaRun) setCancel(cancel raknet.CancelSchedule) {
 	e.mutex.Lock()
-	defer e.mutex.Unlock()
-	if !e.isEffectBound {
-		return false
+	if e.isCleaned {
+		e.mutex.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		return
 	}
-	isReleased := e.effectPool.Release(e.effectObjectID, e.effectSlot)
-	e.isEffectBound = false
-	return isReleased
-}
-
-func (e *heroChannelAreaRun) DeleteEffectObject() bool {
-	if e == nil {
-		return false
-	}
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-	if e.isEffectObjectDeleted || e.effectObjectID == 0 {
-		return false
-	}
-	e.isEffectObjectDeleted = true
-	return true
+	e.cancel = cancel
+	e.mutex.Unlock()
 }
 
 type heroChannelAreaSchedule struct {
-	runtime             campaignAbilityCommandRuntime
-	packet              raknet.Packet
-	sessionKey          string
-	generation          uint64
-	sourceObjectID      uint32
-	creatureIndex       uint32
-	previousManaPoint   float32
-	center              raknet.Vector3
-	creature            game.GameplayCreature
-	definition          sim.AbilityDefinition
-	binding             game.GameplayBinding
-	run                 *heroChannelAreaRun
-	slamStart           time.Duration
-	slamHit             time.Duration
-	cleanupAt           time.Duration
-	cooldownReservation zoneability.CooldownReservation
-	releaseReservation  zoneaction.ReleaseReservation
-	releasePacket       []byte
+	runtime        campaignAbilityCommandRuntime
+	packet         raknet.Packet
+	sessionKey     string
+	generation     uint64
+	sourceObjectID uint32
+	center         raknet.Vector3
+	creature       game.GameplayCreature
+	definition     sim.AbilityDefinition
+	binding        game.GameplayBinding
+	run            *heroChannelAreaRun
+	slamStart      time.Duration
+	slamHit        time.Duration
+	cleanupAt      time.Duration
+	releasePacket  []byte
 }
 
 func (e heroChannelAreaSchedule) isCurrent(
 	peerSession gameplayPeerSession, isFound bool,
 ) bool {
-	return isFound && peerSession.generation == e.generation &&
+	e.run.mutex.Lock()
+	isActive := e.run.isAdmitted && !e.run.isCleaned
+	e.run.mutex.Unlock()
+	return isActive && isFound && peerSession.generation == e.generation &&
 		peerSession.deployedObjectID == e.sourceObjectID &&
 		peerSession.heroChannelArea == e.run
 }
@@ -170,6 +151,7 @@ func (e heroChannelAreaSchedule) lift() ([][]byte, error) {
 		return nil, nil
 	}
 	expiresAt := e.runtime.now().Add(e.cleanupAt - e.definition.HitDelay)
+	e.run.cast.activateLocked(e.run.cast.revision)
 	targets := make([]heroChannelAreaTarget, 0)
 	messages := make([]raknet.ApplicationMessage, 0)
 	for index, target := range peerSession.zone.NPCs().LiveSnapshots() {
@@ -187,10 +169,20 @@ func (e heroChannelAreaSchedule) lift() ([][]byte, error) {
 		}
 		err = peerSession.zone.NPCs().ApplyStun(target.Plan.ObjectID, expiresAt)
 		if err != nil {
-			_ = e.runtime.modifierPool.Release(instance)
+			releaseErr := e.runtime.modifierPool.Release(instance)
+			if releaseErr != nil {
+				e.runtime.logger.Printf("RakNet channel modifier allocation cleanup failed instance=%d: %v", instance, releaseErr)
+			}
 			e.run.ReleaseTargets(targets)
 			e.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("channelAreaStun[%d]: %w", index, err)
+		}
+		if peerSession.zone.NPCs().StunRemaining(target.Plan.ObjectID, e.runtime.now()) == 0 {
+			releaseErr := e.runtime.modifierPool.Release(instance)
+			if releaseErr != nil {
+				e.runtime.logger.Printf("RakNet blocked gravity lift modifier release failed: %v", releaseErr)
+			}
+			continue
 		}
 		targets = append(targets, heroChannelAreaTarget{
 			snapshot: target, instanceID: instance, expiresAt: expiresAt,
@@ -209,24 +201,46 @@ func (e heroChannelAreaSchedule) lift() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	e.runtime.registry.sessions[e.sessionKey] = peerSession
-	e.runtime.registry.mutex.Unlock()
 	packets := make([][]byte, 0, len(messages))
 	for index, message := range messages {
 		packet, err := raknet.MarshalApplication(message)
 		if err != nil {
+			e.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("channelAreaLiftMarshal[%d]: %w", index, err)
 		}
 		packets = append(packets, packet)
 	}
-	return packets, nil
+	for _, target := range targets {
+		stopPackets, err := npcraknet.StopAtPose(target.snapshot.Plan.ObjectID, target.snapshot.Plan.Position, target.snapshot.Facing)
+		if err != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("gravityLiftStop: %w", err)
+		}
+		animationPacket, err := npcraknet.AnimationState(target.snapshot.Plan.ObjectID,
+			"gravitystorm_target_lift", e.packet.SourceTime+uint64(e.definition.HitDelay/time.Millisecond))
+		if err != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("gravityLiftAnimation: %w", err)
+		}
+		packets = append(packets, stopPackets...)
+		packets = append(packets, animationPacket)
+	}
+	e.run.mutex.Lock()
+	for index := range e.run.targets {
+		e.run.targets[index].isPublished = true
+	}
+	e.run.mutex.Unlock()
+	e.runtime.registry.sessions[e.sessionKey] = peerSession
+	e.runtime.registry.queueChannelPresentationLocked(e.run.zone, packets)
+	e.runtime.registry.mutex.Unlock()
+	return nil, nil
 }
 
 func (e heroChannelAreaSchedule) startSlam() ([][]byte, error) {
-	e.runtime.registry.mutex.RLock()
+	e.runtime.registry.mutex.Lock()
+	defer e.runtime.registry.mutex.Unlock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := e.isCurrent(peerSession, isFound)
-	e.runtime.registry.mutex.RUnlock()
 	if !isCurrent {
 		return nil, nil
 	}
@@ -237,15 +251,25 @@ func (e heroChannelAreaSchedule) startSlam() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("channelAreaSlamAnimation: %w", err)
 	}
-	return [][]byte{packet}, nil
+	e.runtime.registry.queueChannelPresentationLocked(e.run.zone, [][]byte{packet})
+	err = e.animateTargetsLocked("gravitystorm_target_slam", e.slamStart)
+	if err != nil {
+		return nil, fmt.Errorf("gravitySlamTargets: %w", err)
+	}
+	return nil, nil
 }
 
 func (e heroChannelAreaSchedule) shutdownEffect() ([][]byte, error) {
-	e.runtime.registry.mutex.RLock()
+	e.runtime.registry.mutex.Lock()
+	defer e.runtime.registry.mutex.Unlock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := e.isCurrent(peerSession, isFound)
-	e.runtime.registry.mutex.RUnlock()
-	if !isCurrent || !e.run.ReleaseEffect() {
+	if !isCurrent {
+		return nil, nil
+	}
+	e.run.mutex.Lock()
+	defer e.run.mutex.Unlock()
+	if !e.run.isEffectBound {
 		return nil, nil
 	}
 	packet, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
@@ -255,15 +279,25 @@ func (e heroChannelAreaSchedule) shutdownEffect() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("channelAreaEffectShutdown: %w", err)
 	}
-	return [][]byte{packet}, nil
+	if e.run.isEffectPublished {
+		e.runtime.registry.queueChannelRemovalsLocked(e.run.zone, [][]byte{packet})
+	}
+	e.run.effectPool.Release(e.run.effectObjectID, e.run.effectSlot)
+	e.run.isEffectBound = false
+	return nil, nil
 }
 
 func (e heroChannelAreaSchedule) deleteEffectObject() ([][]byte, error) {
-	e.runtime.registry.mutex.RLock()
+	e.runtime.registry.mutex.Lock()
+	defer e.runtime.registry.mutex.Unlock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := e.isCurrent(peerSession, isFound)
-	e.runtime.registry.mutex.RUnlock()
-	if !isCurrent || !e.run.DeleteEffectObject() {
+	if !isCurrent {
+		return nil, nil
+	}
+	e.run.mutex.Lock()
+	defer e.run.mutex.Unlock()
+	if e.run.isEffectObjectDeleted {
 		return nil, nil
 	}
 	packet, err := raknet.MarshalApplication(raknet.ObjectDeleteMessage{
@@ -272,7 +306,11 @@ func (e heroChannelAreaSchedule) deleteEffectObject() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("channelAreaEffectDelete: %w", err)
 	}
-	return [][]byte{packet}, nil
+	if e.run.isEffectPublished {
+		e.runtime.registry.queueChannelRemovalsLocked(e.run.zone, [][]byte{packet})
+	}
+	e.run.isEffectObjectDeleted = true
+	return nil, nil
 }
 
 func (e heroChannelAreaSchedule) slam() ([][]byte, error) {
@@ -283,6 +321,7 @@ func (e heroChannelAreaSchedule) slam() ([][]byte, error) {
 		return nil, nil
 	}
 	targets := e.run.Targets()
+	e.run.cast.activateLocked(e.run.cast.revision)
 	damage, err := zoneability.ProjectDamage(
 		e.creature, e.definition,
 		e.definition.MinimumDamage, e.definition.MaximumDamage,
@@ -331,78 +370,60 @@ func (e heroChannelAreaSchedule) slam() ([][]byte, error) {
 }
 
 func (e heroChannelAreaSchedule) release() ([][]byte, error) {
-	e.runtime.registry.mutex.RLock()
+	e.runtime.registry.mutex.Lock()
+	defer e.runtime.registry.mutex.Unlock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := e.isCurrent(peerSession, isFound)
-	e.runtime.registry.mutex.RUnlock()
 	if !isCurrent {
 		return nil, nil
 	}
-	return [][]byte{e.releasePacket}, nil
+	e.runtime.registry.queueChannelReleaseLocked(e.run.zone, e.sessionKey, e.generation, [][]byte{e.releasePacket})
+	return nil, nil
 }
 
 func (e heroChannelAreaSchedule) cleanup() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
+	defer e.runtime.registry.mutex.Unlock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	if e.isCurrent(peerSession, isFound) {
 		peerSession.heroChannelArea = nil
-		e.run.mutex.Lock()
-		e.run.cancel = nil
-		e.run.mutex.Unlock()
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 	}
-	e.runtime.registry.mutex.Unlock()
-	targets := e.run.Cleanup()
-	packets := make([][]byte, 0, len(targets))
-	for index, target := range targets {
-		packet, err := raknet.MarshalApplication(raknet.ModifierDeletedMessage{
-			TargetID: target.snapshot.Plan.ObjectID, InstanceID: target.instanceID,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("channelAreaCleanup[%d]: %w", index, err)
-		}
-		packets = append(packets, packet)
+	err := e.run.retireLocked()
+	if err != nil {
+		return nil, fmt.Errorf("channelAreaRetire: %w", err)
 	}
-	if e.run.ReleaseEffect() {
-		packet, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
-			Slot: e.run.effectSlot + 1, IsRemovalRequested: true,
-			IsHardStop: true, ObjectID: e.run.effectObjectID,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("channelAreaCleanupEffect: %w", err)
-		}
-		packets = append(packets, packet)
-	}
-	if e.run.DeleteEffectObject() {
-		packet, err := raknet.MarshalApplication(raknet.ObjectDeleteMessage{
-			ObjectID: []uint32{e.run.effectObjectID},
-		})
-		if err != nil {
-			return nil, fmt.Errorf("channelAreaCleanupObject: %w", err)
-		}
-		packets = append(packets, packet)
-	}
-	return packets, nil
+	return nil, nil
 }
 
 func (e heroChannelAreaSchedule) fail(scheduleErr error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := e.isCurrent(peerSession, isFound)
+	// Pointer identity decides which action slot to clear; the exact cast's
+	// retained phase decides whether its own admission debit can be refunded.
+	isCurrent := isFound && peerSession.generation == e.generation &&
+		peerSession.deployedObjectID == e.sourceObjectID && peerSession.heroChannelArea == e.run
 	if isCurrent {
 		peerSession.heroChannelArea = nil
-		_ = peerSession.setCampaignCharacterManaPoints(
-			e.creatureIndex, e.previousManaPoint,
-		)
-		peerSession.abilityCooldownSession().Rollback(e.cooldownReservation)
-		peerSession.abilityReleaseSession().Rollback(e.releaseReservation)
+	}
+	refundPacket, refundErr := e.run.cast.failLocked(&peerSession, isFound, e.run.cast.revision)
+	if isFound {
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 	}
+	if len(refundPacket) != 0 {
+		e.runtime.registry.queueChannelPresentationLocked(e.run.zone, [][]byte{refundPacket})
+	}
+	if refundErr != nil {
+		e.runtime.logger.Printf("RakNet channel area refund failed: %v", refundErr)
+	}
+	retireErr := e.run.retireLocked()
 	e.runtime.registry.mutex.Unlock()
+	if retireErr != nil {
+		e.runtime.logger.Printf("RakNet area failure retirement failed: %v", retireErr)
+	}
 	if !isCurrent {
 		return
 	}
-	e.run.Stop()
 	e.runtime.logger.Printf(
 		"RakNet hero channel area stopped after schedule failure for %s: %v",
 		e.sessionKey, scheduleErr,
@@ -469,6 +490,15 @@ func (r campaignAbilityCommandRuntime) handleHeroChannelArea(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("channelAreaEffectCreate: %w", err)
 	}
+	positionPacket, err := raknet.MarshalApplication(raknet.ObjectUpdateMessage{
+		ObjectID: effectObjectID, PositionX: center.X, PositionY: center.Y,
+		PositionZ: center.Z, IsVisible: true,
+	})
+	if err != nil {
+		r.effectPool.Release(effectObjectID, effectSlot)
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("gravityEffectPosition: %w", err)
+	}
 	effectPacket, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
 		Slot: effectSlot + 1, IsForceAttached: true,
 		Asset: util.HashID(definition.ActivationEffectName), ObjectID: effectObjectID,
@@ -513,6 +543,7 @@ func (r campaignAbilityCommandRuntime) handleHeroChannelArea(
 		AbilityID: activeAbilityID, AbilityIndex: req.command.Ability.Index,
 		SourceTime: req.packet.SourceTime, AnimationName: definition.AnimationName,
 		HitDelay: definition.HitDelay, ReleaseDelay: releaseAt, Cooldown: cooldown,
+		ChannelDuration: timeToSlam,
 	})
 	if err != nil {
 		r.effectPool.Release(effectObjectID, effectSlot)
@@ -545,37 +576,43 @@ func (r campaignAbilityCommandRuntime) handleHeroChannelArea(
 		r.registry.mutex.Unlock()
 		return req.reject("channel area release unavailable")
 	}
-	previousManaPoint := peerSession.deployedManaPoint()
+	cast := r.registry.reserveChannelCastLocked(peerSession, req.command.Common.ObjectID, cooldownReservation, releaseReservation)
 	err = peerSession.stopPlayerMovement(abilityStartTime)
 	if err == nil {
-		err = peerSession.setDeployedManaPoints(remainingManaPoint)
+		err = cast.debitLocked(&peerSession, manaCost)
 	}
 	if err != nil {
 		r.effectPool.Release(effectObjectID, effectSlot)
-		peerSession.abilityCooldownSession().Rollback(cooldownReservation)
-		peerSession.abilityReleaseSession().Rollback(releaseReservation)
+		refundPacket, refundErr := cast.failLocked(&peerSession, true, cast.revision)
+		r.registry.sessions[sessionKey] = peerSession
+		if len(refundPacket) != 0 {
+			r.registry.queueChannelPresentationLocked(peerSession.zone, [][]byte{refundPacket})
+		}
+		if refundErr != nil {
+			r.logger.Printf("RakNet channel area admission refund failed: %v", refundErr)
+		}
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("channelAreaCommit: %w", err)
 	}
 	run := &heroChannelAreaRun{
+		cast:       cast,
+		sourceTime: req.packet.SourceTime, startedAt: abilityStartTime,
+		registry: r.registry, zone: peerSession.zone, timer: r.npc.timer,
 		npc: peerSession.zone.NPCs(), modifierPool: r.modifierPool,
 		effectPool: r.effectPool, effectObjectID: effectObjectID,
 		effectSlot: effectSlot, isEffectBound: true,
 	}
 	peerSession.heroChannelArea = run
 	generation := peerSession.generation
-	creatureIndex := peerSession.deployedCreatureIndex
 	binding := peerSession.binding
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
 	schedule := heroChannelAreaSchedule{
 		runtime: r, packet: req.packet, sessionKey: sessionKey,
 		generation: generation, sourceObjectID: req.command.Common.ObjectID,
-		creatureIndex: creatureIndex, previousManaPoint: previousManaPoint,
 		center: center, creature: creature, definition: definition, binding: binding,
 		run: run, slamStart: slamStart, slamHit: slamHit, cleanupAt: cleanupAt,
-		cooldownReservation: cooldownReservation,
-		releaseReservation:  releaseReservation, releasePacket: start.Release,
+		releasePacket: start.Release,
 	}
 	producers := r.registry.producerGuard.scheduledProducers(
 		sessionKey, []raknet.ScheduledPacketProducer{
@@ -586,6 +623,7 @@ func (r campaignAbilityCommandRuntime) handleHeroChannelArea(
 				gravityStormEffectDeleteDelay, Produce: schedule.deleteEffectObject},
 			{Delay: slamStart, Produce: schedule.startSlam},
 			{Delay: slamHit, Produce: schedule.slam},
+			{Delay: releaseAt, Produce: schedule.getUp},
 			{Delay: releaseAt, Produce: schedule.release},
 			{Delay: cleanupAt, Produce: schedule.cleanup},
 		},
@@ -598,18 +636,27 @@ func (r campaignAbilityCommandRuntime) handleHeroChannelArea(
 	} else {
 		err = errors.New("schedule unavailable")
 	}
+	if err == nil && cancel == nil {
+		err = errors.New("channel cancellation unavailable")
+	}
 	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
 		schedule.fail(err)
 		return nil, fmt.Errorf("channelAreaSchedule: %w", err)
 	}
-	run.mutex.Lock()
-	run.cancel = cancel
-	run.mutex.Unlock()
+	run.setCancel(cancel)
 	r.logger.Printf(
 		"RakNet hero channel area accepted ability=%s source=%d center=(%g,%g,%g)",
 		definition.Name, req.command.Common.ObjectID, center.X, center.Y, center.Z,
 	)
 	packets := append([][]byte{start.Acknowledge, manaPacket}, start.Presentation...)
-	packets = append(packets, createPacket, effectPacket)
+	admission := channelAreaAdmission{run: run, packets: [][]byte{createPacket, positionPacket, effectPacket}}
+	err = req.packet.AfterResponseCommit(admission.commit)
+	if err != nil {
+		schedule.fail(err)
+		return nil, fmt.Errorf("channelAreaPublication: %w", err)
+	}
 	return packets, nil
 }

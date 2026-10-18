@@ -10,8 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/darkspinnet/darkspin/content/dbpf"
 )
 
 // writeNPCDeathAnimations follows each enemy noun's own animation rig instead
@@ -45,7 +43,7 @@ func writeNPCDeathAnimations(ctx context.Context, transaction *sql.Tx, installPa
 	if err != nil {
 		return fmt.Errorf("deathPackageStat: %w", err)
 	}
-	pkg, err := dbpf.NewReader(r, fi.Size())
+	pkg, err := importPackageReader(ctx, r, fi.Size())
 	if err != nil {
 		return fmt.Errorf("deathPackageRead: %w", err)
 	}

@@ -37,6 +37,7 @@ type spinnerPathSet struct {
 	configPath     string
 	contentPath    string
 	staticPath     string
+	settingPath    string
 }
 
 func resolveSpinnerPaths(basePath string) (*spinnerPathSet, error) {
@@ -63,6 +64,7 @@ func resolveSpinnerPaths(basePath string) (*spinnerPathSet, error) {
 		configPath:     filepath.Join(basePath, game.DefaultConfigFilename),
 		contentPath:    filepath.Join(cachePath, server.ContentDatabaseFilename),
 		staticPath:     filepath.Join(cachePath, "www", "static"),
+		settingPath:    filepath.Join(runtimePath, "launcher.toml"),
 	}
 	return pathSet, nil
 }
@@ -245,6 +247,10 @@ func (a *App) prepareContent(ctx context.Context, pathSet *spinnerPathSet) error
 		return fmt.Errorf("webPrepare: %w", err)
 	}
 	a.setSubsystemProgress("Content", "preparing", "Checking prepared content", 15)
+	stageTiming := func(timing contentsqlite.BuildStageTiming) {
+		a.log(fmt.Sprintf("Content import phase=%q elapsed=%s complete=%t",
+			timing.Phase, timing.Duration, timing.IsComplete))
+	}
 	_, err = os.Stat(pathSet.contentPath)
 	if err == nil {
 		_, err = contentsqlite.Verify(ctx, pathSet.contentPath)
@@ -269,6 +275,7 @@ func (a *App) prepareContent(ctx context.Context, pathSet *spinnerPathSet) error
 			}
 			a.setSubsystemProgress("Content", "preparing", progress.Phase, percent)
 		},
+		OnStageTiming: stageTiming,
 	})
 	if err != nil {
 		return fmt.Errorf("contentBuild: %w", err)
@@ -287,6 +294,7 @@ func (a *App) startGameServer(ctx context.Context, pathSet *spinnerPathSet) erro
 		Logger:      logger,
 		RuntimePath: pathSet.runtimePath,
 		TracePath:   "server.jsonl",
+		HTTPRoutes:  a.launcherHTTPRoutes(),
 	})
 	if err != nil {
 		return fmt.Errorf("serverCreate: %w", err)
@@ -301,6 +309,12 @@ func (a *App) startGameServer(ctx context.Context, pathSet *spinnerPathSet) erro
 		a.log("Starter loadout reconciliation remains queued: " + reconcileErr.Error())
 	} else if completedProfileCount != 0 {
 		a.log(fmt.Sprintf("Completed %d queued starter loadouts", completedProfileCount))
+	}
+	if a.beforeServerStart != nil {
+		err = a.beforeServerStart()
+		if err != nil {
+			return fmt.Errorf("listenerHandoff: %w", err)
+		}
 	}
 	go func() {
 		defer close(serverDone)
@@ -367,12 +381,12 @@ func waitForServerListener(ctx context.Context, address string, serverDone <-cha
 }
 
 func (a *App) preparePatch(ctx context.Context, gamePath, configPath string) error {
-	isRestarting, err := a.prepareLauncherUpdate(ctx)
+	release, err := availableLauncherUpdate(ctx)
 	if err != nil {
-		a.log("Launcher update skipped: " + err.Error())
-		a.setSubsystem("Patch", "Pending", false)
+		a.log("Launcher update check skipped: " + err.Error())
 	}
-	if isRestarting {
+	if release != nil {
+		a.setSubsystem("Patch", "Update available", false)
 		return nil
 	}
 	plan, err := buildModPatchPlan(ctx, gamePath)

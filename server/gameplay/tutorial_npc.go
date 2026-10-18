@@ -58,6 +58,11 @@ func attachTutorialActorActionProfiles(
 		profile.NonCombatMovementSpeed = action.nonCombatMovementSpeed
 		plans[index].ActionProfile = profile
 		plans[index].IsActionKnown = true
+		// nBehavior_Invisible hides authored tutorial actors before aggro;
+		// FirstAggro_BeamIn_Tutorial restores visibility with the teleport.
+		// Horde actors already receive a separate floor-warp introduction.
+		plans[index].IsIntroductionHidden =
+			plans[index].Introduction != zonenpc.SpawnIntroductionFloorWarp
 	}
 	return nil
 }

@@ -22,7 +22,11 @@ var embeddedLoader []byte
 // Windows shares the same x86 system DLL mappings between local processes.
 // Resolve in an x86 process: the amd64 launcher's loader address cannot be used
 // as the entry point of a thread in the 32-bit game.
-func gameLoaderAddress() (uintptr, error) {
+func gameLoaderAddress(ctx context.Context) (uintptr, error) {
+	err := ctx.Err()
+	if err != nil {
+		return 0, fmt.Errorf("loaderContext: %w", err)
+	}
 	directory, err := os.MkdirTemp("", "darkspinner-loader-")
 	if err != nil {
 		return 0, fmt.Errorf("loaderTemp: %w", err)
@@ -33,7 +37,7 @@ func gameLoaderAddress() (uintptr, error) {
 	if err != nil {
 		return 0, fmt.Errorf("loaderWrite: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, path)
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}

@@ -31,12 +31,18 @@ func (e gameplayProjectionRuntime) drainQueuedProjection(
 	peerSession, isFound := e.registry.sessions[sessionKey]
 	if !isFound || peerSession.zone == nil || peerSession.isRejoinPending ||
 		!peerSession.dungeonSetup.IsCommitted() ||
-		len(peerSession.pendingPacketBatches) != 0 {
+		(request.TraceID != 0 && peerSession.pendingPacketResponseTraceID == request.TraceID) {
 		e.registry.mutex.Unlock()
 		return nil, nil
 	}
 	err := peerSession.queueCampaignPresentation(nil)
 	packets, batchID := peerSession.pendingPackets()
+	if len(packets) != 0 {
+		// Pending batches are retained until transport commit. Only a batch
+		// already included by this request should suppress the outer drain;
+		// the existence of queued peer updates is a reason to send them.
+		peerSession.pendingPacketResponseTraceID = request.TraceID
+	}
 	e.registry.sessions[sessionKey] = peerSession
 	e.registry.mutex.Unlock()
 	if err != nil {
@@ -111,6 +117,37 @@ func (e *gameplayPeerSession) queueCampaignPresentation(packets [][]byte) error 
 	queuedPackets := make([][]byte, 0, len(packets)+len(events))
 	projectedPacketCounts := make(map[string]int)
 	for _, event := range events {
+		var liveObjectID uint32
+		isSuppressed := false
+		switch event.Kind {
+		case zoneprojection.EventNPCAction:
+			liveObjectID = event.Action.Plan.ObjectID
+		case zoneprojection.EventNPCSnapshot:
+			liveObjectID = event.NPCSnapshot.Plan.ObjectID
+		case zoneprojection.EventNPCTarget:
+			liveObjectID = event.NPCTarget.Plan.ObjectID
+		}
+		if liveObjectID != 0 {
+			// Native 5393D0 installs movement on any retained object, including
+			// a corpse. A delayed action must not restart pursuit or overwrite
+			// its death animation; a delayed join snapshot must not recreate it.
+			enemy, isFound := e.zone.NPCs().NPC(liveObjectID)
+			isSuppressed = !isFound || enemy.IsDefeated
+		}
+		if event.Kind == zoneprojection.EventNPCDamage && !event.Damage.IsDamageImmune {
+			// Damage publication can finish after a later projectile has killed
+			// the target. Native 5399D0 applies combatant snapshots without a
+			// revision check: replaying the earlier hit's health revives its
+			// client state. Keep the hit feedback, but publish current health.
+			enemy, isFound := e.zone.NPCs().NPC(event.Damage.TargetObjectID)
+			if !isFound {
+				continue
+			}
+			event.Damage.HitPoint = enemy.HitPoint
+			if enemy.IsDefeated {
+				event.Damage.HitPoint = 0
+			}
+		}
 		projectedPackets, err := marshalCampaignProjection(event)
 		if err != nil {
 			// Preserve the presentation for retry and request a state baseline
@@ -122,7 +159,11 @@ func (e *gameplayPeerSession) queueCampaignPresentation(packets [][]byte) error 
 			}
 			return fmt.Errorf("presentationProjection: %w", err)
 		}
-		queuedPackets = append(queuedPackets, projectedPackets...)
+		if !isSuppressed {
+			queuedPackets = append(queuedPackets, projectedPackets...)
+		}
+		// Count suppressed packets too, so an encoded copy supplied by the
+		// producer cannot reintroduce the stale event below.
 		for _, projectedPacket := range projectedPackets {
 			projectedPacketCounts[string(projectedPacket)]++
 		}

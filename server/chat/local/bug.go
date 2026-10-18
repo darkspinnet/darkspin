@@ -27,8 +27,9 @@ const (
 
 // BugReporter writes local bug archives beneath the server runtime directory.
 type BugReporter struct {
-	runtimePath string
-	now         func() time.Time
+	runtimePath      string
+	now              func() time.Time
+	snapshotProvider BugSnapshotProvider
 }
 
 type bugMetadata struct {
@@ -70,8 +71,15 @@ func (e *BugReporter) Report(ctx context.Context, req chat.BugCommand) (string, 
 	if version == "" {
 		version = "unknown"
 	}
+	level := strings.TrimSpace(req.Context.Mission.Label)
+	if level == "" {
+		level = strings.TrimSpace(req.Context.LocationLabel)
+	}
+	if level == "" {
+		level = "unknown-level"
+	}
 	archiveName := fmt.Sprintf(
-		"%s-darkspin-bug-%s-%s.zip", bugSlug(description), version,
+		"%s-%s-%s-%s.zip", bugSlug(description), bugSlug(level), version,
 		createdAt.Format("20060102T150405.000000000Z"),
 	)
 	archivePath := filepath.Join(bugPath, archiveName)
@@ -97,6 +105,7 @@ func (e *BugReporter) Report(ctx context.Context, req chat.BugCommand) (string, 
 		writeErr := writeBugArchive(
 			reportContext, output, temporaryPath, archivePath,
 			filepath.Join(runtimePath, "logs"), req, metadata, createdAt,
+			e.snapshotProvider,
 		)
 		if writeErr != nil {
 			writtenByteCount, stderrErr := fmt.Fprintf(
@@ -113,6 +122,7 @@ func (e *BugReporter) Report(ctx context.Context, req chat.BugCommand) (string, 
 func writeBugArchive(
 	ctx context.Context, output *os.File, temporaryPath string, archivePath string,
 	logPath string, req chat.BugCommand, metadata bugMetadata, createdAt time.Time,
+	snapshotProvider BugSnapshotProvider,
 ) error {
 	isComplete := false
 	defer func() {
@@ -125,6 +135,9 @@ func writeBugArchive(
 	err := addBugText(archive, req)
 	if err == nil {
 		err = addBugMetadata(archive, metadata)
+	}
+	if err == nil && snapshotProvider != nil {
+		err = addBugSnapshot(ctx, archive, snapshotProvider, req)
 	}
 	if err == nil {
 		err = addRecentBugLogs(ctx, archive, logPath, createdAt)

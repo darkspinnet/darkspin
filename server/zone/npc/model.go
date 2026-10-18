@@ -3,8 +3,11 @@ package npc
 import (
 	"errors"
 	"math"
+	"reflect"
+	"slices"
 
 	"github.com/darkspinnet/darkspin/server/game"
+	"github.com/darkspinnet/darkspin/server/navigation"
 	"github.com/darkspinnet/darkspin/server/sim"
 	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
 )
@@ -13,6 +16,7 @@ type BossIdentity struct {
 	DisplayName   string
 	AffixNames    [game.MaxCampaignNPCAffixCount]string
 	ModifierNames [game.MaxCampaignNPCAffixCount + 1]string
+	ModifierIDs   [game.MaxCampaignNPCAffixCount + 1]uint32
 	AuraRadius    float32
 	IsKnown       bool
 }
@@ -29,31 +33,48 @@ const (
 )
 
 type SpawnPlan struct {
-	ObjectID           uint32
-	OwnerObjectID      uint32
-	NounName           string
-	AuthoredNounName   string
-	Position           game.Vec3
-	Rotation           game.Vec3
-	PlacementScale     float32 // Authored marker multiplier; zero means one.
-	Experience         uint32
-	LocusID            uint32
-	Kind               sim.DirectorLocusKind
-	IsCaptain          bool
-	IsElite            bool
-	IsBoss             bool
-	IsFixture          bool
-	IsRewardSuppressed bool
-	MarkerSetName      string
-	Introduction       SpawnIntroduction
-	NPCProfile         game.CampaignNPCProfile
-	BossIdentity       BossIdentity
-	ActionProfile      ActionProfile
-	IsActionKnown      bool
+	ObjectID         uint32
+	OwnerObjectID    uint32
+	NounName         string
+	AuthoredNounName string
+	Position         game.Vec3
+	Rotation         game.Vec3
+	PlacementScale   float32 // Authored marker multiplier; zero means one.
+	Experience       uint32
+	LocusID          uint32
+	Kind             sim.DirectorLocusKind
+	IsCaptain        bool
+	IsElite          bool
+	IsBoss           bool
+	IsArena          bool
+	IsFixture        bool
+	// Current presentation state, retained across rejoin until the entrance reveals it.
+	IsIntroductionHidden   bool
+	IsIntroductionComplete bool
+	IsStartupInitialized   bool
+	IsSecondaryStart       bool
+	IsLootSuppressed       bool // Native object +153, independent of XP eligibility.
+	IsExperienceSuppressed bool // Native object +154.
+	// Server encounter policy: excluded from progress and retired with its owner.
+	IsEncounterAuxiliary    bool
+	MovementSpeedBuff       float32
+	SwiftAuraSourceObjectID uint32
+	MarkerSetName           string
+	Introduction            SpawnIntroduction
+	NPCProfile              game.CampaignNPCProfile
+	BossIdentity            BossIdentity
+	ActionProfile           ActionProfile
+	IsActionKnown           bool
 }
 
 func (e SpawnPlan) Clone() SpawnPlan {
+	if e.NPCProfile.ActorFootprint != nil {
+		footprint := *e.NPCProfile.ActorFootprint
+		e.NPCProfile.ActorFootprint = &footprint
+	}
 	e.ActionProfile = e.ActionProfile.Clone()
+	e.NPCProfile.DropTypes = slices.Clone(e.NPCProfile.DropTypes)
+	e.NPCProfile.AIGraph = e.NPCProfile.AIGraph.Clone()
 	return e
 }
 
@@ -71,11 +92,16 @@ func (e SpawnPlan) IsEqual(other SpawnPlan) bool {
 		e.IsCaptain == other.IsCaptain &&
 		e.IsElite == other.IsElite &&
 		e.IsBoss == other.IsBoss &&
+		e.IsArena == other.IsArena &&
 		e.IsFixture == other.IsFixture &&
-		e.IsRewardSuppressed == other.IsRewardSuppressed &&
+		e.IsLootSuppressed == other.IsLootSuppressed &&
+		e.IsExperienceSuppressed == other.IsExperienceSuppressed &&
+		e.IsEncounterAuxiliary == other.IsEncounterAuxiliary &&
+		e.MovementSpeedBuff == other.MovementSpeedBuff &&
+		e.SwiftAuraSourceObjectID == other.SwiftAuraSourceObjectID &&
 		e.MarkerSetName == other.MarkerSetName &&
 		e.Introduction == other.Introduction &&
-		e.NPCProfile == other.NPCProfile &&
+		reflect.DeepEqual(e.NPCProfile, other.NPCProfile) &&
 		e.BossIdentity == other.BossIdentity &&
 		e.ActionProfile.IsEqual(other.ActionProfile) &&
 		e.IsActionKnown == other.IsActionKnown
@@ -107,6 +133,20 @@ type Target struct {
 }
 
 type Snapshot struct {
+	orcusConsumeBands               uint8
+	IsOrcusFollowing                bool
+	repairStackCount                uint32
+	IsNashiraPassiveActive          bool
+	NashiraFiendOwnerObjectID       uint32
+	NashiraFiendCasterObjectID      uint32
+	GraphState                      GraphState
+	Navigation                      navigation.ActorNavigation
+	PerceptionOffset                game.Vec3
+	IsPerceptionOffsetCached        bool
+	threats                         []Threat
+	IsInitialAggroSet               bool
+	InitialAggroAnimationFlag       uint32
+	recentDamages                   []recentDamage
 	Plan                            SpawnPlan
 	Origin                          game.Vec3
 	Facing                          game.Vec3
@@ -118,6 +158,7 @@ type Snapshot struct {
 	TargetOwner                     ActionOwner
 	ActionOwner                     ActionOwner
 	ActionGeneration                uint64
+	PositionRevision                uint64
 	IsDefeated                      bool
 	IsActionStarted                 bool
 	IsFirstActionStarted            bool
@@ -143,6 +184,7 @@ type DamageResult struct {
 	PreviousHealth             float32
 	HitPoint                   float32
 	Damage                     float32
+	ResolvedDamage             float32 // Mitigated hit before remaining health caps it.
 	AbsorbedDamage             float32
 	RemainingLocusActorCount   int
 	RemainingMarkerSetCount    int

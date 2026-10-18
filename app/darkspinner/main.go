@@ -47,14 +47,15 @@ var launcherUpdateManifestURL = "https://github.com/darkspinnet/darkspin/" +
 	"releases/latest/download/darkspinner-update.json"
 
 const (
-	launchJWTEnvironment          = "DARKSPIN_LAUNCH_JWT"
-	skipIntroEnvironment          = "DARKSPIN_SKIP_INTRO"
-	skipCinematicEnvironment      = "DARKSPIN_SKIP_CINEMATIC"
-	darkSpinnerVersionEnvironment = "DARKSPINNER_VERSION"
-	serverAddressEnvironment      = "DARKSPIN_SERVER_ADDRESS"
-	snapshotModeEnvironment       = "DARKSPIN_SNAPSHOT_MODE"
-	snapshotControlEnvironment    = "DARKSPIN_SNAPSHOT_CONTROL"
-	maximumJWTLength              = 16 * 1024
+	launchJWTEnvironment            = "DARKSPIN_LAUNCH_JWT"
+	skipIntroEnvironment            = "DARKSPIN_SKIP_INTRO"
+	skipCinematicEnvironment        = "DARKSPIN_SKIP_CINEMATIC"
+	darkSpinnerVersionEnvironment   = "DARKSPINNER_VERSION"
+	serverAddressEnvironment        = "DARKSPIN_SERVER_ADDRESS"
+	snapshotModeEnvironment         = "DARKSPIN_SNAPSHOT_MODE"
+	snapshotControlEnvironment      = "DARKSPIN_SNAPSHOT_CONTROL"
+	borderlessFullscreenEnvironment = "DARKSPIN_BORDERLESS_FULLSCREEN"
+	maximumJWTLength                = 16 * 1024
 )
 
 type options struct {
@@ -78,6 +79,17 @@ type options struct {
 }
 
 func main() {
+	isScenarioWorker, scenarioErr := runScenarioWorker(os.Args[1:])
+	if isScenarioWorker {
+		if scenarioErr != nil {
+			count, outputErr := fmt.Fprintln(os.Stderr, "Scenario worker failed:", scenarioErr)
+			if outputErr != nil || count == 0 {
+				// The parent also observes worker exit; stderr is best effort here.
+			}
+			os.Exit(1)
+		}
+		return
+	}
 	privilegeErr := ensureStandardUser()
 	err := configureDarkSpinnerVersion()
 	if err != nil {
@@ -98,6 +110,14 @@ func main() {
 			_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner detached launch failed:", err)
 		}
 		return
+	}
+	isHeadless := hasLaunchArgument(os.Args[1:], "headless")
+	if !isHeadless {
+		err = configureWebViewEnvironment()
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner display setup failed:", err)
+			os.Exit(1)
+		}
 	}
 	releaseInstance, isExistingInstance, err := appwindow.Acquire(appwindow.InstanceOptions{
 		MutexName: `Local\darkspin-darkspinner-single-instance-v1`,
@@ -122,12 +142,20 @@ func main() {
 		_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner startup failed:", err)
 		os.Exit(1)
 	}
-	app := NewApp(removeInstallationArguments(os.Args[1:]))
+	app := NewApp(removePresentationArguments(removeInstallationArguments(os.Args[1:])))
 	if privilegeErr != nil {
 		app.startupError = privilegeLaunchMessage(privilegeErr)
 	}
 	if integrationErr != nil {
 		app.integrationError = integrationErr.Error()
+	}
+	if isHeadless {
+		err = runHeadless(app)
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner browser mode failed:", err)
+			os.Exit(1)
+		}
+		return
 	}
 	err = wails.Run(&wailsoptions.App{
 		Title:            "DarkSpinner v" + Version,
@@ -150,6 +178,17 @@ func main() {
 		_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner failed:", err)
 		os.Exit(1)
 	}
+}
+
+func removePresentationArguments(arguments []string) []string {
+	filteredArguments := make([]string, 0, len(arguments))
+	for _, argument := range arguments {
+		if argument == "--headless" || argument == "-headless" || argument == "--headless=true" {
+			continue
+		}
+		filteredArguments = append(filteredArguments, argument)
+	}
+	return filteredArguments
 }
 
 func privilegeLaunchMessage(err error) string {
@@ -282,6 +321,18 @@ func run(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("localeConfig: %w", err)
 	}
+	err = configureBorderlessFullscreen(
+		BuildChannel == "development" && gameConfig.Bool(game.ConfigIsBorderlessFullscreenEnabled),
+	)
+	if err != nil {
+		return fmt.Errorf("borderlessConfigure: %w", err)
+	}
+	defer func() {
+		unsetErr := os.Unsetenv(borderlessFullscreenEnvironment)
+		if unsetErr != nil {
+			// The launched child already owns an independent environment block.
+		}
+	}()
 	err = configureSnapshotEnvironment(
 		gameConfig.String(game.ConfigSnapshotMode),
 		filepath.Join(pathSet.tracePath, "snapshot-control.txt"),
@@ -333,9 +384,13 @@ func run(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("fangPrepare: %w", err)
 	}
+	wineLaunch, err := resolveWineLaunch(pathSet)
+	if err != nil {
+		return fmt.Errorf("winePrefix: %w", err)
+	}
 	err = launchInjected(
 		ctx, gamePath, installDirectory(gameWorkingDirectory), fangPath,
-		gameArguments, configuration.serverAddress,
+		gameArguments, configuration.serverAddress, wineLaunch,
 	)
 	if err != nil {
 		return fmt.Errorf("gameLaunch: %w", err)
@@ -740,6 +795,14 @@ func configureCinematicOptions(isIntroSkipped, isCinematicSkipped bool) error {
 	err = configureBooleanEnvironment(skipCinematicEnvironment, isCinematicSkipped)
 	if err != nil {
 		return fmt.Errorf("cinematicEnvironment: %w", err)
+	}
+	return nil
+}
+
+func configureBorderlessFullscreen(isEnabled bool) error {
+	err := configureBooleanEnvironment(borderlessFullscreenEnvironment, isEnabled)
+	if err != nil {
+		return fmt.Errorf("borderlessEnvironment: %w", err)
 	}
 	return nil
 }

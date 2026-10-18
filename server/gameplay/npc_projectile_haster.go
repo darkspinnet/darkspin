@@ -68,7 +68,7 @@ func (r campaignNPCActionRuntime) produceHasterProjectile(
 	hasteAttackSpeed, hasteCooldownReduction, hasteMovementSpeedBuff :=
 		peerSession.zone.NPCs().HasteProfile(objectID, r.now())
 	plan, planErr := planCampaignNPCHasterAttack(
-		enemy, target.ObjectID, target.Position, target.FootprintRadius,
+		enemy, target.ObjectID, target.Position, target.ActorFootprintRadius,
 	)
 	if planErr == nil {
 		plan.Profile = applyNPCHaste(
@@ -89,7 +89,7 @@ func (r campaignNPCActionRuntime) produceHasterProjectile(
 		}
 		action, actionErr := campaignNPCActionWithProfile(
 			enemy.Plan, target.ObjectID, target.Position,
-			attackProfile, target.FootprintRadius,
+			attackProfile, target.ActorFootprintRadius,
 		)
 		r.registry.mutex.Unlock()
 		if actionErr != nil {
@@ -230,6 +230,9 @@ func (r campaignNPCActionRuntime) produceHasterProjectile(
 		projectileSourcePosition:    sourcePosition,
 		projectileTargetPosition:    targetPosition,
 		isProjectileTrajectoryFound: true,
+		retirement: &campaignProjectileRetirement{
+			originalZone: peerSession.zone, generation: generation, objectID: projectileObjectID, run: projectileRun,
+		},
 	}
 	producers := make([]raknet.ScheduledPacketProducer, 0, len(projectileDeadlines)+1)
 	for _, scheduledDeadline := range projectileDeadlines {
@@ -252,8 +255,12 @@ func (r campaignNPCActionRuntime) produceHasterProjectile(
 	}
 	r.registry.mutex.Lock()
 	currentSession, isCurrentFound := r.registry.sessions[sessionKey]
-	isTracked := isCurrentFound && currentSession.generation == generation &&
+	isTracked := isCurrentFound && currentSession.generation == generation && currentSession.zone == projectileSchedule.retirement.originalZone && !projectileSchedule.retirement.isRetired && !projectileSchedule.retirement.isRetirementPending &&
 		currentSession.campaignNPCProjectiles[projectileObjectID] == projectileRun
+	if isTracked {
+		r.registry.queueCampaignProjectilePublicationLocked(projectileSchedule.retirement, sessionKey, immediatePackets)
+		r.registry.admitCampaignProjectilePublicationLocked(projectileSchedule.retirement, sessionKey)
+	}
 	if isTracked && flight == nil {
 		projectileRun.SetCancel(cancel)
 	}
@@ -273,5 +280,5 @@ func (r campaignNPCActionRuntime) produceHasterProjectile(
 		target.LinearVelocity.Z, distance, collisionDelay.Milliseconds(),
 		plan.Profile.HomingDelay > 0, plan.Profile.IsProjectilePiercing,
 	)
-	return immediatePackets, nil
+	return nil, nil
 }

@@ -290,13 +290,20 @@ func (e quantumStateReactionStep) applyKnockbackLocked(
 	)
 	destination, isFound, err := zoneaction.NPCDirectMovementDestination(
 		peerSession.zone.Navigation(), target.Plan.Position, desired,
-		max(target.Plan.NPCProfile.FootprintRadius, float32(0.25)),
+		max(target.NavigationRadius(), float32(0.25)), target.Navigation,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("quantumStateKnockbackDestination: %w", err)
 	}
 	if !isFound {
 		return nil, nil
+	}
+	interruptionPackets, err :=
+		e.run.quantum.runtime.registry.interruptCampaignNPCForForcedMovementLocked(
+			e.run.quantum.sessionKey, &peerSession, e.targetObjectID,
+		)
+	if err != nil {
+		return nil, fmt.Errorf("quantumStateKnockbackInterrupt: %w", err)
 	}
 	plan := zonenpc.AttackPlan{
 		SourceObjectID: e.run.quantum.ownerObjectID,
@@ -313,6 +320,7 @@ func (e quantumStateReactionStep) applyKnockbackLocked(
 	if err != nil {
 		return nil, fmt.Errorf("quantumStateKnockbackMarshal: %w", err)
 	}
+	packets = append(interruptionPackets, packets...)
 	err = peerSession.zone.NPCs().SetPosition(e.targetObjectID, destination)
 	if err != nil {
 		return nil, fmt.Errorf("quantumStateKnockbackMove: %w", err)

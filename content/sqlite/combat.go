@@ -10,8 +10,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-
-	"github.com/darkspinnet/darkspin/content/dbpf"
 )
 
 const (
@@ -65,7 +63,7 @@ type combatTuningSource struct {
 }
 
 func writeCombatTuning(ctx context.Context, transaction *sql.Tx, installPath string) error {
-	source, err := loadCombatTuning(filepath.Join(installPath, "Data", lootAssetPackage))
+	source, err := loadCombatTuning(ctx, filepath.Join(installPath, "Data", lootAssetPackage))
 	if err != nil {
 		return fmt.Errorf("tuningLoad: %w", err)
 	}
@@ -128,7 +126,7 @@ func writeCombatTuning(ctx context.Context, transaction *sql.Tx, installPath str
 	return nil
 }
 
-func loadCombatTuning(packagePath string) (combatTuningSource, error) {
+func loadCombatTuning(ctx context.Context, packagePath string) (combatTuningSource, error) {
 	r, err := os.Open(packagePath)
 	if err != nil {
 		return combatTuningSource{}, fmt.Errorf("packageOpen: %w", err)
@@ -138,7 +136,7 @@ func loadCombatTuning(packagePath string) (combatTuningSource, error) {
 	if err != nil {
 		return combatTuningSource{}, fmt.Errorf("packageStat: %w", err)
 	}
-	pkg, err := dbpf.NewReader(r, fi.Size())
+	pkg, err := importPackageReader(ctx, r, fi.Size())
 	if err != nil {
 		return combatTuningSource{}, fmt.Errorf("packageRead: %w", err)
 	}

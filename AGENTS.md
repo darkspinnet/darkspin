@@ -1,5 +1,7 @@
 # Workspace conventions
 
+Never use .cache, instead put it in bin/cache/
+
 ## Generated diagnostics
 
 - Write game and IDA reverse-engineering output under `bin/game/logs`. Do not

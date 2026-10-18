@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
-	"github.com/darkspinnet/darkspin/server/util"
 	zone "github.com/darkspinnet/darkspin/server/zone"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
@@ -16,7 +15,7 @@ import (
 const (
 	nomadDragSlowShieldCooldown = 16 * time.Second
 	nomadDragSlowShieldHitDelay = 233333334 * time.Nanosecond
-	nomadDragSlowShieldRelease  = time.Second
+	nomadDragSlowShieldRelease  = nomadDragSlowShieldHitDelay + 2*time.Second
 	nomadDragTauntRelease       = 1800 * time.Millisecond
 )
 
@@ -39,14 +38,6 @@ type campaignNomadDragTauntResetStep struct {
 	timestamp        uint64
 	profile          zonenpc.ActionProfile
 	resume           campaignNPCStrafeResume
-}
-
-type campaignNomadDragShieldCleanupStep struct {
-	runtime    campaignNPCActionRuntime
-	sessionKey string
-	generation uint64
-	objectID   uint32
-	effectSlot uint8
 }
 
 type campaignNomadDragResumeStep struct {
@@ -98,26 +89,6 @@ func (e campaignNomadDragResumeStep) produce() ([][]byte, error) {
 	return packets, nil
 }
 
-func (e campaignNomadDragShieldCleanupStep) produce() ([][]byte, error) {
-	e.runtime.registry.mutex.RLock()
-	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := isFound && peerSession.isCampaignNPCSourceActive(
-		e.generation, e.objectID,
-	)
-	e.runtime.registry.mutex.RUnlock()
-	if !isCurrent || !e.runtime.effectPool.Release(e.objectID, e.effectSlot) {
-		return nil, nil
-	}
-	packet, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
-		Slot: e.effectSlot + 1, IsRemovalRequested: true,
-		IsHardStop: true, ObjectID: e.objectID,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("dragShieldRemove: %w", err)
-	}
-	return [][]byte{packet}, nil
-}
-
 func (e campaignNomadDragTauntResetStep) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.RLock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
@@ -154,7 +125,7 @@ func nomadDragSlowShieldPresentation(
 ) (float32, string, bool) {
 	switch strings.ToLower(nounName) {
 	case "nomaddrag.noun":
-		return 5.25, "spacetime_aoe_slow_globe_effect.ServerEventDef", true
+		return 5.25, "spacetime_aoe_slow_globe_effect_enemy.ServerEventDef", true
 	case "nomaddrag_2.noun":
 		return 6.75, "spacetime_aoe_slow_globe_effect_lvl2.ServerEventDef", true
 	case "nomaddrag_3.noun":
@@ -195,23 +166,18 @@ func (r campaignNPCActionRuntime) produceNomadDragPhase(
 	}
 	r.registry.mutex.Unlock()
 	if isSlowShieldReady {
-		effectSlot, isEffectAllocated := r.effectPool.Allocate(enemy.Plan.ObjectID)
-		if !isEffectAllocated {
-			return nil, true, errors.New("Dimensionist Slow Shield effect unavailable")
-		}
-		packets, err := nomadDragSlowShieldPackets(
-			peerSession.zone.NPCs(), enemy, target, effectName, effectSlot, timestamp,
-		)
+		packets, err := marshalNPCAttack(peerSession.zone.NPCs(), zonenpc.AttackPlan{
+			SourceObjectID: enemy.Plan.ObjectID, TargetObjectID: target.ObjectID,
+			ActionGeneration: enemy.ActionGeneration,
+			SourcePosition:   enemy.Plan.Position, TargetPosition: target.Position,
+			Profile: zonenpc.ActionProfile{AnimationName: "nomad_lieu_sp_3_attack2"},
+		}, timestamp)
 		if err != nil {
-			r.releaseNomadDragShieldEffect(enemy.Plan.ObjectID, effectSlot)
-			return nil, true, fmt.Errorf("dragSlowShieldMarshal: %w", err)
+			return nil, true, fmt.Errorf("dragSlowShieldStart: %w", err)
 		}
-		err = r.scheduleNomadDragShield(
-			packet, sessionKey, generation, enemy.Plan.ObjectID, effectSlot,
-			timestamp,
-		)
+		err = r.scheduleNomadDragShield(packet, sessionKey, generation, enemy.Plan.ObjectID,
+			radius, effectName, timestamp)
 		if err != nil {
-			r.releaseNomadDragShieldEffect(enemy.Plan.ObjectID, effectSlot)
 			return nil, true, fmt.Errorf("dragSlowShieldSchedule: %w", err)
 		}
 		r.logger.Printf(
@@ -271,66 +237,4 @@ func (r campaignNPCActionRuntime) produceNomadDragPostMeteorTaunt(
 		return nil, fmt.Errorf("dragTauntSchedule: %w", err)
 	}
 	return [][]byte{animationPacket}, nil
-}
-
-func nomadDragSlowShieldPackets(
-	npcSession *zonenpc.Session,
-	enemy zonenpc.Snapshot, target zone.NPCTarget, effectName string,
-	effectSlot uint8, timestamp uint64,
-) ([][]byte, error) {
-	if enemy.Plan.ObjectID == 0 || target.ObjectID == 0 || effectName == "" {
-		return nil, errors.New("invalid Dimensionist Slow Shield")
-	}
-	startPackets, err := marshalNPCAttack(npcSession, zonenpc.AttackPlan{
-		SourceObjectID: enemy.Plan.ObjectID, TargetObjectID: target.ObjectID,
-		ActionGeneration: enemy.ActionGeneration,
-		SourcePosition:   enemy.Plan.Position, TargetPosition: target.Position,
-		Profile: zonenpc.ActionProfile{AnimationName: "nomad_lieu_sp_3_attack2"},
-	}, timestamp)
-	if err != nil {
-		return nil, fmt.Errorf("slowShieldStart: %w", err)
-	}
-	effectPacket, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
-		Slot: effectSlot + 1, IsForceAttached: true,
-		Asset: util.HashID(effectName), ObjectID: enemy.Plan.ObjectID,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("slowShieldEffect: %w", err)
-	}
-	return append(startPackets, effectPacket), nil
-}
-
-func (r campaignNPCActionRuntime) releaseNomadDragShieldEffect(
-	objectID uint32, effectSlot uint8,
-) {
-	isReleased := r.effectPool.Release(objectID, effectSlot)
-	if !isReleased {
-		r.logger.Printf(
-			"RakNet Dimensionist Slow Shield effect lease was already released object=%d slot=%d",
-			objectID, effectSlot,
-		)
-	}
-}
-
-func (r campaignNPCActionRuntime) scheduleNomadDragShield(
-	packet raknet.Packet, sessionKey string, generation uint64,
-	objectID uint32, effectSlot uint8, timestamp uint64,
-) error {
-	phase := campaignNomadDragPhaseStep{
-		runtime: r, packet: packet, sessionKey: sessionKey,
-		generation: generation, objectID: objectID,
-		timestamp: timestamp + uint64(nomadDragSlowShieldRelease/time.Millisecond),
-	}
-	cleanup := campaignNomadDragShieldCleanupStep{
-		runtime: r, sessionKey: sessionKey, generation: generation,
-		objectID: objectID, effectSlot: effectSlot,
-	}
-	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
-		{Delay: nomadDragSlowShieldRelease, Produce: phase.produce},
-		{Delay: nomadDragSlowShieldCooldown, Produce: cleanup.produce},
-	})
-	if err == nil && cancel == nil {
-		err = errors.New("nil cancellation")
-	}
-	return err
 }

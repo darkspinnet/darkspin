@@ -66,11 +66,22 @@ func (r campaignAbilityCommandRuntime) startTerrifyFlee(
 	owner := zonenpc.ActionOwner{
 		UserID: peerSession.binding.UserID, PeerGeneration: generation,
 	}
+	source, isSourceFound := npcSession.NPC(sourceObjectID)
+	combatTargetObjectID := sourceObjectID
+	if isSourceFound && peerSession.deployedObjectID != 0 {
+		combatTargetObjectID = peerSession.deployedObjectID
+	}
 	if target.TargetObjectID == 0 {
-		acquired, _, err := npcSession.AcquireTarget(targetObjectID, sourceObjectID)
+		acquired, isTargetAcquired, err := npcSession.AcquireTarget(
+			targetObjectID, combatTargetObjectID,
+		)
 		if err != nil {
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("terrifyTarget: %w", err)
+		}
+		if !isTargetAcquired {
+			r.registry.mutex.Unlock()
+			return nil, nil
 		}
 		target = acquired
 	}
@@ -95,13 +106,16 @@ func (r campaignAbilityCommandRuntime) startTerrifyFlee(
 	}
 	profile.Range = max(float32(0.5), target.Plan.NPCProfile.FootprintRadius*0.5)
 	sourcePosition := game.Vec3(peerSession.playerPosition)
+	if isSourceFound {
+		sourcePosition = source.Plan.Position
+	}
 	destination, isDestinationFound, err := campaignChronoStrikerFleeDestination(
 		target.Plan.Position, sourcePosition,
 		peerSession.zone.NPCRandom().Float64,
 		func(candidate game.Vec3) (game.Vec3, bool, error) {
 			return zoneaction.NPCDirectMovementDestination(
 				peerSession.zone.Navigation(), target.Plan.Position, candidate,
-				target.Plan.NPCProfile.FootprintRadius,
+				target.NavigationRadius(), target.Navigation,
 			)
 		},
 	)
@@ -283,6 +297,9 @@ func (r campaignNPCActionRuntime) restartAfterTerrify(
 	packet raknet.Packet, sessionKey string, generation uint64,
 	objectID uint32, timestamp uint64,
 ) ([][]byte, error) {
+	if r.registry == nil {
+		return nil, errors.New("terrify restart runtime unavailable")
+	}
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation &&

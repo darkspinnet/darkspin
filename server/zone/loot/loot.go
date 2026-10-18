@@ -216,7 +216,7 @@ func IsEquipmentDrop(challenge int32, chanceScale float32, randomDraw float64) (
 	if err != nil {
 		return false, fmt.Errorf("equipmentThreshold: %w", err)
 	}
-	return float32(randomDraw) < threshold, nil
+	return randomDraw < float64(threshold), nil
 }
 
 func IsCrystalDrop(challenge int32, chanceScale float32, randomDraw uint32) (bool, error) {
@@ -266,15 +266,41 @@ func NPCDNAAmount(difficulty uint32, droppedMultiplier float32, randomDraw uint3
 	return uint32(amount), nil
 }
 
-func EquipmentContainerNoun(rarity Rarity) string {
+func EquipmentContainerNoun(rarity Rarity) (string, bool) {
 	switch rarity {
+	case RarityCommon:
+		return "loot_container_white.Noun", true
 	case RarityUncommon:
-		return "loot_container_green.Noun"
+		return "loot_container_green.Noun", true
 	case RarityRare:
-		return "Loot_Drop.Noun"
+		return "Loot_Drop.Noun", true
 	case RarityEpic:
-		return "loot_container_purple.Noun"
+		return "loot_container_purple.Noun", true
 	default:
-		return "loot_container_white.Noun"
+		return "", false
+	}
+}
+
+type EquipmentPresentationPolicy uint8
+
+const (
+	EquipmentOrdinaryWorldDrop EquipmentPresentationPolicy = iota
+	EquipmentInventoryGroundDrop
+	EquipmentUniqueRewardGroundDrop
+)
+
+func (e EquipmentPresentationPolicy) ContainerNoun(rarity Rarity) (string, bool) {
+	switch e {
+	case EquipmentOrdinaryWorldDrop:
+		return EquipmentContainerNoun(rarity)
+	case EquipmentInventoryGroundDrop, EquipmentUniqueRewardGroundDrop:
+		// Server policy preserves existing unique-item ground presentation.
+		// These three inventory tiers are outside the native ordinary lookup.
+		if rarity == 4 || rarity == 5 || rarity == 6 {
+			return "loot_container_white.Noun", true
+		}
+		return EquipmentContainerNoun(rarity)
+	default:
+		return "", false
 	}
 }

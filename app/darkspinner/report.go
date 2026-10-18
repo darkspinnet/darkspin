@@ -25,7 +25,6 @@ type reportManifest struct {
 	CreatedAt     string             `json:"created_at"`
 	Platform      string             `json:"platform"`
 	Title         string             `json:"title"`
-	Description   string             `json:"description"`
 	State         reportState        `json:"state"`
 	Gameplay      chat.BugContext    `json:"gameplay"`
 	GameplayError string             `json:"gameplay_error,omitempty"`
@@ -70,26 +69,20 @@ type ReportResult struct {
 	FileCount int      `json:"fileCount"`
 }
 
-// SendReport creates size-limited local archives containing the user's account of
-// the problem and every available ordinary log. Sync Snapshot artifacts are
+// SendReport creates size-limited local archives containing the report title and
+// every available ordinary log. Sync Snapshot artifacts are
 // excluded because they are separate diagnostic reports. It never uploads the
 // bundle or opens another application by itself.
-func (a *App) SendReport(title string, description string) (ReportResult, error) {
+func (a *App) SendReport(title string) (ReportResult, error) {
 	title = strings.TrimSpace(title)
-	description = strings.TrimSpace(description)
 	if title == "" {
 		return ReportResult{}, errors.New("report title is empty")
-	}
-	if description == "" {
-		return ReportResult{}, errors.New("report description is empty")
 	}
 	logPath, reportDirectory, err := a.reportPaths()
 	if err != nil {
 		return ReportResult{}, fmt.Errorf("reportPaths: %w", err)
 	}
-	reportPath, records, err := a.createReportArchive(
-		logPath, reportDirectory, title, description,
-	)
+	reportPath, records, err := a.createReportArchive(logPath, reportDirectory, title)
 	if err != nil {
 		return ReportResult{}, fmt.Errorf("reportCreate: %w", err)
 	}
@@ -140,15 +133,23 @@ func (a *App) OpenReportFolder() error {
 }
 
 func (a *App) createReportArchive(
-	logPath string, reportDirectory string, title string, description string,
+	logPath string, reportDirectory string, title string,
 ) (string, []reportFileRecord, error) {
 	err := os.MkdirAll(reportDirectory, 0o755)
 	if err != nil {
 		return "", nil, fmt.Errorf("reportMkdir: %w", err)
 	}
 	createdAt := time.Now().UTC()
+	manifest := a.reportManifest(createdAt, title, nil)
+	level := strings.TrimSpace(manifest.Gameplay.Mission.Label)
+	if level == "" {
+		level = strings.TrimSpace(manifest.Gameplay.LocationLabel)
+	}
+	if level == "" {
+		level = "unknown-level"
+	}
 	reportName := fmt.Sprintf(
-		"%s-darkspin-report-%s-%s.zip", reportSlug(title), Version,
+		"%s-%s-%s-%s.zip", reportSlug(title), reportSlug(level), Version,
 		createdAt.Format("20060102T150405.000000000Z"),
 	)
 	reportPath := filepath.Join(reportDirectory, reportName)
@@ -166,8 +167,7 @@ func (a *App) createReportArchive(
 
 	archive := zip.NewWriter(w)
 	records := make([]reportFileRecord, 0, 5)
-	manifest := a.reportManifest(createdAt, title, description, nil)
-	err = addReportText(archive, title, description)
+	err = addReportText(archive, title)
 	if err != nil {
 		_ = archive.Close()
 		_ = w.Close()
@@ -213,7 +213,7 @@ func (a *App) createReportArchive(
 }
 
 func (a *App) reportManifest(
-	createdAt time.Time, title string, description string,
+	createdAt time.Time, title string,
 	records []reportFileRecord,
 ) reportManifest {
 	a.mu.Lock()
@@ -230,10 +230,11 @@ func (a *App) reportManifest(
 	gameplayError := ""
 	if gameServer != nil {
 		captured, err := gameServer.BugContext(ctx, status.Identity)
+		if !captured.CapturedAt.IsZero() {
+			gameplay = captured
+		}
 		if err != nil {
 			gameplayError = err.Error()
-		} else {
-			gameplay = captured
 		}
 		if gameplay.CapturedAt.IsZero() {
 			gameplay.CapturedAt = createdAt
@@ -241,7 +242,7 @@ func (a *App) reportManifest(
 	}
 	return reportManifest{
 		Version: Version, CreatedAt: createdAt.Format(time.RFC3339), Platform: runtime.GOOS + "/" + runtime.GOARCH,
-		Title: title, Description: description,
+		Title: title,
 		State: reportState{
 			Launcher: status.State, Message: status.Message,
 			Identity: status.Identity,
@@ -257,12 +258,12 @@ func (a *App) reportManifest(
 	}
 }
 
-func addReportText(archive *zip.Writer, title string, description string) error {
+func addReportText(archive *zip.Writer, title string) error {
 	w, err := archive.Create("report.txt")
 	if err != nil {
 		return fmt.Errorf("textCreate: %w", err)
 	}
-	_, err = fmt.Fprintf(w, "%s\n\n%s\n", title, description)
+	_, err = fmt.Fprintln(w, title)
 	if err != nil {
 		return fmt.Errorf("textWrite: %w", err)
 	}

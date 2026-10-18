@@ -134,6 +134,11 @@ func NamedBossEntries(
 				director, candidate.ConfigurationEntryOrdinal,
 			)
 			if isProfileFound {
+				profile.NPCType = candidate.NPCProfile.NPCType
+				profile.AggroRange = candidate.NPCProfile.AggroRange
+				profile.AlertRange = candidate.NPCProfile.AlertRange
+				profile.DropAggroRange = candidate.NPCProfile.DropAggroRange
+				profile.IdleMovementSpeed = candidate.NPCProfile.IdleMovementSpeed
 				candidate.NPCProfile = profile
 				entry = append(entry, candidate)
 			}
@@ -168,7 +173,15 @@ func PrepareNamedBossDirector(
 	normalizedName := strings.ToLower(nounName)
 	profile, isProfileFound := director.NPCProfilesByNoun[normalizedName]
 	if !isProfileFound || !profile.IsKnown || profile.HitPoint <= 0 {
+		authoredProfile := profile
 		profile = standaloneBossClassProfile(rank)
+		if isProfileFound {
+			profile.NPCType = authoredProfile.NPCType
+			profile.AggroRange = authoredProfile.AggroRange
+			profile.AlertRange = authoredProfile.AlertRange
+			profile.DropAggroRange = authoredProfile.DropAggroRange
+			profile.IdleMovementSpeed = authoredProfile.IdleMovementSpeed
+		}
 	}
 	profile.NPCRank = int32(rank)
 	profile.IsTargetable = true
@@ -307,9 +320,15 @@ func retainBossClassMetadata(
 ) game.CampaignNPCProfile {
 	profile.ChallengeValue = authored.ChallengeValue
 	profile.NPCRank = authored.NPCRank
+	profile.NPCType = authored.NPCType
 	profile.IsTargetable = authored.IsTargetable
 	profile.IsPlayerPet = authored.IsPlayerPet
+	profile.IsClassKnown = authored.IsClassKnown
 	profile.PlayerCountHealthScale = authored.PlayerCountHealthScale
+	profile.AggroRange = authored.AggroRange
+	profile.AlertRange = authored.AlertRange
+	profile.DropAggroRange = authored.DropAggroRange
+	profile.IdleMovementSpeed = authored.IdleMovementSpeed
 	return profile
 }
 

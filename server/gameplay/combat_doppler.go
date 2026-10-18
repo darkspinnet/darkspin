@@ -99,12 +99,13 @@ func (e campaignDopplerCloneStep) spawn() ([][]byte, error) {
 	plan := source.Plan.Clone()
 	plan.ObjectID = e.fakeObjectID
 	plan.NounName = e.profile.RetainedObjectNoun
-	plan.Experience = 0
 	plan.LocusID = 0
 	plan.Kind = 0
 	plan.IsCaptain = false
 	plan.IsBoss = false
-	plan.IsRewardSuppressed = true
+	// Chunk 180 calls MarkCantDropLoot only; keep the source XP gate.
+	plan.IsLootSuppressed = true
+	plan.IsEncounterAuxiliary = true
 	plan.MarkerSetName = ""
 	plan.BossIdentity = zonenpc.BossIdentity{}
 	plan.ActionProfile = zonenpc.ActionProfile{}

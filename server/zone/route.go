@@ -67,6 +67,25 @@ func (e *Zone) AdvanceDirector(
 	return publications, nil
 }
 
+func (e *Zone) AdvanceDirectorParticipants(
+	req game.CampaignTriggerRequest,
+) ([]game.CampaignDirectorPublication, error) {
+	if e == nil {
+		return nil, errors.New("zone director unavailable")
+	}
+	e.mu.RLock()
+	director := e.info.Director
+	e.mu.RUnlock()
+	if director == nil {
+		return nil, nil
+	}
+	publications, err := director.AdvanceParticipants(req)
+	if err != nil {
+		return nil, fmt.Errorf("partyDirector: %w", err)
+	}
+	return publications, nil
+}
+
 func (e *Zone) CanAcceptPublication(
 	publication game.CampaignDirectorPublication,
 ) error {

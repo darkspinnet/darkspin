@@ -274,6 +274,7 @@ func (e campaignNPCGravityOrbSchedule) pull(timestamp uint64) ([][]byte, error) 
 		if err != nil {
 			if peerSession.playerMotion == nil {
 				peerSession.playerPosition = previousPosition
+				peerSession.resetPickupContacts()
 			} else {
 				peerSession.restorePlayerMotion(
 					motionSnapshot, peerSession.playerMotionRevision(),
@@ -443,7 +444,7 @@ func (r campaignNPCActionRuntime) producePolarisGravityOrb(
 		plan := zonenpc.SpawnPlan{
 			ObjectID: firstObjectID + uint32(index), OwnerObjectID: objectID,
 			NounName: profile.NounName, Position: position,
-			IsFixture: true, IsRewardSuppressed: true, NPCProfile: npcProfile,
+			IsFixture: true, IsLootSuppressed: true, IsExperienceSuppressed: true, IsEncounterAuxiliary: true, NPCProfile: npcProfile,
 		}
 		orbs = append(orbs, campaignNPCGravityOrb{
 			objectID: plan.ObjectID, position: position, plan: plan,

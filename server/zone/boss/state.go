@@ -28,6 +28,7 @@ const (
 type Transition struct {
 	LeaderObjectID     uint32
 	NextWaveActorCount int
+	IsLeaderDefeated   bool
 	IsComplete         bool
 }
 
@@ -48,6 +49,7 @@ type Snapshot struct {
 }
 
 type Session struct {
+	spawnRules            game.BossSpawnRules
 	mu                    sync.RWMutex
 	phase                 Phase
 	isInitialChain        bool
@@ -64,8 +66,12 @@ type Session struct {
 	isBeamOutCommitted    bool
 }
 
-func NewSession() *Session {
-	return &Session{}
+func NewSession(rules ...game.BossSpawnRules) *Session {
+	spawnRules := game.DefaultBossSpawnRules()
+	if len(rules) != 0 {
+		spawnRules = rules[0].Resolved()
+	}
+	return &Session{spawnRules: spawnRules}
 }
 
 func (s *Session) Arm(
@@ -122,7 +128,7 @@ func (s *Session) canArm(
 		return errors.New("boss arm: unsupported publication")
 	}
 	if isInitialChain {
-		if len(plans) != 5 ||
+		if len(plans) != 1+4*int(s.spawnRules.Resolved().OpeningAddsPerAnchor) ||
 			!zonenpc.IsBossIdentityValid(plans[0].BossIdentity) {
 			return errors.New("boss arm: invalid Illust identity")
 		}
@@ -214,7 +220,9 @@ func (s *Session) ObserveDamage(
 	if !isEncounterActor {
 		return Transition{}, nil
 	}
-	if s.phase != PhaseActive || !s.liveObjectIDs[result.ObjectID] {
+	// A revived opening add can remain alive while captain entry is pending.
+	// Only admitted live actors may report damage in either combat phase.
+	if (s.phase != PhaseActive && s.phase != PhaseArming) || !s.liveObjectIDs[result.ObjectID] {
 		return Transition{}, errors.New("boss damage: unexpected actor")
 	}
 	if result.ObjectID == s.leaderObjectID {
@@ -226,14 +234,17 @@ func (s *Session) ObserveDamage(
 	if result.IsDefeated {
 		delete(s.liveObjectIDs, result.ObjectID)
 	}
-	transition := Transition{LeaderObjectID: s.leaderObjectID}
+	transition := Transition{
+		LeaderObjectID:   s.leaderObjectID,
+		IsLeaderDefeated: result.IsDefeated && result.ObjectID == s.leaderObjectID,
+	}
 	if s.isLeaderDeferred && !s.isSecondWaveRequested &&
 		s.isFirstWaveAddClear() {
 		s.isSecondWaveRequested = true
 		s.phase = PhaseArming
 		transition.NextWaveActorCount = 1
 		if s.isInitialChain {
-			transition.NextWaveActorCount = 3
+			transition.NextWaveActorCount = 1 + int(s.spawnRules.Resolved().InitialBossAddCount)
 		}
 		return transition, nil
 	}
@@ -270,7 +281,7 @@ func (s *Session) canAdmitSecondWave(plans []zonenpc.SpawnPlan) error {
 	}
 	expectedActorCount := 1
 	if s.isInitialChain {
-		expectedActorCount = 3
+		expectedActorCount = 1 + int(s.spawnRules.Resolved().InitialBossAddCount)
 	}
 	if len(plans) != expectedActorCount {
 		return errors.New("boss second wave: actor count invalid")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sporenet"
@@ -103,8 +104,9 @@ func scaleBoomerDeathDamage(
 	distanceRatio := min(float32(1), distance/radius)
 	damage := plan.Damage.Maximum -
 		(plan.Damage.Maximum-plan.Damage.Minimum)*distanceRatio
-	plan.Damage.Minimum = damage
-	plan.Damage.Maximum = damage
+	roundedDamage := float32(math.Round(float64(damage)))
+	plan.Damage.Minimum = roundedDamage
+	plan.Damage.Maximum = roundedDamage
 	return plan
 }
 

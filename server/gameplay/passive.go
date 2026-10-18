@@ -11,6 +11,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/util"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
+	zoneeffect "github.com/darkspinnet/darkspin/server/zone/effect"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
 
@@ -18,7 +19,63 @@ const (
 	graspingDeadRadius                   = 8
 	graspingDeadSlow                     = 0.15
 	campaignSameGenetypeDamageMultiplier = 2
+	missileTargetingEffectName           = "cyber_missileTempest_targetScanner.ServerEventDef"
+	missileTargetingDamagePerStack       = 0.05
+	missileTargetingOverdrivePerStack    = 0.12
+	missileTargetingMaximumStack         = uint32(5)
 )
+
+func (e *gameplayPeerSession) startMissileTargetingPresentation(
+	creatureIndex uint32, pool *attachedEffectPool,
+) ([]byte, error) {
+	if e == nil || creatureIndex >= uint32(len(e.binding.Creatures)) ||
+		creatureIndex >= uint32(len(e.isMissileTargetingPresented)) ||
+		e.isMissileTargetingPresented[creatureIndex] ||
+		e.binding.Creatures[creatureIndex].PassiveAbility !=
+			util.HashID("MissileTempestPassive") {
+		return nil, nil
+	}
+	slot, isAllocated := pool.Allocate(e.deployedObjectID)
+	if !isAllocated {
+		return nil, nil
+	}
+	packet, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
+		Slot: slot, IsForceAttached: true,
+		Asset: util.HashID(missileTargetingEffectName), ObjectID: e.deployedObjectID,
+	})
+	if err != nil {
+		if !pool.Release(e.deployedObjectID, slot) {
+			return nil, fmt.Errorf("missileTargetingSlotRelease: %w", err)
+		}
+		return nil, fmt.Errorf("missileTargetingMarshal: %w", err)
+	}
+	e.missileTargetingEffectSlots[creatureIndex] = slot
+	e.isMissileTargetingPresented[creatureIndex] = true
+	return packet, nil
+}
+
+func (e *gameplayPeerSession) stopMissileTargetingPresentation(
+	creatureIndex uint32, pool *attachedEffectPool,
+) ([]byte, error) {
+	if e == nil || creatureIndex >= uint32(len(e.isMissileTargetingPresented)) ||
+		!e.isMissileTargetingPresented[creatureIndex] {
+		return nil, nil
+	}
+	packet, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
+		Slot: e.missileTargetingEffectSlots[creatureIndex], IsRemovalRequested: true,
+		IsHardStop: true, ObjectID: e.deployedObjectID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("missileTargetingStopMarshal: %w", err)
+	}
+	if !pool.Release(e.deployedObjectID, e.missileTargetingEffectSlots[creatureIndex]) {
+		// Object teardown may have released its slots already; still send the
+		// removal so the client drops any presentation it retained.
+	}
+	e.missileTargetingEffectSlots[creatureIndex] = 0
+	e.isMissileTargetingPresented[creatureIndex] = false
+	return packet, nil
+}
 
 func (s gameplayPeerSession) applySameGenetypeDamage(
 	damage float32, damageType uint8, isDamageTypeKnown bool,
@@ -230,6 +287,9 @@ func (e *gameplayPeerSession) absorbTCShield(
 func (s gameplayPeerSession) applyPassiveDamageReduction(
 	damage float32, damageSource uint8, sourceObjectID uint32, now time.Time,
 ) float32 {
+	if s.isHeroArrivalProtected(now) {
+		return 0
+	}
 	if damage <= 0 || math.IsNaN(float64(damage)) || math.IsInf(float64(damage), 0) ||
 		s.deployedCreatureIndex >= uint32(len(s.binding.Creatures)) {
 		return damage
@@ -326,8 +386,14 @@ func (s gameplayPeerSession) passiveDamageReduction(now time.Time) float32 {
 		!now.Before(s.passiveReductionExpiresAt[s.deployedCreatureIndex]) {
 		return reduction
 	}
+	// Modifiers/0x0A09D13C.lua ranks 1-2 use 4%; overdrive ranks
+	// 3-4 use 10%. Both retain the five-stack cap.
+	damageReductionPerStack := float32(0.04)
+	if s.isOverdriveActiveAt(now) {
+		damageReductionPerStack = 0.10
+	}
 	return reduction +
-		0.04*float32(s.passiveReductionStack[s.deployedCreatureIndex])
+		damageReductionPerStack*float32(s.passiveReductionStack[s.deployedCreatureIndex])
 }
 
 func (s *gameplayPeerSession) applyPassiveDamageTaken(now time.Time) {
@@ -354,6 +420,7 @@ func (s *gameplayPeerSession) resetPassiveDamageReduction(creatureIndex uint32) 
 	}
 	s.passiveReductionStack[creatureIndex] = 0
 	s.passiveReductionExpiresAt[creatureIndex] = time.Time{}
+	s.stopHardenedMantle()
 }
 
 func (s *gameplayPeerSession) advanceFireRavagerBasic(
@@ -391,8 +458,21 @@ func (s gameplayPeerSession) projectPassiveCreature(
 	if creatureIndex != s.deployedCreatureIndex {
 		return creature
 	}
+	// Enemy modifiers live in the shared zone, including those applied by
+	// another peer's NPC simulation. Project them without changing base stats
+	// so removal immediately restores the next attack's normal timing.
+	if s.zone != nil && s.zone.Effect() != nil {
+		for _, modifier := range s.zone.Effect().Snapshot() {
+			if modifier.TargetObjectID == s.deployedObjectID &&
+				modifier.Kind == zoneeffect.ModifierKindDebuff && modifier.AttackSpeed < 0 {
+				creature.TimingProfile.AttackSpeed += modifier.AttackSpeed
+			}
+		}
+	}
 	if creature.PassiveAbility == util.HashID("LightningTempest_Passive") {
-		creature.CriticalRating += creature.CriticalRating * 0.50
+		creature.CriticalRating += chargeFieldCriticalIncrease(
+			creature.CriticalRating, s.isOverdriveActiveAt(now),
+		)
 	}
 	if creature.PassiveAbility == util.HashID("LightspeedTempestPassive") {
 		healthRatio := s.passiveHealthRatio(creatureIndex)
@@ -402,6 +482,9 @@ func (s gameplayPeerSession) projectPassiveCreature(
 			healthRatio * creature.PassiveHealthMovementMax
 	}
 	if s.isOverdriveActiveAt(now) {
+		// Modifiers/0x1EF02FF9.lua (OverdriveModifier): additive attributes.
+		creature.TimingProfile.AttackSpeed += 0.20
+		creature.TimingProfile.CooldownReduction += 0.40
 		switch creature.PassiveAbility {
 		case util.HashID("QuantumPositioning"):
 			creature.EnergyDamageReduction += 0.50
@@ -419,25 +502,16 @@ func (s gameplayPeerSession) projectPassiveCreature(
 	if stationarySince.IsZero() || now.Before(stationarySince) {
 		return creature
 	}
-	stackCount := min(uint32(5), uint32(now.Sub(stationarySince)/time.Second))
-	creature.DamageProfile.DamageBuff += 0.05 * float32(stackCount)
+	stackCount := min(
+		missileTargetingMaximumStack,
+		uint32(now.Sub(stationarySince)/time.Second),
+	)
+	damagePerStack := float32(missileTargetingDamagePerStack)
+	if s.isOverdriveActiveAt(now) {
+		damagePerStack = missileTargetingOverdrivePerStack
+	}
+	creature.DamageProfile.DamageBuff += damagePerStack * float32(stackCount)
 	return creature
-}
-
-func (s gameplayPeerSession) isMissileTempestHoming(
-	creatureIndex uint32, now time.Time,
-) bool {
-	if now.IsZero() || creatureIndex >= uint32(len(s.binding.Creatures)) ||
-		creatureIndex >= uint32(len(s.passiveStationarySince)) {
-		return false
-	}
-	creature := s.binding.Creatures[creatureIndex]
-	if creature.PassiveAbility != util.HashID("MissileTempestPassive") {
-		return false
-	}
-	stationarySince := s.passiveStationarySince[creatureIndex]
-	return !stationarySince.IsZero() && !now.Before(stationarySince) &&
-		now.Sub(stationarySince) >= 5*time.Second
 }
 
 func (e *gameplaySessionRegistry) projectPassiveCreature(
@@ -454,6 +528,13 @@ func (e *gameplaySessionRegistry) projectPassiveCreature(
 	projectileSpeedIncrease := float32(0)
 	attackSpeedIncrease := float32(0)
 	criticalRatingIncrease := float32(0)
+	selfCriticalRatingIncrease := float32(0)
+	if creature.PassiveAbility == util.HashID("LightningTempest_Passive") {
+		selfCriticalRatingIncrease = chargeFieldCriticalIncrease(
+			peerSession.binding.Creatures[creatureIndex].CriticalRating,
+			peerSession.isOverdriveActiveAt(now),
+		)
+	}
 	for _, candidate := range e.sessions {
 		if candidate.zone != peerSession.zone ||
 			candidate.deployedObjectID == peerSession.deployedObjectID ||
@@ -499,11 +580,12 @@ func (e *gameplaySessionRegistry) projectPassiveCreature(
 				attackSpeedIncrease, aura.TimingProfile.AttackSpeed,
 			)
 		case util.HashID("LightningTempest_Passive"):
-			if creature.PassiveAbility == aura.PassiveAbility {
-				continue
-			}
+			// Both modifiers use kAddBest on the initiator's rating. A Lumin
+			// recipient can receive a stronger allied field than its own.
 			criticalRatingIncrease = max(
-				criticalRatingIncrease, aura.CriticalRating*0.50,
+				criticalRatingIncrease, chargeFieldCriticalIncrease(
+					aura.CriticalRating, candidate.isOverdriveActiveAt(now),
+				)-selfCriticalRatingIncrease,
 			)
 		}
 	}
@@ -514,6 +596,15 @@ func (e *gameplaySessionRegistry) projectPassiveCreature(
 	creature.TimingProfile.AttackSpeed += attackSpeedIncrease
 	creature.CriticalRating += criticalRatingIncrease
 	return creature
+}
+
+func chargeFieldCriticalIncrease(criticalRating float32, isOverdrive bool) float32 {
+	// Modifiers/0x7D667E50.lua and 0xAA8F880A.lua use 50% and 75%
+	// respectively. The authored overdrive critical-damage bonus is zero.
+	if isOverdrive {
+		return criticalRating * 0.75
+	}
+	return criticalRating * 0.50
 }
 
 func (e *gameplaySessionRegistry) passiveMovementIncrease(

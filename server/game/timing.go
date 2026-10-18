@@ -128,6 +128,13 @@ func ResolveAreaDuration(duration time.Duration, increase float32) (time.Duratio
 	return time.Duration(projected), nil
 }
 
+// LabsTuning/0x3B01D7F6.prop overrides the native defaults: property
+// 0xEE25EE0B supplies capacity and 0xD549E2E3 supplies drain per second.
+// Build 103 sub_41FC20 divides the displayed meter by this capacity, and
+// sub_9C29F0 requires it before allowing activation.
+const OverdriveMaximumEnergy = float64(420)
+const OverdriveDrainPerSecond = float64(70)
+
 // ResolveOverdriveDuration reproduces build-103's Overdrive meter path. The
 // equipped duration attribute reduces the authored energy drain rate rather
 // than multiplying the final duration directly.

@@ -19,16 +19,14 @@ func isActiveCoopPickupAlly(
 ) bool {
 	return source.binding.Mode == game.ModeChain &&
 		candidate.binding.Mode == game.ModeChain &&
-		candidate.binding.GameID == source.binding.GameID &&
 		candidate.binding.UserID != source.binding.UserID &&
-		candidate.zone == source.zone && candidate.squad != nil &&
-		candidate.stage.IsDungeon() && !candidate.isRejoinPending
+		isActivePartyRecipient(candidate, source)
 }
 
 func (e *gameplaySessionRegistry) restoreAlliedZoneSquadsLocked(
-	source gameplayPeerSession, kind zoneOrbKind, restoreFraction float32,
+	source gameplayPeerSession, kind zoneOrbKind, baseFraction float32,
 ) ([]alliedZoneSquadRestoration, [][]byte, [][]byte, error) {
-	if e == nil || source.zone == nil || restoreFraction <= 0 {
+	if e == nil || source.zone == nil || baseFraction <= 0 {
 		return nil, nil, nil, nil
 	}
 	sessionKeys := make([]string, 0, len(e.sessions))
@@ -43,6 +41,10 @@ func (e *gameplaySessionRegistry) restoreAlliedZoneSquadsLocked(
 	worldPackets := make([][]byte, 0, len(sessionKeys))
 	for _, sessionKey := range sessionKeys {
 		candidate := e.sessions[sessionKey]
+		// PartAttribute already includes current catalyst contributions. Apply
+		// this recipient's active hero projection exactly once to the base.
+		restoreFraction := baseFraction *
+			(1 + candidate.campaignPartAttribute(campaignOrbEffectAttribute))
 		restoration := alliedZoneSquadRestoration{sessionKey: sessionKey}
 		var err error
 		if kind == zoneHealthOrb {

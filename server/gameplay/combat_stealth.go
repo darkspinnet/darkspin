@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/util"
 	zone "github.com/darkspinnet/darkspin/server/zone"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
+	zoneeffect "github.com/darkspinnet/darkspin/server/zone/effect"
 	zonenavigation "github.com/darkspinnet/darkspin/server/zone/navigation"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
@@ -33,6 +35,7 @@ type campaignStealtherSchedule struct {
 }
 
 type campaignNPCFearRun struct {
+	origin         game.Vec3
 	modifier       *campaignNPCModifierRun
 	sourceObjectID uint32
 	targetObjectID uint32
@@ -99,8 +102,13 @@ func (r campaignNPCActionRuntime) startStealtherStealth(
 		timestamp: timestamp,
 		plan:      zonenpc.AttackPlan{ActionGeneration: enemy.ActionGeneration, Profile: profile},
 	}
+	previousPackets := schedule.retirePreviousStealth()
 	if !action.IsPursuitNeeded {
-		return schedule.cast(timestamp)
+		castPackets, castErr := schedule.cast(timestamp)
+		if castErr != nil {
+			return nil, fmt.Errorf("stealthImmediateCast: %w", castErr)
+		}
+		return append(previousPackets, castPackets...), nil
 	}
 	packets, err := npcraknet.Pursuit(action)
 	if err != nil {
@@ -123,7 +131,49 @@ func (r campaignNPCActionRuntime) startStealtherStealth(
 		schedule.rollbackStealth(schedule.modifier)
 		return nil, fmt.Errorf("enemyStealthMoveSchedule: %w", err)
 	}
-	return append(stealthPackets, packets...), nil
+	previousPackets = append(previousPackets, stealthPackets...)
+	return append(previousPackets, packets...), nil
+}
+
+// A failed approach releases the action lease before the travel expiry fires.
+// Retire that cast's modifier before the retry, so its delayed cleanup cannot
+// clear the newer cast's shared stealth presentation.
+func (e campaignStealtherSchedule) retirePreviousStealth() [][]byte {
+	e.runtime.registry.mutex.RLock()
+	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
+	previousSchedules := make([]campaignStealtherSchedule, 0)
+	if isFound && peerSession.generation == e.generation && peerSession.zone != nil {
+		for sessionKey, member := range e.runtime.registry.sessions {
+			if member.zone != peerSession.zone {
+				continue
+			}
+			for _, run := range member.campaignNPCModifiers {
+				if run == nil || run.record.GUID != stealtherStealthModifierID ||
+					run.record.TargetObjectID != e.objectID {
+					continue
+				}
+				previous := e
+				previous.sessionKey = sessionKey
+				previous.generation = member.generation
+				previous.modifier = run
+				previousSchedules = append(previousSchedules, previous)
+			}
+		}
+	}
+	e.runtime.registry.mutex.RUnlock()
+	packets := make([][]byte, 0)
+	for _, previous := range previousSchedules {
+		packets = append(packets, previous.finishStealth(true, e.timestamp)...)
+	}
+	return packets
+}
+
+func (e campaignStealtherSchedule) ownStealthModifier(modifier *campaignNPCModifierRun) {
+	modifier.record = zoneeffect.Modifier{
+		InstanceID: modifier.instanceID, GUID: stealtherStealthModifierID,
+		SourceObjectID: e.objectID, TargetObjectID: e.objectID,
+		InitiatorObject: e.objectID, Kind: zoneeffect.ModifierKindBuff, Rank: 1,
+	}
 }
 
 func (e *campaignStealtherSchedule) beginTravelStealth(profile zonenpc.ActionProfile) ([][]byte, error) {
@@ -131,6 +181,7 @@ func (e *campaignStealtherSchedule) beginTravelStealth(profile zonenpc.ActionPro
 	if err != nil {
 		return nil, fmt.Errorf("travelModifier: %w", err)
 	}
+	e.ownStealthModifier(modifier)
 	e.modifier = modifier
 	e.plan.Profile = profile
 	e.runtime.registry.mutex.Lock()
@@ -204,7 +255,7 @@ func (e campaignStealtherSchedule) cast(timestamp uint64) ([][]byte, error) {
 		return e.finishStealth(true, timestamp), nil
 	}
 	plan, err := zonenpc.PlanAttackWithProfile(
-		enemy, target.ObjectID, target.Position, profile, target.FootprintRadius,
+		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
@@ -219,6 +270,7 @@ func (e campaignStealtherSchedule) cast(timestamp uint64) ([][]byte, error) {
 			e.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("enemyStealthModifierRun: %w", err)
 		}
+		e.ownStealthModifier(modifier)
 		err = peerSession.zone.NPCs().ApplyStealth(e.objectID)
 		if err != nil {
 			e.runtime.registry.mutex.Unlock()
@@ -335,7 +387,7 @@ func (e campaignStealtherSchedule) hit() ([][]byte, error) {
 	}
 	plan, err := zonenpc.PlanAttackWithProfile(
 		enemy, target.ObjectID, target.Position, e.plan.Profile,
-		target.FootprintRadius,
+		target.ActorFootprintRadius,
 	)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
@@ -540,7 +592,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCFear(
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
-	if r.isTargetDebuffImmuneLocked(&peerSession, target.ObjectID) {
+	if r.isTargetStatusImmuneLocked(&peerSession, target.ObjectID) {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
@@ -558,7 +610,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCFear(
 		}
 		run = &campaignNPCFearRun{
 			modifier: modifier, sourceObjectID: source.Plan.ObjectID,
-			targetObjectID: target.ObjectID,
+			targetObjectID: target.ObjectID, origin: latestTarget.Position,
 		}
 	}
 	previousSourceObjectID := run.sourceObjectID
@@ -600,9 +652,18 @@ func (r campaignNPCActionRuntime) applyCampaignNPCFear(
 		runtime: r, sessionKey: sessionKey, generation: generation,
 		revision: revision, run: run,
 	}
-	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
+	producers := []raknet.ScheduledPacketProducer{{
 		Delay: profile.ModifierDuration, Produce: expiry.produce,
-	}})
+	}}
+	if isHeroFeared {
+		for delay := heroFearMovementInterval; delay < profile.ModifierDuration; delay += heroFearMovementInterval {
+			producers = append(producers, raknet.ScheduledPacketProducer{
+				Delay: delay, Produce: expiry.move,
+			})
+		}
+	}
+	sortScheduledPacketProducersByDelay(producers)
+	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, producers)
 	if scheduleErr == nil && cancel == nil {
 		scheduleErr = errors.New("nil cancellation")
 	}
@@ -642,9 +703,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCFear(
 		run.modifier.create()
 	}
 	packets := [][]byte{modifierPacket}
-	movementPacket, err := r.startCampaignFearMovement(
-		sessionKey, generation, target,
-	)
+	movementPackets, err := expiry.move()
 	if err != nil {
 		r.logger.Printf(
 			"RakNet campaign fear movement skipped target=%d: %v",
@@ -652,9 +711,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCFear(
 		)
 		return packets, nil
 	}
-	if movementPacket != nil {
-		packets = append(packets, movementPacket)
-	}
+	packets = append(packets, movementPackets...)
 	return packets, nil
 }
 
@@ -704,6 +761,7 @@ func (r campaignNPCActionRuntime) stopCampaignNPCFearSource(
 		return nil, nil
 	}
 	runs := make([]*campaignNPCFearRun, 0, len(peerSession.campaignNPCFears))
+	packets := make([][]byte, 0)
 	for targetObjectID, run := range peerSession.campaignNPCFears {
 		if run == nil || run.sourceObjectID != sourceObjectID {
 			continue
@@ -719,27 +777,20 @@ func (r campaignNPCActionRuntime) stopCampaignNPCFearSource(
 			peerSession.enemyFearTargetObjectID = 0
 		}
 		if peerSession.deployedObjectID == targetObjectID {
-			err := peerSession.stopPlayerMovement(r.now())
+			stopPackets, err := peerSession.stopHeroFearMovement(r.now())
 			if err != nil && r.logger != nil {
 				r.logger.Printf(
 					"RakNet fear source-death movement cleanup omitted target=%d: %v",
 					targetObjectID, err,
 				)
 			}
-			err = peerSession.syncZoneHeroPose()
-			if err != nil && r.logger != nil {
-				r.logger.Printf(
-					"RakNet fear source-death pose cleanup omitted target=%d: %v",
-					targetObjectID, err,
-				)
-			}
+			packets = append(packets, stopPackets...)
 		}
 		runs = append(runs, run)
 	}
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
 
-	packets := make([][]byte, 0, len(runs))
 	for index, run := range runs {
 		isCreated, err := run.modifier.release(r.modifierPool)
 		if err != nil {
@@ -760,6 +811,7 @@ func (r campaignNPCActionRuntime) stopCampaignNPCFearSource(
 }
 
 func (e campaignNPCFearExpiryStep) produce() ([][]byte, error) {
+	packets := make([][]byte, 0, 2)
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
@@ -773,8 +825,11 @@ func (e campaignNPCFearExpiryStep) produce() ([][]byte, error) {
 			peerSession.enemyFearTargetObjectID = 0
 		}
 		if peerSession.deployedObjectID == e.run.targetObjectID {
-			_ = peerSession.stopPlayerMovement(e.runtime.now())
-			_ = peerSession.syncZoneHeroPose()
+			stopPackets, err := peerSession.stopHeroFearMovement(e.runtime.now())
+			if err != nil && e.runtime.logger != nil {
+				e.runtime.logger.Printf("RakNet fear expiry movement cleanup failed target=%d: %v", e.run.targetObjectID, err)
+			}
+			packets = append(packets, stopPackets...)
 		}
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 	}
@@ -787,7 +842,7 @@ func (e campaignNPCFearExpiryStep) produce() ([][]byte, error) {
 		return nil, fmt.Errorf("enemyFearRelease: %w", err)
 	}
 	if !isCreated {
-		return nil, nil
+		return packets, nil
 	}
 	modifierPacket, err := raknet.MarshalApplication(raknet.ModifierDeletedMessage{
 		TargetID: e.run.targetObjectID, InstanceID: e.run.modifier.instanceID,
@@ -795,55 +850,5 @@ func (e campaignNPCFearExpiryStep) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("enemyFearDelete: %w", err)
 	}
-	return [][]byte{modifierPacket}, nil
-}
-
-func (r campaignNPCActionRuntime) startCampaignFearMovement(
-	sessionKey string, generation uint64, target zone.NPCTarget,
-) ([]byte, error) {
-	r.registry.mutex.Lock()
-	defer r.registry.mutex.Unlock()
-	peerSession, isFound := r.registry.sessions[sessionKey]
-	isLocal := isFound && peerSession.generation == generation &&
-		peerSession.zone != nil && target.IsHero &&
-		target.UserID == peerSession.binding.UserID &&
-		peerSession.deployedObjectID == target.ObjectID &&
-		peerSession.zone.NPCRandom() != nil
-	if !isLocal {
-		return nil, nil
-	}
-	destination, isDestinationFound, err :=
-		zonenavigation.RandomTeleportDestination(
-			peerSession.zone.Navigation(), peerSession.zone.NPCRandom(),
-			zonenavigation.RandomTeleportRequest{
-				SourcePosition:  target.Position,
-				FootprintRadius: peerSession.deployedCampaignFootprintRadius(),
-				MinimumDistance: 5, NormalDistance: 7.5, MaximumDistance: 10,
-			},
-		)
-	if err != nil {
-		return nil, fmt.Errorf("fearDestination: %w", err)
-	}
-	if !isDestinationFound {
-		return nil, nil
-	}
-	err = peerSession.startEnemyFearMovement(
-		r.now(), raknet.Vector3{
-			X: destination.X, Y: destination.Y, Z: destination.Z,
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("fearMotion: %w", err)
-	}
-	r.registry.sessions[sessionKey] = peerSession
-	packet, err := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
-		ObjectID: target.ObjectID, GoalFlags: 0x01,
-		GoalPosition: raknet.Vector3{
-			X: destination.X, Y: destination.Y, Z: destination.Z,
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("fearMovementMarshal: %w", err)
-	}
-	return packet, nil
+	return append(packets, modifierPacket), nil
 }

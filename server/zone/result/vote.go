@@ -50,6 +50,7 @@ type VoteSession struct {
 	mu       sync.RWMutex
 	epoch    uint64
 	decision VoteDecision
+	deadline time.Time
 	voters   map[uint64]voteMember
 }
 
@@ -155,7 +156,11 @@ func (s *VoteSession) Cast(
 	defer s.mu.Unlock()
 	current, isFound := s.voters[voter.UserID]
 	if !isFound || current.voter.PeerGeneration != voter.PeerGeneration ||
-		s.epoch != epoch || s.decision != VoteDecisionPending {
+		s.epoch != epoch {
+		return s.snapshot(), false
+	}
+	s.expire(time.Now())
+	if s.decision != VoteDecisionPending {
 		return s.snapshot(), false
 	}
 	if current.choice == choice {
@@ -185,17 +190,25 @@ func (s *VoteSession) Decision(
 	if s == nil || epoch == 0 {
 		return VoteDecisionPending, false
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	current, isFound := s.voters[voter.UserID]
 	if !isFound || current.voter.PeerGeneration != voter.PeerGeneration ||
-		s.epoch != epoch || s.decision == VoteDecisionPending {
+		s.epoch != epoch {
+		return VoteDecisionPending, false
+	}
+	s.expire(time.Now())
+	if s.decision == VoteDecisionPending {
 		return VoteDecisionPending, false
 	}
 	return s.decision, true
 }
 
 func (s *VoteSession) resolve() {
+	s.expire(time.Now())
+	if s.decision != VoteDecisionPending {
+		return
+	}
 	if s.epoch == 0 || len(s.voters) == 0 {
 		return
 	}
@@ -212,6 +225,37 @@ func (s *VoteSession) resolve() {
 	}
 	if isAllContinue {
 		s.decision = VoteDecisionContinue
+	}
+}
+
+// Countdown starts when voting data is first requested. All members and
+// repeated requests share the same deadline rather than restarting the clock.
+func (e *VoteSession) Countdown(voter Voter, epoch uint64) (time.Duration, bool) {
+	if e == nil || epoch == 0 {
+		return 0, false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	current, isFound := e.voters[voter.UserID]
+	if !isFound || current.voter.PeerGeneration != voter.PeerGeneration ||
+		e.epoch != epoch {
+		return 0, false
+	}
+	now := time.Now()
+	if e.deadline.IsZero() && e.decision == VoteDecisionPending {
+		e.deadline = now.Add(VoteDuration)
+	}
+	e.expire(now)
+	if e.decision != VoteDecisionPending {
+		return 0, true
+	}
+	return e.deadline.Sub(now), true
+}
+
+func (e *VoteSession) expire(now time.Time) {
+	if e.decision == VoteDecisionPending && !e.deadline.IsZero() &&
+		!now.Before(e.deadline) {
+		e.decision = VoteDecisionCashOut
 	}
 }
 

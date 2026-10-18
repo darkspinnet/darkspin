@@ -79,14 +79,17 @@ func ChargeMove(
 	objectID uint32, source game.Vec3, destination game.Vec3,
 	targetObjectID uint32, target game.Vec3,
 ) ([][]byte, error) {
-	if objectID == 0 || targetObjectID == 0 ||
-		!isFinitePosition(source) || !isFinitePosition(destination) ||
+	if objectID == 0 || !isFinitePosition(source) || !isFinitePosition(destination) ||
 		!isFinitePosition(target) {
 		return nil, errors.New("invalid charge move")
 	}
 	facing := pursuitDirection(source, destination)
+	goalFlags := uint32(0x01)
+	if targetObjectID != 0 {
+		goalFlags |= 0x40
+	}
 	movePacket, err := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
-		ObjectID: objectID, GoalFlags: 0x41,
+		ObjectID: objectID, GoalFlags: goalFlags,
 		GoalPosition:        vector(destination),
 		Facing:              facing,
 		DesiredStopDistance: 0.1,
@@ -101,6 +104,24 @@ func ChargeMove(
 		return nil, fmt.Errorf("chargeStep: %w", err)
 	}
 	return [][]byte{movePacket, stepPacket}, nil
+}
+
+// ChargeSlide mirrors SlideToPoint: a flat jump snapshot faces the destination
+// and lets the client mover traverse actors instead of routing around them.
+func ChargeSlide(objectID uint32, source game.Vec3, destination game.Vec3, speed float32) ([]byte, error) {
+	if objectID == 0 || !isFinitePosition(source) || !isFinitePosition(destination) ||
+		speed <= 0 || math.IsNaN(float64(speed)) || math.IsInf(float64(speed), 0) {
+		return nil, errors.New("invalid charge slide")
+	}
+	packet, err := raknet.MarshalApplication(raknet.ObjectJumpMessage{
+		ObjectID: objectID, JumpPosition: vector(destination),
+		JumpDirection:  pursuitDirection(source, destination),
+		JumpParameters: [4]float32{speed, 0, 0, 0},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("chargeSlideMarshal: %w", err)
+	}
+	return packet, nil
 }
 
 func pursuitGoal(source game.Vec3, target game.Vec3, stopDistance float32) game.Vec3 {

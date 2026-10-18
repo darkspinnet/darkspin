@@ -94,7 +94,9 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 		sourceCharacter.HitPoints, sourceCharacter.ManaPoints,
 		targetCharacter.HitPoints, targetCharacter.ManaPoints,
 		peerSession.playerPosition, command.Common.Orientation,
-		uint64(switchStartTime.UnixMilli()), true,
+		packet.SourceTime+uint64(campaignCreatureWarpOutDelay/time.Millisecond),
+		packet.SourceTime+uint64(standardCreatureSwapCooldown/time.Millisecond),
+		true,
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -102,7 +104,7 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 	}
 	departurePackets, err := marshalCampaignCharacterDeparture(
 		sourceObjectID, peerSession.binding.Creatures[sourceCreatureIndex],
-		peerSession.playerPosition, uint64(switchStartTime.UnixMilli()),
+		peerSession.playerPosition, packet.SourceTime,
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -128,6 +130,8 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 	interruptedBasic := peerSession.resetAbilityAdmissionForSwitch()
 	peerSession.deployedCreatureIndex = command.Value
 	peerSession.deployedObjectID = targetObjectID
+	peerSession.heroInputLockedObjectID = sourceObjectID
+	peerSession.heroInputLockedUntil = switchStartTime.Add(campaignCreatureWarpOutDelay)
 	peerSession.isHeroSelectionPending = false
 	peerSession.isHeroSelectionScheduled = false
 	peerSession.heroSelectionReadyAt = time.Time{}
@@ -145,7 +149,10 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 			sourceObjectID, targetObjectID, command.Value,
 		)
 	}
-	step := gameplaySwitchArrivalStep{packets: switchPackets}
+	step := gameplaySwitchArrivalStep{
+		runtime: r, packets: switchPackets, sessionKey: sessionKey,
+		generation: commandSession.generation, targetObjectID: targetObjectID,
+	}
 	producer := raknet.ScheduledPacketProducer{
 		Delay: campaignCreatureWarpOutDelay, Produce: step.produce,
 	}
@@ -165,7 +172,11 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 			sourceObjectID, targetObjectID, scheduleErr,
 		)
 	}
-	return append(departurePackets, switchPackets...), nil
+	arrivalPackets, err := step.produce()
+	if err != nil {
+		return nil, fmt.Errorf("arenaArrivalFallback: %w", err)
+	}
+	return append(departurePackets, arrivalPackets...), nil
 }
 
 func (r gameplaySwitchRuntime) rejectArenaSwitch(
@@ -308,17 +319,20 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 		return nil, fmt.Errorf("arenaTargetPosition: %w", err)
 	}
 	maximumRange := heroAbilityAdmissionRange(creature, projected)
-	actorRadius, actorRadiusErr := r.program.FootprintRadiusByNoun(creature.Noun)
-	if actorRadiusErr == nil && actorRadius > 0 {
-		maximumRange += actorRadius
-	}
-	targetCreature := targetSession.binding.Creatures[targetSession.deployedCreatureIndex]
-	targetRadius, targetRadiusErr := r.program.FootprintRadiusByNoun(targetCreature.Noun)
-	if targetRadiusErr == nil && targetRadius > 0 {
-		maximumRange += targetRadius
-	}
 	if projected.Kind == sim.AbilityKindMelee {
+		maximumRange += peerSession.deployedCampaignActorFootprintRadius() +
+			targetSession.deployedCampaignActorFootprintRadius()
 		maximumRange += campaignHeldMeleeCursorRadius
+	} else {
+		actorRadius, actorRadiusErr := r.program.FootprintRadiusByNoun(creature.Noun)
+		if actorRadiusErr == nil && actorRadius > 0 {
+			maximumRange += actorRadius
+		}
+		targetCreature := targetSession.binding.Creatures[targetSession.deployedCreatureIndex]
+		targetRadius, targetRadiusErr := r.program.FootprintRadiusByNoun(targetCreature.Noun)
+		if targetRadiusErr == nil && targetRadius > 0 {
+			maximumRange += targetRadius
+		}
 	}
 	distance := zonegeometry.Distance(
 		game.Vec3(peerSession.playerPosition), game.Vec3(targetSession.playerPosition),
@@ -366,7 +380,7 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("arenaDefense: %w", defenseErr)
 	}
-	if targetSession.heroModifierRun.IsDamageImmune() || targetSession.heroQuantumBlink != nil {
+	if targetSession.isHeroDamageImmune(attackTime) {
 		defenseFlags = 0x40
 	}
 	damage := critical.Damage
@@ -434,7 +448,7 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 	} else {
 		posePackets, poseErr := marshalZonePlayerAttackPose(
 			peerSession.deployedObjectID, peerSession.playerPosition,
-			raknet.Vector3(direction), targetSession.playerPosition, targetObjectID,
+			raknet.Vector3(direction), targetSession.playerPosition,
 		)
 		if poseErr != nil {
 			r.registry.mutex.Unlock()
@@ -572,6 +586,13 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 	}
 	if hitPoint > 0 && damage > 0 && targetSession.deployedObjectID == targetObjectID {
 		targetSession.applyPassiveDamageTaken(attackTime)
+		mantlePackets, mantleErr := targetSession.presentHardenedMantle(
+			r.modifierPool, r.effectPool, packet.SourceTime,
+		)
+		if mantleErr != nil {
+			r.logger.Printf("RakNet Hardened Mantle presentation omitted object=%d: %v", targetObjectID, mantleErr)
+		}
+		transitionPackets = append(transitionPackets, mantlePackets...)
 	}
 	if hitPoint > 0 {
 		index := targetSession.deployedCreatureIndex
@@ -1390,7 +1411,9 @@ func (e gameplayArenaRuntime) lobbyPlayerPackets(gameID uint32) ([][]byte, error
 	})
 	packets := make([][]byte, 0, len(bindings))
 	for _, binding := range bindings {
-		packet, err := marshalCampaignInitialPlayer(binding, raknet.PlayerStatus{})
+		packet, err := marshalCampaignInitialPlayer(
+			binding, raknet.PlayerStatus{}, campaignInitialOverdriveEnergy(binding),
+		)
 		if err != nil {
 			return nil, fmt.Errorf("arenaPlayer[%d]: %w", binding.Slot, err)
 		}

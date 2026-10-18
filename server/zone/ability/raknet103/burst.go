@@ -216,6 +216,16 @@ func (r *BurstRun) ResetActorAnimation(ctx context.Context) ([][]byte, error) {
 	return r.outbox.Drain(), nil
 }
 
+func (e *BurstRun) StopLaunching() {
+	if e != nil && e.behavior != nil {
+		e.behavior.StopLaunching()
+	}
+}
+
+func (e *BurstRun) IsShotLaunched(index int) bool {
+	return e != nil && e.behavior != nil && e.behavior.IsShotLaunched(index)
+}
+
 func (r *BurstRun) AdvanceClock(deadline time.Duration) error {
 	if r == nil || r.simulator == nil {
 		return errors.New("nil projectile burst run")
@@ -256,7 +266,7 @@ func (r *BurstRun) Snapshots(now time.Time) []ProjectileSnapshot {
 		remainingDuration := time.Duration(0)
 		if r.ability.Speed > 0 && shot.RemainingDistance > 0 {
 			remainingDuration = time.Duration(
-				float64(shot.RemainingDistance) / float64(r.ability.Speed) *
+				float64(shot.RemainingDistance) / float64(r.ability.Speed*shot.SpeedScale) *
 					float64(time.Second),
 			)
 		}
@@ -270,7 +280,7 @@ func (r *BurstRun) Snapshots(now time.Time) []ProjectileSnapshot {
 			AbilityName: r.ability.Name, ProjectileNoun: r.ability.ProjectileNoun,
 			Position: shot.Position, TargetPosition: shot.TargetPosition,
 			Direction: shot.Direction,
-			Speed:     r.ability.Speed, RemainingDistance: shot.RemainingDistance,
+			Speed:     r.ability.Speed * shot.SpeedScale, RemainingDistance: shot.RemainingDistance,
 			RemainingFlightDuration: remainingDuration, IsActive: true,
 		})
 	}

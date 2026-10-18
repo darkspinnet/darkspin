@@ -21,6 +21,7 @@ type AreaPlan struct {
 	Target         []zonenpc.Snapshot
 	DamageScale    map[uint32]float32
 	TargetDamage   map[uint32]game.DamageRange
+	TargetEffects  map[uint32]string
 	// Single-target secondary hits can share damage selection and publication
 	// without inheriting area mitigation from this executor.
 	IsSingleTarget bool
@@ -189,7 +190,12 @@ func PlanZetawattBeam(
 		if halfExtent <= 0 {
 			halfExtent = 0.5
 		}
-		if positionDistance(closest, enemy.Plan.Position) > halfExtent {
+		deltaClosestX := closest.X - enemy.Plan.Position.X
+		deltaClosestY := closest.Y - enemy.Plan.Position.Y
+		horizontalDistance := float32(math.Sqrt(float64(
+			deltaClosestX*deltaClosestX + deltaClosestY*deltaClosestY,
+		)))
+		if horizontalDistance > halfExtent {
 			continue
 		}
 		target = append(target, enemy)
@@ -575,9 +581,13 @@ func CommitArea(
 		if err != nil {
 			return nil, fmt.Errorf("areaApply[%d]: %w", target.Plan.ObjectID, err)
 		}
+		definition := plan.Definition
+		if effect, isFound := plan.TargetEffects[target.Plan.ObjectID]; isFound {
+			definition.HitEffectName = effect
+		}
 		results = append(results, AreaResult{
 			Snapshot: live, Damage: damage, IsCritical: critical.IsCritical,
-			Definition: plan.Definition,
+			Definition: definition,
 		})
 	}
 	return results, nil

@@ -202,6 +202,16 @@ func (e fieldMedicDroneAttackStep) impact() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	remaining := e.run.RemainingFlightDelay(e.runtime.npc.now())
+	if remaining > abilityraknet.ProjectileCollisionTick {
+		e.runtime.registry.mutex.Unlock()
+		err := scheduleNPCProducer(e.runtime.registry, e.packet,
+			min(remaining, campaignProjectileMotionPollInterval), e.impact)
+		if err != nil {
+			return nil, fmt.Errorf("droneSlowResume: %w", err)
+		}
+		return nil, nil
+	}
 	target, isTargetFound := peerSession.zone.NPCs().NPC(e.plan.TargetObjectID)
 	isTargetValid := isTargetFound && !target.IsDefeated && target.HitPoint > 0
 	var err error

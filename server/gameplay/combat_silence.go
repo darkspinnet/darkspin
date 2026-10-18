@@ -111,7 +111,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCSilence(
 			generation = peerSession.generation
 		}
 	}
-	if peerSession.isHeroDebuffImmune(plan.TargetObjectID) {
+	if peerSession.isHeroDebuffImmune(plan.TargetObjectID) || peerSession.isOverdriveActiveAt(r.now()) {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}

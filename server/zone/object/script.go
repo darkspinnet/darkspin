@@ -57,9 +57,11 @@ func PlanScripts(
 		if callbackName == "" {
 			continue
 		}
+		isComponentAbility := object.Interactable != nil && object.Interactable.AbilityName != nil &&
+			*object.Interactable.AbilityName == object.InteractableAbility
 		if object.InteractableAbility != "" &&
 			(object.InteractableUseLimit == 0 || object.InteractableUseLimit < -1 ||
-				!slices.Contains(object.CallbackNames, object.InteractableAbility)) {
+				(!isComponentAbility && !slices.Contains(object.CallbackNames, object.InteractableAbility))) {
 			return nil, firstObjectID, fmt.Errorf("scriptPlan[%d]: invalid interactable", index)
 		}
 		if nextObjectID >= ProjectileIDStart {

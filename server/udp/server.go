@@ -58,8 +58,61 @@ const (
 )
 
 type rakNetPeerWorker struct {
-	queue  chan rakNetPeerWork
-	cancel context.CancelFunc
+	mu                sync.Mutex
+	queue             chan rakNetPeerWork
+	cancel            context.CancelFunc
+	currentTraceID    uint64
+	currentRequestID  uint8
+	currentReceivedAt time.Time
+	currentStartedAt  time.Time
+	lastDuration      time.Duration
+	lastFailure       string
+}
+
+type SnapshotDiagnostics struct {
+	Peer                    raknet.PeerDiagnostics
+	QueueDepth              int
+	CurrentTraceID          uint64
+	CurrentRequestID        uint8
+	CurrentQueueDelay       time.Duration
+	CurrentDispatchDuration time.Duration
+	LastDispatchDuration    time.Duration
+	LastFailure             string
+}
+
+func (s *SharedServer) SnapshotDiagnostics(
+	remote string, generation uint64, now time.Time,
+) (SnapshotDiagnostics, bool) {
+	address, err := net.ResolveUDPAddr("udp", remote)
+	if err != nil {
+		return SnapshotDiagnostics{}, false
+	}
+	peerDiagnostics, isFound := s.raknet.PeerDiagnostics(address, generation, now)
+	if !isFound {
+		return SnapshotDiagnostics{}, false
+	}
+	key := fmt.Sprintf("%d:%s", rakNetChannelGameplay, remote)
+	s.mu.Lock()
+	worker := s.workers[key]
+	s.mu.Unlock()
+	diagnostics := SnapshotDiagnostics{Peer: peerDiagnostics}
+	if worker == nil {
+		return diagnostics, true
+	}
+	diagnostics.QueueDepth = len(worker.queue)
+	worker.mu.Lock()
+	diagnostics.CurrentTraceID = worker.currentTraceID
+	diagnostics.CurrentRequestID = worker.currentRequestID
+	if !worker.currentReceivedAt.IsZero() {
+		diagnostics.CurrentQueueDelay = worker.currentStartedAt.Sub(worker.currentReceivedAt)
+	}
+	if !worker.currentStartedAt.IsZero() {
+		diagnostics.CurrentDispatchDuration = now.Sub(worker.currentStartedAt)
+	}
+	diagnostics.LastDispatchDuration = worker.lastDuration
+	diagnostics.LastFailure = worker.lastFailure
+	worker.mu.Unlock()
+	return diagnostics, true
 }
 
 type rakNetPeerResult struct {
@@ -324,6 +377,12 @@ func (s *SharedServer) processRakNetWork(
 	}
 	rakNetServer := s.rakNetServer(work.channel)
 	peerGeneration := rakNetServer.PeerGeneration(work.remote)
+	worker.mu.Lock()
+	worker.currentTraceID = work.traceID
+	worker.currentRequestID = requestID
+	worker.currentReceivedAt = work.receivedAt
+	worker.currentStartedAt = startedAt
+	worker.mu.Unlock()
 	traceCtx := raknet.WithTraceID(ctx, work.traceID)
 	workCtx, cancel := context.WithCancel(traceCtx)
 	defer cancel()
@@ -410,6 +469,17 @@ func (s *SharedServer) completeRakNetWork(
 	result rakNetPeerResult, queueDelay time.Duration, startedAt time.Time,
 ) {
 	duration := time.Since(startedAt)
+	worker.mu.Lock()
+	worker.lastDuration = duration
+	worker.lastFailure = ""
+	if result.err != nil {
+		worker.lastFailure = result.err.Error()
+	}
+	worker.currentTraceID = 0
+	worker.currentRequestID = 0
+	worker.currentReceivedAt = time.Time{}
+	worker.currentStartedAt = time.Time{}
+	worker.mu.Unlock()
 	requestID := byte(0)
 	if len(work.packet) != 0 {
 		requestID = work.packet[0]

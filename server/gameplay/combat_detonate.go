@@ -8,7 +8,6 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sporenet"
-	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
@@ -21,10 +20,17 @@ type campaignExploderScarabSchedule struct {
 func (e campaignExploderScarabSchedule) fail(
 	step string, err error,
 ) ([][]byte, error) {
-	e.request.runtime.releaseAction(
+	var packets [][]byte
+	if e.plan.Profile.AbilityName == "CitadelMinionSuicide_Suicide" {
+		var resetErr error
+		packets, resetErr = e.resetMovement()
+		err = errors.Join(err, resetErr)
+	}
+	e.request.runtime.releaseActionGeneration(
 		e.request.sessionKey, e.request.generation, e.request.objectID,
+		e.plan.ActionGeneration,
 	)
-	return nil, fmt.Errorf("%s: %w", step, err)
+	return packets, fmt.Errorf("%s: %w", step, err)
 }
 
 func (e campaignExploderScarabSchedule) explode() ([][]byte, error) {
@@ -55,7 +61,7 @@ func (e campaignExploderScarabSchedule) hit() ([][]byte, error) {
 	runtime.registry.mutex.Lock()
 	peerSession, isFound := runtime.registry.sessions[req.sessionKey]
 	isCurrent := isFound && peerSession.generation == req.generation &&
-		peerSession.isCampaignNPCSourceActive(req.generation, req.objectID)
+		peerSession.isCampaignNPCSourceGenerationActive(req.generation, req.objectID, e.plan.ActionGeneration)
 	if !isCurrent {
 		runtime.registry.mutex.Unlock()
 		return nil, nil
@@ -76,21 +82,6 @@ func (e campaignExploderScarabSchedule) hit() ([][]byte, error) {
 		return nil, nil
 	}
 	isFirebomb := profile.AbilityName == "ScaldronBasicMonk_Firebomb"
-	if !isFirebomb {
-		target, isTargetFound := peerSession.campaignNPCTarget(
-			req.generation, source.TargetObjectID,
-		)
-		if !isTargetFound || zonegeometry.Distance(
-			source.Plan.Position, target.Position,
-		) >= profile.Range+source.Plan.NPCProfile.FootprintRadius+
-			target.FootprintRadius {
-			runtime.registry.mutex.Unlock()
-			e.request.runtime.releaseAction(
-				e.request.sessionKey, e.request.generation, e.request.objectID,
-			)
-			return nil, nil
-		}
-	}
 	packets := make([][]byte, 0, 1)
 	if profile.ImpactEffectName != "" {
 		impactPacket, impactErr := npcraknet.PositionedEffect(
@@ -147,6 +138,15 @@ func (e campaignExploderScarabSchedule) hit() ([][]byte, error) {
 		packets = append(packets, hitPackets...)
 		statDelta.PVEDamageTaken += targetStatDelta.PVEDamageTaken
 		if isApplied {
+			if !isFirebomb {
+				hitEffect, hitEffectErr := npcraknet.DeathDetonation(currentTarget.ObjectID,
+					"ctd_minn_tc_2_explosion_hit.ServerEventDef")
+				if hitEffectErr != nil {
+					runtime.logger.Printf("RakNet scarab hit effect omitted target=%d: %v", currentTarget.ObjectID, hitEffectErr)
+				} else {
+					packets = append(packets, hitEffect)
+				}
+			}
 			modifierPlans = append(modifierPlans, plan)
 		}
 	}
@@ -249,12 +249,12 @@ func (r campaignNPCActionRuntime) produceExploderScarab(
 	}
 	plan, err := zonenpc.PlanAttackWithProfile(
 		source, target.ObjectID, target.Position, profile,
-		target.FootprintRadius,
+		target.ActorFootprintRadius,
 	)
 	if err != nil {
 		action, actionErr := campaignNPCActionWithProfile(
 			source.Plan, target.ObjectID, target.Position, profile,
-			target.FootprintRadius,
+			target.ActorFootprintRadius,
 		)
 		if actionErr != nil {
 			r.releaseAction(sessionKey, generation, objectID)
@@ -314,7 +314,7 @@ func (r campaignNPCActionRuntime) produceExploderScarab(
 	}
 	schedule := campaignExploderScarabSchedule{request: request, plan: plan}
 	_, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
-		Delay: profile.HitDelay, Produce: schedule.hit,
+		Delay: 300 * time.Millisecond, Produce: schedule.arm,
 	}})
 	if scheduleErr != nil {
 		r.releaseAction(sessionKey, generation, objectID)

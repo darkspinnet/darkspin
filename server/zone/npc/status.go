@@ -7,6 +7,8 @@ import (
 )
 
 type status struct {
+	repairBlockedUntil       time.Time
+	swiftMovementSpeedBuff   float32
 	areaShiftExpiresAt       time.Time
 	absorptionShieldAmount   float32
 	absorptionShieldMaximum  float32
@@ -49,6 +51,7 @@ type status struct {
 	oozeBaseMaximumHitPoint  float32
 	oozeGrowthDamageIncrease float32
 	oozeGrowthStack          uint32
+	oozeGrowthReadyTimestamp uint64
 	corpseConsumerCount      uint32
 	isCorpseFading           bool
 	isCorpseFadePublished    bool
@@ -105,6 +108,7 @@ func (s *Session) PurgeDebuffs(objectID uint32) bool {
 	isPurged := !status.banishExpiresAt.IsZero() ||
 		!status.curseExpiresAt.IsZero() ||
 		status.damageTakenIncrease > 0 ||
+		!status.physicalVulnerabilityEnd.IsZero() ||
 		!status.energyVulnerabilityEnd.IsZero() ||
 		!status.healingReductionEnd.IsZero() ||
 		!status.fearExpiresAt.IsZero() ||
@@ -123,6 +127,8 @@ func (s *Session) PurgeDebuffs(objectID uint32) bool {
 	status.curseDamage = CurseDamageProfile{}
 	status.damageTakenIncrease = 0
 	status.damageVulnerabilityOwner = 0
+	status.physicalTakenIncrease = 0
+	status.physicalVulnerabilityEnd = time.Time{}
 	status.energyTakenIncrease = 0
 	status.energyVulnerabilityOwner = 0
 	status.energyVulnerabilityEnd = time.Time{}
@@ -408,11 +414,10 @@ func (s *Session) ApplyHaste(
 			float64(profile.Cooldown) / float64(1+attackSpeed) *
 				float64(1-cooldownReduction),
 		)
-		profile.MovementSpeed *= 1 + movementSpeedBuff
-		profile.NonCombatMovementSpeed *= 1 + movementSpeedBuff
 		npc.Plan.ActionProfile = profile
 		npc.Plan.IsActionKnown = true
 	}
+	npc.Plan.MovementSpeedBuff = movementSpeedBuff
 	s.npcs[objectID] = npc
 	return nil
 }
@@ -431,6 +436,7 @@ func (s *Session) ClearHaste(objectID uint32, expiresAt time.Time) {
 	npc.status.hasteAttackSpeed = 0
 	npc.status.hasteCooldownReduction = 0
 	npc.status.hasteMovementSpeedBuff = 0
+	npc.Plan.MovementSpeedBuff = 0
 	if npc.status.isHasteProfileStored {
 		npc.Plan.ActionProfile = npc.status.hasteActionProfile
 		npc.Plan.IsActionKnown = npc.status.isHasteActionKnown

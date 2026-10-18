@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -76,52 +75,77 @@ type CreatureAbilityProperty struct {
 // NonPlayerClass is the proven runtime combat-stat projection for one
 // non-player noun base instance.
 type NonPlayerClass struct {
-	InstanceID             uint32
-	NounName               string
-	DisplayName            string
-	DisplayNameLocaleKey   string
-	Description            string
-	DescriptionLocaleKey   string
-	NPCAffixNames          [NonPlayerAffixLimit]string
-	ChallengeValue         int32
-	NPCRank                int32
-	IsTargetable           bool
-	IsPlayerPet            bool
-	PlayerCountHealthScale float32
-	HitPoint               float32
-	PowerPoint             float32
-	Strength               float32
-	Dexterity              float32
-	Mind                   float32
-	DodgeRating            float32
-	ResistRating           float32
-	CriticalRating         float32
+	InstanceID                   uint32
+	NounName                     string
+	DisplayName                  string
+	DisplayNameLocaleKey         string
+	Description                  string
+	DescriptionLocaleKey         string
+	NPCAffixNames                [NonPlayerAffixLimit]string
+	NPCAffixMinimumDifficulties  [NonPlayerAffixLimit]int32
+	NPCAffixMaximumDifficulties  [NonPlayerAffixLimit]int32
+	AreNPCAffixDifficultiesKnown bool
+	ChallengeValue               int32
+	NPCRank                      int32
+	NPCType                      uint32
+	CreatureType                 uint32
+	DropTypes                    []uint32
+	IsTargetable                 bool
+	IsPlayerPet                  bool
+	PlayerCountHealthScale       float32
+	AggroRange                   float32
+	AlertRange                   float32
+	DropAggroRange               float32
+	IdleMovementSpeed            float32
+	BaseCombatSpeed              float32
+	HitPoint                     float32
+	PowerPoint                   float32
+	Strength                     float32
+	Dexterity                    float32
+	Mind                         float32
+	DodgeRating                  float32
+	ResistRating                 float32
+	CriticalRating               float32
 }
 
 // NonPlayerNounProfile joins one noun to its authored non-player class and
 // physical scale without exposing storage IDs to the game feature.
 type NonPlayerNounProfile struct {
-	NounName               string
-	DisplayName            string
-	DisplayNameLocaleKey   string
-	Description            string
-	DescriptionLocaleKey   string
-	NPCAffixNames          [NonPlayerAffixLimit]string
-	ChallengeValue         int32
-	NPCRank                int32
-	IsTargetable           bool
-	IsPlayerPet            bool
-	PlayerCountHealthScale float32
-	HitPoint               float32
-	PowerPoint             float32
-	Strength               float32
-	Dexterity              float32
-	Mind                   float32
-	DodgeRating            float32
-	ResistRating           float32
-	CriticalRating         float32
-	GraphicsScale          float32
-	FootprintRadius        float32
+	AIDefinitionInstanceID       uint32
+	IsClassKnown                 bool
+	AggroType                    uint32
+	NounName                     string
+	DisplayName                  string
+	DisplayNameLocaleKey         string
+	Description                  string
+	DescriptionLocaleKey         string
+	NPCAffixNames                [NonPlayerAffixLimit]string
+	NPCAffixMinimumDifficulties  [NonPlayerAffixLimit]int32
+	NPCAffixMaximumDifficulties  [NonPlayerAffixLimit]int32
+	AreNPCAffixDifficultiesKnown bool
+	ChallengeValue               int32
+	NPCRank                      int32
+	NPCType                      uint32
+	CreatureType                 uint32
+	DropTypes                    []uint32
+	IsTargetable                 bool
+	IsPlayerPet                  bool
+	PlayerCountHealthScale       float32
+	AggroRange                   float32
+	AlertRange                   float32
+	DropAggroRange               float32
+	IdleMovementSpeed            float32
+	BaseCombatSpeed              float32
+	HitPoint                     float32
+	PowerPoint                   float32
+	Strength                     float32
+	Dexterity                    float32
+	Mind                         float32
+	DodgeRating                  float32
+	ResistRating                 float32
+	CriticalRating               float32
+	GraphicsScale                float32
+	FootprintRadius              float32
 }
 
 // NounPhysics is the storage representation of proven noun collision and
@@ -274,11 +298,15 @@ func (s *Store) enrichCreatureTemplates(ctx context.Context, templates []Creatur
 	}
 	if isLocalizationStored {
 		for index := range templates {
+			tableID, tableErr := creatureLocalizationTableID(templates[index].Name)
+			if tableErr != nil {
+				return fmt.Errorf("localeIdentity[%d]: %w", templates[index].ID, tableErr)
+			}
 			err = s.database.QueryRowContext(ctx, `
 				SELECT table_id FROM localization_text
-				WHERE locale = 'en-us' AND locale_key = ?
-				LIMIT 1`, templates[index].NameLocaleKey).Scan(&templates[index].LocalizationTableID)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				WHERE locale = 'en-us' AND table_id = ? AND locale_key = ?`,
+				tableID, templates[index].NameLocaleKey).Scan(&templates[index].LocalizationTableID)
+			if err != nil {
 				return fmt.Errorf("localeRead[%d]: %w", templates[index].ID, err)
 			}
 		}
@@ -622,8 +650,10 @@ func (s *Store) NonPlayerClasses(ctx context.Context) ([]NonPlayerClass, error) 
 	rows, err := s.database.QueryContext(ctx, `
 		SELECT instance_id, noun_name, display_name, display_name_locale_key,
 			description, description_locale_key,
-			challenge_value, npc_rank, is_targetable, is_player_pet,
-			player_count_health_scale, hit_point, power_point, strength, dexterity, mind,
+			challenge_value, npc_rank, npc_type, creature_type, is_targetable, is_player_pet,
+			player_count_health_scale, aggro_range, alert_range, drop_aggro_range,
+			idle_movement_speed, base_combat_speed,
+			hit_point, power_point, strength, dexterity, mind,
 			dodge_rating, resist_rating, critical_rating
 		FROM non_player_class ORDER BY instance_id`)
 	if err != nil {
@@ -636,8 +666,10 @@ func (s *Store) NonPlayerClasses(ctx context.Context) ([]NonPlayerClass, error) 
 		err = rows.Scan(
 			&class.InstanceID, &class.NounName, &class.DisplayName,
 			&class.DisplayNameLocaleKey, &class.Description, &class.DescriptionLocaleKey,
-			&class.ChallengeValue, &class.NPCRank,
+			&class.ChallengeValue, &class.NPCRank, &class.NPCType, &class.CreatureType,
 			&class.IsTargetable, &class.IsPlayerPet, &class.PlayerCountHealthScale,
+			&class.AggroRange, &class.AlertRange, &class.DropAggroRange,
+			&class.IdleMovementSpeed, &class.BaseCombatSpeed,
 			&class.HitPoint, &class.PowerPoint,
 			&class.Strength, &class.Dexterity, &class.Mind,
 			&class.DodgeRating, &class.ResistRating, &class.CriticalRating,
@@ -661,7 +693,9 @@ func (s *Store) NonPlayerClasses(ctx context.Context) ([]NonPlayerClass, error) 
 	}
 	affixRows, err := s.database.QueryContext(ctx, `
 		SELECT non_player_class.instance_id, non_player_class_affix.ordinal,
-		       non_player_class_affix.asset_name
+		       non_player_class_affix.asset_name,
+		       non_player_class_affix.minimum_difficulty,
+		       non_player_class_affix.maximum_difficulty
 		FROM non_player_class_affix
 		JOIN non_player_class
 		  ON non_player_class.content_source_resource_id=
@@ -675,7 +709,9 @@ func (s *Store) NonPlayerClasses(ctx context.Context) ([]NonPlayerClass, error) 
 		var instanceID uint32
 		var ordinal int
 		var affixName string
-		err = affixRows.Scan(&instanceID, &ordinal, &affixName)
+		var minimumDifficulty, maximumDifficulty int32
+		err = affixRows.Scan(&instanceID, &ordinal, &affixName,
+			&minimumDifficulty, &maximumDifficulty)
 		if err != nil {
 			return nil, fmt.Errorf("nonPlayerAffixScan: %w", err)
 		}
@@ -684,157 +720,132 @@ func (s *Store) NonPlayerClasses(ctx context.Context) ([]NonPlayerClass, error) 
 			return nil, fmt.Errorf("nonPlayerAffixOwner[%d:%d]: missing", instanceID, ordinal)
 		}
 		classes[classIndex].NPCAffixNames[ordinal] = affixName
+		if minimumDifficulty > maximumDifficulty {
+			return nil, fmt.Errorf("nonPlayerAffixRange[%d:%d]: inverted", instanceID, ordinal)
+		}
+		classes[classIndex].NPCAffixMinimumDifficulties[ordinal] = minimumDifficulty
+		classes[classIndex].NPCAffixMaximumDifficulties[ordinal] = maximumDifficulty
+		classes[classIndex].AreNPCAffixDifficultiesKnown = true
 	}
 	err = affixRows.Err()
 	if err != nil {
 		return nil, fmt.Errorf("nonPlayerAffixRows: %w", err)
 	}
+	dropRows, err := s.database.QueryContext(ctx, `
+		SELECT non_player_class.instance_id, non_player_class_drop_type.drop_type
+		FROM non_player_class_drop_type
+		JOIN non_player_class ON non_player_class.content_source_resource_id=non_player_class_drop_type.non_player_class_resource_id
+		ORDER BY non_player_class.instance_id, non_player_class_drop_type.ordinal`)
+	if err != nil {
+		return nil, fmt.Errorf("nonPlayerDropQuery: %w", err)
+	}
+	defer dropRows.Close()
+	for dropRows.Next() {
+		var instanceID uint32
+		var dropType uint32
+		err = dropRows.Scan(&instanceID, &dropType)
+		if err != nil {
+			return nil, fmt.Errorf("nonPlayerDropScan: %w", err)
+		}
+		classIndex, isClassFound := classesByInstance[instanceID]
+		if !isClassFound {
+			return nil, fmt.Errorf("nonPlayerDropOwner[%d]: missing", instanceID)
+		}
+		classes[classIndex].DropTypes = append(classes[classIndex].DropTypes, dropType)
+	}
+	err = dropRows.Err()
+	if err != nil {
+		return nil, fmt.Errorf("nonPlayerDropRows: %w", err)
+	}
 	return classes, nil
 }
 
-// NonPlayerNounProfiles reads every authored ClassAttributes identity and
-// overlays exact noun physics where that narrower catalog is available.
-func (s *Store) NonPlayerNounProfiles(ctx context.Context) ([]NonPlayerNounProfile, error) {
-	if s == nil || s.database == nil {
+// NonPlayerNounProfiles follows each noun's authored NonPlayerClass reference
+// and overlays exact noun physics where that narrower catalog is available.
+func (e *Store) NonPlayerNounProfiles(ctx context.Context) ([]NonPlayerNounProfile, error) {
+	if e == nil || e.database == nil {
 		return nil, errors.New("nil store")
 	}
 	if ctx == nil {
 		return nil, errors.New("nil context")
 	}
-	rows, err := s.database.QueryContext(ctx, `
-		SELECT noun_physics.asset_name,
-		       non_player_class.display_name,
-		       non_player_class.display_name_locale_key,
-		       non_player_class.description,
-		       non_player_class.description_locale_key,
-		       non_player_class.challenge_value, non_player_class.npc_rank,
-		       non_player_class.is_targetable, non_player_class.is_player_pet,
-		       non_player_class.player_count_health_scale,
-		       non_player_class.hit_point, non_player_class.power_point,
-		       non_player_class.strength, non_player_class.dexterity, non_player_class.mind,
-		       non_player_class.dodge_rating, non_player_class.resist_rating,
-		       non_player_class.critical_rating,
-		       noun_physics.graphics_scale, noun_physics.footprint_radius
-		FROM noun_physics
-		JOIN content_source_resource AS non_player_resource
-		  ON non_player_resource.id=noun_physics.class_attribute_resource_id
-		JOIN non_player_class
-		  ON non_player_class.instance_id=non_player_resource.instance_id
-		ORDER BY noun_physics.asset_name COLLATE NOCASE`)
-	if err != nil {
-		return nil, fmt.Errorf("nonPlayerNounQuery: %w", err)
-	}
-	profiles := make([]NonPlayerNounProfile, 0, 100)
-	profileIndexesByNoun := make(map[string]int, 100)
-	for rows.Next() {
-		var profile NonPlayerNounProfile
-		err = rows.Scan(
-			&profile.NounName, &profile.DisplayName, &profile.DisplayNameLocaleKey,
-			&profile.Description, &profile.DescriptionLocaleKey,
-			&profile.ChallengeValue, &profile.NPCRank,
-			&profile.IsTargetable, &profile.IsPlayerPet, &profile.PlayerCountHealthScale,
-			&profile.HitPoint, &profile.PowerPoint,
-			&profile.Strength, &profile.Dexterity, &profile.Mind,
-			&profile.DodgeRating, &profile.ResistRating, &profile.CriticalRating,
-			&profile.GraphicsScale, &profile.FootprintRadius,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("nonPlayerNounScan: %w", err)
-		}
-		profiles = append(profiles, profile)
-		profileIndexesByNoun[strings.ToLower(profile.NounName)] = len(profiles) - 1
-	}
-	err = rows.Err()
-	closeErr := rows.Close()
-	if err != nil {
-		return nil, fmt.Errorf("nonPlayerNounRows: %w", err)
-	}
-	if closeErr != nil {
-		return nil, fmt.Errorf("nonPlayerNounClose: %w", closeErr)
-	}
-	classes, err := s.NonPlayerClasses(ctx)
+	classes, err := e.NonPlayerClasses(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("nonPlayerNounClasses: %w", err)
 	}
-	classesByNoun := make(map[string]NonPlayerClass, len(classes))
+	classesByInstance := make(map[uint32]NonPlayerClass, len(classes))
 	for _, class := range classes {
-		nounKey := strings.ToLower(class.NounName)
-		_, isClassFound := classesByNoun[nounKey]
-		classStem := strings.TrimSuffix(class.NounName, ".Noun")
-		isCanonicalClass := class.InstanceID == hashID(classStem)
-		if !isClassFound || isCanonicalClass {
-			classesByNoun[nounKey] = class
-		}
+		classesByInstance[class.InstanceID] = class
 	}
-	for index := range profiles {
-		class, isClassFound := classesByNoun[strings.ToLower(profiles[index].NounName)]
+	rows, err := e.database.QueryContext(ctx, `
+		SELECT non_player_noun.noun_name, non_player_class.instance_id,
+		       COALESCE(noun_physics.graphics_scale, 1),
+		       COALESCE(noun_physics.footprint_radius, 0.5), non_player_noun.aggro_type,
+		       COALESCE(non_player_noun.ai_definition_instance_id, 0)
+		FROM non_player_noun
+		JOIN non_player_class
+		  ON non_player_class.content_source_resource_id=non_player_noun.non_player_class_resource_id
+		LEFT JOIN noun_physics
+		  ON noun_physics.content_source_resource_id=non_player_noun.content_source_resource_id
+		ORDER BY non_player_noun.noun_name COLLATE NOCASE`)
+	if err != nil {
+		return nil, fmt.Errorf("nonPlayerNounQuery: %w", err)
+	}
+	defer rows.Close()
+	profiles := make([]NonPlayerNounProfile, 0, len(classes))
+	for rows.Next() {
+		var nounName string
+		var classInstanceID uint32
+		var aiDefinitionInstanceID uint32
+		var aggroType sql.NullInt64
+		var graphicsScale, footprintRadius float32
+		err = rows.Scan(&nounName, &classInstanceID, &graphicsScale, &footprintRadius, &aggroType,
+			&aiDefinitionInstanceID)
+		if err != nil {
+			return nil, fmt.Errorf("nonPlayerNounScan: %w", err)
+		}
+		class, isClassFound := classesByInstance[classInstanceID]
 		if !isClassFound {
-			continue
+			return nil, fmt.Errorf("nonPlayerNounClass[%s]: missing %#x", nounName, classInstanceID)
 		}
-		profiles[index].NPCAffixNames = class.NPCAffixNames
-	}
-	// Named captains are packaged as a second ClassAttributes identity for
-	// the ordinary noun family, while the director refers to the promoted
-	// actor through its synthetic _Captain noun. Preserve that distinct
-	// identity and combine it with the canonical family's combat/physics
-	// profile instead of collapsing it into the ordinary actor.
-	for _, class := range classes {
-		nounKey := strings.ToLower(class.NounName)
-		canonicalClass, isCanonicalClassFound := classesByNoun[nounKey]
-		if !isCanonicalClassFound || !isNamedCaptainClass(class, canonicalClass) {
-			continue
+		profile := nonPlayerClassProfile(nounName, class)
+		profile.AIDefinitionInstanceID = aiDefinitionInstanceID
+		if aggroType.Valid {
+			profile.AggroType = uint32(aggroType.Int64)
 		}
-		captainNounName := namedCaptainNounName(class.NounName)
-		captainNounKey := strings.ToLower(captainNounName)
-		_, isCaptainProfileFound := profileIndexesByNoun[captainNounKey]
-		if isCaptainProfileFound {
-			continue
-		}
-		profile := nonPlayerClassProfile(captainNounName, canonicalClass)
-		baseProfileIndex, isBaseProfileFound := profileIndexesByNoun[nounKey]
-		if isBaseProfileFound {
-			profile = profiles[baseProfileIndex]
-			profile.NounName = captainNounName
-		}
-		profile.DisplayName = class.DisplayName
-		profile.DisplayNameLocaleKey = class.DisplayNameLocaleKey
-		profile.Description = class.Description
-		profile.DescriptionLocaleKey = class.DescriptionLocaleKey
-		profile.NPCAffixNames = class.NPCAffixNames
-		profile.ChallengeValue = class.ChallengeValue
-		profile.NPCRank = class.NPCRank
-		profile.IsTargetable = class.IsTargetable
-		profile.IsPlayerPet = class.IsPlayerPet
-		profile.PlayerCountHealthScale = class.PlayerCountHealthScale
+		// Unresolved AI retains the profile's existing zero default. SQL NULL
+		// distinguishes it from an authored mode 0 in the imported projection.
+		profile.GraphicsScale = graphicsScale
+		profile.FootprintRadius = footprintRadius
 		profiles = append(profiles, profile)
-		profileIndexesByNoun[captainNounKey] = len(profiles) - 1
 	}
-	for _, class := range classesByNoun {
-		nounKey := strings.ToLower(class.NounName)
-		_, isProfileFound := profileIndexesByNoun[nounKey]
-		if isProfileFound {
-			continue
-		}
-		profiles = append(profiles, nonPlayerClassProfile(class.NounName, class))
-		profileIndexesByNoun[nounKey] = len(profiles) - 1
+	err = rows.Err()
+	if err != nil {
+		return nil, fmt.Errorf("nonPlayerNounRows: %w", err)
 	}
-	slices.SortFunc(profiles, func(left NonPlayerNounProfile, right NonPlayerNounProfile) int {
-		return strings.Compare(strings.ToLower(left.NounName), strings.ToLower(right.NounName))
-	})
 	return profiles, nil
 }
 
 func nonPlayerClassProfile(nounName string, class NonPlayerClass) NonPlayerNounProfile {
 	return NonPlayerNounProfile{
-		NounName: nounName, DisplayName: class.DisplayName,
-		DisplayNameLocaleKey: class.DisplayNameLocaleKey,
-		Description:          class.Description,
-		DescriptionLocaleKey: class.DescriptionLocaleKey,
-		NPCAffixNames:        class.NPCAffixNames,
-		ChallengeValue:       class.ChallengeValue, NPCRank: class.NPCRank,
+		IsClassKnown: true,
+		NounName:     nounName, DisplayName: class.DisplayName,
+		DisplayNameLocaleKey:         class.DisplayNameLocaleKey,
+		Description:                  class.Description,
+		DescriptionLocaleKey:         class.DescriptionLocaleKey,
+		NPCAffixNames:                class.NPCAffixNames,
+		NPCAffixMinimumDifficulties:  class.NPCAffixMinimumDifficulties,
+		NPCAffixMaximumDifficulties:  class.NPCAffixMaximumDifficulties,
+		AreNPCAffixDifficultiesKnown: class.AreNPCAffixDifficultiesKnown,
+		ChallengeValue:               class.ChallengeValue, NPCRank: class.NPCRank,
+		NPCType: class.NPCType, CreatureType: class.CreatureType, DropTypes: class.DropTypes,
 		IsTargetable: class.IsTargetable, IsPlayerPet: class.IsPlayerPet,
 		PlayerCountHealthScale: class.PlayerCountHealthScale,
-		HitPoint:               class.HitPoint, PowerPoint: class.PowerPoint,
+		AggroRange:             class.AggroRange, AlertRange: class.AlertRange,
+		DropAggroRange:    class.DropAggroRange,
+		IdleMovementSpeed: class.IdleMovementSpeed,
+		BaseCombatSpeed:   class.BaseCombatSpeed,
+		HitPoint:          class.HitPoint, PowerPoint: class.PowerPoint,
 		Strength: class.Strength, Dexterity: class.Dexterity, Mind: class.Mind,
 		DodgeRating: class.DodgeRating, ResistRating: class.ResistRating,
 		CriticalRating: class.CriticalRating,
@@ -843,31 +854,6 @@ func nonPlayerClassProfile(nounName string, class NonPlayerClass) NonPlayerNounP
 		// complete noun-physics catalog is imported.
 		GraphicsScale: 1, FootprintRadius: 0.5,
 	}
-}
-
-func isNamedCaptainClass(class NonPlayerClass, canonicalClass NonPlayerClass) bool {
-	if class.InstanceID == canonicalClass.InstanceID || class.HitPoint > 0 {
-		return false
-	}
-	className := strings.TrimSpace(class.DisplayName)
-	canonicalName := strings.TrimSpace(canonicalClass.DisplayName)
-	return className != "" && !strings.EqualFold(className, canonicalName)
-}
-
-func namedCaptainNounName(nounName string) string {
-	baseName := strings.TrimSpace(nounName)
-	extension := ""
-	if strings.HasSuffix(strings.ToLower(baseName), ".noun") {
-		extension = baseName[len(baseName)-len(".Noun"):]
-		baseName = baseName[:len(baseName)-len(".Noun")]
-	}
-	for _, rankSuffix := range []string{"_2", "_3"} {
-		if strings.HasSuffix(strings.ToLower(baseName), rankSuffix) {
-			baseName = baseName[:len(baseName)-len(rankSuffix)] + "_Captain" + rankSuffix
-			return baseName + extension
-		}
-	}
-	return baseName + "_Captain" + extension
 }
 
 // NounPhysicsCatalog reads the immutable tutorial noun physics projection.

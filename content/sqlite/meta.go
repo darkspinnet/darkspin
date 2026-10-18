@@ -261,7 +261,7 @@ func insertMetaPackage(ctx context.Context, transaction *sql.Tx, installPath str
 	if err != nil {
 		return fmt.Errorf("resourceStat: %w", err)
 	}
-	pkg, err := dbpf.NewReader(r, fi.Size())
+	pkg, err := importPackageReader(ctx, r, fi.Size())
 	if err != nil {
 		return fmt.Errorf("resourcePackage: %w", err)
 	}

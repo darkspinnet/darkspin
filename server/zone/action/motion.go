@@ -8,23 +8,30 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/navigation"
 	"github.com/darkspinnet/darkspin/server/sim"
+	zonenavigation "github.com/darkspinnet/darkspin/server/zone/navigation"
 )
 
 type Motion struct {
-	mu              sync.RWMutex
-	movement        *sim.LinearMovement
-	position        sim.Position
-	startedAt       time.Time
-	revision        uint64
-	navigation      *navigation.Mesh
-	footprintRadius float32
+	mu                 sync.RWMutex
+	movement           *sim.LinearMovement
+	position           sim.Position
+	startedAt          time.Time
+	revision           uint64
+	navigation         *navigation.Mesh
+	footprintRadius    float32
+	navigationActor    navigation.ActorNavigation
+	navigationObjectID uint32
+	projectionRange    float32
 }
 
 type MotionSnapshot struct {
-	movement  *sim.LinearMovement
-	position  sim.Position
-	startedAt time.Time
-	Revision  uint64
+	navigationObjectID uint32
+	navigationActor    navigation.ActorNavigation
+	movement           *sim.LinearMovement
+	position           sim.Position
+	startedAt          time.Time
+	Revision           uint64
+	projectionRange    float32
 }
 
 func (e MotionSnapshot) Position() sim.Position {
@@ -49,6 +56,7 @@ func NewMotion(position sim.Position, startedAt time.Time) (*Motion, error) {
 	}
 	return &Motion{
 		movement: movement, position: position, startedAt: startedAt,
+		projectionRange: zonenavigation.ProjectionDistance,
 	}, nil
 }
 
@@ -59,6 +67,39 @@ func (m *Motion) Position() sim.Position {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.position
+}
+
+// SamplePosition follows the retained path without consuming movement that
+// command-driven encounter observers still need to process.
+func (e *Motion) SamplePosition(now time.Time) (sim.Position, error) {
+	e.mu.RLock()
+	movement := e.movement.Clone()
+	at := max(now.Sub(e.startedAt), movement.Snapshot().At)
+	e.mu.RUnlock()
+	position, err := movement.Position(at)
+	if err != nil {
+		return sim.Position{}, fmt.Errorf("motionSample: %w", err)
+	}
+	return position, nil
+}
+
+// SetSpeed retimes a retained path without consuming the position interval
+// needed by command-driven encounter and trigger observers.
+func (e *Motion) SetSpeed(now time.Time, speed float32) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	elapsed, err := e.elapsed(now)
+	if err != nil {
+		return fmt.Errorf("speedTime: %w", err)
+	}
+	movement := e.movement.Clone()
+	err = movement.SetSpeed(max(elapsed, movement.Snapshot().At), speed)
+	if err != nil {
+		return fmt.Errorf("speedPath: %w", err)
+	}
+	e.movement = movement
+	e.revision++
+	return nil
 }
 
 func (m *Motion) Revision() uint64 {
@@ -90,8 +131,11 @@ func (m *Motion) Snapshot() MotionSnapshot {
 
 func (m *Motion) snapshot() MotionSnapshot {
 	return MotionSnapshot{
-		movement: m.movement.Clone(), position: m.position,
+		navigationActor:    m.navigationActor,
+		navigationObjectID: m.navigationObjectID,
+		movement:           m.movement.Clone(), position: m.position,
 		startedAt: m.startedAt, Revision: m.revision,
+		projectionRange: m.projectionRange,
 	}
 }
 
@@ -104,9 +148,12 @@ func (m *Motion) Restore(snapshot MotionSnapshot, expectedRevision uint64) (sim.
 	if m.revision != expectedRevision {
 		return m.position, false
 	}
+	m.navigationObjectID = snapshot.navigationObjectID
+	m.navigationActor = snapshot.navigationActor
 	m.movement = snapshot.movement.Clone()
 	m.position = snapshot.position
 	m.startedAt = snapshot.startedAt
+	m.projectionRange = snapshot.projectionRange
 	m.revision++
 	return m.position, true
 }
@@ -119,6 +166,40 @@ func (m *Motion) Advance(
 	isStop bool,
 	correctionRange float32,
 	speed float32,
+) (sim.Position, sim.Position, error) {
+	return m.advance(
+		now, reported, goal, isReported, isStop, correctionRange, speed,
+		zonenavigation.ProjectionDistance,
+	)
+}
+
+// AdvancePursuit allows an NPC goal near the edge of authored navigation to
+// use the same wider projection range as NPC pursuit while retaining a routed
+// player path.
+func (m *Motion) AdvancePursuit(
+	now time.Time,
+	reported sim.Position,
+	goal sim.Position,
+	isReported bool,
+	isStop bool,
+	correctionRange float32,
+	speed float32,
+) (sim.Position, sim.Position, error) {
+	return m.advance(
+		now, reported, goal, isReported, isStop, correctionRange, speed,
+		pursuitProjectionDistance,
+	)
+}
+
+func (m *Motion) advance(
+	now time.Time,
+	reported sim.Position,
+	goal sim.Position,
+	isReported bool,
+	isStop bool,
+	correctionRange float32,
+	speed float32,
+	projectionRange float32,
 ) (sim.Position, sim.Position, error) {
 	if m == nil {
 		return sim.Position{}, sim.Position{}, errors.New("nil motion")
@@ -152,13 +233,16 @@ func (m *Motion) Advance(
 			return sim.Position{}, sim.Position{}, fmt.Errorf("motionStop: %w", err)
 		}
 	} else {
-		position, err = m.setGoal(movement, elapsed, position, goal, speed)
+		position, err = m.setGoal(
+			movement, elapsed, position, goal, speed, projectionRange,
+		)
 		if err != nil {
 			return sim.Position{}, sim.Position{}, fmt.Errorf("motionGoal: %w", err)
 		}
 	}
 	m.movement = movement
 	m.position = position
+	m.projectionRange = projectionRange
 	m.revision++
 	return previous, position, nil
 }
@@ -191,7 +275,14 @@ func (m *Motion) AdvancePosition(
 		}
 		if isAccepted && movement.IsMoving() {
 			snapshot := movement.Snapshot()
-			position, err = m.setGoal(movement, elapsed, position, snapshot.Goal, snapshot.Speed)
+			projectionRange := m.projectionRange
+			if projectionRange <= 0 {
+				projectionRange = zonenavigation.ProjectionDistance
+			}
+			position, err = m.setGoal(
+				movement, elapsed, position, snapshot.Goal, snapshot.Speed,
+				projectionRange,
+			)
 			if err != nil {
 				return sim.Position{}, fmt.Errorf("reconcilePath: %w", err)
 			}
@@ -218,6 +309,7 @@ func (m *Motion) Stop(now time.Time) (sim.Position, error) {
 		return sim.Position{}, fmt.Errorf("motionStop: %w", err)
 	}
 	m.position = position
+	m.projectionRange = zonenavigation.ProjectionDistance
 	m.revision++
 	return position, nil
 }
@@ -237,6 +329,7 @@ func (m *Motion) Teleport(now time.Time, destination sim.Position) error {
 		return fmt.Errorf("motionTeleport: %w", err)
 	}
 	m.position = destination
+	m.projectionRange = zonenavigation.ProjectionDistance
 	m.revision++
 	return nil
 }

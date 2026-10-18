@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
@@ -21,7 +22,7 @@ import (
 const (
 	scaldronMineMinimumSpawnDistance = 3
 	scaldronMineMaximumSpawnDistance = 12
-	scaldronMineMinimumFlight        = 300 * time.Millisecond
+	scaldronMineMinimumFlight        = 400 * time.Millisecond
 	scaldronMineMaximumFlight        = 600 * time.Millisecond
 	scaldronMineTriggerPoll          = 100 * time.Millisecond
 	scaldronMineExplosionDuration    = time.Second
@@ -61,11 +62,13 @@ func (e campaignScaldronDeathMineSchedule) landing() ([][]byte, error) {
 	if !isCurrent {
 		return nil, nil
 	}
-	landingPackets, err := abilityraknet.TossDirectLanding(
-		e.toss, e.run.projectileObjectID, nil,
-	)
+	removePacket, err := abilityraknet.TrapRemoveEffect(e.run.projectileObjectID)
 	if err != nil {
-		return nil, fmt.Errorf("deathMineLanding: %w", err)
+		return nil, fmt.Errorf("deathMineTrailRemove: %w", err)
+	}
+	deletePacket, err := abilityraknet.TrapDelete(e.run.projectileObjectID)
+	if err != nil {
+		return nil, fmt.Errorf("deathMineProjectileDelete: %w", err)
 	}
 	definition := sim.AbilityDefinition{SpawnNoun: e.profile.RetainedObjectNoun}
 	spawnPacket, err := abilityraknet.TrapSpawnForTeam(
@@ -76,7 +79,16 @@ func (e campaignScaldronDeathMineSchedule) landing() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("deathMineSpawn: %w", err)
 	}
-	return append(landingPackets, spawnPacket), nil
+	// EndTrailEffect adds the landing plasma to the mine's owned slot. A
+	// positioned TossDirectLanding effect would outlive timeout/deletion.
+	impactPacket, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
+		Slot: 1, IsForceAttached: true, ObjectID: e.run.mineObjectID,
+		Asset: util.HashID(e.profile.ProjectileExitEffectName),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("deathMineImpact: %w", err)
+	}
+	return [][]byte{removePacket, deletePacket, spawnPacket, impactPacket}, nil
 }
 
 func (e campaignScaldronDeathMineSchedule) trigger() ([][]byte, error) {
@@ -205,7 +217,14 @@ func (e campaignScaldronDeathMineSchedule) timeout() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("deathMineTimeout: %w", err)
 	}
-	return [][]byte{effectPacket, deletePacket}, nil
+	timeoutPacket, err := raknet.MarshalApplication(raknet.PositionedEffectMessage{
+		Asset:    util.HashID(e.profile.ImpactEffectName),
+		Position: raknet.Vector3(e.run.position),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("deathMineTimeoutBurst: %w", err)
+	}
+	return [][]byte{effectPacket, timeoutPacket, deletePacket}, nil
 }
 
 func (r campaignNPCActionRuntime) spawnScaldronDeathMines(
@@ -244,27 +263,30 @@ func (r campaignNPCActionRuntime) spawnScaldronDeathMines(
 	}
 	schedules := make([]campaignScaldronDeathMineSchedule, 0, profile.ProjectileShotCount)
 	for mineIndex := uint32(0); mineIndex < profile.ProjectileShotCount; mineIndex++ {
+		// GetRandomDestPos samples one sector per mine and projects that
+		// candidate using the caster's navigation footprint. It does not run
+		// the random-teleport source/reachability gate or use visual bounds.
+		angle := (float64(mineIndex+1) + peerSession.zone.NPCRandom().Float64()) *
+			2 * math.Pi / float64(profile.ProjectileShotCount)
 		distance := scaldronMineMinimumSpawnDistance +
 			peerSession.zone.NPCRandom().Float64()*
 				(scaldronMineMaximumSpawnDistance-scaldronMineMinimumSpawnDistance)
 		destination, isDestinationFound, destinationErr :=
-			zonenavigation.RandomTeleportDestination(
-				peerSession.zone.Navigation(), peerSession.zone.NPCRandom(),
-				zonenavigation.RandomTeleportRequest{
-					SourcePosition:  source.Plan.Position,
-					FootprintRadius: max(source.Plan.NPCProfile.FootprintRadius, 0.25),
-					MinimumDistance: scaldronMineMinimumSpawnDistance,
-					NormalDistance:  float32(distance),
-					MaximumDistance: scaldronMineMaximumSpawnDistance,
-				},
+			zonenavigation.ProjectPosition(
+				peerSession.zone.Navigation(), game.Vec3{
+					X: source.Plan.Position.X + float32(math.Cos(angle)*distance),
+					Y: source.Plan.Position.Y + float32(math.Sin(angle)*distance),
+					Z: source.Plan.Position.Z,
+				}, source.Plan.ActorFootprintRadius(),
 			)
 		if destinationErr != nil {
 			r.registry.mutex.Unlock()
 			return nil, false, fmt.Errorf("deathMineDestination: %w", destinationErr)
 		}
-		if !isDestinationFound {
+		if !isDestinationFound || destination.Sub(source.Plan.Position).Length() < scaldronMineMinimumSpawnDistance {
 			continue
 		}
+		flightHeight := float32(2 + peerSession.zone.NPCRandom().Float64())
 		flightDuration := scaldronMineMinimumFlight + time.Duration(
 			peerSession.zone.NPCRandom().Float64()*float64(
 				scaldronMineMaximumFlight-scaldronMineMinimumFlight,
@@ -276,7 +298,7 @@ func (r campaignNPCActionRuntime) spawnScaldronDeathMines(
 		}
 		landingPosition := sim.Position{X: destination.X, Y: destination.Y, Z: destination.Z}
 		lob, lobErr := sim.BuildTossLob(
-			0, launchPosition, landingPosition, profile.ProjectileHeight,
+			0, launchPosition, landingPosition, flightHeight,
 			flightDuration, 0, 0, 0, true, false,
 		)
 		if lobErr != nil {

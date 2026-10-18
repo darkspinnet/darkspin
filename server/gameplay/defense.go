@@ -2,6 +2,7 @@ package gameplay
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/darkspinnet/darkspin/server/combat"
 	"github.com/darkspinnet/darkspin/server/raknet"
@@ -37,6 +38,9 @@ func (e gameplayPeerSession) equipmentDefense() combat.DefenseProfile {
 		PhysicalArmor: attributes[102], EnergyArmor: attributes[103],
 	}
 	copy(profile.ScienceResistances[:], attributes[43:48])
+	if e.isOverdriveActiveAt(time.Now()) {
+		profile.DamageReduction += 0.50
+	}
 	return profile
 }
 
@@ -64,6 +68,23 @@ func (e campaignNPCActionRuntime) isTargetDebuffImmuneLocked(
 	return targetSession.isHeroDebuffImmune(targetObjectID)
 }
 
+// Overdrive protects against disables and authored DoT categories, not every
+// debuff (for example, incoming-damage vulnerability is still allowed).
+func (e campaignNPCActionRuntime) isTargetStatusImmuneLocked(
+	session *gameplayPeerSession, targetObjectID uint32,
+) bool {
+	if e.isTargetDebuffImmuneLocked(session, targetObjectID) {
+		return true
+	}
+	target, isFound := session.campaignNPCTarget(session.generation, targetObjectID)
+	if !isFound || !target.IsHero {
+		return false
+	}
+	targetSession, targetSessionKey := e.heroTargetSession(session, target)
+	_ = targetSessionKey
+	return targetSession != nil && targetSession.isOverdriveActiveAt(time.Now())
+}
+
 func enemyDefenseRequest(profile zonenpc.ActionProfile, damage float32, isArea, isPeriodic bool) combat.DefenseRequest {
 	// Unprofiled NPC attacks use the same physical fallback as resolveAttackDamage.
 	if !profile.IsDamageProfileKnown {
@@ -80,7 +101,7 @@ func enemyDefenseRequest(profile zonenpc.ActionProfile, damage float32, isArea, 
 func (e gameplayPeerSession) rollDefense(random *sim.SimulatorRandom,
 	req combat.DefenseRequest, tuning sim.CriticalTuning,
 ) (uint16, error) {
-	if e.heroModifierRun.IsDamageImmune() || e.heroQuantumBlink != nil {
+	if e.isHeroDamageImmune(time.Now()) {
 		return 0, nil
 	}
 	if e.ghostFormRun != nil && e.ghostFormRun.IsActive(e.deployedCreatureIndex, e.deployedHitPoint() > 0) {

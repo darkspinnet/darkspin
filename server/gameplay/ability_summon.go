@@ -19,21 +19,26 @@ import (
 	geometryraknet "github.com/darkspinnet/darkspin/server/zone/geometry/raknet103"
 )
 
-const spriteFallbackHitPoint = float32(25)
+const spriteFallbackHitPoint = float32(0.1)
 const spriteFallbackFootprint = float32(0.5)
-const spriteFollowDistance = float32(2)
+const spriteFollowDistance = float32(4)
 const spriteHealingFraction = float32(0.03)
-const spriteHealingInterval = time.Second
+const spriteHealingInterval = 3 * time.Second
+const spriteHealingHitDelay = 333333343 * time.Nanosecond
+const spriteMovementSpeed = float32(12)
 
 type heroSummonRun struct {
-	runtime    campaignAbilityCommandRuntime
-	packet     raknet.Packet
-	sessionKey string
-	generation uint64
-	objectID   uint32
-	ownerID    uint32
-	definition sim.AbilityDefinition
-	cancel     raknet.CancelSchedule
+	runtime       campaignAbilityCommandRuntime
+	packet        raknet.Packet
+	sessionKey    string
+	generation    uint64
+	objectID      uint32
+	ownerID       uint32
+	hitPoint      float32
+	definition    sim.AbilityDefinition
+	healUntil     time.Time
+	castStartedAt time.Time
+	cancel        raknet.CancelSchedule
 }
 
 func (e *heroSummonRun) isCurrent(
@@ -70,23 +75,10 @@ func (e *heroSummonRun) tick() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	ownerPosition := game.Vec3(peerSession.playerPosition)
-	follows := make([]zonecompanion.Follow, 0, 1)
-	delta := companion.Position.Sub(ownerPosition)
-	distance := delta.Length()
-	if distance > spriteFollowDistance {
-		goal := ownerPosition.Add(delta.Scale(spriteFollowDistance / distance))
-		err := peerSession.zone.Companion().SetPosition(e.objectID, goal)
-		if err != nil {
-			e.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf("heroSummonFollow: %w", err)
-		}
-		follows = append(follows, zonecompanion.Follow{
-			ObjectID: e.objectID, OwnerObjectID: e.ownerID,
-			Position: companion.Position, Goal: ownerPosition,
-			DesiredStopDistance: spriteFollowDistance,
-		})
-		companion.Position = goal
+	if !e.runtime.now().Before(e.healUntil) ||
+		companion.Position.Sub(game.Vec3(peerSession.playerPosition)).Length() > 20 {
+		e.runtime.registry.mutex.Unlock()
+		return nil, nil
 	}
 	creatureIndex := peerSession.squad.DeployedIndex()
 	character, isCharacterFound := peerSession.squad.Character(creatureIndex)
@@ -117,15 +109,14 @@ func (e *heroSummonRun) tick() ([][]byte, error) {
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
 
-	packets, err := companionraknet.Follow(follows)
-	if err != nil {
-		return nil, fmt.Errorf("heroSummonFollowMarshal: %w", err)
-	}
+	packets := make([][]byte, 0)
 	if healedAmount <= 0 {
 		return packets, nil
 	}
+	healingDefinition := e.definition
+	healingDefinition.HealEffectName = ""
 	healingPackets, err := abilityraknet.MarshalTreeOfLifeHealing(
-		e.definition, raknet.Vector3(companion.Position),
+		healingDefinition, raknet.Vector3(companion.Position),
 		[]abilityraknet.Healing{{
 			SourceObjectID: e.objectID, ObjectID: e.ownerID,
 			HitPoint: hitPoint, Amount: healedAmount,
@@ -135,6 +126,13 @@ func (e *heroSummonRun) tick() ([][]byte, error) {
 		return nil, fmt.Errorf("heroSummonHealingMarshal: %w", err)
 	}
 	packets = append(packets, healingPackets...)
+	impactPacket, err := raknet.MarshalApplication(raknet.ServerEventMessage{
+		Asset: util.HashID("lf_pocketHealer_healHit.ServerEventDef"), ObjectID: e.ownerID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("spriteHealImpact: %w", err)
+	}
+	packets = append(packets, impactPacket)
 	err = e.runtime.stats.Record(
 		context.Background(), binding,
 		sporenet.PlayerStatDelta{
@@ -145,6 +143,9 @@ func (e *heroSummonRun) tick() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("heroSummonHealingStats: %w", err)
 	}
+	e.runtime.registry.queuePeerPresentation(
+		gameplayProducerIdentityFromSession(e.sessionKey, peerSession, true), packets,
+	)
 	return packets, nil
 }
 
@@ -161,6 +162,11 @@ func (e *heroSummonRun) expire() ([][]byte, error) {
 	e.cancel = nil
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
+	if !isCompanionFound || companion.HitPoint <= 0 {
+		// Enemy defeat already removed its presentation. Expiry must not
+		// recreate a spawn-out effect for a pet that died earlier.
+		return nil, nil
+	}
 	position := game.Vec3{}
 	if isCompanionFound {
 		position = companion.Position
@@ -182,7 +188,11 @@ func (e *heroSummonRun) expire() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("heroSummonDelete: %w", err)
 	}
-	return append(packets, deletePacket), nil
+	packets = append(packets, deletePacket)
+	e.runtime.registry.queuePeerPresentation(
+		gameplayProducerIdentityFromSession(e.sessionKey, peerSession, true), packets,
+	)
+	return packets, nil
 }
 
 func (e *gameplayPeerSession) stopHeroSummons() ([][]byte, error) {
@@ -341,6 +351,7 @@ func (r campaignAbilityCommandRuntime) handleHeroSummon(
 		Noun:     util.HashID(definition.SpawnNoun),
 		Position: position, FootprintRadius: footprintRadius,
 		HitPoint: hitPoint, MaximumHitPoint: hitPoint,
+		MovementSpeed: spriteMovementSpeed, FollowDistance: spriteFollowDistance,
 		IsTargetable: true, IsCombatant: false,
 	})
 	if err != nil {
@@ -353,7 +364,8 @@ func (r campaignAbilityCommandRuntime) handleHeroSummon(
 	run := &heroSummonRun{
 		runtime: r, packet: req.packet, sessionKey: sessionKey,
 		generation: peerSession.generation, objectID: objectID,
-		ownerID: req.command.Common.ObjectID, definition: definition,
+		ownerID: req.command.Common.ObjectID, hitPoint: hitPoint, definition: definition,
+		castStartedAt: abilityStartTime,
 	}
 	if peerSession.heroSummons == nil {
 		peerSession.heroSummons = make(map[uint32]*heroSummonRun)
@@ -370,10 +382,15 @@ func (r campaignAbilityCommandRuntime) handleHeroSummon(
 	producers = append(producers, raknet.ScheduledPacketProducer{
 		Delay: definition.ReleaseDelay, Produce: run.release(releasePacket),
 	})
-	for delay := definition.ReleaseDelay + spriteHealingInterval; delay < definition.Duration; delay += spriteHealingInterval {
+	for delay := definition.ReleaseDelay; delay < definition.Duration; delay += spriteHealingInterval {
 		producers = append(producers, raknet.ScheduledPacketProducer{
-			Delay: delay, Produce: run.tick,
+			Delay: delay, Produce: run.sting,
 		})
+		if delay+spriteHealingHitDelay < definition.Duration {
+			producers = append(producers, raknet.ScheduledPacketProducer{
+				Delay: delay + spriteHealingHitDelay, Produce: run.tick,
+			})
+		}
 	}
 	producers = append(producers, raknet.ScheduledPacketProducer{
 		Delay: definition.Duration, Produce: run.expire,
@@ -396,6 +413,10 @@ func (r campaignAbilityCommandRuntime) handleHeroSummon(
 	run.cancel = cancel
 	packets := [][]byte{ackPacket}
 	packets = append(packets, startPackets...)
+	err = publishCampaignPeersAfterCommit(r.registry, req.packet, append(startPackets, spawnPackets...))
+	if err != nil {
+		return nil, fmt.Errorf("spriteSpawnPeers: %w", err)
+	}
 	return append(packets, spawnPackets...), nil
 }
 
@@ -428,11 +449,15 @@ func marshalHeroSummonSpawn(
 		return nil, fmt.Errorf("heroSummonCreate: %w", err)
 	}
 	message := []raknet.ApplicationMessage{
+		raknet.CombatantDataDeltaMessage{
+			ObjectID: run.objectID, HitPoints: run.hitPoint, IsHitPointChanged: true,
+		},
 		raknet.AttributeDataUpdateMessage{
 			ObjectID: run.objectID,
 			Value: map[uint8]float32{
-				11: zonecompanion.CompatibilityMovementSpeed,
-				12: zonecompanion.CompatibilityMovementSpeed,
+				4:  run.hitPoint,
+				11: spriteMovementSpeed,
+				12: spriteMovementSpeed,
 				48: 0,
 			},
 		},

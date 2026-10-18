@@ -22,7 +22,7 @@ func marshalCampaignNPCSnapshot(snapshot zonenpc.Snapshot) ([][]byte, error) {
 	}
 	packets = append(packets, resourcePacket)
 	if snapshot.TargetObjectID == 0 {
-		stopPackets, stopErr := npcraknet.MovementStop(snapshot.Plan.ObjectID, snapshot.Plan.Position)
+		stopPackets, stopErr := npcraknet.StopAtPose(snapshot.Plan.ObjectID, snapshot.Plan.Position, snapshot.Facing)
 		if stopErr != nil {
 			return nil, fmt.Errorf("snapshotStop: %w", stopErr)
 		}
