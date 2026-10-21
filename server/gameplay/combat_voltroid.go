@@ -205,7 +205,7 @@ func (e campaignVoltroidSchedule) hit() ([][]byte, error) {
 		packets = append(packets, removePacket)
 	}
 	packet, err := npcraknet.VoltroidEffect(
-		e.targetID, e.objectID, effectSlot, effectName, false,
+		e.targetID, 0, effectSlot, effectName, false,
 	)
 	if err != nil {
 		e.runtime.logger.Printf(

@@ -2,6 +2,7 @@ package raknet103
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/util"
@@ -14,10 +15,11 @@ func Remnants(snapshots []zonenpc.Snapshot) ([][]byte, error) {
 	packets := make([][]byte, 0)
 	for _, snapshot := range snapshots {
 		isGeyser := zonenpc.IsCryosGeyser(snapshot.Plan)
+		isBossVent := strings.EqualFold(snapshot.Plan.NounName, "DEST_citadel_factoryvent_boss.Noun")
 		isPipe := zonenpc.IsFactoryPipe(snapshot.Plan.NounName)
 		isWarpTotem := zonenpc.IsWarpTotem(snapshot.Plan)
 		if !snapshot.IsPublished || !snapshot.IsDefeated ||
-			(!zonenpc.IsGraviticRemnant(snapshot.Plan) && !isGeyser && !isPipe && !isWarpTotem) {
+			(!zonenpc.IsGraviticRemnant(snapshot.Plan) && !isGeyser && !isBossVent && !isPipe && !isWarpTotem) {
 			continue
 		}
 		graphicsState := util.HashID("dead")

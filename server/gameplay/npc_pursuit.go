@@ -338,6 +338,12 @@ func (r campaignNPCPursuitRuntime) produceStep(
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
+	if enemy.IsTurtleActive {
+		// The turtle modifier resumes the owned action after recovery. Retire
+		// this pursuit producer so its old goal cannot move the closed shell.
+		r.registry.mutex.Unlock()
+		return nil, nil
+	}
 	if profile.AbilityName != "Flee" &&
 		npcSession.FearRemaining(objectID, r.now()) > 0 {
 		r.registry.mutex.Unlock()

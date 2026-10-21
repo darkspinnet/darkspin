@@ -2,6 +2,7 @@ package gameplay
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
@@ -21,6 +22,7 @@ type campaignFireVent struct {
 	cycle          uint64
 	completedCycle uint64
 	completedAt    time.Time
+	isDefeated     bool
 }
 
 func (e *gameplayPeerSession) pollFireVents(runtime campaignNPCActionRuntime, timestamp uint64, now time.Time) ([][]byte, sporenet.PlayerStatDelta, error) {
@@ -45,10 +47,21 @@ func (e *gameplayPeerSession) pollFireVents(runtime campaignNPCActionRuntime, ti
 				}
 			}
 			if state == nil {
-				state = &campaignFireVent{cycle: 1}
-				state.rest(e, now)
+				state = &campaignFireVent{cycle: 1, isDefeated: vent.IsDefeated}
+				startAt := now
+				if strings.EqualFold(vent.Plan.NounName, "DEST_citadel_factoryvent_boss.Noun") && vent.IsDefeated {
+					// CitadelFactoryVentDeath waits a second before requesting the passive.
+					startAt = startAt.Add(time.Second)
+				}
+				state.rest(e, startAt)
 			}
 			e.fireVents[objectID] = state
+		}
+		if vent.IsDefeated && !state.isDefeated {
+			state.isDefeated = true
+			state.completedCycle = 0
+			state.cycle++
+			state.rest(e, now.Add(time.Second))
 		}
 		if !now.Before(state.eruptionAt) {
 			state.completedCycle = state.cycle
@@ -119,8 +132,8 @@ func (e *gameplayPeerSession) pollFireVents(runtime campaignNPCActionRuntime, ti
 }
 
 // Some maps place the bare, noncombatant vent instead of its damageable prefab.
-// Keep selected scenery sources alongside live fixtures, without inventing NPC
-// health or allowing destroyed/unpublished fixtures to restart their passive.
+// Keep selected scenery sources alongside live fixtures. Boss vents retain
+// their authored passive after CitadelFactoryVentDeath reopens the dead vent.
 func (e *gameplayPeerSession) fireVentSources() []zonenpc.Snapshot {
 	vents := make([]zonenpc.Snapshot, 0)
 	seenObjectIDs := make(map[uint32]bool)
@@ -129,7 +142,8 @@ func (e *gameplayPeerSession) fireVentSources() []zonenpc.Snapshot {
 			continue
 		}
 		seenObjectIDs[vent.Plan.ObjectID] = true
-		if vent.IsPublished && !vent.IsDefeated {
+		isBossVent := strings.EqualFold(vent.Plan.NounName, "DEST_citadel_factoryvent_boss.Noun")
+		if vent.IsPublished && (isBossVent || !vent.IsDefeated) {
 			vents = append(vents, vent)
 		}
 	}
@@ -144,7 +158,11 @@ func (e *gameplayPeerSession) fireVentSources() []zonenpc.Snapshot {
 				continue
 			}
 			fixture, isFixtureFound := e.zone.NPCs().NPC(definition.MarkerID)
-			if isFixtureFound && (!fixture.IsPublished || fixture.IsDefeated) {
+			isBossVent := strings.EqualFold(definition.NounName, "DEST_citadel_factoryvent_boss.Noun")
+			if isFixtureFound && (!fixture.IsPublished || (fixture.IsDefeated && !isBossVent)) {
+				continue
+			}
+			if !isFixtureFound && isBossVent {
 				continue
 			}
 			seenObjectIDs[definition.MarkerID] = true

@@ -216,6 +216,10 @@ func destructibleDeathPresentation(
 		// CryosGeyserDeath retains the unblocked vent; no debris explosion.
 		return "", time.Millisecond
 	}
+	if strings.EqualFold(snapshot.Plan.NounName, "DEST_citadel_factoryvent_boss.Noun") {
+		// CitadelFactoryVentDeath keeps the dead vent and starts its flame cone.
+		return "", time.Millisecond
+	}
 	if strings.EqualFold(snapshot.Plan.NounName, game.CryosFungusNoun) {
 		// The dead graphics state and poison-stalk particle own this transition.
 		return "", 8 * time.Second
@@ -344,6 +348,7 @@ func campaignNPCDeathDefinition(
 	isVerdanthTotem := zonenpc.IsVerdanthTotem(snapshot.Plan)
 	isWarpTotem := zonenpc.IsWarpTotem(snapshot.Plan)
 	isCryosGeyser := zonenpc.IsCryosGeyser(snapshot.Plan)
+	isBossVent := strings.EqualFold(snapshot.Plan.NounName, "DEST_citadel_factoryvent_boss.Noun")
 	isPipe := isFactoryPipe(snapshot.Plan.NounName)
 	if isCryosGeyser {
 		graphicsState = util.HashID("unblocked")
@@ -399,10 +404,10 @@ func campaignNPCDeathDefinition(
 		isCreatureTypeKnown: physics.IsCreatureTypeKnown,
 		isFixture:           isFixture,
 		isBoss:              snapshot.Plan.IsBoss || isDestructor,
-		isRemnantRetained:   isNightmareVine || isGraviticRemnant || isVerdanthTotem || isWarpTotem || isCryosGeyser || isPipe || isScaldronRemnantRetained,
-		isCollisionRetained: isGraviticRemnant,
+		isRemnantRetained:   isNightmareVine || isGraviticRemnant || isVerdanthTotem || isWarpTotem || isCryosGeyser || isBossVent || isPipe || isScaldronRemnantRetained,
+		isCollisionRetained: isGraviticRemnant || isBossVent,
 		isDeathAnimationSuppressed: isIllusion || isNightmareVine || isGraviticRemnant ||
-			isVerdanthTotem || isWarpTotem || isCryosGeyser || isNocturnaPlant || isToxicactusPlant || isPipe || isScaldronPlant,
+			isVerdanthTotem || isWarpTotem || isCryosGeyser || isBossVent || isNocturnaPlant || isToxicactusPlant || isPipe || isScaldronPlant,
 		ordinaryDeathAnimation: ordinaryDeathAnimation,
 		corpseFadeDelay:        deathPresentation.PresentationDuration,
 		graphicsState:          graphicsState,

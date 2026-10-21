@@ -248,6 +248,7 @@ type zonePresentationRuntime struct {
 	plasmaBurn             *campaignNPCModifierRun
 	plasmaBurnEffect       *plasmaBurnPresentation
 	plasmaBurnReadyAt      time.Time
+	petPlasmaBurns         map[uint32]petPlasmaBurn
 	zoneCombatPresentation
 	campaignSchedule                        *zoneaction.ScheduleSession
 	campaignUnlockPresentation              *unlockraknet.ActiveSession
@@ -4168,6 +4169,11 @@ func (r gameplaySwitchRuntime) handle(
 	} else {
 		r.logger.Printf("RakNet Field Medic cleanup omitted during switch remote=%s: %v", packet.Address, fieldMedicErr)
 	}
+	stoppedBurnPackets, burnErr := peerSession.stopPetPlasmaBurns(r.npc)
+	beastPetPackets = append(beastPetPackets, stoppedBurnPackets...)
+	if burnErr != nil {
+		r.logger.Printf("RakNet pet plasma cleanup omitted during switch remote=%s: %v", packet.Address, burnErr)
+	}
 	stoppedBeastPackets, beastErr := peerSession.stopBeastPet()
 	if beastErr == nil {
 		beastPetPackets = append(beastPetPackets, stoppedBeastPackets...)
@@ -5121,6 +5127,7 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 		if droneErr == nil {
 			hitPackets = append(hitPackets, dronePackets...)
 		}
+		s.cancelPetPlasmaBurns()
 		beastPackets, beastErr := s.stopBeastPet()
 		if beastErr == nil {
 			hitPackets = append(hitPackets, beastPackets...)
@@ -5246,6 +5253,7 @@ func (s *gameplayPeerSession) removeCampaignCompanions() {
 		return
 	}
 	for objectID := range s.sagePassiveActivations {
+		s.cancelPetPlasmaBurn(objectID)
 		s.zone.Companion().Remove(objectID)
 	}
 }

@@ -432,7 +432,13 @@ func (r campaignDamageRuntime) startNomadSpecialThreeTurtle(
 		run.cleanup(err)
 		return nil, fmt.Errorf("turtleDefenseRemove: %w", err)
 	}
-	return [][]byte{
+	stopPackets, stopErr := npcraknet.MovementPause(objectID, enemy.Plan.Position, enemy.Facing)
+	if stopErr != nil {
+		cancel()
+		run.cleanup(stopErr)
+		return nil, fmt.Errorf("turtleMovementStop: %w", stopErr)
+	}
+	return append(stopPackets,
 		modifierPacket, animationPacket, passiveEffectRemove, attributePacket,
-	}, nil
+	), nil
 }

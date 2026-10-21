@@ -165,6 +165,7 @@ func (e fireTempestStep) monitor() ([][]byte, error) {
 		e.run.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("fireTempestReplacementPosition: %w", err)
 	}
+	peerSession.cancelPetPlasmaBurn(oldPetObjectID)
 	peerSession.zone.Companion().Remove(oldPetObjectID)
 	enrageInstanceID := e.run.enrageInstanceID
 	if e.run.enrageCancel != nil {
@@ -679,6 +680,7 @@ func (e *gameplayPeerSession) stopFireTempestRun(
 		_ = run.runtime.modifierPool.Release(run.enrageInstanceID)
 	}
 	if e.zone != nil && e.zone.Companion() != nil {
+		e.cancelPetPlasmaBurn(run.petObjectID)
 		e.zone.Companion().Remove(run.petObjectID)
 	}
 	packets := make([][]byte, 0, 4)

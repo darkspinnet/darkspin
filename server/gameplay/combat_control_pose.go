@@ -3,6 +3,8 @@ package gameplay
 import (
 	"fmt"
 	"time"
+
+	"github.com/darkspinnet/darkspin/server/raknet"
 )
 
 // The caller holds the registry lock and saves the updated peer afterward.
@@ -12,7 +14,9 @@ func stopEnemyControlledHeroMovement(peerSession *gameplayPeerSession, at time.T
 	if err != nil {
 		return nil, fmt.Errorf("controlStop: %w", err)
 	}
-	packets, err := marshalZonePlayerStop(peerSession.deployedObjectID, peerSession.playerPosition)
+	packets, err := marshalPlayerMovementCorrection(
+		peerSession.deployedObjectID, peerSession.playerPosition, raknet.Quaternion{W: 1},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("controlMarshal: %w", err)
 	}

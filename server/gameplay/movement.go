@@ -667,10 +667,10 @@ func (r campaignMovementCommandRuntime) handle(
 		return response, nil
 	}
 	if commandSession.isEnemyRootActive(r.now()) {
-		// A correction must be a stop, not a new route. The stop adapter also
-		// preserves this response instead of substituting the reported position.
-		response, marshalErr := marshalZonePlayerStop(
-			command.Common.ObjectID, commandSession.playerPosition,
+		// Native fixed move messages skip the controlling hero. Reconcile
+		// its local prediction through locomotion reflection and placement.
+		response, marshalErr := marshalPlayerMovementCorrection(
+			command.Common.ObjectID, commandSession.playerPosition, command.Common.Orientation,
 		)
 		if marshalErr != nil {
 			return nil, fmt.Errorf("moveCampaignRootMarshal: %w", marshalErr)

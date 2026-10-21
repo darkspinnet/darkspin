@@ -140,7 +140,7 @@ func (e *gameplayPeerSession) campaignTeleporterInitialState() ([][]byte, error)
 		e.zone.Security() == nil {
 		return nil, nil
 	}
-	packets, err := e.retireInitialSecurityTeleporters()
+	packets, err := e.retireSecurityTeleporters()
 	if err != nil {
 		return nil, fmt.Errorf("campaignSecurityRetire: %w", err)
 	}

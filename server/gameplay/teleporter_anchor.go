@@ -11,38 +11,47 @@ import (
 	securityraknet "github.com/darkspinnet/darkspin/server/zone/security/raknet103"
 )
 
-// The initial campaign uses recovered security routes rather than the generic
-// route baseline. Retire their authored render objects just as the generic
-// baseline does before retaining the server-owned presentation anchors.
-func (e *gameplayPeerSession) retireInitialSecurityTeleporters() ([][]byte, error) {
+// Retire authored render objects before creating server-owned presentation
+// anchors. The initial campaign uses recovered routes; later levels use the
+// director's selected security teleporter markers.
+func (e *gameplayPeerSession) retireSecurityTeleporters() ([][]byte, error) {
 	if e == nil || e.zone == nil {
 		return nil, nil
 	}
-	routes := zonesecurity.Routes(e.binding.Level)
-	if len(routes) == 0 {
-		return nil, nil
-	}
 	director := e.zone.DirectorDefinition()
+	routes := zonesecurity.Routes(e.binding.Level)
 	markerIDs := make([]uint32, 0, len(routes))
 	retiredMarkerIDs := make(map[uint32]bool)
-	for _, set := range director.MarkerSets {
-		for _, definition := range set.Definitions {
-			marker, isFound := director.SelectedMarkerDefinition(definition.MarkerID)
-			if !isFound || marker.MarkerID == 0 || retiredMarkerIDs[marker.MarkerID] {
-				continue
-			}
-			for _, route := range routes {
-				nounName := "SecurityTeleporter.Noun"
-				if route.IsBoss {
-					nounName = "BossSecurityTeleporter.Noun"
-				}
-				if !strings.EqualFold(marker.NounName, nounName) ||
-					zonegeometry.DistanceSquared(marker.Position, route.Source) > 0.0001 {
+	for _, route := range director.TeleportRoutes() {
+		if !route.IsSecurity || route.MarkerID == 0 || retiredMarkerIDs[route.MarkerID] {
+			continue
+		}
+		markerIDs = append(markerIDs, route.MarkerID)
+		retiredMarkerIDs[route.MarkerID] = true
+	}
+	if len(routes) == 0 && len(markerIDs) == 0 {
+		return nil, nil
+	}
+	if len(routes) > 0 {
+		for _, set := range director.MarkerSets {
+			for _, definition := range set.Definitions {
+				marker, isFound := director.SelectedMarkerDefinition(definition.MarkerID)
+				if !isFound || marker.MarkerID == 0 || retiredMarkerIDs[marker.MarkerID] {
 					continue
 				}
-				markerIDs = append(markerIDs, marker.MarkerID)
-				retiredMarkerIDs[marker.MarkerID] = true
-				break
+				for _, route := range routes {
+					nounName := "SecurityTeleporter.Noun"
+					if route.IsBoss {
+						nounName = "BossSecurityTeleporter.Noun"
+					}
+					if !strings.EqualFold(marker.NounName, nounName) ||
+						zonegeometry.DistanceSquared(marker.Position, route.Source) > 0.0001 {
+						continue
+					}
+					markerIDs = append(markerIDs, marker.MarkerID)
+					retiredMarkerIDs[marker.MarkerID] = true
+					break
+				}
 			}
 		}
 	}

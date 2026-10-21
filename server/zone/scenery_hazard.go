@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
@@ -39,7 +40,8 @@ func (e *Zone) ApplySceneryHazardDamage(
 	if !director.IsInitialLayoutSelected || abilityName == "" || (!isSelected && !isFixture) {
 		return NPCTargetDamage{}, false, nil
 	}
-	if isNPCFound && (!npc.IsPublished || npc.IsDefeated) {
+	isBossVent := strings.EqualFold(npc.Plan.NounName, "DEST_citadel_factoryvent_boss.Noun")
+	if isNPCFound && (!npc.IsPublished || (npc.IsDefeated && !isBossVent)) {
 		return NPCTargetDamage{}, false, nil
 	}
 	result, isApplied, err := e.applyNPCTargetDamage(owner, sourceObjectID, targetObjectID, damage)

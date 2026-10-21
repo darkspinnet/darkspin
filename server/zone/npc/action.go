@@ -3821,15 +3821,15 @@ func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
 		return citadelSpecialTwoHomingStunProfile(8*time.Second, 10, 5), true
 	case "citadelspecificone.noun":
 		return citadelSpecificOneDischargeProfile(
-			3*time.Second, 12, 39, 41, 6, 4.5,
+			3*time.Second, 12, 3, 5, 6, 4.5,
 		), true
 	case "citadelspecificone_2.noun":
 		return citadelSpecificOneDischargeProfile(
-			2500*time.Millisecond, 15, 40, 42, 9, 6,
+			2500*time.Millisecond, 15, 4, 6, 9, 6,
 		), true
 	case "citadelspecificone_3.noun":
 		return citadelSpecificOneDischargeProfile(
-			2*time.Second, 18, 41, 43, 12, 7.5,
+			2*time.Second, 18, 5, 7, 12, 7.5,
 		), true
 	case "nomadscope.noun", "nomadscope_captain.noun":
 		return nomadScopeBurningDebuffProfile(4 * time.Second), true

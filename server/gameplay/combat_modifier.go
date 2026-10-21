@@ -306,8 +306,8 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 				}
 			}
 			targetSession.playerMovementGoal = rootPosition
-			stopPackets, stopErr := marshalZonePlayerStop(
-				plan.TargetObjectID, rootPosition,
+			stopPackets, stopErr := marshalPlayerMovementCorrection(
+				plan.TargetObjectID, rootPosition, raknet.Quaternion{W: 1},
 			)
 			if stopErr != nil {
 				r.registry.mutex.Unlock()

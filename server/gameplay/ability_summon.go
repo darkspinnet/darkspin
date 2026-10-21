@@ -157,6 +157,7 @@ func (e *heroSummonRun) expire() ([][]byte, error) {
 		return nil, nil
 	}
 	companion, isCompanionFound := peerSession.zone.Companion().Snapshot(e.objectID)
+	peerSession.cancelPetPlasmaBurn(e.objectID)
 	peerSession.zone.Companion().Remove(e.objectID)
 	delete(peerSession.heroSummons, e.objectID)
 	e.cancel = nil
@@ -203,6 +204,7 @@ func (e *gameplayPeerSession) stopHeroSummons() ([][]byte, error) {
 	e.heroSummons = nil
 	packets := make([][]byte, 0, len(runs)*2)
 	for objectID, run := range runs {
+		e.cancelPetPlasmaBurn(objectID)
 		if run != nil && run.cancel != nil {
 			run.cancel()
 			run.cancel = nil

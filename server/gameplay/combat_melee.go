@@ -240,9 +240,15 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 		enemy.Plan, target.Position, target.ActorFootprintRadius,
 	)
 	if profile.AbilityName == "CitadelDischarge" {
+		// CitadelDischarge adds a charge-counter bonus to its ranked base
+		// damage. With no counter, the client uses a bonus of zero.
+		chargeCount := min(peerSession.campaignNPCVoltroidCharges[objectID], uint32(5))
+		chargeDamage := [...]float32{0, 4, 9, 16, 25, 36}
+		profile.MinimumDamage += chargeDamage[chargeCount]
+		profile.MaximumDamage += chargeDamage[chargeCount]
 		// GetChannelEffect clamps the retained charge counter to four authored
 		// visual strengths, starting at one when no counter is present.
-		stackCount := min(max(uint32(1), peerSession.campaignNPCVoltroidCharges[objectID]), uint32(4))
+		stackCount := min(max(uint32(1), chargeCount), uint32(4))
 		profile.TrailEffectName = fmt.Sprintf("citadel_zap_discharge_%d.ServerEventDef", stackCount)
 		profile.ImpactEffectName = fmt.Sprintf("citadel_zap_hit_%d.ServerEventDef", stackCount)
 	}

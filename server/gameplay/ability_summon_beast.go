@@ -341,6 +341,7 @@ func (e *gameplayPeerSession) stopBeastPet() ([][]byte, error) {
 		return nil, nil
 	}
 	objectID := e.beastPetObjectID
+	e.cancelPetPlasmaBurn(objectID)
 	e.beastPetObjectID = 0
 	e.beastPetDamage = 0
 	e.beastPetDamageIncrease = 0

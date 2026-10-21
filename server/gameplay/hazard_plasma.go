@@ -49,7 +49,7 @@ func (e *plasmaBurnPresentation) publishToAllies(packets [][]byte) {
 // This passive belongs to zero-health scenery, not the live NPC roster. The
 // director's selected marker sets retain its authored owner and world position.
 func plasmaPoolContact(member *gameplayPeerSession, position game.Vec3) (game.CampaignDirectorMarker, bool) {
-	if member == nil || member.zone == nil || member.deployedObjectID == 0 || member.deployedHitPoint() <= 0 {
+	if member == nil || member.zone == nil {
 		return game.CampaignDirectorMarker{}, false
 	}
 	director := member.zone.DirectorDefinition()
@@ -77,6 +77,9 @@ func (e campaignNPCActionRuntime) applyPlasmaPoolContact(
 	member *gameplayPeerSession, position game.Vec3, timestamp uint64, now time.Time,
 ) ([][]byte, sporenet.PlayerStatDelta, bool, error) {
 	if member == nil {
+		return nil, sporenet.PlayerStatDelta{}, false, nil
+	}
+	if member.deployedObjectID == 0 || member.deployedHitPoint() <= 0 {
 		return nil, sporenet.PlayerStatDelta{}, false, nil
 	}
 	pool, isContact := plasmaPoolContact(member, position)

@@ -160,6 +160,7 @@ func (e *plasmaSentinelActiveRun) expirePet(objectID uint32) ([][]byte, error) {
 	if peerSession.plasmaSentinelActive == e && !e.isShieldActive && !e.hasPets() {
 		peerSession.plasmaSentinelActive = nil
 	}
+	peerSession.cancelPetPlasmaBurn(objectID)
 	peerSession.zone.Companion().Remove(objectID)
 	delete(peerSession.sagePassiveActivations, objectID)
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
@@ -211,6 +212,7 @@ func (e *gameplayPeerSession) stopPlasmaSentinelActive() ([][]byte, error) {
 			pet.cancel()
 		}
 		if e.zone != nil && e.zone.Companion() != nil {
+			e.cancelPetPlasmaBurn(pet.objectID)
 			e.zone.Companion().Remove(pet.objectID)
 		}
 		delete(e.sagePassiveActivations, pet.objectID)
@@ -491,6 +493,7 @@ func rollbackPlasmaSentinelPet(
 	}
 	pet := run.pets[petIndex]
 	if peerSession.zone != nil && peerSession.zone.Companion() != nil {
+		peerSession.cancelPetPlasmaBurn(objectID)
 		peerSession.zone.Companion().Remove(objectID)
 	}
 	delete(peerSession.sagePassiveActivations, objectID)

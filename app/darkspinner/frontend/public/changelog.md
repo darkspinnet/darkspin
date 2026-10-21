@@ -2,6 +2,12 @@
 
 ### 2026-10-21
 
+- [#96](https://github.com/darkspinnet/darkspin/issues/96) Correct rooted heroes through native owner-aware locomotion and pose updates so local movement prediction cannot bypass the server's stop.
+- [#96](https://github.com/darkspinnet/darkspin/issues/96) Stop Acid Shell's existing pursuit when it retracts into its shell and resume attacks after recovery.
+- [#96](https://github.com/darkspinnet/darkspin/issues/96) Retire authored security teleport pads across campaign levels before creating server presentation anchors, preventing doubled pads.
+- [#96](https://github.com/darkspinnet/darkspin/issues/96) Calculate Voltroid discharge damage from its current charge count instead of maximum charge, and keep its lasting charge glow from drawing a continuous ally beam.
+- [#96](https://github.com/darkspinnet/darkspin/issues/96) Keep Citadel boss factory vents in their dead graphics state after damage and resume their authored fire trap instead of exploding and removing them.
+- [#96](https://github.com/darkspinnet/darkspin/issues/96) Apply Citadel plasma pool burning effects and damage to hero pets, with cleanup on exit, death, switching and despawn.
 - [#97](https://github.com/darkspinnet/darkspin/issues/97) Fix /scale previews from combat-attribute-only updates to native object-scale updates, preserving baseline-based sizing, reset and rejoin behavior without overriding combat growth attributes.
 - Add /god to toggle testing invulnerability across hero switches, including enemy and lava damage, and record its state in bug reports.
 - Apply the client-authored elite HP bonus to /spawn captains, matching normal captain encounters.

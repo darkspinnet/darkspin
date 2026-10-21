@@ -2573,6 +2573,15 @@ func (r gameplayPendingRuntime) poll(
 			}
 			peerSession.queueStatDelta(lavaDelta)
 			rootHazardPackets = append(rootHazardPackets, lavaPackets...)
+			petBurnPackets, petBurnDelta, petBurnErr := peerSession.pollPetPlasmaBurns(
+				r.damage.npc, packet.SourceTime, r.now(),
+			)
+			if petBurnErr != nil {
+				r.registry.mutex.Unlock()
+				return nil, fmt.Errorf("petPlasmaPoll: %w", petBurnErr)
+			}
+			peerSession.queueStatDelta(petBurnDelta)
+			rootHazardPackets = append(rootHazardPackets, petBurnPackets...)
 			fungusPackets, fungusErr := r.pollCryosFungusLocked(&peerSession, packet.SourceTime)
 			if fungusErr != nil {
 				r.registry.mutex.Unlock()
