@@ -2,6 +2,7 @@
 
 ### 2026-10-21
 
+- Increase captain spawn scale from 1.0 to 1.4, including continue/rejoin
 - [#96](https://github.com/darkspinnet/darkspin/issues/96) Correct rooted heroes through native owner-aware locomotion and pose updates so local movement prediction cannot bypass the server's stop.
 - [#96](https://github.com/darkspinnet/darkspin/issues/96) Stop Acid Shell's existing pursuit when it retracts into its shell and resume attacks after recovery.
 - [#96](https://github.com/darkspinnet/darkspin/issues/96) Retire authored security teleport pads across campaign levels before creating server presentation anchors, preventing doubled pads.

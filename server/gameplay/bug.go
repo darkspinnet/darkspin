@@ -137,7 +137,7 @@ func bugContextForSession(
 			if npc.Plan.ScalePreviewMultiplier > 0 {
 				result.NPCScalePreviews = append(result.NPCScalePreviews, chat.NPCScalePreview{
 					ObjectID: npc.Plan.ObjectID, NounName: npc.Plan.NounName, Multiplier: npc.Plan.ScalePreviewMultiplier,
-					ObjectScale: npc.Plan.PreviewObjectScale(),
+					ObjectScale: npc.Plan.RuntimeObjectScale(),
 				})
 			}
 		}

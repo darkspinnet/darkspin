@@ -74,7 +74,7 @@ func spawn(plan zonenpc.SpawnPlan, isRemnant bool) ([][]byte, error) {
 	// The noun already owns its authored graphics scale. The create field is a
 	// runtime multiplier, so replaying the noun scale here enlarges major actors
 	// twice (for example, TutorialSpecialOne became 2.3 * 2.3).
-	runtimeScale := plan.PreviewObjectScale()
+	runtimeScale := plan.RuntimeObjectScale()
 	clientPosition := plan.Position
 	var createMessage raknet.ApplicationMessage = raknet.EnemyObjectCreateMessage{
 		IsInitiallyHidden: !isVisible,

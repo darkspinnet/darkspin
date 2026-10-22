@@ -22,19 +22,6 @@ type ScalePreview struct {
 	ObjectScale float32
 }
 
-// PreviewObjectScale multiplies the original placement scale, not the previous
-// preview. The noun's graphics scale remains client-owned.
-func (e SpawnPlan) PreviewObjectScale() float32 {
-	objectScale := e.PlacementScale
-	if objectScale == 0 {
-		objectScale = 1
-	}
-	if e.ScalePreviewMultiplier > 0 {
-		objectScale *= e.ScalePreviewMultiplier
-	}
-	return objectScale
-}
-
 func (e *Session) PreviewScales(req ScalePreviewRequest) ([]ScalePreview, error) {
 	if e == nil || !zonegeometry.IsFinite(req.Position) || math.IsNaN(float64(req.Radius)) || math.IsInf(float64(req.Radius), 0) ||
 		req.Radius <= 0 || req.Radius > 100 || math.IsNaN(float64(req.Multiplier)) ||
@@ -58,7 +45,7 @@ func (e *Session) PreviewScales(req ScalePreviewRequest) ([]ScalePreview, error)
 			npc.Plan.ScalePreviewMultiplier = req.Multiplier
 		}
 		e.npcs[objectID] = npc
-		previews = append(previews, ScalePreview{Plan: npc.Plan, ObjectScale: npc.Plan.PreviewObjectScale()})
+		previews = append(previews, ScalePreview{Plan: npc.Plan, ObjectScale: npc.Plan.RuntimeObjectScale()})
 	}
 	return previews, nil
 }
