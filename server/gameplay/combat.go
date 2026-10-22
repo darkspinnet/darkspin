@@ -1066,44 +1066,6 @@ func (s campaignBossFollowupStep) produce() ([][]byte, error) {
 	return append(packets, actionPacket...), nil
 }
 
-type campaignHordeFollowupStep struct {
-	runtime       campaignDamageRuntime
-	packet        raknet.Packet
-	sessionKey    string
-	generation    uint64
-	markerSet     string
-	plans         []zonenpc.SpawnPlan
-	outputPackets [][]byte
-	timestamp     uint64
-	delay         time.Duration
-}
-
-func (s campaignHordeFollowupStep) produce() ([][]byte, error) {
-	s.runtime.registry.mutex.Lock()
-	peerSession, isFound := s.runtime.registry.sessions[s.sessionKey]
-	if !isFound || peerSession.generation != s.generation {
-		s.runtime.registry.mutex.Unlock()
-		return nil, nil
-	}
-	err := peerSession.admitReservedCampaignHorde(s.markerSet, s.plans)
-	if err == nil {
-		s.runtime.registry.sessions[s.sessionKey] = peerSession
-	}
-	s.runtime.registry.mutex.Unlock()
-	if err != nil {
-		return nil, fmt.Errorf("transitionHordeAdmit: %w", err)
-	}
-	actionPacket, err := s.runtime.npc.scheduleFirstActions(
-		s.packet, s.sessionKey, s.generation, s.plans,
-		s.timestamp+uint64(s.delay/time.Millisecond),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("transitionHordeAction: %w", err)
-	}
-	packet := append([][]byte(nil), s.outputPackets...)
-	return append(packet, actionPacket...), nil
-}
-
 type campaignDamageRuntime struct {
 	activationID uint64
 	registry     *gameplaySessionRegistry
@@ -1739,6 +1701,13 @@ func (r campaignDamageRuntime) publishTransition(
 	packet raknet.Packet, sessionKey string, generation uint64,
 	transition campaignDamageTransition, timestamp uint64,
 ) ([][]byte, error) {
+	// Retain accepted interwave work before unrelated presentation can fail.
+	if len(transition.hordePlans) != 0 {
+		err := r.retainHordeFollowup(transition)
+		if err != nil {
+			return nil, fmt.Errorf("transitionHordeRetain: %w", err)
+		}
+	}
 	entryErr := r.npc.startCorruptorSecondAggro(transition.corruptorStageTwo, timestamp)
 	if entryErr != nil {
 		return nil, fmt.Errorf("transitionCinematic: %w", entryErr)
@@ -2257,34 +2226,7 @@ func (r campaignDamageRuntime) publishTransition(
 				scheduleErr)
 		}
 	}
-	if len(transition.hordePlans) == 0 {
-		return packets, nil
-	}
-	delay := transition.hordeTransition.NextWaveDelay
-	step := campaignHordeFollowupStep{
-		runtime: r, packet: packet, sessionKey: sessionKey,
-		generation: generation,
-		markerSet:  transition.hordeTransition.MarkerSetName,
-		plans:      transition.hordePlans, outputPackets: transition.hordePackets,
-		timestamp: timestamp, delay: delay,
-	}
-	producer := raknet.ScheduledPacketProducer{
-		Delay:   delay,
-		Produce: step.produce,
-	}
-	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{producer})
-	if scheduleErr == nil && cancel == nil {
-		scheduleErr = errors.New("nil cancellation")
-	}
-	if scheduleErr == nil {
-		return packets, nil
-	}
-	fallbackPackets, err := producer.Produce()
-	if err != nil {
-		return nil, fmt.Errorf("transitionHordeFallback: %w", err)
-	}
-	r.logger.Printf("RakNet campaign horde follow-up published immediately after schedule failure: %v", scheduleErr)
-	return append(packets, fallbackPackets...), nil
+	return packets, nil
 }
 
 const (
@@ -2471,7 +2413,7 @@ type campaignDamageTransition struct {
 	sinkholeCleanupObjectID      uint32
 	experience                   uint32
 	hordePlans                   []zonenpc.SpawnPlan
-	hordePackets                 [][]byte
+	hordeZone                    *zone.Zone
 	hordeTransition              zonehorde.Transition
 	isTutorialHordeNextWave      bool
 	isTutorialHordeComplete      bool
@@ -3075,12 +3017,12 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 			}
 		}
 		if hordeTransition.NextWaveActorCount != 0 {
-			plans, packets, err := s.planCampaignHordeFollowup(hordeTransition)
+			plans, err := s.planCampaignHordeFollowup(hordeTransition)
 			if err != nil {
 				return campaignDamageTransition{}, fmt.Errorf("hordeFollowup: %w", err)
 			}
 			transition.hordePlans = plans
-			transition.hordePackets = packets
+			transition.hordeZone = s.zone
 		}
 		if hordeTransition.IsComplete {
 			plans, packets, isStarted, err := s.admitCampaignGenericBossAfterHorde(
@@ -3200,18 +3142,14 @@ func (s *gameplayPeerSession) applyEquippedLifeSteal(
 
 func (s *gameplayPeerSession) planCampaignHordeFollowup(
 	transition zonehorde.Transition,
-) ([]zonenpc.SpawnPlan, [][]byte, error) {
+) ([]zonenpc.SpawnPlan, error) {
 	plans, err := s.zone.PlanHordeFollowup(
 		transition, s.deployedObjectID, s.binding.GameID,
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("hordePlan: %w", err)
+		return nil, fmt.Errorf("hordePlan: %w", err)
 	}
-	packets, err := npcraknet.TargetedSpawns(plans, s.deployedObjectID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("hordeMarshal: %w", err)
-	}
-	return plans, packets, nil
+	return plans, nil
 }
 
 func (s *gameplayPeerSession) admitReservedCampaignHorde(

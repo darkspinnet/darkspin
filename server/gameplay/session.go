@@ -594,6 +594,9 @@ type gameplayPeerSession struct {
 	schedulePacket                       raknet.Packet
 	pendingPacketBatches                 []pendingPeerPacketBatch
 	pendingPacketResponseTraceID         uint64
+	mutationBaselineRevision             uint64
+	isMutationBaselineRequired           bool
+	mutationResetObjectIDs               []uint32
 	nextPendingPacketID                  uint64
 	isPendingPacketOverflow              bool
 	pendingStatDeltas                    []sporenet.PlayerStatDelta
@@ -2029,6 +2032,7 @@ type gameplaySessionRegistry struct {
 	beastPetVulnerabilities  map[*zonenpc.Session]map[uint32]*beastPetVulnerabilityRun
 	basicHitModifiers        map[*zonenpc.Session]map[basicHitModifierKey]*basicHitModifierRun
 	cloudPoisons             map[*zonenpc.Session]*campaignCloudPoisonWorld
+	hordeFollowups           map[campaignHordeFollowupKey]*campaignHordeFollowup
 	supportHealerRoots       map[*zonenpc.Session]map[uint32]*supportHealerRootRun
 	chronoFreezes            map[chronoFreezeKey]*chronoFreezeStep
 	timeBubbles              map[*heroAuraAreaRun]struct{}
@@ -2532,6 +2536,7 @@ func (e gameplaySessionLifecycle) cleanup(
 ) {
 	e.registry.mutex.Lock()
 	e.registry.isClosed = true
+	e.registry.stopHordeFollowupsLocked()
 	fixtureTicket := e.registry.beginFixtureBlastDiscardLocked(0)
 	if e.registry.voodooCharms.cancel != nil {
 		e.registry.voodooCharms.cancel()

@@ -117,6 +117,7 @@ func (e campaignProjectionDelivery) commit() {
 		return
 	}
 	peerSession.commitPendingPackets(e.batchID)
+	peerSession.commitMutationFeedbackReceipts(e.mutationFeedbacks)
 	e.registry.repairOverdriveDeliveryLocked(&peerSession, e.overdriveFrames, time.Now())
 	e.registry.repairQuestDeliveryLocked(&peerSession, e.questFrames, time.Now())
 	e.registry.repairMutationDeliveryLocked(&peerSession, e.mutationElites)

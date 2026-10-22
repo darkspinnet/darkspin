@@ -2,6 +2,10 @@
 
 ### 2026-10-22
 
+- [#100](https://github.com/darkspinnet/darkspin/issues/100) Expose all Mutation Agent horde settings in the launcher's Server Rules dialog, including validation, saving, reloading and GitHub feedback export.
+- [#100](https://github.com/darkspinnet/darkspin/issues/100) Keep horde followups alive through player disconnects, preserve their delay, and deliver Mutation Agent spawns before their effects and movement.
+- [#100](https://github.com/darkspinnet/darkspin/issues/100) Add server configuration for Mutation Agent horde eligibility, wave count, spawn wave, delay and encounter completion, applied to new missions.
+- [#100](https://github.com/darkspinnet/darkspin/issues/100) Recover stale Mutation Agent life presentation through targeted baseline recreation and prevent acknowledged feedback from replaying structural packets in queued replacements.
 - [#100](https://github.com/darkspinnet/darkspin/issues/100) Restore combat music input from current per-hero enemy targeting counts, clearing stale counts and refreshing through busy combat, hero switching and reconnects.
 - [#100](https://github.com/darkspinnet/darkspin/issues/100) Replace Mutation Agents' instant nearby promotion with authored ally selection, movement, timed beams and target-owned elite transformations.
 - [#100](https://github.com/darkspinnet/darkspin/issues/100) Restore Mutation Agent aura timing, hero and companion targeting, transformation immunities and immediate death deletion, with reliable damage retries and co-op feedback.

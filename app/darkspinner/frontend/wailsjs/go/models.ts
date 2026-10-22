@@ -475,9 +475,34 @@ export namespace runtime {
 	        this.captainDelayMillisecond = source["captainDelayMillisecond"];
 	    }
 	}
+	export class MutationAgentConfiguration {
+	    version: number;
+	    isEnabled: boolean;
+	    minimumChainLevel: number;
+	    waveCount: number;
+	    spawnWave: number;
+	    interWaveDelayMillisecond: number;
+	    isAgentDefeatCompleting: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new MutationAgentConfiguration(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.isEnabled = source["isEnabled"];
+	        this.minimumChainLevel = source["minimumChainLevel"];
+	        this.waveCount = source["waveCount"];
+	        this.spawnWave = source["spawnWave"];
+	        this.interWaveDelayMillisecond = source["interWaveDelayMillisecond"];
+	        this.isAgentDefeatCompleting = source["isAgentDefeatCompleting"];
+	    }
+	}
 	export class ServerRulesConfiguration {
 	    allyAlert: AllyAlertConfiguration;
 	    bossSpawning: BossSpawningConfiguration;
+	    mutationAgent: MutationAgentConfiguration;
 	
 	    static createFrom(source: any = {}) {
 	        return new ServerRulesConfiguration(source);
@@ -487,6 +512,7 @@ export namespace runtime {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.allyAlert = this.convertValues(source["allyAlert"], AllyAlertConfiguration);
 	        this.bossSpawning = this.convertValues(source["bossSpawning"], BossSpawningConfiguration);
+	        this.mutationAgent = this.convertValues(source["mutationAgent"], MutationAgentConfiguration);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

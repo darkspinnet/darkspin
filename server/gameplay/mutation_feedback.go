@@ -28,6 +28,7 @@ type mutationFeedbackHit struct {
 }
 
 type mutationDamageFeedback struct {
+	receipt             *mutationFeedbackReceipt
 	world               *zone.Zone
 	targets             []mutationFeedbackTarget
 	packets             [][]byte
@@ -60,6 +61,9 @@ func mutationFeedbackActor(world *zone.Zone, objectID uint32) (mutationFeedbackT
 }
 
 func (e *gameplayPeerSession) queueMutationFeedback(frame mutationDamageFeedback) {
+	if frame.receipt == nil {
+		frame.receipt = &mutationFeedbackReceipt{}
+	}
 	e.nextPendingPacketID++
 	e.pendingPacketBatches = append(append([]pendingPeerPacketBatch(nil), e.pendingPacketBatches...), pendingPeerPacketBatch{
 		id: e.nextPendingPacketID, mutationFeedback: &frame, isCampaignPresentation: true,
@@ -209,6 +213,9 @@ func (e *gameplaySessionRegistry) refreshMutationFeedbackLocked(member *gameplay
 			continue
 		}
 		next := *pending
+		if next.receipt != nil && next.receipt.isCommitted {
+			next = mutationFeedbackResourceRepair(next)
+		}
 		next.hits, next.areEffectsAllowed = e.mutationFeedbackHitsLocked(next)
 		next.isPrepared = true
 		packets := make([][]byte, 0, len(next.packets)+len(next.hits))
@@ -278,13 +285,38 @@ func (e *gameplaySessionRegistry) repairMutationFeedbackLocked(member *gameplayP
 			continue
 		}
 		hits, areEffectsAllowed := e.mutationFeedbackHitsLocked(frame)
+		for _, target := range frame.targets {
+			if !isMutationFeedbackLifeCurrent(frame, target.objectID) {
+				e.requireMutationBaselineLocked(member, target.objectID, "stale feedback life")
+			}
+		}
 		if !areMutationFeedbackHitsEqual(frame.hits, hits) || frame.areEffectsAllowed != areEffectsAllowed {
-			frame.areEffectsAllowed = false
 			// A delivery receipt repairs resources, never repeats accepted
 			// object creation, death, deletion, or reaction presentation.
-			frame.packets = nil
-			frame.isPrepared = false
+			frame = mutationFeedbackResourceRepair(frame)
 			member.queueMutationFeedback(frame)
 		}
+	}
+}
+
+// ReliableOrdered transport places the existing full baseline after the stale
+// response. This repairs structural presentation eventually; it cannot retract
+// a death pose or delete that has already reached the client.
+func (e *gameplaySessionRegistry) requireMutationBaselineLocked(member *gameplayPeerSession, objectID uint32, reason string) {
+	member.mutationBaselineRevision++
+	member.isMutationBaselineRequired = true
+	isRetained := false
+	for _, retainedID := range member.mutationResetObjectIDs {
+		if retainedID == objectID {
+			isRetained = true
+			break
+		}
+	}
+	if !isRetained {
+		member.mutationResetObjectIDs = append(append([]uint32(nil), member.mutationResetObjectIDs...), objectID)
+	}
+	if e.logger != nil {
+		e.logger.Printf("RakNet mutation presentation baseline required game=%d user=%d revision=%d reason=%s",
+			member.binding.GameID, member.binding.UserID, member.mutationBaselineRevision, reason)
 	}
 }

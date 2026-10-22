@@ -75,8 +75,8 @@ func (e *Zone) PlanInitialEncounter(
 	if objectID == nil {
 		return InitialEncounterPlan{}, errors.New("encounter planning allocator unavailable")
 	}
-	hordePlans, nextHordeObjectID, err := zonehorde.PlanFirstWaveWithSections(
-		directorDefinition, publication, objectID.Next(), gameID, population.SectionRosters(),
+	hordePlans, nextHordeObjectID, err := zonehorde.PlanFirstWaveWithPolicy(
+		directorDefinition, publication, objectID.Next(), gameID, population.SectionRosters(), horde.Policy(),
 	)
 	if err != nil {
 		return InitialEncounterPlan{}, fmt.Errorf("initialHordePlan: %w", err)
@@ -140,9 +140,9 @@ func (e *Zone) PlanHordeFollowup(
 	if !isFound {
 		return nil, errors.New("horde followup publication missing")
 	}
-	plans, nextHordeObjectID, err := zonehorde.PlanWaveWithSections(
+	plans, nextHordeObjectID, err := zonehorde.PlanWaveWithPolicy(
 		directorDefinition, publication, objectID.Next(), gameID,
-		transition.NextWaveActorCount, transition.NextWaveOrdinal, population.SectionRosters(),
+		transition.NextWaveActorCount, transition.NextWaveOrdinal, population.SectionRosters(), horde.Policy(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("hordeFollowupPlan: %w", err)

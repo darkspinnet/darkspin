@@ -801,6 +801,7 @@ type NavigationSource interface {
 
 type gameplayHandlerDependencies struct {
 	allyAlertRuleSource    AllyAlertRuleSource
+	hordePolicySource      HordePolicySource
 	campaignSetup          *game.CampaignSetup
 	campaignNavigation     NavigationSource
 	publishCampaignEvent   func(game.CampaignDirectorPublication)
@@ -1163,6 +1164,10 @@ func NewHandler(
 	dependency.allyAlertRuleSource = fixedAllyAlertRules{rules: zonenpc.DefaultAllyAlertRules()}
 	if len(allyAlertRuleSources) > 0 {
 		dependency.allyAlertRuleSource = allyAlertRuleSources[0]
+		hordePolicySource, isHordePolicySource := allyAlertRuleSources[0].(HordePolicySource)
+		if isHordePolicySource {
+			dependency.hordePolicySource = hordePolicySource
+		}
 	}
 	dependency.campaignSetup = campaignSetup
 	dependency.campaignNavigation = campaignNavigation
@@ -1298,8 +1303,9 @@ func newGameplayHandlerWithDependencies(
 		})
 	}
 	campaignPrepare := campaignPreparation{
-		spawnRuleSource: dependency.allyAlertRuleSource,
-		setup:           dependency.campaignSetup, difficulty: program.Difficulty, session: sessionRegistry,
+		spawnRuleSource:   dependency.allyAlertRuleSource,
+		hordePolicySource: dependency.hordePolicySource,
+		setup:             dependency.campaignSetup, difficulty: program.Difficulty, session: sessionRegistry,
 		zone:       zoneRegistry,
 		navigation: dependency.campaignNavigation, program: program,
 		timer:        dependency.zoneTimer,
@@ -2569,6 +2575,15 @@ func (r gameplayPendingRuntime) pollWorld(
 		// Debug-ping preparation and the client's loaded status advance rejoin.
 		// World packets must wait until the fresh client can consume a baseline.
 		return nil, nil
+	}
+	if isFound && peerSession.zone != nil && peerSession.dungeonSetup.IsCommitted() &&
+		(peerSession.isMutationBaselineRequired || peerSession.zone.IsProjectionBaselineRequired(peerSession.binding.UserID, peerSession.generation)) {
+		// Recovery must outrank continuously produced mutation publications.
+		packets, err := r.projection.drain(packet, packet.Address.String(), packet.SourceTime)
+		if err != nil {
+			return nil, fmt.Errorf("recoveryBaseline: %w", err)
+		}
+		return packets, nil
 	}
 	err := r.action.overdrive.reconcilePresentation(packet)
 	if err != nil {
@@ -4020,11 +4035,10 @@ func (r gameplayProjectionRuntime) drain(
 	if !isFound || peerSession.zone == nil {
 		return nil, nil
 	}
-	if peerSession.isRejoinPending || !peerSession.dungeonSetup.IsCommitted() ||
-		len(peerSession.pendingPacketBatches) != 0 {
+	if peerSession.isRejoinPending || !peerSession.dungeonSetup.IsCommitted() {
 		return nil, nil
 	}
-	if peerSession.zone.IsProjectionBaselineRequired(
+	if peerSession.isMutationBaselineRequired || peerSession.zone.IsProjectionBaselineRequired(
 		peerSession.binding.UserID, peerSession.generation,
 	) {
 		packets, revision, err := marshalGameplayRejoinBaseline(
@@ -4032,6 +4046,27 @@ func (r gameplayProjectionRuntime) drain(
 		)
 		if err != nil {
 			return nil, fmt.Errorf("projectionBaseline: %w", err)
+		}
+		if peerSession.isMutationBaselineRequired && len(peerSession.mutationResetObjectIDs) != 0 {
+			resetPacket, resetErr := raknet.MarshalApplication(raknet.ObjectDeleteMessage{ObjectID: peerSession.mutationResetObjectIDs})
+			if resetErr != nil {
+				return nil, fmt.Errorf("baselineReset: %w", resetErr)
+			}
+			packets = append([][]byte{resetPacket}, packets...)
+		}
+		mutationPackets, mutationFrames, err := r.registry.mutationRejoinPackets(peerSession, r.registry.now(), sourceTime)
+		if err != nil {
+			return nil, fmt.Errorf("baselineMutation: %w", err)
+		}
+		packets = append(packets, mutationPackets...)
+		delivery := campaignProjectionDelivery{
+			registry: r.registry, sessionKey: sessionKey,
+			generation: peerSession.generation, transportGeneration: peerSession.transportGeneration,
+			mutationEvents: mutationFrames,
+		}
+		err = request.AfterResponseCommit(delivery.commit)
+		if err != nil {
+			return nil, fmt.Errorf("baselineMutationCommit: %w", err)
 		}
 		err = request.AfterResponseCommit(func() {
 			r.commitProjectionDelivery(
@@ -4048,6 +4083,9 @@ func (r gameplayProjectionRuntime) drain(
 			)
 		}
 		return packets, nil
+	}
+	if len(peerSession.pendingPacketBatches) != 0 {
+		return nil, nil
 	}
 	packets, err := r.drainQueuedProjection(request, sessionKey)
 	if err != nil {
@@ -4091,6 +4129,18 @@ func (r gameplayProjectionRuntime) commitProjectionDelivery(
 		)
 	}
 	if isCommitted {
+		if isBaseline {
+			r.registry.mutex.Lock()
+			member, isFound := r.registry.sessions[sessionKey]
+			if isFound && member.zone == expected.zone && member.generation == expected.generation &&
+				member.transportGeneration == expected.transportGeneration &&
+				member.mutationBaselineRevision == expected.mutationBaselineRevision {
+				member.isMutationBaselineRequired = false
+				member.mutationResetObjectIDs = nil
+				r.registry.sessions[sessionKey] = member
+			}
+			r.registry.mutex.Unlock()
+		}
 		return
 	}
 	err := expected.zone.RequireProjectionBaseline(
@@ -5910,17 +5960,18 @@ func (r gameplaySetupRuntime) publishVote(
 // by campaign levels. Level-specific differences stay in prepared director
 // data instead of branching in the gameplay transport.
 type campaignPreparation struct {
-	spawnRuleSource AllyAlertRuleSource
-	setup           *game.CampaignSetup
-	difficulty      sim.DifficultyCombatTuning
-	session         *gameplaySessionRegistry
-	zone            *zone.Registry
-	navigation      NavigationSource
-	program         Programs
-	timer           zone.Timer
-	checkpoint      zonecheckpoint.Repository
-	gameplayJoin    *game.GameplayJoin
-	logger          *log.Logger
+	spawnRuleSource   AllyAlertRuleSource
+	hordePolicySource HordePolicySource
+	setup             *game.CampaignSetup
+	difficulty        sim.DifficultyCombatTuning
+	session           *gameplaySessionRegistry
+	zone              *zone.Registry
+	navigation        NavigationSource
+	program           Programs
+	timer             zone.Timer
+	checkpoint        zonecheckpoint.Repository
+	gameplayJoin      *game.GameplayJoin
+	logger            *log.Logger
 }
 
 const campaignPopulationAggroRadius = float32(12)
@@ -6410,6 +6461,11 @@ func (p campaignPreparation) initialize(
 	if capsuleRandomErr != nil {
 		return fmt.Errorf("statusChainCapsuleRandom: %w", capsuleRandomErr)
 	}
+	hordePolicy := p.hordePolicy()
+	hordePolicyErr := hordePolicy.Validate()
+	if hordePolicyErr != nil {
+		return fmt.Errorf("hordePolicy: %w", hordePolicyErr)
+	}
 	zone, _, zoneErr := zoneRegistry.Resolve(
 		uint64(binding.GameID),
 		zone.Member{
@@ -6458,7 +6514,7 @@ func (p campaignPreparation) initialize(
 			Director:                directorSession,
 			Script:                  scriptRegistry,
 			Encounter:               zoneencounter.NewStageSession(),
-			Horde:                   zonehorde.NewCampaignSession(binding.ChainLevelIndex),
+			Horde:                   zonehorde.NewCampaignSessionWithPolicy(binding.ChainLevelIndex, hordePolicy),
 			Boss:                    zoneboss.NewSession(director.BossSpawnRules),
 			Death:                   zonedeath.NewSession(),
 			Objective:               objectiveSession,

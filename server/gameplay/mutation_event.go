@@ -243,6 +243,13 @@ func (e gameplayPeerSession) pendingMutationEvents(batchID uint64) []mutationPen
 
 func (e *gameplaySessionRegistry) repairMutationEventsLocked(member *gameplayPeerSession, frames []mutationPendingEvent, at time.Time) {
 	for _, frame := range frames {
+		if member.zone == frame.world && frame.group == mutationTransformFrame && frame.snapshot.isActive {
+			npc, isFound := frame.world.NPCs().NPC(frame.event.ID.ObjectID)
+			if !isFound || npc.Mutation.Generation != frame.event.ID.Generation || !mutationVisual(frame, npc, at).isActive {
+				e.requireMutationBaselineLocked(member, frame.event.ID.ObjectID, "stale growth pose")
+			}
+			continue
+		}
 		if member.zone != frame.world || (frame.group != mutationSourceFrame && frame.group != mutationBeamFrame && frame.group != mutationMovementFrame) {
 			continue
 		}
@@ -270,6 +277,14 @@ func (e *gameplaySessionRegistry) mutationRejoinPackets(member gameplayPeerSessi
 		}
 		// Active grow phases use the object-creation reflection in SpawnSnapshot;
 		// live SetAnimationState does not establish bootstrap seek semantics.
+		growthFrame := mutationPendingEvent{world: member.zone, group: mutationTransformFrame, event: zonenpc.MutationEvent{
+			ID: zonenpc.MutationEventID{ObjectID: npc.Plan.ObjectID, Generation: npc.Mutation.Generation},
+		}}
+		growthFrame.snapshot = mutationVisual(growthFrame, npc, at)
+		if growthFrame.snapshot.isActive {
+			growthFrame.isPrepared = true
+			frames = append(frames, growthFrame)
+		}
 		for _, group := range []uint8{mutationSourceFrame, mutationBeamFrame, mutationMovementFrame} {
 			frame := mutationPendingEvent{world: member.zone, group: group, event: zonenpc.MutationEvent{
 				ID: zonenpc.MutationEventID{ObjectID: npc.Plan.ObjectID, Generation: npc.Mutation.Generation},

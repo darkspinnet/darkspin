@@ -853,6 +853,11 @@ func New(options Options) (*Server, error) {
 	logger.Printf("NPC ally alert policy enabled=%t range_percent=%d range_owner=%s max_hops=%d diagnostics=%t",
 		allyAlertRules.IsEnabled, allyAlertRules.RangePercent, allyAlertRules.RangeOwner,
 		allyAlertRules.MaxHops, allyAlertRules.IsDiagnosticLoggingEnabled)
+	hordePolicy := serverRuleStore.HordePolicy()
+	logger.Printf("Mutation Agent horde policy enabled=%t minimum_chain_level=%d waves=%d spawn_wave=%d delay=%s agent_defeat_completes=%t",
+		hordePolicy.IsMutationAgentEnabled, hordePolicy.MutationAgentMinChainLevel,
+		hordePolicy.WaveCount, hordePolicy.MutationAgentWaveOrdinal,
+		hordePolicy.InterWaveDelay, hordePolicy.IsMutationAgentDefeatCompleting)
 	gameplayHandler, gameplayLifecycle := gameplay.NewHandler(
 		gameplayJoin, userManager, simulationProgram, logger, campaignSetup, navigationSource,
 		zone.NewSchedulerTimer(taskScheduler), checkpointManager, serverRuleStore,

@@ -441,6 +441,29 @@ boundary.
 - pure-Go Lua runtime for the external global and ability scripts
 - server-data extraction/merge support in the `installer` package
 
+## Mutation Agent horde settings
+
+Gameplay policy settings live in `server.toml` beside the selected `darkspin.toml`. The server adds the following section when it is absent. These are adjustable compatibility rules; the original server's horde selection policy has not been recovered.
+
+```toml
+[mutation_agent]
+version = 1
+is_enabled = true
+minimum_chain_level = 7
+wave_count = 3
+spawn_wave = 3
+inter_wave_delay_millisecond = 1500
+is_agent_defeat_completing = true
+```
+
+- `minimum_chain_level` is the one-based campaign index, from 1 to 72; 7 is mission 2-3.
+- `wave_count` accepts 1–10. `spawn_wave` accepts 1 through `wave_count` and adds one Mutation Agent alongside that wave's normal enemies.
+- `inter_wave_delay_millisecond` accepts 0–30000. A disconnect or retry does not shorten the retained deadline.
+- `is_agent_defeat_completing = true` ends the encounter when its Mutation Agent dies, even if other wave members remain. Set it to `false` to require normal wave clearing.
+- Disabling the section's behavior, or playing below its minimum index, retains the earlier ordinary/tutorial horde rules. It does not disable a developer-spawned Mutation Agent's authored abilities.
+
+Use the launcher's **Server Rules → Mutation Agent Hordes** section to edit these settings, then select **Apply Server Rules**. Reload restores the saved settings, and Share to GitHub includes the Mutation Agent section. Changes apply to new missions; existing missions retain their captured policy. Stop the server before editing this file directly, then restart it. Invalid policy ranges reject configuration loading or saving. Authored beam timing, elite bonuses, aura damage, and transformation behavior are not overridden by these settings.
+
 ## Verify
 
 ```sh
