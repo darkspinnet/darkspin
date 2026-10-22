@@ -217,7 +217,7 @@ func (r campaignNPCActionRuntime) produceZelemSpecialThreeEnergyBuff(
 	if !isProfileFound {
 		return nil, false, nil
 	}
-	profile = zonenpc.ApplyAffixTiming(profile, source.Plan)
+	profile.Cast = zonenpc.ApplyAffixTiming(profile.Cast, source.Plan)
 	r.registry.mutex.RLock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation &&

@@ -4359,8 +4359,8 @@ func campaignNPCActionProfile(
 		surfaceDistance := max(float32(0), targetPosition.Sub(plan.Position).Length()-
 			plan.ActorFootprintRadius()-targetFootprintRadius)
 		if surfaceDistance > profile.Range {
-			return campaignAffixActionProfile(plan,
-				zonenpc.ArcturusSawBladeProfile(plan.NounName))
+			sawBladeProfile, isSawBladeFound := zonenpc.ArcturusSawBladeProfile(plan.NounName)
+			return campaignAffixActionProfile(plan, sawBladeProfile, isSawBladeFound)
 		}
 	}
 	nashiraSwipeProfile, isNashiraSwipeFound :=
