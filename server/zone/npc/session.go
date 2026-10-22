@@ -33,6 +33,8 @@ type Session struct {
 	objectIDs            []uint32
 	npcs                 map[uint32]Snapshot
 	attackersByObject    map[uint32][]uint32
+	infectionImmunities  map[uint32]time.Time
+	infectionInstances   map[uint32]map[uint32]struct{}
 }
 
 func NewSession(objectIDLimit uint32, aggroRadius float32) *Session {
@@ -1162,12 +1164,19 @@ func (s *Session) damage(
 			// attributes. This is the illusion's identity, not a cleansable debuff.
 			damage *= 4
 		}
-		if isPhysicalDamage && now.Before(npc.status.physicalVulnerabilityEnd) {
-			damage *= 1 + npc.status.physicalTakenIncrease
+		if isPhysicalDamage {
+			increase := npc.status.beastVulnerability.DamageIncrease(now)
+			if now.Before(npc.status.physicalVulnerabilityEnd) {
+				increase += npc.status.physicalTakenIncrease
+			}
+			damage *= 1 + increase
 		}
-		if len(damageSource) > 0 && damageSource[0] == 1 &&
-			time.Now().Before(npc.status.energyVulnerabilityEnd) {
-			damage *= 1 + npc.status.energyTakenIncrease
+		if isEnergyDamage {
+			increase := npc.status.basicEnergyIncrease(now)
+			if now.Before(npc.status.energyVulnerabilityEnd) {
+				increase += npc.status.energyTakenIncrease
+			}
+			damage *= 1 + increase
 		}
 	}
 	absorbedDamage := float32(0)

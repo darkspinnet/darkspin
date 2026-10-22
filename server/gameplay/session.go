@@ -340,6 +340,7 @@ type controlledHeroState struct {
 	campaignLavaSpoutKey          uint64
 	nightmareRootDamageReadyAt    time.Time
 	passiveKillStack              [squad.Size]uint32
+	voodooDeathRevision           uint64
 	soulRavagerObjectIDs          [5]uint32
 	soulRavagerOwnerObjectID      uint32
 	soulRavagerVisualStack        uint32
@@ -350,8 +351,10 @@ type controlledHeroState struct {
 	isMissileTargetingPresented   [squad.Size]bool
 	missileTargetingEffectSlots   [squad.Size]uint8
 	fireRavagerBasicCount         [squad.Size]uint32
+	fireRavagerPassive            fireRavagerPassiveState
 	tcShieldAmount                [squad.Size]float32
 	tcShieldReadyAt               [squad.Size]time.Time
+	tcShieldRuns                  [squad.Size]*tcShieldPassiveRun
 	tcShieldEffectSlot            [squad.Size]uint8
 	isTCShieldEffectAttached      [squad.Size]bool
 	lightspeedPassiveEpoch        uint64
@@ -537,13 +540,15 @@ type controlledHeroPresentation struct {
 	sphereAttack                 *abilityraknet.TargetedAOERun
 	sphereObjectID               uint32
 	sagePassive                  *summonPassiveRun
+	sagePassiveSchedule          *sagePassivePoll
 	sagePassiveActivations       map[uint32]summonCompanionActivation
-	fieldMedicDroneObjectID      uint32
-	fieldMedicDroneAttack        *abilityraknet.ProjectileRun
+	fieldMedicDroneObjectIDs     []uint32
+	fieldMedicDroneAttacks       map[uint32]*abilityraknet.ProjectileRun
 	beastPetObjectID             uint32
 	beastPetDamage               float32
 	beastPetEnrage               *beastPetEnrageRun
 	beastPetDamageIncrease       float32
+	beastPetResurrection         *beastPetResurrectionRun
 	heroSummons                  map[uint32]*heroSummonRun
 	trapperStealthEpoch          uint64
 	isTrapperStealthed           bool
@@ -1610,9 +1615,7 @@ func (s *gameplayPeerSession) resetRetainedTransportState() {
 	s.enemyFearExpiresAt = time.Time{}
 	s.enemyFearTargetObjectID = 0
 	s.isHeroSelectionScheduled = false
-	for index := range s.tcShieldAmount {
-		s.resetTCShield(uint32(index))
-	}
+	s.resetTCShieldTransport()
 	s.lightspeedPassiveEpoch = 0
 	s.lightspeedEffectObjectID = 0
 	s.lightspeedEffectSlot = 0
@@ -1755,8 +1758,10 @@ func (s *gameplayPeerSession) resetInterruptibleActionAdmission() *abilityraknet
 		s.heroChannelArea = nil
 	}
 	if s.heroQuantumBlink != nil {
-		s.heroQuantumBlink.Stop()
-		s.heroQuantumBlink = nil
+		cleanupErr := s.retireQuantumBlinkLocked(time.Now())
+		if cleanupErr != nil {
+			log.Printf("RakNet Quantum Blink interruption cleanup failed user=%d: %v", s.binding.UserID, cleanupErr)
+		}
 	}
 	if s.heroCharge != nil {
 		cleanupPackets := s.interruptChargeLocked(s.heroCharge)
@@ -1953,6 +1958,9 @@ type gameplaySessionRegistry struct {
 	activeRequest           int
 	requestIdle             chan struct{}
 	sessions                map[string]gameplayPeerSession
+	voodooCharms            voodooCharmWorld
+	beastPetVulnerabilities map[*zonenpc.Session]map[uint32]*beastPetVulnerabilityRun
+	basicHitModifiers       map[*zonenpc.Session]map[basicHitModifierKey]*basicHitModifierRun
 	chronoFreezes           map[chronoFreezeKey]*chronoFreezeStep
 	timeBubbles             map[*heroAuraAreaRun]struct{}
 	auraRuns                map[*heroAuraAreaRun]struct{}
@@ -2148,6 +2156,12 @@ func (e *gameplaySessionRegistry) takeRetained(
 		return gameplayPeerSession{}, false
 	}
 	delete(e.retainedSessions, key)
+	if retained.peerSession.zone != nil {
+		if e.voodooCharms.handovers == nil {
+			e.voodooCharms.handovers = make(map[gameplayMemberKey]*voodooCharmHandover)
+		}
+		e.voodooCharms.handovers[key] = &voodooCharmHandover{member: retained.peerSession}
+	}
 	if retained.cancel != nil {
 		retained.cancel()
 	}
@@ -2407,6 +2421,14 @@ func (e gameplaySessionLifecycle) cleanup(
 ) {
 	e.registry.mutex.Lock()
 	e.registry.isClosed = true
+	if e.registry.voodooCharms.cancel != nil {
+		e.registry.voodooCharms.cancel()
+		e.registry.voodooCharms.cancel = nil
+	}
+	clear(e.registry.voodooCharms.providers)
+	clear(e.registry.voodooCharms.owners)
+	clear(e.registry.voodooCharms.deaths)
+	clear(e.registry.voodooCharms.handovers)
 	requestIdle := e.registry.requestIdle
 	activeRequest := e.registry.activeRequest
 	e.registry.mutex.Unlock()
@@ -2617,6 +2639,12 @@ func (e gameplaySessionLifecycle) disconnectMember(
 		stopGameplayPeerSession(peerSession, modifierInstancePool, effectPool)
 		return
 	}
+	if e.registry.voodooCharms.handovers == nil {
+		e.registry.voodooCharms.handovers = make(map[gameplayMemberKey]*voodooCharmHandover)
+	}
+	handover := &voodooCharmHandover{member: peerSession}
+	e.registry.voodooCharms.handovers[key] = handover
+	defer e.registry.releaseVoodooHandover(key, handover)
 	e.registry.mutex.Unlock()
 	disconnectedAt := e.registry.now()
 	moveErr := peerSession.stopPlayerMovement(disconnectedAt)
@@ -2648,6 +2676,7 @@ func (e gameplaySessionLifecycle) disconnectMember(
 		}
 		return
 	}
+	retainedSage := peerSession.detachSagePassive()
 	retainedCompanions := make([]zonecompanion.Actor, 0)
 	if peerSession.zone.Companion() != nil {
 		for _, companion := range peerSession.zone.Companion().Snapshots() {
@@ -2671,6 +2700,7 @@ func (e gameplaySessionLifecycle) disconnectMember(
 	peerSession.zoneEffectPresentation = zoneEffectPresentation{}
 	peerSession.zonePresentationRuntime = zonePresentationRuntime{}
 	peerSession.controlledHeroPresentation = controlledHeroPresentation{}
+	peerSession.restoreSagePassive(retainedSage)
 	peerSession.resetRetainedTransportState()
 	peerSession.isRejoinPending = true
 	retained := &gameplayRetainedSession{
@@ -2698,6 +2728,11 @@ func (e gameplaySessionLifecycle) disconnectMember(
 	}
 	previous := e.registry.retainedSessions[key]
 	e.registry.retainedSessions[key] = retained
+	e.registry.voodooCharms.releaseHandover(key, handover)
+	shieldErr := retained.peerSession.scheduleTCShieldRecharge()
+	if shieldErr != nil && e.registry.logger != nil {
+		e.registry.logger.Printf("RakNet retained Titan recharge scheduling failed user=%d: %v", peerSession.binding.UserID, shieldErr)
+	}
 	e.registry.mutex.Unlock()
 	cancel, err := e.registry.timer.Schedule(
 		gameplayRejoinGrace, func() {
@@ -3325,6 +3360,9 @@ func (s *gameplayPeerSession) setDeployedHitPoints(hitPoints float32) (bool, err
 	if err != nil {
 		return false, fmt.Errorf("squadHealthCheckpoint: %w", err)
 	}
+	if previousHitPoint > 0 && hitPoints <= 0 {
+		s.voodooDeathRevision++
+	}
 	return isGameOver, nil
 }
 
@@ -3700,14 +3738,20 @@ type gameplaySwitchRuntime struct {
 }
 
 type gameplayDeathSelectionStep struct {
-	runtime    gameplaySwitchRuntime
-	packet     raknet.Packet
-	command    raknet.ActionCommandData
-	sessionKey string
-	generation uint64
+	runtime          gameplaySwitchRuntime
+	packet           raknet.Packet
+	command          raknet.ActionCommandData
+	sessionKey       string
+	generation       uint64
+	identity         gameplayProducerIdentity
+	publishedPackets [][]byte
+	sagePoll         *sagePassivePoll
 }
 
-func (e gameplayDeathSelectionStep) produce() ([][]byte, error) {
+func (e *gameplayDeathSelectionStep) produce() ([][]byte, error) {
+	if e.identity.isFound && !e.runtime.registry.producerGuard.isCurrent(e.identity) {
+		return nil, nil
+	}
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
@@ -3722,25 +3766,34 @@ func (e gameplayDeathSelectionStep) produce() ([][]byte, error) {
 	if !isCurrent {
 		return nil, nil
 	}
-	packets, err := e.runtime.handle(e.packet, e.command, peerSession, true)
+	publication := &sagePassivePublicationCommit{runtime: e.runtime, sessionKey: e.sessionKey, generation: e.generation}
+	packets, err := e.runtime.handle(e.packet, e.command, peerSession, true, publication)
 	if err != nil {
 		return nil, fmt.Errorf("deathSelectionHandle: %w", err)
 	}
+	e.publishedPackets = packets
+	e.sagePoll = publication.poll
 	return packets, nil
 }
 
 type gameplaySwitchArrivalStep struct {
-	runtime        gameplaySwitchRuntime
-	packet         raknet.Packet
-	packets        [][]byte
-	sessionKey     string
-	generation     uint64
-	targetObjectID uint32
-	timestamp      uint64
-	isKnockback    bool
+	runtime          gameplaySwitchRuntime
+	packet           raknet.Packet
+	packets          [][]byte
+	sessionKey       string
+	generation       uint64
+	targetObjectID   uint32
+	timestamp        uint64
+	isKnockback      bool
+	identity         gameplayProducerIdentity
+	publishedPackets [][]byte
+	sagePoll         *sagePassivePoll
 }
 
-func (s gameplaySwitchArrivalStep) produce() ([][]byte, error) {
+func (s *gameplaySwitchArrivalStep) produce() ([][]byte, error) {
+	if s.identity.isFound && !s.runtime.registry.producerGuard.isCurrent(s.identity) {
+		return nil, nil
+	}
 	isCurrent := true
 	if s.runtime.registry != nil {
 		s.runtime.registry.mutex.Lock()
@@ -3757,6 +3810,7 @@ func (s gameplaySwitchArrivalStep) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	packets := clonePendingPackets(s.packets)
+	s.publishedPackets = packets
 	if !s.isKnockback {
 		return packets, nil
 	}
@@ -3768,13 +3822,17 @@ func (r gameplaySwitchRuntime) recoverPassiveSchedule(
 	sessionKey string, generation uint64, objectID uint32,
 	run *summonPassiveRun, cause error,
 ) {
-	_, stopErr := run.Stop()
 	r.registry.mutex.Lock()
+	stopRequests, stopErr := run.Stop()
+	if stopErr != nil {
+		r.logger.Printf("RakNet Sage rollback cleanup failed owner=%d requests=%d: %v", objectID, len(stopRequests), stopErr)
+	}
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation &&
 		peerSession.deployedObjectID == objectID && peerSession.sagePassive == run
 	if isCurrent {
 		peerSession.sagePassive = nil
+		peerSession.sagePassiveSchedule = nil
 		peerSession.sagePassiveActivations = nil
 		r.registry.sessions[sessionKey] = peerSession
 	}
@@ -3794,15 +3852,29 @@ type gameplaySwitchPassiveSchedule struct {
 	targetCreatureIndex uint32
 	run                 *summonPassiveRun
 	isCampaign          bool
+	isScheduledCommit   bool
+	startedAt           time.Time
+	preparedPoll        *sagePassivePoll
 }
 
-func (s gameplaySwitchPassiveSchedule) start(packet raknet.Packet) error {
+func (s *gameplaySwitchPassiveSchedule) start(packet raknet.Packet) error {
+	if s.isCampaign {
+		poll, err := s.prepareWorldPoll(packet)
+		if err != nil {
+			return fmt.Errorf("sagePrepare: %w", err)
+		}
+		if poll == nil {
+			return errors.New("Sage prepared poll unavailable")
+		}
+		s.preparedPoll = poll
+		return nil
+	}
 	if packet.ScheduleGroup == nil && packet.ScheduleGroupResult == nil {
 		return fmt.Errorf("%s: %w", s.errorTag(), errors.New("unavailable"))
 	}
 	s.packet = packet
 	producer := raknet.ScheduledPacketProducer{
-		Delay:   s.runtime.program.SupportHealerPassive.SpawnDelay,
+		Delay:   s.run.Definition().SpawnDelay,
 		Produce: s.produce,
 	}
 	producers := s.runtime.registry.producerGuard.scheduledProducers(
@@ -3841,7 +3913,7 @@ func (s gameplaySwitchPassiveSchedule) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	requests, err := s.run.Advance(
-		s.runtime.program.SupportHealerPassive.SpawnDelay,
+		s.run.Definition().SpawnDelay,
 	)
 	if err != nil {
 		s.runtime.registry.mutex.Unlock()
@@ -3917,7 +3989,7 @@ func (s gameplaySwitchPassiveSchedule) produce() ([][]byte, error) {
 		actionPackets, actionErr := s.runtime.npc.scheduleFirstActions(
 			s.packet, s.sessionKey, s.sessionGeneration, plans,
 			s.packet.SourceTime+uint64(
-				s.runtime.program.SupportHealerPassive.SpawnDelay/time.Millisecond,
+				s.run.Definition().SpawnDelay/time.Millisecond,
 			),
 		)
 		if actionErr != nil {
@@ -3927,7 +3999,7 @@ func (s gameplaySwitchPassiveSchedule) produce() ([][]byte, error) {
 		companionPackets, companionErr := s.runtime.damage.startCompanionAttacks(
 			s.packet, s.sessionKey, s.sessionGeneration,
 			s.packet.SourceTime+uint64(
-				s.runtime.program.SupportHealerPassive.SpawnDelay/time.Millisecond,
+				s.run.Definition().SpawnDelay/time.Millisecond,
 			),
 		)
 		if companionErr != nil {
@@ -3998,8 +4070,9 @@ func (s gameplaySwitchPassiveSchedule) spawnTag() string {
 
 func (r gameplaySwitchRuntime) handle(
 	packet raknet.Packet, command raknet.ActionCommandData,
-	commandSession gameplayPeerSession, isSessionFound bool,
+	commandSession gameplayPeerSession, isSessionFound bool, publications ...*sagePassivePublicationCommit,
 ) ([][]byte, error) {
+	isScheduledCommit := len(publications) == 1 && publications[0] != nil
 	switchStartTime := r.now()
 	if isSessionFound && commandSession.binding.Mode == game.ModeArena {
 		return r.handleArenaSwitch(
@@ -4071,13 +4144,12 @@ func (r gameplaySwitchRuntime) handle(
 		step := gameplayDeathSelectionStep{
 			runtime: r, packet: deferredPacket, command: command,
 			sessionKey: sessionKey, generation: commandSession.generation,
+			identity: r.registry.producerGuard.identity(sessionKey),
 		}
 		producer := raknet.ScheduledPacketProducer{
-			Delay: deathSelectionDelay, Produce: step.produce,
+			Delay: deathSelectionDelay, Produce: step.produce, AfterCommit: step.commit,
 		}
-		producers := r.registry.producerGuard.scheduledProducers(
-			sessionKey, []raknet.ScheduledPacketProducer{producer},
-		)
+		producers := []raknet.ScheduledPacketProducer{producer}
 		cancel, scheduleErr := packet.Autonomous().ScheduleProducers(producers)
 		if scheduleErr == nil && cancel == nil {
 			scheduleErr = errors.New("death selection cancellation unavailable")
@@ -4112,10 +4184,11 @@ func (r gameplaySwitchRuntime) handle(
 	var departurePackets [][]byte
 	var err error
 	var startedPassive *summonPassiveRun
+	var preparedSagePoll *sagePassivePoll
 	var interruptedBasic *abilityraknet.MeleeRun
 	var stoppedGhostRun *abilityraknet.GhostFormRun
 	var stoppedHeroModifierRun *heroModifierRun
-	stoppedPassiveRequest := []summonPassiveWorldRequest(nil)
+	stoppedSagePackets := [][]byte(nil)
 	stoppedWreathPackets := make([][]byte, 0)
 	stoppedGhostPackets := make([][]byte, 0)
 	stoppedHeroModifierPackets := make([][]byte, 0)
@@ -4206,7 +4279,7 @@ func (r gameplaySwitchRuntime) handle(
 	} else {
 		r.logger.Printf("RakNet Trapper stealth cleanup omitted during switch remote=%s: %v", packet.Address, stealthErr)
 	}
-	if isTargetSage && peerSession.sagePassive == nil {
+	if isTargetSage && (peerSession.sagePassive == nil || sourceObjectID != targetObjectID) {
 		companionCount := int(r.program.SupportHealerPassive.MaximumCompanion)
 		if companionCount <= 0 {
 			r.logger.Printf("RakNet Sage passive unavailable during switch remote=%s: no companions", packet.Address)
@@ -4370,16 +4443,11 @@ func (r gameplaySwitchRuntime) handle(
 		}
 		peerSession.plasmaWreathRun = nil
 	}
-	if !isTargetSage && peerSession.sagePassive != nil {
-		stoppedPassiveRequest, err = peerSession.sagePassive.Stop()
+	if peerSession.sagePassive != nil && (!isTargetSage || sourceObjectID != targetObjectID) {
+		stoppedSagePackets, err = peerSession.stopCampaignSagePassive()
 		if err != nil {
 			r.logger.Printf("RakNet Sage passive cleanup omitted during switch remote=%s: %v", packet.Address, err)
-			stoppedPassiveRequest = nil
 		}
-		stopSummonCompanionAttacks(peerSession.sagePassiveActivations)
-		peerSession.removeCampaignCompanions()
-		peerSession.sagePassive = nil
-		peerSession.sagePassiveActivations = nil
 	}
 	err = peerSession.squad.DeployWithCooldown(
 		command.Value, switchPresentationTime, standardCreatureSwapCooldown,
@@ -4391,8 +4459,12 @@ func (r gameplaySwitchRuntime) handle(
 	peerSession.clearEnemyHeroStatuses()
 	peerSession.deployedCreatureIndex = command.Value
 	peerSession.passiveStationarySince[command.Value] = switchPresentationTime
-	peerSession.startTCShieldRecharge(command.Value, switchPresentationTime)
 	peerSession.deployedObjectID = targetObjectID
+	initialShieldPackets, err := peerSession.activateTCShield(command.Value, switchPresentationTime, r.effectPool, r.registry)
+	if err != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("switchInitialShield: %w", err)
+	}
 	peerSession.resetTeleporterSample()
 	peerSession.resetPickupContacts()
 	if isVoluntarySwitch {
@@ -4481,6 +4553,7 @@ func (r gameplaySwitchRuntime) handle(
 		enemyTargetPackets = nil
 	}
 	r.registry.sessions[packet.Address.String()] = peerSession
+	r.registry.refreshVoodooCharmsLocked(switchPresentationTime)
 	r.registry.mutex.Unlock()
 	if interruptedBasic != nil {
 		interruptedBasic.Stop()
@@ -4505,30 +4578,21 @@ func (r gameplaySwitchRuntime) handle(
 	switchPackets = append(switchPackets, heroSummonPackets...)
 	switchPackets = append(switchPackets, trapperStealthPackets...)
 	switchPackets = append(switchPackets, shieldPackets...)
+	switchPackets = append(switchPackets, initialShieldPackets...)
 	if missileTargetingStopPacket != nil {
 		departurePackets = append([][]byte{missileTargetingStopPacket}, departurePackets...)
 		if !isVoluntarySwitch {
 			switchPackets = append([][]byte{missileTargetingStopPacket}, switchPackets...)
 		}
 	}
-	for index, req := range stoppedPassiveRequest {
-		passivePackets, _, passiveErr := marshalSummonPassiveWorldRequest(
-			req, raknet.Vector3{},
-		)
-		if passiveErr != nil {
-			r.logger.Printf(
-				"RakNet campaign passive cleanup omitted remote=%s index=%d: %v",
-				packet.Address, index, passiveErr,
-			)
-			continue
-		}
-		switchPackets = append(switchPackets, passivePackets...)
-	}
+	switchPackets = append(switchPackets, stoppedSagePackets...)
 	if startedPassive != nil {
 		schedule := gameplaySwitchPassiveSchedule{
 			runtime: r, sessionKey: packet.Address.String(),
 			sessionGeneration: commandSession.generation,
 			targetObjectID:    targetObjectID, run: startedPassive, isCampaign: true,
+			startedAt:         switchStartTime,
+			isScheduledCommit: isVoluntarySwitch || isScheduledCommit,
 		}
 		err = schedule.start(packet)
 		if err != nil {
@@ -4537,6 +4601,10 @@ func (r gameplaySwitchRuntime) handle(
 				targetObjectID, startedPassive, err,
 			)
 		} else {
+			preparedSagePoll = schedule.preparedPoll
+			if isScheduledCommit {
+				publications[0].poll = preparedSagePoll
+			}
 			r.logger.Printf(
 				"RakNet campaign Sage passive scheduled for %s owner=%d delay=%s",
 				packet.Address, targetObjectID,
@@ -4636,13 +4704,13 @@ func (r gameplaySwitchRuntime) handle(
 			timestamp: packet.SourceTime +
 				uint64(campaignCreatureWarpOutDelay/time.Millisecond),
 			isKnockback: true,
+			identity:    r.registry.producerGuard.identity(packet.Address.String()),
+			sagePoll:    preparedSagePoll,
 		}
 		producer := raknet.ScheduledPacketProducer{
-			Delay: campaignCreatureWarpOutDelay, Produce: step.produce,
+			Delay: campaignCreatureWarpOutDelay, Produce: step.produce, AfterCommit: step.commit,
 		}
-		producers := r.registry.producerGuard.scheduledProducers(
-			packet.Address.String(), []raknet.ScheduledPacketProducer{producer},
-		)
+		producers := []raknet.ScheduledPacketProducer{producer}
 		cancel, scheduleErr := packet.Autonomous().ScheduleProducers(producers)
 		if scheduleErr == nil && cancel == nil {
 			scheduleErr = errors.New("switch arrival cancellation unavailable")
@@ -4661,6 +4729,10 @@ func (r gameplaySwitchRuntime) handle(
 		arrivalPackets, arrivalErr := step.produce()
 		if arrivalErr != nil {
 			return nil, fmt.Errorf("switchArrivalFallback: %w", arrivalErr)
+		}
+		commitErr := r.armSageAfterResponse(packet, packet.Address.String(), commandSession.generation, preparedSagePoll)
+		if commitErr != nil {
+			return nil, fmt.Errorf("switchSageFallback: %w", commitErr)
 		}
 		return append(departurePackets, arrivalPackets...), nil
 	}
@@ -4959,7 +5031,8 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 		return s.finishCampaignDamage(hitPackets, sporenet.PlayerStatDelta{})
 	}
 	isLethal := previousHitPoint > 0 && hitPoint <= 0
-	isExpectedGameOver := isLethal && s.squad.LivingCount() == 1
+	isRevivalPending := isLethal && s.reserveBeastPetRevival(now)
+	isExpectedGameOver := isLethal && !isRevivalPending && s.squad.LivingCount() == 1
 	resourcePacket, err := s.marshalCampaignCharacterResourceAt(
 		s.squad.DeployedIndex(), hitPoint,
 	)
@@ -5128,9 +5201,11 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 			hitPackets = append(hitPackets, dronePackets...)
 		}
 		s.cancelPetPlasmaBurns()
-		beastPackets, beastErr := s.stopBeastPet()
-		if beastErr == nil {
-			hitPackets = append(hitPackets, beastPackets...)
+		if s.beastPetResurrection == nil {
+			beastPackets, beastErr := s.stopBeastPet()
+			if beastErr == nil {
+				hitPackets = append(hitPackets, beastPackets...)
+			}
 		}
 		summonPackets, summonErr := s.stopHeroSummons()
 		if summonErr == nil {
@@ -5155,6 +5230,9 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 				hitPackets = append(hitPackets, wreathPackets...)
 			}
 		}
+	}
+	if isRevivalPending {
+		return s.finishCampaignDamage(hitPackets, statDelta)
 	}
 	if isGameOver {
 		if s.binding.Mode == game.ModeChain && s.zone != nil {
@@ -5228,11 +5306,23 @@ func (s *gameplayPeerSession) stopCampaignSagePassive() ([][]byte, error) {
 	if s == nil || s.sagePassive == nil {
 		return nil, nil
 	}
+	if s.sagePassiveSchedule != nil {
+		packets, err := s.sagePassiveSchedule.stopOwner(s)
+		if err != nil {
+			return packets, fmt.Errorf("sageWorldStop: %w", err)
+		}
+		return packets, nil
+	}
 	run := s.sagePassive
 	s.sagePassive = nil
+	beastActivation, isBeastActivationFound := s.sagePassiveActivations[s.beastPetObjectID]
 	stopSummonCompanionAttacks(s.sagePassiveActivations)
 	s.removeCampaignCompanions()
 	s.sagePassiveActivations = nil
+	if isBeastActivationFound && s.beastPetResurrection != nil && s.deployedHitPoint() <= 0 {
+		beastActivation.Attack = nil
+		s.sagePassiveActivations = map[uint32]summonCompanionActivation{s.beastPetObjectID: beastActivation}
+	}
 	requests, err := run.Stop()
 	if err != nil {
 		return nil, fmt.Errorf("passiveStop: %w", err)
@@ -5253,6 +5343,9 @@ func (s *gameplayPeerSession) removeCampaignCompanions() {
 		return
 	}
 	for objectID := range s.sagePassiveActivations {
+		if objectID == s.beastPetObjectID && s.beastPetResurrection != nil && s.deployedHitPoint() <= 0 {
+			continue
+		}
 		s.cancelPetPlasmaBurn(objectID)
 		s.zone.Companion().Remove(objectID)
 	}

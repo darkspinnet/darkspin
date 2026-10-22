@@ -89,6 +89,26 @@ func (r gameplaySetupRuntime) publishRejoin(
 		return nil, fmt.Errorf("rejoinDragShield: %w", err)
 	}
 	baseline = append(baseline, shieldPackets...)
+	titanPackets, err := r.registry.tcShieldReplay(peerSession, r.damage.effectPool)
+	if err != nil {
+		return nil, fmt.Errorf("rejoinTitanShield: %w", err)
+	}
+	baseline = append(baseline, titanPackets...)
+	energyPackets, err := r.registry.energySentinelPresentation(peerSession, packet.SourceTime)
+	if err != nil {
+		return nil, fmt.Errorf("rejoinEnergyPassive: %w", err)
+	}
+	baseline = append(baseline, energyPackets...)
+	beastPackets, err := r.registry.beastPetVulnerabilityReplay(peerSession, baselineTime, packet.SourceTime)
+	if err != nil {
+		return nil, fmt.Errorf("rejoinBeastDebuff: %w", err)
+	}
+	baseline = append(baseline, beastPackets...)
+	modifierPackets, err := r.registry.basicHitModifierReplay(peerSession, baselineTime, packet.SourceTime)
+	if err != nil {
+		return nil, fmt.Errorf("rejoinBasicModifier: %w", err)
+	}
+	baseline = append(baseline, modifierPackets...)
 	if peerSession.zone.TreeOfLife() != nil && peerSession.zone.TreeOfLife().Revision() != treeRevision {
 		return nil, fmt.Errorf("rejoinTreeCapture: %w", errRejoinSnapshotActive)
 	}
@@ -211,6 +231,7 @@ func (r gameplaySetupRuntime) commitRejoin(
 		}
 		return
 	}
+	current.commitSagePassiveReplay()
 }
 
 func marshalGameplayRejoinBaseline(
@@ -837,9 +858,12 @@ func marshalGameplayCompanions(
 		return nil, nil
 	}
 	connectedGenerations := make(map[uint64]uint64)
+	retainedGenerations := make(map[uint64]uint64)
 	for _, member := range peerSession.zone.Snapshot().Members {
 		if member.IsConnected || member.UserID == peerSession.binding.UserID {
 			connectedGenerations[member.UserID] = member.PeerGeneration
+		} else {
+			retainedGenerations[member.UserID] = member.PeerGeneration
 		}
 	}
 	packets := make([][]byte, 0)
@@ -849,9 +873,11 @@ func marshalGameplayCompanions(
 	}
 	for index, motion := range peerSession.zone.Companion().MotionSnapshots(at) {
 		companion := motion.Actor
+		isRetainedSage := companion.IsSageCompanion &&
+			retainedGenerations[companion.UserID] == companion.PeerGeneration
 		if companion.HitPoint <= 0 ||
 			(ownerUserID != 0 && companion.UserID != ownerUserID) ||
-			connectedGenerations[companion.UserID] != companion.PeerGeneration {
+			(connectedGenerations[companion.UserID] != companion.PeerGeneration && !isRetainedSage) {
 			continue
 		}
 		if companion.OwnerObjectID == 0 || companion.OwnerObjectID >= zonehero.FirstSharedObjectID() {
@@ -904,6 +930,15 @@ func marshalGameplayCompanions(
 			return nil, fmt.Errorf("companionPosition[%d]: %w", index, err)
 		}
 		packets = append(packets, create, position, attribute, resource)
+		if companion.IsAbilityControlled && companion.AbilityAnimation != "" {
+			animation, animationErr := raknet.MarshalApplication(raknet.SetAnimationStateMessage{
+				ObjectID: companion.ObjectID, State: util.HashID(companion.AbilityAnimation), Scale: 1,
+			})
+			if animationErr != nil {
+				return nil, fmt.Errorf("companionAnimation[%d]: %w", index, animationErr)
+			}
+			packets = append(packets, animation)
+		}
 		if motion.IsFollowing {
 			followPackets, followErr := companionraknet.Follow([]zonecompanion.Follow{motion.Follow})
 			if followErr != nil {
@@ -920,5 +955,10 @@ func marshalGameplayCompanions(
 		}
 		packets = append(packets, stop)
 	}
+	signPackets, signErr := marshalBeastResurrectionSigns(peerSession, ownerUserID)
+	if signErr != nil {
+		return nil, fmt.Errorf("companionResurrectionSigns: %w", signErr)
+	}
+	packets = append(packets, signPackets...)
 	return packets, nil
 }

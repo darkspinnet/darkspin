@@ -28,10 +28,12 @@ type AreaPlan struct {
 }
 
 type AreaResult struct {
-	Snapshot   zonenpc.Snapshot
-	Damage     zonenpc.DamageResult
-	IsCritical bool
-	Definition sim.AbilityDefinition
+	SourceRank     uint32
+	SourceCreature game.GameplayCreature
+	Snapshot       zonenpc.Snapshot
+	Damage         zonenpc.DamageResult
+	IsCritical     bool
+	Definition     sim.AbilityDefinition
 }
 
 func projectAreaRadius(

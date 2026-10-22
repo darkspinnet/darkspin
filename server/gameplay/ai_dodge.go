@@ -36,7 +36,9 @@ func (e gameplayPendingRuntime) playerAIDodgeGoalLocked(
 		for _, run := range candidate.heroBurstAttacks {
 			projectiles = append(projectiles, run.Snapshots(now)...)
 		}
-		projectiles = append(projectiles, candidate.fieldMedicDroneAttack.Snapshot(now))
+		for _, attack := range candidate.fieldMedicDroneAttacks {
+			projectiles = append(projectiles, attack.Snapshot(now))
+		}
 		if candidate.fireTempestActive != nil {
 			projectiles = append(projectiles, candidate.fireTempestActive.attack.Snapshot(now))
 		}

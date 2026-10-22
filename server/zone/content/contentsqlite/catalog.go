@@ -133,6 +133,10 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 			DescriptorMask: 129, DamageType: 0, DamageSource: 1,
 			IsDescriptorFound: true, IsDamageTypeFound: true, IsDamageSourceFound: true,
 			HitEffectName: "cyber_energy_arcweld_hit.ServerEventDef",
+			ChainLightning: sim.ChainLightningDefinition{
+				LeapRadius: 10, UpgradedLeapRadius: 10, MaximumHopCount: 4, DamageIncrease: 0.25, HopDelay: 100 * time.Millisecond,
+				EffectNames: []string{"cyber_energy_arcweld_beam1.ServerEventDef", "cyber_energy_arcweld_beam2.ServerEventDef", "cyber_energy_arcweld_beam3.ServerEventDef", "cyber_energy_arcweld_beam4.ServerEventDef"},
+			},
 		},
 		"EnergySentinelSupport": {
 			Name: "EnergySentinelSupport", Kind: sim.AbilityKindMelee,
@@ -271,16 +275,14 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 				"sp_quantumRavager_active_pose_3",
 				"sp_quantumRavager_active_pose_4",
 			},
-			SecondaryAnimationName: "sp_quantumRavager_active_end",
-			HitDelay:               100 * time.Millisecond, ReleaseDelay: 2100 * time.Millisecond,
+			HitDelay: 100 * time.Millisecond, ReleaseDelay: 1100 * time.Millisecond,
 			ManaCost: 18, ManaCoefficient: 0.09,
 			MinimumDamage: 4, MaximumDamage: 16, DamageCoefficient: 0.05,
 			DescriptorMask: 65, DamageType: 2, DamageSource: 0,
 			IsDescriptorFound: true, IsDamageTypeFound: true,
 			IsDamageSourceFound: true,
 			ShotCount:           5, TickDuration: 200 * time.Millisecond,
-			FinalWaitDelay: time.Second,
-			HitEffectName:  "spacetime_large_hit_effect.ServerEventDef",
+			HitEffectName: "spacetime_large_hit_effect.ServerEventDef",
 		},
 		"SummonBeast": {
 			Name: "SummonBeast", Kind: sim.AbilityKindSummonBuff,
@@ -1210,6 +1212,14 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 	}
 	var projectileHalfExtent sim.Position
 	for _, shape := range shapes {
+		if shape.ShapeRole == "projectile_query" && shape.ShapeKind == "box" {
+			noun := nounPhysics[shape.AssetName]
+			noun.ProjectileQueryHalfExtent = sim.Position{
+				X: shape.DimensionX / 2, Y: shape.DimensionY / 2, Z: shape.DimensionZ / 2,
+			}
+			nounPhysics[shape.AssetName] = noun
+			nounPhysicsByID[util.HashID(shape.AssetName)] = noun
+		}
 		if shape.AssetName == "Ability_Fireball.Noun" && shape.ShapeRole == "projectile_query" &&
 			shape.ShapeKind == "box" {
 			projectileHalfExtent = sim.Position{

@@ -163,6 +163,7 @@ func resolveAttackDamage(
 		damageProfile.DamageBuff += npc.status.munchDamageIncrease
 	}
 	damageProfile.DamageBuff += npc.status.passiveDamageIncrease
+	damageProfile.DamageBuff -= npc.status.basicWeakness(at)
 	damageProfile.DamageBuff += npc.status.oozeGrowthDamageIncrease
 	if npc.Plan.IsCaptain || npc.Plan.IsElite || npc.Plan.IsBoss ||
 		npc.Plan.BossIdentity.HasModifier(EliteModifierName) {

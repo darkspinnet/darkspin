@@ -1,5 +1,28 @@
 # Changelog
 
+### 2026-10-22
+
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Add a read-only Lua audit command that reports bytecode integrity, dependency links, callback metadata and production hero definitions while keeping unverified gameplay behavior explicit.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Restore missing basic-attack burn, vulnerability, haste, weakness, silence and knockback callbacks with their authored stacking and expiry rules.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Restore Savage pet vulnerability and owner resurrection, including revival indicators, failed-revival cleanup and protection against premature squad defeat.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Correct passive rank and Overdrive bonuses, nonbasic-ability stun charging, companion counts and supported passive reactivation when entering Overdrive.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Restore Arc Weld chain hits, Rewind's allied hero cooldown reduction and Expunge's consumption of supported co-op damage-over-time effects.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Restore Quantum Blink position and animation on interruption, clear retained immunity and keep co-op hero positions consistent through cleanup and rejoin.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Initialize Titan's passive shield immediately on activation while preserving its delayed recharge after breaking.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Restore Flame Surge's piercing wave, authored collision volume, growing hit filter and contact effects.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Restore Sage's shared companion refill timing, distance recall, emergence and burrow, with consistent ownership and presentation through switching, Overdrive and co-op rejoin.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Regenerate Titan's depleted shield on its authored timer and retain its recharge deadline and presentation through reconnects.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Publish scheduled Overdrive updates to co-op peers after transport commit and start companion polling after the owner's presentation is sent.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Resolve 480 previously unlinked Lua dependencies using native resource identities while retaining explicit diagnostics for unresolved references.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Allow Krel's charged stun to trigger from qualifying child damage and start its retention window on the first qualifying hit.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Preserve Voodoo Charm's first accepted aura owner through overlapping providers, death, Overdrive entry and co-op disconnect/rejoin.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Extend Rewind to eligible allied combat companions while preserving accepted attack release timing and co-op ownership.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Let Expunge consume Rooting Plague's remaining disease damage while preserving its separate root, and credit co-op damage transitions to the original damage-over-time owner.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Preserve authored NPC introduction delays on scheduling failure and prevent stale boss activation or cleanup from affecting replacement actions.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Make Pummel's silence respect Unstoppable immunity while preserving its separate repeat-hit marker.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Restore Quantum Blink's initial hit plus five strikes, correct overlapping-target placement, and release immediately when no targets remain without the unused ending pause.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Give Rooting Plague immunity its authored seven-second lifetime across co-op owners and let Expunge consume Plasma Sentinel's remaining burn damage.
+
 ### 2026-10-21
 
 - Restore Shielded affix absorption and visuals across NPC spawns, regenerate shields on their client-authored timer, and preserve them through DLS-1227's half-health invincibility transition.

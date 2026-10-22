@@ -2,6 +2,47 @@ package gameplay
 
 import "github.com/darkspinnet/darkspin/server/util"
 
+type retainedSagePassive struct {
+	run         *summonPassiveRun
+	poll        *sagePassivePoll
+	activations map[uint32]summonCompanionActivation
+}
+
+// Retain the world clock and stable slots while connection-local attacks stop.
+func (e *gameplayPeerSession) detachSagePassive() retainedSagePassive {
+	retained := retainedSagePassive{run: e.sagePassive, poll: e.sagePassiveSchedule,
+		activations: e.sagePassiveActivations}
+	if retained.run == nil {
+		return retained
+	}
+	stopSummonCompanionAttacks(retained.activations)
+	for objectID, activation := range retained.activations {
+		activation.Attack = nil
+		retained.activations[objectID] = activation
+		if e.zone == nil || e.zone.Companion() == nil {
+			continue
+		}
+		isQuiesced := e.zone.Companion().QuiesceCombat(objectID)
+		if !isQuiesced {
+			// A deleted pet has no reservation to carry into the new transport.
+			continue
+		}
+	}
+	e.sagePassive = nil
+	e.sagePassiveSchedule = nil
+	e.sagePassiveActivations = nil
+	return retained
+}
+
+func (e *gameplayPeerSession) restoreSagePassive(retained retainedSagePassive) {
+	if retained.run == nil {
+		return
+	}
+	e.sagePassive = retained.run
+	e.sagePassiveSchedule = retained.poll
+	e.sagePassiveActivations = retained.activations
+}
+
 // reserveDefeatedSageCompanionRespawnLocked routes a shared-zone death to the
 // summon owner's passive even when another player's NPC action dealt the hit.
 // The registry lock must be held, and peerSession is the caller's working copy.

@@ -136,7 +136,12 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 	peerSession.isHeroSelectionScheduled = false
 	peerSession.heroSelectionReadyAt = time.Time{}
 	peerSession.passiveStationarySince[command.Value] = switchStartTime
-	peerSession.startTCShieldRecharge(command.Value, switchStartTime)
+	initialShieldPackets, err := peerSession.activateTCShield(command.Value, switchStartTime, r.effectPool, r.registry)
+	if err != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("arenaInitialShield: %w", err)
+	}
+	switchPackets = append(switchPackets, initialShieldPackets...)
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
 	if interruptedBasic != nil {
@@ -599,6 +604,13 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 		targetSession.tcShieldAmount[index] = shieldPreview.tcShieldAmount[index]
 		targetSession.tcShieldReadyAt[index] = shieldPreview.tcShieldReadyAt[index]
 		if targetSession.tcShieldAmount[index] <= 0 {
+			previousReadyAt := targetSession.tcShieldReadyAt[index]
+			if !previousReadyAt.IsZero() {
+				scheduleErr := targetSession.scheduleTCShieldRecharge()
+				if scheduleErr != nil && r.logger != nil {
+					r.logger.Printf("Arena shield recharge schedule failed: %v", scheduleErr)
+				}
+			}
 			stopPackets, stopErr := targetSession.stopTCShield(index, r.effectPool)
 			if stopErr != nil {
 				r.logger.Printf("Arena shield cleanup: %v", stopErr)
@@ -791,16 +803,12 @@ func arenaDamageAfterReduction(
 		target.deployedCreatureIndex >= uint32(len(target.binding.Creatures)) {
 		return damage
 	}
-	creature := target.binding.Creatures[target.deployedCreatureIndex]
+	creature := target.projectPassiveCreature(target.deployedCreatureIndex, now)
 	if creature.PassiveAuraRadius > 0 && zonegeometry.Distance(
 		game.Vec3(source.playerPosition), game.Vec3(target.playerPosition),
 	) > creature.PassiveAuraRadius {
 		creature.PhysicalDamageReduction = 0
 		creature.EnergyDamageReduction = 0
-	}
-	if target.isOverdriveActiveAt(now) &&
-		creature.PassiveAbility == util.HashID("QuantumPositioning") {
-		creature.EnergyDamageReduction += 0.50
 	}
 	reduction := target.passiveDamageReduction(now)
 	if target.deployedObjectID == target.roarReductionObjectID &&

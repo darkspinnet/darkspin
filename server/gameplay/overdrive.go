@@ -33,6 +33,7 @@ func (e gameplayPeerSession) overdriveKillCharge(objectID uint32) uint32 {
 
 type campaignOverdriveRuntime struct {
 	registry *gameplaySessionRegistry
+	switcher gameplaySwitchRuntime
 	now      func() time.Time
 	logger   *log.Logger
 }
@@ -110,11 +111,9 @@ func (r campaignOverdriveRuntime) handle(
 		runtime: r, packet: packet.Autonomous(), sessionKey: sessionKey,
 		generation: peerSession.generation, activation: peerSession.overdriveActivation,
 		objectID: peerSession.deployedObjectID, creatureIndex: peerSession.deployedCreatureIndex,
+		identity: gameplayProducerIdentityFromSession(sessionKey, peerSession, true),
 	}
-	scheduleErr := errors.New("overdrive scheduler unavailable")
-	if step.packet.ScheduleFunc != nil {
-		scheduleErr = step.packet.ScheduleFunc(300*time.Millisecond, step.produce)
-	}
+	scheduleErr := step.schedule(300 * time.Millisecond)
 	if scheduleErr != nil {
 		r.registry.mutex.Lock()
 		current, isCurrent := r.registry.sessions[sessionKey]
@@ -153,13 +152,36 @@ type campaignOverdriveMeterStep struct {
 	objectID      uint32
 	creatureIndex uint32
 	isPresented   bool
+	identity      gameplayProducerIdentity
+	packets       [][]byte
+	nextDelay     time.Duration
+	isContinuing  bool
+	sagePoll      *sagePassivePoll
 }
 
-func (e campaignOverdriveMeterStep) produce() ([][]byte, error) {
+func (e *campaignOverdriveMeterStep) schedule(delay time.Duration) error {
+	producer := raknet.ScheduledPacketProducer{
+		Delay: delay, Produce: e.produce, AfterCommit: e.commit,
+	}
+	cancel, err := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{producer})
+	if err != nil {
+		return fmt.Errorf("overdriveGroup: %w", err)
+	}
+	if cancel == nil {
+		return errors.New("overdrive group cancellation unavailable")
+	}
+	return nil
+}
+
+func (e *campaignOverdriveMeterStep) produce() ([][]byte, error) {
+	e.packets = nil
+	e.isContinuing = false
+	e.sagePoll = nil
 	now := e.runtime.now()
 	e.runtime.registry.mutex.RLock()
 	member, isFound := e.runtime.registry.sessions[e.sessionKey]
 	if !isFound || member.generation != e.generation ||
+		member.transportGeneration != e.identity.transportGeneration ||
 		member.overdriveActivation != e.activation {
 		e.runtime.registry.mutex.RUnlock()
 		return nil, nil
@@ -169,10 +191,8 @@ func (e campaignOverdriveMeterStep) produce() ([][]byte, error) {
 	energy := member.presentedOverdriveEnergy(now)
 	e.runtime.registry.mutex.RUnlock()
 	if now.Before(member.overdriveStartsAt) && remaining > 0 {
-		err := e.packet.ScheduleFunc(member.overdriveStartsAt.Sub(now), e.produce)
-		if err != nil {
-			return nil, fmt.Errorf("overdriveCommitSchedule: %w", err)
-		}
+		e.nextDelay = member.overdriveStartsAt.Sub(now)
+		e.isContinuing = true
 		return nil, nil
 	}
 	statePacket, err := raknet.MarshalApplication(raknet.LabsPlayerOverdriveStateMessage{
@@ -182,11 +202,30 @@ func (e campaignOverdriveMeterStep) produce() ([][]byte, error) {
 		return nil, fmt.Errorf("overdriveMeter: %w", err)
 	}
 	packets := [][]byte{statePacket}
+	if !e.isPresented && isActive {
+		passivePackets, passiveErr := e.runtime.switcher.restartOverdriveEntryPassives(
+			e.packet, e.sessionKey, e.generation,
+		)
+		if passiveErr != nil {
+			return nil, fmt.Errorf("overdrivePassiveEntry: %w", passiveErr)
+		}
+		packets = append(packets, passivePackets...)
+		sagePackets, sagePoll, sageErr := e.runtime.switcher.restartSagePassiveScheduled(
+			e.packet, e.sessionKey, e.generation, 3,
+		)
+		if sageErr != nil {
+			return nil, fmt.Errorf("overdriveSageEntry: %w", sageErr)
+		}
+		packets = append(packets, sagePackets...)
+		e.sagePoll = sagePoll
+	}
 	if isActive != e.isPresented {
 		creature := member.projectPassiveCreature(e.creatureIndex, now)
 		attributePacket, attributeErr := raknet.MarshalApplication(raknet.AttributeDataUpdateMessage{
 			ObjectID: e.objectID,
 			Value: map[uint8]float32{
+				9:  creature.EnergyDefense,
+				10: creature.CriticalRating,
 				23: creature.TimingProfile.AttackSpeed,
 				24: creature.TimingProfile.CooldownReduction,
 			},
@@ -198,17 +237,36 @@ func (e campaignOverdriveMeterStep) produce() ([][]byte, error) {
 		e.isPresented = isActive
 	}
 	if isActive {
-		delay := min(500*time.Millisecond, remaining)
-		err = e.packet.ScheduleFunc(delay, e.produce)
-		if err != nil {
-			return nil, fmt.Errorf("overdriveMeterSchedule: %w", err)
-		}
+		e.nextDelay = min(500*time.Millisecond, remaining)
+		e.isContinuing = true
 	}
-	err = publishCampaignPeersAfterCommit(e.runtime.registry, e.packet, packets)
-	if err != nil {
-		return nil, fmt.Errorf("overdrivePeers: %w", err)
-	}
+	e.packets = clonePendingPackets(packets)
 	return packets, nil
+}
+
+// Scheduled publications use the producer's commit boundary. The action
+// packet's response callback list has already been consumed before this runs.
+func (e *campaignOverdriveMeterStep) commit() {
+	e.runtime.registry.mutex.RLock()
+	member, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isCurrent := isFound && member.generation == e.generation &&
+		member.transportGeneration == e.identity.transportGeneration &&
+		member.overdriveActivation == e.activation
+	e.runtime.registry.mutex.RUnlock()
+	if !isCurrent {
+		return
+	}
+	e.runtime.registry.queuePeerPresentation(e.identity, e.packets)
+	if member.deployedObjectID == e.objectID && e.sagePoll != nil {
+		e.runtime.switcher.commitSagePassive(e.sessionKey, e.generation, e.sagePoll)
+	}
+	if !e.isContinuing {
+		return
+	}
+	err := e.schedule(e.nextDelay)
+	if err != nil && e.runtime.logger != nil {
+		e.runtime.logger.Printf("RakNet Overdrive continuation scheduling failed user=%d: %v", member.binding.UserID, err)
+	}
 }
 
 func (e *gameplayPeerSession) rechargeOverdrive(

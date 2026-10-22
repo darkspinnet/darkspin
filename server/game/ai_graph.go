@@ -13,15 +13,31 @@ const (
 // CampaignAIGraph retains authored graph order without assigning execution or
 // transition behavior to the phase enum. Unresolved definitions retain their ID.
 type CampaignAIGraph struct {
-	PassiveAbility     *string
-	PreAggroIdle       string
-	PreAggroIdle2      string
-	UseSecondaryStart  float32
-	FirstAggroAbility  *string
-	FirstAggroAbility2 *string
-	DefinitionID       uint32
-	IsResolved         bool
-	Nodes              []CampaignAINode
+	PassiveAbility         *string
+	DeathAbility           *string
+	DeathCondition         *string
+	FirstAlertAbility      *string
+	SubsequentAggroAbility *string
+	CombatIdle2Condition   *string
+	AggroType              uint32
+	PreAggroIdle           string
+	PreAggroIdle2          string
+	PassiveIdle            string
+	CombatIdle             string
+	CombatIdle2            string
+	TargetTooFar           string
+	CombatIdleCooldown     uint32
+	CombatIdle2Cooldown    uint32
+	TargetTooFarCooldown   uint32
+	IsFaceTarget           bool
+	IsAlwaysRunAI          bool
+	IsRandomizeCooldowns   bool
+	UseSecondaryStart      float32
+	FirstAggroAbility      *string
+	FirstAggroAbility2     *string
+	DefinitionID           uint32
+	IsResolved             bool
+	Nodes                  []CampaignAINode
 }
 
 type CampaignAINode struct {
@@ -80,6 +96,11 @@ func (e *CampaignAIGraph) Clone() *CampaignAIGraph {
 	}
 	clone := *e
 	clone.PassiveAbility = cloneAIReference(e.PassiveAbility)
+	clone.DeathAbility = cloneAIReference(e.DeathAbility)
+	clone.DeathCondition = cloneAIReference(e.DeathCondition)
+	clone.FirstAlertAbility = cloneAIReference(e.FirstAlertAbility)
+	clone.SubsequentAggroAbility = cloneAIReference(e.SubsequentAggroAbility)
+	clone.CombatIdle2Condition = cloneAIReference(e.CombatIdle2Condition)
 	clone.FirstAggroAbility2 = cloneAIReference(e.FirstAggroAbility2)
 	clone.FirstAggroAbility = cloneAIReference(e.FirstAggroAbility)
 	clone.Nodes = slices.Clone(e.Nodes)

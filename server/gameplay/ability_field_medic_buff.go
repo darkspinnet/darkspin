@@ -171,6 +171,16 @@ func (e fieldMedicActiveSchedule) removeEnemyBuffOriginalLocked(
 	if peerSession == nil || peerSession.zone == nil {
 		return false, nil, nil
 	}
+	for key, run := range e.runtime.registry.basicHitModifiers[peerSession.zone.NPCs()] {
+		if run.modifier.instanceID != modifier.InstanceID || key.modifier.Kind != zonenpc.BasicModifierHaste {
+			continue
+		}
+		packets, err := e.runtime.registry.retireBasicHitModifierLocked(peerSession.zone.NPCs(), peerSession.zone.Effect(), key, e.runtime.modifierPool)
+		if err != nil {
+			return false, nil, fmt.Errorf("basicHasteRemove: %w", err)
+		}
+		return true, packets, nil
+	}
 	for sessionKey, candidate := range e.runtime.registry.sessions {
 		if candidate.zone != peerSession.zone {
 			continue

@@ -59,7 +59,9 @@ func (e gameplayPendingRuntime) updateGraviticProjectilesLocked(
 			runs = append(runs, run.projectile)
 		}
 	}
-	runs = append(runs, member.fieldMedicDroneAttack)
+	for _, attack := range member.fieldMedicDroneAttacks {
+		runs = append(runs, attack)
+	}
 	if member.fireTempestActive != nil {
 		runs = append(runs, member.fireTempestActive.attack)
 	}

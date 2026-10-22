@@ -15,6 +15,9 @@ func OpenReadOnly(ctx context.Context, path string) (store *Store, resultErr err
 	if ctx == nil {
 		return nil, errors.New("nil context")
 	}
+	if path == "" {
+		return nil, errors.New("empty path")
+	}
 	absolutePath, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("pathResolve: %w", err)
@@ -56,12 +59,20 @@ type LuaIndexChunk struct {
 }
 
 type LuaIndexDependency struct {
-	Name          string
-	TargetChunkID *int64
+	Name                 string
+	TargetChunkID        *int64
+	RuntimeTargetChunkID *int64
+	ResolutionError      string
 }
 
 // LuaIndex returns every imported chunk and its indexed dependency evidence.
 func (e *Store) LuaIndex(ctx context.Context) (chunks []LuaIndexChunk, resultErr error) {
+	if e == nil || e.database == nil {
+		return nil, errors.New("nil store")
+	}
+	if ctx == nil {
+		return nil, errors.New("nil context")
+	}
 	rows, err := e.database.QueryContext(ctx, `SELECT id, source_name, bytecode_sha256, bytecode_size FROM lua_chunk ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("chunkQuery: %w", err)
@@ -85,10 +96,29 @@ func (e *Store) LuaIndex(ctx context.Context) (chunks []LuaIndexChunk, resultErr
 	if err != nil {
 		return nil, fmt.Errorf("chunkRows: %w", err)
 	}
+	resourceIDs, err := e.luaResourceIDs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("indexResources: %w", err)
+	}
 	for index := range chunks {
 		err = e.loadLuaIndexLinks(ctx, &chunks[index])
 		if err != nil {
 			return nil, fmt.Errorf("chunkLinks[%d]: %w", chunks[index].ID, err)
+		}
+		for dependencyIndex := range chunks[index].Dependencies {
+			dependency := &chunks[index].Dependencies[dependencyIndex]
+			dependency.RuntimeTargetChunkID = dependency.TargetChunkID
+			if dependency.TargetChunkID != nil {
+				continue
+			}
+			targetID, resolveErr := resolveLuaResource(dependency.Name, resourceIDs)
+			if resolveErr != nil {
+				dependency.ResolutionError = resolveErr.Error()
+				continue
+			}
+			if targetID != 0 {
+				dependency.RuntimeTargetChunkID = &targetID
+			}
 		}
 	}
 	return chunks, nil

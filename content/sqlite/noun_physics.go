@@ -42,6 +42,7 @@ type nounPhysicsSpec struct {
 	lifetimeSeconds              float32
 	pickupTriggerDimension       [3]float32
 	pickupTriggerOffset          int
+	projectileQueryDimension     [3]float32
 }
 
 type nounClassAttribute struct {
@@ -72,7 +73,8 @@ var tutorialNounPhysicsSpec = map[uint32]nounPhysicsSpec{
 	0xa823e2e9: {assetName: "PC_EL_Rogue.Noun", instanceID: 0xa823e2e9, decodedSize: 771, decodedSHA256: "7aa6ab3a11d78d8ee830d4a2a7bd85e1ea49bf1d3c926d1710c68b67ff0bd4fe", footprintRadius: 0.8, geometry: "builtins!sphere", characterAnimationInstanceID: 0x070ef53e, characterAnimationSize: 1198, characterAnimationSHA256: "242ab598b9182f4a77a325604aafaf3dcdcd6cafccf5101f192b18e39cc73573", ordinaryDeathAnimation: "gen_player_death", danceAnimation: "emote_dance_carlton"},
 	0x1d521f70: {assetName: "PC_LF_Mage.Noun", instanceID: 0x1d521f70, decodedSize: 777, decodedSHA256: "0232b342f3c1622b2eabcfefb0b1205abd6c423b9c8ca5888dac7d3467a8a1b1", footprintRadius: 0.825, geometry: "builtins!sphere", characterAnimationInstanceID: 0xdef804c7, characterAnimationSize: 1177, characterAnimationSHA256: "5081aba4541b8d3a3a8fb447f80e486879f2824b6394f3ab69284fd7d93edf1f", ordinaryDeathAnimation: "gen_player_death", danceAnimation: "emote_dance_runman_gun_r"},
 	0x75bbfd0f: {assetName: "HelperMelee.Noun", instanceID: 0x75bbfd0f, decodedSize: 672, decodedSHA256: "4809ae68d0ce82ea331af1d9f0cced95c9ed3e1ef631cf41975bf4bc368a299c", footprintRadius: 0.5, geometry: "builtins!sphere"},
-	0x5a5aafaf: {assetName: "Ability_Fireball.Noun", instanceID: 0x5a5aafaf, decodedSize: 629, decodedSHA256: "9011e75175f8624f04c666e2a6cb113fb94bfcd7775acdbcac0afd1f7ff85058", footprintRadius: 0, geometry: "inline!box"},
+	0x5a5aafaf: {assetName: "Ability_Fireball.Noun", instanceID: 0x5a5aafaf, decodedSize: 629, decodedSHA256: "9011e75175f8624f04c666e2a6cb113fb94bfcd7775acdbcac0afd1f7ff85058", footprintRadius: 0, geometry: "inline!box", projectileQueryDimension: [3]float32{1, 1, 3}},
+	0xb0a250f8: {assetName: "Ability_PlasmaRandom_FireWaveProjectile.Noun", instanceID: 0xb0a250f8, decodedSize: 629, decodedSHA256: "236d4fee031166fdc4477ceda31fbf779ba9d3d9c9ac08a71d2fad2eec9e851c", geometry: "inline!box", projectileQueryDimension: [3]float32{16, 2, 4}},
 	0x75b43ff2: {assetName: "HealthOrb.Noun", instanceID: 0x75b43ff2, decodedSize: 736, decodedSHA256: "9a56b99636cc0f0b88bc9509d7e7295bff27d9841c52150229564462388eea87", geometry: "inline!box", lifetimeSeconds: 30, pickupTriggerDimension: [3]float32{2, 2, 4}, pickupTriggerOffset: 0x265},
 	0xf402465f: {assetName: "manaorb.Noun", instanceID: 0xf402465f, decodedSize: 734, decodedSHA256: "70def252863f937abc90a810a008ca2a4bbbc7df9eb650b0a1444114f502f181", geometry: "inline!box", lifetimeSeconds: 30, pickupTriggerDimension: [3]float32{2, 2, 4}, pickupTriggerOffset: 0x263},
 	0x801b75bd: {assetName: "HealthOrbPlaced.Noun", instanceID: 0x801b75bd, decodedSize: 736, decodedSHA256: "e37d84f0ce09489268c9b26713eda6d0a37b4289ffa09932bd135b35e40b2487", geometry: "inline!box", pickupTriggerDimension: [3]float32{1, 1, 1}, pickupTriggerOffset: 0x265},
@@ -363,9 +365,9 @@ func decodeNounPhysics(spec nounPhysicsSpec, payload []byte) (nounPhysicsAsset, 
 			return nounPhysicsAsset{}, fmt.Errorf("bound[%d]: invalid", index)
 		}
 	}
-	if spec.assetName == "Ability_Fireball.Noun" {
-		if payload[0x205] != 1 || readNounFloat(payload, 0x209) != 1 ||
-			readNounFloat(payload, 0x20d) != 1 || readNounFloat(payload, 0x211) != 3 {
+	if spec.projectileQueryDimension != [3]float32{} {
+		if payload[0x205] != 1 || readNounFloat(payload, 0x209) != spec.projectileQueryDimension[0] ||
+			readNounFloat(payload, 0x20d) != spec.projectileQueryDimension[1] || readNounFloat(payload, 0x211) != spec.projectileQueryDimension[2] {
 			return nounPhysicsAsset{}, errors.New("projectileShape: invalid")
 		}
 	}
@@ -464,9 +466,9 @@ func insertNounPhysics(
 			return fmt.Errorf("animationCount: got %d", count)
 		}
 	}
-	if asset.spec.assetName == "Ability_Fireball.Noun" {
+	if asset.spec.projectileQueryDimension != [3]float32{} {
 		err = insertNounPhysicsBoxShape(ctx, transaction, asset.spec.assetName,
-			"projectile_query", [3]float32{1, 1, 3}, 517)
+			"projectile_query", asset.spec.projectileQueryDimension, 517)
 		if err != nil {
 			return fmt.Errorf("projectileShape: %w", err)
 		}

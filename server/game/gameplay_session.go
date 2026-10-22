@@ -142,6 +142,7 @@ type GameplayCreature struct {
 	HealingTargetProfile       HealingTargetProfile
 	TimingProfile              TimingProfile
 	CriticalRating             float32
+	CriticalRatingPerPercent   float32
 	PhysicalDefense            float32
 	EnergyDefense              float32
 	PetDamage                  float32
@@ -857,6 +858,22 @@ func applyRecoveredPassiveProperties(selected *GameplayCreature) {
 		return
 	}
 	switch selected.PassiveAbility {
+	case util.HashID("CrushingDread"):
+		selected.PassiveAuraRadius = max(selected.PassiveAuraRadius, 12)
+		selected.PhysicalDamageReduction = max(selected.PhysicalDamageReduction, 0.15)
+		selected.EnergyDamageReduction = max(selected.EnergyDamageReduction, 0.15)
+	case util.HashID("RampantGrowth"):
+		selected.DamageProfile.DamageOverTimeIncrease = max(selected.DamageProfile.DamageOverTimeIncrease, 0.25)
+		selected.HealingProfile.HealingOverTimeIncrease = max(selected.HealingProfile.HealingOverTimeIncrease, 0.25)
+	case util.HashID("GravityTempestPassive"):
+		selected.TimingProfile.ProjectileSpeedIncrease = max(selected.TimingProfile.ProjectileSpeedIncrease, 0.25)
+		selected.DamageProfile.ProjectileDamage = max(selected.DamageProfile.ProjectileDamage, 0.10)
+	case util.HashID("SoulRavagerPassive"):
+		selected.PassiveKillDamageIncrease = max(selected.PassiveKillDamageIncrease, 0.05)
+		selected.PassiveMaximumStack = max(selected.PassiveMaximumStack, 5)
+		selected.PassiveStackPerKill = max(selected.PassiveStackPerKill, 1)
+	case util.HashID("BinarySentinelPassive"):
+		selected.DamageProfile.BasicDefenseBoost = max(selected.DamageProfile.BasicDefenseBoost, 0.01)
 	case util.HashID("LightningTempest_Passive"):
 		selected.PassiveAuraRadius = max(selected.PassiveAuraRadius, 30)
 	case util.HashID("VoodooTempestPassive"):

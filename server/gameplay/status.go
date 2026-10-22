@@ -729,6 +729,18 @@ func (r gameplayStatusRuntime) commitCampaignBeamOut(
 		return gameplayPeerSession{}, false
 	}
 	peerSession.chainResult = resultSession
+	// The world poll and the detached runtime teardown share this run. Retire
+	// it under the registry lock before returning the detached session copy.
+	sagePoll := peerSession.sagePassiveSchedule
+	sagePackets, sageErr := peerSession.stopCampaignSagePassive()
+	if sageErr != nil && r.logger != nil {
+		r.logger.Printf("RakNet Sage Beam Out cleanup failed user=%d: %v", peerSession.binding.UserID, sageErr)
+	}
+	peerSession.queueCampaignPackets(sagePackets)
+	r.registry.sessions[sessionKey] = peerSession
+	if sagePoll != nil {
+		sagePoll.publishLocked(sagePackets)
+	}
 	peerSession.retireChannelsLocked()
 	peerSession.retireAuraAreasLocked()
 	peerSession.retireChargeRunsLocked()
@@ -1692,7 +1704,7 @@ func (s *gameplayPeerSession) marshalResetBaselineAt(
 	if s.deployedCreatureIndex >= uint32(len(s.binding.Creatures)) {
 		return nil, errors.New("reset creature unavailable")
 	}
-	creature := s.binding.Creatures[s.deployedCreatureIndex]
+	creature := s.projectPassiveCreature(s.deployedCreatureIndex, time.Now())
 	creature.HitPoint, creature.PowerPoint = hitPoint, manaPoint
 	creature.MaximumHitPoint, creature.MaximumPowerPoint = maximumHitPoint, maximumManaPoint
 	for index, message := range campaignHeroResourceStateMessages(s.deployedObjectID, creature) {

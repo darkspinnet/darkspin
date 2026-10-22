@@ -16,11 +16,12 @@ type ModifierCreateRequest struct {
 	StackCount     uint32
 	Duration       time.Duration
 	Timestamp      uint64
+	IsIndefinite   bool
 }
 
 func ModifierCreate(req ModifierCreateRequest) ([]byte, error) {
 	if req.SourceObjectID == 0 || req.TargetObjectID == 0 ||
-		req.ModifierID == 0 || req.InstanceID == 0 || req.Duration <= 0 {
+		req.ModifierID == 0 || req.InstanceID == 0 || req.Duration < 0 || (req.Duration == 0 && !req.IsIndefinite) {
 		return nil, errors.New("modifier create invalid")
 	}
 	stackCount := req.StackCount

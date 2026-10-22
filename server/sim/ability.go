@@ -161,6 +161,8 @@ type LightningSecondaryAbilityDefinition struct {
 // AbilityDefinition is the rank-one authored projection of a packaged Lua
 // ability registration. It contains content data, not runtime combat state.
 type AbilityDefinition struct {
+	ProjectileWave                  *ProjectileWaveDefinition
+	IsPiercing                      bool
 	TimeLapse                       *TimeLapseDefinition
 	IsFacingSuppressed              bool
 	IsFacingPolicyKnown             bool
@@ -849,7 +851,7 @@ func abilityDefinitionFromLua(table *luaTable, provenance Provenance) (AbilityDe
 	if hitEffect.kind == luaString {
 		definition.Kind = AbilityKindMelee
 		definition.HitEffectName = hitEffect.text
-		if definition.Name == "LightningTempest_Support" {
+		if definition.Name == "LightningTempest_Support" || definition.Name == "EnergySentinelActive" {
 			return loadChainLightning(definition, table)
 		}
 		if definition.Name == "TimeRavagerActive" {
@@ -1008,6 +1010,12 @@ func abilityDefinitionFromLua(table *luaTable, provenance Provenance) (AbilityDe
 		definition, err = lightningSecondaryAbilityDefinitionFromLua(table, definition)
 		if err != nil {
 			return AbilityDefinition{}, fmt.Errorf("lightningSecondary: %w", err)
+		}
+	}
+	if definition.Name == "PlasmaRandom_FireWave" {
+		definition, err = projectileWaveDefinitionFromLua(table, definition)
+		if err != nil {
+			return AbilityDefinition{}, fmt.Errorf("projectileWave: %w", err)
 		}
 	}
 	return definition, nil

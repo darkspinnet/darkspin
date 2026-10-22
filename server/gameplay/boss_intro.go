@@ -35,7 +35,9 @@ func (e campaignBossIntroStep) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	boss, isBossFound := current.zone.NPCs().NPC(e.plan.ObjectID)
-	if !isBossFound || boss.IsDefeated || boss.HitPoint <= 0 {
+	owner := zonenpc.ActionOwner{UserID: current.binding.UserID, PeerGeneration: e.generation}
+	if !isBossFound || boss.IsDefeated || boss.HitPoint <= 0 ||
+		!boss.IsActionStarted || boss.ActionOwner != owner || boss.ActionGeneration != e.plan.ActionGeneration {
 		return nil, nil
 	}
 	packet, err := bossraknet.Active(e.plan.ObjectID, true)

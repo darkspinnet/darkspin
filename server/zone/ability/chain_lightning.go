@@ -23,7 +23,7 @@ func PlanChainLightningHop(
 ) (BasicPlan, zonenpc.Snapshot, bool, error) {
 	plan := req.Plan
 	chain := plan.Definition.ChainLightning
-	if enemies == nil || plan.Definition.Name != "LightningTempest_Support" ||
+	if enemies == nil || chain.MaximumHopCount == 0 ||
 		req.HopIndex == 0 || req.HopIndex > chain.MaximumHopCount {
 		return BasicPlan{}, zonenpc.Snapshot{}, false, nil
 	}

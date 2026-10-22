@@ -903,9 +903,23 @@ func (r campaignAbilityCommandRuntime) handleCharacter(
 	}
 	specialResponse, specialErr := r.handleSpecial(request)
 	if !errors.Is(specialErr, errCampaignAbilityNotSpecial) {
+		if specialErr == nil {
+			useErr := r.recordFireRavagerUse(packet, command, commandSession, specialResponse, abilityStartTime)
+			if useErr != nil {
+				return nil, fmt.Errorf("characterSpecialUse: %w", useErr)
+			}
+		}
 		return specialResponse, specialErr
 	}
-	return r.handleBasic(ctx, request)
+	packets, err := r.handleBasic(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("characterBasic: %w", err)
+	}
+	err = r.recordFireRavagerUse(packet, command, commandSession, packets, abilityStartTime)
+	if err != nil {
+		return nil, fmt.Errorf("characterBasicUse: %w", err)
+	}
+	return packets, nil
 }
 
 type campaignAbilityCommandRuntime struct {
@@ -2131,6 +2145,7 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 		return nil, fmt.Errorf("campaignBasicCommit: %w", err)
 	}
 	areaResults := []zoneability.AreaResult{{
+		SourceRank: schedule.plan.SourceRank, SourceCreature: schedule.creature,
 		Snapshot: liveNPC, Damage: result.Damage, IsCritical: result.IsCritical,
 		Definition: livePlan.Definition,
 	}}
@@ -2190,6 +2205,7 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 				return nil, fmt.Errorf("campaignBasicAdditionalTransition: %w", transitionErr)
 			}
 			areaResults = append(areaResults, zoneability.AreaResult{
+				SourceRank: schedule.plan.SourceRank, SourceCreature: schedule.creature,
 				Snapshot: additionalTarget, Damage: additionalResult.Damage,
 				IsCritical: additionalResult.IsCritical, Definition: livePlan.Definition,
 			})
@@ -2232,7 +2248,7 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 
 	timestamp := schedule.packet.SourceTime + uint64(e.delay/time.Millisecond)
 	var effect func(zoneability.AreaResult) ([]byte, error)
-	if schedule.selected.HitEffectName != "" && schedule.selected.Name != "LightningTempest_Support" {
+	if schedule.selected.HitEffectName != "" && schedule.selected.ChainLightning.MaximumHopCount == 0 {
 		impact := campaignMeleeImpact{
 			assetName:      schedule.selected.HitEffectName,
 			sourceObjectID: schedule.sourceObjectID,
@@ -2248,7 +2264,7 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("campaignBasicPublish: %w", err)
 	}
-	if schedule.selected.Name == "LightningTempest_Support" {
+	if schedule.selected.ChainLightning.MaximumHopCount > 0 {
 		chainPackets, chainErr := schedule.startChainLightning(livePlan, liveNPC.Plan.Position, e.delay)
 		if chainErr != nil {
 			runtime.logger.Printf("RakNet Chain Lightning continuation omitted source=%d: %v", schedule.sourceObjectID, chainErr)
@@ -2316,6 +2332,7 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 			schedule.packet, schedule.sessionKey, schedule.generation,
 			schedule.sourceObjectID, livePlan.TargetObjectID,
 			timestamp, schedule.binding, plasmaPlan,
+			currentCreature,
 		)
 		if modifierErr != nil {
 			return nil, fmt.Errorf("campaignBasicPlasmaPublish: %w", modifierErr)
@@ -3302,6 +3319,10 @@ func (r campaignAbilityCommandRuntime) handleMeleeBasic(
 	var err error
 	packet := request.packet
 	command := request.command
+	plan.SourceRank = 1
+	if peerSession.isOverdriveActiveAt(abilityStartTime) {
+		plan.SourceRank = 3
+	}
 	isActiveRequest := activeAbilityID != 0
 	if definition.Kind != sim.AbilityKindMelee {
 		r.registry.mutex.Unlock()
@@ -3539,8 +3560,9 @@ func (r campaignAbilityCommandRuntime) handleMeleeBasic(
 	}
 	generation := peerSession.generation
 	binding := peerSession.binding
-	isFireRavagerStun := !isActiveRequest &&
-		peerSession.advanceFireRavagerBasic(peerSession.deployedCreatureIndex)
+	// Chunk555's UsedAbility/DealtDamage callbacks exclude basic attacks.
+	// The shared accepted-cast and damage publication owners handle the passive.
+	isFireRavagerStun := false
 	peerSession.basicAttack = basicRun
 	peerSession.basicAttackSyncStamp = command.Common.Unknown[0]
 	peerSession.retainAttackPose(

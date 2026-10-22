@@ -42,6 +42,7 @@ type campaignProjectileSchedule struct {
 	flight             *sim.ProjectileFlight
 	startedAt          time.Time
 	retirement         *campaignProjectileRetirement
+	wave               *campaignProjectileWave
 }
 
 type campaignProjectileStep struct {
@@ -386,9 +387,13 @@ func (e campaignProjectileStep) produceContact(
 	healingPackets, healingErr := schedule.applyDamageHealingLocked(
 		peerSession.zone, game.Vec3(impactPosition), result.Damage.Damage,
 	)
+	cooldownPackets, cooldownErr := schedule.applyLightspeedCooldownsLocked(game.Vec3(impactPosition))
 	schedule.runtime.registry.mutex.Unlock()
 	if healingErr != nil {
 		return nil, fmt.Errorf("campaignProjectileHealing: %w", healingErr)
+	}
+	if cooldownErr != nil {
+		return nil, fmt.Errorf("projectileCooldown: %w", cooldownErr)
 	}
 	schedule.runtime.logger.Printf(
 		"RakNet projectile trajectory resolved kind=hero-basic projectile=%d source=%d target=%d outcome=hit aim=(%.3f,%.3f,%.3f) target_now=(%.3f,%.3f,%.3f) contact=(%.3f,%.3f,%.3f) drift=%.3f ability=%q weapon=(%.3f,%.3f) projected=(%.3f,%.3f) selected=%.3f applied=%.3f previous_health=%.3f critical=%t",
@@ -413,6 +418,7 @@ func (e campaignProjectileStep) produceContact(
 		schedule.packet, schedule.sessionKey, schedule.generation,
 		schedule.sourceObjectID, timestamp, schedule.binding,
 		[]zoneability.AreaResult{{
+			SourceRank: schedule.plan.SourceRank, SourceCreature: schedule.creature,
 			Snapshot: liveNPC, Damage: result.Damage,
 			IsCritical: result.IsCritical, Definition: schedule.plan.Definition,
 		}},
@@ -422,7 +428,8 @@ func (e campaignProjectileStep) produceContact(
 		return nil, fmt.Errorf("campaignProjectilePublish: %w", err)
 	}
 	packets = append(filteredPackets, resultPackets...)
-	return append(packets, healingPackets...), nil
+	packets = append(packets, healingPackets...)
+	return append(packets, cooldownPackets...), nil
 }
 
 func filterProjectileCombatPackets(packets [][]byte) [][]byte {

@@ -341,11 +341,21 @@ func (e *gameplayPeerSession) stopBeastPet() ([][]byte, error) {
 		return nil, nil
 	}
 	objectID := e.beastPetObjectID
+	var resurrectionPackets [][]byte
+	if e.beastPetResurrection != nil {
+		run := e.beastPetResurrection
+		e.beastPetResurrection = nil
+		var err error
+		resurrectionPackets, err = run.stop(e)
+		if err != nil {
+			return nil, fmt.Errorf("beastResurrectionStop: %w", err)
+		}
+	}
 	e.cancelPetPlasmaBurn(objectID)
 	e.beastPetObjectID = 0
 	e.beastPetDamage = 0
 	e.beastPetDamageIncrease = 0
-	packet := make([][]byte, 0, 2)
+	packet := resurrectionPackets
 	if e.zone != nil && e.zone.Companion() != nil {
 		e.zone.Companion().Remove(objectID)
 	}
@@ -666,6 +676,14 @@ func (r campaignAbilityCommandRuntime) handleSummonBeast(
 		ObjectID: objectID, OwnerObjectID: req.command.Common.ObjectID,
 		Position: raknet.Vector3{X: position.X, Y: position.Y, Z: position.Z},
 	}
+	err = peerSession.startBeastResurrection(r.damage, req.packet, sessionKey, req.packet.SourceTime)
+	if err != nil {
+		cleanupPackets, cleanupErr := peerSession.stopBeastPet()
+		peerSession.queueCampaignPackets(cleanupPackets)
+		r.registry.sessions[sessionKey] = peerSession
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("summonResurrection: %w", errors.Join(err, cleanupErr))
+	}
 	generation := peerSession.generation
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
@@ -706,6 +724,10 @@ func (r campaignDamageRuntime) startBeastPetAttack(
 	isCurrent := isFound && peerSession.generation == generation &&
 		peerSession.beastPetObjectID != 0 && peerSession.zone != nil &&
 		peerSession.zone.Companion() != nil && peerSession.zone.NPCs() != nil
+	if isCurrent && peerSession.beastPetResurrection != nil {
+		state := peerSession.beastPetResurrection.state
+		isCurrent = !state.IsCasting && !state.IsBurrowing
+	}
 	if !isCurrent {
 		r.registry.mutex.Unlock()
 		return nil, nil

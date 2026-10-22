@@ -704,7 +704,9 @@ func snapshotAbilityRuntimes(
 	states = appendActiveAbilityRuntime(states, "electron_sphere", peerSession.sphereAttack != nil)
 	states = appendActiveAbilityRuntime(states, "tree_of_life", peerSession.treeOfLifeRun != nil)
 	states = appendAbilityObjectRuntime(states, "electron_sphere_object", peerSession.sphereObjectID)
-	states = appendAbilityObjectRuntime(states, "field_medic_drone", peerSession.fieldMedicDroneObjectID)
+	for _, objectID := range peerSession.fieldMedicDroneObjectIDs {
+		states = appendAbilityObjectRuntime(states, "field_medic_drone", objectID)
+	}
 	states = appendAbilityObjectRuntime(states, "beast_pet", peerSession.beastPetObjectID)
 	states = appendAbilityObjectRuntime(states, "tree_of_life_object", peerSession.treeOfLifeObjectID)
 	states = appendAbilityObjectRuntime(states, "lightspeed_effect", peerSession.lightspeedEffectObjectID)
@@ -901,9 +903,9 @@ func snapshotProjectileObjects(
 	for _, burstRun := range peerSession.heroBurstAttacks {
 		collectSnapshotBurstProjectiles(projectilesByID, burstRun, capturedAt)
 	}
-	collectSnapshotProjectile(
-		projectilesByID, peerSession.fieldMedicDroneAttack, capturedAt,
-	)
+	for _, attack := range peerSession.fieldMedicDroneAttacks {
+		collectSnapshotProjectile(projectilesByID, attack, capturedAt)
+	}
 	if peerSession.fireTempestActive != nil {
 		collectSnapshotProjectile(
 			projectilesByID, peerSession.fireTempestActive.attack, capturedAt,

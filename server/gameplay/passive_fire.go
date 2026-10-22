@@ -31,6 +31,23 @@ var fireTempestPassiveDefinition = sim.AbilityDefinition{
 	ImpactEffectName:     "fire_rocks_impact.ServerEventDef",
 }
 
+func (e gameplayPeerSession) fireTempestChargeDurationAt(now time.Time) time.Duration {
+	if e.isOverdriveActiveAt(now) {
+		return 3 * time.Second
+	}
+	return fireTempestChargeDuration
+}
+
+func (e gameplayPeerSession) fireTempestDefinitionAt(now time.Time) sim.AbilityDefinition {
+	definition := fireTempestPassiveDefinition
+	if e.isOverdriveActiveAt(now) {
+		// Chunk392's third damage range is {8,12}, retaining .05 coefficient.
+		definition.MinimumDamage, definition.MaximumDamage = 8, 12
+		definition.ActivationEffectName = "fire_rocks_overdrive.ServerEventDef"
+	}
+	return definition
+}
+
 type fireTempestPassivePhase uint8
 
 const (
@@ -213,11 +230,13 @@ func (e fireTempestPassiveSchedule) hit() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	creature := peerSession.binding.Creatures[e.creatureID]
+	now := e.runtime.now()
+	creature := peerSession.projectPassiveCreature(e.creatureID, now)
+	definition := peerSession.fireTempestDefinitionAt(now)
 	center := game.Vec3(peerSession.playerPosition)
 	plan, err := zoneability.PlanFixedArea(
 		peerSession.zone.NPCs(), e.objectID, center, creature,
-		fireTempestPassiveDefinition,
+		definition,
 	)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
@@ -245,7 +264,11 @@ func (e fireTempestPassiveSchedule) hit() ([][]byte, error) {
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
 
-	err = e.schedule(fireTempestRearmDuration, e.rearm)
+	rearmDuration := fireTempestRearmDuration
+	if peerSession.isOverdriveActiveAt(now) {
+		rearmDuration = time.Second
+	}
+	err = e.schedule(rearmDuration, e.rearm)
 	if err != nil {
 		return nil, fmt.Errorf("firePassiveRearm: %w", err)
 	}
@@ -279,13 +302,14 @@ func (e fireTempestPassiveSchedule) rearm() ([][]byte, error) {
 	if !isCurrent || !e.run.transition(fireTempestRearming, fireTempestCharging) {
 		return nil, nil
 	}
-	err := e.schedule(fireTempestChargeDuration, e.chargeReady)
+	err := e.schedule(peerSession.fireTempestChargeDurationAt(e.runtime.now()), e.chargeReady)
 	if err != nil {
 		return nil, fmt.Errorf("firePassiveCharge: %w", err)
 	}
+	definition := peerSession.fireTempestDefinitionAt(e.runtime.now())
 	packet, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
 		Slot: e.run.effectSlot + 1, IsForceAttached: true,
-		Asset:    util.HashID(fireTempestPassiveDefinition.ActivationEffectName),
+		Asset:    util.HashID(definition.ActivationEffectName),
 		ObjectID: e.objectID,
 	})
 	if err != nil {
@@ -338,7 +362,7 @@ func (r fireTempestPassiveRuntime) start(
 		objectID: objectID, creatureID: creatureID, sourceTime: packet.SourceTime,
 		startedAt: startedAt, run: run,
 	}
-	err := schedule.schedule(fireTempestChargeDuration, schedule.chargeReady)
+	err := schedule.schedule(peerSession.fireTempestChargeDurationAt(startedAt), schedule.chargeReady)
 	if err != nil {
 		run.Stop()
 		r.registry.mutex.Lock()
@@ -351,9 +375,10 @@ func (r fireTempestPassiveRuntime) start(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("firePassiveStart: %w", err)
 	}
+	definition := peerSession.fireTempestDefinitionAt(startedAt)
 	chargePacket, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
 		Slot: effectSlot + 1, IsForceAttached: true,
-		Asset:    util.HashID(fireTempestPassiveDefinition.ActivationEffectName),
+		Asset:    util.HashID(definition.ActivationEffectName),
 		ObjectID: objectID,
 	})
 	if err != nil {

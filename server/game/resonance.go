@@ -39,6 +39,10 @@ func (e *GameplayBinding) ConfigureDefenseDamage(conversions []float32) error {
 	if e == nil {
 		return errors.New("nil gameplay binding")
 	}
+	err := e.configurePassiveCritical(conversions)
+	if err != nil {
+		return fmt.Errorf("passiveCritical: %w", err)
+	}
 	isDefenseDamageActive := false
 	for _, creature := range e.Creatures {
 		isDefenseDamageActive = isDefenseDamageActive || creature.DamageProfile.BasicDefenseBoost != 0

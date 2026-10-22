@@ -21,9 +21,16 @@ import (
 )
 
 type heroQuantumBlinkRun struct {
-	mutex     sync.Mutex
-	cancel    raknet.CancelSchedule
-	isStopped bool
+	registry        *gameplaySessionRegistry
+	mutex           sync.Mutex
+	cancel          raknet.CancelSchedule
+	isStopped       bool
+	returnPosition  raknet.Vector3
+	sourceObjectID  uint32
+	startedAt       time.Time
+	sourceTime      uint64
+	isPositionSaved bool
+	nextTargetIndex int
 }
 
 func (e *heroQuantumBlinkRun) Stop() {
@@ -63,7 +70,10 @@ type heroQuantumBlinkSchedule struct {
 	run                 *heroQuantumBlinkRun
 	cooldownReservation zoneability.CooldownReservation
 	releaseReservation  zoneaction.ReleaseReservation
-	releasePacket       []byte
+	syncStamp           uint8
+	activeAbilityID     uint32
+	abilityIndex        uint32
+	slideDelay          time.Duration
 	releaseDelay        time.Duration
 }
 
@@ -90,9 +100,16 @@ func (e heroQuantumBlinkAnimation) produce() ([][]byte, error) {
 func (e heroQuantumBlinkSchedule) isCurrent(
 	peerSession gameplayPeerSession, isFound bool,
 ) bool {
-	return isFound && peerSession.generation == e.generation &&
+	isCurrent := isFound && peerSession.generation == e.generation &&
 		peerSession.deployedObjectID == e.sourceObjectID &&
 		peerSession.heroQuantumBlink == e.run
+	if !isCurrent {
+		return false
+	}
+	e.run.mutex.Lock()
+	isStopped := e.run.isStopped
+	e.run.mutex.Unlock()
+	return !isStopped
 }
 
 func (e heroQuantumBlinkSchedule) selectTarget(
@@ -101,13 +118,21 @@ func (e heroQuantumBlinkSchedule) selectTarget(
 	if npc == nil || len(e.targetObjectIDs) == 0 || e.initialTargetIndex < 0 {
 		return zonenpc.Snapshot{}, false
 	}
-	start := (e.initialTargetIndex + int(strikeIndex)) % len(e.targetObjectIDs)
-	for offset := range len(e.targetObjectIDs) {
+	start := e.run.nextTargetIndex
+	count := len(e.targetObjectIDs)
+	if strikeIndex == 0 {
+		start = e.initialTargetIndex
+		count = 1
+	}
+	for offset := range count {
 		index := (start + offset) % len(e.targetObjectIDs)
 		target, isFound := npc.NPC(e.targetObjectIDs[index])
 		if isFound && !target.IsDefeated && target.HitPoint > 0 &&
 			target.Faction == zonenpc.FactionNonPlayerAligned &&
 			!target.Plan.IsFixture {
+			if strikeIndex > 0 {
+				e.run.nextTargetIndex = (index + 1) % len(e.targetObjectIDs)
+			}
 			return target, true
 		}
 	}
@@ -123,15 +148,21 @@ func (e heroQuantumBlinkSchedule) animate(
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	e.runtime.registry.mutex.Unlock()
 	packet, err := npcraknet.AnimationState(
 		e.sourceObjectID, animationName,
 		e.packet.SourceTime+uint64(deadline/time.Millisecond),
 	)
 	if err != nil {
+		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("quantumBlinkAnimate: %w", err)
 	}
-	return [][]byte{packet}, nil
+	err = e.runtime.registry.queueQuantumBlinkPoseLocked(&peerSession, [][]byte{packet})
+	e.runtime.registry.sessions[e.sessionKey] = peerSession
+	e.runtime.registry.mutex.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("quantumBlinkAnimateQueue: %w", err)
+	}
+	return nil, nil
 }
 
 func (e heroQuantumBlinkSchedule) strike(
@@ -144,17 +175,19 @@ func (e heroQuantumBlinkSchedule) strike(
 		return nil, nil
 	}
 	target, isTargetFound := e.selectTarget(peerSession.zone.NPCs(), strikeIndex)
-	random, err := peerSession.abilityRandom()
-	if err != nil {
+	if strikeIndex > 0 && !isTargetFound {
+		packets, err := e.finishLocked(peerSession, deadline)
 		e.runtime.registry.mutex.Unlock()
-		return nil, fmt.Errorf("quantumBlinkRandom[%d]: %w", strikeIndex, err)
+		if err != nil {
+			return packets, fmt.Errorf("blinkEarlyFinish: %w", err)
+		}
+		return packets, nil
 	}
-	animationIndex, err := random.Index(uint32(len(e.definition.AnimationNames)))
+	animationPacket, err := e.strikeAnimation(strikeIndex, deadline, peerSession)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("quantumBlinkPose[%d]: %w", strikeIndex, err)
 	}
-	animationName := e.definition.AnimationNames[animationIndex]
 	destination := e.initialDestination
 	if isTargetFound && strikeIndex > 0 {
 		destination = raknet.Vector3(target.Plan.Position)
@@ -164,6 +197,16 @@ func (e heroQuantumBlinkSchedule) strike(
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("quantumBlinkPosition[%d]: %w", strikeIndex, err)
 	}
+	if strikeIndex == 0 {
+		e.run.isPositionSaved = true
+	}
+	err = peerSession.syncZoneHeroPose()
+	if err != nil {
+		e.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("quantumBlinkPoseSync[%d]: %w", strikeIndex, err)
+	}
+	// SavePosition follows the initial slide, before any later strike teleport.
+	// Cancellation during the windup must not move the caster to the destination.
 	var result zoneability.AreaResult
 	var transition campaignDamageTransition
 	if isTargetFound {
@@ -190,25 +233,31 @@ func (e heroQuantumBlinkSchedule) strike(
 			}
 		}
 	}
-	e.runtime.registry.sessions[e.sessionKey] = peerSession
-	e.runtime.registry.mutex.Unlock()
-
 	packets, err := actionraknet.Teleport(actionraknet.TeleportRequest{
 		ObjectID: e.sourceObjectID, Position: game.Vec3(destination),
 	})
 	if err != nil {
+		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("quantumBlinkTeleport[%d]: %w", strikeIndex, err)
 	}
-	animationPacket, err := npcraknet.AnimationState(
-		e.sourceObjectID, animationName,
-		e.packet.SourceTime+uint64(deadline/time.Millisecond),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("quantumBlinkAnimation[%d]: %w", strikeIndex, err)
+	if len(animationPacket) > 0 {
+		packets = append(packets, animationPacket)
 	}
-	packets = append(packets, animationPacket)
+	err = e.runtime.registry.queueQuantumBlinkPoseLocked(&peerSession, packets)
+	e.runtime.registry.sessions[e.sessionKey] = peerSession
+	e.runtime.registry.mutex.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("quantumBlinkStrikeQueue[%d]: %w", strikeIndex, err)
+	}
 	if result.Damage.ObjectID == 0 {
-		return packets, nil
+		if strikeIndex == 0 && e.initialTargetIndex < 0 {
+			packets, finishErr := e.finishAt(deadline)
+			if finishErr != nil {
+				return packets, fmt.Errorf("blinkEmptyFinish: %w", finishErr)
+			}
+			return packets, nil
+		}
+		return nil, nil
 	}
 	damagePackets, err := e.runtime.damage.publishAreaResults(
 		e.packet, e.sessionKey, e.generation, e.sourceObjectID,
@@ -231,28 +280,79 @@ func (e heroQuantumBlinkSchedule) strike(
 	if err != nil {
 		return nil, fmt.Errorf("quantumBlinkPublish[%d]: %w", strikeIndex, err)
 	}
-	return append(packets, damagePackets...), nil
+	return damagePackets, nil
+}
+
+func (e heroQuantumBlinkSchedule) strikeAnimation(
+	strikeIndex uint32, deadline time.Duration, peerSession gameplayPeerSession,
+) ([]byte, error) {
+	// Activate deals the slide hit before DoStrikes begins. Only the five
+	// subsequent StrikeEnemy calls choose a strike animation.
+	if strikeIndex == 0 {
+		return nil, nil
+	}
+	random, err := peerSession.abilityRandom()
+	if err != nil {
+		return nil, fmt.Errorf("blinkRandom: %w", err)
+	}
+	animationIndex, err := random.Index(uint32(len(e.definition.AnimationNames)))
+	if err != nil {
+		return nil, fmt.Errorf("blinkPose: %w", err)
+	}
+	packet, err := npcraknet.AnimationState(
+		e.sourceObjectID, e.definition.AnimationNames[animationIndex],
+		e.packet.SourceTime+uint64(deadline/time.Millisecond),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("blinkAnimation: %w", err)
+	}
+	return packet, nil
 }
 
 func (e heroQuantumBlinkSchedule) finish() ([][]byte, error) {
+	packets, err := e.finishAt(e.releaseDelay)
+	if err != nil {
+		return packets, fmt.Errorf("blinkFinish: %w", err)
+	}
+	return packets, nil
+}
+
+func (e heroQuantumBlinkSchedule) finishAt(deadline time.Duration) ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
+	defer e.runtime.registry.mutex.Unlock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	if !e.isCurrent(peerSession, isFound) {
-		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	err := peerSession.teleportPlayer(e.runtime.now(), e.returnPosition)
+	packets, err := e.finishLocked(peerSession, deadline)
 	if err != nil {
-		e.runtime.registry.mutex.Unlock()
+		return packets, fmt.Errorf("blinkFinishState: %w", err)
+	}
+	return packets, nil
+}
+
+func (e heroQuantumBlinkSchedule) finishLocked(peerSession gameplayPeerSession, deadline time.Duration) ([][]byte, error) {
+	if !peerSession.abilityReleaseSession().IsCurrent(e.releaseReservation) {
+		peerSession.heroQuantumBlink = nil
+		e.run.Stop()
+		e.runtime.registry.sessions[e.sessionKey] = peerSession
+		return nil, nil
+	}
+	releasePacket, err := abilityraknet.ReleaseResponse(
+		e.syncStamp, e.activeAbilityID, e.abilityIndex,
+		e.packet.SourceTime, e.slideDelay, deadline,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("blinkRelease: %w", err)
+	}
+	err = peerSession.teleportPlayer(e.runtime.now(), e.returnPosition)
+	if err != nil {
 		return nil, fmt.Errorf("quantumBlinkReturn: %w", err)
 	}
-	peerSession.heroQuantumBlink = nil
-	e.run.mutex.Lock()
-	e.run.cancel = nil
-	e.run.isStopped = true
-	e.run.mutex.Unlock()
-	e.runtime.registry.sessions[e.sessionKey] = peerSession
-	e.runtime.registry.mutex.Unlock()
+	err = peerSession.syncZoneHeroPose()
+	if err != nil {
+		return nil, fmt.Errorf("quantumBlinkReturnPose: %w", err)
+	}
 	packets, err := actionraknet.Teleport(actionraknet.TeleportRequest{
 		ObjectID: e.sourceObjectID, Position: game.Vec3(e.returnPosition),
 	})
@@ -261,13 +361,29 @@ func (e heroQuantumBlinkSchedule) finish() ([][]byte, error) {
 	}
 	resetPacket, err := npcraknet.ResetAnimation(
 		e.sourceObjectID,
-		e.packet.SourceTime+uint64(e.releaseDelay/time.Millisecond),
+		e.packet.SourceTime+uint64(deadline/time.Millisecond),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("quantumBlinkReset: %w", err)
 	}
-	packets = append(packets, resetPacket, e.releasePacket)
-	return packets, nil
+	packets = append(packets, resetPacket)
+	err = e.runtime.registry.queueQuantumBlinkPoseLocked(&peerSession, packets)
+	if err != nil {
+		return nil, fmt.Errorf("quantumBlinkFinishQueue: %w", err)
+	}
+	isCompleted := peerSession.abilityReleaseSession().Complete(
+		e.releaseReservation, e.run.startedAt.Add(deadline),
+	)
+	if isCompleted {
+		peerSession.queuePackets([][]byte{releasePacket})
+	}
+	peerSession.heroQuantumBlink = nil
+	e.run.mutex.Lock()
+	e.run.cancel = nil
+	e.run.isStopped = true
+	e.run.mutex.Unlock()
+	e.runtime.registry.sessions[e.sessionKey] = peerSession
+	return nil, nil
 }
 
 func (e heroQuantumBlinkSchedule) fail(scheduleErr error) {
@@ -275,10 +391,16 @@ func (e heroQuantumBlinkSchedule) fail(scheduleErr error) {
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := e.isCurrent(peerSession, isFound)
 	if isCurrent {
-		peerSession.heroQuantumBlink = nil
-		_ = peerSession.setCampaignCharacterManaPoints(
+		cleanupErr := peerSession.retireQuantumBlinkLocked(e.runtime.now())
+		if cleanupErr != nil {
+			e.runtime.logger.Printf("RakNet Quantum Blink failure cleanup user=%d: %v", peerSession.binding.UserID, cleanupErr)
+		}
+		manaErr := peerSession.setCampaignCharacterManaPoints(
 			e.creatureIndex, e.previousManaPoint,
 		)
+		if manaErr != nil {
+			e.runtime.logger.Printf("RakNet Quantum Blink mana rollback user=%d: %v", peerSession.binding.UserID, manaErr)
+		}
 		peerSession.abilityCooldownSession().Rollback(e.cooldownReservation)
 		peerSession.abilityReleaseSession().Rollback(e.releaseReservation)
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
@@ -307,7 +429,7 @@ func (r campaignAbilityCommandRuntime) handleHeroQuantumBlink(
 		definition.MinimumDamage <= 0 ||
 		definition.MaximumDamage < definition.MinimumDamage ||
 		len(definition.AnimationNames) != 4 || definition.SlideAnimationName == "" ||
-		definition.AnimationName == "" || definition.SecondaryAnimationName == "" ||
+		definition.AnimationName == "" ||
 		definition.HitEffectName == "" {
 		r.registry.mutex.Unlock()
 		return req.reject("Quantum Blink definition unavailable")
@@ -394,9 +516,7 @@ func (r campaignAbilityCommandRuntime) handleHeroQuantumBlink(
 	slideDelay := definition.HitDelay + time.Duration(
 		float64(slideDistance)/100*float64(time.Second),
 	)
-	releaseDelay := slideDelay +
-		time.Duration(definition.ShotCount)*definition.TickDuration +
-		definition.FinalWaitDelay
+	releaseDelay := slideDelay + time.Duration(definition.ShotCount)*definition.TickDuration
 	ackPacket, err := abilityraknet.Acknowledge(abilityraknet.AcknowledgeRequest{
 		SyncStamp: req.command.Common.Unknown[0], ResponseType: raknet.ActionResponseAccepted,
 		ObjectID: activeAbilityID, AbilityIndex: req.command.Ability.Index,
@@ -409,14 +529,6 @@ func (r campaignAbilityCommandRuntime) handleHeroQuantumBlink(
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("quantumBlinkAck: %w", err)
-	}
-	releasePacket, err := abilityraknet.ReleaseResponse(
-		req.command.Common.Unknown[0], activeAbilityID, req.command.Ability.Index,
-		req.packet.SourceTime, slideDelay, releaseDelay,
-	)
-	if err != nil {
-		r.registry.mutex.Unlock()
-		return nil, fmt.Errorf("quantumBlinkRelease: %w", err)
 	}
 	remainingManaPoint := peerSession.deployedManaPoint() - manaCost
 	startPackets, err := abilityraknet.StartSpendPresentation(
@@ -455,7 +567,11 @@ func (r campaignAbilityCommandRuntime) handleHeroQuantumBlink(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("quantumBlinkCommit: %w", err)
 	}
-	run := &heroQuantumBlinkRun{}
+	run := &heroQuantumBlinkRun{
+		registry:       r.registry,
+		returnPosition: initialDestination, sourceObjectID: req.command.Common.ObjectID,
+		startedAt: abilityStartTime, sourceTime: req.packet.SourceTime,
+	}
 	peerSession.heroQuantumBlink = run
 	generation := peerSession.generation
 	creatureIndex := peerSession.deployedCreatureIndex
@@ -470,7 +586,9 @@ func (r campaignAbilityCommandRuntime) handleHeroQuantumBlink(
 		targetObjectIDs: targetObjectIDs, initialTargetIndex: initialTargetIndex,
 		creature: creature, definition: definition, damage: damage, binding: binding,
 		run: run, cooldownReservation: cooldownReservation,
-		releaseReservation: releaseReservation, releasePacket: releasePacket,
+		releaseReservation: releaseReservation,
+		syncStamp:          req.command.Common.Unknown[0], activeAbilityID: activeAbilityID,
+		abilityIndex: req.command.Ability.Index, slideDelay: slideDelay,
 		releaseDelay: releaseDelay,
 	}
 	producers := make([]raknet.ScheduledPacketProducer, 0, definition.ShotCount+3)
@@ -481,8 +599,11 @@ func (r campaignAbilityCommandRuntime) handleHeroQuantumBlink(
 	producers = append(producers, raknet.ScheduledPacketProducer{
 		Delay: definition.HitDelay, Produce: slide.produce,
 	})
-	for index := uint32(0); index < definition.ShotCount; index++ {
-		deadline := slideDelay + time.Duration(index)*definition.TickDuration
+	for index := uint32(0); index <= definition.ShotCount; index++ {
+		deadline := slideDelay
+		if index > 0 {
+			deadline += time.Duration(index-1) * definition.TickDuration
+		}
 		step := heroQuantumBlinkStrike{
 			schedule: schedule, index: index, deadline: deadline,
 		}
@@ -490,15 +611,6 @@ func (r campaignAbilityCommandRuntime) handleHeroQuantumBlink(
 			Delay: deadline, Produce: step.produce,
 		})
 	}
-	relaxDelay := slideDelay +
-		time.Duration(definition.ShotCount)*definition.TickDuration
-	relax := heroQuantumBlinkAnimation{
-		schedule: schedule, animationName: definition.SecondaryAnimationName,
-		deadline: relaxDelay,
-	}
-	producers = append(producers, raknet.ScheduledPacketProducer{
-		Delay: relaxDelay, Produce: relax.produce,
-	})
 	producers = append(producers, raknet.ScheduledPacketProducer{
 		Delay: releaseDelay, Produce: schedule.finish,
 	})
@@ -516,8 +628,14 @@ func (r campaignAbilityCommandRuntime) handleHeroQuantumBlink(
 		return nil, fmt.Errorf("quantumBlinkSchedule: %w", err)
 	}
 	run.mutex.Lock()
-	run.cancel = cancel
+	isStopped := run.isStopped
+	if !isStopped {
+		run.cancel = cancel
+	}
 	run.mutex.Unlock()
+	if isStopped && cancel != nil {
+		cancel()
+	}
 	r.logger.Printf(
 		"RakNet Quantum Blink accepted source=%d targets=%d destination=(%g,%g,%g)",
 		req.command.Common.ObjectID, len(targetObjectIDs),
@@ -532,8 +650,8 @@ func quantumBlinkSlideDestination(
 ) raknet.Vector3 {
 	stopDistance := max(float32(0), sourceFootprint) + max(float32(0), targetFootprint)
 	distance := chargeDistance(start, target)
-	if distance <= stopDistance || distance == 0 {
-		return target
+	if distance < stopDistance || distance == 0 {
+		return start
 	}
 	ratio := stopDistance / distance
 	return raknet.Vector3{

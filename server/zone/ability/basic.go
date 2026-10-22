@@ -14,6 +14,7 @@ import (
 )
 
 type BasicPlan struct {
+	SourceRank     uint32
 	SourceObjectID uint32
 	TargetObjectID uint32
 	SourcePosition game.Vec3

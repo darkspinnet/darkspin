@@ -1763,7 +1763,7 @@ func (e *Zone) applyNPCCompanionDamage(
 	damage float32,
 ) (NPCTargetDamage, bool, error) {
 	companion, isFound := e.info.Companion.Snapshot(targetObjectID)
-	if !isFound || !companion.IsTargetable || companion.HitPoint <= 0 {
+	if !isFound || !companion.IsTargetable || companion.IsIntangible || companion.HitPoint <= 0 {
 		return NPCTargetDamage{}, false, nil
 	}
 	hitPoint := max(float32(0), companion.HitPoint-damage)
@@ -2367,6 +2367,11 @@ func (e *Zone) isCheckpointSafe() bool {
 // independent locks, and their transitions never acquire the zone lock while
 // holding those locks.
 func (e *Zone) isCheckpointEncounterSafe() bool {
+	for _, memberSquad := range e.checkpointSquads {
+		if memberSquad.State.IsResurrectionPending {
+			return false
+		}
+	}
 	return e.info.Boss.IsDormant() && e.info.Horde.IsCheckpointSafe()
 }
 

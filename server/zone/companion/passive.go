@@ -29,11 +29,12 @@ type PassiveInput struct {
 }
 
 type Passive struct {
-	simulator *sim.Simulator
-	session   *sim.Session
-	behavior  *sim.SummonPassiveBehavior
-	outbox    *passiveOutbox
-	cancels   []func()
+	definition sim.SummonPassiveDefinition
+	simulator  *sim.Simulator
+	session    *sim.Session
+	behavior   *sim.SummonPassiveBehavior
+	outbox     *passiveOutbox
+	cancels    []func()
 }
 
 type passiveOutbox struct {
@@ -99,11 +100,19 @@ func NewPassive(req PassiveInput) (*Passive, error) {
 		return nil, fmt.Errorf("behaviorStart: %w", err)
 	}
 	return &Passive{
-		simulator: simulator,
-		session:   session,
-		behavior:  behavior,
-		outbox:    outbox,
+		definition: req.Definition,
+		simulator:  simulator,
+		session:    session,
+		behavior:   behavior,
+		outbox:     outbox,
 	}, nil
+}
+
+func (e *Passive) Definition() sim.SummonPassiveDefinition {
+	if e == nil {
+		return sim.SummonPassiveDefinition{}
+	}
+	return e.definition
 }
 
 func (e *Passive) Advance(deadline time.Duration) ([]PassiveRequest, error) {
@@ -118,6 +127,14 @@ func (e *Passive) Advance(deadline time.Duration) ([]PassiveRequest, error) {
 	err := e.session.AdvanceBy(context.Background(), deadline-now)
 	if err != nil {
 		return nil, fmt.Errorf("sessionAdvance: %w", err)
+	}
+	err = e.behavior.Tick(deadline - now)
+	if err != nil {
+		return nil, fmt.Errorf("refillTick: %w", err)
+	}
+	err = e.session.DispatchPending(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("refillDispatch: %w", err)
 	}
 	return e.outbox.drain(), nil
 }
@@ -137,36 +154,50 @@ func (e *Passive) CompanionDied(objectID uint32) error {
 	return nil
 }
 
-func (e *Passive) RespawnCompanion(
+// ReplaceCompanion reserves a fresh object identity for one now-empty slot.
+// Refill remains controlled by the shared accumulator.
+func (e *Passive) ReplaceCompanion(
 	objectID uint32, replacementObjectID uint32,
-) ([]PassiveRequest, error) {
+) error {
 	if e == nil || e.behavior == nil || e.session == nil || objectID == 0 ||
 		replacementObjectID == 0 || objectID == replacementObjectID {
-		return nil, errors.New("invalid summon passive respawn")
+		return errors.New("invalid summon passive replacement")
 	}
 	role, isFound := e.outbox.roleByObjectID[objectID]
 	if !isFound {
-		return nil, fmt.Errorf("companionObjectID: %d", objectID)
+		return fmt.Errorf("companionObjectID: %d", objectID)
 	}
 	if _, isReplacementUsed := e.outbox.roleByObjectID[replacementObjectID]; isReplacementUsed {
-		return nil, fmt.Errorf("replacementObjectID: %d", replacementObjectID)
+		return fmt.Errorf("replacementObjectID: %d", replacementObjectID)
 	}
-	err := e.behavior.RespawnCompanion(role)
-	if err != nil {
-		return nil, fmt.Errorf("behaviorRespawn: %w", err)
+	if e.behavior.IsAlive(role) {
+		return errors.New("companion replacement still alive")
 	}
 	delete(e.outbox.roleByObjectID, objectID)
 	e.outbox.roleByObjectID[replacementObjectID] = role
 	e.outbox.objectIDByRole[role] = replacementObjectID
-	err = e.session.DispatchPending(context.Background())
-	if err != nil {
-		e.outbox.drain()
-		delete(e.outbox.roleByObjectID, replacementObjectID)
-		e.outbox.roleByObjectID[objectID] = role
-		e.outbox.objectIDByRole[role] = objectID
-		return nil, fmt.Errorf("respawnDispatch: %w", err)
+	return nil
+}
+
+type PassiveSlot struct {
+	ObjectID uint32
+	IsAlive  bool
+}
+
+func (e *Passive) Slots() []PassiveSlot {
+	if e == nil || e.outbox == nil || e.behavior == nil {
+		return nil
 	}
-	return e.outbox.drain(), nil
+	objectIDs := make([]uint32, 0, len(e.outbox.roleByObjectID))
+	for objectID := range e.outbox.roleByObjectID {
+		objectIDs = append(objectIDs, objectID)
+	}
+	slices.Sort(objectIDs)
+	slots := make([]PassiveSlot, 0, len(objectIDs))
+	for _, objectID := range objectIDs {
+		slots = append(slots, PassiveSlot{ObjectID: objectID, IsAlive: e.behavior.IsAlive(e.outbox.roleByObjectID[objectID])})
+	}
+	return slots
 }
 
 func (e *Passive) CompanionSeparated(

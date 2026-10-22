@@ -37,12 +37,31 @@ func (e campaignNPCActionRuntime) companionDefeat(
 	peerSession *gameplayPeerSession, objectID uint32, timestamp uint64,
 ) ([][]byte, error) {
 	burnPackets := make([][]byte, 0)
+	for sessionKey, ownerSession := range e.registry.sessions {
+		if ownerSession.zone != peerSession.zone || ownerSession.beastPetObjectID != objectID || ownerSession.beastPetResurrection == nil {
+			continue
+		}
+		if ownerSession.binding.UserID == peerSession.binding.UserID && ownerSession.generation == peerSession.generation {
+			ownerSession = *peerSession
+		}
+		run := ownerSession.beastPetResurrection
+		ownerSession.beastPetResurrection = nil
+		resurrectionPackets, resurrectionErr := run.stop(&ownerSession)
+		if resurrectionErr != nil {
+			return nil, fmt.Errorf("beastDeathResurrection: %w", resurrectionErr)
+		}
+		burnPackets = append(burnPackets, resurrectionPackets...)
+		e.registry.sessions[sessionKey] = ownerSession
+		if ownerSession.binding.UserID == peerSession.binding.UserID && ownerSession.generation == peerSession.generation {
+			*peerSession = ownerSession
+		}
+	}
 	if burn, isFound := peerSession.petPlasmaBurns[objectID]; isFound {
-		var err error
-		burnPackets, err = peerSession.endPetPlasmaBurn(e, objectID, burn)
+		plasmaPackets, err := peerSession.endPetPlasmaBurn(e, objectID, burn)
 		if err != nil {
 			return nil, fmt.Errorf("companionBurn: %w", err)
 		}
+		burnPackets = append(burnPackets, plasmaPackets...)
 	}
 	deletePacket, err := companionraknet.Defeat(objectID)
 	if err != nil {

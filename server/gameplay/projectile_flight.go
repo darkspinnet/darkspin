@@ -31,6 +31,9 @@ func (e campaignProjectileStep) produceFlight(
 		schedule.runtime.registry.mutex.Unlock()
 		return packets, nil
 	}
+	if schedule.wave != nil {
+		return e.produceWaveFlight(peerSession, now, isFinalScheduledStep, packets)
+	}
 	targets := make([]sim.ProjectileCollisionTarget, 0)
 	fallbackCount := 0
 	for _, target := range peerSession.zone.NPCs().LiveSnapshots() {

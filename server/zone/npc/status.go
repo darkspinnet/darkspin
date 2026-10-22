@@ -7,6 +7,8 @@ import (
 )
 
 type status struct {
+	beastVulnerability       BeastVulnerability
+	basicModifiers           map[BasicModifierKey]BasicModifier
 	repairBlockedUntil       time.Time
 	swiftMovementSpeedBuff   float32
 	areaShiftExpiresAt       time.Time
@@ -80,10 +82,15 @@ func (s *Session) HasDebuff(objectID uint32, at time.Time) bool {
 		return false
 	}
 	status := npc.status
+	for _, modifier := range status.basicModifiers {
+		if modifier.IsDebuff() && at.Before(modifier.ActiveUntil) {
+			return true
+		}
+	}
 	return at.Before(status.banishExpiresAt) ||
 		at.Before(status.curseExpiresAt) ||
 		status.damageTakenIncrease > 0 ||
-		at.Before(status.physicalVulnerabilityEnd) ||
+		at.Before(status.physicalVulnerabilityEnd) || at.Before(status.beastVulnerability.ExpiresAt) ||
 		at.Before(status.energyVulnerabilityEnd) ||
 		at.Before(status.healingReductionEnd) ||
 		at.Before(status.fearExpiresAt) ||
@@ -107,10 +114,17 @@ func (s *Session) PurgeDebuffs(objectID uint32) bool {
 		return false
 	}
 	status := &npc.status
+	isBasicPurged := false
+	for key, modifier := range status.basicModifiers {
+		if modifier.IsDebuff() {
+			delete(status.basicModifiers, key)
+			isBasicPurged = true
+		}
+	}
 	isPurged := !status.banishExpiresAt.IsZero() ||
 		!status.curseExpiresAt.IsZero() ||
 		status.damageTakenIncrease > 0 ||
-		!status.physicalVulnerabilityEnd.IsZero() ||
+		!status.physicalVulnerabilityEnd.IsZero() || !status.beastVulnerability.ExpiresAt.IsZero() ||
 		!status.energyVulnerabilityEnd.IsZero() ||
 		!status.healingReductionEnd.IsZero() ||
 		!status.fearExpiresAt.IsZero() ||
@@ -120,7 +134,7 @@ func (s *Session) PurgeDebuffs(objectID uint32) bool {
 		!status.sleepExpiresAt.IsZero() ||
 		!status.slowExpiresAt.IsZero() ||
 		!status.stunExpiresAt.IsZero() ||
-		!status.tauntExpiresAt.IsZero()
+		!status.tauntExpiresAt.IsZero() || isBasicPurged
 	if !isPurged {
 		return false
 	}
@@ -129,6 +143,7 @@ func (s *Session) PurgeDebuffs(objectID uint32) bool {
 	status.curseDamage = CurseDamageProfile{}
 	status.damageTakenIncrease = 0
 	status.damageVulnerabilityOwner = 0
+	status.beastVulnerability = BeastVulnerability{}
 	status.physicalTakenIncrease = 0
 	status.physicalVulnerabilityEnd = time.Time{}
 	status.energyTakenIncrease = 0
@@ -399,34 +414,7 @@ func (s *Session) ApplyHaste(
 	npc.status.hasteAttackSpeed = attackSpeed
 	npc.status.hasteCooldownReduction = cooldownReduction
 	npc.status.hasteMovementSpeedBuff = movementSpeedBuff
-	if !npc.status.isHasteProfileStored {
-		basePlan := npc.Plan
-		basePlan.AffixAttackSpeedBonus = 0
-		basePlan.AffixCooldownReductionBonus = 0
-		basePlan.AffixMovementSpeedBuff = 0
-		profile, isProfileFound := ActionProfileForPlan(basePlan)
-		if isProfileFound {
-			npc.status.hasteActionProfile = profile
-			npc.status.isHasteActionKnown = npc.Plan.IsActionKnown
-			npc.status.isHasteProfileStored = true
-		}
-	}
-	if npc.status.isHasteProfileStored {
-		profile := npc.status.hasteActionProfile
-		profile.HitDelay = time.Duration(
-			float64(profile.HitDelay) / float64(1+attackSpeed),
-		)
-		profile.ReleaseDelay = time.Duration(
-			float64(profile.ReleaseDelay) / float64(1+attackSpeed),
-		)
-		profile.Cooldown = time.Duration(
-			float64(profile.Cooldown) / float64(1+attackSpeed) *
-				float64(1-cooldownReduction),
-		)
-		npc.Plan.ActionProfile = profile
-		npc.Plan.IsActionKnown = true
-	}
-	npc.Plan.MovementSpeedBuff = movementSpeedBuff
+	npc.refreshHasteProfile(time.Now())
 	s.npcs[objectID] = npc
 	return nil
 }
@@ -445,14 +433,7 @@ func (s *Session) ClearHaste(objectID uint32, expiresAt time.Time) {
 	npc.status.hasteAttackSpeed = 0
 	npc.status.hasteCooldownReduction = 0
 	npc.status.hasteMovementSpeedBuff = 0
-	npc.Plan.MovementSpeedBuff = 0
-	if npc.status.isHasteProfileStored {
-		npc.Plan.ActionProfile = npc.status.hasteActionProfile
-		npc.Plan.IsActionKnown = npc.status.isHasteActionKnown
-	}
-	npc.status.hasteActionProfile = ActionProfile{}
-	npc.status.isHasteActionKnown = false
-	npc.status.isHasteProfileStored = false
+	npc.refreshHasteProfile(time.Now())
 	s.npcs[objectID] = npc
 }
 
@@ -465,12 +446,16 @@ func (s *Session) HasteProfile(
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	npc, isFound := s.npcs[objectID]
-	if !isFound || npc.IsDefeated || !at.Before(npc.status.hasteExpiresAt) {
+	if !isFound || npc.IsDefeated {
 		return 0, 0, 0
 	}
-	return npc.status.hasteAttackSpeed,
+	basic := npc.status.basicHaste(at)
+	if !at.Before(npc.status.hasteExpiresAt) {
+		return basic, 0, basic
+	}
+	return npc.status.hasteAttackSpeed + basic,
 		npc.status.hasteCooldownReduction,
-		npc.status.hasteMovementSpeedBuff
+		npc.status.hasteMovementSpeedBuff + basic
 }
 
 func (s *Session) ApplyIntangible(objectID uint32, expiresAt time.Time) error {

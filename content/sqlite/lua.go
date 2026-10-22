@@ -351,7 +351,12 @@ func loadLuaChunkImports(ctx context.Context, transaction *sql.Tx) ([]luaChunkIm
 
 func resolveLuaDependencies(chunks []luaChunkImport) map[int64][]luaDependencyImport {
 	targetIDs := make(map[string][]int64)
+	resourceIDs := make(map[luaResourceKey][]int64)
 	for _, chunk := range chunks {
+		key, isResourceKnown := luaModuleResourceKey(chunk.resourceName)
+		if isResourceKnown {
+			resourceIDs[key] = append(resourceIDs[key], chunk.id)
+		}
 		for _, targetName := range luaSourceKeys(chunk.sourceName) {
 			targetIDs[targetName] = append(targetIDs[targetName], chunk.id)
 		}
@@ -381,6 +386,27 @@ func resolveLuaDependencies(chunks []luaChunkImport) map[int64][]luaDependencyIm
 			dependency := luaDependencyImport{name: constant}
 			if targetChunkID, isFound := aliasTargetIDs[normalizedName]; isFound && targetChunkID != chunk.id {
 				dependency.targetChunkID = &targetChunkID
+			}
+			if dependency.targetChunkID == nil {
+				targetChunkID, resolveErr := resolveLuaResource(constant, resourceIDs)
+				if resolveErr != nil {
+					// Keep ambiguity visible as an unresolved index entry; never
+					// fall through to an unqualified filename from another group.
+					dependencies[chunk.id] = append(dependencies[chunk.id], dependency)
+					continue
+				}
+				if targetChunkID != 0 && targetChunkID != chunk.id {
+					dependency.targetChunkID = &targetChunkID
+				}
+				resourceKey, isResourceQualified := luaModuleResourceKey(constant)
+				if isResourceQualified && dependency.targetChunkID == nil {
+					// A missing/self qualified resource must not bind another
+					// group's matching basename. The key remains unresolved.
+					if len(resourceIDs[resourceKey]) == 0 || targetChunkID == chunk.id {
+						dependencies[chunk.id] = append(dependencies[chunk.id], dependency)
+						continue
+					}
+				}
 			}
 			for _, lookupName := range luaSourceKeys(constant) {
 				if dependency.targetChunkID != nil {

@@ -199,9 +199,10 @@ func (s *Store) LuaChunksByStringConstant(ctx context.Context, stringConstant st
 	return chunks, nil
 }
 
-// LuaModules reads the complete exact require closure linked to a root chunk.
-func (s *Store) LuaModules(ctx context.Context, rootID int64) (map[string]LuaChunk, error) {
-	if s == nil || s.database == nil {
+// LuaModules reads the requested root's indexed and native resource-key closure.
+// Missing indexes are resolved in memory; the content database stays unchanged.
+func (e *Store) LuaModules(ctx context.Context, rootID int64) (map[string]LuaChunk, error) {
+	if e == nil || e.database == nil {
 		return nil, errors.New("nil store")
 	}
 	if ctx == nil {
@@ -210,64 +211,9 @@ func (s *Store) LuaModules(ctx context.Context, rootID int64) (map[string]LuaChu
 	if rootID <= 0 {
 		return nil, errors.New("invalid root chunk ID")
 	}
-	rows, err := s.database.QueryContext(ctx, `
-		WITH RECURSIVE module_dependency(dependency_name, target_lua_chunk_id, path) AS (
-			SELECT dependency_name, target_lua_chunk_id,
-			       ',' || CAST(target_lua_chunk_id AS TEXT) || ','
-			FROM lua_dependency
-			WHERE lua_chunk_id=? AND target_lua_chunk_id IS NOT NULL
-			UNION ALL
-			SELECT dependency.dependency_name, dependency.target_lua_chunk_id,
-			       module_dependency.path || CAST(dependency.target_lua_chunk_id AS TEXT) || ','
-			FROM module_dependency
-			JOIN lua_dependency AS dependency
-			  ON dependency.lua_chunk_id=module_dependency.target_lua_chunk_id
-			WHERE dependency.target_lua_chunk_id IS NOT NULL
-			  AND INSTR(module_dependency.path,
-			      ',' || CAST(dependency.target_lua_chunk_id AS TEXT) || ',')=0
-		)
-		SELECT DISTINCT module_dependency.dependency_name, lua_chunk.id, lua_chunk.source_name,
-		       lua_chunk.bytecode_sha256, lua_chunk.bytecode_size, server_data.decoded_payload
-		FROM module_dependency
-		JOIN lua_chunk ON lua_chunk.id=module_dependency.target_lua_chunk_id
-		JOIN server_data
-		  ON server_data.content_source_resource_id=lua_chunk.server_data_resource_id
-		ORDER BY module_dependency.dependency_name`, rootID)
+	modules, err := e.luaResolvedModules(ctx, rootID)
 	if err != nil {
-		return nil, fmt.Errorf("moduleQuery[%d]: %w", rootID, err)
-	}
-	defer rows.Close()
-	modules := make(map[string]LuaChunk)
-	for rows.Next() {
-		var moduleName string
-		var chunk LuaChunk
-		var bytecodeSize int
-		var compressedBytecode []byte
-		err = rows.Scan(&moduleName, &chunk.ID, &chunk.Source, &chunk.SHA256,
-			&bytecodeSize, &compressedBytecode)
-		if err != nil {
-			return nil, fmt.Errorf("moduleScan[%d]: %w", rootID, err)
-		}
-		chunk.Bytecode, err = decompressContent(compressedBytecode)
-		if err != nil {
-			return nil, fmt.Errorf("moduleDecode[%d]: %w", chunk.ID, err)
-		}
-		if len(chunk.Bytecode) != bytecodeSize {
-			return nil, fmt.Errorf("moduleSize[%d]: got %d, want %d", chunk.ID, len(chunk.Bytecode), bytecodeSize)
-		}
-		digest := fmt.Sprintf("%x", sha256.Sum256(chunk.Bytecode))
-		if digest != chunk.SHA256 {
-			return nil, fmt.Errorf("moduleHash[%d]: got %s, want %s", chunk.ID, digest, chunk.SHA256)
-		}
-		existing, isExisting := modules[moduleName]
-		if isExisting && existing.ID != chunk.ID {
-			return nil, fmt.Errorf("moduleAmbiguous[%s]: %d/%d", moduleName, existing.ID, chunk.ID)
-		}
-		modules[moduleName] = chunk
-	}
-	err = rows.Err()
-	if err != nil {
-		return nil, fmt.Errorf("moduleRows[%d]: %w", rootID, err)
+		return nil, fmt.Errorf("moduleClosure: %w", err)
 	}
 	return modules, nil
 }

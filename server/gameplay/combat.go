@@ -588,6 +588,16 @@ func (r campaignDamageRuntime) publishAreaResults(
 	packets = append(packets, stealthPackets...)
 	statDelta := sporenet.PlayerStatDelta{}
 	for _, result := range results {
+		basicModifierPackets, basicModifierErr := r.applyBasicHitModifier(packet, sessionKey, generation, sourceObjectID, timestamp, result)
+		if basicModifierErr != nil {
+			return nil, fmt.Errorf("basicHitModifier: %w", basicModifierErr)
+		}
+		packets = append(packets, basicModifierPackets...)
+		fireRavagerPackets, fireRavagerErr := r.applyFireRavagerStun(packet, sessionKey, generation, sourceObjectID, timestamp, result)
+		if fireRavagerErr != nil {
+			return nil, fmt.Errorf("areaFireRavagerStun: %w", fireRavagerErr)
+		}
+		packets = append(packets, fireRavagerPackets...)
 		if effect != nil && !isEffectAfterDamage {
 			effectPacket, err := effect(result)
 			if err != nil {
@@ -613,6 +623,18 @@ func (r campaignDamageRuntime) publishAreaResults(
 			continue
 		}
 		physics := r.npc.program.NPCDeathPhysics(result.Snapshot.Plan.NounName)
+		beastPackets, beastErr := r.retireDefeatedBeastVulnerabilities(
+			sessionKey, generation, result.Damage,
+		)
+		if beastErr != nil {
+			return nil, fmt.Errorf("beastDeathModifier: %w", beastErr)
+		}
+		packets = append(packets, beastPackets...)
+		basicRetirePackets, basicRetireErr := r.retireBasicHitModifiers(sessionKey, generation, result.Damage)
+		if basicRetireErr != nil {
+			return nil, fmt.Errorf("basicDeathModifier: %w", basicRetireErr)
+		}
+		packets = append(packets, basicRetirePackets...)
 		definition, err := campaignNPCDeathDefinition(result.Snapshot, physics)
 		if err != nil {
 			return nil, fmt.Errorf("areaDeathDefinition: %w", err)
@@ -1457,6 +1479,10 @@ func (r campaignDamageRuntime) refreshNPCTargets(
 
 func (e campaignCompanionAttackStep) schedule() error {
 	ability := e.ability
+	if !e.runtime.registry.setCompanionAttackRelease(e.sessionKey, e.generation,
+		e.plan.ObjectID, e.plan.TargetObjectID, e.start.CooldownEnd.Add(ability.ReleaseDelay-ability.HitDelay-ability.Cooldown)) {
+		return errors.New("companion release unavailable")
+	}
 	repeatDelay := max(
 		ability.ReleaseDelay, ability.HitDelay+ability.Cooldown,
 	)
@@ -1587,7 +1613,14 @@ func (e campaignCompanionAttackStep) hit() ([][]byte, error) {
 	}
 	result := zonenpc.DamageResult{}
 	transition := campaignDamageTransition{}
+	vulnerabilityPackets := [][]byte(nil)
+	vulnerabilityChange := beastPetVulnerabilityChange{}
 	if isHitValid {
+		vulnerabilityPackets, vulnerabilityChange, err = e.applyBeastPetVulnerabilityLocked(peerSession)
+		if err != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("beastHitModifier: %w", err)
+		}
 		result, err = peerSession.zone.NPCs().Hit(zonenpc.HitRequest{
 			SourceObjectID: e.plan.ObjectID, TargetObjectID: e.plan.TargetObjectID, Damage: damage,
 			SourcePosition: &companion.Position, Metadata: zoneability.NPCDamageMetadata(e.ability),
@@ -1596,9 +1629,11 @@ func (e campaignCompanionAttackStep) hit() ([][]byte, error) {
 			transition, err = peerSession.applyCampaignDamageTransition(result)
 		}
 		if err != nil {
+			rollbackErr := vulnerabilityChange.rollback()
 			e.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf("damageCommit: %w", err)
+			return nil, fmt.Errorf("damageCommit: %w", errors.Join(err, rollbackErr))
 		}
+		vulnerabilityChange.commit()
 	}
 	binding := peerSession.binding
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
@@ -1613,6 +1648,7 @@ func (e campaignCompanionAttackStep) hit() ([][]byte, error) {
 	if !isHitValid {
 		return packets, nil
 	}
+	packets = append(packets, vulnerabilityPackets...)
 	resultPackets, err := e.runtime.publishAreaResults(
 		e.packet, e.sessionKey, e.generation, e.plan.ObjectID,
 		e.sourceTime+uint64(
@@ -3810,6 +3846,9 @@ type campaignPlasmaModifierRun struct {
 	targetID  uint32
 	expiresAt time.Time
 	cancel    raknet.CancelSchedule
+	creature  game.GameplayCreature
+	sourceID  uint32
+	tick      time.Duration
 }
 
 type campaignPlasmaBurnStep struct {
@@ -3972,6 +4011,7 @@ func (r campaignDamageRuntime) publishPlasmaModifier(
 	packet raknet.Packet, sessionKey string, generation uint64,
 	sourceObjectID uint32, targetObjectID uint32, timestamp uint64,
 	binding game.GameplayBinding, plan zoneability.PlasmaModifierPlan,
+	creature game.GameplayCreature,
 ) ([][]byte, error) {
 	if plan.Kind == zoneability.PlasmaModifierShock {
 		r.registry.mutex.RLock()
@@ -3992,6 +4032,7 @@ func (r campaignDamageRuntime) publishPlasmaModifier(
 	run := &campaignPlasmaModifierRun{
 		modifier: modifier, kind: plan.Kind, targetID: targetObjectID,
 		expiresAt: r.npc.now().Add(plan.Duration),
+		creature:  creature, sourceID: sourceObjectID, tick: plan.Tick,
 	}
 	createPacket, err := effectraknet.ModifierCreate(
 		effectraknet.ModifierCreateRequest{
@@ -4487,169 +4528,22 @@ type campaignNPCActionRuntime struct {
 	effectPool          *attachedEffectPool
 }
 
-type campaignSageCompanionRespawnStep struct {
-	runtime       campaignNPCActionRuntime
-	sessionKey    string
-	generation    uint64
-	ownerObjectID uint32
-	objectID      uint32
-	run           *summonPassiveRun
-}
-
 func (r campaignNPCActionRuntime) reserveSageCompanionRespawnLocked(
-	peerSession *gameplayPeerSession, sessionKey string, generation uint64,
-	objectID uint32,
+	peerSession *gameplayPeerSession, sessionKey string, generation uint64, objectID uint32,
 ) {
-	if peerSession == nil || sessionKey == "" || generation == 0 || objectID == 0 ||
-		peerSession.sagePassive == nil || peerSession.zone == nil ||
-		peerSession.zone.Companion() == nil || r.timer == nil {
+	if peerSession == nil || peerSession.generation != generation || peerSession.sagePassive == nil ||
+		peerSession.zone == nil || peerSession.zone.Companion() == nil {
 		return
 	}
-	actor, isActorFound := peerSession.zone.Companion().Snapshot(objectID)
-	activation, isActivationFound := peerSession.sagePassiveActivations[objectID]
-	if !isActorFound || actor.HitPoint > 0 || !isActivationFound {
+	actor, isFound := peerSession.zone.Companion().Snapshot(objectID)
+	if !isFound || actor.HitPoint > 0 {
 		return
 	}
-	if activation.Attack != nil {
-		activation.Attack.Stop()
-	}
-	err := peerSession.sagePassive.CompanionDied(objectID)
+	requests, err := peerSession.retireSageCompanion(objectID, false)
 	if err != nil {
-		r.logger.Printf(
-			"RakNet Sage companion respawn admission omitted remote=%s object=%d: %v",
-			sessionKey, objectID, err,
-		)
-		return
+		r.logger.Printf("RakNet Sage shared refill admission failed remote=%s object=%d requests=%d: %v", sessionKey, objectID, len(requests), err)
 	}
-	peerSession.zone.Companion().Remove(objectID)
-	delete(peerSession.sagePassiveActivations, objectID)
-	step := campaignSageCompanionRespawnStep{
-		runtime: r, sessionKey: sessionKey, generation: generation,
-		ownerObjectID: peerSession.deployedObjectID, objectID: objectID,
-		run: peerSession.sagePassive,
-	}
-	cancel, err := r.timer.Schedule(
-		r.program.SupportHealerPassive.RespawnDelay, step.execute,
-	)
-	if err != nil {
-		r.logger.Printf(
-			"RakNet Sage companion respawn schedule omitted remote=%s object=%d: %v",
-			sessionKey, objectID, err,
-		)
-		return
-	}
-	peerSession.sagePassive.AddCancel(cancel)
-	r.logger.Printf(
-		"RakNet Sage companion respawn scheduled remote=%s object=%d delay=%s",
-		sessionKey, objectID, r.program.SupportHealerPassive.RespawnDelay,
-	)
 }
-
-func (e campaignSageCompanionRespawnStep) execute() {
-	e.runtime.registry.mutex.Lock()
-	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := isFound && peerSession.generation == e.generation &&
-		peerSession.deployedObjectID == e.ownerObjectID &&
-		peerSession.sagePassive == e.run && peerSession.zone != nil &&
-		peerSession.zone.Companion() != nil
-	if !isCurrent {
-		e.runtime.registry.mutex.Unlock()
-		return
-	}
-	replacementObjectID, err := peerSession.reserveCampaignObjectID()
-	if err != nil {
-		e.runtime.registry.mutex.Unlock()
-		e.runtime.logger.Printf(
-			"RakNet Sage companion respawn object reservation omitted remote=%s object=%d: %v",
-			e.sessionKey, e.objectID, err,
-		)
-		return
-	}
-	requests, err := e.run.RespawnCompanion(e.objectID, replacementObjectID)
-	if err != nil {
-		e.runtime.registry.mutex.Unlock()
-		e.runtime.logger.Printf(
-			"RakNet Sage companion respawn omitted remote=%s object=%d: %v",
-			e.sessionKey, e.objectID, err,
-		)
-		return
-	}
-	if len(requests) != 1 || requests[0].ObjectID != replacementObjectID ||
-		requests[0].Spawn == nil {
-		e.runtime.registry.mutex.Unlock()
-		e.runtime.logger.Printf(
-			"RakNet Sage companion respawn intent omitted remote=%s object=%d count=%d",
-			e.sessionKey, e.objectID, len(requests),
-		)
-		return
-	}
-	packets := make([][]byte, 0, len(requests)*2)
-	for index, request := range requests {
-		position, placementErr := summonPassiveSpawnPosition(
-			peerSession.playerPosition, index, len(requests),
-			request.Spawn.SpawnRadius,
-		)
-		if placementErr != nil {
-			e.runtime.registry.mutex.Unlock()
-			e.runtime.logger.Printf(
-				"RakNet Sage companion respawn placement omitted remote=%s object=%d: %v",
-				e.sessionKey, e.objectID, placementErr,
-			)
-			return
-		}
-		spawnPackets, activation, marshalErr :=
-			marshalSummonPassiveWorldRequest(request, position)
-		if marshalErr != nil || activation == nil {
-			e.runtime.registry.mutex.Unlock()
-			e.runtime.logger.Printf(
-				"RakNet Sage companion respawn marshal omitted remote=%s object=%d: %v",
-				e.sessionKey, e.objectID, marshalErr,
-			)
-			return
-		}
-		hitPoint := e.runtime.program.NonPlayerHitPoint[util.HashID("HelperMelee")]
-		hitPoint = peerSession.petHitPoint(hitPoint)
-		footprintRadius, footprintErr :=
-			e.runtime.program.FootprintRadius("HelperMelee.Noun")
-		if hitPoint <= 0 || footprintErr != nil || footprintRadius <= 0 {
-			e.runtime.registry.mutex.Unlock()
-			e.runtime.logger.Printf(
-				"RakNet Sage companion respawn profile omitted remote=%s object=%d",
-				e.sessionKey, e.objectID,
-			)
-			return
-		}
-		err = peerSession.zone.Companion().Put(zonecompanion.Actor{
-			UserID: peerSession.binding.UserID, PeerGeneration: peerSession.generation,
-			ObjectID: activation.ObjectID, OwnerObjectID: activation.OwnerObjectID,
-			Noun:            util.HashID("HelperMelee.Noun"),
-			Position:        game.Vec3{X: activation.Position.X, Y: activation.Position.Y, Z: activation.Position.Z},
-			FootprintRadius: footprintRadius, HitPoint: hitPoint,
-			MaximumHitPoint: hitPoint, IsTargetable: true, IsCombatant: true,
-		})
-		if err != nil {
-			e.runtime.registry.mutex.Unlock()
-			e.runtime.logger.Printf(
-				"RakNet Sage companion respawn world admission omitted remote=%s object=%d: %v",
-				e.sessionKey, e.objectID, err,
-			)
-			return
-		}
-		peerSession.sagePassiveActivations[request.ObjectID] = *activation
-		packets = append(packets, spawnPackets...)
-	}
-	peerSession.queuePackets(packets)
-	e.runtime.registry.sessions[e.sessionKey] = peerSession
-	e.runtime.registry.mutex.Unlock()
-	e.runtime.registry.queuePeerPresentation(
-		gameplayProducerIdentityFromSession(e.sessionKey, peerSession, true), packets,
-	)
-	e.runtime.logger.Printf(
-		"RakNet Sage companion respawned remote=%s prior_object=%d object=%d",
-		e.sessionKey, e.objectID, replacementObjectID,
-	)
-}
-
 func (r campaignNPCActionRuntime) releaseAction(
 	sessionKey string, generation uint64, objectID uint32,
 ) bool {
@@ -6145,7 +6039,7 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 	producers := make([]raknet.ScheduledPacketProducer, 0, len(plans)*2)
 	aggroEvents := make([]zonenpc.ActionEvent, 0, len(plans))
 	owner := zonenpc.ActionOwner{UserID: userID, PeerGeneration: generation}
-	startedObjectIDs := make([]uint32, 0, len(plans))
+	startedActions := make(map[uint32]uint64, len(plans))
 	spawnPresentationObjectIDs := make(map[uint32]struct{}, len(plans))
 	spawnPresentationRuns := make(map[uint32]*spawnraknet.Run, len(plans))
 	for index, plan := range plans {
@@ -6234,7 +6128,7 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 			plan, target.ObjectID, target.Position, target.ActorFootprintRadius,
 		)
 		if err != nil {
-			releaseCampaignNPCFirstActions(npcSession, owner, startedObjectIDs)
+			releaseCampaignNPCFirstActions(npcSession, owner, startedActions)
 			return nil, fmt.Errorf("enemyFirstAction[%d]: %w", index, err)
 		}
 		if !isActionFound {
@@ -6250,7 +6144,7 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 			plan.ObjectID, owner, target.ObjectID,
 		)
 		if startErr != nil {
-			releaseCampaignNPCFirstActions(npcSession, owner, startedObjectIDs)
+			releaseCampaignNPCFirstActions(npcSession, owner, startedActions)
 			return nil, fmt.Errorf("enemyFirstActionStart[%d]: %w", index, startErr)
 		}
 		if !isStarted {
@@ -6261,7 +6155,7 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 		)
 		if err != nil {
 			npcSession.ReleaseAction(plan.ObjectID, owner)
-			releaseCampaignNPCFirstActions(npcSession, owner, startedObjectIDs)
+			releaseCampaignNPCFirstActions(npcSession, owner, startedActions)
 			return nil, fmt.Errorf("enemyFirstActionRefresh[%d]: %w", index, err)
 		}
 		if !isActionFound {
@@ -6284,7 +6178,7 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 			aggroPackets, err := npcraknet.FirstAggro(action, timestamp)
 			if err != nil {
 				npcSession.ReleaseAction(plan.ObjectID, owner)
-				releaseCampaignNPCFirstActions(npcSession, owner, startedObjectIDs)
+				releaseCampaignNPCFirstActions(npcSession, owner, startedActions)
 				return nil, fmt.Errorf("enemyFirstAggro[%d]: %w", index, err)
 			}
 			if !npcSession.CommitFacing(action.FirstAggroFacingPlan()) {
@@ -6361,7 +6255,7 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 			}
 			producers = append(producers, raknet.ScheduledPacketProducer{Delay: delay, Produce: bossCombat.produce})
 		}
-		startedObjectIDs = append(startedObjectIDs, objectID)
+		startedActions[objectID] = npc.ActionGeneration
 	}
 	// Publish target state before a zero-delay producer can commit movement.
 	r.publishFirstAggro(zone, userID, generation, aggroEvents)
@@ -6371,35 +6265,35 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 	}
 	sortScheduledPacketProducersByDelay(producers)
 	producers = r.registry.producerGuard.scheduledProducers(sessionKey, producers)
+	var cancel raknet.CancelSchedule
 	var scheduleErr error
 	if packet.ScheduleGroupResult != nil {
 		failure := campaignNPCFirstActionFailure{
-			npc: npcSession, owner: owner, objectIDs: startedObjectIDs,
+			npc: npcSession, owner: owner, actions: startedActions,
 			spawnRegistry: r.registry, spawnSessionKey: sessionKey,
 			spawnGeneration: generation, spawnRuns: spawnPresentationRuns,
 			logger: r.logger,
 		}
-		_, scheduleErr = packet.ScheduleGroupResult(producers, failure.handle)
+		cancel, scheduleErr = packet.ScheduleGroupResult(producers, failure.handle)
 	} else if packet.ScheduleGroup != nil {
-		_, scheduleErr = packet.ScheduleGroup(producers)
+		cancel, scheduleErr = packet.ScheduleGroup(producers)
 	} else {
 		scheduleErr = errors.New("scheduler unavailable")
+	}
+	if scheduleErr == nil && cancel == nil {
+		scheduleErr = errors.New("first action cancellation unavailable")
 	}
 	if scheduleErr == nil {
 		spawnPresentationGuard.isCommitted = true
 		return immediatePackets, nil
 	}
-	for index, producer := range producers {
-		pursuitPackets, err := producer.Produce()
-		if err != nil {
-			releaseCampaignNPCFirstActions(npcSession, owner, startedObjectIDs)
-			return nil, fmt.Errorf("enemyPursuitFallback[%d]: %w", index, err)
-		}
-		immediatePackets = append(immediatePackets, pursuitPackets...)
+	if cancel != nil {
+		cancel()
 	}
-	r.logger.Printf("RakNet campaign enemy pursuit published immediately after schedule failure: %v", scheduleErr)
-	spawnPresentationGuard.isCommitted = true
-	return immediatePackets, nil
+	// Delayed reveals, cinematic completion and attacks cannot be executed
+	// immediately without violating their authored order and deadlines.
+	releaseCampaignNPCFirstActions(npcSession, owner, startedActions)
+	return nil, fmt.Errorf("firstActionSchedule: %w", scheduleErr)
 }
 
 func isCampaignNPCFirstActionSupported(family zonenpc.ActionFamily) bool {
@@ -6427,17 +6321,21 @@ func isCampaignNPCFirstActionSupported(family zonenpc.ActionFamily) bool {
 func releaseCampaignNPCFirstActions(
 	npc *zonenpc.Session,
 	owner zonenpc.ActionOwner,
-	objectIDs []uint32,
+	actions map[uint32]uint64,
 ) {
-	for _, objectID := range objectIDs {
-		npc.ReleaseAction(objectID, owner)
+	for objectID, actionGeneration := range actions {
+		isReleased := npc.ReleaseActionGeneration(objectID, owner, actionGeneration)
+		if !isReleased {
+			// A completed or superseding action no longer belongs to this group.
+			continue
+		}
 	}
 }
 
 type campaignNPCFirstActionFailure struct {
 	npc             *zonenpc.Session
 	owner           zonenpc.ActionOwner
-	objectIDs       []uint32
+	actions         map[uint32]uint64
 	spawnRegistry   *gameplaySessionRegistry
 	spawnSessionKey string
 	spawnGeneration uint64
@@ -6479,7 +6377,7 @@ func (e campaignNPCSpawnPresentationStep) produce() ([][]byte, error) {
 }
 
 func (e campaignNPCFirstActionFailure) handle(scheduleErr error) {
-	releaseCampaignNPCFirstActions(e.npc, e.owner, e.objectIDs)
+	releaseCampaignNPCFirstActions(e.npc, e.owner, e.actions)
 	releaseCampaignNPCSpawnPresentations(
 		e.spawnRegistry, e.spawnSessionKey, e.spawnGeneration, e.spawnRuns,
 	)

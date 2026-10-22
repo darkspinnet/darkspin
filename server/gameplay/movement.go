@@ -1240,6 +1240,7 @@ func (r campaignMovementCommandRuntime) handle(
 		playerFollowPublications = r.registry.updatePlayerFollowersLocked(
 			peerSession, movementNow, packet.SourceTime,
 		)
+		r.registry.refreshVoodooCharmsLocked(movementNow)
 	}
 	r.registry.mutex.Unlock()
 	publishPlayerFollowMovements(playerFollowPublications)

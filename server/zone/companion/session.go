@@ -19,37 +19,42 @@ const attackRangeTolerance = 0.25
 const minimumPursuitDuration = 50 * time.Millisecond
 
 type Actor struct {
-	ActorFootprint    *game.NavigationFootprint
-	UserID            uint64
-	PeerGeneration    uint64
-	ObjectID          uint32
-	OwnerObjectID     uint32
-	Noun              uint32
-	Position          game.Vec3
-	FootprintRadius   float32
-	HitPoint          float32
-	MaximumHitPoint   float32
-	BodyScale         float32
-	IsTargetable      bool
-	IsCombatant       bool
-	TargetObjectID    uint32
-	PursuitObjectID   uint32
-	PursuitPosition   game.Vec3
-	PursuitRevision   uint64
-	CooldownEnd       time.Time
-	DamageBuff        float32
-	EnergyDamageBuff  float32
-	AttackSpeed       float32
-	CooldownReduction float32
-	MovementSpeedBuff float32
-	MovementSpeed     float32
-	FollowDistance    float32
-	FollowRevision    uint64
-	IsFollowing       bool
-	followPlan        Follow
-	followStartedAt   time.Time
-	followDeadline    time.Time
-	followHoldUntil   time.Time
+	ActorFootprint      *game.NavigationFootprint
+	UserID              uint64
+	PeerGeneration      uint64
+	ObjectID            uint32
+	OwnerObjectID       uint32
+	Noun                uint32
+	Position            game.Vec3
+	FootprintRadius     float32
+	HitPoint            float32
+	MaximumHitPoint     float32
+	BodyScale           float32
+	IsTargetable        bool
+	IsCombatant         bool
+	IsSageCompanion     bool
+	IsAbilityControlled bool
+	IsIntangible        bool
+	AbilityAnimation    string
+	TargetObjectID      uint32
+	PursuitObjectID     uint32
+	PursuitPosition     game.Vec3
+	PursuitRevision     uint64
+	CooldownEnd         time.Time
+	AttackReleaseEnd    time.Time
+	DamageBuff          float32
+	EnergyDamageBuff    float32
+	AttackSpeed         float32
+	CooldownReduction   float32
+	MovementSpeedBuff   float32
+	MovementSpeed       float32
+	FollowDistance      float32
+	FollowRevision      uint64
+	IsFollowing         bool
+	followPlan          Follow
+	followStartedAt     time.Time
+	followDeadline      time.Time
+	followHoldUntil     time.Time
 }
 
 type Buff struct {
@@ -363,7 +368,7 @@ func (e *Session) followActors(
 		if actor.UserID != userID ||
 			actor.PeerGeneration != peerGeneration ||
 			actor.OwnerObjectID != ownerObjectID ||
-			actor.HitPoint <= 0 {
+			actor.HitPoint <= 0 || actor.IsAbilityControlled {
 			continue
 		}
 		if at.Before(actor.followHoldUntil) {
@@ -504,7 +509,7 @@ func (e *Session) ReserveAttacks(
 	attack := make([]Attack, 0)
 	for objectID, actor := range e.actors {
 		actor.Position = actor.followPosition(at)
-		if !actor.IsCombatant || actor.HitPoint <= 0 ||
+		if !actor.IsCombatant || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
 			actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 ||
 			at.Before(actor.CooldownEnd) {
 			continue
@@ -581,7 +586,7 @@ func (e *Session) ReserveActorAttack(
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	actor, isFound := e.actors[objectID]
-	if !isFound || !actor.IsCombatant || actor.HitPoint <= 0 ||
+	if !isFound || !actor.IsCombatant || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
 		actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 ||
 		at.Before(actor.CooldownEnd) {
 		return Attack{}, false, nil
@@ -655,7 +660,7 @@ func (e *Session) ReservePursuits(
 	}
 	for objectID, actor := range e.actors {
 		actor.Position = actor.followPosition(at)
-		if !actor.IsCombatant || actor.HitPoint <= 0 ||
+		if !actor.IsCombatant || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
 			actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 {
 			continue
 		}
@@ -741,7 +746,7 @@ func (e *Session) ReserveActorPursuit(
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	actor, isFound := e.actors[objectID]
-	if !isFound || !actor.IsCombatant || actor.HitPoint <= 0 ||
+	if !isFound || !actor.IsCombatant || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
 		actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 {
 		return Pursuit{}, false, nil
 	}
@@ -871,6 +876,7 @@ func (e *Session) ReleaseAttack(objectID uint32, targetObjectID uint32) bool {
 		return false
 	}
 	actor.TargetObjectID = 0
+	actor.AttackReleaseEnd = time.Time{}
 	e.actors[objectID] = actor
 	return true
 }

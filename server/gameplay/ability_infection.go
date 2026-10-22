@@ -3,6 +3,7 @@ package gameplay
 import (
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"sync"
 	"time"
@@ -29,16 +30,22 @@ type heroInfectionEntry struct {
 	age                uint32
 	tickCount          uint32
 	isPrimary          bool
+	expiresAt          time.Time
+	isConsumed         bool
 }
 
 type heroInfectionRun struct {
-	mutex        sync.Mutex
-	npc          *zonenpc.Session
-	modifierPool *modifierPool
-	infections   map[uint32]heroInfectionEntry
-	immunities   map[uint32]struct{}
-	cancel       raknet.CancelSchedule
-	isCleaned    bool
+	mutex          sync.Mutex
+	npc            *zonenpc.Session
+	modifierPool   *modifierPool
+	infections     map[uint32]heroInfectionEntry
+	now            func() time.Time
+	cancel         raknet.CancelSchedule
+	isCleaned      bool
+	isAccepted     bool
+	creature       game.GameplayCreature
+	definition     sim.AbilityDefinition
+	sourceObjectID uint32
 }
 
 func (e *heroInfectionRun) Stop() {
@@ -68,7 +75,7 @@ func (e *heroInfectionRun) Add(entry heroInfectionEntry) bool {
 	if _, isFound := e.infections[entry.objectID]; isFound {
 		return false
 	}
-	if _, isImmune := e.immunities[entry.objectID]; isImmune {
+	if !e.npc.AdmitInfection(entry.objectID, entry.modifierInstanceID, entry.isPrimary, e.now()) {
 		return false
 	}
 	e.infections[entry.objectID] = entry
@@ -117,11 +124,18 @@ func (e *heroInfectionRun) Expire(objectID uint32) (heroInfectionEntry, bool) {
 		return heroInfectionEntry{}, false
 	}
 	delete(e.infections, objectID)
-	e.immunities[objectID] = struct{}{}
+	if !entry.isConsumed {
+		e.applyImmunity(entry, e.now())
+	}
 	if !entry.rootExpiresAt.IsZero() {
 		e.npc.ClearRoot(objectID, entry.rootExpiresAt)
 	}
-	_ = e.modifierPool.Release(entry.modifierInstanceID)
+	if entry.modifierInstanceID != 0 {
+		err := e.modifierPool.Release(entry.modifierInstanceID)
+		if err != nil {
+			log.Printf("Infection expired modifier release failed target=%d: %v", objectID, err)
+		}
+	}
 	if entry.rootInstanceID != 0 {
 		_ = e.modifierPool.Release(entry.rootInstanceID)
 	}
@@ -137,8 +151,7 @@ func (e *heroInfectionRun) IsImmune(objectID uint32) bool {
 	if _, isFound := e.infections[objectID]; isFound {
 		return true
 	}
-	_, isFound := e.immunities[objectID]
-	return isFound
+	return e.npc.IsInfectionImmune(objectID, e.now())
 }
 
 func (e *heroInfectionRun) IsEmpty() bool {
@@ -163,10 +176,22 @@ func (e *heroInfectionRun) Cleanup() []heroInfectionEntry {
 	entries := make([]heroInfectionEntry, 0, len(e.infections))
 	for objectID, entry := range e.infections {
 		entries = append(entries, entry)
+		if !entry.isConsumed {
+			if e.isAccepted {
+				e.applyImmunity(entry, e.now())
+			} else {
+				e.npc.RollbackInfection(objectID, entry.modifierInstanceID)
+			}
+		}
 		if !entry.rootExpiresAt.IsZero() {
 			e.npc.ClearRoot(objectID, entry.rootExpiresAt)
 		}
-		_ = e.modifierPool.Release(entry.modifierInstanceID)
+		if entry.modifierInstanceID != 0 {
+			err := e.modifierPool.Release(entry.modifierInstanceID)
+			if err != nil {
+				log.Printf("Infection cleanup modifier release failed target=%d: %v", objectID, err)
+			}
+		}
 		if entry.rootInstanceID != 0 {
 			_ = e.modifierPool.Release(entry.rootInstanceID)
 		}
@@ -226,6 +251,26 @@ func (e heroInfectionSchedule) tick(
 		if !isAdvanced {
 			continue
 		}
+		if entry.isConsumed {
+			// Expunge removes the disease, while Bio Entangle retains its
+			// independent duration and never deals or spreads disease damage.
+			if !e.runtime.now().Before(entry.rootExpiresAt) {
+				removed, isRemoved := e.run.Expire(entry.objectID)
+				if isRemoved {
+					expired = append(expired, removed)
+				}
+			}
+			continue
+		}
+		if !entry.isPrimary && e.run.npc.IsInfectionImmune(entry.objectID, e.runtime.now()) {
+			if entry.age >= entry.tickCount {
+				removed, isRemoved := e.run.Expire(entry.objectID)
+				if isRemoved {
+					expired = append(expired, removed)
+				}
+			}
+			continue
+		}
 		target, isTargetFound := peerSession.zone.NPCs().NPC(entry.objectID)
 		if !isTargetFound || target.IsDefeated || target.HitPoint <= 0 {
 			if removed, isRemoved := e.run.Expire(entry.objectID); isRemoved {
@@ -278,7 +323,7 @@ func (e heroInfectionSchedule) tick(
 			for _, candidate := range peerSession.zone.NPCs().LiveSnapshots() {
 				if candidate.Faction != zonenpc.FactionNonPlayerAligned ||
 					candidate.Plan.ObjectID == entry.objectID ||
-					e.run.IsImmune(candidate.Plan.ObjectID) ||
+					e.run.npc.IsInfectionSpreadBlocked(candidate.Plan.ObjectID, e.runtime.now()) ||
 					zonegeometry.Distance(
 						target.Plan.Position, candidate.Plan.Position,
 					) > e.definition.Radius {
@@ -295,6 +340,9 @@ func (e heroInfectionSchedule) tick(
 	}
 	created := make([]heroInfectionEntry, 0, len(spreadCandidate))
 	for objectID := range spreadCandidate {
+		if e.run.npc.IsInfectionSpreadBlocked(objectID, e.runtime.now()) {
+			continue
+		}
 		instanceID, err := e.runtime.modifierPool.Allocate()
 		if err != nil {
 			e.runtime.registry.mutex.Unlock()
@@ -303,6 +351,7 @@ func (e heroInfectionSchedule) tick(
 		entry := heroInfectionEntry{
 			objectID: objectID, modifierInstanceID: instanceID,
 			tickCount: uint32(rootingPlagueSpreadDuration / e.definition.TickDuration),
+			expiresAt: e.runtime.now().Add(rootingPlagueSpreadDuration),
 		}
 		if !e.run.Add(entry) {
 			_ = e.runtime.modifierPool.Release(instanceID)
@@ -341,13 +390,13 @@ func (e heroInfectionSchedule) tick(
 		packets = append(packets, packet)
 	}
 	for _, entry := range expired {
-		packet, marshalErr := effectraknet.ModifierDelete(
-			entry.objectID, entry.modifierInstanceID,
-		)
-		if marshalErr != nil {
-			return nil, fmt.Errorf("infectionDelete: %w", marshalErr)
+		if entry.modifierInstanceID != 0 {
+			packet, marshalErr := effectraknet.ModifierDelete(entry.objectID, entry.modifierInstanceID)
+			if marshalErr != nil {
+				return nil, fmt.Errorf("infectionDelete: %w", marshalErr)
+			}
+			packets = append(packets, packet)
 		}
-		packets = append(packets, packet)
 		if entry.rootInstanceID == 0 {
 			continue
 		}
@@ -387,17 +436,17 @@ func (e heroInfectionSchedule) finish() ([][]byte, error) {
 	entries := e.run.Cleanup()
 	packets := make([][]byte, 0, len(entries)*2)
 	for _, entry := range entries {
-		packet, err := effectraknet.ModifierDelete(
-			entry.objectID, entry.modifierInstanceID,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("infectionFinishDelete: %w", err)
+		if entry.modifierInstanceID != 0 {
+			packet, err := effectraknet.ModifierDelete(entry.objectID, entry.modifierInstanceID)
+			if err != nil {
+				return nil, fmt.Errorf("infectionFinishDelete: %w", err)
+			}
+			packets = append(packets, packet)
 		}
-		packets = append(packets, packet)
 		if entry.rootInstanceID == 0 {
 			continue
 		}
-		packet, err = effectraknet.ModifierDelete(
+		packet, err := effectraknet.ModifierDelete(
 			entry.objectID, entry.rootInstanceID,
 		)
 		if err != nil {
@@ -581,12 +630,14 @@ func (r campaignAbilityCommandRuntime) handleHeroInfection(
 	run := &heroInfectionRun{
 		npc: peerSession.zone.NPCs(), modifierPool: r.modifierPool,
 		infections: make(map[uint32]heroInfectionEntry),
-		immunities: make(map[uint32]struct{}),
+		now:        r.now,
+		creature:   creature, definition: projected, sourceObjectID: req.command.Common.ObjectID,
 	}
 	entry := heroInfectionEntry{
 		objectID: targetObjectID, modifierInstanceID: modifierInstanceID,
 		rootInstanceID: rootInstanceID, rootExpiresAt: rootExpiresAt,
 		tickCount: projected.NumberOfTicks, isPrimary: true,
+		expiresAt: abilityStartTime.Add(projected.Duration),
 	}
 	if !run.Add(entry) {
 		peerSession.abilityCooldownSession().Rollback(cooldownReservation)
@@ -606,6 +657,14 @@ func (r campaignAbilityCommandRuntime) handleHeroInfection(
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
 
+	schedule := heroInfectionSchedule{
+		runtime: r, packet: req.packet, sessionKey: sessionKey,
+		generation: generation, sourceObjectID: req.command.Common.ObjectID,
+		creatureIndex: creatureIndex, previousManaPoint: previousManaPoint,
+		creature: creature, definition: projected, binding: binding, run: run,
+		cooldownReservation: cooldownReservation,
+		releaseReservation:  releaseReservation, releasePacket: start.Release,
+	}
 	modifierPackets := make([][]byte, 0, 2)
 	for index, message := range []raknet.ApplicationMessage{
 		raknet.ModifierCreatedMessage{
@@ -625,17 +684,10 @@ func (r campaignAbilityCommandRuntime) handleHeroInfection(
 	} {
 		packet, marshalErr := raknet.MarshalApplication(message)
 		if marshalErr != nil {
+			schedule.fail(marshalErr)
 			return nil, fmt.Errorf("infectionModifierMarshal[%d]: %w", index, marshalErr)
 		}
 		modifierPackets = append(modifierPackets, packet)
-	}
-	schedule := heroInfectionSchedule{
-		runtime: r, packet: req.packet, sessionKey: sessionKey,
-		generation: generation, sourceObjectID: req.command.Common.ObjectID,
-		creatureIndex: creatureIndex, previousManaPoint: previousManaPoint,
-		creature: creature, definition: projected, binding: binding, run: run,
-		cooldownReservation: cooldownReservation,
-		releaseReservation:  releaseReservation, releasePacket: start.Release,
 	}
 	maximumTickCount := max(14, liveCount+14)
 	producers := make([]raknet.ScheduledPacketProducer, 0, maximumTickCount+2)
@@ -669,7 +721,20 @@ func (r campaignAbilityCommandRuntime) handleHeroInfection(
 		schedule.fail(err)
 		return nil, fmt.Errorf("infectionSchedule: %w", err)
 	}
+	if cancel == nil {
+		err = errors.New("schedule cancellation unavailable")
+		schedule.fail(err)
+		return nil, fmt.Errorf("infectionCancellation: %w", err)
+	}
+	run.mutex.Lock()
+	if run.isCleaned {
+		run.mutex.Unlock()
+		cancel()
+		return nil, errors.New("infection stopped before schedule acceptance")
+	}
+	run.isAccepted = true
 	run.cancel = cancel
+	run.mutex.Unlock()
 	r.logger.Printf(
 		"RakNet hero infections accepted ability=%s source=%d target=%d",
 		projected.Name, req.command.Common.ObjectID, targetObjectID,

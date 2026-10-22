@@ -56,6 +56,22 @@ func (e campaignMaserCleanseStep) hit() ([][]byte, error) {
 		if !peerSession.zone.NPCs().PurgeDebuffs(ally.Plan.ObjectID) {
 			continue
 		}
+		beastPacket, beastErr := e.runtime.registry.retireBeastVulnerabilityLocked(
+			peerSession.zone.NPCs(), peerSession.zone.Effect(), ally.Plan.ObjectID, e.runtime.modifierPool,
+		)
+		if beastErr != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("beastCleanse: %w", beastErr)
+		}
+		if beastPacket != nil {
+			packets = append(packets, beastPacket)
+		}
+		basicPackets, basicErr := e.runtime.registry.retireTargetBasicModifiersLocked(peerSession, ally.Plan.ObjectID, e.runtime.modifierPool, true)
+		if basicErr != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("basicCleanse: %w", basicErr)
+		}
+		packets = append(packets, basicPackets...)
 		hitPacket, hitErr := npcraknet.PositionedEffect(
 			e.profile.ImpactEffectName, ally.Plan.Position,
 		)

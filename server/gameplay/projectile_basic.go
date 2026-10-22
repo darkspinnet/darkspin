@@ -30,6 +30,10 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 	packet := request.packet
 	command := request.command
 	previousProjectileObjectID := peerSession.nextProjectileObjectID
+	plan.SourceRank = 1
+	if peerSession.isOverdriveActiveAt(abilityStartTime) {
+		plan.SourceRank = 3
+	}
 	cooldownKey := zoneability.CooldownProjectileBasic
 	isActiveRequest := activeAbilityID != 0
 	if isActiveRequest {
@@ -188,6 +192,19 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 			launchPosition, game.Vec3(projectileTarget),
 		)
 		var flight *sim.ProjectileFlight
+		var wave *campaignProjectileWave
+		projectileHalfExtent := r.program.ProjectileHalfExtent
+		if projectileDefinition.ProjectileWave != nil {
+			physics, isPhysicsFound := r.program.NounPhysics[projectileDefinition.ProjectileNoun]
+			if !isPhysicsFound || physics.ProjectileQueryHalfExtent.X <= 0 ||
+				physics.ProjectileQueryHalfExtent.Y <= 0 || physics.ProjectileQueryHalfExtent.Z <= 0 {
+				stopProjectileRuns(projectileRuns)
+				r.registry.mutex.Unlock()
+				return nil, errors.New("wave projectile query unavailable")
+			}
+			projectileHalfExtent = physics.ProjectileQueryHalfExtent
+			wave = &campaignProjectileWave{halfExtent: projectileHalfExtent, attemptedTargets: make(map[uint32]struct{})}
+		}
 		if !isElectronSphereRequest {
 			travelDistance = projectileDefinition.Distance
 			flight, err = sim.NewProjectileFlight(sim.ProjectileFlightInput{
@@ -195,7 +212,7 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 				Direction: sim.Position(geometryraknet.Direction(
 					raknet.Vector3(launchPosition), projectileTarget,
 				)),
-				HalfExtent:      r.program.ProjectileHalfExtent,
+				HalfExtent:      projectileHalfExtent,
 				Speed:           projectileDefinition.Speed,
 				Acceleration:    projectileDefinition.Acceleration,
 				MaximumDistance: travelDistance,
@@ -256,6 +273,7 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 				CollisionDelay:  collisionDelay, IsDirectHit: isEnemyFound,
 				IsCollisionExternallyDriven: true, Damage: projectilePlan.Damage.Maximum,
 				IsCollisionSampled: flight != nil,
+				IsPiercing:         projectileDefinition.IsPiercing,
 				TargetHitPoint:     targetHitPoint, ActorTeam: 1, SourceTime: packet.SourceTime,
 				IsActivationSuppressed: projectileIndex > 0,
 				IsCooldownSuppressed:   projectileIndex > 0,
@@ -290,6 +308,7 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 			projectile: projectileDefinition, plan: projectilePlan,
 			binding: peerSession.binding, run: projectileRun,
 			isElectronSphere: isElectronSphereRequest,
+			wave:             wave,
 			flight:           flight, startedAt: abilityStartTime,
 			retirement: &campaignProjectileRetirement{
 				originalZone: peerSession.zone, generation: peerSession.generation, objectID: projectileObjectID, run: projectileRun,

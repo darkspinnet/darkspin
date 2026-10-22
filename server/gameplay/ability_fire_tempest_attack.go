@@ -184,6 +184,10 @@ func (r campaignDamageRuntime) startFireTempestPetAttack(
 		targetPosition: targetPosition, travelDistance: distance,
 		geometry: geometry, run: projectileRun,
 	}
+	if !r.registry.setCompanionAttackRelease(sessionKey, generation,
+		plan.ObjectID, plan.TargetObjectID, r.npc.now().Add(impactDeadline)) {
+		return nil, errors.New("fire tempest pet release unavailable")
+	}
 	producers := r.registry.producerGuard.scheduledProducers(
 		sessionKey, []raknet.ScheduledPacketProducer{
 			{Delay: ability.HitDelay, Produce: step.launch},
@@ -346,6 +350,11 @@ func (e fireTempestPetAttackStep) impact() ([][]byte, error) {
 	e.ownerRun.attackTargetObjectID = 0
 	e.ownerRun.isAttackLaunched = false
 	peerSession.zone.Companion().ReleaseAttack(e.plan.ObjectID, e.plan.TargetObjectID)
+	pet, isPetFound := peerSession.zone.Companion().Snapshot(e.plan.ObjectID)
+	if isPetFound {
+		remaining := max(time.Duration(0), pet.CooldownEnd.Sub(e.runtime.npc.now()))
+		e.repeatDeadline = e.impactDeadline + min(e.repeatDeadline-e.impactDeadline, remaining)
+	}
 	binding := peerSession.binding
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()

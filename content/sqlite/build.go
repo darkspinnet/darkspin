@@ -20,7 +20,7 @@ import (
 const (
 	SourceVersion  = "5.3.0.103"
 	SourceBuild    = 103
-	RecipeVersion  = 90
+	RecipeVersion  = 91
 	ContentRelease = "build-103-content"
 	RuntimeRole    = "runtime-content"
 )
@@ -711,8 +711,10 @@ func Verify(ctx context.Context, path string) (*Verification, error) {
 	}
 	expectedNounShapeCount := 0
 	if assetResourceCount != 0 {
-		expectedNounShapeCount = 1
 		for _, spec := range tutorialNounPhysicsSpec {
+			if spec.projectileQueryDimension != [3]float32{} {
+				expectedNounShapeCount++
+			}
 			if spec.pickupTriggerOffset != 0 {
 				expectedNounShapeCount++
 			}

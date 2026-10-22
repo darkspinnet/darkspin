@@ -215,7 +215,12 @@ func (r campaignDamageRuntime) applyPoisonRavagerPassive(
 	run.creature = creature
 	run.sourceObjectID = sourceObjectID
 	run.revision++
-	run.stackCount = min(poisonRavagerStackLimit, run.stackCount+1)
+	stackLimit, addedStack := poisonRavagerStackLimit, uint32(1)
+	if peerSession.isOverdriveActiveAt(r.npc.now()) {
+		// Root698 applies two stacks; child899 raises the cap from4 to6.
+		stackLimit, addedStack = 6, 2
+	}
+	run.stackCount = min(stackLimit, run.stackCount+addedStack)
 	run.completedTick = 0
 	revision := run.revision
 	stackCount := run.stackCount

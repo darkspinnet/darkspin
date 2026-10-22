@@ -92,6 +92,12 @@ func (e campaignDamageRuntime) applyTimeRavagerSlow(
 		peerSession.heroTimeRavagerSlows = make(map[uint32]*heroTimeRavagerSlowRun)
 	}
 	run := peerSession.heroTimeRavagerSlows[result.Damage.ObjectID]
+	if run != nil && e.npc.now().Before(run.expiresAt) && run.stackCount >= timeRavagerSlowMaximumStack {
+		// IncrementStackCount returns false at cap, so authored modifier893
+		// does not call ResetDuration for this hit.
+		e.registry.mutex.Unlock()
+		return nil, nil
+	}
 	isNew := run == nil
 	if isNew {
 		modifier, err := newCampaignNPCModifierRun(e.npc.modifierPool)
@@ -117,6 +123,9 @@ func (e campaignDamageRuntime) applyTimeRavagerSlow(
 	previousRevision := run.revision
 	previousExpiresAt := run.expiresAt
 	previousCancel := run.cancel
+	if !e.npc.now().Before(run.expiresAt) {
+		run.stackCount = 0
+	}
 	run.stackCount = min(timeRavagerSlowMaximumStack, run.stackCount+1)
 	run.revision++
 	duration := zonenpc.CrowdControlDuration(result.Snapshot.Plan, timeRavagerSlowDuration)

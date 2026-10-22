@@ -11,8 +11,18 @@ import (
 )
 
 type expungeRemainingDamage struct {
-	creature   game.GameplayCreature
-	definition sim.AbilityDefinition
+	creature       game.GameplayCreature
+	definition     sim.AbilityDefinition
+	sourceObjectID uint32
+	sessionKey     string
+	generation     uint64
+	binding        game.GameplayBinding
+}
+
+type expungeDamagePublication struct {
+	remaining   expungeRemainingDamage
+	results     []zoneability.AreaResult
+	transitions []campaignDamageTransition
 }
 
 type expungeModifierDelete struct {
@@ -38,15 +48,67 @@ func (e campaignMeleeSchedule) expunge() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	damages, deletes, cancels, err := consumeExpungeDamageOverTime(
-		&peerSession, e.targetObjectID, e.runtime.modifierPool,
-	)
-	if err != nil {
-		e.runtime.registry.mutex.Unlock()
-		return nil, fmt.Errorf("expungeConsume: %w", err)
+	damages := make([]expungeRemainingDamage, 0)
+	deletes := make([]expungeModifierDelete, 0)
+	cancels := make([]func(), 0)
+	for sessionKey, candidate := range e.runtime.registry.sessions {
+		if candidate.zone != peerSession.zone {
+			continue
+		}
+		if sessionKey == e.sessionKey {
+			candidate = peerSession
+		}
+		consumedDamages, consumedDeletes, consumedCancels, consumeErr := consumeExpungeDamageOverTime(&candidate, e.targetObjectID, e.runtime.modifierPool)
+		if consumeErr != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("expungeConsume: %w", consumeErr)
+		}
+		plasmaDamage, plasmaDelete, plasmaCancel, plasmaErr := candidate.consumeExpungePlasma(e.targetObjectID, e.runtime.now(), e.runtime.modifierPool)
+		if plasmaErr != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("expungePlasma: %w", plasmaErr)
+		}
+		if plasmaDamage != nil {
+			consumedDamages = append(consumedDamages, *plasmaDamage)
+		}
+		if plasmaDelete != nil {
+			consumedDeletes = append(consumedDeletes, *plasmaDelete)
+		}
+		if plasmaCancel != nil {
+			consumedCancels = append(consumedCancels, plasmaCancel)
+		}
+		infectionDamage, infectionDelete, infectionErr := candidate.heroInfection.consumeExpunge(e.targetObjectID, e.runtime.now())
+		if infectionErr != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("expungeInfection: %w", infectionErr)
+		}
+		if infectionDamage != nil {
+			consumedDamages = append(consumedDamages, *infectionDamage)
+		}
+		if infectionDelete != nil {
+			consumedDeletes = append(consumedDeletes, *infectionDelete)
+		}
+		for index := range consumedDamages {
+			consumedDamages[index].sessionKey = sessionKey
+			consumedDamages[index].generation = candidate.generation
+			consumedDamages[index].binding = candidate.binding
+		}
+		damages = append(damages, consumedDamages...)
+		deletes = append(deletes, consumedDeletes...)
+		cancels = append(cancels, consumedCancels...)
+		e.runtime.registry.sessions[sessionKey] = candidate
+		if sessionKey == e.sessionKey {
+			peerSession = candidate
+		}
 	}
-	results := make([]zoneability.AreaResult, 0, len(damages))
-	transitions := make([]campaignDamageTransition, 0, len(damages))
+	burnDamages, burnDeletes, burnErr := e.runtime.registry.consumeBasicBurnsLocked(peerSession, e.targetObjectID, e.runtime.modifierPool)
+	if burnErr != nil {
+		e.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("expungeBasicBurn: %w", burnErr)
+	}
+	damages = append(damages, burnDamages...)
+	deletes = append(deletes, burnDeletes...)
+	publications := make([]expungeDamagePublication, 0, len(damages))
 	for _, remaining := range damages {
 		live, isLiveFound := peerSession.zone.NPCs().NPC(e.targetObjectID)
 		if !isLiveFound || live.IsDefeated || live.HitPoint <= 0 {
@@ -62,7 +124,7 @@ func (e campaignMeleeSchedule) expunge() ([][]byte, error) {
 			return nil, fmt.Errorf("expungeProjection: %w", err)
 		}
 		plan := zoneability.AreaPlan{
-			SourceObjectID: e.sourceObjectID,
+			SourceObjectID: remaining.sourceObjectID,
 			AbilityID:      e.plan.AbilityID,
 			Definition:     remaining.definition,
 			Damage:         damage,
@@ -79,16 +141,30 @@ func (e campaignMeleeSchedule) expunge() ([][]byte, error) {
 			e.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("expungeDamage: %w", err)
 		}
+		transitions := make([]campaignDamageTransition, 0, len(committed))
+		transitionKey := remaining.sessionKey
+		owner, isOwnerFound := e.runtime.registry.sessions[transitionKey]
+		if !isOwnerFound || owner.generation != remaining.generation || owner.zone != peerSession.zone {
+			// World transitions still run when a zone-owned burn outlives its
+			// initiator, without awarding another player's life steal or kills.
+			transitionKey = e.sessionKey
+			owner = peerSession
+		}
+		isOriginalOwner := owner.binding.UserID == remaining.binding.UserID
 		for _, result := range committed {
 			transition, transitionErr :=
-				peerSession.applyCampaignDamageTransition(result.Damage)
+				owner.applyCampaignDamageTransitionWithKill(result.Damage, isOriginalOwner)
 			if transitionErr != nil {
 				e.runtime.registry.mutex.Unlock()
 				return nil, fmt.Errorf("expungeTransition: %w", transitionErr)
 			}
-			results = append(results, result)
 			transitions = append(transitions, transition)
 		}
+		e.runtime.registry.sessions[transitionKey] = owner
+		if transitionKey == e.sessionKey {
+			peerSession = owner
+		}
+		publications = append(publications, expungeDamagePublication{remaining: remaining, results: committed, transitions: transitions})
 	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
@@ -97,12 +173,17 @@ func (e campaignMeleeSchedule) expunge() ([][]byte, error) {
 			cancel()
 		}
 	}
-	packets, err := e.runtime.damage.publishAreaResults(
-		e.packet, e.sessionKey, e.generation, e.sourceObjectID,
-		e.packet.SourceTime+500, e.binding, results, transitions, nil, false,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("expungePublish: %w", err)
+	packets := make([][]byte, 0)
+	for _, publication := range publications {
+		remaining := publication.remaining
+		damagePackets, publishErr := e.runtime.damage.publishAreaResults(
+			e.packet, remaining.sessionKey, remaining.generation, remaining.sourceObjectID,
+			e.packet.SourceTime+500, remaining.binding, publication.results, publication.transitions, nil, false,
+		)
+		if publishErr != nil {
+			return nil, fmt.Errorf("expungePublish: %w", publishErr)
+		}
+		packets = append(packets, damagePackets...)
 	}
 	for _, deleted := range deletes {
 		packet, marshalErr := effectraknet.ModifierDelete(
@@ -130,7 +211,8 @@ func consumeExpungeDamageOverTime(
 		}
 		remainingTick := run.definition.NumberOfTicks - run.completedTick
 		damages = append(damages, expungeRemainingDamage{
-			creature: run.creature,
+			creature:       run.creature,
+			sourceObjectID: run.sourceObjectID,
 			definition: expungeDamageDefinition(
 				run.definition, remainingTick,
 				run.definition.MinimumDamagePerTick,
@@ -158,7 +240,8 @@ func consumeExpungeDamageOverTime(
 		remainingTick := poisonRavagerTickCount - run.completedTick
 		definition := poisonRavagerDefinition(run.stackCount)
 		damages = append(damages, expungeRemainingDamage{
-			creature: run.creature,
+			creature:       run.creature,
+			sourceObjectID: run.sourceObjectID,
 			definition: expungeDamageDefinition(
 				definition, remainingTick,
 				definition.MinimumDamage, definition.MaximumDamage,
@@ -191,7 +274,8 @@ func consumeExpungeDamageOverTime(
 			))
 			if remainingTick > 0 {
 				damages = append(damages, expungeRemainingDamage{
-					creature: run.creature,
+					creature:       run.creature,
+					sourceObjectID: run.sourceObjectID,
 					definition: expungeDamageDefinition(
 						run.definition, remainingTick,
 						run.definition.MinimumDamagePerTick,
@@ -220,7 +304,8 @@ func consumeExpungeDamageOverTime(
 		run.mutex.Unlock()
 		if remainingTick > 0 {
 			damages = append(damages, expungeRemainingDamage{
-				creature: creature,
+				creature:       creature,
+				sourceObjectID: run.sourceObjectID,
 				definition: expungeDamageDefinition(
 					definition, remainingTick,
 					definition.MinimumDamagePerTick,

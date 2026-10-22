@@ -1435,6 +1435,7 @@ func newGameplayHandlerWithDependencies(
 		switcher: switchRuntime, ability: campaignAbility,
 		movement: movementRuntime, simple: simpleActionRuntime,
 		overdrive: campaignOverdriveRuntime{
+			switcher: switchRuntime,
 			registry: sessionRegistry, now: dependency.now, logger: logger,
 		},
 		now: dependency.now, logger: logger,
@@ -2533,6 +2534,7 @@ func (r gameplayPendingRuntime) poll(
 	playerFollowPublications := r.registry.updatePlayerFollowersLocked(
 		peerSession, r.now(), packet.SourceTime,
 	)
+	r.registry.refreshVoodooCharmsLocked(r.now())
 	peerSession, isFound = r.registry.sessions[packet.Address.String()]
 	var rootHazardPackets [][]byte
 	if isFound {
@@ -2949,6 +2951,14 @@ func (r gameplayPendingRuntime) recoverNPCs(
 			packet.Address, len(plans),
 		)
 	}
+	companionPackets, err := r.damage.startCompanionAttacks(
+		packet, sessionKey, peerSession.generation, packet.SourceTime,
+	)
+	if err != nil {
+		r.restoreNPCRecovery(sessionKey, peerSession.transportGeneration)
+		return nil, fmt.Errorf("companionRecovery: %w", err)
+	}
+	packets = append(packets, companionPackets...)
 	return packets, nil
 }
 
@@ -4449,6 +4459,12 @@ func leaveGameplayPeerMembership(peerSession gameplayPeerSession) {
 	if peerSession.zone == nil {
 		return
 	}
+	if peerSession.sagePassive != nil {
+		requests, err := peerSession.sagePassive.Stop()
+		if err != nil {
+			log.Printf("RakNet Sage membership cleanup failed user=%d requests=%d: %v", peerSession.binding.UserID, len(requests), err)
+		}
+	}
 	peerSession.zone.Leave(
 		peerSession.binding.UserID, peerSession.generation,
 	)
@@ -4562,7 +4578,17 @@ func stopGameplayPeerRuntime(
 		peerSession.heroChannelArea.Stop()
 	}
 	if peerSession.heroQuantumBlink != nil {
-		peerSession.heroQuantumBlink.Stop()
+		registry := peerSession.heroQuantumBlink.registry
+		if registry != nil {
+			registry.mutex.Lock()
+		}
+		cleanupErr := peerSession.retireQuantumBlinkLocked(time.Now())
+		if registry != nil {
+			registry.mutex.Unlock()
+		}
+		if cleanupErr != nil {
+			log.Printf("RakNet Quantum Blink runtime cleanup failed user=%d: %v", peerSession.binding.UserID, cleanupErr)
+		}
 	}
 	for _, run := range peerSession.heroStatusAreas {
 		run.Stop()
@@ -4685,6 +4711,12 @@ func resetGameplayPeerRuntime(
 	if peerSession == nil {
 		return
 	}
+	// The developer reset caller owns the registry lock. Retire Blink here so
+	// detached runtime teardown below does not try to acquire it recursively.
+	err := peerSession.retireQuantumBlinkLocked(time.Now())
+	if err != nil {
+		log.Printf("RakNet Quantum Blink reset cleanup failed user=%d: %v", peerSession.binding.UserID, err)
+	}
 	stopGameplayPeerRuntime(peerSession, modifierInstancePool, effectPool)
 	peerSession.zoneEffectPresentation = zoneEffectPresentation{}
 	peerSession.zonePresentationRuntime = zonePresentationRuntime{}
@@ -4712,6 +4744,9 @@ func resetGameplayPeerRuntime(
 	peerSession.isMissileTargetingPresented = [squad.Size]bool{}
 	peerSession.missileTargetingEffectSlots = [squad.Size]uint8{}
 	peerSession.fireRavagerBasicCount = [squad.Size]uint32{}
+	for index := range peerSession.tcShieldRuns {
+		peerSession.resetTCShield(uint32(index))
+	}
 	peerSession.tcShieldAmount = [squad.Size]float32{}
 	peerSession.tcShieldReadyAt = [squad.Size]time.Time{}
 	peerSession.tcShieldEffectSlot = [squad.Size]uint8{}
@@ -4893,6 +4928,7 @@ func (e campaignPopulationRuntime) activateOpening(
 		peerSession.recordScenarioDungeonCommit(setupEpoch)
 		peerSession.recordScenarioFixtureCommit()
 		e.registry.sessions[sessionKey] = peerSession
+		e.registry.refreshVoodooCharmsLocked(e.registry.now())
 	}
 	e.registry.mutex.Unlock()
 	if err != nil {
@@ -5054,7 +5090,12 @@ func (r gameplaySetupRuntime) publishCampaign(
 	peerSession.resetTeleporterSample()
 	peerSession.resetPickupContacts()
 	peerSession.passiveStationarySince[peerSession.deployedCreatureIndex] = r.now()
-	peerSession.startTCShieldRecharge(peerSession.deployedCreatureIndex, r.now())
+	initialShieldPackets, err := peerSession.activateTCShield(
+		peerSession.deployedCreatureIndex, r.now(), r.damage.effectPool, r.registry,
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("campaignInitialShield: %w", err)
+	}
 	if peerSession.squad == nil {
 		peerSession.squad, err = newCampaignSquad(peerSession.binding.Creatures)
 		if err != nil {
@@ -5154,6 +5195,7 @@ func (r gameplaySetupRuntime) publishCampaign(
 	if err != nil {
 		return nil, false, fmt.Errorf("pingDragShield: %w", err)
 	}
+	response = append(response, initialShieldPackets...)
 	response = append(response, shieldPackets...)
 	for index, use := range peerSession.zone.Script().SnapshotUses() {
 		usePackets, marshalErr := objectraknet.ScriptUseSnapshot(use)
@@ -5368,6 +5410,13 @@ func (r gameplaySetupRuntime) publishCampaign(
 	if err != nil {
 		return nil, false, fmt.Errorf("deploymentArrivalCommit: %w", err)
 	}
+	// Arm Sage after the owner's response and the preceding co-op roster
+	// publication callbacks; retain the setup's accepted clock as its epoch.
+	sagePackets, err := r.startSagePassive(packet, packet.Address.String(), peerSession.generation, publishStartedAt)
+	if err != nil {
+		return nil, false, fmt.Errorf("pingCampaignSage: %w", err)
+	}
+	response = append(response, sagePackets...)
 	return response, true, nil
 }
 
@@ -5630,7 +5679,12 @@ func (r gameplaySetupRuntime) publishArena(
 	peerSession.resetTeleporterSample()
 	peerSession.resetPickupContacts()
 	peerSession.passiveStationarySince[peerSession.deployedCreatureIndex] = r.now()
-	peerSession.startTCShieldRecharge(peerSession.deployedCreatureIndex, r.now())
+	initialShieldPackets, err := peerSession.activateTCShield(
+		peerSession.deployedCreatureIndex, r.now(), r.damage.effectPool, r.registry,
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("arenaInitialShield: %w", err)
+	}
 	packets, err := marshalCampaignDungeonSetup(
 		peerSession.binding, nil, nil, nil, peerSession.passiveModifierInstance,
 		entryPosition, packet.SourceTime, 0,
@@ -5639,6 +5693,7 @@ func (r gameplaySetupRuntime) publishArena(
 	if err != nil {
 		return nil, false, fmt.Errorf("arenaSetup: %w", err)
 	}
+	packets = append(packets, initialShieldPackets...)
 	r.registry.mutex.RLock()
 	peerBindings := make([]game.GameplayBinding, 0, 6)
 	for sessionKey, candidate := range r.registry.sessions {
