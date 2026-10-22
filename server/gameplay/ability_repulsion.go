@@ -77,7 +77,7 @@ func (e heroRepulsionSchedule) hit() ([][]byte, error) {
 			continue
 		}
 		targets = append(targets, target)
-		if target.HasAffixModifier(surefootedNPCAffixModifierName) {
+		if target.IsMutationKnockbackImmune() || target.HasAffixModifier(surefootedNPCAffixModifierName) {
 			continue
 		}
 		if distance <= 0 {

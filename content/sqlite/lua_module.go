@@ -67,9 +67,10 @@ func resolveLuaResource(name string, resourceIDs map[luaResourceKey][]int64) (in
 
 func (e *Store) luaResourceIDs(ctx context.Context) (resourceIDs map[luaResourceKey][]int64, resultErr error) {
 	rows, err := e.database.QueryContext(ctx, `
-		SELECT lua_chunk.id, server_data.resource_group, server_data.resource_name
+		SELECT lua_chunk.id, content_source_resource.group_id, content_source_resource.instance_id
 		FROM lua_chunk JOIN server_data
-		ON server_data.content_source_resource_id=lua_chunk.server_data_resource_id`)
+		ON server_data.content_source_resource_id=lua_chunk.server_data_resource_id
+		JOIN content_source_resource ON content_source_resource.id=server_data.content_source_resource_id`)
 	if err != nil {
 		return nil, fmt.Errorf("resourceQuery: %w", err)
 	}
@@ -82,15 +83,19 @@ func (e *Store) luaResourceIDs(ctx context.Context) (resourceIDs map[luaResource
 	resourceIDs = make(map[luaResourceKey][]int64)
 	for rows.Next() {
 		var id int64
-		var group, filename string
-		err = rows.Scan(&id, &group, &filename)
+		var groupID uint32
+		var instanceID uint64
+		err = rows.Scan(&id, &groupID, &instanceID)
 		if err != nil {
 			return nil, fmt.Errorf("resourceScan: %w", err)
 		}
-		key, isValid := luaModuleResourceKey(group + "/" + filename)
-		if isValid {
-			resourceIDs[key] = append(resourceIDs[key], id)
+		// Native Lua keys carry a 32-bit instance. Do not truncate a wider
+		// DBPF identity into an unrelated module.
+		if instanceID > uint64(^uint32(0)) {
+			continue
 		}
+		key := luaResourceKey{group: groupID, instance: uint32(instanceID)}
+		resourceIDs[key] = append(resourceIDs[key], id)
 	}
 	err = rows.Err()
 	if err != nil {

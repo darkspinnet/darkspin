@@ -89,6 +89,7 @@ func OrcusFallbackProfile(nounName string) (ActionProfile, bool) {
 		NonCombatMovementSpeed: nonCombatMovementSpeed,
 		MinimumDamage:          5, MaximumDamage: 8,
 		FirstAggroAnimationName:     "boss_lf_spawneater_aggro",
+		FirstAggroAnimationDelay:    1600000023 * time.Nanosecond,
 		FirstAggroDelay:             9199999929 * time.Nanosecond,
 		FirstAggroCinematicDuration: 9199999929 * time.Nanosecond,
 		FirstAggroCinematicRadius:   100,

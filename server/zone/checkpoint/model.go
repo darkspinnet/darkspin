@@ -17,17 +17,19 @@ import (
 	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	zoneobjective "github.com/darkspinnet/darkspin/server/zone/objective"
+	zonequest "github.com/darkspinnet/darkspin/server/zone/quest"
 	zonesecurity "github.com/darkspinnet/darkspin/server/zone/security"
 )
 
-const Version = uint32(8)
+const Version = uint32(11)
 
 type Reason string
 
 const (
-	ReasonSpawnGroupCleared Reason = "spawn-group-cleared"
-	ReasonSafePickup        Reason = "safe-pickup"
-	ReasonDeployment        Reason = "deployment"
+	ReasonSpawnGroupCleared    Reason = "spawn-group-cleared"
+	ReasonSafePickup           Reason = "safe-pickup"
+	ReasonDeployment           Reason = "deployment"
+	ReasonIntroductionProgress Reason = "introduction-progress"
 )
 
 type Member struct {
@@ -50,7 +52,9 @@ type Hero struct {
 }
 
 type NPC struct {
-	State zonenpc.Snapshot
+	State              zonenpc.Snapshot
+	Introduction       zonenpc.IntroductionState
+	MutationCapturedAt time.Time
 }
 
 type Squad struct {
@@ -94,6 +98,10 @@ type Snapshot struct {
 	Security             zonesecurity.Snapshot
 	Objectives           []sim.ObjectiveSnapshot
 	ObjectiveRuntimes    []sim.LuaObjectiveSnapshot
+	ObjectiveDrops       []zoneobjective.DropRequest
+	ObjectiveEvents      []sim.LuaObjectiveEvent
+	ObjectiveNextDropID  uint64
+	QuestCrystals        []zonequest.State
 	ScriptUses           []game.CampaignScriptUse
 	ClearedSpawnGroupIDs []uint32
 	DropRandom           sim.RandomSnapshot
@@ -166,7 +174,8 @@ func Validate(
 		return errors.New("checkpoint mission mismatch")
 	}
 	if snapshot.Reason != ReasonSpawnGroupCleared &&
-		snapshot.Reason != ReasonSafePickup && snapshot.Reason != ReasonDeployment {
+		snapshot.Reason != ReasonSafePickup && snapshot.Reason != ReasonDeployment &&
+		snapshot.Reason != ReasonIntroductionProgress {
 		return fmt.Errorf("checkpointReason: %q", snapshot.Reason)
 	}
 	err := zonesecurity.ValidateSnapshot(snapshot.Security)
@@ -225,7 +234,15 @@ func Validate(
 		}
 	}
 	for index, npc := range snapshot.NPCs {
-		err := npc.State.GraphState.Validate(npc.State.Plan.NPCProfile.AIGraph)
+		err := ValidateMutation(npc)
+		if err != nil {
+			return fmt.Errorf("checkpointMutation[%d]: %w", index, err)
+		}
+		err = zonenpc.ValidateIntroductionState(npc.State.Plan, npc.Introduction)
+		if err != nil {
+			return fmt.Errorf("checkpointIntroduction[%d]: %w", index, err)
+		}
+		err = npc.State.GraphState.Validate(npc.State.Plan.NPCProfile.AIGraph)
 		if err != nil {
 			return fmt.Errorf("checkpointGraph[%d]: %w", index, err)
 		}
@@ -408,6 +425,10 @@ func Validate(
 			return fmt.Errorf("checkpointRuntime[%d]: %w", index, err)
 		}
 		runtimeIDs[runtime.ObjectiveID] = struct{}{}
+	}
+	err = validateQuestCrystals(snapshot)
+	if err != nil {
+		return fmt.Errorf("checkpointQuest: %w", err)
 	}
 	clearedSpawnGroupIDs := make(map[uint32]struct{}, len(snapshot.ClearedSpawnGroupIDs))
 	for index, spawnGroupID := range snapshot.ClearedSpawnGroupIDs {

@@ -42,7 +42,8 @@ func (e *gameplayPeerSession) consumeExpungePlasma(
 	// raw tick damage {1,1}, independent of its ordinary damage projection.
 	source := sim.AbilityDefinition{DamageType: 3, DamageSource: 1, IsDamageTypeFound: true, IsDamageSourceFound: true}
 	damage := &expungeRemainingDamage{
-		creature: run.creature, sourceObjectID: run.sourceID,
+		activationID: run.activationID,
+		creature:     run.creature, sourceObjectID: run.sourceID,
 		definition: expungeDamageDefinition(source, tickCount, 1, 1),
 	}
 	return damage, deleted, cancel, nil

@@ -36,6 +36,7 @@ import (
 	zoneoutcome "github.com/darkspinnet/darkspin/server/zone/outcome"
 	zonepopulation "github.com/darkspinnet/darkspin/server/zone/population"
 	zoneprojection "github.com/darkspinnet/darkspin/server/zone/projection"
+	zonequest "github.com/darkspinnet/darkspin/server/zone/quest"
 	zoneresult "github.com/darkspinnet/darkspin/server/zone/result"
 	zonesecurity "github.com/darkspinnet/darkspin/server/zone/security"
 	zonetimeline "github.com/darkspinnet/darkspin/server/zone/timeline"
@@ -182,33 +183,36 @@ type NPCTargetDamage struct {
 // Zone owns the state shared by every peer participating in one campaign
 // run. Connection-local presentation and transport state remain outside it.
 type Zone struct {
-	treeOfLife           *zoneability.TreeOfLifePresentationSession
-	mu                   sync.RWMutex
-	ctx                  context.Context
-	cancel               context.CancelFunc
-	registry             *Registry
-	id                   uint64
-	generation           uint64
-	completionID         uint64
-	state                State
-	startedAt            time.Time
-	info                 ZoneInfo
-	tutorialActivations  *zoneunlock.ActivationSession
-	members              map[uint64]Member
-	crystals             map[uint64]sim.CrystalInventory
-	missionEquipments    map[uint64]zoneloot.EquipmentInventory
-	unlocks              map[uint64]*zoneunlock.Session
-	experienceAwards     map[uint32]ExperienceAward
-	experienceTotals     map[uint64]uint32
-	experienceCommits    map[uint64]ExperienceCommit
-	projection           *zoneprojection.Session
-	clearedSpawnGroups   map[uint32]struct{}
-	checkpointHeroes     map[uint64]zonecheckpoint.Hero
-	checkpointSquads     map[uint64]zonecheckpoint.Squad
-	isPopulationPrimed   bool
-	isPickupSweepStarted bool
-	isRestored           bool
-	isObjectiveComplete  bool
+	treeOfLife             *zoneability.TreeOfLifePresentationSession
+	questMutex             sync.Mutex
+	mutationDamageRunCount uint32
+	questCrystal           *zonequest.Session
+	mu                     sync.RWMutex
+	ctx                    context.Context
+	cancel                 context.CancelFunc
+	registry               *Registry
+	id                     uint64
+	generation             uint64
+	completionID           uint64
+	state                  State
+	startedAt              time.Time
+	info                   ZoneInfo
+	tutorialActivations    *zoneunlock.ActivationSession
+	members                map[uint64]Member
+	crystals               map[uint64]sim.CrystalInventory
+	missionEquipments      map[uint64]zoneloot.EquipmentInventory
+	unlocks                map[uint64]*zoneunlock.Session
+	experienceAwards       map[uint32]ExperienceAward
+	experienceTotals       map[uint64]uint32
+	experienceCommits      map[uint64]ExperienceCommit
+	projection             *zoneprojection.Session
+	clearedSpawnGroups     map[uint32]struct{}
+	checkpointHeroes       map[uint64]zonecheckpoint.Hero
+	checkpointSquads       map[uint64]zonecheckpoint.Squad
+	isPopulationPrimed     bool
+	isPickupSweepStarted   bool
+	isRestored             bool
+	isObjectiveComplete    bool
 
 	isNPCSpawnCommandUsed bool
 }
@@ -262,8 +266,9 @@ func New(id uint64, generation uint64, info ZoneInfo) (*Zone, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	zone := &Zone{
-		treeOfLife: zoneability.NewTreeOfLifePresentationSession(),
-		ctx:        ctx, cancel: cancel,
+		treeOfLife:   zoneability.NewTreeOfLifePresentationSession(),
+		questCrystal: zonequest.NewSession(),
+		ctx:          ctx, cancel: cancel,
 		id: id, generation: generation, completionID: completionID,
 		state: StateActive, startedAt: time.Now(),
 		info: info, members: make(map[uint64]Member),
@@ -291,6 +296,7 @@ func New(id uint64, generation uint64, info ZoneInfo) (*Zone, error) {
 		return nil, fmt.Errorf("zoneNavigation: %w", navigationErr)
 	}
 	info.Companion.ConfigureActorFootprints(info.DirectorDefinition.NounFootprintsByNoun)
+	info.Companion.ConfigureNPCProfiles(info.DirectorDefinition.NPCProfilesByNoun)
 	info.NPCs.ConfigureAffixContext(info.Difficulty, uint32(len(zone.members)))
 	return zone, nil
 }
@@ -1769,6 +1775,20 @@ func (e *Zone) applyNPCCompanionDamage(
 	targetObjectID uint32,
 	damage float32, isTargetabilityRequired bool,
 ) (NPCTargetDamage, bool, error) {
+	result, isApplied, err := e.applyNPCCompanionDamageState(owner, sourceObjectID,
+		targetObjectID, damage, isTargetabilityRequired, true)
+	if err != nil {
+		return result, isApplied, fmt.Errorf("companionState: %w", err)
+	}
+	return result, isApplied, nil
+}
+
+func (e *Zone) applyNPCCompanionDamageState(
+	owner zonenpc.ActionOwner,
+	sourceObjectID uint32,
+	targetObjectID uint32,
+	damage float32, isTargetabilityRequired, isProjectionNeeded bool,
+) (NPCTargetDamage, bool, error) {
 	companion, isFound := e.info.Companion.Snapshot(targetObjectID)
 	if !isFound || (isTargetabilityRequired && !companion.IsTargetable) || companion.IsIntangible || companion.HitPoint <= 0 {
 		return NPCTargetDamage{}, false, nil
@@ -1781,22 +1801,24 @@ func (e *Zone) applyNPCCompanionDamage(
 		return NPCTargetDamage{}, false, fmt.Errorf("instanceCompanionDamage: %w", err)
 	}
 	appliedDamage := previous.HitPoint - current.HitPoint
-	e.projection.PublishCompanionDamage(
-		zoneprojection.CompanionDamage{
-			SourceObjectID: sourceObjectID, TargetObjectID: targetObjectID,
-			Damage: appliedDamage, HitPoint: current.HitPoint,
-			IsDefeated: current.HitPoint == 0,
-		},
-		zoneprojection.Subscriber{
-			UserID: owner.UserID, PeerGeneration: owner.PeerGeneration,
-		},
-	)
+	if isProjectionNeeded {
+		e.projection.PublishCompanionDamage(
+			zoneprojection.CompanionDamage{
+				SourceObjectID: sourceObjectID, TargetObjectID: targetObjectID,
+				Damage: appliedDamage, HitPoint: current.HitPoint,
+				IsDefeated: current.HitPoint == 0,
+			},
+			zoneprojection.Subscriber{
+				UserID: owner.UserID, PeerGeneration: owner.PeerGeneration,
+			},
+		)
+	}
 	if current.HitPoint == 0 {
 		released, releaseErr := e.info.NPCs.ReplaceTarget(
 			targetObjectID, e.livePlayerAlignedTargets(),
 		)
 		if releaseErr != nil {
-			return NPCTargetDamage{}, false,
+			return NPCTargetDamage{PreviousHitPoint: previous.HitPoint, HitPoint: current.HitPoint, IsDefeated: current.HitPoint == 0}, true,
 				fmt.Errorf("instanceCompanionRetarget: %w", releaseErr)
 		}
 		for _, npc := range released {
@@ -2008,13 +2030,26 @@ func (e *Zone) restoreCheckpoint(snapshot zonecheckpoint.Snapshot) error {
 	objectiveNPCObjectIDs := make([]uint32, 0, len(snapshot.NPCs))
 	defeatedObjectiveNPCObjectIDs := make([]uint32, 0, len(snapshot.NPCs))
 	var maximumObjectID uint32
+	for _, crystal := range snapshot.QuestCrystals {
+		maximumObjectID = max(maximumObjectID, crystal.ObjectID)
+	}
 	for _, inventory := range snapshot.MissionEquipments {
 		for _, equipment := range inventory.Equipments {
 			maximumObjectID = max(maximumObjectID, equipment.ObjectID)
 		}
 	}
+	restoreNPCAt := time.Now()
 	for _, npc := range snapshot.NPCs {
-		npcStates = append(npcStates, npc.State)
+		restoredNPC, introErr := npc.State.WithCheckpointIntroduction(npc.Introduction, time.Now())
+		if introErr != nil {
+			return fmt.Errorf("checkpointIntroduction: %w", introErr)
+		}
+		mutation, mutationErr := zonecheckpoint.RebaseMutation(npc.State.Mutation, npc.MutationCapturedAt, restoreNPCAt)
+		if mutationErr != nil {
+			return fmt.Errorf("checkpointMutation: %w", mutationErr)
+		}
+		restoredNPC.Mutation = mutation
+		npcStates = append(npcStates, restoredNPC)
 		maximumObjectID = max(maximumObjectID, npc.State.Plan.ObjectID)
 		if npc.State.Plan.IsFixture || npc.State.Plan.IsEncounterAuxiliary {
 			continue
@@ -2098,9 +2133,14 @@ func (e *Zone) restoreCheckpoint(snapshot zonecheckpoint.Snapshot) error {
 			e.clearedSpawnGroups[spawnGroupID] = struct{}{}
 		}
 	}
-	err = e.info.Objective.RestoreCheckpoint(snapshot.Objectives, snapshot.ObjectiveRuntimes)
+	err = e.info.Objective.RestoreState(zoneobjective.Checkpoint{Objectives: snapshot.Objectives,
+		Runtimes: snapshot.ObjectiveRuntimes, Drops: snapshot.ObjectiveDrops, Events: snapshot.ObjectiveEvents, NextDropID: snapshot.ObjectiveNextDropID})
 	if err != nil {
 		return fmt.Errorf("checkpointObjective: %w", err)
+	}
+	err = e.restoreQuestCrystals(snapshot.QuestCrystals)
+	if err != nil {
+		return fmt.Errorf("checkpointQuest: %w", err)
 	}
 	err = e.info.Script.RestoreUses(snapshot.ScriptUses)
 	if err != nil {
@@ -2208,11 +2248,13 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 	if e == nil || reason == "" || e.info.Checkpoint == nil {
 		return
 	}
+	e.questMutex.Lock()
+	defer e.questMutex.Unlock()
 	if !e.isCheckpointSafe() {
 		return
 	}
 	e.mu.Lock()
-	if e.state != StateActive {
+	if e.state != StateActive || e.mutationDamageRunCount != 0 {
 		e.mu.Unlock()
 		return
 	}
@@ -2269,6 +2311,11 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 		elapsed = 0
 	}
 	recorder := e.info.Checkpoint
+	// Mutation advancement owns the zone lock while updating actor lifetimes.
+	// Capture both sides before releasing it, paired with the random state.
+	heroSnapshots := e.info.Hero.Snapshots()
+	npcSnapshots := e.info.NPCs.Snapshots()
+	introCapturedAt := time.Now()
 	dropRandom := e.info.DropRandom.Snapshot()
 	capsuleRandom := e.info.CapsuleRandom.Snapshot()
 	e.mu.Unlock()
@@ -2287,7 +2334,6 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 	sort.Slice(experienceAwards, func(left int, right int) bool {
 		return experienceAwards[left].ObjectID < experienceAwards[right].ObjectID
 	})
-	heroSnapshots := e.info.Hero.Snapshots()
 	heroes := make([]zonecheckpoint.Hero, 0, len(heroSnapshots)+len(restoredHeroes))
 	for _, hero := range heroSnapshots {
 		heroes = append(heroes, zonecheckpoint.Hero{
@@ -2319,18 +2365,34 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 	sort.Slice(heroes, func(left int, right int) bool {
 		return heroes[left].UserID < heroes[right].UserID
 	})
-	npcSnapshots := e.info.NPCs.Snapshots()
+	defeatedObjectIDs := make([]uint32, 0)
+	for _, npc := range npcSnapshots {
+		if npc.IsDefeated || npc.HitPoint <= 0 {
+			defeatedObjectIDs = append(defeatedObjectIDs, npc.Plan.ObjectID)
+		}
+	}
+	if e.info.ObjectiveProgress != nil && !e.info.ObjectiveProgress.AreDeathsRecorded(defeatedObjectIDs) {
+		// Damage can commit before its death producer takes questMutex.
+		// Keep the last safe point until that producer journals the event.
+		return
+	}
 	npcs := make([]zonecheckpoint.NPC, 0, len(npcSnapshots))
 	for _, npc := range npcSnapshots {
+		intro, introErr := npc.CheckpointIntroduction(introCapturedAt)
+		if introErr != nil {
+			// An uncommitted entrance cannot become durable accepted progress.
+			// Keep the previous safe checkpoint and retry a later boundary.
+			return
+		}
 		npcs = append(npcs, zonecheckpoint.NPC{
-			State: npc,
+			State: npc, Introduction: intro,
+			MutationCapturedAt: introCapturedAt,
 		})
 	}
-	objectives := []sim.ObjectiveSnapshot(nil)
-	objectiveRuntimes := []sim.LuaObjectiveSnapshot(nil)
+	objectiveState := zoneobjective.Checkpoint{NextDropID: 1}
 	if e.info.Objective != nil {
 		var objectiveErr error
-		objectives, objectiveRuntimes, objectiveErr = e.info.Objective.Checkpoint()
+		objectiveState, objectiveErr = e.info.Objective.CheckpointState()
 		if objectiveErr != nil {
 			// A later safe capture can retry. Do not persist UI-only state
 			// when an authored private field cannot be represented safely.
@@ -2350,8 +2412,11 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 		TriggerProgresses: triggerProgresses,
 		ExperienceAwards:  experienceAwards,
 		MissionEquipments: missionEquipments,
-		Security:          security, Objectives: objectives, ScriptUses: scriptUses,
-		ObjectiveRuntimes:    objectiveRuntimes,
+		Security:          security, Objectives: objectiveState.Objectives, ScriptUses: scriptUses,
+		ObjectiveRuntimes: objectiveState.Runtimes,
+		ObjectiveDrops:    objectiveState.Drops, ObjectiveNextDropID: objectiveState.NextDropID,
+		ObjectiveEvents:      objectiveState.Events,
+		QuestCrystals:        e.questCrystal.Snapshots(now),
 		ClearedSpawnGroupIDs: clearedSpawnGroupIDs,
 		DropRandom:           dropRandom, IsDropRandomSet: true,
 		CapsuleRandom: capsuleRandom, IsCapsuleRandomSet: true,
@@ -2882,7 +2947,7 @@ func (e *Zone) RecordModifierCreated(
 // quest-crystal pickup has committed at the world boundary.
 func (e *Zone) RecordQuestCrystalFound(ctx context.Context) error {
 	if e == nil || e.info.Objective == nil {
-		return nil
+		return errors.New("quest crystal objective unavailable")
 	}
 	if ctx == nil {
 		return errors.New("quest crystal objective context unavailable")
@@ -3065,6 +3130,8 @@ func (e *Zone) recordNPCDeaths(ctx context.Context, deaths []zonenpc.DeathEvent,
 	if ctx == nil {
 		return errors.New("npc death context unavailable")
 	}
+	e.questMutex.Lock()
+	defer e.questMutex.Unlock()
 	e.destroyDeletedFixtureListeners(deaths)
 	var objectiveErr error
 	for _, death := range deaths {
@@ -3096,9 +3163,16 @@ func (e *Zone) recordNPCDeaths(ctx context.Context, deaths []zonenpc.DeathEvent,
 			event.TargetObjectID = death.TargetObjectID
 			event.SourceObjectID = death.SourceObjectID
 			event.TargetAssetID = util.HashID(npc.Plan.NounName)
-			event.TargetTeam = 2
-			event.SourceTeam = 1
+			event.TargetPosition = e.questDropSourcePosition(npc)
+			event.TargetFootprintRadius = npc.Plan.ActorFootprintRadius()
+			event.TargetTeam = questObjectiveTeam(npc.Faction)
+			event.SourceTeam = event.TargetTeam
+			killer, isKillerFound := e.info.NPCs.NPC(death.SourceObjectID)
+			if isKillerFound {
+				event.SourceTeam = questObjectiveTeam(killer.Faction)
+			}
 			if source.IsFound {
+				event.SourceTeam = 1
 				event.PlayerIndex = source.PlayerIndex
 				event.DamageInteger = int32(source.PlayerIndex)
 				event.IsSourcePlayerControlled = source.IsPlayerControlled
@@ -3109,14 +3183,10 @@ func (e *Zone) recordNPCDeaths(ctx context.Context, deaths []zonenpc.DeathEvent,
 				event.TargetMarkerID = npc.Plan.LocusID
 			}
 			updates, err := objective.ApplyEvent(ctx, event)
-			if err != nil {
-				objectiveErr = fmt.Errorf("npcObjective[%d]: %w", eventIndex, err)
-				break
-			}
 			e.PublishObjective(updates)
-		}
-		if objectiveErr != nil {
-			break
+			if err != nil {
+				objectiveErr = errors.Join(objectiveErr, fmt.Errorf("npcObjective[%d]: %w", eventIndex, err))
+			}
 		}
 	}
 	if isPresentationPublished {

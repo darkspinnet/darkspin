@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/zone"
 	zoneboss "github.com/darkspinnet/darkspin/server/zone/boss"
 	bossraknet "github.com/darkspinnet/darkspin/server/zone/boss/raknet103"
+	zonecheckpoint "github.com/darkspinnet/darkspin/server/zone/checkpoint"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
@@ -77,10 +79,53 @@ func (e *campaignBossIntroPublication) commit() {
 		return
 	}
 	isCommitted := e.zone.NPCs().CommitPublishedIntroduction(e.plan.ObjectID, e.timelineGeneration, e.runtime.now(), e.stage)
-	if !isCommitted || e.stage != zonenpc.IntroductionBossActive {
+	if !isCommitted {
 		return
 	}
-	e.zone.PublishNPCAction(zonenpc.ActionEvent{Kind: zonenpc.ActionEventBossActive, Plan: e.plan}, e.owner.UserID, e.owner.PeerGeneration)
+	if e.stage == zonenpc.IntroductionBossActive {
+		e.zone.PublishNPCAction(zonenpc.ActionEvent{Kind: zonenpc.ActionEventBossActive, Plan: e.plan}, e.owner.UserID, e.owner.PeerGeneration)
+	}
+	e.zone.SaveCheckpoint(zonecheckpoint.ReasonIntroductionProgress)
+}
+
+// Entrance completion is independent of whether its first combat action can
+// find a target or produce bytes. This explicit native activation is admitted
+// at the authored deadline, before the separate first-attack producer.
+type campaignNPCIntroductionCompleteStep struct {
+	runtime    campaignNPCActionRuntime
+	zone       *zone.Zone
+	sessionKey string
+	generation uint64
+	plan       zonenpc.FirstActionPlan
+	readyAt    time.Time
+}
+
+func (e campaignNPCIntroductionCompleteStep) produce() ([][]byte, error) {
+	e.runtime.registry.mutex.RLock()
+	defer e.runtime.registry.mutex.RUnlock()
+	member, isFound := e.runtime.registry.sessions[e.sessionKey]
+	if !isFound || member.generation != e.generation || member.zone != e.zone ||
+		member.isZoneTerminal() || e.runtime.now().Before(e.readyAt) {
+		return nil, nil
+	}
+	npc, isNPCFound := e.zone.NPCs().NPC(e.plan.ObjectID)
+	owner := zonenpc.ActionOwner{UserID: member.binding.UserID, PeerGeneration: member.generation}
+	if !isNPCFound || npc.IsDefeated || npc.HitPoint <= 0 || !npc.IsActionStarted ||
+		npc.ActionOwner != owner || npc.ActionGeneration != e.plan.ActionGeneration || !npc.IsIntroductionPending() {
+		return nil, nil
+	}
+	attackerCount := uint32(0)
+	if npc.TargetObjectID != 0 {
+		attackerCount = 1
+	}
+	packet, err := raknet.MarshalApplication(raknet.AgentBlackboardUpdateMessage{
+		ObjectID: npc.Plan.ObjectID, TargetID: npc.TargetObjectID,
+		IsTargetable: true, IsInCombat: npc.TargetObjectID != 0, AttackerCount: attackerCount,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("introCompleteMarshal: %w", err)
+	}
+	return [][]byte{packet}, nil
 }
 
 func (e campaignBossIntroStep) produce() ([][]byte, error) {

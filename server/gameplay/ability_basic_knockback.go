@@ -10,6 +10,9 @@ import (
 )
 
 func (e campaignDamageRuntime) applyBasicKnockbackLocked(sessionKey string, peerSession *gameplayPeerSession, target zonenpc.Snapshot, timestamp uint64) ([][]byte, error) {
+	if target.IsMutationKnockbackImmune() {
+		return nil, nil
+	}
 	if peerSession.zone.NPCs().RootRemaining(target.Plan.ObjectID, e.npc.now()) > 0 {
 		return nil, nil
 	}

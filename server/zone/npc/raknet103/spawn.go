@@ -3,6 +3,7 @@ package raknet103
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
@@ -18,7 +19,56 @@ func Spawn(plan zonenpc.SpawnPlan) ([][]byte, error) {
 	return spawn(plan, false)
 }
 
+// SpawnSnapshot seeds the new client's animation component before its first
+// update. Native bootstrap seeks from these reflected state/time fields.
+func SpawnSnapshot(snapshot zonenpc.Snapshot, now time.Time, sourceTime uint64) ([][]byte, error) {
+	animationName, elapsed, isPlaying := snapshot.IntroductionAnimation(now)
+	if snapshot.IsPublished && !snapshot.IsDefeated && snapshot.HitPoint > 0 &&
+		snapshot.Mutation.Transform.IsActive && now.Before(snapshot.Mutation.Transform.CompleteAt) {
+		animationName = "npc_mutationagent_infected_grow"
+		elapsed = max(time.Duration(0), now.Sub(snapshot.Mutation.Transform.CompleteAt.Add(-zonenpc.MutationAgentTransformDuration)))
+		isPlaying = true
+	}
+	elapsedMilliseconds := uint64(elapsed / time.Millisecond)
+	reflection := raknet.ObjectReflection{}
+	if isPlaying {
+		animationState := util.HashID(animationName)
+		// Both clients subtract clock origins then FILD the signed 64-bit
+		// result. Preserve that bit pattern for starts before a fresh uptime.
+		animationTime := sourceTime - elapsedMilliseconds
+		if animationTime != 0 {
+			// Zero bypasses native clock conversion and cannot encode a mapped
+			// epoch start. Keep the ordinary baseline for that exact sentinel.
+			reflection.LastAnimationState = &animationState
+			reflection.LastAnimationPlayMilliseconds = &animationTime
+		}
+	}
+	packets, err := spawnWithAnimation(snapshot.FacingSpawnPlan(), false, reflection)
+	if err != nil {
+		return nil, fmt.Errorf("snapshotSpawn: %w", err)
+	}
+	if bodyScale := snapshot.MutationBodyScale(); bodyScale != snapshot.Plan.PermanentBodyScale() {
+		packet, scaleErr := raknet.MarshalApplication(raknet.AttributeDataUpdateMessage{
+			ObjectID: snapshot.Plan.ObjectID,
+			Value:    map[uint8]float32{uint8(game.AttributeBodyScale): bodyScale},
+		})
+		if scaleErr != nil {
+			return nil, fmt.Errorf("snapshotScale: %w", scaleErr)
+		}
+		packets = append(packets, packet)
+	}
+	return packets, nil
+}
+
 func spawn(plan zonenpc.SpawnPlan, isRemnant bool) ([][]byte, error) {
+	packets, err := spawnWithAnimation(plan, isRemnant, raknet.ObjectReflection{})
+	if err != nil {
+		return nil, fmt.Errorf("spawnAnimation: %w", err)
+	}
+	return packets, nil
+}
+
+func spawnWithAnimation(plan zonenpc.SpawnPlan, isRemnant bool, reflection raknet.ObjectReflection) ([][]byte, error) {
 	if !isRemnant {
 		plan = zonenpc.WithPendingIntroduction(plan)
 	}
@@ -91,6 +141,21 @@ func spawn(plan zonenpc.SpawnPlan, isRemnant bool) ([][]byte, error) {
 			Rotation: vector(plan.Rotation),
 			Team:     0, OwnerID: plan.OwnerObjectID,
 			IsCollisionEnabled: profile.IsTargetable,
+		}
+	}
+	if reflection.LastAnimationState != nil {
+		nounID := util.HashID(plan.NounName)
+		position := vector(clientPosition)
+		rotation := vector(plan.Rotation)
+		assetID := uint64(0)
+		team := uint8(0)
+		isPlayerControlled := false
+		reflection.Position = &position
+		createMessage = raknet.ObjectCreateContractMessage{
+			ObjectID: plan.ObjectID, Noun: &nounID, Position: &position, Rotation: &rotation,
+			AssetID: &assetID, Scale: &runtimeScale, Team: &team,
+			IsCollisionEnabled: &profile.IsTargetable, IsPlayerControlled: &isPlayerControlled,
+			Object: reflection,
 		}
 	}
 	messages := []raknet.ApplicationMessage{
@@ -211,7 +276,7 @@ func spawn(plan zonenpc.SpawnPlan, isRemnant bool) ([][]byte, error) {
 		})
 	}
 	if plan.Introduction == zonenpc.SpawnIntroductionDormant &&
-		isActionKnown && actionProfile.PreAggroAnimationName != "" {
+		isActionKnown && actionProfile.PreAggroAnimationName != "" && reflection.LastAnimationState == nil {
 		messages = append(messages, raknet.SetAnimationStateMessage{
 			ObjectID: plan.ObjectID,
 			State:    util.HashID(actionProfile.PreAggroAnimationName),

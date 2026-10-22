@@ -138,10 +138,13 @@ func NewLevel(
 // Build103CompatibilitySelection names the current server-authority fallback
 // explicitly. No recovered level binding proves this ordered draw; it remains
 // a compatibility policy until content-backed pool selection is available.
+// The appended families are supported ordinary Default pool members, not
+// a reconstruction of the native chooser's count, random draw or ordering.
 func Build103CompatibilitySelection(
 	inputs []sim.LuaObjectiveInput, objects []game.CampaignScriptObject,
 ) ([]Selection, error) {
 	interactableCount := LootInteractableCount(objects)
+	healthInteractableCount := HealthInteractableCount(objects)
 	inputsByID := make(map[uint32]sim.LuaObjectiveInput, len(inputs))
 	for index := range inputs {
 		objectiveID := inputs[index].ObjectiveID
@@ -155,10 +158,14 @@ func Build103CompatibilitySelection(
 	objectiveIDs := []uint32{
 		finishLevelQuicklyID, damageOftenID, ObeliskID,
 		defeatAllMonstersID, hugeDamageID,
+		stayAliveID, healthObeliskID, LootCrystalsID,
 	}
 	selection := make([]Selection, 0, len(objectiveIDs))
 	for _, objectiveID := range objectiveIDs {
 		if objectiveID == ObeliskID && interactableCount == 0 {
+			continue
+		}
+		if objectiveID == healthObeliskID && healthInteractableCount == 0 {
 			continue
 		}
 		selected, isFound := inputsByID[objectiveID]
@@ -169,6 +176,9 @@ func Build103CompatibilitySelection(
 		}
 		if objectiveID == ObeliskID {
 			selected.InteractableCount = interactableCount
+		}
+		if objectiveID == healthObeliskID {
+			selected.HealthInteractableCount = healthInteractableCount
 		}
 		selection = append(selection, Selection{
 			Input: selected, InitialStatus: CompatibilityInitialStatus,
@@ -199,6 +209,10 @@ func NewSelected(
 		}
 		if _, isDuplicate := runtime[objectiveID]; isDuplicate {
 			return nil, nil, fmt.Errorf("campaignObjectiveDuplicate[%d]: %#x", index, objectiveID)
+		}
+		err := ValidateRuntimeInput(selected.Input)
+		if err != nil {
+			return nil, nil, fmt.Errorf("campaignObjectiveAdmission[%d]: %w", index, err)
 		}
 		objectiveRuntime, initializer, err := sim.NewLuaObjectiveRuntime(selected.Input)
 		if err != nil {
@@ -304,6 +318,16 @@ func LootInteractableCount(objects []game.CampaignScriptObject) int {
 	count := 0
 	for _, object := range objects {
 		if object.InteractableAbility == "InteractWithObelisk" {
+			count++
+		}
+	}
+	return count
+}
+
+func HealthInteractableCount(objects []game.CampaignScriptObject) int {
+	count := 0
+	for _, object := range objects {
+		if object.InteractableAbility == "InteractHealthObelisk" {
 			count++
 		}
 	}

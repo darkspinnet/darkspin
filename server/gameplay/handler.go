@@ -2529,22 +2529,25 @@ func (r gameplayPendingRuntime) retireCanceledTransport(packet raknet.Packet) {
 	)
 }
 
-func (r gameplayPendingRuntime) poll(
+func (r gameplayPendingRuntime) pollWorld(
 	ctx context.Context, packet raknet.Packet,
 ) ([][]byte, error) {
-	if !r.registry.beginRequest() {
-		return nil, errors.New("gameplay registry closed")
-	}
-	defer r.registry.endRequest()
-	if packet.Address == nil {
-		return nil, errors.New("pending poll: nil address")
-	}
 	r.persistOverdriveUnlock(ctx, packet.Address.String())
 	r.registry.mutex.RLock()
 	peerSession, isFound := r.registry.sessions[packet.Address.String()]
 	isRejoinNeeded := isFound && peerSession.isRejoinPending &&
 		peerSession.stage.IsDungeon() && peerSession.zone != nil
 	r.registry.mutex.RUnlock()
+	if isFound && peerSession.zone != nil {
+		questErr := r.publishQuestCrystals(ctx, packet, packet.Address.String())
+		if questErr != nil && r.logger != nil {
+			r.logger.Printf("Quest crystal delivery retained: %v", questErr)
+		}
+		recoveryErr := r.damage.npc.recoverCorruptorSecondAggro(packet.Address.String(), peerSession.generation, packet.SourceTime)
+		if recoveryErr != nil {
+			return nil, fmt.Errorf("corruptorRecovery: %w", recoveryErr)
+		}
+	}
 	if isRejoinNeeded {
 		packets, err := r.setup.publishRejoin(packet, peerSession)
 		if err != nil {
@@ -2567,7 +2570,11 @@ func (r gameplayPendingRuntime) poll(
 		// World packets must wait until the fresh client can consume a baseline.
 		return nil, nil
 	}
-	err := r.pollOperativeCages(packet)
+	err := r.action.overdrive.reconcilePresentation(packet)
+	if err != nil {
+		return nil, fmt.Errorf("overdrivePoll: %w", err)
+	}
+	err = r.pollOperativeCages(packet)
 	if err != nil {
 		return nil, fmt.Errorf("operativePoll: %w", err)
 	}
@@ -2655,7 +2662,7 @@ func (r gameplayPendingRuntime) poll(
 				return nil, fmt.Errorf("fungusPoll: %w", fungusErr)
 			}
 			rootHazardPackets = append(rootHazardPackets, fungusPackets...)
-			mutationPackets, mutationErr := r.pollMutationAgentsLocked(&peerSession)
+			mutationPackets, mutationErr := r.pollMutationAgentsLocked(&peerSession, packet.SourceTime)
 			if mutationErr != nil {
 				r.registry.mutex.Unlock()
 				return nil, fmt.Errorf("mutationPoll: %w", mutationErr)
@@ -2681,7 +2688,43 @@ func (r gameplayPendingRuntime) poll(
 	rootHazardPackets = append(rootHazardPackets, landingPackets...)
 	rootHazardPackets = append(rootHazardPackets, pickupPursuitPackets...)
 	rootHazardPackets = append(rootHazardPackets, triggerPackets...)
+	overdriveErr := r.registry.refreshOverdriveFramesLocked(&peerSession, r.now())
+	if overdriveErr != nil {
+		r.registry.sessions[packet.Address.String()] = peerSession
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("overdrivePending: %w", overdriveErr)
+	}
+	questErr := r.registry.refreshQuestFramesLocked(&peerSession, r.now(), packet.SourceTime)
+	if questErr != nil {
+		r.registry.sessions[packet.Address.String()] = peerSession
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("questPending: %w", questErr)
+	}
+	mutationErr := r.registry.refreshMutationElitesLocked(&peerSession)
+	if mutationErr != nil {
+		r.registry.sessions[packet.Address.String()] = peerSession
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("mutationPending: %w", mutationErr)
+	}
+	mutationStageErr := r.registry.refreshMutationEventsLocked(&peerSession, r.now(), packet.SourceTime)
+	if mutationStageErr != nil {
+		r.registry.sessions[packet.Address.String()] = peerSession
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("mutationStagePending: %w", mutationStageErr)
+	}
+	mutationFeedbackErr := r.registry.refreshMutationFeedbackLocked(&peerSession)
+	if mutationFeedbackErr != nil {
+		r.registry.sessions[packet.Address.String()] = peerSession
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("mutationFeedbackPending: %w", mutationFeedbackErr)
+	}
+	pendingBatchCount := len(peerSession.pendingPacketBatches)
 	queuedPackets, pendingPacketBatchID := peerSession.pendingPackets()
+	overdriveFrames := peerSession.pendingOverdriveFrames(pendingPacketBatchID)
+	questFrames := peerSession.pendingQuestFrames(pendingPacketBatchID)
+	mutationElites := peerSession.pendingMutationElites(pendingPacketBatchID)
+	mutationEvents := peerSession.pendingMutationEvents(pendingPacketBatchID)
+	mutationFeedbacks := peerSession.pendingMutationFeedbacks(pendingPacketBatchID)
 	if len(queuedPackets) != 0 {
 		peerSession.pendingPacketResponseTraceID = packet.TraceID
 	}
@@ -2702,7 +2745,8 @@ func (r gameplayPendingRuntime) poll(
 	if isArenaTransitionRetry || isArenaPreparationRetry {
 		peerSession.arenaLobbyTransitionAt = r.now()
 	}
-	if isFound && (len(queuedPackets) != 0 || len(queuedStatDeltas) != 0 || isPendingPacketOverflow ||
+	if isFound && (len(peerSession.pendingPacketBatches) != pendingBatchCount ||
+		len(queuedPackets) != 0 || len(queuedStatDeltas) != 0 || isPendingPacketOverflow ||
 		isArenaTransitionRetry || isArenaPreparationRetry) {
 		r.registry.sessions[packet.Address.String()] = peerSession
 	}
@@ -2749,18 +2793,16 @@ func (r gameplayPendingRuntime) poll(
 		}
 	}
 	if len(queuedPackets) != 0 {
-		err := packet.AfterResponseCommit(func() {
-			r.registry.mutex.Lock()
-			currentSession, isCurrent := r.registry.sessions[packet.Address.String()]
-			if isCurrent && currentSession.transportGeneration == packet.TransportGeneration {
-				currentSession.commitPendingPackets(pendingPacketBatchID)
-				r.registry.sessions[packet.Address.String()] = currentSession
-				r.registry.commitPlasmaWreathPublicationsLocked()
-				r.registry.commitOmniShieldRemovalsLocked()
-				r.registry.commitChannelRemovalsLocked()
-			}
-			r.registry.mutex.Unlock()
-		})
+		delivery := campaignProjectionDelivery{
+			registry: r.registry, sessionKey: packet.Address.String(),
+			generation: peerSession.generation, transportGeneration: packet.TransportGeneration,
+			batchID: pendingPacketBatchID, overdriveFrames: overdriveFrames,
+			questFrames:       questFrames,
+			mutationElites:    mutationElites,
+			mutationEvents:    mutationEvents,
+			mutationFeedbacks: mutationFeedbacks,
+		}
+		err := packet.AfterResponseCommit(delivery.commit)
 		if err != nil {
 			return nil, fmt.Errorf("pendingCommit: %w", err)
 		}
@@ -2842,14 +2884,6 @@ func (r gameplayPendingRuntime) poll(
 	}
 	if len(responses) != 0 {
 		return responses, nil
-	}
-	combatPackets, err := r.heroCombatPackets(packet)
-	if err != nil {
-		return nil, fmt.Errorf("heroCombatPoll: %w", err)
-	}
-	projected = append(projected, combatPackets...)
-	if len(projected) != 0 {
-		return projected, nil
 	}
 	responses, _, err = r.consumePlayerResourceCommand(ctx, packet)
 	if err != nil {
@@ -3457,13 +3491,9 @@ func (r gameplayPendingRuntime) spawnDeveloperNPC(
 		plan.BossIdentity = bossIdentity
 	}
 	if strings.EqualFold(command.NounName, zonenpc.MutationAgentNounName) {
-		bodyNounName, isBodyFound := developerMutationAgentBodyNoun(director)
-		if !isBodyFound {
-			r.registry.mutex.Unlock()
-			return nil, false, errors.New("npcSpawnMutationBody: unavailable")
-		}
-		plan.NounName = bodyNounName
-		plan.AuthoredNounName = command.NounName
+		// The agent owns its class rank and smoke-model presentation. A
+		// minion body changes its identity and bypasses mutation admission.
+		plan.NounName = zonenpc.MutationAgentNounName
 		plan.ActionProfile = zonenpc.MutationAgentActionProfile()
 		plan.IsActionKnown = true
 	}
@@ -3514,31 +3544,6 @@ func (r gameplayPendingRuntime) spawnDeveloperNPC(
 		plan.ObjectID, command.NounName, plan.NounName, packet.Address,
 	)
 	return packets, true, nil
-}
-
-func developerMutationAgentBodyNoun(
-	director game.CampaignDirector,
-) (string, bool) {
-	entries := zonepopulation.PoolEntries(director, "minion")
-	for _, entry := range entries {
-		if strings.EqualFold(entry.NounName, zonenpc.MutationAgentNounName) ||
-			!entry.NPCProfile.IsKnown || !entry.NPCProfile.IsTargetable ||
-			entry.NPCProfile.HitPoint <= 0 {
-			continue
-		}
-		return entry.NounName, true
-	}
-	for _, pool := range director.Pools {
-		for _, entry := range pool.Entries {
-			if strings.EqualFold(entry.NounName, zonenpc.MutationAgentNounName) ||
-				!entry.NPCProfile.IsKnown || !entry.NPCProfile.IsTargetable ||
-				entry.NPCProfile.HitPoint <= 0 {
-				continue
-			}
-			return entry.NounName, true
-		}
-	}
-	return "", false
 }
 
 func developerNPCProfile(

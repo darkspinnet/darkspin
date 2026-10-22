@@ -88,13 +88,16 @@ func (s *Session) ApplyOozeGrowth(
 	target.status.oozeGrowthStack++
 	stackScale := float32(target.status.oozeGrowthStack)
 	target.status.oozeGrowthDamageIncrease = 0.25 * stackScale
-	target.Plan.NPCProfile.HitPoint = baseMaximumHitPoint * (1 + 0.25*stackScale)
+	permanentMultiplier := target.Plan.permanentHealthMultiplier()
+	unmodifiedMaximumHitPoint := baseMaximumHitPoint / permanentMultiplier
+	target.Plan.NPCProfile.HitPoint = unmodifiedMaximumHitPoint * (permanentMultiplier + 0.25*stackScale)
 	if target.status.oozeBaseGraphicsScale > 0 {
 		target.Plan.NPCProfile.GraphicsScale =
 			target.status.oozeBaseGraphicsScale * (1 + 0.1*stackScale)
 	}
 	healedAmount := target.Plan.NPCProfile.HitPoint - previousMaximumHitPoint
 	target.HitPoint += healedAmount
+	captureMutationGrowth(&target)
 	s.npcs[targetObjectID] = target
 	return OozeGrowthResult{
 		Target: target, StackCount: target.status.oozeGrowthStack,

@@ -21,10 +21,13 @@ type completionResult struct {
 }
 
 type Session struct {
-	mu       sync.Mutex
-	state    *sim.ObjectiveState
-	runtimes map[uint32]*sim.LuaObjectiveRuntime
-	initials []sim.ObjectiveSnapshot
+	mu            sync.Mutex
+	state         *sim.ObjectiveState
+	runtimes      map[uint32]*sim.LuaObjectiveRuntime
+	initials      []sim.ObjectiveSnapshot
+	pendingDrops  []DropRequest
+	pendingEvents []sim.LuaObjectiveEvent
+	nextDropID    uint64
 }
 
 // Update is one immutable, protocol-independent objective projection.
@@ -143,6 +146,9 @@ func (s *Session) Restore(snapshots []sim.ObjectiveSnapshot) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.runtimes[LootCrystalsID] != nil {
+		return errors.New("quest restore requires outbox state")
+	}
 	err := s.state.Restore(snapshots)
 	if err != nil {
 		return fmt.Errorf("objectiveRestore: %w", err)
@@ -161,6 +167,13 @@ func (s *Session) Apply(
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if objectiveID == LootCrystalsID {
+		updates, err := s.applyQuestEvent(ctx, event)
+		if err != nil {
+			return updates, fmt.Errorf("questApply: %w", err)
+		}
+		return updates, nil
+	}
 	return ApplyState(ctx, s.state, s.runtimes, objectiveID, event)
 }
 
@@ -186,18 +199,29 @@ func (s *Session) ApplyEvent(
 		return objectiveIDs[left] < objectiveIDs[right]
 	})
 	updates := make([]Update, 0)
+	eventErrors := make([]error, 0)
+	if s.runtimes[LootCrystalsID] != nil && event.Kind == sim.LuaObjectiveEventDeath {
+		current, err := s.applyQuestEvent(ctx, event)
+		updates = append(updates, current...)
+		if err != nil {
+			eventErrors = append(eventErrors, fmt.Errorf("questDelivery: %w", err))
+		}
+	}
 	for _, objectiveID := range objectiveIDs {
+		if objectiveID == LootCrystalsID {
+			continue
+		}
 		objectiveRuntime := s.runtimes[objectiveID]
 		if objectiveRuntime == nil || !objectiveRuntime.IsEventSubscriber() {
 			continue
 		}
 		current, err := ApplyState(ctx, s.state, s.runtimes, objectiveID, event)
 		if err != nil {
-			return nil, fmt.Errorf("objectiveApply[%#x]: %w", objectiveID, err)
+			eventErrors = append(eventErrors, fmt.Errorf("objectiveApply[%#x]: %w", objectiveID, err))
 		}
 		updates = append(updates, current...)
 	}
-	return updates, nil
+	return updates, errors.Join(eventErrors...)
 }
 
 // Invoke calls one proven custom callback on a selected packaged objective.
@@ -208,10 +232,20 @@ func (s *Session) Invoke(
 		return nil, errors.New("objective invoke: nil context")
 	}
 	if s == nil || s.state == nil || len(s.runtimes) == 0 {
+		if objectiveID == LootCrystalsID {
+			return nil, errors.New("quest crystal objective unavailable")
+		}
 		return nil, nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if objectiveID == LootCrystalsID {
+		updates, err := s.invokeQuestCallback(ctx, callbackName)
+		if err != nil {
+			return updates, fmt.Errorf("questInvoke: %w", err)
+		}
+		return updates, nil
+	}
 	objectiveRuntime := s.runtimes[objectiveID]
 	if objectiveRuntime == nil {
 		return nil, nil
@@ -308,6 +342,10 @@ func (s *Session) Complete(
 	results := make([]completionResult, 0, len(snapshots)*4)
 	completionErrors := make([]error, 0)
 	for _, snapshot := range snapshots {
+		if snapshot.ObjectiveID == LootCrystalsID && len(s.pendingEvents) != 0 {
+			completionErrors = append(completionErrors, errors.New("quest completion has pending events"))
+			continue
+		}
 		objectiveRuntime := s.runtimes[snapshot.ObjectiveID]
 		if objectiveRuntime == nil {
 			completionErrors = append(completionErrors, fmt.Errorf(
@@ -433,6 +471,9 @@ func ApplyState(
 ) ([]Update, error) {
 	if ctx == nil {
 		return nil, errors.New("objective apply: nil context")
+	}
+	if objectiveID == LootCrystalsID {
+		return nil, errors.New("quest objective requires session outbox")
 	}
 	if state == nil || len(runtimes) == 0 {
 		return nil, nil

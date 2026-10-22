@@ -22,6 +22,7 @@ type heroHitPoisonKey struct {
 }
 
 type heroHitPoisonRun struct {
+	activationID   uint64
 	modifier       *campaignNPCModifierRun
 	binding        game.GameplayBinding
 	creature       game.GameplayCreature
@@ -106,7 +107,7 @@ func (e heroHitPoisonStep) produce() ([][]byte, error) {
 		e.packet, e.sessionKey, e.generation, e.run.sourceObjectID,
 		e.timestamp, e.run.binding,
 		[]zoneability.AreaResult{{
-			Snapshot: target, Damage: damageResult, Definition: tickDefinition,
+			ActivationID: e.run.activationID, Snapshot: target, Damage: damageResult, Definition: tickDefinition,
 		}}, []campaignDamageTransition{transition}, nil, false,
 	)
 	if err != nil {
@@ -197,10 +198,14 @@ func (e campaignDamageRuntime) applyHeroHitPoison(
 			)
 		}
 	}
-	previousRevision := run.revision
-	previousCompletedTick := run.completedTick
-	previousCancel := run.cancel
+	// The existing run owns one coherent initiator snapshot. A rejected
+	// refresh must restore its stats and definition together with its token.
+	previousRun := *run
 	run.binding = peerSession.binding
+	run.activationID = result.ActivationID
+	if run.activationID == 0 {
+		run.activationID = e.activationID
+	}
 	run.creature = peerSession.binding.Creatures[peerSession.deployedCreatureIndex]
 	run.definition = definition
 	run.sourceObjectID = sourceObjectID
@@ -222,8 +227,7 @@ func (e campaignDamageRuntime) applyHeroHitPoison(
 	if err != nil {
 		e.rollbackHeroHitPoison(
 			sessionKey, generation, key, run, isNew,
-			previousRevision, revision, previousCancel,
-			previousCompletedTick,
+			previousRun, revision,
 		)
 		return nil, fmt.Errorf("hitPoisonCreate: %w", err)
 	}
@@ -244,10 +248,12 @@ func (e campaignDamageRuntime) applyHeroHitPoison(
 		scheduleErr = errors.New("nil cancellation")
 	}
 	if scheduleErr != nil {
+		if cancel != nil {
+			cancel()
+		}
 		e.rollbackHeroHitPoison(
 			sessionKey, generation, key, run, isNew,
-			previousRevision, revision, previousCancel,
-			previousCompletedTick,
+			previousRun, revision,
 		)
 		return nil, fmt.Errorf("hitPoisonSchedule: %w", scheduleErr)
 	}
@@ -264,8 +270,8 @@ func (e campaignDamageRuntime) applyHeroHitPoison(
 		cancel()
 		return nil, nil
 	}
-	if previousCancel != nil {
-		previousCancel()
+	if previousRun.cancel != nil {
+		previousRun.cancel()
 	}
 	if isNew {
 		run.modifier.create()
@@ -276,9 +282,7 @@ func (e campaignDamageRuntime) applyHeroHitPoison(
 func (e campaignDamageRuntime) rollbackHeroHitPoison(
 	sessionKey string, generation uint64, key heroHitPoisonKey,
 	run *heroHitPoisonRun, isNew bool,
-	previousRevision uint64, revision uint64,
-	previousCancel raknet.CancelSchedule,
-	previousCompletedTick uint32,
+	previousRun heroHitPoisonRun, revision uint64,
 ) {
 	e.registry.mutex.Lock()
 	peerSession, isFound := e.registry.sessions[sessionKey]
@@ -288,14 +292,20 @@ func (e campaignDamageRuntime) rollbackHeroHitPoison(
 		if isNew {
 			peerSession.removeHeroHitPoison(key, run)
 		} else {
-			run.revision = previousRevision
-			run.cancel = previousCancel
-			run.completedTick = previousCompletedTick
+			*run = previousRun
 		}
 		e.registry.sessions[sessionKey] = peerSession
 	}
 	e.registry.mutex.Unlock()
 	if isNew && isCurrent {
-		_, _ = run.modifier.release(e.npc.modifierPool)
+		isCreated, releaseErr := run.modifier.release(e.npc.modifierPool)
+		if releaseErr != nil && e.logger != nil {
+			e.logger.Printf("Poison Nova rejected child release failed: %v", releaseErr)
+		}
+		if isCreated && e.logger != nil {
+			// Admission failed before returning the create packet; an already
+			// published flag is an ownership invariant violation.
+			e.logger.Printf("Poison Nova rejected child was already marked published target=%d", key.targetObjectID)
+		}
 	}
 }

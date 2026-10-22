@@ -30,6 +30,7 @@ type Actor struct {
 	HitPoint            float32
 	MaximumHitPoint     float32
 	DeathRevision       uint64
+	lifeRevision        uint64
 	BodyScale           float32
 	IsTargetable        bool
 	IsCombatant         bool
@@ -41,6 +42,9 @@ type Actor struct {
 	PursuitObjectID     uint32
 	PursuitPosition     game.Vec3
 	PursuitRevision     uint64
+	pursuitSource       game.Vec3
+	pursuitStartedAt    time.Time
+	pursuitDeadline     time.Time
 	CooldownEnd         time.Time
 	AttackReleaseEnd    time.Time
 	DamageBuff          float32
@@ -56,6 +60,9 @@ type Actor struct {
 	followStartedAt     time.Time
 	followDeadline      time.Time
 	followHoldUntil     time.Time
+	cinematicUntil      time.Time
+	cinematicRevision   uint64
+	cinematicHolds      map[uint64]time.Time
 }
 
 type Buff struct {
@@ -105,12 +112,17 @@ type Pursuit struct {
 }
 
 type Session struct {
-	actorFootprints map[uint32]game.NavigationFootprint
-	mu              sync.RWMutex
-	actors          map[uint32]Actor
-	pursuitRevision uint64
-	followRevision  uint64
-	motionRevision  uint64
+	actorFootprints   map[uint32]game.NavigationFootprint
+	mu                sync.RWMutex
+	actors            map[uint32]Actor
+	pursuitRevision   uint64
+	followRevision    uint64
+	motionRevision    uint64
+	cinematicRevision uint64
+	npcTypesByNoun    map[uint32]uint32
+	actorRevisions    map[uint32]uint64
+	retainedActors    map[uint32]Actor
+	lifeRevision      uint64
 }
 
 func NewSession() *Session {
@@ -118,6 +130,25 @@ func NewSession() *Session {
 }
 
 func (e *Session) Put(actor Actor) error {
+	err := e.put(actor, false)
+	if err != nil {
+		return fmt.Errorf("actorPut: %w", err)
+	}
+	return nil
+}
+
+// RestoreRetained restores a server-owned snapshot after transient summon
+// teardown. A replacement admitted since capture invalidates its life token.
+func (e *Session) RestoreRetained(actor Actor) error {
+	err := e.put(actor, true)
+	if err != nil {
+		e.discardRetained(actor)
+		return fmt.Errorf("retainedPut: %w", err)
+	}
+	return nil
+}
+
+func (e *Session) put(actor Actor, isRetained bool) error {
 	if e == nil {
 		return errors.New("nil companion session")
 	}
@@ -148,6 +179,27 @@ func (e *Session) Put(actor Actor) error {
 		}
 	}
 	current, isFound := e.actors[actor.ObjectID]
+	if isRetained {
+		retained, isCaptured := e.retainedActors[actor.ObjectID]
+		if !isCaptured || retained.lifeRevision != actor.lifeRevision {
+			return errors.New("retained companion capture stale")
+		}
+		if isFound {
+			if current.lifeRevision != actor.lifeRevision {
+				return errors.New("retained companion replacement")
+			}
+			actor = current
+		} else {
+			actor = retained
+		}
+	}
+	if isRetained && (actor.lifeRevision == 0 ||
+		e.actorRevisions[actor.ObjectID] != actor.lifeRevision ||
+		(isFound && (!current.sameCinematicActor(actor) ||
+			(current.HitPoint <= 0 && actor.HitPoint > 0) ||
+			current.lifeRevision != actor.lifeRevision))) {
+		return errors.New("retained companion identity stale")
+	}
 	if isFound && actor.PeerGeneration < current.PeerGeneration {
 		return fmt.Errorf(
 			"companion generation stale: got %d, want >= %d",
@@ -155,13 +207,37 @@ func (e *Session) Put(actor Actor) error {
 		)
 	}
 	if isFound && actor.UserID == current.UserID &&
-		actor.PeerGeneration == current.PeerGeneration &&
 		actor.OwnerObjectID == current.OwnerObjectID && actor.Noun == current.Noun {
 		actor.DeathRevision = max(actor.DeathRevision, current.DeathRevision)
 		if current.HitPoint > 0 && actor.HitPoint == 0 {
 			actor.DeathRevision++
 		}
 	}
+	if isFound && actor.UserID == current.UserID && actor.OwnerObjectID == current.OwnerObjectID &&
+		actor.Noun == current.Noun && actor.DeathRevision == current.DeathRevision &&
+		actor.HitPoint > 0 && current.HitPoint > 0 {
+		actor.cinematicUntil = current.cinematicUntil
+		actor.cinematicRevision = current.cinematicRevision
+		actor.cinematicHolds = current.cinematicHolds
+		actor.lifeRevision = current.lifeRevision
+		if actor.PeerGeneration != current.PeerGeneration {
+			actor.lifeRevision = e.nextLifeRevision()
+		}
+		if current.IsCinematicImmobilized(time.Now()) {
+			actor.Position = current.Position
+		}
+	} else if !isRetained {
+		actor.clearCinematic()
+		actor.lifeRevision = e.nextLifeRevision()
+	}
+	if actor.HitPoint <= 0 {
+		actor.clearCinematic()
+	}
+	if e.actorRevisions == nil {
+		e.actorRevisions = make(map[uint32]uint64)
+	}
+	e.actorRevisions[actor.ObjectID] = actor.lifeRevision
+	delete(e.retainedActors, actor.ObjectID)
 	// Replacement and ownership resets cannot retain a movement reservation.
 	actor.clearFollow()
 	actor.FollowRevision = e.nextFollowRevision()
@@ -287,15 +363,19 @@ func (e *Session) SetHitPoint(
 	previous := actor
 	if actor.HitPoint > 0 && hitPoint == 0 {
 		actor.DeathRevision++
+		actor.lifeRevision = e.nextLifeRevision()
+		e.actorRevisions[objectID] = actor.lifeRevision
+		delete(e.retainedActors, objectID)
 	}
 	actor.HitPoint = hitPoint
 	if hitPoint == 0 {
+		actor.clearCinematic()
 		actor.clearFollow()
 		actor.FollowRevision = e.nextFollowRevision()
 		actor.clearPursuit()
 		actor.BodyScale = 0
 	}
-	e.actors[objectID] = actor
+	e.storeCinematicActor(actor, true)
 	return previous, actor, nil
 }
 
@@ -317,7 +397,7 @@ func (e *Session) SetMaximumHitPoint(
 	previous := actor
 	actor.MaximumHitPoint = maximumHitPoint
 	actor.HitPoint = min(actor.HitPoint, maximumHitPoint)
-	e.actors[objectID] = actor
+	e.storeCinematicActor(actor, true)
 	return previous, actor, nil
 }
 
@@ -383,7 +463,7 @@ func (e *Session) followActors(
 			actor.HitPoint <= 0 || actor.IsAbilityControlled {
 			continue
 		}
-		if at.Before(actor.followHoldUntil) {
+		if at.Before(actor.followHoldUntil) || actor.IsCinematicImmobilized(at) {
 			continue
 		}
 		actor.Position = actor.followPosition(at)
@@ -673,7 +753,7 @@ func (e *Session) ReservePursuits(
 	for objectID, actor := range e.actors {
 		actor.Position = actor.followPosition(at)
 		if !actor.IsCombatant || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
-			actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 {
+			actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 || actor.IsCinematicImmobilized(at) {
 			continue
 		}
 		var selected zonenpc.Snapshot
@@ -727,6 +807,9 @@ func (e *Session) ReservePursuits(
 		actor.PursuitObjectID = selected.Plan.ObjectID
 		actor.PursuitPosition = destination
 		actor.PursuitRevision = e.nextPursuitRevision()
+		actor.pursuitSource = source
+		actor.pursuitStartedAt = at
+		actor.pursuitDeadline = at.Add(travelDuration)
 		e.actors[objectID] = actor
 		pursuit = append(pursuit, Pursuit{
 			ObjectID: objectID, TargetObjectID: selected.Plan.ObjectID,
@@ -765,6 +848,9 @@ func (e *Session) ReserveActorPursuit(
 	at := time.Now()
 	if len(capturedTimes) > 0 {
 		at = capturedTimes[0]
+	}
+	if actor.IsCinematicImmobilized(at) {
+		return Pursuit{}, false, nil
 	}
 	actor.Position = actor.followPosition(at)
 	var selected zonenpc.Snapshot
@@ -817,6 +903,9 @@ func (e *Session) ReserveActorPursuit(
 	actor.PursuitObjectID = selected.Plan.ObjectID
 	actor.PursuitPosition = destination
 	actor.PursuitRevision = e.nextPursuitRevision()
+	actor.pursuitSource = source
+	actor.pursuitStartedAt = at
+	actor.pursuitDeadline = at.Add(travelDuration)
 	e.actors[objectID] = actor
 	return Pursuit{
 		ObjectID: objectID, TargetObjectID: selected.Plan.ObjectID,
@@ -913,6 +1002,11 @@ func (e *Session) RemoveOwner(userID uint64, peerGeneration uint64) []Actor {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	for objectID, retained := range e.retainedActors {
+		if retained.UserID == userID && retained.PeerGeneration == peerGeneration {
+			delete(e.retainedActors, objectID)
+		}
+	}
 	removed := make([]Actor, 0)
 	for objectID, actor := range e.actors {
 		if actor.UserID != userID || actor.PeerGeneration != peerGeneration {

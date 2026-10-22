@@ -7,13 +7,13 @@ import (
 	"sort"
 )
 
-const objectiveStateTableLimit = 1
+const objectiveStateTableLimit = 5
 const objectiveStateFieldLimit = 64
 const objectiveStateTextLimit = 4096
 
-// LuaObjectiveSnapshot preserves the flat private data used by the admitted
-// objective scripts independently of UI tokens. Nested tables, executable
-// closures, native functions, and inherited tables are unsupported.
+// LuaObjectiveSnapshot preserves bounded private data independently of UI
+// tokens. Table references retain shared data identities; executable closures,
+// native functions, inherited tables and cyclic graphs are unsupported.
 type LuaObjectiveSnapshot struct {
 	ObjectiveID   uint32
 	ChunkID       int64
@@ -32,12 +32,14 @@ type LuaObjectiveField struct {
 }
 
 // A snapshot without tables represents no private root, rather than an empty
-// root. A nonempty snapshot has exactly one flat private table.
+// root. A nonempty snapshot starts with its root at table index zero. Table
+// references are allowed only as field data, never as keys.
 type LuaObjectiveScalar struct {
-	Kind   string
-	Number float64
-	Text   string
-	IsTrue bool
+	Kind       string
+	Number     float64
+	Text       string
+	IsTrue     bool
+	TableIndex int
 }
 
 func (e LuaObjectiveSnapshot) Clone() LuaObjectiveSnapshot {
@@ -64,11 +66,15 @@ func (e *LuaObjectiveRuntime) SnapshotState() (LuaObjectiveSnapshot, error) {
 		return snapshot, nil
 	}
 	tables := []*luaTable{e.compiler.privateTable}
+	tableIndexes := map[*luaTable]int{e.compiler.privateTable: 0}
 	fieldCount := 0
 	for tableIndex := 0; tableIndex < len(tables); tableIndex++ {
 		table := tables[tableIndex]
 		if table.parent != nil {
 			return LuaObjectiveSnapshot{}, errors.New("objective inherited private table")
+		}
+		if len(table.fields) > objectiveStateFieldLimit-fieldCount {
+			return LuaObjectiveSnapshot{}, errors.New("objective private field limit")
 		}
 		keys := make([]luaKey, 0, len(table.fields))
 		for key := range table.fields {
@@ -99,9 +105,26 @@ func (e *LuaObjectiveRuntime) SnapshotState() (LuaObjectiveSnapshot, error) {
 				return LuaObjectiveSnapshot{}, fmt.Errorf("privateKey: %w", err)
 			}
 			field := table.fields[key]
-			data, err := snapshotObjectiveScalar(field)
-			if err != nil {
-				return LuaObjectiveSnapshot{}, fmt.Errorf("privateData: %w", err)
+			var data LuaObjectiveScalar
+			if field.kind == luaTableValue {
+				if field.table == nil {
+					return LuaObjectiveSnapshot{}, errors.New("objective nil private table")
+				}
+				targetIndex, isFound := tableIndexes[field.table]
+				if !isFound {
+					if len(tables) >= objectiveStateTableLimit {
+						return LuaObjectiveSnapshot{}, errors.New("objective private table limit")
+					}
+					targetIndex = len(tables)
+					tableIndexes[field.table] = targetIndex
+					tables = append(tables, field.table)
+				}
+				data = LuaObjectiveScalar{Kind: "table", TableIndex: targetIndex}
+			} else {
+				data, err = snapshotObjectiveScalar(field)
+				if err != nil {
+					return LuaObjectiveSnapshot{}, fmt.Errorf("privateData: %w", err)
+				}
 			}
 			fields = append(fields, LuaObjectiveField{Key: keyData, Data: data})
 		}
@@ -201,7 +224,7 @@ func (e *LuaObjectiveRuntime) restorePrivateTables(snapshot LuaObjectiveSnapshot
 			if tables[tableIndex].has(key) {
 				return errors.New("objective duplicate private key")
 			}
-			data, err := restoreObjectiveScalar(field.Data)
+			data, err := restoreObjectiveData(field.Data, tables)
 			if err != nil {
 				return fmt.Errorf("privateData[%d:%d]: %w", tableIndex, fieldIndex, err)
 			}
@@ -210,6 +233,20 @@ func (e *LuaObjectiveRuntime) restorePrivateTables(snapshot LuaObjectiveSnapshot
 	}
 	e.compiler.memoryBudget = snapshot.MemoryBudget
 	return nil
+}
+
+func restoreObjectiveData(data LuaObjectiveScalar, tables []*luaTable) (luaValue, error) {
+	if data.Kind == "table" {
+		if data.TableIndex < 0 || data.TableIndex >= len(tables) {
+			return luaValue{}, errors.New("objective private table reference invalid")
+		}
+		return tableLuaValue(tables[data.TableIndex]), nil
+	}
+	field, err := restoreObjectiveScalar(data)
+	if err != nil {
+		return luaValue{}, fmt.Errorf("dataScalar: %w", err)
+	}
+	return field, nil
 }
 
 func restoreObjectiveScalar(data LuaObjectiveScalar) (luaValue, error) {
@@ -244,8 +281,10 @@ func ValidateLuaObjectiveSnapshot(snapshot LuaObjectiveSnapshot) error {
 		return errors.New("objective private table limit")
 	}
 	textCount := 0
+	fieldCount := 0
 	for _, table := range snapshot.PrivateTables {
-		if len(table.Fields) > objectiveStateFieldLimit {
+		fieldCount += len(table.Fields)
+		if fieldCount > objectiveStateFieldLimit {
 			return errors.New("objective private field limit")
 		}
 		keys := make(map[luaKey]struct{}, len(table.Fields))
@@ -263,9 +302,18 @@ func ValidateLuaObjectiveSnapshot(snapshot LuaObjectiveSnapshot) error {
 				return errors.New("objective duplicate private key")
 			}
 			keys[key] = struct{}{}
-			_, err = restoreObjectiveScalar(field.Data)
-			if err != nil {
-				return fmt.Errorf("snapshotData[%d]: %w", index, err)
+			if field.Data.Kind == "table" {
+				if field.Data.TableIndex < 0 || field.Data.TableIndex >= len(snapshot.PrivateTables) {
+					return errors.New("objective private table reference invalid")
+				}
+			} else {
+				data, dataErr := restoreObjectiveScalar(field.Data)
+				if dataErr != nil {
+					return fmt.Errorf("snapshotData[%d]: %w", index, dataErr)
+				}
+				if data.kind == luaTableValue {
+					return errors.New("objective private scalar invalid")
+				}
 			}
 			textCount += len(field.Key.Text) + len(field.Data.Text)
 			if textCount > objectiveStateTextLimit {
@@ -273,5 +321,39 @@ func ValidateLuaObjectiveSnapshot(snapshot LuaObjectiveSnapshot) error {
 			}
 		}
 	}
+	if len(snapshot.PrivateTables) == 0 {
+		return nil
+	}
+	states := make([]uint8, len(snapshot.PrivateTables))
+	err := validateObjectiveTableGraph(snapshot.PrivateTables, 0, states)
+	if err != nil {
+		return fmt.Errorf("snapshotGraph: %w", err)
+	}
+	for _, state := range states {
+		if state == 0 {
+			return errors.New("objective unreachable private table")
+		}
+	}
+	return nil
+}
+
+func validateObjectiveTableGraph(tables []LuaObjectiveTable, tableIndex int, states []uint8) error {
+	if states[tableIndex] == 1 {
+		return errors.New("objective cyclic private table")
+	}
+	if states[tableIndex] == 2 {
+		return nil
+	}
+	states[tableIndex] = 1
+	for _, field := range tables[tableIndex].Fields {
+		if field.Data.Kind != "table" {
+			continue
+		}
+		err := validateObjectiveTableGraph(tables, field.Data.TableIndex, states)
+		if err != nil {
+			return fmt.Errorf("tableGraph[%d]: %w", tableIndex, err)
+		}
+	}
+	states[tableIndex] = 2
 	return nil
 }

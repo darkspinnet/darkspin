@@ -6,13 +6,14 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
+	"github.com/darkspinnet/darkspin/server/zone"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
 
 func (e campaignNPCActionRuntime) restartCorruptorAction(
 	packet raknet.Packet, sessionKey string, generation uint64,
-	boss zonenpc.Snapshot, timestamp uint64,
+	boss zonenpc.Snapshot, timestamp uint64, sceneGeneration uint64, world *zone.Zone,
 ) ([][]byte, error) {
 	// The old cast has been retired. Stop at the authoritative pose before
 	// starting a new action generation on the same actor.
@@ -27,12 +28,14 @@ func (e campaignNPCActionRuntime) restartCorruptorAction(
 	packets = append([][]byte{posePacket}, packets...)
 	e.registry.mutex.RLock()
 	session, isFound := e.registry.sessions[sessionKey]
-	if !isFound || session.generation != generation || session.zone == nil || session.isZoneTerminal() {
+	if !isFound || session.generation != generation || session.zone == nil || session.isZoneTerminal() ||
+		(world != nil && session.zone != world) {
 		e.registry.mutex.RUnlock()
 		return nil, nil
 	}
 	current, isNPCFound := session.zone.NPCs().NPC(boss.Plan.ObjectID)
-	if !isNPCFound || current.IsDefeated || current.ActionGeneration != boss.ActionGeneration {
+	if !isNPCFound || current.IsDefeated || current.ActionGeneration != boss.ActionGeneration ||
+		(current.IsCorruptorStageTwo && !current.IsSecondAggroCinematic(sceneGeneration)) {
 		e.registry.mutex.RUnlock()
 		return nil, nil
 	}

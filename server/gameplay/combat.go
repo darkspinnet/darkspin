@@ -194,6 +194,7 @@ type zoneNPCDeathDefinition struct {
 	isFixture                  bool
 	isBoss                     bool
 	isRemnantRetained          bool
+	isImmediateDelete          bool
 	isCollisionRetained        bool
 	isDeathAnimationSuppressed bool
 	ordinaryDeathAnimation     string
@@ -390,7 +391,7 @@ func campaignNPCDeathDefinition(
 		}
 		permanentModifierIDs = append(permanentModifierIDs, instanceID)
 	}
-	return zoneNPCDeathDefinition{
+	definition := zoneNPCDeathDefinition{
 		objectID:             snapshot.Plan.ObjectID,
 		noun:                 snapshot.Plan.NounName,
 		permanentModifierIDs: permanentModifierIDs,
@@ -413,7 +414,8 @@ func campaignNPCDeathDefinition(
 		graphicsState:          graphicsState,
 		explosionEffectName:    explosionEffectName,
 		deleteDelay:            deleteDelay,
-	}, nil
+	}
+	return withMutationAgentDeath(snapshot, definition), nil
 }
 
 type campaignShockwaveStunExpiryStep struct {
@@ -576,6 +578,13 @@ func (r campaignDamageRuntime) publishAreaResults(
 	effect func(zoneability.AreaResult) ([]byte, error), isEffectAfterDamage bool,
 ) ([][]byte, error) {
 	packets := make([][]byte, 0, len(results)*3)
+	for _, transition := range transitions {
+		err := r.npc.startCorruptorSecondAggro(transition.corruptorStageTwo, timestamp)
+		if err != nil {
+			return nil, fmt.Errorf("areaCinematic: %w", err)
+		}
+		defer r.npc.publishCorruptorSecondAggro(transition.corruptorStageTwo)
+	}
 	if len(results) == 0 {
 		return packets, nil
 	}
@@ -1096,6 +1105,7 @@ func (s campaignHordeFollowupStep) produce() ([][]byte, error) {
 }
 
 type campaignDamageRuntime struct {
+	activationID uint64
 	registry     *gameplaySessionRegistry
 	npc          campaignNPCActionRuntime
 	projection   gameplayProjectionRuntime
@@ -1729,6 +1739,11 @@ func (r campaignDamageRuntime) publishTransition(
 	packet raknet.Packet, sessionKey string, generation uint64,
 	transition campaignDamageTransition, timestamp uint64,
 ) ([][]byte, error) {
+	entryErr := r.npc.startCorruptorSecondAggro(transition.corruptorStageTwo, timestamp)
+	if entryErr != nil {
+		return nil, fmt.Errorf("transitionCinematic: %w", entryErr)
+	}
+	r.npc.publishCorruptorSecondAggro(transition.corruptorStageTwo)
 	if transition.bossStartError != nil {
 		r.logger.Printf("RakNet campaign later boss fallback skipped for %s: %v",
 			sessionKey, transition.bossStartError)
@@ -1768,40 +1783,17 @@ func (r campaignDamageRuntime) publishTransition(
 			return nil, fmt.Errorf("transitionSinkholeCleanup: %w", err)
 		}
 	}
-	if len(transition.corruptorStageTwoPlans) != 0 {
-		for index, plan := range transition.corruptorStageTwoPlans {
-			deletePacket, err := raknet.MarshalApplication(
-				raknet.ObjectDeleteMessage{ObjectID: []uint32{plan.ObjectID}},
-			)
-			if err != nil {
-				return nil, fmt.Errorf(
-					"transitionCorruptorDelete[%d]: %w", index, err,
-				)
-			}
-			spawnPackets, err := npcraknet.TargetedSpawn(
-				plan, transition.corruptorStageTwoTargetObjectID,
-			)
-			if err != nil {
-				return nil, fmt.Errorf(
-					"transitionCorruptorSpawn[%d]: %w", index, err,
-				)
-			}
-			packets = append(packets, deletePacket)
-			packets = append(packets, spawnPackets...)
-			animationPacket, err := npcraknet.AnimationState(
-				plan.ObjectID, campaignCorruptorStageTwoAnimation, timestamp,
-			)
-			if err != nil {
-				return nil, fmt.Errorf(
-					"transitionCorruptorAnimation[%d]: %w", index, err,
-				)
-			}
-			packets = append(packets, animationPacket)
-		}
-	}
 	if transition.corruptorPhaseObjectID != 0 {
+		phaseGeneration := uint64(0)
+		r.registry.mutex.RLock()
+		phaseOwner, isPhaseOwnerFound := r.registry.sessions[sessionKey]
+		if isPhaseOwnerFound && phaseOwner.generation == generation {
+			phaseGeneration = phaseOwner.campaignCorruptorStates[transition.corruptorPhaseObjectID].phaseGeneration
+		}
+		r.registry.mutex.RUnlock()
 		step := campaignCorruptorPhaseStep{
-			runtime: r.npc, packet: packet.Autonomous(), sessionKey: sessionKey,
+			phaseGeneration: phaseGeneration,
+			runtime:         r.npc, packet: packet.Autonomous(), sessionKey: sessionKey,
 			generation: generation, objectID: transition.corruptorPhaseObjectID,
 			timestamp: timestamp,
 		}
@@ -1961,33 +1953,6 @@ func (r campaignDamageRuntime) publishTransition(
 			packets = append(packets, fallbackPackets...)
 			r.logger.Printf(
 				"RakNet Pouncing Stalker resumed immediately after resurrection schedule failure: %v",
-				scheduleErr,
-			)
-		}
-	}
-	if len(transition.corruptorStageTwoPlans) != 0 {
-		plan := transition.corruptorStageTwoPlans[0]
-		step := campaignCorruptorPhaseStep{
-			runtime: r.npc, packet: packet.Autonomous(), sessionKey: sessionKey,
-			generation: generation, objectID: plan.ObjectID, isStageTwoStart: true,
-			timestamp: timestamp +
-				uint64(campaignCorruptorStageTwoDuration/time.Millisecond),
-		}
-		scheduleErr := scheduleNPCProducer(r.registry, step.packet,
-			campaignCorruptorStageTwoDuration, step.produce,
-		)
-		if scheduleErr != nil {
-			step.timestamp = timestamp
-			fallbackPackets, fallbackErr := step.produce()
-			if fallbackErr != nil {
-				return nil, fmt.Errorf(
-					"transitionCorruptorFallback: %w",
-					errors.Join(scheduleErr, fallbackErr),
-				)
-			}
-			packets = append(packets, fallbackPackets...)
-			r.logger.Printf(
-				"RakNet Corruptor stage two resumed immediately after schedule failure: %v",
 				scheduleErr,
 			)
 		}
@@ -2491,41 +2456,40 @@ func (r *campaignShieldTransitionRun) producers() []raknet.ScheduledPacketProduc
 }
 
 type campaignDamageTransition struct {
-	bossFollowupDelay               time.Duration
-	immediatePlans                  []zonenpc.SpawnPlan
-	immediatePackets                [][]byte
-	nashiraSplit                    *campaignNashiraSplitPlan
-	selfResurrectionPlans           []zonenpc.SpawnPlan
-	affixResurrectionObjectIDs      []uint32
-	corruptorStageTwoPlans          []zonenpc.SpawnPlan
-	corruptorStageTwoTargetObjectID uint32
-	corruptorPhaseObjectID          uint32
-	corruptorPortalRespawn          *campaignCorruptorPortalRespawnPlan
-	defeatedObjectID                uint32
-	fearCleanupObjectID             uint32
-	healingCleanupObjectID          uint32
-	sinkholeCleanupObjectID         uint32
-	experience                      uint32
-	hordePlans                      []zonenpc.SpawnPlan
-	hordePackets                    [][]byte
-	hordeTransition                 zonehorde.Transition
-	isTutorialHordeNextWave         bool
-	isTutorialHordeComplete         bool
-	bossPlans                       []zonenpc.SpawnPlan
-	bossPackets                     [][]byte
-	bossTransition                  zoneboss.Transition
-	bossCompletionPacket            []byte
-	bossCompletionDelay             time.Duration
-	bossStartError                  error
-	catalystUnlock                  *unlockraknet.CatalystRun
-	catalystSource                  sim.Position
-	overdriveUnlock                 *unlockraknet.Run
-	shieldObjectID                  uint32
-	shieldDuration                  time.Duration
-	turtleObjectID                  uint32
-	nocturnaTerrorSourceObjectID    uint32
-	nocturnaTerrorSourcePosition    game.Vec3
-	nocturnaRootObjectIDs           []uint32
+	bossFollowupDelay            time.Duration
+	immediatePlans               []zonenpc.SpawnPlan
+	immediatePackets             [][]byte
+	nashiraSplit                 *campaignNashiraSplitPlan
+	selfResurrectionPlans        []zonenpc.SpawnPlan
+	affixResurrectionObjectIDs   []uint32
+	corruptorStageTwo            *corruptorCinematicRun
+	corruptorPhaseObjectID       uint32
+	corruptorPortalRespawn       *campaignCorruptorPortalRespawnPlan
+	defeatedObjectID             uint32
+	fearCleanupObjectID          uint32
+	healingCleanupObjectID       uint32
+	sinkholeCleanupObjectID      uint32
+	experience                   uint32
+	hordePlans                   []zonenpc.SpawnPlan
+	hordePackets                 [][]byte
+	hordeTransition              zonehorde.Transition
+	isTutorialHordeNextWave      bool
+	isTutorialHordeComplete      bool
+	bossPlans                    []zonenpc.SpawnPlan
+	bossPackets                  [][]byte
+	bossTransition               zoneboss.Transition
+	bossCompletionPacket         []byte
+	bossCompletionDelay          time.Duration
+	bossStartError               error
+	catalystUnlock               *unlockraknet.CatalystRun
+	catalystSource               sim.Position
+	overdriveUnlock              *unlockraknet.Run
+	shieldObjectID               uint32
+	shieldDuration               time.Duration
+	turtleObjectID               uint32
+	nocturnaTerrorSourceObjectID uint32
+	nocturnaTerrorSourcePosition game.Vec3
+	nocturnaRootObjectIDs        []uint32
 }
 
 const (
@@ -2533,7 +2497,6 @@ const (
 	campaignSelfResurrectionDuration   = time.Duration(62) * time.Second / 30
 	campaignCorruptorStageTwoAnimation = "sca_boss_blink_in"
 	campaignCorruptorStageTwoNounName  = "ScaldronBoss_Stage2.Noun"
-	campaignCorruptorStageTwoDuration  = 11200 * time.Millisecond
 )
 
 type campaignBossCompletionStep struct {
@@ -2909,23 +2872,10 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 			return campaignDamageTransition{},
 				fmt.Errorf("corruptorStageTwoNoun: %w", resurrectErr)
 		}
-		profile := zonenpc.ActionProfile{
-			ImpactEffectName: "scaldronboss_transition_shader_effect.ServerEventDef",
+		transition.corruptorStageTwo, resurrectErr = s.acceptCorruptorSecondAggro(revived)
+		if resurrectErr != nil {
+			return campaignDamageTransition{}, fmt.Errorf("corruptorStageTwoAccept: %w", resurrectErr)
 		}
-		resurrectionPackets, marshalErr := npcraknet.ResurrectionHit(
-			revived.Plan.ObjectID, revived, profile,
-		)
-		if marshalErr != nil {
-			return campaignDamageTransition{},
-				fmt.Errorf("corruptorStageTwoMarshal: %w", marshalErr)
-		}
-		transition.immediatePackets = append(
-			transition.immediatePackets, resurrectionPackets...,
-		)
-		transition.corruptorStageTwoPlans = append(
-			transition.corruptorStageTwoPlans, revived.Plan,
-		)
-		transition.corruptorStageTwoTargetObjectID = revived.TargetObjectID
 	}
 	if result.IsAreaShiftStarted {
 		shiftPacket, marshalErr := raknet.MarshalApplication(
@@ -2991,12 +2941,11 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 	if result.IsDefeated && !result.IsSelfResurrectionStarted &&
 		isDefeatedNPCFound {
 		profile, isProfileFound := zonenpc.ActionProfileForPlan(defeatedNPC.Plan)
-		if defeatedNPC.Plan.NounName == zonenpc.MutationAgentNounName {
-			packets, err := mutationAgentDeathPackets(result.ObjectID)
-			if err != nil {
-				return campaignDamageTransition{}, fmt.Errorf("mutationDeath: %w", err)
+		if zonenpc.HasMutationAgentDeath(defeatedNPC.Plan) {
+			isFinished := s.zone.NPCs().FinishMutationAgentDeath(defeatedNPC)
+			if !isFinished {
+				return campaignDamageTransition{}, errors.New("mutation death life replaced")
 			}
-			transition.immediatePackets = append(transition.immediatePackets, packets...)
 		}
 		rootedHealProfile, isRootedHealer := zonenpc.VerdanthBasicHealerRootedHealProfile(
 			defeatedNPC.Plan.NounName,
@@ -3295,6 +3244,7 @@ func campaignDeathTarget(target zoneNPCDeathDefinition) deathraknet.Target {
 		IsFixture:           target.isFixture,
 		IsBoss:              target.isBoss,
 		IsRemnantRetained:   target.isRemnantRetained,
+		IsImmediateDelete:   target.isImmediateDelete,
 		IsCollisionRetained: target.isCollisionRetained,
 		DeleteDelay:         target.deleteDelay,
 	}
@@ -3584,6 +3534,10 @@ func (d campaignDeathDeadline) execute() {
 func (r campaignDeathRuntime) schedule(
 	zone *zone.Zone, objectID uint32, run *deathraknet.Run,
 ) error {
+	if run != nil && run.State().IsMarkedForDeletion {
+		run.Stop()
+		return nil
+	}
 	if r.timer == nil || zone == nil || zone.Death() == nil {
 		return errors.New("campaign death timer unavailable")
 	}
@@ -3625,6 +3579,10 @@ func (r campaignNPCActionRuntime) scheduleEnemyDeath(
 	packet raknet.Packet, sessionKey string, generation uint64,
 	targetID uint32, run *deathraknet.Run,
 ) error {
+	if run != nil && run.State().IsMarkedForDeletion {
+		run.Stop()
+		return nil
+	}
 	r.registry.mutex.RLock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation
@@ -3841,14 +3799,15 @@ func (r campaignNPCActionRuntime) retireEnemyDeath(
 }
 
 type campaignPlasmaModifierRun struct {
-	modifier  *campaignNPCModifierRun
-	kind      zoneability.PlasmaModifierKind
-	targetID  uint32
-	expiresAt time.Time
-	cancel    raknet.CancelSchedule
-	creature  game.GameplayCreature
-	sourceID  uint32
-	tick      time.Duration
+	activationID uint64
+	modifier     *campaignNPCModifierRun
+	kind         zoneability.PlasmaModifierKind
+	targetID     uint32
+	expiresAt    time.Time
+	cancel       raknet.CancelSchedule
+	creature     game.GameplayCreature
+	sourceID     uint32
+	tick         time.Duration
 }
 
 type campaignPlasmaBurnStep struct {
@@ -4030,7 +3989,8 @@ func (r campaignDamageRuntime) publishPlasmaModifier(
 		return nil, fmt.Errorf("plasmaModifierRun: %w", err)
 	}
 	run := &campaignPlasmaModifierRun{
-		modifier: modifier, kind: plan.Kind, targetID: targetObjectID,
+		activationID: r.activationID,
+		modifier:     modifier, kind: plan.Kind, targetID: targetObjectID,
 		expiresAt: r.npc.now().Add(plan.Duration),
 		creature:  creature, sourceID: sourceObjectID, tick: plan.Tick,
 	}
@@ -6003,17 +5963,20 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 	r.registry.mutex.RLock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation &&
+		peerSession.transportGeneration == packet.TransportGeneration && peerSession.zone != nil &&
 		!peerSession.isZoneTerminal() &&
 		peerSession.zone.NPCs() != nil &&
 		(peerSession.zone.Boss() == nil ||
 			!peerSession.zone.Boss().IsBeamOutCommitted())
+	if !isCurrent {
+		r.registry.mutex.RUnlock()
+		return nil, nil
+	}
 	userID := peerSession.binding.UserID
 	npcSession := peerSession.zone.NPCs()
 	zone := peerSession.zone
+	identity := gameplayProducerIdentityFromSession(sessionKey, peerSession, isCurrent)
 	r.registry.mutex.RUnlock()
-	if !isCurrent {
-		return nil, nil
-	}
 	plans, err := r.alertAllies(zone, plans, timestamp)
 	if err != nil {
 		return nil, fmt.Errorf("firstActionAllies: %w", err)
@@ -6039,6 +6002,7 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 	immediatePackets := append(make([][]byte, 0, len(plans)*4), copterPackets...)
 	producers := make([]raknet.ScheduledPacketProducer, 0, len(plans)*2)
 	aggroEvents := make([]zonenpc.ActionEvent, 0, len(plans))
+	initialIntroductions := make([]*campaignNPCInitialIntroduction, 0, len(plans))
 	owner := zonenpc.ActionOwner{UserID: userID, PeerGeneration: generation}
 	startedActions := make(map[uint32]uint64, len(plans))
 	spawnPresentationObjectIDs := make(map[uint32]struct{}, len(plans))
@@ -6202,8 +6166,12 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 				!npcSession.RevealIntroduction(plan.ObjectID, owner, npc.ActionGeneration) {
 				continue
 			}
-			immediatePackets = append(immediatePackets, aggroPackets...)
-			if zone != nil {
+			if isRetainedIntroduction {
+				initialIntroductions = append(initialIntroductions, &campaignNPCInitialIntroduction{
+					runtime: r, zone: zone, identity: identity, plan: action, timestamp: timestamp,
+				})
+			} else {
+				immediatePackets = append(immediatePackets, aggroPackets...)
 				aggroEvents = append(aggroEvents, zonenpc.ActionEvent{
 					Kind: zonenpc.ActionEventAggro, Plan: action,
 					Timestamp: timestamp,
@@ -6216,7 +6184,7 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 			revealTimestamp := timestamp + uint64(revealDelay/time.Millisecond)
 			if isRetainedIntroduction {
 				revealDelay = introTiming.RevealDelay
-				revealTimestamp = introTiming.Timestamp + uint64(introTiming.Profile.FirstAggroRevealDelay/time.Millisecond)
+				revealTimestamp = timestamp + uint64(revealDelay/time.Millisecond)
 			}
 			revealStep := campaignNPCFirstAggroRevealStep{
 				runtime: r, sessionKey: sessionKey, generation: generation,
@@ -6236,6 +6204,21 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 				revealProducer.AfterCommit = publication.commit
 			}
 			producers = append(producers, revealProducer)
+		}
+		if isRetainedIntroduction && introTiming.IsAnimationPending {
+			animationStep := campaignNPCIntroductionAnimationStep{
+				runtime: r, zone: zone, sessionKey: sessionKey, generation: generation,
+				plan: action, readyAt: r.now().Add(introTiming.AnimationDelay),
+				timestamp: timestamp + uint64(introTiming.AnimationDelay/time.Millisecond),
+			}
+			publication := &campaignBossIntroPublication{
+				runtime: r, zone: zone, owner: owner, plan: action,
+				timelineGeneration: introTiming.Generation, stage: zonenpc.IntroductionAnimationStart,
+				producePacket: animationStep.produce,
+			}
+			producers = append(producers, raknet.ScheduledPacketProducer{
+				Delay: introTiming.AnimationDelay, Produce: publication.produce, AfterCommit: publication.commit,
+			})
 		}
 		if isFirstAction && !isFloorWarpIntroduction &&
 			action.Profile.FirstAggroEffectName != "" &&
@@ -6272,10 +6255,15 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 			Delay: firstAggroDelay, Produce: step.produce,
 		}
 		if isRetainedIntroduction {
+			completionStep := campaignNPCIntroductionCompleteStep{
+				runtime: r, zone: zone, sessionKey: sessionKey, generation: generation,
+				plan: action, readyAt: r.now().Add(firstAggroDelay),
+			}
 			publication := &campaignBossIntroPublication{runtime: r, zone: zone, owner: owner, plan: action,
-				timelineGeneration: introTiming.Generation, stage: zonenpc.IntroductionComplete, producePacket: step.produce}
-			producer.Produce = publication.produce
-			producer.AfterCommit = publication.commit
+				timelineGeneration: introTiming.Generation, stage: zonenpc.IntroductionComplete, producePacket: completionStep.produce}
+			producers = append(producers, raknet.ScheduledPacketProducer{
+				Delay: firstAggroDelay, Produce: publication.produce, AfterCommit: publication.commit,
+			})
 		}
 		if isFirstAction && isCampaignBossIntroDelayed(plan) && (!isRetainedIntroduction || introTiming.IsActivePending) {
 			bossIntroDelay := firstAggroDelay
@@ -6311,12 +6299,17 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 		startedActions[objectID] = npc.ActionGeneration
 	}
 	if len(producers) == 0 {
+		err = r.publishInitialIntroductions(initialIntroductions)
+		if err != nil {
+			releaseCampaignNPCFirstActions(npcSession, owner, startedActions)
+			return nil, fmt.Errorf("firstActionInitial: %w", err)
+		}
 		r.publishFirstAggro(zone, userID, generation, aggroEvents)
 		spawnPresentationGuard.isCommitted = true
 		return immediatePackets, nil
 	}
 	sortScheduledPacketProducersByDelay(producers)
-	producers = r.registry.producerGuard.scheduledProducers(sessionKey, producers)
+	producers = r.registry.producerGuard.scheduledProducersForIdentity(identity, producers)
 	// Production schedulers run producers asynchronously. Hold zero-delay work
 	// until admission succeeds and observers have received the entrance.
 	admission := &campaignNPCFirstActionAdmission{ready: make(chan struct{})}
@@ -6342,6 +6335,9 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 	}
 	if scheduleErr == nil && cancel == nil {
 		scheduleErr = errors.New("first action cancellation unavailable")
+	}
+	if scheduleErr == nil {
+		scheduleErr = r.publishInitialIntroductions(initialIntroductions)
 	}
 	if scheduleErr == nil {
 		for objectID, actionGeneration := range startedActions {
@@ -7635,6 +7631,7 @@ func (r campaignNPCActionRuntime) commitHeroTargetDamage(
 	damage zone.NPCTargetDamage,
 	distribution soulLinkDistribution,
 	timestamp uint64,
+	receipts ...*enemyDamageReceipt,
 ) ([][]byte, sporenet.PlayerStatDelta, error) {
 	if targetSession == nil {
 		return hitPackets, sporenet.PlayerStatDelta{},
@@ -7642,9 +7639,24 @@ func (r campaignNPCActionRuntime) commitHeroTargetDamage(
 	}
 	// Reserve heroes must take their share before a lethal active hit selects
 	// a replacement or decides whether the whole squad has been defeated.
-	sharePackets, sharedDamage, err := distribution.commit(targetSession)
-	if err != nil {
-		return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("targetSoulLink: %w", err)
+	var receipt *enemyDamageReceipt
+	if len(receipts) != 0 {
+		receipt = receipts[0]
+	}
+	sharePackets := [][]byte(nil)
+	sharedDamage := float32(0)
+	var err error
+	if receipt != nil && receipt.IsShareCommitted {
+		sharePackets, sharedDamage = receipt.SharePackets, receipt.SharedDamage
+	} else {
+		sharePackets, sharedDamage, err = distribution.commit(targetSession)
+		if err != nil {
+			return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("targetSoulLink: %w", err)
+		}
+		if receipt != nil {
+			receipt.IsShareCommitted = true
+			receipt.SharePackets, receipt.SharedDamage = sharePackets, sharedDamage
+		}
 	}
 	isLocalTarget := targetSession == peerSession
 	transitionPackets := hitPackets
@@ -7654,19 +7666,32 @@ func (r campaignNPCActionRuntime) commitHeroTargetDamage(
 	transitionPackets = append(transitionPackets, sharePackets...)
 	packets, statDelta, err := targetSession.applyCampaignCommittedDamageHitPackets(
 		transitionPackets, damage.PreviousHitPoint, damage.HitPoint,
-		timestamp, r.now(),
+		timestamp, r.now(), receipt,
 	)
 	if err != nil {
 		return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("targetTransition: %w", err)
 	}
 	packets = append(packets, r.registry.takePlasmaWreathRestorationLocked(targetSession)...)
 	statDelta.PVEDamageTaken += float64(sharedDamage)
+	if receipt != nil {
+		targetSession.queuePackets(mutationPrivateDamagePackets(packets))
+		if isLocalTarget {
+			return gameplayPeerPresentationPackets(packets), statDelta, nil
+		}
+		targetSession.queueStatDelta(statDelta)
+		if targetSessionKey != "" {
+			r.registry.sessions[targetSessionKey] = *targetSession
+		}
+		return gameplayPeerPresentationPackets(packets), sporenet.PlayerStatDelta{}, nil
+	}
 	if isLocalTarget {
 		return packets, statDelta, nil
 	}
 	targetSession.queuePackets(packets)
 	targetSession.queueStatDelta(statDelta)
-	r.registry.sessions[targetSessionKey] = *targetSession
+	if targetSessionKey != "" {
+		r.registry.sessions[targetSessionKey] = *targetSession
+	}
 	// The target receives its private squad transition above. Preserve the
 	// shared death presentation too, including removal of Sage's Dendrones,
 	// for the NPC simulation's client and its normal teammate broadcast.
@@ -7679,14 +7704,28 @@ func (r campaignNPCActionRuntime) deliverHeroTargetPackets(
 	targetSessionKey string,
 	packets [][]byte,
 	statDelta sporenet.PlayerStatDelta,
+	receipts ...*enemyDamageReceipt,
 ) ([][]byte, sporenet.PlayerStatDelta, error) {
 	packets = append(packets, r.registry.takePlasmaWreathRestorationLocked(targetSession)...)
+	if len(receipts) != 0 && receipts[0] != nil && targetSession != nil {
+		targetSession.queuePackets(mutationPrivateDamagePackets(packets))
+		if targetSession == peerSession {
+			return gameplayPeerPresentationPackets(packets), statDelta, nil
+		}
+		targetSession.queueStatDelta(statDelta)
+		if targetSessionKey != "" {
+			r.registry.sessions[targetSessionKey] = *targetSession
+		}
+		return gameplayPeerPresentationPackets(packets), sporenet.PlayerStatDelta{}, nil
+	}
 	if targetSession == nil || targetSession == peerSession {
 		return packets, statDelta, nil
 	}
 	targetSession.queuePackets(packets)
 	targetSession.queueStatDelta(statDelta)
-	r.registry.sessions[targetSessionKey] = *targetSession
+	if targetSessionKey != "" {
+		r.registry.sessions[targetSessionKey] = *targetSession
+	}
 	return packets, sporenet.PlayerStatDelta{}, nil
 }
 
@@ -7699,6 +7738,7 @@ func (r campaignNPCActionRuntime) commitHeroTargetReactions(
 	damage zone.NPCTargetDamage,
 	plan zonenpc.AttackPlan,
 	timestamp uint64,
+	receipts ...*enemyDamageReceipt,
 ) ([][]byte, sporenet.PlayerStatDelta, error) {
 	if targetSession != nil && targetSession.deployedObjectID == plan.TargetObjectID {
 		r.reservePlasmaWreathReactionLocked(targetSession, plan.SourceObjectID, timestamp)
@@ -7731,11 +7771,20 @@ func (r campaignNPCActionRuntime) commitHeroTargetReactions(
 		}
 		reactionPackets = append(reactionPackets, mantlePackets...)
 	}
+	if len(receipts) != 0 && receipts[0] != nil {
+		targetSession.queuePackets(mutationPrivateDamagePackets(reactionPackets))
+		if targetSessionKey != "" {
+			r.registry.sessions[targetSessionKey] = *targetSession
+		}
+		return append(packets, gameplayPeerPresentationPackets(reactionPackets)...), statDelta, nil
+	}
 	if targetSession == peerSession {
 		return append(packets, reactionPackets...), statDelta, nil
 	}
 	targetSession.queuePackets(reactionPackets)
-	r.registry.sessions[targetSessionKey] = *targetSession
+	if targetSessionKey != "" {
+		r.registry.sessions[targetSessionKey] = *targetSession
+	}
 	return append(packets, reactionPackets...), statDelta, nil
 }
 
@@ -7804,7 +7853,18 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 	result zonenpc.AttackResult,
 	timestamp uint64,
 	isRetainedStatus bool, isAreaAttack bool, isDefeatedSourceAllowed bool,
+	receipts ...*enemyDamageReceipt,
 ) ([][]byte, sporenet.PlayerStatDelta, bool, error) {
+	var receipt *enemyDamageReceipt
+	if len(receipts) != 0 {
+		receipt = receipts[0]
+	}
+	if receipt != nil && receipt.IsCommitted {
+		return r.finishEnemyDamage(peerSession, generation, timestamp, receipt)
+	}
+	if plan.Profile.AbilityName == "MutationAgent_AoE" && receipt == nil {
+		return nil, sporenet.PlayerStatDelta{}, false, errors.New("mutation damage receipt unavailable")
+	}
 	if peerSession == nil || peerSession.zone == nil || r.now == nil {
 		return nil, sporenet.PlayerStatDelta{}, false,
 			errors.New("enemy damage runtime unavailable")
@@ -7818,6 +7878,9 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 	target, isTargetFound := peerSession.campaignNPCTarget(
 		generation, plan.TargetObjectID,
 	)
+	if plan.Profile.AbilityName == "MutationAgent_AoE" && plan.Profile.IsRetainedVolumeDamage {
+		target, isTargetFound = peerSession.zone.MutationTarget(receipt.Faction, plan.TargetObjectID, r.now())
+	}
 	if plan.Profile.AbilityName == "DrainerDeathDetonate" {
 		target, isTargetFound = r.drainerDeathTargetLocked(peerSession.zone, plan.TargetObjectID)
 	}
@@ -7825,6 +7888,12 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 		return nil, sporenet.PlayerStatDelta{}, false, nil
 	}
 	targetSession, targetSessionKey := r.heroTargetSession(peerSession, target)
+	if plan.Profile.AbilityName == "MutationAgent_AoE" && plan.Profile.IsRetainedVolumeDamage {
+		targetSession, targetSessionKey = r.mutationHeroTargetSession(peerSession, target)
+	}
+	if receipt != nil {
+		defer r.retainMutationTargetSessionLocked(targetSession, targetSessionKey)
+	}
 	if target.IsHero && targetSession == nil {
 		return nil, sporenet.PlayerStatDelta{}, false, nil
 	}
@@ -7833,12 +7902,17 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 	defenseFlags := uint16(0)
 	if target.IsHero {
 		var defenseErr error
-		defenseFlags, defenseErr = targetSession.rollDefense(
-			peerSession.zone.NPCRandom(), defenseReq, r.program.Critical,
-		)
+		if receipt != nil && receipt.IsDefenseRolled {
+			defenseFlags = receipt.DefenseFlags
+		} else {
+			defenseFlags, defenseErr = targetSession.rollDefense(peerSession.zone.NPCRandom(), defenseReq, r.program.Critical)
+		}
 		if defenseErr != nil {
 			return nil, sporenet.PlayerStatDelta{}, false,
 				fmt.Errorf("enemyDefense: %w", defenseErr)
+		}
+		if receipt != nil {
+			receipt.IsDefenseRolled, receipt.DefenseFlags = true, defenseFlags
 		}
 	}
 	if defenseFlags != 0 {
@@ -7856,7 +7930,7 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 		}
 		packets = append(packets, feedbackPacket)
 		packets, statDelta, err = r.deliverHeroTargetPackets(
-			peerSession, targetSession, targetSessionKey, packets, statDelta,
+			peerSession, targetSession, targetSessionKey, packets, statDelta, receipt,
 		)
 		return packets, statDelta, false, err
 	}
@@ -7876,7 +7950,7 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 				fmt.Errorf("enemyDamageImmunity: %w", immunityErr)
 		}
 		packets, statDelta, immunityErr = r.deliverHeroTargetPackets(
-			peerSession, targetSession, targetSessionKey, packets, statDelta,
+			peerSession, targetSession, targetSessionKey, packets, statDelta, receipt,
 		)
 		return packets, statDelta, true, immunityErr
 	}
@@ -7917,16 +7991,29 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 			blockedPackets := [][]byte{feedbackPacket}
 
 			packets, statDelta, deliveryErr := r.deliverHeroTargetPackets(
-				peerSession, targetSession, targetSessionKey, blockedPackets, sporenet.PlayerStatDelta{},
+				peerSession, targetSession, targetSessionKey, blockedPackets, sporenet.PlayerStatDelta{}, receipt,
 			)
 			if deliveryErr != nil {
 				return nil, sporenet.PlayerStatDelta{}, false, fmt.Errorf("blockedDeliver: %w", deliveryErr)
 			}
 			return packets, statDelta, false, nil
 		}
-		shield, shieldErr := targetSession.absorbTCShield(
-			result.Damage, r.now(), r.effectPool,
-		)
+		var shield tcShieldAbsorption
+		var shieldErr error
+		if receipt != nil {
+			if targetSession != peerSession {
+				r.registry.storeMutationDamageMemberLocked(peerSession)
+			}
+			shield, shieldErr = targetSession.absorbMutationShield(result.Damage, r.now(), r.effectPool, &receipt.Shield, r.registry)
+			if targetSession != peerSession {
+				r.registry.refreshMutationDamageMemberLocked(peerSession)
+			}
+			if targetSessionKey != "" {
+				r.registry.sessions[targetSessionKey] = *targetSession
+			}
+		} else {
+			shield, shieldErr = targetSession.absorbTCShield(result.Damage, r.now(), r.effectPool)
+		}
 		if shieldErr != nil {
 			return nil, sporenet.PlayerStatDelta{}, false,
 				fmt.Errorf("enemyDamageShield: %w", shieldErr)
@@ -7952,7 +8039,7 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 					fmt.Errorf("enemyDamageShieldHit: %w", hitErr)
 			}
 			packets, statDelta, hitErr = r.deliverHeroTargetPackets(
-				peerSession, targetSession, targetSessionKey, packets, statDelta,
+				peerSession, targetSession, targetSessionKey, packets, statDelta, receipt,
 			)
 			return packets, statDelta, true, hitErr
 		}
@@ -7985,6 +8072,8 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 		damage, isApplied, err = peerSession.zone.ApplySceneryHazardDamage(
 			owner, plan.SourceObjectID, plan.TargetObjectID, plan.Profile.AbilityName, result.Damage,
 		)
+	} else if plan.Profile.IsRetainedVolumeDamage && plan.Profile.AbilityName == "MutationAgent_AoE" {
+		damage, isApplied, err = peerSession.zone.ApplyMutationAuraDamage(owner, receipt.EventID, plan.TargetObjectID, result.Damage, receipt.Faction, r.now())
 	} else if isRetainedStatus || plan.Profile.IsRetainedVolumeDamage {
 		damage, isApplied, err = peerSession.zone.ApplyNPCTargetStatusDamage(
 			owner, plan.SourceObjectID, plan.TargetObjectID, result.Damage,
@@ -8000,12 +8089,21 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 			r.now(),
 		)
 	}
+	if receipt != nil && isApplied {
+		receipt.IsCommitted = true
+		receipt.Target, receipt.Plan, receipt.Result, receipt.Damage = target, plan, result, damage
+		receipt.Distribution, receipt.Vulnerability = distribution, vulnerabilityRun
+		receipt.ShieldPackets, receipt.Absorbed = shieldPackets, absorbedAmount
+	}
 	if err != nil {
-		return nil, sporenet.PlayerStatDelta{}, false,
+		return nil, sporenet.PlayerStatDelta{}, isApplied,
 			fmt.Errorf("enemyDamageCommit: %w", err)
 	}
 	if !isApplied {
 		return nil, sporenet.PlayerStatDelta{}, false, nil
+	}
+	if receipt != nil {
+		return r.finishEnemyDamage(peerSession, generation, timestamp, receipt)
 	}
 	vulnerabilityPackets, err := peerSession.commitPhysicalVulnerability(
 		plan.TargetObjectID, vulnerabilityRun, r.modifierPool,

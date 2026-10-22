@@ -369,6 +369,7 @@ type controlledHeroState struct {
 	overdriveExpiresAt            time.Time
 	overdriveActivation           uint64
 	overdriveObjectID             uint32
+	overdrivePresentation         overdrivePresentationState
 }
 
 func (e gameplayPeerSession) isOverdriveActiveAt(now time.Time) bool {
@@ -712,12 +713,18 @@ func (s *gameplayPeerSession) setCrystalInventory(inventory sim.CrystalInventory
 }
 
 type pendingPeerPacketBatch struct {
+	mutationFeedback       *mutationDamageFeedback
+	mutationEvent          *mutationPendingEvent
+	mutationElite          *mutationEliteFrame
+	questFrame             *questPendingFrame
+	overdriveFrame         *overdrivePendingFrame
 	wreathRemoval          *plasmaWreathDelivery
 	omniRemoval            *omniShieldDelivery
 	channelRemoval         *channelDelivery
 	channelCreation        *channelEffects
 	id                     uint64
 	packets                [][]byte
+	cinematics             map[int]pendingCinematic
 	isCampaignPresentation bool
 }
 
@@ -731,9 +738,10 @@ func (s *gameplayPeerSession) queuePackets(packets [][]byte) {
 	}
 	if len(packets) >= pendingPeerPacketLimit {
 		batch.packets = retainPendingPackets(packets, pendingPeerPacketLimit)
+		batch.cinematics = capturePendingCinematics(batch.packets, time.Now())
 		retainedBatches := make([]pendingPeerPacketBatch, 0, len(s.pendingPacketBatches)+1)
 		for _, pendingBatch := range s.pendingPacketBatches {
-			if pendingBatch.wreathRemoval != nil || pendingBatch.omniRemoval != nil || pendingBatch.channelRemoval != nil || pendingBatch.channelCreation != nil {
+			if pendingBatch.wreathRemoval != nil || pendingBatch.omniRemoval != nil || pendingBatch.channelRemoval != nil || pendingBatch.channelCreation != nil || pendingBatch.questFrame != nil || pendingBatch.mutationElite != nil || pendingBatch.mutationEvent != nil {
 				retainedBatches = append(retainedBatches, pendingBatch)
 			}
 		}
@@ -742,6 +750,7 @@ func (s *gameplayPeerSession) queuePackets(packets [][]byte) {
 		return
 	}
 	batch.packets = clonePendingPackets(packets)
+	batch.cinematics = capturePendingCinematics(batch.packets, time.Now())
 	s.pendingPacketBatches = append(s.pendingPacketBatches, batch)
 	packetCount := 0
 	for _, pendingBatch := range s.pendingPacketBatches {
@@ -800,7 +809,7 @@ func retainPendingPackets(packets [][]byte, limit int) [][]byte {
 
 func oldestDroppablePendingBatch(batches []pendingPeerPacketBatch) int {
 	for index, batch := range batches {
-		if batch.wreathRemoval != nil || batch.omniRemoval != nil || batch.channelRemoval != nil || batch.channelCreation != nil {
+		if batch.wreathRemoval != nil || batch.omniRemoval != nil || batch.channelRemoval != nil || batch.channelCreation != nil || batch.questFrame != nil || batch.mutationElite != nil || batch.mutationEvent != nil {
 			continue
 		}
 		isCritical := false
@@ -815,7 +824,7 @@ func oldestDroppablePendingBatch(batches []pendingPeerPacketBatch) int {
 		}
 	}
 	for index, batch := range batches {
-		if batch.wreathRemoval == nil && batch.omniRemoval == nil && batch.channelRemoval == nil && batch.channelCreation == nil {
+		if batch.wreathRemoval == nil && batch.omniRemoval == nil && batch.channelRemoval == nil && batch.channelCreation == nil && batch.questFrame == nil && batch.mutationElite == nil && batch.mutationEvent == nil {
 			return index
 		}
 	}
@@ -864,6 +873,10 @@ func (s *gameplayPeerSession) pendingPackets() ([][]byte, uint64) {
 	if s == nil || len(s.pendingPacketBatches) == 0 {
 		return nil, 0
 	}
+	now := time.Now()
+	// No transport acknowledgement is required when every byte in an
+	// untagged batch has expired. Never discard an attachment delivery owner.
+	s.pendingPacketBatches = pruneExpiredCinematicBatches(s.pendingPacketBatches, now)
 	packetCount := 0
 	for _, batch := range s.pendingPacketBatches {
 		packetCount += len(batch.packets)
@@ -877,7 +890,7 @@ func (s *gameplayPeerSession) pendingPackets() ([][]byte, uint64) {
 		if batch.isCampaignPresentation && (!s.dungeonSetup.IsCommitted() || s.isRejoinPending) {
 			break
 		}
-		packets = append(packets, batch.packets...)
+		packets = append(packets, batch.packetsAt(now)...)
 		batchID = batch.id
 	}
 	return packets, batchID
@@ -1997,6 +2010,7 @@ type gameplaySessionRegistry struct {
 	// in the Windows 386 build.
 	nextGeneration           uint64
 	nextActionGeneration     uint64
+	mutationDamageWorks      map[mutationDamageKey]*mutationDamageRun
 	plasmaWreathPublications []plasmaWreathPublication
 	omniShieldRemovals       []*omniShieldRemoval
 	channelEffects           []*channelEffects
@@ -2840,16 +2854,13 @@ func (e gameplaySessionLifecycle) disconnectMember(
 	retainedSage := peerSession.detachSagePassive()
 	retainedCompanions := make([]zonecompanion.Actor, 0)
 	if peerSession.zone.Companion() != nil {
-		for _, companion := range peerSession.zone.Companion().Snapshots() {
-			if companion.UserID == peerSession.binding.UserID &&
-				companion.PeerGeneration == peerSession.generation {
-				retainedCompanions = append(retainedCompanions, companion)
-			}
-		}
+		retainedCompanions = peerSession.zone.Companion().CaptureRetainedOwner(
+			peerSession.binding.UserID, peerSession.generation,
+		)
 	}
 	stopGameplayPeerRuntime(&peerSession, modifierInstancePool, effectPool)
 	for _, companion := range retainedCompanions {
-		err := peerSession.zone.Companion().Put(companion)
+		err := peerSession.zone.Companion().RestoreRetained(companion)
 		if err != nil && e.registry.logger != nil {
 			e.registry.logger.Printf(
 				"RakNet retained companion restore failed game=%d user=%d object=%d: %v",
@@ -5152,9 +5163,10 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPackets(
 func (s *gameplayPeerSession) applyCampaignCommittedDamageHitPackets(
 	hitPackets [][]byte, previousHitPoint float32, hitPoint float32,
 	timestamp uint64, now time.Time,
+	receipts ...*enemyDamageReceipt,
 ) ([][]byte, sporenet.PlayerStatDelta, error) {
 	return s.applyCampaignDamageHitPacketsWithCommit(
-		hitPackets, 0, hitPoint, previousHitPoint, timestamp, now, true,
+		hitPackets, 0, hitPoint, previousHitPoint, timestamp, now, true, receipts...,
 	)
 }
 
@@ -5162,7 +5174,18 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 	hitPackets [][]byte, sourceObjectID uint32, hitPoint float32,
 	committedPreviousHitPoint float32, timestamp uint64, now time.Time,
 	isSharedCommitted bool,
+	receipts ...*enemyDamageReceipt,
 ) ([][]byte, sporenet.PlayerStatDelta, error) {
+	var receipt *enemyDamageReceipt
+	if len(receipts) != 0 {
+		receipt = receipts[0]
+	}
+	if receipt != nil {
+		hitPackets = append([][]byte(nil), hitPackets...)
+		baseCount := len(hitPackets)
+		hitPackets = append(hitPackets, receipt.HeroTransitionPackets...)
+		defer receipt.retainHeroTransitionOutput(&hitPackets, baseCount)
+	}
 	if s == nil || s.squad == nil ||
 		(s.binding.Mode != game.ModeChain && s.binding.Mode != game.ModeTutorial) {
 		return nil, sporenet.PlayerStatDelta{}, errors.New("campaign squad unavailable")
@@ -5205,8 +5228,21 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 		return s.finishCampaignDamage(hitPackets, sporenet.PlayerStatDelta{})
 	}
 	isLethal := previousHitPoint > 0 && hitPoint <= 0
-	isRevivalPending := isLethal && s.reserveBeastPetRevival(now)
+	isRevivalPending := false
+	if receipt != nil && receipt.IsHeroHeaderPrepared {
+		isRevivalPending = receipt.IsHeroRevivalPending
+	} else {
+		isRevivalPending = isLethal && s.reserveBeastPetRevival(now)
+	}
 	isExpectedGameOver := isLethal && !isRevivalPending && s.squad.LivingCount() == 1
+	if receipt != nil {
+		if receipt.IsHeroHeaderPrepared {
+			isRevivalPending, isExpectedGameOver = receipt.IsHeroRevivalPending, receipt.IsHeroExpectedGameOver
+		} else {
+			receipt.IsHeroHeaderPrepared = true
+			receipt.IsHeroRevivalPending, receipt.IsHeroExpectedGameOver = isRevivalPending, isExpectedGameOver
+		}
+	}
 	resourcePacket, err := s.marshalCampaignCharacterResourceAt(
 		s.squad.DeployedIndex(), hitPoint,
 	)
@@ -5270,13 +5306,16 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 	statDelta := sporenet.PlayerStatDelta{
 		PVEDamageTaken: float64(max(float32(0), previousHitPoint-hitPoint)),
 	}
-	if isLethal {
+	if isLethal && (receipt == nil || !receipt.IsHeroBusinessDone) {
 		statDelta.PVEDeath = 1
 		if s.zone != nil {
-			_ = s.zone.ApplyHeroDeathObjectives(
-				context.Background(), s.binding.UserID, s.generation,
+			objectiveErr := s.zone.ApplyHeroDeathObjectives(
+				s.zone.Context(), s.binding.UserID, s.generation,
 				s.deployedObjectID,
 			)
+			if objectiveErr != nil {
+				log.Printf("Hero death objective user=%d: %v", s.binding.UserID, objectiveErr)
+			}
 		}
 		s.resetPassiveKill(s.deployedCreatureIndex)
 		soulPackets, soulErr := s.syncSoulRavagerPresentation()
@@ -5286,40 +5325,70 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 		s.resetPassiveDamageReduction(s.deployedCreatureIndex)
 		s.resetFireRavagerBasic(s.deployedCreatureIndex)
 		s.resetTCShield(s.deployedCreatureIndex)
-	}
-	if isLethal {
-		hitPackets = append(hitPackets, stopPackets...)
-	}
-	hitPackets = append(hitPackets, resourcePacket)
-	if hitPoint < previousHitPoint {
-		stealthPackets, stealthErr := s.breakTrapperStealth()
-		if stealthErr == nil {
-			hitPackets = append(hitPackets, stealthPackets...)
+		if receipt != nil {
+			receipt.IsHeroBusinessDone = true
 		}
 	}
 	if isLethal {
-		s.retireOmniShieldsLocked(s.deployedObjectID)
-		hitPackets = append(hitPackets, s.takeHeroInfections()...)
-		interruptedBasic := s.resetAbilityAdmissionForSwitch()
-		if interruptedBasic != nil {
-			interruptedBasic.Stop()
+		statDelta.PVEDeath = 1
+	}
+	if receipt == nil || !receipt.IsHeroOutputPrepared {
+		if isLethal {
+			hitPackets = append(hitPackets, stopPackets...)
 		}
-		drainPackets, drainErr := s.stopCampaignNPCDrainsTargeting(
-			s.deployedObjectID,
-		)
-		if drainErr != nil {
-			return nil, sporenet.PlayerStatDelta{},
-				fmt.Errorf("campaignDeathDrain: %w", drainErr)
+		hitPackets = append(hitPackets, resourcePacket)
+		if hitPoint < previousHitPoint {
+			stealthPackets, stealthErr := s.breakTrapperStealth()
+			if stealthErr == nil {
+				hitPackets = append(hitPackets, stealthPackets...)
+			}
 		}
-		hitPackets = append(hitPackets, drainPackets...)
-		pullPackets, pullErr := s.stopCampaignNPCPullEffectsTargeting(
-			s.deployedObjectID,
-		)
-		if pullErr != nil {
-			return nil, sporenet.PlayerStatDelta{},
-				fmt.Errorf("campaignDeathPullEffect: %w", pullErr)
+		if receipt != nil {
+			receipt.IsHeroOutputPrepared = true
 		}
-		hitPackets = append(hitPackets, pullPackets...)
+	}
+	if isLethal {
+		if receipt == nil || !receipt.IsHeroInitialCleanupDone {
+			s.retireOmniShieldsLocked(s.deployedObjectID)
+			hitPackets = append(hitPackets, s.takeHeroInfections()...)
+			interruptedBasic := s.resetAbilityAdmissionForSwitch()
+			if interruptedBasic != nil {
+				interruptedBasic.Stop()
+			}
+			if receipt != nil {
+				receipt.IsHeroInitialCleanupDone = true
+			}
+		}
+		if receipt == nil || !receipt.AreHeroDrainsDone {
+			drainPackets, drainErr := s.stopCampaignNPCDrainsTargeting(
+				s.deployedObjectID,
+			)
+			if drainErr != nil {
+				return nil, sporenet.PlayerStatDelta{},
+					fmt.Errorf("campaignDeathDrain: %w", drainErr)
+			}
+			hitPackets = append(hitPackets, drainPackets...)
+			if receipt != nil {
+				receipt.AreHeroDrainsDone = true
+			}
+		}
+		if receipt == nil || !receipt.AreHeroPullsDone {
+			var pullPackets [][]byte
+			var pullErr error
+			if receipt != nil {
+				pullPackets, pullErr = s.stopMutationPullEffectsTargeting(s.deployedObjectID, receipt)
+			} else {
+				pullPackets, pullErr = s.stopCampaignNPCPullEffectsTargeting(s.deployedObjectID)
+			}
+			if pullErr != nil {
+				return nil, sporenet.PlayerStatDelta{},
+					fmt.Errorf("campaignDeathPullEffect: %w", pullErr)
+			}
+			hitPackets = append(hitPackets, pullPackets...)
+			if receipt != nil {
+				receipt.AreHeroPullsDone = true
+			}
+		}
 		cooldownPacket, cooldownErr := heroraknet.DeployCooldown(
 			uint8(s.binding.Slot), s.deployedCreatureIndex, 0,
 		)

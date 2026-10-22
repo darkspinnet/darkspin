@@ -46,7 +46,8 @@ func (e *heroInfectionRun) consumeExpunge(targetObjectID uint32, at time.Time) (
 		return nil, deleted, nil
 	}
 	damage := &expungeRemainingDamage{
-		creature: e.creature, sourceObjectID: e.sourceObjectID,
+		activationID: e.activationID,
+		creature:     e.creature, sourceObjectID: e.sourceObjectID,
 		definition: expungeDamageDefinition(e.definition, tickCount, minimum, maximum),
 	}
 	return damage, deleted, nil

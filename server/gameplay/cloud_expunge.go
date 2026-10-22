@@ -26,7 +26,8 @@ func (e *gameplaySessionRegistry) consumeCloudPoisonLocked(npc *zonenpc.Session,
 	// its default tickDamage={{0,0}}. Expunge still applies its own coefficient.
 	source := sim.AbilityDefinition{DamageType: 2, DamageSource: 1, IsDamageTypeFound: true, IsDamageSourceFound: true}
 	damage := &expungeRemainingDamage{
-		creature: target.creature, sourceObjectID: origin.sourceObjectID,
+		activationID: origin.runtime.damage.activationID,
+		creature:     target.creature, sourceObjectID: origin.sourceObjectID,
 		definition: expungeDamageDefinition(source, 1, 0, 0),
 		sessionKey: origin.sessionKey, generation: origin.generation, binding: origin.binding,
 	}

@@ -18,6 +18,7 @@ import (
 )
 
 type heroProjectileStatusRun struct {
+	activationID      uint64
 	mutex             sync.Mutex
 	projectile        *abilityraknet.ProjectileRun
 	npc               *zonenpc.Session
@@ -956,7 +957,8 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 		return nil, fmt.Errorf("projectileStatusCommit: %w", err)
 	}
 	run := &heroProjectileStatusRun{
-		projectile: projectileRun, npc: peerSession.zone.NPCs(),
+		activationID: r.damage.activationID,
+		projectile:   projectileRun, npc: peerSession.zone.NPCs(),
 		modifierPool: r.modifierPool, targetID: targetObjectID,
 		statusKind: projected.StatusKind,
 		definition: projected, creature: creature,

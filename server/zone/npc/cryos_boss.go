@@ -1,11 +1,14 @@
 package npc
 
 import (
+	"math"
 	"strings"
 	"time"
+
+	"github.com/darkspinnet/darkspin/server/game"
 )
 
-const cryosBossFirstAggroDuration = 13433334 * time.Microsecond
+const cryosBossFirstAggroDuration = 12433334350 * time.Nanosecond
 
 func CryosBossChainLightningProfile(nounName string) (ActionProfile, bool) {
 	rank := cryosBossRank(nounName)
@@ -22,6 +25,7 @@ func CryosBossChainLightningProfile(nounName string) (ActionProfile, bool) {
 		FirstAggroDelay:             cryosBossFirstAggroDuration,
 		FirstAggroCinematicDuration: cryosBossFirstAggroDuration,
 		FirstAggroCinematicRadius:   100,
+		FirstAggroCinematicOffset:   game.Vec3{X: 3 / math.Sqrt2, Y: 3 / math.Sqrt2},
 		HitDelay:                    2300 * time.Millisecond,
 		ReleaseDelay:                4500 * time.Millisecond,
 		Cooldown:                    10 * time.Second,
@@ -61,6 +65,7 @@ func CryosBossMeleeProfile(nounName string) (ActionProfile, bool) {
 		FirstAggroDelay:             cryosBossFirstAggroDuration,
 		FirstAggroCinematicDuration: cryosBossFirstAggroDuration,
 		FirstAggroCinematicRadius:   100,
+		FirstAggroCinematicOffset:   game.Vec3{X: 3 / math.Sqrt2, Y: 3 / math.Sqrt2},
 		HitDelay:                    time.Second,
 		ReleaseDelay:                3450 * time.Millisecond,
 		Cooldown:                    cooldowns[rank-1],

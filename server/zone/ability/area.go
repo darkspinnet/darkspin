@@ -28,12 +28,16 @@ type AreaPlan struct {
 }
 
 type AreaResult struct {
-	SourceRank     uint32
-	SourceCreature game.GameplayCreature
-	Snapshot       zonenpc.Snapshot
-	Damage         zonenpc.DamageResult
-	IsCritical     bool
-	Definition     sim.AbilityDefinition
+	// ActivationID follows the initiator attribute snapshot, independently of
+	// the definition executing this particular damage callback.
+	ActivationID           uint64
+	ActivationDefinitionID uint32
+	SourceRank             uint32
+	SourceCreature         game.GameplayCreature
+	Snapshot               zonenpc.Snapshot
+	Damage                 zonenpc.DamageResult
+	IsCritical             bool
+	Definition             sim.AbilityDefinition
 }
 
 func projectAreaRadius(

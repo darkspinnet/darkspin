@@ -504,6 +504,8 @@ func snapshotActionScheduleKind(kind zoneaction.ScheduleKind) string {
 		return "crystal"
 	case zoneaction.ScheduleEquipment:
 		return "equipment"
+	case zoneaction.ScheduleQuestCrystal:
+		return "quest-crystal"
 	default:
 		return fmt.Sprintf("unknown-%d", kind)
 	}

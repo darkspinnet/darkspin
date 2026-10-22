@@ -100,8 +100,9 @@ func (e FirstActionPlan) FirstAggroFacingPlan() AttackPlan {
 		e.Profile.PreAggroAnimationName != "" || e.Profile.FirstAggroRevealDelay > 0 ||
 		e.Profile.FirstAggroCinematicDuration > 0
 	targetPosition := e.TargetPosition
-	if e.Profile.FirstAggroAnimationName == "shadowboss_onaggro" {
-		// FirstAggro_ShadowBoss turns southwest before its reveal, independently
+	if e.Profile.FirstAggroAnimationName == "shadowboss_onaggro" ||
+		e.Profile.FirstAggroAnimationName == "ctd_boss_tc_aggro" {
+		// Shadow and Citadel entrances turn southwest, independently
 		// of the player. Use the same heading for live packets and late joins.
 		profile.IsFacingSuppressed = false
 		profile.IsFacingPolicyKnown = true

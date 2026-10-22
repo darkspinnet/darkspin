@@ -12,6 +12,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/sim"
 	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
 	zoneobjective "github.com/darkspinnet/darkspin/server/zone/objective"
+	zonequest "github.com/darkspinnet/darkspin/server/zone/quest"
 )
 
 const closeTimeout = 5 * time.Second
@@ -94,9 +95,9 @@ func (e *Manager) FindResume(
 		return game.ResumeCheckpoint{}, false, nil
 	}
 	if snapshot.Version != Version {
-		// UI-only objective checkpoints cannot be upgraded by inferring
-		// authored counters from tokens. Keep the old row, but do not offer
-		// an interrupted mission that can no longer resume faithfully.
+		// Older formats can lack authored objective state or accepted entrance
+		// progress. Neither can be recovered by inferring it from UI/actor
+		// flags. Keep the row, but do not offer an unfaithful resume.
 		return game.ResumeCheckpoint{}, false, nil
 	}
 	if game.IsTutorialLevel(snapshot.Level) {
@@ -624,6 +625,9 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 		[]sim.ObjectiveSnapshot(nil), snapshot.Objectives...,
 	)
 	snapshot.ObjectiveRuntimes = append([]sim.LuaObjectiveSnapshot(nil), snapshot.ObjectiveRuntimes...)
+	snapshot.ObjectiveDrops = append([]zoneobjective.DropRequest(nil), snapshot.ObjectiveDrops...)
+	snapshot.ObjectiveEvents = append([]sim.LuaObjectiveEvent(nil), snapshot.ObjectiveEvents...)
+	snapshot.QuestCrystals = append([]zonequest.State(nil), snapshot.QuestCrystals...)
 	for index := range snapshot.ObjectiveRuntimes {
 		snapshot.ObjectiveRuntimes[index] = snapshot.ObjectiveRuntimes[index].Clone()
 	}

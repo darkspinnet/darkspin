@@ -2,6 +2,19 @@
 
 ### 2026-10-22
 
+- #100 Restore combat music input from current per-hero enemy targeting counts, clearing stale counts and refreshing through busy combat, hero switching and reconnects.
+- #100 Replace Mutation Agents' instant nearby promotion with authored ally selection, movement, timed beams and target-owned elite transformations.
+- #100 Restore Mutation Agent aura timing, hero and companion targeting, transformation immunities and immediate death deletion, with reliable damage retries and co-op feedback.
+- #100 Preserve Mutation Agent progress and accepted callbacks through resurrection, rejoin and safe checkpoint recovery; checkpoint format advances from 10 to 11 and older checkpoints cannot resume.
+- #100 Correct Krel's passive stun activation tracking and preserve Poison Nova's prior source snapshot when a refresh fails.
+- #100 Keep Overdrive meters and combat attributes current through expiry, co-op ownership changes and reconnects.
+- #100 Restore authored chance, animation and timing for supported NPC first-aggro reactions without rerolling on retries.
+- #100 Add survival, health-obelisk avoidance and Quest Crystal objectives, including shared quest pickups, pursuit and reliable reconnect presentation.
+- #100 Preserve objective event subscriptions, player counters and pending quest drops through checkpoint recovery; checkpoint format advances from 9 to 10 and older checkpoints cannot resume.
+- #100 Correct boss entrance timing, camera focus and facing, delay SpawnEater's entrance animation as authored, and restore elapsed entrance poses on rejoin without replaying expired camera requests.
+- #100 Preserve introduction progress through safe checkpoint restart; checkpoint format advances from 8 to 9 and older checkpoints cannot resume.
+- #100 Restore Scaldron's second entrance protection and nearby NPC and companion holds, preserving the original deadline, ordered co-op presentation and phase recovery through disconnects and preparation failures.
+- #100 Restore Citadel charging-target animation resets and cinematic interruption rules while preserving transfers whose initial hit was already accepted.
 - #99 Preserve channel effect creation and removal order through co-op reconnects, hold visual slots until removal delivery, and prevent stale drain callbacks from changing replacement actions.
 - #99 Preserve initial environmental explosion feedback and corpse deadlines through co-op ownership changes, and settle accepted blasts before world reset or shutdown without repeating damage or rewards.
 - #99 Correct Savage Rage's fractional and critical healing, preserve its accepted initial healing feedback, and use continuous healing ranges for Strangling Briars and Sporogenesis.

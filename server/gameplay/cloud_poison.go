@@ -246,6 +246,9 @@ func (e campaignCloudLobSchedule) commitCloudPoisonTargetLocked(target *campaign
 	if err != nil {
 		return campaignCloudPoisonPublication{}, fmt.Errorf("cloudCommit: %w", err)
 	}
+	for index := range results {
+		results[index].ActivationID = origin.runtime.damage.activationID
+	}
 	transitions := make([]campaignDamageTransition, 0, len(results))
 	for _, result := range results {
 		isOriginalActor := owner.generation == origin.generation && owner.binding.UserID == origin.binding.UserID && owner.deployedObjectID == origin.sourceObjectID

@@ -30,7 +30,7 @@ func (e *gameplaySessionRegistry) consumeBasicBurnsLocked(peerSession gameplayPe
 			tickCount := uint32((remaining + 500*time.Millisecond - 1) / (500 * time.Millisecond))
 			sessionKey, owner := e.basicModifierOwnerLocked(npc, run.binding.UserID)
 			definition := sim.AbilityDefinition{DamageType: 3, DamageSource: 1, IsDamageTypeFound: true, IsDamageSourceFound: true}
-			damages = append(damages, expungeRemainingDamage{creature: run.sourceCreature, definition: expungeDamageDefinition(definition, tickCount, 1, 1), sourceObjectID: run.sourceID, sessionKey: sessionKey, generation: owner.generation, binding: run.binding})
+			damages = append(damages, expungeRemainingDamage{activationID: run.activationID, activationDefinitionID: run.activationDefinitionID, creature: run.sourceCreature, definition: expungeDamageDefinition(definition, tickCount, 1, 1), sourceObjectID: run.sourceID, sessionKey: sessionKey, generation: owner.generation, binding: run.binding})
 		}
 		instanceID := run.modifier.instanceID
 		packets, err := e.retireBasicHitModifierLocked(npc, peerSession.zone.Effect(), key, pool)

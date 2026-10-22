@@ -1,7 +1,6 @@
 package gameplay
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
@@ -15,25 +14,6 @@ const (
 	campaignVoltroidDischargeStackCount  = 5
 	campaignVoltroidChargeFriendCooldown = 15 * time.Second
 )
-
-type campaignVoltroidVisualCleanupStep struct {
-	runtime    campaignNPCActionRuntime
-	objectID   uint32
-	effectSlot uint8
-}
-
-func (e campaignVoltroidVisualCleanupStep) produce() ([][]byte, error) {
-	if !e.runtime.effectPool.Release(e.objectID, e.effectSlot) {
-		return nil, nil
-	}
-	packet, err := npcraknet.VoltroidEffect(
-		e.objectID, 0, e.effectSlot, "", true,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("voltroidVisualRemove: %w", err)
-	}
-	return [][]byte{packet}, nil
-}
 
 type campaignVoltroidChargeCleanupStep struct {
 	runtime    campaignNPCActionRuntime
@@ -82,16 +62,28 @@ type campaignVoltroidSchedule struct {
 	timestamp            uint64
 	chargeReadyTimestamp uint64
 	plan                 zonenpc.AttackPlan
+	charge               *campaignVoltroidPendingCharge
+	castTimestamp        uint64
+	castAt               time.Time
 }
 
 func (e campaignVoltroidSchedule) fail(
 	step string, err error,
 ) ([][]byte, error) {
-	e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
+	e.releaseCharge()
+	e.runtime.releaseActionGeneration(e.sessionKey, e.generation, e.objectID, e.plan.ActionGeneration)
 	return nil, fmt.Errorf("%s: %w", step, err)
 }
 
 func (e campaignVoltroidSchedule) next() ([][]byte, error) {
+	e.releaseCharge()
+	e.runtime.registry.mutex.RLock()
+	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isCurrent := isFound && peerSession.isCampaignNPCSourceGenerationActive(e.generation, e.objectID, e.plan.ActionGeneration)
+	e.runtime.registry.mutex.RUnlock()
+	if !isCurrent {
+		return nil, nil
+	}
 	packets, err := e.runtime.produceEnemyMelee(
 		e.packet, e.sessionKey, e.generation, e.objectID, e.timestamp,
 	)
@@ -111,14 +103,26 @@ func (e campaignVoltroidSchedule) arrive(timestamp uint64) ([][]byte, error) {
 	return packets, nil
 }
 
-func (e campaignVoltroidSchedule) hit() ([][]byte, error) {
+func (e campaignVoltroidSchedule) transfer() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
-		peerSession.isCampaignNPCSourceActive(e.generation, e.objectID)
+		peerSession.isCampaignNPCSourceGenerationActive(e.generation, e.objectID, e.plan.ActionGeneration)
 	if !isCurrent {
+		e.releaseChargeLocked()
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
+	}
+	e.stopBeamLocked()
+	var beamPackets [][]byte
+	// Beam retirement queues recipient batches, including the source. Reload
+	// its aggregate before updating earned counters so that FIFO is preserved.
+	peerSession = e.runtime.registry.sessions[e.sessionKey]
+	if e.charge == nil || !e.charge.isHitAccepted ||
+		!e.charge.npc.CompleteZapCharge(e.charge.lease) {
+		e.releaseChargeLocked()
+		e.runtime.registry.mutex.Unlock()
+		return beamPackets, nil
 	}
 	source, isSourceFound := peerSession.zone.NPCs().NPC(e.objectID)
 	target, isTargetFound := peerSession.zone.NPCs().NPC(e.targetID)
@@ -127,7 +131,7 @@ func (e campaignVoltroidSchedule) hit() ([][]byte, error) {
 		source.Plan.Position, target.Plan.Position,
 	) > 16 {
 		e.runtime.registry.mutex.Unlock()
-		return nil, nil
+		return beamPackets, nil
 	}
 	if peerSession.campaignNPCVoltroidCharges == nil {
 		peerSession.campaignNPCVoltroidCharges = make(map[uint32]uint32)
@@ -168,7 +172,7 @@ func (e campaignVoltroidSchedule) hit() ([][]byte, error) {
 			"RakNet Voltroid charge presentation omitted object=%d target=%d: effect slots unavailable",
 			e.objectID, e.targetID,
 		)
-		return nil, nil
+		return beamPackets, nil
 	}
 	effectName := fmt.Sprintf(
 		"citadel_zap_has_charge_%d.ServerEventDef", min(stackCount, uint32(4)),
@@ -186,7 +190,11 @@ func (e campaignVoltroidSchedule) hit() ([][]byte, error) {
 			"RakNet Voltroid charge cleanup not scheduled object=%d target=%d: %v",
 			e.objectID, e.targetID, scheduleErr,
 		)
-		return cleanup.produce()
+		cleanupPackets, cleanupErr := cleanup.produce()
+		if cleanupErr != nil {
+			return beamPackets, fmt.Errorf("voltroidChargeCleanup: %w", cleanupErr)
+		}
+		return append(beamPackets, cleanupPackets...), nil
 	}
 	if cancelCleanup == nil {
 		e.runtime.logger.Printf(
@@ -194,13 +202,13 @@ func (e campaignVoltroidSchedule) hit() ([][]byte, error) {
 			e.objectID, e.targetID,
 		)
 	}
-	packets := make([][]byte, 0, 2)
+	packets := append([][]byte(nil), beamPackets...)
 	if isEffectReplacement {
 		removePacket, removeErr := npcraknet.VoltroidEffect(
 			e.targetID, 0, effectSlot, "", true,
 		)
 		if removeErr != nil {
-			return nil, fmt.Errorf("voltroidChargeReplace: %w", removeErr)
+			return packets, fmt.Errorf("voltroidChargeReplace: %w", removeErr)
 		}
 		packets = append(packets, removePacket)
 	}
@@ -212,7 +220,7 @@ func (e campaignVoltroidSchedule) hit() ([][]byte, error) {
 			"RakNet Voltroid charge presentation omitted object=%d target=%d: %v",
 			e.objectID, e.targetID, err,
 		)
-		return nil, nil
+		return packets, nil
 	}
 	return append(packets, packet), nil
 }
@@ -291,7 +299,7 @@ func (r campaignNPCActionRuntime) produceCitadelSpecificOne(
 		timestamp: timestamp + uint64(time.Second/time.Millisecond),
 		chargeReadyTimestamp: timestamp +
 			uint64(campaignVoltroidChargeFriendCooldown/time.Millisecond),
-		plan: zonenpc.AttackPlan{},
+		plan: zonenpc.AttackPlan{ActionGeneration: source.ActionGeneration},
 	}
 	profile, isProfileFound := zonenpc.CitadelSpecificOneChargeFriendProfile(
 		source.Plan.NounName,
@@ -333,49 +341,9 @@ func (r campaignNPCActionRuntime) produceCitadelSpecificOne(
 		SourcePosition: source.Plan.Position, TargetPosition: target.Plan.Position,
 		Profile: profile,
 	}
-	startPackets, err := r.startNPCAttack(sessionKey, generation, schedule.plan, timestamp)
-	if err != nil {
-		r.releaseAction(sessionKey, generation, objectID)
-		return nil, true, fmt.Errorf("voltroidChargeStart: %w", err)
+	startPackets, startErr := schedule.start(timestamp)
+	if startErr != nil {
+		return nil, true, fmt.Errorf("voltroidChargeStart: %w", startErr)
 	}
-	effectSlot, isEffectAllocated := r.effectPool.Allocate(objectID)
-	if !isEffectAllocated {
-		r.releaseAction(sessionKey, generation, objectID)
-		return nil, true, errors.New("voltroid charge effect slots unavailable")
-	}
-	beamPacket, err := npcraknet.VoltroidEffect(
-		objectID, target.Plan.ObjectID, effectSlot,
-		profile.TrailEffectName, false,
-	)
-	if err != nil {
-		isEffectReleased := r.effectPool.Release(objectID, effectSlot)
-		if !isEffectReleased {
-			r.logger.Printf(
-				"RakNet Voltroid charge beam slot already released object=%d slot=%d",
-				objectID, effectSlot,
-			)
-		}
-		r.releaseAction(sessionKey, generation, objectID)
-		return nil, true, fmt.Errorf("voltroidChargeBeam: %w", err)
-	}
-	cleanup := campaignVoltroidVisualCleanupStep{
-		runtime: r, objectID: objectID, effectSlot: effectSlot,
-	}
-	_, err = scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
-		{Delay: profile.HitDelay, Produce: schedule.hit},
-		{Delay: profile.ReleaseDelay, Produce: cleanup.produce},
-		{Delay: repeatDelay, Produce: schedule.next},
-	})
-	if err != nil {
-		isEffectReleased := r.effectPool.Release(objectID, effectSlot)
-		if !isEffectReleased {
-			r.logger.Printf(
-				"RakNet Voltroid charge cleanup slot already released object=%d slot=%d",
-				objectID, effectSlot,
-			)
-		}
-		r.releaseAction(sessionKey, generation, objectID)
-		return nil, true, fmt.Errorf("voltroidChargeSchedule: %w", err)
-	}
-	return append(startPackets, beamPacket), true, nil
+	return startPackets, true, nil
 }

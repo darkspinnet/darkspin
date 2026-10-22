@@ -11,6 +11,7 @@ import (
 )
 
 type Actor struct {
+	DeathRevision    uint64
 	UserID           uint64
 	PeerGeneration   uint64
 	ObjectID         uint32
@@ -65,6 +66,12 @@ func (s *Session) Put(actor Actor) error {
 			"hero actor generation stale: got %d, want >= %d",
 			actor.PeerGeneration, current.PeerGeneration,
 		)
+	}
+	if isFound && actor.ObjectID == current.ObjectID {
+		actor.DeathRevision = max(actor.DeathRevision, current.DeathRevision)
+		if current.HitPoint > 0 && actor.HitPoint <= 0 {
+			actor.DeathRevision++
+		}
 	}
 	s.actors[actor.UserID] = actor
 	return nil
@@ -204,6 +211,9 @@ func (s *Session) SetResources(
 		return Actor{}, errors.New("hero resurrection requires lifecycle operation")
 	}
 	previous := actor
+	if actor.HitPoint > 0 && hitPoint <= 0 {
+		actor.DeathRevision++
+	}
 	actor.HitPoint = hitPoint
 	actor.ManaPoint = manaPoint
 	s.actors[userID] = actor

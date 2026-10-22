@@ -24,6 +24,7 @@ import (
 	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 	objectraknet "github.com/darkspinnet/darkspin/server/zone/object/raknet103"
+	questraknet "github.com/darkspinnet/darkspin/server/zone/quest/raknet103"
 	securityraknet "github.com/darkspinnet/darkspin/server/zone/security/raknet103"
 )
 
@@ -84,6 +85,25 @@ func (r gameplaySetupRuntime) publishRejoin(
 	// The baseline's final deployment can reset the native action bar. Restore
 	// remaining cooldowns afterward, only in this owner's reconnect response.
 	baseline = append(baseline, cooldownPackets...)
+	overdrivePackets, err := r.registry.overdriveRejoinPackets(peerSession, baselineTime)
+	if err != nil {
+		return nil, fmt.Errorf("rejoinOverdrive: %w", err)
+	}
+	baseline = append(baseline, overdrivePackets...)
+	mutationPackets, mutationFrames, err := r.registry.mutationRejoinPackets(peerSession, baselineTime, packet.SourceTime)
+	if err != nil {
+		return nil, fmt.Errorf("rejoinMutation: %w", err)
+	}
+	baseline = append(baseline, mutationPackets...)
+	mutationDelivery := campaignProjectionDelivery{
+		registry: r.registry, sessionKey: packet.Address.String(),
+		generation: peerSession.generation, transportGeneration: peerSession.transportGeneration,
+		mutationEvents: mutationFrames,
+	}
+	err = packet.AfterResponseCommit(mutationDelivery.commit)
+	if err != nil {
+		return nil, fmt.Errorf("rejoinMutationCommit: %w", err)
+	}
 	shieldPackets, err := r.registry.nomadDragShieldPackets(peerSession.zone, r.now())
 	if err != nil {
 		return nil, fmt.Errorf("rejoinDragShield: %w", err)
@@ -444,12 +464,16 @@ func marshalGameplayRejoinBaselineState(
 		}
 		packets = append(packets, objectivePacket)
 	}
+	introTime := time.Now()
+	if len(capturedTimes) > 0 {
+		introTime = capturedTimes[0]
+	}
 	liveNPCs := peerSession.zone.NPCs().LiveSnapshots()
 	for index, npc := range liveNPCs {
 		if !npc.IsPublished {
 			continue
 		}
-		spawnPackets, marshalErr := npcraknet.Spawn(npc.FacingSpawnPlan())
+		spawnPackets, marshalErr := npcraknet.SpawnSnapshot(npc, introTime, sourceTime)
 		if marshalErr != nil {
 			return nil, fmt.Errorf("rejoinNPC[%d]: %w", index, marshalErr)
 		}
@@ -522,10 +546,6 @@ func marshalGameplayRejoinBaselineState(
 		return nil, fmt.Errorf("rejoinNPCTarget: %w", err)
 	}
 	packets = append(packets, targetPackets...)
-	introTime := time.Now()
-	if len(capturedTimes) > 0 {
-		introTime = capturedTimes[0]
-	}
 	for _, npc := range liveNPCs {
 		if !npc.IsPublished {
 			continue
@@ -546,7 +566,7 @@ func marshalGameplayRejoinBaselineState(
 		return nil, fmt.Errorf("rejoinTrees: %w", err)
 	}
 	packets = append(packets, treePackets...)
-	pickupPackets, err := marshalGameplayRejoinPickups(peerSession)
+	pickupPackets, err := marshalGameplayRejoinPickups(peerSession, sourceTime)
 	if err != nil {
 		return nil, fmt.Errorf("rejoinPickup: %w", err)
 	}
@@ -707,7 +727,7 @@ func marshalGameplayRejoinTrees(peerSession gameplayPeerSession) ([][]byte, erro
 }
 
 func marshalGameplayRejoinPickups(
-	peerSession gameplayPeerSession,
+	peerSession gameplayPeerSession, sourceTimes ...uint64,
 ) ([][]byte, error) {
 	if peerSession.zone == nil || peerSession.zone.Pickups() == nil {
 		return nil, nil
@@ -716,7 +736,7 @@ func marshalGameplayRejoinPickups(
 	for index, pickup := range peerSession.zone.Pickups().SnapshotsAt(
 		peerSession.zone.Elapsed(time.Now()),
 	) {
-		encoded, err := marshalGameplayRejoinPickup(peerSession, pickup)
+		encoded, err := marshalGameplayRejoinPickup(peerSession, pickup, sourceTimes...)
 		if err != nil {
 			return nil, fmt.Errorf("pickup[%d]: %w", index, err)
 		}
@@ -749,13 +769,16 @@ func marshalGameplayRejoinPickups(
 	return packets, nil
 }
 
-func marshalGameplayRejoinPickup(peerSession gameplayPeerSession, pickup zoneinteract.Pickup) ([][]byte, error) {
-	packets, err := marshalGameplayRejoinPickupPayload(peerSession, pickup)
+func marshalGameplayRejoinPickup(peerSession gameplayPeerSession, pickup zoneinteract.Pickup, sourceTimes ...uint64) ([][]byte, error) {
+	packets, err := marshalGameplayRejoinPickupPayload(peerSession, pickup, sourceTimes...)
 	if err != nil {
 		return nil, fmt.Errorf("pickupPayload: %w", err)
 	}
 	if len(packets) == 0 {
 		return nil, nil
+	}
+	if pickup.Kind == zoneinteract.PickupQuestCrystal {
+		return packets, nil
 	}
 	flightPackets, err := marshalPickupFlight(pickup.ObjectID, pickup.Flight, true)
 	if err != nil {
@@ -765,7 +788,7 @@ func marshalGameplayRejoinPickup(peerSession gameplayPeerSession, pickup zoneint
 }
 
 func marshalGameplayRejoinPickupPayload(
-	peerSession gameplayPeerSession, pickup zoneinteract.Pickup,
+	peerSession gameplayPeerSession, pickup zoneinteract.Pickup, sourceTimes ...uint64,
 ) ([][]byte, error) {
 	position := raknet.Vector3{
 		X: pickup.Position.X, Y: pickup.Position.Y, Z: pickup.Position.Z,
@@ -826,6 +849,16 @@ func marshalGameplayRejoinPickupPayload(
 				CrystalLevel: payload.Request.CrystalLevel,
 			},
 		)
+	case zoneinteract.PickupQuestCrystal:
+		crystal, isFound := peerSession.zone.QuestCrystals().Crystal(pickup.ObjectID, time.Now())
+		if !isFound {
+			return nil, errors.New("quest crystal payload unavailable")
+		}
+		sourceTime := uint64(0)
+		if len(sourceTimes) > 0 {
+			sourceTime = sourceTimes[0]
+		}
+		return questraknet.SpawnAt(crystal, time.Now(), sourceTime)
 	case zoneinteract.PickupDNA:
 		payload, isFound := peerSession.zone.DNA().Lookup(pickup.ObjectID)
 		if !isFound {

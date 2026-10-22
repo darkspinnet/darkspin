@@ -21,22 +21,24 @@ type basicHitModifierKey struct {
 }
 
 type basicHitModifierRun struct {
-	modifier           *campaignNPCModifierRun
-	silence            *campaignNPCModifierRun
-	state              zonenpc.BasicModifier
-	timer              *time.Timer
-	sourceID           uint32
-	tickCount          uint32
-	damage             game.DamageRange
-	sourceCreature     game.GameplayCreature
-	binding            game.GameplayBinding
-	packet             raknet.Packet
-	timestamp          uint64
-	isMovementPending  bool
-	movementDeadline   time.Time
-	movementTimestamp  uint64
-	movementGeneration uint64
-	movementRevision   uint64
+	activationID           uint64
+	activationDefinitionID uint32
+	modifier               *campaignNPCModifierRun
+	silence                *campaignNPCModifierRun
+	state                  zonenpc.BasicModifier
+	timer                  *time.Timer
+	sourceID               uint32
+	tickCount              uint32
+	damage                 game.DamageRange
+	sourceCreature         game.GameplayCreature
+	binding                game.GameplayBinding
+	packet                 raknet.Packet
+	timestamp              uint64
+	isMovementPending      bool
+	movementDeadline       time.Time
+	movementTimestamp      uint64
+	movementGeneration     uint64
+	movementRevision       uint64
 }
 
 type basicHitModifierStep struct {
@@ -82,7 +84,7 @@ func (e campaignDamageRuntime) applyBasicHitModifier(packet raknet.Packet, sessi
 	if !isTargetFound || target.IsDefeated {
 		return nil, nil
 	}
-	if kind == zonenpc.BasicModifierKnockback && (target.Plan.IsBoss || target.IsTurtleActive || target.HasAffixModifier(surefootedNPCAffixModifierName)) {
+	if kind == zonenpc.BasicModifierKnockback && (target.IsMutationKnockbackImmune() || target.Plan.IsBoss || target.IsTurtleActive || target.HasAffixModifier(surefootedNPCAffixModifierName)) {
 		return nil, nil
 	}
 	modifierKey := zonenpc.BasicModifierKey{Kind: kind}
@@ -152,7 +154,15 @@ func (e campaignDamageRuntime) applyBasicHitModifier(packet raknet.Packet, sessi
 		modifier.create()
 	}
 	modifier.record = record
-	run := &basicHitModifierRun{modifier: modifier, state: state, sourceID: record.SourceObjectID, sourceCreature: result.SourceCreature, binding: peerSession.binding, packet: packet, timestamp: timestamp}
+	activationID := result.ActivationID
+	if activationID == 0 {
+		activationID = e.activationID
+	}
+	activationDefinitionID := result.ActivationDefinitionID
+	if activationDefinitionID == 0 {
+		activationDefinitionID = util.HashID(result.Definition.Name)
+	}
+	run := &basicHitModifierRun{activationID: activationID, activationDefinitionID: activationDefinitionID, modifier: modifier, state: state, sourceID: record.SourceObjectID, sourceCreature: result.SourceCreature, binding: peerSession.binding, packet: packet, timestamp: timestamp}
 	if kind == zonenpc.BasicModifierBurn {
 		creature := result.SourceCreature
 		definition := sim.AbilityDefinition{Name: "FireRavagerBurn", MinimumDamage: 1, MaximumDamage: 1, DamageCoefficient: .05, DamageType: 3, DamageSource: 1, IsDamageTypeFound: true, IsDamageSourceFound: true, IsDescriptorFound: true, DescriptorMask: 36}

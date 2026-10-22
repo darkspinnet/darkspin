@@ -1,34 +1,43 @@
 package npc
 
-import "time"
+import (
+	"time"
+
+	"github.com/darkspinnet/darkspin/server/game"
+)
 
 // introductionTimeline belongs to the actor. Losing its action driver does not
 // restart the authored entrance or shorten the remaining animation wait.
 type introductionTimeline struct {
-	startedAt         time.Time
-	profile           ActionProfile
-	timestamp         uint64
-	generation        uint64
-	isCommitted       bool
-	isComplete        bool
-	isEffectEmitted   bool
-	isBossActive      bool
-	isInitiallyHidden bool
+	startedAt          time.Time
+	sourcePosition     game.Vec3
+	profile            ActionProfile
+	timestamp          uint64
+	generation         uint64
+	isCommitted        bool
+	isComplete         bool
+	isEffectEmitted    bool
+	isAnimationEmitted bool
+	isBossActive       bool
+	isInitiallyHidden  bool
+	isTimestampPending bool
 }
 
 // IntroductionTiming contains remaining waits, never new authored durations.
 type IntroductionTiming struct {
-	Delay           time.Duration
-	RevealDelay     time.Duration
-	EffectDelay     time.Duration
-	ActiveDelay     time.Duration
-	Timestamp       uint64
-	Profile         ActionProfile
-	IsNew           bool
-	IsRevealPending bool
-	IsEffectPending bool
-	IsActivePending bool
-	Generation      uint64
+	Delay              time.Duration
+	RevealDelay        time.Duration
+	EffectDelay        time.Duration
+	AnimationDelay     time.Duration
+	ActiveDelay        time.Duration
+	Timestamp          uint64
+	Profile            ActionProfile
+	IsNew              bool
+	IsRevealPending    bool
+	IsEffectPending    bool
+	IsAnimationPending bool
+	IsActivePending    bool
+	Generation         uint64
 }
 
 func (e Snapshot) IsIntroductionPending() bool {
@@ -58,12 +67,14 @@ func WithRetainedIntroduction(profile ActionProfile, timing IntroductionTiming) 
 	intro := timing.Profile
 	profile.FirstAggroAbilityName = intro.FirstAggroAbilityName
 	profile.FirstAggroAnimationName = intro.FirstAggroAnimationName
+	profile.FirstAggroAnimationDelay = intro.FirstAggroAnimationDelay
 	profile.FirstAggroEffectName = intro.FirstAggroEffectName
 	profile.FirstAggroEffectDelay = intro.FirstAggroEffectDelay
 	profile.FirstAggroDelay = intro.FirstAggroDelay
 	profile.FirstAggroRevealDelay = intro.FirstAggroRevealDelay
 	profile.FirstAggroCinematicDuration = intro.FirstAggroCinematicDuration
 	profile.FirstAggroCinematicRadius = intro.FirstAggroCinematicRadius
+	profile.FirstAggroCinematicOffset = intro.FirstAggroCinematicOffset
 	profile.IsFirstAggroDurationKnown = intro.IsFirstAggroDurationKnown
 	profile.IsFirstAggroFacingSuppressed = intro.IsFirstAggroFacingSuppressed
 	profile.PreAggroAnimationName = intro.PreAggroAnimationName
@@ -94,25 +105,34 @@ func (e *Session) StartIntroduction(objectID uint32, owner ActionOwner, generati
 			return IntroductionTiming{}, false
 		}
 		npc.introduction = introductionTimeline{
-			startedAt: now, profile: profile, timestamp: timestamp, generation: generation,
+			startedAt: now, sourcePosition: npc.Plan.Position, profile: profile, timestamp: timestamp, generation: generation,
 			isInitiallyHidden: npc.Plan.IsIntroductionHidden,
 		}
 	}
 	intro := npc.introduction
 	elapsed := max(now.Sub(intro.startedAt), 0)
+	if intro.isTimestampPending {
+		// Packet time belongs to this server process. A resumed stage uses its
+		// new driver's current timestamp plus the saved remaining delay.
+		intro.timestamp = timestamp
+		intro.isTimestampPending = false
+		npc.introduction = intro
+	}
 	activeDelay := intro.profile.FirstAggroDelay
 	if intro.profile.FirstAggroRevealDelay > 0 {
 		activeDelay = intro.profile.FirstAggroRevealDelay
 	}
 	timing := IntroductionTiming{
-		Delay:       max(intro.profile.FirstAggroDelay-elapsed, 0),
-		RevealDelay: max(intro.profile.FirstAggroRevealDelay-elapsed, 0),
-		EffectDelay: max(intro.profile.FirstAggroEffectDelay-elapsed, 0),
-		ActiveDelay: max(activeDelay-elapsed, 0),
-		Timestamp:   intro.timestamp, Profile: intro.profile, IsNew: isNew, Generation: intro.generation,
-		IsRevealPending: npc.Plan.IsIntroductionHidden && intro.profile.FirstAggroRevealDelay > 0,
-		IsEffectPending: !intro.isEffectEmitted && intro.profile.FirstAggroEffectName != "" && intro.profile.FirstAggroEffectDelay > 0,
-		IsActivePending: !intro.isBossActive,
+		Delay:          max(intro.profile.FirstAggroDelay-elapsed, 0),
+		RevealDelay:    max(intro.profile.FirstAggroRevealDelay-elapsed, 0),
+		EffectDelay:    max(intro.profile.FirstAggroEffectDelay-elapsed, 0),
+		AnimationDelay: max(max(intro.profile.FirstAggroAnimationDelay, intro.profile.FirstAggroRevealDelay)-elapsed, 0),
+		ActiveDelay:    max(activeDelay-elapsed, 0),
+		Timestamp:      intro.timestamp, Profile: intro.profile, IsNew: isNew, Generation: intro.generation,
+		IsRevealPending:    npc.Plan.IsIntroductionHidden && intro.profile.FirstAggroRevealDelay > 0,
+		IsEffectPending:    !intro.isEffectEmitted && intro.profile.FirstAggroEffectName != "" && intro.profile.FirstAggroEffectDelay > 0,
+		IsAnimationPending: !intro.isAnimationEmitted && intro.profile.FirstAggroAnimationName != "" && intro.profile.FirstAggroAnimationDelay > 0,
+		IsActivePending:    !intro.isBossActive,
 	}
 	e.npcs[objectID] = npc
 	return timing, true
@@ -175,6 +195,12 @@ func (e *Session) CommitPublishedIntroduction(objectID uint32, generation uint64
 			return false
 		}
 		deadline = intro.profile.FirstAggroEffectDelay
+	case IntroductionAnimationStart:
+		if intro.isAnimationEmitted || intro.profile.FirstAggroAnimationDelay <= 0 ||
+			intro.profile.FirstAggroAnimationName == "" {
+			return false
+		}
+		deadline = max(intro.profile.FirstAggroAnimationDelay, intro.profile.FirstAggroRevealDelay)
 	case IntroductionBossActive:
 		if intro.isBossActive {
 			return false
@@ -199,6 +225,8 @@ func (e *Session) CommitPublishedIntroduction(objectID uint32, generation uint64
 		npc.IsInvisibleToSecurityTeleporter = false
 	case IntroductionEffect:
 		intro.isEffectEmitted = true
+	case IntroductionAnimationStart:
+		intro.isAnimationEmitted = true
 	case IntroductionBossActive:
 		intro.isBossActive = true
 	case IntroductionComplete:
@@ -215,6 +243,7 @@ const (
 	IntroductionBossActive
 	IntroductionComplete
 	IntroductionReveal
+	IntroductionAnimationStart
 )
 
 // IntroductionRemaining projects an in-flight camera hold to a newly joined

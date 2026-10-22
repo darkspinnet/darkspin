@@ -67,6 +67,7 @@ func WithBossIntroduction(plan SpawnPlan, profile ActionProfile) ActionProfile {
 		return profile
 	}
 	profile.FirstAggroAnimationName = intro.FirstAggroAnimationName
+	profile.FirstAggroAnimationDelay = intro.FirstAggroAnimationDelay
 	profile.FirstAggroAbilityName = intro.FirstAggroAbilityName
 	profile.FirstAggroEffectName = intro.FirstAggroEffectName
 	profile.FirstAggroEffectDelay = intro.FirstAggroEffectDelay
@@ -74,6 +75,7 @@ func WithBossIntroduction(plan SpawnPlan, profile ActionProfile) ActionProfile {
 	profile.FirstAggroRevealDelay = intro.FirstAggroRevealDelay
 	profile.FirstAggroCinematicDuration = intro.FirstAggroCinematicDuration
 	profile.FirstAggroCinematicRadius = intro.FirstAggroCinematicRadius
+	profile.FirstAggroCinematicOffset = intro.FirstAggroCinematicOffset
 	profile.IsFirstAggroDurationKnown = intro.IsFirstAggroDurationKnown
 	return profile
 }
@@ -83,6 +85,7 @@ func WithBossIntroduction(plan SpawnPlan, profile ActionProfile) ActionProfile {
 func IntroductionProfile(plan SpawnPlan, profile ActionProfile) ActionProfile {
 	profile = WithBossIntroduction(plan, profile)
 	profile = authoredRobotEntrance(plan, profile)
+	profile = authoredFirstAggroReaction(plan, profile)
 	if plan.IsStartupInitialized && plan.IsSecondaryStart &&
 		plan.Introduction != SpawnIntroductionFloorWarp {
 		graph := plan.NPCProfile.AIGraph

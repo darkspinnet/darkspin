@@ -99,10 +99,15 @@ func reserveQuantumStateReactionLocked(
 	if err != nil {
 		return fmt.Errorf("quantumStateChoice: %w", err)
 	}
+	kind := quantumStateReactionKind(choice)
+	if kind == quantumStateReactionKnockback && target.IsMutationKnockbackImmune() ||
+		kind == quantumStateReactionBanish && target.IsMutationBanishImmune() {
+		return nil
+	}
 	run.quantum.nextActivation = now.Add(quantumStateLockout)
 	step := quantumStateReactionStep{
 		run: run, targetObjectID: targetObjectID, timestamp: timestamp,
-		kind: quantumStateReactionKind(choice),
+		kind: kind,
 	}
 	_, err = run.quantum.packet.ScheduleProducers(
 		[]raknet.ScheduledPacketProducer{{Produce: step.produce}},
@@ -178,6 +183,10 @@ func (e quantumStateReactionStep) produceStatusLocked(
 	runtime := e.run.quantum.runtime
 	target, isFound := peerSession.zone.NPCs().NPC(e.targetObjectID)
 	if !isFound || target.IsDefeated {
+		return nil, quantumStateStatusExpiry{}, nil
+	}
+	if e.kind == quantumStateReactionKnockback && target.IsMutationKnockbackImmune() ||
+		e.kind == quantumStateReactionBanish && target.IsMutationBanishImmune() {
 		return nil, quantumStateStatusExpiry{}, nil
 	}
 	duration := quantumStateSlowDuration
@@ -276,7 +285,7 @@ func clearQuantumStateStatus(
 func (e quantumStateReactionStep) applyKnockbackLocked(
 	peerSession gameplayPeerSession, target zonenpc.Snapshot,
 ) ([][]byte, error) {
-	if target.IsTurtleActive || target.HasAffixModifier(surefootedNPCAffixModifierName) {
+	if target.IsMutationKnockbackImmune() || target.IsTurtleActive || target.HasAffixModifier(surefootedNPCAffixModifierName) {
 		return nil, nil
 	}
 	source := game.Vec3(peerSession.playerPosition)

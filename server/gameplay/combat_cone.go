@@ -195,7 +195,7 @@ func (e campaignConeSchedule) hit() ([][]byte, error) {
 				// action owner leaves the boss permanently inactive.
 				nextPackets, nextErr := e.runtime.restartCorruptorAction(
 					e.packet, e.sessionKey, e.generation, source,
-					e.timestamp+uint64(hitDelay/time.Millisecond),
+					e.timestamp+uint64(hitDelay/time.Millisecond), source.SecondAggroGeneration(), peerSession.zone,
 				)
 				if nextErr != nil {
 					return nil, fmt.Errorf("laserRestart: %w", nextErr)

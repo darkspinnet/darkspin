@@ -75,7 +75,7 @@ func (e *Store) Save(ctx context.Context, snapshot checkpoint.Snapshot) error {
 	if e == nil || e.db == nil {
 		return errors.New("checkpoint store unavailable")
 	}
-	payload, err := json.Marshal(snapshot)
+	payload, err := json.Marshal(encodeCheckpoint(snapshot))
 	if err != nil {
 		return fmt.Errorf("snapshotMarshal: %w", err)
 	}
@@ -150,12 +150,12 @@ func (e *Store) Load(
 	if err != nil {
 		return checkpoint.Snapshot{}, false, fmt.Errorf("snapshotSelect: %w", err)
 	}
-	var snapshot checkpoint.Snapshot
-	err = json.Unmarshal(payload, &snapshot)
+	var encoded checkpointPayload
+	err = json.Unmarshal(payload, &encoded)
 	if err != nil {
 		return checkpoint.Snapshot{}, false, fmt.Errorf("snapshotDecode: %w", err)
 	}
-	return snapshot, true, nil
+	return decodeCheckpoint(encoded), true, nil
 }
 
 func (e *Store) LoadMember(

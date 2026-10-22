@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
@@ -456,6 +457,14 @@ func PursuitProgress(
 }
 
 func FirstAggro(plan zonenpc.FirstActionPlan, timestamp uint64) ([][]byte, error) {
+	packets, err := firstAggro(plan, timestamp, plan.Profile.FirstAggroCinematicDuration, true)
+	if err != nil {
+		return nil, fmt.Errorf("aggroMarshal: %w", err)
+	}
+	return packets, nil
+}
+
+func firstAggro(plan zonenpc.FirstActionPlan, timestamp uint64, cameraDuration time.Duration, isRevealPending bool) ([][]byte, error) {
 	if plan.ObjectID == 0 || plan.TargetObjectID == 0 ||
 		!isFiniteVec3(plan.SourcePosition) ||
 		!plan.Profile.IsFirstAggroDurationKnown {
@@ -463,9 +472,9 @@ func FirstAggro(plan zonenpc.FirstActionPlan, timestamp uint64) ([][]byte, error
 	}
 	source := vector(plan.SourcePosition)
 	messages := make([]raknet.ApplicationMessage, 0, 6)
-	if plan.Profile.FirstAggroCinematicDuration > 0 {
+	if cameraDuration > 0 {
 		messages = append(messages, raknet.NewCinematicMessage(
-			plan.Profile.FirstAggroCinematicDuration, source,
+			cameraDuration, vector(plan.IntroductionFocus()),
 			plan.Profile.FirstAggroCinematicRadius,
 		))
 	}
@@ -481,7 +490,7 @@ func FirstAggro(plan zonenpc.FirstActionPlan, timestamp uint64) ([][]byte, error
 		raknet.ObjectUpdateMessage{
 			ObjectID: plan.ObjectID, PositionX: source.X,
 			PositionY: source.Y, PositionZ: source.Z,
-			IsVisible: plan.Profile.FirstAggroRevealDelay <= 0,
+			IsVisible: plan.Profile.FirstAggroRevealDelay <= 0 || !isRevealPending,
 		},
 		raknet.AgentBlackboardUpdateMessage{
 			ObjectID: plan.ObjectID, TargetID: targetObjectID,
@@ -490,13 +499,14 @@ func FirstAggro(plan zonenpc.FirstActionPlan, timestamp uint64) ([][]byte, error
 		},
 	)
 	turn := attackTurn(plan.FirstAggroFacingPlan())
-	if plan.Profile.FirstAggroAnimationName == "shadowboss_onaggro" {
+	if plan.Profile.FirstAggroAnimationName == "shadowboss_onaggro" ||
+		plan.Profile.FirstAggroAnimationName == "ctd_boss_tc_aggro" {
 		// TurnToFace(..., true): build 103 sub_A0A800 adds 0x800 to the
 		// captured-point goal produced by sub_A15610.
 		turn.GoalFlags |= 0x800
 	}
 	messages = append(messages, turn)
-	if plan.Profile.FirstAggroRevealDelay <= 0 && plan.Profile.FirstAggroAnimationName != "" {
+	if plan.Profile.FirstAggroRevealDelay <= 0 && plan.Profile.FirstAggroAnimationDelay <= 0 && plan.Profile.FirstAggroAnimationName != "" {
 		messages = append(messages, raknet.SetAnimationStateMessage{
 			ObjectID:  plan.ObjectID,
 			State:     util.HashID(plan.Profile.FirstAggroAnimationName),

@@ -13,12 +13,14 @@ import (
 )
 
 type expungeRemainingDamage struct {
-	creature       game.GameplayCreature
-	definition     sim.AbilityDefinition
-	sourceObjectID uint32
-	sessionKey     string
-	generation     uint64
-	binding        game.GameplayBinding
+	activationID           uint64
+	activationDefinitionID uint32
+	creature               game.GameplayCreature
+	definition             sim.AbilityDefinition
+	sourceObjectID         uint32
+	sessionKey             string
+	generation             uint64
+	binding                game.GameplayBinding
 }
 
 type expungeDamagePublication struct {
@@ -219,7 +221,14 @@ func (e campaignMeleeSchedule) expunge() ([][]byte, error) {
 	packets := make([][]byte, 0)
 	for _, publication := range publications {
 		remaining := publication.remaining
-		damagePackets, publishErr := e.runtime.damage.publishAreaResults(
+		for index := range publication.results {
+			publication.results[index].ActivationDefinitionID = remaining.activationDefinitionID
+		}
+		// Expunge executes TakeDamage with the consumed modifier's initiator
+		// snapshot, not the Expunge request's activation or current caller.
+		damageRuntime := e.runtime.damage
+		damageRuntime.activationID = remaining.activationID
+		damagePackets, publishErr := damageRuntime.publishAreaResults(
 			e.packet, remaining.sessionKey, remaining.generation, remaining.sourceObjectID,
 			e.packet.SourceTime+500, remaining.binding, publication.results, publication.transitions, nil, false,
 		)
@@ -264,6 +273,7 @@ func consumeExpungeDamageOverTime(
 		}
 		remainingTick := run.definition.NumberOfTicks - run.completedTick
 		damages = append(damages, expungeRemainingDamage{
+			activationID:   run.activationID,
 			creature:       run.creature,
 			sourceObjectID: run.sourceObjectID,
 			definition: expungeDamageDefinition(
@@ -328,6 +338,7 @@ func consumeExpungeDamageOverTime(
 			remainingTick := expungeRemainingTickCount(contact.expiresAt, at, 2*time.Second)
 			if remainingTick > 0 {
 				damages = append(damages, expungeRemainingDamage{
+					activationID:   run.activationID,
 					creature:       run.creature,
 					sourceObjectID: run.sourceObjectID,
 					definition: expungeDamageDefinition(
@@ -360,7 +371,7 @@ func consumeExpungeDamageOverTime(
 		run.cancel = nil
 		run.mutex.Unlock()
 		damages = append(damages, expungeRemainingDamage{
-			creature: creature, sourceObjectID: run.sourceObjectID,
+			activationID: run.activationID, creature: creature, sourceObjectID: run.sourceObjectID,
 			definition: expungeDamageDefinition(definition, 1, 0, 0),
 		})
 		delete(peerSession.heroProjectileRuns, projectileObjectID)

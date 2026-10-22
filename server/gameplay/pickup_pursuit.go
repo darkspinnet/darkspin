@@ -9,6 +9,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/raknet"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	zoneaction "github.com/darkspinnet/darkspin/server/zone/action"
+	zoneinteract "github.com/darkspinnet/darkspin/server/zone/interact"
 )
 
 type campaignPickupTimeout struct {
@@ -86,10 +87,14 @@ func (e gameplayPendingRuntime) pollPickupPursuit(ctx context.Context, packet ra
 		position = game.Vec3(sampledPosition)
 	}
 	distance := zoneability.Distance(position, pickup.Position)
-	if pickup.IsSourcePositionKnown {
+	if pickup.IsSourcePositionKnown && pickup.Kind != zoneinteract.PickupQuestCrystal {
 		distance = min(distance, zoneability.Distance(position, pickup.SourcePosition))
 	}
-	if distance > session.campaignPickupMaximumDistance() {
+	maximumDistance := session.campaignPickupMaximumDistance()
+	if pickup.Kind == zoneinteract.PickupQuestCrystal {
+		maximumDistance = questCrystalDistance(session)
+	}
+	if distance > maximumDistance {
 		e.registry.mutex.Unlock()
 		return nil, nil
 	}

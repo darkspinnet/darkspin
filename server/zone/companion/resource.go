@@ -28,6 +28,6 @@ func (e *Session) RestoreHitPoint(expected Actor, hitPoint float32) (bool, error
 		return false, nil
 	}
 	actor.HitPoint = hitPoint
-	e.actors[expected.ObjectID] = actor
+	e.storeCinematicActor(actor, true)
 	return true, nil
 }

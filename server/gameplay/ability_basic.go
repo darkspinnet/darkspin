@@ -871,6 +871,7 @@ func (r campaignAbilityCommandRuntime) handleCharacter(
 	ctx context.Context, packet raknet.Packet, command raknet.ActionCommandData,
 	commandSession gameplayPeerSession,
 ) ([][]byte, error) {
+	r.damage.activationID = nextDamageActivationID()
 	abilityStartTime := r.now()
 	targetObjectID := command.Ability.TargetID
 	deployedCreature := game.GameplayCreature{}
@@ -1057,7 +1058,7 @@ func (r campaignAbilityCommandRuntime) handle(
 	}
 	if command.Common.Type == raknet.ActionUseSquadAbility &&
 		command.Ability != nil {
-		return r.handleSquad(packet, command, commandSession)
+		return r.handleSquadActivation(packet, command, commandSession)
 	}
 	if command.Common.Type == raknet.ActionUseCharacterAbility &&
 		command.Ability != nil {

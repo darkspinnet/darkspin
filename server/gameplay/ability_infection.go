@@ -35,6 +35,7 @@ type heroInfectionEntry struct {
 }
 
 type heroInfectionRun struct {
+	activationID   uint64
 	mutex          sync.Mutex
 	npc            *zonenpc.Session
 	modifierPool   *modifierPool
@@ -357,6 +358,7 @@ func (e heroInfectionSchedule) tick(
 				e.runtime.registry.mutex.Unlock()
 				return nil, fmt.Errorf("infectionTransition: %w", transitionErr)
 			}
+			result.ActivationID = e.run.activationID
 			results = append(results, result)
 			transitions = append(transitions, transition)
 			if result.Damage.Damage <= 0 || result.Damage.IsDefeated {
@@ -629,7 +631,8 @@ func (r campaignAbilityCommandRuntime) handleHeroInfection(
 		return nil, fmt.Errorf("infectionCommit: %w", err)
 	}
 	run := &heroInfectionRun{
-		npc: peerSession.zone.NPCs(), modifierPool: r.modifierPool,
+		activationID: r.damage.activationID,
+		npc:          peerSession.zone.NPCs(), modifierPool: r.modifierPool,
 		infections: make(map[uint32]heroInfectionEntry),
 		now:        r.now,
 		creature:   creature, definition: projected, sourceObjectID: req.command.Common.ObjectID,

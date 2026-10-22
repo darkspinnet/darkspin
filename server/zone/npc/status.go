@@ -556,10 +556,14 @@ func (s *Session) IntangibleRemaining(
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	npc, isFound := s.npcs[objectID]
-	if !isFound || npc.IsDefeated || !at.Before(npc.status.intangibleExpiresAt) {
+	if !isFound || npc.IsDefeated {
 		return 0
 	}
-	return npc.status.intangibleExpiresAt.Sub(at)
+	expiresAt := npc.status.intangibleExpiresAt
+	if expiresAt.Before(npc.cinematic.intangibleUntil) {
+		expiresAt = npc.cinematic.intangibleUntil
+	}
+	return max(time.Duration(0), expiresAt.Sub(at))
 }
 
 func (s *Session) ApplyDamageVulnerability(
@@ -874,9 +878,13 @@ func (s *Session) RootRemaining(objectID uint32, at time.Time) time.Duration {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	npc, isFound := s.npcs[objectID]
-	if !isFound || npc.IsDefeated || isStatusBlockedByShield(npc) ||
-		!at.Before(npc.status.rootExpiresAt) && !at.Before(npc.status.bioEntangleExpiresAt) && !at.Before(npc.status.supportHealerRootExpiresAt) {
+	if !isFound || npc.IsDefeated {
 		return 0
+	}
+	cinematicRemaining := max(time.Duration(0), npc.cinematic.immobilizedUntil.Sub(at))
+	if isStatusBlockedByShield(npc) ||
+		!at.Before(npc.status.rootExpiresAt) && !at.Before(npc.status.bioEntangleExpiresAt) && !at.Before(npc.status.supportHealerRootExpiresAt) {
+		return cinematicRemaining
 	}
 	expiresAt := npc.status.rootExpiresAt
 	if expiresAt.Before(npc.status.bioEntangleExpiresAt) {
@@ -885,7 +893,7 @@ func (s *Session) RootRemaining(objectID uint32, at time.Time) time.Duration {
 	if expiresAt.Before(npc.status.supportHealerRootExpiresAt) {
 		expiresAt = npc.status.supportHealerRootExpiresAt
 	}
-	return expiresAt.Sub(at)
+	return max(cinematicRemaining, expiresAt.Sub(at))
 }
 
 type CurseDamageProfile struct {
@@ -906,7 +914,7 @@ func (s *Session) AdmitBanish(objectID uint32, at, expiresAt time.Time) (bool, e
 	if !isFound || npc.IsDefeated {
 		return false, fmt.Errorf("npcBanishMissing: %d", objectID)
 	}
-	if isStatusBlockedByShield(npc) || at.Before(npc.status.banishExpiresAt) ||
+	if npc.IsMutationBanishImmune() || isStatusBlockedByShield(npc) || at.Before(npc.status.banishExpiresAt) ||
 		at.Before(npc.status.intangibleExpiresAt) {
 		return false, nil
 	}
@@ -926,7 +934,7 @@ func (s *Session) ApplyBanish(objectID uint32, expiresAt time.Time) error {
 	if !isFound || npc.IsDefeated {
 		return fmt.Errorf("npcBanishMissing: %d", objectID)
 	}
-	if isStatusBlockedByShield(npc) {
+	if npc.IsMutationBanishImmune() || isStatusBlockedByShield(npc) {
 		return nil
 	}
 	endDirectionalShield(&npc)
@@ -993,8 +1001,15 @@ func (s *Session) StunRemaining(objectID uint32, at time.Time) time.Duration {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	npc, isFound := s.npcs[objectID]
-	if !isFound || npc.IsDefeated || isStatusBlockedByShield(npc) {
+	if !isFound || npc.IsDefeated {
 		return 0
+	}
+	transformRemaining := time.Duration(0)
+	if npc.IsMutationTransforming() {
+		transformRemaining = max(time.Nanosecond, npc.Mutation.Transform.CompleteAt.Sub(at))
+	}
+	if isStatusBlockedByShield(npc) {
+		return transformRemaining
 	}
 	expiresAt := npc.status.stunExpiresAt
 	if expiresAt.Before(npc.status.banishExpiresAt) {
@@ -1004,9 +1019,9 @@ func (s *Session) StunRemaining(objectID uint32, at time.Time) time.Duration {
 		expiresAt = npc.status.sleepExpiresAt
 	}
 	if !at.Before(expiresAt) {
-		return 0
+		return transformRemaining
 	}
-	return expiresAt.Sub(at)
+	return max(transformRemaining, expiresAt.Sub(at))
 }
 
 func (s *Session) ClearStun(objectID uint32, expiresAt time.Time) {

@@ -113,6 +113,25 @@ func (p *Progress) KillPercent() float64 {
 	return float64(len(p.defeatedObjectIDs)) / float64(len(p.npcObjectIDs))
 }
 
+// AreDeathsRecorded fences a checkpoint taken between an NPC's accepted
+// damage mutation and objective death admission. Untracked actors do not
+// contribute to this population's death accounting.
+func (e *Progress) AreDeathsRecorded(objectIDs []uint32) bool {
+	if e == nil {
+		return len(objectIDs) == 0
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	for _, objectID := range objectIDs {
+		_, isTracked := e.npcObjectIDs[objectID]
+		_, isRecorded := e.defeatedObjectIDs[objectID]
+		if isTracked && !isRecorded {
+			return false
+		}
+	}
+	return true
+}
+
 func (p *Progress) NPCObjectIDs() []uint32 {
 	if p == nil {
 		return nil

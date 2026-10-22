@@ -10,6 +10,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/util"
+	"github.com/darkspinnet/darkspin/server/zone"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 	zoneprojection "github.com/darkspinnet/darkspin/server/zone/projection"
@@ -24,6 +25,8 @@ const (
 )
 
 type campaignCorruptorState struct {
+	phaseGeneration  uint64
+	secondAggro      *corruptorCinematicRun
 	phases           [5]zonenpc.CorruptorPhase
 	phaseIndex       int
 	portalPositions  []game.Vec3
@@ -36,6 +39,11 @@ type campaignCorruptorState struct {
 }
 
 type campaignCorruptorPhaseStep struct {
+	world           *zone.Zone
+	sceneGeneration uint64
+	identity        gameplayProducerIdentity
+	continuation    *corruptorPhaseContinuation
+	phaseGeneration uint64
 	runtime         campaignNPCActionRuntime
 	packet          raknet.Packet
 	sessionKey      string
@@ -213,6 +221,7 @@ func (s *gameplayPeerSession) prepareCampaignCorruptorStageTwo(objectID uint32) 
 		randomFloat = s.zone.NPCRandom().Float64
 	}
 	state := newCampaignCorruptorState(randomFloat)
+	state.phaseGeneration = s.campaignCorruptorStates[objectID].phaseGeneration + 1
 	state.isStageTwo = true
 	state.isPhasePending = true
 	s.campaignCorruptorStates[objectID] = state
@@ -327,19 +336,32 @@ func (r campaignNPCActionRuntime) advanceCorruptorPhase(
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[step.sessionKey]
 	isCurrent := isFound && peerSession.generation == step.generation &&
-		peerSession.zone != nil && peerSession.zone.NPCs() != nil
+		peerSession.zone != nil && peerSession.zone.NPCs() != nil &&
+		!peerSession.isZoneTerminal() && peerSession.zone.IsActive()
 	if !isCurrent {
+		r.registry.mutex.Unlock()
+		return nil, nil
+	}
+	if (step.world != nil && peerSession.zone != step.world) ||
+		(step.identity.isFound && gameplayProducerIdentityFromSession(step.sessionKey, peerSession, isFound) != step.identity) {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
 	state, isStateFound := peerSession.campaignCorruptorStates[step.objectID]
 	boss, isBossFound := peerSession.zone.NPCs().NPC(step.objectID)
-	if !isStateFound || !isBossFound || boss.IsDefeated {
+	if !isStateFound || !isBossFound || boss.IsDefeated || state.phaseGeneration != step.phaseGeneration ||
+		(state.secondAggro != nil && !step.isStageTwoStart) ||
+		(boss.IsCorruptorStageTwo && (!state.isStageTwo || !boss.IsSecondAggroCinematic(step.sceneGeneration) || !boss.IsSecondAggroController(
+			zonenpc.ActionOwner{UserID: peerSession.binding.UserID, PeerGeneration: peerSession.generation}))) {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
 	if step.isStageTwoStart {
 		state.isStageTwo = true
+	}
+	if step.continuation != nil && step.continuation.isPrepared {
+		r.registry.mutex.Unlock()
+		return step.continuation.admit(step)
 	}
 	state.phaseIndex++
 	if state.phaseIndex >= len(state.phases) {
@@ -383,6 +405,11 @@ func (r campaignNPCActionRuntime) advanceCorruptorPhase(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("corruptorPhaseSpawn: %w", err)
 	}
+	phasePackets, err := corruptorPhasePackets(boss.Plan.ObjectID, phase)
+	if err != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("phasePackets: %w", err)
+	}
 	err = admitCorruptorPopulation(&peerSession, plans, targetObjectID)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -390,41 +417,21 @@ func (r campaignNPCActionRuntime) advanceCorruptorPhase(
 	}
 	peerSession.campaignCorruptorStates[step.objectID] = state
 	r.registry.sessions[step.sessionKey] = peerSession
+	continuation := step.continuation
+	if continuation == nil {
+		continuation = &corruptorPhaseContinuation{}
+	}
+	continuation.boss = boss
+	continuation.state = state
+	continuation.plans = plans
+	continuation.actionPlans = spawnedActionPlans
+	continuation.packets = append(phasePackets, spawnPackets...)
+	continuation.isPrepared = true
+	continuation.isStageTwo = state.isStageTwo
 	r.registry.mutex.Unlock()
-	err = r.scheduleCorruptorPortals(step.packet, step.sessionKey, step.generation,
-		step.objectID, plans, step.timestamp)
+	packets, err := continuation.admit(step)
 	if err != nil {
-		return nil, fmt.Errorf("phasePortalTimers: %w", err)
-	}
-
-	packets, err := corruptorPhasePackets(boss.Plan.ObjectID, phase)
-	if err != nil {
-		return nil, err
-	}
-	packets = append(packets, spawnPackets...)
-	resumePackets, err := r.restartCorruptorAction(
-		step.packet, step.sessionKey, step.generation, boss, step.timestamp,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("phaseResume: %w", err)
-	}
-	packets = append(packets, resumePackets...)
-	actionPackets, err := r.scheduleFirstActions(
-		step.packet, step.sessionKey, step.generation, spawnedActionPlans, step.timestamp,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("corruptorPhaseAction: %w", err)
-	}
-	packets = append(packets, actionPackets...)
-	if state.isStageTwo {
-		period := corruptorPhasePeriod(corruptorRank(boss.Plan.NounName))
-		next := step
-		next.timestamp += uint64(period / time.Millisecond)
-		next.isStageTwoStart = false
-		err = scheduleNPCProducer(r.registry, step.packet, period, next.produce)
-		if err != nil {
-			return nil, fmt.Errorf("corruptorPhaseSchedule: %w", err)
-		}
+		return packets, fmt.Errorf("phaseAdmission: %w", err)
 	}
 	return packets, nil
 }

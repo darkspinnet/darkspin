@@ -27,6 +27,7 @@ type DeathBehaviorInput struct {
 	IsPlayerControlled   bool
 	IsBoss               bool
 	IsRemnantRetained    bool
+	IsImmediateDelete    bool
 	IsCollisionRetained  bool
 	CorpseFadeDelay      time.Duration
 	DeleteDelay          time.Duration
@@ -128,6 +129,13 @@ func (b *DeathBehavior) emitEntry() error {
 }
 
 func (b *DeathBehavior) scheduleBranch() error {
+	if b.input.IsImmediateDelete {
+		err := b.markForDeletion()
+		if err != nil {
+			return fmt.Errorf("scriptDelete: %w", err)
+		}
+		return nil
+	}
 	if b.input.IsFastCriticalDeath && !b.input.IsBoss {
 		err := b.setCorpseFading()
 		if err != nil {

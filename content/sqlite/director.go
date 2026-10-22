@@ -159,6 +159,7 @@ type LevelScriptBinding struct {
 // It deliberately contains no selection, budget, encounter, or AI policy.
 type LevelDirector struct {
 	Camera            *LevelCameraSettings
+	ObjectivePool     LevelObjectivePool
 	LevelID           int64
 	Name              string
 	CatalogOrdinal    *uint32
@@ -218,6 +219,10 @@ func (s *Store) LevelDirector(ctx context.Context, levelName string) (LevelDirec
 	director.Camera, err = s.LevelCamera(ctx, director.LevelID)
 	if err != nil {
 		return LevelDirector{}, fmt.Errorf("directorCamera: %w", err)
+	}
+	director.ObjectivePool, err = s.LevelObjectivePool(ctx, levelName)
+	if err != nil {
+		return LevelDirector{}, fmt.Errorf("directorObjectivePool: %w", err)
 	}
 	director.ExternalPools, err = s.externalDirectorPools(ctx)
 	if err != nil {

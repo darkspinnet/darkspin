@@ -20,7 +20,7 @@ import (
 const (
 	SourceVersion  = "5.3.0.103"
 	SourceBuild    = 103
-	RecipeVersion  = 93
+	RecipeVersion  = 94
 	ContentRelease = "build-103-content"
 	RuntimeRole    = "runtime-content"
 )
@@ -1843,6 +1843,25 @@ func writeContentDatabase(
 			source_compression TEXT NOT NULL,
 			source_payload BLOB NOT NULL
 		);
+		CREATE TABLE objective_pool (
+			id INTEGER PRIMARY KEY REFERENCES content_source_resource(id) ON DELETE CASCADE,
+			instance_id INTEGER NOT NULL UNIQUE
+		);
+		CREATE TABLE objective_pool_entry (
+			objective_pool_id INTEGER NOT NULL REFERENCES objective_pool(id) ON DELETE CASCADE,
+			category TEXT NOT NULL,
+			ordinal INTEGER NOT NULL,
+			key_first INTEGER NOT NULL,
+			key_second INTEGER NOT NULL,
+			key_third INTEGER NOT NULL,
+			asset_name TEXT,
+			PRIMARY KEY (objective_pool_id, category, ordinal)
+		);
+		CREATE TABLE level_objective_pool (
+			level_id INTEGER PRIMARY KEY REFERENCES level(id) ON DELETE CASCADE,
+			asset_reference TEXT,
+			objective_pool_id INTEGER REFERENCES objective_pool(id)
+		);
 		CREATE TABLE level_navigation (
 			level_id INTEGER PRIMARY KEY REFERENCES level(id) ON DELETE CASCADE,
 			content_ordinal INTEGER NOT NULL,
@@ -2171,6 +2190,10 @@ func writeContentDatabase(
 	err = writeLevels(ctx, transaction, installPath)
 	if err != nil {
 		return fmt.Errorf("levelInsert: %w", err)
+	}
+	err = writeLevelObjectivePools(ctx, transaction, installPath)
+	if err != nil {
+		return fmt.Errorf("objectivePoolInsert: %w", err)
 	}
 	progress.next("Importing campaign chain", 11, 20)
 	err = writeChainLevels(ctx, transaction, installPath)

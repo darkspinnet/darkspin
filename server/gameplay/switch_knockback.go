@@ -218,7 +218,7 @@ func isHeroSwapKnockbackTarget(
 ) bool {
 	if target.Faction != zonenpc.FactionNonPlayerAligned ||
 		!target.IsPublished || target.IsDefeated || target.Plan.IsFixture ||
-		target.Plan.IsBoss ||
+		target.IsMutationKnockbackImmune() || target.Plan.IsBoss ||
 		target.HasAffixModifier(surefootedNPCAffixModifierName) {
 		return false
 	}

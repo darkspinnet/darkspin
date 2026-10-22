@@ -53,6 +53,8 @@ type SpawnPlan struct {
 	IsIntroductionHidden       bool
 	IsIntroductionComplete     bool
 	IsStartupInitialized       bool
+	IsRoarInitialized          bool
+	IsRoarSelected             bool
 	IsAbsorptionShieldDepleted bool // Snapshot presentation; fresh spawns start charged.
 	IsSecondaryStart           bool
 	IsLootSuppressed           bool // Native object +153, independent of XP eligibility.
@@ -152,6 +154,7 @@ type Target struct {
 }
 
 type Snapshot struct {
+	Mutation                        MutationState
 	orcusConsumeBands               uint8
 	IsOrcusFollowing                bool
 	repairStackCount                uint32
@@ -195,6 +198,8 @@ type Snapshot struct {
 	IsInvisibleToSecurityTeleporter bool
 	status                          status
 	corruptorCombat                 corruptorCombat
+	cinematic                       cinematicHold
+	zapCharge                       *zapChargeState
 	introduction                    introductionTimeline
 }
 

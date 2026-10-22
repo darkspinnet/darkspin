@@ -304,6 +304,16 @@ func (r campaignInteractionRuntime) handlePickup(
 	}
 	r.registry.sessions[sessionKey] = currentSession
 	abilityIndex := uint32(0)
+	questCrystal, isQuestCrystal := currentSession.zone.QuestCrystals().Crystal(command.Value, r.now())
+	if isQuestCrystal {
+		maximumDistance := questCrystalDistance(currentSession)
+		if zoneability.Distance(game.Vec3(currentSession.playerPosition), game.Vec3(questCrystal.Flight.Position)) > maximumDistance {
+			r.registry.mutex.Unlock()
+			return r.pursuePickup(packet, sessionKey, command, zoneinteract.Pickup{ObjectID: questCrystal.ObjectID,
+				Kind: zoneinteract.PickupQuestCrystal, Position: game.Vec3(questCrystal.Flight.Position)}, maximumDistance)
+		}
+		return r.beginQuestCrystalPickupLocked(packet, command, sessionKey, currentSession, questCrystal)
+	}
 	if command.Ability != nil {
 		abilityIndex = command.Ability.Index
 	}
@@ -3061,6 +3071,16 @@ func (r campaignInteractionRuntime) handleScriptUse(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignInteractableTrack: %w", err)
 	}
+	err = currentSession.zone.Script().CommitUse(use)
+	if err != nil {
+		currentSession.releaseCampaignInteractableSchedule(
+			use.Invocation.TargetObjectID, interactableRun,
+		)
+		interactableCancel()
+		interactableRun.Stop()
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("campaignInteractableCommit: %w", err)
+	}
 	if isObjectiveObelisk {
 		objectiveEventKind := sim.LuaObjectiveEventTouchedObelisk
 		if use.Invocation.CallbackName == "InteractHealthObelisk" {
@@ -3090,21 +3110,13 @@ func (r campaignInteractionRuntime) handleScriptUse(
 			objectiveUpdates, uint8(currentSession.binding.Slot),
 		)
 		if err != nil {
-			interactableCancel()
-			interactableRun.Stop()
-			r.registry.mutex.Unlock()
-			return nil, fmt.Errorf("campaignInteractableObeliskVoice: %w", err)
+			// The use and objective are committed. Optional voice projection
+			// must not cancel the accepted interactable execution afterward.
+			obeliskVoicePackets = nil
+			if r.logger != nil {
+				r.logger.Printf("RakNet campaign obelisk voice omitted: %v", err)
+			}
 		}
-	}
-	err = currentSession.zone.Script().CommitUse(use)
-	if err != nil {
-		currentSession.releaseCampaignInteractableSchedule(
-			use.Invocation.TargetObjectID, interactableRun,
-		)
-		interactableCancel()
-		interactableRun.Stop()
-		r.registry.mutex.Unlock()
-		return nil, fmt.Errorf("campaignInteractableCommit: %w", err)
 	}
 	currentSession.zone.PublishObjective(objectiveUpdates)
 	r.registry.sessions[sessionKey] = currentSession

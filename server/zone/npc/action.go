@@ -53,12 +53,14 @@ type ActionProfile struct {
 	RecoveryAnimationName            string
 	PreAggroAnimationName            string
 	FirstAggroAnimationName          string
+	FirstAggroAnimationDelay         time.Duration
 	FirstAggroEffectName             string
 	FirstAggroEffectDelay            time.Duration
 	FirstAggroDelay                  time.Duration
 	FirstAggroRevealDelay            time.Duration
 	FirstAggroCinematicDuration      time.Duration
 	FirstAggroCinematicRadius        float32
+	FirstAggroCinematicOffset        game.Vec3
 	HitDelay                         time.Duration
 	ReleaseDelay                     time.Duration
 	Cooldown                         time.Duration
@@ -783,8 +785,8 @@ func citadelBossTwinLaserProfile(nounName string) (ActionProfile, bool) {
 		Family: ActionCone, AbilityName: "TwinLaser",
 		AnimationName:               "ctd_boss_tc_attack2_part_1",
 		FirstAggroAnimationName:     "ctd_boss_tc_aggro",
-		FirstAggroDelay:             7125 * time.Millisecond,
-		FirstAggroCinematicDuration: 7125 * time.Millisecond,
+		FirstAggroDelay:             6979166984 * time.Nanosecond,
+		FirstAggroCinematicDuration: 5979166984 * time.Nanosecond,
 		FirstAggroCinematicRadius:   100,
 		LoopAnimationName:           "ctd_boss_tc_attack2_part_2",
 		EndAnimationName:            "ctd_boss_tc_attack2_part_3",
@@ -850,8 +852,9 @@ func scaldronBossTwinLaserProfile(nounName string) (ActionProfile, bool) {
 		TickDuration:                500 * time.Millisecond,
 		NumberOfTicks:               7,
 		FirstAggroAnimationName:     "sca_boss_aggro",
-		FirstAggroDelay:             14433334 * time.Microsecond,
-		FirstAggroCinematicDuration: 14433334 * time.Microsecond,
+		FirstAggroDelay:             15399999618 * time.Nanosecond,
+		FirstAggroRevealDelay:       500 * time.Millisecond,
+		FirstAggroCinematicDuration: 15399999618 * time.Nanosecond,
 		FirstAggroCinematicRadius:   100,
 		IsDamageProfileKnown:        true,
 		IsFirstAggroDurationKnown:   true,

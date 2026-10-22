@@ -15,6 +15,9 @@ func (e *Session) Checkpoint() ([]sim.ObjectiveSnapshot, []sim.LuaObjectiveSnaps
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.runtimes[LootCrystalsID] != nil {
+		return nil, nil, errors.New("quest checkpoint requires outbox state")
+	}
 	objectives, runtimes, err := e.checkpoint()
 	if err != nil {
 		return nil, nil, fmt.Errorf("checkpointState: %w", err)
@@ -57,6 +60,9 @@ func (e *Session) RestoreCheckpoint(
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.runtimes[LootCrystalsID] != nil {
+		return errors.New("quest restore requires outbox state")
+	}
 	err := e.restoreCheckpoint(objectives, runtimes)
 	if err != nil {
 		return fmt.Errorf("checkpointRestore: %w", err)
@@ -86,7 +92,7 @@ func (e *Session) restoreCheckpoint(
 	}
 	objectives = append([]sim.ObjectiveSnapshot(nil), objectives...)
 	for index := range objectives {
-		if objectives[index].ObjectiveID != hugeDamageID && objectives[index].ObjectiveID != damageOftenID {
+		if !isPlayerObjective(objectives[index].ObjectiveID) {
 			continue
 		}
 		for _, initial := range e.initials {
@@ -130,9 +136,27 @@ func (e *Session) restoreCheckpoint(
 	return nil
 }
 
-// ValidateCheckpointRuntime admits only the recovered flat-state schemas.
+// ValidateCheckpointRuntime admits only the reviewed private-state schemas.
 // Bytecode changes require an explicit review of state and closure ownership.
 func ValidateCheckpointRuntime(snapshot sim.LuaObjectiveSnapshot) error {
+	err := validateRuntimeIdentity(snapshot)
+	if err != nil {
+		return fmt.Errorf("checkpointIdentity: %w", err)
+	}
+	err = sim.ValidateLuaObjectiveSnapshot(snapshot)
+	if err != nil {
+		return fmt.Errorf("checkpointPrivate: %w", err)
+	}
+	if snapshot.ObjectiveID == sameTypeID {
+		err = validateSameTypeState(snapshot)
+		if err != nil {
+			return fmt.Errorf("checkpointPlayer: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateRuntimeIdentity(snapshot sim.LuaObjectiveSnapshot) error {
 	var chunkID int64
 	var sha256 string
 	switch snapshot.ObjectiveID {
@@ -151,15 +175,23 @@ func ValidateCheckpointRuntime(snapshot sim.LuaObjectiveSnapshot) error {
 	case damageOftenID:
 		chunkID = 902
 		sha256 = "8441e30aa93c5e61cb09cb2817bfc40a6a4fca856aea24645c673dd3d6721db4"
+	case healthObeliskID:
+		chunkID = 163
+		sha256 = "ce065a01ba48775543cbbcb24807465398c2a3a8a1a94af8866c6f2dde99beda"
+	case stayAliveID:
+		chunkID = 506
+		sha256 = "1547e9e5dcda912fc166202042e9d09ac04c54b73fc727e2de37ff7834d8a4ae"
+	case sameTypeID:
+		chunkID = 849
+		sha256 = "8f15ed5adb0e0de1becb91218d36b19f515224eebe9e5dc8fbf2c971564ecec0"
+	case LootCrystalsID:
+		chunkID = 631
+		sha256 = "bb8cf84a351727e30a37596b334850862e9bb040df8cff0137e279585ab9741a"
 	default:
 		return fmt.Errorf("objective checkpoint schema unsupported: %#x", snapshot.ObjectiveID)
 	}
 	if snapshot.ChunkID != chunkID || snapshot.SHA256 != sha256 {
 		return fmt.Errorf("objective checkpoint chunk mismatch: %d", snapshot.ChunkID)
-	}
-	err := sim.ValidateLuaObjectiveSnapshot(snapshot)
-	if err != nil {
-		return fmt.Errorf("checkpointPrivate: %w", err)
 	}
 	return nil
 }
@@ -180,7 +212,7 @@ func (e *Session) leavePlayer(playerIndex uint8) error {
 	}
 	for index := range objectives {
 		objectives[index].State[playerIndex] = 0
-		if objectives[index].ObjectiveID != hugeDamageID && objectives[index].ObjectiveID != damageOftenID {
+		if !isPlayerObjective(objectives[index].ObjectiveID) {
 			// Group progress and the shared elapsed clock remain available to
 			// a replacement member; they are not an individual contribution.
 			continue
@@ -199,19 +231,22 @@ func (e *Session) leavePlayer(playerIndex uint8) error {
 	return nil
 }
 
-// WithoutPlayer resets only the two selected objectives whose installed Lua
-// stores per-player counts directly at private[playerIndex] (708 and 902).
-// Their named threshold fields and every group objective remain untouched.
-// Unknown objective schemas must be admitted deliberately before lifecycle
-// reset can claim to support them.
+// WithoutPlayer resets reviewed per-player private state. Shared counters and
+// thresholds survive permanent departure; retained reconnects never call it.
 func WithoutPlayer(snapshot sim.LuaObjectiveSnapshot, playerIndex uint8) (sim.LuaObjectiveSnapshot, error) {
 	if playerIndex >= 4 {
 		return sim.LuaObjectiveSnapshot{}, fmt.Errorf("objective player index: %d", playerIndex)
 	}
 	switch snapshot.ObjectiveID {
-	case finishLevelQuicklyID, defeatAllMonstersID, ObeliskID:
+	case finishLevelQuicklyID, defeatAllMonstersID, ObeliskID, healthObeliskID, LootCrystalsID:
 		return snapshot.Clone(), nil
-	case hugeDamageID, damageOftenID:
+	case sameTypeID:
+		reset, err := resetSameTypePlayer(snapshot, playerIndex)
+		if err != nil {
+			return sim.LuaObjectiveSnapshot{}, fmt.Errorf("leaveSameType: %w", err)
+		}
+		return reset, nil
+	case hugeDamageID, damageOftenID, stayAliveID:
 		if len(snapshot.PrivateTables) == 0 {
 			return sim.LuaObjectiveSnapshot{}, errors.New("objective private root unavailable")
 		}

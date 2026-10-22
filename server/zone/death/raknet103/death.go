@@ -45,6 +45,7 @@ type Target struct {
 	IsFixture              bool
 	IsBoss                 bool
 	IsRemnantRetained      bool
+	IsImmediateDelete      bool
 	IsCollisionRetained    bool
 	DeleteDelay            time.Duration
 }
@@ -138,6 +139,7 @@ func NewRun(
 		IsCritical:           isCritical, IsFastCriticalDeath: isFastCriticalDeath,
 		IsBoss:              target.IsBoss,
 		IsRemnantRetained:   target.IsRemnantRetained,
+		IsImmediateDelete:   target.IsImmediateDelete,
 		IsCollisionRetained: target.IsCollisionRetained,
 		DeleteDelay:         deleteDelay,
 		DamageProvenance: sim.Provenance{
@@ -155,7 +157,9 @@ func NewRun(
 		return nil, nil, fmt.Errorf("immediateDispatch: %w", err)
 	}
 	deadlines := ordinaryEnemyDeathDeadlines
-	if deleteDelay > 0 {
+	if target.IsImmediateDelete {
+		deadlines = nil
+	} else if deleteDelay > 0 {
 		deadlines = []time.Duration{deleteDelay}
 	} else if isFastCriticalDeath {
 		deadlines = criticalEnemyDeathDeadlines

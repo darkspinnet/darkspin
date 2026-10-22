@@ -167,6 +167,8 @@ type LuaObjectiveEvent struct {
 	TargetMarkerID             uint32
 	TargetAssetID              uint32
 	ModifierDescriptor         uint32
+	TargetPosition             Position
+	TargetFootprintRadius      float32
 }
 
 type LuaObjectiveStatus string
@@ -196,11 +198,12 @@ type LuaObjectiveStatusResult struct {
 // LuaObjectiveRuntime retains authored private tables and closures for one
 // match-session objective instance.
 type LuaObjectiveRuntime struct {
-	mu                sync.Mutex
-	input             LuaObjectiveInput
-	compiler          *luaCompiler
-	instructionBudget int
-	isEventSubscriber bool
+	mu                 sync.Mutex
+	input              LuaObjectiveInput
+	compiler           *luaCompiler
+	instructionBudget  int
+	isEventSubscriber  bool
+	objectiveEventMask uint32
 }
 
 type LuaModifierInput struct {
@@ -536,9 +539,14 @@ func NewLuaObjectiveRuntime(
 		return nil, Program{}, err
 	}
 	eventCallback := compiler.registeredObjective.get(stringLuaKey("HandleEvent"))
+	eventMask, err := luaObjectiveEventMask(compiler.registeredObjective)
+	if err != nil {
+		return nil, Program{}, fmt.Errorf("objectiveSubscription: %w", err)
+	}
 	runtime := &LuaObjectiveRuntime{
 		input: input, compiler: compiler, instructionBudget: instructionBudget,
-		isEventSubscriber: eventCallback.kind == luaClosureValue,
+		isEventSubscriber:  eventCallback.kind == luaClosureValue && eventMask != 0,
+		objectiveEventMask: eventMask,
 	}
 	return runtime, drainLuaProgram(compiler), nil
 }
@@ -606,6 +614,9 @@ func (runtime *LuaObjectiveRuntime) HandleEvent(event LuaObjectiveEvent) (Progra
 		event.Kind != LuaObjectiveEventModifierCreated {
 		return Program{}, fmt.Errorf("objective event kind: %s", event.Kind)
 	}
+	if runtime.objectiveEventMask&luaObjectiveEventFlag(event.Kind) == 0 {
+		return Program{}, nil
+	}
 	if math.IsNaN(event.KillPercent) || math.IsInf(event.KillPercent, 0) ||
 		event.KillPercent < 0 || event.KillPercent > 1 {
 		return Program{}, fmt.Errorf("objective kill percent: %g", event.KillPercent)
@@ -631,7 +642,7 @@ func (runtime *LuaObjectiveRuntime) HandleEvent(event LuaObjectiveEvent) (Progra
 	compiler.instructionBudget = runtime.instructionBudget
 	compiler.program.Provenance.FunctionName = compiler.objectiveName + ".HandleEvent"
 	_, err := compiler.callClosure(callback.closure, []luaValue{
-		stringLuaValue(string(event.Kind)), numberLuaValue(float64(event.ObjectID)),
+		numberLuaValue(float64(luaObjectiveEventFlag(event.Kind))), numberLuaValue(float64(event.ObjectID)),
 	})
 	if err != nil {
 		compiler.program.Steps = nil
@@ -641,8 +652,8 @@ func (runtime *LuaObjectiveRuntime) HandleEvent(event LuaObjectiveEvent) (Progra
 }
 
 // IsEventSubscriber reports whether the packaged objective registered the
-// optional HandleEvent callback. Objectives without it are driven by their
-// dedicated status or timer paths and must not receive generic zone events.
+// optional HandleEvent callback and a nonzero authored event mask. Individual
+// events are gated by that mask before entering the callback.
 func (runtime *LuaObjectiveRuntime) IsEventSubscriber() bool {
 	if runtime == nil {
 		return false
@@ -1322,10 +1333,11 @@ func (c *luaCompiler) registerGlobals() {
 	})
 	registerLuaEnum("nAbilityAnimationSelection", "Sequence")
 	registerLuaEnum("nObjectiveFns", "Init", "HandleEvent", "ObjectiveStatus")
-	registerLuaEnum(
-		"nObjectiveEvents", "FullClear", "Death", "TouchedObelisk", "Damage",
-		"ModifierCreated", "ActivateAffix", "Heal", "TouchedHealthObelisk",
-	)
+	registerLuaNumberEnum("nObjectiveEvents", map[string]uint32{
+		"TouchedObelisk": 1, "Damage": 2, "Death": 4, "FullClear": 8,
+		"ModifierCreated": 16, "ActivateAffix": 32, "Heal": 64,
+		"TouchedHealthObelisk": 128,
+	})
 	registerLuaEnum("nObjectiveStatus", "Gold", "Silver", "Bronze", "Failed")
 	c.global.set(stringLuaKey("kInvalidGUID"), numberLuaValue(0))
 
@@ -1491,6 +1503,7 @@ func (c *luaCompiler) registerGlobals() {
 	c.global.set(stringLuaKey("nAbilityFns"), tableLuaValue(nAbilityFns))
 
 	nGameObject := newLuaTable(nil)
+	c.setNative(nGameObject, "DropObject", c.dropObjectiveObject)
 	c.setNative(nGameObject, "GetPosition", func(arguments []luaValue) ([]luaValue, error) {
 		if err := c.requireRole(arguments); err != nil {
 			return nil, fmt.Errorf("getPositionRole: %w", err)

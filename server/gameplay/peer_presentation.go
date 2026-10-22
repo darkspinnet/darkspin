@@ -2,9 +2,12 @@ package gameplay
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
+	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
+	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 	zoneprojection "github.com/darkspinnet/darkspin/server/zone/projection"
 )
 
@@ -38,7 +41,32 @@ func (e gameplayProjectionRuntime) drainQueuedProjection(
 	}
 	peerSession.queueCampaignPackets(e.registry.takePlasmaWreathRestorationLocked(&peerSession))
 	err := peerSession.queueCampaignPresentation(nil)
+	if err == nil {
+		err = e.registry.refreshOverdriveFramesLocked(&peerSession, time.Now())
+	}
+	if err == nil {
+		err = e.registry.refreshQuestFramesLocked(&peerSession, time.Now(), request.SourceTime)
+	}
+	if err == nil {
+		err = e.registry.refreshMutationElitesLocked(&peerSession)
+	}
+	if err == nil {
+		err = e.registry.refreshMutationEventsLocked(&peerSession, time.Now(), request.SourceTime)
+	}
+	if err == nil {
+		err = e.registry.refreshMutationFeedbackLocked(&peerSession)
+	}
+	if err != nil {
+		e.registry.sessions[sessionKey] = peerSession
+		e.registry.mutex.Unlock()
+		return nil, fmt.Errorf("projectionPrepare: %w", err)
+	}
 	packets, batchID := peerSession.pendingPackets()
+	overdriveFrames := peerSession.pendingOverdriveFrames(batchID)
+	questFrames := peerSession.pendingQuestFrames(batchID)
+	mutationElites := peerSession.pendingMutationElites(batchID)
+	mutationEvents := peerSession.pendingMutationEvents(batchID)
+	mutationFeedbacks := peerSession.pendingMutationFeedbacks(batchID)
 	if len(packets) != 0 {
 		// Pending batches are retained until transport commit. Only a batch
 		// already included by this request should suppress the outer drain;
@@ -47,9 +75,6 @@ func (e gameplayProjectionRuntime) drainQueuedProjection(
 	}
 	e.registry.sessions[sessionKey] = peerSession
 	e.registry.mutex.Unlock()
-	if err != nil {
-		return nil, fmt.Errorf("projectionQueue: %w", err)
-	}
 	if len(packets) == 0 {
 		return nil, nil
 	}
@@ -57,6 +82,11 @@ func (e gameplayProjectionRuntime) drainQueuedProjection(
 		registry: e.registry, sessionKey: sessionKey,
 		generation:          peerSession.generation,
 		transportGeneration: peerSession.transportGeneration, batchID: batchID,
+		overdriveFrames:   overdriveFrames,
+		questFrames:       questFrames,
+		mutationElites:    mutationElites,
+		mutationEvents:    mutationEvents,
+		mutationFeedbacks: mutationFeedbacks,
 	}
 	err = request.AfterResponseCommit(delivery.commit)
 	if err != nil {
@@ -71,6 +101,11 @@ type campaignProjectionDelivery struct {
 	generation          uint64
 	transportGeneration uint64
 	batchID             uint64
+	overdriveFrames     []overdrivePendingFrame
+	questFrames         []questPendingFrame
+	mutationElites      []mutationEliteFrame
+	mutationEvents      []mutationPendingEvent
+	mutationFeedbacks   []mutationDamageFeedback
 }
 
 func (e campaignProjectionDelivery) commit() {
@@ -82,6 +117,11 @@ func (e campaignProjectionDelivery) commit() {
 		return
 	}
 	peerSession.commitPendingPackets(e.batchID)
+	e.registry.repairOverdriveDeliveryLocked(&peerSession, e.overdriveFrames, time.Now())
+	e.registry.repairQuestDeliveryLocked(&peerSession, e.questFrames, time.Now())
+	e.registry.repairMutationDeliveryLocked(&peerSession, e.mutationElites)
+	e.registry.repairMutationEventsLocked(&peerSession, e.mutationEvents, time.Now())
+	e.registry.repairMutationFeedbackLocked(&peerSession, e.mutationFeedbacks)
 	e.registry.sessions[e.sessionKey] = peerSession
 	e.registry.commitPlasmaWreathPublicationsLocked()
 	e.registry.commitOmniShieldRemovalsLocked()
@@ -153,7 +193,7 @@ func (e *gameplayPeerSession) queueCampaignPresentation(packets [][]byte) error 
 				event.Damage.HitPoint = 0
 			}
 		}
-		projectedPackets, err := marshalCampaignProjection(event)
+		projectedPackets, err := e.marshalCampaignPresentation(event, time.Now())
 		if err != nil {
 			// Preserve the presentation for retry and request a state baseline
 			// rather than silently dropping an unencodable prerequisite.
@@ -200,6 +240,25 @@ func (e *gameplayPeerSession) queueCampaignPresentation(packets [][]byte) error 
 		}
 	}
 	return nil
+}
+
+func (e *gameplayPeerSession) marshalCampaignPresentation(event zoneprojection.Event, now time.Time) ([][]byte, error) {
+	if event.Kind == zoneprojection.EventNPCAction && event.Action.Kind == zonenpc.ActionEventAggro {
+		snapshot, isFound := e.zone.NPCs().NPC(event.Action.Plan.ObjectID)
+		if !isFound || snapshot.IsDefeated {
+			return nil, nil
+		}
+		packets, err := npcraknet.FirstAggroCurrent(event.Action.Plan, event.Action.Timestamp, snapshot, now)
+		if err != nil {
+			return nil, fmt.Errorf("presentationAggro: %w", err)
+		}
+		return packets, nil
+	}
+	packets, err := marshalCampaignProjection(event)
+	if err != nil {
+		return nil, fmt.Errorf("presentationEvent: %w", err)
+	}
+	return packets, nil
 }
 
 func (e *gameplayPeerSession) queueCampaignPackets(packets [][]byte) {

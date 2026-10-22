@@ -9,6 +9,17 @@ import (
 )
 
 func (e Actor) PositionAt(at time.Time) game.Vec3 {
+	if e.PursuitObjectID != 0 && !e.pursuitStartedAt.IsZero() && !e.pursuitDeadline.IsZero() {
+		if !at.After(e.pursuitStartedAt) {
+			return e.pursuitSource
+		}
+		if !at.Before(e.pursuitDeadline) {
+			return e.PursuitPosition
+		}
+		fraction := float32(float64(at.Sub(e.pursuitStartedAt)) /
+			float64(e.pursuitDeadline.Sub(e.pursuitStartedAt)))
+		return e.pursuitSource.Add(e.PursuitPosition.Sub(e.pursuitSource).Scale(fraction))
+	}
 	return e.followPosition(at)
 }
 

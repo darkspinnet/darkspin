@@ -294,8 +294,11 @@ func loadLuaChunkImports(ctx context.Context, transaction *sql.Tx) ([]luaChunkIm
 		SELECT server_data.content_source_resource_id,
 		       server_data.resource_group,
 		       server_data.resource_name,
-		       server_data.decoded_payload
+		       server_data.decoded_payload,
+		       content_source_resource.group_id,
+		       content_source_resource.instance_id
 		FROM server_data
+		JOIN content_source_resource ON content_source_resource.id=server_data.content_source_resource_id
 		WHERE server_data.is_compiled_lua=1
 		ORDER BY server_data.content_source_resource_id`)
 	if err != nil {
@@ -307,7 +310,10 @@ func loadLuaChunkImports(ctx context.Context, transaction *sql.Tx) ([]luaChunkIm
 		var resourceGroup string
 		var resourceName string
 		var compressedPayload []byte
-		err = rows.Scan(&serverDataResourceID, &resourceGroup, &resourceName, &compressedPayload)
+		var groupID uint32
+		var instanceID uint64
+		err = rows.Scan(&serverDataResourceID, &resourceGroup, &resourceName, &compressedPayload,
+			&groupID, &instanceID)
 		if err != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("chunkScan: %w", err)
@@ -330,11 +336,13 @@ func loadLuaChunkImports(ctx context.Context, transaction *sql.Tx) ([]luaChunkIm
 		chunks = append(chunks, luaChunkImport{
 			id:                   int64(len(chunks) + 1),
 			serverDataResourceID: serverDataResourceID,
-			resourceName:         resourceGroup + "/" + resourceName,
-			sourceName:           sourceName,
-			bytecodeSHA256:       fmt.Sprintf("%x", digest),
-			bytecode:             bytecode,
-			strings:              inspection.Strings,
+			// Display labels need not hash to their DBPF group (LuaClient is
+			// one installed example). Native require uses the numeric key.
+			resourceName:   fmt.Sprintf("0x%08X/0x%08X.lua", groupID, instanceID),
+			sourceName:     sourceName,
+			bytecodeSHA256: fmt.Sprintf("%x", digest),
+			bytecode:       bytecode,
+			strings:        inspection.Strings,
 		})
 	}
 	err = rows.Err()

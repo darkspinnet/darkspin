@@ -123,6 +123,7 @@ func (s *Session) add(plans []SpawnPlan, targetObjectID uint32) error {
 		}
 		s.objectIDs = append(s.objectIDs, plan.ObjectID)
 		s.npcs[plan.ObjectID] = Snapshot{
+			Mutation:               MutationState{Generation: 1},
 			IsNashiraPassiveActive: hasNashiraPassive(plan),
 			GraphState:             initialGraphState(plan.NPCProfile.AIGraph),
 			Navigation:             actorNavigation,
@@ -191,6 +192,7 @@ func (s *Session) AddDormant(plans []SpawnPlan) error {
 			return fmt.Errorf("dormantNavigation: %w", navigationErr)
 		}
 		s.npcs[plan.ObjectID] = Snapshot{
+			Mutation:               MutationState{Generation: 1},
 			IsNashiraPassiveActive: hasNashiraPassive(plan),
 			GraphState:             initialGraphState(plan.NPCProfile.AIGraph),
 			Navigation:             actorNavigation,
@@ -234,6 +236,7 @@ func (s *Session) AddStaged(plans []SpawnPlan) error {
 			return fmt.Errorf("stagedNavigation: %w", navigationErr)
 		}
 		s.npcs[plan.ObjectID] = Snapshot{
+			Mutation:               MutationState{Generation: 1},
 			IsNashiraPassiveActive: hasNashiraPassive(plan),
 			GraphState:             initialGraphState(plan.NPCProfile.AIGraph),
 			Navigation:             actorNavigation,
@@ -306,6 +309,14 @@ func (s *Session) Restore(snapshots []Snapshot) error {
 			return fmt.Errorf("restoreMana[%d]: invalid", plan.ObjectID)
 		}
 		isDefeated := snapshot.IsDefeated || snapshot.HitPoint == 0
+		mutation := snapshot.Mutation
+		if mutation == (MutationState{}) {
+			// Older checkpoints predate this actor-life identity. Empty state
+			// has no accepted event or target identity that could be relabeled.
+			mutation.Generation = 1
+		} else if mutation.Generation == 0 {
+			return fmt.Errorf("restoreMutationLife[%d]: zero generation", plan.ObjectID)
+		}
 		restored := Snapshot{
 			IsNashiraPassiveActive:     snapshot.IsNashiraPassiveActive && !isDefeated,
 			NashiraFiendOwnerObjectID:  snapshot.NashiraFiendOwnerObjectID,
@@ -318,6 +329,7 @@ func (s *Session) Restore(snapshots []Snapshot) error {
 			IsInitialAggroSet:          snapshot.IsInitialAggroSet,
 			IsFirstActionStarted:       snapshot.IsFirstActionStarted,
 			introduction:               snapshot.introduction,
+			Mutation:                   mutation,
 			InitialAggroAnimationFlag:  snapshot.InitialAggroAnimationFlag,
 			Plan:                       plan, Origin: snapshot.Origin, Facing: snapshot.Facing,
 			Faction:  FactionNonPlayerAligned,
@@ -332,6 +344,10 @@ func (s *Session) Restore(snapshots []Snapshot) error {
 			// Checkpoint restore discards in-flight callbacks. A saved delayed
 			// explosion must not become a permanent corpse without its timer.
 			restored.IsPublished = false
+		}
+		err = restoreMutationGrowth(&restored)
+		if err != nil {
+			return fmt.Errorf("restoreMutationGrowth[%d]: %w", plan.ObjectID, err)
 		}
 		if restored.Facing.Length() <= 0 || !zonegeometry.IsFinite(restored.Facing) {
 			restored.Facing = plan.InitialFacing()
@@ -686,8 +702,15 @@ func (s *Session) StartAction(
 	if npc.TargetObjectID != 0 && npc.TargetObjectID != targetObjectID {
 		return npc, false, false, nil
 	}
-	if npc.IsActionStarted || npc.IsOrcusFollowing {
+	if isMutationAgent(npc.Plan) || npc.IsMutationTransforming() || npc.IsActionStarted || npc.IsOrcusFollowing || npc.cinematic.isPending || time.Now().Before(npc.cinematic.intangibleUntil) {
 		return npc, false, false, nil
+	}
+	if !npc.IsFirstActionStarted {
+		plan, err := s.prepareFirstAggro(npc.Plan)
+		if err != nil {
+			return Snapshot{}, false, false, fmt.Errorf("actionAggro: %w", err)
+		}
+		npc.Plan = plan
 	}
 	if npc.TargetObjectID == 0 {
 		npc.TargetObjectID = targetObjectID
@@ -860,6 +883,7 @@ func (s *Session) Despawn(objectIDs []uint32) error {
 		}
 		npc.HitPoint = 0
 		npc.IsDefeated = true
+		stopMutationLife(&npc, time.Now())
 		s.deactivateNashiraPassive(&npc)
 		npc.TargetObjectID = 0
 		npc.TargetFaction = FactionUnknown
@@ -1142,7 +1166,7 @@ func (s *Session) damage(
 	// into a field. Preserve their frontal interception even in area plans.
 	isFieldDamage := isAreaAttack && meta.DescriptorMask&(1<<1|1<<7) == 0
 	now := time.Now()
-	if !meta.isForcedDefeat && (npc.Plan.IsIntroductionHidden || now.Before(npc.status.intangibleExpiresAt) ||
+	if !meta.isForcedDefeat && (npc.Plan.IsIntroductionHidden || now.Before(npc.status.intangibleExpiresAt) || now.Before(npc.cinematic.intangibleUntil) ||
 		now.Before(npc.status.banishExpiresAt) || now.Before(npc.status.chargeProtectionEnd) ||
 		(npc.IsTurtleActive && (len(damageSource) == 0 || damageSource[0] == 0)) ||
 		(npc.IsShieldActive && isShieldDamageImmune(npc, sourcePosition, isFieldDamage, isDamageOverTime))) {
@@ -1256,6 +1280,7 @@ func (s *Session) damage(
 		npc.IsSpawnStealthActive = false
 	}
 	if npc.IsDefeated {
+		stopMutationLife(&npc, now)
 		npc.status.repairBlockedUntil = time.Time{}
 		npc.status.oozeGrowthReadyTimestamp = 0
 		if npc.status.oozeBaseMaximumHitPoint > 0 {
@@ -1265,6 +1290,7 @@ func (s *Session) damage(
 			npc.status.oozeBaseGraphicsScale = 0
 			npc.status.oozeGrowthDamageIncrease = 0
 			npc.status.oozeGrowthStack = 0
+			npc.Mutation.Growth = MutationGrowthState{}
 		}
 		npc.TargetObjectID = 0
 		npc.TargetFaction = FactionUnknown
@@ -1284,6 +1310,7 @@ func (s *Session) damage(
 			}
 			owned.HitPoint = 0
 			owned.IsDefeated = true
+			stopMutationLife(&owned, now)
 			deletedOwnedObjectIDs = append(deletedOwnedObjectIDs, s.deactivateNashiraPassive(&owned)...)
 			owned.TargetObjectID = 0
 			owned.TargetFaction = FactionUnknown
@@ -1575,6 +1602,36 @@ func (s *Session) resurrect(
 		npc.ActionGeneration = 1
 	}
 	npc.status = status{}
+	mutationGeneration := npc.Mutation.Generation + 1
+	if mutationGeneration == 0 {
+		mutationGeneration = 1
+	}
+	pendingEliteHeal := npc.Mutation.Transform
+	retirement := npc.Mutation.Retirement
+	if npc.Mutation.IsDeactivatePending {
+		retirement = MutationRetirementState{Generation: npc.Mutation.Generation,
+			BeamTargetObjectID:   npc.Mutation.Beam.TargetObjectID,
+			BeamTargetGeneration: npc.Mutation.Beam.TargetGeneration,
+			IsBeamPending:        npc.Mutation.Beam.IsActive, IsDeactivatePending: true}
+	}
+	npc.Mutation = MutationState{Generation: mutationGeneration,
+		Events: npc.Mutation.Events, EventCount: npc.Mutation.EventCount,
+		NextSequence: npc.Mutation.NextSequence, Retirement: retirement}
+	if pendingEliteHeal.IsFullHealPending && npc.Plan.IsEliteModifierApplied() {
+		// EliteModifier survives death. Its already accepted post-yield heal
+		// resumes on this restored object, while the old beam/transform ends.
+		npc.Mutation.Transform = MutationTransformState{
+			SourceObjectID:    pendingEliteHeal.SourceObjectID,
+			SourceGeneration:  pendingEliteHeal.SourceGeneration,
+			IsFullHealPending: true, HealAfter: pendingEliteHeal.HealAfter,
+		}
+	}
+	cinematicGeneration := npc.cinematic.generation + 1
+	if cinematicGeneration == 0 {
+		cinematicGeneration = 1
+	}
+	npc.cinematic = cinematicHold{generation: cinematicGeneration}
+	npc.zapCharge = nil
 	if npc.IsCorruptorStageTwo {
 		profile, isProfileFound := scaldronBossChainLightningProfile(npc.Plan.NounName)
 		if !isProfileFound {
