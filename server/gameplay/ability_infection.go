@@ -154,6 +154,27 @@ func (e *heroInfectionRun) IsImmune(objectID uint32) bool {
 	return e.npc.IsInfectionImmune(objectID, e.now())
 }
 
+// expireRoot releases BioEntangle independently of the disease modifier.
+// In particular, upgraded roots expire before LifePlague finishes ticking.
+func (e *heroInfectionRun) expireRoot(objectID uint32) (heroInfectionEntry, bool) {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	entry, isFound := e.infections[objectID]
+	if !isFound || entry.rootInstanceID == 0 {
+		return heroInfectionEntry{}, false
+	}
+	e.npc.ClearRoot(objectID, entry.rootExpiresAt)
+	err := e.modifierPool.Release(entry.rootInstanceID)
+	if err != nil {
+		log.Printf("Infection root release failed target=%d: %v", objectID, err)
+	}
+	removed := heroInfectionEntry{objectID: objectID, rootInstanceID: entry.rootInstanceID}
+	entry.rootInstanceID = 0
+	entry.rootExpiresAt = time.Time{}
+	e.infections[objectID] = entry
+	return removed, true
+}
+
 func (e *heroInfectionRun) IsEmpty() bool {
 	if e == nil {
 		return true
@@ -251,14 +272,31 @@ func (e heroInfectionSchedule) tick(
 		if !isAdvanced {
 			continue
 		}
+		target, isTargetFound := peerSession.zone.NPCs().NPC(entry.objectID)
+		isTargetDead := !isTargetFound || target.IsDefeated || target.HitPoint <= 0
+		if entry.rootInstanceID != 0 && (isTargetDead || !e.runtime.now().Before(entry.rootExpiresAt)) {
+			removed, isRemoved := e.run.expireRoot(entry.objectID)
+			if isRemoved {
+				expired = append(expired, removed)
+				entry.rootInstanceID = 0
+				entry.rootExpiresAt = time.Time{}
+			}
+		}
 		if entry.isConsumed {
 			// Expunge removes the disease, while Bio Entangle retains its
 			// independent duration and never deals or spreads disease damage.
-			if !e.runtime.now().Before(entry.rootExpiresAt) {
+			if entry.rootInstanceID == 0 {
 				removed, isRemoved := e.run.Expire(entry.objectID)
 				if isRemoved {
 					expired = append(expired, removed)
 				}
+			}
+			continue
+		}
+		if isTargetDead {
+			removed, isRemoved := e.run.Expire(entry.objectID)
+			if isRemoved {
+				expired = append(expired, removed)
 			}
 			continue
 		}
@@ -268,13 +306,6 @@ func (e heroInfectionSchedule) tick(
 				if isRemoved {
 					expired = append(expired, removed)
 				}
-			}
-			continue
-		}
-		target, isTargetFound := peerSession.zone.NPCs().NPC(entry.objectID)
-		if !isTargetFound || target.IsDefeated || target.HitPoint <= 0 {
-			if removed, isRemoved := e.run.Expire(entry.objectID); isRemoved {
-				expired = append(expired, removed)
 			}
 			continue
 		}

@@ -44,7 +44,7 @@ func (e *gameplayPeerSession) spawnDestructorEquipment(
 		return nil, 0, fmt.Errorf("bossPlacement: %w", err)
 	}
 	participantCount := e.campaignLootParticipantCount()
-	challenge, npcType := campaignNPCLootSource(enemy.Plan, 500)
+	challenge, npcType := e.campaignNPCRewardSource(enemy.Plan, 500)
 	if challenge <= 0 {
 		return nil, 0, nil
 	}

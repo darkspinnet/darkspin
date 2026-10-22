@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/sim"
@@ -32,6 +33,18 @@ func campaignNPCLootSource(plan zonenpc.SpawnPlan, fallbackChallenge int32) (int
 		return fallbackChallenge, 2
 	}
 	return fallbackChallenge, 0
+}
+
+// The native emitter adds the active Elite.NPCAffix challenge bonus after
+// emitting orbs. Equipment and catalyst emission consume this context.
+func (e *gameplayPeerSession) campaignNPCRewardSource(
+	plan zonenpc.SpawnPlan, fallbackChallenge int32,
+) (int32, uint32) {
+	challenge, npcType := campaignNPCLootSource(plan, fallbackChallenge)
+	if e == nil || e.zone == nil || !plan.IsEliteRewardEligible() {
+		return challenge, npcType
+	}
+	return int32(min(int64(math.MaxInt32), int64(challenge)+int64(e.zone.EliteRewardBonus()))), npcType
 }
 
 func (e *gameplayPeerSession) removeUnpublishedLoot(objectIDs []uint32) {
@@ -99,7 +112,7 @@ func (s *gameplayPeerSession) spawnCampaignNPCEquipment(
 		}
 		return nil, 0, nil
 	}
-	challenge, npcType := campaignNPCLootSource(enemy.Plan, campaignNPCEquipmentSourceAmount)
+	challenge, npcType := s.campaignNPCRewardSource(enemy.Plan, campaignNPCEquipmentSourceAmount)
 	if challenge <= 0 && !isCampaignDestructorLoot(enemy.Plan) {
 		return nil, 0, nil
 	}
@@ -196,7 +209,7 @@ func (s *gameplayPeerSession) spawnCampaignNPCCrystal(
 	if zonenpc.IsVerdanthTotem(enemy.Plan) {
 		fallbackChallenge = campaignVerdanthTotemCrystalSourceAmount
 	}
-	challenge, npcType := campaignNPCLootSource(enemy.Plan, fallbackChallenge)
+	challenge, npcType := s.campaignNPCRewardSource(enemy.Plan, fallbackChallenge)
 	if challenge <= 0 || !zoneunlock.AreCatalystDropsUnlocked(s.binding) || len(definitions) == 0 {
 		return nil, 0, nil
 	}

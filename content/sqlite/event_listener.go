@@ -51,24 +51,9 @@ func decodeOptionalEventListener(cursor *assetCursor, fieldOffset int) (*EventLi
 	return definition, nil
 }
 
-// The shared tail visits audio, teleporter and listeners before spawn fields.
+// After audio, the shared tail visits teleporter and listeners before spawn fields.
 // The same traversal applies at marker+156 and noun+252.
 func decodeSharedComponentPrefix(cursor *assetCursor, base int) (*TeleporterDefinition, *EventListenerDefinition, error) {
-	audioBase, err := cursor.optionalBody(base, 32)
-	if err != nil {
-		return nil, nil, fmt.Errorf("componentAudio: %w", err)
-	}
-	if audioBase >= 0 {
-		err = cursor.references(audioBase + 16)
-		if err != nil {
-			return nil, nil, fmt.Errorf("componentAudioSound: %w", err)
-		}
-		audioTrigger, triggerErr := decodeOptionalTriggerVolume(cursor, audioBase+28)
-		if triggerErr != nil {
-			return nil, nil, fmt.Errorf("componentAudioTrigger: %w", triggerErr)
-		}
-		_ = audioTrigger
-	}
 	var teleporter *TeleporterDefinition
 	teleporterBase, err := cursor.optionalBody(base+4, 12)
 	if err != nil {

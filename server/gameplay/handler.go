@@ -6307,6 +6307,7 @@ func (p campaignPreparation) initialize(
 			CrystalDefinitions:      p.program.CrystalDefinitions,
 			CrystalLevelOffsets:     p.program.CrystalLevelOffsets,
 			CrystalMinorStageCount:  p.program.CrystalMinorStageCount,
+			EliteRewardBonus:        p.program.EliteRewardBonus,
 			TutorialMajorStageCount: p.program.TutorialMajorStageCount,
 			Security:                zonesecurity.NewSession(securityObjectID),
 			Effect:                  zoneeffect.NewInventory(),

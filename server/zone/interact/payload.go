@@ -17,6 +17,8 @@ type EquipmentPickup struct {
 	WinnerRewardRigblockID uint16
 	Rolls                  []EquipmentPickupRoll
 	Part                   sporenet.Part
+	SourcePart             sporenet.Part
+	IsWinnerPartFinalized  bool
 	PresentationPolicy     zoneloot.EquipmentPresentationPolicy
 	IsWinnerReward         bool
 	IsWinnerRewardBoss     bool
@@ -113,12 +115,17 @@ func (e *PickupPayloadRegistry) ClearEquipmentRoll(
 	}
 	pickup.WinnerUserID = 0
 	pickup.Rolls = nil
+	if pickup.IsWinnerPartFinalized {
+		pickup.Part = pickup.SourcePart
+		pickup.SourcePart = sporenet.Part{}
+		pickup.IsWinnerPartFinalized = false
+	}
 	e.equipmentPickups[objectID] = cloneEquipmentPickup(pickup)
 	return nil
 }
 
-// SetEquipmentWinnerPart replaces a multiplayer pickup's neutral preview with
-// the reward generated for its selected winner.
+// SetEquipmentWinnerPart retains the source descriptor separately so a reset
+// cannot pass one recipient's raised level on to a different winner.
 func (e *PickupPayloadRegistry) SetEquipmentWinnerPart(
 	objectID uint32, userID uint64, part sporenet.Part,
 ) (EquipmentPickup, error) {
@@ -131,12 +138,40 @@ func (e *PickupPayloadRegistry) SetEquipmentWinnerPart(
 	if !isFound {
 		return EquipmentPickup{}, errors.New("equipment pickup unavailable")
 	}
-	if pickup.WinnerUserID != userID || !pickup.IsWinnerReward {
+	if pickup.WinnerUserID != userID {
 		return EquipmentPickup{}, errors.New("equipment winner unavailable")
 	}
+	if !pickup.IsWinnerPartFinalized {
+		pickup.SourcePart = pickup.Part
+	}
 	pickup.Part = part
+	pickup.IsWinnerPartFinalized = true
 	e.equipmentPickups[objectID] = cloneEquipmentPickup(pickup)
 	return cloneEquipmentPickup(pickup), nil
+}
+
+// ResetDeferredEquipmentWinnerPart rolls back an unaccepted generated item,
+// retaining the selected winner and roll choice for deterministic preparation.
+// Published source descriptors retain their finalized recipient level.
+func (e *PickupPayloadRegistry) ResetDeferredEquipmentWinnerPart(
+	objectID uint32, userID uint64,
+) error {
+	if e == nil || objectID == 0 || userID == 0 {
+		return errors.New("invalid deferred equipment reset")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	pickup, isFound := e.equipmentPickups[objectID]
+	if !isFound || pickup.WinnerUserID != userID {
+		return errors.New("deferred equipment winner unavailable")
+	}
+	if !pickup.IsWinnerPartFinalized || pickup.SourcePart.RigblockAssetID != 0 {
+		return nil
+	}
+	pickup.Part = pickup.SourcePart
+	pickup.IsWinnerPartFinalized = false
+	e.equipmentPickups[objectID] = cloneEquipmentPickup(pickup)
+	return nil
 }
 
 func cloneEquipmentPickup(pickup EquipmentPickup) EquipmentPickup {

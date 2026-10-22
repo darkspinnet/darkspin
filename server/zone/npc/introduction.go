@@ -37,6 +37,9 @@ func (e *Session) RevealIntroduction(objectID uint32, owner ActionOwner, generat
 		npc.ActionOwner != owner || npc.ActionGeneration != generation {
 		return false
 	}
+	if !npc.introduction.startedAt.IsZero() && npc.introduction.profile.FirstAggroRevealDelay > 0 && !npc.Plan.IsIntroductionHidden {
+		return false
+	}
 	npc.Plan.IsIntroductionHidden = false
 	npc.Plan.IsIntroductionComplete = true
 	npc.IsInvisibleToSecurityTeleporter = false

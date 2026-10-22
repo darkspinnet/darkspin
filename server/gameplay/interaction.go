@@ -1591,9 +1591,15 @@ func (s *gameplayPeerSession) spawnCampaignNPCDNA(
 		reservation.Release()
 		return nil, 0, fmt.Errorf("dnaAmount: %w", err)
 	}
-	amount, err := zoneloot.NPCDNAAmount(
-		s.binding.Difficulty, s.campaignPartAttribute(campaignDNADroppedAttribute), amountDraw,
-	)
+	// Unresolved source classes retain the prior 11-challenge compatibility
+	// amount; resolved classes and active Elite attachments own their challenge.
+	challenge, npcType := s.campaignNPCRewardSource(enemy.Plan, 11)
+	// DNA has one emission per source, independent of the NPC attempt class.
+	_ = npcType
+	amount, err := zoneloot.NPCDNAAmount(zoneloot.NPCDNAAmountInput{
+		Stage: stage, Challenge: challenge, Tuning: tuning,
+		DroppedMultiplier: s.campaignPartAttribute(campaignDNADroppedAttribute), RandomDraw: amountDraw,
+	})
 	if err != nil {
 		reservation.Release()
 		return nil, 0, fmt.Errorf("dnaAmountResolve: %w", err)

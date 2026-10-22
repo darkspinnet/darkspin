@@ -20,7 +20,7 @@ import (
 const (
 	SourceVersion  = "5.3.0.103"
 	SourceBuild    = 103
-	RecipeVersion  = 91
+	RecipeVersion  = 92
 	ContentRelease = "build-103-content"
 	RuntimeRole    = "runtime-content"
 )
@@ -1710,6 +1710,7 @@ func writeContentDatabase(
 			event_listener_definition TEXT,
 			interactable_definition TEXT,
 			combatant_definition TEXT,
+			audio_definition TEXT,
 			is_combatant_component_present INTEGER NOT NULL CHECK (is_combatant_component_present IN (0, 1)),
 			CHECK ((is_door=0 AND is_click_to_open IS NULL AND is_click_to_close IS NULL AND door_initial_state IS NULL)
 			    OR (is_door=1 AND is_click_to_open IS NOT NULL AND is_click_to_close IS NOT NULL AND door_initial_state IS NOT NULL)),
@@ -1924,6 +1925,7 @@ func writeContentDatabase(
 			event_listener_definition TEXT,
 			interactable_definition TEXT,
 			combatant_definition TEXT,
+			audio_definition TEXT,
 			UNIQUE (level_marker_set_id, ordinal)
 		);
 		CREATE TABLE level_event (

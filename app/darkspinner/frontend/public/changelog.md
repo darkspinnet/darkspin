@@ -2,6 +2,13 @@
 
 ### 2026-10-22
 
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Calculate NPC DNA drops from their class and active Elite challenge with the authored amount tuning instead of a fixed source amount.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Apply the recipient's co-op item-level floor to pickup and Cash Out rewards while preserving selected item identities and retry behavior.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Reject resolved affix combinations with no positive combined modifier during generation and stat calculation, including weapon fallback handling.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Preserve boss introduction deadlines through co-op ownership changes and restore the remaining cinematic hold on rejoin without restarting the entrance for other players.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Remove Rooting Plague's shorter upgraded root at its own expiry and clean up roots retained by Expunge when their target dies.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Apply the authored Elite reward challenge bonus to equipment and catalyst drops using the NPC's actual modifier affix.
+- [#99](https://github.com/darkspinnet/darkspin/issues/99) Preserve authored audio triggers and their nested geometry in the content database for inspection, including separate noun definitions and marker overrides.
 - [#99](https://github.com/darkspinnet/darkspin/issues/99) Add a read-only Lua audit command that reports bytecode integrity, dependency links, callback metadata and production hero definitions while keeping unverified gameplay behavior explicit.
 - [#99](https://github.com/darkspinnet/darkspin/issues/99) Restore missing basic-attack burn, vulnerability, haste, weakness, silence and knockback callbacks with their authored stacking and expiry rules.
 - [#99](https://github.com/darkspinnet/darkspin/issues/99) Restore Savage pet vulnerability and owner resurrection, including revival indicators, failed-revival cleanup and protection against premature squad defeat.

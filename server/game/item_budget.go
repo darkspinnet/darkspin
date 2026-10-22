@@ -77,7 +77,9 @@ func (e *PartCatalog) fillBudgetedAffixes(
 	maximumBudget float32,
 ) bool {
 	if slot == len(slots) {
-		return true
+		// Check the complete signed sum only: a later affix can rescue a
+		// nonpositive partial roll. Budget pruning retains its own policy.
+		return e.isPartAffixValid(part)
 	}
 	ids := slots[slot]
 	start := int(random.index(uint32(len(ids))))

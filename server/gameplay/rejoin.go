@@ -457,7 +457,7 @@ func marshalGameplayRejoinBaselineState(
 			packets = append(packets, phasePacket)
 		} else {
 			for _, npc := range liveNPCs {
-				if npc.Plan.ObjectID != bossState.LeaderObjectID || !npc.IsPublished {
+				if npc.Plan.ObjectID != bossState.LeaderObjectID || !npc.IsPublished || !npc.IsIntroductionBossActive() {
 					continue
 				}
 				activePacket, activeErr := bossraknet.Active(
@@ -491,6 +491,20 @@ func marshalGameplayRejoinBaselineState(
 		return nil, fmt.Errorf("rejoinNPCTarget: %w", err)
 	}
 	packets = append(packets, targetPackets...)
+	introTime := time.Now()
+	if len(capturedTimes) > 0 {
+		introTime = capturedTimes[0]
+	}
+	for _, npc := range liveNPCs {
+		if !npc.IsPublished {
+			continue
+		}
+		introPackets, introErr := npcraknet.Introduction(npc, introTime)
+		if introErr != nil {
+			return nil, fmt.Errorf("rejoinIntroduction: %w", introErr)
+		}
+		packets = append(packets, introPackets...)
+	}
 	companionPackets, err := marshalGameplayRejoinCompanions(peerSession, capturedTimes...)
 	if err != nil {
 		return nil, fmt.Errorf("rejoinCompanion: %w", err)

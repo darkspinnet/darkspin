@@ -102,6 +102,7 @@ type Programs struct {
 	CrystalLineBonusPercent    float32
 	TutorialMajorStageCount    uint32
 	CrystalMinorStageCount     uint32
+	EliteRewardBonus           uint32
 }
 
 // CrystalEffect is noun-owned catalyst identity for pickup, HUD, and effect

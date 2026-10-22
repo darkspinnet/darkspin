@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/darkspinnet/darkspin/server/game"
 )
 
 const maximumCashOutBonusAttempts = 3
@@ -16,6 +18,7 @@ type RewardSubject struct {
 	AccountLevel  uint32
 	CampaignStage uint32
 	ChainArgument uint32
+	RecipientPart game.RecipientPartRequest
 	Alternates    []RewardSubject
 }
 
@@ -110,6 +113,7 @@ func CollectCashOut(
 	}
 	defer session.RollbackCashOutCommit(snapshot.ResultID)
 	command.Subject.CampaignStage = snapshot.CompletedIndex
+	command.Subject.RecipientPart.MissionStage = snapshot.CompletedIndex
 	command.Subject.ChainArgument = uint32(snapshot.PlanetsCompleted)
 	rewardCount := RewardCount(snapshot.PlanetsCompleted)
 	rewardLevel := RewardLevel(snapshot.Difficulty, snapshot.PlanetsCompleted)

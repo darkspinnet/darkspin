@@ -19,12 +19,68 @@ func isCampaignBossIntroDelayed(plan zonenpc.SpawnPlan) bool {
 }
 
 type campaignBossIntroStep struct {
-	zone       *zone.Zone
-	runtime    campaignNPCActionRuntime
-	sessionKey string
-	generation uint64
-	plan       zonenpc.FirstActionPlan
-	readyAt    time.Time
+	zone                  *zone.Zone
+	runtime               campaignNPCActionRuntime
+	sessionKey            string
+	generation            uint64
+	plan                  zonenpc.FirstActionPlan
+	readyAt               time.Time
+	isPublicationDeferred bool
+}
+
+// The admission barrier prevents observer fanout and zero-delay continuation
+// from escaping a rejected schedule. Closing ready publishes isAdmitted.
+type campaignNPCFirstActionAdmission struct {
+	ready      chan struct{}
+	isAdmitted bool
+}
+
+type campaignNPCAdmittedProducer struct {
+	admission     *campaignNPCFirstActionAdmission
+	producePacket func() ([][]byte, error)
+}
+
+func (e campaignNPCAdmittedProducer) produce() ([][]byte, error) {
+	<-e.admission.ready
+	if !e.admission.isAdmitted {
+		return nil, nil
+	}
+	packets, err := e.producePacket()
+	if err != nil {
+		return nil, fmt.Errorf("introAdmitted: %w", err)
+	}
+	return packets, nil
+}
+
+type campaignBossIntroPublication struct {
+	runtime            campaignNPCActionRuntime
+	zone               *zone.Zone
+	owner              zonenpc.ActionOwner
+	plan               zonenpc.FirstActionPlan
+	timelineGeneration uint64
+	stage              zonenpc.IntroductionStage
+	producePacket      func() ([][]byte, error)
+	isProduced         bool
+}
+
+func (e *campaignBossIntroPublication) produce() ([][]byte, error) {
+	packets, err := e.producePacket()
+	if err != nil {
+		return nil, fmt.Errorf("introContinue: %w", err)
+	}
+	e.isProduced = len(packets) > 0
+	return packets, nil
+}
+
+func (e *campaignBossIntroPublication) commit() {
+	if !e.isProduced {
+		return
+	}
+	isCommitted := e.zone.NPCs().CommitPublishedIntroduction(e.plan.ObjectID, e.timelineGeneration, e.runtime.now(), e.stage)
+	if !isCommitted || e.stage != zonenpc.IntroductionBossActive {
+		return
+	}
+	e.zone.PublishNPCAction(zonenpc.ActionEvent{Kind: zonenpc.ActionEventBossActive, Plan: e.plan}, e.owner.UserID, e.owner.PeerGeneration)
 }
 
 func (e campaignBossIntroStep) produce() ([][]byte, error) {
@@ -43,6 +99,9 @@ func (e campaignBossIntroStep) produce() ([][]byte, error) {
 	packet, err := bossraknet.Active(e.plan.ObjectID, true)
 	if err != nil {
 		return nil, fmt.Errorf("bossIntroActive: %w", err)
+	}
+	if e.isPublicationDeferred {
+		return [][]byte{packet}, nil
 	}
 	current.zone.PublishNPCAction(zonenpc.ActionEvent{Kind: zonenpc.ActionEventBossActive, Plan: e.plan}, current.binding.UserID, current.generation)
 	if e.runtime.logger != nil {

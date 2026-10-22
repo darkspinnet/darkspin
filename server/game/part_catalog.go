@@ -134,6 +134,8 @@ type PartTuning struct {
 	MinorLevelMultiplier   uint32
 	LastMinorLevelBonus    uint32
 	RarityLevelMultiplier  uint32
+	SidekickProgressionGap int32
+	IsSidekickingForced    bool
 	HandMinimumLevel       uint32
 	FootMinimumLevel       uint32
 	WeaponMinimumLevel     uint32
@@ -640,6 +642,9 @@ func (e *PartCatalog) ValidateGeneratedCampaignPart(part sporenet.Part) error {
 			return fmt.Errorf("campaign prefix definition %d missing", prefixID)
 		}
 	}
+	if !e.isPartAffixValid(&part) {
+		return errors.New("campaign affix modifiers invalid")
+	}
 	return nil
 }
 
@@ -1035,12 +1040,14 @@ func (c *PartCatalog) attributes(part *sporenet.Part) ([partAttributeCount]float
 	if !isFound {
 		return [partAttributeCount]float32{}, false
 	}
-	var modifierBlocks [4][partAttributeCount]float32
-	c.copyAffixModifiers(&modifierBlocks[0], "suffix", part.SuffixAssetID)
-	c.copyAffixModifiers(&modifierBlocks[1], "prefix", part.PrefixAssetID)
-	c.copyAffixModifiers(&modifierBlocks[2], "prefix", part.PrefixSecondaryAssetID)
+	modifierBlocks, isAffixResolved := c.affixModifierBlocks(part)
 	c.standardModifiers(&modifierBlocks[3], definition, uint32(part.Level), part.Rarity)
 	modifierCount := positiveModifierCount(modifierBlocks)
+	// sub_9CD3D0 rejects resolved affixes before scaling. Standard slot
+	// modifiers cannot rescue an empty or nonpositive signed affix sum.
+	if isAffixResolved && modifierCount == 0 {
+		return [partAttributeCount]float32{}, false
+	}
 	levelScale := c.levelScale(uint32(part.Level))
 	pointScale := levelScale * ((float32(modifierCount)*c.tuning.ExtraStatBonusFactor + 1) * c.tuning.BasePoint)
 	rarity := int(part.Rarity)
@@ -1124,6 +1131,9 @@ func (c *PartCatalog) WeaponDamageModifier(part *sporenet.Part) float32 {
 	if !isFound || definition.SlotType != "weapon" {
 		return 0
 	}
+	if !c.isPartAffixValid(part) {
+		return 0
+	}
 	return c.weaponDamageModifier(uint32(part.Level))
 }
 
@@ -1147,6 +1157,31 @@ func (c *PartCatalog) CriticalAttributes(part *sporenet.Part) (CriticalAttribute
 	return CriticalAttributes{
 		Rating: attributes[10], AutoCrit: attributes[19], DamageIncrease: attributes[22],
 	}, true
+}
+
+// affixModifierBlocks distinguishes resolved pointers from unresolved IDs,
+// matching sub_9CD7C0 before the native stat-derivation validity guard.
+func (e *PartCatalog) affixModifierBlocks(part *sporenet.Part) ([4][partAttributeCount]float32, bool) {
+	var blocks [4][partAttributeCount]float32
+	isAffixResolved := false
+	for index, id := range [...]uint16{part.SuffixAssetID, part.PrefixAssetID, part.PrefixSecondaryAssetID} {
+		kind := "prefix"
+		if index == 0 {
+			kind = "suffix"
+		}
+		affix, isFound := e.affixesByName[partAffixKey(kind, id)]
+		if !isFound {
+			continue
+		}
+		blocks[index] = affix.Modifiers
+		isAffixResolved = true
+	}
+	return blocks, isAffixResolved
+}
+
+func (e *PartCatalog) isPartAffixValid(part *sporenet.Part) bool {
+	blocks, isAffixResolved := e.affixModifierBlocks(part)
+	return !isAffixResolved || positiveModifierCount(blocks) > 0
 }
 
 func (c *PartCatalog) copyAffixModifiers(target *[partAttributeCount]float32, kind string, id uint16) {

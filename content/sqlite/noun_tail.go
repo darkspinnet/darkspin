@@ -160,6 +160,7 @@ func decodeNounTail(payload []byte, noun *NounNavigation) error {
 		return fmt.Errorf("nounSharedComponents: %w", err)
 	}
 	noun.EventListener = definition.listener
+	noun.audioTrigger = definition.audio
 	noun.Interactable = definition.interactable
 	noun.Combatant = definition.combatant
 	return nil

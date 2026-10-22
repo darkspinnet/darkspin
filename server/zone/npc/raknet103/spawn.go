@@ -62,8 +62,7 @@ func spawn(plan zonenpc.SpawnPlan, isRemnant bool) ([][]byte, error) {
 		attribute[12] = actionProfile.MovementSpeed
 		attribute[48] = zonenpc.EffectiveMovementSpeedBuff(plan)
 	}
-	isElite := plan.IsCaptain || plan.IsElite || plan.IsBoss ||
-		plan.BossIdentity.HasModifier(zonenpc.EliteModifierName)
+	isElite := plan.IsEliteModifierApplied()
 	if isElite {
 		attribute[uint8(game.AttributeBodyScale)] = plan.PermanentBodyScale()
 	}
@@ -117,11 +116,9 @@ func spawn(plan zonenpc.SpawnPlan, isRemnant bool) ([][]byte, error) {
 			IsInCombat: plan.IsArena,
 			Stealth:    uint8(actionStealthType(plan)),
 		})
-		eliteAffixAssetID := util.HashID("Elite.NPCAffix")
-		if profile.NPCType == 2 {
-			// Destructor class identity is its own nameplate. Retain the
-			// existing modifier bonuses without assigning a generic elite name.
-			eliteAffixAssetID = 0
+		eliteAffixAssetID := uint32(0)
+		if affixName := plan.EliteModifierAffixName(); affixName != "" {
+			eliteAffixAssetID = util.HashID(affixName)
 		}
 		messages = append(messages, raknet.ModifierCreatedMessage{
 			TargetID:          plan.ObjectID,

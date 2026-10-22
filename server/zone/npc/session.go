@@ -317,6 +317,7 @@ func (s *Session) Restore(snapshots []Snapshot) error {
 			threats:                    slices.Clone(snapshot.threats),
 			IsInitialAggroSet:          snapshot.IsInitialAggroSet,
 			IsFirstActionStarted:       snapshot.IsFirstActionStarted,
+			introduction:               snapshot.introduction,
 			InitialAggroAnimationFlag:  snapshot.InitialAggroAnimationFlag,
 			Plan:                       plan, Origin: snapshot.Origin, Facing: snapshot.Facing,
 			Faction:  FactionNonPlayerAligned,
@@ -693,8 +694,8 @@ func (s *Session) StartAction(
 	}
 	npc.IsActionStarted = true
 	// A canceled delayed entrance must retry its reveal on the next action.
-	isFirstAction := !npc.IsFirstActionStarted || npc.Plan.IsIntroductionHidden
-	if isFirstAction && npc.Plan.Introduction != SpawnIntroductionFloorWarp {
+	isFirstAction := !npc.IsFirstActionStarted || npc.Plan.IsIntroductionHidden || npc.IsIntroductionPending()
+	if isFirstAction && npc.introduction.startedAt.IsZero() && npc.Plan.Introduction != SpawnIntroductionFloorWarp {
 		profile, isProfileKnown := ActionProfileForPlan(npc.Plan)
 		if isProfileKnown && profile.FirstAggroRevealDelay > 0 {
 			npc.Plan.IsIntroductionHidden = true

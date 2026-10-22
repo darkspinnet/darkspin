@@ -68,6 +68,7 @@ func decodeOptionalCombatant(cursor *assetCursor, fieldOffset int) (*CombatantDe
 }
 
 type sharedComponentDefinition struct {
+	audio        *AudioTriggerDefinition
 	teleporter   *TeleporterDefinition
 	listener     *EventListenerDefinition
 	spawn        *SpawnTriggerDefinition
@@ -80,6 +81,10 @@ type sharedComponentDefinition struct {
 func decodeSharedComponents(cursor *assetCursor, base int) (sharedComponentDefinition, error) {
 	definition := sharedComponentDefinition{}
 	var err error
+	definition.audio, err = decodeOptionalAudioTrigger(cursor, base)
+	if err != nil {
+		return definition, fmt.Errorf("sharedAudio: %w", err)
+	}
 	definition.teleporter, definition.listener, err = decodeSharedComponentPrefix(cursor, base)
 	if err != nil {
 		return definition, fmt.Errorf("sharedPrefix: %w", err)

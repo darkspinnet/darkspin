@@ -5170,12 +5170,13 @@ type campaignNPCFirstActionStep struct {
 }
 
 type campaignNPCFirstAggroRevealStep struct {
-	runtime          campaignNPCActionRuntime
-	sessionKey       string
-	generation       uint64
-	actionGeneration uint64
-	objectID         uint32
-	timestamp        uint64
+	runtime               campaignNPCActionRuntime
+	sessionKey            string
+	generation            uint64
+	actionGeneration      uint64
+	objectID              uint32
+	timestamp             uint64
+	isPublicationDeferred bool
 }
 
 type campaignNPCFirstAggroEffectStep struct {
@@ -5256,7 +5257,7 @@ func (e campaignNPCFirstAggroRevealStep) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("enemyFirstAggroReveal: %w", err)
 	}
-	if !peerSession.zone.NPCs().RevealIntroduction(e.objectID, owner, e.actionGeneration) {
+	if !e.isPublicationDeferred && !peerSession.zone.NPCs().RevealIntroduction(e.objectID, owner, e.actionGeneration) {
 		return nil, nil
 	}
 	e.runtime.logger.Printf(
@@ -6150,6 +6151,7 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 		if !isStarted {
 			continue
 		}
+		startedActions[plan.ObjectID] = npc.ActionGeneration
 		action, isActionFound, err = campaignNPCFirstAction(
 			npc.Plan, target.ObjectID, target.Position, target.ActorFootprintRadius,
 		)
@@ -6166,15 +6168,25 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 		isFloorWarpIntroduction :=
 			plan.Introduction == zonenpc.SpawnIntroductionFloorWarp
 		firstAggroDelay := time.Duration(0)
+		introTiming := zonenpc.IntroductionTiming{}
+		isRetainedIntroduction := false
+		if isFirstAction && !isFloorWarpIntroduction && plan.OwnerObjectID == 0 && zoneboss.IsFinalBossNoun(plan.NounName) {
+			introTiming, isRetainedIntroduction = npcSession.StartIntroduction(
+				plan.ObjectID, owner, npc.ActionGeneration, action.Profile, r.now(), timestamp,
+			)
+		}
 		if isFirstAction && !isFloorWarpIntroduction &&
 			action.Profile.IsFirstAggroDurationKnown {
 			firstAggroDelay = action.Profile.FirstAggroDelay
+		}
+		if isRetainedIntroduction {
+			firstAggroDelay = introTiming.Delay
 		}
 		if _, isSpawnPresentation := spawnPresentationObjectIDs[plan.ObjectID]; isSpawnPresentation {
 			firstAggroDelay += zonespawn.Duration
 		}
 		if isFirstAction && !isFloorWarpIntroduction &&
-			action.Profile.IsFirstAggroDurationKnown {
+			action.Profile.IsFirstAggroDurationKnown && (!isRetainedIntroduction || introTiming.IsNew) {
 			aggroPackets, err := npcraknet.FirstAggro(action, timestamp)
 			if err != nil {
 				npcSession.ReleaseAction(plan.ObjectID, owner)
@@ -6197,30 +6209,53 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 			}
 		}
 		if isFirstAction && !isFloorWarpIntroduction &&
-			action.Profile.FirstAggroRevealDelay > 0 {
+			action.Profile.FirstAggroRevealDelay > 0 && (!isRetainedIntroduction || introTiming.IsRevealPending) {
+			revealDelay := action.Profile.FirstAggroRevealDelay
+			revealTimestamp := timestamp + uint64(revealDelay/time.Millisecond)
+			if isRetainedIntroduction {
+				revealDelay = introTiming.RevealDelay
+				revealTimestamp = introTiming.Timestamp + uint64(introTiming.Profile.FirstAggroRevealDelay/time.Millisecond)
+			}
 			revealStep := campaignNPCFirstAggroRevealStep{
 				runtime: r, sessionKey: sessionKey, generation: generation,
-				actionGeneration: npc.ActionGeneration,
-				objectID:         plan.ObjectID,
-				timestamp: timestamp + uint64(
-					action.Profile.FirstAggroRevealDelay/time.Millisecond,
-				),
+				actionGeneration:      npc.ActionGeneration,
+				objectID:              plan.ObjectID,
+				timestamp:             revealTimestamp,
+				isPublicationDeferred: isRetainedIntroduction,
 			}
-			producers = append(producers, raknet.ScheduledPacketProducer{
-				Delay:   action.Profile.FirstAggroRevealDelay,
+			revealProducer := raknet.ScheduledPacketProducer{
+				Delay:   revealDelay,
 				Produce: revealStep.produce,
-			})
+			}
+			if isRetainedIntroduction {
+				publication := &campaignBossIntroPublication{runtime: r, zone: zone, owner: owner, plan: action,
+					timelineGeneration: introTiming.Generation, stage: zonenpc.IntroductionReveal, producePacket: revealStep.produce}
+				revealProducer.Produce = publication.produce
+				revealProducer.AfterCommit = publication.commit
+			}
+			producers = append(producers, revealProducer)
 		}
 		if isFirstAction && !isFloorWarpIntroduction &&
 			action.Profile.FirstAggroEffectName != "" &&
-			action.Profile.FirstAggroEffectDelay > 0 {
+			action.Profile.FirstAggroEffectDelay > 0 && (!isRetainedIntroduction || introTiming.IsEffectPending) {
+			effectDelay := action.Profile.FirstAggroEffectDelay
+			if isRetainedIntroduction {
+				effectDelay = introTiming.EffectDelay
+			}
 			effectStep := campaignNPCFirstAggroEffectStep{
 				runtime: r, sessionKey: sessionKey, generation: generation,
 				actionGeneration: npc.ActionGeneration, objectID: plan.ObjectID,
 			}
-			producers = append(producers, raknet.ScheduledPacketProducer{
-				Delay: action.Profile.FirstAggroEffectDelay, Produce: effectStep.produce,
-			})
+			effectProducer := raknet.ScheduledPacketProducer{
+				Delay: effectDelay, Produce: effectStep.produce,
+			}
+			if isRetainedIntroduction {
+				publication := &campaignBossIntroPublication{runtime: r, zone: zone, owner: owner, plan: action,
+					timelineGeneration: introTiming.Generation, stage: zonenpc.IntroductionEffect, producePacket: effectStep.produce}
+				effectProducer.Produce = publication.produce
+				effectProducer.AfterCommit = publication.commit
+			}
+			producers = append(producers, effectProducer)
 		}
 		objectID := plan.ObjectID
 		actionTimestamp := timestamp + uint64(firstAggroDelay/time.Millisecond)
@@ -6234,16 +6269,32 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 		producer := raknet.ScheduledPacketProducer{
 			Delay: firstAggroDelay, Produce: step.produce,
 		}
-		if isFirstAction && isCampaignBossIntroDelayed(plan) {
+		if isRetainedIntroduction {
+			publication := &campaignBossIntroPublication{runtime: r, zone: zone, owner: owner, plan: action,
+				timelineGeneration: introTiming.Generation, stage: zonenpc.IntroductionComplete, producePacket: step.produce}
+			producer.Produce = publication.produce
+			producer.AfterCommit = publication.commit
+		}
+		if isFirstAction && isCampaignBossIntroDelayed(plan) && (!isRetainedIntroduction || introTiming.IsActivePending) {
 			bossIntroDelay := firstAggroDelay
 			if action.Profile.FirstAggroRevealDelay > 0 {
 				bossIntroDelay = action.Profile.FirstAggroRevealDelay
 			}
+			if isRetainedIntroduction {
+				bossIntroDelay = introTiming.ActiveDelay
+			}
 			bossStep := campaignBossIntroStep{runtime: r, zone: zone, sessionKey: sessionKey,
-				generation: generation, plan: action, readyAt: r.now().Add(bossIntroDelay)}
-			producers = append(producers, raknet.ScheduledPacketProducer{
+				generation: generation, plan: action, readyAt: r.now().Add(bossIntroDelay), isPublicationDeferred: isRetainedIntroduction}
+			bossProducer := raknet.ScheduledPacketProducer{
 				Delay: bossIntroDelay, Produce: bossStep.produce,
-			})
+			}
+			if isRetainedIntroduction {
+				publication := &campaignBossIntroPublication{runtime: r, zone: zone, owner: owner, plan: action,
+					timelineGeneration: introTiming.Generation, stage: zonenpc.IntroductionBossActive, producePacket: bossStep.produce}
+				bossProducer.Produce = publication.produce
+				bossProducer.AfterCommit = publication.commit
+			}
+			producers = append(producers, bossProducer)
 		}
 		producers = append(producers, producer)
 		if isFirstAction && plan.OwnerObjectID == 0 && zoneboss.IsFinalBossNoun(plan.NounName) {
@@ -6257,14 +6308,21 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 		}
 		startedActions[objectID] = npc.ActionGeneration
 	}
-	// Publish target state before a zero-delay producer can commit movement.
-	r.publishFirstAggro(zone, userID, generation, aggroEvents)
 	if len(producers) == 0 {
+		r.publishFirstAggro(zone, userID, generation, aggroEvents)
 		spawnPresentationGuard.isCommitted = true
 		return immediatePackets, nil
 	}
 	sortScheduledPacketProducersByDelay(producers)
 	producers = r.registry.producerGuard.scheduledProducers(sessionKey, producers)
+	// Production schedulers run producers asynchronously. Hold zero-delay work
+	// until admission succeeds and observers have received the entrance.
+	admission := &campaignNPCFirstActionAdmission{ready: make(chan struct{})}
+	defer close(admission.ready)
+	for index, producer := range producers {
+		step := campaignNPCAdmittedProducer{admission: admission, producePacket: producer.Produce}
+		producers[index].Produce = step.produce
+	}
 	var cancel raknet.CancelSchedule
 	var scheduleErr error
 	if packet.ScheduleGroupResult != nil {
@@ -6284,6 +6342,11 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 		scheduleErr = errors.New("first action cancellation unavailable")
 	}
 	if scheduleErr == nil {
+		for objectID, actionGeneration := range startedActions {
+			npcSession.CommitIntroduction(objectID, actionGeneration)
+		}
+		r.publishFirstAggro(zone, userID, generation, aggroEvents)
+		admission.isAdmitted = true
 		spawnPresentationGuard.isCommitted = true
 		return immediatePackets, nil
 	}
@@ -6324,6 +6387,7 @@ func releaseCampaignNPCFirstActions(
 	actions map[uint32]uint64,
 ) {
 	for objectID, actionGeneration := range actions {
+		npc.RejectIntroduction(objectID, actionGeneration)
 		isReleased := npc.ReleaseActionGeneration(objectID, owner, actionGeneration)
 		if !isReleased {
 			// A completed or superseding action no longer belongs to this group.

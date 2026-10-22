@@ -65,6 +65,7 @@ type levelDirectorAsset struct {
 }
 
 type markerAsset struct {
+	audio                   *AudioTriggerDefinition
 	markerID                uint32
 	markerName              string
 	nounName                string
@@ -297,8 +298,8 @@ func insertLevelAssets(ctx context.Context, transaction *sql.Tx, pkg *dbpf.Reade
 		 asset_override_id, target_marker_id, teleporter_trigger_radius, interactable_ability,
 		 interactable_use_limit, interactable_challenge, spawn_section_type, is_spike_active,
 		 spatial_radius, exclusion_radius, teleporter_definition, is_trigger_creation_deferred,
-		 spawn_trigger_definition, event_listener_definition, interactable_definition, combatant_definition)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		 spawn_trigger_definition, event_listener_definition, interactable_definition, combatant_definition, audio_definition)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		_ = setStatement.Close()
 		_ = aliasStatement.Close()
@@ -481,6 +482,10 @@ func insertLevelAssets(ctx context.Context, transaction *sql.Tx, pkg *dbpf.Reade
 				if encodeErr != nil {
 					return fmt.Errorf("markerCombatantEncode[%s:%d]: %w", markerSetName, markerOrdinal, encodeErr)
 				}
+				audioDefinition, encodeErr := encodeAudioTriggerDefinition(marker.audio)
+				if encodeErr != nil {
+					return fmt.Errorf("markerAudioEncode[%s:%d]: %w", markerSetName, markerOrdinal, encodeErr)
+				}
 				if marker.teleporter != nil {
 					isTriggerCreationDeferred = &marker.teleporter.IsTriggerCreationDeferred
 				}
@@ -492,7 +497,7 @@ func insertLevelAssets(ctx context.Context, transaction *sql.Tx, pkg *dbpf.Reade
 					marker.teleporterTriggerRadius, interactableAbility,
 					interactableUseLimit, interactableChallenge, spawnSectionType, isSpikeActive,
 					marker.spatialRadius, marker.exclusionRadius, teleporterDefinition, isTriggerCreationDeferred,
-					spawnTriggerDefinition, listenerDefinition, interactableDefinition, combatantDefinition)
+					spawnTriggerDefinition, listenerDefinition, interactableDefinition, combatantDefinition, audioDefinition)
 				if err != nil {
 					return fmt.Errorf("markerInsert[%s:%d]: %w", markerSetName, markerOrdinal, err)
 				}
@@ -843,6 +848,7 @@ func decodeMarkerSetAsset(payload []byte) (markerSetAsset, error) {
 			targetMarkerID = teleporter.DestinationMarkerID
 		}
 		set.markers = append(set.markers, markerAsset{
+			audio:              definition.audio,
 			markerID:           binary.LittleEndian.Uint32(payload[base+4 : base+8]),
 			markerName:         fields[pair.nameIndex].text,
 			nounName:           fields[pair.nounIndex].text,

@@ -2046,6 +2046,9 @@ func (r campaignResultRuntime) presentCashOut(
 	}
 	primaryRewardSubject := rewardSubjects[0]
 	primaryRewardSubject.Alternates = rewardSubjects[1:]
+	r.registry.mutex.Lock()
+	primaryRewardSubject.RecipientPart = r.registry.campaignRecipientPartRequestLocked(peerSession)
+	r.registry.mutex.Unlock()
 	collectResult, err := zoneresult.CollectCashOut(
 		ctx,
 		peerSession.chainResult,

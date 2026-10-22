@@ -1776,6 +1776,7 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		CrystalLevelOffsets:        crystalLevelOffsets,
 		CrystalLineBonusPercent:    crystalTuning.ThreeInARowBonusPercent,
 		CrystalMinorStageCount:     rewardTuning.Progression.MinorStageCount,
+		EliteRewardBonus:           rewardTuning.EliteRewardBonus,
 		TutorialMajorStageCount:    rewardTuning.Progression.MajorStageCount,
 		IntroAbilitySecond: zonecontent.MarkerProgram{
 			Program: abilitySecondProgram,

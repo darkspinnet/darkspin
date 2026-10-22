@@ -596,10 +596,14 @@ func gameplayCreature(
 	partAttribute := [partAttributeCount]float32{}
 	weaponDamageModifier := float32(0)
 	equippedParts, ignoredPartCount := gameplayEquippedParts(view.Parts, creature.ID)
-	selected.FunctionalItemCount = uint32(len(equippedParts))
 	selected.IgnoredFunctionalItemCount = ignoredPartCount
 	for index := range equippedParts {
 		part := &equippedParts[index]
+		if partCatalog != nil && !partCatalog.isPartAffixValid(part) {
+			selected.IgnoredFunctionalItemCount++
+			continue
+		}
+		selected.FunctionalItemCount++
 		partLevel := uint32(part.Level)
 		if selected.MinimumFunctionalItemLevel == 0 ||
 			partLevel < selected.MinimumFunctionalItemLevel {
@@ -629,7 +633,7 @@ func gameplayCreature(
 	// equipped item has lost its catalog weapon classification, preserve the
 	// playable loadout by treating its highest-level functional item as the
 	// missing weapon.
-	if weaponDamageModifier <= 0 && len(equippedParts) > 0 {
+	if weaponDamageModifier <= 0 && selected.MaximumFunctionalItemLevel > 0 {
 		selected.FunctionalWeaponItemCount = 1
 		selected.WeaponItemLevel = selected.MaximumFunctionalItemLevel
 		weaponDamageModifier = partCatalog.weaponDamageModifier(selected.WeaponItemLevel)

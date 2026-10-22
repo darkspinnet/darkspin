@@ -70,6 +70,7 @@ type ZoneInfo struct {
 	CrystalLevelOffsets     []sim.CrystalLevelOffset
 	TutorialMajorStageCount uint32
 	CrystalMinorStageCount  uint32
+	EliteRewardBonus        uint32
 	Security                *zonesecurity.Session
 	Effect                  *zoneeffect.Inventory
 	NPCs                    *zonenpc.Session
@@ -2714,6 +2715,13 @@ func (e *Zone) CrystalMinorStageCount() uint32 {
 		return 0
 	}
 	return e.info.CrystalMinorStageCount
+}
+
+func (e *Zone) EliteRewardBonus() uint32 {
+	if e == nil {
+		return 0
+	}
+	return e.info.EliteRewardBonus
 }
 
 func (e *Zone) CrystalLevelOffsets() []sim.CrystalLevelOffset {

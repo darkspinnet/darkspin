@@ -22,11 +22,16 @@ func loadDNADropTuning(ctx context.Context, store levelDirectorStore) (game.DNAD
 	if err != nil {
 		return game.DNADropTuning{}, fmt.Errorf("dnaRead: %w", err)
 	}
-	if authored.ContentSourceResourceID <= 0 || authored.Chance == nil {
-		return game.DNADropTuning{}, errors.New("authored DNA chance missing")
+	if authored.ContentSourceResourceID <= 0 || authored.Chance == nil ||
+		authored.AmountScalar == nil || authored.FirstGrowthBase == nil || authored.AmountFactorRange == nil {
+		return game.DNADropTuning{}, errors.New("authored DNA tuning missing")
 	}
 	// The native lookup defaults only the absent minimum-stage property to 1.
-	tuning := game.DNADropTuning{Chance: *authored.Chance, MinimumStage: 1}
+	tuning := game.DNADropTuning{
+		Chance: *authored.Chance, MinimumStage: 1,
+		AmountScalar: *authored.AmountScalar, FirstGrowthBase: *authored.FirstGrowthBase,
+		AmountFactors: *authored.AmountFactorRange,
+	}
 	if authored.MinimumStage != nil {
 		tuning.MinimumStage = *authored.MinimumStage
 	}

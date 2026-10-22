@@ -84,6 +84,8 @@ func LoadPartCatalog(ctx context.Context, store lootRigblockStore) (*game.PartCa
 		LastMinorLevelBonus:    rewardTuning.LastMinorLevelBonus,
 		RarityLevelMultiplier:  rewardTuning.RarityLevelMultiplier,
 		MinorStageCount:        rewardTuning.Progression.MinorStageCount,
+		SidekickProgressionGap: rewardTuning.Progression.SidekickProgressionGap,
+		IsSidekickingForced:    rewardTuning.Progression.IsSidekickingForced,
 		HandMinimumLevel:       contentTuning.HandMinimumLevel,
 		FootMinimumLevel:       contentTuning.FootMinimumLevel,
 		WeaponMinimumLevel:     contentTuning.WeaponMinimumLevel,

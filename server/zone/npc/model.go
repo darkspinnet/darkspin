@@ -195,6 +195,7 @@ type Snapshot struct {
 	IsInvisibleToSecurityTeleporter bool
 	status                          status
 	corruptorCombat                 corruptorCombat
+	introduction                    introductionTimeline
 }
 
 type DamageResult struct {
