@@ -83,17 +83,19 @@ type PartDefinition struct {
 
 // PartAffixDefinition contains one immutable prefix or suffix input vector.
 type PartAffixDefinition struct {
-	PartTypes       []string
-	Kind            string
-	ID              uint16
-	CatalogOrdinal  *uint32
-	MinimumLevel    uint32
-	MaximumLevel    uint32
-	ClassType       string
-	ScienceType     string
-	Modifiers       [partAttributeCount]float32
-	IsUniqueFamily  bool
-	IsBasicEligible bool
+	PartTypes           []string
+	ModifierGrants      []string
+	AbilityImprovements []string
+	Kind                string
+	ID                  uint16
+	CatalogOrdinal      *uint32
+	MinimumLevel        uint32
+	MaximumLevel        uint32
+	ClassType           string
+	ScienceType         string
+	Modifiers           [partAttributeCount]float32
+	IsUniqueFamily      bool
+	IsBasicEligible     bool
 }
 
 // PartLevelBand applies one exponential base through an inclusive item level.
@@ -206,6 +208,8 @@ func NewPartStatCatalog(definitions []PartDefinition, affixes []PartAffixDefinit
 		// Authored affixes can have empty eligibility lists. Preserve them for
 		// identity and stat lookup; candidate selection checks list membership.
 		affix.PartTypes = append([]string(nil), affix.PartTypes...)
+		affix.ModifierGrants = append([]string(nil), affix.ModifierGrants...)
+		affix.AbilityImprovements = append([]string(nil), affix.AbilityImprovements...)
 		key := partAffixKey(affix.Kind, affix.ID)
 		if _, isFound := catalog.affixesByName[key]; isFound {
 			return nil, fmt.Errorf("affixDuplicate[%d]: %s", index, key)

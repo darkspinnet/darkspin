@@ -52,7 +52,7 @@ func (e *gameplayPeerSession) returnQuantumBlinkPosition(run *heroQuantumBlinkRu
 		return nil, fmt.Errorf("blinkReturnPose: %w", err)
 	}
 	packets, err := actionraknet.Teleport(actionraknet.TeleportRequest{
-		ObjectID: run.sourceObjectID, Position: game.Vec3(run.returnPosition),
+		ObjectID: run.sourceObjectID, Position: game.Vec3(run.returnPosition), Orientation: run.orientation,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("blinkTeleport: %w", err)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	zone "github.com/darkspinnet/darkspin/server/zone"
@@ -44,6 +45,27 @@ func isConnectedTutorialMember(campaignZone *zone.Zone, member zone.Member) bool
 func hasBeatenTutorialLevel(peerSession gameplayPeerSession) bool {
 	return zoneunlock.HasBeatenThisLevel(peerSession.binding,
 		peerSession.zone.TutorialMajorStageCount(), peerSession.zone.CrystalMinorStageCount())
+}
+
+func (e campaignEncounterRuntime) hasPartyAbilityUnlockLocked(
+	peerSession gameplayPeerSession, abilityCount uint32,
+) bool {
+	for _, member := range peerSession.zone.Snapshot().Members {
+		if !member.IsConnected {
+			continue
+		}
+		for _, participant := range e.registry.sessions {
+			if participant.zone != peerSession.zone || participant.binding.UserID != member.UserID ||
+				participant.generation != member.PeerGeneration || hasBeatenTutorialLevel(participant) {
+				continue
+			}
+			currentAbilityCount, isFound := peerSession.zone.AbilityCount(member)
+			if isFound && currentAbilityCount == abilityCount {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // The registry lock protects the participant bindings. Enumerate the actual
@@ -114,6 +136,41 @@ func (e campaignEncounterRuntime) startTutorialActivationLocked(
 	return nil
 }
 
+// The authored random/support jobs capture the party before waiting and recheck
+// each player's completion predicate at mutation time. The zone owns the wait
+// so the triggering peer disconnecting does not cancel another player's unlock.
+func (e campaignEncounterRuntime) startPartyAbilityUnlockLocked(
+	peerSession gameplayPeerSession, publication game.CampaignDirectorPublication, callback string,
+) (string, error) {
+	if peerSession.zone == nil || peerSession.zone.Timeline() == nil || e.timer == nil {
+		return "", errors.New("party unlock authority unavailable")
+	}
+	key := fmt.Sprintf("party-unlock:%s:%d:%d", callback,
+		publication.MarkerSetOrdinal, publication.TriggerMarkerID)
+	if !peerSession.zone.TutorialActivations().Claim(key) {
+		return "", nil
+	}
+	step := e.newTutorialActivationLocked(peerSession, callback)
+	if !step.isAnyUnbeaten {
+		peerSession.zone.TutorialActivations().Release(key)
+		return "", nil
+	}
+	err := step.scheduleMutation(key)
+	if err != nil {
+		peerSession.zone.TutorialActivations().Release(key)
+		return "", fmt.Errorf("partySchedule: %w", err)
+	}
+	return key, nil
+}
+
+func cancelPartyAbilityUnlock(campaignZone *zone.Zone, key string) {
+	if key == "" {
+		return
+	}
+	campaignZone.Timeline().Cancel(key)
+	campaignZone.TutorialActivations().Release(key)
+}
+
 func (e campaignTutorialActivation) scheduleMutation(key string) error {
 	err := e.zone.Timeline().Schedule(key, zoneunlock.TutorialMutationDelay(e.callback),
 		e.mutate, e.runtime.timer.Schedule)
@@ -133,6 +190,10 @@ func (e campaignTutorialActivation) mutate() {
 		for sessionKey, peerSession := range e.runtime.registry.sessions {
 			if peerSession.zone != e.zone || peerSession.binding.UserID != member.UserID ||
 				peerSession.generation != member.PeerGeneration {
+				continue
+			}
+			if (e.callback == zonecallback.RandomUnlock || e.callback == zonecallback.SupportUnlock) &&
+				(peerSession.isZoneTerminal() || !e.zone.IsActive()) {
 				continue
 			}
 			isBeaten := hasBeatenTutorialLevel(peerSession)
@@ -205,6 +266,26 @@ func (e campaignTutorialActivation) mutateParticipant(
 	abilityCount, isFound := e.zone.AbilityCount(zoneResultMember(*peerSession))
 	if !isFound {
 		return nil, nil
+	}
+	if e.callback == zonecallback.RandomUnlock || e.callback == zonecallback.SupportUnlock {
+		previousAbilityCount := uint32(zoneunlock.InitialAbilityBoundary)
+		nextAbilityCount := uint32(zoneunlock.RandomAbilityBoundary)
+		if e.callback == zonecallback.SupportUnlock {
+			previousAbilityCount = zoneunlock.FullAbilityBoundary
+			nextAbilityCount = zoneunlock.SupportAbilityBoundary
+		}
+		if abilityCount != previousAbilityCount {
+			return nil, nil
+		}
+		packet, err := unlockraknet.AbilityCount(peerSession.binding.Slot, nextAbilityCount)
+		if err != nil {
+			return nil, fmt.Errorf("partyMarshal: %w", err)
+		}
+		isRaised := e.zone.CompareAndSetAbilityCount(zoneResultMember(*peerSession), previousAbilityCount, nextAbilityCount)
+		if !isRaised {
+			return nil, nil
+		}
+		return [][]byte{packet}, nil
 	}
 	run, err := unlockraknet.NewSoloSupportRun(e.runtime.program.SoloSupportUnlock,
 		uint8(peerSession.binding.Slot), abilityCount)

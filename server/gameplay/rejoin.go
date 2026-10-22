@@ -109,6 +109,16 @@ func (r gameplaySetupRuntime) publishRejoin(
 		return nil, fmt.Errorf("rejoinBasicModifier: %w", err)
 	}
 	baseline = append(baseline, modifierPackets...)
+	briarPackets, err := r.registry.supportHealerRootReplay(peerSession, baselineTime, packet.SourceTime)
+	if err != nil {
+		return nil, fmt.Errorf("rejoinBriarRoot: %w", err)
+	}
+	baseline = append(baseline, briarPackets...)
+	omniPackets, err := r.registry.omniShieldReplay(peerSession, baselineTime, packet.SourceTime)
+	if err != nil {
+		return nil, fmt.Errorf("rejoinOmniShield: %w", err)
+	}
+	baseline = append(baseline, omniPackets...)
 	if peerSession.zone.TreeOfLife() != nil && peerSession.zone.TreeOfLife().Revision() != treeRevision {
 		return nil, fmt.Errorf("rejoinTreeCapture: %w", errRejoinSnapshotActive)
 	}
@@ -214,6 +224,12 @@ func (r gameplaySetupRuntime) commitRejoin(
 		current.securityTeleporterStates = nil
 		current.campaignTeleporterStates = nil
 		current.isTutorialTeleporterPresentationPending = true
+		if current.beastPetResurrection != nil {
+			beastErr := current.rebindBeastPassive(current.beastPetResurrection.packet, sessionKey)
+			if beastErr != nil && r.logger != nil {
+				r.logger.Printf("RakNet rejoined Savage attack scheduling failed user=%d: %v", current.binding.UserID, beastErr)
+			}
+		}
 		r.registry.sessions[sessionKey] = current
 	}
 	r.registry.mutex.Unlock()
@@ -285,11 +301,13 @@ func marshalGameplayRejoinBaselineState(
 	}
 	activeHitPoint := binding.Creatures[peerSession.deployedCreatureIndex].HitPoint
 	activeManaPoint := binding.Creatures[peerSession.deployedCreatureIndex].PowerPoint
+	orientation := raknet.Quaternion{W: 1}
 	actor, isFound := peerSession.zone.Hero().Snapshot(
 		binding.UserID, peerSession.generation,
 	)
 	if isFound && actor.ObjectID == peerSession.deployedObjectID &&
 		actor.CreatureIndex == peerSession.deployedCreatureIndex {
+		orientation = raknet.Quaternion(actor.Orientation)
 		activeHitPoint = actor.HitPoint
 		activeManaPoint = actor.ManaPoint
 		binding.Creatures[peerSession.deployedCreatureIndex].HitPoint = activeHitPoint
@@ -381,6 +399,14 @@ func marshalGameplayRejoinBaselineState(
 		return nil, fmt.Errorf("rejoinDeploy: %w", err)
 	}
 	packets = append(packets, controlledPacket, deployPacket)
+	placementPacket, err := raknet.MarshalApplication(raknet.ObjectTeleportMessage{
+		ObjectID: peerSession.deployedObjectID, Position: peerSession.playerPosition,
+		Orientation: orientation,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("rejoinPlacement: %w", err)
+	}
+	packets = append(packets, placementPacket)
 	for index, use := range peerSession.zone.Script().SnapshotUses() {
 		usePackets, marshalErr := objectraknet.ScriptUseSnapshot(use)
 		if marshalErr != nil {
@@ -477,6 +503,11 @@ func marshalGameplayRejoinBaselineState(
 		return nil, fmt.Errorf("rejoinRemnants: %w", err)
 	}
 	packets = append(packets, remnantPackets...)
+	drainerPackets, err := npcraknet.DrainerRemnants(peerSession.zone.NPCs().Snapshots(), sourceTime)
+	if err != nil {
+		return nil, fmt.Errorf("rejoinDrainer: %w", err)
+	}
+	packets = append(packets, drainerPackets...)
 	for _, geyser := range peerSession.zone.NPCs().MerakGeysers() {
 		geyserPacket, geyserErr := merakGeyserCreate(geyser)
 		if geyserErr != nil {
@@ -889,8 +920,18 @@ func marshalGameplayCompanions(
 		companion := motion.Actor
 		isRetainedSage := companion.IsSageCompanion &&
 			retainedGenerations[companion.UserID] == companion.PeerGeneration
-		if companion.HitPoint <= 0 ||
-			(ownerUserID != 0 && companion.UserID != ownerUserID) ||
+		if companion.HitPoint <= 0 {
+			deathProfile, isDeathKnown := zonecompanion.DeathProfileForNoun(companion.Noun)
+			if isDeathKnown && deathProfile.Duration > 0 {
+				deletePacket, deleteErr := companionraknet.Defeat(companion.ObjectID)
+				if deleteErr != nil {
+					return nil, fmt.Errorf("corpseDelete[%d]: %w", index, deleteErr)
+				}
+				packets = append(packets, deletePacket)
+			}
+			continue
+		}
+		if (ownerUserID != 0 && companion.UserID != ownerUserID) ||
 			(connectedGenerations[companion.UserID] != companion.PeerGeneration && !isRetainedSage) {
 			continue
 		}

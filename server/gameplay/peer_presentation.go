@@ -28,6 +28,7 @@ func (e gameplayProjectionRuntime) drainQueuedProjection(
 	request raknet.Packet, sessionKey string,
 ) ([][]byte, error) {
 	e.registry.mutex.Lock()
+	e.registry.commitChannelRemovalsLocked()
 	peerSession, isFound := e.registry.sessions[sessionKey]
 	if !isFound || peerSession.zone == nil || peerSession.isRejoinPending ||
 		!peerSession.dungeonSetup.IsCommitted() ||
@@ -35,6 +36,7 @@ func (e gameplayProjectionRuntime) drainQueuedProjection(
 		e.registry.mutex.Unlock()
 		return nil, nil
 	}
+	peerSession.queueCampaignPackets(e.registry.takePlasmaWreathRestorationLocked(&peerSession))
 	err := peerSession.queueCampaignPresentation(nil)
 	packets, batchID := peerSession.pendingPackets()
 	if len(packets) != 0 {
@@ -81,6 +83,9 @@ func (e campaignProjectionDelivery) commit() {
 	}
 	peerSession.commitPendingPackets(e.batchID)
 	e.registry.sessions[e.sessionKey] = peerSession
+	e.registry.commitPlasmaWreathPublicationsLocked()
+	e.registry.commitOmniShieldRemovalsLocked()
+	e.registry.commitChannelRemovalsLocked()
 }
 
 type campaignPeerPublication struct {

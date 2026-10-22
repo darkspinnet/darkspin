@@ -12,6 +12,10 @@ import (
 
 type PopulationRequest struct {
 	Position game.Vec3
+	// Nil retains the explicit local doing-well policy. A supplied result must
+	// come from a trusted performance classifier; the native producer is not
+	// recovered, so current gameplay callers leave this unset.
+	IsDoingWell *bool
 }
 
 type PopulationTransition struct {
@@ -86,9 +90,21 @@ func (e *Zone) AdvancePopulation(
 	if err != nil {
 		return PopulationTransition{}, fmt.Errorf("initialNPCIntroduce: %w", err)
 	}
-	decisions, err := e.info.Population.Observe(req.Position, true)
+	isDoingWell := true
+	isPerformanceFallback := req.IsDoingWell == nil
+	if req.IsDoingWell != nil {
+		isDoingWell = *req.IsDoingWell
+	}
+	decisions, err := e.info.Population.Observe(req.Position, isDoingWell)
 	if err != nil {
 		return PopulationTransition{}, fmt.Errorf("populationObserve: %w", err)
+	}
+	for index := range decisions {
+		if decisions[index].SpikeOutcome == 0 {
+			continue
+		}
+		decisions[index].IsDoingWell = isDoingWell
+		decisions[index].IsPerformanceFallback = isPerformanceFallback
 	}
 	introducedPlans, err := e.planPopulation(decisions)
 	if err != nil {

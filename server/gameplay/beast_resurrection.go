@@ -20,6 +20,7 @@ type beastPetResurrectionRun struct {
 	packet         raknet.Packet
 	zone           *zone.Zone
 	userID         uint64
+	memberKey      gameplayMemberKey
 	sessionKey     string
 	generation     uint64
 	ownerObjectID  uint32
@@ -30,6 +31,23 @@ type beastPetResurrectionRun struct {
 	state          zonecompanion.Resurrection
 	signInstanceID uint32
 	cancel         func()
+	resumeCancel   func()
+	resumeRevision uint64
+	revision       uint64
+}
+
+type beastPetResurrectionStep struct {
+	run      *beastPetResurrectionRun
+	revision uint64
+}
+
+type beastPetResumeStep struct {
+	run      *beastPetResurrectionRun
+	revision uint64
+}
+
+func (e beastPetResumeStep) execute() {
+	e.run.resumeAttack(e.revision)
 }
 
 func (e gameplayPeerSession) isBeastResurrectionOverdrive(at time.Time) bool {
@@ -67,6 +85,7 @@ func (e *gameplayPeerSession) startBeastResurrection(
 	}
 	at := runtime.now()
 	run := &beastPetResurrectionRun{runtime: runtime, damageRuntime: damageRuntime, packet: packet, zone: e.zone, userID: e.binding.UserID, sessionKey: sessionKey,
+		memberKey:  gameplaySessionMemberKey(*e),
 		generation: e.generation, ownerObjectID: e.deployedObjectID, petObjectID: e.beastPetObjectID,
 		startedAt: at, sourceTime: timestamp, nextPollAt: at.Add(500 * time.Millisecond)}
 	err := run.schedule(500 * time.Millisecond)
@@ -78,7 +97,13 @@ func (e *gameplayPeerSession) startBeastResurrection(
 }
 
 func (e *beastPetResurrectionRun) schedule(delay time.Duration) error {
-	cancel, err := e.runtime.timer.Schedule(max(time.Millisecond, delay), e.execute)
+	if e.cancel != nil {
+		e.cancel()
+		e.cancel = nil
+	}
+	e.revision++
+	step := beastPetResurrectionStep{run: e, revision: e.revision}
+	cancel, err := e.runtime.timer.Schedule(max(time.Millisecond, delay), step.execute)
 	if err != nil {
 		return fmt.Errorf("timerSchedule: %w", err)
 	}
@@ -93,9 +118,16 @@ func (e *beastPetResurrectionRun) timestamp(at time.Time) uint64 {
 	return advanceHeroArrivalTimestamp(e.sourceTime, e.startedAt, at)
 }
 
-func (e *beastPetResurrectionRun) execute() {
+func (e beastPetResurrectionStep) execute() {
+	e.run.execute(e.revision)
+}
+
+func (e *beastPetResurrectionRun) execute(revision uint64) {
 	e.runtime.registry.mutex.Lock()
 	defer e.runtime.registry.mutex.Unlock()
+	if e.revision != revision {
+		return
+	}
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	if !isFound || peerSession.beastPetResurrection != e {
 		for sessionKey, candidate := range e.runtime.registry.sessions {
@@ -105,6 +137,14 @@ func (e *beastPetResurrectionRun) execute() {
 				isFound = true
 				break
 			}
+		}
+	}
+	var retained *gameplayRetainedSession
+	if !isFound || peerSession.beastPetResurrection != e {
+		retained = e.runtime.registry.retainedSessions[e.memberKey]
+		if retained != nil {
+			peerSession = retained.peerSession
+			isFound = true
 		}
 	}
 	if !isFound || peerSession.generation != e.generation || peerSession.beastPetResurrection != e ||
@@ -123,7 +163,11 @@ func (e *beastPetResurrectionRun) execute() {
 			e.runtime.logger.Printf("RakNet Savage Ally resurrection cleanup failed pet=%d: %v", e.petObjectID, stopErr)
 		}
 	}
-	e.runtime.registry.sessions[e.sessionKey] = peerSession
+	if retained != nil {
+		retained.peerSession = peerSession
+	} else {
+		e.runtime.registry.sessions[e.sessionKey] = peerSession
+	}
 	for sessionKey, candidate := range e.runtime.registry.sessions {
 		if candidate.zone != peerSession.zone || candidate.isRejoinPending {
 			continue
@@ -169,12 +213,9 @@ func (e *beastPetResurrectionRun) advance(peerSession *gameplayPeerSession, at t
 			}
 		}
 		if peerSession.deployedHitPoint() > 0 {
-			resumeCancel, resumeErr := e.runtime.timer.Schedule(time.Millisecond, e.resumeAttack)
+			resumeErr := e.scheduleResume()
 			if resumeErr != nil {
 				return nil, fmt.Errorf("attackSchedule: %w", resumeErr)
-			}
-			if resumeCancel == nil {
-				return nil, errors.New("pet attack cancellation unavailable")
 			}
 		}
 	}
@@ -380,6 +421,12 @@ func (e *beastPetResurrectionRun) failRevival(peerSession *gameplayPeerSession, 
 }
 
 func (e *beastPetResurrectionRun) stop(peerSession *gameplayPeerSession) ([][]byte, error) {
+	e.revision++
+	e.resumeRevision++
+	if e.resumeCancel != nil {
+		e.resumeCancel()
+		e.resumeCancel = nil
+	}
 	if e.cancel != nil {
 		e.cancel()
 		e.cancel = nil
@@ -387,7 +434,8 @@ func (e *beastPetResurrectionRun) stop(peerSession *gameplayPeerSession) ([][]by
 	packets, err := e.removeSign()
 	if peerSession.zone != nil && peerSession.zone.Companion() != nil {
 		pet, isFound := peerSession.zone.Companion().Snapshot(e.petObjectID)
-		if isFound && pet.HitPoint > 0 && pet.IsAbilityControlled {
+		if isFound && pet.HitPoint > 0 && pet.IsAbilityControlled && pet.UserID == e.userID &&
+			pet.PeerGeneration == e.generation && pet.OwnerObjectID == e.ownerObjectID {
 			controlErr := peerSession.zone.Companion().ControlAbility(e.petObjectID, e.runtime.now(), time.Time{}, false, "")
 			err = errors.Join(err, controlErr)
 		}
@@ -402,21 +450,50 @@ func (e *beastPetResurrectionRun) stop(peerSession *gameplayPeerSession) ([][]by
 	return packets, nil
 }
 
-func (e *beastPetResurrectionRun) resumeAttack() {
+func (e *beastPetResurrectionRun) scheduleResume() error {
+	if e.resumeCancel != nil {
+		e.resumeCancel()
+		e.resumeCancel = nil
+	}
+	e.resumeRevision++
+	step := beastPetResumeStep{run: e, revision: e.resumeRevision}
+	cancel, err := e.runtime.timer.Schedule(time.Millisecond, step.execute)
+	if err != nil {
+		return fmt.Errorf("resumeTimer: %w", err)
+	}
+	if cancel == nil {
+		return errors.New("pet attack cancellation unavailable")
+	}
+	e.resumeCancel = cancel
+	return nil
+}
+
+func (e *beastPetResurrectionRun) resumeAttack(revision uint64) {
 	e.runtime.registry.mutex.RLock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := isFound && peerSession.beastPetResurrection == e && peerSession.generation == e.generation && peerSession.deployedHitPoint() > 0 && e.packet.Address.String() == e.sessionKey
+	isCurrent := e.resumeRevision == revision && isFound && peerSession.beastPetResurrection == e && peerSession.generation == e.generation && peerSession.deployedHitPoint() > 0 && e.packet.Address.String() == e.sessionKey
+	packet := e.packet
+	sessionKey := e.sessionKey
+	generation := e.generation
+	transportGeneration := peerSession.transportGeneration
+	timestamp := e.timestamp(e.runtime.now())
 	e.runtime.registry.mutex.RUnlock()
 	if !isCurrent {
 		return
 	}
-	packets, err := e.damageRuntime.startBeastPetAttack(e.packet, e.sessionKey, e.generation, e.timestamp(e.runtime.now()))
+	packets, err := e.damageRuntime.startBeastPetAttackWithResume(packet, sessionKey, generation, timestamp,
+		e, revision, transportGeneration)
 	if err != nil {
 		e.runtime.logger.Printf("RakNet Savage Ally resumed attack failed pet=%d: %v", e.petObjectID, err)
 		return
 	}
 	e.runtime.registry.mutex.Lock()
 	defer e.runtime.registry.mutex.Unlock()
+	current, isCurrentFound := e.runtime.registry.sessions[sessionKey]
+	if e.resumeRevision != revision || !isCurrentFound || current.beastPetResurrection != e ||
+		current.generation != generation || current.transportGeneration != transportGeneration {
+		return
+	}
 	for sessionKey, candidate := range e.runtime.registry.sessions {
 		if candidate.zone == e.zone && !candidate.isRejoinPending {
 			candidate.queueCampaignPackets(packets)

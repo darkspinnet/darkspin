@@ -6170,7 +6170,8 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 		firstAggroDelay := time.Duration(0)
 		introTiming := zonenpc.IntroductionTiming{}
 		isRetainedIntroduction := false
-		if isFirstAction && !isFloorWarpIntroduction && plan.OwnerObjectID == 0 && zoneboss.IsFinalBossNoun(plan.NounName) {
+		if isFirstAction && !isFloorWarpIntroduction &&
+			(npc.IsIntroductionPending() || zonenpc.CanRetainIntroduction(npc.Plan, action.Profile)) {
 			introTiming, isRetainedIntroduction = npcSession.StartIntroduction(
 				plan.ObjectID, owner, npc.ActionGeneration, action.Profile, r.now(), timestamp,
 			)
@@ -6180,6 +6181,7 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 			firstAggroDelay = action.Profile.FirstAggroDelay
 		}
 		if isRetainedIntroduction {
+			action.Profile = zonenpc.WithRetainedIntroduction(action.Profile, introTiming)
 			firstAggroDelay = introTiming.Delay
 		}
 		if _, isSpawnPresentation := spawnPresentationObjectIDs[plan.ObjectID]; isSpawnPresentation {
@@ -6502,6 +6504,8 @@ func (campaignNPCActionRuntime) publishFirstAggro(
 }
 
 type campaignNPCModifierRun struct {
+	fixtureBurn        *campaignFixtureBurnState
+	operativeCage      *operativeCageState
 	mu                 sync.Mutex
 	instanceID         uint32
 	record             zoneeffect.Modifier
@@ -6556,6 +6560,7 @@ func (r *campaignNPCModifierRun) release(pool *modifierPool) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("enemyModifierRelease: %w", err)
 	}
+	r.retireFixtureInfection()
 	r.isReleased = true
 	return r.isCreated, nil
 }
@@ -7654,6 +7659,7 @@ func (r campaignNPCActionRuntime) commitHeroTargetDamage(
 	if err != nil {
 		return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("targetTransition: %w", err)
 	}
+	packets = append(packets, r.registry.takePlasmaWreathRestorationLocked(targetSession)...)
 	statDelta.PVEDamageTaken += float64(sharedDamage)
 	if isLocalTarget {
 		return packets, statDelta, nil
@@ -7674,6 +7680,7 @@ func (r campaignNPCActionRuntime) deliverHeroTargetPackets(
 	packets [][]byte,
 	statDelta sporenet.PlayerStatDelta,
 ) ([][]byte, sporenet.PlayerStatDelta, error) {
+	packets = append(packets, r.registry.takePlasmaWreathRestorationLocked(targetSession)...)
 	if targetSession == nil || targetSession == peerSession {
 		return packets, statDelta, nil
 	}
@@ -7693,6 +7700,9 @@ func (r campaignNPCActionRuntime) commitHeroTargetReactions(
 	plan zonenpc.AttackPlan,
 	timestamp uint64,
 ) ([][]byte, sporenet.PlayerStatDelta, error) {
+	if targetSession != nil && targetSession.deployedObjectID == plan.TargetObjectID {
+		r.reservePlasmaWreathReactionLocked(targetSession, plan.SourceObjectID, timestamp)
+	}
 	// The transition may already have deployed a reserve hero. Reactions
 	// belong only to the surviving hero who actually received this hit.
 	if targetSession == nil || damage.HitPoint <= 0 ||
@@ -7808,6 +7818,9 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 	target, isTargetFound := peerSession.campaignNPCTarget(
 		generation, plan.TargetObjectID,
 	)
+	if plan.Profile.AbilityName == "DrainerDeathDetonate" {
+		target, isTargetFound = r.drainerDeathTargetLocked(peerSession.zone, plan.TargetObjectID)
+	}
 	if !isTargetFound || target.ObjectID != plan.TargetObjectID {
 		return nil, sporenet.PlayerStatDelta{}, false, nil
 	}
@@ -7959,7 +7972,11 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 	damage := zone.NPCTargetDamage{}
 	isApplied := false
 	var err error
-	if isDefeatedSourceAllowed {
+	if plan.Profile.AbilityName == "DrainerDeathDetonate" {
+		damage, isApplied, err = peerSession.zone.ApplyDrainerDeathDamage(
+			owner, plan.SourceObjectID, plan.TargetObjectID, result.Damage,
+		)
+	} else if isDefeatedSourceAllowed {
 		damage, isApplied, err = peerSession.zone.ApplyNPCReflectedTargetDamage(
 			owner, plan.SourceObjectID, plan.TargetObjectID, result.Damage,
 		)

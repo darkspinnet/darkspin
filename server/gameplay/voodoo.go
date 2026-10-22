@@ -20,9 +20,12 @@ type voodooActorKey struct {
 }
 
 type voodooActor struct {
-	key      voodooActorKey
-	position game.Vec3
-	member   gameplayPeerSession
+	key           voodooActorKey
+	position      game.Vec3
+	member        gameplayPeerSession
+	hitPoint      float32
+	deathRevision uint64
+	isCompanion   bool
 }
 
 type voodooCharmProvider struct {
@@ -109,7 +112,11 @@ func (e *gameplaySessionRegistry) voodooActorsLocked(now time.Time) []voodooActo
 			}
 			position = game.Vec3{X: sample.X, Y: sample.Y, Z: sample.Z}
 		}
-		actors = append(actors, voodooActor{key: voodooActorIdentity(member), position: position, member: member})
+		actors = append(actors, voodooActor{
+			key: voodooActorIdentity(member), position: position, member: member,
+			hitPoint: member.deployedHitPoint(), deathRevision: member.voodooDeathRevision,
+		})
+		actors = append(actors, voodooCompanionActors(member, now)...)
 	}
 	// Simultaneous first observations have no recovered native ordering. Keep
 	// the server's tie deterministic without preferring an Overdrive payload.
@@ -130,6 +137,12 @@ func compareVoodooActors(first, second voodooActor) int {
 	if first.key.member.userID > second.key.member.userID {
 		return 1
 	}
+	if first.key.objectID < second.key.objectID {
+		return -1
+	}
+	if first.key.objectID > second.key.objectID {
+		return 1
+	}
 	return 0
 }
 
@@ -148,11 +161,11 @@ func (e *gameplaySessionRegistry) refreshVoodooCharmsLocked(now time.Time) {
 	targets := make(map[voodooActorKey]voodooActor, len(actors))
 	for _, actor := range actors {
 		targets[actor.key] = actor
-		if world.deaths[actor.key] != actor.member.voodooDeathRevision {
+		if world.deaths[actor.key] != actor.deathRevision {
 			delete(world.owners, actor.key)
 		}
-		world.deaths[actor.key] = actor.member.voodooDeathRevision
-		if actor.member.deployedHitPoint() > 0 &&
+		world.deaths[actor.key] = actor.deathRevision
+		if !actor.isCompanion && actor.hitPoint > 0 &&
 			actor.member.binding.Creatures[actor.key.creatureIndex].PassiveAbility == util.HashID("VoodooTempestPassive") {
 			providers[actor.key] = actor
 		}
@@ -161,20 +174,21 @@ func (e *gameplaySessionRegistry) refreshVoodooCharmsLocked(now time.Time) {
 	// accepted child, leaving other providers' rejected contacts unchanged.
 	for key, provider := range world.providers {
 		source, isSourceFound := providers[key]
-		if !isSourceFound || provider.deathRevision != source.member.voodooDeathRevision {
+		if !isSourceFound || provider.deathRevision != source.deathRevision {
 			world.removeProvider(key)
 			continue
 		}
 		for targetKey := range provider.contacts {
 			target, isTargetFound := targets[targetKey]
-			if !isTargetFound || source.position.Sub(target.position).Length() > provider.radius {
+			if !isTargetFound || target.member.binding.Team != source.member.binding.Team ||
+				source.position.Sub(target.position).Length() > provider.radius {
 				world.removeContact(key, targetKey)
 			}
 		}
 	}
 	for targetKey := range world.owners {
 		target, isTargetFound := targets[targetKey]
-		if !isTargetFound || target.member.deployedHitPoint() <= 0 {
+		if !isTargetFound || target.hitPoint <= 0 {
 			delete(world.owners, targetKey)
 		}
 	}
@@ -190,7 +204,7 @@ func (e *gameplaySessionRegistry) refreshVoodooCharmsLocked(now time.Time) {
 		provider := world.providers[source.key]
 		if provider == nil {
 			provider = &voodooCharmProvider{radius: 8, charm: voodooCharmReturn{manaRatio: 0.02}, contacts: make(map[voodooActorKey]bool)}
-			provider.deathRevision = source.member.voodooDeathRevision
+			provider.deathRevision = source.deathRevision
 			if source.member.isOverdriveActiveAt(now) {
 				provider.radius = 12
 				provider.charm = voodooCharmReturn{manaRatio: 0.04, healthRatio: 0.04}
@@ -198,16 +212,19 @@ func (e *gameplaySessionRegistry) refreshVoodooCharmsLocked(now time.Time) {
 			world.providers[source.key] = provider
 		}
 		for _, target := range actors {
-			if target.key.zone != source.key.zone || source.position.Sub(target.position).Length() > provider.radius {
+			if target.key.zone != source.key.zone ||
+				target.member.binding.Team != source.member.binding.Team ||
+				source.position.Sub(target.position).Length() > provider.radius ||
+				target.hitPoint <= 0 {
 				continue
 			}
 			if _, isInside := provider.contacts[target.key]; isInside {
 				continue
 			}
+			// AuraUtils validates a living friend before recording even a
+			// rejected modifier request. Death of an existing contact still
+			// preserves that contact until its ordinary exit.
 			provider.contacts[target.key] = false
-			if target.member.deployedHitPoint() <= 0 {
-				continue
-			}
 			if _, isOwned := world.owners[target.key]; isOwned {
 				continue
 			}
@@ -271,8 +288,12 @@ func (e voodooCharmPoll) execute() {
 }
 
 func (e *gameplaySessionRegistry) voodooCharmReturn(member gameplayPeerSession) voodooCharmReturn {
+	return e.voodooCharmActorReturn(voodooActorIdentity(member))
+}
+
+func (e *gameplaySessionRegistry) voodooCharmActorReturn(key voodooActorKey) voodooCharmReturn {
 	e.refreshVoodooCharmsLocked(e.now())
-	providerKey, isFound := e.voodooCharms.owners[voodooActorIdentity(member)]
+	providerKey, isFound := e.voodooCharms.owners[key]
 	if !isFound {
 		return voodooCharmReturn{}
 	}

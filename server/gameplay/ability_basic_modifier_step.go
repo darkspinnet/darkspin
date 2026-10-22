@@ -177,11 +177,24 @@ func (e campaignDamageRuntime) retireBasicHitModifiers(sessionKey string, genera
 	if !isFound || peerSession.generation != generation || peerSession.zone == nil {
 		return nil, nil
 	}
-	return e.registry.retireTargetBasicModifiersLocked(peerSession, result.ObjectID, e.npc.modifierPool, false)
+	rootPackets := e.registry.retireTargetInfectionRootsLocked(peerSession.zone.NPCs(), result.ObjectID)
+	cloudPackets, err := e.registry.retireCloudPoisonLocked(peerSession.zone.NPCs(), result.ObjectID, e.npc.modifierPool)
+	if err != nil {
+		return nil, fmt.Errorf("deathCloudRetire: %w", err)
+	}
+	rootPackets = append(rootPackets, cloudPackets...)
+	basicPackets, err := e.registry.retireTargetBasicModifiersLocked(peerSession, result.ObjectID, e.npc.modifierPool, false)
+	if err != nil {
+		return nil, fmt.Errorf("deathBasicRetire: %w", err)
+	}
+	return append(rootPackets, basicPackets...), nil
 }
 
 func (e *gameplaySessionRegistry) retireTargetBasicModifiersLocked(peerSession gameplayPeerSession, targetID uint32, pool *modifierPool, isCleanse bool) ([][]byte, error) {
-	packets := make([][]byte, 0)
+	packets, rootErr := e.retireSupportHealerRootLocked(peerSession.zone.NPCs(), targetID)
+	if rootErr != nil {
+		return packets, fmt.Errorf("targetBriarRoot: %w", rootErr)
+	}
 	for key, run := range e.basicHitModifiers[peerSession.zone.NPCs()] {
 		if key.targetID != targetID {
 			continue

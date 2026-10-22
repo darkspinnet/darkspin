@@ -41,6 +41,7 @@ type heroInfectionRun struct {
 	infections     map[uint32]heroInfectionEntry
 	now            func() time.Time
 	cancel         raknet.CancelSchedule
+	tickCancel     raknet.CancelSchedule
 	isCleaned      bool
 	isAccepted     bool
 	creature       game.GameplayCreature
@@ -48,18 +49,23 @@ type heroInfectionRun struct {
 	sourceObjectID uint32
 }
 
-func (e *heroInfectionRun) Stop() {
+func (e *heroInfectionRun) Stop() []heroInfectionEntry {
 	if e == nil {
-		return
+		return nil
 	}
 	e.mutex.Lock()
 	cancel := e.cancel
+	tickCancel := e.tickCancel
 	e.cancel = nil
+	e.tickCancel = nil
 	e.mutex.Unlock()
 	if cancel != nil {
 		cancel()
 	}
-	e.Cleanup()
+	if tickCancel != nil {
+		tickCancel()
+	}
+	return e.Cleanup()
 }
 
 func (e *heroInfectionRun) Add(entry heroInfectionEntry) bool {
@@ -128,7 +134,7 @@ func (e *heroInfectionRun) Expire(objectID uint32) (heroInfectionEntry, bool) {
 		e.applyImmunity(entry, e.now())
 	}
 	if !entry.rootExpiresAt.IsZero() {
-		e.npc.ClearRoot(objectID, entry.rootExpiresAt)
+		e.npc.ClearBioEntangle(objectID, entry.rootInstanceID)
 	}
 	if entry.modifierInstanceID != 0 {
 		err := e.modifierPool.Release(entry.modifierInstanceID)
@@ -157,13 +163,17 @@ func (e *heroInfectionRun) IsImmune(objectID uint32) bool {
 // expireRoot releases BioEntangle independently of the disease modifier.
 // In particular, upgraded roots expire before LifePlague finishes ticking.
 func (e *heroInfectionRun) expireRoot(objectID uint32) (heroInfectionEntry, bool) {
+	return e.expireRootInstance(objectID, 0)
+}
+
+func (e *heroInfectionRun) expireRootInstance(objectID, instanceID uint32) (heroInfectionEntry, bool) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 	entry, isFound := e.infections[objectID]
-	if !isFound || entry.rootInstanceID == 0 {
+	if !isFound || entry.rootInstanceID == 0 || (instanceID != 0 && entry.rootInstanceID != instanceID) {
 		return heroInfectionEntry{}, false
 	}
-	e.npc.ClearRoot(objectID, entry.rootExpiresAt)
+	e.npc.ClearBioEntangle(objectID, entry.rootInstanceID)
 	err := e.modifierPool.Release(entry.rootInstanceID)
 	if err != nil {
 		log.Printf("Infection root release failed target=%d: %v", objectID, err)
@@ -205,7 +215,7 @@ func (e *heroInfectionRun) Cleanup() []heroInfectionEntry {
 			}
 		}
 		if !entry.rootExpiresAt.IsZero() {
-			e.npc.ClearRoot(objectID, entry.rootExpiresAt)
+			e.npc.ClearBioEntangle(objectID, entry.rootInstanceID)
 		}
 		if entry.modifierInstanceID != 0 {
 			err := e.modifierPool.Release(entry.modifierInstanceID)
@@ -226,6 +236,7 @@ type heroInfectionSchedule struct {
 	packet              raknet.Packet
 	sessionKey          string
 	generation          uint64
+	startedAt           time.Time
 	sourceObjectID      uint32
 	creatureIndex       uint32
 	previousManaPoint   float32
@@ -251,7 +262,7 @@ func (e heroInfectionSchedule) isCurrent(
 	peerSession gameplayPeerSession, isFound bool,
 ) bool {
 	return isFound && peerSession.generation == e.generation &&
-		peerSession.heroInfection == e.run
+		isHeroInfectionCurrent(peerSession, e.run)
 }
 
 func (e heroInfectionSchedule) tick(
@@ -259,7 +270,7 @@ func (e heroInfectionSchedule) tick(
 ) ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	if !e.isCurrent(peerSession, isFound) {
+	if !e.isCurrent(peerSession, isFound) || !e.run.isAccepted {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
@@ -391,8 +402,7 @@ func (e heroInfectionSchedule) tick(
 		created = append(created, entry)
 	}
 	if e.run.IsEmpty() {
-		peerSession.heroInfection = nil
-		e.run.cancel = nil
+		delete(peerSession.heroInfections, e.run)
 	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
@@ -445,7 +455,7 @@ func (e heroInfectionSchedule) tick(
 func (e heroInfectionSchedule) release() ([][]byte, error) {
 	e.runtime.registry.mutex.RLock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := isFound && peerSession.generation == e.generation
+	isCurrent := e.isCurrent(peerSession, isFound) && e.run.isAccepted
 	e.runtime.registry.mutex.RUnlock()
 	if !isCurrent {
 		return nil, nil
@@ -453,59 +463,35 @@ func (e heroInfectionSchedule) release() ([][]byte, error) {
 	return [][]byte{e.releasePacket}, nil
 }
 
-func (e heroInfectionSchedule) finish() ([][]byte, error) {
+func (e heroInfectionSchedule) fail(scheduleErr error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	if !e.isCurrent(peerSession, isFound) {
 		e.runtime.registry.mutex.Unlock()
-		return nil, nil
-	}
-	peerSession.heroInfection = nil
-	e.run.cancel = nil
-	e.runtime.registry.sessions[e.sessionKey] = peerSession
-	e.runtime.registry.mutex.Unlock()
-	entries := e.run.Cleanup()
-	packets := make([][]byte, 0, len(entries)*2)
-	for _, entry := range entries {
-		if entry.modifierInstanceID != 0 {
-			packet, err := effectraknet.ModifierDelete(entry.objectID, entry.modifierInstanceID)
-			if err != nil {
-				return nil, fmt.Errorf("infectionFinishDelete: %w", err)
-			}
-			packets = append(packets, packet)
-		}
-		if entry.rootInstanceID == 0 {
-			continue
-		}
-		packet, err := effectraknet.ModifierDelete(
-			entry.objectID, entry.rootInstanceID,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("infectionFinishRoot: %w", err)
-		}
-		packets = append(packets, packet)
-	}
-	return packets, nil
-}
-
-func (e heroInfectionSchedule) fail(scheduleErr error) {
-	e.runtime.registry.mutex.Lock()
-	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := e.isCurrent(peerSession, isFound)
-	if isCurrent {
-		peerSession.heroInfection = nil
-		_ = peerSession.setCampaignCharacterManaPoints(
-			e.creatureIndex, e.previousManaPoint,
-		)
-		peerSession.abilityCooldownSession().Rollback(e.cooldownReservation)
-		peerSession.abilityReleaseSession().Rollback(e.releaseReservation)
-		e.runtime.registry.sessions[e.sessionKey] = peerSession
-	}
-	e.runtime.registry.mutex.Unlock()
-	if !isCurrent {
 		return
 	}
-	e.run.Cleanup()
+	delete(peerSession.heroInfections, e.run)
+	if !e.run.isAccepted {
+		err := peerSession.setCampaignCharacterManaPoints(e.creatureIndex, e.previousManaPoint)
+		if err != nil {
+			e.runtime.logger.Printf("Infection mana rollback failed: %v", err)
+		}
+		peerSession.abilityCooldownSession().Rollback(e.cooldownReservation)
+		peerSession.abilityReleaseSession().Rollback(e.releaseReservation)
+	}
+	e.runtime.registry.sessions[e.sessionKey] = peerSession
+	entries := e.run.Stop()
+	if e.run.isAccepted {
+		packets := infectionDeletionPackets(entries)
+		for candidateKey, candidate := range e.runtime.registry.sessions {
+			if candidate.zone == nil || candidate.zone.NPCs() != e.run.npc {
+				continue
+			}
+			candidate.queuePackets(packets)
+			e.runtime.registry.sessions[candidateKey] = candidate
+		}
+	}
+	e.runtime.registry.mutex.Unlock()
 	e.runtime.logger.Printf(
 		"RakNet hero infections stopped after schedule failure for %s: %v",
 		e.sessionKey, scheduleErr,
@@ -529,10 +515,6 @@ func (r campaignAbilityCommandRuntime) handleHeroInfection(
 		definition.SpreadModifierID == 0 || definition.AnimationName == "" {
 		r.registry.mutex.Unlock()
 		return req.reject("infections definition unavailable")
-	}
-	if peerSession.heroInfection != nil {
-		r.registry.mutex.Unlock()
-		return req.reject("infections already active")
 	}
 	if targetObjectID == 0 {
 		targetObjectID = zoneability.CursorTarget(
@@ -587,13 +569,6 @@ func (r campaignAbilityCommandRuntime) handleHeroInfection(
 		return nil, fmt.Errorf("infectionRootModifier: %w", err)
 	}
 	rootExpiresAt := abilityStartTime.Add(rootDuration)
-	err = peerSession.zone.NPCs().ApplyRoot(targetObjectID, rootExpiresAt)
-	if err != nil {
-		_ = r.modifierPool.Release(modifierInstanceID)
-		_ = r.modifierPool.Release(rootInstanceID)
-		r.registry.mutex.Unlock()
-		return req.reject("infections root unavailable")
-	}
 	remainingManaPoint := peerSession.deployedManaPoint() - manaCost
 	previousManaPoint := peerSession.deployedManaPoint()
 	start, err := abilityraknet.StartAreaBasic(abilityraknet.AreaBasicStartRequest{
@@ -605,7 +580,6 @@ func (r campaignAbilityCommandRuntime) handleHeroInfection(
 		Cooldown: projected.Cooldown,
 	})
 	if err != nil {
-		peerSession.zone.NPCs().ClearRoot(targetObjectID, rootExpiresAt)
 		_ = r.modifierPool.Release(modifierInstanceID)
 		_ = r.modifierPool.Release(rootInstanceID)
 		r.registry.mutex.Unlock()
@@ -615,7 +589,6 @@ func (r campaignAbilityCommandRuntime) handleHeroInfection(
 		req.command.Common.ObjectID, remainingManaPoint,
 	)
 	if err != nil {
-		peerSession.zone.NPCs().ClearRoot(targetObjectID, rootExpiresAt)
 		_ = r.modifierPool.Release(modifierInstanceID)
 		_ = r.modifierPool.Release(rootInstanceID)
 		r.registry.mutex.Unlock()
@@ -627,7 +600,6 @@ func (r campaignAbilityCommandRuntime) handleHeroInfection(
 			abilityStartTime, projected.Cooldown,
 		)
 	if !isCooldownReserved {
-		peerSession.zone.NPCs().ClearRoot(targetObjectID, rootExpiresAt)
 		_ = r.modifierPool.Release(modifierInstanceID)
 		_ = r.modifierPool.Release(rootInstanceID)
 		r.registry.mutex.Unlock()
@@ -639,7 +611,6 @@ func (r campaignAbilityCommandRuntime) handleHeroInfection(
 		)
 	if !isReleaseReserved {
 		peerSession.abilityCooldownSession().Rollback(cooldownReservation)
-		peerSession.zone.NPCs().ClearRoot(targetObjectID, rootExpiresAt)
 		_ = r.modifierPool.Release(modifierInstanceID)
 		_ = r.modifierPool.Release(rootInstanceID)
 		r.registry.mutex.Unlock()
@@ -652,7 +623,6 @@ func (r campaignAbilityCommandRuntime) handleHeroInfection(
 	if err != nil {
 		peerSession.abilityCooldownSession().Rollback(cooldownReservation)
 		peerSession.abilityReleaseSession().Rollback(releaseReservation)
-		peerSession.zone.NPCs().ClearRoot(targetObjectID, rootExpiresAt)
 		_ = r.modifierPool.Release(modifierInstanceID)
 		_ = r.modifierPool.Release(rootInstanceID)
 		r.registry.mutex.Unlock()
@@ -670,27 +640,21 @@ func (r campaignAbilityCommandRuntime) handleHeroInfection(
 		tickCount: projected.NumberOfTicks, isPrimary: true,
 		expiresAt: abilityStartTime.Add(projected.Duration),
 	}
-	if !run.Add(entry) {
-		peerSession.abilityCooldownSession().Rollback(cooldownReservation)
-		peerSession.abilityReleaseSession().Rollback(releaseReservation)
-		_ = peerSession.setDeployedManaPoints(previousManaPoint)
-		peerSession.zone.NPCs().ClearRoot(targetObjectID, rootExpiresAt)
-		_ = r.modifierPool.Release(modifierInstanceID)
-		_ = r.modifierPool.Release(rootInstanceID)
-		r.registry.mutex.Unlock()
-		return nil, errors.New("infections primary unavailable")
+	run.infections[targetObjectID] = entry
+	if peerSession.heroInfections == nil {
+		peerSession.heroInfections = make(map[*heroInfectionRun]struct{})
 	}
-	peerSession.heroInfection = run
+	peerSession.heroInfections[run] = struct{}{}
 	generation := peerSession.generation
 	binding := peerSession.binding
 	creatureIndex := peerSession.deployedCreatureIndex
-	liveCount := len(peerSession.zone.NPCs().LiveSnapshots())
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
 
 	schedule := heroInfectionSchedule{
-		runtime: r, packet: req.packet, sessionKey: sessionKey,
+		runtime: r, packet: req.packet.Autonomous(), sessionKey: sessionKey,
 		generation: generation, sourceObjectID: req.command.Common.ObjectID,
+		startedAt:     abilityStartTime,
 		creatureIndex: creatureIndex, previousManaPoint: previousManaPoint,
 		creature: creature, definition: projected, binding: binding, run: run,
 		cooldownReservation: cooldownReservation,
@@ -720,35 +684,27 @@ func (r campaignAbilityCommandRuntime) handleHeroInfection(
 		}
 		modifierPackets = append(modifierPackets, packet)
 	}
-	maximumTickCount := max(14, liveCount+14)
-	producers := make([]raknet.ScheduledPacketProducer, 0, maximumTickCount+2)
-	for tick := 1; tick <= maximumTickCount; tick++ {
-		deadline := time.Duration(tick) * projected.TickDuration
-		step := heroInfectionTickStep{schedule: schedule, deadline: deadline}
-		producers = append(producers, raknet.ScheduledPacketProducer{
-			Delay: deadline, Produce: step.produce,
-		})
+	step := heroInfectionTickStep{schedule: schedule, deadline: projected.TickDuration}
+	rootStep := heroInfectionRootStep{schedule: schedule, objectID: targetObjectID, instanceID: rootInstanceID}
+	producers := []raknet.ScheduledPacketProducer{
+		{Delay: max(time.Duration(0), abilityStartTime.Add(projected.TickDuration).Sub(r.now())), Produce: step.produce, AfterCommit: step.commit},
+		{Delay: projected.ReleaseDelay, Produce: schedule.release},
+		{Delay: max(time.Duration(0), rootExpiresAt.Sub(r.now())), Produce: rootStep.produce},
 	}
-	producers = append(producers,
-		raknet.ScheduledPacketProducer{
-			Delay: projected.ReleaseDelay, Produce: schedule.release,
-		},
-		raknet.ScheduledPacketProducer{
-			Delay:   time.Duration(maximumTickCount+1) * projected.TickDuration,
-			Produce: schedule.finish,
-		},
-	)
 	sortScheduledPacketProducersByDelay(producers)
 	producers = r.registry.producerGuard.scheduledProducers(sessionKey, producers)
 	var cancel raknet.CancelSchedule
-	if req.packet.ScheduleGroupResult != nil {
-		cancel, err = req.packet.ScheduleGroupResult(producers, schedule.fail)
-	} else if req.packet.ScheduleGroup != nil {
-		cancel, err = req.packet.ScheduleGroup(producers)
+	if schedule.packet.ScheduleGroupResult != nil {
+		cancel, err = schedule.packet.ScheduleGroupResult(producers, schedule.fail)
+	} else if schedule.packet.ScheduleGroup != nil {
+		cancel, err = schedule.packet.ScheduleGroup(producers)
 	} else {
 		err = errors.New("schedule unavailable")
 	}
 	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
 		schedule.fail(err)
 		return nil, fmt.Errorf("infectionSchedule: %w", err)
 	}
@@ -757,20 +713,27 @@ func (r campaignAbilityCommandRuntime) handleHeroInfection(
 		schedule.fail(err)
 		return nil, fmt.Errorf("infectionCancellation: %w", err)
 	}
-	run.mutex.Lock()
-	if run.isCleaned {
-		run.mutex.Unlock()
+	r.registry.mutex.Lock()
+	current, isFound := r.registry.sessions[sessionKey]
+	if !schedule.isCurrent(current, isFound) {
+		r.registry.mutex.Unlock()
 		cancel()
+		run.Cleanup()
 		return nil, errors.New("infection stopped before schedule acceptance")
 	}
-	run.isAccepted = true
-	run.cancel = cancel
-	run.mutex.Unlock()
+	replacedPackets, replaceErr := schedule.acceptPrimary(entry, cancel)
+	r.registry.mutex.Unlock()
+	if replaceErr != nil {
+		cancel()
+		schedule.fail(replaceErr)
+		return nil, fmt.Errorf("infectionAccept: %w", replaceErr)
+	}
 	r.logger.Printf(
 		"RakNet hero infections accepted ability=%s source=%d target=%d",
 		projected.Name, req.command.Common.ObjectID, targetObjectID,
 	)
 	packets := append([][]byte{start.Acknowledge, manaPacket}, start.Presentation...)
+	packets = append(packets, replacedPackets...)
 	packets = append(packets, modifierPackets...)
 	return packets, nil
 }

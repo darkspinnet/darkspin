@@ -29,6 +29,7 @@ type Actor struct {
 	FootprintRadius     float32
 	HitPoint            float32
 	MaximumHitPoint     float32
+	DeathRevision       uint64
 	BodyScale           float32
 	IsTargetable        bool
 	IsCombatant         bool
@@ -153,6 +154,14 @@ func (e *Session) Put(actor Actor) error {
 			actor.PeerGeneration, current.PeerGeneration,
 		)
 	}
+	if isFound && actor.UserID == current.UserID &&
+		actor.PeerGeneration == current.PeerGeneration &&
+		actor.OwnerObjectID == current.OwnerObjectID && actor.Noun == current.Noun {
+		actor.DeathRevision = max(actor.DeathRevision, current.DeathRevision)
+		if current.HitPoint > 0 && actor.HitPoint == 0 {
+			actor.DeathRevision++
+		}
+	}
 	// Replacement and ownership resets cannot retain a movement reservation.
 	actor.clearFollow()
 	actor.FollowRevision = e.nextFollowRevision()
@@ -276,6 +285,9 @@ func (e *Session) SetHitPoint(
 		return Actor{}, Actor{}, errors.New("companion hit point invalid")
 	}
 	previous := actor
+	if actor.HitPoint > 0 && hitPoint == 0 {
+		actor.DeathRevision++
+	}
 	actor.HitPoint = hitPoint
 	if hitPoint == 0 {
 		actor.clearFollow()

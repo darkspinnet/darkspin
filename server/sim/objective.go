@@ -225,11 +225,13 @@ func (state *ObjectiveState) Restore(snapshots []ObjectiveSnapshot) error {
 		restored[snapshot.ObjectiveID] = snapshot
 	}
 	for _, objectiveID := range state.objectiveIDs {
-		snapshot, isFound := restored[objectiveID]
+		_, isFound := restored[objectiveID]
 		if !isFound {
 			return fmt.Errorf("objectiveRestoreMissing: %#x", objectiveID)
 		}
-		state.records[objectiveID].snapshot = snapshot
+	}
+	for _, objectiveID := range state.objectiveIDs {
+		state.records[objectiveID].snapshot = restored[objectiveID]
 	}
 	state.mutations = nil
 	return nil

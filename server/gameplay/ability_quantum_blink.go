@@ -3,6 +3,7 @@ package gameplay
 import (
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -26,6 +27,7 @@ type heroQuantumBlinkRun struct {
 	cancel          raknet.CancelSchedule
 	isStopped       bool
 	returnPosition  raknet.Vector3
+	orientation     game.Quaternion
 	sourceObjectID  uint32
 	startedAt       time.Time
 	sourceTime      uint64
@@ -183,6 +185,18 @@ func (e heroQuantumBlinkSchedule) strike(
 		}
 		return packets, nil
 	}
+	orientation := e.run.orientation
+	if strikeIndex > 0 {
+		random, randomErr := peerSession.abilityRandom()
+		if randomErr != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("blinkFacingRandom: %w", randomErr)
+		}
+		// RandomDir runs before PlayStrikeAnimation. Native TeleportAndFace
+		// constructs a world-up quaternion whose local Y is that direction.
+		yaw := random.Float64()*2*math.Pi - math.Pi/2
+		orientation = game.Quaternion{Z: float32(math.Sin(yaw / 2)), W: float32(math.Cos(yaw / 2))}
+	}
 	animationPacket, err := e.strikeAnimation(strikeIndex, deadline, peerSession)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
@@ -205,6 +219,12 @@ func (e heroQuantumBlinkSchedule) strike(
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("quantumBlinkPoseSync[%d]: %w", strikeIndex, err)
 	}
+	err = peerSession.zone.Hero().SetOrientation(peerSession.binding.UserID, peerSession.generation, e.sourceObjectID, orientation)
+	if err != nil {
+		e.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("blinkFacing[%d]: %w", strikeIndex, err)
+	}
+	e.run.orientation = orientation
 	// SavePosition follows the initial slide, before any later strike teleport.
 	// Cancellation during the windup must not move the caster to the destination.
 	var result zoneability.AreaResult
@@ -234,7 +254,7 @@ func (e heroQuantumBlinkSchedule) strike(
 		}
 	}
 	packets, err := actionraknet.Teleport(actionraknet.TeleportRequest{
-		ObjectID: e.sourceObjectID, Position: game.Vec3(destination),
+		ObjectID: e.sourceObjectID, Position: game.Vec3(destination), Orientation: orientation,
 	})
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
@@ -354,7 +374,7 @@ func (e heroQuantumBlinkSchedule) finishLocked(peerSession gameplayPeerSession, 
 		return nil, fmt.Errorf("quantumBlinkReturnPose: %w", err)
 	}
 	packets, err := actionraknet.Teleport(actionraknet.TeleportRequest{
-		ObjectID: e.sourceObjectID, Position: game.Vec3(e.returnPosition),
+		ObjectID: e.sourceObjectID, Position: game.Vec3(e.returnPosition), Orientation: e.run.orientation,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("quantumBlinkReturnMarshal: %w", err)
@@ -571,6 +591,7 @@ func (r campaignAbilityCommandRuntime) handleHeroQuantumBlink(
 		registry:       r.registry,
 		returnPosition: initialDestination, sourceObjectID: req.command.Common.ObjectID,
 		startedAt: abilityStartTime, sourceTime: req.packet.SourceTime,
+		orientation: normalizedHeroOrientation(req.command.Common.Orientation),
 	}
 	peerSession.heroQuantumBlink = run
 	generation := peerSession.generation

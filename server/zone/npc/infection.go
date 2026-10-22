@@ -17,12 +17,12 @@ func (e *Session) AdmitInfection(objectID, instanceID uint32, isPrimary bool, at
 		return false
 	}
 	if e.infectionInstances == nil {
-		e.infectionInstances = make(map[uint32]map[uint32]struct{})
+		e.infectionInstances = make(map[uint32]map[uint32]bool)
 	}
 	if e.infectionInstances[objectID] == nil {
-		e.infectionInstances[objectID] = make(map[uint32]struct{})
+		e.infectionInstances[objectID] = make(map[uint32]bool)
 	}
-	e.infectionInstances[objectID][instanceID] = struct{}{}
+	e.infectionInstances[objectID][instanceID] = isPrimary
 	return true
 }
 
@@ -89,4 +89,66 @@ func (e *Session) IsInfectionImmune(objectID uint32, at time.Time) bool {
 		return false
 	}
 	return true
+}
+
+// AcceptPlague replaces each Unique GUID independently after scheduling succeeds.
+// Keeping instance identities here also protects against detached-owner cleanup.
+func (e *Session) AcceptPlague(objectID, instanceID, rootInstanceID uint32, rootExpiresAt, at time.Time) (uint32, uint32, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	npc, isFound := e.npcs[objectID]
+	if !isFound || npc.IsDefeated || npc.HitPoint <= 0 {
+		return 0, 0, false
+	}
+	var replacedID uint32
+	for previousID, isPrimary := range e.infectionInstances[objectID] {
+		if !isPrimary {
+			continue
+		}
+		replacedID = previousID
+		delete(e.infectionInstances[objectID], previousID)
+		if e.infectionImmunities == nil {
+			e.infectionImmunities = make(map[uint32]time.Time)
+		}
+		e.infectionImmunities[objectID] = at.Add(7 * time.Second)
+	}
+	if e.infectionInstances == nil {
+		e.infectionInstances = make(map[uint32]map[uint32]bool)
+	}
+	if e.infectionInstances[objectID] == nil {
+		e.infectionInstances[objectID] = make(map[uint32]bool)
+	}
+	e.infectionInstances[objectID][instanceID] = true
+	replacedRootID := npc.status.bioEntangleInstanceID
+	npc.status.bioEntangleInstanceID = rootInstanceID
+	npc.status.bioEntangleExpiresAt = rootExpiresAt
+	if isStatusBlockedByShield(npc) {
+		npc.status.bioEntangleExpiresAt = time.Time{}
+	}
+	e.npcs[objectID] = npc
+	return replacedID, replacedRootID, true
+}
+
+func (e *Session) PlagueInstances(objectID uint32) (uint32, uint32) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	var instanceID uint32
+	for candidateID, isPrimary := range e.infectionInstances[objectID] {
+		if isPrimary {
+			instanceID = candidateID
+		}
+	}
+	return instanceID, e.npcs[objectID].status.bioEntangleInstanceID
+}
+
+func (e *Session) ClearBioEntangle(objectID, instanceID uint32) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	npc, isFound := e.npcs[objectID]
+	if !isFound || instanceID == 0 || npc.status.bioEntangleInstanceID != instanceID {
+		return
+	}
+	npc.status.bioEntangleInstanceID = 0
+	npc.status.bioEntangleExpiresAt = time.Time{}
+	e.npcs[objectID] = npc
 }

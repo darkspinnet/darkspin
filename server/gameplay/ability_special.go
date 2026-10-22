@@ -20,7 +20,6 @@ import (
 	zonecontent "github.com/darkspinnet/darkspin/server/zone/content"
 	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
 	zonehero "github.com/darkspinnet/darkspin/server/zone/hero"
-	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
 var errCampaignAbilityNotSpecial = errors.New("campaign ability is not special")
@@ -28,6 +27,7 @@ var errCampaignAbilityNotSpecial = errors.New("campaign ability is not special")
 const tutorialAbilityLessonObjectiveID = uint32(0xac4273f3)
 
 type plasmaWreathSchedule struct {
+	admission           *plasmaWreathAdmission
 	runtime             campaignAbilityCommandRuntime
 	packet              raknet.Packet
 	sessionKey          string
@@ -37,6 +37,7 @@ type plasmaWreathSchedule struct {
 	creatureIndex       uint32
 	previousManaPoint   float32
 	creature            game.GameplayCreature
+	definition          sim.AbilityDefinition
 	binding             game.GameplayBinding
 	run                 *abilityraknet.PlasmaWreathRun
 	cooldownReservation zoneability.CooldownReservation
@@ -57,9 +58,23 @@ func (e plasmaWreathSchedule) retire(reason string) [][]byte {
 	isCurrent := e.isCurrent(peerSession, isFound)
 	packets := make([][]byte, 0)
 	if isCurrent {
-		packets, _ = e.run.Stop()
+		peerSession.plasmaWreathState.cancel()
+		var stopErr error
+		packets, stopErr = e.run.Stop()
+		if stopErr != nil {
+			e.runtime.logger.Printf("Plasma Wreath retire source=%d: %v", e.sourceObjectID, stopErr)
+		}
 		peerSession.plasmaWreathRun = nil
+		attributePacket, attributeErr := e.runtime.registry.plasmaWreathAttributePacket(peerSession, e.runtime.now())
+		if attributeErr != nil {
+			e.runtime.logger.Printf("Plasma Wreath attributes source=%d: %v", e.sourceObjectID, attributeErr)
+		} else {
+			packets = append(packets, attributePacket)
+		}
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
+		e.runtime.registry.queuePlasmaWreathRemovalsLocked(&peerSession, e.run, packets)
+		e.runtime.registry.sessions[e.sessionKey] = peerSession
+		packets = nil
 	}
 	e.runtime.registry.mutex.Unlock()
 	if isCurrent {
@@ -71,17 +86,16 @@ func (e plasmaWreathSchedule) retire(reason string) [][]byte {
 	return packets
 }
 
+func (e plasmaWreathSchedule) produceExpiry() ([][]byte, error) {
+	return e.retire("duration expired"), nil
+}
+
 func (e plasmaWreathSchedule) rollback() {
 	e.runtime.registry.mutex.Lock()
-	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	if e.isCurrent(peerSession, isFound) {
-		peerSession.plasmaWreathRun = nil
-		_ = peerSession.setCampaignCharacterManaPoints(
-			e.creatureIndex, e.previousManaPoint,
-		)
-		peerSession.abilityCooldownSession().Rollback(e.cooldownReservation)
-		peerSession.abilityReleaseSession().Rollback(e.releaseReservation)
-		e.runtime.registry.sessions[e.sessionKey] = peerSession
+	member, isFound := e.runtime.registry.sessions[e.sessionKey]
+	if isFound && member.generation == e.generation && member.plasmaWreathPending == e.admission {
+		member.rollbackPendingPlasmaWreath()
+		e.runtime.registry.sessions[e.sessionKey] = member
 	}
 	e.runtime.registry.mutex.Unlock()
 	e.run.Abort()
@@ -98,7 +112,7 @@ func (e plasmaWreathSchedule) produceRelease() ([][]byte, error) {
 	return [][]byte{e.releasePacket}, nil
 }
 
-func (e plasmaWreathSchedule) produceTick() ([][]byte, error) {
+func (e plasmaWreathSchedule) fireTarget(targetObjectID uint32, timestamp uint64, isReactive bool) ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := e.isCurrent(peerSession, isFound) &&
@@ -107,15 +121,24 @@ func (e plasmaWreathSchedule) produceTick() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	tickCount := e.run.AdvanceTick()
-	plan, err := zoneability.PlanPlasmaWreathHit(
+	if !peerSession.plasmaWreathState.expiresAt.IsZero() &&
+		!e.runtime.now().Before(peerSession.plasmaWreathState.expiresAt) {
+		e.runtime.registry.mutex.Unlock()
+		return e.retire("duration expired"), nil
+	}
+	if !isPlasmaWreathTarget(peerSession, targetObjectID, isReactive) {
+		e.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	plan, err := zoneability.PlanProjected(
 		peerSession.zone.NPCs(), e.sourceObjectID,
+		targetObjectID,
 		game.Vec3{
 			X: peerSession.playerPosition.X,
 			Y: peerSession.playerPosition.Y,
 			Z: peerSession.playerPosition.Z,
 		},
-		e.creature,
+		e.creature, e.definition, zoneability.PlasmaWreathRadius,
 	)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
@@ -123,12 +146,6 @@ func (e plasmaWreathSchedule) produceTick() ([][]byte, error) {
 	}
 	if plan.TargetObjectID == 0 {
 		e.runtime.registry.mutex.Unlock()
-		err = e.packet.ScheduleFunc(
-			zoneability.PlasmaWreathCheckInterval, e.produceTick,
-		)
-		if err != nil {
-			return e.retire("idle reschedule failed"), nil
-		}
 		return nil, nil
 	}
 	snapshot, isFound := peerSession.zone.NPCs().NPC(plan.TargetObjectID)
@@ -136,10 +153,28 @@ func (e plasmaWreathSchedule) produceTick() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, errors.New("campaignPlasmaWreathTarget: missing")
 	}
-	result, err := zoneability.CommitBasic(
+	err = zoneability.ValidateBasicCommit(
 		peerSession.zone.Population().Random(),
 		peerSession.zone.NPCs(), plan, e.creature,
 		peerSession.binding.Difficulty, e.runtime.program.Critical,
+	)
+	if err != nil {
+		e.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("campaignPlasmaWreathValidate: %w", err)
+	}
+	// Lua TryToFireLightningOrb requires successful effect removal before
+	// TakeDamage. Failed removal cannot damage a target or spend an orb.
+	orbPacket, isEmpty, err := e.run.ConsumeOrb()
+	if err != nil {
+		e.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("campaignPlasmaWreathOrb: %w", err)
+	}
+	// Reliable deletion ownership precedes releasing the native attachment slot.
+	e.runtime.registry.queuePlasmaWreathRemovalsLocked(&peerSession, e.run, [][]byte{orbPacket})
+	e.runtime.registry.sessions[e.sessionKey] = peerSession
+	result, err := zoneability.CommitBasic(
+		peerSession.zone.Population().Random(), peerSession.zone.NPCs(),
+		plan, e.creature, peerSession.binding.Difficulty, e.runtime.program.Critical,
 	)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
@@ -150,24 +185,26 @@ func (e plasmaWreathSchedule) produceTick() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignPlasmaWreathTransition: %w", err)
 	}
-	orbPacket, isEmpty, err := e.run.ConsumeOrb()
-	if err != nil {
-		e.runtime.registry.mutex.Unlock()
-		return nil, fmt.Errorf("campaignPlasmaWreathOrb: %w", err)
-	}
 	cleanupPackets := make([][]byte, 0)
 	if isEmpty {
+		peerSession.plasmaWreathState.cancel()
 		cleanupPackets, err = e.run.Stop()
 		peerSession.plasmaWreathRun = nil
+		e.runtime.registry.queuePlasmaWreathRemovalsLocked(&peerSession, e.run, cleanupPackets)
+		cleanupPackets = nil
+		if err == nil {
+			var attributePacket []byte
+			attributePacket, err = e.runtime.registry.plasmaWreathAttributePacket(peerSession, e.runtime.now())
+			if err == nil {
+				cleanupPackets = append(cleanupPackets, attributePacket)
+			}
+		}
 	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("campaignPlasmaWreathCleanup: %w", err)
 	}
-	timestamp := e.sourceTime + tickCount*uint64(
-		zoneability.PlasmaWreathCheckInterval/time.Millisecond,
-	)
 	resultPackets, err := e.runtime.damage.publishAreaResults(
 		e.packet, e.sessionKey, e.generation, e.sourceObjectID,
 		timestamp, e.binding,
@@ -186,20 +223,9 @@ func (e plasmaWreathSchedule) produceTick() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("campaignPlasmaWreathEffect: %w", err)
 	}
-	packets := [][]byte{orbPacket}
-	packets = append(packets, resultPackets...)
+	packets := append([][]byte(nil), resultPackets...)
 	packets = append(packets, effectPackets...)
 	packets = append(packets, cleanupPackets...)
-	if !isEmpty {
-		err = e.packet.ScheduleFunc(
-			zoneability.PlasmaWreathCheckInterval, e.produceTick,
-		)
-		if err != nil {
-			packets = append(
-				packets, e.retire("hit reschedule failed")...,
-			)
-		}
-	}
 	return packets, nil
 }
 
@@ -937,6 +963,7 @@ func (e enrageSchedule) fail(scheduleErr error) {
 }
 
 type targetedAOESchedule struct {
+	rank                 int32
 	runtime              campaignAbilityCommandRuntime
 	packet               raknet.Packet
 	sessionKey           string
@@ -960,9 +987,6 @@ type targetedAOEStep struct {
 	schedule targetedAOESchedule
 	deadline time.Duration
 }
-
-const supportHealerSlowMovementScale = float32(0.60)
-const supportHealerSlowAttackScale = float32(0.60)
 
 func (e targetedAOESchedule) isCurrent(
 	peerSession gameplayPeerSession, isFound bool,
@@ -1004,6 +1028,7 @@ func (e targetedAOEStep) produce() ([][]byte, error) {
 	}
 	results := make([]zoneability.AreaResult, 0)
 	transitions := make([]campaignDamageTransition, 0)
+	callbackPackets := make([][]byte, 0)
 	healingReductionTarget := make(map[uint32]struct{})
 	for _, pulse := range pulses {
 		plan, planErr := zoneability.PlanTargetedAOEPulse(
@@ -1026,47 +1051,45 @@ func (e targetedAOEStep) produce() ([][]byte, error) {
 				healingReductionTarget[target.Plan.ObjectID] = struct{}{}
 			}
 		}
-		if schedule.definition.Name == "SupportHealerSupport" {
-			slowDuration := max(
-				schedule.definition.TickDuration+250*time.Millisecond,
-				time.Second,
-			)
-			for _, target := range plan.Target {
-				slowExpiresAt := schedule.runtime.now().Add(
-					zonenpc.CrowdControlDuration(target.Plan, slowDuration),
-				)
-				slowErr := peerSession.zone.NPCs().ApplySlow(
-					target.Plan.ObjectID, slowExpiresAt,
-					supportHealerSlowMovementScale,
-					supportHealerSlowAttackScale,
-				)
-				if slowErr != nil {
-					schedule.runtime.registry.mutex.Unlock()
-					return nil, fmt.Errorf("campaignSupportSlow: %w", slowErr)
-				}
-			}
-		}
 		if pulse.IsFirstTargetOnly && len(plan.Target) > 1 {
 			plan.Target = plan.Target[:1]
 		}
-		pulseResults, commitErr := zoneability.CommitArea(
-			peerSession.zone.Population().Random(),
-			peerSession.zone.NPCs(), plan, schedule.creature,
-			peerSession.binding.Difficulty,
-			schedule.runtime.program.Critical,
-		)
+		var pulseResults []zoneability.AreaResult
+		var commitErr error
+		if schedule.definition.Name == supportHealerName {
+			var supportPackets [][]byte
+			pulseResults, supportPackets, commitErr = schedule.commitSupportHealerPulseLocked(peerSession, plan,
+				schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond))
+			callbackPackets = append(callbackPackets, supportPackets...)
+		} else {
+			pulseResults, commitErr = zoneability.CommitArea(
+				peerSession.zone.Population().Random(),
+				peerSession.zone.NPCs(), plan, schedule.creature,
+				peerSession.binding.Difficulty,
+				schedule.runtime.program.Critical,
+			)
+		}
 		if commitErr != nil {
-			schedule.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf("campaignSupportDamage: %w", commitErr)
+			if schedule.definition.Name != supportHealerName {
+				schedule.runtime.registry.mutex.Unlock()
+				return nil, fmt.Errorf("campaignSupportDamage: %w", commitErr)
+			}
+			schedule.runtime.logger.Printf("Strangling Briars partial pulse: %v", commitErr)
+		}
+		healingPackets, healingErr := schedule.healSupportHealerPartyLocked(&peerSession, pulse)
+		callbackPackets = append(callbackPackets, healingPackets...)
+		if healingErr != nil {
+			schedule.runtime.logger.Printf("Strangling Briars healing callback: %v", healingErr)
 		}
 		for _, result := range pulseResults {
 			transition, transitionErr :=
 				peerSession.applyCampaignDamageTransition(result.Damage)
 			if transitionErr != nil {
-				schedule.runtime.registry.mutex.Unlock()
-				return nil, fmt.Errorf(
-					"campaignSupportTransition: %w", transitionErr,
-				)
+				if schedule.definition.Name != supportHealerName {
+					schedule.runtime.registry.mutex.Unlock()
+					return nil, fmt.Errorf("campaignSupportTransition: %w", transitionErr)
+				}
+				schedule.runtime.logger.Printf("Strangling Briars transition: %v", transitionErr)
 			}
 			results = append(results, result)
 			transitions = append(transitions, transition)
@@ -1078,6 +1101,12 @@ func (e targetedAOEStep) produce() ([][]byte, error) {
 		schedule.run.ClearCancel()
 	}
 	schedule.runtime.registry.sessions[schedule.sessionKey] = peerSession
+	if schedule.definition.Name == supportHealerName {
+		// Transfer committed callback feedback before an expiry or disconnect
+		// can queue its deletion. Each recipient retains this ordered batch.
+		schedule.queueSupportHealerPacketsLocked(peerSession.zone.NPCs(), callbackPackets)
+		callbackPackets = nil
+	}
 	schedule.runtime.registry.mutex.Unlock()
 
 	resultPackets, err := schedule.runtime.damage.publishAreaResults(
@@ -1090,6 +1119,7 @@ func (e targetedAOEStep) produce() ([][]byte, error) {
 		return nil, fmt.Errorf("campaignSupportPublish: %w", err)
 	}
 	outputPackets = append(outputPackets, resultPackets...)
+	outputPackets = append(outputPackets, callbackPackets...)
 	for targetObjectID := range healingReductionTarget {
 		isDefeated := false
 		for _, result := range results {
@@ -1223,7 +1253,7 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 		)
 	}
 	if isPlasmaWreathRequest {
-		if packet.ScheduleFunc == nil {
+		if packet.ScheduleGroupResult == nil && packet.ScheduleGroup == nil {
 			return request.reject("Plasma Wreath schedule unavailable")
 		}
 		sessionKey := packet.Address.String()
@@ -1234,7 +1264,7 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures)) &&
 			peerSession.zone.NPCs() != nil &&
 			peerSession.zone.Population() != nil &&
-			peerSession.plasmaWreathRun == nil &&
+			peerSession.plasmaWreathPending == nil &&
 			peerSession.abilityCooldownSession().IsReady(
 				supportCooldownKey, abilityStartTime,
 			) &&
@@ -1244,11 +1274,15 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			return request.reject("session, cooldown, release, or Plasma Wreath modifier unavailable")
 		}
 		creatureIndex := peerSession.deployedCreatureIndex
-		creature := r.registry.projectPassiveCreature(
-			peerSession, creatureIndex, abilityStartTime,
-		)
+		// The ability snapshots its initiator before RequestModifier performs
+		// Unique replacement. The child's flat defense reads the agent afterward.
+		creature := r.registry.projectPassiveCreature(peerSession, creatureIndex, abilityStartTime)
+		snapshotSession := peerSession
+		snapshotSession.plasmaWreathRun = nil
+		defenseCreature := r.registry.projectPassiveCreature(snapshotSession, creatureIndex, abilityStartTime)
+		profile := zoneability.PlasmaWreathProfileForRank(command.Ability.Rank)
 		definition, projectionErr := zoneability.ProjectTiming(
-			creature, supportAbility.Definition,
+			creature, profile.Definition,
 		)
 		if projectionErr != nil {
 			r.registry.mutex.Unlock()
@@ -1272,13 +1306,17 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("campaignPlasmaWreathModifier: %w", allocateErr)
 		}
-		run, modifierPackets, runErr := abilityraknet.NewPlasmaWreathRun(
+		r.registry.commitPlasmaWreathPublicationsLocked()
+		r.registry.commitOmniShieldRemovalsLocked()
+		r.registry.commitChannelRemovalsLocked()
+		run, modifierPackets, runErr := abilityraknet.NewPlasmaWreathRunForRank(
 			instanceID, command.Common.ObjectID, r.effectPool, r.modifierPool,
+			command.Ability.Rank,
 		)
 		if runErr != nil {
-			_ = r.modifierPool.Release(instanceID)
+			releaseErr := r.modifierPool.Release(instanceID)
 			r.registry.mutex.Unlock()
-			return nil, fmt.Errorf("campaignPlasmaWreathRun: %w", runErr)
+			return nil, fmt.Errorf("campaignPlasmaWreathRun: %w", errors.Join(runErr, releaseErr))
 		}
 		remainingManaPoint := peerSession.deployedManaPoint() - manaCost
 		ackPacket, marshalErr := abilityraknet.Acknowledge(abilityraknet.AcknowledgeRequest{
@@ -1329,9 +1367,12 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 				abilityStartTime, definition.Cooldown,
 			)
 		if !isCooldownReserved {
-			_ = peerSession.setCampaignCharacterManaPoints(
+			manaErr := peerSession.setCampaignCharacterManaPoints(
 				creatureIndex, previousManaPoint,
 			)
+			if manaErr != nil {
+				r.logger.Printf("Plasma Wreath cooldown mana rollback source=%d: %v", command.Common.ObjectID, manaErr)
+			}
 			run.Abort()
 			r.registry.mutex.Unlock()
 			return request.reject("Plasma Wreath cooldown unavailable")
@@ -1342,48 +1383,96 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			)
 		if !isReleaseReserved {
 			peerSession.abilityCooldownSession().Rollback(cooldownReservation)
-			_ = peerSession.setCampaignCharacterManaPoints(
+			manaErr := peerSession.setCampaignCharacterManaPoints(
 				creatureIndex, previousManaPoint,
 			)
+			if manaErr != nil {
+				r.logger.Printf("Plasma Wreath release mana rollback source=%d: %v", command.Common.ObjectID, manaErr)
+			}
 			run.Abort()
 			r.registry.mutex.Unlock()
 			return request.reject("Plasma Wreath release unavailable")
 		}
-		peerSession.plasmaWreathRun = run
+		defensePercent := float32(1)
+		if command.Ability.Rank >= 1 && command.Ability.Rank <= 8 && command.Ability.Rank%2 == 0 {
+			defensePercent = 0.5
+		}
+		state := plasmaWreathState{
+			rank:                  command.Ability.Rank,
+			energyDefenseIncrease: defenseCreature.EnergyDefense * defensePercent,
+			attackSpeedIncrease:   profile.AttackSpeedIncrease,
+		}
+		if definition.Duration > 0 {
+			state.expiresAt = abilityStartTime.Add(definition.Duration)
+		}
+		admission := &plasmaWreathAdmission{
+			run: run, state: state, creatureIndex: creatureIndex, previousManaPoint: previousManaPoint,
+			cooldownReservation: cooldownReservation, releaseReservation: releaseReservation,
+		}
+		peerSession.plasmaWreathPending = admission
 		generation := peerSession.generation
 		binding := peerSession.binding
 		r.registry.sessions[sessionKey] = peerSession
 		r.registry.mutex.Unlock()
 
 		schedule := plasmaWreathSchedule{
-			runtime: r, packet: packet, sessionKey: sessionKey,
+			admission: admission,
+			runtime:   r, packet: packet, sessionKey: sessionKey,
 			generation: generation, sourceObjectID: command.Common.ObjectID,
 			sourceTime: packet.SourceTime, creatureIndex: creatureIndex,
 			previousManaPoint: previousManaPoint, creature: creature,
-			binding: binding, run: run,
+			binding: binding, run: run, definition: definition,
 			cooldownReservation: cooldownReservation,
 			releaseReservation:  releaseReservation,
 			releasePacket:       releasePacket,
 		}
-		err = packet.ScheduleFunc(
-			definition.ReleaseDelay, schedule.produceRelease,
-		)
-		if err != nil {
-			schedule.rollback()
-			return nil, fmt.Errorf("campaignPlasmaWreathReleaseSchedule: %w", err)
+		admission.state.schedule = &schedule
+		producers := []raknet.ScheduledPacketProducer{
+			{Delay: definition.ReleaseDelay, Produce: schedule.produceRelease},
 		}
-		err = packet.ScheduleFunc(
-			zoneability.PlasmaWreathCheckInterval, schedule.produceTick,
-		)
+		if command.Ability.Rank != 5 && command.Ability.Rank != 6 {
+			producers = append(producers, raknet.ScheduledPacketProducer{
+				Delay: 0, Produce: schedule.produceTick, AfterCommit: schedule.commitTick,
+			})
+		}
+		if definition.Duration > 0 {
+			producers = append(producers, raknet.ScheduledPacketProducer{
+				Delay: definition.Duration, Produce: schedule.produceExpiry,
+			})
+		}
+		cancel, scheduleErr := schedule.scheduleProducers(producers)
+		if scheduleErr != nil {
+			schedule.rollback()
+			return nil, fmt.Errorf("campaignPlasmaWreathSchedule: %w", scheduleErr)
+		}
+		r.registry.mutex.Lock()
+		attributeSession, isAttributeSessionFound := r.registry.sessions[sessionKey]
+		var attributePacket []byte
+		var replacementPackets [][]byte
+		if isAttributeSessionFound && attributeSession.generation == generation && attributeSession.plasmaWreathPending == admission {
+			admission.state.initialCancel = cancel
+			attributeSession, replacementPackets, attributePacket, err = schedule.acceptRecastLocked(attributeSession, cancel)
+			if err == nil {
+				r.registry.sessions[sessionKey] = attributeSession
+			}
+		} else {
+			cancel()
+			err = errors.New("Plasma Wreath admission no longer current")
+		}
+		r.registry.mutex.Unlock()
 		if err != nil {
 			schedule.rollback()
-			return nil, fmt.Errorf("campaignPlasmaWreathSchedule: %w", err)
+			return nil, fmt.Errorf("campaignPlasmaWreathAttributes: %w", err)
 		}
 		r.logger.Printf(
 			"RakNet campaign Plasma Wreath accepted source=%d index=%d orbs=%d",
-			command.Common.ObjectID, command.Ability.Index, zoneability.PlasmaWreathOrbCount,
+			command.Common.ObjectID, command.Ability.Index, definition.ShotCount,
 		)
 		packets := append([][]byte{ackPacket}, startPackets...)
+		packets = append(packets, replacementPackets...)
+		if len(attributePacket) != 0 {
+			packets = append(packets, attributePacket)
+		}
 		return append(packets, modifierPackets...), nil
 	}
 	if isArcWeldRequest || isShockwaveRequest || isZetawattRequest {
@@ -2547,7 +2636,7 @@ func (r campaignAbilityCommandRuntime) handleSquad(
 		position = peerSession.playerPosition
 	}
 	definition, projectionErr := zoneability.ProjectTiming(
-		creature, supportAbility.Definition,
+		creature, projectSupportHealerRank(supportAbility.Definition, command.Ability.Rank),
 	)
 	if projectionErr != nil {
 		r.registry.mutex.Unlock()
@@ -2685,6 +2774,7 @@ func (r campaignAbilityCommandRuntime) handleSquad(
 	slices.Sort(deadlines)
 	deadlines = slices.Compact(deadlines)
 	schedule := targetedAOESchedule{
+		rank:    command.Ability.Rank,
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, sourceObjectID: command.Common.ObjectID,
 		effectObjectID: effectObjectID, creatureIndex: creatureIndex,
@@ -2707,14 +2797,28 @@ func (r campaignAbilityCommandRuntime) handleSquad(
 	} else {
 		cancel, err = packet.ScheduleGroup(producers)
 	}
+	if err == nil && cancel == nil {
+		err = errors.New("targeted area cancellation unavailable")
+	}
 	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
 		schedule.fail(err)
 		rollbackErr := schedule.rollbackAdmission()
 		return nil, fmt.Errorf(
 			"campaignSupportSchedule: %w", errors.Join(err, rollbackErr),
 		)
 	}
-	run.SetCancel(cancel)
+	r.registry.mutex.Lock()
+	current, isCurrentFound := r.registry.sessions[sessionKey]
+	if !schedule.isCurrent(current, isCurrentFound) {
+		r.registry.mutex.Unlock()
+		cancel()
+		return nil, errors.New("targeted area admission retired")
+	}
+	run.AcceptSchedule(cancel)
+	r.registry.mutex.Unlock()
 	r.logger.Printf("RakNet campaign %s accepted source=%d object=%d index=%d position=(%g,%g,%g)",
 		definition.Name, command.Common.ObjectID, effectObjectID, command.Ability.Index,
 		position.X, position.Y, position.Z)

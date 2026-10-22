@@ -115,6 +115,7 @@ func projectEvenHeroAbilityRank(
 		definition.StatusDuration = time.Second
 	case "SpacetimeRandom":
 		definition.Duration = 6 * time.Second
+		definition.Cooldown = 24 * time.Second
 	case "TimeRavagerSupport":
 		definition.StatusDuration = time.Second
 	case "TechRandom2":

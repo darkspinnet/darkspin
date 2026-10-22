@@ -34,7 +34,7 @@ type Session struct {
 	npcs                 map[uint32]Snapshot
 	attackersByObject    map[uint32][]uint32
 	infectionImmunities  map[uint32]time.Time
-	infectionInstances   map[uint32]map[uint32]struct{}
+	infectionInstances   map[uint32]map[uint32]bool
 }
 
 func NewSession(objectIDLimit uint32, aggroRadius float32) *Session {
@@ -327,6 +327,11 @@ func (s *Session) Restore(snapshots []Snapshot) error {
 			IsNavigationCollisionEnabled:    !isDefeated || IsGraviticRemnant(plan),
 			IsInvisibleToSecurityTeleporter: plan.IsIntroductionHidden && !isDefeated,
 			status:                          s.initialStatus(plan),
+		}
+		if isDefeated && IsDrainerDeath(snapshot) {
+			// Checkpoint restore discards in-flight callbacks. A saved delayed
+			// explosion must not become a permanent corpse without its timer.
+			restored.IsPublished = false
 		}
 		if restored.Facing.Length() <= 0 || !zonegeometry.IsFinite(restored.Facing) {
 			restored.Facing = plan.InitialFacing()

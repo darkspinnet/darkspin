@@ -11,6 +11,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/sim"
 	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
+	zoneobjective "github.com/darkspinnet/darkspin/server/zone/objective"
 )
 
 const closeTimeout = 5 * time.Second
@@ -61,6 +62,9 @@ func (e *Manager) FindResume(
 	}
 	e.mu.Unlock()
 	if pending.ZoneID != 0 {
+		if pending.Version != Version {
+			return game.ResumeCheckpoint{}, false, nil
+		}
 		if game.IsTutorialLevel(pending.Level) {
 			e.Discard(pending.ZoneID)
 			return game.ResumeCheckpoint{}, false, nil
@@ -87,6 +91,12 @@ func (e *Manager) FindResume(
 		return game.ResumeCheckpoint{}, false, fmt.Errorf("resumeLoad: %w", err)
 	}
 	if !isFound {
+		return game.ResumeCheckpoint{}, false, nil
+	}
+	if snapshot.Version != Version {
+		// UI-only objective checkpoints cannot be upgraded by inferring
+		// authored counters from tokens. Keep the old row, but do not offer
+		// an interrupted mission that can no longer resume faithfully.
 		return game.ResumeCheckpoint{}, false, nil
 	}
 	if game.IsTutorialLevel(snapshot.Level) {
@@ -179,9 +189,17 @@ func (e *Manager) Record(snapshot Snapshot) {
 		e.mu.Unlock()
 		return
 	}
-	snapshot = checkpointWithoutMembers(
+	var pruneErr error
+	snapshot, pruneErr = checkpointWithoutMembers(
 		snapshot, e.declinedMembers[snapshot.ZoneID],
 	)
+	if pruneErr != nil {
+		e.mu.Unlock()
+		if e.logger != nil {
+			e.logger.Printf("Zone checkpoint member prune rejected: %v", pruneErr)
+		}
+		return
+	}
 	snapshot = checkpointWithoutEquipment(snapshot, e.forfeitedEquipments[snapshot.ZoneID])
 	if len(snapshot.Members) == 0 {
 		e.mu.Unlock()
@@ -253,9 +271,13 @@ func (e *Manager) RemoveMemberNow(
 	declinedMembers[userID] = struct{}{}
 	delete(e.pendingSnapshots, zoneID)
 	e.mu.Unlock()
-	snapshot = checkpointWithoutMembers(
+	snapshot, err = checkpointWithoutMembers(
 		snapshot, map[uint64]struct{}{userID: {}},
 	)
+	if err != nil {
+		e.restoreDeclinedMember(zoneID, userID)
+		return 0, fmt.Errorf("memberPrune: %w", err)
+	}
 	if len(snapshot.Members) == 0 {
 		err = e.DiscardNow(ctx, zoneID)
 		if err != nil {
@@ -317,11 +339,19 @@ func (e *Manager) Load(ctx context.Context, zoneID uint64) (Snapshot, bool, erro
 	pending, isPending := e.pendingSnapshots[zoneID]
 	e.mu.Unlock()
 	if isPending {
+		if pending.Version != Version {
+			return Snapshot{}, false, nil
+		}
 		return cloneSnapshot(pending), true, nil
 	}
 	snapshot, isFound, err := e.load(ctx, zoneID)
 	if err != nil {
 		return Snapshot{}, false, fmt.Errorf("snapshotLoad: %w", err)
+	}
+	if isFound && snapshot.Version != Version {
+		// Older snapshots contain UI-only objective progress. They cannot
+		// safely resume; leave durable data untouched and start normally.
+		return Snapshot{}, false, nil
 	}
 	return snapshot, isFound, nil
 }
@@ -593,6 +623,10 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 	snapshot.Objectives = append(
 		[]sim.ObjectiveSnapshot(nil), snapshot.Objectives...,
 	)
+	snapshot.ObjectiveRuntimes = append([]sim.LuaObjectiveSnapshot(nil), snapshot.ObjectiveRuntimes...)
+	for index := range snapshot.ObjectiveRuntimes {
+		snapshot.ObjectiveRuntimes[index] = snapshot.ObjectiveRuntimes[index].Clone()
+	}
 	snapshot.ScriptUses = append(
 		[]game.CampaignScriptUse(nil), snapshot.ScriptUses...,
 	)
@@ -614,9 +648,9 @@ func checkpointMember(snapshot Snapshot, userID uint64) (Member, bool) {
 
 func checkpointWithoutMembers(
 	snapshot Snapshot, removedMembers map[uint64]struct{},
-) Snapshot {
+) (Snapshot, error) {
 	if len(removedMembers) == 0 {
-		return snapshot
+		return snapshot, nil
 	}
 	snapshot = cloneSnapshot(snapshot)
 	removedSlots := make(map[uint16]struct{}, len(removedMembers))
@@ -669,11 +703,23 @@ func checkpointWithoutMembers(
 		}
 	}
 	snapshot.ExperienceAwards = experienceAwards
+	for runtimeIndex, runtime := range snapshot.ObjectiveRuntimes {
+		objectiveID := runtime.ObjectiveID
+		for slot := range removedSlots {
+			var err error
+			runtime, err = zoneobjective.WithoutPlayer(runtime, uint8(slot))
+			if err != nil {
+				return Snapshot{}, fmt.Errorf("pruneObjective[%#x]: %w", objectiveID, err)
+			}
+		}
+		snapshot.ObjectiveRuntimes[runtimeIndex] = runtime
+	}
 	for objectiveIndex := range snapshot.Objectives {
 		for slot := range removedSlots {
 			snapshot.Objectives[objectiveIndex].State[slot] = 0
-			snapshot.Objectives[objectiveIndex].Token[slot] = [3]int32{}
+			// Group tokens retain shared progress for a later slot occupant.
+			// Individual counters are reset on restore from authored Init.
 		}
 	}
-	return snapshot
+	return snapshot, nil
 }

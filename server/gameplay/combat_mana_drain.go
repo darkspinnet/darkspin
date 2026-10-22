@@ -13,24 +13,34 @@ import (
 )
 
 type campaignNPCManaDrainRequest struct {
-	runtime    campaignNPCActionRuntime
-	packet     raknet.Packet
-	sessionKey string
-	generation uint64
-	objectID   uint32
-	timestamp  uint64
+	runtime          campaignNPCActionRuntime
+	packet           raknet.Packet
+	sessionKey       string
+	generation       uint64
+	objectID         uint32
+	timestamp        uint64
+	actionGeneration uint64
 }
 
 func (e campaignNPCManaDrainRequest) fail(
 	step string, err error,
 ) ([][]byte, error) {
-	e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
+	if e.actionGeneration != 0 {
+		e.runtime.releaseActionGeneration(e.sessionKey, e.generation, e.objectID, e.actionGeneration)
+	} else {
+		e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
+	}
+	return nil, fmt.Errorf("%s: %w", step, err)
+}
+
+func (e campaignNPCManaDrainRequest) failGeneration(step string, err error, actionGeneration uint64) ([][]byte, error) {
+	e.runtime.releaseActionGeneration(e.sessionKey, e.generation, e.objectID, actionGeneration)
 	return nil, fmt.Errorf("%s: %w", step, err)
 }
 
 func (e campaignNPCManaDrainRequest) resume(timestamp uint64) ([][]byte, error) {
-	packets, err := e.runtime.produceManaDrain(
-		e.packet, e.sessionKey, e.generation, e.objectID, timestamp,
+	packets, err := e.runtime.produceManaDrainOwned(
+		e.packet, e.sessionKey, e.generation, e.objectID, timestamp, e.actionGeneration,
 	)
 	if err != nil {
 		return e.fail("enemyManaDrainResume", err)
@@ -45,15 +55,45 @@ type campaignNPCManaDrainSchedule struct {
 	tick    uint32
 }
 
+func (e campaignNPCManaDrainSchedule) fail(step string, err error) ([][]byte, error) {
+	e.run.Stop()
+	e.request.runtime.untrackHealthDrain(e.request.sessionKey, e.request.generation, e.request.objectID, e.run)
+	e.request.runtime.settleDrainEffects()
+	packets, failureErr := e.request.failGeneration(step, err, e.plan.ActionGeneration)
+	if failureErr != nil {
+		return packets, fmt.Errorf("manaChannel: %w", failureErr)
+	}
+	return packets, nil
+}
+
 type campaignNPCManaDrainNextStep struct {
-	request   campaignNPCManaDrainRequest
-	timestamp uint64
+	request          campaignNPCManaDrainRequest
+	timestamp        uint64
+	run              *campaignNPCDrainRun
+	actionGeneration uint64
 }
 
 func (e campaignNPCManaDrainNextStep) produce() ([][]byte, error) {
+	if e.run.IsStopped() {
+		return nil, nil
+	}
+	runtime := e.request.runtime
+	runtime.registry.mutex.RLock()
+	current, isFound := runtime.registry.sessions[e.request.sessionKey]
+	isCurrent := isFound && current.generation == e.request.generation &&
+		current.campaignNPCDrainRuns[e.request.objectID] == e.run &&
+		current.isCampaignNPCSourceGenerationActive(e.request.generation, e.request.objectID, e.actionGeneration)
+	runtime.registry.mutex.RUnlock()
+	if !isCurrent {
+		e.run.Stop()
+		runtime.untrackHealthDrain(e.request.sessionKey, e.request.generation, e.request.objectID, e.run)
+		runtime.settleDrainEffects()
+		return nil, nil
+	}
+	runtime.untrackHealthDrain(e.request.sessionKey, e.request.generation, e.request.objectID, e.run)
 	packets, err := e.request.resume(e.timestamp)
 	if err != nil {
-		return e.request.fail("enemyManaDrainNext", err)
+		return e.request.failGeneration("enemyManaDrainNext", err, e.actionGeneration)
 	}
 	return packets, nil
 }
@@ -66,8 +106,9 @@ func (e campaignNPCManaDrainSchedule) end(
 	}
 	packets, err := e.effectRemovals()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("manaEndEffects: %w", err)
 	}
+	e.request.runtime.settleDrainEffects()
 	packet, err := npcraknet.AnimationState(
 		e.plan.SourceObjectID, e.plan.Profile.EndAnimationName, timestamp,
 	)
@@ -81,9 +122,9 @@ func (e campaignNPCManaDrainSchedule) end(
 	nextTimestamp := timestamp +
 		uint64(e.plan.Profile.EndAnimationDelay/time.Millisecond)
 	next := campaignNPCManaDrainNextStep{
-		request: e.request, timestamp: nextTimestamp,
+		request: e.request, timestamp: nextTimestamp, run: e.run, actionGeneration: e.plan.ActionGeneration,
 	}
-	cancel, err := scheduleNPCProducers(e.request.runtime.registry, e.request.packet,
+	cancel, err := e.request.runtime.scheduleDrainProducers(e.request.packet, e.request.sessionKey, e.request.generation, e.request.objectID, e.plan.ActionGeneration, e.run,
 		[]raknet.ScheduledPacketProducer{{
 			Delay: e.plan.Profile.EndAnimationDelay, Produce: next.produce,
 		}},
@@ -92,7 +133,7 @@ func (e campaignNPCManaDrainSchedule) end(
 		err = errors.New("nil cancellation")
 	}
 	if err != nil {
-		return e.request.fail("enemyManaDrainNextSchedule", err)
+		return e.fail("enemyManaDrainNextSchedule", err)
 	}
 	if packet == nil {
 		return packets, nil
@@ -101,24 +142,14 @@ func (e campaignNPCManaDrainSchedule) end(
 }
 
 func (e campaignNPCManaDrainSchedule) effectRemovals() ([][]byte, error) {
-	lease, isLeaseFound := e.run.ReleaseEffects()
-	if !isLeaseFound {
-		return nil, nil
-	}
-	packets, err := zoneabilityraknet.ChannelDrainEffectRemovals(
-		lease.sourceObjectID, lease.sourceSlot,
-		lease.targetObjectID, lease.targetSlot,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("enemyManaDrainEffectRemoval: %w", err)
-	}
-	return packets, nil
+	e.run.ReleaseEffects()
+	return nil, nil
 }
 
 func (e campaignNPCManaDrainSchedule) scheduleNext() error {
 	next := e
 	next.tick++
-	cancel, err := scheduleNPCProducers(e.request.runtime.registry, e.request.packet,
+	cancel, err := e.request.runtime.scheduleDrainProducers(e.request.packet, e.request.sessionKey, e.request.generation, e.request.objectID, e.plan.ActionGeneration, e.run,
 		[]raknet.ScheduledPacketProducer{{
 			Delay: e.plan.Profile.TickDuration, Produce: next.produce,
 		}},
@@ -151,6 +182,15 @@ func (e campaignNPCManaDrainSchedule) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	source, isSourceFound := current.zone.NPCs().NPC(e.request.objectID)
+	isOwned := isSourceFound && source.ActionGeneration == e.plan.ActionGeneration &&
+		current.campaignNPCDrainRuns[e.request.objectID] == e.run
+	if !isOwned {
+		runtime.registry.mutex.Unlock()
+		e.run.Stop()
+		runtime.untrackHealthDrain(e.request.sessionKey, e.request.generation, e.request.objectID, e.run)
+		runtime.settleDrainEffects()
+		return nil, nil
+	}
 	target, isTargetFound := current.campaignNPCTarget(
 		e.request.generation, e.plan.TargetObjectID,
 	)
@@ -220,7 +260,7 @@ func (e campaignNPCManaDrainSchedule) produce() ([][]byte, error) {
 		runtime.registry.mutex.Unlock()
 		e.run.End()
 		e.run.ReleaseEffects()
-		return e.request.fail("enemyManaDrainCommit", err)
+		return e.fail("enemyManaDrainCommit", err)
 	}
 	updatedSource, err := current.zone.NPCs().IncreaseMana(
 		e.request.objectID, 1,
@@ -229,7 +269,7 @@ func (e campaignNPCManaDrainSchedule) produce() ([][]byte, error) {
 		runtime.registry.mutex.Unlock()
 		e.run.End()
 		e.run.ReleaseEffects()
-		return e.request.fail("enemyManaDrainSourceMana", err)
+		return e.fail("enemyManaDrainSourceMana", err)
 	}
 	sourceManaPacket, err := zoneabilityraknet.Mana(
 		e.request.objectID, updatedSource.ManaPoint,
@@ -257,7 +297,7 @@ func (e campaignNPCManaDrainSchedule) produce() ([][]byte, error) {
 			runtime.registry.mutex.Unlock()
 			e.run.End()
 			e.run.ReleaseEffects()
-			return e.request.fail("enemyManaDrainOverload", err)
+			return e.fail("enemyManaDrainOverload", err)
 		}
 	}
 	if targetSessionKey == e.request.sessionKey {
@@ -277,15 +317,29 @@ func (e campaignNPCManaDrainSchedule) produce() ([][]byte, error) {
 	if isOverloaded {
 		e.run.End()
 		removalPackets, removalErr := e.effectRemovals()
-		if removalErr != nil {
-			return e.request.fail("enemyManaDrainOverloadEffect", removalErr)
+		if removalErr != nil && !zonenpc.IsDrainerDeath(updatedSource) {
+			return e.fail("enemyManaDrainOverloadEffect", removalErr)
+		}
+		if zonenpc.IsDrainerDeath(updatedSource) {
+			packets = append(packets, removalPackets...)
+			deathPackets, deathErr := runtime.publishDrainerDeath(
+				e.request.packet, drainerDeathOwner{world: current.zone, gameID: current.binding.GameID,
+					userID: current.binding.UserID, generation: e.request.generation, sessionKey: e.request.sessionKey},
+				updatedSource, damageResult, transition, timestamp, packets, removalErr,
+			)
+			runtime.settleDrainEffects()
+			if deathErr != nil {
+				return e.fail("enemyDrainerDeath", deathErr)
+			}
+			return deathPackets, nil
 		}
 		deathPackets, deathErr := runtime.publishNPCSelfDeath(
 			e.request.packet, e.request.sessionKey, e.request.generation,
-			source, damageResult, transition, timestamp,
+			updatedSource, damageResult, transition, timestamp,
 		)
+		runtime.settleDrainEffects()
 		if deathErr != nil {
-			return e.request.fail("enemyManaDrainOverloadPublish", deathErr)
+			return e.fail("enemyManaDrainOverloadPublish", deathErr)
 		}
 		packets = append(packets, removalPackets...)
 		return append(packets, deathPackets...), nil
@@ -294,7 +348,7 @@ func (e campaignNPCManaDrainSchedule) produce() ([][]byte, error) {
 	if isLast {
 		endPackets, endErr := e.end(timestamp)
 		if endErr != nil {
-			return e.request.fail("enemyManaDrainFinish", endErr)
+			return e.fail("enemyManaDrainFinish", endErr)
 		}
 		return append(packets, endPackets...), nil
 	}
@@ -302,7 +356,7 @@ func (e campaignNPCManaDrainSchedule) produce() ([][]byte, error) {
 	if err != nil {
 		e.run.End()
 		e.run.ReleaseEffects()
-		return e.request.fail("enemyManaDrainContinue", err)
+		return e.fail("enemyManaDrainContinue", err)
 	}
 	return packets, nil
 }
@@ -399,9 +453,29 @@ func (r campaignNPCActionRuntime) produceManaDrain(
 	packet raknet.Packet, sessionKey string, generation uint64,
 	objectID uint32, timestamp uint64,
 ) ([][]byte, error) {
+	packets, err := r.produceManaDrainOwned(packet, sessionKey, generation, objectID, timestamp, 0)
+	if err != nil {
+		return packets, fmt.Errorf("manaProduce: %w", err)
+	}
+	return packets, nil
+}
+
+func (r campaignNPCActionRuntime) produceManaDrainOwned(
+	packet raknet.Packet, sessionKey string, generation uint64,
+	objectID uint32, timestamp uint64, actionGeneration uint64,
+) ([][]byte, error) {
 	request := campaignNPCManaDrainRequest{
 		runtime: r, packet: packet, sessionKey: sessionKey,
-		generation: generation, objectID: objectID, timestamp: timestamp,
+		generation: generation, objectID: objectID, timestamp: timestamp, actionGeneration: actionGeneration,
+	}
+	if actionGeneration != 0 {
+		r.registry.mutex.RLock()
+		member, isFound := r.registry.sessions[sessionKey]
+		isCurrent := isFound && member.isCampaignNPCSourceGenerationActive(generation, objectID, actionGeneration)
+		r.registry.mutex.RUnlock()
+		if !isCurrent {
+			return nil, nil
+		}
 	}
 	isDeferred, err := r.pursuit.deferAction(
 		packet, sessionKey, generation, objectID, timestamp, request.resume,
@@ -422,6 +496,11 @@ func (r campaignNPCActionRuntime) produceManaDrain(
 		return nil, nil
 	}
 	enemy, isEnemyFound := peerSession.zone.NPCs().NPC(objectID)
+	if actionGeneration != 0 && (!isEnemyFound || enemy.ActionGeneration != actionGeneration) {
+		r.registry.mutex.RUnlock()
+		return nil, nil
+	}
+	request.actionGeneration = enemy.ActionGeneration
 	target, isTargetFound := peerSession.campaignNPCTarget(
 		generation, enemy.TargetObjectID,
 	)
@@ -477,46 +556,61 @@ func (r campaignNPCActionRuntime) produceManaDrain(
 	}
 	startPackets, err := r.startNPCAttack(sessionKey, generation, plan, timestamp)
 	if err != nil {
-		return request.fail("enemyManaDrainStart", err)
+		return request.failGeneration("enemyManaDrainStart", err, plan.ActionGeneration)
 	}
 	if r.effectPool == nil {
-		return request.fail("enemyManaDrainEffectPool", errors.New("effect pool unavailable"))
+		return request.failGeneration("enemyManaDrainEffectPool", errors.New("effect pool unavailable"), plan.ActionGeneration)
 	}
-	sourceSlot, isSourceAllocated := r.effectPool.Allocate(objectID)
-	if !isSourceAllocated {
-		return request.fail("enemyManaDrainSourceEffect", errors.New("effect slot unavailable"))
+	effects, err := r.allocateDrainEffects(sessionKey, generation, []uint32{objectID, target.ObjectID})
+	if err != nil {
+		return request.failGeneration("manaEffects", err, plan.ActionGeneration)
 	}
-	targetSlot, isTargetAllocated := r.effectPool.Allocate(target.ObjectID)
-	if !isTargetAllocated {
-		r.effectPool.Release(objectID, sourceSlot)
-		return request.fail("enemyManaDrainTargetEffect", errors.New("effect slot unavailable"))
-	}
+	slots := effects.Slots()
+	sourceSlot, targetSlot := slots[0].slot, slots[1].slot
 	effectPackets, err := zoneabilityraknet.ChannelDrainAttachedEffects(
 		profile.TrailEffectName, profile.TargetEffectName,
 		objectID, sourceSlot, target.ObjectID, targetSlot,
 	)
 	if err != nil {
-		r.effectPool.Release(objectID, sourceSlot)
-		r.effectPool.Release(target.ObjectID, targetSlot)
-		return request.fail("enemyManaDrainEffect", err)
+		effects.Retire()
+		r.settleDrainEffects()
+		return request.failGeneration("enemyManaDrainEffect", err, plan.ActionGeneration)
 	}
 	run := &campaignNPCDrainRun{}
-	run.BindEffects(
-		r.effectPool, objectID, sourceSlot, target.ObjectID, targetSlot,
-	)
+	run.bindEffects(effects, plan.ActionGeneration)
+	if !r.trackHealthDrain(sessionKey, generation, objectID, run) {
+		run.End()
+		run.ReleaseEffects()
+		r.settleDrainEffects()
+		return request.failGeneration("manaTrack", errors.New("channel run unavailable"), plan.ActionGeneration)
+	}
 	schedule := campaignNPCManaDrainSchedule{
 		request: request, plan: plan, run: run,
 	}
-	cancel, err := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
+	cancel, err := r.scheduleDrainProducers(packet, sessionKey, generation, objectID, plan.ActionGeneration, run, []raknet.ScheduledPacketProducer{{
 		Delay: profile.HitDelay, Produce: schedule.produce,
 	}})
 	if err == nil && cancel == nil {
 		err = errors.New("nil cancellation")
 	}
 	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
 		run.End()
 		run.ReleaseEffects()
-		return request.fail("enemyManaDrainSchedule", err)
+		r.untrackHealthDrain(sessionKey, generation, objectID, run)
+		r.settleDrainEffects()
+		return request.failGeneration("enemyManaDrainSchedule", err, plan.ActionGeneration)
 	}
-	return append(startPackets, effectPackets...), nil
+	err = r.publishDrainEffects(sessionKey, generation, objectID, run, effectPackets)
+	if err != nil {
+		cancel()
+		run.End()
+		run.ReleaseEffects()
+		r.untrackHealthDrain(sessionKey, generation, objectID, run)
+		r.settleDrainEffects()
+		return request.failGeneration("manaPublish", err, plan.ActionGeneration)
+	}
+	return startPackets, nil
 }

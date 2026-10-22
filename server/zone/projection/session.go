@@ -69,6 +69,7 @@ type HeroRoster struct {
 	Team          uint16
 	Roster        game.GameplayRoster
 	Position      game.Vec3
+	Orientation   game.Quaternion
 	CreatureIndex uint32
 }
 
@@ -432,6 +433,28 @@ func (s *Session) PublishNPCDeath(
 			}
 			s.enqueueLocked(subscriber, event)
 		}
+	}
+}
+
+// RecordNPCDeathState advances snapshot identity without queueing wire events.
+// A named world callback may already own those events in its reliable FIFO.
+func (e *Session) RecordNPCDeathState(deaths []zonenpc.DeathEvent) {
+	if e == nil || len(deaths) == 0 {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.deletedNPCObjectIDs == nil {
+		e.deletedNPCObjectIDs = make(map[uint32]struct{})
+	}
+	for _, death := range deaths {
+		if death.Kind == zonenpc.DeathDelete {
+			e.deletedNPCObjectIDs[death.TargetObjectID] = struct{}{}
+			for _, objectIDs := range e.npcObjectIDsBySubscriber {
+				delete(objectIDs, death.TargetObjectID)
+			}
+		}
+		e.next++
 	}
 }
 

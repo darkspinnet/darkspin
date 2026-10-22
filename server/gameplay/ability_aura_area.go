@@ -37,6 +37,7 @@ type heroAuraAreaRun struct {
 	npc               *zonenpc.Session
 	modifierPool      *modifierPool
 	targets           map[uint32]heroAuraAreaTarget
+	sleepAttempts     map[uint32]struct{}
 	projectiles       map[uint32]heroAuraAreaProjectile
 	statusKind        sim.AbilityStatusKind
 	objectID          uint32
@@ -355,6 +356,11 @@ func (e heroAuraAreaSchedule) reconcile(
 		if _, isTracked := e.run.targets[objectID]; isTracked {
 			continue
 		}
+		if e.run.isSleepingCloud {
+			if _, isAttempted := e.run.sleepAttempts[objectID]; isAttempted {
+				continue
+			}
+		}
 		instanceID, err := e.run.modifierPool.Allocate()
 		if err != nil {
 			return nil, fmt.Errorf("auraEntryAllocate: %w", err)
@@ -368,6 +374,14 @@ func (e heroAuraAreaSchedule) reconcile(
 		if err != nil {
 			e.run.releaseAuraInstance(instanceID)
 			return nil, fmt.Errorf("auraEntryApply: %w", err)
+		}
+		if e.run.isSleepingCloud {
+			// The Lua cloud retains idModifiers[target] after damage ends the
+			// sleep. A membership scan must not turn that into another entry.
+			if e.run.sleepAttempts == nil {
+				e.run.sleepAttempts = make(map[uint32]struct{})
+			}
+			e.run.sleepAttempts[objectID] = struct{}{}
 		}
 		if e.statusRemaining(peerSession.zone.NPCs(), objectID, now) == 0 {
 			e.run.releaseAuraInstance(instanceID)
@@ -576,9 +590,15 @@ func (r campaignAbilityCommandRuntime) handleHeroAuraArea(
 		return nil, fmt.Errorf("auraAreaTiming: %w", err)
 	}
 	if projected.IsAreaDurationScaled {
-		projected.NumberOfTicks, err = game.ResolveAreaDurationCount(
-			projected.NumberOfTicks, creature.AreaDurationIncrease,
-		)
+		if projected.Name == "Psistorm" {
+			projected.NumberOfTicks, err = psistormTickCount(
+				projected.NumberOfTicks, creature.AreaDurationIncrease,
+			)
+		} else {
+			projected.NumberOfTicks, err = game.ResolveAreaDurationCount(
+				projected.NumberOfTicks, creature.AreaDurationIncrease,
+			)
+		}
 		if err != nil {
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("auraAreaDuration: %w", err)

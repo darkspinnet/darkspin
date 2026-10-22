@@ -197,6 +197,7 @@ type LuaObjectiveStatusResult struct {
 // match-session objective instance.
 type LuaObjectiveRuntime struct {
 	mu                sync.Mutex
+	input             LuaObjectiveInput
 	compiler          *luaCompiler
 	instructionBudget int
 	isEventSubscriber bool
@@ -536,7 +537,7 @@ func NewLuaObjectiveRuntime(
 	}
 	eventCallback := compiler.registeredObjective.get(stringLuaKey("HandleEvent"))
 	runtime := &LuaObjectiveRuntime{
-		compiler: compiler, instructionBudget: instructionBudget,
+		input: input, compiler: compiler, instructionBudget: instructionBudget,
 		isEventSubscriber: eventCallback.kind == luaClosureValue,
 	}
 	return runtime, drainLuaProgram(compiler), nil

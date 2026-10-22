@@ -40,6 +40,10 @@ type Decision struct {
 	NavigationComponentID uint32
 	Wanderer              sim.WandererDecision
 	SpikeOutcome          sim.SpikeOutcome
+	// These inputs apply only when SpikeOutcome is nonzero. They expose the
+	// zone's supplied classifier result versus its local doing-well fallback.
+	IsDoingWell           bool
+	IsPerformanceFallback bool
 	Challenge             uint32
 	Positions             []game.Vec3
 	Rotations             []game.Vec3
@@ -318,6 +322,9 @@ func (e *Session) PrimeOpening(position game.Vec3) ([]Decision, error) {
 		if err != nil {
 			return nil, fmt.Errorf("openingResolve[%d]: %w", candidate.locusID, err)
 		}
+		if decision.SpikeOutcome != 0 {
+			decision.IsPerformanceFallback = true
+		}
 		decisions = append(decisions, decision)
 		e.resolvedDirectorPointIDs[candidate.locusID] = true
 	}
@@ -418,6 +425,7 @@ func (e *Session) resolveCandidate(candidate candidate, isDoingWell bool) (Decis
 			return Decision{}, fmt.Errorf("populationChallenge: %w", err)
 		}
 		decision.SpikeOutcome = outcome
+		decision.IsDoingWell = isDoingWell
 		decision.Challenge = challenge
 	}
 	return decision, nil

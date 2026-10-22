@@ -11,7 +11,9 @@ import (
 // Introduction restores a joining peer's remaining hold without replaying
 // one-shot animation or effect messages to the zone.
 func Introduction(snapshot zonenpc.Snapshot, now time.Time) ([][]byte, error) {
-	if !snapshot.IsIntroductionPending() {
+	// Ordinary entrances are already targetable in FirstAggro. Rejoining must
+	// not invent a protected blackboard that their continuation never clears.
+	if !snapshot.IsIntroductionCombatSuppressed() {
 		return nil, nil
 	}
 	messages := []raknet.ApplicationMessage{raknet.AgentBlackboardUpdateMessage{

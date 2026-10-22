@@ -14,17 +14,13 @@ import (
 )
 
 type campaignNPCDrainRun struct {
-	mu          sync.Mutex
-	isEnded     bool
-	effectLease *campaignNPCDrainEffectLease
-}
-
-type campaignNPCDrainEffectLease struct {
-	pool           *attachedEffectPool
-	sourceObjectID uint32
-	sourceSlot     uint8
-	targetObjectID uint32
-	targetSlot     uint8
+	mu               sync.Mutex
+	isEnded          bool
+	isStopped        bool
+	cancels          []raknet.CancelSchedule
+	effects          *channelEffects
+	targetObjectID   uint32
+	actionGeneration uint64
 }
 
 func (e *campaignNPCDrainRun) IsEnded() bool {
@@ -49,74 +45,63 @@ func (e *campaignNPCDrainRun) End() bool {
 	return true
 }
 
-func (e *campaignNPCDrainRun) BindEffects(
-	pool *attachedEffectPool, sourceObjectID uint32, sourceSlot uint8,
-	targetObjectID uint32, targetSlot uint8,
-) {
+func (e *campaignNPCDrainRun) IsStopped() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.isStopped
+}
+
+func (e *campaignNPCDrainRun) Stop() {
 	if e == nil {
 		return
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.effectLease = &campaignNPCDrainEffectLease{
-		pool: pool, sourceObjectID: sourceObjectID, sourceSlot: sourceSlot,
-		targetObjectID: targetObjectID, targetSlot: targetSlot,
-	}
-}
-
-func (e *campaignNPCDrainRun) BindTargetEffect(
-	pool *attachedEffectPool, sourceObjectID uint32,
-	targetObjectID uint32, targetSlot uint8,
-) {
-	if e == nil {
-		return
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.effectLease = &campaignNPCDrainEffectLease{
-		pool: pool, sourceObjectID: sourceObjectID,
-		targetObjectID: targetObjectID, targetSlot: targetSlot,
-	}
-}
-
-func (e *campaignNPCDrainRun) ReleaseEffects() (campaignNPCDrainEffectLease, bool) {
-	if e == nil {
-		return campaignNPCDrainEffectLease{}, false
-	}
-	e.mu.Lock()
-	lease := e.effectLease
-	e.effectLease = nil
+	e.isStopped = true
+	e.isEnded = true
+	cancels := e.cancels
+	e.cancels = nil
+	effects := e.effects
 	e.mu.Unlock()
-	if lease == nil || lease.pool == nil {
-		return campaignNPCDrainEffectLease{}, false
+	effects.Retire()
+	for _, cancel := range cancels {
+		cancel()
 	}
-	// The lease records presentation already sent to the client. Another cleanup
-	// path can clear the shared slot pool first, but the client still needs the
-	// matching removal for this lease.
-	if lease.sourceObjectID != 0 {
-		isSourceSlotReleased := lease.pool.Release(
-			lease.sourceObjectID, lease.sourceSlot,
-		)
-		if !isSourceSlotReleased {
-			// A prior actor cleanup already cleared the shared source slot.
-		}
-	}
-	isTargetSlotReleased := lease.pool.Release(
-		lease.targetObjectID, lease.targetSlot,
-	)
-	if !isTargetSlotReleased {
-		// A prior actor cleanup already cleared the shared target slot.
-	}
-	return *lease, true
 }
 
+func (e *campaignNPCDrainRun) bindCancel(cancel raknet.CancelSchedule) {
+	e.mu.Lock()
+	isStopped := e.isStopped
+	if !isStopped {
+		e.cancels = append(e.cancels, cancel)
+	}
+	e.mu.Unlock()
+	if isStopped {
+		cancel()
+	}
+}
+
+func (e *campaignNPCDrainRun) bindEffects(effects *channelEffects, actionGeneration uint64) {
+	slots := effects.Slots()
+	e.effects = effects
+	e.targetObjectID = slots[len(slots)-1].objectID
+	e.actionGeneration = actionGeneration
+}
+
+func (e *campaignNPCDrainRun) ReleaseEffects() {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.effects.Retire()
+}
 func (e *campaignNPCDrainRun) targets(objectID uint32) bool {
 	if e == nil || objectID == 0 {
 		return false
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.effectLease != nil && e.effectLease.targetObjectID == objectID
+	return e.effects != nil && e.targetObjectID == objectID && !e.isEnded
 }
 
 func (s *gameplayPeerSession) stopCampaignNPCDrainsTargeting(
@@ -131,18 +116,8 @@ func (s *gameplayPeerSession) stopCampaignNPCDrainsTargeting(
 			continue
 		}
 		delete(s.campaignNPCDrainRuns, sourceObjectID)
-		run.End()
-		lease, isLeaseFound := run.ReleaseEffects()
-		if !isLeaseFound {
-			continue
-		}
-		removalPackets, err := zoneabilityraknet.ChannelDrainTargetEffectRemoval(
-			lease.targetObjectID, lease.targetSlot,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("enemyDrainTargetEffect: %w", err)
-		}
-		packets = append(packets, removalPackets...)
+		run.Stop()
+		run.ReleaseEffects()
 	}
 	return packets, nil
 }
@@ -190,6 +165,7 @@ func (e campaignNPCDrainSchedule) endPacket(
 	if err != nil {
 		return nil, fmt.Errorf("enemyDrainEndEffect: %w", err)
 	}
+	e.request.runtime.settleDrainEffects()
 	if !isFirstEnd {
 		return packets, nil
 	}
@@ -214,17 +190,8 @@ func (e campaignNPCDrainSchedule) endPacket(
 }
 
 func (e campaignNPCDrainSchedule) effectRemovals() ([][]byte, error) {
-	lease, isLeaseFound := e.run.ReleaseEffects()
-	if !isLeaseFound {
-		return nil, nil
-	}
-	packets, err := zoneabilityraknet.ChannelDrainTargetEffectRemoval(
-		lease.targetObjectID, lease.targetSlot,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("enemyDrainEffectRemoval: %w", err)
-	}
-	return packets, nil
+	e.run.ReleaseEffects()
+	return nil, nil
 }
 
 func (e campaignNPCDrainSchedule) tick(
@@ -350,6 +317,7 @@ func (e campaignNPCDrainSchedule) tick(
 	packets = append(packets, animationPacket)
 	binding := current.binding
 	runtime.registry.sessions[req.sessionKey] = current
+	runtime.registry.commitChannelRemovalsLocked()
 	runtime.registry.mutex.Unlock()
 	reflectionPackets, reflectionErr := runtime.publishThornBarkReflection(
 		req.packet, req.sessionKey, req.generation,
@@ -369,6 +337,9 @@ func (e campaignNPCDrainSchedule) tick(
 }
 
 func (e campaignNPCDrainSchedule) next() ([][]byte, error) {
+	if e.run.IsStopped() {
+		return nil, nil
+	}
 	profile := e.plan.Profile
 	finalTickDeadline := profile.HitDelay +
 		time.Duration(profile.NumberOfTicks-1)*profile.TickDuration
@@ -481,23 +452,27 @@ func (r campaignNPCActionRuntime) produceHealthDrain(
 	if r.effectPool == nil {
 		return nil, errors.New("enemy drain effect pool unavailable")
 	}
-	targetSlot, isTargetAllocated := r.effectPool.Allocate(target.ObjectID)
-	if !isTargetAllocated {
-		return nil, errors.New("enemy drain target effect slot unavailable")
+	effects, err := r.allocateDrainEffects(sessionKey, generation, []uint32{target.ObjectID})
+	if err != nil {
+		return nil, fmt.Errorf("drainAllocate: %w", err)
 	}
+	slots := effects.Slots()
+	targetSlot := slots[0].slot
 	effectPackets, err := zoneabilityraknet.ChannelDrainTargetEffect(
 		profile.TargetEffectName, objectID, target.ObjectID, targetSlot,
 	)
 	if err != nil {
-		r.effectPool.Release(target.ObjectID, targetSlot)
+		effects.Retire()
+		r.settleDrainEffects()
 		return nil, fmt.Errorf("enemyDrainEffect: %w", err)
 	}
 	run := &campaignNPCDrainRun{}
-	run.BindTargetEffect(r.effectPool, objectID, target.ObjectID, targetSlot)
+	run.bindEffects(effects, plan.ActionGeneration)
 	if !r.trackHealthDrain(sessionKey, generation, objectID, run) {
 		run.End()
 		run.ReleaseEffects()
-		r.releaseAction(sessionKey, generation, objectID)
+		r.settleDrainEffects()
+		r.releaseActionGeneration(sessionKey, generation, objectID, plan.ActionGeneration)
 		return nil, errors.New("enemy drain run unavailable")
 	}
 	schedule := campaignNPCDrainSchedule{
@@ -520,18 +495,32 @@ func (r campaignNPCActionRuntime) produceHealthDrain(
 		Delay:   finalTickDeadline + profile.EndAnimationDelay,
 		Produce: schedule.next,
 	})
-	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, producers)
+	cancel, scheduleErr := r.scheduleDrainProducers(packet, sessionKey, generation, objectID, plan.ActionGeneration, run, producers)
 	if scheduleErr == nil && cancel == nil {
 		scheduleErr = errors.New("nil cancellation")
 	}
 	if scheduleErr != nil {
+		if cancel != nil {
+			cancel()
+		}
 		run.End()
 		run.ReleaseEffects()
 		r.untrackHealthDrain(sessionKey, generation, objectID, run)
-		r.releaseAction(sessionKey, generation, objectID)
+		r.releaseActionGeneration(sessionKey, generation, objectID, plan.ActionGeneration)
+		r.settleDrainEffects()
 		return nil, fmt.Errorf("enemyDrainSchedule: %w", scheduleErr)
 	}
-	return append(startPackets, effectPackets...), nil
+	err = r.publishDrainEffects(sessionKey, generation, objectID, run, effectPackets)
+	if err != nil {
+		cancel()
+		run.End()
+		run.ReleaseEffects()
+		r.untrackHealthDrain(sessionKey, generation, objectID, run)
+		r.releaseActionGeneration(sessionKey, generation, objectID, plan.ActionGeneration)
+		r.settleDrainEffects()
+		return nil, fmt.Errorf("drainPublish: %w", err)
+	}
+	return startPackets, nil
 }
 
 func (r campaignNPCActionRuntime) trackHealthDrain(
@@ -551,7 +540,11 @@ func (r campaignNPCActionRuntime) trackHealthDrain(
 		peerSession.campaignNPCDrainRuns = make(map[uint32]*campaignNPCDrainRun)
 	}
 	if peerSession.campaignNPCDrainRuns[objectID] != nil {
-		return false
+		previous := peerSession.campaignNPCDrainRuns[objectID]
+		if !previous.IsEnded() {
+			return false
+		}
+		previous.ReleaseEffects()
 	}
 	peerSession.campaignNPCDrainRuns[objectID] = run
 	r.registry.sessions[sessionKey] = peerSession
@@ -592,16 +585,8 @@ func (r campaignNPCActionRuntime) stopHealthDrain(
 	if run == nil {
 		return nil, nil
 	}
-	run.End()
-	lease, isLeaseFound := run.ReleaseEffects()
-	if !isLeaseFound {
-		return nil, nil
-	}
-	packets, err := zoneabilityraknet.ChannelDrainTargetEffectRemoval(
-		lease.targetObjectID, lease.targetSlot,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("enemyDrainStopEffect: %w", err)
-	}
-	return packets, nil
+	run.Stop()
+	run.ReleaseEffects()
+	r.settleDrainEffects()
+	return nil, nil
 }

@@ -322,6 +322,13 @@ func (e heroStatusAreaSchedule) apply() ([][]byte, error) {
 				e.definition.Radius {
 			continue
 		}
+		if e.definition.StatusKind == sim.AbilityStatusKindBanish {
+			at := e.runtime.now()
+			if peerSession.zone.NPCs().BanishRemaining(target.Plan.ObjectID, at) > 0 ||
+				peerSession.zone.NPCs().IntangibleRemaining(target.Plan.ObjectID, at) > 0 {
+				continue
+			}
+		}
 		targets = append(targets, target)
 	}
 	messages := make([]raknet.ApplicationMessage, 0, len(targets)+1)
@@ -337,7 +344,13 @@ func (e heroStatusAreaSchedule) apply() ([][]byte, error) {
 		var err error
 		switch e.definition.StatusKind {
 		case sim.AbilityStatusKindBanish:
-			err = peerSession.zone.NPCs().ApplyBanish(target.Plan.ObjectID, expiresAt)
+			var isAdmitted bool
+			isAdmitted, err = peerSession.zone.NPCs().AdmitBanish(
+				target.Plan.ObjectID, e.runtime.now(), expiresAt,
+			)
+			if err == nil && !isAdmitted {
+				continue
+			}
 		case sim.AbilityStatusKindCurse:
 			err = peerSession.zone.NPCs().ApplyCurseProfile(
 				target.Plan.ObjectID, expiresAt, zonenpc.CurseDamageProfile{

@@ -627,8 +627,8 @@ func (r campaignMovementCommandRuntime) handle(
 ) ([][]byte, error) {
 	var err error
 	if commandSession.isSleepingCloudActive(r.now()) {
-		packets, marshalErr := marshalZonePlayerStop(
-			command.Common.ObjectID, commandSession.playerPosition,
+		packets, marshalErr := marshalPlayerMovementCorrection(
+			command.Common.ObjectID, commandSession.playerPosition, command.Common.Orientation,
 		)
 		if marshalErr != nil {
 			return nil, fmt.Errorf("moveSleepingCloud: %w", marshalErr)
@@ -641,8 +641,8 @@ func (r campaignMovementCommandRuntime) handle(
 		return nil, nil
 	}
 	if commandSession.isEnemySleepActive(r.now()) {
-		response, marshalErr := marshalZonePlayerMove(
-			command.Common.ObjectID, commandSession.playerPosition,
+		response, marshalErr := marshalPlayerMovementCorrection(
+			command.Common.ObjectID, commandSession.playerPosition, command.Common.Orientation,
 		)
 		if marshalErr != nil {
 			return nil, fmt.Errorf("moveCampaignSleepMarshal: %w", marshalErr)
@@ -654,8 +654,8 @@ func (r campaignMovementCommandRuntime) handle(
 		return response, nil
 	}
 	if commandSession.isEnemyStunActive(r.now()) {
-		response, marshalErr := marshalZonePlayerMove(
-			command.Common.ObjectID, commandSession.playerPosition,
+		response, marshalErr := marshalPlayerMovementCorrection(
+			command.Common.ObjectID, commandSession.playerPosition, command.Common.Orientation,
 		)
 		if marshalErr != nil {
 			return nil, fmt.Errorf("moveCampaignStunMarshal: %w", marshalErr)
@@ -868,7 +868,6 @@ func (r campaignMovementCommandRuntime) handle(
 	bossPublication := game.CampaignDirectorPublication{}
 	namedBossPlans := make([]zonenpc.SpawnPlan, 0)
 	namedBossPackets := make([][]byte, 0)
-	randomUnlockPublication := game.CampaignDirectorPublication{}
 	supportUnlockPublication := game.CampaignDirectorPublication{}
 	var tutorialAbilityUnlock *unlockraknet.AbilityUnlockRun
 	var tutorialCreatureUnlock *unlockraknet.CreatureUnlockRun
@@ -913,6 +912,14 @@ func (r campaignMovementCommandRuntime) handle(
 		if movementErr != nil {
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("moveCampaignAdvance: %w", movementErr)
+		}
+		orientationErr := peerSession.zone.Hero().SetOrientation(
+			peerSession.binding.UserID, peerSession.generation, peerSession.deployedObjectID,
+			normalizedHeroOrientation(command.Common.Orientation),
+		)
+		if orientationErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("moveHeroOrientation: %w", orientationErr)
 		}
 		if !isStop {
 			targetingPacket, targetingErr := peerSession.stopMissileTargetingPresentation(
@@ -1055,7 +1062,6 @@ func (r campaignMovementCommandRuntime) handle(
 		bossPublication = encounterResult.bossPublication
 		namedBossPlans = encounterResult.namedBossPlans
 		namedBossPackets = encounterResult.namedBossPackets
-		randomUnlockPublication = encounterResult.randomUnlockPublication
 		supportUnlockPublication = encounterResult.supportUnlockPublication
 		tutorialAbilityUnlock = encounterResult.tutorialAbilityUnlock
 		tutorialCreatureUnlock = encounterResult.tutorialCreatureUnlock
@@ -1360,7 +1366,6 @@ func (r campaignMovementCommandRuntime) handle(
 		packet, commandSession, campaignEncounterAdvance{
 			bossPlans: bossPlans, bossPackets: bossPackets,
 			bossPublication:          bossPublication,
-			randomUnlockPublication:  randomUnlockPublication,
 			supportUnlockPublication: supportUnlockPublication,
 			tutorialAbilityUnlock:    tutorialAbilityUnlock,
 			tutorialCreatureUnlock:   tutorialCreatureUnlock,
@@ -1386,12 +1391,13 @@ func (r campaignMovementCommandRuntime) handle(
 		}
 	}
 	for _, decision := range populationDecisions {
-		r.logger.Printf("RakNet campaign population decision for %s marker_set=%q locus=%d kind=%d section=%d component=%d floor=%t ambush=%t provisional_count=%d wanderer_spawn=%t wanderer_count=%d spike_outcome=%d challenge=%d",
+		r.logger.Printf("RakNet campaign population decision for %s marker_set=%q locus=%d kind=%d section=%d component=%d floor=%t ambush=%t provisional_count=%d wanderer_spawn=%t wanderer_count=%d spike_outcome=%d challenge=%d performance_used=%t performance_fallback=%t doing_well=%t",
 			packet.Address, decision.MarkerSetName, decision.LocusID, decision.Kind,
 			decision.Section, decision.NavigationComponentID,
 			decision.IsFloorIntroduction, decision.IsAmbush,
 			decision.ProvisionalCount, decision.Wanderer.IsSpawn, decision.Wanderer.ClumpSize,
-			decision.SpikeOutcome, decision.Challenge)
+			decision.SpikeOutcome, decision.Challenge,
+			decision.SpikeOutcome != 0, decision.IsPerformanceFallback, decision.IsDoingWell)
 	}
 	for _, plan := range populationPlans {
 		r.logger.Printf("RakNet campaign enemy planned for %s object=%d noun=%q marker_set=%q locus=%d kind=%d captain=%t position=(%.3f,%.3f,%.3f)",
@@ -1561,7 +1567,6 @@ type campaignEncounterAdvance struct {
 	bossPublication          game.CampaignDirectorPublication
 	namedBossPlans           []zonenpc.SpawnPlan
 	namedBossPackets         [][]byte
-	randomUnlockPublication  game.CampaignDirectorPublication
 	supportUnlockPublication game.CampaignDirectorPublication
 	tutorialAbilityUnlock    *unlockraknet.AbilityUnlockRun
 	tutorialCreatureUnlock   *unlockraknet.CreatureUnlockRun
@@ -1729,35 +1734,6 @@ func (s campaignTutorialAbilityUnlockStep) clear() {
 			ClearTutorialAbility(s.run)
 	}
 	s.runtime.registry.mutex.Unlock()
-}
-
-type campaignRandomUnlockStep struct {
-	runtime    campaignEncounterRuntime
-	zone       *zone.Zone
-	member     zone.Member
-	sessionKey string
-	slot       uint16
-	markerID   uint32
-}
-
-func (s campaignRandomUnlockStep) produce() ([][]byte, error) {
-	packet, err := unlockraknet.AbilityCount(s.slot, zoneunlock.RandomAbilityBoundary)
-	if err != nil {
-		return nil, fmt.Errorf("campaignRandomUnlockMarshal: %w", err)
-	}
-	isCurrent := s.zone.CompareAndSetAbilityCount(
-		s.member,
-		zoneunlock.InitialAbilityBoundary,
-		zoneunlock.RandomAbilityBoundary,
-	)
-	if !isCurrent {
-		return nil, nil
-	}
-	s.runtime.logger.Printf(
-		"RakNet campaign random ability unlocked for %s marker=%d boundary=%d",
-		s.sessionKey, s.markerID, zoneunlock.RandomAbilityBoundary,
-	)
-	return [][]byte{packet}, nil
 }
 
 type campaignSupportUnlockStep struct {
@@ -1994,31 +1970,6 @@ func (r campaignEncounterRuntime) schedulePublications(
 			r.logger.Printf(
 				"RakNet tutorial Sage published immediately after schedule failure: %v",
 				scheduleErr,
-			)
-		}
-	}
-	if encounter.randomUnlockPublication.TriggerMarkerID != 0 {
-		step := campaignRandomUnlockStep{
-			runtime: r, zone: commandSession.zone,
-			member: zoneResultMember(commandSession), sessionKey: sessionKey,
-			slot:     commandSession.binding.Slot,
-			markerID: encounter.randomUnlockPublication.TriggerMarkerID,
-		}
-		producers := r.registry.producerGuard.scheduledProducers(
-			sessionKey, []raknet.ScheduledPacketProducer{{
-				Delay: zoneunlock.RandomDelay, Produce: step.produce,
-			}},
-		)
-		scheduleErr := scheduleEncounterProducers(packet, producers)
-		if scheduleErr != nil {
-			var err error
-			immediateUnlockPackets, err = step.produce()
-			if err != nil {
-				return nil, nil, fmt.Errorf("campaignRandomUnlockFallback: %w", err)
-			}
-			r.logger.Printf(
-				"RakNet campaign random ability published immediately after schedule failure marker=%d: %v",
-				step.markerID, scheduleErr,
 			)
 		}
 	}

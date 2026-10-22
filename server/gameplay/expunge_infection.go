@@ -15,7 +15,7 @@ func (e *heroInfectionRun) consumeExpunge(targetObjectID uint32, at time.Time) (
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 	entry, isFound := e.infections[targetObjectID]
-	if !isFound || entry.isConsumed || e.isCleaned || e.definition.TickDuration <= 0 {
+	if !isFound || entry.isConsumed || e.isCleaned || !e.isAccepted || e.definition.TickDuration <= 0 {
 		return nil, nil, nil
 	}
 	remaining := max(time.Duration(0), entry.expiresAt.Sub(at))

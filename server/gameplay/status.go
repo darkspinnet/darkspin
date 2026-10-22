@@ -747,6 +747,8 @@ func (r gameplayStatusRuntime) commitCampaignBeamOut(
 	r.registry.retirePeerProjectileFreezesLocked(&peerSession)
 	r.registry.retireFieldMedicBuffsLocked(&peerSession, r.modifierPool)
 	r.registry.retireCampaignTreeOfLifeLocked(&peerSession)
+	r.registry.retireHeroInfectionsLocked(&peerSession)
+	r.registry.retirePlasmaWreathLocked(&peerSession)
 	if snapshot.FinalLevel != 0 {
 		peerSession.binding.AvatarLevel = snapshot.FinalLevel
 		peerSession.binding.AvatarXP = float32(snapshot.FinalExperience)
@@ -1642,6 +1644,7 @@ func (s *gameplayPeerSession) applyDeveloperResetCommand(
 	if plasmaErr == nil {
 		packets = append(packets, plasmaPackets...)
 	}
+	packets = append(packets, s.takeHeroInfections()...)
 	interruptedBasic := s.resetAbilityAdmissionForSwitch()
 	if interruptedBasic != nil {
 		interruptedBasic.Stop()
@@ -1834,6 +1837,7 @@ func (s *gameplayPeerSession) applyDeveloperDefeatCommand() ([][]byte, error) {
 		s.deployedObjectID == 0 || s.isZoneTerminal() {
 		return nil, errors.New("defeat session unavailable")
 	}
+	infectionPackets := s.takeHeroInfections()
 	interruptedBasic := s.resetAbilityAdmissionForSwitch()
 	if interruptedBasic != nil {
 		interruptedBasic.Stop()
@@ -1843,7 +1847,7 @@ func (s *gameplayPeerSession) applyDeveloperDefeatCommand() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("defeatPassive: %w", err)
 	}
-	packets := append([][]byte(nil), passivePackets...)
+	packets := append(infectionPackets, passivePackets...)
 	summonPackets, err := s.stopHeroSummons()
 	if err != nil {
 		return nil, fmt.Errorf("defeatHeroSummon: %w", err)

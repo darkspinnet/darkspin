@@ -68,6 +68,21 @@ func (e campaignNPCActionRuntime) companionDefeat(
 		return nil, fmt.Errorf("companionDelete: %w", err)
 	}
 	actor, isFound := peerSession.zone.Companion().Snapshot(objectID)
+	if isFound {
+		isDeathHandled, deathErr := e.scheduleCompanionDeathLocked(peerSession, actor, timestamp)
+		if deathErr != nil {
+			if e.logger != nil {
+				e.logger.Printf("Pet death callback object=%d: %v", objectID, deathErr)
+			}
+			if peerSession.zone.Companion().FinishDeath(actor) {
+				return append(burnPackets, deletePacket), nil
+			}
+			return burnPackets, nil
+		}
+		if isDeathHandled {
+			return burnPackets, nil
+		}
+	}
 	nounName := e.program.SupportHealerPassive.CompanionNoun
 	if !isFound || nounName == "" || actor.Noun != util.HashID(nounName) || e.timer == nil {
 		e.reserveDefeatedSageCompanionRespawnLocked(peerSession, objectID)

@@ -698,7 +698,7 @@ func snapshotAbilityRuntimes(
 	states = appendActiveAbilityRuntime(states, "quantum_blink", peerSession.heroQuantumBlink != nil)
 	states = appendActiveAbilityRuntime(states, "fire_tempest", peerSession.fireTempestActive != nil)
 	states = appendActiveAbilityRuntime(states, "plasma_sentinel", peerSession.plasmaSentinelActive != nil)
-	states = appendActiveAbilityRuntime(states, "infection", peerSession.heroInfection != nil)
+	states = appendActiveAbilityRuntime(states, "infection", len(peerSession.heroInfections) != 0)
 	states = appendActiveAbilityRuntime(states, "healing_ticks", peerSession.heroHealingTicks != nil)
 	states = appendActiveAbilityRuntime(states, "charge", peerSession.heroCharge != nil)
 	states = appendActiveAbilityRuntime(states, "electron_sphere", peerSession.sphereAttack != nil)

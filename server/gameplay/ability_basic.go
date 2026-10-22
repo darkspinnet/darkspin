@@ -24,7 +24,6 @@ import (
 	zonenavigation "github.com/darkspinnet/darkspin/server/zone/navigation"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
-	objectraknet "github.com/darkspinnet/darkspin/server/zone/object/raknet103"
 )
 
 const campaignHeldMeleeCursorRadius = float32(3)
@@ -1265,6 +1264,11 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 	var plan zoneability.AreaPlan
 	var err error
 	if e.definition.TimeLapse != nil {
+		if current.deployedObjectID != e.command.Common.ObjectID ||
+			current.deployedCreatureIndex >= uint32(len(current.binding.Creatures)) {
+			e.runtime.registry.mutex.Unlock()
+			return nil, nil
+		}
 		e.sourcePosition = game.Vec3(current.playerPosition)
 	}
 	if e.definition.Kind == sim.AbilityKindCone {
@@ -1295,7 +1299,13 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignAreaBasicLivePlan: %w", err)
 	}
-	err = zoneability.ApplyTimeLapse(&plan, current.zone.NPCs(), e.creature, e.runtime.now())
+	dexterity := e.creature.Dexterity
+	if e.definition.TimeLapse != nil {
+		dexterity = current.binding.Creatures[current.deployedCreatureIndex].Dexterity
+	}
+	err = zoneability.ApplyTimeLapseWithDexterity(
+		&plan, current.zone.NPCs(), e.creature, dexterity, e.runtime.now(),
+	)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignTimeLapsePlan: %w", err)
@@ -1744,6 +1754,11 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 		}
 		remainingManaPoint -= manaCost
 	}
+	poisonNovaCue, cueErr := peerSession.preparePoisonNovaCooldownCue(definition.Name, abilityRank, abilityStartTime)
+	if cueErr != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("areaCooldownCue: %w", cueErr)
+	}
 	if !isActiveRequest && !isBasicHeldRepeat {
 		peerSession.basicSequenceSession().SetHeld(isBasicHeldInput)
 	}
@@ -1959,7 +1974,11 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 	}
 	r.logger.Printf("RakNet campaign area basic accepted source=%d targets=%d ability=%q",
 		command.Common.ObjectID, len(areaPlan.Target), areaPlan.Definition.Name)
-	startPackets := append([][]byte(nil), start.Presentation...)
+	startPackets := make([][]byte, 0, len(start.Presentation)+1)
+	if len(poisonNovaCue) != 0 {
+		startPackets = append(startPackets, poisonNovaCue)
+	}
+	startPackets = append(startPackets, start.Presentation...)
 	if definition.Kind == sim.AbilityKindTeleportArea &&
 		definition.ActivationEffectName != "" {
 		exitPacket, exitErr := abilityraknet.CursorAreaImpact(
@@ -2655,93 +2674,11 @@ type campaignCloudLobSchedule struct {
 	releaseResponse      []byte
 }
 
-type campaignCloudPoisonStep struct {
-	schedule campaignCloudLobSchedule
-	index    uint32
-	elapsed  time.Duration
-	isFinal  bool
-}
-
 func (e campaignCloudLobSchedule) isCurrent(
 	peerSession gameplayPeerSession, isFound bool,
 ) bool {
 	return isFound && peerSession.generation == e.generation &&
 		peerSession.cloudLobAttacks[e.projectileObjectID] == e.run
-}
-
-func (e campaignCloudLobSchedule) commitPoison(
-	isLanding bool, timestamp uint64,
-) ([][]byte, error) {
-	e.runtime.registry.mutex.Lock()
-	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	if !e.isCurrent(peerSession, isFound) {
-		e.runtime.registry.mutex.Unlock()
-		return nil, nil
-	}
-	poisonPlan := e.plan.PoisonPlan()
-	var tick zoneability.CloudPoisonTick
-	var err error
-	isTickResolved := true
-	if isLanding {
-		err = peerSession.cloudPoison.AddRegion(
-			e.projectileObjectID, poisonPlan, timestamp,
-		)
-		if err == nil {
-			tick, err = peerSession.cloudPoison.ResolveLanding(
-				peerSession.zone.NPCs(), poisonPlan,
-			)
-		}
-	} else {
-		tick, isTickResolved, err = peerSession.cloudPoison.ResolveTick(
-			peerSession.zone.NPCs(), poisonPlan, timestamp,
-		)
-	}
-	if err != nil {
-		e.runtime.registry.mutex.Unlock()
-		return nil, fmt.Errorf("campaignCloudPoisonTick: %w", err)
-	}
-	if !isTickResolved {
-		e.runtime.registry.mutex.Unlock()
-		return nil, nil
-	}
-	results, err := zoneability.CommitArea(
-		peerSession.zone.Population().Random(),
-		peerSession.zone.NPCs(), tick.Plan, e.creature,
-		peerSession.binding.Difficulty, e.runtime.program.Critical,
-	)
-	if err != nil {
-		e.runtime.registry.mutex.Unlock()
-		return nil, fmt.Errorf("campaignCloudPoisonDamage: %w", err)
-	}
-	transitions := make([]campaignDamageTransition, 0, len(results))
-	for _, result := range results {
-		transition, transitionErr :=
-			peerSession.applyCampaignDamageTransition(result.Damage)
-		if transitionErr != nil {
-			e.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf(
-				"campaignCloudPoisonTransition: %w", transitionErr,
-			)
-		}
-		transitions = append(transitions, transition)
-	}
-	e.runtime.registry.sessions[e.sessionKey] = peerSession
-	e.runtime.registry.mutex.Unlock()
-
-	entryPackets, err := abilityraknet.CloudEntryEffects(
-		e.plan.Definition, e.sourceObjectID, tick.EnteredObjectID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("campaignCloudPoisonEntry: %w", err)
-	}
-	resultPackets, err := e.runtime.damage.publishAreaResults(
-		e.packet, e.sessionKey, e.generation, e.sourceObjectID,
-		timestamp, e.binding, results, transitions, nil, false,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("campaignCloudPoisonPublish: %w", err)
-	}
-	return append(entryPackets, resultPackets...), nil
 }
 
 func (e campaignCloudLobSchedule) produceLaunch() ([][]byte, error) {
@@ -2794,62 +2731,11 @@ func (e campaignCloudLobSchedule) produceLanding() ([][]byte, error) {
 		uint64(e.landingDelay/time.Millisecond)
 	poisonPackets, err := e.commitPoison(true, timestamp)
 	if err != nil {
-		return nil, fmt.Errorf("campaignCloudLobPoison: %w", err)
+		e.runtime.logger.Printf("Sprout accepted landing publication: %v", err)
 	}
-	err = e.scheduleCloudAfterLanding()
-	if err != nil {
-		return nil, fmt.Errorf("cloudContactSchedule: %w", err)
-	}
-	return append(landingPackets, poisonPackets...), nil
-}
-
-func (e campaignCloudLobSchedule) scheduleCloudAfterLanding() error {
-	cloud := e.plan.Definition.CloudLob
-	producers := []raknet.ScheduledPacketProducer{
-		{Delay: cloud.CloudDuration + 300*time.Millisecond, Produce: e.produceCleanup},
-		{Delay: cloud.CloudDuration, Produce: e.produceDeactivate},
-	}
-	limit := uint32(cloud.CloudDuration/cloud.TickDuration) + cloud.TickCount
-	for index := uint32(1); index < limit; index++ {
-		elapsed := time.Duration(index) * cloud.TickDuration
-		step := campaignCloudPoisonStep{schedule: e, index: index, elapsed: elapsed, isFinal: index+1 == limit}
-		producers = append(producers, raknet.ScheduledPacketProducer{Delay: elapsed, Produce: step.produce})
-	}
-	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, producers)
-	if err != nil {
-		return fmt.Errorf("cloudTimers: %w", err)
-	}
-	if cancel == nil {
-		return errors.New("cloud timers cancellation unavailable")
-	}
-	return nil
-}
-
-func (e campaignCloudLobSchedule) produceCleanup() ([][]byte, error) {
-	e.runtime.registry.mutex.RLock()
-	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := e.isCurrent(peerSession, isFound)
-	e.runtime.registry.mutex.RUnlock()
-	if !isCurrent {
-		return nil, nil
-	}
-	packet, err := objectraknet.Delete(
-		[]uint32{e.cloudObjectID},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("campaignCloudLobCleanup: %w", err)
-	}
-	return [][]byte{packet}, nil
-}
-
-func (e campaignCloudLobSchedule) produceDeactivate() ([][]byte, error) {
-	e.runtime.registry.mutex.Lock()
-	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	if e.isCurrent(peerSession, isFound) {
-		peerSession.cloudPoison.RemoveRegion(e.projectileObjectID)
-		e.runtime.registry.sessions[e.sessionKey] = peerSession
-	}
-	e.runtime.registry.mutex.Unlock()
+	// Queue accepted world presentation before arming any periodic damage.
+	// Source transport departure cannot discard the co-op cloud baseline.
+	e.publishCloudLanding(append(landingPackets, poisonPackets...))
 	return nil, nil
 }
 
@@ -2864,56 +2750,13 @@ func (e campaignCloudLobSchedule) produceRelease() ([][]byte, error) {
 	return [][]byte{e.releaseResponse}, nil
 }
 
-func (e campaignCloudPoisonStep) produce() ([][]byte, error) {
-	deadline := e.schedule.landingDelay + e.elapsed
-	timestamp := e.schedule.packet.SourceTime +
-		uint64(deadline/time.Millisecond)
-	packets, err := e.schedule.commitPoison(false, timestamp)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"campaignCloudPoison[%d]: %w", e.index, err,
-		)
-	}
-	if !e.isFinal {
-		return packets, nil
-	}
-	e.schedule.runtime.registry.mutex.Lock()
-	peerSession, isFound :=
-		e.schedule.runtime.registry.sessions[e.schedule.sessionKey]
-	if e.schedule.isCurrent(peerSession, isFound) {
-		delete(
-			peerSession.cloudLobAttacks,
-			e.schedule.projectileObjectID,
-		)
-		peerSession.cloudPoison.RemoveRegion(
-			e.schedule.projectileObjectID,
-		)
-		e.schedule.run.cancel = nil
-		e.schedule.runtime.registry.sessions[e.schedule.sessionKey] =
-			peerSession
-	}
-	e.schedule.runtime.registry.mutex.Unlock()
-	return packets, nil
-}
-
-func (e campaignCloudLobSchedule) poisonProducer(
-	index uint32, elapsed time.Duration, isFinal bool,
-) raknet.ScheduledPacketProducer {
-	step := campaignCloudPoisonStep{
-		schedule: e, index: index, elapsed: elapsed, isFinal: isFinal,
-	}
-	return raknet.ScheduledPacketProducer{
-		Delay: e.landingDelay + elapsed, Produce: step.produce,
-	}
-}
-
 func (e campaignCloudLobSchedule) fail(scheduleErr error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := e.isCurrent(peerSession, isFound)
 	if isCurrent {
 		delete(peerSession.cloudLobAttacks, e.projectileObjectID)
-		peerSession.cloudPoison.RemoveRegion(e.projectileObjectID)
+		e.removeCloudPoisonRegionLocked(peerSession)
 		peerSession.basicSequenceSession().ReleaseHeld()
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 	}

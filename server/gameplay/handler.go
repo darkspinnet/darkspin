@@ -1449,10 +1449,17 @@ func newGameplayHandlerWithDependencies(
 	}
 	if dependency.registerDiscard != nil {
 		dependency.registerDiscard(func(gameID uint32) {
+			sessionRegistry.mutex.Lock()
+			fixtureTicket := sessionRegistry.beginFixtureBlastDiscardLocked(gameID)
+			sessionRegistry.mutex.Unlock()
+			fixtureTicket.wait()
 			sessionRegistry.lifecycle.discardGame(
 				gameID, modifierInstancePool, attachedEffectPool,
 			)
 			zoneRegistry.Discard(uint64(gameID))
+			sessionRegistry.mutex.Lock()
+			fixtureTicket.finishLocked()
+			sessionRegistry.mutex.Unlock()
 		})
 	}
 	if dependency.registerDiscardMember != nil {
@@ -1879,9 +1886,16 @@ func marshalZoneHeroRoster(
 	if err != nil {
 		return nil, fmt.Errorf("rosterDeploy: %w", err)
 	}
+	orientation := roster.Orientation
+	if orientation == (game.Quaternion{}) {
+		orientation.W = 1
+	}
 	placementPacket, err := raknet.MarshalApplication(raknet.ObjectTeleportMessage{
 		ObjectID: zonehero.ObjectID(roster.PlayerSlot, roster.CreatureIndex),
-		Position: raknet.Vector3(roster.Position), Orientation: raknet.Quaternion{W: 1},
+		Position: raknet.Vector3(roster.Position),
+		Orientation: raknet.Quaternion{
+			X: orientation.X, Y: orientation.Y, Z: orientation.Z, W: orientation.W,
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("rosterPlacement: %w", err)
@@ -1916,7 +1930,7 @@ func marshalOtherZoneHeroRosters(
 		rosterPackets, err := marshalZoneHeroRoster(
 			zoneprojection.HeroRoster{
 				UserID: member.UserID, PlayerSlot: member.Slot,
-				Roster: roster, Position: actor.Position,
+				Roster: roster, Position: actor.Position, Orientation: actor.Orientation,
 				CreatureIndex: actor.CreatureIndex,
 			},
 		)
@@ -2100,15 +2114,21 @@ func (r gameplayJoinRuntime) handle(
 		return nil, errors.New("hello transport generation superseded")
 	}
 	if isSameMember {
-		r.registry.lifecycle.disconnectMember(
+		isDisconnected := r.registry.lifecycle.disconnectMember(
 			sessionKey, r.modifierPool, r.effectPool,
 		)
+		if !isDisconnected {
+			return nil, errors.New("hello fixture publication in progress")
+		}
 	}
 	activeSessionKeys := r.registry.activeSessionKeys(memberKey, sessionKey)
 	for _, activeSessionKey := range activeSessionKeys {
-		r.registry.lifecycle.disconnectMember(
+		isDisconnected := r.registry.lifecycle.disconnectMember(
 			activeSessionKey, r.modifierPool, r.effectPool,
 		)
+		if !isDisconnected {
+			return nil, errors.New("supersede fixture publication in progress")
+		}
 		if r.logger != nil {
 			r.logger.Printf(
 				"RakNet authenticated gameplay endpoint superseded game=%d user=%d old=%s new=%s",
@@ -2119,6 +2139,14 @@ func (r gameplayJoinRuntime) handle(
 	contextErr = ctx.Err()
 	if contextErr != nil {
 		return nil, fmt.Errorf("replaceContext: %w", contextErr)
+	}
+	r.registry.mutex.RLock()
+	preflightSession, isPreflightFound := r.registry.sessions[sessionKey]
+	retainedCandidate := r.registry.retainedSessions[memberKey]
+	isFixtureProducing := isPreflightFound && r.registry.isFixtureProducingLocked(preflightSession)
+	r.registry.mutex.RUnlock()
+	if isFixtureProducing {
+		return nil, errors.New("admit fixture publication in progress")
 	}
 	retainedSession, isRetained := r.registry.takeRetained(ctx, memberKey)
 	if isRetained && (retainedSession.binding.Level != binding.Level ||
@@ -2212,19 +2240,51 @@ func (r gameplayJoinRuntime) handle(
 		return nil, errors.New("gameplay registry closed")
 	}
 	previousSession, isPreviousFound := r.registry.sessions[sessionKey]
+	var fixtureBatch fixtureHandoffBatch
 	if isPreviousFound {
+		var isDeferred bool
+		fixtureBatch, isDeferred = r.registry.prepareFixtureHandoffLocked(&previousSession)
+		if isDeferred {
+			r.registry.mutex.Unlock()
+			if isRetained {
+				restore := fixtureRetainedJoinRestore{registry: r.registry, key: memberKey, retained: retainedCandidate}
+				restore.restore()
+			}
+			return nil, errors.New("install fixture publication in progress")
+		}
 		previousSession.retireChannelsLocked()
 		previousSession.retireAuraAreasLocked()
 		previousSession.retireChargeRunsLocked()
 		r.registry.retirePeerProjectileFreezesLocked(&previousSession)
 		r.registry.retireFieldMedicBuffsLocked(&previousSession, r.modifierPool)
 		r.registry.retireCampaignTreeOfLifeLocked(&previousSession)
+		r.registry.retireHeroInfectionsLocked(&previousSession)
+		r.registry.retirePlasmaWreathLocked(&previousSession)
 	}
 	r.registry.sessions[sessionKey] = nextSession
 	r.registry.memberTransports[memberKey] = transportGeneration
 	r.registry.memberEndpoints[memberKey] = sessionKey
+	if isRetained {
+		beastBindErr := nextSession.rebindBeastPassive(packet, sessionKey)
+		if beastBindErr != nil && r.logger != nil {
+			r.logger.Printf("RakNet rejoining Savage adapter failed user=%d: %v", nextSession.binding.UserID, beastBindErr)
+		}
+		beastErr := nextSession.scheduleRetainedBeastPassive()
+		if beastErr != nil && r.logger != nil {
+			r.logger.Printf("RakNet rejoining Savage scheduling failed user=%d: %v", nextSession.binding.UserID, beastErr)
+		}
+	}
+	if isRetained {
+		member := r.registry.sessions[sessionKey]
+		r.registry.replayChannelEffectsLocked(&member)
+		r.registry.sessions[sessionKey] = member
+	}
+	r.registry.commitChannelRemovalsLocked()
 	r.registry.mutex.Unlock()
-	if isPreviousFound {
+	fixtureBatch.complete()
+	isSameWorldMembership := previousSession.zone == nextSession.zone &&
+		previousSession.generation == nextSession.generation
+	if isPreviousFound && !isSameWorldMembership {
 		stopGameplayPeerSession(previousSession, r.modifierPool, r.effectPool)
 	}
 	if isRetained && r.logger != nil {
@@ -2433,9 +2493,12 @@ func (r gameplayJoinRuntime) retainReplacedEndpoint(
 	if !isCurrent {
 		return nil
 	}
-	r.registry.lifecycle.disconnectMember(
+	isDisconnected := r.registry.lifecycle.disconnectMember(
 		sessionKey, r.modifierPool, r.effectPool,
 	)
+	if !isDisconnected {
+		return errors.New("replace fixture publication in progress")
+	}
 	return nil
 }
 
@@ -2529,6 +2592,7 @@ func (r gameplayPendingRuntime) poll(
 		return nil, fmt.Errorf("pickupPursuitPoll: %w", err)
 	}
 	r.registry.mutex.Lock()
+	r.registry.commitChannelRemovalsLocked()
 	peerSession, isFound = r.registry.sessions[packet.Address.String()]
 	// Follow must advance while the ally is moving, even between input packets.
 	playerFollowPublications := r.registry.updatePlayerFollowersLocked(
@@ -2573,6 +2637,7 @@ func (r gameplayPendingRuntime) poll(
 				r.registry.mutex.Unlock()
 				return nil, fmt.Errorf("lavaPoll: %w", lavaErr)
 			}
+			lavaPackets = append(lavaPackets, r.registry.takePlasmaWreathRestorationLocked(&peerSession)...)
 			peerSession.queueStatDelta(lavaDelta)
 			rootHazardPackets = append(rootHazardPackets, lavaPackets...)
 			petBurnPackets, petBurnDelta, petBurnErr := peerSession.pollPetPlasmaBurns(
@@ -2690,6 +2755,9 @@ func (r gameplayPendingRuntime) poll(
 			if isCurrent && currentSession.transportGeneration == packet.TransportGeneration {
 				currentSession.commitPendingPackets(pendingPacketBatchID)
 				r.registry.sessions[packet.Address.String()] = currentSession
+				r.registry.commitPlasmaWreathPublicationsLocked()
+				r.registry.commitOmniShieldRemovalsLocked()
+				r.registry.commitChannelRemovalsLocked()
 			}
 			r.registry.mutex.Unlock()
 		})
@@ -3097,6 +3165,7 @@ func (r gameplayPendingRuntime) consumePlayerResourceCommand(
 		r.registry.mutex.Unlock()
 		return nil, false, fmt.Errorf("resourceApply: %w", applyErr)
 	}
+	packets = append(packets, r.registry.takePlasmaWreathRestorationLocked(&currentSession)...)
 	binding := currentSession.binding
 	r.registry.sessions[packet.Address.String()] = currentSession
 	r.registry.mutex.Unlock()
@@ -3209,6 +3278,14 @@ func (r gameplayPendingRuntime) consumePlayerEventCommand(
 		return [][]byte{completionPacket}, true, nil
 	}
 	if command.Name == "defeat" {
+		if currentSession.binding.Mode != game.ModeChain || currentSession.squad == nil ||
+			currentSession.deployedObjectID == 0 || currentSession.isZoneTerminal() {
+			r.registry.mutex.Unlock()
+			return nil, false, errors.New("eventDefeatApply: defeat session unavailable")
+		}
+		r.registry.retireHeroInfectionsLocked(&currentSession)
+		r.registry.retirePlasmaWreathLocked(&currentSession)
+		r.registry.retireOmniShieldsLocked(&currentSession, 0)
 		packets, defeatErr := currentSession.applyDeveloperDefeatCommand()
 		if defeatErr != nil {
 			r.registry.mutex.Unlock()
@@ -3239,17 +3316,37 @@ func (r gameplayPendingRuntime) consumePlayerEventCommand(
 		r.logger.Printf("RakNet developer kill defeated %d enemies for %s", len(result), packet.Address)
 		return packets, true, nil
 	}
+	var fixtureTicket *fixtureDiscard
+	if command.Name == "reset" {
+		fixtureTicket = r.registry.beginFixtureBlastDiscardLocked(currentSession.binding.GameID)
+		r.registry.mutex.Unlock()
+		fixtureTicket.wait()
+		r.registry.mutex.Lock()
+		currentSession, isCurrentFound = r.registry.sessions[packet.Address.String()]
+		isCurrent = isCurrentFound && !r.registry.isClosed &&
+			currentSession.generation == queuedSession.generation &&
+			currentSession.transportGeneration == queuedSession.transportGeneration &&
+			currentSession.zone == queuedSession.zone
+		if !isCurrent {
+			fixtureTicket.finishLocked()
+			r.registry.mutex.Unlock()
+			return nil, false, errors.New("eventResetSession: replaced")
+		}
+	}
 	if command.Name == "reset" && currentSession.securityTransfer != nil {
 		currentSession.securityTransfer.Stop()
 		currentSession.securityTransfer = nil
 	}
 	if command.Name == "reset" {
 		currentSession.retireChannelsLocked()
+		r.registry.retireOmniShieldsLocked(&currentSession, 0)
 		currentSession.retireAuraAreasLocked()
 		currentSession.retireChargeRunsLocked()
 		r.registry.retirePeerProjectileFreezesLocked(&currentSession)
 		r.registry.retireFieldMedicBuffsLocked(&currentSession, r.modifierPool)
 		r.registry.retireCampaignTreeOfLifeLocked(&currentSession)
+		r.registry.retireHeroInfectionsLocked(&currentSession)
+		r.registry.retirePlasmaWreathLocked(&currentSession)
 		r.registry.clearActionLeasesLocked(
 			packet.Address.String(), currentSession.transportGeneration,
 		)
@@ -3258,6 +3355,9 @@ func (r gameplayPendingRuntime) consumePlayerEventCommand(
 		r.registry, command, r.now(), packet.SourceTime,
 	)
 	if applyErr != nil {
+		if fixtureTicket != nil {
+			fixtureTicket.finishLocked()
+		}
 		r.registry.mutex.Unlock()
 		return nil, false, fmt.Errorf("eventApply: %w", applyErr)
 	}
@@ -3295,6 +3395,10 @@ func (r gameplayPendingRuntime) consumePlayerEventCommand(
 	}
 	generation := currentSession.generation
 	r.registry.sessions[packet.Address.String()] = currentSession
+	if command.Name == "reset" {
+		r.registry.commitChannelRemovalsLocked()
+		fixtureTicket.finishLocked()
+	}
 	r.registry.mutex.Unlock()
 	if command.Name == "reset" {
 		restartedEnemyPackets, restartErr := r.damage.npc.scheduleFirstActions(
@@ -3840,6 +3944,7 @@ func (r gameplayProjectionRuntime) publishEnemyDamage(
 	if !isCurrent {
 		return errors.New("damage projection session replaced")
 	}
+	r.recordOperativeCageDamage(sessionKey, generation, damage)
 	err := peerSession.zone.RecordNPCDamage(context.Background(), damage)
 	if err != nil {
 		r.logger.Printf(
@@ -4453,11 +4558,30 @@ func stopGameplayPeerSession(
 ) {
 	leaveGameplayPeerMembership(peerSession)
 	stopGameplayPeerRuntime(&peerSession, modifierInstancePool, effectPool)
+	peerSession.settleChannelRemovals()
 }
 
 func leaveGameplayPeerMembership(peerSession gameplayPeerSession) {
+	peerSession.retireOmniShields()
 	if peerSession.zone == nil {
 		return
+	}
+	if peerSession.beastPetResurrection != nil {
+		registry := peerSession.beastPetResurrection.runtime.registry
+		registry.mutex.Lock()
+		packets, err := peerSession.stopBeastPet()
+		if err != nil {
+			log.Printf("RakNet Savage membership cleanup failed user=%d: %v", peerSession.binding.UserID, err)
+		}
+		for sessionKey, member := range registry.sessions {
+			if member.zone != peerSession.zone || member.isRejoinPending ||
+				member.binding.UserID == peerSession.binding.UserID {
+				continue
+			}
+			member.queueCampaignPackets(packets)
+			registry.sessions[sessionKey] = member
+		}
+		registry.mutex.Unlock()
 	}
 	if peerSession.sagePassive != nil {
 		requests, err := peerSession.sagePassive.Stop()
@@ -4468,6 +4592,9 @@ func leaveGameplayPeerMembership(peerSession gameplayPeerSession) {
 	peerSession.zone.Leave(
 		peerSession.binding.UserID, peerSession.generation,
 	)
+	// Permanent departure can settle the final semantic-member deletion lease.
+	peerSession.retireOmniShields()
+	peerSession.settleChannelRemovals()
 }
 
 // stopGameplayPeerRuntime quiesces connection-local gameplay work without
@@ -4593,9 +4720,7 @@ func stopGameplayPeerRuntime(
 	for _, run := range peerSession.heroStatusAreas {
 		run.Stop()
 	}
-	if peerSession.heroInfection != nil {
-		peerSession.heroInfection.Stop()
-	}
+	peerSession.stopHeroInfections()
 	if peerSession.heroHealingTicks != nil {
 		peerSession.heroHealingTicks.Stop()
 	}
@@ -4688,7 +4813,11 @@ func stopGameplayPeerRuntime(
 			errors.Join(fieldMedicHeroErr, fieldMedicCompanionErr))
 	}
 	if peerSession.plasmaWreathRun != nil {
-		_, _ = peerSession.plasmaWreathRun.Stop()
+		wreathPackets, wreathErr := peerSession.stopPlasmaWreath(time.Now())
+		peerSession.queueCampaignPackets(wreathPackets)
+		if wreathErr != nil {
+			log.Printf("Plasma Wreath teardown user=%d: %v", peerSession.binding.UserID, wreathErr)
+		}
 	}
 	if peerSession.rideCancel != nil {
 		peerSession.rideCancel()
@@ -5369,7 +5498,7 @@ func (r gameplaySetupRuntime) publishCampaign(
 		rosterPackets, rosterErr := marshalZoneHeroRoster(
 			zoneprojection.HeroRoster{
 				UserID: peerSession.binding.UserID, PlayerSlot: peerSession.binding.Slot,
-				Roster: peerSession.binding.Roster(), Position: heroActor.Position,
+				Roster: peerSession.binding.Roster(), Position: heroActor.Position, Orientation: heroActor.Orientation,
 				CreatureIndex: heroActor.CreatureIndex,
 			},
 		)
@@ -6204,9 +6333,9 @@ func (p campaignPreparation) initialize(
 			return fmt.Errorf("statusChainSecurityObjectIDs: %w", securityErr)
 		}
 	}
-	objectiveSession, planErr := zoneobjective.NewSession(
+	objectiveSession, planErr := zoneobjective.NewDifficultySession(
 		ctx, p.program.ObjectiveInput, scriptObjects, uint8(binding.Slot),
-		binding.Mode,
+		binding.Difficulty, p.program.CrystalMinorStageCount, binding.Mode,
 	)
 	if planErr != nil {
 		return fmt.Errorf("statusChainObjective: %w", planErr)
@@ -6349,6 +6478,7 @@ func (p campaignPreparation) initialize(
 	}
 	peerSession.tutorialHorde = tutorialHorde
 	peerSession.zone = zone
+	peerSession.nightmareRootDamageReadyAts = nil
 	if binding.IsCheckpointRestore {
 		crystalInventory, isCrystalFound := peerSession.zone.CrystalInventory(
 			binding.UserID, peerSession.generation,

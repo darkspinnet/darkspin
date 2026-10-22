@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
@@ -48,12 +49,14 @@ func fixtureBlastProfile(nounName string) (zonenpc.ActionProfile, bool) {
 }
 
 type campaignFixtureBlastStep struct {
-	runtime    campaignDamageRuntime
-	packet     raknet.Packet
-	sessionKey string
-	generation uint64
-	source     zonenpc.Snapshot
-	timestamp  uint64
+	runtime     campaignDamageRuntime
+	packet      raknet.Packet
+	sessionKey  string
+	generation  uint64
+	source      zonenpc.Snapshot
+	npc         *zonenpc.Session
+	publication *campaignFixturePublication
+	timestamp   uint64
 }
 
 func (e campaignFixtureBlastStep) produce() ([][]byte, error) {
@@ -63,7 +66,8 @@ func (e campaignFixtureBlastStep) produce() ([][]byte, error) {
 	}
 	e.runtime.registry.mutex.RLock()
 	member, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := isFound && member.generation == e.generation && !member.isZoneTerminal()
+	isCurrent := isFound && member.generation == e.generation && !member.isZoneTerminal() &&
+		member.zone != nil && (e.npc == nil || member.zone.NPCs() == e.npc)
 	if !isCurrent {
 		e.runtime.registry.mutex.RUnlock()
 		return nil, nil
@@ -87,14 +91,15 @@ func (e campaignFixtureBlastStep) produce() ([][]byte, error) {
 			}
 			poisonPackets, poisonErr := e.startBurn(target.Plan.ObjectID, profile)
 			if poisonErr != nil {
-				return nil, fmt.Errorf("pustulePoison: %w", poisonErr)
+				return packets, fmt.Errorf("pustulePoison: %w", poisonErr)
 			}
 			packets = append(packets, poisonPackets...)
+			e.publication.recordPreparedPackets(poisonPackets)
 			continue
 		}
 		hitPackets, isSurviving, err := e.damage(target.Plan.ObjectID, profile, false)
 		if err != nil {
-			return nil, fmt.Errorf("fixtureBlastHit: %w", err)
+			return append(packets, hitPackets...), fmt.Errorf("fixtureBlastHit: %w", err)
 		}
 		packets = append(packets, hitPackets...)
 		if !isSurviving {
@@ -102,18 +107,44 @@ func (e campaignFixtureBlastStep) produce() ([][]byte, error) {
 		}
 		burnPackets, burnErr := e.startBurn(target.Plan.ObjectID, profile)
 		if burnErr != nil {
-			return nil, fmt.Errorf("fixtureBlastBurn: %w", burnErr)
+			return packets, fmt.Errorf("fixtureBlastBurn: %w", burnErr)
 		}
 		packets = append(packets, burnPackets...)
+		e.publication.recordPreparedPackets(burnPackets)
 	}
 	return packets, nil
 }
 
 func (e campaignFixtureBlastStep) damage(targetID uint32, profile zonenpc.ActionProfile, isDOT bool) ([][]byte, bool, error) {
+	packets, isSurviving, err := e.damageOwned(targetID, profile, isDOT, nil)
+	if err != nil {
+		return packets, false, fmt.Errorf("fixtureOwned: %w", err)
+	}
+	return packets, isSurviving, nil
+}
+
+func (e campaignFixtureBlastStep) damageOwned(targetID uint32, profile zonenpc.ActionProfile, isDOT bool, run *campaignNPCModifierRun) ([][]byte, bool, error) {
+	packets, isSurviving, err := e.damageProjected(targetID, profile, isDOT, run, nil)
+	if err != nil {
+		return packets, false, fmt.Errorf("fixtureProjected: %w", err)
+	}
+	return packets, isSurviving, nil
+}
+
+func (e campaignFixtureBlastStep) damageProjected(targetID uint32, profile zonenpc.ActionProfile, isDOT bool, run *campaignNPCModifierRun, projected *game.DamageRange) ([][]byte, bool, error) {
 	r := e.runtime
 	r.registry.mutex.Lock()
 	member, isFound := r.registry.sessions[e.sessionKey]
-	if !isFound || member.generation != e.generation || member.isZoneTerminal() {
+	if !isFound || member.generation != e.generation || member.isZoneTerminal() ||
+		member.zone == nil || (e.npc != nil && member.zone.NPCs() != e.npc) {
+		r.registry.mutex.Unlock()
+		return nil, false, nil
+	}
+	if e.publication != nil && e.publication.burn == nil && r.registry.isFixtureDiscardingLocked(member.binding.GameID) {
+		r.registry.mutex.Unlock()
+		return nil, false, nil
+	}
+	if run != nil && (member.campaignNPCModifiers[run.instanceID] != run || !run.isActive() || run.fixtureBurn.isRetiring) {
 		r.registry.mutex.Unlock()
 		return nil, false, nil
 	}
@@ -122,10 +153,24 @@ func (e campaignFixtureBlastStep) damage(targetID uint32, profile zonenpc.Action
 		r.registry.mutex.Unlock()
 		return nil, false, nil
 	}
+	if run != nil && profile.ModifierName == "LifePlagueSpread" && member.zone.NPCs().IsInfectionImmune(targetID, r.npc.now()) {
+		r.registry.mutex.Unlock()
+		return nil, true, nil
+	}
 	plan, err := zonenpc.PlanRetainedAreaAttackWithProfile(e.source, targetID, target.Plan.Position, profile)
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, false, fmt.Errorf("fixtureDamagePlan: %w", err)
+	}
+	if run != nil && run.fixtureBurn != nil {
+		plan.Damage, err = run.fixtureBurn.projectDamage(profile)
+		if err != nil {
+			r.registry.mutex.Unlock()
+			return nil, false, fmt.Errorf("fixtureTickProjection: %w", err)
+		}
+	}
+	if projected != nil {
+		plan.Damage = *projected
 	}
 	result, err := zonenpc.CommitAttack(member.zone.NPCRandom(), plan, 0, r.npc.program.Critical)
 	if err != nil {
@@ -137,6 +182,7 @@ func (e campaignFixtureBlastStep) damage(targetID uint32, profile zonenpc.Action
 		return nil, true, nil
 	}
 	sourcePosition := e.source.Plan.Position
+	acceptedAt := r.npc.now()
 	damage, err := member.zone.NPCs().Hit(zonenpc.HitRequest{
 		SourceObjectID: e.source.Plan.ObjectID, TargetObjectID: targetID,
 		Damage: result.Damage, SourcePosition: &sourcePosition, IsArea: !isDOT, IsPeriodic: isDOT,
@@ -149,51 +195,77 @@ func (e campaignFixtureBlastStep) damage(targetID uint32, profile zonenpc.Action
 		r.registry.mutex.Unlock()
 		return nil, false, fmt.Errorf("fixtureDamageCommit: %w", err)
 	}
-	transition, err := member.applyCampaignDamageTransition(damage)
+	transition, err := member.applyCampaignDamageTransitionWithKill(damage, false)
+	spreadTargets := make([]uint32, 0)
+	if err == nil && run != nil && profile.ModifierName == "LifePlagueSpread" && !damage.IsDamageImmune && damage.Damage > 0 {
+		for _, candidate := range member.zone.NPCs().LiveSnapshots() {
+			if candidate.Plan.ObjectID == targetID || candidate.Faction != target.Faction ||
+				candidate.Plan.Position.Sub(target.Plan.Position).Length() > 5 ||
+				member.zone.NPCs().IsInfectionSpreadBlocked(candidate.Plan.ObjectID, r.npc.now()) {
+				continue
+			}
+			spreadTargets = append(spreadTargets, candidate.Plan.ObjectID)
+		}
+	}
 	r.registry.sessions[e.sessionKey] = member
 	r.registry.mutex.Unlock()
 	if err != nil {
 		return nil, false, fmt.Errorf("fixtureDamageTransition: %w", err)
 	}
-	packets, err := e.publishDamage(target, damage, transition)
+	packets, err := e.publishDamage(target, damage, transition, acceptedAt)
 	if err != nil {
-		return nil, false, fmt.Errorf("fixtureDamagePublish: %w", err)
+		return packets, false, fmt.Errorf("fixtureDamagePublish: %w", err)
+	}
+	for _, objectID := range spreadTargets {
+		spreadPackets, spreadErr := e.startContagiousBurn(objectID, run)
+		if spreadErr != nil {
+			return packets, false, fmt.Errorf("fixtureDamageSpread: %w", spreadErr)
+		}
+		packets = append(packets, spreadPackets...)
 	}
 	isSurviving := !damage.IsDefeated && (isDOT || (!damage.IsDamageImmune && damage.Damage > 0))
 	return packets, isSurviving, nil
 }
 
-func (e campaignFixtureBlastStep) publishDamage(target zonenpc.Snapshot, damage zonenpc.DamageResult, transition campaignDamageTransition) ([][]byte, error) {
+func (e campaignFixtureBlastStep) publishDamage(target zonenpc.Snapshot, damage zonenpc.DamageResult, transition campaignDamageTransition, acceptedAt time.Time) ([][]byte, error) {
 	r := e.runtime
 	packets := make([][]byte, 0)
 	if damage.IsDefeated {
 		definition, err := campaignNPCDeathDefinition(target, r.npc.program.NPCDeathPhysics(target.Plan.NounName))
 		if err != nil {
-			return nil, fmt.Errorf("fixtureDeathDefinition: %w", err)
+			return packets, fmt.Errorf("fixtureDeathDefinition: %w", err)
 		}
 		publication, err := marshalZoneNPCDamage(definition, zoneNPCDamageResult{
 			hitPoint: damage.HitPoint, isDefeated: true, isFound: true,
 		}, e.source.Plan.ObjectID, damage.ResolvedDamage, false, e.timestamp, r.effectPool)
 		if err != nil {
-			return nil, fmt.Errorf("fixtureDeathMarshal: %w", err)
+			return packets, fmt.Errorf("fixtureDeathMarshal: %w", err)
+		}
+		packets = append(packets, publication.packets...)
+		e.publication.recordPreparedPackets(publication.packets)
+		isInitial := e.publication != nil && e.publication.burn == nil
+		if isInitial {
+			e.publication.stageDeath(campaignFixtureDeath{run: publication.deathRun, targetID: target.Plan.ObjectID, acceptedAt: acceptedAt})
 		}
 		err = r.projection.publishEnemyDeath(e.sessionKey, e.generation, publication.deathRun.DrainProjection())
 		if err != nil {
 			publication.deathRun.Stop()
-			return nil, fmt.Errorf("fixtureDeathProjection: %w", err)
+			return packets, fmt.Errorf("fixtureDeathProjection: %w", err)
 		}
-		err = r.npc.scheduleEnemyDeath(e.packet, e.sessionKey, e.generation, target.Plan.ObjectID, publication.deathRun)
-		if err != nil {
-			publication.deathRun.Stop()
-			return nil, fmt.Errorf("fixtureDeathSchedule: %w", err)
+		if !isInitial {
+			err = r.npc.scheduleEnemyDeath(e.packet, e.sessionKey, e.generation, target.Plan.ObjectID, publication.deathRun)
+			if err != nil {
+				publication.deathRun.Stop()
+				return packets, fmt.Errorf("fixtureDeathSchedule: %w", err)
+			}
 		}
-		packets = append(packets, publication.packets...)
 		target.IsDefeated = true
 		lootPackets, lootErr := r.npc.spawnLoot(e.sessionKey, e.generation, target, e.timestamp)
-		if lootErr != nil {
-			return nil, fmt.Errorf("fixtureDeathLoot: %w", lootErr)
-		}
 		packets = append(packets, lootPackets...)
+		e.publication.recordPreparedPackets(lootPackets)
+		if lootErr != nil {
+			return packets, fmt.Errorf("fixtureDeathLoot: %w", lootErr)
+		}
 	} else {
 		err := r.projection.publishEnemyDamage(e.sessionKey, e.generation, zonenpc.DamageEvent{
 			SourceObjectID: e.source.Plan.ObjectID, TargetObjectID: target.Plan.ObjectID,
@@ -201,37 +273,58 @@ func (e campaignFixtureBlastStep) publishDamage(target zonenpc.Snapshot, damage 
 			IsDamageImmune: damage.IsDamageImmune,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("fixtureHitProjection: %w", err)
+			return packets, fmt.Errorf("fixtureHitProjection: %w", err)
 		}
 	}
 	transitionPackets, err := r.publishTransition(e.packet, e.sessionKey, e.generation, transition, e.timestamp)
+	packets = append(packets, transitionPackets...)
+	e.publication.recordPreparedPackets(transitionPackets)
 	if err != nil {
-		return nil, fmt.Errorf("fixtureHitTransition: %w", err)
+		return packets, fmt.Errorf("fixtureHitTransition: %w", err)
 	}
-	return append(packets, transitionPackets...), nil
+	return packets, nil
 }
 
 func (e campaignDamageRuntime) scheduleFixtureBlast(packet raknet.Packet, sessionKey string, generation uint64, objectID uint32, timestamp uint64) error {
-	e.registry.mutex.RLock()
+	// Source capture and index admission share one registry transaction so a
+	// reset cannot complete between the defeated snapshot and its ownership.
+	e.registry.mutex.Lock()
 	member, isFound := e.registry.sessions[sessionKey]
-	if !isFound || member.generation != generation || member.zone == nil {
-		e.registry.mutex.RUnlock()
+	if !isFound || member.generation != generation || member.transportGeneration != packet.TransportGeneration || member.zone == nil || member.isZoneTerminal() || e.registry.isClosed || e.registry.isFixtureDiscardingLocked(member.binding.GameID) {
+		e.registry.mutex.Unlock()
 		return nil
 	}
 	source, isSourceFound := member.zone.NPCs().NPC(objectID)
-	e.registry.mutex.RUnlock()
 	profile, isKnown := fixtureBlastProfile(source.Plan.NounName)
 	if !isSourceFound || !source.IsDefeated || !isKnown || profile.Radius <= 0 {
+		e.registry.mutex.Unlock()
 		return nil
 	}
 	step := campaignFixtureBlastStep{runtime: e, packet: packet, sessionKey: sessionKey,
-		generation: generation, source: source, timestamp: timestamp}
-	cancel, err := scheduleNPCProducers(e.registry, packet, []raknet.ScheduledPacketProducer{{Produce: step.produce}})
-	if err != nil {
-		return fmt.Errorf("fixtureBlastSchedule: %w", err)
+		generation: generation, source: source, npc: member.zone.NPCs(), timestamp: timestamp}
+	publication := &campaignFixturePublication{blast: &step}
+	for current := range e.registry.fixturePublications {
+		if current.blast.npc == step.npc && current.blast.source.Plan.ObjectID == objectID {
+			e.registry.mutex.Unlock()
+			return nil
+		}
 	}
-	if cancel == nil {
-		return fmt.Errorf("fixtureBlastCancel: cancellation unavailable")
+	if e.registry.fixturePublications == nil {
+		e.registry.fixturePublications = make(map[*campaignFixturePublication]struct{})
+	}
+	publication.identity = gameplayProducerIdentityFromSession(sessionKey, member, true)
+	e.registry.fixturePublications[publication] = struct{}{}
+	e.registry.mutex.Unlock()
+	err := publication.scheduleBlast()
+	if err != nil {
+		publication.fail(err)
+		if isFixturePeerUnavailable(err) {
+			// The indexed child owns the exact transfer/retirement outcome. A
+			// recursive source blast must not mistake that recovery for a domain
+			// failure and abandon its already accepted transition or target loop.
+			return nil
+		}
+		return fmt.Errorf("fixtureBlastAdmission: %w", err)
 	}
 	return nil
 }

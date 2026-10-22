@@ -135,20 +135,15 @@ func PlanRetainedAreaAttackWithProfile(
 	}, nil
 }
 
-func resolveAttackDamage(
-	npc Snapshot, profile ActionProfile,
-) (game.DamageRange, error) {
-	if profile.MinimumDamage <= 0 ||
-		profile.MaximumDamage < profile.MinimumDamage {
-		return game.DamageRange{}, errors.New("npc attack profile invalid")
-	}
+// DamageProfileAt captures the source attributes used by an accepted native snapshot.
+func DamageProfileAt(npc Snapshot, at time.Time) game.DamageProfile {
 	damageProfile := game.DamageProfile{
 		PrimaryAttribute:                npc.Plan.NPCProfile.Mind,
 		IsPrimaryAttributeFound:         true,
 		PrimaryAttributeBaseline:        nonPlayerPrimaryAttributeBaseline,
 		IsPrimaryAttributeBaselineFound: true,
 	}
-	at := time.Now()
+
 	if at.Before(npc.status.curseExpiresAt) {
 		damageProfile.DamageBuff = npc.status.curseDamage.DamageBuff
 		damageProfile.PhysicalAbilityDamageIncrease =
@@ -175,6 +170,25 @@ func resolveAttackDamage(
 	if npc.HasAffixModifier("Deadly_NPCAffixModifier") {
 		damageProfile.DamageBuff += 0.5
 	}
+	return damageProfile
+}
+
+func resolveAttackDamage(
+	npc Snapshot, profile ActionProfile,
+) (game.DamageRange, error) {
+	damage, err := resolveAttackDamageAt(npc, profile, time.Now())
+	if err != nil {
+		return game.DamageRange{}, fmt.Errorf("attackAt: %w", err)
+	}
+	return damage, nil
+}
+
+func resolveAttackDamageAt(npc Snapshot, profile ActionProfile, at time.Time) (game.DamageRange, error) {
+	if profile.MinimumDamage <= 0 ||
+		profile.MaximumDamage < profile.MinimumDamage {
+		return game.DamageRange{}, errors.New("npc attack profile invalid")
+	}
+	damageProfile := DamageProfileAt(npc, at)
 	descriptorMask := uint32(1 | 1<<6)
 	damageType := uint8(0)
 	damageSource := uint8(0)

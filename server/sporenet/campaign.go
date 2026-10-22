@@ -43,8 +43,8 @@ type CampaignCashOutBonus struct {
 	IsAvailable      bool
 }
 
-// CampaignCashOutReceipt is the immutable durable result used to construct
-// repeatable cash-out presentation.
+// CampaignCashOutReceipt carries the awarded result for cash-out presentation.
+// Durable replay resolves the recorded item IDs against the current inventory.
 type CampaignCashOutReceipt struct {
 	ResultID            uint64
 	ChainProgression    uint32
@@ -214,7 +214,8 @@ func (m *UserManager) AdvanceChainProgression(
 
 // CommitCampaignCashOut atomically persists chain progression, a bounded
 // reward ledger, and the result idempotency event through one repository save.
-// A replay returns every previously committed item without another write.
+// A replay resolves the recorded item IDs without another write; it fails if
+// an awarded item has since been removed from inventory.
 func (m *UserManager) CommitCampaignCashOut(
 	ctx context.Context, userID int64, reward CampaignCashOutReward,
 ) (CampaignCashOutReceipt, error) {

@@ -517,6 +517,10 @@ func (s gameplayPeerSession) projectPassiveCreature(
 			)
 		}
 	}
+	if s.plasmaWreathRun != nil && s.plasmaWreathState.isActive(now) {
+		creature.EnergyDefense += s.plasmaWreathState.energyDefenseIncrease
+		creature.TimingProfile.AttackSpeed += s.plasmaWreathState.attackSpeedIncrease
+	}
 	if now.IsZero() || creature.PassiveAbility != util.HashID("MissileTempestPassive") ||
 		creatureIndex >= uint32(len(s.passiveStationarySince)) {
 		return creature
@@ -825,29 +829,37 @@ func (r campaignDamageRuntime) applyVoodooCharmKill(
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation &&
-		peerSession.deployedObjectID == sourceObjectID && peerSession.squad != nil &&
+		peerSession.squad != nil &&
 		peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures))
 	if !isCurrent {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
+	if peerSession.deployedObjectID != sourceObjectID {
+		packets, err := r.applyVoodooCompanionKillLocked(peerSession, sourceObjectID)
+		r.registry.mutex.Unlock()
+		if err != nil {
+			return nil, fmt.Errorf("voodooCompanion: %w", err)
+		}
+		return packets, nil
+	}
 	creatureIndex := peerSession.deployedCreatureIndex
 	charm := r.registry.voodooCharmReturn(peerSession)
-	if charm.manaRatio == 0 {
+	if charm.manaRatio == 0 && charm.healthRatio == 0 {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
 	character, isCharacterFound := peerSession.squad.Character(creatureIndex)
 	maximumHitPoint, maximumManaPoint := peerSession.characterResourceMaximum(creatureIndex)
-	if !isCharacterFound || !character.IsAvailable || character.HitPoints <= 0 ||
-		maximumManaPoint <= 0 {
+	if !isCharacterFound || !character.IsAvailable || character.HitPoints <= 0 {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
-	manaPoint := min(
-		maximumManaPoint,
-		character.ManaPoints+maximumManaPoint*charm.manaRatio,
-	)
+	manaAward := maximumManaPoint * charm.manaRatio
+	manaPoint := character.ManaPoints
+	if manaAward > 0 {
+		manaPoint = min(maximumManaPoint, character.ManaPoints+manaAward)
+	}
 	healing, err := game.ApplyTargetHealingReduction(
 		maximumHitPoint*charm.healthRatio,
 		peerSession.binding.Creatures[creatureIndex].HealingTargetProfile,
@@ -857,14 +869,53 @@ func (r campaignDamageRuntime) applyVoodooCharmKill(
 		return nil, fmt.Errorf("voodooCharmHealing: %w", err)
 	}
 	hitPoint := min(maximumHitPoint, character.HitPoints+healing)
-	if manaPoint == character.ManaPoints && hitPoint == character.HitPoints {
-		r.registry.mutex.Unlock()
-		return nil, nil
+	isResourceChanged := manaPoint != character.ManaPoints || hitPoint != character.HitPoints
+	packets := make([][]byte, 0, 2)
+	if isResourceChanged {
+		resourcePacket, resourceErr := raknet.MarshalApplication(raknet.CombatantDataUpdateMessage{
+			ObjectID: sourceObjectID, HitPoints: hitPoint, ManaPoints: manaPoint,
+		})
+		if resourceErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("voodooCharmResource: %w", resourceErr)
+		}
+		packets = append(packets, resourcePacket)
 	}
-	err = peerSession.setCampaignCharacterManaPoints(creatureIndex, manaPoint)
-	if err != nil {
+	// Child811 notifies on a positive computed award, even when SetManaPoints
+	// clamps it to an already-full pool. Healing is a separate branch.
+	if manaAward > 0 {
+		effectPacket, effectErr := raknet.MarshalApplication(raknet.ObjectEffectMessage{
+			Asset:    util.HashID("shadow_mana_healing_target_effect.ServerEventDef"),
+			ObjectID: sourceObjectID,
+		})
+		if effectErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("voodooCharmEffect: %w", effectErr)
+		}
+		packets = append(packets, effectPacket)
+	}
+	if healing > 0 {
+		healingPacket, healingErr := raknet.MarshalApplication(raknet.DamageCombatEventMessage{
+			Flags: 0x0002, DeltaHealth: -healing,
+			TargetID: sourceObjectID, SourceID: 0,
+			IntegerHPChange: int32(character.HitPoints) - int32(hitPoint),
+		})
+		if healingErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("voodooCharmHealEvent: %w", healingErr)
+		}
+		packets = append(packets, healingPacket)
+	}
+	if !isResourceChanged {
 		r.registry.mutex.Unlock()
-		return nil, fmt.Errorf("voodooCharmMana: %w", err)
+		return packets, nil
+	}
+	if manaPoint != character.ManaPoints {
+		err = peerSession.setCampaignCharacterManaPoints(creatureIndex, manaPoint)
+		if err != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("voodooCharmMana: %w", err)
+		}
 	}
 	if hitPoint > character.HitPoints {
 		isGameOver, healErr := peerSession.setCampaignCharacterHitPoints(creatureIndex, hitPoint)
@@ -879,19 +930,5 @@ func (r campaignDamageRuntime) applyVoodooCharmKill(
 	}
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
-
-	manaPacket, err := raknet.MarshalApplication(raknet.CombatantDataUpdateMessage{
-		ObjectID: sourceObjectID, HitPoints: hitPoint, ManaPoints: manaPoint,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("voodooCharmResource: %w", err)
-	}
-	effectPacket, err := raknet.MarshalApplication(raknet.ObjectEffectMessage{
-		Asset:    util.HashID("shadow_mana_healing_target_effect.ServerEventDef"),
-		ObjectID: sourceObjectID,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("voodooCharmEffect: %w", err)
-	}
-	return [][]byte{manaPacket, effectPacket}, nil
+	return packets, nil
 }

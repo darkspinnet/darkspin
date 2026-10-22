@@ -127,6 +127,8 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 	peerSession.resetPassiveDamageReduction(sourceCreatureIndex)
 	peerSession.resetFireRavagerBasic(sourceCreatureIndex)
 	peerSession.resetTCShield(sourceCreatureIndex)
+	r.registry.retirePlasmaWreathLocked(&peerSession)
+	departurePackets = append(departurePackets, peerSession.takeHeroInfections()...)
 	interruptedBasic := peerSession.resetAbilityAdmissionForSwitch()
 	peerSession.deployedCreatureIndex = command.Value
 	peerSession.deployedObjectID = targetObjectID

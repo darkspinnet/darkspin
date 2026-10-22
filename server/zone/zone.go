@@ -541,7 +541,7 @@ func (e *Zone) PublishHeroRoster(
 	}
 	e.projection.PublishHeroRoster(zoneprojection.HeroRoster{
 		UserID: userID, PlayerSlot: member.Slot, Roster: member.Roster,
-		Position: actor.Position, CreatureIndex: actor.CreatureIndex,
+		Position: actor.Position, Orientation: actor.Orientation, CreatureIndex: actor.CreatureIndex,
 	}, zoneprojection.Subscriber{
 		UserID: userID, PeerGeneration: peerGeneration,
 	})
@@ -668,7 +668,7 @@ func (e *Zone) CommitReconnect(
 	if actor, isFound := e.info.Hero.Snapshot(userID, peerGeneration); isFound {
 		e.projection.PublishHeroRoster(zoneprojection.HeroRoster{
 			UserID: userID, PlayerSlot: member.Slot,
-			Roster: member.Roster, Position: actor.Position, CreatureIndex: actor.CreatureIndex,
+			Roster: member.Roster, Position: actor.Position, Orientation: actor.Orientation, CreatureIndex: actor.CreatureIndex,
 		}, zoneprojection.Subscriber{UserID: userID, PeerGeneration: peerGeneration})
 	}
 	e.mu.Unlock()
@@ -708,6 +708,15 @@ func (e *Zone) Leave(userID uint64, peerGeneration uint64) bool {
 		e.mu.Unlock()
 		return false
 	}
+	if e.info.Objective != nil {
+		err := e.info.Objective.Leave(uint8(current.Slot))
+		if err != nil {
+			// Keep the member/slot reserved if authored state cannot be reset;
+			// reuse must never inherit a departed player's private counters.
+			e.mu.Unlock()
+			return false
+		}
+	}
 	delete(e.members, userID)
 	isAnyConnected := false
 	for _, participant := range e.members {
@@ -727,9 +736,6 @@ func (e *Zone) Leave(userID uint64, peerGeneration uint64) bool {
 	delete(e.checkpointSquads, userID)
 	delete(e.experienceTotals, userID)
 	delete(e.experienceCommits, userID)
-	if e.info.Objective != nil {
-		_ = e.info.Objective.Leave(uint8(current.Slot))
-	}
 	e.projection.Leave(zoneprojection.Subscriber{
 		UserID: userID, PeerGeneration: peerGeneration,
 	})
@@ -1717,7 +1723,7 @@ func (e *Zone) applyNPCTargetDamage(
 	actor, isFound := e.info.Hero.SnapshotByObjectID(targetObjectID)
 	if !isFound {
 		return e.applyNPCCompanionDamage(
-			owner, sourceObjectID, targetObjectID, damage,
+			owner, sourceObjectID, targetObjectID, damage, true,
 		)
 	}
 	if actor.HitPoint <= 0 {
@@ -1761,10 +1767,10 @@ func (e *Zone) applyNPCCompanionDamage(
 	owner zonenpc.ActionOwner,
 	sourceObjectID uint32,
 	targetObjectID uint32,
-	damage float32,
+	damage float32, isTargetabilityRequired bool,
 ) (NPCTargetDamage, bool, error) {
 	companion, isFound := e.info.Companion.Snapshot(targetObjectID)
-	if !isFound || !companion.IsTargetable || companion.IsIntangible || companion.HitPoint <= 0 {
+	if !isFound || (isTargetabilityRequired && !companion.IsTargetable) || companion.IsIntangible || companion.HitPoint <= 0 {
 		return NPCTargetDamage{}, false, nil
 	}
 	hitPoint := max(float32(0), companion.HitPoint-damage)
@@ -2092,7 +2098,7 @@ func (e *Zone) restoreCheckpoint(snapshot zonecheckpoint.Snapshot) error {
 			e.clearedSpawnGroups[spawnGroupID] = struct{}{}
 		}
 	}
-	err = e.info.Objective.Restore(snapshot.Objectives)
+	err = e.info.Objective.RestoreCheckpoint(snapshot.Objectives, snapshot.ObjectiveRuntimes)
 	if err != nil {
 		return fmt.Errorf("checkpointObjective: %w", err)
 	}
@@ -2321,8 +2327,15 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 		})
 	}
 	objectives := []sim.ObjectiveSnapshot(nil)
-	if e.info.Objective != nil && e.info.Objective.State() != nil {
-		objectives = e.info.Objective.State().Snapshot()
+	objectiveRuntimes := []sim.LuaObjectiveSnapshot(nil)
+	if e.info.Objective != nil {
+		var objectiveErr error
+		objectives, objectiveRuntimes, objectiveErr = e.info.Objective.Checkpoint()
+		if objectiveErr != nil {
+			// A later safe capture can retry. Do not persist UI-only state
+			// when an authored private field cannot be represented safely.
+			return
+		}
 	}
 	scriptUses := e.info.Script.SnapshotUses()
 	security := e.info.Security.Snapshot()
@@ -2338,6 +2351,7 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 		ExperienceAwards:  experienceAwards,
 		MissionEquipments: missionEquipments,
 		Security:          security, Objectives: objectives, ScriptUses: scriptUses,
+		ObjectiveRuntimes:    objectiveRuntimes,
 		ClearedSpawnGroupIDs: clearedSpawnGroupIDs,
 		DropRandom:           dropRandom, IsDropRandomSet: true,
 		CapsuleRandom: capsuleRandom, IsCapsuleRandomSet: true,
@@ -2896,6 +2910,13 @@ func (e *Zone) ApplyNPCDamageObjectives(
 	if !source.IsFound || source.UserID == 0 || e.info.Objective == nil {
 		return nil
 	}
+	if e.info.NPCs == nil {
+		return nil
+	}
+	target, isTargetFound := e.info.NPCs.NPC(damage.TargetObjectID)
+	if !isTargetFound {
+		return nil
+	}
 	updates, err := e.info.Objective.ApplyEvent(
 		ctx, sim.LuaObjectiveEvent{
 			Kind:           sim.LuaObjectiveEventDamage,
@@ -2905,7 +2926,7 @@ func (e *Zone) ApplyNPCDamageObjectives(
 			Damage:         float64(damage.Damage),
 			DamageInteger:  int32(math.Round(float64(damage.Damage))),
 			TargetTeam:     2, SourceTeam: 1,
-			PlayerIndex: source.PlayerIndex, IsTargetNPC: true,
+			PlayerIndex: source.PlayerIndex, IsTargetNPC: !target.Plan.IsFixture,
 			IsSourcePlayerControlled: source.IsPlayerControlled,
 		},
 	)
@@ -3018,6 +3039,26 @@ func (e *Zone) RecordNPCDeaths(
 	ctx context.Context, deaths []zonenpc.DeathEvent,
 	sourceUserID uint64, sourceGeneration uint64,
 ) error {
+	err := e.recordNPCDeaths(ctx, deaths, sourceUserID, sourceGeneration, true)
+	if err != nil {
+		return fmt.Errorf("deathRecord: %w", err)
+	}
+	return nil
+}
+
+// RecordNPCDeathObjectives keeps normal death bookkeeping when a named world
+// callback owns all of its wire presentation through one reliable FIFO.
+func (e *Zone) RecordNPCDeathObjectives(ctx context.Context, deaths []zonenpc.DeathEvent) error {
+	err := e.recordNPCDeaths(ctx, deaths, 0, 0, false)
+	if err != nil {
+		return fmt.Errorf("deathObjectives: %w", err)
+	}
+	return nil
+}
+
+func (e *Zone) recordNPCDeaths(ctx context.Context, deaths []zonenpc.DeathEvent,
+	sourceUserID uint64, sourceGeneration uint64, isPresentationPublished bool,
+) error {
 	if e == nil || len(deaths) == 0 {
 		return nil
 	}
@@ -3078,7 +3119,11 @@ func (e *Zone) RecordNPCDeaths(
 			break
 		}
 	}
-	e.PublishNPCDeath(deaths, sourceUserID, sourceGeneration)
+	if isPresentationPublished {
+		e.PublishNPCDeath(deaths, sourceUserID, sourceGeneration)
+	} else {
+		e.projection.RecordNPCDeathState(deaths)
+	}
 	return objectiveErr
 }
 

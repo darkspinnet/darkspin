@@ -53,31 +53,45 @@ func (e campaignMaserCleanseStep) hit() ([][]byte, error) {
 	}
 	packets = append(packets, novaPacket)
 	for _, ally := range allies {
-		if !peerSession.zone.NPCs().PurgeDebuffs(ally.Plan.ObjectID) {
+		fixturePackets, fixtureErr := e.runtime.registry.retireFixtureBurnsLocked(peerSession.zone.NPCs(), ally.Plan.ObjectID, e.runtime.modifierPool)
+		packets = append(packets, fixturePackets...)
+		if fixtureErr != nil {
+			e.runtime.registry.mutex.Unlock()
+			return packets, fmt.Errorf("fixtureCleanse: %w", fixtureErr)
+		}
+		cloudPackets, cloudErr := e.runtime.registry.retireCloudPoisonLocked(peerSession.zone.NPCs(), ally.Plan.ObjectID, e.runtime.modifierPool)
+		packets = append(packets, cloudPackets...)
+		if cloudErr != nil {
+			e.runtime.registry.mutex.Unlock()
+			return packets, fmt.Errorf("cloudCleanse: %w", cloudErr)
+		}
+		isPurged := peerSession.zone.NPCs().PurgeDebuffs(ally.Plan.ObjectID)
+		if !isPurged && len(cloudPackets) == 0 && len(fixturePackets) == 0 {
 			continue
 		}
+		packets = append(packets, e.runtime.registry.retireTargetInfectionRootsLocked(peerSession.zone.NPCs(), ally.Plan.ObjectID)...)
 		beastPacket, beastErr := e.runtime.registry.retireBeastVulnerabilityLocked(
 			peerSession.zone.NPCs(), peerSession.zone.Effect(), ally.Plan.ObjectID, e.runtime.modifierPool,
 		)
 		if beastErr != nil {
 			e.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf("beastCleanse: %w", beastErr)
+			return packets, fmt.Errorf("beastCleanse: %w", beastErr)
 		}
 		if beastPacket != nil {
 			packets = append(packets, beastPacket)
 		}
 		basicPackets, basicErr := e.runtime.registry.retireTargetBasicModifiersLocked(peerSession, ally.Plan.ObjectID, e.runtime.modifierPool, true)
+		packets = append(packets, basicPackets...)
 		if basicErr != nil {
 			e.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf("basicCleanse: %w", basicErr)
+			return packets, fmt.Errorf("basicCleanse: %w", basicErr)
 		}
-		packets = append(packets, basicPackets...)
 		hitPacket, hitErr := npcraknet.PositionedEffect(
 			e.profile.ImpactEffectName, ally.Plan.Position,
 		)
 		if hitErr != nil {
 			e.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf("maserCleanseHit: %w", hitErr)
+			return packets, fmt.Errorf("maserCleanseHit: %w", hitErr)
 		}
 		packets = append(packets, hitPacket)
 	}
@@ -129,7 +143,9 @@ func (r campaignNPCActionRuntime) produceScaldronBasicMaserCleanse(
 	isNeeded := false
 	now := r.now()
 	for _, ally := range allies {
-		if peerSession.zone.NPCs().HasDebuff(ally.Plan.ObjectID, now) &&
+		if (peerSession.zone.NPCs().HasDebuff(ally.Plan.ObjectID, now) ||
+			r.registry.hasCloudPoisonLocked(peerSession.zone.NPCs(), ally.Plan.ObjectID) ||
+			r.registry.hasFixtureBurnLocked(peerSession.zone.NPCs(), ally.Plan.ObjectID)) &&
 			zonegeometry.Distance(source.Plan.Position, ally.Plan.Position) <= profile.Radius {
 			isNeeded = true
 			break

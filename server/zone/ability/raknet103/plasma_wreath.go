@@ -3,6 +3,7 @@ package raknet103
 import (
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/util"
@@ -31,6 +32,8 @@ type PlasmaWreathRun struct {
 	remainingOrb        uint32
 	bubbleSlot          uint8
 	orbSlots            []uint8
+	removedSlots        []uint8
+	removalPackets      [][]byte
 	isBubbleBound       bool
 	effectPool          AttachmentPool
 	modifierPool        ModifierPool
@@ -42,13 +45,50 @@ func NewPlasmaWreathRun(
 	instanceID uint32, objectID uint32, effectPool AttachmentPool,
 	modifierPool ModifierPool,
 ) (*PlasmaWreathRun, [][]byte, error) {
+	run, packets, err := NewPlasmaWreathRunWithOrbCount(instanceID, objectID, effectPool, modifierPool, zoneability.PlasmaWreathOrbCount)
+	if err != nil {
+		return nil, nil, fmt.Errorf("wreathRun: %w", err)
+	}
+	return run, packets, nil
+}
+
+func NewPlasmaWreathRunWithOrbCount(
+	instanceID uint32, objectID uint32, effectPool AttachmentPool,
+	modifierPool ModifierPool, orbCount uint32,
+) (*PlasmaWreathRun, [][]byte, error) {
+	run, packets, err := newPlasmaWreathRun(instanceID, objectID, effectPool, modifierPool, orbCount, 1)
+	if err != nil {
+		return nil, nil, fmt.Errorf("wreathCount: %w", err)
+	}
+	return run, packets, nil
+}
+
+func NewPlasmaWreathRunForRank(
+	instanceID uint32, objectID uint32, effectPool AttachmentPool,
+	modifierPool ModifierPool, rank int32,
+) (*PlasmaWreathRun, [][]byte, error) {
+	profile := zoneability.PlasmaWreathProfileForRank(rank)
+	run, packets, err := newPlasmaWreathRun(instanceID, objectID, effectPool, modifierPool, profile.Definition.ShotCount, rank)
+	if err != nil {
+		return nil, nil, fmt.Errorf("wreathRank: %w", err)
+	}
+	return run, packets, nil
+}
+
+func newPlasmaWreathRun(
+	instanceID uint32, objectID uint32, effectPool AttachmentPool,
+	modifierPool ModifierPool, orbCount uint32, rank int32,
+) (*PlasmaWreathRun, [][]byte, error) {
 	if instanceID == 0 || objectID == 0 || effectPool == nil || modifierPool == nil {
 		return nil, nil, errors.New("invalid Plasma Wreath run")
 	}
+	if orbCount == 0 || orbCount > zoneability.PlasmaWreathOrbCount {
+		return nil, nil, errors.New("invalid Plasma Wreath orb count")
+	}
 	run := &PlasmaWreathRun{
 		instanceID: instanceID, objectID: objectID,
-		remainingOrb: zoneability.PlasmaWreathOrbCount,
-		orbSlots:     make([]uint8, 0, zoneability.PlasmaWreathOrbCount),
+		remainingOrb: orbCount,
+		orbSlots:     make([]uint8, 0, orbCount),
 		effectPool:   effectPool, modifierPool: modifierPool,
 		isModifierAllocated: true,
 	}
@@ -58,7 +98,7 @@ func NewPlasmaWreathRun(
 	}
 	run.bubbleSlot = bubbleSlot
 	run.isBubbleBound = true
-	for index := uint32(0); index < zoneability.PlasmaWreathOrbCount; index++ {
+	for index := uint32(0); index < orbCount; index++ {
 		slot, isOrbAllocated := effectPool.Allocate(objectID)
 		if !isOrbAllocated {
 			run.releaseSlots()
@@ -66,7 +106,16 @@ func NewPlasmaWreathRun(
 		}
 		run.orbSlots = append(run.orbSlots, slot)
 	}
-	messages := make([]raknet.ApplicationMessage, 0, 2+zoneability.PlasmaWreathOrbCount)
+	messages := make([]raknet.ApplicationMessage, 0, 2+orbCount)
+	bubbleEffect := plasmaWreathBubbleEffect
+	orbEffect := plasmaWreathOrbEffect
+	if rank == 5 || rank == 6 {
+		bubbleEffect = "lightning_shield_bubble_upon_hit.ServerEventDef"
+		orbEffect = "lightning_shield_upon_hit.ServerEventDef"
+	}
+	if rank == 7 || rank == 8 {
+		orbEffect = "lightning_shield_haste.ServerEventDef"
+	}
 	messages = append(messages,
 		raknet.ModifierCreatedMessage{
 			TargetID: objectID, ModifierGUID: util.HashID("LightningRogueSupportModifier"),
@@ -74,13 +123,13 @@ func NewPlasmaWreathRun(
 		},
 		raknet.AttachedEffectMessage{
 			Slot: bubbleSlot + 1, IsForceAttached: true,
-			Asset: util.HashID(plasmaWreathBubbleEffect), ObjectID: objectID,
+			Asset: util.HashID(bubbleEffect), ObjectID: objectID,
 		},
 	)
 	for _, slot := range run.orbSlots {
 		messages = append(messages, raknet.AttachedEffectMessage{
 			Slot: slot + 1, IsForceAttached: true,
-			Asset: util.HashID(plasmaWreathOrbEffect), ObjectID: objectID,
+			Asset: util.HashID(orbEffect), ObjectID: objectID,
 		})
 	}
 	packets, err := marshalMessages(messages, "plasmaWreathStart")
@@ -98,6 +147,18 @@ func (r *PlasmaWreathRun) RemainingOrb() uint32 {
 	return r.remainingOrb
 }
 
+func (e *PlasmaWreathRun) AttachmentSlots() []uint8 {
+	if e == nil {
+		return nil
+	}
+	slots := append([]uint8(nil), e.orbSlots...)
+	slots = append(slots, e.removedSlots...)
+	if e.isBubbleBound {
+		slots = append(slots, e.bubbleSlot)
+	}
+	return slots
+}
+
 func (r *PlasmaWreathRun) AdvanceTick() uint64 {
 	if r == nil {
 		return 0
@@ -113,17 +174,18 @@ func (r *PlasmaWreathRun) ConsumeOrb() ([]byte, bool, error) {
 	}
 	last := len(r.orbSlots) - 1
 	slot := r.orbSlots[last]
-	r.orbSlots = r.orbSlots[:last]
-	if !r.effectPool.Release(r.objectID, slot) {
-		return nil, false, errors.New("Plasma Wreath orb slot stale")
-	}
-	r.remainingOrb--
 	packet, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
 		Slot: slot + 1, IsRemovalRequested: true, ObjectID: r.objectID,
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("orbMarshal: %w", err)
 	}
+	if !r.holdRemoval(slot) {
+		return nil, false, errors.New("Plasma Wreath orb slot stale")
+	}
+	r.removalPackets = append(r.removalPackets, packet)
+	r.orbSlots = r.orbSlots[:last]
+	r.remainingOrb--
 	return packet, r.remainingOrb == 0, nil
 }
 
@@ -131,31 +193,32 @@ func (r *PlasmaWreathRun) Stop() ([][]byte, error) {
 	if r == nil || r.objectID == 0 || r.effectPool == nil {
 		return nil, errors.New("Plasma Wreath stop unavailable")
 	}
-	messages := make([]raknet.ApplicationMessage, 0, len(r.orbSlots)+2)
-	for _, slot := range r.orbSlots {
-		if r.effectPool.Release(r.objectID, slot) {
-			messages = append(messages, raknet.AttachedEffectMessage{
-				Slot: slot + 1, IsRemovalRequested: true, ObjectID: r.objectID,
-			})
-		}
+	slots := append([]uint8(nil), r.orbSlots...)
+	if r.isBubbleBound {
+		slots = append(slots, r.bubbleSlot)
 	}
-	r.orbSlots = nil
-	r.remainingOrb = 0
-	if r.isBubbleBound && r.effectPool.Release(r.objectID, r.bubbleSlot) {
-		messages = append(messages, raknet.AttachedEffectMessage{
-			Slot: r.bubbleSlot + 1, IsRemovalRequested: true, ObjectID: r.objectID,
-		})
+	messages := make([]raknet.ApplicationMessage, 0, len(slots)+1)
+	for _, slot := range slots {
+		messages = append(messages, raknet.AttachedEffectMessage{Slot: slot + 1, IsRemovalRequested: true, ObjectID: r.objectID})
 	}
-	r.isBubbleBound = false
-	r.releaseModifier()
-	messages = append(messages, raknet.ModifierDeletedMessage{
-		TargetID: r.objectID, InstanceID: r.instanceID,
-	})
+	messages = append(messages, raknet.ModifierDeletedMessage{TargetID: r.objectID, InstanceID: r.instanceID})
 	packets, err := marshalMessages(messages, "plasmaWreathStop")
 	if err != nil {
-		return nil, fmt.Errorf("stopMarshal: %w", err)
+		return r.PendingRemovals(), fmt.Errorf("stopMarshal: %w", err)
 	}
-	return packets, nil
+	// Encoding succeeds before any ownership mutation. A stale reservation must
+	// never remove a different effect now occupying that native slot.
+	for index, slot := range slots {
+		if r.holdRemoval(slot) {
+			r.removalPackets = append(r.removalPackets, packets[index])
+		}
+	}
+	r.removalPackets = append(r.removalPackets, packets[len(packets)-1])
+	r.orbSlots = nil
+	r.remainingOrb = 0
+	r.isBubbleBound = false
+	r.releaseModifier()
+	return r.PendingRemovals(), nil
 }
 
 func (r *PlasmaWreathRun) Abort() {
@@ -163,6 +226,7 @@ func (r *PlasmaWreathRun) Abort() {
 		return
 	}
 	r.releaseSlots()
+	r.CommitRemovals()
 	r.releaseModifier()
 }
 
@@ -182,7 +246,10 @@ func (r *PlasmaWreathRun) releaseModifier() {
 	if r == nil || !r.isModifierAllocated || r.modifierPool == nil {
 		return
 	}
-	_ = r.modifierPool.Release(r.instanceID)
+	err := r.modifierPool.Release(r.instanceID)
+	if err != nil {
+		log.Printf("Plasma Wreath modifier release instance=%d: %v", r.instanceID, err)
+	}
 	r.isModifierAllocated = false
 }
 
@@ -211,3 +278,59 @@ func marshalMessages(messages []raknet.ApplicationMessage, operation string) ([]
 	}
 	return packets, nil
 }
+
+type attachmentRemovalPool interface {
+	HoldRemoval(objectID uint32, slot uint8) bool
+	CommitRemoval(objectID uint32, slot uint8) bool
+}
+
+func (e *PlasmaWreathRun) holdRemoval(slot uint8) bool {
+	pool, isSupported := e.effectPool.(attachmentRemovalPool)
+	if isSupported && !pool.HoldRemoval(e.objectID, slot) {
+		return false
+	}
+	e.removedSlots = append(e.removedSlots, slot)
+	return true
+}
+
+// PendingRemovals retains deletion packets across a failed publication.
+func (e *PlasmaWreathRun) PendingRemovals() [][]byte {
+	return append([][]byte(nil), e.removalPackets...)
+}
+
+// PlasmaWreathRemoval owns slots until every recipient commits their deletion.
+type PlasmaWreathRemoval struct {
+	run   *PlasmaWreathRun
+	slots []uint8
+}
+
+func (e *PlasmaWreathRun) TakeRemovals() *PlasmaWreathRemoval {
+	if len(e.removedSlots) == 0 {
+		return nil
+	}
+	removal := &PlasmaWreathRemoval{run: e, slots: e.removedSlots}
+	e.removedSlots = nil
+	e.removalPackets = nil
+	return removal
+}
+func (e *PlasmaWreathRemoval) Commit() {
+	if e == nil {
+		return
+	}
+	for _, slot := range e.slots {
+		pool, isSupported := e.run.effectPool.(attachmentRemovalPool)
+		var isReleased bool
+		if isSupported {
+			isReleased = pool.CommitRemoval(e.run.objectID, slot)
+		} else {
+			isReleased = e.run.effectPool.Release(e.run.objectID, slot)
+		}
+		if !isReleased {
+			log.Printf("Plasma Wreath held slot source=%d slot=%d stale", e.run.objectID, slot)
+		}
+	}
+	e.slots = nil
+}
+
+// CommitRemovals is only for candidates whose creates were never published.
+func (e *PlasmaWreathRun) CommitRemovals() { e.TakeRemovals().Commit() }

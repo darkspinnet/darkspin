@@ -16,10 +16,11 @@ import (
 	zonehorde "github.com/darkspinnet/darkspin/server/zone/horde"
 	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
+	zoneobjective "github.com/darkspinnet/darkspin/server/zone/objective"
 	zonesecurity "github.com/darkspinnet/darkspin/server/zone/security"
 )
 
-const Version = uint32(7)
+const Version = uint32(8)
 
 type Reason string
 
@@ -92,6 +93,7 @@ type Snapshot struct {
 	MissionEquipments    []zoneloot.EquipmentInventory
 	Security             zonesecurity.Snapshot
 	Objectives           []sim.ObjectiveSnapshot
+	ObjectiveRuntimes    []sim.LuaObjectiveSnapshot
 	ScriptUses           []game.CampaignScriptUse
 	ClearedSpawnGroupIDs []uint32
 	DropRandom           sim.RandomSnapshot
@@ -390,6 +392,22 @@ func Validate(
 			}
 		}
 		objectiveIDs[objective.ObjectiveID] = struct{}{}
+	}
+	if len(snapshot.ObjectiveRuntimes) != len(snapshot.Objectives) {
+		return errors.New("checkpoint objective runtime count mismatch")
+	}
+	runtimeIDs := make(map[uint32]struct{}, len(snapshot.ObjectiveRuntimes))
+	for index, runtime := range snapshot.ObjectiveRuntimes {
+		_, isObjective := objectiveIDs[runtime.ObjectiveID]
+		_, isDuplicate := runtimeIDs[runtime.ObjectiveID]
+		if !isObjective || isDuplicate {
+			return fmt.Errorf("checkpointObjectiveRuntime[%d]: invalid", index)
+		}
+		err := zoneobjective.ValidateCheckpointRuntime(runtime)
+		if err != nil {
+			return fmt.Errorf("checkpointRuntime[%d]: %w", index, err)
+		}
+		runtimeIDs[runtime.ObjectiveID] = struct{}{}
 	}
 	clearedSpawnGroupIDs := make(map[uint32]struct{}, len(snapshot.ClearedSpawnGroupIDs))
 	for index, spawnGroupID := range snapshot.ClearedSpawnGroupIDs {

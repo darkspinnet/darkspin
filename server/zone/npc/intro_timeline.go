@@ -39,11 +39,47 @@ func (e Snapshot) IsIntroductionBossActive() bool {
 	return e.introduction.startedAt.IsZero() || e.introduction.isBossActive
 }
 
-// StartIntroduction admits or resumes the same actor-owned cinematic timeline.
+// CanRetainIntroduction admits recovered, timed entrances independently of
+// whether they also request a camera hold. Floor warps and owned summons keep
+// their separate spawn lifecycles.
+func CanRetainIntroduction(plan SpawnPlan, profile ActionProfile) bool {
+	if plan.OwnerObjectID != 0 || plan.Introduction == SpawnIntroductionFloorWarp ||
+		!profile.IsFirstAggroDurationKnown {
+		return false
+	}
+	return profile.FirstAggroCinematicDuration > 0 ||
+		(profile.FirstAggroDelay > 0 && profile.FirstAggroAnimationName != "")
+}
+
+// WithRetainedIntroduction restores entrance fields after a takeover selects
+// its current combat attack. A visible actor's ordinary entrance profile may
+// already have been omitted by IntroductionProfile.
+func WithRetainedIntroduction(profile ActionProfile, timing IntroductionTiming) ActionProfile {
+	intro := timing.Profile
+	profile.FirstAggroAbilityName = intro.FirstAggroAbilityName
+	profile.FirstAggroAnimationName = intro.FirstAggroAnimationName
+	profile.FirstAggroEffectName = intro.FirstAggroEffectName
+	profile.FirstAggroEffectDelay = intro.FirstAggroEffectDelay
+	profile.FirstAggroDelay = intro.FirstAggroDelay
+	profile.FirstAggroRevealDelay = intro.FirstAggroRevealDelay
+	profile.FirstAggroCinematicDuration = intro.FirstAggroCinematicDuration
+	profile.FirstAggroCinematicRadius = intro.FirstAggroCinematicRadius
+	profile.IsFirstAggroDurationKnown = intro.IsFirstAggroDurationKnown
+	profile.IsFirstAggroFacingSuppressed = intro.IsFirstAggroFacingSuppressed
+	profile.PreAggroAnimationName = intro.PreAggroAnimationName
+	return profile
+}
+
+func (e Snapshot) IsIntroductionCombatSuppressed() bool {
+	return e.IsIntroductionPending() && (e.introduction.profile.FirstAggroRevealDelay > 0 ||
+		e.introduction.profile.FirstAggroCinematicDuration > 0)
+}
+
+// StartIntroduction admits or resumes the same actor-owned entrance timeline.
 func (e *Session) StartIntroduction(objectID uint32, owner ActionOwner, generation uint64,
 	profile ActionProfile, now time.Time, timestamp uint64,
 ) (IntroductionTiming, bool) {
-	if e == nil || now.IsZero() || !profile.IsFirstAggroDurationKnown || profile.FirstAggroCinematicDuration <= 0 {
+	if e == nil || now.IsZero() {
 		return IntroductionTiming{}, false
 	}
 	e.mu.Lock()
@@ -54,6 +90,9 @@ func (e *Session) StartIntroduction(objectID uint32, owner ActionOwner, generati
 	}
 	isNew := npc.introduction.startedAt.IsZero()
 	if isNew {
+		if !CanRetainIntroduction(npc.Plan, profile) {
+			return IntroductionTiming{}, false
+		}
 		npc.introduction = introductionTimeline{
 			startedAt: now, profile: profile, timestamp: timestamp, generation: generation,
 			isInitiallyHidden: npc.Plan.IsIntroductionHidden,

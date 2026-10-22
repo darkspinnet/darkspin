@@ -2,9 +2,11 @@ package gameplay
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/sim"
+	"github.com/darkspinnet/darkspin/server/util"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
@@ -51,6 +53,7 @@ func (e campaignMeleeSchedule) expunge() ([][]byte, error) {
 	damages := make([]expungeRemainingDamage, 0)
 	deletes := make([]expungeModifierDelete, 0)
 	cancels := make([]func(), 0)
+	fixtureBursts := make([]expungeFixtureBurst, 0)
 	for sessionKey, candidate := range e.runtime.registry.sessions {
 		if candidate.zone != peerSession.zone {
 			continue
@@ -58,7 +61,15 @@ func (e campaignMeleeSchedule) expunge() ([][]byte, error) {
 		if sessionKey == e.sessionKey {
 			candidate = peerSession
 		}
-		consumedDamages, consumedDeletes, consumedCancels, consumeErr := consumeExpungeDamageOverTime(&candidate, e.targetObjectID, e.runtime.modifierPool)
+		bursts, fixtureDeletes, fixtureCancels, fixtureErr := candidate.consumeExpungeFixtures(e.targetObjectID, e.runtime.now(), e.runtime.modifierPool)
+		if fixtureErr != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("expungeFixture: %w", fixtureErr)
+		}
+		fixtureBursts = append(fixtureBursts, bursts...)
+		deletes = append(deletes, fixtureDeletes...)
+		cancels = append(cancels, fixtureCancels...)
+		consumedDamages, consumedDeletes, consumedCancels, consumeErr := consumeExpungeDamageOverTime(&candidate, e.targetObjectID, e.runtime.modifierPool, e.runtime.now())
 		if consumeErr != nil {
 			e.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("expungeConsume: %w", consumeErr)
@@ -77,16 +88,18 @@ func (e campaignMeleeSchedule) expunge() ([][]byte, error) {
 		if plasmaCancel != nil {
 			consumedCancels = append(consumedCancels, plasmaCancel)
 		}
-		infectionDamage, infectionDelete, infectionErr := candidate.heroInfection.consumeExpunge(e.targetObjectID, e.runtime.now())
-		if infectionErr != nil {
-			e.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf("expungeInfection: %w", infectionErr)
-		}
-		if infectionDamage != nil {
-			consumedDamages = append(consumedDamages, *infectionDamage)
-		}
-		if infectionDelete != nil {
-			consumedDeletes = append(consumedDeletes, *infectionDelete)
+		for run := range candidate.heroInfections {
+			infectionDamage, infectionDelete, infectionErr := run.consumeExpunge(e.targetObjectID, e.runtime.now())
+			if infectionErr != nil {
+				e.runtime.registry.mutex.Unlock()
+				return nil, fmt.Errorf("expungeInfection: %w", infectionErr)
+			}
+			if infectionDamage != nil {
+				consumedDamages = append(consumedDamages, *infectionDamage)
+			}
+			if infectionDelete != nil {
+				consumedDeletes = append(consumedDeletes, *infectionDelete)
+			}
 		}
 		for index := range consumedDamages {
 			consumedDamages[index].sessionKey = sessionKey
@@ -108,6 +121,17 @@ func (e campaignMeleeSchedule) expunge() ([][]byte, error) {
 	}
 	damages = append(damages, burnDamages...)
 	deletes = append(deletes, burnDeletes...)
+	cloudDamage, cloudDelete, cloudErr := e.runtime.registry.consumeCloudPoisonLocked(peerSession.zone.NPCs(), e.targetObjectID, e.runtime.modifierPool)
+	if cloudErr != nil {
+		e.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("expungeCloud: %w", cloudErr)
+	}
+	if cloudDamage != nil {
+		damages = append(damages, *cloudDamage)
+	}
+	if cloudDelete != nil {
+		deletes = append(deletes, *cloudDelete)
+	}
 	publications := make([]expungeDamagePublication, 0, len(damages))
 	for _, remaining := range damages {
 		live, isLiveFound := peerSession.zone.NPCs().NPC(e.targetObjectID)
@@ -142,15 +166,34 @@ func (e campaignMeleeSchedule) expunge() ([][]byte, error) {
 			return nil, fmt.Errorf("expungeDamage: %w", err)
 		}
 		transitions := make([]campaignDamageTransition, 0, len(committed))
-		transitionKey := remaining.sessionKey
-		owner, isOwnerFound := e.runtime.registry.sessions[transitionKey]
-		if !isOwnerFound || owner.generation != remaining.generation || owner.zone != peerSession.zone {
+		transitionKey := ""
+		owner := gameplayPeerSession{}
+		isOwnerFound := false
+		for sourceKey, candidate := range e.runtime.registry.sessions {
+			if candidate.binding.UserID != remaining.binding.UserID || candidate.generation != remaining.generation ||
+				candidate.zone != peerSession.zone {
+				continue
+			}
+			currentEndpoint := e.runtime.registry.memberEndpoints[gameplaySessionMemberKey(candidate)]
+			if currentEndpoint != "" && currentEndpoint != sourceKey {
+				continue
+			}
+			transitionKey = sourceKey
+			owner = candidate
+			isOwnerFound = true
+			break
+		}
+		if !isOwnerFound {
 			// World transitions still run when a zone-owned burn outlives its
 			// initiator, without awarding another player's life steal or kills.
 			transitionKey = e.sessionKey
 			owner = peerSession
 		}
-		isOriginalOwner := owner.binding.UserID == remaining.binding.UserID
+		// The accepted initiator snapshot stays unchanged across an endpoint
+		// handover; publication follows that same semantic member's live endpoint.
+		remaining.sessionKey = transitionKey
+		isOriginalOwner := isOwnerFound && owner.binding.UserID == remaining.binding.UserID &&
+			owner.generation == remaining.generation && owner.deployedObjectID == remaining.sourceObjectID
 		for _, result := range committed {
 			transition, transitionErr :=
 				owner.applyCampaignDamageTransitionWithKill(result.Damage, isOriginalOwner)
@@ -185,6 +228,16 @@ func (e campaignMeleeSchedule) expunge() ([][]byte, error) {
 		}
 		packets = append(packets, damagePackets...)
 	}
+	for _, burst := range fixtureBursts {
+		fixturePackets, isSurviving, fixtureErr := burst.produce(e.packet.SourceTime + 500)
+		if fixtureErr != nil {
+			return nil, fmt.Errorf("expungeFixtureBurst: %w", fixtureErr)
+		}
+		packets = append(packets, fixturePackets...)
+		if !isSurviving {
+			break
+		}
+	}
 	for _, deleted := range deletes {
 		packet, marshalErr := effectraknet.ModifierDelete(
 			deleted.targetObjectID, deleted.instanceID,
@@ -199,7 +252,7 @@ func (e campaignMeleeSchedule) expunge() ([][]byte, error) {
 
 func consumeExpungeDamageOverTime(
 	peerSession *gameplayPeerSession, targetObjectID uint32,
-	modifierPool *modifierPool,
+	modifierPool *modifierPool, at time.Time,
 ) ([]expungeRemainingDamage, []expungeModifierDelete, []func(), error) {
 	damages := make([]expungeRemainingDamage, 0)
 	deletes := make([]expungeModifierDelete, 0)
@@ -264,14 +317,15 @@ func consumeExpungeDamageOverTime(
 		}
 	}
 	for projectileObjectID, run := range peerSession.heroProjectileRuns {
-		if run != nil && run.definition.Name == "AfflictionBolt" {
+		if run == nil {
+			continue
+		}
+		if run.definition.Name == "AfflictionBolt" && run.definition.RootModifierID == util.HashID("AfflictionCurse") {
 			contact, isContactFound := run.Splash(targetObjectID)
 			if !isContactFound {
 				continue
 			}
-			remainingTick := uint32(max(
-				0, len(run.definition.HitDelays)-int(contact.completedTick),
-			))
+			remainingTick := expungeRemainingTickCount(contact.expiresAt, at, 2*time.Second)
 			if remainingTick > 0 {
 				damages = append(damages, expungeRemainingDamage{
 					creature:       run.creature,
@@ -292,27 +346,23 @@ func consumeExpungeDamageOverTime(
 			}
 			continue
 		}
-		if run == nil || run.targetID != targetObjectID || !run.IsApplied() {
+		// TerrifyDebuff inherits DOT149, whose tickDamage remains {{0,0}}.
+		// Its separate custom damage coroutine is not GetRemainingDamage.
+		// Other projectile namespaces need their own recovered modifier contract.
+		if run.definition.Name != "Terrify" || run.definition.RootModifierID != util.HashID("TerrifyDebuff") ||
+			run.targetID != targetObjectID || !run.IsApplied() {
 			continue
 		}
 		run.mutex.Lock()
-		remainingTick := uint32(max(0, len(run.definition.HitDelays)-int(run.completedTick)))
 		definition := run.definition
 		creature := run.creature
 		cancel := run.cancel
 		run.cancel = nil
 		run.mutex.Unlock()
-		if remainingTick > 0 {
-			damages = append(damages, expungeRemainingDamage{
-				creature:       creature,
-				sourceObjectID: run.sourceObjectID,
-				definition: expungeDamageDefinition(
-					definition, remainingTick,
-					definition.MinimumDamagePerTick,
-					definition.MaximumDamagePerTick,
-				),
-			})
-		}
+		damages = append(damages, expungeRemainingDamage{
+			creature: creature, sourceObjectID: run.sourceObjectID,
+			definition: expungeDamageDefinition(definition, 1, 0, 0),
+		})
 		delete(peerSession.heroProjectileRuns, projectileObjectID)
 		deleted := run.Cleanup()
 		run.projectile.Finish()
@@ -327,6 +377,18 @@ func consumeExpungeDamageOverTime(
 		}
 	}
 	return damages, deletes, cancels, nil
+}
+
+func expungeRemainingTickCount(expiresAt, at time.Time, interval time.Duration) uint32 {
+	remaining := expiresAt.Sub(at)
+	if remaining <= 0 || interval <= 0 {
+		return 0
+	}
+	tickCount := remaining / interval
+	if remaining%interval != 0 {
+		tickCount++
+	}
+	return uint32(tickCount)
 }
 
 func expungeDamageDefinition(

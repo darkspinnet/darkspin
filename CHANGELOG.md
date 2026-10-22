@@ -2,6 +2,32 @@
 
 ### 2026-10-22
 
+- #99 Preserve channel effect creation and removal order through co-op reconnects, hold visual slots until removal delivery, and prevent stale drain callbacks from changing replacement actions.
+- #99 Preserve initial environmental explosion feedback and corpse deadlines through co-op ownership changes, and settle accepted blasts before world reset or shutdown without repeating damage or rewards.
+- #99 Correct Savage Rage's fractional and critical healing, preserve its accepted initial healing feedback, and use continuous healing ranges for Strangling Briars and Sporogenesis.
+- #99 Correct Time Lapse's damage-history cutoff and prevent late Plasma Column or healing-channel failures from restoring stale mana and cooldown state.
+- #99 Preserve accepted healing feedback when statistics recording fails, and exclude destructible fixtures from NPC damage objectives.
+- #99 Restore Plasma Wreath's damage-triggered retaliation, creature targeting and ranked effects, preserve accepted casts through recovery, and hold visual slots until removal is delivered.
+- #99 Preserve supported objective counters through checkpoint rejoin and apply campaign difficulty and stage scaling; checkpoint format advances from 7 to 8 and older checkpoints cannot resume.
+- #99 Correct Voodoo Charm's dead-contact admission and healing feedback, preserve Savage Ally resurrection ownership through co-op reconnects, and capture Savage Rage healing attributes at activation.
+- #99 Resume ordinary NPC entrances after co-op ownership changes, preserve Quantum Blink's random facing, and correct local movement rejected by sleep or stun.
+- #99 Apply tutorial and world unlock callbacks to eligible party members and restore the robot entrance's authored timing and animation.
+- #99 Restore Fire Elemental and Plasma Sentinel pet death animations and Drainer's delayed overload explosion with ordered damage, corpse cleanup and rejoin handling.
+- #99 Restore Strangling Briars' ranked allied healing, hostile roots and movement slow, including independent root expiry, cleansing and rejoin presentation.
+- #99 Apply operative cage ranks, Cyber pulse timing and health or accumulated-damage escape rules while preserving committed co-op presentation.
+- #99 Preserve Toxic Spores' original poison source and independent cloud-tail lifetime, and correct Expunge's remaining-damage budgets and modifier cleanup.
+- #99 Preserve environmental disease and burn source snapshots and tick positions when an active co-op peer takes over, including disconnects before scheduling or publication.
+- #99 Restore Sporogenesis' independent healing callbacks and retain pending heals through reconnect handover without extending their lifetime.
+- #99 Give Omni Shield independent overlapping children with authored activation and expiry, hit-time payment and cleanse, retained protection and safe release responses.
+- #99 Correct Dimensional Rift's banished-target admission and ranked cooldown, Time Lapse's current Dexterity input, and Plasma Column's tick count, timing and current source attributes.
+- #99 Restore Poison Nova's upgraded refresh cue, Psistorm's fractional tick count and Sleeping Cloud's per-cloud sleep-attempt history.
+- #99 Clear Rooting Plague roots on their own deadlines, cleansing and target death, and publish infection cleanup through switching, disconnects and co-op teardown.
+- #99 Restore Voodoo Charm's authored mana-return effect on qualifying kills even when resources are full.
+- #99 Correct Nightmare Vine root damage from fixed Spectral/Physical damage to the authored Elements/Energy range, radius and impact effect.
+- #99 Restore Plasma Wreath's ranked orb counts, damage, defense bonus and upgraded haste lifetime, with co-op expiry and departure cleanup.
+- #99 Allow Rooting Plague recasts to replace primary disease and roots while preserving existing spread infections and their original damage credit, and keep spread ticking on authored deadlines while infections remain.
+- #99 Extend Voodoo Charm to eligible allied combat companions, restoring their own Overdrive health return on kills and preserving death and co-op ownership rules.
+- #99 Preserve equipment affix modifier grants and ability improvements in the content database and catalog for inspection.
 - #98 Restore Corruptor's final-stage boss loot eligibility after its stage-two noun transition.
 - #98 Keep Invincitron's drone orbit following its living owner between combat actions instead of stopping when attack state clears.
 - #98 Ignore deaths of summons outside the admitted horde wave so auxiliary drones cannot reject combat updates or alter wave completion.

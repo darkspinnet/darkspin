@@ -16,6 +16,7 @@ type Actor struct {
 	ObjectID         uint32
 	CreatureIndex    uint32
 	Position         game.Vec3
+	Orientation      game.Quaternion
 	LinearVelocity   game.Vec3
 	FootprintRadius  float32
 	HitPoint         float32
@@ -48,6 +49,14 @@ func (s *Session) Put(actor Actor) error {
 		!isFiniteActorResource(actor.ManaPoint, actor.MaximumManaPoint) {
 		return errors.New("hero actor invalid")
 	}
+	if actor.Orientation == (game.Quaternion{}) {
+		actor.Orientation.W = 1
+	}
+	orientation, err := normalizeOrientation(actor.Orientation)
+	if err != nil {
+		return fmt.Errorf("actorOrientation: %w", err)
+	}
+	actor.Orientation = orientation
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	current, isFound := s.actors[actor.UserID]
@@ -132,6 +141,42 @@ func (s *Session) UpdatePose(
 	actor.FootprintRadius = footprintRadius
 	s.actors[userID] = actor
 	return nil
+}
+
+// SetOrientation retains authoritative ability facing across ordinary pose
+// updates and peer baselines. Position-only teleports preserve this rotation.
+func (e *Session) SetOrientation(userID uint64, peerGeneration uint64, objectID uint32, orientation game.Quaternion) error {
+	if e == nil {
+		return errors.New("nil hero session")
+	}
+	orientation, err := normalizeOrientation(orientation)
+	if err != nil {
+		return fmt.Errorf("setOrientation: %w", err)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	actor, isFound := e.actors[userID]
+	if !isFound || actor.PeerGeneration != peerGeneration || actor.ObjectID != objectID {
+		return errors.New("hero actor unavailable")
+	}
+	actor.Orientation = orientation
+	e.actors[userID] = actor
+	return nil
+}
+
+func normalizeOrientation(orientation game.Quaternion) (game.Quaternion, error) {
+	lengthSquared := float64(orientation.X)*float64(orientation.X) +
+		float64(orientation.Y)*float64(orientation.Y) +
+		float64(orientation.Z)*float64(orientation.Z) +
+		float64(orientation.W)*float64(orientation.W)
+	if lengthSquared <= 0 || math.IsNaN(lengthSquared) || math.IsInf(lengthSquared, 0) {
+		return game.Quaternion{}, errors.New("hero orientation invalid")
+	}
+	length := math.Sqrt(lengthSquared)
+	return game.Quaternion{
+		X: float32(float64(orientation.X) / length), Y: float32(float64(orientation.Y) / length),
+		Z: float32(float64(orientation.Z) / length), W: float32(float64(orientation.W) / length),
+	}, nil
 }
 
 func (s *Session) SetResources(

@@ -3,6 +3,7 @@ package gameplay
 import (
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
@@ -28,14 +29,18 @@ const beastPetEnrageBodyScale = float32(0.20)
 const beastPetSpawnReleaseDelay = 1400 * time.Millisecond
 
 type beastPetEnrageRun struct {
-	runtime    campaignAbilityCommandRuntime
-	packet     raknet.Packet
-	sessionKey string
-	generation uint64
-	objectID   uint32
-	instanceID uint32
-	timestamp  uint64
-	cancel     raknet.CancelSchedule
+	runtime        campaignAbilityCommandRuntime
+	packet         raknet.Packet
+	sessionKey     string
+	generation     uint64
+	objectID       uint32
+	instanceID     uint32
+	timestamp      uint64
+	healingProfile game.HealingProfile
+	criticalRating float32
+	autoCrit       float32
+	difficulty     uint32
+	cancel         raknet.CancelSchedule
 }
 
 func (e *beastPetEnrageRun) stop() ([]byte, error) {
@@ -112,17 +117,41 @@ func (e *beastPetEnrageRun) isCurrent(peerSession gameplayPeerSession, isFound b
 func (e *beastPetEnrageRun) activate() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	if !e.isCurrent(peerSession, isFound) || peerSession.zone == nil {
+	if !e.isCurrent(peerSession, isFound) || peerSession.zone == nil ||
+		peerSession.deployedCreatureIndex >= uint32(len(peerSession.binding.Creatures)) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	// RequestModifier captures its hero initiator at the authored hit time.
+	// Every Rage tick uses that snapshot, including the healing-over-time bonus.
+	creature := e.runtime.registry.projectPassiveCreature(
+		peerSession, peerSession.deployedCreatureIndex, e.runtime.now(),
+	)
+	e.healingProfile = creature.HealingProfile
+	e.criticalRating = creature.CriticalRating
+	e.autoCrit = creature.AutoCrit
+	e.difficulty = peerSession.binding.Difficulty
 	peerSession.beastPetDamageIncrease = beastPetEnrageDamageIncrease
-	healPacket, err := e.healLocked(&peerSession)
+	healPackets, err := e.healLocked(&peerSession)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("beastPetEnrageInitialHeal: %w", err)
 	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
+	// The HP commit is accepted independently of later taunt/presentation work.
+	// Publish through the original world's retained queues before unlocking.
+	for sessionKey, member := range e.runtime.registry.sessions {
+		if member.zone != peerSession.zone || member.isZoneTerminal() {
+			continue
+		}
+		member.queueCampaignPackets(healPackets)
+		e.runtime.registry.sessions[sessionKey] = member
+	}
+	for _, retained := range e.runtime.registry.retainedSessions {
+		if retained.peerSession.zone == peerSession.zone && !retained.peerSession.isZoneTerminal() {
+			retained.peerSession.queueCampaignPackets(healPackets)
+		}
+	}
 	e.runtime.registry.mutex.Unlock()
 	acquired, err := peerSession.zone.TauntCompanion(
 		peerSession.binding.UserID, e.generation, e.objectID, 5,
@@ -176,7 +205,7 @@ func (e *beastPetEnrageRun) activate() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("beastPetEnrageScaleCommit: %w", err)
 	}
-	packets := append([][]byte{modifierPacket, effectPacket, attributePacket}, healPacket...)
+	packets := [][]byte{modifierPacket, effectPacket, attributePacket}
 	return append(packets, actionPackets...), nil
 }
 
@@ -205,19 +234,50 @@ func (e *beastPetEnrageRun) healLocked(
 	if !isFound || companion.HitPoint <= 0 {
 		return nil, nil
 	}
-	healing := companion.MaximumHitPoint * beastPetEnrageHealingPercent
+	multiplier := e.runtime.program.Critical.DamageBonus
+	if multiplier <= 0 || math.IsNaN(float64(multiplier)) || math.IsInf(float64(multiplier), 0) {
+		return nil, errors.New("invalid rage healing critical multiplier")
+	}
+	amount := companion.MaximumHitPoint * beastPetEnrageHealingPercent
+	healingRange := sim.DamageRange{
+		Minimum: amount, Maximum: amount,
+	}
+	random := peerSession.zone.Population().Random()
+	if random == nil {
+		return nil, errors.New("rage healing random unavailable")
+	}
+	// Native 9BCEF0 draws even for equal, potentially fractional endpoints.
+	rangeDraw := float32(random.Float64())
+	amount = healingRange.Minimum + (healingRange.Maximum-healingRange.Minimum)*rangeDraw
+	healing, err := game.ResolveAbilityHealing(game.AbilityHealing{
+		Amount:     amount,
+		Descriptor: 4096, IsDescriptorFound: true,
+	}, e.healingProfile)
+	if err != nil {
+		return nil, fmt.Errorf("beastPetEnrageHealing: %w", err)
+	}
+	isCritical, err := sim.RollCritical(peerSession.zone.Population().Random(),
+		e.criticalRating, e.autoCrit, e.difficulty, e.runtime.program.Critical.RatingConversions,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("rageHealCritical: %w", err)
+	}
+	flags := uint16(0x0002)
+	if isCritical {
+		healing *= multiplier
+		flags |= 0x0008
+	}
+	if math.IsNaN(float64(healing)) || math.IsInf(float64(healing), 0) {
+		return nil, errors.New("invalid critical rage healing")
+	}
 	hitPoint := min(companion.MaximumHitPoint, companion.HitPoint+healing)
 	if hitPoint <= companion.HitPoint {
 		return nil, nil
 	}
-	_, _, err := peerSession.zone.Companion().SetHitPoint(e.objectID, hitPoint)
-	if err != nil {
-		return nil, fmt.Errorf("beastPetEnrageResource: %w", err)
-	}
 	integerChange := int32(hitPoint) - int32(companion.HitPoint)
 	messages := []raknet.ApplicationMessage{
 		raknet.DamageCombatEventMessage{
-			Flags: 0x0002, DeltaHealth: -(hitPoint - companion.HitPoint),
+			Flags: flags, DeltaHealth: -healing,
 			TargetID: e.objectID, SourceID: peerSession.deployedObjectID,
 			IntegerHPChange: -integerChange,
 		},
@@ -232,6 +292,13 @@ func (e *beastPetEnrageRun) healLocked(
 			return nil, fmt.Errorf("beastPetEnrageResourceMarshal[%d]: %w", index, marshalErr)
 		}
 		packets = append(packets, packet)
+	}
+	isRestored, err := peerSession.zone.Companion().RestoreHitPoint(companion, hitPoint)
+	if err != nil {
+		return nil, fmt.Errorf("beastPetEnrageResource: %w", err)
+	}
+	if !isRestored {
+		return nil, nil
 	}
 	return packets, nil
 }
@@ -716,6 +783,17 @@ func (r campaignAbilityCommandRuntime) handleSummonBeast(
 func (r campaignDamageRuntime) startBeastPetAttack(
 	packet raknet.Packet, sessionKey string, generation uint64, sourceTime uint64,
 ) ([][]byte, error) {
+	packets, err := r.startBeastPetAttackWithResume(packet, sessionKey, generation, sourceTime, nil, 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("beastAttack: %w", err)
+	}
+	return packets, nil
+}
+
+func (r campaignDamageRuntime) startBeastPetAttackWithResume(
+	packet raknet.Packet, sessionKey string, generation uint64, sourceTime uint64,
+	resurrection *beastPetResurrectionRun, resumeRevision uint64, transportGeneration uint64,
+) ([][]byte, error) {
 	if packet.ScheduleGroup == nil && packet.ScheduleGroupResult == nil {
 		return nil, errors.New("beast pet schedule unavailable")
 	}
@@ -724,6 +802,11 @@ func (r campaignDamageRuntime) startBeastPetAttack(
 	isCurrent := isFound && peerSession.generation == generation &&
 		peerSession.beastPetObjectID != 0 && peerSession.zone != nil &&
 		peerSession.zone.Companion() != nil && peerSession.zone.NPCs() != nil
+	if resurrection != nil {
+		isCurrent = isCurrent && peerSession.beastPetResurrection == resurrection &&
+			resurrection.resumeRevision == resumeRevision && peerSession.transportGeneration == transportGeneration &&
+			!peerSession.isRejoinPending && peerSession.deployedHitPoint() > 0
+	}
 	if isCurrent && peerSession.beastPetResurrection != nil {
 		state := peerSession.beastPetResurrection.state
 		isCurrent = !state.IsCasting && !state.IsBurrowing

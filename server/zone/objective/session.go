@@ -24,6 +24,7 @@ type Session struct {
 	mu       sync.Mutex
 	state    *sim.ObjectiveState
 	runtimes map[uint32]*sim.LuaObjectiveRuntime
+	initials []sim.ObjectiveSnapshot
 }
 
 // Update is one immutable, protocol-independent objective projection.
@@ -45,7 +46,7 @@ func NewSessionState(
 	if len(runtimes) == 0 {
 		return nil, errors.New("objective runtime unavailable")
 	}
-	return &Session{state: state, runtimes: runtimes}, nil
+	return &Session{state: state, runtimes: runtimes, initials: state.Snapshot()}, nil
 }
 
 func NewSession(
@@ -64,13 +65,17 @@ func NewSession(
 		if err != nil {
 			return nil, fmt.Errorf("sessionTutorial: %w", err)
 		}
-		return &Session{state: state, runtimes: runtimes}, nil
+		return &Session{state: state, runtimes: runtimes, initials: state.Snapshot()}, nil
 	}
 	state, runtimes, err := NewLevel(ctx, inputs, objects, playerIndex)
 	if err != nil {
 		return nil, fmt.Errorf("sessionLevel: %w", err)
 	}
-	return &Session{state: state, runtimes: runtimes}, nil
+	var initials []sim.ObjectiveSnapshot
+	if state != nil {
+		initials = state.Snapshot()
+	}
+	return &Session{state: state, runtimes: runtimes, initials: initials}, nil
 }
 
 func (s *Session) Join(playerIndex uint8) error {
@@ -102,11 +107,9 @@ func (s *Session) Leave(playerIndex uint8) error {
 	if s.state == nil {
 		return nil
 	}
-	for index, objective := range s.state.Snapshot() {
-		err := s.state.DeactivatePlayer(objective.ObjectiveID, playerIndex)
-		if err != nil {
-			return fmt.Errorf("objectiveLeave[%d]: %w", index, err)
-		}
+	err := s.leavePlayer(playerIndex)
+	if err != nil {
+		return fmt.Errorf("leavePlayer: %w", err)
 	}
 	return nil
 }

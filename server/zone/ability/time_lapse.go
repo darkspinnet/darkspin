@@ -11,13 +11,23 @@ import (
 // ApplyTimeLapse repeats each nearby enemy's recent damage, capped separately
 // for each victim. An undamaged enemy still receives the base energy hit.
 func ApplyTimeLapse(plan *AreaPlan, enemies *zonenpc.Session, creature game.GameplayCreature, now time.Time) error {
+	err := ApplyTimeLapseWithDexterity(plan, enemies, creature, creature.Dexterity, now)
+	if err != nil {
+		return fmt.Errorf("timeLapsePlan: %w", err)
+	}
+	return nil
+}
+
+// ApplyTimeLapseWithDexterity keeps the accepted damage snapshot separate from
+// the live Dexterity operand read after the windup in ability525.
+func ApplyTimeLapseWithDexterity(
+	plan *AreaPlan, enemies *zonenpc.Session, creature game.GameplayCreature,
+	dexterity float32, now time.Time,
+) error {
 	policy := plan.Definition.TimeLapse
 	if policy == nil {
 		return nil
 	}
-	// Vex's primary attribute is Dexterity. The damage profile contains the
-	// full mission stat, whereas PartAttribute contains equipment bonuses only.
-	dexterity := creature.DamageProfile.PrimaryAttribute
 	cap := policy.DamageCap + policy.CapCoefficient*dexterity
 	definition := plan.Definition
 	baseScale := 1 + (dexterity-8)*definition.DamageCoefficient

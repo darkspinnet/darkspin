@@ -16,9 +16,15 @@ import (
 var offlineMagic = [16]byte{0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78}
 
 var (
-	errScheduleCanceled    = errors.New("schedule canceled")
-	errScheduleCommitted   = errors.New("schedule committed callback failed")
-	errTransportDisconnect = errors.New("transport disconnect")
+	// ErrScheduledPeerStale identifies a publication whose original peer was
+	// retired after production and before its packets could be sent.
+	ErrScheduledPeerStale = errors.New("scheduledPeer: stale")
+	// ErrSchedulePeerUnavailable identifies scheduling admission after the
+	// addressed peer has disconnected, before any producer has run.
+	ErrSchedulePeerUnavailable = errors.New("schedulePeer: not connected")
+	errScheduleCanceled        = errors.New("schedule canceled")
+	errScheduleCommitted       = errors.New("schedule committed callback failed")
+	errTransportDisconnect     = errors.New("transport disconnect")
 )
 
 const (
@@ -1445,7 +1451,7 @@ func (s *Server) scheduleConnectedPacketGroupResult(
 	connContext := s.connContext
 	s.mu.Unlock()
 	if currentPeer == nil || !currentPeer.isConnected {
-		return nil, errors.New("schedulePeer: not connected")
+		return nil, ErrSchedulePeerUnavailable
 	}
 	if conn == nil || connContext == nil {
 		return nil, errors.New("scheduleConn: not listening")
@@ -1620,7 +1626,7 @@ func (s *Server) produceAndSendScheduledDeadline(
 	s.mu.Unlock()
 	if !isCurrentPeer {
 		s.outboundMu.RUnlock()
-		return errors.New("scheduledPeer: stale")
+		return ErrScheduledPeerStale
 	}
 	if !isCurrentConnection {
 		s.outboundMu.RUnlock()

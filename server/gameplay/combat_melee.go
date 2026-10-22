@@ -252,13 +252,6 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 		profile.TrailEffectName = fmt.Sprintf("citadel_zap_discharge_%d.ServerEventDef", stackCount)
 		profile.ImpactEffectName = fmt.Sprintf("citadel_zap_hit_%d.ServerEventDef", stackCount)
 	}
-	isOperativeChannel := zonenpc.IsOperativeCage(profile.ModifierName) &&
-		r.registry.isOperativeChannelLocked(peerSession, objectID, target.ObjectID)
-	if isOperativeChannel {
-		profile.HitDelay = 0
-		profile.ReleaseDelay = 0
-		profile.Cooldown = 2 * time.Second
-	}
 	drainerMeleeProfile, isDrainerMeleeFound :=
 		zonenpc.NoctMinionDrainerMeleeProfile(enemy.Plan.NounName)
 	if isDrainerMeleeFound {
@@ -408,12 +401,12 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 		}
 		return pursuitPackets, nil
 	}
-	var startPackets [][]byte
-	if !isOperativeChannel {
-		startPackets, err = r.startNPCAttack(sessionKey, generation, attackPlan, timestamp)
-		if err != nil {
-			return nil, fmt.Errorf("enemyMeleeStart: %w", err)
-		}
+	if zonenpc.IsOperativeCage(profile.ModifierName) {
+		return r.produceOperativeCage(packet, sessionKey, generation, attackPlan, timestamp)
+	}
+	startPackets, err := r.startNPCAttack(sessionKey, generation, attackPlan, timestamp)
+	if err != nil {
+		return nil, fmt.Errorf("enemyMeleeStart: %w", err)
 	}
 	timeline, err := zonenpc.TimelineForAttack(attackPlan)
 	if err != nil {

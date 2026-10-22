@@ -248,6 +248,7 @@ func (r gameplayActionRuntime) releaseFailedActionAdmission(
 	}
 	pursuit := peerSession.campaignPlayerPursuitSession().Snapshot()
 	r.registry.retireCampaignTreeOfLifeLocked(&peerSession)
+	r.registry.retireHeroInfectionsLocked(&peerSession)
 	interruptedBasic := peerSession.resetFailedActionAdmission(
 		r.switcher.modifierPool, r.switcher.effectPool,
 	)
@@ -282,6 +283,7 @@ func (r gameplayActionRuntime) recoverRejectedActionAdmission(
 		return nil
 	}
 	r.registry.retireCampaignTreeOfLifeLocked(&peerSession)
+	r.registry.retireHeroInfectionsLocked(&peerSession)
 	interruptedBasic := peerSession.resetFailedActionAdmission(
 		r.switcher.modifierPool, r.switcher.effectPool,
 	)
@@ -570,6 +572,7 @@ func (e gameplayActionLeaseExpiry) produce() ([][]byte, error) {
 	delete(e.runtime.registry.actionLeases, e.key)
 	delete(e.runtime.registry.actionTerminals, e.key)
 	e.runtime.registry.retireCampaignTreeOfLifeLocked(&peerSession)
+	e.runtime.registry.retireHeroInfectionsLocked(&peerSession)
 	interruptedBasic := peerSession.resetFailedActionAdmission(
 		e.runtime.switcher.modifierPool, e.runtime.switcher.effectPool,
 	)

@@ -20,7 +20,7 @@ import (
 const (
 	SourceVersion  = "5.3.0.103"
 	SourceBuild    = 103
-	RecipeVersion  = 92
+	RecipeVersion  = 93
 	ContentRelease = "build-103-content"
 	RuntimeRole    = "runtime-content"
 )
@@ -397,6 +397,23 @@ func Verify(ctx context.Context, path string) (*Verification, error) {
 	}
 	if lootAffixCount != expectedLootAffixCount {
 		return nil, fmt.Errorf("lootAffixCount: got %d, want %d", lootAffixCount, expectedLootAffixCount)
+	}
+	isLootAffixTailStored, err := hasTable(ctx, database, "loot_affix_tail")
+	if err != nil {
+		return nil, fmt.Errorf("lootAffixTailTable: %w", err)
+	}
+	if !isLootAffixTailStored {
+		return nil, errors.New("lootAffixTailTable: missing")
+	}
+	var lootAffixTailCount int
+	err = database.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM loot_affix_tail
+		WHERE JSON_VALID(modifier_grant) AND JSON_VALID(ability_improvement)`).Scan(&lootAffixTailCount)
+	if err != nil {
+		return nil, fmt.Errorf("lootAffixTailCount: %w", err)
+	}
+	if lootAffixTailCount != expectedLootAffixCount {
+		return nil, fmt.Errorf("lootAffixTailCount: got %d, want %d", lootAffixTailCount, expectedLootAffixCount)
 	}
 	isLootTuningStored, err := hasTable(ctx, database, "loot_tuning")
 	if err != nil {
@@ -1479,6 +1496,14 @@ func writeContentDatabase(
 			is_unique_family INTEGER NOT NULL CHECK (is_unique_family IN (0, 1)),
 			is_basic_eligible INTEGER NOT NULL CHECK (is_basic_eligible IN (0, 1)),
 			PRIMARY KEY (kind, id)
+		);
+		CREATE TABLE loot_affix_tail (
+			kind TEXT NOT NULL,
+			id INTEGER NOT NULL,
+			modifier_grant TEXT NOT NULL,
+			ability_improvement TEXT NOT NULL,
+			PRIMARY KEY (kind, id),
+			FOREIGN KEY (kind, id) REFERENCES loot_affix(kind, id) ON DELETE CASCADE
 		);
 		CREATE TABLE loot_tuning (
 			id INTEGER PRIMARY KEY CHECK (id = 1),

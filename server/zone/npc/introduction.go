@@ -82,6 +82,7 @@ func WithBossIntroduction(plan SpawnPlan, profile ActionProfile) ActionProfile {
 // animations for actors that are already standing in the map.
 func IntroductionProfile(plan SpawnPlan, profile ActionProfile) ActionProfile {
 	profile = WithBossIntroduction(plan, profile)
+	profile = authoredRobotEntrance(plan, profile)
 	if plan.IsStartupInitialized && plan.IsSecondaryStart &&
 		plan.Introduction != SpawnIntroductionFloorWarp {
 		graph := plan.NPCProfile.AIGraph

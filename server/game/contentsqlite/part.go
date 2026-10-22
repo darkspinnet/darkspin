@@ -50,8 +50,10 @@ func LoadPartCatalog(ctx context.Context, store lootRigblockStore) (*game.PartCa
 			return nil, fmt.Errorf("affixModifier[%d]: got %d", index, len(affix.Modifier))
 		}
 		definition := game.PartAffixDefinition{
-			PartTypes: append([]string(nil), affix.PartTypes...),
-			Kind:      affix.Kind, ID: affix.ID, CatalogOrdinal: affix.CatalogOrdinal,
+			PartTypes:           append([]string(nil), affix.PartTypes...),
+			ModifierGrants:      append([]string(nil), affix.ModifierGrants...),
+			AbilityImprovements: append([]string(nil), affix.AbilityImprovements...),
+			Kind:                affix.Kind, ID: affix.ID, CatalogOrdinal: affix.CatalogOrdinal,
 			MinimumLevel: affix.MinimumLevel, MaximumLevel: affix.MaximumLevel,
 			ClassType: affix.ClassType, ScienceType: affix.ScienceType,
 			IsUniqueFamily: affix.IsUniqueFamily, IsBasicEligible: affix.IsBasicEligible,
