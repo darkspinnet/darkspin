@@ -254,6 +254,7 @@ func (r campaignNPCActionRuntime) produceScaldronBasicSinkhole(
 		r.registry.mutex.Unlock()
 		return nil, false, nil
 	}
+	profile = zonenpc.ApplyAffixTiming(profile, source.Plan)
 	plan := zonenpc.AttackPlan{
 		ActionGeneration: source.ActionGeneration,
 		SourceObjectID:   objectID, TargetObjectID: target.ObjectID,

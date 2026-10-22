@@ -482,7 +482,8 @@ func (r campaignDamageRuntime) publishNPCStuns(
 		if err != nil {
 			return nil, fmt.Errorf("shockwaveStunRun: %w", err)
 		}
-		stunExpiresAt := r.npc.now().Add(duration)
+		statusDuration := zonenpc.CrowdControlDuration(result.Snapshot.Plan, duration)
+		stunExpiresAt := r.npc.now().Add(statusDuration)
 		r.registry.mutex.Lock()
 		currentSession, isFound := r.registry.sessions[sessionKey]
 		isCurrent := isFound && currentSession.generation == generation &&
@@ -515,7 +516,7 @@ func (r campaignDamageRuntime) publishNPCStuns(
 				TargetObjectID: result.Damage.ObjectID,
 				ModifierID:     modifierID,
 				InstanceID:     run.instanceID,
-				Duration:       duration,
+				Duration:       statusDuration,
 				Timestamp:      timestamp,
 			},
 		)
@@ -545,7 +546,7 @@ func (r campaignDamageRuntime) publishNPCStuns(
 			run: run,
 		}
 		deleteProducer := raknet.ScheduledPacketProducer{
-			Delay:   duration,
+			Delay:   statusDuration,
 			Produce: expiryStep.produce,
 		}
 		_, scheduleErr := scheduleNPCProducers(r.registry, packet,
@@ -693,6 +694,14 @@ func (r campaignDamageRuntime) publishAreaResults(
 		}
 		packets = append(packets, reflectionPackets...)
 		statDelta.PVEDamageTaken += reflectionStatDelta.PVEDamageTaken
+		thornsPackets, thornsStatDelta, thornsErr := r.applyAffixThorns(
+			sessionKey, generation, timestamp, result.Damage.Thorns,
+		)
+		if thornsErr != nil {
+			return nil, fmt.Errorf("areaAffixThorns: %w", thornsErr)
+		}
+		packets = append(packets, thornsPackets...)
+		statDelta.PVEDamageTaken += thornsStatDelta.PVEDamageTaken
 		err = r.reserveQuantumStateReaction(
 			sessionKey, generation, sourceObjectID,
 			result.Damage.ObjectID, timestamp,
@@ -1818,6 +1827,18 @@ func (r campaignDamageRuntime) publishTransition(
 			}
 			packets = append(packets, animationPacket)
 		}
+		for index, objectID := range transition.affixResurrectionObjectIDs {
+			resurrectionEffect, err := raknet.MarshalApplication(
+				raknet.ObjectEffectMessage{
+					Asset:    util.HashID("life_resurrect.ServerEventDef"),
+					ObjectID: objectID, AttackerID: objectID,
+				},
+			)
+			if err != nil {
+				return nil, fmt.Errorf("affixResurrectEffect[%d]: %w", index, err)
+			}
+			packets = append(packets, resurrectionEffect)
+		}
 	}
 	packets = append(packets, sinkholeCleanupPackets...)
 	// Publish the modifier deletion after the death state. The native corpse
@@ -1885,6 +1906,7 @@ func (r campaignDamageRuntime) publishTransition(
 		step := campaignSelfResurrectionActionStep{
 			runtime: r.npc, packet: packet.Autonomous(), sessionKey: sessionKey,
 			generation: generation, plans: transition.selfResurrectionPlans,
+			affixResurrectionObjectIDs: transition.affixResurrectionObjectIDs,
 			timestamp: timestamp +
 				uint64(campaignSelfResurrectionDuration/time.Millisecond),
 		}
@@ -2438,6 +2460,7 @@ type campaignDamageTransition struct {
 	immediatePackets                [][]byte
 	nashiraSplit                    *campaignNashiraSplitPlan
 	selfResurrectionPlans           []zonenpc.SpawnPlan
+	affixResurrectionObjectIDs      []uint32
 	corruptorStageTwoPlans          []zonenpc.SpawnPlan
 	corruptorStageTwoTargetObjectID uint32
 	corruptorPhaseObjectID          uint32
@@ -2496,21 +2519,34 @@ func (e campaignBossCompletionStep) produce() ([][]byte, error) {
 }
 
 type campaignSelfResurrectionActionStep struct {
-	runtime    campaignNPCActionRuntime
-	packet     raknet.Packet
-	sessionKey string
-	generation uint64
-	plans      []zonenpc.SpawnPlan
-	timestamp  uint64
+	runtime                    campaignNPCActionRuntime
+	packet                     raknet.Packet
+	sessionKey                 string
+	generation                 uint64
+	plans                      []zonenpc.SpawnPlan
+	affixResurrectionObjectIDs []uint32
+	timestamp                  uint64
 }
 
 func (e campaignSelfResurrectionActionStep) produce() ([][]byte, error) {
-	packets, err := e.runtime.scheduleFirstActions(
+	packets := make([][]byte, 0, len(e.affixResurrectionObjectIDs))
+	for index, objectID := range e.affixResurrectionObjectIDs {
+		removalPacket, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
+			Slot: 18, IsRemovalRequested: true, IsHardStop: true,
+			ObjectID: objectID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("selfResurrectStatusRemove[%d]: %w", index, err)
+		}
+		packets = append(packets, removalPacket)
+	}
+	actionPackets, err := e.runtime.scheduleFirstActions(
 		e.packet, e.sessionKey, e.generation, e.plans, e.timestamp,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("selfResurrectAction: %w", err)
 	}
+	packets = append(packets, actionPackets...)
 	return packets, nil
 }
 
@@ -2619,7 +2655,9 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 		scalePacket, marshalErr := raknet.MarshalApplication(
 			raknet.AttributeDataUpdateMessage{
 				ObjectID: enrage.Target.Plan.ObjectID,
-				Value:    map[uint8]float32{113: enrage.BodyScale},
+				Value: map[uint8]float32{
+					113: enrage.Target.Plan.PermanentBodyScale() + enrage.BodyScale,
+				},
 			},
 		)
 		if marshalErr != nil {
@@ -2740,16 +2778,23 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 		transition.turtleObjectID = result.ObjectID
 	}
 	if result.IsSelfResurrectionStarted {
-		passiveEffectRemove, marshalErr := raknet.MarshalApplication(
-			raknet.AttachedEffectMessage{
-				Slot: 16, IsRemovalRequested: true, ObjectID: result.ObjectID,
-			},
-		)
-		if marshalErr != nil {
-			return campaignDamageTransition{},
-				fmt.Errorf("selfResurrectPassiveRemove: %w", marshalErr)
+		fraction := result.AffixResurrectionFraction
+		if fraction <= 0 {
+			fraction = 0.4 // Nomad Bio's authored self resurrection.
+			passiveEffectRemove, marshalErr := raknet.MarshalApplication(
+				raknet.AttachedEffectMessage{
+					Slot: 16, IsRemovalRequested: true, ObjectID: result.ObjectID,
+				},
+			)
+			if marshalErr != nil {
+				return campaignDamageTransition{},
+					fmt.Errorf("selfResurrectPassiveRemove: %w", marshalErr)
+			}
+			transition.immediatePackets = append(
+				transition.immediatePackets, passiveEffectRemove,
+			)
 		}
-		revived, resurrectErr := s.zone.NPCs().ResurrectWithoutLoot(result.ObjectID, 0.4)
+		revived, resurrectErr := s.zone.NPCs().ResurrectWithoutLoot(result.ObjectID, fraction)
 		if resurrectErr != nil {
 			return campaignDamageTransition{},
 				fmt.Errorf("selfResurrectApply: %w", resurrectErr)
@@ -2779,12 +2824,32 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 			return campaignDamageTransition{},
 				fmt.Errorf("selfResurrectMarshal: %w", marshalErr)
 		}
-		transition.immediatePackets = append(
-			transition.immediatePackets, passiveEffectRemove,
-		)
-		transition.immediatePackets = append(
-			transition.immediatePackets, resurrectionPackets...,
-		)
+		if result.AffixResurrectionFraction > 0 {
+			statusEffect, statusErr := raknet.MarshalApplication(
+				raknet.AttachedEffectMessage{
+					Slot: 18, IsForceAttached: true,
+					Asset:    util.HashID("status_self_rezzing.ServerEventDef"),
+					ObjectID: result.ObjectID,
+				},
+			)
+			if statusErr != nil {
+				return campaignDamageTransition{},
+					fmt.Errorf("affixResurrectStatus: %w", statusErr)
+			}
+			transition.immediatePackets = append(
+				transition.immediatePackets, statusEffect,
+			)
+			transition.immediatePackets = append(
+				transition.immediatePackets, resurrectionPackets...,
+			)
+			transition.affixResurrectionObjectIDs = append(
+				transition.affixResurrectionObjectIDs, result.ObjectID,
+			)
+		} else {
+			transition.immediatePackets = append(
+				transition.immediatePackets, resurrectionPackets...,
+			)
+		}
 		transition.selfResurrectionPlans = append(
 			transition.selfResurrectionPlans, revived.Plan,
 		)
@@ -3920,6 +3985,18 @@ func (r campaignDamageRuntime) publishPlasmaModifier(
 	sourceObjectID uint32, targetObjectID uint32, timestamp uint64,
 	binding game.GameplayBinding, plan zoneability.PlasmaModifierPlan,
 ) ([][]byte, error) {
+	if plan.Kind == zoneability.PlasmaModifierShock {
+		r.registry.mutex.RLock()
+		peerSession, isFound := r.registry.sessions[sessionKey]
+		if isFound && peerSession.generation == generation &&
+			peerSession.zone != nil && peerSession.zone.NPCs() != nil {
+			target, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
+			if isTargetFound {
+				plan.Duration = zonenpc.CrowdControlDuration(target.Plan, plan.Duration)
+			}
+		}
+		r.registry.mutex.RUnlock()
+	}
 	modifier, err := newCampaignNPCModifierRun(r.npc.modifierPool)
 	if err != nil {
 		return nil, fmt.Errorf("plasmaModifierRun: %w", err)
@@ -4282,7 +4359,8 @@ func campaignNPCActionProfile(
 		surfaceDistance := max(float32(0), targetPosition.Sub(plan.Position).Length()-
 			plan.ActorFootprintRadius()-targetFootprintRadius)
 		if surfaceDistance > profile.Range {
-			return zonenpc.ArcturusSawBladeProfile(plan.NounName)
+			return campaignAffixActionProfile(plan,
+				zonenpc.ArcturusSawBladeProfile(plan.NounName))
 		}
 	}
 	nashiraSwipeProfile, isNashiraSwipeFound :=
@@ -4296,7 +4374,7 @@ func campaignNPCActionProfile(
 				targetFootprintRadius,
 		)
 		if surfaceDistance <= nashiraSwipeProfile.Range {
-			return nashiraSwipeProfile, true
+			return campaignAffixActionProfile(plan, nashiraSwipeProfile, true)
 		}
 	}
 	cryosBossMeleeProfile, isCryosBossMeleeFound :=
@@ -4310,7 +4388,7 @@ func campaignNPCActionProfile(
 				targetFootprintRadius,
 		)
 		if surfaceDistance <= cryosBossMeleeProfile.Range {
-			return cryosBossMeleeProfile, true
+			return campaignAffixActionProfile(plan, cryosBossMeleeProfile, true)
 		}
 	}
 	stealthProfile, isStealthFound := zonenpc.StealtherStealthProfile(plan.NounName)
@@ -4323,7 +4401,7 @@ func campaignNPCActionProfile(
 				targetFootprintRadius,
 		)
 		if surfaceDistance > profile.Range {
-			return stealthProfile, true
+			return campaignAffixActionProfile(plan, stealthProfile, true)
 		}
 	}
 	homerMeleeProfile, isHomerMeleeFound :=
@@ -4337,7 +4415,7 @@ func campaignNPCActionProfile(
 				targetFootprintRadius,
 		)
 		if surfaceDistance <= homerMeleeProfile.Range {
-			return homerMeleeProfile, true
+			return campaignAffixActionProfile(plan, homerMeleeProfile, true)
 		}
 	}
 	hybridMeleeProfile, isHybridMeleeFound :=
@@ -4351,7 +4429,7 @@ func campaignNPCActionProfile(
 				targetFootprintRadius,
 		)
 		if surfaceDistance <= hybridMeleeProfile.Range {
-			return hybridMeleeProfile, true
+			return campaignAffixActionProfile(plan, hybridMeleeProfile, true)
 		}
 	}
 	specialTwoMeleeProfile, isSpecialTwoMeleeFound :=
@@ -4361,7 +4439,7 @@ func campaignNPCActionProfile(
 		deltaY := targetPosition.Y - plan.Position.Y
 		distance := float32(math.Hypot(float64(deltaX), float64(deltaY)))
 		if distance <= 10 {
-			return specialTwoMeleeProfile, true
+			return campaignAffixActionProfile(plan, specialTwoMeleeProfile, true)
 		}
 	}
 	jumpProfile, isJumpFound := zonenpc.NomadBioSpecialTwoJumpProfile(plan.NounName)
@@ -4376,7 +4454,7 @@ func campaignNPCActionProfile(
 			targetFootprintRadius,
 	)
 	if surfaceDistance > profile.Range {
-		return jumpProfile, true
+		return campaignAffixActionProfile(plan, jumpProfile, true)
 	}
 	return profile, true
 }
@@ -4807,13 +4885,16 @@ func (e campaignNPCAttackSchedule) hit() ([][]byte, error) {
 	if req.kind == campaignNPCAttackSnipeMelee {
 		currentPlan, err = zonenpc.PlanAttackWithProfile(
 			currentNPC, currentTarget.ObjectID, currentTarget.Position,
-			zonenpc.NomadSnipeMeleeProfile(currentNPC.Plan.NounName),
+			zonenpc.ApplyAffixTiming(
+				zonenpc.NomadSnipeMeleeProfile(currentNPC.Plan.NounName), currentNPC.Plan,
+			),
 			currentTarget.ActorFootprintRadius,
 		)
 	} else if req.kind == campaignNPCAttackBoomerSmash {
 		currentPlan, err = zonenpc.PlanAttackWithProfile(
 			currentNPC, currentTarget.ObjectID, currentTarget.Position,
-			zonenpc.BoomerSmashProfile(), currentTarget.ActorFootprintRadius,
+			zonenpc.ApplyAffixTiming(zonenpc.BoomerSmashProfile(), currentNPC.Plan),
+			currentTarget.ActorFootprintRadius,
 		)
 		if err == nil {
 			impactPacket, err = npcraknet.AttackImpact(currentPlan)
@@ -4881,7 +4962,7 @@ func (e campaignNPCAttackSchedule) hit() ([][]byte, error) {
 	}
 	result, err := zonenpc.CommitAttack(
 		current.zone.NPCRandom(), currentPlan,
-		currentNPC.Plan.NPCProfile.CriticalRating, runtime.program.Critical,
+		currentNPC.EffectiveCriticalRating(), runtime.program.Critical,
 	)
 	if err != nil {
 		runtime.registry.mutex.Unlock()
@@ -4971,7 +5052,7 @@ func (e campaignNPCAttackSchedule) hit() ([][]byte, error) {
 			}
 			chainResult, chainErr := zonenpc.CommitAttack(
 				current.zone.NPCRandom(), chainPlan,
-				currentNPC.Plan.NPCProfile.CriticalRating, runtime.program.Critical,
+				currentNPC.EffectiveCriticalRating(), runtime.program.Critical,
 			)
 			if chainErr != nil {
 				runtime.registry.mutex.Unlock()
@@ -6800,7 +6881,9 @@ func (r campaignNPCActionRuntime) produceSnipeMelee(
 		r.releaseAction(sessionKey, generation, objectID)
 		return nil, nil
 	}
-	profile := zonenpc.NomadSnipeMeleeProfile(enemy.Plan.NounName)
+	profile := zonenpc.ApplyAffixTiming(
+		zonenpc.NomadSnipeMeleeProfile(enemy.Plan.NounName), enemy.Plan,
+	)
 	attackPlan, err := zonenpc.PlanAttackWithProfile(
 		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
@@ -6985,7 +7068,9 @@ func (e campaignSnipeSlowSchedule) melee() ([][]byte, error) {
 	}
 	action, err := campaignNPCActionWithProfile(
 		currentNPC.Plan, target.ObjectID, target.Position,
-		zonenpc.NomadSnipeMeleeProfile(currentNPC.Plan.NounName),
+		zonenpc.ApplyAffixTiming(
+			zonenpc.NomadSnipeMeleeProfile(currentNPC.Plan.NounName), currentNPC.Plan,
+		),
 		target.ActorFootprintRadius,
 	)
 	if err != nil {
@@ -7219,6 +7304,7 @@ func planCampaignNPCHasterAttack(
 	attackProfile := zonenpc.ZelemHasterAttackProfile()
 	attackProfile.MovementSpeed = profile.MovementSpeed
 	attackProfile.NonCombatMovementSpeed = profile.NonCombatMovementSpeed
+	attackProfile = zonenpc.ApplyAffixTiming(attackProfile, enemy.Plan)
 	return zonenpc.PlanAttackWithProfile(
 		enemy, targetObjectID, targetPosition,
 		attackProfile, targetFootprintRadius,
@@ -8312,7 +8398,7 @@ func (e campaignNPCPushPullSchedule) hit() ([][]byte, error) {
 			}
 			result, commitErr := zonenpc.CommitAttack(
 				current.zone.NPCRandom(), currentPlan,
-				enemy.Plan.NPCProfile.CriticalRating, runtime.program.Critical,
+				enemy.EffectiveCriticalRating(), runtime.program.Critical,
 			)
 			if commitErr != nil {
 				runtime.registry.mutex.Unlock()

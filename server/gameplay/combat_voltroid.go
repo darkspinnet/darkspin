@@ -300,6 +300,7 @@ func (r campaignNPCActionRuntime) produceCitadelSpecificOne(
 		r.releaseAction(sessionKey, generation, objectID)
 		return nil, true, nil
 	}
+	profile = zonenpc.ApplyAffixTiming(profile, source.Plan)
 	repeatDelay := max(profile.Cooldown, profile.ReleaseDelay)
 	schedule.timestamp = timestamp + uint64(repeatDelay/time.Millisecond)
 	action, err := campaignNPCActionWithProfile(

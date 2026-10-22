@@ -264,7 +264,8 @@ func (e campaignConsumeSchedule) hit() ([][]byte, error) {
 		raknet.AttributeDataUpdateMessage{
 			ObjectID: e.sourceObjectID,
 			Value: map[uint8]float32{
-				campaignMunchBodyScaleAttribute: campaignMunchBodyScalePerStack * float32(result.ModifierStack),
+				campaignMunchBodyScaleAttribute: result.Source.Plan.PermanentBodyScale() +
+					campaignMunchBodyScalePerStack*float32(result.ModifierStack),
 			},
 		},
 	)
@@ -333,11 +334,16 @@ func (r campaignNPCActionRuntime) stopCarrionMunch(
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation
 	var run *campaignNPCMunchRun
+	bodyScale := float32(0)
 	if isCurrent {
 		run = peerSession.campaignNPCMunches[objectID]
 	}
 	if run != nil {
 		peerSession.zone.NPCs().ClearMunch(objectID, run.expiresAt)
+		source, isSourceFound := peerSession.zone.NPCs().NPC(objectID)
+		if isSourceFound {
+			bodyScale = source.Plan.PermanentBodyScale()
+		}
 		peerSession.zone.Effect().Remove(run.modifier.instanceID)
 		delete(peerSession.campaignNPCMunches, objectID)
 		peerSession.untrackCampaignNPCModifier(run.modifier)
@@ -362,7 +368,7 @@ func (r campaignNPCActionRuntime) stopCarrionMunch(
 	bodyScalePacket, bodyScaleErr := raknet.MarshalApplication(
 		raknet.AttributeDataUpdateMessage{
 			ObjectID: objectID,
-			Value:    map[uint8]float32{campaignMunchBodyScaleAttribute: 0},
+			Value:    map[uint8]float32{campaignMunchBodyScaleAttribute: bodyScale},
 		},
 	)
 	if bodyScaleErr != nil {
@@ -399,6 +405,7 @@ type campaignMunchExpiryStep struct {
 }
 
 func (e campaignMunchExpiryStep) produce() ([][]byte, error) {
+	bodyScale := float32(0)
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
@@ -406,6 +413,10 @@ func (e campaignMunchExpiryStep) produce() ([][]byte, error) {
 		e.run.expiresAt == e.expiresAt
 	if isCurrent {
 		peerSession.zone.NPCs().ClearMunch(e.objectID, e.expiresAt)
+		source, isSourceFound := peerSession.zone.NPCs().NPC(e.objectID)
+		if isSourceFound {
+			bodyScale = source.Plan.PermanentBodyScale()
+		}
 		peerSession.zone.Effect().Remove(e.run.modifier.instanceID)
 		delete(peerSession.campaignNPCMunches, e.objectID)
 		peerSession.untrackCampaignNPCModifier(e.run.modifier)
@@ -432,7 +443,7 @@ func (e campaignMunchExpiryStep) produce() ([][]byte, error) {
 	bodyScalePacket, bodyScaleErr := raknet.MarshalApplication(
 		raknet.AttributeDataUpdateMessage{
 			ObjectID: e.objectID,
-			Value:    map[uint8]float32{campaignMunchBodyScaleAttribute: 0},
+			Value:    map[uint8]float32{campaignMunchBodyScaleAttribute: bodyScale},
 		},
 	)
 	if bodyScaleErr != nil {
@@ -464,6 +475,7 @@ func (r campaignNPCActionRuntime) produceCarrionConsume(
 		r.registry.mutex.RUnlock()
 		return nil, false, nil
 	}
+	profile = zonenpc.ApplyAffixTiming(profile, source.Plan)
 	if timestamp < peerSession.campaignNPCMunchReadiness[objectID] {
 		r.registry.mutex.RUnlock()
 		return nil, false, nil

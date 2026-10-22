@@ -494,6 +494,7 @@ func (r campaignAbilityCommandRuntime) handleHeroInfection(
 	if rootDuration <= 0 {
 		rootDuration = projected.Duration
 	}
+	rootDuration = zonenpc.CrowdControlDuration(target.Plan, rootDuration)
 	modifierInstanceID, err := r.modifierPool.Allocate()
 	if err != nil {
 		r.registry.mutex.Unlock()

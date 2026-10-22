@@ -67,6 +67,8 @@ type status struct {
 	tauntTargetObjectID      uint32
 }
 
+const unstoppableModifierName = "Unstoppable_NPCAffixModifier"
+
 func (s *Session) HasDebuff(objectID uint32, at time.Time) bool {
 	if s == nil || objectID == 0 || at.IsZero() {
 		return false
@@ -201,6 +203,9 @@ func (s *Session) ApplyTaunt(
 	if !isFound || npc.IsDefeated || !npc.IsPublished || npc.Plan.IsFixture ||
 		npc.Faction == target.Faction {
 		return Snapshot{}, fmt.Errorf("npcTauntMissing: %d", objectID)
+	}
+	if npc.HasAffixModifier(unstoppableModifierName) {
+		return npc, nil
 	}
 	npc.TargetObjectID = target.ObjectID
 	npc.TargetFaction = target.Faction
@@ -395,7 +400,11 @@ func (s *Session) ApplyHaste(
 	npc.status.hasteCooldownReduction = cooldownReduction
 	npc.status.hasteMovementSpeedBuff = movementSpeedBuff
 	if !npc.status.isHasteProfileStored {
-		profile, isProfileFound := ActionProfileForPlan(npc.Plan)
+		basePlan := npc.Plan
+		basePlan.AffixAttackSpeedBonus = 0
+		basePlan.AffixCooldownReductionBonus = 0
+		basePlan.AffixMovementSpeedBuff = 0
+		profile, isProfileFound := ActionProfileForPlan(basePlan)
 		if isProfileFound {
 			npc.status.hasteActionProfile = profile
 			npc.status.isHasteActionKnown = npc.Plan.IsActionKnown
@@ -755,7 +764,7 @@ func (s *Session) applySimpleStatus(
 	if !isFound || npc.IsDefeated {
 		return fmt.Errorf("npcStatusMissing: %d", objectID)
 	}
-	if isStatusBlockedByShield(npc) {
+	if isStatusBlockedByShield(npc) || npc.HasAffixModifier(unstoppableModifierName) {
 		return nil
 	}
 	if kind == "silence" {
@@ -944,7 +953,7 @@ func (s *Session) ApplyStun(objectID uint32, expiresAt time.Time) error {
 	if !isFound || npc.IsDefeated {
 		return fmt.Errorf("npcStunMissing: %d", objectID)
 	}
-	if isStatusBlockedByShield(npc) {
+	if isStatusBlockedByShield(npc) || npc.HasAffixModifier(unstoppableModifierName) {
 		return nil
 	}
 	endDirectionalShield(&npc)
@@ -1002,7 +1011,7 @@ func (s *Session) ApplyFear(objectID uint32, expiresAt time.Time) error {
 	if !isFound || npc.IsDefeated {
 		return fmt.Errorf("npcFearMissing: %d", objectID)
 	}
-	if isStatusBlockedByShield(npc) {
+	if isStatusBlockedByShield(npc) || npc.HasAffixModifier(unstoppableModifierName) {
 		return nil
 	}
 	if npc.status.fearExpiresAt.Before(expiresAt) {

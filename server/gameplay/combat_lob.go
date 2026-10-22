@@ -204,7 +204,7 @@ func (e campaignNPCLobSchedule) landing() ([][]byte, error) {
 			}
 			result, commitErr := zonenpc.CommitAttack(
 				peerSession.zone.NPCRandom(), plan,
-				source.Plan.NPCProfile.CriticalRating, e.runtime.program.Critical,
+				source.EffectiveCriticalRating(), e.runtime.program.Critical,
 			)
 			if commitErr != nil {
 				e.runtime.registry.mutex.Unlock()
@@ -557,7 +557,7 @@ func (e campaignNPCLobSchedule) magmaTick(timestamp uint64) ([][]byte, error) {
 		}
 		result, commitErr := zonenpc.CommitAttack(
 			peerSession.zone.NPCRandom(), plan,
-			e.source.Plan.NPCProfile.CriticalRating, e.runtime.program.Critical,
+			e.source.EffectiveCriticalRating(), e.runtime.program.Critical,
 		)
 		if commitErr != nil {
 			e.runtime.registry.mutex.Unlock()
@@ -736,7 +736,7 @@ func (e campaignNPCSubmunitionStep) produce() ([][]byte, error) {
 		}
 		result, commitErr := zonenpc.CommitAttack(
 			peerSession.zone.NPCRandom(), plan,
-			e.schedule.source.Plan.NPCProfile.CriticalRating,
+			e.schedule.source.EffectiveCriticalRating(),
 			e.schedule.runtime.program.Critical,
 		)
 		if commitErr != nil {
@@ -822,13 +822,13 @@ func (r campaignNPCActionRuntime) produceEnemyLob(
 		enemy.Plan.NounName,
 	)
 	if isMagmaFamily {
-		profile, isProfileFound = magmaProfile, true
+		profile, isProfileFound = zonenpc.ApplyAffixTiming(magmaProfile, enemy.Plan), true
 	}
 	shielderProfile, isShielderFamily := zonenpc.NomadShielderGrenadeProfile(
 		enemy.Plan.NounName,
 	)
 	if isShielderFamily {
-		profile, isProfileFound = shielderProfile, true
+		profile, isProfileFound = zonenpc.ApplyAffixTiming(shielderProfile, enemy.Plan), true
 	}
 	if !isEnemyFound || enemy.IsDefeated || !isTargetFound ||
 		!isProfileFound || !zonenpc.IsTossActionProfile(profile) {
@@ -890,7 +890,7 @@ func (r campaignNPCActionRuntime) produceEnemyLob(
 		}
 		result, err = zonenpc.CommitAttack(
 			peerSession.zone.NPCRandom(), plan,
-			enemy.Plan.NPCProfile.CriticalRating, r.program.Critical,
+			enemy.EffectiveCriticalRating(), r.program.Critical,
 		)
 		if err != nil {
 			r.registry.mutex.Unlock()

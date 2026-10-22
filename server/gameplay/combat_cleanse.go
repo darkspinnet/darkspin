@@ -102,6 +102,7 @@ func (r campaignNPCActionRuntime) produceScaldronBasicMaserCleanse(
 		r.registry.mutex.Unlock()
 		return nil, false, nil
 	}
+	profile = zonenpc.ApplyAffixTiming(profile, source.Plan)
 	allies, err := peerSession.zone.NPCs().ActorsInSphere(zonenpc.SphereRequest{
 		Center: source.Plan.Position, Radius: profile.Radius,
 	})

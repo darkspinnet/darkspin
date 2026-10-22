@@ -413,7 +413,7 @@ func (e *campaignArcturusLaunch) areaDamage(current *gameplayPeerSession, boss z
 			return nil, fmt.Errorf("arcturusAreaPlan: %w", err)
 		}
 		plan.SourcePosition = position
-		result, err := zonenpc.CommitAttack(current.zone.NPCRandom(), plan, boss.Plan.NPCProfile.CriticalRating, e.runtime.program.Critical)
+		result, err := zonenpc.CommitAttack(current.zone.NPCRandom(), plan, boss.EffectiveCriticalRating(), e.runtime.program.Critical)
 		if err != nil {
 			return nil, fmt.Errorf("arcturusAreaRoll: %w", err)
 		}

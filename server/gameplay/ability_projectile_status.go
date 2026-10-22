@@ -475,7 +475,8 @@ func (e heroProjectileStatusSchedule) impactNow() ([][]byte, error) {
 		),
 	)
 	packets = filterProjectileCombatPackets(packets)
-	expiresAt := e.runtime.now().Add(e.definition.StatusDuration)
+	duration := zonenpc.CrowdControlDuration(target.Plan, e.definition.StatusDuration)
+	expiresAt := e.runtime.now().Add(duration)
 	err = e.applyStatus(peerSession.zone.NPCs(), expiresAt)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
@@ -498,7 +499,7 @@ func (e heroProjectileStatusSchedule) impactNow() ([][]byte, error) {
 	modifierPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: e.targetObjectID, ModifierGUID: e.definition.RootModifierID,
 		InstanceID:           instanceID,
-		DurationMilliseconds: uint32(e.definition.StatusDuration.Milliseconds()),
+		DurationMilliseconds: uint32(duration.Milliseconds()),
 		StackCount:           1,
 		StartMilliseconds:    e.packet.SourceTime + uint64(e.impactDeadline/time.Millisecond),
 		SourceID:             e.sourceObjectID,
@@ -511,7 +512,7 @@ func (e heroProjectileStatusSchedule) impactNow() ([][]byte, error) {
 		return packets, nil
 	}
 	splashPackets, splashTargetIDs, err := e.applyTerrifySplash(
-		impactPosition, expiresAt,
+		impactPosition,
 		e.packet.SourceTime+uint64(e.impactDeadline/time.Millisecond),
 	)
 	if err != nil {
@@ -542,7 +543,7 @@ func (e heroProjectileStatusSchedule) impactNow() ([][]byte, error) {
 }
 
 func (e heroProjectileStatusSchedule) applyTerrifySplash(
-	center raknet.Vector3, expiresAt time.Time, timestamp uint64,
+	center raknet.Vector3, timestamp uint64,
 ) ([][]byte, []uint32, error) {
 	if e.definition.SecondaryModifierID == 0 || e.definition.Radius <= 0 {
 		return nil, nil, nil
@@ -556,6 +557,7 @@ func (e heroProjectileStatusSchedule) applyTerrifySplash(
 	type splashModifier struct {
 		targetID   uint32
 		instanceID uint32
+		duration   time.Duration
 	}
 	modifiers := make([]splashModifier, 0)
 	for _, candidate := range peerSession.zone.NPCs().LiveSnapshots() {
@@ -565,6 +567,8 @@ func (e heroProjectileStatusSchedule) applyTerrifySplash(
 			candidate.Plan.Position.Sub(game.Vec3(center)).Length() > e.definition.Radius {
 			continue
 		}
+		duration := zonenpc.CrowdControlDuration(candidate.Plan, e.definition.StatusDuration)
+		expiresAt := e.runtime.now().Add(duration)
 		err := peerSession.zone.NPCs().ApplyFear(candidate.Plan.ObjectID, expiresAt)
 		if err != nil {
 			e.runtime.registry.mutex.Unlock()
@@ -582,7 +586,7 @@ func (e heroProjectileStatusSchedule) applyTerrifySplash(
 			continue
 		}
 		modifiers = append(modifiers, splashModifier{
-			targetID: candidate.Plan.ObjectID, instanceID: instanceID,
+			targetID: candidate.Plan.ObjectID, instanceID: instanceID, duration: duration,
 		})
 	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
@@ -594,7 +598,7 @@ func (e heroProjectileStatusSchedule) applyTerrifySplash(
 			TargetID:             modifier.targetID,
 			ModifierGUID:         e.definition.SecondaryModifierID,
 			InstanceID:           modifier.instanceID,
-			DurationMilliseconds: uint32(e.definition.StatusDuration.Milliseconds()),
+			DurationMilliseconds: uint32(modifier.duration.Milliseconds()),
 			StackCount:           1, StartMilliseconds: timestamp, SourceID: e.sourceObjectID,
 		})
 		if err != nil {

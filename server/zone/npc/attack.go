@@ -18,6 +18,10 @@ var ErrControlTargetOutOfRange = errors.New("npc control target out of range")
 // offset 52. sub_9E4E60 subtracts it before applying an ability coefficient.
 const nonPlayerPrimaryAttributeBaseline = float32(8)
 
+// Chunk 802 adds this to a captain's EliteModifier DamageBuff. Its authored
+// 1.5 captain total subtracts the lieutenant elite bonus of 0.5.
+const captainDamageBonus = float32(1.5 - 0.5)
+
 type AttackPlan struct {
 	SourceObjectID   uint32
 	TargetObjectID   uint32
@@ -163,6 +167,12 @@ func resolveAttackDamage(
 	if npc.Plan.IsCaptain || npc.Plan.IsElite || npc.Plan.IsBoss ||
 		npc.Plan.BossIdentity.HasModifier(EliteModifierName) {
 		damageProfile.DamageBuff += EliteBonusForType(npc.Plan.NPCProfile.NPCType).Damage
+	}
+	if npc.Plan.IsCaptain {
+		damageProfile.DamageBuff += captainDamageBonus
+	}
+	if npc.HasAffixModifier("Deadly_NPCAffixModifier") {
+		damageProfile.DamageBuff += 0.5
 	}
 	descriptorMask := uint32(1 | 1<<6)
 	damageType := uint8(0)

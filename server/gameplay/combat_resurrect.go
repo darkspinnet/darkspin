@@ -63,7 +63,8 @@ func (r campaignNPCActionRuntime) rezzerGhostlyBoltProfile(
 	if !isFound {
 		return zonenpc.ActionProfile{}, false
 	}
-	return zonenpc.RezzerGhostlyBoltProfile(source.Plan.NounName)
+	profile, isProfileFound := zonenpc.RezzerGhostlyBoltProfile(source.Plan.NounName)
+	return campaignAffixActionProfile(source.Plan, profile, isProfileFound)
 }
 
 func (r campaignNPCActionRuntime) produceRezzerFallback(
@@ -88,6 +89,7 @@ func (r campaignNPCActionRuntime) produceRezzerFallback(
 		r.releaseAction(sessionKey, generation, objectID)
 		return nil, nil
 	}
+	profile = zonenpc.ApplyAffixTiming(profile, source.Plan)
 	action, err := zonenpc.PlanActionWithProfile(
 		campaignNPCActionCommand(
 			source.Plan, target.ObjectID, target.Position, target.ActorFootprintRadius,

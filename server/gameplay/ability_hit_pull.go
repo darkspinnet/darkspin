@@ -133,7 +133,8 @@ func (e campaignDamageRuntime) applyHeroPull(
 	hero, isHeroFound := peerSession.zone.Hero().Snapshot(peerSession.binding.UserID, generation)
 	target, isTargetFound := peerSession.zone.NPCs().NPC(result.Damage.ObjectID)
 	if !isHeroFound || hero.ObjectID != sourceObjectID || !isTargetFound ||
-		target.IsDefeated || target.IsTurtleActive {
+		target.IsDefeated || target.IsTurtleActive ||
+		target.HasAffixModifier(surefootedNPCAffixModifierName) {
 		e.registry.mutex.Unlock()
 		return nil, nil
 	}

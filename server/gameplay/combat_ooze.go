@@ -96,10 +96,7 @@ func (e campaignNPCOozeGrowthSchedule) hit() ([][]byte, error) {
 	packets := [][]byte{modifierPacket}
 	bodyScaleBonus := 0.1 * float32(result.StackCount)
 	targetPlan := result.Target.Plan
-	if targetPlan.IsCaptain || targetPlan.IsElite || targetPlan.IsBoss ||
-		targetPlan.BossIdentity.HasModifier(zonenpc.EliteModifierName) {
-		bodyScaleBonus += zonenpc.EliteBonusForType(targetPlan.NPCProfile.NPCType).BodyScale
-	}
+	bodyScaleBonus += targetPlan.PermanentBodyScale()
 	bodyScalePacket, bodyScaleErr := raknet.MarshalApplication(
 		raknet.AttributeDataUpdateMessage{
 			ObjectID: e.targetObjectID,
@@ -184,6 +181,7 @@ func (r campaignNPCActionRuntime) produceVerdanthBasicOozeGrowth(
 	if !isProfileFound {
 		return nil, false, nil
 	}
+	profile = zonenpc.ApplyAffixTiming(profile, source.Plan)
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation &&

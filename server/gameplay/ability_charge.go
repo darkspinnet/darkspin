@@ -358,8 +358,9 @@ func (e heroChargeSchedule) applyBeastPetChargeStatus(
 ) ([][]byte, error) {
 	targets := e.statusTargets(peerSession.zone.NPCs(), results)
 	packets := make([][]byte, 0, len(targets))
-	expiresAt := e.runtime.now().Add(e.definition.StatusDuration)
 	for _, npc := range targets {
+		duration := zonenpc.CrowdControlDuration(npc.Plan, e.definition.StatusDuration)
+		expiresAt := e.runtime.now().Add(duration)
 		err := e.applyStatus(peerSession.zone.NPCs(), npc.Plan.ObjectID, expiresAt)
 		if err != nil {
 			return nil, fmt.Errorf("apply[%d]: %w", npc.Plan.ObjectID, err)
@@ -382,7 +383,7 @@ func (e heroChargeSchedule) applyBeastPetChargeStatus(
 			effectraknet.ModifierCreateRequest{
 				SourceObjectID: pet.ObjectID, TargetObjectID: npc.Plan.ObjectID,
 				ModifierID: e.definition.RootModifierID, InstanceID: instanceID,
-				Duration: e.definition.StatusDuration,
+				Duration: duration,
 				Timestamp: e.packet.SourceTime +
 					uint64(e.petImpactDelay/time.Millisecond),
 			},
@@ -431,7 +432,12 @@ func (e heroChargeSchedule) commitBeastPetTerminal(
 		TargetObjectID: target.Plan.ObjectID,
 		Damage:         critical.Damage,
 		SourcePosition: &pet.Position,
-		Metadata:       zonenpc.DamageMetadata{DamageSource: uint32(physicalDamageSource)},
+		Metadata: zonenpc.DamageMetadata{
+			DamageSource:      uint32(physicalDamageSource),
+			DamageType:        e.definition.DamageType,
+			DescriptorMask:    e.definition.DescriptorMask,
+			IsDamageTypeKnown: e.definition.IsDamageTypeFound,
+		},
 	})
 	if err != nil {
 		return zoneability.AreaResult{}, campaignDamageTransition{}, false,
@@ -526,8 +532,9 @@ func (e heroChargeSchedule) impact() ([][]byte, error) {
 	}
 	statusTargets := e.statusTargets(peerSession.zone.NPCs(), results)
 	modifierPackets := make([][]byte, 0, len(statusTargets))
-	expiresAt := e.runtime.now().Add(e.definition.StatusDuration)
 	for _, npc := range statusTargets {
+		duration := zonenpc.CrowdControlDuration(npc.Plan, e.definition.StatusDuration)
+		expiresAt := e.runtime.now().Add(duration)
 		applyErr := e.applyStatus(peerSession.zone.NPCs(), npc.Plan.ObjectID, expiresAt)
 		if applyErr != nil {
 			e.runtime.registry.mutex.Unlock()
@@ -552,7 +559,7 @@ func (e heroChargeSchedule) impact() ([][]byte, error) {
 			effectraknet.ModifierCreateRequest{
 				SourceObjectID: e.sourceObjectID, TargetObjectID: npc.Plan.ObjectID,
 				ModifierID: e.definition.RootModifierID, InstanceID: instanceID,
-				Duration:  e.definition.StatusDuration,
+				Duration:  duration,
 				Timestamp: e.packet.SourceTime + uint64(e.impactDelay/time.Millisecond),
 			},
 		)

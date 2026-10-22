@@ -73,6 +73,16 @@ func NounSwiftModifierInstanceID(objectID uint32) uint32 {
 	return uint32(nounSwiftGeneration)<<16 | uint32(uint16(objectID))
 }
 
+// NounAuraModifierInstanceID reserves one stable handle per recipient and aura
+// child, below the existing Swift/affix handles and outside pooled lifetimes.
+func NounAuraModifierInstanceID(objectID uint32, auraIndex int) (uint32, error) {
+	if auraIndex < 0 || auraIndex >= 8 {
+		return 0, errors.New("noun aura index invalid")
+	}
+	generation := nounSwiftGeneration - 1 - uint16(auraIndex)
+	return uint32(generation)<<16 | uint32(uint16(objectID)), nil
+}
+
 // NounAffixModifierInstanceID gives each authored affix a distinct permanent
 // handle, stable across replay and disjoint from elite and ability modifiers.
 func NounAffixModifierInstanceID(objectID uint32, affixIndex int) (uint32, error) {

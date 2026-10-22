@@ -21,6 +21,7 @@ func (e *Session) BindStartupRandom(random *sim.SimulatorRandom) {
 // construction. Its returned plans must be used for both, preserving one choice
 // for all peers. Already prepared/restored plans consume no additional draws.
 func (e *Session) PrepareIntroductions(plans []SpawnPlan) []SpawnPlan {
+	plans = e.PrepareAffixPlans(plans)
 	preparedPlans := make([]SpawnPlan, len(plans))
 	if e == nil {
 		copy(preparedPlans, plans)

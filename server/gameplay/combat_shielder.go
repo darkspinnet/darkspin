@@ -369,6 +369,7 @@ func (r campaignNPCActionRuntime) produceNomadShielderShield(
 	if !isEnemyFound || !isProfileFound {
 		return nil, false, nil
 	}
+	profile = zonenpc.ApplyAffixTiming(profile, enemy.Plan)
 	if enemy.IsShieldActive {
 		return r.produceShieldedNomadAction(
 			packet, sessionKey, generation, enemy, target, isTargetFound, timestamp,

@@ -422,7 +422,7 @@ func (e campaignConeSchedule) hit() ([][]byte, error) {
 		}
 		result, err := zonenpc.CommitAttack(
 			peerSession.zone.NPCRandom(), plan,
-			source.Plan.NPCProfile.CriticalRating, e.runtime.program.Critical,
+			source.EffectiveCriticalRating(), e.runtime.program.Critical,
 		)
 		if err != nil {
 			e.runtime.registry.mutex.Unlock()

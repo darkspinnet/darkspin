@@ -248,6 +248,7 @@ func New(id uint64, generation uint64, info ZoneInfo) (*Zone, error) {
 	info.NPCRandom = info.DropRandom
 	info.Objective.BindRandom(info.DropRandom)
 	info.NPCs.BindStartupRandom(info.DropRandom)
+	info.NPCs.ConfigureAffixContext(info.Difficulty, 1)
 	completionID := uint64(0)
 	if info.Restore != nil {
 		completionID = info.Restore.CompletionID
@@ -289,6 +290,7 @@ func New(id uint64, generation uint64, info ZoneInfo) (*Zone, error) {
 		return nil, fmt.Errorf("zoneNavigation: %w", navigationErr)
 	}
 	info.Companion.ConfigureActorFootprints(info.DirectorDefinition.NounFootprintsByNoun)
+	info.NPCs.ConfigureAffixContext(info.Difficulty, uint32(len(zone.members)))
 	return zone, nil
 }
 
@@ -485,6 +487,7 @@ func (e *Zone) Join(member Member) error {
 		})
 	}
 	e.members[member.UserID] = member
+	e.info.NPCs.ConfigureAffixContext(e.info.Difficulty, uint32(len(e.members)))
 	if !isFound && e.isPopulationPrimed && !e.isRestored {
 		e.projection.SeedNPCs(zoneprojection.Subscriber{
 			UserID: member.UserID, PeerGeneration: member.PeerGeneration,
@@ -1631,7 +1634,8 @@ func (e *Zone) ApplyNPCReflectedTargetDamage(
 		return NPCTargetDamage{}, false, nil
 	}
 	profile, isProfileFound := zonenpc.ActionProfileForPlan(source.Plan)
-	if !isProfileFound || profile.PassiveMeleeDamageReflection <= 0 {
+	isThorno := isProfileFound && profile.PassiveMeleeDamageReflection > 0
+	if !isThorno && !source.HasAffixModifier("Thorns_NPCAffixModifier") {
 		return NPCTargetDamage{}, false, nil
 	}
 	return e.applyNPCTargetDamage(owner, sourceObjectID, targetObjectID, damage)

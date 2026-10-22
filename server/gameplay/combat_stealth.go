@@ -254,6 +254,7 @@ func (e campaignStealtherSchedule) cast(timestamp uint64) ([][]byte, error) {
 		e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
 		return e.finishStealth(true, timestamp), nil
 	}
+	profile = zonenpc.ApplyAffixTiming(profile, enemy.Plan)
 	plan, err := zonenpc.PlanAttackWithProfile(
 		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
@@ -395,7 +396,7 @@ func (e campaignStealtherSchedule) hit() ([][]byte, error) {
 	}
 	result, err := zonenpc.CommitAttack(
 		peerSession.zone.NPCRandom(), plan,
-		enemy.Plan.NPCProfile.CriticalRating, e.runtime.program.Critical,
+		enemy.EffectiveCriticalRating(), e.runtime.program.Critical,
 	)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()

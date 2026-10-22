@@ -151,7 +151,7 @@ func (e campaignLaserPulse) produce() ([][]byte, error) {
 				return nil, fmt.Errorf("laserDamagePlan: %w", err)
 			}
 			result, err := zonenpc.CommitAttack(member.zone.NPCRandom(), plan,
-				source.Plan.NPCProfile.CriticalRating, cast.runtime.program.Critical)
+				source.EffectiveCriticalRating(), cast.runtime.program.Critical)
 			if err != nil {
 				registry.mutex.Unlock()
 				return nil, fmt.Errorf("laserDamageRoll: %w", err)

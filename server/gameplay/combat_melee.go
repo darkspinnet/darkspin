@@ -262,14 +262,14 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 	drainerMeleeProfile, isDrainerMeleeFound :=
 		zonenpc.NoctMinionDrainerMeleeProfile(enemy.Plan.NounName)
 	if isDrainerMeleeFound {
-		profile = drainerMeleeProfile
+		profile = zonenpc.ApplyAffixTiming(drainerMeleeProfile, enemy.Plan)
 		isProfileFound = true
 	}
 	grapplingSwipeProfile, isGrapplingPulsar := zonenpc.VerdanthSpecialThreeFastSwipeProfile(
 		enemy.Plan.NounName,
 	)
 	if isGrapplingPulsar {
-		profile = grapplingSwipeProfile
+		profile = zonenpc.ApplyAffixTiming(grapplingSwipeProfile, enemy.Plan)
 		isProfileFound = true
 	}
 	_, isHomerFamily := zonenpc.NocturnaSpecialHomerMeleeProfile(enemy.Plan.NounName)
@@ -277,11 +277,6 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 		profile = scaleNocturnaSpecialHomerCooldown(
 			profile, uint32(len(peerSession.zone.Snapshot().Members)),
 		)
-	}
-	if isProfileFound && profile.AbilityName == "PackflyAttack" &&
-		peerSession.zone.NPCs().HasSameSpeciesAlly(objectID, 10) {
-		profile.Cooldown = time.Duration(float64(profile.Cooldown) * 0.75)
-		profile.MovementSpeed *= 1.25
 	}
 	_, slowAttackScale := peerSession.zone.NPCs().SlowProfile(objectID, r.now())
 	profile = applyNPCSlowTiming(profile, slowAttackScale)
@@ -354,6 +349,7 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 	if profile.AbilityName == "ZelemChargeupStandardAttack" && !isSilenced {
 		if chargeupState.isCharged {
 			profile = zonenpc.ZelemChargeupDischargeProfile()
+			profile = zonenpc.ApplyAffixTiming(profile, enemy.Plan)
 		} else if chargeupState.isStandardAttackPerformed &&
 			timestamp >= chargeupState.nextBuildTimestamp {
 			return r.produceZelemChargeupBuild(
@@ -542,6 +538,7 @@ func (r campaignNPCActionRuntime) produceCryosRezMelee(
 		r.releaseAction(sessionKey, generation, objectID)
 		return nil, nil
 	}
+	profile = zonenpc.ApplyAffixTiming(profile, enemy.Plan)
 	plan, err := zonenpc.PlanAttackWithProfile(
 		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)

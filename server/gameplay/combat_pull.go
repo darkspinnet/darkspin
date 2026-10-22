@@ -96,6 +96,7 @@ func (r campaignNPCActionRuntime) produceGrapplingPulsarPull(
 		r.registry.mutex.Unlock()
 		return nil, false, nil
 	}
+	profile = zonenpc.ApplyAffixTiming(profile, enemy.Plan)
 	target, isTargetFound := peerSession.campaignNPCTarget(generation, enemy.TargetObjectID)
 	swipeProfile, isSwipeFound := zonenpc.VerdanthSpecialThreeFastSwipeProfile(enemy.Plan.NounName)
 	if !isTargetFound || !isSwipeFound || zonegeometry.Distance(enemy.Plan.Position, target.Position)-

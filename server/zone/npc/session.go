@@ -27,6 +27,9 @@ type Session struct {
 	objectIDLimit        uint32
 	aggroRadius          float32
 	defenseConversion    float32
+	affixDifficulty      uint32
+	affixPlayerCount     uint32
+	affixRefreshAt       time.Time
 	objectIDs            []uint32
 	npcs                 map[uint32]Snapshot
 	attackersByObject    map[uint32][]uint32
@@ -110,6 +113,7 @@ func (s *Session) add(plans []SpawnPlan, targetObjectID uint32) error {
 	}
 	for _, plan := range plans {
 		plan = WithPendingIntroduction(plan)
+		plan = s.prepareAffixPlan(plan)
 		plan = s.attachActorFootprint(plan).Clone()
 		actorNavigation, navigationErr := s.navigationForPlan(plan)
 		if navigationErr != nil {
@@ -177,6 +181,7 @@ func (s *Session) AddDormant(plans []SpawnPlan) error {
 	}
 	for _, plan := range plans {
 		plan = s.prepareIntroduction(plan)
+		plan = s.prepareAffixPlan(plan)
 		plan = s.attachActorFootprint(plan).Clone()
 		s.objectIDs = append(s.objectIDs, plan.ObjectID)
 		actorNavigation, navigationErr := s.navigationForPlan(plan)
@@ -219,6 +224,7 @@ func (s *Session) AddStaged(plans []SpawnPlan) error {
 	}
 	for _, plan := range plans {
 		plan = s.prepareIntroduction(plan)
+		plan = s.prepareAffixPlan(plan)
 		plan = s.attachActorFootprint(plan).Clone()
 		s.objectIDs = append(s.objectIDs, plan.ObjectID)
 		actorNavigation, navigationErr := s.navigationForPlan(plan)
@@ -1214,6 +1220,15 @@ func (s *Session) damage(
 	if isSelfResurrectionStarted {
 		npc.IsSelfResurrectionTriggered = true
 	}
+	affixResurrectionFraction := float32(0)
+	if !meta.isForcedDefeat && npc.IsDefeated && !isSelfResurrectionStarted {
+		affixResurrectionFraction = s.affixResurrectionFraction(npc)
+		if affixResurrectionFraction > 0 {
+			isSelfResurrectionStarted = true
+			npc.IsAffixResurrectionTriggered = true
+			npc.IsAffixResurrectionPending = true
+		}
+	}
 	isCorruptorStageTwoStarted := !meta.isForcedDefeat && npc.IsDefeated &&
 		!npc.IsCorruptorStageTwo &&
 		nounSpecies(npc.Plan.NounName) == "scaldronboss"
@@ -1299,7 +1314,7 @@ func (s *Session) damage(
 	remainingActorCount := 0
 	for _, objectID := range s.objectIDs {
 		candidate := s.npcs[objectID]
-		if candidate.IsDefeated || candidate.Plan.IsFixture {
+		if (candidate.IsDefeated && !candidate.IsAffixResurrectionPending) || candidate.Plan.IsFixture {
 			continue
 		}
 		remainingActorCount++
@@ -1314,7 +1329,9 @@ func (s *Session) damage(
 	isTerminalDefeat := npc.IsDefeated && !isSelfResurrectionStarted &&
 		!isCorruptorStageTwoStarted
 	return DamageResult{
-		ObjectID: targetObjectID, DeletedOwnedObjectIDs: deletedOwnedObjectIDs,
+		Thorns:                    thornsDamage(npc, sourceObjectID, appliedDamage, meta, s.affixDifficulty),
+		AffixResurrectionFraction: affixResurrectionFraction,
+		ObjectID:                  targetObjectID, DeletedOwnedObjectIDs: deletedOwnedObjectIDs,
 		LocusID: npc.Plan.LocusID, MarkerSetName: npc.Plan.MarkerSetName,
 		PreviousHealth: previousHealth, HitPoint: npc.HitPoint,
 		Damage:                   appliedDamage + absorbedDamage,
@@ -1531,6 +1548,7 @@ func (s *Session) resurrect(
 	npc.HitPoint = maximumHitPoint * hitPointFraction
 	npc.ManaPoint = npc.Plan.NPCProfile.PowerPoint
 	npc.IsDefeated = false
+	npc.IsAffixResurrectionPending = false
 	npc.repairStackCount = 0
 	npc.TargetObjectID = 0
 	npc.TargetFaction = FactionUnknown

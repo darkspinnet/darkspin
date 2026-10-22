@@ -10,6 +10,7 @@ import (
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	zoneeffect "github.com/darkspinnet/darkspin/server/zone/effect"
 	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
+	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
 const timeRavagerBasicName = "TimeRavagerBasic"
@@ -118,7 +119,8 @@ func (e campaignDamageRuntime) applyTimeRavagerSlow(
 	previousCancel := run.cancel
 	run.stackCount = min(timeRavagerSlowMaximumStack, run.stackCount+1)
 	run.revision++
-	run.expiresAt = e.npc.now().Add(timeRavagerSlowDuration)
+	duration := zonenpc.CrowdControlDuration(result.Snapshot.Plan, timeRavagerSlowDuration)
+	run.expiresAt = e.npc.now().Add(duration)
 	movementAdjustment := float32(run.stackCount) * timeRavagerMovementAdjustmentPerStack
 	attackAdjustment := float32(run.stackCount) * timeRavagerAttackAdjustmentPerStack
 	err := peerSession.zone.NPCs().ApplySlow(
@@ -150,7 +152,7 @@ func (e campaignDamageRuntime) applyTimeRavagerSlow(
 		InstanceID:     run.modifier.instanceID,
 		GUID:           util.HashID("TimeRavagerBasicModifier"),
 		SourceObjectID: sourceObjectID, TargetObjectID: run.targetObjectID,
-		Rank: 1, Duration: timeRavagerSlowDuration,
+		Rank: 1, Duration: duration,
 		Kind: zoneeffect.ModifierKindDebuff, InitiatorObject: sourceObjectID,
 		StackCount: run.stackCount, AttackSpeed: attackAdjustment,
 		MovementSpeedBuff: movementAdjustment,
@@ -207,7 +209,7 @@ func (e campaignDamageRuntime) applyTimeRavagerSlow(
 	createPacket, err := effectraknet.ModifierCreate(effectraknet.ModifierCreateRequest{
 		SourceObjectID: sourceObjectID, TargetObjectID: run.targetObjectID,
 		ModifierID: run.modifier.record.GUID, InstanceID: run.modifier.instanceID,
-		StackCount: run.stackCount, Duration: timeRavagerSlowDuration,
+		StackCount: run.stackCount, Duration: duration,
 		Timestamp: timestamp,
 	})
 	if err != nil {
@@ -222,7 +224,7 @@ func (e campaignDamageRuntime) applyTimeRavagerSlow(
 		revision: run.revision, run: run,
 	}
 	cancel, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
-		Delay: timeRavagerSlowDuration, Produce: expiry.produce,
+		Delay: duration, Produce: expiry.produce,
 	}})
 	if scheduleErr == nil && cancel == nil {
 		scheduleErr = errors.New("nil cancellation")

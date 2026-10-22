@@ -7,7 +7,7 @@ const SwiftModifierName = "Swift_NPCAffixModifier"
 const swiftAuraModifierName = "Aura_Swift_NPCAffixModifier"
 
 func EffectiveMovementSpeedBuff(plan SpawnPlan) float32 {
-	bonus := plan.MovementSpeedBuff
+	bonus := plan.MovementSpeedBuff + plan.AffixMovementSpeedBuff
 	if plan.BossIdentity.HasModifier(SwiftModifierName) || plan.SwiftAuraSourceObjectID != 0 {
 		bonus++
 	}
@@ -46,7 +46,7 @@ func (e *Session) RefreshSwift() []SwiftChange {
 				if source.Faction != target.Faction {
 					continue
 				}
-				rank := max(int32(1), min(int32(3), source.Plan.NPCProfile.NPCRank))
+				rank := source.Plan.AffixRank(swiftAuraModifierName)
 				radius := float32(8 + 4*rank)
 				if target.Plan.Position.Sub(source.Plan.Position).Length() > radius {
 					continue

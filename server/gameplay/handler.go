@@ -2594,6 +2594,12 @@ func (r gameplayPendingRuntime) poll(
 				return nil, fmt.Errorf("mutationPoll: %w", mutationErr)
 			}
 			rootHazardPackets = append(rootHazardPackets, mutationPackets...)
+			affixPackets, affixErr := r.pollAffixAurasLocked(&peerSession)
+			if affixErr != nil {
+				r.registry.mutex.Unlock()
+				return nil, fmt.Errorf("affixPoll: %w", affixErr)
+			}
+			rootHazardPackets = append(rootHazardPackets, affixPackets...)
 			swiftPackets, swiftErr := r.pollSwiftAurasLocked(&peerSession)
 			if swiftErr != nil {
 				r.registry.mutex.Unlock()
@@ -3320,8 +3326,10 @@ func (r gameplayPendingRuntime) spawnDeveloperNPC(
 	}
 	profile = zoneboss.NormalizeFinalBossProfile(command.NounName, profile)
 	isCaptain := strings.Contains(strings.ToLower(command.NounName), "_captain")
+	bossIdentity := zonenpc.BossIdentity{}
 	if isCaptain {
-		profile = zonenpc.ApplyCaptainProfile(profile)
+		bossIdentity = zonepopulation.CaptainIdentity(director, command.NounName)
+		profile = zonenpc.ApplyCaptainProfile(profile, bossIdentity)
 	}
 	position := game.Vec3(currentSession.playerPosition)
 	position.X += 5
@@ -3330,6 +3338,9 @@ func (r gameplayPendingRuntime) spawnDeveloperNPC(
 		IsCaptain:            isCaptain,
 		IsArena:              currentSession.binding.Mode == game.ModeArena,
 		IsEncounterAuxiliary: true, IsLootSuppressed: true, IsExperienceSuppressed: true, NPCProfile: profile,
+	}
+	if isCaptain {
+		plan.BossIdentity = bossIdentity
 	}
 	if strings.EqualFold(command.NounName, zonenpc.MutationAgentNounName) {
 		bodyNounName, isBodyFound := developerMutationAgentBodyNoun(director)

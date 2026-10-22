@@ -269,7 +269,7 @@ func (e campaignNPCDrainSchedule) tick(
 	}
 	result, err := zonenpc.CommitAttack(
 		current.zone.NPCRandom(), currentPlan,
-		currentNPC.Plan.NPCProfile.CriticalRating, runtime.program.Critical,
+		currentNPC.EffectiveCriticalRating(), runtime.program.Critical,
 	)
 	if err != nil {
 		runtime.registry.mutex.Unlock()

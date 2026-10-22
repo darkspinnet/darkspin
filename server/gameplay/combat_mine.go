@@ -134,7 +134,7 @@ func (e campaignScaldronDeathMineSchedule) explode() ([][]byte, error) {
 		}
 		result, commitErr := zonenpc.CommitAttack(
 			peerSession.zone.NPCRandom(), plan,
-			e.source.Plan.NPCProfile.CriticalRating, e.runtime.program.Critical,
+			e.source.EffectiveCriticalRating(), e.runtime.program.Critical,
 		)
 		if commitErr != nil {
 			e.runtime.registry.mutex.Unlock()

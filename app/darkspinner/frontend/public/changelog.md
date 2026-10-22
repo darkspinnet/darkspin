@@ -2,7 +2,15 @@
 
 ### 2026-10-21
 
-- Increase captain spawn scale from 1.0 to 1.4, including continue/rejoin
+- Restore CaptainModifier crowd-control resistance and multiplayer timing bonuses, plus Frenzied attack-speed and cooldown bonuses.
+- Restore Tough's type-dependent HP bonus, Accurate critical rating, Ghostly and Reflective defense ratings, and Armored and Sloth Passive flat armor.
+- Restore Spiky melee retaliation and one-time Persistent resurrection with native effects and protection against duplicate loot and premature encounter completion.
+- Restore non-stacking enemy aura propagation and cleanup, including Frenzied, Ghostly, Reflective, Spiky, Shifted, Surefooted, Unstoppable and Persistent recipients.
+- Restore Packfly Passive's ranked nearby-helper bonuses and effect tiers, replacing the fixed one-ally bonus with up to seven helpers within eight units.
+- Restore the client-authored CaptainModifier and Deadly affix damage bonuses in the shared enemy damage calculation.
+- Preserve authored captain names and affixes for /spawn, matching normal encounter spawning.
+- Restore the client-backed CaptainModifier HP bonus across captain encounters, population spawns and /spawn, increasing first-run solo Illust from 105 to 300 HP without compounding on continue/rejoin.
+- Replace the captain 1.4 spawn-scale override with the client-authored CaptainModifier BodyScale bonus, preserving it through continue/rejoin and combat growth effects.
 - [#96](https://github.com/darkspinnet/darkspin/issues/96) Correct rooted heroes through native owner-aware locomotion and pose updates so local movement prediction cannot bypass the server's stop.
 - [#96](https://github.com/darkspinnet/darkspin/issues/96) Stop Acid Shell's existing pursuit when it retracts into its shell and resume attacks after recovery.
 - [#96](https://github.com/darkspinnet/darkspin/issues/96) Retire authored security teleport pads across campaign levels before creating server presentation anchors, preventing doubled pads.

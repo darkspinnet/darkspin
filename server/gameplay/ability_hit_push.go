@@ -79,7 +79,7 @@ func (e campaignDamageRuntime) applyAcceptedHitPushes(
 		}
 		target, isTargetFound := peerSession.zone.NPCs().NPC(result.Damage.ObjectID)
 		if !isTargetFound || target.IsDefeated || target.IsTurtleActive ||
-			target.Plan.IsBoss {
+			target.Plan.IsBoss || target.HasAffixModifier(surefootedNPCAffixModifierName) {
 			continue
 		}
 		if peerSession.zone.NPCs().RootRemaining(target.Plan.ObjectID, e.npc.now()) > 0 {

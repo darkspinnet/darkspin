@@ -457,7 +457,7 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 	if !isControlProjectile {
 		result, err = zonenpc.CommitAttack(
 			peerSession.zone.NPCRandom(), plan,
-			enemy.Plan.NPCProfile.CriticalRating, r.program.Critical,
+			enemy.EffectiveCriticalRating(), r.program.Critical,
 		)
 		if err != nil {
 			r.registry.mutex.Unlock()

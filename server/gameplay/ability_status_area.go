@@ -116,7 +116,6 @@ func (r campaignAbilityCommandRuntime) applyTargetStatus(
 	}
 	run := &heroStatusAreaRun{modifierPool: r.modifierPool}
 	messages := make([]raknet.ApplicationMessage, 0, len(targetObjectIDs))
-	expiresAt := r.now().Add(definition.StatusDuration)
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	if !isFound || peerSession.generation != generation || peerSession.zone == nil {
@@ -125,6 +124,15 @@ func (r campaignAbilityCommandRuntime) applyTargetStatus(
 	}
 	run.npc = peerSession.zone.NPCs()
 	for index, targetObjectID := range targetObjectIDs {
+		duration := definition.StatusDuration
+		if definition.StatusKind != sim.AbilityStatusKindPhysicalVulnerability {
+			target, isTargetFound := run.npc.NPC(targetObjectID)
+			if !isTargetFound {
+				continue
+			}
+			duration = zonenpc.CrowdControlDuration(target.Plan, duration)
+		}
+		expiresAt := r.now().Add(duration)
 		err := applyAcceptedHitNPCStatus(
 			run.npc, targetObjectID, expiresAt, definition,
 		)
@@ -153,7 +161,7 @@ func (r campaignAbilityCommandRuntime) applyTargetStatus(
 		messages = append(messages, raknet.ModifierCreatedMessage{
 			TargetID: targetObjectID, ModifierGUID: definition.RootModifierID,
 			InstanceID:           instanceID,
-			DurationMilliseconds: uint32(definition.StatusDuration.Milliseconds()),
+			DurationMilliseconds: uint32(duration.Milliseconds()),
 			StackCount:           1, StartMilliseconds: hitTimestamp, SourceID: sourceObjectID,
 		})
 	}
@@ -307,7 +315,6 @@ func (e heroStatusAreaSchedule) apply() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	expiresAt := e.runtime.now().Add(e.definition.Duration)
 	targets := make([]zonenpc.Snapshot, 0)
 	for _, target := range peerSession.zone.NPCs().LiveSnapshots() {
 		if target.Faction != zonenpc.FactionNonPlayerAligned ||
@@ -322,6 +329,11 @@ func (e heroStatusAreaSchedule) apply() ([][]byte, error) {
 		Asset: util.HashID(e.definition.ActivationEffectName), Position: e.center,
 	})
 	for index, target := range targets {
+		duration := e.definition.Duration
+		if e.definition.StatusKind == sim.AbilityStatusKindBanish {
+			duration = zonenpc.CrowdControlDuration(target.Plan, duration)
+		}
+		expiresAt := e.runtime.now().Add(duration)
 		var err error
 		switch e.definition.StatusKind {
 		case sim.AbilityStatusKindBanish:
@@ -378,7 +390,7 @@ func (e heroStatusAreaSchedule) apply() ([][]byte, error) {
 			TargetID:             target.Plan.ObjectID,
 			ModifierGUID:         e.definition.RootModifierID,
 			InstanceID:           instanceID,
-			DurationMilliseconds: uint32(e.definition.Duration.Milliseconds()),
+			DurationMilliseconds: uint32(duration.Milliseconds()),
 			StackCount:           1, StartMilliseconds: e.packet.SourceTime +
 				uint64(e.definition.HitDelay/time.Millisecond),
 			SourceID: e.sourceObjectID,

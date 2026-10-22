@@ -199,6 +199,7 @@ func (e quantumStateReactionStep) produceStatusLocked(
 		duration = quantumStateBanishDuration
 		modifierName = "QuantumBanishDebuff"
 	}
+	duration = zonenpc.CrowdControlDuration(target.Plan, duration)
 	expiresAt := runtime.npc.now().Add(duration)
 	instanceID, err := runtime.npc.modifierPool.Allocate()
 	if err != nil {
@@ -275,7 +276,7 @@ func clearQuantumStateStatus(
 func (e quantumStateReactionStep) applyKnockbackLocked(
 	peerSession gameplayPeerSession, target zonenpc.Snapshot,
 ) ([][]byte, error) {
-	if target.IsTurtleActive {
+	if target.IsTurtleActive || target.HasAffixModifier(surefootedNPCAffixModifierName) {
 		return nil, nil
 	}
 	source := game.Vec3(peerSession.playerPosition)

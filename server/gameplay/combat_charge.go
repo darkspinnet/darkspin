@@ -899,7 +899,7 @@ func (r campaignNPCActionRuntime) produceChargeSegmentCollision(
 		}
 		result, commitErr := zonenpc.CommitAttack(
 			peerSession.zone.NPCRandom(), plan,
-			enemy.Plan.NPCProfile.CriticalRating, r.program.Critical,
+			enemy.EffectiveCriticalRating(), r.program.Critical,
 		)
 		if commitErr != nil {
 			r.registry.mutex.Unlock()
@@ -941,7 +941,7 @@ func (r campaignNPCActionRuntime) produceChargeSegmentCollision(
 			}
 			result, commitErr := zonenpc.CommitAttack(
 				peerSession.zone.NPCRandom(), plan,
-				enemy.Plan.NPCProfile.CriticalRating, r.program.Critical,
+				enemy.EffectiveCriticalRating(), r.program.Critical,
 			)
 			if commitErr != nil {
 				r.registry.mutex.Unlock()
@@ -1368,6 +1368,7 @@ func (r campaignNPCActionRuntime) produceVerdanthBasicPickyAttack(
 		r.releaseAction(sessionKey, generation, objectID)
 		return nil, nil
 	}
+	profile = zonenpc.ApplyAffixTiming(profile, enemy.Plan)
 	plan, err := zonenpc.PlanAttackWithProfile(
 		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
@@ -1496,6 +1497,7 @@ func (r campaignNPCActionRuntime) produceCryosBasicChargeHeadbutt(
 		headbuttCooldown, chargeProfile.MovementSpeed,
 		chargeProfile.NonCombatMovementSpeed,
 	)
+	profile = zonenpc.ApplyAffixTiming(profile, enemy.Plan)
 	plan, err := zonenpc.PlanAttackWithProfile(
 		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
@@ -1599,6 +1601,7 @@ func (r campaignNPCActionRuntime) produceNomadChargeAttack(
 		return nil, nil
 	}
 	profile := zonenpc.NomadSpecialOneChargingAttackProfile()
+	profile = zonenpc.ApplyAffixTiming(profile, enemy.Plan)
 	plan, err := zonenpc.PlanAttackWithProfile(
 		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
@@ -1674,6 +1677,7 @@ func (r campaignNPCActionRuntime) produceBoomerSmash(
 		return nil, nil
 	}
 	profile := zonenpc.BoomerSmashProfile()
+	profile = zonenpc.ApplyAffixTiming(profile, enemy.Plan)
 	plan, err := zonenpc.PlanAttackWithProfile(
 		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)

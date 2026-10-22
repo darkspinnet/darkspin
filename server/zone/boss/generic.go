@@ -152,7 +152,7 @@ func PlanNamedEncounter(
 	isCaptain := !IsFinalBossNoun(leader.NounName)
 	profile := leader.NPCProfile
 	if isCaptain {
-		profile = zonenpc.ApplyCaptainProfile(profile)
+		profile = zonenpc.ApplyCaptainProfile(profile, bossIdentity)
 	} else {
 		profile = zonenpc.ApplyEliteProfile(profile)
 	}

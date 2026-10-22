@@ -124,7 +124,7 @@ func (e *campaignNomadSpecialThreeTurtleRun) pulse(
 		}
 		result, err := zonenpc.CommitAttack(
 			peerSession.zone.NPCRandom(), plan,
-			source.Plan.NPCProfile.CriticalRating, e.runtime.npc.program.Critical,
+			source.EffectiveCriticalRating(), e.runtime.npc.program.Critical,
 		)
 		if err != nil {
 			e.runtime.registry.mutex.Unlock()

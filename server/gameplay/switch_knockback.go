@@ -219,7 +219,7 @@ func isHeroSwapKnockbackTarget(
 	if target.Faction != zonenpc.FactionNonPlayerAligned ||
 		!target.IsPublished || target.IsDefeated || target.Plan.IsFixture ||
 		target.Plan.IsBoss ||
-		target.Plan.BossIdentity.HasModifier(surefootedNPCAffixModifierName) {
+		target.HasAffixModifier(surefootedNPCAffixModifierName) {
 		return false
 	}
 	contactRadius := heroSwapKnockbackRadius +

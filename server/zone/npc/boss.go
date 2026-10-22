@@ -131,10 +131,13 @@ func ApplyEliteProfile(profile game.CampaignNPCProfile) game.CampaignNPCProfile 
 	return profile
 }
 
-// ApplyCaptainProfile applies the HP bonuses from EliteModifier and
-// CaptainModifier together to an unmodified profile. Rejoin restores the
-// resulting profile without reapplying it.
-func ApplyCaptainProfile(profile game.CampaignNPCProfile) game.CampaignNPCProfile {
-	profile.HitPoint *= 1 + EliteBonusForType(profile.NPCType).Health + captainHealthBonus
+// ApplyCaptainProfile applies the authored MaxHealth percentage changes to an
+// unmodified profile. Rejoin restores the result without reapplying it.
+func ApplyCaptainProfile(profile game.CampaignNPCProfile, identity BossIdentity) game.CampaignNPCProfile {
+	bonus := EliteBonusForType(profile.NPCType).Health + captainHealthBonus
+	if identity.HasModifier(toughModifierName) {
+		bonus += ToughHealthBonusForType(profile.NPCType)
+	}
+	profile.HitPoint *= 1 + bonus
 	return profile
 }

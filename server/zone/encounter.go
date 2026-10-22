@@ -56,7 +56,7 @@ func (e *Zone) AssignSpawnPlanIDs(
 	for index := range assigned {
 		assigned[index].ObjectID = firstObjectID + uint32(index)
 	}
-	return assigned, nil
+	return e.info.NPCs.PrepareAffixPlans(assigned), nil
 }
 
 func (e *Zone) PlanInitialEncounter(

@@ -1341,11 +1341,14 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 	}
 	if e.definition.Kind == sim.AbilityKindTeleportArea {
 		now := e.runtime.now()
-		expiresAt := now.Add(e.definition.StatusDuration)
 		for _, result := range results {
 			if result.Damage.IsDamageImmune || result.Damage.IsDefeated {
 				continue
 			}
+			duration := zonenpc.CrowdControlDuration(
+				result.Snapshot.Plan, e.definition.StatusDuration,
+			)
+			expiresAt := now.Add(duration)
 			err = current.zone.NPCs().ApplyStun(result.Damage.ObjectID, expiresAt)
 			if err != nil {
 				e.runtime.registry.mutex.Unlock()
@@ -1361,7 +1364,7 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 				freezePacket, freezeErr := freezeChronoObjectLocked(
 					e.runtime, e.packet, e.sessionKey, e.generation,
 					current.zone, result.Damage.ObjectID,
-					e.definition.StatusDuration,
+					duration,
 				)
 				current = e.runtime.registry.sessions[e.sessionKey]
 				if freezeErr != nil {

@@ -77,6 +77,9 @@ func (e heroRepulsionSchedule) hit() ([][]byte, error) {
 			continue
 		}
 		targets = append(targets, target)
+		if target.HasAffixModifier(surefootedNPCAffixModifierName) {
+			continue
+		}
 		if distance <= 0 {
 			delta = game.Vec3{X: 1}
 			distance = 1

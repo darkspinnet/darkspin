@@ -190,7 +190,7 @@ func (e *campaignArcturusTurret) tick() ([][]byte, error) {
 					err = fmt.Errorf("turretHitPlan: %w", planErr)
 					break
 				}
-				result, rollErr := zonenpc.CommitAttack(current.zone.NPCRandom(), plan, turret.Plan.NPCProfile.CriticalRating, owner.runtime.program.Critical)
+				result, rollErr := zonenpc.CommitAttack(current.zone.NPCRandom(), plan, turret.EffectiveCriticalRating(), owner.runtime.program.Critical)
 				if rollErr != nil {
 					err = fmt.Errorf("turretHitRoll: %w", rollErr)
 					break

@@ -28,6 +28,7 @@ func (e *Session) ConfigureDefense(difficulty uint32, conversions []float32) err
 	}
 	e.mu.Lock()
 	e.defenseConversion = conversion
+	e.affixDifficulty = difficulty
 	e.mu.Unlock()
 	return nil
 }
@@ -38,10 +39,12 @@ func (e *Session) reduceDamage(npc Snapshot, profile ActionProfile, damage float
 	incoming := damage
 	rating := float32(0)
 	if isPhysical {
-		rating = npc.Plan.NPCProfile.DodgeRating + profile.PassivePhysicalDefense
+		rating = npc.Plan.NPCProfile.DodgeRating + profile.PassivePhysicalDefense +
+			npc.Plan.affixDefenseRating(ghostlyModifierName)
 	}
 	if isEnergy {
-		rating = npc.Plan.NPCProfile.ResistRating
+		rating = npc.Plan.NPCProfile.ResistRating +
+			npc.Plan.affixDefenseRating(reflectiveModifierName)
 		// Turtle suspends this passive; combat_turtle also removes its client
 		// attribute until the stance ends.
 		if !npc.IsTurtleActive {
@@ -77,8 +80,18 @@ func (e *Session) reduceDamage(npc Snapshot, profile ActionProfile, damage float
 	if isProtected {
 		damage *= 1 - maximumPhaseReduction
 	}
+	damage = max(damage, incoming*(1-maximumPhaseReduction))
+	if isArea && npc.HasAffixModifier("Shifted_NPCAffixModifier") {
+		// Chunk 701 adds 0.75 AoeResistance independently of ordinary ratings.
+		damage *= 0.25
+	}
+	if isPhysical || isEnergy {
+		// Authored flat armor is separate from the server's percentage-defense
+		// budget, so that budget must not erase the Armored or Sloth effect.
+		damage = max(0, damage-npc.Plan.flatArmor(e.affixDifficulty))
+	}
 	// Vulnerability and finite absorption are applied by the caller afterward.
-	return max(damage, incoming*(1-maximumPhaseReduction))
+	return damage
 }
 
 func npcDefenseRemaining(reduction, ceiling float32) float32 {

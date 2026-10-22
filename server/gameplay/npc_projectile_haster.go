@@ -117,7 +117,7 @@ func (r campaignNPCActionRuntime) produceHasterProjectile(
 		return nil, errors.New("enemy random unavailable")
 	}
 	result, commitErr := zonenpc.CommitAttack(
-		peerSession.zone.NPCRandom(), plan, enemy.Plan.NPCProfile.CriticalRating, r.program.Critical,
+		peerSession.zone.NPCRandom(), plan, enemy.EffectiveCriticalRating(), r.program.Critical,
 	)
 	if commitErr != nil {
 		r.registry.mutex.Unlock()

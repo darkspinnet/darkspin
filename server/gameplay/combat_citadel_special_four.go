@@ -193,6 +193,7 @@ func (r campaignNPCActionRuntime) produceCitadelSpecialFour(
 	if !isEnemyFound || !isFamilyFound {
 		return nil, false, nil
 	}
+	repairProfile = zonenpc.ApplyAffixTiming(repairProfile, enemy.Plan)
 	if isSilenced {
 		return nil, false, nil
 	}
@@ -254,6 +255,7 @@ func (r campaignNPCActionRuntime) produceCitadelSpecialFour(
 		r.registry.mutex.Unlock()
 		return nil, true, errors.New("citadel ground slam profile unavailable")
 	}
+	slamProfile = zonenpc.ApplyAffixTiming(slamProfile, enemy.Plan)
 	slamPlan, slamErr := zonenpc.PlanAttackWithProfile(
 		enemy, target.ObjectID, target.Position, slamProfile, target.ActorFootprintRadius,
 	)
@@ -278,6 +280,7 @@ func (r campaignNPCActionRuntime) produceCitadelSpecialFour(
 		r.registry.mutex.Unlock()
 		return nil, true, errors.New("citadel piston punch profile unavailable")
 	}
+	punchProfile = zonenpc.ApplyAffixTiming(punchProfile, enemy.Plan)
 	punchPlan, punchErr := zonenpc.PlanAttackWithProfile(
 		enemy, target.ObjectID, target.Position, punchProfile, target.ActorFootprintRadius,
 	)

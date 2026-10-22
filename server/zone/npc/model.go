@@ -57,18 +57,26 @@ type SpawnPlan struct {
 	IsLootSuppressed       bool // Native object +153, independent of XP eligibility.
 	IsExperienceSuppressed bool // Native object +154.
 	// Server encounter policy: excluded from progress and retired with its owner.
-	IsEncounterAuxiliary    bool
-	MovementSpeedBuff       float32
-	SwiftAuraSourceObjectID uint32
-	MarkerSetName           string
-	Introduction            SpawnIntroduction
-	NPCProfile              game.CampaignNPCProfile
-	BossIdentity            BossIdentity
-	ActionProfile           ActionProfile
-	IsActionKnown           bool
+	IsEncounterAuxiliary        bool
+	MovementSpeedBuff           float32
+	SwiftAuraSourceObjectID     uint32
+	AffixAuras                  []AffixAura
+	AffixDifficulty             uint32
+	AffixAttackSpeedBonus       float32
+	AffixCooldownReductionBonus float32
+	AffixMovementSpeedBuff      float32
+	PackflyHelperCount          uint32
+	PackflyPassiveRank          int32
+	MarkerSetName               string
+	Introduction                SpawnIntroduction
+	NPCProfile                  game.CampaignNPCProfile
+	BossIdentity                BossIdentity
+	ActionProfile               ActionProfile
+	IsActionKnown               bool
 }
 
 func (e SpawnPlan) Clone() SpawnPlan {
+	e.AffixAuras = slices.Clone(e.AffixAuras)
 	if e.NPCProfile.ActorFootprint != nil {
 		footprint := *e.NPCProfile.ActorFootprint
 		e.NPCProfile.ActorFootprint = &footprint
@@ -101,6 +109,13 @@ func (e SpawnPlan) IsEqual(other SpawnPlan) bool {
 		e.IsEncounterAuxiliary == other.IsEncounterAuxiliary &&
 		e.MovementSpeedBuff == other.MovementSpeedBuff &&
 		e.SwiftAuraSourceObjectID == other.SwiftAuraSourceObjectID &&
+		slices.Equal(e.AffixAuras, other.AffixAuras) &&
+		e.AffixDifficulty == other.AffixDifficulty &&
+		e.AffixAttackSpeedBonus == other.AffixAttackSpeedBonus &&
+		e.AffixCooldownReductionBonus == other.AffixCooldownReductionBonus &&
+		e.AffixMovementSpeedBuff == other.AffixMovementSpeedBuff &&
+		e.PackflyHelperCount == other.PackflyHelperCount &&
+		e.PackflyPassiveRank == other.PackflyPassiveRank &&
 		e.MarkerSetName == other.MarkerSetName &&
 		e.Introduction == other.Introduction &&
 		reflect.DeepEqual(e.NPCProfile, other.NPCProfile) &&
@@ -171,6 +186,8 @@ type Snapshot struct {
 	IsTurtleTriggered               bool
 	IsTurtleActive                  bool
 	IsSelfResurrectionTriggered     bool
+	IsAffixResurrectionTriggered    bool
+	IsAffixResurrectionPending      bool
 	IsCorruptorStageTwo             bool
 	IsNavigationCollisionEnabled    bool
 	IsInvisibleToSecurityTeleporter bool
@@ -179,6 +196,8 @@ type Snapshot struct {
 }
 
 type DamageResult struct {
+	Thorns                     *ThornsDamage
+	AffixResurrectionFraction  float32
 	ObjectID                   uint32
 	DeletedOwnedObjectIDs      []uint32
 	LocusID                    uint32

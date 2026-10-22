@@ -150,7 +150,6 @@ func (e heroChannelAreaSchedule) lift() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	expiresAt := e.runtime.now().Add(e.cleanupAt - e.definition.HitDelay)
 	e.run.cast.activateLocked(e.run.cast.revision)
 	targets := make([]heroChannelAreaTarget, 0)
 	messages := make([]raknet.ApplicationMessage, 0)
@@ -161,6 +160,10 @@ func (e heroChannelAreaSchedule) lift() ([][]byte, error) {
 				e.definition.Radius {
 			continue
 		}
+		duration := zonenpc.CrowdControlDuration(
+			target.Plan, e.cleanupAt-e.definition.HitDelay,
+		)
+		expiresAt := e.runtime.now().Add(duration)
 		instance, err := e.runtime.modifierPool.Allocate()
 		if err != nil {
 			e.run.ReleaseTargets(targets)
@@ -190,7 +193,7 @@ func (e heroChannelAreaSchedule) lift() ([][]byte, error) {
 		messages = append(messages, raknet.ModifierCreatedMessage{
 			TargetID: target.Plan.ObjectID, ModifierGUID: e.definition.RootModifierID,
 			InstanceID: instance, StackCount: 1,
-			DurationMilliseconds: uint32((e.cleanupAt - e.definition.HitDelay).Milliseconds()),
+			DurationMilliseconds: uint32(duration.Milliseconds()),
 			StartMilliseconds: e.packet.SourceTime +
 				uint64(e.definition.HitDelay/time.Millisecond),
 			SourceID: e.sourceObjectID,

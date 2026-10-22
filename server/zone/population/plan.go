@@ -142,8 +142,8 @@ func (s *Session) planSpawns(
 			profile := selectedEntry.NPCProfile
 			bossIdentity := zonenpc.BossIdentity{}
 			if isCaptain {
-				profile = zonenpc.ApplyCaptainProfile(profile)
-				bossIdentity = captainIdentity(director, selectedEntry.NounName)
+				bossIdentity = CaptainIdentity(director, selectedEntry.NounName)
+				profile = zonenpc.ApplyCaptainProfile(profile, bossIdentity)
 			}
 			plans = append(plans, zonenpc.SpawnPlan{
 				ObjectID: nextObjectID, NounName: selectedEntry.NounName,
@@ -386,8 +386,8 @@ func appendAuthoredPlans(
 		profile := selectedEntry.NPCProfile
 		bossIdentity := zonenpc.BossIdentity{}
 		if isCaptain {
-			profile = zonenpc.ApplyCaptainProfile(profile)
-			bossIdentity = captainIdentity(director, selectedEntry.NounName)
+			bossIdentity = CaptainIdentity(director, selectedEntry.NounName)
+			profile = zonenpc.ApplyCaptainProfile(profile, bossIdentity)
 		}
 		plans = append(plans, zonenpc.SpawnPlan{
 			ObjectID: nextObjectID, NounName: selectedEntry.NounName,
@@ -402,7 +402,9 @@ func appendAuthoredPlans(
 	return plans, nextObjectID, nil
 }
 
-func captainIdentity(
+// CaptainIdentity resolves the authored captain affixes for encounter and
+// developer spawns through the same content lookup.
+func CaptainIdentity(
 	director game.CampaignDirector, nounName string,
 ) zonenpc.BossIdentity {
 	nounKey := strings.ToLower(strings.TrimSpace(nounName))

@@ -33,8 +33,12 @@ func spawn(plan zonenpc.SpawnPlan, isRemnant bool) ([][]byte, error) {
 		7: profile.DodgeRating, 9: profile.ResistRating,
 		10: profile.CriticalRating,
 	}
+	for attributeID, amount := range affixAttributes(zonenpc.Snapshot{Plan: plan}) {
+		attribute[attributeID] = amount
+	}
 	basePlan := plan
 	basePlan.MovementSpeedBuff = 0
+	basePlan.AffixMovementSpeedBuff = 0
 	basePlan.SwiftAuraSourceObjectID = 0
 	basePlan.BossIdentity = zonenpc.BossIdentity{}
 	actionProfile, isActionKnown := zonenpc.ActionProfileForPlan(basePlan)
@@ -58,18 +62,10 @@ func spawn(plan zonenpc.SpawnPlan, isRemnant bool) ([][]byte, error) {
 		attribute[12] = actionProfile.MovementSpeed
 		attribute[48] = zonenpc.EffectiveMovementSpeedBuff(plan)
 	}
-	if isActionKnown && actionProfile.PassiveEnergyDefense > 0 {
-		attribute[uint8(game.AttributeEnergyDefense)] +=
-			actionProfile.PassiveEnergyDefense
-	}
-	if isActionKnown && actionProfile.PassivePhysicalDefense > 0 {
-		attribute[uint8(game.AttributePhysicalDefense)] +=
-			actionProfile.PassivePhysicalDefense
-	}
 	isElite := plan.IsCaptain || plan.IsElite || plan.IsBoss ||
 		plan.BossIdentity.HasModifier(zonenpc.EliteModifierName)
 	if isElite {
-		attribute[uint8(game.AttributeBodyScale)] = zonenpc.EliteBonusForType(profile.NPCType).BodyScale
+		attribute[uint8(game.AttributeBodyScale)] = plan.PermanentBodyScale()
 	}
 	// The noun already owns its authored graphics scale. The create field is a
 	// runtime multiplier, so replaying the noun scale here enlarges major actors
@@ -161,6 +157,18 @@ func spawn(plan zonenpc.SpawnPlan, isRemnant bool) ([][]byte, error) {
 	}
 	if plan.SwiftAuraSourceObjectID != 0 {
 		messages = append(messages, swiftAuraMessage(plan))
+	}
+	for _, aura := range plan.AffixAuras {
+		message, err := affixAuraMessage(plan, aura)
+		if err != nil {
+			return nil, fmt.Errorf("spawnAura: %w", err)
+		}
+		messages = append(messages, message)
+	}
+	if effectName := zonenpc.PackflyBoostEffectName(plan.PackflyHelperCount); effectName != "" {
+		messages = append(messages, raknet.AttachedEffectMessage{
+			Slot: 19, ObjectID: plan.ObjectID, IsForceAttached: true, Asset: util.HashID(effectName),
+		})
 	}
 	if isActionKnown && actionProfile.StealthType != 0 {
 		messages = append(messages, raknet.AgentBlackboardUpdateMessage{

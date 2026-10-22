@@ -250,6 +250,11 @@ func (e fieldMedicActiveSchedule) transferDebuffLocked(
 	if duration <= 0 || !isFieldMedicStatusSupported(modifier.GUID) {
 		return nil, false, nil
 	}
+	target, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
+	if !isTargetFound {
+		return nil, false, nil
+	}
+	duration = zonenpc.CrowdControlDuration(target.Plan, duration)
 	expiresAt := e.runtime.now().Add(duration)
 	err := applyFieldMedicNPCStatus(
 		peerSession.zone.NPCs(), targetObjectID, modifier.GUID, expiresAt,

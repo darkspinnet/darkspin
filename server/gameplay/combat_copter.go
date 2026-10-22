@@ -267,7 +267,7 @@ func (e *campaignScaldronCopterRun) passive() ([][]byte, error) {
 			}
 			result, commitErr := zonenpc.CommitAttack(
 				peerSession.zone.NPCRandom(), plan,
-				source.Plan.NPCProfile.CriticalRating,
+				source.EffectiveCriticalRating(),
 				e.runtime.program.Critical,
 			)
 			if commitErr != nil {

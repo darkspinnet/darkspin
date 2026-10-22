@@ -75,7 +75,7 @@ func (e campaignNPCAttackSchedule) hitVerdanthBasicPlunge() ([][]byte, error) {
 		}
 		result, commitErr := zonenpc.CommitAttack(
 			peerSession.zone.NPCRandom(), plan,
-			source.Plan.NPCProfile.CriticalRating, runtime.program.Critical,
+			source.EffectiveCriticalRating(), runtime.program.Critical,
 		)
 		if commitErr != nil {
 			runtime.registry.mutex.Unlock()

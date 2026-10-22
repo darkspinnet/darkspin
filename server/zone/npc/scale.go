@@ -1,9 +1,5 @@
 package npc
 
-import "strings"
-
-const captainSpawnScale = float32(1.4)
-
 // SpawnObjectScale applies the normal spawn size independently of /scale.
 // Authored placement scale is retained; the noun's graphics scale is client-owned.
 func (e SpawnPlan) SpawnObjectScale() float32 {
@@ -11,10 +7,20 @@ func (e SpawnPlan) SpawnObjectScale() float32 {
 	if objectScale == 0 {
 		objectScale = 1
 	}
-	if e.IsCaptain || strings.Contains(strings.ToLower(e.NounName), "_captain") {
-		objectScale *= captainSpawnScale
-	}
 	return objectScale
+}
+
+// PermanentBodyScale combines the additive BodyScale attributes from the
+// client-authored EliteModifier (chunk 650) and CaptainModifier (chunk 802).
+func (e SpawnPlan) PermanentBodyScale() float32 {
+	bodyScale := float32(0)
+	if e.IsCaptain || e.IsElite || e.IsBoss || e.BossIdentity.HasModifier(EliteModifierName) {
+		bodyScale = EliteBonusForType(e.NPCProfile.NPCType).BodyScale
+	}
+	if e.IsCaptain {
+		bodyScale += 1
+	}
+	return bodyScale
 }
 
 // RuntimeObjectScale adds an optional developer preview to the normal spawn size.

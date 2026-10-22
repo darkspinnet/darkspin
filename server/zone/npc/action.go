@@ -242,17 +242,23 @@ func PlanFirstAction(command FirstActionCommand) (FirstActionPlan, bool, error) 
 func ActionProfileForPlan(plan SpawnPlan) (ActionProfile, bool) {
 	if plan.IsActionKnown {
 		profile := zelemSpecialTwoDecisionProfile(plan, plan.ActionProfile)
-		return authoredCombatSpeed(plan, IntroductionProfile(plan, profile)), true
+		return ApplyAffixTiming(
+			authoredCombatSpeed(plan, IntroductionProfile(plan, profile)), plan,
+		), true
 	}
 	profile, isFound := ActionProfileForNoun(plan.NounName)
 	if isFound {
 		profile = zelemSpecialTwoDecisionProfile(plan, profile)
-		return authoredCombatSpeed(plan, IntroductionProfile(plan, profile)), true
+		return ApplyAffixTiming(
+			authoredCombatSpeed(plan, IntroductionProfile(plan, profile)), plan,
+		), true
 	}
 	if plan.IsFixture || plan.NounName == "" {
 		return ActionProfile{}, false
 	}
-	return authoredCombatSpeed(plan, IntroductionProfile(plan, fallbackActionProfile(plan.NounName))), true
+	return ApplyAffixTiming(authoredCombatSpeed(
+		plan, IntroductionProfile(plan, fallbackActionProfile(plan.NounName)),
+	), plan), true
 }
 
 func authoredCombatSpeed(plan SpawnPlan, profile ActionProfile) ActionProfile {
@@ -3549,7 +3555,7 @@ func ZelemSpecialTwoActionProfileForPlan(
 		cooldowns := [...]time.Duration{8 * time.Second, 6 * time.Second, 4 * time.Second}
 		profile.Cooldown = cooldowns[rank-1]
 	}
-	return authoredCombatSpeed(plan, profile), nil
+	return ApplyAffixTiming(authoredCombatSpeed(plan, profile), plan), nil
 }
 
 func zelemSpecialTwoRank(plan SpawnPlan) int32 {

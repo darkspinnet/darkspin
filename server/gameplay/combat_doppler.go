@@ -372,6 +372,7 @@ func (r campaignNPCActionRuntime) produceScaldronBasicDopplerClone(
 	if !isProfileFound {
 		return nil, false, nil
 	}
+	profile = zonenpc.ApplyAffixTiming(profile, source.Plan)
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.isCampaignNPCSourceActive(

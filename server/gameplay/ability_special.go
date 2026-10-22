@@ -20,6 +20,7 @@ import (
 	zonecontent "github.com/darkspinnet/darkspin/server/zone/content"
 	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
 	zonehero "github.com/darkspinnet/darkspin/server/zone/hero"
+	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
 var errCampaignAbilityNotSpecial = errors.New("campaign ability is not special")
@@ -1030,8 +1031,10 @@ func (e targetedAOEStep) produce() ([][]byte, error) {
 				schedule.definition.TickDuration+250*time.Millisecond,
 				time.Second,
 			)
-			slowExpiresAt := schedule.runtime.now().Add(slowDuration)
 			for _, target := range plan.Target {
+				slowExpiresAt := schedule.runtime.now().Add(
+					zonenpc.CrowdControlDuration(target.Plan, slowDuration),
+				)
 				slowErr := peerSession.zone.NPCs().ApplySlow(
 					target.Plan.ObjectID, slowExpiresAt,
 					supportHealerSlowMovementScale,

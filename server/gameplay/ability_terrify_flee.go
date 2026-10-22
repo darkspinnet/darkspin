@@ -359,7 +359,6 @@ func (r campaignAbilityCommandRuntime) applyHeroNPCFear(
 	if err != nil {
 		return nil, fmt.Errorf("heroFearRun: %w", err)
 	}
-	expiresAt := r.now().Add(duration)
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation &&
@@ -381,6 +380,8 @@ func (r campaignAbilityCommandRuntime) applyHeroNPCFear(
 		}
 		return nil, nil
 	}
+	duration = zonenpc.CrowdControlDuration(target.Plan, duration)
+	expiresAt := r.now().Add(duration)
 	err = peerSession.zone.NPCs().ApplyFear(targetObjectID, expiresAt)
 	if err != nil {
 		r.registry.mutex.Unlock()
