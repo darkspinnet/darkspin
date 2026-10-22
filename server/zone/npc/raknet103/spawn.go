@@ -177,16 +177,27 @@ func spawn(plan zonenpc.SpawnPlan, isRemnant bool) ([][]byte, error) {
 			IsTargetable: profile.IsTargetable && !plan.IsIntroductionHidden,
 		})
 	}
-	if isActionKnown && actionProfile.PassiveCreateEffectName != "" {
+	createEffectName := actionProfile.PassiveCreateEffectName
+	effectName := actionProfile.PassiveEffectName
+	if plan.HasAffixModifier(zonenpc.ShieldedModifierName) {
+		createEffectName = "cyber_shield_generate_shield.ServerEventDef"
+		effectName = "citadelBasicShield_Shield.ServerEventDef"
+	}
+	if (plan.IsAbsorptionShieldDepleted || isRemnant) &&
+		(plan.HasAffixModifier(zonenpc.ShieldedModifierName) || actionProfile.PassiveAbsorptionShield > 0) {
+		createEffectName = ""
+		effectName = ""
+	}
+	if createEffectName != "" {
 		messages = append(messages, raknet.ObjectEffectMessage{
-			Asset:    util.HashID(actionProfile.PassiveCreateEffectName),
+			Asset:    util.HashID(createEffectName),
 			ObjectID: plan.ObjectID,
 		})
 	}
-	if isActionKnown && actionProfile.PassiveEffectName != "" {
+	if effectName != "" {
 		messages = append(messages, raknet.AttachedEffectMessage{
 			Slot: 16, IsForceAttached: true,
-			Asset:    util.HashID(actionProfile.PassiveEffectName),
+			Asset:    util.HashID(effectName),
 			ObjectID: plan.ObjectID,
 		})
 	}

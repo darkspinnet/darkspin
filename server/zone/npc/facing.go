@@ -61,6 +61,8 @@ func (e *Session) CommitFacing(plan AttackPlan) bool {
 // before any visibility or animation updates can expose the actor.
 func (e Snapshot) FacingSpawnPlan() SpawnPlan {
 	plan := e.Plan.Clone()
+	plan.IsAbsorptionShieldDepleted = e.IsDefeated ||
+		(e.status.absorptionShieldMaximum > 0 && e.status.absorptionShieldAmount <= 0)
 	length := e.Facing.Length()
 	if length <= 0 || !zonegeometry.IsFinite(e.Facing) {
 		return plan

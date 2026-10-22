@@ -2,6 +2,7 @@
 
 ### 2026-10-21
 
+- Restore Shielded affix absorption and visuals across NPC spawns, regenerate shields on their client-authored timer, and preserve them through DLS-1227's half-health invincibility transition.
 - Restore CaptainModifier crowd-control resistance and multiplayer timing bonuses, plus Frenzied attack-speed and cooldown bonuses.
 - Restore Tough's type-dependent HP bonus, Accurate critical rating, Ghostly and Reflective defense ratings, and Armored and Sloth Passive flat armor.
 - Restore Spiky melee retaliation and one-time Persistent resurrection with native effects and protection against duplicate loot and premature encounter completion.

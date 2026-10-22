@@ -13,6 +13,13 @@ func (e gameplayPendingRuntime) pollAffixAurasLocked(member *gameplayPeerSession
 	if err != nil {
 		return nil, fmt.Errorf("affixChanges: %w", err)
 	}
+	for _, objectID := range member.zone.NPCs().RenewAbsorptionShields(e.now()) {
+		shieldPackets, shieldErr := npcraknet.AbsorptionShieldGenerate(objectID)
+		if shieldErr != nil {
+			return nil, fmt.Errorf("shieldRenew: %w", shieldErr)
+		}
+		packets = append(packets, shieldPackets...)
+	}
 	if len(packets) == 0 {
 		return nil, nil
 	}

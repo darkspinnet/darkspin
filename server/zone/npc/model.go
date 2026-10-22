@@ -50,12 +50,13 @@ type SpawnPlan struct {
 	IsArena                bool
 	IsFixture              bool
 	// Current presentation state, retained across rejoin until the entrance reveals it.
-	IsIntroductionHidden   bool
-	IsIntroductionComplete bool
-	IsStartupInitialized   bool
-	IsSecondaryStart       bool
-	IsLootSuppressed       bool // Native object +153, independent of XP eligibility.
-	IsExperienceSuppressed bool // Native object +154.
+	IsIntroductionHidden       bool
+	IsIntroductionComplete     bool
+	IsStartupInitialized       bool
+	IsAbsorptionShieldDepleted bool // Snapshot presentation; fresh spawns start charged.
+	IsSecondaryStart           bool
+	IsLootSuppressed           bool // Native object +153, independent of XP eligibility.
+	IsExperienceSuppressed     bool // Native object +154.
 	// Server encounter policy: excluded from progress and retired with its owner.
 	IsEncounterAuxiliary        bool
 	MovementSpeedBuff           float32
@@ -104,6 +105,7 @@ func (e SpawnPlan) IsEqual(other SpawnPlan) bool {
 		e.IsBoss == other.IsBoss &&
 		e.IsArena == other.IsArena &&
 		e.IsFixture == other.IsFixture &&
+		e.IsAbsorptionShieldDepleted == other.IsAbsorptionShieldDepleted &&
 		e.IsLootSuppressed == other.IsLootSuppressed &&
 		e.IsExperienceSuppressed == other.IsExperienceSuppressed &&
 		e.IsEncounterAuxiliary == other.IsEncounterAuxiliary &&

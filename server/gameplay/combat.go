@@ -2670,26 +2670,13 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 		)
 	}
 	if result.IsAbsorptionShieldRenewed {
-		generationPacket, marshalErr := raknet.MarshalApplication(
-			raknet.ObjectEffectMessage{
-				Asset:    util.HashID("cyber_shield_generate_shield.ServerEventDef"),
-				ObjectID: result.ObjectID,
-			},
-		)
+		shieldPackets, marshalErr := npcraknet.AbsorptionShieldGenerate(result.ObjectID)
 		if marshalErr != nil {
 			return campaignDamageTransition{},
 				fmt.Errorf("absorptionShieldGenerate: %w", marshalErr)
 		}
-		shieldPacket, marshalErr := npcraknet.ShieldEffectAsset(
-			result.ObjectID, 15,
-			"citadelBasicShield_Shield.ServerEventDef", false,
-		)
-		if marshalErr != nil {
-			return campaignDamageTransition{},
-				fmt.Errorf("absorptionShieldAttach: %w", marshalErr)
-		}
 		transition.immediatePackets = append(
-			transition.immediatePackets, generationPacket, shieldPacket,
+			transition.immediatePackets, shieldPackets...,
 		)
 	}
 	if result.IsAbsorptionShieldHit && !result.IsAbsorptionShieldBroken {
@@ -2979,6 +2966,7 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 			defeatedNPC.Plan.NounName,
 		)
 		if (isProfileFound && profile.PassiveEffectName != "") ||
+			defeatedNPC.HasAffixModifier(zonenpc.ShieldedModifierName) ||
 			zonenpc.IsGraviticStabilizer(defeatedNPC.Plan) ||
 			(isRootedHealer && rootedHealProfile.TrailEffectName != "") {
 			passiveEffectRemove, marshalErr := raknet.MarshalApplication(

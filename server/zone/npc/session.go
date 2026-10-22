@@ -132,7 +132,7 @@ func (s *Session) add(plans []SpawnPlan, targetObjectID uint32) error {
 			IsPublished:                  true,
 			IsSpawnStealthActive:         isSpawnStealthedPlan(plan),
 			IsNavigationCollisionEnabled: true,
-			status:                       initialStatus(plan),
+			status:                       s.initialStatus(plan),
 		}
 	}
 	return nil
@@ -200,7 +200,7 @@ func (s *Session) AddDormant(plans []SpawnPlan) error {
 			IsSpawnStealthActive:            isSpawnStealthedPlan(plan),
 			IsNavigationCollisionEnabled:    true,
 			IsInvisibleToSecurityTeleporter: plan.IsIntroductionHidden,
-			status:                          initialStatus(plan),
+			status:                          s.initialStatus(plan),
 		}
 		s.recordScenarioFixtureAdmission(plan)
 	}
@@ -242,7 +242,7 @@ func (s *Session) AddStaged(plans []SpawnPlan) error {
 			IsSpawnStealthActive:            isSpawnStealthedPlan(plan),
 			IsNavigationCollisionEnabled:    true,
 			IsInvisibleToSecurityTeleporter: plan.IsIntroductionHidden,
-			status:                          initialStatus(plan),
+			status:                          s.initialStatus(plan),
 		}
 	}
 	return nil
@@ -323,7 +323,7 @@ func (s *Session) Restore(snapshots []Snapshot) error {
 			IsSpawnStealthActive:            isSpawnStealthedPlan(plan) && !isDefeated,
 			IsNavigationCollisionEnabled:    !isDefeated || IsGraviticRemnant(plan),
 			IsInvisibleToSecurityTeleporter: plan.IsIntroductionHidden && !isDefeated,
-			status:                          initialStatus(plan),
+			status:                          s.initialStatus(plan),
 		}
 		if restored.Facing.Length() <= 0 || !zonegeometry.IsFinite(restored.Facing) {
 			restored.Facing = plan.InitialFacing()
@@ -370,7 +370,10 @@ func isSpawnStealthedPlan(plan SpawnPlan) bool {
 	return isFound && profile.IsSpawnStealthed
 }
 
-func initialStatus(plan SpawnPlan) status {
+func (s *Session) initialStatus(plan SpawnPlan) status {
+	if plan.HasAffixModifier(ShieldedModifierName) {
+		return shieldedStatus(plan, s.affixDifficulty, s.affixPlayerCount)
+	}
 	profile, isFound := ActionProfileForPlan(plan)
 	if !isFound || profile.PassiveAbsorptionShield <= 0 ||
 		profile.PassiveAbsorptionShieldRecharge <= 0 {
@@ -416,35 +419,31 @@ func (s *Session) ConfigureShieldedAffix(
 	if s == nil || difficulty == 0 || playerCount == 0 {
 		return errors.New("shielded affix configuration invalid")
 	}
-	shieldAmount := float32(10 * math.Pow(1.037500023841858, float64(difficulty)) *
-		float64(playerCount))
-	if !zonegeometry.IsFinitePositiveScalar(shieldAmount) {
+	shield := shieldedStatus(SpawnPlan{}, difficulty, playerCount)
+	if !zonegeometry.IsFinitePositiveScalar(shield.absorptionShieldMaximum) {
 		return errors.New("shielded affix amount invalid")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, plan := range plans {
-		if !plan.BossIdentity.HasModifier("Shielded_NPCAffixModifier") {
+		if !plan.HasAffixModifier(ShieldedModifierName) {
 			continue
 		}
 		npc, isFound := s.npcs[plan.ObjectID]
-		if !isFound || !npc.IsPublished {
+		if !isFound {
 			return fmt.Errorf("shieldedAffixMissing: %d", plan.ObjectID)
 		}
 		if npc.IsDefeated {
 			continue
 		}
-		recharge := 12 * time.Second
-		switch {
-		case strings.HasSuffix(strings.ToLower(plan.NounName), "_2.noun"):
-			recharge = 10 * time.Second
-		case strings.HasSuffix(strings.ToLower(plan.NounName), "_3.noun"):
-			recharge = 8 * time.Second
+		shield = shieldedStatus(plan, difficulty, playerCount)
+		// Admission may already have initialized the shield. Preserve a live
+		// depletion/recharge instead of refreshing it during configuration.
+		if npc.status.absorptionShieldMaximum <= 0 {
+			npc.status.absorptionShieldAmount = shield.absorptionShieldAmount
 		}
-		npc.status.absorptionShieldAmount = shieldAmount
-		npc.status.absorptionShieldMaximum = shieldAmount
-		npc.status.absorptionShieldReadyAt = time.Time{}
-		npc.status.absorptionShieldRecharge = recharge
+		npc.status.absorptionShieldMaximum = shield.absorptionShieldMaximum
+		npc.status.absorptionShieldRecharge = shield.absorptionShieldRecharge
 		s.npcs[plan.ObjectID] = npc
 	}
 	return nil
@@ -1146,13 +1145,8 @@ func (s *Session) damage(
 		}, nil
 	}
 	isAbsorptionShieldRenewed := false
-	if !meta.isForcedDefeat && npc.status.absorptionShieldMaximum > 0 &&
-		npc.status.absorptionShieldAmount <= 0 &&
-		!npc.status.absorptionShieldReadyAt.IsZero() &&
-		!now.Before(npc.status.absorptionShieldReadyAt) {
-		npc.status.absorptionShieldAmount = npc.status.absorptionShieldMaximum
-		npc.status.absorptionShieldReadyAt = time.Time{}
-		isAbsorptionShieldRenewed = true
+	if !meta.isForcedDefeat {
+		isAbsorptionShieldRenewed = npc.renewAbsorptionShield(now)
 	}
 	actionProfile, isActionProfileFound := ActionProfileForPlan(npc.Plan)
 	species := nounSpecies(npc.Plan.NounName)
@@ -1296,7 +1290,13 @@ func (s *Session) damage(
 			npc.Plan.ActionProfile = npc.status.hasteActionProfile
 			npc.Plan.IsActionKnown = npc.status.isHasteActionKnown
 		}
-		npc.status = status{}
+		previousStatus := npc.status
+		npc.status = status{
+			absorptionShieldAmount:   previousStatus.absorptionShieldAmount,
+			absorptionShieldMaximum:  previousStatus.absorptionShieldMaximum,
+			absorptionShieldReadyAt:  previousStatus.absorptionShieldReadyAt,
+			absorptionShieldRecharge: previousStatus.absorptionShieldRecharge,
+		}
 	}
 	isTurtleStarted := !npc.IsDefeated && !npc.IsTurtleTriggered &&
 		isNomadSpecialThreeNoun(npc.Plan.NounName) &&
