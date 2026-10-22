@@ -41,6 +41,7 @@ func NewRootCommand() *cobra.Command {
 	rootCmd.AddCommand(newBuildCommand())
 	rootCmd.AddCommand(newInspectCommand())
 	rootCmd.AddCommand(newLuaCommand())
+	rootCmd.AddCommand(newLuaAuditCommand())
 	rootCmd.AddCommand(newUnzipCommand())
 	rootCmd.AddCommand(newZipCommand())
 	rootCmd.AddCommand(newInstallDataCommand())
