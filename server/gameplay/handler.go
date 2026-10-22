@@ -3321,7 +3321,7 @@ func (r gameplayPendingRuntime) spawnDeveloperNPC(
 	profile = zoneboss.NormalizeFinalBossProfile(command.NounName, profile)
 	isCaptain := strings.Contains(strings.ToLower(command.NounName), "_captain")
 	if isCaptain {
-		profile = zonenpc.ApplyEliteProfile(profile)
+		profile = zonenpc.ApplyCaptainProfile(profile)
 	}
 	position := game.Vec3(currentSession.playerPosition)
 	position.X += 5

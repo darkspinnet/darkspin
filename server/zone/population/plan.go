@@ -142,7 +142,7 @@ func (s *Session) planSpawns(
 			profile := selectedEntry.NPCProfile
 			bossIdentity := zonenpc.BossIdentity{}
 			if isCaptain {
-				profile = zonenpc.ApplyEliteProfile(profile)
+				profile = zonenpc.ApplyCaptainProfile(profile)
 				bossIdentity = captainIdentity(director, selectedEntry.NounName)
 			}
 			plans = append(plans, zonenpc.SpawnPlan{
@@ -386,7 +386,7 @@ func appendAuthoredPlans(
 		profile := selectedEntry.NPCProfile
 		bossIdentity := zonenpc.BossIdentity{}
 		if isCaptain {
-			profile = zonenpc.ApplyEliteProfile(profile)
+			profile = zonenpc.ApplyCaptainProfile(profile)
 			bossIdentity = captainIdentity(director, selectedEntry.NounName)
 		}
 		plans = append(plans, zonenpc.SpawnPlan{

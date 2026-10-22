@@ -150,7 +150,12 @@ func PlanNamedEncounter(
 			)
 	}
 	isCaptain := !IsFinalBossNoun(leader.NounName)
-	profile := zonenpc.ApplyEliteProfile(leader.NPCProfile)
+	profile := leader.NPCProfile
+	if isCaptain {
+		profile = zonenpc.ApplyCaptainProfile(profile)
+	} else {
+		profile = zonenpc.ApplyEliteProfile(profile)
+	}
 	plan := []zonenpc.SpawnPlan{{
 		ObjectID:      firstObjectID,
 		NounName:      leader.NounName,

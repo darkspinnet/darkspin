@@ -2,6 +2,7 @@
 
 ### 2026-10-21
 
+- Restore the client-backed CaptainModifier HP bonus across captain encounters, population spawns and /spawn, increasing first-run solo Illust from 105 to 300 HP without compounding on continue/rejoin.
 - Increase captain spawn scale from 1.0 to 1.4, including continue/rejoin
 - #96 Correct rooted heroes through native owner-aware locomotion and pose updates so local movement prediction cannot bypass the server's stop.
 - #96 Stop Acid Shell's existing pursuit when it retracts into its shell and resume attacks after recovery.

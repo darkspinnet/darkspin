@@ -13,6 +13,9 @@ const (
 	EliteModifierName     = "EliteModifier"
 	EliteModifierDuration = 1_000_000 * time.Second
 	eliteMinionNPCType    = uint32(0)
+	// Chunk 802's CaptainModifier adds 4 minus the lieutenant elite HP bonus.
+	// Both MaxHealth percentage modifiers add against the same base HP.
+	captainHealthBonus = float32(4 - 0.75)
 )
 
 type EliteBonus struct {
@@ -125,5 +128,13 @@ func (e BossIdentity) HasModifier(modifierName string) bool {
 
 func ApplyEliteProfile(profile game.CampaignNPCProfile) game.CampaignNPCProfile {
 	profile.HitPoint *= 1 + EliteBonusForType(profile.NPCType).Health
+	return profile
+}
+
+// ApplyCaptainProfile applies the HP bonuses from EliteModifier and
+// CaptainModifier together to an unmodified profile. Rejoin restores the
+// resulting profile without reapplying it.
+func ApplyCaptainProfile(profile game.CampaignNPCProfile) game.CampaignNPCProfile {
+	profile.HitPoint *= 1 + EliteBonusForType(profile.NPCType).Health + captainHealthBonus
 	return profile
 }
