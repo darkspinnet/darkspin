@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
@@ -17,7 +18,8 @@ import (
 )
 
 func isCampaignDestructorLoot(plan zonenpc.SpawnPlan) bool {
-	return plan.OwnerObjectID == 0 && zoneboss.IsFinalBossNoun(plan.NounName)
+	return plan.OwnerObjectID == 0 && (zoneboss.IsFinalBossNoun(plan.NounName) ||
+		strings.EqualFold(plan.NounName, "ScaldronBoss_Stage2.Noun"))
 }
 
 type destructorEquipmentDrop struct {

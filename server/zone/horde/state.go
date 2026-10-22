@@ -260,7 +260,12 @@ func (s *Session) Defeat(
 	if encounter.phase == PhaseComplete {
 		return Transition{}, nil
 	}
-	if encounter.phase != PhaseActiveWave || !encounter.liveObjectIDs[result.ObjectID] {
+	// Owned summons share their owner's marker set without belonging to the
+	// admitted wave. Their deaths must not reject the whole combat publication.
+	if !encounter.liveObjectIDs[result.ObjectID] {
+		return Transition{}, nil
+	}
+	if encounter.phase != PhaseActiveWave {
 		return Transition{}, fmt.Errorf("horde defeat: unexpected actor %d", result.ObjectID)
 	}
 	delete(encounter.liveObjectIDs, result.ObjectID)
@@ -301,7 +306,8 @@ func (s *Session) Defeat(
 
 func (s *Session) Revive(snapshot zonenpc.Snapshot) error {
 	if s == nil || snapshot.Plan.ObjectID == 0 ||
-		snapshot.Plan.MarkerSetName == "" || snapshot.IsDefeated {
+		snapshot.Plan.MarkerSetName == "" || snapshot.IsDefeated ||
+		snapshot.Plan.IsEncounterAuxiliary {
 		return nil
 	}
 	s.mu.Lock()

@@ -2,6 +2,9 @@
 
 ### 2026-10-22
 
+- [#98](https://github.com/darkspinnet/darkspin/issues/98) Restore Corruptor's final-stage boss loot eligibility after its stage-two noun transition.
+- [#98](https://github.com/darkspinnet/darkspin/issues/98) Keep Invincitron's drone orbit following its living owner between combat actions instead of stopping when attack state clears.
+- [#98](https://github.com/darkspinnet/darkspin/issues/98) Ignore deaths of summons outside the admitted horde wave so auxiliary drones cannot reject combat updates or alter wave completion.
 - [#99](https://github.com/darkspinnet/darkspin/issues/99) Calculate NPC DNA drops from their class and active Elite challenge with the authored amount tuning instead of a fixed source amount.
 - [#99](https://github.com/darkspinnet/darkspin/issues/99) Apply the recipient's co-op item-level floor to pickup and Cash Out rewards while preserving selected item identities and retry behavior.
 - [#99](https://github.com/darkspinnet/darkspin/issues/99) Reject resolved affix combinations with no positive combined modifier during generation and stat calculation, including weapon fallback handling.

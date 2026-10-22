@@ -179,14 +179,22 @@ func (e campaignDroneFollowStep) schedule() error {
 func (e campaignDroneFollowStep) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.RLock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := isFound && peerSession.isCampaignNPCSourceActive(e.generation, e.objectID)
+	// Orbiting belongs to the live drone, even between combat actions when
+	// IsActionStarted and ActionOwner are cleared.
+	isCurrent := isFound && peerSession.generation == e.generation &&
+		peerSession.squad != nil && peerSession.zone != nil &&
+		!peerSession.isZoneTerminal() &&
+		peerSession.zone.NPCs() != nil &&
+		(peerSession.zone.Boss() == nil || !peerSession.zone.Boss().IsBeamOutCommitted())
 	if !isCurrent {
 		e.runtime.registry.mutex.RUnlock()
 		return nil, nil
 	}
 	owner, isOwnerFound := peerSession.zone.NPCs().NPC(e.ownerObjectID)
 	drone, isDroneFound := peerSession.zone.NPCs().NPC(e.objectID)
-	if !isOwnerFound || !isDroneFound || owner.IsDefeated {
+	if !isOwnerFound || !isDroneFound || owner.IsDefeated || drone.IsDefeated ||
+		!drone.IsPublished || drone.HitPoint <= 0 ||
+		drone.Plan.OwnerObjectID != e.ownerObjectID {
 		e.runtime.registry.mutex.RUnlock()
 		return nil, nil
 	}
