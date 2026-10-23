@@ -15,6 +15,47 @@ const (
 	campaignVoltroidChargeFriendCooldown = 15 * time.Second
 )
 
+type campaignVoltroidActiveBeam struct {
+	targetID uint32
+	effects  *channelEffects
+}
+
+func (e *gameplayPeerSession) retireVoltroidBeamsForObject(objectID uint32) {
+	for sourceID, beam := range e.campaignNPCVoltroidBeams {
+		if sourceID != objectID && beam.targetID != objectID {
+			continue
+		}
+		beam.effects.Retire()
+		delete(e.campaignNPCVoltroidBeams, sourceID)
+	}
+}
+
+// A death can interrupt the transfer before its normal beam retirement.
+func (r campaignNPCActionRuntime) stopVoltroidBeamsForObject(
+	sessionKey string, generation uint64, objectID uint32,
+) {
+	r.registry.mutex.Lock()
+	member, isFound := r.registry.sessions[sessionKey]
+	if !isFound || member.generation != generation || member.zone == nil {
+		r.registry.mutex.Unlock()
+		return
+	}
+	for candidateKey, candidate := range r.registry.sessions {
+		if candidate.zone != member.zone {
+			continue
+		}
+		candidate.retireVoltroidBeamsForObject(objectID)
+		r.registry.sessions[candidateKey] = candidate
+	}
+	for _, retained := range r.registry.retainedSessions {
+		if retained.peerSession.zone == member.zone {
+			retained.peerSession.retireVoltroidBeamsForObject(objectID)
+		}
+	}
+	r.registry.commitChannelRemovalsLocked()
+	r.registry.mutex.Unlock()
+}
+
 type campaignVoltroidChargeCleanupStep struct {
 	runtime    campaignNPCActionRuntime
 	sessionKey string

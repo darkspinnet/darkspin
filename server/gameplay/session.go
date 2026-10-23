@@ -203,6 +203,8 @@ type zoneEffectPresentation struct {
 	campaignNPCVoltroidChargeExpires    map[uint32]uint64
 	campaignNPCVoltroidChargeReadiness  map[uint32]uint64
 	campaignNPCVoltroidEffectSlots      map[uint32]uint8
+	campaignNPCVoltroidBeams            map[uint32]campaignVoltroidActiveBeam
+	campaignAcceptedHitPushEffects      map[uint32]*channelEffects
 	campaignNPCRecoveryActionCounts     map[uint32]uint32
 	campaignNPCPolarisStates            map[uint32]campaignNPCPolarisState
 	campaignNPCCitadelSpecialFourStates map[uint32]campaignCitadelSpecialFourState
@@ -230,25 +232,28 @@ type zoneEffectPresentation struct {
 // zonePresentationRuntime owns connection-local scheduling and transfers.
 // Authoritative world state remains on Zone.
 type zonePresentationRuntime struct {
-	cryosFungusExpirations map[uint32]time.Time
-	cryosGeyserWarnings    map[uint32]uint64
-	cryosGeyserSpouts      map[uint32]uint64
-	fireVents              map[uint32]*campaignFireVent
-	fireVentWarnings       map[uint32]uint64
-	fireVentEruptions      map[uint32]uint64
-	warpTotems             map[uint32]*warpTotemCycle
-	warpTotemWarnings      map[uint32]uint64
-	warpTotemDischarges    map[uint32]uint64
-	randomTeleport         randomTeleport
-	cryosPoisonReadyAt     time.Time
-	cryosPoisonExpiresAt   time.Time
-	cryosPoisonSourceID    uint32
-	cryosBurnExpiresAt     time.Time
-	cryosBurnHazard        campaignLavaHazard
-	plasmaBurn             *campaignNPCModifierRun
-	plasmaBurnEffect       *plasmaBurnPresentation
-	plasmaBurnReadyAt      time.Time
-	petPlasmaBurns         map[uint32]petPlasmaBurn
+	acMalfunctions          map[uint32]*acMalfunctionCycle
+	acMalfunctionWarnings   map[uint32]uint64
+	acMalfunctionDischarges map[uint32]uint64
+	cryosFungusExpirations  map[uint32]time.Time
+	cryosGeyserWarnings     map[uint32]uint64
+	cryosGeyserSpouts       map[uint32]uint64
+	fireVents               map[uint32]*campaignFireVent
+	fireVentWarnings        map[uint32]uint64
+	fireVentEruptions       map[uint32]uint64
+	warpTotems              map[uint32]*warpTotemCycle
+	warpTotemWarnings       map[uint32]uint64
+	warpTotemDischarges     map[uint32]uint64
+	randomTeleport          randomTeleport
+	cryosPoisonReadyAt      time.Time
+	cryosPoisonExpiresAt    time.Time
+	cryosPoisonSourceID     uint32
+	cryosBurnExpiresAt      time.Time
+	cryosBurnHazard         campaignLavaHazard
+	plasmaBurn              *campaignNPCModifierRun
+	plasmaBurnEffect        *plasmaBurnPresentation
+	plasmaBurnReadyAt       time.Time
+	petPlasmaBurns          map[uint32]petPlasmaBurn
 	zoneCombatPresentation
 	campaignSchedule                        *zoneaction.ScheduleSession
 	campaignUnlockPresentation              *unlockraknet.ActiveSession
@@ -706,6 +711,7 @@ func (s *gameplayPeerSession) setCrystalInventory(inventory sim.CrystalInventory
 			creature.DamageProfile.ScienceDamage[index] += next[attributeIndex] - previous[attributeIndex]
 		}
 		creature.DamageProfile.AreaDamage += next[37] - previous[37]
+		creature.DamageProfile.DamageBuff += next[13] - previous[13]
 		creature.DamageProfile.DirectAttackDamagePercent += next[109] - previous[109]
 		creature.TimingProfile.AttackSpeed += next[23] - previous[23]
 		creature.TimingProfile.CooldownReduction += next[24] - previous[24]
@@ -1222,9 +1228,17 @@ func (s *gameplayPeerSession) stopCampaignNPCProjectiles() {
 	clear(s.campaignNPCVoltroidChargeExpires)
 	clear(s.campaignNPCVoltroidChargeReadiness)
 	clear(s.campaignNPCVoltroidEffectSlots)
+	clear(s.campaignNPCVoltroidBeams)
+	for objectID, effects := range s.campaignAcceptedHitPushEffects {
+		effects.Retire()
+		delete(s.campaignAcceptedHitPushEffects, objectID)
+	}
 	clear(s.campaignNPCCitadelSpecialFourStates)
 	clear(s.campaignNPCOrcusStates)
 	clear(s.campaignNPCLaserZones)
+	clear(s.acMalfunctions)
+	clear(s.acMalfunctionWarnings)
+	clear(s.acMalfunctionDischarges)
 	clear(s.fireVents)
 	clear(s.fireVentWarnings)
 	clear(s.fireVentEruptions)

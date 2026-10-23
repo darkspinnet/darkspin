@@ -297,33 +297,58 @@ func (i CrystalInventory) Attributes() map[int]float32 {
 			continue
 		}
 		amount := float32(max(slot.CrystalLevel, int32(1)))
-		if slot.CrystalType == 25 {
-			// MoveSpeedCrystal modifiers use a fixed percentage regardless of rank.
-			// The ordinary epic noun is authored with AttackSpeedCrystalEpic.
-			switch strings.ToLower(slot.NounName) {
-			case "crystal_movespeed_epic.noun":
-				attributeIndex = 23
-				amount = 0.10
-			default:
-				switch slot.Rarity {
-				case 1:
-					amount = 0.06
-				case 2:
-					amount = 0.08
-				default:
-					amount = 0.04
-				}
-			}
+		fixedIndex, fixedAmount, isFixed := fixedCrystalAttribute(slot)
+		if isFixed {
+			attributeIndex = fixedIndex
+			amount = fixedAmount
 		} else if isPercentage {
 			amount *= 0.01
 		}
-		if slot.CrystalType != 25 {
+		if !isFixed {
 			amount *= 1 + 0.5*float32(max(slot.Rarity, int32(0)))
 		}
 		amount *= 1 + crystalLinkBonus*float32(links.LinkCounts[index])
 		attributes[attributeIndex] += amount
 	}
 	return attributes
+}
+
+// Fixed catalyst modifiers use authored coefficients, independent of the
+// pickup's level. Rating and core-stat effects follow a separate level scale.
+func fixedCrystalAttribute(slot CrystalSlot) (int, float32, bool) {
+	rarity := min(max(slot.Rarity, int32(0)), int32(2))
+	switch slot.CrystalType {
+	case 0:
+		return 37, [...]float32{0.06, 0.12, 0.18}[rarity], true
+	case 1:
+		return 23, [...]float32{0.05, 0.075, 0.10}[rarity], true
+	case 3:
+		return 93, [...]float32{0.10, 0.20, 0.30}[rarity], true
+	case 4:
+		return 24, [...]float32{0.05, 0.10, 0.15}[rarity], true
+	case 6:
+		return 13, [...]float32{0.04, 0.08, 0.12}[rarity], true
+	case 20:
+		return 35, [...]float32{0.02, 0.03, 0.04}[rarity], true
+	case 22:
+		return 52, [...]float32{0.01, 0.015, 0.02}[rarity], true
+	case 25:
+		// The ordinary epic noun is authored with AttackSpeedCrystalEpic.
+		if strings.EqualFold(slot.NounName, "crystal_movespeed_epic.noun") {
+			return 23, 0.10, true
+		}
+		return 48, [...]float32{0.04, 0.06, 0.08}[rarity], true
+	case 26:
+		return 68, [...]float32{0.10, 0.15, 0.20}[rarity], true
+	case 27:
+		return 69, [...]float32{0.10, 0.15, 0.20}[rarity], true
+	case 30:
+		return 26, [...]float32{0.15, 0.30, 0.45}[rarity], true
+	case 33:
+		return 72, [...]float32{0.10, 0.20, 0.30}[rarity], true
+	default:
+		return 0, 0, false
+	}
 }
 
 func crystalRowMatches(first CrystalSlot, second CrystalSlot, third CrystalSlot) bool {

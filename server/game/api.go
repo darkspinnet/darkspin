@@ -1529,6 +1529,12 @@ func profileNode(nodeName string, creature *sporenet.Creature, parts []sporenet.
 		attributes = profilePartAttributes(functionalParts, partCatalog)
 		stats = gameplayCreatureStats(creature, attributes)
 	}
+	profileStatAttributes := attributes
+	if len(template.Stats) == 0 {
+		// gameplayCreatureStats falls back to the saved editor vector here;
+		// those fields may already include the equipped part contributions.
+		profileStatAttributes = [partAttributeCount]float32{}
+	}
 	abilityStats := encodeAbilityStats(creature.AbilityStats)
 	if abilityStats == "" && template.Noun != 1667741389 && len(stats) > 0 {
 		abilityStats = profileAbilityStatsWithAttributes(template, profile.abilityID, stats, attributes)
@@ -1555,7 +1561,7 @@ func profileNode(nodeName string, creature *sporenet.Creature, parts []sporenet.
 		xmlText("weapon_min_damage", fmt.Sprint(template.WeaponMinDamage)), xmlText("weapon_max_damage", fmt.Sprint(template.WeaponMaxDamage)),
 		xmlText("gear_score", fmt.Sprint(creature.GearScore)), xmlText("item_points", fmt.Sprint(creature.ItemPoints)),
 		xmlText("class", strings.ToLower(template.ClassType)),
-		xmlText("stats", profileStatsText(stats, profile.stats)),
+		xmlText("stats", profileStatsWithAttributes(stats, profile.stats, profileStatAttributes)),
 		xmlText("stats_template", profileStatsText(template.Stats, profile.stats)),
 		xmlText("stats_template_ability", profile.abilityBase),
 		xmlText("stats_template_ability_keyvalues", profile.abilityStats),
@@ -1958,6 +1964,39 @@ func profileStatsText(stats []sporenet.Stat, fallback string) string {
 		isPresent[parts[0]] = true
 	}
 	return strings.Join(fields, ";") + ";"
+}
+
+// Template-based gameplay stats contain the immutable secondary baseline;
+// equipment's fractional secondary attributes live in the part catalog.
+// Include those effective attributes in the profile instead of zero fallback.
+func profileStatsWithAttributes(
+	stats []sporenet.Stat, fallback string, attributes [partAttributeCount]float32,
+) string {
+	profileText := profileStatsText(stats, fallback)
+	secondaryAttributes := map[string]int{
+		"CRTD": 22, "PROS": 26, "COOL": 24, "AOEDMG": 37,
+		"AOERES": 27, "MOV": 48, "AOEDUR": 95, "LFSTL": 35,
+	}
+	fields := strings.Split(profileText, ";")
+	for index, field := range fields {
+		pieces := strings.SplitN(field, ",", 3)
+		if len(pieces) != 3 {
+			continue
+		}
+		attributeIndex, isFound := secondaryAttributes[pieces[0]]
+		if !isFound || attributes[attributeIndex] == 0 {
+			continue
+		}
+		baseMaximum, maximumError := strconv.ParseFloat(pieces[1], 32)
+		baseCurrent, currentError := strconv.ParseFloat(pieces[2], 32)
+		if maximumError != nil || currentError != nil {
+			continue
+		}
+		maximum := strconv.FormatFloat(baseMaximum+float64(attributes[attributeIndex]), 'f', -1, 32)
+		current := strconv.FormatFloat(baseCurrent+float64(attributes[attributeIndex]), 'f', -1, 32)
+		fields[index] = pieces[0] + "," + maximum + "," + current
+	}
+	return strings.Join(fields, ";")
 }
 
 func encodeAbilityStats(stats []sporenet.AbilityStat) string {

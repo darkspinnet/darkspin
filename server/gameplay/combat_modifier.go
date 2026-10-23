@@ -100,6 +100,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 	if (profile.ModifierName == "SleepModifier" ||
 		profile.ModifierName == "StalkerShock" ||
 		profile.ModifierName == "CryosBossShock" ||
+		profile.ModifierName == "AcFreeze" ||
 		profile.ModifierName == "SilenceModifier" || profile.ModifierName == "CitadelMinionSuicide_Daze" || isRoot) && r.now == nil {
 		return nil, errors.New("enemy modifier clock unavailable")
 	}
@@ -241,7 +242,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 		}
 		r.registry.mutex.Unlock()
 	}
-	if profile.ModifierName == "StalkerShock" ||
+	if profile.ModifierName == "StalkerShock" || profile.ModifierName == "AcFreeze" ||
 		profile.ModifierName == "CryosBossShock" {
 		at := r.now()
 		expiresAt := at.Add(profile.ModifierDuration)

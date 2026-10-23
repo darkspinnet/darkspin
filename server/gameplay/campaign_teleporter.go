@@ -160,13 +160,8 @@ func (e *gameplayPeerSession) campaignTeleporterInitialState() ([][]byte, error)
 		if err != nil {
 			return nil, fmt.Errorf("campaignInitialOwner: %w", err)
 		}
-		removePacket, err := raknet.MarshalApplication(raknet.ObjectDeleteMessage{
-			ObjectID: []uint32{route.MarkerID},
-		})
-		if err != nil {
-			return nil, fmt.Errorf("campaignInitialRetire: %w", err)
-		}
-		anchorPacket, err := securityraknet.Anchor(objectID, teleport)
+		anchorPacket, err := securityraknet.AnchorWithRotation(objectID, teleport,
+			raknet.Vector3{X: route.Rotation.X, Y: route.Rotation.Y, Z: route.Rotation.Z})
 		if err != nil {
 			return nil, fmt.Errorf("campaignInitialAnchor: %w", err)
 		}
@@ -177,7 +172,7 @@ func (e *gameplayPeerSession) campaignTeleporterInitialState() ([][]byte, error)
 			return nil, fmt.Errorf("campaignTeleporterInitial[%d]: %w", route.MarkerID, err)
 		}
 		e.campaignTeleporterStates[route.MarkerID] = isActive
-		packets = append(packets, removePacket, anchorPacket)
+		packets = append(packets, anchorPacket)
 		packets = append(packets, statePackets...)
 	}
 	return packets, nil

@@ -31,6 +31,24 @@ func IsCryosGeyser(plan SpawnPlan) bool {
 	return plan.IsFixture && strings.EqualFold(plan.NounName, "DEST_prefab_cryos_ice_crack1.Noun")
 }
 
+// CryosACRemnantNoun is the separate damaged object created by AcDeath and
+// AcDeathFreeze, rather than a graphics state on the original AC unit.
+func CryosACRemnantNoun(plan SpawnPlan) string {
+	if !plan.IsFixture {
+		return ""
+	}
+	switch strings.ToLower(plan.NounName) {
+	case "dest_prefab_cryos_acunit_small_animated.noun", "dest_prefab_cryos_acunit_small.noun":
+		return "prefab_cryos_acunit_small_dam.Noun"
+	default:
+		return ""
+	}
+}
+
+func IsCryosMalfunction(plan SpawnPlan) bool {
+	return plan.IsFixture && strings.EqualFold(plan.NounName, "DEST_prefab_cryos_acunit_small.Noun")
+}
+
 // Gravitic Regulators leave a solid base after their machinery is destroyed.
 func IsGraviticRegulator(plan SpawnPlan) bool {
 	return plan.IsFixture && game.IsGraviticRegulatorNoun(plan.NounName)

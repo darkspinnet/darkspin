@@ -38,6 +38,7 @@ func (e campaignVoltroidSchedule) releaseChargeLocked() {
 	}
 	if e.charge.effects != nil {
 		e.charge.effects.Retire()
+		e.clearBeamLocked()
 		e.runtime.registry.commitChannelRemovalsLocked()
 	}
 	e.charge.isReleased = true
@@ -52,7 +53,20 @@ func (e campaignVoltroidSchedule) releaseCharge() {
 func (e campaignVoltroidSchedule) stopBeamLocked() {
 	if e.charge != nil && e.charge.effects != nil {
 		e.charge.effects.Retire()
+		e.clearBeamLocked()
 		e.runtime.registry.commitChannelRemovalsLocked()
+	}
+}
+
+func (e campaignVoltroidSchedule) clearBeamLocked() {
+	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
+	if !isFound {
+		return
+	}
+	beam, isBeamFound := peerSession.campaignNPCVoltroidBeams[e.objectID]
+	if isBeamFound && e.charge != nil && beam.effects == e.charge.effects {
+		delete(peerSession.campaignNPCVoltroidBeams, e.objectID)
+		e.runtime.registry.sessions[e.sessionKey] = peerSession
 	}
 }
 
@@ -183,6 +197,15 @@ func (e campaignVoltroidSchedule) hit() ([][]byte, error) {
 		e.releaseChargeLocked()
 		return nil, fmt.Errorf("voltroidBeamPublish: %w", err)
 	}
+	// Publication queues recipient batches in the session aggregate.
+	peerSession = e.runtime.registry.sessions[e.sessionKey]
+	if peerSession.campaignNPCVoltroidBeams == nil {
+		peerSession.campaignNPCVoltroidBeams = make(map[uint32]campaignVoltroidActiveBeam)
+	}
+	peerSession.campaignNPCVoltroidBeams[e.objectID] = campaignVoltroidActiveBeam{
+		targetID: e.targetID, effects: effects,
+	}
+	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	return nil, nil
 }
 

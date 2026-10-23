@@ -7,6 +7,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
+	"github.com/darkspinnet/darkspin/server/util"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
@@ -26,19 +27,26 @@ type campaignAcceptedHitPushResetStep struct {
 	timestamp        uint64
 	actionGeneration uint64
 	positionRevision uint64
+	effects          *channelEffects
 }
 
 func (e campaignAcceptedHitPushResetStep) produce() ([][]byte, error) {
-	e.runtime.registry.mutex.RLock()
+	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
 		peerSession.zone != nil && peerSession.zone.NPCs() != nil
+	if isCurrent && peerSession.campaignAcceptedHitPushEffects[e.objectID] == e.effects {
+		delete(peerSession.campaignAcceptedHitPushEffects, e.objectID)
+		e.runtime.registry.sessions[e.sessionKey] = peerSession
+	}
+	e.effects.Retire()
+	e.runtime.registry.commitChannelRemovalsLocked()
 	if isCurrent {
 		target, isTargetFound := peerSession.zone.NPCs().LiveNPC(e.objectID)
 		isCurrent = isTargetFound && target.ActionGeneration == e.actionGeneration &&
 			target.PositionRevision == e.positionRevision
 	}
-	e.runtime.registry.mutex.RUnlock()
+	e.runtime.registry.mutex.Unlock()
 	if !isCurrent {
 		return nil, nil
 	}
@@ -49,12 +57,48 @@ func (e campaignAcceptedHitPushResetStep) produce() ([][]byte, error) {
 	return [][]byte{packet}, nil
 }
 
+func (e *gameplayPeerSession) retireAcceptedHitPushEffect(objectID uint32) {
+	effects := e.campaignAcceptedHitPushEffects[objectID]
+	if effects == nil {
+		return
+	}
+	effects.Retire()
+	delete(e.campaignAcceptedHitPushEffects, objectID)
+}
+
+func (e *gameplaySessionRegistry) retireAcceptedHitPushEffectForDeath(
+	sessionKey string, generation uint64, objectID uint32,
+) {
+	e.mutex.Lock()
+	member, isFound := e.sessions[sessionKey]
+	if !isFound || member.generation != generation || member.zone == nil {
+		e.mutex.Unlock()
+		return
+	}
+	for candidateKey, candidate := range e.sessions {
+		if candidate.zone == member.zone {
+			candidate.retireAcceptedHitPushEffect(objectID)
+			e.sessions[candidateKey] = candidate
+		}
+	}
+	for _, retained := range e.retainedSessions {
+		if retained.peerSession.zone == member.zone {
+			retained.peerSession.retireAcceptedHitPushEffect(objectID)
+		}
+	}
+	e.commitChannelRemovalsLocked()
+	e.mutex.Unlock()
+}
+
 func (e campaignDamageRuntime) applyAcceptedHitPushes(
 	packet raknet.Packet, sessionKey string, generation uint64, sourceObjectID uint32,
 	timestamp uint64, plan zoneability.AreaPlan, results []zoneability.AreaResult,
 ) ([][]byte, error) {
 	if plan.Definition.Name != binarySentinelSupportName {
 		return nil, nil
+	}
+	if packet.ScheduleFunc == nil {
+		return nil, errors.New("hero push reset schedule unavailable")
 	}
 	e.registry.mutex.Lock()
 	defer e.registry.mutex.Unlock()
@@ -123,7 +167,6 @@ func (e campaignDamageRuntime) applyAcceptedHitPushes(
 				ForcedMovementSpeed:        binarySentinelPushSpeed,
 				ForcedMovementDistance:     binarySentinelPushDistance,
 				ForcedMovementReactionName: "react_knockback",
-				ForcedMovementEffectName:   binarySentinelPushEffectName,
 			},
 		}
 		// The shared knockback template supplies a two-unit arc and a
@@ -154,26 +197,57 @@ func (e campaignDamageRuntime) applyAcceptedHitPushes(
 		if err != nil {
 			return packets, fmt.Errorf("heroPushMotionHold[%d]: %w", target.Plan.ObjectID, err)
 		}
+		effects, err := e.registry.allocateChannelEffectsLocked(
+			peerSession.zone, e.effectPool, []uint32{target.Plan.ObjectID},
+		)
+		if err != nil {
+			return packets, fmt.Errorf("heroPushEffectSlot[%d]: %w", target.Plan.ObjectID, err)
+		}
+		slot := effects.Slots()[0].slot
+		effectPacket, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
+			Slot: slot + 1, ObjectID: target.Plan.ObjectID,
+			Asset: util.HashID(binarySentinelPushEffectName), IsForceAttached: true,
+		})
+		if err != nil {
+			effects.Retire()
+			e.registry.commitChannelRemovalsLocked()
+			return packets, fmt.Errorf("heroPushEffectMarshal[%d]: %w", target.Plan.ObjectID, err)
+		}
 		reset := campaignAcceptedHitPushResetStep{
 			runtime: e, sessionKey: sessionKey, generation: generation,
-			objectID:  target.Plan.ObjectID,
+			objectID: target.Plan.ObjectID, effects: effects,
 			timestamp: timestamp + uint64(resetDelay/time.Millisecond),
 		}
 		latestTarget, isLatestTargetFound := peerSession.zone.NPCs().NPC(target.Plan.ObjectID)
 		if !isLatestTargetFound {
+			effects.Retire()
+			e.registry.commitChannelRemovalsLocked()
 			continue
 		}
 		reset.actionGeneration = latestTarget.ActionGeneration
 		reset.positionRevision = latestTarget.PositionRevision
-		if packet.ScheduleFunc == nil {
-			return packets, errors.New("hero push reset schedule unavailable")
-		}
 		err = packet.ScheduleFunc(resetDelay, reset.produce)
 		if err != nil {
+			effects.Retire()
+			e.registry.commitChannelRemovalsLocked()
 			return packets, fmt.Errorf(
 				"heroPushResetSchedule[%d]: %w", target.Plan.ObjectID, err,
 			)
 		}
+		peerSession.retireAcceptedHitPushEffect(target.Plan.ObjectID)
+		e.registry.commitChannelRemovalsLocked()
+		if peerSession.campaignAcceptedHitPushEffects == nil {
+			peerSession.campaignAcceptedHitPushEffects = make(map[uint32]*channelEffects)
+		}
+		peerSession.campaignAcceptedHitPushEffects[target.Plan.ObjectID] = effects
+		e.registry.sessions[sessionKey] = peerSession
+		err = e.registry.publishChannelEffectsLocked(effects, [][]byte{effectPacket})
+		if err != nil {
+			peerSession.retireAcceptedHitPushEffect(target.Plan.ObjectID)
+			e.registry.commitChannelRemovalsLocked()
+			return packets, fmt.Errorf("heroPushEffectPublish[%d]: %w", target.Plan.ObjectID, err)
+		}
+		peerSession = e.registry.sessions[sessionKey]
 	}
 	e.registry.sessions[sessionKey] = peerSession
 	return packets, nil

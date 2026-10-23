@@ -2056,8 +2056,9 @@ func loadHeroKits(
 					definitionsByAsset[active.assetName] = definition
 				}
 			}
-			// These custom callbacks expose generic registrations, but their actual
-			// payload is owned by a recovered specialized runtime. CastEnrage's
+			// These abilities need recovered definitions for their custom payload.
+			// Charged Strike's target taunt otherwise classifies it as a modifier
+			// instead of the authored pursuing melee strike. CastEnrage's
 			// hitEffect otherwise classifies it as melee, losing its self animation,
 			// muzzle effect, and Enrage modifier identity.
 			switch active.assetName {
@@ -2069,7 +2070,7 @@ func loadHeroKits(
 				"PlasmaRandom_WebbedLightning",
 				"SoulRavagerSupport", "AfflictionBolt", "BeastCharge", "BioRandom2",
 				"SummonSprite", "SpacetimeRandom3", "LightspeedTempestActive",
-				"EntanglingRush", "PhantomCharge":
+				"EntanglingRush", "PhantomCharge", "TechRandom3":
 				recovered, isRecovered := recoveredDefinitions[active.assetName]
 				if isRecovered {
 					definition = recovered

@@ -18,15 +18,31 @@ func Remnants(snapshots []zonenpc.Snapshot) ([][]byte, error) {
 		isBossVent := strings.EqualFold(snapshot.Plan.NounName, "DEST_citadel_factoryvent_boss.Noun")
 		isPipe := zonenpc.IsFactoryPipe(snapshot.Plan.NounName)
 		isWarpTotem := zonenpc.IsWarpTotem(snapshot.Plan)
+		replacementNoun := zonenpc.CryosACRemnantNoun(snapshot.Plan)
 		if !snapshot.IsPublished || !snapshot.IsDefeated ||
-			(!zonenpc.IsGraviticRemnant(snapshot.Plan) && !isGeyser && !isBossVent && !isPipe && !isWarpTotem) {
+			(!zonenpc.IsGraviticRemnant(snapshot.Plan) && !isGeyser && !isBossVent && !isPipe && !isWarpTotem && replacementNoun == "") {
 			continue
 		}
 		graphicsState := util.HashID("dead")
 		if isGeyser {
 			graphicsState = util.HashID("unblocked")
 		}
-		spawnPackets, err := spawn(snapshot.FacingSpawnPlan(), true)
+		plan := snapshot.FacingSpawnPlan()
+		if replacementNoun != "" {
+			packet, err := raknet.MarshalApplication(raknet.ObjectCreateMessage{
+				ObjectID: plan.ObjectID, Noun: util.HashID(replacementNoun),
+				PositionX: plan.Position.X, PositionY: plan.Position.Y,
+				PositionZ: plan.Position.Z,
+				Rotation:  raknet.Vector3{X: plan.Rotation.X, Y: plan.Rotation.Y, Z: plan.Rotation.Z},
+				Scale:     1, IsCollisionEnabled: false,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("remnantReplacement[%d]: %w", plan.ObjectID, err)
+			}
+			packets = append(packets, packet)
+			continue
+		}
+		spawnPackets, err := spawn(plan, true)
 		if err != nil {
 			return nil, fmt.Errorf("remnantSpawn[%d]: %w", snapshot.Plan.ObjectID, err)
 		}

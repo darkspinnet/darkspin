@@ -200,6 +200,8 @@ type zoneNPCDeathDefinition struct {
 	ordinaryDeathAnimation     string
 	corpseFadeDelay            time.Duration
 	graphicsState              uint32
+	replacementNoun            string
+	rotation                   raknet.Vector3
 	explosionEffectName        string
 	deleteDelay                time.Duration
 }
@@ -216,6 +218,9 @@ func destructibleDeathPresentation(
 	if zonenpc.IsCryosGeyser(snapshot.Plan) {
 		// CryosGeyserDeath retains the unblocked vent; no debris explosion.
 		return "", time.Millisecond
+	}
+	if zonenpc.CryosACRemnantNoun(snapshot.Plan) != "" {
+		return "cryos_acUnit_destruction_effect.ServerEventDef", time.Millisecond
 	}
 	if strings.EqualFold(snapshot.Plan.NounName, "DEST_citadel_factoryvent_boss.Noun") {
 		// CitadelFactoryVentDeath keeps the dead vent and starts its flame cone.
@@ -349,10 +354,14 @@ func campaignNPCDeathDefinition(
 	isVerdanthTotem := zonenpc.IsVerdanthTotem(snapshot.Plan)
 	isWarpTotem := zonenpc.IsWarpTotem(snapshot.Plan)
 	isCryosGeyser := zonenpc.IsCryosGeyser(snapshot.Plan)
+	replacementNoun := zonenpc.CryosACRemnantNoun(snapshot.Plan)
 	isBossVent := strings.EqualFold(snapshot.Plan.NounName, "DEST_citadel_factoryvent_boss.Noun")
 	isPipe := isFactoryPipe(snapshot.Plan.NounName)
 	if isCryosGeyser {
 		graphicsState = util.HashID("unblocked")
+	}
+	if replacementNoun != "" {
+		graphicsState = util.HashID("dead")
 	}
 	isNocturnaPlant := isFixture && nocturnaPlantDeathEffect(snapshot.Plan.NounName) != ""
 	isToxicactusPlant := isFixture && isToxicactus(snapshot.Plan.NounName)
@@ -405,15 +414,18 @@ func campaignNPCDeathDefinition(
 		isCreatureTypeKnown: physics.IsCreatureTypeKnown,
 		isFixture:           isFixture,
 		isBoss:              snapshot.Plan.IsBoss || isDestructor,
-		isRemnantRetained:   isNightmareVine || isGraviticRemnant || isVerdanthTotem || isWarpTotem || isCryosGeyser || isBossVent || isPipe || isScaldronRemnantRetained,
+		isRemnantRetained:   isNightmareVine || isGraviticRemnant || isVerdanthTotem || isWarpTotem || isCryosGeyser || isBossVent || isPipe || isScaldronRemnantRetained || replacementNoun != "",
 		isCollisionRetained: isGraviticRemnant || isBossVent,
 		isDeathAnimationSuppressed: isIllusion || isNightmareVine || isGraviticRemnant ||
-			isVerdanthTotem || isWarpTotem || isCryosGeyser || isBossVent || isNocturnaPlant || isToxicactusPlant || isPipe || isScaldronPlant,
+			isVerdanthTotem || isWarpTotem || isCryosGeyser || isBossVent || isNocturnaPlant || isToxicactusPlant || isPipe || isScaldronPlant || replacementNoun != "",
 		ordinaryDeathAnimation: ordinaryDeathAnimation,
 		corpseFadeDelay:        deathPresentation.PresentationDuration,
 		graphicsState:          graphicsState,
-		explosionEffectName:    explosionEffectName,
-		deleteDelay:            deleteDelay,
+		replacementNoun:        replacementNoun,
+		rotation: raknet.Vector3{X: snapshot.Plan.Rotation.X,
+			Y: snapshot.Plan.Rotation.Y, Z: snapshot.Plan.Rotation.Z},
+		explosionEffectName: explosionEffectName,
+		deleteDelay:         deleteDelay,
 	}
 	return withMutationAgentDeath(snapshot, definition), nil
 }
@@ -1967,6 +1979,12 @@ func (r campaignDamageRuntime) publishTransition(
 	}
 	packets = append(packets, experiencePackets...)
 	if transition.defeatedObjectID != 0 {
+		r.registry.retireAcceptedHitPushEffectForDeath(
+			sessionKey, generation, transition.defeatedObjectID,
+		)
+		r.npc.stopVoltroidBeamsForObject(
+			sessionKey, generation, transition.defeatedObjectID,
+		)
 		copterPackets, copterErr := r.npc.stopCopterLinks(
 			sessionKey, generation, transition.defeatedObjectID,
 		)
@@ -3177,6 +3195,8 @@ func campaignDeathTarget(target zoneNPCDeathDefinition) deathraknet.Target {
 		IsAnimationSuppressed:  target.isDeathAnimationSuppressed,
 		CorpseFadeDelay:        target.corpseFadeDelay,
 		GraphicsState:          target.graphicsState,
+		ReplacementNoun:        target.replacementNoun,
+		Rotation:               target.rotation,
 		ExplosionEffectName:    target.explosionEffectName,
 		CreatureType:           target.creatureType, IsCreatureTypeKnown: target.isCreatureTypeKnown,
 		IsFixture:           target.isFixture,

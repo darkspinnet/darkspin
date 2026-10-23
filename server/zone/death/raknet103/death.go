@@ -39,6 +39,8 @@ type Target struct {
 	IsAnimationSuppressed  bool
 	CorpseFadeDelay        time.Duration
 	GraphicsState          uint32
+	ReplacementNoun        string
+	Rotation               raknet.Vector3
 	ExplosionEffectName    string
 	CreatureType           uint32
 	IsCreatureTypeKnown    bool
@@ -488,6 +490,31 @@ func (o *enemyDeathOutbox) SetGraphicsState(
 ) error {
 	if intent.Role != enemyDeathTargetRole || intent.State == 0 {
 		return fmt.Errorf("graphicsIntent: %#v", intent)
+	}
+	if o.target.ReplacementNoun != "" {
+		messages := []raknet.ApplicationMessage{
+			raknet.ObjectDeleteMessage{ObjectID: []uint32{o.target.ObjectID}},
+			raknet.ObjectCreateMessage{
+				ObjectID: o.target.ObjectID, Noun: util.HashID(o.target.ReplacementNoun),
+				PositionX: o.target.Position.X, PositionY: o.target.Position.Y,
+				PositionZ: o.target.Position.Z, Rotation: o.target.Rotation, Scale: 1,
+				IsCollisionEnabled: o.target.IsCollisionRetained,
+			},
+			raknet.CombatantDataDeltaMessage{
+				ObjectID: o.target.ObjectID, HitPoints: 0, IsHitPointChanged: true,
+			},
+			raknet.AgentBlackboardUpdateMessage{
+				ObjectID: o.target.ObjectID, IsTargetable: false,
+			},
+		}
+		for index, message := range messages {
+			packet, err := raknet.MarshalApplication(message)
+			if err != nil {
+				return fmt.Errorf("replacementMarshal[%d]: %w", index, err)
+			}
+			o.packets = append(o.packets, packet)
+		}
+		return nil
 	}
 	packet, err := raknet.MarshalApplication(raknet.SetObjectGFXStateMessage{
 		ObjectID: o.target.ObjectID, State: intent.State,

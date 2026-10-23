@@ -2601,6 +2601,10 @@ func (r gameplayPendingRuntime) pollWorld(
 	if err != nil {
 		return nil, fmt.Errorf("warpTotemPoll: %w", err)
 	}
+	acMalfunctionPackets, err := r.pollACMalfunctions(packet)
+	if err != nil {
+		return nil, fmt.Errorf("acMalfunctionPoll: %w", err)
+	}
 	graviticPackets, err := r.pollGraviticFields(packet)
 	if err != nil {
 		return nil, fmt.Errorf("graviticPoll: %w", err)
@@ -2700,6 +2704,7 @@ func (r gameplayPendingRuntime) pollWorld(
 	}
 	rootHazardPackets = append(rootHazardPackets, graviticPackets...)
 	rootHazardPackets = append(rootHazardPackets, warpTotemPackets...)
+	rootHazardPackets = append(rootHazardPackets, acMalfunctionPackets...)
 	rootHazardPackets = append(rootHazardPackets, landingPackets...)
 	rootHazardPackets = append(rootHazardPackets, pickupPursuitPackets...)
 	rootHazardPackets = append(rootHazardPackets, triggerPackets...)

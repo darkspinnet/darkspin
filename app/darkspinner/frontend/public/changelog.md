@@ -1,5 +1,16 @@
 # Changelog
 
+### 2026-10-23
+
+- [#102](https://github.com/darkspinnet/darkspin/issues/102) Restore authored fixed catalyst bonuses instead of scaling percentage effects by item level, including Attack Speed from 73% to 5% for a common level-73 catalyst.
+- [#102](https://github.com/darkspinnet/darkspin/issues/102) Include equipped-part secondary attributes in hero profile More Stats without double counting saved editor values.
+- [#102](https://github.com/darkspinnet/darkspin/issues/102) Cancel accepted pursuits and held basic attacks when sleep or another movement-stopping control effect takes hold.
+- [#102](https://github.com/darkspinnet/darkspin/issues/102) Restore Charged Strike's pursuing melee definition instead of classifying its target taunt as the entire ability.
+- [#102](https://github.com/darkspinnet/darkspin/issues/102) Retire Voltroid charge beams when either endpoint dies, including retained multiplayer owners.
+- [#102](https://github.com/darkspinnet/darkspin/issues/102) Track Kinetic Wave's push effect and remove it on landing cleanup, target death and session shutdown.
+- [#102](https://github.com/darkspinnet/darkspin/issues/102) Preserve Ecostabilizer damaged models after destruction and reconnect, and restore Dysfunctional Ecostabilizer's authored warning and periodic freezing wave.
+- [#102](https://github.com/darkspinnet/darkspin/issues/102) Preserve authored security teleporter rotations and remove duplicate retirement packets during initial presentation.
+
 ### 2026-10-22
 
 - Apply bound Mod creature sizing to final model transforms instead of animation rig inputs so cached and animated models use the same visual enlargement.

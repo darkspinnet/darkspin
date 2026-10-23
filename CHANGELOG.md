@@ -1,12 +1,21 @@
 # Changelog
 
+### 2026-10-23
+
+- #102 Restore authored fixed catalyst bonuses instead of scaling percentage effects by item level, including Attack Speed from 73% to 5% for a common level-73 catalyst.
+- #102 Include equipped-part secondary attributes in hero profile More Stats without double counting saved editor values.
+- #102 Cancel accepted pursuits and held basic attacks when sleep or another movement-stopping control effect takes hold.
+- #102 Restore Charged Strike's pursuing melee definition instead of classifying its target taunt as the entire ability.
+- #102 Retire Voltroid charge beams when either endpoint dies, including retained multiplayer owners.
+- #102 Track Kinetic Wave's push effect and remove it on landing cleanup, target death and session shutdown.
+- #102 Preserve Ecostabilizer damaged models after destruction and reconnect, and restore Dysfunctional Ecostabilizer's authored warning and periodic freezing wave.
+- #102 Preserve authored security teleporter rotations and remove duplicate retirement packets during initial presentation.
+
 ### 2026-10-22
 
 - Apply bound Mod creature sizing to final model transforms instead of animation rig inputs so cached and animated models use the same visual enlargement.
-
 - Reduce the automatic enlargement cap for Spore creatures bound to Mod heroes from 2x to 1.5x native visual size, preserving proportions without saving per-binding multipliers.
 - Expand Mod bindings from heroes to categorized character nouns, with automatic fitting from shared noun size data and imported rest bounds instead of saved per-binding scale multipliers.
-
 - Add `/emote` happy, laugh, scared, swoon, roar, backflip, flex and yawn for bound Spore creatures in Mod missions, with native animation playback and multiplayer presentation.
 - Route Mod creature-editor music from Spore's general sound groups through Darkspore's native music groups using a private in-memory event, retaining native playback handles and exit cleanup.
 - Extend bound Mod creatures' Spore voices to combat, reactions, idles and taunts using mouth-matched sound families and native animation cue timing.
