@@ -301,6 +301,145 @@ int fang_mod_attach_memory(void* database, const wchar_t* path, const BYTE* payl
     return 1;
 }
 
+/* A private four-resource view of the original editor background. Only the
+ * header, index and adapted model wrapper live in memory. GMSH, RW4 and light
+ * payloads remain compressed in the read-only source and stream on demand.
+ * Private identities prevent the editor experiment from replacing resources
+ * with the same original identity in Arsenal or normal gameplay.
+ */
+int fang_mod_attach_scene(void* database, const wchar_t* path) {
+    static const uint32_t types[] = {0x01c135da, 0x2f4e681b, 0x00b1b104};
+    mod_stream* stream;
+    BYTE header[96];
+    BYTE* index = NULL;
+    BYTE* cursor;
+    BYTE* end;
+    BYTE* property;
+    LARGE_INTEGER source_size;
+    uint32_t flags, shared[3] = {0, 0, 0};
+    uint32_t count, index_size, index_offset, ordinal, slot, position = 320;
+    unsigned int found = 0;
+    HANDLE source;
+    if (!readable_range((BYTE*)database + 608, sizeof(void*)) ||
+        *(void**)((BYTE*)database + 608)) return 0;
+    source = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_RANDOM_ACCESS, NULL);
+    if (source == INVALID_HANDLE_VALUE) return 0;
+    stream = (mod_stream*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*stream));
+    if (!stream) {
+        if (!CloseHandle(source)) trace_client_state("mod_scene_close_error", GetLastError());
+        return 0;
+    }
+    stream->methods = &stream_methods;
+    stream->refs = 1;
+    stream->source = source;
+    InitializeCriticalSection(&stream->lock);
+    if (!GetFileSizeEx(source, &source_size) ||
+        !mod_source_read(stream, 0, header, sizeof(header))) goto failed;
+    if (memcmp(header, "DBPF", 4) || mod_u32(header + 4) != 3 || mod_u32(header + 60) != 3)
+        goto failed;
+    count = mod_u32(header + 36);
+    index_size = mod_u32(header + 44);
+    index_offset = mod_u32(header + 64);
+    if (count > 1000000 || index_size < 4 || index_size > 64 * 1024 * 1024 ||
+        (uint64_t)index_offset + index_size > (uint64_t)source_size.QuadPart) goto failed;
+    index = (BYTE*)HeapAlloc(GetProcessHeap(), 0, index_size);
+    stream->prefix = (BYTE*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 320);
+    stream->spans = (mod_resource_span*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 3 * sizeof(*stream->spans));
+    if (!index || !stream->prefix || !stream->spans) goto failed;
+    stream->prefix_size = 320;
+    stream->count = 3;
+    if (!mod_source_read(stream, index_offset, index, index_size)) goto failed;
+    cursor = index + 4;
+    end = index + index_size;
+    flags = mod_u32(index);
+    if (flags & ~7u) goto failed;
+    for (slot = 0; slot < 3; ++slot) {
+        if (!(flags & (1u << slot))) continue;
+        if (end - cursor < 4) goto failed;
+        shared[slot] = mod_u32(cursor);
+        cursor += 4;
+    }
+    for (ordinal = 0; ordinal < count; ++ordinal) {
+        uint32_t keys[3], low, offset, stored;
+        BYTE* entry;
+        for (slot = 0; slot < 3; ++slot) {
+            keys[slot] = shared[slot];
+            if (flags & (1u << slot)) continue;
+            if (end - cursor < 4) goto failed;
+            keys[slot] = mod_u32(cursor);
+            cursor += 4;
+        }
+        if (end - cursor < 20) goto failed;
+        low = mod_u32(cursor);
+        offset = mod_u32(cursor + 4);
+        stored = mod_u32(cursor + 8) & 0x7fffffffu;
+        slot = 3;
+        if (!keys[2] && keys[1] == 0x40606000 && low == 0x01dcaf31) {
+            if (keys[0] == types[0]) slot = 0;
+            if (keys[0] == types[1]) slot = 1;
+        }
+        if (!keys[2] && keys[1] == 0x40200100 && low == 0xf1fac055 && keys[0] == types[2]) slot = 2;
+        if (!keys[2] && keys[1] == 0x40606000 && low == 0x01dcaf31 && keys[0] == 0x00b1b104) {
+            if ((found & 8) || stored != 104 || mod_u32(cursor + 12) != 104 ||
+                cursor[16] || cursor[17] || (uint64_t)offset + stored > (uint64_t)source_size.QuadPart ||
+                !mod_source_read(stream, offset, stream->prefix + 216, 104)) goto failed;
+            found |= 8;
+        }
+        if (slot < 3) {
+            if ((found & (1u << slot)) || !stored ||
+                (uint64_t)offset + stored > (uint64_t)source_size.QuadPart ||
+                stored > 0x7fffffffu - position) goto failed;
+            entry = stream->prefix + 104 + slot * 28;
+            mod_put32(entry, keys[0]); mod_put32(entry + 4, keys[1]);
+            mod_put32(entry + 8, slot == 2 ? FANG_EDITOR_SCENE_LIGHT : FANG_EDITOR_SCENE_MODEL);
+            mod_put32(entry + 12, position); mod_put32(entry + 16, stored | 0x80000000u);
+            memcpy(entry + 20, cursor + 12, 8);
+            stream->spans[slot].source_offset = offset;
+            stream->spans[slot].start = position;
+            stream->spans[slot].size = stored;
+            position += stored;
+            found |= 1u << slot;
+        }
+        cursor += 20;
+    }
+    if (cursor != end || found != 15) goto failed;
+    /* Source order need not match resource-type order. The stream reader uses
+     * a binary search over virtual payload offsets. */
+    for (slot = 1; slot < 3; ++slot) {
+        uint32_t previous = slot;
+        while (previous && stream->spans[previous - 1].start > stream->spans[previous].start) {
+            mod_resource_span span = stream->spans[previous - 1];
+            stream->spans[previous - 1] = stream->spans[previous];
+            stream->spans[previous--] = span;
+        }
+    }
+    memcpy(stream->prefix, "DBPF", 4);
+    mod_put32(stream->prefix + 4, 3); mod_put32(stream->prefix + 36, 4);
+    mod_put32(stream->prefix + 44, 120); mod_put32(stream->prefix + 60, 3);
+    mod_put32(stream->prefix + 64, 96); mod_put32(stream->prefix + 96, 4);
+    cursor = stream->prefix + 188;
+    mod_put32(cursor, 0x00b1b104); mod_put32(cursor + 4, 0x40606000);
+    mod_put32(cursor + 8, FANG_EDITOR_SCENE_MODEL); mod_put32(cursor + 12, 216);
+    mod_put32(cursor + 16, 104 | 0x80000000u); mod_put32(cursor + 20, 104);
+    property = stream->prefix + 216;
+    /* Retain source bounds/radius and parent. Only alias the final RW4 key;
+     * reject a different wrapper layout instead of editing arbitrary bytes. */
+    if (mod_u32(property + 88) != 0x01dcaf31 || mod_u32(property + 92) != 0x2f4e681b ||
+        mod_u32(property + 96) != 0x40606000) goto failed;
+    mod_put32(property + 88, FANG_EDITOR_SCENE_MODEL);
+    stream->size = position;
+    HeapFree(GetProcessHeap(), 0, index);
+    *(void**)((BYTE*)database + 608) = stream;
+    trace_client_state("mod_scene_stream_resources", 4);
+    return 1;
+failed:
+    if (index) HeapFree(GetProcessHeap(), 0, index);
+    trace_client_state("mod_scene_stream_failed", stream->error ? stream->error : ERROR_INVALID_DATA);
+    mod_stream_release(stream);
+    return 0;
+}
+
 static int mod_stream_index(mod_stream* stream, const BYTE* header, uint64_t source_size) {
     uint32_t count = mod_u32(header + 36), flags, shared[3] = {0, 0, 0};
     uint64_t index_size = mod_u64(header + 40), index_offset = mod_u64(header + 56);

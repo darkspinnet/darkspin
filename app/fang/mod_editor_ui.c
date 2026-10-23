@@ -33,6 +33,7 @@ typedef float* (FANG_THISCALL* editor_point_fn)(BYTE*, float*, float, float);
 typedef BYTE* (FANG_THISCALL* editor_button_fn)(BYTE*, uint32_t);
 typedef void (FANG_THISCALL* editor_button_flag_fn)(BYTE*, unsigned int, int);
 typedef void (FANG_THISCALL* editor_repaint_fn)(BYTE*);
+typedef void (FANG_THISCALL* editor_window_flag_fn)(BYTE*, unsigned int, unsigned char);
 
 static BYTE* editor_ui_base;
 static editor_member_fn editor_get_member;
@@ -60,6 +61,12 @@ static RECT validation_area;
 static unsigned int validation_page;
 static unsigned int validation_pages;
 static UINT validation_press;
+static BYTE scene_context[72];
+static unsigned int scene_generation;
+static unsigned int scene_target;
+static uint32_t scene_identity[3];
+static int is_scene_requested;
+static char scene_name[64];
 
 static void __cdecl editor_body_toggle(BYTE* context);
 
@@ -186,7 +193,7 @@ static int editor_body_place(BYTE* ui) {
     if (!((editor_point_fn)(*(void***)tab)[48])(tab, origin, 0, 0)) return 0;
     /* RealArea is relative to its parent; the native conversion includes the
      * dock's parent origin and layout transforms. Match the Equip tab exactly. */
-    body_area.left = (LONG)origin[0] - width - 2;
+    body_area.left = (LONG)origin[0] - (fang_mod_editor_is_scene(fang_mod_editor_active()) ? 0 : width + 2);
     body_area.top = (LONG)origin[1];
     body_area.right = body_area.left + width;
     body_area.bottom = body_area.top + height;
@@ -391,6 +398,17 @@ static void editor_menu_update(BYTE* context) {
     if (!is_edit_visible) {
         editor_set(&button, "_visible", editor_boolean(0));
         goto done;
+    }
+    if (fang_mod_scene_available()) {
+        editor_value visible = {0}, opacity = {0};
+        if (editor_get(root, "_visible", &visible) &&
+            (visible.type & 0x8f) == 2 && *(unsigned char*)&visible.data &&
+            editor_get(root, "_alpha", &opacity) &&
+            (opacity.type & 0x8f) == 3 && opacity.data.number > 0 &&
+            fang_mod_editor_identity(context, scene_identity))
+            scene_target = *(unsigned int*)(context + 8);
+        editor_release(&opacity);
+        editor_release(&visible);
     }
     if (!editor_get(&button, "fangEditorReady", &ready) ||
         (ready.type & 0x8f) != 2 || !*(unsigned char*)&ready.data) {
@@ -607,6 +625,24 @@ done:
     editor_release(&field);
 }
 
+static void editor_scene_hide_window(BYTE* window) {
+    if (!readable_range(window, 44) || !readable_range(*(void**)window, 128)) return;
+    /* Native IWindow::SetFlag(Visible, false), verified at BE05B0. These are
+     * windows owned by this editor UI, not shared authored layout defaults.
+     * Preserve paint/preview panels and the native Accept/Cancel lifecycle. */
+    ((editor_window_flag_fn)(*(void***)window)[31])(window, 1, 0);
+}
+
+static void editor_scene_present(BYTE* editor, BYTE* ui) {
+    BYTE* equipment_tab;
+    if (!fang_mod_editor_is_scene(editor)) return;
+    if (!readable_range(ui, 312)) return;
+    editor_scene_hide_window(*(BYTE**)(ui + 300)); /* Equipment layout root. */
+    editor_scene_hide_window(*(BYTE**)(ui + 308)); /* Hero combat-stat panel. */
+    equipment_tab = ((editor_find_window_fn)(*(void***)ui)[18])(ui, 0xf019c2e7);
+    editor_scene_hide_window(equipment_tab);
+}
+
 static void editor_body_update(void) {
     static const char* native_buttons[] = {"contextMenu1", "contextMenu2", "contextMenu3"};
     BYTE* editor = fang_mod_editor_active();
@@ -629,7 +665,8 @@ static void editor_body_update(void) {
         /* Give the new Body tab its own explicit selection. The player editor
          * starts with mode 0 even for equipment; use its retained Equip mode
          * until the player selects our general Build-mode entry. */
-        ((editor_mode_fn)(*(void***)ui)[17])(ui, 3);
+        if (fang_mod_editor_is_scene(editor)) editor_native_mode(ui, 0);
+        else ((editor_mode_fn)(*(void***)ui)[17])(ui, 3);
         trace_client_state("mod_editor_initial_mode", *(unsigned int*)(editor + 856));
         body_owner = editor;
         body_mode = UINT32_MAX;
@@ -641,6 +678,7 @@ static void editor_body_update(void) {
         trace_client_state("mod_editor_body_tab_requested", body_generation);
     }
     if (!body_context[56]) return;
+    editor_scene_present(editor, ui);
     editor_body_select_tabs(editor, ui);
     if (!editor_body_place(ui)) {
         SetRectEmpty(&body_area);
@@ -674,15 +712,119 @@ done:
     editor_release(&button);
 }
 
+static void editor_scene_close(void) {
+    BYTE* manager;
+    char callback[80];
+    scene_target = 0;
+    memset(scene_identity, 0, sizeof(scene_identity));
+    if (!is_scene_requested) return;
+    is_scene_requested = 0;
+    ++scene_generation;
+    manager = editor_ui_manager();
+    if (manager) {
+        editor_callback_name(scene_context, callback, sizeof(callback), 1);
+        ((editor_unregister_fn)(*(void***)manager)[9])(manager, callback);
+        ((editor_unregister_fn)(*(void***)manager)[6])(manager, scene_name);
+    }
+    editor_release((editor_value*)(scene_context + 24));
+    editor_release((editor_value*)(scene_context + 40));
+    memset(scene_context, 0, sizeof(scene_context));
+}
+
+static void __cdecl editor_scene_loaded(void* owner, unsigned int unused, editor_value* movies) {
+    editor_copy_fn copy = (editor_copy_fn)(editor_ui_base + 0x17f0);
+    (void)unused;
+    if (!is_scene_requested || (unsigned int)(uintptr_t)owner != scene_generation ||
+        !readable_range(movies, 32) || (movies[0].type & 0x8f) < 6 ||
+        (movies[0].type & 0x8f) > 8 || (movies[1].type & 0x8f) < 6 ||
+        (movies[1].type & 0x8f) > 8) return;
+    copy((editor_value*)(scene_context + 24), &movies[0]);
+    copy((editor_value*)(scene_context + 40), &movies[1]);
+    scene_context[56] = 1;
+    trace_client_state("mod_editor_scene_button_loaded", scene_generation);
+}
+
+static int editor_scene_has_target(void) {
+    uint32_t identity[3];
+    return scene_target && fang_mod_editor_identity(scene_context, identity) &&
+        memcmp(identity, scene_identity, sizeof(identity)) == 0;
+}
+
+static void __cdecl editor_scene_open(BYTE* context) {
+    if (context != scene_context || !editor_scene_has_target()) return;
+    fang_mod_editor_open_scene(context);
+}
+
+static void editor_scene_update(int is_arsenal) {
+    static const char* names[] = {"contextMenu1", "contextMenu2", "contextMenu3"};
+    editor_value* root = (editor_value*)(scene_context + 24);
+    editor_value button = {0}, ready = {0};
+    BYTE* manager;
+    HWND window;
+    RECT client;
+    unsigned int index;
+    if (!is_arsenal || fang_mod_editor_active() || !fang_mod_scene_available()) {
+        editor_scene_close();
+        return;
+    }
+    if (!is_scene_requested) {
+        manager = editor_ui_manager();
+        if (!manager) return;
+        *(unsigned int*)(scene_context + 60) = UINT32_MAX - 1;
+        snprintf(scene_name, sizeof(scene_name), "FangModEditorScene_%u", ++scene_generation);
+        is_scene_requested = 1;
+        ((editor_load_fn)(*(void***)manager)[5])(manager, "ContextMenu.swf", scene_name,
+            999.0, editor_scene_loaded, (void*)(uintptr_t)scene_generation);
+    }
+    if (!scene_context[56]) return;
+    *(unsigned int*)(scene_context + 8) = scene_target;
+    if (!editor_scene_has_target()) {
+        scene_target = 0;
+        *(unsigned int*)(scene_context + 8) = 0;
+    }
+    for (index = 0; index < sizeof(names) / sizeof(names[0]); ++index) {
+        editor_value native = {0};
+        if (editor_get(root, names[index], &native))
+            editor_set(&native, "_visible", editor_boolean(0));
+        editor_release(&native);
+    }
+    editor_get(root, "fangCreatureEditor", &button);
+    if (!editor_get(&button, "fangEditorReady", &ready) ||
+        (ready.type & 0x8f) != 2 || !*(unsigned char*)&ready.data) {
+        if (!editor_make_button(scene_context, &button, 180, 24,
+            "CREATURE EDITOR", editor_scene_open)) goto done;
+    }
+    window = GetActiveWindow();
+    if (!window || !GetClientRect(window, &client)) goto done;
+    editor_set(root, "_x", editor_number(client.right > 204 ? client.right - 204 : 12));
+    editor_set(root, "_y", editor_number(135));
+    editor_set(root, "_visible", editor_boolean(1));
+    editor_set(&button, "_x", editor_number(0));
+    editor_set(&button, "_y", editor_number(0));
+    editor_set(&button, "_visible", editor_boolean(1));
+    editor_set(&button, "disabled", editor_boolean(!scene_target));
+    editor_set(&button, "_alpha", editor_number(scene_target ? 100 : 45));
+done:
+    editor_release(&ready);
+    editor_release(&button);
+}
+
 void fang_mod_update_editor(void) {
     static const unsigned int vectors[] = {1840, 2440};
     BYTE* controller;
     unsigned int index;
     if (!is_editor_ui_enabled) return;
+    /* Retain the last eligible creature when its hover menu closes so the
+     * pointer can travel to the separate Arsenal action. Revalidate the owned
+     * identity each frame and on click; clear it on leaving Arsenal. */
+    fang_mod_update_scene();
     editor_body_update();
     controller = *(BYTE**)(editor_ui_base + 0xdbeaa0);
     if (!readable_range(controller, 0xd10) || !controller[920] ||
-        *(void**)controller != editor_ui_base + 0xbce048) return;
+        *(void**)controller != editor_ui_base + 0xbce048) {
+        editor_scene_update(0);
+        return;
+    }
     for (index = 0; index < sizeof(vectors) / sizeof(vectors[0]); ++index) {
         BYTE* begin = *(BYTE**)(controller + vectors[index]);
         BYTE* end = *(BYTE**)(controller + vectors[index] + 4);
@@ -694,6 +836,7 @@ void fang_mod_update_editor(void) {
             begin += 72;
         }
     }
+    editor_scene_update(1);
 }
 
 int fang_mod_install_editor_ui(BYTE* base) {

@@ -50,12 +50,22 @@ void fang_mod_install_editor(BYTE* base, const wchar_t* manifest);
 int fang_mod_install_editor_ui(BYTE* base);
 void fang_mod_update_editor(void);
 int fang_mod_editor_target(BYTE* context);
+int fang_mod_editor_identity(BYTE* context, uint32_t* identity);
 void __cdecl fang_mod_editor_open(BYTE* context);
+void __cdecl fang_mod_editor_open_scene(BYTE* context);
+int fang_mod_editor_is_scene(BYTE* editor);
+void fang_mod_editor_continue_scene(uint32_t instance, uint32_t type, uint32_t group);
 BYTE* fang_mod_editor_active(void);
 void fang_mod_editor_update_body(void);
 void fang_mod_editor_close_body_ui(void);
 void fang_mod_install_validation(BYTE* base);
 void fang_mod_editor_clear_validation(void);
 const char* fang_mod_editor_validation_text(unsigned int page, unsigned int* pages);
+enum { FANG_EDITOR_SCENE_MODEL = 0xfad0ce01u, FANG_EDITOR_SCENE_LIGHT = 0xfad0ce02u };
+int fang_mod_attach_scene(void* database, const wchar_t* path);
+void fang_mod_install_scene(BYTE* base);
+int fang_mod_scene_available(void);
+void fang_mod_update_scene(void);
+void fang_mod_scene_leave(BYTE* editor);
 
 #endif

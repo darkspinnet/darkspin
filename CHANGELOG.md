@@ -2,6 +2,10 @@
 
 ### 2026-10-23
 
+- #104 Route core foot placement in Mod Body mode from the stock hero attachment controller to the general creature manipulator, retaining native symmetry and edit history.
+- #104 Keep the imported editor environment across owned-hero switches and isolate its Body view from native room geometry, equipment panels, and combat stats while retaining paint, preview, and save controls.
+- #104 Keep the Mod Arsenal Creature Editor button enabled for the last eligible creature after its hover menu closes, while rechecking ownership and creature identity before opening it.
+- #104 Add a Mod Arsenal Creature Editor button that selects the original creature-editor backdrop and lighting through private on-demand resource aliases while retaining the selected hero's body controls and save flow.
 - #103 Expand Mod Creature Edit save diagnostics from a single native message to a paged panel covering all 128 validation bits, with shared creature-editor error names and trace details for unmapped failures.
 - #103 Give native part hover and selection highlights a cool blue color in the Mod Body tab to distinguish them from cyan bones and white joints.
 - #103 Increase Mod Body overlay contrast from muted pink to bright cyan, with white highlighted vertebrae and stronger hover opacity while preserving native fading.

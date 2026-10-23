@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/darkspinnet/darkspin/content/spore"
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/modprofile"
 	server "github.com/darkspinnet/darkspin/server/runtime"
@@ -257,10 +258,17 @@ func (a *App) prepareModAppearance(paths *spinnerPathSet, identity, serverAddres
 	if err != nil {
 		return "", fmt.Errorf("sourceRead: %w", err)
 	}
-	if len(bindings) != 0 {
-		_, err = os.Stat(filepath.Join(settings.Mod.SporePath, "Data", "Spore_Game.package"))
-		if err != nil {
-			return "", fmt.Errorf("sourceValidate: %w", err)
+	isSceneAvailable := false
+	if settings.Mod.SporePath != "" || len(bindings) != 0 {
+		sourcePath, sourceErr := spore.Installation(settings.Mod.SporePath)
+		if sourceErr != nil && len(bindings) != 0 {
+			return "", fmt.Errorf("sourceValidate: %w", sourceErr)
+		}
+		if sourceErr != nil {
+			a.log(fmt.Sprintf("Mod editor environment unavailable: %v", sourceErr))
+		} else {
+			settings.Mod.SporePath = sourcePath
+			isSceneAvailable = true
 		}
 	}
 	heroes, err := a.modHeroes(paths)
@@ -339,6 +347,9 @@ func (a *App) prepareModAppearance(paths *spinnerPathSet, identity, serverAddres
 	// baseline. Source and parent-hero identities keep imported and edited saves
 	// scoped to explicit bindings.
 	manifest := "[mod]\nversion=1\nmodel_baseline=1\nmodel_material=1\nmodel_audio=1\nmodel_scale=1\nmodel_fit=1\nmodel_portrait=1\neditor_music=1\ncharacter_override=1\ncreature_editor=1\n"
+	if isSceneAvailable {
+		manifest += "editor_scene=1\n"
+	}
 	editorHeroCount := 0
 	for _, hero := range heroes {
 		if hero.Category != "Hero" || hero.Noun == 0 {
@@ -377,7 +388,7 @@ func (a *App) prepareModAppearance(paths *spinnerPathSet, identity, serverAddres
 			break
 		}
 	}
-	if len(bindings) != 0 {
+	if len(bindings) != 0 || isSceneAvailable {
 		for index, name := range []string{"Spore_Game.package", "Spore_Graphics.package", "Spore_Content.package"} {
 			path := filepath.Join(settings.Mod.SporePath, "Data", name)
 			if strings.ContainsAny(path, "\r\n") {

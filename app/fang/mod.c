@@ -94,8 +94,10 @@ static int mod_mount(BYTE* base, void* manager, const wchar_t* path, int priorit
         !readable_range(manager_methods, 84)) return 0;
     ((mod_ref_fn)ref_methods[0])(reference);
     ((mod_initialize_fn)methods[1])(database);
-    ((mod_path_fn)methods[11])(database, payload ? L"DarkspinModEditorMusic.memory.package" : path);
-    if (payload ? !fang_mod_attach_memory(database, path, payload, size) :
+    ((mod_path_fn)methods[11])(database, index == 10 ? L"DarkspinModEditorScene.memory.package" :
+        payload ? L"DarkspinModEditorMusic.memory.package" : path);
+    if (index == 10 ? !fang_mod_attach_scene(database, path) :
+        payload ? !fang_mod_attach_memory(database, path, payload, size) :
         fang_mod_attach_dbbf(database, path, index) < 0) {
         ((mod_ref_fn)ref_methods[1])(reference);
         return 0;
@@ -180,6 +182,14 @@ void fang_update_mod(void) {
     /* Owned stock heroes use the shipped editor assets. Body editing in Mod
      * mode does not require an import binding or mounted source packages. */
     fang_mod_install_editor(base, mod_manifest);
+    if (mounted && !failed && GetPrivateProfileIntW(L"mod", L"editor_scene", 0, mod_manifest) == 1) {
+        if (GetPrivateProfileStringW(L"mod", L"package2", L"", path,
+            sizeof(path) / sizeof(wchar_t), mod_manifest) &&
+            mod_mount(base, manager, path, -1990, 10, NULL, 0)) {
+            trace_client_state("mod_editor_scene_package_mounted", 1);
+            fang_mod_install_scene(base);
+        } else trace_client_state("mod_editor_scene_package_failed", 1);
+    }
     if (audio_count == 2) {
         if (GetPrivateProfileIntW(L"mod", L"editor_music", 0, mod_manifest) == 1) {
             BYTE music_package[320];

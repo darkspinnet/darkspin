@@ -20,6 +20,7 @@ typedef void (FANG_THISCALL* editor_exit_fn)(BYTE*);
 typedef void (FANG_THISCALL* editor_part_flag_fn)(BYTE*, unsigned int, unsigned char);
 typedef void (FANG_THISCALL* editor_ref_fn)(BYTE*);
 typedef void (FANG_THISCALL* editor_glow_fn)(BYTE*, float, float, float, float);
+typedef void (FANG_THISCALL* editor_manipulate_fn)(BYTE*, int, int, float*, void*, int, void*);
 
 typedef struct editor_part {
     BYTE* part;
@@ -31,9 +32,11 @@ static editor_config_fn editor_config;
 static uint32_t editor_identity[3];
 static DWORD editor_deadline;
 static int is_editor_pending;
+static int is_editor_scene_pending;
 static int is_editor_enabled;
 static editor_edit_fn editor_native_edit;
 static BYTE* active_editor;
+static BYTE* active_scene_editor;
 static editor_hit_fn editor_native_hit;
 static editor_hit_fn editor_body_hit;
 static editor_exit_fn editor_native_exit;
@@ -46,10 +49,48 @@ static BYTE* editor_tuning;
 static float editor_colors[4][4];
 static editor_glow_fn editor_native_glow;
 static unsigned int editor_glow_count;
+static editor_manipulate_fn editor_native_manipulate;
+static editor_manipulate_fn editor_body_manipulate;
+static unsigned int editor_foot_count;
 
 BYTE* fang_mod_editor_active(void) {
     if (!is_editor_enabled || !readable_range(active_editor, 1172)) return NULL;
     return active_editor;
+}
+
+int fang_mod_editor_is_scene(BYTE* editor) {
+    return editor && editor == active_scene_editor && editor == fang_mod_editor_active();
+}
+
+static void FANG_THISCALL editor_manipulate(BYTE* editor, int command, int flags,
+    float* point, void* hit, int option, void* handle) {
+    BYTE* part;
+    if (editor == fang_mod_editor_active() && *(unsigned int*)(editor + 856) == 0) {
+        part = *(BYTE**)(editor + 228);
+        /* 6A2440 returns part+1524, the canonical part type. PlayerEditor's
+         * 4B98E0 intercepts foot (B4B1179D) and creates a 4C5A50 hero-anchor
+         * controller with restrictions from the stock chassis. For core feet
+         * use the general creator's 727FC0 dispatch, including its native
+         * pinning, symmetry and edit history. Inventory parts remain native. */
+        if (readable_range(part, 1528) && *(uint32_t*)(part + 1524) == 0xb4b1179d &&
+            *(uint64_t*)(part + 40) == 0 && *(BYTE**)(part + 48) == *(BYTE**)(editor + 176)) {
+            if (editor_foot_count++ < 32) trace_client_state("mod_editor_body_foot_manipulator", command);
+            editor_body_manipulate(editor, command, flags, point, hit, option, handle);
+            return;
+        }
+    }
+    editor_native_manipulate(editor, command, flags, point, hit, option, handle);
+}
+
+static void editor_install_foot(BYTE* base) {
+    editor_native_manipulate = (editor_manipulate_fn)(base + 0xb98e0);
+    editor_body_manipulate = (editor_manipulate_fn)(base + 0x327fc0);
+    if (!readable_range(base + 0xbd99a8, 4) ||
+        !patch_pointer((void**)(base + 0xbd99a8), editor_native_manipulate, editor_manipulate)) {
+        trace_client_state("mod_editor_body_foot_hook_failed", 1);
+        return;
+    }
+    trace_client_state("mod_editor_body_foot_enabled", 1);
 }
 
 static void FANG_THISCALL editor_body_glow(BYTE* part, float red, float green, float blue, float alpha) {
@@ -159,6 +200,7 @@ void fang_mod_editor_update_body(void) {
 
 static void FANG_THISCALL editor_leave(BYTE* editor) {
     if (active_editor == editor) {
+        fang_mod_scene_leave(editor);
         fang_mod_editor_close_body_ui();
         editor_restore_parts();
         editor_restore_colors();
@@ -166,6 +208,7 @@ static void FANG_THISCALL editor_leave(BYTE* editor) {
         editor[751] = editor_pick_flags[1];
         is_body_picking = 0;
         active_editor = NULL;
+        active_scene_editor = NULL;
     }
     editor_native_exit(editor);
 }
@@ -231,12 +274,28 @@ int fang_mod_editor_target(BYTE* context) {
     return readable_range(creature, 64);
 }
 
-void __cdecl fang_mod_editor_open(BYTE* context) {
+int fang_mod_editor_identity(BYTE* context, uint32_t* identity) {
+    BYTE* manager;
+    BYTE* agent;
+    BYTE* creature;
+    if (!identity || !fang_mod_editor_target(context)) return 0;
+    manager = ((editor_manager_fn)(editor_base + 0x5bc740))();
+    agent = ((editor_agent_fn)(editor_base + 0x5d1730))(manager, *(uint32_t*)(context + 8));
+    if (!readable_range(agent, 16)) return 0;
+    creature = ((editor_creature_fn)(editor_base + 0xe63a0))(
+        *(uint32_t*)(agent + 8), *(uint32_t*)(agent + 12));
+    if (!readable_range(creature, 12)) return 0;
+    memcpy(identity, creature, 3 * sizeof(uint32_t));
+    return 1;
+}
+
+static void editor_open(BYTE* context, int is_scene) {
     BYTE* manager;
     BYTE* agent;
     BYTE* creature;
     BYTE* controller;
     is_editor_pending = 0;
+    is_editor_scene_pending = 0;
     if (!fang_mod_editor_target(context)) return;
     manager = ((editor_manager_fn)(editor_base + 0x5bc740))();
     agent = ((editor_agent_fn)(editor_base + 0x5d1730))(manager, *(uint32_t*)(context + 8));
@@ -251,11 +310,33 @@ void __cdecl fang_mod_editor_open(BYTE* context) {
     if (!controller || *(uint32_t*)(controller + 3320) != *(uint32_t*)(context + 8)) return;
     editor_deadline = GetTickCount() + 30000;
     is_editor_pending = 1;
+    is_editor_scene_pending = is_scene;
     trace_client_state("mod_editor_requested", editor_identity[0]);
+}
+
+void __cdecl fang_mod_editor_open(BYTE* context) {
+    editor_open(context, 0);
+}
+
+void __cdecl fang_mod_editor_open_scene(BYTE* context) {
+    if (!fang_mod_scene_available()) return;
+    editor_open(context, 1);
+}
+
+void fang_mod_editor_continue_scene(uint32_t instance, uint32_t type, uint32_t group) {
+    if (!fang_mod_editor_is_scene(fang_mod_editor_active())) return;
+    editor_identity[0] = instance;
+    editor_identity[1] = type;
+    editor_identity[2] = group;
+    editor_deadline = GetTickCount() + 30000;
+    is_editor_pending = 1;
+    is_editor_scene_pending = 1;
+    trace_client_state("mod_editor_scene_switch_requested", instance);
 }
 
 static void __cdecl editor_standard_open(BYTE* context) {
     is_editor_pending = 0;
+    is_editor_scene_pending = 0;
     editor_native_edit(context);
 }
 
@@ -273,7 +354,9 @@ static int FANG_THISCALL editor_configure(BYTE* editor) {
     unsigned int cursor;
     int result = editor_config(editor);
     int is_requested = is_editor_pending;
+    int is_scene = is_editor_scene_pending;
     is_editor_pending = 0; /* A request cannot leak into a later editor. */
+    is_editor_scene_pending = 0;
     if (!is_requested || (LONG)(GetTickCount() - editor_deadline) >= 0 ||
         !readable_range(editor, 1170)) return result;
     request = *(BYTE**)(editor + 524);
@@ -309,6 +392,7 @@ static int FANG_THISCALL editor_configure(BYTE* editor) {
     editor_pick_flags[1] = editor[751];
     is_body_picking = 0;
     active_editor = editor;
+    active_scene_editor = is_scene ? editor : NULL;
     trace_client_state("mod_editor_body_controls", count);
     return result;
 }
@@ -358,6 +442,7 @@ void fang_mod_install_editor(BYTE* base, const wchar_t* manifest) {
         goto rollback_hit;
     }
     is_editor_enabled = 1;
+    editor_install_foot(base);
     editor_install_glow(base);
     fang_mod_install_validation(base);
     trace_client_state("mod_editor_enabled", 1);
