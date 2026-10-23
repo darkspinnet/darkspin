@@ -25,6 +25,9 @@ type creationPackage struct {
 // Format reference: SporeModder-FX DatabasePackedFile and DBPFItem readers.
 func openCreationPackage(r io.ReaderAt, size int64) (*creationPackage, error) {
 	var header [96]byte
+	if size < int64(len(header)) {
+		return nil, errors.New("incomplete creation package header")
+	}
 	count, err := r.ReadAt(header[:], 0)
 	if err != nil {
 		return nil, fmt.Errorf("headerRead: %w", err)
@@ -51,7 +54,10 @@ func openCreationPackage(r io.ReaderAt, size int64) (*creationPackage, error) {
 		return nil, errors.New("unsupported creation package header")
 	}
 	indexOffset := binary.LittleEndian.Uint64(header[56:])
-	indexSize := binary.LittleEndian.Uint64(header[40:])
+	// The DBBF reader layout uses a 32-bit index size at 0x28. Do not
+	// interpret the following header word as its high bits; cache writers
+	// need not clear that word. Payload and index offsets remain 64-bit.
+	indexSize := uint64(binary.LittleEndian.Uint32(header[40:44]))
 	if indexOffset > uint64(size) || indexSize > uint64(size)-indexOffset || indexSize > 64<<20 {
 		return nil, errors.New("creation index range exceeds limit")
 	}

@@ -33,6 +33,48 @@ static uint32_t fit_nouns[512];
 static unsigned int source_count;
 static unsigned int model_count;
 static int is_baseline_enabled;
+static uint32_t editor_hero_nouns[128];
+static unsigned int editor_hero_count;
+static uint32_t editor_model_keys[512][3];
+static unsigned int editor_model_count;
+
+static int mod_editor_baseline_key(const uint32_t* key) {
+    unsigned int index;
+    int is_found = 0;
+    EnterCriticalSection(&baseline_lock);
+    for (index = 0; index < editor_model_count; ++index) {
+        if (memcmp(key, editor_model_keys[index], 12) != 0) continue;
+        is_found = 1;
+        break;
+    }
+    LeaveCriticalSection(&baseline_lock);
+    return is_found;
+}
+
+static int mod_register_editor_baseline(const uint32_t* metadata, const uint32_t* key) {
+    unsigned int index;
+    int is_registered = 0;
+    if (metadata[0] != 7 || metadata[7] != 0) return 0;
+    for (index = 0; index < editor_hero_count; ++index) {
+        if (editor_hero_nouns[index] == metadata[6]) break;
+    }
+    if (index == editor_hero_count) return 0;
+    EnterCriticalSection(&baseline_lock);
+    for (index = 0; index < editor_model_count; ++index) {
+        if (memcmp(key, editor_model_keys[index], 12) == 0) break;
+    }
+    if (index < editor_model_count) {
+        is_registered = 1;
+    } else if (editor_model_count < sizeof(editor_model_keys) / sizeof(editor_model_keys[0])) {
+        memcpy(editor_model_keys[editor_model_count++], key, 12);
+        is_registered = 1;
+        trace_client_state("mod_editor_saved_hero", metadata[6]);
+    } else {
+        trace_client_state("mod_editor_baseline_capacity", editor_model_count);
+    }
+    LeaveCriticalSection(&baseline_lock);
+    return is_registered;
+}
 
 int fang_mod_is_bound_key(const uint32_t* key) {
     unsigned int index;
@@ -87,7 +129,8 @@ int fang_mod_portrait_source(const uint32_t* key, uint32_t* source) {
 static unsigned char __cdecl mod_bound_baseline(const uint32_t* key, void* source,
     uint32_t* core_key, void* allowed_parts, void* context) {
     unsigned char is_valid = baseline_provider.original(key, source, core_key, allowed_parts, context);
-    if (is_valid && readable_range(key, 12) && readable_range(core_key, 12) && fang_mod_is_bound_key(key)) {
+    if (is_valid && readable_range(key, 12) && readable_range(core_key, 12) &&
+        (fang_mod_is_bound_key(key) || mod_editor_baseline_key(key))) {
         memcpy(core_key, key, 12);
         trace_client_state("mod_bound_baseline", key[0]);
     }
@@ -130,7 +173,9 @@ int fang_mod_bind_baseline(const uint32_t* metadata, const uint32_t* model_key) 
             break;
         }
     }
-    if (!is_source_bound) return 0;
+    /* Stock hero editor saves need the same appearance comparison baseline,
+     * but must never acquire import audio, fitting or portrait identities. */
+    if (!is_source_bound) return mod_register_editor_baseline(metadata, model_key);
     /* Original imports have a PNG in the mounted Spore package. Native editor
      * saves use their own generated portrait; do not replace painted saves
      * with the original Spore picture. */
@@ -196,7 +241,15 @@ void fang_mod_install_baseline(BYTE* base, const wchar_t* manifest) {
         }
         ++source_count;
     }
-    if (!source_count) { trace_client_state("mod_baseline_source_missing", 1); return; }
+    if (GetPrivateProfileIntW(L"mod", L"creature_editor", 0, manifest) == 1) {
+        for (index = 1; index <= sizeof(editor_hero_nouns) / sizeof(editor_hero_nouns[0]); ++index) {
+            uint32_t noun;
+            _snwprintf(key, sizeof(key) / sizeof(wchar_t), L"editor_hero%u", index);
+            noun = GetPrivateProfileIntW(L"mod", key, 0, manifest);
+            if (noun) editor_hero_nouns[editor_hero_count++] = noun;
+        }
+    }
+    if (!source_count && !editor_hero_count) { trace_client_state("mod_baseline_source_missing", 1); return; }
     native_provider = (mod_provider_fn)(base + 0x2694d0);
     InitializeCriticalSection(&baseline_lock);
     if (!patch_call(first_call, native_provider, mod_bound_provider)) {

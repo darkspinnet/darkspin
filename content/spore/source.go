@@ -69,7 +69,7 @@ func Scan(ctx context.Context, root, userPath string) ([]Creation, error) {
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("creationScan: %w", err)
+			return nil, fmt.Errorf("creationScan[%s]: %w", filepath.Base(path), err)
 		}
 	}
 	creations := make([]Creation, 0, len(creationsByInstance))

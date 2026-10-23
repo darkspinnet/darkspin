@@ -135,6 +135,8 @@ body:has(.mod-accent) {
 }
 .mod-accent .selected-profile-avatar { border-color: var(--primary); box-shadow: 0 0 0 3px #fbbf2440; }
 .mod-accent .profile-level-badge { border-color: var(--primary); }
+.mod-accent .play-action { border-color: var(--primary); background: var(--primary); color: var(--primary-foreground); }
+.mod-accent .play-action:hover { background: color-mix(in srgb, var(--primary) 85%, white); }
 .remote-command-frame { display: flex; flex-direction: column; gap: 12px; }
 .remote-command-frame .launch-main { min-height: 260px; flex: 1; }
 .remote-empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; }

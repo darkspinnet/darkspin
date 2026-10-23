@@ -121,6 +121,7 @@ void fang_update_mod(void) {
     wchar_t path[32768];
     wchar_t key[32];
     fang_mod_update_dance();
+    fang_mod_update_editor();
     if (mod_state == 2) return;
     if (mod_state == 0) {
         DWORD length = GetEnvironmentVariableW(L"DARKSPIN_MOD_MANIFEST", mod_manifest,
@@ -176,6 +177,9 @@ void fang_update_mod(void) {
     trace_client_state("mod_audio_bank_count", audio_count);
     if (mounted && !failed) fang_mod_install_portrait(base, mod_manifest);
     if (mounted && !failed) fang_mod_install_character(base, mod_manifest);
+    /* Owned stock heroes use the shipped editor assets. Body editing in Mod
+     * mode does not require an import binding or mounted source packages. */
+    fang_mod_install_editor(base, mod_manifest);
     if (audio_count == 2) {
         if (GetPrivateProfileIntW(L"mod", L"editor_music", 0, mod_manifest) == 1) {
             BYTE music_package[320];

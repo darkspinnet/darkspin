@@ -338,7 +338,18 @@ func (a *App) prepareModAppearance(paths *spinnerPathSet, identity, serverAddres
 	// Approved Mod-only compatibility: bound imports supply their appearance
 	// baseline. Source and parent-hero identities keep imported and edited saves
 	// scoped to explicit bindings.
-	manifest := "[mod]\nversion=1\nmodel_baseline=1\nmodel_material=1\nmodel_audio=1\nmodel_scale=1\nmodel_fit=1\nmodel_portrait=1\neditor_music=1\ncharacter_override=1\n"
+	manifest := "[mod]\nversion=1\nmodel_baseline=1\nmodel_material=1\nmodel_audio=1\nmodel_scale=1\nmodel_fit=1\nmodel_portrait=1\neditor_music=1\ncharacter_override=1\ncreature_editor=1\n"
+	editorHeroCount := 0
+	for _, hero := range heroes {
+		if hero.Category != "Hero" || hero.Noun == 0 {
+			continue
+		}
+		editorHeroCount++
+		if editorHeroCount > 128 {
+			return "", errors.New("a Mod launch supports at most 128 editor hero nouns")
+		}
+		manifest += fmt.Sprintf("editor_hero%d=%d\n", editorHeroCount, hero.Noun)
+	}
 	if len(bindings) > 128 {
 		return "", errors.New("a Mod launch supports at most 128 creature bindings")
 	}

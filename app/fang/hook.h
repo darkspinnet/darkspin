@@ -46,5 +46,16 @@ int fang_mod_portrait_source(const uint32_t* key, uint32_t* source);
 void fang_mod_install_portrait(BYTE* base, const wchar_t* manifest);
 void fang_mod_install_scale(BYTE* base, const wchar_t* manifest);
 void fang_mod_install_fit(BYTE* base, const wchar_t* manifest);
+void fang_mod_install_editor(BYTE* base, const wchar_t* manifest);
+int fang_mod_install_editor_ui(BYTE* base);
+void fang_mod_update_editor(void);
+int fang_mod_editor_target(BYTE* context);
+void __cdecl fang_mod_editor_open(BYTE* context);
+BYTE* fang_mod_editor_active(void);
+void fang_mod_editor_update_body(void);
+void fang_mod_editor_close_body_ui(void);
+void fang_mod_install_validation(BYTE* base);
+void fang_mod_editor_clear_validation(void);
+const char* fang_mod_editor_validation_text(unsigned int page, unsigned int* pages);
 
 #endif
