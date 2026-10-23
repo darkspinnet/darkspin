@@ -82,6 +82,9 @@ func (e *BugReporter) Report(ctx context.Context, req chat.BugCommand) (string, 
 		"%s-%s-%s-%s.zip", bugSlug(description), bugSlug(level), version,
 		createdAt.Format("20060102T150405.000000000Z"),
 	)
+	if req.Context.IsModded {
+		archiveName = "mod-" + archiveName
+	}
 	archivePath := filepath.Join(bugPath, archiveName)
 	output, err := os.CreateTemp(bugPath, ".bug-*.zip")
 	if err != nil {
@@ -174,6 +177,10 @@ func addBugText(archive *zip.Writer, req chat.BugCommand) error {
 		return fmt.Errorf("textWrite: %w", err)
 	}
 	gameplay := req.Context
+	_, err = fmt.Fprintf(w, "Modded game: %t\nMods: %s\n", gameplay.IsModded, strings.Join(gameplay.ModNames, ", "))
+	if err != nil {
+		return fmt.Errorf("modContextWrite: %w", err)
+	}
 	_, err = fmt.Fprintf(
 		w,
 		"\nCaptured gameplay context\nActive: %t\nCrogenitor: %s (%d)\nMission: %s [%s]\nHero: %s, level %d, creature %d, noun %#x, squad index %d\nLocation: %.3f, %.3f, %.3f; nearest %s / %s (%.3f)\nGame: %d; run seed %016x; difficulty %d; mode %s; stage %s; session generation %d; transport generation %d; zone generation %d\nResources: %.3f/%.3f health, %.3f/%.3f power\n",

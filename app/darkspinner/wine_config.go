@@ -31,9 +31,10 @@ type WineRunnerConfiguration struct {
 // A zero value keeps the automatic behavior: system Wine with its own default
 // prefix.
 type wineLaunchEnvironment struct {
-	prefixPath string
-	runnerPath string
-	isProton   bool
+	modManifest string
+	prefixPath  string
+	runnerPath  string
+	isProton    bool
 }
 
 // wineRunnerCache keeps the last RESCAN result so opening the Config tab

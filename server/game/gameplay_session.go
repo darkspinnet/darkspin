@@ -110,6 +110,7 @@ func (e GameplayBinding) Roster() GameplayRoster {
 // GameplayCreature is the transport-neutral selected hero identity needed to
 // construct a gameplay roster. Appearance assets remain a RakNet adapter concern.
 type GameplayCreature struct {
+	IsModBound                 bool
 	ID                         uint32
 	Name                       string
 	Noun                       uint32
@@ -583,8 +584,9 @@ func gameplayCreature(
 ) GameplayCreature {
 	selected := GameplayCreature{
 		ID: creature.ID, Name: creature.Name(), Noun: creature.Noun(),
-		Version:   creature.Version,
-		GearScore: creature.GearScore, FlattenedGearScore: creature.FlattenedGearScore(),
+		IsModBound: view.Settings["mod.binding."+strconv.FormatUint(uint64(creature.Noun()), 10)] != "",
+		Version:    creature.Version,
+		GearScore:  creature.GearScore, FlattenedGearScore: creature.FlattenedGearScore(),
 	}
 	if creature.Template != nil {
 		selected.PassiveAbility = creature.Template.AbilityPassive

@@ -176,6 +176,209 @@ export namespace main {
 	        this.isStartupBlocked = source["isStartupBlocked"];
 	    }
 	}
+	export class ModBinding {
+	    heroNoun: number;
+	    creationId: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModBinding(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.heroNoun = source["heroNoun"];
+	        this.creationId = source["creationId"];
+	    }
+	}
+	export class ModProfile {
+	    loginName: string;
+	    displayName: string;
+	    createDt: string;
+	    lastConnectionDt: string;
+	    crogenitorLevel: number;
+	    cumulativeXp: number;
+	    highestCampaignUnlocked: number;
+	    isTutorialCompleted: boolean;
+	    isTutorialCompletionPending: boolean;
+	    avatarId: number;
+	    avatarUrl: string;
+	    bindings: ModBinding[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ModProfile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.loginName = source["loginName"];
+	        this.displayName = source["displayName"];
+	        this.createDt = source["createDt"];
+	        this.lastConnectionDt = source["lastConnectionDt"];
+	        this.crogenitorLevel = source["crogenitorLevel"];
+	        this.cumulativeXp = source["cumulativeXp"];
+	        this.highestCampaignUnlocked = source["highestCampaignUnlocked"];
+	        this.isTutorialCompleted = source["isTutorialCompleted"];
+	        this.isTutorialCompletionPending = source["isTutorialCompletionPending"];
+	        this.avatarId = source["avatarId"];
+	        this.avatarUrl = source["avatarUrl"];
+	        this.bindings = this.convertValues(source["bindings"], ModBinding);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ModHero {
+	    noun: number;
+	    name: string;
+	    portraitUrl: string;
+	    category: string;
+	    nounName: string;
+	    nominalScale: number;
+	    targetExtent: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModHero(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.noun = source["noun"];
+	        this.name = source["name"];
+	        this.portraitUrl = source["portraitUrl"];
+	        this.category = source["category"];
+	        this.nounName = source["nounName"];
+	        this.nominalScale = source["nominalScale"];
+	        this.targetExtent = source["targetExtent"];
+	    }
+	}
+	export class ModCreature {
+	    id: string;
+	    name: string;
+	    isPersonal: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModCreature(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.isPersonal = source["isPersonal"];
+	    }
+	}
+	export class ModConfiguration {
+	    sporePath: string;
+	    creatures: ModCreature[];
+	    heroes: ModHero[];
+	    profiles: ModProfile[];
+	    sourceError: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModConfiguration(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sporePath = source["sporePath"];
+	        this.creatures = this.convertValues(source["creatures"], ModCreature);
+	        this.heroes = this.convertValues(source["heroes"], ModHero);
+	        this.profiles = this.convertValues(source["profiles"], ModProfile);
+	        this.sourceError = source["sourceError"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class ModDirectory {
+	    path: string;
+	    parent: string;
+	    directories: string[];
+	    executables: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ModDirectory(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.parent = source["parent"];
+	        this.directories = source["directories"];
+	        this.executables = source["executables"];
+	    }
+	}
+	
+	
+	export class ModProfileRequest {
+	    loginName: string;
+	    avatarId: number;
+	    isTutorialSkipped: boolean;
+	    isNew: boolean;
+	    bindings: ModBinding[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ModProfileRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.loginName = source["loginName"];
+	        this.avatarId = source["avatarId"];
+	        this.isTutorialSkipped = source["isTutorialSkipped"];
+	        this.isNew = source["isNew"];
+	        this.bindings = this.convertValues(source["bindings"], ModBinding);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class Profile {
 	    loginName: string;
 	    displayName: string;

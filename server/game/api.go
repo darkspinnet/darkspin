@@ -69,11 +69,13 @@ type API struct {
 	qosPort             uint16
 	logger              *log.Logger
 	resumeActivator     ResumeActivator
+	isModded            bool
 	broadcastMutex      sync.Mutex
 	broadcastRecipients map[string]struct{}
 }
 
 type APIOptions struct {
+	IsModded         bool
 	UserManager      UserManager
 	Template         *sporenet.TemplateDatabase
 	PartCatalog      *PartCatalog
@@ -98,6 +100,7 @@ func RegisterAPI(router *recaphttp.Router, options APIOptions) error {
 		storage: options.Storage, staticFileSystem: options.StaticFileSystem,
 		host: options.Host, httpPort: options.HTTPPort, qosPort: options.QoSPort, logger: logger,
 		resumeActivator:     options.ResumeActivator,
+		isModded:            options.IsModded,
 		partShopRules:       options.PartShopRules,
 		broadcastRecipients: make(map[string]struct{}),
 	}
@@ -350,7 +353,7 @@ func (a *API) game(writer http.ResponseWriter, request *http.Request, uri *recap
 	case "api.creature.getCreature":
 		a.creatureResponse(request.Context(), writer, user, values)
 	case "api.creature.getTemplate":
-		a.templateResponse(writer, values.Get("id"))
+		a.templateResponse(request.Context(), writer, user, values.Get("id"))
 	case "api.creature.unlockCreature":
 		templateID := values.Get("template_id")
 		if templateID == "" {
@@ -1210,7 +1213,7 @@ func (a *API) creatureResponse(ctx context.Context, writer http.ResponseWriter, 
 	writeXML(writer, http.StatusOK, xmlResponse(true, profileXML))
 }
 
-func (a *API) templateResponse(writer http.ResponseWriter, rawID string) {
+func (a *API) templateResponse(ctx context.Context, writer http.ResponseWriter, user *sporenet.User, rawID string) {
 	id, err := strconv.ParseUint(rawID, 0, 32)
 	if err != nil {
 		writeXML(writer, http.StatusOK, xmlResponse(false))
@@ -1224,6 +1227,11 @@ func (a *API) templateResponse(writer http.ResponseWriter, rawID string) {
 	creature := sporenet.NewCreature(template)
 	creature.ID = template.Noun
 	creature.Stats = append([]sporenet.Stat(nil), template.Stats...)
+	portrait := a.modPortraitCreature(ctx, user, template.Noun)
+	if portrait != nil {
+		creature.ThumbImageURL = portrait.ThumbImageURL
+		creature.LargeImageURL = portrait.LargeImageURL
+	}
 	imageURL := fmt.Sprintf("http://%s:%d/game/service/png?template_id=%d", a.host, a.httpPort, template.Noun)
 	profileXML := profileTemplateNode(creature, imageURL, a.partCatalog)
 	if a.logger != nil {
@@ -1271,6 +1279,9 @@ func (a *API) profileImage(writer http.ResponseWriter, request *http.Request, _ 
 	query := request.URL.Query()
 	templateID, err := strconv.ParseUint(query.Get("template_id"), 10, 32)
 	if err == nil && templateID > 0 {
+		if a.serveModPortrait(writer, request, uint32(templateID)) {
+			return
+		}
 		a.serveStaticFile(writer, request, fmt.Sprintf("template_png/%d_thumb.png", templateID))
 		return
 	}

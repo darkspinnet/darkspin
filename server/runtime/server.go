@@ -183,6 +183,8 @@ func CompleteTutorialProfile(
 
 // Options controls construction of a Server.
 type Options struct {
+	IsModded              bool
+	ModNames              []string
 	GamePath              string
 	ConfigPath            string
 	IsTimestampingEnabled bool
@@ -191,6 +193,9 @@ type Options struct {
 	BlazePrivateKeyPath   string
 	TracePath             string
 	RuntimePath           string
+	UserDatabasePath      string
+	ContentDatabasePath   string
+	StaticPath            string
 	HTTPRoutes            []HTTPRoute
 	workingDirectory      string
 }
@@ -463,6 +468,12 @@ func New(options Options) (*Server, error) {
 	traceDirectoryPath := filepath.Join(logPath, TraceDirectory)
 	userDatabasePath := filepath.Join(runtimePath, SaveDirectory, UserDatabaseFilename)
 	contentDatabasePath := filepath.Join(runtimePath, CacheDirectory, ContentDatabaseFilename)
+	if options.UserDatabasePath != "" {
+		userDatabasePath = options.UserDatabasePath
+	}
+	if options.ContentDatabasePath != "" {
+		contentDatabasePath = options.ContentDatabasePath
+	}
 	for index, directory := range []string{logPath, traceDirectoryPath, filepath.Dir(userDatabasePath), filepath.Dir(contentDatabasePath)} {
 		err = os.MkdirAll(directory, 0o755)
 		if err != nil {
@@ -678,6 +689,7 @@ func New(options Options) (*Server, error) {
 	chatService.UseEffectPreviewer(chatlocal.NewEffectPreviewer(gameManager))
 	chatService.UseResourceMutator(chatlocal.NewResourceMutator(gameManager))
 	chatService.UseEventTriggerer(chatlocal.NewEventTriggerer(gameManager))
+	chatService.UseEmoteRequester(chatlocal.NewModEmoteRequester(gameManager, options.IsModded))
 	chatService.UseFollowRequester(chatlocal.NewFollowRequester(gameManager))
 	chatService.UseItemSummoner(chatlocal.NewItemSummoner(userManager, gameManager))
 	chatService.UseLevelSetter(chatlocal.NewLevelSetter(userManager, gameManager))
@@ -758,7 +770,11 @@ func New(options Options) (*Server, error) {
 			}
 		}
 	}
-	webFileSystem := os.DirFS(filepath.Join(runtimePath, CacheDirectory, "www", "static"))
+	staticPath := options.StaticPath
+	if staticPath == "" {
+		staticPath = filepath.Join(runtimePath, CacheDirectory, "www", "static")
+	}
+	webFileSystem := os.DirFS(staticPath)
 	partCatalogContext, partCatalogCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	partCatalog, err := gamecontentsqlite.LoadPartCatalog(partCatalogContext, contentStore)
 	partCatalogCancel()
@@ -772,6 +788,7 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("resumeCoordinator: %w", err)
 	}
 	err = game.RegisterAPI(router, game.APIOptions{
+		IsModded:    options.IsModded,
 		UserManager: userManager, Template: templateDatabase, PartCatalog: partCatalog, Vendor: vendor,
 		PartShopRules:   serverRuleStore.shopRules,
 		ResumeActivator: resumeCoordinator,
@@ -862,7 +879,10 @@ func New(options Options) (*Server, error) {
 		gameplayJoin, userManager, simulationProgram, logger, campaignSetup, navigationSource,
 		zone.NewSchedulerTimer(taskScheduler), checkpointManager, serverRuleStore,
 	)
-	reportContext := reportContextProvider{gameplay: gameplayLifecycle, presence: presenceRegistry}
+	reportContext := reportContextProvider{
+		gameplay: gameplayLifecycle, presence: presenceRegistry,
+		isModded: options.IsModded, modNames: append([]string(nil), options.ModNames...),
+	}
 	chatService.UseBugContextProvider(reportContext)
 	chatService.UseHintProvider(gameplayLifecycle)
 	chatService.UseLocationProvider(gameplayLifecycle)

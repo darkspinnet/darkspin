@@ -1534,7 +1534,8 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 		if isArcWeldRequest {
 			plan, planErr = zoneability.PlanArcWeld(
 				peerSession.zone.NPCs(), command.Common.ObjectID, targetObjectID,
-				sourcePosition, creature, definition,
+				sourcePosition, peerSession.deployedCampaignActorFootprintRadius(),
+				creature, definition,
 			)
 		}
 		if isZetawattRequest {

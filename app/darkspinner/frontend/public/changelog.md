@@ -2,6 +2,37 @@
 
 ### 2026-10-22
 
+- Apply bound Mod creature sizing to final model transforms instead of animation rig inputs so cached and animated models use the same visual enlargement.
+
+- Reduce the automatic enlargement cap for Spore creatures bound to Mod heroes from 2x to 1.5x native visual size, preserving proportions without saving per-binding multipliers.
+- Expand Mod bindings from heroes to categorized character nouns, with automatic fitting from shared noun size data and imported rest bounds instead of saved per-binding scale multipliers.
+
+- Add `/emote` happy, laugh, scared, swoon, roar, backflip, flex and yawn for bound Spore creatures in Mod missions, with native animation playback and multiplayer presentation.
+- Route Mod creature-editor music from Spore's general sound groups through Darkspore's native music groups using a private in-memory event, retaining native playback handles and exit cleanup.
+- Extend bound Mod creatures' Spore voices to combat, reactions, idles and taunts using mouth-matched sound families and native animation cue timing.
+- Use bound Spore creature portraits in Mod squad and HUD image controls and template profiles while retaining Darkspore hero names.
+- Keep Mod Crogenitor details visible across tab switches and disable dependent actions while refreshing validation in the background.
+- Match the top-left Dark Spin logo to each tab's accent, including blue for Remote and purple for Detached alongside Mod's amber.
+- Add per-hero Mod size targets with uniform fitting to assembled rest bounds, preserving imported proportions and native presentation scales.
+- Play mouth-matched Spore vocalizations with bound Mod creatures' dance animations and stop their audio on movement, animation interruption or model replacement.
+- Expand editor part-scale limits for explicitly bound Mod creatures so imported proportions remain unchanged, while retaining missing-part, finite-scale and other native validation checks.
+- Load Spore audio banks for imported Mod creatures so native mouth and footstep selection can resolve their Spore sounds.
+- Initialize missing material settings on bound Mod creatures with Blitz's native material settings while preserving Spore paint and existing materials.
+- Keep edited Spore creatures bound to their Mod heroes after native editor saves, and retain their saved appearances across Mod relaunches instead of restoring the original import.
+- Widen the Mod Crogenitor binding editor, compact creature and hero selectors into one row, trim introductory copy, and replace binding editing with delete-and-recreate.
+- Use explicitly bound Spore creatures as their Mod appearance baselines, preserving native validation checks while allowing their bodies to differ from the stock hero template.
+- Remove Mod status messages beneath the Crogenitor selector to match the standard profile layout.
+- Stop Mod settings from automatically selecting and highlighting the Spore path when opened.
+- Identify modded launcher and in-game bug reports with Mod filename prefixes, explicit session metadata, versioned mod component names, and the isolated Mod server logs.
+- [#101](https://github.com/darkspinnet/darkspin/issues/101) Restore Shockwave's authored melee strike, hit radius and impact effect so casts can apply damage and start their cooldown.
+- [#101](https://github.com/darkspinnet/darkspin/issues/101) Correct Arc Weld's cast range to include both actors' footprints, restore its authored chain radius and allow hostile targets attacking other heroes.
+- [#101](https://github.com/darkspinnet/darkspin/issues/101) Remove Mutation Agent's duplicate model effect at object creation, leaving activation and rejoin to publish its authored persistent effects.
+- Replace converted Spore package snapshots with Mod-only Fang streams that translate DBBF indexes in memory and read original resource payloads on demand.
+- Give Mod a distinct amber primary color across its launcher view, creation wizard, settings, and dropdowns.
+- Change converted Spore package indexes from per-entry instance-high words to the shared zero word required by Darkspore, rebuilding cached mounts and retrying imported appearances.
+- Convert Spore DBBF caches to launcher-owned DBPF snapshots for Mod launches and refresh creature appearance revisions so rejected imports are requested again.
+- Change Mod from a persistent binding panel to the standard Crogenitor view, with bindings managed through Edit Crogenitor and the creation wizard.
+- Add experimental Mod Crogenitors with Spore discovery, creature and hero portraits, editable profile bindings, native resource loading attempts, and isolated mod.db launches.
 - [#100](https://github.com/darkspinnet/darkspin/issues/100) Expose all Mutation Agent horde settings in the launcher's Server Rules dialog, including validation, saving, reloading and GitHub feedback export.
 - [#100](https://github.com/darkspinnet/darkspin/issues/100) Keep horde followups alive through player disconnects, preserve their delay, and deliver Mutation Agent spawns before their effects and movement.
 - [#100](https://github.com/darkspinnet/darkspin/issues/100) Add server configuration for Mutation Agent horde eligibility, wave count, spawn wave, delay and encounter completion, applied to new missions.

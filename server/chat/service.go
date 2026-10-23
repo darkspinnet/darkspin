@@ -346,6 +346,7 @@ type Service struct {
 	previewer              EffectPreviewer
 	resourceMutator        ResourceMutator
 	eventTriggerer         EventTriggerer
+	emoteRequester         EmoteRequester
 	followRequester        FollowRequester
 	hintProvider           HintProvider
 	locationProvider       LocationProvider

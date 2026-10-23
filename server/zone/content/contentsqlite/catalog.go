@@ -2099,6 +2099,16 @@ func loadHeroKits(
 					"ShadowRavagerPhysicalVulnerabilityModifier",
 				)
 			}
+			if active.assetName == "EnergySentinelSupport" {
+				// Shockwave's melee arc also authors a stun modifier. The generic
+				// modifier discriminator sees that field before the inherited melee
+				// arc and leaves this strike without a radius or hit event.
+				definition.Kind = sim.AbilityKindMelee
+				if definition.HitArcLength != nil {
+					definition.Radius = *definition.HitArcLength
+				}
+				definition.HitEffectName = "cyber_cleave_hit.ServerEventDef"
+			}
 			definition = applyRecoveredAreaRadiusPolicy(definition)
 			definition = applyRecoveredAreaDurationPolicy(definition)
 			definitionsByAsset[active.assetName] = definition

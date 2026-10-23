@@ -14,7 +14,6 @@ import (
 )
 
 const (
-	campaignArcWeldLeapRadius     = float32(7)
 	campaignArcWeldMaximumChain   = 4
 	campaignArcWeldDamageIncrease = float32(0.25)
 	ArcWeldTimeBetweenChain       = 100 * time.Millisecond
@@ -29,13 +28,14 @@ var campaignArcWeldBeamEffectName = [...]string{
 
 func PlanArcWeld(
 	enemies *zonenpc.Session, sourceObjectID uint32, targetObjectID uint32,
-	sourcePosition game.Vec3, creature game.GameplayCreature, definition sim.AbilityDefinition,
+	sourcePosition game.Vec3, sourceFootprint float32,
+	creature game.GameplayCreature, definition sim.AbilityDefinition,
 ) (AreaPlan, error) {
 	if enemies == nil || sourceObjectID == 0 || targetObjectID == 0 || creature.Noun == 0 ||
 		definition.Name != "EnergySentinelActive" || definition.Kind != sim.AbilityKindMelee ||
 		definition.Range <= 0 || definition.AnimationName == "" || definition.HitEffectName == "" ||
 		definition.HitDelay < 0 || definition.ReleaseDelay < definition.HitDelay ||
-		!isFinitePosition(sourcePosition) {
+		!isFinitePosition(sourcePosition) || invalidNumber(sourceFootprint) || sourceFootprint < 0 {
 		return AreaPlan{}, errors.New("invalid Arc Weld ability")
 	}
 	projected, err := ProjectTiming(creature, definition)
@@ -53,11 +53,12 @@ func PlanArcWeld(
 		projected.Range, creature.RangeIncrease, projected.DescriptorMask,
 		projected.IsDescriptorFound,
 	)
-	primaryFootprintRadius := max(float32(0), primary.Plan.NPCProfile.FootprintRadius)
-	if !isPrimaryFound || primary.IsDefeated || primary.HitPoint <= 0 ||
-		primary.TargetObjectID != sourceObjectID ||
-		positionDistance(sourcePosition, primary.Plan.Position) >
-			admissionRange+primaryFootprintRadius {
+	if !isPrimaryFound || !IsHostileMeleeTarget(primary) {
+		return AreaPlan{}, errors.New("Arc Weld target unavailable or out of range")
+	}
+	primaryFootprintRadius := primary.Plan.ActorFootprintRadius()
+	if positionDistance(sourcePosition, primary.Plan.Position) >
+		admissionRange+sourceFootprint+primaryFootprintRadius {
 		return AreaPlan{}, errors.New("Arc Weld target unavailable or out of range")
 	}
 	target := []zonenpc.Snapshot{primary}
@@ -67,8 +68,8 @@ func PlanArcWeld(
 		candidate := make([]zonenpc.Snapshot, 0)
 		for _, enemy := range enemies.LiveSnapshots() {
 			if enemy.Plan.ObjectID == sourceObjectID || visited[enemy.Plan.ObjectID] ||
-				enemy.TargetObjectID != sourceObjectID ||
-				positionDistance(currentPosition, enemy.Plan.Position) > campaignArcWeldLeapRadius {
+				!IsHostileMeleeTarget(enemy) ||
+				positionDistance(currentPosition, enemy.Plan.Position) > projected.ChainLightning.LeapRadius {
 				continue
 			}
 			candidate = append(candidate, enemy)

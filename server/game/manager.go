@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/emote"
 	"github.com/darkspinnet/darkspin/server/sporenet"
 )
 
@@ -893,6 +894,8 @@ func (g *Instance) ConsumePlayerResourceCommand(id int64) (PlayerResourceCommand
 
 // RequestPlayerEventCommand appends one pending developer event for a joined player.
 func (g *Instance) RequestPlayerEventCommand(id int64, command PlayerEventCommand) bool {
+	_, isKnownEmote := emote.SporeState(command.Category)
+	isEmote := command.Name == "spore-emote" && isKnownEmote
 	isGoto := command.Name == "goto" && isFinitePlayerEventPosition(command.Position)
 	isFollow := command.Name == "follow" && command.TargetUserID != 0 &&
 		command.TargetUserID != uint64(id)
@@ -903,7 +906,7 @@ func (g *Instance) RequestPlayerEventCommand(id int64, command PlayerEventComman
 		command.Name != "boss-complete" && command.Name != "kill" &&
 		command.Name != "reset" && command.Name != "victory" &&
 		command.Name != "defeat" && command.Name != "recap" && !isGoto && !isFollow &&
-		command.Name != "ai" && !isDropCreate && !isSpawn {
+		command.Name != "ai" && !isDropCreate && !isSpawn && !isEmote {
 		return false
 	}
 	g.mu.Lock()
@@ -926,6 +929,9 @@ func (g *Instance) RequestPlayerEventCommand(id int64, command PlayerEventComman
 		if !isTargetFound {
 			return false
 		}
+	}
+	if isEmote && len(g.eventCommands[id]) != 0 {
+		return false
 	}
 	if g.eventCommands == nil {
 		g.eventCommands = make(map[int64][]PlayerEventCommand)

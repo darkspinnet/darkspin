@@ -14,6 +14,8 @@ type BugContextRequest struct {
 
 // BugContext is the transport-neutral live state captured at report time.
 type BugContext struct {
+	IsModded            bool           `json:"is_modded"`
+	ModNames            []string       `json:"mod_names,omitempty"`
 	CapturedAt          time.Time      `json:"captured_at"`
 	IsGameplayActive    bool           `json:"is_gameplay_active"`
 	UserID              int64          `json:"user_id"`

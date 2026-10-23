@@ -190,6 +190,13 @@ func newLauncherHandler(app *App) (http.Handler, string, error) {
 
 func launcherMethods(app *App) map[string]any {
 	return map[string]any{
+		"GetModConfiguration":          app.GetModConfiguration,
+		"SetModSporePath":              app.SetModSporePath,
+		"DetectModSporePath":           app.DetectModSporePath,
+		"BrowseModSporeDirectory":      app.BrowseModSporeDirectory,
+		"GetModPortrait":               app.GetModPortrait,
+		"SaveModProfile":               app.SaveModProfile,
+		"LaunchModProfile":             app.LaunchModProfile,
 		"Authorize":                    app.Authorize,
 		"Cancel":                       app.Cancel,
 		"CancelPatch":                  app.CancelPatch,

@@ -227,6 +227,7 @@ static void update_borderless(void* app) {
 static void FANG_THISCALL hooked_app_update(void* app, unsigned int elapsed) {
     update_borderless(app);
     original_app_update(app, elapsed);
+    fang_update_mod();
     update_taskbar_overlay();
     save_display_preferences();
     fang_update_display_ui();

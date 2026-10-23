@@ -8,6 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Progress } from '@/components/ui/progress'
 import LauncherDialog from '@/components/LauncherDialog.vue'
+import ModPage from '@/components/ModPage.vue'
+import ProfileSummary from '@/components/ProfileSummary.vue'
+import { campaignDetailFor, campaignLabelFor, campaignLevelFor, profileCreateDate, profileLastPlayedDate } from './profile'
 import ServerRulesConfiguration from '@/components/ServerRulesConfiguration.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { BrowserOpenURL, CancelPatch, ClipboardSetText, CompactSnapshots, CloseDetachedGameInstances, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RefreshRemoteProfiles, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetIdentity, SetServerConfiguration, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
@@ -38,6 +41,8 @@ const isProfileDeletionBusy = ref(false)
 const isRemoteDeletionBusy = ref(false)
 const remoteDeletionError = ref('')
 const activePage = ref('play')
+const modPage = ref(null)
+const isModPlayReady = ref(false)
 const remoteServers = ref([])
 const remoteProfiles = ref([])
 const remoteServerAddress = ref(localStorage.getItem('darkspinner.remoteServer') || '')
@@ -126,14 +131,6 @@ const hasAutoLaunchAttempted = ref(false)
 const autoLaunchCountdown = ref(0)
 const isGameLaunchedThisSession = ref(false)
 const activeClientRoute = ref('')
-const campaignPlanets = [
-  "Zelem's Nexus", "Zelem's Nexus", 'Nocturna', 'Nocturna',
-  'Verdanth', 'Verdanth', "Zelem's Nexus", "Zelem's Nexus",
-  'Cryos', 'Cryos', 'Verdanth', 'Verdanth',
-  'Infinity', 'Infinity', 'Cryos', 'Cryos',
-  'Nocturna', 'Nocturna', 'Infinity', 'Infinity',
-  'Scaldron', 'Scaldron', 'Scaldron', 'Scaldron',
-]
 let autoLaunchTimer = null
 let processStateTimer = null
 let preparationProgressTimer = null
@@ -266,7 +263,7 @@ const isHeaderPlayEnabled = computed(() => activePage.value === 'launcher'
       (isRemoteRegistration.value || (status.value.isPatchComplete && status.value.isGameReady))
   : !isActiveProfileRunning.value && isPlayEnabled.value && !isMissionChoiceBusy.value)
 const isActiveRouteRunning = computed(() => status.value.state === 'running' && activeClientRoute.value === activePage.value)
-const isAttachedKillVisible = computed(() => (activePage.value === 'play' || activePage.value === 'remote') && isActiveRouteRunning.value)
+const isAttachedKillVisible = computed(() => ['play', 'remote', 'mod'].includes(activePage.value) && isActiveRouteRunning.value)
 const isDetachedKillVisible = computed(() => activePage.value === 'launcher' && isDetachedClientDetected.value)
 const dockPlayLabel = computed(() => {
   if (isAutoLaunchCounting.value) return `PLAY IN ${autoLaunchCountdown.value} · CANCEL`
@@ -347,7 +344,6 @@ const isProfileCreationReady = computed(() =>
   installation.value.isLocalReady && status.value.isAvatarReady &&
   isNewProfileNameValid.value && profileAvatars.value.length > 0 && status.value.isProfileStoreReady)
 const selectedProfileRecord = computed(() => profiles.value.find(candidate => candidate.loginName === selectedProfile.value))
-const selectedProfileAvatar = computed(() => selectedProfileRecord.value?.avatarUrl || '')
 const readinessSummary = computed(() => {
   const failedSystem = statusRows.value.find(row => row.error)
   if (failedSystem) return { level:'error', label:`${failedSystem.label} failure`, message:failedSystem.error }
@@ -373,29 +369,12 @@ const footerStatus = computed(() => {
   if (summary.level !== 'ready') return summary
   return null
 })
-function campaignLevelFor(profile) {
-  if (!profile?.isTutorialCompleted) return 0
-  return Math.min(campaignPlanets.length, Math.max(1, profile.highestCampaignUnlocked || 1))
-}
 
-function profileCreateDate(profile) {
-  if (!profile?.createDt) return ''
-  const createDT = new Date(profile.createDt)
-  if (Number.isNaN(createDT.getTime())) return ''
-  return createDT.toISOString().slice(0, 10)
-}
 function profileLastConnectedDate(profile) {
   if (!profile?.lastConnectedDt) return ''
   const lastConnectedDT = new Date(profile.lastConnectedDt)
   if (Number.isNaN(lastConnectedDT.getTime())) return ''
   return lastConnectedDT.toISOString().slice(0, 10)
-}
-function profileLastPlayedDate(profile) {
-  const connectionDT = profile?.lastConnectionDt || profile?.lastConnectedDt
-  if (!connectionDT) return 'NEVER'
-  const lastPlayedDT = new Date(connectionDT)
-  if (Number.isNaN(lastPlayedDT.getTime())) return 'NEVER'
-  return lastPlayedDT.toISOString().slice(0, 10)
 }
 function markProfilePlayed(loginName) {
   const connectionDT = new Date().toISOString()
@@ -403,20 +382,6 @@ function markProfilePlayed(loginName) {
     profile.loginName === loginName ? { ...profile, lastConnectionDt:connectionDT } : profile,
   )
 }
-function campaignLabelFor(chainLevel) {
-  if (!chainLevel) return 'TUTORIAL'
-  const planet = Math.floor((chainLevel - 1) / 4) + 1
-  const mission = ((chainLevel - 1) % 4) + 1
-  return `${planet}-${mission}`
-}
-function campaignDetailFor(chainLevel) {
-  return chainLevel
-    ? campaignPlanets[chainLevel - 1]
-    : 'CRYOS TRAINING'
-}
-const selectedCampaignLevel = computed(() => campaignLevelFor(selectedProfileRecord.value))
-const selectedCampaignLabel = computed(() => campaignLabelFor(selectedCampaignLevel.value))
-const selectedCampaignDetail = computed(() => campaignDetailFor(selectedCampaignLevel.value))
 const detachedCampaignLevel = computed(() => campaignLevelFor(detachedProfileRecord.value))
 const detachedCampaignLabel = computed(() => campaignLabelFor(detachedCampaignLevel.value))
 const detachedCampaignDetail = computed(() => campaignDetailFor(detachedCampaignLevel.value))
@@ -1285,12 +1250,13 @@ async function copyLauncherFailure() {
 </script>
 
 <template>
-  <main class="spinner-shell" :class="{ onboarding:isInstallationRequired, management:activePage === 'launcher' || activePage === 'remote' || activePage === 'config', 'remote-accent':activePage === 'remote', 'detached-accent':activePage === 'launcher' }" @pointerdown.capture="handleLauncherInteraction" @keydown.capture="handleLauncherInteraction">
+  <main class="spinner-shell" :class="{ onboarding:isInstallationRequired, management:['launcher', 'remote', 'config', 'mod'].includes(activePage), 'remote-accent':activePage === 'remote', 'detached-accent':activePage === 'launcher', 'mod-accent':activePage === 'mod' }" @pointerdown.capture="handleLauncherInteraction" @keydown.capture="handleLauncherInteraction">
     <Tabs :model-value="activePage" @update:model-value="showPage" class="workspace" :class="{ 'navigation-hidden':isInstallationRequired }">
       <div v-if="!isInstallationRequired" class="workspace-navigation">
         <button class="workspace-wordmark" type="button" aria-label="Show Dark Spin credits" @click="isCreditsOpen = true"><span>DARK</span><strong>SPIN</strong></button>
         <TabsList aria-label="Launcher pages">
             <TabsTrigger value="play">Launch</TabsTrigger>
+            <TabsTrigger value="mod">Mod</TabsTrigger>
             <TabsTrigger v-if="isExperimentalLauncherFeatureVisible" value="remote">Remote</TabsTrigger>
             <TabsTrigger v-if="isExperimentalLauncherFeatureVisible" value="launcher">Detached</TabsTrigger>
             <TabsTrigger value="config">Config</TabsTrigger>
@@ -1472,22 +1438,7 @@ async function copyLauncherFailure() {
                   <Button variant="outline" class="identity-delete" type="button" :disabled="isBusy || !selectedProfileRecord" @click="requestDeleteProfile">DELETE</Button>
                 </div>
                 <div class="launch-profile-summary">
-                  <div v-if="selectedProfileRecord" class="profile-info-card" :aria-label="`${selectedProfileLabel} profile summary`">
-                    <time v-if="profileCreateDate(selectedProfileRecord)" class="profile-create-date" :datetime="selectedProfileRecord.createDt">{{ profileCreateDate(selectedProfileRecord) }}</time>
-                    <div class="selected-profile-avatar-frame">
-                      <div class="selected-profile-avatar" :class="{ empty:!selectedProfileAvatar }">
-                        <img v-if="selectedProfileAvatar" :src="selectedProfileAvatar" :alt="`${selectedProfileLabel} Crogenitor photo`">
-                      </div>
-                      <span class="profile-level-badge" :aria-label="`Crogenitor level ${selectedProfileRecord.crogenitorLevel}`">{{ selectedProfileRecord.crogenitorLevel }}</span>
-                    </div>
-                    <div class="profile-info-content">
-                      <div class="profile-info-heading"><small>LOCAL CROGENITOR</small><strong>{{ selectedProfileLabel }}</strong></div>
-                      <div class="profile-progress">
-                        <span><small>CROGENITOR</small><strong>{{ selectedProfileRecord.crogenitorLevel }}</strong><em>{{ selectedProfileRecord.cumulativeXp }} XP</em></span>
-                        <span><small>PROGRESS</small><strong>{{ selectedCampaignLabel }}</strong><em>{{ selectedCampaignDetail }}</em></span>
-                      </div>
-                    </div>
-                  </div>
+                  <ProfileSummary v-if="selectedProfileRecord" :profile="selectedProfileRecord" />
                 </div>
               </template>
             </div>
@@ -1496,7 +1447,7 @@ async function copyLauncherFailure() {
       </div>
     </section></TabsContent>
 
-    <TabsContent v-else value="launcher" as-child><section class="management-frame detached-frame">
+    <TabsContent v-else-if="activePage === 'launcher'" value="launcher" as-child><section class="management-frame detached-frame">
       <div class="management-grid detached-grid">
         <Card class="bay launcher-bay detached-card">
           <div class="launch-pane">
@@ -1539,6 +1490,7 @@ async function copyLauncherFailure() {
       </div>
     </section></TabsContent>
 
+    <TabsContent v-if="!isInstallationRequired" v-show="activePage === 'mod'" value="mod" force-mount as-child><ModPage ref="modPage" :status="status" :is-active="activePage === 'mod'" @readiness="isModPlayReady = $event" @launch="activeClientRoute = 'mod'" /></TabsContent>
     </Tabs>
 
     <footer :class="{ 'launch-footer':!isInstallationRequired }">
@@ -1569,7 +1521,7 @@ async function copyLauncherFailure() {
             <Button variant="destructive" v-if="isDetachedKillVisible" class="launcher-action detach-action kill-detached-action" type="button" :disabled="isClientStopBusy" title="Close every detached or untracked game client" @click="stopActiveClient">{{ isClientStopBusy ? 'CLOSING...' : 'KILL ALL' }}</Button>
 			<Button variant="destructive" v-else-if="isAttachedKillVisible" class="launcher-action detach-action kill-detached-action" type="button" :disabled="isClientStopBusy" title="Close the active game client" @click="stopActiveClient">{{ isClientStopBusy ? 'CLOSING...' : 'KILL' }}</Button>
             <Button variant="outline" v-else-if="activeInterruptedMission" class="launcher-action detach-action mission-fresh" type="button" :disabled="!isHeaderPlayEnabled || isMissionChoiceBusy" title="Discard the interrupted deployment and start fresh" @click="startFresh">{{ isMissionChoiceBusy ? 'STARTING...' : 'START FRESH' }}</Button>
-            <Button variant="default" class="launcher-action play-action" type="button" :class="{ counting:isAutoLaunchCounting }" :disabled="activePage === 'config' || (!isHeaderPlayEnabled && !isAutoLaunchCounting)" :title="dockPlayTitle" @click="handlePlayButton">{{ dockPlayLabel }}</Button>
+            <Button variant="default" class="launcher-action play-action" type="button" :class="{ counting:isAutoLaunchCounting }" :disabled="activePage === 'mod' ? !isModPlayReady : activePage === 'config' || (!isHeaderPlayEnabled && !isAutoLaunchCounting)" :title="activePage === 'mod' ? 'Launch the selected modded Crogenitor' : dockPlayTitle" @click="activePage === 'mod' ? modPage?.launch() : handlePlayButton()">{{ activePage === 'mod' ? 'LAUNCH MODDED' : dockPlayLabel }}</Button>
           </div>
         </div>
       </div>
@@ -1582,7 +1534,7 @@ async function copyLauncherFailure() {
 
     <ServerRulesConfiguration v-if="isServerRulesOpen && activePage === 'config'" :build-version="status.version" @interact="handleLauncherInteraction" @close="isServerRulesOpen = false" />
 
-    <LauncherDialog @interact="handleLauncherInteraction" v-if="isCreatingProfile && activePage !== 'remote' && activePage !== 'config'" :is-dismissible="!isFirstRunOnboarding && !isProfileCreationBusy" @close="cancelProfileCreation">
+    <LauncherDialog @interact="handleLauncherInteraction" v-if="isCreatingProfile && !['remote','config','mod'].includes(activePage)" :is-dismissible="!isFirstRunOnboarding && !isProfileCreationBusy" @close="cancelProfileCreation">
       <div class="notice-card onboarding-card profile-creation-notice">
         <p v-if="isFirstRunOnboarding" class="eyebrow">FIRST CONTACT</p>
         <DialogTitle as="h2">{{ isFirstRunOnboarding ? 'CREATE YOUR CROGENITOR' : 'ADD A CROGENITOR' }}</DialogTitle>

@@ -5918,6 +5918,9 @@ static int WSAAPI hooked_connect(SOCKET socket, const struct sockaddr* name, int
     int is_party_destination = 0;
     if (name != NULL && name_length >= (int)sizeof(struct sockaddr_in) && name->sa_family == AF_INET) {
         memcpy(&redirected, name, sizeof(redirected));
+        if (fang_redirect_mod_address(&redirected, redirect_port, redirect_party_port)) {
+            effective = (const struct sockaddr*)&redirected;
+        }
         if (redirected.sin_port == htons(80)) {
             redirected.sin_port = htons(redirect_port);
             redirect_ipv4(&redirected.sin_addr);
@@ -6067,10 +6070,18 @@ static int WSAAPI hooked_recv(SOCKET socket, char* buffer, int length, int flags
 
 static int WSAAPI hooked_sendto(SOCKET socket, const char* buffer, int length, int flags, const struct sockaddr* destination, int destination_length) {
     struct sockaddr_in redirected;
+    struct sockaddr_in mod_destination;
     const struct sockaddr* effective = destination;
     int wrapped_length = 0;
     char* wrapped = NULL;
     int result;
+    if (destination != NULL && destination_length >= (int)sizeof(mod_destination) && destination->sa_family == AF_INET) {
+        memcpy(&mod_destination, destination, sizeof(mod_destination));
+        if (fang_redirect_mod_address(&mod_destination, redirect_port, redirect_party_port)) {
+            destination = (const struct sockaddr*)&mod_destination;
+            effective = destination;
+        }
+    }
     if (is_ipv4_port(destination, destination_length, redirect_party_port)) {
         remember_party_socket(socket);
         memcpy(&redirected, destination, sizeof(redirected));

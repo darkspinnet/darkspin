@@ -65,6 +65,7 @@ type options struct {
 	clientResult              string
 	launchID                  string
 	clientProfile             string
+	modManifest               string
 	isIntroSkipped            bool
 	isCinematicSkipped        bool
 	isMultipleInstanceAllowed bool
@@ -236,6 +237,7 @@ func run(ctx context.Context, arguments []string) error {
 	flags.StringVar(&configuration.clientResult, "client-result", "", "write a PID-bound client failure result")
 	flags.StringVar(&configuration.launchID, "launch-id", "", "correlate one managed game process with its launcher")
 	flags.StringVar(&configuration.clientProfile, "client-profile", "", "bind a managed game process to a launcher profile")
+	flags.StringVar(&configuration.modManifest, "mod-manifest", "", "use an explicit experimental Spore resource manifest for this client")
 	flags.BoolVar(&configuration.isIntroSkipped, "skip-intro", false, "skip the EA and Maxis startup videos")
 	flags.BoolVar(&configuration.isCinematicSkipped, "skip-cinematic", false, "skip startup videos and the post-login transition cinematic")
 	flags.BoolVar(&configuration.isMultipleInstanceAllowed, "multiple-instances", false, "allow a detached client beside an existing game process")
@@ -375,6 +377,7 @@ func run(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("winePrefix: %w", err)
 	}
+	wineLaunch.modManifest = configuration.modManifest
 	err = launchInjected(
 		ctx, gamePath, installDirectory(gameWorkingDirectory), fangPath,
 		gameArguments, configuration.serverAddress, wineLaunch,

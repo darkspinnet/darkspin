@@ -16,6 +16,12 @@ import (
 // fields and would drop launcher keys.
 type launcherSettings struct {
 	Wine launcherWineSettings `toml:"wine"`
+	Mod  launcherModSettings  `toml:"mod"`
+}
+
+type launcherModSettings struct {
+	SporePath            string `toml:"spore_path"`
+	IsDetectionAttempted bool   `toml:"is_detection_attempted"`
 }
 
 type launcherWineSettings struct {

@@ -329,9 +329,18 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 		}
 		commandName, isCommand := messagingCommandName(body)
 		if isCommand {
-			responseBody := fmt.Sprintf("Unknown command %s. Available: /help, /taunt, /ss, /bug, /b, /ping, /hint, /loc, /stat, /follow, /ai, /effect, /summon, /level, /warp, /spawn, /drop, /dna, /damage, /heal, /power, /mana, /event, /goto, /kill, /reset, /recap, /victory, /defeat, /exit", commandName)
+			responseBody := fmt.Sprintf("Unknown command %s. Available: /help, /emote, /taunt, /ss, /bug, /b, /ping, /hint, /loc, /stat, /follow, /ai, /effect, /summon, /level, /warp, /spawn, /drop, /dna, /damage, /heal, /power, /mana, /event, /goto, /kill, /reset, /recap, /victory, /defeat, /exit", commandName)
 			if commandName == "/help" {
 				responseBody = darkspinChatHelp
+			}
+			if commandName == "/emote" {
+				responseBody, err = messagingEmote(ctx, messenger, chat.EmoteRequest{
+					Sender: chat.Participant{ID: user.Account.ID, Name: user.DisplayName},
+					GameID: user.CurrentGameID(), Name: commandRemainder(body),
+				})
+				if err != nil {
+					return nil, fmt.Errorf("commandEmote: %w", err)
+				}
 			}
 			if commandName == "/taunt" {
 				responseBody = "Unfortunately, /taunt was added in a newer Darkspore build than Darkspin supports, so taunt animations are unavailable."
@@ -1054,7 +1063,7 @@ const victorySyntax = "Syntax: /victory"
 
 const defeatSyntax = "Syntax: /defeat"
 
-const darkspinChatHelp = "Darkspin: /help | /taunt (availability info) | " + snapshotSyntax + " | /bug <what happened> | /b <what happened> | /ping | /hint | /loc | /stat | /follow [ally name] | /ai | /effect <exact-authored-name> [world] | " +
+const darkspinChatHelp = "Darkspin: /help | /emote (Mod only) | /taunt (availability info) | " + snapshotSyntax + " | /bug <what happened> | /b <what happened> | /ping | /hint | /loc | /stat | /follow [ally name] | /ai | /effect <exact-authored-name> [world] | " +
 	"/summon <rigid> <primary> <secondary> <suffix> | /level <1-100> | /warp [area] | /spawn <noun> | /scale <multiplier|reset> [radius] [noun filter] | /god (toggle invulnerability) | /drop create [weapon|hand|foot|offense|defense|utility] | /dna <amount> | " +
 	"/damage <amount> | /heal | /power [negative amount] | /mana [negative amount] | /event [1|security-next|2|boss-start|3|boss-complete] | /goto <x> <y> <z> | /kill | /reset | /recap | /victory | /defeat | /exit | " +
 	"Built-in: /tell <player> <message> | /party <message> | /game <message> | /lobby <message> | " +

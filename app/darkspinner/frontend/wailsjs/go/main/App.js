@@ -6,6 +6,10 @@ export function Authorize(arg1) {
   return window['go']['main']['App']['Authorize'](arg1);
 }
 
+export function BrowseModSporeDirectory(arg1) {
+  return window['go']['main']['App']['BrowseModSporeDirectory'](arg1);
+}
+
 export function Cancel() {
   return window['go']['main']['App']['Cancel']();
 }
@@ -46,6 +50,10 @@ export function DeleteRemoteProfile(arg1, arg2, arg3) {
   return window['go']['main']['App']['DeleteRemoteProfile'](arg1, arg2, arg3);
 }
 
+export function DetectModSporePath() {
+  return window['go']['main']['App']['DetectModSporePath']();
+}
+
 export function DiscardInterruptedMission(arg1) {
   return window['go']['main']['App']['DiscardInterruptedMission'](arg1);
 }
@@ -60,6 +68,14 @@ export function GetInterruptedMission(arg1) {
 
 export function GetLauncherIntegrationStatus() {
   return window['go']['main']['App']['GetLauncherIntegrationStatus']();
+}
+
+export function GetModConfiguration() {
+  return window['go']['main']['App']['GetModConfiguration']();
+}
+
+export function GetModPortrait(arg1) {
+  return window['go']['main']['App']['GetModPortrait'](arg1);
 }
 
 export function GetProfileAvatars() {
@@ -96,6 +112,10 @@ export function HasDetachedGameInstances() {
 
 export function IsProfileRunning(arg1) {
   return window['go']['main']['App']['IsProfileRunning'](arg1);
+}
+
+export function LaunchModProfile(arg1) {
+  return window['go']['main']['App']['LaunchModProfile'](arg1);
 }
 
 export function LaunchRemoteProfile(arg1, arg2, arg3, arg4) {
@@ -154,6 +174,10 @@ export function RestartLauncher() {
   return window['go']['main']['App']['RestartLauncher']();
 }
 
+export function SaveModProfile(arg1) {
+  return window['go']['main']['App']['SaveModProfile'](arg1);
+}
+
 export function ScanRemoteServers(arg1) {
   return window['go']['main']['App']['ScanRemoteServers'](arg1);
 }
@@ -168,6 +192,10 @@ export function SendReport(arg1) {
 
 export function SetIdentity(arg1) {
   return window['go']['main']['App']['SetIdentity'](arg1);
+}
+
+export function SetModSporePath(arg1) {
+  return window['go']['main']['App']['SetModSporePath'](arg1);
 }
 
 export function SetServerConfiguration(arg1, arg2, arg3, arg4) {

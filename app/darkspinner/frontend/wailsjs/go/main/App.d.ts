@@ -5,6 +5,8 @@ import {runtime} from '../models';
 
 export function Authorize(arg1:string):Promise<void>;
 
+export function BrowseModSporeDirectory(arg1:string):Promise<main.ModDirectory>;
+
 export function Cancel():Promise<void>;
 
 export function CancelPatch():Promise<void>;
@@ -25,6 +27,8 @@ export function DeleteProfile(arg1:string):Promise<void>;
 
 export function DeleteRemoteProfile(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function DetectModSporePath():Promise<string>;
+
 export function DiscardInterruptedMission(arg1:string):Promise<void>;
 
 export function GetInstallationStatus():Promise<main.InstallationStatus>;
@@ -32,6 +36,10 @@ export function GetInstallationStatus():Promise<main.InstallationStatus>;
 export function GetInterruptedMission(arg1:string):Promise<main.InterruptedMission>;
 
 export function GetLauncherIntegrationStatus():Promise<main.LauncherIntegrationStatus>;
+
+export function GetModConfiguration():Promise<main.ModConfiguration>;
+
+export function GetModPortrait(arg1:string):Promise<string>;
 
 export function GetProfileAvatars():Promise<Array<main.ProfileAvatar>>;
 
@@ -50,6 +58,8 @@ export function GetWineRunnerConfiguration():Promise<main.WineRunnerConfiguratio
 export function HasDetachedGameInstances():Promise<boolean>;
 
 export function IsProfileRunning(arg1:string):Promise<boolean>;
+
+export function LaunchModProfile(arg1:string):Promise<void>;
 
 export function LaunchRemoteProfile(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<void>;
 
@@ -79,6 +89,8 @@ export function RepairLauncherIntegration(arg1:string):Promise<main.LauncherInte
 
 export function RestartLauncher():Promise<void>;
 
+export function SaveModProfile(arg1:main.ModProfileRequest):Promise<void>;
+
 export function ScanRemoteServers(arg1:string):Promise<Array<main.RemoteServer>>;
 
 export function ScanWineRunners():Promise<main.WineRunnerConfiguration>;
@@ -86,6 +98,8 @@ export function ScanWineRunners():Promise<main.WineRunnerConfiguration>;
 export function SendReport(arg1:string):Promise<main.ReportResult>;
 
 export function SetIdentity(arg1:string):Promise<main.LauncherStatus>;
+
+export function SetModSporePath(arg1:string):Promise<void>;
 
 export function SetServerConfiguration(arg1:number,arg2:boolean,arg3:string,arg4:string):Promise<main.ServerConfiguration>;
 

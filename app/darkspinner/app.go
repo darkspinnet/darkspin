@@ -26,6 +26,9 @@ type App struct {
 	lifecycleCtx       context.Context
 	mu                 sync.Mutex
 	serverMu           sync.Mutex
+	modMu              sync.Mutex
+	modState           modState
+	reportSession      launcherReportSession
 	remoteRefreshMu    sync.Mutex
 	snapshotCompactMu  sync.Mutex
 	logMu              sync.Mutex
@@ -106,6 +109,7 @@ type LauncherStatus struct {
 func NewApp(arguments []string) *App {
 	identity := launchArgumentValue(arguments, "account")
 	return &App{
+		modState:     modState{userPath: initialSporeUserPath()},
 		arguments:    setBooleanLaunchArgument(arguments, "skip-cinematic", false),
 		authURL:      authServiceURL,
 		presentation: wailsPresentation{},
@@ -491,6 +495,7 @@ func (a *App) Play() error {
 }
 
 type gameLaunchRequest struct {
+	reportSession launcherReportSession
 	account       string
 	clientProfile string
 	serverAddress string
@@ -555,6 +560,7 @@ func (a *App) runGameLaunch(ctx context.Context, req gameLaunchRequest) {
 		"--client-profile", clientProfile, "--launch-id", launchID, "--client-result", resultPath,
 	}, arguments...)
 	a.log("Starting game")
+	a.recordReportSession(req, launchID)
 	launchDone := make(chan struct{})
 	detectionDone := make(chan struct{})
 	go a.detectGameLaunch(ctx, launchDone, detectionDone, a.gameDirectory(), launchID)

@@ -63,9 +63,9 @@
 .workspace-navigation { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; }
 .workspace-navigation [data-slot="tabs-list"] { justify-self: center; }
 .workspace-wordmark { display: flex; align-items: baseline; gap: 5px; justify-self: start; padding: 0; border: 0; background: transparent; font-family: inherit; font-size: 19px; letter-spacing: -.07em; white-space: nowrap; cursor: pointer; }
-.workspace-wordmark span { color: var(--primary); font-weight: 400; }
-.workspace-wordmark strong { color: var(--primary); font-weight: 750; }
-.workspace-wordmark:hover span, .workspace-wordmark:hover strong { color: var(--accent-foreground); }
+.workspace-wordmark span { color: var(--wordmark-color, var(--primary)); font-weight: 400; }
+.workspace-wordmark strong { color: var(--wordmark-color, var(--primary)); font-weight: 750; }
+.workspace-wordmark:hover span, .workspace-wordmark:hover strong { color: var(--wordmark-hover-color, var(--accent-foreground)); }
 .report-button { justify-self: end; font-size: 11px; padding-inline: 12px; }
 .command-frame, .management-frame, .onboarding-frame { flex: 1; min-height: 0; overflow: auto; }
 .launch-main, .detached-grid { width: 100%; height: 100%; margin-inline: auto; }
@@ -111,18 +111,30 @@
 .profile-progress strong, .profile-progress em { border-left: 1px solid var(--border); }
 .profile-progress strong { font-size: 16px; font-weight: 400; }
 .profile-progress em { padding-right: 0; font-size: 12px; font-style: normal; color: var(--muted-foreground); }
+.remote-accent .workspace-wordmark { --wordmark-color: #3b82f6; --wordmark-hover-color: #bfdbfe; }
 .remote-accent [data-slot="tabs-trigger"][data-state="active"] { border-color: #3b82f6; }
 .remote-accent .selected-profile-avatar { border-color: #3b82f6; box-shadow: 0 0 0 3px #1d4ed840; }
 .remote-accent .profile-level-badge { border-color: #60a5fa; }
 .remote-accent .profile-info-heading small { color: #60a5fa; }
 .remote-accent .play-action { border-color: #3b82f6; background: #1d4ed8; }
 .remote-accent .play-action:hover { background: #2563eb; }
+.detached-accent .workspace-wordmark { --wordmark-color: #8b5cf6; --wordmark-hover-color: #ddd6fe; }
 .detached-accent [data-slot="tabs-trigger"][data-state="active"] { border-color: #8b5cf6; }
 .detached-accent .selected-profile-avatar { border-color: #8b5cf6; box-shadow: 0 0 0 3px #6d28d940; }
 .detached-accent .profile-level-badge { border-color: #a78bfa; }
 .detached-accent .profile-info-heading small { color: #a78bfa; }
 .detached-accent .play-action { border-color: #8b5cf6; background: #6d28d9; }
 .detached-accent .play-action:hover { background: #7c3aed; }
+/* Keep portalled Mod dialogs and dropdowns on the same amber palette. */
+body:has(.mod-accent) {
+  --primary: #fbbf24;
+  --primary-foreground: #451a03;
+  --accent: #422a0b;
+  --accent-foreground: #fef3c7;
+  --ring: #fbbf24;
+}
+.mod-accent .selected-profile-avatar { border-color: var(--primary); box-shadow: 0 0 0 3px #fbbf2440; }
+.mod-accent .profile-level-badge { border-color: var(--primary); }
 .remote-command-frame { display: flex; flex-direction: column; gap: 12px; }
 .remote-command-frame .launch-main { min-height: 260px; flex: 1; }
 .remote-empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; }

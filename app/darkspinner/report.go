@@ -25,6 +25,8 @@ type reportManifest struct {
 	CreatedAt     string             `json:"created_at"`
 	Platform      string             `json:"platform"`
 	Title         string             `json:"title"`
+	Client        reportClient       `json:"client"`
+	ClientError   string             `json:"client_error,omitempty"`
 	State         reportState        `json:"state"`
 	Gameplay      chat.BugContext    `json:"gameplay"`
 	GameplayError string             `json:"gameplay_error,omitempty"`
@@ -152,6 +154,9 @@ func (a *App) createReportArchive(
 		"%s-%s-%s-%s.zip", reportSlug(title), reportSlug(level), Version,
 		createdAt.Format("20060102T150405.000000000Z"),
 	)
+	if manifest.Client.IsModded {
+		reportName = "mod-" + reportName
+	}
 	reportPath := filepath.Join(reportDirectory, reportName)
 	w, err := os.CreateTemp(reportDirectory, ".darkspin-report-*.zip")
 	if err != nil {
@@ -167,13 +172,20 @@ func (a *App) createReportArchive(
 
 	archive := zip.NewWriter(w)
 	records := make([]reportFileRecord, 0, 5)
-	err = addReportText(archive, title, manifest.Gameplay)
+	reportTitle := title
+	if manifest.Client.IsModded {
+		reportTitle = "[MODDED GAME]\nMods: " + strings.Join(manifest.Client.ModNames, ", ") + "\n" + title
+	}
+	err = addReportText(archive, reportTitle, manifest.Gameplay)
 	if err != nil {
 		_ = archive.Close()
 		_ = w.Close()
 		return "", nil, fmt.Errorf("reportText: %w", err)
 	}
 	sources, err := reportSources(logPath)
+	if err == nil && manifest.Client.IsModded {
+		sources, err = modReportSources(logPath, sources)
+	}
 	if err != nil {
 		_ = archive.Close()
 		_ = w.Close()
@@ -216,11 +228,20 @@ func (a *App) reportManifest(
 	createdAt time.Time, title string,
 	records []reportFileRecord,
 ) reportManifest {
+	session, sessionErr := a.readReportSession()
+	clientError := ""
+	if sessionErr != nil {
+		clientError = sessionErr.Error()
+	}
 	a.mu.Lock()
 	status := a.status
 	gameServer := a.serviceSet.gameServer
 	ctx := a.lifecycleCtx
 	a.mu.Unlock()
+	if session.client.IsModded {
+		gameServer = session.server
+		status.Identity = session.client.Profile
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -240,7 +261,10 @@ func (a *App) reportManifest(
 			gameplay.CapturedAt = createdAt
 		}
 	}
+	gameplay.IsModded = session.client.IsModded
+	gameplay.ModNames = append([]string(nil), session.client.ModNames...)
 	return reportManifest{
+		Client: session.client, ClientError: clientError,
 		Version: Version, CreatedAt: createdAt.Format(time.RFC3339), Platform: runtime.GOOS + "/" + runtime.GOARCH,
 		Title: title,
 		State: reportState{

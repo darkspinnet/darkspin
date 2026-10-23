@@ -18,6 +18,8 @@ void fang_trace_camera_state(void);
 void fang_set_display_window(HWND window);
 int fang_install_exception_trace(HANDLE trace, HMODULE executable);
 void fang_trace_arsenal_snapshot(HMODULE executable);
+void fang_update_mod(void);
+int fang_redirect_mod_address(struct sockaddr_in* address, unsigned short port, unsigned short party_port);
 
 __declspec(dllexport) DWORD WINAPI RecapInitializeThread(LPVOID parameter);
 

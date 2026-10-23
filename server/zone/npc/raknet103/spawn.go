@@ -263,12 +263,6 @@ func spawnWithAnimation(plan zonenpc.SpawnPlan, isRemnant bool, reflection rakne
 			ObjectID: plan.ObjectID,
 		})
 	}
-	if plan.NounName == zonenpc.MutationAgentNounName {
-		messages = append(messages, raknet.AttachedEffectMessage{
-			Slot: 17, IsForceAttached: true, ObjectID: plan.ObjectID,
-			Asset: util.HashID("effect_environment_mutant_agent_smoke_model.ServerEventDef"),
-		})
-	}
 	if zonenpc.IsGraviticStabilizer(plan) && !isRemnant {
 		messages = append(messages, raknet.AttachedEffectMessage{
 			Slot: 16, IsForceAttached: true,

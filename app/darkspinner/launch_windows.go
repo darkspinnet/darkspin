@@ -98,9 +98,9 @@ func (e *debugEventLoop) detach() error {
 
 func launchInjected(
 	ctx context.Context, gamePath, gameWorkingDirectory, fangPath string,
-	gameArguments []string, serverAddress string, _ wineLaunchEnvironment,
+	gameArguments []string, serverAddress string, wineLaunch wineLaunchEnvironment,
 ) (err error) {
-	process, err := startInjectedProcess(ctx, gamePath, gameWorkingDirectory, fangPath, gameArguments, serverAddress, nil)
+	process, err := startInjectedProcess(ctx, gamePath, gameWorkingDirectory, fangPath, gameArguments, serverAddress, nil, wineLaunch.modManifest)
 	if err != nil {
 		return fmt.Errorf("launchStart: %w", err)
 	}
@@ -139,7 +139,7 @@ type injectedLaunchObserver interface {
 
 func startInjectedProcess(
 	ctx context.Context, gamePath, gameWorkingDirectory, fangPath string,
-	gameArguments []string, serverAddress string, observer injectedLaunchObserver,
+	gameArguments []string, serverAddress string, observer injectedLaunchObserver, modManifests ...string,
 ) (ownedProcess *injectedProcess, err error) {
 	err = ctx.Err()
 	if err != nil {
@@ -156,7 +156,7 @@ func startInjectedProcess(
 	}
 	startup := windows.StartupInfo{Cb: uint32(unsafe.Sizeof(windows.StartupInfo{}))}
 	process := windows.ProcessInformation{}
-	environmentBlock := managedGameEnvironment(serverAddress)
+	environmentBlock := managedGameEnvironment(serverAddress, modManifests...)
 	creationFlags := uint32(windows.CREATE_DEFAULT_ERROR_MODE | windows.CREATE_SUSPENDED | windows.CREATE_UNICODE_ENVIRONMENT)
 	isWineDebugLaunch := os.Getenv("DARKSPIN_WINE_DEBUG_LAUNCH") == "1"
 	if isWineDebugLaunch {
@@ -212,19 +212,23 @@ func startInjectedProcess(
 	return ownedProcess, nil
 }
 
-func managedGameEnvironment(serverAddress string) []uint16 {
+func managedGameEnvironment(serverAddress string, modManifests ...string) []uint16 {
 	managedPrefix := managedLaunchEnvironment + "="
 	serverPrefix := serverAddressEnvironment + "="
 	environmentEntries := make([]string, 0, len(os.Environ())+2)
 	for _, entry := range os.Environ() {
 		upperEntry := strings.ToUpper(entry)
 		if strings.HasPrefix(upperEntry, strings.ToUpper(managedPrefix)) ||
-			strings.HasPrefix(upperEntry, strings.ToUpper(serverPrefix)) {
+			strings.HasPrefix(upperEntry, strings.ToUpper(serverPrefix)) ||
+			strings.HasPrefix(upperEntry, "DARKSPIN_MOD_MANIFEST=") {
 			continue
 		}
 		environmentEntries = append(environmentEntries, entry)
 	}
 	environmentEntries = append(environmentEntries, managedPrefix+"1")
+	if len(modManifests) == 1 && modManifests[0] != "" {
+		environmentEntries = append(environmentEntries, "DARKSPIN_MOD_MANIFEST="+modManifests[0])
+	}
 	if serverAddress != "" {
 		environmentEntries = append(environmentEntries, serverPrefix+serverAddress)
 	}
