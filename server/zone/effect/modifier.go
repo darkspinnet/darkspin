@@ -13,6 +13,7 @@ const (
 	nounModifierGeneration   = uint16(0xfffe)
 	nounAffixGenerationStart = nounModifierGeneration - game.MaxCampaignNPCAffixCount
 	nounSwiftGeneration      = nounAffixGenerationStart - 1
+	nounCaptainGeneration    = nounSwiftGeneration - 9
 )
 
 type modifierSlot struct {
@@ -52,7 +53,7 @@ func (p *ModifierPool) Allocate() (uint32, error) {
 	p.freeSlots = p.freeSlots[:last]
 	p.nextGeneration++
 	for p.nextGeneration == 0 ||
-		(p.nextGeneration >= nounSwiftGeneration && p.nextGeneration <= nounModifierGeneration) {
+		(p.nextGeneration >= nounCaptainGeneration && p.nextGeneration <= nounModifierGeneration) {
 		p.nextGeneration++
 	}
 	p.slot[slot] = modifierSlot{
@@ -65,6 +66,12 @@ func (p *ModifierPool) Allocate() (uint32, error) {
 // constructed with an NPC noun rather than allocated by an ability runtime.
 func NounModifierInstanceID(objectID uint32) uint32 {
 	return uint32(nounModifierGeneration)<<16 | uint32(uint16(objectID))
+}
+
+// NounCaptainModifierInstanceID remains stable when a captain is replayed to
+// a joining client and does not overlap elite, affix, aura, or pooled handles.
+func NounCaptainModifierInstanceID(objectID uint32) uint32 {
+	return uint32(nounCaptainGeneration)<<16 | uint32(uint16(objectID))
 }
 
 // NounSwiftModifierInstanceID is separate from permanent class affixes and

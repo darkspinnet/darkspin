@@ -197,6 +197,19 @@ func spawnWithAnimation(plan zonenpc.SpawnPlan, isRemnant bool, reflection rakne
 			NPCAffixAssetID: eliteAffixAssetID,
 		})
 	}
+	if plan.IsCaptain {
+		// The native CaptainCreate startup requests this permanent modifier.
+		// Replicate it directly so clients see the captain's live status on both
+		// initial spawn and rejoin; it has no NPC affix nameplate identity.
+		messages = append(messages, raknet.ModifierCreatedMessage{
+			TargetID:             plan.ObjectID,
+			ModifierGUID:         util.HashID(zonenpc.CaptainModifierName),
+			InstanceID:           zoneeffect.NounCaptainModifierInstanceID(plan.ObjectID),
+			StartMilliseconds:    permanentModifierStartMilliseconds,
+			DurationMilliseconds: uint32(zonenpc.EliteModifierDuration.Milliseconds()),
+			StackCount:           1,
+		})
+	}
 	// HUD_NPCBar reads live modifier instances, not ClassAttributes alone.
 	// Replicate each authored affix after object creation on spawn and rejoin.
 	for affixIndex, affixName := range plan.BossIdentity.AffixNames {

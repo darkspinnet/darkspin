@@ -11,6 +11,7 @@ import (
 
 const (
 	EliteModifierName     = "EliteModifier"
+	CaptainModifierName   = "CaptainModifier"
 	EliteModifierDuration = 1_000_000 * time.Second
 	eliteMinionNPCType    = uint32(0)
 	// Chunk 802's CaptainModifier adds 4 minus the lieutenant elite HP bonus.
