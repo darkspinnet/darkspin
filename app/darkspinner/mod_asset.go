@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/darkspinnet/darkspin/content/spore"
+	creationreader "github.com/darkspinnet/darkspin/content/creation"
 )
 
 var modCreationIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
@@ -64,7 +64,7 @@ func modCreationPath(paths *spinnerPathSet, id string) (string, error) {
 	return filepath.Join(modRuntimePath(paths), "cache", "creature", id), nil
 }
 
-func (a *App) findModCreation(paths *spinnerPathSet, id string) (spore.Creation, error) {
+func (a *App) findModCreation(paths *spinnerPathSet, id string) (creationreader.Creation, error) {
 	for _, creation := range a.modState.creations {
 		if creation.ID == id {
 			return creation, nil
@@ -72,18 +72,18 @@ func (a *App) findModCreation(paths *spinnerPathSet, id string) (spore.Creation,
 	}
 	settings, err := readLauncherSettings(paths.settingPath)
 	if err != nil {
-		return spore.Creation{}, fmt.Errorf("sourceSettings: %w", err)
+		return creationreader.Creation{}, fmt.Errorf("sourceSettings: %w", err)
 	}
 	creations, err := a.scanModCreations(settings.Mod.SporePath)
 	if err != nil {
-		return spore.Creation{}, fmt.Errorf("sourceScan: %w", err)
+		return creationreader.Creation{}, fmt.Errorf("sourceScan: %w", err)
 	}
 	for _, creation := range creations {
 		if creation.ID == id {
 			return creation, nil
 		}
 	}
-	return spore.Creation{}, errors.New("the creature no longer exists in the selected Spore source")
+	return creationreader.Creation{}, errors.New("the creature no longer exists in the selected Spore source")
 }
 
 func (a *App) cacheModCreation(paths *spinnerPathSet, id string) error {
@@ -99,10 +99,10 @@ func (a *App) cacheModCreation(paths *spinnerPathSet, id string) error {
 		resourceType, group uint32
 		suffix              string
 	}{
-		{0x2f7d0004, spore.CreatureGroup, ".png"},
-		{spore.CreatureType, spore.CreatureGroup, ".creaturedata"},
+		{0x2f7d0004, creationreader.CreatureGroup, ".png"},
+		{creationreader.CreatureType, creationreader.CreatureGroup, ".creaturedata"},
 	} {
-		payload, readErr := spore.Resource(creation, resource.resourceType, resource.group)
+		payload, readErr := creationreader.Resource(creation, resource.resourceType, resource.group)
 		if readErr != nil {
 			return fmt.Errorf("creationResource: %w", readErr)
 		}
@@ -115,7 +115,7 @@ func (a *App) cacheModCreation(paths *spinnerPathSet, id string) error {
 			return fmt.Errorf("creationWrite: %w", err)
 		}
 	}
-	large, err := spore.Resource(creation, 0x2f7d0004, 0x40626201)
+	large, err := creationreader.Resource(creation, 0x2f7d0004, 0x40626201)
 	if errors.Is(err, os.ErrNotExist) {
 		large, err = os.ReadFile(cachePath + ".png")
 	}
@@ -155,7 +155,7 @@ func (a *App) GetModPortrait(id string) (string, error) {
 		if findErr != nil {
 			return "", fmt.Errorf("portraitFind: %w", findErr)
 		}
-		payload, err = spore.Resource(creation, 0x2f7d0004, spore.CreatureGroup)
+		payload, err = creationreader.Resource(creation, 0x2f7d0004, creationreader.CreatureGroup)
 	}
 	if err != nil {
 		return "", fmt.Errorf("portraitRead: %w", err)

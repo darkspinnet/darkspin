@@ -167,6 +167,86 @@ static mod_fit* fit_binding(BYTE* rig) {
     return empty;
 }
 
+static int fit_rotate(const float* rotation, const float* position, float* output) {
+    float cross[3];
+    float second_cross[3];
+    unsigned int axis;
+    for (axis = 0; axis < 4; ++axis)
+        if (!isfinite(rotation[axis])) return 0;
+    for (axis = 0; axis < 3; ++axis)
+        if (!isfinite(position[axis])) return 0;
+    cross[0] = rotation[1] * position[2] - rotation[2] * position[1];
+    cross[1] = rotation[2] * position[0] - rotation[0] * position[2];
+    cross[2] = rotation[0] * position[1] - rotation[1] * position[0];
+    second_cross[0] = rotation[1] * cross[2] - rotation[2] * cross[1];
+    second_cross[1] = rotation[2] * cross[0] - rotation[0] * cross[2];
+    second_cross[2] = rotation[0] * cross[1] - rotation[1] * cross[0];
+    for (axis = 0; axis < 3; ++axis) {
+        output[axis] = position[axis] + 2.f * (rotation[3] * cross[axis] + second_cross[axis]);
+        if (!isfinite(output[axis])) return 0;
+    }
+    return 1;
+}
+
+static unsigned int fit_separate_parts(BYTE* rig, BYTE* root, float ratio) {
+    BYTE* presentation = *(BYTE**)(rig + 720);
+    uintptr_t begin;
+    uintptr_t end;
+    uintptr_t joints = *(uintptr_t*)(rig + 752);
+    uintptr_t joint_end = *(uintptr_t*)(rig + 756);
+    unsigned int index;
+    unsigned int fitted_count = 0;
+    float native_scale = *(float*)(rig + 112);
+    if (!readable_range(presentation, 44) || *(BYTE**)(presentation + 8) != root) return 0;
+    begin = *(uintptr_t*)(presentation + 36);
+    end = *(uintptr_t*)(presentation + 40);
+    if (end < begin || (end - begin) % 20 || (end - begin) / 20 > 1024 ||
+        !readable_range((void*)begin, end - begin) || joint_end < joints ||
+        (joint_end - joints) % 708 || (joint_end - joints) / 708 > 1024 ||
+        !readable_range((void*)joints, joint_end - joints)) return 0;
+    /* 977E00 owns separate world models for unmerged rigblocks. Fitting only
+     * its main model leaves eyes and other separate parts inside the enlarged
+     * skin. Rebuild the native attachment transform from the current joint and
+     * local offset, then fit it about the rig origin. Do not scale last frame's
+     * output: native presentation can reuse it while an idle pose is unchanged.
+     * This is the explicitly approved bound-creature fitting correction. */
+    for (index = 0; index < (joint_end - joints) / 708; ++index) {
+        BYTE* joint = (BYTE*)(joints + index * 708);
+        BYTE* part = *(BYTE**)joint;
+        BYTE* record;
+        BYTE* node;
+        uint32_t part_index;
+        float offset[3], local[3], position[3], scale;
+        unsigned int axis;
+        if (!readable_range(part, 900)) continue;
+        part_index = *(uint32_t*)(part + 504);
+        if (part_index >= (end - begin) / 20) continue;
+        record = (BYTE*)(begin + part_index * 20);
+        node = *(BYTE**)(record + 12);
+        if (node == root || !readable_range(node, 108) ||
+            !(*(uint32_t*)(node + 4) & 0x1000)) continue;
+        scale = *(float*)(part + 892) * native_scale * ratio;
+        if (!(scale > .0000152587890625f && isfinite(scale))) continue;
+        for (axis = 0; axis < 3; ++axis)
+            offset[axis] = *(float*)(record + 4 * axis) * native_scale;
+        if (!fit_rotate((float*)(joint + 28), offset, local)) continue;
+        for (axis = 0; axis < 3; ++axis)
+            local[axis] += *(float*)(joint + 16 + 4 * axis);
+        if (!fit_rotate((float*)(rig + 60), local, position)) continue;
+        for (axis = 0; axis < 3; ++axis) {
+            position[axis] = *(float*)(rig + 24 + 4 * axis) + position[axis] * ratio;
+            if (!isfinite(position[axis])) break;
+        }
+        if (axis != 3) continue;
+        memcpy(node + 12, position, sizeof(position));
+        *(float*)(node + 24) = scale;
+        *(WORD*)(node + 8) |= 4;
+        ++*(WORD*)(node + 10);
+        ++fitted_count;
+    }
+    return fitted_count;
+}
+
 /* Animated meshes normalize vertices by rig+112; cached/baked meshes do
  * not follow the same normalization. Fit the final graphics-model transform
  * after native presentation instead of changing the animation rig's scale.
@@ -179,6 +259,7 @@ static int __cdecl mod_fit_present(BYTE* animator, unsigned char mode, unsigned 
     mod_fit* fit;
     float native_scale;
     float fitted_scale;
+    unsigned int fitted_part_count;
     if (!readable_range(animator, 396)) return result;
     rig = *(BYTE**)(animator + 388);
     fit = fit_binding(rig);
@@ -192,6 +273,7 @@ static int __cdecl mod_fit_present(BYTE* animator, unsigned char mode, unsigned 
     if (!(fitted_scale > .0000152587890625f && isfinite(fitted_scale))) return result;
     *(float*)(node + 24) = fitted_scale;
     ++*(WORD*)(node + 10); /* Native graphics-transform generation counter. */
+    fitted_part_count = fit_separate_parts(rig, node, fit->ratio);
     if (!fit->is_traced && InterlockedIncrement(&fit_trace_count) <= 128) {
         uint32_t bits;
         fit->is_traced = 1;
@@ -200,6 +282,7 @@ static int __cdecl mod_fit_present(BYTE* animator, unsigned char mode, unsigned 
         memcpy(&bits, &fitted_scale, 4);
         trace_client_state("mod_fit_effective_scale_bits", bits);
         trace_client_state("mod_fit_render_path", *(void**)(rig + 720) != NULL);
+        trace_client_state("mod_fit_separate_part_count", fitted_part_count);
     }
     return result;
 }
@@ -243,5 +326,5 @@ void fang_mod_install_fit(BYTE* base, const wchar_t* manifest) {
         }
         return;
     }
-    trace_client_state("mod_fit_enabled", 3);
+    trace_client_state("mod_fit_enabled", 4);
 }

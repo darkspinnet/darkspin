@@ -2,6 +2,11 @@
 
 Never use .cache, instead put it in bin/cache/
 
+## One-off scripts
+
+- Never create `.py` files inside any versioned source directory. Keep one-off scripts under the unversioned `bin` tree, using `bin/game/logs` for reverse-engineering and diagnostic scripts and `bin/cache` for other temporary tooling.
+- Prefer Go for one-off processing when it is a good fit and can accomplish the task quickly. Do not introduce a production scripting dependency for a one-off operation.
+
 ## Generated diagnostics
 
 - Write game and IDA reverse-engineering output under `bin/game/logs`. Do not
@@ -60,6 +65,7 @@ Never use .cache, instead put it in bin/cache/
 
 ## Immutable game installation
 
+- Never bundle or embed game or third-party mod assets in Darkspin source, binaries, or release packages. This includes copied UI/layout definitions encoded as C byte arrays, images, models, audio, and assets from DarkInjector. Use Fang to reference the user's installed resources and adjust runtime instances, or derive private local cache data from that installation when necessary. Keep extracted reverse-engineering assets under diagnostics, outside release inputs.
 - Never modify, patch, replace, rebuild, delete, rename, or write into any
   shipped game binary or asset.
 - This prohibition includes executables, DLLs, DBPF/package files, property

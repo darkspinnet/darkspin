@@ -94,9 +94,11 @@ static int mod_mount(BYTE* base, void* manager, const wchar_t* path, int priorit
         !readable_range(manager_methods, 84)) return 0;
     ((mod_ref_fn)ref_methods[0])(reference);
     ((mod_initialize_fn)methods[1])(database);
-    ((mod_path_fn)methods[11])(database, index == 10 ? L"DarkspinModEditorScene.memory.package" :
+    ((mod_path_fn)methods[11])(database, index == 11 ? L"DarkspinModEditorEnvironment.memory.package" :
+        index == 10 ? L"DarkspinModEditorScene.memory.package" :
         payload ? L"DarkspinModEditorMusic.memory.package" : path);
-    if (index == 10 ? !fang_mod_attach_scene(database, path) :
+    if (index == 11 ? !fang_mod_attach_environment(database, path) :
+        index == 10 ? !fang_mod_attach_scene(database, path) :
         payload ? !fang_mod_attach_memory(database, path, payload, size) :
         fang_mod_attach_dbbf(database, path, index) < 0) {
         ((mod_ref_fn)ref_methods[1])(reference);
@@ -187,6 +189,8 @@ void fang_update_mod(void) {
             sizeof(path) / sizeof(wchar_t), mod_manifest) &&
             mod_mount(base, manager, path, -1990, 10, NULL, 0)) {
             trace_client_state("mod_editor_scene_package_mounted", 1);
+            trace_client_state("mod_editor_environment_package_mounted",
+                mod_mount(base, manager, path, -1989, 11, NULL, 0));
             fang_mod_install_scene(base);
         } else trace_client_state("mod_editor_scene_package_failed", 1);
     }

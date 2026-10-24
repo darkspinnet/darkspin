@@ -15,7 +15,7 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"github.com/darkspinnet/darkspin/content/spore"
+	creationreader "github.com/darkspinnet/darkspin/content/creation"
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/modprofile"
 	server "github.com/darkspinnet/darkspin/server/runtime"
@@ -260,7 +260,7 @@ func (a *App) prepareModAppearance(paths *spinnerPathSet, identity, serverAddres
 	}
 	isSceneAvailable := false
 	if settings.Mod.SporePath != "" || len(bindings) != 0 {
-		sourcePath, sourceErr := spore.Installation(settings.Mod.SporePath)
+		sourcePath, sourceErr := creationreader.Installation(settings.Mod.SporePath)
 		if sourceErr != nil && len(bindings) != 0 {
 			return "", fmt.Errorf("sourceValidate: %w", sourceErr)
 		}

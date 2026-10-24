@@ -1,4 +1,4 @@
-package spore
+package creation
 
 import (
 	"encoding/binary"
@@ -21,7 +21,7 @@ type creationPackage struct {
 }
 
 // DBBF stores 64-bit payload offsets and different header locations. Keep its
-// read-only adapter local to Spore; the game's DBPF writer remains unchanged.
+// read-only adapter separate from the game's DBPF writer.
 // Format reference: SporeModder-FX DatabasePackedFile and DBPFItem readers.
 func openCreationPackage(r io.ReaderAt, size int64) (*creationPackage, error) {
 	var header [96]byte
@@ -117,6 +117,14 @@ func readEntry(pkg *creationPackage, entry creationEntry) ([]byte, error) {
 	if entry.Size > 32<<20 || entry.StoredSize > 32<<20 {
 		return nil, errors.New("creation resource exceeds 32 MiB")
 	}
+	payload, err := readPackageResource(pkg, entry)
+	if err != nil {
+		return nil, fmt.Errorf("entryRead: %w", err)
+	}
+	return payload, nil
+}
+
+func readPackageResource(pkg *creationPackage, entry creationEntry) ([]byte, error) {
 	if entry.offset > pkg.size || uint64(entry.StoredSize) > pkg.size-entry.offset {
 		return nil, errors.New("creation resource exceeds package")
 	}

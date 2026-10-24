@@ -54,14 +54,14 @@ func resolvePackageOrdinal(entries []dbpf.Entry, selector string) (int, error) {
 	if selector == "" {
 		return -1, nil
 	}
-	ordinal, err := strconv.Atoi(selector)
+	cleanSelector := strings.TrimSuffix(filepath.Base(selector), filepath.Ext(selector))
+	ordinal, err := strconv.Atoi(cleanSelector)
 	if err == nil {
 		if ordinal < 0 || ordinal >= len(entries) {
 			return -1, fmt.Errorf("selectorRange: got %d, resources %d", ordinal, len(entries))
 		}
 		return ordinal, nil
 	}
-	cleanSelector := strings.TrimSuffix(filepath.Base(selector), filepath.Ext(selector))
 	for entryOrdinal, entry := range entries {
 		resourceName := strings.TrimSuffix(dbpf.ResourceName(entryOrdinal, entry), ".bin")
 		if strings.EqualFold(cleanSelector, resourceName) {

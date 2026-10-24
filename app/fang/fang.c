@@ -4212,6 +4212,10 @@ static char* find_darkspin_chat_command(const char* text, int* command) {
                 *command = 3;
                 return (char*)cursor;
             }
+            if (is_darkspin_chat_command(cursor, "/emote")) {
+                *command = 32;
+                return (char*)cursor;
+            }
             if (is_darkspin_chat_command(cursor, "/exit")) {
                 *command = 4;
                 return (char*)cursor;

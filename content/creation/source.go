@@ -1,5 +1,5 @@
-// Package spore reads creation resources from a local Spore installation.
-package spore
+// Package creation reads creature resources from installed source archives.
+package creation
 
 import (
 	"context"

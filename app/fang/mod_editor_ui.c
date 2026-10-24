@@ -51,16 +51,13 @@ static int is_body_requested;
 static HWND body_window;
 static WNDPROC body_window_proc;
 static RECT body_area;
+static RECT preview_area;
+static int is_preview_pressed;
+static unsigned int preview_status = UINT32_MAX;
 static int is_body_pressed;
 static unsigned int body_mode = UINT32_MAX;
-static editor_mode_fn editor_native_mode;
-static double body_width;
-static double body_height;
 static int is_body_selected;
-static RECT validation_area;
-static unsigned int validation_page;
-static unsigned int validation_pages;
-static UINT validation_press;
+static editor_mode_fn editor_native_mode;
 static BYTE scene_context[72];
 static unsigned int scene_generation;
 static unsigned int scene_target;
@@ -69,6 +66,12 @@ static int is_scene_requested;
 static char scene_name[64];
 
 static void __cdecl editor_body_toggle(BYTE* context);
+static void __cdecl editor_preview_toggle(BYTE* context);
+
+int fang_mod_editor_is_body(BYTE* editor) {
+    return is_body_selected && editor && editor == body_owner &&
+        editor == fang_mod_editor_active() && *(unsigned int*)(editor + 856) == 0;
+}
 
 /* EditorUI::SetMode changes palettes and editor state, while the ordinary
  * radio buttons update their own selection through their click dispatcher.
@@ -78,12 +81,13 @@ static void editor_body_select_tabs(BYTE* editor, BYTE* ui) {
     static const uint32_t ids[] = {0xf019c2e7, 0xf019c2f3, 0x70218642, 0x0aa07258};
     unsigned int mode = *(unsigned int*)(editor + 856);
     unsigned int index;
-    if (body_mode == mode) return;
+    unsigned int selection = mode | (fang_mod_editor_is_body(editor) ? 0x80000000u : 0);
+    if (body_mode == selection) return;
     for (index = 0; index < sizeof(ids) / sizeof(ids[0]); ++index) {
         BYTE* tab = ((editor_find_window_fn)(*(void***)ui)[18])(ui, ids[index]);
         BYTE* button;
-        int is_selected = (index == 0 && mode == 3) ||
-            (index == 1 && (mode == 1 || mode == 4)) || (index == 2 && mode == 2) ||
+        int is_selected = (index == 0 && mode == 0 && !fang_mod_editor_is_body(editor)) ||
+            (index == 1 && mode == 1) || (index == 2 && mode == 2) ||
             (index == 3 && mode == 3);
         if (!readable_range(tab, 4) || !readable_range(*(void**)tab, 152)) continue;
         button = ((editor_button_fn)(*(void***)tab)[3])(tab, 0x8ed27e7a);
@@ -91,16 +95,19 @@ static void editor_body_select_tabs(BYTE* editor, BYTE* ui) {
         ((editor_button_flag_fn)(*(void***)button)[10])(button, 4, is_selected);
         ((editor_repaint_fn)(*(void***)tab)[37])(tab);
     }
-    body_mode = mode;
+    body_mode = selection;
     trace_client_state("mod_editor_tab_selection", mode);
 }
 
 static void FANG_THISCALL editor_body_native_mode(BYTE* ui, unsigned int mode) {
     BYTE* editor = fang_mod_editor_active();
-    /* The shipped equipment tab also requests the general creator's mode 0.
-     * Give it the retained equipment mode 3 for this explicit editor instance;
-     * only our Body entry calls the native routine with Build mode 0. */
-    if (editor && *(BYTE**)(editor + 128) == ui && mode == 0) mode = 3;
+    /* Equip and Body both use the native Build mode. Keep the native mode
+     * for equipment picking and placement; only our explicit Body action
+     * selects the private catalogue and general creature manipulators. */
+    if (editor && *(BYTE**)(editor + 128) == ui) {
+        is_body_selected = 0;
+        fang_mod_palette_suspend(editor);
+    }
     editor_native_mode(ui, mode);
     if (editor && *(BYTE**)(editor + 128) == ui) fang_mod_editor_update_body();
 }
@@ -110,21 +117,18 @@ static void FANG_THISCALL editor_body_native_mode(BYTE* ui, unsigned int mode) {
  * through its owning game window, on the native UI thread. */
 static LRESULT CALLBACK editor_body_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     POINT point = {(short)LOWORD(lparam), (short)HIWORD(lparam)};
+    if (fang_mod_editor_preview_input(window, message, wparam, lparam)) return 0;
+    if (message == WM_MOUSEWHEEL && fang_mod_editor_validation_scroll(window, wparam, lparam)) return 0;
     if (is_body_requested && body_context[56] && fang_mod_editor_active() == body_owner) {
-        if ((message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN) &&
-            PtInRect(&validation_area, point)) {
-            validation_press = message;
+        if (message == WM_LBUTTONDOWN && PtInRect(&preview_area, point)) {
+            is_preview_pressed = 1;
             SetCapture(window);
             return 0;
         }
-        if (validation_press && ((message == WM_LBUTTONUP && validation_press == WM_LBUTTONDOWN) ||
-            (message == WM_RBUTTONUP && validation_press == WM_RBUTTONDOWN))) {
-            validation_press = 0;
+        if (message == WM_LBUTTONUP && is_preview_pressed) {
+            is_preview_pressed = 0;
             if (GetCapture() == window) ReleaseCapture();
-            if (!PtInRect(&validation_area, point)) return 0;
-            if (message == WM_LBUTTONUP && validation_pages)
-                validation_page = (validation_page + 1) % validation_pages;
-            if (message == WM_RBUTTONUP) fang_mod_editor_clear_validation();
+            if (PtInRect(&preview_area, point)) editor_preview_toggle(body_context);
             return 0;
         }
         if (message == WM_LBUTTONDOWN && PtInRect(&body_area, point)) {
@@ -141,15 +145,13 @@ static LRESULT CALLBACK editor_body_window_proc(HWND window, UINT message, WPARA
     }
     if (message == WM_CAPTURECHANGED || message == WM_KILLFOCUS) {
         is_body_pressed = 0;
-        validation_press = 0;
     }
     return CallWindowProcW(body_window_proc, window, message, wparam, lparam);
 }
 
 static void editor_body_detach_input(void) {
-    if ((is_body_pressed || validation_press) && GetCapture() == body_window) ReleaseCapture();
+    if (is_body_pressed && GetCapture() == body_window) ReleaseCapture();
     is_body_pressed = 0;
-    validation_press = 0;
     if (body_window && (WNDPROC)GetWindowLongPtrW(body_window, GWLP_WNDPROC) == editor_body_window_proc) {
         SetLastError(0);
         if (!SetWindowLongPtrW(body_window, GWLP_WNDPROC, (LONG_PTR)body_window_proc) && GetLastError()) {
@@ -193,7 +195,7 @@ static int editor_body_place(BYTE* ui) {
     if (!((editor_point_fn)(*(void***)tab)[48])(tab, origin, 0, 0)) return 0;
     /* RealArea is relative to its parent; the native conversion includes the
      * dock's parent origin and layout transforms. Match the Equip tab exactly. */
-    body_area.left = (LONG)origin[0] - (fang_mod_editor_is_scene(fang_mod_editor_active()) ? 0 : width + 2);
+    body_area.left = (LONG)origin[0] - width - 2;
     body_area.top = (LONG)origin[1];
     body_area.right = body_area.left + width;
     body_area.bottom = body_area.top + height;
@@ -436,13 +438,35 @@ static void __cdecl editor_body_toggle(BYTE* context) {
     ui = *(BYTE**)(editor + 128);
     if (!readable_range(ui, 159) || !ui[157] || ui[158]) return;
     mode = 0;
+    is_body_selected = 1;
     /* EditorUI::SetMode owns both the palette visibility and the editor's
      * native before/after transitions; never set editor+856 directly. */
+    fang_mod_palette_suspend(editor);
     editor_native_mode(ui, mode);
     fang_mod_editor_update_body();
     editor_body_select_tabs(editor, ui);
     trace_client_state("mod_editor_body_mode", *(unsigned int*)(editor + 856));
     trace_client_state("mod_editor_body_ui_mode", *(unsigned int*)(ui + 92));
+}
+
+static void __cdecl editor_preview_toggle(BYTE* context) {
+    BYTE* editor = fang_mod_editor_active();
+    BYTE* ui;
+    unsigned int mode;
+    if (context != body_context || editor != body_owner || !fang_mod_editor_is_scene(editor)) return;
+    ui = *(BYTE**)(editor + 128);
+    if (!readable_range(ui, 159) || !ui[157] || ui[158]) return;
+    mode = *(unsigned int*)(editor + 856) == 2 ? 0 : 2;
+    if (mode == 2 && !fang_mod_editor_preview_ready(editor)) {
+        trace_client_state("mod_editor_preview_not_ready", 1);
+        return;
+    }
+    is_body_selected = mode == 0;
+    fang_mod_palette_suspend(editor);
+    editor_native_mode(ui, mode);
+    fang_mod_editor_update_body();
+    editor_body_select_tabs(editor, ui);
+    trace_client_state("mod_editor_preview_mode", *(unsigned int*)(editor + 856));
 }
 
 static void __cdecl editor_body_loaded(void* owner, unsigned int unused, editor_value* movies) {
@@ -468,10 +492,13 @@ static void __cdecl editor_body_loaded(void* owner, unsigned int unused, editor_
 void fang_mod_editor_close_body_ui(void) {
     BYTE* manager;
     char callback[80];
+    is_body_selected = 0;
     fang_mod_editor_clear_validation();
-    SetRectEmpty(&validation_area);
-    validation_page = 0;
-    validation_pages = 0;
+    fang_mod_editor_preview_controls_leave();
+    fang_mod_editor_tab_leave();
+    SetRectEmpty(&preview_area);
+    is_preview_pressed = 0;
+    preview_status = UINT32_MAX;
     if (!is_body_requested) return;
     editor_body_detach_input();
     is_body_requested = 0;
@@ -486,143 +513,6 @@ void fang_mod_editor_close_body_ui(void) {
     editor_release((editor_value*)(body_context + 40));
     memset(body_context, 0, sizeof(body_context));
     body_owner = NULL;
-    body_width = 0;
-    body_height = 0;
-}
-
-static void editor_draw_wrench(editor_value* button) {
-    static const double points[][2] = {
-        {1, 0}, {7, 5}, {12, 0}, {14, 7}, {10, 12}, {5, 13},
-        {-7, 26}, {-12, 26}, {-15, 22}, {-13, 18}, {-2, 7}, {-2, 3}
-    };
-    editor_value icon = {0};
-    editor_value arguments[2];
-    unsigned int index;
-    if (editor_get(button, "fangWrench", &icon) && (icon.type & 0x8f) >= 6) goto done;
-    editor_release(&icon);
-    memset(&icon, 0, sizeof(icon));
-    arguments[0] = editor_string("fangWrench");
-    arguments[1] = editor_number(18002);
-    editor_invoke(button, "createEmptyMovieClip", NULL, arguments, 2);
-    if (!editor_get(button, "fangWrench", &icon)) goto done;
-    editor_set(&icon, "_x", editor_number(36));
-    editor_set(&icon, "_y", editor_number(7));
-    arguments[0] = editor_number(0xffffff);
-    arguments[1] = editor_number(100);
-    editor_invoke(&icon, "beginFill", NULL, arguments, 2);
-    for (index = 0; index < sizeof(points) / sizeof(points[0]); ++index) {
-        arguments[0] = editor_number(points[index][0]);
-        arguments[1] = editor_number(points[index][1]);
-        editor_invoke(&icon, index ? "lineTo" : "moveTo", NULL, arguments, 2);
-    }
-    editor_invoke(&icon, "endFill", NULL, NULL, 0);
-done:
-    editor_release(&icon);
-}
-
-static int editor_body_draw(editor_value* root, editor_value* button,
-    double width, double height, int is_selected) {
-    editor_value arguments[3];
-    editor_value icon = {0};
-    double points[7][2] = {
-        {1, 9}, {9, 1}, {width - 9, 1}, {width - 1, 9},
-        {width - 1, height - 1}, {1, height - 1}, {1, 9}
-    };
-    unsigned int index;
-    if (!editor_get(root, "fangBodyTab", button) || (button->type & 0x8f) < 6) {
-        editor_release(button);
-        memset(button, 0, sizeof(*button));
-        arguments[0] = editor_string("fangBodyTab");
-        arguments[1] = editor_number(18000);
-        editor_invoke(root, "createEmptyMovieClip", NULL, arguments, 2);
-        if (!editor_get(root, "fangBodyTab", button) || (button->type & 0x8f) < 6) return 0;
-    }
-    if (body_width == width && body_height == height && is_body_selected == is_selected) return 1;
-    /* Draw in the tab's final coordinate space. Scaling the menu skin's
-     * aggregate bounds also scales its authored offset and newly added icon;
-     * repeating that each frame made the background collapse into a strip. */
-    editor_invoke(button, "clear", NULL, NULL, 0);
-    arguments[0] = editor_number(1);
-    arguments[1] = editor_number(is_selected ? 0xd9f4ff : 0x82939c);
-    arguments[2] = editor_number(100);
-    editor_invoke(button, "lineStyle", NULL, arguments, 3);
-    arguments[0] = editor_number(is_selected ? 0x365767 : 0x202b32);
-    arguments[1] = editor_number(100);
-    editor_invoke(button, "beginFill", NULL, arguments, 2);
-    for (index = 0; index < sizeof(points) / sizeof(points[0]); ++index) {
-        arguments[0] = editor_number(points[index][0]);
-        arguments[1] = editor_number(points[index][1]);
-        editor_invoke(button, index ? "lineTo" : "moveTo", NULL, arguments, 2);
-    }
-    editor_invoke(button, "endFill", NULL, NULL, 0);
-    editor_draw_wrench(button);
-    if (editor_get(button, "fangWrench", &icon)) {
-        /* The icon's local bounds are [-15, 14] by [0, 26]. */
-        editor_set(&icon, "_xscale", editor_number(75));
-        editor_set(&icon, "_yscale", editor_number(75));
-        editor_set(&icon, "_x", editor_number(width / 2 + 0.375));
-        editor_set(&icon, "_y", editor_number((height - 19.5) / 2));
-    }
-    editor_release(&icon);
-    body_width = width;
-    body_height = height;
-    is_body_selected = is_selected;
-    trace_client_state("mod_editor_body_layout", 2);
-    return 1;
-}
-
-static void editor_validation_draw(editor_value* root) {
-    editor_value field = {0};
-    editor_value arguments[6];
-    const char* text = fang_mod_editor_validation_text(validation_page, &validation_pages);
-    RECT client;
-    LONG width;
-    LONG x;
-    LONG y;
-    SetRectEmpty(&validation_area);
-    if (!text) {
-        validation_page = 0;
-        if (editor_get(root, "fangValidation", &field))
-            editor_set(&field, "_visible", editor_boolean(0));
-        goto done;
-    }
-    if (!body_window || !GetClientRect(body_window, &client)) goto done;
-    width = client.right - client.left - 24;
-    if (width > 520) width = 520;
-    if (width < 160) goto done;
-    x = body_area.left;
-    if (x + width > client.right - 12) x = client.right - width - 12;
-    if (x < 12) x = 12;
-    y = body_area.top - 240;
-    if (y < 12) y = 12;
-    if (!editor_get(root, "fangValidation", &field) || (field.type & 0x8f) < 6) {
-        editor_release(&field);
-        memset(&field, 0, sizeof(field));
-        arguments[0] = editor_string("fangValidation");
-        arguments[1] = editor_number(101);
-        arguments[2] = editor_number(0);
-        arguments[3] = editor_number(0);
-        arguments[4] = editor_number(width);
-        arguments[5] = editor_number(228);
-        if (!editor_invoke(root, "createTextField", NULL, arguments, 6) ||
-            !editor_get(root, "fangValidation", &field) || (field.type & 0x8f) < 6) goto done;
-        editor_set(&field, "multiline", editor_boolean(1));
-        editor_set(&field, "wordWrap", editor_boolean(1));
-        editor_set(&field, "selectable", editor_boolean(0));
-        editor_set(&field, "background", editor_boolean(1));
-        editor_set(&field, "backgroundColor", editor_number(0x101820));
-        editor_set(&field, "border", editor_boolean(1));
-        editor_set(&field, "borderColor", editor_number(0xe2b34a));
-        editor_set(&field, "textColor", editor_number(0xffffff));
-    }
-    editor_set(&field, "text", editor_string(text));
-    editor_set(&field, "_width", editor_number(width));
-    editor_set(&field, "_x", editor_number(x - body_area.left));
-    editor_set(&field, "_y", editor_number(y - body_area.top));
-    editor_set(&field, "_visible", editor_boolean(1));
-    SetRect(&validation_area, x, y, x + width, y + 228);
-done:
-    editor_release(&field);
 }
 
 static void editor_scene_hide_window(BYTE* window) {
@@ -634,13 +524,86 @@ static void editor_scene_hide_window(BYTE* window) {
 }
 
 static void editor_scene_present(BYTE* editor, BYTE* ui) {
-    BYTE* equipment_tab;
     if (!fang_mod_editor_is_scene(editor)) return;
     if (!readable_range(ui, 312)) return;
-    editor_scene_hide_window(*(BYTE**)(ui + 300)); /* Equipment layout root. */
+    /* The imported environment shares the player editor's native tabs.
+     * SetMode owns equipment/detail visibility; hiding their layout here
+     * every frame overrides that transition and leaves empty panels. */
     editor_scene_hide_window(*(BYTE**)(ui + 308)); /* Hero combat-stat panel. */
-    equipment_tab = ((editor_find_window_fn)(*(void***)ui)[18])(ui, 0xf019c2e7);
-    editor_scene_hide_window(equipment_tab);
+}
+
+static void editor_preview_label(editor_value* button, const char* label, LONG width, LONG height) {
+    editor_value text = {0};
+    editor_value format = {0};
+    editor_value argument;
+    editor_set(button, "_label", editor_string(label));
+    editor_set(button, "label", editor_string(label));
+    if (!editor_get(button, "textField", &text)) goto done;
+    /* btnContextMenu resizes its frame without widening the authored label
+     * field. Give this separate preview control an explicit single-line box
+     * and retain its installed font while increasing the text size. */
+    editor_set(&text, "autoSize", editor_string("none"));
+    editor_set(&text, "wordWrap", editor_boolean(0));
+    editor_set(&text, "multiline", editor_boolean(0));
+    editor_set(&text, "_xscale", editor_number(100));
+    editor_set(&text, "_yscale", editor_number(100));
+    editor_set(&text, "_x", editor_number(8));
+    editor_set(&text, "_y", editor_number(2));
+    editor_set(&text, "_width", editor_number(width - 16));
+    editor_set(&text, "_height", editor_number(height - 4));
+    editor_set(&text, "text", editor_string(label));
+    if (!editor_invoke(&text, "getTextFormat", &format, NULL, 0)) goto done;
+    editor_set(&format, "size", editor_number(18));
+    editor_set(&format, "align", editor_string("center"));
+    argument = format;
+    editor_invoke(&text, "setNewTextFormat", NULL, &argument, 1);
+    editor_invoke(&text, "setTextFormat", NULL, &argument, 1);
+done:
+    editor_release(&format);
+    editor_release(&text);
+}
+
+static void editor_preview_draw(editor_value* root, BYTE* editor, BYTE* ui) {
+    editor_value button = {0};
+    editor_value ready = {0};
+    RECT client;
+    LONG width = 224;
+    LONG height = 34;
+    LONG x;
+    LONG y = body_area.top - height - 8;
+    int is_test = *(unsigned int*)(editor + 856) == 2;
+    int is_ready = is_test || fang_mod_editor_preview_ready(editor);
+    unsigned int status;
+    const char* label = is_test ? "RETURN TO BODY" : is_ready ? "TEST CREATURE" : "PREPARING PREVIEW";
+    SetRectEmpty(&preview_area);
+    if (!fang_mod_editor_is_scene(editor) || !body_window ||
+        !GetClientRect(body_window, &client)) goto done;
+    status = (is_ready ? 1u : 0u) | (editor[941] ? 2u : 0u) |
+        (editor[813] ? 4u : 0u) | (*(void**)(editor + 908) ? 8u : 0u);
+    if (status != preview_status) {
+        preview_status = status;
+        trace_client_state("mod_editor_preview_status", status);
+    }
+    /* Above the right edge of the mode dock, clear of native undo/redo and
+     * the rotation control below. Coordinates follow the real native tab. */
+    x = body_area.right + 2 * (body_area.right - body_area.left) + 12;
+    if (x + width > client.right - 12) x = client.right - width - 12;
+    if (x < 12 || y < 12) goto done;
+    editor_get(root, "fangCreatureEditor", &button);
+    if (!editor_get(&button, "fangEditorReady", &ready) ||
+        (ready.type & 0x8f) != 2 || !*(unsigned char*)&ready.data) {
+        if (!editor_make_button(body_context, &button, width, height, label, editor_preview_toggle)) goto done;
+    }
+    editor_set(&button, "_x", editor_number(x - body_area.left));
+    editor_set(&button, "_y", editor_number(y - body_area.top));
+    editor_preview_label(&button, label, width, height);
+    editor_set(&button, "disabled", editor_boolean(!is_ready || ui[158]));
+    editor_set(&button, "_alpha", editor_number(is_ready && !ui[158] ? 100 : 55));
+    editor_set(&button, "_visible", editor_boolean(1));
+    SetRect(&preview_area, x, y, x + width, y + height);
+done:
+    editor_release(&ready);
+    editor_release(&button);
 }
 
 static void editor_body_update(void) {
@@ -649,24 +612,23 @@ static void editor_body_update(void) {
     BYTE* ui;
     BYTE* manager;
     editor_value* root = (editor_value*)(body_context + 24);
-    editor_value button = {0};
     HWND window;
-    double width;
-    double height;
     unsigned int index;
     fang_mod_editor_update_body();
+    fang_mod_editor_update_skin();
     if (!editor || editor != body_owner) fang_mod_editor_close_body_ui();
     if (!editor) return;
     ui = *(BYTE**)(editor + 128);
     if (!readable_range(ui, 159) || !ui[157] || !*(void**)(editor + 176)) return;
+    fang_mod_editor_update_validation(ui);
+    fang_mod_editor_preview_update();
     if (!is_body_requested) {
         manager = editor_ui_manager();
         if (!manager) return;
-        /* Give the new Body tab its own explicit selection. The player editor
-         * starts with mode 0 even for equipment; use its retained Equip mode
-         * until the player selects our general Build-mode entry. */
-        if (fang_mod_editor_is_scene(editor)) editor_native_mode(ui, 0);
-        else ((editor_mode_fn)(*(void***)ui)[17])(ui, 3);
+        /* Imported scenery starts in Body. Ordinary Creature Edit retains
+         * native Equip; both views share mode 0 but own different catalogues. */
+        is_body_selected = fang_mod_editor_is_scene(editor);
+        editor_native_mode(ui, 0);
         trace_client_state("mod_editor_initial_mode", *(unsigned int*)(editor + 856));
         body_owner = editor;
         body_mode = UINT32_MAX;
@@ -677,39 +639,33 @@ static void editor_body_update(void) {
             1000.0, editor_body_loaded, (void*)(uintptr_t)body_generation);
         trace_client_state("mod_editor_body_tab_requested", body_generation);
     }
+    fang_mod_update_palette();
     if (!body_context[56]) return;
     editor_scene_present(editor, ui);
     editor_body_select_tabs(editor, ui);
     if (!editor_body_place(ui)) {
         SetRectEmpty(&body_area);
+        SetRectEmpty(&preview_area);
         editor_set(root, "_visible", editor_boolean(0));
         return;
     }
-    width = body_area.right - body_area.left;
-    height = body_area.bottom - body_area.top;
     for (index = 0; index < sizeof(native_buttons) / sizeof(native_buttons[0]); ++index) {
         editor_value native = {0};
         if (editor_get(root, native_buttons[index], &native))
             editor_set(&native, "_visible", editor_boolean(0));
         editor_release(&native);
     }
-    if (!editor_body_draw(root, &button, width, height, *(unsigned int*)(editor + 856) == 0)) goto done;
+    if (!fang_mod_editor_tab_update(editor_ui_base, ui,
+        fang_mod_editor_is_body(editor), !ui[158])) return;
     window = GetActiveWindow();
-    if (!window) goto done;
-    if (!editor_body_attach_input(window)) goto done;
+    if (!window) return;
+    if (!editor_body_attach_input(window)) return;
+    fang_mod_editor_preview_controls(editor_ui_base, ui, window);
     editor_set(root, "_x", editor_number(body_area.left));
     editor_set(root, "_y", editor_number(body_area.top));
-    editor_set(&button, "_x", editor_number(0));
-    editor_set(&button, "_y", editor_number(0));
     editor_set(root, "_visible", editor_boolean(1));
     editor_set(root, "_alpha", editor_number(100));
-    editor_set(&button, "_visible", editor_boolean(1));
-    editor_set(&button, "selected", editor_boolean(*(unsigned int*)(editor + 856) == 0));
-    editor_set(&button, "_alpha", editor_number(*(unsigned int*)(editor + 856) == 0 ? 100 : 65));
-    editor_set(&button, "disabled", editor_boolean(ui[158]));
-    editor_validation_draw(root);
-done:
-    editor_release(&button);
+    editor_preview_draw(root, editor, ui);
 }
 
 static void editor_scene_close(void) {
@@ -792,7 +748,7 @@ static void editor_scene_update(int is_arsenal) {
     if (!editor_get(&button, "fangEditorReady", &ready) ||
         (ready.type & 0x8f) != 2 || !*(unsigned char*)&ready.data) {
         if (!editor_make_button(scene_context, &button, 180, 24,
-            "CREATURE EDITOR", editor_scene_open)) goto done;
+            "IMPORT EDITOR", editor_scene_open)) goto done;
     }
     window = GetActiveWindow();
     if (!window || !GetClientRect(window, &client)) goto done;

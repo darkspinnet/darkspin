@@ -65,7 +65,7 @@ int fang_mod_editor_is_scene(BYTE* editor) {
 static void FANG_THISCALL editor_manipulate(BYTE* editor, int command, int flags,
     float* point, void* hit, int option, void* handle) {
     BYTE* part;
-    if (editor == fang_mod_editor_active() && *(unsigned int*)(editor + 856) == 0) {
+    if (fang_mod_editor_is_body(editor)) {
         part = *(BYTE**)(editor + 228);
         /* 6A2440 returns part+1524, the canonical part type. PlayerEditor's
          * 4B98E0 intercepts foot (B4B1179D) and creates a 4C5A50 hero-anchor
@@ -95,7 +95,7 @@ static void editor_install_foot(BYTE* base) {
 
 static void FANG_THISCALL editor_body_glow(BYTE* part, float red, float green, float blue, float alpha) {
     BYTE* editor = fang_mod_editor_active();
-    if (editor && *(unsigned int*)(editor + 856) == 0 &&
+    if (fang_mod_editor_is_body(editor) &&
         readable_range(part, 68) && *(uint64_t*)(part + 40) == 0 &&
         *(BYTE**)(part + 48) == *(BYTE**)(editor + 176)) {
         /* 6A8130 creates the native temporary highlight mesh. Its RGB is
@@ -183,7 +183,7 @@ void fang_mod_editor_update_body(void) {
         editor_restore_parts();
         return;
     }
-    is_build = *(unsigned int*)(editor + 856) == 0;
+    is_build = fang_mod_editor_is_body(editor);
     editor_update_colors(is_build);
     /* 723730 excludes the body-control render groups at +750/+751 and
      * skips the bone controller's 6A00C0 ray test entirely when +751 is set.
@@ -201,6 +201,7 @@ void fang_mod_editor_update_body(void) {
 static void FANG_THISCALL editor_leave(BYTE* editor) {
     if (active_editor == editor) {
         fang_mod_scene_leave(editor);
+        fang_mod_palette_leave(editor);
         fang_mod_editor_close_body_ui();
         editor_restore_parts();
         editor_restore_colors();
@@ -224,7 +225,7 @@ static BYTE* FANG_THISCALL editor_hit(BYTE* editor, BYTE* hit, float x, float y,
     BYTE* result;
     BYTE* part;
     unsigned int index;
-    if (editor != fang_mod_editor_active() || *(unsigned int*)(editor + 856) != 0)
+    if (!fang_mod_editor_is_body(editor))
         return editor_native_hit(editor, hit, x, y, flags);
     fang_mod_editor_update_body();
     result = editor_body_hit(editor, hit, x, y, flags);
@@ -388,6 +389,9 @@ static int FANG_THISCALL editor_configure(BYTE* editor) {
     memcpy(begin, manipulators, count * sizeof(uint32_t));
     editor[746] = 1; /* editorShowVertebrae */
     editor[1169] = 1; /* editorShowBoneLengthHandles */
+    /* Both explicit Mod editors need the native skin/bake controller for
+     * textured Body display. Configure it before 731900 loads the model. */
+    editor[813] = 1; /* editorUseSkin */
     editor_pick_flags[0] = editor[750];
     editor_pick_flags[1] = editor[751];
     is_body_picking = 0;
@@ -442,8 +446,11 @@ void fang_mod_install_editor(BYTE* base, const wchar_t* manifest) {
         goto rollback_hit;
     }
     is_editor_enabled = 1;
+    fang_mod_install_editor_skin(base);
     editor_install_foot(base);
     editor_install_glow(base);
+    fang_mod_install_palette(base);
+    fang_mod_install_editor_preview(base);
     fang_mod_install_validation(base);
     trace_client_state("mod_editor_enabled", 1);
     trace_client_state("mod_editor_owned_heroes", 1);

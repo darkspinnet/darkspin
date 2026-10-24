@@ -24,7 +24,7 @@ type launcherReportSession struct {
 }
 
 func modReportNames() []string {
-	return []string{"spore-creature-import@3", "fang-dbbf-stream@1", "fang-bound-baseline@2", "fang-bound-material@1", "spore-creature-audio@1", "fang-bound-scale@1", "spore-dance-audio@1", "fang-bound-fit@5", "fang-bound-portrait@1", "fang-bound-voice@1", "spore-editor-music@2", "spore-emote@1", "fang-noun-appearance@1", "fang-creature-editor@2", "fang-editor-scene@2"}
+	return []string{"spore-creature-import@3", "fang-dbbf-stream@1", "fang-bound-baseline@2", "fang-bound-material@1", "spore-creature-audio@1", "fang-bound-scale@1", "spore-dance-audio@1", "fang-bound-fit@6", "fang-bound-portrait@1", "fang-bound-voice@1", "spore-editor-music@2", "spore-emote@3", "fang-noun-appearance@1", "fang-creature-editor@7", "fang-editor-scene@7", "fang-parts-palette@11", "fang-editor-preview@3"}
 }
 
 func (a *App) recordReportSession(req gameLaunchRequest, launchID string) {

@@ -192,6 +192,8 @@ typedef struct {
  * reinterpret arbitrary weapon sounds, ship dialogue or unfamiliar events.
  */
 static const mod_voice_cue voice_cues[] = {
+    {"vlib_happy_shrt", MOD_VOICE_HAPPY},
+    {"vlib_dance_shrt", MOD_VOICE_DANCE},
     {"vo_char_attack", MOD_VOICE_ATTACK},
     {"vo_char_attack_end", MOD_VOICE_ATTACK},
     {"vo_attack", MOD_VOICE_ATTACK},
@@ -286,10 +288,13 @@ static int voice_family(uint32_t mouth) {
     return -1;
 }
 
-static int voice_is_bound(BYTE* rig) {
+static int voice_has_source(BYTE* rig) {
     BYTE* recipe;
     uint32_t key[3];
     if (!readable_range(rig, 760)) return 0;
+    /* Only the active Test actor may select source voices without an import
+     * binding. Its current mouth joints choose the family below. */
+    if (fang_mod_editor_is_preview_rig(rig)) return 1;
     recipe = *(BYTE**)rig;
     if (!readable_range(recipe, 804)) return 0;
     key[0] = *(uint32_t*)(recipe + 792);
@@ -330,7 +335,7 @@ static int voice_rig_family(BYTE* rig, uint32_t joint_index) {
 
 uint32_t fang_mod_vocalization(BYTE* rig, uint32_t joint, enum fang_mod_voice_kind kind) {
     int family;
-    if ((unsigned int)kind >= MOD_VOICE_COUNT || !voice_is_bound(rig)) return 0;
+    if ((unsigned int)kind >= MOD_VOICE_COUNT || !voice_has_source(rig)) return 0;
     family = voice_rig_family(rig, joint);
     if (family < 0) return 0;
     return voice_hash(voice_events[kind][family].event);
@@ -360,7 +365,7 @@ mod_voice_animation_event(BYTE* rig, const char* event, uint32_t joint) {
             break;
         }
     }
-    if (kind == MOD_VOICE_COUNT || !voice_is_bound(rig)) return event;
+    if (kind == MOD_VOICE_COUNT || !voice_has_source(rig)) return event;
     family = voice_rig_family(rig, joint);
     if (family < 0) {
         if (InterlockedIncrement(&unmapped_trace_count) <= 32)

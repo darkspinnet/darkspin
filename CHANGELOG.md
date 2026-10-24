@@ -1,9 +1,40 @@
 # Changelog
 
+### 2026-10-24
+
+- #104 Move editor save errors from the Accept hover tooltip to the native on-screen hint area, retaining error numbers and explanations with scrollable and automatic paging.
+- #104 Apply imported creature fitting to separately rendered parts as well as the body, preserving eye attachment positions and proportions across native poses.
+- #104 Evaluate Mod emote movement eligibility at the current time instead of rejecting a completed path from its stale movement snapshot, and include eligibility details in rejection logs.
+- #105 Extend `darkrun inspect` from package inventory to nested `package:entry:rw4_mesh_N` metadata with DBBF support, mesh bounds, and guided usage; rename the source reader package to `content/creation`.
+- #105 Expand campaign weapons and parts from active-squad class, genesis, and hero-family pools to all eligible heroes, including world drops, boss loot, mission-end rewards, and developer drops, while retaining item-level, rarity, and campaign slot limits.
+
 ### 2026-10-23
 
+- #104 Name save error 28 as a core-body template mismatch, explain why leg removal can trigger it, and reuse the native Accept tooltip with wrapped text instead of attaching competing save details.
+- #104 Forward `/emote` through the client chat command handler so Mod emote requests reach the existing server handler instead of being rejected as an invalid command.
+- #104 Revert the parts palette bounds change that separated the frame from its cards and enlarged the grid outside the panel.
+- #104 Restore native mode 0 for Equip and track Body selection separately, keeping weapon placement and the equipment catalogue independent of the private body-parts palette.
+- #104 Rework Mod Body category headers into aligned native radio-button frames with square icons and centered paging arrows, removing the legacy selected-tab flourish and animated strip decoration.
+- #103 Give the Mod Body tab native radio-button selection and replace its ineffective hover effects toggle with the painted model render groups, preserving native picking and manipulation state.
+- #104 Distinguish the Mod Body tab from Equipment using an installed limb icon over a native button frame instead of duplicating Equipment artwork.
+- #104 Start Test Creature playback automatically, give walking a native movement route, cycle manual emotes through multiple dances and battle roar, and route preview voice cues through the current mouth family.
+- #104 Adapt the full Import Editor environment's terrain and central platform materials through private runtime model aliases, extending ground compatibility beyond the fallback backdrop.
+- #103 Move Mod editor save diagnostics from the custom Flash panel to the native Accept tooltip, with mouse-wheel paging for additional errors.
+- #104 Enlarge Mod Body part previews from a ten-row grid to four columns and five rows, paging remaining parts in batches of twenty.
+- #104 Change Mod Body category tabs from the classic cyan strip to installed Darkspore equipment tab skins while retaining category symbols, tooltips, selection, and paging.
+- #104 Preload the Mod Body catalogue during editor entry and change card creation from eager all-page construction to selected-page-first batches with gradual off-screen warming.
+- #104 Rename the separate Arsenal scene action to Import Editor and restore its availability by adapting the correct render-model resource, with the original scene retained if floor adaptation is unsupported.
+- #105 Replicate the client-authored CaptainModifier on captain spawn and rejoin using a dedicated permanent handle, preserving existing calculated stats and scale.
+- #104 Replace embedded palette assets with direct loading of installed native layouts and Fang adjustments to the loaded window instances.
+- #104 Add Test Creature and Return to Body controls to the imported Mod editor, retain native skin baking, and enable its idle-animation update and message handling within scoped native calls.
+- #104 Adapt the imported backdrop's lit paving and ground materials to its textured unlit renderer.
+- #104 Suppress the native lobby level's static-model rendering and optional pedestal models in the imported creature-editor scene while retaining its creature, backdrop, and editor controls.
+- #104 Restore native Equip and Detail tab visibility in the imported creature-editor scene and restore the Detail palette root when leaving Mod Body mode.
+- #104 Use installed native UI resources for the parts palette, with larger four-column previews and native paging with up to forty parts per page.
+- #104 Add Body category tooltips with recovered native labels and readable fallback titles for parts whose authored names remain internal placeholders.
+- #104 Restore the native creature-parts palette in Mod Body mode with compatible creature cards and native part dragging, attachment, and symmetry.
 - #104 Route core foot placement in Mod Body mode from the stock hero attachment controller to the general creature manipulator, retaining native symmetry and edit history.
-- #104 Keep the imported editor environment across owned-hero switches and isolate its Body view from native room geometry, equipment panels, and combat stats while retaining paint, preview, and save controls.
+- #104 Keep the imported editor environment across owned-hero switches and isolate its Body view from native room geometry and combat stats while retaining equipment, detail, paint, preview, and save controls.
 - #104 Keep the Mod Arsenal Creature Editor button enabled for the last eligible creature after its hover menu closes, while rechecking ownership and creature identity before opening it.
 - #104 Add a Mod Arsenal Creature Editor button that selects the original creature-editor backdrop and lighting through private on-demand resource aliases while retaining the selected hero's body controls and save flow.
 - #103 Expand Mod Creature Edit save diagnostics from a single native message to a paged panel covering all 128 validation bits, with shared creature-editor error names and trace details for unmapped failures.

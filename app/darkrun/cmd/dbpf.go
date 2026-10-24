@@ -10,6 +10,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	creationreader "github.com/darkspinnet/darkspin/content/creation"
 	"github.com/darkspinnet/darkspin/content/dbpf"
 	"github.com/spf13/cobra"
 )
@@ -18,11 +19,33 @@ func newInspectCommand() *cobra.Command {
 	outputPath := ""
 	contains := ""
 	command := &cobra.Command{
-		Use:   "inspect <package[:entry]>",
-		Short: "List or extract a decoded resource from a DBPF package",
-		Args:  cobra.ExactArgs(1),
+		Use:   "inspect [package[:entry[:section]]]",
+		Short: "Explore metadata and decoded resources in DBPF or DBBF packages",
+		Long: "Explore installed packages without modifying or extracting their assets.\n\n" +
+			"Each colon descends one level:\n" +
+			"  file.package                         lists all resource entries\n" +
+			"  file.package:entry                   shows resource metadata; RW4 entries list sections and meshes\n" +
+			"  file.package:entry.rw4:rw4_mesh_14    shows the selected mesh's counts and local bounds\n\n" +
+			"An entry may be an ordinal, a stable resource identity from the listing,\n" +
+			"or an unambiguous hashed resource name. The optional .rw4 suffix is accepted.\n" +
+			"rw4_mesh_14 means RW4 section 14, not package entry 14.\n" +
+			"Windows drive-letter colons are preserved. Use --output to extract a selected resource.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return command.Help()
+			}
 			target := parsePackageTarget(args[0])
+			selectors := strings.Split(target.Selector, ":")
+			if len(selectors) > 2 || len(selectors) == 2 && (selectors[0] == "" || selectors[1] == "") {
+				return fmt.Errorf("inspectDepth: use package:entry[:rw4_mesh_N]")
+			}
+			if len(selectors) == 2 && outputPath != "" {
+				return fmt.Errorf("inspectOutput: --output extracts a whole resource; omit the nested section")
+			}
+			if contains != "" && target.Selector != "" {
+				return fmt.Errorf("inspectContains: --contains requires a package without an entry selector")
+			}
 			r, err := os.Open(target.Path)
 			if err != nil {
 				return fmt.Errorf("inspectOpen: %w", err)
@@ -32,17 +55,26 @@ func newInspectCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("inspectStat: %w", err)
 			}
-			pkg, err := dbpf.NewReader(r, fi.Size())
+			pkg, err := creationreader.InspectPackage(r, fi.Size())
 			if err != nil {
 				return fmt.Errorf("inspectRead: %w", err)
 			}
 			if target.Selector != "" {
-				ordinal, resolveErr := resolvePackageOrdinal(pkg.Entries, target.Selector)
+				ordinal, resolveErr := resolvePackageOrdinal(pkg.Entries, selectors[0])
 				if resolveErr != nil {
 					return fmt.Errorf("inspectSelector: %w", resolveErr)
 				}
 				if outputPath == "" {
 					err = writeInspectedEntry(command.OutOrStdout(), target.Path, pkg, ordinal)
+					if err == nil && pkg.Entries[ordinal].Type == 0x2f4e681b {
+						meshName := ""
+						if len(selectors) == 2 {
+							meshName = selectors[1]
+						}
+						err = writeInspectedMesh(command.OutOrStdout(), args[0], pkg, ordinal, meshName)
+					} else if err == nil && len(selectors) == 2 {
+						return fmt.Errorf("inspectSection: nested sections currently require an RW4 resource")
+					}
 				} else {
 					err = writeInspectedResource(command.OutOrStdout(), pkg, ordinal, outputPath)
 				}
@@ -70,7 +102,7 @@ func newInspectCommand() *cobra.Command {
 	return command
 }
 
-func writeInspectedEntry(w io.Writer, sourcePath string, pkg *dbpf.Reader, ordinal int) error {
+func writeInspectedEntry(w io.Writer, sourcePath string, pkg *creationreader.PackageInspection, ordinal int) error {
 	if ordinal < 0 || ordinal >= len(pkg.Entries) {
 		return fmt.Errorf("ordinalRange: got %d, package has %d resources", ordinal, len(pkg.Entries))
 	}
@@ -85,17 +117,13 @@ func writeInspectedEntry(w io.Writer, sourcePath string, pkg *dbpf.Reader, ordin
 	return nil
 }
 
-func writeMatchingInspection(w io.Writer, sourcePath string, pkg *dbpf.Reader, needle []byte) error {
+func writeMatchingInspection(w io.Writer, sourcePath string, pkg *creationreader.PackageInspection, needle []byte) error {
 	_, err := fmt.Fprintf(w, "Package:\t%s\nContains:\t%q\n\n", sourcePath, needle)
 	if err != nil {
 		return fmt.Errorf("summaryWrite: %w", err)
 	}
 	for ordinal, entry := range pkg.Entries {
-		r, openErr := pkg.Open(entry)
-		if openErr != nil {
-			return fmt.Errorf("resourceOpen[%d]: %w", ordinal, openErr)
-		}
-		contents, readErr := io.ReadAll(r)
+		contents, readErr := pkg.ReadResource(ordinal)
 		if readErr != nil {
 			return fmt.Errorf("resourceRead[%d]: %w", ordinal, readErr)
 		}
@@ -111,18 +139,14 @@ func writeMatchingInspection(w io.Writer, sourcePath string, pkg *dbpf.Reader, n
 	return nil
 }
 
-func writeInspectedResource(output io.Writer, pkg *dbpf.Reader, ordinal int, outputPath string) error {
+func writeInspectedResource(output io.Writer, pkg *creationreader.PackageInspection, ordinal int, outputPath string) error {
 	if ordinal < 0 || ordinal >= len(pkg.Entries) {
 		return fmt.Errorf("ordinalRange: got %d, package has %d resources", ordinal, len(pkg.Entries))
 	}
 	if outputPath == "" {
 		return errors.New("outputMissing: use --output with --ordinal")
 	}
-	r, err := pkg.Open(pkg.Entries[ordinal])
-	if err != nil {
-		return fmt.Errorf("resourceOpen[%d]: %w", ordinal, err)
-	}
-	contents, err := io.ReadAll(r)
+	contents, err := pkg.ReadResource(ordinal)
 	if err != nil {
 		return fmt.Errorf("resourceRead[%d]: %w", ordinal, err)
 	}
@@ -137,9 +161,9 @@ func writeInspectedResource(output io.Writer, pkg *dbpf.Reader, ordinal int, out
 	return nil
 }
 
-func writeInspection(w io.Writer, sourcePath string, pkg *dbpf.Reader) error {
-	_, err := fmt.Fprintf(w, "Package:\t%s\nDBPF:\t%d.%d\nIndex:\t%d\nResources:\t%d\n\n",
-		sourcePath, pkg.Header.MajorVersion, pkg.Header.MinorVersion, pkg.Header.IndexVersion, len(pkg.Entries))
+func writeInspection(w io.Writer, sourcePath string, pkg *creationreader.PackageInspection) error {
+	_, err := fmt.Fprintf(w, "Package:\t%s\n%s:\t%d.%d\nIndex:\t%d\nResources:\t%d\nNext:\t%s:<entry>\n\n",
+		sourcePath, pkg.Format, pkg.MajorVersion, pkg.MinorVersion, pkg.IndexVersion, len(pkg.Entries), sourcePath)
 	if err != nil {
 		return fmt.Errorf("summaryWrite: %w", err)
 	}

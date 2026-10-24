@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/darkspinnet/darkspin/content/spore"
+	creationreader "github.com/darkspinnet/darkspin/content/creation"
 	contentsqlite "github.com/darkspinnet/darkspin/content/sqlite"
 	"github.com/darkspinnet/darkspin/server/modprofile"
 	sporenetsqlite "github.com/darkspinnet/darkspin/server/sporenet/sqlite"
@@ -23,7 +23,7 @@ type ModCreature struct {
 
 type modState struct {
 	userPath  string
-	creations []spore.Creation
+	creations []creationreader.Creation
 	isRunning bool
 }
 
@@ -110,7 +110,7 @@ func detectSporeInstallation() string {
 		libraries = append(libraries, parseSteamLibraryRoots(payload)...)
 	}
 	for _, library := range libraries {
-		root, err := spore.Installation(filepath.Join(library, "steamapps", "common", "Spore"))
+		root, err := creationreader.Installation(filepath.Join(library, "steamapps", "common", "Spore"))
 		if err == nil {
 			return root
 		}
@@ -163,7 +163,7 @@ func (a *App) GetModConfiguration() (ModConfiguration, error) {
 func (a *App) SetModSporePath(path string) error {
 	a.modMu.Lock()
 	defer a.modMu.Unlock()
-	root, err := spore.Installation(path)
+	root, err := creationreader.Installation(path)
 	if err != nil {
 		return fmt.Errorf("sporeValidate: %w", err)
 	}
@@ -197,12 +197,12 @@ func (a *App) DetectModSporePath() (string, error) {
 	return root, nil
 }
 
-func (a *App) scanModCreations(root string) ([]spore.Creation, error) {
-	validated, err := spore.Installation(root)
+func (a *App) scanModCreations(root string) ([]creationreader.Creation, error) {
+	validated, err := creationreader.Installation(root)
 	if err != nil {
 		return nil, fmt.Errorf("sporeSource: %w", err)
 	}
-	creations, err := spore.Scan(a.modContext(), validated, a.modState.userPath)
+	creations, err := creationreader.Scan(a.modContext(), validated, a.modState.userPath)
 	if err != nil {
 		return nil, fmt.Errorf("sporeScan: %w", err)
 	}

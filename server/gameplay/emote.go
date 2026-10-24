@@ -20,6 +20,21 @@ func (e gameplayPendingRuntime) playModEmote(
 	e.registry.mutex.Lock()
 	sessionKey := packet.Address.String()
 	session, isFound := e.registry.sessions[sessionKey]
+	isMoving := false
+	if session.playerMotion != nil {
+		movement := session.playerMotion.Snapshot().Movement()
+		if movement.IsMoving {
+			// Movement snapshots retain the last consumed command time. Chat
+			// requests do not carry a movement action, so sample the path at now
+			// instead of rejecting a creature that has already reached its goal.
+			position, sampleErr := session.playerMotion.SamplePosition(now)
+			if sampleErr != nil {
+				e.registry.mutex.Unlock()
+				return nil, false, fmt.Errorf("emotePosition: %w", sampleErr)
+			}
+			isMoving = position != movement.Goal
+		}
+	}
 	isEligible := isFound && session.generation == queuedSession.generation &&
 		session.transportGeneration == queuedSession.transportGeneration &&
 		session.stage.IsDungeon() && session.dungeonSetup.IsCommitted() &&
@@ -27,12 +42,16 @@ func (e gameplayPendingRuntime) playModEmote(
 		session.deployedHitPoint() > 0 && session.isAbilityReleaseReady(now) &&
 		!session.isEnemyStunActive(now) && !session.isEnemySleepActive(now) &&
 		!session.isEnemyFearActive(now) &&
-		(session.playerMotion == nil || !session.playerMotion.Snapshot().Movement().IsMoving) &&
+		!isMoving &&
 		session.basicAttack == nil && session.followTargetUserID == 0 && !session.playerAI.isEnabled &&
 		session.deployedCreatureIndex < uint32(len(session.binding.Creatures))
-	if !isEligible || !session.binding.Creatures[session.deployedCreatureIndex].IsModBound {
+	isBound := session.deployedCreatureIndex < uint32(len(session.binding.Creatures)) &&
+		session.binding.Creatures[session.deployedCreatureIndex].IsModBound
+	if !isEligible || !isBound {
 		e.registry.mutex.Unlock()
-		e.logger.Printf("RakNet Mod emote rejected name=%s remote=%s", req.Category, packet.Address)
+		e.logger.Printf("RakNet Mod emote rejected name=%s remote=%s moving=%t bound=%t basic_attack=%t follow=%t ai=%t",
+			req.Category, packet.Address, isMoving, isBound, session.basicAttack != nil,
+			session.followTargetUserID != 0, session.playerAI.isEnabled)
 		return nil, false, nil
 	}
 	animationPacket, err := raknet.MarshalApplication(raknet.SetAnimationStateMessage{

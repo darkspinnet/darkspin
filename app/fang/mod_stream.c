@@ -301,9 +301,147 @@ int fang_mod_attach_memory(void* database, const wchar_t* path, const BYTE* payl
     return 1;
 }
 
-/* A private four-resource view of the original editor background. Only the
- * header, index and adapted model wrapper live in memory. GMSH, RW4 and light
- * payloads remain compressed in the read-only source and stream on demand.
+int fang_mod_attach_environment(void* database, const wchar_t* path) {
+    static const uint32_t types[5] = {0xea5118b0u, 0x00b1b104u, 0x2f4e681bu, 0x00b1b104u, 0x2f4e681bu};
+    static const uint32_t groups[5] = {0x40450200u, 0x40606000u, 0, 0x40606000u, 0};
+    static const uint32_t instances[5] = {0xbafc5ca1u, 0xdaf31958u, 0xdaf31958u, 0x6261312au, 0x6261312au};
+    fang_environment_source sources[5] = {{0}};
+    mod_stream source;
+    LARGE_INTEGER source_size;
+    BYTE header[96];
+    BYTE* index = NULL;
+    BYTE* package = NULL;
+    BYTE* cursor;
+    BYTE* end;
+    uint32_t count, index_size, flags, shared[3] = {0, 0, 0};
+    unsigned int ordinal, slot, package_size, found = 0;
+    int is_attached = 0;
+    memset(&source, 0, sizeof(source));
+    source.source = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_RANDOM_ACCESS, NULL);
+    if (source.source == INVALID_HANDLE_VALUE) return 0;
+    if (!GetFileSizeEx(source.source, &source_size) ||
+        !mod_source_read(&source, 0, header, sizeof(header))) goto finished;
+    if (memcmp(header, "DBPF", 4) || mod_u32(header + 4) != 3 || mod_u32(header + 60) != 3)
+        goto finished;
+    count = mod_u32(header + 36);
+    index_size = mod_u32(header + 44);
+    if (count > 1000000 || index_size < 4 || index_size > 64 * 1024 * 1024 ||
+        (uint64_t)mod_u32(header + 64) + index_size > (uint64_t)source_size.QuadPart) goto finished;
+    index = (BYTE*)HeapAlloc(GetProcessHeap(), 0, index_size);
+    if (!index || !mod_source_read(&source, mod_u32(header + 64), index, index_size)) goto finished;
+    flags = mod_u32(index);
+    if (flags & ~7u) goto finished;
+    cursor = index + 4;
+    end = index + index_size;
+    for (slot = 0; slot < 3; ++slot) {
+        if (!(flags & (1u << slot))) continue;
+        if (end - cursor < 4) goto finished;
+        shared[slot] = mod_u32(cursor);
+        cursor += 4;
+    }
+    for (ordinal = 0; ordinal < count; ++ordinal) {
+        uint32_t keys[3], offset, stored, decoded;
+        unsigned int compression;
+        for (slot = 0; slot < 3; ++slot) {
+            keys[slot] = shared[slot];
+            if (flags & (1u << slot)) continue;
+            if (end - cursor < 4) goto finished;
+            keys[slot] = mod_u32(cursor);
+            cursor += 4;
+        }
+        if (end - cursor < 20) goto finished;
+        for (slot = 0; slot < 5; ++slot)
+            if (keys[0] == types[slot] && keys[1] == groups[slot] && !keys[2] &&
+                mod_u32(cursor) == instances[slot]) break;
+        if (slot == 5) {
+            cursor += 20;
+            continue;
+        }
+        offset = mod_u32(cursor + 4);
+        stored = mod_u32(cursor + 8) & 0x7fffffffu;
+        decoded = mod_u32(cursor + 12);
+        compression = cursor[16] | ((unsigned int)cursor[17] << 8);
+        if (!stored || stored > 8 * 1024 * 1024 ||
+            (uint64_t)offset + stored > (uint64_t)source_size.QuadPart) goto finished;
+        if (sources[slot].payload) goto finished;
+        sources[slot].payload = (BYTE*)HeapAlloc(GetProcessHeap(), 0, stored);
+        if (!sources[slot].payload ||
+            !mod_source_read(&source, offset, sources[slot].payload, stored)) goto finished;
+        sources[slot].stored = stored;
+        sources[slot].decoded = decoded;
+        sources[slot].compression = compression;
+        ++found;
+        cursor += 20;
+    }
+    if (cursor != end || found != 5) goto finished;
+    package = fang_mod_environment_package(sources, &package_size);
+    if (!package) goto finished;
+    is_attached = fang_mod_attach_memory(database, path, package, package_size);
+finished:
+    if (package) HeapFree(GetProcessHeap(), 0, package);
+    for (slot = 0; slot < 5; ++slot)
+        if (sources[slot].payload) HeapFree(GetProcessHeap(), 0, sources[slot].payload);
+    if (index) HeapFree(GetProcessHeap(), 0, index);
+    if (!CloseHandle(source.source)) trace_client_state("mod_editor_environment_close_error", GetLastError());
+    trace_client_state("mod_editor_environment_package_attached", is_attached);
+    return is_attached;
+}
+
+static int mod_scene_floor(mod_stream* stream, uint32_t* position) {
+    /* Source slots are GMSH, RW4, lighting. Adapt the render model rather
+     * than passing the geometry descriptor to the RW4 parser. */
+    BYTE* entry = stream->prefix + 104 + 28;
+    unsigned int stored = mod_u32(entry + 16) & 0x7fffffffu;
+    unsigned int decoded = mod_u32(entry + 20);
+    unsigned int compression = entry[24] | ((unsigned int)entry[25] << 8);
+    BYTE* source;
+    BYTE* model;
+    BYTE* prefix;
+    unsigned int slot;
+    unsigned int cursor;
+    if (!stored || stored > 32 * 1024 * 1024 || decoded > 32 * 1024 * 1024) return 0;
+    source = (BYTE*)HeapAlloc(GetProcessHeap(), 0, stored);
+    if (!source) return 0;
+    if (!mod_source_read(stream, stream->spans[1].source_offset, source, stored)) {
+        HeapFree(GetProcessHeap(), 0, source);
+        return 0;
+    }
+    model = fang_mod_scene_floor(source, stored, decoded, compression);
+    HeapFree(GetProcessHeap(), 0, source);
+    if (!model) return 0;
+    prefix = (BYTE*)HeapAlloc(GetProcessHeap(), 0, 320 + decoded);
+    if (!prefix) {
+        HeapFree(GetProcessHeap(), 0, model);
+        return 0;
+    }
+    memcpy(prefix, stream->prefix, 320);
+    memcpy(prefix + 320, model, decoded);
+    HeapFree(GetProcessHeap(), 0, model);
+    entry = prefix + 104 + 28;
+    mod_put32(entry + 12, 320);
+    mod_put32(entry + 16, decoded | 0x80000000u);
+    entry[24] = 0;
+    entry[25] = 0;
+    cursor = 320 + decoded;
+    for (slot = 0; slot < 3; ++slot) {
+        if (slot == 1) continue;
+        mod_put32(prefix + 104 + slot * 28 + 12, cursor);
+        stream->spans[slot].start = cursor;
+        cursor += stream->spans[slot].size;
+    }
+    stream->spans[1] = stream->spans[2];
+    stream->count = 2;
+    HeapFree(GetProcessHeap(), 0, stream->prefix);
+    stream->prefix = prefix;
+    stream->prefix_size = 320 + decoded;
+    *position = cursor;
+    return 1;
+}
+
+/* A private four-resource view of the original editor background. The
+ * header, index, adapted wrapper and floor material copy live in memory.
+ * GMSH and lighting remain compressed in the read-only source and stream on demand.
  * Private identities prevent the editor experiment from replacing resources
  * with the same original identity in Arsenal or normal gameplay.
  */
@@ -404,9 +542,15 @@ int fang_mod_attach_scene(void* database, const wchar_t* path) {
         cursor += 20;
     }
     if (cursor != end || found != 15) goto failed;
+    if (!mod_scene_floor(stream, &position)) {
+        trace_client_state("mod_editor_scene_floor_adapt_failed", 1);
+        /* The original source spans and prefix remain intact on failure.
+         * An optional presentation adjustment must not remove scene access. */
+        trace_client_state("mod_editor_scene_floor_source_fallback", 1);
+    }
     /* Source order need not match resource-type order. The stream reader uses
      * a binary search over virtual payload offsets. */
-    for (slot = 1; slot < 3; ++slot) {
+    for (slot = 1; slot < stream->count; ++slot) {
         uint32_t previous = slot;
         while (previous && stream->spans[previous - 1].start > stream->spans[previous].start) {
             mod_resource_span span = stream->spans[previous - 1];

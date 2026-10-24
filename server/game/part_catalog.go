@@ -259,8 +259,8 @@ func (c *PartCatalog) ByRigblock(rigblockID uint16) (PartDefinition, bool) {
 	return definition, isFound
 }
 
-// GenerateCampaignPart chooses one class/science-compatible in-level campaign
-// drop using the ordinary rarity distribution. The caller owns random-stream
+// GenerateCampaignPart chooses one in-level campaign drop for any hero
+// using the ordinary rarity distribution. The caller owns random-stream
 // selection and durable identity. Campaign stage gates categories independently
 // of the generated item level and recipient progression.
 func (c *PartCatalog) GenerateCampaignPart(
@@ -275,8 +275,8 @@ func (c *PartCatalog) GenerateCampaignPart(
 	)
 }
 
-// GenerateCampaignCreaturePart restricts weapon candidates to the selected
-// hero family while retaining ordinary compatibility for non-weapon items.
+// GenerateCampaignCreaturePart retains the caller's hero context without
+// restricting the in-level item pool to that hero or its squad.
 func (e *PartCatalog) GenerateCampaignCreaturePart(
 	classType string, scienceType string, creatureName string,
 	difficulty uint32, campaignStage uint32, choice uint32, isBoss bool,
@@ -362,7 +362,7 @@ func (c *PartCatalog) GenerateCampaignPartForSlot(
 }
 
 // GenerateCampaignCreaturePartForSlot applies an explicit developer slot while
-// preserving the selected hero's authored weapon family.
+// allowing in-level items for every hero.
 func (e *PartCatalog) GenerateCampaignCreaturePartForSlot(
 	classType string, scienceType string, creatureName string,
 	difficulty uint32, campaignStage uint32, choice uint32, slotType string, isBoss bool,
@@ -381,7 +381,7 @@ func (e *PartCatalog) GenerateCampaignCreaturePartForSlot(
 }
 
 // GenerateCampaignSpecialPart applies ordinary campaign level, rarity, and
-// affix budgets to a specific compatible base item. This lets promotional
+// affix budgets to a specific base item. This lets promotional
 // bases participate in gameplay drops without inheriting their entitlement
 // sentinel level or bypassing normal item-power limits.
 func (c *PartCatalog) GenerateCampaignSpecialPart(
@@ -397,7 +397,7 @@ func (c *PartCatalog) GenerateCampaignSpecialPart(
 }
 
 // GenerateCampaignSpecialPartFromBag applies player-local rarity pity to a
-// compatible limited-edition campaign base while retaining its item budget.
+// limited-edition campaign base while retaining its item budget.
 func (e *PartCatalog) GenerateCampaignSpecialPartFromBag(
 	classType string, scienceType string, creatureName string,
 	difficulty uint32, campaignStage uint32,
@@ -431,14 +431,11 @@ func (e *PartCatalog) generateCampaignSpecialPart(
 	difficulty uint32, campaignStage uint32,
 	choice uint32, rigblockID uint16, rarity sporenet.PartRarity, isBoss bool,
 ) (sporenet.Part, error) {
-	if e == nil || classType == "" || scienceType == "" || difficulty == 0 {
+	if e == nil || difficulty == 0 {
 		return sporenet.Part{}, errors.New("campaign special part unavailable")
 	}
 	definition, isFound := e.ByRigblock(rigblockID)
-	if !isFound || !isCampaignPartCompatible(
-		definition, classType, scienceType, creatureName,
-	) ||
-		!e.isPartSlotUnlocked(definition, campaignStage) {
+	if !isFound || !e.isPartSlotUnlocked(definition, campaignStage) {
 		return sporenet.Part{}, errors.New("campaign special part incompatible")
 	}
 	dropLevel := e.CampaignItemLevel(campaignStage, rarity, isBoss, 0)
@@ -523,7 +520,7 @@ func (c *PartCatalog) GenerateCampaignRewardPart(
 	)
 }
 
-// GenerateCampaignCreatureRewardPart restricts cash-out weapons to the selected
+// GenerateCampaignCreatureRewardPart allows cash-out items for every
 // hero family while retaining the chosen unique rarity band.
 func (e *PartCatalog) GenerateCampaignCreatureRewardPart(
 	classType string, scienceType string, creatureName string,
@@ -543,7 +540,7 @@ func (c *PartCatalog) generateCampaignPart(
 	level uint32, campaignStage uint32, choice uint32,
 	rarity sporenet.PartRarity, slotType string,
 ) (sporenet.Part, error) {
-	if c == nil || classType == "" || scienceType == "" {
+	if c == nil {
 		return sporenet.Part{}, errors.New("campaign part catalog unavailable")
 	}
 	isUniqueFamily := isCampaignUniqueRarity(rarity)
@@ -556,33 +553,14 @@ func (c *PartCatalog) generateCampaignPart(
 		}
 	}
 	eligibleIDs := make([]uint16, 0, len(c.partsByRigblock))
-	weaponCompatibility := campaignWeaponIncompatible
-	if slotType == "weapon" {
-		weaponCompatibility = c.campaignWeaponCompatibility(
-			classType, scienceType, creatureName, campaignStage, isUniqueFamily,
-		)
-		if weaponCompatibility == campaignWeaponIncompatible {
-			return sporenet.Part{}, errors.New("campaign weapon family unavailable")
-		}
-	}
 	slotMask := partSlotBit(slotType)
-	scienceMask := partScienceMask(scienceType)
+	scienceMask := campaignLootScienceMask
 	for _, definition := range c.rigblocks {
 		rigblockID := definition.RigblockID
 		if !isCampaignRigblockEligible(
 			definition, slotMask, scienceMask, level, isUniqueFamily,
 		) ||
 			!c.isPartSlotUnlocked(definition, campaignStage) {
-			continue
-		}
-		// Hero-family/class targeting is deliberate server loot policy applied
-		// after the native collector; equip compatibility remains independent.
-		if slotType == "weapon" {
-			if campaignWeaponCompatibility(definition, classType, scienceType, creatureName) !=
-				weaponCompatibility {
-				continue
-			}
-		} else if !isCampaignPartCompatible(definition, classType, scienceType, creatureName) {
 			continue
 		}
 		eligibleIDs = append(eligibleIDs, rigblockID)
@@ -675,7 +653,6 @@ func (c *PartCatalog) campaignPartSlotTypes(
 	for _, slotType := range campaignPartSlotTypes {
 		for _, definition := range c.partsByRigblock {
 			if definition.MinimumLevel > definition.MaximumLevel || definition.SlotType != slotType ||
-				!isCampaignPartCompatible(definition, classType, scienceType, creatureName) ||
 				definition.IsUniqueFamily != isUniqueFamily ||
 				!c.isPartSlotUnlocked(definition, campaignStage) {
 				continue
@@ -684,7 +661,7 @@ func (c *PartCatalog) campaignPartSlotTypes(
 			// family existing at another level cannot make this slot viable.
 			// Callers inspecting general slot availability may omit the level.
 			if len(itemLevels) > 0 && !isCampaignRigblockEligible(
-				definition, partSlotBit(slotType), partScienceMask(scienceType),
+				definition, partSlotBit(slotType), campaignLootScienceMask,
 				itemLevels[0], isUniqueFamily,
 			) {
 				continue
@@ -694,65 +671,6 @@ func (c *PartCatalog) campaignPartSlotTypes(
 		}
 	}
 	return availableSlotTypes
-}
-
-const campaignWeaponIncompatible = 1 << 30
-
-// campaignWeaponCompatibility requires the hero's authored weapon family.
-// Cross-family fallback concealed missing catalog imports and could award
-// weapons the selected hero cannot equip.
-func (c *PartCatalog) campaignWeaponCompatibility(
-	classType string, scienceType string, creatureName string,
-	campaignStage uint32, isUniqueFamily bool,
-) int {
-	compatibility := campaignWeaponIncompatible
-	for _, definition := range c.partsByRigblock {
-		if definition.MinimumLevel > definition.MaximumLevel ||
-			definition.SlotType != "weapon" || definition.IsUniqueFamily != isUniqueFamily ||
-			!c.isPartSlotUnlocked(definition, campaignStage) {
-			continue
-		}
-		compatibility = min(
-			compatibility,
-			campaignWeaponCompatibility(definition, classType, scienceType, creatureName),
-		)
-	}
-	return compatibility
-}
-
-func campaignWeaponCompatibility(
-	definition PartDefinition, classType string, scienceType string, creatureName string,
-) int {
-	isClassCompatible := partCategoryContains(definition.ClassType, classType)
-	isScienceCompatible := partCategoryContains(definition.ScienceType, scienceType)
-	isFamilyCompatible := creatureName == "" || (definition.WeaponOwnerName != "" &&
-		campaignHeroFamilyName(definition.WeaponOwnerName) == campaignHeroFamilyName(creatureName))
-	if isFamilyCompatible && isClassCompatible && isScienceCompatible {
-		return 0
-	}
-	return campaignWeaponIncompatible
-}
-
-func isCampaignPartCompatible(
-	definition PartDefinition, classType string, scienceType string, creatureName string,
-) bool {
-	if !partCategoryContains(definition.ClassType, classType) ||
-		!partCategoryContains(definition.ScienceType, scienceType) {
-		return false
-	}
-	if definition.SlotType != "weapon" || creatureName == "" {
-		return true
-	}
-	return campaignHeroFamilyName(definition.WeaponOwnerName) ==
-		campaignHeroFamilyName(creatureName)
-}
-
-func campaignHeroFamilyName(creatureName string) string {
-	familyName := strings.ToLower(strings.TrimSpace(creatureName))
-	for _, suffix := range [...]string{" alpha", " beta", " gamma", " delta"} {
-		familyName = strings.TrimSuffix(familyName, suffix)
-	}
-	return strings.TrimSpace(familyName)
 }
 
 func (e *CampaignPartSlotBag) selectSlotType(
@@ -1015,16 +933,6 @@ func (c *PartCatalog) inverseLevelScale(scale float32) float32 {
 		currentLevel = band.MaximumLevel
 	}
 	return float32(currentLevel)
-}
-
-func partCategoryContains(categories string, category string) bool {
-	for field := range strings.SplitSeq(strings.ToLower(categories), ",") {
-		field = strings.TrimSpace(field)
-		if field != "" && (field == "all" || field == strings.ToLower(category)) {
-			return true
-		}
-	}
-	return false
 }
 
 // Stats derives the native profile stat string for one persisted item.
