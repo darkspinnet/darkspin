@@ -22,14 +22,28 @@ static int page_entries(BYTE* page, BYTE*** entries, unsigned int* count) {
     return 1;
 }
 
+static unsigned int page_item_count(BYTE** entries, unsigned int count) {
+    unsigned int index;
+    unsigned int item_count = 0;
+    for (index = 0; index < count; ++index)
+        if (entries[index]) ++item_count;
+    return item_count;
+}
+
 int fang_mod_palette_pages(BYTE* base, BYTE* category) {
     BYTE** pages;
     BYTE** replacements;
     BYTE** entries;
     unsigned int count;
     unsigned int entry_count;
+    unsigned int item_count = 0;
     unsigned int replacement_count = 0;
     unsigned int created_count = 0;
+    unsigned int copied_count = 0;
+    unsigned int filled_count = 0;
+    BYTE* page = NULL;
+    BYTE** copies = NULL;
+    int is_replacement_needed = 0;
     unsigned int index;
     uintptr_t begin;
     uintptr_t end;
@@ -41,47 +55,56 @@ int fang_mod_palette_pages(BYTE* base, BYTE* category) {
     count = (end - begin) / 4;
     pages = (BYTE**)begin;
     for (index = 0; index < count; ++index) {
+        unsigned int page_count;
         if (!page_entries(pages[index], &entries, &entry_count)) return -1;
-        replacement_count += entry_count ?
-            (entry_count + FANG_PART_PAGE_SIZE - 1) / FANG_PART_PAGE_SIZE : 1;
+        /* Authored grids include null padding slots. Count actual parts so
+         * padding cannot become an entire selectable blank page. */
+        page_count = page_item_count(entries, entry_count);
+        if (!page_count || page_count != entry_count || page_count > FANG_PART_PAGE_SIZE ||
+            (index + 1 < count && page_count != FANG_PART_PAGE_SIZE))
+            is_replacement_needed = 1;
+        item_count += page_count;
+        if (item_count > 4096 * FANG_PART_PAGE_SIZE) return -1;
     }
-    if (replacement_count == count) return 0;
-    if (replacement_count > 4096) return -1;
+    if (!is_replacement_needed || !item_count) return 0;
+    replacement_count = (item_count + FANG_PART_PAGE_SIZE - 1) / FANG_PART_PAGE_SIZE;
     replacements = (BYTE**)((page_alloc_fn)(base + 0x118550))(
         replacement_count * 4, "Darkspin/PartsPages", 0);
     if (!replacements) return -1;
     for (index = 0; index < count; ++index) {
-        unsigned int offset = 0;
+        unsigned int offset;
         if (!page_entries(pages[index], &entries, &entry_count)) goto failed;
-        do {
-            unsigned int size = entry_count - offset;
-            unsigned int item;
-            BYTE** copies = NULL;
-            BYTE* page;
-            if (size > FANG_PART_PAGE_SIZE) size = FANG_PART_PAGE_SIZE;
-            page = ((page_alloc_fn)(base + 0x118550))(128, "Darkspin/PartsPage", 0);
-            if (!page) goto failed;
-            ((page_construct_fn)(base + 0x34c7e0))(page);
-            ((page_ref_fn)(*(void***)page)[1])(page);
-            replacements[created_count++] = page;
-            /* Scalar page configuration ends at the entry vector. The
-             * constructor's vtables, count and vector ownership stay intact. */
-            memcpy(page + 12, pages[index] + 12, 104);
-            *(unsigned int*)(page + 92) = created_count;
-            if (size) {
+        /* Carry a partially filled replacement across authored page breaks.
+         * Those breaks are not category boundaries; preserve entry order. */
+        for (offset = 0; offset < entry_count; ++offset) {
+            if (!entries[offset]) continue;
+            if (!page) {
+                unsigned int size = item_count - copied_count;
+                if (size > FANG_PART_PAGE_SIZE) size = FANG_PART_PAGE_SIZE;
+                page = ((page_alloc_fn)(base + 0x118550))(128, "Darkspin/PartsPage", 0);
+                if (!page) goto failed;
+                ((page_construct_fn)(base + 0x34c7e0))(page);
+                ((page_ref_fn)(*(void***)page)[1])(page);
+                replacements[created_count++] = page;
+                /* Scalar page configuration ends at the entry vector. The
+                 * constructor's vtables and vector ownership stay intact. */
+                memcpy(page + 12, pages[index] + 12, 104);
+                *(unsigned int*)(page + 92) = created_count;
                 copies = (BYTE**)((page_alloc_fn)(base + 0x118550))(
                     size * 4, "Darkspin/PartsEntries", 0);
                 if (!copies) goto failed;
-                for (item = 0; item < size; ++item) {
-                    copies[item] = entries[offset + item];
-                    if (copies[item]) ((page_ref_fn)(*(void***)copies[item])[1])(copies[item]);
-                }
+                *(BYTE***)(page + 116) = copies;
+                *(BYTE***)(page + 120) = copies;
+                *(BYTE***)(page + 124) = copies + size;
+                filled_count = 0;
             }
-            *(BYTE***)(page + 116) = copies;
-            *(BYTE***)(page + 120) = copies ? copies + size : NULL;
-            *(BYTE***)(page + 124) = copies ? copies + size : NULL;
-            offset += size;
-        } while (offset < entry_count);
+            copies[filled_count] = entries[offset];
+            ((page_ref_fn)(*(void***)entries[offset])[1])(entries[offset]);
+            ++filled_count;
+            ++copied_count;
+            *(BYTE***)(page + 120) = copies + filled_count;
+            if (filled_count == FANG_PART_PAGE_SIZE) page = NULL;
+        }
     }
     /* 74C7A0 releases each IRefCount and its native EASTL allocation. Existing
      * render pages retain their own references until the immediate rebuild. */

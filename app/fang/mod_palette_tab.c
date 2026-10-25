@@ -15,6 +15,7 @@ static unsigned int tab_count;
 void fang_mod_palette_tabs_leave(void) {
     /* The native window tree owns these references and destroys the frames
      * with the palette. Do not retain windows beyond that tree's lifetime. */
+    fang_mod_palette_title_leave();
     tab_owner = NULL;
     tab_count = 0;
     memset(tab_frames, 0, sizeof(tab_frames));
@@ -29,7 +30,7 @@ static BYTE* parts_tab_window_from_button(BYTE* button) {
     return ((parts_tab_get_fn)(*(void***)button)[4])(button);
 }
 
-static BYTE* parts_tab_wrap(BYTE* base, BYTE* window, BYTE* drawable) {
+static BYTE* parts_tab_wrap(BYTE* base, BYTE* window, BYTE* donor) {
     BYTE* parent = ((parts_tab_get_fn)(*(void***)window)[4])(window);
     BYTE* allocator;
     BYTE* allocation;
@@ -44,7 +45,19 @@ static BYTE* parts_tab_wrap(BYTE* base, BYTE* window, BYTE* drawable) {
     if (!instance) return NULL;
     frame = instance + 4;
     ((parts_tab_ref_fn)(*(void***)frame)[0])(frame);
-    ((parts_tab_draw_fn)(*(void***)frame)[44])(frame, drawable);
+    if (!fang_mod_editor_button_skin(base, frame, donor)) {
+        ((parts_tab_ref_fn)(*(void***)frame)[1])(frame);
+        return NULL;
+    }
+    {
+        BYTE* drawable = ((parts_tab_get_fn)(*(void***)frame)[42])(frame);
+        if (readable_range(drawable, 76)) {
+            /* A mode-tab skin is 79 pixels wide. Its nine-slice corners
+             * overlap inside a 25-pixel category button; scale this private
+             * background as a whole instead of retaining those wide corners. */
+            *(unsigned int*)(drawable + 48) = 1;
+        }
+    }
     {
         BYTE* button = ((BYTE* (FANG_THISCALL*)(BYTE*, uint32_t))
             (*(void***)frame)[3])(frame, 0x8ed27e7au);
@@ -102,6 +115,20 @@ int fang_mod_palette_tabs(BYTE* base, BYTE* panel, BYTE* equipment) {
     if (*(uintptr_t*)(equipment + 72) <= begin || !readable_range((void*)begin, 4)) return 0;
     donor = parts_tab_window_from_button(*(BYTE**)begin);
     if (!parts_tab_window(donor)) return 0;
+    {
+        BYTE* root = donor;
+        BYTE* parent;
+        BYTE* mode;
+        unsigned int depth;
+        for (depth = 0; depth < 24; ++depth) {
+            parent = ((parts_tab_get_fn)(*(void***)root)[4])(root);
+            if (!parent) break;
+            root = parent;
+        }
+        mode = ((BYTE* (FANG_THISCALL*)(BYTE*, uint32_t, int))
+            (*(void***)root)[60])(root, 0xf019c2e7u, 1);
+        if (parts_tab_window(mode)) donor = mode;
+    }
     drawable = ((parts_tab_get_fn)(*(void***)donor)[42])(donor);
     if (!drawable) return 0;
     fang_mod_palette_tabs_leave();
@@ -117,16 +144,14 @@ int fang_mod_palette_tabs(BYTE* base, BYTE* panel, BYTE* equipment) {
         source = *(BYTE**)(category + 108);
         if (!readable_range(source, 144)) break;
         icons = *(uint32_t**)(source + 140);
-        if (!readable_range(icons, 12)) break;
-        /* 90AE10 builds eight image states from this installed icon list.
-         * Keep its transparent normal glyph for every state: the native
-         * equipment skin underneath now supplies the selection artwork. */
+        if (!readable_range(icons, 96)) break;
+        /* Preserve the installed normal, hover, pressed and checked glyphs. */
         for (state = 0; state < 8; ++state) {
             if (!((unsigned char (__cdecl*)(BYTE*, uint32_t*, unsigned int))
-                (base + 0x50a360))(window, icons, state)) break;
+                (base + 0x50a360))(window, icons + state * 3, state)) break;
         }
         if (state != 8) break;
-        tab_frames[index] = parts_tab_wrap(base, window, drawable);
+        tab_frames[index] = parts_tab_wrap(base, window, donor);
         if (!tab_frames[index]) break;
     }
     trace_client_state("mod_editor_parts_native_tabs", index);
@@ -153,10 +178,10 @@ void fang_mod_palette_tabs_update(BYTE* panel) {
         BYTE* window;
         BYTE* button;
         unsigned int state;
-        float left = (index % 9) * (284.0f / 9.0f);
-        float area[4] = {left, 0, left + 284.0f / 9.0f, 32};
-        const float glyph[4] = {(284.0f / 9.0f - 24) * .5f, 4,
-            (284.0f / 9.0f + 24) * .5f, 28};
+        float left = (index % 9) * (228.0f / 9.0f);
+        float area[4] = {left, 0, left + 228.0f / 9.0f - 1, 32};
+        const float glyph[4] = {(228.0f / 9.0f - 20) * .5f, 6,
+            (228.0f / 9.0f + 20) * .5f, 26};
         if (!parts_tab_window(frame)) continue;
         window = parts_tab_window_from_button(buttons[index]);
         if (!parts_tab_window(window)) continue;

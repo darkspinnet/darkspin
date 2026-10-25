@@ -36,8 +36,26 @@ static void view_arrow(BYTE* base, BYTE* layout, uint32_t id, int is_right) {
     if (view_window(cap) && ((BYTE* (FANG_THISCALL*)(BYTE*))(*(void***)cap)[42])(cap))
         ((void (FANG_THISCALL*)(BYTE*, BYTE*))(*(void***)cap)[44])(cap, NULL);
     view_area(cap, 0, 0, 18, 38);
-    if (is_right) view_area(view_parent(cap), 302, 0, 320, 38);
+    if (is_right) view_area(view_parent(cap), 246, 0, 264, 38);
     view_area(arrow, 2, 11, 16, 27);
+}
+
+static void view_pages(BYTE* category) {
+    uintptr_t begin;
+    uintptr_t end;
+    unsigned int index;
+    unsigned int count;
+    if (!readable_range(category, 140)) return;
+    begin = *(uintptr_t*)(category + 132);
+    end = *(uintptr_t*)(category + 136);
+    if (end < begin || (end - begin) % 8 || end - begin > 512 * 8 ||
+        (end != begin && !readable_range((void*)begin, end - begin))) return;
+    count = (end - begin) / 8;
+    for (index = 0; index < count; ++index) {
+        BYTE* page = *(BYTE**)(begin + index * 8);
+        if (!readable_range(page, 20)) continue;
+        view_area(*(BYTE**)(page + 16), 0, 0, 296, 315);
+    }
 }
 
 void fang_mod_palette_view(BYTE* base, BYTE* panel) {
@@ -54,10 +72,11 @@ void fang_mod_palette_view(BYTE* base, BYTE* panel) {
     tabs = *(BYTE**)(panel + 16);
     tab_container = view_parent(tabs);
     header = view_parent(tab_container);
-    view_area(header, 8, 108, 328, 146);
-    view_area(tab_container, 18, 0, 302, 38);
-    view_area(tabs, 0, 3, 284, 35);
+    view_area(header, 8, 108, 272, 169);
+    view_area(tab_container, 18, 0, 246, 38);
+    view_area(tabs, 0, 3, 228, 35);
     fang_mod_palette_tabs_update(panel);
+    fang_mod_palette_title(base, panel);
     view_area(*(BYTE**)(panel + 36), 8, 146, 328, 540);
     layout = *(BYTE**)(panel + 12);
     if (readable_range(layout, 4)) {
@@ -78,8 +97,19 @@ void fang_mod_palette_view(BYTE* base, BYTE* panel) {
         if (!readable_range(layout, 4)) continue;
         root = ((view_find_fn)(base + 0x50c0e0))(layout, UINT32_MAX, 1);
         view_area(root, 0, 0, 320, 394);
-        view_area(*(BYTE**)(category + 24), 12, 12, 308, 350);
-        view_area(*(BYTE**)(category + 40), 0, 0, 296, 338);
-        view_area(*(BYTE**)(category + 28), 0, 338, 296, 366);
+        /* Match the native frame's rendered width. Its centered 80% page
+         * transform and fixed-size artwork must share one visible origin;
+         * widening just the viewport puts column four outside that frame. */
+        view_area(*(BYTE**)(category + 24), -16, 12, 280, 327);
+        view_area(((view_find_fn)(base + 0x50c0e0))(layout, 0x0af12396, 1),
+            -15, -50, 314, 414);
+        view_pages(category);
+        /* Page windows are parented below the viewport, while the paging
+         * strip belongs to its decorative frame, whose authored origin is
+         * above the viewport. Place the strip after the entire grid in that
+         * parent's coordinates, rather than over its last two rows. */
+        view_area(*(BYTE**)(category + 28), 0, 364, 329, 392);
+        view_area(((view_find_fn)(base + 0x50c0e0))(layout, 0x734afa63, 1),
+            146, 5, 183, 23);
     }
 }

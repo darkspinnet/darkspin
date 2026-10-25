@@ -80,7 +80,7 @@ void fang_mod_palette_tip_card(BYTE* base, BYTE* card) {
     *(void***)card = tip_card_table + 1;
 }
 
-static const wchar_t* tip_category_name(BYTE* source) {
+const wchar_t* fang_mod_palette_category_name(BYTE* source) {
     const wchar_t* name;
     if (!readable_range(source, 104)) return L"Body parts";
     name = ((const wchar_t* (FANG_THISCALL*)(BYTE*))(tip_base + 0x3ae420))(source + 84);
@@ -132,7 +132,7 @@ int fang_mod_palette_tip_categories(BYTE* base, BYTE* panel) {
             !readable_range(categories[index], 112)) return 0;
         window = ((BYTE* (FANG_THISCALL*)(BYTE*))(*(void***)buttons[index])[4])(buttons[index]);
         if (!readable_range(window, 4) || !readable_range(*(void**)window, 264)) return 0;
-        name = tip_category_name(*(BYTE**)(categories[index] + 108));
+        name = fang_mod_palette_category_name(*(BYTE**)(categories[index] + 108));
         allocator = ((BYTE* (__cdecl*)(void))(base + 0x7de7d0))();
         allocation = ((BYTE* (__cdecl*)(unsigned int, unsigned int, const char*, BYTE*))
             (base + 0x7de7e0))(104, 4, "Darkspin/PartsTooltip", allocator);

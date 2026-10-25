@@ -105,6 +105,7 @@ static void palette_visible(BYTE* panel, int is_visible) {
 
 void fang_mod_palette_suspend(BYTE* editor) {
     if (!palette_owner || editor != palette_owner) return;
+    fang_mod_palette_drag_leave();
     if (is_palette_selected) {
         if (*(BYTE**)(editor + 988) == body_catalog) {
             *(BYTE**)(editor + 988) = equipment_catalog;

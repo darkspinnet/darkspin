@@ -67,6 +67,7 @@ static int card_fill(BYTE* page, unsigned int limit, DWORD deadline) {
     unsigned int count;
     unsigned int index;
     unsigned int added = 0;
+    unsigned int cursor = 0;
     if (!readable_range(page, 64) || *(void***)page != card_page_table + 1) return -1;
     source = *(BYTE**)(page + 24);
     if (!card_vector(source, 116, 4, 4096, &entries, &count)) return -1;
@@ -74,14 +75,16 @@ static int card_fill(BYTE* page, unsigned int limit, DWORD deadline) {
     if (fang_mod_palette_is_styled()) {
         unsigned int row_count = (count + FANG_PART_COLUMNS - 1) / FANG_PART_COLUMNS;
         if (row_count < FANG_PART_ROWS) row_count = FANG_PART_ROWS;
-        /* The former ten-row cap limited even wide cells to about 30px.
-         * Split at twenty entries and reserve five rows: 74FEA0's height
-         * cap is relative to the page viewport, so previews now fit ~60px. */
-        *(float*)(source + 44) = 0.02f;
-        *(float*)(source + 48) = 0.02f;
-        *(float*)(source + 52) = 0.02f;
-        *(float*)(source + 56) = 0.02f;
-        *(float*)(source + 60) = 0.21f;
+        /* Keep the compact four-column, ten-row creator palette. The native
+         * rectangle calculation must reserve the same rows as pagination;
+         * otherwise its last thumbnail row collides with the page controls. */
+        /* 74FEA0 adds these borders to each cell's stride, not just the
+         * outside margin. A nonzero top border pushes row ten past the page. */
+        *(float*)(source + 44) = 0;
+        *(float*)(source + 48) = 0;
+        *(float*)(source + 52) = 0;
+        *(float*)(source + 56) = 0;
+        *(float*)(source + 60) = 0.15f;
         *(float*)(source + 64) = 1.f;
         source[68] = 1;
         source[69] = 0;
@@ -101,12 +104,25 @@ static int card_fill(BYTE* page, unsigned int limit, DWORD deadline) {
         if (!entry) continue;
         if (!readable_range(entry, 104) ||
             !card_vector(page, 36, 4, 4096, &cards, &existing_count)) return -1;
+        /* Cards normally form an ordered prefix of their source entries.
+         * Consume that prefix once instead of searching it again for each
+         * slot. Keep the search fallback for duplicate or reordered entries. */
+        if (cursor < existing_count) {
+            card = ((BYTE**)cards)[cursor];
+            if (readable_range(card, 16) && *(BYTE**)(card + 12) == entry) {
+                ++cursor;
+                continue;
+            }
+        }
         for (existing = 0; existing < existing_count; ++existing) {
             card = ((BYTE**)cards)[existing];
             if (readable_range(card, 16) && *(BYTE**)(card + 12) == entry) break;
         }
         if (existing != existing_count) continue;
-        if (added >= limit || (LONG)(GetTickCount() - deadline) >= 0) return 0;
+        /* Scanning existing cards must not consume the entire allowance on
+         * every frame and permanently starve a later thumbnail. Always make
+         * one unit of progress; the remaining creations respect the budget. */
+        if (added >= limit || (added && (LONG)(GetTickCount() - deadline) >= 0)) return 0;
         /* Same rectangle, constructor, initializer and EASTL insertion as
          * native 750550's generic branch. Native handlers own input. */
         ((card_area_fn)(card_base + 0x34fea0))(page, area, index);
@@ -125,8 +141,10 @@ static int card_fill(BYTE* page, unsigned int limit, DWORD deadline) {
         ((card_init_fn)(card_base + 0x352450))(card, entry,
             *(BYTE**)(page + 16), area, *(BYTE**)(page + 20));
         fang_mod_palette_tip_card(card_base, card);
+        fang_mod_palette_drag_card(card_base, card);
         ((card_append_fn)(card_base + 0x350300))(page + 36, &card);
         ((card_ref_fn)(*(void***)card)[2])(card);
+        ++cursor;
         ++added;
         ++card_warm.created;
         if (card_warm.created % 64 == 0)

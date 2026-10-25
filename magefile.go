@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/darkspinnet/darkspin/window"
 	"github.com/magefile/mage/mg"
 	"github.com/magefile/mage/sh"
 )
@@ -665,9 +666,13 @@ func (Darkspinner) Build() error {
 	return nil
 }
 
-// BuildRun builds and then launches the all-in-one desktop runtime.
+// BuildRun closes running Darkspinner instances, builds, and launches the runtime.
 func (e Darkspinner) BuildRun() error {
-	err := e.Build()
+	err := stopDarkSpinnerInstances()
+	if err != nil {
+		return fmt.Errorf("darkSpinnerStop: %w", err)
+	}
+	err = e.Build()
 	if err != nil {
 		return fmt.Errorf("darkSpinnerBuildRunBuild: %w", err)
 	}
@@ -679,6 +684,39 @@ func (e Darkspinner) BuildRun() error {
 	if err != nil {
 		return fmt.Errorf("darkSpinnerBuildRunLaunch: %w", err)
 	}
+	return nil
+}
+
+func stopDarkSpinnerInstances() error {
+	binaryName := darkSpinnerBinaryName
+	if runtime.GOOS != "windows" {
+		binaryName = darkSpinnerLinuxBinaryName
+	}
+	processIDs, err := window.Running(binaryName)
+	if err != nil {
+		return fmt.Errorf("processList: %w", err)
+	}
+	if len(processIDs) == 0 {
+		return nil
+	}
+	fmt.Printf("Closing %d running Darkspinner instance(s) before rebuilding...\n", len(processIDs))
+	stopErrors := make([]error, 0, len(processIDs))
+	for _, processID := range processIDs {
+		err = window.StopProcess(processID)
+		if err != nil {
+			stopErrors = append(stopErrors, fmt.Errorf("processStop[%d]: %w", processID, err))
+		}
+	}
+	remainingIDs, err := window.Running(binaryName)
+	if err != nil {
+		return fmt.Errorf("processVerify: %w", err)
+	}
+	if len(remainingIDs) != 0 {
+		stopErrors = append(stopErrors, fmt.Errorf("Darkspinner processes still running: %v", remainingIDs))
+		return fmt.Errorf("processExit: %w", errors.Join(stopErrors...))
+	}
+	// Stopping a supervisor can also stop another snapshotted instance. A stale
+	// PID failure is harmless once the final process inventory confirms exit.
 	return nil
 }
 

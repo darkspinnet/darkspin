@@ -2,11 +2,7 @@
 
 ### 2026-10-24
 
-- Remove unsupported print calls that interrupted camera-follow scenarios during click recovery and route backtracking.
-- Add bounded backtracking and multiple local probe distances to the camera-follow scenario so a dead-end platform does not immediately exhaust route exploration.
-- Wait for native hero-switch admission in Lua scenarios after explicit pre-dispatch guard refusals, preserving single-input execution and reporting eligibility and dispatch details on failure.
-- Let the camera-follow scenario wait up to five seconds after explicit native click refusals before any press, while stopping immediately on unknown input outcomes.
-
+- Capitalize the creature editor Body tooltip as BODY to match the adjacent mode tooltips.
 - [#106](https://github.com/darkspinnet/darkspin/issues/106) Correct Grappling Pulsar's pull effects from duplicate persistent world orbs to client-authored victim and linked beam attachments, removing both when the pull ends or its actors are retired.
 - [#106](https://github.com/darkspinnet/darkspin/issues/106) Restore the Corruptor's first-stage death animation before its second-stage introduction, and preserve the transport identity needed to resume its second-stage attacks.
 - [#106](https://github.com/darkspinnet/darkspin/issues/106) Preserve Lightning Juggernaut movement during charge redirects instead of repeatedly resetting its native mover and snapping at arrival.

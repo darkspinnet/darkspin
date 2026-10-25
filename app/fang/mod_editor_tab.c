@@ -29,27 +29,19 @@ void fang_mod_editor_tab_leave(void) {
 
 static int tab_create(BYTE* base, BYTE* ui, BYTE* source) {
     BYTE* parent;
-    BYTE* drawable;
     BYTE* allocator;
     BYTE* allocation;
     BYTE* instance;
     BYTE* window;
     BYTE* tooltip;
-    BYTE* frame;
     BYTE* icon;
     unsigned int state;
     uint32_t icon_key[3] = {0x4bc8a7f0u, 0x2f7d0004u, 0x100d977cu};
     parent = ((tab_get_fn)(*(void***)source)[4])(source);
-    /* Equipment artwork includes its hand glyph in every state. Borrow the
-     * icon-free native Accept frame instead, then add the installed limb
-     * symbol as a separate child. Never mutate a shared native drawable. */
-    frame = ((BYTE* (FANG_THISCALL*)(BYTE*, uint32_t))(*(void***)ui)[18])(ui, 0x058a3350u);
-    if (!readable_range(frame, 4) || !readable_range(*(void**)frame, 180)) return 0;
-    drawable = ((tab_get_fn)(*(void***)frame)[42])(frame);
-    if (!readable_range(parent, 4) || !readable_range(*(void**)parent, 224) || !drawable) return 0;
+    if (!readable_range(parent, 4) || !readable_range(*(void**)parent, 224)) return 0;
     /* Same native WinButton construction as 90A200. The IWindow interface
-     * is at +4; the IButton interface is at +488. SetDrawable retains the
-     * installation-owned skin, and its interaction states. */
+     * is at +4; the IButton interface is at +488. The private drawable retains
+     * installation-owned background images for its interaction states. */
     allocator = ((BYTE* (__cdecl*)(void))(base + 0x7de7d0))();
     allocation = ((BYTE* (__cdecl*)(unsigned int, unsigned int, const char*, BYTE*))
         (base + 0x7de7e0))(2148, 4, "Darkspin/BodyTab", allocator);
@@ -60,7 +52,10 @@ static int tab_create(BYTE* base, BYTE* ui, BYTE* source) {
     ((tab_ref_fn)(*(void***)window)[0])(window);
     ((void (FANG_THISCALL*)(BYTE*, uint32_t))(*(void***)window)[20])(window, 0xfad0b001u);
     ((void (FANG_THISCALL*)(BYTE*, uint32_t))(*(void***)window)[21])(window, 0xfad0b001u);
-    ((tab_drawable_fn)(*(void***)window)[44])(window, drawable);
+    if (!fang_mod_editor_button_skin(base, window, source)) {
+        ((tab_ref_fn)(*(void***)window)[1])(window);
+        return 0;
+    }
     {
         BYTE* button = ((tab_object_fn)(*(void***)window)[3])(window, 0x8ed27e7au);
         /* WinButton defaults to push type 1, which ignores persistent checked
@@ -80,7 +75,7 @@ static int tab_create(BYTE* base, BYTE* ui, BYTE* source) {
     tooltip = ((BYTE* (FANG_THISCALL*)(BYTE*))(base + 0x51ce20))(allocation);
     ((tab_ref_fn)(*(void***)tooltip)[0])(tooltip);
     ((void (FANG_THISCALL*)(BYTE*, const wchar_t*, int, unsigned char))
-        (base + 0x51d030))(tooltip, L"Body", -1, 0);
+        (base + 0x51d030))(tooltip, L"BODY", -1, 0);
     ((tab_drawable_fn)(*(void***)window)[65])(window, tooltip);
     ((tab_ref_fn)(*(void***)tooltip)[1])(tooltip);
     if (!((tab_child_fn)(*(void***)parent)[54])(parent, window)) {

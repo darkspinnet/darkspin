@@ -13,12 +13,17 @@ import (
 	"strings"
 )
 
-// BuildRunLua builds scenario support and runs a Lua scenario by name or path.
+// BuildRunLua closes running Darkspinner instances, builds scenario support,
+// and runs a Lua scenario by name or path.
 // Example: mage darkspinner:buildrunlua two_arsenal
 func (Darkspinner) BuildRunLua(name string) error {
 	scriptPath, err := resolveDarkSpinnerLua(name)
 	if err != nil {
 		return fmt.Errorf("luaResolve: %w", err)
+	}
+	err = stopDarkSpinnerInstances()
+	if err != nil {
+		return fmt.Errorf("luaStop: %w", err)
 	}
 	err = (Scenario{}).Build()
 	if err != nil {
