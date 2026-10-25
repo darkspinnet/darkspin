@@ -2,6 +2,7 @@
 
 ### 2026-10-25
 
+- [#116](https://github.com/darkspinnet/darkspin/issues/116) Preserve accepted basic attacks when repeat input or held-aim updates arrive instead of falsely rejecting them and canceling their hits and release callbacks.
 - [#115](https://github.com/darkspinnet/darkspin/issues/115) Allow fully mitigated hits to complete without damage text or failed melee actions, preventing repeated recovery baselines from replaying hero warp-in effects.
 
 ### 2026-10-24

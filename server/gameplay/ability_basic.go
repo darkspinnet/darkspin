@@ -479,6 +479,7 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 	if !isAccepted {
 		if isSessionCurrent && isBasicHeldAimRefresh {
 			r.registry.mutex.Unlock()
+			retainBasicAction(ctx)
 			return nil, nil
 		}
 		basicCycleRemaining := peerSession.basicSequenceSession().CooldownEnd().Sub(
@@ -488,10 +489,11 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 		if isSessionCurrent && !isActiveRequest && isBasicHeldCurrent &&
 			basicCycleRemaining > 0 {
 			// These are repeated presses inside the accepted basic cycle, not
-			// another action. Native 103 clears its current action definition
-			// when it receives a rejection, even while that cycle still plays.
+			// another action. Native 103 clears the matching predicted action
+			// and resets animation on rejection, even while that cycle plays.
 			// As with held-aim refreshes above, acknowledge transport only and
 			// leave the running attack and its authored timing intact.
+			retainBasicAction(ctx)
 			return nil, nil
 		}
 		return request.reject("session unavailable or busy")

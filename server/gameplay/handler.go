@@ -357,6 +357,8 @@ func (r gameplayActionRuntime) handleCommand(
 			r.registry.mutex.Unlock()
 		}()
 	}
+	disposition := &gameplayActionDisposition{}
+	ctx = context.WithValue(ctx, gameplayActionDispositionKey{}, disposition)
 	response, err := r.dispatch(ctx, packet, command)
 	duration := r.now().Sub(startedAt)
 	if err != nil {
@@ -366,7 +368,7 @@ func (r gameplayActionRuntime) handleCommand(
 		}
 		return r.reject(packet, command, duration, err)
 	}
-	if isActionTerminalResponseRequired(command.Common.Type) &&
+	if isActionTerminalResponseRequired(command.Common.Type) && !disposition.isBasicRetained &&
 		!hasActionResponseForSync(response, command.Common.Unknown[0]) {
 		scheduleSet.cancelAll()
 		cause := errors.New("terminal response missing")
@@ -445,12 +447,16 @@ func (r gameplayActionRuntime) handleCommand(
 			)
 		}
 	}
+	outcome := "accepted"
+	if disposition.isBasicRetained {
+		outcome = "retained"
+	}
 	r.registry.recordDiagnosticDecision(gameplayDiagnosticDecision{
 		occurredAt: r.now(), kind: "action_publication", traceID: packet.TraceID,
 		remote: packet.Address.String(), transportGeneration: peerSession.transportGeneration,
 		zoneGeneration: peerSession.generation, objectID: command.Common.ObjectID,
 		actionType: uint32(command.Common.Type), syncStamp: command.Common.Unknown[0],
-		outcome: "accepted", packetCount: len(protected),
+		outcome: outcome, packetCount: len(protected),
 	})
 	return protected, nil
 }
