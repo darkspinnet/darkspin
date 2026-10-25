@@ -26,6 +26,15 @@ func (e campaignNPCActionRuntime) restartCorruptorAction(
 		return nil, fmt.Errorf("phaseStop: %w", err)
 	}
 	packets = append([][]byte{posePacket}, packets...)
+	// Phase replacement invalidates the outgoing charge's callbacks. Restore
+	// its scoped speed modifier here rather than waiting for a retired arrival.
+	speedPackets, speedErr := npcraknet.ChargeMovementSpeed(
+		boss.Plan.ObjectID, zonenpc.EffectiveMovementSpeedBuff(boss.Plan),
+	)
+	if speedErr != nil {
+		return nil, fmt.Errorf("phaseSpeed: %w", speedErr)
+	}
+	packets = append(speedPackets, packets...)
 	e.registry.mutex.RLock()
 	session, isFound := e.registry.sessions[sessionKey]
 	if !isFound || session.generation != generation || session.zone == nil || session.isZoneTerminal() ||

@@ -2,6 +2,11 @@
 
 ### 2026-10-24
 
+- [#111](https://github.com/darkspinnet/darkspin/issues/111) Use the Corruptor's authored stage-two reward class at final defeat instead of retaining stage one's zero-challenge, no-equipment drop settings.
+- [#111](https://github.com/darkspinnet/darkspin/issues/111) Play the Corruptor's distinct first-stage blink-out death animation while preserving its final-stage death animation and correct rejoin presentation.
+- [#111](https://github.com/darkspinnet/darkspin/issues/111) Restore the Corruptor's authored transition with an 11.2-second death animation, a portal-clear wait capped at 120 seconds, and a two-second exit delay before stage two.
+- [#111](https://github.com/darkspinnet/darkspin/issues/111) Preserve the Corruptor's existing minions through its first-stage transition and retire only remaining transition portals before stage two.
+- [#111](https://github.com/darkspinnet/darkspin/issues/111) Replicate the Corruptor's Shadow Charge speed increase to the native mover and restore it on arrival, interruption, or phase replacement to prevent position snapping.
 - [#110](https://github.com/darkspinnet/darkspin/issues/110) Track obelisk approach movement on the server and complete the interaction on arrival instead of repeatedly returning pursuit responses from a stale hero position.
 - [#110](https://github.com/darkspinnet/darkspin/issues/110) Delay the Corruptor's phase controller until its client-authored entrance and completion publication finish, preventing pursuit during the cutscene.
 - [#110](https://github.com/darkspinnet/darkspin/issues/110) Replicate the client-authored Immobilized attribute for enemy roots and avoid redundant correction teleports while the hero remains in place.

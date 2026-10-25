@@ -3224,6 +3224,11 @@ func (r campaignNPCActionRuntime) spawnLoot(
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
+	enemy, rewardErr := peerSession.campaignDeathRewardSnapshot(enemy)
+	if rewardErr != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("deathRewardClass: %w", rewardErr)
+	}
 	isTutorial := peerSession.binding.Mode == game.ModeTutorial
 	isVerdanthTotem := zonenpc.IsVerdanthTotem(enemy.Plan)
 	equipmentPackets := make([][]byte, 0)

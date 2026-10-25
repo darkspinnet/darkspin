@@ -55,6 +55,7 @@ func (e campaignChargeSchedule) restoreMovementState() ([][]byte, error) {
 	if e.plan.Profile.AbilityName != "BoomerCharge" &&
 		e.plan.Profile.AbilityName != "NocturnaSpecialDriftCharge" &&
 		e.plan.Profile.AbilityName != "VerdanthBasicPicky" &&
+		e.plan.Profile.AbilityName != "ScaldronBoss_ShadowCharge" &&
 		e.plan.Profile.AbilityName != "NomadSpecialOneCharge" {
 		return nil, nil
 	}
@@ -70,6 +71,7 @@ func (e campaignChargeSchedule) restoreMovementState() ([][]byte, error) {
 		return nil, nil
 	}
 	if e.plan.Profile.AbilityName == "NomadSpecialOneCharge" ||
+		e.plan.Profile.AbilityName == "ScaldronBoss_ShadowCharge" ||
 		e.plan.Profile.AbilityName == "VerdanthBasicPicky" {
 		packets, err := npcraknet.ChargeMovementSpeed(
 			e.objectID, zonenpc.EffectiveMovementSpeedBuff(enemy.Plan),
@@ -312,6 +314,18 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 		}
 		packets = append(statePackets, packets...)
 	}
+	if movementProfile.AbilityName == "ScaldronBoss_ShadowCharge" {
+		// Abilities/0xF6F64C82.lua adds MovementSpeedBuff=30 around
+		// MoveTowardObject. The server already simulates that multiplier;
+		// the native mover must receive it before the pursuit command.
+		speedPackets, speedErr := npcraknet.ChargeMovementSpeed(
+			e.objectID, zonenpc.EffectiveMovementSpeedBuff(enemy.Plan)+e.plan.Profile.MovementSpeedBuff,
+		)
+		if speedErr != nil {
+			return e.fail("shadowChargeSpeed", speedErr)
+		}
+		packets = append(speedPackets, packets...)
+	}
 	err = e.runtime.pursuit.schedule(
 		e.packet, e.sessionKey, e.generation, e.objectID,
 		movementTimestamp, action.TargetPosition, action.Profile, e.arrive,
@@ -372,6 +386,7 @@ func chargeCancelSpeed(
 	objectID uint32, enemy zonenpc.Snapshot, profile zonenpc.ActionProfile,
 ) ([][]byte, error) {
 	if profile.AbilityName != "NomadSpecialOneCharge" &&
+		profile.AbilityName != "ScaldronBoss_ShadowCharge" &&
 		profile.AbilityName != "VerdanthBasicPicky" {
 		return nil, nil
 	}
@@ -505,6 +520,7 @@ func (e campaignChargeSchedule) followup(timestamp uint64) ([][]byte, error) {
 	var restoredStatePackets [][]byte
 	if e.plan.Profile.AbilityName == "NocturnaSpecialDriftCharge" ||
 		e.plan.Profile.AbilityName == "BoomerCharge" ||
+		e.plan.Profile.AbilityName == "ScaldronBoss_ShadowCharge" ||
 		e.plan.Profile.AbilityName == "NomadSpecialOneCharge" {
 		var stateErr error
 		restoredStatePackets, stateErr = e.restoreMovementState()
@@ -518,9 +534,13 @@ func (e campaignChargeSchedule) followup(timestamp uint64) ([][]byte, error) {
 		)
 	}
 	if isTemplateContactCharge(e.plan.Profile.AbilityName) {
-		return e.runtime.produceChargeContactHit(
+		contactPackets, contactErr := e.runtime.produceChargeContactHit(
 			e.packet, e.sessionKey, e.generation, e.objectID, timestamp, e.plan,
 		)
+		if contactErr != nil {
+			return nil, fmt.Errorf("chargeContact: %w", contactErr)
+		}
+		return append(restoredStatePackets, contactPackets...), nil
 	}
 	var relaxPacket []byte
 	var err error

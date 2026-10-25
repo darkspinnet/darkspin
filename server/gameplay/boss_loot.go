@@ -22,6 +22,24 @@ func isCampaignDestructorLoot(plan zonenpc.SpawnPlan) bool {
 		strings.EqualFold(plan.NounName, "ScaldronBoss_Stage2.Noun"))
 }
 
+// Stage two swaps the native noun while retaining the scaled combat actor.
+// Its death rewards must follow that noun's class rather than stage one's
+// zero-challenge, no-equipment class. Preserve the live combat statistics.
+func (e *gameplayPeerSession) campaignDeathRewardSnapshot(enemy zonenpc.Snapshot) (zonenpc.Snapshot, error) {
+	if !strings.EqualFold(enemy.Plan.NounName, campaignCorruptorStageTwoNounName) {
+		return enemy, nil
+	}
+	profile, isFound := e.zone.DirectorDefinition().NPCProfilesByNoun[strings.ToLower(enemy.Plan.NounName)]
+	if !isFound || !profile.IsKnown || !profile.IsClassKnown {
+		return zonenpc.Snapshot{}, errors.New("Corruptor stage-two reward class unavailable")
+	}
+	enemy.Plan.NPCProfile.ChallengeValue = profile.ChallengeValue
+	enemy.Plan.NPCProfile.NPCType = profile.NPCType
+	enemy.Plan.NPCProfile.DropTypes = append([]uint32(nil), profile.DropTypes...)
+	enemy.Plan.NPCProfile.IsClassKnown = true
+	return enemy, nil
+}
+
 type destructorEquipmentDrop struct {
 	pickup      zoneinteract.EquipmentPickup
 	destination sim.Position

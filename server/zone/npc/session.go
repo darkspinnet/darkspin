@@ -1313,7 +1313,7 @@ func (s *Session) damage(
 		npc.ActionOwner = ActionOwner{}
 	}
 	deletedOwnedObjectIDs := make([]uint32, 0, 1)
-	if npc.IsDefeated {
+	if npc.IsDefeated && !isCorruptorStageTwoStarted {
 		deletedOwnedObjectIDs = append(deletedOwnedObjectIDs, s.deactivateNashiraPassive(&npc)...)
 		for _, objectID := range s.objectIDs {
 			owned := s.npcs[objectID]

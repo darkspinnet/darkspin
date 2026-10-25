@@ -477,6 +477,9 @@ func marshalGameplayRejoinBaselineState(
 		if marshalErr != nil {
 			return nil, fmt.Errorf("rejoinNPC[%d]: %w", index, marshalErr)
 		}
+		if len(spawnPackets) == 0 {
+			continue
+		}
 		packets = append(packets, spawnPackets...)
 		facingPackets, facingErr := npcraknet.RestoreFacing(
 			npc.Plan.ObjectID, npc.Plan.Position, npc.Facing,
@@ -507,7 +510,7 @@ func marshalGameplayRejoinBaselineState(
 			packets = append(packets, phasePacket)
 		} else {
 			for _, npc := range liveNPCs {
-				if npc.Plan.ObjectID != bossState.LeaderObjectID || !npc.IsPublished || !npc.IsIntroductionBossActive() {
+				if npc.Plan.ObjectID != bossState.LeaderObjectID || !npc.IsPublished || !npc.IsIntroductionBossActive() || npc.IsCorruptorTransitionHidden(introTime) {
 					continue
 				}
 				activePacket, activeErr := bossraknet.Active(

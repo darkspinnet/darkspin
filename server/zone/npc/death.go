@@ -13,6 +13,9 @@ type DeathPresentation struct {
 // ScaldronBoss_Stage1Death waits this raw Lua duration before retiring the
 // original body. The subsequent second-aggro camera has its own clock.
 const CorruptorStageOneDeathDuration = 11199999809 * time.Nanosecond
+const CorruptorStageOneDeathAnimation = "sca_boss_blink_out"
+const CorruptorStageOnePortalWait = 120 * time.Second
+const CorruptorStageOneExitDelay = 2 * time.Second
 
 // DeathPresentationForNoun supplies authored presentation for campaign NPC rigs
 // whose physics records are not yet part of the curated noun catalog.
@@ -30,8 +33,9 @@ func DeathPresentationForNoun(nounName string) (DeathPresentation, bool) {
 		return destructorDeathPresentation("cry_el_boss_death", 296), true
 	case "citadelboss.noun", "citadelboss_2.noun", "citadelboss_3.noun":
 		return destructorDeathPresentation("ctd_boss_tc_death", 480), true
-	case "scaldronboss.noun", "scaldronboss_stage2.noun",
-		"scaldronboss_2.noun", "scaldronboss_3.noun":
+	case "scaldronboss.noun", "scaldronboss_2.noun", "scaldronboss_3.noun":
+		return DeathPresentation{AnimationName: CorruptorStageOneDeathAnimation, PresentationDuration: CorruptorStageOneDeathDuration}, true
+	case "scaldronboss_stage2.noun":
 		return destructorDeathPresentation("sca_boss_death", 662), true
 	case "nocturnabasichealthdrain.noun",
 		"nocturnabasichealthdrain_2.noun",

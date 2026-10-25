@@ -24,6 +24,7 @@ type corruptorCinematicRun struct {
 	objectID             uint32
 	sourceGeneration     uint64
 	entryAt              time.Time
+	deathEndsAt          time.Time
 	until                time.Time
 	timestamp            uint64
 	timestampAt          time.Time
@@ -43,6 +44,9 @@ type corruptorCinematicRun struct {
 	isArmed              bool
 	isPrefixPrepared     bool
 	isDeathPresented     bool
+	isCorpseRetired      bool
+	isPortalGateComplete bool
+	portalObjectIDs      []uint32
 	continuation         corruptorPhaseContinuation
 	continuationIdentity gameplayProducerIdentity
 }
@@ -65,15 +69,19 @@ func (e *gameplayPeerSession) acceptCorruptorSecondAggro(boss zonenpc.Snapshot, 
 	if state.secondAggro != nil {
 		return state.secondAggro, nil
 	}
-	entryAt := time.Now().Add(zonenpc.CorruptorStageOneDeathDuration)
+	deathEndsAt := time.Now().Add(zonenpc.CorruptorStageOneDeathDuration)
+	entryAt := deathEndsAt.Add(zonenpc.CorruptorStageOnePortalWait + zonenpc.CorruptorStageOneExitDelay)
 	until := entryAt.Add(zonenpc.SecondAggroCinematicDuration)
 	focus := zonenpc.SecondAggroCinematicFocus(boss.Plan.Position)
 	sourceGeneration, isReserved := e.zone.NPCs().ReserveSecondAggroCinematic(boss.Plan.ObjectID, focus, until, deathNounName)
 	if !isReserved {
 		return nil, errors.New("corruptor cinematic reservation unavailable")
 	}
+	if !e.zone.NPCs().SetSecondAggroTiming(boss.Plan.ObjectID, sourceGeneration, deathEndsAt, entryAt) {
+		return nil, errors.New("corruptor transition timing unavailable")
+	}
 	run := &corruptorCinematicRun{zone: e.zone, objectID: boss.Plan.ObjectID,
-		sourceGeneration: sourceGeneration, entryAt: entryAt, until: until,
+		sourceGeneration: sourceGeneration, entryAt: entryAt, deathEndsAt: deathEndsAt, until: until,
 		entryBoss: boss, focus: raknet.Vector3(focus)}
 	state.secondAggro = run
 	run.state = state
@@ -87,7 +95,7 @@ func (e campaignNPCActionRuntime) startCorruptorSecondAggro(run *corruptorCinema
 	if run == nil {
 		return nil
 	}
-	err := e.armCorruptorSecondAggro(run, timestamp, run.entryAt.Add(-zonenpc.CorruptorStageOneDeathDuration))
+	err := e.armCorruptorSecondAggro(run, timestamp, run.deathEndsAt.Add(-zonenpc.CorruptorStageOneDeathDuration))
 	if err != nil {
 		return fmt.Errorf("sceneArm: %w", err)
 	}
@@ -183,9 +191,12 @@ func (e *corruptorCinematicRun) sourceTimestamp(at time.Time) uint64 {
 }
 
 func (e *corruptorCinematicRun) prepareEntryPackets() ([][]byte, error) {
-	deletePacket, err := raknet.MarshalApplication(raknet.ObjectDeleteMessage{ObjectID: []uint32{e.objectID}})
-	if err != nil {
-		return nil, fmt.Errorf("entryDelete: %w", err)
+	portalObjectIDs := make([]uint32, 0, len(e.portalObjectIDs))
+	for _, objectID := range e.portalObjectIDs {
+		portal, isFound := e.zone.NPCs().NPC(objectID)
+		if isFound && portal.IsPublished && !portal.IsDefeated && portal.HitPoint > 0 {
+			portalObjectIDs = append(portalObjectIDs, objectID)
+		}
 	}
 	spawnPackets, err := npcraknet.TargetedSpawn(e.entryBoss.Plan, e.entryBoss.TargetObjectID)
 	if err != nil {
@@ -200,7 +211,19 @@ func (e *corruptorCinematicRun) prepareEntryPackets() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("entryShader: %w", err)
 	}
-	packets := append([][]byte{deletePacket}, spawnPackets...)
+	packets := make([][]byte, 0, len(spawnPackets)+2)
+	if len(portalObjectIDs) != 0 {
+		deletePacket, deleteErr := raknet.MarshalApplication(raknet.ObjectDeleteMessage{ObjectID: portalObjectIDs})
+		if deleteErr != nil {
+			return nil, fmt.Errorf("entryDelete: %w", deleteErr)
+		}
+		err = e.zone.NPCs().Despawn(portalObjectIDs)
+		if err != nil {
+			return nil, fmt.Errorf("entryPortals: %w", err)
+		}
+		packets = append(packets, deletePacket)
+	}
+	packets = append(packets, spawnPackets...)
 	packets = append(packets, animationPacket)
 	return append(packets, resurrectionPackets...), nil
 }
@@ -218,8 +241,15 @@ func (e *corruptorCinematicRun) admitLocked() ([][]byte, error) {
 		}
 		return nil, nil
 	}
-	if e.runtime.now().Before(e.entryAt) {
+	if e.runtime.now().Before(e.deathEndsAt) {
 		return e.presentStageOneDeathLocked(source)
+	}
+	isReady, err := e.waitForPortalsLocked()
+	if err != nil {
+		return nil, fmt.Errorf("portalGate: %w", err)
+	}
+	if !isReady {
+		return nil, nil
 	}
 	if !e.isPrefixPrepared {
 		packets, err := e.prepareEntryPackets()
@@ -347,7 +377,7 @@ func (e *corruptorCinematicRun) admitLocked() ([][]byte, error) {
 // The zone-owned reservation already blocks actions and incoming damage; only
 // the later entry replaces the client object and begins the second-aggro scene.
 func (e *corruptorCinematicRun) presentStageOneDeathLocked(source zonenpc.Snapshot) ([][]byte, error) {
-	err := e.zone.Timeline().Schedule(e.key()+":entry", max(time.Duration(0), e.entryAt.Sub(e.runtime.now())), e.retryAdmission, e.runtime.timer.Schedule)
+	err := e.zone.Timeline().Schedule(e.key()+":entry", max(time.Duration(0), e.deathEndsAt.Sub(e.runtime.now())), e.retryAdmission, e.runtime.timer.Schedule)
 	if err != nil {
 		return nil, fmt.Errorf("deathSchedule: %w", err)
 	}
@@ -358,13 +388,64 @@ func (e *corruptorCinematicRun) presentStageOneDeathLocked(source zonenpc.Snapsh
 	if err != nil {
 		return nil, fmt.Errorf("deathStop: %w", err)
 	}
-	animationPacket, err := npcraknet.AnimationState(e.objectID, "sca_boss_death", e.timestamp)
+	animationPacket, err := npcraknet.AnimationState(e.objectID, zonenpc.CorruptorStageOneDeathAnimation, e.timestamp)
 	if err != nil {
 		return nil, fmt.Errorf("deathAnimation: %w", err)
 	}
 	packets = append(packets, animationPacket)
 	e.isDeathPresented = true
 	return packets, nil
+}
+
+// Stage1Death's job retires only the corpse, then waits for its existing
+// portals (at most 120 seconds). Minions keep fighting throughout this gap.
+func (e *corruptorCinematicRun) waitForPortalsLocked() (bool, error) {
+	if !e.isCorpseRetired {
+		packet, err := raknet.MarshalApplication(raknet.ObjectDeleteMessage{ObjectID: []uint32{e.objectID}})
+		if err != nil {
+			return false, fmt.Errorf("corpseDelete: %w", err)
+		}
+		for _, npc := range e.zone.NPCs().Snapshots() {
+			if npc.Plan.OwnerObjectID == e.objectID && npc.Plan.NounName == campaignCorruptorPortalNounName &&
+				!npc.IsDefeated && npc.HitPoint > 0 {
+				e.portalObjectIDs = append(e.portalObjectIDs, npc.Plan.ObjectID)
+			}
+		}
+		e.queueLocked([][]byte{packet})
+		e.isCorpseRetired = true
+	}
+	now := e.runtime.now()
+	if !e.isPortalGateComplete {
+		isPortalAlive := false
+		for _, objectID := range e.portalObjectIDs {
+			npc, isFound := e.zone.NPCs().NPC(objectID)
+			if isFound && !npc.IsDefeated && npc.HitPoint > 0 {
+				isPortalAlive = true
+				break
+			}
+		}
+		if isPortalAlive && now.Before(e.deathEndsAt.Add(zonenpc.CorruptorStageOnePortalWait)) {
+			err := e.zone.Timeline().Schedule(e.key()+":entry", 500*time.Millisecond, e.retryAdmission, e.runtime.timer.Schedule)
+			if err != nil {
+				return false, fmt.Errorf("portalPoll: %w", err)
+			}
+			return false, nil
+		}
+		e.entryAt = now.Add(zonenpc.CorruptorStageOneExitDelay)
+		e.until = e.entryAt.Add(zonenpc.SecondAggroCinematicDuration)
+		if !e.zone.NPCs().SetSecondAggroTiming(e.objectID, e.sourceGeneration, e.deathEndsAt, e.entryAt) {
+			return false, errors.New("corruptor portal gate timing rejected")
+		}
+		e.isPortalGateComplete = true
+	}
+	if now.Before(e.entryAt) {
+		err := e.zone.Timeline().Schedule(e.key()+":entry", e.entryAt.Sub(now), e.retryAdmission, e.runtime.timer.Schedule)
+		if err != nil {
+			return false, fmt.Errorf("portalExit: %w", err)
+		}
+		return false, nil
+	}
+	return true, nil
 }
 
 func (e *corruptorCinematicRun) prepareCompanionModifier(target zonecompanion.Actor) ([]byte, error) {

@@ -22,13 +22,18 @@ func Spawn(plan zonenpc.SpawnPlan) ([][]byte, error) {
 // SpawnSnapshot seeds the new client's animation component before its first
 // update. Native bootstrap seeks from these reflected state/time fields.
 func SpawnSnapshot(snapshot zonenpc.Snapshot, now time.Time, sourceTime uint64) ([][]byte, error) {
+	if snapshot.IsCorruptorTransitionHidden(now) {
+		// The corpse has retired but the portal-clear job has not created stage
+		// two yet. Its ordinary entry will create the object for every observer.
+		return nil, nil
+	}
 	animationName, elapsed, isPlaying := snapshot.IntroductionAnimation(now)
 	deathNounName, deathElapsed, isStageOneDeathPlaying := snapshot.CorruptorStageOneDeath(now)
 	if isStageOneDeathPlaying {
 		// The authoritative actor has accepted stage two, but existing clients
 		// still show its original noun until the delayed replacement arrives.
 		snapshot.Plan.NounName = deathNounName
-		animationName = "sca_boss_death"
+		animationName = zonenpc.CorruptorStageOneDeathAnimation
 		elapsed = deathElapsed
 		isPlaying = true
 	}
