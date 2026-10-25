@@ -2,6 +2,8 @@
 
 ### 2026-10-24
 
+- #112 Preserve Pain Hounds' client-authored 1.9-second death animation when their duration expires or their owner deactivates them instead of deleting them immediately.
+- #112 Replicate the client-authored Immobilized attribute during enemy stuns and avoid redundant movement corrections while the stunned hero remains in place.
 - #111 Use the Corruptor's authored stage-two reward class at final defeat instead of retaining stage one's zero-challenge, no-equipment drop settings.
 - #111 Play the Corruptor's distinct first-stage blink-out death animation while preserving its final-stage death animation and correct rejoin presentation.
 - #111 Restore the Corruptor's authored transition with an 11.2-second death animation, a portal-clear wait capped at 120 seconds, and a two-second exit delay before stage two.

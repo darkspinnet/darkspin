@@ -258,6 +258,12 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 			} else {
 				packets = append(packets, stopPackets...)
 			}
+			controlPackets, controlErr := targetSession.refreshEnemyImmobilizedAttributes(at)
+			if controlErr != nil {
+				r.registry.mutex.Unlock()
+				return nil, fmt.Errorf("enemyStunAttribute: %w", controlErr)
+			}
+			packets = append(packets, controlPackets...)
 			r.registry.sessions[targetSessionKey] = targetSession
 		}
 		r.registry.mutex.Unlock()
@@ -315,7 +321,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 				return nil, fmt.Errorf("enemyRootStopMarshal: %w", stopErr)
 			}
 			rootStopPackets = append(rootStopPackets, stopPackets...)
-			rootAttributes, rootAttributeErr := targetSession.refreshEnemyRootAttributes(r.now())
+			rootAttributes, rootAttributeErr := targetSession.refreshEnemyImmobilizedAttributes(r.now())
 			if rootAttributeErr != nil {
 				r.registry.mutex.Unlock()
 				return nil, fmt.Errorf("enemyRootAttribute: %w", rootAttributeErr)

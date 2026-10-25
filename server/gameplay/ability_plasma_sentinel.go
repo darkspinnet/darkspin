@@ -33,6 +33,7 @@ type plasmaSentinelPetRun struct {
 type plasmaSentinelActiveRun struct {
 	runtime        campaignAbilityCommandRuntime
 	packet         raknet.Packet
+	startedAt      time.Time
 	sessionKey     string
 	generation     uint64
 	ownerObjectID  uint32
@@ -156,29 +157,67 @@ func (e *plasmaSentinelActiveRun) expirePet(objectID uint32) ([][]byte, error) {
 		return nil, nil
 	}
 	pet := e.pets[petIndex]
+	packets, err := e.retirePetLocked(&peerSession, pet)
+	if err != nil {
+		e.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("petExpiry: %w", err)
+	}
 	e.pets[petIndex] = plasmaSentinelPetRun{}
 	if peerSession.plasmaSentinelActive == e && !e.isShieldActive && !e.hasPets() {
 		peerSession.plasmaSentinelActive = nil
 	}
-	peerSession.cancelPetPlasmaBurn(objectID)
-	peerSession.zone.Companion().Remove(objectID)
 	delete(peerSession.sagePassiveActivations, objectID)
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
-	_ = e.runtime.modifierPool.Release(pet.modifierInstanceID)
-	modifierPacket, err := effectraknet.ModifierDelete(
-		e.ownerObjectID, pet.modifierInstanceID,
-	)
+	return packets, nil
+}
+
+// The installed pet modifier kills its living summon when it expires or its
+// owner deactivates it. Reuse the ordinary death callback instead of deleting
+// the object before its 1.9-second death animation can play.
+func (e *plasmaSentinelActiveRun) retirePetLocked(peerSession *gameplayPeerSession, pet plasmaSentinelPetRun) ([][]byte, error) {
+	modifierPacket, err := effectraknet.ModifierDelete(e.ownerObjectID, pet.modifierInstanceID)
 	if err != nil {
-		return nil, fmt.Errorf("plasmaSentinelPetModifierDelete: %w", err)
+		return nil, fmt.Errorf("petModifier: %w", err)
 	}
-	packet, err := raknet.MarshalApplication(raknet.ObjectDeleteMessage{
-		ObjectID: []uint32{objectID},
-	})
+	err = e.runtime.modifierPool.Release(pet.modifierInstanceID)
 	if err != nil {
-		return nil, fmt.Errorf("plasmaSentinelPetDelete: %w", err)
+		// A previously released owner modifier must not strand its summon.
+		e.runtime.logger.Printf("RakNet Pain Hound modifier release object=%d: %v", pet.objectID, err)
 	}
-	return [][]byte{modifierPacket, packet}, nil
+	if peerSession.zone != nil && peerSession.zone.Companion() != nil {
+		peerSession.cancelPetPlasmaBurn(pet.objectID)
+		actor, isFound := peerSession.zone.Companion().Snapshot(pet.objectID)
+		if !isFound || actor.Noun != util.HashID("PlasmaSentinelPet.Noun") || actor.OwnerObjectID != e.ownerObjectID {
+			return [][]byte{modifierPacket}, nil
+		}
+		if peerSession.zone.IsActive() && !e.runtime.registry.isClosed {
+			if actor.HitPoint > 0 {
+				previousActor, deadActor, deathErr := peerSession.zone.Companion().SetHitPoint(pet.objectID, 0)
+				if deathErr != nil {
+					return nil, fmt.Errorf("petKill: %w", deathErr)
+				}
+				if previousActor.ObjectID != actor.ObjectID || deadActor.HitPoint != 0 {
+					return nil, fmt.Errorf("petKill: unexpected companion identity")
+				}
+				actor = deadActor
+			}
+			timestamp := e.packet.SourceTime + uint64(max(time.Duration(0), e.runtime.now().Sub(e.startedAt))/time.Millisecond)
+			isHandled, deathErr := e.runtime.npc.scheduleCompanionDeathLocked(peerSession, actor, timestamp)
+			if deathErr != nil {
+				e.runtime.logger.Printf("RakNet Pain Hound death fallback object=%d: %v", pet.objectID, deathErr)
+			}
+			if isHandled {
+				return [][]byte{modifierPacket}, nil
+			}
+		}
+		peerSession.zone.Companion().Remove(pet.objectID)
+	}
+	deletePacket, err := companionraknet.Defeat(pet.objectID)
+	if err != nil {
+		return nil, fmt.Errorf("petDelete: %w", err)
+	}
+	return [][]byte{modifierPacket, deletePacket}, nil
 }
 
 func (e *gameplayPeerSession) stopPlasmaSentinelActive() ([][]byte, error) {
@@ -211,25 +250,12 @@ func (e *gameplayPeerSession) stopPlasmaSentinelActive() ([][]byte, error) {
 		if pet.cancel != nil {
 			pet.cancel()
 		}
-		if e.zone != nil && e.zone.Companion() != nil {
-			e.cancelPetPlasmaBurn(pet.objectID)
-			e.zone.Companion().Remove(pet.objectID)
-		}
-		delete(e.sagePassiveActivations, pet.objectID)
-		_ = run.runtime.modifierPool.Release(pet.modifierInstanceID)
-		modifierPacket, err := effectraknet.ModifierDelete(
-			run.ownerObjectID, pet.modifierInstanceID,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("plasmaSentinelStopModifier[%d]: %w", index, err)
-		}
-		deletePacket, err := raknet.MarshalApplication(raknet.ObjectDeleteMessage{
-			ObjectID: []uint32{pet.objectID},
-		})
+		petPackets, err := run.retirePetLocked(e, pet)
 		if err != nil {
 			return nil, fmt.Errorf("plasmaSentinelStopPet[%d]: %w", index, err)
 		}
-		packets = append(packets, modifierPacket, deletePacket)
+		delete(e.sagePassiveActivations, pet.objectID)
+		packets = append(packets, petPackets...)
 		run.pets[index] = plasmaSentinelPetRun{}
 	}
 	return packets, nil
@@ -244,7 +270,6 @@ func (r campaignAbilityCommandRuntime) handlePlasmaSentinelActive(
 	abilityStartTime time.Time,
 ) ([][]byte, error) {
 	_ = creature
-	_ = abilityStartTime
 	definition := ability.Definition
 	if ability.ID == 0 || definition.Name != "PlasmaSentinelActive" ||
 		definition.Kind != sim.AbilityKindReactiveSummon || definition.Duration <= 0 {
@@ -292,7 +317,7 @@ func (r campaignAbilityCommandRuntime) handlePlasmaSentinelActive(
 		return nil, fmt.Errorf("plasmaSentinelActiveEffect: %w", err)
 	}
 	run := &plasmaSentinelActiveRun{
-		runtime: r, packet: req.packet, sessionKey: sessionKey,
+		runtime: r, packet: req.packet, startedAt: abilityStartTime, sessionKey: sessionKey,
 		generation: peerSession.generation, ownerObjectID: req.command.Common.ObjectID,
 		orientation: req.command.Common.Orientation, effectSlot: effectSlot,
 		isShieldActive: true,

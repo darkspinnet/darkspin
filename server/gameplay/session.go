@@ -332,7 +332,7 @@ type controlledHeroState struct {
 	operativeChannels             map[uint32]*operativeCageState
 	enemyRootExpiresAt            time.Time
 	enemyRootTargetObjectID       uint32
-	enemyRootPresentedObjectID    uint32
+	enemyControlPresentedObjectID uint32
 	heroKnockbackLanding          heroKnockbackLanding
 	enemyFearExpiresAt            time.Time
 	enemyFearTargetObjectID       uint32

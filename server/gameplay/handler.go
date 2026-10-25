@@ -2646,7 +2646,7 @@ func (r gameplayPendingRuntime) pollWorld(
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("nightmareRootPoll: %w", err)
 		}
-		rootControlPackets, rootControlErr := peerSession.refreshEnemyRootAttributes(r.now())
+		rootControlPackets, rootControlErr := peerSession.refreshEnemyImmobilizedAttributes(r.now())
 		if rootControlErr != nil {
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("rootControlPoll: %w", rootControlErr)

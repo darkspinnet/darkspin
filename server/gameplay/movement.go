@@ -654,6 +654,15 @@ func (r campaignMovementCommandRuntime) handle(
 		return response, nil
 	}
 	if commandSession.isEnemyStunActive(r.now()) {
+		// The native Immobilized attribute holds actual stun effects. Held
+		// clicks at that pose need no placement reset on every input poll.
+		deltaX := command.Common.Position.X - commandSession.playerPosition.X
+		deltaY := command.Common.Position.Y - commandSession.playerPosition.Y
+		radius := commandSession.deployedCampaignNavigationRadius()
+		if isFiniteZonePosition(command.Common.Position) && radius > 0 &&
+			deltaX*deltaX+deltaY*deltaY <= radius*radius {
+			return nil, nil
+		}
 		response, marshalErr := marshalPlayerMovementCorrection(
 			command.Common.ObjectID, commandSession.playerPosition, command.Common.Orientation,
 		)
