@@ -359,6 +359,24 @@ func (r campaignNPCActionRuntime) advanceCorruptorPhase(
 	if step.isStageTwoStart {
 		state.isStageTwo = true
 	}
+	// The phase controller's ten-second startup is independent of the client
+	// FirstAggro_ScaldronBoss entrance: 0.5 + 14.4 + 0.5 seconds. Never let
+	// changing phase retire that introduction and begin pursuit early.
+	delay := boss.IntroductionCombatDelay(r.now())
+	if boss.IsIntroductionPending() && delay <= 0 {
+		// Completion's native packets must commit before phase replacement
+		// invalidates the entrance action generation at the same deadline.
+		delay = 10 * time.Millisecond
+	}
+	if delay > 0 {
+		r.registry.mutex.Unlock()
+		step.timestamp += uint64((delay + time.Millisecond - 1) / time.Millisecond)
+		err := scheduleNPCProducer(r.registry, step.packet, delay, step.produce)
+		if err != nil {
+			return nil, fmt.Errorf("corruptorIntroWait: %w", err)
+		}
+		return nil, nil
+	}
 	if step.continuation != nil && step.continuation.isPrepared {
 		r.registry.mutex.Unlock()
 		return step.continuation.admit(step)

@@ -487,7 +487,12 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 		r.registry.mutex.Unlock()
 		if isSessionCurrent && !isActiveRequest && isBasicHeldCurrent &&
 			basicCycleRemaining > 0 {
-			return request.reject("basic cycle already active")
+			// These are repeated presses inside the accepted basic cycle, not
+			// another action. Native 103 clears its current action definition
+			// when it receives a rejection, even while that cycle still plays.
+			// As with held-aim refreshes above, acknowledge transport only and
+			// leave the running attack and its authored timing intact.
+			return nil, nil
 		}
 		return request.reject("session unavailable or busy")
 	}

@@ -2,6 +2,12 @@
 
 ### 2026-10-24
 
+- #110 Track obelisk approach movement on the server and complete the interaction on arrival instead of repeatedly returning pursuit responses from a stale hero position.
+- #110 Delay the Corruptor's phase controller until its client-authored entrance and completion publication finish, preventing pursuit during the cutscene.
+- #110 Replicate the client-authored Immobilized attribute for enemy roots and avoid redundant correction teleports while the hero remains in place.
+- #110 Keep one committed campaign clock stream per session so duplicate backward updates cannot corrupt native cooldown timing, including Supernova.
+- #110 Preserve earned cash-out rewards when inventory is full, allowing the bounded reward batch above capacity instead of leaving placeholder reward cards.
+- #110 Preserve the running basic attack when repeated input arrives during its accepted cycle instead of sending rejections that reset its native animation.
 - #106 Correct Grappling Pulsar's pull effects from duplicate persistent world orbs to client-authored victim and linked beam attachments, removing both when the pull ends or its actors are retired.
 - #106 Restore the Corruptor's first-stage death animation before its second-stage introduction, and preserve the transport identity needed to resume its second-stage attacks.
 - #106 Preserve Lightning Juggernaut movement during charge redirects instead of repeatedly resetting its native mover and snapping at arrival.

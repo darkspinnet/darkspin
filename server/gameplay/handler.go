@@ -2618,6 +2618,10 @@ func (r gameplayPendingRuntime) pollWorld(
 	if err != nil {
 		return nil, fmt.Errorf("pickupPursuitPoll: %w", err)
 	}
+	interactablePursuitPackets, err := r.pollInteractablePursuit(ctx, packet)
+	if err != nil {
+		return nil, fmt.Errorf("interactablePursuitPoll: %w", err)
+	}
 	r.registry.mutex.Lock()
 	r.registry.commitChannelRemovalsLocked()
 	peerSession, isFound = r.registry.sessions[packet.Address.String()]
@@ -2642,6 +2646,12 @@ func (r gameplayPendingRuntime) pollWorld(
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("nightmareRootPoll: %w", err)
 		}
+		rootControlPackets, rootControlErr := peerSession.refreshEnemyRootAttributes(r.now())
+		if rootControlErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("rootControlPoll: %w", rootControlErr)
+		}
+		rootHazardPackets = append(rootHazardPackets, rootControlPackets...)
 		if peerSession.zone != nil && peerSession.stage.IsDungeon() &&
 			!peerSession.isZoneTerminal() && peerSession.dungeonSetup.IsCommitted() {
 			ventPackets, ventDelta, ventErr := peerSession.pollFireVents(r.damage.npc, packet.SourceTime, r.now())
@@ -2708,6 +2718,7 @@ func (r gameplayPendingRuntime) pollWorld(
 	rootHazardPackets = append(rootHazardPackets, acMalfunctionPackets...)
 	rootHazardPackets = append(rootHazardPackets, landingPackets...)
 	rootHazardPackets = append(rootHazardPackets, pickupPursuitPackets...)
+	rootHazardPackets = append(rootHazardPackets, interactablePursuitPackets...)
 	rootHazardPackets = append(rootHazardPackets, triggerPackets...)
 	overdriveErr := r.registry.refreshOverdriveFramesLocked(&peerSession, r.now())
 	if overdriveErr != nil {

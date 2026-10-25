@@ -78,18 +78,20 @@ func ValidateTeleport(
 	return nil
 }
 
-func ValidateInteraction(
+// InteractionDestination keeps an approach outside the target's collision
+// footprint while validating the same route used to admit the interaction.
+func InteractionDestination(
 	mesh *basenavigation.Mesh, start game.Vec3, target game.Vec3, footprintRadius float32,
-) error {
+) (game.Vec3, error) {
 	if mesh == nil {
-		return nil
+		return target, nil
 	}
 	if footprintRadius < 0 {
-		return errors.New("navigation interaction footprint invalid")
+		return game.Vec3{}, errors.New("navigation interaction footprint invalid")
 	}
 	planLayer, isLayerFound := mesh.SelectFootprintLayer(footprintRadius)
 	if !isLayerFound {
-		return errors.New("navigation interaction layer unavailable")
+		return game.Vec3{}, errors.New("navigation interaction layer unavailable")
 	}
 	startProjection, err := mesh.Project(basenavigation.Vec3{
 		X: start.X, Y: start.Y, Z: start.Z,
@@ -97,7 +99,7 @@ func ValidateInteraction(
 		PlanLayer: planLayer, MaxDistance: ProjectionDistance,
 	})
 	if err != nil {
-		return fmt.Errorf("navigationInteractionStart: %w", err)
+		return game.Vec3{}, fmt.Errorf("navigationInteractionStart: %w", err)
 	}
 	targetProjection, err := mesh.ProjectInteractionTarget(startProjection, basenavigation.Vec3{
 		X: target.X, Y: target.Y, Z: target.Z,
@@ -106,10 +108,10 @@ func ValidateInteraction(
 		ComponentID: startProjection.ComponentID, IsComponentConstrained: true,
 	})
 	if err != nil {
-		return fmt.Errorf("navigationInteractionTarget: %w", err)
+		return game.Vec3{}, fmt.Errorf("navigationInteractionTarget: %w", err)
 	}
 	if !mesh.IsReachable(startProjection, targetProjection, planLayer) {
-		return errors.New("navigation interaction target unreachable")
+		return game.Vec3{}, errors.New("navigation interaction target unreachable")
 	}
 	path, err := mesh.CreatePath(startProjection.Position, targetProjection.Position, basenavigation.PathOptions{
 		ProjectionOptions: basenavigation.ProjectionOptions{
@@ -118,10 +120,10 @@ func ValidateInteraction(
 		MaxVisitedPolygon: 4096,
 	})
 	if err != nil {
-		return fmt.Errorf("navigationInteractionPath: %w", err)
+		return game.Vec3{}, fmt.Errorf("navigationInteractionPath: %w", err)
 	}
 	if len(path.Points) == 0 {
-		return errors.New("navigation interaction path empty")
+		return game.Vec3{}, errors.New("navigation interaction path empty")
 	}
-	return nil
+	return game.Vec3(targetProjection.Position), nil
 }

@@ -315,6 +315,12 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 				return nil, fmt.Errorf("enemyRootStopMarshal: %w", stopErr)
 			}
 			rootStopPackets = append(rootStopPackets, stopPackets...)
+			rootAttributes, rootAttributeErr := targetSession.refreshEnemyRootAttributes(r.now())
+			if rootAttributeErr != nil {
+				r.registry.mutex.Unlock()
+				return nil, fmt.Errorf("enemyRootAttribute: %w", rootAttributeErr)
+			}
+			rootStopPackets = append(rootStopPackets, rootAttributes...)
 			r.registry.sessions[targetSessionKey] = targetSession
 		}
 		r.registry.mutex.Unlock()

@@ -86,6 +86,16 @@ func (e Snapshot) IsIntroductionCombatSuppressed() bool {
 		e.introduction.profile.FirstAggroCinematicDuration > 0)
 }
 
+// IntroductionCombatDelay keeps independent combat controllers behind the
+// actor's retained entrance, including its authored camera hold.
+func (e Snapshot) IntroductionCombatDelay(now time.Time) time.Duration {
+	if !e.IsIntroductionPending() {
+		return 0
+	}
+	duration := max(e.introduction.profile.FirstAggroDelay, e.introduction.profile.FirstAggroCinematicDuration)
+	return max(e.introduction.startedAt.Add(duration).Sub(now), 0)
+}
+
 // StartIntroduction admits or resumes the same actor-owned entrance timeline.
 func (e *Session) StartIntroduction(objectID uint32, owner ActionOwner, generation uint64,
 	profile ActionProfile, now time.Time, timestamp uint64,

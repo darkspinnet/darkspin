@@ -215,6 +215,7 @@ type zoneEffectPresentation struct {
 	campaignTwinLaserEndpointIDs        map[uint32]uint32
 	campaignArcturusStates              map[uint32]*campaignArcturusState
 	pickupPursuit                       *campaignPickupTimeout
+	interactablePursuit                 *campaignInteractablePursuit
 	campaignCorruptorStates             map[uint32]campaignCorruptorState
 	campaignNPCRuptionNextMagmas        map[uint32]uint64
 	campaignNPCDragSlowShieldReadiness  map[uint32]uint64
@@ -331,6 +332,7 @@ type controlledHeroState struct {
 	operativeChannels             map[uint32]*operativeCageState
 	enemyRootExpiresAt            time.Time
 	enemyRootTargetObjectID       uint32
+	enemyRootPresentedObjectID    uint32
 	heroKnockbackLanding          heroKnockbackLanding
 	enemyFearExpiresAt            time.Time
 	enemyFearTargetObjectID       uint32
@@ -620,6 +622,7 @@ type gameplayPeerSession struct {
 	arenaLobbyTransitionAt               time.Time
 	arenaLobbyTransitionCount            uint32
 	isRejoinPending                      bool
+	campaignClock                        *campaignClockRun
 	isNPCRecoveryPending                 bool
 	isTutorialCapsuleDropUnlocked        bool
 	fullOrbContactObjectIDs              map[uint32]struct{}
@@ -1250,6 +1253,7 @@ func (s *gameplayPeerSession) stopCampaignNPCProjectiles() {
 	clear(s.campaignTwinLaserEndpointIDs)
 	clear(s.campaignArcturusStates)
 	s.pickupPursuit = nil
+	s.interactablePursuit = nil
 	clear(s.campaignNPCRuptionNextMagmas)
 	clear(s.campaignNPCShielderNextGrenades)
 	clear(s.campaignNPCNextSleepMushrooms)

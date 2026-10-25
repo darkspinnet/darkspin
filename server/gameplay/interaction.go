@@ -2837,7 +2837,22 @@ func (r campaignInteractionRuntime) handleScriptUse(
 	}
 	var use game.CampaignScriptUse
 	rejection := game.CampaignScriptUseRejectedIdentity
-	if isCurrentFound && currentSession.zone.Script() != nil {
+	if isCurrentFound && currentSession.zone != nil && command.Common.ObjectID == currentSession.deployedObjectID &&
+		currentSession.zone.Script() != nil {
+		currentSession.interactablePursuit = nil
+		// Native interactable pursuit moves the hero without ground-move
+		// commands. Sample its bounded server route before testing use range.
+		err = currentSession.advancePlayerPosition(r.now(), command.Common.Position)
+		if err != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("interactablePosition: %w", err)
+		}
+		err = currentSession.syncZoneHeroPose()
+		if err != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("interactablePose: %w", err)
+		}
+		r.registry.sessions[sessionKey] = currentSession
 		use, rejection, err = currentSession.zone.Script().PrepareUse(
 			currentSession.deployedObjectID, command.Common.ObjectID, command.Value,
 			game.Vec3{
@@ -2851,8 +2866,10 @@ func (r campaignInteractionRuntime) handleScriptUse(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignInteractablePrepare: %w", err)
 	}
+	approach := use.Invocation.Position
 	if rejection == "" || rejection == game.CampaignScriptUseRejectedDistance {
-		navigationErr := zonenavigation.ValidateInteraction(
+		var navigationErr error
+		approach, navigationErr = zonenavigation.InteractionDestination(
 			currentSession.zone.Navigation(),
 			game.Vec3{
 				X: currentSession.playerPosition.X,
@@ -2885,10 +2902,41 @@ func (r campaignInteractionRuntime) handleScriptUse(
 			pursuitPackets, marshalErr := actionraknet.PursuitTransfer(
 				command.Common.Unknown[0], command.Common.ObjectID,
 			)
-			r.registry.mutex.Unlock()
 			if marshalErr != nil {
+				r.registry.mutex.Unlock()
 				return nil, fmt.Errorf("campaignInteractablePursuit: %w", marshalErr)
 			}
+			if currentSession.isEnemyRootActive(r.now()) || currentSession.isSleepingCloudActive(r.now()) {
+				r.registry.mutex.Unlock()
+				packets, rejectErr := r.rejectScriptUse(command, "cannot pursue while immobilized")
+				if rejectErr != nil {
+					return nil, fmt.Errorf("interactableRootReject: %w", rejectErr)
+				}
+				return packets, nil
+			}
+			previousPosition, playerPosition, movementErr := currentSession.advancePlayerPursuitMovement(
+				r.now(), currentSession.playerPosition, raknet.Vector3(approach),
+				r.registry.passiveMovementIncrease(currentSession),
+			)
+			if movementErr != nil {
+				r.registry.mutex.Unlock()
+				return nil, fmt.Errorf("interactablePursuitPath: %w", movementErr)
+			}
+			if previousPosition != playerPosition {
+				poseErr := currentSession.syncZoneHeroPose()
+				if poseErr != nil {
+					r.registry.mutex.Unlock()
+					return nil, fmt.Errorf("interactablePursuitPose: %w", poseErr)
+				}
+			}
+			currentSession.interactablePursuit = &campaignInteractablePursuit{
+				runtime: r, sessionKey: sessionKey, generation: currentSession.generation,
+				transportGeneration: currentSession.transportGeneration,
+				motionRevision:      currentSession.playerMotionRevision(), command: command,
+				destination: approach, expiresAt: r.now().Add(zoneaction.PursuitTimeout),
+			}
+			r.registry.sessions[sessionKey] = currentSession
+			r.registry.mutex.Unlock()
 			r.logger.Printf("RakNet campaign interactable pursuit transferred source=%d target=%d source_position=(%g,%g,%g) target_position=(%g,%g,%g) range=%g",
 				command.Common.ObjectID, command.Value,
 				currentSession.playerPosition.X, currentSession.playerPosition.Y,

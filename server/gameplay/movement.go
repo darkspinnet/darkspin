@@ -667,8 +667,16 @@ func (r campaignMovementCommandRuntime) handle(
 		return response, nil
 	}
 	if commandSession.isEnemyRootActive(r.now()) {
-		// Native fixed move messages skip the controlling hero. Reconcile
-		// its local prediction through locomotion reflection and placement.
+		// Immobilized now holds the native mover. Correct a genuine escaped
+		// prediction, but do not repeatedly teleport an already stopped hero
+		// for each held movement command (including its render height offset).
+		deltaX := command.Common.Position.X - commandSession.playerPosition.X
+		deltaY := command.Common.Position.Y - commandSession.playerPosition.Y
+		radius := commandSession.deployedCampaignNavigationRadius()
+		if isFiniteZonePosition(command.Common.Position) && radius > 0 &&
+			deltaX*deltaX+deltaY*deltaY <= radius*radius {
+			return nil, nil
+		}
 		response, marshalErr := marshalPlayerMovementCorrection(
 			command.Common.ObjectID, commandSession.playerPosition, command.Common.Orientation,
 		)
