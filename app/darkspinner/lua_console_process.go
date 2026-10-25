@@ -166,6 +166,42 @@ func (e *launcherLuaProcess) stop(ctx context.Context) error {
 }
 
 func (e *launcherLuaProcess) closeInput() { e.closePipe(e.input) }
+
+func (e *launcherLuaProcess) stopScript(ctx context.Context) error {
+	select {
+	case <-e.done:
+		return nil
+	default:
+	}
+	e.mutex.Lock()
+	discovery := e.discovery
+	e.mutex.Unlock()
+	if discovery == nil {
+		return errors.New("scenario connection is not ready")
+	}
+	requestContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestContext, http.MethodPost, discovery.URL+"/scripts/stop", nil)
+	if err != nil {
+		return fmt.Errorf("stopRequest: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+discovery.Token)
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}, CheckRedirect: rejectScenarioReadyRedirect}
+	defer client.CloseIdleConnections()
+	response, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("stopSend: %w", err)
+	}
+	closeErr := response.Body.Close()
+	if closeErr != nil {
+		return fmt.Errorf("stopResponse: %w", closeErr)
+	}
+	if response.StatusCode != http.StatusAccepted {
+		return fmt.Errorf("scenario script stop rejected (%d)", response.StatusCode)
+	}
+	return nil
+}
+
 func (e *launcherLuaProcess) kill(ctx context.Context) error {
 	select {
 	case <-e.done:

@@ -23,8 +23,8 @@ func (e *debugClientManager) lockAbilityCast(ctx context.Context, clientID strin
 	return &client.abilityCastMutex, nil
 }
 
-func (e *debugClientManager) CastActive(ctx context.Context, clientID string, point controlWorldPoint) (any, error) {
-	result, err := e.requestWindow(ctx, clientID, "gameplay.cast_active", controlCommand{WorldPoint: &point})
+func (e *debugClientManager) CastActive(ctx context.Context, clientID string, point controlWorldPoint, abilityID uint32) (any, error) {
+	result, err := e.requestWindow(ctx, clientID, "gameplay.cast_active", controlCommand{WorldPoint: &point, AbilityID: abilityID})
 	if err != nil {
 		return result, fmt.Errorf("activeCast: %w", err)
 	}

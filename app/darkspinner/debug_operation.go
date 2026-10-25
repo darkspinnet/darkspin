@@ -151,6 +151,20 @@ func (e *debugSupervisor) executeDebugOperation(ctx context.Context, operation s
 	}
 	state := e.operationState
 	switch operation {
+	case "scenario.log":
+		var req struct {
+			Message string `json:"message"`
+		}
+		err := decodeDebugPayload(payload, &req)
+		if err != nil {
+			return nil, fmt.Errorf("logRequest: %w", err)
+		}
+		message := strings.TrimSpace(req.Message)
+		if message == "" || len(message) > 2048 || strings.ContainsAny(message, "\r\n") {
+			return nil, errors.New("scenario log message must be one nonempty line of at most 2048 bytes")
+		}
+		e.logLuaActivity(message)
+		return nil, nil
 	case "party.create", "party.invite", "party.join":
 		result, err := executeDebugPartyOperation(ctx, state.host, state.clientManager, operation, payload)
 		if err != nil {

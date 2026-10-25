@@ -153,12 +153,12 @@ typedef struct fang_control_active_cast {
 int fang_control_ability_install(HMODULE executable);
 unsigned char fang_control_ability_edge(void* caller, uint32_t action, unsigned char is_pressed);
 uint32_t fang_control_ability_begin(uint32_t request_id, uint32_t scene, uint32_t handle, int32_t x, int32_t y,
-    uint64_t deadline, fang_control_active_cast* snapshot);
+    uint32_t ability_id, uint64_t deadline, fang_control_active_cast* snapshot);
 uint32_t fang_control_ability_frame(uint32_t request_id, fang_control_active_cast* snapshot);
 void fang_control_ability_cancel(uint32_t request_id);
 int fang_control_gameplay_install(HMODULE executable);
 void fang_control_gameplay_frame(uint32_t sequence);
-int fang_control_gameplay_submit(uint32_t request_id, uint32_t kind, float x, float y, float z, uint32_t timeout_ms, uint32_t hold_ms, uint32_t hero_slot);
+int fang_control_gameplay_submit(uint32_t request_id, uint32_t kind, float x, float y, float z, uint32_t timeout_ms, uint32_t hold_ms, uint32_t hero_slot, uint32_t ability_id);
 int fang_control_gameplay_result(uint32_t request_id, fang_control_window_receipt* receipt,
     fang_control_gameplay_state* snapshot, fang_control_projection* projection, fang_control_gameplay_click* click,
     fang_control_hero_selection* selection, fang_control_active_cast* cast);

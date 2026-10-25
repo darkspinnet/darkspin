@@ -18,9 +18,16 @@ import (
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
-const missileTempestScatterRadius = float32(6)
+const (
+	missileTempestScatterRadius = float32(6)
+	missileTempestDescentHeight = float32(15)
+	// MissileTempestActive's TrackProjectile normalizes (0.01, 0, -1).
+	// Preserve its nonvertical descent instead of a singular world-up facing.
+	missileTempestDescentSlope = float32(0.01)
+)
 
 type heroBurstSchedule struct {
+	scenarioCast               *scenarioRideCast
 	channel                    *rocketBarrageChannel
 	runtime                    campaignAbilityCommandRuntime
 	packet                     raknet.Packet
@@ -179,7 +186,8 @@ func (e heroBurstStep) produceLaunch() ([][]byte, error) {
 		targetPosition = schedule.planTargetPosition(peerSession, e.index)
 		if schedule.definition.Name == "MissileTempestActive" {
 			actorPosition = targetPosition
-			actorPosition.Z += 15
+			actorPosition.X -= missileTempestDescentHeight * missileTempestDescentSlope
+			actorPosition.Z += missileTempestDescentHeight
 		}
 	}
 	if schedule.definition.Name == "LightningTempest_Active" {
@@ -247,6 +255,9 @@ func (e heroBurstStep) produceLaunch() ([][]byte, error) {
 		return presentationPackets, nil
 	}
 	packets, err := schedule.run.Advance(context.Background(), e.deadline)
+	if err == nil {
+		peerSession.launchScenarioBurst(schedule.scenarioCast, e.index, schedule.runtime.now())
+	}
 	schedule.runtime.registry.mutex.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("heroBurstLaunch[%d]: %w", e.index, err)
@@ -902,6 +913,7 @@ func (e heroBurstSchedule) produceRelease() ([][]byte, error) {
 		}
 		packets = append(packets, resetPackets...)
 	}
+	e.runtime.releaseScenarioBurst(e.sessionKey, e.scenarioCast, e.runtime.now())
 	return append(packets, e.releaseResponse), nil
 }
 
@@ -919,6 +931,7 @@ func (e heroBurstSchedule) produceFinish() ([][]byte, error) {
 		return nil, nil
 	}
 	if isCurrent {
+		peerSession.completeScenarioBurst(e.scenarioCast, e.runtime.now())
 		delete(peerSession.heroBurstAttacks, e.firstProjectileObjectID)
 		e.run.SetCancel(nil)
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
@@ -939,6 +952,7 @@ func (e heroBurstSchedule) fail(scheduleErr error) {
 		if e.channel != nil && peerSession.rocketBarrage == e.channel {
 			peerSession.interruptRocketBarrage(e.runtime.now())
 		}
+		peerSession.failScenarioRide(e.scenarioCast, e.runtime.now(), scheduleErr.Error())
 		delete(peerSession.heroBurstAttacks, e.firstProjectileObjectID)
 		peerSession.restoreCampaignProjectileID(e.previousProjectileObjectID)
 		peerSession.abilityCooldownSession().Rollback(e.cooldownReservation)
@@ -982,7 +996,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 ) ([][]byte, error) {
 	if activeAbilityID == 0 {
 		r.registry.mutex.Unlock()
-		return request.reject("projectile burst definition unavailable")
+		return request.rejectScenarioAbility("projectile burst definition unavailable")
 	}
 	command := request.command
 	packet := request.packet
@@ -1012,7 +1026,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 		(!isReportedZonePosition(targetPosition) ||
 			!isFiniteZonePosition(targetPosition)) {
 		r.registry.mutex.Unlock()
-		return request.reject("projectile burst cursor unavailable")
+		return request.rejectScenarioAbility("projectile burst cursor unavailable")
 	}
 	actorPosition := game.Vec3(peerSession.playerPosition)
 	creature, definition, passiveKillStack :=
@@ -1056,7 +1070,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 	}
 	if len(projected.HitDelays) == 0 {
 		r.registry.mutex.Unlock()
-		return request.reject("projectile burst definition unavailable")
+		return request.rejectScenarioAbility("projectile burst definition unavailable")
 	}
 	damage, err := zoneability.ProjectDamage(
 		creature, projected, projected.MinimumDamage, projected.MaximumDamage,
@@ -1107,13 +1121,13 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 				return pursuitPackets, nil
 			}
 			r.registry.mutex.Unlock()
-			return request.reject("projectile burst target unavailable or out of range")
+			return request.rejectScenarioAbility("projectile burst target unavailable or out of range")
 		}
 	} else if definition.BurstTargeting != sim.ProjectileBurstTargetingRadial &&
 		definition.BurstTargeting != sim.ProjectileBurstTargetingArc &&
 		zoneability.Distance(actorPosition, game.Vec3(targetPosition)) > admissionRange {
 		r.registry.mutex.Unlock()
-		return request.reject("projectile burst cursor out of range")
+		return request.rejectScenarioAbility("projectile burst cursor out of range")
 	}
 	definition = projected
 	definition.MinimumDamage = damage.Minimum
@@ -1128,7 +1142,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 	}
 	if peerSession.deployedManaPoint() < manaCost {
 		r.registry.mutex.Unlock()
-		return request.reject("power unavailable")
+		return request.rejectScenarioAbility("power unavailable")
 	}
 	definition.Speed, err = zoneability.ProjectProjectileSpeed(creature, definition)
 	if err != nil {
@@ -1159,7 +1173,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 			if acquireErr != nil {
 				peerSession.restoreCampaignProjectileID(previousProjectileObjectID)
 				r.registry.mutex.Unlock()
-				return request.reject(acquireErr.Error())
+				return request.rejectScenarioAbility(acquireErr.Error())
 			}
 			if isAcquired {
 				targetNPC = acquired
@@ -1195,7 +1209,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 	if definition.Name == "LightningTempest_Active" {
 		travelDistance = max(float32(0.01), 10-actorFootprint)
 	} else if definition.Name == "MissileTempestActive" {
-		travelDistance = max(float32(0.01), 15-actorFootprint)
+		travelDistance = max(float32(0.01), missileTempestDescentHeight-actorFootprint)
 	}
 	if definition.BurstTargeting == sim.ProjectileBurstTargetingRadial ||
 		definition.BurstTargeting == sim.ProjectileBurstTargetingArc {
@@ -1289,7 +1303,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 	if !isCooldownReserved {
 		run.Stop()
 		r.registry.mutex.Unlock()
-		return request.reject("cooldown unavailable")
+		return request.rejectScenarioAbility("cooldown unavailable")
 	}
 	releaseReservation, isReleaseReserved :=
 		peerSession.abilityReleaseSession().Reserve(
@@ -1299,7 +1313,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 		peerSession.abilityCooldownSession().Rollback(cooldownReservation)
 		run.Stop()
 		r.registry.mutex.Unlock()
-		return request.reject("release unavailable")
+		return request.rejectScenarioAbility("release unavailable")
 	}
 	if isPursuitRetry {
 		peerSession.campaignPlayerPursuitSession().Cancel()
@@ -1331,7 +1345,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 		)
 		run.Stop()
 		r.registry.mutex.Unlock()
-		return request.reject("passive soul state unavailable")
+		return request.rejectScenarioAbility("passive soul state unavailable")
 	}
 	soulPackets, soulErr := peerSession.syncSoulRavagerPresentation()
 	if soulErr != nil {
@@ -1348,10 +1362,12 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 		return nil, fmt.Errorf("heroBurstSoulPresentation: %w", soulErr)
 	}
 	immediatePackets = append(immediatePackets, soulPackets...)
+	scenarioCast := peerSession.prepareScenarioBurst(request, activeAbilityID, abilityStartTime, targetPosition, targetObjectID, len(definition.HitDelays))
 	var channel *rocketBarrageChannel
 	if definition.Name == "MissileTempestActive" {
 		channel = &rocketBarrageChannel{
-			run: run, startedAt: abilityStartTime, sourceTime: packet.SourceTime,
+			scenarioCast: scenarioCast,
+			run:          run, startedAt: abilityStartTime, sourceTime: packet.SourceTime,
 			objectID: command.Common.ObjectID, releasePacket: releaseResponse,
 		}
 		peerSession.rocketBarrage = channel
@@ -1361,8 +1377,9 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 	r.registry.mutex.Unlock()
 
 	schedule := heroBurstSchedule{
-		channel: channel,
-		runtime: r, packet: packet, sessionKey: sessionKey,
+		scenarioCast: scenarioCast,
+		channel:      channel,
+		runtime:      r, packet: packet, sessionKey: sessionKey,
 		generation: generation, sourceObjectID: command.Common.ObjectID,
 		targetObjectID:             targetObjectID,
 		targetPosition:             targetPosition,
@@ -1410,6 +1427,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 		return nil, fmt.Errorf("heroBurstSchedule: %w", err)
 	}
 	run.SetCancel(cancel)
+	r.acceptScenarioRide(sessionKey, scenarioCast, r.now())
 	r.logger.Printf(
 		"RakNet hero projectile burst accepted ability=%s source=%d target=%d shots=%d",
 		definition.Name, command.Common.ObjectID, targetObjectID,

@@ -13,31 +13,36 @@ import (
 )
 
 type debugAbilityCast struct {
-	Revision           uint64             `json:"revision"`
-	ActorObjectID      uint32             `json:"actor_object_id"`
-	CreatureIndex      uint32             `json:"creature_index"`
-	AbilityID          uint32             `json:"ability_id"`
-	AbilityAsset       string             `json:"ability_asset"`
-	InputSyncStamp     uint32             `json:"input_sync_stamp"`
-	RequestStamp       uint8              `json:"request_stamp"`
-	Phase              string             `json:"phase"`
-	IsAccepted         bool               `json:"is_accepted"`
-	IsArrived          bool               `json:"is_arrived"`
-	IsArrivalProcessed bool               `json:"is_arrival_processed"`
-	IsImpactCommitted  bool               `json:"is_impact_committed"`
-	IsReleased         bool               `json:"is_released"`
-	IsFailed           bool               `json:"is_failed"`
-	AcceptedAt         time.Time          `json:"accepted_at"`
-	ArrivedAt          time.Time          `json:"arrived_at"`
-	ArrivalProcessedAt time.Time          `json:"arrival_processed_at"`
-	ImpactAt           time.Time          `json:"impact_at"`
-	ReleasedAt         time.Time          `json:"released_at"`
-	FailedAt           time.Time          `json:"failed_at"`
-	FailureReason      string             `json:"failure_reason,omitempty"`
-	TargetObjectID     uint32             `json:"target_object_id"`
-	Destination        debugWorldPosition `json:"destination"`
-	Damage             float32            `json:"damage"`
-	IsTargetDefeated   bool               `json:"is_target_defeated"`
+	Revision            uint64             `json:"revision"`
+	ActorObjectID       uint32             `json:"actor_object_id"`
+	CreatureIndex       uint32             `json:"creature_index"`
+	AbilityID           uint32             `json:"ability_id"`
+	AbilityAsset        string             `json:"ability_asset"`
+	InputSyncStamp      uint32             `json:"input_sync_stamp"`
+	RequestStamp        uint8              `json:"request_stamp"`
+	Phase               string             `json:"phase"`
+	IsAccepted          bool               `json:"is_accepted"`
+	IsArrived           bool               `json:"is_arrived"`
+	IsArrivalProcessed  bool               `json:"is_arrival_processed"`
+	IsImpactCommitted   bool               `json:"is_impact_committed"`
+	IsReleased          bool               `json:"is_released"`
+	IsFailed            bool               `json:"is_failed"`
+	AcceptedAt          time.Time          `json:"accepted_at"`
+	ArrivedAt           time.Time          `json:"arrived_at"`
+	ArrivalProcessedAt  time.Time          `json:"arrival_processed_at"`
+	ImpactAt            time.Time          `json:"impact_at"`
+	ReleasedAt          time.Time          `json:"released_at"`
+	FailedAt            time.Time          `json:"failed_at"`
+	FailureReason       string             `json:"failure_reason,omitempty"`
+	TargetObjectID      uint32             `json:"target_object_id"`
+	Destination         debugWorldPosition `json:"destination"`
+	Damage              float32            `json:"damage"`
+	IsTargetDefeated    bool               `json:"is_target_defeated"`
+	ExpectedLaunchCount int                `json:"expected_launch_count"`
+	LaunchCount         int                `json:"launch_count"`
+	LastLaunchAt        time.Time          `json:"last_launch_at"`
+	IsBurstCompleted    bool               `json:"is_burst_completed"`
+	BurstCompletedAt    time.Time          `json:"burst_completed_at"`
 }
 
 type debugAbilityRejection struct {
@@ -97,7 +102,8 @@ func debugAbilityStateDTO(state scenario.AbilityState) debugAbilityState {
 		result.Cast = &debugAbilityCast{Revision: cast.Revision, ActorObjectID: cast.ActorObjectID, CreatureIndex: cast.CreatureIndex, AbilityID: cast.AbilityID, AbilityAsset: cast.AbilityAsset,
 			InputSyncStamp: cast.InputSyncStamp, RequestStamp: cast.RequestStamp, Phase: cast.Phase, IsAccepted: cast.IsAccepted, IsArrived: cast.IsArrived, IsArrivalProcessed: cast.IsArrivalProcessed, IsImpactCommitted: cast.IsImpactCommitted, IsReleased: cast.IsReleased, IsFailed: cast.IsFailed,
 			AcceptedAt: cast.AcceptedAt, ArrivedAt: cast.ArrivedAt, ArrivalProcessedAt: cast.ArrivalProcessedAt, ImpactAt: cast.ImpactAt, ReleasedAt: cast.ReleasedAt, FailedAt: cast.FailedAt, FailureReason: cast.FailureReason,
-			TargetObjectID: cast.TargetObjectID, Destination: debugWorldPositionDTO(cast.Destination), Damage: cast.Damage, IsTargetDefeated: cast.IsTargetDefeated}
+			TargetObjectID: cast.TargetObjectID, Destination: debugWorldPositionDTO(cast.Destination), Damage: cast.Damage, IsTargetDefeated: cast.IsTargetDefeated,
+			ExpectedLaunchCount: cast.ExpectedLaunchCount, LaunchCount: cast.LaunchCount, LastLaunchAt: cast.LastLaunchAt, IsBurstCompleted: cast.IsBurstCompleted, BurstCompletedAt: cast.BurstCompletedAt}
 	}
 	if state.Rejection != nil {
 		rejection := state.Rejection

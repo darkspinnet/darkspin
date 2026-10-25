@@ -85,9 +85,13 @@ func (e *gameplaySessionRegistry) scenarioAbilitySnapshot(peer gameplayPeerSessi
 	ability, isFound := e.abilitiesByNoun[creature.Noun]
 	result.AbilityID = ability.ID
 	result.AbilityAsset = ability.AssetName
-	result.IsSupported = isFound && ability.ID != 0 && ability.AssetName == "LightningRogueActive" && ability.Definition.Kind == sim.AbilityKindTeleportStrike
-	if result.IsSupported {
+	isRide := ability.AssetName == "LightningRogueActive" && ability.Definition.Kind == sim.AbilityKindTeleportStrike
+	isBurst := ability.AssetName == "MissileTempestActive" && ability.Definition.Kind == sim.AbilityKindProjectileBurst
+	result.IsSupported = isFound && ability.ID != 0 && (isRide || isBurst)
+	if isRide {
 		result.AbilityName = "Ride the Lightning"
+	} else if isBurst {
+		result.AbilityName = "Rocket Barrage"
 	}
 	zoneGeneration, actor, isActor := peer.zone.ScenarioAbilityActor(peer.binding.UserID, peer.generation)
 	if !isActor || actor.ObjectID != peer.deployedObjectID || actor.CreatureIndex != peer.deployedCreatureIndex {

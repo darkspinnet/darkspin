@@ -42,6 +42,7 @@ static fang_control_projection gameplay_projection;
 static fang_control_gameplay_click gameplay_click;
 static uint32_t gameplay_hold_ms;
 static uint32_t gameplay_hero_slot;
+static uint32_t gameplay_ability_id;
 static fang_control_hero_selection gameplay_hero;
 static fang_control_active_cast gameplay_cast;
 static int is_gameplay_input_started;
@@ -192,7 +193,7 @@ void fang_control_gameplay_frame(uint32_t sequence) {
         else {
             gameplay_receipt.status = fang_control_ability_begin(gameplay_request, boundary.scene_load_return_count,
                 gameplay_state.controlled_handle, (int32_t)gameplay_projection.x, (int32_t)gameplay_projection.y,
-                gameplay_deadline, &gameplay_cast);
+                gameplay_ability_id, gameplay_deadline, &gameplay_cast);
             if (!gameplay_receipt.status) is_gameplay_input_started = 1;
         }
         goto complete;
@@ -238,11 +239,12 @@ done:
     ReleaseSRWLockExclusive(&gameplay_lock);
 }
 
-int fang_control_gameplay_submit(uint32_t request_id, uint32_t kind, float x, float y, float z, uint32_t timeout_ms, uint32_t hold_ms, uint32_t hero_slot) {
+int fang_control_gameplay_submit(uint32_t request_id, uint32_t kind, float x, float y, float z, uint32_t timeout_ms, uint32_t hold_ms, uint32_t hero_slot, uint32_t ability_id) {
     int is_accepted = 0;
     fang_control_snapshot boundary;
     if (!InterlockedCompareExchange(&is_gameplay_installed, 0, 0) || !request_id || kind > 5 ||
         (kind == 4 ? hero_slot > 2 : hero_slot != 0) ||
+        (kind == 5 ? (ability_id != 0x43C6B5F7 && ability_id != 0xF0D49F1D) : ability_id != 0) ||
         (kind == 3 ? (!hold_ms || hold_ms > 1200) : hold_ms != 0) ||
         !timeout_ms || timeout_ms > 2000 || !is_gameplay_float_finite(&x) ||
         !is_gameplay_float_finite(&y) || !is_gameplay_float_finite(&z)) return 0;
@@ -253,6 +255,7 @@ int fang_control_gameplay_submit(uint32_t request_id, uint32_t kind, float x, fl
         gameplay_kind = kind;
         gameplay_hold_ms = hold_ms;
         gameplay_hero_slot = hero_slot;
+        gameplay_ability_id = ability_id;
         gameplay_request_scene = boundary.scene_load_return_count;
         gameplay_point[0] = x; gameplay_point[1] = y; gameplay_point[2] = z;
         gameplay_deadline = GetTickCount64() + timeout_ms;

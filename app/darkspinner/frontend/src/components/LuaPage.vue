@@ -20,7 +20,7 @@ let timer = null
 let isRefreshing = false
 const isRunning = computed(() => ['starting', 'running', 'stopping'].includes(state.value.phase))
 const canRun = computed(() => !isBusy.value && !isKilling.value && !isRunning.value && !!selected.value && !state.value.inventoryError)
-const canStop = computed(() => !isBusy.value && !!state.value.isActive)
+const canStop = computed(() => !isBusy.value && isRunning.value && !!state.value.isActive)
 const canKill = computed(() => !isKilling.value && !!state.value.isActive)
 const consoleError = computed(() => {
   if (error.value || state.value.inventoryError) return error.value || state.value.inventoryError
@@ -33,7 +33,7 @@ const filteredScripts = computed(() => (state.value.scripts || []).filter(script
 function openPicker(isOpen) { isPickerOpen.value = isOpen; if (isOpen) search.value = '' }
 const resultLabel = computed(() => {
   const phase = state.value.phase || 'idle'
-  const label = phase === 'passed' ? 'Finished' : phase.charAt(0).toUpperCase() + phase.slice(1)
+  const label = phase === 'passed' ? 'Finished' : phase === 'interrupted' ? 'Stopped' : phase.charAt(0).toUpperCase() + phase.slice(1)
   return state.value.elapsedMs > 0 ? `${label} · ${(state.value.elapsedMs / 1000).toFixed(2)}s` : label
 })
 

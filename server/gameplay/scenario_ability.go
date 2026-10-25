@@ -48,7 +48,7 @@ func (e *gameplaySessionRegistry) configureScenarioAbility(program Programs) {
 // returns and therefore retain this exact preparing cast object. Publishing
 // preparation never sets acceptance or makes the actor available for a cast.
 func (e *gameplayPeerSession) prepareScenarioRide(req campaignCharacterAbilityRequest, ability zonecontent.HeroAbility, at time.Time, destination raknet.Vector3, targetObjectID uint32) *scenarioRideCast {
-	if e.zone == nil || ability.AssetName != "LightningRogueActive" {
+	if e.zone == nil || (ability.AssetName != "LightningRogueActive" && ability.AssetName != "MissileTempestActive") {
 		return nil
 	}
 	zoneGeneration, actor, isActor := e.zone.ScenarioAbilityActor(e.binding.UserID, e.generation)
@@ -127,7 +127,11 @@ func (e *gameplayPeerSession) cancelScenarioRide(reason string, at time.Time) {
 	// just this cast's scalars; never reach back into the registry from it.
 	cast.mutex.Lock()
 	defer cast.mutex.Unlock()
-	if cast.state.IsReleased && cast.state.IsArrived && cast.state.IsArrivalProcessed || cast.state.IsFailed {
+	isCompleted := cast.state.IsReleased && cast.state.IsArrived && cast.state.IsArrivalProcessed
+	if cast.state.AbilityAsset == "MissileTempestActive" {
+		isCompleted = cast.state.IsReleased && cast.state.IsBurstCompleted
+	}
+	if isCompleted || cast.state.IsFailed {
 		return
 	}
 	cast.state.IsFailed = true
@@ -194,7 +198,7 @@ func (e campaignCharacterAbilityRequest) recordScenarioRideRejection(reason stri
 		return
 	}
 	ability := e.runtime.registry.abilitiesByNoun[peer.binding.Creatures[peer.deployedCreatureIndex].Noun]
-	if ability.AssetName != "LightningRogueActive" {
+	if ability.AssetName != "LightningRogueActive" && ability.AssetName != "MissileTempestActive" {
 		return
 	}
 	peer.scenarioAbility.nextRejection++
@@ -206,6 +210,9 @@ func scenarioRidePhase(cast scenario.AbilityCast) string {
 	if cast.IsFailed {
 		return "failed"
 	}
+	if cast.IsBurstCompleted {
+		return "completed"
+	}
 	if cast.IsReleased {
 		return "released"
 	}
@@ -214,6 +221,9 @@ func scenarioRidePhase(cast scenario.AbilityCast) string {
 	}
 	if cast.IsArrived {
 		return "arrived"
+	}
+	if cast.LaunchCount > 0 {
+		return "launching"
 	}
 	if cast.IsAccepted {
 		return "accepted"

@@ -50,6 +50,7 @@ func (e *debugSupervisor) serveScriptRun(w http.ResponseWriter, req *http.Reques
 		e.respond(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
+	e.scriptControl.reset()
 	select {
 	case e.scriptRequests <- script.Name:
 		e.automation.Resume()
@@ -94,6 +95,9 @@ func (e *debugSupervisor) prepareScript(ctx context.Context, name string) {
 		result.Failure = &control.ScenarioError{Code: control.InvalidRequest, Context: "scriptPrepare", Cause: err}
 	} else {
 		failure := e.executeLua(ctx, script, source)
+		if ctx.Err() != nil {
+			failure = &debugLuaFailure{Failure: &debugError{Code: "interrupted", Context: "scriptStop", Message: ctx.Err().Error()}}
+		}
 		if failure == nil {
 			result.Outcome = control.ScriptPassed
 			script.Status = "passed"

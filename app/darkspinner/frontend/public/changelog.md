@@ -2,6 +2,8 @@
 
 ### 2026-10-25
 
+- #117 Fix the automatic Missile Barrage recording scenario stopping on a progress-log call inside its parallel capture block.
+- [#117](https://github.com/darkspinnet/darkspin/issues/117) Restore Missile Barrage's client-authored nonvertical descent slope while preserving impact points instead of sending exactly vertical missile trajectories.
 - [#116](https://github.com/darkspinnet/darkspin/issues/116) Preserve accepted basic attacks when repeat input or held-aim updates arrive instead of falsely rejecting them and canceling their hits and release callbacks.
 - [#115](https://github.com/darkspinnet/darkspin/issues/115) Allow fully mitigated hits to complete without damage text or failed melee actions, preventing repeated recovery baselines from replaying hero warp-in effects.
 
@@ -21,7 +23,6 @@
 - [#110](https://github.com/darkspinnet/darkspin/issues/110) Keep one committed campaign clock stream per session so duplicate backward updates cannot corrupt native cooldown timing, including Supernova.
 - [#110](https://github.com/darkspinnet/darkspin/issues/110) Preserve earned cash-out rewards when inventory is full, allowing the bounded reward batch above capacity instead of leaving placeholder reward cards.
 - [#110](https://github.com/darkspinnet/darkspin/issues/110) Preserve the running basic attack when repeated input arrives during its accepted cycle instead of sending rejections that reset its native animation.
-- Capitalize the creature editor Body tooltip as BODY to match the adjacent mode tooltips.
 - [#106](https://github.com/darkspinnet/darkspin/issues/106) Correct Grappling Pulsar's pull effects from duplicate persistent world orbs to client-authored victim and linked beam attachments, removing both when the pull ends or its actors are retired.
 - [#106](https://github.com/darkspinnet/darkspin/issues/106) Restore the Corruptor's first-stage death animation before its second-stage introduction, and preserve the transport identity needed to resume its second-stage attacks.
 - [#106](https://github.com/darkspinnet/darkspin/issues/106) Preserve Lightning Juggernaut movement during charge redirects instead of repeatedly resetting its native mover and snapping at arrival.

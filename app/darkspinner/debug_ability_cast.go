@@ -101,7 +101,7 @@ func castDebugAbility(ctx context.Context, host *debugHost, clientManager *debug
 	if err != nil {
 		return result, fmt.Errorf("castBeforeGate: %w", err)
 	}
-	result.Action, err = clientManager.CastActive(waitContext, req.ClientID, *req.Point)
+	result.Action, err = clientManager.CastActive(waitContext, req.ClientID, *req.Point, initial.State.AbilityID)
 	if err != nil {
 		return result, fmt.Errorf("castNativeAction: %w", err)
 	}
@@ -145,7 +145,7 @@ func castDebugAbility(ctx context.Context, host *debugHost, clientManager *debug
 				if cast.IsFailed {
 					return result, &control.ScenarioError{Code: control.NotAvailable, Context: "castFailed", Message: cast.FailureReason}
 				}
-				if cast.IsAccepted && cast.IsArrived && cast.IsArrivalProcessed && cast.IsReleased && nativeErr == nil && currentNative.FrameSequence > native.FrameSequence {
+				if isDebugAbilityCastComplete(cast) && nativeErr == nil && currentNative.FrameSequence > native.FrameSequence {
 					err = recheckDebugWorldOwner(waitContext, host, clientManager, owner)
 					if err != nil {
 						return result, fmt.Errorf("castFinalOwner: %w", err)
@@ -157,9 +157,23 @@ func castDebugAbility(ctx context.Context, host *debugHost, clientManager *debug
 		}
 		select {
 		case <-waitContext.Done():
-			return result, &control.ScenarioError{Code: control.DeadlineExceeded, Context: "castTerminal", Message: "supported server acceptance, completed arrival processing and release were not observed before the deadline; native action is not replayed", Cause: waitContext.Err()}
+			return result, &control.ScenarioError{Code: control.DeadlineExceeded, Context: "castTerminal", Message: "supported server cast completion and release were not observed before the deadline; native action is not replayed", Cause: waitContext.Err()}
 		case <-ticker.C:
 		}
+	}
+}
+
+func isDebugAbilityCastComplete(cast *debugAbilityCast) bool {
+	if cast == nil || !cast.IsAccepted || !cast.IsReleased || cast.IsFailed {
+		return false
+	}
+	switch cast.AbilityAsset {
+	case "LightningRogueActive":
+		return cast.IsArrived && cast.IsArrivalProcessed
+	case "MissileTempestActive":
+		return cast.IsBurstCompleted && cast.ExpectedLaunchCount > 0 && cast.LaunchCount == cast.ExpectedLaunchCount
+	default:
+		return false
 	}
 }
 
@@ -167,8 +181,8 @@ func validateDebugAbilityReady(state debugAbilityState) error {
 	if !state.IsAvailable {
 		return &control.ScenarioError{Code: control.NotAvailable, Context: "abilityState", Message: state.UnavailableReason}
 	}
-	if !state.IsSupported || state.AbilityID == 0 || state.AbilityAsset != "LightningRogueActive" {
-		return &control.ScenarioError{Code: control.NotAvailable, Context: "abilitySupported", Message: "independent cast verification currently supports only Blitz's Ride the Lightning"}
+	if !state.IsSupported || state.AbilityID == 0 || state.AbilityAsset != "LightningRogueActive" && state.AbilityAsset != "MissileTempestActive" {
+		return &control.ScenarioError{Code: control.NotAvailable, Context: "abilitySupported", Message: "independent cast verification supports Ride the Lightning and Rocket Barrage"}
 	}
 	if !state.IsManaCostAvailable || !state.IsGateStateAvailable {
 		return &control.ScenarioError{Code: control.NotAvailable, Context: "abilityMetadata", Message: "supported ability mana/cooldown/release metadata is unavailable; no native action attempted"}
@@ -176,7 +190,7 @@ func validateDebugAbilityReady(state debugAbilityState) error {
 	if state.ManaPoint < state.ManaCost || state.CooldownRemainingMS > 0 || state.ReleaseRemainingMS > 0 {
 		return &control.ScenarioError{Code: control.NotAvailable, Context: "abilityGate", Message: "supported ability lacks mana or its cooldown/release gate is active; no native action attempted"}
 	}
-	if state.Cast != nil && !state.Cast.IsFailed && !(state.Cast.IsReleased && state.Cast.IsArrived && state.Cast.IsArrivalProcessed) {
+	if state.Cast != nil && !state.Cast.IsFailed && !isDebugAbilityCastComplete(state.Cast) {
 		return &control.ScenarioError{Code: control.NotAvailable, Context: "abilityPending", Message: "a supported server cast is already in progress; no native action attempted"}
 	}
 	return nil

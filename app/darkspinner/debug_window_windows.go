@@ -75,6 +75,14 @@ func (e *debugClientManager) requestWindow(ctx context.Context, clientID, operat
 	e.mutex.Lock()
 	client := e.clientsByID[clientID]
 	e.mutex.Unlock()
+	// Parallel scenario observations share the same single-command pipe with
+	// native actions. Serialize individual requests, not the whole cast wait,
+	// so screenshots and camera samples can continue between observations.
+	err = lockScenarioLiveness(ctx, &client.windowCommandMutex)
+	if err != nil {
+		return nil, fmt.Errorf("windowCommandLock: %w", err)
+	}
+	defer client.windowCommandMutex.Unlock()
 	client.mutex.Lock()
 	bridge := client.bridge
 	client.mutex.Unlock()

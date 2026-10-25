@@ -38,6 +38,7 @@ type debugClientManager struct {
 type debugOwnedClient struct {
 	heroSelectionMutex    sync.Mutex
 	abilityCastMutex      sync.Mutex
+	windowCommandMutex    sync.Mutex
 	isClosing             bool
 	pause                 *debugClientPause
 	mutex                 sync.Mutex

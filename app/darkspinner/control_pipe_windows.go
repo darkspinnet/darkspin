@@ -135,6 +135,9 @@ func (e *controlPipe) Request(ctx context.Context, operation string, command con
 	if command.HeroSlot != nil && operation != "gameplay.select_hero" {
 		return controlCommandResult{}, &controlCommandFailure{Code: "invalid_request", Message: "hero_slot requires gameplay.select_hero"}
 	}
+	if operation == "gameplay.cast_active" && command.AbilityID == 0 || operation != "gameplay.cast_active" && command.AbilityID != 0 {
+		return controlCommandResult{}, &controlCommandFailure{Code: "invalid_request", Message: "ability_id is required only for gameplay.cast_active"}
+	}
 	if command.HoldMS != 0 && operation != "gameplay.hold" {
 		return controlCommandResult{}, &controlCommandFailure{Code: "invalid_request", Message: "hold_ms requires gameplay.hold"}
 	}
@@ -711,6 +714,7 @@ type controlEnvelope struct {
 }
 
 type controlCommand struct {
+	AbilityID               uint32             `json:"ability_id,omitempty"`
 	HeroNoun                uint32             `json:"hero_noun,omitempty"`
 	ExpectedOwnerGeneration uint64             `json:"expected_owner_generation,omitempty"`
 	Screen                  string             `json:"screen,omitempty"`

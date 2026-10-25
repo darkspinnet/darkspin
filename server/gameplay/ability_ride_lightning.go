@@ -19,11 +19,11 @@ import (
 
 const rideLightningShockDuration = 3 * time.Second
 
-func (e campaignCharacterAbilityRequest) rejectScenarioRide(reason string) ([][]byte, error) {
+func (e campaignCharacterAbilityRequest) rejectScenarioAbility(reason string) ([][]byte, error) {
 	e.recordScenarioRideRejection(reason)
 	packets, err := e.reject(reason)
 	if err != nil {
-		return nil, fmt.Errorf("rideReject: %w", err)
+		return nil, fmt.Errorf("abilityReject: %w", err)
 	}
 	return packets, nil
 }
@@ -270,7 +270,7 @@ func (r campaignAbilityCommandRuntime) handleRideLightning(
 		peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures))
 	if !isFound {
 		r.registry.mutex.Unlock()
-		return req.rejectScenarioRide("session unavailable")
+		return req.rejectScenarioAbility("session unavailable")
 	}
 	creatureIndex := peerSession.deployedCreatureIndex
 	creature := r.registry.projectPassiveCreature(
@@ -300,7 +300,7 @@ func (r campaignAbilityCommandRuntime) handleRideLightning(
 	if !isFiniteZonePosition(destination) || !isReportedZonePosition(destination) ||
 		peerSession.zone == nil || peerSession.zone.Navigation() == nil {
 		r.registry.mutex.Unlock()
-		return req.rejectScenarioRide("cursor or navigation unavailable")
+		return req.rejectScenarioAbility("cursor or navigation unavailable")
 	}
 	// LightningRogueActive uses FindGoodMeleePosition/GetPosition for a
 	// validated hostile target. Only ground casts use GetTargetPosition.
@@ -326,7 +326,7 @@ func (r campaignAbilityCommandRuntime) handleRideLightning(
 	}
 	if !isLandingFound {
 		r.registry.mutex.Unlock()
-		return req.rejectScenarioRide("cursor destination is not walkable")
+		return req.rejectScenarioAbility("cursor destination is not walkable")
 	}
 	destination = raknet.Vector3(landing)
 	err = peerSession.advancePlayerPosition(abilityStartTime, command.Common.Position)
@@ -350,7 +350,7 @@ func (r campaignAbilityCommandRuntime) handleRideLightning(
 	}
 	if !isCooldownReady || peerSession.deployedManaPoint() < manaCost {
 		r.registry.mutex.Unlock()
-		return req.rejectScenarioRide("destination, cooldown, or power unavailable")
+		return req.rejectScenarioAbility("destination, cooldown, or power unavailable")
 	}
 	ridePlan := zoneability.BasicPlan{}
 	if isStrikeTargetFound && strikeTarget.Plan.Position.Sub(landing).Length() <= strikeRange {
@@ -442,7 +442,7 @@ func (r campaignAbilityCommandRuntime) handleRideLightning(
 		)
 	if !isCooldownReserved {
 		r.registry.mutex.Unlock()
-		return req.rejectScenarioRide("cooldown unavailable")
+		return req.rejectScenarioAbility("cooldown unavailable")
 	}
 	releaseReservation, isReleaseReserved :=
 		peerSession.abilityReleaseSession().Reserve(
@@ -451,7 +451,7 @@ func (r campaignAbilityCommandRuntime) handleRideLightning(
 	if !isReleaseReserved {
 		peerSession.abilityCooldownSession().Rollback(cooldownReservation)
 		r.registry.mutex.Unlock()
-		return req.rejectScenarioRide("release unavailable")
+		return req.rejectScenarioAbility("release unavailable")
 	}
 	err = peerSession.stopPlayerMovement(abilityStartTime)
 	if err == nil {

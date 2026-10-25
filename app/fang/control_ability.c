@@ -12,6 +12,7 @@ static volatile LONG is_ability_installed;
 static BYTE* ability_image;
 static ability_cast_fn original_ability_cast;
 static uint32_t ability_request, ability_scene, ability_handle, ability_phase, ability_failure;
+static uint32_t ability_expected_id;
 /* 0 armed, 1 edge emitted/caster unobserved, 2 original caster observed,
  * 3 terminal. Terminal requests never collect a later ordinary cast. */
 static DWORD ability_thread;
@@ -63,6 +64,7 @@ static int __cdecl observe_ability_cast(uint32_t index, const float* start_point
             player = ((ability_player_fn)(ability_image + 0xE57B0))();
             ability_snapshot.ability_id = ((ability_identity_fn)(ability_image + 0x5C25C0))(player, index, -1);
             ability_snapshot.fields |= 2;
+            if (ability_snapshot.ability_id != ability_expected_id) ability_failure = 5;
         }
         ability_phase = 2;
         trace_client_state("scenario_active_cast_result", (unsigned int)result);
@@ -75,6 +77,7 @@ static int __cdecl observe_ability_cast(uint32_t index, const float* start_point
 unsigned char fang_control_ability_edge(void* caller, uint32_t action, unsigned char is_pressed) {
     unsigned char result = is_pressed;
     fang_control_gameplay_click ground;
+    BYTE* player;
     if (!InterlockedCompareExchange(&is_ability_installed, 0, 0) ||
         caller != ability_image + 0x4D537 || action != 0x10000011) return result;
     AcquireSRWLockExclusive(&ability_lock);
@@ -82,6 +85,11 @@ unsigned char fang_control_ability_edge(void* caller, uint32_t action, unsigned 
     if (is_pressed || GetTickCount64() >= ability_deadline || !is_ability_owner_current() || !is_ability_physical_clear() ||
         !fang_control_input_aim_read(ability_request, &ground) || !ground.is_native_ground_query_success ||
         (ground.fields & 6) != 6) {
+        ability_failure = 5;
+        goto done;
+    }
+    player = ((ability_player_fn)(ability_image + 0xE57B0))();
+    if (((ability_identity_fn)(ability_image + 0x5C25C0))(player, 2, -1) != ability_expected_id) {
         ability_failure = 5;
         goto done;
     }
@@ -113,17 +121,28 @@ int fang_control_ability_install(HMODULE executable) {
 }
 
 uint32_t fang_control_ability_begin(uint32_t request_id, uint32_t scene, uint32_t handle, int32_t x, int32_t y,
-    uint64_t deadline, fang_control_active_cast* snapshot) {
+    uint32_t ability_id, uint64_t deadline, fang_control_active_cast* snapshot) {
     fang_control_window_snapshot window;
+    BYTE* player;
     uint32_t status = 5;
-    if (!snapshot || !request_id || !handle || !InterlockedCompareExchange(&is_ability_installed, 0, 0) ||
+    if (!snapshot || !request_id || !handle ||
+        (ability_id != 0x43C6B5F7 && ability_id != 0xF0D49F1D) ||
+        !InterlockedCompareExchange(&is_ability_installed, 0, 0) ||
         !fang_control_window_inspect(&window) || window.thread_id != GetCurrentThreadId()) return 5;
     AcquireSRWLockExclusive(&ability_lock);
     ability_request = request_id; ability_scene = scene; ability_handle = handle; ability_thread = GetCurrentThreadId();
+    ability_expected_id = ability_id;
     ability_window = (HWND)(uintptr_t)window.window_id; ability_deadline = deadline; ability_phase = 0; ability_failure = 0;
     memset(&ability_snapshot, 0, sizeof(ability_snapshot));
     ability_snapshot.action_index = 2;
     if (GetTickCount64() >= deadline || !is_ability_owner_current() || !is_ability_physical_clear()) goto done;
+    /* Build 103 routes SpecialTwo to slot 2 for both Ride the Lightning and
+     * Missile Barrage. Resolve the installed hero's slot before emitting an
+     * edge; a stale or mismatched request must never cast another ability. */
+    player = ((ability_player_fn)(ability_image + 0xE57B0))();
+    ability_snapshot.ability_id = ((ability_identity_fn)(ability_image + 0x5C25C0))(player, 2, -1);
+    ability_snapshot.fields |= 2;
+    if (ability_snapshot.ability_id != ability_expected_id) goto done;
     if (!fang_control_input_aim_begin(request_id, scene, handle, x, y, deadline)) goto done;
     status = 0;
 done:

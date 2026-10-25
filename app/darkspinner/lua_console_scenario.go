@@ -260,7 +260,7 @@ func (a *App) StopLuaScript() error {
 	if child == nil {
 		return nil
 	}
-	err := child.stop(a.ctx)
+	err := child.stopScript(a.ctx)
 	if err != nil {
 		return fmt.Errorf("luaStop: %w", err)
 	}
@@ -271,7 +271,16 @@ func (a *App) stopLauncherLua() {
 	if a.lua == nil {
 		return
 	}
-	err := a.StopLuaScript()
+	e := a.lua
+	e.operationMutex.Lock()
+	defer e.operationMutex.Unlock()
+	e.mutex.Lock()
+	child := e.child
+	e.mutex.Unlock()
+	if child == nil {
+		return
+	}
+	err := child.stop(a.ctx)
 	if err != nil {
 		a.log("Lua shutdown: " + err.Error())
 	}

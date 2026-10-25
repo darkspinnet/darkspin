@@ -30,6 +30,7 @@ func (e *debugLuaVM) register(state *lua.LState) {
 		"Check": debugLuaCheck, "Must": debugLuaMust, "RequireAPI": debugLuaRequireAPI,
 		"Parallel": e.runParallel,
 		"Sleep":    e.sleep,
+		"Log":      e.logMessage,
 		"Time":     e.elapsedTime,
 		"Snapshot": e.status, "Status": e.status, "StartServer": e.startServer, "CreateProfile": e.createProfile,
 		"ResetProfile": e.resetProfile, "ClientWindow": e.clientWindow,
@@ -44,6 +45,10 @@ func (e *debugLuaVM) register(state *lua.LState) {
 
 func (e *debugLuaVM) sleep(state *lua.LState) int {
 	return e.invoke(state, "scenario.sleep", map[string]any{"duration_ms": debugLuaTimeoutMilliseconds(state, 1, 0)}, false)
+}
+
+func (e *debugLuaVM) logMessage(state *lua.LState) int {
+	return e.invoke(state, "scenario.log", map[string]any{"message": state.CheckString(1)}, false)
 }
 
 func (e *debugLuaVM) elapsedTime(state *lua.LState) int {

@@ -30,3 +30,11 @@ func (e campaignCharacterAbilityRequest) recordScenarioRideRejection(reason stri
 
 func (e campaignAbilityCommandRuntime) completeScenarioRideArrival(sessionKey string, cast *scenarioRideCast, at time.Time) {
 }
+
+func (e *gameplayPeerSession) prepareScenarioBurst(req campaignCharacterAbilityRequest, abilityID uint32, at time.Time, destination raknet.Vector3, targetObjectID uint32, launchCount int) *scenarioRideCast {
+	return nil
+}
+func (e *gameplayPeerSession) launchScenarioBurst(cast *scenarioRideCast, index int, at time.Time) {}
+func (e *gameplayPeerSession) completeScenarioBurst(cast *scenarioRideCast, at time.Time)          {}
+func (e campaignAbilityCommandRuntime) releaseScenarioBurst(sessionKey string, cast *scenarioRideCast, at time.Time) {
+}

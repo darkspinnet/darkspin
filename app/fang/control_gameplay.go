@@ -152,6 +152,11 @@ func (e *controlConnection) gameplayCommand(req controlEnvelope, response contro
 	isHold := req.Operation == "gameplay.hold"
 	isSelect := req.Operation == "gameplay.select_hero"
 	isCast := req.Operation == "gameplay.cast_active"
+	if isCast && (req.Command == nil || req.Command.AbilityID == 0) ||
+		!isCast && req.Command != nil && req.Command.AbilityID != 0 {
+		response.Failure = &controlCommandFailure{Code: "invalid_request", Message: "ability_id is required only for gameplay.cast_active"}
+		return response
+	}
 	isProject := req.Operation == "gameplay.project" || isClick || isHold || isCast
 	if req.Sequence > uint64(^uint32(0)) || (req.Command != nil && (req.Command.Key != "" || req.Command.Scene != "" ||
 		req.Command.X != 0 || req.Command.Y != 0 || req.Command.Button != "" || req.Command.IsIntroSkipped != nil || req.Command.IsCinematicSkipped != nil)) {
@@ -162,6 +167,10 @@ func (e *controlConnection) gameplayCommand(req controlEnvelope, response contro
 	var kind uint32
 	var holdMS uint32
 	var heroSlot uint32
+	var abilityID uint32
+	if isCast {
+		abilityID = req.Command.AbilityID
+	}
 	if isSelect {
 		if req.Command == nil || req.Command.HeroSlot == nil || *req.Command.HeroSlot > 2 {
 			response.Failure = &controlCommandFailure{Code: "invalid_request", Message: "hero selection requires hero_slot from 0 through 2"}
@@ -210,7 +219,7 @@ func (e *controlConnection) gameplayCommand(req controlEnvelope, response contro
 		return response
 	}
 	timeoutMS := uint32((remaining + time.Millisecond - 1) / time.Millisecond)
-	isAccepted := C.fang_control_gameplay_submit(C.uint32_t(nativeID), C.uint32_t(kind), C.float(point.X), C.float(point.Y), C.float(point.Z), C.uint32_t(timeoutMS), C.uint32_t(holdMS), C.uint32_t(heroSlot))
+	isAccepted := C.fang_control_gameplay_submit(C.uint32_t(nativeID), C.uint32_t(kind), C.float(point.X), C.float(point.Y), C.float(point.Z), C.uint32_t(timeoutMS), C.uint32_t(holdMS), C.uint32_t(heroSlot), C.uint32_t(abilityID))
 	if isAccepted != 0 {
 		e.activeNativeID = nativeID
 		e.activeRequestID = req.RequestID

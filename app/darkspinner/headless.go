@@ -50,7 +50,7 @@ type browserCallResponse struct {
 	Error  string `json:"error,omitempty"`
 }
 
-func runHeadless(app *App) error {
+func runHeadless(app *App, isBrowserAutoOpenEnabled bool) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	app.isHeadless = true
@@ -87,7 +87,7 @@ func runHeadless(app *App) error {
 	app.startup(ctx)
 	defer app.shutdown(context.Background())
 	fmt.Println("DarkSpinner browser launcher:", address)
-	runHeadlessTray(ctx, app, address, cancel)
+	runHeadlessTray(ctx, app, address, cancel, isBrowserAutoOpenEnabled)
 	cancel()
 	return nil
 }

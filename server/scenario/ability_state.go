@@ -4,8 +4,8 @@ package scenario
 
 import "time"
 
-// AbilityState currently supports only the authored LightningRogueActive
-// (Ride the Lightning) path. Admission and landing never attest native input.
+// AbilityState observes the authored Ride the Lightning and Rocket Barrage
+// paths. Server producer evidence never attests native input or rendering.
 type AbilityState struct {
 	CapturedAt           time.Time
 	IsAvailable          bool
@@ -37,31 +37,36 @@ type AbilityState struct {
 }
 
 type AbilityCast struct {
-	Revision           uint64
-	ActorObjectID      uint32
-	CreatureIndex      uint32
-	AbilityID          uint32
-	AbilityAsset       string
-	InputSyncStamp     uint32
-	RequestStamp       uint8
-	Phase              string
-	IsAccepted         bool
-	IsArrived          bool
-	IsArrivalProcessed bool
-	IsImpactCommitted  bool
-	IsReleased         bool
-	IsFailed           bool
-	AcceptedAt         time.Time
-	ArrivedAt          time.Time
-	ArrivalProcessedAt time.Time
-	ImpactAt           time.Time
-	ReleasedAt         time.Time
-	FailedAt           time.Time
-	FailureReason      string
-	TargetObjectID     uint32
-	Destination        WorldPosition
-	Damage             float32
-	IsTargetDefeated   bool
+	Revision            uint64
+	ActorObjectID       uint32
+	CreatureIndex       uint32
+	AbilityID           uint32
+	AbilityAsset        string
+	InputSyncStamp      uint32
+	RequestStamp        uint8
+	Phase               string
+	IsAccepted          bool
+	IsArrived           bool
+	IsArrivalProcessed  bool
+	IsImpactCommitted   bool
+	IsReleased          bool
+	IsFailed            bool
+	AcceptedAt          time.Time
+	ArrivedAt           time.Time
+	ArrivalProcessedAt  time.Time
+	ImpactAt            time.Time
+	ReleasedAt          time.Time
+	FailedAt            time.Time
+	FailureReason       string
+	TargetObjectID      uint32
+	Destination         WorldPosition
+	Damage              float32
+	IsTargetDefeated    bool
+	ExpectedLaunchCount int
+	LaunchCount         int
+	LastLaunchAt        time.Time
+	IsBurstCompleted    bool
+	BurstCompletedAt    time.Time
 }
 
 // Rejection is separate from the last cast, so a refused later request cannot

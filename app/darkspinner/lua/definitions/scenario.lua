@@ -30,6 +30,11 @@ function scenario.Time() end
 ---@return ScenarioError|nil err
 function scenario.Sleep(duration_ms) end
 
+---Writes one message to the launcher's scenario output.
+---@param message string One nonempty line, at most 2048 bytes.
+---@return ScenarioError|nil err
+function scenario.Log(message) end
+
 ---@return SessionSnapshot|nil result
 ---@return ScenarioError|nil err
 function scenario.Snapshot() end

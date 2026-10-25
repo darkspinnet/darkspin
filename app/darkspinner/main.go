@@ -170,7 +170,7 @@ func main() {
 		app.integrationError = integrationErr.Error()
 	}
 	if isHeadless {
-		err = runHeadless(app)
+		err = runHeadless(app, !hasLaunchArgument(os.Args[1:], "no-browser"))
 		if err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner browser mode failed:", err)
 			os.Exit(1)
@@ -204,6 +204,9 @@ func removePresentationArguments(arguments []string) []string {
 	filteredArguments := make([]string, 0, len(arguments))
 	for _, argument := range arguments {
 		if argument == "--headless" || argument == "-headless" || argument == "--headless=true" {
+			continue
+		}
+		if argument == "--no-browser" || argument == "-no-browser" || argument == "--no-browser=true" || argument == "--no-browser=false" {
 			continue
 		}
 		filteredArguments = append(filteredArguments, argument)

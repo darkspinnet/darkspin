@@ -1,11 +1,11 @@
 ---@meta
 
 ---@class ClientAbility
----@field Snapshot fun(self:ClientAbility):AbilityObservation|nil,ScenarioError|nil Read-only actor/ability support, resource gates and last semantic cast/rejection. Currently supports only Blitz's Ride the Lightning.
----@field Cast fun(self:ClientAbility,point:WorldPosition,timeout_ms?:integer):AbilityCastResult|nil,ScenarioError|nil One fixed native SpecialTwo request, then wait for the exact next supported server cast's acceptance, completed arrival processing and release. Impact remains optional and separately observed. Default client timeout. Unsupported metadata/resources fail before input; errors/unknown outcomes are never replayed.
+---@field Snapshot fun(self:ClientAbility):AbilityObservation|nil,ScenarioError|nil Read-only actor/ability support, resource gates and last semantic cast/rejection. Supports Blitz's Ride the Lightning and SRS-42's Rocket Barrage.
+---@field Cast fun(self:ClientAbility,point:WorldPosition,timeout_ms?:integer):AbilityCastResult|nil,ScenarioError|nil One native SpecialTwo request for the independently resolved ability, then wait for its exact next server cast. Ride the Lightning requires arrival processing and release; Rocket Barrage requires every launch, release and burst completion. Default client timeout. Unsupported metadata/resources fail before input; errors/unknown outcomes are never replayed.
 
 ---@class NativeActiveCast
----@field action_index integer Fixed native SpecialTwo index 2.
+---@field action_index integer Native SpecialTwo index 2, validated against the expected installed ability.
 ---@field is_query_processed boolean
 ---@field is_native_request_attempted boolean
 ---@field native_result_code integer|nil Negative is explicit refusal; positive 1/2/3 means native admission/approach/queue only.
@@ -41,6 +41,11 @@
 ---@field destination WorldPosition Actual server cast destination, not requested-coordinate arrival proof.
 ---@field damage number Actual supported damage result; zero does not prove a hit.
 ---@field is_target_defeated boolean
+---@field expected_launch_count integer Authored burst launch count; zero for non-burst casts.
+---@field launch_count integer Successful burst launches observed by the server.
+---@field last_launch_at string
+---@field is_burst_completed boolean Actual finish producer observed every launch and release with no live projectiles remaining.
+---@field burst_completed_at string
 
 ---@class AbilityRejection
 ---@field revision integer Independent rejection revision; does not erase a previous cast.
@@ -55,7 +60,7 @@
 ---@field captured_at string
 ---@field is_available boolean
 ---@field unavailable_reason? string
----@field is_supported boolean Current installed catalog SpecialTwo is supported LightningRogueActive/TeleportStrike.
+---@field is_supported boolean Current installed SpecialTwo is supported LightningRogueActive/TeleportStrike or MissileTempestActive/ProjectileBurst.
 ---@field user_id integer
 ---@field game_id integer
 ---@field peer_generation integer
@@ -90,5 +95,5 @@
 ---@field observation AbilityObservation Latest partial semantic observation, retained on failure.
 ---@field action WindowCommandResult|nil Native local request/admission evidence only.
 ---@field native WindowCommandResult|nil Latest independent pinned native actor/frame observation.
----@field is_completed boolean Exact next server revision reached acceptance, arrival, completed arrival processing and release without failure; does not prove impact or a target hit.
+---@field is_completed boolean Exact next server revision completed the supported ability's lifecycle without failure; does not prove rendering or a target hit.
 ---@field is_native_server_stamp_correlated false Native input stamp is not exposed; no exact cross-source stamp equality is claimed.
