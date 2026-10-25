@@ -1606,6 +1606,11 @@ func (e gameplayPacketHandler) logIgnored(packet raknet.Packet) {
 
 func tutorialGameplayBinding(binding game.GameplayBinding) game.GameplayBinding {
 	if binding.Mode == game.ModeTutorial {
+		// Authentication preloads owned starter appearances, but ownership must
+		// not bypass the tutorial's second-creature introduction and unlock.
+		// Keep the owned catalog available for restoring Sage at that boundary.
+		binding.Creatures[1] = game.GameplayCreature{}
+		binding.Creatures[2] = game.GameplayCreature{}
 		binding.DNA = tutorialStartingDNA
 		if binding.Creatures[0].Noun == 0 {
 			binding.Creatures[0].Noun = util.HashID("PC_EL_Rogue.Noun")
@@ -1636,6 +1641,14 @@ func tutorialGameplayBinding(binding game.GameplayBinding) game.GameplayBinding 
 func tutorialSageBinding(binding game.GameplayBinding) game.GameplayBinding {
 	if binding.Mode != game.ModeTutorial {
 		return binding
+	}
+	if binding.Creatures[1].Noun == 0 {
+		for _, creature := range binding.ActivatedCreatures {
+			if creature.Noun == util.HashID("PC_LF_Mage.Noun") {
+				binding.Creatures[1] = creature
+				break
+			}
+		}
 	}
 	if binding.Creatures[1].Noun == 0 {
 		binding.Creatures[1] = game.GameplayCreature{
@@ -5166,11 +5179,14 @@ func (r gameplaySetupRuntime) publishCampaign(
 	}
 	securityPackets := [][]byte(nil)
 	if isCheckpointBaseline {
-		securityPackets, err = securityraknet.SnapshotState(
-			securitySnapshot, peerSession.zone.SecurityThreats(),
+		securityPackets, err = securityraknet.SnapshotStateWithRotations(
+			securitySnapshot, peerSession.securityTeleporterRotations(),
+			peerSession.zone.SecurityThreats(),
 		)
 	} else {
-		securityPackets, err = securityraknet.InitialState(securitySnapshot.ObjectID)
+		securityPackets, err = securityraknet.InitialStateWithRotations(
+			securitySnapshot.ObjectID, peerSession.securityTeleporterRotations(),
+		)
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("pingCampaignSecurityState: %w", err)

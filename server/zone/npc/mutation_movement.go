@@ -395,6 +395,10 @@ func isMutationMovementBlocked(actor Snapshot, at time.Time) bool {
 	}
 	isStatusSuppressed := at.Before(actor.status.chargeProtectionEnd) || actor.IsTurtleActive
 	if actor.IsShieldActive {
+		shieldDuration, isInvincitron := NomadWithDroneShieldDuration(actor.Plan.NounName)
+		if isInvincitron && shieldDuration > 0 {
+			return true
+		}
 		shieldProfile, isDirectional := NomadShielderDirectionalShieldProfile(actor.Plan.NounName)
 		if !isDirectional || shieldProfile.SetupAnimationName == "" {
 			isStatusSuppressed = true

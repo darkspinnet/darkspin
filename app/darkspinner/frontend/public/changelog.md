@@ -2,6 +2,11 @@
 
 ### 2026-10-25
 
+- [#122](https://github.com/darkspinnet/darkspin/issues/122) Queue early ground-targeted and held basic attacks with their latest native response token instead of leaving them blocked behind unanswered input or older server-generated repeats.
+- [#122](https://github.com/darkspinnet/darkspin/issues/122) Keep stationary basic attack animation offsets from accumulating into permanent hero movement.
+- [#122](https://github.com/darkspinnet/darkspin/issues/122) Keep Sage unavailable until his authored tutorial introduction and preserve owned starter appearances and resources when he unlocks.
+- [#122](https://github.com/darkspinnet/darkspin/issues/122) Stop Invincitron pursuit while its shield is active and resume pursuit when the shield ends.
+- [#122](https://github.com/darkspinnet/darkspin/issues/122) Preserve authored portal rotations in mission 1-1 on initial spawn, checkpoint restoration and rejoin instead of resetting them to zero.
 - [#120](https://github.com/darkspinnet/darkspin/issues/120) Defer early targeted basic attack repeats until the current attack releases instead of dropping their response and leaving the client blocked on its prediction timeout.
 - [#118](https://github.com/darkspinnet/darkspin/issues/118) Use completed campaign progression for Mutation Agent eligibility, restoring agents and follow-up horde waves in earlier missions after the configured unlock (2-3 by default).
 - [#118](https://github.com/darkspinnet/darkspin/issues/118) Retract horde fences through the client's door-open state instead of deleting them immediately, and restore completed fences open and nonblocking on rejoin.

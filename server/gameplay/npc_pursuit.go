@@ -461,6 +461,7 @@ func (r campaignNPCPursuitRuntime) produceStep(
 		}
 	}
 	isMovementDisabled := movementSpeed <= 0 ||
+		(enemy.IsShieldActive && profile.Family == zonenpc.ActionNomadDrone) ||
 		peerSession.campaignNPCShielderShieldSetups[objectID] ||
 		peerSession.campaignNPCShielderShields[objectID] != nil ||
 		npcSession.StunRemaining(objectID, advancedAt) > 0 ||

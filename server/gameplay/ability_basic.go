@@ -470,6 +470,15 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 	basicHeldAbility := *command.Ability
 	isBasicHeldCurrent := !isBasicHeldRepeat || isFound &&
 		peerSession.basicSequenceSession().IsHeldAt(basicHeldGeneration)
+	if isSessionCurrent && isBasicHeldRepeat && isBasicHeldCurrent &&
+		peerSession.pendingBasic != nil {
+		// The queued native request owns the next cycle and its response token.
+		// Recheck under the admission lock in case it arrived after the repeat
+		// producer inspected the session.
+		r.registry.mutex.Unlock()
+		retainBasicAction(ctx)
+		return nil, nil
+	}
 	isBasicHeldAimRefresh := !isBasicHeldRepeat && isBasicHeldInput &&
 		peerSession.basicSequenceSession().IsHeld()
 	if isBasicHeldAimRefresh {
@@ -487,17 +496,14 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 	isAccepted := isSessionCurrent &&
 		(isActiveRequest && isActiveReady || !isActiveRequest && isBasicReady)
 	if !isAccepted {
-		if isSessionCurrent && isBasicHeldAimRefresh {
-			r.registry.mutex.Unlock()
-			retainBasicAction(ctx)
-			return nil, nil
-		}
 		basicCycleRemaining := peerSession.basicSequenceSession().CooldownEnd().Sub(
 			abilityStartTime,
 		)
 		if isSessionCurrent && !isActiveRequest && !isBasicHeldRepeat &&
-			command.Ability.TargetID != 0 && isBasicHeldCurrent &&
+			isBasicHeldCurrent &&
 			(peerSession.basicAttack != nil || basicCycleRemaining > 0) {
+			// Targetless native repeats also predict a new action token. Merely
+			// refreshing held aim leaves that prediction unanswered after release.
 			pending := &campaignPendingBasic{
 				runtime: r, packet: packet, command: command, sessionKey: sessionKey,
 				generation:          peerSession.generation,
@@ -518,13 +524,10 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 			return nil, nil
 		}
 		r.registry.mutex.Unlock()
-		if isSessionCurrent && !isActiveRequest && isBasicHeldCurrent &&
-			basicCycleRemaining > 0 {
-			// These are repeated presses inside the accepted basic cycle, not
-			// another action. Native 103 clears the matching predicted action
-			// and resets animation on rejection, even while that cycle plays.
-			// As with held-aim refreshes above, acknowledge transport only and
-			// leave the running attack and its authored timing intact.
+		if isSessionCurrent && !isActiveRequest && isBasicHeldRepeat &&
+			isBasicHeldCurrent && basicCycleRemaining > 0 {
+			// A server-generated repeat carries the preceding accepted token;
+			// it must not interrupt that cycle or replace a newer native request.
 			retainBasicAction(ctx)
 			return nil, nil
 		}
@@ -562,7 +565,15 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 		request.command = command
 		request.targetObjectID = targetObjectID
 	}
-	err = peerSession.advancePlayerPosition(abilityStartTime, command.Common.Position)
+	reportedPosition := command.Common.Position
+	if !isActiveRequest && peerSession.playerMotion != nil &&
+		!peerSession.playerMotion.Snapshot().Movement().IsMoving {
+		// Basic animations can displace the native rendered pose while the
+		// locomotion goal remains stopped. Adopting that pose on every repeat
+		// turns animation offsets into permanent movement without a move command.
+		reportedPosition = peerSession.playerPosition
+	}
+	err = peerSession.advancePlayerPosition(abilityStartTime, reportedPosition)
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignBasicPosition: %w", err)
@@ -1593,6 +1604,7 @@ func (e campaignAreaRepeatStep) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.RLock()
 	current, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && current.generation == e.generation &&
+		current.pendingBasic == nil &&
 		current.basicSequenceSession().IsHeldAt(e.heldGeneration)
 	command := latestBasicHeldCommand(current, e.command)
 	e.runtime.registry.mutex.RUnlock()
@@ -1606,7 +1618,8 @@ func (e campaignAreaRepeatStep) produce() ([][]byte, error) {
 	isRepeated := isLatestFound && latest.generation == e.generation &&
 		latest.basicSequenceSession().HeldGeneration() == e.heldGeneration &&
 		latest.areaBasicGeneration > e.areaGeneration
-	if !isRepeated && isLatestFound && latest.generation == e.generation &&
+	if !isRepeated && isLatestFound && latest.pendingBasic == nil &&
+		latest.generation == e.generation &&
 		latest.basicSequenceSession().HeldGeneration() == e.heldGeneration {
 		latest.basicSequenceSession().ReleaseHeld()
 		e.runtime.registry.sessions[e.sessionKey] = latest
@@ -3097,6 +3110,7 @@ func (e campaignHeldRepeatStep) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.RLock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
+		peerSession.pendingBasic == nil &&
 		peerSession.basicSequenceSession().IsHeldAt(e.heldGeneration)
 	command := latestBasicHeldCommand(peerSession, e.command)
 	previousNextObjectID := peerSession.nextProjectileObjectID
@@ -3117,7 +3131,7 @@ func (e campaignHeldRepeatStep) produce() ([][]byte, error) {
 			e.heldGeneration
 	isRepeated := isMatching &&
 		latestSession.nextProjectileObjectID > previousNextObjectID
-	if isMatching && !isRepeated {
+	if isMatching && !isRepeated && latestSession.pendingBasic == nil {
 		latestSession.basicSequenceSession().ReleaseHeld()
 		e.runtime.registry.sessions[e.sessionKey] = latestSession
 	}
@@ -3158,6 +3172,7 @@ func (r campaignBasicScheduleRun) repeat() ([][]byte, error) {
 	r.runtime.registry.mutex.Lock()
 	peerSession, isFound := r.runtime.registry.sessions[r.sessionKey]
 	isCurrent := isFound && peerSession.generation == r.generation &&
+		peerSession.pendingBasic == nil &&
 		peerSession.basicSequenceSession().IsHeldAt(r.heldGeneration)
 	command := latestBasicHeldCommand(peerSession, r.command)
 	r.runtime.registry.mutex.Unlock()
@@ -3177,7 +3192,7 @@ func (r campaignBasicScheduleRun) repeat() ([][]byte, error) {
 	isMatching := isLatestFound &&
 		latestSession.generation == r.generation &&
 		latestSession.basicSequenceSession().HeldGeneration() == r.heldGeneration
-	if !isRepeated && isMatching {
+	if !isRepeated && isMatching && latestSession.pendingBasic == nil {
 		latestSession.basicSequenceSession().ReleaseHeld()
 		r.runtime.registry.sessions[r.sessionKey] = latestSession
 	}

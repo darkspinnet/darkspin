@@ -10,7 +10,7 @@ import (
 	actionraknet "github.com/darkspinnet/darkspin/server/zone/action/raknet103"
 )
 
-// campaignPendingBasic owns a native targeted repeat until the preceding
+// campaignPendingBasic owns a native repeat until the preceding
 // attack has released. Replacing this pointer coalesces repeats without
 // canceling the preceding attack's remaining hits or borrowing its sync token.
 type campaignPendingBasic struct {

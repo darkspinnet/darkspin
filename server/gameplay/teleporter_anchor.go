@@ -5,11 +5,42 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
 	zonesecurity "github.com/darkspinnet/darkspin/server/zone/security"
 	securityraknet "github.com/darkspinnet/darkspin/server/zone/security/raknet103"
 )
+
+// Recovered first-campaign routes retain endpoint positions separately from
+// the selected authored markers. Copy the matching marker's orientation too,
+// just as the director-driven route path does on later missions.
+func (e *gameplayPeerSession) securityTeleporterRotations() [zonesecurity.RouteCount]raknet.Vector3 {
+	rotations := [zonesecurity.RouteCount]raknet.Vector3{}
+	if e == nil || e.zone == nil || !strings.EqualFold(e.binding.Level, game.InitialChainLevel) {
+		return rotations
+	}
+	director := e.zone.DirectorDefinition()
+	for index, route := range zonesecurity.Routes(e.binding.Level) {
+		nounName := "SecurityTeleporter.Noun"
+		if route.IsBoss {
+			nounName = "BossSecurityTeleporter.Noun"
+		}
+		for _, set := range director.MarkerSets {
+			for _, definition := range set.Definitions {
+				marker, isFound := director.SelectedMarkerDefinition(definition.MarkerID)
+				if !isFound || !strings.EqualFold(marker.NounName, nounName) ||
+					zonegeometry.DistanceSquared(marker.Position, route.Source) > 0.0001 {
+					continue
+				}
+				rotations[index] = raknet.Vector3{
+					X: marker.Rotation.X, Y: marker.Rotation.Y, Z: marker.Rotation.Z,
+				}
+			}
+		}
+	}
+	return rotations
+}
 
 // Retire authored render objects before creating server-owned presentation
 // anchors. The initial campaign uses recovered routes; later levels use the

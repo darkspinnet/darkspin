@@ -3542,7 +3542,7 @@ func (s *gameplayPeerSession) commitTutorialCompletion() (bool, error) {
 func restartTutorialSession(
 	previous gameplayPeerSession, generation uint64, experience sporenet.TutorialExperience,
 ) gameplayPeerSession {
-	binding := previous.binding
+	binding := tutorialGameplayBinding(previous.binding)
 	binding.AvatarXP = float32(experience.CumulativeXP)
 	binding.AvatarLevel = experience.Level
 	return gameplayPeerSession{

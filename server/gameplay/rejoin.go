@@ -583,8 +583,9 @@ func marshalGameplayRejoinBaselineState(
 	packets = append(packets, pickupPackets...)
 	securityPackets := make([][]byte, 0)
 	if peerSession.zone.Security() != nil {
-		securityPackets, err = securityraknet.SnapshotState(
+		securityPackets, err = securityraknet.SnapshotStateWithRotations(
 			peerSession.zone.Security().Snapshot(),
+			peerSession.securityTeleporterRotations(),
 			peerSession.zone.SecurityThreats(),
 		)
 		if err != nil {

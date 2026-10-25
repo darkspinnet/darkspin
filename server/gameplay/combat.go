@@ -2714,6 +2714,13 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 		transition.shieldObjectID = result.ObjectID
 		shieldNPC, isShieldNPCFound := s.zone.NPCs().NPC(result.ObjectID)
 		if isShieldNPCFound {
+			stopPackets, stopErr := npcraknet.MovementPause(
+				result.ObjectID, shieldNPC.Plan.Position, shieldNPC.Facing,
+			)
+			if stopErr != nil {
+				return campaignDamageTransition{}, fmt.Errorf("shieldStop: %w", stopErr)
+			}
+			transition.immediatePackets = append(transition.immediatePackets, stopPackets...)
 			transition.shieldDuration, _ = zonenpc.NomadWithDroneShieldDuration(
 				shieldNPC.Plan.NounName,
 			)
