@@ -444,6 +444,16 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 		peerSession.zone != nil &&
 		peerSession.zone.NPCs() != nil &&
 		peerSession.zone.Population() != nil
+	pendingBasic, isPendingBasic := ctx.Value(campaignPendingBasicKey{}).(*campaignPendingBasic)
+	if isPendingBasic {
+		if !pendingBasic.isCurrent(peerSession, isFound) {
+			r.registry.mutex.Unlock()
+			retainBasicAction(ctx)
+			return nil, nil
+		}
+		peerSession.pendingBasic = nil
+		r.registry.sessions[sessionKey] = peerSession
+	}
 	var interruptedBasic *abilityraknet.MeleeRun
 	isActiveCooldownReady := isSessionCurrent && isActiveRequest &&
 		peerSession.abilityCooldownSession().IsReady(
@@ -485,6 +495,28 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 		basicCycleRemaining := peerSession.basicSequenceSession().CooldownEnd().Sub(
 			abilityStartTime,
 		)
+		if isSessionCurrent && !isActiveRequest && !isBasicHeldRepeat &&
+			command.Ability.TargetID != 0 && isBasicHeldCurrent &&
+			(peerSession.basicAttack != nil || basicCycleRemaining > 0) {
+			pending := &campaignPendingBasic{
+				runtime: r, packet: packet, command: command, sessionKey: sessionKey,
+				generation:          peerSession.generation,
+				transportGeneration: peerSession.transportGeneration,
+				heldGeneration:      peerSession.basicSequenceSession().HeldGeneration(),
+				startedAt:           abilityStartTime,
+			}
+			delay := pendingBasicDelay(peerSession, abilityStartTime)
+			pending.expiresAt = abilityStartTime.Add(delay + 2*time.Second)
+			peerSession.pendingBasic = pending
+			r.registry.sessions[sessionKey] = peerSession
+			r.registry.mutex.Unlock()
+			err := pending.schedule(delay)
+			if err != nil {
+				return pending.reject(err)
+			}
+			retainBasicAction(ctx)
+			return nil, nil
+		}
 		r.registry.mutex.Unlock()
 		if isSessionCurrent && !isActiveRequest && isBasicHeldCurrent &&
 			basicCycleRemaining > 0 {
@@ -930,16 +962,17 @@ func (r campaignAbilityCommandRuntime) handleCharacter(
 }
 
 type campaignAbilityCommandRuntime struct {
-	registry     *gameplaySessionRegistry
-	action       campaignActionAuthority
-	program      Programs
-	modifierPool *modifierPool
-	effectPool   *attachedEffectPool
-	npc          campaignNPCActionRuntime
-	damage       campaignDamageRuntime
-	stats        *playerstat.Recorder
-	now          func() time.Time
-	logger       *log.Logger
+	actionRuntime *gameplayActionRuntime
+	registry      *gameplaySessionRegistry
+	action        campaignActionAuthority
+	program       Programs
+	modifierPool  *modifierPool
+	effectPool    *attachedEffectPool
+	npc           campaignNPCActionRuntime
+	damage        campaignDamageRuntime
+	stats         *playerstat.Recorder
+	now           func() time.Time
+	logger        *log.Logger
 }
 
 type campaignCharacterAbilityRequest struct {

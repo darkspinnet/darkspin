@@ -284,6 +284,14 @@ func (r gameplayActionRuntime) handleCommand(
 		r.registry.mutex.RLock()
 		currentSession, isCurrentFound :=
 			r.registry.sessions[packet.Address.String()]
+		pendingBasic, isPendingBasic := ctx.Value(campaignPendingBasicKey{}).(*campaignPendingBasic)
+		if isPendingBasic && !pendingBasic.isCurrent(currentSession, isCurrentFound) {
+			r.registry.mutex.RUnlock()
+			return nil, nil
+		}
+		if isPendingBasic {
+			command.Common.Position = currentSession.playerPosition
+		}
 		isCurrent := isCurrentFound &&
 			gameplaySessionMemberKey(currentSession) == memberKey &&
 			currentSession.generation == peerSession.generation &&
@@ -416,6 +424,19 @@ func (r gameplayActionRuntime) handleCommand(
 		return protected, err
 	}
 	scheduleSet.seal()
+	if command.Ability != nil && !disposition.isBasicRetained &&
+		hasActionResponseForSync(protected, command.Common.Unknown[0]) {
+		// A newly admitted attack or special replaces the queued basic intent.
+		// Rejected specials and coalesced repeats leave that intent intact.
+		r.registry.mutex.Lock()
+		current := r.registry.sessions[packet.Address.String()]
+		if current.generation == peerSession.generation &&
+			current.transportGeneration == peerSession.transportGeneration {
+			current.pendingBasic = nil
+			r.registry.sessions[packet.Address.String()] = current
+		}
+		r.registry.mutex.Unlock()
+	}
 	if command.Ability != nil && command.Ability.TargetID != 0 &&
 		command.Ability.TargetID != command.Common.ObjectID && !isProtectedRejected {
 		r.registry.mutex.Lock()
@@ -1453,6 +1474,7 @@ func newGameplayHandlerWithDependencies(
 		},
 		now: dependency.now, logger: logger,
 	}
+	actionRuntime.ability.actionRuntime = &actionRuntime
 	pendingRuntime.action = actionRuntime
 	if dependency.registerPoll != nil {
 		dependency.registerPoll(pendingRuntime.poll)

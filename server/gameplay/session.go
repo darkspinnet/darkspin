@@ -528,6 +528,7 @@ type controlledHeroPresentation struct {
 	enemyDeaths                  map[uint32]*deathraknet.Run
 	basicAttack                  *abilityraknet.MeleeRun
 	basicAttackSyncStamp         uint8
+	pendingBasic                 *campaignPendingBasic
 	sageAttacks                  map[uint32]*abilityraknet.ProjectileRun
 	heroBurstAttacks             map[uint32]*abilityraknet.BurstRun
 	rocketBarrage                *rocketBarrageChannel
