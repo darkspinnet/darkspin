@@ -30,19 +30,21 @@ type debugEditorNode struct {
 }
 
 type debugEditorHierarchy struct {
-	ClientID        string            `json:"client_id"`
-	InstanceID      string            `json:"instance_id"`
-	PID             uint32            `json:"pid"`
-	Path            string            `json:"path"`
-	SHA256          string            `json:"sha256"`
-	Source          string            `json:"source"`
-	ObservedAt      time.Time         `json:"observed_at"`
-	OwnerGeneration uint32            `json:"owner_generation"`
-	IsComplete      bool              `json:"is_complete"`
-	IsBodyMode      bool              `json:"is_body_mode"`
-	EditorMode      uint32            `json:"editor_mode"`
-	IsModEditor     bool              `json:"is_mod_editor"`
-	Nodes           []debugEditorNode `json:"nodes"`
+	ClientID                string            `json:"client_id"`
+	InstanceID              string            `json:"instance_id"`
+	PID                     uint32            `json:"pid"`
+	Path                    string            `json:"path"`
+	SHA256                  string            `json:"sha256"`
+	Source                  string            `json:"source"`
+	ObservedAt              time.Time         `json:"observed_at"`
+	OwnerGeneration         uint32            `json:"owner_generation"`
+	IsComplete              bool              `json:"is_complete"`
+	IsBodyMode              bool              `json:"is_body_mode"`
+	EditorMode              uint32            `json:"editor_mode"`
+	IsModEditor             bool              `json:"is_mod_editor"`
+	IsImportEditor          bool              `json:"is_import_editor"`
+	IsEnvironmentRegistered bool              `json:"is_environment_registered"`
+	Nodes                   []debugEditorNode `json:"nodes"`
 }
 
 func openDebugCreatureEditor(ctx context.Context, host *debugHost, clientManager *debugClientManager, payload json.RawMessage) (any, error) {
@@ -50,9 +52,10 @@ func openDebugCreatureEditor(ctx context.Context, host *debugHost, clientManager
 		return nil, errors.New("Creature Editor requires an owned Mod server and client")
 	}
 	var req struct {
-		ClientID  string `json:"client_id"`
-		HeroNoun  uint32 `json:"hero_noun"`
-		TimeoutMS uint32 `json:"timeout_ms"`
+		ClientID       string `json:"client_id"`
+		HeroNoun       uint32 `json:"hero_noun"`
+		IsImportEditor bool   `json:"is_import_editor"`
+		TimeoutMS      uint32 `json:"timeout_ms"`
 	}
 	err := decodeDebugPayload(payload, &req)
 	if err != nil {
@@ -77,7 +80,7 @@ func openDebugCreatureEditor(ctx context.Context, host *debugHost, clientManager
 	if !profile.IsAuthenticated || profile.Presence.Location != "arsenal" || profile.Presence.Status != "available" {
 		return nil, errors.New("Creature Editor requires an authenticated client in Arsenal")
 	}
-	action, err := clientManager.OpenCreatureEditor(waitContext, req.ClientID, req.HeroNoun)
+	action, err := clientManager.OpenCreatureEditor(waitContext, req.ClientID, req.HeroNoun, req.IsImportEditor)
 	result := map[string]any{"action": action}
 	if err != nil {
 		return result, fmt.Errorf("editorOpen: %w", err)
@@ -99,6 +102,9 @@ func openDebugCreatureEditor(ctx context.Context, host *debugHost, clientManager
 	snapshot, isHierarchy := hierarchy.(debugEditorHierarchy)
 	if !isHierarchy || !snapshot.IsModEditor {
 		return result, errors.New("editor opened without the requested Mod creature-editor ownership")
+	}
+	if snapshot.IsImportEditor != req.IsImportEditor {
+		return result, errors.New("editor opened through a different entry than requested")
 	}
 	return result, nil
 }

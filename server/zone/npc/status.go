@@ -68,6 +68,7 @@ type status struct {
 	slowExpiresAt               time.Time
 	slowMovementScale           float32
 	slowAttackScale             float32
+	publishedSlowMovementScale  float32
 	stunExpiresAt               time.Time
 	tauntExpiresAt              time.Time
 	tauntTargetObjectID         uint32
@@ -402,6 +403,27 @@ func (s *Session) SlowProfile(objectID uint32, at time.Time) (float32, float32) 
 
 func (s *Session) SlowMovementScale(objectID uint32, at time.Time) float32 {
 	return s.slowScales(objectID, at).Movement
+}
+
+// CommitSlowMovementPublication records the factor reflected to native
+// locomotion. Zero is the initial, unmodified spawn presentation.
+func (e *Session) CommitSlowMovementPublication(objectID uint32, scale float32) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	npc, isFound := e.npcs[objectID]
+	if !isFound || npc.IsDefeated {
+		return false
+	}
+	previousScale := npc.status.publishedSlowMovementScale
+	if previousScale == 0 {
+		previousScale = 1
+	}
+	if previousScale == scale {
+		return false
+	}
+	npc.status.publishedSlowMovementScale = scale
+	e.npcs[objectID] = npc
+	return true
 }
 
 func (s *Session) ApplyHaste(

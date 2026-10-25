@@ -6,6 +6,7 @@ typedef unsigned char (FANG_THISCALL* skin_mode_fn)(BYTE*, unsigned int);
 
 static BYTE* skin_base;
 static skin_mode_fn skin_native_mode;
+static skin_mode_fn skin_native_paint;
 static unsigned int skin_trace_count;
 static BYTE* skin_body_owner;
 static unsigned int skin_body_actor;
@@ -98,17 +99,30 @@ static unsigned char FANG_THISCALL skin_build_mode(BYTE* editor, unsigned int mo
      * instance. Both queries must agree with 734180's lifecycle decisions. */
     if ((caller == skin_base + 0x3343a5 || caller == skin_base + 0x334433 ||
          caller == skin_base + 0x334442 || caller == skin_base + 0x329d05 ||
-         caller == skin_base + 0x329efc) && mode == 0 &&
-        editor == fang_mod_editor_active() && editor[813] && *(void**)(editor + 408)) {
+         caller == skin_base + 0x329efc ||
+         (caller >= skin_base + 0x32a5f0 && caller < skin_base + 0x32aa20)) && mode == 0 &&
+        fang_mod_editor_is_body_selected(editor) && editor[813] && *(void**)(editor + 408)) {
         if (skin_trace_count++ < 16) trace_client_state("mod_editor_body_skin_transition", 1);
         return 0;
     }
     return skin_native_mode(editor, mode);
 }
 
+static unsigned char FANG_THISCALL skin_paint_mode(BYTE* editor, unsigned int mode) {
+    BYTE* caller = (BYTE*)__builtin_return_address(0);
+    /* The retained after-mode callback must also select Paint's material
+     * setup. Creating a baked actor while leaving the callback on Build's
+     * clay branch bakes an unpainted display, including on later Paint entry.
+     * Input, picking and brush queries keep their real native mode. */
+    if (caller >= skin_base + 0x32a5f0 && caller < skin_base + 0x32aa20 && mode == 0 &&
+        fang_mod_editor_is_body_selected(editor) && editor[813] && *(void**)(editor + 408)) return 1;
+    return skin_native_paint(editor, mode);
+}
+
 void fang_mod_install_editor_skin(BYTE* base) {
     skin_base = base;
     skin_native_mode = (skin_mode_fn)(base + 0xb82e0);
+    skin_native_paint = (skin_mode_fn)(base + 0xb8300);
     if (!readable_range(base + 0xbd9934, 4) ||
         !readable_range(base + 0x3343a3, 2) ||
         !readable_range(base + 0x334431, 2) ||
@@ -122,6 +136,13 @@ void fang_mod_install_editor_skin(BYTE* base) {
         base[0x329efa] != 0xff || base[0x329efb] != 0xd2 ||
         !patch_pointer((void**)(base + 0xbd9934), skin_native_mode, skin_build_mode)) {
         trace_client_state("mod_editor_body_skin_hook_failed", 1);
+        return;
+    }
+    if (!readable_range(base + 0xbd9938, 4) ||
+        !patch_pointer((void**)(base + 0xbd9938), skin_native_paint, skin_paint_mode)) {
+        if (!patch_pointer((void**)(base + 0xbd9934), skin_build_mode, skin_native_mode))
+            trace_client_state("mod_editor_body_skin_rollback_failed", 1);
+        trace_client_state("mod_editor_body_paint_hook_failed", 1);
         return;
     }
     trace_client_state("mod_editor_body_skin_enabled", 1);

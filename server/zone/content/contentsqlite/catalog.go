@@ -2061,10 +2061,11 @@ func loadHeroKits(
 			// instead of the authored pursuing melee strike. CastEnrage's
 			// hitEffect otherwise classifies it as melee, losing its self animation,
 			// muzzle effect, and Enrage modifier identity.
+			// NecroRandom's protective modifier likewise masks its drain channel.
 			switch active.assetName {
 			case "BinarySentinelActive", "BinarySentinelSupport",
 				"CastEnrage", "RootingPlague", "Sporogenesis", "FieldMedicSupport",
-				"Psistorm", "SleepingCloud", "SoulRavagerActive", "SpacetimeRandom2",
+				"Psistorm", "SleepingCloud", "SoulRavagerActive", "SpacetimeRandom2", "NecroRandom",
 				"Terrify", "TimeRavagerSupport", "TurretTrap", "RepulsionWave",
 				"GravityStorm", "QuantumBlink", "QuantumState",
 				"PlasmaRandom_WebbedLightning",

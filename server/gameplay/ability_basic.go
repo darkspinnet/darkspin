@@ -1791,6 +1791,19 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 	areaPlan.Definition.AnimationName = selection.AnimationName
 	areaPlan.Definition.HitDelay = selection.HitDelay
 	areaPlan.Definition.ReleaseDelay = selection.ReleaseDelay
+	var posePackets [][]byte
+	if definition.Name == "FireTempestBasic" {
+		facing := geometryraknet.Direction(peerSession.playerPosition, center)
+		posePackets, err = marshalZonePlayerAttackPose(command.Common.ObjectID,
+			peerSession.playerPosition, facing, center)
+		if err != nil {
+			peerSession.basicSequenceSession().Restore(previousBasicSequence, basicSequenceRevision)
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("areaBasicFacing: %w", err)
+		}
+		peerSession.retainAttackPose(facing, center, targetObjectID,
+			abilityStartTime.Add(selection.ReleaseDelay))
+	}
 	if definition.Kind != sim.AbilityKindTeleportArea {
 		err = peerSession.stopPlayerMovement(abilityStartTime)
 	}
@@ -2000,7 +2013,8 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 	if len(manaPacket) != 0 {
 		startPackets = append(startPackets, manaPacket)
 	}
-	return append([][]byte{start.Acknowledge}, startPackets...), nil
+	responsePackets := append([][]byte{start.Acknowledge}, posePackets...)
+	return append(responsePackets, startPackets...), nil
 }
 
 type campaignBasicScheduleRun struct {
@@ -2032,6 +2046,7 @@ type campaignMeleeSchedule struct {
 	run               *abilityraknet.MeleeRun
 	releaseResponse   []byte
 	isFireRavagerStun bool
+	isShadowCloakCrit bool
 }
 
 type campaignMeleeHitStep struct {
@@ -2103,6 +2118,11 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	currentCreature := current.binding.Creatures[current.deployedCreatureIndex]
+	// Shadow Cloak ends on UsedAbility, after this attack is accepted. Its
+	// attribute snapshot still grants the triggering attack its guaranteed crit.
+	if schedule.isShadowCloakCrit {
+		currentCreature.AutoCrit = max(float32(1), currentCreature.AutoCrit)
+	}
 	livePlan := schedule.plan
 	livePlan.SourcePosition = game.Vec3{
 		X: current.playerPosition.X, Y: current.playerPosition.Y,
@@ -3431,6 +3451,8 @@ func (r campaignAbilityCommandRuntime) handleMeleeBasic(
 	// Chunk555's UsedAbility/DealtDamage callbacks exclude basic attacks.
 	// The shared accepted-cast and damage publication owners handle the passive.
 	isFireRavagerStun := false
+	isShadowCloakCrit := peerSession.heroModifierRun != nil &&
+		peerSession.heroModifierRun.isShadowStealth
 	peerSession.basicAttack = basicRun
 	peerSession.basicAttackSyncStamp = command.Common.Unknown[0]
 	peerSession.retainAttackPose(
@@ -3448,6 +3470,7 @@ func (r campaignAbilityCommandRuntime) handleMeleeBasic(
 		selection: selection, selected: selectedDefinition, plan: plan,
 		binding: binding, run: basicRun, releaseResponse: releaseAckPacket,
 		isFireRavagerStun: isFireRavagerStun,
+		isShadowCloakCrit: isShadowCloakCrit,
 	}
 	repeatDelay := max(selectedDefinition.Cooldown, selectedDefinition.ReleaseDelay)
 	if !isActiveRequest {
@@ -3806,6 +3829,14 @@ func (r campaignAbilityCommandRuntime) handleCloudLobBasic(
 		r.registry.mutex.Unlock()
 		return request.reject(planErr.Error())
 	}
+	targetPosition := raknet.Vector3(cloudPlan.Destination)
+	facing := geometryraknet.Direction(peerSession.playerPosition, targetPosition)
+	posePackets, poseErr := marshalZonePlayerAttackPose(command.Common.ObjectID,
+		peerSession.playerPosition, facing, targetPosition)
+	if poseErr != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("cloudLobFacing: %w", poseErr)
+	}
 	previousBasicSequence := peerSession.basicSequenceSession().Snapshot()
 	previousNextObjectID := peerSession.nextProjectileObjectID
 	previousPlayerMotion := peerSession.playerMotionSnapshot()
@@ -3902,6 +3933,8 @@ func (r campaignAbilityCommandRuntime) handleCloudLobBasic(
 	generation := peerSession.generation
 	binding := peerSession.binding
 	repeatDelay := peerSession.basicSequenceSession().CooldownEnd().Sub(abilityStartTime)
+	peerSession.retainAttackPose(facing, targetPosition, cloudPlan.TargetObjectID,
+		abilityStartTime.Add(selection.ReleaseDelay))
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
 
@@ -3962,5 +3995,6 @@ func (r campaignAbilityCommandRuntime) handleCloudLobBasic(
 	run.cancel = cancel
 	r.logger.Printf("RakNet campaign cloud lob basic accepted source=%d target=%d ability=%q",
 		command.Common.ObjectID, cloudPlan.TargetObjectID, cloudPlan.Definition.Name)
-	return append([][]byte{ackPacket}, startPackets...), nil
+	responsePackets := append([][]byte{ackPacket}, posePackets...)
+	return append(responsePackets, startPackets...), nil
 }

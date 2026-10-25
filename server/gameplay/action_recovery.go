@@ -283,8 +283,7 @@ func (r gameplayActionRuntime) recoverRejectedActionAdmission(
 		return nil
 	}
 	r.registry.retireCampaignTreeOfLifeLocked(&peerSession)
-	r.registry.retireHeroInfectionsLocked(&peerSession)
-	interruptedBasic := peerSession.resetFailedActionAdmission(
+	interruptedBasic := peerSession.resetRejectedActionAdmission(
 		r.switcher.modifierPool, r.switcher.effectPool,
 	)
 	movementErr := peerSession.stopPlayerMovement(r.now())

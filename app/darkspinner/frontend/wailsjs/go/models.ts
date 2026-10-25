@@ -429,6 +429,7 @@ export namespace main {
 	    avatarId: number;
 	    isTutorialSkipped: boolean;
 	    isNew: boolean;
+	    isResyncRequested: boolean;
 	    bindings: ModBinding[];
 	
 	    static createFrom(source: any = {}) {
@@ -441,6 +442,7 @@ export namespace main {
 	        this.avatarId = source["avatarId"];
 	        this.isTutorialSkipped = source["isTutorialSkipped"];
 	        this.isNew = source["isNew"];
+	        this.isResyncRequested = source["isResyncRequested"];
 	        this.bindings = this.convertValues(source["bindings"], ModBinding);
 	    }
 	

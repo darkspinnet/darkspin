@@ -11,7 +11,7 @@ func (e *debugClientManager) EditorHierarchy(ctx context.Context, clientID strin
 	return nil, errors.New("native editor hierarchy requires Windows")
 }
 
-func (e *debugClientManager) OpenCreatureEditor(ctx context.Context, clientID string, heroNoun uint32) (any, error) {
+func (e *debugClientManager) OpenCreatureEditor(ctx context.Context, clientID string, heroNoun uint32, isImport bool) (any, error) {
 	return nil, errors.New("Creature Editor requires Windows")
 }
 

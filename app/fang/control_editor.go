@@ -54,16 +54,18 @@ func saveControlEditorHierarchy(requestID uint32) (*controlEditorArtifact, error
 			ParentIndex: uint32(node.parent_index), Depth: uint32(node.depth), Bounds: [4]float32{float32(node.left), float32(node.top), float32(node.right), float32(node.bottom)}}
 	}
 	payload, err := json.Marshal(struct {
-		Source          string              `json:"source"`
-		PID             int                 `json:"pid"`
-		ObservedAt      time.Time           `json:"observed_at"`
-		OwnerGeneration uint32              `json:"owner_generation"`
-		IsComplete      bool                `json:"is_complete"`
-		IsBodyMode      bool                `json:"is_body_mode"`
-		EditorMode      uint32              `json:"editor_mode"`
-		IsModEditor     bool                `json:"is_mod_editor"`
-		Nodes           []controlEditorNode `json:"nodes"`
-	}{"native-editor-spui", os.Getpid(), time.Now().UTC(), uint32(snapshot.owner_generation), snapshot.is_complete != 0, snapshot.is_body_mode != 0, uint32(snapshot.editor_mode), snapshot.is_mod_editor != 0, nodes})
+		Source                  string              `json:"source"`
+		PID                     int                 `json:"pid"`
+		ObservedAt              time.Time           `json:"observed_at"`
+		OwnerGeneration         uint32              `json:"owner_generation"`
+		IsComplete              bool                `json:"is_complete"`
+		IsBodyMode              bool                `json:"is_body_mode"`
+		EditorMode              uint32              `json:"editor_mode"`
+		IsModEditor             bool                `json:"is_mod_editor"`
+		IsImportEditor          bool                `json:"is_import_editor"`
+		IsEnvironmentRegistered bool                `json:"is_environment_registered"`
+		Nodes                   []controlEditorNode `json:"nodes"`
+	}{"native-editor-spui", os.Getpid(), time.Now().UTC(), uint32(snapshot.owner_generation), snapshot.is_complete != 0, snapshot.is_body_mode != 0, uint32(snapshot.editor_mode), snapshot.is_mod_editor != 0, snapshot.is_import_editor != 0, snapshot.is_environment_registered != 0, nodes})
 	if err != nil {
 		return nil, fmt.Errorf("treeMarshal: %w", err)
 	}

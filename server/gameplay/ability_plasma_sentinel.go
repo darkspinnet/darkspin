@@ -10,6 +10,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/util"
 	"github.com/darkspinnet/darkspin/server/zone"
+	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
 	zonecompanion "github.com/darkspinnet/darkspin/server/zone/companion"
 	companionraknet "github.com/darkspinnet/darkspin/server/zone/companion/raknet103"
@@ -269,7 +270,6 @@ func (r campaignAbilityCommandRuntime) handlePlasmaSentinelActive(
 	sessionKey string,
 	abilityStartTime time.Time,
 ) ([][]byte, error) {
-	_ = creature
 	definition := ability.Definition
 	if ability.ID == 0 || definition.Name != "PlasmaSentinelActive" ||
 		definition.Kind != sim.AbilityKindReactiveSummon || definition.Duration <= 0 {
@@ -279,6 +279,35 @@ func (r campaignAbilityCommandRuntime) handlePlasmaSentinelActive(
 	if peerSession.plasmaSentinelActive != nil {
 		r.registry.mutex.Unlock()
 		return req.reject("plasma sentinel active already running")
+	}
+	projected, err := zoneability.ProjectTiming(creature, definition)
+	if err != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("plasmaTiming: %w", err)
+	}
+	definition = projected
+	manaCost, err := game.ResolveAbilityManaCost(definition.ManaCost, creature.DamageProfile.PrimaryAttribute, definition.ManaCoefficient, peerSession.isOverdriveActiveAt(abilityStartTime))
+	if err != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("plasmaMana: %w", err)
+	}
+	previousManaPoint := peerSession.deployedManaPoint()
+	if previousManaPoint < manaCost {
+		r.registry.mutex.Unlock()
+		return req.reject("power unavailable")
+	}
+	cooldownPacket, err := raknet.MarshalApplication(raknet.CooldownUpdateMessage{
+		ObjectID: req.command.Common.ObjectID, AbilityKey: uint64(ability.ID),
+		DurationMilliseconds: definition.Cooldown.Milliseconds(), SourceStartMilliseconds: int64(req.packet.SourceTime),
+	})
+	if err != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("plasmaCooldown: %w", err)
+	}
+	manaPacket, err := abilityraknet.Mana(req.command.Common.ObjectID, previousManaPoint-manaCost)
+	if err != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("plasmaManaPacket: %w", err)
 	}
 	effectSlot, isEffectAllocated := r.effectPool.Allocate(req.command.Common.ObjectID)
 	if !isEffectAllocated {
@@ -316,6 +345,19 @@ func (r campaignAbilityCommandRuntime) handlePlasmaSentinelActive(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("plasmaSentinelActiveEffect: %w", err)
 	}
+	cooldownReservation, isCooldownReserved := peerSession.abilityCooldownSession().Reserve(zoneability.HeroAbilityCooldown(ability.ID), abilityStartTime, definition.Cooldown)
+	if !isCooldownReserved {
+		r.effectPool.Release(req.command.Common.ObjectID, effectSlot)
+		r.registry.mutex.Unlock()
+		return req.reject("plasma sentinel cooldown unavailable")
+	}
+	err = peerSession.setDeployedManaPoints(previousManaPoint - manaCost)
+	if err != nil {
+		peerSession.abilityCooldownSession().Rollback(cooldownReservation)
+		r.effectPool.Release(req.command.Common.ObjectID, effectSlot)
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("plasmaPayment: %w", err)
+	}
 	run := &plasmaSentinelActiveRun{
 		runtime: r, packet: req.packet, startedAt: abilityStartTime, sessionKey: sessionKey,
 		generation: peerSession.generation, ownerObjectID: req.command.Common.ObjectID,
@@ -334,13 +376,18 @@ func (r campaignAbilityCommandRuntime) handlePlasmaSentinelActive(
 		latest, isFound := r.registry.sessions[sessionKey]
 		if run.isCurrent(latest, isFound) {
 			latest.plasmaSentinelActive = nil
+			latest.abilityCooldownSession().Rollback(cooldownReservation)
+			manaErr := latest.setDeployedManaPoints(previousManaPoint)
+			if manaErr != nil {
+				r.logger.Printf("Pain Hounds payment rollback failed: %v", manaErr)
+			}
 			r.registry.sessions[sessionKey] = latest
 		}
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("plasmaSentinelActiveSchedule: %w", err)
 	}
 	run.cancel = cancel
-	return [][]byte{ackPacket, effectPacket, releasePacket}, nil
+	return [][]byte{ackPacket, cooldownPacket, manaPacket, effectPacket, releasePacket}, nil
 }
 
 func (r campaignNPCActionRuntime) triggerPlasmaSentinelActive(

@@ -65,6 +65,7 @@ func (e *heroAuraAreaRun) retireAuraLocked() error {
 		}
 		return nil
 	}
+	defer e.refreshSleepingCloudControlLocked()
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 	if e.isCleaned {

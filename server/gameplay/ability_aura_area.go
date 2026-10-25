@@ -675,6 +675,13 @@ func (r campaignAbilityCommandRuntime) handleHeroAuraArea(
 	err = peerSession.stopPlayerMovement(abilityStartTime)
 	if err == nil && isSleepingCloud {
 		movementPackets, err = marshalZonePlayerStop(req.command.Common.ObjectID, peerSession.playerPosition)
+		if err == nil {
+			var holdPacket []byte
+			holdPacket, err = marshalEnemyImmobilizedAttribute(req.command.Common.ObjectID, 1)
+			if err == nil {
+				movementPackets = append(movementPackets, holdPacket)
+			}
+		}
 	}
 	if err == nil {
 		err = cast.debitLocked(&peerSession, manaCost)
@@ -704,6 +711,9 @@ func (r campaignAbilityCommandRuntime) handleHeroAuraArea(
 		peerSession.heroAuraAreas = make(map[uint32]*heroAuraAreaRun)
 	}
 	peerSession.heroAuraAreas[activeAbilityID] = run
+	if isSleepingCloud {
+		peerSession.enemyControlPresentedObjectID = req.command.Common.ObjectID
+	}
 	generation := peerSession.generation
 	binding := peerSession.binding
 	r.registry.sessions[sessionKey] = peerSession

@@ -4,6 +4,7 @@ package modprofile
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -18,6 +19,7 @@ const bindingPrefix = "mod.binding."
 type Binding struct {
 	HeroNoun   uint32
 	CreationID string
+	HeroName   string
 }
 
 type SaveRequest struct {
@@ -25,6 +27,7 @@ type SaveRequest struct {
 	AvatarID          uint32
 	IsTutorialSkipped bool
 	IsNew             bool
+	IsResyncRequested bool
 	Bindings          []Binding
 }
 
@@ -38,11 +41,16 @@ func Save(ctx context.Context, repository sporenet.UserRepository, req SaveReque
 		return errors.New("profile name is required")
 	}
 	nouns := make(map[uint32]bool)
+	boundNames := make(map[string]bool)
 	for _, binding := range req.Bindings {
 		if binding.HeroNoun == 0 || binding.CreationID == "" || nouns[binding.HeroNoun] {
 			return errors.New("each character must have one valid creature binding")
 		}
 		nouns[binding.HeroNoun] = true
+		if req.IsResyncRequested && binding.HeroName == "" {
+			return errors.New("resync requires a resolved character name for every binding")
+		}
+		boundNames[strings.ToLower(binding.HeroName)] = true
 	}
 	record, err := repository.LoadByLoginName(ctx, req.LoginName)
 	if req.IsNew {
@@ -70,6 +78,12 @@ func Save(ctx context.Context, repository sporenet.UserRepository, req SaveReque
 	for _, binding := range req.Bindings {
 		record.Settings[bindingPrefix+strconv.FormatUint(uint64(binding.HeroNoun), 10)] = binding.CreationID
 	}
+	if req.IsResyncRequested {
+		err = resyncUnbound(&record, boundNames)
+		if err != nil {
+			return fmt.Errorf("profileResync: %w", err)
+		}
+	}
 	if req.IsNew {
 		createdID, createErr := repository.Create(ctx, record)
 		if createErr != nil {
@@ -83,6 +97,34 @@ func Save(ctx context.Context, repository sporenet.UserRepository, req SaveReque
 	err = repository.Save(ctx, record)
 	if err != nil {
 		return fmt.Errorf("profileSave: %w", err)
+	}
+	return nil
+}
+
+type appearanceRecovery struct {
+	Version  uint32
+	ThumbURL string
+	LargeURL string
+}
+
+// Resync retains every previous appearance reference and its PNG files. Only
+// unbound creatures select the installed template; inventory is not changed.
+func resyncUnbound(record *sporenet.UserRecord, boundNames map[string]bool) error {
+	for _, creature := range record.Creatures {
+		if creature == nil || boundNames[strings.ToLower(creature.TemplateName)] {
+			continue
+		}
+		key := "mod.resync." + strconv.FormatUint(uint64(creature.ID), 10) + "." + strconv.FormatUint(uint64(creature.Version), 10)
+		if _, isSaved := record.Settings[key]; !isSaved {
+			payload, err := json.Marshal(appearanceRecovery{creature.Version, creature.ThumbImageURL, creature.LargeImageURL})
+			if err != nil {
+				return fmt.Errorf("recoveryEncode: %w", err)
+			}
+			record.Settings[key] = string(payload)
+		}
+		creature.Version = 1
+		creature.ThumbImageURL = ""
+		creature.LargeImageURL = ""
 	}
 	return nil
 }

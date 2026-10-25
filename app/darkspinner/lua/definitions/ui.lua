@@ -7,6 +7,7 @@
 ---Screenshot() saves a bounded image and metadata locally. None proves gameplay
 ---or menu-transition success, rendering readiness, or a usable controlled hero.
 ---@class ClientUI
+---@field OpenImportEditor fun(self:ClientUI,hero_noun:integer,timeout_ms?:integer):CreatureEditorOpenResult|nil,ScenarioError|nil Uses Import Editor's separate entry and verifies imported-scene ownership. Does not assert environment rendering readiness.
 ---@field OpenCreatureEditor fun(self:ClientUI,hero_noun:integer,timeout_ms?:integer):CreatureEditorOpenResult|nil,ScenarioError|nil Uses Mod's existing Creature Edit action for the unique owned Arsenal creature matching hero_noun, waits for Editor and verifies Mod ownership. Scene:Set(Editor) remains the ordinary equipment editor.
 ---@field Hierarchy fun(self:ClientUI):EditorUIHierarchy|nil,ScenarioError|nil Saves and returns the active editor's bounded native SPUI hierarchy. Unavailable outside Editor. Does not enumerate Flash/HTML controls or establish rendering readiness.
 ---@field Screen ClientScreen Native overlays, independent of ship Scene and reported presence.
@@ -29,6 +30,8 @@ local ClientUI = {}
 ---@field is_complete boolean False when the 4096-node or 64-depth bound truncates traversal; never treat partial coverage as absence.
 ---@field is_body_mode boolean Observed Mod Body selection.
 ---@field is_mod_editor boolean Explicit Mod creature-editor lifecycle owns this editor, rather than ordinary equipment editing.
+---@field is_import_editor boolean Import Editor's separate lifecycle owns this editor.
+---@field is_environment_registered boolean The private installed environment directory is retained and registered; does not prove successful drawing.
 ---@field editor_mode integer Ordinary native editor mode; Body and Equip both use native Build mode.
 ---@field nodes EditorUINode[] Breadth-first order. Nodes are observations, not retained native handles.
 

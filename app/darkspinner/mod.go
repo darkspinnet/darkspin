@@ -70,6 +70,7 @@ type ModProfileRequest struct {
 	AvatarID          uint32       `json:"avatarId"`
 	IsTutorialSkipped bool         `json:"isTutorialSkipped"`
 	IsNew             bool         `json:"isNew"`
+	IsResyncRequested bool         `json:"isResyncRequested"`
 	Bindings          []ModBinding `json:"bindings"`
 }
 
@@ -287,9 +288,11 @@ func (a *App) SaveModProfile(req ModProfileRequest) error {
 	bindings := make([]modprofile.Binding, 0, len(req.Bindings))
 	for _, binding := range req.Bindings {
 		isKnown := false
+		heroName := ""
 		for _, hero := range heroes {
 			if hero.Noun == binding.HeroNoun {
 				isKnown = true
+				heroName = hero.Name
 				break
 			}
 		}
@@ -300,14 +303,14 @@ func (a *App) SaveModProfile(req ModProfileRequest) error {
 		if err != nil {
 			return fmt.Errorf("bindingCache: %w", err)
 		}
-		bindings = append(bindings, modprofile.Binding{HeroNoun: binding.HeroNoun, CreationID: binding.CreationID})
+		bindings = append(bindings, modprofile.Binding{HeroNoun: binding.HeroNoun, CreationID: binding.CreationID, HeroName: heroName})
 	}
 	repository, err := a.openProfileRepositoryAt(a.modContext(), modDatabasePath(paths))
 	if err != nil {
 		return fmt.Errorf("modOpen: %w", err)
 	}
 	defer a.closeModRepository(repository)
-	err = modprofile.Save(a.modContext(), repository, modprofile.SaveRequest{LoginName: req.LoginName, AvatarID: req.AvatarID, IsTutorialSkipped: req.IsTutorialSkipped, IsNew: req.IsNew, Bindings: bindings})
+	err = modprofile.Save(a.modContext(), repository, modprofile.SaveRequest{LoginName: req.LoginName, AvatarID: req.AvatarID, IsTutorialSkipped: req.IsTutorialSkipped, IsNew: req.IsNew, IsResyncRequested: req.IsResyncRequested, Bindings: bindings})
 	if err != nil {
 		return fmt.Errorf("modSave: %w", err)
 	}

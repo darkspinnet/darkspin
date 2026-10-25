@@ -627,6 +627,15 @@ func (r campaignMovementCommandRuntime) handle(
 ) ([][]byte, error) {
 	var err error
 	if commandSession.isSleepingCloudActive(r.now()) {
+		// Immobilized holds the native mover for this fixed-duration cast.
+		// Repeated walking input at the held pose needs no placement reset.
+		deltaX := command.Common.Position.X - commandSession.playerPosition.X
+		deltaY := command.Common.Position.Y - commandSession.playerPosition.Y
+		radius := commandSession.deployedCampaignNavigationRadius()
+		if isFiniteZonePosition(command.Common.Position) && radius > 0 &&
+			deltaX*deltaX+deltaY*deltaY <= radius*radius {
+			return nil, nil
+		}
 		packets, marshalErr := marshalPlayerMovementCorrection(
 			command.Common.ObjectID, commandSession.playerPosition, command.Common.Orientation,
 		)

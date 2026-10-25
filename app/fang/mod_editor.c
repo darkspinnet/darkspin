@@ -56,6 +56,15 @@ static editor_manipulate_fn editor_native_manipulate;
 static editor_manipulate_fn editor_body_manipulate;
 static unsigned int editor_foot_count;
 
+typedef struct {
+    uint32_t noun;
+    uint32_t source;
+    wchar_t path[32768];
+} editor_reset_source;
+
+static editor_reset_source reset_sources[128];
+static unsigned int reset_source_count;
+
 BYTE* fang_mod_editor_active(void) {
     if (!is_editor_enabled || !readable_range(active_editor, 1172)) return NULL;
     return active_editor;
@@ -185,6 +194,52 @@ static void editor_restore_parts(void) {
         ((editor_ref_fn)(*(void***)part->part)[2])(part->part);
         memset(part, 0, sizeof(*part));
     }
+}
+
+/* Explicit Body reset uses the existing creator resource-load operation.
+ * It changes the working editor only: native Accept/Cancel owns persistence.
+ * A bound creature must resolve its cached import, never silently its chassis.
+ * Build 103 72FC60 consumes six stack arguments (RET 18h) and copies the model
+ * through the player editor's slot 28, preserving its account/save identity. */
+int fang_mod_editor_reset_body(BYTE* editor) {
+    typedef unsigned char (FANG_THISCALL* load_fn)(BYTE*, const uint32_t*, uint32_t,
+        uint32_t, uint32_t, uint32_t, unsigned char);
+    BYTE* request;
+    BYTE* definition;
+    uint32_t noun;
+    uint32_t key[3];
+    void* retained = NULL;
+    unsigned int index;
+    int is_loaded;
+    if (editor != fang_mod_editor_active() || !fang_mod_editor_is_body(editor) ||
+        fang_mod_editor_is_save_busy(editor)) return 0;
+    request = *(BYTE**)(editor + 524);
+    if (!readable_range(request, 120) || !*(uintptr_t*)(request + 116)) return 0;
+    definition = ((BYTE* (__cdecl*)(uintptr_t, void*))(editor_base + 0x5eca10))
+        (*(uintptr_t*)(request + 116), NULL);
+    if (!readable_range(definition, 160)) return 0;
+    noun = *(uint32_t*)(definition + 92);
+    for (index = 0; index < reset_source_count; ++index) {
+        editor_reset_source* source = reset_sources + index;
+        if (source->noun != noun) continue;
+        if (!fang_mod_import_source(source->path, source->source, key, &retained)) {
+            trace_client_state("mod_editor_reset_import_failed", noun);
+            return 0;
+        }
+        break;
+    }
+    fang_mod_palette_suspend(editor);
+    editor_restore_parts();
+    if (retained) {
+        is_loaded = ((load_fn)(editor_base + 0x32fc60))(editor, key,
+            *(uint32_t*)(editor_base + 0x1048298), *(uint32_t*)(editor_base + 0x104829c),
+            *(uint32_t*)(editor_base + 0x10482a0), *(uint32_t*)(editor_base + 0x10482a4), 0);
+        ((void (FANG_THISCALL*)(void*))(*(void***)retained)[1])(retained);
+    } else {
+        is_loaded = ((unsigned char (FANG_THISCALL*)(BYTE*))(editor_base + 0xba030))(editor);
+    }
+    trace_client_state("mod_editor_reset_body_result", is_loaded ? noun : 0);
+    return is_loaded;
 }
 
 void fang_mod_editor_update_body(void) {
@@ -428,6 +483,7 @@ static int FANG_THISCALL editor_configure(BYTE* editor) {
     editor[1169] = 1; /* editorShowBoneLengthHandles */
     /* Both explicit Mod editors need the native skin/bake controller for
      * textured Body display. Configure it before 731900 loads the model. */
+    trace_client_state("mod_editor_configured_use_skin", editor[813]);
     editor[813] = 1; /* editorUseSkin */
     editor_pick_flags[0] = editor[750];
     editor_pick_flags[1] = editor[751];
@@ -439,6 +495,7 @@ static int FANG_THISCALL editor_configure(BYTE* editor) {
 }
 
 void fang_mod_install_editor(BYTE* base, const wchar_t* manifest) {
+    unsigned int index;
     static const BYTE agent_signature[] = {0x8b, 0x49, 0x04, 0xe9};
     static const BYTE config_signature[] = {0x83, 0xec, 0x08, 0x56, 0x8b, 0xf1, 0xe8};
     editor_exit_fn exit_target = (editor_exit_fn)(base + 0xb9470);
@@ -460,6 +517,19 @@ void fang_mod_install_editor(BYTE* base, const wchar_t* manifest) {
         return;
     }
     editor_base = base;
+    for (index = 1; index <= 128; ++index) {
+        wchar_t name[32];
+        editor_reset_source* source = reset_sources + reset_source_count;
+        _snwprintf(name, 32, L"hero%u", index);
+        source->noun = GetPrivateProfileIntW(L"mod", name, 0, manifest);
+        if (!source->noun) continue;
+        _snwprintf(name, 32, L"source%u", index);
+        source->source = GetPrivateProfileIntW(L"mod", name, 0, manifest);
+        _snwprintf(name, 32, L"reset_png%u", index);
+        GetPrivateProfileStringW(L"mod", name, L"", source->path, 32768, manifest);
+        /* Retain even a missing path: a broken import must fail closed. */
+        ++reset_source_count;
+    }
     editor_native_edit = (editor_edit_fn)(base + 0xe920);
     editor_native_hit = (editor_hit_fn)(base + 0xba7a0);
     editor_body_hit = (editor_hit_fn)(base + 0x323730);

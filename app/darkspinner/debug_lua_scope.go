@@ -204,6 +204,8 @@ func debugLuaScopeIndex(state *lua.LState) int {
 	switch name {
 	case "OpenCreatureEditor":
 		state.Push(state.NewFunction(debugLuaUIOpenCreatureEditor))
+	case "OpenImportEditor":
+		state.Push(state.NewFunction(debugLuaUIOpenImportEditor))
 	case "Hierarchy":
 		state.Push(state.NewFunction(debugLuaUIHierarchy))
 	case "Screen":
@@ -228,6 +230,14 @@ func debugLuaScopeIndex(state *lua.LState) int {
 }
 
 func debugLuaUIOpenCreatureEditor(state *lua.LState) int {
+	return debugLuaUIOpenEditor(state, false)
+}
+
+func debugLuaUIOpenImportEditor(state *lua.LState) int {
+	return debugLuaUIOpenEditor(state, true)
+}
+
+func debugLuaUIOpenEditor(state *lua.LState, isImport bool) int {
 	scope := debugLuaScopeSelf(state)
 	if scope == nil {
 		return 0
@@ -238,7 +248,7 @@ func debugLuaUIOpenCreatureEditor(state *lua.LState) int {
 		return 0
 	}
 	return scope.client.invoke(state, "client.open_creature_editor", map[string]any{"client_id": scope.client.id,
-		"hero_noun": uint32(heroNoun), "timeout_ms": debugLuaClientTimeout(state, scope.client, 3)}, true)
+		"hero_noun": uint32(heroNoun), "is_import_editor": isImport, "timeout_ms": debugLuaClientTimeout(state, scope.client, 3)}, true)
 }
 
 func debugLuaUIHierarchy(state *lua.LState) int {

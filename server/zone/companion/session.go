@@ -36,6 +36,7 @@ type Actor struct {
 	IsCombatant         bool
 	IsSageCompanion     bool
 	IsAbilityControlled bool
+	IsStationary        bool
 	IsIntangible        bool
 	AbilityAnimation    string
 	TargetObjectID      uint32
@@ -460,7 +461,7 @@ func (e *Session) followActors(
 		if actor.UserID != userID ||
 			actor.PeerGeneration != peerGeneration ||
 			actor.OwnerObjectID != ownerObjectID ||
-			actor.HitPoint <= 0 || actor.IsAbilityControlled {
+			actor.HitPoint <= 0 || actor.IsAbilityControlled || actor.IsStationary {
 			continue
 		}
 		if at.Before(actor.followHoldUntil) || actor.IsCinematicImmobilized(at) {

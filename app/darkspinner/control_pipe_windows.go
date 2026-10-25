@@ -120,7 +120,7 @@ func (e *controlPipe) State() (controlEnvelope, time.Time, bool, string) {
 // Request submits at most once. A timeout after a write attempt reports an
 // unknown outcome; the caller must inspect a fresh state rather than replay.
 func (e *controlPipe) Request(ctx context.Context, operation string, command controlCommand) (controlCommandResult, error) {
-	if (command.HeroNoun != 0 && operation != "editor.open_creature") || (operation == "editor.open_creature" && command.HeroNoun == 0) {
+	if ((command.HeroNoun != 0 || command.IsImportEditor) && operation != "editor.open_creature") || (operation == "editor.open_creature" && command.HeroNoun == 0) {
 		return controlCommandResult{}, &controlCommandFailure{Code: "invalid_request", Message: "hero_noun is required only for editor.open_creature"}
 	}
 	if command.ExpectedOwnerGeneration != 0 && operation != "ui.screen_set" {
@@ -720,6 +720,7 @@ type controlEnvelope struct {
 type controlCommand struct {
 	AbilityID               uint32             `json:"ability_id,omitempty"`
 	HeroNoun                uint32             `json:"hero_noun,omitempty"`
+	IsImportEditor          bool               `json:"is_import_editor,omitempty"`
 	ExpectedOwnerGeneration uint64             `json:"expected_owner_generation,omitempty"`
 	Screen                  string             `json:"screen,omitempty"`
 	Text                    string             `json:"text,omitempty"`

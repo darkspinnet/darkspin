@@ -48,6 +48,7 @@ type controlEnvelope struct {
 type controlCommand struct {
 	AbilityID               uint32             `json:"ability_id,omitempty"`
 	HeroNoun                uint32             `json:"hero_noun,omitempty"`
+	IsImportEditor          bool               `json:"is_import_editor,omitempty"`
 	Screen                  string             `json:"screen,omitempty"`
 	ExpectedOwnerGeneration uint64             `json:"expected_owner_generation,omitempty"`
 	WorldPoint              *controlWorldPoint `json:"world_point,omitempty"`

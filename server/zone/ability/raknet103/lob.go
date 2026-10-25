@@ -182,6 +182,10 @@ func CloudLobLaunch(
 				),
 				Scale: 1,
 				Team:  1,
+				// Build 103 A2EF00 selects type four before setting the lob
+				// data; A31E10 dispatches that type to A30D60. Reflecting only
+				// cLocomotionData leaves a fresh projectile's mover inactive.
+				MovementType: 4,
 			},
 			raknet.AttachedEffectMessage{
 				Slot:            1,

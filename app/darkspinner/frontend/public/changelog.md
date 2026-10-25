@@ -2,11 +2,15 @@
 
 ### 2026-10-25
 
-- Add bounded camera investigation scenarios for Ride the Lightning cancellation followed by walking and held movement, with native cancellation dispatch and corrected continuous-movement polling in the development scenario runtime.
-- Preserve Import Editor's complete installed ground materials instead of changing renderer IDs while retaining parameters authored for different renderers.
-- Correct Import Editor ground-model references so the complete installed environment can load instead of falling back to its backdrop.
-- Restore Test Creature readiness, painted-skin hover handling, and gradual part preloading after completed editor saves.
-- Temporarily allow Mod creatures to save and reload despite core-body template mismatch error 28, while retaining all other native validation checks.
+- [#104](https://github.com/darkspinnet/darkspin/issues/104) Restore painted Body display when entering from Equip in both creature editors by completing native skin and material initialization.
+- [#119](https://github.com/darkspinnet/darkspin/issues/119) Restore Tork's Sprout projectile lob movement and turn Tork and Char toward their basic attack targets.
+- [#119](https://github.com/darkspinnet/darkspin/issues/119) Hold Tork's native movement during Sleeping Cloud and release it on cleanup instead of repeatedly snapping him back when walking is attempted.
+- [#119](https://github.com/darkspinnet/darkspin/issues/119) Keep Auto Turret and Attractor Bomb at their placement positions instead of moving them with their owner.
+- [#119](https://github.com/darkspinnet/darkspin/issues/119) Preserve Savage's ally and Healing Sprite through unrelated rejected commands and send their removal packets during failure cleanup instead of leaving client ghosts.
+- [#119](https://github.com/darkspinnet/darkspin/issues/119) Restore Lifeforce Siphon for Skar and Wraith and preserve Shadow Cloak's guaranteed critical on its triggering melee attack.
+- [#119](https://github.com/darkspinnet/darkspin/issues/119) Preserve active Proximity Mine, Dimensional Rift, Virulent Vines and Arboreal Might through unrelated rejected-command recovery.
+- [#119](https://github.com/darkspinnet/darkspin/issues/119) Replicate ordinary enemy pursuit slows from Strangling Briars and Time Bubble to client locomotion and restore movement when they expire.
+- [#119](https://github.com/darkspinnet/darkspin/issues/119) Restore Pain Hounds' client-authored cooldown and power cost.
 - [#117](https://github.com/darkspinnet/darkspin/issues/117) Restore Missile Barrage's client-authored nonvertical descent slope while preserving impact points instead of sending exactly vertical missile trajectories.
 - [#116](https://github.com/darkspinnet/darkspin/issues/116) Preserve accepted basic attacks when repeat input or held-aim updates arrive instead of falsely rejecting them and canceling their hits and release callbacks.
 - [#115](https://github.com/darkspinnet/darkspin/issues/115) Allow fully mitigated hits to complete without damage text or failed melee actions, preventing repeated recovery baselines from replaying hero warp-in effects.

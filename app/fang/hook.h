@@ -58,6 +58,8 @@ void fang_mod_editor_continue_scene(uint32_t instance, uint32_t type, uint32_t g
 BYTE* fang_mod_editor_active(void);
 void* fang_mod_editor_exit_hook(void);
 int fang_mod_editor_is_body(BYTE* editor);
+int fang_mod_editor_is_body_selected(BYTE* editor);
+int fang_mod_editor_reset_body(BYTE* editor);
 int fang_mod_editor_is_save_busy(BYTE* editor);
 int fang_mod_editor_preview_ready(BYTE* editor);
 int fang_mod_editor_is_preview_rig(BYTE* rig);

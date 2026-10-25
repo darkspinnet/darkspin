@@ -80,12 +80,13 @@ typedef struct fang_control_editor_node {
 } fang_control_editor_node;
 typedef struct fang_control_editor_tree {
     uint32_t is_available, is_complete, node_count, owner_generation, is_body_mode, editor_mode, is_mod_editor;
+    uint32_t is_import_editor, is_environment_registered;
     fang_control_editor_node nodes[FANG_EDITOR_NODE_LIMIT];
 } fang_control_editor_tree;
 uint32_t fang_control_editor_hierarchy(uint32_t request_id, uint32_t scene, uint64_t deadline, fang_control_editor_tree* snapshot);
 int fang_control_window_editor_hierarchy(uint32_t request_id, uint32_t timeout_ms);
-int fang_control_window_editor_open(uint32_t request_id, uint32_t hero_noun, uint32_t timeout_ms);
-uint32_t fang_mod_editor_open_owned(uint32_t hero_noun);
+int fang_control_window_editor_open(uint32_t request_id, uint32_t hero_noun, int is_import, uint32_t timeout_ms);
+uint32_t fang_mod_editor_open_owned(uint32_t hero_noun, int is_import);
 uint32_t fang_mod_editor_owned_noun(BYTE* context);
 int fang_control_window_editor_tree_result(uint32_t request_id, fang_control_editor_tree* snapshot);
 int fang_control_window_editor_current(uint32_t request_id);

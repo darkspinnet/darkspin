@@ -315,7 +315,7 @@ func (e *controlConnection) configureCinematic(req controlEnvelope, response con
 }
 
 func (e *controlConnection) windowCommand(req controlEnvelope, response controlEnvelope, deadline time.Time) controlEnvelope {
-	if req.Command != nil && req.Command.HeroNoun != 0 && req.Operation != "editor.open_creature" {
+	if req.Command != nil && (req.Command.HeroNoun != 0 || req.Command.IsImportEditor) && req.Operation != "editor.open_creature" {
 		response.Failure = &controlCommandFailure{Code: "invalid_request", Message: "hero_noun requires editor.open_creature"}
 		return response
 	}
@@ -466,7 +466,11 @@ func (e *controlConnection) windowCommand(req controlEnvelope, response controlE
 	} else if isReady {
 		isAccepted = C.fang_control_window_ready(C.uint32_t(nativeID), C.uint32_t(timeoutMS))
 	} else if isEditorOpen {
-		isAccepted = C.fang_control_window_editor_open(C.uint32_t(nativeID), C.uint32_t(req.Command.HeroNoun), C.uint32_t(timeoutMS))
+		isImport := 0
+		if req.Command.IsImportEditor {
+			isImport = 1
+		}
+		isAccepted = C.fang_control_window_editor_open(C.uint32_t(nativeID), C.uint32_t(req.Command.HeroNoun), C.int(isImport), C.uint32_t(timeoutMS))
 	} else if isEditorHierarchy {
 		isAccepted = C.fang_control_window_editor_hierarchy(C.uint32_t(nativeID), C.uint32_t(timeoutMS))
 	} else if isEditor {

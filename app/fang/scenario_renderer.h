@@ -9,6 +9,7 @@
 // Returns true only when both supported discovery call sites are observed.
 // Successful observations do not cover later caps, display or depth checks.
 int install_scenario_renderer_observation(void* executable);
+void observe_scenario_draw_device(void* device);
 #endif
 
 #endif

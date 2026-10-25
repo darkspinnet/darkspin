@@ -373,6 +373,11 @@ func (a *App) prepareModAppearance(paths *spinnerPathSet, identity, serverAddres
 			return "", errors.New("a Mod creature requires a native 32-bit source identity")
 		}
 		manifest += fmt.Sprintf("source%d=%d\nhero%d=%d\n", index+1, creation.Instance, index+1, binding.HeroNoun)
+		baselinePath, pathErr := modCreationPath(paths, binding.CreationID)
+		if pathErr != nil {
+			return "", fmt.Errorf("resetPath: %w", pathErr)
+		}
+		manifest += fmt.Sprintf("reset_png%d=%s.png\n", index+1, baselinePath)
 		for _, character := range heroes {
 			if character.Noun != binding.HeroNoun {
 				continue

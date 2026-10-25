@@ -3,6 +3,7 @@
 #if FANG_SCENARIO
 #include <math.h>
 #include <string.h>
+#include <stdio.h>
 
 typedef int (FANG_THISCALL* control_editor_config_fn)(BYTE*);
 typedef void (FANG_THISCALL* control_editor_exit_fn)(BYTE*);
@@ -130,6 +131,29 @@ uint32_t fang_control_editor_ready(void) {
 
 typedef BYTE* (FANG_THISCALL* control_editor_iterator_fn)(BYTE*, BYTE**);
 
+static void observe_editor_render_groups(BYTE* editor) {
+    static const unsigned int offsets[] = {612, 628, 644, 692};
+    static const char* names[] = {"build", "paint", "skin", "overlay"};
+    BYTE* world = *(BYTE**)(editor + 136);
+    unsigned int index, word;
+    char name[80];
+    trace_client_state("scenario_editor_use_skin", editor[813]);
+    trace_client_state("scenario_editor_skin_display", editor[940]);
+    trace_client_state("scenario_editor_animation_display", editor[941]);
+    for (index = 0; index < 4; ++index) {
+        for (word = 0; word < (index == 3 ? 2u : 4u); ++word) {
+            _snprintf(name, sizeof(name), "scenario_editor_group_%s_%u", names[index], word);
+            trace_client_state(name, *(uint32_t*)(editor + offsets[index] + word * 4));
+        }
+    }
+    if (!readable_range(world, 480) || !readable_range(*(void**)world, 304) ||
+        (*(void***)world)[75] != editor_image + 0x4AC0B0) return;
+    for (word = 0; word < 4; ++word) {
+        _snprintf(name, sizeof(name), "scenario_editor_group_active_%u", word);
+        trace_client_state(name, *(uint32_t*)(world + 432 + word * 4));
+    }
+}
+
 /* Build-103 IWindow children are an intrusive list: Begin/End return an
  * iterator through an out slot; each link belongs to IWindow at link-4.
  * This ABI was observed in rea-editor-tree.js. Never retain these pointers
@@ -154,6 +178,9 @@ uint32_t fang_control_editor_hierarchy(uint32_t request_id, uint32_t scene, uint
     snapshot->owner_generation = editor_generation;
     snapshot->is_body_mode = fang_mod_editor_is_body(editor) != 0;
     snapshot->is_mod_editor = fang_mod_editor_active() == editor;
+    snapshot->is_import_editor = fang_mod_editor_is_scene(editor) != 0;
+    snapshot->is_environment_registered = fang_mod_environment_active(editor) != 0;
+    observe_editor_render_groups(editor);
     snapshot->editor_mode = *(uint32_t*)(editor + 856);
     snapshot->is_complete = 1;
     while (cursor < queued) {

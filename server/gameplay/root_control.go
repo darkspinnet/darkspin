@@ -17,7 +17,7 @@ const enemyImmobilizedAttribute = uint8(15)
 // The caller holds the registry lock and saves the updated session.
 func (e *gameplayPeerSession) refreshEnemyImmobilizedAttributes(at time.Time) ([][]byte, error) {
 	objectID := uint32(0)
-	if e.isEnemyRootActive(at) || e.deployedObjectID == e.enemyStunTargetObjectID &&
+	if e.isSleepingCloudActive(at) || e.isEnemyRootActive(at) || e.deployedObjectID == e.enemyStunTargetObjectID &&
 		at.Before(e.enemyStunExpiresAt) {
 		// Do not use isEnemyStunActive here: its knockback/cage guards also
 		// protect input while a forced native mover owns the hero.

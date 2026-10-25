@@ -1892,6 +1892,45 @@ func (s *gameplayPeerSession) resetAbilityAdmissionForSwitch() *abilityraknet.Me
 	return run
 }
 
+// A rejected command does not deactivate previously accepted effect agents.
+// Keep their owned schedules alive; otherwise mines lose their detonation,
+// banishes lose their deletion, and infections lose their authored lifetime.
+// Producer failures and lease expiry still use the full failure cleanup.
+func (e *gameplayPeerSession) resetRejectedActionAdmission(
+	modifierInstancePool *modifierPool, effectPool *attachedEffectPool,
+) *abilityraknet.MeleeRun {
+	traps := e.heroTraps
+	statusAreas := e.heroStatusAreas
+	infections := e.heroInfections
+	bursts := e.heroBurstAttacks
+	beastObjectID := e.beastPetObjectID
+	summons := e.heroSummons
+	var arborealMight *heroModifierRun
+	if e.heroModifierRun != nil && e.heroModifierRun.isArborealMight {
+		arborealMight = e.heroModifierRun
+		e.heroModifierRun = nil
+	}
+	e.heroTraps = nil
+	e.heroStatusAreas = nil
+	e.heroInfections = nil
+	e.heroBurstAttacks = nil
+	// Rejection is not an owner switch, death, or summon expiry. Preserve the
+	// accepted pets and their follow, healing, resurrection, and expiry jobs.
+	e.beastPetObjectID = 0
+	e.heroSummons = nil
+	run := e.resetFailedActionAdmission(modifierInstancePool, effectPool)
+	e.heroTraps = traps
+	e.heroStatusAreas = statusAreas
+	e.heroInfections = infections
+	e.heroBurstAttacks = bursts
+	e.beastPetObjectID = beastObjectID
+	e.heroSummons = summons
+	if arborealMight != nil {
+		e.heroModifierRun = arborealMight
+	}
+	return run
+}
+
 func (e *gameplayPeerSession) resetFailedActionAdmission(
 	modifierInstancePool *modifierPool, effectPool *attachedEffectPool,
 ) *abilityraknet.MeleeRun {
@@ -1944,8 +1983,18 @@ func (e *gameplayPeerSession) resetFailedActionAdmission(
 	// Removing authority must also retire the client object; otherwise the next
 	// Meditron deployment creates a second drone beside the orphaned one.
 	e.queueCampaignPackets(dronePackets)
-	_, _ = e.stopBeastPet()
-	_, _ = e.stopHeroSummons()
+	beastPackets, beastErr := e.stopBeastPet()
+	if beastErr != nil {
+		log.Printf("RakNet Savage Ally action reset cleanup failed user=%d: %v", e.binding.UserID, beastErr)
+	}
+	e.queueCampaignPackets(beastPackets)
+	summonPackets, summonErr := e.stopHeroSummons()
+	if summonErr != nil {
+		log.Printf("RakNet Healing Sprite action reset cleanup failed user=%d: %v", e.binding.UserID, summonErr)
+	}
+	// Full recovery cancels the accepted expiry job. Retire its client object
+	// in the same transition instead of leaving an inert, immortal presentation.
+	e.queueCampaignPackets(summonPackets)
 	treePackets, treeErr := e.stopCampaignTreeOfLife()
 	if treeErr != nil {
 		log.Printf("RakNet Tree of Life action reset cleanup failed user=%d: %v", e.binding.UserID, treeErr)

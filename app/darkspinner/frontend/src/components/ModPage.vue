@@ -122,11 +122,11 @@ function bind() {
   bindings.value.push({ heroNoun:hero.value.noun, creationId:creation.value.id })
 }
 
-async function save() {
+async function save(isResyncRequested = false) {
   if (isNew.value && (!isProfileReady.value || wizardStep.value !== 'bindings')) return
   await perform(async () => {
     const loginName = isNew.value ? name.value : selectedProfile.value
-    await SaveModProfile({ loginName, avatarId:avatarID.value, isTutorialSkipped:isTutorialSkipped.value, isNew:isNew.value, bindings:bindings.value })
+    await SaveModProfile({ loginName, avatarId:avatarID.value, isTutorialSkipped:isTutorialSkipped.value, isNew:isNew.value, isResyncRequested, bindings:bindings.value })
     selectedProfile.value = loginName
     await refresh()
   })
@@ -237,9 +237,10 @@ onMounted(validate)
         <p v-if="error" class="mod-error" role="alert">{{ error }}</p>
         <div class="onboarding-actions">
           <Button variant="outline" :disabled="isBusy" @click="loadProfile">CANCEL</Button>
+          <Button v-if="!isNew" variant="outline" :disabled="isBusy" title="Save these bindings and refresh non-imported creatures from their installed templates. Keep previous appearance references, imported bindings, inventory and progression." @click="save(true)">RESYNC</Button>
           <Button v-if="isNew && wizardStep === 'bindings'" variant="outline" :disabled="isBusy" @click="wizardStep = 'profile'">BACK</Button>
           <Button v-if="isNew && wizardStep === 'profile'" :disabled="isBusy || !isProfileReady" @click="wizardStep = 'bindings'">NEXT · CREATURE BINDINGS</Button>
-          <Button v-else :disabled="isBusy || (isNew && !isProfileReady)" @click="save">{{ isBusy ? 'SAVING...' : isNew ? 'CREATE CROGENITOR' : 'SAVE CROGENITOR' }}</Button>
+          <Button v-else :disabled="isBusy || (isNew && !isProfileReady)" @click="save(false)">{{ isBusy ? 'SAVING...' : isNew ? 'CREATE CROGENITOR' : 'SAVE CROGENITOR' }}</Button>
         </div>
       </div>
     </LauncherDialog>

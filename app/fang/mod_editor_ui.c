@@ -55,6 +55,10 @@ static HWND body_window;
 static WNDPROC body_window_proc;
 static RECT body_area;
 static RECT preview_area;
+static RECT reset_area;
+static BYTE reset_context[72];
+static int is_reset_pressed;
+static DWORD reset_confirm_until;
 static int is_preview_pressed;
 static unsigned int preview_status = UINT32_MAX;
 static int is_body_pressed;
@@ -70,10 +74,14 @@ static char scene_name[64];
 
 static void __cdecl editor_body_toggle(BYTE* context);
 static void __cdecl editor_preview_toggle(BYTE* context);
+static void __cdecl editor_reset_toggle(BYTE* context);
 
 int fang_mod_editor_is_body(BYTE* editor) {
-    return is_body_selected && editor && editor == body_owner &&
-        editor == fang_mod_editor_active() && *(unsigned int*)(editor + 856) == 0;
+    return fang_mod_editor_is_body_selected(editor) && *(unsigned int*)(editor + 856) == 0;
+}
+
+int fang_mod_editor_is_body_selected(BYTE* editor) {
+    return is_body_selected && editor && editor == body_owner && editor == fang_mod_editor_active();
 }
 
 /* EditorUI::SetMode changes palettes and editor state, while the ordinary
@@ -123,6 +131,17 @@ static LRESULT CALLBACK editor_body_window_proc(HWND window, UINT message, WPARA
     if (fang_mod_editor_preview_input(window, message, wparam, lparam)) return 0;
     if (message == WM_MOUSEWHEEL && fang_mod_editor_validation_scroll(window, wparam, lparam)) return 0;
     if (is_body_requested && body_context[56] && fang_mod_editor_active() == body_owner) {
+        if (message == WM_LBUTTONDOWN && PtInRect(&reset_area, point)) {
+            is_reset_pressed = 1;
+            SetCapture(window);
+            return 0;
+        }
+        if (message == WM_LBUTTONUP && is_reset_pressed) {
+            is_reset_pressed = 0;
+            if (GetCapture() == window) ReleaseCapture();
+            if (PtInRect(&reset_area, point)) editor_reset_toggle(reset_context);
+            return 0;
+        }
         if (message == WM_LBUTTONDOWN && PtInRect(&preview_area, point)) {
             is_preview_pressed = 1;
             SetCapture(window);
@@ -148,6 +167,7 @@ static LRESULT CALLBACK editor_body_window_proc(HWND window, UINT message, WPARA
     }
     if (message == WM_CAPTURECHANGED || message == WM_KILLFOCUS) {
         is_body_pressed = 0;
+        is_reset_pressed = 0;
     }
     return CallWindowProcW(body_window_proc, window, message, wparam, lparam);
 }
@@ -269,6 +289,9 @@ static int editor_copy_method(editor_value* source, editor_value* receiver, cons
 
 static int editor_make_button(BYTE* context, editor_value* button, double width, double height,
     const char* label, void (__cdecl* on_click)(BYTE*)) {
+    int is_reset = context == reset_context;
+    const char* button_name = is_reset ? "fangResetBody" : "fangCreatureEditor";
+    const char* receiver_name = is_reset ? "fangResetBodyReceiver" : "fangCreatureEditorReceiver";
     static const char* constants[] = {
         "kContextMenu_Collect", "kContextMenu_SwapDeck", "kContextMenu_SwapConga",
         "kContextMenu_Edit", "kContextMenu_ViewProfile"
@@ -283,13 +306,13 @@ static int editor_make_button(BYTE* context, editor_value* button, double width,
     char name[80];
     int is_ready = 0;
     unsigned int stage = 1;
-    arguments[0] = editor_string("fangCreatureEditorReceiver");
-    arguments[1] = editor_number(18001);
-    if (!editor_get(root, "fangCreatureEditorReceiver", &receiver) || (receiver.type & 0x8f) < 6) {
+    arguments[0] = editor_string(receiver_name);
+    arguments[1] = editor_number(is_reset ? 18003 : 18001);
+    if (!editor_get(root, receiver_name, &receiver) || (receiver.type & 0x8f) < 6) {
         editor_release(&receiver);
         memset(&receiver, 0, sizeof(receiver));
         editor_invoke(root, "createEmptyMovieClip", NULL, arguments, 2);
-        if (!editor_get(root, "fangCreatureEditorReceiver", &receiver)) goto done;
+        if (!editor_get(root, receiver_name, &receiver)) goto done;
     }
     stage = 2;
     if (!editor_copy_method(data, &receiver, "CallCallbackFromID") ||
@@ -303,12 +326,12 @@ static int editor_make_button(BYTE* context, editor_value* button, double width,
     stage = 4;
     if ((button->type & 0x8f) < 6) {
         arguments[0] = editor_string("btnContextMenu");
-        arguments[1] = editor_string("fangCreatureEditor");
-        arguments[2] = editor_number(18000);
+        arguments[1] = editor_string(button_name);
+        arguments[2] = editor_number(is_reset ? 18002 : 18000);
         editor_invoke(root, "attachMovie", NULL, arguments, 3);
         editor_release(button);
         memset(button, 0, sizeof(*button));
-        if (!editor_get(root, "fangCreatureEditor", button) || (button->type & 0x8f) < 6) goto done;
+        if (!editor_get(root, button_name, button) || (button->type & 0x8f) < 6) goto done;
     }
     editor_set(button, "_visible", editor_boolean(0));
     editor_set(button, "__width", editor_number(width));
@@ -432,24 +455,51 @@ done:
     editor_release(&button);
 }
 
+static void editor_enter_body(BYTE* editor, BYTE* ui) {
+    fang_mod_palette_suspend(editor);
+    /* Equip and Body share mode 0. SetMode skips its lifecycle for an
+     * unchanged mode, leaving Equip's clay material in the baked display.
+     * Let Paint initialize that material before entering editable Body.
+     * Both transitions complete on this UI thread without changing parts. */
+    if (*(unsigned int*)(editor + 856) == 0 && !fang_mod_editor_is_body(editor))
+        editor_native_mode(ui, 1);
+    is_body_selected = 1;
+    editor_native_mode(ui, 0);
+}
+
 static void __cdecl editor_body_toggle(BYTE* context) {
     BYTE* editor = fang_mod_editor_active();
     BYTE* ui;
-    unsigned int mode;
     trace_client_state("mod_editor_body_clicked", body_generation);
     if (context != body_context || !editor || editor != body_owner) return;
     ui = *(BYTE**)(editor + 128);
     if (!readable_range(ui, 159) || !ui[157] || ui[158]) return;
-    mode = 0;
-    is_body_selected = 1;
     /* EditorUI::SetMode owns both the palette visibility and the editor's
      * native before/after transitions; never set editor+856 directly. */
-    fang_mod_palette_suspend(editor);
-    editor_native_mode(ui, mode);
+    editor_enter_body(editor, ui);
     fang_mod_editor_update_body();
     editor_body_select_tabs(editor, ui);
     trace_client_state("mod_editor_body_mode", *(unsigned int*)(editor + 856));
     trace_client_state("mod_editor_body_ui_mode", *(unsigned int*)(ui + 92));
+}
+
+static void __cdecl editor_reset_toggle(BYTE* context) {
+    BYTE* editor = fang_mod_editor_active();
+    BYTE* ui;
+    DWORD now = GetTickCount();
+    if (context != reset_context || editor != body_owner || !fang_mod_editor_is_body(editor) ||
+        fang_mod_editor_is_save_busy(editor)) return;
+    ui = *(BYTE**)(editor + 128);
+    if (!readable_range(ui, 159) || !ui[157] || ui[158]) return;
+    if (!reset_confirm_until || (LONG)(now - reset_confirm_until) >= 0) {
+        reset_confirm_until = now + 5000;
+        return;
+    }
+    reset_confirm_until = 0;
+    if (!fang_mod_editor_reset_body(editor)) return;
+    /* Rebuild the painted display using the same real mode transitions. */
+    editor_native_mode(ui, 1);
+    editor_enter_body(editor, ui);
 }
 
 static void __cdecl editor_preview_toggle(BYTE* context) {
@@ -500,6 +550,9 @@ void fang_mod_editor_close_body_ui(void) {
     fang_mod_editor_preview_controls_leave();
     fang_mod_editor_tab_leave();
     SetRectEmpty(&preview_area);
+    SetRectEmpty(&reset_area);
+    is_reset_pressed = 0;
+    reset_confirm_until = 0;
     is_preview_pressed = 0;
     preview_status = UINT32_MAX;
     if (!is_body_requested) return;
@@ -508,12 +561,17 @@ void fang_mod_editor_close_body_ui(void) {
     body_context[56] = 0;
     manager = editor_ui_manager();
     if (manager) {
+        editor_callback_name(reset_context, callback, sizeof(callback), 1);
+        ((editor_unregister_fn)(*(void***)manager)[9])(manager, callback);
         editor_callback_name(body_context, callback, sizeof(callback), 1);
         ((editor_unregister_fn)(*(void***)manager)[9])(manager, callback);
         ((editor_unregister_fn)(*(void***)manager)[6])(manager, body_name);
     }
     editor_release((editor_value*)(body_context + 24));
     editor_release((editor_value*)(body_context + 40));
+    editor_release((editor_value*)(reset_context + 24));
+    editor_release((editor_value*)(reset_context + 40));
+    memset(reset_context, 0, sizeof(reset_context));
     memset(body_context, 0, sizeof(body_context));
     body_owner = NULL;
 }
@@ -564,6 +622,46 @@ static void editor_preview_label(editor_value* button, const char* label, LONG w
 done:
     editor_release(&format);
     editor_release(&text);
+}
+
+static void editor_reset_draw(editor_value* root, BYTE* editor, BYTE* ui) {
+    editor_value button = {0};
+    editor_value ready = {0};
+    editor_copy_fn copy = (editor_copy_fn)(editor_ui_base + 0x17f0);
+    LONG width = 224;
+    LONG height = 34;
+    LONG x = body_area.left;
+    LONG y = body_area.top - height - 8;
+    int is_enabled = !ui[158] && !fang_mod_editor_is_save_busy(editor);
+    const char* label = reset_confirm_until && (LONG)(GetTickCount() - reset_confirm_until) < 0 ?
+        "CONFIRM RESET" : "RESET TO DEFAULT";
+    SetRectEmpty(&reset_area);
+    editor_get(root, "fangResetBody", &button);
+    if (!fang_mod_editor_is_body(editor) || x < 12 || y < 12) {
+        reset_confirm_until = 0;
+        editor_set(&button, "_visible", editor_boolean(0));
+        goto done;
+    }
+    if (!reset_context[56]) {
+        copy((editor_value*)(reset_context + 24), root);
+        copy((editor_value*)(reset_context + 40), (editor_value*)(body_context + 40));
+        *(uint32_t*)(reset_context + 60) = UINT32_MAX - 2;
+        reset_context[56] = 1;
+    }
+    if (!editor_get(&button, "fangEditorReady", &ready) ||
+        (ready.type & 0x8f) != 2 || !*(unsigned char*)&ready.data) {
+        if (!editor_make_button(reset_context, &button, width, height, label, editor_reset_toggle)) goto done;
+    }
+    editor_set(&button, "_x", editor_number(x - body_area.left));
+    editor_set(&button, "_y", editor_number(y - body_area.top));
+    editor_preview_label(&button, label, width, height);
+    editor_set(&button, "disabled", editor_boolean(!is_enabled));
+    editor_set(&button, "_alpha", editor_number(is_enabled ? 100 : 55));
+    editor_set(&button, "_visible", editor_boolean(1));
+    if (is_enabled) SetRect(&reset_area, x, y, x + width, y + height);
+done:
+    editor_release(&ready);
+    editor_release(&button);
 }
 
 static void editor_preview_draw(editor_value* root, BYTE* editor, BYTE* ui) {
@@ -634,10 +732,10 @@ static void editor_body_update(void) {
         if (!manager) return;
         /* Imported scenery starts in Body. Ordinary Creature Edit retains
          * native Equip; both views share mode 0 but own different catalogues. */
-        is_body_selected = fang_mod_editor_is_scene(editor);
-        editor_native_mode(ui, 0);
-        trace_client_state("mod_editor_initial_mode", *(unsigned int*)(editor + 856));
         body_owner = editor;
+        if (fang_mod_editor_is_scene(editor)) editor_enter_body(editor, ui);
+        else editor_native_mode(ui, 0);
+        trace_client_state("mod_editor_initial_mode", *(unsigned int*)(editor + 856));
         body_mode = UINT32_MAX;
         *(unsigned int*)(body_context + 60) = UINT32_MAX;
         snprintf(body_name, sizeof(body_name), "FangModBodyTab_%u", ++body_generation);
@@ -653,6 +751,7 @@ static void editor_body_update(void) {
     if (!editor_body_place(ui)) {
         SetRectEmpty(&body_area);
         SetRectEmpty(&preview_area);
+        SetRectEmpty(&reset_area);
         editor_set(root, "_visible", editor_boolean(0));
         return;
     }
@@ -673,6 +772,7 @@ static void editor_body_update(void) {
     editor_set(root, "_visible", editor_boolean(1));
     editor_set(root, "_alpha", editor_number(100));
     editor_preview_draw(root, editor, ui);
+    editor_reset_draw(root, editor, ui);
 }
 
 static void editor_scene_close(void) {
@@ -807,12 +907,13 @@ void fang_mod_update_editor(void) {
  * the existing Creature Edit callback, not the ordinary ship-room request.
  * Contexts are resolved anew from the same native vectors used above; no
  * caller-supplied pointer, actor ID or callback name is accepted. */
-uint32_t fang_mod_editor_open_owned(uint32_t hero_noun) {
+uint32_t fang_mod_editor_open_owned(uint32_t hero_noun, int is_import) {
     static const unsigned int vectors[] = {1840, 2440};
     BYTE* controller;
     BYTE* selected = NULL;
     unsigned int index;
     if (!is_editor_ui_enabled || !hero_noun) return 5;
+    if (is_import && !fang_mod_scene_available()) return 5;
     controller = *(BYTE**)(editor_ui_base + 0xdbeaa0);
     if (!readable_range(controller, 0xd10) || !controller[920] ||
         *(void**)controller != editor_ui_base + 0xbce048) return 5;
@@ -831,7 +932,8 @@ uint32_t fang_mod_editor_open_owned(uint32_t hero_noun) {
         }
     }
     if (!selected) return 5;
-    fang_mod_editor_open(selected);
+    if (is_import) fang_mod_editor_open_scene(selected);
+    else fang_mod_editor_open(selected);
     return 1; /* Callback returned only; host observes the actual editor. */
 }
 #endif

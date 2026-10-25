@@ -688,7 +688,7 @@ func (r campaignAbilityCommandRuntime) handleHeroTrap(
 			Noun:     util.HashID(projected.SpawnNoun),
 			Position: game.Vec3(position), FootprintRadius: footprint,
 			HitPoint: hitPoint, MaximumHitPoint: hitPoint,
-			IsTargetable: true, IsCombatant: false,
+			IsTargetable: true, IsCombatant: false, IsStationary: true,
 		})
 		if err != nil {
 			_ = peerSession.setDeployedManaPoints(previousManaPoint)

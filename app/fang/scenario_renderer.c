@@ -10,11 +10,34 @@ typedef BOOL (WINAPI* scenario_d3dx_version_fn)(UINT d3d_sdk_version,
 
 static scenario_direct3d_factory_fn original_scenario_direct3d_factory;
 static scenario_d3dx_version_fn original_scenario_d3dx_version;
+typedef HRESULT (WINAPI* scenario_create_device_fn)(IDirect3D9*, UINT, D3DDEVTYPE,
+    HWND, DWORD, D3DPRESENT_PARAMETERS*, IDirect3DDevice9**);
+static scenario_create_device_fn original_create_device;
+
+static HRESULT WINAPI observe_create_device(IDirect3D9* renderer, UINT adapter,
+    D3DDEVTYPE type, HWND window, DWORD behavior, D3DPRESENT_PARAMETERS* presentation,
+    IDirect3DDevice9** device) {
+    HRESULT result = original_create_device(renderer, adapter, type, window, behavior, presentation, device);
+    DWORD last_error = GetLastError();
+    trace_client_state("scenario_editor_draw_device_result", (unsigned int)result);
+    if (SUCCEEDED(result) && device && *device) observe_scenario_draw_device(*device);
+    SetLastError(last_error);
+    return result;
+}
 
 static IDirect3D9* WINAPI observe_scenario_direct3d_factory(UINT sdk_version) {
     IDirect3D9* renderer = original_scenario_direct3d_factory(sdk_version);
     DWORD last_error = GetLastError();
     trace_client_state("scenario_renderer_factory_nonnull", renderer != NULL);
+    if (renderer && readable_range(renderer->lpVtbl, sizeof(*renderer->lpVtbl)) &&
+        renderer->lpVtbl->CreateDevice != observe_create_device) {
+        scenario_create_device_fn create = renderer->lpVtbl->CreateDevice;
+        if (!original_create_device || original_create_device == create) {
+            original_create_device = create;
+            trace_client_state("scenario_editor_draw_factory_hook", patch_pointer(
+                (void**)&renderer->lpVtbl->CreateDevice, (void*)create, (void*)observe_create_device));
+        }
+    }
     SetLastError(last_error);
     return renderer;
 }

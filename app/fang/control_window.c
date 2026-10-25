@@ -217,9 +217,9 @@ int fang_control_window_editor_hierarchy(uint32_t request_id, uint32_t timeout_m
     return submit_control_window(request_id, 0, 0, timeout_ms, 21, NULL, 0);
 }
 
-int fang_control_window_editor_open(uint32_t request_id, uint32_t hero_noun, uint32_t timeout_ms) {
+int fang_control_window_editor_open(uint32_t request_id, uint32_t hero_noun, int is_import, uint32_t timeout_ms) {
     if (!hero_noun) return 0;
-    return submit_control_window(request_id, (int32_t)hero_noun, 0, timeout_ms, 22, NULL, 0);
+    return submit_control_window(request_id, (int32_t)hero_noun, is_import != 0, timeout_ms, 22, NULL, 0);
 }
 
 int fang_control_window_editor_current(uint32_t request_id) {
@@ -382,10 +382,11 @@ int fang_control_window_message(HWND window, UINT message, WPARAM wparam, LPARAM
     if (control_kind == 22) {
         uint32_t status;
         uint32_t hero_noun = (uint32_t)control_x;
+        int is_import = control_y != 0;
         is_executing = 1;
         ReleaseSRWLockExclusive(&window_lock);
         status = fang_control_scene_ready(1);
-        if (status == 1) status = fang_mod_editor_open_owned(hero_noun);
+        if (status == 1) status = fang_mod_editor_open_owned(hero_noun, is_import);
         AcquireSRWLockExclusive(&window_lock);
         control_receipt.status = status;
         control_receipt.completed_tick_ms = GetTickCount64();

@@ -20,8 +20,8 @@ import (
 
 var debugEditorArtifactPattern = regexp.MustCompile(`^editor-ui-[0-9a-f]{8}\.json$`)
 
-func (e *debugClientManager) OpenCreatureEditor(ctx context.Context, clientID string, heroNoun uint32) (any, error) {
-	result, err := e.requestWindow(ctx, clientID, "editor.open_creature", controlCommand{HeroNoun: heroNoun})
+func (e *debugClientManager) OpenCreatureEditor(ctx context.Context, clientID string, heroNoun uint32, isImport bool) (any, error) {
+	result, err := e.requestWindow(ctx, clientID, "editor.open_creature", controlCommand{HeroNoun: heroNoun, IsImportEditor: isImport})
 	if err != nil {
 		return result, fmt.Errorf("creatureOpen: %w", err)
 	}
