@@ -1,19 +1,17 @@
----Investigate issue 106 on a fresh isolated 5-4 run using native ground input.
+---Investigate issue 109 on a fresh isolated 3-4 run using native ground input.
 ---A completed run means only that this bounded route produced no candidate.
 ---No server teleport, camera retarget, damage command or position write is used.
 ---Allow the full route with --lua-timeout 10m; the default helper limit is 3m.
 local must = scenario.Must
 local check = scenario.Check
 
-local mission = 20 -- 5-4; change this for another authored level.
+local mission = 12 -- 3-4; native mission selection currently supports Infection only.
 local runSeed = 104729 -- Server RNG only; not an exact replay of client layout RNG.
 local isAmbientPopulationSuppressed = true -- First isolate navigation; set false for ordinary combat population.
 local checkpoints = {
     {
-        name = "factory-stop", position = {x = -862.031, y = -52.450, z = 2.551},
-        probe = {x = -859.247, y = -48.852, z = 2.086},
+        name = "verdanth-025434", position = {x = 240.764, y = 66.907, z = 11.134},
     },
-    {name = "boss-approach", position = {x = 1031.609, y = -263.573, z = 0.590}},
 }
 local offsets = {{x = 6, y = 0}, {x = -6, y = 0}, {x = 0, y = 6}, {x = 0, y = -6}}
 
@@ -463,7 +461,7 @@ return function()
     check(scenario.RequireAPI(1))
     local server = must(scenario.StartServer({}))
     local profile = must(server:CreateProfile({
-        name = "camera-follow", hero_nouns = {1667741389, 3618328019, 749013658}, chain_progression = 21,
+        name = "camera-follow", hero_nouns = {454054015, 2530835539, 749013658}, chain_progression = 11,
     }))
     local client = must(profile:Launch({client_id = "camera-follow", launch_mode = "normal"}))
     check(client:SetTimeout(60000))
