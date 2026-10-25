@@ -86,14 +86,14 @@ func CreatePublication(plans []Plan) ([]ObjectPublication, error) {
 	return publication, nil
 }
 
-func DeletePublication(plans []Plan) ([]uint32, error) {
+func OpenPublication(plans []Plan) ([]uint32, error) {
 	if len(plans) == 0 {
-		return nil, errors.New("horde barrier delete: invalid plans")
+		return nil, errors.New("horde barrier open: invalid plans")
 	}
 	objectIDs := make([]uint32, 0, len(plans))
 	for planIndex, plan := range plans {
 		if plan.objectID == 0 {
-			return nil, fmt.Errorf("hordeBarrierDelete[%d]: invalid", planIndex)
+			return nil, fmt.Errorf("hordeBarrierOpen[%d]: invalid", planIndex)
 		}
 		objectIDs = append(objectIDs, plan.objectID)
 	}

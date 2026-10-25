@@ -154,9 +154,19 @@ type Appearance struct {
 	SavedLargePath string
 }
 
+type SavedAppearance struct {
+	CreatureID uint32
+	Version    uint32
+	ThumbPath  string
+	LargePath  string
+}
+
 // ApplyAppearances changes only presentation on a detached profile record.
 // Hero abilities, equipment, statistics and unlock progression are retained.
-func ApplyAppearances(ctx context.Context, repository sporenet.UserRepository, loginName string, appearances []Appearance) error {
+func ApplyAppearances(
+	ctx context.Context, repository sporenet.UserRepository, loginName string,
+	appearances []Appearance, savedAppearances []SavedAppearance,
+) error {
 	record, err := repository.LoadByLoginName(ctx, loginName)
 	if err != nil {
 		return fmt.Errorf("appearanceLoad: %w", err)
@@ -170,12 +180,8 @@ func ApplyAppearances(ctx context.Context, repository sporenet.UserRepository, l
 		}
 		key := "mod.original." + strconv.FormatUint(uint64(creature.ID), 10)
 		previousVersion := creature.Version
+		previousCreationID := record.Settings[key+".creation"]
 		originalThumb, isOriginal := record.Settings[key+".thumb"]
-		if isOriginal {
-			creature.ThumbImageURL = originalThumb
-			creature.LargeImageURL = record.Settings[key+".large"]
-			creature.Version = 1
-		}
 		isBound := false
 		for _, appearance := range appearances {
 			if !strings.EqualFold(creature.TemplateName, appearance.HeroName) {
@@ -187,7 +193,6 @@ func ApplyAppearances(ctx context.Context, repository sporenet.UserRepository, l
 			}
 			creature.ThumbImageURL = appearance.ThumbPath
 			creature.LargeImageURL = appearance.LargePath
-			previousCreationID := record.Settings[key+".creation"]
 			// Older Mod profiles have no creation marker. Their already-saved
 			// edits migrate once; subsequent binding changes select a fresh import.
 			isSameBinding := previousCreationID == appearance.CreationID || (previousCreationID == "" && isOriginal)
@@ -202,6 +207,25 @@ func ApplyAppearances(ctx context.Context, repository sporenet.UserRepository, l
 			isBound = true
 		}
 		if !isBound {
+			// Restore the chassis only on the transition away from a binding.
+			// Baseline keys remain available for future imports; their presence
+			// must not replace subsequent stock Body saves on every launch.
+			if previousCreationID != "" && isOriginal {
+				creature.ThumbImageURL = originalThumb
+				creature.LargeImageURL = record.Settings[key+".large"]
+				creature.Version = 1
+			} else {
+				// Mod launches select a fresh loopback port. Stock Body saves
+				// need the same current-server image references as bound saves.
+				for _, saved := range savedAppearances {
+					if saved.CreatureID != creature.ID || saved.Version != creature.Version {
+						continue
+					}
+					creature.ThumbImageURL = saved.ThumbPath
+					creature.LargeImageURL = saved.LargePath
+					break
+				}
+			}
 			delete(record.Settings, key+".creation")
 		}
 	}

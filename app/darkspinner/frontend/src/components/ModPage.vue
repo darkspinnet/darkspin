@@ -235,6 +235,7 @@ onMounted(validate)
           </div>
         </template>
         <p v-if="error" class="mod-error" role="alert">{{ error }}</p>
+        <p v-if="!isNew" class="mod-copy">Resync saves these bindings and restores non-imported creatures to their installed appearance. Imported creatures, inventory and Crogenitor progress are kept.</p>
         <div class="onboarding-actions">
           <Button variant="outline" :disabled="isBusy" @click="loadProfile">CANCEL</Button>
           <Button v-if="!isNew" variant="outline" :disabled="isBusy" title="Save these bindings and refresh non-imported creatures from their installed templates. Keep previous appearance references, imported bindings, inventory and progression." @click="save(true)">RESYNC</Button>

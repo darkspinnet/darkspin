@@ -65,7 +65,12 @@ return function()
     if not body.is_body_mode then
         return "Body tab processing did not produce an observed Body selection; inspect saved hierarchy and screenshot"
     end
-    capture(client, "mod-editor-body-retained")
+    local retained = capture(client, "mod-editor-body-retained")
+    clickElement(client, retained, 0xfad0b002)
+    local confirmation, confirmationError = client.UI:Hierarchy()
+    must(client.UI:Screenshot("mod-editor-reset-confirm"))
+    clickElement(client, must(confirmation, confirmationError), 0xfad0b002)
+    capture(client, "mod-editor-reset-body")
     must(client.Diagnostics:Capture("mod-editor-handoff"))
     -- Leave the owned client in Body mode. The supervisor keeps its debug
     -- endpoint available after this script finishes for the next agent.

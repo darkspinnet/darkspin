@@ -276,6 +276,23 @@ func (a *App) prepareModAppearance(paths *spinnerPathSet, identity, serverAddres
 		return "", fmt.Errorf("heroRead: %w", err)
 	}
 	appearances := make([]modprofile.Appearance, 0, len(bindings))
+	savedAppearances := make([]modprofile.SavedAppearance, 0, len(record.Creatures))
+	for _, creature := range record.Creatures {
+		if creature == nil {
+			continue
+		}
+		thumbPath, largePath, savedErr := modSavedAppearance(modRuntimePath(paths), serverAddress,
+			creature.ID, creature.Version, creature.ThumbImageURL, creature.LargeImageURL)
+		if savedErr != nil {
+			return "", fmt.Errorf("savedRebase[%d]: %w", creature.ID, savedErr)
+		}
+		if thumbPath == "" || largePath == "" {
+			continue
+		}
+		savedAppearances = append(savedAppearances, modprofile.SavedAppearance{
+			CreatureID: creature.ID, Version: creature.Version, ThumbPath: thumbPath, LargePath: largePath,
+		})
+	}
 	for _, binding := range bindings {
 		cachePath, pathErr := modCreationPath(paths, binding.CreationID)
 		if pathErr != nil {
@@ -339,7 +356,7 @@ func (a *App) prepareModAppearance(paths *spinnerPathSet, identity, serverAddres
 			appearances = append(appearances, appearance)
 		}
 	}
-	err = modprofile.ApplyAppearances(ctx, repository, identity, appearances)
+	err = modprofile.ApplyAppearances(ctx, repository, identity, appearances, savedAppearances)
 	if err != nil {
 		return "", fmt.Errorf("appearanceApply: %w", err)
 	}

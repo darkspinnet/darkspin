@@ -74,6 +74,7 @@ uint32_t fang_control_scene_request(uint32_t room);
 uint32_t fang_control_scene_ready(uint32_t room);
 int fang_control_editor_install(HMODULE executable);
 #define FANG_EDITOR_NODE_LIMIT 4096
+int fang_mod_editor_reset_bounds(RECT* area);
 typedef struct fang_control_editor_node {
     uint32_t id, command, flags, parent_index, depth;
     float left, top, right, bottom;

@@ -435,6 +435,13 @@ func marshalGameplayRejoinBaselineState(
 		packets = append(packets, usePackets...)
 	}
 	activeBarrierPlans := peerSession.zone.ActiveHordeBarrierPlans()
+	for index, plans := range peerSession.zone.OpenHordeBarrierPlans() {
+		barrierPackets, marshalErr := barrierraknet.CreateOpened(plans)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("rejoinOpenBarrier[%d]: %w", index, marshalErr)
+		}
+		packets = append(packets, barrierPackets...)
+	}
 	for index, plans := range activeBarrierPlans {
 		barrierPackets, marshalErr := barrierraknet.Create(plans)
 		if marshalErr != nil {

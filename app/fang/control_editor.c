@@ -232,6 +232,17 @@ uint32_t fang_control_editor_hierarchy(uint32_t request_id, uint32_t scene, uint
     }
     if (observed_editor != editor || snapshot->owner_generation != editor_generation ||
         !fang_control_window_editor_current(request_id)) goto done;
+    {
+        RECT area;
+        if (fang_mod_editor_reset_bounds(&area) && snapshot->node_count < FANG_EDITOR_NODE_LIMIT) {
+            fang_control_editor_node* node = snapshot->nodes + snapshot->node_count++;
+            memset(node, 0, sizeof(*node));
+            node->id = 0xfad0b002u;
+            node->flags = 3; /* Visible and enabled custom Flash overlay. */
+            node->left = area.left; node->top = area.top;
+            node->right = area.right; node->bottom = area.bottom;
+        }
+    }
     snapshot->is_available = 1;
     status = GetTickCount64() >= deadline ? 4 : 1;
 done:

@@ -6215,7 +6215,7 @@ func (p campaignPreparation) initialize(
 			Director:                directorSession,
 			Script:                  scriptRegistry,
 			Encounter:               zoneencounter.NewStageSession(),
-			Horde:                   zonehorde.NewCampaignSessionWithPolicy(binding.ChainLevelIndex, hordePolicy),
+			Horde:                   zonehorde.NewCampaignSessionWithPolicy(binding.ChainProgression, hordePolicy),
 			Boss:                    zoneboss.NewSession(director.BossSpawnRules),
 			Death:                   zonedeath.NewSession(),
 			Objective:               objectiveSession,

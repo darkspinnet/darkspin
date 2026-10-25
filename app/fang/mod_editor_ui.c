@@ -59,6 +59,7 @@ static RECT reset_area;
 static BYTE reset_context[72];
 static int is_reset_pressed;
 static DWORD reset_confirm_until;
+static DWORD reset_failed_until;
 static int is_preview_pressed;
 static unsigned int preview_status = UINT32_MAX;
 static int is_body_pressed;
@@ -75,6 +76,14 @@ static char scene_name[64];
 static void __cdecl editor_body_toggle(BYTE* context);
 static void __cdecl editor_preview_toggle(BYTE* context);
 static void __cdecl editor_reset_toggle(BYTE* context);
+
+#if FANG_SCENARIO
+int fang_mod_editor_reset_bounds(RECT* area) {
+    if (!area || !fang_mod_editor_is_body(fang_mod_editor_active()) || IsRectEmpty(&reset_area)) return 0;
+    *area = reset_area;
+    return 1;
+}
+#endif
 
 int fang_mod_editor_is_body(BYTE* editor) {
     return fang_mod_editor_is_body_selected(editor) && *(unsigned int*)(editor + 856) == 0;
@@ -496,7 +505,11 @@ static void __cdecl editor_reset_toggle(BYTE* context) {
         return;
     }
     reset_confirm_until = 0;
-    if (!fang_mod_editor_reset_body(editor)) return;
+    if (!fang_mod_editor_reset_body(editor)) {
+        reset_failed_until = now + 5000;
+        return;
+    }
+    reset_failed_until = 0;
     /* Rebuild the painted display using the same real mode transitions. */
     editor_native_mode(ui, 1);
     editor_enter_body(editor, ui);
@@ -553,6 +566,7 @@ void fang_mod_editor_close_body_ui(void) {
     SetRectEmpty(&reset_area);
     is_reset_pressed = 0;
     reset_confirm_until = 0;
+    reset_failed_until = 0;
     is_preview_pressed = 0;
     preview_status = UINT32_MAX;
     if (!is_body_requested) return;
@@ -561,8 +575,10 @@ void fang_mod_editor_close_body_ui(void) {
     body_context[56] = 0;
     manager = editor_ui_manager();
     if (manager) {
-        editor_callback_name(reset_context, callback, sizeof(callback), 1);
-        ((editor_unregister_fn)(*(void***)manager)[9])(manager, callback);
+        if (reset_context[56]) {
+            editor_callback_name(reset_context, callback, sizeof(callback), 1);
+            ((editor_unregister_fn)(*(void***)manager)[9])(manager, callback);
+        }
         editor_callback_name(body_context, callback, sizeof(callback), 1);
         ((editor_unregister_fn)(*(void***)manager)[9])(manager, callback);
         ((editor_unregister_fn)(*(void***)manager)[6])(manager, body_name);
@@ -628,13 +644,14 @@ static void editor_reset_draw(editor_value* root, BYTE* editor, BYTE* ui) {
     editor_value button = {0};
     editor_value ready = {0};
     editor_copy_fn copy = (editor_copy_fn)(editor_ui_base + 0x17f0);
-    LONG width = 224;
+    LONG width = 160;
     LONG height = 34;
     LONG x = body_area.left;
     LONG y = body_area.top - height - 8;
     int is_enabled = !ui[158] && !fang_mod_editor_is_save_busy(editor);
     const char* label = reset_confirm_until && (LONG)(GetTickCount() - reset_confirm_until) < 0 ?
-        "CONFIRM RESET" : "RESET TO DEFAULT";
+        "RESET NOW?" : reset_failed_until && (LONG)(GetTickCount() - reset_failed_until) < 0 ?
+        "RESET FAILED" : "RESET BODY";
     SetRectEmpty(&reset_area);
     editor_get(root, "fangResetBody", &button);
     if (!fang_mod_editor_is_body(editor) || x < 12 || y < 12) {

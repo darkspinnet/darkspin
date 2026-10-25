@@ -9,6 +9,23 @@ import (
 )
 
 func Create(plans []zonebarrier.Plan) ([][]byte, error) {
+	packets, err := create(plans, true)
+	if err != nil {
+		return nil, fmt.Errorf("closedCreate: %w", err)
+	}
+	return packets, nil
+}
+
+// CreateOpened restores a completed horde's retained doors without collision.
+func CreateOpened(plans []zonebarrier.Plan) ([][]byte, error) {
+	packets, err := create(plans, false)
+	if err != nil {
+		return nil, fmt.Errorf("openedCreate: %w", err)
+	}
+	return packets, nil
+}
+
+func create(plans []zonebarrier.Plan, isClosed bool) ([][]byte, error) {
 	publication, err := zonebarrier.CreatePublication(plans)
 	if err != nil {
 		return nil, fmt.Errorf("createPublication: %w", err)
@@ -26,7 +43,7 @@ func Create(plans []zonebarrier.Plan) ([][]byte, error) {
 					X: object.Rotation.X, Y: object.Rotation.Y,
 					Z: object.Rotation.Z,
 				},
-				Scale: object.Scale, IsCollidable: object.IsCollisionEnabled,
+				Scale: object.Scale, IsCollidable: isClosed && object.IsCollisionEnabled,
 			},
 		)
 		if err != nil {
@@ -43,28 +60,44 @@ func Create(plans []zonebarrier.Plan) ([][]byte, error) {
 			return nil, fmt.Errorf("updateMarshal[%d]: %w", index, err)
 		}
 		packets = append(packets, createPacket, updatePacket)
-		closedPacket, closeErr := raknet.MarshalApplication(raknet.SetObjectGFXStateMessage{
-			// Native CloseDoor uses this literal state for static horde walls.
-			ObjectID: object.ObjectID, State: util.HashID("door closed"), Timestamp: 1,
-		})
-		if closeErr != nil {
-			return nil, fmt.Errorf("closeMarshal[%d]: %w", index, closeErr)
+		state := "door opened"
+		if isClosed {
+			state = "door closed"
 		}
-		packets = append(packets, closedPacket)
+		statePacket, stateErr := raknet.MarshalApplication(raknet.SetObjectGFXStateMessage{
+			ObjectID: object.ObjectID, State: util.HashID(state), Timestamp: 1,
+		})
+		if stateErr != nil {
+			return nil, fmt.Errorf("stateMarshal[%d]: %w", index, stateErr)
+		}
+		packets = append(packets, statePacket)
 	}
 	return packets, nil
 }
 
-func Delete(plans []zonebarrier.Plan) ([]byte, error) {
-	objectID, err := zonebarrier.DeletePublication(plans)
+// Open mirrors build-103 OpenDoor (sub_A648D0): clear collision, then publish
+// the authored "door opened" graphics state. Deleting the object skips its
+// retraction animation entirely; the open placement remains until zone teardown.
+func Open(plans []zonebarrier.Plan, timestamp uint64) ([][]byte, error) {
+	objectIDs, err := zonebarrier.OpenPublication(plans)
 	if err != nil {
-		return nil, fmt.Errorf("deletePublication: %w", err)
+		return nil, fmt.Errorf("openPublication: %w", err)
 	}
-	packet, err := raknet.MarshalApplication(
-		raknet.ObjectDeleteMessage{ObjectID: objectID},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("deleteMarshal: %w", err)
+	packets := make([][]byte, 0)
+	for index, objectID := range objectIDs {
+		messages := []raknet.ApplicationMessage{
+			raknet.ObjectCollisionUpdateMessage{ObjectID: objectID},
+			raknet.SetObjectGFXStateMessage{
+				ObjectID: objectID, State: util.HashID("door opened"), Timestamp: timestamp,
+			},
+		}
+		for messageIndex, message := range messages {
+			packet, marshalErr := raknet.MarshalApplication(message)
+			if marshalErr != nil {
+				return nil, fmt.Errorf("openMarshal[%d][%d]: %w", index, messageIndex, marshalErr)
+			}
+			packets = append(packets, packet)
+		}
 	}
-	return packet, nil
+	return packets, nil
 }

@@ -20,7 +20,6 @@ import (
 	zone "github.com/darkspinnet/darkspin/server/zone"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
-	barrierraknet "github.com/darkspinnet/darkspin/server/zone/barrier/raknet103"
 	zoneboss "github.com/darkspinnet/darkspin/server/zone/boss"
 	bossraknet "github.com/darkspinnet/darkspin/server/zone/boss/raknet103"
 	zonecompanion "github.com/darkspinnet/darkspin/server/zone/companion"
@@ -3027,12 +3026,11 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 			transition.immediatePackets = append(transition.immediatePackets, statePacket)
 			barrierPlans := s.zone.HordeBarrierPlans(hordeTransition.MarkerSetName)
 			if len(barrierPlans) != 0 {
-				packet, err := barrierraknet.Delete(barrierPlans)
+				barrierPackets, err := s.openCampaignHordeBarriers(barrierPlans)
 				if err != nil {
 					return campaignDamageTransition{}, fmt.Errorf("hordeBarrierComplete: %w", err)
 				}
-				transition.immediatePackets = append(transition.immediatePackets, packet)
-				s.zone.DestroyHordeBarrierListeners(hordeTransition.MarkerSetName)
+				transition.immediatePackets = append(transition.immediatePackets, barrierPackets...)
 			}
 		}
 		if hordeTransition.NextWaveActorCount != 0 {

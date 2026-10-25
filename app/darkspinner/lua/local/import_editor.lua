@@ -15,10 +15,10 @@ local function capture(client, label)
     return hierarchy
 end
 
-local function clickBody(client, hierarchy)
+local function clickElement(client, hierarchy, id)
     local selected = nil
     for _, node in ipairs(hierarchy.nodes) do
-        if node.id == 0xfad0b001 and node.is_visible and node.is_enabled then
+        if node.id == id and node.is_visible and node.is_enabled then
             if selected ~= nil then error("Body tab is ambiguous") end
             selected = node
         end
@@ -42,9 +42,14 @@ return function()
     must(client.Scene:Wait(scene.Arsenal))
     must(client.UI:OpenImportEditor(749013658))
     local initial = capture(client,"import-editor-entry")
-    clickBody(client,initial)
+    clickElement(client,initial,0xfad0b001)
     local body = capture(client,"import-editor-body")
     if not body.is_body_mode then error("Body tab did not produce observed Body selection") end
+    clickElement(client,body,0xfad0b002)
+    local confirmation, confirmationError = client.UI:Hierarchy()
+    must(client.UI:Screenshot("import-editor-reset-confirm"))
+    clickElement(client,must(confirmation,confirmationError),0xfad0b002)
+    capture(client,"import-editor-reset-body")
     must(client.Diagnostics:Capture("import-editor-ground"))
     check(scenario.Log("Import Editor captured; review screenshots and scenario_editor_draw records. Client retained."))
 end

@@ -8,7 +8,9 @@ import (
 // Policy is an operator-owned compatibility policy. Native server horde wave
 // selection and completion rules have not been recovered.
 type Policy struct {
-	IsMutationAgentEnabled          bool
+	IsMutationAgentEnabled bool
+	// MutationAgentMinChainLevel is the completed progression required to
+	// unlock Mutation Agents in any selected mission.
 	MutationAgentMinChainLevel      uint32
 	WaveCount                       int
 	MutationAgentWaveOrdinal        int

@@ -202,10 +202,14 @@ static void editor_restore_parts(void) {
  * Build 103 72FC60 consumes six stack arguments (RET 18h) and copies the model
  * through the player editor's slot 28, preserving its account/save identity. */
 int fang_mod_editor_reset_body(BYTE* editor) {
+    static const BYTE load_signature[] = {0x83, 0xec, 0x14, 0x53, 0x55, 0x33, 0xc0, 0x56, 0x57};
     typedef unsigned char (FANG_THISCALL* load_fn)(BYTE*, const uint32_t*, uint32_t,
         uint32_t, uint32_t, uint32_t, unsigned char);
+    typedef void (FANG_THISCALL* guard_fn)(uint32_t*);
     BYTE* request;
+    BYTE* reference;
     BYTE* definition;
+    uint32_t guard[2] = {0, 0};
     uint32_t noun;
     uint32_t key[3];
     void* retained = NULL;
@@ -213,12 +217,21 @@ int fang_mod_editor_reset_body(BYTE* editor) {
     int is_loaded;
     if (editor != fang_mod_editor_active() || !fang_mod_editor_is_body(editor) ||
         fang_mod_editor_is_save_busy(editor)) return 0;
+    if (!readable_range(editor_base + 0x32fc60, sizeof(load_signature)) ||
+        memcmp(editor_base + 0x32fc60, load_signature, sizeof(load_signature))) return 0;
     request = *(BYTE**)(editor + 524);
     if (!readable_range(request, 120) || !*(uintptr_t*)(request + 116)) return 0;
+    reference = *(BYTE**)(request + 116);
+    if (!readable_range(reference, 104)) return 0;
+    /* 9ECA10 -> 9C8E70 always writes both guard words and retains the noun.
+     * Mirror 4BA030's initialized guard and matching 9C3B50 release. Passing
+     * NULL here faults at 9C8E91 before any model reset has taken place. */
+    ((guard_fn)(editor_base + 0x5c3b40))(guard);
     definition = ((BYTE* (__cdecl*)(uintptr_t, void*))(editor_base + 0x5eca10))
-        (*(uintptr_t*)(request + 116), NULL);
-    if (!readable_range(definition, 160)) return 0;
-    noun = *(uint32_t*)(definition + 92);
+        ((uintptr_t)reference, guard);
+    noun = readable_range(definition, 160) ? *(uint32_t*)(definition + 92) : 0;
+    ((guard_fn)(editor_base + 0x5c3b50))(guard);
+    if (!noun) return 0;
     for (index = 0; index < reset_source_count; ++index) {
         editor_reset_source* source = reset_sources + index;
         if (source->noun != noun) continue;

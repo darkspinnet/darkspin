@@ -2,6 +2,8 @@
 
 ### 2026-10-25
 
+- [#118](https://github.com/darkspinnet/darkspin/issues/118) Use completed campaign progression for Mutation Agent eligibility, restoring agents and follow-up horde waves in earlier missions after the configured unlock (2-3 by default).
+- [#118](https://github.com/darkspinnet/darkspin/issues/118) Retract horde fences through the client's door-open state instead of deleting them immediately, and restore completed fences open and nonblocking on rejoin.
 - [#104](https://github.com/darkspinnet/darkspin/issues/104) Restore painted Body display when entering from Equip in both creature editors by completing native skin and material initialization.
 - [#119](https://github.com/darkspinnet/darkspin/issues/119) Restore Tork's Sprout projectile lob movement and turn Tork and Char toward their basic attack targets.
 - [#119](https://github.com/darkspinnet/darkspin/issues/119) Hold Tork's native movement during Sleeping Cloud and release it on cleanup instead of repeatedly snapping him back when walking is attempted.

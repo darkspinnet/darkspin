@@ -90,15 +90,18 @@ func (e *Session) IsActive() bool {
 	return false
 }
 
-func NewCampaignSession(chainLevelIndex uint32) *Session {
-	return NewCampaignSessionWithPolicy(chainLevelIndex, DefaultPolicy())
+func NewCampaignSession(chainProgression uint32) *Session {
+	return NewCampaignSessionWithPolicy(chainProgression, DefaultPolicy())
 }
 
-func NewCampaignSessionWithPolicy(chainLevelIndex uint32, policy Policy) *Session {
+// The minimum is completed campaign progression, not the selected level.
+// Once unlocked, earlier missions retain Mutation Agents and later waves.
+// The explicit operator disable still applies to every run.
+func NewCampaignSessionWithPolicy(chainProgression uint32, policy Policy) *Session {
 	e := NewSession()
 	e.policy = policy
 	e.areMutationAgentsEnabled = policy.IsMutationAgentEnabled &&
-		chainLevelIndex >= policy.MutationAgentMinChainLevel
+		chainProgression >= policy.MutationAgentMinChainLevel
 	return e
 }
 
