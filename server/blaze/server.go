@@ -60,6 +60,7 @@ type Session struct {
 	server                *Server
 	conn                  net.Conn
 	write                 sync.Mutex
+	operationMutex        sync.Mutex
 	data                  sync.Map
 	userID                int64
 	account               string
@@ -276,6 +277,8 @@ func (s *Session) Notify(component, command uint16, fields []tdf.Field) error {
 
 func (s *Session) serve(ctx context.Context) {
 	defer func() {
+		s.operationMutex.Lock()
+		defer s.operationMutex.Unlock()
 		s.logPlayerDisconnect()
 		s.server.traceConnection(s, "close")
 		_ = s.conn.Close()
@@ -315,48 +318,79 @@ func (s *Session) serve(ctx context.Context) {
 				continue
 			}
 		}
-		// Cleanup/attribute RPCs can trail LeavePlaygroup during shutdown.
-		// Only an actual new game/party transition supersedes that leave.
-		if isPlaygroupHandoffFrame(frame) {
-			s.pendingPlaygroupLeave = nil
-		}
-		result := s.server.registry.dispatch(ctx, s, frame)
-		for _, notification := range result.beforeReplyFrames {
-			s.traceFrame("out", notification)
-			err = s.send(notification)
-			if err != nil {
-				s.server.logger.Printf("Blaze session %d pre-reply notification failed: %v", s.ID, err)
-				return
-			}
-		}
-		s.cacheRequestReply(frame, result.reply)
-		s.traceFrame("out", result.reply)
-		err = s.send(result.reply)
+		err = s.dispatchFrame(ctx, frame)
 		if err != nil {
-			s.server.logger.Printf("Blaze session %d write failed: %v", s.ID, err)
+			s.server.logger.Printf("Blaze session %d request stage failed: %v", s.ID, err)
 			return
 		}
-		for _, notification := range result.notifications {
-			s.traceFrame("out", notification)
-			err = s.send(notification)
-			if err != nil {
-				s.server.logger.Printf("Blaze session %d notification failed: %v", s.ID, err)
-				return
+	}
+}
+
+// The request stage is shared by the network owner and scenario-only typed
+// party operations. Neither can interleave handler execution with the other's
+// party notification projection or deferred handoff state.
+func (e *Session) dispatchFrame(ctx context.Context, frame Frame) error {
+	err := e.lockOperation(ctx)
+	if err != nil {
+		return fmt.Errorf("dispatchLock: %w", err)
+	}
+	defer e.operationMutex.Unlock()
+	if isPlaygroupHandoffFrame(frame) {
+		e.pendingPlaygroupLeave = nil
+	}
+	result := e.server.registry.dispatch(ctx, e, frame)
+	for _, notification := range result.beforeReplyFrames {
+		e.traceFrame("out", notification)
+		err = e.send(notification)
+		if err != nil {
+			return fmt.Errorf("dispatchBefore: %w", err)
+		}
+	}
+	e.cacheRequestReply(frame, result.reply)
+	e.traceFrame("out", result.reply)
+	err = e.send(result.reply)
+	if err != nil {
+		return fmt.Errorf("dispatchReply: %w", err)
+	}
+	for _, notification := range result.notifications {
+		e.traceFrame("out", notification)
+		err = e.send(notification)
+		if err != nil {
+			return fmt.Errorf("dispatchAfter: %w", err)
+		}
+	}
+	for _, notification := range result.targetedNotifications {
+		target := notification.session
+		if target == nil {
+			continue
+		}
+		target.traceFrame("out", notification.frame)
+		err = target.send(notification.frame)
+		if err != nil {
+			e.server.logger.Printf("Blaze target session %d notification failed: %v", target.ID, err)
+			if target == e {
+				return fmt.Errorf("dispatchTarget: %w", err)
 			}
 		}
-		for _, notification := range result.targetedNotifications {
-			target := notification.session
-			if target == nil {
-				continue
-			}
-			target.traceFrame("out", notification.frame)
-			err = target.send(notification.frame)
-			if err != nil {
-				s.server.logger.Printf("Blaze target session %d notification failed: %v", target.ID, err)
-				if target == s {
-					return
-				}
-			}
+	}
+	return nil
+}
+
+func (e *Session) lockOperation(ctx context.Context) error {
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		err := ctx.Err()
+		if err != nil {
+			return fmt.Errorf("stageContext: %w", err)
+		}
+		if e.operationMutex.TryLock() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("stageWait: %w", ctx.Err())
+		case <-ticker.C:
 		}
 	}
 }

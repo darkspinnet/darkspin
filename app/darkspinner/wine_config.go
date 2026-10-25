@@ -55,7 +55,7 @@ func (e *App) GetWineRunnerConfiguration() (WineRunnerConfiguration, error) {
 	if err != nil {
 		return WineRunnerConfiguration{}, fmt.Errorf("configPath: %w", err)
 	}
-	settings, err := readLauncherSettings(pathSet.settingPath)
+	settings, err := readLauncherSettings(pathSet.configPath)
 	if err != nil {
 		return WineRunnerConfiguration{}, fmt.Errorf("settingRead: %w", err)
 	}
@@ -118,12 +118,12 @@ func (e *App) SetWineRunner(path string) (WineRunnerConfiguration, error) {
 			return WineRunnerConfiguration{}, fmt.Errorf("Wine runtime %s has no bin/wine; rescan and choose a listed runtime", path)
 		}
 	}
-	settings, err := readLauncherSettings(pathSet.settingPath)
+	settings, err := readLauncherSettings(pathSet.configPath)
 	if err != nil {
 		return WineRunnerConfiguration{}, fmt.Errorf("settingRead: %w", err)
 	}
 	settings.Wine.RuntimePath = path
-	err = writeLauncherSettings(pathSet.settingPath, settings)
+	err = writeLauncherSettings(pathSet.configPath, settings)
 	if err != nil {
 		return WineRunnerConfiguration{}, fmt.Errorf("settingSave: %w", err)
 	}
@@ -150,7 +150,7 @@ func resolveWineLaunch(pathSet *spinnerPathSet) (wineLaunchEnvironment, error) {
 	if !isWineRunnerSupported() {
 		return wineLaunchEnvironment{}, nil
 	}
-	settings, err := readLauncherSettings(pathSet.settingPath)
+	settings, err := readLauncherSettings(pathSet.configPath)
 	if err != nil {
 		return wineLaunchEnvironment{}, fmt.Errorf("settingRead: %w", err)
 	}

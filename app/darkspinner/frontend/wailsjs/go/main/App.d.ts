@@ -37,6 +37,8 @@ export function GetInterruptedMission(arg1:string):Promise<main.InterruptedMissi
 
 export function GetLauncherIntegrationStatus():Promise<main.LauncherIntegrationStatus>;
 
+export function GetLuaConsole():Promise<main.LuaConsoleSnapshot>;
+
 export function GetModConfiguration():Promise<main.ModConfiguration>;
 
 export function GetModPortrait(arg1:string):Promise<string>;
@@ -58,6 +60,8 @@ export function GetWineRunnerConfiguration():Promise<main.WineRunnerConfiguratio
 export function HasDetachedGameInstances():Promise<boolean>;
 
 export function IsProfileRunning(arg1:string):Promise<boolean>;
+
+export function KillLuaSession():Promise<void>;
 
 export function LaunchModProfile(arg1:string):Promise<void>;
 
@@ -89,6 +93,8 @@ export function RepairLauncherIntegration(arg1:string):Promise<main.LauncherInte
 
 export function RestartLauncher():Promise<void>;
 
+export function RunLuaScript(arg1:string):Promise<void>;
+
 export function SaveModProfile(arg1:main.ModProfileRequest):Promise<void>;
 
 export function ScanRemoteServers(arg1:string):Promise<Array<main.RemoteServer>>;
@@ -109,10 +115,14 @@ export function SetServerRulesConfiguration(arg1:runtime.ServerRulesConfiguratio
 
 export function SetSkipCinematic(arg1:boolean):Promise<void>;
 
+export function SetSkipIntro(arg1:boolean):Promise<void>;
+
 export function SetWineRunner(arg1:string):Promise<main.WineRunnerConfiguration>;
 
 export function SignOut():Promise<void>;
 
 export function StartDetachedGameInstance(arg1:string):Promise<void>;
+
+export function StopLuaScript():Promise<void>;
 
 export function UninstallDarkspinner():Promise<void>;

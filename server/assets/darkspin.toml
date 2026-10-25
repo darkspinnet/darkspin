@@ -8,6 +8,12 @@ is_version_locked = false
 is_singleplayer_only = false
 locale = ""
 
+[launcher]
+# Saved choices for new game instances. Explicit launch flags override them
+# for the current launcher run without changing these preferences.
+is_intro_skipped = false
+is_cinematic_skipped = false
+
 [server]
 is_multiplayer_enabled = false
 port = 42127
@@ -19,9 +25,8 @@ world_player_limit = 25
 
 [chat]
 # Accepted messages are always written to chat_log when SQLite is active.
-# Stdout and this append-only JSONL file provide convenient live diagnostics.
+# Optional stdout output provides live diagnostics without a separate chat file.
 is_stdout_enabled = true
-file_path = "chat.log"
 
 [storage]
 # SQLite is the current embedded adapter. PostgreSQL is planned.

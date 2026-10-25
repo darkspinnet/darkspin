@@ -453,6 +453,7 @@ func (a *App) LaunchRemoteProfile(
 }
 
 func (a *App) runRemoteGameLaunch(ctx context.Context, req gameLaunchRequest, password string) {
+	req.isRemoteServer = true
 	a.runGameLaunch(ctx, req)
 	refreshCtx := a.lifecycleCtx
 	if refreshCtx == nil {

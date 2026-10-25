@@ -194,7 +194,7 @@ func (a *App) newModServer(paths *spinnerPathSet, configPath string) (*server.Se
 	gameServer, err := server.New(server.Options{
 		GamePath: paths.gamePath, ConfigPath: configPath, RuntimePath: modRuntimePath(paths),
 		UserDatabasePath: modDatabasePath(paths), ContentDatabasePath: paths.contentPath,
-		StaticPath: paths.staticPath, TracePath: "server.jsonl", IsModded: true, ModNames: modReportNames(),
+		StaticPath: paths.staticPath, IsModded: true, ModNames: modReportNames(),
 		Logger: log.New(&spinnerLogWriter{app: a, prefix: "Mod server"}, "", 0),
 	})
 	if err != nil {
@@ -254,7 +254,7 @@ func (a *App) prepareModAppearance(paths *spinnerPathSet, identity, serverAddres
 	if err != nil {
 		return "", fmt.Errorf("bindingRead: %w", err)
 	}
-	settings, err := readLauncherSettings(paths.settingPath)
+	settings, err := readLauncherSettings(paths.configPath)
 	if err != nil {
 		return "", fmt.Errorf("sourceRead: %w", err)
 	}

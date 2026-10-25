@@ -27,9 +27,13 @@ func (e *App) StartDetachedGameInstance(identity string) error {
 		e.status.IsPatchComplete && e.status.IsGameReady
 	arguments := append([]string(nil), e.arguments...)
 	gameServer := e.serviceSet.gameServer
+	ctx := e.lifecycleCtx
 	e.mu.Unlock()
 	if !isReady {
 		return errors.New("authentication, server, patch, and game must be ready")
+	}
+	if ctx == nil {
+		return errors.New("launcher lifetime is unavailable")
 	}
 	serverAddress, err := localServerAddress(gameServer)
 	if err != nil {
@@ -53,7 +57,7 @@ func (e *App) StartDetachedGameInstance(identity string) error {
 	if err != nil {
 		return fmt.Errorf("detachedConnection: %w", err)
 	}
-	err = e.startDetachedGame(detachedGameRequest{
+	err = e.startDetachedGame(ctx, detachedGameRequest{
 		account: identity, clientProfile: identity, serverAddress: serverAddress,
 		arguments: arguments,
 	})
@@ -72,13 +76,13 @@ type detachedGameRequest struct {
 	arguments     []string
 }
 
-func (e *App) startDetachedGame(req detachedGameRequest) error {
+func (e *App) startDetachedGame(ctx context.Context, req detachedGameRequest) error {
 	executablePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("executable: %w", err)
 	}
 	basePath := filepath.Dir(executablePath)
-	isProfileRunning, err := isClientProfileRunning(basePath, req.clientProfile)
+	isProfileRunning, err := e.isClientProfileRunning(req.clientProfile)
 	if err != nil {
 		return fmt.Errorf("profileCheck: %w", err)
 	}
@@ -98,6 +102,7 @@ func (e *App) startDetachedGame(req detachedGameRequest) error {
 	if err != nil {
 		return fmt.Errorf("failureTarget: %w", err)
 	}
+	e.clientSession.Track(launchID, req.clientProfile, "detached")
 	launchArguments := gameLaunchArguments(arguments, req.token)
 	prefixArguments := []string{
 		"--" + detachedGameArgument, "--multiple-instances",
@@ -110,8 +115,21 @@ func (e *App) startDetachedGame(req detachedGameRequest) error {
 		prefixArguments = append(prefixArguments, "--account", req.account)
 	}
 	launchArguments = append(prefixArguments, launchArguments...)
-	err = startDetachedProcess(executablePath, launchArguments)
+	e.mu.Lock()
+	gameServer := e.serviceSet.gameServer
+	e.mu.Unlock()
+	connection := snapshotControlConnection{}
+	if gameServer != nil {
+		connection.endpoint, connection.token, err = gameServer.SnapshotClientControl(ctx, req.account)
+		if err != nil {
+			return fmt.Errorf("snapshotControl: %w", err)
+		}
+		connection.directory = gameServer.SnapshotControlDirectory()
+	}
+	environmentEntries := connection.environmentEntries(os.Environ())
+	err = startDetachedProcess(executablePath, launchArguments, environmentEntries)
 	if err != nil {
+		e.clientSession.Close(launchID)
 		return fmt.Errorf("processStart: %w", err)
 	}
 	return nil
@@ -251,6 +269,10 @@ func configureClientEnvironment(rootPath string) (string, error) {
 }
 
 func runDetachedGame(arguments []string) error {
+	return runDetachedGameContext(context.Background(), arguments)
+}
+
+func runDetachedGameContext(ctx context.Context, arguments []string) error {
 	filteredArguments := make([]string, 0, len(arguments))
 	for _, argument := range arguments {
 		if argument == "--"+detachedGameArgument || argument == "-"+detachedGameArgument {
@@ -262,7 +284,7 @@ func runDetachedGame(arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("detachedRuntime: %w", err)
 	}
-	err = run(context.Background(), filteredArguments)
+	err = run(ctx, filteredArguments)
 	if err != nil {
 		writeDetachedLaunchError(err)
 		return fmt.Errorf("detachedLaunch: %w", err)

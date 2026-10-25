@@ -119,6 +119,7 @@ export namespace main {
 	    isAutoPlayRequested: boolean;
 	    isPatchEnabled: boolean;
 	    isCinematicSkipped: boolean;
+	    isIntroSkipped: boolean;
 	    isLastRunFailure: boolean;
 	    isStartupBlocked: boolean;
 	
@@ -172,10 +173,92 @@ export namespace main {
 	        this.isAutoPlayRequested = source["isAutoPlayRequested"];
 	        this.isPatchEnabled = source["isPatchEnabled"];
 	        this.isCinematicSkipped = source["isCinematicSkipped"];
+	        this.isIntroSkipped = source["isIntroSkipped"];
 	        this.isLastRunFailure = source["isLastRunFailure"];
 	        this.isStartupBlocked = source["isStartupBlocked"];
 	    }
 	}
+	export class LuaConsoleLine {
+	    sequence: number;
+	    time: string;
+	    text: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LuaConsoleLine(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sequence = source["sequence"];
+	        this.time = source["time"];
+	        this.text = source["text"];
+	    }
+	}
+	export class LuaScriptChoice {
+	    name: string;
+	    path: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LuaScriptChoice(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.path = source["path"];
+	    }
+	}
+	export class LuaConsoleSnapshot {
+	    isAvailable: boolean;
+	    isSelected: boolean;
+	    isActive: boolean;
+	    phase: string;
+	    script: string;
+	    runId: string;
+	    elapsedMs: number;
+	    failure: string;
+	    inventoryError: string;
+	    scripts: LuaScriptChoice[];
+	    lines: LuaConsoleLine[];
+	
+	    static createFrom(source: any = {}) {
+	        return new LuaConsoleSnapshot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.isAvailable = source["isAvailable"];
+	        this.isSelected = source["isSelected"];
+	        this.isActive = source["isActive"];
+	        this.phase = source["phase"];
+	        this.script = source["script"];
+	        this.runId = source["runId"];
+	        this.elapsedMs = source["elapsedMs"];
+	        this.failure = source["failure"];
+	        this.inventoryError = source["inventoryError"];
+	        this.scripts = this.convertValues(source["scripts"], LuaScriptChoice);
+	        this.lines = this.convertValues(source["lines"], LuaConsoleLine);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class ModBinding {
 	    heroNoun: number;
 	    creationId: string;

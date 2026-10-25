@@ -33,6 +33,7 @@ const (
 )
 
 type SpawnPlan struct {
+	scenarioControl        scenarioControlPlan
 	ObjectID               uint32
 	OwnerObjectID          uint32
 	NounName               string
@@ -91,7 +92,7 @@ func (e SpawnPlan) Clone() SpawnPlan {
 }
 
 func (e SpawnPlan) IsEqual(other SpawnPlan) bool {
-	return e.ObjectID == other.ObjectID &&
+	return e.scenarioControl == other.scenarioControl && e.ObjectID == other.ObjectID &&
 		e.OwnerObjectID == other.OwnerObjectID &&
 		e.NounName == other.NounName &&
 		e.AuthoredNounName == other.AuthoredNounName &&

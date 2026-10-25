@@ -272,7 +272,13 @@ func (e *scenarioWorker) clientRequest() (scenarioClientRequest, error) {
 	if err != nil {
 		return scenarioClientRequest{}, fmt.Errorf("clientTrace: %w", err)
 	}
-	err = configureSnapshotEnvironment("manual", filepath.Join(e.start.Paths.ReportDirectory, "snapshot-control.txt"))
+	endpoint, token, err := e.host.server.SnapshotControlForUser(e.host.userID)
+	if err != nil {
+		return scenarioClientRequest{}, fmt.Errorf("snapshotControl: %w", err)
+	}
+	err = configureSnapshotEnvironment("manual", snapshotControlConnection{
+		endpoint: endpoint, token: token, directory: e.host.server.SnapshotControlDirectory(),
+	})
 	if err != nil {
 		return scenarioClientRequest{}, fmt.Errorf("clientSnapshot: %w", err)
 	}

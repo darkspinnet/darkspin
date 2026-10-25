@@ -291,6 +291,7 @@ type zoneMembership struct {
 }
 
 type controlledHeroState struct {
+	scenarioAbility               scenarioAbilityState
 	squad                         *squad.Session
 	abilityCooldown               *zoneability.CooldownSession
 	abilityRelease                *zoneaction.ReleaseSession
@@ -2025,8 +2026,11 @@ type campaignAbilityPursuitAdmission struct {
 type gameplaySessionRegistry struct {
 	// Keep every atomically accessed 64-bit field first so it remains aligned
 	// in the Windows 386 build.
-	nextGeneration           uint64
-	nextActionGeneration     uint64
+	nextGeneration       uint64
+	nextActionGeneration uint64
+	scenarioAbilityCatalog
+	scenarioSpawnState
+	scenarioNPCControlQueue
 	mutationDamageWorks      map[mutationDamageKey]*mutationDamageRun
 	plasmaWreathPublications []plasmaWreathPublication
 	omniShieldRemovals       []*omniShieldRemoval

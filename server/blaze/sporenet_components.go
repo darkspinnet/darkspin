@@ -317,6 +317,9 @@ func queuePeerLoginVisibility(request *Request, user *sporenet.User, peers []*sp
 		if peer == nil || peer.Account.ID == user.Account.ID {
 			continue
 		}
+		if !isSocialUserOnline(request, peer.Account.ID) {
+			continue
+		}
 		err := request.QueueNotification(
 			UserSessionComponentID, userSessionUserAdded, userAddedNotificationFields(peer),
 		)
@@ -482,13 +485,6 @@ func updateUserSessionClientDataHandler(
 					continue
 				}
 				err := request.QueueUserNotification(
-					recipient.Account.ID, UserSessionComponentID, userSessionUserUpdated,
-					userUpdatedNotificationFields(user),
-				)
-				if err != nil {
-					return nil, fmt.Errorf("presenceOwnerUpdate[%d]: %w", recipientIndex, err)
-				}
-				err = request.QueueUserNotification(
 					recipient.Account.ID, UserSessionComponentID, userSessionExtendedData, fields,
 				)
 				if err != nil {
@@ -561,32 +557,41 @@ func replaceField(fields []tdf.Field, label string, value tdf.Value) {
 }
 
 func lookupUserHandler(userManager UserManager, presenceRegistry *PresenceRegistry) Handler {
-	return func(_ context.Context, request *Request) (*Response, error) {
-		name := fieldString(request.Fields, "NAME")
-		var user *sporenet.User
-		if name != "" {
-			user = userManager.UserByLoginName(name)
-			if user == nil {
-				user = userManager.UserByDisplayName(name)
-			}
-		}
-		if user == nil {
-			user = requestUser(request)
-		}
-		if user == nil {
+	return func(ctx context.Context, request *Request) (*Response, error) {
+		profile, err := lookupSocialIdentity(ctx, userManager, request.Fields)
+		if errors.Is(err, sporenet.ErrUserNotFound) || errors.Is(err, sporenet.ErrUserAmbiguous) {
 			return &Response{ErrorCode: authInvalidUser}, nil
 		}
+		if err != nil {
+			return nil, fmt.Errorf("lookupIdentity: %w", err)
+		}
+		isOnline := isSocialUserOnline(request, profile.Account.ID)
+		flags := uint64(1)
+		if isOnline {
+			flags = 3
+		}
 		variables := []tdf.Field(nil)
-		if presenceRegistry != nil {
-			record, isFound := presenceRegistry.lookup(user.Account.ID)
+		if presenceRegistry != nil && isOnline {
+			record, isFound := presenceRegistry.lookup(profile.Account.ID)
 			if isFound {
 				variables = record.variables
 			}
 		}
+		externalID := uint64(0)
+		if fieldInteger(request.Fields, "EXID") != 0 {
+			externalID = userExternalID(profile.Account.AvatarID)
+		}
 		return &Response{Fields: []tdf.Field{
-			tdf.FieldNamed("EDAT", tdf.StructValue(extendedDataFieldsWithPresence(user, variables)...)),
-			tdf.FieldNamed("FLGS", tdf.IntegerValue(3)),
-			tdf.FieldNamed("USER", tdf.StructValue(userLookupIdentificationFields(user, request.Fields)...)),
+			tdf.FieldNamed("EDAT", tdf.StructValue(extendedDataFieldsWithPresence(nil, variables)...)),
+			tdf.FieldNamed("FLGS", tdf.IntegerValue(flags)),
+			tdf.FieldNamed("USER", tdf.StructValue(
+				tdf.FieldNamed("AID", tdf.IntegerValue(uint64(profile.Account.ID))),
+				tdf.FieldNamed("ALOC", tdf.IntegerValue(0)),
+				tdf.FieldNamed("EXBB", tdf.BinaryValue(nil)),
+				tdf.FieldNamed("EXID", tdf.IntegerValue(externalID)),
+				tdf.FieldNamed("ID", tdf.IntegerValue(uint64(profile.Account.ID))),
+				tdf.FieldNamed("NAME", tdf.StringValue(profile.DisplayName)),
+			)),
 		}}, nil
 	}
 }

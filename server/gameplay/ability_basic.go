@@ -3288,6 +3288,23 @@ func (r campaignAbilityCommandRuntime) handleMeleeBasic(
 		return request.reject("cursor position unavailable")
 	}
 	facing := geometryraknet.Direction(peerSession.playerPosition, targetPosition)
+	if isEnemyFound && targetPosition.X == peerSession.playerPosition.X && targetPosition.Y == peerSession.playerPosition.Y {
+		resolvedFacing, facingErr := campaignMeleeFacing(peerSession, command, targetPosition)
+		if facingErr != nil {
+			// Active melee abilities use SelectActivation and never mutate the
+			// basic sequence. Restore only admission actually made above.
+			isSequenceRestored := true
+			if !isActiveRequest {
+				isSequenceRestored = peerSession.basicSequenceSession().Restore(previousBasicSequence, basicSequenceRevision)
+			}
+			r.registry.mutex.Unlock()
+			if !isSequenceRestored {
+				return nil, fmt.Errorf("meleeFacingRestore: %w", errors.Join(facingErr, errors.New("basic sequence changed before facing rejection rollback")))
+			}
+			return request.reject(facingErr.Error())
+		}
+		facing = resolvedFacing
+	}
 	runTargetObjectID := targetObjectID
 	targetHitPoint := float32(0)
 	if runTargetObjectID == 0 {

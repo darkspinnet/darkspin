@@ -1,4 +1,7 @@
 #include "hook.h"
+#if FANG_SCENARIO
+#include "control.h"
+#endif
 
 #include <stdint.h>
 #include <string.h>
@@ -199,6 +202,9 @@ void fang_mod_editor_update_body(void) {
 }
 
 static void FANG_THISCALL editor_leave(BYTE* editor) {
+#if FANG_SCENARIO
+    int is_observation_entered = fang_control_editor_exit_begin(editor);
+#endif
     if (active_editor == editor) {
         fang_mod_scene_leave(editor);
         fang_mod_palette_leave(editor);
@@ -212,6 +218,13 @@ static void FANG_THISCALL editor_leave(BYTE* editor) {
         active_scene_editor = NULL;
     }
     editor_native_exit(editor);
+#if FANG_SCENARIO
+    fang_control_editor_exit_end(is_observation_entered);
+#endif
+}
+
+void* fang_mod_editor_exit_hook(void) {
+    return (void*)editor_leave;
 }
 
 /* 4BA7A0 calls the normal creature hit test, then discards non-inventory
@@ -289,6 +302,21 @@ int fang_mod_editor_identity(BYTE* context, uint32_t* identity) {
     memcpy(identity, creature, 3 * sizeof(uint32_t));
     return 1;
 }
+
+#if FANG_SCENARIO
+uint32_t fang_mod_editor_owned_noun(BYTE* context) {
+    BYTE* manager;
+    BYTE* agent;
+    BYTE* definition;
+    if (!fang_mod_editor_target(context)) return 0;
+    manager = ((editor_manager_fn)(editor_base + 0x5bc740))();
+    agent = ((editor_agent_fn)(editor_base + 0x5d1730))(manager, *(uint32_t*)(context + 8));
+    if (!readable_range(agent, 16)) return 0;
+    definition = *(BYTE**)(agent + 4);
+    if (!readable_range(definition, 96)) return 0;
+    return *(uint32_t*)(definition + 92);
+}
+#endif
 
 static void editor_open(BYTE* context, int is_scene) {
     BYTE* manager;
@@ -404,6 +432,11 @@ static int FANG_THISCALL editor_configure(BYTE* editor) {
 void fang_mod_install_editor(BYTE* base, const wchar_t* manifest) {
     static const BYTE agent_signature[] = {0x8b, 0x49, 0x04, 0xe9};
     static const BYTE config_signature[] = {0x83, 0xec, 0x08, 0x56, 0x8b, 0xf1, 0xe8};
+    editor_exit_fn exit_target = (editor_exit_fn)(base + 0xb9470);
+#if FANG_SCENARIO
+    void* observed_exit = fang_control_editor_exit_target(base);
+    if (observed_exit) exit_target = (editor_exit_fn)observed_exit;
+#endif
     if (GetPrivateProfileIntW(L"mod", L"creature_editor", 0, manifest) != 1) return;
     if (sizeof(void*) != 4 || !readable_range(base + 0xdbeaa0, 4) ||
         !readable_range(base + 0x5d1730, sizeof(agent_signature)) ||
@@ -413,7 +446,7 @@ void fang_mod_install_editor(BYTE* base, const wchar_t* manifest) {
         !readable_range(base + 0x19fcb, 5) || base[0x19fcb] != 0x68 ||
         *(void**)(base + 0x19fcc) != base + 0xe920 ||
         !readable_range(base + 0xbd99d0, 4) || *(void**)(base + 0xbd99d0) != base + 0xba7a0 ||
-        !readable_range(base + 0xbd98fc, 4) || *(void**)(base + 0xbd98fc) != base + 0xb9470) {
+        !readable_range(base + 0xbd98fc, 4) || *(void**)(base + 0xbd98fc) != (void*)exit_target) {
         trace_client_state("mod_editor_unsupported", 1);
         return;
     }
@@ -421,7 +454,7 @@ void fang_mod_install_editor(BYTE* base, const wchar_t* manifest) {
     editor_native_edit = (editor_edit_fn)(base + 0xe920);
     editor_native_hit = (editor_hit_fn)(base + 0xba7a0);
     editor_body_hit = (editor_hit_fn)(base + 0x323730);
-    editor_native_exit = (editor_exit_fn)(base + 0xb9470);
+    editor_native_exit = exit_target;
     editor_config = (editor_config_fn)(base + 0x32dce0);
     if (!patch_call(base + 0xb9106, editor_config, editor_configure)) {
         trace_client_state("mod_editor_config_hook_failed", 1);

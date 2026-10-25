@@ -60,7 +60,7 @@ func runHeadless(app *App) error {
 		return fmt.Errorf("handlerCreate: %w", err)
 	}
 	app.launcherHandler = handler
-	address, bootstrapServer, bootstrapDone, err := startLauncherBootstrap(handler, token)
+	address, bootstrapServer, bootstrapDone, err := startLauncherBootstrap(handler, token, app.lua != nil && app.GetLuaConsole().IsSelected)
 	if err != nil {
 		return fmt.Errorf("bootstrapStart: %w", err)
 	}
@@ -93,7 +93,7 @@ func runHeadless(app *App) error {
 }
 
 func startLauncherBootstrap(
-	handler http.Handler, token string,
+	handler http.Handler, token string, isLuaMode bool,
 ) (string, *http.Server, <-chan error, error) {
 	basePath, err := executableDirectory()
 	if err != nil {
@@ -117,6 +117,9 @@ func startLauncherBootstrap(
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", nil, nil, fmt.Errorf("configStat: %w", err)
 	}
+	if isLuaMode {
+		port = 0
+	}
 	listenerAddress := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", port))
 	listener, err := net.Listen("tcp", listenerAddress)
 	if err != nil {
@@ -134,7 +137,7 @@ func startLauncherBootstrap(
 	go func() {
 		bootstrapDone <- bootstrapServer.Serve(listener)
 	}()
-	address := "http://" + listenerAddress + launcherPath + "#token=" + token
+	address := "http://" + listener.Addr().String() + launcherPath + "#token=" + token
 	return address, bootstrapServer, bootstrapDone, nil
 }
 
@@ -190,6 +193,10 @@ func newLauncherHandler(app *App) (http.Handler, string, error) {
 
 func launcherMethods(app *App) map[string]any {
 	return map[string]any{
+		"GetLuaConsole":                app.GetLuaConsole,
+		"RunLuaScript":                 app.RunLuaScript,
+		"KillLuaSession":               app.KillLuaSession,
+		"StopLuaScript":                app.StopLuaScript,
 		"GetModConfiguration":          app.GetModConfiguration,
 		"SetModSporePath":              app.SetModSporePath,
 		"DetectModSporePath":           app.DetectModSporePath,
@@ -243,6 +250,7 @@ func launcherMethods(app *App) map[string]any {
 		"SetServerRulesConfiguration":  app.SetServerRulesConfiguration,
 		"SetServerPort":                app.SetServerPort,
 		"SetSkipCinematic":             app.SetSkipCinematic,
+		"SetSkipIntro":                 app.SetSkipIntro,
 		"SetWineRunner":                app.SetWineRunner,
 		"SignOut":                      app.SignOut,
 		"StartDetachedGameInstance":    app.StartDetachedGameInstance,

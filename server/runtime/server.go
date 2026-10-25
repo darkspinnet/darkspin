@@ -240,9 +240,9 @@ type Server struct {
 	contentStore          io.Closer
 	checkpoint            *zonecheckpoint.Manager
 	checkpointStore       io.Closer
-	chatLogOutput         io.Closer
 	roomManager           *sporenet.RoomManager
 	gameManager           *game.Manager
+	partyService          *party.Service
 	template              *sporenet.TemplateDatabase
 	vendor                *sporenet.Vendor
 	logger                *log.Logger
@@ -570,7 +570,6 @@ func New(options Options) (*Server, error) {
 		Directory:        filepath.Join(traceDirectoryPath, "snapshots"),
 		ArchiveDirectory: filepath.Join(runtimePath, "bugs"),
 		TraceDirectory:   traceDirectoryPath, Mode: snapshotMode,
-		ControlPath:    filepath.Join(traceDirectoryPath, "snapshot-control.txt"),
 		BufferDuration: time.Duration(snapshotBufferSecond) * time.Second,
 		Delay:          time.Duration(snapshotDelaySecond) * time.Second,
 		BuildVersion:   buildinfo.Version, Logger: logger,
@@ -669,16 +668,10 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("gameHostNetwork: %w", err)
 	}
 	gameManager.SetHostNetwork(hostNetwork)
-	chatRecorders, chatLogOutput, err := openChatRecorders(config, logPath, userRepository, logger)
+	chatRecorders, err := openChatRecorders(config, userRepository, logger)
 	if err != nil {
 		return nil, fmt.Errorf("chatLogInit: %w", err)
 	}
-	isChatLogOutputTransferred := false
-	defer func() {
-		if !isChatLogOutputTransferred && chatLogOutput != nil {
-			_ = chatLogOutput.Close()
-		}
-	}()
 	directory := chatlocal.NewDirectory(
 		userManager, roomManager, gameManager, partyService,
 	)
@@ -940,9 +933,9 @@ func New(options Options) (*Server, error) {
 		contentStore:          contentStore,
 		checkpoint:            checkpointManager,
 		checkpointStore:       checkpointStore,
-		chatLogOutput:         chatLogOutput,
 		roomManager:           roomManager,
 		gameManager:           gameManager,
+		partyService:          partyService,
 		template:              templateDatabase,
 		vendor:                vendor,
 		logger:                logger,
@@ -952,7 +945,6 @@ func New(options Options) (*Server, error) {
 	isUserStoreTransferred = true
 	isContentStoreTransferred = true
 	isCheckpointStoreTransferred = true
-	isChatLogOutputTransferred = true
 	isSnapshotTransferred = true
 	return application, nil
 }
@@ -1094,8 +1086,8 @@ func (r bestEffortChatRecorder) Record(ctx context.Context, message chat.Message
 	return nil
 }
 
-func openChatRecorders(config *game.Config, logPath string, repository sporenet.UserRepository, logger *log.Logger) ([]chat.Recorder, io.Closer, error) {
-	recorders := make([]chat.Recorder, 0, 3)
+func openChatRecorders(config *game.Config, repository sporenet.UserRepository, logger *log.Logger) ([]chat.Recorder, error) {
+	recorders := make([]chat.Recorder, 0, 2)
 	databaseRecorder, isSupported := repository.(chat.Recorder)
 	if isSupported {
 		recorders = append(recorders, databaseRecorder)
@@ -1103,32 +1095,11 @@ func openChatRecorders(config *game.Config, logPath string, repository sporenet.
 	if config.Bool(game.ConfigIsChatStdoutEnabled) {
 		stdoutRecorder, err := textlog.New(os.Stdout)
 		if err != nil {
-			return nil, nil, fmt.Errorf("stdoutCreate: %w", err)
+			return nil, fmt.Errorf("stdoutCreate: %w", err)
 		}
 		recorders = append(recorders, bestEffortChatRecorder{recorder: stdoutRecorder, logger: logger, label: "stdout"})
 	}
-	filePath := strings.TrimSpace(config.String(game.ConfigChatFilePath))
-	if filePath == "" {
-		return recorders, nil, nil
-	}
-	if !filepath.IsAbs(filePath) {
-		filePath = filepath.Join(logPath, filepath.FromSlash(filePath))
-	}
-	err := os.MkdirAll(filepath.Dir(filePath), 0o755)
-	if err != nil {
-		return nil, nil, fmt.Errorf("fileDirectory: %w", err)
-	}
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return nil, nil, fmt.Errorf("fileOpen: %w", err)
-	}
-	fileRecorder, err := textlog.New(file)
-	if err != nil {
-		_ = file.Close()
-		return nil, nil, fmt.Errorf("fileCreate: %w", err)
-	}
-	recorders = append(recorders, bestEffortChatRecorder{recorder: fileRecorder, logger: logger, label: "file"})
-	return recorders, file, nil
+	return recorders, nil
 }
 
 // Environment returns a copy of the initialized runtime environment.
@@ -1199,7 +1170,7 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 	s.Close()
-	s.logger.Print("Stopping recap server")
+	s.logger.Print("Stopping server")
 	if runErr != nil {
 		return fmt.Errorf("servicesRun: %w", runErr)
 	}
@@ -1245,12 +1216,6 @@ func (s *Server) Close() {
 			err = s.contentStore.Close()
 			if err != nil {
 				s.logger.Printf("Content storage close failed: %v", err)
-			}
-		}
-		if s.chatLogOutput != nil {
-			err = s.chatLogOutput.Close()
-			if err != nil {
-				s.logger.Printf("Chat log close failed: %v", err)
 			}
 		}
 		if s.traceRecorder != nil {

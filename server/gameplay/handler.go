@@ -1244,6 +1244,7 @@ func newGameplayHandlerWithDependencies(
 	sessionRegistry := newGameplaySessionRegistry(
 		dependency.zoneTimer, dependency.now, logger,
 	)
+	sessionRegistry.configureScenarioAbility(program)
 	if dependency.registerBugContext != nil {
 		dependency.registerBugContext(sessionRegistry)
 	}
@@ -3233,100 +3234,6 @@ func (r gameplayPendingRuntime) consumePlayerResourceCommand(
 	)
 	return packets, true, nil
 }
-func (r gameplayPendingRuntime) spawnDeveloperNPC(
-	packet raknet.Packet, queuedSession gameplayPeerSession, command game.PlayerEventCommand,
-) ([][]byte, bool, error) {
-	sessionKey := packet.Address.String()
-	r.registry.mutex.Lock()
-	currentSession, isFound := r.registry.sessions[sessionKey]
-	isCurrent := isFound && currentSession.generation == queuedSession.generation &&
-		currentSession.stage.IsDungeon() && currentSession.zone != nil &&
-		currentSession.zone.NPCs() != nil && currentSession.deployedObjectID != 0 &&
-		!currentSession.isZoneTerminal()
-	if !isCurrent {
-		r.registry.mutex.Unlock()
-		return nil, false, errors.New("npcSpawnSession: unavailable")
-	}
-	director := currentSession.zone.DirectorDefinition()
-	profile, isProfileFound := developerNPCProfile(director, command.NounName)
-	if !isProfileFound {
-		r.registry.mutex.Unlock()
-		return nil, false, fmt.Errorf("npcSpawnProfile: unavailable %q", command.NounName)
-	}
-	profile = zoneboss.NormalizeFinalBossProfile(command.NounName, profile)
-	isCaptain := strings.Contains(strings.ToLower(command.NounName), "_captain")
-	bossIdentity := zonenpc.BossIdentity{}
-	if isCaptain {
-		bossIdentity = zonepopulation.CaptainIdentity(director, command.NounName)
-		profile = zonenpc.ApplyCaptainProfile(profile, bossIdentity)
-	}
-	position := game.Vec3(currentSession.playerPosition)
-	position.X += 5
-	plan := zonenpc.SpawnPlan{
-		NounName: command.NounName, Position: position,
-		IsCaptain:            isCaptain,
-		IsArena:              currentSession.binding.Mode == game.ModeArena,
-		IsEncounterAuxiliary: true, IsLootSuppressed: true, IsExperienceSuppressed: true, NPCProfile: profile,
-	}
-	if isCaptain {
-		plan.BossIdentity = bossIdentity
-	}
-	if strings.EqualFold(command.NounName, zonenpc.MutationAgentNounName) {
-		// The agent owns its class rank and smoke-model presentation. A
-		// minion body changes its identity and bypasses mutation admission.
-		plan.NounName = zonenpc.MutationAgentNounName
-		plan.ActionProfile = zonenpc.MutationAgentActionProfile()
-		plan.IsActionKnown = true
-	}
-	plans, err := currentSession.zone.AssignSpawnPlanIDs([]zonenpc.SpawnPlan{plan})
-	if err != nil {
-		r.registry.mutex.Unlock()
-		return nil, false, fmt.Errorf("npcSpawnAllocate: %w", err)
-	}
-	plan = plans[0]
-	targetObjectID := currentSession.deployedObjectID
-	packets, err := npcraknet.TargetedSpawn(plan, targetObjectID)
-	if err != nil {
-		r.registry.mutex.Unlock()
-		return nil, false, fmt.Errorf("npcSpawnMarshal: %w", err)
-	}
-	err = currentSession.zone.NPCs().Add(plans, targetObjectID)
-	if err != nil {
-		r.registry.mutex.Unlock()
-		return nil, false, fmt.Errorf("npcSpawnAdd: %w", err)
-	}
-	err = currentSession.zone.PublishNPCSpawn(zoneprojection.NPCSpawn{
-		Plans: plans, TargetObjectID: targetObjectID,
-	}, currentSession.binding.UserID, currentSession.generation)
-	if err != nil {
-		rollbackErr := currentSession.zone.NPCs().RollbackAdd(plans)
-		r.registry.mutex.Unlock()
-		return nil, false, fmt.Errorf(
-			"npcSpawnPublish: %w", errors.Join(err, rollbackErr),
-		)
-	}
-	currentSession.zone.MarkNPCSpawnCommandUsed()
-	generation := currentSession.generation
-	r.registry.sessions[sessionKey] = currentSession
-	r.registry.mutex.Unlock()
-	actionPackets, actionErr := r.damage.npc.scheduleFirstActions(
-		packet, sessionKey, generation, plans, packet.SourceTime,
-	)
-	if actionErr != nil {
-		r.logger.Printf(
-			"RakNet developer NPC spawn retained object=%d noun=%q for %s while first action failed: %v",
-			plan.ObjectID, plan.NounName, packet.Address, actionErr,
-		)
-	} else {
-		packets = append(packets, actionPackets...)
-	}
-	r.logger.Printf(
-		"RakNet developer NPC spawn accepted object=%d noun=%q presentation_noun=%q for %s",
-		plan.ObjectID, command.NounName, plan.NounName, packet.Address,
-	)
-	return packets, true, nil
-}
-
 func developerNPCProfile(
 	director game.CampaignDirector, nounName string,
 ) (game.CampaignNPCProfile, bool) {
@@ -4641,6 +4548,7 @@ func stopGameplayPeerRuntime(
 		}
 	}
 	if peerSession.rideCancel != nil {
+		peerSession.cancelScenarioRide("gameplay lifecycle closed ability", time.Now())
 		peerSession.rideCancel()
 	}
 	if peerSession.obeliskCancel != nil {
@@ -6232,6 +6140,10 @@ func (p campaignPreparation) initialize(
 	if hordePolicyErr != nil {
 		return fmt.Errorf("hordePolicy: %w", hordePolicyErr)
 	}
+	recipeRunID, isAmbientPopulationSuppressed := binding.FocusedRecipeInputs()
+	if recipeRunID == "" {
+		isAmbientPopulationSuppressed = false
+	}
 	zone, _, zoneErr := zoneRegistry.Resolve(
 		uint64(binding.GameID),
 		zone.Member{
@@ -6290,14 +6202,15 @@ func (p campaignPreparation) initialize(
 			Outcome:                 zoneoutcome.NewSession(),
 			Result:                  zoneresult.NewLedger(),
 
-			ResultVote:    zoneresult.NewVoteSession(),
-			Timeline:      zonetimeline.NewSession(),
-			Timer:         p.timer,
-			NPCRandom:     dropRandom,
-			DropRandom:    dropRandom,
-			CapsuleRandom: capsuleRandom,
-			Checkpoint:    p.checkpoint,
-			Restore:       restoreSnapshot,
+			ResultVote:                    zoneresult.NewVoteSession(),
+			Timeline:                      zonetimeline.NewSession(),
+			Timer:                         p.timer,
+			IsAmbientPopulationSuppressed: isAmbientPopulationSuppressed,
+			NPCRandom:                     dropRandom,
+			DropRandom:                    dropRandom,
+			CapsuleRandom:                 capsuleRandom,
+			Checkpoint:                    p.checkpoint,
+			Restore:                       restoreSnapshot,
 		},
 	)
 	if zoneErr != nil {

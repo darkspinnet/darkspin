@@ -9,13 +9,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Progress } from '@/components/ui/progress'
 import LauncherDialog from '@/components/LauncherDialog.vue'
 import ModPage from '@/components/ModPage.vue'
+import LuaPage from '@/components/LuaPage.vue'
+import { GetLuaConsole } from './platform'
 import ProfileSummary from '@/components/ProfileSummary.vue'
 import { campaignDetailFor, campaignLabelFor, campaignLevelFor, profileCreateDate, profileLastPlayedDate } from './profile'
 import ServerRulesConfiguration from '@/components/ServerRulesConfiguration.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { BrowserOpenURL, CancelPatch, ClipboardSetText, CompactSnapshots, CloseDetachedGameInstances, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RefreshRemoteProfiles, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetIdentity, SetServerConfiguration, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
+import { BrowserOpenURL, CancelPatch, ClipboardSetText, CompactSnapshots, CloseDetachedGameInstances, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RefreshRemoteProfiles, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetIdentity, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
 
-const status = ref({ state:'starting', message:'Starting DarkSpinner', identity:'', auth:'Starting', server:'Starting', patch:'Pending', game:'Checking', avatar:'Preparing', profile:'Starting', content:'Pending', identityError:'', authError:'', serverError:'', patchError:'', gameError:'', avatarError:'', profileError:'', contentError:'', lastRun:'', launcherNotice:'', version:'', buildChannel:'production', progress:0, patchProgress:0, avatarProgress:0, contentProgress:0, isAuthenticated:false, isAuthOnline:false, isServerOnline:false, isPatchComplete:false, isPatchActive:false, isGameReady:false, isAvatarReady:false, isProfileStoreReady:false, isContentReady:false, isPlayReady:false, isCinematicSkipped:false, isLastRunFailure:false, isStartupBlocked:false })
+const status = ref({ state:'starting', message:'Starting DarkSpinner', identity:'', auth:'Starting', server:'Starting', patch:'Pending', game:'Checking', avatar:'Preparing', profile:'Starting', content:'Pending', identityError:'', authError:'', serverError:'', patchError:'', gameError:'', avatarError:'', profileError:'', contentError:'', lastRun:'', launcherNotice:'', version:'', buildChannel:'production', progress:0, patchProgress:0, avatarProgress:0, contentProgress:0, isAuthenticated:false, isAuthOnline:false, isServerOnline:false, isPatchComplete:false, isPatchActive:false, isGameReady:false, isAvatarReady:false, isProfileStoreReady:false, isContentReady:false, isPlayReady:false, isCinematicSkipped:false, isIntroSkipped:false, isLastRunFailure:false, isStartupBlocked:false })
 const retainedProfileName = localStorage.getItem('darkspinner.selectedProfile') || localStorage.getItem('darkspinner.identity') || ''
 const retainedDetachedProfileName = localStorage.getItem('darkspinner.detachedProfile') || ''
 const identity = ref(localStorage.getItem('darkspinner.identity') || '')
@@ -41,6 +43,8 @@ const isProfileDeletionBusy = ref(false)
 const isRemoteDeletionBusy = ref(false)
 const remoteDeletionError = ref('')
 const activePage = ref('play')
+const luaConsole = ref({ isAvailable:false, isSelected:false })
+const luaPage = ref(null)
 const modPage = ref(null)
 const isModPlayReady = ref(false)
 const remoteServers = ref([])
@@ -170,7 +174,7 @@ const isCreatingProfile = computed(() =>
   isProfileListLoaded.value && status.value.isAvatarReady && profileAvatars.value.length > 0 &&
   (profiles.value.length === 0 || selectedProfile.value === '__create__'))
 const isFirstRunOnboarding = computed(() => isProfileListLoaded.value && profiles.value.length === 0)
-const isInstallationRequired = computed(() => isInstallationLoaded.value && !installation.value.isLocalReady)
+const isInstallationRequired = computed(() => isInstallationLoaded.value && !installation.value.isLocalReady && !luaConsole.value.isSelected)
 const isIntegrationSelected = computed(() => isStartMenuShortcut.value || isDesktopShortcut.value || isSteamLaunch.value)
 const isReportReady = computed(() => !!reportTitle.value.trim() && !isReportBusy.value)
 const isNewProfileNameValid = computed(() => {
@@ -407,6 +411,12 @@ onMounted(async () => {
     if (next.patch === 'Update available') void maybeAutoPatch()
   })
   status.value = { ...status.value, ...(await GetStatus()) }
+  luaConsole.value = await GetLuaConsole()
+  if (luaConsole.value.isSelected) {
+    activePage.value = 'lua'
+    isInstallationLoaded.value = true
+    return
+  }
   showLauncherNotice(status.value.launcherNotice)
   installation.value = await GetInstallationStatus()
   integrationStatus.value = await GetLauncherIntegrationStatus()
@@ -595,6 +605,24 @@ async function confirmMultiplayerConfiguration() {
 function cancelMultiplayerConfiguration() {
   isMultiplayerConfirmOpen.value = false
   isConfiguredMultiplayerEnabled.value = serverConfiguration.value.isMultiplayerEnabled
+}
+
+async function setSkipCinematic(isSkipped) {
+  try {
+    const isEnabled = isSkipped === true
+    await SetSkipCinematic(isEnabled)
+    status.value.isCinematicSkipped = isEnabled
+  }
+  catch (error) { serverConfigurationMessage.value = visibleLauncherText(error) }
+}
+
+async function setSkipIntro(isSkipped) {
+  try {
+    const isEnabled = isSkipped === true
+    await SetSkipIntro(isEnabled)
+    status.value.isIntroSkipped = isEnabled
+  }
+  catch (error) { serverConfigurationMessage.value = visibleLauncherText(error) }
 }
 
 async function applyServerConfiguration() {
@@ -1255,11 +1283,12 @@ async function copyLauncherFailure() {
       <div v-if="!isInstallationRequired" class="workspace-navigation">
         <button class="workspace-wordmark" type="button" aria-label="Show Dark Spin credits" @click="isCreditsOpen = true"><span>DARK</span><strong>SPIN</strong></button>
         <TabsList aria-label="Launcher pages">
-            <TabsTrigger value="play">Launch</TabsTrigger>
-            <TabsTrigger value="mod">Mod</TabsTrigger>
-            <TabsTrigger v-if="isExperimentalLauncherFeatureVisible" value="remote">Remote</TabsTrigger>
-            <TabsTrigger v-if="isExperimentalLauncherFeatureVisible" value="launcher">Detached</TabsTrigger>
-            <TabsTrigger value="config">Config</TabsTrigger>
+            <TabsTrigger value="play" :disabled="luaConsole.isSelected">Launch</TabsTrigger>
+            <TabsTrigger value="mod" :disabled="luaConsole.isSelected">Mod</TabsTrigger>
+            <TabsTrigger v-if="isExperimentalLauncherFeatureVisible" value="remote" :disabled="luaConsole.isSelected">Remote</TabsTrigger>
+            <TabsTrigger v-if="isExperimentalLauncherFeatureVisible" value="launcher" :disabled="luaConsole.isSelected">Detached</TabsTrigger>
+            <TabsTrigger value="config" :disabled="luaConsole.isSelected">Config</TabsTrigger>
+            <TabsTrigger v-if="luaConsole.isAvailable" value="lua">Lua</TabsTrigger>
         </TabsList>
         <Button variant="outline" class="report-button" type="button" :disabled="isReportBusy" @click="openReportComposer">SEND REPORT</Button>
       </div>
@@ -1298,6 +1327,7 @@ async function copyLauncherFailure() {
       </Card>
     </section>
 
+    <TabsContent v-else-if="activePage === 'lua'" value="lua" as-child><LuaPage ref="luaPage" @state="luaConsole = $event" /></TabsContent>
     <TabsContent v-else-if="activePage === 'remote'" value="remote" as-child><section class="command-frame launch-command-frame remote-command-frame">
       <div class="launch-main">
         <Card class="bay launcher-bay">
@@ -1376,6 +1406,8 @@ async function copyLauncherFailure() {
             <SelectItem value="auto">AUTO — capture and detect ordering anomalies</SelectItem>
           </SelectContent>
           </Select>
+          <label class="management-toggle"><Checkbox :model-value="status.isIntroSkipped" :disabled="isBusy || isServerConfigurationBusy" @update:model-value="setSkipIntro" /><span><strong>SKIP INTRO MOVIES</strong><small>Use the client's Escape handling for opening movies. Applies to new game instances.</small></span></label>
+          <label class="management-toggle"><Checkbox :model-value="status.isCinematicSkipped" :disabled="isBusy || isServerConfigurationBusy" @update:model-value="setSkipCinematic" /><span><strong>SKIP IN-GAME CINEMATICS</strong><small>Use the client's Escape handling for skippable cinematics. Applies to new game instances.</small></span></label>
           <template v-if="wineRunnerConfiguration.isSupported">
             <div class="config-wine-runner-heading">
               <label class="config-locale" for="config-wine-runner"><strong>WINE RUNTIME</strong></label>
@@ -1490,7 +1522,7 @@ async function copyLauncherFailure() {
       </div>
     </section></TabsContent>
 
-    <TabsContent v-if="!isInstallationRequired" v-show="activePage === 'mod'" value="mod" force-mount as-child><ModPage ref="modPage" :status="status" :is-active="activePage === 'mod'" @readiness="isModPlayReady = $event" @launch="activeClientRoute = 'mod'" /></TabsContent>
+    <TabsContent v-if="!isInstallationRequired && !luaConsole.isSelected" v-show="activePage === 'mod'" value="mod" force-mount as-child><ModPage ref="modPage" :status="status" :is-active="activePage === 'mod'" @readiness="isModPlayReady = $event" @launch="activeClientRoute = 'mod'" /></TabsContent>
     </Tabs>
 
     <footer :class="{ 'launch-footer':!isInstallationRequired }">
@@ -1509,19 +1541,25 @@ async function copyLauncherFailure() {
           </div>
         </div>
         <div class="launcher-control-row">
-          <Button variant="outline" class="launcher-action patch-action" type="button" :disabled="isPatchCancelRequested || status.state === 'cancelling' || (!isPatchBusy && status.state !== 'cancelled' && (!status.isGameReady || status.isStartupBlocked))" @click="requestPatch">{{ status.state === 'cancelling' || isPatchCancelRequested ? 'CANCELLING...' : isPatchBusy ? 'CANCEL' : 'PATCH' }}</Button>
+          <Button v-if="activePage === 'lua'" variant="outline" class="launcher-action patch-action" type="button" :disabled="!luaPage?.canStop" @click="luaPage?.stop()">{{ luaPage?.isBusy ? 'WORKING...' : 'STOP SESSION' }}</Button>
+          <Button v-else variant="outline" class="launcher-action patch-action" type="button" :disabled="isPatchCancelRequested || status.state === 'cancelling' || (!isPatchBusy && status.state !== 'cancelled' && (!status.isGameReady || status.isStartupBlocked))" @click="requestPatch">{{ status.state === 'cancelling' || isPatchCancelRequested ? 'CANCELLING...' : isPatchBusy ? 'CANCEL' : 'PATCH' }}</Button>
           <div class="launcher-control-center">
-            <div class="launcher-progress-status" :title="launcherProgressLabel">{{ launcherProgressLabel }}</div>
+            <div v-if="activePage === 'lua'" id="lua-scenario-picker"></div>
+            <template v-else><div class="launcher-progress-status" :title="launcherProgressLabel">{{ launcherProgressLabel }}</div>
             <div class="launcher-auto-options">
               <label><Checkbox v-model="isAutoPatchEnabled" /><span>AUTO PATCH</span></label>
               <label><Checkbox v-model="isAutoLaunchEnabled" /><span>AUTO PLAY</span></label>
-            </div>
+            </div></template>
           </div>
           <div class="launcher-play-group">
+            <Button v-if="activePage === 'lua'" variant="destructive" class="launcher-action detach-action kill-detached-action" type="button" :disabled="!luaPage?.canKill" title="Terminate this scenario's owned clients and stop its server" @click="luaPage?.kill()">KILL ALL</Button>
+            <Button v-if="activePage === 'lua'" variant="default" class="launcher-action play-action" type="button" :disabled="!luaPage?.canRun" @click="luaPage?.run()">{{ luaPage?.isBusy ? 'WORKING...' : 'RUN' }}</Button>
+            <template v-else>
             <Button variant="destructive" v-if="isDetachedKillVisible" class="launcher-action detach-action kill-detached-action" type="button" :disabled="isClientStopBusy" title="Close every detached or untracked game client" @click="stopActiveClient">{{ isClientStopBusy ? 'CLOSING...' : 'KILL ALL' }}</Button>
 			<Button variant="destructive" v-else-if="isAttachedKillVisible" class="launcher-action detach-action kill-detached-action" type="button" :disabled="isClientStopBusy" title="Close the active game client" @click="stopActiveClient">{{ isClientStopBusy ? 'CLOSING...' : 'KILL' }}</Button>
             <Button variant="outline" v-else-if="activeInterruptedMission" class="launcher-action detach-action mission-fresh" type="button" :disabled="!isHeaderPlayEnabled || isMissionChoiceBusy" title="Discard the interrupted deployment and start fresh" @click="startFresh">{{ isMissionChoiceBusy ? 'STARTING...' : 'START FRESH' }}</Button>
             <Button variant="default" class="launcher-action play-action" type="button" :class="{ counting:isAutoLaunchCounting }" :disabled="activePage === 'mod' ? !isModPlayReady : activePage === 'config' || (!isHeaderPlayEnabled && !isAutoLaunchCounting)" :title="activePage === 'mod' ? 'Launch the selected modded Crogenitor' : dockPlayTitle" @click="activePage === 'mod' ? modPage?.launch() : handlePlayButton()">{{ activePage === 'mod' ? 'LAUNCH MODDED' : dockPlayLabel }}</Button>
+            </template>
           </div>
         </div>
       </div>

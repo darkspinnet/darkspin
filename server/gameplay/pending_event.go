@@ -23,6 +23,20 @@ func (r gameplayPendingRuntime) consumePlayerEventCommand(
 	if !isSessionFound {
 		return nil, false, nil
 	}
+	spawnPackets, isSpawnHandled, spawnErr := r.consumeScenarioSpawn(ctx, packet, queuedSession, isCommandEligible)
+	if spawnErr != nil {
+		return spawnPackets, isSpawnHandled, fmt.Errorf("scenarioSpawn: %w", spawnErr)
+	}
+	if isSpawnHandled {
+		return spawnPackets, true, nil
+	}
+	controlPackets, isControlHandled, controlErr := r.consumeScenarioNPCControl(ctx, packet, queuedSession, isCommandEligible)
+	if controlErr != nil {
+		return controlPackets, isControlHandled, fmt.Errorf("scenarioNPC: %w", controlErr)
+	}
+	if isControlHandled {
+		return controlPackets, true, nil
+	}
 	command, isCommandFound, err := r.gameplayJoin.ConsumePlayerEventCommand(
 		ctx, int64(queuedSession.binding.UserID), queuedSession.binding.GameID,
 		packet.ScheduleGroup != nil || packet.ScheduleGroupResult != nil,

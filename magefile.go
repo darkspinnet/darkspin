@@ -1020,7 +1020,6 @@ func (Darkrun) Server() error {
 	arguments := []string{
 		"server",
 		"--game-path", installPath,
-		"--trace", "server.jsonl",
 	}
 	command := exec.Command(binaryPath, arguments...)
 	command.Dir = filepath.Dir(binaryPath)

@@ -1,0 +1,12 @@
+---@meta
+
+---Structured failure; Parallel retains every failed named branch in Failures.
+---@class ScenarioError
+---@field Code string
+---@field Context string
+---@field Message string
+---@field ClientInstanceID string|nil
+---@field ActionID string|nil
+---@field Cause ScenarioError|nil
+---@field Failures table<string,ScenarioError>|nil
+---@field Details table|nil Operation-specific diagnostic partials; SpawnControlled failure retains spawn_receipt here and returns nil as its result.

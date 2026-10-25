@@ -1,0 +1,88 @@
+---@meta
+
+---Mission scope for this exact owned process and profile.
+---Snapshot() samples current profile/gameplay metadata. Wait() uses the current
+---client timeout unless overridden (1-120000 milliseconds), and requires live
+---authentication, a nonzero game ID, available active server gameplay with the
+---same gameplay_game_id as game_id, the 'dungeon' stage and final dungeon setup
+---commitment, a deployed server hero and a processed native active-world/controlled-handle
+---observation. It pins the process, login/account and game while waiting. This
+---does not establish visibility of every object, attack success or cross-client membership.
+---@class ClientMission
+---@field Enter fun(self:ClientMission,difficulty:integer,timeout_ms?:integer):WorldSnapshot|nil,ScenarioError|nil Composes Select, Start, Continue and world readiness under one total timeout. Returns the ready world; partial failing-step receipt accompanies errors. Never replay blindly after failure. Requires the navigation entry flow and an authenticated client outside a game.
+---@field BeamOut fun(self:ClientMission,timeout_ms?:integer):MissionBeamOutResult|nil,ScenarioError|nil Requires completed boss and live hero, waits for native HUD readiness, invokes authored Beam Out at most once, then waits for actual personal server victory commitment. An existing native request is observed without another invocation; never replay an unknown outcome.
+---@field Select fun(self:ClientMission,difficulty:integer,timeout_ms?:integer):MissionSelectResult|nil,ScenarioError|nil Selects a first-mode campaign difficulty from 1 to 24 through normal UI handlers, waiting for each observed step. No direct field writes or replay of attempted steps.
+---@field Start fun(self:ClientMission,timeout_ms?:integer):MissionActionResult|nil,ScenarioError|nil Requires an eligible selected campaign, invokes its authored Play handler once, then waits for server deployment. No automatic replay.
+---@field Continue fun(self:ClientMission,timeout_ms?:integer):MissionActionResult|nil,ScenarioError|nil Waits for native Accept readiness or existing same-session dungeon commitment. Invokes Accept at most once, then waits for commitment. Use Parallel for party members; automatic group entry returns is_already_entered=true without invoking Accept.
+---@field SnapshotDeployment fun(self:ClientMission):WindowCommandResult|nil,ScenarioError|nil Copies native deployment UI state; differs from server Snapshot().
+---@field WaitDeploymentReady fun(self:ClientMission,timeout_ms?:integer):WindowCommandResult|nil,ScenarioError|nil Waits for the native Continue action guard, without sending input.
+---@field SnapshotSelection fun(self:ClientMission):WindowCommandResult|nil,ScenarioError|nil Copies allowlisted native map UI state; absent fields are unknown.
+---@field WaitSelection fun(self:ClientMission,difficulty?:integer,timeout_ms?:integer):WindowCommandResult|nil,ScenarioError|nil Waits for an enabled stable Campaign selection; difficulty 0 or omitted accepts any difficulty.
+---@field SnapshotMission fun(self:ClientMission):MissionObservation|nil,ScenarioError|nil
+---@field Wait fun(self:ClientMission,timeout_ms?:integer):MissionObservation|nil,ScenarioError|nil Last partial state may accompany an error.
+---@field WaitDeployment fun(self:ClientMission,timeout_ms?:integer):MissionObservation|nil,ScenarioError|nil Waits for matching active server gameplay at countdown, preparing or dungeon. Later stages satisfy this milestone; does not prove native Continue readiness or observation of every earlier phase.
+
+---@class MissionObservation
+---@field world? WorldSnapshot Server and native readiness snapshot when Wait() succeeds.
+---@field client_id string Explicit owned client target.
+---@field instance_id string Exact owned native process instance.
+---@field pid integer
+---@field state ProfileSnapshot Independently sampled server state; partial on error.
+
+---@class MissionBeamOutResult
+---@field action WindowCommandResult|nil Native handler receipt only; never proof of victory. Nil if no handler dispatch was needed.
+---@field readiness MissionBeamOutReadiness|nil Last pure native HUD eligibility query; retained on failure.
+---@field world WorldSnapshot Last sampled server world and personal outcome; partial on failure.
+---@field is_already_committed boolean Personal server victory was observed before this call dispatched any handler.
+---@field is_already_requested boolean Native request latch was already set; this call did not invoke Beam Out again.
+
+---@class MissionBeamOutReadiness: WindowCommandResult
+---@field beam_out_state MissionBeamOutState|nil
+
+---@class MissionBeamOutState
+---@field is_available boolean
+---@field is_ready boolean Positive native HUD handler guard, rechecked by dispatch.
+---@field is_requested boolean Actual native request latch; does not prove server victory.
+
+---@class MissionActionResult
+---@field is_already_entered boolean Continue observed the same owned login/game committed without invoking Accept. action is nil before dispatch, or retains an explicit native no-invocation refusal receipt if the screen advanced during dispatch. Unknown outcomes remain errors.
+---@field action WindowCommandResult|nil Present when native dispatch was attempted; partial on failure.
+---@field readiness WindowCommandResult|nil Last native eligibility evidence, retained on failure.
+---@field observation MissionObservation Last server mission evidence; does not prove world rendering.
+
+---@class MissionDeployment
+---@field is_available boolean
+---@field is_loaded boolean
+---@field is_ready boolean Positive native Continue guard, rechecked by the action itself.
+---@field is_results_screen boolean
+---@field squad_index integer|nil
+---@field major_difficulty integer|nil
+---@field minor_difficulty integer|nil
+---@field is_squad_valid boolean|nil
+---@field is_accept_disabled boolean|nil
+---@field is_accept_visible boolean|nil
+---@field are_squad_buttons_disabled boolean|nil
+
+---Copied on the owned native window thread. Null fields are unknown; a successful
+---processing receipt alone is not proof of an available map or usable Start.
+---@class MissionSelection
+---@field is_available boolean
+---@field is_loaded boolean
+---@field is_campaign_ready boolean Positive native Campaign action guard.
+---@field is_previous_ready boolean Positive native Previous action guard.
+---@field is_next_ready boolean Positive native Next action guard.
+---@field difficulty_mode integer|nil Infection=1, Outbreak=2, Pandemic=3. Select currently supports Infection only.
+---@field state integer|nil Native map state; Difficulty selection is 5.
+---@field difficulty integer|nil One-based global difficulty, 1-72.
+---@field game_type integer|nil Campaign chain is 2.
+---@field animation_state integer|nil Zero when difficulty carousel is settled.
+---@field animation_difficulty integer|nil Settled carousel selection.
+---@field is_transactions_processing boolean|nil
+---@field are_party_members_ready boolean|nil
+---@field is_start_disabled boolean|nil
+---@field is_start_visible boolean|nil
+
+---@class MissionSelectResult
+---@field actions WindowCommandResult[] Copied receipts for distinct attempted Campaign/carousel actions.
+---@field selection WindowCommandResult|nil Last native selection evidence; partial on failure.
+---@field is_already_selected boolean True when no action was required.

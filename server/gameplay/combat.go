@@ -5935,6 +5935,10 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 	zone := peerSession.zone
 	identity := gameplayProducerIdentityFromSession(sessionKey, peerSession, isCurrent)
 	r.registry.mutex.RUnlock()
+	plans = scenarioAutonomousNPCPlans(npcSession, plans)
+	if len(plans) == 0 {
+		return nil, nil
+	}
 	plans, err := r.alertAllies(zone, plans, timestamp)
 	if err != nil {
 		return nil, fmt.Errorf("firstActionAllies: %w", err)

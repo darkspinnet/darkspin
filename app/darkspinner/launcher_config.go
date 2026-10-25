@@ -7,16 +7,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/BurntSushi/toml"
 )
 
-// launcherSettings is the launcher-owned darkspin/launcher.toml. It lives
-// apart from darkspin.toml because the server rewrites that file from its own
-// fields and would drop launcher keys.
+var launcherConfigMu sync.Mutex
+
+// launcherSettings lives in [launcher] and its subtables in darkspin.toml.
 type launcherSettings struct {
-	Wine launcherWineSettings `toml:"wine"`
-	Mod  launcherModSettings  `toml:"mod"`
+	Wine               launcherWineSettings `toml:"wine"`
+	Mod                launcherModSettings  `toml:"mod"`
+	IsIntroSkipped     bool                 `toml:"is_intro_skipped"`
+	IsCinematicSkipped bool                 `toml:"is_cinematic_skipped"`
 }
 
 type launcherModSettings struct {
@@ -29,35 +32,59 @@ type launcherWineSettings struct {
 }
 
 func readLauncherSettings(path string) (launcherSettings, error) {
+	launcherConfigMu.Lock()
+	defer launcherConfigMu.Unlock()
 	settings := launcherSettings{}
-	r, err := os.Open(path)
+	err := migrateLauncherSettingsLocked(path)
+	if err != nil {
+		return settings, fmt.Errorf("settingMigrate: %w", err)
+	}
+	contents, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return settings, nil
 	}
 	if err != nil {
 		return settings, fmt.Errorf("settingOpen: %w", err)
 	}
-	defer r.Close()
-	_, err = toml.NewDecoder(r).Decode(&settings)
+	var document struct {
+		Launcher launcherSettings `toml:"launcher"`
+	}
+	err = toml.Unmarshal(contents, &document)
 	if err != nil {
 		return settings, fmt.Errorf("settingDecode: %w", err)
 	}
-	return settings, nil
+	return document.Launcher, nil
 }
 
 func writeLauncherSettings(path string, settings launcherSettings) error {
-	var encoded bytes.Buffer
-	err := toml.NewEncoder(&encoded).Encode(settings)
+	launcherConfigMu.Lock()
+	defer launcherConfigMu.Unlock()
+	err := migrateLauncherSettingsLocked(path)
 	if err != nil {
-		return fmt.Errorf("settingEncode: %w", err)
+		return fmt.Errorf("settingMigrate: %w", err)
 	}
-	err = os.MkdirAll(filepath.Dir(path), 0o755)
+	sections, err := readLauncherSections(path)
 	if err != nil {
-		return fmt.Errorf("settingMkdir: %w", err)
+		return fmt.Errorf("settingRead: %w", err)
 	}
-	err = replaceLauncherConfig(path, encoded.Bytes())
+	launcherSections, err := launcherSection(sections, "launcher")
 	if err != nil {
-		return fmt.Errorf("settingReplace: %w", err)
+		return fmt.Errorf("settingSection: %w", err)
+	}
+	wineFields, err := launcherSection(launcherSections, "wine")
+	if err != nil {
+		return fmt.Errorf("wineSection: %w", err)
+	}
+	modFields, err := launcherSection(launcherSections, "mod")
+	if err != nil {
+		return fmt.Errorf("modSection: %w", err)
+	}
+	wineFields["runtime_path"] = settings.Wine.RuntimePath
+	modFields["spore_path"] = settings.Mod.SporePath
+	modFields["is_detection_attempted"] = settings.Mod.IsDetectionAttempted
+	err = saveLauncherSections(path, sections)
+	if err != nil {
+		return fmt.Errorf("settingSave: %w", err)
 	}
 	return nil
 }
@@ -65,6 +92,8 @@ func writeLauncherSettings(path string, settings launcherSettings) error {
 // writeLauncherConfigLine replaces or inserts one `key = ...` line in the
 // [launcher] table of darkspin.toml and leaves every other line untouched.
 func writeLauncherConfigLine(configPath, key, line string) error {
+	launcherConfigMu.Lock()
+	defer launcherConfigMu.Unlock()
 	contents, err := os.ReadFile(configPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("launcherConfigRead: %w", err)

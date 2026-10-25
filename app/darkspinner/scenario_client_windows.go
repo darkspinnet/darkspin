@@ -18,21 +18,26 @@ import (
 )
 
 type scenarioClientRequest struct {
-	RunID            string
-	GamePath         string
-	WorkingDirectory string
-	FangPath         string
-	Arguments        []string
-	ServerAddress    string
+	RunID              string
+	GamePath           string
+	WorkingDirectory   string
+	FangPath           string
+	Arguments          []string
+	ServerAddress      string
+	ModManifest        string
+	EnvironmentEntries map[string]string
+	Observer           injectedLaunchObserver
 }
 
 type scenarioClient struct {
-	runID        string
-	mutex        sync.Mutex
-	process      *injectedProcess
-	cancellation *injectedCancellation
-	capability   scenario.Capability
-	processID    uint32
+	runID              string
+	mutex              sync.Mutex
+	process            *injectedProcess
+	cancellation       *injectedCancellation
+	capability         scenario.Capability
+	processID          uint32
+	environmentEntries map[string]string
+	observer           injectedLaunchObserver
 }
 
 func startScenarioClient(lifetimeContext, startupContext context.Context, req scenarioClientRequest) (*scenarioClient, scenario.Capability, error) {
@@ -46,14 +51,26 @@ func startScenarioClient(lifetimeContext, startupContext context.Context, req sc
 	defer cancelSetup()
 	stopLifetime := context.AfterFunc(lifetimeContext, cancelSetup)
 	defer stopLifetime()
-	client := &scenarioClient{runID: req.RunID}
-	process, err := startInjectedProcess(setupContext, req.GamePath, req.WorkingDirectory, req.FangPath, req.Arguments, req.ServerAddress, client)
+	client := &scenarioClient{runID: req.RunID, observer: req.Observer}
+	if req.EnvironmentEntries != nil {
+		client.environmentEntries = make(map[string]string, len(req.EnvironmentEntries))
+		for name, contents := range req.EnvironmentEntries {
+			client.environmentEntries[name] = contents
+		}
+	}
+	process, err := startInjectedProcess(setupContext, req.GamePath, req.WorkingDirectory, req.FangPath, req.Arguments, req.ServerAddress, client, req.ModManifest)
+	delete(client.environmentEntries, launchJWTEnvironment)
+	delete(client.environmentEntries, "DARKSPIN_DEBUG_TOKEN")
 	if err != nil {
 		return nil, scenario.Capability{}, fmt.Errorf("clientSuspend: %w", err)
 	}
 	client.process = process
 	client.cancellation = process.watch(lifetimeContext)
 	return client, client.capability, nil
+}
+
+func (e *scenarioClient) GameEnvironment() map[string]string {
+	return e.environmentEntries
 }
 
 func (e *scenarioClient) BeforeResume(ctx context.Context, process uintptr, moduleHandle uint32, fangPath string) error {
@@ -75,6 +92,12 @@ func (e *scenarioClient) BeforeResume(ctx context.Context, process uintptr, modu
 		return errors.New("loaded Fang does not expose scenario-v1")
 	}
 	e.capability = capability
+	if e.observer != nil {
+		err = e.observer.BeforeResume(ctx, process, moduleHandle, fangPath)
+		if err != nil {
+			return fmt.Errorf("clientBefore: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -87,6 +110,12 @@ func (e *scenarioClient) AfterResume(ctx context.Context, processID uint32) erro
 		return errors.New("resumed client process ID is missing")
 	}
 	e.processID = processID
+	if e.observer != nil {
+		err = e.observer.AfterResume(ctx, processID)
+		if err != nil {
+			return fmt.Errorf("clientAfter: %w", err)
+		}
+	}
 	return nil
 }
 

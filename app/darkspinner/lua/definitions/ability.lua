@@ -1,0 +1,94 @@
+---@meta
+
+---@class ClientAbility
+---@field Snapshot fun(self:ClientAbility):AbilityObservation|nil,ScenarioError|nil Read-only actor/ability support, resource gates and last semantic cast/rejection. Currently supports only Blitz's Ride the Lightning.
+---@field Cast fun(self:ClientAbility,point:WorldPosition,timeout_ms?:integer):AbilityCastResult|nil,ScenarioError|nil One fixed native SpecialTwo request, then wait for the exact next supported server cast's acceptance, completed arrival processing and release. Impact remains optional and separately observed. Default client timeout. Unsupported metadata/resources fail before input; errors/unknown outcomes are never replayed.
+
+---@class NativeActiveCast
+---@field action_index integer Fixed native SpecialTwo index 2.
+---@field is_query_processed boolean
+---@field is_native_request_attempted boolean
+---@field native_result_code integer|nil Negative is explicit refusal; positive 1/2/3 means native admission/approach/queue only.
+---@field ability_id integer|nil Actual native resolved ability ID.
+---@field target_handle integer|nil Opaque native target, not a server object ID.
+---@field is_native_ground_query_success boolean
+---@field ray_point WorldPosition|nil
+---@field chosen_ground_point WorldPosition|nil
+
+---@class AbilityCast
+---@field revision integer Server-owned semantic revision.
+---@field actor_object_id integer
+---@field creature_index integer
+---@field ability_id integer
+---@field ability_asset string
+---@field input_sync_stamp integer Actual server command stamp; not proven equal to an unexposed native request stamp.
+---@field request_stamp integer Actual server request byte.
+---@field phase string
+---@field is_accepted boolean Ordinary server scheduling was admitted.
+---@field is_arrived boolean Actual supported arrival callback.
+---@field is_arrival_processed boolean Arrival producer completed its optional impact attempt or known skip. Does not imply a hit or network delivery.
+---@field is_impact_committed boolean Actual supported impact producer committed.
+---@field is_released boolean Actual supported release completed.
+---@field is_failed boolean
+---@field accepted_at string
+---@field arrived_at string
+---@field arrival_processed_at string
+---@field impact_at string
+---@field released_at string
+---@field failed_at string
+---@field failure_reason? string
+---@field target_object_id integer
+---@field destination WorldPosition Actual server cast destination, not requested-coordinate arrival proof.
+---@field damage number Actual supported damage result; zero does not prove a hit.
+---@field is_target_defeated boolean
+
+---@class AbilityRejection
+---@field revision integer Independent rejection revision; does not erase a previous cast.
+---@field actor_object_id integer
+---@field ability_id integer
+---@field input_sync_stamp integer
+---@field request_stamp integer
+---@field at string
+---@field reason string
+
+---@class AbilityState
+---@field captured_at string
+---@field is_available boolean
+---@field unavailable_reason? string
+---@field is_supported boolean Current installed catalog SpecialTwo is supported LightningRogueActive/TeleportStrike.
+---@field user_id integer
+---@field game_id integer
+---@field peer_generation integer
+---@field transport_generation integer
+---@field zone_generation integer
+---@field actor_object_id integer
+---@field creature_index integer
+---@field creature_noun integer
+---@field ability_id integer
+---@field ability_asset string
+---@field ability_name string Full in-game name.
+---@field mana_point number
+---@field mana_cost number Meaningful only when is_mana_cost_available.
+---@field is_mana_cost_available boolean
+---@field cooldown_remaining_ms integer
+---@field release_remaining_ms integer
+---@field is_gate_state_available boolean
+---@field last_revision integer Last allocated supported-cast revision in this admitted peer; stays monotonic across hero switches. Preparing admission is explicitly unavailable; cast can be nil for another actor.
+---@field phase string
+---@field cast AbilityCast|nil
+---@field rejection AbilityRejection|nil
+
+---@class AbilityObservation
+---@field client_id string
+---@field instance_id string
+---@field pid integer
+---@field source 'server_supported_ability'
+---@field state AbilityState
+
+---@class AbilityCastResult
+---@field before AbilityObservation
+---@field observation AbilityObservation Latest partial semantic observation, retained on failure.
+---@field action WindowCommandResult|nil Native local request/admission evidence only.
+---@field native WindowCommandResult|nil Latest independent pinned native actor/frame observation.
+---@field is_completed boolean Exact next server revision reached acceptance, arrival, completed arrival processing and release without failure; does not prove impact or a target hit.
+---@field is_native_server_stamp_correlated false Native input stamp is not exposed; no exact cross-source stamp equality is claimed.

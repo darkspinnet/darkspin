@@ -40,6 +40,14 @@ Never use .cache, instead put it in bin/cache/
   logs, or carry it into the first themed launcher view. Do not create a native
   fallback popup.
 
+## Configuration ownership
+
+- Store every user-exposed configuration option in `darkspin.toml`, including launcher preferences. Use named sections within that file instead of creating separate configuration files for individual features.
+- Do not create `darkspin/launcher.toml`, another `launcher.toml`, or other feature-specific TOML files. When replacing an older configuration file, migrate its settings into `darkspin.toml` and delete the old file only after a successful save. Preserve explicit settings already present in `darkspin.toml`.
+- Every TOML configuration file and its user-exposed settings must be editable through the launcher's Config interface; do not add settings that require users to edit files manually.
+- Server rules currently live in `server.toml`. Include that existing file in the launcher editing requirement; its existence is not permission to introduce more TOML files.
+- Configuration writers must preserve settings owned by other features when saving a shared TOML file.
+
 ## Changelog
 
 - Record user-visible changes in the root `CHANGELOG.md` under a daily heading

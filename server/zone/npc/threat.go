@@ -46,7 +46,7 @@ func (e *Session) alertObjectLocked(objectID, targetObjectID uint32) (Snapshot, 
 	if !isFound || npc.IsDefeated || !npc.IsPublished || npc.HitPoint <= 0 {
 		return Snapshot{}, false, fmt.Errorf("npcAlertUnavailable: %d", objectID)
 	}
-	if npc.Plan.IsFixture || npc.Plan.NPCProfile.AggroType != 0 {
+	if !npc.IsScenarioAIEnabled() || npc.Plan.IsFixture || npc.Plan.NPCProfile.AggroType != 0 {
 		return npc, false, nil
 	}
 	for _, threat := range npc.threats {

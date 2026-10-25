@@ -143,6 +143,9 @@ func (e *scenarioWGCAttempt) copySurface(ctx context.Context, capture *scenarioE
 	box := scenarioWGCBox{Right: width, Bottom: height, Back: 1}
 	callScenarioWGC(e.deviceContext, 46, staging, 0, 0, 0, 0, texture, 0, uintptr(unsafe.Pointer(&box)))
 	runtime.KeepAlive(&box)
+	// Submit the private copy before polling Map(DO_NOT_WAIT). A newly created
+	// immediate context has no render/present loop to flush this work for us.
+	callScenarioWGC(e.deviceContext, 111) // ID3D11DeviceContext::Flush is void.
 	err = scenarioEntryContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("wgcDeviceStatusContext: %w", err)

@@ -127,14 +127,14 @@ func (a *App) GetModConfiguration() (ModConfiguration, error) {
 	if err != nil {
 		return ModConfiguration{}, fmt.Errorf("modResolve: %w", err)
 	}
-	settings, err := readLauncherSettings(paths.settingPath)
+	settings, err := readLauncherSettings(paths.configPath)
 	if err != nil {
 		return ModConfiguration{}, fmt.Errorf("modSettings: %w", err)
 	}
 	if !settings.Mod.IsDetectionAttempted && settings.Mod.SporePath == "" {
 		settings.Mod.SporePath = detectSporeInstallation()
 		settings.Mod.IsDetectionAttempted = true
-		err = writeLauncherSettings(paths.settingPath, settings)
+		err = writeLauncherSettings(paths.configPath, settings)
 		if err != nil {
 			return ModConfiguration{}, fmt.Errorf("detectSave: %w", err)
 		}
@@ -171,14 +171,14 @@ func (a *App) SetModSporePath(path string) error {
 	if err != nil {
 		return fmt.Errorf("modResolve: %w", err)
 	}
-	settings, err := readLauncherSettings(paths.settingPath)
+	settings, err := readLauncherSettings(paths.configPath)
 	if err != nil {
 		return fmt.Errorf("modSettings: %w", err)
 	}
 	settings.Mod.SporePath = root
 	a.modState.creations = nil
 	settings.Mod.IsDetectionAttempted = true
-	err = writeLauncherSettings(paths.settingPath, settings)
+	err = writeLauncherSettings(paths.configPath, settings)
 	if err != nil {
 		return fmt.Errorf("sourceSave: %w", err)
 	}

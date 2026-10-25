@@ -145,6 +145,7 @@ type Instance struct {
 	isStartPublished           bool
 	isAdmissionReserved        bool
 	isCheckpointRestore        bool
+	gameplayReady              chan struct{}
 	tutorialCompletions        map[int64]struct{}
 	effectPreviews             map[int64]EffectPreview
 	resourceCommands           map[int64]PlayerResourceCommand
@@ -375,6 +376,7 @@ func (g *Instance) FinalizePreGame() bool {
 	switch g.Info.State {
 	case StateNew, StateInitializing:
 		g.Info.State = StatePreGame
+		g.notifyGameplayReadyLocked()
 		return true
 	case StatePreGame:
 		return true
@@ -1062,6 +1064,7 @@ func (g *Instance) SetState(state SessionState) {
 // Manager owns active game instances.
 type Manager struct {
 	scenarioMapState
+	scenarioRecipeState
 	mu                    sync.RWMutex
 	nextID                uint32
 	hostNetwork           NetworkPair
@@ -1402,6 +1405,7 @@ func (m *Manager) Remove(id uint32) {
 	removalObserver := m.removalObserver
 	m.mu.Unlock()
 	if instance != nil {
+		instance.retireGameplayWait()
 		for _, player := range instance.Players() {
 			instance.RemovePlayer(player.Account.ID)
 		}

@@ -52,6 +52,10 @@ func (e *Manager) ConfigureScenario(ctx context.Context, req ScenarioMapRequest)
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	focusedRecipe, isFocusedRecipe := e.recipesByUser[req.UserID]
+	if isFocusedRecipe {
+		return fmt.Errorf("scenario user already has focused recipe run %q", focusedRecipe.RunID)
+	}
 	if int(req.Occurrence) > len(e.chainLevels) ||
 		!strings.EqualFold(strings.TrimSuffix(e.chainLevels[req.Occurrence-1], ".Level"), req.Level) {
 		return errors.New("scenario authored campaign occurrence mismatch")

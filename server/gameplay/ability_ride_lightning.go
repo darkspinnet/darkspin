@@ -19,7 +19,17 @@ import (
 
 const rideLightningShockDuration = 3 * time.Second
 
+func (e campaignCharacterAbilityRequest) rejectScenarioRide(reason string) ([][]byte, error) {
+	e.recordScenarioRideRejection(reason)
+	packets, err := e.reject(reason)
+	if err != nil {
+		return nil, fmt.Errorf("rideReject: %w", err)
+	}
+	return packets, nil
+}
+
 type rideLightningSchedule struct {
+	scenarioCast        *scenarioRideCast
 	runtime             campaignAbilityCommandRuntime
 	packet              raknet.Packet
 	sessionKey          string
@@ -58,27 +68,34 @@ func (e rideLightningSchedule) produceArrival() ([][]byte, error) {
 	err := peerSession.teleportPlayer(e.runtime.now(), e.destination)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
+		e.runtime.failScenarioRide(e.sessionKey, e.scenarioCast, "arrival teleport: "+err.Error())
 		return nil, fmt.Errorf("rideArrivalTeleport: %w", err)
 	}
 	err = peerSession.syncZoneHero()
 	if err != nil {
 		peerSession.restorePlayerMotion(previousMotion, peerSession.playerMotionRevision())
 		e.runtime.registry.mutex.Unlock()
+		e.runtime.failScenarioRide(e.sessionKey, e.scenarioCast, "arrival hero commit: "+err.Error())
 		return nil, fmt.Errorf("rideArrivalHero: %w", err)
 	}
+	peerSession.arriveScenarioRide(e.scenarioCast, e.runtime.now())
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
 	packets := clonePendingPackets(e.arrivalPackets)
 	if e.plan.TargetObjectID == 0 {
+		e.runtime.completeScenarioRideArrival(e.sessionKey, e.scenarioCast, e.runtime.now())
 		return packets, nil
 	}
 	impactPackets, err := e.produceImpact()
 	if err != nil {
+		e.runtime.failScenarioRide(e.sessionKey, e.scenarioCast, "arrival impact producer: "+err.Error())
+		e.runtime.completeScenarioRideArrival(e.sessionKey, e.scenarioCast, e.runtime.now())
 		// Arrival already committed. Keep its correction deliverable even if
 		// damage publication fails, rather than stranding the client at takeoff.
 		e.runtime.logger.Printf("RakNet Ride the Lightning impact failed source=%d: %v", e.sourceObjectID, err)
 		return packets, nil
 	}
+	e.runtime.completeScenarioRideArrival(e.sessionKey, e.scenarioCast, e.runtime.now())
 	return append(packets, impactPackets...), nil
 }
 
@@ -105,11 +122,14 @@ func (e rideLightningSchedule) produceImpact() ([][]byte, error) {
 	)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
+		e.runtime.failScenarioRide(e.sessionKey, e.scenarioCast, "impact damage: "+err.Error())
 		return nil, fmt.Errorf("campaignRideDamage: %w", err)
 	}
+	peerSession.impactScenarioRide(e.scenarioCast, e.runtime.now(), result.Damage.Damage, result.Damage.IsDefeated)
 	transition, err := peerSession.applyCampaignDamageTransition(result.Damage)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
+		e.runtime.failScenarioRide(e.sessionKey, e.scenarioCast, "impact transition: "+err.Error())
 		return nil, fmt.Errorf("campaignRideTransition: %w", err)
 	}
 	isCooldownReset := false
@@ -130,6 +150,7 @@ func (e rideLightningSchedule) produceImpact() ([][]byte, error) {
 		[]campaignDamageTransition{transition}, nil, false,
 	)
 	if err != nil {
+		e.runtime.failScenarioRide(e.sessionKey, e.scenarioCast, "impact publication: "+err.Error())
 		return nil, fmt.Errorf("campaignRidePublish: %w", err)
 	}
 	if !result.Damage.IsDefeated {
@@ -166,6 +187,7 @@ func (e rideLightningSchedule) produceRelease() ([][]byte, error) {
 	isCurrent := isFound && peerSession.generation == e.generation &&
 		peerSession.deployedObjectID == e.sourceObjectID
 	if isCurrent {
+		peerSession.releaseScenarioRide(e.scenarioCast, e.runtime.now())
 		peerSession.rideCancel = nil
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 	}
@@ -180,6 +202,7 @@ func (e rideLightningSchedule) fail(scheduleErr error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	if isFound && peerSession.generation == e.generation {
+		peerSession.failScenarioRide(e.scenarioCast, e.runtime.now(), scheduleErr.Error())
 		peerSession.rideCancel = nil
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 	}
@@ -197,6 +220,8 @@ func (e rideLightningSchedule) rollbackAdmission() error {
 	if !isFound || peerSession.generation != e.generation {
 		return nil
 	}
+	peerSession.failScenarioRide(e.scenarioCast, e.runtime.now(), "ability admission scheduling rolled back")
+	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	err := peerSession.setCampaignCharacterManaPoints(
 		e.creatureIndex, e.previousManaPoint,
 	)
@@ -245,7 +270,7 @@ func (r campaignAbilityCommandRuntime) handleRideLightning(
 		peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures))
 	if !isFound {
 		r.registry.mutex.Unlock()
-		return req.reject("session unavailable")
+		return req.rejectScenarioRide("session unavailable")
 	}
 	creatureIndex := peerSession.deployedCreatureIndex
 	creature := r.registry.projectPassiveCreature(
@@ -275,7 +300,7 @@ func (r campaignAbilityCommandRuntime) handleRideLightning(
 	if !isFiniteZonePosition(destination) || !isReportedZonePosition(destination) ||
 		peerSession.zone == nil || peerSession.zone.Navigation() == nil {
 		r.registry.mutex.Unlock()
-		return req.reject("cursor or navigation unavailable")
+		return req.rejectScenarioRide("cursor or navigation unavailable")
 	}
 	// LightningRogueActive uses FindGoodMeleePosition/GetPosition for a
 	// validated hostile target. Only ground casts use GetTargetPosition.
@@ -301,7 +326,7 @@ func (r campaignAbilityCommandRuntime) handleRideLightning(
 	}
 	if !isLandingFound {
 		r.registry.mutex.Unlock()
-		return req.reject("cursor destination is not walkable")
+		return req.rejectScenarioRide("cursor destination is not walkable")
 	}
 	destination = raknet.Vector3(landing)
 	err = peerSession.advancePlayerPosition(abilityStartTime, command.Common.Position)
@@ -325,7 +350,7 @@ func (r campaignAbilityCommandRuntime) handleRideLightning(
 	}
 	if !isCooldownReady || peerSession.deployedManaPoint() < manaCost {
 		r.registry.mutex.Unlock()
-		return req.reject("destination, cooldown, or power unavailable")
+		return req.rejectScenarioRide("destination, cooldown, or power unavailable")
 	}
 	ridePlan := zoneability.BasicPlan{}
 	if isStrikeTargetFound && strikeTarget.Plan.Position.Sub(landing).Length() <= strikeRange {
@@ -417,7 +442,7 @@ func (r campaignAbilityCommandRuntime) handleRideLightning(
 		)
 	if !isCooldownReserved {
 		r.registry.mutex.Unlock()
-		return req.reject("cooldown unavailable")
+		return req.rejectScenarioRide("cooldown unavailable")
 	}
 	releaseReservation, isReleaseReserved :=
 		peerSession.abilityReleaseSession().Reserve(
@@ -426,7 +451,7 @@ func (r campaignAbilityCommandRuntime) handleRideLightning(
 	if !isReleaseReserved {
 		peerSession.abilityCooldownSession().Rollback(cooldownReservation)
 		r.registry.mutex.Unlock()
-		return req.reject("release unavailable")
+		return req.rejectScenarioRide("release unavailable")
 	}
 	err = peerSession.stopPlayerMovement(abilityStartTime)
 	if err == nil {
@@ -440,11 +465,13 @@ func (r campaignAbilityCommandRuntime) handleRideLightning(
 		return nil, fmt.Errorf("campaignRideCommit: %w", err)
 	}
 	playerMotionRevision := peerSession.playerMotionRevision()
+	scenarioCast := peerSession.prepareScenarioRide(req, specialTwoAbility, abilityStartTime, destination, ridePlan.TargetObjectID)
 	generation := peerSession.generation
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
 	schedule := rideLightningSchedule{
-		runtime: r, packet: packet, sessionKey: sessionKey,
+		scenarioCast: scenarioCast,
+		runtime:      r, packet: packet, sessionKey: sessionKey,
 		generation: generation, sourceObjectID: command.Common.ObjectID,
 		abilityID: abilityID, cooldownKey: cooldownKey,
 		creatureIndex: creatureIndex, previousManaPoint: previousManaPoint,
@@ -487,6 +514,7 @@ func (r campaignAbilityCommandRuntime) handleRideLightning(
 		))
 	}
 	schedule.bindCancel(cancel)
+	r.acceptScenarioRide(sessionKey, scenarioCast, r.now())
 	r.logger.Printf(
 		"RakNet campaign teleport strike accepted ability=%s source=%d target=%d destination=(%g,%g,%g) mana=%g cooldown=%s arrival=%s release=%s",
 		definition.Name, command.Common.ObjectID, ridePlan.TargetObjectID,

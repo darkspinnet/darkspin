@@ -29,7 +29,6 @@ const (
 	ConfigServerPort           ConfigKey = "SERVER_PORT"
 	ConfigWorldPlayerLimit     ConfigKey = "WORLD_PLAYER_LIMIT"
 	ConfigIsChatStdoutEnabled  ConfigKey = "IS_CHAT_STDOUT_ENABLED"
-	ConfigChatFilePath         ConfigKey = "CHAT_FILE_PATH"
 	ConfigStorageDriver        ConfigKey = "STORAGE_DRIVER"
 	ConfigAuthJWTSecret        ConfigKey = "AUTH_JWT_SECRET"
 	ConfigAuthJWTIssuer        ConfigKey = "AUTH_JWT_ISSUER"
@@ -47,7 +46,6 @@ var defaultConfigValues = map[ConfigKey]string{
 	ConfigServerPort:           "42127",
 	ConfigWorldPlayerLimit:     "25",
 	ConfigIsChatStdoutEnabled:  "true",
-	ConfigChatFilePath:         "chat.log",
 	ConfigStorageDriver:        "sqlite",
 	ConfigAuthJWTSecret:        "darkspin-local-development-secret-do-not-use-in-production",
 	ConfigAuthJWTIssuer:        "darkspin-web",
@@ -64,12 +62,13 @@ type Config struct {
 }
 
 type configDocument struct {
-	Game     configGame     `toml:"game"`
-	Server   configServer   `toml:"server"`
-	Chat     configChat     `toml:"chat"`
-	Storage  configStorage  `toml:"storage"`
-	Auth     configAuth     `toml:"auth"`
-	Snapshot configSnapshot `toml:"snapshot"`
+	LauncherFields map[string]any `toml:"launcher,omitempty"`
+	Game           configGame     `toml:"game"`
+	Server         configServer   `toml:"server"`
+	Chat           configChat     `toml:"chat"`
+	Storage        configStorage  `toml:"storage"`
+	Auth           configAuth     `toml:"auth"`
+	Snapshot       configSnapshot `toml:"snapshot"`
 }
 
 type configAuth struct {
@@ -79,8 +78,7 @@ type configAuth struct {
 }
 
 type configChat struct {
-	IsStdoutEnabled *bool   `toml:"is_stdout_enabled"`
-	FilePath        *string `toml:"file_path"`
+	IsStdoutEnabled *bool `toml:"is_stdout_enabled"`
 }
 
 type configGame struct {
@@ -151,7 +149,6 @@ func LoadConfig(path string) (*Config, bool, error) {
 	config.setInt(ConfigServerPort, document.Server.Port)
 	config.setInt(ConfigWorldPlayerLimit, document.Server.WorldPlayerLimit)
 	config.setBool(ConfigIsChatStdoutEnabled, document.Chat.IsStdoutEnabled)
-	config.setString(ConfigChatFilePath, document.Chat.FilePath)
 	config.setString(ConfigStorageDriver, document.Storage.Driver)
 	config.setString(ConfigAuthJWTSecret, document.Auth.JWTSecret)
 	config.setString(ConfigAuthJWTIssuer, document.Auth.JWTIssuer)
@@ -175,6 +172,20 @@ func (c *Config) Save(path string) error {
 	document, err := encodeConfigDocument(values)
 	if err != nil {
 		return fmt.Errorf("configEncode: %w", err)
+	}
+	// Launcher-owned settings are read at save time so an older server Config
+	// cannot overwrite a launcher preference changed since the server started.
+	currentContents, readErr := os.ReadFile(path)
+	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		return fmt.Errorf("launcherRead: %w", readErr)
+	}
+	if readErr == nil {
+		var currentDocument configDocument
+		decodeErr := toml.Unmarshal(currentContents, &currentDocument)
+		if decodeErr != nil {
+			return fmt.Errorf("launcherDecode: %w", decodeErr)
+		}
+		document.LauncherFields = currentDocument.LauncherFields
 	}
 	contents := bytes.Buffer{}
 	err = toml.NewEncoder(&contents).Encode(document)
@@ -227,7 +238,6 @@ func encodeConfigDocument(values map[ConfigKey]string) (configDocument, error) {
 		},
 		Chat: configChat{
 			IsStdoutEnabled: configPointer(configBool(values[ConfigIsChatStdoutEnabled])),
-			FilePath:        configPointer(values[ConfigChatFilePath]),
 		},
 		Storage: configStorage{
 			Driver: configPointer(values[ConfigStorageDriver]),

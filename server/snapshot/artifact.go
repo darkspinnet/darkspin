@@ -189,7 +189,7 @@ func (e *Service) dump(ctx context.Context, req dumpRequest) (dumpResult, error)
 	}
 	clientMemoryPath := filepath.Join(directory, "client-memory.jsonl")
 	clientCaptureResult := e.requestClientMemory(
-		ctx, directoryName, clientMemoryPath, bufferDuration, mode,
+		ctx, directoryName, clientMemoryPath, bufferDuration, mode, req.Actor.UserID,
 	)
 
 	client, err := readClientTail(e.traceDirectory, bufferDuration)
@@ -564,30 +564,31 @@ func addSnapshotArchiveFile(
 
 func (e *Service) requestClientMemory(
 	ctx context.Context, directoryName string, outputPath string,
-	bufferDuration time.Duration, mode Mode,
+	bufferDuration time.Duration, mode Mode, userIDs ...int64,
 ) clientCapture {
-	if strings.TrimSpace(e.controlPath) == "" || mode == ModeOff {
+	if e.controlBroker == nil || mode == ModeOff {
 		return clientCapture{Status: "unavailable"}
 	}
 	e.controlMu.Lock()
 	defer e.controlMu.Unlock()
 	requestedAt := time.Now().UTC()
 	control := fmt.Sprintf(
-		"mode=%s\nrequest=%s\nbuffer_ms=%d\nserver_time_unix_nano=%d\n",
+		"mode=%s\nrequest=%s\nbuffer_ms=%d\nserver_time_unix_nano=%d\n\n",
 		mode, directoryName, bufferDuration/time.Millisecond, requestedAt.UnixNano(),
 	)
-	err := os.WriteFile(e.controlPath, []byte(control), 0o644)
-	if err != nil {
-		e.logger.Printf("Sync Snapshot client request failed: %v", err)
-		return clientCapture{Status: "request_failed", RequestedAt: requestedAt}
+	userID := int64(0)
+	if len(userIDs) == 1 {
+		userID = userIDs[0]
+	}
+	if !e.controlBroker.publishCapture(control, userID) {
+		return clientCapture{Status: "unavailable", RequestedAt: requestedAt}
 	}
 	deadline := time.Now().Add(750 * time.Millisecond)
 	lastSize := int64(-1)
 	stableCount := 0
 	for time.Now().Before(deadline) {
 		fi, statErr := os.Stat(outputPath)
-		err = statErr
-		if err == nil {
+		if statErr == nil {
 			if fi.Size() == lastSize {
 				stableCount++
 			} else {
@@ -601,8 +602,8 @@ func (e *Service) requestClientMemory(
 				}
 			}
 		}
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			e.logger.Printf("Sync Snapshot client response failed: %v", err)
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			e.logger.Printf("Sync Snapshot client response failed: %v", statErr)
 			return clientCapture{Status: "response_failed", RequestedAt: requestedAt}
 		}
 		if ctx.Err() != nil {

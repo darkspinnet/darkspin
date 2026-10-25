@@ -173,14 +173,14 @@ func launchInjected(
 		}
 		command.Env = replaceEnvironment(command.Env, "DARKSPIN_CLIENT_TRACE", traceWinePath)
 	}
-	snapshotControlPath := os.Getenv(snapshotControlEnvironment)
-	if snapshotControlPath != "" {
-		snapshotControlWinePath, controlErr := runner.windowsPath(ctx, snapshotControlPath)
-		if controlErr != nil {
-			return fmt.Errorf("snapshotControlWinePath: %w", controlErr)
+	snapshotDirectory := os.Getenv(snapshotDirectoryEnvironment)
+	if snapshotDirectory != "" {
+		snapshotWineDirectory, directoryErr := runner.windowsPath(ctx, snapshotDirectory)
+		if directoryErr != nil {
+			return fmt.Errorf("snapshotDirectoryWinePath: %w", directoryErr)
 		}
 		command.Env = replaceEnvironment(
-			command.Env, snapshotControlEnvironment, snapshotControlWinePath,
+			command.Env, snapshotDirectoryEnvironment, snapshotWineDirectory,
 		)
 	}
 	err = command.Run()

@@ -118,7 +118,6 @@ func newScenarioHost(ctx context.Context, req desktop.StartRequest) (*scenarioHo
 		game.ConfigAuthJWTSecret: secret, game.ConfigAuthJWTIssuer: "darkspin-scenario",
 		game.ConfigAuthJWTAudience: "darkspin", game.ConfigSnapshotMode: "off",
 		game.ConfigIsChatStdoutEnabled: "false",
-		game.ConfigChatFilePath:        filepath.Join(req.Paths.ReportDirectory, "chat.log"),
 	}
 	for key, setting := range settings {
 		err = config.Set(key, setting)

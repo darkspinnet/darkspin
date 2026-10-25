@@ -19,14 +19,16 @@ const (
 
 // Request is a decoded Blaze RPC request.
 type Request struct {
-	Session               *Session
-	Component             uint16
-	Command               uint16
-	MessageID             uint32
-	Fields                []tdf.Field
-	beforeReplyFrames     []Frame
-	notifications         []Frame
-	targetedNotifications []targetedNotification
+	Session                         *Session
+	Component                       uint16
+	Command                         uint16
+	MessageID                       uint32
+	Fields                          []tdf.Field
+	beforeReplyFrames               []Frame
+	notifications                   []Frame
+	targetedNotifications           []targetedNotification
+	isPartyInviteRecoverySuppressed bool
+	ownedPartyUsers                 map[int64]bool
 }
 
 type targetedNotification struct {
@@ -121,6 +123,10 @@ type Component struct {
 type Registry struct {
 	mu         sync.RWMutex
 	components map[uint16]Component
+	// Serialize ship disconnect cleanup against replacement authentication and
+	// ordinary party/game admission. This gate is never held for socket writes.
+	partyLifecycle      sync.Mutex
+	playgroupDisconnect *playgroupShipDisconnect
 }
 
 // NewRegistry returns an empty component registry.
@@ -167,6 +173,15 @@ func (r *Registry) dispatch(
 		MessageID: frame.MessageID,
 	}
 	defer recoverDispatch(session, frame, reply, &result)
+	if frame.Component == AuthComponentID || frame.Component == GameManagerComponentID || frame.Component == PlaygroupsComponentID {
+		lockErr := r.lockPartyLifecycle(ctx)
+		if lockErr != nil {
+			reply.Type = ErrorReply
+			reply.ErrorCode = ErrorSystem
+			return dispatchResult{reply: reply}
+		}
+		defer r.partyLifecycle.Unlock()
+	}
 
 	component, isFound := r.Component(frame.Component)
 	if !isFound {

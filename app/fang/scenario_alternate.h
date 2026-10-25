@@ -6,7 +6,7 @@
 #if FANG_SCENARIO
 #include "scenario_input.h"
 #include <stddef.h>
-#include <windows.h>
+#include "fang.h"
 
 enum ScenarioAlternatePhase {
     SCENARIO_ALTERNATE_ENTRY,

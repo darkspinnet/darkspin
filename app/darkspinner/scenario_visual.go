@@ -27,8 +27,10 @@ const (
 )
 
 type scenarioEntryFrameRequest struct {
-	RunID    string
-	Sequence uint32
+	RunID                     string
+	Sequence                  uint32
+	IsBackgroundWindowAllowed bool
+	WindowCaptureTimeout      time.Duration
 }
 
 type scenarioEntryRect struct {

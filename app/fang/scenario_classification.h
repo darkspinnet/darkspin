@@ -6,7 +6,7 @@
 #if FANG_SCENARIO
 #include <stddef.h>
 #include <stdint.h>
-#include <windows.h>
+#include "fang.h"
 
 enum ScenarioMarkerMaskPhase {
     SCENARIO_MARKER_MASK_ENTRY,

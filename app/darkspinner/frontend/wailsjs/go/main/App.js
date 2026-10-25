@@ -70,6 +70,10 @@ export function GetLauncherIntegrationStatus() {
   return window['go']['main']['App']['GetLauncherIntegrationStatus']();
 }
 
+export function GetLuaConsole() {
+  return window['go']['main']['App']['GetLuaConsole']();
+}
+
 export function GetModConfiguration() {
   return window['go']['main']['App']['GetModConfiguration']();
 }
@@ -112,6 +116,10 @@ export function HasDetachedGameInstances() {
 
 export function IsProfileRunning(arg1) {
   return window['go']['main']['App']['IsProfileRunning'](arg1);
+}
+
+export function KillLuaSession() {
+  return window['go']['main']['App']['KillLuaSession']();
 }
 
 export function LaunchModProfile(arg1) {
@@ -174,6 +182,10 @@ export function RestartLauncher() {
   return window['go']['main']['App']['RestartLauncher']();
 }
 
+export function RunLuaScript(arg1) {
+  return window['go']['main']['App']['RunLuaScript'](arg1);
+}
+
 export function SaveModProfile(arg1) {
   return window['go']['main']['App']['SaveModProfile'](arg1);
 }
@@ -214,6 +226,10 @@ export function SetSkipCinematic(arg1) {
   return window['go']['main']['App']['SetSkipCinematic'](arg1);
 }
 
+export function SetSkipIntro(arg1) {
+  return window['go']['main']['App']['SetSkipIntro'](arg1);
+}
+
 export function SetWineRunner(arg1) {
   return window['go']['main']['App']['SetWineRunner'](arg1);
 }
@@ -224,6 +240,10 @@ export function SignOut() {
 
 export function StartDetachedGameInstance(arg1) {
   return window['go']['main']['App']['StartDetachedGameInstance'](arg1);
+}
+
+export function StopLuaScript() {
+  return window['go']['main']['App']['StopLuaScript']();
 }
 
 export function UninstallDarkspinner() {

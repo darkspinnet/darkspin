@@ -16,6 +16,50 @@ type snapshotTransportProvider struct {
 	server *sharedudp.SharedServer
 }
 
+// SnapshotControlConnection returns ephemeral local Fang launch credentials.
+func (e *Server) SnapshotControlConnection() (endpoint string, token string) {
+	if e == nil || e.snapshot == nil {
+		return "", ""
+	}
+	return e.snapshot.ControlConnection()
+}
+
+// SnapshotClientControl scopes local capture credentials to the launch profile.
+func (e *Server) SnapshotClientControl(ctx context.Context, loginName string) (endpoint string, token string, err error) {
+	if e == nil || e.userManager == nil {
+		return "", "", errors.New("snapshot control user manager unavailable")
+	}
+	userID, err := e.userManager.FindUserID(ctx, loginName)
+	if err != nil {
+		return "", "", fmt.Errorf("controlUser: %w", err)
+	}
+	endpoint, token, err = e.SnapshotControlForUser(userID)
+	if err != nil {
+		return "", "", fmt.Errorf("controlClient: %w", err)
+	}
+	return endpoint, token, nil
+}
+
+// SnapshotControlForUser scopes credentials to an already resolved owned user.
+func (e *Server) SnapshotControlForUser(userID int64) (endpoint string, token string, err error) {
+	if e == nil || e.snapshot == nil {
+		return "", "", errors.New("snapshot control service unavailable")
+	}
+	endpoint, token, err = e.snapshot.ControlConnectionForUser(userID)
+	if err != nil {
+		return "", "", fmt.Errorf("controlScope: %w", err)
+	}
+	return endpoint, token, nil
+}
+
+// SnapshotControlDirectory is the Fang diagnostic root selected by the recorder.
+func (e *Server) SnapshotControlDirectory() string {
+	if e == nil || e.snapshot == nil {
+		return ""
+	}
+	return e.snapshot.ControlDirectory()
+}
+
 func (e snapshotTransportProvider) SnapshotTransportDiagnostics(
 	remote string, generation uint64, now time.Time,
 ) (snapshot.TransportDiagnosticsState, bool) {

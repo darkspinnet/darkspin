@@ -21,16 +21,17 @@ import (
 const maximumReportSlugSize = 60
 
 type reportManifest struct {
-	Version       string             `json:"version"`
-	CreatedAt     string             `json:"created_at"`
-	Platform      string             `json:"platform"`
-	Title         string             `json:"title"`
-	Client        reportClient       `json:"client"`
-	ClientError   string             `json:"client_error,omitempty"`
-	State         reportState        `json:"state"`
-	Gameplay      chat.BugContext    `json:"gameplay"`
-	GameplayError string             `json:"gameplay_error,omitempty"`
-	Files         []reportFileRecord `json:"files"`
+	ClientResults []clientSessionResult `json:"client_results,omitempty"`
+	Version       string                `json:"version"`
+	CreatedAt     string                `json:"created_at"`
+	Platform      string                `json:"platform"`
+	Title         string                `json:"title"`
+	Client        reportClient          `json:"client"`
+	ClientError   string                `json:"client_error,omitempty"`
+	State         reportState           `json:"state"`
+	Gameplay      chat.BugContext       `json:"gameplay"`
+	GameplayError string                `json:"gameplay_error,omitempty"`
+	Files         []reportFileRecord    `json:"files"`
 }
 
 type reportState struct {
@@ -264,7 +265,8 @@ func (a *App) reportManifest(
 	gameplay.IsModded = session.client.IsModded
 	gameplay.ModNames = append([]string(nil), session.client.ModNames...)
 	return reportManifest{
-		Client: session.client, ClientError: clientError,
+		ClientResults: a.clientSession.Results(),
+		Client:        session.client, ClientError: clientError,
 		Version: Version, CreatedAt: createdAt.Format(time.RFC3339), Platform: runtime.GOOS + "/" + runtime.GOARCH,
 		Title: title,
 		State: reportState{

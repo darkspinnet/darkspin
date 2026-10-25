@@ -37,6 +37,7 @@ type ActiveUserFinder interface {
 // transport. It deliberately contains no RakNet representation details.
 type GameplayBinding struct {
 	scenarioMapBinding
+	scenarioRecipeBinding
 	Endpoint                   NetworkEndpoint
 	GameID                     uint32
 	RunSeed                    uint64
@@ -361,12 +362,27 @@ func (o *GameplayJoin) Execute(ctx context.Context, userID int64) (GameplayBindi
 	if instance == nil {
 		return GameplayBinding{}, fmt.Errorf("joinGame: %w", ErrGameplayGameNotFound)
 	}
-	if !instance.IsGameplayJoinable() {
-		return GameplayBinding{}, fmt.Errorf("joinReady: %w", ErrGameplayNotReady)
-	}
 	slot, playerMask, isFound := instance.PlayerBinding(user.Account.ID)
 	if !isFound {
 		return GameplayBinding{}, fmt.Errorf("joinSlot: %w", ErrGameplaySlotNotFound)
+	}
+	err = instance.waitGameplayReady(ctx)
+	if err != nil {
+		return GameplayBinding{}, fmt.Errorf("joinReady: %w", err)
+	}
+	err = ctx.Err()
+	if err != nil {
+		return GameplayBinding{}, fmt.Errorf("joinWaitContext: %w", err)
+	}
+	if o.userFinder.UserByID(userID) != user {
+		return GameplayBinding{}, fmt.Errorf("joinIdentity: %w", ErrGameplayUserNotFound)
+	}
+	if o.gameManager.Game(user.CurrentGameID()) != instance {
+		return GameplayBinding{}, fmt.Errorf("joinInstance: %w", ErrGameplayGameNotFound)
+	}
+	slot, playerMask, isFound = instance.PlayerBinding(user.Account.ID)
+	if !isFound {
+		return GameplayBinding{}, fmt.Errorf("joinMember: %w", ErrGameplaySlotNotFound)
 	}
 	team, isTeamFound := instance.PlayerTeam(user.Account.ID)
 	if instance.Info.Mode == ModeArena && !isTeamFound {
@@ -447,6 +463,10 @@ func (o *GameplayJoin) Execute(ctx context.Context, userID int64) (GameplayBindi
 	if err != nil {
 		return GameplayBinding{}, fmt.Errorf("joinScenario: %w", err)
 	}
+	err = o.gameManager.attachFocusedRecipe(&binding)
+	if err != nil {
+		return GameplayBinding{}, fmt.Errorf("joinRecipe: %w", err)
+	}
 	return binding, nil
 }
 
@@ -522,6 +542,10 @@ func (o *GameplayJoin) SelectCampaignSquad(
 	err := o.gameManager.attachScenarioMap(&binding)
 	if err != nil {
 		return GameplayBinding{}, fmt.Errorf("squadScenario: %w", err)
+	}
+	err = o.gameManager.attachFocusedRecipe(&binding)
+	if err != nil {
+		return GameplayBinding{}, fmt.Errorf("squadRecipe: %w", err)
 	}
 	return binding, nil
 }

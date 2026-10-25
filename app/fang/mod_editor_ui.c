@@ -1,4 +1,7 @@
 #include "hook.h"
+#if FANG_SCENARIO
+#include "control.h"
+#endif
 
 #include <stdint.h>
 #include <stdio.h>
@@ -794,6 +797,40 @@ void fang_mod_update_editor(void) {
     }
     editor_scene_update(1);
 }
+
+#if FANG_SCENARIO
+/* Fixed debug action for a unique owned Arsenal creature by hero noun. Use
+ * the existing Creature Edit callback, not the ordinary ship-room request.
+ * Contexts are resolved anew from the same native vectors used above; no
+ * caller-supplied pointer, actor ID or callback name is accepted. */
+uint32_t fang_mod_editor_open_owned(uint32_t hero_noun) {
+    static const unsigned int vectors[] = {1840, 2440};
+    BYTE* controller;
+    BYTE* selected = NULL;
+    unsigned int index;
+    if (!is_editor_ui_enabled || !hero_noun) return 5;
+    controller = *(BYTE**)(editor_ui_base + 0xdbeaa0);
+    if (!readable_range(controller, 0xd10) || !controller[920] ||
+        *(void**)controller != editor_ui_base + 0xbce048) return 5;
+    for (index = 0; index < sizeof(vectors) / sizeof(vectors[0]); ++index) {
+        BYTE* begin = *(BYTE**)(controller + vectors[index]);
+        BYTE* end = *(BYTE**)(controller + vectors[index] + 4);
+        uintptr_t size = (uintptr_t)end - (uintptr_t)begin;
+        if ((uintptr_t)end < (uintptr_t)begin || size > 128 * 72 || size % 72 ||
+            (size && !readable_range(begin, size))) return 5;
+        while (begin != end) {
+            if (fang_mod_editor_owned_noun(begin) == hero_noun) {
+                if (selected && selected != begin) return 5;
+                selected = begin;
+            }
+            begin += 72;
+        }
+    }
+    if (!selected) return 5;
+    fang_mod_editor_open(selected);
+    return 1; /* Callback returned only; host observes the actual editor. */
+}
+#endif
 
 int fang_mod_install_editor_ui(BYTE* base) {
     static const unsigned int calls[] = {0x18e27, 0x18ee1};

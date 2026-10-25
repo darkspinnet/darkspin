@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
-	appwindow "github.com/darkspinnet/darkspin/window"
 	"github.com/wailsapp/wails/v2"
 	wailsoptions "github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -53,7 +52,9 @@ const (
 	darkSpinnerVersionEnvironment = "DARKSPINNER_VERSION"
 	serverAddressEnvironment      = "DARKSPIN_SERVER_ADDRESS"
 	snapshotModeEnvironment       = "DARKSPIN_SNAPSHOT_MODE"
-	snapshotControlEnvironment    = "DARKSPIN_SNAPSHOT_CONTROL"
+	snapshotEndpointEnvironment   = "DARKSPIN_SNAPSHOT_ENDPOINT"
+	snapshotTokenEnvironment      = "DARKSPIN_SNAPSHOT_TOKEN"
+	snapshotDirectoryEnvironment  = "DARKSPIN_SNAPSHOT_DIRECTORY"
 	maximumJWTLength              = 16 * 1024
 )
 
@@ -79,6 +80,18 @@ type options struct {
 }
 
 func main() {
+	cleanupLegacySnapshotControls()
+	isDebugSupervisor, debugErr := runDebugSupervisor(os.Args[1:])
+	if isDebugSupervisor {
+		if debugErr != nil {
+			count, outputErr := fmt.Fprintln(os.Stderr, "Scenario supervisor failed:", debugErr)
+			if outputErr != nil || count == 0 {
+				// No native fallback dialog is allowed before the launcher exists.
+			}
+			os.Exit(1)
+		}
+		return
+	}
 	isScenarioWorker, scenarioErr := runScenarioWorker(os.Args[1:])
 	if isScenarioWorker {
 		if scenarioErr != nil {
@@ -119,9 +132,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	releaseInstance, isExistingInstance, err := appwindow.Acquire(appwindow.InstanceOptions{
-		MutexName: `Local\darkspin-darkspinner-single-instance-v1`,
-	})
+	releaseInstance, isExistingInstance, err := acquireLauncherInstance(os.Args[1:])
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner instance check failed:", err)
 		os.Exit(1)
@@ -143,6 +154,15 @@ func main() {
 		os.Exit(1)
 	}
 	app := NewApp(removePresentationArguments(removeInstallationArguments(os.Args[1:])))
+	basePath, cleanupErr := executableDirectory()
+	if cleanupErr == nil {
+		cleanupErr = cleanupDetachedLogs(basePath)
+	}
+	if cleanupErr != nil {
+		count, outputErr := fmt.Fprintln(os.Stderr, "Previous client log cleanup:", cleanupErr)
+		if outputErr != nil || count == 0 { /* Startup remains available if a previous log is locked. */
+		}
+	}
 	if privilegeErr != nil {
 		app.startupError = privilegeLaunchMessage(privilegeErr)
 	}
@@ -208,6 +228,10 @@ func hasVersionArgument(arguments []string) bool {
 }
 
 func run(ctx context.Context, arguments []string) error {
+	return runWithSnapshotControl(ctx, arguments, inheritedSnapshotControl())
+}
+
+func runWithSnapshotControl(ctx context.Context, arguments []string, connection snapshotControlConnection) error {
 	if ctx == nil {
 		return errors.New("launch context is nil")
 	}
@@ -238,8 +262,8 @@ func run(ctx context.Context, arguments []string) error {
 	flags.StringVar(&configuration.launchID, "launch-id", "", "correlate one managed game process with its launcher")
 	flags.StringVar(&configuration.clientProfile, "client-profile", "", "bind a managed game process to a launcher profile")
 	flags.StringVar(&configuration.modManifest, "mod-manifest", "", "use an explicit experimental Spore resource manifest for this client")
-	flags.BoolVar(&configuration.isIntroSkipped, "skip-intro", false, "skip the EA and Maxis startup videos")
-	flags.BoolVar(&configuration.isCinematicSkipped, "skip-cinematic", false, "skip startup videos and the post-login transition cinematic")
+	flags.BoolVar(&configuration.isIntroSkipped, "skip-intro", false, "skip opening movies through the client's Escape handling")
+	flags.BoolVar(&configuration.isCinematicSkipped, "skip-cinematic", false, "skip in-game cinematics through the client's Escape handling")
 	flags.BoolVar(&configuration.isMultipleInstanceAllowed, "multiple-instances", false, "allow a detached client beside an existing game process")
 	flags.StringVar(&configuration.userDataDirectory, "user-data-dir", "", "use a specific isolated writable client configuration directory")
 	flags.StringVar(&configuration.jwt, "jwt", "", "short-lived login JWT (development use; prefer a .dsjwt file or game login URI)")
@@ -264,6 +288,10 @@ func run(ctx context.Context, arguments []string) error {
 	jwt, gameArguments, err := resolveLaunchJWT(configuration.jwt, configuration.jwtFile, flags.Args())
 	if err != nil {
 		return fmt.Errorf("jwtResolve: %w", err)
+	}
+	jwt, err = debugDetachedCredential(jwt)
+	if err != nil {
+		return fmt.Errorf("detachedCredential: %w", err)
 	}
 	if configuration.account != "" && jwt != "" {
 		return errors.New("--account cannot be combined with a JWT credential")
@@ -310,7 +338,7 @@ func run(ctx context.Context, arguments []string) error {
 		return fmt.Errorf("jwtConfigure: %w", err)
 	}
 	defer os.Unsetenv(launchJWTEnvironment)
-	gamePath, gameWorkingDirectory, err := resolveGameExecutable(configuration.gameExecutable, baseDirectory)
+	gamePath, gameWorkingDirectory, err := resolveGameExecutable(configuration.gameExecutable, debugDetachedGameDirectory(baseDirectory))
 	if err != nil {
 		return fmt.Errorf("gameResolve: %w", err)
 	}
@@ -324,7 +352,7 @@ func run(ctx context.Context, arguments []string) error {
 	}
 	err = configureSnapshotEnvironment(
 		gameConfig.String(game.ConfigSnapshotMode),
-		filepath.Join(pathSet.tracePath, "snapshot-control.txt"),
+		connection.withDirectory(pathSet.tracePath),
 	)
 	if err != nil {
 		return fmt.Errorf("snapshotEnvironment: %w", err)
@@ -334,12 +362,14 @@ func run(ctx context.Context, arguments []string) error {
 		if unsetErr != nil {
 			// The launched child already owns an independent environment block.
 		}
-		unsetErr = os.Unsetenv(snapshotControlEnvironment)
-		if unsetErr != nil {
-			// The launched child already owns an independent environment block.
+		for _, name := range []string{snapshotEndpointEnvironment, snapshotTokenEnvironment, snapshotDirectoryEnvironment} {
+			unsetErr = os.Unsetenv(name)
+			if unsetErr != nil {
+				// The launched child already owns an independent environment block.
+			}
 		}
 	}()
-	clientLocales, err := detectClientLocales(pathSet.gamePath)
+	clientLocales, err := detectClientLocales(debugDetachedGameDirectory(pathSet.gamePath))
 	if err != nil {
 		return fmt.Errorf("localeDetect: %w", err)
 	}
@@ -758,7 +788,7 @@ func configureClientTrace(path, traceDirectory string) error {
 	return nil
 }
 
-func configureSnapshotEnvironment(mode string, controlPath string) error {
+func configureSnapshotEnvironment(mode string, connection snapshotControlConnection) error {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode != "manual" && mode != "auto" && mode != "off" {
 		return errors.New("snapshot mode must be manual, auto, or off")
@@ -767,17 +797,16 @@ func configureSnapshotEnvironment(mode string, controlPath string) error {
 	if err != nil {
 		return fmt.Errorf("snapshotSet: %w", err)
 	}
-	err = os.Setenv(snapshotControlEnvironment, controlPath)
-	if err != nil {
-		return fmt.Errorf("snapshotControlSet: %w", err)
+	for name, contents := range connection.environment() {
+		err = os.Setenv(name, contents)
+		if err != nil {
+			return fmt.Errorf("snapshotControlSet[%s]: %w", name, err)
+		}
 	}
 	return nil
 }
 
 func configureCinematicOptions(isIntroSkipped, isCinematicSkipped bool) error {
-	if isCinematicSkipped {
-		isIntroSkipped = true
-	}
 	err := configureBooleanEnvironment(skipIntroEnvironment, isIntroSkipped)
 	if err != nil {
 		return fmt.Errorf("introEnvironment: %w", err)

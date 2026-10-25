@@ -1,5 +1,6 @@
 #include "fang.h"
 #include "hook.h"
+#include "cinematic.h"
 #include "scenario_observation.h"
 #if FANG_SCENARIO
 #include "scenario_renderer.h"
@@ -8,6 +9,7 @@
 #include "scenario_primary.h"
 #include "scenario_alternate.h"
 #include "scenario_classification.h"
+#include "control.h"
 #endif
 
 #include <limits.h>
@@ -263,7 +265,6 @@ static HANDLE trace_file = INVALID_HANDLE_VALUE;
 static CRITICAL_SECTION trace_lock;
 static int trace_lock_ready;
 static HMODULE executable_module;
-static volatile LONG movie_skip_pending;
 static volatile LONG ship_spline_skipped;
 static volatile LONG ship_spline_skip_active;
 static volatile LONG ship_navigation_ready;
@@ -319,7 +320,9 @@ static volatile LONG snapshot_keyframe_pending;
 static HANDLE snapshot_keyframe_event;
 static DWORD snapshot_last_probe_time;
 static DWORD movement_trace_tls_index = TLS_OUT_OF_INDEXES;
-static char snapshot_control_path[MAX_PATH * 4];
+static char snapshot_directory[MAX_PATH * 4];
+static char snapshot_endpoint[64];
+static char snapshot_token[65];
 
 typedef struct snapshot_line {
     struct snapshot_line* next;
@@ -1197,6 +1200,7 @@ static float __cdecl hooked_frame_delta(void* frame) {
     InterlockedExchange(&snapshot_frame_time_ms, (LONG)GetTickCount());
 #if FANG_SCENARIO
     observe_scenario_dispatch_frame();
+    fang_control_frame((uint32_t)InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0));
 #endif
     if (InterlockedCompareExchange(&snapshot_keyframe_pending, 2, 1) == 1) {
         InterlockedExchange(&snapshot_keyframe_started_time_ms, (LONG)GetTickCount());
@@ -1216,105 +1220,228 @@ static float __cdecl hooked_frame_delta(void* frame) {
     return delta;
 }
 
+static void apply_snapshot_control(char* contents, char* last_request) {
+    char request[256];
+    char* mode;
+    char* request_line;
+    char* buffer_line;
+    char* server_time_line;
+    unsigned int buffer_ms = 30000;
+    unsigned long long server_time_unix_nano = 0;
+    unsigned long long client_received_time_ms = 0;
+    ZeroMemory(request, sizeof(request));
+    mode = strstr(contents, "mode=");
+    if (mode != NULL) {
+        mode += 5;
+    }
+    if (mode != NULL && _strnicmp(mode, "auto", 4) == 0) {
+        InterlockedExchange(&snapshot_capture_enabled, 1);
+        InterlockedExchange(&snapshot_auto_probe_enabled, 1);
+    } else if (mode != NULL && _strnicmp(mode, "manual", 6) == 0) {
+        InterlockedExchange(&snapshot_capture_enabled, 1);
+        InterlockedExchange(&snapshot_auto_probe_enabled, 1);
+    } else if (mode != NULL && _strnicmp(mode, "off", 3) == 0) {
+        InterlockedExchange(&snapshot_auto_probe_enabled, 0);
+        if (InterlockedExchange(&snapshot_capture_enabled, 0) != 0) {
+            snapshot_ring_clear();
+        }
+    }
+    request_line = strstr(contents, "request=");
+    if (request_line != NULL) {
+        size_t request_length;
+        request_line += 8;
+        request_length = strcspn(request_line, "\r\n");
+        if (request_length >= sizeof(request)) {
+            request_length = sizeof(request) - 1;
+        }
+        memcpy(request, request_line, request_length);
+        request[request_length] = '\0';
+    }
+    buffer_line = strstr(contents, "buffer_ms=");
+    if (buffer_line != NULL) {
+        unsigned long parsed = strtoul(buffer_line + 10, NULL, 10);
+        if (parsed >= 1000 && parsed <= 300000) {
+            buffer_ms = (unsigned int)parsed;
+        }
+    }
+    server_time_line = strstr(contents, "server_time_unix_nano=");
+    if (server_time_line != NULL) {
+        server_time_unix_nano = _strtoui64(
+            server_time_line + 22, NULL, 10);
+    }
+    if (request[0] != '\0' && strcmp(request, last_request) != 0 &&
+        valid_snapshot_directory_name(request) &&
+        InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) != 0) {
+        strncpy(last_request, request, sizeof(request) - 1);
+        last_request[sizeof(request) - 1] = '\0';
+        client_received_time_ms = GetTickCount64();
+        InterlockedExchange(&snapshot_keyframe_started_time_ms, 0);
+        InterlockedExchange(&snapshot_keyframe_completed_time_ms, 0);
+        {
+            const char* keyframe_status = "unavailable";
+            if (snapshot_keyframe_event != NULL) {
+                DWORD wait_result;
+                ResetEvent(snapshot_keyframe_event);
+                InterlockedExchange(&snapshot_keyframe_pending, 1);
+                wait_result = WaitForSingleObject(snapshot_keyframe_event, 250);
+                InterlockedExchange(&snapshot_keyframe_pending, 0);
+                if (wait_result == WAIT_OBJECT_0) {
+                    keyframe_status = "complete";
+                } else if (wait_result == WAIT_TIMEOUT) {
+                    keyframe_status = "timeout";
+                } else {
+                    keyframe_status = "wait_failed";
+                }
+            }
+            fang_trace_arsenal_snapshot(executable_module);
+            snapshot_ring_marker(
+                "snapshot_boundary", request, server_time_unix_nano,
+                buffer_ms, keyframe_status, client_received_time_ms);
+        }
+        snapshot_ring_dump(request, buffer_ms);
+    }
+}
+
+static int snapshot_control_address(struct sockaddr_in* address) {
+    const char* port_text;
+    char* port_end;
+    unsigned long port;
+    size_t index;
+    if (strncmp(snapshot_endpoint, "127.0.0.1:", 10) != 0 ||
+        strlen(snapshot_token) != 64 || snapshot_directory[0] == '\0') {
+        return 0;
+    }
+    for (index = 0; index < 64; index++) {
+        if (!isxdigit((unsigned char)snapshot_token[index])) {
+            return 0;
+        }
+    }
+    port_text = snapshot_endpoint + 10;
+    if (*port_text == '\0') {
+        return 0;
+    }
+    for (index = 0; port_text[index] != '\0'; index++) {
+        if (port_text[index] < '0' || port_text[index] > '9') {
+            return 0;
+        }
+    }
+    port = strtoul(port_text, &port_end, 10);
+    if (*port_end != '\0' || port == 0 || port > 65535) {
+        return 0;
+    }
+    ZeroMemory(address, sizeof(*address));
+    address->sin_family = AF_INET;
+    address->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address->sin_port = htons((unsigned short)port);
+    return 1;
+}
+
+// Use unhooked Winsock exports so diagnostics never capture their own control traffic.
+static SOCKET connect_snapshot_control(const struct sockaddr_in* address) {
+    SOCKET control = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    u_long is_nonblocking = 1;
+    fd_set writes;
+    fd_set errors;
+    struct timeval timeout;
+    int connection_error = 0;
+    int error_length = sizeof(connection_error);
+    DWORD operation_timeout = 500;
+    if (control == INVALID_SOCKET) {
+        return INVALID_SOCKET;
+    }
+    if (ioctlsocket(control, FIONBIO, &is_nonblocking) == SOCKET_ERROR) {
+        original_closesocket(control);
+        return INVALID_SOCKET;
+    }
+    if (original_connect(control, (const struct sockaddr*)address, sizeof(*address)) == SOCKET_ERROR) {
+        if (WSAGetLastError() != WSAEWOULDBLOCK) {
+            original_closesocket(control);
+            return INVALID_SOCKET;
+        }
+        FD_ZERO(&writes);
+        FD_ZERO(&errors);
+        FD_SET(control, &writes);
+        FD_SET(control, &errors);
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 500000;
+        if (select(0, NULL, &writes, &errors, &timeout) <= 0 ||
+            FD_ISSET(control, &errors) ||
+            getsockopt(control, SOL_SOCKET, SO_ERROR,
+                (char*)&connection_error, &error_length) == SOCKET_ERROR || connection_error != 0) {
+            original_closesocket(control);
+            return INVALID_SOCKET;
+        }
+    }
+    is_nonblocking = 0;
+    if (ioctlsocket(control, FIONBIO, &is_nonblocking) == SOCKET_ERROR ||
+        setsockopt(control, SOL_SOCKET, SO_RCVTIMEO,
+            (const char*)&operation_timeout, sizeof(operation_timeout)) == SOCKET_ERROR ||
+        setsockopt(control, SOL_SOCKET, SO_SNDTIMEO,
+            (const char*)&operation_timeout, sizeof(operation_timeout)) == SOCKET_ERROR) {
+        original_closesocket(control);
+        return INVALID_SOCKET;
+    }
+    return control;
+}
+
 static DWORD WINAPI watch_snapshot_control(LPVOID parameter) {
+    struct sockaddr_in address;
+    WSADATA startup;
     char last_request[256];
+    char authentication[66];
     (void)parameter;
+    if (!snapshot_control_address(&address) || original_connect == NULL ||
+        original_send == NULL || original_recv == NULL || original_closesocket == NULL) {
+        return 0;
+    }
+    if (WSAStartup(MAKEWORD(2, 2), &startup) != 0) {
+        return 0;
+    }
     ZeroMemory(last_request, sizeof(last_request));
+    memcpy(authentication, snapshot_token, 64);
+    authentication[64] = '\n';
+    authentication[65] = '\0';
     for (;;) {
-        HANDLE control;
+        SOCKET control = connect_snapshot_control(&address);
         char contents[1024];
-        char request[256];
-        char* mode;
-        char* request_line;
-        char* buffer_line;
-        char* server_time_line;
-        DWORD read_count = 0;
-        unsigned int buffer_ms = 30000;
-        unsigned long long server_time_unix_nano = 0;
-        unsigned long long client_received_time_ms = 0;
-        ZeroMemory(contents, sizeof(contents));
-        ZeroMemory(request, sizeof(request));
-        control = CreateFileA(
-            snapshot_control_path, GENERIC_READ,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-        if (control != INVALID_HANDLE_VALUE) {
-            ReadFile(control, contents, (DWORD)(sizeof(contents) - 1), &read_count, NULL);
-            CloseHandle(control);
-            if (read_count != 0) {
-                mode = strstr(contents, "mode=");
-                if (mode != NULL) {
-                    mode += 5;
+        size_t used = 0;
+        int sent = 0;
+        if (control == INVALID_SOCKET) {
+            Sleep(500);
+            continue;
+        }
+        while (sent < 65) {
+            int count = original_send(control, authentication + sent, 65 - sent, 0);
+            if (count <= 0) {
+                break;
+            }
+            sent += count;
+        }
+        while (sent == 65) {
+            char incoming[256];
+            int index;
+            int count = original_recv(control, incoming, sizeof(incoming), 0);
+            if (count == SOCKET_ERROR && WSAGetLastError() == WSAETIMEDOUT) {
+                continue;
+            }
+            if (count <= 0) {
+                break;
+            }
+            for (index = 0; index < count; index++) {
+                if (used >= sizeof(contents) - 1) {
+                    sent = 0;
+                    break;
                 }
-                if (mode != NULL && _strnicmp(mode, "auto", 4) == 0) {
-                    InterlockedExchange(&snapshot_capture_enabled, 1);
-                    InterlockedExchange(&snapshot_auto_probe_enabled, 1);
-                } else if (mode != NULL && _strnicmp(mode, "manual", 6) == 0) {
-                    InterlockedExchange(&snapshot_capture_enabled, 1);
-                    InterlockedExchange(&snapshot_auto_probe_enabled, 1);
-                } else if (mode != NULL && _strnicmp(mode, "off", 3) == 0) {
-                    InterlockedExchange(&snapshot_auto_probe_enabled, 0);
-                    if (InterlockedExchange(&snapshot_capture_enabled, 0) != 0) {
-                        snapshot_ring_clear();
-                    }
-                }
-                request_line = strstr(contents, "request=");
-                if (request_line != NULL) {
-                    size_t request_length;
-                    request_line += 8;
-                    request_length = strcspn(request_line, "\r\n");
-                    if (request_length >= sizeof(request)) {
-                        request_length = sizeof(request) - 1;
-                    }
-                    memcpy(request, request_line, request_length);
-                    request[request_length] = '\0';
-                }
-                buffer_line = strstr(contents, "buffer_ms=");
-                if (buffer_line != NULL) {
-                    unsigned long parsed = strtoul(buffer_line + 10, NULL, 10);
-                    if (parsed >= 1000 && parsed <= 300000) {
-                        buffer_ms = (unsigned int)parsed;
-                    }
-                }
-                server_time_line = strstr(contents, "server_time_unix_nano=");
-                if (server_time_line != NULL) {
-                    server_time_unix_nano = _strtoui64(
-                        server_time_line + 22, NULL, 10);
-                }
-                if (request[0] != '\0' && strcmp(request, last_request) != 0 &&
-                    valid_snapshot_directory_name(request) &&
-                    InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) != 0) {
-                    strncpy(last_request, request, sizeof(last_request) - 1);
-                    last_request[sizeof(last_request) - 1] = '\0';
-                    client_received_time_ms = GetTickCount64();
-                    InterlockedExchange(&snapshot_keyframe_started_time_ms, 0);
-                    InterlockedExchange(&snapshot_keyframe_completed_time_ms, 0);
-                    {
-                        const char* keyframe_status = "unavailable";
-                    if (snapshot_keyframe_event != NULL) {
-                        DWORD wait_result;
-                        ResetEvent(snapshot_keyframe_event);
-                        InterlockedExchange(&snapshot_keyframe_pending, 1);
-                        wait_result = WaitForSingleObject(snapshot_keyframe_event, 250);
-                        InterlockedExchange(&snapshot_keyframe_pending, 0);
-                        if (wait_result == WAIT_OBJECT_0) {
-                            keyframe_status = "complete";
-                        } else if (wait_result == WAIT_TIMEOUT) {
-                            keyframe_status = "timeout";
-                        } else {
-                            keyframe_status = "wait_failed";
-                        }
-                    }
-                    fang_trace_arsenal_snapshot(executable_module);
-                    snapshot_ring_marker(
-                        "snapshot_boundary", request, server_time_unix_nano,
-                        buffer_ms, keyframe_status, client_received_time_ms);
-                    }
-                    snapshot_ring_dump(request, buffer_ms);
+                contents[used++] = incoming[index];
+                if (used >= 2 && contents[used - 1] == '\n' && contents[used - 2] == '\n') {
+                    contents[used] = '\0';
+                    apply_snapshot_control(contents, last_request);
+                    used = 0;
                 }
             }
         }
-        Sleep(250);
+        original_closesocket(control);
+        Sleep(500);
     }
 }
 
@@ -2091,6 +2218,12 @@ static unsigned int reset_combat_input_state(void) {
 
 static LRESULT CALLBACK hooked_game_wndproc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     static const UINT_PTR chat_timer = 0xD45C;
+#if FANG_SCENARIO
+    /* Scenario input must traverse the installed compatibility handler too,
+     * including ordinary Enter-to-open-chat behavior. Synthetic input messages
+     * are not the private wake message, so they fall through the control probe. */
+    if (fang_control_window_message(window, message, wparam, lparam, hooked_game_wndproc)) return 0;
+#endif
     if (message == WM_KEYDOWN && (wparam == 'V' || wparam == 'v') &&
         (GetKeyState(VK_CONTROL) & 0x8000) != 0) {
         void* chat = original_chat_lookup();
@@ -2148,6 +2281,9 @@ static void install_chat_wndproc(HWND window) {
     WNDPROC current = (WNDPROC)GetWindowLongPtrA(window, GWLP_WNDPROC);
     if (current == hooked_game_wndproc) {
         chat_game_window = window;
+#if FANG_SCENARIO
+        fang_control_window_attach(window);
+#endif
         return;
     }
     original_game_wndproc = current;
@@ -2158,6 +2294,9 @@ static void install_chat_wndproc(HWND window) {
         return;
     }
     chat_game_window = window;
+#if FANG_SCENARIO
+    fang_control_window_attach(window);
+#endif
     trace_client_state("chat_wndproc", 1);
 }
 
@@ -2497,7 +2636,6 @@ static void snapshot_ring_dump(
     const char* directory_name, unsigned int buffer_ms) {
     char output_path[MAX_PATH * 4];
     char temporary_path[MAX_PATH * 4];
-    char* separator;
     snapshot_line* line;
     char* contents = NULL;
     size_t total = 0;
@@ -2508,26 +2646,13 @@ static void snapshot_ring_dump(
     int is_complete = 0;
     int output_length;
     int temporary_length;
-    size_t output_remaining;
     if (!valid_snapshot_directory_name(directory_name) ||
-        snapshot_control_path[0] == '\0') {
+        snapshot_directory[0] == '\0') {
         return;
     }
-    strncpy(output_path, snapshot_control_path, sizeof(output_path) - 1);
-    output_path[sizeof(output_path) - 1] = '\0';
-    separator = strrchr(output_path, '\\');
-    if (separator == NULL) {
-        separator = strrchr(output_path, '/');
-    }
-    if (separator == NULL) {
-        return;
-    }
-    separator[1] = '\0';
-    output_remaining = sizeof(output_path) -
-        (size_t)(separator + 1 - output_path);
-    output_length = snprintf(separator + 1, output_remaining,
-        "snapshots\\%s\\client-memory.jsonl", directory_name);
-    if (output_length <= 0 || (size_t)output_length >= output_remaining) {
+    output_length = snprintf(output_path, sizeof(output_path),
+        "%s\\snapshots\\%s\\client-memory.jsonl", snapshot_directory, directory_name);
+    if (output_length <= 0 || (size_t)output_length >= sizeof(output_path)) {
         return;
     }
     temporary_length = snprintf(
@@ -4911,6 +5036,7 @@ static void __cdecl hooked_scene_load(void* scene, unsigned int markerset, unsig
     trace_scene_state("scene_load_request", asset_id, markerset, index, asset_id != 0);
     original_scene_load(scene, markerset, index);
 #if FANG_SCENARIO
+    fang_control_scene(asset_id, (uint32_t)InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0));
     if (InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) != 0) {
         char line[512];
         unsigned int load_argument_0 = markerset;
@@ -4952,51 +5078,6 @@ static void __cdecl hooked_scene_change(void* simulator, void* scene) {
     CloseHandle(xp_thread);
     original_scene_change(simulator, scene);
 #endif
-}
-
-static DWORD WINAPI stop_started_movie(LPVOID parameter) {
-    /*
-     * Game's boot state uses movie-manager vtable slot 5 (+0x14) to
-     * detect active playback and slot 9 (+0x24) for its native skip action.
-     * Wait until the scripted ship movie has actually started so stopping it
-     * preserves the loader/player lifecycle expected by the camera script.
-     */
-    int attempt;
-    (void)parameter;
-    for (attempt = 0; attempt < 2000; attempt++) {
-        void* manager = original_movie_manager();
-        if (manager != NULL) {
-            void** methods = *(void***)manager;
-            movie_playing_fn playing = (movie_playing_fn)methods[5];
-            movie_stop_fn stop = (movie_stop_fn)methods[9];
-            if (playing(manager)) {
-                stop(manager);
-                trace_client_state("movie_stop", 1);
-                InterlockedExchange(&movie_skip_pending, 0);
-                return 0;
-            }
-        }
-        Sleep(1);
-    }
-    trace_client_state("movie_stop_timeout", 1);
-    InterlockedExchange(&movie_skip_pending, 0);
-    return 1;
-}
-
-static void __cdecl hooked_movie_load(void* output, const char* name, int unknown_a, int unknown_b) {
-    size_t length = name == NULL ? 0 : strlen(name);
-    original_movie_load(output, name, unknown_a, unknown_b);
-    if (length >= 4 && _stricmp(name + length - 4, ".vp6") == 0 &&
-        InterlockedCompareExchange(&ship_spline_skip_active, 0, 0) == 0 &&
-        InterlockedCompareExchange(&movie_skip_pending, 1, 0) == 0) {
-        HANDLE stop_thread = CreateThread(NULL, 0, stop_started_movie, NULL, 0, NULL);
-        if (stop_thread != NULL) {
-            CloseHandle(stop_thread);
-        } else {
-            InterlockedExchange(&movie_skip_pending, 0);
-            trace_client_state("movie_stop_thread", 1);
-        }
-    }
 }
 
 static int complete_active_spline(void) {
@@ -6849,8 +6930,6 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
     static const BYTE certificate_signature[] = {0x83, 0x7C, 0x24, 0x04, 0x00, 0x56, 0x57, 0x8B, 0xF0};
     static const BYTE secure_connect_signature[] = {0x8B, 0x5C, 0x24, 0x14, 0x8B, 0xC6, 0x89, 0xBE, 0x20, 0x01, 0x00, 0x00, 0xC7, 0x86, 0x24, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00};
     static const BYTE force_plaintext[] = {0x31, 0xDB, 0x90, 0x90};
-    static const BYTE opening_movie_branch[] = {0x84, 0xC0, 0x74, 0x77, 0x8D, 0x44, 0x24, 0x0C};
-    static const BYTE unconditional_jump[] = {0xEB};
     HMODULE executable = GetModuleHandleA(NULL);
     HMODULE winsock = GetModuleHandleA("ws2_32.dll");
     HMODULE user32 = GetModuleHandleA("user32.dll");
@@ -6869,10 +6948,21 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
     ZeroMemory(snapshot_mode, sizeof(snapshot_mode));
     GetEnvironmentVariableA(
         "DARKSPIN_SNAPSHOT_MODE", snapshot_mode, (DWORD)sizeof(snapshot_mode));
-    ZeroMemory(snapshot_control_path, sizeof(snapshot_control_path));
-    GetEnvironmentVariableA(
-        "DARKSPIN_SNAPSHOT_CONTROL", snapshot_control_path,
-        (DWORD)sizeof(snapshot_control_path));
+    ZeroMemory(snapshot_directory, sizeof(snapshot_directory));
+    ZeroMemory(snapshot_endpoint, sizeof(snapshot_endpoint));
+    ZeroMemory(snapshot_token, sizeof(snapshot_token));
+    if (GetEnvironmentVariableA("DARKSPIN_SNAPSHOT_DIRECTORY", snapshot_directory,
+        (DWORD)sizeof(snapshot_directory)) >= sizeof(snapshot_directory)) {
+        snapshot_directory[0] = '\0';
+    }
+    if (GetEnvironmentVariableA("DARKSPIN_SNAPSHOT_ENDPOINT", snapshot_endpoint,
+        (DWORD)sizeof(snapshot_endpoint)) >= sizeof(snapshot_endpoint)) {
+        snapshot_endpoint[0] = '\0';
+    }
+    if (GetEnvironmentVariableA("DARKSPIN_SNAPSHOT_TOKEN", snapshot_token,
+        (DWORD)sizeof(snapshot_token)) != 64) {
+        snapshot_token[0] = '\0';
+    }
     InterlockedExchange(&snapshot_capture_enabled,
         (_stricmp(snapshot_mode, "manual") == 0 ||
          _stricmp(snapshot_mode, "auto") == 0) ? 1 : 0);
@@ -6960,7 +7050,9 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
     original_chat_show = (chat_show_fn)((BYTE*)executable + 0xD850);
     original_chat_open = (chat_open_fn)((BYTE*)executable + 0xB8F0);
     original_chat_text_convert = (chat_text_convert_fn)((BYTE*)executable + 0x6D9E40);
-    skip_cinematics_enabled = skip_cinematic;
+    /* The option now supplies native Escape edges only. Legacy camera/menu
+     * acceleration helpers remain disabled and are never installed below. */
+    skip_cinematics_enabled = 0;
 	 if (jwt != NULL && jwt[0] != '\0') {
 		 strncpy(jwt_login_token, jwt, sizeof(jwt_login_token) - 1);
 		 jwt_login_token[sizeof(jwt_login_token) - 1] = '\0';
@@ -7013,13 +7105,13 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
 #else
     (void)trace_path;
 #endif
-    if (snapshot_control_path[0] != '\0' && snapshot_keyframe_event == NULL) {
+    if (snapshot_endpoint[0] != '\0' && snapshot_keyframe_event == NULL) {
         snapshot_keyframe_event = CreateEventA(NULL, TRUE, FALSE, NULL);
         if (snapshot_keyframe_event == NULL) {
             result |= 0x20000000;
         }
     }
-    if (snapshot_control_path[0] != '\0') {
+    if (snapshot_endpoint[0] != '\0') {
         HANDLE snapshot_thread = CreateThread(
             NULL, 0, watch_snapshot_control, NULL, 0, NULL);
         if (snapshot_thread != NULL) {
@@ -7032,6 +7124,12 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
         (unsigned int)InterlockedCompareExchange(
             &snapshot_capture_enabled, 0, 0));
 #if FANG_SCENARIO
+    trace_client_state("scenario_scene_hook", (unsigned int)fang_control_scene_install(executable));
+    trace_client_state("scenario_screen_hook", (unsigned int)fang_control_screen_install(executable));
+    trace_client_state("scenario_map_hook", (unsigned int)fang_control_map_install(executable));
+    trace_client_state("scenario_deployment_hook", (unsigned int)fang_control_deployment_install(executable));
+    trace_client_state("scenario_arena_hook", (unsigned int)fang_control_arena_install(executable));
+    trace_client_state("scenario_gameplay_hook", (unsigned int)fang_control_gameplay_install(executable));
     if (!install_scenario_renderer_observation(executable)) {
         result |= 0x8;
     }
@@ -7173,22 +7271,10 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
             result |= 0x20000000;
         }
     }
-    if (skip_intro || skip_cinematic) {
-        BYTE* opening_branch = find_signature(executable, opening_movie_branch, sizeof(opening_movie_branch));
-        if (opening_branch == NULL || !patch_bytes(opening_branch + 2, unconditional_jump, sizeof(unconditional_jump))) {
-            result |= 0x10000;
-        }
-    }
-    if (skip_cinematic) {
-        if (!patch_call((BYTE*)executable + 0x131F64, (void*)original_movie_load, (void*)hooked_movie_load)) {
-            result |= 0x200000;
-        }
-        if (!patch_call((BYTE*)executable + 0xF30D8, (void*)original_spline_update, (void*)hooked_spline_update)) {
-            result |= 0x400000;
-        }
-        if (!patch_call((BYTE*)executable + 0x555EE, (void*)original_navigation_update, (void*)hooked_navigation_update)) {
-            result |= 0x1000000;
-        }
+    {
+        int is_cinematic_hooked = fang_cinematic_install(executable, skip_intro, skip_cinematic);
+        trace_client_state("cinematic_escape_hook", (unsigned int)is_cinematic_hooked);
+        if (!is_cinematic_hooked && (skip_intro || skip_cinematic)) result |= 0x10000;
     }
 #if FANG_DIAGNOSTICS
     {

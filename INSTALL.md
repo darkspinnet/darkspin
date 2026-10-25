@@ -64,9 +64,13 @@ mage tutorial:debug
 runs the server with `bin/server` as its working directory. That directory also
 contains `darkspin.toml`, server data, and the generated `darkspin` runtime
 directory.
-The Mage target supplies the repository-local `bin/game` installation and writes
-the default server protocol trace to
-`bin/server/darkspin/logs/traces/server.jsonl`.
+The Mage target supplies the repository-local `bin/game` installation. Normal
+server and launcher runs do not write a continuous server protocol trace.
+Use `darkrun server --trace server.jsonl` for an explicit capture beneath
+`darkspin/logs/traces`; Lua diagnostic sessions and `mage tutorial:debug` also
+request protocol captures. Sync Snapshot's rolling gameplay history and `/bug`
+capture do not depend on that file. The protocol trace adds HTTP, Blaze, and QoS
+metadata that is distinct from the snapshot's gameplay traffic.
 Generated IDA and game reverse-engineering logs belong under `bin/game/logs`.
 
 `mage darkspin:auth` rebuilds darkspin and runs `darkspin auth --local` from `bin/server`.
@@ -75,7 +79,19 @@ The auth broker and game server read the same `[auth]` settings from
 
 The DarkSpinner all-in-one Wails application builds into `bin/game`, beside `DarksporeBin` and `Data`,
 with its own server data, configuration, saves, cache, logs, and traces. It manages local auth,
-the darkspin server, retained player profiles, patch readiness, and game launch:
+the darkspin server, retained player profiles, patch readiness, and game launch.
+
+Launcher preferences share `darkspin.toml` with server settings. Skip-intro and
+skip-cinematic choices persist independently as `is_intro_skipped` and
+`is_cinematic_skipped` in `[launcher]` and are restored on startup. Explicit
+`--skip-intro` and `--skip-cinematic` flags override the saved choices for that
+run without changing them. The Wine runtime
+selection is stored in `[launcher.wine]` as `runtime_path`; the Spore installation
+and detection flag are stored in `[launcher.mod]` as `spore_path` and
+`is_detection_attempted`. Older `darkspin/launcher.toml` and root `launcher.toml`
+files are merged automatically, with existing `darkspin.toml` settings taking
+precedence. The old file is deleted only after the combined configuration is
+successfully saved. Server configuration saves preserve the launcher tables.
 
 ```sh
 mage darkspinner:build
@@ -244,17 +260,16 @@ instance. Local SQLite defaults to 25. A future PostgreSQL deployment can raise
 the value explicitly after sizing the database and server host.
 
 Accepted chat messages are stored in SQLite's `chat_log` table and emitted as
-JSON Lines to stdout and `darkspin/logs/chat.log` by default:
+JSON Lines to stdout by default; no separate chat log file is written:
 
 ```toml
 [chat]
 is_stdout_enabled = true
-file_path = "chat.log"
 ```
 
-Relative chat file paths are resolved beneath the fixed `darkspin/logs` directory.
-Set `file_path = ""` to disable file output. The database audit remains enabled
-when the SQLite storage adapter is active.
+Set `is_stdout_enabled = false` to disable stdout output. The database audit
+remains enabled when the SQLite storage adapter is active. Legacy `file_path`
+settings are ignored.
 
 Persistence uses `darkspin/saves/darkspin.db` for mutable player state and
 `darkspin/cache/content.db` for reference content. SQLite uses WAL mode, foreign keys,

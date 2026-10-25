@@ -1650,6 +1650,7 @@ func (s *gameplayPeerSession) applyDeveloperResetCommand(
 		interruptedBasic.Stop()
 	}
 	if s.rideCancel != nil {
+		s.cancelScenarioRide("hero lifecycle canceled ability", time.Now())
 		s.rideCancel()
 		s.rideCancel = nil
 	}

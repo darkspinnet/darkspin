@@ -1,0 +1,52 @@
+---@meta
+
+---Sequential local evidence, never an atomic or paused game dump. Capture uses
+---the client timeout with a 10-second cap; partial artifacts survive failure.
+---@class ClientDiagnostics
+---@field Capture fun(self:ClientDiagnostics,label:string):DiagnosticCapture|nil,ScenarioError|nil Saves a manifest, owned-window screenshot and bounded complete log records. Use Must only when all observations are required.
+
+---@class DiagnosticCapture
+---@field schema integer
+---@field label string
+---@field is_complete boolean False if any required observation, file or identity recheck failed.
+---@field is_atomic false Independent samples can span game progression; no pause is implied.
+---@field started_at string
+---@field finished_at string
+---@field manifest_path string Empty if persistence failed before a manifest could be saved.
+---@field client ClientSnapshot Original owned process snapshot, including launch mode.
+---@field profile ProfileSnapshot|nil Unavailable for a stopped process to avoid attributing a reset alias's new account.
+---@field world WorldSnapshot|nil Bounded scalar server observation; availability is explicit outside committed gameplay.
+---@field window WindowCommandResult|nil Fresh Fang window receipt, when available.
+---@field screenshot DiagnosticScreenshot|nil Saved through the existing owned-window capture path.
+---@field traces DiagnosticTrace[] Bounded copies, not references to moving logs.
+---@field failures table<string,DiagnosticFailure> JSON failure snapshots; the returned error exposes typed ScenarioError.Failures separately.
+
+---@class DiagnosticFailure
+---@field code? string
+---@field context? string
+---@field message string
+---@field client_instance_id? string
+---@field action_id? string
+---@field cause? DiagnosticFailure
+---@field failures? table<string,DiagnosticFailure>
+
+---@class DiagnosticScreenshot
+---@field client_id string
+---@field instance_id string
+---@field process_id integer
+---@field is_available boolean
+---@field is_complete boolean
+---@field image_path? string
+---@field metadata_path? string
+---@field image_sha256? string
+
+---@class DiagnosticTrace
+---@field name string Client, server protocol or server log.
+---@field path string Empty if that copy failed.
+---@field sha256 string SHA256 of the saved bytes, empty on failure.
+---@field source_size integer Source length sampled before reading.
+---@field source_offset integer Offset of the first saved complete record.
+---@field size integer Saved bytes; at most 512 KiB per source.
+---@field is_truncated boolean Source bytes were omitted before or after the copy.
+---@field started_at string
+---@field finished_at string

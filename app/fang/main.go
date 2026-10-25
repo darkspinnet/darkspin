@@ -58,6 +58,9 @@ func GoRecapInitialize() C.int {
 		host, C.ushort(configuredPort), C.ushort(configuredPort+1), tracePath,
 		isIntroSkipped, isCinematicSkipped, jwt, windowTitle,
 	)
+	if result == 0 {
+		startScenarioControl()
+	}
 	return C.int(result)
 }
 

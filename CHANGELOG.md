@@ -2,6 +2,7 @@
 
 ### 2026-10-24
 
+
 - #104 Move editor save errors from the Accept hover tooltip to the native on-screen hint area, retaining error numbers and explanations with scrollable and automatic paging.
 - #104 Apply imported creature fitting to separately rendered parts as well as the body, preserving eye attachment positions and proportions across native poses.
 - #104 Evaluate Mod emote movement eligibility at the current time instead of rejecting a completed path from its stale movement snapshot, and include eligibility details in rejection logs.

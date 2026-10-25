@@ -22,6 +22,8 @@ const gameProcessName = "Darkspore.exe"
 var visibleProfilePattern = regexp.MustCompile(`(?i)\bprofiles?\b`)
 
 type App struct {
+	clientSession      clientSession
+	lua                *launcherLua
 	ctx                context.Context
 	lifecycleCtx       context.Context
 	mu                 sync.Mutex
@@ -102,6 +104,7 @@ type LauncherStatus struct {
 	IsAutoPlayRequested bool   `json:"isAutoPlayRequested"`
 	IsPatchEnabled      bool   `json:"isPatchEnabled"`
 	IsCinematicSkipped  bool   `json:"isCinematicSkipped"`
+	IsIntroSkipped      bool   `json:"isIntroSkipped"`
 	IsLastRunFailure    bool   `json:"isLastRunFailure"`
 	IsStartupBlocked    bool   `json:"isStartupBlocked"`
 }
@@ -109,8 +112,9 @@ type LauncherStatus struct {
 func NewApp(arguments []string) *App {
 	identity := launchArgumentValue(arguments, "account")
 	return &App{
+		lua:          newLauncherLua(arguments),
 		modState:     modState{userPath: initialSporeUserPath()},
-		arguments:    setBooleanLaunchArgument(arguments, "skip-cinematic", false),
+		arguments:    launcherLuaArguments(arguments),
 		authURL:      authServiceURL,
 		presentation: wailsPresentation{},
 		status: LauncherStatus{
@@ -130,7 +134,8 @@ func NewApp(arguments []string) *App {
 			BuildChannel:        BuildChannel,
 			IsAutoPlayRequested: hasLaunchArgument(arguments, "auto-play"),
 			IsPatchEnabled:      strings.TrimSpace(patchManifestURL) != "",
-			IsCinematicSkipped:  false,
+			IsCinematicSkipped:  hasLaunchArgument(arguments, "skip-cinematic"),
+			IsIntroSkipped:      hasLaunchArgument(arguments, "skip-intro"),
 		},
 	}
 }
@@ -168,6 +173,16 @@ func (a *App) startup(ctx context.Context) {
 	if err != nil {
 		close(initializeDone)
 		a.failSubsystem("Game", fmt.Errorf("executableDirectory: %w", err))
+		return
+	}
+	err = a.restoreMoviePreferences(basePath)
+	if err != nil {
+		close(initializeDone)
+		a.failSubsystem("Game", fmt.Errorf("movieConfig: %w", err))
+		return
+	}
+	if a.startLauncherLua(lifecycleCtx) {
+		close(initializeDone)
 		return
 	}
 	clientFailuresDone := make(chan struct{})
@@ -229,6 +244,7 @@ func (a *App) beginShutdown() {
 }
 
 func (a *App) shutdown(context.Context) {
+	a.stopLauncherLua()
 	a.beginShutdown()
 	a.mu.Lock()
 	gameDone := a.gameDone
@@ -271,13 +287,6 @@ func (a *App) SetIdentity(identity string) LauncherStatus {
 	a.updatePlayReadyLocked()
 	a.emitStatusLocked()
 	return visibleLauncherStatus(a.status)
-}
-
-func (a *App) SetSkipCinematic(isSkipped bool) {
-	a.mu.Lock()
-	a.arguments = setBooleanLaunchArgument(a.arguments, "skip-cinematic", isSkipped)
-	a.status.IsCinematicSkipped = isSkipped
-	a.mu.Unlock()
 }
 
 // Authorize obtains the short-lived desktop credential used by fang.dll.
@@ -460,7 +469,7 @@ func (a *App) Play() error {
 		return errors.New("identity, auth service, server, patch, and game must all be ready")
 	}
 	account := a.status.Identity
-	isProfileRunning, err := isClientProfileRunning(a.status.GameDirectory, account)
+	isProfileRunning, err := a.isClientProfileRunning(account)
 	if err != nil {
 		a.mu.Unlock()
 		return fmt.Errorf("profileProcess: %w", err)
@@ -495,14 +504,15 @@ func (a *App) Play() error {
 }
 
 type gameLaunchRequest struct {
-	reportSession launcherReportSession
-	account       string
-	clientProfile string
-	serverAddress string
-	token         string
-	arguments     []string
-	done          chan struct{}
-	cancel        context.CancelFunc
+	reportSession  launcherReportSession
+	account        string
+	clientProfile  string
+	serverAddress  string
+	isRemoteServer bool
+	token          string
+	arguments      []string
+	done           chan struct{}
+	cancel         context.CancelFunc
 }
 
 func (a *App) runGameLaunch(ctx context.Context, req gameLaunchRequest) {
@@ -556,15 +566,35 @@ func (a *App) runGameLaunch(ctx context.Context, req gameLaunchRequest) {
 	if clientProfile == "" {
 		clientProfile = req.account
 	}
+	a.clientSession.Track(launchID, clientProfile, "attached")
+	defer a.clientSession.Close(launchID)
 	arguments = append([]string{
 		"--client-profile", clientProfile, "--launch-id", launchID, "--client-result", resultPath,
 	}, arguments...)
 	a.log("Starting game")
 	a.recordReportSession(req, launchID)
+	a.mu.Lock()
+	gameServer := a.serviceSet.gameServer
+	if req.isRemoteServer {
+		gameServer = nil
+	}
+	if req.reportSession.server != nil {
+		gameServer = req.reportSession.server
+	}
+	a.mu.Unlock()
+	connection := snapshotControlConnection{}
+	if gameServer != nil {
+		connection.endpoint, connection.token, err = gameServer.SnapshotClientControl(ctx, req.account)
+		if err != nil {
+			a.finishGameLaunchFailure(fmt.Errorf("snapshotControl: %w", err))
+			return
+		}
+		connection.directory = gameServer.SnapshotControlDirectory()
+	}
 	launchDone := make(chan struct{})
 	detectionDone := make(chan struct{})
-	go a.detectGameLaunch(ctx, launchDone, detectionDone, a.gameDirectory(), launchID)
-	err = run(ctx, arguments)
+	go a.detectGameLaunch(ctx, launchDone, detectionDone, launchID)
+	err = runWithSnapshotControl(ctx, arguments, connection)
 	close(launchDone)
 	<-detectionDone
 	if !a.isAttachedGameLaunch(req.done) {
@@ -695,11 +725,16 @@ func (a *App) finishGameLaunch(done chan struct{}) {
 
 func (a *App) detectGameLaunch(
 	ctx context.Context, launchDone <-chan struct{}, detectionDone chan<- struct{},
-	basePath, launchID string,
+	launchID string,
 ) {
 	defer close(detectionDone)
 	a.detectPlayingWithProbe(ctx, launchDone, func(string) (bool, error) {
-		return isClientLaunchRunning(basePath, launchID), nil
+		for _, record := range a.clientSession.RunningRecords() {
+			if record.LaunchID == launchID {
+				return true, nil
+			}
+		}
+		return false, nil
 	}, 100*time.Millisecond)
 }
 
@@ -822,7 +857,7 @@ func (a *App) detachedGameProcessIDs() ([]uint32, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gameProcesses: %w", err)
 	}
-	attachedRecords, err := runningAttachedClientRecords(a.gameDirectory())
+	attachedRecords, err := a.runningAttachedClientRecords()
 	if err != nil {
 		return nil, fmt.Errorf("attachedRecords: %w", err)
 	}
@@ -841,10 +876,12 @@ func (a *App) detachedGameProcessIDs() ([]uint32, error) {
 }
 
 func (a *App) runningProfileRecords(identity string) ([]clientProcessRecord, error) {
-	basePath := a.gameDirectory()
-	records, err := runningClientProfileRecords(basePath, identity)
-	if err != nil || len(records) != 0 {
-		return records, err
+	records, err := a.runningClientProfileRecords(identity)
+	if err != nil {
+		return nil, fmt.Errorf("profileRecords: %w", err)
+	}
+	if len(records) != 0 {
+		return records, nil
 	}
 	a.mu.Lock()
 	isLegacyAttached := a.status.State == "running" &&
@@ -853,7 +890,7 @@ func (a *App) runningProfileRecords(identity string) ([]clientProcessRecord, err
 	if !isLegacyAttached {
 		return records, nil
 	}
-	legacyRecords, err := runningUnownedAttachedClientRecords(basePath)
+	legacyRecords, err := a.runningUnownedAttachedClientRecords()
 	if err != nil {
 		return nil, fmt.Errorf("legacyRecords: %w", err)
 	}

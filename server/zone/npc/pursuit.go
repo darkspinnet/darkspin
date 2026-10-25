@@ -101,7 +101,7 @@ func (s *Session) AdvancePursuit(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	npc, isFound := s.npcs[objectID]
-	if !isFound || npc.IsDefeated || npc.HitPoint <= 0 {
+	if !isFound || npc.IsDefeated || npc.HitPoint <= 0 || !isScenarioPursuitAllowed(npc) {
 		return PursuitStep{}, errors.New("npc pursuit unavailable")
 	}
 	source := npc.Plan.Position

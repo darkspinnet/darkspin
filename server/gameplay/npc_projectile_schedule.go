@@ -329,6 +329,10 @@ func (e campaignNPCProjectileSchedule) next() ([][]byte, error) {
 	if !isCurrent {
 		return nil, nil
 	}
+	if !(e.volley.isActive && e.volley.shotIndex+1 < int(e.plan.Profile.ProjectileShotCount)) &&
+		e.runtime.finishScenarioNPCManualAction(e.sessionKey, e.generation, e.sourceObjectID, e.plan.ActionGeneration) {
+		return nil, nil
+	}
 	timestamp := e.timestamp + uint64(e.nextDelay/time.Millisecond)
 	var packets [][]byte
 	var err error

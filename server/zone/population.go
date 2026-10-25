@@ -48,15 +48,17 @@ func (e *Zone) PrimePopulation(
 				return PopulationTransition{}, fmt.Errorf("fixtureAdd: %w", err)
 			}
 		}
-		transition.Decisions, err = e.info.Population.PrimeOpening(req.Position)
-		if err != nil {
-			return PopulationTransition{}, fmt.Errorf("openingPrime: %w", err)
+		if !e.info.IsAmbientPopulationSuppressed {
+			transition.Decisions, err = e.info.Population.PrimeOpening(req.Position)
+			if err != nil {
+				return PopulationTransition{}, fmt.Errorf("openingPrime: %w", err)
+			}
+			introducedPlans, planErr := e.planPopulation(transition.Decisions)
+			if planErr != nil {
+				return PopulationTransition{}, fmt.Errorf("openingPlan: %w", planErr)
+			}
+			transition.SpawnPlans = append(transition.SpawnPlans, introducedPlans...)
 		}
-		introducedPlans, err := e.planPopulation(transition.Decisions)
-		if err != nil {
-			return PopulationTransition{}, fmt.Errorf("openingPlan: %w", err)
-		}
-		transition.SpawnPlans = append(transition.SpawnPlans, introducedPlans...)
 		e.isPopulationPrimed = true
 	}
 	targets := e.livePlayerAlignedTargets()
@@ -95,9 +97,12 @@ func (e *Zone) AdvancePopulation(
 	if req.IsDoingWell != nil {
 		isDoingWell = *req.IsDoingWell
 	}
-	decisions, err := e.info.Population.Observe(req.Position, isDoingWell)
-	if err != nil {
-		return PopulationTransition{}, fmt.Errorf("populationObserve: %w", err)
+	var decisions []zonepopulation.Decision
+	if !e.info.IsAmbientPopulationSuppressed {
+		decisions, err = e.info.Population.Observe(req.Position, isDoingWell)
+		if err != nil {
+			return PopulationTransition{}, fmt.Errorf("populationObserve: %w", err)
+		}
 	}
 	for index := range decisions {
 		if decisions[index].SpikeOutcome == 0 {

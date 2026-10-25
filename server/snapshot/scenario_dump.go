@@ -46,7 +46,7 @@ type ScenarioDump struct {
 }
 
 // ConfigureScenario relocates the existing recorder before its owned server
-// starts. Client memory follows the control file's parent in Fang; protocol
+// starts. The launcher supplies Fang's client-memory output directory; protocol
 // recording remains independently configured in the runtime composition.
 func (e *Service) ConfigureScenario(ctx context.Context, req ScenarioRecorderRequest) error {
 	if ctx == nil || e == nil {
@@ -89,16 +89,14 @@ func (e *Service) ConfigureScenario(ctx context.Context, req ScenarioRecorderReq
 	if err != nil {
 		return fmt.Errorf("recorderAncestors: %w", err)
 	}
-	controlPath := filepath.Join(directory, "snapshot-control.txt")
-	err = scenarioWriteExclusive(controlPath, []byte("mode=manual\n"))
-	if err != nil {
-		return fmt.Errorf("recorderControl: %w", err)
-	}
+	removeLegacyControl(directory, e.logger)
 	e.directory = snapshotDirectory
 	e.archiveDirectory = ""
 	e.traceDirectory = directory
-	e.controlPath = controlPath
 	e.mode = ModeManual
+	if e.controlBroker != nil {
+		e.controlBroker.publish("mode=manual\n\n", ModeManual)
+	}
 	e.scenarioRunID = req.RunID
 	e.scenarioTraceDirectory = traceDirectory
 	e.isScenarioConfigured = true
@@ -262,7 +260,7 @@ func (e *Service) writeScenarioDump(ctx context.Context, req ScenarioDumpRequest
 	}
 	result.Evidences = append(result.Evidences, result.StateEvidence)
 	clientStatus := e.requestClientMemory(ctx, result.Request,
-		filepath.Join(result.Directory, "client-memory.jsonl"), bufferDuration, ModeManual)
+		filepath.Join(result.Directory, "client-memory.jsonl"), bufferDuration, ModeManual, req.UserID)
 	if clientStatus.IsCaptured {
 		frameEvidence, frameErr := scenarioDumpEvidence(ctx, filepath.Join(result.Directory, "client-memory.jsonl"))
 		if frameErr != nil {

@@ -70,7 +70,7 @@ func (a *App) findModCreation(paths *spinnerPathSet, id string) (creationreader.
 			return creation, nil
 		}
 	}
-	settings, err := readLauncherSettings(paths.settingPath)
+	settings, err := readLauncherSettings(paths.configPath)
 	if err != nil {
 		return creationreader.Creation{}, fmt.Errorf("sourceSettings: %w", err)
 	}

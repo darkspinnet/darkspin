@@ -173,10 +173,14 @@ func (a *App) scanClientProcesses(ctx context.Context, directoryPath string, obs
 		if err != nil {
 			continue
 		}
+		if !a.clientSession.Register(record) {
+			continue
+		}
+		a.consumeClientResult(path)
 		resultPath := filepath.Join(directoryPath, record.LaunchID+".failure.json")
 		observedPaths[path] = struct{}{}
 		observedPaths[resultPath] = struct{}{}
-		go a.awaitClientProcess(ctx, path, resultPath, record)
+		go a.awaitClientProcess(ctx, resultPath, record)
 	}
 }
 
@@ -196,82 +200,52 @@ func readClientProcess(path string) (clientProcessRecord, error) {
 	return record, nil
 }
 
-func isClientProfileRunning(basePath, profile string) (bool, error) {
-	records, err := runningClientProfileRecords(basePath, profile)
+func (a *App) isClientProfileRunning(profile string) (bool, error) {
+	records, err := a.runningClientProfileRecords(profile)
 	if err != nil {
 		return false, fmt.Errorf("profileRecords: %w", err)
 	}
 	return len(records) != 0, nil
 }
 
-func runningClientProfileRecords(basePath, profile string) ([]clientProcessRecord, error) {
-	directoryPath := filepath.Join(basePath, "darkspin", "logs", clientFailureDirectory)
-	paths, err := filepath.Glob(filepath.Join(directoryPath, "*.process.json"))
-	if err != nil {
-		return nil, fmt.Errorf("profileGlob: %w", err)
-	}
+func (a *App) runningClientProfileRecords(profile string) ([]clientProcessRecord, error) {
 	records := make([]clientProcessRecord, 0, 1)
-	for _, path := range paths {
-		record, readErr := readClientProcess(path)
-		if readErr != nil || !strings.EqualFold(strings.TrimSpace(record.Profile), strings.TrimSpace(profile)) {
+	for _, record := range a.clientSession.RunningRecords() {
+		if !strings.EqualFold(strings.TrimSpace(record.Profile), strings.TrimSpace(profile)) {
 			continue
 		}
-		if isProcessIDRunning(record.PID) {
-			records = append(records, record)
-		}
+		records = append(records, record)
 	}
 	return records, nil
 }
 
-func runningUnownedAttachedClientRecords(basePath string) ([]clientProcessRecord, error) {
-	directoryPath := filepath.Join(basePath, "darkspin", "logs", clientFailureDirectory)
-	paths, err := filepath.Glob(filepath.Join(directoryPath, "*.process.json"))
-	if err != nil {
-		return nil, fmt.Errorf("attachedGlob: %w", err)
-	}
+func (a *App) runningUnownedAttachedClientRecords() ([]clientProcessRecord, error) {
 	records := make([]clientProcessRecord, 0, 1)
-	for _, path := range paths {
-		record, readErr := readClientProcess(path)
-		if readErr != nil || strings.TrimSpace(record.Profile) != "" ||
+	for _, record := range a.clientSession.RunningRecords() {
+		if strings.TrimSpace(record.Profile) != "" ||
 			!strings.EqualFold(strings.TrimSpace(record.Mode), "attached") {
 			continue
 		}
-		if isProcessIDRunning(record.PID) {
-			records = append(records, record)
-		}
+		records = append(records, record)
 	}
 	return records, nil
 }
 
-func runningAttachedClientRecords(basePath string) ([]clientProcessRecord, error) {
-	directoryPath := filepath.Join(basePath, "darkspin", "logs", clientFailureDirectory)
-	paths, err := filepath.Glob(filepath.Join(directoryPath, "*.process.json"))
-	if err != nil {
-		return nil, fmt.Errorf("attachedGlob: %w", err)
-	}
+func (a *App) runningAttachedClientRecords() ([]clientProcessRecord, error) {
 	records := make([]clientProcessRecord, 0, 1)
-	for _, path := range paths {
-		record, readErr := readClientProcess(path)
-		if readErr != nil ||
-			!strings.EqualFold(strings.TrimSpace(record.Mode), "attached") {
+	for _, record := range a.clientSession.RunningRecords() {
+		if !strings.EqualFold(strings.TrimSpace(record.Mode), "attached") {
 			continue
 		}
-		if isProcessIDRunning(record.PID) {
-			records = append(records, record)
-		}
+		records = append(records, record)
 	}
 	return records, nil
-}
-
-func isClientLaunchRunning(basePath, launchID string) bool {
-	path := filepath.Join(basePath, "darkspin", "logs", clientFailureDirectory, launchID+".process.json")
-	record, err := readClientProcess(path)
-	return err == nil && record.LaunchID == launchID && isProcessIDRunning(record.PID)
 }
 
 func (a *App) awaitClientProcess(
-	ctx context.Context, processPath, resultPath string, record clientProcessRecord,
+	ctx context.Context, resultPath string, record clientProcessRecord,
 ) {
+	defer a.clientSession.Close(record.LaunchID)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for isProcessIDRunning(record.PID) {
@@ -291,14 +265,9 @@ func (a *App) awaitClientProcess(
 	failureRecord, err := readClientFailure(resultPath)
 	if err == nil && failureRecord.PID == record.PID && failureRecord.LaunchID == record.LaunchID {
 		a.presentClientFailure(resultPath, failureRecord, record)
-	} else {
+	} else if !a.clientSession.IsFailed(record.LaunchID) {
 		a.log(formatClientRun(record) + ": exited normally.")
 		a.setClientLastRun("Exited normally.", false)
-	}
-	closedPath := strings.TrimSuffix(processPath, ".process.json") + ".closed.json"
-	err = os.Rename(processPath, closedPath)
-	if err != nil {
-		a.log("Client process result could not be closed: " + err.Error())
 	}
 }
 
@@ -313,6 +282,9 @@ func (a *App) scanClientFailures(ctx context.Context, directoryPath string, obse
 		}
 		record, err := readClientFailure(path)
 		if err != nil {
+			continue
+		}
+		if !a.clientSession.Owns(record.LaunchID) {
 			continue
 		}
 		observedPaths[path] = struct{}{}
@@ -359,14 +331,21 @@ func (a *App) awaitClientFailure(ctx context.Context, path string, record client
 func (a *App) presentClientFailure(
 	path string, failureRecord clientFailureRecord, processRecord clientProcessRecord,
 ) {
+	if !a.clientSession.Fail(failureRecord) {
+		return
+	}
 	message := fmt.Sprintf(
 		"%s: %s [%s]", formatClientRun(processRecord), failureRecord.Message, failureRecord.Reason,
 	)
 	a.setClientLastRun(message, true)
-	shownPath := strings.TrimSuffix(path, ".failure.json") + ".shown.json"
-	err := os.Rename(path, shownPath)
-	if err != nil {
-		a.log("Client failure result could not be acknowledged: " + err.Error())
+	a.log(message)
+	a.consumeClientResult(path)
+}
+
+func (a *App) consumeClientResult(path string) {
+	err := os.Remove(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		a.log("Client mailbox cleanup: " + err.Error())
 	}
 }
 

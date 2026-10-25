@@ -37,7 +37,6 @@ type spinnerPathSet struct {
 	configPath     string
 	contentPath    string
 	staticPath     string
-	settingPath    string
 }
 
 func resolveSpinnerPaths(basePath string) (*spinnerPathSet, error) {
@@ -64,7 +63,6 @@ func resolveSpinnerPaths(basePath string) (*spinnerPathSet, error) {
 		configPath:     filepath.Join(basePath, game.DefaultConfigFilename),
 		contentPath:    filepath.Join(cachePath, server.ContentDatabaseFilename),
 		staticPath:     filepath.Join(cachePath, "www", "static"),
-		settingPath:    filepath.Join(runtimePath, "launcher.toml"),
 	}
 	return pathSet, nil
 }
@@ -207,6 +205,10 @@ func prepareSpinnerRuntime(pathSet *spinnerPathSet) error {
 			return fmt.Errorf("directoryCreate[%d]: %w", index, err)
 		}
 	}
+	err := migrateLauncherSettings(pathSet.configPath)
+	if err != nil {
+		return fmt.Errorf("launcherMigrate: %w", err)
+	}
 	return nil
 }
 
@@ -293,7 +295,6 @@ func (a *App) startGameServer(ctx context.Context, pathSet *spinnerPathSet) erro
 		ConfigPath:  pathSet.configPath,
 		Logger:      logger,
 		RuntimePath: pathSet.runtimePath,
-		TracePath:   "server.jsonl",
 		HTTPRoutes:  a.launcherHTTPRoutes(),
 	})
 	if err != nil {

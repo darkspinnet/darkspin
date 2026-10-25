@@ -85,10 +85,11 @@ func RegisterSocialComponents(
 	if len(presenceRegistries) != 0 && presenceRegistries[0] != nil {
 		presenceRegistry = presenceRegistries[0]
 	}
+	networkRegistry := newPlaygroupNetworkRegistry(relay)
 	components := []Component{
 		associationComponent(userManager), messagingComponent(messenger, partyService),
 		playgroupsComponent(
-			partyService, userManager, presenceRegistry, relay, matchmaking,
+			partyService, userManager, presenceRegistry, relay, matchmaking, networkRegistry,
 		),
 		roomsComponent(roomManager, presenceRegistry),
 	}
@@ -98,6 +99,12 @@ func RegisterSocialComponents(
 			return fmt.Errorf("socialRegister[%q]: %w", component.Name, err)
 		}
 	}
+	registry.mu.Lock()
+	registry.playgroupDisconnect = &playgroupShipDisconnect{
+		partyService: partyService, networkRegistry: networkRegistry,
+		userManager: userManager, matchmaking: matchmaking,
+	}
+	registry.mu.Unlock()
 	return nil
 }
 
@@ -123,6 +130,9 @@ func associationUpdateHandler(userManager socialUserManager, isAddition bool) Ha
 		}
 		listType := associationListType(request.Fields)
 		members, isResolved := associationMembers(userManager, request.Fields)
+		if !isAddition {
+			members, isResolved = storedAssociationMembers(user, listType, request.Fields)
+		}
 		if !isResolved {
 			return &Response{ErrorCode: 0x0001}, nil
 		}
@@ -138,12 +148,13 @@ func associationUpdateHandler(userManager socialUserManager, isAddition bool) Ha
 		}
 		for index, member := range members {
 			target := userManager.UserByID(member.ID)
-			if target == nil {
-				continue
+			presenceFields := userOfflineNotificationFields(member.ID)
+			if target != nil && isSocialUserOnline(request, member.ID) {
+				presenceFields = userUpdatedNotificationFields(target)
 			}
 			err = request.QueueNotification(
 				UserSessionComponentID, userSessionUserUpdated,
-				userUpdatedNotificationFields(target),
+				presenceFields,
 			)
 			if err != nil {
 				return nil, fmt.Errorf("associationPresence[%d]: %w", index, err)
@@ -932,14 +943,6 @@ func forwardPartyInvite(
 		Invitee: party.Member{ID: inviteeID},
 	})
 	if errors.Is(err, party.ErrAlreadyMember) {
-		existing, isFound := partyService.PartyForMember(inviteeID)
-		if isFound && existing.ID == partyID {
-			messageGroup, messageIDs := messagingAttributeIDs(request.Fields)
-			return &Response{Fields: []tdf.Field{
-				tdf.FieldNamed("MGID", tdf.IntegerValue(messageGroup)),
-				tdf.FieldNamed("MIDS", tdf.ListValue(tdf.Integer, messageIDs...)),
-			}}, nil
-		}
 		return &Response{ErrorCode: messagingErrorTargetNotFound}, nil
 	}
 	if errors.Is(err, party.ErrPartyMissing) || errors.Is(err, party.ErrFull) ||
@@ -1356,8 +1359,12 @@ func playgroupsComponent(
 	partyService *party.Service, userManager socialUserManager,
 	presenceRegistry *PresenceRegistry, relay playgroupRelay,
 	matchmaking matchmakingDirectory,
+	networkRegistries ...*playgroupNetworkRegistry,
 ) Component {
 	networkRegistry := newPlaygroupNetworkRegistry(relay)
+	if len(networkRegistries) != 0 && networkRegistries[0] != nil {
+		networkRegistry = networkRegistries[0]
+	}
 	commands := make(map[uint16]Handler)
 	for command := uint16(1); command <= 0x0b; command++ {
 		commands[command] = func(context.Context, *Request) (*Response, error) { return &Response{}, nil }
@@ -1616,6 +1623,9 @@ func recoverSinglePeerPartyInvite(
 	ctx context.Context, request *Request, inviter *sporenet.User, partySnapshot party.Snapshot,
 	userManager socialUserManager, partyService *party.Service,
 ) error {
+	if request != nil && request.isPartyInviteRecoverySuppressed {
+		return nil
+	}
 	if request == nil || request.Session == nil || request.Session.server == nil {
 		return nil
 	}
@@ -1792,12 +1802,56 @@ func playgroupJoinHandler(
 		if err != nil {
 			return nil, fmt.Errorf("playgroupJoin: %w", err)
 		}
-		member := partySnapshot.Members[len(partySnapshot.Members)-1]
+		var member party.Member
+		for _, candidate := range partySnapshot.Members {
+			if candidate.ID == user.Account.ID {
+				member = candidate
+				break
+			}
+		}
+		if member.ID == 0 {
+			return nil, errors.New("playgroup joining member missing")
+		}
 		publishedNetwork, isPublishedNetworkFound := requestNetwork(request)
 		if !isPublishedNetworkFound {
 			publishedNetwork = tdf.Value{}
 		}
 		networkRegistry.recordMember(partyID, member.ID, request.Fields, publishedNetwork)
+		if member.ID == partySnapshot.LeaderID {
+			host, isHostFound := networkRegistry.member(partyID, member.ID)
+			if isHostFound {
+				networkRegistry.mu.Lock()
+				networkRegistry.hostsByParty[partyID] = host
+				networkRegistry.mu.Unlock()
+			}
+		}
+		for _, existing := range before.Members {
+			if existing.ID != member.ID {
+				continue
+			}
+			// The native Join callback resolves the roster installed by this
+			// notification. An idempotent join adds no member and changes no
+			// party revision, so do not emit a member-added event.
+			err = request.QueueNotificationBeforeReply(PlaygroupsComponentID, 0x33,
+				playgroupJoinFields(partySnapshot, member.ID, networkRegistry))
+			if err != nil {
+				return nil, fmt.Errorf("playgroupRejoinRoster: %w", err)
+			}
+			for _, recipient := range partySnapshot.Members {
+				if recipient.ID == member.ID {
+					continue
+				}
+				err = request.QueueUserNotification(recipient.ID, PlaygroupsComponentID, 0x33,
+					playgroupJoinFields(partySnapshot, recipient.ID, networkRegistry))
+				if err != nil {
+					return nil, fmt.Errorf("playgroupRejoinPeer[%d]: %w", recipient.ID, err)
+				}
+			}
+			return &Response{Fields: []tdf.Field{
+				tdf.FieldNamed("INFO", playgroupInfoValueWithNetwork(
+					partySnapshot, networkRegistry, member.ID)),
+			}}, nil
+		}
 		memberNetwork, isMemberNetworkFound := networkRegistry.member(partyID, member.ID)
 		if !isMemberNetworkFound {
 			memberNetwork = tdf.Value{}
@@ -1921,7 +1975,9 @@ func completePlaygroupLeave(
 		networkRegistry.removeParty(partyID)
 	}
 	removedFields := []tdf.Field{
-		tdf.FieldNamed("MLST", tdf.ListValue(tdf.Integer, tdf.IntegerValue(removedSlotID))),
+		// Build 103 E3C060 visits MLST as a scalar 64-bit user identity,
+		// matching the member identity consumed by C2E2C0, not a slot list.
+		tdf.FieldNamed("MLST", tdf.IntegerValue(uint64(userID))),
 		tdf.FieldNamed("PGID", tdf.IntegerValue(uint64(partyID))),
 		tdf.FieldNamed("REAS", tdf.IntegerValue(0)),
 	}

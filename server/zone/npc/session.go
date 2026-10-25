@@ -608,7 +608,7 @@ func (s *Session) acquireTargets(
 		if bossObjectID != 0 && (objectID != bossObjectID || !npc.Plan.IsBoss || !npc.IsFirstActionStarted) {
 			continue
 		}
-		if npc.IsDefeated || !npc.IsPublished ||
+		if npc.IsDefeated || !npc.IsPublished || !npc.IsScenarioAIEnabled() ||
 			npc.Plan.IsFixture || npc.IsActionStarted {
 			continue
 		}
@@ -672,7 +672,7 @@ func (s *Session) Retarget(objectID uint32, target Target) (Snapshot, bool, erro
 	defer s.mu.Unlock()
 	npc, isFound := s.npcs[objectID]
 	if !isFound || npc.IsDefeated || !npc.IsPublished || npc.HitPoint <= 0 ||
-		npc.Plan.IsFixture || npc.Faction == target.Faction {
+		!npc.IsScenarioAIEnabled() || npc.Plan.IsFixture || npc.Faction == target.Faction {
 		return npc, false, nil
 	}
 	if npc.TargetObjectID != target.ObjectID && time.Now().Before(npc.status.tauntExpiresAt) {
@@ -689,6 +689,16 @@ func (s *Session) Retarget(objectID uint32, target Target) (Snapshot, bool, erro
 func (s *Session) StartAction(
 	objectID uint32, owner ActionOwner, targetObjectID uint32,
 ) (Snapshot, bool, bool, error) {
+	actor, isStarted, isFirst, err := s.startAction(objectID, owner, targetObjectID, "")
+	if err != nil {
+		return Snapshot{}, false, false, fmt.Errorf("actionStart: %w", err)
+	}
+	return actor, isStarted, isFirst, nil
+}
+
+func (s *Session) startAction(
+	objectID uint32, owner ActionOwner, targetObjectID uint32, controlID string,
+) (Snapshot, bool, bool, error) {
 	if s == nil || objectID == 0 || owner.UserID == 0 ||
 		owner.PeerGeneration == 0 || targetObjectID == 0 {
 		return Snapshot{}, false, false, errors.New("npc action start invalid")
@@ -698,6 +708,9 @@ func (s *Session) StartAction(
 	npc, isFound := s.npcs[objectID]
 	if !isFound || npc.IsDefeated || !npc.IsPublished || npc.HitPoint <= 0 {
 		return Snapshot{}, false, false, fmt.Errorf("npcActionMissing: %d", objectID)
+	}
+	if !admitScenarioAction(npc, controlID) {
+		return npc, false, false, nil
 	}
 	if npc.TargetObjectID != 0 && npc.TargetObjectID != targetObjectID {
 		return npc, false, false, nil
@@ -731,6 +744,7 @@ func (s *Session) StartAction(
 	}
 	npc.IsFirstActionStarted = true
 	npc.ActionOwner = owner
+	markScenarioAction(&npc, controlID)
 	s.npcs[objectID] = npc
 	return npc, true, isFirstAction, nil
 }
