@@ -250,7 +250,8 @@ const launcherFailure = computed(() => {
 })
 const isPreparationActive = computed(() => !launcherProgressFailureLabel.value &&
   !statusRows.value.every(row => row.ready) &&
-  !['cancelled', 'error', 'installation-required'].includes(status.value.state))
+  // An available update leaves verification pending after initialization finishes.
+  !['ready', 'cancelled', 'error', 'installation-required'].includes(status.value.state))
 const isPatchBusy = computed(() => isPatchRequestBusy.value || status.value.isPatchActive || isPreparationActive.value)
 const isAutoLaunchCounting = computed(() => autoLaunchCountdown.value > 0)
 const isActiveProfileRunning = computed(() => activePage.value === 'play' && isSelectedProfileRunning.value)

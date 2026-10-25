@@ -2,12 +2,10 @@
 
 ### 2026-10-24
 
-- Persist Skip intro movies and Skip in-game cinematics independently in darkspin.toml, restore them when the launcher starts, and report preference save failures in Config.
+- [#108](https://github.com/darkspinnet/darkspin/issues/108) Fix the launcher getting stuck on Update available after preparation finishes, allowing automatic updates and the Patch button to start the update instead of treating it as ongoing preparation.
 - [#104](https://github.com/darkspinnet/darkspin/issues/104) Move editor save errors from the Accept hover tooltip to the native on-screen hint area, retaining error numbers and explanations with scrollable and automatic paging.
 - [#104](https://github.com/darkspinnet/darkspin/issues/104) Apply imported creature fitting to separately rendered parts as well as the body, preserving eye attachment positions and proportions across native poses.
 - [#104](https://github.com/darkspinnet/darkspin/issues/104) Evaluate Mod emote movement eligibility at the current time instead of rejecting a completed path from its stale movement snapshot, and include eligibility details in rejection logs.
-- [#105](https://github.com/darkspinnet/darkspin/issues/105) Extend `darkrun inspect` from package inventory to nested `package:entry:rw4_mesh_N` metadata with DBBF support, mesh bounds, and guided usage; rename the source reader package to `content/creation`.
-- [#105](https://github.com/darkspinnet/darkspin/issues/105) Expand campaign weapons and parts from active-squad class, genesis, and hero-family pools to all eligible heroes, including world drops, boss loot, mission-end rewards, and developer drops, while retaining item-level, rarity, and campaign slot limits.
 
 ### 2026-10-23
 
