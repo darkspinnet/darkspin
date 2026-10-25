@@ -19,13 +19,83 @@ type controlWorldPoint struct {
 }
 
 type controlGameplayState struct {
-	IsAvailable      bool               `json:"is_available"`
-	IsWorldActive    bool               `json:"is_world_active"`
-	ControlledHandle *uint32            `json:"controlled_handle"`
-	PickedHandle     *uint32            `json:"picked_handle"`
-	Position         *controlWorldPoint `json:"position"`
-	FrameSequence    uint32             `json:"frame_sequence"`
-	OwnerThreadID    uint32             `json:"owner_thread_id"`
+	IsAvailable      bool                   `json:"is_available"`
+	IsWorldActive    bool                   `json:"is_world_active"`
+	ControlledHandle *uint32                `json:"controlled_handle"`
+	PickedHandle     *uint32                `json:"picked_handle"`
+	Position         *controlWorldPoint     `json:"position"`
+	Camera           *controlCameraSnapshot `json:"camera"`
+	FrameSequence    uint32                 `json:"frame_sequence"`
+	OwnerThreadID    uint32                 `json:"owner_thread_id"`
+}
+
+type controlCameraSnapshot struct {
+	IsAvailable          bool               `json:"is_available"`
+	IsOverrideActive     bool               `json:"is_override_active"`
+	TargetHandle         uint32             `json:"target_handle"`
+	Mode                 uint32             `json:"mode"`
+	FollowMode           uint32             `json:"follow_mode"`
+	ZoomMode             uint32             `json:"zoom_mode"`
+	Center               *controlWorldPoint `json:"center"`
+	DesiredPosition      *controlWorldPoint `json:"desired_position"`
+	AnchorPosition       *controlWorldPoint `json:"anchor_position"`
+	OffsetAnchorPosition *controlWorldPoint `json:"offset_anchor_position"`
+	IsAnchorAvailable    bool               `json:"is_anchor_available"`
+	SourcePosition       *controlWorldPoint `json:"source_position"`
+	AnchorSource         string             `json:"anchor_source"`
+	ControlMode          uint32             `json:"control_mode"`
+	HoldTimer            *float64           `json:"hold_timer"`
+	Distance             *float64           `json:"distance"`
+	DistanceTarget       *float64           `json:"distance_target"`
+}
+
+func controlCameraNumber(number C.float) *float64 {
+	coordinate := float64(number)
+	if math.IsNaN(coordinate) || math.IsInf(coordinate, 0) {
+		return nil
+	}
+	return &coordinate
+}
+
+func controlCameraPoint(fields, mask uint32, coordinates [3]C.float) *controlWorldPoint {
+	if fields&mask == 0 {
+		return nil
+	}
+	return &controlWorldPoint{X: float64(coordinates[0]), Y: float64(coordinates[1]), Z: float64(coordinates[2])}
+}
+
+func controlCameraReceipt(snapshot C.fang_control_camera_snapshot) *controlCameraSnapshot {
+	cameraSS := &controlCameraSnapshot{IsAvailable: snapshot.is_available != 0}
+	if !cameraSS.IsAvailable {
+		return cameraSS
+	}
+	cameraSS.IsOverrideActive = snapshot.is_override_active != 0
+	cameraSS.TargetHandle = uint32(snapshot.target_handle)
+	cameraSS.Mode = uint32(snapshot.mode)
+	cameraSS.FollowMode = uint32(snapshot.follow_mode)
+	cameraSS.ZoomMode = uint32(snapshot.zoom_mode)
+	fields := uint32(snapshot.fields)
+	cameraSS.Center = controlCameraPoint(fields, 1, snapshot.center)
+	cameraSS.DesiredPosition = controlCameraPoint(fields, 2, snapshot.desired)
+	cameraSS.AnchorPosition = controlCameraPoint(fields, 4, snapshot.anchor)
+	cameraSS.OffsetAnchorPosition = controlCameraPoint(fields, 8, snapshot.offset_anchor)
+	cameraSS.IsAnchorAvailable = snapshot.is_anchor_available != 0
+	if cameraSS.IsAnchorAvailable {
+		cameraSS.SourcePosition = controlCameraPoint(1, 1, snapshot.source)
+		switch snapshot.anchor_source {
+		case 1:
+			cameraSS.AnchorSource = "control"
+		case 2:
+			cameraSS.AnchorSource = "render"
+		case 3:
+			cameraSS.AnchorSource = "object"
+		}
+	}
+	cameraSS.ControlMode = uint32(snapshot.control_mode)
+	cameraSS.HoldTimer = controlCameraNumber(snapshot.hold_timer)
+	cameraSS.Distance = controlCameraNumber(snapshot.distance)
+	cameraSS.DistanceTarget = controlCameraNumber(snapshot.distance_target)
+	return cameraSS
 }
 
 type controlProjection struct {
@@ -194,6 +264,7 @@ func (e *controlConnection) gameplayCommand(req controlEnvelope, response contro
 func controlGameplayReceipt(response controlEnvelope, receipt C.fang_control_window_receipt, snapshot C.fang_control_gameplay_state, projection C.fang_control_projection, click C.fang_control_gameplay_click, selection C.fang_control_hero_selection, cast C.fang_control_active_cast, deadline time.Time) controlEnvelope {
 	response = controlWindowReceipt(response, receipt, deadline)
 	state := &controlGameplayState{IsAvailable: snapshot.is_available != 0, IsWorldActive: snapshot.is_world_active != 0,
+		Camera:           controlCameraReceipt(snapshot.camera),
 		ControlledHandle: controlMapNumber(uint32(snapshot.fields), 1, uint32(snapshot.controlled_handle)),
 		PickedHandle:     controlMapNumber(uint32(snapshot.fields), 4, uint32(snapshot.picked_handle)),
 		FrameSequence:    uint32(snapshot.frame_sequence), OwnerThreadID: uint32(snapshot.owner_thread_id)}

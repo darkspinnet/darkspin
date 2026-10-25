@@ -137,9 +137,9 @@ func runDebugSupervisor(arguments []string) (bool, error) {
 	}
 	gameDirectory := filepath.Dir(executable)
 	root := debugWorkspaceRoot(gameDirectory)
-	scriptRoot, err := prepareDebugLuaAssets(gameDirectory)
+	scriptRoot, err := resolveDebugLuaRoot(gameDirectory)
 	if err != nil {
-		return true, fmt.Errorf("debugLuaAssets: %w", err)
+		return true, fmt.Errorf("debugLuaRoot: %w", err)
 	}
 	entropy := make([]byte, 32)
 	count, err := rand.Read(entropy)

@@ -284,12 +284,17 @@ func (b *PoisonCloudBehavior) impact() error {
 	if err != nil {
 		return fmt.Errorf("impactEmit: %w", err)
 	}
-	err = b.emit(PositionedEffectIntent{
-		EffectName: b.input.ImpactEffectName,
-		Position:   position, Facing: b.input.ActorFacing,
-	})
-	if err != nil {
-		return fmt.Errorf("impactEffect: %w", err)
+	// Control projectiles hand presentation ownership to their target modifier.
+	// PullModifier's hit orb is a persistent attached effect with an explicit
+	// removal, so emitting it at a world position leaves an unowned loop.
+	if !b.input.IsControl {
+		err = b.emit(PositionedEffectIntent{
+			EffectName: b.input.ImpactEffectName,
+			Position:   position, Facing: b.input.ActorFacing,
+		})
+		if err != nil {
+			return fmt.Errorf("impactEffect: %w", err)
+		}
 	}
 	targets := b.input.SplashTargets
 	if len(targets) == 0 && targetRole != "" {
@@ -316,14 +321,14 @@ func (b *PoisonCloudBehavior) impact() error {
 		if len(b.input.SplashTargets) == 0 {
 			isCritical = b.input.IsCritical
 		}
-		err = b.emit(PositionedEffectIntent{
-			EffectName: b.input.ImpactEffectName,
-			Position:   position, Facing: b.input.ActorFacing,
-		})
-		if err != nil {
-			return fmt.Errorf("hitEffect[%d]: %w", index, err)
-		}
 		if !b.input.IsControl {
+			err = b.emit(PositionedEffectIntent{
+				EffectName: b.input.ImpactEffectName,
+				Position:   position, Facing: b.input.ActorFacing,
+			})
+			if err != nil {
+				return fmt.Errorf("hitEffect[%d]: %w", index, err)
+			}
 			err = b.emit(DamageIntent{
 				ActorRole: b.input.ActorRole, TargetRole: target.Role,
 				DeltaHealth: damage, IntegerHitPointChange: -int32(damage),

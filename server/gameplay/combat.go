@@ -2825,6 +2825,7 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 			return campaignDamageTransition{},
 				errors.New("corruptor stage two target not acquired")
 		}
+		deathNounName := revived.Plan.NounName
 		revived, resurrectErr = s.zone.NPCs().SetNounName(
 			revived.Plan.ObjectID, campaignCorruptorStageTwoNounName,
 		)
@@ -2832,7 +2833,7 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 			return campaignDamageTransition{},
 				fmt.Errorf("corruptorStageTwoNoun: %w", resurrectErr)
 		}
-		transition.corruptorStageTwo, resurrectErr = s.acceptCorruptorSecondAggro(revived)
+		transition.corruptorStageTwo, resurrectErr = s.acceptCorruptorSecondAggro(revived, deathNounName)
 		if resurrectErr != nil {
 			return campaignDamageTransition{}, fmt.Errorf("corruptorStageTwoAccept: %w", resurrectErr)
 		}
@@ -8313,17 +8314,15 @@ func (e campaignNPCPullEffectSchedule) remove() ([][]byte, error) {
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 	}
 	e.runtime.registry.mutex.Unlock()
-	objectID, slot, isReleased := e.run.release()
+	attachments, isReleased := e.run.release()
 	if !isReleased {
 		return nil, nil
 	}
-	packet, err := npcraknet.ForcedMovementEffect(
-		objectID, slot, "", true,
-	)
+	packets, err := campaignNPCPullRemovalPackets(attachments)
 	if err != nil {
 		return nil, fmt.Errorf("enemyPullEffectRemove: %w", err)
 	}
-	return [][]byte{packet}, nil
+	return packets, nil
 }
 
 func (e campaignNPCPushPullSchedule) resume(
@@ -8490,7 +8489,7 @@ func (e campaignNPCPushPullSchedule) hit() ([][]byte, error) {
 	packets = append(packets, forcedPackets...)
 	if len(forcedPackets) != 0 && runtime.effectPool != nil &&
 		e.plan.Profile.ForcedMovementEffectName != "" {
-		effectPacket, effectErr := runtime.startGrapplingPulsarPullEffect(
+		effectPackets, effectErr := runtime.startGrapplingPulsarPullEffect(
 			e.packet, &current, e.sessionKey, e.generation,
 			e.objectID, target.ObjectID,
 			e.plan.Profile.ForcedMovementEffectName,
@@ -8500,9 +8499,7 @@ func (e campaignNPCPushPullSchedule) hit() ([][]byte, error) {
 			runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("enemyPullEffectStart: %w", effectErr)
 		}
-		if effectPacket != nil {
-			packets = append(packets, effectPacket)
-		}
+		packets = append(packets, effectPackets...)
 	}
 	runtime.registry.sessions[e.sessionKey] = current
 	runtime.registry.mutex.Unlock()

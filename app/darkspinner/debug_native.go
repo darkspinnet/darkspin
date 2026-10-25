@@ -17,13 +17,34 @@ type controlWorldPoint struct {
 }
 
 type controlGameplayState struct {
-	IsAvailable      bool               `json:"is_available"`
-	IsWorldActive    bool               `json:"is_world_active"`
-	ControlledHandle *uint32            `json:"controlled_handle"`
-	PickedHandle     *uint32            `json:"picked_handle"`
-	Position         *controlWorldPoint `json:"position"`
-	FrameSequence    uint32             `json:"frame_sequence"`
-	OwnerThreadID    uint32             `json:"owner_thread_id"`
+	IsAvailable      bool                   `json:"is_available"`
+	IsWorldActive    bool                   `json:"is_world_active"`
+	ControlledHandle *uint32                `json:"controlled_handle"`
+	PickedHandle     *uint32                `json:"picked_handle"`
+	Position         *controlWorldPoint     `json:"position"`
+	Camera           *controlCameraSnapshot `json:"camera"`
+	FrameSequence    uint32                 `json:"frame_sequence"`
+	OwnerThreadID    uint32                 `json:"owner_thread_id"`
+}
+
+type controlCameraSnapshot struct {
+	IsAvailable          bool               `json:"is_available"`
+	IsOverrideActive     bool               `json:"is_override_active"`
+	TargetHandle         uint32             `json:"target_handle"`
+	Mode                 uint32             `json:"mode"`
+	FollowMode           uint32             `json:"follow_mode"`
+	ZoomMode             uint32             `json:"zoom_mode"`
+	Center               *controlWorldPoint `json:"center"`
+	DesiredPosition      *controlWorldPoint `json:"desired_position"`
+	AnchorPosition       *controlWorldPoint `json:"anchor_position"`
+	OffsetAnchorPosition *controlWorldPoint `json:"offset_anchor_position"`
+	IsAnchorAvailable    bool               `json:"is_anchor_available"`
+	SourcePosition       *controlWorldPoint `json:"source_position"`
+	AnchorSource         string             `json:"anchor_source"`
+	ControlMode          uint32             `json:"control_mode"`
+	HoldTimer            *float64           `json:"hold_timer"`
+	Distance             *float64           `json:"distance"`
+	DistanceTarget       *float64           `json:"distance_target"`
 }
 
 type controlProjection struct {

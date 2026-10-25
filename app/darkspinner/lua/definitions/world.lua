@@ -2,7 +2,7 @@
 
 ---Server observations and guarded native actions; outcomes require independent observation.
 ---@class ClientWorld
----@field SelectHero fun(self:ClientWorld,slot:integer,timeout_ms?:integer):HeroSelectionResult|nil,ScenarioError|nil Selects zero-based squad slot 0 through 2 through one guarded native edge, then waits for a changed native controlled handle and matching server index. Default client timeout; native dispatch/processing does not prove switching. No replay after error or unknown outcome.
+---@field SelectHero fun(self:ClientWorld,slot:integer,timeout_ms?:integer):HeroSelectionResult|nil,ScenarioError|nil Waits for native eligibility, selects zero-based squad slot 0 through 2 through one guarded native edge, then waits for a changed native controlled handle and matching server index. Default client timeout bounds the operation; native dispatch/processing does not prove switching. No replay after error or unknown outcome.
 ---@field Snapshot fun(self:ClientWorld):WorldSnapshot|nil,ScenarioError|nil Samples the owned server world once without waiting for availability. No movement or gameplay advancement.
 ---@field Ready fun(self:ClientWorld,timeout_ms?:integer):WorldSnapshot|nil,ScenarioError|nil Waits for committed server dungeon setup, a deployed hero and a processed native active-world/controlled-handle observation. Returns the ready snapshot with native_readiness. Uses client timeout; aborts on ownership changes. Does not prove visibility of each object or gameplay action success.
 ---@field SnapshotLiving fun(self:ClientWorld):WorldSnapshot|nil,ScenarioError|nil Samples once and fails if unavailable, terminal, or without a living deployed hero. No readiness wait; partial world accompanies failure.

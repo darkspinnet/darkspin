@@ -3,6 +3,7 @@ package gameplay
 import (
 	"errors"
 	"fmt"
+	"net"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
@@ -22,11 +23,18 @@ type thornBarkReflection struct {
 	transition     campaignDamageTransition
 }
 
-// Retain only connection-owned schedulers, never a request payload, response
+// Retain connection identity and schedulers, never a request payload, response
 // collector or command-scoped cancellation, for reactions on another peer.
 func gameplaySchedulePacket(packet raknet.Packet) raknet.Packet {
 	packet = packet.Autonomous()
+	var address *net.UDPAddr
+	if packet.Address != nil {
+		endpoint := *packet.Address
+		endpoint.IP = append(net.IP(nil), packet.Address.IP...)
+		address = &endpoint
+	}
 	return raknet.Packet{
+		Address: address, TransportGeneration: packet.TransportGeneration,
 		Schedule: packet.Schedule, ScheduleFunc: packet.ScheduleFunc,
 		ScheduleGroup: packet.ScheduleGroup, ScheduleGroupResult: packet.ScheduleGroupResult,
 	}

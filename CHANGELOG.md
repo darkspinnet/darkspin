@@ -2,6 +2,10 @@
 
 ### 2026-10-24
 
+- #106 Correct Grappling Pulsar's pull effects from duplicate persistent world orbs to client-authored victim and linked beam attachments, removing both when the pull ends or its actors are retired.
+- #106 Restore the Corruptor's first-stage death animation before its second-stage introduction, and preserve the transport identity needed to resume its second-stage attacks.
+- #106 Preserve Lightning Juggernaut movement during charge redirects instead of repeatedly resetting its native mover and snapping at arrival.
+- #106 Reconcile a controlled hero's position after an accepted stop when navigation leaves a significant horizontal client/server mismatch.
 - #108 Fix the launcher getting stuck on Update available after preparation finishes, allowing automatic updates and the Patch button to start the update instead of treating it as ongoing preparation.
 - #104 Move editor save errors from the Accept hover tooltip to the native on-screen hint area, retaining error numbers and explanations with scrollable and automatic paging.
 - #104 Apply imported creature fitting to separately rendered parts as well as the body, preserving eye attachment positions and proportions across native poses.

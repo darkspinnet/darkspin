@@ -43,9 +43,8 @@ func (Darkspinner) BuildRunLua(name string) error {
 	return nil
 }
 
-// The launcher installs missing embedded scripts at startup without replacing
-// existing runtime scripts. Resolve that same overlay before an expensive
-// build, including the source fallback needed for a fresh runtime directory.
+// Match the development launcher's repository source root. Runtime copies are
+// not an overlay and must never shadow edited source files.
 func resolveDarkSpinnerLua(name string) (string, error) {
 	name = filepath.FromSlash(strings.TrimSpace(name))
 	if name == "" || filepath.IsAbs(name) || filepath.VolumeName(name) != "" {
@@ -62,9 +61,6 @@ func resolveDarkSpinnerLua(name string) (string, error) {
 		return "", errors.New("scenario must be a .lua source file")
 	}
 	roots := []string{
-		filepath.Join("bin", "game", "darkspin", "lua"),
-		// Pre-migration runtime scripts must still resolve before the build.
-		filepath.Join("bin", "game", "lua"),
 		filepath.Join("app", "darkspinner", "lua"),
 	}
 	for _, root := range roots {
@@ -83,7 +79,7 @@ func resolveDarkSpinnerLua(name string) (string, error) {
 	// A qualified path is explicit; do not silently reinterpret a misspelled
 	// directory as a basename somewhere else in the tree.
 	if filepath.Dir(name) != "." {
-		return "", fmt.Errorf("scenario %q was not found under bin/game/darkspin/lua or the bundled Lua sources", filepath.ToSlash(name))
+		return "", fmt.Errorf("scenario %q was not found under app/darkspinner/lua", filepath.ToSlash(name))
 	}
 	search := darkSpinnerLuaSearch{name: name, matchesByPath: make(map[string]bool)}
 	for _, root := range roots {
@@ -99,7 +95,7 @@ func resolveDarkSpinnerLua(name string) (string, error) {
 	}
 	sort.Strings(matches)
 	if len(matches) == 0 {
-		return "", fmt.Errorf("scenario %q was not found under bin/game/darkspin/lua or the bundled Lua sources", name)
+		return "", fmt.Errorf("scenario %q was not found under app/darkspinner/lua", name)
 	}
 	if len(matches) > 1 {
 		return "", fmt.Errorf("scenario %q is ambiguous; supply one of these relative paths: %s", name, strings.Join(matches, ", "))

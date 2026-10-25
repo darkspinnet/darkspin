@@ -10,6 +10,10 @@ type DeathPresentation struct {
 	PresentationDuration time.Duration
 }
 
+// ScaldronBoss_Stage1Death waits this raw Lua duration before retiring the
+// original body. The subsequent second-aggro camera has its own clock.
+const CorruptorStageOneDeathDuration = 11199999809 * time.Nanosecond
+
 // DeathPresentationForNoun supplies authored presentation for campaign NPC rigs
 // whose physics records are not yet part of the curated noun catalog.
 func DeathPresentationForNoun(nounName string) (DeathPresentation, bool) {

@@ -118,20 +118,30 @@ func selectDebugHero(ctx context.Context, host *debugHost, clientManager *debugC
 		result.IsAlreadySelected = true
 		return result, nil
 	}
-	before, err := readDebugHeroWorld(waitContext, host, clientManager, owner, initial, worldPayload)
-	result.World = before
-	if err != nil {
-		return result, fmt.Errorf("heroBefore: %w", err)
-	}
-	if !before.IsAvailable || before.Hero == nil {
-		return result, &control.ScenarioError{Code: control.NotAvailable, Context: "heroBefore", Message: "owned deployed hero became unavailable before native dispatch"}
-	}
-	if before.Hero.Index != initial.Hero.Index || before.Hero.ObjectID != initial.Hero.ObjectID {
-		return result, &control.ScenarioError{Code: control.OwnershipLost, Context: "heroBeforeActor", Message: "active hero changed before native dispatch"}
-	}
-	result.Action, err = clientManager.SelectHero(waitContext, req.ClientID, *req.Slot)
-	if err != nil {
-		return result, fmt.Errorf("heroNativeAction: %w", err)
+	for {
+		before, err := readDebugHeroWorld(waitContext, host, clientManager, owner, initial, worldPayload)
+		result.World = before
+		if err != nil {
+			return result, fmt.Errorf("heroBefore: %w", err)
+		}
+		if !before.IsAvailable || before.Hero == nil {
+			return result, &control.ScenarioError{Code: control.NotAvailable, Context: "heroBefore", Message: "owned deployed hero became unavailable before native dispatch"}
+		}
+		if before.Hero.Index != initial.Hero.Index || before.Hero.ObjectID != initial.Hero.ObjectID {
+			return result, &control.ScenarioError{Code: control.OwnershipLost, Context: "heroBeforeActor", Message: "active hero changed before native dispatch"}
+		}
+		result.Action, err = clientManager.SelectHero(waitContext, req.ClientID, *req.Slot)
+		if err != nil {
+			if isDebugHeroDispatchBlocked(result.Action, *req.Slot, initialNative) {
+				err = waitDebugHeroTick(waitContext, ticker)
+				if err != nil {
+					return result, fmt.Errorf("heroEligibilityWait[%s]: %w", debugHeroRefusal(result.Action), err)
+				}
+				continue
+			}
+			return result, fmt.Errorf("heroNativeAction[%s]: %w", debugHeroRefusal(result.Action), err)
+		}
+		break
 	}
 	err = validateDebugHeroAction(result.Action, *req.Slot, initialNative)
 	if err != nil {
@@ -239,6 +249,49 @@ func validateDebugHeroAction(action any, slot uint32, initial *controlGameplaySt
 		return errors.New("native hero selection eligibility did not permit dispatch; do not replay")
 	}
 	return nil
+}
+
+// Only a correlated native refusal before any input edge permits another
+// admission check. Physical input and modal guards can refuse before native
+// eligibility is sampled. Waiting preserves those guards, without replaying
+// dispatched edges, missing receipts or unknown outcomes.
+func isDebugHeroDispatchBlocked(action any, slot uint32, initial *controlGameplayState) bool {
+	receipt, isReceipt := action.(map[string]any)
+	if !isReceipt || receipt["status"] != "unavailable" ||
+		receipt["is_invocation_attempted"] != false || receipt["is_invocation_accepted"] != false {
+		return false
+	}
+	selection, isSelection := receipt["hero_selection"].(*controlHeroSelection)
+	if !isSelection || selection == nil || selection.IsQueryProcessed || selection.RequestedSlot != slot {
+		return false
+	}
+	if selection.PreviousSlot != nil && (*selection.PreviousSlot > 2 || *selection.PreviousSlot == slot) {
+		return false
+	}
+	native, isNative := receipt["gameplay_state"].(*controlGameplayState)
+	return isNative && native != nil && native.IsAvailable && native.IsWorldActive &&
+		native.OwnerThreadID == initial.OwnerThreadID && native.ControlledHandle != nil &&
+		selection.PreviousControlledHandle != nil && initial.ControlledHandle != nil &&
+		*native.ControlledHandle == *initial.ControlledHandle &&
+		*selection.PreviousControlledHandle == *initial.ControlledHandle
+}
+
+func debugHeroRefusal(action any) string {
+	receipt, isReceipt := action.(map[string]any)
+	if !isReceipt {
+		return "receiptMissing"
+	}
+	selection, isSelection := receipt["hero_selection"].(*controlHeroSelection)
+	if !isSelection || selection == nil {
+		return fmt.Sprintf("status=%v,selectionMissing", receipt["status"])
+	}
+	eligibility := "notSampled"
+	if selection.EligibilityCode != nil {
+		eligibility = fmt.Sprint(*selection.EligibilityCode)
+	}
+	return fmt.Sprintf("status=%v,slot=%d,eligibility=%s,attempted=%v,accepted=%v,processed=%t",
+		receipt["status"], selection.RequestedSlot, eligibility, receipt["is_invocation_attempted"],
+		receipt["is_invocation_accepted"], selection.IsQueryProcessed)
 }
 
 func isDebugHeroUnavailable(err error) bool {

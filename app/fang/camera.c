@@ -1,4 +1,5 @@
 #include "hook.h"
+#include "control.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -102,6 +103,67 @@ static int is_follow_camera(BYTE* camera) {
         *(unsigned int*)(camera + camera_zoom_mode) == 3 &&
         *(unsigned int*)(camera + camera_follow_mode) == 4;
 }
+
+#if FANG_SCENARIO
+static int copy_camera_vector(float* destination, const BYTE* source) {
+    unsigned int index;
+    for (index = 0; index < 3; index++) {
+        uint32_t bits;
+        memcpy(&bits, source + index * sizeof(float), sizeof(bits));
+        if ((bits & 0x7F800000u) == 0x7F800000u) return 0;
+    }
+    memcpy(destination, source, 3 * sizeof(float));
+    return 1;
+}
+
+/* Read only the already-validated native follow-camera cache. Do not invoke
+ * sub_52FCA0: its lazy transform refresh would change the evidence. */
+void fang_control_camera_read(fang_control_camera_snapshot* snapshot) {
+    const BYTE* camera;
+    const BYTE* object;
+    const BYTE* control;
+    const BYTE* render;
+    const BYTE* source;
+    memset(snapshot, 0, sizeof(*snapshot));
+    if (native_camera == NULL || camera_client_base == NULL) return;
+    camera = (const BYTE*)native_camera();
+    if (!readable_range(camera, camera_snapshot_size) ||
+        *(void* const*)camera != camera_client_base + 0xBE1968) return;
+    snapshot->is_available = 1;
+    snapshot->target_handle = *(const uint32_t*)(camera + camera_target);
+    snapshot->is_override_active = camera[camera_override] != 0;
+    snapshot->mode = *(const uint32_t*)(camera + camera_mode);
+    snapshot->follow_mode = *(const uint32_t*)(camera + camera_follow_mode);
+    snapshot->zoom_mode = *(const uint32_t*)(camera + camera_zoom_mode);
+    if (copy_camera_vector(snapshot->center, camera + 48)) snapshot->fields |= 1;
+    if (copy_camera_vector(snapshot->desired, camera + 60)) snapshot->fields |= 2;
+    if (copy_camera_vector(snapshot->anchor, camera + 80)) snapshot->fields |= 4;
+    if (copy_camera_vector(snapshot->offset_anchor, camera + 92)) snapshot->fields |= 8;
+    memcpy(&snapshot->hold_timer, camera + 460, sizeof(float));
+    memcpy(&snapshot->distance, camera + camera_distance, sizeof(float));
+    memcpy(&snapshot->distance_target, camera + camera_distance_target, sizeof(float));
+    if (snapshot->target_handle == 0 || native_camera_object == NULL) return;
+    object = (const BYTE*)native_camera_object(snapshot->target_handle);
+    if (!readable_range(object, 668) || *(const uint32_t*)object != snapshot->target_handle) return;
+    control = *(const BYTE* const*)(object + 664);
+    render = *(const BYTE* const*)(object + 652);
+    if (control != NULL && !readable_range(control, 484)) return;
+    snapshot->control_mode = control == NULL ? 0 : *(const uint32_t*)(control + 480);
+    if (snapshot->control_mode != 0) {
+        if (!readable_range(control, 540)) return;
+        source = control + 528;
+        snapshot->anchor_source = 1;
+    } else if (render != NULL) {
+        if (!readable_range(render, 28)) return;
+        source = render + 16;
+        snapshot->anchor_source = 2;
+    } else {
+        source = object + 24;
+        snapshot->anchor_source = 3;
+    }
+    snapshot->is_anchor_available = copy_camera_vector(snapshot->source, source);
+}
+#endif
 
 /* Snapshot-only observation. Never refresh, retarget or override a scripted
  * camera while collecting evidence of a lost follow target. */

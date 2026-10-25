@@ -604,7 +604,17 @@ func (r campaignNPCPursuitRuntime) produceStep(
 	if isRedirectDue {
 		var redirectPackets [][]byte
 		var redirectErr error
-		if profile.Family == zonenpc.ActionProjectile {
+		if profile.AbilityName == "BoomerCharge" {
+			// The charge already installed its target and stopping distance.
+			// Native 5393D0/539900 reset mover progress on every complete
+			// command/reflection. Preserve that progress while following a
+			// moving hero: 539810 updates both goals without resetting it.
+			var goalPacket []byte
+			goalPacket, redirectErr = npcraknet.MovementGoalUpdate(objectID, targetPosition)
+			if redirectErr == nil {
+				redirectPackets = append(redirectPackets, goalPacket)
+			}
+		} else if profile.Family == zonenpc.ActionProjectile {
 			redirectPackets, redirectErr = npcraknet.ProjectilePursuitRedirect(
 				objectID, step.Position, resolvedTargetObjectID, targetPosition,
 				profile.Range,

@@ -126,7 +126,7 @@ func cleanupLegacySnapshotRoot(root string) error {
 			break
 		}
 	}
-	entryCount := 0
+	directoryCount := 0
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			log.Printf("Legacy snapshot cleanup skips %s: %v", path, walkErr)
@@ -135,14 +135,16 @@ func cleanupLegacySnapshotRoot(root string) error {
 			}
 			return nil
 		}
-		entryCount++
-		if entryCount > 100000 {
-			return errors.New("snapshot cleanup entry limit reached")
-		}
 		if entry.Type()&(os.ModeSymlink|os.ModeIrregular) != 0 {
 			return nil
 		}
 		if entry.IsDir() {
+			// Large capture directories contain many ordinary log records; only
+			// directory traversal consumes the cleanup search budget.
+			directoryCount++
+			if directoryCount > 100000 {
+				return errors.New("snapshot cleanup directory limit reached")
+			}
 			relative, relErr := filepath.Rel(root, path)
 			if relErr != nil {
 				return fmt.Errorf("cleanupRelative: %w", relErr)

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/scenario/control"
@@ -81,7 +82,17 @@ func (e *debugSupervisor) captureDebugDiagnostic(ctx context.Context, host *debu
 	if err != nil {
 		return capture.result, fmt.Errorf("diagnosticBudget: %w", err)
 	}
-	parent := filepath.Join(e.reportDirectory, "clients", client.ClientID)
+	// Launch allocates a fresh suffixed directory for each process instance;
+	// the logical client alias alone never identifies its artifact directory.
+	parent := filepath.Dir(client.TracePath)
+	relative, err := filepath.Rel(filepath.Join(e.reportDirectory, "clients"), parent)
+	if err != nil {
+		return capture.result, fmt.Errorf("diagnosticRelative: %w", err)
+	}
+	if !filepath.IsAbs(client.TracePath) || relative == "." || relative == ".." ||
+		strings.ContainsAny(relative, `/\`) {
+		return capture.result, errors.New("diagnostic client directory is outside its owned report root")
+	}
 	err = desktop.CheckAncestors(parent)
 	if err != nil {
 		return capture.result, fmt.Errorf("diagnosticParent: %w", err)

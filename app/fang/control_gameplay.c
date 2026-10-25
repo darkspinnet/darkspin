@@ -148,6 +148,7 @@ static void read_gameplay_state(uint32_t sequence, const fang_control_snapshot* 
         return;
     }
     gameplay_state.is_world_active = 1;
+    fang_control_camera_read(&gameplay_state.camera);
     /* This is the client's retained input target, not a server object ID. */
     gameplay_state.picked_handle = *(const uint32_t*)(gameplay_image + 0xDBEF10);
     gameplay_state.fields |= 4;
@@ -217,7 +218,10 @@ void fang_control_gameplay_frame(uint32_t sequence) {
     else if (boundary.scene_load_return_count != gameplay_request_scene) gameplay_receipt.status = 5;
     else {
         read_gameplay_state(sequence, &boundary);
-        if (gameplay_kind == 0) gameplay_receipt.status = 1;
+        if (gameplay_kind == 0) {
+            fang_trace_camera_state();
+            gameplay_receipt.status = 1;
+        }
         else if (!read_gameplay_projection()) gameplay_receipt.status = 5;
         else if (gameplay_kind == 1) gameplay_receipt.status = 1;
         else {

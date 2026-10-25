@@ -155,7 +155,7 @@ func (e *debugSupervisor) logFailure(step string, err error) {
 func readDebugScript(root, name string) (debugScript, []byte, error) {
 	script := debugScript{Name: filepath.ToSlash(name)}
 	if !filepath.IsLocal(name) || strings.ContainsAny(name, ":\\") || strings.ToLower(filepath.Ext(name)) != ".lua" {
-		return script, nil, errors.New("script must be a relative Lua source path beneath the executable's lua directory")
+		return script, nil, errors.New("script must be a relative Lua source path beneath the active Lua source directory")
 	}
 	parts := strings.Split(filepath.ToSlash(filepath.Clean(name)), "/")
 	for _, part := range strings.Split(name, "/") {

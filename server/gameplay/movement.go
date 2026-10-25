@@ -1418,6 +1418,15 @@ func (r campaignMovementCommandRuntime) handle(
 	if marshalErr != nil {
 		return nil, fmt.Errorf("moveCampaignMarshal: %w", marshalErr)
 	}
+	if !isCampaignTunnel && !isTutorialTeleport && !isSecurityTeleport {
+		correctionPackets, correctionErr := marshalAcceptedPlayerStopCorrection(
+			command, peerSession.playerPosition, peerSession.deployedCampaignNavigationRadius(),
+		)
+		if correctionErr != nil {
+			return nil, fmt.Errorf("moveAcceptedStop: %w", correctionErr)
+		}
+		response = append(response, correctionPackets...)
+	}
 	commandSession.zone.PublishHeroMovement(zoneprojection.HeroMovement{
 		ObjectID:           command.Common.ObjectID,
 		AnimationTimestamp: packet.SourceTime,

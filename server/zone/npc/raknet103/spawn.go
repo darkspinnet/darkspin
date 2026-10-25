@@ -23,6 +23,15 @@ func Spawn(plan zonenpc.SpawnPlan) ([][]byte, error) {
 // update. Native bootstrap seeks from these reflected state/time fields.
 func SpawnSnapshot(snapshot zonenpc.Snapshot, now time.Time, sourceTime uint64) ([][]byte, error) {
 	animationName, elapsed, isPlaying := snapshot.IntroductionAnimation(now)
+	deathNounName, deathElapsed, isStageOneDeathPlaying := snapshot.CorruptorStageOneDeath(now)
+	if isStageOneDeathPlaying {
+		// The authoritative actor has accepted stage two, but existing clients
+		// still show its original noun until the delayed replacement arrives.
+		snapshot.Plan.NounName = deathNounName
+		animationName = "sca_boss_death"
+		elapsed = deathElapsed
+		isPlaying = true
+	}
 	if snapshot.IsPublished && !snapshot.IsDefeated && snapshot.HitPoint > 0 &&
 		snapshot.Mutation.Transform.IsActive && now.Before(snapshot.Mutation.Transform.CompleteAt) {
 		animationName = "npc_mutationagent_infected_grow"

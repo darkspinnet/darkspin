@@ -23,6 +23,7 @@ type cinematicHold struct {
 	isPending        bool
 	intangibleUntil  time.Time
 	immobilizedUntil time.Time
+	deathNounName    string
 }
 
 type cinematicOwner struct {
@@ -71,8 +72,8 @@ func (e *Session) ClaimSecondAggroController(objectID uint32, generation uint64,
 // Stage two has already been accepted by resurrection. Keep action admission
 // pending while a rejected scene schedule is retried; source protection and
 // rejoin focus belong to this acceptance and keep their original deadline.
-func (e *Session) ReserveSecondAggroCinematic(objectID uint32, focus game.Vec3, until time.Time) (uint64, bool) {
-	if e == nil || objectID == 0 || until.IsZero() || !zonegeometry.IsFinite(focus) {
+func (e *Session) ReserveSecondAggroCinematic(objectID uint32, focus game.Vec3, until time.Time, deathNounName string) (uint64, bool) {
+	if e == nil || objectID == 0 || until.IsZero() || !zonegeometry.IsFinite(focus) || !IsCorruptorNoun(deathNounName) {
 		return 0, false
 	}
 	e.mu.Lock()
@@ -88,12 +89,26 @@ func (e *Session) ReserveSecondAggroCinematic(objectID uint32, focus game.Vec3, 
 	npc.cinematic.isPending = true
 	npc.cinematic.intangibleUntil = until
 	npc.cinematic.focus = focus
+	npc.cinematic.deathNounName = deathNounName
 	e.npcs[objectID] = npc
 	return npc.cinematic.generation, true
 }
 
 func (e Snapshot) SecondAggroCinematic(now time.Time) (time.Duration, game.Vec3) {
+	if now.Before(e.cinematic.intangibleUntil.Add(-SecondAggroCinematicDuration)) {
+		return 0, e.cinematic.focus
+	}
 	return max(time.Duration(0), e.cinematic.intangibleUntil.Sub(now)), e.cinematic.focus
+}
+
+// CorruptorStageOneDeath allows a reconnecting observer to seek the original
+// noun's retained death animation without starting the second-aggro camera early.
+func (e Snapshot) CorruptorStageOneDeath(now time.Time) (string, time.Duration, bool) {
+	entryAt := e.cinematic.intangibleUntil.Add(-SecondAggroCinematicDuration)
+	if !e.IsCorruptorStageTwo || !e.cinematic.isPending || !now.Before(entryAt) {
+		return "", 0, false
+	}
+	return e.cinematic.deathNounName, max(time.Duration(0), now.Sub(entryAt.Add(-CorruptorStageOneDeathDuration))), true
 }
 
 func SecondAggroCinematicFocus(position game.Vec3) game.Vec3 {

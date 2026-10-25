@@ -3,6 +3,7 @@ package gameplay
 import (
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
 )
@@ -45,4 +46,30 @@ func marshalPlayerMovementCorrection(
 		return nil, fmt.Errorf("correctionPlacement: %w", err)
 	}
 	return [][]byte{stopPacket, placementPacket}, nil
+}
+
+// An accepted stop can retain the server pose when navigation rejects the
+// reported client pose. Ordinary movement replies skip the owning hero, so
+// reconcile a horizontal disagreement larger than its navigation footprint.
+// Ignore the normal floor/render height difference between the two poses.
+func marshalAcceptedPlayerStopCorrection(
+	req raknet.ActionCommandData, position raknet.Vector3, navigationRadius float32,
+) ([][]byte, error) {
+	if req.Movement.GoalFlags&0x20 == 0 ||
+		!isReportedZonePosition(req.Common.Position) || !isFiniteZonePosition(position) ||
+		!(navigationRadius > 0) || math.IsInf(float64(navigationRadius), 0) {
+		return nil, nil
+	}
+	deltaX := position.X - req.Common.Position.X
+	deltaY := position.Y - req.Common.Position.Y
+	if deltaX*deltaX+deltaY*deltaY <= navigationRadius*navigationRadius {
+		return nil, nil
+	}
+	packets, err := marshalPlayerMovementCorrection(
+		req.Common.ObjectID, position, req.Common.Orientation,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("acceptedStop: %w", err)
+	}
+	return packets, nil
 }

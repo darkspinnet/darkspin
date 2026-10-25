@@ -184,19 +184,25 @@ func (e *gameplayPeerSession) stopMutationPullEffectsTargeting(objectID uint32, 
 			run.mutex.Unlock()
 			continue
 		}
-		packet, err := npcraknet.ForcedMovementEffect(run.objectID, run.slot, "", true)
-		if err != nil {
-			run.mutex.Unlock()
-			return nil, fmt.Errorf("mutationPullEncode: %w", err)
-		}
-		removalLease, err := receipt.registry.adoptMutationRemovalLocked(e, run.pool, run.objectID, run.slot, nil, [][]byte{packet})
-		if err != nil {
-			run.mutex.Unlock()
-			return nil, fmt.Errorf("mutationPullAdopt: %w", err)
-		}
-		if removalLease == nil {
-			run.mutex.Unlock()
-			return nil, errors.New("mutation pull removal lease unavailable")
+		for len(run.attachments) != 0 {
+			attachment := run.attachments[0]
+			packet, err := npcraknet.ForcedMovementEffect(attachment.objectID, attachment.slot, "", true)
+			if err != nil {
+				run.mutex.Unlock()
+				return nil, fmt.Errorf("mutationPullEncode: %w", err)
+			}
+			removalLease, err := receipt.registry.adoptMutationRemovalLocked(e, run.pool, attachment.objectID, attachment.slot, nil, [][]byte{packet})
+			if err != nil {
+				run.mutex.Unlock()
+				return nil, fmt.Errorf("mutationPullAdopt: %w", err)
+			}
+			if removalLease == nil {
+				run.mutex.Unlock()
+				return nil, errors.New("mutation pull removal lease unavailable")
+			}
+			// The journal now owns this slot and its pending removal. Retain
+			// only unadopted attachments if a later adoption must be retried.
+			run.attachments = run.attachments[1:]
 		}
 		run.isReleased = true
 		run.mutex.Unlock()

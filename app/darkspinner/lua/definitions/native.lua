@@ -6,8 +6,28 @@
 ---@field controlled_handle integer|nil Opaque native generation-bearing handle, not a server object ID.
 ---@field picked_handle integer|nil Native retained target, not a fresh raycast or server object ID.
 ---@field position WorldPosition|nil
+---@field camera NativeCameraSnapshot Read-only native follow cache; unavailable outside supported gameplay.
 ---@field frame_sequence integer
 ---@field owner_thread_id integer
+
+---@class NativeCameraSnapshot
+---@field is_available boolean
+---@field target_handle integer Opaque native handle, comparable to controlled_handle only when available.
+---@field is_override_active boolean Scripted camera override; ordinary follow expectations do not apply.
+---@field mode integer Ordinary mission follow uses mode 5, follow_mode 4, zoom_mode 3.
+---@field follow_mode integer
+---@field zoom_mode integer
+---@field center WorldPosition|nil Current smoothed native center.
+---@field desired_position WorldPosition|nil Native desired center.
+---@field anchor_position WorldPosition|nil Cached native follow anchor.
+---@field offset_anchor_position WorldPosition|nil Cached offset anchor.
+---@field is_anchor_available boolean Resolved target source_position is readable and finite.
+---@field source_position WorldPosition|nil Native follow source selected from control, render, or object position.
+---@field anchor_source string 'control', 'render', 'object', or empty when unavailable.
+---@field control_mode integer
+---@field hold_timer number|nil Native cached timer; no refresh or smoothing rebuild is invoked.
+---@field distance number|nil
+---@field distance_target number|nil
 
 ---@class WorldProjection
 ---@field is_available boolean

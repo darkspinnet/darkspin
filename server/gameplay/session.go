@@ -1179,7 +1179,7 @@ func (s *gameplayPeerSession) stopCampaignNPCProjectiles() {
 		delete(s.campaignNPCDrainRuns, objectID)
 	}
 	for objectID, run := range s.campaignNPCPullEffects {
-		_, _, isReleased := run.release()
+		_, isReleased := run.release()
 		if !isReleased {
 			// The scheduled cleanup already released this presentation lease.
 		}

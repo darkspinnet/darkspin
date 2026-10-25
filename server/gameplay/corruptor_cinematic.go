@@ -23,6 +23,7 @@ type corruptorCinematicRun struct {
 	zone                 *zone.Zone
 	objectID             uint32
 	sourceGeneration     uint64
+	entryAt              time.Time
 	until                time.Time
 	timestamp            uint64
 	timestampAt          time.Time
@@ -41,6 +42,7 @@ type corruptorCinematicRun struct {
 	isAdmitted           bool
 	isArmed              bool
 	isPrefixPrepared     bool
+	isDeathPresented     bool
 	continuation         corruptorPhaseContinuation
 	continuationIdentity gameplayProducerIdentity
 }
@@ -52,7 +54,7 @@ func (e *corruptorCinematicRun) key() string {
 // The caller owns the registry lock and is still committing the accepted
 // resurrection. No transport lookup or later retained-session insertion owns
 // this reservation or its original clock.
-func (e *gameplayPeerSession) acceptCorruptorSecondAggro(boss zonenpc.Snapshot) (*corruptorCinematicRun, error) {
+func (e *gameplayPeerSession) acceptCorruptorSecondAggro(boss zonenpc.Snapshot, deathNounName string) (*corruptorCinematicRun, error) {
 	if e == nil || e.zone == nil || e.zone.NPCs() == nil {
 		return nil, errors.New("corruptor cinematic world unavailable")
 	}
@@ -63,14 +65,15 @@ func (e *gameplayPeerSession) acceptCorruptorSecondAggro(boss zonenpc.Snapshot) 
 	if state.secondAggro != nil {
 		return state.secondAggro, nil
 	}
-	until := time.Now().Add(zonenpc.SecondAggroCinematicDuration)
+	entryAt := time.Now().Add(zonenpc.CorruptorStageOneDeathDuration)
+	until := entryAt.Add(zonenpc.SecondAggroCinematicDuration)
 	focus := zonenpc.SecondAggroCinematicFocus(boss.Plan.Position)
-	sourceGeneration, isReserved := e.zone.NPCs().ReserveSecondAggroCinematic(boss.Plan.ObjectID, focus, until)
+	sourceGeneration, isReserved := e.zone.NPCs().ReserveSecondAggroCinematic(boss.Plan.ObjectID, focus, until, deathNounName)
 	if !isReserved {
 		return nil, errors.New("corruptor cinematic reservation unavailable")
 	}
 	run := &corruptorCinematicRun{zone: e.zone, objectID: boss.Plan.ObjectID,
-		sourceGeneration: sourceGeneration, until: until,
+		sourceGeneration: sourceGeneration, entryAt: entryAt, until: until,
 		entryBoss: boss, focus: raknet.Vector3(focus)}
 	state.secondAggro = run
 	run.state = state
@@ -84,7 +87,7 @@ func (e campaignNPCActionRuntime) startCorruptorSecondAggro(run *corruptorCinema
 	if run == nil {
 		return nil
 	}
-	err := e.armCorruptorSecondAggro(run, timestamp, run.until.Add(-zonenpc.SecondAggroCinematicDuration))
+	err := e.armCorruptorSecondAggro(run, timestamp, run.entryAt.Add(-zonenpc.CorruptorStageOneDeathDuration))
 	if err != nil {
 		return fmt.Errorf("sceneArm: %w", err)
 	}
@@ -188,7 +191,7 @@ func (e *corruptorCinematicRun) prepareEntryPackets() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("entrySpawn: %w", err)
 	}
-	animationPacket, err := npcraknet.AnimationState(e.objectID, campaignCorruptorStageTwoAnimation, e.timestamp)
+	animationPacket, err := npcraknet.AnimationState(e.objectID, campaignCorruptorStageTwoAnimation, e.sourceTimestamp(e.entryAt))
 	if err != nil {
 		return nil, fmt.Errorf("entryAnimation: %w", err)
 	}
@@ -214,6 +217,9 @@ func (e *corruptorCinematicRun) admitLocked() ([][]byte, error) {
 			e.stopContext()
 		}
 		return nil, nil
+	}
+	if e.runtime.now().Before(e.entryAt) {
+		return e.presentStageOneDeathLocked(source)
 	}
 	if !e.isPrefixPrepared {
 		packets, err := e.prepareEntryPackets()
@@ -337,6 +343,30 @@ func (e *corruptorCinematicRun) admitLocked() ([][]byte, error) {
 	return nil, nil
 }
 
+// Preserve the original body until its authored death animation completes.
+// The zone-owned reservation already blocks actions and incoming damage; only
+// the later entry replaces the client object and begins the second-aggro scene.
+func (e *corruptorCinematicRun) presentStageOneDeathLocked(source zonenpc.Snapshot) ([][]byte, error) {
+	err := e.zone.Timeline().Schedule(e.key()+":entry", max(time.Duration(0), e.entryAt.Sub(e.runtime.now())), e.retryAdmission, e.runtime.timer.Schedule)
+	if err != nil {
+		return nil, fmt.Errorf("deathSchedule: %w", err)
+	}
+	if e.isDeathPresented {
+		return nil, nil
+	}
+	packets, err := npcraknet.MovementPause(e.objectID, source.Plan.Position, source.Facing)
+	if err != nil {
+		return nil, fmt.Errorf("deathStop: %w", err)
+	}
+	animationPacket, err := npcraknet.AnimationState(e.objectID, "sca_boss_death", e.timestamp)
+	if err != nil {
+		return nil, fmt.Errorf("deathAnimation: %w", err)
+	}
+	packets = append(packets, animationPacket)
+	e.isDeathPresented = true
+	return packets, nil
+}
+
 func (e *corruptorCinematicRun) prepareCompanionModifier(target zonecompanion.Actor) ([]byte, error) {
 	at := e.runtime.now()
 	remaining := max(time.Nanosecond, e.until.Sub(at))
@@ -438,6 +468,7 @@ func (e *corruptorCinematicRun) queueLocked(packets [][]byte) {
 
 func (e *corruptorCinematicRun) cancel() {
 	e.zone.Timeline().Cancel(e.key())
+	e.zone.Timeline().Cancel(e.key() + ":entry")
 	e.zone.Timeline().Cancel(e.key() + ":admission")
 	e.runtime.registry.mutex.Lock()
 	defer e.runtime.registry.mutex.Unlock()

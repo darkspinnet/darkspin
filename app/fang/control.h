@@ -112,10 +112,19 @@ typedef struct fang_control_snapshot {
     uint32_t scene_frame_sequence;
     uint64_t scene_tick_ms;
 } fang_control_snapshot;
+typedef struct fang_control_camera_snapshot {
+    uint32_t is_available, fields, target_handle, is_override_active, mode, follow_mode, zoom_mode;
+    uint32_t is_anchor_available, anchor_source, control_mode;
+    float center[3], desired[3], anchor[3], offset_anchor[3], source[3];
+    float hold_timer, distance, distance_target;
+} fang_control_camera_snapshot;
+void fang_control_camera_read(fang_control_camera_snapshot* snapshot);
+
 typedef struct fang_control_gameplay_state {
     uint32_t is_available, is_world_active, fields, controlled_handle, picked_handle;
     uint32_t frame_sequence, owner_thread_id;
     float x, y, z;
+    fang_control_camera_snapshot camera;
 } fang_control_gameplay_state;
 typedef struct fang_control_projection {
     uint32_t is_available, is_on_screen, client_width, client_height;

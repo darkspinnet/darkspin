@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type launcherLua struct {
@@ -127,14 +129,17 @@ func (a *App) RunLuaScript(path string) error {
 	}
 	e.operationMutex.Lock()
 	defer e.operationMutex.Unlock()
+	choices, err := launcherLuaChoices()
 	e.mutex.Lock()
-	choices := e.state.Scripts
-	inventoryError := e.state.InventoryError
-	e.mutex.Unlock()
-	if inventoryError != "" {
-		return fmt.Errorf("luaInventory: %s", inventoryError)
+	e.state.Scripts = choices
+	e.state.InventoryError = ""
+	if err != nil {
+		e.state.InventoryError = err.Error()
 	}
-	var err error
+	e.mutex.Unlock()
+	if err != nil {
+		return fmt.Errorf("luaInventory: %w", err)
+	}
 	selectedPath := ""
 	for _, choice := range choices {
 		if choice.Path == path || choice.Name == path {
@@ -166,6 +171,9 @@ func (a *App) RunLuaScript(path string) error {
 		}
 		a.stopServices()
 		a.selectLauncherLua()
+	}
+	if !a.isHeadless && a.ctx != nil && runtime.WindowIsNormal(a.ctx) {
+		runtime.WindowSetPosition(a.ctx, 0, 0)
 	}
 	if child != nil {
 		select {
@@ -199,9 +207,9 @@ func launcherLuaChoices() ([]LuaScriptChoice, error) {
 	if err != nil {
 		return nil, fmt.Errorf("luaDirectory: %w", err)
 	}
-	root, err := prepareDebugLuaAssets(directory)
+	root, err := resolveDebugLuaRoot(directory)
 	if err != nil {
-		return nil, fmt.Errorf("luaInstall: %w", err)
+		return nil, fmt.Errorf("luaRoot: %w", err)
 	}
 	scripts, err := listDebugScripts(root)
 	if err != nil {
