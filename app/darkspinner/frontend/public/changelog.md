@@ -2,6 +2,7 @@
 
 ### 2026-10-24
 
+- [#114](https://github.com/darkspinnet/darkspin/issues/114) Close active horde barriers with the client-authored door state and enable collision instead of retaining their initially open, non-colliding placement.
 - [#112](https://github.com/darkspinnet/darkspin/issues/112) Preserve Pain Hounds' client-authored 1.9-second death animation when their duration expires or their owner deactivates them instead of deleting them immediately.
 - [#112](https://github.com/darkspinnet/darkspin/issues/112) Replicate the client-authored Immobilized attribute during enemy stuns and avoid redundant movement corrections while the stunned hero remains in place.
 - [#111](https://github.com/darkspinnet/darkspin/issues/111) Use the Corruptor's authored stage-two reward class at final defeat instead of retaining stage one's zero-challenge, no-equipment drop settings.

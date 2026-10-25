@@ -44,7 +44,8 @@ func Create(plans []zonebarrier.Plan) ([][]byte, error) {
 		}
 		packets = append(packets, createPacket, updatePacket)
 		closedPacket, closeErr := raknet.MarshalApplication(raknet.SetObjectGFXStateMessage{
-			ObjectID: object.ObjectID, State: util.HashID("closed"), Timestamp: 1,
+			// Native CloseDoor uses this literal state for static horde walls.
+			ObjectID: object.ObjectID, State: util.HashID("door closed"), Timestamp: 1,
 		})
 		if closeErr != nil {
 			return nil, fmt.Errorf("closeMarshal[%d]: %w", index, closeErr)
