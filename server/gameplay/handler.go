@@ -3877,12 +3877,18 @@ func marshalCampaignProjection(event zoneprojection.Event) ([][]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("damageHealthMarshal: %w", err)
 		}
+		if damage.Damage == 0 {
+			// Flat armor can fully mitigate a successful hit. Its contact and
+			// status effects belong to the accepted attack, but there
+			// is no health damage number to display. Retain the health state.
+			return [][]byte{healthPacket}, nil
+		}
 		textPacket, err := effectraknet.CombatText(effectraknet.CombatTextRequest{
 			ObjectID: damage.TargetObjectID, Position: damage.Position,
 			Amount: damage.Damage, IsCritical: damage.IsCritical,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("damageCombatText: %w", err)
+			return nil, fmt.Errorf("damageCombatText[%d/%g]: %w", damage.TargetObjectID, damage.Damage, err)
 		}
 		return [][]byte{eventPacket, healthPacket, textPacket}, nil
 	case zoneprojection.EventNPCDeath:

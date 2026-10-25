@@ -1,5 +1,9 @@
 # Changelog
 
+### 2026-10-25
+
+- #115 Allow fully mitigated hits to complete without damage text or failed melee actions, preventing repeated recovery baselines from replaying hero warp-in effects.
+
 ### 2026-10-24
 
 - #114 Close active horde barriers with the client-authored door state and enable collision instead of retaining their initially open, non-colliding placement.
