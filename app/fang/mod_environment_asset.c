@@ -182,11 +182,22 @@ BYTE* fang_mod_environment_package(const fang_environment_source* sources, unsig
         sizes[index] = source->decoded;
         if (index == 1 || index == 3) {
             uint32_t key[3];
-            if (sizes[index] != 104) goto finished;
-            memcpy(key, payloads[index] + 88, sizeof(key));
+            /* These installed wrappers put modelMeshLOD0 after the parent
+             * property. The backdrop wrapper has a different property order;
+             * its offset 88 is a bounding-box coordinate in these models. */
+            if (sizes[index] != 104 ||
+                environment_be32(payloads[index] + 28) != 0x00f9efbbu ||
+                environment_be32(payloads[index] + 32) != 0x00200000u) {
+                trace_client_state("mod_editor_environment_wrapper_invalid", index);
+                goto finished;
+            }
+            memcpy(key, payloads[index] + 36, sizeof(key));
             if (key[0] != (index == 1 ? 0xdaf31958u : 0x6261312au) ||
-                key[1] != 0x2f4e681bu || key[2]) goto finished;
-            environment_le32(payloads[index] + 88, instances[index]);
+                key[1] != 0x2f4e681bu || key[2]) {
+                trace_client_state("mod_editor_environment_model_key_invalid", index);
+                goto finished;
+            }
+            environment_le32(payloads[index] + 36, instances[index]);
         }
     }
     if (!environment_exports(payloads[0], sizes[0], &exports, &selected) ||
@@ -217,7 +228,7 @@ BYTE* fang_mod_environment_package(const fang_environment_source* sources, unsig
     }
     *size = total;
     trace_client_state("mod_editor_environment_private_export", selected);
-    trace_client_state("mod_editor_environment_ground_materials", 2);
+    trace_client_state("mod_editor_environment_source_materials", 2);
 finished:
     for (index = 0; index < 5; ++index)
         if (payloads[index]) HeapFree(GetProcessHeap(), 0, payloads[index]);

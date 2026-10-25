@@ -2,6 +2,7 @@
 
 ### 2026-10-25
 
+
 - #117 Restore Missile Barrage's client-authored nonvertical descent slope while preserving impact points instead of sending exactly vertical missile trajectories.
 - #116 Preserve accepted basic attacks when repeat input or held-aim updates arrive instead of falsely rejecting them and canceling their hits and release callbacks.
 - #115 Allow fully mitigated hits to complete without damage text or failed melee actions, preventing repeated recovery baselines from replaying hero warp-in effects.

@@ -1,6 +1,7 @@
 ---@meta
 
 ---@class ClientAbility
+---@field Cancel fun(self:ClientAbility):WindowCommandResult|nil,ScenarioError|nil Debugger-only invocation of the owned active client's native cancellation producer. Processing proves local invocation only; verify ActionCancel in captured traffic. No server state write, fabricated packet, or automatic replay.
 ---@field Snapshot fun(self:ClientAbility):AbilityObservation|nil,ScenarioError|nil Read-only actor/ability support, resource gates and last semantic cast/rejection. Supports Blitz's Ride the Lightning and SRS-42's Rocket Barrage.
 ---@field Cast fun(self:ClientAbility,point:WorldPosition,timeout_ms?:integer):AbilityCastResult|nil,ScenarioError|nil One native SpecialTwo request for the independently resolved ability, then wait for its exact next server cast. Ride the Lightning requires arrival processing and release; Rocket Barrage requires every launch, release and burst completion. Default client timeout. Unsupported metadata/resources fail before input; errors/unknown outcomes are never replayed.
 

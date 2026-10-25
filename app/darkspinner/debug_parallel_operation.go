@@ -22,7 +22,7 @@ func isIndependentDebugOperation(operation string) bool {
 		return true
 	case "client.type":
 		return true
-	case "client.ability_state", "client.cast_active":
+	case "client.ability_state", "client.cast_active", "client.cancel_ability":
 		return true
 	case "client.select_hero":
 		return true
@@ -129,6 +129,20 @@ func (e *debugSupervisor) executeIndependentDebugOperation(ctx context.Context, 
 		result, err := castDebugAbility(ctx, host, clientManager, payload)
 		if err != nil {
 			return result, fmt.Errorf("abilityCast: %w", err)
+		}
+		return result, nil
+	case "client.cancel_ability":
+		var req debugClientRequest
+		err := decodeDebugPayload(payload, &req)
+		if err != nil {
+			return nil, fmt.Errorf("cancelRequest: %w", err)
+		}
+		if req.ClientID == "" || req.IsTerminate {
+			return nil, errors.New("ability cancellation requires only an owned client ID")
+		}
+		result, err := clientManager.CancelAbility(ctx, req.ClientID)
+		if err != nil {
+			return result, fmt.Errorf("cancelNative: %w", err)
 		}
 		return result, nil
 	case "client.select_hero":

@@ -157,7 +157,8 @@ void fang_mod_editor_preview_update(void) {
 int fang_mod_editor_preview_ready(BYTE* editor) {
     BYTE* skin;
     if (!fang_mod_editor_is_scene(editor) || !readable_range(editor, 952) ||
-        !editor[813] || !*(void**)(editor + 908) || *(unsigned int*)(editor + 948)) return 0;
+        !editor[813] || !*(void**)(editor + 908) ||
+        fang_mod_editor_is_save_busy(editor)) return 0;
     skin = *(BYTE**)(editor + 408);
     /* 71E6D0 -> 6A00A0(skin, 1): the native Test transition requires this
      * completed baked model. Also require its animation-world owner, which

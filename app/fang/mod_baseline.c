@@ -9,12 +9,14 @@
 
 /* Build 103's 0x6BA870 compares immutable appearance features with the
  * original template and emits 0x10000000 on mismatch. This optional adapter
- * supplies the bound import as its template baseline. It preserves the
- * comparison itself and all other model-validation rules.
+ * supplies the bound import as its template baseline. The temporary,
+ * explicitly approved Mod policy also ignores this one comparison's error
+ * bit at the validation dispatcher. All other validation rules still run.
  * Activation requires model_baseline=1 in the launcher-owned Mod manifest.
  */
 typedef unsigned char (__cdecl* mod_baseline_fn)(const uint32_t*, void*, uint32_t*, void*, void*);
 typedef void** (__cdecl* mod_provider_fn)(void);
+typedef unsigned char (__cdecl* mod_template_fn)(const uint32_t*, uint32_t*);
 
 typedef struct {
     void* slots[10];
@@ -23,6 +25,8 @@ typedef struct {
 
 static __thread mod_baseline_provider baseline_provider;
 static mod_provider_fn native_provider;
+static mod_template_fn native_template;
+static volatile LONG template_trace_count;
 static CRITICAL_SECTION baseline_lock;
 static uint32_t source_instances[128];
 static uint32_t hero_nouns[128];
@@ -37,6 +41,21 @@ static uint32_t editor_hero_nouns[128];
 static unsigned int editor_hero_count;
 static uint32_t editor_model_keys[512][3];
 static unsigned int editor_model_count;
+
+static unsigned char __cdecl mod_allow_template_error(const uint32_t* model, uint32_t* errors) {
+    unsigned char is_valid = native_template(model, errors);
+    if (!is_baseline_enabled || !readable_range(errors, sizeof(*errors)) ||
+        !(*errors & UINT32_C(0x10000000))) return is_valid;
+    /* Temporary Mod-only exception requested for core-body editing, including
+     * removing native hero legs. 6BA870 owns only validation bit 28. Run it
+     * normally, then remove only that bit before 6BB3E0 evaluates failure.
+     * Keep the import/resource checks and every other accumulated error.
+     * This call also covers reopening the edited save in this Mod client. */
+    *errors &= ~UINT32_C(0x10000000);
+    if (InterlockedIncrement(&template_trace_count) <= 64)
+        trace_client_state("mod_template_error_allowed", 28);
+    return 1;
+}
 
 static int mod_editor_baseline_key(const uint32_t* key) {
     unsigned int index;
@@ -163,7 +182,7 @@ int fang_mod_bind_baseline(const uint32_t* metadata, const uint32_t* model_key) 
         /* Native editor saves replace the source instance but retain the
          * parent hero asset ID at metadata +24. Recognize only version-7
          * saves belonging to a hero explicitly bound in this Mod profile.
-         * The immutable-template comparison itself still runs unchanged. */
+         * The temporary template exception is applied separately below. */
         if (metadata[0] == 7 && metadata[7] == 0 && hero_nouns[index] != 0 &&
             metadata[6] == hero_nouns[index]) {
             trace_client_state("mod_baseline_saved_hero", metadata[6]);
@@ -262,6 +281,18 @@ void fang_mod_install_baseline(BYTE* base, const wchar_t* manifest) {
         trace_client_state("mod_baseline_hook_failed", 2);
         return;
     }
+    native_template = (mod_template_fn)(base + 0x2ba870);
+    /* Build 103: PUSH errors; PUSH model; CALL 6BA870; ADD ESP,8.
+     * patch_call verifies the original target before changing this call. */
+    if (!patch_call(base + 0x2bb9d7, native_template, mod_allow_template_error)) {
+        if (!patch_call(second_call, mod_bound_provider, native_provider))
+            trace_client_state("mod_baseline_rollback_failed", 2);
+        if (!patch_call(first_call, mod_bound_provider, native_provider))
+            trace_client_state("mod_baseline_rollback_failed", 1);
+        trace_client_state("mod_template_hook_failed", 1);
+        return;
+    }
     is_baseline_enabled = 1;
+    trace_client_state("mod_template_error_bypass_enabled", 28);
     trace_client_state("mod_baseline_enabled", 1);
 }

@@ -389,8 +389,8 @@ finished:
 }
 
 static int mod_scene_floor(mod_stream* stream, uint32_t* position) {
-    /* Source slots are GMSH, RW4, lighting. Adapt the render model rather
-     * than passing the geometry descriptor to the RW4 parser. */
+    /* Source slots are GMSH, RW4, lighting. Validate and expand the render
+     * model while retaining its complete authored material records. */
     BYTE* entry = stream->prefix + 104 + 28;
     unsigned int stored = mod_u32(entry + 16) & 0x7fffffffu;
     unsigned int decoded = mod_u32(entry + 20);
@@ -440,7 +440,7 @@ static int mod_scene_floor(mod_stream* stream, uint32_t* position) {
 }
 
 /* A private four-resource view of the original editor background. The
- * header, index, adapted wrapper and floor material copy live in memory.
+ * header, index, aliased wrapper and expanded render model live in memory.
  * GMSH and lighting remain compressed in the read-only source and stream on demand.
  * Private identities prevent the editor experiment from replacing resources
  * with the same original identity in Arsenal or normal gameplay.

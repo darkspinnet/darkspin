@@ -41,6 +41,7 @@ static uint64_t input_deadline;
 static uint64_t input_release_at;
 static uint32_t input_hold_ms;
 static int is_release_poll_ready;
+static int is_held_move_observed;
 /* 0 armed, 1 press consumed, 2 held until release_at (tap: next poll),
  * 3 release poll passed, 4 settled. Cancellation removes all synthetic
  * answers immediately; an unwitnessed release remains outcome_unknown. */
@@ -224,6 +225,14 @@ static int WINAPI scoped_input_held(int key) {
                 if (GetTickCount64() < input_release_at && GetTickCount64() < input_deadline) result = 1;
                 else { result = 0; is_release_poll_ready = 1; }
             }
+        } else if (caller == input_image + 0x4D686 && key == 1000 &&
+            (input_phase == 1 || input_phase == 2)) {
+            /* Build10344D600 checks the held button again before promoting
+             * the initial movement press to continuous movement after 500ms.
+             * Answering only45037B delays release but never exercises that
+             * ordinary held-movement branch. Keep this scoped to the same
+             * finite request and let the original producer update its state. */
+            result = GetTickCount64() < input_release_at && GetTickCount64() < input_deadline;
         } else if (caller == input_image + 0x503AF && key == 1002) {
             if (input_phase == 1) {
                 /* The ordinary press branch has now run. Sample its retained
@@ -251,6 +260,7 @@ int fang_control_input_install(HMODULE executable) {
     static const BYTE press_call[] = {0x8B,0x16,0x8B,0x42,0x3C,0x68,0xE8,0x03,0x00,0x00,0x8B,0xCE,0xFF,0xD0};
     static const BYTE held_left_call[] = {0x8B,0x16,0x8B,0x42,0x40,0x68,0xE8,0x03,0x00,0x00,0x8B,0xCE,0xC6,0x44,0x24,0x0E,0x00,0xFF,0xD0};
     static const BYTE held_right_call[] = {0x8B,0x16,0x8B,0x42,0x40,0x68,0xEA,0x03,0x00,0x00,0x8B,0xCE,0xC6,0x44,0x24,0x0F,0x00,0xFF,0xD0};
+    static const BYTE held_move_call[] = {0x8B,0x10,0x8B,0xC8,0x8B,0x42,0x40,0x68,0xE8,0x03,0x00,0x00,0xFF,0xD0};
     BYTE* base = (BYTE*)executable;
     if (!base || InterlockedCompareExchange(&is_input_installed, 0, 0) ||
         memcmp(base + 0x4FC65, ray_call, sizeof(ray_call)) ||
@@ -263,6 +273,7 @@ int fang_control_input_install(HMODULE executable) {
         memcmp(base + 0x50315, press_call, sizeof(press_call)) ||
         memcmp(base + 0x50368, held_left_call, sizeof(held_left_call)) ||
         memcmp(base + 0x5039C, held_right_call, sizeof(held_right_call)) ||
+        memcmp(base + 0x4D678, held_move_call, sizeof(held_move_call)) ||
         *(void**)(base + 0xC0F574) != base + 0x48DC90 ||
         *(void**)(base + 0xBDE478) != base + 0x10B3A0) return 0;
     input_image = base;
@@ -296,7 +307,7 @@ int fang_control_input_begin(uint32_t request_id, uint32_t scene, uint32_t handl
     AcquireSRWLockExclusive(&input_lock);
     input_request = request_id; input_scene = scene; input_handle = handle;
     input_thread = GetCurrentThreadId(); input_deadline = deadline;
-    input_hold_ms = hold_ms; input_release_at = 0; is_release_poll_ready = 0;
+    input_hold_ms = hold_ms; input_release_at = 0; is_release_poll_ready = 0; is_held_move_observed = 0;
     is_aim_only = 0;
     input_window = (HWND)(uintptr_t)window.window_id;
     input_x = x; input_y = y;
@@ -314,6 +325,11 @@ uint32_t fang_control_input_frame(uint32_t request_id, uint32_t scene, uint32_t 
     uint32_t status = 0;
     AcquireSRWLockExclusive(&input_lock);
     if (request_id != input_request) { status = 5; goto done; }
+    if (!is_held_move_observed && input_hold_ms && input_phase == 2 &&
+        input_thread == GetCurrentThreadId() && *(BYTE*)(input_image + 0xDBEF3C)) {
+        is_held_move_observed = 1;
+        trace_client_state("scenario_move_hold_active", input_request);
+    }
     if (!is_world_active || scene != input_scene || handle != input_handle || input_thread != GetCurrentThreadId()) {
         input_failure = 5; is_input_armed = 0;
     } else if (input_phase == 3) {

@@ -30,3 +30,11 @@ func (e *debugClientManager) CastActive(ctx context.Context, clientID string, po
 	}
 	return result, nil
 }
+
+func (e *debugClientManager) CancelAbility(ctx context.Context, clientID string) (any, error) {
+	result, err := e.requestWindow(ctx, clientID, "gameplay.cancel_ability", controlCommand{})
+	if err != nil {
+		return result, fmt.Errorf("abilityCancel: %w", err)
+	}
+	return result, nil
+}

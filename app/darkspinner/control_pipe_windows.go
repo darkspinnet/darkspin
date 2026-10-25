@@ -169,6 +169,10 @@ func (e *controlPipe) Request(ctx context.Context, operation string, command con
 		if command.HeroSlot == nil || *command.HeroSlot > 2 || command.HoldMS != 0 || command.WorldPoint != nil || command.X != 0 || command.Y != 0 || command.Button != "" || command.Key != "" || command.Scene != "" || command.IsIntroSkipped != nil || command.IsCinematicSkipped != nil {
 			return controlCommandResult{}, &controlCommandFailure{Code: "invalid_request", Message: "gameplay.select_hero requires only hero_slot from 0 through 2"}
 		}
+	case "gameplay.cancel_ability":
+		if command != (controlCommand{}) {
+			return controlCommandResult{}, &controlCommandFailure{Code: "invalid_request", Message: "ability cancellation takes no input arguments"}
+		}
 	case "gameplay.inspect", "gameplay.project", "gameplay.click", "gameplay.hold", "gameplay.cast_active":
 		if command.X != 0 || command.Y != 0 || command.Button != "" || command.Key != "" || command.Scene != "" || command.IsIntroSkipped != nil || command.IsCinematicSkipped != nil || operation != "gameplay.inspect" && (command.WorldPoint == nil || !isDebugWorldPointFinite(*command.WorldPoint)) {
 			return controlCommandResult{}, &controlCommandFailure{Code: "invalid_request", Message: "gameplay observation requires only an optional finite projection point"}

@@ -57,14 +57,13 @@ int fang_mod_scene_expand(const BYTE* source, unsigned int size, BYTE* output, u
     return position == decoded;
 }
 
-static BYTE* scene_material(const BYTE* source, unsigned int stored,
+static BYTE* scene_source_model(const BYTE* source, unsigned int stored,
     unsigned int decoded, unsigned int compression, unsigned int selected, unsigned int expected) {
     BYTE* payload;
     unsigned int offset;
     unsigned int count;
     unsigned int index;
-    unsigned int changed = 0;
-    uint32_t renderer = 0x80000003u;
+    unsigned int matched = 0;
     if (decoded < 108 || decoded > 32 * 1024 * 1024) return NULL;
     payload = (BYTE*)HeapAlloc(GetProcessHeap(), 0, decoded);
     if (!payload) return NULL;
@@ -74,10 +73,11 @@ static BYTE* scene_material(const BYTE* source, unsigned int stored,
     count = scene_word(payload + 0x24);
     offset = scene_word(payload + 0x30);
     if (offset > decoded || count > (decoded - offset) / 24) goto failed;
-    /* Keep source vertex declarations, textures, UVs and render states, but
-     * use the sky/vegetation's working unlit textured renderer for ground.
-     * The fallback swatch has two lit surfaces; each actual environment
-     * model has one, checked against its inspected renderer identity. */
+    /* Preserve the complete installed material contract. Renderer 2/4 states
+     * contain shader data absent from renderer 3's authored states. Replacing
+     * just the renderer ID leaves those original parameters, declarations and
+     * texture stages paired with a different renderer. Keep the records intact
+     * while the private property wrappers alias their model resource keys. */
     for (index = 0; index < count; ++index) {
         const BYTE* section = payload + offset + index * 24;
         unsigned int start = scene_word(section);
@@ -88,10 +88,12 @@ static BYTE* scene_material(const BYTE* source, unsigned int stored,
         shader = scene_word(payload + start + 24);
         if (shader != 0x80000002u && shader != 0x80000004u) continue;
         if (selected && shader != selected) continue;
-        memcpy(payload + start + 24, &renderer, 4);
-        ++changed;
+        trace_client_state("mod_editor_scene_source_renderer", shader);
+        trace_client_state("mod_editor_scene_source_material_flags", scene_word(payload + start + 8));
+        trace_client_state("mod_editor_scene_source_texture_flags", scene_word(payload + start + 16));
+        ++matched;
     }
-    if (changed != expected) goto failed;
+    if (matched != expected) goto failed;
     return payload;
 
 failed:
@@ -101,12 +103,12 @@ failed:
 
 BYTE* fang_mod_scene_floor(const BYTE* source, unsigned int stored,
     unsigned int decoded, unsigned int compression) {
-    BYTE* payload = scene_material(source, stored, decoded, compression, 0, 2);
-    if (payload) trace_client_state("mod_editor_scene_floor_materials", 2);
+    BYTE* payload = scene_source_model(source, stored, decoded, compression, 0, 2);
+    if (payload) trace_client_state("mod_editor_scene_source_materials", 2);
     return payload;
 }
 
 BYTE* fang_mod_scene_ground(const BYTE* source, unsigned int stored,
     unsigned int decoded, unsigned int compression, unsigned int shader) {
-    return scene_material(source, stored, decoded, compression, shader, 1);
+    return scene_source_model(source, stored, decoded, compression, shader, 1);
 }

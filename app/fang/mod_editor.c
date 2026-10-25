@@ -65,6 +65,15 @@ int fang_mod_editor_is_scene(BYTE* editor) {
     return editor && editor == active_scene_editor && editor == fang_mod_editor_active();
 }
 
+int fang_mod_editor_is_save_busy(BYTE* editor) {
+    unsigned int state;
+    if (!readable_range(editor, 952)) return 1;
+    /* 72F600 advances save states 1..5. Completion through PlayerEditor's
+     * slot 60 (4B8670 -> 729C40) leaves state 6, not the initial state 0. */
+    state = *(unsigned int*)(editor + 948);
+    return state != 0 && state != 6;
+}
+
 static void FANG_THISCALL editor_manipulate(BYTE* editor, int command, int flags,
     float* point, void* hit, int option, void* handle) {
     BYTE* part;

@@ -152,6 +152,7 @@ func (e *controlConnection) gameplayCommand(req controlEnvelope, response contro
 	isHold := req.Operation == "gameplay.hold"
 	isSelect := req.Operation == "gameplay.select_hero"
 	isCast := req.Operation == "gameplay.cast_active"
+	isCancel := req.Operation == "gameplay.cancel_ability"
 	if isCast && (req.Command == nil || req.Command.AbilityID == 0) ||
 		!isCast && req.Command != nil && req.Command.AbilityID != 0 {
 		response.Failure = &controlCommandFailure{Code: "invalid_request", Message: "ability_id is required only for gameplay.cast_active"}
@@ -168,6 +169,9 @@ func (e *controlConnection) gameplayCommand(req controlEnvelope, response contro
 	var holdMS uint32
 	var heroSlot uint32
 	var abilityID uint32
+	if isCancel {
+		kind = 6
+	}
 	if isCast {
 		abilityID = req.Command.AbilityID
 	}
@@ -281,6 +285,11 @@ func controlGameplayReceipt(response controlEnvelope, receipt C.fang_control_win
 		state.Position = &controlWorldPoint{X: float64(snapshot.x), Y: float64(snapshot.y), Z: float64(snapshot.z)}
 	}
 	response.Result.GameplayState = state
+	if response.Operation == "gameplay.cancel_ability" {
+		isAttempted := receipt.status == 1
+		response.Result.IsInvocationAttempted = &isAttempted
+		response.Result.IsInvocationAccepted = nil
+	}
 	if response.Operation == "gameplay.cast_active" {
 		active := &controlActiveCast{ActionIndex: uint32(cast.action_index), IsQueryProcessed: cast.is_query_processed != 0,
 			IsNativeRequestAttempted:   cast.is_native_request_attempted != 0,

@@ -178,7 +178,7 @@ func (e *controlConnection) send(message controlEnvelope) error {
 func (e *controlConnection) command(req controlEnvelope, receivedAt time.Time) controlEnvelope {
 	response := controlEnvelope{ProtocolVersion: 1, Kind: "result", RunID: e.identity.RunID, ClientID: e.identity.ClientID, ConnectionGeneration: e.identity.ConnectionGeneration,
 		RequestID: req.RequestID, Sequence: req.Sequence, Operation: req.Operation, Result: &controlCommandResult{Status: "rejected"}}
-	if isControlMissionAction(req.Operation) || req.Operation == "gameplay.select_hero" || req.Operation == "gameplay.cast_active" || req.Operation == "ui.screen_set" {
+	if isControlMissionAction(req.Operation) || req.Operation == "gameplay.select_hero" || req.Operation == "gameplay.cast_active" || req.Operation == "gameplay.cancel_ability" || req.Operation == "ui.screen_set" {
 		isAttempted, isAccepted := false, false
 		response.Result.IsInvocationAttempted = &isAttempted
 		response.Result.IsInvocationAccepted = &isAccepted
@@ -229,7 +229,7 @@ func (e *controlConnection) command(req controlEnvelope, receivedAt time.Time) c
 	switch req.Operation {
 	case "ui.screen_set", "ui.screen_state":
 		return e.windowCommand(req, response, localDeadline)
-	case "gameplay.inspect", "gameplay.project", "gameplay.click", "gameplay.hold", "gameplay.select_hero", "gameplay.cast_active":
+	case "gameplay.inspect", "gameplay.project", "gameplay.click", "gameplay.hold", "gameplay.select_hero", "gameplay.cast_active", "gameplay.cancel_ability":
 		return e.gameplayCommand(req, response, localDeadline)
 	case "cinematic.configure":
 		return e.configureCinematic(req, response, localDeadline)

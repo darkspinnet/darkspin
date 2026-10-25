@@ -576,13 +576,17 @@ static void editor_preview_draw(editor_value* root, BYTE* editor, BYTE* ui) {
     LONG y = body_area.top - height - 8;
     int is_test = *(unsigned int*)(editor + 856) == 2;
     int is_ready = is_test || fang_mod_editor_preview_ready(editor);
+    BYTE* skin = *(BYTE**)(editor + 408);
     unsigned int status;
     const char* label = is_test ? "RETURN TO BODY" : is_ready ? "TEST CREATURE" : "PREPARING PREVIEW";
     SetRectEmpty(&preview_area);
     if (!fang_mod_editor_is_scene(editor) || !body_window ||
         !GetClientRect(body_window, &client)) goto done;
     status = (is_ready ? 1u : 0u) | (editor[941] ? 2u : 0u) |
-        (editor[813] ? 4u : 0u) | (*(void**)(editor + 908) ? 8u : 0u);
+        (editor[813] ? 4u : 0u) | (*(void**)(editor + 908) ? 8u : 0u) |
+        (skin ? 16u : 0u) | (readable_range(skin, 32) && *(void**)(skin + 28) ? 32u : 0u) |
+        (fang_mod_editor_is_save_busy(editor) ? 64u : 0u) |
+        ((*(unsigned int*)(editor + 948) & 255u) << 8);
     if (status != preview_status) {
         preview_status = status;
         trace_client_state("mod_editor_preview_status", status);

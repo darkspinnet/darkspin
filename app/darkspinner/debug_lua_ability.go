@@ -4,6 +4,14 @@ package main
 
 import "github.com/yuin/gopher-lua"
 
+func debugLuaAbilityCancel(state *lua.LState) int {
+	scope := debugLuaScopeSelf(state)
+	if scope == nil {
+		return 0
+	}
+	return scope.client.invoke(state, "client.cancel_ability", map[string]any{"client_id": scope.client.id}, true)
+}
+
 func debugLuaAbilityState(state *lua.LState) int {
 	scope := debugLuaScopeSelf(state)
 	if scope == nil {

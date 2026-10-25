@@ -7,13 +7,13 @@ typedef unsigned char (FANG_THISCALL* skin_mode_fn)(BYTE*, unsigned int);
 static BYTE* skin_base;
 static skin_mode_fn skin_native_mode;
 static unsigned int skin_trace_count;
-static BYTE* skin_hover_owner;
-static unsigned int skin_hover_actor;
-static int is_skin_hover_visible;
+static BYTE* skin_body_owner;
+static unsigned int skin_body_actor;
+static int is_skin_body_visible;
 
 typedef void (FANG_THISCALL* skin_render_groups_fn)(BYTE*, const uint32_t*, const uint32_t*, unsigned int);
 
-static int skin_show_hover(BYTE* editor, int is_visible) {
+static int skin_show_body(BYTE* editor, int is_visible) {
     BYTE* world = *(BYTE**)(editor + 136);
     BYTE* controller = *(BYTE**)(editor + 908);
     BYTE* actor;
@@ -53,35 +53,38 @@ void fang_mod_editor_update_skin(void) {
     BYTE* editor = fang_mod_editor_active();
     BYTE* skin;
     unsigned int actor;
-    int is_hover;
+    int is_painted;
     if (!skin_base || !readable_range(editor, 952)) {
-        skin_hover_owner = NULL;
-        is_skin_hover_visible = 0;
+        skin_body_owner = NULL;
+        is_skin_body_visible = 0;
         return;
     }
     actor = *(unsigned int*)(editor + 912);
-    if (skin_hover_owner != editor || skin_hover_actor != actor) {
-        skin_hover_owner = editor;
-        skin_hover_actor = actor;
-        is_skin_hover_visible = 0;
+    if (skin_body_owner != editor || skin_body_actor != actor) {
+        skin_body_owner = editor;
+        skin_body_actor = actor;
+        is_skin_body_visible = 0;
     }
     skin = *(BYTE**)(editor + 408);
-    is_hover = fang_mod_editor_is_body(editor) && editor[813] &&
+    /* Body uses the completed painted display both on and off the creature.
+     * Requiring a hover target left ordinary Body display to the native Build
+     * mode switch, which can restore its unpainted render groups. */
+    is_painted = fang_mod_editor_is_body(editor) && editor[813] &&
         readable_range(skin, 32) && *(void**)(skin + 28) && actor &&
-        *(void**)(editor + 224) && !*(void**)(editor + 400) &&
-        !*(unsigned int*)(editor + 948) && !(GetAsyncKeyState(VK_LBUTTON) & 0x8000);
-    if (is_hover) {
+        !*(void**)(editor + 400) &&
+        !fang_mod_editor_is_save_busy(editor) && !(GetAsyncKeyState(VK_LBUTTON) & 0x8000);
+    if (is_painted) {
         /* Native editor updates can restore draw groups every frame. */
-        if (skin_show_hover(editor, 1)) {
-            if (!is_skin_hover_visible) trace_client_state("mod_editor_body_hover_skin", 1);
-            is_skin_hover_visible = 1;
+        if (skin_show_body(editor, 1)) {
+            if (!is_skin_body_visible) trace_client_state("mod_editor_body_painted_display", 1);
+            is_skin_body_visible = 1;
         }
-    } else if (!is_hover && is_skin_hover_visible) {
+    } else if (is_skin_body_visible) {
         /* Real manipulation uses the live geometry. Never leave a stale baked
          * silhouette over a drag; native baking restores it after the edit. */
-        if (*(unsigned int*)(editor + 856) == 0) skin_show_hover(editor, 0);
-        is_skin_hover_visible = 0;
-        trace_client_state("mod_editor_body_hover_skin", 0);
+        if (*(unsigned int*)(editor + 856) == 0) skin_show_body(editor, 0);
+        is_skin_body_visible = 0;
+        trace_client_state("mod_editor_body_painted_display", 0);
     }
 }
 

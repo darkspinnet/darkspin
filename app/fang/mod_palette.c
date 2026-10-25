@@ -223,12 +223,12 @@ void fang_mod_update_palette(void) {
          * catalogue before Body is selected. Cards are deferred by the native
          * build hook, so this no longer initializes every thumbnail twice. */
         if (!is_selected && ((DWORD)(GetTickCount() - palette_entered) < 500 ||
-            *(unsigned int*)(editor + 948))) return;
+            fang_mod_editor_is_save_busy(editor))) return;
         palette_load(editor);
         return;
     }
     if (is_palette_ready && !is_warm_failed && !*(void**)(editor + 400) &&
-        !*(unsigned int*)(editor + 948)) {
+        !fang_mod_editor_is_save_busy(editor)) {
         DWORD started = GetTickCount();
         int result = fang_mod_palette_warm(body_panel);
         DWORD elapsed = GetTickCount() - started;

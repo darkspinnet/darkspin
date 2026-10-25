@@ -13,6 +13,7 @@ typedef void* (FANG_THISCALL* gameplay_object_fn)(void*, uint32_t);
 typedef void* (FANG_THISCALL* gameplay_method_fn)(void*);
 typedef unsigned char (__cdecl* gameplay_visible_fn)(const float*, float*);
 typedef float* (__cdecl* gameplay_project_fn)(const float*, float*, float*);
+typedef int (__cdecl* gameplay_cancel_fn)(void);
 #if defined(__GNUC__)
 #define GAMEPLAY_FASTCALL __attribute__((fastcall))
 #define GAMEPLAY_CALLER() __builtin_return_address(0)
@@ -184,6 +185,29 @@ void fang_control_gameplay_frame(uint32_t sequence) {
     AcquireSRWLockExclusive(&gameplay_lock);
     if (!gameplay_request || gameplay_receipt.status) goto done;
     gameplay_receipt.thread_id = GetCurrentThreadId();
+    if (gameplay_kind == 6) {
+        static const BYTE cancel_entry[] = {0xC6,0x05,0x4C,0x8A,0x43,0x01,0x01,0xC6,0x05,0x4D,0x8A,0x43,0x01,0x00,0xC6,0x05,0x4F,0x8A,0x43,0x01,0x01};
+        fang_control_window_snapshot window;
+        int key;
+        read_gameplay_state(sequence, &boundary);
+        if (GetTickCount64() >= gameplay_deadline) { gameplay_receipt.status = 4; goto complete; }
+        if (boundary.scene_load_return_count != gameplay_request_scene || !gameplay_state.is_world_active ||
+            !fang_control_window_inspect(&window) || window.thread_id != GetCurrentThreadId() ||
+            !IsWindowVisible((HWND)(uintptr_t)window.window_id) || !window.is_enabled || window.is_minimized || GetCapture() ||
+            memcmp(gameplay_image + 0xDFB20, cancel_entry, sizeof(cancel_entry))) {
+            gameplay_receipt.status = 5; goto complete;
+        }
+        for (key = 1; key < 256; key++) {
+            if (GetAsyncKeyState(key) & 0x8000) { gameplay_receipt.status = 5; goto complete; }
+        }
+        /* Build1034DFB20 ->4DF800 ->4DEF10 uses the client's ordinary
+         * cancellation queue and encoder (command10). No server packet or
+         * authoritative gameplay state is fabricated by the debugger. */
+        trace_client_state("scenario_ability_cancel_invoked", gameplay_request);
+        ((gameplay_cancel_fn)(gameplay_image + 0xDFB20))();
+        gameplay_receipt.status = 1;
+        goto complete;
+    }
     if (gameplay_kind == 5) {
         read_gameplay_state(sequence, &boundary);
         if (is_gameplay_input_started) gameplay_receipt.status = fang_control_ability_frame(gameplay_request, &gameplay_cast);
@@ -242,7 +266,7 @@ done:
 int fang_control_gameplay_submit(uint32_t request_id, uint32_t kind, float x, float y, float z, uint32_t timeout_ms, uint32_t hold_ms, uint32_t hero_slot, uint32_t ability_id) {
     int is_accepted = 0;
     fang_control_snapshot boundary;
-    if (!InterlockedCompareExchange(&is_gameplay_installed, 0, 0) || !request_id || kind > 5 ||
+    if (!InterlockedCompareExchange(&is_gameplay_installed, 0, 0) || !request_id || kind > 6 ||
         (kind == 4 ? hero_slot > 2 : hero_slot != 0) ||
         (kind == 5 ? (ability_id != 0x43C6B5F7 && ability_id != 0xF0D49F1D) : ability_id != 0) ||
         (kind == 3 ? (!hold_ms || hold_ms > 1200) : hold_ms != 0) ||

@@ -80,6 +80,8 @@ func debugLuaScopeIndex(state *lua.LState) int {
 			state.Push(state.NewFunction(debugLuaAbilityState))
 		case "Cast":
 			state.Push(state.NewFunction(debugLuaAbilityCast))
+		case "Cancel":
+			state.Push(state.NewFunction(debugLuaAbilityCancel))
 		default:
 			state.Push(lua.LNil)
 		}
