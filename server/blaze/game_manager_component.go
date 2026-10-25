@@ -177,6 +177,7 @@ func resetDedicatedServerHandler(
 				return &Response{ErrorCode: 0x0004}, nil
 			}
 			instance.Info.Level = level
+			instance.Info.Attributes["SelectedDifficulty"] = strconv.FormatUint(uint64(selection), 10)
 		}
 		warpLevel := ""
 		if !isRestored && instance.Info.Mode == game.ModeChain {
@@ -198,6 +199,11 @@ func resetDedicatedServerHandler(
 		}
 		if !isRestored {
 			err = reservePartyGame(instance, user, userDirectory, partyDirectory)
+			if err != nil {
+				rollbackResetGame(gameManager, instance, user, false)
+				return &Response{ErrorCode: 0x0004}, nil
+			}
+			err = gameManager.SelectCampaignDestination(instance)
 			if err != nil {
 				rollbackResetGame(gameManager, instance, user, false)
 				return &Response{ErrorCode: 0x0004}, nil
@@ -465,6 +471,10 @@ func joinGameHandler(gameManager *game.Manager) Handler {
 		)
 		if err != nil {
 			return nil, fmt.Errorf("joinHostNetwork: %w", err)
+		}
+		err = gameManager.ValidateCampaignAdmission(instance, user.PresenceSnapshot().ChainProgression)
+		if err != nil {
+			return &Response{ErrorCode: 0x0004}, nil
 		}
 		existingPlayers := instance.Players()
 		if !instance.AddPlayer(user) {
@@ -1084,6 +1094,11 @@ func formCampaignGame(
 			gameManager.Remove(instance.ID)
 			return nil, fmt.Errorf("campaignMember[%d]: %w", playerIndex, err)
 		}
+	}
+	err = gameManager.SelectCampaignDestination(instance)
+	if err != nil {
+		gameManager.Remove(instance.ID)
+		return nil, fmt.Errorf("campaignDestination: %w", err)
 	}
 	return instance, nil
 }

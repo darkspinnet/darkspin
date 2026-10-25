@@ -29,27 +29,29 @@ const (
 // for deterministic AB presentation and retry while the client owns its later
 // local transition from Cash Out to the spaceship.
 type Snapshot struct {
-	ResultID           uint64
-	GameID             uint32
-	UserID             uint64
-	Level              string
-	Difficulty         uint32
-	BossObjectID       uint32
-	CompletedTime      uint64
-	CompletedIndex     uint32
-	PlanetsCompleted   uint8
-	Phase              Phase
-	ContinueSquadID    uint32
-	NextLevel          string
-	IsTerminal         bool
-	EnemyNouns         [6]uint32
-	MedalCounts        [4]MedalCount
-	StartingExperience uint32
-	FinalExperience    uint32
-	FinalLevel         uint32
-	RewardClassType    string
-	RewardElementType  string
-	CashOutReceipt     CashOutReceipt
+	ResultID               uint64
+	GameID                 uint32
+	UserID                 uint64
+	Level                  string
+	IsReplayRandomized     bool
+	Difficulty             uint32
+	BossObjectID           uint32
+	CompletedTime          uint64
+	CompletedIndex         uint32
+	PlanetsCompleted       uint8
+	Phase                  Phase
+	ContinueSquadID        uint32
+	NextLevel              string
+	IsNextReplayRandomized bool
+	IsTerminal             bool
+	EnemyNouns             [6]uint32
+	MedalCounts            [4]MedalCount
+	StartingExperience     uint32
+	FinalExperience        uint32
+	FinalLevel             uint32
+	RewardClassType        string
+	RewardElementType      string
+	CashOutReceipt         CashOutReceipt
 }
 
 type MedalCount struct {
@@ -203,22 +205,29 @@ func NewSnapshotWithResultID(
 		return Snapshot{}, errors.New("campaign result snapshot: invalid")
 	}
 	offer, err := ResolveOffer(OfferCommand{
-		CurrentLevel:    binding.Level,
-		ChainLevelIndex: binding.ChainLevelIndex,
-		ChainLevel:      chainLevel,
+		CurrentLevel:       binding.Level,
+		ChainLevelIndex:    binding.ChainLevelIndex,
+		ChainLevel:         chainLevel,
+		IsReplayRandomized: binding.IsReplayRandomized,
 	})
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("campaign result chain: %w", err)
 	}
-	return Snapshot{
+	snapshot := Snapshot{
 		ResultID: resultID,
 		GameID:   binding.GameID, UserID: binding.UserID, Level: binding.Level,
-		Difficulty: binding.Difficulty, BossObjectID: bossObjectID,
+		IsReplayRandomized: binding.IsReplayRandomized,
+		Difficulty:         binding.Difficulty, BossObjectID: bossObjectID,
 		CompletedTime: completedTime, Phase: ChainVoting,
 		CompletedIndex: offer.CompletedIndex, PlanetsCompleted: planetsCompleted,
 		NextLevel:  offer.NextLevel,
 		IsTerminal: offer.IsTerminal || planetsCompleted >= maximumChainRunLength,
-	}, nil
+	}
+	if snapshot.IsTerminal {
+		snapshot.NextLevel = binding.Level
+		snapshot.IsNextReplayRandomized = binding.IsReplayRandomized
+	}
+	return snapshot, nil
 }
 
 func newCampaignResultID() (uint64, error) {

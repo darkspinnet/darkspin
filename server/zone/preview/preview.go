@@ -3,7 +3,6 @@ package preview
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/darkspinnet/darkspin/server/game"
@@ -43,19 +42,18 @@ func Nouns(
 		}
 		entries = append(entries, poolEntries...)
 	}
-	slices.SortFunc(entries, func(left game.CampaignDirectorEntry, right game.CampaignDirectorEntry) int {
-		return left.Ordinal - right.Ordinal
-	})
+	// Build 103 sub_527DD0 renders the six wire slots in their supplied order.
+	// Keep the composed minion slots followed by the special slots: imported
+	// ordinals belong to separate source pools, not to the selected roster.
+	// Selection owns per-role duplicate rules; presentation must also preserve
+	// repeated nouns instead of imposing uniqueness across both roles.
 	nounNames := make([]string, 0, len(entries))
-	seenNounNames := make(map[string]bool, len(entries))
 	for _, entry := range entries {
 		nounName := strings.TrimSpace(entry.NounName)
-		normalizedNounName := strings.ToLower(nounName)
-		if nounName == "" || seenNounNames[normalizedNounName] {
+		if nounName == "" {
 			continue
 		}
 		nounNames = append(nounNames, nounName)
-		seenNounNames[normalizedNounName] = true
 	}
 	if len(nounNames) < 6 {
 		return [6]uint32{}, fmt.Errorf("campaign preview: level %q has %d eligible nouns",

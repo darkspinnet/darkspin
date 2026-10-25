@@ -2304,6 +2304,7 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 	zoneID := e.id
 	generation := e.generation
 	runSeed := e.info.RunSeed
+	isReplayRandomized := e.info.DirectorDefinition.IsReplay
 	level := e.info.Level
 	difficulty := e.info.Difficulty
 	now := time.Now().UTC()
@@ -2406,7 +2407,8 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 	triggerProgresses := e.info.Director.TriggerProgress()
 	snapshot := zonecheckpoint.Snapshot{
 		Version: zonecheckpoint.Version, ZoneID: zoneID, RunSeed: runSeed,
-		ZoneGeneration: generation, CompletionID: e.CompletionID(),
+		IsReplayRandomized: isReplayRandomized,
+		ZoneGeneration:     generation, CompletionID: e.CompletionID(),
 		Level: level, Difficulty: difficulty, Reason: reason,
 		SavedAt: now, Elapsed: elapsed, Members: members, Heroes: heroes,
 		Squads: squads, NPCs: npcs, Hordes: hordes, Crystals: crystals,

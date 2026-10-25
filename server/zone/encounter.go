@@ -629,9 +629,9 @@ func (e *Zone) IsStandaloneBossEncounter(chainLevelIndex uint32) bool {
 		return false
 	}
 	e.mu.RLock()
-	level := e.info.DirectorDefinition.Level
+	director := e.info.DirectorDefinition
 	e.mu.RUnlock()
-	nounName, isFound := zoneboss.NamedBossNoun(chainLevelIndex, level)
+	nounName, isFound := zoneboss.NamedBossNounForDirector(director, chainLevelIndex)
 	return isFound && zoneboss.IsFinalBossNoun(nounName)
 }
 

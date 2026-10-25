@@ -66,6 +66,19 @@ Never use .cache, instead put it in bin/cache/
 
 ## Client reverse engineering
 
+- Dark Spin exclusively targets client build 103. Build 127 is reference-only;
+  do not treat its functions, addresses, layouts, algorithms, or absence of a
+  feature as evidence of build-103 behavior.
+- Use build-103 binaries, decompilation, installed assets, and captures as the
+  compatibility target. Build-127 findings may guide research, but verify every
+  implementation-relevant conclusion independently against build 103 before
+  applying it. Never assume cross-build equivalence or substitute a build-127
+  address or layout into build-103 code.
+- Label reverse-engineering evidence with its client build. Clearly distinguish
+  build-103-confirmed findings from build-127 references and unresolved
+  hypotheses in research notes and implementation reports. Verify provenance
+  for unversioned extracts before using them to settle build-specific behavior.
+
 - Keep Fang hooks observational or debugger-only by default. Do not use Fang
   to alter packaged UI defaults, suppress native presentation, bypass client
   decisions, or otherwise patch client gameplay logic unless the user

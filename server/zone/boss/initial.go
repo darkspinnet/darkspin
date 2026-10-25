@@ -81,7 +81,9 @@ func PlanInitialEncounter(
 	if len(agentEntry) == 0 {
 		return nil, firstObjectID, errors.New("boss plan: empty pool")
 	}
-	leaderEntry, err := SelectInitialLeader(leaderEntries, chainLevelIndex)
+	leaderEntry, err := SelectNamedLeader(
+		director, leaderEntries, chainLevelIndex, gameID, bossMarker.MarkerID,
+	)
 	if err != nil {
 		return nil, firstObjectID, fmt.Errorf("boss plan leader: %w", err)
 	}

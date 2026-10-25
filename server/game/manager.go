@@ -25,6 +25,7 @@ type ResumeCheckpoint struct {
 	Difficulty          uint32
 	Slot                uint16
 	ExpectedPlayerCount uint16
+	IsReplayRandomized  bool
 }
 
 type ResumeSource interface {
@@ -111,6 +112,7 @@ type Info struct {
 	IsResettable        bool
 	IsIgnored           bool
 	IsWarped            bool
+	IsReplayRandomized  bool
 }
 
 // NetworkEndpoint is one gameplay address advertised through Blaze.
@@ -153,6 +155,7 @@ type Instance struct {
 	levelUpdates               map[int64]PlayerLevelUpdate
 	dnaUpdates                 map[int64]PlayerDNAUpdate
 	itemPresentations          map[int64]sporenet.Part
+	campaignDestinations       map[uint32]CampaignDestination
 }
 
 // PlayerLevelUpdate is a pending live reflection of persisted account progress.
@@ -1174,6 +1177,7 @@ func (m *Manager) Restore(
 				UUID:       "71bc4bdb-82ec-494d-8d75-ca5123b827ac",
 				MaxPlayers: MaxGamePlayers, HostNetwork: m.hostNetwork,
 				Mode: mode, Level: checkpoint.Level,
+				IsReplayRandomized: checkpoint.IsReplayRandomized,
 			},
 			isAdmissionReserved: checkpoint.ExpectedPlayerCount > 1,
 			isCheckpointRestore: true,
@@ -1233,6 +1237,9 @@ func (g *Instance) validateRestore(checkpoint ResumeCheckpoint) error {
 	defer g.mu.RUnlock()
 	if !strings.EqualFold(g.Info.Level, checkpoint.Level) {
 		return errors.New("game restore level mismatch")
+	}
+	if g.Info.IsReplayRandomized != checkpoint.IsReplayRandomized {
+		return errors.New("game restore replay mismatch")
 	}
 	if g.RunSeed == 0 || g.RunSeed != checkpoint.RunSeed {
 		return errors.New("game restore run seed mismatch")

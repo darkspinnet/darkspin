@@ -154,6 +154,7 @@ func resumeCheckpoint(
 		GameID: uint32(snapshot.ZoneID), RunSeed: runSeed, Level: snapshot.Level,
 		Difficulty: snapshot.Difficulty, Slot: member.Slot,
 		ExpectedPlayerCount: uint16(len(snapshot.Members)),
+		IsReplayRandomized:  snapshot.IsReplayRandomized,
 	}, true, nil
 }
 

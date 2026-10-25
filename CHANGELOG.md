@@ -2,6 +2,9 @@
 
 ### 2026-10-25
 
+- #123 Change replay missions from fixed destinations to shared maps unlocked by every player, with eligible randomized creature rosters, cross-pool duplicates, map-and-difficulty captains, and retained previews and resumes.
+
+- #123 Preserve campaign enemy preview slots in selected roster order, including repeated nouns, instead of sorting and deduplicating their portraits.
 - #122 Queue early ground-targeted and held basic attacks with their latest native response token instead of leaving them blocked behind unanswered input or older server-generated repeats.
 - #122 Keep stationary basic attack animation offsets from accumulating into permanent hero movement.
 - #122 Keep Sage unavailable until his authored tutorial introduction and preserve owned starter appearances and resources when he unlocks.

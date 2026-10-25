@@ -6,18 +6,26 @@ import (
 	"strings"
 
 	"github.com/darkspinnet/darkspin/server/sim"
+	"github.com/darkspinnet/darkspin/server/util"
 )
 
-// composeCampaignRoster follows sub_9F6AA0's source draws after inclusive
-// stage filtering. The run seed makes server composition repeatable; the
-// original authoritative server's RNG initialization remains unknown.
+// composeCampaignRoster retains the existing source counts after inclusive
+// stage filtering. Replay source draws are independent so overlapping sources
+// can select the same noun. The run seed makes composition repeatable; the
+// original build-103 authoritative server RNG initialization remains unknown.
 func composeCampaignRoster(
 	director CampaignDirector, seed uint64, partyCompletedStages []uint32,
 ) (CampaignDirector, error) {
-	random := sim.NewSimulatorRandom(uint32(seed) ^ uint32(seed>>32))
+	rosterSeed := uint32(seed) ^ uint32(seed>>32)
+	if director.IsReplay {
+		// Separate replay rosters by destination and threat while preserving
+		// the same selection for every member and checkpoint reload.
+		rosterSeed ^= util.HashID(director.Level) ^ director.Difficulty*0x9e3779b9 ^ 0x524f5354
+	}
+	random := sim.NewSimulatorRandom(rosterSeed)
 	director.IsFirstTimeRosterSelected = false
 	var firstTimeSpecials []CampaignDirectorEntry
-	if director.IsFirstTimeDirectorEnabled && isPartyBelowStage(partyCompletedStages, director.Difficulty) {
+	if !director.IsReplay && director.IsFirstTimeDirectorEnabled && isPartyBelowStage(partyCompletedStages, director.Difficulty) {
 		var err error
 		director, err = selectFirstTimeRoster(director, random)
 		if err != nil {
@@ -26,8 +34,8 @@ func composeCampaignRoster(
 		if director.IsFirstTimeRosterSelected {
 			return director, nil
 		}
-		// sub_9F6DB0 falls back on an empty minion buffer without clearing
-		// specials already drawn by sub_9F6640.
+		// The existing first-time fallback retains specials when its minion
+		// buffer is empty.
 		for _, pool := range director.Pools {
 			if strings.EqualFold(pool.ConfigurationName, "firstTimeConfig") &&
 				strings.EqualFold(pool.ConfigKind, "special") {
@@ -38,8 +46,8 @@ func composeCampaignRoster(
 	if len(director.ExternalPools) == 0 || director.PlanetConfigName == "" {
 		return director, nil
 	}
-	// sub_9F6AA0 reads +120/+124/+128: secondary, tertiary and
-	// quadernaryType. Primary (+116) is already represented by the planet.
+	// Existing composition mixes secondary, tertiary and
+	// quaternary sources; the planet represents the primary source.
 	secondaryName, err := campaignScienceConfig(director.SecondaryType, director.Difficulty >= 25)
 	if err != nil {
 		return CampaignDirector{}, fmt.Errorf("rosterSecondary: %w", err)
@@ -52,7 +60,7 @@ func composeCampaignRoster(
 	if err != nil {
 		return CampaignDirector{}, fmt.Errorf("rosterQuaternary: %w", err)
 	}
-	// Native composition requires all four external resources, even when a
+	// Existing composition requires all four external resources, even when a
 	// branch asks for zero draws from one of them. Empty Planets is valid.
 	for _, configName := range []string{director.PlanetConfigName, secondaryName, tertiaryName, quaternaryName} {
 		isFound := false
@@ -155,6 +163,13 @@ func drawCampaignRoster(
 	if draw.count == 0 {
 		return entries, nil
 	}
+	if director.IsReplay {
+		selectedEntries, err := drawCampaignReplayRoster(director, entries, draw, random)
+		if err != nil {
+			return nil, fmt.Errorf("replayDraw: %w", err)
+		}
+		return selectedEntries, nil
+	}
 	pools := director.Pools
 	if draw.isExternal {
 		pools = director.ExternalPools
@@ -191,7 +206,50 @@ func drawCampaignRoster(
 	return entries[:draw.offset+draw.count], nil
 }
 
-// sub_9F5D00 uses the forward Fisher-Yates variant, including its draw order.
+// drawCampaignReplayRoster selects each source independently. A source keeps
+// unique nouns, while separate source draws may retain matching noun slots.
+func drawCampaignReplayRoster(
+	director CampaignDirector, entries []CampaignDirectorEntry, draw campaignRosterDraw,
+	random *sim.SimulatorRandom,
+) ([]CampaignDirectorEntry, error) {
+	pools := director.Pools
+	if draw.isExternal {
+		pools = director.ExternalPools
+	}
+	candidates := make([]CampaignDirectorEntry, 0)
+	for _, pool := range pools {
+		if !strings.EqualFold(pool.ConfigurationName, draw.configurationName) ||
+			!strings.EqualFold(pool.ConfigKind, draw.configKind) {
+			continue
+		}
+		for _, candidate := range pool.Entries {
+			if director.Difficulty < candidate.MinimumDifficulty || director.Difficulty > candidate.MaximumDifficulty {
+				continue
+			}
+			isDuplicate := false
+			for _, selected := range candidates {
+				if strings.EqualFold(selected.NounName, candidate.NounName) {
+					isDuplicate = true
+					break
+				}
+			}
+			if !isDuplicate {
+				candidates = append(candidates, candidate)
+			}
+		}
+		break
+	}
+	if len(candidates) > draw.count {
+		err := shuffleCampaignRoster(candidates, random)
+		if err != nil {
+			return nil, fmt.Errorf("replayDrawShuffle: %w", err)
+		}
+		candidates = candidates[:draw.count]
+	}
+	return append(entries, candidates...), nil
+}
+
+// shuffleCampaignRoster retains the existing forward Fisher-Yates draw order.
 func shuffleCampaignRoster(entries []CampaignDirectorEntry, random *sim.SimulatorRandom) error {
 	for index := 1; index < len(entries); index++ {
 		otherIndex, err := random.Index(uint32(index + 1))

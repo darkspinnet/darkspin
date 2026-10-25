@@ -494,6 +494,17 @@ func (r gameplayStatusRuntime) campaignBeamOut(
 		nextBinding.ChainLevelIndex++
 	}
 	nextBinding.Difficulty = nextBinding.ChainLevelIndex
+	if !snapshot.IsTerminal {
+		destination, destinationErr := r.gameplayJoin.ResolveCampaignDestination(ctx, nextBinding)
+		if destinationErr != nil {
+			rollbackErr := r.rollbackCampaignBeamOut(sessionKey, generation)
+			return nil, fmt.Errorf("statusCampaignDestination: %w", errors.Join(destinationErr, rollbackErr))
+		}
+		snapshot.NextLevel = destination.Level
+		snapshot.IsNextReplayRandomized = destination.IsReplayRandomized
+		nextBinding.Level = destination.Level
+	}
+	nextBinding.IsReplayRandomized = snapshot.IsNextReplayRandomized
 	nextBinding.RefreshReplay()
 	nextDirector, err := r.preparation.loadPreview(ctx, nextBinding)
 	if err != nil {
@@ -1913,6 +1924,7 @@ func (r campaignResultRuntime) continueChain(
 	nextBinding.Level = snapshot.NextLevel
 	nextBinding.ChainLevelIndex = snapshot.CompletedIndex + 1
 	nextBinding.Difficulty = nextBinding.ChainLevelIndex
+	nextBinding.IsReplayRandomized = snapshot.IsNextReplayRandomized
 	nextBinding.IsCatalystUnlocked = nextBinding.ChainProgression >= 3
 	for index := range nextBinding.Creatures {
 		maximumManaPoint := maximumManaPoints[index]
@@ -1944,18 +1956,32 @@ func (r campaignResultRuntime) continueChain(
 	}
 	r.registry.mutex.Lock()
 	continueSession, isContinueFound := r.registry.sessions[packet.Address.String()]
-	isAccepted := isContinueFound && continueSession.generation == peerSession.generation &&
-		continueSession.chainResult != nil &&
-		continueSession.chainResult.AcceptContinue(squadID, snapshot.NextLevel)
-	if isAccepted {
-		nextGeneration := r.registry.lifecycle.nextGeneration()
-		crystalInventory, isCrystalFound := continueSession.zone.CrystalInventory(
+	isCurrent := isContinueFound && continueSession.generation == peerSession.generation &&
+		continueSession.chainResult != nil
+	if isCurrent {
+		currentSnapshot := continueSession.chainResult.Snapshot()
+		isCurrent = currentSnapshot.ResultID == snapshot.ResultID &&
+			currentSnapshot.Phase == zoneresult.ChainVoting && !currentSnapshot.IsTerminal
+	}
+	var crystalInventory sim.CrystalInventory
+	if isCurrent {
+		var isCrystalFound bool
+		crystalInventory, isCrystalFound = continueSession.zone.CrystalInventory(
 			continueSession.binding.UserID, continueSession.generation,
 		)
 		if !isCrystalFound {
 			r.registry.mutex.Unlock()
 			return nil, errors.New("campaignContinueCrystal: unavailable")
 		}
+		err = r.gameplayJoin.RetainCampaignDestination(nextBinding)
+		if err != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("campaignContinueDestination: %w", err)
+		}
+	}
+	isAccepted := isCurrent && continueSession.chainResult.AcceptContinue(squadID, snapshot.NextLevel)
+	if isAccepted {
+		nextGeneration := r.registry.lifecycle.nextGeneration()
 		nextBinding.ChainProgression = max(nextBinding.ChainProgression, chainProgression)
 		nextBinding.RefreshReplay()
 		r.registry.sessions[packet.Address.String()] = gameplayPeerSession{

@@ -84,6 +84,16 @@ func VoteWithCountdown(snapshot zoneresult.Snapshot, seconds float32) ([]byte, e
 	// record+4 minus one. Narration therefore introduces the offered level;
 	// using the completed level repeats its introduction one mission late.
 	nextPresentation := zonepreview.CampaignPresentation(nextDifficulty, false)
+	if snapshot.IsReplayRandomized {
+		presentation.CurrentMovie = 0
+		presentation.CurrentVoice = 0
+	}
+	if snapshot.IsNextReplayRandomized {
+		// Story scenes belong to authored progression maps. A replay offer
+		// retains its sampled destination without introducing another planet.
+		presentation.NextMovie = 0
+		nextPresentation = zonepreview.Presentation{}
+	}
 	currentVoice := presentation.CurrentVoice
 	if currentVoice == 0 {
 		currentVoice = presentation.CurrentMovie

@@ -57,6 +57,7 @@ type GameplayBinding struct {
 	IsDiagonalCatalystUnlocked bool
 	CatalystSlotCount          uint32
 	IsReplay                   bool
+	IsReplayRandomized         bool
 	IsWarped                   bool
 	IsCheckpointRestore        bool
 	DNA                        uint32
@@ -415,6 +416,7 @@ func (o *GameplayJoin) Execute(ctx context.Context, userID int64) (GameplayBindi
 		Mode: instance.Info.Mode, Slot: slot, Team: team, MemberLimit: instance.Info.MaxPlayers,
 		ParticipantCount:    instance.ParticipantCount(),
 		IsWarped:            instance.Info.IsWarped,
+		IsReplayRandomized:  instance.Info.IsReplayRandomized,
 		IsCheckpointRestore: instance.IsCheckpointRestore(),
 		SquadID:             squadID,
 		Creatures:           creatures,
@@ -422,10 +424,16 @@ func (o *GameplayJoin) Execute(ctx context.Context, userID int64) (GameplayBindi
 	}
 	if binding.Mode == ModeChain && binding.Level != "" {
 		selectedLevel, isSelected := o.gameManager.ChainLevelForSelection(binding.Difficulty)
-		if binding.IsWarped && !isSelected {
+		if (binding.IsWarped || binding.IsReplayRandomized) && !isSelected {
 			return GameplayBinding{}, fmt.Errorf(
 				"joinWarpSelection[%d]: unavailable", binding.Difficulty,
 			)
+		} else if binding.IsReplayRandomized {
+			err = o.gameManager.ValidateCampaignAdmission(instance, binding.ChainProgression)
+			if err != nil {
+				return GameplayBinding{}, fmt.Errorf("joinReplay: %w", err)
+			}
+			binding.ChainLevelIndex = binding.Difficulty
 		} else if binding.IsWarped {
 			binding.ChainLevelIndex = binding.Difficulty
 		} else if isSelected {

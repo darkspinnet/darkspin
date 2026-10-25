@@ -50,10 +50,13 @@ func SelectNamedLeader(
 		gameID == 0 || markerID == 0 {
 		return game.CampaignDirectorEntry{}, errors.New("selection invalid")
 	}
-	nounName, isNamedBoss := NamedBossNoun(
-		chainLevelIndex, director.Level,
+	nounName, isNamedBoss := NamedBossNounForDirector(
+		director, chainLevelIndex,
 	)
 	if !isNamedBoss {
+		if director.IsReplay {
+			return game.CampaignDirectorEntry{}, errors.New("replay captain unavailable")
+		}
 		return entry[int((gameID^markerID)%uint32(len(entry)))], nil
 	}
 	var selected game.CampaignDirectorEntry
@@ -76,10 +79,13 @@ func SelectNamedLeader(
 func ValidateNamedBossDirector(
 	director game.CampaignDirector, chainLevelIndex uint32,
 ) error {
-	nounName, isNamedBoss := NamedBossNoun(
-		chainLevelIndex, director.Level,
+	nounName, isNamedBoss := NamedBossNounForDirector(
+		director, chainLevelIndex,
 	)
 	if !isNamedBoss {
+		if director.IsReplay {
+			return errors.New("replay captain unavailable")
+		}
 		return nil
 	}
 	_, isIdentityFound := namedBossIdentity(director, nounName)
@@ -103,8 +109,8 @@ func ValidateNamedBossDirector(
 func NamedBossEntries(
 	director game.CampaignDirector, chainLevelIndex uint32,
 ) []game.CampaignDirectorEntry {
-	nounName, isNamedBoss := NamedBossNoun(
-		chainLevelIndex, director.Level,
+	nounName, isNamedBoss := NamedBossNounForDirector(
+		director, chainLevelIndex,
 	)
 	if !isNamedBoss {
 		return nil
@@ -120,6 +126,10 @@ func NamedBossEntries(
 	}
 	entry := make([]game.CampaignDirectorEntry, 0, 1)
 	for _, pool := range director.Pools {
+		if director.IsReplay && (!strings.EqualFold(pool.ConfigurationName, "levelConfig") ||
+			!strings.EqualFold(pool.ConfigKind, "captain")) {
+			continue
+		}
 		for _, candidate := range pool.Entries {
 			if !strings.EqualFold(candidate.NounName, nounName) {
 				continue
@@ -153,8 +163,13 @@ func NamedBossEntries(
 func PrepareNamedBossDirector(
 	director game.CampaignDirector, chainLevelIndex uint32,
 ) (game.CampaignDirector, error) {
-	nounName, isNamedBoss := NamedBossNoun(chainLevelIndex, director.Level)
+	nounName, isNamedBoss := NamedBossNounForDirector(director, chainLevelIndex)
 	if !isNamedBoss {
+		if director.IsReplay {
+			return game.CampaignDirector{}, fmt.Errorf(
+				"replayCaptain[%s:%d]: expected one authored captain", director.Level, director.Difficulty,
+			)
+		}
 		return director, nil
 	}
 	_, isIdentityFound := namedBossIdentity(director, nounName)
@@ -233,6 +248,10 @@ func prepareNamedCaptainProfile(
 	}
 	director.Pools = append([]game.CampaignDirectorPool(nil), director.Pools...)
 	for poolIndex := range director.Pools {
+		if director.IsReplay && (!strings.EqualFold(director.Pools[poolIndex].ConfigurationName, "levelConfig") ||
+			!strings.EqualFold(director.Pools[poolIndex].ConfigKind, "captain")) {
+			continue
+		}
 		director.Pools[poolIndex].Entries = append(
 			[]game.CampaignDirectorEntry(nil), director.Pools[poolIndex].Entries...,
 		)
