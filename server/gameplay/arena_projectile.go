@@ -69,6 +69,17 @@ func (e campaignProjectileStep) commitArenaProjectileLocked(member *gameplayPeer
 	if err != nil {
 		return nil, fmt.Errorf("arenaProjectileEvent: %w", err)
 	}
+	modifierPackets, modifierErr := targets.applyForcePulseLocked(schedule.sourceObjectID, result)
+	if modifierErr != nil {
+		// The player damage is already committed. Preserve its combat result
+		// and reliable projectile deletion if an optional callback fails.
+		if schedule.runtime.logger != nil {
+			schedule.runtime.logger.Printf("Arena Force Pulse callback failed source=%d target=%d: %v",
+				schedule.sourceObjectID, result.Damage.ObjectID, modifierErr)
+		}
+	} else {
+		hitPackets = append(hitPackets, modifierPackets...)
+	}
 	if schedule.runtime.logger != nil {
 		schedule.runtime.logger.Printf("Arena shared projectile hit source=%d target=%d projectile=%d delay=%s damage=%g",
 			schedule.sourceObjectID, target.Plan.ObjectID, schedule.projectileObjectID, e.deadline, result.Damage.Damage)

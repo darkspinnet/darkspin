@@ -19,16 +19,15 @@ const (
 
 // Request is a decoded Blaze RPC request.
 type Request struct {
-	Session                         *Session
-	Component                       uint16
-	Command                         uint16
-	MessageID                       uint32
-	Fields                          []tdf.Field
-	beforeReplyFrames               []Frame
-	notifications                   []Frame
-	targetedNotifications           []targetedNotification
-	isPartyInviteRecoverySuppressed bool
-	ownedPartyUsers                 map[int64]bool
+	Session               *Session
+	Component             uint16
+	Command               uint16
+	MessageID             uint32
+	Fields                []tdf.Field
+	beforeReplyFrames     []Frame
+	notifications         []Frame
+	targetedNotifications []targetedNotification
+	ownedPartyUsers       map[int64]bool
 }
 
 type targetedNotification struct {

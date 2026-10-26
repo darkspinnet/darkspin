@@ -127,7 +127,11 @@ local function damageOnce(client, opponent)
     local targetNativeSS = must(opponent.World:SnapshotNative()).gameplay_state
     local sourceSS = must(client.World:Snapshot())
     local action = must(client.World:Hold(targetNativeSS.position, 1000))
-    if not action.is_processed then error("PvP basic attack unprocessed; no replay") end
+    local clickSS = action.gameplay_click
+    if not action.is_processed or clickSS == nil or not clickSS.is_press_poll_observed
+        or not clickSS.is_release_poll_observed then
+        error("PvP basic attack lacks paired native processing; no replay")
+    end
     local deadline = scenario.Time()+6000
     while scenario.Time() < deadline do
         local targetSS = must(opponent.World:Snapshot())
@@ -140,14 +144,14 @@ local function damageOnce(client, opponent)
         end
         check(scenario.Sleep(150))
     end
-    must(client.Diagnostics:Capture("pvp-damage-not-observed"))
-    check(scenario.Log("PvP basic produced no observed opponent damage; recorded for packet review"))
-    return nil
+    check(scenario.Log("Fully processed PvP attack window produced no observed damage; dodge/admission remains distinguishable"))
+    return false
 end
 
 local function exerciseKnockout(firstClient, secondClient)
 
     local deadline = scenario.Time()+180000
+    local missedWindows = 0
     while scenario.Time() < deadline do
         local targetSS = must(secondClient.World:Snapshot())
         if targetSS.arena ~= nil and not targetSS.arena.is_combat_active and targetSS.arena.winning_team ~= 0 then
@@ -172,9 +176,14 @@ local function exerciseKnockout(firstClient, secondClient)
         end
         approach(firstClient, secondClient)
         local isProgress = damageOnce(firstClient, secondClient)
-        if not isProgress then
-            must(secondClient.Diagnostics:Capture("pvp-knockout-stalled"))
-            error("PvP knockout made no confirmed progress; retained for packet review")
+        if isProgress then
+            missedWindows = 0
+        else
+            missedWindows = missedWindows+1
+            if missedWindows >= 6 then
+                must(secondClient.Diagnostics:Capture("pvp-knockout-stalled"))
+                error("six fully processed attack windows made no confirmed progress; retained for packet review")
+            end
         end
     end
     error("PvP team knockout did not finish within three minutes")

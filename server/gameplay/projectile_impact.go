@@ -354,6 +354,9 @@ func (e campaignProjectileStep) produceContact(
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("projectileRandom: %w", randomErr)
 	}
+	if peerSession.binding.Mode == game.ModeArena {
+		schedule.runtime.registry.sessions[schedule.sessionKey] = peerSession
+	}
 	result, err := zoneability.CommitBasic(
 		random, targets, livePlan, schedule.creature,
 		peerSession.binding.Difficulty, schedule.runtime.program.Critical,
@@ -363,8 +366,10 @@ func (e campaignProjectileStep) produceContact(
 		return nil, fmt.Errorf("campaignProjectileCommit: %w", err)
 	}
 	if arenaTargets, isArena := targets.(*arenaAbilityTargets); isArena {
+		// Hit cleanup may have queued reliable removals to the shooter. Carry
+		// that updated session through flight retirement instead of overwriting it.
+		peerSession = schedule.runtime.registry.sessions[schedule.sessionKey]
 		packets, publishErr := e.commitArenaProjectileLocked(&peerSession, arenaTargets, liveNPC, result, collision)
-		schedule.runtime.registry.sessions[schedule.sessionKey] = peerSession
 		schedule.runtime.registry.mutex.Unlock()
 		arenaTargets.finish()
 		if publishErr != nil {

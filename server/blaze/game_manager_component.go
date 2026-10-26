@@ -1116,16 +1116,9 @@ func formArenaGame(
 		len(sessions) != int(criteria.ExpectedPlayerCount) {
 		return nil, errors.New("arena formation invalid")
 	}
-	orderedSessions := make([]pvp.MatchmakingSession, 0, len(sessions))
-	for _, session := range sessions {
-		if session.PartyID != 0 {
-			orderedSessions = append(orderedSessions, session)
-		}
-	}
-	for _, session := range sessions {
-		if session.PartyID == 0 {
-			orderedSessions = append(orderedSessions, session)
-		}
+	orderedSessions, err := pvp.OrderArenaSessions(sessions, criteria)
+	if err != nil {
+		return nil, fmt.Errorf("arenaRoster: %w", err)
 	}
 	sessions = orderedSessions
 	players := make([]*sporenet.User, 0, len(sessions))

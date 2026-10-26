@@ -40,6 +40,7 @@ func (e campaignAbilityCommandRuntime) commitArenaVictory(
 		}
 	}
 	e.registry.completeArenaResultLocked(gameID, winnerTeam)
+	e.registry.retireArenaForcePulsesLocked(gameID)
 	for key, member := range e.registry.sessions {
 		if member.binding.GameID != gameID || member.binding.Mode != game.ModeArena {
 			continue
@@ -109,6 +110,7 @@ func (e arenaRoundEndJob) execute() {
 			interrupted.Stop()
 		}
 		if !match.result.isCompleted {
+			member.arenaWinningTeam = 0
 			member.isArenaLobbyEntered = false
 			member.isArenaLobbyTransitionSent = true
 			member.isArenaSquadAccepted = false

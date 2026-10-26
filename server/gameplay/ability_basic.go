@@ -1389,6 +1389,11 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignTimeLapsePlan: %w", err)
 	}
+	if current.binding.Mode == game.ModeArena {
+		// A victim's cleanup can queue field/modifier removals to the caster.
+		// Publish the working source before hits and retain those queued updates.
+		e.runtime.registry.sessions[e.sessionKey] = current
+	}
 	results, err := zoneability.CommitArea(
 		random, enemies,
 		plan, e.creature, current.binding.Difficulty, e.runtime.program.Critical,
@@ -1398,7 +1403,6 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 		return nil, fmt.Errorf("campaignAreaBasicDamage: %w", err)
 	}
 	if arenaTargets, isArena := enemies.(*arenaAbilityTargets); isArena {
-		e.runtime.registry.sessions[e.sessionKey] = current
 		e.runtime.registry.mutex.Unlock()
 		packets, publishErr := e.publishArena(arenaTargets, plan, results)
 		arenaTargets.finish()
@@ -2248,6 +2252,9 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 		return packets, nil
 	}
 	livePlan.TargetObjectID = liveNPC.Plan.ObjectID
+	if current.binding.Mode == game.ModeArena {
+		runtime.registry.sessions[schedule.sessionKey] = current
+	}
 	result, err := zoneability.CommitBasic(
 		random, enemies,
 		livePlan, currentCreature, current.binding.Difficulty,
@@ -2264,7 +2271,6 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 	}}
 	if arenaTargets, isArena := enemies.(*arenaAbilityTargets); isArena {
 		packets, publishErr := e.commitArenaMeleeLocked(current, arenaTargets, livePlan, liveNPC, result, areaResults)
-		runtime.registry.sessions[schedule.sessionKey] = current
 		runtime.registry.mutex.Unlock()
 		arenaTargets.finish()
 		if publishErr != nil {

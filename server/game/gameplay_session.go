@@ -63,6 +63,7 @@ type GameplayBinding struct {
 	DNA                        uint32
 	Difficulty                 uint32
 	Mode                       Mode
+	IsRanked                   bool
 	Slot                       uint16
 	Team                       uint16
 	MemberLimit                uint16
@@ -414,6 +415,7 @@ func (o *GameplayJoin) Execute(ctx context.Context, userID int64) (GameplayBindi
 		IsOverdriveUnlocked: user.Account.IsOverdriveUnlocked,
 		DNA:                 user.Account.DNA, Difficulty: difficulty,
 		Mode: instance.Info.Mode, Slot: slot, Team: team, MemberLimit: instance.Info.MaxPlayers,
+		IsRanked:            instance.Info.Mode == ModeArena && instance.Info.Attributes["Ranked"] == "1",
 		ParticipantCount:    instance.ParticipantCount(),
 		IsWarped:            instance.Info.IsWarped,
 		IsReplayRandomized:  instance.Info.IsReplayRandomized,
@@ -629,6 +631,7 @@ func gameplayCreature(
 	}
 	partAttribute := [partAttributeCount]float32{}
 	weaponDamageModifier := float32(0)
+	maximumUnclassifiedItemLevel := uint32(0)
 	equippedParts, ignoredPartCount := gameplayEquippedParts(view.Parts, creature.ID)
 	selected.IgnoredFunctionalItemCount = ignoredPartCount
 	for index := range equippedParts {
@@ -647,6 +650,9 @@ func gameplayCreature(
 			selected.MaximumFunctionalItemLevel, partLevel,
 		)
 		definition, isDefinitionFound := partCatalog.ByRigblock(part.RigblockAssetID)
+		if !isDefinitionFound {
+			maximumUnclassifiedItemLevel = max(maximumUnclassifiedItemLevel, partLevel)
+		}
 		if isDefinitionFound && definition.SlotType == "weapon" {
 			selected.FunctionalWeaponItemCount++
 			selected.WeaponItemLevel = max(selected.WeaponItemLevel, partLevel)
@@ -663,13 +669,12 @@ func gameplayCreature(
 			weaponDamageModifier = max(weaponDamageModifier, modifier)
 		}
 	}
-	// Persisted equipment records do not retain their editor slot. When every
-	// equipped item has lost its catalog weapon classification, preserve the
-	// playable loadout by treating its highest-level functional item as the
-	// missing weapon.
-	if weaponDamageModifier <= 0 && selected.MaximumFunctionalItemLevel > 0 {
+	// A missing catalog definition cannot recover the persisted editor slot.
+	// Retain that recovery only for unclassified items: known armor must never
+	// supply a weapon level when the hero has no equipped weapon.
+	if weaponDamageModifier <= 0 && maximumUnclassifiedItemLevel > 0 {
 		selected.FunctionalWeaponItemCount = 1
-		selected.WeaponItemLevel = selected.MaximumFunctionalItemLevel
+		selected.WeaponItemLevel = maximumUnclassifiedItemLevel
 		weaponDamageModifier = partCatalog.weaponDamageModifier(selected.WeaponItemLevel)
 	}
 	if weaponDamageModifier <= 0 {

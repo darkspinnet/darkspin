@@ -6572,7 +6572,7 @@ func (s *gameplayPeerSession) enemyMovementSpeedBuff() float32 {
 	if s == nil || s.deployedObjectID == 0 {
 		return 0
 	}
-	movementSpeedBuff := s.graviticMovementSpeedBuff()
+	movementSpeedBuff := s.graviticMovementSpeedBuff() + s.arenaSphereMovementBuff()
 	for _, run := range s.campaignNPCModifiers {
 		if run == nil || run.record.TargetObjectID != s.deployedObjectID ||
 			!run.isActive() {
@@ -6587,7 +6587,7 @@ func (s *gameplayPeerSession) enemyAttackSpeed() float32 {
 	if s == nil || s.deployedObjectID == 0 {
 		return 0
 	}
-	attackSpeed := float32(0)
+	attackSpeed := s.arenaSphereAttackSpeed()
 	for _, run := range s.campaignNPCModifiers {
 		if run == nil || run.record.TargetObjectID != s.deployedObjectID ||
 			!run.isActive() {

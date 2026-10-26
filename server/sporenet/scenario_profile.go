@@ -23,6 +23,7 @@ type DebugProfileRequest struct {
 	SourceLoginName      string
 	IsSourceCloneAllowed bool
 	IsPVPEnabled         bool
+	EquippedParts        []DebugEquippedPart
 }
 
 // DebugProfile contains effective supplied setup, never credentials or an
@@ -156,6 +157,10 @@ func (e *UserManager) CreateDebugProfile(ctx context.Context, req DebugProfileRe
 	pvpCreatureIDs := [3]uint32{}
 	if req.IsPVPEnabled {
 		pvpSquadID, pvpCreatureIDs = seedDebugPVPProfile(user, templates)
+	}
+	err = e.seedDebugEquipment(user, req.EquippedParts, creatureIDs, pvpCreatureIDs)
+	if err != nil {
+		return DebugProfile{}, fmt.Errorf("debugEquipment: %w", err)
 	}
 	err = ctx.Err()
 	if err != nil {

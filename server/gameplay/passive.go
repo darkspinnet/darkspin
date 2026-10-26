@@ -466,6 +466,7 @@ func (s gameplayPeerSession) projectPassiveCreature(
 	if creatureIndex != s.deployedCreatureIndex {
 		return creature
 	}
+	creature.TimingProfile.AttackSpeed += s.arenaSphereAttackSpeed()
 	if s.isOverdriveActiveAt(now) {
 		creature = projectOverdrivePassiveRank(creature)
 		if creature.PassiveAbility == util.HashID("SoulRavagerPassive") &&

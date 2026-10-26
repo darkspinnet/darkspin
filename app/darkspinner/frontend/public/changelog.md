@@ -2,32 +2,44 @@
 
 ### 2026-10-26
 
-- #129 Defer portal contact polling during hero deployment so a portal cannot relocate the incoming hero before a delayed switch arrival places it back at the old position.
-- #129 Restore the authored immobilization during enemy sleep effects and avoid repeated position corrections for held movement at the sleeping hero's stopped pose.
-- #129 Stop held movement polls from replaying position corrections during tunnel traversal; the authored approach and exit walks remain unresolved.
-- #129 Align Stinger circling movement with the server's lateral destination and preserve facing toward the hero using the build-103 movement contract.
-- #129 Place Gravitic Regulator and Stabilizer DNA beyond their retained collision footprint, with terrain projection and a safe fallback at the hero when navigation is unavailable.
+- Preserve saved hero appearances and rating-based passive bonuses when selecting PvP squads, and refresh complete equipped hero stats on every round load.
+- Stop known armor parts from supplying weapon damage when a hero has no equipped weapon in campaign or PvP.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Enforce cooldown and release timing for fallback PvP basic attacks and apply projected passive stats, including Delaying Sphere's attack-speed penalty.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Keep two-player parties together in 2v2 matchmaking when solo playgroups queue first.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Preserve queued PvP loading updates and Force Pulse cleanup when handshakes or shared attacks save their session state.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Preserve round scores when PvP countdown or teleport preparation fails, clear abandoned countdown gates, and prevent completed matches from restarting combat.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Record the match's actual ranked flag in saved PvP results instead of always marking them unranked.
+
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Add a four-second PvP preparation pause before the native countdown on every round.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Restore the authored teleport-out and teleport-in phases between PvP preparation and combat, holding movement and hero switching until arrival completes.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Restore Delaying Sphere in PvP through the normal persistent-field runtime, slowing opposing heroes and supported projectiles with cleanup on exit, expiry and round transitions.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Restore Force Pulse knockback against PvP heroes with its authored caster-specific immunity marker, landing reaction and death/round cleanup.
+- [#129](https://github.com/darkspinnet/darkspin/issues/129) Defer portal contact polling during hero deployment so a portal cannot relocate the incoming hero before a delayed switch arrival places it back at the old position.
+- [#129](https://github.com/darkspinnet/darkspin/issues/129) Restore the authored immobilization during enemy sleep effects and avoid repeated position corrections for held movement at the sleeping hero's stopped pose.
+- [#129](https://github.com/darkspinnet/darkspin/issues/129) Stop held movement polls from replaying position corrections during tunnel traversal; the authored approach and exit walks remain unresolved.
+- [#129](https://github.com/darkspinnet/darkspin/issues/129) Align Stinger circling movement with the server's lateral destination and preserve facing toward the hero using the build-103 movement contract.
+- [#129](https://github.com/darkspinnet/darkspin/issues/129) Place Gravitic Regulator and Stabilizer DNA beyond their retained collision footprint, with terrain projection and a safe fallback at the hero when navigation is unavailable.
 - Save completed unranked PvP match results and lifetime win/loss, kill/death, fight-time, damage and healing statistics for both players, with atomic profile updates, duplicate protection and save retries.
-- Restore Enrage and Tree of Life healing in PvP through their normal runtimes, with actual healing totals and round cleanup.
-- Restore Arboreal Might squad support and shared Celestial Comet, Time Lapse, melee-combo and projectile delivery paths in PvP instead of reducing these executions to immediate single-target hits.
-- Reply to canceled or replaced pending basic-attack requests so releasing held attacks does not leave the client unable to cast another ability.
-- Restore best-of-three PvP rounds with native victory/defeat overlays, a five-second pause, squad reselection and a fresh prep-area countdown between fights.
-- Replace fabricated PvP round scores, one-second duration and zero damage totals with recorded rounds, fight time and effective damage, retaining both players in completed results.
-- Restore build 103's native PvP prep-area countdown by sending its timer before GameStart and aligning combat entry with the authored animation.
-- Add a native no-party 1v1 scenario that independently queues both players and verifies shared Arena admission and combat readiness.
-- Exclude the dying hero from automatic reserve selection so a squad can continue fighting instead of becoming stuck with a dead deployed hero.
-- Preserve remaining Arena participants when the host opens results instead of aborting the opponent's pending results screen.
-- Add native PvP combat and knockout investigation scenarios with read-only squad, swap-cooldown and outcome snapshots for packet review.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Restore Enrage and Tree of Life healing in PvP through their normal runtimes, with actual healing totals and round cleanup.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Restore Arboreal Might squad support and shared Celestial Comet, Time Lapse, melee-combo and projectile delivery paths in PvP instead of reducing these executions to immediate single-target hits.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Reply to canceled or replaced pending basic-attack requests so releasing held attacks does not leave the client unable to cast another ability.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Restore best-of-three PvP rounds with native victory/defeat overlays, a five-second pause, squad reselection and a fresh prep-area countdown between fights.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Replace fabricated PvP round scores, one-second duration and zero damage totals with recorded rounds, fight time and effective damage, retaining both players in completed results.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Restore build 103's native PvP prep-area countdown by sending its timer before GameStart and aligning combat entry with the authored animation.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Add a native no-party 1v1 scenario that independently queues both players and verifies shared Arena admission and combat readiness.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Exclude the dying hero from automatic reserve selection so a squad can continue fighting instead of becoming stuck with a dead deployed hero.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Preserve remaining Arena participants when the host opens results instead of aborting the opponent's pending results screen.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Add native PvP combat and knockout investigation scenarios with read-only squad, swap-cooldown and outcome snapshots for packet review.
 
 ### 2026-10-25
 
-- Drive the 1v1 scenario through native PvP / Unranked / 1v1 selection and Start, with verified party readiness and arena-owned world observations.
-- Fix PvP loading by sorting game attributes for build 103's binary-search lookup, accepting the native two-player Unranked 1v1 party, and honoring owned unlocked squads offered by the Arena selector.
-- Accept PvP scenario party invitations through native UI input instead of the server join fixture, wait for shared membership, and capture Navigation state and diagnostics when Arena acceptance stalls.
-- Start PvP scenarios from Navigation with established parties, using one shared two-player party for 1v1 and paired team parties for 2v2 instead of silently creating singleton parties from Arsenal.
-- Use pinned Blaze session IDs instead of account IDs for PvP scenario roster and host-session fields, matching production PvP setup.
-- Make campaign enemy targets adjustable from the fixed 15 per route section to 10–60 in Server Rules, preserving 15 by default and including the mission's effective target in bug reports and shared settings.
-- Prepare PvP scenarios with real owned playgroups and native user-group join notifications instead of unsolicited create/join callbacks, and identify which ownership field changes when a scenario loses its match.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Drive the 1v1 scenario through native PvP / Unranked / 1v1 selection and Start, with verified party readiness and arena-owned world observations.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Fix PvP loading by sorting game attributes for build 103's binary-search lookup, accepting the native two-player Unranked 1v1 party, and honoring owned unlocked squads offered by the Arena selector.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Accept PvP scenario party invitations through native UI input instead of the server join fixture, wait for shared membership, and capture Navigation state and diagnostics when Arena acceptance stalls.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Start PvP scenarios from Navigation with established parties, using one shared two-player party for 1v1 and paired team parties for 2v2 instead of silently creating singleton parties from Arsenal.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Use pinned Blaze session IDs instead of account IDs for PvP scenario roster and host-session fields, matching production PvP setup.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Make campaign enemy targets adjustable from the fixed 15 per route section to 10–60 in Server Rules, preserving 15 by default and including the mission's effective target in bug reports and shared settings.
+- [#128](https://github.com/darkspinnet/darkspin/issues/128) Prepare PvP scenarios with real owned playgroups and native user-group join notifications instead of unsolicited create/join callbacks, and identify which ownership field changes when a scenario loses its match.
 - [#128](https://github.com/darkspinnet/darkspin/issues/128) Include Arena roster, squad-selection and loading handshake state in sync snapshots, and retain squad-accept rejection reasons beyond the ordinary log tail.
 - Expand bug reports with rolling build-103 attack, movement-intent and camera/hero state, mouse/focus events, and explicit sampling gaps to investigate transient client/server desync.
 - [#127](https://github.com/darkspinnet/darkspin/issues/127) Restore AcFreeze's build-103 Frozen attribute, attached ice block and ice-breaking effect, with cleanup on expiry, cleanse, death and hero changes.

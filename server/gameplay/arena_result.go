@@ -12,6 +12,7 @@ import (
 // leaves gameplay while opening the result screen.
 type arenaResultState struct {
 	matchID         string
+	isRanked        bool
 	statEntries     []arenaStatEntry
 	statMaximums    map[uint64]arenaStatMaximums
 	isStatsSaved    bool
@@ -48,7 +49,13 @@ func (e *gameplaySessionRegistry) startArenaResultLocked(gameID uint32, now time
 		}
 		player.AvatarID = member.binding.AvatarID
 		player.Team = uint8(member.binding.Team)
+		if match.result.roundIndex < len(player.Round) {
+			player.Round[match.result.roundIndex] = arenaPlayerResult(member).Round[0]
+		}
 		match.result.players[member.binding.UserID] = player
+		if member.binding.Slot < uint16(len(match.result.body.Player)) {
+			match.result.body.Player[member.binding.Slot] = player
+		}
 	}
 }
 
@@ -153,11 +160,21 @@ func (e *gameplaySessionRegistry) completeArenaResultLocked(gameID uint32, winne
 		player.AvatarID = current.AvatarID
 		player.Team = current.Team
 		player.Round[result.roundIndex] = current.Round[0]
+		result.players[member.binding.UserID] = player
+		result.body.Player[member.binding.Slot] = player
+	}
+	// A disconnected participant still owns their stable result slot. Refresh
+	// counters from the retained match roster, even without a live session.
+	for index, retained := range result.body.Player {
+		player, isFound := result.players[retained.PlayerID]
+		if !isFound {
+			continue
+		}
 		if uint32(player.Team) == winnerTeam {
 			player.Round[result.roundIndex].Outcome = 3
 		}
-		result.players[member.binding.UserID] = player
-		result.body.Player[member.binding.Slot] = player
+		result.players[player.PlayerID] = player
+		result.body.Player[index] = player
 	}
 	result.isRoundComplete = true
 	result.isCompleted = result.body.CountA >= 2 || result.body.CountB >= 2
@@ -170,7 +187,15 @@ func (e gameplayArenaRuntime) arenaResultBodyLocked(gameID uint32) raknet.ArenaR
 	if match == nil {
 		return raknet.ArenaResultsBody{}
 	}
-	return match.result.body
+	result := match.result.body
+	// Build 103 copies this body to cArenaResultsUI+4. OnContinueClicked
+	// checks its second word (UI+8) before requesting Spaceship state 2;
+	// zero only hides the results UI. Intermediate rounds must retain zero.
+	result.SelectorB = 0
+	if match.result.isCompleted {
+		result.SelectorB = 1
+	}
+	return result
 }
 
 func arenaResultPercent(current float32, maximum float32) float32 {
@@ -198,6 +223,7 @@ func (e *gameplaySessionRegistry) retireArenaResultLocked(gameID uint32) func() 
 			return nil
 		}
 	}
+	e.retireArenaForcePulsesLocked(gameID)
 	delete(e.arenaMatches, gameID)
 	return match.cancel
 }

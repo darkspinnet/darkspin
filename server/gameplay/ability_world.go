@@ -17,6 +17,7 @@ import (
 type arenaAbilityWorld struct {
 	objectIDSession *zoneobjectid.Session
 	treeSession     *zoneability.TreeOfLifePresentationSession
+	forcePulses     map[arenaForcePulseKey]*arenaForcePulseRun
 }
 
 func abilityActorTeam(member gameplayPeerSession) uint8 {

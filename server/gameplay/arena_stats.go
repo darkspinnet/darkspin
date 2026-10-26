@@ -48,8 +48,7 @@ func (e *arenaResultState) freezeStats(completedAt time.Time) {
 		e.statEntries = append(e.statEntries, arenaStatEntry{userID: userID, result: sporenet.PVPMatchResult{
 			MatchID: e.matchID, CompletedAtUnix: completedAt.Unix(),
 			IsVictory: uint32(player.Team) == e.body.SelectorA,
-			// Ranked queues are not admitted by the current matchmaking rules.
-			IsRanked: false, RoundWins: wins, RoundLosses: losses,
+			IsRanked:  e.isRanked, RoundWins: wins, RoundLosses: losses,
 			PlayTimeSecond: uint64(max(int32(0), e.body.RoundTimeSeconds)),
 			PlayerKills:    uint64(player.Kills), Deaths: uint64(player.Deaths),
 			DamageDealt: float64(player.DamageDealt), DamageTaken: float64(player.DamageTaken),

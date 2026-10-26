@@ -17,6 +17,9 @@ func (e campaignAbilityCommandRuntime) handleArenaAbility(
 	ctx context.Context, packet raknet.Packet, command raknet.ActionCommandData,
 	member gameplayPeerSession,
 ) ([][]byte, error) {
+	if member.isKnockbackActive(e.now()) {
+		return e.rejectArenaCharacter(command, "knockback in progress")
+	}
 	if command.Ability == nil || member.deployedCreatureIndex >= uint32(len(member.binding.Creatures)) {
 		return e.rejectArenaCharacter(command, "ability source unavailable")
 	}
@@ -41,7 +44,7 @@ func (e campaignAbilityCommandRuntime) handleArenaAbility(
 		definition, isFound = e.program.PlayerBasicAbility[creature.Noun]
 	}
 	isShared := isFound && (ability.AssetName == "CastEnrage" || ability.AssetName == "TreeOfLife" ||
-		ability.AssetName == "ArborealMight" ||
+		ability.AssetName == "ArborealMight" || ability.AssetName == "SpacetimeRandom2" ||
 		isSharedArenaArea(definition, command.Ability.Index) || isSharedArenaProjectile(definition) ||
 		(command.Ability.Index == 0 && isSharedArenaMelee(definition)))
 	if !isShared {

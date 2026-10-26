@@ -33,9 +33,9 @@ func (e heroAuraAreaSchedule) prepareNPCMembership(objectID, instanceID uint32, 
 func (e heroAuraAreaSchedule) queueNPCMembershipLocked(peerSession *gameplayPeerSession, packets [][]byte, isCreate bool) {
 	e.runtime.registry.sessions[e.sessionKey] = *peerSession
 	if isCreate {
-		e.runtime.registry.queueTimeBubblePresentationLocked(e.run.originalZone, packets)
+		e.run.queuePresentationLocked(packets, false)
 	} else {
-		e.runtime.registry.queueProjectileRetirementLocked(e.run.originalZone, packets)
+		e.run.queuePresentationLocked(packets, true)
 	}
 	*peerSession = e.runtime.registry.sessions[e.sessionKey]
 }

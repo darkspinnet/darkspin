@@ -1527,7 +1527,8 @@ func newGameplayHandlerWithDependencies(
 		registry: sessionRegistry, join: joinRuntime, setup: setupRuntime,
 		inventory: inventoryRuntime, result: resultRuntime,
 		arena: gameplayArenaRuntime{
-			registry: sessionRegistry, logger: logger, gameplayJoin: gameplayJoin,
+			ratingConversions: program.Critical.RatingConversions,
+			registry:          sessionRegistry, logger: logger, gameplayJoin: gameplayJoin,
 		}, action: actionRuntime,
 		status: statusRuntime, pending: pendingRuntime,
 		projection: projectionRuntime,
@@ -2711,6 +2712,7 @@ func (r gameplayPendingRuntime) pollWorld(
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("rootControlPoll: %w", rootControlErr)
 		}
+		r.registry.queueHeroControlPeersLocked(packet.Address.String(), peerSession, rootControlPackets)
 		rootHazardPackets = append(rootHazardPackets, rootControlPackets...)
 		if peerSession.zone != nil && peerSession.stage.IsDungeon() &&
 			!peerSession.isZoneTerminal() && peerSession.dungeonSetup.IsCommitted() {
@@ -5677,7 +5679,7 @@ func (r gameplaySetupRuntime) publishArena(
 	r.registry.sessions[packet.Address.String()] = peerSession
 	r.registry.mutex.Unlock()
 	countdownErr := r.registry.scheduleArenaCountdown(
-		r.program, peerSession.binding.GameID,
+		r.program, peerSession.binding.GameID, packet.SourceTime,
 	)
 	if countdownErr != nil && r.logger != nil {
 		r.logger.Printf(

@@ -24,6 +24,12 @@ func (e gameplayArenaRuntime) acceptSquad(
 		}
 		return nil, nil
 	}
+	// The selected roster replaces the join binding, including its derived
+	// combat profiles. Restore the native rating conversions before admission.
+	err = binding.ConfigureDefenseDamage(e.ratingConversions)
+	if err != nil {
+		return nil, fmt.Errorf("arenaSquadStats: %w", err)
+	}
 	e.registry.mutex.Lock()
 	current, isFound := e.registry.sessions[sessionKey]
 	if !isFound || current.generation != peerSession.generation ||
@@ -33,6 +39,9 @@ func (e gameplayArenaRuntime) acceptSquad(
 		return nil, nil
 	}
 	current.binding = binding
+	// Each accepted round may bring a different equipped squad. Loading must
+	// publish its complete character records once before sparse progress.
+	current.isCampaignPlayerInitialized = false
 	current.isArenaSquadAccepted = true
 	e.registry.sessions[sessionKey] = current
 	e.registry.mutex.Unlock()

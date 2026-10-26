@@ -39,9 +39,28 @@ func (e *GameplayJoin) SelectArenaSquad(
 				}
 			}
 		}
+		// Squad selection rebuilds equipment-derived stats, but the appearance
+		// revisions were resolved independently when this player joined.
+		for index := range creatures {
+			for _, previous := range binding.ActivatedCreatures {
+				if creatures[index].ID == previous.ID {
+					creatures[index].AppearanceVersion = previous.AppearanceVersion
+					break
+				}
+			}
+		}
 		binding.SquadID = squadID
 		binding.Creatures = creatures
-		binding.ActivatedCreatures = activatedGameplayCreatures(view, e.partCatalog.forGameplayMode(binding.Mode))
+		activatedCreatures := activatedGameplayCreatures(view, e.partCatalog.forGameplayMode(binding.Mode))
+		for index := range activatedCreatures {
+			for _, previous := range binding.ActivatedCreatures {
+				if activatedCreatures[index].ID == previous.ID {
+					activatedCreatures[index].AppearanceVersion = previous.AppearanceVersion
+					break
+				}
+			}
+		}
+		binding.ActivatedCreatures = activatedCreatures
 		return binding, nil
 	}
 	return GameplayBinding{}, ErrGameplaySquadInvalid

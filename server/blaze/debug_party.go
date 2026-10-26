@@ -79,7 +79,6 @@ func (e *Server) DebugParty(ctx context.Context, req scenario.PartyRequest) (sce
 	if err != nil {
 		return result, fmt.Errorf("partyRequest: %w", err)
 	}
-	request.isPartyInviteRecoverySuppressed = true
 	request.ownedPartyUsers = make(map[int64]bool, len(req.OwnedUserIDs))
 	for _, userID := range req.OwnedUserIDs {
 		request.ownedPartyUsers[userID] = true

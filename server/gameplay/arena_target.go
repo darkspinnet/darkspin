@@ -152,6 +152,11 @@ func (e *arenaAbilityTargets) Hit(req zonenpc.HitRequest) (zonenpc.DamageResult,
 	privatePackets := arenaTargetPrivateTransitionPackets(transitions)
 	target.queuePackets(privatePackets)
 	e.runtime.registry.sessions[key] = target
+	if health <= 0 {
+		// Save the committed victim first: marker removal queues presentation
+		// against the current session rather than an earlier local copy.
+		e.runtime.registry.retireArenaForcePulseVictimLocked(e.source.binding.GameID, req.TargetObjectID)
+	}
 	match.result.recordDamage(e.source.binding.UserID, target.binding.UserID, damage, health <= 0)
 	match.recordRecentDamage(req.TargetObjectID, now, damage)
 	e.runtime.registry.queueArenaAbilityResourcesLocked(e.source, [][]byte{resourcePacket})

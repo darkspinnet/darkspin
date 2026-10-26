@@ -384,7 +384,7 @@ func (r gameplayStatusRuntime) startArena(
 		return nil, fmt.Errorf("statusArenaStart: %w", err)
 	}
 	countdownPacket, err := raknet.MarshalApplication(raknet.ArenaCountdownMessage{
-		Seconds: float32(arenaOpeningCountdownDuration.Seconds()),
+		Seconds: float32(arenaOpeningDuration.Seconds()),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("arenaCountdown: %w", err)
@@ -406,6 +406,16 @@ func (r gameplayStatusRuntime) startArena(
 		peerSession.arePassiveModifiersAllocated = true
 	}
 	r.registry.mutex.Lock()
+	currentSession, isFound := r.registry.sessions[packet.Address.String()]
+	if !isFound || currentSession.generation != peerSession.generation {
+		r.registry.mutex.Unlock()
+		return nil, errors.New("arena start session stale")
+	}
+	// Other participants can publish loading/roster packets while this
+	// handshake is prepared. Keep their reliable queues on the live session.
+	peerSession.pendingPacketBatches = currentSession.pendingPacketBatches
+	peerSession.nextPendingPacketID = currentSession.nextPendingPacketID
+	peerSession.isPendingPacketOverflow = currentSession.isPendingPacketOverflow
 	peerSession.stage.EnterDungeon()
 	r.registry.sessions[packet.Address.String()] = peerSession
 	r.registry.mutex.Unlock()

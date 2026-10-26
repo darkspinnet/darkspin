@@ -137,6 +137,8 @@ func (e *gameplaySessionRegistry) finishCampaignProjectilePublicationLocked(
 			for _, controlBatch := range req.controlPacketBatches {
 				if len(controlBatch.releases) != 0 {
 					e.queueProjectileRetirementForOwnerLocked(req, controlBatch.packets)
+				} else if req.arenaGameID != 0 {
+					e.queueProjectileRetirementForOwnerLocked(req, controlBatch.packets)
 				} else {
 					e.queueTimeBubblePresentationLocked(req.originalZone, controlBatch.packets)
 				}

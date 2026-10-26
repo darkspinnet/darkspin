@@ -29,6 +29,11 @@ const (
 	// Build 103 starts PvP_HUD_countdown.swf at frame 11 for a 5.17-second
 	// timer (sub_41BA00). Keep the combat gate aligned with that timeline.
 	arenaOpeningCountdownDuration = 5170 * time.Millisecond
+	// Native 103 sub_41BA00 waits while the remaining timer is at least
+	// 5.17 seconds, then starts its authored countdown movie. Keep a short
+	// preparation pause before that threshold instead of stretching the movie.
+	arenaPreparationPauseDuration = 4 * time.Second
+	arenaOpeningDuration          = arenaPreparationPauseDuration + arenaOpeningCountdownDuration
 )
 
 type arenaMatchState struct {
@@ -37,22 +42,29 @@ type arenaMatchState struct {
 	result               arenaResultState
 	isCountdownScheduled bool
 	isCombatActive       bool
+	isTransferActive     bool
 	variantOffsets       [2]int
 	random               *sim.SimulatorRandom
 	cancel               func()
 }
 
 type arenaCountdownJob struct {
-	registry *gameplaySessionRegistry
-	program  Programs
-	gameID   uint32
-	logger   *log.Logger
+	registry  *gameplaySessionRegistry
+	program   Programs
+	gameID    uint32
+	logger    *log.Logger
+	match     *arenaMatchState
+	round     int
+	timestamp uint64
+	startedAt time.Time
+	members   map[string]arenaTransferMember
 }
 
 type gameplayArenaRuntime struct {
-	gameplayJoin *game.GameplayJoin
-	registry     *gameplaySessionRegistry
-	logger       *log.Logger
+	ratingConversions []float32
+	gameplayJoin      *game.GameplayJoin
+	registry          *gameplaySessionRegistry
+	logger            *log.Logger
 }
 
 func (r gameplaySwitchRuntime) handleArenaSwitch(
@@ -62,7 +74,9 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 	sessionKey := packet.Address.String()
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
+	match := r.registry.arenaMatches[peerSession.binding.GameID]
 	isCurrent := isFound && peerSession.generation == commandSession.generation &&
+		(match == nil || !match.isTransferActive) &&
 		peerSession.binding.Mode == game.ModeArena &&
 		peerSession.stage.IsDungeon() && peerSession.squad != nil &&
 		peerSession.deployedCreatureIndex <
@@ -227,6 +241,15 @@ func (r gameplayMovementRuntime) handleArena(
 		r.campaign.registry.mutex.Unlock()
 		return nil, errors.New("arena movement unavailable")
 	}
+	match := r.campaign.registry.arenaMatches[peerSession.binding.GameID]
+	if match != nil && match.isTransferActive {
+		r.campaign.registry.mutex.Unlock()
+		return nil, nil
+	}
+	if peerSession.isKnockbackActive(r.campaign.now()) {
+		r.campaign.registry.mutex.Unlock()
+		return nil, nil
+	}
 	_, _, err := peerSession.advancePlayerMovement(
 		r.campaign.now(), command.Common.Position,
 		command.Movement.GoalPosition, false, 0,
@@ -251,8 +274,8 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 		return r.rejectArenaCharacter(command, "character ability unavailable")
 	}
 	sessionKey := packet.Address.String()
-	attackTime := r.now()
 	r.registry.mutex.Lock()
+	attackTime := r.now()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == commandSession.generation &&
 		peerSession.stage.IsDungeon() &&
@@ -279,7 +302,7 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("arenaAttackPosition: %w", err)
 	}
-	creature := peerSession.binding.Creatures[peerSession.deployedCreatureIndex]
+	creature := r.registry.projectPassiveCreature(peerSession, peerSession.deployedCreatureIndex, attackTime)
 	definition, abilityID, isActive, isDefinitionFound :=
 		r.arenaCharacterAbility(creature, command.Ability.Index, command.Ability.Rank)
 	if !isDefinitionFound {
@@ -292,15 +315,17 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 		return r.rejectArenaCharacter(command, "ability timing unavailable")
 	}
 	remainingManaPoint := peerSession.deployedManaPoint()
-	cooldownKey := zoneability.CooldownKey(0)
+	cooldownKey := zoneability.HeroAbilityCooldown(abilityID)
+	if !peerSession.isAbilityReleaseReady(attackTime) ||
+		!isActive && (peerSession.basicAttack != nil || !peerSession.basicSequenceSession().IsReady(attackTime)) {
+		r.registry.mutex.Unlock()
+		return r.rejectArenaCharacter(command, "ability release or basic cycle unavailable")
+	}
+	if !peerSession.abilityCooldownSession().IsReady(cooldownKey, attackTime) {
+		r.registry.mutex.Unlock()
+		return r.rejectArenaCharacter(command, "ability cooldown unavailable")
+	}
 	if isActive {
-		cooldownKey = zoneability.HeroAbilityCooldown(abilityID)
-		isReady := peerSession.abilityCooldownSession().IsReady(cooldownKey, attackTime) &&
-			peerSession.isAbilityReleaseReady(attackTime)
-		if !isReady {
-			r.registry.mutex.Unlock()
-			return r.rejectArenaCharacter(command, "ability cooldown or release unavailable")
-		}
 		manaCost, manaErr := game.ResolveAbilityManaCost(
 			projected.ManaCost, creature.DamageProfile.PrimaryAttribute,
 			projected.ManaCoefficient, peerSession.isOverdriveActiveAt(attackTime),
@@ -535,25 +560,25 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 		return nil, fmt.Errorf("arenaSquadHealth: %w", err)
 	}
 	previousManaPoint := peerSession.deployedManaPoint()
-	cooldownReservation := zoneability.CooldownReservation{}
-	releaseReservation := zoneaction.ReleaseReservation{}
+	cooldownReservation, isReserved := peerSession.abilityCooldownSession().Reserve(
+		cooldownKey, attackTime, projected.Cooldown,
+	)
+	if !isReserved {
+		r.registry.mutex.Unlock()
+		return r.rejectArenaCharacter(command, "ability cooldown unavailable")
+	}
+	// The fallback still owns an attack cycle even though it commits damage
+	// immediately. Reserve it before damage so repeated packets cannot bypass
+	// the same cooldown/release boundary used by shared basic execution. Keep
+	// cooldown separate so it does not prevent another ability after release.
+	releaseDelay := max(projected.ReleaseDelay, projected.HitDelay)
+	releaseReservation, isReserved := peerSession.abilityReleaseSession().Reserve(attackTime, releaseDelay)
+	if !isReserved {
+		peerSession.abilityCooldownSession().Rollback(cooldownReservation)
+		r.registry.mutex.Unlock()
+		return r.rejectArenaCharacter(command, "ability release unavailable")
+	}
 	if isActive {
-		var isReserved bool
-		cooldownReservation, isReserved = peerSession.abilityCooldownSession().Reserve(
-			cooldownKey, attackTime, projected.Cooldown,
-		)
-		if !isReserved {
-			r.registry.mutex.Unlock()
-			return r.rejectArenaCharacter(command, "ability cooldown unavailable")
-		}
-		releaseReservation, isReserved = peerSession.abilityReleaseSession().Reserve(
-			attackTime, projected.ReleaseDelay,
-		)
-		if !isReserved {
-			peerSession.abilityCooldownSession().Rollback(cooldownReservation)
-			r.registry.mutex.Unlock()
-			return r.rejectArenaCharacter(command, "ability release unavailable")
-		}
 		err = peerSession.setDeployedManaPoints(remainingManaPoint)
 		if err != nil {
 			peerSession.abilityCooldownSession().Rollback(cooldownReservation)
@@ -637,6 +662,9 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 	}
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.sessions[targetKey] = targetSession
+	if hitPoint <= 0 {
+		r.registry.retireArenaForcePulseVictimLocked(peerSession.binding.GameID, targetObjectID)
+	}
 	matchState.result.recordDamage(peerSession.binding.UserID, targetSession.binding.UserID, damage, hitPoint <= 0)
 	matchState.recordRecentDamage(targetObjectID, attackTime, damage)
 	// Native PvP victory detection counts cached reserve health as well as
@@ -714,12 +742,12 @@ func rollbackArenaAbilitySpend(
 	cooldownReservation zoneability.CooldownReservation,
 	releaseReservation zoneaction.ReleaseReservation,
 ) error {
+	peerSession.abilityReleaseSession().Rollback(releaseReservation)
+	peerSession.abilityCooldownSession().Rollback(cooldownReservation)
 	if !isActive {
 		return nil
 	}
 	err := peerSession.setDeployedManaPoints(previousManaPoint)
-	peerSession.abilityCooldownSession().Rollback(cooldownReservation)
-	peerSession.abilityReleaseSession().Rollback(releaseReservation)
 	if err != nil {
 		return fmt.Errorf("manaRollback: %w", err)
 	}
@@ -898,7 +926,7 @@ func arenaSpawnPlacement(
 }
 
 func (e *gameplaySessionRegistry) scheduleArenaCountdown(
-	program Programs, gameID uint32,
+	program Programs, gameID uint32, timestamp uint64,
 ) error {
 	if e == nil || e.timer == nil {
 		return errors.New("arena countdown timer unavailable")
@@ -909,7 +937,7 @@ func (e *gameplaySessionRegistry) scheduleArenaCountdown(
 		return errors.New("arena countdown registry closed")
 	}
 	state := e.arenaMatches[gameID]
-	if state != nil && (state.isCountdownScheduled || state.isCombatActive) {
+	if state != nil && (state.isCountdownScheduled || state.isCombatActive || state.result.isCompleted) {
 		e.mutex.Unlock()
 		return nil
 	}
@@ -936,7 +964,7 @@ func (e *gameplaySessionRegistry) scheduleArenaCountdown(
 			e.mutex.Unlock()
 			return fmt.Errorf("arenaMatchIdentity: %w", identityErr)
 		}
-		state = &arenaMatchState{result: arenaResultState{matchID: matchID}, random: sim.NewSimulatorRandom(
+		state = &arenaMatchState{result: arenaResultState{matchID: matchID, isRanked: binding.IsRanked}, random: sim.NewSimulatorRandom(
 			binding.GameID ^ (binding.Difficulty << 24) ^ 0xa20e,
 		)}
 	}
@@ -948,15 +976,25 @@ func (e *gameplaySessionRegistry) scheduleArenaCountdown(
 		}
 	}
 	e.arenaMatches[gameID] = state
+	round := state.result.roundIndex
+	startedAt := e.now()
 	e.mutex.Unlock()
 	job := arenaCountdownJob{
 		registry: e, program: program, gameID: gameID, logger: e.logger,
+		match: state, round: round,
+		timestamp: timestamp, startedAt: startedAt,
 	}
-	cancel, err := e.timer.Schedule(arenaOpeningCountdownDuration, job.execute)
+	cancel, err := e.timer.Schedule(arenaOpeningDuration, job.execute)
+	if err == nil && cancel == nil {
+		err = errors.New("arena countdown cancellation unavailable")
+	}
 	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
 		e.mutex.Lock()
 		if e.arenaMatches[gameID] == state {
-			delete(e.arenaMatches, gameID)
+			state.isCountdownScheduled = false
 		}
 		e.mutex.Unlock()
 		return fmt.Errorf("arenaCountdownSchedule: %w", err)
@@ -964,24 +1002,32 @@ func (e *gameplaySessionRegistry) scheduleArenaCountdown(
 	e.mutex.Lock()
 	if e.arenaMatches[gameID] == state {
 		state.cancel = cancel
+	} else if cancel != nil {
+		cancel()
 	}
 	e.mutex.Unlock()
 	if e.logger != nil {
 		e.logger.Printf(
-			"RakNet Arena opening countdown game=%d level=%q seconds=%.2f players=%d",
-			gameID, binding.Level, arenaOpeningCountdownDuration.Seconds(), readyCount,
+			"RakNet Arena opening countdown game=%d level=%q pause_seconds=%.2f countdown_seconds=%.2f players=%d",
+			gameID, binding.Level, arenaPreparationPauseDuration.Seconds(), arenaOpeningCountdownDuration.Seconds(), readyCount,
 		)
 	}
 	return nil
 }
 
-func (e arenaCountdownJob) execute() {
+func (e arenaCountdownJob) teleport() {
 	if e.registry == nil {
 		return
 	}
 	e.registry.mutex.Lock()
 	state := e.registry.arenaMatches[e.gameID]
-	if e.registry.isClosed || state == nil || state.isCombatActive {
+	if e.registry.isClosed || state != e.match || state == nil ||
+		state.result.roundIndex != e.round || !state.isCountdownScheduled || state.isCombatActive {
+		e.registry.mutex.Unlock()
+		return
+	}
+	if !e.areTransferMembersCurrentLocked() {
+		e.releaseTransferLocked(state)
 		e.registry.mutex.Unlock()
 		return
 	}
@@ -998,7 +1044,7 @@ func (e arenaCountdownJob) execute() {
 		}
 	}
 	if expectedCount == 0 || readyCount != expectedCount {
-		delete(e.registry.arenaMatches, e.gameID)
+		e.releaseTransferLocked(state)
 		e.registry.mutex.Unlock()
 		if e.logger != nil {
 			e.logger.Printf(
@@ -1028,6 +1074,7 @@ func (e arenaCountdownJob) execute() {
 			Position: placement.position, Orientation: placement.orientation,
 		})
 		if err != nil {
+			e.releaseTransferLocked(state)
 			e.registry.mutex.Unlock()
 			if e.logger != nil {
 				e.logger.Printf("RakNet Arena combat teleport game=%d omitted: %v", e.gameID, err)
@@ -1035,10 +1082,20 @@ func (e arenaCountdownJob) execute() {
 			return
 		}
 		packets = append(packets, teleportPacket)
+		arrivalPacket, err := arenaTeleportAnimation(candidate.deployedObjectID, "character_teleport_in", e.animationTimestamp(e.registry.now()))
+		if err != nil {
+			e.releaseTransferLocked(state)
+			e.registry.mutex.Unlock()
+			if e.logger != nil {
+				e.logger.Printf("Arena arrival animation omitted game=%d: %v", e.gameID, err)
+			}
+			return
+		}
+		packets = append(packets, arrivalPacket)
 		positions[sessionKey] = placement.position
 	}
 	if len(positions) != expectedCount {
-		delete(e.registry.arenaMatches, e.gameID)
+		e.releaseTransferLocked(state)
 		e.registry.mutex.Unlock()
 		if e.logger != nil {
 			e.logger.Printf(
@@ -1053,7 +1110,7 @@ func (e arenaCountdownJob) execute() {
 	for sessionKey, position := range positions {
 		motion, err := zoneaction.NewMotion(toSimPosition(position), now)
 		if err != nil {
-			delete(e.registry.arenaMatches, e.gameID)
+			e.releaseTransferLocked(state)
 			e.registry.mutex.Unlock()
 			if e.logger != nil {
 				e.logger.Printf(
@@ -1068,20 +1125,11 @@ func (e arenaCountdownJob) execute() {
 		candidate := e.registry.sessions[sessionKey]
 		candidate.playerMotion = motions[sessionKey]
 		candidate.playerPosition = position
-		candidate.isArenaCombatActive = true
 		candidate.queuePackets(packets)
 		e.registry.sessions[sessionKey] = candidate
 	}
-	state.isCombatActive = true
-	e.registry.startArenaResultLocked(e.gameID, now)
-	state.isCountdownScheduled = false
-	state.cancel = nil
+	e.scheduleTransferLocked(state, e.activate)
 	e.registry.mutex.Unlock()
-	if e.logger != nil {
-		e.logger.Printf(
-			"RakNet Arena combat started game=%d teleports=%d", e.gameID, len(positions),
-		)
-	}
 }
 
 func (e gameplayArenaRuntime) handle(packet raknet.Packet) ([][]byte, error) {
@@ -1161,6 +1209,7 @@ func (r gameplayPendingRuntime) completeDeveloperArenaVictory(
 	if match := r.registry.arenaMatches[currentSession.binding.GameID]; match != nil {
 		match.result.isCompleted = true
 	}
+	r.registry.retireArenaForcePulsesLocked(currentSession.binding.GameID)
 	r.registry.mutex.Unlock()
 	if r.logger != nil {
 		r.logger.Printf(

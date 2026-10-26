@@ -1580,114 +1580,29 @@ func playgroupCreateHandler(
 				partySnapshot.ID, user.Account.ID, playgroup, publishedNetwork,
 			)
 		}
-		isGameHandoff := isExisting && fieldString(playgroup.Fields, "UKEY") != ""
 		rosterFields := playgroupJoinFields(
 			partySnapshot, user.Account.ID, networkRegistry, attributes,
 		)
-		if !isExisting {
-			err = request.QueueNotificationBeforeReply(
-				PlaygroupsComponentID, 0x33, rosterFields,
-			)
-			if err != nil {
-				return nil, fmt.Errorf("playgroupCreateRoster: %w", err)
-			}
-		} else if isGameHandoff {
-			err = request.QueueUserNotification(
-				user.Account.ID, PlaygroupsComponentID, 0x33,
-				rosterFields,
-			)
-			if err != nil {
-				return nil, fmt.Errorf("playgroupCreateRoster: %w", err)
-			}
+		// Build 103's successful Create RPC callback (E04480/E04170)
+		// allocates a fresh pending SDK playgroup even when server membership
+		// already exists. Its initial roster belongs only to this caller and
+		// must follow the reply that creates the pending native object.
+		err = request.QueueNotification(
+			PlaygroupsComponentID, 0x33, rosterFields,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("playgroupCreateRoster: %w", err)
 		}
 		logPlaygroupCreate(
 			request, playgroup, attributes, partySnapshot.ID, networkRegistry,
 		)
-		if !isExisting && fieldString(playgroup.Fields, "UKEY") == "" && len(attributes.Entries) == 0 {
-			err = recoverSinglePeerPartyInvite(
-				ctx, request, user, partySnapshot, userManager, partyService,
-			)
-			if err != nil {
-				return nil, fmt.Errorf("playgroupInviteRecovery: %w", err)
-			}
-		}
+
 		return &Response{Fields: []tdf.Field{
 			tdf.FieldNamed("INFO", playgroupInfoValueWithNetwork(
 				partySnapshot, networkRegistry, user.Account.ID, attributes,
 			)),
 		}}, nil
 	}
-}
-
-func recoverSinglePeerPartyInvite(
-	ctx context.Context, request *Request, inviter *sporenet.User, partySnapshot party.Snapshot,
-	userManager socialUserManager, partyService *party.Service,
-) error {
-	if request != nil && request.isPartyInviteRecoverySuppressed {
-		return nil
-	}
-	if request == nil || request.Session == nil || request.Session.server == nil {
-		return nil
-	}
-	inviteeID, isUnique := request.Session.server.uniqueOtherUserID(inviter.Account.ID)
-	if !isUnique {
-		return nil
-	}
-	invitee := userManager.UserByID(inviteeID)
-	if invitee == nil {
-		return nil
-	}
-	_, err := partyService.Invite(ctx, party.InviteRequest{
-		PartyID: partySnapshot.ID,
-		Inviter: party.Member{
-			ID: inviter.Account.ID, Name: inviter.DisplayName, AvatarID: inviter.Account.AvatarID,
-		},
-		Invitee: party.Member{
-			ID: invitee.Account.ID, Name: invitee.DisplayName, AvatarID: invitee.Account.AvatarID,
-		},
-	})
-	if errors.Is(err, party.ErrAlreadyMember) || errors.Is(err, party.ErrFull) ||
-		errors.Is(err, party.ErrClosed) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("inviteRecord: %w", err)
-	}
-	payload := []tdf.Field{
-		tdf.FieldNamed("ATTR", tdf.MapValue(tdf.Integer, tdf.String,
-			tdf.MapEntry{Key: tdf.IntegerValue(65282), Value: tdf.StringValue(invitee.DisplayName)},
-			tdf.MapEntry{
-				Key:   tdf.IntegerValue(720897),
-				Value: tdf.StringValue(strconv.FormatUint(uint64(partySnapshot.ID), 10)),
-			},
-		)),
-		tdf.FieldNamed("FLAG", tdf.IntegerValue(4)),
-		tdf.FieldNamed("TARG", tdf.Value{Type: tdf.ObjectID, ObjectID: [3]uint64{
-			uint64(UserSessionComponentID), userSessionObjectType, uint64(invitee.Account.ID),
-		}}),
-		tdf.FieldNamed("TYPE", tdf.IntegerValue(messagingPartyInviteType)),
-	}
-	notification := []tdf.Field{
-		tdf.FieldNamed("FLAG", tdf.IntegerValue(0)),
-		tdf.FieldNamed("MGID", tdf.IntegerValue(nextSystemMessageID.Add(1))),
-		tdf.FieldNamed("NAME", tdf.StringValue(inviter.DisplayName)),
-		tdf.FieldNamed("PYLD", tdf.StructValue(payload...)),
-		tdf.FieldNamed("SRCE", tdf.Value{Type: tdf.ObjectID, ObjectID: [3]uint64{
-			uint64(UserSessionComponentID), userSessionObjectType, uint64(inviter.Account.ID),
-		}}),
-		tdf.FieldNamed("TIME", tdf.IntegerValue(uint64(time.Now().Unix()))),
-	}
-	err = request.QueueUserNotification(invitee.Account.ID, MessagingComponentID, 0x01, notification)
-	if err != nil {
-		return fmt.Errorf("inviteNotify: %w", err)
-	}
-	if request.Session.server.logger != nil {
-		request.Session.server.logger.Printf(
-			"playgroup_invite_recovered inviter=%q invitee=%q party_id=%d reason=%q",
-			inviter.DisplayName, invitee.DisplayName, partySnapshot.ID, "single_online_peer",
-		)
-	}
-	return nil
 }
 
 func playgroupCreateInfo(fields []tdf.Field) tdf.Value {
@@ -1829,23 +1744,14 @@ func playgroupJoinHandler(
 			if existing.ID != member.ID {
 				continue
 			}
-			// The native Join callback resolves the roster installed by this
-			// notification. An idempotent join adds no member and changes no
-			// party revision, so do not emit a member-added event.
-			err = request.QueueNotificationBeforeReply(PlaygroupsComponentID, 0x33,
+			// Build 103 E04810 routes Join through the same E04480 pending
+			// object constructor as Create. Server membership may be unchanged,
+			// but this caller still needs its initial roster after the reply.
+			// Existing peers need no event: a full roster appends duplicates.
+			err = request.QueueNotification(PlaygroupsComponentID, 0x33,
 				playgroupJoinFields(partySnapshot, member.ID, networkRegistry))
 			if err != nil {
 				return nil, fmt.Errorf("playgroupRejoinRoster: %w", err)
-			}
-			for _, recipient := range partySnapshot.Members {
-				if recipient.ID == member.ID {
-					continue
-				}
-				err = request.QueueUserNotification(recipient.ID, PlaygroupsComponentID, 0x33,
-					playgroupJoinFields(partySnapshot, recipient.ID, networkRegistry))
-				if err != nil {
-					return nil, fmt.Errorf("playgroupRejoinPeer[%d]: %w", recipient.ID, err)
-				}
 			}
 			return &Response{Fields: []tdf.Field{
 				tdf.FieldNamed("INFO", playgroupInfoValueWithNetwork(
@@ -1883,13 +1789,10 @@ func playgroupJoinHandler(
 					return nil, fmt.Errorf("playgroupExistingVisibility[%d]: %w", index, err)
 				}
 			}
-			err = request.QueueUserNotification(
-				existing.ID, PlaygroupsComponentID, 0x33,
-				playgroupJoinFields(partySnapshot, existing.ID, networkRegistry),
-			)
-			if err != nil {
-				return nil, fmt.Errorf("playgroupRosterNotify[%d]: %w", existing.JoinOrdinal, err)
-			}
+			// Existing SDK members need only the incremental member event.
+			// Build 103 E043F0 appends a NotifyJoin roster without clearing it;
+			// repeating the initial roster duplicates the owner's member and
+			// breaks the pointer comparison used by E02BD0's leader check.
 			err = request.QueueUserNotification(existing.ID, PlaygroupsComponentID, 0x34, []tdf.Field{
 				tdf.FieldNamed("MEMB", memberValue),
 				tdf.FieldNamed("PGID", tdf.IntegerValue(uint64(partyID))),
@@ -1898,8 +1801,8 @@ func playgroupJoinHandler(
 				return nil, fmt.Errorf("playgroupMemberNotify[%d]: %w", existing.JoinOrdinal, err)
 			}
 		}
-		err = request.QueueUserNotification(
-			user.Account.ID, PlaygroupsComponentID, 0x33,
+		err = request.QueueNotification(
+			PlaygroupsComponentID, 0x33,
 			playgroupJoinFields(partySnapshot, user.Account.ID, networkRegistry),
 		)
 		if err != nil {

@@ -545,6 +545,7 @@ type controlledHeroPresentation struct {
 	heroInfections               map[*heroInfectionRun]struct{}
 	heroHealingTicks             *heroHealingTicksRun
 	heroAuraAreas                map[uint32]*heroAuraAreaRun
+	arenaSphereSlows             map[uint32]uint32
 	heroProjectileRuns           map[uint32]*heroProjectileStatusRun
 	heroCharge                   *heroChargeRun
 	chargeRuns                   map[*heroChargeRun]struct{}
@@ -2695,6 +2696,7 @@ func (e gameplaySessionLifecycle) cleanup(
 		delete(e.registry.retainedSessions, key)
 	}
 	for gameID, state := range e.registry.arenaMatches {
+		e.registry.retireArenaForcePulsesLocked(gameID)
 		if state.cancel != nil {
 			arenaCancels = append(arenaCancels, state.cancel)
 		}
@@ -5097,6 +5099,12 @@ func (s gameplayPeerSession) characterResourceMaximums(
 ) characterResourceMaximum {
 	hitPoint := campaignHeroResourceFallback
 	powerPoint := campaignHeroResourceFallback
+	if s.binding.Mode == game.ModeArena && creatureIndex < uint32(len(s.binding.Creatures)) {
+		// Arena binds its own character stats. Shared healing/resource paths
+		// must not substitute campaign defaults or apply campaign crystals.
+		creature := s.binding.Creatures[creatureIndex]
+		return characterResourceMaximum{hitPoint: creature.HitPoint, manaPoint: creature.PowerPoint}
+	}
 	if (s.binding.Mode != game.ModeChain && s.binding.Mode != game.ModeTutorial) ||
 		creatureIndex >= uint32(len(s.binding.Creatures)) {
 		return characterResourceMaximum{hitPoint: hitPoint, manaPoint: powerPoint}

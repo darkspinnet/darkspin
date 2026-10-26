@@ -26,6 +26,16 @@ type BasicModifier struct {
 	Rank        uint32
 }
 
+// Build 103 Modifiers/0x9B80AB0C.lua owns both the jump and its caster-unique
+// immunity marker. Share this profile between NPC and player recipients.
+func BasicKnockbackProfile() ActionProfile {
+	return ActionProfile{
+		ModifierName: "KnockbackWithImmunityModifier", ModifierDuration: 10 * time.Second,
+		ForcedMovementSpeed: 25, ForcedMovementDistance: 3,
+		ForcedMovementReactionName: "react_knockback",
+	}
+}
+
 func (e BasicModifier) IsDebuff() bool {
 	return e.Key.Kind == BasicModifierBurn || e.Key.Kind == BasicModifierEnergyVulnerability || e.Key.Kind == BasicModifierWeakness
 }
@@ -62,8 +72,10 @@ func (e *Session) ApplyBasicModifier(objectID uint32, key BasicModifierKey, rank
 	case BasicModifierHaste:
 		duration = 20 * time.Second
 	case BasicModifierWeakness:
-	case BasicModifierPummel, BasicModifierKnockback:
+	case BasicModifierPummel:
 		duration = 10 * time.Second
+	case BasicModifierKnockback:
+		duration = BasicKnockbackProfile().ModifierDuration
 	default:
 		return BasicModifier{}, false
 	}

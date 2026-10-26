@@ -90,6 +90,25 @@ static int is_physical_input_clear(void) {
         !(GetAsyncKeyState(VK_LWIN) & 0x8000) && !(GetAsyncKeyState(VK_RWIN) & 0x8000);
 }
 
+/* Observational diagnostics only: retain the same identity, physical-input
+ * and native-modal gates, and identify which one interrupted an owned press.
+ * Never replay an input whose release was not witnessed. */
+static int is_input_boundary_ready(void) {
+    if (!is_input_identity_current()) {
+        trace_client_state("scenario_gameplay_input_identity_changed", input_request);
+        return 0;
+    }
+    if (!is_physical_input_clear()) {
+        trace_client_state("scenario_gameplay_input_physical_busy", input_request);
+        return 0;
+    }
+    if (!is_native_gameplay_modal_clear()) {
+        trace_client_state("scenario_gameplay_input_modal_busy", input_request);
+        return 0;
+    }
+    return 1;
+}
+
 static int32_t* INPUT_FASTCALL scoped_input_cursor(void* owner, void* ignored) {
     int32_t* cursor = original_input_cursor(owner);
     int32_t* result = cursor;
@@ -185,8 +204,7 @@ int fang_control_input_press(void* caller, int key, int is_pressed) {
         caller != input_image + 0x50323 || key != 1000) return result;
     AcquireSRWLockExclusive(&input_lock);
     if (!is_aim_only && is_input_armed && input_thread == GetCurrentThreadId() && input_phase == 0 && is_ray_observed) {
-        if (is_pressed || GetTickCount64() >= input_deadline || !is_input_identity_current() ||
-            !is_physical_input_clear() || !is_native_gameplay_modal_clear()) {
+        if (is_pressed || GetTickCount64() >= input_deadline || !is_input_boundary_ready()) {
             is_input_armed = 0;
             input_failure = 5;
         } else {
@@ -213,7 +231,7 @@ static int WINAPI scoped_input_held(int key) {
     DWORD last_error = GetLastError();
     AcquireSRWLockExclusive(&input_lock);
     if (is_input_armed && input_thread == GetCurrentThreadId()) {
-        if (!is_input_identity_current() || !is_physical_input_clear() || !is_native_gameplay_modal_clear()) {
+        if (!is_input_boundary_ready()) {
             is_input_armed = 0;
             input_failure = 5;
         }
@@ -301,9 +319,23 @@ rollback_cursor:
 
 int fang_control_input_begin(uint32_t request_id, uint32_t scene, uint32_t handle, int32_t x, int32_t y, uint64_t deadline, uint32_t hold_ms) {
     fang_control_window_snapshot window;
-    if (!InterlockedCompareExchange(&is_input_installed, 0, 0) || hold_ms > 1200 || GetTickCount64() >= deadline ||
-        !is_physical_input_clear() || !is_native_gameplay_modal_clear() || !fang_control_window_inspect(&window) ||
-        window.thread_id != GetCurrentThreadId() || !window.is_enabled || window.is_minimized) return 0;
+    if (!InterlockedCompareExchange(&is_input_installed, 0, 0) || hold_ms > 1200 || GetTickCount64() >= deadline) {
+        trace_client_state("scenario_gameplay_input_begin_unavailable", request_id);
+        return 0;
+    }
+    if (!is_physical_input_clear()) {
+        trace_client_state("scenario_gameplay_input_physical_busy", request_id);
+        return 0;
+    }
+    if (!is_native_gameplay_modal_clear()) {
+        trace_client_state("scenario_gameplay_input_modal_busy", request_id);
+        return 0;
+    }
+    if (!fang_control_window_inspect(&window) || window.thread_id != GetCurrentThreadId() ||
+        !window.is_enabled || window.is_minimized) {
+        trace_client_state("scenario_gameplay_input_window_unavailable", request_id);
+        return 0;
+    }
     AcquireSRWLockExclusive(&input_lock);
     input_request = request_id; input_scene = scene; input_handle = handle;
     input_thread = GetCurrentThreadId(); input_deadline = deadline;
@@ -331,6 +363,7 @@ uint32_t fang_control_input_frame(uint32_t request_id, uint32_t scene, uint32_t 
         trace_client_state("scenario_move_hold_active", input_request);
     }
     if (!is_world_active || scene != input_scene || handle != input_handle || input_thread != GetCurrentThreadId()) {
+        trace_client_state("scenario_gameplay_input_frame_changed", input_request);
         input_failure = 5; is_input_armed = 0;
     } else if (input_phase == 3) {
         input_snapshot.is_release_poll_observed = 1;
@@ -339,6 +372,7 @@ uint32_t fang_control_input_frame(uint32_t request_id, uint32_t scene, uint32_t 
         trace_client_state("scenario_gameplay_release_poll", input_request);
         status = 1;
     } else if (GetTickCount64() >= input_deadline) {
+        trace_client_state("scenario_gameplay_input_expired_phase", input_phase);
         input_failure = 4; is_input_armed = 0;
     }
     if (!status && input_failure) status = input_snapshot.is_press_poll_observed ? 6 : input_failure;
