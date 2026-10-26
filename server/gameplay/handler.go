@@ -305,6 +305,13 @@ func (r gameplayActionRuntime) handleCommand(
 		}
 		peerSession = currentSession
 		if peerSession.campaignTunnelTransfer != nil {
+			if command.Common.Type == raknet.ActionMovement ||
+				command.Common.Type == raknet.ActionStopMovement {
+				// The tunnel transfer stopped the mover and owns its placement
+				// until relocation. Correcting every held poll replays teleports
+				// during the native PlayerEnteredTunnel fade.
+				return nil, nil
+			}
 			return r.reject(packet, command, r.now().Sub(startedAt), errors.New("tunnel traversal in progress"))
 		}
 		inputLockRemaining := peerSession.heroInputLockRemaining(r.now())

@@ -650,6 +650,16 @@ func (r campaignMovementCommandRuntime) handle(
 		return nil, nil
 	}
 	if commandSession.isEnemySleepActive(r.now()) {
+		// SleepModifier's authored Immobilized attribute already holds the
+		// native mover. Do not reset placement for every held walking poll at
+		// that pose, including the normal render-height offset.
+		deltaX := command.Common.Position.X - commandSession.playerPosition.X
+		deltaY := command.Common.Position.Y - commandSession.playerPosition.Y
+		radius := commandSession.deployedCampaignNavigationRadius()
+		if isFiniteZonePosition(command.Common.Position) && radius > 0 &&
+			deltaX*deltaX+deltaY*deltaY <= radius*radius {
+			return nil, nil
+		}
 		response, marshalErr := marshalPlayerMovementCorrection(
 			command.Common.ObjectID, commandSession.playerPosition, command.Common.Orientation,
 		)

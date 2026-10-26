@@ -1618,7 +1618,13 @@ func (s *gameplayPeerSession) spawnCampaignNPCDNA(
 		Y: enemy.Plan.Position.Y,
 		Z: enemy.Plan.Position.Z,
 	}
-	destination := s.reachableCampaignDropDestination(source)
+	clearance := float32(0)
+	if zonenpc.IsGraviticRemnant(enemy.Plan) {
+		// These fixtures keep a solid foundation after death. A two-unit lob
+		// lands inside their authored bounds, outside the hero's pickup reach.
+		clearance = enemy.Plan.ActorFootprintRadius() + s.deployedCampaignNavigationRadius()
+	}
+	destination := s.reachableCampaignDropDestinationWithClearance(source, clearance)
 	objectID, err := s.reserveCampaignObjectID()
 	if err != nil {
 		reservation.Release()
@@ -2182,19 +2188,35 @@ func campaignDropDestination(
 func (s *gameplayPeerSession) reachableCampaignDropDestination(
 	source sim.Position,
 ) sim.Position {
+	return s.reachableCampaignDropDestinationWithClearance(source, 0)
+}
+
+func (s *gameplayPeerSession) reachableCampaignDropDestinationWithClearance(
+	source sim.Position, clearance float32,
+) sim.Position {
 	if s == nil {
 		return source
 	}
 	fallback := campaignDropDestination(source, s.playerPosition)
+	if clearance > 2 {
+		fallback.X = source.X + (fallback.X-source.X)*clearance/2
+		fallback.Y = source.Y + (fallback.Y-source.Y)*clearance/2
+	}
+	unprojectedFallback := fallback
+	if clearance > 0 {
+		// If terrain cannot validate the longer lob, use the hero's observed
+		// stand point rather than inventing a landing beyond a platform edge.
+		unprojectedFallback = sim.Position(s.playerPosition)
+	}
 	campaignNav := s.zone.Navigation()
 	if campaignNav == nil {
-		return fallback
+		return unprojectedFallback
 	}
 	planLayer, isLayerFound := campaignNav.SelectLayerForMode(
 		campaignSecurityBlitzFootprintFallback, uint8(s.binding.Mode),
 	)
 	if !isLayerFound {
-		return fallback
+		return unprojectedFallback
 	}
 	options := navigation.ProjectionOptions{
 		PlanLayer:   planLayer,
@@ -2206,7 +2228,7 @@ func (s *gameplayPeerSession) reachableCampaignDropDestination(
 		Z: s.playerPosition.Z,
 	}, options)
 	if err != nil {
-		return fallback
+		return unprojectedFallback
 	}
 	options.ComponentID = playerProjection.ComponentID
 	options.IsComponentConstrained = true
@@ -2215,6 +2237,12 @@ func (s *gameplayPeerSession) reachableCampaignDropDestination(
 		X: fallback.X, Y: fallback.Y, Z: fallback.Z,
 	}, options)
 	if err != nil {
+		destination = playerProjection
+	}
+	// Projection must not put a cleared drop back into the retained fixture.
+	deltaX := destination.Position.X - source.X
+	deltaY := destination.Position.Y - source.Y
+	if clearance > 0 && deltaX*deltaX+deltaY*deltaY < clearance*clearance {
 		destination = playerProjection
 	}
 	return sim.Position{

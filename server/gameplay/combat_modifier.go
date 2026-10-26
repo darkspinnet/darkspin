@@ -247,6 +247,12 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 			} else {
 				packets = append(packets, stopPackets...)
 			}
+			controlPackets, controlErr := targetSession.refreshEnemyImmobilizedAttributes(at)
+			if controlErr != nil {
+				r.registry.mutex.Unlock()
+				return nil, fmt.Errorf("enemySleepAttribute: %w", controlErr)
+			}
+			packets = append(packets, controlPackets...)
 			r.registry.sessions[targetSessionKey] = targetSession
 		}
 		r.registry.mutex.Unlock()

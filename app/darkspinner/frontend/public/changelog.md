@@ -2,6 +2,11 @@
 
 ### 2026-10-26
 
+- #129 Defer portal contact polling during hero deployment so a portal cannot relocate the incoming hero before a delayed switch arrival places it back at the old position.
+- #129 Restore the authored immobilization during enemy sleep effects and avoid repeated position corrections for held movement at the sleeping hero's stopped pose.
+- #129 Stop held movement polls from replaying position corrections during tunnel traversal; the authored approach and exit walks remain unresolved.
+- #129 Align Stinger circling movement with the server's lateral destination and preserve facing toward the hero using the build-103 movement contract.
+- #129 Place Gravitic Regulator and Stabilizer DNA beyond their retained collision footprint, with terrain projection and a safe fallback at the hero when navigation is unavailable.
 - Save completed unranked PvP match results and lifetime win/loss, kill/death, fight-time, damage and healing statistics for both players, with atomic profile updates, duplicate protection and save retries.
 - Restore Enrage and Tree of Life healing in PvP through their normal runtimes, with actual healing totals and round cleanup.
 - Restore Arboreal Might squad support and shared Celestial Comet, Time Lapse, melee-combo and projectile delivery paths in PvP instead of reducing these executions to immediate single-target hits.

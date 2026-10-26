@@ -19,7 +19,7 @@ const enemyImmobilizedAttribute = uint8(15)
 func (e *gameplayPeerSession) refreshEnemyImmobilizedAttributes(at time.Time) ([][]byte, error) {
 	objectID := uint32(0)
 	if e.heroInputLockedObjectID == e.deployedObjectID && e.isHeroArrivalProtected(at) ||
-		e.isSleepingCloudActive(at) || e.isEnemyRootActive(at) || e.deployedObjectID == e.enemyStunTargetObjectID &&
+		e.isSleepingCloudActive(at) || e.isEnemySleepActive(at) || e.isEnemyRootActive(at) || e.deployedObjectID == e.enemyStunTargetObjectID &&
 		at.Before(e.enemyStunExpiresAt) {
 		// Do not use isEnemyStunActive here: its knockback/cage guards also
 		// protect input while a forced native mover owns the hero.
