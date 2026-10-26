@@ -583,19 +583,18 @@ func (e *Service) requestClientMemory(
 	if !e.controlBroker.publishCapture(control, userID) {
 		return clientCapture{Status: "unavailable", RequestedAt: requestedAt}
 	}
-	deadline := time.Now().Add(750 * time.Millisecond)
-	lastSize := int64(-1)
-	stableCount := 0
-	for time.Now().Before(deadline) {
+	// Fang flushes and closes a temporary file before atomically publishing
+	// this path. Large captures can take longer than 750 ms to publish even
+	// when their frame-thread keyframe completed promptly. File-size stability
+	// neither proves a boundary nor needs to delay an atomically published file.
+	waitContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
 		fi, statErr := os.Stat(outputPath)
 		if statErr == nil {
-			if fi.Size() == lastSize {
-				stableCount++
-			} else {
-				lastSize = fi.Size()
-				stableCount = 0
-			}
-			if stableCount >= 2 {
+			if fi.Mode().IsRegular() && fi.Size() > 0 {
 				return clientCapture{
 					IsCaptured: true, RequestedAt: requestedAt,
 					RespondedAt: time.Now().UTC(),
@@ -606,12 +605,16 @@ func (e *Service) requestClientMemory(
 			e.logger.Printf("Sync Snapshot client response failed: %v", statErr)
 			return clientCapture{Status: "response_failed", RequestedAt: requestedAt}
 		}
-		if ctx.Err() != nil {
-			return clientCapture{Status: "canceled", RequestedAt: requestedAt}
+		select {
+		case <-waitContext.Done():
+			status := "response_timeout"
+			if ctx.Err() != nil {
+				status = "canceled"
+			}
+			return clientCapture{Status: status, RequestedAt: requestedAt}
+		case <-ticker.C:
 		}
-		time.Sleep(25 * time.Millisecond)
 	}
-	return clientCapture{Status: "response_timeout", RequestedAt: requestedAt}
 }
 
 func readSnapshotLines(path string) ([][]byte, error) {

@@ -129,11 +129,13 @@ type SharedServer struct {
 	raknet      *raknet.Server
 	partyRaknet *raknet.Server
 
-	mu         sync.Mutex
-	connection *net.UDPConn
-	cancel     context.CancelFunc
-	routes     map[string]udpEndpointRoute
-	workers    map[string]*rakNetPeerWorker
+	mu                    sync.Mutex
+	connection            *net.UDPConn
+	cancel                context.CancelFunc
+	routes                map[string]udpEndpointRoute
+	workers               map[string]*rakNetPeerWorker
+	dispatchProfileMu     sync.Mutex
+	lastDispatchProfileAt time.Time
 }
 
 func NewSharedServer(address string, logger *log.Logger, handler raknet.Handler) *SharedServer {
@@ -387,14 +389,7 @@ func (s *SharedServer) processRakNetWork(
 	workCtx, cancel := context.WithCancel(traceCtx)
 	defer cancel()
 	result := make(chan rakNetPeerResult, 1)
-	go func() {
-		response, protocol, err := s.processRakNetPacketSafe(
-			workCtx, work.remote, work.packet, rakNetServer, work.channel,
-		)
-		result <- rakNetPeerResult{
-			responses: response, protocol: protocol, err: err,
-		}
-	}()
+	go s.dispatchRakNetWork(workCtx, work, rakNetServer, result)
 	warningTimer := time.NewTimer(rakNetDispatchWarning)
 	defer warningTimer.Stop()
 	select {
@@ -404,6 +399,9 @@ func (s *SharedServer) processRakNetWork(
 	case <-ctx.Done():
 		return false
 	case <-warningTimer.C:
+		// Sample before transport diagnostics, which may wait on the same lock
+		// that is delaying dispatch.
+		go s.captureDispatchProfile(work, startedAt, queueDelay, peerGeneration)
 		diagnostics, isDiagnosticsFound := rakNetServer.PeerDiagnostics(
 			work.remote, peerGeneration, time.Now(),
 		)
