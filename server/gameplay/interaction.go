@@ -26,7 +26,6 @@ import (
 	zoneinteract "github.com/darkspinnet/darkspin/server/zone/interact"
 	interactraknet "github.com/darkspinnet/darkspin/server/zone/interact/raknet103"
 	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
-	lootraknet "github.com/darkspinnet/darkspin/server/zone/loot/raknet103"
 	zonenavigation "github.com/darkspinnet/darkspin/server/zone/navigation"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	objectraknet "github.com/darkspinnet/darkspin/server/zone/object/raknet103"
@@ -1661,123 +1660,6 @@ func (s *gameplayPeerSession) spawnCampaignNPCDNA(
 		return nil, 0, fmt.Errorf("dnaCommit: %w", err)
 	}
 	return packets, objectID, nil
-}
-
-func (s *gameplayPeerSession) collectCampaignDNA(
-	ctx context.Context, progression zoneloot.DNAGranter,
-	registry *gameplaySessionRegistry,
-	start raknet.Vector3, end raknet.Vector3, now time.Time, objectIDs ...uint32,
-) ([][]byte, error) {
-	if s == nil || progression == nil || s.zone == nil || s.zone.DNA() == nil {
-		return nil, nil
-	}
-	objectID := uint32(0)
-	if len(objectIDs) == 1 {
-		objectID = objectIDs[0]
-	}
-	dnaReservation, isReserved := s.zone.DNA().ReserveContactID(
-		objectID,
-		game.Vec3{X: start.X, Y: start.Y, Z: start.Z},
-		game.Vec3{X: end.X, Y: end.Y, Z: end.Z},
-		now, campaignDNAPickupRadius,
-	)
-	if !isReserved {
-		if objectID != 0 && s.zone.DNA().IsReserved(objectID) {
-			return nil, errors.New("DNA contact temporarily reserved")
-		}
-		return nil, nil
-	}
-	pickup := dnaReservation.Pickup()
-	if pickup.Amount > ^uint32(0)-s.binding.DNA {
-		if !dnaReservation.Release() {
-			return nil, errors.New("DNA overflow with missing reservation release")
-		}
-		return nil, errors.New("DNA overflow")
-	}
-	packets, err := lootraknet.MarshalDNACollection(lootraknet.DNACollectionRequest{
-		Slot: uint8(s.binding.Slot), Amount: pickup.Amount,
-		ActorObjectID: s.deployedObjectID, PickupObjectID: pickup.ObjectID,
-		Position: raknet.Vector3{
-			X: pickup.Position.X,
-			Y: pickup.Position.Y,
-			Z: pickup.Position.Z,
-		},
-	})
-	if err != nil {
-		if !dnaReservation.Release() {
-			return nil, errors.Join(
-				fmt.Errorf("dnaCollectionMarshal: %w", err),
-				errors.New("DNA reservation release missing"),
-			)
-		}
-		return nil, fmt.Errorf("dnaCollectionMarshal: %w", err)
-	}
-	grantedDNA, err := progression.GrantDNA(ctx, int64(s.binding.UserID), pickup.Amount)
-	if err != nil {
-		if !dnaReservation.Release() {
-			return nil, errors.Join(fmt.Errorf("dnaGrant: %w", err), errors.New("DNA reservation release missing"))
-		}
-		return nil, fmt.Errorf("dnaGrant: %w", err)
-	}
-	s.binding.DNA = grantedDNA
-	packets[0] = lootraknet.DNAAccountUpdate(uint8(s.binding.Slot), grantedDNA)
-	isCommitted := dnaReservation.Commit()
-	if !isCommitted {
-		// The persistent grant is accepted even if its in-memory reservation
-		// disappeared. Never release it for another grant attempt.
-		isRemoved := s.zone.DNA().Remove(pickup.ObjectID)
-		if !isRemoved && registry != nil && registry.logger != nil {
-			registry.logger.Printf("RakNet committed DNA pickup already absent object=%d", pickup.ObjectID)
-		}
-	}
-	s.publishCommittedPickupLocked(registry, packets, nil)
-	if !isCommitted {
-		return nil, errors.New("DNA reservation commit missing after accepted grant")
-	}
-	if registry != nil {
-		sessionKeys := make([]string, 0, len(registry.sessions))
-		for sessionKey, candidate := range registry.sessions {
-			if !isActiveCoopPickupAlly(candidate, *s) {
-				continue
-			}
-			sessionKeys = append(sessionKeys, sessionKey)
-		}
-		sort.Strings(sessionKeys)
-		allyUserIDs := make(map[uint64]struct{}, len(sessionKeys))
-		for _, sessionKey := range sessionKeys {
-			candidate := registry.sessions[sessionKey]
-			if _, isFound := allyUserIDs[candidate.binding.UserID]; isFound {
-				continue
-			}
-			allyUserIDs[candidate.binding.UserID] = struct{}{}
-			if pickup.Amount > ^uint32(0)-candidate.binding.DNA {
-				if registry.logger != nil {
-					registry.logger.Printf(
-						"RakNet co-op DNA grant skipped for overflow game=%d user=%d",
-						candidate.binding.GameID, candidate.binding.UserID,
-					)
-				}
-				continue
-			}
-			allyDNA, grantErr := progression.GrantDNA(
-				ctx, int64(candidate.binding.UserID), pickup.Amount,
-			)
-			if grantErr != nil {
-				if registry.logger != nil {
-					registry.logger.Printf(
-						"RakNet co-op DNA grant failed game=%d user=%d: %v",
-						candidate.binding.GameID, candidate.binding.UserID, grantErr,
-					)
-				}
-				continue
-			}
-			candidate.binding.DNA = allyDNA
-			updatePacket := lootraknet.DNAAccountUpdate(uint8(candidate.binding.Slot), allyDNA)
-			candidate.queueCampaignPackets([][]byte{updatePacket})
-			registry.sessions[sessionKey] = candidate
-		}
-	}
-	return nil, nil
 }
 
 const campaignOrbLifetime = 30 * time.Second

@@ -65,13 +65,17 @@ func (r campaignAbilityCommandRuntime) transferPlayerAbilityPursuit(
 		r.registry.mutex.Unlock()
 		return nil, false, fmt.Errorf("campaignBasicPursuitTransfer: %w", marshalErr)
 	}
+	pursuitGoal, goalErr := zoneaction.PlayerPursuitDestination(
+		peerSession.zone.Navigation(), zonePosition(peerSession.playerPosition), targetEnemy.Plan.Position,
+		peerSession.deployedCampaignNavigationRadius(), uint8(peerSession.binding.Mode), stopDistance,
+	)
+	if goalErr != nil {
+		r.registry.mutex.Unlock()
+		return nil, false, fmt.Errorf("campaignPursuitGoal: %w", goalErr)
+	}
 	previousPosition, currentPosition, movementErr := peerSession.advancePlayerPursuitMovement(
 		abilityStartTime, peerSession.playerPosition,
-		raknet.Vector3{
-			X: targetEnemy.Plan.Position.X,
-			Y: targetEnemy.Plan.Position.Y,
-			Z: targetEnemy.Plan.Position.Z,
-		},
+		raknet.Vector3(pursuitGoal),
 		r.registry.passiveMovementIncrease(peerSession),
 	)
 	if movementErr != nil {

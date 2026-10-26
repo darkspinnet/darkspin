@@ -78,7 +78,8 @@ func (e *gameplayPeerSession) retainPickupContactSessionLocked(registry *gamepla
 
 // Commands and polls share the same bounded backlog. Older eligible crossings
 // remain ahead of newly observed contacts, so full capsules cannot starve them.
-// No transport/domain reservation survives this pass.
+// Resource contacts commit here; DNA retains its reservation until the
+// registry-owned persistence worker commits or releases the grant.
 func (e *gameplayPeerSession) collectPickupContacts(ctx context.Context, progression zoneloot.DNAGranter, registry *gameplaySessionRegistry, start raknet.Vector3, end raknet.Vector3, now time.Time) error {
 	defer e.retainPickupContactSessionLocked(registry)
 	if !e.isPickupActorAvailable() {

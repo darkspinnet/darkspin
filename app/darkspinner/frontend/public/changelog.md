@@ -2,6 +2,8 @@
 
 ### 2026-10-25
 
+- [#126](https://github.com/darkspinnet/darkspin/issues/126) Persist DNA pickups outside the global gameplay lock so account saves cannot block movement, attacks and NPC callbacks, while preserving pickup reservations and co-op grants.
+- [#126](https://github.com/darkspinnet/darkspin/issues/126) Route targeted pursuit toward a walkable contact within attack range when an enemy's center lies inside a collision blocker instead of repeatedly rejecting the pursuit goal.
 - Improve bug-report evidence by allowing five seconds for atomic client snapshot publication and attaching rate-limited, trace-labeled stack profiles for server dispatch stalls over 250 ms.
 - [#125](https://github.com/darkspinnet/darkspin/issues/125) Replicate the client-authored deployment movement hold during hero arrival and switching, and avoid repeated position corrections for held movement at the locked pose.
 - [#125](https://github.com/darkspinnet/darkspin/issues/125) Sample Ride the Lightning's admission time after acquiring the simulation lock to prevent stale timestamps from rejecting the cast with movement time regressed.

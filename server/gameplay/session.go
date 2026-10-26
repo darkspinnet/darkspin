@@ -2120,6 +2120,8 @@ type gameplaySessionRegistry struct {
 	actionAdmissions         map[gameplayActionLeaseKey]struct{}
 	actionTerminals          map[gameplayActionLeaseKey]struct{}
 	diagnosticDecisions      []gameplayDiagnosticDecision
+	dnaCollections           []*campaignDNACollection
+	isDNACollectionRunning   bool
 	arenaMatches             map[uint32]*arenaMatchState
 	producerGuard            gameplayProducerGuard
 	lifecycle                gameplaySessionLifecycle
@@ -2226,6 +2228,10 @@ func (e *gameplaySessionRegistry) beginRequest() bool {
 	}
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
+	return e.beginRequestLocked()
+}
+
+func (e *gameplaySessionRegistry) beginRequestLocked() bool {
 	if e.isClosed {
 		return false
 	}

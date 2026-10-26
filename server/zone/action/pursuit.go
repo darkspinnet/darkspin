@@ -15,6 +15,38 @@ const maximumVisitedPolygon = 2048
 const PursuitTimeout = 8 * time.Second
 const pursuitProjectionDistance = 12
 
+// PlayerPursuitDestination retains the NPC center for ordinary pursuit. When
+// that center is inside a collision blocker, approach a reachable contact in
+// attack range instead of requiring the hero to stand inside the same blocker.
+func PlayerPursuitDestination(mesh *basenavigation.Mesh, source game.Vec3, target game.Vec3, radius float32, mode uint8, stopDistance float32) (game.Vec3, error) {
+	if mesh == nil {
+		return target, nil
+	}
+	planLayer, isFound := mesh.SelectFootprintLayer(radius, mode)
+	if !isFound {
+		return target, nil
+	}
+	options := basenavigation.ProjectionOptions{PlanLayer: planLayer, MaxDistance: pursuitProjectionDistance}
+	projection, err := mesh.Project(basenavigation.Vec3(target), options)
+	if !errors.Is(err, basenavigation.ErrProjectionObstructed) {
+		// The ordinary path remains responsible for other projection errors.
+		// A successful projection does not change its existing goal semantics.
+		return target, nil
+	}
+	projection, err = mesh.Project(basenavigation.Vec3(source), options)
+	if err != nil {
+		return game.Vec3{}, fmt.Errorf("pursuitContactStart: %w", err)
+	}
+	options.MaxDistance = stopDistance
+	options.ComponentID = projection.ComponentID
+	options.IsComponentConstrained = true
+	contact, err := mesh.ProjectInteractionTarget(projection, basenavigation.Vec3(target), options)
+	if err != nil {
+		return game.Vec3{}, fmt.Errorf("pursuitContactGoal: %w", err)
+	}
+	return game.Vec3(contact.Position), nil
+}
+
 func NPCProjectPosition(
 	mesh *basenavigation.Mesh, position game.Vec3, footprintRadius float32, actors ...basenavigation.ActorNavigation,
 ) (game.Vec3, bool, error) {

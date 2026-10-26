@@ -144,13 +144,21 @@ func (e campaignPursuitProgressProducer) produce() ([][]byte, error) {
 	if pursuit.IsGround {
 		targetPosition = pursuit.GroundPosition
 	}
+	pursuitGoal := targetPosition
+	if !pursuit.IsGround {
+		var goalErr error
+		pursuitGoal, goalErr = zoneaction.PlayerPursuitDestination(
+			peerSession.zone.Navigation(), zonePosition(peerSession.playerPosition), targetPosition,
+			peerSession.deployedCampaignNavigationRadius(), uint8(peerSession.binding.Mode), e.stopDistance,
+		)
+		if goalErr != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("campaignPursuitGoal: %w", goalErr)
+		}
+	}
 	_, playerPosition, err := peerSession.advancePlayerPursuitMovement(
 		now, raknet.Vector3{},
-		raknet.Vector3{
-			X: targetPosition.X,
-			Y: targetPosition.Y,
-			Z: targetPosition.Z,
-		},
+		raknet.Vector3(pursuitGoal),
 		e.runtime.registry.passiveMovementIncrease(peerSession),
 	)
 	if err != nil {

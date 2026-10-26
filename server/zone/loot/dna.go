@@ -91,10 +91,9 @@ func (s *DNASession) Snapshots() []DNAPickup {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	pickup := make([]DNAPickup, 0, len(s.pickups))
-	for objectID, current := range s.pickups {
-		if s.reservedObjectIDs[objectID] {
-			continue
-		}
+	for _, current := range s.pickups {
+		// Persistence can be in flight without consuming the pickup. Keep it
+		// visible in reconnect/checkpoint snapshots until a grant commits.
 		pickup = append(pickup, current.at(time.Now()))
 	}
 	sort.Slice(pickup, func(left int, right int) bool {
