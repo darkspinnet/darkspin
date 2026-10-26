@@ -11,6 +11,14 @@ typedef struct fang_control_window_snapshot {
     uint32_t is_enabled, is_minimized, is_available;
 } fang_control_window_snapshot;
 int fang_control_window_inspect(fang_control_window_snapshot* snapshot);
+typedef struct fang_control_cinematic_snapshot {
+    uint32_t is_available, mode, game_mode, current_room, is_active, is_skippable, is_finished_pulse, is_transitioning, next_mode;
+    uint32_t is_camera_present, is_movie_present, is_movie_playing;
+    uint32_t fields, active_spline_token;
+} fang_control_cinematic_snapshot;
+uint32_t fang_control_scene_snapshot(fang_control_cinematic_snapshot* snapshot);
+int fang_control_window_cinematic(uint32_t request_id, uint32_t timeout_ms);
+int fang_control_window_cinematic_result(uint32_t request_id, fang_control_cinematic_snapshot* snapshot);
 typedef struct fang_control_window_receipt {
     uint32_t request_id, status, thread_id;
     uint64_t completed_tick_ms;

@@ -56,7 +56,7 @@ typedef unsigned int (__cdecl* new_player_progress_fn)(void);
 typedef void (__cdecl* map_room_start_game_fn)(void);
 typedef void* (__cdecl* online_platform_fn)(void);
 typedef void* (__cdecl* scene_asset_lookup_fn)(unsigned int asset_id);
-typedef void* (__cdecl* creature_asset_lookup_fn)(unsigned int asset_id, void* output);
+typedef void* (__cdecl* creature_asset_lookup_fn)(void* resource, void* output);
 typedef void* (__cdecl* creature_nested_lookup_fn)(void* asset, void* output);
 typedef void (__cdecl* scene_load_fn)(void* scene, unsigned int markerset, unsigned int index);
 typedef void (__cdecl* scene_change_fn)(void* simulator, void* scene);
@@ -3148,7 +3148,9 @@ static void trace_client_object_probe(
         "\"sample_unix_nano\":%llu,\"position_bits\":[%u,%u,%u],"
         "\"flags\":%u,\"goal_bits\":[%u,%u,%u],"
         "\"partial_goal_bits\":[%u,%u,%u],\"target_object_id\":%u,"
-        "\"desired_stop_bits\":%u}\r\n",
+        "\"desired_stop_bits\":%u,\"graphics_component_pointer\":%u,"
+        "\"is_graphics_component_present\":%s,\"last_animation_state\":%u,"
+        "\"last_animation_play_milliseconds\":%llu}\r\n",
         (unsigned long long)GetTickCount64(),
         (unsigned long)GetCurrentThreadId(),
         (unsigned long)InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0),
@@ -3166,7 +3168,11 @@ static void trace_client_object_probe(
         *(const unsigned int*)(locomotion + 344),
         *(const unsigned int*)(locomotion + 348),
         *(const unsigned int*)(locomotion + 144),
-        *(const unsigned int*)(locomotion + 416));
+        *(const unsigned int*)(locomotion + 416),
+        *(const unsigned int*)(object + 652),
+        *(const unsigned int*)(object + 652) != 0 ? "true" : "false",
+        *(const unsigned int*)(object + 172),
+        (unsigned long long)*(const uint64_t*)(object + 184));
     if (length <= 0 || (size_t)length >= sizeof(line)) {
         return;
     }
@@ -5011,24 +5017,59 @@ static void* __cdecl hooked_scene_asset_lookup(unsigned int asset_id) {
     return scene;
 }
 
-static void* __cdecl hooked_creature_asset_lookup(unsigned int asset_id, void* output) {
-    void* asset;
-    unsigned int nested_asset_id = 0;
-    trace_scene_state("creature_asset_lookup_input", asset_id,
-        (unsigned int)(uintptr_t)output, 0, asset_id != 0);
-    asset = original_creature_asset_lookup(asset_id, output);
-    if (readable_pointer(asset) && readable_pointer((const BYTE*)asset + 0xA4)) {
-        nested_asset_id = *(const unsigned int*)((const BYTE*)asset + 0xA4);
+static void trace_creature_resource_lookup(const char* kind, const void* resource,
+    const void* result, unsigned int nested_handle) {
+    char line[512];
+    DWORD written;
+    int length;
+    if (InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) == 0 &&
+        (trace_file == INVALID_HANDLE_VALUE || !trace_lock_ready)) {
+        return;
     }
-    trace_scene_state("creature_asset_lookup", asset_id, nested_asset_id,
-        (unsigned int)(uintptr_t)asset, asset != NULL && nested_asset_id != 0);
-    return asset;
+    length = snprintf(line, sizeof(line),
+        "{\"time_ms\":%llu,\"protocol\":\"client_scene\",\"kind\":\"%s\","
+        "\"resource_pointer\":%u,\"result_pointer\":%u,\"nested_handle\":%u}\r\n",
+        (unsigned long long)GetTickCount64(), kind,
+        (unsigned int)(uintptr_t)resource, (unsigned int)(uintptr_t)result, nested_handle);
+    if (length <= 0 || (size_t)length >= sizeof(line)) {
+        return;
+    }
+    if (trace_file != INVALID_HANDLE_VALUE && trace_lock_ready) {
+        EnterCriticalSection(&trace_lock);
+        WriteFile(trace_file, line, (DWORD)length, &written, NULL);
+        LeaveCriticalSection(&trace_lock);
+    }
+    if (InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) != 0) {
+        snapshot_ring_append(line, (unsigned int)length);
+    }
+}
+
+static void* __cdecl hooked_creature_asset_lookup(void* resource, void* output) {
+    /* Build 103's 9ECA10 tail-jumps to 9C8E70: resource and output arguments.
+       Neither the property return nor its nested handle proves model readiness. */
+    void* property = original_creature_asset_lookup(resource, output);
+    DWORD native_error = GetLastError();
+    unsigned int nested_handle = 0;
+    if (InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) == 0 &&
+        (trace_file == INVALID_HANDLE_VALUE || !trace_lock_ready)) {
+        SetLastError(native_error);
+        return property;
+    }
+    if (readable_range(property, 0xA8)) {
+        nested_handle = *(const unsigned int*)((const BYTE*)property + 0xA4);
+    }
+    trace_creature_resource_lookup("creature_resource_property_lookup", resource,
+        property, nested_handle);
+    SetLastError(native_error);
+    return property;
 }
 
 static void* __cdecl hooked_creature_nested_lookup(void* asset, void* output) {
-    trace_scene_state("creature_nested_lookup", (unsigned int)(uintptr_t)asset,
-        (unsigned int)(uintptr_t)output, 0, asset != NULL);
-    return original_creature_nested_lookup(asset, output);
+    void* result = original_creature_nested_lookup(asset, output);
+    DWORD native_error = GetLastError();
+    trace_creature_resource_lookup("creature_resource_nested_lookup", asset, result, 0);
+    SetLastError(native_error);
+    return result;
 }
 
 static void __cdecl hooked_scene_load(void* scene, unsigned int markerset, unsigned int index) {

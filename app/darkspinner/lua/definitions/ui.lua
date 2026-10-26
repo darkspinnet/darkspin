@@ -71,7 +71,20 @@ function ClientUI:Window() end
 ---@field finished_at string RFC3339 UTC.
 ---@field image_path string Saved PNG path, empty when unavailable.
 ---@field image_sha256 string Empty when unavailable.
+---@field pixels_sha256 string Hash of the captured BGRA pixels, empty when unavailable.
+---@field pixels ScreenshotPixels Image-only samples; darkness does not prove cinematic success or failure.
 ---@field metadata_path string Includes unavailable diagnostics.
 ---@field metadata_sha256 string
 ---@field width integer Zero when unavailable.
 ---@field height integer Zero when unavailable.
+
+---At most 4096 evenly spaced samples from the central half of the captured image.
+---Darkness metrics are unavailable if any sampled pixel is not fully opaque.
+---@class ScreenshotPixels
+---@field is_available boolean True only for valid, fully opaque samples.
+---@field reason string Empty when metrics are available.
+---@field region 'central-half'
+---@field sample_count integer Zero when unavailable before sampling.
+---@field opaque_fraction number Fraction of samples with alpha 255, from 0 through 1.
+---@field near_black_fraction number Fraction with maximum RGB channel at most 8; only meaningful when is_available.
+---@field mean_channel number Mean RGB channel from 0 through 255; only meaningful when is_available.

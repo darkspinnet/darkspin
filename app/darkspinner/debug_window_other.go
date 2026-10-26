@@ -85,3 +85,7 @@ func (e *debugClientManager) TypeWindow(ctx context.Context, req debugWindowText
 func (e *debugClientManager) ConfigureCinematic(ctx context.Context, req debugCinematicRequest) (any, error) {
 	return nil, errors.New("owned cinematic configuration requires Windows")
 }
+
+func (e *debugClientManager) inspectCinematic(ctx context.Context, clientID string) (any, error) {
+	return nil, errors.New("owned cinematic observation requires Windows")
+}

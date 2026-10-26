@@ -249,7 +249,7 @@ func (e *controlConnection) command(req controlEnvelope, receivedAt time.Time) c
 		}
 		response.Result.Status = "processed"
 		response.Result.IsProcessed = true
-	case "window.click", "window.ready", "window.press", "window.text", "scene.set", "scene.ready", "editor.cancel", "editor.hierarchy", "editor.open_creature", "mission.map_state", "mission.start", "mission.deployment_state", "mission.continue", "mission.campaign", "mission.previous", "mission.next", "mission.beam_out", "mission.beam_out_state", "mission.arena_lobby", "mission.accept_arena":
+	case "cinematic.snapshot", "window.click", "window.ready", "window.press", "window.text", "scene.set", "scene.ready", "editor.cancel", "editor.hierarchy", "editor.open_creature", "mission.map_state", "mission.start", "mission.deployment_state", "mission.continue", "mission.campaign", "mission.previous", "mission.next", "mission.beam_out", "mission.beam_out_state", "mission.arena_lobby", "mission.accept_arena":
 		return e.windowCommand(req, response, localDeadline)
 	default:
 		response.Result.Status = "unavailable"
@@ -344,6 +344,7 @@ func (e *controlConnection) windowCommand(req controlEnvelope, response controlE
 			}
 		}
 	}
+	isCinematic := req.Operation == "cinematic.snapshot"
 	isReady := req.Operation == "window.ready"
 	isMissionAction := isControlMissionAction(req.Operation)
 	isMission := req.Operation == "mission.map_state" || req.Operation == "mission.deployment_state" || req.Operation == "mission.beam_out_state" || req.Operation == "mission.arena_lobby" || isMissionAction
@@ -418,22 +419,22 @@ func (e *controlConnection) windowCommand(req controlEnvelope, response controlE
 		response.Failure = &controlCommandFailure{Code: "invalid_request", Message: "native window command requires a representable request sequence"}
 		return response
 	}
-	if isReady && req.Command != nil {
+	if (isReady || isCinematic) && req.Command != nil {
 		response.Failure = &controlCommandFailure{Code: "invalid_request", Message: "window readiness takes no input arguments"}
 		return response
 	}
-	if !isScreen && !isReady && !isMission && !isEditor && !isScene && !isPress && !isText && (req.Command == nil || req.Command.X < 0 || req.Command.Y < 0 || req.Command.X > 32767 || req.Command.Y > 32767 || (req.Command.Button != "" && req.Command.Button != "left" && req.Command.Button != "right")) {
+	if !isCinematic && !isScreen && !isReady && !isMission && !isEditor && !isScene && !isPress && !isText && (req.Command == nil || req.Command.X < 0 || req.Command.Y < 0 || req.Command.X > 32767 || req.Command.Y > 32767 || (req.Command.Button != "" && req.Command.Button != "left" && req.Command.Button != "right")) {
 		response.Failure = &controlCommandFailure{Code: "invalid_request", Message: "click requires a representable request sequence and bounded left- or right-button coordinates"}
 		return response
 	}
 	window := inspectControlWindow()
 	response.Result.Window = &window
-	if !window.IsAvailable || (!isReady && !isMissionObservation && (!window.IsEnabled || window.IsMinimized)) {
+	if !window.IsAvailable || (!isCinematic && !isReady && !isMissionObservation && (!window.IsEnabled || window.IsMinimized)) {
 		response.Result.Status = "unavailable"
 		response.Failure = &controlCommandFailure{Code: "unavailable", Message: "owned game window is unavailable, disabled, or minimized"}
 		return response
 	}
-	if !isScreen && !isReady && !isMission && !isEditor && !isScene && !isPress && !isText && (req.Command.X >= window.Width || req.Command.Y >= window.Height) {
+	if !isCinematic && !isScreen && !isReady && !isMission && !isEditor && !isScene && !isPress && !isText && (req.Command.X >= window.Width || req.Command.Y >= window.Height) {
 		response.Failure = &controlCommandFailure{Code: "invalid_request", Message: "click coordinates are outside the owned game window"}
 		return response
 	}
@@ -455,7 +456,9 @@ func (e *controlConnection) windowCommand(req controlEnvelope, response controlE
 	}
 	timeoutMS := uint32((remaining + time.Millisecond - 1) / time.Millisecond)
 	var isAccepted C.int
-	if isScreen {
+	if isCinematic {
+		isAccepted = C.fang_control_window_cinematic(C.uint32_t(nativeID), C.uint32_t(timeoutMS))
+	} else if isScreen {
 		var expectedGeneration uint64
 		var isAction C.int
 		if isScreenAction {
@@ -587,6 +590,12 @@ func controlWindowReceipt(response controlEnvelope, receipt C.fang_control_windo
 	response.Result.CompletedTickMS = uint64(receipt.completed_tick_ms)
 	window := inspectControlWindow()
 	response.Result.Window = &window
+	if response.Operation == "cinematic.snapshot" {
+		response.Result.CinematicSnapshot = readControlCinematicReceipt(uint32(receipt.request_id))
+		if response.Result.CinematicSnapshot != nil {
+			response.Result.CinematicSnapshot.CompletedTickMS = uint64(receipt.completed_tick_ms)
+		}
+	}
 	if response.Operation == "ui.screen_state" || response.Operation == "ui.screen_set" {
 		response.Result.ScreenState = readControlScreenReceipt(uint32(receipt.request_id))
 	}

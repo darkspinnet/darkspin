@@ -44,6 +44,7 @@ static void arsenal_slots(const unsigned int* states) {
     uintptr_t finish = states[133];
     unsigned int records[28];
     unsigned int loaders[10];
+    unsigned int resource_state;
     unsigned int next_block;
     unsigned int index;
     for (index = 0; index < 32 && slot != finish; ++index) {
@@ -71,6 +72,20 @@ static void arsenal_slots(const unsigned int* states) {
                 arsenal_slot_field(index, "has_request_3", loaders[7] != 0);
                 arsenal_slot_field(index, "has_resource_3", loaders[8] != 0);
                 arsenal_slot_field(index, "has_resource_4", loaders[9] != 0);
+                if (loaders[9] != 0) {
+                    /* Build 103 sub_457450 checks graphics-resource state
+                     * bit 12 in addition to the three request readiness calls.
+                     * This bit alone does not certify whole-model readiness. */
+                    if (loaders[9] <= UINTPTR_MAX - sizeof(unsigned int) &&
+                        arsenal_read((uintptr_t)loaders[9] + sizeof(unsigned int),
+                            &resource_state, sizeof(resource_state))) {
+                        arsenal_slot_field(index, "resource_4_state", resource_state);
+                        arsenal_slot_field(index, "is_resource_4_graphics_ready",
+                            (resource_state & (1u << 12)) != 0);
+                    } else {
+                        arsenal_slot_field(index, "resource_4_state_unreadable", 1);
+                    }
+                }
             } else {
                 arsenal_slot_field(index, "loader_unreadable", 1);
             }

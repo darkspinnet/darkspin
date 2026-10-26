@@ -177,6 +177,10 @@ func (e *controlPipe) Request(ctx context.Context, operation string, command con
 		if command.X != 0 || command.Y != 0 || command.Button != "" || command.Key != "" || command.Scene != "" || command.IsIntroSkipped != nil || command.IsCinematicSkipped != nil || operation != "gameplay.inspect" && (command.WorldPoint == nil || !isDebugWorldPointFinite(*command.WorldPoint)) {
 			return controlCommandResult{}, &controlCommandFailure{Code: "invalid_request", Message: "gameplay observation requires only an optional finite projection point"}
 		}
+	case "cinematic.snapshot":
+		if command != (controlCommand{}) {
+			return controlCommandResult{}, &controlCommandFailure{Code: "invalid_request", Message: "cinematic snapshot requires an empty command"}
+		}
 	case "window.inspect", "window.ready", "mission.map_state", "mission.start", "mission.deployment_state", "mission.continue", "mission.beam_out_state", "mission.beam_out", "mission.campaign", "mission.previous", "mission.next", "mission.arena_lobby", "mission.accept_arena", "editor.cancel", "editor.hierarchy", "editor.open_creature":
 		if command.X != 0 || command.Y != 0 || command.Button != "" || command.Key != "" || command.Scene != "" || command.IsIntroSkipped != nil || command.IsCinematicSkipped != nil {
 			return controlCommandResult{}, &controlCommandFailure{Code: "invalid_request", Message: "observational window commands require an empty command"}
@@ -351,7 +355,7 @@ func (e *controlPipe) receiveResult(envelope controlEnvelope) error {
 	if envelope.Failure == nil && pending.operation == "window.text" && (envelope.Result.ProcessedCharacterCount == nil || *envelope.Result.ProcessedCharacterCount != uint32(len(pending.command.Text))) {
 		return errors.New("text processing receipt omits the complete character count")
 	}
-	if envelope.Failure == nil && (pending.operation == "window.inspect" || pending.operation == "window.ready" || pending.operation == "window.text" || pending.operation == "window.click" || pending.operation == "window.press" || pending.operation == "scene.set" || pending.operation == "scene.ready" || pending.operation == "mission.arena_lobby" || pending.operation == "mission.accept_arena" || pending.operation == "mission.map_state" || pending.operation == "mission.start" || pending.operation == "mission.deployment_state" || pending.operation == "mission.beam_out_state" || pending.operation == "mission.continue" || pending.operation == "mission.beam_out" || pending.operation == "mission.campaign" || pending.operation == "mission.previous" || pending.operation == "mission.next" || pending.operation == "editor.cancel" || pending.operation == "editor.hierarchy" || pending.operation == "editor.open_creature") {
+	if envelope.Failure == nil && (pending.operation == "cinematic.snapshot" || pending.operation == "window.inspect" || pending.operation == "window.ready" || pending.operation == "window.text" || pending.operation == "window.click" || pending.operation == "window.press" || pending.operation == "scene.set" || pending.operation == "scene.ready" || pending.operation == "mission.arena_lobby" || pending.operation == "mission.accept_arena" || pending.operation == "mission.map_state" || pending.operation == "mission.start" || pending.operation == "mission.deployment_state" || pending.operation == "mission.beam_out_state" || pending.operation == "mission.continue" || pending.operation == "mission.beam_out" || pending.operation == "mission.campaign" || pending.operation == "mission.previous" || pending.operation == "mission.next" || pending.operation == "editor.cancel" || pending.operation == "editor.hierarchy" || pending.operation == "editor.open_creature") {
 		window := envelope.Result.Window
 		if window == nil || !window.IsAvailable || e.last.State == nil || window.ProcessID != e.last.State.ProcessID || window.ThreadID == 0 || window.Width <= 0 || window.Height <= 0 {
 			return errors.New("window inspection result does not identify a valid owned client window")
@@ -386,6 +390,9 @@ func (e *controlPipe) receiveResult(envelope controlEnvelope) error {
 		if pending.operation == "ui.screen_set" && envelope.Result.ScreenState.OwnerGeneration != pending.command.ExpectedOwnerGeneration {
 			return errors.New("screen action receipt belongs to a different native UI lifecycle")
 		}
+	}
+	if envelope.Failure == nil && pending.operation == "cinematic.snapshot" && envelope.Result.CinematicSnapshot == nil {
+		return errors.New("cinematic observation result does not contain a snapshot")
 	}
 	if envelope.Failure == nil && pending.operation == "cinematic.configure" {
 		result := envelope.Result
@@ -748,28 +755,29 @@ type controlWindow struct {
 }
 
 type controlCommandResult struct {
-	EditorHierarchy         *controlEditorArtifact  `json:"editor_hierarchy,omitempty"`
-	ScreenState             *controlScreenState     `json:"screen_state,omitempty"`
-	ProcessedCharacterCount *uint32                 `json:"processed_character_count,omitempty"`
-	ActiveCast              *controlActiveCast      `json:"active_cast,omitempty"`
-	HeroSelection           *controlHeroSelection   `json:"hero_selection,omitempty"`
-	BeamOutState            *controlBeamOutState    `json:"beam_out_state,omitempty"`
-	GameplayState           *controlGameplayState   `json:"gameplay_state,omitempty"`
-	Projection              *controlProjection      `json:"projection,omitempty"`
-	GameplayClick           *controlGameplayClick   `json:"gameplay_click,omitempty"`
-	ArenaLobby              *controlArenaLobbyState `json:"arena_lobby,omitempty"`
-	DeploymentState         *controlDeploymentState `json:"deployment_state,omitempty"`
-	IsInvocationAttempted   *bool                   `json:"is_invocation_attempted,omitempty"`
-	IsInvocationAccepted    *bool                   `json:"is_invocation_accepted,omitempty"`
-	MapState                *controlMapState        `json:"map_state,omitempty"`
-	Status                  string                  `json:"status"`
-	IsProcessed             bool                    `json:"is_processed"`
-	IsGameplayComplete      bool                    `json:"is_gameplay_complete"`
-	ThreadID                uint32                  `json:"thread_id"`
-	CompletedTickMS         uint64                  `json:"completed_tick_ms"`
-	Window                  *controlWindow          `json:"window,omitempty"`
-	IsIntroSkipped          *bool                   `json:"is_intro_skipped,omitempty"`
-	IsCinematicSkipped      *bool                   `json:"is_cinematic_skipped,omitempty"`
+	CinematicSnapshot       *controlCinematicSnapshot `json:"cinematic_snapshot,omitempty"`
+	EditorHierarchy         *controlEditorArtifact    `json:"editor_hierarchy,omitempty"`
+	ScreenState             *controlScreenState       `json:"screen_state,omitempty"`
+	ProcessedCharacterCount *uint32                   `json:"processed_character_count,omitempty"`
+	ActiveCast              *controlActiveCast        `json:"active_cast,omitempty"`
+	HeroSelection           *controlHeroSelection     `json:"hero_selection,omitempty"`
+	BeamOutState            *controlBeamOutState      `json:"beam_out_state,omitempty"`
+	GameplayState           *controlGameplayState     `json:"gameplay_state,omitempty"`
+	Projection              *controlProjection        `json:"projection,omitempty"`
+	GameplayClick           *controlGameplayClick     `json:"gameplay_click,omitempty"`
+	ArenaLobby              *controlArenaLobbyState   `json:"arena_lobby,omitempty"`
+	DeploymentState         *controlDeploymentState   `json:"deployment_state,omitempty"`
+	IsInvocationAttempted   *bool                     `json:"is_invocation_attempted,omitempty"`
+	IsInvocationAccepted    *bool                     `json:"is_invocation_accepted,omitempty"`
+	MapState                *controlMapState          `json:"map_state,omitempty"`
+	Status                  string                    `json:"status"`
+	IsProcessed             bool                      `json:"is_processed"`
+	IsGameplayComplete      bool                      `json:"is_gameplay_complete"`
+	ThreadID                uint32                    `json:"thread_id"`
+	CompletedTickMS         uint64                    `json:"completed_tick_ms"`
+	Window                  *controlWindow            `json:"window,omitempty"`
+	IsIntroSkipped          *bool                     `json:"is_intro_skipped,omitempty"`
+	IsCinematicSkipped      *bool                     `json:"is_cinematic_skipped,omitempty"`
 }
 
 type controlCommandFailure struct {

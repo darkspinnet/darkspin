@@ -76,28 +76,29 @@ type controlWindow struct {
 }
 
 type controlCommandResult struct {
-	EditorHierarchy         *controlEditorArtifact  `json:"editor_hierarchy,omitempty"`
-	ScreenState             *controlScreenState     `json:"screen_state,omitempty"`
-	GameplayState           *controlGameplayState   `json:"gameplay_state,omitempty"`
-	Projection              *controlProjection      `json:"projection,omitempty"`
-	GameplayClick           *controlGameplayClick   `json:"gameplay_click,omitempty"`
-	Status                  string                  `json:"status"`
-	IsProcessed             bool                    `json:"is_processed"`
-	IsGameplayComplete      bool                    `json:"is_gameplay_complete"`
-	ThreadID                uint32                  `json:"thread_id"`
-	CompletedTickMS         uint64                  `json:"completed_tick_ms"`
-	Window                  *controlWindow          `json:"window,omitempty"`
-	MapState                *controlMapState        `json:"map_state,omitempty"`
-	ArenaLobby              *controlArenaLobbyState `json:"arena_lobby,omitempty"`
-	DeploymentState         *controlDeploymentState `json:"deployment_state,omitempty"`
-	BeamOutState            *controlBeamOutState    `json:"beam_out_state,omitempty"`
-	HeroSelection           *controlHeroSelection   `json:"hero_selection,omitempty"`
-	ActiveCast              *controlActiveCast      `json:"active_cast,omitempty"`
-	ProcessedCharacterCount *uint32                 `json:"processed_character_count,omitempty"`
-	IsInvocationAttempted   *bool                   `json:"is_invocation_attempted,omitempty"`
-	IsInvocationAccepted    *bool                   `json:"is_invocation_accepted,omitempty"`
-	IsIntroSkipped          *bool                   `json:"is_intro_skipped,omitempty"`
-	IsCinematicSkipped      *bool                   `json:"is_cinematic_skipped,omitempty"`
+	CinematicSnapshot       *controlCinematicSnapshot `json:"cinematic_snapshot,omitempty"`
+	EditorHierarchy         *controlEditorArtifact    `json:"editor_hierarchy,omitempty"`
+	ScreenState             *controlScreenState       `json:"screen_state,omitempty"`
+	GameplayState           *controlGameplayState     `json:"gameplay_state,omitempty"`
+	Projection              *controlProjection        `json:"projection,omitempty"`
+	GameplayClick           *controlGameplayClick     `json:"gameplay_click,omitempty"`
+	Status                  string                    `json:"status"`
+	IsProcessed             bool                      `json:"is_processed"`
+	IsGameplayComplete      bool                      `json:"is_gameplay_complete"`
+	ThreadID                uint32                    `json:"thread_id"`
+	CompletedTickMS         uint64                    `json:"completed_tick_ms"`
+	Window                  *controlWindow            `json:"window,omitempty"`
+	MapState                *controlMapState          `json:"map_state,omitempty"`
+	ArenaLobby              *controlArenaLobbyState   `json:"arena_lobby,omitempty"`
+	DeploymentState         *controlDeploymentState   `json:"deployment_state,omitempty"`
+	BeamOutState            *controlBeamOutState      `json:"beam_out_state,omitempty"`
+	HeroSelection           *controlHeroSelection     `json:"hero_selection,omitempty"`
+	ActiveCast              *controlActiveCast        `json:"active_cast,omitempty"`
+	ProcessedCharacterCount *uint32                   `json:"processed_character_count,omitempty"`
+	IsInvocationAttempted   *bool                     `json:"is_invocation_attempted,omitempty"`
+	IsInvocationAccepted    *bool                     `json:"is_invocation_accepted,omitempty"`
+	IsIntroSkipped          *bool                     `json:"is_intro_skipped,omitempty"`
+	IsCinematicSkipped      *bool                     `json:"is_cinematic_skipped,omitempty"`
 }
 
 type controlCommandFailure struct {

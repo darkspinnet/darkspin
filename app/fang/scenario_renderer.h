@@ -10,6 +10,7 @@
 // Successful observations do not cover later caps, display or depth checks.
 int install_scenario_renderer_observation(void* executable);
 void observe_scenario_draw_device(void* device);
+int is_scenario_movie_observed(void);
 #endif
 
 #endif

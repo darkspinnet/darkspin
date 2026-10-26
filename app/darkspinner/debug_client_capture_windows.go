@@ -54,7 +54,8 @@ func captureDebugClientWindow(ctx context.Context, owner *scenarioClient, req sc
 }
 
 func (e *debugClientManager) Screenshot(ctx context.Context, clientID, label string) (debugScreenshot, error) {
-	result := debugScreenshot{ClientID: clientID, Label: label, Source: scenarioWindowBackend}
+	result := debugScreenshot{ClientID: clientID, Label: label, Source: scenarioWindowBackend,
+		Pixels: debugScreenshotPixels{Region: "central-half", Reason: "capture pixels unavailable"}}
 	err := scenarioEntryContext(ctx)
 	if err != nil {
 		return result, fmt.Errorf("captureContext: %w", err)
@@ -130,6 +131,7 @@ func (e *debugClientManager) Screenshot(ctx context.Context, clientID, label str
 				result.ImagePath, result.ImageSHA256, result.ImageSize = artifact.Path, artifact.SHA256, size
 				digest := sha256.Sum256(capture.Pixels)
 				result.PixelsSHA256 = hex.EncodeToString(digest[:])
+				result.Pixels = sampleDebugScreenshotPixels(capture.Pixels, result.Width, result.Height)
 			}
 		}
 	}
@@ -171,6 +173,7 @@ type debugScreenshotEvidence struct {
 	InstanceID        string                 `json:"instance_id"`
 	Label             string                 `json:"label"`
 	PixelsSHA256      string                 `json:"pixels_sha256"`
+	Pixels            debugScreenshotPixels  `json:"pixels"`
 	IsImageComplete   bool                   `json:"is_image_complete"`
 	IsCaptureComplete bool                   `json:"is_capture_complete"`
 	CompletenessScope string                 `json:"completeness_scope"`
@@ -185,6 +188,6 @@ func debugScreenshotMetadata(result debugScreenshot, capture scenarioEntryWindow
 		ContentSize: capture.ContentSize, IsContentSizeAvailable: capture.IsContentSizeAvailable, Texture: capture.Texture, IsTextureAvailable: capture.IsTextureAvailable,
 		SystemRelativeTime: capture.SystemRelativeTime, IsSystemRelativeTimeAvailable: capture.IsSystemRelativeTimeAvailable, OccluderBefore: capture.OccluderBefore, OccluderAfter: capture.OccluderAfter,
 		IsFrameAvailable: result.IsAvailable, Reason: result.Reason, IsObservationOnly: true, PNGSHA256: result.ImageSHA256, PNGSize: result.ImageSize, Screen: "unknown", ModalState: "unknown"}
-	return debugScreenshotEvidence{Schema: 1, ClientID: result.ClientID, InstanceID: result.InstanceID, Label: result.Label, PixelsSHA256: result.PixelsSHA256, IsImageComplete: result.IsAvailable, IsCaptureComplete: capture.IsAvailable,
+	return debugScreenshotEvidence{Schema: 1, ClientID: result.ClientID, InstanceID: result.InstanceID, Label: result.Label, PixelsSHA256: result.PixelsSHA256, Pixels: result.Pixels, IsImageComplete: result.IsAvailable, IsCaptureComplete: capture.IsAvailable,
 		CompletenessScope: "fresh whole-owned-window image and metadata only; no client crop, UI state, gameplay readiness, alpha/HDR, or isolation claim", Capture: window}
 }

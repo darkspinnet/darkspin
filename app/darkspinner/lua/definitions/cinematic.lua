@@ -4,5 +4,22 @@
 ---cinematics are independent; changing one preserves the other. Operations
 ---return only an error, so call scenario.Check(client.Cinematic:SetSkipEnabled(true)).
 ---@class CinematicScope
+---@field Snapshot fun(self:CinematicScope):CinematicSnapshot|nil,ScenarioError|nil Observes build-103 native presentation on the owned window thread without changing it.
 ---@field SetSkipEnabled fun(self:CinematicScope,is_enabled:boolean):ScenarioError|nil Controls in-game cinematic skipping.
 ---@field SetIntroSkipEnabled fun(self:CinematicScope,is_enabled:boolean):ScenarioError|nil Controls introductory-movie skipping.
+
+---@class CinematicSnapshot
+---@field is_available boolean Whether native controller fields could be sampled.
+---@field mode integer Native presentation controller mode (4 is full-screen movie).
+---@field game_mode integer Native game mode, independent of presentation controller mode.
+---@field current_room integer Native ship room (1 arsenal, 2 navigation, 3 editor).
+---@field next_mode integer Requested presentation controller mode.
+---@field is_active boolean
+---@field is_skippable boolean
+---@field is_finished_pulse boolean Transient pulse; absence does not prove completion.
+---@field is_transitioning boolean
+---@field is_camera_present boolean
+---@field is_movie_present boolean Movie object presence alone does not establish playback.
+---@field is_movie_playing boolean Native playback query reports a decoder object; this alone proves neither frame progress nor drawing.
+---@field active_spline_token integer|nil Authored token of the readable active native camera object.
+---@field completed_tick_ms integer Owned window receipt completion tick for freshness checks.

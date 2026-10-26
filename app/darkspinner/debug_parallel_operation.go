@@ -52,7 +52,7 @@ func isIndependentDebugOperation(operation string) bool {
 		return true
 	case "scenario.sleep":
 		return true
-	case "profile.state", "profile.wait_login", "profile.wait_location", "client.state", "client.window", "client.screenshot", "client.click", "client.press", "client.ready", "client.wait_scene", "cinematic.configure", "client.mission_state", "client.wait_mission", "client.wait_deployment", "client.set_scene", "party.state":
+	case "profile.state", "profile.wait_login", "profile.wait_location", "client.state", "client.window", "client.screenshot", "client.click", "client.press", "client.ready", "client.wait_scene", "cinematic.configure", "cinematic.snapshot", "client.mission_state", "client.wait_mission", "client.wait_deployment", "client.set_scene", "party.state":
 		return true
 	default:
 		return false
@@ -312,6 +312,20 @@ func (e *debugSupervisor) executeIndependentDebugOperation(ctx context.Context, 
 			return result, fmt.Errorf("missionObserve: %w", err)
 		}
 		return result, nil
+	case "cinematic.snapshot":
+		if clientManager == nil {
+			return nil, errors.New("client manager is not initialized")
+		}
+		var req debugCinematicRequest
+		err := decodeDebugPayload(payload, &req)
+		if err != nil {
+			return nil, fmt.Errorf("cinematicDecode: %w", err)
+		}
+		result, err := clientManager.SnapshotCinematic(ctx, req.ClientID)
+		if err != nil {
+			return result, fmt.Errorf("cinematicSnapshot: %w", err)
+		}
+		return result, nil
 	case "cinematic.configure":
 		if clientManager == nil {
 			return nil, errors.New("client manager is not initialized")
@@ -381,6 +395,7 @@ func (e *debugSupervisor) executeIndependentDebugOperation(ctx context.Context, 
 		}
 		capture, captureErr := clientManager.Screenshot(ctx, req.ClientID, req.Label)
 		result := map[string]any{"client_id": capture.ClientID, "instance_id": capture.InstanceID, "pid": capture.ProcessID, "is_available": capture.IsAvailable, "is_complete": capture.IsComplete, "reason": capture.Reason,
+			"pixels": capture.Pixels, "pixels_sha256": capture.PixelsSHA256,
 			"image_path": capture.ImagePath, "image_sha256": capture.ImageSHA256, "metadata_path": capture.MetadataPath, "metadata_sha256": capture.MetadataSHA256, "width": capture.Width, "height": capture.Height, "started_at": capture.StartedAt, "finished_at": capture.FinishedAt, "source": capture.Source}
 		if captureErr != nil {
 			return result, fmt.Errorf("clientScreenshot: %w", captureErr)

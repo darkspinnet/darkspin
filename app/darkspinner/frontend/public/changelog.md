@@ -2,8 +2,11 @@
 
 ### 2026-10-25
 
+- Reduce navigation-footprint startup reads from the full asset catalog to noun names and extend the shared simulation-content load deadline from 10 to 60 seconds.
+- [#124](https://github.com/darkspinnet/darkspin/issues/124) Fix black story movies after Beam Out by selecting the authored gameplay-return camera and fade-in before playback, and remove the client movie-material override.
+- [#124](https://github.com/darkspinnet/darkspin/issues/124) Add a mission 1-2 completion cinematic scenario with native playback observations, screenshots and blank-screen diagnostics before ship voting.
+- [#124](https://github.com/darkspinnet/darkspin/issues/124) Match the cinematic scenario's completion check to developer victory and expose screenshot pixel metrics to Lua so sustained black movie frames are detected.
 - [#123](https://github.com/darkspinnet/darkspin/issues/123) Change replay missions from fixed destinations to shared maps unlocked by every player, with eligible randomized creature rosters, cross-pool duplicates, map-and-difficulty captains, and retained previews and resumes.
-
 - [#123](https://github.com/darkspinnet/darkspin/issues/123) Preserve campaign enemy preview slots in selected roster order, including repeated nouns, instead of sorting and deduplicating their portraits.
 - [#122](https://github.com/darkspinnet/darkspin/issues/122) Queue early ground-targeted and held basic attacks with their latest native response token instead of leaving them blocked behind unanswered input or older server-generated repeats.
 - [#122](https://github.com/darkspinnet/darkspin/issues/122) Keep stationary basic attack animation offsets from accumulating into permanent hero movement.

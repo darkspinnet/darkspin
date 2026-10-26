@@ -10,6 +10,8 @@
 
 typedef HRESULT (WINAPI* scenario_draw_fn)(IDirect3DDevice9*, D3DPRIMITIVETYPE,
     INT, UINT, UINT, UINT, UINT);
+typedef HRESULT (WINAPI* scenario_primitive_fn)(IDirect3DDevice9*, D3DPRIMITIVETYPE, UINT, UINT);
+typedef HRESULT (WINAPI* scenario_primitive_up_fn)(IDirect3DDevice9*, D3DPRIMITIVETYPE, UINT, const void*, UINT);
 
 typedef struct scenario_draw_record {
     UINT vertex_count, triangle_count, start_index;
@@ -23,6 +25,10 @@ typedef struct scenario_draw_record {
 } scenario_draw_record;
 
 static scenario_draw_fn original_draw;
+static scenario_primitive_fn original_primitive;
+static scenario_primitive_up_fn original_primitive_up;
+static unsigned int movie_draw_count;
+static DWORD movie_draw_at;
 static BYTE* draw_owner;
 static DWORD draw_started;
 static unsigned int draw_attempt_count;
@@ -111,7 +117,7 @@ done:
     target->lpVtbl->Release(target);
 }
 
-static void save_draw_texture(IDirect3DDevice9* device, unsigned int ordinal, DWORD stage) {
+static void save_draw_texture(IDirect3DDevice9* device, unsigned int ordinal, DWORD stage, const wchar_t* label) {
     IDirect3DBaseTexture9* texture = NULL;
     HMODULE module = GetModuleHandleW(L"d3dx9_27.dll");
     scenario_save_texture_fn save;
@@ -126,7 +132,7 @@ static void save_draw_texture(IDirect3DDevice9* device, unsigned int ordinal, DW
     if (!length || length >= sizeof(path) / sizeof(path[0])) return;
     slash = wcsrchr(path, L'\\');
     if (!slash || _snwprintf(slash + 1, sizeof(path) / sizeof(path[0]) - (slash + 1 - path),
-        L"editor-ground-%u-stage-%lu.png", ordinal, stage) < 0) return;
+        L"%ls-%u-stage-%lu.png", label, ordinal, stage) < 0) return;
     if (GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES) return;
     result = device->lpVtbl->GetTexture(device, stage, &texture);
     if (FAILED(result) || !texture) return;
@@ -301,8 +307,8 @@ static void record_editor_draw(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
     save_draw_shader(device, hint, draw_record_count, 1);
     if (hint == 2) {
         observe_ground_declaration(device);
-        save_draw_texture(device, draw_record_count, 0);
-        save_draw_texture(device, draw_record_count, 12);
+        save_draw_texture(device, draw_record_count, 0, L"editor-ground");
+        save_draw_texture(device, draw_record_count, 12, L"editor-ground");
     }
     trace_client_state("scenario_editor_draw_record", draw_record_count);
     trace_client_state("scenario_editor_draw_vertices", vertex_count);
@@ -335,11 +341,68 @@ static void record_editor_draw(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
         trace_client_state("scenario_editor_draw_render_state", record.render_states[index]);
 }
 
+static void record_movie_draw(IDirect3DDevice9* device, UINT primitive_count) {
+    scenario_draw_record record;
+    D3DVIEWPORT9 viewport;
+    RECT scissor;
+    DWORD enabled;
+    HRESULT result;
+    unsigned int index;
+    if (primitive_count > 4 || !is_scenario_movie_observed() || movie_draw_count >= 8 ||
+        (movie_draw_at && (DWORD)(GetTickCount() - movie_draw_at) < 750)) return;
+    memset(&record, 0, sizeof(record));
+    observe_draw_state(device, &record);
+    /* Ignore cursor/font atlas draws; retain large movie-like sampled textures. */
+    if (record.texture_width < 320 || record.texture_height < 180) return;
+    movie_draw_at = GetTickCount();
+    ++movie_draw_count;
+    trace_client_state("scenario_movie_gpu_record", movie_draw_count);
+    trace_client_state("scenario_movie_gpu_texture_width", record.texture_width);
+    trace_client_state("scenario_movie_gpu_texture_height", record.texture_height);
+    trace_client_state("scenario_movie_gpu_texture_mask", record.texture_mask);
+    trace_client_state("scenario_movie_gpu_pixel_program", record.pixel_program);
+    for (index = 0; index < 12; ++index)
+        trace_client_state("scenario_movie_gpu_render_state", record.render_states[index]);
+    result = device->lpVtbl->GetViewport(device, &viewport);
+    if (SUCCEEDED(result)) {
+        trace_client_state("scenario_movie_gpu_viewport_width", viewport.Width);
+        trace_client_state("scenario_movie_gpu_viewport_height", viewport.Height);
+    }
+    result = device->lpVtbl->GetRenderState(device, D3DRS_SCISSORTESTENABLE, &enabled);
+    if (SUCCEEDED(result)) trace_client_state("scenario_movie_gpu_scissor_enabled", enabled);
+    result = device->lpVtbl->GetScissorRect(device, &scissor);
+    if (SUCCEEDED(result)) {
+        trace_client_state("scenario_movie_gpu_scissor_width", scissor.right - scissor.left);
+        trace_client_state("scenario_movie_gpu_scissor_height", scissor.bottom - scissor.top);
+    }
+    for (index = 0; index < 3; ++index)
+        save_draw_texture(device, movie_draw_count, index, L"movie");
+    save_draw_shader(device, 124, movie_draw_count, 0);
+    save_draw_shader(device, 124, movie_draw_count, 1);
+}
+
+static HRESULT WINAPI observe_primitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
+    UINT start, UINT count) {
+    DWORD last_error = GetLastError();
+    record_movie_draw(device, count);
+    SetLastError(last_error);
+    return original_primitive(device, type, start, count);
+}
+
+static HRESULT WINAPI observe_primitive_up(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
+    UINT count, const void* vertices, UINT stride) {
+    DWORD last_error = GetLastError();
+    record_movie_draw(device, count);
+    SetLastError(last_error);
+    return original_primitive_up(device, type, count, vertices, stride);
+}
+
 static HRESULT WINAPI observe_draw(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
     INT base_vertex, UINT minimum_vertex, UINT vertex_count, UINT start_index, UINT primitive_count) {
     DWORD last_error = GetLastError();
     unsigned int previous_sequence = draw_record_sequence;
     HRESULT result;
+    record_movie_draw(device, primitive_count);
     record_editor_draw(device, type, vertex_count, start_index, primitive_count);
     SetLastError(last_error);
     result = original_draw(device, type, base_vertex, minimum_vertex, vertex_count, start_index, primitive_count);
@@ -364,6 +427,12 @@ void observe_scenario_draw_device(void* pointer) {
         return;
     }
     original_draw = draw;
+    original_primitive = device->lpVtbl->DrawPrimitive;
+    original_primitive_up = device->lpVtbl->DrawPrimitiveUP;
+    trace_client_state("scenario_movie_primitive_hook", patch_pointer(
+        (void**)&device->lpVtbl->DrawPrimitive, (void*)original_primitive, (void*)observe_primitive));
+    trace_client_state("scenario_movie_primitive_up_hook", patch_pointer(
+        (void**)&device->lpVtbl->DrawPrimitiveUP, (void*)original_primitive_up, (void*)observe_primitive_up));
     trace_client_state("scenario_editor_draw_hook", patch_pointer(
         (void**)&device->lpVtbl->DrawIndexedPrimitive, (void*)draw, (void*)observe_draw));
 }

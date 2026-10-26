@@ -1059,7 +1059,9 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 	if store == nil {
 		return zonecontent.Programs{}, errors.New("nil content store")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// This budget covers the complete simulation catalog, not one query.
+	// Cold database reads must not compete for a ten-second request deadline.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	isAvailable, err := store.IsLuaCatalogAvailable(ctx)
 	if err != nil {

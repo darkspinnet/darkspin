@@ -179,6 +179,8 @@ func debugLuaScopeIndex(state *lua.LState) int {
 	}
 	if scope.kind == "cinematic" {
 		switch name {
+		case "Snapshot":
+			state.Push(state.NewFunction(debugLuaCinematicSnapshot))
 		case "SetSkipEnabled":
 			state.Push(state.NewFunction(debugLuaCinematicSetSkip))
 		case "SetIntroSkipEnabled":
@@ -298,6 +300,14 @@ func debugLuaCinematicSetSkip(state *lua.LState) int {
 	return scope.client.invoke(state, "cinematic.configure", map[string]any{
 		"client_id": scope.client.id, "is_cinematic_skipped": state.CheckBool(2),
 	}, false)
+}
+
+func debugLuaCinematicSnapshot(state *lua.LState) int {
+	scope := debugLuaScopeSelf(state)
+	if scope == nil {
+		return 0
+	}
+	return scope.client.invoke(state, "cinematic.snapshot", map[string]any{"client_id": scope.client.id}, true)
 }
 
 func debugLuaCinematicSetIntroSkip(state *lua.LState) int {

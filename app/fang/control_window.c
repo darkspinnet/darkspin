@@ -19,6 +19,7 @@ static fang_control_deployment_state control_deployment_state;
 static fang_control_arena_state control_arena_state;
 static fang_control_beam_state control_beam_state;
 static fang_control_screen_state control_screen_state;
+static fang_control_cinematic_snapshot control_cinematic_snapshot;
 static fang_control_editor_tree control_editor_tree;
 static int is_editor_canceled;
 static uint64_t control_screen_owner_generation;
@@ -131,6 +132,7 @@ static int submit_control_window_with_owner(uint32_t request_id, int32_t x, int3
         memset(&control_arena_state, 0, sizeof(control_arena_state));
         memset(&control_beam_state, 0, sizeof(control_beam_state));
         memset(&control_screen_state, 0, sizeof(control_screen_state));
+        memset(&control_cinematic_snapshot, 0, sizeof(control_cinematic_snapshot));
         control_receipt.request_id = request_id;
         is_posted = PostMessageA(control_window, control_message, request_id, 0) != 0;
         if (!is_posted) {
@@ -158,6 +160,20 @@ int fang_control_window_right_click(uint32_t request_id, int32_t x, int32_t y, u
 
 int fang_control_window_ready(uint32_t request_id, uint32_t timeout_ms) {
     return submit_control_window(request_id, 0, 0, timeout_ms, 1, NULL, 0);
+}
+
+int fang_control_window_cinematic(uint32_t request_id, uint32_t timeout_ms) {
+    return submit_control_window(request_id, 0, 0, timeout_ms, 23, NULL, 0);
+}
+
+int fang_control_window_cinematic_result(uint32_t request_id, fang_control_cinematic_snapshot* snapshot) {
+    int is_found;
+    if (!snapshot) return 0;
+    AcquireSRWLockShared(&window_lock);
+    is_found = request_id && request_id == control_request && control_kind == 23 && control_receipt.status != 0;
+    if (is_found) *snapshot = control_cinematic_snapshot;
+    ReleaseSRWLockShared(&window_lock);
+    return is_found;
 }
 
 int fang_control_window_screen(uint32_t request_id, uint32_t screen, int is_action, uint64_t expected_owner_generation, uint32_t timeout_ms) {
@@ -359,7 +375,7 @@ int fang_control_window_message(HWND window, UINT message, WPARAM wparam, LPARAM
     else if (window != control_window || !IsWindow(window) ||
         GetWindowThreadProcessId(window, &process_id) != GetCurrentThreadId() || process_id != GetCurrentProcessId() ||
         (((control_kind >= 2 && control_kind <= 4) || control_kind == 6 || control_kind >= 8) &&
-            (!IsWindowVisible(window) || !IsWindowEnabled(window) || IsIconic(window))) ||
+            control_kind != 23 && (!IsWindowVisible(window) || !IsWindowEnabled(window) || IsIconic(window))) ||
         ((control_kind == 0 || is_right_click) && (!original || !control_click_window(window, control_x, control_y) ||
             boundary.scene_load_return_count != control_scene ||
             (GetAsyncKeyState(is_right_click ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0))) control_receipt.status = 2;
@@ -378,6 +394,20 @@ int fang_control_window_message(HWND window, UINT message, WPARAM wparam, LPARAM
     {
         WNDPROC installed = (WNDPROC)GetWindowLongPtrW(window, GWLP_WNDPROC);
         if (installed) original = installed;
+    }
+    if (control_kind == 23) {
+        uint32_t status;
+        fang_control_cinematic_snapshot snapshot;
+        is_executing = 1;
+        ReleaseSRWLockExclusive(&window_lock);
+        status = fang_control_scene_snapshot(&snapshot);
+        AcquireSRWLockExclusive(&window_lock);
+        control_cinematic_snapshot = snapshot;
+        control_receipt.status = status;
+        control_receipt.completed_tick_ms = GetTickCount64();
+        is_executing = 0;
+        ReleaseSRWLockExclusive(&window_lock);
+        return 1;
     }
     if (control_kind == 22) {
         uint32_t status;

@@ -14,6 +14,14 @@ func (e *debugClientManager) InspectWindow(ctx context.Context, clientID string)
 	return e.requestWindow(ctx, clientID, "window.inspect", controlCommand{})
 }
 
+func (e *debugClientManager) inspectCinematic(ctx context.Context, clientID string) (any, error) {
+	result, err := e.requestWindow(ctx, clientID, "cinematic.snapshot", controlCommand{})
+	if err != nil {
+		return result, fmt.Errorf("cinematicWindow: %w", err)
+	}
+	return result, nil
+}
+
 func (e *debugClientManager) InspectMap(ctx context.Context, clientID string) (any, error) {
 	result, err := e.requestWindow(ctx, clientID, "mission.map_state", controlCommand{})
 	if err != nil {
@@ -103,6 +111,9 @@ func (e *debugClientManager) requestWindow(ctx context.Context, clientID, operat
 	}
 	if receipt.IsIntroSkipped != nil {
 		result["is_intro_skipped"] = *receipt.IsIntroSkipped
+	}
+	if receipt.CinematicSnapshot != nil {
+		result["cinematic_snapshot"] = receipt.CinematicSnapshot
 	}
 	if receipt.ProcessedCharacterCount != nil {
 		result["processed_character_count"] = *receipt.ProcessedCharacterCount
