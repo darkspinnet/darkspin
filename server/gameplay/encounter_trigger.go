@@ -21,6 +21,15 @@ func (e campaignEncounterRuntime) acceptTriggerPublicationsLocked(
 	packet raknet.Packet, peerSession *gameplayPeerSession, result campaignEncounterAdvance,
 ) (campaignEncounterAdvance, error) {
 	for _, publication := range result.publications {
+		if zonehorde.IsTrigger(publication) && !peerSession.zone.IsHordeTriggerEnabled(publication) {
+			// Consume the trigger without spawning actors or closing barriers.
+			// Disabling only the agent left an orphan opening wave on early runs.
+			err := peerSession.zone.AcceptPublication(publication)
+			if err != nil {
+				return result, fmt.Errorf("hordeDisabledAccept: %w", err)
+			}
+			continue
+		}
 		if publication.IsDwellComplete && zoneboss.IsNamedCallback(publication.CallbackName) {
 			if publication.CallbackName == zoneboss.GenericCallback {
 				// The named-boss operation owns its transactional admission.

@@ -450,7 +450,17 @@ func (r gameplayActionRuntime) handleCommand(
 		current := r.registry.sessions[packet.Address.String()]
 		if current.generation == peerSession.generation &&
 			current.transportGeneration == peerSession.transportGeneration {
-			current.pendingBasic = nil
+			if current.pendingBasic != nil &&
+				current.pendingBasic.command.Common.Unknown[0] != command.Common.Unknown[0] {
+				// A different prediction still owns its own native response token.
+				// Clearing the pointer alone strands it after the accepted action.
+				cancelErr := current.cancelPendingBasic()
+				if cancelErr != nil {
+					log.Printf("RakNet accepted action pending-basic cleanup failed: %v", cancelErr)
+				}
+			} else {
+				current.pendingBasic = nil
+			}
 			r.registry.sessions[packet.Address.String()] = current
 		}
 		r.registry.mutex.Unlock()

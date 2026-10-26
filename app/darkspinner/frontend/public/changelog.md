@@ -2,6 +2,8 @@
 
 ### 2026-10-26
 
+- #130 Gate optional Mutation Agent opening waves and barriers on completed campaign progression, preserving scripted initial-mission and boss-arena encounters.
+- #130 Reply to queued basic-attack predictions replaced by an accepted ability instead of silently discarding their response token.
 - Preserve saved hero appearances and rating-based passive bonuses when selecting PvP squads, and refresh complete equipped hero stats on every round load.
 - Stop known armor parts from supplying weapon damage when a hero has no equipped weapon in campaign or PvP.
 - [#128](https://github.com/darkspinnet/darkspin/issues/128) Enforce cooldown and release timing for fallback PvP basic attacks and apply projected passive stats, including Delaying Sphere's attack-speed penalty.

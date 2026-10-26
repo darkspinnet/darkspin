@@ -2,18 +2,8 @@
 
 ### 2026-10-26
 
-- Preserve saved hero appearances and rating-based passive bonuses when selecting PvP squads, and refresh complete equipped hero stats on every round load.
-- Stop known armor parts from supplying weapon damage when a hero has no equipped weapon in campaign or PvP.
-- #128 Enforce cooldown and release timing for fallback PvP basic attacks and apply projected passive stats, including Delaying Sphere's attack-speed penalty.
-- #128 Keep two-player parties together in 2v2 matchmaking when solo playgroups queue first.
-- #128 Preserve queued PvP loading updates and Force Pulse cleanup when handshakes or shared attacks save their session state.
-- #128 Preserve round scores when PvP countdown or teleport preparation fails, clear abandoned countdown gates, and prevent completed matches from restarting combat.
-- #128 Record the match's actual ranked flag in saved PvP results instead of always marking them unranked.
-
-- #128 Add a four-second PvP preparation pause before the native countdown on every round.
-- #128 Restore the authored teleport-out and teleport-in phases between PvP preparation and combat, holding movement and hero switching until arrival completes.
-- #128 Restore Delaying Sphere in PvP through the normal persistent-field runtime, slowing opposing heroes and supported projectiles with cleanup on exit, expiry and round transitions.
-- #128 Restore Force Pulse knockback against PvP heroes with its authored caster-specific immunity marker, landing reaction and death/round cleanup.
+- #130 Gate optional Mutation Agent opening waves and barriers on completed campaign progression, preserving scripted initial-mission and boss-arena encounters.
+- #130 Reply to queued basic-attack predictions replaced by an accepted ability instead of silently discarding their response token.
 - #129 Defer portal contact polling during hero deployment so a portal cannot relocate the incoming hero before a delayed switch arrival places it back at the old position.
 - #129 Restore the authored immobilization during enemy sleep effects and avoid repeated position corrections for held movement at the sleeping hero's stopped pose.
 - #129 Stop held movement polls from replaying position corrections during tunnel traversal; the authored approach and exit walks remain unresolved.
