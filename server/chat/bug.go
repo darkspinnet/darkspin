@@ -44,6 +44,9 @@ type BugContext struct {
 	Hero                BugHero        `json:"active_hero"`
 	Location            BugLocation    `json:"location"`
 	SquadHeroes         []BugSquadHero `json:"squad_heroes,omitempty"`
+	NearbyNPCs          []BugNPC       `json:"nearby_npcs,omitempty"`
+	AttackTargetNPC     *BugNPC        `json:"attack_target_npc,omitempty"`
+	NPCCount            int            `json:"npc_count"`
 
 	IsNPCSpawnCommandUsed bool              `json:"is_npc_spawn_command_used"`
 	IsGodModeEnabled      bool              `json:"is_god_mode_enabled"`
@@ -100,6 +103,7 @@ type BugSquadHero struct {
 	PowerPoint                 float32 `json:"power_point,omitempty"`
 	MaximumPowerPoint          float32 `json:"maximum_power_point,omitempty"`
 	IsAvailable                bool    `json:"is_available"`
+	IsCharacterFound           bool    `json:"is_character_found"`
 	IsDefeated                 bool    `json:"is_defeated,omitempty"`
 	MinimumWeaponDamage        float32 `json:"minimum_weapon_damage,omitempty"`
 	MaximumWeaponDamage        float32 `json:"maximum_weapon_damage,omitempty"`
@@ -115,6 +119,20 @@ type BugSquadHero struct {
 	CriticalDamageIncrease     float32 `json:"critical_damage_increase,omitempty"`
 	AttackSpeed                float32 `json:"attack_speed,omitempty"`
 	CooldownReduction          float32 `json:"cooldown_reduction,omitempty"`
+}
+
+// BugNPC identifies nearby retained actors even when sync capture is disabled.
+// Distance orders candidates; it does not identify the subject of the report.
+type BugNPC struct {
+	ObjectID       uint32     `json:"object_id"`
+	NounName       string     `json:"noun_name"`
+	LocusID        uint32     `json:"locus_id"`
+	Position       [3]float32 `json:"position"`
+	Distance       float32    `json:"distance"`
+	HitPoint       float32    `json:"hit_point"`
+	TargetObjectID uint32     `json:"target_object_id"`
+	IsPublished    bool       `json:"is_published"`
+	IsDefeated     bool       `json:"is_defeated"`
 }
 
 // BugContextProvider freezes current gameplay state independently of the

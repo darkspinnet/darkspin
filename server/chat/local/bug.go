@@ -139,7 +139,7 @@ func writeBugArchive(
 	if err == nil {
 		err = addBugMetadata(archive, metadata)
 	}
-	if err == nil && snapshotProvider != nil {
+	if err == nil {
 		err = addBugSnapshot(ctx, archive, snapshotProvider, req)
 	}
 	if err == nil {
@@ -236,9 +236,25 @@ func addBugMetadata(archive *zip.Writer, metadata bugMetadata) error {
 func addRecentBugLogs(
 	ctx context.Context, archive *zip.Writer, logPath string, createdAt time.Time,
 ) error {
+	capture := bugLogCapture{
+		RequestedWindowStartedAt: createdAt.Add(-bugLogWindow), RequestedWindowEndedAt: createdAt,
+		MaximumSourceBytes: maximumBugLogSize,
+		Sources:            make([]bugLogSource, 0),
+	}
 	err := filepath.WalkDir(logPath, func(path string, entry os.DirEntry, walkErr error) error {
+		contextErr := ctx.Err()
+		if contextErr != nil {
+			return fmt.Errorf("contextCheck: %w", contextErr)
+		}
 		if walkErr != nil {
-			return fmt.Errorf("logWalk: %w", walkErr)
+			relativePath, relativeErr := filepath.Rel(logPath, path)
+			if relativeErr != nil {
+				return fmt.Errorf("failureRelative: %w", relativeErr)
+			}
+			capture.Sources = append(capture.Sources, bugLogSource{
+				Name: filepath.ToSlash(relativePath), Failure: walkErr.Error(),
+			})
+			return nil
 		}
 		if entry.IsDir() && strings.EqualFold(entry.Name(), "snapshots") {
 			return filepath.SkipDir
@@ -253,20 +269,19 @@ func addRecentBugLogs(
 		if extension != ".log" && extension != ".jsonl" {
 			return nil
 		}
-		contextErr := ctx.Err()
-		if contextErr != nil {
-			return fmt.Errorf("contextCheck: %w", contextErr)
-		}
-		contents, readErr := recentBugLog(path, createdAt)
-		if readErr != nil {
-			return fmt.Errorf("logRead[%s]: %w", entry.Name(), readErr)
-		}
-		if len(contents) == 0 {
-			return nil
-		}
 		relativePath, relativeErr := filepath.Rel(logPath, path)
 		if relativeErr != nil {
 			return fmt.Errorf("logRelative: %w", relativeErr)
+		}
+		contents, source, readErr := captureRecentBugLog(path, createdAt)
+		source.Name = filepath.ToSlash(relativePath)
+		if readErr != nil {
+			source.Failure = readErr.Error()
+			source.IncludedBytes = 0
+		}
+		capture.Sources = append(capture.Sources, source)
+		if readErr != nil || len(contents) == 0 {
+			return nil
 		}
 		w, createErr := archive.Create(filepath.ToSlash(filepath.Join("logs", relativePath)))
 		if createErr != nil {
@@ -278,44 +293,14 @@ func addRecentBugLogs(
 		}
 		return nil
 	})
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
 	if err != nil {
 		return fmt.Errorf("logsWalk: %w", err)
 	}
+	err = writeBugLogCapture(archive, capture)
+	if err != nil {
+		return fmt.Errorf("logsCapture: %w", err)
+	}
 	return nil
-}
-
-func recentBugLog(path string, createdAt time.Time) ([]byte, error) {
-	r, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("sourceOpen: %w", err)
-	}
-	defer r.Close()
-	fi, err := r.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("sourceStat: %w", err)
-	}
-	if fi.ModTime().Before(createdAt.Add(-bugLogWindow)) {
-		return nil, nil
-	}
-	offset := fi.Size() - maximumBugLogSize
-	if offset < 0 {
-		offset = 0
-	}
-	contents, err := io.ReadAll(io.NewSectionReader(r, offset, fi.Size()-offset))
-	if err != nil {
-		return nil, fmt.Errorf("sourceRead: %w", err)
-	}
-	if offset > 0 {
-		separator := bytes.IndexByte(contents, '\n')
-		if separator < 0 {
-			return nil, nil
-		}
-		contents = contents[separator+1:]
-	}
-	return recentBugLines(contents, createdAt), nil
 }
 
 func recentBugLines(contents []byte, createdAt time.Time) []byte {

@@ -60,6 +60,7 @@ type ObjectState struct {
 	UserID                       uint64     `json:"user_id,omitempty"`
 	PeerGeneration               uint64     `json:"peer_generation,omitempty"`
 	NounName                     string     `json:"noun_name,omitempty"`
+	NounID                       uint32     `json:"noun_id,omitempty"`
 	AbilityName                  string     `json:"ability_name,omitempty"`
 	Position                     [3]float32 `json:"position"`
 	Rotation                     [3]float32 `json:"rotation,omitempty"`
@@ -387,6 +388,9 @@ type SessionState struct {
 	Interactables         []InteractableState        `json:"interactables,omitempty"`
 	Objects               []ObjectState              `json:"objects"`
 	Modifiers             []ModifierState            `json:"modifiers,omitempty"`
+	HeroSpeed             *HeroSpeedState            `json:"hero_speed,omitempty"`
+	EnemyDamageTicks      []DamageTickState          `json:"enemy_damage_ticks,omitempty"`
+	CryosGeysers          []GeyserState              `json:"cryos_geysers,omitempty"`
 }
 
 // PendingPacketState preserves one gameplay packet that exists in server

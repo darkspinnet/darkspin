@@ -2,6 +2,7 @@ package gameplay
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -41,6 +42,7 @@ func bugContextForSession(
 	result chat.BugContext, peerSession gameplayPeerSession,
 ) (chat.BugContext, error) {
 	binding := peerSession.binding
+	var contextErrors []error
 	result.IsGameplayActive = true
 	result.GameID = binding.GameID
 	result.RunSeed = binding.RunSeed
@@ -75,7 +77,7 @@ func bugContextForSession(
 		)
 		character, isCharacterFound := peerSession.squad.Character(uint32(index))
 		if !isCharacterFound {
-			return result, fmt.Errorf("bugSquadCharacter[%d]: unavailable", index)
+			contextErrors = append(contextErrors, fmt.Errorf("bugSquadCharacter[%d]: unavailable", index))
 		}
 		result.SquadHeroes = append(result.SquadHeroes, chat.BugSquadHero{
 			Index: uint32(index), Name: creature.Name,
@@ -94,6 +96,7 @@ func bugContextForSession(
 			PowerPoint:                 character.ManaPoints,
 			MaximumPowerPoint:          maximumPowerPoint,
 			IsAvailable:                character.IsAvailable,
+			IsCharacterFound:           isCharacterFound,
 			IsDefeated:                 character.IsAvailable && character.HitPoints <= 0,
 			MinimumWeaponDamage:        creature.MinimumWeaponDamage,
 			MaximumWeaponDamage:        creature.MaximumWeaponDamage,
@@ -111,11 +114,12 @@ func bugContextForSession(
 			CooldownReduction:          creature.TimingProfile.CooldownReduction,
 		})
 	}
-	if peerSession.deployedCreatureIndex < uint32(len(binding.Creatures)) {
+	if peerSession.deployedObjectID != 0 &&
+		peerSession.deployedCreatureIndex < uint32(len(binding.Creatures)) {
 		creature := binding.Creatures[peerSession.deployedCreatureIndex]
 		maximumHitPoint, maximumPowerPoint, err := peerSession.deployedResourceMaximum()
 		if err != nil {
-			return result, fmt.Errorf("bugHeroResources: %w", err)
+			contextErrors = append(contextErrors, fmt.Errorf("bugHeroResources: %w", err))
 		}
 		result.Hero = chat.BugHero{
 			Name: creature.Name, CreatureID: creature.ID, NounID: creature.Noun,
@@ -129,6 +133,7 @@ func bugContextForSession(
 		}
 	}
 	if peerSession.zone != nil {
+		appendBugNPCs(&result, peerSession)
 		zoneSnapshot := peerSession.zone.Snapshot()
 		result.ZoneGeneration = zoneSnapshot.Generation
 		result.ZoneState = uint32(zoneSnapshot.State)
@@ -147,6 +152,10 @@ func bugContextForSession(
 		if isFound {
 			result.AbilityCount = abilityCount
 		}
+	}
+	contextErr := errors.Join(contextErrors...)
+	if contextErr != nil {
+		return result, fmt.Errorf("bugPartial: %w", contextErr)
 	}
 	return result, nil
 }

@@ -194,6 +194,9 @@ func snapshotSession(
 	state.Squad = snapshotSquad(peerSession, capturedAt)
 	state.CrystalInventory = snapshotCrystalInventory(peerSession.crystalInventory)
 	state.AbilityRuntimes = snapshotAbilityRuntimes(peerSession, capturedAt)
+	state.HeroSpeed = snapshotHeroSpeed(peerSession)
+	state.EnemyDamageTicks = snapshotEnemyDamageTicks(peerSession)
+	state.CryosGeysers = snapshotCryosGeysers(peerSession, capturedAt)
 	state.EncounterStages = snapshotEncounterStages(peerSession)
 	state.Hordes = snapshotHordes(peerSession)
 	state.Boss = snapshotBoss(peerSession)
@@ -221,6 +224,9 @@ func snapshotSession(
 			IsTargetable: hero.HitPoint > 0,
 		}
 		if hero.ObjectID == peerSession.deployedObjectID {
+			if peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures)) {
+				object.NounID = peerSession.binding.Creatures[peerSession.deployedCreatureIndex].Noun
+			}
 			object.GoalPosition = vector3(peerSession.playerMovementGoal)
 			object.Facing = vector3(peerSession.attackPose.facing)
 			object.TargetPosition = vector3(peerSession.attackPose.targetPosition)
@@ -259,6 +265,7 @@ func snapshotSession(
 		companion := motion.Actor
 		object := snapshot.ObjectState{
 			Kind: "companion", ObjectID: companion.ObjectID,
+			NounID:        companion.Noun,
 			OwnerObjectID: companion.OwnerObjectID, UserID: companion.UserID,
 			PeerGeneration: companion.PeerGeneration,
 			Position:       vec3(companion.Position), HitPoint: companion.HitPoint,
@@ -698,6 +705,7 @@ func snapshotAbilityRuntimes(
 		}
 	}
 	states = appendActiveAbilityRuntime(states, "basic_attack", peerSession.basicAttack != nil)
+	states = appendActiveAbilityRuntime(states, "sage_passive", peerSession.sagePassive != nil)
 	states = appendActiveAbilityRuntime(states, "channel_drain", peerSession.heroDrain != nil)
 	states = appendActiveAbilityRuntime(states, "timed_area", peerSession.heroTimedArea != nil)
 	states = appendActiveAbilityRuntime(states, "channel_area", peerSession.heroChannelArea != nil)
