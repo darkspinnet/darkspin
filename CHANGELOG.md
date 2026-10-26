@@ -2,6 +2,9 @@
 
 ### 2026-10-26
 
+- #133 Preserve equipped movement and attack-speed bonuses when temporary slows apply or expire, and include equipment movement bonuses at mission entry.
+- #133 Restore Celestial Comet's build-103 knockback distance, speed and recovery through the existing navigation-clipped forced-movement path.
+- #133 Enable Necrotic Leech and its ranked variants to use their authored combat strafing between attacks.
 - #131 Correct hero profiles from duplicated core-stat totals to build 103's base-plus-bonus format without increasing combat health.
 - #131 Show equipped secondary stats in hero profiles using native whole-percent units and the complete supported stat-token set.
 - #131 Prevent consecutive replay maps when another unlocked destination is available, preserving retained offers and first-run progression.

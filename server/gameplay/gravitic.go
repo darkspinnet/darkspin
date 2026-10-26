@@ -221,10 +221,9 @@ func (e gameplayPendingRuntime) updateGraviticPresentationLocked(
 }
 
 func marshalGraviticSpeed(member gameplayPeerSession) ([]byte, error) {
-	packet, err := raknet.MarshalApplication(raknet.AttributeDataUpdateMessage{
-		ObjectID: member.deployedObjectID,
-		Value:    map[uint8]float32{48: member.enemyMovementSpeedBuff()},
-	})
+	packet, err := member.marshalHeroSlowAttributes(
+		member.deployedObjectID, member.enemyAttackSpeed(), member.enemyMovementSpeedBuff(),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("graviticAttribute: %w", err)
 	}

@@ -709,6 +709,9 @@ func gameplayCreature(
 		}
 	}
 	selected.PetDamage += partAttribute[63]
+	// Equipment refresh applies movement deltas to this same baseline. Include
+	// the initial loadout too, so ordinary movement and slow recovery agree.
+	selected.PassiveMovementIncrease += partAttribute[48]
 	selected.PetHealthIncrease += partAttribute[64]
 	selected.RangeIncrease += partAttribute[67]
 	selected.AreaDurationIncrease += partAttribute[95]

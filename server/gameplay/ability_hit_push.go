@@ -94,7 +94,17 @@ func (e campaignDamageRuntime) applyAcceptedHitPushes(
 	packet raknet.Packet, sessionKey string, generation uint64, sourceObjectID uint32,
 	timestamp uint64, plan zoneability.AreaPlan, results []zoneability.AreaResult,
 ) ([][]byte, error) {
-	if plan.Definition.Name != binarySentinelSupportName {
+	pushDistance := binarySentinelPushDistance
+	pushSpeed := binarySentinelPushSpeed
+	pushOutro := binarySentinelPushOutro
+	isComet := plan.Definition.Name == "SpacetimeRandom3"
+	if isComet {
+		// Build 103 CometKnockback inherits the shared jump template and
+		// overrides distance, speed and recovery, without an attached effect.
+		pushDistance = 4
+		pushSpeed = 12
+		pushOutro = 500 * time.Millisecond
+	} else if plan.Definition.Name != binarySentinelSupportName {
 		return nil, nil
 	}
 	if packet.ScheduleFunc == nil {
@@ -136,7 +146,7 @@ func (e campaignDamageRuntime) applyAcceptedHitPushes(
 			distance = 1
 		}
 		desired := target.Plan.Position.Add(
-			delta.Scale(binarySentinelPushDistance / distance),
+			delta.Scale(pushDistance / distance),
 		)
 		destination, isDestinationFound, err := navigationClippedMovementDestination(
 			peerSession.zone.Navigation(), target.Plan.Position, desired,
@@ -164,8 +174,8 @@ func (e campaignDamageRuntime) applyAcceptedHitPushes(
 			SourcePosition: hero.Position,
 			TargetPosition: target.Plan.Position,
 			Profile: zonenpc.ActionProfile{
-				ForcedMovementSpeed:        binarySentinelPushSpeed,
-				ForcedMovementDistance:     binarySentinelPushDistance,
+				ForcedMovementSpeed:        pushSpeed,
+				ForcedMovementDistance:     pushDistance,
 				ForcedMovementReactionName: "react_knockback",
 			},
 		}
@@ -186,9 +196,9 @@ func (e campaignDamageRuntime) applyAcceptedHitPushes(
 		packets = append(packets, movementPackets...)
 		movementDistance := destination.Sub(target.Plan.Position).Length()
 		movementDuration := time.Duration(
-			float64(movementDistance/binarySentinelPushSpeed) * float64(time.Second),
+			float64(movementDistance/pushSpeed) * float64(time.Second),
 		)
-		resetDelay := movementDuration + binarySentinelPushOutro
+		resetDelay := movementDuration + pushOutro
 		// JumpInDirection owns locomotion until landing and the modifier's
 		// outro completes; do not let AI pursuit overwrite that client mover.
 		err = peerSession.zone.NPCs().ApplyStun(
@@ -196,6 +206,24 @@ func (e campaignDamageRuntime) applyAcceptedHitPushes(
 		)
 		if err != nil {
 			return packets, fmt.Errorf("heroPushMotionHold[%d]: %w", target.Plan.ObjectID, err)
+		}
+		if isComet {
+			latestTarget, isLatestTargetFound := peerSession.zone.NPCs().NPC(target.Plan.ObjectID)
+			if !isLatestTargetFound {
+				continue
+			}
+			reset := campaignAcceptedHitPushResetStep{
+				runtime: e, sessionKey: sessionKey, generation: generation,
+				objectID:         target.Plan.ObjectID,
+				timestamp:        timestamp + uint64(resetDelay/time.Millisecond),
+				actionGeneration: latestTarget.ActionGeneration,
+				positionRevision: latestTarget.PositionRevision,
+			}
+			err = packet.ScheduleFunc(resetDelay, reset.produce)
+			if err != nil {
+				return packets, fmt.Errorf("cometResetSchedule[%d]: %w", target.Plan.ObjectID, err)
+			}
+			continue
 		}
 		effects, err := e.registry.allocateChannelEffectsLocked(
 			peerSession.zone, e.effectPool, []uint32{target.Plan.ObjectID},

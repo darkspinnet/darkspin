@@ -6971,7 +6971,7 @@ func (e campaignSnipeSlowSchedule) hit() ([][]byte, error) {
 		movementSpeedBuff = latest.enemyMovementSpeedBuff()
 	}
 	e.runtime.registry.mutex.RUnlock()
-	attributePacket, err := marshalCampaignNPCSlowAttributes(
+	attributePacket, err := latest.marshalHeroSlowAttributes(
 		e.plan.TargetObjectID, attackSpeed, movementSpeedBuff,
 	)
 	if err != nil {
@@ -7061,7 +7061,7 @@ func (e campaignSnipeSlowSchedule) remove() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("enemySlowDelete: %w", err)
 	}
-	attributePacket, err := marshalCampaignNPCSlowAttributes(
+	attributePacket, err := current.marshalHeroSlowAttributes(
 		e.plan.TargetObjectID, attackSpeed, movementSpeedBuff,
 	)
 	if err != nil {

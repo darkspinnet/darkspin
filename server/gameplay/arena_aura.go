@@ -85,7 +85,7 @@ func (e *heroAuraAreaRun) clearArenaSphereSlowLocked(objectID uint32) {
 		if motionErr != nil && e.runtime.logger != nil {
 			e.runtime.logger.Printf("Arena Delaying Sphere movement restoration failed object=%d: %v", objectID, motionErr)
 		}
-		packet, err := marshalCampaignNPCSlowAttributes(objectID, member.enemyAttackSpeed(), member.enemyMovementSpeedBuff())
+		packet, err := member.marshalHeroSlowAttributes(objectID, member.enemyAttackSpeed(), member.enemyMovementSpeedBuff())
 		if err != nil {
 			if e.runtime.logger != nil {
 				e.runtime.logger.Printf("Arena Delaying Sphere slow restoration failed object=%d: %v", objectID, err)
@@ -151,7 +151,7 @@ func (e heroAuraAreaSchedule) reconcileArenaSphereLocked(
 			member.arenaSphereSlows = make(map[uint32]uint32)
 		}
 		member.arenaSphereSlows[instanceID] = objectID
-		attributePacket, err := marshalCampaignNPCSlowAttributes(objectID, member.enemyAttackSpeed(), member.enemyMovementSpeedBuff())
+		attributePacket, err := member.marshalHeroSlowAttributes(objectID, member.enemyAttackSpeed(), member.enemyMovementSpeedBuff())
 		if err != nil {
 			delete(member.arenaSphereSlows, instanceID)
 			e.run.releaseAuraInstance(instanceID)

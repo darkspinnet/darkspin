@@ -98,7 +98,8 @@ func isCampaignNPCBoundedStrafeProfile(
 	}
 	switch profile.AbilityName {
 	case "NocturnaBasicRangedSilence", "NomadSpecialThree", "PoisonSpit",
-		"ZelemSpecialTwo_Push", "ZelemSpecialTwo_Pull", "NomadDrag_Meteor":
+		"ZelemSpecialTwo_Push", "ZelemSpecialTwo_Pull", "NomadDrag_Meteor",
+		"NocturnaSpecialLeech": // Build 103 CombatIdle = nBehavior_Strafe.
 		return true
 	default:
 		return false
