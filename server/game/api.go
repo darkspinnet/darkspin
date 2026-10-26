@@ -1966,39 +1966,6 @@ func profileStatsText(stats []sporenet.Stat, fallback string) string {
 	return strings.Join(fields, ";") + ";"
 }
 
-// Template-based gameplay stats contain the immutable secondary baseline;
-// equipment's fractional secondary attributes live in the part catalog.
-// Include those effective attributes in the profile instead of zero fallback.
-func profileStatsWithAttributes(
-	stats []sporenet.Stat, fallback string, attributes [partAttributeCount]float32,
-) string {
-	profileText := profileStatsText(stats, fallback)
-	secondaryAttributes := map[string]int{
-		"CRTD": 22, "PROS": 26, "COOL": 24, "AOEDMG": 37,
-		"AOERES": 27, "MOV": 48, "AOEDUR": 95, "LFSTL": 35,
-	}
-	fields := strings.Split(profileText, ";")
-	for index, field := range fields {
-		pieces := strings.SplitN(field, ",", 3)
-		if len(pieces) != 3 {
-			continue
-		}
-		attributeIndex, isFound := secondaryAttributes[pieces[0]]
-		if !isFound || attributes[attributeIndex] == 0 {
-			continue
-		}
-		baseMaximum, maximumError := strconv.ParseFloat(pieces[1], 32)
-		baseCurrent, currentError := strconv.ParseFloat(pieces[2], 32)
-		if maximumError != nil || currentError != nil {
-			continue
-		}
-		maximum := strconv.FormatFloat(baseMaximum+float64(attributes[attributeIndex]), 'f', -1, 32)
-		current := strconv.FormatFloat(baseCurrent+float64(attributes[attributeIndex]), 'f', -1, 32)
-		fields[index] = pieces[0] + "," + maximum + "," + current
-	}
-	return strings.Join(fields, ";")
-}
-
 func encodeAbilityStats(stats []sporenet.AbilityStat) string {
 	fields := make([]string, 0, len(stats))
 	for _, stat := range stats {

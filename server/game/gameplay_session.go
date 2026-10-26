@@ -816,7 +816,10 @@ func gameplayCreatureStats(
 		}
 		maximum := max(float32(0), float32(stats[index].Maximum)+partAttributes[attributeIndex])
 		stats[index].Maximum = uint32(maximum)
-		stats[index].Current = stats[index].Maximum
+		// The legacy Stat field names describe neither health nor resources:
+		// build 103 serializes this pair as base plus bonus. This total already
+		// includes equipment, so repeating it as the bonus doubles profiles.
+		stats[index].Current = 0
 	}
 	return stats
 }

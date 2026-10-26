@@ -52,6 +52,16 @@ func (e *Manager) SelectCampaignDestination(instance *Instance) error {
 func (e *Manager) campaignDestination(
 	difficulty uint32, runSeed uint64, completedStages []uint32,
 ) (CampaignDestination, error) {
+	destination, err := e.campaignDestinationAfter(difficulty, runSeed, completedStages, "")
+	if err != nil {
+		return CampaignDestination{}, fmt.Errorf("destinationInitial: %w", err)
+	}
+	return destination, nil
+}
+
+func (e *Manager) campaignDestinationAfter(
+	difficulty uint32, runSeed uint64, completedStages []uint32, previousLevel string,
+) (CampaignDestination, error) {
 	level, isFound := e.ChainLevelForSelection(difficulty)
 	if !isFound || len(completedStages) == 0 {
 		return CampaignDestination{}, errors.New("campaign destination selection unavailable")
@@ -70,6 +80,17 @@ func (e *Manager) campaignDestination(
 		return CampaignDestination{}, errors.New("campaign destination seed unavailable")
 	}
 	levels := e.unlockedCampaignLevels(completed)
+	// Replay policy avoids an immediate repeat without changing locked first
+	// runs, retained offers, or the only available destination.
+	if previousLevel != "" && len(levels) > 1 {
+		candidates := make([]string, 0, len(levels))
+		for _, candidate := range levels {
+			if !strings.EqualFold(candidate, previousLevel) {
+				candidates = append(candidates, candidate)
+			}
+		}
+		levels = candidates
+	}
 	if len(levels) == 0 {
 		return CampaignDestination{}, errors.New("campaign replay maps unavailable")
 	}
@@ -182,6 +203,7 @@ func (e *GameplayJoin) ResolveCampaignDestination(
 	}
 	instance.mu.RLock()
 	retained, isRetained := instance.campaignDestinations[binding.Difficulty]
+	previousLevel := instance.Info.Level
 	instance.mu.RUnlock()
 	if isRetained {
 		return retained, nil
@@ -191,7 +213,9 @@ func (e *GameplayJoin) ResolveCampaignDestination(
 	for index := range completedStages {
 		completedStages[index] = max(completedStages[index], binding.Difficulty-1)
 	}
-	destination, err := e.gameManager.campaignDestination(binding.Difficulty, binding.RunSeed, completedStages)
+	destination, err := e.gameManager.campaignDestinationAfter(
+		binding.Difficulty, binding.RunSeed, completedStages, previousLevel,
+	)
 	if err != nil {
 		return CampaignDestination{}, fmt.Errorf("destinationResolve: %w", err)
 	}

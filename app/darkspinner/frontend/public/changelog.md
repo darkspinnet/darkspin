@@ -2,6 +2,10 @@
 
 ### 2026-10-26
 
+- #131 Correct hero profiles from duplicated core-stat totals to build 103's base-plus-bonus format without increasing combat health.
+- #131 Show equipped secondary stats in hero profiles using native whole-percent units and the complete supported stat-token set.
+- #131 Prevent consecutive replay maps when another unlocked destination is available, preserving retained offers and first-run progression.
+- #131 Prefer unused enemies in replay roster draws, retaining repeated slots only when the source pool lacks alternatives.
 - #130 Gate optional Mutation Agent opening waves and barriers on completed campaign progression, preserving scripted initial-mission and boss-arena encounters.
 - #130 Reply to queued basic-attack predictions replaced by an accepted ability instead of silently discarding their response token.
 - Preserve saved hero appearances and rating-based passive bonuses when selecting PvP squads, and refresh complete equipped hero stats on every round load.

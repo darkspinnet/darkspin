@@ -10,9 +10,9 @@ import (
 )
 
 // composeCampaignRoster retains the existing source counts after inclusive
-// stage filtering. Replay source draws are independent so overlapping sources
-// can select the same noun. The run seed makes composition repeatable; the
-// original build-103 authoritative server RNG initialization remains unknown.
+// stage filtering. Replay source draws prefer unused nouns, retaining a repeated
+// slot only when that source lacks alternatives. The run seed makes composition
+// repeatable; original build-103 server RNG initialization remains unknown.
 func composeCampaignRoster(
 	director CampaignDirector, seed uint64, partyCompletedStages []uint32,
 ) (CampaignDirector, error) {
@@ -206,8 +206,8 @@ func drawCampaignRoster(
 	return entries[:draw.offset+draw.count], nil
 }
 
-// drawCampaignReplayRoster selects each source independently. A source keeps
-// unique nouns, while separate source draws may retain matching noun slots.
+// drawCampaignReplayRoster preserves source quotas while preferring nouns that
+// have not already been drawn. Repeats fill a quota only when alternatives run out.
 func drawCampaignReplayRoster(
 	director CampaignDirector, entries []CampaignDirectorEntry, draw campaignRosterDraw,
 	random *sim.SimulatorRandom,
@@ -239,14 +239,34 @@ func drawCampaignReplayRoster(
 		}
 		break
 	}
-	if len(candidates) > draw.count {
+	if len(candidates) > 1 {
 		err := shuffleCampaignRoster(candidates, random)
 		if err != nil {
 			return nil, fmt.Errorf("replayDrawShuffle: %w", err)
 		}
-		candidates = candidates[:draw.count]
 	}
-	return append(entries, candidates...), nil
+	repeatedCandidates := make([]CampaignDirectorEntry, 0, len(candidates))
+	selectedCount := 0
+	for _, candidate := range candidates {
+		isRepeated := false
+		for _, selected := range entries {
+			if strings.EqualFold(selected.NounName, candidate.NounName) {
+				isRepeated = true
+				break
+			}
+		}
+		if isRepeated {
+			repeatedCandidates = append(repeatedCandidates, candidate)
+			continue
+		}
+		entries = append(entries, candidate)
+		selectedCount++
+		if selectedCount == draw.count {
+			return entries, nil
+		}
+	}
+	remainingCount := min(draw.count-selectedCount, len(repeatedCandidates))
+	return append(entries, repeatedCandidates[:remainingCount]...), nil
 }
 
 // shuffleCampaignRoster retains the existing forward Fisher-Yates draw order.
