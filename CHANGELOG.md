@@ -2,6 +2,8 @@
 
 ### 2026-10-25
 
+- #125 Replicate the client-authored deployment movement hold during hero arrival and switching, and avoid repeated position corrections for held movement at the locked pose.
+- #125 Sample Ride the Lightning's admission time after acquiring the simulation lock to prevent stale timestamps from rejecting the cast with movement time regressed.
 - Reduce navigation-footprint startup reads from the full asset catalog to noun names and extend the shared simulation-content load deadline from 10 to 60 seconds.
 - #124 Fix black story movies after Beam Out by selecting the authored gameplay-return camera and fade-in before playback, and remove the client movie-material override.
 - #124 Add a mission 1-2 completion cinematic scenario with native playback observations, screenshots and blank-screen diagnostics before ship voting.

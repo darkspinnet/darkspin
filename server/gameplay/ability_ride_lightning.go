@@ -257,13 +257,15 @@ func (r campaignAbilityCommandRuntime) handleRideLightning(
 	packet := req.packet
 	command := req.command
 	commandSession := req.commandSession
-	abilityStartTime := req.startTime
 	targetObjectID := req.targetObjectID
 	if packet.ScheduleGroup == nil && packet.ScheduleGroupResult == nil {
 		return nil, errors.New("campaignRideSchedule: unavailable")
 	}
 	sessionKey := packet.Address.String()
 	r.registry.mutex.Lock()
+	// Other world callbacks can advance motion while this request waits for
+	// admission. Sample the simulation clock after acquiring its state lock.
+	abilityStartTime := r.now()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isFound = isFound && peerSession.generation == commandSession.generation &&
 		command.Common.ObjectID == peerSession.deployedObjectID &&

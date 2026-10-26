@@ -4055,13 +4055,21 @@ func (s *gameplaySwitchArrivalStep) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	isCurrent := true
+	controlPackets := make([][]byte, 0)
 	if s.runtime.registry != nil {
 		s.runtime.registry.mutex.Lock()
 		peerSession, isFound := s.runtime.registry.sessions[s.sessionKey]
 		isCurrent = isFound && peerSession.generation == s.generation &&
 			peerSession.deployedObjectID == s.targetObjectID
 		if isCurrent {
-			peerSession.beginHeroArrival(s.runtime.now())
+			at := s.runtime.now()
+			peerSession.beginHeroArrival(at)
+			var controlErr error
+			controlPackets, controlErr = peerSession.refreshEnemyImmobilizedAttributes(at)
+			if controlErr != nil {
+				s.runtime.registry.mutex.Unlock()
+				return nil, fmt.Errorf("switchArrivalControl: %w", controlErr)
+			}
 			s.runtime.registry.sessions[s.sessionKey] = peerSession
 		}
 		s.runtime.registry.mutex.Unlock()
@@ -4070,6 +4078,7 @@ func (s *gameplaySwitchArrivalStep) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	packets := clonePendingPackets(s.packets)
+	packets = append(packets, controlPackets...)
 	s.publishedPackets = packets
 	if !s.isKnockback {
 		return packets, nil

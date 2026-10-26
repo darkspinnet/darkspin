@@ -318,6 +318,17 @@ func (r gameplayActionRuntime) handleCommand(
 			isPredictedMovement := command.Common.ObjectID == peerSession.deployedObjectID &&
 				(command.Common.Type == raknet.ActionMovement ||
 					command.Common.Type == raknet.ActionStopMovement)
+			if isPredictedMovement && peerSession.enemyControlPresentedObjectID == peerSession.deployedObjectID &&
+				isFiniteZonePosition(command.Common.Position) {
+				// DeployModifier's native hold already stops this hero. Repeated
+				// held input at that pose must not replay placement corrections.
+				deltaX := command.Common.Position.X - peerSession.playerPosition.X
+				deltaY := command.Common.Position.Y - peerSession.playerPosition.Y
+				radius := peerSession.deployedCampaignNavigationRadius()
+				if radius > 0 && deltaX*deltaX+deltaY*deltaY <= radius*radius {
+					return nil, nil
+				}
+			}
 			if isActionTerminalResponseRequired(command.Common.Type) || isPredictedMovement {
 				// The client must receive a terminal response to clear its pending attack.
 				// The incoming hero can also predict movement during the deployment

@@ -10,7 +10,7 @@
 
 ---@class CinematicSnapshot
 ---@field is_available boolean Whether native controller fields could be sampled.
----@field mode integer Native presentation controller mode (4 is full-screen movie).
+---@field mode integer Native ship presentation controller mode (4 is interlevel cinematic presentation); independent of the movie renderer mode.
 ---@field game_mode integer Native game mode, independent of presentation controller mode.
 ---@field current_room integer Native ship room (1 arsenal, 2 navigation, 3 editor).
 ---@field next_mode integer Requested presentation controller mode.

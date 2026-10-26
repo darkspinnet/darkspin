@@ -12,12 +12,14 @@ import (
 const enemyImmobilizedAttribute = uint8(15)
 
 // Refresh from the authoritative deadline rather than modifier removal alone:
-// roots and stuns can overlap, be cleansed, or end when the deployed hero
-// changes. Keep publishing the active attribute so rejoining clients receive it.
+// deployment, roots and stuns can overlap, be cleansed, or end when the deployed
+// hero changes. The existing gameplay poll releases expired holds and restores
+// the current attribute for rejoining clients.
 // The caller holds the registry lock and saves the updated session.
 func (e *gameplayPeerSession) refreshEnemyImmobilizedAttributes(at time.Time) ([][]byte, error) {
 	objectID := uint32(0)
-	if e.isSleepingCloudActive(at) || e.isEnemyRootActive(at) || e.deployedObjectID == e.enemyStunTargetObjectID &&
+	if e.heroInputLockedObjectID == e.deployedObjectID && e.isHeroArrivalProtected(at) ||
+		e.isSleepingCloudActive(at) || e.isEnemyRootActive(at) || e.deployedObjectID == e.enemyStunTargetObjectID &&
 		at.Before(e.enemyStunExpiresAt) {
 		// Do not use isEnemyStunActive here: its knockback/cage guards also
 		// protect input while a forced native mover owns the hero.
