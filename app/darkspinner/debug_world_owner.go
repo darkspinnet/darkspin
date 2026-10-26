@@ -44,8 +44,14 @@ func recheckDebugWorldOwner(ctx context.Context, host *debugHost, clientManager 
 	if err != nil {
 		return fmt.Errorf("ownerRecheck: %w", err)
 	}
-	if current.client.InstanceID != owner.client.InstanceID || current.client.ProcessID != owner.client.ProcessID || current.client.ProfileName != owner.client.ProfileName || current.client.UserID != owner.client.UserID || current.profile.UserID != owner.profile.UserID || current.profile.SessionID != owner.profile.SessionID || current.profile.GameID != owner.profile.GameID {
-		return &control.ScenarioError{Code: control.OwnershipLost, Context: "worldIdentity", Message: "owned process, accepted login or game changed during world operation"}
+	if current.client.InstanceID != owner.client.InstanceID || current.client.ProcessID != owner.client.ProcessID || current.client.ProfileName != owner.client.ProfileName || current.client.UserID != owner.client.UserID {
+		return &control.ScenarioError{Code: control.OwnershipLost, Context: "worldIdentity", Message: "owned process or launch account changed during world operation"}
+	}
+	if current.profile.UserID != owner.profile.UserID || current.profile.SessionID != owner.profile.SessionID {
+		return &control.ScenarioError{Code: control.OwnershipLost, Context: "worldIdentity", Message: "accepted login changed during world operation"}
+	}
+	if current.profile.GameID != owner.profile.GameID {
+		return &control.ScenarioError{Code: control.OwnershipLost, Context: "worldIdentity", Message: fmt.Sprintf("owned game changed from %d to %d during world operation", owner.profile.GameID, current.profile.GameID)}
 	}
 	return nil
 }

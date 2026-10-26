@@ -83,7 +83,7 @@ const updateUserQuery = `
 
 func clearDependents(ctx context.Context, tx *sqlx.Tx, userID int64) error {
 	tables := []string{
-		"setting", "user_stat", "user_event", "campaign_experience",
+		"setting", "user_stat", "user_event", "campaign_experience", "pvp_match_result",
 		"user_association", "squad", "creature", "part", "part_shop", "extension",
 	}
 	for index, table := range tables {
@@ -97,6 +97,10 @@ func clearDependents(ctx context.Context, tx *sqlx.Tx, userID int64) error {
 
 func writeDependents(ctx context.Context, tx *sqlx.Tx, record sporenet.UserRecord) error {
 	var err error
+	err = writePVPResults(ctx, tx, record)
+	if err != nil {
+		return fmt.Errorf("pvpWrite: %w", err)
+	}
 	_, err = tx.NamedExecContext(ctx, `
 		INSERT INTO user_stat (
 			user_id, pve_play_time_second, pve_minion_kill, pve_special_kill,
@@ -310,6 +314,10 @@ func loadRecord(ctx context.Context, tx *sqlx.Tx, loginName string) (sporenet.Us
 		IsTutorialCompletionPending: user.IsTutorialCompletionPending != 0,
 		Account:                     user.account(), Associations: make(map[uint32][]sporenet.AssociationMember),
 		Settings: make(map[string]string),
+	}
+	record.PVPResults, err = loadPVPResults(ctx, tx, user.ID)
+	if err != nil {
+		return sporenet.UserRecord{}, fmt.Errorf("pvpLoad: %w", err)
 	}
 	stat := userStatRow{}
 	err = tx.GetContext(ctx, &stat, `SELECT * FROM user_stat WHERE user_id = ?`, user.ID)

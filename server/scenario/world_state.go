@@ -16,6 +16,7 @@ type WorldState struct {
 	ZoneGeneration          uint64
 	SessionStage            string
 	Hero                    *WorldHero
+	Arena                   *WorldArena
 	Ability                 *AbilityState
 	NPCs                    []WorldNPC
 	NPCTotal                int
@@ -33,6 +34,27 @@ type WorldState struct {
 	IsVictoryCommitted      bool
 	IsObjectiveComplete     bool
 	Boss                    *WorldBoss
+}
+
+// WorldArena copies match and squad producers; it does not attest native UI.
+type WorldArena struct {
+	Team           uint16
+	WinningTeam    uint32
+	IsCombatActive bool
+	IsResultReady  bool
+	Members        []WorldArenaMember
+}
+
+type WorldArenaMember struct {
+	DamageDone      float32
+	DamageTaken     float32
+	HealingDone     float32
+	HealingReceived float32
+	SwapRemainingMS uint32
+	UserID          uint64
+	Team            uint16
+	DeployedIndex   uint32
+	Characters      []WorldHero
 }
 
 // WorldOutcome describes a generation-pinned personal result transaction,

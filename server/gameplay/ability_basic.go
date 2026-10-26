@@ -449,9 +449,8 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 		peerSession.generation == commandSession.generation &&
 		command.Common.ObjectID == peerSession.deployedObjectID &&
 		peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures)) &&
-		peerSession.zone != nil &&
-		peerSession.zone.NPCs() != nil &&
-		peerSession.zone.Population() != nil
+		((peerSession.binding.Mode == game.ModeArena && peerSession.isArenaCombatActive) ||
+			(peerSession.zone != nil && peerSession.zone.NPCs() != nil && peerSession.zone.Population() != nil))
 	pendingBasic, isPendingBasic := ctx.Value(campaignPendingBasicKey{}).(*campaignPendingBasic)
 	if isPendingBasic {
 		if !pendingBasic.isCurrent(peerSession, isFound) {
@@ -521,6 +520,11 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 			}
 			delay := pendingBasicDelay(peerSession, abilityStartTime)
 			pending.expiresAt = abilityStartTime.Add(delay + 2*time.Second)
+			pendingErr := peerSession.cancelPendingBasic()
+			if pendingErr != nil {
+				r.registry.mutex.Unlock()
+				return nil, fmt.Errorf("pendingReplace: %w", pendingErr)
+			}
 			peerSession.pendingBasic = pending
 			r.registry.sessions[sessionKey] = peerSession
 			r.registry.mutex.Unlock()
@@ -541,6 +545,7 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 		}
 		return request.reject("session unavailable or busy")
 	}
+	enemies := r.registry.abilityTargetsLocked(r, peerSession, sim.AbilityDefinition{}, packet.SourceTime)
 	creature := r.registry.projectPassiveCreature(peerSession,
 		peerSession.deployedCreatureIndex, abilityStartTime,
 	)
@@ -559,7 +564,7 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 	}
 	if !isActiveRequest && definition.Kind == sim.AbilityKindProjectile {
 		targetObjectID = zoneability.CursorTarget(
-			peerSession.zone.NPCs(), command.Common.ObjectID,
+			enemies, command.Common.ObjectID,
 			game.Vec3(command.Ability.CursorPosition),
 			game.Vec3(command.Ability.TargetPosition),
 			campaignProjectileCursorRadius,
@@ -598,7 +603,7 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 		// Cursor coordinates select among authoritative NPC positions; they must
 		// never relocate an idle enemy when a held attack retains a stale target.
 		targetObjectID = zoneability.CursorTarget(
-			peerSession.zone.NPCs(), command.Common.ObjectID,
+			enemies, command.Common.ObjectID,
 			game.Vec3{
 				X: command.Ability.CursorPosition.X,
 				Y: command.Ability.CursorPosition.Y,
@@ -766,14 +771,14 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 		// object-target admission, including ranged attacks. Physics collision
 		// radii are separate from this range calculation.
 		actorFootprint = peerSession.deployedCampaignActorFootprintRadius()
-		targetEnemy, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
+		targetEnemy, isTargetFound := enemies.NPC(targetObjectID)
 		if isTargetFound {
 			targetFootprint = targetEnemy.Plan.ActorFootprintRadius()
 			maximumRange += actorFootprint + targetFootprint
-			if !targetEnemy.Plan.IsFixture {
+			if peerSession.binding.Mode != game.ModeArena && !targetEnemy.Plan.IsFixture {
 				aggroCandidates := []zonenpc.Snapshot{targetEnemy}
 				if definition.Kind == sim.AbilityKindProjectile {
-					for _, candidate := range peerSession.zone.NPCs().LiveSnapshots() {
+					for _, candidate := range enemies.LiveSnapshots() {
 						if candidate.Plan.ObjectID == targetObjectID ||
 							candidate.Plan.IsFixture || candidate.TargetObjectID != 0 {
 							continue
@@ -827,7 +832,7 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 		plans: directAggroPlans, packetDataItems: directAggroPackets,
 	}
 	plan, planErr := zoneability.PlanProjected(
-		peerSession.zone.NPCs(), command.Common.ObjectID, targetObjectID,
+		enemies, command.Common.ObjectID, targetObjectID,
 		game.Vec3{
 			X: peerSession.playerPosition.X, Y: peerSession.playerPosition.Y,
 			Z: peerSession.playerPosition.Z,
@@ -844,7 +849,7 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 	}
 	if planErr == nil && targetObjectID != 0 &&
 		definition.Name == "SupportHealerBasic" {
-		target, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
+		target, isTargetFound := enemies.NPC(targetObjectID)
 		if !isTargetFound || !isSupportHealerBasicImpactTarget(target) {
 			planErr = errors.New(
 				"support healer basic target is not hostile or destructible",
@@ -864,7 +869,7 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 			planErr = errors.New("electron sphere cursor unavailable or out of range")
 		} else {
 			targetObjectID = zoneability.NearestTarget(
-				peerSession.zone.NPCs(), command.Common.ObjectID,
+				enemies, command.Common.ObjectID,
 				game.Vec3{X: impactPosition.X, Y: impactPosition.Y, Z: impactPosition.Z},
 				definition.Radius,
 			)
@@ -877,12 +882,12 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 		// ability with shouldPursue, including FireRavagerBasic projectiles.
 		// Advance the authoritative route instead of rejecting every retry
 		// while the client's local pursuit has already moved into range.
-		isPursuit := errors.As(planErr, &rangeErr) && targetObjectID != 0 &&
+		isPursuit := peerSession.binding.Mode != game.ModeArena && errors.As(planErr, &rangeErr) && targetObjectID != 0 &&
 			(definition.Kind == sim.AbilityKindMelee ||
 				definition.Kind == sim.AbilityKindProjectile) && definition.IsShouldPursue &&
 			targetFootprint > 0
 		if isPursuit {
-			targetEnemy, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
+			targetEnemy, isTargetFound := enemies.NPC(targetObjectID)
 			if !isTargetFound {
 				r.registry.mutex.Unlock()
 				return request.reject("pursuit target unavailable")
@@ -1064,7 +1069,7 @@ func (r campaignAbilityCommandRuntime) handle(
 		r.registry.sessions[packet.Address.String()]
 	r.registry.mutex.RUnlock()
 	if isSessionFound && commandSession.binding.Mode == game.ModeArena {
-		return r.handleArenaCharacter(packet, command, commandSession)
+		return r.handleArenaAbility(ctx, packet, command, commandSession)
 	}
 	if !isSessionFound ||
 		(commandSession.binding.Mode != game.ModeChain &&
@@ -1317,9 +1322,18 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 			current.deployedObjectID == e.command.Common.ObjectID &&
 			current.deployedHitPoint() > 0
 	}
+	if current.binding.Mode == game.ModeArena {
+		isCurrent = isCurrent && current.isArenaCombatActive
+	}
 	if !isCurrent {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
+	}
+	enemies := e.runtime.registry.abilityTargetsLocked(e.runtime, current, e.definition, e.hitTimestamp)
+	random, randomErr := e.runtime.registry.abilityRandomLocked(current)
+	if randomErr != nil {
+		e.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("areaRandom: %w", randomErr)
 	}
 	var plan zoneability.AreaPlan
 	var err error
@@ -1333,24 +1347,24 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 	}
 	if e.definition.Kind == sim.AbilityKindCone {
 		plan, err = zoneability.PlanCone(
-			current.zone.NPCs(), e.command.Common.ObjectID,
+			enemies, e.command.Common.ObjectID,
 			e.sourcePosition, e.center, e.creature, e.definition,
 		)
 	} else if e.definition.Kind == sim.AbilityKindCursorArea ||
 		e.definition.Kind == sim.AbilityKindTeleportArea {
 		plan, err = zoneability.PlanCursorAreaWithAdmission(
-			current.zone.NPCs(), e.command.Common.ObjectID, e.targetObjectID,
+			enemies, e.command.Common.ObjectID, e.targetObjectID,
 			e.sourcePosition, e.center, e.creature, e.definition, e.admissionRange,
 		)
 	} else if e.definition.Kind == sim.AbilityKindPointBlank {
 		if e.definition.BonusDamageMultiplier > 0 {
 			plan, err = zoneability.ResolvePointBlankBasicHit(
-				current.zone.NPCs(), e.command.Common.ObjectID,
+				enemies, e.command.Common.ObjectID,
 				e.sourcePosition, e.creature, e.definition,
 			)
 		} else {
 			plan, err = zoneability.PlanArea(
-				current.zone.NPCs(), e.command.Common.ObjectID,
+				enemies, e.command.Common.ObjectID,
 				e.sourcePosition, e.creature, e.definition,
 			)
 		}
@@ -1363,20 +1377,35 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 	if e.definition.TimeLapse != nil {
 		dexterity = current.binding.Creatures[current.deployedCreatureIndex].Dexterity
 	}
+	history, isHistoryAvailable := enemies.(zoneability.RecentDamageReader)
+	if plan.Definition.TimeLapse != nil && !isHistoryAvailable {
+		e.runtime.registry.mutex.Unlock()
+		return nil, errors.New("area damage history unavailable")
+	}
 	err = zoneability.ApplyTimeLapseWithDexterity(
-		&plan, current.zone.NPCs(), e.creature, dexterity, e.runtime.now(),
+		&plan, history, e.creature, dexterity, e.runtime.now(),
 	)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignTimeLapsePlan: %w", err)
 	}
 	results, err := zoneability.CommitArea(
-		current.zone.Population().Random(), current.zone.NPCs(),
+		random, enemies,
 		plan, e.creature, current.binding.Difficulty, e.runtime.program.Critical,
 	)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignAreaBasicDamage: %w", err)
+	}
+	if arenaTargets, isArena := enemies.(*arenaAbilityTargets); isArena {
+		e.runtime.registry.sessions[e.sessionKey] = current
+		e.runtime.registry.mutex.Unlock()
+		packets, publishErr := e.publishArena(arenaTargets, plan, results)
+		arenaTargets.finish()
+		if publishErr != nil {
+			return nil, fmt.Errorf("areaArenaPublish: %w", publishErr)
+		}
+		return packets, nil
 	}
 	transitions := make([]campaignDamageTransition, 0, len(results))
 	for index, result := range results {
@@ -1485,38 +1514,11 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 	e.runtime.registry.sessions[e.sessionKey] = current
 	e.runtime.registry.mutex.Unlock()
 
-	prefix := make([][]byte, 0, len(projectilePackets))
-	prefix = append(prefix, projectilePackets...)
-	var effect func(zoneability.AreaResult) ([]byte, error)
-	isEffectAfterDamage := e.definition.Kind == sim.AbilityKindPointBlank
-	if e.definition.Kind == sim.AbilityKindCursorArea {
-		if !e.isEffectPresented {
-			effectPacket, effectErr := abilityraknet.CursorAreaImpact(
-				plan.Definition.HitEffectName,
-				raknet.Vector3{X: plan.Center.X, Y: plan.Center.Y, Z: plan.Center.Z},
-			)
-			if effectErr != nil {
-				return nil, fmt.Errorf("campaignAreaBasicEffect: %w", effectErr)
-			}
-			prefix = append(prefix, effectPacket)
-		}
-	} else if plan.Definition.TimeLapse != nil {
-		effect = marshalTimeLapseImpact
-	} else if plan.Definition.ImpactEffectName != "" {
-		impact := campaignPointBlankImpact{
-			assetName:            plan.Definition.ImpactEffectName,
-			largeTargetAssetName: plan.Definition.HitEffectName,
-			attackerID:           e.command.Common.ObjectID,
-			source: raknet.Vector3{
-				X: e.sourcePosition.X, Y: e.sourcePosition.Y, Z: e.sourcePosition.Z,
-			},
-		}
-		if plan.Definition.Name == binarySentinelSupportName {
-			// The wave belongs to the caster; only large-target impacts are separate.
-			impact.assetName = ""
-		}
-		effect = impact.marshal
+	prefix, effect, isEffectAfterDamage, effectErr := e.impactPresentation(plan)
+	if effectErr != nil {
+		return nil, fmt.Errorf("areaEffect: %w", effectErr)
 	}
+	prefix = append(projectilePackets, prefix...)
 	packets, err := e.runtime.damage.publishAreaResults(
 		e.packet, e.sessionKey, e.generation, e.command.Common.ObjectID,
 		e.hitTimestamp, e.binding, results, transitions, effect, isEffectAfterDamage,
@@ -1696,6 +1698,7 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 		X: peerSession.playerPosition.X, Y: peerSession.playerPosition.Y,
 		Z: peerSession.playerPosition.Z,
 	}
+	enemies := r.registry.abilityTargetsLocked(r, peerSession, definition, packet.SourceTime)
 	var areaPlan zoneability.AreaPlan
 	var planErr error
 	if definition.Kind == sim.AbilityKindCone {
@@ -1707,13 +1710,13 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 			return request.reject("cone direction unavailable")
 		}
 		areaPlan, planErr = zoneability.PlanCone(
-			peerSession.zone.NPCs(), command.Common.ObjectID, sourcePosition,
+			enemies, command.Common.ObjectID, sourcePosition,
 			game.Vec3{X: center.X, Y: center.Y, Z: center.Z}, creature, definition,
 		)
 	} else if definition.Kind == sim.AbilityKindCursorArea ||
 		definition.Kind == sim.AbilityKindTeleportArea {
 		if definition.Name == "FireTempestBasic" && targetObjectID != 0 {
-			target, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
+			target, isTargetFound := enemies.NPC(targetObjectID)
 			if isTargetFound && !target.IsDefeated && target.HitPoint > 0 {
 				center = raknet.Vector3(target.Plan.Position)
 				// Native 103 sub_9DE710 admits object targets using both
@@ -1751,7 +1754,7 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 			center = raknet.Vector3{X: projected.X, Y: projected.Y, Z: projected.Z}
 		}
 		areaPlan, planErr = zoneability.PlanCursorAreaWithAdmission(
-			peerSession.zone.NPCs(), command.Common.ObjectID, targetObjectID,
+			enemies, command.Common.ObjectID, targetObjectID,
 			sourcePosition, game.Vec3{X: center.X, Y: center.Y, Z: center.Z},
 			creature, definition, admissionRange,
 		)
@@ -1759,12 +1762,12 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 		center = raknet.Vector3{X: sourcePosition.X, Y: sourcePosition.Y, Z: sourcePosition.Z}
 		if isActiveRequest {
 			areaPlan, planErr = zoneability.PlanArea(
-				peerSession.zone.NPCs(), command.Common.ObjectID,
+				enemies, command.Common.ObjectID,
 				sourcePosition, creature, definition,
 			)
 		} else {
 			areaPlan, planErr = zoneability.PlanPointBlankBasic(
-				peerSession.zone.NPCs(), command.Common.ObjectID,
+				enemies, command.Common.ObjectID,
 				sourcePosition, creature, definition,
 			)
 		}
@@ -1773,7 +1776,7 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 		var rangeErr zoneability.TargetRangeError
 		if definition.Name == "FireTempestBasic" && definition.IsShouldPursue &&
 			targetObjectID != 0 && errors.As(planErr, &rangeErr) {
-			target, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
+			target, isTargetFound := enemies.NPC(targetObjectID)
 			if isTargetFound && !target.IsDefeated && target.HitPoint > 0 {
 				request.startTime = abilityStartTime
 				packets, isPursuitStarted, pursuitErr := r.transferPlayerAbilityPursuit(
@@ -2167,9 +2170,18 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 	current, isFound := runtime.registry.sessions[schedule.sessionKey]
 	isCurrent := isFound && current.generation == schedule.generation &&
 		current.basicAttack == schedule.run
+	if current.binding.Mode == game.ModeArena {
+		isCurrent = isCurrent && current.isArenaCombatActive
+	}
 	if !isCurrent {
 		runtime.registry.mutex.Unlock()
 		return nil, nil
+	}
+	enemies := runtime.registry.abilityTargetsLocked(runtime, current, schedule.selected, schedule.packet.SourceTime+uint64(e.delay/time.Millisecond))
+	random, randomErr := runtime.registry.abilityRandomLocked(current)
+	if randomErr != nil {
+		runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("meleeHitRandom: %w", randomErr)
 	}
 	currentCreature := current.binding.Creatures[current.deployedCreatureIndex]
 	// Shadow Cloak ends on UsedAbility, after this attack is accepted. Its
@@ -2203,7 +2215,7 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 		}
 		state.arc = &arc
 	}
-	liveNPC, isLiveNPCFound := current.zone.NPCs().NPC(schedule.targetObjectID)
+	liveNPC, isLiveNPCFound := enemies.NPC(schedule.targetObjectID)
 	isSelected := isLiveNPCFound && zoneability.IsHostileMeleeTarget(liveNPC)
 	if isSelected {
 		movement := zonegeometry.Distance(state.initialTargetPosition, liveNPC.Plan.Position)
@@ -2212,7 +2224,7 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 	}
 	if !isSelected {
 		facing := current.attackPose.facing
-		liveNPC, isSelected = state.arc.BestTarget(current.zone.NPCs(), livePlan.SourcePosition,
+		liveNPC, isSelected = state.arc.BestTarget(enemies, livePlan.SourcePosition,
 			game.Vec3{X: facing.X, Y: facing.Y, Z: facing.Z})
 	}
 	// Revalidate the original primary before grace/arc admission, then try the
@@ -2237,7 +2249,7 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 	}
 	livePlan.TargetObjectID = liveNPC.Plan.ObjectID
 	result, err := zoneability.CommitBasic(
-		current.zone.Population().Random(), current.zone.NPCs(),
+		random, enemies,
 		livePlan, currentCreature, current.binding.Difficulty,
 		runtime.program.Critical,
 	)
@@ -2250,13 +2262,23 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 		Snapshot: liveNPC, Damage: result.Damage, IsCritical: result.IsCritical,
 		Definition: livePlan.Definition,
 	}}
+	if arenaTargets, isArena := enemies.(*arenaAbilityTargets); isArena {
+		packets, publishErr := e.commitArenaMeleeLocked(current, arenaTargets, livePlan, liveNPC, result, areaResults)
+		runtime.registry.sessions[schedule.sessionKey] = current
+		runtime.registry.mutex.Unlock()
+		arenaTargets.finish()
+		if publishErr != nil {
+			return nil, fmt.Errorf("meleeArenaPublish: %w", publishErr)
+		}
+		return packets, nil
+	}
 	plasmaPlan := zoneability.PlasmaModifierPlan{}
 	isPlasmaApplied := false
 	if !result.Damage.IsDefeated && !result.Damage.IsDamageImmune &&
 		!result.Damage.IsShieldStarted && !result.Damage.IsTurtleStarted &&
 		len(schedule.selected.MeleeHitPolicies) != 0 {
 		plasmaPlan, isPlasmaApplied, err = zoneability.PlanPlasmaModifier(
-			current.zone.Population().Random(),
+			random,
 			schedule.selected.MeleeHitPolicies,
 			schedule.selection.AnimationIndex, currentCreature,
 		)
@@ -2278,7 +2300,7 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 	}
 	if additionalTargetCount != 0 {
 		additionalTargets, targetErr := zoneability.AdditionalMeleeTargets(
-			current.zone.NPCs(), livePlan.TargetObjectID,
+			enemies, livePlan.TargetObjectID,
 			livePlan.SourcePosition, liveNPC.Plan.Position,
 			schedule.selected.AdditionalTargetRange,
 			schedule.selected.AdditionalTargetAngle, additionalTargetCount,
@@ -2291,7 +2313,7 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 			additionalPlan := livePlan
 			additionalPlan.TargetObjectID = additionalTarget.Plan.ObjectID
 			additionalResult, commitErr := zoneability.CommitBasic(
-				current.zone.Population().Random(), current.zone.NPCs(),
+				random, enemies,
 				additionalPlan, currentCreature, current.binding.Difficulty,
 				runtime.program.Critical,
 			)
@@ -3255,9 +3277,15 @@ func (r campaignAbilityCommandRuntime) handleMeleeBasic(
 		r.registry.mutex.Unlock()
 		return request.reject("basic runtime shape unsupported")
 	}
+	enemies := r.registry.abilityTargetsLocked(r, peerSession, definition, packet.SourceTime)
+	random, randomErr := r.registry.abilityRandomLocked(peerSession)
+	if randomErr != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("meleeRandom: %w", randomErr)
+	}
 	if plan.TargetObjectID != 0 {
 		err = zoneability.ValidateBasicCommit(
-			peerSession.zone.Population().Random(), peerSession.zone.NPCs(),
+			random, enemies,
 			plan, creature, peerSession.binding.Difficulty, r.program.Critical,
 		)
 		if err != nil {
@@ -3322,7 +3350,7 @@ func (r campaignAbilityCommandRuntime) handleMeleeBasic(
 		plan.Damage.Maximum *= damageMultiplier
 	}
 	if len(selectedDefinition.RandomMeleeDamagePolicies) != 0 {
-		policyIndex, policyErr := peerSession.zone.Population().Random().Index(
+		policyIndex, policyErr := random.Index(
 			uint32(len(selectedDefinition.RandomMeleeDamagePolicies)),
 		)
 		if policyErr != nil {
@@ -3346,7 +3374,7 @@ func (r campaignAbilityCommandRuntime) handleMeleeBasic(
 	}
 	plan.Damage = normalizeCampaignMeleeDamage(plan.Damage)
 	plan.Definition = selectedDefinition
-	enemy, isEnemyFound := peerSession.zone.NPCs().NPC(targetObjectID)
+	enemy, isEnemyFound := enemies.NPC(targetObjectID)
 	hitState := &campaignMeleeHitState{}
 	if isEnemyFound {
 		hitState.initialTargetPosition = enemy.Plan.Position
@@ -3410,7 +3438,7 @@ func (r campaignAbilityCommandRuntime) handleMeleeBasic(
 		},
 		TargetFacing: sim.Position{X: facing.X, Y: facing.Y, Z: facing.Z},
 		Damage:       plan.Damage.Maximum, TargetHitPoint: targetHitPoint,
-		ActorTeam: 1, SourceTime: packet.SourceTime, IsUnreliableStopNeeded: true,
+		ActorTeam: abilityActorTeam(peerSession), SourceTime: packet.SourceTime, IsUnreliableStopNeeded: true,
 		HitDelays: selection.HitDelays,
 	})
 	if runErr != nil {

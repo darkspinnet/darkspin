@@ -27,6 +27,23 @@ type campaignPendingBasic struct {
 
 type campaignPendingBasicKey struct{}
 
+// Every native predicted request owns its sync token, including a repeat that
+// has not reached its hit/release admission yet. Cancellation must answer it
+// before invalidating its held generation, or the client can retain a busy
+// prediction and stop submitting later abilities.
+func (e *gameplayPeerSession) cancelPendingBasic() error {
+	if e == nil || e.pendingBasic == nil {
+		return nil
+	}
+	packet, err := actionraknet.Reject(e.pendingBasic.command)
+	if err != nil {
+		return fmt.Errorf("pendingCancelMarshal: %w", err)
+	}
+	e.pendingBasic = nil
+	e.queuePackets([][]byte{packet})
+	return nil
+}
+
 func (e *campaignPendingBasic) isCurrent(session gameplayPeerSession, isFound bool) bool {
 	return isFound && session.pendingBasic == e &&
 		session.generation == e.generation &&

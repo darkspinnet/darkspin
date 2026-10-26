@@ -273,9 +273,10 @@ func (e campaignProjectileStep) produceDirectImpact(
 	schedule := e.schedule
 	// Range was validated at acceptance. Moving the caster after launch
 	// must not invalidate a projectile already in flight.
+	targets := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, schedule.definition, schedule.packet.SourceTime)
 	livePlan := schedule.plan
 	liveNPC, isLiveFound :=
-		peerSession.zone.NPCs().NPC(schedule.targetObjectID)
+		targets.NPC(schedule.targetObjectID)
 	if !isLiveFound || liveNPC.IsDefeated || liveNPC.HitPoint <= 0 ||
 		schedule.definition.Name == "SupportHealerBasic" &&
 			!isSupportHealerBasicImpactTarget(liveNPC) {
@@ -347,14 +348,29 @@ func (e campaignProjectileStep) produceContact(
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("projectileTarget: %w", err)
 	}
+	targets := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, schedule.definition, schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond))
+	random, randomErr := schedule.runtime.registry.abilityRandomLocked(peerSession)
+	if randomErr != nil {
+		schedule.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("projectileRandom: %w", randomErr)
+	}
 	result, err := zoneability.CommitBasic(
-		peerSession.zone.Population().Random(),
-		peerSession.zone.NPCs(), livePlan, schedule.creature,
+		random, targets, livePlan, schedule.creature,
 		peerSession.binding.Difficulty, schedule.runtime.program.Critical,
 	)
 	if err != nil {
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignProjectileCommit: %w", err)
+	}
+	if arenaTargets, isArena := targets.(*arenaAbilityTargets); isArena {
+		packets, publishErr := e.commitArenaProjectileLocked(&peerSession, arenaTargets, liveNPC, result, collision)
+		schedule.runtime.registry.sessions[schedule.sessionKey] = peerSession
+		schedule.runtime.registry.mutex.Unlock()
+		arenaTargets.finish()
+		if publishErr != nil {
+			return nil, fmt.Errorf("projectileArenaPublish: %w", publishErr)
+		}
+		return packets, nil
 	}
 	transition, err :=
 		peerSession.applyCampaignDamageTransition(result.Damage)

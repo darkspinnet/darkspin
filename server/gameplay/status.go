@@ -383,6 +383,12 @@ func (r gameplayStatusRuntime) startArena(
 	if err != nil {
 		return nil, fmt.Errorf("statusArenaStart: %w", err)
 	}
+	countdownPacket, err := raknet.MarshalApplication(raknet.ArenaCountdownMessage{
+		Seconds: float32(arenaOpeningCountdownDuration.Seconds()),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("arenaCountdown: %w", err)
+	}
 	playerPacket, err := memberraknet.Status(memberraknet.StatusRequest{
 		PlayerIndex: uint8(peerSession.binding.Slot),
 		Status:      status.Status, Progress: status.Progress,
@@ -411,7 +417,9 @@ func (r gameplayStatusRuntime) startArena(
 		packet.Address, peerSession.binding.Level, peerSession.binding.Team,
 		statusRecipients,
 	)
-	return [][]byte{playerPacket, startPacket}, nil
+	// PreDungeon consumes subtype 9; prime the HUD before GameStart switches
+	// the native state to Dungeon, whose Arena listener ignores that subtype.
+	return [][]byte{playerPacket, countdownPacket, startPacket}, nil
 }
 
 func (r gameplayStatusRuntime) campaignBeamOut(

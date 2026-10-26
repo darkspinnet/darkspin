@@ -266,6 +266,10 @@ func (e *gameplayPeerSession) queueCampaignPackets(packets [][]byte) {
 	if len(packets) == 0 {
 		return
 	}
+	if e.binding.Mode == game.ModeArena {
+		e.queuePackets(packets)
+		return
+	}
 	e.queuePackets(packets)
 	lastIndex := len(e.pendingPacketBatches) - 1
 	if e.pendingPacketBatches[lastIndex].id == e.nextPendingPacketID {

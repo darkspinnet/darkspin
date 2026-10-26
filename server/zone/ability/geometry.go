@@ -17,7 +17,7 @@ func IsInvalidNumber(number float32) bool {
 }
 
 func CursorTarget(
-	enemies *zonenpc.Session, sourceObjectID uint32,
+	enemies TargetReader, sourceObjectID uint32,
 	cursorPosition game.Vec3, targetPosition game.Vec3, radius float32,
 ) uint32 {
 	if enemies == nil || sourceObjectID == 0 || radius <= 0 {

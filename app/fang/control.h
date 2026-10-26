@@ -30,6 +30,8 @@ typedef struct fang_control_map_state {
     uint32_t difficulty_mode;
     uint32_t is_transactions_processing, are_party_members_ready, is_start_disabled, is_start_visible;
     uint32_t is_campaign_ready, is_previous_ready, is_next_ready;
+    uint32_t pvp_game_size, pvp_rank_type, party_member_count;
+    uint32_t is_pvp_unlocked, is_party_leader, are_pvp_members_ready;
 } fang_control_map_state;
 typedef struct fang_control_deployment_state {
     uint32_t is_available, is_loaded, is_ready, is_results_screen, fields;

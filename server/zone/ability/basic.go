@@ -24,7 +24,7 @@ type BasicPlan struct {
 }
 
 type BasicCommand struct {
-	NPCs           *zonenpc.Session
+	NPCs           TargetReader
 	SourceObjectID uint32
 	TargetObjectID uint32
 	AbilityID      uint32
@@ -41,7 +41,7 @@ type BasicResult struct {
 }
 
 type ProjectedBasicCommand struct {
-	NPCs           *zonenpc.Session
+	NPCs           TargetReader
 	SourceObjectID uint32
 	TargetObjectID uint32
 	SourcePosition game.Vec3
@@ -138,7 +138,7 @@ func PlanProjectedBasic(command ProjectedBasicCommand) (BasicPlan, error) {
 }
 
 func PlanProjected(
-	enemies *zonenpc.Session, sourceObjectID uint32, targetObjectID uint32,
+	enemies TargetReader, sourceObjectID uint32, targetObjectID uint32,
 	sourcePosition game.Vec3, creature game.GameplayCreature,
 	definition sim.AbilityDefinition, maximumRange float32,
 ) (BasicPlan, error) {
@@ -154,7 +154,7 @@ func PlanProjected(
 }
 
 func NearestTarget(
-	enemies *zonenpc.Session, sourceObjectID uint32,
+	enemies TargetReader, sourceObjectID uint32,
 	sourcePosition game.Vec3, maximumRange float32,
 ) uint32 {
 	if enemies == nil || sourceObjectID == 0 || maximumRange <= 0 {
@@ -184,7 +184,7 @@ func NearestTarget(
 // attack arc, excluding the primary target. The deterministic ordering keeps
 // the same secondary victims authoritative for every connected client.
 func AdditionalMeleeTargets(
-	enemies *zonenpc.Session, primaryObjectID uint32,
+	enemies TargetReader, primaryObjectID uint32,
 	sourcePosition game.Vec3, targetPosition game.Vec3,
 	maximumRange float32, angle float32, maximumCount uint32,
 ) ([]zonenpc.Snapshot, error) {
@@ -234,7 +234,7 @@ func AdditionalMeleeTargets(
 }
 
 func CommitBasic(
-	random *sim.SimulatorRandom, enemies *zonenpc.Session, plan BasicPlan,
+	random *sim.SimulatorRandom, enemies DamageTargets, plan BasicPlan,
 	creature game.GameplayCreature, difficulty uint32, tuning sim.CriticalTuning,
 ) (BasicResult, error) {
 	err := ValidateBasicCommit(random, enemies, plan, creature, difficulty, tuning)
@@ -292,7 +292,7 @@ func isRearDirectHit(target zonenpc.Snapshot, sourcePosition game.Vec3) bool {
 }
 
 func ValidateBasicCommit(
-	random *sim.SimulatorRandom, enemies *zonenpc.Session, plan BasicPlan,
+	random *sim.SimulatorRandom, enemies DamageTargets, plan BasicPlan,
 	creature game.GameplayCreature, difficulty uint32, tuning sim.CriticalTuning,
 ) error {
 	if random == nil {

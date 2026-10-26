@@ -2313,6 +2313,18 @@ type ArenaGamePlayerWordMessage struct {
 	Word    uint32
 }
 
+// ArenaCountdownMessage primes build 103's native PvP HUD while PreDungeon
+// still owns ArenaGameMsgs. Subtype 9 reads a float32 into the HUD timer;
+// the Dungeon state's Arena handler does not accept this subtype.
+type ArenaCountdownMessage struct {
+	Seconds float32
+}
+
+func (ArenaCountdownMessage) PacketID() PacketID { return ArenaGameMsgs }
+func (m ArenaCountdownMessage) EncodePayload() []byte {
+	return binary.LittleEndian.AppendUint32([]byte{9}, math.Float32bits(m.Seconds))
+}
+
 func (ArenaGamePlayerWordMessage) PacketID() PacketID { return ArenaGameMsgs }
 func (m ArenaGamePlayerWordMessage) EncodePayload() []byte {
 	if m.Subtype != 9 && m.Subtype != 10 {

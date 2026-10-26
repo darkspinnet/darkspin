@@ -75,14 +75,15 @@ func (e *Server) DebugPVP(ctx context.Context, req scenario.PVPRequest, gameMana
 			return result, errors.New("PvP participant session changed before execution")
 		}
 		user := requestUser(&Request{Session: current})
-		if user == nil || user.CurrentGameID() != 0 || user.CurrentPlaygroupID() != 0 {
-			return result, errors.New("PvP fixture requires owned clients outside existing games and parties")
+		if user == nil || user.CurrentGameID() != 0 || user.CurrentPlaygroupID() == 0 {
+			return result, errors.New("PvP fixture requires owned clients in established parties and outside existing games")
 		}
 		err = validateDebugPVPSquad(user.View())
 		if err != nil {
 			return result, fmt.Errorf("pvpDeck[%d]: %w", participant.UserID, err)
 		}
 	}
+	result.IsMutationAttempted = true
 	criteria := pvp.MatchmakingCriteria{GameType: pvp.ArenaGameType, ExpectedPlayerCount: 2 * req.TeamSize, TeamSize: req.TeamSize}
 	matchmakingSessions := make([]pvp.MatchmakingSession, 0, len(req.Participants))
 	for team := uint16(1); team <= 2; team++ {
@@ -90,14 +91,20 @@ func (e *Server) DebugPVP(ctx context.Context, req scenario.PVPRequest, gameMana
 			if participant.Team != team {
 				continue
 			}
-			matchmakingSessions = append(matchmakingSessions, pvp.MatchmakingSession{UserID: participant.UserID, OwnerID: participant.UserID, Criteria: criteria})
+			user := requestUser(&Request{Session: sessionsByUsers[participant.UserID]})
+			if user == nil || user.CurrentPlaygroupID() == 0 {
+				return result, errors.New("PvP fixture playgroup disappeared before formation")
+			}
+			matchmakingSessions = append(matchmakingSessions, pvp.MatchmakingSession{
+				UserID: participant.UserID, OwnerID: participant.UserID,
+				PartyID: user.CurrentPlaygroupID(), Criteria: criteria,
+			})
 		}
 	}
 	err := ctx.Err()
 	if err != nil {
 		return result, fmt.Errorf("pvpContext: %w", err)
 	}
-	result.IsMutationAttempted = true
 	instance, err := formArenaGame(gameManager, userManager, matchmakingSessions, criteria)
 	if err != nil {
 		return result, fmt.Errorf("pvpForm: %w", err)
@@ -106,7 +113,7 @@ func (e *Server) DebugPVP(ctx context.Context, req scenario.PVPRequest, gameMana
 	result.IsMutationAccepted = true
 	actor := sessionsByUsers[req.Participants[0].UserID]
 	request := &Request{Session: actor, ownedPartyUsers: ownedUsers}
-	err = queueGameSetupRoster(request, instance, gameSetupContextIndirectJoin, nil)
+	err = queueDebugPVPSetup(request, instance, sessionsByUsers)
 	if err != nil {
 		// No queued projection has been delivered, so formation can be retired.
 		gameManager.Remove(instance.ID)

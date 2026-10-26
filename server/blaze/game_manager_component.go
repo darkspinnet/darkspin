@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -545,8 +546,11 @@ func removePlayerHandler(
 			}
 			// Aborting leaves only this member while a co-op teammate remains.
 			// RemoveMember transfers host ownership through the normal roster path.
+			// Build 103 also removes itself while opening Arena results. Its
+			// departure must not destroy the opponent's pending results screen.
 			isGameAbort := reason == returnToShipReason && user != nil &&
 				user.Account.ID == personaID && instance.HostUserID() == personaID &&
+				instance.Info.Mode != game.ModeArena &&
 				(instance.Info.Mode != game.ModeChain || len(players) <= 1)
 			if reason == returnToShipReason && user != nil &&
 				user.Account.ID == personaID &&
@@ -996,7 +1000,7 @@ func matchmakingUsers(
 		}
 		return nil, 0, errors.New("arena party leader required")
 	}
-	if len(partySnapshot.Members) > int(criteria.TeamSize) {
+	if !pvp.IsArenaPartySizeAllowed(criteria, partySnapshot.ID, len(partySnapshot.Members)) {
 		return nil, 0, errors.New("arena party exceeds team size")
 	}
 	userIDs = make([]int64, 0, len(partySnapshot.Members))
@@ -1623,8 +1627,17 @@ func endpointFromFields(fields []tdf.Field) game.NetworkEndpoint {
 
 func stringMapValue(values map[string]string) tdf.Value {
 	entries := make([]tdf.MapEntry, 0, len(values))
-	for key, value := range values {
-		entries = append(entries, tdf.MapEntry{Key: tdf.StringValue(key), Value: tdf.StringValue(value)})
+	// Build 103 retains this order in a sorted-vector map and uses binary
+	// search for GameType and the other game attributes.
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	slices.SortFunc(keys, func(left, right string) int {
+		return strings.Compare(strings.ToLower(left), strings.ToLower(right))
+	})
+	for _, key := range keys {
+		entries = append(entries, tdf.MapEntry{Key: tdf.StringValue(key), Value: tdf.StringValue(values[key])})
 	}
 	return tdf.MapValue(tdf.String, tdf.String, entries...)
 }

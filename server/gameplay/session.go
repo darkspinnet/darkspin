@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
+	"github.com/darkspinnet/darkspin/server/playerstat"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/sporenet"
@@ -1802,6 +1803,10 @@ func (s *gameplayPeerSession) interruptBasicForMovement() *abilityraknet.MeleeRu
 	if s == nil {
 		return nil
 	}
+	err := s.cancelPendingBasic()
+	if err != nil {
+		log.Printf("RakNet pending basic movement cleanup failed user=%d: %v", s.binding.UserID, err)
+	}
 	run := s.basicAttack
 	s.basicAttack = nil
 	s.basicAttackSyncStamp = 0
@@ -1813,6 +1818,10 @@ func (s *gameplayPeerSession) interruptBasicForMovement() *abilityraknet.MeleeRu
 func (s *gameplayPeerSession) resetSharedActionAdmission() *abilityraknet.MeleeRun {
 	if s == nil {
 		return nil
+	}
+	err := s.cancelPendingBasic()
+	if err != nil {
+		log.Printf("RakNet pending basic admission cleanup failed user=%d: %v", s.binding.UserID, err)
 	}
 	run := s.basicAttack
 	s.basicAttack = nil
@@ -2083,6 +2092,7 @@ type gameplaySessionRegistry struct {
 	// in the Windows 386 build.
 	nextGeneration       uint64
 	nextActionGeneration uint64
+	playerStatRecorder   *playerstat.Recorder
 	scenarioAbilityCatalog
 	scenarioSpawnState
 	scenarioNPCControlQueue
@@ -2483,6 +2493,9 @@ func (e gameplaySessionLifecycle) discardGame(
 			delete(e.registry.memberEndpoints, key)
 		}
 	}
+	if cancel := e.registry.retireArenaResultLocked(gameID); cancel != nil {
+		cancellations = append(cancellations, cancel)
+	}
 	e.registry.mutex.Unlock()
 	for _, cancel := range cancellations {
 		cancel()
@@ -2585,6 +2598,9 @@ func (e gameplaySessionLifecycle) discardMember(
 	}
 	delete(e.registry.memberTransports, memberKey)
 	delete(e.registry.memberEndpoints, memberKey)
+	if cancel := e.registry.retireArenaResultLocked(gameID); cancel != nil {
+		cancellations = append(cancellations, cancel)
+	}
 	e.registry.mutex.Unlock()
 	for _, fixtureBatch := range fixtureBatches {
 		fixtureBatch.complete()
@@ -2648,6 +2664,7 @@ func (e gameplaySessionLifecycle) cleanup(
 			}
 		}
 	}
+	e.registry.flushArenaStats()
 	e.registry.mutex.Lock()
 	peerSessions := make([]gameplayPeerSession, 0, len(e.registry.sessions))
 	retainedSessions := make([]gameplayPeerSession, 0, len(e.registry.retainedSessions))
@@ -3386,6 +3403,10 @@ func (e campaignActionAuthority) cancel(
 	if !isCurrent {
 		return zoneaction.PursuitSnapshot{}, nil, nil, nil, false
 	}
+	pendingErr := peerSession.cancelPendingBasic()
+	if pendingErr != nil && e.registry.logger != nil {
+		e.registry.logger.Printf("RakNet pending basic input-release cleanup failed user=%d: %v", peerSession.binding.UserID, pendingErr)
+	}
 	pursuit := peerSession.campaignPlayerPursuitSession().Snapshot()
 	// Releasing held input ends repetition, not the accepted attack's recovery.
 	// Projectile attacks have no basicAttack run to protect below; retain their
@@ -3705,6 +3726,11 @@ func (s *gameplayPeerSession) applyDamageHitPointsWithOutcome(
 		transitionPackets = [][]byte{packet}
 	} else if isLethal && !isExpectedGameOver {
 		for index := uint32(0); index < squad.Size; index++ {
+			// The lethal HP update is committed below. The current slot still
+			// appears alive here and must not become its own replacement.
+			if index == s.deployedCreatureIndex {
+				continue
+			}
 			character, isFound := s.squad.Character(index)
 			if isFound && character.IsAvailable && character.HitPoints > 0 {
 				livingIndex = index
@@ -5206,7 +5232,7 @@ func (s *gameplayPeerSession) setCampaignCharacterHitPoints(
 	creatureIndex uint32, hitPoint float32,
 ) (bool, error) {
 	if s == nil || s.squad == nil ||
-		(s.binding.Mode != game.ModeChain && s.binding.Mode != game.ModeTutorial) {
+		(s.binding.Mode != game.ModeChain && s.binding.Mode != game.ModeTutorial && s.binding.Mode != game.ModeArena) {
 		return false, errors.New("campaign squad unavailable")
 	}
 	if creatureIndex == s.squad.DeployedIndex() {
@@ -5227,7 +5253,7 @@ func (s *gameplayPeerSession) setCampaignCharacterManaPoints(
 	creatureIndex uint32, manaPoint float32,
 ) error {
 	if s == nil || s.squad == nil ||
-		(s.binding.Mode != game.ModeChain && s.binding.Mode != game.ModeTutorial) {
+		(s.binding.Mode != game.ModeChain && s.binding.Mode != game.ModeTutorial && s.binding.Mode != game.ModeArena) {
 		return errors.New("campaign squad unavailable")
 	}
 	if creatureIndex == s.squad.DeployedIndex() {

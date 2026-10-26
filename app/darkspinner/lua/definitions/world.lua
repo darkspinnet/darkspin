@@ -114,6 +114,7 @@
 ---@field is_beam_out_committed boolean
 
 ---@class WorldSnapshot
+---@field arena? ArenaMatchSnapshot Read-only arena match/squad producer, including results after combat ends; independent of world availability and native results UI.
 ---@field native_readiness? NativeGameplaySnapshot Native active-world and controlled-handle sample retained by Ready() and Mission:Enter().
 ---@field ability AbilityState|nil Narrow Ride the Lightning semantic observer; support/availability are explicit.
 ---@field client_id string
@@ -146,6 +147,24 @@
 ---@field is_victory_committed boolean Actual personal result transaction committed after completed boss admission with nonzero boss identity. Requires is_victory_available; not native result-screen or reward-cashout proof.
 ---@field is_objective_complete boolean Real zone objective producer.
 ---@field boss WorldBoss|nil Nil if unsupported or producer lock busy.
+
+---@class ArenaMatchSnapshot
+---@field team integer This participant's team.
+---@field winning_team integer Zero until the match producer commits a winner.
+---@field is_combat_active boolean
+---@field is_result_ready boolean Server result commitment; not native UI receipt.
+---@field members ArenaMemberSnapshot[] Current admitted match members; order unspecified.
+
+---@class ArenaMemberSnapshot
+---@field damage_done number Effective damage credited to this player in the current match.
+---@field damage_taken number Effective damage received in the current match.
+---@field healing_done number Actual restored health credited to this player, excluding overhealing.
+---@field healing_received number Actual restored health received, excluding overhealing.
+---@field swap_remaining_ms integer Remaining server swap cooldown at capture time; zero allows admission but does not prove native eligibility.
+---@field user_id integer
+---@field team integer
+---@field deployed_index integer Zero-based squad slot.
+---@field characters WorldHero[] Available squad characters; only index and resource fields are sampled, not position/object identity.
 
 ---@class WorldPathProjection
 ---@field position WorldPosition Mesh projection, which may differ from the requested point.

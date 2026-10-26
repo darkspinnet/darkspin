@@ -2,6 +2,30 @@ package game
 
 import "errors"
 
+// EnemyPopulationRules controls the reconstructed standing campaign population.
+// Authored spawn points and separate boss/horde encounters still bound the result.
+type EnemyPopulationRules struct {
+	EnemiesPerSection uint32
+}
+
+func DefaultEnemyPopulationRules() EnemyPopulationRules {
+	return EnemyPopulationRules{EnemiesPerSection: 15}
+}
+
+func (e EnemyPopulationRules) Validate() error {
+	if e.EnemiesPerSection < 10 || e.EnemiesPerSection > 60 {
+		return errors.New("enemies per section must be between 10 and 60")
+	}
+	return nil
+}
+
+func (e EnemyPopulationRules) Resolved() EnemyPopulationRules {
+	if e.EnemiesPerSection == 0 {
+		return DefaultEnemyPopulationRules()
+	}
+	return e
+}
+
 // BossSpawnRules controls reconstructed encounter policy, not authored NPC stats.
 type BossSpawnRules struct {
 	OpeningAddsPerAnchor    uint32

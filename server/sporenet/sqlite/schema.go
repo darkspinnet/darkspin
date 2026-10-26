@@ -3,6 +3,25 @@ package sqlite
 const chatLogTimeFormat = "2006-01-02T15:04:05.999999999Z07:00"
 
 var schemaStatements = []string{
+	`CREATE TABLE IF NOT EXISTS pvp_match_result (
+		user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+		match_id TEXT NOT NULL,
+		completed_at_unix INTEGER NOT NULL,
+		is_victory INTEGER NOT NULL,
+		is_ranked INTEGER NOT NULL,
+		round_win INTEGER NOT NULL,
+		round_loss INTEGER NOT NULL,
+		play_time_second INTEGER NOT NULL,
+		player_kill INTEGER NOT NULL,
+		death INTEGER NOT NULL,
+		damage_dealt REAL NOT NULL,
+		damage_taken REAL NOT NULL,
+		damage_maximum REAL NOT NULL,
+		healing REAL NOT NULL,
+		healing_received REAL NOT NULL,
+		healing_maximum REAL NOT NULL,
+		PRIMARY KEY (user_id, match_id)
+	)`,
 	`CREATE TABLE IF NOT EXISTS part_shop (
 		user_id INTEGER PRIMARY KEY REFERENCES user(id) ON DELETE CASCADE,
 		expires_at INTEGER NOT NULL DEFAULT 0,

@@ -34,14 +34,15 @@ func (e campaignProjectileStep) produceFlight(
 	if schedule.wave != nil {
 		return e.produceWaveFlight(peerSession, now, isFinalScheduledStep, packets)
 	}
+	enemies := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, schedule.definition, schedule.packet.SourceTime)
 	targets := make([]sim.ProjectileCollisionTarget, 0)
 	fallbackCount := 0
-	for _, target := range peerSession.zone.NPCs().LiveSnapshots() {
+	for _, target := range enemies.LiveSnapshots() {
 		if !target.IsPublished || target.IsDefeated || target.HitPoint <= 0 ||
 			!isSupportHealerBasicImpactTarget(target) {
 			continue
 		}
-		geometry, isFallback, geometryErr := campaignTargetProjectileGeometry(schedule.runtime.program, target)
+		geometry, isFallback, geometryErr := abilityTargetProjectileGeometryLocked(schedule.runtime, peerSession, target)
 		if geometryErr != nil {
 			schedule.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("flightGeometry[%d]: %w", target.Plan.ObjectID, geometryErr)
@@ -114,7 +115,7 @@ func (e campaignProjectileStep) produceFlight(
 		)
 		return append(packets, impactPackets...), nil
 	}
-	target, isFound := peerSession.zone.NPCs().NPC(result.TargetObjectID)
+	target, isFound := enemies.NPC(result.TargetObjectID)
 	if !isFound {
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("flightContact: target %d unavailable", result.TargetObjectID)

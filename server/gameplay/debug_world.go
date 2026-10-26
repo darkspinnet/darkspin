@@ -82,6 +82,9 @@ func (e *gameplaySessionRegistry) ScenarioWorldState(ctx context.Context, userID
 	result.PeerGeneration = matched.generation
 	result.TransportGeneration = matched.transportGeneration
 	result.SessionStage = bugSessionStage(matched.stage)
+	if matched.binding.Mode == game.ModeArena {
+		return e.scenarioArenaWorld(*matched, result), nil
+	}
 	if !matched.dungeonSetup.IsCommitted() || matched.zone == nil {
 		result.UnavailableReason = "world requires committed dungeon setup"
 		return result, nil

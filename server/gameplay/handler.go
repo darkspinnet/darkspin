@@ -1282,6 +1282,7 @@ func newGameplayHandlerWithDependencies(
 	sessionRegistry := newGameplaySessionRegistry(
 		dependency.zoneTimer, dependency.now, logger,
 	)
+	sessionRegistry.playerStatRecorder = statsRecorder
 	sessionRegistry.configureScenarioAbility(program)
 	if dependency.registerBugContext != nil {
 		dependency.registerBugContext(sessionRegistry)
@@ -5777,6 +5778,13 @@ func (p campaignPreparation) loadDirector(
 		return game.CampaignDirector{}, fmt.Errorf("directorLoad: %w", err)
 	}
 	director.BossSpawnRules = game.DefaultBossSpawnRules()
+	director.EnemyPopulationRules = game.DefaultEnemyPopulationRules()
+	populationRuleSource, isPopulationRuleSource := p.spawnRuleSource.(interface {
+		EnemyPopulationRules() game.EnemyPopulationRules
+	})
+	if isPopulationRuleSource {
+		director.EnemyPopulationRules = populationRuleSource.EnemyPopulationRules()
+	}
 	spawnRuleSource, isSpawnRuleSource := p.spawnRuleSource.(interface{ BossSpawnRules() game.BossSpawnRules })
 	if isSpawnRuleSource {
 		director.BossSpawnRules = spawnRuleSource.BossSpawnRules()

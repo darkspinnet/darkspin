@@ -1,7 +1,29 @@
 # Changelog
 
+### 2026-10-26
+
+- Save completed unranked PvP match results and lifetime win/loss, kill/death, fight-time, damage and healing statistics for both players, with atomic profile updates, duplicate protection and save retries.
+- #128 Restore Enrage and Tree of Life healing in PvP through their normal runtimes, with actual healing totals and round cleanup.
+- #128 Restore Arboreal Might squad support and shared Celestial Comet, Time Lapse, melee-combo and projectile delivery paths in PvP instead of reducing these executions to immediate single-target hits.
+- #128 Reply to canceled or replaced pending basic-attack requests so releasing held attacks does not leave the client unable to cast another ability.
+- #128 Restore best-of-three PvP rounds with native victory/defeat overlays, a five-second pause, squad reselection and a fresh prep-area countdown between fights.
+- #128 Replace fabricated PvP round scores, one-second duration and zero damage totals with recorded rounds, fight time and effective damage, retaining both players in completed results.
+- #128 Restore build 103's native PvP prep-area countdown by sending its timer before GameStart and aligning combat entry with the authored animation.
+- #128 Add a native no-party 1v1 scenario that independently queues both players and verifies shared Arena admission and combat readiness.
+- #128 Exclude the dying hero from automatic reserve selection so a squad can continue fighting instead of becoming stuck with a dead deployed hero.
+- #128 Preserve remaining Arena participants when the host opens results instead of aborting the opponent's pending results screen.
+- #128 Add native PvP combat and knockout investigation scenarios with read-only squad, swap-cooldown and outcome snapshots for packet review.
+
 ### 2026-10-25
 
+- #128 Drive the 1v1 scenario through native PvP / Unranked / 1v1 selection and Start, with verified party readiness and arena-owned world observations.
+- #128 Fix PvP loading by sorting game attributes for build 103's binary-search lookup, accepting the native two-player Unranked 1v1 party, and honoring owned unlocked squads offered by the Arena selector.
+- #128 Accept PvP scenario party invitations through native UI input instead of the server join fixture, wait for shared membership, and capture Navigation state and diagnostics when Arena acceptance stalls.
+- #128 Start PvP scenarios from Navigation with established parties, using one shared two-player party for 1v1 and paired team parties for 2v2 instead of silently creating singleton parties from Arsenal.
+- #128 Use pinned Blaze session IDs instead of account IDs for PvP scenario roster and host-session fields, matching production PvP setup.
+- #128 Make campaign enemy targets adjustable from the fixed 15 per route section to 10–60 in Server Rules, preserving 15 by default and including the mission's effective target in bug reports and shared settings.
+- #128 Prepare PvP scenarios with real owned playgroups and native user-group join notifications instead of unsolicited create/join callbacks, and identify which ownership field changes when a scenario loses its match.
+- #128 Include Arena roster, squad-selection and loading handshake state in sync snapshots, and retain squad-accept rejection reasons beyond the ordinary log tail.
 - Expand bug reports with rolling build-103 attack, movement-intent and camera/hero state, mouse/focus events, and explicit sampling gaps to investigate transient client/server desync.
 - #127 Restore AcFreeze's build-103 Frozen attribute, attached ice block and ice-breaking effect, with cleanup on expiry, cleanse, death and hero changes.
 - #126 Persist DNA pickups outside the global gameplay lock so account saves cannot block movement, attacks and NPC callbacks, while preserving pickup reservations and co-op grants.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 )
 
@@ -40,13 +41,19 @@ func (e *gameplayPeerSession) stopCampaignTreeOfLife() ([][]byte, error) {
 // departure cannot cancel an ally's reliable delivery or redirect it elsewhere.
 // The caller retains or removes the updated caster session after this operation.
 func (e *gameplaySessionRegistry) retireCampaignTreeOfLifeLocked(caster *gameplayPeerSession) {
+	if caster.binding.Mode == game.ModeArena {
+		match := e.arenaMatches[caster.binding.GameID]
+		if match != nil && match.abilityWorld != nil {
+			match.abilityWorld.treeSession.Retire(caster.treeOfLifeObjectID)
+		}
+	}
 	packets, err := caster.stopCampaignTreeOfLife()
 	if err != nil {
 		log.Printf("RakNet Tree of Life retirement failed game=%d user=%d generation=%d: %v",
 			caster.binding.GameID, caster.binding.UserID, caster.generation, err)
 		return
 	}
-	if len(packets) == 0 || caster.zone == nil {
+	if len(packets) == 0 || caster.zone == nil && caster.binding.Mode != game.ModeArena {
 		return
 	}
 	e.queueCampaignTreeRemovalLocked(caster, packets)

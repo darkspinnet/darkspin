@@ -449,6 +449,10 @@ func writeZoneRuntimeReport(document *strings.Builder, sessions []serverSessionS
 			)
 		}
 		security := "unavailable"
+		populationTarget := "unavailable"
+		if session.EnemyTargetPerSection != 0 {
+			populationTarget = fmt.Sprint(session.EnemyTargetPerSection)
+		}
 		if session.Security != nil {
 			security = fmt.Sprintf(
 				"route %d; objects %v; presented %v", session.Security.RouteIndex,
@@ -456,10 +460,11 @@ func writeZoneRuntimeReport(document *strings.Builder, sessions []serverSessionS
 			)
 		}
 		document.WriteString(fmt.Sprintf(
-			"| %d | %s difficulty %d chain %d; %d ms / `%d`; population %t; restored %t; objectives complete %t; cleared groups %s | %s | %s | %s |\n",
+			"| %d | %s difficulty %d chain %d; %d ms / `%d`; population %t; enemy target/section %s; restored %t; objectives complete %t; cleared groups %s | %s | %s | %s |\n",
 			session.UserID, markdownCell(session.ZoneLevel), session.ZoneDifficulty,
 			session.ZoneChainLevelIndex, session.ZoneElapsedMS,
 			session.ZoneCompletionID, session.IsPopulationPrimed,
+			populationTarget,
 			session.IsZoneRestored, session.IsObjectiveComplete,
 			markdownCell(uint32Summary(session.ClearedSpawnGroupIDs)),
 			markdownCell(zoneMemberSummary(session.ZoneMembers)),

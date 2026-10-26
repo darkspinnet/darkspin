@@ -16,6 +16,9 @@ type PVPParticipant struct {
 // PVPRequest prepares a server-owned 1v1 or 2v2 arena fixture. Each team has
 // TeamSize explicit owned clients. It does not assert that clients requested
 // matchmaking or accepted a native matchmaking job.
+// Participants establish their parties before preparation; 1v1 opponents share
+// one two-member party. Build 103 receives user-group setup for those actual
+// groups without an invented matchmaking job.
 type PVPRequest struct {
 	Participants []PVPParticipant
 	OwnedUserIDs []int64

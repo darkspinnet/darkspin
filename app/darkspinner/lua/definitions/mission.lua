@@ -75,6 +75,12 @@
 ---@field state integer|nil Native map state; Difficulty selection is 5.
 ---@field difficulty integer|nil One-based global difficulty, 1-72.
 ---@field game_type integer|nil Campaign chain is 2.
+---@field pvp_game_size integer|nil Native selection: 1v1=0, 2v2=1; nil when unset or unavailable.
+---@field pvp_rank_type integer|nil Native selection: Ranked=0, Unranked=1, Custom=2; nil when unset or unavailable.
+---@field party_member_count integer|nil Native observed party size, including the local player.
+---@field is_pvp_unlocked boolean|nil Native PvP availability.
+---@field is_party_leader boolean|nil Native party leadership observation.
+---@field are_pvp_members_ready boolean|nil Native party PvP squad readiness, separate from server membership.
 ---@field animation_state integer|nil Zero when difficulty carousel is settled.
 ---@field animation_difficulty integer|nil Settled carousel selection.
 ---@field is_transactions_processing boolean|nil

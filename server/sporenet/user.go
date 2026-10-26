@@ -33,6 +33,7 @@ type User struct {
 	PartShop                    PartShopState
 	Events                      []UserEvent
 	CampaignExperiences         []CampaignExperience
+	PVPResults                  []PVPMatchResult
 	State                       uint32
 	RoomID                      uint32
 	GameID                      uint32

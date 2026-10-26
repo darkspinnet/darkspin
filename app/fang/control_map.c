@@ -219,6 +219,12 @@ int fang_control_map_read(fang_control_map_state* snapshot) {
     read_map_number(&context, &controller, "mCurrentDifficultyMode", &snapshot->difficulty_mode, 512, &snapshot->fields);
     read_map_boolean(&context, &controller, "mbTransactionsProcessing", &snapshot->is_transactions_processing, 32, &snapshot->fields);
     read_map_boolean(&context, &controller, "mbPartyMembersReadyToStartGame", &snapshot->are_party_members_ready, 64, &snapshot->fields);
+    read_map_number(&context, &controller, "mPvPGameSize", &snapshot->pvp_game_size, 1024, &snapshot->fields);
+    read_map_number(&context, &controller, "mPvPRankType", &snapshot->pvp_rank_type, 2048, &snapshot->fields);
+    read_map_number(&context, &controller, "mNumPartyMembers", &snapshot->party_member_count, 4096, &snapshot->fields);
+    read_map_boolean(&context, &controller, "mbPvPUnlocked", &snapshot->is_pvp_unlocked, 8192, &snapshot->fields);
+    read_map_boolean(&context, &controller, "mbIsPartyLeader", &snapshot->is_party_leader, 16384, &snapshot->fields);
+    read_map_boolean(&context, &controller, "mbYouAndPartyMembersCanStartPvP", &snapshot->are_pvp_members_ready, 32768, &snapshot->fields);
     if (read_map_member(&context, &controller, "mRoot", &root)) {
         if (read_map_member(&context, &root, "btnStartPlay", &start)) {
             read_map_boolean(&context, &start, "disabled", &snapshot->is_start_disabled, 128, &snapshot->fields);

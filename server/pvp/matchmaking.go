@@ -99,7 +99,7 @@ func (e *Matchmaking) Enter(req MatchmakingRequest) (MatchmakingAdmission, error
 	if !isCampaign && !isArena {
 		return MatchmakingAdmission{}, ErrMatchmakingUnsupported
 	}
-	if isArena && len(userIDs) > int(req.Criteria.TeamSize) {
+	if isArena && !IsArenaPartySizeAllowed(req.Criteria, req.PartyID, len(userIDs)) {
 		return MatchmakingAdmission{}, ErrMatchmakingInvalid
 	}
 	e.mutex.Lock()
@@ -165,6 +165,22 @@ func (e *Matchmaking) Enter(req MatchmakingRequest) (MatchmakingAdmission, error
 		UserID: req.UserID, PartyID: reservation.PartyID,
 		Criteria: req.Criteria,
 	}, Sessions: compatibleSessions}, nil
+}
+
+// IsArenaPartySizeAllowed includes build 103's native Unranked 1v1 start:
+// its two-member party supplies opposing players, rather than one allied team.
+// Other queues retain their single-team party limit.
+func IsArenaPartySizeAllowed(criteria MatchmakingCriteria, partyID uint32, memberCount int) bool {
+	if !isArenaCriteria(criteria) || memberCount < 1 {
+		return false
+	}
+	if memberCount <= int(criteria.TeamSize) {
+		return true
+	}
+	return partyID != 0 && !criteria.IsRanked &&
+		criteria.ExpectedPlayerCount == ArenaOneVersusOnePlayerCount &&
+		criteria.TeamSize == ArenaOneVersusOneTeamSize &&
+		memberCount == int(ArenaOneVersusOnePlayerCount)
 }
 
 // IsArenaCriteria reports whether the requested competitive roster shape is

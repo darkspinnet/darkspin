@@ -23,6 +23,12 @@ type controlMapState struct {
 	State                    *uint32 `json:"state"`
 	Difficulty               *uint32 `json:"difficulty"`
 	GameType                 *uint32 `json:"game_type"`
+	PVPGameSize              *uint32 `json:"pvp_game_size"`
+	PVPRankType              *uint32 `json:"pvp_rank_type"`
+	PartyMemberCount         *uint32 `json:"party_member_count"`
+	IsPVPUnlocked            *bool   `json:"is_pvp_unlocked"`
+	IsPartyLeader            *bool   `json:"is_party_leader"`
+	ArePVPMembersReady       *bool   `json:"are_pvp_members_ready"`
 	AnimationState           *uint32 `json:"animation_state"`
 	AnimationDifficulty      *uint32 `json:"animation_difficulty"`
 	IsTransactionsProcessing *bool   `json:"is_transactions_processing"`

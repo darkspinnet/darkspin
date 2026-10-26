@@ -21,6 +21,7 @@ type UserRecord struct {
 	PartShop                    PartShopState
 	Events                      []UserEvent
 	CampaignExperiences         []CampaignExperience
+	PVPResults                  []PVPMatchResult
 	Associations                map[uint32][]AssociationMember
 	Settings                    map[string]string
 	Extensions                  []OpaqueField
@@ -55,6 +56,7 @@ func (u *User) Record() UserRecord {
 		PartShop:                    u.PartShop,
 		Events:                      append([]UserEvent(nil), u.Events...),
 		CampaignExperiences:         append([]CampaignExperience(nil), u.CampaignExperiences...),
+		PVPResults:                  append([]PVPMatchResult(nil), u.PVPResults...),
 		Associations:                cloneAssociations(u.Associations),
 		Settings:                    cloneSettings(u.Settings),
 		Extensions:                  cloneOpaqueFields(u.extensions),
@@ -80,6 +82,7 @@ func NewUserFromRecord(record UserRecord, templateDatabase *TemplateDatabase) *U
 		PartShop:                    record.PartShop,
 		Events:                      append([]UserEvent(nil), record.Events...),
 		CampaignExperiences:         append([]CampaignExperience(nil), record.CampaignExperiences...),
+		PVPResults:                  append([]PVPMatchResult(nil), record.PVPResults...),
 		Associations:                cloneAssociations(record.Associations),
 		Settings:                    cloneSettings(record.Settings),
 		extensions:                  cloneOpaqueFields(record.Extensions),

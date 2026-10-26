@@ -162,6 +162,7 @@ func snapshotSession(
 		}
 	}
 	state.PendingPacketCount = len(state.PendingPackets)
+	state.ArenaLoading = snapshotArenaLoading(peerSession)
 	if peerSession.zone == nil {
 		return state
 	}
@@ -178,6 +179,9 @@ func snapshotSession(
 	state.ZoneMemberLimit = zoneSnapshot.MemberLimit
 	state.ClearedSpawnGroupIDs = zoneSnapshot.ClearedSpawnGroupIDs
 	state.IsPopulationPrimed = zoneSnapshot.IsPopulationPrimed
+	if peerSession.zone.Population() != nil {
+		state.EnemyTargetPerSection = peerSession.zone.DirectorDefinition().EnemyPopulationRules.Resolved().EnemiesPerSection
+	}
 	state.IsZoneRestored = zoneSnapshot.IsRestored
 	state.IsObjectiveComplete = zoneSnapshot.IsObjectiveComplete
 	state.ZoneMembers = snapshotZoneMembers(zoneSnapshot.Members)

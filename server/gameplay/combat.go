@@ -24,6 +24,7 @@ import (
 	bossraknet "github.com/darkspinnet/darkspin/server/zone/boss/raknet103"
 	zonecompanion "github.com/darkspinnet/darkspin/server/zone/companion"
 	companionraknet "github.com/darkspinnet/darkspin/server/zone/companion/raknet103"
+	zonecontent "github.com/darkspinnet/darkspin/server/zone/content"
 	zonedeath "github.com/darkspinnet/darkspin/server/zone/death"
 	deathraknet "github.com/darkspinnet/darkspin/server/zone/death/raknet103"
 	zoneeffect "github.com/darkspinnet/darkspin/server/zone/effect"
@@ -4210,6 +4211,14 @@ func campaignTargetProjectileGeometry(
 	program Programs, target zonenpc.Snapshot,
 ) (zonenpc.ProjectileGeometry, bool, error) {
 	physics, isFound := program.NounPhysics[target.Plan.NounName]
+	geometry, isFallback, err := campaignTargetProjectileGeometryForPhysics(program, target, physics, isFound)
+	if err != nil {
+		return zonenpc.ProjectileGeometry{}, false, fmt.Errorf("targetPhysics: %w", err)
+	}
+	return geometry, isFallback, nil
+}
+
+func campaignTargetProjectileGeometryForPhysics(program Programs, target zonenpc.Snapshot, physics zonecontent.NounPhysics, isFound bool) (zonenpc.ProjectileGeometry, bool, error) {
 	halfExtent := program.ProjectileHalfExtent
 	if halfExtent.X <= 0 || halfExtent.Y <= 0 || halfExtent.Z <= 0 {
 		return zonenpc.ProjectileGeometry{}, false,

@@ -9,7 +9,7 @@
 ---@class ClientParty
 ---@field Create fun(self:ClientParty,name?:string):PartyObservation|nil,ScenarioError|nil Creates or returns this actor's server party.
 ---@field Invite fun(self:ClientParty,other:ManagedClient):PartyObservation|nil,ScenarioError|nil Invites another owned client/account.
----@field Join fun(self:ClientParty,leader:ManagedClient):PartyObservation|nil,ScenarioError|nil Accepts the invitation associated with the specified owned leader.
+---@field Join fun(self:ClientParty,leader:ManagedClient):PartyObservation|nil,ScenarioError|nil Server join fixture for the specified owned leader. Does not click native Accept or dismiss the invitation; use native UI input when exercising invitation acceptance.
 ---@field Snapshot fun(self:ClientParty):PartyObservation|nil,ScenarioError|nil Reads the actor's server party; id 0 means no membership.
 
 ---@class PartyObservation

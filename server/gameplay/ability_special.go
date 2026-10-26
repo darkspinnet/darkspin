@@ -638,7 +638,8 @@ func (e treeOfLifeSchedule) isCurrent(
 ) bool {
 	return isFound && peerSession.generation == e.generation &&
 		peerSession.treeOfLifeRun == e.run &&
-		peerSession.treeOfLifeObjectID == e.objectID
+		peerSession.treeOfLifeObjectID == e.objectID &&
+		(peerSession.binding.Mode != game.ModeArena || peerSession.isArenaCombatActive)
 }
 
 func (e treeOfLifeSchedule) producer(
@@ -700,17 +701,22 @@ func (e treeOfLifeStep) produce() ([][]byte, error) {
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	treeSession, err := schedule.runtime.registry.abilityTreeSessionLocked(peerSession)
+	if err != nil {
+		schedule.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("healingWorld: %w", err)
+	}
 	output, err := schedule.run.Advance(context.Background(), e.deadline)
 	if err != nil {
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignTreeAdvance: %w", err)
 	}
 	if output.IsSpawned {
-		err = peerSession.zone.TreeOfLife().Commit(zoneability.TreeOfLifePresentation{
+		err = treeSession.Commit(zoneability.TreeOfLifePresentation{
 			ObjectID: schedule.objectID, SourceObjectID: schedule.actorObjectID,
 			NounName: schedule.definition.SpawnNoun,
 			Position: game.Vec3{X: schedule.position.X, Y: schedule.position.Y, Z: schedule.position.Z},
-			Team:     1, Phase: zoneability.TreeOfLifeSpawned,
+			Team:     abilityActorTeam(peerSession), Phase: zoneability.TreeOfLifeSpawned,
 			SpawnedAt: schedule.startedAt + schedule.definition.HitDelay,
 			ExpiresAt: schedule.startedAt + schedule.definition.HitDelay + schedule.definition.Duration,
 		})
@@ -720,7 +726,7 @@ func (e treeOfLifeStep) produce() ([][]byte, error) {
 		}
 	}
 	if e.deadline >= schedule.definition.ReleaseDelay {
-		peerSession.zone.TreeOfLife().Release(schedule.objectID)
+		treeSession.Release(schedule.objectID)
 	}
 	healing := make([]zoneSquadHealing, 0)
 	resourcePackets := make([][]byte, 0)
@@ -728,7 +734,7 @@ func (e treeOfLifeStep) produce() ([][]byte, error) {
 	for _, pulse := range output.Pulse {
 		selectedHealing := pulse.HealingMinimum
 		if pulse.HealingMinimum != pulse.HealingMaximum {
-			random, randomErr := peerSession.abilityRandom()
+			random, randomErr := schedule.runtime.registry.abilityRandomLocked(peerSession)
 			if randomErr != nil {
 				schedule.runtime.registry.mutex.Unlock()
 				return nil, fmt.Errorf(
@@ -769,7 +775,7 @@ func (e treeOfLifeStep) produce() ([][]byte, error) {
 	}
 	isFinal := len(output.Cleanup) != 0
 	if isFinal {
-		peerSession.zone.TreeOfLife().Retire(schedule.objectID)
+		treeSession.Retire(schedule.objectID)
 		// Queue removal before clearing ownership or performing fallible stats
 		// publication. A failed final producer must not strand its tree.
 		schedule.runtime.registry.queueCampaignTreeRemovalLocked(&peerSession, output.Cleanup)
@@ -780,13 +786,14 @@ func (e treeOfLifeStep) produce() ([][]byte, error) {
 	}
 	binding := peerSession.binding
 	schedule.runtime.registry.sessions[schedule.sessionKey] = peerSession
+	schedule.runtime.registry.queueArenaAbilityResourcesLocked(peerSession, resourcePackets)
 	schedule.runtime.registry.mutex.Unlock()
 
-	err = schedule.runtime.stats.Record(
-		context.Background(), binding, statDelta,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("campaignTreeStats: %w", err)
+	if binding.Mode != game.ModeArena {
+		err = schedule.runtime.stats.Record(context.Background(), binding, statDelta)
+		if err != nil {
+			return nil, fmt.Errorf("campaignTreeStats: %w", err)
+		}
 	}
 	packets := output.Packet
 	if e.deadline == schedule.definition.ReleaseDelay {
@@ -846,7 +853,8 @@ func (e enrageSchedule) isCurrent(
 	peerSession gameplayPeerSession, isFound bool,
 ) bool {
 	return isFound && peerSession.generation == e.generation &&
-		peerSession.enrageRun == e.run
+		peerSession.enrageRun == e.run &&
+		(peerSession.binding.Mode != game.ModeArena || peerSession.isArenaCombatActive)
 }
 
 func (e enrageSchedule) tickProducer(
@@ -885,12 +893,33 @@ func (e enrageTickStep) produce() ([][]byte, error) {
 		schedule.definition,
 		schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond),
 	)
+	if err == nil && peerSession.binding.Mode == game.ModeArena && healedAmount > 0 {
+		match := schedule.runtime.registry.arenaMatches[peerSession.binding.GameID]
+		if match != nil && match.isCombatActive {
+			match.result.recordHealing(schedule.binding.UserID, peerSession.binding.UserID, healedAmount)
+		}
+		for index := uint32(0); index < uint32(len(peerSession.binding.Creatures)); index++ {
+			if zonehero.ObjectID(peerSession.binding.Slot, index) != schedule.run.TargetObjectID() {
+				continue
+			}
+			resourcePacket, resourceErr := peerSession.marshalCampaignCharacterResource(index)
+			if resourceErr != nil {
+				schedule.runtime.registry.mutex.Unlock()
+				return nil, fmt.Errorf("enrageResource: %w", resourceErr)
+			}
+			packets = append(packets, resourcePacket)
+		}
+	}
 	schedule.runtime.registry.sessions[schedule.sessionKey] = peerSession
+	schedule.runtime.registry.queueArenaAbilityResourcesLocked(peerSession, packets)
 	schedule.runtime.registry.mutex.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("campaignEnrageTick[%d]: %w", e.index, err)
 	}
 	if healedAmount <= 0 {
+		return packets, nil
+	}
+	if schedule.binding.Mode == game.ModeArena {
 		return packets, nil
 	}
 	err = schedule.runtime.stats.Record(
@@ -1914,7 +1943,7 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			return nil, fmt.Errorf("campaignTreeCooldown: %w", cooldownErr)
 		}
 		definition.Cooldown = cooldown
-		objectID, objectIDErr := peerSession.reserveCampaignProjectileIDs(1, 1000)
+		objectID, objectIDErr := r.registry.reserveAbilityObjectIDsLocked(&peerSession, 1, 1000)
 		if objectIDErr != nil {
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("campaignTreeObjectID: %w", objectIDErr)
@@ -1923,7 +1952,7 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 		treeRun, immediatePackets, runErr := abilityraknet.NewAreaHealingRun(abilityraknet.AreaHealingInput{
 			Ability: definition, ActorObjectID: command.Common.ObjectID, EffectObjectID: objectID,
 			Position: toSimPosition(position), ManaPoint: remainingManaPoint,
-			Team: 1, SourceTime: packet.SourceTime,
+			Team: abilityActorTeam(peerSession), SourceTime: packet.SourceTime,
 		})
 		if runErr != nil {
 			r.registry.mutex.Unlock()
@@ -1983,6 +2012,7 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 		}
 		peerSession.treeOfLifeObjectID = objectID
 		peerSession.treeOfLifeRun = treeRun
+		effectStartedAt := r.registry.abilityElapsedLocked(peerSession, abilityStartTime)
 		generation := peerSession.generation
 		r.registry.sessions[sessionKey] = peerSession
 		r.registry.mutex.Unlock()
@@ -1995,7 +2025,7 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 		slices.Sort(deadlines)
 		deadlines = slices.Compact(deadlines)
 		schedule := treeOfLifeSchedule{
-			startedAt: peerSession.zone.Elapsed(abilityStartTime),
+			startedAt: effectStartedAt,
 			runtime:   r, sessionKey: sessionKey,
 			generation: generation, objectID: objectID,
 			actorObjectID:     command.Common.ObjectID,

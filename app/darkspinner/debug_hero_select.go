@@ -86,7 +86,7 @@ func selectDebugHero(ctx context.Context, host *debugHost, clientManager *debugC
 			return result, fmt.Errorf("heroInitialWorld: %w", worldErr)
 		}
 		if world.IsAvailable && world.Hero != nil {
-			if initial.ZoneGeneration == 0 {
+			if initial.PeerGeneration == 0 {
 				initial = world
 			}
 			probe, native, nativeErr := observeDebugHeroNative(waitContext, clientManager, owner)
@@ -190,7 +190,7 @@ func readDebugHeroWorld(ctx context.Context, host *debugHost, clientManager *deb
 	if world.ClientID != owner.client.ClientID || world.InstanceID != owner.client.InstanceID || world.PID != owner.client.ProcessID || world.UserID != owner.client.UserID || world.GameID != owner.profile.GameID {
 		return world, &control.ScenarioError{Code: control.OwnershipLost, Context: "heroWorldOwner", Message: "hero selection process/account/game changed"}
 	}
-	if initial.ZoneGeneration != 0 {
+	if initial.PeerGeneration != 0 {
 		isEpochChanged := world.PeerGeneration != 0 && world.PeerGeneration != initial.PeerGeneration || world.TransportGeneration != 0 && world.TransportGeneration != initial.TransportGeneration || world.ZoneGeneration != 0 && world.ZoneGeneration != initial.ZoneGeneration
 		if isEpochChanged {
 			return world, &control.ScenarioError{Code: control.OwnershipLost, Context: "heroWorldEpoch", Message: "hero selection peer/transport/zone changed"}
@@ -202,7 +202,8 @@ func readDebugHeroWorld(ctx context.Context, host *debugHost, clientManager *deb
 	if world.Hero != nil && (world.Hero.IsDefeated || world.Hero.HitPoint <= 0) {
 		return world, errors.New("hero selection requires the observed active hero alive")
 	}
-	if world.IsAvailable && (world.PeerGeneration == 0 || world.TransportGeneration == 0 || world.ZoneGeneration == 0) {
+	isArena := owner.profile.IsArena && world.Arena != nil
+	if world.IsAvailable && (world.PeerGeneration == 0 || world.TransportGeneration == 0 || !isArena && world.ZoneGeneration == 0) {
 		return world, errors.New("available hero observation omitted required gameplay epochs")
 	}
 	return world, nil

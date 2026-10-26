@@ -17,6 +17,12 @@ type controlMapState struct {
 	Difficulty               *uint32 `json:"difficulty"`
 	DifficultyMode           *uint32 `json:"difficulty_mode"`
 	GameType                 *uint32 `json:"game_type"`
+	PVPGameSize              *uint32 `json:"pvp_game_size"`
+	PVPRankType              *uint32 `json:"pvp_rank_type"`
+	PartyMemberCount         *uint32 `json:"party_member_count"`
+	IsPVPUnlocked            *bool   `json:"is_pvp_unlocked"`
+	IsPartyLeader            *bool   `json:"is_party_leader"`
+	ArePVPMembersReady       *bool   `json:"are_pvp_members_ready"`
 	AnimationState           *uint32 `json:"animation_state"`
 	AnimationDifficulty      *uint32 `json:"animation_difficulty"`
 	IsTransactionsProcessing *bool   `json:"is_transactions_processing"`
@@ -90,6 +96,12 @@ func readControlMapReceipt(requestID uint32) *controlMapState {
 		Difficulty:               controlMapNumber(fields, 2, uint32(snapshot.difficulty)),
 		DifficultyMode:           controlMapNumber(fields, 512, uint32(snapshot.difficulty_mode)),
 		GameType:                 controlMapNumber(fields, 4, uint32(snapshot.game_type)),
+		PVPGameSize:              controlMapNumber(fields, 1024, uint32(snapshot.pvp_game_size)),
+		PVPRankType:              controlMapNumber(fields, 2048, uint32(snapshot.pvp_rank_type)),
+		PartyMemberCount:         controlMapNumber(fields, 4096, uint32(snapshot.party_member_count)),
+		IsPVPUnlocked:            controlMapBoolean(fields, 8192, uint32(snapshot.is_pvp_unlocked)),
+		IsPartyLeader:            controlMapBoolean(fields, 16384, uint32(snapshot.is_party_leader)),
+		ArePVPMembersReady:       controlMapBoolean(fields, 32768, uint32(snapshot.are_pvp_members_ready)),
 		AnimationState:           controlMapNumber(fields, 8, uint32(snapshot.animation_state)),
 		AnimationDifficulty:      controlMapNumber(fields, 16, uint32(snapshot.animation_difficulty)),
 		IsTransactionsProcessing: controlMapBoolean(fields, 32, uint32(snapshot.is_transactions_processing)),

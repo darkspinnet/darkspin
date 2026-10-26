@@ -21,9 +21,10 @@ const allyAlertSectionVersion uint32 = 1
 
 // ServerRulesConfiguration is the explicit launcher and persistence DTO.
 type ServerRulesConfiguration struct {
-	AllyAlert     AllyAlertConfiguration     `json:"allyAlert" toml:"ally_alert"`
-	BossSpawning  BossSpawningConfiguration  `json:"bossSpawning" toml:"boss_spawning"`
-	MutationAgent MutationAgentConfiguration `json:"mutationAgent" toml:"mutation_agent"`
+	EnemyPopulation EnemyPopulationConfiguration `json:"enemyPopulation" toml:"enemy_population"`
+	AllyAlert       AllyAlertConfiguration       `json:"allyAlert" toml:"ally_alert"`
+	BossSpawning    BossSpawningConfiguration    `json:"bossSpawning" toml:"boss_spawning"`
+	MutationAgent   MutationAgentConfiguration   `json:"mutationAgent" toml:"mutation_agent"`
 }
 
 type BossSpawningConfiguration struct {
@@ -60,7 +61,7 @@ func (e AllyAlertConfiguration) rules() zonenpc.AllyAlertRules {
 }
 
 func serverRulesConfiguration(rules zonenpc.AllyAlertRules) ServerRulesConfiguration {
-	return ServerRulesConfiguration{MutationAgent: mutationAgentConfiguration(zonehorde.DefaultPolicy()), BossSpawning: bossSpawningConfiguration(game.DefaultBossSpawnRules()), AllyAlert: AllyAlertConfiguration{
+	return ServerRulesConfiguration{EnemyPopulation: enemyPopulationConfiguration(game.DefaultEnemyPopulationRules()), MutationAgent: mutationAgentConfiguration(zonehorde.DefaultPolicy()), BossSpawning: bossSpawningConfiguration(game.DefaultBossSpawnRules()), AllyAlert: AllyAlertConfiguration{
 		Version:   allyAlertSectionVersion,
 		IsEnabled: rules.IsEnabled, RangePercent: rules.RangePercent, RangeOwner: rules.RangeOwner,
 		MaxHops: rules.MaxHops, IsDiagnosticLoggingEnabled: rules.IsDiagnosticLoggingEnabled,
@@ -70,13 +71,14 @@ func serverRulesConfiguration(rules zonenpc.AllyAlertRules) ServerRulesConfigura
 // A single store is shared by every gameplay runtime copy and existing zone.
 // Readers snapshot a whole policy; a failed save never changes live rules.
 type serverRuleStore struct {
-	mu          sync.RWMutex
-	path        string
-	rules       zonenpc.AllyAlertRules
-	spawnRules  game.BossSpawnRules
-	hordePolicy zonehorde.Policy
-	shopRules   sporenet.PartShopRules
-	sections    map[string]any
+	mu              sync.RWMutex
+	path            string
+	rules           zonenpc.AllyAlertRules
+	spawnRules      game.BossSpawnRules
+	populationRules game.EnemyPopulationRules
+	hordePolicy     zonehorde.Policy
+	shopRules       sporenet.PartShopRules
+	sections        map[string]any
 }
 
 func (e *serverRuleStore) BossSpawnRules() game.BossSpawnRules {
@@ -116,6 +118,12 @@ func loadServerRuleStore(ctx context.Context, configPath string) (*serverRuleSto
 	}
 	document.MutationAgent = mutationConfiguration
 	isReplaced = isReplaced || isMutationAdded
+	populationConfiguration, isPopulationAdded, err := decodeEnemyPopulationConfiguration(payload)
+	if err != nil {
+		return nil, fmt.Errorf("populationLoad: %w", err)
+	}
+	document.EnemyPopulation = populationConfiguration
+	isReplaced = isReplaced || isPopulationAdded
 	sections := make(map[string]any)
 	if !isNew {
 		metadata, decodeErr := toml.Decode(string(payload), &sections)
@@ -149,7 +157,7 @@ func loadServerRuleStore(ctx context.Context, configPath string) (*serverRuleSto
 	if err != nil {
 		return nil, fmt.Errorf("spawnValidate: %w", err)
 	}
-	return &serverRuleStore{path: path, rules: rules, spawnRules: document.BossSpawning.rules(), hordePolicy: document.MutationAgent.policy(), shopRules: shopRules, sections: sections}, nil
+	return &serverRuleStore{path: path, rules: rules, spawnRules: document.BossSpawning.rules(), populationRules: document.EnemyPopulation.rules(), hordePolicy: document.MutationAgent.policy(), shopRules: shopRules, sections: sections}, nil
 }
 
 func decodeAllyAlertRules(payload []byte, isLegacy bool) (ServerRulesConfiguration, bool, error) {
@@ -251,6 +259,7 @@ func writeServerRules(ctx context.Context, path string, document ServerRulesConf
 	mergedSections["ally_alert"] = document.AllyAlert
 	mergedSections["boss_spawning"] = document.BossSpawning
 	mergedSections["mutation_agent"] = document.MutationAgent
+	mergedSections["enemy_population"] = document.EnemyPopulation
 	var payload bytes.Buffer
 	err = toml.NewEncoder(&payload).Encode(mergedSections)
 	if err != nil {
@@ -304,6 +313,7 @@ func (e *Server) ServerRulesConfiguration() (ServerRulesConfiguration, error) {
 	document := serverRulesConfiguration(store.rules)
 	document.BossSpawning = bossSpawningConfiguration(store.spawnRules)
 	document.MutationAgent = mutationAgentConfiguration(store.hordePolicy)
+	document.EnemyPopulation = enemyPopulationConfiguration(store.populationRules)
 	return document, nil
 }
 
@@ -330,6 +340,16 @@ func (e *Server) SetServerRulesConfiguration(
 	store := e.serverRuleStore
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	if req.EnemyPopulation.Version == 0 {
+		req.EnemyPopulation = enemyPopulationConfiguration(store.populationRules)
+	}
+	if req.EnemyPopulation.Version != 1 {
+		return ServerRulesConfiguration{}, errors.New("enemy population settings version changed; reload before saving")
+	}
+	err = req.EnemyPopulation.rules().Validate()
+	if err != nil {
+		return ServerRulesConfiguration{}, fmt.Errorf("populationValidate: %w", err)
+	}
 	// Older launcher forms do not submit this section. Preserve it rather
 	// than resetting operator choices when unrelated settings are saved.
 	if req.MutationAgent.Version == 0 {
@@ -353,6 +373,9 @@ func (e *Server) SetServerRulesConfiguration(
 	store.rules = rules
 	store.spawnRules = req.BossSpawning.rules()
 	store.hordePolicy = req.MutationAgent.policy()
+	store.populationRules = req.EnemyPopulation.rules()
+	e.logger.Printf("Enemy population policy saved for new missions enemies_per_section=%d",
+		store.populationRules.EnemiesPerSection)
 	e.logger.Printf("Mutation Agent horde policy saved for new missions enabled=%t minimum_chain_level=%d waves=%d spawn_wave=%d delay_ms=%d agent_defeat_completes=%t",
 		store.hordePolicy.IsMutationAgentEnabled, store.hordePolicy.MutationAgentMinChainLevel,
 		store.hordePolicy.WaveCount, store.hordePolicy.MutationAgentWaveOrdinal,

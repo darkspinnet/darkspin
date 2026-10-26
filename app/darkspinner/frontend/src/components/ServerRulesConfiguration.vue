@@ -37,7 +37,12 @@ const isMutationAgentValid = computed(() => {
     Number.isInteger(mutation.spawnWave) && mutation.spawnWave >= 1 && mutation.spawnWave <= mutation.waveCount &&
     Number.isInteger(mutation.interWaveDelayMillisecond) && mutation.interWaveDelayMillisecond >= 0 && mutation.interWaveDelayMillisecond <= 30000
 })
-const isValid = computed(() => isAllyAlertValid.value && isBossSpawningValid.value && isMutationAgentValid.value)
+const isEnemyPopulationValid = computed(() => {
+  const population = configuration.value?.enemyPopulation
+  return population && population.version === 1 && Number.isInteger(population.enemiesPerSection) &&
+    population.enemiesPerSection >= 10 && population.enemiesPerSection <= 60
+})
+const isValid = computed(() => isAllyAlertValid.value && isBossSpawningValid.value && isMutationAgentValid.value && isEnemyPopulationValid.value)
 
 async function reload() {
   isBusy.value = true
@@ -59,8 +64,9 @@ async function save() {
       allyAlert: { ...configuration.value.allyAlert },
       bossSpawning: { ...configuration.value.bossSpawning },
       mutationAgent: { ...configuration.value.mutationAgent },
+      enemyPopulation: { ...configuration.value.enemyPopulation },
     })
-    message.value = 'Saved. Alert changes apply immediately; boss spawning and Mutation Agent horde changes apply to new missions.'
+    message.value = 'Saved. Alert changes apply immediately; enemy population, boss spawning and Mutation Agent horde changes apply to new missions.'
   }
   catch (error) { isError.value = true; message.value = String(error?.message || error) }
   finally { isBusy.value = false }
@@ -71,9 +77,14 @@ function shareToGitHub() {
   const rules = configuration.value.allyAlert
   const spawn = configuration.value.bossSpawning
   const mutation = configuration.value.mutationAgent
+  const population = configuration.value.enemyPopulation
   // Explicitly export every editable rule and its section version. Never
   // include unrelated launcher configuration or authentication settings.
   const toml = [
+    '[enemy_population]',
+    `version = ${population.version}`,
+    `enemies_per_section = ${population.enemiesPerSection}`,
+    '',
     '[ally_alert]',
     `version = ${rules.version}`,
     `is_enabled = ${rules.isEnabled}`,
@@ -110,7 +121,7 @@ function shareToGitHub() {
     '',
     '### Observations',
     '',
-    '<!-- Describe the behavior and optionally link a comparison video. -->',
+    '<!-- Describe the behavior, mission and difficulty, first clear or replay, party size, and whether you started a new mission after applying these settings. Attach a /bug report and optionally a comparison video with timestamps. -->',
   ].join('\n')
   const url = new URL('https://github.com/darkspinnet/darkspin/issues/new')
   url.searchParams.set('title', 'Server rules feedback')
@@ -133,8 +144,22 @@ onMounted(reload)
       <DialogTitle as="h2">SERVER RULES</DialogTitle>
       <Button variant="outline" type="button" :disabled="isBusy || !isValid" @click="shareToGitHub">Share to GitHub</Button>
     </header>
-    <p class="rules-description">Tune the local server. Alerts update immediately; boss spawning and Mutation Agent horde settings apply to new missions.</p>
+    <p class="rules-description">Tune the local server. Alerts update immediately; population, boss and horde settings apply to new missions.</p>
     <div v-if="configuration" class="rules-sections">
+      <details class="rules-group" open>
+        <summary class="rules-group-heading">
+          <span>ENEMY POPULATION</span><span class="rules-group-status" :class="{ 'rules-error': !isEnemyPopulationValid }">{{ isEnemyPopulationValid ? 'Experimental' : 'Check values' }}</span><span class="rules-chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="rules-group-content">
+          <p class="rules-description">Standing enemies along campaign routes. The current default is a server estimate, not a recovered original count. Try 18 for a modest increase from 15, then enter a new mission.</p>
+          <fieldset :disabled="isBusy" class="rules-fields">
+            <div class="rules-numbers">
+              <label for="population-section-count"><strong>ENEMY TARGET PER ROUTE SECTION</strong><Input id="population-section-count" v-model.number="configuration.enemyPopulation.enemiesPerSection" type="number" min="10" max="60" step="1" inputmode="numeric" /><small>Default: 15; allowed: 10–60. Each map normally has three route sections. Available spawn points can limit the result. Fixed opening encounters, companions, scripted spawns, hordes and boss waves have separate counts.</small></label>
+            </div>
+          </fieldset>
+          <p class="rules-description">Share these settings with the mission, difficulty, first clear or replay, party size and a bug report. Higher targets mostly add ordinary enemies; they do not multiply every encounter.</p>
+        </div>
+      </details>
       <details class="rules-group">
         <summary class="rules-group-heading">
           <span>BOSS SPAWNING</span><span class="rules-group-status" :class="{ 'rules-error': !isBossSpawningValid }">{{ isBossSpawningValid ? 'Experimental' : 'Check values' }}</span><span class="rules-chevron" aria-hidden="true"></span>

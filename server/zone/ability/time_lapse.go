@@ -10,7 +10,7 @@ import (
 
 // ApplyTimeLapse repeats each nearby enemy's recent damage, capped separately
 // for each victim. An undamaged enemy still receives the base energy hit.
-func ApplyTimeLapse(plan *AreaPlan, enemies *zonenpc.Session, creature game.GameplayCreature, now time.Time) error {
+func ApplyTimeLapse(plan *AreaPlan, enemies RecentDamageReader, creature game.GameplayCreature, now time.Time) error {
 	err := ApplyTimeLapseWithDexterity(plan, enemies, creature, creature.Dexterity, now)
 	if err != nil {
 		return fmt.Errorf("timeLapsePlan: %w", err)
@@ -21,7 +21,7 @@ func ApplyTimeLapse(plan *AreaPlan, enemies *zonenpc.Session, creature game.Game
 // ApplyTimeLapseWithDexterity keeps the accepted damage snapshot separate from
 // the live Dexterity operand read after the windup in ability525.
 func ApplyTimeLapseWithDexterity(
-	plan *AreaPlan, enemies *zonenpc.Session, creature game.GameplayCreature,
+	plan *AreaPlan, enemies RecentDamageReader, creature game.GameplayCreature,
 	dexterity float32, now time.Time,
 ) error {
 	policy := plan.Definition.TimeLapse

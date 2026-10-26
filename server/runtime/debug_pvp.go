@@ -57,6 +57,10 @@ func (e *Server) DebugPVP(ctx context.Context, req scenario.PVPRequest) (scenari
 	if teamCounts[1] != int(req.TeamSize) || teamCounts[2] != int(req.TeamSize) {
 		return result, errors.New("PvP scenario requires balanced explicit teams")
 	}
+	err := e.validateDebugPVPParties(participants, seenUsers, req.TeamSize)
+	if err != nil {
+		return result, fmt.Errorf("pvpParties: %w", err)
+	}
 	req.Participants = participants
 	providers := make([]debugPVPProvider, 0, len(e.blazeServers)+len(e.sharedTCPServers))
 	for _, provider := range e.blazeServers {
@@ -76,4 +80,32 @@ func (e *Server) DebugPVP(ctx context.Context, req scenario.PVPRequest) (scenari
 		return receipt, nil
 	}
 	return result, errors.New("owned PvP participants have no shared available loopback Blaze provider")
+}
+
+func (e *Server) validateDebugPVPParties(
+	participants []scenario.PVPParticipant, selectedUsers map[int64]bool, teamSize uint16,
+) error {
+	if e.partyService == nil {
+		return errors.New("PvP party service unavailable")
+	}
+	duelPartyID := uint32(0)
+	for _, participant := range participants {
+		partySS, isPartyFound := e.partyService.PartyForMember(participant.UserID)
+		if !isPartyFound || partySS.ID == 0 {
+			return errors.New("PvP requires established party membership before starting")
+		}
+		for _, member := range partySS.Members {
+			if !selectedUsers[member.ID] {
+				return errors.New("PvP party contains a member outside the selected owned participants")
+			}
+		}
+		if teamSize != 1 {
+			continue
+		}
+		if len(partySS.Members) != 2 || duelPartyID != 0 && duelPartyID != partySS.ID {
+			return errors.New("1v1 requires both participants in the same two-player party")
+		}
+		duelPartyID = partySS.ID
+	}
+	return nil
 }

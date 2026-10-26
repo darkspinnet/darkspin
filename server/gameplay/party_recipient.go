@@ -1,10 +1,19 @@
 package gameplay
 
-import zonecompanion "github.com/darkspinnet/darkspin/server/zone/companion"
+import (
+	"github.com/darkspinnet/darkspin/server/game"
+	zonecompanion "github.com/darkspinnet/darkspin/server/zone/companion"
+)
 
 // A fallen deployed hero may still own living squad slots or companions.
 // Participation is separate from each ability's liveness and range rules.
 func isActivePartyRecipient(candidate, source gameplayPeerSession) bool {
+	if source.binding.Mode == game.ModeArena {
+		return candidate.binding.Mode == game.ModeArena && candidate.binding.GameID == source.binding.GameID &&
+			candidate.binding.Team == source.binding.Team && candidate.isArenaCombatActive &&
+			candidate.squad != nil && candidate.stage.IsDungeon() && candidate.dungeonSetup.IsCommitted() &&
+			!candidate.isRejoinPending && !candidate.isZoneTerminal() && candidate.deployedObjectID != 0
+	}
 	if source.zone == nil || candidate.zone != source.zone ||
 		candidate.binding.GameID != source.binding.GameID ||
 		candidate.binding.Team != source.binding.Team || candidate.squad == nil ||

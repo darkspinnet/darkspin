@@ -15,6 +15,7 @@ import (
 // after a successful launch producer or admission with an immediate launch.
 type campaignProjectileRetirement struct {
 	originalZone         *zone.Zone
+	arenaGameID          uint32
 	generation           uint64
 	sessionKey           string
 	objectID             uint32
@@ -49,7 +50,7 @@ func (e *gameplaySessionRegistry) retireCampaignProjectileLocked(req *campaignPr
 		return nil
 	}
 	for _, member := range e.sessions {
-		if member.zone != req.originalZone {
+		if !req.isMemberRealm(member) {
 			continue
 		}
 		heroRun := member.sageAttacks[req.objectID]
@@ -83,9 +84,9 @@ func (e *gameplaySessionRegistry) retireCampaignProjectileLocked(req *campaignPr
 	freezeErr := e.retireProjectileFreezesLocked(req)
 	e.retireTimeBubbleProjectileLocked(req.originalZone, req.objectID, req.run, e.now())
 	if req.isPublished {
-		e.queueProjectileRetirementLocked(req.originalZone, req.extraPackets)
+		e.queueProjectileRetirementForOwnerLocked(req, req.extraPackets)
 	}
-	e.queueProjectileRetirementLocked(req.originalZone, packets)
+	e.queueProjectileRetirementForOwnerLocked(req, packets)
 	req.isRetired = true
 	delete(e.projectileRetirements, req.run)
 	e.untrackRetiredProjectileLocked(req)
@@ -122,7 +123,7 @@ func (e *gameplaySessionRegistry) finishCampaignProjectilePublicationLocked(
 		e.queueCampaignProjectilePublicationLocked(req, sessionKey, packets)
 		if req.isPublished {
 			member, isFound := e.sessions[sessionKey]
-			isCurrent := isFound && member.generation == req.generation && member.zone == req.originalZone &&
+			isCurrent := isFound && member.generation == req.generation && req.isMemberRealm(member) &&
 				(member.sageAttacks[req.objectID] == req.run || member.campaignNPCProjectiles[req.objectID] == req.run)
 			if !isCurrent || !req.run.Snapshot(e.now()).IsActive {
 				// Keep committed impact consequences, then remove any active
@@ -135,7 +136,7 @@ func (e *gameplaySessionRegistry) finishCampaignProjectilePublicationLocked(
 		if req.isPublished {
 			for _, controlBatch := range req.controlPacketBatches {
 				if len(controlBatch.releases) != 0 {
-					e.queueProjectileRetirementLocked(req.originalZone, controlBatch.packets)
+					e.queueProjectileRetirementForOwnerLocked(req, controlBatch.packets)
 				} else {
 					e.queueTimeBubblePresentationLocked(req.originalZone, controlBatch.packets)
 				}
@@ -183,12 +184,17 @@ func (e *gameplaySessionRegistry) admitCampaignProjectilePublicationLocked(req *
 func (e *gameplaySessionRegistry) queueCampaignProjectilePublicationLocked(
 	req *campaignProjectileRetirement, ownerSessionKey string, packets [][]byte,
 ) {
-	if req.isRetired || req.originalZone == nil || len(packets) == 0 {
+	if req.isRetired || (req.originalZone == nil && req.arenaGameID == 0) || len(packets) == 0 {
+		return
+	}
+	if req.arenaGameID != 0 {
+		e.queueArenaProjectilePacketsLocked(req, ownerSessionKey, packets)
+		req.recordPublication(packets)
 		return
 	}
 	presentations := gameplayPeerPresentationPackets(packets)
 	for sessionKey, member := range e.sessions {
-		if member.zone != req.originalZone {
+		if !req.isMemberRealm(member) {
 			continue
 		}
 		if sessionKey == ownerSessionKey && member.generation == req.generation {
@@ -231,7 +237,7 @@ func (e *campaignProjectileRetirement) recordPublication(packets [][]byte) {
 
 func (e *gameplaySessionRegistry) untrackRetiredProjectileLocked(req *campaignProjectileRetirement) {
 	for sessionKey, member := range e.sessions {
-		if member.zone != req.originalZone {
+		if !req.isMemberRealm(member) {
 			continue
 		}
 		if member.sageAttacks[req.objectID] == req.run {

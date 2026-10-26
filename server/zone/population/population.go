@@ -143,6 +143,11 @@ func newSession(
 	if director.Level == "" {
 		return nil, errors.New("populationCreate: empty level")
 	}
+	director.EnemyPopulationRules = director.EnemyPopulationRules.Resolved()
+	populationErr := director.EnemyPopulationRules.Validate()
+	if populationErr != nil {
+		return nil, fmt.Errorf("populationRules: %w", populationErr)
+	}
 	multiplier := director.CompositionTuning.GroupChallengeMultiplier
 	if math.IsNaN(float64(multiplier)) || math.IsInf(float64(multiplier), 0) || multiplier < 0 {
 		return nil, errors.New("populationCreate: invalid group multiplier")
@@ -253,7 +258,7 @@ func newSession(
 	}
 	recipe := "authored-candidates"
 	if strings.EqualFold(director.Level, game.InitialChainLevel) && isFirstClear {
-		recipe = "initial-chain-local-plan"
+		recipe = fmt.Sprintf("initial-chain-local-plan-%d-per-section", director.EnemyPopulationRules.EnemiesPerSection)
 		var planErr error
 		candidates, planErr = applyInitialChainPopulationPlan(candidates, director, isFirstClear,
 			random, sim.NewSimulatorRandom(seed^0x53454354))
@@ -261,7 +266,7 @@ func newSession(
 			return nil, fmt.Errorf("populationInitialPlan: %w", planErr)
 		}
 	} else {
-		recipe = "section-roster-15-per-section"
+		recipe = fmt.Sprintf("section-roster-%d-per-section", director.EnemyPopulationRules.EnemiesPerSection)
 		var planErr error
 		candidates, planErr = applyCampaignSectionPopulation(candidates, director, sectionRosters, random)
 		if planErr != nil {
@@ -518,8 +523,6 @@ func assignNavigationComponents(
 	return planLayer, len(floorComponents)
 }
 
-const CampaignFloorPopulationTarget = 15
-
 var initialChainOpeningAnchor = game.Vec3{
 	// The authored path4579 node sits beside the opening SpikeA set.
 	X: -173.15, Y: -46.05, Z: 0.088,
@@ -611,6 +614,7 @@ func applyInitialChainPopulationPlan(
 		if isFirstClear && section == sim.DirectorRouteSectionA {
 			floorPlan, err := planInitialChainFirstClearOpening(
 				sectionCandidate, firstTimeTheme, sectionTheme, random,
+				int(director.EnemyPopulationRules.Resolved().EnemiesPerSection),
 			)
 			if err != nil {
 				return nil, fmt.Errorf("openingFloor: %w", err)
@@ -641,7 +645,7 @@ func applyInitialChainPopulationPlan(
 		}
 		floorPlan, err := planCampaignFloor(
 			sectionCandidate, theme, random,
-			CampaignFloorPopulationTarget, eliteTarget, openingAnchor,
+			int(director.EnemyPopulationRules.Resolved().EnemiesPerSection), eliteTarget, openingAnchor,
 			isFirstClear && section == sim.DirectorRouteSectionA,
 		)
 		if err != nil {
@@ -667,6 +671,7 @@ func planInitialChainFirstClearOpening(
 	candidates []candidate, theme campaignPopulationTheme,
 	laterTheme campaignPopulationTheme,
 	random *sim.SimulatorRandom,
+	populationTarget int,
 ) ([]candidate, error) {
 	wanderers := make([]candidate, 0)
 	for _, candidate := range candidates {
@@ -683,7 +688,7 @@ func planInitialChainFirstClearOpening(
 	if repairErr != nil || hybridErr != nil || eliteErr != nil {
 		// The visual reference and its named roster apply to difficulty 1-24.
 		return planCampaignFloor(
-			candidates, laterTheme, random, CampaignFloorPopulationTarget,
+			candidates, laterTheme, random, populationTarget,
 			3, &initialChainOpeningAnchor, false,
 		)
 	}
@@ -715,7 +720,7 @@ func planInitialChainFirstClearOpening(
 		laterCandidates = append(laterCandidates, candidate)
 	}
 	laterPlan, err := planCampaignFloor(
-		laterCandidates, laterTheme, random, 11, 2, nil, false,
+		laterCandidates, laterTheme, random, populationTarget-4, 2, nil, false,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("openingLaterFloor: %w", err)

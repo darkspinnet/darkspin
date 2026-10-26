@@ -763,6 +763,20 @@ export namespace runtime {
 	        this.captainDelayMillisecond = source["captainDelayMillisecond"];
 	    }
 	}
+	export class EnemyPopulationConfiguration {
+	    version: number;
+	    enemiesPerSection: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new EnemyPopulationConfiguration(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.enemiesPerSection = source["enemiesPerSection"];
+	    }
+	}
 	export class MutationAgentConfiguration {
 	    version: number;
 	    isEnabled: boolean;
@@ -788,6 +802,7 @@ export namespace runtime {
 	    }
 	}
 	export class ServerRulesConfiguration {
+	    enemyPopulation: EnemyPopulationConfiguration;
 	    allyAlert: AllyAlertConfiguration;
 	    bossSpawning: BossSpawningConfiguration;
 	    mutationAgent: MutationAgentConfiguration;
@@ -798,6 +813,7 @@ export namespace runtime {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enemyPopulation = this.convertValues(source["enemyPopulation"], EnemyPopulationConfiguration);
 	        this.allyAlert = this.convertValues(source["allyAlert"], AllyAlertConfiguration);
 	        this.bossSpawning = this.convertValues(source["bossSpawning"], BossSpawningConfiguration);
 	        this.mutationAgent = this.convertValues(source["mutationAgent"], MutationAgentConfiguration);

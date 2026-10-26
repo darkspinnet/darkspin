@@ -66,6 +66,9 @@ func startDebugPVP(ctx context.Context, host *debugHost, clientManager *debugCli
 			if owner.profile.GameID != 0 || seenUserIDs[owner.profile.UserID] {
 				return result, errors.New("PvP requires distinct authenticated accounts outside active games")
 			}
+			if owner.profile.Presence.Status != "available" || owner.profile.Presence.Location != "navigation" {
+				return result, errors.New("PvP requires every owned participant in Navigation before starting")
+			}
 			seenClientIDs[clientID] = true
 			seenUserIDs[owner.profile.UserID] = true
 			owners = append(owners, owner)
