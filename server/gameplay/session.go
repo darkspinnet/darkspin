@@ -333,6 +333,7 @@ type controlledHeroState struct {
 	enemyRootExpiresAt            time.Time
 	enemyRootTargetObjectID       uint32
 	enemyControlPresentedObjectID uint32
+	enemyFrozenPresentedObjectID  uint32
 	heroKnockbackLanding          heroKnockbackLanding
 	enemyFearExpiresAt            time.Time
 	enemyFearTargetObjectID       uint32

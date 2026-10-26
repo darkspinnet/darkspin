@@ -2,6 +2,8 @@
 
 ### 2026-10-25
 
+- Expand bug reports with rolling build-103 attack, movement-intent and camera/hero state, mouse/focus events, and explicit sampling gaps to investigate transient client/server desync.
+- [#127](https://github.com/darkspinnet/darkspin/issues/127) Restore AcFreeze's build-103 Frozen attribute, attached ice block and ice-breaking effect, with cleanup on expiry, cleanse, death and hero changes.
 - [#126](https://github.com/darkspinnet/darkspin/issues/126) Persist DNA pickups outside the global gameplay lock so account saves cannot block movement, attacks and NPC callbacks, while preserving pickup reservations and co-op grants.
 - [#126](https://github.com/darkspinnet/darkspin/issues/126) Route targeted pursuit toward a walkable contact within attack range when an enemy's center lies inside a collision blocker instead of repeatedly rejecting the pursuit goal.
 - Improve bug-report evidence by allowing five seconds for atomic client snapshot publication and attaching rate-limited, trace-labeled stack profiles for server dispatch stalls over 250 ms.

@@ -16,6 +16,7 @@ const (
 )
 
 type analysisReport struct {
+	ClientControlHistory        clientControlHistory        `json:"client_control_history"`
 	TriggerObjectID             uint32                      `json:"trigger_object_id,omitempty"`
 	TriggerStateDelayMS         *float64                    `json:"trigger_state_delay_ms,omitempty"`
 	MovementSummaries           []movementSummary           `json:"movement_summaries,omitempty"`
@@ -259,7 +260,7 @@ func analyzeSnapshot(
 		createdAt = time.Now().UTC()
 	}
 	report := analysisReport{
-		FormatVersion: 10, SnapshotID: id, CreatedAt: createdAt.UTC(),
+		FormatVersion: 11, SnapshotID: id, CreatedAt: createdAt.UTC(),
 		Trigger: req.Trigger, Context: req.Context,
 		TriggerObjectID: req.ObjectID,
 		Findings:        make([]analysisFinding, 0),
@@ -277,6 +278,7 @@ func analyzeSnapshot(
 	analyzeTransport(&report, events)
 	analyzeTimeline(&report, timeline.Events)
 	analyzeClientBoundaryStates(&report, timeline.Events)
+	report.ClientControlHistory = analyzeClientControlHistory(timeline.Events)
 	analyzePendingServerPackets(&report, state)
 	analyzeServerSessions(&report, state)
 	analyzeObjectState(

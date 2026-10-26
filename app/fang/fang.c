@@ -1,6 +1,7 @@
 #include "fang.h"
 #include "hook.h"
 #include "cinematic.h"
+#include "history.h"
 #include "scenario_observation.h"
 #if FANG_SCENARIO
 #include "scenario_renderer.h"
@@ -1213,6 +1214,12 @@ static float __cdecl hooked_frame_delta(void* frame) {
     }
     probe_time = GetTickCount();
     if (InterlockedCompareExchange(&snapshot_auto_probe_enabled, 0, 0) != 0 &&
+        fang_history_begin((unsigned int)InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0),
+            delta_bits, (unsigned int)InterlockedCompareExchange(&snapshot_frame_time_ms, 0, 0))) {
+        trace_snapshot_action_state();
+        fang_history_end();
+    }
+    if (InterlockedCompareExchange(&snapshot_auto_probe_enabled, 0, 0) != 0 &&
         probe_time - snapshot_last_probe_time >= 250u) {
         snapshot_last_probe_time = probe_time;
         trace_client_object_probe_registry();
@@ -2224,6 +2231,9 @@ static LRESULT CALLBACK hooked_game_wndproc(HWND window, UINT message, WPARAM wp
      * are not the private wake message, so they fall through the control probe. */
     if (fang_control_window_message(window, message, wparam, lparam, hooked_game_wndproc)) return 0;
 #endif
+    if (InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) != 0) {
+        fang_history_input(message, wparam);
+    }
     if (message == WM_KEYDOWN && (wparam == 'V' || wparam == 'v') &&
         (GetKeyState(VK_CONTROL) & 0x8000) != 0) {
         void* chat = original_chat_lookup();
@@ -4749,10 +4759,22 @@ static VOID CALLBACK jwt_login_timer_callback(HWND window, UINT message, UINT_PT
        so the queued login cannot observe a cleared credential. */
 }
 
+void fang_history_write(const char* line, unsigned int length) {
+    DWORD written;
+    if (trace_file == INVALID_HANDLE_VALUE || !trace_lock_ready) return;
+    EnterCriticalSection(&trace_lock);
+    WriteFile(trace_file, line, length, &written, NULL);
+    LeaveCriticalSection(&trace_lock);
+    if (InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) != 0) {
+        snapshot_ring_append(line, length);
+    }
+}
+
 void trace_client_state(const char* kind, unsigned int value) {
     char line[512];
     DWORD written;
     int length;
+    if (fang_history_collect(kind, value)) return;
     if (trace_file == INVALID_HANDLE_VALUE || !trace_lock_ready) {
         return;
     }

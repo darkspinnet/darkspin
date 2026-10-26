@@ -165,7 +165,7 @@ void fang_control_camera_read(fang_control_camera_snapshot* snapshot) {
 }
 #endif
 
-/* Snapshot-only observation. Never refresh, retarget or override a scripted
+/* Snapshot/history observation. Never refresh, retarget or override a scripted
  * camera while collecting evidence of a lost follow target. */
 void fang_trace_camera_state(void) {
     BYTE* camera;

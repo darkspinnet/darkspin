@@ -202,6 +202,15 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 		}
 	}
 	packets := [][]byte{createPacket}
+	if profile.ModifierName == "AcFreeze" {
+		freezePackets, freezeErr := r.attachACFreeze(sessionKey, generation, run)
+		if freezeErr != nil {
+			cancel()
+			r.rollbackCampaignNPCTimedModifier(sessionKey, generation, run)
+			return nil, fmt.Errorf("acFreezeEffect: %w", freezeErr)
+		}
+		packets = append(packets, freezePackets...)
+	}
 	if profile.ModifierName == "MarkOfZelem" {
 		visualPackets, visualErr := r.attachPolarisMark(sessionKey, generation, run, profile.TargetEffectName)
 		if visualErr != nil {

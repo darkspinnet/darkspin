@@ -102,6 +102,7 @@ func writeAnalysisMarkdown(path string, report analysisReport) error {
 		}
 		document.WriteString("\n")
 	}
+	writeClientControlHistory(&document, report.ClientControlHistory)
 	if len(report.ClientBoundaryStates) > 0 {
 		document.WriteString("## Client boundary action and input state\n\n")
 		document.WriteString("| Field | Value | Frame | Thread | Client source |\n")

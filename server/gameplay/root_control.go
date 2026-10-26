@@ -41,7 +41,11 @@ func (e *gameplayPeerSession) refreshEnemyImmobilizedAttributes(at time.Time) ([
 		packets = append(packets, packet)
 	}
 	e.enemyControlPresentedObjectID = objectID
-	return packets, nil
+	frozenPackets, err := e.refreshACFrozenAttribute()
+	if err != nil {
+		return nil, fmt.Errorf("frozenRefresh: %w", err)
+	}
+	return append(packets, frozenPackets...), nil
 }
 
 func marshalEnemyImmobilizedAttribute(objectID uint32, amount float32) ([]byte, error) {
