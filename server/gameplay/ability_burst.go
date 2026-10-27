@@ -1249,7 +1249,8 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 		return nil, fmt.Errorf("heroBurstRun: %w", err)
 	}
 	commitTimestamp := packet.SourceTime
-	if definition.Name == "MissileTempestActive" {
+	if definition.Name == "MissileTempestActive" ||
+		definition.Name == "LightningTempest_Active" {
 		// Build 103 uses start/commit as the channel HUD interval and the
 		// window during which releasing the button cancels the cast.
 		commitTimestamp += uint64(definition.ReleaseDelay / time.Millisecond)

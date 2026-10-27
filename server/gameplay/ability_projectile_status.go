@@ -697,6 +697,20 @@ func (e heroProjectileStatusSchedule) finish() ([][]byte, error) {
 			return nil, fmt.Errorf("projectileStatusDelete[%d]: %w", index, err)
 		}
 		packets = append(packets, packet)
+		if e.definition.StatusKind == sim.AbilityStatusKindFear {
+			restartPackets, restartErr := e.runtime.npc.restartAfterTerrify(
+				e.packet, e.sessionKey, e.generation, target.targetID,
+				e.packet.SourceTime+uint64((e.impactDeadline+e.definition.StatusDuration)/time.Millisecond),
+			)
+			if restartErr != nil {
+				if e.runtime.logger != nil {
+					e.runtime.logger.Printf("RakNet Terrifying Curse restart failed target=%d: %v",
+						target.targetID, restartErr)
+				}
+				continue
+			}
+			packets = append(packets, restartPackets...)
+		}
 	}
 	return packets, nil
 }

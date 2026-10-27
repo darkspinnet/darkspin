@@ -1,5 +1,10 @@
 # Changelog
 
+### 2026-10-27
+
+- #136 Restore Thunderstorm's channel bar by publishing its projected channel duration instead of an empty start-to-commit interval.
+- #136 Resume surviving enemies after Terrifying Curse's projectile and splash fear expire, preserving any overlapping fear that is still active.
+
 ### 2026-10-26
 
 - Replace Compose image updates with `darkrun bootstrap`: supervise the mounted server binary, repeat scheduled maintenance warnings, retain matching binary/database backups for seven days, and roll back failed startup updates automatically.

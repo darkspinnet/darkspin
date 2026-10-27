@@ -312,7 +312,7 @@ func (r campaignNPCActionRuntime) restartAfterTerrify(
 	npcSession := peerSession.zone.NPCs()
 	npc, isNPCFound := npcSession.NPC(objectID)
 	if !isNPCFound || npc.IsDefeated || npc.HitPoint <= 0 ||
-		npc.TargetObjectID == 0 {
+		npc.TargetObjectID == 0 || npcSession.FearRemaining(objectID, r.now()) > 0 {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
