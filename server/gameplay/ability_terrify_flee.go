@@ -491,6 +491,23 @@ func (r campaignAbilityCommandRuntime) applyHeroNPCFear(
 	}
 	run.create()
 	packets := [][]byte{modifierPacket}
+	profile, isProfileFound := zonenpc.ActionProfileForPlan(target.Plan)
+	if isProfileFound && target.IsActionStarted && profile.Family == zonenpc.ActionCharge {
+		// Restore temporary charge attributes before Flee retires the old
+		// action generation. Its normal completion can no longer clean up.
+		charge := campaignChargeSchedule{
+			runtime: r.npc, sessionKey: sessionKey, generation: generation,
+			objectID: targetObjectID,
+			plan: zonenpc.AttackPlan{
+				ActionGeneration: target.ActionGeneration, Profile: profile,
+			},
+		}
+		restorePackets, restoreErr := charge.restoreMovementState()
+		if restoreErr != nil {
+			return packets, fmt.Errorf("heroFearChargeRestore: %w", restoreErr)
+		}
+		packets = append(packets, restorePackets...)
+	}
 	fleePackets, err := r.startTerrifyFlee(
 		packet, sessionKey, generation, targetObjectID, sourceObjectID, timestamp,
 	)

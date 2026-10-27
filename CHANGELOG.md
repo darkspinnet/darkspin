@@ -2,8 +2,9 @@
 
 ### 2026-10-26
 
-- Include sync snapshots with `/bug` in Manual mode, explain unavailable captures, preserve partial squad context, and record missing or truncated logs without discarding the report.
-- Add nearby actor identities, hero speed baselines, enemy damage-over-time state, Cryos geyser phases and Sage passive presence to bug diagnostics for unresolved gameplay reports.
+
+- #134 Use primary melee reach for Pouncing Stalker's selected target instead of the smaller additional-target arc, preventing captains from repeatedly swiping without reaching the hero.
+- #134 Restore temporary charge movement state when Terrifying Curse interrupts an enemy, and retire interrupted charge follow-ups and Wraith Drifter continuations with their original action generation.
 - #133 Preserve equipped movement and attack-speed bonuses when temporary slows apply or expire, and include equipment movement bonuses at mission entry.
 - #133 Restore Celestial Comet's build-103 knockback distance, speed and recovery through the existing navigation-clipped forced-movement path.
 - #133 Enable Necrotic Leech and its ranked variants to use their authored combat strafing between attacks.

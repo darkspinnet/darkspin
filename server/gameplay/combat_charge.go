@@ -517,6 +517,15 @@ func navigationClippedMovementDestination(
 }
 
 func (e campaignChargeSchedule) followup(timestamp uint64) ([][]byte, error) {
+	e.runtime.registry.mutex.RLock()
+	member, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isCurrent := isFound && member.isCampaignNPCSourceGenerationActive(
+		e.generation, e.objectID, e.plan.ActionGeneration,
+	)
+	e.runtime.registry.mutex.RUnlock()
+	if !isCurrent {
+		return nil, nil
+	}
 	var restoredStatePackets [][]byte
 	if e.plan.Profile.AbilityName == "NocturnaSpecialDriftCharge" ||
 		e.plan.Profile.AbilityName == "BoomerCharge" ||
@@ -813,15 +822,25 @@ func campaignChargeSegmentTargets(
 }
 
 type campaignNocturnaDriftNextSchedule struct {
-	runtime    campaignNPCActionRuntime
-	packet     raknet.Packet
-	sessionKey string
-	generation uint64
-	objectID   uint32
-	timestamp  uint64
+	runtime          campaignNPCActionRuntime
+	packet           raknet.Packet
+	sessionKey       string
+	generation       uint64
+	actionGeneration uint64
+	objectID         uint32
+	timestamp        uint64
 }
 
 func (e campaignNocturnaDriftNextSchedule) produce() ([][]byte, error) {
+	e.runtime.registry.mutex.RLock()
+	member, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isCurrent := isFound && member.isCampaignNPCSourceGenerationActive(
+		e.generation, e.objectID, e.actionGeneration,
+	)
+	e.runtime.registry.mutex.RUnlock()
+	if !isCurrent {
+		return nil, nil
+	}
 	return e.runtime.produceEnemyCharge(
 		e.packet, e.sessionKey, e.generation, e.objectID, e.timestamp,
 	)
@@ -858,6 +877,7 @@ func (r campaignNPCActionRuntime) produceChargeSegmentCollision(
 	next := campaignNocturnaDriftNextSchedule{
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID, timestamp: nextTimestamp,
+		actionGeneration: chargePlan.ActionGeneration,
 	}
 	poseEnd := campaignChargePoseEnd{
 		runtime: r, sessionKey: sessionKey, generation: generation,

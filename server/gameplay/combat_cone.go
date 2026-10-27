@@ -341,6 +341,21 @@ func (e campaignConeSchedule) hit() ([][]byte, error) {
 			source.Plan.Position, facing, target,
 			e.plan.Profile.Radius, e.plan.Profile.Angle,
 		)
+		if e.plan.Profile.AbilityName == "NomadBioSpecialTwoSwipe" &&
+			target.ObjectID == primary.ObjectID {
+			// Build 103 chunk 702 inherits the primary melee hit; its
+			// additionalTargetsRange of 3 only bounds the extra victim.
+			// Reuse melee range validation, including both actor footprints.
+			primaryPlan, controlErr := zonenpc.PlanControlWithProfile(
+				source, target.ObjectID, target.Position, e.plan.Profile,
+				target.ActorFootprintRadius,
+			)
+			if controlErr != nil && !errors.Is(controlErr, zonenpc.ErrControlTargetOutOfRange) {
+				e.runtime.registry.mutex.Unlock()
+				return nil, fmt.Errorf("enemySwipePrimary: %w", controlErr)
+			}
+			isTargeted = controlErr == nil && primaryPlan.TargetObjectID == target.ObjectID
+		}
 		if isTwinLaser {
 			isTargeted = false
 			for index, endpoint := range e.laserEndpoints {
