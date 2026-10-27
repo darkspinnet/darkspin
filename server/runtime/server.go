@@ -41,6 +41,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/scheduler"
 	"github.com/darkspinnet/darkspin/server/snapshot"
 	"github.com/darkspinnet/darkspin/server/sporenet"
+	"github.com/darkspinnet/darkspin/server/sporenet/savebuffer"
 	sporenetsqlite "github.com/darkspinnet/darkspin/server/sporenet/sqlite"
 	sharedtcp "github.com/darkspinnet/darkspin/server/tcp"
 	sharedudp "github.com/darkspinnet/darkspin/server/udp"
@@ -256,6 +257,7 @@ type Server struct {
 	httpRouter            *recaphttp.Router
 	userManager           *sporenet.UserManager
 	userStore             io.Closer
+	saveBuffer            *savebuffer.Repository
 	contentStore          io.Closer
 	checkpoint            *zonecheckpoint.Manager
 	checkpointStore       io.Closer
@@ -603,7 +605,20 @@ func New(options Options) (*Server, error) {
 			_ = userStore.Close()
 		}
 	}()
-	userManager, err := sporenet.NewUserManagerWithRepository(userRepository, templateDatabase)
+	snapshotStore, isSnapshotStore := userRepository.(savebuffer.Store)
+	if !isSnapshotStore {
+		return nil, errors.New("profile snapshot storage unavailable")
+	}
+	profileBuffer := savebuffer.New(snapshotStore, logger)
+	defer func() {
+		if !isUserStoreTransferred {
+			closeErr := profileBuffer.Close()
+			if closeErr != nil {
+				logger.Printf("Profile save buffer initialization cleanup failed: %v", closeErr)
+			}
+		}
+	}()
+	userManager, err := sporenet.NewUserManagerWithRepository(profileBuffer, templateDatabase)
 	if err != nil {
 		return nil, fmt.Errorf("userInit: %w", err)
 	}
@@ -665,6 +680,7 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("checkpointStore: %w", err)
 	}
 	checkpointManager := zonecheckpoint.NewManager(checkpointStore, logger)
+	checkpointManager.UseProfileSaver(profileBuffer)
 	isCheckpointStoreTransferred := false
 	defer func() {
 		if isCheckpointStoreTransferred {
@@ -1001,6 +1017,7 @@ func New(options Options) (*Server, error) {
 		httpRouter:            router,
 		userManager:           userManager,
 		userStore:             userStore,
+		saveBuffer:            profileBuffer,
 		contentStore:          contentStore,
 		checkpoint:            checkpointManager,
 		checkpointStore:       checkpointStore,
@@ -1319,6 +1336,13 @@ func (s *Server) Close() {
 		if err != nil {
 			s.logger.Printf("Active user flush failed: %v", err)
 			s.closeErr = errors.Join(s.closeErr, fmt.Errorf("userFlush: %w", err))
+		}
+		if s.saveBuffer != nil {
+			err = s.saveBuffer.Close()
+			if err != nil {
+				s.logger.Printf("Profile save buffer drain failed: %v", err)
+				s.closeErr = errors.Join(s.closeErr, fmt.Errorf("saveBufferDrain: %w", err))
+			}
 		}
 		if s.userStore != nil {
 			err = s.userStore.Close()

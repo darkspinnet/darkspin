@@ -2,6 +2,7 @@
 
 ### 2026-10-27
 
+- Move gameplay profile saves from blocking SQL writes to coalesced memory snapshots, with background writes at safe Continue checkpoints, idle periods, and a five-minute fallback.
 - #137 Persist combat statistics through a focused SQLite stat-row update instead of rewriting every creature, item and other profile record on each hit.
 - #137 Separate new loot from existing item and catalyst pickups using projected ring placements when space is available, preventing obelisk drops from covering each other.
 - #137 Put Laser Units and Blastopods into combat state before pursuit and firing so their zero-speed dormant state does not persist between attacks.

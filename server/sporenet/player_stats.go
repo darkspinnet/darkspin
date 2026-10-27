@@ -76,6 +76,11 @@ func (m *UserManager) RecordPlayerStats(ctx context.Context, userID int64, delta
 	}
 	user.mutation.Lock()
 	defer user.mutation.Unlock()
+	// A logout/relogin may replace the aggregate while this call waits. Never
+	// enqueue a snapshot from the retired instance over the new session's state.
+	if m.UserByID(userID) != user {
+		return ErrInvalidUser
+	}
 	user.mu.Lock()
 	previous := user.Stats
 	err = applyPlayerStatDelta(&user.Stats, delta)

@@ -605,12 +605,6 @@ export namespace main {
 	    }
 	}
 	export class ServerConfiguration {
-	    isBootstrapUpdateEnabled: boolean;
-	    bootstrapUpdateCron: string;
-	    bootstrapWarningMinutes: number;
-	    bootstrapStartupTimeoutSeconds: number;
-	    bootstrapBackupRetentionDays: number;
-	    bootstrapManifestUrl: string;
 	    bindHost: string;
 	    advertisedHost: string;
 	    isDedicated: boolean;
@@ -621,6 +615,12 @@ export namespace main {
 	    locale: string;
 	    locales: ClientLocale[];
 	    snapshotMode: string;
+	    isBootstrapUpdateEnabled: boolean;
+	    bootstrapUpdateCron: string;
+	    bootstrapWarningMinutes: number;
+	    bootstrapStartupTimeoutSeconds: number;
+	    bootstrapBackupRetentionDays: number;
+	    bootstrapManifestUrl: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ServerConfiguration(source);
@@ -629,12 +629,6 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.bindHost = source["bindHost"];
-	        this.isBootstrapUpdateEnabled = source["isBootstrapUpdateEnabled"];
-	        this.bootstrapUpdateCron = source["bootstrapUpdateCron"];
-	        this.bootstrapWarningMinutes = source["bootstrapWarningMinutes"];
-	        this.bootstrapStartupTimeoutSeconds = source["bootstrapStartupTimeoutSeconds"];
-	        this.bootstrapBackupRetentionDays = source["bootstrapBackupRetentionDays"];
-	        this.bootstrapManifestUrl = source["bootstrapManifestUrl"];
 	        this.advertisedHost = source["advertisedHost"];
 	        this.isDedicated = source["isDedicated"];
 	        this.contentPath = source["contentPath"];
@@ -644,6 +638,12 @@ export namespace main {
 	        this.locale = source["locale"];
 	        this.locales = this.convertValues(source["locales"], ClientLocale);
 	        this.snapshotMode = source["snapshotMode"];
+	        this.isBootstrapUpdateEnabled = source["isBootstrapUpdateEnabled"];
+	        this.bootstrapUpdateCron = source["bootstrapUpdateCron"];
+	        this.bootstrapWarningMinutes = source["bootstrapWarningMinutes"];
+	        this.bootstrapStartupTimeoutSeconds = source["bootstrapStartupTimeoutSeconds"];
+	        this.bootstrapBackupRetentionDays = source["bootstrapBackupRetentionDays"];
+	        this.bootstrapManifestUrl = source["bootstrapManifestUrl"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

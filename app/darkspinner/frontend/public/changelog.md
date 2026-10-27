@@ -2,20 +2,18 @@
 
 ### 2026-10-27
 
-- #137 Persist combat statistics through a focused SQLite stat-row update instead of rewriting every creature, item and other profile record on each hit.
-- #137 Separate new loot from existing item and catalyst pickups using projected ring placements when space is available, preventing obelisk drops from covering each other.
-- #137 Put Laser Units and Blastopods into combat state before pursuit and firing so their zero-speed dormant state does not persist between attacks.
-- #136 Restore Thunderstorm's channel bar by publishing its projected channel duration instead of an empty start-to-commit interval.
-- #136 Resume surviving enemies after Terrifying Curse's projectile and splash fear expire, preserving any overlapping fear that is still active.
+- Move gameplay profile saves from blocking SQL writes to coalesced memory snapshots, with background writes at safe Continue checkpoints, idle periods, and a five-minute fallback.
+- [#137](https://github.com/darkspinnet/darkspin/issues/137) Persist combat statistics through a focused SQLite stat-row update instead of rewriting every creature, item and other profile record on each hit.
+- [#137](https://github.com/darkspinnet/darkspin/issues/137) Separate new loot from existing item and catalyst pickups using projected ring placements when space is available, preventing obelisk drops from covering each other.
+- [#137](https://github.com/darkspinnet/darkspin/issues/137) Put Laser Units and Blastopods into combat state before pursuit and firing so their zero-speed dormant state does not persist between attacks.
+- [#136](https://github.com/darkspinnet/darkspin/issues/136) Restore Thunderstorm's channel bar by publishing its projected channel duration instead of an empty start-to-commit interval.
+- [#136](https://github.com/darkspinnet/darkspin/issues/136) Resume surviving enemies after Terrifying Curse's projectile and splash fear expire, preserving any overlapping fear that is still active.
 
 ### 2026-10-26
 
-- Replace Compose image updates with `darkrun bootstrap`: supervise the mounted server binary, repeat scheduled maintenance warnings, retain matching binary/database backups for seven days, and roll back failed startup updates automatically.
-- #134 Use primary melee reach for Pouncing Stalker's selected target instead of the smaller additional-target arc, preventing captains from repeatedly swiping without reaching the hero.
-- #134 Restore temporary charge movement state when Terrifying Curse interrupts an enemy, and retire interrupted charge follow-ups and Wraith Drifter continuations with their original action generation.
-- Add automatic headless dedicated-server setup with shared Darkspinner content preparation, independently selectable config and content paths, saved network settings, and credential-required remote login.
-- Include sync snapshots with `/bug` in Manual mode, explain unavailable captures, preserve partial squad context, and record missing or truncated logs without discarding the report.
-- Add nearby actor identities, hero speed baselines, enemy damage-over-time state, Cryos geyser phases and Sage passive presence to bug diagnostics for unresolved gameplay reports.
+
+- [#134](https://github.com/darkspinnet/darkspin/issues/134) Use primary melee reach for Pouncing Stalker's selected target instead of the smaller additional-target arc, preventing captains from repeatedly swiping without reaching the hero.
+- [#134](https://github.com/darkspinnet/darkspin/issues/134) Restore temporary charge movement state when Terrifying Curse interrupts an enemy, and retire interrupted charge follow-ups and Wraith Drifter continuations with their original action generation.
 - [#133](https://github.com/darkspinnet/darkspin/issues/133) Preserve equipped movement and attack-speed bonuses when temporary slows apply or expire, and include equipment movement bonuses at mission entry.
 - [#133](https://github.com/darkspinnet/darkspin/issues/133) Restore Celestial Comet's build-103 knockback distance, speed and recovery through the existing navigation-clipped forced-movement path.
 - [#133](https://github.com/darkspinnet/darkspin/issues/133) Enable Necrotic Leech and its ranked variants to use their authored combat strafing between attacks.

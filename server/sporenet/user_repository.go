@@ -46,6 +46,8 @@ type UserRepository interface {
 	// LoadByLoginName matches the player identity without case sensitivity and
 	// returns its canonically stored spelling in UserRecord.LoginName.
 	LoadByLoginName(context.Context, string) (UserRecord, error)
+	// Save atomically accepts a detached profile snapshot. Runtime adapters may
+	// buffer durability; failed admission must not replace the accepted snapshot.
 	Save(context.Context, UserRecord) error
 }
 

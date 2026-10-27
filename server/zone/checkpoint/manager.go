@@ -18,6 +18,12 @@ import (
 const closeTimeout = 5 * time.Second
 const retryInterval = time.Second
 
+// ProfileSaver schedules profile persistence at the same safe boundary as a
+// Continue checkpoint. It must not wait for disk or a database lock.
+type ProfileSaver interface {
+	RequestSave(uint64)
+}
+
 // Manager coalesces immutable zone snapshots in memory and persists them off
 // the gameplay path. One pending snapshot per zone bounds write pressure.
 type Manager struct {
@@ -38,6 +44,13 @@ type Manager struct {
 	revision            uint64
 	isClosing           bool
 	closeErr            error
+	profileSaver        ProfileSaver
+}
+
+func (e *Manager) UseProfileSaver(profileSaver ProfileSaver) {
+	e.mu.Lock()
+	e.profileSaver = profileSaver
+	e.mu.Unlock()
 }
 
 func (e *Manager) FindResume(
@@ -236,7 +249,13 @@ func (e *Manager) Record(snapshot Snapshot) {
 	case e.wake <- struct{}{}:
 	default:
 	}
+	profileSaver := e.profileSaver
 	e.mu.Unlock()
+	if profileSaver != nil {
+		for _, member := range snapshot.Members {
+			profileSaver.RequestSave(member.UserID)
+		}
+	}
 }
 
 // RemoveMemberNow durably removes one member's resume entitlement while

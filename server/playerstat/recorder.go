@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/sporenet"
@@ -16,8 +15,8 @@ type Store interface {
 	RecordPlayerStats(context.Context, int64, sporenet.PlayerStatDelta) error
 }
 
-// Recorder bounds asynchronous stat persistence independently of a transport
-// request's cancellation.
+// Recorder applies accepted combat counters independently of transport
+// cancellation. The runtime profile save buffer owns disk timing and deadlines.
 type Recorder struct {
 	store Store
 }
@@ -27,7 +26,7 @@ func NewRecorder(store Store) *Recorder {
 	return &Recorder{store: store}
 }
 
-// Record persists a nonempty stat delta for binding.
+// Record accepts a nonempty stat delta for binding into the profile snapshot.
 func (r *Recorder) Record(
 	ctx context.Context, binding game.GameplayBinding,
 	statDelta sporenet.PlayerStatDelta,
@@ -38,12 +37,8 @@ func (r *Recorder) Record(
 	if ctx == nil {
 		return errors.New("player stats unavailable")
 	}
-	statContext, cancel := context.WithTimeout(
-		context.WithoutCancel(ctx), 5*time.Second,
-	)
-	defer cancel()
 	err := r.store.RecordPlayerStats(
-		statContext, int64(binding.UserID), statDelta,
+		context.WithoutCancel(ctx), int64(binding.UserID), statDelta,
 	)
 	if err != nil {
 		return fmt.Errorf("playerStatsRecord: %w", err)
