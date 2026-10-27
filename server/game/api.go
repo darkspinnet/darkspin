@@ -70,12 +70,14 @@ type API struct {
 	logger              *log.Logger
 	resumeActivator     ResumeActivator
 	isModded            bool
+	isDedicated         bool
 	broadcastMutex      sync.Mutex
 	broadcastRecipients map[string]struct{}
 }
 
 type APIOptions struct {
 	IsModded         bool
+	IsDedicated      bool
 	UserManager      UserManager
 	Template         *sporenet.TemplateDatabase
 	PartCatalog      *PartCatalog
@@ -101,6 +103,7 @@ func RegisterAPI(router *recaphttp.Router, options APIOptions) error {
 		host: options.Host, httpPort: options.HTTPPort, qosPort: options.QoSPort, logger: logger,
 		resumeActivator:     options.ResumeActivator,
 		isModded:            options.IsModded,
+		isDedicated:         options.IsDedicated,
 		partShopRules:       options.PartShopRules,
 		broadcastRecipients: make(map[string]struct{}),
 	}
@@ -218,6 +221,12 @@ func (a *API) recap(writer http.ResponseWriter, request *http.Request, uri *reca
 	values := requestValues(request, uri)
 	switch values.Get("method") {
 	case "api.game.registration":
+		if a.isDedicated {
+			writeJSON(writer, http.StatusForbidden, map[string]any{
+				"success": false, "error": "use desktop account registration",
+			})
+			return
+		}
 		if !isLoopbackRequest(request.RemoteAddr) && values.Get("pass") == "" {
 			writeJSON(writer, http.StatusBadRequest, map[string]any{
 				"success": false, "error": "password is required for remote registration",
@@ -240,6 +249,12 @@ func (a *API) recap(writer http.ResponseWriter, request *http.Request, uri *reca
 	case "api.game.status":
 		writeJSON(writer, http.StatusOK, map[string]any{"status": "ok", "users": len(a.userManager.Users())})
 	case "api.panel.listUsers":
+		if a.isDedicated {
+			writeJSON(writer, http.StatusForbidden, map[string]any{
+				"success": false, "error": "legacy account listing is disabled",
+			})
+			return
+		}
 		writeJSON(writer, http.StatusOK, map[string]any{"users": a.userManager.Users()})
 	default:
 		writeJSON(writer, http.StatusOK, map[string]any{"stat": "ok"})

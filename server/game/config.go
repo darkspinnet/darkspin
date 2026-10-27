@@ -22,37 +22,57 @@ const DefaultConfigFilename = "darkspin.toml"
 type ConfigKey string
 
 const (
-	ConfigIsVersionLocked      ConfigKey = "IS_VERSION_LOCKED"
-	ConfigIsSingleplayerOnly   ConfigKey = "IS_SINGLEPLAYER_ONLY"
-	ConfigClientLocale         ConfigKey = "CLIENT_LOCALE"
-	ConfigIsMultiplayerEnabled ConfigKey = "IS_MULTIPLAYER_ENABLED"
-	ConfigServerPort           ConfigKey = "SERVER_PORT"
-	ConfigWorldPlayerLimit     ConfigKey = "WORLD_PLAYER_LIMIT"
-	ConfigIsChatStdoutEnabled  ConfigKey = "IS_CHAT_STDOUT_ENABLED"
-	ConfigStorageDriver        ConfigKey = "STORAGE_DRIVER"
-	ConfigAuthJWTSecret        ConfigKey = "AUTH_JWT_SECRET"
-	ConfigAuthJWTIssuer        ConfigKey = "AUTH_JWT_ISSUER"
-	ConfigAuthJWTAudience      ConfigKey = "AUTH_JWT_AUDIENCE"
-	ConfigSnapshotMode         ConfigKey = "SNAPSHOT_MODE"
-	ConfigSnapshotBufferSecond ConfigKey = "SNAPSHOT_BUFFER_SECOND"
-	ConfigSnapshotDelaySecond  ConfigKey = "SNAPSHOT_DELAY_SECOND"
+	ConfigIsVersionLocked                ConfigKey = "IS_VERSION_LOCKED"
+	ConfigIsSingleplayerOnly             ConfigKey = "IS_SINGLEPLAYER_ONLY"
+	ConfigClientLocale                   ConfigKey = "CLIENT_LOCALE"
+	ConfigIsMultiplayerEnabled           ConfigKey = "IS_MULTIPLAYER_ENABLED"
+	ConfigServerPort                     ConfigKey = "SERVER_PORT"
+	ConfigServerBindHost                 ConfigKey = "SERVER_BIND_HOST"
+	ConfigServerAdvertisedHost           ConfigKey = "SERVER_ADVERTISED_HOST"
+	ConfigServerIsDedicated              ConfigKey = "SERVER_IS_DEDICATED"
+	ConfigContentPath                    ConfigKey = "CONTENT_PATH"
+	ConfigWorldPlayerLimit               ConfigKey = "WORLD_PLAYER_LIMIT"
+	ConfigIsChatStdoutEnabled            ConfigKey = "IS_CHAT_STDOUT_ENABLED"
+	ConfigStorageDriver                  ConfigKey = "STORAGE_DRIVER"
+	ConfigAuthJWTSecret                  ConfigKey = "AUTH_JWT_SECRET"
+	ConfigAuthJWTIssuer                  ConfigKey = "AUTH_JWT_ISSUER"
+	ConfigAuthJWTAudience                ConfigKey = "AUTH_JWT_AUDIENCE"
+	ConfigSnapshotMode                   ConfigKey = "SNAPSHOT_MODE"
+	ConfigSnapshotBufferSecond           ConfigKey = "SNAPSHOT_BUFFER_SECOND"
+	ConfigSnapshotDelaySecond            ConfigKey = "SNAPSHOT_DELAY_SECOND"
+	ConfigBootstrapIsUpdateEnabled       ConfigKey = "BOOTSTRAP_IS_UPDATE_ENABLED"
+	ConfigBootstrapUpdateCron            ConfigKey = "BOOTSTRAP_UPDATE_CRON"
+	ConfigBootstrapWarningMinutes        ConfigKey = "BOOTSTRAP_WARNING_MINUTES"
+	ConfigBootstrapStartupTimeoutSeconds ConfigKey = "BOOTSTRAP_STARTUP_TIMEOUT_SECONDS"
+	ConfigBootstrapBackupRetentionDays   ConfigKey = "BOOTSTRAP_BACKUP_RETENTION_DAYS"
+	ConfigBootstrapManifestURL           ConfigKey = "BOOTSTRAP_MANIFEST_URL"
 )
 
 var defaultConfigValues = map[ConfigKey]string{
-	ConfigIsVersionLocked:      "false",
-	ConfigIsSingleplayerOnly:   "false",
-	ConfigClientLocale:         "",
-	ConfigIsMultiplayerEnabled: "false",
-	ConfigServerPort:           "42127",
-	ConfigWorldPlayerLimit:     "25",
-	ConfigIsChatStdoutEnabled:  "true",
-	ConfigStorageDriver:        "sqlite",
-	ConfigAuthJWTSecret:        "darkspin-local-development-secret-do-not-use-in-production",
-	ConfigAuthJWTIssuer:        "darkspin-web",
-	ConfigAuthJWTAudience:      "darkspin",
-	ConfigSnapshotMode:         "auto",
-	ConfigSnapshotBufferSecond: "60",
-	ConfigSnapshotDelaySecond:  "30",
+	ConfigIsVersionLocked:                "false",
+	ConfigIsSingleplayerOnly:             "false",
+	ConfigClientLocale:                   "",
+	ConfigIsMultiplayerEnabled:           "false",
+	ConfigServerPort:                     "42127",
+	ConfigServerBindHost:                 "",
+	ConfigServerAdvertisedHost:           "127.0.0.1",
+	ConfigServerIsDedicated:              "false",
+	ConfigContentPath:                    "",
+	ConfigWorldPlayerLimit:               "25",
+	ConfigIsChatStdoutEnabled:            "true",
+	ConfigStorageDriver:                  "sqlite",
+	ConfigAuthJWTSecret:                  "darkspin-local-development-secret-do-not-use-in-production",
+	ConfigAuthJWTIssuer:                  "darkspin-web",
+	ConfigAuthJWTAudience:                "darkspin",
+	ConfigSnapshotMode:                   "auto",
+	ConfigSnapshotBufferSecond:           "60",
+	ConfigSnapshotDelaySecond:            "30",
+	ConfigBootstrapIsUpdateEnabled:       "true",
+	ConfigBootstrapUpdateCron:            "30 3 * * *",
+	ConfigBootstrapWarningMinutes:        "30",
+	ConfigBootstrapStartupTimeoutSeconds: "1800",
+	ConfigBootstrapBackupRetentionDays:   "7",
+	ConfigBootstrapManifestURL:           "https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-update-linux-amd64-unstable.zip",
 }
 
 // Config is a concurrency-safe representation of darkspin.toml.
@@ -62,13 +82,28 @@ type Config struct {
 }
 
 type configDocument struct {
-	LauncherFields map[string]any `toml:"launcher,omitempty"`
-	Game           configGame     `toml:"game"`
-	Server         configServer   `toml:"server"`
-	Chat           configChat     `toml:"chat"`
-	Storage        configStorage  `toml:"storage"`
-	Auth           configAuth     `toml:"auth"`
-	Snapshot       configSnapshot `toml:"snapshot"`
+	LauncherFields map[string]any  `toml:"launcher,omitempty"`
+	Game           configGame      `toml:"game"`
+	Server         configServer    `toml:"server"`
+	Chat           configChat      `toml:"chat"`
+	Storage        configStorage   `toml:"storage"`
+	Auth           configAuth      `toml:"auth"`
+	Snapshot       configSnapshot  `toml:"snapshot"`
+	Content        configContent   `toml:"content"`
+	Bootstrap      configBootstrap `toml:"bootstrap"`
+}
+
+type configBootstrap struct {
+	IsUpdateEnabled       *bool   `toml:"is_update_enabled"`
+	UpdateCron            *string `toml:"update_cron"`
+	WarningMinutes        *int64  `toml:"warning_minutes"`
+	StartupTimeoutSeconds *int64  `toml:"startup_timeout_seconds"`
+	BackupRetentionDays   *int64  `toml:"backup_retention_days"`
+	ManifestURL           *string `toml:"manifest_url"`
+}
+
+type configContent struct {
+	Path *string `toml:"path"`
 }
 
 type configAuth struct {
@@ -88,9 +123,12 @@ type configGame struct {
 }
 
 type configServer struct {
-	IsMultiplayerEnabled *bool  `toml:"is_multiplayer_enabled"`
-	Port                 *int64 `toml:"port"`
-	WorldPlayerLimit     *int64 `toml:"world_player_limit"`
+	BindHost             *string `toml:"bind_host"`
+	AdvertisedHost       *string `toml:"advertised_host"`
+	IsDedicated          *bool   `toml:"is_dedicated"`
+	IsMultiplayerEnabled *bool   `toml:"is_multiplayer_enabled"`
+	Port                 *int64  `toml:"port"`
+	WorldPlayerLimit     *int64  `toml:"world_player_limit"`
 }
 
 type configStorage struct {
@@ -147,6 +185,10 @@ func LoadConfig(path string) (*Config, bool, error) {
 	config.setString(ConfigClientLocale, document.Game.ClientLocale)
 	config.setBool(ConfigIsMultiplayerEnabled, document.Server.IsMultiplayerEnabled)
 	config.setInt(ConfigServerPort, document.Server.Port)
+	config.setString(ConfigServerBindHost, document.Server.BindHost)
+	config.setString(ConfigServerAdvertisedHost, document.Server.AdvertisedHost)
+	config.setBool(ConfigServerIsDedicated, document.Server.IsDedicated)
+	config.setString(ConfigContentPath, document.Content.Path)
 	config.setInt(ConfigWorldPlayerLimit, document.Server.WorldPlayerLimit)
 	config.setBool(ConfigIsChatStdoutEnabled, document.Chat.IsStdoutEnabled)
 	config.setString(ConfigStorageDriver, document.Storage.Driver)
@@ -156,6 +198,12 @@ func LoadConfig(path string) (*Config, bool, error) {
 	config.setString(ConfigSnapshotMode, document.Snapshot.Mode)
 	config.setInt(ConfigSnapshotBufferSecond, document.Snapshot.BufferDurationSecond)
 	config.setInt(ConfigSnapshotDelaySecond, document.Snapshot.DelaySecond)
+	config.setBool(ConfigBootstrapIsUpdateEnabled, document.Bootstrap.IsUpdateEnabled)
+	config.setString(ConfigBootstrapUpdateCron, document.Bootstrap.UpdateCron)
+	config.setInt(ConfigBootstrapWarningMinutes, document.Bootstrap.WarningMinutes)
+	config.setInt(ConfigBootstrapStartupTimeoutSeconds, document.Bootstrap.StartupTimeoutSeconds)
+	config.setInt(ConfigBootstrapBackupRetentionDays, document.Bootstrap.BackupRetentionDays)
+	config.setString(ConfigBootstrapManifestURL, document.Bootstrap.ManifestURL)
 
 	return config, false, nil
 }
@@ -193,7 +241,17 @@ func (c *Config) Save(path string) error {
 		return fmt.Errorf("tomlEncode: %w", err)
 	}
 
-	err = os.WriteFile(path, contents.Bytes(), 0o644)
+	mode := os.FileMode(0o644)
+	if configBool(values[ConfigServerIsDedicated]) {
+		mode = 0o600
+		// Tighten an existing file before writing the dedicated signing key.
+		// WriteFile only applies its mode when creating a new file.
+		err = os.Chmod(path, mode)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("configProtect: %w", err)
+		}
+	}
+	err = os.WriteFile(path, contents.Bytes(), mode)
 	if err != nil {
 		return fmt.Errorf("configWrite: %w", err)
 	}
@@ -225,13 +283,37 @@ func encodeConfigDocument(values map[ConfigKey]string) (configDocument, error) {
 	if err != nil {
 		return configDocument{}, fmt.Errorf("snapshotDelay: %w", err)
 	}
+	bootstrapWarningMinutes, err := integer(ConfigBootstrapWarningMinutes)
+	if err != nil {
+		return configDocument{}, fmt.Errorf("bootstrapWarning: %w", err)
+	}
+	bootstrapStartupTimeoutSeconds, err := integer(ConfigBootstrapStartupTimeoutSeconds)
+	if err != nil {
+		return configDocument{}, fmt.Errorf("bootstrapTimeout: %w", err)
+	}
+	bootstrapBackupRetentionDays, err := integer(ConfigBootstrapBackupRetentionDays)
+	if err != nil {
+		return configDocument{}, fmt.Errorf("bootstrapRetention: %w", err)
+	}
 	return configDocument{
+		Bootstrap: configBootstrap{
+			IsUpdateEnabled:       configPointer(configBool(values[ConfigBootstrapIsUpdateEnabled])),
+			UpdateCron:            configPointer(values[ConfigBootstrapUpdateCron]),
+			WarningMinutes:        bootstrapWarningMinutes,
+			StartupTimeoutSeconds: bootstrapStartupTimeoutSeconds,
+			BackupRetentionDays:   bootstrapBackupRetentionDays,
+			ManifestURL:           configPointer(values[ConfigBootstrapManifestURL]),
+		},
+		Content: configContent{Path: configPointer(values[ConfigContentPath])},
 		Game: configGame{
 			IsVersionLocked:    configPointer(configBool(values[ConfigIsVersionLocked])),
 			IsSingleplayerOnly: configPointer(configBool(values[ConfigIsSingleplayerOnly])),
 			ClientLocale:       configPointer(values[ConfigClientLocale]),
 		},
 		Server: configServer{
+			BindHost:             configPointer(values[ConfigServerBindHost]),
+			AdvertisedHost:       configPointer(values[ConfigServerAdvertisedHost]),
+			IsDedicated:          configPointer(configBool(values[ConfigServerIsDedicated])),
 			IsMultiplayerEnabled: configPointer(configBool(values[ConfigIsMultiplayerEnabled])),
 			Port:                 serverPort,
 			WorldPlayerLimit:     worldPlayerLimit,

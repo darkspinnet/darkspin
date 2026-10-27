@@ -58,9 +58,15 @@ const isRemoteBusy = ref(false)
 const remoteMessage = ref('Enter a server address or ask for LAN suggestions.')
 const serverConfiguration = ref({ port:42127, isMultiplayerEnabled:false, locale:'en-us', locales:[], snapshotMode:'auto' })
 const configuredServerPort = ref(42127)
+const configuredBindHost = ref('')
+const configuredAdvertisedHost = ref('127.0.0.1')
+const isConfiguredDedicated = ref(false)
+const configuredContentPath = ref('')
+const configuredJWTSecret = ref('')
 const isConfiguredMultiplayerEnabled = ref(false)
 const configuredLocale = ref('en-us')
 const configuredSnapshotMode = ref('auto')
+const configuredBootstrap = ref({ isUpdateEnabled:true, updateCron:'30 3 * * *', warningMinutes:30, startupTimeoutSeconds:1800, backupRetentionDays:7, manifestUrl:'https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-update-linux-amd64-unstable.zip' })
 const systemWineRunner = 'system'
 const wineRunnerConfiguration = ref({ isSupported:false, selectedPath:'', runners:[] })
 const configuredWineRunner = ref(systemWineRunner)
@@ -308,6 +314,18 @@ const isRemoteFormReady = computed(() => !!remoteServerAddress.value &&
   /^[A-Za-z0-9]{1,20}$/.test(remoteIdentity.value.trim()) &&
   (!!remotePassword.value || (!isRemoteRegistration.value && selectedRemoteProfile.value?.isPasswordRemembered)))
 const isServerPortValid = computed(() => isPortValid(configuredServerPort.value) && Number(configuredServerPort.value) <= 65534)
+const bootstrapValidationMessage = computed(() => {
+  const configuration = configuredBootstrap.value
+  if (configuration.updateCron.trim().split(/\s+/).length !== 5) return 'Maintenance schedule requires five cron fields: minute hour day month weekday (UTC).'
+  if (!Number.isInteger(configuration.warningMinutes) || configuration.warningMinutes < 1 || configuration.warningMinutes > 1440) return 'Maintenance warning must be between 1 and 1440 minutes.'
+  if (!Number.isInteger(configuration.startupTimeoutSeconds) || configuration.startupTimeoutSeconds < 1 || configuration.startupTimeoutSeconds > 86400) return 'Startup timeout must be between 1 and 86400 seconds.'
+  if (!Number.isInteger(configuration.backupRetentionDays) || configuration.backupRetentionDays < 1 || configuration.backupRetentionDays > 3650) return 'Backup retention must be between 1 and 3650 days.'
+  try {
+    const address = new URL(configuration.manifestUrl)
+    if (address.protocol !== 'https:' || address.username || address.password || address.hash) return 'Update manifest must use HTTPS without credentials or a fragment.'
+  } catch { return 'Enter a valid HTTPS update manifest URL.' }
+  return ''
+})
 // Remove this channel gate when remote, detached, and multiplayer configuration are ready for every build.
 const isExperimentalLauncherFeatureVisible = computed(() => ['development', 'unstable'].includes(status.value.buildChannel))
 
@@ -555,12 +573,29 @@ async function refreshServerConfiguration() {
   try {
     serverConfiguration.value = await GetServerConfiguration()
     configuredServerPort.value = serverConfiguration.value.port
+    configuredBindHost.value = serverConfiguration.value.bindHost
+    configuredAdvertisedHost.value = serverConfiguration.value.advertisedHost
+    isConfiguredDedicated.value = serverConfiguration.value.isDedicated
+    configuredContentPath.value = serverConfiguration.value.contentPath
+    configuredJWTSecret.value = serverConfiguration.value.jwtSecret
     isConfiguredMultiplayerEnabled.value = serverConfiguration.value.isMultiplayerEnabled
     configuredLocale.value = serverConfiguration.value.locale
     configuredSnapshotMode.value = serverConfiguration.value.snapshotMode
+    applyBootstrapConfiguration(serverConfiguration.value)
   }
   catch (error) { serverConfigurationMessage.value = visibleLauncherText(error) }
   await refreshWineRunnerConfiguration()
+}
+
+function applyBootstrapConfiguration(configuration) {
+  configuredBootstrap.value = {
+    isUpdateEnabled:configuration.isBootstrapUpdateEnabled,
+    updateCron:configuration.bootstrapUpdateCron,
+    warningMinutes:configuration.bootstrapWarningMinutes,
+    startupTimeoutSeconds:configuration.bootstrapStartupTimeoutSeconds,
+    backupRetentionDays:configuration.bootstrapBackupRetentionDays,
+    manifestUrl:configuration.bootstrapManifestUrl,
+  }
 }
 
 function applyWineRunnerConfiguration(configuration) {
@@ -590,7 +625,7 @@ function wineRunnerLabel(runner) {
 const selectedWineRunner = computed(() => wineRunnerConfiguration.value.runners.find(runner => (runner.path || systemWineRunner) === configuredWineRunner.value))
 
 async function saveServerConfiguration() {
-  if (!isServerPortValid.value || isServerConfigurationBusy.value) return
+  if (!isServerPortValid.value || bootstrapValidationMessage.value || isServerConfigurationBusy.value) return
   if (isConfiguredMultiplayerEnabled.value && !serverConfiguration.value.isMultiplayerEnabled) {
     isMultiplayerConfirmOpen.value = true
     return
@@ -629,7 +664,12 @@ async function setSkipIntro(isSkipped) {
 async function applyServerConfiguration() {
   isServerConfigurationBusy.value = true
   const isNetworkChanged = Number(configuredServerPort.value) !== Number(serverConfiguration.value.port) ||
-    isConfiguredMultiplayerEnabled.value !== serverConfiguration.value.isMultiplayerEnabled
+    isConfiguredMultiplayerEnabled.value !== serverConfiguration.value.isMultiplayerEnabled ||
+    configuredBindHost.value !== serverConfiguration.value.bindHost ||
+    configuredAdvertisedHost.value !== serverConfiguration.value.advertisedHost ||
+    isConfiguredDedicated.value !== serverConfiguration.value.isDedicated ||
+    configuredContentPath.value !== serverConfiguration.value.contentPath ||
+    configuredJWTSecret.value !== serverConfiguration.value.jwtSecret
   const selectedWineRunnerPath = configuredWineRunner.value === systemWineRunner ? '' : configuredWineRunner.value
   if (wineRunnerConfiguration.value.isSupported && selectedWineRunnerPath !== wineRunnerConfiguration.value.selectedPath) {
     try { applyWineRunnerConfiguration(await SetWineRunner(selectedWineRunnerPath)) }
@@ -643,17 +683,31 @@ async function applyServerConfiguration() {
     ? 'Saving darkspin.toml and restarting the local server...'
     : 'Saving darkspin.toml...'
   try {
-    serverConfiguration.value = await SetServerConfiguration(
-      Number(configuredServerPort.value), isConfiguredMultiplayerEnabled.value,
-      configuredLocale.value, configuredSnapshotMode.value,
-    )
+    serverConfiguration.value = await SetServerConfiguration({
+      port:Number(configuredServerPort.value), isMultiplayerEnabled:isConfiguredMultiplayerEnabled.value,
+      locale:configuredLocale.value, snapshotMode:configuredSnapshotMode.value,
+      bindHost:configuredBindHost.value, advertisedHost:configuredAdvertisedHost.value,
+      isDedicated:isConfiguredDedicated.value, contentPath:configuredContentPath.value,
+      jwtSecret:configuredJWTSecret.value,
+      isBootstrapUpdateEnabled:configuredBootstrap.value.isUpdateEnabled,
+      bootstrapUpdateCron:configuredBootstrap.value.updateCron,
+      bootstrapWarningMinutes:configuredBootstrap.value.warningMinutes,
+      bootstrapStartupTimeoutSeconds:configuredBootstrap.value.startupTimeoutSeconds,
+      bootstrapBackupRetentionDays:configuredBootstrap.value.backupRetentionDays,
+      bootstrapManifestUrl:configuredBootstrap.value.manifestUrl,
+    })
     configuredServerPort.value = serverConfiguration.value.port
+    configuredBindHost.value = serverConfiguration.value.bindHost
+    configuredAdvertisedHost.value = serverConfiguration.value.advertisedHost
+    isConfiguredDedicated.value = serverConfiguration.value.isDedicated
+    configuredContentPath.value = serverConfiguration.value.contentPath
+    configuredJWTSecret.value = serverConfiguration.value.jwtSecret
     isConfiguredMultiplayerEnabled.value = serverConfiguration.value.isMultiplayerEnabled
     configuredLocale.value = serverConfiguration.value.locale
     configuredSnapshotMode.value = serverConfiguration.value.snapshotMode
+    applyBootstrapConfiguration(serverConfiguration.value)
     if (isNetworkChanged) {
-      const interfaceLabel = serverConfiguration.value.isMultiplayerEnabled ? 'all network interfaces' : 'loopback only'
-      serverConfigurationMessage.value = `Local server restarted on ${interfaceLabel}, port ${serverConfiguration.value.port}. Language: ${serverConfiguration.value.locale}.`
+      serverConfigurationMessage.value = `Server setup updated on port ${serverConfiguration.value.port}. Language: ${serverConfiguration.value.locale}.`
     } else {
       const wineRunnerSummary = wineRunnerConfiguration.value.isSupported
         ? ` Wine runtime: ${selectedWineRunner.value?.label || 'System Wine'}.`
@@ -1391,6 +1445,27 @@ async function copyLauncherFailure() {
             <label for="config-server-port">PORT</label>
             <Input id="config-server-port" v-model.number="configuredServerPort" type="number" min="1" max="65534" inputmode="numeric" :disabled="isServerConfigurationBusy" />
           </template>
+          <label class="management-toggle"><Checkbox v-model="isConfiguredDedicated" :disabled="isServerConfigurationBusy" /><span><strong>DEDICATED SERVER</strong><small>Allow remote account login. Uses a private signing secret and a reachable advertised IPv4.</small></span></label>
+          <label for="config-bind-host">LISTEN IPv4</label>
+          <Input id="config-bind-host" v-model="configuredBindHost" placeholder="Automatic" :disabled="isServerConfigurationBusy" />
+          <label for="config-advertised-host">ADVERTISED IPv4</label>
+          <Input id="config-advertised-host" v-model="configuredAdvertisedHost" placeholder="127.0.0.1" :disabled="isServerConfigurationBusy" />
+          <label for="config-content-path">PREPARED CONTENT DIRECTORY</label>
+          <Input id="config-content-path" v-model="configuredContentPath" placeholder="Automatic (darkspin/cache)" :disabled="isServerConfigurationBusy" />
+          <label for="config-jwt-secret">ACCOUNT SIGNING SECRET</label>
+          <Input id="config-jwt-secret" v-model="configuredJWTSecret" type="password" autocomplete="off" :disabled="isServerConfigurationBusy" />
+          <label class="management-toggle"><Checkbox v-model="configuredBootstrap.isUpdateEnabled" :disabled="isServerConfigurationBusy" /><span><strong>DEDICATED SERVER UPDATES</strong><small>Linux supervisor only. Scheduled maintenance backs up the stopped server and always restarts it, including when no update is available. Changes apply when the supervisor restarts.</small></span></label>
+          <label for="config-bootstrap-cron">MAINTENANCE SCHEDULE (UTC CRON)</label>
+          <Input id="config-bootstrap-cron" v-model="configuredBootstrap.updateCron" placeholder="30 3 * * *" :disabled="isServerConfigurationBusy" />
+          <label for="config-bootstrap-warning">MAINTENANCE WARNING (MINUTES)</label>
+          <Input id="config-bootstrap-warning" v-model.number="configuredBootstrap.warningMinutes" type="number" min="1" max="1440" :disabled="isServerConfigurationBusy" />
+          <label for="config-bootstrap-timeout">STARTUP TIMEOUT (SECONDS)</label>
+          <Input id="config-bootstrap-timeout" v-model.number="configuredBootstrap.startupTimeoutSeconds" type="number" min="1" max="86400" :disabled="isServerConfigurationBusy" />
+          <label for="config-bootstrap-retention">BACKUP RETENTION (DAYS)</label>
+          <Input id="config-bootstrap-retention" v-model.number="configuredBootstrap.backupRetentionDays" type="number" min="1" max="3650" :disabled="isServerConfigurationBusy" />
+          <label for="config-bootstrap-manifest">UPDATE MANIFEST URL</label>
+          <Input id="config-bootstrap-manifest" v-model="configuredBootstrap.manifestUrl" type="url" :disabled="isServerConfigurationBusy" />
+          <p v-if="bootstrapValidationMessage" class="management-message">{{ bootstrapValidationMessage }}</p>
           <label class="config-locale" for="config-client-locale"><strong>LANGUAGE</strong></label>
           <Select v-model="configuredLocale" :disabled="isServerConfigurationBusy">
             <SelectTrigger id="config-client-locale" class="w-full"><SelectValue /></SelectTrigger>
@@ -1422,7 +1497,7 @@ async function copyLauncherFailure() {
             </Select>
           </template>
           <p v-if="serverConfigurationMessage" class="management-message">{{ serverConfigurationMessage }}</p>
-          <Button variant="default" class="config-save" type="button" :disabled="!isServerPortValid || !configuredLocale || isServerConfigurationBusy" @click="saveServerConfiguration">{{ isServerConfigurationBusy ? 'SAVING...' : 'SAVE CONFIGURATION' }}</Button>
+          <Button variant="default" class="config-save" type="button" :disabled="!isServerPortValid || !configuredLocale || !!bootstrapValidationMessage || isServerConfigurationBusy" @click="saveServerConfiguration">{{ isServerConfigurationBusy ? 'SAVING...' : 'SAVE CONFIGURATION' }}</Button>
         </Card>
         <Card class="management-card shortcuts-card">
           <div class="integration-row">

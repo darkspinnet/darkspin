@@ -158,7 +158,11 @@ func runDatabaseCommand(ctx context.Context, output io.Writer, options databaseC
 		return nil
 	}
 	runtimePath := filepath.Join(filepath.Dir(configPath), server.DarkspinDirectory)
-	target, err := openDatabaseTarget(ctx, runtimePath, table)
+	contentPath, err := config.ContentPath(configPath)
+	if err != nil {
+		return fmt.Errorf("contentPath: %w", err)
+	}
+	target, err := openDatabaseTarget(ctx, runtimePath, contentPath, table)
 	if err != nil {
 		return fmt.Errorf("targetOpen: %w", err)
 	}
@@ -189,13 +193,13 @@ func runDatabaseCommand(ctx context.Context, output io.Writer, options databaseC
 	return nil
 }
 
-func openDatabaseTarget(ctx context.Context, runtimePath, table string) (*databaseTarget, error) {
+func openDatabaseTarget(ctx context.Context, runtimePath, contentPath, table string) (*databaseTarget, error) {
 	files := []struct {
 		name string
 		path string
 	}{
 		{name: "user", path: filepath.Join(runtimePath, server.SaveDirectory, server.UserDatabaseFilename)},
-		{name: "content", path: filepath.Join(runtimePath, server.CacheDirectory, server.ContentDatabaseFilename)},
+		{name: "content", path: filepath.Join(contentPath, server.ContentDatabaseFilename)},
 	}
 	matches := make([]*databaseTarget, 0, 1)
 	for _, file := range files {

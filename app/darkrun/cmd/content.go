@@ -2,13 +2,14 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 
 	contentcache "github.com/darkspinnet/darkspin/content"
+	contentruntime "github.com/darkspinnet/darkspin/content/runtime"
 	contentsqlite "github.com/darkspinnet/darkspin/content/sqlite"
 	server "github.com/darkspinnet/darkspin/server/runtime"
 	"github.com/spf13/cobra"
@@ -21,6 +22,7 @@ func newContentCommand() *cobra.Command {
 	}
 	command.AddCommand(newContentBuildCommand())
 	command.AddCommand(newContentVerifyCommand())
+	command.AddCommand(newContentPreflightCommand())
 	return command
 }
 
@@ -29,27 +31,21 @@ func newContentBuildCommand() *cobra.Command {
 	var databasePath string
 	command := &cobra.Command{
 		Use:   "build",
-		Short: "Build content.db from an installed Game client",
+		Short: "Prepare content.db and adjacent web assets from an installed Game client",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			resolvedGamePath, err := resolveContentGamePath(gamePath)
 			if err != nil {
 				return fmt.Errorf("gamePath: %w", err)
 			}
-			err = contentcache.PrepareWeb(command.Context(), contentcache.WebOptions{
-				GamePath: resolvedGamePath, StaticPath: contentStaticPath(databasePath),
-			})
-			if err != nil {
-				return fmt.Errorf("webPrepare: %w", err)
-			}
-			err = contentsqlite.Build(command.Context(), contentsqlite.BuildOptions{
+			err = contentruntime.Ensure(command.Context(), contentruntime.Options{
 				GamePath:     resolvedGamePath,
 				DatabasePath: databasePath,
 			})
 			if err != nil {
 				return fmt.Errorf("contentBuild: %w", err)
 			}
-			_, err = fmt.Fprintf(command.OutOrStdout(), "Initialized %s from %s\n", databasePath, resolvedGamePath)
+			_, err = fmt.Fprintf(command.OutOrStdout(), "Prepared %s and adjacent web assets\n", databasePath)
 			if err != nil {
 				return fmt.Errorf("buildOutput: %w", err)
 			}
@@ -84,16 +80,20 @@ func newContentVerifyCommand() *cobra.Command {
 	var databasePath string
 	command := &cobra.Command{
 		Use:   "verify",
-		Short: "Verify an existing content.db",
+		Short: "Verify content.db and its adjacent prepared web assets",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			verification, err := contentsqlite.Verify(command.Context(), databasePath)
 			if err != nil {
 				return fmt.Errorf("contentVerify: %w", err)
 			}
+			err = contentcache.VerifyWeb(command.Context(), contentStaticPath(databasePath))
+			if err != nil {
+				return fmt.Errorf("webVerify: %w", err)
+			}
 			_, err = fmt.Fprintf(
 				command.OutOrStdout(),
-				"Verified %s (build %d, release %s)\n",
+				"Verified %s and adjacent web assets (build %d, release %s)\n",
 				databasePath,
 				verification.SourceBuild,
 				verification.ContentRelease,
@@ -108,38 +108,30 @@ func newContentVerifyCommand() *cobra.Command {
 	return command
 }
 
-func ensureContentDatabase(ctx context.Context, output io.Writer, databasePath, gamePath string) error {
-	if ctx == nil {
-		return errors.New("nil context")
-	}
+func ensureServerContent(ctx context.Context, output io.Writer, databasePath, gamePath string) error {
 	if output == nil {
 		output = io.Discard
 	}
-	_, err := os.Stat(databasePath)
-	if err == nil {
-		_, err = contentsqlite.Verify(ctx, databasePath)
-		if err != nil {
-			return fmt.Errorf("contentVerify: %w", err)
-		}
-		return nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("contentStat: %w", err)
-	}
-	_, err = fmt.Fprintf(output, "content.db is missing; building from %s\n", gamePath)
-	if err != nil {
-		return fmt.Errorf("buildNotice: %w", err)
-	}
-	err = contentsqlite.Build(ctx, contentsqlite.BuildOptions{
-		GamePath:     gamePath,
-		DatabasePath: databasePath,
+	reporter := contentPreparationLog{logger: log.New(output, "", 0)}
+	reporter.logger.Printf("Checking prepared content in %s", filepath.Dir(databasePath))
+	err := contentruntime.Ensure(ctx, contentruntime.Options{
+		GamePath: gamePath, DatabasePath: databasePath,
+		OnProgress: reporter.progress, OnStageTiming: reporter.stageTiming,
 	})
 	if err != nil {
-		return fmt.Errorf("contentBuild: %w", err)
-	}
-	_, err = contentsqlite.Verify(ctx, databasePath)
-	if err != nil {
-		return fmt.Errorf("contentVerifyBuilt: %w", err)
+		return fmt.Errorf("contentPrepare: %w", err)
 	}
 	return nil
+}
+
+type contentPreparationLog struct {
+	logger *log.Logger
+}
+
+func (e contentPreparationLog) progress(progress contentsqlite.BuildProgress) {
+	e.logger.Printf("Content: %s (%d/%d)", progress.Phase, progress.Completed, progress.Total)
+}
+
+func (e contentPreparationLog) stageTiming(timing contentsqlite.BuildStageTiming) {
+	e.logger.Printf("Content import phase=%q elapsed=%s complete=%t", timing.Phase, timing.Duration, timing.IsComplete)
 }

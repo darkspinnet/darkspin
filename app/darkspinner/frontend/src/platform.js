@@ -85,7 +85,7 @@ export const SetSkipCinematic = isSkipped => call('SetSkipCinematic', isSkipped)
 export const SetSkipIntro = isSkipped => call('SetSkipIntro', isSkipped)
 export const SetWineRunner = path => call('SetWineRunner', path)
 export async function SetServerConfiguration(...args) {
-  const configuration = await call('SetServerConfiguration', ...args)
+  const configuration = await call('SetServerSetup', ...args)
   if (!isWails() && configuration?.port && String(configuration.port) !== window.location.port) {
     const address = new URL(window.location.href)
     address.port = String(configuration.port)

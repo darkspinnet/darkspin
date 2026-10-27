@@ -35,3 +35,9 @@ On other platforms, extract DarkSpinner to your game's path.
 These builds are updated more frequently and are where changes are tested before an official stable release is made.
 
 If you want to explore tooling, check out Darkrun: [windows amd64](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-windows-amd64-unstable.zip) or [linux amd64](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-linux-amd64-unstable.zip).
+
+### Host a headless server with Docker Compose
+
+Follow the [Compose server setup guide](deployment/README.md) to download the setup ZIP, configure login and gameplay, and mount your required build-103 game installation for automatic content preparation. `darkrun bootstrap` supervises the server and manages scheduled binary updates with matching database backups and startup rollback. No repository clone or local build is required.
+
+**A stable Compose setup is not available yet.** Use the [unstable Compose setup ZIP](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-compose-unstable.zip) for now.

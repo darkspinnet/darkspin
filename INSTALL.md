@@ -37,6 +37,63 @@ The root `window` package owns Windows process discovery, termination, taskbar
 restoration, and single-instance replacement. Desktop applications provide
 their executable names and dialog text without duplicating Win32 operations.
 
+## Headless container deployment
+
+The headless SQLite server runs account login and gameplay together in one process and follows DarkSpinner's automatic preparation: provide a readable build-103 installation and keep it available for content rebuilds; startup creates its internal TOML settings and authentication secret. A separate `darkrun auth` process is not needed. New Darkrun configurations require account passwords and default to loopback. Existing saved settings retain their login mode. No hand-authored configuration is required. On a native host with the build-103 game installed, initial startup for remote players is:
+
+```sh
+DARKSPIN_ADVERTISED_HOST=192.0.2.10 DARKSPIN_GAME_PATH=/path/to/Game darkrun server
+```
+
+Replace `192.0.2.10` with the IPv4 address players can reach. Later starts reuse saved network settings, but keep `DARKSPIN_GAME_PATH` set on every invocation (or use the installation beside the executable). Environment settings use the existing CLI parsing and saved configuration, with precedence **explicit CLI flags → nonempty environment settings → persisted settings or defaults**. Empty environment settings are ignored; reset optional saved settings explicitly with CLI flags, such as `--content-path=""` or `--bind-host=""`.
+
+| Environment setting | Equivalent flag | Purpose |
+| --- | --- | --- |
+| `DARKSPIN_ADVERTISED_HOST` | `--advertised-host` | IPv4 address players can reach; saved internally. |
+| `DARKSPIN_GAME_PATH` | `--game-path` | Required installed build-103 client used to rebuild missing or stale `content.db` and web assets automatically on startup; the installation is read-only. |
+| `DARKSPIN_CONTENT_PATH` | `--content-path` | Native generated-cache directory containing `content.db` and `www/static`; Compose fixes this to `/darkspin/runtime/darkspin/cache`. |
+| `DARKSPIN_CONFIG_PATH` | `--config` | Persistent settings file; player saves and diagnostics live in its sibling `darkspin` directory. |
+| `DARKSPIN_BIND_HOST` | `--bind-host` | Listener IPv4 address; saved internally. |
+| `DARKSPIN_PORT` | `--port` | Shared TCP/UDP port, from 1 to 65534; saved internally. |
+| `DARKSPIN_IS_DEDICATED` | `--dedicated` | Password-required login mode (`true` or `false`); saved internally. |
+
+The game path is only a preparation source, never a destination for writes. Darkrun and Darkspinner call the same content preparation routine: valid caches are reused, while missing or stale caches are rebuilt from this path before server listeners start. Keep the source mount available across upgrades for automatic rebuilds. Headless startup and update preflight validate the source version and required package indexes even when caches are current; copied caches cannot replace the required installation. A failed database import leaves the previous database in place and stops startup. Relative content-path options are saved as absolute paths. Config and content paths remain internal TOML-backed settings where applicable; environment variables provide startup inputs rather than a separate configuration store.
+
+The server holds an operating-system lock for its runtime through preparation, startup and shutdown. Another `darkrun server` invocation for that runtime reports that an instance is running or starting and exits without changing its settings or opening another database. This is an ownership check, not a readiness or gameplay check. Stop the owner before changing startup settings or using `--prepare-only`. The lock file may remain after exit; the operating system releases the lock when the process exits. Keep one server service per runtime; do not scale replicas against the same SQLite saves.
+
+Add `--prepare-only` to generate settings and prepare or verify content without opening server listeners. The same setup fields are editable through Darkspinner's Config interface. Connect from another Darkspinner using its Remote Servers account flow; dedicated mode requires a password even for loopback connections. Existing passwordless local profiles must not be used as dedicated login credentials.
+
+When reusing an existing local configuration, explicitly set `DARKSPIN_IS_DEDICATED=true` once to switch it to password-required login. A new configuration enables this automatically. Local preparation and serving auth/game traffic run in the same process; no separate `darkrun auth` service is needed.
+
+## Downloadable Compose setup
+
+Use the [Compose setup guide](deployment/README.md) for the [unstable setup ZIP](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-compose-unstable.zip), required game mount, saved settings, scheduled maintenance and rollback. Stable setup is not available yet.
+
+The container invokes `darkrun bootstrap` from a writable host directory. Bootstrap supervises `darkrun server`, snapshots its stopped binary and saves together, installs verified unstable binaries, and restores the matching snapshot if first startup fails. Daily warnings begin at 03:30 UTC and the default shutdown is 04:00. Numeric five-field cron, warning duration, startup timeout and retention are configurable through environment overrides and saved `[bootstrap]` settings.
+
+Mount the complete `darkspin/` directory containing `bin/darkrun`, `runtime/` and `backup/`. Configuration is fixed at `runtime/darkspin.toml` within it so backups cover the entire runtime. The game installation remains a required read-only mount at `/game`. No Docker socket or cron sidecar is needed; ordinary updates replace the executable rather than rebuilding an application image. See the guide before migrating an older runtime layout.
+
+## Packaging and source development
+
+Package the standalone setup without building application binaries:
+
+```sh
+mage darkrun:compose
+```
+
+This creates `bin/deployment/darkrun-compose-v<version>.zip` and an allowlisted bundle containing `compose.yaml`, `.env.example`, `README.md`, and `VERSION`. It excludes local settings, binaries, backups, game assets and saves. `DARKSPIN_BUILD_VERSION` sets the bundle version; `DARKSPIN_COMPOSE_IMAGE` optionally sets the infrastructure image reference.
+
+`main-build` publishes the setup ZIP and Linux binary/manifest artifacts. The manifest pins the executable's SHA-256 and immutable Actions artifact URL. A separate `bootstrap-image` workflow publishes the infrastructure image only when its inputs change or it is manually dispatched.
+
+For local infrastructure development:
+
+```sh
+cd deployment
+docker compose -f compose.yaml -f compose.build.yaml build darkrun
+```
+
+The deployment Dockerfile installs only download tools and the initial-install entry point. Its build context is `deployment/`, allowlisted to the Dockerfile and entry point. Application source is not compiled into this image. Container startup, updates and multiplayer behavior require runtime validation; source and packaging checks alone do not establish readiness.
+
 ## Run
 
 ```sh

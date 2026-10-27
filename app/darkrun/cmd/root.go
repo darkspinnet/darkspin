@@ -35,6 +35,9 @@ func NewRootCommand() *cobra.Command {
 	rootCmd.SetHelpTemplate(fmt.Sprintf("darkrun version %s\n\n%s", buildinfo.Version, rootCmd.HelpTemplate()))
 
 	rootCmd.AddCommand(newServerCommand())
+	rootCmd.AddCommand(newBootstrapCommand())
+	rootCmd.AddCommand(newBuildInfoCommand())
+	rootCmd.AddCommand(newMaintenanceCommand())
 	rootCmd.AddCommand(newAuthCommand())
 	rootCmd.AddCommand(newDatabaseCommand())
 	rootCmd.AddCommand(newContentCommand())

@@ -35,7 +35,7 @@ type webAsset struct {
 func PrepareWeb(ctx context.Context, options WebOptions) error {
 	err := prepareWebAssets(ctx, options, webAssetRecipe)
 	if err != nil {
-		return err
+		return fmt.Errorf("assetPrepare: %w", err)
 	}
 	installPath, err := webInstallPath(options.GamePath)
 	if err != nil {
@@ -48,6 +48,10 @@ func PrepareWeb(ctx context.Context, options WebOptions) error {
 	err = prepareLootImages(ctx, installPath, staticPath)
 	if err != nil {
 		return fmt.Errorf("lootPrepare: %w", err)
+	}
+	err = writeWebManifest(ctx, staticPath)
+	if err != nil {
+		return fmt.Errorf("manifestWrite: %w", err)
 	}
 	return nil
 }

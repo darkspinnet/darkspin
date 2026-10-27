@@ -34,6 +34,7 @@ type LocalBroker struct {
 	issuer         *JWTIssuer
 	host           string
 	accountManager accountManager
+	isDedicated    bool
 	logger         *log.Logger
 	now            func() time.Time
 	mu             sync.Mutex
@@ -60,6 +61,19 @@ func NewAccountBroker(
 		return nil, errors.New("create account broker: nil account manager")
 	}
 	return newBroker(issuer, host, accountManager, logger)
+}
+
+// NewDedicatedBroker requires account credentials from every desktop client,
+// including connections arriving through a local container bridge or proxy.
+func NewDedicatedBroker(
+	issuer *JWTIssuer, host string, accountManager accountManager, logger *log.Logger,
+) (*LocalBroker, error) {
+	broker, err := NewAccountBroker(issuer, host, accountManager, logger)
+	if err != nil {
+		return nil, fmt.Errorf("dedicatedBroker: %w", err)
+	}
+	broker.isDedicated = true
+	return broker, nil
 }
 
 func newBroker(
@@ -220,7 +234,7 @@ func (b *LocalBroker) start(writer http.ResponseWriter, request *http.Request) {
 
 func (b *LocalBroker) register(writer http.ResponseWriter, request *http.Request) {
 	isLoopback, isAllowed := b.requestAccess(request)
-	if !isAllowed {
+	if !isAllowed || b.accountManager == nil {
 		writeAuthError(writer, http.StatusForbidden, "local network request required")
 		return
 	}
@@ -312,6 +326,9 @@ func (b *LocalBroker) requestAccess(request *http.Request) (bool, bool) {
 	ip := net.ParseIP(address)
 	if ip == nil {
 		return false, false
+	}
+	if b.isDedicated {
+		return false, b.accountManager != nil && (ip.IsGlobalUnicast() || ip.IsLoopback())
 	}
 	if ip.IsLoopback() {
 		_, expectedPort, expectedErr := net.SplitHostPort(b.host)

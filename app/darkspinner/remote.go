@@ -552,8 +552,8 @@ func normalizeRemoteHost(host string) (string, error) {
 	ip := net.ParseIP(host)
 	if ip != nil {
 		ip = ip.To4()
-		if ip == nil || (!ip.IsPrivate() && !ip.IsLoopback()) {
-			return "", errors.New("server IP must be a private IPv4 address")
+		if ip == nil || (!ip.IsGlobalUnicast() && !ip.IsLoopback()) {
+			return "", errors.New("server IP must be a unicast IPv4 address")
 		}
 		return ip.String(), nil
 	}

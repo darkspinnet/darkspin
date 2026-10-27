@@ -16,6 +16,12 @@ is_cinematic_skipped = false
 
 [server]
 is_multiplayer_enabled = false
+# Dedicated mode requires a non-loopback advertised IPv4 and a private JWT secret.
+is_dedicated = false
+# Empty selects loopback, or all interfaces for multiplayer/dedicated mode.
+bind_host = ""
+# Client-visible literal IPv4; never use 0.0.0.0 or a container DNS name here.
+advertised_host = "127.0.0.1"
 port = 42127
 # Maximum simultaneously authenticated players across the server. This is
 # separate from the four-player limit of an individual Game game instance.
@@ -32,6 +38,11 @@ is_stdout_enabled = true
 # SQLite is the current embedded adapter. PostgreSQL is planned.
 driver = "sqlite"
 
+[content]
+# Private prepared directory containing content.db and www/static. Empty uses
+# darkspin/cache beside this configuration; relative paths start beside it.
+path = ""
+
 [auth]
 # Shared HS256 signing secret used by the desktop auth broker and game server.
 # Replace this development value before exposing a server beyond localhost.
@@ -46,3 +57,12 @@ jwt_audience = "darkspin"
 mode = "auto"
 buffer_duration_seconds = 60
 delay_seconds = 30
+
+[bootstrap]
+# Dedicated Linux supervisor only; schedule uses UTC. Maintenance always restarts.
+is_update_enabled = true
+update_cron = "30 3 * * *"
+warning_minutes = 30
+startup_timeout_seconds = 1800
+backup_retention_days = 7
+manifest_url = "https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-update-linux-amd64-unstable.zip"

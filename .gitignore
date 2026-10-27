@@ -29,6 +29,8 @@ go.work.sum
 
 # env file
 .env
+/deployment/runtime/
+/deployment/darkspin/
 
 # Editor/IDE
 # .idea/

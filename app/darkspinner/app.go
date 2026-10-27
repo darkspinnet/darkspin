@@ -45,6 +45,7 @@ type App struct {
 	isInitializing     bool
 	arguments          []string
 	authURL            string
+	embeddedAuthURL    string
 	token              string
 	status             LauncherStatus
 	installation       InstallationStatus

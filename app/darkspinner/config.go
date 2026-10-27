@@ -4,20 +4,35 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/darkspinnet/darkspin/server/game"
+	"github.com/darkspinnet/darkspin/server/maintenance"
 	server "github.com/darkspinnet/darkspin/server/runtime"
 	"github.com/darkspinnet/darkspin/server/snapshot"
 )
 
 // ServerConfiguration is the launcher-editable server and client configuration.
 type ServerConfiguration struct {
-	Port                 uint16         `json:"port"`
-	IsMultiplayerEnabled bool           `json:"isMultiplayerEnabled"`
-	Locale               string         `json:"locale"`
-	Locales              []ClientLocale `json:"locales"`
-	SnapshotMode         string         `json:"snapshotMode"`
+	BindHost                       string         `json:"bindHost"`
+	AdvertisedHost                 string         `json:"advertisedHost"`
+	IsDedicated                    bool           `json:"isDedicated"`
+	ContentPath                    string         `json:"contentPath"`
+	JWTSecret                      string         `json:"jwtSecret"`
+	Port                           uint16         `json:"port"`
+	IsMultiplayerEnabled           bool           `json:"isMultiplayerEnabled"`
+	Locale                         string         `json:"locale"`
+	Locales                        []ClientLocale `json:"locales"`
+	SnapshotMode                   string         `json:"snapshotMode"`
+	IsBootstrapUpdateEnabled       bool           `json:"isBootstrapUpdateEnabled"`
+	BootstrapUpdateCron            string         `json:"bootstrapUpdateCron"`
+	BootstrapWarningMinutes        int            `json:"bootstrapWarningMinutes"`
+	BootstrapStartupTimeoutSeconds int            `json:"bootstrapStartupTimeoutSeconds"`
+	BootstrapBackupRetentionDays   int            `json:"bootstrapBackupRetentionDays"`
+	BootstrapManifestURL           string         `json:"bootstrapManifestUrl"`
 }
 
 // GetServerConfiguration returns the persisted local network configuration.
@@ -63,6 +78,28 @@ func (e *App) SetServerPort(port uint16) (ServerConfiguration, error) {
 func (e *App) SetServerConfiguration(
 	port uint16, isMultiplayerEnabled bool, locale string, snapshotMode string,
 ) (ServerConfiguration, error) {
+	req, err := e.GetServerConfiguration()
+	if err != nil {
+		return ServerConfiguration{}, fmt.Errorf("configRead: %w", err)
+	}
+	req.Port = port
+	req.IsMultiplayerEnabled = isMultiplayerEnabled
+	req.Locale = locale
+	req.SnapshotMode = snapshotMode
+	configuration, err := e.SetServerSetup(req)
+	if err != nil {
+		return ServerConfiguration{}, fmt.Errorf("setupApply: %w", err)
+	}
+	return configuration, nil
+}
+
+// SetServerSetup edits the persisted setup through the same restart and
+// rollback flow as the launcher network controls.
+func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, error) {
+	port := req.Port
+	isMultiplayerEnabled := req.IsMultiplayerEnabled
+	locale := req.Locale
+	snapshotMode := req.SnapshotMode
 	if port == 0 || port == ^uint16(0) {
 		return ServerConfiguration{}, errors.New("server port must be between 1 and 65534")
 	}
@@ -92,6 +129,61 @@ func (e *App) SetServerConfiguration(
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("configLoad: %w", err)
 	}
+	err = validateBootstrapConfiguration(req, pathSet.configPath)
+	if err != nil {
+		return ServerConfiguration{}, fmt.Errorf("bootstrapValidate: %w", err)
+	}
+	previousSettings := map[game.ConfigKey]string{
+		game.ConfigServerBindHost:                 config.String(game.ConfigServerBindHost),
+		game.ConfigServerAdvertisedHost:           config.String(game.ConfigServerAdvertisedHost),
+		game.ConfigServerIsDedicated:              config.String(game.ConfigServerIsDedicated),
+		game.ConfigContentPath:                    config.String(game.ConfigContentPath),
+		game.ConfigAuthJWTSecret:                  config.String(game.ConfigAuthJWTSecret),
+		game.ConfigBootstrapIsUpdateEnabled:       config.String(game.ConfigBootstrapIsUpdateEnabled),
+		game.ConfigBootstrapUpdateCron:            config.String(game.ConfigBootstrapUpdateCron),
+		game.ConfigBootstrapWarningMinutes:        config.String(game.ConfigBootstrapWarningMinutes),
+		game.ConfigBootstrapStartupTimeoutSeconds: config.String(game.ConfigBootstrapStartupTimeoutSeconds),
+		game.ConfigBootstrapBackupRetentionDays:   config.String(game.ConfigBootstrapBackupRetentionDays),
+		game.ConfigBootstrapManifestURL:           config.String(game.ConfigBootstrapManifestURL),
+	}
+	settings := map[game.ConfigKey]string{
+		game.ConfigServerBindHost:                 strings.TrimSpace(req.BindHost),
+		game.ConfigServerAdvertisedHost:           strings.TrimSpace(req.AdvertisedHost),
+		game.ConfigServerIsDedicated:              strconv.FormatBool(req.IsDedicated),
+		game.ConfigContentPath:                    strings.TrimSpace(req.ContentPath),
+		game.ConfigAuthJWTSecret:                  req.JWTSecret,
+		game.ConfigBootstrapIsUpdateEnabled:       strconv.FormatBool(req.IsBootstrapUpdateEnabled),
+		game.ConfigBootstrapUpdateCron:            strings.TrimSpace(req.BootstrapUpdateCron),
+		game.ConfigBootstrapWarningMinutes:        strconv.Itoa(req.BootstrapWarningMinutes),
+		game.ConfigBootstrapStartupTimeoutSeconds: strconv.Itoa(req.BootstrapStartupTimeoutSeconds),
+		game.ConfigBootstrapBackupRetentionDays:   strconv.Itoa(req.BootstrapBackupRetentionDays),
+		game.ConfigBootstrapManifestURL:           strings.TrimSpace(req.BootstrapManifestURL),
+	}
+	isSetupChanged := false
+	isBootstrapChanged := false
+	for key, setting := range settings {
+		if strings.HasPrefix(string(key), "BOOTSTRAP_") {
+			isBootstrapChanged = isBootstrapChanged || setting != previousSettings[key]
+		} else {
+			isSetupChanged = isSetupChanged || setting != previousSettings[key]
+		}
+		err = config.Set(key, setting)
+		if err != nil {
+			return ServerConfiguration{}, fmt.Errorf("setupSet: %w", err)
+		}
+	}
+	bindHost, advertisedHost, err := config.NetworkHosts()
+	if err != nil {
+		return ServerConfiguration{}, fmt.Errorf("networkValidate: %w", err)
+	}
+	if bindHost == "" || advertisedHost == "" {
+		return ServerConfiguration{}, errors.New("network hosts are empty")
+	}
+	isAuthPrepared, err := config.PrepareDedicatedAuth()
+	if err != nil {
+		return ServerConfiguration{}, fmt.Errorf("authPrepare: %w", err)
+	}
+	isSetupChanged = isSetupChanged || isAuthPrepared
 	previousPort, err := config.Uint16(game.ConfigServerPort)
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("previousPort: %w", err)
@@ -116,7 +208,7 @@ func (e *App) SetServerConfiguration(
 	if !hasClientLocale(locales, locale) {
 		return ServerConfiguration{}, fmt.Errorf("locale %q is not installed", locale)
 	}
-	if previousPort == port && isPreviouslyMultiplayerEnabled == isMultiplayerEnabled &&
+	if !isSetupChanged && !isBootstrapChanged && previousPort == port && isPreviouslyMultiplayerEnabled == isMultiplayerEnabled &&
 		normalizeClientLocale(previousLocale) == locale &&
 		previousSnapshotMode == selectedSnapshotMode {
 		configuration, configErr := serverConfiguration(config, pathSet.gamePath)
@@ -146,7 +238,7 @@ func (e *App) SetServerConfiguration(
 		return ServerConfiguration{}, fmt.Errorf("configSave: %w", err)
 	}
 
-	isNetworkChanged := previousPort != port ||
+	isNetworkChanged := isSetupChanged || previousPort != port ||
 		isPreviouslyMultiplayerEnabled != isMultiplayerEnabled
 	if !isNetworkChanged {
 		if previousSnapshotMode != selectedSnapshotMode {
@@ -177,6 +269,12 @@ func (e *App) SetServerConfiguration(
 		return configuration, nil
 	}
 	restartErr := err
+	for key, setting := range previousSettings {
+		restoreErr := config.Set(key, setting)
+		if restoreErr != nil {
+			return ServerConfiguration{}, fmt.Errorf("setupRestore: %w", restoreErr)
+		}
+	}
 	rollbackErr := config.Set(game.ConfigServerPort, fmt.Sprintf("%d", previousPort))
 	if rollbackErr == nil {
 		rollbackErr = config.Set(
@@ -210,6 +308,11 @@ func (e *App) SetServerConfiguration(
 }
 
 func (e *App) restartGameServer(pathSet *spinnerPathSet) error {
+	refreshedPathSet, err := resolveSpinnerPaths(filepath.Dir(pathSet.configPath))
+	if err != nil {
+		return fmt.Errorf("pathsRefresh: %w", err)
+	}
+	pathSet = refreshedPathSet
 	e.mu.Lock()
 	gameServer := e.serviceSet.gameServer
 	serverDone := e.serviceSet.serverDone
@@ -234,7 +337,11 @@ func (e *App) restartGameServer(pathSet *spinnerPathSet) error {
 	if ctx == nil {
 		ctx = context.TODO()
 	}
-	err := e.startGameServer(ctx, pathSet)
+	err = e.prepareContent(ctx, pathSet)
+	if err != nil {
+		return fmt.Errorf("contentPrepare: %w", err)
+	}
+	err = e.startGameServer(ctx, pathSet)
 	if err != nil {
 		e.failSubsystem("Server", fmt.Errorf("restartStart: %w", err))
 		return fmt.Errorf("restartStart: %w", err)
@@ -281,13 +388,61 @@ func serverConfiguration(config *game.Config, gamePath string) (ServerConfigurat
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("snapshotModeLoad: %w", err)
 	}
+	bootstrapWarningMinutes, err := config.Uint32(game.ConfigBootstrapWarningMinutes)
+	if err != nil {
+		return ServerConfiguration{}, fmt.Errorf("bootstrapWarningLoad: %w", err)
+	}
+	bootstrapStartupTimeoutSeconds, err := config.Uint32(game.ConfigBootstrapStartupTimeoutSeconds)
+	if err != nil {
+		return ServerConfiguration{}, fmt.Errorf("bootstrapTimeoutLoad: %w", err)
+	}
+	bootstrapBackupRetentionDays, err := config.Uint32(game.ConfigBootstrapBackupRetentionDays)
+	if err != nil {
+		return ServerConfiguration{}, fmt.Errorf("bootstrapRetentionLoad: %w", err)
+	}
 	return ServerConfiguration{
-		Port:                 port,
-		IsMultiplayerEnabled: config.Bool(game.ConfigIsMultiplayerEnabled),
-		Locale:               locale,
-		Locales:              locales,
-		SnapshotMode:         string(snapshotMode),
+		IsBootstrapUpdateEnabled:       config.Bool(game.ConfigBootstrapIsUpdateEnabled),
+		BootstrapUpdateCron:            config.String(game.ConfigBootstrapUpdateCron),
+		BootstrapWarningMinutes:        int(bootstrapWarningMinutes),
+		BootstrapStartupTimeoutSeconds: int(bootstrapStartupTimeoutSeconds),
+		BootstrapBackupRetentionDays:   int(bootstrapBackupRetentionDays),
+		BootstrapManifestURL:           config.String(game.ConfigBootstrapManifestURL),
+		BindHost:                       config.String(game.ConfigServerBindHost),
+		AdvertisedHost:                 config.String(game.ConfigServerAdvertisedHost),
+		IsDedicated:                    config.Bool(game.ConfigServerIsDedicated),
+		ContentPath:                    config.String(game.ConfigContentPath),
+		JWTSecret:                      config.String(game.ConfigAuthJWTSecret),
+		Port:                           port,
+		IsMultiplayerEnabled:           config.Bool(game.ConfigIsMultiplayerEnabled),
+		Locale:                         locale,
+		Locales:                        locales,
+		SnapshotMode:                   string(snapshotMode),
 	}, nil
+}
+
+func validateBootstrapConfiguration(req ServerConfiguration, configPath string) error {
+	if req.BootstrapStartupTimeoutSeconds < 1 || req.BootstrapStartupTimeoutSeconds > 86400 {
+		return errors.New("bootstrap startup timeout must be between 1 and 86400 seconds")
+	}
+	if req.BootstrapBackupRetentionDays < 1 || req.BootstrapBackupRetentionDays > 3650 {
+		return errors.New("bootstrap backup retention must be between 1 and 3650 days")
+	}
+	err := maintenance.ValidateSchedule(maintenance.ScheduleOptions{
+		Cron:              req.BootstrapUpdateCron,
+		WarningMinutes:    req.BootstrapWarningMinutes,
+		UpdateRequestPath: filepath.Join(filepath.Dir(configPath), "update-request.json"),
+	})
+	if err != nil {
+		return fmt.Errorf("scheduleValidate: %w", err)
+	}
+	manifestURL, err := url.Parse(strings.TrimSpace(req.BootstrapManifestURL))
+	if err != nil {
+		return fmt.Errorf("manifestParse: %w", err)
+	}
+	if manifestURL.Scheme != "https" || manifestURL.Host == "" || manifestURL.User != nil || manifestURL.Fragment != "" {
+		return errors.New("bootstrap manifest URL must use HTTPS without credentials or a fragment")
+	}
+	return nil
 }
 
 func localServerAddress(gameServer *server.Server) (string, error) {

@@ -2,27 +2,21 @@
 
 ### 2026-10-26
 
-- #133 Preserve equipped movement and attack-speed bonuses when temporary slows apply or expire, and include equipment movement bonuses at mission entry.
-- #133 Restore Celestial Comet's build-103 knockback distance, speed and recovery through the existing navigation-clipped forced-movement path.
-- #133 Enable Necrotic Leech and its ranked variants to use their authored combat strafing between attacks.
-- #131 Correct hero profiles from duplicated core-stat totals to build 103's base-plus-bonus format without increasing combat health.
-- #131 Show equipped secondary stats in hero profiles using native whole-percent units and the complete supported stat-token set.
-- #131 Prevent consecutive replay maps when another unlocked destination is available, preserving retained offers and first-run progression.
-- #131 Prefer unused enemies in replay roster draws, retaining repeated slots only when the source pool lacks alternatives.
-- #130 Gate optional Mutation Agent opening waves and barriers on completed campaign progression, preserving scripted initial-mission and boss-arena encounters.
-- #130 Reply to queued basic-attack predictions replaced by an accepted ability instead of silently discarding their response token.
-- Preserve saved hero appearances and rating-based passive bonuses when selecting PvP squads, and refresh complete equipped hero stats on every round load.
-- Stop known armor parts from supplying weapon damage when a hero has no equipped weapon in campaign or PvP.
-- [#128](https://github.com/darkspinnet/darkspin/issues/128) Enforce cooldown and release timing for fallback PvP basic attacks and apply projected passive stats, including Delaying Sphere's attack-speed penalty.
-- [#128](https://github.com/darkspinnet/darkspin/issues/128) Keep two-player parties together in 2v2 matchmaking when solo playgroups queue first.
-- [#128](https://github.com/darkspinnet/darkspin/issues/128) Preserve queued PvP loading updates and Force Pulse cleanup when handshakes or shared attacks save their session state.
-- [#128](https://github.com/darkspinnet/darkspin/issues/128) Preserve round scores when PvP countdown or teleport preparation fails, clear abandoned countdown gates, and prevent completed matches from restarting combat.
-- [#128](https://github.com/darkspinnet/darkspin/issues/128) Record the match's actual ranked flag in saved PvP results instead of always marking them unranked.
-
-- [#128](https://github.com/darkspinnet/darkspin/issues/128) Add a four-second PvP preparation pause before the native countdown on every round.
-- [#128](https://github.com/darkspinnet/darkspin/issues/128) Restore the authored teleport-out and teleport-in phases between PvP preparation and combat, holding movement and hero switching until arrival completes.
-- [#128](https://github.com/darkspinnet/darkspin/issues/128) Restore Delaying Sphere in PvP through the normal persistent-field runtime, slowing opposing heroes and supported projectiles with cleanup on exit, expiry and round transitions.
-- [#128](https://github.com/darkspinnet/darkspin/issues/128) Restore Force Pulse knockback against PvP heroes with its authored caster-specific immunity marker, landing reaction and death/round cleanup.
+- Replace Compose image updates with `darkrun bootstrap`: supervise the mounted server binary, repeat scheduled maintenance warnings, retain matching binary/database backups for seven days, and roll back failed startup updates automatically.
+- #134 Use primary melee reach for Pouncing Stalker's selected target instead of the smaller additional-target arc, preventing captains from repeatedly swiping without reaching the hero.
+- #134 Restore temporary charge movement state when Terrifying Curse interrupts an enemy, and retire interrupted charge follow-ups and Wraith Drifter continuations with their original action generation.
+- Add automatic headless dedicated-server setup with shared Darkspinner content preparation, independently selectable config and content paths, saved network settings, and credential-required remote login.
+- Include sync snapshots with `/bug` in Manual mode, explain unavailable captures, preserve partial squad context, and record missing or truncated logs without discarding the report.
+- Add nearby actor identities, hero speed baselines, enemy damage-over-time state, Cryos geyser phases and Sage passive presence to bug diagnostics for unresolved gameplay reports.
+- [#133](https://github.com/darkspinnet/darkspin/issues/133) Preserve equipped movement and attack-speed bonuses when temporary slows apply or expire, and include equipment movement bonuses at mission entry.
+- [#133](https://github.com/darkspinnet/darkspin/issues/133) Restore Celestial Comet's build-103 knockback distance, speed and recovery through the existing navigation-clipped forced-movement path.
+- [#133](https://github.com/darkspinnet/darkspin/issues/133) Enable Necrotic Leech and its ranked variants to use their authored combat strafing between attacks.
+- [#131](https://github.com/darkspinnet/darkspin/issues/131) Correct hero profiles from duplicated core-stat totals to build 103's base-plus-bonus format without increasing combat health.
+- [#131](https://github.com/darkspinnet/darkspin/issues/131) Show equipped secondary stats in hero profiles using native whole-percent units and the complete supported stat-token set.
+- [#131](https://github.com/darkspinnet/darkspin/issues/131) Prevent consecutive replay maps when another unlocked destination is available, preserving retained offers and first-run progression.
+- [#131](https://github.com/darkspinnet/darkspin/issues/131) Prefer unused enemies in replay roster draws, retaining repeated slots only when the source pool lacks alternatives.
+- [#130](https://github.com/darkspinnet/darkspin/issues/130) Gate optional Mutation Agent opening waves and barriers on completed campaign progression, preserving scripted initial-mission and boss-arena encounters.
+- [#130](https://github.com/darkspinnet/darkspin/issues/130) Reply to queued basic-attack predictions replaced by an accepted ability instead of silently discarding their response token.
 - [#129](https://github.com/darkspinnet/darkspin/issues/129) Defer portal contact polling during hero deployment so a portal cannot relocate the incoming hero before a delayed switch arrival places it back at the old position.
 - [#129](https://github.com/darkspinnet/darkspin/issues/129) Restore the authored immobilization during enemy sleep effects and avoid repeated position corrections for held movement at the sleeping hero's stopped pose.
 - [#129](https://github.com/darkspinnet/darkspin/issues/129) Stop held movement polls from replaying position corrections during tunnel traversal; the authored approach and exit walks remain unresolved.

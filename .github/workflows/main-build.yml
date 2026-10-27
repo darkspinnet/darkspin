@@ -203,9 +203,87 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Upload raw Linux update binary
+        if: matrix.platform == 'linux'
+        id: update-binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: darkrun-linux-amd64-update-binary
+          path: bin/darkrunci/linux-amd64/darkrun
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Generate Linux binary update manifest
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          BINARY_ARTIFACT_ID: ${{ steps.update-binary.outputs.artifact-id }}
+        run: |
+          identity="$(bin/darkrunci/linux-amd64/darkrun build-info)"
+          version="$(printf '%s' "$identity" | jq -er '.version')"
+          build_id="$(printf '%s' "$identity" | jq -er '.build_id | select(type == "string" and length > 0)')"
+          platform="$(printf '%s' "$identity" | jq -er '.platform')"
+          if [[ "$version" != "$DARKSPIN_BUILD_VERSION" || "$platform" != linux-amd64 ]]; then
+            echo 'Built Darkrun identity does not match this update target' >&2
+            exit 1
+          fi
+          digest="$(sha256sum bin/darkrunci/linux-amd64/darkrun | awk '{print $1}')"
+          url="https://nightly.link/${GITHUB_REPOSITORY}/actions/artifacts/${BINARY_ARTIFACT_ID}.zip"
+          jq -n --arg version "$version" --arg build_id "$build_id" --arg platform "$platform" \
+            --arg url "$url" --arg sha256 "$digest" \
+            '{version:$version,build_id:$build_id,platform:$platform,url:$url,sha256:$sha256,format:"zip"}' \
+            > bin/darkrunci/linux-amd64/darkrun-update.json
+
+      - name: Upload Linux binary update manifest
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: darkrun-update-linux-amd64-unstable
+          path: bin/darkrunci/linux-amd64/darkrun-update.json
+          if-no-files-found: error
+          retention-days: 14
+
+  compose-setup:
+    name: Package bootstrap Compose setup
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      DARKSPIN_BUILD_VERSION: ${{ needs.version.outputs.version }}
+      DARKSPIN_COMPOSE_IMAGE: ghcr.io/darkspinnet/darkrun-bootstrap:1
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Install Mage
+        run: go install github.com/magefile/mage@v1.15.0
+
+      - name: Package standalone Compose setup
+        run: mage darkrun:compose
+
+      - name: Upload Compose setup
+        uses: actions/upload-artifact@v4
+        with:
+          name: darkrun-compose-unstable
+          # Explicit setup files only; never upload private runtimes or .env.
+          path: |
+            bin/deployment/bundle/compose.yaml
+            bin/deployment/bundle/.env.example
+            bin/deployment/bundle/README.md
+            bin/deployment/bundle/VERSION
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
   notify:
     name: Notify Discord
-    needs: [version, build, darkrun]
+    needs: [version, build, darkrun, compose-setup]
     if: success()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

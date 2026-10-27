@@ -605,6 +605,17 @@ export namespace main {
 	    }
 	}
 	export class ServerConfiguration {
+	    isBootstrapUpdateEnabled: boolean;
+	    bootstrapUpdateCron: string;
+	    bootstrapWarningMinutes: number;
+	    bootstrapStartupTimeoutSeconds: number;
+	    bootstrapBackupRetentionDays: number;
+	    bootstrapManifestUrl: string;
+	    bindHost: string;
+	    advertisedHost: string;
+	    isDedicated: boolean;
+	    contentPath: string;
+	    jwtSecret: string;
 	    port: number;
 	    isMultiplayerEnabled: boolean;
 	    locale: string;
@@ -617,6 +628,17 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.bindHost = source["bindHost"];
+	        this.isBootstrapUpdateEnabled = source["isBootstrapUpdateEnabled"];
+	        this.bootstrapUpdateCron = source["bootstrapUpdateCron"];
+	        this.bootstrapWarningMinutes = source["bootstrapWarningMinutes"];
+	        this.bootstrapStartupTimeoutSeconds = source["bootstrapStartupTimeoutSeconds"];
+	        this.bootstrapBackupRetentionDays = source["bootstrapBackupRetentionDays"];
+	        this.bootstrapManifestUrl = source["bootstrapManifestUrl"];
+	        this.advertisedHost = source["advertisedHost"];
+	        this.isDedicated = source["isDedicated"];
+	        this.contentPath = source["contentPath"];
+	        this.jwtSecret = source["jwtSecret"];
 	        this.port = source["port"];
 	        this.isMultiplayerEnabled = source["isMultiplayerEnabled"];
 	        this.locale = source["locale"];

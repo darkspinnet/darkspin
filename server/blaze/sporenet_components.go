@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/blaze/tdf"
@@ -100,12 +101,48 @@ func registerSporeNetComponents(
 	membershipReconciler LoginMembershipReconciler,
 	presenceRegistries ...*PresenceRegistry,
 ) error {
+	err := registerSporeNetComponentsWithPolicy(
+		registry, userManager, tokenVerifier, membershipReconciler, false, presenceRegistries...,
+	)
+	if err != nil {
+		return fmt.Errorf("sporenetRegister: %w", err)
+	}
+	return nil
+}
+
+// RegisterDedicatedSporeNetComponentsWithMembership requires credentials for
+// new transports and confines express login to the authenticated session.
+func RegisterDedicatedSporeNetComponentsWithMembership(
+	registry *Registry, userManager UserManager,
+	tokenVerifier LoginTokenVerifier,
+	membershipReconciler LoginMembershipReconciler,
+	presenceRegistries ...*PresenceRegistry,
+) error {
+	err := registerSporeNetComponentsWithPolicy(
+		registry, userManager, tokenVerifier, membershipReconciler, true, presenceRegistries...,
+	)
+	if err != nil {
+		return fmt.Errorf("dedicatedRegister: %w", err)
+	}
+	return nil
+}
+
+func registerSporeNetComponentsWithPolicy(
+	registry *Registry, userManager UserManager,
+	tokenVerifier LoginTokenVerifier,
+	membershipReconciler LoginMembershipReconciler,
+	isDedicated bool,
+	presenceRegistries ...*PresenceRegistry,
+) error {
 	if userManager == nil {
 		return errors.New("register SporeNet components: nil user manager")
 	}
-	err := registry.Register(authenticationComponent(
-		userManager, tokenVerifier, membershipReconciler,
-	))
+	component := authenticationComponent(userManager, tokenVerifier, membershipReconciler)
+	if isDedicated {
+		component.Commands[authLogin] = loginHandlerWithPolicy(userManager, tokenVerifier, membershipReconciler, true)
+		component.Commands[authExpressLogin] = dedicatedExpressLoginHandler(membershipReconciler)
+	}
+	err := registry.Register(component)
 	if err != nil {
 		return fmt.Errorf("authRegister: %w", err)
 	}
@@ -164,6 +201,13 @@ func loginHandler(
 	userManager UserManager, tokenVerifier LoginTokenVerifier,
 	membershipReconciler LoginMembershipReconciler,
 ) Handler {
+	return loginHandlerWithPolicy(userManager, tokenVerifier, membershipReconciler, false)
+}
+
+func loginHandlerWithPolicy(
+	userManager UserManager, tokenVerifier LoginTokenVerifier,
+	membershipReconciler LoginMembershipReconciler, isDedicated bool,
+) Handler {
 	return func(ctx context.Context, request *Request) (*Response, error) {
 		clearSessionUser(request)
 		loginName := fieldString(request.Fields, "MAIL")
@@ -171,6 +215,10 @@ func loginHandler(
 		account := loginName
 		method := "password"
 		result := sporenet.LoginResult{}
+		if isDedicated && (password == "" || loginName == TokenLoginUsername && tokenVerifier == nil) {
+			logServerLoginAttempt(request, method, account, nil, false)
+			return &Response{ErrorCode: authInvalidUser}, nil
+		}
 		if loginName == TokenLoginUsername && tokenVerifier != nil {
 			account = ""
 			method = "jwt"
@@ -239,6 +287,21 @@ func expressLoginHandler(
 		}
 		reconcileLoginMembership(user, membershipReconciler)
 		request.Session.Set(sessionUserKey, user)
+		return &Response{Fields: fullLoginFields(user)}, nil
+	}
+}
+
+func dedicatedExpressLoginHandler(membershipReconciler LoginMembershipReconciler) Handler {
+	return func(_ context.Context, request *Request) (*Response, error) {
+		account := fieldString(request.Fields, "MAIL")
+		user := requestUser(request)
+		isAccepted := user != nil && strings.EqualFold(strings.TrimSpace(account), user.LoginName)
+		logServerLoginAttempt(request, "express", account, user, isAccepted)
+		if !isAccepted {
+			clearSessionUser(request)
+			return &Response{ErrorCode: authInvalidUser}, nil
+		}
+		reconcileLoginMembership(user, membershipReconciler)
 		return &Response{Fields: fullLoginFields(user)}, nil
 	}
 }

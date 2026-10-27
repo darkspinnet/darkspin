@@ -222,6 +222,10 @@ export function SetServerRulesConfiguration(arg1) {
   return window['go']['main']['App']['SetServerRulesConfiguration'](arg1);
 }
 
+export function SetServerSetup(arg1) {
+  return window['go']['main']['App']['SetServerSetup'](arg1);
+}
+
 export function SetSkipCinematic(arg1) {
   return window['go']['main']['App']['SetSkipCinematic'](arg1);
 }

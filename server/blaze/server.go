@@ -613,12 +613,20 @@ func (s *Session) send(frame Frame) error {
 	if s.server != nil && s.server.writeTimeout > 0 {
 		timeout = s.server.writeTimeout
 	}
-	err := s.conn.SetWriteDeadline(time.Now().Add(timeout))
+	err := s.writeFrame(frame, time.Now().Add(timeout))
+	if err != nil {
+		return fmt.Errorf("sessionWrite: %w", err)
+	}
+	return nil
+}
+
+func (e *Session) writeFrame(frame Frame, deadline time.Time) error {
+	err := e.conn.SetWriteDeadline(deadline)
 	if err != nil {
 		return fmt.Errorf("writeDeadline: %w", err)
 	}
-	writeErr := WriteFrame(s.conn, frame)
-	clearErr := s.conn.SetWriteDeadline(time.Time{})
+	writeErr := WriteFrame(e.conn, frame)
+	clearErr := e.conn.SetWriteDeadline(time.Time{})
 	if writeErr != nil {
 		return fmt.Errorf("frameWrite: %w", writeErr)
 	}

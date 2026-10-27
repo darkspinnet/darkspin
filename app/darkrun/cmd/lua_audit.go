@@ -136,8 +136,11 @@ func runLuaAudit(ctx context.Context, output io.Writer, configPath string) (resu
 	if driver != "" && driver != "sqlite" {
 		return fmt.Errorf("driverUnsupported: %s", driver)
 	}
-	databasePath := filepath.Join(filepath.Dir(absoluteConfigPath), server.DarkspinDirectory,
-		server.CacheDirectory, server.ContentDatabaseFilename)
+	contentPath, err := config.ContentPath(absoluteConfigPath)
+	if err != nil {
+		return fmt.Errorf("contentPath: %w", err)
+	}
+	databasePath := filepath.Join(contentPath, server.ContentDatabaseFilename)
 	store, err := contentstore.OpenReadOnly(ctx, databasePath)
 	if err != nil {
 		return fmt.Errorf("storeOpen: %w", err)

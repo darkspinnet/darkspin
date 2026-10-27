@@ -1212,6 +1212,22 @@ func (s *Server) NotifySystemChat(
 	if s == nil || userID == 0 || strings.TrimSpace(body) == "" {
 		return 0, errors.New("system chat notification invalid")
 	}
+	notification := systemChatNotification(userID, gameID, body)
+	sessions := s.sessionsForUser(userID)
+	var notifyErrors []error
+	deliveryCount := 0
+	for index, session := range sessions {
+		err := session.Notify(MessagingComponentID, 0x01, notification)
+		if err != nil {
+			notifyErrors = append(notifyErrors, fmt.Errorf("systemChat[%d]: %w", index, err))
+			continue
+		}
+		deliveryCount++
+	}
+	return deliveryCount, errors.Join(notifyErrors...)
+}
+
+func systemChatNotification(userID int64, gameID uint32, body string) []tdf.Field {
 	targetComponentID := uint64(UserSessionComponentID)
 	targetObjectType := userSessionObjectType
 	targetObjectID := uint64(userID)
@@ -1232,7 +1248,7 @@ func (s *Server) NotifySystemChat(
 		}}),
 		tdf.FieldNamed("TYPE", tdf.IntegerValue(messagingChatType)),
 	}
-	notification := []tdf.Field{
+	return []tdf.Field{
 		tdf.FieldNamed("FLAG", tdf.IntegerValue(0)),
 		tdf.FieldNamed("MGID", tdf.IntegerValue(nextSystemMessageID.Add(1))),
 		tdf.FieldNamed("NAME", tdf.StringValue("Darkspin")),
@@ -1242,18 +1258,6 @@ func (s *Server) NotifySystemChat(
 		}}),
 		tdf.FieldNamed("TIME", tdf.IntegerValue(uint64(time.Now().Unix()))),
 	}
-	sessions := s.sessionsForUser(userID)
-	var notifyErrors []error
-	deliveryCount := 0
-	for index, session := range sessions {
-		err := session.Notify(MessagingComponentID, 0x01, notification)
-		if err != nil {
-			notifyErrors = append(notifyErrors, fmt.Errorf("systemChat[%d]: %w", index, err))
-			continue
-		}
-		deliveryCount++
-	}
-	return deliveryCount, errors.Join(notifyErrors...)
 }
 
 func messagingPayloadWithBody(fields []tdf.Field, body string) []tdf.Field {

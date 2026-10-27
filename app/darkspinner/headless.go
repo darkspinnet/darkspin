@@ -247,6 +247,7 @@ func launcherMethods(app *App) map[string]any {
 		"CompactSnapshots":             app.CompactSnapshots,
 		"SetIdentity":                  app.SetIdentity,
 		"SetServerConfiguration":       app.SetServerConfiguration,
+		"SetServerSetup":               app.SetServerSetup,
 		"SetServerRulesConfiguration":  app.SetServerRulesConfiguration,
 		"SetServerPort":                app.SetServerPort,
 		"SetSkipCinematic":             app.SetSkipCinematic,
@@ -265,6 +266,16 @@ func launcherMethods(app *App) map[string]any {
 func handleLauncherCall(
 	writer http.ResponseWriter, request *http.Request, token string, methods map[string]any,
 ) {
+	peerHost, peerPort, err := net.SplitHostPort(request.RemoteAddr)
+	if err != nil || peerPort == "" {
+		http.Error(writer, "local launcher access required", http.StatusForbidden)
+		return
+	}
+	peerIP := net.ParseIP(peerHost)
+	if peerIP == nil || !peerIP.IsLoopback() {
+		http.Error(writer, "local launcher access required", http.StatusForbidden)
+		return
+	}
 	if request.Method != http.MethodPost {
 		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -283,7 +294,7 @@ func handleLauncherCall(
 	req := browserCallRequest{}
 	request.Body = http.MaxBytesReader(writer, request.Body, 1<<20)
 	decoder := json.NewDecoder(request.Body)
-	err := decoder.Decode(&req)
+	err = decoder.Decode(&req)
 	if err != nil {
 		writeLauncherResponse(writer, browserCallResponse{Error: "invalid request"})
 		return

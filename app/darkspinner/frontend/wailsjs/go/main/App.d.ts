@@ -113,6 +113,8 @@ export function SetServerPort(arg1:number):Promise<main.ServerConfiguration>;
 
 export function SetServerRulesConfiguration(arg1:runtime.ServerRulesConfiguration):Promise<runtime.ServerRulesConfiguration>;
 
+export function SetServerSetup(arg1:main.ServerConfiguration):Promise<main.ServerConfiguration>;
+
 export function SetSkipCinematic(arg1:boolean):Promise<void>;
 
 export function SetSkipIntro(arg1:boolean):Promise<void>;

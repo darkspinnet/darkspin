@@ -31,6 +31,8 @@ type BuildOptions struct {
 	DatabasePath  string
 	OnProgress    func(BuildProgress)
 	OnStageTiming func(BuildStageTiming)
+	// IsReplacementAllowed installs a verified replacement over an existing cache.
+	IsReplacementAllowed bool
 }
 
 // BuildStageTiming reports elapsed time for one completed import phase.
@@ -135,7 +137,8 @@ var buildPackages = []packageSpec{
 }
 
 // Build creates the first recipe/version manifest and package inventory for a
-// future full content projection. The target must not already exist.
+// future full content projection. Existing targets require IsReplacementAllowed
+// and are replaced only after the new database passes verification.
 func Build(ctx context.Context, options BuildOptions) (resultErr error) {
 	if ctx == nil {
 		return errors.New("nil context")
@@ -144,10 +147,10 @@ func Build(ctx context.Context, options BuildOptions) (resultErr error) {
 		return errors.New("empty database path")
 	}
 	_, err := os.Stat(options.DatabasePath)
-	if err == nil {
+	if err == nil && !options.IsReplacementAllowed {
 		return fmt.Errorf("databaseExists: %q", options.DatabasePath)
 	}
-	if !errors.Is(err, os.ErrNotExist) {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("databaseStat: %w", err)
 	}
 

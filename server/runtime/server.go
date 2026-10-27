@@ -29,6 +29,8 @@ import (
 	gamecontentsqlite "github.com/darkspinnet/darkspin/server/game/contentsqlite"
 	"github.com/darkspinnet/darkspin/server/gameplay"
 	recaphttp "github.com/darkspinnet/darkspin/server/http"
+	"github.com/darkspinnet/darkspin/server/instance"
+	"github.com/darkspinnet/darkspin/server/maintenance"
 	navigationcontentsqlite "github.com/darkspinnet/darkspin/server/navigation/contentsqlite"
 	"github.com/darkspinnet/darkspin/server/party"
 	partylocal "github.com/darkspinnet/darkspin/server/party/local"
@@ -57,8 +59,6 @@ const (
 	CacheDirectory          = "cache"
 	UserDatabaseFilename    = "darkspin.db"
 	ContentDatabaseFilename = "content.db"
-	advertisedServerHost    = "127.0.0.1"
-	multiplayerBindHost     = "0.0.0.0"
 	sqliteOpenLimit         = 8
 	sqliteIdleLimit         = 4
 	sqliteBusyTimeout       = 5 * time.Second
@@ -135,8 +135,12 @@ func CompleteTutorialProfile(
 		return TutorialProfileCompletion{}, fmt.Errorf("configLoad: %w", err)
 	}
 	runtimePath := filepath.Join(filepath.Dir(configPath), DarkspinDirectory)
+	contentPath, err := config.ContentPath(configPath)
+	if err != nil {
+		return TutorialProfileCompletion{}, fmt.Errorf("contentPath: %w", err)
+	}
 	contentStore, err := openContentStore(
-		filepath.Join(runtimePath, CacheDirectory, ContentDatabaseFilename),
+		filepath.Join(contentPath, ContentDatabaseFilename),
 	)
 	if err != nil {
 		return TutorialProfileCompletion{}, fmt.Errorf("contentStore: %w", err)
@@ -197,7 +201,11 @@ type Options struct {
 	ContentDatabasePath   string
 	StaticPath            string
 	HTTPRoutes            []HTTPRoute
-	workingDirectory      string
+	MaintenanceSchedule   *maintenance.ScheduleOptions
+	// InstanceLease transfers an already acquired startup lease to the server.
+	// When nil, New acquires the runtime lease before opening persistent stores.
+	InstanceLease    *instance.Lease
+	workingDirectory string
 }
 
 // HTTPRoute mounts an optional host-owned handler on the server's HTTP ports.
@@ -220,6 +228,17 @@ type Environment struct {
 
 // Server coordinates the lifetime of all Game server subsystems.
 type Server struct {
+	instanceLease         *instance.Lease
+	maintenanceControl    *maintenance.Control
+	maintenanceServers    []*blaze.Server
+	maintenanceSchedule   *maintenance.ScheduleOptions
+	maintenanceDone       chan struct{}
+	isMaintenanceUpdate   bool
+	closeErr              error
+	lifecycleMu           sync.Mutex
+	runCancel             context.CancelFunc
+	isClosed              bool
+	isRunning             bool
 	environment           Environment
 	config                *game.Config
 	serverRuleStore       *serverRuleStore
@@ -444,6 +463,15 @@ func (s *Server) CompletePendingTutorialProfiles(ctx context.Context) (int, erro
 
 // New initializes the process environment required by the server.
 func New(options Options) (*Server, error) {
+	var maintenanceSchedule *maintenance.ScheduleOptions
+	if options.MaintenanceSchedule != nil {
+		req := *options.MaintenanceSchedule
+		err := maintenance.ValidateSchedule(req)
+		if err != nil {
+			return nil, fmt.Errorf("maintenanceSchedule: %w", err)
+		}
+		maintenanceSchedule = &req
+	}
 	workingDirectory := options.workingDirectory
 	if workingDirectory == "" {
 		var err error
@@ -456,14 +484,39 @@ func New(options Options) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cwdResolve: %w", err)
 	}
+	configPath := options.ConfigPath
+	if configPath == "" {
+		configPath = game.DefaultConfigFilename
+	}
+	configPath, err = filepath.Abs(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("configPath: %w", err)
+	}
 	runtimePath := options.RuntimePath
 	if runtimePath == "" {
-		runtimePath = filepath.Join(workingDirectory, DarkspinDirectory)
+		runtimePath = filepath.Join(filepath.Dir(configPath), DarkspinDirectory)
 	}
 	runtimePath, err = filepath.Abs(runtimePath)
 	if err != nil {
 		return nil, fmt.Errorf("runtimePath: %w", err)
 	}
+	instanceLease := options.InstanceLease
+	if instanceLease == nil {
+		instanceLease, err = instance.Acquire(runtimePath)
+		if err != nil {
+			return nil, fmt.Errorf("instanceAcquire: %w", err)
+		}
+	}
+	isInstanceTransferred := false
+	defer func() {
+		if isInstanceTransferred {
+			return
+		}
+		closeErr := instanceLease.Close()
+		if closeErr != nil {
+			log.Printf("Server startup lease close failed: %v", closeErr)
+		}
+	}()
 	logPath := filepath.Join(runtimePath, LogDirectory)
 	traceDirectoryPath := filepath.Join(logPath, TraceDirectory)
 	userDatabasePath := filepath.Join(runtimePath, SaveDirectory, UserDatabaseFilename)
@@ -481,15 +534,6 @@ func New(options Options) (*Server, error) {
 		}
 	}
 
-	configPath := options.ConfigPath
-	if configPath == "" {
-		configPath = game.DefaultConfigFilename
-	}
-	configPath, err = filepath.Abs(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("configPath: %w", err)
-	}
-
 	gamePath, err := detectGame(options.GamePath)
 	if err != nil {
 		return nil, fmt.Errorf("gameDetect: %w", err)
@@ -498,6 +542,16 @@ func New(options Options) (*Server, error) {
 	config, isConfigGenerated, err := game.LoadConfig(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("configLoad: %w", err)
+	}
+	contentPath := filepath.Join(runtimePath, CacheDirectory)
+	if config.String(game.ConfigContentPath) != "" {
+		contentPath, err = config.ContentPath(configPath)
+		if err != nil {
+			return nil, fmt.Errorf("contentDirectory: %w", err)
+		}
+	}
+	if options.ContentDatabasePath == "" {
+		contentDatabasePath = filepath.Join(contentPath, ContentDatabaseFilename)
 	}
 	serverRuleStore, err := loadServerRuleStore(context.Background(), configPath)
 	if err != nil {
@@ -516,10 +570,9 @@ func New(options Options) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tlsLoad: %w", err)
 	}
-	host := advertisedServerHost
-	bindHost := advertisedServerHost
-	if config.Bool(game.ConfigIsMultiplayerEnabled) {
-		bindHost = multiplayerBindHost
+	bindHost, host, err := config.NetworkHosts()
+	if err != nil {
+		return nil, fmt.Errorf("networkHosts: %w", err)
 	}
 	contentStore, err := openContentStore(contentDatabasePath)
 	if err != nil {
@@ -628,6 +681,10 @@ func New(options Options) (*Server, error) {
 	var loginTokenVerifier blaze.LoginTokenVerifier
 	var localAuthHandler http.Handler
 	jwtSecret := config.String(game.ConfigAuthJWTSecret)
+	isDedicated := config.Bool(game.ConfigServerIsDedicated)
+	if isDedicated && (jwtSecret == "" || jwtSecret == game.DefaultConfig().String(game.ConfigAuthJWTSecret)) {
+		return nil, errors.New("dedicated server requires a private auth.jwt_secret of at least 32 bytes")
+	}
 	if jwtSecret != "" {
 		jwtIssuer := config.String(game.ConfigAuthJWTIssuer)
 		jwtAudience := config.String(game.ConfigAuthJWTAudience)
@@ -643,9 +700,13 @@ func New(options Options) (*Server, error) {
 			return nil, fmt.Errorf("accountAuthIssuer: %w", issuerErr)
 		}
 		authAddress := net.JoinHostPort(host, fmt.Sprintf("%d", ports.http))
-		broker, brokerErr := serverauth.NewAccountBroker(
-			issuer, authAddress, userManager, logger,
-		)
+		var broker *serverauth.LocalBroker
+		var brokerErr error
+		if isDedicated {
+			broker, brokerErr = serverauth.NewDedicatedBroker(issuer, authAddress, userManager, logger)
+		} else {
+			broker, brokerErr = serverauth.NewAccountBroker(issuer, authAddress, userManager, logger)
+		}
 		if brokerErr != nil {
 			return nil, fmt.Errorf("accountAuthBroker: %w", brokerErr)
 		}
@@ -714,9 +775,15 @@ func New(options Options) (*Server, error) {
 	}
 	presenceRegistry := blaze.NewPresenceRegistry()
 	matchmaking := pvp.NewMatchmaking()
-	err = blaze.RegisterSporeNetComponentsWithMembership(
-		registry, userManager, loginTokenVerifier, partyService, presenceRegistry,
-	)
+	if isDedicated {
+		err = blaze.RegisterDedicatedSporeNetComponentsWithMembership(
+			registry, userManager, loginTokenVerifier, partyService, presenceRegistry,
+		)
+	} else {
+		err = blaze.RegisterSporeNetComponentsWithMembership(
+			registry, userManager, loginTokenVerifier, partyService, presenceRegistry,
+		)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("sporenetRegister: %w", err)
 	}
@@ -765,7 +832,7 @@ func New(options Options) (*Server, error) {
 	}
 	staticPath := options.StaticPath
 	if staticPath == "" {
-		staticPath = filepath.Join(runtimePath, CacheDirectory, "www", "static")
+		staticPath = filepath.Join(contentPath, "www", "static")
 	}
 	webFileSystem := os.DirFS(staticPath)
 	partCatalogContext, partCatalogCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -781,6 +848,7 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("resumeCoordinator: %w", err)
 	}
 	err = game.RegisterAPI(router, game.APIOptions{
+		IsDedicated: isDedicated,
 		IsModded:    options.IsModded,
 		UserManager: userManager, Template: templateDatabase, PartCatalog: partCatalog, Vendor: vendor,
 		PartShopRules:   serverRuleStore.shopRules,
@@ -907,6 +975,8 @@ func New(options Options) (*Server, error) {
 	)
 
 	application := &Server{
+		instanceLease:       instanceLease,
+		maintenanceSchedule: maintenanceSchedule,
 		environment: Environment{
 			WorkingDirectory: workingDirectory,
 			RuntimePath:      runtimePath,
@@ -919,6 +989,7 @@ func New(options Options) (*Server, error) {
 		isConfigGenerated:     isConfigGenerated,
 		scheduler:             taskScheduler,
 		blazeServers:          blazeServers,
+		maintenanceServers:    allBlazeServers,
 		sharedTCPServers:      sharedTCPServers,
 		udpServer:             udpServer,
 		gameplayCleanup:       gameplayLifecycle.Cleanup,
@@ -946,6 +1017,7 @@ func New(options Options) (*Server, error) {
 	isContentStoreTransferred = true
 	isCheckpointStoreTransferred = true
 	isSnapshotTransferred = true
+	isInstanceTransferred = true
 	return application, nil
 }
 
@@ -1139,6 +1211,24 @@ func (s *Server) Run(ctx context.Context) error {
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	s.lifecycleMu.Lock()
+	if s.isClosed || s.isRunning {
+		s.lifecycleMu.Unlock()
+		return errors.New("server has already started or closed")
+	}
+	control, err := maintenance.Start(s.environment.RuntimePath, s.broadcastMaintenance)
+	if err != nil {
+		s.lifecycleMu.Unlock()
+		s.Close()
+		return fmt.Errorf("maintenanceStart: %w", err)
+	}
+	s.maintenanceControl = control
+	s.runCancel = cancel
+	s.isRunning = true
+	if s.maintenanceSchedule != nil {
+		s.maintenanceDone = make(chan struct{})
+		go s.runMaintenanceSchedule(runCtx, cancel)
+	}
 	serviceCount := len(s.blazeServers) + len(s.sharedTCPServers) + len(s.httpServers) + 1
 	results := make(chan error, serviceCount)
 	for _, service := range s.blazeServers {
@@ -1159,6 +1249,7 @@ func (s *Server) Run(ctx context.Context) error {
 			results <- current.ListenAndServe(runCtx)
 		}(service)
 	}
+	s.lifecycleMu.Unlock()
 
 	var runErr error
 	for completed := 0; completed < serviceCount; completed++ {
@@ -1174,12 +1265,32 @@ func (s *Server) Run(ctx context.Context) error {
 	if runErr != nil {
 		return fmt.Errorf("servicesRun: %w", runErr)
 	}
+	err = s.writeMaintenanceRequest(ctx)
+	if err != nil {
+		return fmt.Errorf("maintenanceRequest: %w", err)
+	}
 	return nil
 }
 
 // Close releases initialized server subsystems. It is safe to call repeatedly.
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
+		s.lifecycleMu.Lock()
+		s.isClosed = true
+		if s.runCancel != nil {
+			s.runCancel()
+		}
+		s.lifecycleMu.Unlock()
+		if s.maintenanceDone != nil {
+			<-s.maintenanceDone
+		}
+		if s.maintenanceControl != nil {
+			err := s.maintenanceControl.Close()
+			if err != nil {
+				s.logger.Printf("Maintenance control close failed: %v", err)
+				s.closeErr = errors.Join(s.closeErr, fmt.Errorf("controlClose: %w", err))
+			}
+		}
 		s.closeNetworkServices()
 		if s.snapshot != nil {
 			s.snapshot.Close()
@@ -1192,12 +1303,14 @@ func (s *Server) Close() {
 			err := s.checkpoint.Close()
 			if err != nil {
 				s.logger.Printf("Zone checkpoint flush failed: %v", err)
+				s.closeErr = errors.Join(s.closeErr, fmt.Errorf("checkpointFlush: %w", err))
 			}
 		}
 		if s.checkpointStore != nil {
 			err := s.checkpointStore.Close()
 			if err != nil {
 				s.logger.Printf("Zone checkpoint storage close failed: %v", err)
+				s.closeErr = errors.Join(s.closeErr, fmt.Errorf("checkpointClose: %w", err))
 			}
 		}
 		flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1205,23 +1318,34 @@ func (s *Server) Close() {
 		err := s.userManager.Flush(flushCtx)
 		if err != nil {
 			s.logger.Printf("Active user flush failed: %v", err)
+			s.closeErr = errors.Join(s.closeErr, fmt.Errorf("userFlush: %w", err))
 		}
 		if s.userStore != nil {
 			err = s.userStore.Close()
 			if err != nil {
 				s.logger.Printf("User storage close failed: %v", err)
+				s.closeErr = errors.Join(s.closeErr, fmt.Errorf("userClose: %w", err))
 			}
 		}
 		if s.contentStore != nil {
 			err = s.contentStore.Close()
 			if err != nil {
 				s.logger.Printf("Content storage close failed: %v", err)
+				s.closeErr = errors.Join(s.closeErr, fmt.Errorf("contentClose: %w", err))
 			}
 		}
 		if s.traceRecorder != nil {
 			err := s.traceRecorder.Close()
 			if err != nil {
 				s.logger.Printf("Protocol trace close failed: %v", err)
+				s.closeErr = errors.Join(s.closeErr, fmt.Errorf("traceClose: %w", err))
+			}
+		}
+		if s.instanceLease != nil {
+			err := s.instanceLease.Close()
+			if err != nil {
+				s.logger.Printf("Server instance lease close failed: %v", err)
+				s.closeErr = errors.Join(s.closeErr, fmt.Errorf("leaseClose: %w", err))
 			}
 		}
 	})
