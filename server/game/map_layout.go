@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/darkspinnet/darkspin/server/util"
 )
@@ -161,7 +162,8 @@ func (e CampaignDirector) MapDestructibles() (
 			}
 			if marker.MarkerID == 0 || !isFiniteCampaignPosition(marker.Position) ||
 				!isFiniteCampaignPosition(marker.Rotation) || marker.Scale <= 0 ||
-				!marker.NPCProfile.IsKnown || !marker.NPCProfile.IsTargetable || marker.NPCProfile.HitPoint <= 0 {
+				!marker.NPCProfile.IsKnown || marker.NPCProfile.HitPoint <= 0 ||
+				(!marker.NPCProfile.IsTargetable && !isUntargetableMapFixtureNoun(marker.NounName)) {
 				return nil, nil, fmt.Errorf("selected fixture %d invalid", marker.MarkerID)
 			}
 			_, isDuplicate := markerIDs[marker.MarkerID]
@@ -183,7 +185,24 @@ func isMapDestructible(marker CampaignDirectorMarker) bool {
 		isVerdanthCombatFixture(marker) || isNocturnaCombatFixture(marker) ||
 		isCryosOneFixtureNoun(marker.NounName) || isCryosTwoFixtureNoun(marker.NounName) ||
 		isCryosFourFixtureNoun(marker.NounName) || isCryosCaveFixtureNoun(marker.NounName) ||
+		isUntargetableMapFixtureNoun(marker.NounName) ||
 		isInfinityFixtureNoun(marker.NounName) || isInfinityThreeFixtureNoun(marker.NounName) ||
 		isInfinityOneFixtureNoun(marker.NounName) || isInfinityFourFixtureNoun(marker.NounName) ||
 		isScaldronFixtureNoun(marker.NounName)
+}
+
+// Build 103 leaves these fixed combatants to the server (mask 0x200).
+// Their imported class is untargetable; authored collision remains independent.
+func isUntargetableMapFixtureNoun(nounName string) bool {
+	switch strings.ToLower(nounName) {
+	case "dest_prefab_cryos3_stalagmite_small.noun",
+		"dest_prefab_cryos3_stalagmite_large.noun",
+		"cryos_stalagmite_small_destructible.noun",
+		"dest_prefab_cryos_stalagmite_small.noun",
+		"dest_prefab_cryos_stalagmite_large.noun",
+		"dest_prefab_citadel_factorylight.noun":
+		return true
+	default:
+		return false
+	}
 }

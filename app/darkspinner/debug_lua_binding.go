@@ -211,17 +211,37 @@ func (e *debugLuaVM) launchClient(state *lua.LState) int {
 }
 
 func (e *debugLuaVM) wrapClient(state *lua.LState, count int, clientID, profileName string, timeoutMS int, startedAt time.Time) int {
+	client := &debugLuaClient{vm: e, id: clientID, profileName: profileName, timeoutMS: timeoutMS, startedAt: startedAt}
+	request := debugLuaPendingYield(state, count)
+	if request != nil {
+		request.client = client
+		return count
+	}
 	if count != 2 {
 		return count
 	}
 	initialState, isTable := state.Get(-2).(*lua.LTable)
 	if state.Get(-1) == lua.LNil && isTable {
-		client := state.NewUserData()
-		client.Value = &debugLuaClient{vm: e, id: clientID, profileName: profileName, timeoutMS: timeoutMS, startedAt: startedAt, initialState: initialState}
-		state.SetMetatable(client, state.GetTypeMetatable("ManagedClient"))
-		state.Replace(-2, client)
+		resource, failure := e.clientHandle(state, client, initialState)
+		if failure != nil {
+			return e.returnOperation(state, nil, failure, true)
+		}
+		state.Replace(-2, resource)
 	}
 	return count
+}
+
+func (e *debugLuaVM) clientHandle(state *lua.LState, client *debugLuaClient, snapshot *lua.LTable) (lua.LValue, *debugError) {
+	processID, isPID := snapshot.RawGetString("pid").(lua.LNumber)
+	instanceID, isInstance := snapshot.RawGetString("instance_id").(lua.LString)
+	if !isPID || processID < 1 || processID > math.MaxUint32 || math.Trunc(float64(processID)) != float64(processID) || !isInstance || instanceID == "" {
+		return lua.LNil, &debugError{Code: "invalid_result", Context: "clientIdentity", Message: "launch did not return an owned process identity"}
+	}
+	client.processID, client.instanceID, client.initialState = uint32(processID), string(instanceID), snapshot
+	resource := state.NewUserData()
+	resource.Value = client
+	state.SetMetatable(resource, state.GetTypeMetatable("ManagedClient"))
+	return resource, nil
 }
 func (e *debugLuaVM) clientState(state *lua.LState) int {
 	return e.invoke(state, "client.state", map[string]any{"client_id": state.CheckString(1)}, true)

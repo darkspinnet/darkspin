@@ -37,11 +37,16 @@ func (e *Manager) SelectCampaignDestination(instance *Instance) error {
 		}
 		completedStages = append(completedStages, player.PresenceSnapshot().ChainProgression)
 	}
-	destination, err := e.campaignDestination(difficulty, instance.RunSeed, completedStages)
+	runSeed, err := e.campaignDestinationRunSeed(instance)
+	if err != nil {
+		return fmt.Errorf("destinationSeed: %w", err)
+	}
+	destination, err := e.campaignDestination(difficulty, runSeed, completedStages)
 	if err != nil {
 		return fmt.Errorf("destinationSelect: %w", err)
 	}
 	instance.mu.Lock()
+	instance.RunSeed = runSeed
 	instance.Info.Level = destination.Level
 	instance.Info.IsReplayRandomized = destination.IsReplayRandomized
 	instance.campaignDestinations = map[uint32]CampaignDestination{difficulty: destination}

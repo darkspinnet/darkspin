@@ -109,6 +109,11 @@ func spawnWithAnimation(plan zonenpc.SpawnPlan, isRemnant bool, reflection rakne
 	isVisible := plan.Introduction == zonenpc.SpawnIntroductionFloorWarp ||
 		!isActionKnown || !actionProfile.IsSpawnStealthed
 	isVisible = isVisible && !plan.IsIntroductionHidden
+	isCollidable := profile.IsTargetable
+	if plan.IsFixture && plan.IsPlacementKnown {
+		isVisible = plan.IsPlacementVisible && !plan.IsIntroductionHidden
+		isCollidable = plan.IsPlacementCollidable
+	}
 	if isActionKnown && (actionProfile.MovementSpeed > 0 || actionProfile.NonCombatMovementSpeed > 0) {
 		nonCombatMovementSpeed := actionProfile.NonCombatMovementSpeed
 		if profile.IdleMovementSpeed > 0 {
@@ -144,7 +149,7 @@ func spawnWithAnimation(plan zonenpc.SpawnPlan, isRemnant bool, reflection rakne
 		Rotation: raknet.Vector3{
 			X: plan.Rotation.X, Y: plan.Rotation.Y, Z: plan.Rotation.Z,
 		},
-		Scale: runtimeScale, IsCollidable: profile.IsTargetable,
+		Scale: runtimeScale, IsCollidable: isCollidable,
 	}
 	if plan.OwnerObjectID != 0 && plan.NounName != "NomadDrone.Noun" {
 		createMessage = raknet.ObjectCreateMessage{
@@ -154,7 +159,7 @@ func spawnWithAnimation(plan zonenpc.SpawnPlan, isRemnant bool, reflection rakne
 			PositionZ: clientPosition.Z, Scale: runtimeScale,
 			Rotation: vector(plan.Rotation),
 			Team:     0, OwnerID: plan.OwnerObjectID,
-			IsCollisionEnabled: profile.IsTargetable,
+			IsCollisionEnabled: isCollidable,
 		}
 	}
 	if reflection.LastAnimationState != nil {
@@ -168,7 +173,7 @@ func spawnWithAnimation(plan zonenpc.SpawnPlan, isRemnant bool, reflection rakne
 		createMessage = raknet.ObjectCreateContractMessage{
 			ObjectID: plan.ObjectID, Noun: &nounID, Position: &position, Rotation: &rotation,
 			AssetID: &assetID, Scale: &runtimeScale, Team: &team,
-			IsCollisionEnabled: &profile.IsTargetable, IsPlayerControlled: &isPlayerControlled,
+			IsCollisionEnabled: &isCollidable, IsPlayerControlled: &isPlayerControlled,
 			Object: reflection,
 		}
 	}

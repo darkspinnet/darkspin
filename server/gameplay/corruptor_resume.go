@@ -48,20 +48,26 @@ func (e *corruptorPhaseContinuation) admit(step campaignCorruptorPhaseStep) ([][
 	if e.portalCancels == nil {
 		e.portalCancels = make(map[uint32]raknet.CancelSchedule)
 	}
+	var portalPlans []campaignCorruptorSpawnPlan
 	for _, plan := range e.plans {
 		if plan.Plan.NounName != campaignCorruptorPortalNounName || e.portalCancels[plan.Plan.ObjectID] != nil {
 			continue
 		}
+		portalPlans = append(portalPlans, plan)
+	}
+	if len(portalPlans) > 0 {
 		err = e.validate(step)
 		if err != nil {
 			return e.drainPackets(), fmt.Errorf("portalCarrier: %w", err)
 		}
-		cancel, err := runtime.scheduleCorruptorPortal(step.packet, step.sessionKey, step.generation,
-			step.objectID, plan, step.timestamp, step.sceneGeneration)
+		cancel, err := runtime.scheduleCorruptorPortalGroup(step.packet, step.sessionKey, step.generation,
+			step.objectID, portalPlans, step.timestamp)
 		if err != nil {
 			return e.drainPackets(), fmt.Errorf("phasePortalTimer: %w", err)
 		}
-		e.portalCancels[plan.Plan.ObjectID] = cancel
+		for _, plan := range portalPlans {
+			e.portalCancels[plan.Plan.ObjectID] = cancel
+		}
 	}
 	if !e.isActionRestarted {
 		err = e.validate(step)

@@ -48,8 +48,10 @@ function scenario.StartServer(req) end
 
 ---Runs at most eight named branches and blocks at their shared completion barrier.
 ---All branches settle before return; ScenarioError.Failures retains every failed
----branch. Nested Parallel and lifecycle mutations (server start, profile create
----or reset, client launch or close) are rejected inside branches.
+---branch. Profile creation/logout, client launch/close and logging are supported, so
+---workers can take successive jobs on one server. Lifecycle mutations serialize;
+---independent client loads/waits overlap. StartServer and profile reset remain
+---outside branches; nested Parallel is rejected.
 ---@param branches table<string,fun():nil|ScenarioError|string>
 ---@return ScenarioError|nil err
 function scenario.Parallel(branches) end

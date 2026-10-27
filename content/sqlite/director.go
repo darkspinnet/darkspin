@@ -353,6 +353,12 @@ func (s *Store) LevelDirector(ctx context.Context, levelName string) (LevelDirec
 		       OR marker.noun_name='DEST_prefab_cryos_ACunit_small_animated.Noun' COLLATE NOCASE
 		       OR marker.noun_name='DEST_prefab_cryos_plants_shascope.Noun' COLLATE NOCASE
 		       OR marker.noun_name='DEST_prefab_cryos_ice_crack1.Noun' COLLATE NOCASE
+		       OR marker.noun_name='DEST_prefab_cryos3_stalagmite_small.Noun' COLLATE NOCASE
+		       OR marker.noun_name='DEST_prefab_cryos3_stalagmite_large.Noun' COLLATE NOCASE
+		       OR marker.noun_name='cryos_stalagmite_small_destructible.Noun' COLLATE NOCASE
+		       OR marker.noun_name='DEST_prefab_cryos_stalagmite_small.Noun' COLLATE NOCASE
+		       OR marker.noun_name='DEST_prefab_cryos_stalagmite_large.Noun' COLLATE NOCASE
+		       OR marker.noun_name='DEST_prefab_citadel_factorylight.Noun' COLLATE NOCASE
 		       OR marker.noun_name='DEST_nocturna_herotree_yellow_1.Noun' COLLATE NOCASE
 		       OR marker.noun_name='DEST_nocturna_plant_expl.Noun' COLLATE NOCASE
 		       OR marker.noun_name='DEST_citadel_factoryvent_boss.Noun' COLLATE NOCASE
@@ -730,16 +736,19 @@ func (s *Store) LevelDirector(ctx context.Context, levelName string) (LevelDirec
 	// Placement loading above intentionally filters out unrelated scenery.
 	// Layout selection still needs every authored set, including empty
 	// alternatives, to preserve native random draws.
-	// The importer also retains unresolved level references as placeholder
-	// rows without a resource, group, or payload (infinity_4_plants is one).
-	// Those are not loaded marker sets and must not enter layout selection.
+	// Build 103 resolves missing resources to an empty marker set with group
+	// none and weight 1. Retain those references in native load order too;
+	// infinity_4_plants was confirmed through the live resource reader.
 	loadedSetIndexes := make(map[int]int, len(director.MarkerSets))
 	for index, markerSet := range director.MarkerSets {
 		loadedSetIndexes[markerSet.Ordinal] = index
 	}
 	rows, err = s.database.QueryContext(ctx, `
 		SELECT level_marker_set.ordinal, level_marker_set.asset_name,
-		       level_marker_set.group_name, level_marker_set.weight,
+		       CASE WHEN level_marker_set.content_source_resource_id IS NULL
+		            THEN 'none' ELSE level_marker_set.group_name END,
+		       CASE WHEN level_marker_set.content_source_resource_id IS NULL
+		            THEN 1 ELSE level_marker_set.weight END,
 		       catalog.ordinal, COALESCE(catalog.asset_name, ''),
 		       COALESCE(catalog.source_file_name, '')
 		FROM level_marker_set
@@ -747,7 +756,6 @@ func (s *Store) LevelDirector(ctx context.Context, levelName string) (LevelDirec
 		    SELECT MIN(ordinal) FROM asset_catalog
 		    WHERE content_source_resource_id=level_marker_set.content_source_resource_id)
 		WHERE level_marker_set.level_id=?
-		  AND level_marker_set.content_source_resource_id IS NOT NULL
 		ORDER BY level_marker_set.ordinal`, director.LevelID)
 	if err != nil {
 		return LevelDirector{}, fmt.Errorf("directorLayoutSetQuery: %w", err)

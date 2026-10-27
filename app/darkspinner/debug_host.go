@@ -251,6 +251,20 @@ func (e *debugHost) HasProfile(name string) bool {
 	return isCreated && credential.UserID != 0
 }
 
+func (e *debugHost) LogoutProfile(ctx context.Context, name string) error {
+	e.mutex.Lock()
+	credential, isCreated := e.credentialsByName[name]
+	e.mutex.Unlock()
+	if !isCreated || credential.UserID == 0 {
+		return errors.New("logout requires an owned profile")
+	}
+	err := e.server.DebugLogoutProfile(ctx, credential.UserID)
+	if err != nil {
+		return fmt.Errorf("ownedLogout: %w", err)
+	}
+	return nil
+}
+
 // ResetProfile replaces only the alias with a newly created account. The
 // supervisor must first reject reset while a managed client uses this alias.
 // No setup is inherited implicitly from the previous account.

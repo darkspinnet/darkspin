@@ -39,6 +39,7 @@
 ---with revision strictly greater than afterRevision (default 0). Pass a captured
 ---revision to require a later report; this is not native scene readiness.
 ---@class ProfileHandle: ProfileIdentity
+---@field Logout fun(self:ProfileHandle):ScenarioError|nil Releases this owned account's authenticated server slot after all its clients stop; preserves its saved profile.
 ---@field Launch fun(self:ProfileHandle,req:ClientOptions):ManagedClient|nil,ScenarioError|nil
 ---@field Snapshot fun(self:ProfileHandle):ProfileSnapshot|nil,ScenarioError|nil
 ---@field WaitForLogin fun(self:ProfileHandle,timeoutMs:integer):LoginObservation|nil,ScenarioError|nil

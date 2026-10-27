@@ -2,6 +2,12 @@
 
 ### 2026-10-27
 
+- Make Corruptor portal placement reproducible with a run-owned saved RNG stream and ordered portal waves instead of clock seeds and competing timers.
+- Restore missing Cryos stalagmites and blockers, Infinity factory lights and plasma pools, and selected Obelisk scenery with authored placement flags.
+- Seed replay populations from the durable run seed, map and difficulty instead of transient game IDs.
+- Apply configured scenario seeds before replay destination selection and release stopped audit profiles from authenticated server slots.
+- Support up to eight rolling parallel Lua client sessions on one server, expose each launched client's PID and instance ID, and wait for external observer capture signals.
+- Restore the 15 server-owned Nocturna 2 Wanderer plant placements and their native collision objects.
 - Restore selected Nocturna and Verdanth rock and flower colliders, and match build-103 navigation bounds and headings for tilted scenery.
 - Replicate authored Nocturna collision boxes to the client and project nearby edge positions onto free terrain, keeping client movement aligned with the selected server blockers.
 - Expand Nocturna wall diagnostics from one report seed to paired WandererA/B layouts with all other selected variations held fixed.

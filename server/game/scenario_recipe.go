@@ -52,7 +52,9 @@ func (e *Manager) ConfigureFocusedRecipe(ctx context.Context, req scenario.Focus
 	if err != nil {
 		return scenario.FocusedRecipe{}, fmt.Errorf("recipeCommitContext: %w", err)
 	}
-	recipe := scenario.FocusedRecipe{RunID: req.RunID, UserID: req.UserID, RunSeed: req.RunSeed, IsAmbientPopulationSuppressed: req.IsAmbientPopulationSuppressed}
+	recipe := scenario.FocusedRecipe{RunID: req.RunID, UserID: req.UserID, RunSeed: req.RunSeed,
+		PopulationSeed: req.PopulationSeed, IsPopulationSeedSet: req.IsPopulationSeedSet,
+		IsAmbientPopulationSuppressed: req.IsAmbientPopulationSuppressed}
 	if e.recipesByUser == nil {
 		e.recipesByUser = make(map[int64]scenario.FocusedRecipe)
 	}
@@ -97,6 +99,44 @@ func (e *Manager) attachFocusedRecipe(binding *GameplayBinding) error {
 	binding.isFocusedCohortValidated = true
 	binding.RunSeed = recipe.RunSeed
 	return nil
+}
+
+// Select the configured seed before resolving the replay destination, rather
+// than replacing only the later gameplay binding's seed after map selection.
+func (e *Manager) campaignDestinationRunSeed(instance *Instance) (uint64, error) {
+	e.mu.RLock()
+	recipesByUser := make(map[int64]scenario.FocusedRecipe, len(e.recipesByUser))
+	for userID, recipe := range e.recipesByUser {
+		recipesByUser[userID] = recipe
+	}
+	parityUsers := make(map[int64]bool, len(e.requests))
+	for userID := range e.requests {
+		parityUsers[userID] = true
+	}
+	e.mu.RUnlock()
+	players := instance.Players()
+	if len(players) == 0 || len(players) > int(MaxGamePlayers) || players[0] == nil {
+		return 0, errors.New("campaign seed requires an admitted player")
+	}
+	userID := players[0].Account.ID
+	slot, playerMask, isJoined := instance.PlayerBinding(userID)
+	if !isJoined {
+		return 0, errors.New("campaign seed player is no longer admitted")
+	}
+	binding := GameplayBinding{GameID: instance.ID, Mode: ModeChain,
+		UserID: uint64(userID), Slot: slot, PlayerMask: playerMask,
+		ParticipantCount: uint16(len(players))}
+	recipe, participantIDs, err := instance.validateFocusedCohort(binding, recipesByUser, parityUsers)
+	if err != nil {
+		return 0, fmt.Errorf("seedCohort: %w", err)
+	}
+	if recipe.RunID == "" {
+		return instance.RunSeed, nil
+	}
+	if len(participantIDs) != len(players) {
+		return 0, errors.New("campaign seed cohort changed")
+	}
+	return recipe.RunSeed, nil
 }
 
 func (e *Instance) validateFocusedCohort(binding GameplayBinding, recipesByUser map[int64]scenario.FocusedRecipe, parityUsers map[int64]bool) (scenario.FocusedRecipe, []uint64, error) {
@@ -144,8 +184,11 @@ func (e *Instance) validateFocusedCohort(binding GameplayBinding, recipesByUser 
 			return scenario.FocusedRecipe{}, nil, errors.New("focused recipe contains an invalid actual participant")
 		}
 		participantRecipe, isParticipantConfigured := recipesByUser[userID]
-		if !isParticipantConfigured || participantRecipe.UserID != userID || participantRecipe.RunID != recipe.RunID || participantRecipe.RunSeed != recipe.RunSeed || participantRecipe.IsAmbientPopulationSuppressed != recipe.IsAmbientPopulationSuppressed {
-			return scenario.FocusedRecipe{}, nil, errors.New("every frozen focused participant must preconfigure the same run, seed and ambient population policy")
+		isRecipeMatched := participantRecipe.RunID == recipe.RunID && participantRecipe.RunSeed == recipe.RunSeed &&
+			participantRecipe.IsAmbientPopulationSuppressed == recipe.IsAmbientPopulationSuppressed &&
+			participantRecipe.IsPopulationSeedSet == recipe.IsPopulationSeedSet && participantRecipe.PopulationSeed == recipe.PopulationSeed
+		if !isParticipantConfigured || participantRecipe.UserID != userID || !isRecipeMatched {
+			return scenario.FocusedRecipe{}, nil, errors.New("every frozen focused participant must preconfigure the same run, RNG seeds and ambient population policy")
 		}
 		if parityUsers[userID] {
 			return scenario.FocusedRecipe{}, nil, errors.New("focused cohort cannot contain a parity scenario participant")
@@ -158,6 +201,15 @@ func (e *Instance) validateFocusedCohort(binding GameplayBinding, recipesByUser 
 
 func (e GameplayBinding) FocusedRecipeInputs() (runID string, isAmbientPopulationSuppressed bool) {
 	return e.focusedRecipe.RunID, e.focusedRecipe.IsAmbientPopulationSuppressed
+}
+
+// A diagnostic population seed is independent of the prepared map layout.
+// Only an immutable recipe validated against the complete cohort may supply it.
+func (e GameplayBinding) ScenarioPopulationSeed() (uint32, bool) {
+	if !e.isFocusedCohortValidated || !e.focusedRecipe.IsPopulationSeedSet {
+		return 0, false
+	}
+	return e.focusedRecipe.PopulationSeed, true
 }
 
 // FocusedRecipeCohort exposes only membership already validated against the

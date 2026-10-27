@@ -12,6 +12,8 @@ import (
 
 func isIndependentDebugOperation(operation string) bool {
 	switch operation {
+	case "profile.create", "profile.logout", "client.launch", "client.close", "scenario.log":
+		return true
 	case "client.ui_hierarchy", "client.open_creature_editor":
 		return true
 	case "pvp.start":
@@ -40,7 +42,7 @@ func isIndependentDebugOperation(operation string) bool {
 		return true
 	case "client.world_state", "client.world_living", "client.wait_world_ready", "client.enter_mission":
 		return true
-	case "client.capture":
+	case "client.capture", "client.wait_signal":
 		return true
 	case "client.select_mission":
 		return true
@@ -59,10 +61,18 @@ func isIndependentDebugOperation(operation string) bool {
 	}
 }
 
-// Session ownership keeps these references alive until the Lua helper has
-// joined. Capture retains its per-client lock; each bridge admits only one
-// pending command. The global mutex protects references, never a client wait.
+// Session ownership keeps references alive until the helper joins. Lifecycle
+// mutations remain serialized; independent client waits and loads overlap.
+// Capture retains its per-client lock; each bridge admits one pending command.
 func (e *debugSupervisor) executeIndependentDebugOperation(ctx context.Context, operation string, payload json.RawMessage) (any, error) {
+	switch operation {
+	case "profile.create", "profile.logout", "client.launch", "client.close", "scenario.log":
+		result, err := e.executeSerializedDebugOperation(ctx, operation, payload)
+		if err != nil {
+			return result, fmt.Errorf("parallelLifecycle: %w", err)
+		}
+		return result, nil
+	}
 	err := e.lockDebugOperations(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("independentLock: %w", err)
@@ -75,6 +85,12 @@ func (e *debugSupervisor) executeIndependentDebugOperation(ctx context.Context, 
 	}
 	e.operationMutex.Unlock()
 	switch operation {
+	case "client.wait_signal":
+		result, err := waitDebugObserverSignal(ctx, clientManager, payload)
+		if err != nil {
+			return result, fmt.Errorf("observerWait: %w", err)
+		}
+		return result, nil
 	case "client.open_creature_editor":
 		result, err := openDebugCreatureEditor(ctx, host, clientManager, payload)
 		if err != nil {

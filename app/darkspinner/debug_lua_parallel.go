@@ -31,8 +31,25 @@ type debugLuaBranch struct {
 }
 
 type debugLuaYield struct {
-	request  debugOperationRequest
-	isResult bool
+	request         debugOperationRequest
+	isResult        bool
+	isProfileResult bool
+	client          *debugLuaClient
+}
+
+func debugLuaPendingYield(state *lua.LState, count int) *debugLuaYield {
+	if count != -1 {
+		return nil
+	}
+	userdata, isUserdata := state.Get(-1).(*lua.LUserData)
+	if !isUserdata {
+		return nil
+	}
+	request, isRequest := userdata.Value.(*debugLuaYield)
+	if !isRequest {
+		return nil
+	}
+	return request
 }
 
 func (e *debugLuaVM) runParallel(state *lua.LState) int {
@@ -101,7 +118,7 @@ func (e *debugLuaVM) newParallel(state *lua.LState) (*debugLuaParallel, error) {
 
 func (e *debugLuaParallel) yieldOperation(state *lua.LState, operation string, payload json.RawMessage, isResult bool, timeoutMS int) int {
 	if e.branchesByState[state] == nil || (!isIndependentDebugOperation(operation) && operation != "status") {
-		return e.vm.returnOperation(state, nil, &debugError{Code: "unsupported_operation", Context: "parallel", Message: "Parallel supports only independent client observations, waits, screenshots and input; lifecycle operations must remain outside the block"}, isResult)
+		return e.vm.returnOperation(state, nil, &debugError{Code: "unsupported_operation", Context: "parallel", Message: "Parallel supports independent client operations, profile creation and client launch/close; server startup and profile reset must remain outside the block"}, isResult)
 	}
 	request := state.NewUserData()
 	request.Value = &debugLuaYield{request: debugOperationRequest{Operation: operation, Payload: payload, TimeoutMS: uint32(timeoutMS)}, isResult: isResult}
@@ -134,7 +151,15 @@ func (e *debugLuaParallel) run() *debugLuaFailure {
 		}
 		args := make([]lua.LValue, 0, 2)
 		if branch.request.isResult {
-			args = append(args, debugLuaValue(branch.state, result))
+			response := debugLuaValue(branch.state, result)
+			if frame.Failure == nil && (branch.request.isProfileResult || branch.request.client != nil) {
+				var failure *debugError
+				response, failure = e.wrapResult(branch.state, branch.request, response)
+				if failure != nil {
+					frame.Failure = failure
+				}
+			}
+			args = append(args, response)
 		}
 		if frame.Failure != nil {
 			args = append(args, debugLuaErrorValue(branch.state, &debugLuaFailure{Failure: frame.Failure}))
@@ -161,6 +186,17 @@ func (e *debugLuaParallel) run() *debugLuaFailure {
 		return nil
 	}
 	return &debugLuaFailure{Failure: &debugError{Code: "parallel_failed", Context: "parallel", Message: fmt.Sprintf("%d branch(es) failed", len(failures)), Failures: failures}, Traceback: strings.Join(traces, "\n")}
+}
+
+func (e *debugLuaParallel) wrapResult(state *lua.LState, request *debugLuaYield, response lua.LValue) (lua.LValue, *debugError) {
+	snapshot, isTable := response.(*lua.LTable)
+	if !isTable {
+		return lua.LNil, &debugError{Code: "invalid_result", Context: "parallelHandle", Message: "profile/client operation did not return a snapshot"}
+	}
+	if request.isProfileResult {
+		return e.vm.profileHandle(state, snapshot)
+	}
+	return e.vm.clientHandle(state, request.client, snapshot)
 }
 
 func (e *debugLuaParallel) resume(branch *debugLuaBranch, args []lua.LValue) error {

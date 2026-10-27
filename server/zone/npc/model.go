@@ -41,6 +41,9 @@ type SpawnPlan struct {
 	Position               game.Vec3
 	Rotation               game.Vec3
 	PlacementScale         float32 // Authored marker multiplier; zero means one.
+	IsPlacementKnown       bool
+	IsPlacementVisible     bool
+	IsPlacementCollidable  bool
 	ScalePreviewMultiplier float32
 	Experience             uint32
 	LocusID                uint32
@@ -99,6 +102,9 @@ func (e SpawnPlan) IsEqual(other SpawnPlan) bool {
 		e.Position == other.Position &&
 		e.Rotation == other.Rotation &&
 		e.PlacementScale == other.PlacementScale &&
+		e.IsPlacementKnown == other.IsPlacementKnown &&
+		e.IsPlacementVisible == other.IsPlacementVisible &&
+		e.IsPlacementCollidable == other.IsPlacementCollidable &&
 		e.ScalePreviewMultiplier == other.ScalePreviewMultiplier &&
 		e.Experience == other.Experience &&
 		e.LocusID == other.LocusID &&

@@ -106,22 +106,27 @@ func waitDebugLogin(ctx context.Context, host *debugHost, req debugLoginRequest)
 }
 
 type debugOwnedClientDTO struct {
-	IsModded    bool        `json:"is_modded"`
-	UserID      int64       `json:"user_id"`
-	ClientID    string      `json:"client_id"`
-	ProfileName string      `json:"profile_name"`
-	InstanceID  string      `json:"instance_id"`
-	PID         uint32      `json:"pid"`
-	IsDetached  bool        `json:"is_detached"`
-	IsRunning   bool        `json:"is_running"`
-	LaunchMode  string      `json:"launch_mode"`
-	Status      string      `json:"status"`
-	Observation debugClient `json:"observation"`
+	IsModded        bool        `json:"is_modded"`
+	UserID          int64       `json:"user_id"`
+	ClientID        string      `json:"client_id"`
+	ProfileName     string      `json:"profile_name"`
+	InstanceID      string      `json:"instance_id"`
+	PID             uint32      `json:"pid"`
+	SignalDirectory string      `json:"signal_directory"`
+	IsDetached      bool        `json:"is_detached"`
+	IsRunning       bool        `json:"is_running"`
+	LaunchMode      string      `json:"launch_mode"`
+	Status          string      `json:"status"`
+	Observation     debugClient `json:"observation"`
 }
 
 func debugOwnedClientResponse(client debugClientState) debugOwnedClientDTO {
+	signalDirectory := ""
+	if client.TracePath != "" {
+		signalDirectory = filepath.Dir(client.TracePath)
+	}
 	return debugOwnedClientDTO{UserID: client.UserID, ClientID: client.ClientID, ProfileName: client.ProfileName, InstanceID: client.InstanceID, PID: client.ProcessID,
-		IsModded: client.IsModded, IsDetached: client.IsDetached, IsRunning: client.IsRunning, LaunchMode: client.LaunchMode, Status: client.Status, Observation: debugClientDTO(client.Observation)}
+		SignalDirectory: signalDirectory, IsModded: client.IsModded, IsDetached: client.IsDetached, IsRunning: client.IsRunning, LaunchMode: client.LaunchMode, Status: client.Status, Observation: debugClientDTO(client.Observation)}
 }
 
 func decodeDebugPayload(payload json.RawMessage, req any) error {
@@ -150,6 +155,14 @@ func (e *debugSupervisor) executeDebugOperation(ctx context.Context, operation s
 		}
 		return result, nil
 	}
+	result, err := e.executeSerializedDebugOperation(ctx, operation, payload)
+	if err != nil {
+		return result, fmt.Errorf("serializedOperation: %w", err)
+	}
+	return result, nil
+}
+
+func (e *debugSupervisor) executeSerializedDebugOperation(ctx context.Context, operation string, payload json.RawMessage) (any, error) {
 	err := e.lockDebugOperations(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("operationLock: %w", err)
@@ -231,6 +244,25 @@ func (e *debugSupervisor) executeDebugOperation(ctx context.Context, operation s
 		state.clientManager = newDebugClientManager(e.sessionContext, e.id, state.cacheDirectory, e.reportDirectory)
 		state.serverRequest = req
 		return map[string]any{"address": state.host.Address, "is_ready": true, "is_modded": state.host.IsModded}, nil
+	case "profile.logout":
+		if state.host == nil || state.clientManager == nil {
+			return nil, errors.New("logout requires the owned server and client manager")
+		}
+		var req debugLoginRequest
+		err := decodeDebugPayload(payload, &req)
+		if err != nil {
+			return nil, fmt.Errorf("logoutRequest: %w", err)
+		}
+		for _, client := range state.clientManager.List() {
+			if client.ProfileName == req.Name && (client.IsRunning || client.Status == "liveness_unavailable") {
+				return nil, errors.New("stop every owned client for this profile before logout")
+			}
+		}
+		err = state.host.LogoutProfile(ctx, req.Name)
+		if err != nil {
+			return nil, fmt.Errorf("logoutProfile: %w", err)
+		}
+		return nil, nil
 	case "profile.create", "profile.reset":
 		if state.host == nil {
 			return nil, errors.New("start the isolated server before creating profiles")

@@ -78,6 +78,7 @@ func (e campaignNPCActionRuntime) corruptorScatterPosition(
 		return origin
 	}
 	return zonepopulation.ScatterPlacement(zonepopulation.ScatterRequest{
+		Random: peerSession.zone.CapsuleRandom(),
 		Origin: origin, Mode: uint8(peerSession.binding.Mode), Size: size, Footprint: &footprint, Mesh: peerSession.zone.Navigation(), Blockers: blockers,
 	})
 }

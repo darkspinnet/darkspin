@@ -4,6 +4,13 @@
 ---the client timeout with a 10-second cap; partial artifacts survive failure.
 ---@class ClientDiagnostics
 ---@field Capture fun(self:ClientDiagnostics,label:string):DiagnosticCapture|nil,ScenarioError|nil Saves a manifest, owned-window screenshot and bounded complete log records. Use Must only when all observations are required.
+---@field WaitForSignal fun(self:ClientDiagnostics,name:string,timeout_ms?:integer):ObserverSignalReceipt|nil,ScenarioError|nil Waits for signal-<name>.json in this launch's signal_directory. Requires schema=1, matching name, pid and instance_id; the external observer owns the claim. The client must remain alive. Performs no gameplay action or capture.
+
+---@class ObserverSignalReceipt
+---@field client_id string
+---@field signal {schema:integer,name:string,pid:integer,instance_id:string}
+---@field path string
+---@field observed_at string
 
 ---@class DiagnosticCapture
 ---@field schema integer

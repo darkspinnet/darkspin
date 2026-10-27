@@ -138,6 +138,8 @@ func debugLuaScopeIndex(state *lua.LState) int {
 	if scope.kind == "diagnostic" {
 		if name == "Capture" {
 			state.Push(state.NewFunction(debugLuaDiagnosticCapture))
+		} else if name == "WaitForSignal" {
+			state.Push(state.NewFunction(debugLuaDiagnosticWaitForSignal))
 		} else {
 			state.Push(lua.LNil)
 		}

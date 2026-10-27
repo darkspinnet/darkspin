@@ -19,6 +19,7 @@
 
 ---@class WorldRecipeOptions
 ---@field run_seed integer Positive integer up to 9007199254740991. Controls server gameplay RNG; no native layout RNG claim.
+---@field population_seed? integer Optional unsigned 32-bit diagnostic population seed, including zero. Overrides standing-population and section-roster RNG independently of run/layout seeds; does not reconstruct the original server seed or override combat/drop RNG. Immutable and identical for every cohort member; scenario builds only.
 ---@field is_ambient_population_suppressed? boolean Omitting or false retains ambient population. True preserves fixed scene actors and normal scene loading, suppressing ambient population only.
 
 ---@class WorldRecipe

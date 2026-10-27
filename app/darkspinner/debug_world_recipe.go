@@ -12,19 +12,21 @@ import (
 )
 
 type debugWorldRecipeRequest struct {
-	ClientID                      string `json:"client_id"`
-	RunSeed                       uint64 `json:"run_seed"`
-	IsAmbientPopulationSuppressed bool   `json:"is_ambient_population_suppressed"`
+	ClientID                      string  `json:"client_id"`
+	RunSeed                       uint64  `json:"run_seed"`
+	PopulationSeed                *uint32 `json:"population_seed,omitempty"`
+	IsAmbientPopulationSuppressed bool    `json:"is_ambient_population_suppressed"`
 }
 
 type debugWorldRecipe struct {
-	ClientID                      string `json:"client_id"`
-	InstanceID                    string `json:"instance_id"`
-	PID                           uint32 `json:"pid"`
-	UserID                        int64  `json:"user_id"`
-	RunSeed                       uint64 `json:"run_seed"`
-	IsAmbientPopulationSuppressed bool   `json:"is_ambient_population_suppressed"`
-	Source                        string `json:"source"`
+	ClientID                      string  `json:"client_id"`
+	InstanceID                    string  `json:"instance_id"`
+	PID                           uint32  `json:"pid"`
+	UserID                        int64   `json:"user_id"`
+	RunSeed                       uint64  `json:"run_seed"`
+	PopulationSeed                *uint32 `json:"population_seed,omitempty"`
+	IsAmbientPopulationSuppressed bool    `json:"is_ambient_population_suppressed"`
+	Source                        string  `json:"source"`
 }
 
 func configureDebugWorld(ctx context.Context, host *debugHost, clientManager *debugClientManager, payload json.RawMessage) (debugWorldRecipe, error) {
@@ -52,11 +54,21 @@ func configureDebugWorld(ctx context.Context, host *debugHost, clientManager *de
 	if err != nil {
 		return result, fmt.Errorf("recipePrecheck: %w", err)
 	}
-	recipe, err := host.server.DebugConfigureRecipe(ctx, scenario.FocusedRecipeRequest{RunID: host.runID, UserID: owner.client.UserID, RunSeed: req.RunSeed, IsAmbientPopulationSuppressed: req.IsAmbientPopulationSuppressed})
+	recipeRequest := scenario.FocusedRecipeRequest{RunID: host.runID, UserID: owner.client.UserID,
+		RunSeed: req.RunSeed, IsAmbientPopulationSuppressed: req.IsAmbientPopulationSuppressed}
+	if req.PopulationSeed != nil {
+		recipeRequest.PopulationSeed = *req.PopulationSeed
+		recipeRequest.IsPopulationSeedSet = true
+	}
+	recipe, err := host.server.DebugConfigureRecipe(ctx, recipeRequest)
 	if err != nil {
 		return result, fmt.Errorf("recipeConfigure: %w", err)
 	}
 	result.RunSeed = recipe.RunSeed
+	if recipe.IsPopulationSeedSet {
+		populationSeed := recipe.PopulationSeed
+		result.PopulationSeed = &populationSeed
+	}
 	result.IsAmbientPopulationSuppressed = recipe.IsAmbientPopulationSuppressed
 	err = recheckDebugWorldOwner(ctx, host, clientManager, owner)
 	if err != nil {

@@ -115,6 +115,9 @@ func planMarkers(
 		}
 		if isFixture {
 			currentPlan.PlacementScale = currentMarker.Scale
+			currentPlan.IsPlacementKnown = true
+			currentPlan.IsPlacementVisible = currentMarker.IsVisible
+			currentPlan.IsPlacementCollidable = currentMarker.IsCollisionEnabled
 		}
 		if IsGraviticStabilizer(currentPlan) && currentMarker.Scale > 0 {
 			currentPlan.NPCProfile.FootprintRadius *= currentMarker.Scale

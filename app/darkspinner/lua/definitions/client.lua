@@ -34,6 +34,7 @@
 ---@field selected_hero_slot table Unavailable until a supported observer exists.
 
 ---@class ClientSnapshot
+---@field signal_directory string Owned diagnostic directory for external observer receipts.
 ---@field is_modded boolean
 ---@field user_id integer Immutable launch account identity.
 ---@field client_id string
@@ -46,7 +47,7 @@
 ---@field status string
 ---@field observation ClientObservationSnapshot Missing state is explicitly unavailable.
 
----An owned process handle. Its actual fields are ID and InitialSnapshot; snapshot
+---An owned process handle. Identity fields are immutable; snapshot
 ---fields are accessed through InitialSnapshot or Snapshot(), without inheritance.
 ---Login/profile methods resolve the associated profile alias. Blocking methods
 ---inherit the current client timeout (60000 milliseconds initially); optional
@@ -55,6 +56,8 @@
 ---@class ManagedClient
 ---@field PVP ClientPVP Native arena lobby observations, guarded Accept and verified combat readiness.
 ---@field ID string Immutable client_id.
+---@field PID integer Immutable spawned process ID. Use Snapshot().is_running to check liveness before external debugger attachment.
+---@field InstanceID string Immutable owned launch instance, distinct from the reusable OS process ID.
 ---@field InitialSnapshot ClientSnapshot Launch observation, not login or world readiness.
 ---@field Scene ClientScene Wait combines reported presence with native current-room and UI-eligibility probes; does not prove rendering or gameplay readiness.
 ---@field UI ClientUI Owned-window operations, independent of desktop focus.

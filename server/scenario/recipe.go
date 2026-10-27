@@ -6,6 +6,8 @@ type FocusedRecipeRequest struct {
 	RunID                         string
 	UserID                        int64
 	RunSeed                       uint64
+	PopulationSeed                uint32
+	IsPopulationSeedSet           bool
 	IsAmbientPopulationSuppressed bool
 }
 
@@ -15,6 +17,8 @@ type FocusedRecipe struct {
 	RunID                         string
 	UserID                        int64
 	RunSeed                       uint64
+	PopulationSeed                uint32
+	IsPopulationSeedSet           bool
 	IsAmbientPopulationSuppressed bool
 }
 

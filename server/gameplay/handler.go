@@ -5748,15 +5748,8 @@ func newCampaignPopulationSession(
 	director game.CampaignDirector, binding game.GameplayBinding,
 	mesh *navigation.Mesh,
 ) (*zonepopulation.Session, error) {
-	selectionID := binding.GameID
 	isFirstTimeRosterSelected := director.IsFirstTimeRosterSelected
-	if isFirstTimeRosterSelected {
-		selectionID = 0
-	}
-	seed := selectionID ^ (binding.Difficulty << 24) ^ 0x103
-	if isFirstTimeRosterSelected {
-		seed ^= (binding.ChainLevelIndex - 1) << 16
-	}
+	seed := campaignPopulationSeed(director, binding)
 	var session *zonepopulation.Session
 	var err error
 	if isFirstTimeRosterSelected {

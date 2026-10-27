@@ -6,10 +6,11 @@ import (
 	"strings"
 )
 
-// ServerScenery restores audited static nouns which the native map loader
+// ServerScenery restores audited noncombat nouns which the native map loader
 // deliberately leaves to the server. Build 103 sub_9D3720 returns server-only
 // mask 0x200 for static noun type 0x6FEDAE4D when clientOnly (byte 4) is false;
-// sub_9D5D40 consequently does not instantiate them on the client.
+// sub_9D5D40 consequently does not instantiate them on the client. The plasma
+// pool also returns 0x200 through its passive-owner classification.
 func (e CampaignDirector) ServerScenery() ([]CampaignDirectorMarker, error) {
 	if !e.IsInitialLayoutSelected {
 		return nil, errors.New("server scenery layout unavailable")
@@ -47,11 +48,15 @@ func isServerSceneryNoun(nounName string) bool {
 	// flower_dest name, that noun is fixed static scenery with no combatant
 	// component or native client-owned placement override.
 	switch strings.ToLower(nounName) {
-	case "phys_nocturna2_lvl2_herotree_yellow_1.noun",
+	case "dest_citadel_plasma_pool.noun",
+		"phys_nocturna2_lvl2_herotree_yellow_1.noun",
+		"phys_design_object_block_1x1.noun",
 		"phys_design_object_block_3x3.noun",
+		"phys_cryos2_lvl1_stonesolo_b.noun",
 		"phys_nocturna2_herotree_red_1.noun",
 		"phys_moon1_rock_large_a.noun",
 		"phys_nocturna2_rock_large_a.noun",
+		"phys_nocturna2_plant_5b.noun",
 		"phys_tota_object_rock_pile_b.noun",
 		"phys_tota_rock_grass_c.noun",
 		"phys_tota_heroflower_a.noun",

@@ -12,6 +12,8 @@ import (
 type debugLuaClient struct {
 	vm              *debugLuaVM
 	id              string
+	processID       uint32
+	instanceID      string
 	profileName     string
 	timeoutMS       int
 	startedAt       time.Time
@@ -89,6 +91,10 @@ func debugLuaClientIndex(state *lua.LState) int {
 		state.Push(client.cinematicScope)
 	case "ID":
 		state.Push(lua.LString(client.id))
+	case "PID":
+		state.Push(lua.LNumber(client.processID))
+	case "InstanceID":
+		state.Push(lua.LString(client.instanceID))
 	case "InitialSnapshot":
 		state.Push(client.initialState)
 	case "Snapshot":

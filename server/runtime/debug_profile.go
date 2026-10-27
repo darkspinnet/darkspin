@@ -22,3 +22,20 @@ func (e *Server) DebugCreateProfile(ctx context.Context, req sporenet.DebugProfi
 	}
 	return profile, nil
 }
+
+// DebugLogoutProfile releases an owned audit account's authenticated slot after
+// its client has stopped. It preserves the profile and normal reconnect rules.
+func (e *Server) DebugLogoutProfile(ctx context.Context, userID int64) error {
+	if e == nil || e.userManager == nil || ctx == nil || userID <= 0 {
+		return errors.New("debug logout requires an owned profile and context")
+	}
+	user := e.userManager.UserByID(userID)
+	if user == nil {
+		return nil
+	}
+	err := e.userManager.Logout(ctx, user)
+	if err != nil {
+		return fmt.Errorf("profileLogout: %w", err)
+	}
+	return nil
+}

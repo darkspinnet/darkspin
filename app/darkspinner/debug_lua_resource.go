@@ -42,6 +42,11 @@ func (e *debugLuaVM) wrapServer(state *lua.LState, count int) int {
 }
 
 func (e *debugLuaVM) wrapProfile(state *lua.LState, count int) int {
+	request := debugLuaPendingYield(state, count)
+	if request != nil {
+		request.isProfileResult = true
+		return count
+	}
 	if count != 2 || state.Get(-1) != lua.LNil {
 		return count
 	}
@@ -49,15 +54,23 @@ func (e *debugLuaVM) wrapProfile(state *lua.LState, count int) int {
 	if !isTable {
 		return count
 	}
+	resource, failure := e.profileHandle(state, snapshot)
+	if failure != nil {
+		return e.returnOperation(state, nil, failure, true)
+	}
+	state.Replace(-2, resource)
+	return count
+}
+
+func (e *debugLuaVM) profileHandle(state *lua.LState, snapshot *lua.LTable) (lua.LValue, *debugError) {
 	profileName, isName := snapshot.RawGetString("name").(lua.LString)
 	if !isName || profileName == "" {
-		return e.returnOperation(state, nil, &debugError{Code: "invalid_result", Context: "profileHandle", Message: "profile operation did not return a profile name"}, true)
+		return lua.LNil, &debugError{Code: "invalid_result", Context: "profileHandle", Message: "profile operation did not return a profile name"}
 	}
 	resource := state.NewUserData()
 	resource.Value = &debugLuaResource{vm: e, kind: "profile", initialState: snapshot, profileName: string(profileName)}
 	state.SetMetatable(resource, state.GetTypeMetatable("ProfileHandle"))
-	state.Replace(-2, resource)
-	return count
+	return resource, nil
 }
 
 func debugLuaResourceSelf(state *lua.LState, kind string) *debugLuaResource {
@@ -98,6 +111,8 @@ func debugLuaProfileIndex(state *lua.LState) int {
 	switch name {
 	case "Launch":
 		state.Push(state.NewFunction(debugLuaProfileLaunch))
+	case "Logout":
+		state.Push(state.NewFunction(debugLuaProfileLogout))
 	case "Snapshot":
 		state.Push(state.NewFunction(debugLuaProfileState))
 	case "WaitForLogin":
@@ -108,6 +123,14 @@ func debugLuaProfileIndex(state *lua.LState) int {
 		state.Push(debugLuaResourceField(resource, name))
 	}
 	return 1
+}
+
+func debugLuaProfileLogout(state *lua.LState) int {
+	resource := debugLuaResourceSelf(state, "profile")
+	if resource == nil {
+		return 0
+	}
+	return resource.vm.invoke(state, "profile.logout", map[string]any{"name": resource.profileName}, false)
 }
 
 func debugLuaResourceField(resource *debugLuaResource, name string) lua.LValue {
