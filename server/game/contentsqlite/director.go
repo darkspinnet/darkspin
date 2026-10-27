@@ -228,7 +228,7 @@ func (s *DirectorSource) LoadCampaignDirector(
 			return game.CampaignDirector{}, fmt.Errorf("nounTypeID[%d]: out of range", noun.ResourceID)
 		}
 		nounID := uint32(noun.InstanceID)
-		// Native 127 sub_9EC530 admits fixed nonzero-physics objects with
+		// Build 103 sub_9E7620 admits fixed nonzero-physics objects with
 		// collision enabled. isDynamicWall changes its blockage mask; it does
 		// not exclude the object. Authored PHYS design boxes use this flag.
 		// Doors, switches and combatants require their own collision lifecycle.

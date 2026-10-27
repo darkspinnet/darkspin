@@ -2,6 +2,9 @@
 
 ### 2026-10-27
 
+- Restore selected Nocturna and Verdanth rock and flower colliders, and match build-103 navigation bounds and headings for tilted scenery.
+- Replicate authored Nocturna collision boxes to the client and project nearby edge positions onto free terrain, keeping client movement aligned with the selected server blockers.
+- Expand Nocturna wall diagnostics from one report seed to paired WandererA/B layouts with all other selected variations held fixed.
 - Move gameplay profile saves from blocking SQL writes to coalesced memory snapshots, with background writes at safe Continue checkpoints, idle periods, and a five-minute fallback.
 - #137 Persist combat statistics through a focused SQLite stat-row update instead of rewriting every creature, item and other profile record on each hit.
 - #137 Separate new loot from existing item and catalyst pickups using projected ring placements when space is available, preventing obelisk drops from covering each other.

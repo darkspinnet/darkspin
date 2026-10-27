@@ -6003,6 +6003,7 @@ func (p campaignPreparation) initialize(
 				MarkerID: obstacle.MarkerID,
 				Position: navigation.Vec3(obstacle.Position), Minimum: navigation.Vec3(obstacle.Minimum),
 				Maximum: navigation.Vec3(obstacle.Maximum), Yaw: obstacle.Yaw,
+				IsBoundaryProjectionEnabled: obstacle.IsBoundaryProjectionEnabled,
 			})
 		}
 		campaignNav, setupErr = campaignNav.WithObstacles(obstacles)
@@ -6069,15 +6070,15 @@ func (p campaignPreparation) initialize(
 	if planErr != nil {
 		return fmt.Errorf("statusChainScriptObjectPlans: %w", planErr)
 	}
-	// Client-owned scenery stays native. Publish server-owned static trees from
+	// Client-owned scenery stays native. Publish audited server-owned scenery from
 	// that same selected layout, including on the shared rejoin baseline.
-	sceneryMarkers, sceneryErr := director.ServerTreeScenery()
+	sceneryMarkers, sceneryErr := director.ServerScenery()
 	if sceneryErr != nil {
-		return fmt.Errorf("statusTreeScenery: %w", sceneryErr)
+		return fmt.Errorf("statusServerScenery: %w", sceneryErr)
 	}
 	sceneryPlans, sceneryErr := zoneobject.PlanScenery(sceneryMarkers)
 	if sceneryErr != nil {
-		return fmt.Errorf("statusTreePlans: %w", sceneryErr)
+		return fmt.Errorf("statusSceneryPlans: %w", sceneryErr)
 	}
 	tutorialCapsulePlans := make([]tutorialCapsulePlan, 0)
 	if binding.Mode == game.ModeTutorial {

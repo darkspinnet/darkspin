@@ -1,9 +1,18 @@
----Reproduce the local 1-4 wall reports on the same native layout (0x871ba807).
+---Compare build-103 WandererA/B wall placement with every other selected set held fixed.
 ---Native input only: no teleport, collision bypass, asset writes or camera edits.
 local must, check = scenario.Must, scenario.Check
 local target = {x = 342.063, y = 494.144, z = 40.625}
--- This exactly representable server seed derives the report's layout seed for 1-4.
-local runSeed = 4417884244153018
+-- Observe from outside the reported box so a blocked target remains inspectable.
+local approach = {x = 346, y = 494, z = 40.625}
+-- Selected through production SelectMapLayout with condition mask 0. Only the
+-- Wander group changes; Smart_Object_2, Obelisk_1 and every spike/horde set agree.
+-- Build-103 live comparison: A reaches x=338.048 across the opening; B stops at
+-- x=342.050 against its invisible proxy. Neither screenshot shows a wall there.
+-- This identifies the clean variation; it does not repair the shipped B layout.
+local variations = {
+    {name = "wanderer-a", run_seed = 1203641, map_seed = "0xeaf11892", set_ordinal = 23},
+    {name = "wanderer-b", run_seed = 4417884244153018, map_seed = "0x871ba807", set_ordinal = 24},
+}
 
 local function distance(first, second)
     local x, y = first.x - second.x, first.y - second.y
@@ -42,7 +51,13 @@ local function click(client, point)
         or not input.is_native_ground_query_success then
         fail(client, "wall-ground-unproven", "native paired ground input not established")
     end
-    return input.chosen_ground_point
+    local ground = input.chosen_ground_point
+    if ground == nil then
+        fail(client, "wall-ground-missing", "native ground query returned no chosen point")
+    end
+    check(scenario.Log(string.format("ground requested=(%.3f,%.3f,%.3f) chosen=(%.3f,%.3f,%.3f) gap=%.3f",
+        point.x, point.y, point.z, ground.x, ground.y, ground.z, distance(point, ground))))
+    return ground
 end
 
 local function walk(client, destination, timeout, tunnelDestination)
@@ -99,32 +114,31 @@ local function walk(client, destination, timeout, tunnelDestination)
     return false, "bounded traversal expired"
 end
 
-return function()
-    check(scenario.RequireAPI(1))
-    local server = must(scenario.StartServer({}))
-    local profile = must(server:CreateProfile({name = "nocturna-wall",
+local function runVariation(server, variation)
+    check(scenario.Log(string.format("Wall comparison %s run_seed=%.0f map_seed=%s Wander ordinal=%d; verify captured selected_sets before comparing",
+        variation.name, variation.run_seed, variation.map_seed, variation.set_ordinal)))
+    local profile = must(server:CreateProfile({name = "nocturna-wall-" .. variation.name,
         hero_nouns = {1667741389, 3618328019, 749013658}, chain_progression = 3}))
-    local client = must(profile:Launch({client_id = "nocturna-wall", launch_mode = "normal"}))
+    local client = must(profile:Launch({client_id = "nocturna-wall-" .. variation.name, launch_mode = "normal"}))
     check(client:SetTimeout(60000))
     check(client.Cinematic:SetSkipEnabled(false))
     must(client:Login())
     must(client.Scene:Wait(scene.Arsenal))
-    must(client.World:Configure({run_seed = runSeed, is_ambient_population_suppressed = true}))
+    must(client.World:Configure({run_seed = variation.run_seed, is_ambient_population_suppressed = true}))
     must(client.Scene:Set(scene.Navigation))
     must(client.Mission:Enter(4))
-    check(scenario.Log("Expected map-layout seed=0x871ba807; selected set=nocturna_1_AI_WandererB.Markerset; verify captured server log before comparing."))
     capture(client, "wall-entry")
     local attemptedPortals = {}
     local isReached = false
     for attempt = 1, 8 do
         local reason, worldSS
-        isReached, reason, worldSS = walk(client, target, 180000)
+        isReached, reason, worldSS = walk(client, approach, 180000)
         if isReached then break end
         capture(client, "wall-route-" .. tostring(attempt))
         local portal = nil
         for _, candidate in ipairs(worldSS ~= nil and worldSS.teleporters or {}) do
             if candidate.is_tunnel and candidate.is_active and not attemptedPortals[candidate.marker_id] then
-                local path = must(client.World:Path(candidate.destination, target))
+                local path = must(client.World:Path(candidate.destination, approach))
                 if path.is_available and path.is_complete then portal = candidate; break end
             end
         end
@@ -146,9 +160,10 @@ return function()
         if not isTransitObserved then fail(client, "wall-tunnel-unproven", "native tunnel arrival not observed") end
     end
     if not isReached then fail(client, "wall-not-reached", "eight route attempts exhausted") end
-    capture(client, "wall-reported-position")
+    capture(client, "wall-outside-edge")
     -- Across and along the near edge of marker 996624157's authored rotated box.
     for index, point in ipairs({
+        target,
         {x = 338, y = 494, z = 40.625}, {x = 346, y = 494, z = 40.625},
         {x = 342, y = 499, z = 40.625}, {x = 342, y = 489, z = 40.625},
     }) do
@@ -164,8 +179,19 @@ return function()
             distance(afterNativeSS.position, afterWorldSS.hero.position),
             distance(beforeNativeSS.position, afterNativeSS.position))))
         capture(client, "wall-probe-" .. tostring(index))
-        local isReturned, returnReason = walk(client, target, 20000)
+        local isReturned, returnReason = walk(client, approach, 20000)
         if not isReturned then fail(client, "wall-return-blocked", tostring(returnReason)) end
     end
-    check(scenario.Log("Wall probes complete; review screenshots and collision corrections, not just script completion."))
+    check(scenario.Log(variation.name .. " probes complete; review screenshots, chosen ground points and collision corrections."))
+    -- Fresh diagnostic profiles need no save/quit prompt between comparisons.
+    check(client:Terminate())
+end
+
+return function()
+    check(scenario.RequireAPI(1))
+    local server = must(scenario.StartServer({}))
+    for _, variation in ipairs(variations) do
+        runVariation(server, variation)
+    end
+    check(scenario.Log("Paired wall comparison complete; script completion does not establish proper visible/native alignment."))
 end

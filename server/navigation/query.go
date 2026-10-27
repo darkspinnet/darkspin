@@ -53,7 +53,10 @@ func (m *Mesh) Project(point Vec3, options ProjectionOptions) (Projection, error
 		return Projection{}, fmt.Errorf("projectPolygon: %w", err)
 	}
 	if m.isObstructed(projection.Position, options.PlanLayer) {
-		return Projection{}, ErrProjectionObstructed
+		projection, err = m.projectObstacleBoundary(point, projection, options)
+		if err != nil {
+			return Projection{}, fmt.Errorf("projectBoundary: %w", err)
+		}
 	}
 	return projection, nil
 }

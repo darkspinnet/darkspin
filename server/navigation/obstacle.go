@@ -10,12 +10,15 @@ import (
 // Obstacle is an upright static collision box in game coordinates. The
 // selected layout owns these boxes; the cached terrain mesh remains immutable.
 type Obstacle struct {
-	MarkerID   uint32
-	Position   Vec3
-	Minimum    Vec3
-	Maximum    Vec3
-	Yaw        float32
-	isDisabled *atomic.Bool
+	MarkerID uint32
+	Position Vec3
+	Minimum  Vec3
+	Maximum  Vec3
+	Yaw      float32
+	// Selected Nocturna wall proxies permit bounded projection to free faces.
+	// Other obstacles retain strict rejection of an obstructed projection.
+	IsBoundaryProjectionEnabled bool
+	isDisabled                  *atomic.Bool
 }
 
 func (e *Mesh) WithObstacles(obstacles []Obstacle) (*Mesh, error) {
