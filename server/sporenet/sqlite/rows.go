@@ -119,9 +119,12 @@ type userStatRow struct {
 }
 
 func userStatRowFromRecord(record sporenet.UserRecord) userStatRow {
-	stat := record.Stats
+	return userStatRowFromStats(record.Account.ID, record.Stats)
+}
+
+func userStatRowFromStats(userID int64, stat sporenet.PlayerStats) userStatRow {
 	return userStatRow{
-		UserID:            record.Account.ID,
+		UserID:            userID,
 		PVEPlayTimeSecond: stat.PVEPlayTimeSecond,
 		PVEMinionKill:     stat.PVEMinionKill, PVESpecialKill: stat.PVESpecialKill,
 		PVEBossKill: stat.PVEBossKill, PVETotalKill: stat.PVETotalKill,

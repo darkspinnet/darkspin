@@ -164,6 +164,28 @@ func ForcedMovementEffect(
 }
 
 func Pursuit(plan zonenpc.FirstActionPlan) ([][]byte, error) {
+	packets, err := pursuit(plan)
+	if err != nil {
+		return nil, fmt.Errorf("pursuitPlan: %w", err)
+	}
+	if plan.Profile.AbilityName != "CitadelBasicRanged_Bolt" &&
+		plan.Profile.AbilityName != "CitadelSpecificFour_Bolt" {
+		return packets, nil
+	}
+	// Dormant actors have zero idle movement speed. These profiles omit a
+	// first-aggro animation, but must still enter combat before they approach.
+	combatPacket, err := raknet.MarshalApplication(raknet.AgentBlackboardUpdateMessage{
+		ObjectID: plan.ObjectID, TargetID: plan.TargetObjectID,
+		IsInCombat: true, IsTargetable: true, AttackerCount: 1,
+		Stealth: uint8(plan.Profile.StealthType),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pursuitCombat: %w", err)
+	}
+	return append([][]byte{combatPacket}, packets...), nil
+}
+
+func pursuit(plan zonenpc.FirstActionPlan) ([][]byte, error) {
 	if plan.ObjectID == 0 || plan.TargetObjectID == 0 || !plan.IsPursuitNeeded ||
 		plan.Profile.Range <= 0 || math.IsNaN(float64(plan.Profile.Range)) ||
 		math.IsInf(float64(plan.Profile.Range), 0) ||
@@ -596,7 +618,7 @@ func AttackStart(plan zonenpc.AttackPlan, timestamp uint64) ([][]byte, error) {
 		return nil, errors.New("npc attack start invalid")
 	}
 	source := vector(plan.SourcePosition)
-	return marshalMessages([]raknet.ApplicationMessage{
+	messages := []raknet.ApplicationMessage{
 		raknet.ObjectPositionUpdateMessage{
 			ObjectID: plan.SourceObjectID, PositionX: source.X,
 			PositionY: source.Y, PositionZ: source.Z,
@@ -606,7 +628,18 @@ func AttackStart(plan zonenpc.AttackPlan, timestamp uint64) ([][]byte, error) {
 			ObjectID: plan.SourceObjectID, State: util.HashID(plan.Profile.AnimationName),
 			Timestamp: timestamp, Scale: 1,
 		},
-	}, "attackStart")
+	}
+	if plan.Profile.AbilityName == "CitadelBasicRanged_Bolt" ||
+		plan.Profile.AbilityName == "CitadelSpecificFour_Bolt" {
+		// These profiles have no separate first-aggro presentation. Their
+		// animation reset must return to combat idle rather than dormancy.
+		messages = append([]raknet.ApplicationMessage{raknet.AgentBlackboardUpdateMessage{
+			ObjectID: plan.SourceObjectID, TargetID: plan.TargetObjectID,
+			IsInCombat: true, IsTargetable: true, AttackerCount: 1,
+			Stealth: uint8(plan.Profile.StealthType),
+		}}, messages...)
+	}
+	return marshalMessages(messages, "attackStart")
 }
 
 func MovementStop(objectID uint32, position game.Vec3) ([][]byte, error) {

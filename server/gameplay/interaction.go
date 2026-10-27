@@ -2188,7 +2188,8 @@ func campaignDropDestination(
 func (s *gameplayPeerSession) reachableCampaignDropDestination(
 	source sim.Position,
 ) sim.Position {
-	return s.reachableCampaignDropDestinationWithClearance(source, 0)
+	destination := s.reachableCampaignDropDestinationWithClearance(source, 0)
+	return s.separatedCampaignDropDestination(source, destination)
 }
 
 func (s *gameplayPeerSession) reachableCampaignDropDestinationWithClearance(

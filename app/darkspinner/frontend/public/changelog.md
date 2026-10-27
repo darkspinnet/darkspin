@@ -2,6 +2,9 @@
 
 ### 2026-10-27
 
+- #137 Persist combat statistics through a focused SQLite stat-row update instead of rewriting every creature, item and other profile record on each hit.
+- #137 Separate new loot from existing item and catalyst pickups using projected ring placements when space is available, preventing obelisk drops from covering each other.
+- #137 Put Laser Units and Blastopods into combat state before pursuit and firing so their zero-speed dormant state does not persist between attacks.
 - #136 Restore Thunderstorm's channel bar by publishing its projected channel duration instead of an empty start-to-commit interval.
 - #136 Resume surviving enemies after Terrifying Curse's projectile and splash fear expire, preserving any overlapping fear that is still active.
 

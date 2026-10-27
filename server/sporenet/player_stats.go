@@ -58,6 +58,12 @@ type PlayerStatDelta struct {
 	PVPHealingReceived float64
 }
 
+// PlayerStatsRepository persists lifetime stats without replacing unrelated
+// profile collections on each combat event.
+type PlayerStatsRepository interface {
+	SavePlayerStats(context.Context, int64, PlayerStats) error
+}
+
 // RecordPlayerStats atomically applies and persists one lifetime-stat delta.
 func (m *UserManager) RecordPlayerStats(ctx context.Context, userID int64, delta PlayerStatDelta) error {
 	err := validatePlayerStatDelta(delta)
@@ -73,6 +79,7 @@ func (m *UserManager) RecordPlayerStats(ctx context.Context, userID int64, delta
 	user.mu.Lock()
 	previous := user.Stats
 	err = applyPlayerStatDelta(&user.Stats, delta)
+	updated := user.Stats
 	user.mu.Unlock()
 	if err != nil {
 		return fmt.Errorf("statApply: %w", err)
@@ -80,7 +87,12 @@ func (m *UserManager) RecordPlayerStats(ctx context.Context, userID int64, delta
 	if delta == (PlayerStatDelta{}) {
 		return nil
 	}
-	err = m.repository.Save(ctx, user.Record())
+	statRepository, isStatRepository := m.repository.(PlayerStatsRepository)
+	if isStatRepository {
+		err = statRepository.SavePlayerStats(ctx, userID, updated)
+	} else {
+		err = m.repository.Save(ctx, user.Record())
+	}
 	if err != nil {
 		user.mu.Lock()
 		user.Stats = previous
