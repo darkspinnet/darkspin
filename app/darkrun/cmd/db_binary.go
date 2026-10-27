@@ -55,7 +55,7 @@ func databaseBinaryGet(
 		`SELECT `+quoteDatabaseIdentifier(column)+` FROM `+quoteDatabaseIdentifier(table), predicates,
 	)
 	query += ` LIMIT 2`
-	rows, err := target.database.QueryContext(ctx, query, queryArguments...)
+	rows, err := target.database.QueryContext(ctx, target.bind(query), queryArguments...)
 	if err != nil {
 		return fmt.Errorf("queryExecute: %w", err)
 	}

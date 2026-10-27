@@ -35,7 +35,9 @@ world_player_limit = 25
 is_stdout_enabled = true
 
 [storage]
-# SQLite is the current embedded adapter. PostgreSQL is planned.
+# SQLite is for desktop local play. Dedicated darkrun requires PostgreSQL through
+# DARKSPIN_POSTGRES_URL or PGHOST/PGDATABASE/PGUSER environment settings.
+# PostgreSQL connection credentials are never saved to this file.
 driver = "sqlite"
 
 [content]

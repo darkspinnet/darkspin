@@ -1,4 +1,4 @@
-package sqlite
+package sqlstore
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 )
 
 const insertUserQuery = `
-	INSERT INTO user (
+	INSERT INTO "user" (
 		login_name, display_name, password, create_dt, last_connection_dt,
 		is_tutorial_completion_pending,
 		is_all_access_granted, is_online_access_granted,
@@ -43,7 +43,7 @@ const insertUserQuery = `
 	)`
 
 const updateUserQuery = `
-	UPDATE user SET
+	UPDATE "user" SET
 		display_name = :display_name,
 		password = :password,
 		last_connection_dt = :last_connection_dt,
@@ -87,7 +87,7 @@ func clearDependents(ctx context.Context, tx *sqlx.Tx, userID int64) error {
 		"user_association", "squad", "creature", "part", "part_shop", "extension",
 	}
 	for index, table := range tables {
-		_, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE user_id = ?`, userID)
+		_, err := tx.ExecContext(ctx, tx.Rebind(`DELETE FROM `+table+` WHERE user_id = ?`), userID)
 		if err != nil {
 			return fmt.Errorf("clearTable[%d]: %w", index, err)
 		}
@@ -289,7 +289,7 @@ func writeDependents(ctx context.Context, tx *sqlx.Tx, record sporenet.UserRecor
 
 func loadRecord(ctx context.Context, tx *sqlx.Tx, loginName string) (sporenet.UserRecord, error) {
 	user := userRow{}
-	err := tx.GetContext(ctx, &user, `SELECT * FROM user WHERE login_name = ? COLLATE NOCASE`, loginName)
+	err := tx.GetContext(ctx, &user, tx.Rebind(`SELECT * FROM "user" WHERE LOWER(login_name) = LOWER(?)`), loginName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return sporenet.UserRecord{}, fmt.Errorf("userMissing: %w", sporenet.ErrUserNotFound)
 	}
@@ -320,7 +320,7 @@ func loadRecord(ctx context.Context, tx *sqlx.Tx, loginName string) (sporenet.Us
 		return sporenet.UserRecord{}, fmt.Errorf("pvpLoad: %w", err)
 	}
 	stat := userStatRow{}
-	err = tx.GetContext(ctx, &stat, `SELECT * FROM user_stat WHERE user_id = ?`, user.ID)
+	err = tx.GetContext(ctx, &stat, tx.Rebind(`SELECT * FROM user_stat WHERE user_id = ?`), user.ID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return sporenet.UserRecord{}, fmt.Errorf("userStatSelect: %w", err)
 	}
@@ -328,7 +328,7 @@ func loadRecord(ctx context.Context, tx *sqlx.Tx, loginName string) (sporenet.Us
 		record.Stats = stat.stats()
 	}
 	settings := []settingRow{}
-	err = tx.SelectContext(ctx, &settings, `SELECT user_id, key, value FROM setting WHERE user_id = ? ORDER BY key`, user.ID)
+	err = tx.SelectContext(ctx, &settings, tx.Rebind(`SELECT user_id, key, value FROM setting WHERE user_id = ? ORDER BY key`), user.ID)
 	if err != nil {
 		return sporenet.UserRecord{}, fmt.Errorf("settingsSelect: %w", err)
 	}
@@ -336,9 +336,9 @@ func loadRecord(ctx context.Context, tx *sqlx.Tx, loginName string) (sporenet.Us
 		record.Settings[setting.Key] = setting.Value
 	}
 	events := []userEventRow{}
-	err = tx.SelectContext(ctx, &events, `
+	err = tx.SelectContext(ctx, &events, tx.Rebind(`
 		SELECT user_id, key, message_id, metadata, occurred_at, is_public
-		FROM user_event WHERE user_id = ? ORDER BY occurred_at DESC, key`, user.ID)
+		FROM user_event WHERE user_id = ? ORDER BY occurred_at DESC, key`), user.ID)
 	if err != nil {
 		return sporenet.UserRecord{}, fmt.Errorf("userEventsSelect: %w", err)
 	}
@@ -349,9 +349,9 @@ func loadRecord(ctx context.Context, tx *sqlx.Tx, loginName string) (sporenet.Us
 		})
 	}
 	campaignExperiences := []campaignExperienceRow{}
-	err = tx.SelectContext(ctx, &campaignExperiences, `
+	err = tx.SelectContext(ctx, &campaignExperiences, tx.Rebind(`
 		SELECT user_id, result_id, amount, cumulative_xp, level
-		FROM campaign_experience WHERE user_id = ? ORDER BY result_id`, user.ID)
+		FROM campaign_experience WHERE user_id = ? ORDER BY result_id`), user.ID)
 	if err != nil {
 		return sporenet.UserRecord{}, fmt.Errorf("campaignExperienceSelect: %w", err)
 	}
@@ -364,9 +364,9 @@ func loadRecord(ctx context.Context, tx *sqlx.Tx, loginName string) (sporenet.Us
 		)
 	}
 	associations := []userAssociationRow{}
-	err = tx.SelectContext(ctx, &associations, `
+	err = tx.SelectContext(ctx, &associations, tx.Rebind(`
 		SELECT user_id, list_type, member_id, name, associated_at
-		FROM user_association WHERE user_id = ? ORDER BY list_type, associated_at, member_id`, user.ID)
+		FROM user_association WHERE user_id = ? ORDER BY list_type, associated_at, member_id`), user.ID)
 	if err != nil {
 		return sporenet.UserRecord{}, fmt.Errorf("userAssociationsSelect: %w", err)
 	}
@@ -378,7 +378,7 @@ func loadRecord(ctx context.Context, tx *sqlx.Tx, loginName string) (sporenet.Us
 		)
 	}
 	squads := []squadRow{}
-	err = tx.SelectContext(ctx, &squads, `SELECT * FROM squad WHERE user_id = ? ORDER BY slot, id`, user.ID)
+	err = tx.SelectContext(ctx, &squads, tx.Rebind(`SELECT * FROM squad WHERE user_id = ? ORDER BY slot, id`), user.ID)
 	if err != nil {
 		return sporenet.UserRecord{}, fmt.Errorf("squadsSelect: %w", err)
 	}
@@ -391,9 +391,9 @@ func loadRecord(ctx context.Context, tx *sqlx.Tx, loginName string) (sporenet.Us
 		})
 	}
 	squadCreatures := []squadCreatureRow{}
-	err = tx.SelectContext(ctx, &squadCreatures, `
+	err = tx.SelectContext(ctx, &squadCreatures, tx.Rebind(`
 		SELECT user_id, squad_id, creature_id, position
-		FROM squad_creature WHERE user_id = ? ORDER BY squad_id, position`, user.ID)
+		FROM squad_creature WHERE user_id = ? ORDER BY squad_id, position`), user.ID)
 	if err != nil {
 		return sporenet.UserRecord{}, fmt.Errorf("squadCreatures: %w", err)
 	}
@@ -405,7 +405,7 @@ func loadRecord(ctx context.Context, tx *sqlx.Tx, loginName string) (sporenet.Us
 		record.Squads[index].CreatureIDs[row.Position] = row.CreatureID
 	}
 	creatures := []creatureRow{}
-	err = tx.SelectContext(ctx, &creatures, `SELECT * FROM creature WHERE user_id = ? ORDER BY id`, user.ID)
+	err = tx.SelectContext(ctx, &creatures, tx.Rebind(`SELECT * FROM creature WHERE user_id = ? ORDER BY id`), user.ID)
 	if err != nil {
 		return sporenet.UserRecord{}, fmt.Errorf("creaturesSelect: %w", err)
 	}
@@ -420,9 +420,9 @@ func loadRecord(ctx context.Context, tx *sqlx.Tx, loginName string) (sporenet.Us
 		creatureByID[row.ID] = creature
 	}
 	creatureStats := []creatureStatRow{}
-	err = tx.SelectContext(ctx, &creatureStats, `
+	err = tx.SelectContext(ctx, &creatureStats, tx.Rebind(`
 		SELECT user_id, creature_id, position, name, maximum, current
-		FROM creature_stat WHERE user_id = ? ORDER BY creature_id, position`, user.ID)
+		FROM creature_stat WHERE user_id = ? ORDER BY creature_id, position`), user.ID)
 	if err != nil {
 		return sporenet.UserRecord{}, fmt.Errorf("creatureStats: %w", err)
 	}
@@ -436,9 +436,9 @@ func loadRecord(ctx context.Context, tx *sqlx.Tx, loginName string) (sporenet.Us
 		})
 	}
 	creatureAbilityStats := []creatureAbilityStatRow{}
-	err = tx.SelectContext(ctx, &creatureAbilityStats, `
+	err = tx.SelectContext(ctx, &creatureAbilityStats, tx.Rebind(`
 		SELECT user_id, creature_id, position, ability_key, token, token_value
-		FROM creature_ability_stat WHERE user_id = ? ORDER BY creature_id, position`, user.ID)
+		FROM creature_ability_stat WHERE user_id = ? ORDER BY creature_id, position`), user.ID)
 	if err != nil {
 		return sporenet.UserRecord{}, fmt.Errorf("creatureAbilityStats: %w", err)
 	}
@@ -452,7 +452,7 @@ func loadRecord(ctx context.Context, tx *sqlx.Tx, loginName string) (sporenet.Us
 		})
 	}
 	parts := []partRow{}
-	err = tx.SelectContext(ctx, &parts, `SELECT * FROM part WHERE user_id = ? ORDER BY position`, user.ID)
+	err = tx.SelectContext(ctx, &parts, tx.Rebind(`SELECT * FROM part WHERE user_id = ? ORDER BY position`), user.ID)
 	if err != nil {
 		return sporenet.UserRecord{}, fmt.Errorf("partsSelect: %w", err)
 	}
@@ -472,7 +472,7 @@ func loadRecord(ctx context.Context, tx *sqlx.Tx, loginName string) (sporenet.Us
 		return sporenet.UserRecord{}, fmt.Errorf("shopLoad: %w", err)
 	}
 	extensions := []extensionRow{}
-	err = tx.SelectContext(ctx, &extensions, `SELECT * FROM extension WHERE user_id = ? ORDER BY position`, user.ID)
+	err = tx.SelectContext(ctx, &extensions, tx.Rebind(`SELECT * FROM extension WHERE user_id = ? ORDER BY position`), user.ID)
 	if err != nil {
 		return sporenet.UserRecord{}, fmt.Errorf("extensionsSelect: %w", err)
 	}

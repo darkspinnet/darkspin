@@ -1,4 +1,4 @@
-package sqlite
+package sqlstore
 
 import (
 	"context"
@@ -39,7 +39,7 @@ func writePartShop(ctx context.Context, tx *sqlx.Tx, record sporenet.UserRecord)
 
 func loadPartShop(ctx context.Context, tx *sqlx.Tx, userID int64) (sporenet.PartShopState, error) {
 	var row partShopRow
-	err := tx.GetContext(ctx, &row, `SELECT * FROM part_shop WHERE user_id = ?`, userID)
+	err := tx.GetContext(ctx, &row, tx.Rebind(`SELECT * FROM part_shop WHERE user_id = ?`), userID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return sporenet.PartShopState{}, nil
 	}

@@ -1,4 +1,4 @@
-package sqlite
+package sqlstore
 
 import (
 	"context"
@@ -63,7 +63,7 @@ func writePVPResults(ctx context.Context, tx *sqlx.Tx, record sporenet.UserRecor
 
 func loadPVPResults(ctx context.Context, tx *sqlx.Tx, userID int64) ([]sporenet.PVPMatchResult, error) {
 	rows := make([]pvpMatchResultRow, 0)
-	err := tx.SelectContext(ctx, &rows, `SELECT * FROM pvp_match_result WHERE user_id = ? ORDER BY match_id`, userID)
+	err := tx.SelectContext(ctx, &rows, tx.Rebind(`SELECT * FROM pvp_match_result WHERE user_id = ? ORDER BY match_id`), userID)
 	if err != nil {
 		return nil, fmt.Errorf("pvpSelect: %w", err)
 	}

@@ -83,13 +83,13 @@ func (e *Mesh) projectContactTarget(
 	return projection, nil
 }
 
-// Terrain projection can move the near contact into another collision box.
-// Retain a validated approach instead of rejecting the whole movement click.
+// Terrain projection can move the near contact into another collision box or
+// outside the walkable mesh. Back off to a validated approach in either case.
 func (e *Mesh) projectContactApproach(
 	start Projection, contact Vec3, options ProjectionOptions,
 ) (Projection, error) {
 	projection, err := e.Project(contact, options)
-	if !errors.Is(err, ErrProjectionObstructed) {
+	if !errors.Is(err, ErrProjectionObstructed) && !errors.Is(err, ErrProjectionUnavailable) {
 		if err != nil {
 			return Projection{}, fmt.Errorf("approachProject: %w", err)
 		}
@@ -105,7 +105,7 @@ func (e *Mesh) projectContactApproach(
 		fraction := (nearFraction + farFraction) / 2
 		candidate := add(start.Position, scale(delta, fraction))
 		projection, err = e.Project(candidate, options)
-		if errors.Is(err, ErrProjectionObstructed) {
+		if errors.Is(err, ErrProjectionObstructed) || errors.Is(err, ErrProjectionUnavailable) {
 			farFraction = fraction
 			continue
 		}

@@ -2,7 +2,7 @@
 set -eu
 umask 077
 
-# First install only. After that, darkrun bootstrap owns updates and recovery.
+# First install only. Bootstrap owns later snapshots, updates and recovery.
 root=${DARKSPIN_BOOTSTRAP_PATH:-/darkspin}
 case "$root" in /*) ;; *) echo 'Bootstrap path must be absolute' >&2; exit 1;; esac
 if [ -L "$root" ] || [ -L "$root/bin" ] || [ -L "$root/bin/darkrun" ]; then
@@ -58,4 +58,16 @@ if [ ! -e "$binary" ]; then
 fi
 [ -f "$binary" ] && [ -x "$binary" ] || { echo 'Installed darkrun is not executable' >&2; exit 1; }
 if [ "$#" -eq 0 ]; then set -- bootstrap; fi
+if [ "$1" = server ]; then
+  # Direct mode must not bypass an interrupted bootstrap transaction.
+  if [ -e "$root/firstboot.json" ]; then
+    echo 'Run bootstrap to recover the pending update before starting directly' >&2
+    exit 1
+  fi
+  echo 'Starting directly without scheduled bootstrap backups or updates' >&2
+  mkdir -p "$root/runtime"
+  unset DARKSPIN_BOOTSTRAP_ROOT
+  shift
+  set -- server --config "$root/runtime/darkspin.toml" --dedicated "$@"
+fi
 exec "$binary" "$@"

@@ -11,6 +11,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/instance"
 	server "github.com/darkspinnet/darkspin/server/runtime"
+	"github.com/darkspinnet/darkspin/server/runtime/playerstore"
 	"github.com/spf13/cobra"
 )
 
@@ -19,7 +20,7 @@ func newServerCommand() *cobra.Command {
 
 	serverCmd := &cobra.Command{
 		Use:   "server",
-		Short: "Start the combined account login and game server if not already running",
+		Short: "Start the combined account login and game server (PostgreSQL required)",
 		Args:  cobra.NoArgs,
 		RunE:  options.run,
 	}
@@ -83,6 +84,10 @@ func (e *serverCommandOptions) run(cmd *cobra.Command, _ []string) (resultErr er
 	if err != nil {
 		return fmt.Errorf("serverEnvironment: %w", err)
 	}
+	e.server.Postgres, err = playerstore.FromEnvironment()
+	if err != nil {
+		return fmt.Errorf("postgresEnvironment: %w", err)
+	}
 	contentGamePath := e.contentGamePath
 	if contentGamePath == "" {
 		contentGamePath = e.server.GamePath
@@ -139,6 +144,9 @@ func (e *serverCommandOptions) run(cmd *cobra.Command, _ []string) (resultErr er
 	config, err := e.setup.prepare(cmd, configPath)
 	if err != nil {
 		return fmt.Errorf("serverSetup: %w", err)
+	}
+	if !config.Bool(game.ConfigServerIsDedicated) {
+		return errors.New("PostgreSQL player storage requires --dedicated")
 	}
 	if bootstrapRoot != "" {
 		e.server.MaintenanceSchedule, err = bootstrapSchedule(config, bootstrapRoot)

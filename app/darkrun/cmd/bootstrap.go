@@ -14,10 +14,12 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/bootstrap"
+	postgresbackup "github.com/darkspinnet/darkspin/server/bootstrap/postgres"
 	"github.com/darkspinnet/darkspin/server/buildinfo"
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/instance"
 	"github.com/darkspinnet/darkspin/server/maintenance"
+	"github.com/darkspinnet/darkspin/server/runtime/playerstore"
 	"github.com/spf13/cobra"
 )
 
@@ -36,7 +38,7 @@ type bootstrapOptions struct {
 
 func newBootstrapCommand() *cobra.Command {
 	e := &bootstrapOptions{}
-	command := &cobra.Command{Use: "bootstrap", Short: "Supervise a dedicated Linux server with scheduled backups and updates", Args: cobra.NoArgs, RunE: e.run}
+	command := &cobra.Command{Use: "bootstrap", Short: "Supervise a dedicated server with PostgreSQL backups and updates", Args: cobra.NoArgs, RunE: e.run}
 	e.setup.registerFlags(command)
 	command.Flags().StringVar(&e.rootPath, "path", "./darkspin", "bootstrap root containing bin, runtime, and backup")
 	command.Flags().StringVar(&e.configPath, "config", "", "must be PATH/runtime/darkspin.toml")
@@ -68,10 +70,18 @@ func runBuildInfo(command *cobra.Command, args []string) error {
 }
 
 func (e *bootstrapOptions) run(command *cobra.Command, args []string) error {
+	configuration, err := playerstore.FromEnvironment()
+	if err != nil {
+		return fmt.Errorf("postgresEnvironment: %w", err)
+	}
 	if runtime.GOOS != "linux" {
 		return errors.New("dedicated bootstrap requires Linux; use server mode on this platform")
 	}
-	err := applyBootstrapEnvironment(command)
+	databaseBackup, err := postgresbackup.New(command.Context(), configuration)
+	if err != nil {
+		return fmt.Errorf("postgresBackup: %w", err)
+	}
+	err = applyBootstrapEnvironment(command)
 	if err != nil {
 		return fmt.Errorf("bootstrapEnvironment: %w", err)
 	}
@@ -96,6 +106,7 @@ func (e *bootstrapOptions) run(command *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("bootstrapLayout: %w", err)
 	}
+	storage.DatabaseBackup = databaseBackup
 	lease, err := instance.Acquire(filepath.Join(rootPath, "bootstrap-lock"))
 	if err != nil {
 		return fmt.Errorf("bootstrapLease: %w", err)
@@ -106,6 +117,7 @@ func (e *bootstrapOptions) run(command *cobra.Command, args []string) error {
 		return fmt.Errorf("bootstrapPrepare: %w", err)
 	}
 	options.BootstrapLease = lease
+	options.DatabaseBackup = databaseBackup
 	options.Logger = slog.New(slog.NewTextHandler(command.ErrOrStderr(), nil))
 	err = bootstrap.Run(command.Context(), options)
 	if err != nil {
@@ -128,7 +140,7 @@ func (e *bootstrapOptions) prepare(command *cobra.Command, rootPath, configPath 
 		return options, fmt.Errorf("settingsLease: %w", err)
 	}
 	defer closeBootstrapLease(lease, command)
-	isRecovered, err := storage.Recover()
+	isRecovered, err := storage.RecoverContext(command.Context())
 	if err != nil {
 		return options, fmt.Errorf("settingsRecover: %w", err)
 	}
@@ -156,6 +168,9 @@ func (e *bootstrapOptions) prepare(command *cobra.Command, rootPath, configPath 
 	config, err := e.setup.prepare(command, configPath)
 	if err != nil {
 		return options, fmt.Errorf("serverSettings: %w", err)
+	}
+	if !config.Bool(game.ConfigServerIsDedicated) {
+		return options, errors.New("PostgreSQL bootstrap requires --dedicated")
 	}
 	settings := []struct {
 		flag    string
@@ -310,7 +325,7 @@ func validateBootstrapPaths(command *cobra.Command, rootPath, configPath, reques
 		return errors.New("bootstrap content must remain in PATH/runtime/darkspin/cache")
 	}
 	if config.String(game.ConfigStorageDriver) != "sqlite" {
-		return errors.New("bootstrap matching database backups require sqlite storage")
+		return errors.New("bootstrap requires the local SQLite content driver; player storage uses PostgreSQL")
 	}
 	return nil
 }

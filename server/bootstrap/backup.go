@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -33,6 +34,14 @@ func (e *Storage) backupPath(id string) (string, error) {
 
 // Snapshot captures the executable and all persistent databases after clean stop.
 func (e *Storage) Snapshot(buildID string) (string, error) {
+	id, err := e.SnapshotContext(context.Background(), buildID)
+	if err != nil {
+		return "", fmt.Errorf("snapshotContext: %w", err)
+	}
+	return id, nil
+}
+
+func (e *Storage) SnapshotContext(ctx context.Context, buildID string) (string, error) {
 	err := e.checkPath(e.path("bin", "darkrun"))
 	if err != nil {
 		return "", fmt.Errorf("snapshotCheck: %w", err)
@@ -72,6 +81,10 @@ func (e *Storage) Snapshot(buildID string) (string, error) {
 		}
 	}
 	manifest := snapshotManifest{Created: now.Format(time.RFC3339Nano), PreviousBuild: buildID, PreviousHash: previousHash, IsComplete: true}
+	err = e.snapshotDatabase(ctx, destination, &manifest)
+	if err != nil {
+		return "", fmt.Errorf("databaseSnapshot: %w", err)
+	}
 	err = e.writeJSON(filepath.Join(destination, "snapshot.json"), manifest)
 	if err != nil {
 		return "", fmt.Errorf("snapshotManifest: %w", err)
@@ -82,6 +95,14 @@ func (e *Storage) Snapshot(buildID string) (string, error) {
 // Recover must precede the first process launch after bootstrap starts. A
 // transaction always means the candidate has not yet completed its first boot.
 func (e *Storage) Recover() (bool, error) {
+	isRecovered, err := e.RecoverContext(context.Background())
+	if err != nil {
+		return false, fmt.Errorf("recoverContext: %w", err)
+	}
+	return isRecovered, nil
+}
+
+func (e *Storage) RecoverContext(ctx context.Context) (bool, error) {
 	err := e.checkPath(e.path("firstboot.json"))
 	if err != nil {
 		return false, fmt.Errorf("recoverCheck: %w", err)
@@ -111,7 +132,7 @@ func (e *Storage) Recover() (bool, error) {
 		}
 		return false, nil
 	}
-	err = e.Rollback()
+	err = e.RollbackContext(ctx)
 	if err != nil {
 		return false, fmt.Errorf("recoverRollback: %w", err)
 	}
@@ -121,6 +142,14 @@ func (e *Storage) Recover() (bool, error) {
 // Rollback is repeatable at every crash point. Failed candidate state is retained
 // beside its matching snapshot. Restore stages never replace the only backup.
 func (e *Storage) Rollback() error {
+	err := e.RollbackContext(context.Background())
+	if err != nil {
+		return fmt.Errorf("rollbackContext: %w", err)
+	}
+	return nil
+}
+
+func (e *Storage) RollbackContext(ctx context.Context) error {
 	statePath := e.path("firstboot.json")
 	var transaction updateTransaction
 	err := e.checkPath(statePath)
@@ -163,10 +192,20 @@ func (e *Storage) Rollback() error {
 	if actualHash != manifest.PreviousHash {
 		return errors.New("rollback binary checksum mismatch")
 	}
+	err = e.validateDatabaseSnapshot(backup, manifest)
+	if err != nil {
+		return fmt.Errorf("databaseValidate: %w", err)
+	}
 	transaction.Phase = "restoring"
 	err = e.writeJSON(statePath, transaction)
 	if err != nil {
 		return fmt.Errorf("rollbackMark: %w", err)
+	}
+	if e.DatabaseBackup != nil {
+		err = e.DatabaseBackup.Restore(ctx, filepath.Join(backup, "postgres.dump"))
+		if err != nil {
+			return fmt.Errorf("databaseRestore: %w", err)
+		}
 	}
 	for _, rel := range snapshotPaths {
 		err = e.restorePath(backup, rel)

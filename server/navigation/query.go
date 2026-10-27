@@ -25,6 +25,7 @@ type Projection struct {
 }
 
 var ErrProjectionObstructed = errors.New("navigation projection obstructed")
+var ErrProjectionUnavailable = errors.New("navigation projection unavailable")
 
 type PathOptions struct {
 	ProjectionOptions
@@ -107,7 +108,7 @@ func projectPolygonIndexes(
 		}
 	}
 	if math.IsInf(float64(bestSquared), 1) {
-		return Projection{}, errors.New("navigation projection unavailable")
+		return Projection{}, ErrProjectionUnavailable
 	}
 	return best, nil
 }

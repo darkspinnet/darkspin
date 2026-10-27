@@ -27,6 +27,7 @@ type Options struct {
 	StartupTimeout  time.Duration
 	ShutdownTimeout time.Duration
 	RetentionDays   int
+	DatabaseBackup  DatabaseBackup
 	// BootstrapLease may be acquired by the CLI before preparing configuration.
 	// Run closes this lease on return, including startup failures.
 	BootstrapLease *instance.Lease
@@ -53,6 +54,9 @@ func Run(ctx context.Context, req Options) error {
 	}
 	if strings.TrimSpace(req.RootPath) == "" {
 		return errors.New("bootstrap root is required")
+	}
+	if req.DatabaseBackup == nil {
+		return errors.New("bootstrap requires PostgreSQL backup support")
 	}
 	rootPath, err := filepath.Abs(req.RootPath)
 	if err != nil {
@@ -85,6 +89,7 @@ func Run(ctx context.Context, req Options) error {
 	if err != nil {
 		return fmt.Errorf("storageOpen: %w", err)
 	}
+	storage.DatabaseBackup = req.DatabaseBackup
 	bootstrapLease := req.BootstrapLease
 	if bootstrapLease == nil {
 		bootstrapLease, err = instance.Acquire(filepath.Join(rootPath, "bootstrap-lock"))
@@ -96,14 +101,14 @@ func Run(ctx context.Context, req Options) error {
 	e := &supervisor{option: req, storage: storage,
 		binaryPath:  filepath.Join(rootPath, "bin", installedBinaryName()),
 		runtimePath: filepath.Join(filepath.Dir(req.ConfigPath), "darkspin")}
-	err = e.recoverStopped()
+	err = e.recoverStopped(ctx)
 	if err != nil {
 		return fmt.Errorf("startupRecover: %w", err)
 	}
 	isFirstBoot, err := e.updateStopped(ctx)
 	if err != nil {
 		req.Logger.Error("startup update failed; restoring installed server", "error", err)
-		err = e.rollbackStopped()
+		err = e.rollbackStopped(ctx)
 		if err != nil {
 			return fmt.Errorf("startupRollback: %w", err)
 		}
@@ -122,13 +127,13 @@ func closeLease(lease *instance.Lease, logger *slog.Logger) {
 	}
 }
 
-func (e *supervisor) recoverStopped() error {
+func (e *supervisor) recoverStopped(ctx context.Context) error {
 	lease, err := instance.Acquire(e.runtimePath)
 	if err != nil {
 		return fmt.Errorf("recoveryLease: %w", err)
 	}
 	defer closeLease(lease, e.option.Logger)
-	isRecovered, err := e.storage.Recover()
+	isRecovered, err := e.storage.RecoverContext(ctx)
 	if err != nil {
 		return fmt.Errorf("candidateRecover: %w", err)
 	}
@@ -151,7 +156,7 @@ func (e *supervisor) run(ctx context.Context, isFirstBoot bool) error {
 			return nil
 		}
 		if isFirstBoot && !result.isHealthy {
-			err := e.rollbackStopped()
+			err := e.rollbackStopped(ctx)
 			if err != nil {
 				return fmt.Errorf("firstbootRollback: %w", err)
 			}
@@ -165,7 +170,7 @@ func (e *supervisor) run(ctx context.Context, isFirstBoot bool) error {
 			if err != nil {
 				e.option.Logger.Error("maintenance update failed; restarting installed server", "error", err)
 				// A failed install may already have written firstboot. Restore before restart.
-				err = e.rollbackStopped()
+				err = e.rollbackStopped(ctx)
 				if err != nil {
 					return fmt.Errorf("updateRollback: %w", err)
 				}
@@ -196,13 +201,13 @@ func (e *supervisor) run(ctx context.Context, isFirstBoot bool) error {
 	return nil
 }
 
-func (e *supervisor) rollbackStopped() error {
+func (e *supervisor) rollbackStopped(ctx context.Context) error {
 	lease, err := instance.Acquire(e.runtimePath)
 	if err != nil {
 		return fmt.Errorf("rollbackLease: %w", err)
 	}
 	defer closeLease(lease, e.option.Logger)
-	isRecovered, err := e.storage.Recover()
+	isRecovered, err := e.storage.RecoverContext(ctx)
 	if err != nil {
 		return fmt.Errorf("candidateRollback: %w", err)
 	}
@@ -261,7 +266,7 @@ func (e *supervisor) updateStopped(ctx context.Context) (bool, error) {
 	if identity.BuildID != request.BuildID {
 		return false, errors.New("maintenance request does not match the installed server build")
 	}
-	backupID, err := e.storage.Snapshot(request.BuildID)
+	backupID, err := e.storage.SnapshotContext(ctx, request.BuildID)
 	if err != nil {
 		return false, fmt.Errorf("runtimeSnapshot: %w", err)
 	}

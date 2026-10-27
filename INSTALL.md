@@ -39,10 +39,12 @@ their executable names and dialog text without duplicating Win32 operations.
 
 ## Headless container deployment
 
-The headless SQLite server runs account login and gameplay together in one process and follows DarkSpinner's automatic preparation: provide a readable build-103 installation and keep it available for content rebuilds; startup creates its internal TOML settings and authentication secret. A separate `darkrun auth` process is not needed. New Darkrun configurations require account passwords and default to loopback. Existing saved settings retain their login mode. No hand-authored configuration is required. On a native host with the build-103 game installed, initial startup for remote players is:
+The headless server requires PostgreSQL for player storage and runs account login and gameplay together in one process. Provide a readable build-103 installation and keep it available for content rebuilds; startup creates its internal TOML settings, authentication secret, and missing PostgreSQL tables. A separate `darkrun auth` process is not needed. New Darkrun configurations require account passwords and default to loopback. On a native host, provision a PostgreSQL database and role with table-creation permission, then export its connection settings before starting:
 
 ```sh
-DARKSPIN_ADVERTISED_HOST=192.0.2.10 DARKSPIN_GAME_PATH=/path/to/Game darkrun server
+export PGHOST=database.example PGDATABASE=darkspin PGUSER=darkspin
+export PGPASSWORD='replace-with-your-password' PGSSLMODE=verify-full
+DARKSPIN_ADVERTISED_HOST=192.0.2.10 DARKSPIN_GAME_PATH=/path/to/Game darkrun server --dedicated
 ```
 
 Replace `192.0.2.10` with the IPv4 address players can reach. Later starts reuse saved network settings, but keep `DARKSPIN_GAME_PATH` set on every invocation (or use the installation beside the executable). Environment settings use the existing CLI parsing and saved configuration, with precedence **explicit CLI flags → nonempty environment settings → persisted settings or defaults**. Empty environment settings are ignored; reset optional saved settings explicitly with CLI flags, such as `--content-path=""` or `--bind-host=""`.
@@ -59,7 +61,7 @@ Replace `192.0.2.10` with the IPv4 address players can reach. Later starts reuse
 
 The game path is only a preparation source, never a destination for writes. Darkrun and Darkspinner call the same content preparation routine: valid caches are reused, while missing or stale caches are rebuilt from this path before server listeners start. Keep the source mount available across upgrades for automatic rebuilds. Headless startup and update preflight validate the source version and required package indexes even when caches are current; copied caches cannot replace the required installation. A failed database import leaves the previous database in place and stops startup. Relative content-path options are saved as absolute paths. Config and content paths remain internal TOML-backed settings where applicable; environment variables provide startup inputs rather than a separate configuration store.
 
-The server holds an operating-system lock for its runtime through preparation, startup and shutdown. Another `darkrun server` invocation for that runtime reports that an instance is running or starting and exits without changing its settings or opening another database. This is an ownership check, not a readiness or gameplay check. Stop the owner before changing startup settings or using `--prepare-only`. The lock file may remain after exit; the operating system releases the lock when the process exits. Keep one server service per runtime; do not scale replicas against the same SQLite saves.
+The server holds an operating-system lock for its runtime through preparation, startup and shutdown. Another correctly configured `darkrun server` invocation for that runtime reports that an instance is running or starting and exits without changing its settings or opening another database. This is an ownership check, not a readiness or gameplay check. Stop the owner before changing startup settings or using `--prepare-only`. The lock file may remain after exit; the operating system releases the lock when the process exits. Keep one server service per runtime and PostgreSQL player database.
 
 Add `--prepare-only` to generate settings and prepare or verify content without opening server listeners. The same setup fields are editable through Darkspinner's Config interface. Connect from another Darkspinner using its Remote Servers account flow; dedicated mode requires a password even for loopback connections. Existing passwordless local profiles must not be used as dedicated login credentials.
 
@@ -67,11 +69,11 @@ When reusing an existing local configuration, explicitly set `DARKSPIN_IS_DEDICA
 
 ## Downloadable Compose setup
 
-Use the [Compose setup guide](deployment/README.md) for the [unstable setup ZIP](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-compose-unstable.zip), required game mount, saved settings, scheduled maintenance and rollback. Stable setup is not available yet.
+Use the [Compose setup guide](deployment/README.md) for the [unstable setup ZIP](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-compose-unstable.zip), required game mount, PostgreSQL initialization, and persistent storage. Stable setup is not available yet.
 
-The container invokes `darkrun bootstrap` from a writable host directory. Bootstrap supervises `darkrun server`, snapshots its stopped binary and saves together, installs verified unstable binaries, and restores the matching snapshot if first startup fails. Daily warnings begin at 03:30 UTC and the default shutdown is 04:00. Numeric five-field cron, warning duration, startup timeout and retention are configurable through environment overrides and saved `[bootstrap]` settings.
+Compose always provisions PostgreSQL with a persistent named volume and starts `darkrun bootstrap` after database readiness. The container downloads and verifies its initial binary into the writable runtime mount. Bootstrap supervises the server, captures a compressed `pg_dump` alongside stopped-runtime file backups, and restores the matching database and files if an update fails its first boot. The infrastructure image includes PostgreSQL 18 client tools.
 
-Mount the complete `darkspin/` directory containing `bin/darkrun`, `runtime/` and `backup/`. Configuration is fixed at `runtime/darkspin.toml` within it so backups cover the entire runtime. The game installation remains a required read-only mount at `/game`. No Docker socket or cron sidecar is needed; ordinary updates replace the executable rather than rebuilding an application image. See the guide before migrating an older runtime layout.
+Mount the complete `darkspin/` directory containing `bin/darkrun`, `runtime/`, and `backup/`. Configuration lives at `runtime/darkspin.toml`; live PostgreSQL data lives in its separate named volume, and completed snapshots include `backup/<date>/<snapshot>/postgres.dump`. The game installation remains a required read-only mount at `/game`. See the guide before migrating an older runtime layout; existing SQLite players are not imported automatically.
 
 ## Packaging and source development
 
@@ -313,10 +315,10 @@ world_player_limit = 25
 
 `world_player_limit` caps simultaneously authenticated users across the server;
 it is separate from game's four-player limit for an individual Blaze game
-instance. Local SQLite defaults to 25. A future PostgreSQL deployment can raise
+instance. The default is 25. A PostgreSQL deployment can raise
 the value explicitly after sizing the database and server host.
 
-Accepted chat messages are stored in SQLite's `chat_log` table and emitted as
+Accepted chat messages are stored in the selected player database's `chat_log` table and emitted as
 JSON Lines to stdout by default; no separate chat log file is written:
 
 ```toml
@@ -325,7 +327,7 @@ is_stdout_enabled = true
 ```
 
 Set `is_stdout_enabled = false` to disable stdout output. The database audit
-remains enabled when the SQLite storage adapter is active. Legacy `file_path`
+remains enabled with either SQLite or PostgreSQL. Legacy `file_path`
 settings are ignored.
 
 Persistence uses `darkspin/saves/darkspin.db` for mutable player state and
@@ -337,6 +339,12 @@ migration/version bookkeeping during the current destructive development phase:
 [storage]
 driver = "sqlite"
 ```
+
+`darkrun server` requires PostgreSQL and dedicated mode. Set `DARKSPIN_POSTGRES_URL`, or supply the standard `PGHOST`, `PGDATABASE`, and `PGUSER` variables together. `PGPORT`, `PGPASSWORD`, `PGSSLMODE`, `PGSSLROOTCERT`, and `PGCONNECT_TIMEOUT` configure the connection. Missing or partial settings and connection failures stop startup rather than falling back. Connection credentials are never saved to TOML, and desktop local play remains on SQLite.
+
+PostgreSQL stores player profiles, statistics, chat, and mission checkpoints; `content.db` remains local SQLite. Switching storage does not migrate existing data. Use one active server per player database. Linux `darkrun bootstrap` supports scheduled file-plus-`pg_dump` snapshots, binary updates, and matching database restoration. It requires `pg_dump`/`pg_restore`, access to the `postgres` maintenance database, and ownership plus `CREATEDB` (or a superuser) for rollback. Direct `darkrun server` does not schedule backups. See [the Compose guide](deployment/README.md#scheduled-backups-updates-and-recovery) for configuration and recovery details.
+
+Compose always provisions PostgreSQL. `POSTGRES_DB`, `POSTGRES_USER`, and required `POSTGRES_PASSWORD` configure both PostgreSQL initialization and Darkrun's connection. Compose persists PostgreSQL 18 in a named disk volume and waits for database readiness; Darkrun creates its tables at startup. Initialization settings only apply to an empty volume. Ordinary container replacement and `docker compose down` retain data; `down -v` deletes the database volume. SQLite player storage is reserved for desktop local play.
 
 Runtime layout is intentionally implicit: SQLite uses
 `darkspin/saves/darkspin.db` and `darkspin/cache/content.db`, web content is
@@ -368,8 +376,7 @@ when the game exits. A marked proxy left by a crash is removed on the next
 DarkSpinner startup; an unrelated `VERSION.dll` is never overwritten.
 
 Use the built-in database command for focused inspection and updates. It reads
-the storage driver from `darkspin.toml` and resolves the requested table to either
-`darkspin/saves/darkspin.db` or `darkspin/cache/content.db`:
+the configuration and resolves the requested table to either `darkspin/saves/darkspin.db` or `darkspin/cache/content.db`. With a dedicated configuration and PostgreSQL environment settings, `darkrun db` routes player tables to PostgreSQL and content tables to local SQLite. Use the same environment as the running server:
 
 ```sh
 darkspin db user get 1

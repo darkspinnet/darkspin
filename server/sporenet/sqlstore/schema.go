@@ -1,10 +1,10 @@
-package sqlite
+package sqlstore
 
 const chatLogTimeFormat = "2006-01-02T15:04:05.999999999Z07:00"
 
 var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS pvp_match_result (
-		user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+		user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
 		match_id TEXT NOT NULL,
 		completed_at_unix INTEGER NOT NULL,
 		is_victory INTEGER NOT NULL,
@@ -23,12 +23,12 @@ var schemaStatements = []string{
 		PRIMARY KEY (user_id, match_id)
 	)`,
 	`CREATE TABLE IF NOT EXISTS part_shop (
-		user_id INTEGER PRIMARY KEY REFERENCES user(id) ON DELETE CASCADE,
+		user_id INTEGER PRIMARY KEY REFERENCES "user"(id) ON DELETE CASCADE,
 		expires_at INTEGER NOT NULL DEFAULT 0,
 		next_part_id INTEGER NOT NULL DEFAULT 0,
 		item_level INTEGER NOT NULL DEFAULT 0
 	)`,
-	`CREATE TABLE IF NOT EXISTS user (
+	`CREATE TABLE IF NOT EXISTS "user" (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		login_name TEXT NOT NULL COLLATE NOCASE UNIQUE,
 		display_name TEXT NOT NULL,
@@ -69,13 +69,13 @@ var schemaStatements = []string{
 		limited_edition_used_mask INTEGER NOT NULL DEFAULT 0
 	)`,
 	`CREATE TABLE IF NOT EXISTS setting (
-		user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+		user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
 		key TEXT NOT NULL,
 		value TEXT NOT NULL,
 		PRIMARY KEY (user_id, key)
 	)`,
 	`CREATE TABLE IF NOT EXISTS user_stat (
-		user_id INTEGER PRIMARY KEY REFERENCES user(id) ON DELETE CASCADE,
+		user_id INTEGER PRIMARY KEY REFERENCES "user"(id) ON DELETE CASCADE,
 		pve_play_time_second INTEGER NOT NULL DEFAULT 0,
 		pve_minion_kill INTEGER NOT NULL DEFAULT 0,
 		pve_special_kill INTEGER NOT NULL DEFAULT 0,
@@ -101,7 +101,7 @@ var schemaStatements = []string{
 		pvp_healing_maximum REAL NOT NULL DEFAULT 0
 	)`,
 	`CREATE TABLE IF NOT EXISTS user_event (
-		user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+		user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
 		key TEXT NOT NULL,
 		message_id INTEGER NOT NULL,
 		metadata TEXT NOT NULL,
@@ -110,7 +110,7 @@ var schemaStatements = []string{
 		PRIMARY KEY (user_id, key)
 	)`,
 	`CREATE TABLE IF NOT EXISTS campaign_experience (
-		user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+		user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
 		result_id INTEGER NOT NULL,
 		amount INTEGER NOT NULL,
 		cumulative_xp INTEGER NOT NULL,
@@ -118,7 +118,7 @@ var schemaStatements = []string{
 		PRIMARY KEY (user_id, result_id)
 	)`,
 	`CREATE TABLE IF NOT EXISTS user_association (
-		user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+		user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
 		list_type INTEGER NOT NULL,
 		member_id INTEGER NOT NULL,
 		name TEXT NOT NULL,
@@ -127,7 +127,7 @@ var schemaStatements = []string{
 	)`,
 	`CREATE TABLE IF NOT EXISTS squad (
 		id INTEGER NOT NULL,
-		user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+		user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
 		name TEXT NOT NULL,
 		category TEXT NOT NULL,
 		slot INTEGER NOT NULL,
@@ -135,7 +135,7 @@ var schemaStatements = []string{
 		PRIMARY KEY (id, user_id)
 	)`,
 	`CREATE TABLE IF NOT EXISTS squad_creature (
-		user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+		user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
 		squad_id INTEGER NOT NULL,
 		creature_id INTEGER NOT NULL,
 		position INTEGER NOT NULL,
@@ -144,7 +144,7 @@ var schemaStatements = []string{
 	)`,
 	`CREATE TABLE IF NOT EXISTS creature (
 		id INTEGER NOT NULL,
-		user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+		user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
 		template_name TEXT NOT NULL,
 		version INTEGER NOT NULL,
 		gear_score REAL NOT NULL,
@@ -175,7 +175,7 @@ var schemaStatements = []string{
 		FOREIGN KEY (creature_id, user_id) REFERENCES creature(id, user_id) ON DELETE CASCADE
 	)`,
 	`CREATE TABLE IF NOT EXISTS part (
-		user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+		user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
 		position INTEGER NOT NULL,
 		item_id INTEGER NOT NULL DEFAULT 0,
 		reference_id INTEGER NOT NULL DEFAULT 0,
@@ -196,7 +196,7 @@ var schemaStatements = []string{
 		PRIMARY KEY (user_id, position)
 	)`,
 	`CREATE TABLE IF NOT EXISTS extension (
-		user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+		user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
 		position INTEGER NOT NULL,
 		name TEXT NOT NULL,
 		value BLOB NOT NULL,
@@ -214,24 +214,25 @@ var schemaStatements = []string{
 		sent_at TEXT NOT NULL
 	)`,
 	`CREATE INDEX IF NOT EXISTS creature_user_id ON creature(user_id)`,
+	`CREATE INDEX IF NOT EXISTS user_login_lower ON "user"(LOWER(login_name))`,
 	`CREATE INDEX IF NOT EXISTS squad_user_id ON squad(user_id)`,
 	`CREATE INDEX IF NOT EXISTS user_event_occurred_at ON user_event(user_id, occurred_at)`,
 	`CREATE INDEX IF NOT EXISTS user_association_member ON user_association(member_id, list_type)`,
 	`INSERT OR IGNORE INTO user_event (user_id, key, message_id, metadata, occurred_at, is_public)
 		SELECT id, 'level:4', 4, 'Reached Crogenitor level 4.', CAST(strftime('%s', 'now') AS INTEGER), 1
-		FROM user WHERE level >= 4`,
+		FROM "user" WHERE level >= 4`,
 	`INSERT OR IGNORE INTO user_event (user_id, key, message_id, metadata, occurred_at, is_public)
 		SELECT id, 'hero-available:arakna', 4, 'Arakna, the Scout Collector, is now available.', CAST(strftime('%s', 'now') AS INTEGER), 1
-		FROM user WHERE level >= 4`,
+		FROM "user" WHERE level >= 4`,
 	`INSERT OR IGNORE INTO user_event (user_id, key, message_id, metadata, occurred_at, is_public)
 		SELECT id, 'hero-available:vex', 4, 'Vex, the Chrono Shifter, is now available.', CAST(strftime('%s', 'now') AS INTEGER), 1
-		FROM user WHERE level >= 4`,
+		FROM "user" WHERE level >= 4`,
 	`INSERT OR IGNORE INTO user_event (user_id, key, message_id, metadata, occurred_at, is_public)
 		SELECT id, 'hero-available:viper', 4, 'Viper, the Toxic Ravager, is now available.', CAST(strftime('%s', 'now') AS INTEGER), 1
-		FROM user WHERE level >= 4`,
+		FROM "user" WHERE level >= 4`,
 	`INSERT OR IGNORE INTO user_event (user_id, key, message_id, metadata, occurred_at, is_public)
 		SELECT id, 'upgrade-available:hero-genetic', 4, 'A hero genetic upgrade is now available in the Upgrade Store.', CAST(strftime('%s', 'now') AS INTEGER), 1
-		FROM user WHERE level >= 4`,
+		FROM "user" WHERE level >= 4`,
 	`CREATE INDEX IF NOT EXISTS chat_log_sent_at ON chat_log(sent_at)`,
 	`CREATE INDEX IF NOT EXISTS chat_log_sender_id ON chat_log(sender_id)`,
 	`CREATE INDEX IF NOT EXISTS chat_log_target ON chat_log(scope, target_id)`,

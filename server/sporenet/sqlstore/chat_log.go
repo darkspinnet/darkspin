@@ -1,4 +1,4 @@
-package sqlite
+package sqlstore
 
 import (
 	"context"
@@ -21,7 +21,7 @@ type chatLogRow struct {
 }
 
 // Record inserts one accepted chat event into the durable audit log.
-func (r *Repository) Record(ctx context.Context, message chat.Message) error {
+func (e *Repository) Record(ctx context.Context, message chat.Message) error {
 	if ctx == nil {
 		return errors.New("nil context")
 	}
@@ -29,7 +29,7 @@ func (r *Repository) Record(ctx context.Context, message chat.Message) error {
 	if err != nil {
 		return fmt.Errorf("recipientEncode: %w", err)
 	}
-	_, err = r.db.NamedExecContext(ctx, `
+	_, err = e.db.NamedExecContext(ctx, `
 		INSERT INTO chat_log (message_id, sender_id, sender_name, scope, target_id, body, recipient, sent_at)
 		VALUES (:message_id, :sender_id, :sender_name, :scope, :target_id, :body, :recipient, :sent_at)`, chatLogRow{
 		MessageID: message.ID, SenderID: message.Sender.ID, SenderName: message.Sender.Name,

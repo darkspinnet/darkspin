@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,8 +18,17 @@ import (
 // Its methods must only be used while the supervised process is stopped, except
 // ConfirmHealthy, which only commits metadata and prunes old snapshots.
 type Storage struct {
-	root          string
-	retentionDays int
+	root           string
+	retentionDays  int
+	DatabaseBackup DatabaseBackup
+}
+
+// DatabaseBackup captures and restores the exclusive player database while the
+// supervised server is stopped. Identity must exclude credentials.
+type DatabaseBackup interface {
+	Identity() string
+	Dump(context.Context, string) error
+	Restore(context.Context, string) error
 }
 
 type snapshotManifest struct {
@@ -28,6 +38,8 @@ type snapshotManifest struct {
 	CandidateBuild string `json:"candidate_build,omitempty"`
 	CandidateHash  string `json:"candidate_sha256,omitempty"`
 	IsComplete     bool   `json:"is_complete"`
+	DatabaseTarget string `json:"database_target,omitempty"`
+	DatabaseHash   string `json:"database_sha256,omitempty"`
 }
 
 type updateTransaction struct {

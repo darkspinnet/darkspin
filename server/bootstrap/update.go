@@ -181,6 +181,10 @@ func (e *Storage) CheckUpdate(ctx context.Context, manifestURL, backupID string)
 	if !snapshot.IsComplete {
 		return false, errors.New("update requires complete snapshot")
 	}
+	err = e.validateDatabaseSnapshot(backup, snapshot)
+	if err != nil {
+		return false, fmt.Errorf("updateDatabase: %w", err)
+	}
 	currentHash, err := hashFile(e.path("bin", "darkrun"))
 	if err != nil {
 		return false, fmt.Errorf("updateCurrent: %w", err)
@@ -245,12 +249,12 @@ func (e *Storage) CheckUpdate(ctx context.Context, manifestURL, backupID string)
 	}
 	err = os.Rename(candidate, e.path("bin", "darkrun"))
 	if err != nil {
-		rollbackErr := e.Rollback()
+		rollbackErr := e.RollbackContext(ctx)
 		return false, fmt.Errorf("candidateInstall: %w", errors.Join(err, rollbackErr))
 	}
 	err = syncDirectory(e.path("bin"))
 	if err != nil {
-		rollbackErr := e.Rollback()
+		rollbackErr := e.RollbackContext(ctx)
 		return false, fmt.Errorf("candidateSync: %w", errors.Join(err, rollbackErr))
 	}
 	return true, nil

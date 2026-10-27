@@ -42,14 +42,13 @@ import (
 	"github.com/darkspinnet/darkspin/server/snapshot"
 	"github.com/darkspinnet/darkspin/server/sporenet"
 	"github.com/darkspinnet/darkspin/server/sporenet/savebuffer"
-	sporenetsqlite "github.com/darkspinnet/darkspin/server/sporenet/sqlite"
 	sharedtcp "github.com/darkspinnet/darkspin/server/tcp"
 	sharedudp "github.com/darkspinnet/darkspin/server/udp"
 	"github.com/darkspinnet/darkspin/server/util"
 	"github.com/darkspinnet/darkspin/server/zone"
 	zonecheckpoint "github.com/darkspinnet/darkspin/server/zone/checkpoint"
-	checkpointsqlite "github.com/darkspinnet/darkspin/server/zone/checkpoint/sqlite"
 	zonecontentsqlite "github.com/darkspinnet/darkspin/server/zone/content/contentsqlite"
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -60,9 +59,6 @@ const (
 	CacheDirectory          = "cache"
 	UserDatabaseFilename    = "darkspin.db"
 	ContentDatabaseFilename = "content.db"
-	sqliteOpenLimit         = 8
-	sqliteIdleLimit         = 4
-	sqliteBusyTimeout       = 5 * time.Second
 )
 
 // TutorialProfileCompletion reports the durable profile produced by the
@@ -188,6 +184,8 @@ func CompleteTutorialProfile(
 
 // Options controls construction of a Server.
 type Options struct {
+	// Postgres is supplied only by the dedicated darkrun host.
+	Postgres              *pgx.ConnConfig
 	IsModded              bool
 	ModNames              []string
 	GamePath              string
@@ -595,21 +593,33 @@ func New(options Options) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("simulationProgram: %w", err)
 	}
-	userRepository, userStore, err := openUserRepository(config, userDatabasePath)
+	playerStore, err := openPlayerStore(config, userDatabasePath, options.Postgres)
 	if err != nil {
 		return nil, fmt.Errorf("userStore: %w", err)
 	}
+	isCheckpointStoreTransferred := false
+	userRepository := playerStore.Profile
+	userStore := playerStore.Profile
+	checkpointStore := playerStore.Checkpoint
+	logger.Printf("Player storage backend: %s; content storage: sqlite", playerStore.Driver)
+	defer func() {
+		if !isCheckpointStoreTransferred {
+			closeErr := checkpointStore.Close()
+			if closeErr != nil {
+				logger.Printf("Checkpoint initialization cleanup failed: %v", closeErr)
+			}
+		}
+	}()
 	isUserStoreTransferred := false
 	defer func() {
 		if !isUserStoreTransferred && userStore != nil {
-			_ = userStore.Close()
+			closeErr := userStore.Close()
+			if closeErr != nil {
+				logger.Printf("Player storage initialization cleanup failed: %v", closeErr)
+			}
 		}
 	}()
-	snapshotStore, isSnapshotStore := userRepository.(savebuffer.Store)
-	if !isSnapshotStore {
-		return nil, errors.New("profile snapshot storage unavailable")
-	}
-	profileBuffer := savebuffer.New(snapshotStore, logger)
+	profileBuffer := savebuffer.New(userRepository, logger)
 	defer func() {
 		if !isUserStoreTransferred {
 			closeErr := profileBuffer.Close()
@@ -670,24 +680,16 @@ func New(options Options) (*Server, error) {
 			completedProfileCount,
 		)
 	}
-	checkpointCtx, checkpointCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	checkpointStore, err := checkpointsqlite.New(
-		checkpointCtx, userDatabasePath,
-		checkpointsqlite.Options{BusyTimeout: sqliteBusyTimeout},
-	)
-	checkpointCancel()
-	if err != nil {
-		return nil, fmt.Errorf("checkpointStore: %w", err)
-	}
 	checkpointManager := zonecheckpoint.NewManager(checkpointStore, logger)
 	checkpointManager.UseProfileSaver(profileBuffer)
-	isCheckpointStoreTransferred := false
 	defer func() {
 		if isCheckpointStoreTransferred {
 			return
 		}
-		_ = checkpointManager.Close()
-		_ = checkpointStore.Close()
+		closeErr := checkpointManager.Close()
+		if closeErr != nil {
+			logger.Printf("Checkpoint manager initialization cleanup failed: %v", closeErr)
+		}
 	}()
 	worldPlayerLimit, err := config.Uint32(game.ConfigWorldPlayerLimit)
 	if err != nil {
@@ -1036,26 +1038,6 @@ func New(options Options) (*Server, error) {
 	isSnapshotTransferred = true
 	isInstanceTransferred = true
 	return application, nil
-}
-
-func openUserRepository(config *game.Config, databasePath string) (sporenet.UserRepository, io.Closer, error) {
-	driver := strings.ToLower(strings.TrimSpace(config.String(game.ConfigStorageDriver)))
-	switch driver {
-	case "", "sqlite":
-		openCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		repository, err := sporenetsqlite.New(openCtx, databasePath, sporenetsqlite.Options{
-			MaxOpenConnections: sqliteOpenLimit,
-			MaxIdleConnections: sqliteIdleLimit,
-			BusyTimeout:        sqliteBusyTimeout,
-		})
-		if err != nil {
-			return nil, nil, fmt.Errorf("sqliteOpen: %w", err)
-		}
-		return repository, repository, nil
-	default:
-		return nil, nil, fmt.Errorf("storageDriver: unsupported %q", driver)
-	}
 }
 
 func openContentStore(databasePath string) (*contentsqlite.Store, error) {

@@ -9,14 +9,27 @@ services:
       DARKSPIN_BIND_HOST: "${DARKSPIN_BIND_HOST:-0.0.0.0}"
       DARKSPIN_PORT: "${DARKSPIN_PORT:-42127}"
       DARKSPIN_GAME_PATH: /game
-      # Empty inputs reuse saved [bootstrap] settings. Fresh defaults: daily
-      # 03:30 UTC, 30m warning, 30m startup timeout, seven days of backups.
+      # Compose always uses its managed PostgreSQL database. The same settings
+      # initialize PostgreSQL and connect Darkrun; content.db remains SQLite.
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: "${POSTGRES_DB:-darkspin}"
+      PGUSER: "${POSTGRES_USER:-darkspin}"
+      PGPASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD for the database}"
+      PGSSLMODE: disable
+      PGCONNECT_TIMEOUT: "10"
+      # Empty inputs preserve saved [bootstrap] settings. Fresh defaults:
+      # daily 03:30 UTC warning, 30m warning/startup allowance, seven-day retention.
       DARKSPIN_IS_UPDATE_ENABLED: "${DARKSPIN_IS_UPDATE_ENABLED:-}"
       DARKSPIN_UPDATE_CRON: "${DARKSPIN_UPDATE_CRON:-}"
       DARKSPIN_UPDATE_WARNING_MINUTES: "${DARKSPIN_UPDATE_WARNING_MINUTES:-}"
       DARKSPIN_UPDATE_START_TIMEOUT_SECONDS: "${DARKSPIN_UPDATE_START_TIMEOUT_SECONDS:-}"
       DARKSPIN_BACKUP_RETENTION_DAYS: "${DARKSPIN_BACKUP_RETENTION_DAYS:-}"
       DARKSPIN_UPDATE_MANIFEST_URL: "${DARKSPIN_UPDATE_MANIFEST_URL:-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
     ports:
       - "${DARKSPIN_PORT:-42127}:${DARKSPIN_PORT:-42127}/tcp"
       - "${DARKSPIN_PORT:-42127}:${DARKSPIN_PORT:-42127}/udp"
@@ -40,6 +53,8 @@ services:
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
+    # Allow a stopped-server dump/restore to be cancelled and leave its durable
+    # recovery marker before Docker resorts to a hard kill.
     stop_grace_period: 120s
     healthcheck:
       test: ["CMD", "/darkspin/bin/darkrun", "maintenance", "status", "--ready", "--config", "/darkspin/runtime/darkspin.toml"]
@@ -47,3 +62,26 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30m
+
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-darkspin}"
+      POSTGRES_USER: "${POSTGRES_USER:-darkspin}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD for the database}"
+    volumes:
+      # PostgreSQL 18 keeps PGDATA below this version-aware volume root.
+      - postgres_data:/var/lib/postgresql
+    # No published port: Darkrun connects over the private Compose network.
+    restart: unless-stopped
+    stop_grace_period: 120s
+    healthcheck:
+      # TCP excludes the temporary socket-only server used during initdb.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  postgres_data:

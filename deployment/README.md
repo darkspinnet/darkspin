@@ -1,27 +1,10 @@
 # Darkrun with Docker Compose
 
-This setup runs password-based account login and gameplay together in one headless server. A small container starts `darkrun bootstrap`, which supervises a second Darkrun process and updates its mounted binary.
-
-**Stable setup is not available yet. Use unstable.** You do not need to clone the repository, install Go, or build an application image.
+**Stable setup is not available yet. Use unstable.** You need Linux amd64, Docker Engine with the Compose plugin, and a complete build-103 game installation.
 
 ## Download and prepare
 
-You need Linux amd64, Docker Engine with the Compose plugin, a reachable IPv4 address, and a complete build-103 game installation.
-
-[Download the unstable Compose setup ZIP](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-compose-unstable.zip). Extract it into its own directory, such as `/srv/darkspin`. It contains:
-
-```text
-compose.yaml
-.env.example
-README.md
-VERSION
-```
-
-This same guide is included in the ZIP. `VERSION` identifies the setup bundle; Darkrun binaries update independently.
-
-The download and initial binary feed become available after the updated `main-build` workflow succeeds. The `darkrun-bootstrap:1` GHCR infrastructure image must also be published and allow public pulls.
-
-Run subsequent commands from that directory:
+[Download the unstable Compose setup ZIP](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-compose-unstable.zip). Extract it into its own directory, such as `/srv/darkspin`. It contains `compose.yaml`, `.env.example`, this `README.md`, and `VERSION`.
 
 ```sh
 cd /srv/darkspin
@@ -38,34 +21,53 @@ DARKSPIN_ADVERTISED_HOST=192.0.2.10
 DARKSPIN_PORT=42127
 DARKSPIN_HOME_PATH=./darkspin
 DARKSPIN_GAME_HOST_PATH=/srv/game-build-103
+POSTGRES_DB=darkspin
+POSTGRES_USER=darkspin
+POSTGRES_PASSWORD='replace-with-a-long-unique-password'
 ```
 
-Replace the example address with the IPv4 players can reach and the game path with your actual installation. The installation root must contain `DarksporeBin/` and `Data/`. UID/GID 65532 must be able to read and traverse it. Allow the configured port for **both TCP and UDP**, using the same port inside and outside the container.
+Replace the example address with the IPv4 players can reach and choose a long, unique database password. Single quotes preserve literal `$` characters in `.env`. Restrict access to `.env`, which contains credentials. Compose rejects an empty or omitted `POSTGRES_PASSWORD`.
 
-Compose mounts the game **read-only at /game** and sets `DARKSPIN_GAME_PATH=/game`. Keep it mounted permanently: first startup and later updates rebuild missing or outdated content from it. Darkrun validates the source build and required package indexes even when content is current. Do not supply or link an external `content.db`. No game assets are included in the ZIP, image, or binary.
+The game root must contain `DarksporeBin/` and `Data/`. UID/GID 65532 must be able to read and traverse it. Allow the configured game port for **both TCP and UDP**.
 
 ## Start and stop
 
 ```sh
-docker compose pull darkrun
+docker compose pull
 docker compose up -d --no-build darkrun
-docker compose logs -f darkrun
+docker compose logs -f postgres darkrun
 docker compose ps
 ```
 
-On first start, the entry point downloads a versioned manifest and its exact binary artifact, verifies the executable's SHA-256 and build identity, then runs `darkrun bootstrap`. Later container starts use the installed binary and bootstrap's recovery state. The server prepares content and generates saved settings and its authentication secret before accepting players.
+On first launch, the Darkrun entry point downloads a versioned manifest and its exact binary artifact, verifies its SHA-256 and build identity, and installs it in the runtime mount. It then runs `darkrun bootstrap`, which starts the dedicated server with `/darkspin/runtime/darkspin.toml`. Subsequent launches recover pending updates before serving players. The server creates its settings, authentication secret, content cache, and missing player tables before accepting players.
 
-Connect through Darkspinner's Remote Servers account flow using the advertised address and port. This prototype uses username/password login; HTTPS and OAuth are not configured.
+Connect through Darkspinner's Remote Servers account flow using the advertised address and port. This prototype uses username/password login; HTTPS and OAuth are not configured. Darkrun's health check probes its maintenance and main server endpoints; it does not establish that a multiplayer session works.
 
 ```sh
-docker compose stop darkrun
+docker compose stop
 ```
 
-An intentional container stop shuts down the child and exits bootstrap. Container health checks verify the maintenance endpoint and main server endpoint; they do not prove a multiplayer session works.
+This stops both services while preserving their data. `docker compose stop darkrun` stops only the game server and leaves PostgreSQL running. Normal `docker compose down` removes the containers and network while preserving the database volume.
+
+## PostgreSQL player storage
+
+`POSTGRES_DB`, `POSTGRES_USER`, and required `POSTGRES_PASSWORD` are the single source for both database initialization and Darkrun's `PGDATABASE`, `PGUSER`, and `PGPASSWORD`. Compose sets `PGHOST=postgres`, port 5432, and `PGSSLMODE=disable` for its private network. No second Compose variant or TOML database flag is needed.
+
+For a native host deployment with an existing database, set `DARKSPIN_POSTGRES_URL` or `PGHOST`, `PGDATABASE`, and `PGUSER`, plus authentication/TLS settings, and run `darkrun server --dedicated --config PATH/darkspin.toml`. The database and role must already exist with permission to create tables. URL passwords must be URL-encoded. Darkrun requires these settings even outside Compose. Desktop local play remains on SQLite.
+
+For administration inside Compose, the running container already has the correct connection environment:
+
+```sh
+docker compose exec darkrun /darkspin/bin/darkrun db user get player_name --config /darkspin/runtime/darkspin.toml
+```
+
+Native Linux hosts can use `darkrun bootstrap --path PATH` with the same environment and PostgreSQL client tools on `PATH`. Bootstrap verifies it can connect to the `postgres` maintenance database and that its role is a superuser or owns the player database with `CREATEDB` permission. Do not use `postgres`, `template0`, or `template1` as the player database. The standard Compose role already meets these requirements. Multiple database hosts, service files, `PGHOSTADDR`, and unsupported URL options are rejected to avoid differences between the server and backup tools' connection targets.
 
 ## Persistent layout
 
-The entire `darkspin/` host directory is mounted writable at `/darkspin`:
+**`docker compose down -v` or removing the volume deletes the database.** Persistence is not a backup. PostgreSQL major upgrades require a database upgrade or dump/restore; do not merely change the image's major version.
+
+The separate `DARKSPIN_HOME_PATH` directory is mounted writable at `/darkspin`:
 
 ```text
 darkspin/
@@ -74,78 +76,37 @@ darkspin/
     darkspin.toml
     server.toml
     darkspin/
-      saves/
-      cache/
+      saves/      # appearance files; old SQLite saves may remain
+      cache/      # SQLite content.db and generated web content
       logs/
   backup/
     YYYY-MM-DD/
       <timestamp-and-build>/
-  update-request.json   (only while maintenance is pending)
-  firstboot.json        (only during an update transaction)
+        postgres.dump
+        snapshot.json
+        bin/darkrun
+        runtime/  # settings and saves from the same stopped server
+  firstboot.json  # durable update/recovery state, when present
 ```
 
-Bootstrap fixes configuration and generated content inside this runtime so every rollback covers the same data. Do not mount an individual executable: updates replace it atomically. Do not point multiple servers at the same directory or SQLite saves.
+Scheduled snapshots include PostgreSQL alongside authentication secrets and uploaded appearance files. Keep an independent copy of completed backups outside this host. Copying only `runtime/` does not capture PostgreSQL player data, and a dump is not continuous point-in-time recovery. Keep the game mount read-only and never point multiple servers at the same runtime.
 
-To migrate an earlier setup, stop its server, copy its complete runtime (including `darkspin.toml`, `server.toml` if present, and the `darkspin/` subtree) into the new `darkspin/runtime/`, and make the new mount writable by UID/GID 65532. Preserve the original separately until the new server works. Remove any old updater service using its old Compose definition before switching. The new setup has no updater sidecar or Docker socket mount.
+## Scheduled backups, updates and recovery
 
-## Schedule and warnings
+By default, maintenance warnings start daily at **03:30 UTC**, with shutdown after a **30-minute warning**. The existing `[bootstrap]` settings in `runtime/darkspin.toml` remain editable through Darkspinner's Config interface. Optional `.env` overrides are shown in `.env.example`; omitted inputs preserve saved settings. The defaults allow 30 minutes for candidate startup and retain completed backups for seven days. Set `DARKSPIN_IS_UPDATE_ENABLED=false` to disable scheduled maintenance.
 
-Scheduled maintenance is enabled by default, using **03:30 UTC daily** and a **30-minute warning**. Set optional overrides in `.env` or directly in Compose's environment:
+Each scheduled clean shutdown follows this sequence, even when no new binary is available:
 
-```dotenv
-DARKSPIN_IS_UPDATE_ENABLED=true
-DARKSPIN_UPDATE_CRON="30 3 * * *"
-DARKSPIN_UPDATE_WARNING_MINUTES=30
-DARKSPIN_UPDATE_START_TIMEOUT_SECONDS=1800
-DARKSPIN_BACKUP_RETENTION_DAYS=7
-```
+1. Darkrun disconnects players, flushes pending writes and checkpoints, closes its database connections, and exits. Bootstrap acquires the runtime lock. PostgreSQL remains running.
+2. Bootstrap copies the installed binary, settings, and appearance/save files, then runs `pg_dump --format=custom` against the same configured player database. The compressed `postgres.dump` includes schema, rows, and sequences. It does not include cluster-wide roles or passwords.
+3. The dump is flushed to disk, its archive table of contents is checked with `pg_restore --list`, and its SHA-256 and destination identity are recorded in `snapshot.json`. Only then is the snapshot marked complete. A dump failure prevents installation of an update; the existing server can restart without accepting a partial snapshot as a backup.
+4. Bootstrap fetches and verifies an available candidate binary. Its durable `firstboot.json` marker identifies the matching backup before installation. Three readiness probes commit the candidate; only completed backups outside the retention window are pruned.
+5. A failed candidate or interrupted first boot restores the database with `pg_restore --clean --if-exists --create --exit-on-error`, then restores its matching binary and runtime files. Recreating the player database removes any tables added by the failed candidate. The archive hash and configured destination must match before restoration. Failed file state is retained for diagnostics; failed PostgreSQL state is replaced by the snapshot.
 
-These inputs are saved under `[bootstrap]` in `runtime/darkspin.toml`. Empty or omitted overrides preserve saved settings, which are also editable through Darkspinner's Config interface. Explicit environment inputs take precedence on each container start. Recreate the service after changing its environment:
+Restore uses the `postgres` maintenance database so it can retry after interruption even if the player database was already dropped. It is not a single transaction: the recovery marker remains until all database and file restoration succeeds, and the server stays stopped on failure. Only the configured game database is recreated; the PostgreSQL service and cluster remain running. Do not connect another server or writer to that database during maintenance or recovery. Changing the host, port, or database while recovery is pending is rejected; use the original destination to recover first.
 
-```sh
-docker compose up -d --no-build darkrun
-```
+Dump and restore commands each have a 30-minute limit and are cancelled on supervisor shutdown. Ordinary container stops do not create a scheduled snapshot. `pg_restore --list` checks archive readability, not a full restore rehearsal. Keep independent backups for failures discovered after a candidate has already been committed healthy.
 
-The cron expression uses five numeric fields in UTC, with lists, ranges and steps:
+Cancel a pending warning countdown with `docker compose exec darkrun /darkspin/bin/darkrun maintenance cancel --config /darkspin/runtime/darkspin.toml`. Recreate Darkrun after changing environment overrides. The running bootstrap process keeps its loaded updater code while replacing the child binary; a later container restart loads the new updater.
 
-| Cadence | Expression |
-| --- | --- |
-| Daily at 03:30 | `30 3 * * *` |
-| Sundays at 03:30 | `30 3 * * 0` |
-| Monday and Thursday at 03:30 | `30 3 * * 1,4` |
-| First day of each month at 03:30 | `30 3 1 * *` |
-
-The default sends system-chat warnings at **03:30, 03:40, 03:50, 03:55, 03:56, 03:57, 03:58 and 03:59 UTC**, then a final message at **04:00** before disconnecting players. Every reminder targets players online at that moment, including those who joined after an earlier warning. Other warning durations use the initial warning, remaining multiples of ten minutes, and the final five minutes. The deadline remains fixed; message delivery and graceful saving may extend actual downtime beyond it.
-
-Cancel the current countdown:
-
-```sh
-docker compose exec darkrun /darkspin/bin/darkrun maintenance cancel --config /darkspin/runtime/darkspin.toml
-```
-
-Cancellation skips that scheduled occurrence. To disable future automatic maintenance, set `DARKSPIN_IS_UPDATE_ENABLED=false` and recreate the service. Bootstrap still monitors and restarts a failed child.
-
-## Updates, backups and rollback
-
-Each scheduled maintenance window restarts the server, **even if no new binary exists**:
-
-1. The server announces maintenance, disconnects players, flushes state, closes storage, and writes a clean-shutdown request.
-2. Bootstrap waits for the child to exit and acquires the stopped runtime's lock. It snapshots the installed binary, configuration and complete saves directory together under a dated backup.
-3. It reads the latest unstable manifest. An unchanged binary or unavailable download restarts the current version. A new candidate must match the platform and SHA-256 before atomic installation.
-4. Bootstrap records `firstboot.json` before installing the candidate and starts it. The candidate prepares content from the required game mount.
-5. Three consecutive readiness probes accept the new version. A crash or startup timeout restores the matching binary, saved settings and databases, then starts the previous version. Failed candidate data and cache are retained inside that backup for diagnosis.
-6. An interrupted update is recovered on the next bootstrap start. Completed backups older than the configured retention period are pruned; the active rollback snapshot is protected.
-
-The default startup allowance is 30 minutes. Increase it for a slow content rebuild. The supervisor also restarts an established server after repeated health failures, with backoff for repeated crashes. Logs go to the container output and runtime logs.
-
-Backups contain account data and authentication secrets; restrict access to the host directory. Generated content is rebuilt rather than included in every snapshot. Keep an independent backup of the stopped host directory for disk loss or operator recovery. Automatic rollback protects candidate startup; a fault discovered after a candidate is accepted still requires operator recovery. Graceful shutdown does not promise exact mid-combat resume.
-
-The running bootstrap process keeps its loaded supervisor code while replacing and restarting the child. A later container restart loads the current binary's bootstrap implementation.
-
-## Infrastructure and setup upgrades
-
-Ordinary Darkrun updates download a binary; they do not rebuild or replace the container image. The small infrastructure image and Compose files are upgraded deliberately when deployment tooling changes. Download a new setup ZIP into a separate directory, review it, and preserve your `.env` and mounted `darkspin/` data.
-
-The default manifest is the `darkrun-update-linux-amd64-unstable` artifact from `main-build`. `DARKSPIN_UPDATE_MANIFEST_URL` may override its HTTPS URL; the manifest's binary URL points to one immutable Actions artifact. Expired or unavailable artifacts leave the installed server intact.
-
-For packaging with `mage darkrun:compose` and infrastructure image development, see [INSTALL.md](https://github.com/darkspinnet/darkspin/blob/main/INSTALL.md#packaging-and-source-development).
+For packaging with `mage darkrun:compose` and source builds, see [INSTALL.md](https://github.com/darkspinnet/darkspin/blob/main/INSTALL.md#packaging-and-source-development).

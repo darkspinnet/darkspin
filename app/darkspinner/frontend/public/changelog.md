@@ -2,6 +2,9 @@
 
 ### 2026-10-27
 
+- Extend bootstrap backups from file copies to matching PostgreSQL dumps, restoring scheduled updates and database rollback after a failed first boot.
+- Require PostgreSQL for Darkrun player storage, with shared Compose credentials, persistent disk storage, automatic table creation, and no SQLite fallback; desktop local play and content remain SQLite.
+- Add a seeded Nocturna 1-4 navigation scenario with native movement, wall-edge probes and screenshot captures for the reported invisible obstruction.
 - Move gameplay profile saves from blocking SQL writes to coalesced memory snapshots, with background writes at safe Continue checkpoints, idle periods, and a five-minute fallback.
 - [#137](https://github.com/darkspinnet/darkspin/issues/137) Persist combat statistics through a focused SQLite stat-row update instead of rewriting every creature, item and other profile record on each hit.
 - [#137](https://github.com/darkspinnet/darkspin/issues/137) Separate new loot from existing item and catalyst pickups using projected ring placements when space is available, preventing obelisk drops from covering each other.

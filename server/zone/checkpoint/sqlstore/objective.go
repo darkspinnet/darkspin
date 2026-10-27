@@ -1,4 +1,4 @@
-package sqlite
+package sqlstore
 
 import "github.com/darkspinnet/darkspin/server/sim"
 
