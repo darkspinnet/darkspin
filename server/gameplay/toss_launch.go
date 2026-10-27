@@ -41,7 +41,8 @@ func (e campaignTossSchedule) produceLaunch() ([][]byte, error) {
 		return nil, nil
 	}
 	destination := e.plan.Destination
-	target, isTargetFound := peerSession.zone.NPCs().NPC(e.plan.TargetObjectID)
+	enemies := e.runtime.registry.abilityTargetsLocked(e.runtime, peerSession, e.plan.Definition, e.packet.SourceTime)
+	target, isTargetFound := enemies.NPC(e.plan.TargetObjectID)
 	if isTargetFound && !target.IsDefeated && target.HitPoint > 0 {
 		destination = sim.Position(target.Plan.Position)
 	}

@@ -42,8 +42,12 @@ func (e campaignAbilityCommandRuntime) handleArenaAbility(
 	definition := ability.Definition
 	if command.Ability.Index == 0 {
 		definition, isFound = e.program.PlayerBasicAbility[creature.Noun]
+	} else {
+		definition = projectHeroAbilityRank(definition, command.Ability.Rank)
 	}
 	isShared := isFound && (ability.AssetName == "CastEnrage" || ability.AssetName == "TreeOfLife" ||
+		definition.Name == "MissileTempestActive" ||
+		(definition.Kind == sim.AbilityKindToss && definition.Toss.Behavior == sim.TossAbilityBehaviorTrapper) ||
 		ability.AssetName == "ArborealMight" || ability.AssetName == "SpacetimeRandom2" ||
 		isSharedArenaArea(definition, command.Ability.Index) || isSharedArenaProjectile(definition) ||
 		(command.Ability.Index == 0 && isSharedArenaMelee(definition)))
@@ -107,9 +111,9 @@ func isSharedArenaArea(definition sim.AbilityDefinition, index uint32) bool {
 }
 
 func isSharedArenaProjectile(definition sim.AbilityDefinition) bool {
-	return definition.Kind == sim.AbilityKindProjectile && definition.ProjectileWave == nil &&
-		definition.LightningSecondary.MaximumCandidates == 0 && definition.ChainLightning.MaximumHopCount == 0 &&
+	return definition.Kind == sim.AbilityKindProjectile &&
+		(definition.LightningSecondary.MaximumCandidates == 0 || definition.Name == "PlasmaRandom_LightningBall") && definition.ChainLightning.MaximumHopCount == 0 &&
 		definition.StatusDuration == 0 && definition.RootModifierID == 0 &&
-		definition.LifeSteal == 0 && definition.DamageHealingFraction == 0 &&
-		definition.Name != "MissileTempestBasic" && definition.Name != "LightspeedTempestBasic"
+		definition.LifeSteal == 0 && (definition.DamageHealingFraction == 0 || definition.Name == "SupportHealerBasic") &&
+		definition.Name != "LightspeedTempestBasic"
 }

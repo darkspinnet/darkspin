@@ -297,6 +297,9 @@ func (e heroBurstStep) produceImpact() ([][]byte, error) {
 	if schedule.definition.BurstTargeting == sim.ProjectileBurstTargetingRadial ||
 		schedule.definition.BurstTargeting == sim.ProjectileBurstTargetingArc ||
 		schedule.definition.BurstTargeting == sim.ProjectileBurstTargetingCursorArea {
+		if peerSession.binding.Mode == game.ModeArena {
+			return e.produceArenaBurstImpact(peerSession)
+		}
 		return e.produceRadialImpact(peerSession)
 	}
 	if schedule.definition.Name == "LightningTempest_Active" {
@@ -628,7 +631,13 @@ func (e heroBurstSchedule) planTargetPosition(
 		}
 	}
 	if e.definition.BurstTargeting == sim.ProjectileBurstTargetingCursorArea {
-		random := peerSession.zone.Population().Random()
+		random, randomErr := e.runtime.registry.abilityRandomLocked(peerSession)
+		if randomErr != nil {
+			if e.runtime.logger != nil {
+				e.runtime.logger.Printf("Projectile burst scatter unavailable: %v", randomErr)
+			}
+			return e.targetPosition
+		}
 		angle := random.Float64() * 2 * math.Pi
 		scatterRadius := e.definition.Radius
 		if e.definition.Name == "MissileTempestActive" {
@@ -1000,6 +1009,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 	}
 	command := request.command
 	packet := request.packet
+	enemies := r.registry.abilityTargetsLocked(r, peerSession, definition, packet.SourceTime)
 	targetPosition := command.Ability.TargetPosition
 	if !isReportedZonePosition(targetPosition) {
 		targetPosition = command.Ability.CursorPosition
@@ -1011,7 +1021,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 		definition.BurstTargeting != sim.ProjectileBurstTargetingRadial &&
 		definition.BurstTargeting != sim.ProjectileBurstTargetingCursorArea {
 		targetObjectID = zoneability.CursorTarget(
-			peerSession.zone.NPCs(), command.Common.ObjectID,
+			enemies, command.Common.ObjectID,
 			game.Vec3(command.Ability.CursorPosition),
 			game.Vec3(targetPosition), definition.Radius,
 		)
@@ -1090,7 +1100,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 		command.Common.Unknown[0],
 	)
 	if targetObjectID != 0 {
-		targetEnemy, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
+		targetEnemy, isTargetFound := enemies.NPC(targetObjectID)
 		if isTargetFound {
 			// Native 103 sub_9DE710 applies both actor footprints to targeted
 			// ability admission, including projectile bursts.
@@ -1098,7 +1108,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 				targetEnemy.Plan.ActorFootprintRadius()
 		}
 		plan, err = zoneability.PlanBasic(zoneability.BasicCommand{
-			NPCs: peerSession.zone.NPCs(), SourceObjectID: command.Common.ObjectID,
+			NPCs: enemies, SourceObjectID: command.Common.ObjectID,
 			TargetObjectID: targetObjectID, AbilityID: activeAbilityID,
 			SourcePosition: actorPosition, MaximumRange: maximumRange,
 			Definition: projected, Damage: damage,
@@ -1150,7 +1160,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 		return nil, fmt.Errorf("heroBurstSpeed: %w", err)
 	}
 	previousProjectileObjectID := peerSession.nextProjectileObjectID
-	firstProjectileObjectID, err := peerSession.reserveCampaignProjectileIDs(
+	firstProjectileObjectID, err := r.registry.reserveAbilityObjectIDsLocked(&peerSession,
 		uint32(len(definition.HitDelays)), 1000,
 	)
 	if err != nil {
@@ -1161,12 +1171,12 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 	for index := range projectileObjectID {
 		projectileObjectID[index] = firstProjectileObjectID + uint32(index)
 	}
-	targetNPC, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
+	targetNPC, isTargetFound := enemies.NPC(targetObjectID)
 	targetHitPoint := float32(0)
 	runTargetObjectID := command.Common.ObjectID
 	projectileGeometry := zonenpc.ProjectileGeometry{}
 	if isTargetFound {
-		if targetNPC.TargetObjectID == 0 && !targetNPC.Plan.IsFixture {
+		if peerSession.zone != nil && targetNPC.TargetObjectID == 0 && !targetNPC.Plan.IsFixture {
 			acquired, isAcquired, acquireErr := peerSession.zone.NPCs().AcquireTarget(
 				targetObjectID, command.Common.ObjectID,
 			)

@@ -1907,7 +1907,8 @@ func (s *gameplayPeerSession) resetAbilityAdmissionForSwitch() *abilityraknet.Me
 // A rejected command does not deactivate previously accepted effect agents.
 // Keep their owned schedules alive; otherwise mines lose their detonation,
 // banishes lose their deletion, and infections lose their authored lifetime.
-// Producer failures and lease expiry still use the full failure cleanup.
+// Producer failures still use the full failure cleanup; unanswered-command
+// expiry preserves accepted agents just like an explicit command rejection.
 func (e *gameplayPeerSession) resetRejectedActionAdmission(
 	modifierInstancePool *modifierPool, effectPool *attachedEffectPool,
 ) *abilityraknet.MeleeRun {
@@ -1917,9 +1918,17 @@ func (e *gameplayPeerSession) resetRejectedActionAdmission(
 	bursts := e.heroBurstAttacks
 	beastObjectID := e.beastPetObjectID
 	summons := e.heroSummons
+	timedArea := e.heroTimedArea
+	retainedSlots := make([]uint8, 0, 2)
+	if timedArea != nil && timedArea.isEffectBound {
+		retainedSlots = append(retainedSlots, timedArea.effectSlot)
+	}
 	var arborealMight *heroModifierRun
 	if e.heroModifierRun != nil && e.heroModifierRun.isArborealMight {
 		arborealMight = e.heroModifierRun
+		if arborealMight.isEffectAttached {
+			retainedSlots = append(retainedSlots, arborealMight.effectSlot)
+		}
 		e.heroModifierRun = nil
 	}
 	e.heroTraps = nil
@@ -1930,13 +1939,15 @@ func (e *gameplayPeerSession) resetRejectedActionAdmission(
 	// accepted pets and their follow, healing, resurrection, and expiry jobs.
 	e.beastPetObjectID = 0
 	e.heroSummons = nil
-	run := e.resetFailedActionAdmission(modifierInstancePool, effectPool)
+	e.heroTimedArea = nil
+	run := e.resetFailedActionAdmission(modifierInstancePool, effectPool, retainedSlots...)
 	e.heroTraps = traps
 	e.heroStatusAreas = statusAreas
 	e.heroInfections = infections
 	e.heroBurstAttacks = bursts
 	e.beastPetObjectID = beastObjectID
 	e.heroSummons = summons
+	e.heroTimedArea = timedArea
 	if arborealMight != nil {
 		e.heroModifierRun = arborealMight
 	}
@@ -1945,6 +1956,7 @@ func (e *gameplayPeerSession) resetRejectedActionAdmission(
 
 func (e *gameplayPeerSession) resetFailedActionAdmission(
 	modifierInstancePool *modifierPool, effectPool *attachedEffectPool,
+	retainedSlots ...uint8,
 ) *abilityraknet.MeleeRun {
 	if e == nil {
 		return nil
@@ -2066,11 +2078,15 @@ func (e *gameplayPeerSession) resetFailedActionAdmission(
 	_, _ = stopPoisonNovaCooldown(e, modifierInstancePool)
 	e.rollbackPendingPlasmaWreath()
 	if effectPool != nil {
-		if e.plasmaWreathRun == nil {
-			effectPool.ReleaseObject(e.deployedObjectID)
-		} else {
-			effectPool.ReleaseObjectExcept(e.deployedObjectID, e.plasmaWreathRun.AttachmentSlots())
+		if e.plasmaWreathRun != nil {
+			retainedSlots = append(retainedSlots, e.plasmaWreathRun.AttachmentSlots()...)
 		}
+		// Hardened Mantle retains its expiry job through action recovery. Its
+		// slot cannot be reused until that job publishes the passive's removal.
+		if e.hardenedMantleRun != nil {
+			retainedSlots = append(retainedSlots, e.hardenedMantleRun.attachmentSlots()...)
+		}
+		effectPool.ReleaseObjectExcept(e.deployedObjectID, retainedSlots)
 	}
 	return run
 }

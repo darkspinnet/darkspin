@@ -35,6 +35,15 @@ type hardenedMantleExpiry struct {
 	revision uint64
 }
 
+func (e *hardenedMantleRun) attachmentSlots() []uint8 {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	if e.isStopped {
+		return nil
+	}
+	return []uint8{e.effectSlot}
+}
+
 func (e hardenedMantleExpiry) produce() ([][]byte, error) {
 	e.run.mutex.Lock()
 	defer e.run.mutex.Unlock()
@@ -102,7 +111,8 @@ func (e *gameplayPeerSession) presentHardenedMantle(
 		e.passiveReductionStack[e.deployedCreatureIndex] == 0 {
 		return nil, nil
 	}
-	if modifierPool == nil || effectPool == nil || e.schedulePacket.ScheduleProducers == nil {
+	if modifierPool == nil || effectPool == nil ||
+		(e.schedulePacket.ScheduleGroup == nil && e.schedulePacket.ScheduleGroupResult == nil) {
 		return nil, errors.New("mantle presentation unavailable")
 	}
 	packets := make([][]byte, 0, 4)

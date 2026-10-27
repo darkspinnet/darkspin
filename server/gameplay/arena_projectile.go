@@ -80,6 +80,14 @@ func (e campaignProjectileStep) commitArenaProjectileLocked(member *gameplayPeer
 	} else {
 		hitPackets = append(hitPackets, modifierPackets...)
 	}
+	healingPackets, healingErr := schedule.applyDamageHealingLocked(nil, game.Vec3(collision.Position), result.Damage.Damage)
+	if healingErr != nil {
+		if schedule.runtime.logger != nil {
+			schedule.runtime.logger.Printf("Arena projectile healing failed source=%d: %v", schedule.sourceObjectID, healingErr)
+		}
+	} else {
+		hitPackets = append(hitPackets, healingPackets...)
+	}
 	if schedule.runtime.logger != nil {
 		schedule.runtime.logger.Printf("Arena shared projectile hit source=%d target=%d projectile=%d delay=%s damage=%g",
 			schedule.sourceObjectID, target.Plan.ObjectID, schedule.projectileObjectID, e.deadline, result.Damage.Damage)

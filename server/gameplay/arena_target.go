@@ -61,7 +61,7 @@ func (e arenaAbilityTargets) NPC(objectID uint32) (zonenpc.Snapshot, bool) {
 	return zonenpc.Snapshot{
 		Plan: zonenpc.SpawnPlan{
 			ObjectID: objectID, Position: game.Vec3(member.playerPosition),
-			NPCProfile: game.CampaignNPCProfile{FootprintRadius: member.deployedCampaignActorFootprintRadius()},
+			NPCProfile: game.CampaignNPCProfile{FootprintRadius: member.deployedCampaignActorFootprintRadius(), IsTargetable: true},
 		},
 		HitPoint: member.deployedHitPoint(), ManaPoint: member.deployedManaPoint(),
 		Faction: zonenpc.FactionNonPlayerAligned, IsPublished: true,
@@ -83,6 +83,14 @@ func (e arenaAbilityTargets) LiveSnapshots() []zonenpc.Snapshot {
 		return cmp.Compare(first.Plan.ObjectID, second.Plan.ObjectID)
 	})
 	return targets
+}
+
+func (e arenaAbilityTargets) HasCurseOrFear(objectID uint32, at time.Time) bool {
+	key, member, isFound := e.member(objectID)
+	if !isFound || key == "" {
+		return false
+	}
+	return member.isEnemyFearActive(at)
 }
 
 func (e *arenaAbilityTargets) Hit(req zonenpc.HitRequest) (zonenpc.DamageResult, error) {
@@ -213,6 +221,34 @@ func (e arenaAbilityTargets) packets(results []zoneability.AreaResult) ([][]byte
 		}
 		packets = append(packets, packet)
 		packets = append(packets, hit.packets...)
+	}
+	return packets, nil
+}
+
+func (e arenaAbilityTargets) packetsWithEffects(results []zoneability.AreaResult,
+	effect func(zoneability.AreaResult) ([]byte, error), isEffectAfterDamage bool,
+) ([][]byte, error) {
+	packets := make([][]byte, 0)
+	for _, result := range results {
+		var effectPacket []byte
+		var err error
+		if effect != nil {
+			effectPacket, err = effect(result)
+			if err != nil {
+				return nil, fmt.Errorf("arenaImpact: %w", err)
+			}
+		}
+		if len(effectPacket) != 0 && !isEffectAfterDamage {
+			packets = append(packets, effectPacket)
+		}
+		hitPackets, hitErr := e.packets([]zoneability.AreaResult{result})
+		if hitErr != nil {
+			return nil, fmt.Errorf("arenaHit: %w", hitErr)
+		}
+		packets = append(packets, hitPackets...)
+		if len(effectPacket) != 0 && isEffectAfterDamage {
+			packets = append(packets, effectPacket)
+		}
 	}
 	return packets, nil
 }

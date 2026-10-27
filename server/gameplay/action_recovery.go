@@ -571,8 +571,9 @@ func (e gameplayActionLeaseExpiry) produce() ([][]byte, error) {
 	delete(e.runtime.registry.actionLeases, e.key)
 	delete(e.runtime.registry.actionTerminals, e.key)
 	e.runtime.registry.retireCampaignTreeOfLifeLocked(&peerSession)
-	e.runtime.registry.retireHeroInfectionsLocked(&peerSession)
-	interruptedBasic := peerSession.resetFailedActionAdmission(
+	// An unanswered command may expire after a later independent ability has
+	// been accepted. Reject that command without canceling those effect agents.
+	interruptedBasic := peerSession.resetRejectedActionAdmission(
 		e.runtime.switcher.modifierPool, e.runtime.switcher.effectPool,
 	)
 	movementErr := peerSession.stopPlayerMovement(e.runtime.now())

@@ -15,7 +15,7 @@ import (
 func (e campaignProjectileSchedule) applyDamageHealingLocked(
 	sourceZone *zone.Zone, center game.Vec3, damage float32,
 ) ([][]byte, error) {
-	if sourceZone == nil || e.definition.Name != "SupportHealerBasic" ||
+	if sourceZone == nil && e.binding.Mode != game.ModeArena || e.definition.Name != "SupportHealerBasic" ||
 		e.definition.DamageHealingFraction <= 0 ||
 		e.definition.HealingRadius <= 0 || damage <= 0 {
 		return nil, nil
@@ -61,7 +61,7 @@ func (e campaignProjectileSchedule) applyDamageHealingLocked(
 		if commitErr != nil {
 			return nil, fmt.Errorf("supportBasicCommit: %w", commitErr)
 		}
-		if sessionKey != e.sessionKey {
+		if sessionKey != e.sessionKey && targetSession.zone != nil {
 			targetSession.zone.PublishHeroResourceTo(
 				targetSession.binding.UserID, targetSession.generation,
 			)
@@ -82,6 +82,16 @@ func (e campaignProjectileSchedule) applyDamageHealingLocked(
 		packets = append(packets, healingPackets...)
 		packets = append(packets, resourcePacket)
 		e.runtime.registry.sessions[sessionKey] = targetSession
+		if e.binding.Mode == game.ModeArena {
+			match := e.runtime.registry.arenaMatches[e.binding.GameID]
+			if match != nil && match.isCombatActive {
+				match.result.recordHealing(e.binding.UserID, targetSession.binding.UserID, healedAmount)
+			}
+		}
+	}
+	if e.binding.Mode == game.ModeArena {
+		e.runtime.registry.queueArenaAbilityResourcesLocked(sourceSession, packets)
+		return packets, nil
 	}
 	for _, companion := range sourceZone.Companion().Snapshots() {
 		if !e.runtime.registry.isActivePartyCompanionLocked(companion, sourceSession) ||

@@ -80,7 +80,7 @@ func castDebugAbility(ctx context.Context, host *debugHost, clientManager *debug
 	if err != nil {
 		return result, fmt.Errorf("castWorld: %w", err)
 	}
-	if !world.IsAvailable || world.Hero == nil || world.Hero.IsDefeated || world.Hero.HitPoint <= 0 || world.Hero.ObjectID != initial.State.ActorObjectID || world.Hero.Index != initial.State.CreatureIndex || world.PeerGeneration != initial.State.PeerGeneration || world.TransportGeneration != initial.State.TransportGeneration || world.ZoneGeneration != initial.State.ZoneGeneration {
+	if !world.IsAvailable || (world.Arena != nil) != initial.State.IsArena || world.Hero == nil || world.Hero.IsDefeated || world.Hero.HitPoint <= 0 || world.Hero.ObjectID != initial.State.ActorObjectID || world.Hero.Index != initial.State.CreatureIndex || world.PeerGeneration != initial.State.PeerGeneration || world.TransportGeneration != initial.State.TransportGeneration || world.ZoneGeneration != initial.State.ZoneGeneration {
 		return result, &control.ScenarioError{Code: control.NotAvailable, Context: "castActor", Message: "supported ability actor is not the current live owned dungeon hero"}
 	}
 	probe, native, err := observeDebugHeroNative(waitContext, clientManager, owner)

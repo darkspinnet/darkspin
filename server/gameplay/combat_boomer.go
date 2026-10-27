@@ -114,7 +114,7 @@ func (r campaignNPCActionRuntime) scheduleBoomerDeathDetonation(
 	packet raknet.Packet, sessionKey string, generation uint64,
 	objectID uint32, timestamp uint64,
 ) (bool, error) {
-	if packet.ScheduleProducers == nil {
+	if packet.ScheduleGroup == nil && packet.ScheduleGroupResult == nil {
 		return false, errors.New("death detonation scheduler unavailable")
 	}
 	r.registry.mutex.RLock()

@@ -189,10 +189,7 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 		launchPosition := campaignProjectileLaunchPosition(
 			game.Vec3(projectileSource), game.Vec3(projectileTarget), actorFootprint,
 		)
-		travelDistance := zoneability.Distance(
-			launchPosition, game.Vec3(projectileTarget),
-		)
-		var flight *sim.ProjectileFlight
+		travelDistance := projectileDefinition.Distance
 		var wave *campaignProjectileWave
 		projectileHalfExtent := r.program.ProjectileHalfExtent
 		if projectileDefinition.ProjectileWave != nil {
@@ -206,23 +203,20 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 			projectileHalfExtent = physics.ProjectileQueryHalfExtent
 			wave = &campaignProjectileWave{halfExtent: projectileHalfExtent, attemptedTargets: make(map[uint32]struct{})}
 		}
-		if !isElectronSphereRequest {
-			travelDistance = projectileDefinition.Distance
-			flight, err = sim.NewProjectileFlight(sim.ProjectileFlightInput{
-				Position: sim.Position(launchPosition),
-				Direction: sim.Position(geometryraknet.Direction(
-					raknet.Vector3(launchPosition), projectileTarget,
-				)),
-				HalfExtent:      projectileHalfExtent,
-				Speed:           projectileDefinition.Speed,
-				Acceleration:    projectileDefinition.Acceleration,
-				MaximumDistance: travelDistance,
-			})
-			if err != nil {
-				stopProjectileRuns(projectileRuns)
-				r.registry.mutex.Unlock()
-				return nil, fmt.Errorf("projectileFlight[%d]: %w", projectileIndex, err)
-			}
+		flight, err := sim.NewProjectileFlight(sim.ProjectileFlightInput{
+			Position: sim.Position(launchPosition),
+			Direction: sim.Position(geometryraknet.Direction(
+				raknet.Vector3(launchPosition), projectileTarget,
+			)),
+			HalfExtent:      projectileHalfExtent,
+			Speed:           projectileDefinition.Speed,
+			Acceleration:    projectileDefinition.Acceleration,
+			MaximumDistance: travelDistance,
+		})
+		if err != nil {
+			stopProjectileRuns(projectileRuns)
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("projectileFlight[%d]: %w", projectileIndex, err)
 		}
 		collisionDelay, travelErr := zoneability.ProjectileTravelDuration(
 			travelDistance, projectileDefinition.Speed,
@@ -424,9 +418,18 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 	}
 	firstSecondaryDeadline := time.Duration(0)
 	if isElectronSphereRequest {
+		random, randomErr := r.registry.abilityRandomLocked(peerSession)
+		if randomErr != nil {
+			peerSession.abilityCooldownSession().Rollback(cooldownReservation)
+			peerSession.abilityReleaseSession().Rollback(releaseReservation)
+			manaErr := peerSession.setDeployedManaPoints(previousManaPoint)
+			stopProjectileRuns(projectileRuns)
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("electronRandom: %w", errors.Join(randomErr, manaErr))
+		}
 		firstDelay, secondaryErr :=
 			zoneability.ElectronSphereSecondaryDelay(
-				peerSession.zone.Population().Random(),
+				random,
 				projectileDefinition.LightningSecondary,
 			)
 		if secondaryErr != nil {

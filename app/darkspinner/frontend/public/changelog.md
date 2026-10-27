@@ -2,7 +2,8 @@
 
 ### 2026-10-27
 
-- Let Lua scenarios vary population seeds independently of layout seeds when reconstructing first-clear enemy spawns.
+- [#138](https://github.com/darkspinnet/darkspin/issues/138) Preserve accepted Plasma Column and Arboreal Might lifetimes when unrelated commands are rejected or expire, including their reserved visual-effect slots.
+- [#138](https://github.com/darkspinnet/darkspin/issues/138) Keep Hardened Mantle's effect slot reserved through action recovery so its later expiry cannot remove a newly cast ability's visual effect.
 - Make Corruptor portal placement reproducible with a run-owned saved RNG stream and ordered portal waves instead of clock seeds and competing timers.
 - Restore missing Cryos stalagmites and blockers, Infinity factory lights and plasma pools, and selected Obelisk scenery with authored placement flags.
 - Seed replay populations from the durable run seed, map and difficulty instead of transient game IDs.

@@ -546,7 +546,7 @@ func (e *gameplaySessionRegistry) projectPassiveCreature(
 	peerSession gameplayPeerSession, creatureIndex uint32, now time.Time,
 ) game.GameplayCreature {
 	creature := peerSession.projectPassiveCreature(creatureIndex, now)
-	if e == nil || peerSession.zone == nil ||
+	if e == nil || (peerSession.zone == nil && peerSession.binding.Mode != game.ModeArena) ||
 		creatureIndex != peerSession.deployedCreatureIndex {
 		return creature
 	}
@@ -564,7 +564,7 @@ func (e *gameplaySessionRegistry) projectPassiveCreature(
 		)
 	}
 	for _, candidate := range e.sessions {
-		if candidate.zone != peerSession.zone ||
+		if !isPassiveAuraRecipient(candidate, peerSession) ||
 			candidate.deployedObjectID == peerSession.deployedObjectID ||
 			candidate.deployedHitPoint() <= 0 ||
 			candidate.deployedCreatureIndex >=
@@ -639,7 +639,7 @@ func (e *gameplaySessionRegistry) passiveMovementIncrease(
 	peerSession gameplayPeerSession,
 ) float32 {
 	increase := peerSession.passiveMovementIncrease()
-	if e == nil || peerSession.zone == nil ||
+	if e == nil || (peerSession.zone == nil && peerSession.binding.Mode != game.ModeArena) ||
 		peerSession.deployedCreatureIndex >= uint32(len(peerSession.binding.Creatures)) {
 		return increase
 	}
@@ -649,7 +649,7 @@ func (e *gameplaySessionRegistry) passiveMovementIncrease(
 	}
 	allyIncrease := float32(0)
 	for _, candidate := range e.sessions {
-		if candidate.zone != peerSession.zone ||
+		if !isPassiveAuraRecipient(candidate, peerSession) ||
 			candidate.deployedObjectID == peerSession.deployedObjectID ||
 			candidate.deployedHitPoint() <= 0 ||
 			candidate.deployedCreatureIndex >=
@@ -667,6 +667,13 @@ func (e *gameplaySessionRegistry) passiveMovementIncrease(
 		allyIncrease = max(allyIncrease, aura.PassiveMovementIncrease)
 	}
 	return increase + allyIncrease
+}
+
+func isPassiveAuraRecipient(candidate, source gameplayPeerSession) bool {
+	if source.binding.Mode == game.ModeArena {
+		return source.isArenaCombatActive && isActivePartyRecipient(candidate, source)
+	}
+	return source.zone != nil && candidate.zone == source.zone
 }
 
 func (s gameplayPeerSession) passiveHealthRatio(creatureIndex uint32) float32 {

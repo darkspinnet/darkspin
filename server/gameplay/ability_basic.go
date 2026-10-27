@@ -2653,8 +2653,15 @@ func (e campaignElectronSecondaryStep) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	projectilePosition := game.Vec3(snapshot.Position)
+	enemies := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, schedule.definition,
+		schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond))
+	random, randomErr := schedule.runtime.registry.abilityRandomLocked(peerSession)
+	if randomErr != nil {
+		schedule.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("electronRandom: %w", randomErr)
+	}
 	secondaryPlan, err := zoneability.PlanElectronSphereSecondary(
-		peerSession.zone.NPCs(), schedule.sourceObjectID,
+		enemies, schedule.sourceObjectID,
 		projectilePosition, schedule.creature, schedule.definition,
 	)
 	if err != nil {
@@ -2662,8 +2669,7 @@ func (e campaignElectronSecondaryStep) produce() ([][]byte, error) {
 		return nil, fmt.Errorf("campaignElectronSecondaryPlan: %w", err)
 	}
 	results, err := zoneability.CommitElectronSphereSecondary(
-		peerSession.zone.Population().Random(),
-		peerSession.zone.NPCs(), secondaryPlan, schedule.creature,
+		random, enemies, secondaryPlan, schedule.creature,
 		peerSession.binding.Difficulty, schedule.runtime.program.Critical,
 	)
 	if err != nil {
@@ -2672,6 +2678,9 @@ func (e campaignElectronSecondaryStep) produce() ([][]byte, error) {
 	}
 	transitions := make([]campaignDamageTransition, 0, len(results))
 	for _, result := range results {
+		if peerSession.binding.Mode == game.ModeArena {
+			continue
+		}
 		transition, transitionErr :=
 			peerSession.applyCampaignDamageTransition(result.Damage)
 		if transitionErr != nil {
@@ -2683,7 +2692,7 @@ func (e campaignElectronSecondaryStep) produce() ([][]byte, error) {
 		transitions = append(transitions, transition)
 	}
 	nextDelay, err := zoneability.ElectronSphereSecondaryDelay(
-		peerSession.zone.Population().Random(),
+		random,
 		schedule.definition.LightningSecondary,
 	)
 	if err != nil {
@@ -2692,16 +2701,24 @@ func (e campaignElectronSecondaryStep) produce() ([][]byte, error) {
 	}
 	nextDeadline := e.deadline + nextDelay
 	isRescheduled := snapshot.RemainingFlightDuration > nextDelay
-	schedule.runtime.registry.sessions[schedule.sessionKey] = peerSession
+	if peerSession.binding.Mode != game.ModeArena {
+		schedule.runtime.registry.sessions[schedule.sessionKey] = peerSession
+	}
 	schedule.runtime.registry.mutex.Unlock()
 
 	timestamp := schedule.packet.SourceTime +
 		uint64(e.deadline/time.Millisecond)
-	packets, err := schedule.runtime.damage.publishAreaResults(
-		schedule.packet, schedule.sessionKey, schedule.generation,
-		schedule.sourceObjectID, timestamp, schedule.binding,
-		results, transitions, nil, false,
-	)
+	var packets [][]byte
+	if arenaTargets, isArena := enemies.(*arenaAbilityTargets); isArena {
+		arenaTargets.finish()
+		packets, err = arenaTargets.packets(results)
+	} else {
+		packets, err = schedule.runtime.damage.publishAreaResults(
+			schedule.packet, schedule.sessionKey, schedule.generation,
+			schedule.sourceObjectID, timestamp, schedule.binding,
+			results, transitions, nil, false,
+		)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("campaignElectronSecondaryPublish: %w", err)
 	}
@@ -3016,9 +3033,11 @@ func (e campaignTossLandingStep) produce() ([][]byte, error) {
 	// Lob locomotion publishes a fixed destination. Damage and effects must
 	// resolve there even when the selected enemy has moved during flight.
 	impactPlan := schedule.plan
-	liveTarget, isTargetFound := peerSession.zone.NPCs().NPC(impactPlan.TargetObjectID)
+	enemies := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, impactPlan.Definition,
+		schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond))
+	liveTarget, isTargetFound := enemies.NPC(impactPlan.TargetObjectID)
 	landingPlan, isStrongImpact, err := zoneability.ResolveTossImpact(
-		peerSession.zone.NPCs(), impactPlan, schedule.creature,
+		enemies.(zoneability.TossTargets), impactPlan, schedule.creature,
 		schedule.startTime.Add(e.deadline),
 	)
 	if err != nil {
@@ -3036,17 +3055,28 @@ func (e campaignTossLandingStep) produce() ([][]byte, error) {
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	random, err := schedule.runtime.registry.abilityRandomLocked(peerSession)
+	if err != nil {
+		schedule.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("tossRandom: %w", err)
+	}
 	results, err := zoneability.CommitArea(
-		peerSession.zone.Population().Random(),
-		peerSession.zone.NPCs(), landingPlan, schedule.creature,
+		random, enemies, landingPlan, schedule.creature,
 		peerSession.binding.Difficulty, schedule.runtime.program.Critical,
 	)
 	if err != nil {
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignTossDamage: %w", err)
 	}
+	if peerSession.binding.Mode == game.ModeArena {
+		// Hits publish through the real target sessions and may queue source packets.
+		peerSession = schedule.runtime.registry.sessions[schedule.sessionKey]
+	}
 	transitions := make([]campaignDamageTransition, 0, len(results))
 	for _, result := range results {
+		if peerSession.binding.Mode == game.ModeArena {
+			continue
+		}
 		transition, transitionErr :=
 			peerSession.applyCampaignDamageTransition(result.Damage)
 		if transitionErr != nil {
@@ -3069,11 +3099,17 @@ func (e campaignTossLandingStep) produce() ([][]byte, error) {
 
 	timestamp := schedule.packet.SourceTime +
 		uint64(e.deadline/time.Millisecond)
-	resultPackets, err := schedule.runtime.damage.publishAreaResults(
-		schedule.packet, schedule.sessionKey, schedule.generation,
-		schedule.sourceObjectID, timestamp, schedule.binding,
-		results, transitions, nil, false,
-	)
+	var resultPackets [][]byte
+	if arenaTargets, isArena := enemies.(*arenaAbilityTargets); isArena {
+		arenaTargets.finish()
+		resultPackets, err = arenaTargets.packets(results)
+	} else {
+		resultPackets, err = schedule.runtime.damage.publishAreaResults(
+			schedule.packet, schedule.sessionKey, schedule.generation,
+			schedule.sourceObjectID, timestamp, schedule.binding,
+			results, transitions, nil, false,
+		)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("campaignTossPublish: %w", err)
 	}
@@ -3149,7 +3185,7 @@ func (e campaignHeldRepeatStep) produce() ([][]byte, error) {
 		peerSession.pendingBasic == nil &&
 		peerSession.basicSequenceSession().IsHeldAt(e.heldGeneration)
 	command := latestBasicHeldCommand(peerSession, e.command)
-	previousNextObjectID := peerSession.nextProjectileObjectID
+	previousCooldownEnd := peerSession.basicSequenceSession().CooldownEnd()
 	e.runtime.registry.mutex.RUnlock()
 	if !isCurrent {
 		return nil, nil
@@ -3166,7 +3202,7 @@ func (e campaignHeldRepeatStep) produce() ([][]byte, error) {
 		latestSession.basicSequenceSession().HeldGeneration() ==
 			e.heldGeneration
 	isRepeated := isMatching &&
-		latestSession.nextProjectileObjectID > previousNextObjectID
+		latestSession.basicSequenceSession().CooldownEnd().After(previousCooldownEnd)
 	if isMatching && !isRepeated && latestSession.pendingBasic == nil {
 		latestSession.basicSequenceSession().ReleaseHeld()
 		e.runtime.registry.sessions[e.sessionKey] = latestSession
@@ -3687,8 +3723,9 @@ func (r campaignAbilityCommandRuntime) handleTossBasic(
 	}
 	isTargetPositionFound := isReportedZonePosition(requestedPosition) &&
 		isFiniteZonePosition(requestedPosition)
+	enemies := r.registry.abilityTargetsLocked(r, peerSession, definition, packet.SourceTime)
 	tossPlan, planErr := zoneability.PlanTossWithAdmission(
-		peerSession.zone.NPCs(), zoneability.TossRequest{
+		enemies, zoneability.TossRequest{
 			SourceObjectID: command.Common.ObjectID, TargetObjectID: targetObjectID,
 			TargetPosition:        game.Vec3(requestedPosition),
 			IsTargetPositionFound: isTargetPositionFound,
@@ -3703,8 +3740,8 @@ func (r campaignAbilityCommandRuntime) handleTossBasic(
 		var rangeErr zoneability.TargetRangeError
 		// VoodooTempestBasic authors shouldPursue. Toss attacks must transfer
 		// to the same authoritative pursuit used by other ranged abilities.
-		if errors.As(planErr, &rangeErr) && definition.IsShouldPursue && targetObjectID != 0 {
-			targetEnemy, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
+		if errors.As(planErr, &rangeErr) && definition.IsShouldPursue && targetObjectID != 0 && peerSession.zone != nil {
+			targetEnemy, isTargetFound := enemies.NPC(targetObjectID)
 			if isTargetFound {
 				request.startTime = abilityStartTime
 				admissionRange := heroAbilityAdmissionRange(creature, definition)
@@ -3747,7 +3784,7 @@ func (r campaignAbilityCommandRuntime) handleTossBasic(
 	tossPlan.Definition.AnimationName = selection.AnimationName
 	tossPlan.Definition.HitDelay = selection.HitDelay
 	tossPlan.Definition.ReleaseDelay = selection.ReleaseDelay
-	projectileObjectID, err := peerSession.reserveCampaignProjectileIDs(1, 1000)
+	projectileObjectID, err := r.registry.reserveAbilityObjectIDsLocked(&peerSession, 1, 1000)
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignTossObjectID: %w", err)

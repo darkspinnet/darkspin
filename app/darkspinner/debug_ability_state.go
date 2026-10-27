@@ -56,6 +56,7 @@ type debugAbilityRejection struct {
 }
 
 type debugAbilityState struct {
+	IsArena              bool                   `json:"is_arena"`
 	CapturedAt           time.Time              `json:"captured_at"`
 	IsAvailable          bool                   `json:"is_available"`
 	UnavailableReason    string                 `json:"unavailable_reason,omitempty"`
@@ -97,6 +98,7 @@ func debugAbilityStateDTO(state scenario.AbilityState) debugAbilityState {
 		ActorObjectID: state.ActorObjectID, CreatureIndex: state.CreatureIndex, CreatureNoun: state.CreatureNoun, AbilityID: state.AbilityID, AbilityAsset: state.AbilityAsset, AbilityName: state.AbilityName,
 		ManaPoint: state.ManaPoint, ManaCost: state.ManaCost, IsManaCostAvailable: state.IsManaCostAvailable, CooldownRemainingMS: state.CooldownRemainingMS, ReleaseRemainingMS: state.ReleaseRemainingMS,
 		IsGateStateAvailable: state.IsGateStateAvailable, LastRevision: state.LastRevision, Phase: state.Phase}
+	result.IsArena = state.IsArena
 	if state.Cast != nil {
 		cast := state.Cast
 		result.Cast = &debugAbilityCast{Revision: cast.Revision, ActorObjectID: cast.ActorObjectID, CreatureIndex: cast.CreatureIndex, AbilityID: cast.AbilityID, AbilityAsset: cast.AbilityAsset,
@@ -146,12 +148,12 @@ func readDebugAbility(ctx context.Context, host *debugHost, clientManager *debug
 	if err != nil {
 		return result, fmt.Errorf("abilitySnapshot: %w", err)
 	}
-	if state.IsAvailable && (state.UserID != uint64(owner.client.UserID) || state.GameID != owner.profile.GameID || state.PeerGeneration == 0 || state.TransportGeneration == 0 || state.ZoneGeneration == 0) {
+	if state.IsAvailable && (state.UserID != uint64(owner.client.UserID) || state.GameID != owner.profile.GameID || state.PeerGeneration == 0 || state.TransportGeneration == 0 || !state.IsArena && state.ZoneGeneration == 0) {
 		return result, &control.ScenarioError{Code: control.OwnershipLost, Context: "abilityBinding", Message: "ability observer omitted or changed the owned admitted binding"}
 	}
 	if initial != nil {
 		isEpochChanged := state.PeerGeneration != 0 && state.PeerGeneration != initial.PeerGeneration || state.TransportGeneration != 0 && state.TransportGeneration != initial.TransportGeneration || state.ZoneGeneration != 0 && state.ZoneGeneration != initial.ZoneGeneration
-		if isEpochChanged || state.IsAvailable && (state.ActorObjectID != initial.ActorObjectID || state.CreatureIndex != initial.CreatureIndex || state.CreatureNoun != initial.CreatureNoun || state.AbilityID != initial.AbilityID) {
+		if isEpochChanged || state.IsAvailable && (state.IsArena != initial.IsArena || state.ActorObjectID != initial.ActorObjectID || state.CreatureIndex != initial.CreatureIndex || state.CreatureNoun != initial.CreatureNoun || state.AbilityID != initial.AbilityID) {
 			return result, &control.ScenarioError{Code: control.OwnershipLost, Context: "abilityActor", Message: "owned ability actor, binding epoch or resolved ability changed"}
 		}
 	}

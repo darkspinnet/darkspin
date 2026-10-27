@@ -231,7 +231,7 @@ func (r campaignNPCActionRuntime) spawnScaldronDeathMines(
 	packet raknet.Packet, sessionKey string, generation uint64,
 	objectID uint32, timestamp uint64,
 ) ([][]byte, bool, error) {
-	if packet.ScheduleProducers == nil {
+	if packet.ScheduleGroup == nil && packet.ScheduleGroupResult == nil {
 		return nil, false, errors.New("death mine scheduler unavailable")
 	}
 	r.registry.mutex.Lock()

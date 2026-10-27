@@ -76,7 +76,8 @@ func (e *gameplaySessionRegistry) ScenarioAbilityState(ctx context.Context, user
 // and this operation neither creates a cooldown gate nor mutates an ability.
 func (e *gameplaySessionRegistry) scenarioAbilitySnapshot(peer gameplayPeerSession, now time.Time) scenario.AbilityState {
 	result := scenario.AbilityState{CapturedAt: now.UTC(), UserID: peer.binding.UserID, GameID: peer.binding.GameID, PeerGeneration: peer.generation, TransportGeneration: peer.transportGeneration, ActorObjectID: peer.deployedObjectID, CreatureIndex: peer.deployedCreatureIndex, Phase: "idle", LastRevision: peer.scenarioAbility.nextRevision}
-	if peer.zone == nil || !peer.stage.IsDungeon() || !peer.dungeonSetup.IsCommitted() || peer.deployedCreatureIndex >= uint32(len(peer.binding.Creatures)) {
+	result.IsArena = peer.binding.Mode == game.ModeArena
+	if !peer.stage.IsDungeon() || !peer.dungeonSetup.IsCommitted() || peer.deployedCreatureIndex >= uint32(len(peer.binding.Creatures)) {
 		result.UnavailableReason = "ability requires an admitted deployed dungeon hero"
 		return result
 	}
@@ -93,7 +94,7 @@ func (e *gameplaySessionRegistry) scenarioAbilitySnapshot(peer gameplayPeerSessi
 	} else if isBurst {
 		result.AbilityName = "Rocket Barrage"
 	}
-	zoneGeneration, actor, isActor := peer.zone.ScenarioAbilityActor(peer.binding.UserID, peer.generation)
+	zoneGeneration, actor, isActor := peer.scenarioAbilityActor()
 	if !isActor || actor.ObjectID != peer.deployedObjectID || actor.CreatureIndex != peer.deployedCreatureIndex {
 		result.UnavailableReason = "current ability hero/zone producer is unavailable or busy"
 		return result

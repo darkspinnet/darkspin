@@ -66,6 +66,16 @@ func (e campaignProjectileStep) produceWaveFlight(
 	results := make([]zoneability.AreaResult, 0, len(contacts))
 	transitions := make([]campaignDamageTransition, 0, len(contacts))
 	width := schedule.projectile.ProjectileWave.Width(now.Sub(schedule.startedAt.Add(schedule.projectile.HitDelay)))
+	enemies := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, schedule.definition,
+		schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond))
+	random, randomErr := schedule.runtime.registry.abilityRandomLocked(peerSession)
+	if randomErr != nil {
+		schedule.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("waveRandom: %w", randomErr)
+	}
+	if peerSession.binding.Mode == game.ModeArena {
+		schedule.runtime.registry.sessions[schedule.sessionKey] = peerSession
+	}
 	for _, contact := range contacts {
 		// Template chunk38 records this BEFORE the child hit callback, including
 		// a callback returning false because the wave is still too narrow.
@@ -84,28 +94,39 @@ func (e campaignProjectileStep) produceWaveFlight(
 		plan := schedule.plan
 		plan.TargetObjectID = contact.target.Plan.ObjectID
 		result, commitErr := zoneability.CommitBasic(
-			peerSession.zone.Population().Random(), peerSession.zone.NPCs(), plan,
+			random, enemies, plan,
 			schedule.creature, schedule.binding.Difficulty, schedule.runtime.program.Critical,
 		)
 		if commitErr != nil {
 			schedule.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("waveCommit: %w", commitErr)
 		}
-		transition, transitionErr := peerSession.applyCampaignDamageTransition(result.Damage)
-		if transitionErr != nil {
-			schedule.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf("waveTransition: %w", transitionErr)
+		if peerSession.binding.Mode != game.ModeArena {
+			transition, transitionErr := peerSession.applyCampaignDamageTransition(result.Damage)
+			if transitionErr != nil {
+				schedule.runtime.registry.mutex.Unlock()
+				return nil, fmt.Errorf("waveTransition: %w", transitionErr)
+			}
+			transitions = append(transitions, transition)
 		}
 		results = append(results, zoneability.AreaResult{
 			SourceRank: plan.SourceRank, SourceCreature: schedule.creature,
 			Snapshot: contact.target, Damage: result.Damage, IsCritical: result.IsCritical,
 			Definition: plan.Definition,
 		})
-		transitions = append(transitions, transition)
 	}
-	schedule.runtime.registry.sessions[schedule.sessionKey] = peerSession
+	if peerSession.binding.Mode != game.ModeArena {
+		schedule.runtime.registry.sessions[schedule.sessionKey] = peerSession
+	}
 	schedule.runtime.registry.mutex.Unlock()
-	if len(results) > 0 {
+	if arenaTargets, isArena := enemies.(*arenaAbilityTargets); isArena {
+		arenaTargets.finish()
+		resultPackets, publishErr := arenaTargets.packets(results)
+		if publishErr != nil {
+			return nil, fmt.Errorf("arenaWavePublish: %w", publishErr)
+		}
+		packets = append(packets, resultPackets...)
+	} else if len(results) > 0 {
 		resultPackets, publishErr := schedule.runtime.damage.publishAreaResults(
 			schedule.packet, schedule.sessionKey, schedule.generation, schedule.sourceObjectID,
 			schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond), schedule.binding,
@@ -139,14 +160,16 @@ func (e *campaignProjectileWave) contacts(
 		segments = []sim.ProjectileMotionSegment{{Position: snapshot.Position, Direction: snapshot.Direction}}
 	}
 	contacts := make([]campaignWaveContact, 0)
-	for _, target := range peerSession.zone.NPCs().LiveSnapshots() {
+	enemies := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, schedule.definition,
+		schedule.packet.SourceTime)
+	for _, target := range enemies.LiveSnapshots() {
 		if _, isAttempted := e.attemptedTargets[target.Plan.ObjectID]; isAttempted {
 			continue
 		}
 		if !target.IsPublished || target.IsDefeated || target.HitPoint <= 0 || !isSupportHealerBasicImpactTarget(target) {
 			continue
 		}
-		geometry, isFallback, err := campaignTargetProjectileGeometry(schedule.runtime.program, target)
+		geometry, isFallback, err := abilityTargetProjectileGeometryLocked(schedule.runtime, peerSession, target)
 		if err != nil {
 			return nil, fmt.Errorf("targetGeometry: %w", err)
 		}

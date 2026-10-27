@@ -7,6 +7,7 @@ import "time"
 // AbilityState observes the authored Ride the Lightning and Rocket Barrage
 // paths. Server producer evidence never attests native input or rendering.
 type AbilityState struct {
+	IsArena              bool
 	CapturedAt           time.Time
 	IsAvailable          bool
 	UnavailableReason    string

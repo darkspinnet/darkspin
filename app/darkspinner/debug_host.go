@@ -219,7 +219,7 @@ func (e *debugHost) waitReady(ctx context.Context, marker string) error {
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("hostReadyContext: %w", ctx.Err())
+			return fmt.Errorf("hostReadyContext: %w", errors.Join(ctx.Err(), err))
 		case <-e.done:
 			if e.runErr != nil {
 				return fmt.Errorf("hostReadyExit: %w", e.runErr)

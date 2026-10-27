@@ -60,6 +60,7 @@
 ---@class AbilityState
 ---@field captured_at string
 ---@field is_available boolean
+---@field is_arena boolean Actor belongs to an admitted PvP round; zone_generation is zero in Arena.
 ---@field unavailable_reason? string
 ---@field is_supported boolean Current installed SpecialTwo is supported LightningRogueActive/TeleportStrike or MissileTempestActive/ProjectileBurst.
 ---@field user_id integer

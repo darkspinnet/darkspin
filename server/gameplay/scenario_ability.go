@@ -6,10 +6,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/scenario"
+	"github.com/darkspinnet/darkspin/server/squad"
 	"github.com/darkspinnet/darkspin/server/zone"
 	zonecontent "github.com/darkspinnet/darkspin/server/zone/content"
+	zonehero "github.com/darkspinnet/darkspin/server/zone/hero"
 )
 
 type scenarioAbilityCatalog struct {
@@ -26,6 +29,7 @@ type scenarioRideCast struct {
 	mutex               sync.Mutex
 	state               scenario.AbilityCast
 	zone                *zone.Zone
+	squad               *squad.Session
 	userID              uint64
 	gameID              uint32
 	peerGeneration      uint64
@@ -48,24 +52,38 @@ func (e *gameplaySessionRegistry) configureScenarioAbility(program Programs) {
 // returns and therefore retain this exact preparing cast object. Publishing
 // preparation never sets acceptance or makes the actor available for a cast.
 func (e *gameplayPeerSession) prepareScenarioRide(req campaignCharacterAbilityRequest, ability zonecontent.HeroAbility, at time.Time, destination raknet.Vector3, targetObjectID uint32) *scenarioRideCast {
-	if e.zone == nil || (ability.AssetName != "LightningRogueActive" && ability.AssetName != "MissileTempestActive") {
+	if ability.AssetName != "LightningRogueActive" && ability.AssetName != "MissileTempestActive" {
 		return nil
 	}
-	zoneGeneration, actor, isActor := e.zone.ScenarioAbilityActor(e.binding.UserID, e.generation)
+	zoneGeneration, actor, isActor := e.scenarioAbilityActor()
 	if !isActor || actor.ObjectID != e.deployedObjectID || actor.CreatureIndex != e.deployedCreatureIndex {
 		e.scenarioAbility.isCaptureUnavailable = true
 		return nil
 	}
 	e.scenarioAbility.isCaptureUnavailable = false
 	e.scenarioAbility.nextRevision++
-	cast := &scenarioRideCast{zone: e.zone, userID: e.binding.UserID, gameID: e.binding.GameID, peerGeneration: e.generation, transportGeneration: e.transportGeneration, zoneGeneration: zoneGeneration,
+	cast := &scenarioRideCast{zone: e.zone, squad: e.squad, userID: e.binding.UserID, gameID: e.binding.GameID, peerGeneration: e.generation, transportGeneration: e.transportGeneration, zoneGeneration: zoneGeneration,
 		state: scenario.AbilityCast{Revision: e.scenarioAbility.nextRevision, ActorObjectID: e.deployedObjectID, CreatureIndex: e.deployedCreatureIndex, AbilityID: ability.ID, AbilityAsset: ability.AssetName, InputSyncStamp: req.command.Common.InputSyncStamp, RequestStamp: req.command.Common.Unknown[0], Phase: "preparing", TargetObjectID: targetObjectID, Destination: scenario.WorldPosition{X: destination.X, Y: destination.Y, Z: destination.Z}}}
 	e.scenarioAbility.last = cast
 	return cast
 }
 
 func (e *gameplayPeerSession) isScenarioRideCurrent(cast *scenarioRideCast) bool {
-	return cast != nil && e.zone == cast.zone && e.binding.UserID == cast.userID && e.binding.GameID == cast.gameID && e.generation == cast.peerGeneration && e.transportGeneration == cast.transportGeneration && e.deployedObjectID == cast.state.ActorObjectID && e.deployedCreatureIndex == cast.state.CreatureIndex
+	return cast != nil && e.zone == cast.zone && e.squad == cast.squad && e.binding.UserID == cast.userID && e.binding.GameID == cast.gameID && e.generation == cast.peerGeneration && e.transportGeneration == cast.transportGeneration && e.deployedObjectID == cast.state.ActorObjectID && e.deployedCreatureIndex == cast.state.CreatureIndex
+}
+
+func (e gameplayPeerSession) scenarioAbilityActor() (uint64, zonehero.Actor, bool) {
+	if e.binding.Mode == game.ModeArena {
+		if e.squad == nil || !e.isArenaCombatActive || e.deployedObjectID == 0 {
+			return 0, zonehero.Actor{}, false
+		}
+		return 0, zonehero.Actor{ObjectID: e.deployedObjectID, CreatureIndex: e.deployedCreatureIndex,
+			HitPoint: e.deployedHitPoint(), ManaPoint: e.deployedManaPoint()}, true
+	}
+	if e.zone == nil {
+		return 0, zonehero.Actor{}, false
+	}
+	return e.zone.ScenarioAbilityActor(e.binding.UserID, e.generation)
 }
 
 func (e *gameplayPeerSession) publishScenarioRide(cast *scenarioRideCast) {

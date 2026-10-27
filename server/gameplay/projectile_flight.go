@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/sim"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
 )
@@ -133,6 +134,14 @@ func (e campaignProjectileStep) produceFlight(
 		result.Distance, result.Speed, (e.deadline - schedule.projectile.HitDelay).Milliseconds(),
 		len(targets), fallbackCount,
 	)
+	if schedule.isElectronSphere {
+		e.schedule.targetObjectID = result.TargetObjectID
+		impactPackets, impactErr := e.produceElectronContact(peerSession, target, game.Vec3(result.Position))
+		if impactErr != nil {
+			return nil, fmt.Errorf("electronContact: %w", impactErr)
+		}
+		return append(packets, impactPackets...), nil
+	}
 	impactPackets, err := e.produceContact(peerSession, target, plan, sim.ProjectileBoxCollision{
 		Position: result.Position, TravelDistance: result.Distance, IsDirectHit: true,
 	})

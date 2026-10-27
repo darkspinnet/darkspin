@@ -40,7 +40,7 @@ type TossRequest struct {
 }
 
 func PlanToss(
-	enemies *zonenpc.Session, sourceObjectID uint32, targetObjectID uint32,
+	enemies TargetReader, sourceObjectID uint32, targetObjectID uint32,
 	sourcePosition game.Vec3, creature game.GameplayCreature,
 	definition sim.AbilityDefinition, simulationTime time.Duration,
 ) (TossPlan, error) {
@@ -58,7 +58,7 @@ func PlanToss(
 // PlanTossWithAdmission uses actor origins and scaled footprints for admission.
 // The separate source center preserves the toss template's muzzle and flight.
 func PlanTossWithAdmission(
-	enemies *zonenpc.Session, req TossRequest,
+	enemies TargetReader, req TossRequest,
 ) (TossPlan, error) {
 	sourceObjectID := req.SourceObjectID
 	targetObjectID := req.TargetObjectID
@@ -167,8 +167,13 @@ func PlanTossWithAdmission(
 	}, nil
 }
 
+type TossTargets interface {
+	TargetReader
+	HasCurseOrFear(uint32, time.Time) bool
+}
+
 func ResolveTossImpact(
-	enemies *zonenpc.Session, plan TossPlan,
+	enemies TossTargets, plan TossPlan,
 	creature game.GameplayCreature, at time.Time,
 ) (AreaPlan, bool, error) {
 	landing, err := resolveTossLanding(enemies, plan)
@@ -219,7 +224,7 @@ func RefreshTossLaunch(plan TossPlan, destination sim.Position, at time.Duration
 }
 
 func resolveTossLanding(
-	enemies *zonenpc.Session, plan TossPlan,
+	enemies TargetReader, plan TossPlan,
 ) (AreaPlan, error) {
 	if enemies == nil || plan.SourceObjectID == 0 || plan.AbilityID == 0 ||
 		plan.Definition.Kind != sim.AbilityKindToss ||
