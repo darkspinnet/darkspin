@@ -54,7 +54,7 @@ func (e *heroDrainRun) retireWebTransfusionLocked() error {
 		}
 		packets = append(packets, removals...)
 	}
-	e.registry.queueChannelRemovalsLocked(e.zone, packets)
+	e.queueRemovalsLocked(packets)
 	e.isStopped = true
 	e.isEffectsReleased = true
 	if e.cancel != nil {
@@ -84,7 +84,7 @@ func (e heroDrainSchedule) refreshWebTransfusionEffects(targets []zonenpc.Snapsh
 		if err != nil {
 			return fmt.Errorf("webRootAttach: %w", err)
 		}
-		e.runtime.registry.queueChannelPresentationLocked(e.run.zone, [][]byte{rootPacket})
+		e.run.queuePresentationLocked([][]byte{rootPacket})
 		e.run.areaDrain.isRootPublished = true
 	}
 	targetIDs := make(map[uint32]struct{}, len(targets))
@@ -100,7 +100,7 @@ func (e heroDrainSchedule) refreshWebTransfusionEffects(targets []zonenpc.Snapsh
 		if err != nil {
 			return fmt.Errorf("webDepartRemove: %w", err)
 		}
-		e.runtime.registry.queueChannelRemovalsLocked(e.run.zone, packets)
+		e.run.queueRemovalsLocked(packets)
 		e.run.effectPool.Release(e.sourceObjectID, effect.sourceSlot)
 		e.run.effectPool.Release(targetID, effect.targetSlot)
 		delete(e.run.areaDrain.effects, targetID)
@@ -114,7 +114,7 @@ func (e heroDrainSchedule) refreshWebTransfusionEffects(targets []zonenpc.Snapsh
 			if err != nil {
 				return fmt.Errorf("webSparkRefresh: %w", err)
 			}
-			e.runtime.registry.queueChannelPresentationLocked(e.run.zone, packets)
+			e.run.queuePresentationLocked(packets)
 			continue
 		}
 		sourceSlot, isSourceAllocated := e.run.effectPool.Allocate(e.sourceObjectID)
@@ -135,7 +135,7 @@ func (e heroDrainSchedule) refreshWebTransfusionEffects(targets []zonenpc.Snapsh
 			return fmt.Errorf("webPairAttach: %w", err)
 		}
 		e.run.areaDrain.effects[targetID] = webTransfusionEffect{sourceSlot: sourceSlot, targetSlot: targetSlot}
-		e.runtime.registry.queueChannelPresentationLocked(e.run.zone, packets)
+		e.run.queuePresentationLocked(packets)
 	}
 	return nil
 }
@@ -153,6 +153,9 @@ func (e heroDrainSchedule) tickWebTransfusion(deadline time.Duration) ([][]byte,
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("webPulseRadius: %w", err)
 	}
+	if peerSession.binding.Mode == game.ModeArena {
+		return e.tickArenaWebTransfusionLocked(peerSession, radius, deadline)
+	}
 	targets := make([]zonenpc.Snapshot, 0)
 	for _, target := range peerSession.zone.NPCs().LiveSnapshots() {
 		if target.Faction == zonenpc.FactionNonPlayerAligned &&
@@ -165,6 +168,7 @@ func (e heroDrainSchedule) tickWebTransfusion(deadline time.Duration) ([][]byte,
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("webPulseEffects: %w", err)
 	}
+	peerSession = e.runtime.registry.sessions[e.sessionKey]
 	damage, err := zoneability.ProjectDamage(e.creature, e.definition, e.definition.MinimumDamage, e.definition.MaximumDamage)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
@@ -211,7 +215,7 @@ func (e heroDrainSchedule) healWebTransfusion(peerSession *gameplayPeerSession, 
 	if damage <= 0 {
 		return nil, nil
 	}
-	healing, err := game.ApplyTargetHealingReduction(damage*e.definition.LifeSteal, e.creature.HealingTargetProfile)
+	healing, err := game.ApplyTargetHealingReduction(damage*e.definition.LifeSteal, peerSession.healingTargetProfile(peerSession.deployedCreatureIndex))
 	if err != nil {
 		return nil, fmt.Errorf("webHealReduction: %w", err)
 	}
@@ -254,7 +258,7 @@ func (e heroDrainSchedule) failWebTransfusionLocked() {
 		e.runtime.logger.Printf("RakNet Web Transfusion failure animation failed: %v", err)
 		return
 	}
-	e.runtime.registry.queueChannelReleaseLocked(e.run.zone, e.sessionKey, e.generation, [][]byte{e.run.releasePacket, packet})
+	e.run.queueReleaseLocked(e.sessionKey, e.generation, [][]byte{e.run.releasePacket, packet})
 }
 
 func (e campaignAbilityCommandRuntime) handleWebTransfusion(
@@ -381,10 +385,14 @@ func (e campaignAbilityCommandRuntime) handleWebTransfusion(
 	if err != nil {
 		e.effectPool.Release(req.command.Common.ObjectID, sourceEffectSlot)
 		refundPacket, refundErr := cast.failLocked(&peerSession, true, cast.revision)
-		e.registry.sessions[sessionKey] = peerSession
 		if len(refundPacket) != 0 {
-			e.registry.queueChannelPresentationLocked(peerSession.zone, [][]byte{refundPacket})
+			if peerSession.binding.Mode == game.ModeArena {
+				peerSession.queuePackets([][]byte{refundPacket})
+			} else {
+				e.registry.queueChannelPresentationLocked(peerSession.zone, [][]byte{refundPacket})
+			}
 		}
+		e.registry.sessions[sessionKey] = peerSession
 		if refundErr != nil {
 			e.logger.Printf("RakNet channel drain admission refund failed: %v", refundErr)
 		}
@@ -397,6 +405,9 @@ func (e campaignAbilityCommandRuntime) handleWebTransfusion(
 		effectPool: e.effectPool, sourceObjectID: req.command.Common.ObjectID,
 		sourceEffectSlot: sourceEffectSlot, releasePacket: releasePacket,
 		areaDrain: &webTransfusionRun{effects: make(map[uint32]webTransfusionEffect), relaxAnimationName: projected.OutAnimationName, startedAt: abilityStartTime},
+	}
+	if peerSession.binding.Mode == game.ModeArena {
+		run.arenaGameID = peerSession.binding.GameID
 	}
 	peerSession.heroDrain = run
 	generation := peerSession.generation

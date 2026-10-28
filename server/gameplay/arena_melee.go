@@ -67,6 +67,20 @@ func (e campaignMeleeHitStep) commitArenaMeleeLocked(current gameplayPeerSession
 			return nil, fmt.Errorf("arenaMeleeEvent: %w", hitErr)
 		}
 		packets = append(packets, hitPackets...)
+		statusErr := targets.applyBasicStatusLocked(hit.Damage, schedule.creature, schedule.plan.SourceRank,
+			schedule.packet.SourceTime+uint64(e.delay/time.Millisecond))
+		if statusErr != nil && runtime.logger != nil {
+			// Damage is committed; keep the hit and record an optional status failure.
+			runtime.logger.Printf("Arena melee status callback failed source=%d target=%d: %v",
+				schedule.sourceObjectID, hit.Damage.ObjectID, statusErr)
+		}
+		plasmaErr := targets.applyPlasmaModifierLocked(hit.Damage, schedule.creature,
+			schedule.plan.SourceRank, schedule.selection.AnimationIndex,
+			schedule.packet.SourceTime+uint64(e.delay/time.Millisecond))
+		if plasmaErr != nil && runtime.logger != nil {
+			runtime.logger.Printf("Arena plasma modifier failed source=%d target=%d: %v",
+				schedule.sourceObjectID, hit.Damage.ObjectID, plasmaErr)
+		}
 		if schedule.selected.HitEffectName != "" && schedule.selected.ChainLightning.MaximumHopCount == 0 {
 			impact := campaignMeleeImpact{assetName: schedule.selected.HitEffectName,
 				sourceObjectID: schedule.sourceObjectID, sourcePosition: current.playerPosition}
@@ -77,6 +91,25 @@ func (e campaignMeleeHitStep) commitArenaMeleeLocked(current gameplayPeerSession
 			if len(effectPacket) != 0 {
 				packets = append(packets, effectPacket)
 			}
+		}
+	}
+	if schedule.selected.Name == "ShadowRavagerActive" || schedule.selected.Name == "TechRandom3" {
+		targetObjectIDs := make([]uint32, 0, len(results))
+		for _, hit := range results {
+			if hit.Damage.IsDefeated || hit.Damage.IsDamageImmune || hit.Damage.Damage <= 0 {
+				continue
+			}
+			targetObjectIDs = append(targetObjectIDs, hit.Damage.ObjectID)
+		}
+		plan := zoneability.AreaPlan{SourceObjectID: schedule.sourceObjectID,
+			AbilityID: schedule.plan.AbilityID, Definition: schedule.selected}
+		_, statusErr := runtime.applyArenaTargetStatusLocked(schedule.sessionKey, schedule.generation,
+			schedule.sourceObjectID, schedule.packet.SourceTime+uint64(e.delay/time.Millisecond), plan, targetObjectIDs)
+		if statusErr != nil && runtime.logger != nil {
+			// The melee hit is committed; do not discard its damage when the
+			// optional child modifier cannot be published.
+			runtime.logger.Printf("Arena melee modifier failed ability=%s source=%d: %v",
+				schedule.selected.Name, schedule.sourceObjectID, statusErr)
 		}
 	}
 	if runtime.logger != nil {

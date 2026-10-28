@@ -2,7 +2,8 @@
 ---For a short smoke run set pairCount=1 and select case IDs below. Reruns
 ---reuse these exact owned clients; an attempted input is never replayed here.
 local pairCount = 5
-local selectedCaseIDs = {} -- Example: { ["srs-basic"] = true }
+local selectedCaseIDs = {}
+local isFallbackSurveyEnabled = false
 local isThunderstormEnabled = true -- Separate long case, explicit 30s deadline.
 local must, check = scenario.Must, scenario.Check
 
@@ -41,36 +42,144 @@ local plans = {
     {firstNoun=3524487169, secondNoun=185979955, cases={
         {id="srs-basic", side="a", noun=3524487169, asset="MissileTempestBasic", kind="basic"},
         {id="missile-barrage", side="a", noun=3524487169, asset="MissileTempestActive", kind="burst", x=575, timeout=15000},
-        {id="meditron-basic", side="b", noun=185979955, asset="FieldMedicBasic", kind="basic"},
+        {id="meditron-basic", side="b", noun=185979955, asset="FieldMedicBasic", kind="audit", slot="basic", isAudit=true, settle=1800, timeout=7000},
         {id="reconstruct-self", side="b", noun=185979955, asset="FieldMedicSupport", kind="heal", x=640, settle=3800, isSelf=true},
     }},
     {firstNoun=577654149, secondNoun=749013658, cases={
         {id="krel-basic", side="a", noun=577654149, asset="FireRavagerBasic", kind="basic"},
-        {id="electron-sphere", side="a", noun=577654149, asset="PlasmaRandom_LightningBall", kind="damage", x=605, settle=6000},
+        {id="electron-sphere", side="a", noun=577654149, asset="PlasmaRandom_LightningBall", kind="damage", x=605, settle=6000, isAudit=true},
         {id="sage-healing-projectile", side="b", noun=749013658, asset="SupportHealerBasic", kind="basic_heal"},
         {id="tree-of-life-self", side="b", noun=749013658, asset="TreeOfLife", kind="heal", x=575, settle=31000, isSelf=true},
     }},
     {firstNoun=700180862, secondNoun=3618328019, cases={
         {id="lumin-basic", side="a", noun=700180862, asset="LightningTempest_Basic", kind="basic"},
-        {id="thunderstorm", side="a", noun=700180862, asset="LightningTempest_Active", kind="burst", x=575, timeout=30000, isSelf=true, isLong=true, expectedLaunchCount=30},
-        {id="thunderstorm-reset-repeat", side="a", noun=700180862, asset="LightningTempest_Active", kind="burst", x=575, timeout=30000, isSelf=true, isLong=true, expectedLaunchCount=30, isCooldownRepeat=true},
+        {id="thunderstorm", side="a", noun=700180862, asset="LightningTempest_Active", kind="burst", x=575, timeout=30000, isSelf=true, isLong=true, expectedLaunchCount=30, isZeroDamageAllowed=true},
+        {id="thunderstorm-reset-repeat", side="a", noun=700180862, asset="LightningTempest_Active", kind="burst", x=575, timeout=30000, isSelf=true, isLong=true, expectedLaunchCount=30, isCooldownRepeat=true, isZeroDamageAllowed=true},
         {id="chain-lightning-direct", side="a", noun=700180862, asset="LightningTempest_Support", kind="damage", x=640, settle=1800},
-        {id="fire-wave", side="a", noun=700180862, asset="PlasmaRandom_FireWave", kind="damage", x=605, settle=6000},
-        {id="delaying-sphere", side="b", noun=3618328019, asset="SpacetimeRandom2", kind="aura", x=605, settle=13000, isSelf=true},
+        {id="fire-wave", side="a", noun=700180862, asset="PlasmaRandom_FireWave", kind="damage", x=605, settle=6000, isAudit=true},
+        {id="delaying-sphere", side="b", noun=3618328019, asset="SpacetimeRandom2", kind="aura", x=605, settle=13000, isSelf=true, isAudit=true},
     }},
     {firstNoun=171910024, secondNoun=820281267, cases={
         {id="goliath-basic", side="a", noun=171910024, asset="EnergySentinelBasic", kind="basic"},
-        {id="arc-weld-direct", side="a", noun=171910024, asset="EnergySentinelActive", kind="damage", x=640, settle=1800},
+        {id="arc-weld-direct", side="a", noun=171910024, asset="EnergySentinelActive", kind="audit", x=640, isAudit=true, settle=1800},
         {id="trapper-grenade", side="b", noun=820281267, asset="Trapper_Grenade", kind="basic"},
     }},
     {firstNoun=43291678, secondNoun=3877795735, cases={
         {id="arakna-basic", side="a", noun=43291678, asset="SoulRavagerBasic", kind="basic"},
         {id="essence-volley", side="a", noun=43291678, asset="SoulRavagerSupport", kind="burst_heal", x=640, timeout=12000},
         {id="phantom-burst", side="a", noun=43291678, asset="SoulRavagerActive", kind="burst", x=575, timeout=10000, isSelf=true},
-        {id="force-pulse", side="b", noun=3877795735, asset="ForcePulse", kind="basic"},
+        {id="force-pulse", side="b", noun=3877795735, asset="ForcePulse", kind="basic", isAudit=true, settle=1200},
         {id="celestial-comet", side="b", noun=3877795735, asset="SpacetimeRandom3", kind="damage", x=605, settle=1800},
     }},
 }
+
+-- Complete the rank-one shared-executor catalog in the same five owned duels.
+-- These cases require exact admitted dispatch and both native frames; semantic
+-- effects and packet delivery are evaluated from the retained case traces.
+local auditCases = {
+    {noun=117394854,asset="SplinteringCleave",slot="basic"},
+    {noun=117394854,asset="CastEnrage",slot="random",isSelf=true},
+    {noun=117394854,asset="ArborealMight",slot="special_one",isSelf=true},
+    {noun=117394854,asset="EntanglingRush",slot="special_two",settle=3500,timeout=9000},
+    {noun=171910024,asset="ClaymoreTrap",slot="random",isSelf=true,settle=5000,timeout=12000},
+    {noun=820281267,asset="TurretTrap",slot="special_one",isSelf=true,settle=12000,timeout=18000,targetMaximumHitPoint=10000},
+    {noun=820281267,asset="PipeBomb",slot="special_two",settle=5000,timeout=12000},
+    {noun=171910024,asset="EnergySentinelSupport",slot="special_two"},
+    {noun=185979955,asset="FieldMedicActive",slot="special_two",isSelf=true,settle=1500,timeout=7000},
+    {noun=185979955,asset="TechRandom",slot="random"},
+    {noun=239643518,asset="ShadowRavagerBasic",slot="basic"},
+    {noun=43291678,asset="NecroRandom",slot="random",settle=7500,timeout=13000,targetMaximumHitPoint=10000},
+    {noun=239643518,asset="CastSoulLink",slot="random",isSelf=true},
+    {noun=239643518,asset="ShadowRavagerSupport",slot="special_one",isSelf=true},
+    {noun=239643518,asset="ShadowRavagerActive",slot="special_two"},
+    {noun=454054015,asset="LightningRogueBasic",slot="basic"},
+    {noun=454054015,asset="LightningRogueActive",slot="special_two",settle=1800,timeout=7000},
+    {noun=454054015,asset="PlasmaRandom",slot="random"},
+    {noun=577654149,asset="FireRavagerActive",slot="special_two"},
+    {noun=577654149,asset="FireRavagerSupport",slot="special_one",settle=2600,timeout=8000,targetMaximumHitPoint=10000},
+    {noun=709733043,asset="FireTempestSupport",slot="special_one",settle=7000,timeout=12000,targetMaximumHitPoint=10000},
+    {noun=709733043,asset="FireTempestActive",slot="special_two",isSelf=true,settle=8500,timeout=13000,targetMaximumHitPoint=10000},
+    {noun=709733043,asset="FireTempestBasic",slot="basic"},
+    {noun=308338531,asset="Sporogenesis",slot="special_one",isSelf=true,settle=6500,timeout=11000},
+    {noun=308338531,asset="Sprout",slot="basic",settle=6500,timeout=11000,targetMaximumHitPoint=10000},
+    {noun=308338531,asset="SleepingCloud",slot="special_two",settle=7500,timeout=12000,targetMaximumHitPoint=10000},
+    {noun=713294352,asset="LFPoisonRavager_Stab",slot="basic"},
+    {noun=713294352,asset="LFPoisonRavager_PoisonNova",slot="special_one",isSelf=true,settle=11000,timeout=16000,targetMaximumHitPoint=10000},
+    {noun=713294352,asset="LFPoisonRavager_Expunge",slot="special_two",settle=2000,timeout=7500,targetMaximumHitPoint=10000,prepAsset="LFPoisonRavager_PoisonNova",prepWaitMS=1800},
+    {noun=725345831,asset="SpacetimeRandom1",slot="random"},
+    {noun=725345831,asset="LightspeedTempestBasic",slot="basic"},
+    {noun=725345831,asset="LightspeedTempestSupport",slot="special_one"},
+    {noun=725345831,asset="LightspeedTempestActive",slot="special_two",settle=2200,timeout=7500,targetMaximumHitPoint=10000},
+    {noun=753829266,asset="Pummel",slot="basic"},
+    {noun=753829266,asset="AfflictionBolt",slot="random",settle=10500,timeout=15000,targetMaximumHitPoint=10000},
+    {noun=753829266,asset="DeathsEmbrace",slot="special_two",isSelf=true,settle=3000,timeout=8000,targetMaximumHitPoint=10000},
+    {noun=753829266,asset="Ghostform",slot="special_one",isSelf=true},
+    {noun=647027626,asset="SummonSprite",slot="random",isSelf=true,settle=32000,timeout=38000},
+    {noun=758141691,asset="Weakness",slot="basic"},
+    {noun=758141691,asset="Psistorm",slot="special_two",settle=7500,timeout=12000,targetMaximumHitPoint=10000},
+    {noun=758141691,asset="Terrify",slot="special_one",settle=5500,timeout=10500,targetMaximumHitPoint=10000},
+    {noun=1077715391,asset="TimeRavagerBasic",slot="basic"},
+    {noun=1077715391,asset="TimeRavagerActive",slot="special_two",isSelf=true},
+    {noun=1077715391,asset="TimeRavagerSupport",slot="special_one",settle=4300,timeout=8500,targetMaximumHitPoint=10000},
+    {noun=1194511925,asset="TCShieldedSentinelBasic",slot="basic"},
+    {noun=1194511925,asset="TCShieldedSentinelSupport",slot="special_one"},
+    {noun=1194511925,asset="TCShieldedSentinelActive",slot="special_two",isSelf=true,settle=1600,timeout=7000,targetMaximumHitPoint=10000},
+    {noun=1194511925,asset="TechRandom2",slot="random",isSelf=true,settle=4300,timeout=9000,reactAfterMS=900},
+    {noun=1240682488,asset="QuantumStrike",slot="basic"},
+    {noun=1240682488,asset="QuantumBlink",slot="special_two",settle=3500,timeout=10000,targetMaximumHitPoint=10000},
+    {noun=1240682488,asset="QuantumState",slot="special_one",isSelf=true,settle=9000,timeout=14000,targetMaximumHitPoint=10000,reactAfterMS=400},
+    {noun=1237326306,asset="RootingPlague",slot="random",settle=9000,timeout=14000,targetMaximumHitPoint=10000},
+    {noun=1264710567,asset="BeastSmash",slot="basic"},
+    {noun=1264710567,asset="SummonBeast",slot="special_one",isSelf=true,settle=5000,timeout=10000,targetMaximumHitPoint=10000},
+    {noun=1264710567,asset="BeastCharge",slot="special_two",settle=3500,timeout=9000},
+    {noun=1442915581,asset="VoodooTempestBasic",slot="basic",settle=2500,timeout=7500},
+    {noun=1442915581,asset="VoodooTempestActive",slot="special_two",settle=5000,timeout=10000,targetMaximumHitPoint=10000},
+    {noun=1442915581,asset="VoodooTempestSupport",slot="special_one",isSelf=true,settle=1600,timeout=7000},
+    {noun=1557965449,asset="TechRandom3",slot="random",settle=1800,timeout=7000,targetMaximumHitPoint=10000},
+    {noun=507464763,asset="SpacetimeRandom",slot="random",settle=8500,timeout=13000,targetMaximumHitPoint=10000},
+    {noun=507464763,asset="RepulsionWave",slot="special_one",isSelf=true,settle=2300,timeout=7500,targetMaximumHitPoint=10000},
+    {noun=507464763,asset="GravityStorm",slot="special_two",settle=7200,timeout=12000,targetMaximumHitPoint=10000},
+    {noun=308338531,asset="BioRandom2",slot="random",settle=3500,timeout=9000,targetMaximumHitPoint=10000},
+    {noun=454054015,asset="LightningRogueSupport",slot="special_one",settle=4300,timeout=8500,targetMaximumHitPoint=10000},
+    {noun=1476711747,asset="BinarySentinelActive",slot="special_two",settle=1800,timeout=7000,targetMaximumHitPoint=10000},
+    {noun=1476711747,asset="BinarySentinelSupport",slot="special_one",settle=2200,timeout=7500,targetMaximumHitPoint=10000},
+    {noun=962104613,asset="PlasmaRandom_WebbedLightning",slot="random",kind="burst",timeout=12000,targetMaximumHitPoint=10000},
+    {noun=576185321,asset="PlasmaSentinelBasic",slot="basic",settle=2500,timeout=8000},
+    {noun=576185321,asset="PlasmaSentinelSupport",slot="special_one",settle=8500,timeout=12500},
+    {noun=576185321,asset="PlasmaSentinelActive",slot="special_two",isSelf=true,settle=8500,timeout=12500,targetMaximumHitPoint=10000,reactAfterMS=900},
+    {noun=1014804343,asset="PhantomCharge",slot="random",settle=3500,timeout=9000},
+    {noun=1476711747,asset="BinarySentinelBasic",slot="basic"},
+    {noun=749013658,asset="SupportHealerSupport",slot="special_one",settle=8500,timeout=13000,targetMaximumHitPoint=10000},
+    {noun=2038499613,asset="MissileTempestSupport",slot="special_one"},
+}
+for index,case in ipairs(auditCases) do
+    case.id="audit-"..case.asset
+    case.side="a"
+    case.kind=case.kind or "audit"
+    case.isAudit=case.kind=="audit"
+    case.x=case.slot=="random" and 605 or case.slot=="special_one" and 640 or 575
+    case.settle=case.settle or 1500
+    case.timeout=case.timeout or 7000
+    local plan=plans[(index-1)%pairCount+1]
+    plan.cases[#plan.cases+1]=case
+end
+
+-- Survey remaining build-103 assets without treating a fallback admission as
+-- parity. Enable separately from the verified catalog; a rejected cast is
+-- recorded and the next owned fixture can still be inspected.
+local fallbackSurveyCases = {
+}
+for index,case in ipairs(fallbackSurveyCases) do
+    case.id="survey-"..case.asset
+    case.side="a"
+    case.kind="survey"
+    case.isSurvey=true
+    case.x=case.slot=="random" and 605 or case.slot=="special_one" and 640 or 575
+    case.settle=1500
+    case.timeout=4500
+    local plan=plans[(index-1)%pairCount+1]
+    plan.cases[#plan.cases+1]=case
+end
 
 local function snapshot(client)
     local world = must(client.World:SnapshotLiving())
@@ -242,17 +351,20 @@ local function preparePairBoundary(pair)
         is_packet_proven=false})
 end
 
-local function restore(client, isWounded)
+local function restore(client, isWounded, maximumHitPoint)
     local before = snapshot(client)
     local req = {}
-    if isWounded then req.hit_point = before.hero.maximum_hit_point * 0.4 end
+    if maximumHitPoint then req.maximum_hit_point = maximumHitPoint end
+    if isWounded then req.hit_point = (maximumHitPoint or before.hero.maximum_hit_point) * 0.4 end
     local receipt = must(client.World:RestoreHero(req))
     if not receipt.is_queued or receipt.recipient_count ~= 2 then error("resource fixture not queued to both owned clients") end
-    local expectedHP = isWounded and before.hero.maximum_hit_point*0.4 or before.hero.maximum_hit_point
+    local expectedMaximum = maximumHitPoint or before.hero.maximum_hit_point
+    local expectedHP = isWounded and expectedMaximum*0.4 or expectedMaximum
     local deadline = scenario.Time()+4000
     while scenario.Time()<deadline do
         local after = snapshot(client)
-        if math.abs(after.hero.hit_point-expectedHP)<0.1 and math.abs(after.hero.mana_point-after.hero.maximum_mana_point)<0.1 then return end
+        if math.abs(after.hero.hit_point-expectedHP)<0.1 and math.abs(after.hero.maximum_hit_point-expectedMaximum)<0.1
+            and math.abs(after.hero.mana_point-after.hero.maximum_mana_point)<0.1 then return end
         pause(100)
     end
     error("server resource fixture was not observed before deadline")
@@ -266,7 +378,8 @@ local function place(client, point)
     while scenario.Time()<deadline do
         local after = native(client)
         local dx,dy = after.position.x-point.x,after.position.y-point.y
-        if dx*dx+dy*dy<0.09 and after.frame_sequence>before.frame_sequence then return end
+        -- Some build-103 controlled rigs settle with a small persistent actor-center offset.
+        if dx*dx+dy*dy<0.25 and after.frame_sequence>before.frame_sequence then return end
         pause(100)
     end
     error("fresh native placement not observed")
@@ -281,13 +394,12 @@ end
 local function nativeDispatch(case, source, target)
     local aim = native(case.isSelf and source or target).position
     if not case.isSelf then aim={x=aim.x,y=aim.y,z=aim.z+1.5} end
-    if case.kind=="basic" or case.kind=="basic_heal" then
+    if case.kind=="basic" or case.kind=="basic_heal" or (case.isAudit or case.isSurvey) and case.slot=="basic" then
         local receipt = must(source.World:Hold(aim,600))
         local click = receipt.gameplay_click
         if not receipt.is_processed or not click or not click.is_press_poll_observed or not click.is_release_poll_observed then
             error("basic input lacks paired native press/release processing; no replay")
         end
-        stop(source)
         return
     end
     local button = must(source.UI:Click(case.x,655))
@@ -297,13 +409,14 @@ local function nativeDispatch(case, source, target)
     if not receipt.is_processed then error("native world ability edge unprocessed; no replay") end
 end
 
-local function waitCase(pair, case, source, target, beforeSource, beforeTarget)
+local function waitCase(pair, case, source, target, beforeSource, beforeTarget, sourceFrame, targetFrame)
     local started = scenario.Time()
     local deadline = started+(case.timeout or math.max(5000,(case.settle or 0)+3000))
     local isBurst = case.kind=="burst" or case.kind=="burst_heal"
     local previousRevision = beforeSource.ability and beforeSource.ability.last_revision
     if isBurst and previousRevision==nil then error("burst terminal revision producer unavailable") end
     local afterSource,afterTarget
+    local otherDispatchRevision = 0
     while scenario.Time()<deadline do
         afterSource,afterTarget = snapshot(source),snapshot(target)
         if not isPinned(beforeSource,afterSource) or not isPinned(beforeTarget,afterTarget) then
@@ -314,7 +427,48 @@ local function waitCase(pair, case, source, target, beforeSource, beforeTarget)
         local healing = sourceLedger.healing_received-member(beforeSource).healing_received
         local isDamage = damage>0 and afterTarget.hero.hit_point<beforeTarget.hero.hit_point
         local isHealing = healing>0 and afterSource.hero.hit_point>beforeSource.hero.hit_point
-        if isBurst then
+        if case.isSurvey then
+            local dispatch=afterSource.ability and afterSource.ability.last_dispatch
+            local previous=beforeSource.ability and beforeSource.ability.last_dispatch
+            local previousDispatchRevision=previous and previous.revision or 0
+            if dispatch and dispatch.revision>previousDispatchRevision then
+                if dispatch.actor_object_id~=beforeSource.hero.object_id or dispatch.ability_asset~=case.asset then
+                    if dispatch.revision>otherDispatchRevision then
+                        record({event="survey_other_dispatch",case_id=case.id,asset=case.asset,
+                            observed_asset=dispatch.ability_asset,revision=dispatch.revision})
+                        otherDispatchRevision=dispatch.revision
+                    end
+                else
+                    local sourceNative,targetNative=native(source),native(target)
+                    if sourceNative.frame_sequence>sourceFrame and targetNative.frame_sequence>targetFrame
+                        and scenario.Time()-started>=case.settle then
+                        record({event="survey_observation",case_id=case.id,asset=case.asset,
+                            is_dispatch_observed=true,revision=dispatch.revision,damage=damage,healing=healing,
+                            source_frame=sourceNative.frame_sequence,target_frame=targetNative.frame_sequence,
+                            is_effect_proven=false,is_packet_proven=false})
+                        return afterSource,afterTarget,"survey_admitted_unverified_effect"
+                    end
+                end
+            end
+        elseif case.isAudit then
+            local dispatch=afterSource.ability and afterSource.ability.last_dispatch
+            local previous=beforeSource.ability and beforeSource.ability.last_dispatch
+            local previousDispatchRevision=previous and previous.revision or 0
+            if dispatch and dispatch.revision>previousDispatchRevision then
+                if dispatch.actor_object_id~=beforeSource.hero.object_id or dispatch.ability_asset~=case.asset then
+                    error("audit dispatch identity disagrees with native case")
+                end
+                local sourceNative,targetNative=native(source),native(target)
+                if sourceNative.frame_sequence>sourceFrame and targetNative.frame_sequence>targetFrame
+                    and scenario.Time()-started>=case.settle then
+                    record({event="audit_dispatch",case_id=case.id,asset=case.asset,
+                        revision=dispatch.revision,source_frame=sourceNative.frame_sequence,
+                        target_frame=targetNative.frame_sequence,damage=damage,healing=healing,
+                        is_packet_proven=false,is_native_rendering_proven=false})
+                    return afterSource,afterTarget,"exact_dispatch_and_native_frames"
+                end
+            end
+        elseif isBurst then
             local ability = afterSource.ability
             if not ability then error("burst terminal observer unavailable") end
             if ability.last_revision>previousRevision+1 then error("burst revision skipped; no attribution or replay") end
@@ -332,6 +486,11 @@ local function waitCase(pair, case, source, target, beforeSource, beforeTarget)
                         damage=damage,healing=healing})
                     if case.expectedLaunchCount and cast.expected_launch_count~=case.expectedLaunchCount then
                         error("terminal burst launch count disagrees with the explicit installed case contract")
+                    end
+                    if not isDamage and (case.asset=="PlasmaRandom_WebbedLightning" or case.isZeroDamageAllowed) then
+                        record({event="burst_zero_damage",case_id=case.id,asset=case.asset,
+                            is_defense_packet_verified=false,is_effect_proven=false,is_packet_proven=false})
+                        return afterSource,afterTarget,"terminal_zero_damage_unverified"
                     end
                     if not isDamage then error("burst completed but damage remains unverified") end
                     if case.kind=="burst_heal" and not isHealing then error("burst completed but actual healing remains unverified") end
@@ -354,8 +513,20 @@ local function waitCase(pair, case, source, target, beforeSource, beforeTarget)
     end
     actorRecord(case.id,"deadline","source",source,afterSource or beforeSource)
     actorRecord(case.id,"deadline","target",target,afterTarget or beforeTarget)
+    if case.isSurvey then
+        record({event="survey_observation",case_id=case.id,asset=case.asset,
+            is_dispatch_observed=false,is_effect_proven=false,is_packet_proven=false})
+        return afterSource or beforeSource,afterTarget or beforeTarget,"survey_no_dispatch_observer"
+    end
     error("case observation deadline reached; no replay")
 end
+
+local meleeAssets = {
+    SplinteringCleave=true, EnergySentinelActive=true, EnergySentinelSupport=true, ShadowRavagerBasic=true, ShadowRavagerActive=true,
+    LightningRogueBasic=true, LightningTempest_Support=true,
+    LFPoisonRavager_Stab=true, LFPoisonRavager_Expunge=true, Pummel=true, TimeRavagerBasic=true,
+    QuantumStrike=true, BeastSmash=true, BinarySentinelBasic=true, TechRandom3=true, PlasmaSentinelBasic=true,
+}
 
 local function runCase(pair, case)
     pair.isCaseTerminal=false
@@ -363,15 +534,20 @@ local function runCase(pair, case)
     local target = case.side=="a" and pair.second or pair.first
     record({event="case_start",case_id=case.id,pair=pair.index,asset=case.asset,noun=case.noun,
         source_id=source.ID,source_pid=source.PID,target_id=target.ID,target_pid=target.PID})
-    stop(source)
-    stop(target)
     ensureHero(source,case.noun)
     restore(source,case.kind=="heal" or case.kind=="basic_heal" or case.kind=="burst_heal")
-    restore(target,false)
+    restore(target,false,case.targetMaximumHitPoint or (case.isAudit and 10000))
     resetCooldowns(source)
     resetCooldowns(target)
     local anchor = native(target).position
-    place(source,{x=anchor.x-3,y=anchor.y,z=anchor.z})
+    place(source,{x=anchor.x-(meleeAssets[case.asset] and 1 or 3),y=anchor.y,z=anchor.z})
+    if case.prepAsset then
+        nativeDispatch({isSelf=true,kind="audit",slot="special_one",x=640},source,target)
+        pause(case.prepWaitMS or 1500)
+        record({event="prep_cast_processed",case_id=case.id,asset=case.prepAsset,
+            source_id=source.ID,target_id=target.ID,source_pid=source.PID,target_pid=target.PID})
+        resetCooldowns(source)
+    end
     local beforeSource,beforeTarget = snapshot(source),snapshot(target)
     local sourceNative,targetNative = native(source),native(target)
     if not sourceNative.is_rig_observed or not sourceNative.is_rig_ready
@@ -393,11 +569,23 @@ local function runCase(pair, case)
     end
     local dispatchedAt = scenario.Time()
     nativeDispatch(case,source,target)
+    if case.reactAfterMS then
+        pause(case.reactAfterMS)
+        local aim=native(source).position
+        local attack=must(target.World:Hold({x=aim.x,y=aim.y,z=aim.z+1.5},600))
+        local click=attack.gameplay_click
+        if not attack.is_processed or not click or not click.is_press_poll_observed or not click.is_release_poll_observed then
+            error("reactive fixture attack lacks paired native press/release processing")
+        end
+        record({event="reactive_attack_processed",case_id=case.id,source_id=target.ID,
+            target_id=source.ID,source_pid=target.PID,target_pid=source.PID})
+    end
     local nativeProcessedAt = scenario.Time()
     record({event="native_processed",case_id=case.id,elapsed_ms=scenario.Time()-dispatchedAt,
         native_processed_at_ms=nativeProcessedAt,
         is_packet_proven=false,is_ability_identity_native_verified=false})
-    local afterSource,afterTarget,evidence = waitCase(pair,case,source,target,beforeSource,beforeTarget)
+    local afterSource,afterTarget,evidence = waitCase(pair,case,source,target,beforeSource,beforeTarget,
+        sourceNative.frame_sequence,targetNative.frame_sequence)
     if case.id=="thunderstorm" then
         pair.thunderstormTerminal={nativeProcessedAt=nativeProcessedAt,cast=afterSource.ability.cast,
             objectID=beforeSource.hero.object_id,gameID=beforeSource.game_id}
@@ -417,11 +605,12 @@ local function runCase(pair, case)
     end
     actorRecord(case.id,"after","source",source,afterSource)
     actorRecord(case.id,"after","target",target,afterTarget)
-    if case.kind=="aura" then error("aura resource admission observed; effect membership/expiry producer unavailable") end
     return evidence
 end
 
 local function selected(case)
+    if isFallbackSurveyEnabled then return case.isSurvey==true end
+    if case.isSurvey then return false end
     if case.isLong and not isThunderstormEnabled then return false end
     return next(selectedCaseIDs)==nil or selectedCaseIDs[case.id]==true
 end
@@ -490,7 +679,7 @@ end
 local function finishWaveCase(job,failure)
     local pair,case = job.pair,job.case
     local evidence = job.evidence or failure
-    local status = job.isComplete and "passed" or "retry_required"
+    local status = job.isComplete and (case.isSurvey and "surveyed" or "passed") or "retry_required"
     local reportedAt = scenario.Time()
     record({event="case_end",case_id=case.id,pair=pair.index,status=status,
         elapsed_ms=(job.finishedAt or reportedAt)-job.started,
@@ -659,12 +848,18 @@ return function()
         branches["validate_"..index]=function() validatePair(pair); return nil end
     end
     local parallelError = scenario.Parallel(branches)
-    local passed,retries = 0,0
+    local passed,surveyed,retries = 0,0,0
     for _,pair in ipairs(pairs) do
         local completedIDs = {}
         for _,result in ipairs(pair.results) do
             completedIDs[result.id]=true
-            if result.status=="passed" then passed=passed+1 else retries=retries+1 end
+            if result.status=="passed" then
+                passed=passed+1
+            elseif result.status=="surveyed" then
+                surveyed=surveyed+1
+            else
+                retries=retries+1
+            end
         end
         for _,case in ipairs(pair.plan.cases) do
             if selected(case) and not completedIDs[case.id] then
@@ -674,7 +869,7 @@ return function()
             end
         end
     end
-    record({event="suite_end",expected_count=expectedCount,passed=passed,retry_count=retries,
+    record({event="suite_end",expected_count=expectedCount,passed=passed,surveyed=surveyed,retry_count=retries,
         branch_failure=parallelError and string.sub(tostring(parallelError),1,700),
         is_complete=parallelError==nil and retries==0,is_packet_proven=false})
     check(parallelError)

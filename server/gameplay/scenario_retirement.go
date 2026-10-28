@@ -111,6 +111,10 @@ func (e *gameplaySessionRegistry) retireScenarioHeroLocked(ctx context.Context, 
 	if member.binding.Mode == game.ModeChain {
 		e.retireScenarioCampaignPresentation(&member)
 	}
+	if member.binding.Mode == game.ModeArena {
+		e.retireArenaSpritesForOwnerLocked(member.binding.GameID, req.ObjectID)
+		e.retireArenaCombatPetsForOwnerLocked(member.binding.GameID, req.ObjectID)
+	}
 	member.retireArenaHitStatuses()
 	if member.sphereAttack != nil {
 		// Ordinary rejection preserves accepted effect-owned targeted areas.

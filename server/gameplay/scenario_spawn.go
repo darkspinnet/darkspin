@@ -104,7 +104,10 @@ func (e *gameplaySessionRegistry) ScenarioSpawnNPC(ctx context.Context, req scen
 	if !isProfile || profile.HitPoint <= 0 {
 		return scenario.SpawnReceipt{}, errors.New("spawn noun has no supported combat profile in the installed mission catalog")
 	}
-	if len(e.spawnReceipts) >= 128 || len(e.pendingSpawns) >= 8 {
+	if len(e.spawnReceipts) >= 128 && !e.reclaimRetiredSpawnLocked() {
+		return scenario.SpawnReceipt{}, errors.New("focused spawn ledger is full with no retired controlled actor to reclaim")
+	}
+	if len(e.pendingSpawns) >= 8 {
 		return scenario.SpawnReceipt{}, errors.New("focused spawn receipt or pending-command limit reached")
 	}
 	e.nextSpawnID++
@@ -126,6 +129,24 @@ func (e *gameplaySessionRegistry) ScenarioSpawnNPC(ctx context.Context, req scen
 	e.spawnReceipts[receipt.RequestID] = receipt
 	e.pendingSpawns = append(e.pendingSpawns, receipt.RequestID)
 	return receipt, nil
+}
+
+func (e *gameplaySessionRegistry) reclaimRetiredSpawnLocked() bool {
+	oldestID := ""
+	for requestID, receipt := range e.spawnReceipts {
+		if receipt.State != "retired" {
+			continue
+		}
+		if oldestID == "" || requestID < oldestID {
+			oldestID = requestID
+		}
+	}
+	if oldestID == "" {
+		return false
+	}
+	delete(e.spawnReceipts, oldestID)
+	delete(e.lastNPCControlIDsBySpawn, oldestID)
+	return true
 }
 
 func (e *gameplaySessionRegistry) prepareScenarioSpawnPlanLocked(requestID string, plan zonenpc.SpawnPlan) (zonenpc.SpawnPlan, error) {

@@ -3131,7 +3131,7 @@ func (s *gameplayPeerSession) applyEquippedLifeSteal(
 		return nil, 0, nil
 	}
 	healing, err := game.ApplyTargetHealingReduction(
-		damage*creature.LifeSteal, creature.HealingTargetProfile,
+		damage*creature.LifeSteal, s.healingTargetProfile(s.deployedCreatureIndex),
 	)
 	if err != nil {
 		return nil, 0, fmt.Errorf("itemLifeStealReduction: %w", err)
@@ -5089,6 +5089,10 @@ func (e campaignNPCAttackSchedule) next() ([][]byte, error) {
 		}
 		return packets, nil
 	}
+	if e.request.runtime.finishScenarioNPCManualAction(e.request.sessionKey,
+		e.request.generation, e.request.objectID, e.plan.ActionGeneration) {
+		return nil, nil
+	}
 	packets, produceErr := e.request.resume(timestamp)
 	if produceErr != nil {
 		return e.fail("enemyAttackNext", produceErr)
@@ -6583,7 +6587,7 @@ func (s *gameplayPeerSession) enemyMovementSpeedBuff() float32 {
 		}
 		movementSpeedBuff += run.record.MovementSpeedBuff
 	}
-	return max(float32(-0.9), min(float32(0), movementSpeedBuff)+s.sinkholeMovementBuff)
+	return max(float32(-0.9), min(float32(0), movementSpeedBuff)+s.sinkholeMovementBuff) + s.arenaBasicHasteIncrease(time.Now())
 }
 
 func (s *gameplayPeerSession) enemyAttackSpeed() float32 {
@@ -6601,7 +6605,7 @@ func (s *gameplayPeerSession) enemyAttackSpeed() float32 {
 		}
 		attackSpeed += run.record.AttackSpeed
 	}
-	return max(float32(-0.9), min(float32(0), attackSpeed))
+	return max(float32(-0.9), min(float32(0), attackSpeed)) + s.arenaBasicHasteIncrease(time.Now())
 }
 
 func marshalCampaignNPCSlowAttributes(
@@ -8382,6 +8386,10 @@ func (e campaignNPCPushPullSchedule) next() ([][]byte, error) {
 func (e campaignNPCPushPullSchedule) resumeAfterCooldown(
 	timestamp uint64,
 ) ([][]byte, error) {
+	if e.runtime.finishScenarioNPCManualAction(e.sessionKey, e.generation,
+		e.objectID, e.plan.ActionGeneration) {
+		return nil, nil
+	}
 	delay, isCurrent, err := e.selectedCooldownDelay(timestamp)
 	if err != nil {
 		return nil, fmt.Errorf("enemyPushPullCooldown: %w", err)

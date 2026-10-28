@@ -1806,11 +1806,27 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 		if definition.Kind == sim.AbilityKindTeleportArea {
 			peerSession.enemyRootExpiresAt = time.Time{}
 			peerSession.enemyRootTargetObjectID = 0
-			projected, isProjected, projectionErr := zonenavigation.ReachableTeleportDestination(
-				peerSession.zone.Navigation(), sourcePosition,
-				game.Vec3{X: center.X, Y: center.Y, Z: center.Z},
-				peerSession.deployedCampaignNavigationRadius(),
-			)
+			var projected game.Vec3
+			var isProjected bool
+			var projectionErr error
+			if peerSession.binding.Mode == game.ModeArena {
+				match := r.registry.arenaMatches[peerSession.binding.GameID]
+				if match == nil || match.navigation == nil || !match.isCombatActive {
+					r.registry.mutex.Unlock()
+					return request.reject("Arena teleport destination unavailable")
+				}
+				projected, isProjected, projectionErr = zonenavigation.ReachableTeleportDestination(
+					match.navigation, sourcePosition,
+					game.Vec3{X: center.X, Y: center.Y, Z: center.Z},
+					peerSession.deployedCampaignNavigationRadius(),
+				)
+			} else {
+				projected, isProjected, projectionErr = zonenavigation.ReachableTeleportDestination(
+					peerSession.zone.Navigation(), sourcePosition,
+					game.Vec3{X: center.X, Y: center.Y, Z: center.Z},
+					peerSession.deployedCampaignNavigationRadius(),
+				)
+			}
 			if projectionErr != nil {
 				r.registry.mutex.Unlock()
 				return nil, fmt.Errorf("teleportAreaNavigation: %w", projectionErr)

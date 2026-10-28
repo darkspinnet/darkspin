@@ -11,6 +11,7 @@
 ---@field Snapshot fun(self:ClientWorld):WorldSnapshot|nil,ScenarioError|nil Samples the owned server world once without waiting for availability. No movement or gameplay advancement.
 ---@field Ready fun(self:ClientWorld,timeout_ms?:integer):WorldSnapshot|nil,ScenarioError|nil Waits for committed server dungeon setup, a deployed hero and a processed native active-world/controlled-handle observation. Returns the ready snapshot with native_readiness. Uses client timeout; aborts on ownership changes. Does not prove visibility of each object or gameplay action success.
 ---@field SnapshotLiving fun(self:ClientWorld):WorldSnapshot|nil,ScenarioError|nil Samples once and fails if unavailable, terminal, or without a living deployed hero. No readiness wait; partial world accompanies failure.
+---@field NPCCatalog fun(self:ClientWorld):NPCCatalog|nil,ScenarioError|nil Returns the current committed campaign director's sorted installed NPC nouns and baseline action profiles. Recovered and scenario-control support flags are separate; no native playback assertion.
 ---@field Path fun(self:ClientWorld,start:WorldPosition,goal:WorldPosition):WorldPath|nil,ScenarioError|nil Read-only bounded installed-mesh path with this hero's footprint and scene obstacles. Complete means the projected goal is reached, never authored-target arrival or native movement acceptance.
 ---@field SnapshotNative fun(self:ClientWorld):WindowCommandResult|nil,ScenarioError|nil Reads native gameplay_state; availability is explicit.
 ---@field Project fun(self:ClientWorld,point:WorldPosition):WindowCommandResult|nil,ScenarioError|nil Reads native camera projection of a world point; does not send input.
@@ -24,6 +25,7 @@
 
 ---@class HeroResourceOptions
 ---@field hit_point? number Finite positive HP at or below current maximum; cannot revive a defeated hero.
+---@field maximum_hit_point? number Scenario-only maximum HP from the hero's base maximum through 1000000. Use with hit_point to keep a durable high-health victim.
 ---@field mana_point? number Finite power between zero and current maximum.
 
 ---@class WorldRecipeOptions
@@ -46,7 +48,7 @@
 ---@field pid integer
 ---@field user_id integer
 ---@field request_id string Retain this ID after a timeout; do not blindly replay Spawn.
----@field state 'queued'|'admitted'|'published'|'failed'
+---@field state 'queued'|'admitted'|'published'|'retired'|'failed'
 ---@field game_id integer
 ---@field peer_generation integer
 ---@field transport_generation integer
@@ -59,6 +61,29 @@
 ---@field is_native_observed false Native rendering acknowledgment is not available from this producer.
 ---@field failure? string
 ---@field source 'server_spawn_receipt'
+
+---@class NPCCatalog
+---@field client_id string
+---@field instance_id string
+---@field pid integer
+---@field game_id integer
+---@field zone_generation integer
+---@field level string Current director level.
+---@field difficulty integer Numeric selected campaign difficulty; named mode mapping requires separate build-103 evidence.
+---@field entries NPCCatalogEntry[] Sorted by case-insensitive noun name.
+
+---@class NPCCatalogEntry
+---@field noun string Exact installed director noun filename.
+---@field hit_point number Installed baseline combat HP; positive HP is required for controlled spawn.
+---@field rank integer Authored baseline NPC rank.
+---@field ability_name string Default action ability name, including fallback names when is_action_recovered is false.
+---@field family string Server default action family.
+---@field target_kind 'hero'|'ally'|'unknown' Hero-target actions can use the owned deployed hero; ally-target families require separate scenario support.
+---@field range number Authored attack range before actor and target footprint adjustments; use to place close-range mobs before casting.
+---@field minimum_range number Authored minimum range where applicable.
+---@field is_action_recovered boolean True only when a noun-specific action profile is present, not a generic fallback.
+---@field is_control_supported boolean True for a positive-HP, recovered, ordinary hero-target profile admitted by the current controlled-spawn gate. Final spawn admission may still reject encounter-specific modifiers.
+---@field is_final_boss boolean Known standalone final-boss noun; separate controller support is required.
 
 ---@class WorldPosition
 ---@field x number

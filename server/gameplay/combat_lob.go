@@ -617,6 +617,10 @@ func (e campaignNPCLobSchedule) finishMagma() ([][]byte, error) {
 }
 
 func (e campaignNPCLobSchedule) next() ([][]byte, error) {
+	if e.runtime.finishScenarioNPCManualAction(e.sessionKey, e.generation,
+		e.objectID, e.plan.ActionGeneration) {
+		return nil, nil
+	}
 	delay := e.plan.Profile.Cooldown
 	if e.plan.Profile.AbilityName == "HurlMagma" ||
 		e.plan.Profile.AbilityName == "NomadShielderGrenade" ||

@@ -12,7 +12,8 @@ import (
 )
 
 // ScenarioNearby copies at most 128 scalar actors, including dead and
-// unpublished actors. It does not assert per-client native visibility.
+// unpublished actors other than explicitly retired controlled actors. It does
+// not assert per-client native visibility.
 func (e *Session) ScenarioNearby(ctx context.Context, center scenario.WorldPosition) ([]scenario.WorldNPC, int, error) {
 	if e == nil {
 		return nil, 0, nil
@@ -32,6 +33,9 @@ func (e *Session) ScenarioNearby(ctx context.Context, center scenario.WorldPosit
 		err := ctx.Err()
 		if err != nil {
 			return nil, 0, fmt.Errorf("nearbyScan: %w", err)
+		}
+		if actor.IsScenarioControlled() && actor.Plan.scenarioControl.lastCommand == "retire" {
+			continue
 		}
 		position := actor.Plan.Position
 		dx, dy, dz := float64(position.X-center.X), float64(position.Y-center.Y), float64(position.Z-center.Z)

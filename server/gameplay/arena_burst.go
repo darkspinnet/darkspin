@@ -41,6 +41,11 @@ func (e heroBurstStep) finishArenaTargetedBurstLocked(member gameplayPeerSession
 		}
 		schedule.runtime.registry.queueArenaAbilityResourcesLocked(current, healingPackets)
 	}
+	statusErr := targets.applyFireVulnerabilityLocked(result.Damage,
+		schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond))
+	if statusErr != nil && schedule.runtime.logger != nil {
+		schedule.runtime.logger.Printf("Arena Twinblaze vulnerability target=%d: %v", result.Damage.ObjectID, statusErr)
+	}
 	schedule.runtime.registry.mutex.Unlock()
 	targets.finish()
 	hitPackets, hitErr := targets.packets([]zoneability.AreaResult{{Snapshot: target, Damage: result.Damage,
@@ -109,6 +114,10 @@ func (e heroBurstStep) produceArenaBurstImpact(member gameplayPeerSession) ([][]
 				return nil, fmt.Errorf("burstDamage: %w", commitErr)
 			}
 			schedule.hitCounts[targetID]++
+			if schedule.definition.Name == "PlasmaRandom_WebbedLightning" &&
+				!result.Damage.IsDamageImmune && !result.Damage.IsDefeated && result.Damage.Damage > 0 {
+				schedule.webbedStatusTargets[targetID] = true
+			}
 			previousHealth, damage, isCritical = result.Damage.PreviousHealth, result.Damage.Damage, result.IsCritical
 			position = raknet.Vector3(target.Plan.Position)
 			results = append(results, zoneability.AreaResult{Snapshot: target, Damage: result.Damage,
@@ -121,6 +130,15 @@ func (e heroBurstStep) produceArenaBurstImpact(member gameplayPeerSession) ([][]
 	}
 	packets, err := schedule.run.ResolveCollision(context.Background(), e.index, e.deadline,
 		true, len(results) != 0, previousHealth, damage, isCritical, sim.Position(position), facing)
+	if err == nil {
+		for _, result := range results {
+			statusErr := targets.applyFireVulnerabilityLocked(result.Damage, timestamp)
+			if statusErr != nil && schedule.runtime.logger != nil {
+				schedule.runtime.logger.Printf("Arena Twinblaze vulnerability target=%d: %v", result.Damage.ObjectID, statusErr)
+			}
+		}
+	}
+	webbedTargetObjectIDs := schedule.webbedTargetObjectIDs(member)
 	schedule.runtime.registry.mutex.Unlock()
 	targets.finish()
 	if err != nil {
@@ -134,5 +152,10 @@ func (e heroBurstStep) produceArenaBurstImpact(member gameplayPeerSession) ([][]
 		schedule.runtime.logger.Printf("Arena projectile burst impact ability=%s shot=%d target=%d deadline_ms=%d",
 			schedule.definition.Name, e.index, targetID, e.deadline.Milliseconds())
 	}
-	return append(filterProjectileCombatPackets(packets), hitPackets...), nil
+	statusPackets, statusErr := e.applyWebbedStatus(webbedTargetObjectIDs)
+	if statusErr != nil {
+		return nil, fmt.Errorf("burstWebbedStatus: %w", statusErr)
+	}
+	packets = append(filterProjectileCombatPackets(packets), hitPackets...)
+	return append(packets, statusPackets...), nil
 }

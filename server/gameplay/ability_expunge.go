@@ -38,6 +38,9 @@ func (e campaignMeleeSchedule) expunge() ([][]byte, error) {
 	if e.selected.Name != "LFPoisonRavager_Expunge" {
 		return nil, nil
 	}
+	if e.binding.Mode == game.ModeArena {
+		return e.expungeArena()
+	}
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&

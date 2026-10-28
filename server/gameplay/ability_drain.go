@@ -32,6 +32,7 @@ type heroDrainRun struct {
 	cancel             raknet.CancelSchedule
 	registry           *gameplaySessionRegistry
 	zone               *zone.Zone
+	arenaGameID        uint32
 	timer              zone.Timer
 	cast               *channelCast
 	areaDrain          *webTransfusionRun
@@ -158,6 +159,9 @@ func (e heroDrainSchedule) tick(deadline time.Duration) ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	if peerSession.binding.Mode == game.ModeArena && e.definition.Name == "NecroRandom" {
+		return e.tickArenaNecroLocked(peerSession, deadline)
+	}
 	target, isTargetFound := peerSession.zone.NPCs().NPC(e.targetObjectID)
 	if !isTargetFound || target.IsDefeated || target.HitPoint <= 0 ||
 		target.Faction != zonenpc.FactionNonPlayerAligned ||
@@ -225,7 +229,7 @@ func (e heroDrainSchedule) tick(deadline time.Duration) ([][]byte, error) {
 	)
 	if err == nil {
 		healing, err = game.ApplyTargetHealingReduction(
-			healing, e.creature.HealingTargetProfile,
+			healing, peerSession.healingTargetProfile(peerSession.deployedCreatureIndex),
 		)
 	}
 	if err != nil {
@@ -290,7 +294,7 @@ func (e heroDrainSchedule) endPackets(deadline time.Duration) ([][]byte, error) 
 	if err != nil {
 		return nil, fmt.Errorf("heroDrainEndAnimation: %w", err)
 	}
-	e.runtime.registry.queueChannelReleaseLocked(e.run.zone, e.sessionKey, e.generation, [][]byte{e.run.releasePacket, animationPacket})
+	e.run.queueReleaseLocked(e.sessionKey, e.generation, [][]byte{e.run.releasePacket, animationPacket})
 	return nil, nil
 }
 
@@ -324,7 +328,14 @@ func (e heroDrainSchedule) fail(scheduleErr error) {
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 	}
 	if len(refundPacket) != 0 {
-		e.runtime.registry.queueChannelPresentationLocked(e.run.zone, [][]byte{refundPacket})
+		if e.run.arenaGameID != 0 {
+			if isFound {
+				peerSession.queuePackets([][]byte{refundPacket})
+				e.runtime.registry.sessions[e.sessionKey] = peerSession
+			}
+		} else {
+			e.run.queuePresentationLocked([][]byte{refundPacket})
+		}
 	}
 	if refundErr != nil {
 		e.runtime.logger.Printf("RakNet channel drain refund failed: %v", refundErr)
@@ -369,7 +380,16 @@ func (r campaignAbilityCommandRuntime) handleHeroChannelDrain(
 		r.registry.mutex.Unlock()
 		return req.reject("channel drain already active")
 	}
-	target, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
+	target := zonenpc.Snapshot{}
+	isTargetFound := false
+	if peerSession.binding.Mode == game.ModeArena && definition.Name == "NecroRandom" {
+		targets := r.registry.abilityTargetsLocked(r, peerSession, definition, req.packet.SourceTime).(*arenaAbilityTargets)
+		target, isTargetFound = targets.NPC(targetObjectID)
+		_, _, isPlayerTarget := targets.member(targetObjectID)
+		isTargetFound = isTargetFound && isPlayerTarget
+	} else if peerSession.zone != nil && peerSession.zone.NPCs() != nil {
+		target, isTargetFound = peerSession.zone.NPCs().NPC(targetObjectID)
+	}
 	admissionRange := heroAbilityAdmissionRange(creature, definition)
 	if !isTargetFound || target.IsDefeated || target.HitPoint <= 0 ||
 		target.Faction != zonenpc.FactionNonPlayerAligned ||
@@ -501,7 +521,12 @@ func (r campaignAbilityCommandRuntime) handleHeroChannelDrain(
 		refundPacket, refundErr := cast.failLocked(&peerSession, true, cast.revision)
 		r.registry.sessions[sessionKey] = peerSession
 		if len(refundPacket) != 0 {
-			r.registry.queueChannelPresentationLocked(peerSession.zone, [][]byte{refundPacket})
+			if peerSession.binding.Mode == game.ModeArena {
+				peerSession.queuePackets([][]byte{refundPacket})
+				r.registry.sessions[sessionKey] = peerSession
+			} else {
+				r.registry.queueChannelPresentationLocked(peerSession.zone, [][]byte{refundPacket})
+			}
 		}
 		if refundErr != nil {
 			r.logger.Printf("RakNet channel drain admission refund failed: %v", refundErr)
@@ -518,6 +543,9 @@ func (r campaignAbilityCommandRuntime) handleHeroChannelDrain(
 	}
 	if projected.Name == "NecroRandom" {
 		run.damageReduction = projected.StatusDamageReduction
+		if peerSession.binding.Mode == game.ModeArena {
+			run.arenaGameID = peerSession.binding.GameID
+		}
 	}
 	peerSession.heroDrain = run
 	generation := peerSession.generation

@@ -466,6 +466,11 @@ func (s gameplayPeerSession) projectPassiveCreature(
 	if creatureIndex != s.deployedCreatureIndex {
 		return creature
 	}
+	if s.binding.Mode == game.ModeArena {
+		creature.DamageProfile.DamageBuff -= s.arenaBasicWeakness(now)
+		creature.DamageProfile.DamageBuff += s.arenaVoodooDamageBuff(now)
+		creature.TimingProfile.AttackSpeed += s.arenaBasicHasteIncrease(now)
+	}
 	creature.TimingProfile.AttackSpeed += s.arenaSphereAttackSpeed()
 	if s.isOverdriveActiveAt(now) {
 		creature = projectOverdrivePassiveRank(creature)
@@ -870,7 +875,7 @@ func (r campaignDamageRuntime) applyVoodooCharmKill(
 	}
 	healing, err := game.ApplyTargetHealingReduction(
 		maximumHitPoint*charm.healthRatio,
-		peerSession.binding.Creatures[creatureIndex].HealingTargetProfile,
+		peerSession.healingTargetProfile(creatureIndex),
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()

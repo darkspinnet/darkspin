@@ -34,6 +34,8 @@ type plasmaSentinelPetRun struct {
 type plasmaSentinelActiveRun struct {
 	runtime        campaignAbilityCommandRuntime
 	packet         raknet.Packet
+	arenaWorld     *arenaAbilityWorld
+	arenaGameID    uint32
 	startedAt      time.Time
 	sessionKey     string
 	generation     uint64
@@ -61,6 +63,12 @@ func (e plasmaSentinelPetExpiryStep) execute() {
 		return
 	}
 	if len(packets) == 0 {
+		return
+	}
+	if e.run.arenaWorld != nil {
+		e.run.runtime.registry.mutex.Lock()
+		e.run.runtime.registry.queueArenaForcePulsePacketsLocked(e.run.arenaGameID, packets)
+		e.run.runtime.registry.mutex.Unlock()
 		return
 	}
 	e.run.runtime.registry.mutex.Lock()
@@ -151,6 +159,35 @@ func (e *plasmaSentinelActiveRun) expirePet(objectID uint32) ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	petIndex, isPetFound := e.petIndex(objectID)
+	if e.arenaWorld != nil {
+		if !isFound || peerSession.generation != e.generation || !isPetFound ||
+			peerSession.binding.Mode != game.ModeArena || peerSession.binding.GameID != e.arenaGameID {
+			e.runtime.registry.mutex.Unlock()
+			return nil, nil
+		}
+		pet := e.arenaWorld.combatPets[objectID]
+		var packets [][]byte
+		if pet != nil && pet.plasmaOwner == e {
+			_, deadActor, deathErr := e.arenaWorld.companion.SetHitPoint(objectID, 0)
+			if deathErr == nil {
+				timestamp := e.packet.SourceTime + uint64(max(time.Duration(0), e.runtime.now().Sub(e.startedAt))/time.Millisecond)
+				packets, deathErr = pet.beginDeathLocked(deadActor, timestamp)
+			}
+			if deathErr != nil {
+				if e.runtime.logger != nil {
+					e.runtime.logger.Printf("Arena Pain Hound expiry death fallback object=%d: %v", objectID, deathErr)
+				}
+				pet.retireLocked()
+			}
+		}
+		e.pets[petIndex] = plasmaSentinelPetRun{}
+		if peerSession.plasmaSentinelActive == e && !e.isShieldActive && !e.hasPets() {
+			peerSession.plasmaSentinelActive = nil
+		}
+		e.runtime.registry.sessions[e.sessionKey] = peerSession
+		e.runtime.registry.mutex.Unlock()
+		return packets, nil
+	}
 	if !isFound || peerSession.generation != e.generation || !isPetFound ||
 		peerSession.zone == nil ||
 		peerSession.zone.Companion() == nil {
@@ -177,6 +214,32 @@ func (e *plasmaSentinelActiveRun) expirePet(objectID uint32) ([][]byte, error) {
 // owner deactivates it. Reuse the ordinary death callback instead of deleting
 // the object before its 1.9-second death animation can play.
 func (e *plasmaSentinelActiveRun) retirePetLocked(peerSession *gameplayPeerSession, pet plasmaSentinelPetRun) ([][]byte, error) {
+	if e.arenaWorld != nil {
+		actor := e.arenaWorld.combatPets[pet.objectID]
+		if actor == nil || actor.plasmaOwner != e {
+			return nil, nil
+		}
+		_, deadActor, deathErr := e.arenaWorld.companion.SetHitPoint(pet.objectID, 0)
+		if deathErr == nil {
+			timestamp := e.packet.SourceTime + uint64(max(time.Duration(0), e.runtime.now().Sub(e.startedAt))/time.Millisecond)
+			packets, animateErr := actor.beginDeathLocked(deadActor, timestamp)
+			if animateErr == nil {
+				return packets, nil
+			}
+			deathErr = animateErr
+		}
+		if e.runtime.logger != nil {
+			e.runtime.logger.Printf("Arena Pain Hound retirement death fallback object=%d: %v", pet.objectID, deathErr)
+		}
+		packets := make([][]byte, 0, 2)
+		if len(actor.modifierPacket) != 0 {
+			packets = append(packets, actor.modifierPacket)
+		}
+		packets = append(packets, actor.deletePacket)
+		actor.isPublished = false
+		actor.retireLocked()
+		return packets, nil
+	}
 	modifierPacket, err := effectraknet.ModifierDelete(e.ownerObjectID, pet.modifierInstanceID)
 	if err != nil {
 		return nil, fmt.Errorf("petModifier: %w", err)
@@ -280,6 +343,15 @@ func (r campaignAbilityCommandRuntime) handlePlasmaSentinelActive(
 		r.registry.mutex.Unlock()
 		return req.reject("plasma sentinel active already running")
 	}
+	var arenaWorld *arenaAbilityWorld
+	if peerSession.binding.Mode == game.ModeArena {
+		world, worldErr := r.registry.arenaAbilityWorldLocked(peerSession.binding.GameID)
+		if worldErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("plasmaArenaWorld: %w", worldErr)
+		}
+		arenaWorld = world
+	}
 	projected, err := zoneability.ProjectTiming(creature, definition)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -359,7 +431,7 @@ func (r campaignAbilityCommandRuntime) handlePlasmaSentinelActive(
 		return nil, fmt.Errorf("plasmaPayment: %w", err)
 	}
 	run := &plasmaSentinelActiveRun{
-		runtime: r, packet: req.packet, startedAt: abilityStartTime, sessionKey: sessionKey,
+		runtime: r, packet: req.packet, arenaWorld: arenaWorld, arenaGameID: peerSession.binding.GameID, startedAt: abilityStartTime, sessionKey: sessionKey,
 		generation: peerSession.generation, ownerObjectID: req.command.Common.ObjectID,
 		orientation: req.command.Common.Orientation, effectSlot: effectSlot,
 		isShieldActive: true,
@@ -393,6 +465,14 @@ func (r campaignAbilityCommandRuntime) handlePlasmaSentinelActive(
 func (r campaignNPCActionRuntime) triggerPlasmaSentinelActive(
 	peerSession *gameplayPeerSession, timestamp uint64,
 ) ([][]byte, error) {
+	if peerSession != nil && peerSession.binding.Mode == game.ModeArena &&
+		peerSession.plasmaSentinelActive != nil && peerSession.plasmaSentinelActive.arenaWorld != nil {
+		packets, err := r.triggerArenaPlasmaSentinelActive(peerSession, timestamp)
+		if err != nil {
+			return nil, fmt.Errorf("plasmaArenaTrigger: %w", err)
+		}
+		return packets, nil
+	}
 	if peerSession == nil || peerSession.plasmaSentinelActive == nil ||
 		peerSession.deployedObjectID == 0 || peerSession.zone == nil ||
 		peerSession.zone.Companion() == nil {

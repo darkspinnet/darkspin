@@ -155,6 +155,9 @@ func (e heroHealingTicksSchedule) tick(
 			return nil, nil
 		}
 		e.commitAdmission()
+		if e.binding.Mode == game.ModeArena {
+			return e.startArenaSporogenesis(deadline)
+		}
 		return e.startSporogenesis(deadline)
 	}
 	e.runtime.registry.mutex.Lock()
@@ -221,8 +224,7 @@ func (e heroHealingTicksSchedule) tick(
 		hitPointBefore = character.HitPoints
 		maximumHitPoint, _ =
 			targetSession.characterResourceMaximum(e.target.creatureIndex)
-		healingTargetProfile =
-			targetSession.binding.Creatures[e.target.creatureIndex].HealingTargetProfile
+		healingTargetProfile = targetSession.healingTargetProfile(e.target.creatureIndex)
 	}
 	healing, err := zoneability.ProjectHealing(
 		e.creature, e.definition, e.definition.MinimumHealingPerTick,

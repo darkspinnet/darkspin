@@ -359,6 +359,10 @@ func (e campaignNPCDrainSchedule) next() ([][]byte, error) {
 	if !isCurrent {
 		return cleanupPackets, nil
 	}
+	if runtime.finishScenarioNPCManualAction(e.request.sessionKey,
+		e.request.generation, e.request.objectID, e.plan.ActionGeneration) {
+		return cleanupPackets, nil
+	}
 	timestamp := e.request.timestamp +
 		uint64((finalTickDeadline+profile.EndAnimationDelay)/time.Millisecond)
 	packets, err := e.request.resume(timestamp)

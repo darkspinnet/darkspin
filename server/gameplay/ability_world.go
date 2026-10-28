@@ -9,6 +9,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
+	zonecompanion "github.com/darkspinnet/darkspin/server/zone/companion"
 	zoneeffect "github.com/darkspinnet/darkspin/server/zone/effect"
 	zoneobjectid "github.com/darkspinnet/darkspin/server/zone/objectid"
 )
@@ -17,8 +18,17 @@ import (
 // It has no campaign director, objectives or NPC population to manufacture.
 type arenaAbilityWorld struct {
 	objectIDSession *zoneobjectid.Session
+	companion       *zonecompanion.Session
 	treeSession     *zoneability.TreeOfLifePresentationSession
 	forcePulses     map[arenaForcePulseKey]*arenaForcePulseRun
+	claymores       map[uint32]*arenaClaymoreRun
+	sprites         map[uint32]*arenaSpriteRun
+	combatPets      map[uint32]*arenaCombatPetRun
+	charges         map[uint32]*arenaHeroChargeRun
+	gravityStorms   map[uint32]*arenaGravityStormRun
+	sproutWorld     *arenaSproutWorld
+	infectionWorld  *arenaInfectionWorld
+	rides           map[uint32]*arenaRideRun
 	effectInventory *zoneeffect.Inventory
 }
 
@@ -41,7 +51,7 @@ func (e *gameplaySessionRegistry) arenaAbilityWorldLocked(gameID uint32) (*arena
 	if err != nil {
 		return nil, fmt.Errorf("arenaObjectIDs: %w", err)
 	}
-	match.abilityWorld = &arenaAbilityWorld{objectIDSession: objectIDSession, treeSession: zoneability.NewTreeOfLifePresentationSession(), effectInventory: zoneeffect.NewInventory()}
+	match.abilityWorld = &arenaAbilityWorld{objectIDSession: objectIDSession, companion: zonecompanion.NewSession(), treeSession: zoneability.NewTreeOfLifePresentationSession(), effectInventory: zoneeffect.NewInventory()}
 	return match.abilityWorld, nil
 }
 

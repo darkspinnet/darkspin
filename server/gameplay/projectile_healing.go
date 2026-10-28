@@ -43,7 +43,7 @@ func (e campaignProjectileSchedule) applyDamageHealingLocked(
 		}
 		healing, reductionErr := game.ApplyTargetHealingReduction(
 			projectedHealing,
-			targetSession.binding.Creatures[targetSession.deployedCreatureIndex].HealingTargetProfile,
+			targetSession.healingTargetProfile(targetSession.deployedCreatureIndex),
 		)
 		if reductionErr != nil {
 			return nil, fmt.Errorf("supportBasicReduction: %w", reductionErr)

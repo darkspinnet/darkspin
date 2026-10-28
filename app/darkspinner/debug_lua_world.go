@@ -31,6 +31,14 @@ func debugLuaWorldLiving(state *lua.LState) int {
 	return scope.client.invoke(state, "client.world_living", map[string]any{"client_id": scope.client.id}, true)
 }
 
+func debugLuaWorldNPCCatalog(state *lua.LState) int {
+	scope := debugLuaScopeSelf(state)
+	if scope == nil {
+		return 0
+	}
+	return scope.client.invoke(state, "client.npc_catalog", map[string]any{"client_id": scope.client.id}, true)
+}
+
 func debugLuaWorldConfigure(state *lua.LState) int {
 	scope := debugLuaScopeSelf(state)
 	if scope == nil {

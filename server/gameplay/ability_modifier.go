@@ -60,14 +60,20 @@ type heroModifierRun struct {
 func (e gameplayPeerSession) setShadowRavagerStealth(
 	objectID uint32, isStealthed bool,
 ) ([]zonenpc.Snapshot, []byte, error) {
-	if e.zone == nil || objectID == 0 {
+	if objectID == 0 {
 		return nil, nil, errors.New("shadow stealth target unavailable")
 	}
-	acquired, err := e.zone.SetHeroStealthed(
-		e.binding.UserID, e.generation, objectID, isStealthed,
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf("shadowStealthTargeting: %w", err)
+	var acquired []zonenpc.Snapshot
+	if e.zone != nil {
+		var err error
+		acquired, err = e.zone.SetHeroStealthed(
+			e.binding.UserID, e.generation, objectID, isStealthed,
+		)
+		if err != nil {
+			return nil, nil, fmt.Errorf("shadowStealthTargeting: %w", err)
+		}
+	} else if e.binding.Mode != game.ModeArena {
+		return nil, nil, errors.New("shadow stealth world unavailable")
 	}
 	stealth := uint8(0)
 	if isStealthed {
@@ -901,6 +907,17 @@ func (r campaignAbilityCommandRuntime) purgeHeroDebuffs(
 	r.registry.mutex.Lock()
 	defer r.registry.mutex.Unlock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
+	if isFound && peerSession.generation == generation && peerSession.binding.Mode == game.ModeArena &&
+		peerSession.deployedObjectID == objectID {
+		for _, status := range peerSession.arenaHitStatuses {
+			if status.kind == arenaBasicHaste || status.kind == arenaSporogenesisHot {
+				continue
+			}
+			status.retire(&peerSession)
+		}
+		r.registry.sessions[sessionKey] = peerSession
+		return nil, nil
+	}
 	if !isFound || peerSession.generation != generation ||
 		peerSession.deployedObjectID != objectID || peerSession.zone == nil ||
 		peerSession.zone.Effect() == nil {

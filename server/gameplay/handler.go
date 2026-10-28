@@ -188,8 +188,12 @@ func (r gameplayMovementRuntime) stop(
 		peerSession.deployedObjectID == command.Common.ObjectID
 	var targetingPacket []byte
 	if isCurrent {
+		effectPool := r.campaign.damage.effectPool
+		if peerSession.binding.Mode == game.ModeArena && peerSession.arenaEffectPool != nil {
+			effectPool = peerSession.arenaEffectPool
+		}
 		targetingPacket, err = peerSession.startMissileTargetingPresentation(
-			peerSession.deployedCreatureIndex, r.campaign.damage.effectPool,
+			peerSession.deployedCreatureIndex, effectPool,
 		)
 		if err == nil {
 			r.campaign.registry.sessions[packet.Address.String()] = peerSession
@@ -4434,6 +4438,9 @@ func stopGameplayPeerRuntime(
 	if peerSession == nil {
 		return
 	}
+	if peerSession.binding.Mode == game.ModeArena && peerSession.arenaEffectPool != nil {
+		effectPool = peerSession.arenaEffectPool
+	}
 	sinkholePackets, sinkholeErr := peerSession.updateSinkholeWind(0, effectPool)
 	if sinkholeErr != nil {
 		log.Printf("Sinkhole wind cleanup user=%d: %v", peerSession.binding.UserID, sinkholeErr)
@@ -5578,7 +5585,7 @@ func (r gameplaySetupRuntime) publishDungeon(
 		r.registry.sessions[packet.Address.String()] = peerSession
 		r.registry.mutex.Unlock()
 		packets, isPublished, publishErr := r.publishArena(
-			packet, peerSession, setupEpoch,
+			ctx, packet, peerSession, setupEpoch,
 		)
 		if publishErr != nil {
 			return nil, false, fmt.Errorf("arenaPublish: %w", publishErr)
@@ -5612,8 +5619,16 @@ func (r gameplaySetupRuntime) publishDungeon(
 }
 
 func (r gameplaySetupRuntime) publishArena(
-	packet raknet.Packet, peerSession gameplayPeerSession, setupEpoch uint64,
+	ctx context.Context, packet raknet.Packet, peerSession gameplayPeerSession, setupEpoch uint64,
 ) ([][]byte, bool, error) {
+	var arenaNav *navigation.Mesh
+	if r.preparation.navigation != nil {
+		mesh, err := r.preparation.navigation.LoadCampaignNavigation(ctx, peerSession.binding.Level)
+		if err != nil {
+			return nil, false, fmt.Errorf("arenaNavigation: %w", err)
+		}
+		arenaNav = mesh
+	}
 	peerSession.initializeCampaignResourceMaximums()
 	peerSession.deployedCreatureIndex = 0
 	peerSession.deployedObjectID = zonehero.ObjectID(peerSession.binding.Slot, 0)
@@ -5638,8 +5653,16 @@ func (r gameplaySetupRuntime) publishArena(
 	peerSession.resetTeleporterSample()
 	peerSession.resetPickupContacts()
 	peerSession.passiveStationarySince[peerSession.deployedCreatureIndex] = r.now()
+	r.registry.mutex.Lock()
+	pool := r.registry.arenaEffectPools[peerSession.binding.GameID]
+	if pool == nil {
+		pool = newAttachedEffectPool()
+		r.registry.arenaEffectPools[peerSession.binding.GameID] = pool
+	}
+	r.registry.mutex.Unlock()
+	peerSession.arenaEffectPool = pool
 	initialShieldPackets, err := peerSession.activateTCShield(
-		peerSession.deployedCreatureIndex, r.now(), r.damage.effectPool, r.registry,
+		peerSession.deployedCreatureIndex, r.now(), pool, r.registry,
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("arenaInitialShield: %w", err)
@@ -5698,7 +5721,7 @@ func (r gameplaySetupRuntime) publishArena(
 	r.registry.sessions[packet.Address.String()] = peerSession
 	r.registry.mutex.Unlock()
 	countdownErr := r.registry.scheduleArenaCountdown(
-		r.program, peerSession.binding.GameID, packet.SourceTime,
+		r.program, peerSession.binding.GameID, packet.SourceTime, arenaNav,
 	)
 	if countdownErr != nil && r.logger != nil {
 		r.logger.Printf(

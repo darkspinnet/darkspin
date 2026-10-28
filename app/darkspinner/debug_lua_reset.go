@@ -15,7 +15,7 @@ func debugLuaWorldRestoreHero(state *lua.LState) int {
 	req := map[string]any{"client_id": scope.client.id}
 	if state.GetTop() >= 2 && state.Get(2) != lua.LNil {
 		options := state.CheckTable(2)
-		for _, name := range []string{"hit_point", "mana_point"} {
+		for _, name := range []string{"hit_point", "maximum_hit_point", "mana_point"} {
 			amount := options.RawGetString(name)
 			if amount != lua.LNil {
 				number, isNumber := amount.(lua.LNumber)

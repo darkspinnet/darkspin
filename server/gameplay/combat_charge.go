@@ -782,6 +782,10 @@ func (r campaignNPCActionRuntime) produceChargeContactHit(
 		nextTimestamp = timestamp +
 			uint64(chargePlan.Profile.EndAnimationDelay/time.Millisecond)
 	}
+	if r.finishScenarioNPCManualAction(sessionKey, generation, objectID,
+		chargePlan.ActionGeneration) {
+		return packets, nil
+	}
 	next := campaignEnemyChargeNextStep{
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID, timestamp: nextTimestamp,
@@ -839,6 +843,10 @@ func (e campaignNocturnaDriftNextSchedule) produce() ([][]byte, error) {
 	)
 	e.runtime.registry.mutex.RUnlock()
 	if !isCurrent {
+		return nil, nil
+	}
+	if e.runtime.finishScenarioNPCManualAction(e.sessionKey, e.generation,
+		e.objectID, e.actionGeneration) {
 		return nil, nil
 	}
 	return e.runtime.produceEnemyCharge(
@@ -1594,6 +1602,10 @@ type campaignNomadChargeAttackSchedule struct {
 
 func (e campaignNomadChargeAttackSchedule) next() ([][]byte, error) {
 	req := e.attack.request
+	if req.runtime.finishScenarioNPCManualAction(req.sessionKey, req.generation,
+		req.objectID, e.attack.plan.ActionGeneration) {
+		return nil, nil
+	}
 	timestamp := req.timestamp + uint64(e.nextDelay/time.Millisecond)
 	packets, err := req.runtime.produceEnemyCharge(
 		req.packet, req.sessionKey, req.generation, req.objectID, timestamp,

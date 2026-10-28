@@ -37,6 +37,7 @@ type MeleeInput struct {
 	SourceTime     uint64
 	CenterRange    float32
 	StartedAt      time.Time
+	ActorTeam      uint8
 }
 
 type MeleeStart struct {
@@ -179,6 +180,10 @@ func NewMelee(req MeleeInput) (MeleeStart, error) {
 	facing.X /= length
 	facing.Y /= length
 	facing.Z /= length
+	actorTeam := req.ActorTeam
+	if actorTeam == 0 {
+		actorTeam = 1
+	}
 	run, packets, err := abilityraknet.NewMeleeRun(abilityraknet.MeleeInput{
 		Ability:        req.Ability,
 		ActorObjectID:  req.CompanionID,
@@ -188,7 +193,7 @@ func NewMelee(req MeleeInput) (MeleeStart, error) {
 		TargetFacing:   facing,
 		Damage:         req.Damage,
 		TargetHitPoint: req.TargetHitPoint,
-		ActorTeam:      1,
+		ActorTeam:      actorTeam,
 		SourceTime:     req.SourceTime,
 	})
 	if err != nil {

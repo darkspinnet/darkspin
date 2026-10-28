@@ -453,7 +453,7 @@ func (e *sporogenesisHot) healLocked() ([][]byte, error) {
 			if maximumHitPoint <= 0 || maximumManaPoint < 0 {
 				return nil, errors.New("hero maximum unavailable")
 			}
-			healing, err = game.ApplyTargetHealingReduction(healing, member.binding.Creatures[e.target.creatureIndex].HealingTargetProfile)
+			healing, err = game.ApplyTargetHealingReduction(healing, member.healingTargetProfile(e.target.creatureIndex))
 			if err != nil {
 				return nil, fmt.Errorf("sporogenesisReduction: %w", err)
 			}

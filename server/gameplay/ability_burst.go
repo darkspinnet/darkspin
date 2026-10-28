@@ -75,7 +75,7 @@ func (e heroBurstSchedule) applyLifeSteal(
 		return nil, 0, nil
 	}
 	healing, err := game.ApplyTargetHealingReduction(
-		damage*e.definition.LifeSteal, e.creature.HealingTargetProfile,
+		damage*e.definition.LifeSteal, peerSession.healingTargetProfile(peerSession.deployedCreatureIndex),
 	)
 	if err != nil {
 		return nil, 0, fmt.Errorf("lifeStealReduction: %w", err)
@@ -708,7 +708,14 @@ func (e heroBurstSchedule) planArcTarget(
 	selected := game.Vec3{}
 	selectedDistance := e.definition.Distance
 	isSelected := false
-	for _, npc := range peerSession.zone.NPCs().LiveSnapshots() {
+	var targets []zonenpc.Snapshot
+	if peerSession.binding.Mode == game.ModeArena {
+		enemies := e.runtime.registry.abilityTargetsLocked(e.runtime, peerSession, e.definition, e.packet.SourceTime)
+		targets = enemies.LiveSnapshots()
+	} else {
+		targets = peerSession.zone.NPCs().LiveSnapshots()
+	}
+	for _, npc := range targets {
 		if npc.Faction != zonenpc.FactionNonPlayerAligned || npc.Plan.IsFixture {
 			continue
 		}
@@ -750,6 +757,16 @@ func (e heroBurstSchedule) webbedTargetObjectIDs(
 		return nil
 	}
 	targetObjectIDs := make([]uint32, 0, len(e.webbedStatusTargets))
+	if peerSession.binding.Mode == game.ModeArena {
+		enemies := e.runtime.registry.abilityTargetsLocked(e.runtime, peerSession, e.definition, e.packet.SourceTime)
+		for targetObjectID := range e.webbedStatusTargets {
+			target, isFound := enemies.NPC(targetObjectID)
+			if isFound && !target.IsDefeated && target.HitPoint > 0 {
+				targetObjectIDs = append(targetObjectIDs, targetObjectID)
+			}
+		}
+		return targetObjectIDs
+	}
 	for targetObjectID := range e.webbedStatusTargets {
 		npc, isFound := peerSession.zone.NPCs().NPC(targetObjectID)
 		if !isFound || npc.IsDefeated || npc.HitPoint <= 0 {

@@ -89,7 +89,7 @@ func (e *heroSummonRun) tick() ([][]byte, error) {
 		maximumHitPoint > character.HitPoints {
 		healing := maximumHitPoint * spriteHealingFraction
 		healing, err := game.ApplyTargetHealingReduction(
-			healing, peerSession.binding.Creatures[creatureIndex].HealingTargetProfile,
+			healing, peerSession.healingTargetProfile(creatureIndex),
 		)
 		if err != nil {
 			e.runtime.registry.mutex.Unlock()
@@ -444,13 +444,19 @@ func (e gameplayPeerSession) petHitPoint(hitPoint float32) float32 {
 func marshalHeroSummonSpawn(
 	run *heroSummonRun, position game.Vec3, footprintRadius float32,
 ) ([][]byte, error) {
+	return marshalHeroSummonSpawnForTeam(run, position, footprintRadius, 1)
+}
+
+func marshalHeroSummonSpawnForTeam(
+	run *heroSummonRun, position game.Vec3, footprintRadius float32, team uint8,
+) ([][]byte, error) {
 	if run == nil || run.objectID == 0 || run.ownerID == 0 || footprintRadius <= 0 {
 		return nil, errors.New("hero summon spawn invalid")
 	}
 	packets, err := companionraknet.Create(raknet.ObjectCreateMessage{
 		ObjectID: run.objectID, Noun: util.HashID(run.definition.SpawnNoun),
 		PositionX: position.X, PositionY: position.Y, PositionZ: position.Z,
-		Scale: 1, Team: 1, OwnerID: run.ownerID, IsCollisionEnabled: true,
+		Scale: 1, Team: team, OwnerID: run.ownerID, IsCollisionEnabled: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("heroSummonCreate: %w", err)

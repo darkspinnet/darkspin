@@ -1257,6 +1257,7 @@ func (s *Session) damage(
 		npc.recordRecentDamage(now, appliedDamage)
 	}
 	npc.IsDefeated = npc.HitPoint == 0
+	markScenarioSelfDetonation(&npc, sourceObjectID, targetObjectID, meta.isForcedDefeat)
 	if appliedDamage > 0 && !npc.IsDefeated &&
 		species == "cryoselementalspecialthree" {
 		npc.status.isDamageFleePending = true

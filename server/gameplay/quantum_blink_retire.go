@@ -66,6 +66,18 @@ func (e *gameplaySessionRegistry) queueQuantumBlinkPoseLocked(source *gameplayPe
 	if len(packets) == 0 {
 		return nil
 	}
+	if source.binding.Mode == game.ModeArena {
+		source.queuePackets(packets)
+		for key, candidate := range e.sessions {
+			if candidate.binding.Mode != game.ModeArena || candidate.binding.GameID != source.binding.GameID ||
+				candidate.binding.UserID == source.binding.UserID || candidate.isRejoinPending {
+				continue
+			}
+			candidate.queuePackets(packets)
+			e.sessions[key] = candidate
+		}
+		return nil
+	}
 	if source.zone == nil {
 		source.queuePackets(packets)
 		return nil

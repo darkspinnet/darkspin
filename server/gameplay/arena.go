@@ -12,6 +12,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/combat"
 	"github.com/darkspinnet/darkspin/server/game"
+	"github.com/darkspinnet/darkspin/server/navigation"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/util"
@@ -38,6 +39,8 @@ const (
 
 type arenaMatchState struct {
 	abilityWorld         *arenaAbilityWorld
+	effectPool           *attachedEffectPool
+	navigation           *navigation.Mesh
 	recentDamages        map[uint32][]arenaRecentDamage
 	result               arenaResultState
 	isCountdownScheduled bool
@@ -75,6 +78,9 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	match := r.registry.arenaMatches[peerSession.binding.GameID]
+	if match != nil && match.effectPool != nil {
+		r.effectPool = match.effectPool
+	}
 	isCurrent := isFound && peerSession.generation == commandSession.generation &&
 		(match == nil || !match.isTransferActive) &&
 		peerSession.binding.Mode == game.ModeArena &&
@@ -135,6 +141,18 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("arenaSwitchSquad: %w", err)
+	}
+	r.registry.retireArenaClaymoresForOwnerLocked(peerSession.binding.GameID, sourceObjectID)
+	r.registry.retireArenaSpritesForOwnerLocked(peerSession.binding.GameID, sourceObjectID)
+	r.registry.retireArenaCombatPetsForOwnerLocked(peerSession.binding.GameID, sourceObjectID)
+	r.registry.retireArenaChargeForOwnerLocked(peerSession.binding.GameID, sourceObjectID)
+	r.registry.retireArenaGravityStormForOwnerLocked(peerSession.binding.GameID, sourceObjectID)
+	r.registry.retireArenaSproutsForOwnerLocked(peerSession.binding.GameID, sourceObjectID)
+	r.registry.retireArenaInfectionsForOwnerLocked(peerSession.binding.GameID, sourceObjectID)
+	r.registry.retireArenaRideForOwnerLocked(peerSession.binding.GameID, sourceObjectID)
+	blinkErr := peerSession.retireQuantumBlinkLocked(switchStartTime)
+	if blinkErr != nil && r.logger != nil {
+		r.logger.Printf("Arena Quantum Blink switch cleanup failed owner=%d: %v", sourceObjectID, blinkErr)
 	}
 	// Retire recipient control while its old object/slot identity is intact.
 	peerSession.retireArenaHitStatuses()
@@ -344,6 +362,8 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 		r.registry.mutex.Unlock()
 		return r.rejectArenaCharacter(command, "match unavailable")
 	}
+	r.effectPool = matchState.effectPool
+	r.damage.effectPool = matchState.effectPool
 	random := matchState.random
 	err := peerSession.advancePlayerPosition(attackTime, command.Common.Position)
 	if err != nil {
@@ -487,8 +507,12 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("arenaShieldPreview: %w", shieldErr)
 	}
-	damage = shield.Damage
-	damage = max(float32(0), min(damage, targetSession.deployedHitPoint()))
+	distribution, err := targetSession.prepareSoulLinkDamage(shield.Damage)
+	if err != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("arenaSoulLinkPlan: %w", err)
+	}
+	damage = max(float32(0), min(distribution.activeDamage, targetSession.deployedHitPoint()))
 	hitPoint := max(float32(0), targetSession.deployedHitPoint()-damage)
 	targetObjectID := targetSession.deployedObjectID
 	acceptPacket, err := actionraknet.Accept(
@@ -588,6 +612,19 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("arenaAttackImpact: %w", err)
 	}
+	var ghostPacket []byte
+	if defenseFlags == 0x20 && targetSession.ghostFormRun != nil &&
+		targetSession.ghostFormRun.IsActive(targetSession.deployedCreatureIndex, targetSession.deployedHitPoint() > 0) {
+		ghostPacket, err = raknet.MarshalApplication(raknet.ServerEventMessage{
+			Asset:    util.HashID(zoneability.GhostFormPassthroughEffect),
+			ObjectID: targetObjectID,
+		})
+		if err != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("arenaGhostEffect: %w", err)
+		}
+		impactPacket = nil
+	}
 	healthPacket, err := raknet.MarshalApplication(raknet.CombatantDataDeltaMessage{
 		ObjectID: targetObjectID, HitPoints: hitPoint, IsHitPointChanged: true,
 	})
@@ -635,7 +672,35 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 			return nil, fmt.Errorf("arenaAbilityMana: %w", err)
 		}
 	}
-	isSquadLethal := hitPoint <= 0 && targetSession.squad.LivingCount() == 1
+	backupSquad := targetSession.squad
+	if len(distribution.shares) != 0 {
+		stagedSquad, stageErr := targetSession.squad.Clone()
+		if stageErr != nil {
+			rollbackErr := rollbackArenaAbilitySpend(
+				&peerSession, isActive, previousManaPoint,
+				cooldownReservation, releaseReservation,
+			)
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("arenaSoulLinkStage: %w", errors.Join(stageErr, rollbackErr))
+		}
+		backupSquad = stagedSquad
+	}
+	sharePackets, sharedDamage, err := distribution.commit(&targetSession)
+	if err != nil {
+		if len(distribution.shares) != 0 {
+			rollbackErr := targetSession.squad.CommitClone(backupSquad)
+			err = errors.Join(err, rollbackErr)
+		}
+		rollbackErr := rollbackArenaAbilitySpend(
+			&peerSession, isActive, previousManaPoint,
+			cooldownReservation, releaseReservation,
+		)
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("arenaSoulLinkCommit: %w", errors.Join(err, rollbackErr))
+	}
+	livingReserveCount := targetSession.squad.LivingCount() - 1
+	isSquadLethal := hitPoint <= 0 && livingReserveCount <= 0 &&
+		!targetSession.canBeastPetRevive(attackTime)
 	if isSquadLethal {
 		err = packet.AfterResponseCommit(func() {
 			r.commitArenaVictory(
@@ -644,6 +709,10 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 			)
 		})
 		if err != nil {
+			if len(distribution.shares) != 0 {
+				rollbackErr := targetSession.squad.CommitClone(backupSquad)
+				err = errors.Join(err, rollbackErr)
+			}
 			rollbackErr := rollbackArenaAbilitySpend(
 				&peerSession, isActive, previousManaPoint,
 				cooldownReservation, releaseReservation,
@@ -658,6 +727,10 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 		hitPoint, packet.SourceTime,
 	)
 	if err != nil {
+		if len(distribution.shares) != 0 {
+			rollbackErr := targetSession.squad.CommitClone(backupSquad)
+			err = errors.Join(err, rollbackErr)
+		}
 		rollbackErr := rollbackArenaAbilitySpend(
 			&peerSession, isActive, previousManaPoint,
 			cooldownReservation, releaseReservation,
@@ -711,10 +784,33 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.sessions[targetKey] = targetSession
 	if hitPoint <= 0 {
+		r.registry.retireArenaClaymoresForOwnerLocked(peerSession.binding.GameID, targetObjectID)
+		r.registry.retireArenaSpritesForOwnerLocked(peerSession.binding.GameID, targetObjectID)
+		r.registry.retireArenaCombatPetsForOwnerLocked(peerSession.binding.GameID, targetObjectID)
+		r.registry.retireArenaChargeForOwnerLocked(peerSession.binding.GameID, targetObjectID)
+		r.registry.retireArenaGravityStormForOwnerLocked(peerSession.binding.GameID, targetObjectID)
+		r.registry.retireArenaSproutsForOwnerLocked(peerSession.binding.GameID, targetObjectID)
+		r.registry.retireArenaInfectionsForOwnerLocked(peerSession.binding.GameID, targetObjectID)
+		r.registry.retireArenaRideForOwnerLocked(peerSession.binding.GameID, targetObjectID)
+		r.registry.retireArenaQuantumBlinkForOwnerLocked(peerSession.binding.GameID, targetObjectID)
 		r.registry.retireArenaForcePulseVictimLocked(peerSession.binding.GameID, targetObjectID)
 	}
-	matchState.result.recordDamage(peerSession.binding.UserID, targetSession.binding.UserID, damage, hitPoint <= 0)
+	matchState.result.recordDamage(peerSession.binding.UserID, targetSession.binding.UserID, damage+sharedDamage, hitPoint <= 0)
 	matchState.recordRecentDamage(targetObjectID, attackTime, damage)
+	var petPackets [][]byte
+	if hitPoint > 0 && damage > 0 && targetSession.deployedObjectID == targetObjectID &&
+		targetSession.plasmaSentinelActive != nil {
+		petPackets, err = r.npc.triggerPlasmaSentinelActive(&targetSession, packet.SourceTime)
+		if err != nil {
+			if r.logger != nil {
+				r.logger.Printf("Arena Pain Hounds trigger failed object=%d: %v", targetObjectID, err)
+			}
+			petPackets = nil
+		} else {
+			r.registry.sessions[targetKey] = targetSession
+		}
+	}
+	r.registry.queueArenaAbilityResourcesLocked(peerSession, sharePackets)
 	// Native PvP victory detection counts cached reserve health as well as
 	// the deployed combatant. Send this sparse public resource update to all
 	// opponents/allies; ordinary presentation filtering omits LabsPlayerUpdate.
@@ -736,8 +832,13 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 	if len(impactPacket) != 0 {
 		packets = append(packets, impactPacket)
 	}
+	if len(ghostPacket) != 0 {
+		packets = append(packets, ghostPacket)
+	}
 	packets = append(packets, healthPacket, squadHealthPacket)
+	packets = append(packets, sharePackets...)
 	packets = append(packets, gameplayPeerPresentationPackets(transitionPackets)...)
+	packets = append(packets, petPackets...)
 	r.logger.Printf(
 		"RakNet Arena ability accepted game=%d source=%d target=%d index=%d ability=%q damage=%g critical=%t hit_point=%g",
 		peerSession.binding.GameID, peerSession.deployedObjectID,
@@ -868,7 +969,14 @@ func arenaDamageAfterReduction(
 	case energyDamageSource:
 		reduction += creature.EnergyDamageReduction
 	}
-	return combat.ApplyDamageReduction(damage, reduction)
+	damage = combat.ApplyDamageReduction(damage, reduction)
+	if damageSource == physicalDamageSource {
+		damage *= 1 + target.arenaPhysicalVulnerability(now)
+	}
+	if damageSource == energyDamageSource {
+		damage *= 1 + target.arenaBasicEnergyIncrease(now) + target.arenaFireEnergyIncrease(now) + target.arenaVoodooEnergyIncrease(now)
+	}
+	return damage
 }
 
 func (r campaignAbilityCommandRuntime) arenaEnemyTargetLocked(
@@ -977,7 +1085,7 @@ func arenaSpawnPlacement(
 }
 
 func (e *gameplaySessionRegistry) scheduleArenaCountdown(
-	program Programs, gameID uint32, timestamp uint64,
+	program Programs, gameID uint32, timestamp uint64, mesh *navigation.Mesh,
 ) error {
 	if e == nil || e.timer == nil {
 		return errors.New("arena countdown timer unavailable")
@@ -1015,9 +1123,23 @@ func (e *gameplaySessionRegistry) scheduleArenaCountdown(
 			e.mutex.Unlock()
 			return fmt.Errorf("arenaMatchIdentity: %w", identityErr)
 		}
-		state = &arenaMatchState{result: arenaResultState{matchID: matchID, isRanked: binding.IsRanked}, random: sim.NewSimulatorRandom(
+		state = &arenaMatchState{navigation: mesh, effectPool: e.arenaEffectPools[gameID], result: arenaResultState{matchID: matchID, isRanked: binding.IsRanked}, random: sim.NewSimulatorRandom(
 			binding.GameID ^ (binding.Difficulty << 24) ^ 0xa20e,
 		)}
+	}
+	if state.effectPool == nil {
+		state.effectPool = newAttachedEffectPool()
+		e.arenaEffectPools[gameID] = state.effectPool
+	}
+	for key, member := range e.sessions {
+		if member.binding.Mode != game.ModeArena || member.binding.GameID != gameID {
+			continue
+		}
+		member.arenaEffectPool = state.effectPool
+		e.sessions[key] = member
+	}
+	if state.navigation == nil {
+		state.navigation = mesh
 	}
 	state.isCountdownScheduled = true
 	for teamIndex := range state.variantOffsets {
@@ -1261,6 +1383,15 @@ func (r gameplayPendingRuntime) completeDeveloperArenaVictory(
 		match.result.isCompleted = true
 	}
 	r.registry.retireArenaForcePulsesLocked(currentSession.binding.GameID)
+	r.registry.retireArenaClaymoresLocked(currentSession.binding.GameID)
+	r.registry.retireArenaSpritesLocked(currentSession.binding.GameID)
+	r.registry.retireArenaCombatPetsLocked(currentSession.binding.GameID)
+	r.registry.retireArenaChargesLocked(currentSession.binding.GameID)
+	r.registry.retireArenaGravityStormsLocked(currentSession.binding.GameID)
+	r.registry.retireArenaSproutsLocked(currentSession.binding.GameID)
+	r.registry.retireArenaInfectionsLocked(currentSession.binding.GameID)
+	r.registry.retireArenaRidesLocked(currentSession.binding.GameID)
+	r.registry.retireArenaQuantumBlinksLocked(currentSession.binding.GameID)
 	r.registry.mutex.Unlock()
 	if r.logger != nil {
 		r.logger.Printf(

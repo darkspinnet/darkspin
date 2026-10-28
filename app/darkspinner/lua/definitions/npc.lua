@@ -9,8 +9,9 @@
 ---@field Snapshot fun(self:ControlledNPC):ControlledNPCSnapshot|nil,ScenarioError|nil Reads scalar state, including after NPC death when the record remains available. Availability is explicit; no native rendering assertion.
 ---@field SetAI fun(self:ControlledNPC,is_enabled:boolean):NPCControlCommand|nil,ScenarioError|nil Changes scenario spawn AI policy through the feature owner and waits for the correlated receipt. Suppression does not freeze simulation or rewind earlier actions.
 ---@field Move fun(self:ControlledNPC,destination:WorldPosition):NPCControlCommand|nil,ScenarioError|nil Queues one supported normal NPC movement command; completion requires observed arrival. Uses client timeout; partial receipt accompanies errors. No teleport or direct pose rewrite.
----@field Cast fun(self:ControlledNPC,ability_name:string,target_object_id:integer):NPCControlCommand|nil,ScenarioError|nil Uses an exact Snapshot().supported_ability_names entry and a current eligible target. Settled producer does not prove damage; independently observe hero/world HP. Uses client timeout; no replay after error.
+---@field Cast fun(self:ControlledNPC,ability_name:string,target_object_id:integer,timeout_ms?:integer):NPCControlCommand|nil,ScenarioError|nil Uses an exact Snapshot().supported_ability_names entry and a current eligible target. Settled producer does not prove damage; independently observe hero/world HP. Optional timeout is 1–120000ms; no replay after error.
 ---@field Restore fun(self:ControlledNPC):NPCControlCommand|nil,ScenarioError|nil Restores a living idle AI-off controlled NPC to its authored maximum HP. Publishes a native health delta without gameplay healing credit; does not revive, remove statuses, or cancel launched effects.
+---@field Retire fun(self:ControlledNPC):NPCControlCommand|nil,ScenarioError|nil Explicitly cancels and retires an AI-off controlled NPC, including an active cast or already defeated actor, without death rewards or encounter progress. Publishes ObjectDelete only for an actor still alive and published. A committed retirement makes its spawn receipt eligible for bounded ledger reclamation.
 
 ---@class ControlledNPCIdentity
 ---@field user_id integer
@@ -39,7 +40,7 @@
 ---@class NPCControlCommand
 ---@field identity ControlledNPCIdentity
 ---@field request_id string Correlated command identity retained after a timeout; do not automatically replay.
----@field operation 'set_ai'|'move'|'ability'|'restore'
+---@field operation 'set_ai'|'move'|'ability'|'restore'|'retire'
 ---@field state string
 ---@field is_accepted boolean Command admission only.
 ---@field is_completed boolean Actual operation-specific completion; never inferred from action release alone.

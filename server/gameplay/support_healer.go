@@ -299,7 +299,16 @@ func (e targetedAOESchedule) criticalSupportHealingLocked(caster gameplayPeerSes
 		math.IsNaN(maximum) || math.IsInf(maximum, 0) || minimum < 0 || maximum < minimum {
 		return sim.CriticalDamageResult{}, errors.New("invalid healing range")
 	}
-	random := caster.zone.Population().Random()
+	var random *sim.SimulatorRandom
+	if caster.zone != nil && caster.zone.Population() != nil {
+		random = caster.zone.Population().Random()
+	} else {
+		var err error
+		random, err = e.runtime.registry.abilityRandomLocked(caster)
+		if err != nil {
+			return sim.CriticalDamageResult{}, fmt.Errorf("briarRandom: %w", err)
+		}
+	}
 	if random == nil {
 		return sim.CriticalDamageResult{}, errors.New("healing random unavailable")
 	}
@@ -310,7 +319,7 @@ func (e targetedAOESchedule) criticalSupportHealingLocked(caster gameplayPeerSes
 	if err != nil {
 		return sim.CriticalDamageResult{}, fmt.Errorf("briarHealProject: %w", err)
 	}
-	isCritical, err := sim.RollCritical(caster.zone.Population().Random(), e.creature.CriticalRating,
+	isCritical, err := sim.RollCritical(random, e.creature.CriticalRating,
 		e.creature.AutoCrit, e.binding.Difficulty, e.runtime.program.Critical.RatingConversions)
 	if err != nil {
 		return sim.CriticalDamageResult{}, fmt.Errorf("briarHealCritical: %w", err)
@@ -340,7 +349,7 @@ func (e targetedAOESchedule) healSupportHealerPartyLocked(caster *gameplayPeerSe
 		if criticalErr != nil {
 			return packets, fmt.Errorf("briarHeroCritical: %w", criticalErr)
 		}
-		reduced, reduceErr := game.ApplyTargetHealingReduction(critical.Damage, member.binding.Creatures[member.deployedCreatureIndex].HealingTargetProfile)
+		reduced, reduceErr := game.ApplyTargetHealingReduction(critical.Damage, member.healingTargetProfile(member.deployedCreatureIndex))
 		if reduceErr != nil {
 			return packets, fmt.Errorf("briarHealReduction: %w", reduceErr)
 		}

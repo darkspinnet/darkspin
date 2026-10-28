@@ -19,6 +19,8 @@ type beastPetResurrectionRun struct {
 	damageRuntime  campaignDamageRuntime
 	packet         raknet.Packet
 	zone           *zone.Zone
+	arenaWorld     *arenaAbilityWorld
+	arenaGameID    uint32
 	userID         uint64
 	memberKey      gameplayMemberKey
 	sessionKey     string
@@ -63,16 +65,33 @@ func (e gameplayPeerSession) isBeastNormalResurrectionAvailable() bool {
 }
 
 func (e *gameplayPeerSession) reserveBeastPetRevival(at time.Time) bool {
+	if !e.canBeastPetRevive(at) {
+		return false
+	}
+	e.squad.ReserveResurrection()
+	return true
+}
+
+func (e *gameplayPeerSession) canBeastPetRevive(at time.Time) bool {
 	run := e.beastPetResurrection
-	if run == nil || e.zone == nil || e.squad == nil || run.ownerObjectID != e.deployedObjectID ||
+	if run == nil || e.squad == nil || run.ownerObjectID != e.deployedObjectID ||
 		run.state.IsBurrowing || !run.state.IsEligible(e.isBeastResurrectionOverdrive(at), e.isBeastNormalResurrectionAvailable()) {
+		return false
+	}
+	if run.arenaWorld != nil {
+		pet, isFound := run.arenaWorld.companion.Snapshot(run.petObjectID)
+		if !isFound || pet.HitPoint <= 0 || pet.OwnerObjectID != run.ownerObjectID {
+			return false
+		}
+		return true
+	}
+	if e.zone == nil || e.zone.Companion() == nil {
 		return false
 	}
 	pet, isFound := e.zone.Companion().Snapshot(run.petObjectID)
 	if !isFound || pet.HitPoint <= 0 || pet.OwnerObjectID != run.ownerObjectID {
 		return false
 	}
-	e.squad.ReserveResurrection()
 	return true
 }
 
@@ -123,6 +142,10 @@ func (e beastPetResurrectionStep) execute() {
 }
 
 func (e *beastPetResurrectionRun) execute(revision uint64) {
+	if e.arenaWorld != nil {
+		e.executeArena(revision)
+		return
+	}
 	e.runtime.registry.mutex.Lock()
 	defer e.runtime.registry.mutex.Unlock()
 	if e.revision != revision {
@@ -421,6 +444,9 @@ func (e *beastPetResurrectionRun) failRevival(peerSession *gameplayPeerSession, 
 }
 
 func (e *beastPetResurrectionRun) stop(peerSession *gameplayPeerSession) ([][]byte, error) {
+	if e.arenaWorld != nil {
+		return e.stopArena(peerSession)
+	}
 	e.revision++
 	e.resumeRevision++
 	if e.resumeCancel != nil {

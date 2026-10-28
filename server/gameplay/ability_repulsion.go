@@ -53,6 +53,9 @@ func (e heroRepulsionSchedule) hit() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	if peerSession.binding.Mode == game.ModeArena {
+		return e.hitArenaLocked(peerSession)
+	}
 	packets := make([][]byte, 0)
 	projectilePackets, reflectedProjectileCount, err :=
 		reflectHostileProjectilesLocked(

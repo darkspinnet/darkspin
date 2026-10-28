@@ -31,6 +31,7 @@ type hostileProjectileFreezeStep struct {
 	isReleased         bool
 	isDeletionQueued   bool
 	originalZone       *zone.Zone
+	arenaGameID        uint32
 	ownerSessionKey    string
 	ownerGeneration    uint64
 	expiresAt          time.Time
@@ -44,8 +45,15 @@ func (e *hostileProjectileFreezeStep) expire() ([][]byte, error) {
 		return nil, nil
 	}
 	owner, isFound := e.runtime.registry.sessions[e.ownerSessionKey]
-	isCurrent := isFound && owner.generation == e.ownerGeneration && owner.zone == e.originalZone &&
-		owner.campaignNPCProjectiles[e.projectileObjectID] == e.run && e.originalZone.IsActive() && e.originalZone.Context().Err() == nil
+	isCurrent := isFound && owner.generation == e.ownerGeneration
+	if e.arenaGameID != 0 {
+		isCurrent = isCurrent && owner.binding.Mode == game.ModeArena &&
+			owner.binding.GameID == e.arenaGameID && owner.sageAttacks[e.projectileObjectID] == e.run
+	} else {
+		isCurrent = isCurrent && owner.zone == e.originalZone &&
+			owner.campaignNPCProjectiles[e.projectileObjectID] == e.run &&
+			e.originalZone.IsActive() && e.originalZone.Context().Err() == nil
+	}
 	if isCurrent {
 		e.run.Thaw(e.runtime.now())
 	}
@@ -86,6 +94,10 @@ func freezeHostileProjectilesLocked(
 	if peerSession == nil || radius <= 0 || modifierID == 0 || duration <= 0 ||
 		now.IsZero() {
 		return nil, nil
+	}
+	if peerSession.binding.Mode == game.ModeArena {
+		return freezeArenaHostileProjectilesLocked(runtime, peerSession, sessionKey,
+			sourceObjectID, center, radius, modifierID, duration, sourceTime, now)
 	}
 	owners := runtime.registry.hostileProjectileOwnersLocked(peerSession, sessionKey)
 	for _, owner := range owners {

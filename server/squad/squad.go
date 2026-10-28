@@ -54,6 +54,26 @@ type Snapshot struct {
 	IsRestartReserved bool
 }
 
+// Clone saves match-local squad state for rollback while preserving the
+// published squad pointer used by scheduled gameplay callbacks.
+func (e *Session) Clone() (*Session, error) {
+	if e == nil {
+		return nil, errors.New("nil squad")
+	}
+	clone := *e
+	return &clone, nil
+}
+
+// CommitClone restores a saved squad state without changing the published
+// pointer identity used by scheduled match effects.
+func (e *Session) CommitClone(staged *Session) error {
+	if e == nil || staged == nil {
+		return errors.New("nil squad transition")
+	}
+	*e = *staged
+	return nil
+}
+
 func New(characters [Size]Character, characterIndex uint32) (*Session, error) {
 	if characterIndex >= Size {
 		return nil, errors.New("character index out of range")

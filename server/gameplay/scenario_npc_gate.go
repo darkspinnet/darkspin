@@ -15,8 +15,8 @@ func scenarioAutonomousNPCPlans(session *zonenpc.Session, plans []zonenpc.SpawnP
 	return results
 }
 
-// The first ordinary projectile cycle settles a manual shot. It must not
-// resume the autonomous controller while its spawned actor's AI is disabled.
+// The first ordinary action cycle settles a manual cast. It must not resume
+// the autonomous controller while its spawned actor's AI is disabled.
 func (e campaignNPCActionRuntime) finishScenarioNPCManualAction(sessionKey string, generation uint64, objectID uint32, actionGeneration uint64) bool {
 	e.registry.mutex.RLock()
 	defer e.registry.mutex.RUnlock()

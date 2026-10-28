@@ -2090,6 +2090,13 @@ func loadHeroKits(
 					definitionsByAsset[active.assetName] = recovered
 				}
 			}
+			if active.assetName == "FireTempestSupport" && definition.StatusDuration <= 0 {
+				// The compiled pulse script does not expose the healing reduction's
+				// lifetime. Keep its recovered build-103 rank-one duration.
+				recovered := recoveredDefinitions[active.assetName]
+				definition.StatusDuration = recovered.StatusDuration
+				definitionsByAsset[active.assetName] = definition
+			}
 			if active.assetName == "ShadowRavagerActive" {
 				// Shadow Sting inherits a target modifier alongside its melee arc. The
 				// generic Lua modifier discriminator sees that field first, so restore

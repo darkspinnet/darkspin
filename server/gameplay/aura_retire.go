@@ -52,6 +52,9 @@ func (e *heroAuraAreaRun) retainAuraLocked() {
 		e.runtime.registry.auraRuns = make(map[*heroAuraAreaRun]struct{})
 	}
 	e.runtime.registry.auraRuns[e] = struct{}{}
+	if e.arenaGameID != 0 {
+		return
+	}
 	retirement := auraRetirement{run: e}
 	e.stopContext = context.AfterFunc(e.originalZone.Context(), retirement.execute)
 }
@@ -64,6 +67,9 @@ func (e *heroAuraAreaRun) retireAuraLocked() error {
 			return fmt.Errorf("auraBubbleRetire: %w", err)
 		}
 		return nil
+	}
+	if e.arenaGameID != 0 {
+		return e.retireArenaPsistormLocked()
 	}
 	defer e.refreshSleepingCloudControlLocked()
 	e.mutex.Lock()

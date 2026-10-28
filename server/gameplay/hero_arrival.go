@@ -108,7 +108,7 @@ func (e gameplayPeerSession) isHeroArrivalProtected(at time.Time) bool {
 
 func (e gameplayPeerSession) isHeroDamageImmune(at time.Time) bool {
 	return e.isGodModeEnabled || e.campaignTunnelTransfer != nil || e.isHeroArrivalProtected(at) || e.heroModifierRun.IsDamageImmune() ||
-		e.heroQuantumBlink != nil || e.hasOmniShieldAt(e.deployedObjectID, at)
+		e.heroQuantumBlink != nil || e.hasOmniShieldAt(e.deployedObjectID, at) || e.isArenaBanished(at)
 }
 
 func advanceHeroArrivalTimestamp(

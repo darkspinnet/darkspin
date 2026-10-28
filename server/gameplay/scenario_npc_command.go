@@ -43,8 +43,9 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 	if err == nil && (!isEligible || peer.generation != queuedPeer.generation || peer.transportGeneration != packet.TransportGeneration) {
 		err = errors.New("NPC command packet owner changed before admission")
 	}
-	isCancellation := req.Operation == "set_ai" && req.IsAIEnabled != nil && !*req.IsAIEnabled
-	if err == nil && (actor.IsDefeated || actor.HitPoint <= 0 || peer.deployedHitPoint() <= 0 && !isCancellation) {
+	isCancellation := req.Operation == "retire" || req.Operation == "set_ai" && req.IsAIEnabled != nil && !*req.IsAIEnabled
+	isCleanup := isCancellation
+	if err == nil && (actor.IsDefeated || actor.HitPoint <= 0 || peer.deployedHitPoint() <= 0) && !isCleanup {
 		err = errors.New("NPC command source or owned hero is dead")
 	}
 	if err == nil {
@@ -56,6 +57,8 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 		return nil, true, fmt.Errorf("npcConsumeValidate: %w", err)
 	}
 	ref := zonenpc.ScenarioControlRef{ObjectID: req.Identity.ObjectID, ControlID: req.Identity.SpawnRequestID}
+	wasPublished := actor.IsPublished
+	wasDefeated := actor.IsDefeated
 	var action zonenpc.Snapshot
 	var isStarted bool
 	var isFirstAction bool
@@ -83,6 +86,8 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 		// The first movement step runs through the owning scheduler, not here.
 	case "restore":
 		actor, err = peer.zone.NPCs().ScenarioRestoreHitPoint(ref)
+	case "retire":
+		actor, err = peer.zone.NPCs().ScenarioRetire(ref)
 	default:
 		err = errors.New("NPC command operation is unsupported")
 	}
@@ -93,7 +98,7 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 	}
 	receipt := e.registry.npcControlReceipts[requestID]
 	receipt.IsAccepted, receipt.State, receipt.ActionGeneration = true, "admitted", actor.ActionGeneration
-	if req.Operation == "set_ai" || req.Operation == "restore" {
+	if req.Operation == "set_ai" || req.Operation == "restore" || req.Operation == "retire" {
 		receipt.IsCompleted, receipt.IsSettled, receipt.State = true, true, "completed"
 	}
 	e.registry.npcControlReceipts[requestID] = receipt
@@ -118,10 +123,14 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 			packets, err = scenarioNPCStop(actor)
 		}
 	case "ability":
-		// The ordinary gunner's exact profile is admitted above. This calls
-		// the existing projectile producer once; its normal next boundary is
-		// fenced from autonomous repetition by the build-selected helper.
-		packets, err = e.damage.npc.produceZelemShot(packet.Autonomous(), packet.Address.String(), peer.generation, req.Identity.ObjectID, packet.SourceTime)
+		// Run the admitted action through the ordinary first-action producer.
+		// It selects the NPC family, pursues when needed, and schedules its
+		// authored release and impact. AI-off fences autonomous continuation.
+		step := campaignNPCFirstActionStep{runtime: e.damage.npc, packet: packet.Autonomous(),
+			sessionKey: packet.Address.String(), generation: peer.generation,
+			actionGeneration: action.ActionGeneration, objectID: req.Identity.ObjectID,
+			timestamp: packet.SourceTime}
+		packets, err = step.produce()
 	case "move":
 		step := scenarioNPCMoveStep{runtime: e, packet: packet.Autonomous(), requestID: requestID, req: req,
 			controlGeneration: actor.ControlGeneration, startedAt: e.damage.npc.now(), lastAt: e.damage.npc.now()}
@@ -133,6 +142,14 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 		})
 		if err == nil {
 			packets = [][]byte{healthPacket}
+		}
+	case "retire":
+		if wasPublished && !wasDefeated {
+			var deletePacket []byte
+			deletePacket, err = raknet.MarshalApplication(raknet.ObjectDeleteMessage{ObjectID: []uint32{actor.ObjectID}})
+			if err == nil {
+				packets = [][]byte{deletePacket}
+			}
 		}
 	}
 	if err != nil {
@@ -191,6 +208,11 @@ func (e scenarioNPCResponseCommit) complete() {
 	}
 	receipt.IsResponseCommitted = true
 	e.registry.npcControlReceipts[e.requestID] = receipt
+	if receipt.Operation == "retire" {
+		spawn := e.registry.spawnReceipts[receipt.Identity.SpawnRequestID]
+		spawn.State = "retired"
+		e.registry.spawnReceipts[receipt.Identity.SpawnRequestID] = spawn
+	}
 }
 
 // Move permits at most ten seconds of actor-footprint mesh progression. A

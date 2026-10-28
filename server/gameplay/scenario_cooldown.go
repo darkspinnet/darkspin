@@ -12,7 +12,7 @@ import (
 )
 
 func (e *gameplaySessionRegistry) resetScenarioCooldownsLocked(member gameplayPeerSession, req scenario.HeroResetRequest, recipientCount int) (scenario.HeroResetReceipt, error) {
-	if req.Noun != 0 || req.IsPlacement || req.HitPoint != nil || req.ManaPoint != nil {
+	if req.Noun != 0 || req.IsPlacement || req.HitPoint != nil || req.MaximumHitPoint != nil || req.ManaPoint != nil {
 		return scenario.HeroResetReceipt{}, errors.New("cooldown reset does not replace, move or heal a hero")
 	}
 	packets := make([][]byte, 0)

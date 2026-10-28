@@ -13,7 +13,7 @@ import (
 
 func debugHeroResetDTO(receipt scenario.HeroResetReceipt, isRigReady bool) map[string]any {
 	return map[string]any{"game_id": receipt.GameID, "zone_generation": receipt.ZoneGeneration, "object_id": receipt.ObjectID, "noun": receipt.Noun,
-		"index": receipt.Index, "hit_point": receipt.HitPoint, "mana_point": receipt.ManaPoint,
+		"index": receipt.Index, "hit_point": receipt.HitPoint, "maximum_hit_point": receipt.MaximumHitPoint, "mana_point": receipt.ManaPoint,
 		"recipient_count": receipt.RecipientCount, "is_replacement": receipt.IsReplacement,
 		"is_cooldown_reset": receipt.IsCooldownReset, "cooldown_count": receipt.CooldownCount,
 		"is_retirement": receipt.IsRetirement, "is_rig_ready": isRigReady,
@@ -27,12 +27,13 @@ func debugHeroResetDTO(receipt scenario.HeroResetReceipt, isRigReady bool) map[s
 func resetDebugHero(ctx context.Context, host *debugHost, clientManager *debugClientManager, operation string, payload json.RawMessage) (scenario.HeroResetReceipt, error) {
 	result := scenario.HeroResetReceipt{}
 	var req struct {
-		ClientID    string             `json:"client_id"`
-		Noun        uint32             `json:"noun,omitempty"`
-		Point       *controlWorldPoint `json:"point,omitempty"`
-		HitPoint    *float32           `json:"hit_point,omitempty"`
-		ManaPoint   *float32           `json:"mana_point,omitempty"`
-		AbilityRank *int32             `json:"ability_rank,omitempty"`
+		ClientID        string             `json:"client_id"`
+		Noun            uint32             `json:"noun,omitempty"`
+		Point           *controlWorldPoint `json:"point,omitempty"`
+		HitPoint        *float32           `json:"hit_point,omitempty"`
+		MaximumHitPoint *float32           `json:"maximum_hit_point,omitempty"`
+		ManaPoint       *float32           `json:"mana_point,omitempty"`
+		AbilityRank     *int32             `json:"ability_rank,omitempty"`
 	}
 	err := decodeDebugPayload(payload, &req)
 	if err != nil {
@@ -41,7 +42,7 @@ func resetDebugHero(ctx context.Context, host *debugHost, clientManager *debugCl
 	if (operation == "client.replace_hero") != (req.Noun != 0) {
 		return result, errors.New("ReplaceHero requires an installed noun ID; RestoreHero accepts no noun")
 	}
-	if operation != "client.restore_hero" && (req.HitPoint != nil || req.ManaPoint != nil) {
+	if operation != "client.restore_hero" && (req.HitPoint != nil || req.MaximumHitPoint != nil || req.ManaPoint != nil) {
 		return result, errors.New("resource fields require RestoreHero")
 	}
 	if operation == "client.set_ability_rank" {
@@ -77,7 +78,7 @@ func resetDebugHero(ctx context.Context, host *debugHost, clientManager *debugCl
 		PeerGeneration: world.PeerGeneration, TransportGeneration: world.TransportGeneration,
 		ZoneGeneration: world.ZoneGeneration, ObjectID: world.Hero.ObjectID, Noun: req.Noun,
 		ObservedNoun: world.Hero.Noun, ObservedIndex: world.Hero.Index}
-	command.HitPoint, command.ManaPoint = req.HitPoint, req.ManaPoint
+	command.HitPoint, command.MaximumHitPoint, command.ManaPoint = req.HitPoint, req.MaximumHitPoint, req.ManaPoint
 	command.IsCooldownReset = operation == "client.reset_cooldowns"
 	if operation == "client.set_ability_rank" {
 		command.IsAbilityRankSet = true

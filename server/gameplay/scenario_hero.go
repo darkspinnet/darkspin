@@ -82,13 +82,13 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 	retirement := member.scenarioAbility.retirement
 	if retirement != nil {
 		if req.IsRetirement || req.IsPlacement || req.IsCooldownReset || req.IsAbilityRankSet || req.Noun == 0 ||
-			req.HitPoint != nil || req.ManaPoint != nil || !retirement.matches(member, req) {
+			req.HitPoint != nil || req.MaximumHitPoint != nil || req.ManaPoint != nil || !retirement.matches(member, req) {
 			return result, errors.New("hero replacement retirement is pending; only its matching commit is permitted")
 		}
 	} else if req.Noun != 0 && !req.IsRetirement {
 		return result, errors.New("hero replacement requires retirement and a native deletion fence before commit")
 	}
-	if req.IsRetirement && (req.Noun == 0 || req.IsPlacement || req.IsCooldownReset || req.IsAbilityRankSet || req.HitPoint != nil || req.ManaPoint != nil) {
+	if req.IsRetirement && (req.Noun == 0 || req.IsPlacement || req.IsCooldownReset || req.IsAbilityRankSet || req.HitPoint != nil || req.MaximumHitPoint != nil || req.ManaPoint != nil) {
 		return result, errors.New("hero retirement requires only a replacement noun and observed position")
 	}
 	if req.IsAbilityRankSet {
@@ -103,7 +103,7 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 	if req.IsCooldownReset {
 		return e.resetScenarioCooldownsLocked(member, req, result.RecipientCount)
 	}
-	if req.Noun != 0 && (req.HitPoint != nil || req.ManaPoint != nil) {
+	if req.Noun != 0 && (req.HitPoint != nil || req.MaximumHitPoint != nil || req.ManaPoint != nil) {
 		return result, errors.New("resource fields require a resource-only restore")
 	}
 	maximumHitPoint, maximumManaPoint := member.characterResourceMaximum(index)
@@ -129,6 +129,24 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 	// Prepare the complete wire projection before any mutation.
 	projected := member
 	projected.binding.Creatures = member.binding.Creatures
+	if req.Noun != 0 {
+		projected.scenarioHitPointMaximums[index] = 0
+	}
+	if req.MaximumHitPoint != nil {
+		maximum := *req.MaximumHitPoint
+		base := projected
+		base.scenarioHitPointMaximums[index] = 0
+		baseMaximumHitPoint := base.characterResourceMaximums(index).hitPoint
+		if !isFiniteZonePosition(raknet.Vector3{X: maximum}) || maximum < baseMaximumHitPoint || maximum > 1000000 {
+			return result, errors.New("fixture maximum hit points must be finite, at least the hero maximum, and at most one million")
+		}
+		if maximum == baseMaximumHitPoint {
+			projected.scenarioHitPointMaximums[index] = 0
+		} else {
+			projected.scenarioHitPointMaximums[index] = maximum
+		}
+		maximumHitPoint = maximum
+	}
 	var replacement *squad.Session
 	if req.Noun != 0 {
 		projected.binding.Creatures[index] = creature
@@ -197,6 +215,7 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 			e.logger.Printf("Scenario hero position preservation user=%d: %v", member.binding.UserID, err)
 		}
 		member.arenaHitPointIncreases = projected.arenaHitPointIncreases
+		member.scenarioHitPointMaximums = projected.scenarioHitPointMaximums
 		member.passiveKillStack[index] = 0
 		member.resetPassiveDamageReduction(index)
 		member.resetFireRavagerBasic(index)
@@ -224,6 +243,7 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 		}
 		packets = append(packets, initialPackets...)
 	} else {
+		member.scenarioHitPointMaximums = projected.scenarioHitPointMaximums
 		isGameOver, healthErr := member.squad.SetHitPoints(index, restoredHitPoint)
 		if healthErr != nil {
 			return result, fmt.Errorf("resetHealth: %w", healthErr)
@@ -264,7 +284,7 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 	e.commitChannelRemovalsLocked()
 	e.queueScenarioHeroPacketsLocked(member, packets)
 	return scenario.HeroResetReceipt{GameID: req.GameID, ObjectID: req.ObjectID, Noun: member.binding.Creatures[index].Noun,
-		Index: index, HitPoint: restoredHitPoint, ManaPoint: restoredManaPoint, RecipientCount: result.RecipientCount,
+		Index: index, HitPoint: restoredHitPoint, MaximumHitPoint: maximumHitPoint, ManaPoint: restoredManaPoint, RecipientCount: result.RecipientCount,
 		ZoneGeneration: req.ZoneGeneration, IsReplacement: req.Noun != 0, IsQueued: true}, nil
 }
 

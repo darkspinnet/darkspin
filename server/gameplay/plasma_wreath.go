@@ -134,11 +134,16 @@ func (e plasmaWreathSchedule) handleScheduleFailure(scheduleErr error) {
 		return
 	}
 	zone := peerSession.zone
+	gameID := arenaAbilityGameID(peerSession)
 	e.runtime.registry.mutex.Unlock()
 	packets := e.retire("schedule failed")
 	e.runtime.registry.mutex.Lock()
 	for sessionKey, member := range e.runtime.registry.sessions {
-		if member.zone != zone {
+		if gameID != 0 {
+			if member.binding.Mode != game.ModeArena || member.binding.GameID != gameID {
+				continue
+			}
+		} else if member.zone != zone {
 			continue
 		}
 		member.queueCampaignPackets(packets)

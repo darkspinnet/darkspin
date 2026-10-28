@@ -139,6 +139,11 @@ func (e *gameplaySessionRegistry) retireOmniShieldRunLocked(member *gameplayPeer
 		run.releaseAllocation()
 		return
 	}
+	if run.isArena {
+		e.queueFieldMedicRealmPacketsLocked(nil, run.gameID, packets)
+		run.releaseAllocation()
+		return
+	}
 	removal := &omniShieldRemoval{world: run.world, run: run, packets: packets}
 	for _, actor := range run.world.Snapshot().Members {
 		removal.deliveries = append(removal.deliveries, &omniShieldDelivery{userID: actor.UserID, generation: actor.PeerGeneration})

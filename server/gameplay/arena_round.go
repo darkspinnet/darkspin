@@ -41,6 +41,10 @@ func (e campaignAbilityCommandRuntime) commitArenaVictory(
 	}
 	e.registry.completeArenaResultLocked(gameID, winnerTeam)
 	e.registry.retireArenaForcePulsesLocked(gameID)
+	e.registry.retireArenaClaymoresLocked(gameID)
+	e.registry.retireArenaChargesLocked(gameID)
+	e.registry.retireArenaRidesLocked(gameID)
+	e.registry.retireArenaQuantumBlinksLocked(gameID)
 	for key, member := range e.registry.sessions {
 		if member.binding.GameID != gameID || member.binding.Mode != game.ModeArena {
 			continue
@@ -60,7 +64,7 @@ func (e campaignAbilityCommandRuntime) commitArenaVictory(
 		e.registry.clearActionLeasesLocked(key, member.transportGeneration)
 		e.registry.sessions[key] = member
 	}
-	job := arenaRoundEndJob{registry: e.registry, modifierPool: e.modifierPool, effectPool: e.effectPool, gameID: gameID, roundIndex: match.result.roundIndex}
+	job := arenaRoundEndJob{registry: e.registry, modifierPool: e.modifierPool, effectPool: match.effectPool, gameID: gameID, roundIndex: match.result.roundIndex}
 	e.registry.mutex.Unlock()
 	// Persistence is independent of both the presentation timer and Continue.
 	err := e.registry.saveArenaStats(context.Background(), gameID)

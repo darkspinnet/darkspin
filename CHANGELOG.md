@@ -2,13 +2,14 @@
 
 ### 2026-10-28
 
+
 - Remove the saved-password status area below the Remote Crogenitor card.
 - Replace the remote profile's Check Connection button with a small refresh icon below the Crogenitor portrait.
 - Move remote server availability and shortened version into the Server row, highlight incompatible versions in red, and show full client/server versions on hover.
-- Add a co-op batch scenario for all 95 castable hero abilities using hero swaps, controlled enemy restoration, cooldown resets, and caster/observer packet evidence.
-- Preserve mission defense conversion during scenario hero swaps so defense-scaled basic attacks remain castable.
-- Make Arc Weld hit an explicitly selected hostile target even when it is idle or attacking a co-op teammate.
-- Retire Phantom Charge and Omni Shield action leases when their release packets commit, preventing late rejected responses.
+- pve: Add a co-op batch scenario for all 95 castable hero abilities using hero swaps, controlled enemy restoration, cooldown resets, and caster/observer packet evidence.
+- pve: Preserve mission defense conversion during scenario hero swaps so defense-scaled basic attacks remain castable.
+- pve: Make Arc Weld hit an explicitly selected hostile target even when it is idle or attacking a co-op teammate.
+- pvp: Retire Phantom Charge and Omni Shield action leases when their release packets commit, preventing late rejected responses.
 - #140 Show live remote server availability and versions, block unreachable launches, and enforce matching client/server major and minor versions before launch and at login while allowing patch and unstable differences.
 - #140 Add a Docker maintenance update command that reuses player warnings, clean shutdown, backups, and bootstrap recovery, including when automatic updates are disabled.
 - #141 Accept build-103 signed editor costs so hero resets and removed cosmetic edits can refund DNA instead of returning an error.

@@ -315,6 +315,10 @@ func (e campaignLeapSchedule) land(
 }
 
 func (e campaignLeapSchedule) next() ([][]byte, error) {
+	if e.runtime.finishScenarioNPCManualAction(e.sessionKey, e.generation,
+		e.objectID, e.actionGeneration) {
+		return nil, nil
+	}
 	nextDelay := max(e.plan.Profile.EndAnimationDelay, e.plan.Profile.Cooldown)
 	timestamp := e.timestamp + uint64(nextDelay/time.Millisecond)
 	step := campaignNPCFirstActionStep{

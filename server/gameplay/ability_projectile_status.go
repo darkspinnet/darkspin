@@ -19,6 +19,7 @@ import (
 
 type heroProjectileStatusRun struct {
 	activationID      uint64
+	arena             *arenaProjectileStatusRun
 	mutex             sync.Mutex
 	projectile        *abilityraknet.ProjectileRun
 	npc               *zonenpc.Session
@@ -69,6 +70,9 @@ func (e *heroProjectileStatusRun) Stop() {
 	}
 	if e.projectile != nil {
 		e.projectile.Finish()
+	}
+	if e.arena != nil {
+		return
 	}
 	e.Cleanup()
 	e.CleanupSplash()
@@ -790,6 +794,10 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 	activeAbilityID uint32, targetObjectID uint32, sessionKey string,
 	abilityStartTime time.Time,
 ) ([][]byte, error) {
+	if peerSession.binding.Mode == game.ModeArena {
+		return r.handleArenaProjectileStatus(req, peerSession, creature, definition,
+			activeAbilityID, targetObjectID, sessionKey, abilityStartTime)
+	}
 	isStatusSupported := definition.StatusKind == sim.AbilityStatusKindFear ||
 		definition.StatusKind == sim.AbilityStatusKindCurse ||
 		definition.StatusKind == sim.AbilityStatusKindStun

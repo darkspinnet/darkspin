@@ -224,6 +224,11 @@ func (e *gameplaySessionRegistry) retireArenaResultLocked(gameID uint32) func() 
 		}
 	}
 	e.retireArenaForcePulsesLocked(gameID)
+	e.retireArenaClaymoresLocked(gameID)
+	e.retireArenaChargesLocked(gameID)
+	e.retireArenaRidesLocked(gameID)
+	e.retireArenaQuantumBlinksLocked(gameID)
 	delete(e.arenaMatches, gameID)
+	delete(e.arenaEffectPools, gameID)
 	return match.cancel
 }

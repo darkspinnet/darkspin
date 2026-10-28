@@ -82,7 +82,8 @@ func (e fieldMedicActiveSchedule) isCurrent(
 	peerSession gameplayPeerSession, isFound bool,
 ) bool {
 	return isFound && peerSession.generation == e.generation &&
-		peerSession.zone != nil && peerSession.zone.Effect() != nil &&
+		((peerSession.zone != nil && peerSession.zone.Effect() != nil) ||
+			peerSession.binding.Mode == game.ModeArena && peerSession.isArenaCombatActive) &&
 		peerSession.deployedObjectID == e.sourceObjectID
 }
 
@@ -90,6 +91,12 @@ func (e fieldMedicActiveSchedule) hit() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	if !e.isCurrent(peerSession, isFound) {
+		e.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	if peerSession.binding.Mode == game.ModeArena {
+		// Build-103 Field Medic transfers only five NPC-origin debuff GUIDs
+		// and three NPC-origin buff GUIDs. None is authored by a hero in Arena.
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}

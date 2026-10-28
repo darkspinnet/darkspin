@@ -2,13 +2,20 @@
 
 ### 2026-10-28
 
+- pvp: Route all 95 castable hero abilities through their Arena execution paths and reject an unavailable route instead of applying a generic instant hit.
+- pvp: Keep Arena attachment effects isolated per match, prevent Pain Hounds' reactive pet from stalling the server, and deliver direct ability starts once to each opponent.
+- pvp: Sweep 95 unique hero abilities and a Thunderstorm cooldown repeat across five native duels, retaining accepted casts, resource outcomes, and two-client effect packet captures for review.
+- pvp: Verify Repulsion Wave reflection, Sleeping Cloud break-on-hit, Rooting Plague spread and recast replacement, Summon Sprite healing, Summon Beast resurrection, Fire Tempest enrage, and Strangling Briars healing in focused multiplayer scenarios.
+- pvp: Deliver delayed Fire Tempest pet effects and retirement to every Arena participant.
+- pve: Deliver delayed Fire Tempest pet effects and retirement to cooperative observers.
+- pve: Restore Rain of Fire's authored one-second healing-reduction lifetime when its compiled Lua definition omits that duration.
 - Remove the saved-password status area below the Remote Crogenitor card.
 - Replace the remote profile's Check Connection button with a small refresh icon below the Crogenitor portrait.
 - Move remote server availability and shortened version into the Server row, highlight incompatible versions in red, and show full client/server versions on hover.
-- Add a co-op batch scenario for all 95 castable hero abilities using hero swaps, controlled enemy restoration, cooldown resets, and caster/observer packet evidence.
-- Preserve mission defense conversion during scenario hero swaps so defense-scaled basic attacks remain castable.
-- Make Arc Weld hit an explicitly selected hostile target even when it is idle or attacking a co-op teammate.
-- Retire Phantom Charge and Omni Shield action leases when their release packets commit, preventing late rejected responses.
+- pve: Add a co-op batch scenario for all 95 castable hero abilities using hero swaps, controlled enemy restoration, cooldown resets, and caster/observer packet evidence.
+- pve: Preserve mission defense conversion during scenario hero swaps so defense-scaled basic attacks remain castable.
+- pve: Make Arc Weld hit an explicitly selected hostile target even when it is idle or attacking a co-op teammate.
+- pvp: Retire Phantom Charge and Omni Shield action leases when their release packets commit, preventing late rejected responses.
 - [#140](https://github.com/darkspinnet/darkspin/issues/140) Show live remote server availability and versions, block unreachable launches, and enforce matching client/server major and minor versions before launch and at login while allowing patch and unstable differences.
 - [#140](https://github.com/darkspinnet/darkspin/issues/140) Add a Docker maintenance update command that reuses player warnings, clean shutdown, backups, and bootstrap recovery, including when automatic updates are disabled.
 - [#141](https://github.com/darkspinnet/darkspin/issues/141) Accept build-103 signed editor costs so hero resets and removed cosmetic edits can refund DNA instead of returning an error.

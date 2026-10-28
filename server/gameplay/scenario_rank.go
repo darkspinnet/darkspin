@@ -46,7 +46,7 @@ func (e *gameplayPeerSession) clearScenarioHeroAbilityRank() { e.scenarioAbility
 
 func (e *gameplaySessionRegistry) setScenarioHeroAbilityRankLocked(member gameplayPeerSession, req scenario.HeroResetRequest, recipientCount int) (scenario.HeroResetReceipt, error) {
 	if req.AbilityRank < 0 || req.AbilityRank > 8 || req.Noun != 0 || req.IsPlacement || req.IsCooldownReset ||
-		req.IsRetirement || req.HitPoint != nil || req.ManaPoint != nil || req.Position != nil {
+		req.IsRetirement || req.HitPoint != nil || req.MaximumHitPoint != nil || req.ManaPoint != nil || req.Position != nil {
 		return scenario.HeroResetReceipt{}, errors.New("ability rank fixture requires only rank0 through8")
 	}
 	index := member.deployedCreatureIndex

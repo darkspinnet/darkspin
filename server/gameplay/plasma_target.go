@@ -7,6 +7,33 @@ import (
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
+func (e plasmaWreathSchedule) isWreathTargetLocked(peerSession gameplayPeerSession, objectID uint32, isReactive bool) bool {
+	if peerSession.binding.Mode != game.ModeArena {
+		return isPlasmaWreathTarget(peerSession, objectID, isReactive)
+	}
+	if isReactive != isPlasmaWreathReactive(peerSession.plasmaWreathState.rank) {
+		return false
+	}
+	targets := e.runtime.registry.abilityTargetsLocked(e.runtime, peerSession, e.definition, e.sourceTime).(*arenaAbilityTargets)
+	_, victim, isFound := targets.member(objectID)
+	if !isFound {
+		return false
+	}
+	_, isFound = targets.NPC(objectID)
+	if !isFound {
+		return false
+	}
+	_, victim, isFound = targets.member(objectID)
+	if !isFound {
+		return false
+	}
+	distance := game.Vec3(victim.playerPosition).Sub(game.Vec3(peerSession.playerPosition)).Length()
+	if isReactive {
+		return distance < zoneability.PlasmaWreathRadius
+	}
+	return distance <= zoneability.PlasmaWreathRadius
+}
+
 func isPlasmaWreathReactive(rank int32) bool {
 	return rank == 5 || rank == 6
 }
@@ -42,8 +69,15 @@ func (e plasmaWreathSchedule) produceTick() ([][]byte, error) {
 	targetObjectID := uint32(0)
 	// Lua uses the unsorted query and ipairs, then permits only the first
 	// successful orb. Preserve authoritative object order, not nearest range.
-	for _, target := range peerSession.zone.NPCs().LiveSnapshots() {
-		if !isPlasmaWreathTarget(peerSession, target.Plan.ObjectID, false) {
+	var snapshots []zonenpc.Snapshot
+	if peerSession.binding.Mode == game.ModeArena {
+		targets := e.runtime.registry.abilityTargetsLocked(e.runtime, peerSession, e.definition, e.sourceTime).(*arenaAbilityTargets)
+		snapshots = targets.LiveSnapshots()
+	} else {
+		snapshots = peerSession.zone.NPCs().LiveSnapshots()
+	}
+	for _, target := range snapshots {
+		if !e.isWreathTargetLocked(peerSession, target.Plan.ObjectID, false) {
 			continue
 		}
 		targetObjectID = target.Plan.ObjectID

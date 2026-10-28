@@ -576,6 +576,10 @@ func (e campaignConeSchedule) releaseCryosBossChain() ([][]byte, error) {
 
 func (e campaignConeSchedule) next() ([][]byte, error) {
 	timestamp := e.timestamp + uint64(e.nextDelay/time.Millisecond)
+	if e.runtime.finishScenarioNPCManualAction(e.sessionKey, e.generation,
+		e.objectID, e.actionGeneration) {
+		return nil, nil
+	}
 	if e.laserZone != nil {
 		packets, err := e.resume(timestamp)
 		if err != nil {

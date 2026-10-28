@@ -3,6 +3,7 @@ package gameplay
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/sim"
@@ -69,6 +70,14 @@ func (e campaignProjectileStep) commitArenaProjectileLocked(member *gameplayPeer
 	if err != nil {
 		return nil, fmt.Errorf("arenaProjectileEvent: %w", err)
 	}
+	statusErr := targets.applyBasicStatusLocked(result.Damage, schedule.creature, schedule.plan.SourceRank,
+		schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond))
+	if statusErr != nil && schedule.runtime.logger != nil {
+		// Damage is committed. A status publication failure must not discard
+		// the hit, flight resolution, or reliable projectile deletion.
+		schedule.runtime.logger.Printf("Arena basic status callback failed source=%d target=%d: %v",
+			schedule.sourceObjectID, result.Damage.ObjectID, statusErr)
+	}
 	modifierPackets, modifierErr := targets.applyForcePulseLocked(schedule.sourceObjectID, result)
 	if modifierErr != nil {
 		// The player damage is already committed. Preserve its combat result
@@ -87,6 +96,17 @@ func (e campaignProjectileStep) commitArenaProjectileLocked(member *gameplayPeer
 		}
 	} else {
 		hitPackets = append(hitPackets, healingPackets...)
+	}
+	cooldownPackets, cooldownErr := schedule.applyLightspeedCooldownsLocked(game.Vec3(collision.Position))
+	if cooldownErr != nil {
+		// Damage and projectile retirement have already committed. Preserve
+		// their packets if the allied cooldown callback cannot complete.
+		if schedule.runtime.logger != nil {
+			schedule.runtime.logger.Printf("Arena Lightspeed cooldown callback failed source=%d: %v",
+				schedule.sourceObjectID, cooldownErr)
+		}
+	} else {
+		hitPackets = append(hitPackets, cooldownPackets...)
 	}
 	if schedule.runtime.logger != nil {
 		schedule.runtime.logger.Printf("Arena shared projectile hit source=%d target=%d projectile=%d delay=%s damage=%g",

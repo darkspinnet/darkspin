@@ -35,6 +35,8 @@ const fireTempestFallbackFootprint = float32(0.75)
 type fireTempestActiveRun struct {
 	runtime              campaignAbilityCommandRuntime
 	packet               raknet.Packet
+	arenaWorld           *arenaAbilityWorld
+	arenaGameID          uint32
 	sessionKey           string
 	generation           uint64
 	ownerObjectID        uint32
@@ -113,6 +115,9 @@ func (e fireTempestStep) produce() ([][]byte, error) {
 }
 
 func (e fireTempestStep) monitor() ([][]byte, error) {
+	if e.run.arenaWorld != nil {
+		return e.arenaMonitor()
+	}
 	e.run.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.run.runtime.registry.sessions[e.run.sessionKey]
 	if !e.run.isCurrent(peerSession, isFound) || peerSession.zone == nil ||
@@ -221,9 +226,10 @@ func (e fireTempestStep) scheduleMonitor() error {
 			kind:     fireTempestStepMonitor,
 		}.produce,
 	}
-	cancel, err := e.run.packet.ScheduleProducers(
-		[]raknet.ScheduledPacketProducer{producer},
+	producers := e.run.runtime.registry.producerGuard.scheduledProducers(
+		e.run.sessionKey, []raknet.ScheduledPacketProducer{producer},
 	)
+	cancel, err := e.run.packet.ScheduleProducers(producers)
 	if err != nil {
 		return fmt.Errorf("schedule: %w", err)
 	}
@@ -254,6 +260,7 @@ func (e fireTempestStep) scheduleReplacement(position game.Vec3) error {
 				kind:     fireTempestStepMonitor,
 			}.produce},
 	}
+	steps = e.run.runtime.registry.producerGuard.scheduledProducers(e.run.sessionKey, steps)
 	cancel, err := e.run.packet.ScheduleProducers(steps)
 	if err != nil {
 		return fmt.Errorf("schedule: %w", err)
@@ -296,6 +303,9 @@ func (e fireTempestStep) owner() ([][]byte, error) {
 }
 
 func (e fireTempestStep) spawn() ([][]byte, error) {
+	if e.run.arenaWorld != nil {
+		return e.arenaSpawn()
+	}
 	e.run.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.run.runtime.registry.sessions[e.run.sessionKey]
 	if !e.run.isCurrent(peerSession, isFound) || peerSession.zone == nil ||
@@ -330,6 +340,9 @@ func (e fireTempestStep) spawn() ([][]byte, error) {
 }
 
 func (e fireTempestStep) spawnRelease() ([][]byte, error) {
+	if e.run.arenaWorld != nil {
+		return e.arenaSpawnRelease()
+	}
 	peerSession, isCurrent := e.current()
 	if !isCurrent || peerSession.zone == nil || peerSession.zone.Companion() == nil {
 		return nil, nil
@@ -367,6 +380,9 @@ func (e fireTempestStep) spawnRelease() ([][]byte, error) {
 }
 
 func (e fireTempestStep) expire() ([][]byte, error) {
+	if e.run.arenaWorld != nil {
+		return e.arenaExpire()
+	}
 	e.run.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.run.runtime.registry.sessions[e.run.sessionKey]
 	if !e.run.isCurrent(peerSession, isFound) {
@@ -384,6 +400,9 @@ func (e fireTempestStep) expire() ([][]byte, error) {
 }
 
 func (e fireTempestStep) enrageStart() ([][]byte, error) {
+	if e.run.arenaWorld != nil {
+		return e.arenaEnrageStart()
+	}
 	peerSession, isCurrent := e.current()
 	if !isCurrent || peerSession.zone == nil || peerSession.zone.Companion() == nil {
 		return nil, nil
@@ -418,6 +437,9 @@ func (e fireTempestStep) enrageStart() ([][]byte, error) {
 }
 
 func (e fireTempestStep) enragePulse() ([][]byte, error) {
+	if e.run.arenaWorld != nil {
+		return e.arenaEnragePulse()
+	}
 	e.run.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.run.runtime.registry.sessions[e.run.sessionKey]
 	if !e.run.isCurrent(peerSession, isFound) || peerSession.zone == nil ||
@@ -547,6 +569,9 @@ func (e fireTempestStep) enragePulse() ([][]byte, error) {
 }
 
 func (e fireTempestStep) enrageExpire() ([][]byte, error) {
+	if e.run.arenaWorld != nil {
+		return e.arenaEnrageExpire()
+	}
 	e.run.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.run.runtime.registry.sessions[e.run.sessionKey]
 	if !e.run.isCurrent(peerSession, isFound) || e.run.enrageInstanceID == 0 {
@@ -649,6 +674,9 @@ func (e *gameplayPeerSession) stopFireTempestRun(
 	if run == nil {
 		return nil, nil
 	}
+	if run.arenaWorld != nil {
+		return e.stopArenaFireTempestRun(run)
+	}
 	if run.cancel != nil {
 		run.cancel()
 		run.cancel = nil
@@ -711,10 +739,13 @@ func (e *gameplayPeerSession) stopFireTempestRun(
 		return nil, fmt.Errorf("fireTempestStopDelete: %w", err)
 	}
 	packets = append(packets, ownerPacket, beamPacket)
-	_, scheduleErr := run.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
-		Delay:   fireTempestBeamOutDuration,
-		Produce: fireTempestStaticProducer{packet: deletePacket}.produce,
-	}})
+	identity := gameplayProducerIdentityFromSession(run.sessionKey, *e, true)
+	producers := run.runtime.registry.producerGuard.scheduledProducersForIdentity(identity,
+		[]raknet.ScheduledPacketProducer{{
+			Delay:   fireTempestBeamOutDuration,
+			Produce: fireTempestStaticProducer{packet: deletePacket}.produce,
+		}})
+	_, scheduleErr := run.packet.ScheduleProducers(producers)
 	if scheduleErr != nil {
 		packets = append(packets, deletePacket)
 	}
@@ -750,6 +781,17 @@ func (r campaignAbilityCommandRuntime) handleFireTempestActive(
 		definition.Duration <= 0 || definition.PlacementDistance <= 0 {
 		r.registry.mutex.Unlock()
 		return req.reject("fire tempest definition unavailable")
+	}
+	if peerSession.binding.Mode == game.ModeArena {
+		world, worldErr := r.registry.arenaAbilityWorldLocked(peerSession.binding.GameID)
+		if worldErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("fireArenaWorld: %w", worldErr)
+		}
+		if world.companion == nil {
+			r.registry.mutex.Unlock()
+			return req.reject("fire tempest companion unavailable")
+		}
 	}
 	definition, err := zoneability.ProjectTiming(creature, definition)
 	if err != nil {
@@ -849,7 +891,13 @@ func (r campaignAbilityCommandRuntime) startFireTempestSummon(
 	releaseReservation zoneaction.ReleaseReservation,
 	ackPacket []byte, releasePacket []byte, startPackets [][]byte,
 ) ([][]byte, error) {
-	objectID, err := peerSession.reserveCampaignObjectID()
+	var objectID uint32
+	var err error
+	if peerSession.binding.Mode == game.ModeArena {
+		objectID, err = r.registry.reserveAbilityObjectIDsLocked(&peerSession, 1, 1000)
+	} else {
+		objectID, err = peerSession.reserveCampaignObjectID()
+	}
 	if err != nil {
 		return r.rollbackFireTempest(
 			req, peerSession, sessionKey, previousManaPoint,
@@ -863,7 +911,12 @@ func (r campaignAbilityCommandRuntime) startFireTempestSummon(
 			cooldownReservation, releaseReservation, "fireTempestModifier", err,
 		)
 	}
-	position, err := fireTempestSpawnPosition(peerSession, req.command.Common.Orientation)
+	position := game.Vec3{}
+	if peerSession.binding.Mode == game.ModeArena {
+		position, err = r.arenaFireTempestSpawnPosition(peerSession, req.command.Common.Orientation)
+	} else {
+		position, err = fireTempestSpawnPosition(peerSession, req.command.Common.Orientation)
+	}
 	if err != nil {
 		_ = r.modifierPool.Release(instanceID)
 		return r.rollbackFireTempest(
@@ -876,6 +929,10 @@ func (r campaignAbilityCommandRuntime) startFireTempestSummon(
 		generation: peerSession.generation, ownerObjectID: req.command.Common.ObjectID,
 		petObjectID: objectID, modifierInstanceID: instanceID, stackCount: 1,
 		orientation: req.command.Common.Orientation,
+	}
+	if peerSession.binding.Mode == game.ModeArena {
+		run.arenaWorld = r.registry.arenaMatches[peerSession.binding.GameID].abilityWorld
+		run.arenaGameID = peerSession.binding.GameID
 	}
 	peerSession.fireTempestActive = run
 	r.registry.sessions[sessionKey] = peerSession
@@ -919,6 +976,7 @@ func (r campaignAbilityCommandRuntime) startFireTempestSummon(
 			kind: fireTempestStepExpire,
 		}.produce},
 	}
+	steps = r.registry.producerGuard.scheduledProducers(sessionKey, steps)
 	cancel, err := req.packet.ScheduleProducers(steps)
 	if err != nil {
 		r.registry.mutex.Lock()
@@ -1013,6 +1071,7 @@ func (r campaignAbilityCommandRuntime) startFireTempestEnrage(
 			}.produce,
 		},
 	)
+	steps = r.registry.producerGuard.scheduledProducers(sessionKey, steps)
 	cancel, err := req.packet.ScheduleProducers(steps)
 	if err != nil {
 		r.registry.mutex.Lock()

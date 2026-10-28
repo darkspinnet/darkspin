@@ -1,6 +1,7 @@
 package gameplay
 
 import (
+	"github.com/darkspinnet/darkspin/server/game"
 	zone "github.com/darkspinnet/darkspin/server/zone"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
 	"log"
@@ -80,7 +81,10 @@ func (e *gameplaySessionRegistry) queuePlasmaWreathRemovalsLocked(caster *gamepl
 	caster.queuePlasmaWreathDeletion(packets, delivery)
 	publication.deliveries = append(publication.deliveries, delivery)
 	for sessionKey, member := range e.sessions {
-		if caster.zone == nil || member.zone != caster.zone || (member.binding.UserID == caster.binding.UserID && member.generation == caster.generation) {
+		isSameRealm := caster.binding.Mode == game.ModeArena && member.binding.Mode == game.ModeArena &&
+			member.binding.GameID == caster.binding.GameID ||
+			caster.zone != nil && member.zone == caster.zone
+		if !isSameRealm || (member.binding.UserID == caster.binding.UserID && member.generation == caster.generation) {
 			continue
 		}
 		delivery = &plasmaWreathDelivery{userID: member.binding.UserID, generation: member.generation}

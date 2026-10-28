@@ -91,6 +91,10 @@ func (e campaignNPCManaDrainNextStep) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	runtime.untrackHealthDrain(e.request.sessionKey, e.request.generation, e.request.objectID, e.run)
+	if runtime.finishScenarioNPCManualAction(e.request.sessionKey,
+		e.request.generation, e.request.objectID, e.actionGeneration) {
+		return nil, nil
+	}
 	packets, err := e.request.resume(e.timestamp)
 	if err != nil {
 		return e.request.failGeneration("enemyManaDrainNext", err, e.actionGeneration)

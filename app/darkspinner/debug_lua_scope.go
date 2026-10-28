@@ -140,6 +140,8 @@ func debugLuaScopeIndex(state *lua.LState) int {
 			state.Push(state.NewFunction(debugLuaWorldReady))
 		case "SnapshotLiving", "LivingSnapshot", "Living":
 			state.Push(state.NewFunction(debugLuaWorldLiving))
+		case "NPCCatalog":
+			state.Push(state.NewFunction(debugLuaWorldNPCCatalog))
 		default:
 			state.Push(lua.LNil)
 		}

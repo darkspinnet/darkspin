@@ -11,6 +11,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
+	"github.com/darkspinnet/darkspin/server/util"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
@@ -34,6 +35,7 @@ type arenaAbilityHit struct {
 	generation     uint64
 	isTeamDefeated bool
 	isLethal       bool
+	isGhostDodge   bool
 }
 
 func (e arenaAbilityTargets) member(objectID uint32) (string, gameplayPeerSession, bool) {
@@ -51,7 +53,13 @@ func (e arenaAbilityTargets) member(objectID uint32) (string, gameplayPeerSessio
 func (e arenaAbilityTargets) NPC(objectID uint32) (zonenpc.Snapshot, bool) {
 	key, member, isFound := e.member(objectID)
 	if !isFound {
-		return zonenpc.Snapshot{}, false
+		if target, isTurret := e.turretSnapshot(objectID); isTurret {
+			return target, true
+		}
+		if target, isSprite := e.spriteSnapshot(objectID); isSprite {
+			return target, true
+		}
+		return e.combatPetSnapshot(objectID)
 	}
 	err := member.advancePlayerPosition(e.runtime.now(), raknet.Vector3{})
 	if err != nil {
@@ -82,6 +90,27 @@ func (e arenaAbilityTargets) LiveSnapshots() []zonenpc.Snapshot {
 			targets = append(targets, target)
 		}
 	}
+	match := e.runtime.registry.arenaMatches[e.source.binding.GameID]
+	if match != nil && match.abilityWorld != nil {
+		for objectID := range match.abilityWorld.claymores {
+			target, isFound := e.turretSnapshot(objectID)
+			if isFound {
+				targets = append(targets, target)
+			}
+		}
+		for objectID := range match.abilityWorld.sprites {
+			target, isFound := e.spriteSnapshot(objectID)
+			if isFound {
+				targets = append(targets, target)
+			}
+		}
+		for objectID := range match.abilityWorld.combatPets {
+			target, isFound := e.combatPetSnapshot(objectID)
+			if isFound {
+				targets = append(targets, target)
+			}
+		}
+	}
 	slices.SortFunc(targets, func(first, second zonenpc.Snapshot) int {
 		return cmp.Compare(first.Plan.ObjectID, second.Plan.ObjectID)
 	})
@@ -93,10 +122,19 @@ func (e arenaAbilityTargets) HasCurseOrFear(objectID uint32, at time.Time) bool 
 	if !isFound || key == "" {
 		return false
 	}
-	return member.isEnemyFearActive(at)
+	return member.isEnemyFearActive(at) || member.isArenaHitCurseActive(at)
 }
 
 func (e *arenaAbilityTargets) Hit(req zonenpc.HitRequest) (zonenpc.DamageResult, error) {
+	if run, isFound := e.turret(req.TargetObjectID); isFound {
+		return e.hitTurretLocked(run, req)
+	}
+	if run, actor, isFound := e.sprite(req.TargetObjectID); isFound {
+		return e.hitSpriteLocked(run, actor, req)
+	}
+	if run, actor, isFound := e.combatPet(req.TargetObjectID); isFound {
+		return e.hitCombatPetLocked(run, actor, req)
+	}
 	key, target, isFound := e.member(req.TargetObjectID)
 	match := e.runtime.registry.arenaMatches[e.source.binding.GameID]
 	if !isFound || match == nil || !match.isCombatActive {
@@ -128,7 +166,11 @@ func (e *arenaAbilityTargets) Hit(req zonenpc.HitRequest) (zonenpc.DamageResult,
 		return zonenpc.DamageResult{}, fmt.Errorf("arenaHitShield: %w", err)
 	}
 	previousHealth := target.deployedHitPoint()
-	damage = max(float32(0), min(shield.Damage, previousHealth))
+	distribution, err := target.prepareSoulLinkDamage(shield.Damage)
+	if err != nil {
+		return zonenpc.DamageResult{}, fmt.Errorf("arenaHitSoulLink: %w", err)
+	}
+	damage = max(float32(0), min(distribution.activeDamage, previousHealth))
 	health := previousHealth - damage
 	creatureIndex := target.deployedCreatureIndex
 	creature := target.binding.Creatures[creatureIndex]
@@ -146,8 +188,40 @@ func (e *arenaAbilityTargets) Hit(req zonenpc.HitRequest) (zonenpc.DamageResult,
 	if err != nil {
 		return zonenpc.DamageResult{}, fmt.Errorf("arenaHitHealth: %w", err)
 	}
+	var ghostPacket []byte
+	isGhostDodge := flags == 0x20 && target.ghostFormRun != nil &&
+		target.ghostFormRun.IsActive(creatureIndex, previousHealth > 0)
+	if isGhostDodge {
+		ghostPacket, err = raknet.MarshalApplication(raknet.ServerEventMessage{
+			Asset:    util.HashID(zoneability.GhostFormPassthroughEffect),
+			ObjectID: req.TargetObjectID,
+		})
+		if err != nil {
+			return zonenpc.DamageResult{}, fmt.Errorf("arenaGhostEffect: %w", err)
+		}
+	}
+	backupSquad := target.squad
+	if len(distribution.shares) != 0 {
+		stagedSquad, stageErr := target.squad.Clone()
+		if stageErr != nil {
+			return zonenpc.DamageResult{}, fmt.Errorf("arenaHitSquadStage: %w", stageErr)
+		}
+		backupSquad = stagedSquad
+	}
+	sharePackets, sharedDamage, err := distribution.commit(&target)
+	if err != nil {
+		if len(distribution.shares) != 0 {
+			rollbackErr := target.squad.CommitClone(backupSquad)
+			err = errors.Join(err, rollbackErr)
+		}
+		return zonenpc.DamageResult{}, fmt.Errorf("arenaHitSoulShare: %w", err)
+	}
 	transitions, err := target.applyArenaDamageHitPoints(health, e.timestamp)
 	if err != nil {
+		if len(distribution.shares) != 0 {
+			rollbackErr := target.squad.CommitClone(backupSquad)
+			err = errors.Join(err, rollbackErr)
+		}
 		return zonenpc.DamageResult{}, fmt.Errorf("arenaHitCommit: %w", err)
 	}
 	if health > 0 && damage > 0 {
@@ -163,21 +237,54 @@ func (e *arenaAbilityTargets) Hit(req zonenpc.HitRequest) (zonenpc.DamageResult,
 	privatePackets := arenaTargetPrivateTransitionPackets(transitions)
 	target.queuePackets(privatePackets)
 	e.runtime.registry.sessions[key] = target
+	if health > 0 && damage > 0 {
+		quantumErr := e.reserveArenaQuantumStateLocked(key, &target, req.SourceObjectID)
+		if quantumErr != nil && e.runtime.logger != nil {
+			e.runtime.logger.Printf("Arena Quantum State reaction reservation failed target=%d: %v", req.TargetObjectID, quantumErr)
+		}
+	}
+	if req.Metadata.DescriptorMask&4 == 0 {
+		e.runtime.registry.breakArenaSleepingCloudLocked(target.binding.GameID, req.TargetObjectID)
+	}
 	if health <= 0 {
+		e.runtime.registry.retireArenaClaymoresForOwnerLocked(e.source.binding.GameID, req.TargetObjectID)
+		e.runtime.registry.retireArenaSpritesForOwnerLocked(e.source.binding.GameID, req.TargetObjectID)
+		e.runtime.registry.retireArenaCombatPetsForOwnerLocked(e.source.binding.GameID, req.TargetObjectID)
+		e.runtime.registry.retireArenaChargeForOwnerLocked(e.source.binding.GameID, req.TargetObjectID)
+		e.runtime.registry.retireArenaRideForOwnerLocked(e.source.binding.GameID, req.TargetObjectID)
+		e.runtime.registry.retireArenaQuantumBlinkForOwnerLocked(e.source.binding.GameID, req.TargetObjectID)
 		// Save the committed victim first: marker removal queues presentation
 		// against the current session rather than an earlier local copy.
 		e.runtime.registry.retireArenaForcePulseVictimLocked(e.source.binding.GameID, req.TargetObjectID)
 	}
-	match.result.recordDamage(e.source.binding.UserID, target.binding.UserID, damage, health <= 0)
+	match.result.recordDamage(e.source.binding.UserID, target.binding.UserID, damage+sharedDamage, health <= 0)
 	match.recordRecentDamage(req.TargetObjectID, now, damage)
-	e.runtime.registry.queueArenaAbilityResourcesLocked(e.source, [][]byte{resourcePacket})
-	packets := append(shield.Packets, healthPacket, resourcePacket)
+	resourcePackets := append(sharePackets, resourcePacket)
+	e.runtime.registry.queueArenaAbilityResourcesLocked(e.source, resourcePackets)
+	packets := append(shield.Packets, healthPacket)
+	packets = append(packets, resourcePackets...)
+	if len(ghostPacket) != 0 {
+		packets = append(packets, ghostPacket)
+	}
 	packets = append(packets, gameplayPeerPresentationPackets(transitions)...)
+	if health > 0 && damage > 0 && target.deployedObjectID == req.TargetObjectID &&
+		target.plasmaSentinelActive != nil {
+		petPackets, petErr := e.runtime.npc.triggerPlasmaSentinelActive(&target, e.timestamp)
+		if petErr != nil {
+			if e.runtime.logger != nil {
+				e.runtime.logger.Printf("Arena Pain Hounds trigger failed object=%d: %v", req.TargetObjectID, petErr)
+			}
+		} else {
+			packets = append(packets, petPackets...)
+			e.runtime.registry.sessions[key] = target
+		}
+	}
 	e.hits[req.TargetObjectID] = arenaAbilityHit{
 		sourceObjectID: req.SourceObjectID,
 		flags:          flags, packets: packets, memberKey: key, generation: target.generation,
 		isTeamDefeated: target.isZoneGameOver(),
 		isLethal:       health <= 0 && damage > 0,
+		isGhostDodge:   isGhostDodge,
 	}
 	return zonenpc.DamageResult{
 		ObjectID: req.TargetObjectID, PreviousHealth: previousHealth, HitPoint: health,
@@ -244,7 +351,7 @@ func (e arenaAbilityTargets) packetsWithEffects(results []zoneability.AreaResult
 	for _, result := range results {
 		var effectPacket []byte
 		var err error
-		if effect != nil {
+		if effect != nil && !e.hits[result.Damage.ObjectID].isGhostDodge {
 			effectPacket, err = effect(result)
 			if err != nil {
 				return nil, fmt.Errorf("arenaImpact: %w", err)

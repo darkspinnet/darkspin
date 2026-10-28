@@ -2,6 +2,7 @@ package gameplay
 
 import (
 	"errors"
+	"github.com/darkspinnet/darkspin/server/game"
 )
 
 type plasmaWreathReaction struct {
@@ -19,11 +20,13 @@ func (e campaignNPCActionRuntime) reservePlasmaWreathReactionLocked(
 ) {
 	if peerSession == nil || peerSession.plasmaWreathRun == nil ||
 		peerSession.plasmaWreathState.schedule == nil ||
-		!isPlasmaWreathReactive(peerSession.plasmaWreathState.rank) ||
-		!isPlasmaWreathTarget(*peerSession, attackerObjectID, true) {
+		!isPlasmaWreathReactive(peerSession.plasmaWreathState.rank) {
 		return
 	}
 	schedule := *peerSession.plasmaWreathState.schedule
+	if !schedule.isWreathTargetLocked(*peerSession, attackerObjectID, true) {
+		return
+	}
 	if !schedule.isCurrent(*peerSession, true) {
 		return
 	}
@@ -65,6 +68,7 @@ func (e *plasmaWreathReaction) execute() {
 	}
 	delete(peerSession.plasmaWreathState.reactions, e.id)
 	zone := peerSession.zone
+	gameID := arenaAbilityGameID(peerSession)
 	e.schedule.runtime.registry.sessions[e.schedule.sessionKey] = peerSession
 	e.schedule.runtime.registry.mutex.Unlock()
 	packets, err := e.schedule.fireTarget(e.targetObjectID, e.timestamp, true)
@@ -74,7 +78,11 @@ func (e *plasmaWreathReaction) execute() {
 	}
 	e.schedule.runtime.registry.mutex.Lock()
 	for sessionKey, member := range e.schedule.runtime.registry.sessions {
-		if member.zone != zone {
+		if gameID != 0 {
+			if member.binding.Mode != game.ModeArena || member.binding.GameID != gameID {
+				continue
+			}
+		} else if member.zone != zone {
 			continue
 		}
 		member.queueCampaignPackets(packets)

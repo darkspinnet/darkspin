@@ -237,6 +237,11 @@ func debugNPCFeatureRequest(operation string, req debugNPCRequest, identity scen
 			return command, errors.New("NPC restore accepts only captured identity")
 		}
 		command.Operation = "restore"
+	case "client.controlled_npc_retire":
+		if req.IsAIEnabled != nil || req.Destination != nil || req.AbilityName != "" || req.TargetObjectID != 0 {
+			return command, errors.New("NPC retire accepts only captured identity")
+		}
+		command.Operation = "retire"
 	default:
 		return command, errors.New("unsupported controlled NPC operation")
 	}

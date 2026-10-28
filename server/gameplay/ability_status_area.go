@@ -319,6 +319,12 @@ func (e heroStatusAreaSchedule) apply() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	if peerSession.binding.Mode == game.ModeArena && e.definition.Name == "VoodooTempestSupport" {
+		return e.applyArenaVoodooLocked(peerSession)
+	}
+	if peerSession.binding.Mode == game.ModeArena && e.definition.Name == "SpacetimeRandom" {
+		return e.applyArenaBanishLocked(peerSession)
+	}
 	targets := make([]zonenpc.Snapshot, 0)
 	for _, target := range peerSession.zone.NPCs().LiveSnapshots() {
 		if target.Faction != zonenpc.FactionNonPlayerAligned ||
@@ -591,8 +597,9 @@ func (r campaignAbilityCommandRuntime) handleHeroStatusArea(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("statusAreaCommit: %w", err)
 	}
-	run := &heroStatusAreaRun{
-		npc: peerSession.zone.NPCs(), modifierPool: r.modifierPool,
+	run := &heroStatusAreaRun{modifierPool: r.modifierPool}
+	if peerSession.zone != nil {
+		run.npc = peerSession.zone.NPCs()
 	}
 	if peerSession.heroStatusAreas == nil {
 		peerSession.heroStatusAreas = make(map[uint32]*heroStatusAreaRun)

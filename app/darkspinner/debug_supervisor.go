@@ -473,7 +473,7 @@ func isDebugReadOperation(operation string) bool {
 		return true
 	case "client.controlled_npc_state":
 		return true
-	case "client.ability_state", "client.world_state", "client.world_living", "client.wait_world_ready", "client.world_path", "client.native_state", "client.project_world", "client.spawn_state", "client.capture", "client.screenshot":
+	case "client.ability_state", "client.world_state", "client.world_living", "client.npc_catalog", "client.wait_world_ready", "client.world_path", "client.native_state", "client.project_world", "client.spawn_state", "client.capture", "client.screenshot":
 		return true
 	case "status", "client.state", "client.window", "profile.state", "client.mission_state", "party.state":
 		return true

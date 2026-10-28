@@ -44,6 +44,14 @@ type fireTempestPetAttackStep struct {
 func (r campaignDamageRuntime) startFireTempestPetAttack(
 	packet raknet.Packet, sessionKey string, generation uint64, sourceTime uint64,
 ) ([][]byte, error) {
+	r.registry.mutex.RLock()
+	member, isMemberFound := r.registry.sessions[sessionKey]
+	isArena := isMemberFound && member.binding.Mode == game.ModeArena &&
+		member.fireTempestActive != nil && member.fireTempestActive.arenaWorld != nil
+	r.registry.mutex.RUnlock()
+	if isArena {
+		return r.startArenaFireTempestPetAttack(packet, sessionKey, generation, sourceTime)
+	}
 	if packet.ScheduleGroup == nil && packet.ScheduleGroupResult == nil {
 		return nil, errors.New("fire tempest pet schedule unavailable")
 	}

@@ -40,9 +40,9 @@ func isIndependentDebugOperation(operation string) bool {
 		return true
 	case "client.configure_world", "client.spawn_npc", "client.spawn_npc_async", "client.spawn_state":
 		return true
-	case "client.spawn_controlled_npc", "client.controlled_npc_state", "client.controlled_npc_set_ai", "client.controlled_npc_move", "client.controlled_npc_cast", "client.controlled_npc_restore":
+	case "client.spawn_controlled_npc", "client.controlled_npc_state", "client.controlled_npc_set_ai", "client.controlled_npc_move", "client.controlled_npc_cast", "client.controlled_npc_restore", "client.controlled_npc_retire":
 		return true
-	case "client.world_state", "client.world_living", "client.wait_world_ready", "client.enter_mission":
+	case "client.world_state", "client.world_living", "client.npc_catalog", "client.wait_world_ready", "client.enter_mission":
 		return true
 	case "client.capture", "client.wait_signal":
 		return true
@@ -211,7 +211,7 @@ func (e *debugSupervisor) executeIndependentDebugOperation(ctx context.Context, 
 			return result, fmt.Errorf("worldSpawn: %w", err)
 		}
 		return result, nil
-	case "client.controlled_npc_state", "client.controlled_npc_set_ai", "client.controlled_npc_move", "client.controlled_npc_cast", "client.controlled_npc_restore":
+	case "client.controlled_npc_state", "client.controlled_npc_set_ai", "client.controlled_npc_move", "client.controlled_npc_cast", "client.controlled_npc_restore", "client.controlled_npc_retire":
 		result, err := executeDebugNPC(ctx, host, clientManager, operation, payload)
 		if err != nil {
 			return result, fmt.Errorf("npcControl: %w", err)
@@ -233,6 +233,12 @@ func (e *debugSupervisor) executeIndependentDebugOperation(ctx context.Context, 
 		result, err := observeDebugLivingWorld(ctx, host, clientManager, payload)
 		if err != nil {
 			return result, fmt.Errorf("worldLiving: %w", err)
+		}
+		return result, nil
+	case "client.npc_catalog":
+		result, err := readDebugNPCCatalog(ctx, host, clientManager, payload)
+		if err != nil {
+			return result, fmt.Errorf("npcCatalog: %w", err)
 		}
 		return result, nil
 	case "client.enter_mission":

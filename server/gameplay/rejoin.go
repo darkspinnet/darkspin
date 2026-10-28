@@ -109,7 +109,11 @@ func (r gameplaySetupRuntime) publishRejoin(
 		return nil, fmt.Errorf("rejoinDragShield: %w", err)
 	}
 	baseline = append(baseline, shieldPackets...)
-	titanPackets, err := r.registry.tcShieldReplay(peerSession, r.damage.effectPool)
+	effectPool := r.damage.effectPool
+	if peerSession.binding.Mode == game.ModeArena && peerSession.arenaEffectPool != nil {
+		effectPool = peerSession.arenaEffectPool
+	}
+	titanPackets, err := r.registry.tcShieldReplay(peerSession, effectPool)
 	if err != nil {
 		return nil, fmt.Errorf("rejoinTitanShield: %w", err)
 	}

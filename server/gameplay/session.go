@@ -317,6 +317,7 @@ type controlledHeroState struct {
 	heroInputLockedObjectID       uint32
 	heroInputLockedUntil          time.Time
 	maximumHitPoints              [squad.Size]float32
+	scenarioHitPointMaximums      [squad.Size]float32
 	arenaHitPointIncreases        [squad.Size]float32
 	maximumManaPoints             [squad.Size]float32
 	isHeroSelectionPending        bool
@@ -432,7 +433,18 @@ func (s *gameplayPeerSession) extendEnemySleep(
 }
 
 func (s *gameplayPeerSession) isEnemySleepActive(at time.Time) bool {
-	return s != nil && !at.IsZero() && at.Before(s.enemySleepExpiresAt)
+	if s == nil || at.IsZero() {
+		return false
+	}
+	if at.Before(s.enemySleepExpiresAt) {
+		return true
+	}
+	for _, status := range s.arenaHitStatuses {
+		if status != nil && status.kind == sim.AbilityStatusKindSleep && status.matches(*s) && at.Before(status.expiresAt) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *gameplayPeerSession) extendEnemyStun(
@@ -477,8 +489,8 @@ func (s *gameplayPeerSession) extendEnemyRoot(
 
 func (s *gameplayPeerSession) isEnemyRootActive(at time.Time) bool {
 	return s != nil && !at.IsZero() &&
-		s.deployedObjectID == s.enemyRootTargetObjectID &&
-		at.Before(s.enemyRootExpiresAt)
+		((s.deployedObjectID == s.enemyRootTargetObjectID && at.Before(s.enemyRootExpiresAt)) ||
+			s.isArenaHitRootActive(at))
 }
 
 func (s *gameplayPeerSession) extendEnemyFear(
@@ -497,8 +509,8 @@ func (s *gameplayPeerSession) extendEnemyFear(
 
 func (s *gameplayPeerSession) isEnemyFearActive(at time.Time) bool {
 	return s != nil && !at.IsZero() &&
-		s.deployedObjectID == s.enemyFearTargetObjectID &&
-		at.Before(s.enemyFearExpiresAt)
+		((s.deployedObjectID == s.enemyFearTargetObjectID && at.Before(s.enemyFearExpiresAt)) ||
+			s.isArenaHitFearActive(at))
 }
 
 func (s *gameplayPeerSession) extendEnemySilence(
@@ -596,6 +608,7 @@ type zoneCombatPresentation struct {
 
 type gameplayPeerSession struct {
 	channelRegistry *gameplaySessionRegistry
+	arenaEffectPool *attachedEffectPool
 	scenarioPeerPreparation
 	scenarioPeerFixture
 	scenarioPeerReadiness
@@ -1022,8 +1035,10 @@ func (e campaignEnrageState) EnrageTarget(
 	if !isFound || objectID == 0 {
 		return abilityraknet.EnrageTarget{}, false
 	}
+	creature := e.session.binding.Creatures[creatureIndex]
+	creature.HealingTargetProfile = e.session.healingTargetProfile(creatureIndex)
 	return abilityraknet.EnrageTarget{
-		Creature:  e.session.binding.Creatures[creatureIndex],
+		Creature:  creature,
 		Character: character,
 		ObjectID:  objectID,
 	}, true
@@ -1167,7 +1182,7 @@ func (s *gameplayPeerSession) campaignNPCTarget(
 
 func (s *gameplayPeerSession) isHeroDebuffImmune(targetObjectID uint32) bool {
 	return s != nil && targetObjectID == s.deployedObjectID &&
-		(s.isHeroArrivalProtected(time.Now()) || s.heroModifierRun.IsDebuffImmune() || s.hasOmniShieldAt(targetObjectID, time.Now()))
+		(s.isHeroArrivalProtected(time.Now()) || s.heroModifierRun.IsDebuffImmune() || s.hasOmniShieldAt(targetObjectID, time.Now()) || s.isArenaBanished(time.Now()))
 }
 
 func (s *gameplayPeerSession) trackCampaignNPCProjectile(
@@ -1993,6 +2008,9 @@ func (e *gameplayPeerSession) resetFailedActionAdmission(
 	if e == nil {
 		return nil
 	}
+	if e.binding.Mode == game.ModeArena && e.arenaEffectPool != nil {
+		effectPool = e.arenaEffectPool
+	}
 	run := e.resetAbilityAdmissionForSwitch()
 	for _, trap := range e.heroTraps {
 		trap.Stop()
@@ -2183,6 +2201,7 @@ type gameplaySessionRegistry struct {
 	dnaCollections           []*campaignDNACollection
 	isDNACollectionRunning   bool
 	arenaMatches             map[uint32]*arenaMatchState
+	arenaEffectPools         map[uint32]*attachedEffectPool
 	producerGuard            gameplayProducerGuard
 	lifecycle                gameplaySessionLifecycle
 	timer                    zone.Timer
@@ -2240,6 +2259,7 @@ func newGameplaySessionRegistry(
 		actionAdmissions: make(map[gameplayActionLeaseKey]struct{}),
 		actionTerminals:  make(map[gameplayActionLeaseKey]struct{}),
 		arenaMatches:     make(map[uint32]*arenaMatchState),
+		arenaEffectPools: make(map[uint32]*attachedEffectPool),
 		timer:            timer, now: now, logger: logger,
 	}
 	registry.producerGuard.registry = registry
@@ -2766,11 +2786,21 @@ func (e gameplaySessionLifecycle) cleanup(
 	}
 	for gameID, state := range e.registry.arenaMatches {
 		e.registry.retireArenaForcePulsesLocked(gameID)
+		e.registry.retireArenaClaymoresLocked(gameID)
+		e.registry.retireArenaSpritesLocked(gameID)
+		e.registry.retireArenaCombatPetsLocked(gameID)
+		e.registry.retireArenaChargesLocked(gameID)
+		e.registry.retireArenaGravityStormsLocked(gameID)
+		e.registry.retireArenaSproutsLocked(gameID)
+		e.registry.retireArenaInfectionsLocked(gameID)
+		e.registry.retireArenaRidesLocked(gameID)
+		e.registry.retireArenaQuantumBlinksLocked(gameID)
 		if state.cancel != nil {
 			arenaCancels = append(arenaCancels, state.cancel)
 		}
 		delete(e.registry.arenaMatches, gameID)
 	}
+	clear(e.registry.arenaEffectPools)
 	clear(e.registry.actionLeases)
 	clear(e.registry.actionAdmissions)
 	clear(e.registry.actionTerminals)
@@ -3777,8 +3807,16 @@ func (s *gameplayPeerSession) applyArenaDamageHitPoints(
 	}
 	creatureIndex, objectID := s.deployedCreatureIndex, s.deployedObjectID
 	isLethal := s.deployedHitPoint() > 0 && hitPoints <= 0
+	isRevivalPending := false
+	if isLethal && s.beastPetResurrection != nil && s.beastPetResurrection.arenaWorld != nil {
+		isRevivalPending = s.reserveBeastPetRevival(s.beastPetResurrection.runtime.now())
+	}
 	packets, err := s.applyDamageHitPointsWithOutcome(hitPoints, timestamp, false)
 	if err != nil {
+		if isRevivalPending {
+			cancelErr := s.squad.CancelResurrection()
+			err = errors.Join(err, cancelErr)
+		}
 		return nil, fmt.Errorf("arenaHealth: %w", err)
 	}
 	if isLethal {
@@ -3798,7 +3836,7 @@ func (s *gameplayPeerSession) applyDamageHitPointsWithOutcome(
 		return nil, nil
 	}
 	isLethal := previousHitPoint > 0 && hitPoints <= 0
-	isExpectedGameOver := isLethal && s.squad.LivingCount() == 1
+	isExpectedGameOver := isLethal && !s.squad.IsResurrectionPending() && s.squad.LivingCount() == 1
 	var transitionPackets [][]byte
 	livingIndex := uint32(squad.Size)
 	if isExpectedGameOver && isGameOverPacketEnabled && s.binding.Mode != game.ModeChain {
@@ -3807,7 +3845,7 @@ func (s *gameplayPeerSession) applyDamageHitPointsWithOutcome(
 			return nil, fmt.Errorf("gameOverMarshal: %w", err)
 		}
 		transitionPackets = [][]byte{packet}
-	} else if isLethal && !isExpectedGameOver {
+	} else if isLethal && !isExpectedGameOver && !s.squad.IsResurrectionPending() {
 		for index := uint32(0); index < squad.Size; index++ {
 			// The lethal HP update is committed below. The current slot still
 			// appears alive here and must not become its own replacement.
@@ -3874,6 +3912,9 @@ func (s *gameplayPeerSession) applyDamageHitPointsWithOutcome(
 	}
 	if hitPoints > 0 {
 		return nil, nil
+	}
+	if s.squad.IsResurrectionPending() {
+		return transitionPackets, nil
 	}
 	if livingIndex >= squad.Size {
 		return nil, errors.New("living zone character missing")
@@ -4026,7 +4067,7 @@ func (s *gameplayPeerSession) healLivingZoneSquadScaled(
 			restoreAmount = maximumHitPoint * maximumFraction
 		}
 		receivedAmount, err := game.ApplyTargetHealingReduction(
-			restoreAmount, s.binding.Creatures[index].HealingTargetProfile,
+			restoreAmount, s.healingTargetProfile(index),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("healReduction[%d]: %w", index, err)
@@ -5200,6 +5241,9 @@ func (s gameplayPeerSession) characterResourceMaximums(
 		// Arena binds its own character stats. Shared healing/resource paths
 		// must not substitute campaign defaults or apply campaign crystals.
 		creature := s.binding.Creatures[creatureIndex]
+		if s.scenarioHitPointMaximums[creatureIndex] > 0 {
+			return characterResourceMaximum{hitPoint: s.scenarioHitPointMaximums[creatureIndex], manaPoint: creature.PowerPoint}
+		}
 		return characterResourceMaximum{hitPoint: creature.HitPoint + s.arenaHitPointIncreases[creatureIndex], manaPoint: creature.PowerPoint}
 	}
 	if (s.binding.Mode != game.ModeChain && s.binding.Mode != game.ModeTutorial) ||
@@ -5215,6 +5259,9 @@ func (s gameplayPeerSession) characterResourceMaximums(
 	attributes := s.crystalInventory.Attributes()
 	hitPoint += attributes[4]
 	powerPoint += attributes[5]
+	if s.scenarioHitPointMaximums[creatureIndex] > 0 {
+		hitPoint = s.scenarioHitPointMaximums[creatureIndex]
+	}
 	return characterResourceMaximum{hitPoint: hitPoint, manaPoint: powerPoint}
 }
 

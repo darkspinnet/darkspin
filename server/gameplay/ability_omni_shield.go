@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/util"
@@ -20,6 +21,8 @@ import (
 type omniShieldRun struct {
 	runtime              campaignAbilityCommandRuntime
 	world                *zone.Zone
+	gameID               uint32
+	isArena              bool
 	userID               uint64
 	generation           uint64
 	objectID             uint32
@@ -52,7 +55,7 @@ type omniShieldRun struct {
 // registry.mutex. This function consumes that lock on every branch.
 func (e campaignAbilityCommandRuntime) startOmniShieldLocked(req campaignCharacterAbilityRequest, ability zonecontent.HeroAbility, cooldownKey zoneability.CooldownKey, sessionKey string, member gameplayPeerSession, definition sim.AbilityDefinition, manaCost float32) ([][]byte, error) {
 	defer e.registry.mutex.Unlock()
-	if member.zone == nil || e.registry.timer == nil || e.effectPool == nil || e.modifierPool == nil {
+	if (member.zone == nil && member.binding.Mode != game.ModeArena) || e.registry.timer == nil || e.effectPool == nil || e.modifierPool == nil {
 		return req.reject("Omni Shield owner unavailable")
 	}
 	instanceID, err := e.modifierPool.Allocate()
@@ -72,7 +75,8 @@ func (e campaignAbilityCommandRuntime) startOmniShieldLocked(req campaignCharact
 		releaseErr := e.modifierPool.Release(instanceID)
 		return nil, fmt.Errorf("omniHold: %w", errors.Join(errors.New("attachment hold unavailable"), releaseErr))
 	}
-	run := &omniShieldRun{runtime: e, world: member.zone, userID: member.binding.UserID,
+	run := &omniShieldRun{runtime: e, world: member.zone, gameID: member.binding.GameID,
+		isArena: member.binding.Mode == game.ModeArena, userID: member.binding.UserID,
 		generation: member.generation, objectID: member.deployedObjectID, creatureIndex: member.deployedCreatureIndex,
 		instanceID: instanceID, effectSlot: slot, definition: definition, startedAt: req.startTime,
 		timestamp: req.packet.SourceTime, traceID: req.packet.TraceID,
@@ -192,17 +196,27 @@ func (e *omniShieldRun) releaseAllocation() {
 
 func (e *omniShieldRun) ownerLocked() (string, gameplayPeerSession, *gameplayRetainedSession, bool) {
 	for key, member := range e.runtime.registry.sessions {
-		if member.zone == e.world && member.binding.UserID == e.userID && member.generation == e.generation {
+		if e.matchesOwner(member) {
 			return key, member, nil, true
 		}
 	}
 	for _, retained := range e.runtime.registry.retainedSessions {
 		member := retained.peerSession
-		if member.zone == e.world && member.binding.UserID == e.userID && member.generation == e.generation {
+		if e.matchesOwner(member) {
 			return "", member, retained, true
 		}
 	}
 	return "", gameplayPeerSession{}, nil, false
+}
+
+func (e *omniShieldRun) matchesOwner(member gameplayPeerSession) bool {
+	if member.binding.UserID != e.userID || member.generation != e.generation {
+		return false
+	}
+	if e.isArena {
+		return member.binding.Mode == game.ModeArena && member.binding.GameID == e.gameID
+	}
+	return member.zone != nil && member.zone == e.world
 }
 
 func (e *omniShieldRun) commitAdmission() {
@@ -240,7 +254,8 @@ func (e *omniShieldRun) activate() {
 		e.runtime.registry.mutex.Unlock()
 		return
 	}
-	if !isFound || retained != nil || member.isZoneTerminal() || member.deployedObjectID != e.objectID || member.deployedHitPoint() <= 0 || e.world.Context().Err() != nil {
+	if !isFound || retained != nil || member.isZoneTerminal() || member.deployedObjectID != e.objectID || member.deployedHitPoint() <= 0 ||
+		(!e.isArena && e.world.Context().Err() != nil) {
 		e.runtime.registry.retireOmniShieldRunLocked(nil, e)
 		e.runtime.registry.mutex.Unlock()
 		return
@@ -253,14 +268,18 @@ func (e *omniShieldRun) activate() {
 		return
 	}
 	e.runtime.registry.sessions[key] = member
-	e.runtime.registry.queueChannelPresentationLocked(e.world, paid)
+	e.queueArenaOrCampaignLocked(paid)
 	e.runtime.registry.mutex.Unlock()
 	// The existing named purge takes the registry lock. No child has become
 	// active yet; old independent children remain untouched through this wait.
 	purged, err := e.runtime.purgeHeroDebuffs(key, e.generation, e.objectID)
 	e.runtime.registry.mutex.Lock()
 	defer e.runtime.registry.mutex.Unlock()
-	e.runtime.registry.queueChannelRemovalsLocked(e.world, purged)
+	if e.isArena {
+		e.queueArenaOrCampaignLocked(purged)
+	} else {
+		e.runtime.registry.queueChannelRemovalsLocked(e.world, purged)
+	}
 	key, member, retained, isFound = e.ownerLocked()
 	if err != nil || !isFound || retained != nil || e.isRetired || member.deployedObjectID != e.objectID || member.deployedHitPoint() <= 0 {
 		e.runtime.registry.retireOmniShieldRunLocked(nil, e)
@@ -278,7 +297,7 @@ func (e *omniShieldRun) activate() {
 		return
 	}
 	e.isActive = true
-	e.runtime.registry.queueChannelPresentationLocked(e.world, packets)
+	e.queueArenaOrCampaignLocked(packets)
 	cancel, err := e.runtime.registry.timer.Schedule(e.definition.Duration, e.expire)
 	if err != nil || cancel == nil {
 		if cancel != nil {
@@ -289,6 +308,14 @@ func (e *omniShieldRun) activate() {
 		return
 	}
 	e.expiryCancel = cancel
+}
+
+func (e *omniShieldRun) queueArenaOrCampaignLocked(packets [][]byte) {
+	if e.isArena {
+		e.runtime.registry.queueFieldMedicRealmPacketsLocked(nil, e.gameID, packets)
+		return
+	}
+	e.runtime.registry.queueChannelPresentationLocked(e.world, packets)
 }
 
 func (e *omniShieldRun) release() {

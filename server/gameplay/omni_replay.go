@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/util"
 )
@@ -34,7 +35,7 @@ func (e *gameplaySessionRegistry) omniShieldReplay(member gameplayPeerSession, a
 	defer e.mutex.Unlock()
 	runs := make(map[uint32]*omniShieldRun)
 	for _, candidate := range e.sessions {
-		if candidate.zone != member.zone {
+		if !isOmniReplayPeer(candidate, member) {
 			continue
 		}
 		for id, run := range candidate.omniShields {
@@ -42,7 +43,7 @@ func (e *gameplaySessionRegistry) omniShieldReplay(member gameplayPeerSession, a
 		}
 	}
 	for _, retained := range e.retainedSessions {
-		if retained.peerSession.zone != member.zone {
+		if !isOmniReplayPeer(retained.peerSession, member) {
 			continue
 		}
 		for id, run := range retained.peerSession.omniShields {
@@ -53,7 +54,7 @@ func (e *gameplaySessionRegistry) omniShieldReplay(member gameplayPeerSession, a
 	// endpoint indexes. Read its shared run identities without mutating that
 	// snapshot or changing any combat target lookup.
 	for _, handover := range e.voodooCharms.handovers {
-		if handover.member.zone != member.zone {
+		if !isOmniReplayPeer(handover.member, member) {
 			continue
 		}
 		for id, run := range handover.member.omniShields {
@@ -96,4 +97,11 @@ func (e *gameplaySessionRegistry) omniShieldReplay(member gameplayPeerSession, a
 		}
 	}
 	return packets, nil
+}
+
+func isOmniReplayPeer(candidate, member gameplayPeerSession) bool {
+	if member.binding.Mode == game.ModeArena {
+		return candidate.binding.Mode == game.ModeArena && candidate.binding.GameID == member.binding.GameID
+	}
+	return member.zone != nil && candidate.zone == member.zone
 }

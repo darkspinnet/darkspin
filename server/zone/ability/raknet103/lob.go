@@ -154,6 +154,13 @@ func CloudLobLaunch(
 	plan zoneability.CloudLobPlan, projectileObjectID uint32,
 	projectileIndex int, sourceTime uint64,
 ) ([][]byte, error) {
+	return CloudLobLaunchForTeam(plan, projectileObjectID, projectileIndex, sourceTime, 1)
+}
+
+func CloudLobLaunchForTeam(
+	plan zoneability.CloudLobPlan, projectileObjectID uint32,
+	projectileIndex int, sourceTime uint64, team uint8,
+) ([][]byte, error) {
 	if projectileObjectID == 0 || projectileIndex < 0 ||
 		projectileIndex >= len(plan.Lob) ||
 		plan.Lob[projectileIndex].Duration <= 0 ||
@@ -181,7 +188,7 @@ func CloudLobLaunch(
 					plan.Lob[projectileIndex],
 				),
 				Scale: 1,
-				Team:  1,
+				Team:  team,
 				// Build 103 A2EF00 selects type four before setting the lob
 				// data; A31E10 dispatches that type to A30D60. Reflecting only
 				// cLocomotionData leaves a fresh projectile's mover inactive.
@@ -217,6 +224,13 @@ func CloudLobLanding(
 	plan zoneability.CloudLobPlan, projectileObjectID uint32,
 	cloudObjectID uint32,
 ) ([][]byte, error) {
+	return CloudLobLandingForTeam(plan, projectileObjectID, cloudObjectID, 1)
+}
+
+func CloudLobLandingForTeam(
+	plan zoneability.CloudLobPlan, projectileObjectID uint32,
+	cloudObjectID uint32, team uint8,
+) ([][]byte, error) {
 	if projectileObjectID == 0 || cloudObjectID == 0 ||
 		plan.Definition.Kind != sim.AbilityKindCloudLob ||
 		plan.Definition.CloudLob.ImpactEffectName == "" ||
@@ -242,7 +256,7 @@ func CloudLobLanding(
 				PositionY: plan.Destination.Y,
 				PositionZ: plan.Destination.Z,
 				Scale:     1,
-				Team:      1,
+				Team:      team,
 			},
 			raknet.AttachedEffectMessage{
 				Slot:            1,

@@ -116,6 +116,8 @@ func debugLuaNPCIndex(state *lua.LState) int {
 		state.Push(state.NewFunction(debugLuaNPCCast))
 	case "Restore":
 		state.Push(state.NewFunction(debugLuaNPCRestore))
+	case "Retire":
+		state.Push(state.NewFunction(debugLuaNPCRetire))
 	case "ObjectID":
 		state.Push(lua.LNumber(npc.objectID))
 	case "InitialSnapshot":
@@ -146,6 +148,14 @@ func debugLuaNPCRestore(state *lua.LState) int {
 		return 0
 	}
 	return npc.client.invoke(state, "client.controlled_npc_restore", npc.request(), true)
+}
+
+func debugLuaNPCRetire(state *lua.LState) int {
+	npc := debugLuaNPCSelf(state)
+	if npc == nil {
+		return 0
+	}
+	return npc.client.invoke(state, "client.controlled_npc_retire", npc.request(), true)
 }
 
 func debugLuaNPCSetAI(state *lua.LState) int {
@@ -183,5 +193,12 @@ func debugLuaNPCCast(state *lua.LState) int {
 	}
 	req := npc.request()
 	req["ability_name"], req["target_object_id"] = state.CheckString(2), uint32(target)
+	if state.GetTop() >= 4 && state.Get(4) != lua.LNil {
+		timeout := float64(state.CheckNumber(4))
+		if math.IsNaN(timeout) || math.IsInf(timeout, 0) || math.Trunc(timeout) != timeout || timeout < 1 || timeout > 120000 {
+			return npc.client.vm.returnOperation(state, nil, &debugError{Code: "invalid_request", Context: "npcTimeout", Message: "timeout_ms must be an integer from 1 to 120000"}, true)
+		}
+		req["timeout_ms"] = uint32(timeout)
+	}
 	return npc.client.invoke(state, "client.controlled_npc_cast", req, true)
 }

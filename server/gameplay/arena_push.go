@@ -34,6 +34,7 @@ type arenaHitPushRun struct {
 	holdUntil           time.Time
 	landingCancel       func()
 	expiryCancel        func()
+	effects             *channelEffects
 	isRetired           bool
 }
 
@@ -220,6 +221,11 @@ func (e *arenaHitPushRun) release(member *gameplayPeerSession) [][]byte {
 		if isSameActor && e.ownsLanding(*member) {
 			member.heroKnockbackLanding = heroKnockbackLanding{}
 		}
+	}
+	if e.effects != nil {
+		e.effects.Retire()
+		e.runtime.registry.commitChannelRemovalsLocked()
+		return nil
 	}
 	err := e.runtime.modifierPool.Release(e.instanceID)
 	if err != nil && e.runtime.logger != nil {

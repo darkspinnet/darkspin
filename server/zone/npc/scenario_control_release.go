@@ -12,4 +12,7 @@ func admitScenarioAction(actor Snapshot, controlID string) bool { return control
 
 func markScenarioAction(actor *Snapshot, controlID string) {}
 
+func markScenarioSelfDetonation(actor *Snapshot, sourceObjectID uint32, targetObjectID uint32, isForcedDefeat bool) {
+}
+
 func isScenarioPursuitAllowed(actor Snapshot) bool { return true }

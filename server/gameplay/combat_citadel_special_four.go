@@ -359,7 +359,8 @@ func (r campaignNPCActionRuntime) startCitadelSpecialFourSlam(
 	schedule := campaignConeSchedule{
 		runtime: r, packet: request.packet, sessionKey: request.sessionKey,
 		generation: request.generation, objectID: request.objectID,
-		timestamp: request.timestamp, nextDelay: plan.Profile.ReleaseDelay,
+		actionGeneration: plan.ActionGeneration,
+		timestamp:        request.timestamp, nextDelay: plan.Profile.ReleaseDelay,
 		plan: plan,
 	}
 	cancel, err := scheduleNPCProducers(r.registry, request.packet, []raknet.ScheduledPacketProducer{

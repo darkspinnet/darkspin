@@ -85,8 +85,9 @@ func (e *gameplaySessionRegistry) ScenarioControlNPC(ctx context.Context, req sc
 	if err != nil {
 		return scenario.NPCControlReceipt{}, fmt.Errorf("npcQueueActor: %w", err)
 	}
-	isCancellation := req.Operation == "set_ai" && req.IsAIEnabled != nil && !*req.IsAIEnabled
-	if actor.IsDefeated || actor.HitPoint <= 0 || peer.deployedHitPoint() <= 0 && !isCancellation {
+	isCancellation := req.Operation == "retire" || req.Operation == "set_ai" && req.IsAIEnabled != nil && !*req.IsAIEnabled
+	isCleanup := isCancellation
+	if (actor.IsDefeated || actor.HitPoint <= 0 || peer.deployedHitPoint() <= 0) && !isCleanup {
 		return scenario.NPCControlReceipt{}, errors.New("NPC mutation requires the spawned actor and owned hero alive")
 	}
 	err = validateScenarioNPCRequest(req, peer, actor)
@@ -101,15 +102,15 @@ func (e *gameplaySessionRegistry) ScenarioControlNPC(ctx context.Context, req sc
 		}
 	}
 	isReplacingQueued := isCancellation && previousID != "" && e.npcControlReceipts[previousID].State == "queued"
-	if len(e.pendingNPCControls) >= 8 && !isReplacingQueued || len(e.npcControlReceipts) >= 128 && !isCancellation {
-		return scenario.NPCControlReceipt{}, errors.New("NPC control receipt or pending-command limit reached")
+	if len(e.pendingNPCControls) >= 8 && !isReplacingQueued {
+		return scenario.NPCControlReceipt{}, errors.New("NPC control pending-command limit reached")
 	}
 	supersededRequestID, supersededFailure := "", ""
 	if previousID != "" && isCancellation {
 		previous := e.npcControlReceipts[previousID]
 		if !previous.IsSettled {
 			previous.State, previous.IsSettled = "failed", true
-			previous.Failure = "superseded by an explicit AI-off command; actor fence awaits packet-owner application"
+			previous.Failure = "superseded by explicit NPC cancellation; actor fence awaits packet-owner application"
 			supersededRequestID, supersededFailure = previousID, previous.Failure
 			e.npcControlReceipts[previousID] = previous
 			for index, pendingID := range e.pendingNPCControls {
@@ -221,6 +222,10 @@ func validateScenarioNPCRequest(req scenario.NPCControlRequest, peer gameplayPee
 			actor.IsAIEnabled || actor.IsActionStarted {
 			return errors.New("NPC restore requires an idle AI-off actor and no other command fields")
 		}
+	case "retire":
+		if req.IsAIEnabled != nil || req.Destination != nil || req.AbilityName != "" || req.TargetObjectID != 0 || actor.IsAIEnabled {
+			return errors.New("NPC retire requires an AI-off actor and no other command fields")
+		}
 	default:
 		return errors.New("NPC control operation is unsupported")
 	}
@@ -249,7 +254,10 @@ func (e *gameplaySessionRegistry) refreshNPCControlLocked(requestID string, peer
 	if receipt.IsSettled || !receipt.IsAccepted {
 		return receipt
 	}
-	if actor.IsDefeated || actor.HitPoint <= 0 {
+	if receipt.Operation == "ability" && actor.IsSelfDetonationCompleted &&
+		receipt.ActionGeneration == actor.ActionGeneration {
+		receipt.State, receipt.IsCompleted, receipt.IsSettled = "completed", true, true
+	} else if actor.IsDefeated || actor.HitPoint <= 0 {
 		receipt.State, receipt.Failure, receipt.IsSettled = "failed", "controlled actor died before command settlement", true
 	} else if receipt.ActionGeneration != actor.ActionGeneration {
 		receipt.State, receipt.Failure, receipt.IsSettled = "failed", "controlled actor action generation changed; outcome is not correlated", true

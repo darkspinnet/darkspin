@@ -48,6 +48,7 @@ type heroTimedAreaSchedule struct {
 	generation          uint64
 	sourceObjectID      uint32
 	creatureIndex       uint32
+	sourceCreatureIndex uint32
 	previousManaPoint   float32
 	creature            game.GameplayCreature
 	definition          sim.AbilityDefinition
@@ -75,7 +76,9 @@ func (e heroTimedAreaSchedule) isCurrent(
 		peerSession.heroTimedArea == e.run &&
 		peerSession.deployedObjectID == e.sourceObjectID &&
 		peerSession.deployedCreatureIndex == e.creatureIndex &&
-		e.creatureIndex < uint32(len(peerSession.binding.Creatures))
+		e.creatureIndex < uint32(len(peerSession.binding.Creatures)) &&
+		e.sourceCreatureIndex < uint32(len(peerSession.binding.Creatures)) &&
+		peerSession.binding.Creatures[e.sourceCreatureIndex].Noun == e.creature.Noun
 }
 
 func (e heroTimedAreaSchedule) tick(
@@ -94,8 +97,11 @@ func (e heroTimedAreaSchedule) tick(
 	if e.definition.Name == "PlasmaSentinelSupport" {
 		// Cone template170 takes a new source snapshot inside every DoDamage.
 		creature = e.runtime.registry.projectPassiveCreature(
-			peerSession, e.creatureIndex, e.runtime.now(),
+			peerSession, e.sourceCreatureIndex, e.runtime.now(),
 		)
+	}
+	if peerSession.binding.Mode == game.ModeArena {
+		return e.tickArenaLocked(peerSession, creature, deadline, isFirst)
 	}
 	plan, err := zoneability.PlanArea(
 		peerSession.zone.NPCs(), e.sourceObjectID,
@@ -145,6 +151,56 @@ func (e heroTimedAreaSchedule) tick(
 	})
 	if err != nil {
 		return nil, fmt.Errorf("timedAreaEffect: %w", err)
+	}
+	return append([][]byte{effectPacket, e.releasePacket}, packets...), nil
+}
+
+func (e heroTimedAreaSchedule) tickArenaLocked(
+	peerSession gameplayPeerSession, creature game.GameplayCreature,
+	deadline time.Duration, isFirst bool,
+) ([][]byte, error) {
+	timestamp := e.packet.SourceTime + uint64(deadline/time.Millisecond)
+	targets := e.runtime.registry.abilityTargetsLocked(
+		e.runtime, peerSession, e.definition, timestamp,
+	).(*arenaAbilityTargets)
+	plan, err := zoneability.PlanArea(
+		targets, e.sourceObjectID, game.Vec3(peerSession.playerPosition),
+		creature, e.definition,
+	)
+	if err != nil {
+		e.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("arenaTimedAreaPlan: %w", err)
+	}
+	random, err := e.runtime.registry.abilityRandomLocked(peerSession)
+	if err != nil {
+		e.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("arenaTimedAreaRandom: %w", err)
+	}
+	results, err := zoneability.CommitArea(
+		random, targets, plan, creature, peerSession.binding.Difficulty,
+		e.runtime.program.Critical,
+	)
+	if err != nil {
+		e.runtime.registry.mutex.Unlock()
+		targets.finish()
+		return nil, fmt.Errorf("arenaTimedAreaDamage: %w", err)
+	}
+	packets, err := targets.packets(results)
+	e.runtime.registry.mutex.Unlock()
+	targets.finish()
+	if err != nil {
+		return nil, fmt.Errorf("arenaTimedAreaPackets: %w", err)
+	}
+	if !isFirst {
+		return packets, nil
+	}
+	effectPacket, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
+		Slot: e.run.effectSlot + 1, IsForceAttached: true,
+		Asset:    util.HashID(e.definition.ActivationEffectName),
+		ObjectID: e.sourceObjectID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("arenaTimedAreaEffect: %w", err)
 	}
 	return append([][]byte{effectPacket, e.releasePacket}, packets...), nil
 }
@@ -343,14 +399,19 @@ func (r campaignAbilityCommandRuntime) handleHeroTimedArea(
 	generation := peerSession.generation
 	binding := peerSession.binding
 	creatureIndex := peerSession.deployedCreatureIndex
+	sourceCreatureIndex := creatureIndex
+	if req.command.Ability.Index >= 6 && req.command.Ability.Index <= 8 {
+		sourceCreatureIndex = req.command.Ability.Index - 6
+	}
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
 
 	schedule := heroTimedAreaSchedule{
 		runtime: r, packet: req.packet, sessionKey: sessionKey,
 		generation: generation, sourceObjectID: req.command.Common.ObjectID,
-		creatureIndex: creatureIndex, previousManaPoint: previousManaPoint,
-		creature: creature, definition: projected, binding: binding, run: run,
+		creatureIndex: creatureIndex, sourceCreatureIndex: sourceCreatureIndex,
+		previousManaPoint: previousManaPoint,
+		creature:          creature, definition: projected, binding: binding, run: run,
 		cooldownReservation: cooldownReservation,
 		releaseReservation:  releaseReservation, releasePacket: start.Release,
 	}

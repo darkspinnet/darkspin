@@ -3,6 +3,7 @@ package gameplay
 import (
 	"fmt"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/util"
@@ -144,6 +145,64 @@ func (e campaignAreaHitStep) publishArena(
 		// Its slow is requested before TakeDamage, even on defended hits.
 		return packets, nil
 	}
+	if plan.Definition.Name == "TCShieldedSentinelActive" {
+		objectIDs := make([]uint32, 0, len(results))
+		for _, result := range results {
+			if result.Damage.IsDamageImmune || result.Damage.IsDefeated || result.Damage.Damage <= 0 {
+				continue
+			}
+			objectIDs = append(objectIDs, result.Damage.ObjectID)
+		}
+		_, statusErr := e.runtime.applyArenaTargetStatus(e.sessionKey, e.generation,
+			e.command.Common.ObjectID, e.hitTimestamp, plan, objectIDs)
+		if statusErr != nil && e.runtime.logger != nil {
+			e.runtime.logger.Printf("Arena Shield Bash taunt failed source=%d: %v", e.command.Common.ObjectID, statusErr)
+		}
+		return packets, nil
+	}
+	if plan.Definition.Name == poisonNovaName {
+		for _, result := range results {
+			poisonErr := targets.applyPoisonNova(result.Damage, e.creature,
+				plan.Definition, e.hitTimestamp)
+			if poisonErr != nil && e.runtime.logger != nil {
+				e.runtime.logger.Printf("Arena Poison Nova status failed target=%d: %v",
+					result.Damage.ObjectID, poisonErr)
+			}
+		}
+		return packets, nil
+	}
+	if plan.Definition.Name == binarySentinelActiveName {
+		e.runtime.registry.mutex.Lock()
+		pullPackets, pullErr := targets.applyBinaryPullsLocked(plan, results)
+		e.runtime.registry.mutex.Unlock()
+		packets = append(packets, pullPackets...)
+		if pullErr != nil && e.runtime.logger != nil {
+			e.runtime.logger.Printf("Arena Binary Sentinel pull failed source=%d: %v",
+				e.command.Common.ObjectID, pullErr)
+		}
+		return packets, nil
+	}
+	if plan.Definition.Name == binarySentinelSupportName {
+		e.runtime.registry.mutex.Lock()
+		pushPackets, pushErr := targets.applyBinaryPushesLocked(plan, results)
+		e.runtime.registry.mutex.Unlock()
+		packets = append(packets, pushPackets...)
+		if pushErr != nil && e.runtime.logger != nil {
+			e.runtime.logger.Printf("Arena Binary Sentinel push failed source=%d: %v",
+				e.command.Common.ObjectID, pushErr)
+		}
+		return packets, nil
+	}
+	if plan.Definition.Name == "LightspeedTempestActive" {
+		e.runtime.registry.mutex.Lock()
+		stealErr := targets.applyArenaLightspeedStealLocked(plan, results)
+		e.runtime.registry.mutex.Unlock()
+		if stealErr != nil && e.runtime.logger != nil {
+			e.runtime.logger.Printf("Arena Spacetime Tempest haste transfer failed source=%d: %v",
+				e.command.Common.ObjectID, stealErr)
+		}
+		return packets, nil
+	}
 	statusPackets, statusErr := e.runtime.applyAcceptedHitStatus(e.packet, e.sessionKey, e.generation,
 		e.command.Common.ObjectID, e.hitTimestamp, plan, results)
 	if statusErr != nil {
@@ -153,6 +212,21 @@ func (e campaignAreaHitStep) publishArena(
 		}
 	} else {
 		packets = append(packets, statusPackets...)
+	}
+	if plan.Definition.Name == "TimeRavagerSupport" {
+		e.runtime.registry.mutex.Lock()
+		member, isFound := e.runtime.registry.sessions[e.sessionKey]
+		if isFound && member.generation == e.generation && member.binding.Mode == game.ModeArena {
+			_, freezeErr := freezeHostileProjectilesLocked(e.runtime, e.packet, &member,
+				e.sessionKey, e.generation, e.command.Common.ObjectID, plan.Center,
+				plan.Definition.Radius, plan.Definition.RootModifierID,
+				plan.Definition.StatusDuration, e.hitTimestamp, e.runtime.now())
+			if freezeErr != nil && e.runtime.logger != nil {
+				e.runtime.logger.Printf("Arena Chrono Shift projectile freeze failed source=%d: %v",
+					e.command.Common.ObjectID, freezeErr)
+			}
+		}
+		e.runtime.registry.mutex.Unlock()
 	}
 	return packets, nil
 }

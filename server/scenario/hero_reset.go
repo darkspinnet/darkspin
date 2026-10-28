@@ -21,6 +21,7 @@ type HeroResetRequest struct {
 	ObservedNoun        uint32
 	ObservedIndex       uint32
 	HitPoint            *float32
+	MaximumHitPoint     *float32
 	ManaPoint           *float32
 	OwnedUserIDs        []int64
 }
@@ -32,6 +33,7 @@ type HeroResetReceipt struct {
 	Noun             uint32
 	Index            uint32
 	HitPoint         float32
+	MaximumHitPoint  float32
 	ManaPoint        float32
 	RecipientCount   int
 	IsReplacement    bool

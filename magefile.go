@@ -920,6 +920,17 @@ func runVersionedWailsBuild(projectPath string, arguments ...string) error {
 	if err != nil {
 		return fmt.Errorf("configDecode: %w", err)
 	}
+	projectName, isName := projectFields["name"].(string)
+	if !isName || projectName == "" {
+		return errors.New("config name must be a nonempty string")
+	}
+	// Wails generates bindings with the host architecture before it recreates
+	// its target resource. An interrupted cross-build can leave this file behind.
+	resourcePath := filepath.Join(projectPath, strings.ReplaceAll(projectName, " ", "_")+"-res.syso")
+	err = os.Remove(resourcePath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("resourceRemove: %w", err)
+	}
 	infoFields := make(map[string]any)
 	configuredInfo, isFound := projectFields["info"]
 	if isFound {

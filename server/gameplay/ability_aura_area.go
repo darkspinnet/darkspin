@@ -51,6 +51,7 @@ type heroAuraAreaRun struct {
 	runtime           campaignAbilityCommandRuntime
 	originalZone      *zone.Zone
 	arenaGameID       uint32
+	arenaStatuses     map[uint32]*arenaHitStatus
 	stopContext       func() bool
 }
 
@@ -248,6 +249,12 @@ func (e heroAuraAreaSchedule) tick(
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("auraAreaReconcile: %w", err)
 	}
+	if peerSession.binding.Mode == game.ModeArena && e.definition.Name == "Psistorm" {
+		return e.tickArenaPsistormLocked(peerSession, deadline, index, isFinal, statusPackets)
+	}
+	if peerSession.binding.Mode == game.ModeArena && e.definition.Name == "SleepingCloud" {
+		return e.tickArenaSleepingCloudLocked(isFinal, statusPackets)
+	}
 	results := make([]zoneability.AreaResult, 0)
 	transitions := make([]campaignDamageTransition, 0)
 	isDamageTick := e.definition.MinimumDamage > 0 &&
@@ -331,7 +338,13 @@ func (e heroAuraAreaSchedule) reconcile(
 	remaining := max(heroAuraAreaScanInterval, e.definition.Duration-elapsed)
 	expiresAt := now.Add(remaining)
 	if e.run.arenaGameID != 0 {
-		return nil, e.reconcileArenaSphereLocked(peerSession, deadline, expiresAt)
+		if e.run.isTimeBubble {
+			return nil, e.reconcileArenaSphereLocked(peerSession, deadline, expiresAt)
+		}
+		if e.definition.Name == "Psistorm" || e.definition.Name == "SleepingCloud" {
+			return nil, e.reconcileArenaControlAuraLocked(peerSession, deadline, expiresAt)
+		}
+		return nil, errors.New("Arena aura runtime unavailable")
 	}
 	live := make(map[uint32]zonenpc.Snapshot)
 	for _, target := range peerSession.zone.NPCs().LiveSnapshots() {

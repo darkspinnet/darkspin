@@ -126,9 +126,12 @@ func (e plasmaWreathSchedule) fireTarget(targetObjectID uint32, timestamp uint64
 		e.runtime.registry.mutex.Unlock()
 		return e.retire("duration expired"), nil
 	}
-	if !isPlasmaWreathTarget(peerSession, targetObjectID, isReactive) {
+	if !e.isWreathTargetLocked(peerSession, targetObjectID, isReactive) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
+	}
+	if peerSession.binding.Mode == game.ModeArena {
+		return e.fireArenaWreathLocked(peerSession, targetObjectID, timestamp)
 	}
 	plan, err := zoneability.PlanProjected(
 		peerSession.zone.NPCs(), e.sourceObjectID,
@@ -352,6 +355,10 @@ func (e areaSpecialHitStep) produce() ([][]byte, error) {
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	if peerSession.binding.Mode == game.ModeArena && schedule.definition.Name == "EnergySentinelSupport" {
+		schedule.runtime.registry.mutex.Unlock()
+		return e.produceArenaShockwave()
+	}
 	livePlan := zoneability.AreaPlan{}
 	var err error
 	if schedule.isArcWeld {
@@ -501,6 +508,9 @@ func (e wraithActiveSchedule) produceHit() ([][]byte, error) {
 	if !e.isCurrent(peerSession, isFound) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
+	}
+	if peerSession.binding.Mode == game.ModeArena {
+		return e.produceArenaHitLocked(peerSession)
 	}
 	livePlan, err := zoneability.PlanArea(
 		peerSession.zone.NPCs(), e.sourceObjectID,
@@ -1050,6 +1060,12 @@ func (e targetedAOEStep) produce() ([][]byte, error) {
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	if peerSession.binding.Mode == game.ModeArena && schedule.definition.Name == fireTempestSupportName {
+		return schedule.produceArenaFireSupportLocked(peerSession, e.deadline)
+	}
+	if peerSession.binding.Mode == game.ModeArena && schedule.definition.Name == supportHealerName {
+		return schedule.produceArenaSupportHealerLocked(peerSession, e.deadline)
+	}
 	if peerSession.zone == nil || peerSession.zone.NPCs() == nil ||
 		peerSession.zone.Population() == nil {
 		schedule.runtime.registry.mutex.Unlock()
@@ -1296,11 +1312,15 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 		sessionKey := packet.Address.String()
 		r.registry.mutex.Lock()
 		peerSession, isFound := r.registry.sessions[sessionKey]
+		isWorldReady := peerSession.zone != nil && peerSession.zone.NPCs() != nil && peerSession.zone.Population() != nil
+		if peerSession.binding.Mode == game.ModeArena {
+			match := r.registry.arenaMatches[peerSession.binding.GameID]
+			isWorldReady = match != nil && match.isCombatActive && match.random != nil && peerSession.isArenaCombatActive
+		}
 		isFound = isFound && peerSession.generation == commandSession.generation &&
 			command.Common.ObjectID == peerSession.deployedObjectID &&
 			peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures)) &&
-			peerSession.zone.NPCs() != nil &&
-			peerSession.zone.Population() != nil &&
+			isWorldReady &&
 			peerSession.plasmaWreathPending == nil &&
 			peerSession.abilityCooldownSession().IsReady(
 				supportCooldownKey, abilityStartTime,
@@ -1510,7 +1530,8 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 		if len(attributePacket) != 0 {
 			packets = append(packets, attributePacket)
 		}
-		return append(packets, modifierPackets...), nil
+		packets = append(packets, modifierPackets...)
+		return packets, nil
 	}
 	if isArcWeldRequest || isShockwaveRequest || isZetawattRequest {
 		if packet.ScheduleGroup == nil && packet.ScheduleGroupResult == nil {
@@ -1529,10 +1550,12 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 		isCooldownReady := isFound && peerSession.abilityCooldownSession().IsReady(
 			cooldownKey, abilityStartTime,
 		)
+		isArenaShockwave := isShockwaveRequest && peerSession.binding.Mode == game.ModeArena
+		isCampaignWorldReady := peerSession.zone != nil && peerSession.zone.NPCs() != nil && peerSession.zone.Population() != nil
 		isFound = isFound && peerSession.generation == commandSession.generation &&
 			command.Common.ObjectID == peerSession.deployedObjectID &&
 			peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures)) &&
-			peerSession.zone.NPCs() != nil && peerSession.zone.Population() != nil &&
+			(isCampaignWorldReady || isArenaShockwave) &&
 			isCooldownReady &&
 			peerSession.isAbilityReleaseReady(abilityStartTime)
 		if !isFound {
@@ -1564,8 +1587,9 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			X: peerSession.playerPosition.X, Y: peerSession.playerPosition.Y, Z: peerSession.playerPosition.Z,
 		}
 		storedTargetPosition := game.Vec3{X: targetPosition.X, Y: targetPosition.Y, Z: targetPosition.Z}
+		planTargets := r.registry.abilityTargetsLocked(r, peerSession, definition, packet.SourceTime)
 		plan, planErr := zoneability.PlanShockwave(
-			peerSession.zone.NPCs(), command.Common.ObjectID, targetObjectID,
+			planTargets, command.Common.ObjectID, targetObjectID,
 			sourcePosition, storedTargetPosition, creature, definition,
 		)
 		if isArcWeldRequest {
@@ -1733,10 +1757,15 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 		sessionKey := packet.Address.String()
 		r.registry.mutex.Lock()
 		peerSession, isFound := r.registry.sessions[sessionKey]
+		isWorldReady := peerSession.zone != nil && peerSession.zone.NPCs() != nil && peerSession.zone.Population() != nil
+		if peerSession.binding.Mode == game.ModeArena {
+			match := r.registry.arenaMatches[peerSession.binding.GameID]
+			isWorldReady = match != nil && match.isCombatActive && match.random != nil && peerSession.isArenaCombatActive
+		}
 		isFound = isFound && peerSession.generation == commandSession.generation &&
 			command.Common.ObjectID == peerSession.deployedObjectID &&
 			peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures)) &&
-			peerSession.zone.NPCs() != nil && peerSession.zone.Population() != nil
+			isWorldReady
 		if !isFound {
 			r.registry.mutex.Unlock()
 			return request.reject("session unavailable")
@@ -1750,8 +1779,9 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 			r.registry.mutex.Unlock()
 			return request.reject("position unavailable")
 		}
+		areaTargets := r.registry.abilityTargetsLocked(r, peerSession, specialTwoAbility.Definition, packet.SourceTime)
 		plan, planErr := zoneability.PlanArea(
-			peerSession.zone.NPCs(), command.Common.ObjectID,
+			areaTargets, command.Common.ObjectID,
 			game.Vec3{X: peerSession.playerPosition.X, Y: peerSession.playerPosition.Y, Z: peerSession.playerPosition.Z},
 			creature, specialTwoAbility.Definition,
 		)
@@ -2421,9 +2451,7 @@ func (r campaignAbilityCommandRuntime) handleSquad(
 	isSessionAvailable := isFound &&
 		peerSession.generation == commandSession.generation &&
 		command.Common.ObjectID == peerSession.deployedObjectID &&
-		peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures)) &&
-		peerSession.zone != nil &&
-		peerSession.zone.NPCs() != nil && peerSession.zone.Population() != nil
+		peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures))
 	if !isSessionAvailable {
 		r.registry.mutex.Unlock()
 		return r.rejectSquadAbility(command, "session unavailable")
@@ -2469,6 +2497,22 @@ func (r campaignAbilityCommandRuntime) handleSquad(
 	supportAbility, isSupportAbilityFound := r.program.HeroAbility(
 		supportCreature.Noun, zonecontent.HeroAbilitySpecialOne,
 	)
+	isCampaignWorldAvailable := peerSession.zone != nil &&
+		peerSession.zone.NPCs() != nil && peerSession.zone.Population() != nil
+	match := r.registry.arenaMatches[peerSession.binding.GameID]
+	isArenaGhostFormAvailable := peerSession.binding.Mode == game.ModeArena &&
+		peerSession.isArenaCombatActive && match != nil && match.isCombatActive &&
+		isSupportAbilityFound && supportAbility.AssetName == "Ghostform"
+	isArenaFireSupportAvailable := peerSession.binding.Mode == game.ModeArena &&
+		peerSession.isArenaCombatActive && match != nil && match.isCombatActive &&
+		isSupportAbilityFound && supportAbility.AssetName == fireTempestSupportName
+	isArenaSupportHealerAvailable := peerSession.binding.Mode == game.ModeArena &&
+		peerSession.isArenaCombatActive && match != nil && match.isCombatActive &&
+		isSupportAbilityFound && supportAbility.AssetName == supportHealerName
+	if !isCampaignWorldAvailable && !isArenaGhostFormAvailable && !isArenaFireSupportAvailable && !isArenaSupportHealerAvailable {
+		r.registry.mutex.Unlock()
+		return r.rejectSquadAbility(command, "support world unavailable")
+	}
 	supportCooldownKey := zoneability.HeroAbilityCooldown(supportAbility.ID)
 	isSharedSelfModifier := isSupportAbilityFound &&
 		supportAbility.Definition.Kind == sim.AbilityKindModifier &&
@@ -2714,7 +2758,7 @@ func (r campaignAbilityCommandRuntime) handleSquad(
 	definition.ManaCost = manaCost
 	remainingManaPoint := peerSession.deployedManaPoint() - manaCost
 	previousNextObjectID := peerSession.nextProjectileObjectID
-	effectObjectID, err := peerSession.reserveCampaignProjectileIDs(1, 1000)
+	effectObjectID, err := r.registry.reserveAbilityObjectIDsLocked(&peerSession, 1, 1000)
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignSupportObjectID: %w", err)

@@ -4,10 +4,55 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/zone"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
 )
+
+func (e *heroDrainRun) queuePresentationLocked(packets [][]byte) {
+	if e.arenaGameID != 0 {
+		e.registry.queueArenaForcePulsePacketsLocked(e.arenaGameID, gameplayPeerPresentationPackets(packets))
+		return
+	}
+	e.registry.queueChannelPresentationLocked(e.zone, packets)
+}
+
+func (e *heroDrainRun) queueRemovalsLocked(packets [][]byte) {
+	if e.arenaGameID != 0 {
+		for key, member := range e.registry.sessions {
+			if member.binding.Mode != game.ModeArena || member.binding.GameID != e.arenaGameID {
+				continue
+			}
+			member.queuePackets(packets)
+			e.registry.sessions[key] = member
+		}
+		return
+	}
+	e.registry.queueChannelRemovalsLocked(e.zone, packets)
+}
+
+func (e *heroDrainRun) queueReleaseLocked(ownerSessionKey string, generation uint64, packets [][]byte) {
+	if e.arenaGameID == 0 {
+		e.registry.queueChannelReleaseLocked(e.zone, ownerSessionKey, generation, packets)
+		return
+	}
+	presentations := gameplayPeerPresentationPackets(packets)
+	for key, member := range e.registry.sessions {
+		if member.binding.Mode != game.ModeArena || member.binding.GameID != e.arenaGameID {
+			continue
+		}
+		if key == ownerSessionKey && member.generation == generation {
+			member.queuePackets(packets)
+		} else {
+			if member.isRejoinPending {
+				continue
+			}
+			member.queuePackets(presentations)
+		}
+		e.registry.sessions[key] = member
+	}
+}
 
 // Removal packets enter the original zone's durable queue before any owned
 // modifier instance or attached-effect slot can be reused.
@@ -69,7 +114,7 @@ func (e *heroDrainRun) retireLocked() error {
 		if err != nil {
 			return fmt.Errorf("drainRetireEncode: %w", err)
 		}
-		e.registry.queueChannelRemovalsLocked(e.zone, packets)
+		e.queueRemovalsLocked(packets)
 	}
 	e.isStopped = true
 	e.isProtectionActive = false
@@ -149,7 +194,8 @@ func (e *gameplayPeerSession) retireChannelsLocked(sourceTimes ...uint64) {
 	}
 	ownerSessionKey := ""
 	for sessionKey, member := range registry.sessions {
-		if member.zone == e.zone && member.binding.UserID == e.binding.UserID && member.generation == e.generation {
+		if member.zone == e.zone && member.binding.GameID == e.binding.GameID &&
+			member.binding.UserID == e.binding.UserID && member.generation == e.generation {
 			ownerSessionKey = sessionKey
 			registry.sessions[sessionKey] = *e
 			break
@@ -168,7 +214,7 @@ func (e *gameplayPeerSession) retireChannelsLocked(sourceTimes ...uint64) {
 			if marshalErr != nil {
 				log.Printf("RakNet drain interrupt animation failed: %v", marshalErr)
 			} else {
-				registry.queueChannelPresentationLocked(e.zone, [][]byte{packet})
+				e.heroDrain.queuePresentationLocked([][]byte{packet})
 			}
 		}
 	}
