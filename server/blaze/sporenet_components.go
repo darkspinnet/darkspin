@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -45,6 +46,10 @@ const TokenLoginUsername = "token@local.invalid"
 // local account login name named by it.
 type LoginTokenVerifier interface {
 	Verify(string) (string, error)
+}
+
+type remoteLoginTokenVerifier interface {
+	VerifyRemote(string) (string, error)
 }
 
 // UserManager is the Blaze adapter's application boundary. Blaze owns
@@ -215,14 +220,27 @@ func loginHandlerWithPolicy(
 		account := loginName
 		method := "password"
 		result := sporenet.LoginResult{}
-		if isDedicated && (password == "" || loginName == TokenLoginUsername && tokenVerifier == nil) {
+		peerIP := net.ParseIP(serverLoginRemoteIP(request))
+		isRemote := isDedicated || peerIP == nil || !peerIP.IsLoopback()
+		if isRemote && (password == "" || loginName != TokenLoginUsername || tokenVerifier == nil) {
 			logServerLoginAttempt(request, method, account, nil, false)
 			return &Response{ErrorCode: authInvalidUser}, nil
 		}
 		if loginName == TokenLoginUsername && tokenVerifier != nil {
 			account = ""
 			method = "jwt"
-			verifiedLoginName, err := tokenVerifier.Verify(password)
+			verifiedLoginName := ""
+			var err error
+			if isRemote {
+				remoteVerifier, isSupported := tokenVerifier.(remoteLoginTokenVerifier)
+				if !isSupported {
+					err = errors.New("remote login requires a version-aware launch verifier")
+				} else {
+					verifiedLoginName, err = remoteVerifier.VerifyRemote(password)
+				}
+			} else {
+				verifiedLoginName, err = tokenVerifier.Verify(password)
+			}
 			if err == nil {
 				account = verifiedLoginName
 				result = userManager.LoginTrusted(ctx, verifiedLoginName)
@@ -278,6 +296,10 @@ func expressLoginHandler(
 	userManager UserManager, membershipReconciler LoginMembershipReconciler,
 ) Handler {
 	return func(_ context.Context, request *Request) (*Response, error) {
+		peerIP := net.ParseIP(serverLoginRemoteIP(request))
+		if peerIP == nil || !peerIP.IsLoopback() {
+			return authenticatedExpressLogin(request, membershipReconciler), nil
+		}
 		clearSessionUser(request)
 		account := fieldString(request.Fields, "MAIL")
 		user := userManager.UserByLoginName(account)
@@ -293,17 +315,21 @@ func expressLoginHandler(
 
 func dedicatedExpressLoginHandler(membershipReconciler LoginMembershipReconciler) Handler {
 	return func(_ context.Context, request *Request) (*Response, error) {
-		account := fieldString(request.Fields, "MAIL")
-		user := requestUser(request)
-		isAccepted := user != nil && strings.EqualFold(strings.TrimSpace(account), user.LoginName)
-		logServerLoginAttempt(request, "express", account, user, isAccepted)
-		if !isAccepted {
-			clearSessionUser(request)
-			return &Response{ErrorCode: authInvalidUser}, nil
-		}
-		reconcileLoginMembership(user, membershipReconciler)
-		return &Response{Fields: fullLoginFields(user)}, nil
+		return authenticatedExpressLogin(request, membershipReconciler), nil
 	}
+}
+
+func authenticatedExpressLogin(request *Request, membershipReconciler LoginMembershipReconciler) *Response {
+	account := fieldString(request.Fields, "MAIL")
+	user := requestUser(request)
+	isAccepted := user != nil && strings.EqualFold(strings.TrimSpace(account), user.LoginName)
+	logServerLoginAttempt(request, "express", account, user, isAccepted)
+	if !isAccepted {
+		clearSessionUser(request)
+		return &Response{ErrorCode: authInvalidUser}
+	}
+	reconcileLoginMembership(user, membershipReconciler)
+	return &Response{Fields: fullLoginFields(user)}
 }
 
 func reconcileLoginMembership(

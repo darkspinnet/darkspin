@@ -17,10 +17,12 @@ type Broadcast func(context.Context, string) (int, error)
 
 // countdown identifies one countdown. Repeated announcements retain its deadline.
 type countdown struct {
-	ID        string
-	Deadline  time.Time
-	Delivered int
-	IsActive  bool
+	ID                 string
+	Deadline           time.Time
+	Delivered          int
+	IsActive           bool
+	StartedAt          time.Time
+	WarningMinuteCount int
 }
 
 type announcement struct {
@@ -29,6 +31,9 @@ type announcement struct {
 	broadcast             Broadcast
 	state                 countdown
 	scheduledID           string
+	isUpdateReady         bool
+	areUpdatesEnabled     bool
+	changed               chan struct{}
 	isAccepted            bool
 	isCancellationPending bool
 }
@@ -89,6 +94,7 @@ func (e *announcement) cancel(ctx context.Context, id string) (countdown, error)
 	e.state.IsActive = false
 	e.isAccepted = false
 	e.mu.Unlock()
+	e.notifyChange()
 	delivered, err := e.broadcast(ctx, "Server update cancelled. You can continue playing; the announced restart will not happen.")
 	e.mu.Lock()
 	e.state.Delivered = delivered
@@ -104,6 +110,13 @@ func (e *announcement) status() countdown {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.state
+}
+
+func (e *announcement) notifyChange() {
+	select {
+	case e.changed <- struct{}{}:
+	default:
+	}
 }
 
 func randomToken() (string, error) {

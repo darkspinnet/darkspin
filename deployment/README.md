@@ -43,6 +43,8 @@ On first launch, the Darkrun entry point downloads a versioned manifest and its 
 
 Connect through Darkspinner's Remote Servers account flow using the advertised address and port. This prototype uses username/password login; HTTPS and OAuth are not configured. Darkrun's health check probes its maintenance and main server endpoints; it does not establish that a multiplayer session works.
 
+Darkspinner shows the full remote server version. Remote login requires client and server versions to share the same major and minor numbers: `1.2.1-unstable` and `1.2.5` work in either direction, while `1.3` is incompatible with `1.2`. The server enforces this at login. Older remote clients that do not send their version must upgrade once to a build with this protocol.
+
 ```sh
 docker compose stop
 ```
@@ -107,6 +109,27 @@ Restore uses the `postgres` maintenance database so it can retry after interrupt
 
 Dump and restore commands each have a 30-minute limit and are cancelled on supervisor shutdown. Ordinary container stops do not create a scheduled snapshot. `pg_restore --list` checks archive readability, not a full restore rehearsal. Keep independent backups for failures discovered after a candidate has already been committed healthy.
 
-Cancel a pending warning countdown with `docker compose exec darkrun /darkspin/bin/darkrun maintenance cancel --config /darkspin/runtime/darkspin.toml`. Recreate Darkrun after changing environment overrides. The running bootstrap process keeps its loaded updater code while replacing the child binary; a later container restart loads the new updater.
+## Request an update from Docker
+
+Request a self-update through the running server's authenticated local maintenance channel:
+
+```sh
+docker compose exec darkrun /darkspin/bin/darkrun maintenance update --config /darkspin/runtime/darkspin.toml
+```
+
+The command returns after accepting the request; follow `docker compose logs -f darkrun` for the backup and update result. The default warning is 30 minutes. Choose a shorter interval with `--minutes 5`, or use `--minutes 0` to skip the countdown and begin the final announcement and clean shutdown immediately. Warnings repeat at the same remaining-minute intervals as scheduled maintenance, including every minute during the final five minutes. Players who join during the countdown receive the next reminder.
+
+This command performs the same stopped-server backup, verified binary check, startup validation, and recovery sequence described above. It also works with `DARKSPIN_IS_UPDATE_ENABLED=false`: that option disables automatic scheduling, while an explicit update still uses the configured manifest. The server restarts even if the manifest has no newer binary. A normal `docker compose restart darkrun` remains an ordinary restart and does not request this update/backup sequence.
+
+Check or cancel a pending update:
+
+```sh
+docker compose exec darkrun /darkspin/bin/darkrun maintenance status --config /darkspin/runtime/darkspin.toml
+docker compose exec darkrun /darkspin/bin/darkrun maintenance cancel --config /darkspin/runtime/darkspin.toml
+```
+
+Repeating `maintenance update` preserves the active update's deadline. Cancel it first to request a different interval. `maintenance announce` remains warning-only and does not schedule a shutdown; an active warning-only countdown must be cancelled before requesting an update. The update command requires a bootstrap-managed server and reports an error for ordinary standalone server runs. After final shutdown begins, the process can no longer accept cancellation.
+
+Recreate Darkrun after changing environment overrides. The running bootstrap process keeps its loaded updater code while replacing the child binary; a later container restart loads the new updater.
 
 For packaging with `mage darkrun:compose` and source builds, see [INSTALL.md](https://github.com/darkspinnet/darkspin/blob/main/INSTALL.md#packaging-and-source-development).

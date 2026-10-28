@@ -22,6 +22,10 @@ export function Check() {
   return window['go']['main']['App']['Check']();
 }
 
+export function CheckRemoteServers(arg1) {
+  return window['go']['main']['App']['CheckRemoteServers'](arg1);
+}
+
 export function CloseDetachedGameInstances() {
   return window['go']['main']['App']['CloseDetachedGameInstances']();
 }

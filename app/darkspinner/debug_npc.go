@@ -232,6 +232,11 @@ func debugNPCFeatureRequest(operation string, req debugNPCRequest, identity scen
 			return command, errors.New("NPC cast requires an exact supported ability name and target object ID")
 		}
 		command.Operation, command.AbilityName, command.TargetObjectID = "ability", req.AbilityName, req.TargetObjectID
+	case "client.controlled_npc_restore":
+		if req.IsAIEnabled != nil || req.Destination != nil || req.AbilityName != "" || req.TargetObjectID != 0 {
+			return command, errors.New("NPC restore accepts only captured identity")
+		}
+		command.Operation = "restore"
 	default:
 		return command, errors.New("unsupported controlled NPC operation")
 	}

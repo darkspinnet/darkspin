@@ -114,6 +114,8 @@ func debugLuaNPCIndex(state *lua.LState) int {
 		state.Push(state.NewFunction(debugLuaNPCMove))
 	case "Cast":
 		state.Push(state.NewFunction(debugLuaNPCCast))
+	case "Restore":
+		state.Push(state.NewFunction(debugLuaNPCRestore))
 	case "ObjectID":
 		state.Push(lua.LNumber(npc.objectID))
 	case "InitialSnapshot":
@@ -136,6 +138,14 @@ func debugLuaNPCState(state *lua.LState) int {
 		return 0
 	}
 	return npc.client.invoke(state, "client.controlled_npc_state", npc.request(), true)
+}
+
+func debugLuaNPCRestore(state *lua.LState) int {
+	npc := debugLuaNPCSelf(state)
+	if npc == nil {
+		return 0
+	}
+	return npc.client.invoke(state, "client.controlled_npc_restore", npc.request(), true)
 }
 
 func debugLuaNPCSetAI(state *lua.LState) int {

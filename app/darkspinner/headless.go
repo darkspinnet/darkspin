@@ -236,6 +236,7 @@ func launcherMethods(app *App) map[string]any {
 		"Play":                         app.Play,
 		"RefreshInstallationStatus":    app.RefreshInstallationStatus,
 		"RefreshRemoteProfiles":        app.RefreshRemoteProfiles,
+		"CheckRemoteServers":           app.CheckRemoteServers,
 		"RegisterRemoteProfile":        app.RegisterRemoteProfile,
 		"RelocateToGameRoot":           app.RelocateToGameRoot,
 		"RemoveLauncherIntegration":    app.RemoveLauncherIntegration,

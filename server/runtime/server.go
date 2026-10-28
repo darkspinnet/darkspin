@@ -706,10 +706,14 @@ func New(options Options) (*Server, error) {
 	if jwtSecret != "" {
 		jwtIssuer := config.String(game.ConfigAuthJWTIssuer)
 		jwtAudience := config.String(game.ConfigAuthJWTAudience)
-		loginTokenVerifier, err = serverauth.NewJWTVerifier([]byte(jwtSecret), jwtIssuer, jwtAudience)
-		if err != nil {
-			return nil, fmt.Errorf("jwtInit: %w", err)
+		jwtVerifier, verifierErr := serverauth.NewJWTVerifier([]byte(jwtSecret), jwtIssuer, jwtAudience)
+		if verifierErr != nil {
+			return nil, fmt.Errorf("jwtInit: %w", verifierErr)
 		}
+		if isDedicated {
+			jwtVerifier.RequireClientVersion()
+		}
+		loginTokenVerifier = jwtVerifier
 		logger.Printf("JWT launch login enabled for issuer %q and audience %q", jwtIssuer, jwtAudience)
 		issuer, issuerErr := serverauth.NewJWTIssuer(
 			[]byte(jwtSecret), jwtIssuer, jwtAudience,
@@ -1225,6 +1229,7 @@ func (s *Server) Run(ctx context.Context) error {
 	s.runCancel = cancel
 	s.isRunning = true
 	if s.maintenanceSchedule != nil {
+		control.EnableUpdates()
 		s.maintenanceDone = make(chan struct{})
 		go s.runMaintenanceSchedule(runCtx, cancel)
 	}

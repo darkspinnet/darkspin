@@ -81,6 +81,8 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 		}
 	case "move":
 		// The first movement step runs through the owning scheduler, not here.
+	case "restore":
+		actor, err = peer.zone.NPCs().ScenarioRestoreHitPoint(ref)
 	default:
 		err = errors.New("NPC command operation is unsupported")
 	}
@@ -91,7 +93,7 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 	}
 	receipt := e.registry.npcControlReceipts[requestID]
 	receipt.IsAccepted, receipt.State, receipt.ActionGeneration = true, "admitted", actor.ActionGeneration
-	if req.Operation == "set_ai" {
+	if req.Operation == "set_ai" || req.Operation == "restore" {
 		receipt.IsCompleted, receipt.IsSettled, receipt.State = true, true, "completed"
 	}
 	e.registry.npcControlReceipts[requestID] = receipt
@@ -124,6 +126,14 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 		step := scenarioNPCMoveStep{runtime: e, packet: packet.Autonomous(), requestID: requestID, req: req,
 			controlGeneration: actor.ControlGeneration, startedAt: e.damage.npc.now(), lastAt: e.damage.npc.now()}
 		err = step.schedule()
+	case "restore":
+		var healthPacket []byte
+		healthPacket, err = raknet.MarshalApplication(raknet.CombatantDataDeltaMessage{
+			ObjectID: actor.ObjectID, HitPoints: actor.HitPoint, IsHitPointChanged: true,
+		})
+		if err == nil {
+			packets = [][]byte{healthPacket}
+		}
 	}
 	if err != nil {
 		if req.Operation == "ability" {

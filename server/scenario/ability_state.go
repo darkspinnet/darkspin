@@ -33,9 +33,22 @@ type AbilityState struct {
 	// LastRevision is the last allocated supported-cast sequence within this
 	// peer, including preparation and casts belonging to a previous hero actor.
 	LastRevision uint64
+	LastDispatch *AbilityDispatch
 	Phase        string
 	Cast         *AbilityCast
 	Rejection    *AbilityRejection
+}
+
+// AbilityDispatch identifies a character action whose ordinary server handler
+// returned successfully. It does not establish impact or native presentation.
+type AbilityDispatch struct {
+	Revision       uint64
+	ActorObjectID  uint32
+	AbilityID      uint32
+	AbilityAsset   string
+	Slot           string
+	TargetObjectID uint32
+	At             time.Time
 }
 
 type AbilityCast struct {

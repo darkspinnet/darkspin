@@ -112,6 +112,15 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 			req.Position == nil || !isWorldPathPointFinite(*req.Position) {
 			return result, errors.New("replacement hero template unavailable")
 		}
+		// Initial campaign preparation applies this difficulty conversion to
+		// every roster creature. A freshly materialized scenario template lacks
+		// it, which rejects Resonance basic damage before ability admission.
+		conversion := member.binding.Creatures[index].DamageProfile.DefenseRatingPerPercent
+		if creature.DamageProfile.BasicDefenseBoost != 0 &&
+			(conversion <= 0 || !isFiniteZonePosition(raknet.Vector3{X: conversion})) {
+			return result, errors.New("replacement hero defense conversion unavailable")
+		}
+		creature.DamageProfile.DefenseRatingPerPercent = conversion
 		maximumHitPoint, maximumManaPoint = creature.HitPoint, creature.PowerPoint
 	}
 	if req.IsRetirement {

@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -65,7 +67,7 @@ func Start(runtimePath string, broadcast Broadcast) (*Control, error) {
 		return nil, fmt.Errorf("controlListen: %w", err)
 	}
 	e := &Control{
-		announcement:   announcement{broadcast: broadcast},
+		announcement:   announcement{broadcast: broadcast, changed: make(chan struct{}, 1)},
 		descriptor:     descriptor{Address: listener.Addr().String(), Token: token},
 		descriptorPath: filepath.Join(runtimePath, descriptorFilename),
 		done:           make(chan error, 1),
@@ -157,6 +159,8 @@ func (e *Control) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		state, err = e.announcement.announce(request.Context(), req.Minutes)
 	case "/cancel":
 		state, err = e.announcement.cancel(request.Context(), req.ID)
+	case "/update":
+		state, err = e.announcement.requestUpdate(req.Minutes)
 	default:
 		http.Error(writer, "unknown maintenance command", http.StatusNotFound)
 		return
@@ -164,7 +168,39 @@ func (e *Control) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	reply := Reply{ID: state.ID, Deadline: state.Deadline, Delivered: state.Delivered, IsActive: state.IsActive}
 	if err != nil {
 		reply.Error = err.Error()
-		writer.WriteHeader(http.StatusServiceUnavailable)
+		statusCode := http.StatusServiceUnavailable
+		if errors.Is(err, ErrWarningActive) {
+			statusCode = http.StatusConflict
+		}
+		writer.WriteHeader(statusCode)
+	}
+	if request.URL.Path == "/update" && err == nil {
+		defer e.announcement.discardUnstartedUpdate(state.ID)
+		// A fixed response length lets the client receive the complete reply
+		// before a zero-minute update closes this listener.
+		payload, marshalErr := json.Marshal(reply)
+		if marshalErr != nil {
+			slog.Warn("Maintenance update acceptance encoding failed", "countdown_id", state.ID, "error", marshalErr)
+			return
+		}
+		writer.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+		written, writeErr := writer.Write(payload)
+		if written != len(payload) && writeErr == nil {
+			writeErr = io.ErrShortWrite
+		}
+		if writeErr != nil {
+			slog.Warn("Maintenance update acceptance write failed", "countdown_id", state.ID,
+				"written_bytes", written, "expected_bytes", len(payload), "error", writeErr)
+			return
+		}
+		controller := http.NewResponseController(writer)
+		flushErr := controller.Flush()
+		if flushErr != nil {
+			slog.Warn("Maintenance update acceptance flush failed", "countdown_id", state.ID, "error", flushErr)
+			return
+		}
+		e.announcement.activateUpdate(state.ID)
+		return
 	}
 	encodeErr := json.NewEncoder(writer).Encode(reply)
 	if encodeErr != nil {

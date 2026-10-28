@@ -103,6 +103,11 @@ Never use .cache, instead put it in bin/cache/
   and `mage darkspinner:run` to start its existing binary without rebuilding it.
 - Run `mage build` explicitly after changing the server, launcher, or Fang.
 
+## Scenario server ownership
+
+- Run one scenario server instance on its configured port. Never add dynamic port allocation, change the scenario server port, or start another server to work around a binding conflict.
+- On a bind conflict, identify and shut down the existing owned scenario server, then make scenario clients and tooling use the server on its provided port. Check server lifecycle and client attachment before changing gameplay or networking code.
+
 ## Git safety
 
 - Never run Git commands that stage, unstage, or commit changes. Read-only Git

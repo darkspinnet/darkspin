@@ -30,6 +30,8 @@ type scenarioAbilityState struct {
 	clockTransport       uint64
 	isCaptureUnavailable bool
 	nextRevision         uint64
+	nextDispatchRevision uint64
+	lastDispatch         *scenario.AbilityDispatch
 	nextRejection        uint64
 	last                 *scenarioRideCast
 	rejection            *scenario.AbilityRejection
@@ -56,6 +58,53 @@ func (e *gameplaySessionRegistry) configureScenarioAbility(program Programs) {
 			e.abilitiesByNoun[noun] = ability
 		}
 	}
+}
+
+func (e campaignAbilityCommandRuntime) recordScenarioAbilityDispatch(packet raknet.Packet, command raknet.ActionCommandData, commandSession gameplayPeerSession, response [][]byte, at time.Time) {
+	if packet.Address == nil || command.Ability == nil {
+		return
+	}
+	for _, candidate := range response {
+		syncStamp, responseType, isFound := actionResponse(candidate)
+		if isFound && syncStamp == command.Common.Unknown[0] && responseType == raknet.ActionResponseRejected {
+			return
+		}
+	}
+	e.registry.mutex.Lock()
+	defer e.registry.mutex.Unlock()
+	peer, isFound := e.registry.sessions[packet.Address.String()]
+	if !isFound || peer.generation != commandSession.generation || peer.transportGeneration != commandSession.transportGeneration ||
+		peer.deployedObjectID != command.Common.ObjectID || peer.deployedCreatureIndex >= uint32(len(peer.binding.Creatures)) {
+		return
+	}
+	noun := peer.binding.Creatures[peer.deployedCreatureIndex].Noun
+	slot := zonecontent.HeroAbilityBasic
+	slotName := "basic"
+	switch command.Ability.Index {
+	case 0:
+	case 2:
+		slot, slotName = zonecontent.HeroAbilitySpecialTwo, "special_two"
+	case 3:
+		slot, slotName = zonecontent.HeroAbilityRandom, "random"
+	case 6, 7, 8:
+		index := command.Ability.Index - 6
+		if index >= uint32(len(peer.binding.Creatures)) {
+			return
+		}
+		noun = peer.binding.Creatures[index].Noun
+		slot, slotName = zonecontent.HeroAbilitySpecialOne, "special_one"
+	default:
+		return
+	}
+	ability, isFound := e.program.HeroAbility(noun, slot)
+	if !isFound || ability.ID == 0 {
+		return
+	}
+	peer.scenarioAbility.nextDispatchRevision++
+	peer.scenarioAbility.lastDispatch = &scenario.AbilityDispatch{Revision: peer.scenarioAbility.nextDispatchRevision,
+		ActorObjectID: command.Common.ObjectID, AbilityID: ability.ID, AbilityAsset: ability.AssetName,
+		Slot: slotName, TargetObjectID: command.Ability.TargetID, At: at.UTC()}
+	e.registry.sessions[packet.Address.String()] = peer
 }
 
 // Called while the ordinary gameplay registry owns the resource transaction.

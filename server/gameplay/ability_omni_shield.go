@@ -31,6 +31,8 @@ type omniShieldRun struct {
 	activeAt             time.Time
 	expiresAt            time.Time
 	timestamp            uint64
+	traceID              uint64
+	syncStamp            uint8
 	releasePacket        []byte
 	activationCancel     func()
 	expiryCancel         func()
@@ -73,7 +75,9 @@ func (e campaignAbilityCommandRuntime) startOmniShieldLocked(req campaignCharact
 	run := &omniShieldRun{runtime: e, world: member.zone, userID: member.binding.UserID,
 		generation: member.generation, objectID: member.deployedObjectID, creatureIndex: member.deployedCreatureIndex,
 		instanceID: instanceID, effectSlot: slot, definition: definition, startedAt: req.startTime,
-		timestamp: req.packet.SourceTime, cooldownKey: cooldownKey, abilityID: ability.ID, manaCost: manaCost}
+		timestamp: req.packet.SourceTime, traceID: req.packet.TraceID,
+		syncStamp:   req.command.Common.Unknown[0],
+		cooldownKey: cooldownKey, abilityID: ability.ID, manaCost: manaCost}
 	defer run.releaseUnadmittedAllocation()
 	packets, err := run.admissionPackets(req, ability.ID)
 	if err != nil {
@@ -289,18 +293,27 @@ func (e *omniShieldRun) activate() {
 
 func (e *omniShieldRun) release() {
 	e.runtime.registry.mutex.Lock()
-	defer e.runtime.registry.mutex.Unlock()
 	key, member, retained, isFound := e.ownerLocked()
 	if !isFound || (!e.isPaid && e.isRetired) || member.deployedObjectID != e.objectID ||
 		!member.abilityReleaseSession().IsCurrent(e.releaseReservation) {
+		e.runtime.registry.mutex.Unlock()
 		return
 	}
 	member.queueCampaignPackets([][]byte{e.releasePacket})
+	if retained == nil {
+		// The pending packet's transport commit retires this cast's lease.
+		batchIndex := len(member.pendingPacketBatches) - 1
+		member.pendingPacketBatches[batchIndex].actionTerminal = &pendingActionTerminal{
+			sessionKey: key, transportGeneration: member.transportGeneration, traceID: e.traceID,
+			objectID: e.objectID, syncStamp: e.syncStamp,
+		}
+	}
 	if retained != nil {
 		retained.peerSession = member
 	} else {
 		e.runtime.registry.sessions[key] = member
 	}
+	e.runtime.registry.mutex.Unlock()
 }
 
 func (e *omniShieldRun) expire() {

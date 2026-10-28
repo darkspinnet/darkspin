@@ -586,6 +586,30 @@ export namespace main {
 	        this.gameVersion = source["gameVersion"];
 	    }
 	}
+	export class RemoteServerStatus {
+	    address: string;
+	    isOnline: boolean;
+	    serverVersion: string;
+	    clientVersion: string;
+	    isVersionMatched: boolean;
+	    error: string;
+	    checkedDt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RemoteServerStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.address = source["address"];
+	        this.isOnline = source["isOnline"];
+	        this.serverVersion = source["serverVersion"];
+	        this.clientVersion = source["clientVersion"];
+	        this.isVersionMatched = source["isVersionMatched"];
+	        this.error = source["error"];
+	        this.checkedDt = source["checkedDt"];
+	    }
+	}
 	export class ReportResult {
 	    name: string;
 	    names: string[];

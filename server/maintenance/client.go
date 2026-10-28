@@ -17,7 +17,7 @@ import (
 // Execute uses the private descriptor created by the running server. Its token
 // is only sent to a literal loopback address with proxying and redirects disabled.
 func Execute(ctx context.Context, runtimePath, action string, minutes int, id string) (Reply, error) {
-	if action != "announce" && action != "cancel" && action != "status" {
+	if action != "announce" && action != "cancel" && action != "status" && action != "update" {
 		return Reply{}, errors.New("unknown maintenance command")
 	}
 	payload, err := os.ReadFile(filepath.Join(runtimePath, descriptorFilename))

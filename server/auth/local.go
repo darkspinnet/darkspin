@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/buildinfo"
 	"github.com/darkspinnet/darkspin/server/sporenet"
 )
 
@@ -25,8 +26,9 @@ const (
 )
 
 type desktopGrant struct {
-	identity  string
-	expiresAt time.Time
+	identity      string
+	expiresAt     time.Time
+	clientVersion string
 }
 
 // LocalBroker substitutes loopback identity approval for OAuth in development.
@@ -102,7 +104,7 @@ func (b *LocalBroker) Handler() http.Handler {
 	mux.HandleFunc("/api/desktop/profile", b.profile)
 	mux.HandleFunc("/api/desktop/exchange", b.exchange)
 	mux.HandleFunc("/api/desktop/delete", b.delete)
-	return mux
+	return b.compatibleRequests(mux)
 }
 
 func (b *LocalBroker) profile(writer http.ResponseWriter, request *http.Request) {
@@ -224,7 +226,10 @@ func (b *LocalBroker) start(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	b.mu.Lock()
-	b.grants[code] = desktopGrant{identity: identity, expiresAt: b.now().Add(desktopCodeLifetime)}
+	b.grants[code] = desktopGrant{
+		identity: identity, expiresAt: b.now().Add(desktopCodeLifetime),
+		clientVersion: strings.TrimSpace(request.Header.Get(ClientVersionHeader)),
+	}
 	b.mu.Unlock()
 	result = "approved"
 	writeAuthJSON(writer, http.StatusOK, map[string]any{
@@ -282,7 +287,7 @@ func (b *LocalBroker) register(writer http.ResponseWriter, request *http.Request
 }
 
 func (b *LocalBroker) exchange(writer http.ResponseWriter, request *http.Request) {
-	_, isAllowed := b.requestAccess(request)
+	isLoopback, isAllowed := b.requestAccess(request)
 	if !isAllowed {
 		writeAuthError(writer, http.StatusForbidden, "local network request required")
 		return
@@ -307,7 +312,14 @@ func (b *LocalBroker) exchange(writer http.ResponseWriter, request *http.Request
 		writeAuthError(writer, http.StatusUnauthorized, "invalid or expired code")
 		return
 	}
-	token, err := b.issuer.Issue(grant.identity, launchTokenLifetime)
+	if !isLoopback || grant.clientVersion != "" {
+		err = buildinfo.CheckCompatibility(grant.clientVersion, buildinfo.Version)
+		if err != nil {
+			writeAuthError(writer, http.StatusConflict, err.Error())
+			return
+		}
+	}
+	token, err := b.issuer.IssueForVersion(grant.identity, launchTokenLifetime, grant.clientVersion)
 	if err != nil {
 		writeAuthError(writer, http.StatusInternalServerError, "token generation failed")
 		return

@@ -214,6 +214,31 @@ func (e *Session) ScenarioSetAI(req ScenarioAIRequest) (ScenarioControlState, er
 	return scenarioControlState(actor), nil
 }
 
+// ScenarioRestoreHitPoint refreshes a living idle controlled target for the
+// next cast without attributing gameplay healing or reviving a defeated NPC.
+func (e *Session) ScenarioRestoreHitPoint(ref ScenarioControlRef) (ScenarioControlState, error) {
+	if e == nil {
+		return ScenarioControlState{}, errors.New("controlled npc session is unavailable")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	actor, err := e.scenarioControlledLocked(ref)
+	if err != nil {
+		return ScenarioControlState{}, fmt.Errorf("controlRestore: %w", err)
+	}
+	maximumHitPoint := actor.Plan.NPCProfile.HitPoint
+	if actor.IsScenarioAIEnabled() || actor.IsDefeated || !actor.IsPublished || actor.HitPoint <= 0 ||
+		actor.IsActionStarted || maximumHitPoint <= 0 {
+		return ScenarioControlState{}, errors.New("controlled npc restore requires a living idle AI-off actor")
+	}
+	actor.HitPoint = maximumHitPoint
+	control := &actor.Plan.scenarioControl
+	control.lastCommand = "restore"
+	control.lastCommandAt = time.Now()
+	e.npcs[ref.ObjectID] = actor
+	return scenarioControlState(actor), nil
+}
+
 func (e *Session) ScenarioStartAction(req ScenarioActionRequest) (Snapshot, bool, bool, error) {
 	if req.Ref.ControlID == "" {
 		return Snapshot{}, false, false, errors.New("controlled npc identity is unavailable")

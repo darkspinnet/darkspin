@@ -12,10 +12,12 @@ import ModPage from '@/components/ModPage.vue'
 import LuaPage from '@/components/LuaPage.vue'
 import { GetLuaConsole } from './platform'
 import ProfileSummary from '@/components/ProfileSummary.vue'
+import RemoteConnection from '@/components/RemoteConnection.vue'
+import { RefreshCw } from '@lucide/vue'
 import { campaignDetailFor, campaignLabelFor, campaignLevelFor, profileCreateDate, profileLastPlayedDate } from './profile'
 import ServerRulesConfiguration from '@/components/ServerRulesConfiguration.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { BrowserOpenURL, CancelPatch, ClipboardSetText, CompactSnapshots, CloseDetachedGameInstances, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RefreshRemoteProfiles, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetIdentity, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
+import { BrowserOpenURL, CancelPatch, CheckRemoteServers, ClipboardSetText, CompactSnapshots, CloseDetachedGameInstances, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RefreshRemoteProfiles, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetIdentity, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
 
 const status = ref({ state:'starting', message:'Starting DarkSpinner', identity:'', auth:'Starting', server:'Starting', patch:'Pending', game:'Checking', avatar:'Preparing', profile:'Starting', content:'Pending', identityError:'', authError:'', serverError:'', patchError:'', gameError:'', avatarError:'', profileError:'', contentError:'', lastRun:'', launcherNotice:'', version:'', buildChannel:'production', progress:0, patchProgress:0, avatarProgress:0, contentProgress:0, isAuthenticated:false, isAuthOnline:false, isServerOnline:false, isPatchComplete:false, isPatchActive:false, isGameReady:false, isAvatarReady:false, isProfileStoreReady:false, isContentReady:false, isPlayReady:false, isCinematicSkipped:false, isIntroSkipped:false, isLastRunFailure:false, isStartupBlocked:false })
 const retainedProfileName = localStorage.getItem('darkspinner.selectedProfile') || localStorage.getItem('darkspinner.identity') || ''
@@ -49,6 +51,11 @@ const modPage = ref(null)
 const isModPlayReady = ref(false)
 const remoteServers = ref([])
 const remoteProfiles = ref([])
+const remoteChecks = ref([])
+const isRemoteChecking = ref(false)
+let remoteCheckTimer = null
+let remoteCheckDelay = null
+let isRemoteViewDisposed = false
 const remoteServerAddress = ref(localStorage.getItem('darkspinner.remoteServer') || '')
 const remoteIdentity = ref('')
 const remotePassword = ref('')
@@ -270,7 +277,7 @@ const activeInterruptedMission = computed(() => activePage.value === 'launcher'
 const isHeaderPlayEnabled = computed(() => activePage.value === 'launcher'
   ? isDetachedReady.value && !!detachedProfile.value && !isDetachedLaunchBusy.value && !isMissionChoiceBusy.value
   : activePage.value === 'remote'
-    ? isRemoteFormReady.value && !isRemoteBusy.value && !isActiveRouteRunning.value &&
+    ? isRemoteFormReady.value && isRemoteConnectionReady.value && !isRemoteBusy.value && !isActiveRouteRunning.value &&
       (isRemoteRegistration.value || (status.value.isPatchComplete && status.value.isGameReady))
   : !isActiveProfileRunning.value && isPlayEnabled.value && !isMissionChoiceBusy.value)
 const isActiveRouteRunning = computed(() => status.value.state === 'running' && activeClientRoute.value === activePage.value)
@@ -295,7 +302,7 @@ const dockPlayTitle = computed(() => activePage.value === 'config'
     : activePage.value === 'remote'
     ? isRemoteRegistration.value
       ? 'Register this Crogenitor on the selected remote server'
-      : 'Launch the selected remote Crogenitor'
+      : !isRemoteConnectionReady.value ? remoteConnectionReason.value : 'Launch the selected remote Crogenitor'
     : activePage.value === 'launcher'
       ? `Launch another detached client for ${detachedProfileRecord.value?.displayName || 'selected Crogenitor'}`
       : activeInterruptedMission.value
@@ -307,6 +314,17 @@ const selectedRemoteServer = computed(() => remoteServers.value.find(server =>
   isSameRemoteServer(server.address, remoteServerAddress.value)) || remoteServers.value[0])
 const selectedRemoteProfileLabel = computed(() => selectedRemoteProfile.value?.displayName || 'SELECT CROGENITOR')
 const selectedRemoteProfileAvatar = computed(() => selectedRemoteProfile.value?.avatarUrl || '')
+const selectedRemoteCheck = computed(() => remoteCheckFor(remoteServerAddress.value))
+const isRemoteConnectionReady = computed(() => !isRemoteChecking.value &&
+  selectedRemoteCheck.value?.isOnline && selectedRemoteCheck.value?.isVersionMatched)
+const remoteConnectionReason = computed(() => {
+  if (isRemoteChecking.value) return 'Checking remote server availability and version…'
+  const connection = selectedRemoteCheck.value
+  if (!connection) return 'Check the remote server before launching.'
+  if (!connection.isOnline) return connection.error || 'The remote server is offline or unreachable.'
+  if (!connection.isVersionMatched) return connection.error || 'Server and launcher major/minor versions must match.'
+  return ''
+})
 const selectedRemoteCampaignLevel = computed(() => Math.max(1, selectedRemoteProfile.value?.highestCampaignUnlocked || 1))
 const selectedRemoteCampaignLabel = computed(() => campaignLabelFor(selectedRemoteCampaignLevel.value))
 const selectedRemoteCampaignDetail = computed(() => campaignDetailFor(selectedRemoteCampaignLevel.value))
@@ -331,6 +349,14 @@ const isExperimentalLauncherFeatureVisible = computed(() => ['development', 'uns
 
 watch(identity, next => localStorage.setItem('darkspinner.identity', next))
 watch(remoteServerAddress, next => localStorage.setItem('darkspinner.remoteServer', next))
+watch(remoteServerAddress, scheduleRemoteCheck)
+watch(activePage, page => {
+  if (remoteCheckTimer !== null) window.clearInterval(remoteCheckTimer)
+  remoteCheckTimer = null
+  if (page !== 'remote') return
+  scheduleRemoteCheck()
+  remoteCheckTimer = window.setInterval(refreshVisibleRemoteChecks, 30000)
+})
 watch(newProfileName, next => {
   const restricted = next.replace(/[^A-Za-z0-9]/g, '').slice(0, maximumProfileNameLength)
   if (restricted !== next) newProfileName.value = restricted
@@ -393,12 +419,6 @@ const footerStatus = computed(() => {
   return null
 })
 
-function profileLastConnectedDate(profile) {
-  if (!profile?.lastConnectedDt) return ''
-  const lastConnectedDT = new Date(profile.lastConnectedDt)
-  if (Number.isNaN(lastConnectedDT.getTime())) return ''
-  return lastConnectedDT.toISOString().slice(0, 10)
-}
 function markProfilePlayed(loginName) {
   const connectionDT = new Date().toISOString()
   profiles.value = profiles.value.map(profile =>
@@ -454,6 +474,9 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  isRemoteViewDisposed = true
+  if (remoteCheckTimer !== null) window.clearInterval(remoteCheckTimer)
+  if (remoteCheckDelay !== null) window.clearTimeout(remoteCheckDelay)
   cancelAutoLaunchCountdown()
   if (processStateTimer !== null) window.clearInterval(processStateTimer)
   if (preparationProgressTimer !== null) window.clearInterval(preparationProgressTimer)
@@ -520,9 +543,52 @@ async function refreshRemoteProfiles() {
       remoteProfiles.value.find(profile => isSameRemoteServer(profile.serverAddress, remoteServerAddress.value)) ||
       remoteProfiles.value[0]
     if (selected && !selectedRemoteProfile.value) selectRemoteProfile(selected)
+    scheduleRemoteCheck()
     void refreshStaleRemoteProfiles()
   }
   catch (error) { recordError(error) }
+}
+
+function remoteCheckFor(address) {
+  return remoteChecks.value.find(connection => isSameRemoteServer(connection.address, address))
+}
+
+function remoteProfileState(profile) {
+  const connection = remoteCheckFor(profile.serverAddress)
+  if (!connection) return 'Not checked'
+  if (!connection.isOnline) return 'Offline'
+  return connection.isVersionMatched ? 'Online' : 'Online · version mismatch'
+}
+
+function scheduleRemoteCheck() {
+  if (remoteCheckDelay !== null) window.clearTimeout(remoteCheckDelay)
+  if (isRemoteViewDisposed || activePage.value !== 'remote') return
+  remoteCheckDelay = window.setTimeout(refreshVisibleRemoteChecks, 300)
+}
+
+function refreshVisibleRemoteChecks() {
+  if (activePage.value !== 'remote' || document.visibilityState === 'hidden') return
+  void refreshRemoteChecks()
+}
+
+async function refreshRemoteChecks() {
+  if (isRemoteViewDisposed || isRemoteChecking.value) return
+  const selectedAddress = remoteServerAddress.value
+  const addresses = [...new Set([selectedAddress, ...remoteProfiles.value.map(profile => profile.serverAddress)]
+    .map(address => address.trim()).filter(Boolean))]
+  if (!addresses.length) return
+  isRemoteChecking.value = true
+  try {
+    const connections = await CheckRemoteServers(addresses)
+    if (!isRemoteViewDisposed) remoteChecks.value = connections || []
+  } catch (error) {
+    if (!isRemoteViewDisposed) remoteChecks.value = addresses.map(address => ({
+      address, isOnline:false, isVersionMatched:false, error:visibleLauncherText(error),
+    }))
+  } finally {
+    isRemoteChecking.value = false
+    if (selectedAddress !== remoteServerAddress.value) scheduleRemoteCheck()
+  }
 }
 
 async function refreshStaleRemoteProfiles() {
@@ -759,7 +825,7 @@ function cancelRemoteRegistration() {
 }
 
 async function submitRemoteAccount() {
-  if (!isRemoteFormReady.value || isRemoteBusy.value) return
+  if (!isRemoteFormReady.value || !isRemoteConnectionReady.value || isRemoteBusy.value) return
   isRemoteBusy.value = true
   try {
     if (isRemoteRegistration.value) {
@@ -780,8 +846,17 @@ async function submitRemoteAccount() {
 
 async function launchRemote() {
   if (!isRemoteFormReady.value || isRemoteBusy.value) return
+  if (!isRemoteConnectionReady.value) {
+    remoteMessage.value = remoteConnectionReason.value
+    return
+  }
   isRemoteBusy.value = true
   try {
+    await refreshRemoteChecks()
+    if (!isRemoteConnectionReady.value) {
+      remoteMessage.value = remoteConnectionReason.value
+      return
+    }
     await LaunchRemoteProfile(remoteServerAddress.value, remoteIdentity.value.trim(), remotePassword.value, isRemotePasswordRemembered.value)
     activeClientRoute.value = 'remote'
     remoteMessage.value = 'Remote game launch requested.'
@@ -1394,7 +1469,7 @@ async function copyLauncherFailure() {
                   <SelectTrigger class="profile-select-trigger" aria-label="Remote Crogenitor"><SelectValue>{{ selectedRemoteProfileLabel }}</SelectValue></SelectTrigger>
                   <SelectContent>
                     <SelectItem v-for="profile in remoteProfiles" :key="`${profile.serverAddress}:${profile.loginName}`" :value="`${profile.serverAddress}:${profile.loginName}`">
-                      <span class="profile-option profile-detail-option"><span class="profile-option-photo"><img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt=""></span><span class="profile-option-copy"><strong>{{ profile.displayName }}</strong><small>{{ profile.serverAddress }}</small></span><span class="profile-option-level">LEVEL {{ profile.crogenitorLevel }}</span><small class="profile-option-last-played">LAST PLAYED {{ profileLastPlayedDate(profile) }}</small></span>
+                      <span class="profile-option profile-detail-option"><span class="profile-option-photo"><img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt=""></span><span class="profile-option-copy"><strong>{{ profile.displayName }}</strong><small>{{ profile.serverAddress }}</small><small class="remote-profile-state" :class="{ online:remoteCheckFor(profile.serverAddress)?.isOnline, mismatch:remoteCheckFor(profile.serverAddress)?.isOnline && !remoteCheckFor(profile.serverAddress)?.isVersionMatched }"><span aria-hidden="true">●</span> {{ remoteProfileState(profile) }}</small></span><span class="profile-option-level">LEVEL {{ profile.crogenitorLevel }}</span><small class="profile-option-last-played">LAST PLAYED {{ profileLastPlayedDate(profile) }}</small></span>
                     </SelectItem>
                   </SelectContent>
                 </Select>
@@ -1403,18 +1478,21 @@ async function copyLauncherFailure() {
               <div v-if="selectedRemoteProfile" class="launch-profile-summary">
                 <div class="profile-info-card remote-profile-info-card" :aria-label="`${selectedRemoteProfileLabel} remote profile summary`">
                   <time v-if="profileCreateDate(selectedRemoteProfile)" class="profile-create-date" :datetime="selectedRemoteProfile.createDt">{{ profileCreateDate(selectedRemoteProfile) }}</time>
+                  <div class="remote-profile-avatar">
                   <div class="selected-profile-avatar-frame">
                     <div class="selected-profile-avatar" :class="{ empty:!selectedRemoteProfileAvatar }">
                       <img v-if="selectedRemoteProfileAvatar" :src="selectedRemoteProfileAvatar" :alt="`${selectedRemoteProfileLabel} Crogenitor photo`">
                     </div>
                     <span class="profile-level-badge" :aria-label="`Crogenitor level ${selectedRemoteProfile.crogenitorLevel}`">{{ selectedRemoteProfile.crogenitorLevel }}</span>
                   </div>
+                  <Button variant="ghost" class="remote-refresh-button" type="button" :disabled="isRemoteChecking || isRemoteBusy" :aria-busy="isRemoteChecking" aria-label="Refresh server connection" :title="isRemoteChecking ? 'Checking server…' : 'Refresh server connection'" @click="refreshRemoteChecks"><RefreshCw :size="14" aria-hidden="true" /></Button>
+                  </div>
                   <div class="profile-info-content">
                     <div class="profile-info-heading"><small>REMOTE CROGENITOR</small><strong>{{ selectedRemoteProfileLabel }}</strong></div>
                     <div class="profile-progress">
                       <span><small>CROGENITOR</small><strong>{{ selectedRemoteProfile.crogenitorLevel }}</strong><em>{{ selectedRemoteProfile.cumulativeXp }} XP</em></span>
                       <span><small>PROGRESS</small><strong>{{ selectedRemoteCampaignLabel }}</strong><em>{{ selectedRemoteCampaignDetail }}</em></span>
-                      <span class="remote-profile-server"><small>SERVER</small><strong>{{ selectedRemoteProfile.serverAddress }}</strong><em>{{ profileLastConnectedDate(selectedRemoteProfile) }}</em></span>
+                      <span class="remote-profile-server" :title="`Client ${selectedRemoteCheck?.clientVersion || status.version || 'unknown'} vs Server ${selectedRemoteCheck?.serverVersion || 'unknown'}`"><small>SERVER</small><strong>{{ selectedRemoteProfile.serverAddress }}</strong><em><RemoteConnection :connection="selectedRemoteCheck" :is-checking="isRemoteChecking" :client-version="status.version" /></em></span>
                     </div>
                     <div v-if="!selectedRemoteProfile.isPasswordRemembered" class="remote-profile-password">
                       <label for="remote-profile-password">PASSWORD</label>
@@ -1684,6 +1762,8 @@ async function copyLauncherFailure() {
           <Button variant="outline" type="button" :disabled="isRemoteBusy" @click="scanRemoteServers">{{ isRemoteBusy ? 'SUGGESTING...' : 'SUGGEST' }}</Button>
           <Input id="remote-server" v-model="remoteServerAddress" type="text" placeholder="darkspin.local:42127" autocomplete="off" spellcheck="false" :disabled="isRemoteBusy" />
         </div>
+        <RemoteConnection v-if="remoteServerAddress" :connection="selectedRemoteCheck" :is-checking="isRemoteChecking" :client-version="status.version" />
+        <Button v-if="remoteServerAddress" variant="outline" type="button" :disabled="isRemoteChecking || isRemoteBusy" @click="refreshRemoteChecks">CHECK CONNECTION</Button>
         <Select v-if="remoteServers.length" v-model:open="isRemoteServerMenuOpen" :model-value="remoteServerAddress" @update:model-value="chooseRemoteServerAddress" :disabled="isRemoteBusy">
                   <SelectTrigger class="profile-select-trigger" aria-label="Detected Darkspinner instances"><SelectValue>{{ selectedRemoteServer?.address || remoteServerAddress }}</SelectValue></SelectTrigger>
                   <SelectContent>
@@ -1707,7 +1787,7 @@ async function copyLauncherFailure() {
         <p class="onboarding-rule">{{ remoteMessage }}</p>
         <div class="onboarding-actions">
           <Button variant="outline" class="onboarding-cancel" type="button" :disabled="isRemoteBusy" @click="cancelRemoteRegistration">CANCEL</Button>
-          <Button variant="default" class="onboarding-create" type="button" :disabled="!isRemoteFormReady || isRemoteBusy" @click="submitRemoteAccount">{{ isRemoteBusy ? 'WORKING...' : 'REGISTER OR SIGN IN' }} <span>&rsaquo;</span></Button>
+          <Button variant="default" class="onboarding-create" type="button" :disabled="!isRemoteFormReady || !isRemoteConnectionReady || isRemoteBusy" @click="submitRemoteAccount">{{ isRemoteBusy ? 'WORKING...' : 'REGISTER OR SIGN IN' }} <span>&rsaquo;</span></Button>
         </div>
       </div>
     </LauncherDialog>

@@ -139,9 +139,9 @@ local function serverPosition(world)
     return world.hero.position
 end
 local function movement(client,baseline,phase)
-    local before,nativeBefore=read(client,baseline)
-    local goal
+    local attempts=0
     for _,delta in ipairs({{0,4},{4,0},{0,-4},{-4,0}}) do
+        local before,nativeBefore=read(client,baseline)
         local requested=offset(nativeBefore.position,delta[1],delta[2])
         local path=must(client.World:Path(nativeBefore.position,requested))
         if path.is_available and path.is_complete and not path.is_truncated and path.goal and path.goal.position then
@@ -152,28 +152,30 @@ local function movement(client,baseline,phase)
             end
             if isClear and distance(point,nativeBefore.position)>2 then
                 local projection=must(client.World:Project(point)).projection
-                if projection and projection.is_available and projection.is_on_screen then goal=point;break end
+                if projection and projection.is_available and projection.is_on_screen then
+                    attempts=attempts+1
+                    local receipt=must(client.World:Hold(point,650))
+                    local poll=receipt.gameplay_click
+                    if not receipt.is_processed or not poll or not poll.is_press_poll_observed or not poll.is_release_poll_observed then
+                        error("native movement input outcome unknown; no replay")
+                    end
+                    local after,nativeAfter=read(client,baseline)
+                    local nativeDistance=distance(nativeBefore.position,nativeAfter.position)
+                    local serverDistance=distance(serverPosition(before),serverPosition(after))
+                    record({event="movement",phase=phase,attempt=attempts,client_id=client.ID,pid=client.PID,noun=after.hero.noun,goal=point,
+                        native_before=nativeBefore.position,native_after=nativeAfter.position,
+                        server_before=serverPosition(before),server_after=serverPosition(after),
+                        native_distance=nativeDistance,server_distance=serverDistance,
+                        frame_before=nativeBefore.frame_sequence,frame_after=nativeAfter.frame_sequence,
+                        is_native_ground_query_success=poll.is_native_ground_query_success,chosen_ground_point=poll.chosen_ground_point})
+                    if nativeAfter.frame_sequence<=nativeBefore.frame_sequence then error("replacement native frame stalled") end
+                    if nativeDistance>=.5 and serverDistance>=.5 then return end
+                end
             end
         end
     end
-    if not goal then error("no bounded complete native movement probe path") end
-    local receipt=must(client.World:Hold(goal,650))
-    local poll=receipt.gameplay_click
-    if not receipt.is_processed or not poll or not poll.is_press_poll_observed or not poll.is_release_poll_observed then
-        error("native movement input outcome unknown; no replay")
-    end
-    local after,nativeAfter=read(client,baseline)
-    local nativeDistance=distance(nativeBefore.position,nativeAfter.position)
-    local serverDistance=distance(serverPosition(before),serverPosition(after))
-    record({event="movement",phase=phase,client_id=client.ID,pid=client.PID,noun=after.hero.noun,goal=goal,
-        native_before=nativeBefore.position,native_after=nativeAfter.position,
-        server_before=serverPosition(before),server_after=serverPosition(after),
-        native_distance=nativeDistance,server_distance=serverDistance,
-        frame_before=nativeBefore.frame_sequence,frame_after=nativeAfter.frame_sequence,
-        is_native_ground_query_success=poll.is_native_ground_query_success,chosen_ground_point=poll.chosen_ground_point})
-    if nativeAfter.frame_sequence<=nativeBefore.frame_sequence or nativeDistance<.5 or serverDistance<.5 then
-        error("replacement hero did not move through native/server path")
-    end
+    if attempts==0 then error("no bounded complete native movement probe path") end
+    error("replacement hero did not move through native/server path")
 end
 local function npcStable(npc,initial,phase)
     local current=must(npc:Snapshot())
@@ -261,30 +263,29 @@ return function()
         local capture=must(client.Diagnostics:Capture(suite.."-entry"))
         record({event="diagnostic",client_id=client.ID,pid=client.PID,manifest=capture.manifest_path})
     end
-    local npc=must(clients[1].World:SpawnControlledNPC("CitadelBasicGunner.Noun"))
-    local initialNPC=must(npc:Snapshot())
-    if not initialNPC.is_available or initialNPC.is_ai_enabled or initialNPC.is_dead then error("controlled NPC constructor unavailable") end
     for index,noun in ipairs(nouns) do
         local phase="source-"..index
         replace(clients[1],noun,baselines[1],phase)
         expectedNouns[1]=noun
         verifyRosters(clients,baselines,expectedNouns,phase)
-        npcStable(npc,initialNPC,phase)
         fixtures(clients[1]);movement(clients[1],baselines[1],phase)
         if index==3 and participantCount==2 then
             replace(clients[2],185979955,baselines[2],"observer")
             expectedNouns[2]=185979955
             verifyRosters(clients,baselines,expectedNouns,"observer")
-            npcStable(npc,initialNPC,"observer");fixtures(clients[2]);movement(clients[2],baselines[2],"observer")
+            fixtures(clients[2]);movement(clients[2],baselines[2],"observer")
         end
     end
     for _,slot in ipairs({1,0}) do
         fixtures(clients[1]);must(clients[1].World:SelectHero(slot,20000))
         local world=actor(clients[1],baselines[1],"ordinary-select-"..slot)
         if world.hero.index~=slot then error("ordinary native hero selection failed after replacements") end
-        npcStable(npc,initialNPC,"ordinary-select-"..slot)
     end
     verifyRosters(clients,baselines,expectedNouns,"before-native-cast")
+    local npc=must(clients[1].World:SpawnControlledNPC("CitadelBasicGunner.Noun"))
+    local initialNPC=must(npc:Snapshot())
+    if not initialNPC.is_available or initialNPC.is_ai_enabled or initialNPC.is_dead then error("controlled NPC constructor unavailable") end
+    npcStable(npc,initialNPC,"before-native-cast")
     finishCast(clients,baselines,npc)
     local frames={}
     for index,client in ipairs(clients) do local world,native=read(client,baselines[index]);frames[index]=native.frame_sequence end

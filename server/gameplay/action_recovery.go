@@ -619,10 +619,10 @@ func (r gameplayActionRuntime) observeActionResponses(
 		}
 		var cancel raknet.CancelSchedule
 		r.registry.mutex.Lock()
-		if lease, isLeased := r.registry.actionLeases[key]; isLeased {
+		if lease, isFound := r.registry.actionLeases[key]; isFound {
 			cancel = lease.cancel
 			delete(r.registry.actionLeases, key)
-		} else if _, isAdmitting := r.registry.actionAdmissions[key]; isAdmitting {
+		} else if _, isFound = r.registry.actionAdmissions[key]; isFound {
 			r.registry.actionTerminals[key] = struct{}{}
 		}
 		r.registry.mutex.Unlock()

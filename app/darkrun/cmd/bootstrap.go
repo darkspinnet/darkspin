@@ -277,7 +277,9 @@ func bootstrapSchedule(config *game.Config, rootPath string) (*maintenance.Sched
 		return nil, errors.New("bootstrap manifest URL must use HTTPS without credentials or fragment")
 	}
 	if !config.Bool(game.ConfigBootstrapIsUpdateEnabled) {
-		return nil, nil
+		// Disable automatic occurrences, while keeping bootstrap's explicit
+		// update command and configured manifest available to operators.
+		req.Cron = ""
 	}
 	return &req, nil
 }

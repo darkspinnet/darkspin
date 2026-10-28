@@ -36,5 +36,6 @@ func (e campaignAbilityCommandRuntime) handleSquadActivation(
 	if err != nil {
 		return nil, fmt.Errorf("squadUse: %w", err)
 	}
+	e.recordScenarioAbilityDispatch(packet, command, member, packets, startedAt)
 	return packets, nil
 }

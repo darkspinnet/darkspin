@@ -822,8 +822,9 @@ func (e heroChargeSchedule) release() ([][]byte, error) {
 		packets = append(packets, animationPacket)
 	}
 	packets = append(packets, e.releasePacket)
-	e.runtime.registry.queueChargeReleaseLocked(e.run, e.sessionKey, packets)
-	return nil, nil
+	// Publish through the guarded scheduled producer. Its commit observes the
+	// terminal response and fans the presentation out to campaign peers.
+	return packets, nil
 }
 
 func (e heroChargeSchedule) finish() ([][]byte, error) {

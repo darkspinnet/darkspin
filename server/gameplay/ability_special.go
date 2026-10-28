@@ -363,8 +363,7 @@ func (e areaSpecialHitStep) produce() ([][]byte, error) {
 		liveTarget, isTargetFound := peerSession.zone.NPCs().NPC(
 			livePlan.Target[0].Plan.ObjectID,
 		)
-		if !isTargetFound || liveTarget.IsDefeated || liveTarget.HitPoint <= 0 ||
-			liveTarget.TargetObjectID != schedule.sourceObjectID {
+		if !isTargetFound || liveTarget.IsDefeated || liveTarget.HitPoint <= 0 {
 			schedule.runtime.registry.mutex.Unlock()
 			return nil, nil
 		}

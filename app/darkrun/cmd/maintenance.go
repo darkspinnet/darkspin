@@ -23,7 +23,7 @@ type maintenanceOptions struct {
 
 func newMaintenanceCommand() *cobra.Command {
 	options := &maintenanceOptions{}
-	command := &cobra.Command{Use: "maintenance", Short: "Announce or cancel an update through the running server's local control channel"}
+	command := &cobra.Command{Use: "maintenance", Short: "Request, announce, or cancel maintenance through the running server's local control channel"}
 	configPath := os.Getenv("DARKSPIN_CONFIG_PATH")
 	if configPath == "" {
 		configPath = game.DefaultConfigFilename
@@ -31,11 +31,13 @@ func newMaintenanceCommand() *cobra.Command {
 	command.PersistentFlags().StringVar(&options.configPath, "config", configPath, "path to the running server's internal configuration")
 	announce := &cobra.Command{Use: "announce", Short: "Warn online players before a server update", Args: cobra.NoArgs, RunE: options.run}
 	announce.Flags().IntVar(&options.minutes, "minutes", 30, "minutes before restart (1 to 1440)")
+	update := &cobra.Command{Use: "update", Short: "Warn players, stop cleanly, and ask bootstrap to back up and self-update", Args: cobra.NoArgs, RunE: options.run}
+	update.Flags().IntVar(&options.minutes, "minutes", 30, "warning interval before update (0 to 1440; 0 updates immediately)")
 	cancel := &cobra.Command{Use: "cancel", Short: "Cancel a previously announced update", Args: cobra.NoArgs, RunE: options.run}
 	cancel.Flags().StringVar(&options.id, "id", "", "only cancel the matching countdown ID")
 	status := &cobra.Command{Use: "status", Short: "Read local server liveness and the current countdown", Args: cobra.NoArgs, RunE: options.run}
 	status.Flags().BoolVar(&options.isReady, "ready", false, "also verify the main server endpoint and image identity")
-	command.AddCommand(announce, cancel, status)
+	command.AddCommand(announce, update, cancel, status)
 	return command
 }
 

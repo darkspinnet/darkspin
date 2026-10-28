@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -209,7 +210,7 @@ func probeRemoteServer(ctx context.Context, client *http.Client, address string)
 		ServerVersion string `json:"server_version"`
 		GameVersion   string `json:"game_version"`
 	}{}
-	err = json.NewDecoder(response.Body).Decode(&payload)
+	err = json.NewDecoder(io.LimitReader(response.Body, 16*1024)).Decode(&payload)
 	if err != nil {
 		return RemoteServer{}, fmt.Errorf("probeDecode: %w", err)
 	}
@@ -306,16 +307,9 @@ func (a *App) RegisterRemoteProfile(
 	if ctx == nil {
 		ctx = context.TODO()
 	}
-	availabilityCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	remoteServer, err := probeRemoteServer(
-		availabilityCtx, &http.Client{Timeout: 2 * time.Second}, serverAddress,
-	)
-	cancel()
+	err = requireRemoteCompatibility(ctx, serverAddress)
 	if err != nil {
-		return fmt.Errorf("remoteUnavailable[%s]: %w", serverAddress, err)
-	}
-	if remoteServer.Address == "" {
-		return fmt.Errorf("remote server %s returned an empty address", serverAddress)
+		return fmt.Errorf("remoteCompatibility: %w", err)
 	}
 	_, existingProfile, resolvedPassword, loginErr := a.remoteCredential(
 		serverAddress, identity, password,
@@ -335,7 +329,9 @@ func (a *App) RegisterRemoteProfile(
 	if err != nil {
 		return fmt.Errorf("avatarValidate: %w", err)
 	}
-	err = postAuthJSON(ctx, &http.Client{Timeout: 15 * time.Second},
+	client := remoteHTTPClient(15 * time.Second)
+	defer client.CloseIdleConnections()
+	err = postAuthJSON(ctx, client,
 		"http://"+serverAddress+"/api/desktop/register", map[string]any{
 			"account": identity, "display_name": identity, "password": password,
 			"avatar_id": avatarID, "is_tutorial_skipped": isTutorialSkipped,
@@ -393,7 +389,9 @@ func (a *App) DeleteRemoteProfile(serverAddress, identity, password string) erro
 	if ctx == nil {
 		ctx = context.TODO()
 	}
-	err = postAuthJSON(ctx, &http.Client{Timeout: 15 * time.Second},
+	client := remoteHTTPClient(15 * time.Second)
+	defer client.CloseIdleConnections()
+	err = postAuthJSON(ctx, client,
 		"http://"+serverAddress+"/api/desktop/delete",
 		map[string]string{"account": identity, "password": password}, &response)
 	if err != nil {
@@ -490,10 +488,15 @@ func (a *App) remoteCredential(
 		return "", remoteProfileResponse{}, "", errors.New("password is required")
 	}
 	start := remoteStartResponse{}
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := remoteHTTPClient(15 * time.Second)
+	defer client.CloseIdleConnections()
 	ctx := a.lifecycleCtx
 	if ctx == nil {
 		ctx = context.TODO()
+	}
+	err = requireRemoteCompatibility(ctx, serverAddress)
+	if err != nil {
+		return "", remoteProfileResponse{}, "", fmt.Errorf("remoteCompatibility: %w", err)
 	}
 	err = postAuthJSON(ctx, client, "http://"+serverAddress+"/api/desktop/start",
 		map[string]string{"account": identity, "password": password}, &start)
@@ -809,7 +812,8 @@ func (a *App) refreshRemoteCache(
 	if closeErr != nil {
 		return fmt.Errorf("entryClose: %w", closeErr)
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := remoteHTTPClient(5 * time.Second)
+	defer client.CloseIdleConnections()
 	serversByAddress := make(map[string]RemoteServer)
 	offlineServers := make(map[string]bool)
 	for _, entry := range entries {

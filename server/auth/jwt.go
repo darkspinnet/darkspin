@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/darkspinnet/darkspin/server/buildinfo"
 )
 
 const maximumJWTLength = 16 * 1024
@@ -17,10 +19,11 @@ const maximumJWTLength = 16 * 1024
 // JWTVerifier validates short-lived HS256 launch credentials issued by a
 // trusted website or account service.
 type JWTVerifier struct {
-	secret   []byte
-	issuer   string
-	audience string
-	now      func() time.Time
+	isClientVersionRequired bool
+	secret                  []byte
+	issuer                  string
+	audience                string
+	now                     func() time.Time
 }
 
 type jwtHeader struct {
@@ -29,12 +32,19 @@ type jwtHeader struct {
 }
 
 type jwtClaims struct {
-	Issuer    string          `json:"iss"`
-	Audience  json.RawMessage `json:"aud"`
-	Subject   string          `json:"sub"`
-	Email     string          `json:"email"`
-	ExpiresAt int64           `json:"exp"`
-	NotBefore int64           `json:"nbf"`
+	ClientVersion string          `json:"client_version"`
+	Issuer        string          `json:"iss"`
+	Audience      json.RawMessage `json:"aud"`
+	Subject       string          `json:"sub"`
+	Email         string          `json:"email"`
+	ExpiresAt     int64           `json:"exp"`
+	NotBefore     int64           `json:"nbf"`
+}
+
+// RequireClientVersion enables the dedicated-server launch compatibility gate.
+// Call during composition before the verifier is shared with listeners.
+func (e *JWTVerifier) RequireClientVersion() {
+	e.isClientVersionRequired = true
 }
 
 // NewJWTVerifier constructs a verifier. Issuer and audience are mandatory so
@@ -56,6 +66,24 @@ func NewJWTVerifier(secret []byte, issuer, audience string) (*JWTVerifier, error
 // Verify validates a JWT and returns the account login name carried by its email
 // claim, falling back to subject for issuers that use the email as subject.
 func (v *JWTVerifier) Verify(token string) (string, error) {
+	identity, err := v.verify(token, v != nil && v.isClientVersionRequired)
+	if err != nil {
+		return "", fmt.Errorf("tokenVerify: %w", err)
+	}
+	return identity, nil
+}
+
+// VerifyRemote additionally requires a version-bound credential for remote
+// game transports, including LAN listeners using the local desktop defaults.
+func (e *JWTVerifier) VerifyRemote(token string) (string, error) {
+	identity, err := e.verify(token, true)
+	if err != nil {
+		return "", fmt.Errorf("remoteVerify: %w", err)
+	}
+	return identity, nil
+}
+
+func (v *JWTVerifier) verify(token string, isClientVersionRequired bool) (string, error) {
 	if v == nil {
 		return "", errors.New("JWT authentication is disabled")
 	}
@@ -121,6 +149,12 @@ func (v *JWTVerifier) Verify(token string) (string, error) {
 	}
 	if claims.NotBefore != 0 && now < claims.NotBefore {
 		return "", errors.New("JWT is not active")
+	}
+	if isClientVersionRequired || claims.ClientVersion != "" {
+		err = buildinfo.CheckCompatibility(claims.ClientVersion, buildinfo.Version)
+		if err != nil {
+			return "", fmt.Errorf("launchVersion: %w", err)
+		}
 	}
 	loginName := strings.TrimSpace(claims.Email)
 	if loginName == "" {

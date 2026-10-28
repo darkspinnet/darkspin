@@ -980,6 +980,7 @@ func (r campaignAbilityCommandRuntime) handleCharacter(
 			if useErr != nil {
 				return nil, fmt.Errorf("characterSpecialUse: %w", useErr)
 			}
+			r.recordScenarioAbilityDispatch(packet, command, commandSession, specialResponse, abilityStartTime)
 		}
 		return specialResponse, specialErr
 	}
@@ -991,6 +992,7 @@ func (r campaignAbilityCommandRuntime) handleCharacter(
 	if err != nil {
 		return nil, fmt.Errorf("characterBasicUse: %w", err)
 	}
+	r.recordScenarioAbilityDispatch(packet, command, commandSession, packets, abilityStartTime)
 	return packets, nil
 }
 

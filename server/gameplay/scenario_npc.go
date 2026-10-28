@@ -216,6 +216,11 @@ func validateScenarioNPCRequest(req scenario.NPCControlRequest, peer gameplayPee
 		if !isSupported {
 			return errors.New("manual ability name is not supported by this spawned actor")
 		}
+	case "restore":
+		if req.IsAIEnabled != nil || req.Destination != nil || req.AbilityName != "" || req.TargetObjectID != 0 ||
+			actor.IsAIEnabled || actor.IsActionStarted {
+			return errors.New("NPC restore requires an idle AI-off actor and no other command fields")
+		}
 	default:
 		return errors.New("NPC control operation is unsupported")
 	}

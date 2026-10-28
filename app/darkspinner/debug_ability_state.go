@@ -79,9 +79,20 @@ type debugAbilityState struct {
 	ReleaseRemainingMS   int64                  `json:"release_remaining_ms"`
 	IsGateStateAvailable bool                   `json:"is_gate_state_available"`
 	LastRevision         uint64                 `json:"last_revision"`
+	LastDispatch         *debugAbilityDispatch  `json:"last_dispatch"`
 	Phase                string                 `json:"phase"`
 	Cast                 *debugAbilityCast      `json:"cast"`
 	Rejection            *debugAbilityRejection `json:"rejection"`
+}
+
+type debugAbilityDispatch struct {
+	Revision       uint64    `json:"revision"`
+	ActorObjectID  uint32    `json:"actor_object_id"`
+	AbilityID      uint32    `json:"ability_id"`
+	AbilityAsset   string    `json:"ability_asset"`
+	Slot           string    `json:"slot"`
+	TargetObjectID uint32    `json:"target_object_id"`
+	At             time.Time `json:"at"`
 }
 
 type debugAbilityObservation struct {
@@ -99,6 +110,12 @@ func debugAbilityStateDTO(state scenario.AbilityState) debugAbilityState {
 		ManaPoint: state.ManaPoint, ManaCost: state.ManaCost, IsManaCostAvailable: state.IsManaCostAvailable, CooldownRemainingMS: state.CooldownRemainingMS, ReleaseRemainingMS: state.ReleaseRemainingMS,
 		IsGateStateAvailable: state.IsGateStateAvailable, LastRevision: state.LastRevision, Phase: state.Phase}
 	result.IsArena = state.IsArena
+	if state.LastDispatch != nil {
+		dispatch := state.LastDispatch
+		result.LastDispatch = &debugAbilityDispatch{Revision: dispatch.Revision, ActorObjectID: dispatch.ActorObjectID,
+			AbilityID: dispatch.AbilityID, AbilityAsset: dispatch.AbilityAsset, Slot: dispatch.Slot,
+			TargetObjectID: dispatch.TargetObjectID, At: dispatch.At}
+	}
 	if state.Cast != nil {
 		cast := state.Cast
 		result.Cast = &debugAbilityCast{Revision: cast.Revision, ActorObjectID: cast.ActorObjectID, CreatureIndex: cast.CreatureIndex, AbilityID: cast.AbilityID, AbilityAsset: cast.AbilityAsset,

@@ -81,6 +81,7 @@
 ---@field release_remaining_ms integer
 ---@field is_gate_state_available boolean
 ---@field last_revision integer Last allocated supported-cast revision in this admitted peer; stays monotonic across hero switches. Preparing admission is explicitly unavailable; cast can be nil for another actor.
+---@field last_dispatch AbilityDispatch|nil Most recent character action whose ordinary server handler returned successfully. Identifies the asset and input slot; it does not prove impact, packet delivery, or rendering.
 ---@field phase string
 ---@field cast AbilityCast|nil
 ---@field rejection AbilityRejection|nil
@@ -91,6 +92,15 @@
 ---@field pid integer
 ---@field source 'server_supported_ability'
 ---@field state AbilityState
+
+---@class AbilityDispatch
+---@field revision integer Monotonic within the admitted peer, including earlier hero replacements.
+---@field actor_object_id integer
+---@field ability_id integer
+---@field ability_asset string
+---@field slot 'basic'|'special_one'|'special_two'|'random'
+---@field target_object_id integer
+---@field at string
 
 ---@class AbilityCastResult
 ---@field before AbilityObservation

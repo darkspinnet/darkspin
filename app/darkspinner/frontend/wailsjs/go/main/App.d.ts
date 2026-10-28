@@ -13,6 +13,8 @@ export function CancelPatch():Promise<void>;
 
 export function Check():Promise<void>;
 
+export function CheckRemoteServers(arg1:Array<string>):Promise<Array<main.RemoteServerStatus>>;
+
 export function CloseDetachedGameInstances():Promise<void>;
 
 export function CloseRunningGame():Promise<void>;

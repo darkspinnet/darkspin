@@ -110,11 +110,20 @@ type campaignProjectionDelivery struct {
 
 func (e campaignProjectionDelivery) commit() {
 	e.registry.mutex.Lock()
-	defer e.registry.mutex.Unlock()
 	peerSession, isFound := e.registry.sessions[e.sessionKey]
 	if !isFound || peerSession.generation != e.generation ||
 		peerSession.transportGeneration != e.transportGeneration {
+		e.registry.mutex.Unlock()
 		return
+	}
+	terminals := make([]pendingActionTerminal, 0, 1)
+	for _, batch := range peerSession.pendingPacketBatches {
+		if batch.id > e.batchID {
+			break
+		}
+		if batch.actionTerminal != nil {
+			terminals = append(terminals, *batch.actionTerminal)
+		}
 	}
 	peerSession.commitPendingPackets(e.batchID)
 	peerSession.commitMutationFeedbackReceipts(e.mutationFeedbacks)
@@ -127,6 +136,10 @@ func (e campaignProjectionDelivery) commit() {
 	e.registry.commitPlasmaWreathPublicationsLocked()
 	e.registry.commitOmniShieldRemovalsLocked()
 	e.registry.commitChannelRemovalsLocked()
+	e.registry.mutex.Unlock()
+	for _, terminal := range terminals {
+		e.registry.clearActionLeaseForTrace(terminal)
+	}
 }
 
 type campaignPeerPublication struct {

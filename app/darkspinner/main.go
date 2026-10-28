@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	serverauth "github.com/darkspinnet/darkspin/server/auth"
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/wailsapp/wails/v2"
 	wailsoptions "github.com/wailsapp/wails/v2/pkg/options"
@@ -525,6 +526,7 @@ func postAuthJSON(ctx context.Context, client *http.Client, endpoint string, req
 		return fmt.Errorf("requestCreate: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(serverauth.ClientVersionHeader, Version)
 	response, err := client.Do(request)
 	if err != nil {
 		return fmt.Errorf("requestSend: %w", err)

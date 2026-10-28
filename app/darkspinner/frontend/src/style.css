@@ -141,10 +141,16 @@ body:has(.mod-accent) {
 .remote-command-frame .launch-main { min-height: 260px; flex: 1; }
 .remote-empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; }
 .profile-progress > .remote-profile-server strong { font-size: 12px; overflow-wrap: anywhere; }
+.profile-progress > .remote-profile-server em { overflow: visible; white-space: normal; }
 .remote-profile-password { width: 100%; }
 .remote-profile-password > label { display: block; margin-bottom: 6px; }
 .remote-profile-info-card { align-items: start; }
 .remote-profile-core .selected-profile-avatar { width: 88px; height: 88px; }
+.remote-profile-state { color:#a5abb5; }
+.remote-profile-state.online { color:#89d5b1; }
+.remote-profile-state.mismatch { color:#f1ba7c; }
+.remote-profile-avatar { display:flex; flex-direction:column; align-items:center; gap:8px; }
+.remote-refresh-button { width:28px; height:28px; padding:0; color:var(--muted-foreground); }
 .config-grid { display: grid; grid-template-columns: minmax(240px, .9fr) minmax(0, 1.1fr); align-items: start; gap: 16px; }
 .config-toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
 .management-card { padding: 18px; gap: 0; }

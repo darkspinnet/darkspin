@@ -740,6 +740,14 @@ func (s *gameplayPeerSession) setCrystalInventory(inventory sim.CrystalInventory
 	s.crystalInventory = inventory
 }
 
+type pendingActionTerminal struct {
+	sessionKey          string
+	transportGeneration uint64
+	traceID             uint64
+	objectID            uint32
+	syncStamp           uint8
+}
+
 type pendingPeerPacketBatch struct {
 	mutationFeedback       *mutationDamageFeedback
 	mutationEvent          *mutationPendingEvent
@@ -750,6 +758,7 @@ type pendingPeerPacketBatch struct {
 	omniRemoval            *omniShieldDelivery
 	channelRemoval         *channelDelivery
 	channelCreation        *channelEffects
+	actionTerminal         *pendingActionTerminal
 	id                     uint64
 	packets                [][]byte
 	cinematics             map[int]pendingCinematic
@@ -769,7 +778,7 @@ func (s *gameplayPeerSession) queuePackets(packets [][]byte) {
 		batch.cinematics = capturePendingCinematics(batch.packets, time.Now())
 		retainedBatches := make([]pendingPeerPacketBatch, 0, len(s.pendingPacketBatches)+1)
 		for _, pendingBatch := range s.pendingPacketBatches {
-			if pendingBatch.wreathRemoval != nil || pendingBatch.omniRemoval != nil || pendingBatch.channelRemoval != nil || pendingBatch.channelCreation != nil || pendingBatch.questFrame != nil || pendingBatch.mutationElite != nil || pendingBatch.mutationEvent != nil {
+			if pendingBatch.wreathRemoval != nil || pendingBatch.omniRemoval != nil || pendingBatch.channelRemoval != nil || pendingBatch.channelCreation != nil || pendingBatch.actionTerminal != nil || pendingBatch.questFrame != nil || pendingBatch.mutationElite != nil || pendingBatch.mutationEvent != nil {
 				retainedBatches = append(retainedBatches, pendingBatch)
 			}
 		}
@@ -837,7 +846,7 @@ func retainPendingPackets(packets [][]byte, limit int) [][]byte {
 
 func oldestDroppablePendingBatch(batches []pendingPeerPacketBatch) int {
 	for index, batch := range batches {
-		if batch.wreathRemoval != nil || batch.omniRemoval != nil || batch.channelRemoval != nil || batch.channelCreation != nil || batch.questFrame != nil || batch.mutationElite != nil || batch.mutationEvent != nil {
+		if batch.wreathRemoval != nil || batch.omniRemoval != nil || batch.channelRemoval != nil || batch.channelCreation != nil || batch.actionTerminal != nil || batch.questFrame != nil || batch.mutationElite != nil || batch.mutationEvent != nil {
 			continue
 		}
 		isCritical := false
@@ -852,7 +861,7 @@ func oldestDroppablePendingBatch(batches []pendingPeerPacketBatch) int {
 		}
 	}
 	for index, batch := range batches {
-		if batch.wreathRemoval == nil && batch.omniRemoval == nil && batch.channelRemoval == nil && batch.channelCreation == nil && batch.questFrame == nil && batch.mutationElite == nil && batch.mutationEvent == nil {
+		if batch.wreathRemoval == nil && batch.omniRemoval == nil && batch.channelRemoval == nil && batch.channelCreation == nil && batch.actionTerminal == nil && batch.questFrame == nil && batch.mutationElite == nil && batch.mutationEvent == nil {
 			return index
 		}
 	}
@@ -2424,6 +2433,27 @@ func (e *gameplaySessionRegistry) clearActionLeasesForSync(
 		stop()
 	}
 	return cleared
+}
+
+func (e *gameplaySessionRegistry) clearActionLeaseForTrace(terminal pendingActionTerminal) {
+	e.mutex.Lock()
+	var cancel raknet.CancelSchedule
+	for key, lease := range e.actionLeases {
+		if key.sessionKey != terminal.sessionKey ||
+			key.transportGeneration != terminal.transportGeneration ||
+			key.traceID != terminal.traceID || key.syncStamp != terminal.syncStamp ||
+			lease.command.Common.ObjectID != terminal.objectID {
+			continue
+		}
+		delete(e.actionLeases, key)
+		delete(e.actionTerminals, key)
+		cancel = lease.cancel
+		break
+	}
+	e.mutex.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (e *gameplaySessionRegistry) clearPursuitActionLeases(
