@@ -363,8 +363,15 @@ static void __cdecl shop_on_event(BYTE* controller, const char* event,
         return;
     }
     if (is_tab_event || strcmp(event, "OnCloseInventoryClicked") == 0) {
-        if (shop_market == 1 && strcmp(event, "OnVendorTabClicked") == 0) {
-            *(unsigned int*)(controller + 1404) = 2;
+        if (shop_market == 1) {
+            /* Leaving Parts changes the native buyback filter even when the
+             * movie merely closes. Do not retain a Parts page against the
+             * smaller buyback index list on the next inventory refresh.
+             * Build 103 clamps an invalid page to pageCount, then indexes it
+             * as a real page in 4326A0, beyond the filtered entry vector. */
+            if (strcmp(event, "OnVendorTabClicked") == 0) {
+                *(unsigned int*)(controller + 1404) = 2;
+            }
             *(unsigned int*)(controller + 24) = 0;
             controller[11] = 1;
         }

@@ -10,6 +10,9 @@ import (
 
 type scenarioAbilityCatalog struct{}
 type scenarioAbilityState struct{}
+
+func (e gameplayPeerSession) isScenarioHeroRetired() bool { return false }
+
 type scenarioRideCast struct{}
 
 func (e gameplayPeerSession) scenarioHeroAbilityRank(baseRank int32) int32 { return baseRank }

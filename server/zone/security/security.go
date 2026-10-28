@@ -217,30 +217,41 @@ func HasThreat(teleport Teleport, threats []Threat) bool {
 	return false
 }
 
-// PublishState owns only the steady loop. isPowerUp remains part of the caller
-// contract, but timed power choreography requires a separate scheduled owner.
+// PublishState owns only the steady loop. Timed power choreography has a
+// separate lifetime and must replace its temporary effect after one second.
 func PublishState(
 	objectID uint32, teleport Teleport, isActive bool, isPowerUp bool,
 ) (StatePublication, error) {
 	if objectID == 0 || !zonepopulation.IsFinitePosition(teleport.Source) {
 		return StatePublication{}, errors.New("security activation invalid")
 	}
-	// The packaged inactive effects still render a live portal loop. A locked
-	// route must remain dormant until its local encounter has been cleared.
+	effectName := effectPrefix(teleport)
 	if !isActive {
-		return StatePublication{
-			ObjectID: objectID, Position: teleport.Source,
-		}, nil
+		effectName += "_inactive"
 	}
-	effectName := effectPrefix(teleport) + ".ServerEventDef"
-	// Keep the persistent loop in one owned slot. Authored power transitions
-	// retain a separate effect index until their delayed replacement; emitting
-	// those without the delay/removal owner would create another untracked loop.
+	effectName += ".ServerEventDef"
+	// Keep the persistent loop in one owned slot; its transition replaces that
+	// same slot and the scheduled owner restores this steady state afterward.
 	effectNames := []string{effectName}
 	return StatePublication{
 		ObjectID: objectID, Position: teleport.Source,
 		EffectNames: effectNames,
 	}, nil
+}
+
+// PublishTransition matches build 103's SecurityTeleporterPassive tick: remove
+// the current loop, attach powerUp/powerDown, wait one second, then swap loops.
+func PublishTransition(objectID uint32, teleport Teleport, isActive bool) (StatePublication, error) {
+	publication, err := PublishState(objectID, teleport, isActive, false)
+	if err != nil {
+		return StatePublication{}, fmt.Errorf("transitionState: %w", err)
+	}
+	suffix := "_powerdown.ServerEventDef"
+	if isActive {
+		suffix = "_powerup.ServerEventDef"
+	}
+	publication.EffectNames = []string{effectPrefix(teleport) + suffix}
+	return publication, nil
 }
 
 func PublishInitialState(objectID [RouteCount]uint32) ([]StatePublication, error) {

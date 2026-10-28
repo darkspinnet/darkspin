@@ -1,5 +1,14 @@
 # Changelog
 
+### 2026-10-28
+
+- #141 Accept build-103 signed editor costs so hero resets and removed cosmetic edits can refund DNA instead of returning an error.
+- #141 Reset the vendor page when leaving the Parts filter, preventing stale page indices from addressing the smaller Buyback list after inventory closes.
+- #141 Publish Reconstruct's animation reset and terminal release when action recovery interrupts its healing channel.
+- #141 Synchronize native hero health and maximum health alongside the squad HUD when Reconstruct's temporary health-capacity buff changes or expires.
+- #141 Restore selected campaign security portals' inactive sphere and authored one-second power-up and power-down effect transitions.
+- #141 Use Fast Swipe's authored 2.5-unit hit allowance beyond actor footprints instead of rejecting every hit outside direct contact.
+
 ### 2026-10-27
 
 - #139 Preserve the configured advertised gameplay address instead of replacing it with a private TCP listener address during remote game setup.

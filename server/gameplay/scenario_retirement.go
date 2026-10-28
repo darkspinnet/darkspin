@@ -23,6 +23,7 @@ type scenarioHeroRetirement struct {
 	noun                uint32
 	peerGeneration      uint64
 	transportGeneration uint64
+	zoneGeneration      uint64
 	squad               *squad.Session
 }
 
@@ -30,7 +31,7 @@ func (e *scenarioHeroRetirement) matches(member gameplayPeerSession, req scenari
 	return e.userID == member.binding.UserID && e.gameID == req.GameID &&
 		e.objectID == req.ObjectID && e.index == member.deployedCreatureIndex && e.noun == req.Noun &&
 		e.peerGeneration == req.PeerGeneration && e.transportGeneration == req.TransportGeneration &&
-		e.squad == member.squad
+		e.squad == member.squad && e.zoneGeneration == req.ZoneGeneration && e.zoneGeneration == member.scenarioHeroZoneGeneration()
 }
 
 func scenarioHeroRosterPacket(member gameplayPeerSession) ([]byte, error) {
@@ -79,8 +80,37 @@ func (e *gameplaySessionRegistry) retireScenarioHeroLocked(ctx context.Context, 
 	if err != nil {
 		return scenario.HeroResetReceipt{}, fmt.Errorf("retireRoster: %w", err)
 	}
+	if member.binding.Mode == game.ModeChain {
+		timestamp := member.scenarioHeroTimestamp(e.now())
+		if timestamp == 0 {
+			return scenario.HeroResetReceipt{}, fmt.Errorf("retireClock: native gameplay clock unavailable")
+		}
+		acquired, released, retireErr := member.zone.RetireScenarioHero(member.binding.UserID, member.generation, req.ObjectID, timestamp)
+		if retireErr != nil {
+			return scenario.HeroResetReceipt{}, fmt.Errorf("retireActor: %w", retireErr)
+		}
+		for _, actor := range acquired {
+			member.scenarioAbility.npcPlans = append(member.scenarioAbility.npcPlans, actor.Plan)
+		}
+		// The zone publishes cancellation events before any new target plan.
+		if len(released) > 0 && e.logger != nil {
+			e.logger.Printf("Scenario hero retirement released NPC targets user=%d count=%d", member.binding.UserID, len(released))
+		}
+		member.scenarioAbility.retirement = &scenarioHeroRetirement{userID: member.binding.UserID, gameID: req.GameID,
+			objectID: req.ObjectID, index: member.deployedCreatureIndex, noun: req.Noun, peerGeneration: req.PeerGeneration,
+			transportGeneration: req.TransportGeneration, zoneGeneration: req.ZoneGeneration, squad: member.squad}
+		for key, candidate := range e.sessions {
+			if candidate.binding.UserID == member.binding.UserID && candidate.generation == member.generation {
+				e.sessions[key] = member
+				break
+			}
+		}
+	}
 	previousBatchID := member.nextPendingPacketID
-	previousBatchIDs := e.scenarioCleanupBatchIDsLocked(req.GameID)
+	previousBatchIDs := e.scenarioCleanupBatchIDsLocked(req.GameID, member)
+	if member.binding.Mode == game.ModeChain {
+		e.retireScenarioCampaignPresentation(&member)
+	}
 	member.retireArenaHitStatuses()
 	if member.sphereAttack != nil {
 		// Ordinary rejection preserves accepted effect-owned targeted areas.
@@ -117,7 +147,7 @@ func (e *gameplaySessionRegistry) retireScenarioHeroLocked(ctx context.Context, 
 	member.scenarioAbility.retirement = &scenarioHeroRetirement{
 		userID: member.binding.UserID, gameID: req.GameID, objectID: req.ObjectID,
 		index: member.deployedCreatureIndex, noun: req.Noun, peerGeneration: req.PeerGeneration,
-		transportGeneration: req.TransportGeneration, squad: fencedSquad,
+		transportGeneration: req.TransportGeneration, zoneGeneration: req.ZoneGeneration, squad: fencedSquad,
 	}
 	member.heroInputLockedObjectID = req.ObjectID
 	member.heroInputLockedUntil = e.now().Add(30 * time.Second)
@@ -137,12 +167,12 @@ func (e *gameplaySessionRegistry) retireScenarioHeroLocked(ctx context.Context, 
 			break
 		}
 	}
-	e.queueScenarioCleanupLocked(req.GameID, member.binding.UserID, cleanupPackets, previousBatchIDs)
+	e.queueScenarioCleanupLocked(req.GameID, member.binding.UserID, cleanupPackets, previousBatchIDs, member)
 	e.commitChannelRemovalsLocked()
 	// Publish appearance metadata while the old object is absent. ObjectCreate
 	// remains deferred until the host observes each owned client's frame fence.
-	e.queueFieldMedicRealmPacketsLocked(nil, req.GameID, [][]byte{deletePacket, rosterPacket})
+	e.queueScenarioHeroPacketsLocked(member, [][]byte{deletePacket, rosterPacket})
 	return scenario.HeroResetReceipt{GameID: req.GameID, ObjectID: req.ObjectID, Noun: req.Noun,
 		Index: member.deployedCreatureIndex, HitPoint: member.deployedHitPoint(), ManaPoint: member.deployedManaPoint(),
-		RecipientCount: recipientCount, IsRetirement: true, IsQueued: true}, nil
+		ZoneGeneration: req.ZoneGeneration, RecipientCount: recipientCount, IsRetirement: true, IsQueued: true}, nil
 }

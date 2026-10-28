@@ -2,11 +2,11 @@
 
 ---Server observations and guarded native actions; outcomes require independent observation.
 ---@class ClientWorld
----@field PlaceHero fun(self:ClientWorld,point:WorldPosition):table|nil,ScenarioError|nil Positions a living owned PvP hero through server teleport packets. Fixture setup only; does not prove native movement, restore resources or change statistics. Observe native arrival separately.
----@field RestoreHero fun(self:ClientWorld,options?:HeroResourceOptions):table|nil,ScenarioError|nil Scenario-only PvP fixture. Sets living hero resources to requested amounts, defaulting omitted amounts to current maxima. Leaves combat statistics, effects and cooldowns intact. Requires every arena participant owned; observe both native clients separately.
----@field ResetCooldowns fun(self:ClientWorld):table|nil,ScenarioError|nil Scenario-only owned PvP fixture. Resets server and native ability/deployment cooldowns without resetting recovery, arrival locks, resources, statistics or in-flight producers. Receipt reports is_queued and cooldown_count; observe subsequent native acceptance separately.
+---@field PlaceHero fun(self:ClientWorld,point:WorldPosition):table|nil,ScenarioError|nil Positions a living owned Arena or committed campaign hero through server teleport packets. Requires every world participant owned and ready. Fixture setup only; does not prove native movement, restore resources or change statistics. Observe native arrival separately.
+---@field RestoreHero fun(self:ClientWorld,options?:HeroResourceOptions):table|nil,ScenarioError|nil Scenario-only Arena or committed campaign fixture. Sets living hero resources to requested amounts, defaulting omitted amounts to current maxima. Leaves combat statistics, effects and cooldowns intact. Requires every world participant owned and ready; observe each native client separately.
+---@field ResetCooldowns fun(self:ClientWorld):table|nil,ScenarioError|nil Scenario-only owned Arena or committed campaign fixture. Resets server and native ability/deployment cooldowns without resetting recovery, arrival locks, resources, statistics or in-flight producers. Receipt reports is_queued and cooldown_count; observe subsequent native acceptance separately.
 ---@field SetAbilityRank fun(self:ClientWorld,rank:integer):table|nil,ScenarioError|nil Scenario-only owned PvP SERVER rank fixture,1..8 or0 to clear. Pins the current living actor lifetime; native UI/command rank, resources and cooldowns are unchanged. Receipt is_ability_rank_set/is_server_rank_fixture and ability_rank explicitly identify the server fixture; is_queued is false because no native packet is queued. Override expires on actor/slot/squad/transport changes.
----@field ReplaceHero fun(self:ClientWorld,noun:integer):table|nil,ScenarioError|nil Scenario-only owned PvP fixture. Replaces the active slot while preserving position and saved deck. Observes deletion on both clients before recreation, performs native away/back deployment using a living reserve, and requires native rig readiness. Interrupts owned effects and resets cooldowns. Completed deaths are not rewound; partial retirement errors must not be replayed. Rig readiness does not certify pixels or remote appearance identity.
+---@field ReplaceHero fun(self:ClientWorld,noun:integer):table|nil,ScenarioError|nil Scenario-only owned Arena or committed campaign solo/co-op fixture. Requires every world participant owned and ready. Replaces the active slot while preserving position and saved deck. Observes deletion on every owned client before recreation, performs native away/back deployment using a living reserve, and requires native rig readiness. Pins game, zone, peer, transport and actor identities; interrupts owned effects and resets cooldowns. Completed deaths are not rewound; partial retirement errors must not be replayed. Rig readiness does not certify pixels or remote appearance identity.
 ---@field SelectHero fun(self:ClientWorld,slot:integer,timeout_ms?:integer):HeroSelectionResult|nil,ScenarioError|nil Waits for native eligibility and authoritative arrival recovery, selects zero-based squad slot 0 through 2 through one guarded native edge, then waits for a changed native controlled handle, matching server index and completed arrival recovery. No replay after an accepted edge or unknown outcome.
 ---@field Snapshot fun(self:ClientWorld):WorldSnapshot|nil,ScenarioError|nil Samples the owned server world once without waiting for availability. No movement or gameplay advancement.
 ---@field Ready fun(self:ClientWorld,timeout_ms?:integer):WorldSnapshot|nil,ScenarioError|nil Waits for committed server dungeon setup, a deployed hero and a processed native active-world/controlled-handle observation. Returns the ready snapshot with native_readiness. Uses client timeout; aborts on ownership changes. Does not prove visibility of each object or gameplay action success.
@@ -139,6 +139,7 @@
 
 ---@class WorldSnapshot
 ---@field arena? ArenaMatchSnapshot Read-only arena match/squad producer, including results after combat ends; independent of world availability and native results UI.
+---@field campaign? CampaignSnapshot Read-only committed campaign participant/squad producer. Includes unready members, which block owned world fixtures.
 ---@field native_readiness? NativeGameplaySnapshot Native active-world and controlled-handle sample retained by Ready() and Mission:Enter().
 ---@field ability AbilityState|nil Active readiness for the supported native adapter and terminal producer evidence for authored projectile bursts; support/availability are explicit.
 ---@field client_id string
@@ -171,6 +172,18 @@
 ---@field is_victory_committed boolean Actual personal result transaction committed after completed boss admission with nonzero boss identity. Requires is_victory_available; not native result-screen or reward-cashout proof.
 ---@field is_objective_complete boolean Real zone objective producer.
 ---@field boss WorldBoss|nil Nil if unsupported or producer lock busy.
+
+---@class CampaignSnapshot
+---@field members CampaignMemberSnapshot[] Same-zone admitted campaign members, including unavailable participants.
+
+---@class CampaignMemberSnapshot
+---@field user_id integer
+---@field peer_generation integer
+---@field transport_generation integer
+---@field zone_generation integer
+---@field deployed_index integer
+---@field is_ready boolean Committed current transport and squad are available; not proof of native readiness.
+---@field characters WorldHero[] Current server squad resources; no saved-deck mutation.
 
 ---@class ArenaMatchSnapshot
 ---@field team integer This participant's team.

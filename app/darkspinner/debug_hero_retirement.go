@@ -22,6 +22,7 @@ import (
 // destruction from recreation of the same server object ID on every client.
 type debugHeroRetirementWitness struct {
 	owner         debugWorldOwner
+	epoch         scenario.HeroResetRequest
 	offset        int64
 	deletedFrame  uint32
 	ownerThreadID uint32
@@ -29,9 +30,10 @@ type debugHeroRetirementWitness struct {
 	isSettled     bool
 }
 
-func prepareDebugHeroRetirement(ctx context.Context, clientManager *debugClientManager, owners []debugWorldOwner) ([]debugHeroRetirementWitness, error) {
-	witnesses := make([]debugHeroRetirementWitness, 0, len(owners))
-	for _, owner := range owners {
+func prepareDebugHeroRetirement(ctx context.Context, clientManager *debugClientManager, participants []debugHeroResetParticipant) ([]debugHeroRetirementWitness, error) {
+	witnesses := make([]debugHeroRetirementWitness, 0, len(participants))
+	for _, participant := range participants {
+		owner := participant.owner
 		fi, err := os.Stat(owner.client.TracePath)
 		if err != nil {
 			return nil, fmt.Errorf("retireTrace: %w", err)
@@ -43,7 +45,7 @@ func prepareDebugHeroRetirement(ctx context.Context, clientManager *debugClientM
 		if probe == nil || native == nil {
 			return nil, errors.New("hero retirement requires current native owners")
 		}
-		witnesses = append(witnesses, debugHeroRetirementWitness{owner: owner, offset: fi.Size(), ownerThreadID: native.OwnerThreadID})
+		witnesses = append(witnesses, debugHeroRetirementWitness{owner: owner, epoch: participant.epoch, offset: fi.Size(), ownerThreadID: native.OwnerThreadID})
 	}
 	return witnesses, nil
 }
@@ -117,6 +119,10 @@ func waitDebugHeroRetirement(ctx context.Context, host *debugHost, clientManager
 			if err != nil {
 				return fmt.Errorf("deleteOwner: %w", err)
 			}
+			err = recheckDebugHeroResetEpoch(waitContext, host, witness.owner, witness.epoch)
+			if err != nil {
+				return fmt.Errorf("deleteEpoch: %w", err)
+			}
 			if witness.isSettled {
 				settledCount++
 				continue
@@ -157,7 +163,7 @@ func waitDebugHeroRetirement(ctx context.Context, host *debugHost, clientManager
 	}
 }
 
-func waitDebugHeroReplacementRig(ctx context.Context, host *debugHost, clientManager *debugClientManager, owner debugWorldOwner, noun uint32) error {
+func waitDebugHeroReplacementRig(ctx context.Context, host *debugHost, clientManager *debugClientManager, owner debugWorldOwner, command scenario.HeroResetRequest) error {
 	waitContext, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -169,6 +175,10 @@ func waitDebugHeroReplacementRig(ctx context.Context, host *debugHost, clientMan
 		if err != nil {
 			return fmt.Errorf("rigOwner: %w", err)
 		}
+		err = recheckDebugHeroResetEpoch(waitContext, host, owner, command)
+		if err != nil {
+			return fmt.Errorf("rigEpoch: %w", err)
+		}
 		probe, native, nativeErr := observeDebugHeroNative(waitContext, clientManager, owner)
 		if nativeErr != nil && !isDebugHeroUnavailable(nativeErr) {
 			return fmt.Errorf("rigNative: %w", nativeErr)
@@ -179,7 +189,11 @@ func waitDebugHeroReplacementRig(ctx context.Context, host *debugHost, clientMan
 				if worldErr != nil {
 					return fmt.Errorf("rigWorld: %w", worldErr)
 				}
-				if world.IsAvailable && world.Hero != nil && world.Hero.Noun == noun {
+				if !isDebugHeroResetEpochCurrent(world, command) {
+					return errors.New("hero replacement rig observation changed gameplay epochs")
+				}
+				if world.IsAvailable && world.Hero != nil && world.Hero.Noun == command.Noun &&
+					world.Hero.ObjectID == command.ObjectID && world.Hero.Index == command.ObservedIndex {
 					return nil
 				}
 			}
@@ -200,20 +214,23 @@ func refreshDebugHeroReplacement(ctx context.Context, host *debugHost, clientMan
 	if err != nil {
 		return fmt.Errorf("refreshWorld: %w", err)
 	}
-	if !world.IsAvailable || world.Hero == nil || world.Arena == nil {
-		return errors.New("replacement refresh requires its current live arena hero")
+	if !world.IsAvailable || world.Hero == nil || world.Arena == nil && world.Campaign == nil {
+		return errors.New("replacement refresh requires its current live world hero")
+	}
+	if world.Hero.ObjectID != command.ObjectID || world.Hero.Index != command.ObservedIndex || world.Hero.Noun != command.Noun {
+		return errors.New("replacement refresh actor changed before native deployment")
+	}
+	err = recheckDebugHeroResetEpoch(ctx, host, owner, command)
+	if err != nil {
+		return fmt.Errorf("refreshEpoch: %w", err)
 	}
 	originalIndex := world.Hero.Index
 	reserveIndex := uint32(3)
-	for _, member := range world.Arena.Members {
-		if member.UserID != uint64(owner.client.UserID) {
-			continue
-		}
-		for _, hero := range member.Characters {
-			if hero.Index != originalIndex && !hero.IsDefeated && hero.HitPoint > 0 {
-				reserveIndex = hero.Index
-				break
-			}
+	characters := debugHeroReplacementCharacters(world, uint64(owner.client.UserID))
+	for _, hero := range characters {
+		if hero.Index != originalIndex && !hero.IsDefeated && hero.HitPoint > 0 {
+			reserveIndex = hero.Index
+			break
 		}
 	}
 	if reserveIndex >= 3 {
@@ -227,10 +244,15 @@ func refreshDebugHeroReplacement(ctx context.Context, host *debugHost, clientMan
 		if !current.IsAvailable || current.Hero == nil {
 			return errors.New("replacement refresh lost its current hero")
 		}
+		err = recheckDebugHeroResetEpoch(ctx, host, owner, command)
+		if err != nil {
+			return fmt.Errorf("refreshStepEpoch: %w", err)
+		}
 		reset := command
 		reset.Noun, reset.Position = 0, nil
 		reset.IsRetirement, reset.IsCooldownReset = false, true
 		reset.ObjectID = current.Hero.ObjectID
+		reset.ObservedNoun, reset.ObservedIndex = current.Hero.Noun, current.Hero.Index
 		receipt, resetErr := host.server.DebugResetHero(ctx, reset)
 		if resetErr != nil {
 			return fmt.Errorf("refreshCooldown: %w", resetErr)
@@ -248,6 +270,24 @@ func refreshDebugHeroReplacement(ctx context.Context, host *debugHost, clientMan
 		}
 		if selected.World.Hero == nil || selected.World.Hero.Index != slot {
 			return errors.New("replacement refresh did not observe the selected hero")
+		}
+	}
+	return nil
+}
+
+func debugHeroReplacementCharacters(world scenario.WorldState, userID uint64) []scenario.WorldHero {
+	if world.Arena != nil {
+		for _, member := range world.Arena.Members {
+			if member.UserID == userID {
+				return member.Characters
+			}
+		}
+	}
+	if world.Campaign != nil {
+		for _, member := range world.Campaign.Members {
+			if member.UserID == userID && member.IsReady {
+				return member.Characters
+			}
 		}
 	}
 	return nil

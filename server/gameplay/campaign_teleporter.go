@@ -145,6 +145,7 @@ func (e *gameplayPeerSession) campaignTeleporterInitialState() ([][]byte, error)
 		return nil, fmt.Errorf("campaignSecurityRetire: %w", err)
 	}
 	previousStates := e.campaignTeleporterStates
+	e.campaignTeleporterTransitions = nil
 	e.campaignTeleporterStates = make(map[uint32]bool)
 	threats := e.zone.SecurityThreats()
 	routes := e.zone.DirectorDefinition().TeleportRoutes()
@@ -207,9 +208,7 @@ func (e *gameplayPeerSession) syncCampaignTeleporterStates() ([][]byte, error) {
 			// A peer must receive its owner baseline before slot updates.
 			continue
 		}
-		statePackets, err := securityraknet.State(
-			objectID, teleport, isActive, isActive,
-		)
+		statePackets, err := e.beginCampaignTeleporterTransition(route.MarkerID, objectID, teleport, isActive)
 		if err != nil {
 			return nil, fmt.Errorf("campaignTeleporterState[%d]: %w", route.MarkerID, err)
 		}

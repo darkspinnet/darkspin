@@ -12,7 +12,7 @@ import (
 )
 
 func debugHeroResetDTO(receipt scenario.HeroResetReceipt, isRigReady bool) map[string]any {
-	return map[string]any{"game_id": receipt.GameID, "object_id": receipt.ObjectID, "noun": receipt.Noun,
+	return map[string]any{"game_id": receipt.GameID, "zone_generation": receipt.ZoneGeneration, "object_id": receipt.ObjectID, "noun": receipt.Noun,
 		"index": receipt.Index, "hit_point": receipt.HitPoint, "mana_point": receipt.ManaPoint,
 		"recipient_count": receipt.RecipientCount, "is_replacement": receipt.IsReplacement,
 		"is_cooldown_reset": receipt.IsCooldownReset, "cooldown_count": receipt.CooldownCount,
@@ -22,7 +22,7 @@ func debugHeroResetDTO(receipt scenario.HeroResetReceipt, isRigReady bool) map[s
 		"is_placement":           receipt.IsPlacement, "is_queued": receipt.IsQueued, "is_native_observed": false}
 }
 
-// The host proves every match participant belongs to this supervisor before
+// The host proves every world participant belongs to this supervisor before
 // passing the allowlist to the epoch-checked gameplay fixture.
 func resetDebugHero(ctx context.Context, host *debugHost, clientManager *debugClientManager, operation string, payload json.RawMessage) (scenario.HeroResetReceipt, error) {
 	result := scenario.HeroResetReceipt{}
@@ -66,36 +66,17 @@ func resetDebugHero(ctx context.Context, host *debugHost, clientManager *debugCl
 	if err != nil {
 		return result, fmt.Errorf("resetWorld: %w", err)
 	}
-	if !world.IsAvailable || world.Hero == nil || world.Arena == nil || !world.Arena.IsCombatActive {
-		return result, errors.New("hero fixtures require a committed active PvP arena")
+	if operation == "client.set_ability_rank" && world.Arena == nil {
+		return result, errors.New("server ability rank fixtures currently require an owned arena")
 	}
-	owners := make([]debugWorldOwner, 0, len(world.Arena.Members))
-	ownedUsers := make(map[uint64]bool)
-	for _, client := range clientManager.List() {
-		if !client.IsRunning {
-			continue
-		}
-		for _, member := range world.Arena.Members {
-			if uint64(client.UserID) != member.UserID || ownedUsers[member.UserID] {
-				continue
-			}
-			candidate, candidateErr := observeDebugWorldOwner(ctx, host, clientManager, client.ClientID)
-			if candidateErr != nil {
-				return result, fmt.Errorf("resetParticipant: %w", candidateErr)
-			}
-			if candidate.profile.GameID != world.GameID {
-				return result, errors.New("hero fixture participant changed games")
-			}
-			owners = append(owners, candidate)
-			ownedUsers[member.UserID] = true
-		}
-	}
-	if len(owners) != len(world.Arena.Members) || len(owners) < 2 {
-		return result, errors.New("hero fixture requires every arena member to be owned by this supervisor")
+	participants, err := debugHeroResetParticipants(ctx, host, clientManager, world)
+	if err != nil {
+		return result, fmt.Errorf("resetParticipants: %w", err)
 	}
 	command := scenario.HeroResetRequest{UserID: owner.client.UserID, GameID: world.GameID,
 		PeerGeneration: world.PeerGeneration, TransportGeneration: world.TransportGeneration,
-		ObjectID: world.Hero.ObjectID, Noun: req.Noun}
+		ZoneGeneration: world.ZoneGeneration, ObjectID: world.Hero.ObjectID, Noun: req.Noun,
+		ObservedNoun: world.Hero.Noun, ObservedIndex: world.Hero.Index}
 	command.HitPoint, command.ManaPoint = req.HitPoint, req.ManaPoint
 	command.IsCooldownReset = operation == "client.reset_cooldowns"
 	if operation == "client.set_ability_rank" {
@@ -118,15 +99,26 @@ func resetDebugHero(ctx context.Context, host *debugHost, clientManager *debugCl
 		}
 		command.Position = &scenario.WorldPosition{X: float32(native.Position.X), Y: float32(native.Position.Y), Z: float32(native.Position.Z)}
 	}
-	for _, participant := range owners {
-		err = recheckDebugWorldOwner(ctx, host, clientManager, participant)
+	isOwnerParticipant := false
+	for _, participant := range participants {
+		if participant.owner.client.UserID == owner.client.UserID {
+			isOwnerParticipant = true
+		}
+		err = recheckDebugWorldOwner(ctx, host, clientManager, participant.owner)
 		if err != nil {
 			return result, fmt.Errorf("resetRecheck: %w", err)
 		}
-		command.OwnedUserIDs = append(command.OwnedUserIDs, participant.client.UserID)
+		err = recheckDebugHeroResetEpoch(ctx, host, participant.owner, participant.epoch)
+		if err != nil {
+			return result, fmt.Errorf("resetEpoch: %w", err)
+		}
+		command.OwnedUserIDs = append(command.OwnedUserIDs, participant.owner.client.UserID)
+	}
+	if !isOwnerParticipant {
+		return result, errors.New("hero fixture owner is absent from the observed world participants")
 	}
 	if req.Noun != 0 {
-		witnesses, witnessErr := prepareDebugHeroRetirement(ctx, clientManager, owners)
+		witnesses, witnessErr := prepareDebugHeroRetirement(ctx, clientManager, participants)
 		if witnessErr != nil {
 			return result, fmt.Errorf("resetWitness: %w", witnessErr)
 		}
@@ -150,10 +142,101 @@ func resetDebugHero(ctx context.Context, host *debugHost, clientManager *debugCl
 		if err != nil {
 			return result, fmt.Errorf("resetRefresh: %w", err)
 		}
-		err = waitDebugHeroReplacementRig(ctx, host, clientManager, owner, req.Noun)
+		err = waitDebugHeroReplacementRig(ctx, host, clientManager, owner, command)
 		if err != nil {
 			return result, fmt.Errorf("resetRig: %w", err)
 		}
 	}
 	return result, nil
+}
+
+type debugHeroResetParticipant struct {
+	owner debugWorldOwner
+	epoch scenario.HeroResetRequest
+}
+
+func debugHeroResetParticipants(ctx context.Context, host *debugHost, clientManager *debugClientManager, world scenario.WorldState) ([]debugHeroResetParticipant, error) {
+	if !world.IsAvailable || world.Hero == nil || world.Hero.IsDefeated || world.Hero.HitPoint <= 0 || world.IsZoneTerminal ||
+		world.PeerGeneration == 0 || world.TransportGeneration == 0 {
+		return nil, errors.New("hero fixtures require a committed living world")
+	}
+	expectedMembers := make(map[uint64]scenario.WorldCampaignMember)
+	if world.Arena != nil {
+		if !world.Arena.IsCombatActive || len(world.Arena.Members) < 2 {
+			return nil, errors.New("hero fixtures require an active owned arena")
+		}
+		for _, member := range world.Arena.Members {
+			if member.UserID == 0 || expectedMembers[member.UserID].UserID != 0 {
+				return nil, errors.New("hero fixture arena participant identity is invalid or duplicated")
+			}
+			expectedMembers[member.UserID] = scenario.WorldCampaignMember{UserID: member.UserID, IsReady: true}
+		}
+	} else if world.Campaign != nil && world.ZoneGeneration != 0 {
+		for _, member := range world.Campaign.Members {
+			if !member.IsReady || member.UserID == 0 || member.PeerGeneration == 0 || member.TransportGeneration == 0 || member.ZoneGeneration == 0 {
+				return nil, errors.New("hero fixture campaign participant is not committed and ready")
+			}
+			isDuplicate := expectedMembers[member.UserID].UserID != 0
+			if isDuplicate {
+				return nil, errors.New("hero fixture campaign participant identity is duplicated")
+			}
+			expectedMembers[member.UserID] = member
+		}
+	} else {
+		return nil, errors.New("hero fixtures require an active arena or committed campaign")
+	}
+	if len(expectedMembers) == 0 {
+		return nil, errors.New("hero fixture has no committed participants")
+	}
+	participants := make([]debugHeroResetParticipant, 0, len(expectedMembers))
+	ownedUsers := make(map[uint64]bool)
+	for _, client := range clientManager.List() {
+		member, isExpected := expectedMembers[uint64(client.UserID)]
+		if !client.IsRunning || !isExpected || ownedUsers[member.UserID] {
+			continue
+		}
+		candidate, err := observeDebugWorldOwner(ctx, host, clientManager, client.ClientID)
+		if err != nil {
+			return nil, fmt.Errorf("participantOwner: %w", err)
+		}
+		observed, err := host.server.DebugWorldState(ctx, candidate.client.UserID, candidate.profile.GameID)
+		if err != nil {
+			return nil, fmt.Errorf("participantWorld: %w", err)
+		}
+		if candidate.profile.GameID != world.GameID || !observed.IsAvailable || observed.GameID != world.GameID || observed.Hero == nil ||
+			observed.PeerGeneration == 0 || observed.TransportGeneration == 0 || observed.IsZoneTerminal {
+			return nil, errors.New("hero fixture participant lost its committed game")
+		}
+		if world.Campaign != nil && (observed.Campaign == nil || observed.PeerGeneration != member.PeerGeneration ||
+			observed.TransportGeneration != member.TransportGeneration || observed.ZoneGeneration != member.ZoneGeneration || observed.Hero.Index != member.DeployedIndex) {
+			return nil, errors.New("hero fixture participant changed campaign epochs or actor")
+		}
+		if world.Arena != nil && (observed.Arena == nil || !observed.Arena.IsCombatActive) {
+			return nil, errors.New("hero fixture participant left active arena combat")
+		}
+		participants = append(participants, debugHeroResetParticipant{owner: candidate,
+			epoch: scenario.HeroResetRequest{GameID: observed.GameID, PeerGeneration: observed.PeerGeneration,
+				TransportGeneration: observed.TransportGeneration, ZoneGeneration: observed.ZoneGeneration}})
+		ownedUsers[member.UserID] = true
+	}
+	if len(participants) != len(expectedMembers) {
+		return nil, errors.New("hero fixture requires every world participant to be owned by this supervisor")
+	}
+	return participants, nil
+}
+
+func recheckDebugHeroResetEpoch(ctx context.Context, host *debugHost, owner debugWorldOwner, epoch scenario.HeroResetRequest) error {
+	world, err := host.server.DebugWorldState(ctx, owner.client.UserID, epoch.GameID)
+	if err != nil {
+		return fmt.Errorf("epochWorld: %w", err)
+	}
+	if !isDebugHeroResetEpochCurrent(world, epoch) {
+		return errors.New("hero fixture participant changed game, peer, transport or zone")
+	}
+	return nil
+}
+
+func isDebugHeroResetEpochCurrent(world scenario.WorldState, epoch scenario.HeroResetRequest) bool {
+	return world.GameID == epoch.GameID && world.PeerGeneration == epoch.PeerGeneration &&
+		world.TransportGeneration == epoch.TransportGeneration && world.ZoneGeneration == epoch.ZoneGeneration && !world.IsZoneTerminal
 }

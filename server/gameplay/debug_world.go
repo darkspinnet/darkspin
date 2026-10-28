@@ -93,6 +93,7 @@ func (e *gameplaySessionRegistry) ScenarioWorldState(ctx context.Context, userID
 	if err != nil {
 		return result, fmt.Errorf("worldZone: %w", err)
 	}
+	world.Campaign = e.scenarioCampaignMembers(*matched, world.CapturedAt)
 	if world.Hero != nil && (world.Hero.ObjectID != matched.deployedObjectID || world.Hero.Index != matched.deployedCreatureIndex) {
 		result.UnavailableReason = "zone hero does not match current deployed gameplay object"
 		return result, nil

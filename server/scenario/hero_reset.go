@@ -9,6 +9,7 @@ type HeroResetRequest struct {
 	GameID              uint32
 	PeerGeneration      uint64
 	TransportGeneration uint64
+	ZoneGeneration      uint64
 	ObjectID            uint32
 	Noun                uint32
 	Position            *WorldPosition
@@ -25,6 +26,7 @@ type HeroResetRequest struct {
 }
 
 type HeroResetReceipt struct {
+	ZoneGeneration   uint64
 	GameID           uint32
 	ObjectID         uint32
 	Noun             uint32

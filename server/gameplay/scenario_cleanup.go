@@ -10,14 +10,21 @@ import (
 
 // Capture before retiring any producer: some owners already publish their
 // removals to every recipient, while legacy owners only queue local cleanup.
-func (e *gameplaySessionRegistry) scenarioCleanupBatchIDsLocked(gameID uint32) map[string]uint64 {
+func (e *gameplaySessionRegistry) scenarioCleanupBatchIDsLocked(gameID uint32, sources ...gameplayPeerSession) map[string]uint64 {
 	batchIDs := make(map[string]uint64)
 	for key, member := range e.sessions {
-		if member.binding.Mode == game.ModeArena && member.binding.GameID == gameID {
+		if isScenarioCleanupPeer(member, gameID, sources) {
 			batchIDs[key] = member.nextPendingPacketID
 		}
 	}
 	return batchIDs
+}
+
+func isScenarioCleanupPeer(member gameplayPeerSession, gameID uint32, sources []gameplayPeerSession) bool {
+	if len(sources) > 0 {
+		return isScenarioHeroPeer(sources[0], member)
+	}
+	return member.binding.Mode == game.ModeArena && member.binding.GameID == gameID
 }
 
 func hasScenarioCleanupPacket(member gameplayPeerSession, previousBatchID uint64, packet []byte) bool {
@@ -38,9 +45,10 @@ func hasScenarioCleanupPacket(member gameplayPeerSession, previousBatchID uint64
 // queue. An identical packet from an earlier operation must still be sent.
 func (e *gameplaySessionRegistry) queueScenarioCleanupLocked(
 	gameID uint32, ownerUserID uint64, packets [][]byte, previousBatchIDs map[string]uint64,
+	sources ...gameplayPeerSession,
 ) {
 	for key, member := range e.sessions {
-		if member.binding.Mode != game.ModeArena || member.binding.GameID != gameID ||
+		if !isScenarioCleanupPeer(member, gameID, sources) ||
 			member.binding.UserID == ownerUserID || member.isRejoinPending {
 			continue
 		}

@@ -2611,6 +2611,7 @@ func (r gameplayPendingRuntime) retireCanceledTransport(packet raknet.Packet) {
 func (r gameplayPendingRuntime) pollWorld(
 	ctx context.Context, packet raknet.Packet,
 ) ([][]byte, error) {
+	r.observeScenarioHeroClock(packet)
 	r.persistOverdriveUnlock(ctx, packet.Address.String())
 	r.registry.mutex.RLock()
 	peerSession, isFound := r.registry.sessions[packet.Address.String()]
@@ -2648,6 +2649,13 @@ func (r gameplayPendingRuntime) pollWorld(
 		// Debug-ping preparation and the client's loaded status advance rejoin.
 		// World packets must wait until the fresh client can consume a baseline.
 		return nil, nil
+	}
+	arrivalPackets, arrivalErr := r.pollScenarioHeroArrival(packet)
+	if arrivalErr != nil {
+		return nil, fmt.Errorf("scenarioArrival: %w", arrivalErr)
+	}
+	if len(arrivalPackets) > 0 {
+		return arrivalPackets, nil
 	}
 	if isFound && peerSession.zone != nil && peerSession.dungeonSetup.IsCommitted() &&
 		(peerSession.isMutationBaselineRequired || peerSession.zone.IsProjectionBaselineRequired(peerSession.binding.UserID, peerSession.generation)) {

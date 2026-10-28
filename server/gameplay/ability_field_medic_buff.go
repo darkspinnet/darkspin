@@ -325,7 +325,14 @@ func fieldMedicTargetResourcePackets(
 		if err != nil {
 			return nil, fmt.Errorf("fieldMedicHeroResource: %w", err)
 		}
-		if peerSession.binding.Mode == game.ModeArena && run.creatureIndex == peerSession.deployedCreatureIndex {
+		// Capacity changes and clamps affect the native combatant as well as
+		// the squad HUD, including a benched hero's cached object. Publishing
+		// only the HUD leaves stale HP until that hero is deployed again.
+		if peerSession.squad != nil {
+			character, isCharacterFound := peerSession.squad.Character(run.creatureIndex)
+			if !isCharacterFound {
+				return nil, errors.New("field medic hero resource unavailable")
+			}
 			maximumPacket, maximumErr := raknet.MarshalApplication(raknet.AttributeDataUpdateMessage{
 				ObjectID: run.targetObjectID, Value: map[uint8]float32{4: peerSession.characterHitPointMaximum(run.creatureIndex)},
 			})
@@ -333,7 +340,7 @@ func fieldMedicTargetResourcePackets(
 				return nil, fmt.Errorf("fieldMedicMaximum: %w", maximumErr)
 			}
 			healthPacket, healthErr := raknet.MarshalApplication(raknet.CombatantDataDeltaMessage{
-				ObjectID: run.targetObjectID, HitPoints: peerSession.deployedHitPoint(), IsHitPointChanged: true,
+				ObjectID: run.targetObjectID, HitPoints: character.HitPoints, IsHitPointChanged: true,
 			})
 			if healthErr != nil {
 				return nil, fmt.Errorf("fieldMedicHealth: %w", healthErr)

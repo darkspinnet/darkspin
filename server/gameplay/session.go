@@ -269,6 +269,7 @@ type zonePresentationRuntime struct {
 	isTutorialTeleporterPresentationPending bool
 	securityTeleporterStates                map[uint32]bool
 	campaignTeleporterStates                map[uint32]bool
+	campaignTeleporterTransitions           map[uint32]*campaignTeleporterTransition
 	campaignTunnelExitSource                game.Vec3
 	campaignTunnelExitRadius                float32
 	isCampaignTunnelExitPending             bool
@@ -1727,6 +1728,9 @@ func (s *gameplayPeerSession) syncZoneHero() error {
 	if s == nil || s.zone == nil || s.deployedObjectID == 0 {
 		return nil
 	}
+	if s.isScenarioHeroRetired() {
+		return nil
+	}
 	character, err := s.normalizeCampaignCharacterResources(
 		s.deployedCreatureIndex,
 	)
@@ -1793,6 +1797,9 @@ func (s *gameplayPeerSession) syncZoneSquadCheckpoint() error {
 
 func (s *gameplayPeerSession) syncZoneHeroPose() error {
 	if s == nil || s.zone == nil || s.deployedObjectID == 0 {
+		return nil
+	}
+	if s.isScenarioHeroRetired() {
 		return nil
 	}
 	velocity := sim.Position{}
@@ -1904,8 +1911,7 @@ func (s *gameplayPeerSession) resetAbilityAdmissionForSwitch() *abilityraknet.Me
 	}
 	s.stopHeroInfections()
 	if s.heroHealingTicks != nil {
-		s.heroHealingTicks.Stop()
-		s.heroHealingTicks = nil
+		s.stopHealingTicksPresentation()
 	}
 	s.roarReductionObjectID = 0
 	s.roarReductionExpiresAt = time.Time{}

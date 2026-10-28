@@ -37,7 +37,7 @@ func (e *gameplaySessionRegistry) configureScenarioHeroPools(modifierPool *modif
 	e.scenarioEffectPool = effectPool
 }
 
-// This fixture changes only an active owned arena, never saved creatures,
+// This fixture changes only active owned gameplay, never saved creatures,
 // match statistics, immunity, or the production ability acceptance rules.
 func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req scenario.HeroResetRequest, creature game.GameplayCreature) (scenario.HeroResetReceipt, error) {
 	result := scenario.HeroResetReceipt{}
@@ -51,7 +51,12 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 	if !req.IsAbilityRankSet && req.AbilityRank != 0 {
 		return result, errors.New("ability rank requires its explicit server fixture flag")
 	}
-	err := e.lockScenarioSpawn(ctx)
+	memberMutex, err := e.lockMember(ctx, gameplayMemberKey{gameID: req.GameID, userID: uint64(req.UserID)})
+	if err != nil {
+		return result, fmt.Errorf("resetMember: %w", err)
+	}
+	defer memberMutex.Unlock()
+	err = e.lockScenarioSpawn(ctx)
 	if err != nil {
 		return result, fmt.Errorf("resetLock: %w", err)
 	}
@@ -61,29 +66,14 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 		return result, fmt.Errorf("resetSession: %w", err)
 	}
 	match := e.arenaMatches[req.GameID]
-	if observation.Outcome != scenario.Passed || member.binding.Mode != game.ModeArena ||
-		member.binding.GameID != req.GameID || member.generation != req.PeerGeneration ||
-		member.transportGeneration != req.TransportGeneration || member.deployedObjectID != req.ObjectID ||
-		member.squad == nil || member.squad.State().IsGameOver || !member.dungeonSetup.IsCommitted() ||
-		!member.isArenaCombatActive || match == nil || !match.isCombatActive || match.isTransferActive {
-		return result, errors.New("hero reset requires the observed committed live arena transport")
+	if observation.Outcome != scenario.Passed {
+		return result, errors.New("hero reset requires an admitted gameplay transport")
 	}
-	ownedUsers := make(map[uint64]bool, len(req.OwnedUserIDs))
-	for _, userID := range req.OwnedUserIDs {
-		if userID > 0 {
-			ownedUsers[uint64(userID)] = true
-		}
+	result.RecipientCount, err = e.validateScenarioHeroScopeLocked(member, req)
+	if err != nil {
+		return result, fmt.Errorf("resetScope: %w", err)
 	}
-	for _, candidate := range e.sessions {
-		if candidate.binding.GameID != req.GameID {
-			continue
-		}
-		if !ownedUsers[candidate.binding.UserID] || candidate.binding.Mode != game.ModeArena ||
-			!candidate.dungeonSetup.IsCommitted() || !candidate.isArenaCombatActive {
-			return result, errors.New("hero reset requires every arena participant to be an owned ready client")
-		}
-		result.RecipientCount++
-	}
+	result.ZoneGeneration = req.ZoneGeneration
 	index := member.deployedCreatureIndex
 	character, isFound := member.squad.Character(index)
 	if !isFound || !character.IsAvailable || character.HitPoints <= 0 {
@@ -102,6 +92,9 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 		return result, errors.New("hero retirement requires only a replacement noun and observed position")
 	}
 	if req.IsAbilityRankSet {
+		if member.binding.Mode != game.ModeArena {
+			return result, errors.New("ability rank fixtures currently require Arena")
+		}
 		return e.setScenarioHeroAbilityRankLocked(member, req, result.RecipientCount)
 	}
 	if req.IsPlacement {
@@ -165,7 +158,7 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 		return result, fmt.Errorf("resetPackets: %w", err)
 	}
 	previousBatchID := member.nextPendingPacketID
-	previousBatchIDs := e.scenarioCleanupBatchIDsLocked(req.GameID)
+	previousBatchIDs := e.scenarioCleanupBatchIDsLocked(req.GameID, member)
 	if req.Noun != 0 {
 		// A fresh squad fences delayed callbacks holding the old actor identity.
 		e.retireFieldMedicBuffsLocked(&member, e.scenarioModifierPool)
@@ -189,6 +182,7 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 		member.scenarioAbility.rejection = nil
 		member.scenarioAbility.retirement = nil
 		member.scenarioAbility.isCaptureUnavailable = false
+		member.scenarioAbility.isArrivalPending = member.binding.Mode == game.ModeChain
 		err = member.teleportPlayer(e.now(), projected.playerPosition)
 		if err != nil && e.logger != nil {
 			e.logger.Printf("Scenario hero position preservation user=%d: %v", member.binding.UserID, err)
@@ -203,7 +197,9 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 		member.isMissileTargetingPresented[index] = false
 		member.missileTargetingEffectSlots[index] = 0
 		member.attackPose = retainedAttackPose{}
-		delete(match.recentDamages, member.deployedObjectID)
+		if match != nil {
+			delete(match.recentDamages, member.deployedObjectID)
+		}
 		member.passiveStationarySince[index] = e.now()
 		member.abilityCooldownSession().ResetAll()
 		member.abilityReleaseSession().Reset()
@@ -231,6 +227,10 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 			return result, fmt.Errorf("resetMana: %w", manaErr)
 		}
 	}
+	err = e.syncScenarioCampaignHero(&member)
+	if err != nil {
+		return result, fmt.Errorf("resetCampaign: %w", err)
+	}
 	for key, candidate := range e.sessions {
 		if candidate.binding.UserID == member.binding.UserID && candidate.generation == member.generation {
 			if req.Noun != 0 {
@@ -250,13 +250,13 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 				cleanupPackets = append(cleanupPackets, batch.packets...)
 			}
 		}
-		e.queueScenarioCleanupLocked(req.GameID, member.binding.UserID, cleanupPackets, previousBatchIDs)
+		e.queueScenarioCleanupLocked(req.GameID, member.binding.UserID, cleanupPackets, previousBatchIDs, member)
 	}
 	e.commitChannelRemovalsLocked()
-	e.queueFieldMedicRealmPacketsLocked(nil, req.GameID, packets)
+	e.queueScenarioHeroPacketsLocked(member, packets)
 	return scenario.HeroResetReceipt{GameID: req.GameID, ObjectID: req.ObjectID, Noun: member.binding.Creatures[index].Noun,
 		Index: index, HitPoint: restoredHitPoint, ManaPoint: restoredManaPoint, RecipientCount: result.RecipientCount,
-		IsReplacement: req.Noun != 0, IsQueued: true}, nil
+		ZoneGeneration: req.ZoneGeneration, IsReplacement: req.Noun != 0, IsQueued: true}, nil
 }
 
 // Positioning is an explicit fixture action, never evidence for native movement.
@@ -285,11 +285,11 @@ func (e *gameplaySessionRegistry) placeScenarioHeroLocked(member gameplayPeerSes
 			break
 		}
 	}
-	e.queueFieldMedicRealmPacketsLocked(nil, req.GameID, packets)
+	e.queueScenarioHeroPacketsLocked(member, packets)
 	return scenario.HeroResetReceipt{GameID: req.GameID, ObjectID: req.ObjectID,
 		Noun: member.binding.Creatures[member.deployedCreatureIndex].Noun, Index: member.deployedCreatureIndex,
 		HitPoint: member.deployedHitPoint(), ManaPoint: member.deployedManaPoint(),
-		RecipientCount: recipientCount, IsPlacement: true, IsQueued: true}, nil
+		RecipientCount: recipientCount, ZoneGeneration: req.ZoneGeneration, IsPlacement: true, IsQueued: true}, nil
 }
 
 func scenarioHeroResetPackets(member gameplayPeerSession, hitPoint, manaPoint float32, isReplacement bool) ([][]byte, error) {

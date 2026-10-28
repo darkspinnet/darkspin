@@ -25,6 +25,8 @@ type heroHealingTicksRun struct {
 	isCommitted    bool
 	isChanneled    bool
 	sourceObjectID uint32
+	sourceTime     uint64
+	startedAt      time.Time
 	releasePacket  []byte
 }
 
@@ -597,6 +599,7 @@ func (r campaignAbilityCommandRuntime) handleHeroHealingTicks(
 	}
 	run := &heroHealingTicksRun{
 		isChanneled: isFieldMedicSupport, sourceObjectID: req.command.Common.ObjectID,
+		sourceTime: req.packet.SourceTime, startedAt: abilityStartTime,
 		releasePacket: start.Release,
 	}
 	startPresentation := make([][]byte, 0, 2)

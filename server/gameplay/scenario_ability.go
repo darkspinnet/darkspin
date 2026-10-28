@@ -14,6 +14,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/zone"
 	zonecontent "github.com/darkspinnet/darkspin/server/zone/content"
 	zonehero "github.com/darkspinnet/darkspin/server/zone/hero"
+	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
 type scenarioAbilityCatalog struct {
@@ -22,6 +23,11 @@ type scenarioAbilityCatalog struct {
 	scenarioEffectPool   *attachedEffectPool
 }
 type scenarioAbilityState struct {
+	isArrivalPending     bool
+	npcPlans             []zonenpc.SpawnPlan
+	lastSourceTime       uint64
+	lastSourceAt         time.Time
+	clockTransport       uint64
 	isCaptureUnavailable bool
 	nextRevision         uint64
 	nextRejection        uint64

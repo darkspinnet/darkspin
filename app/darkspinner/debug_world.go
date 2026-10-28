@@ -93,6 +93,7 @@ type debugWorldState struct {
 	SessionStage            string                 `json:"session_stage"`
 	Hero                    *debugWorldHero        `json:"hero"`
 	Arena                   *debugWorldArena       `json:"arena,omitempty"`
+	Campaign                *debugWorldCampaign    `json:"campaign,omitempty"`
 	NPCs                    []debugWorldNPC        `json:"npcs"`
 	NPCTotal                int                    `json:"npc_total"`
 	IsNPCTruncated          bool                   `json:"is_npc_truncated"`
@@ -174,6 +175,7 @@ func observeDebugWorld(ctx context.Context, host *debugHost, clientManager *debu
 	result.ZoneGeneration = world.ZoneGeneration
 	result.SessionStage = world.SessionStage
 	result.Arena = debugWorldArenaDTO(world.Arena)
+	result.Campaign = debugWorldCampaignDTO(world.Campaign)
 	result.NPCTotal = world.NPCTotal
 	result.IsNPCTruncated = world.IsNPCTruncated
 	result.PickupTotal = world.PickupTotal

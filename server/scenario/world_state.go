@@ -17,6 +17,7 @@ type WorldState struct {
 	SessionStage            string
 	Hero                    *WorldHero
 	Arena                   *WorldArena
+	Campaign                *WorldCampaign
 	Ability                 *AbilityState
 	NPCs                    []WorldNPC
 	NPCTotal                int
@@ -34,6 +35,20 @@ type WorldState struct {
 	IsVictoryCommitted      bool
 	IsObjectiveComplete     bool
 	Boss                    *WorldBoss
+}
+
+type WorldCampaign struct {
+	Members []WorldCampaignMember
+}
+
+type WorldCampaignMember struct {
+	UserID              uint64
+	PeerGeneration      uint64
+	TransportGeneration uint64
+	ZoneGeneration      uint64
+	DeployedIndex       uint32
+	IsReady             bool
+	Characters          []WorldHero
 }
 
 // WorldArena copies match and squad producers; it does not attest native UI.

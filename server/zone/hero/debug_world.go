@@ -10,5 +10,8 @@ func (e *Session) ScenarioActor(userID, generation uint64) (Actor, bool) {
 	}
 	defer e.mu.RUnlock()
 	actor, isFound := e.actors[userID]
+	if e.retiredActors[userID] {
+		return Actor{}, false
+	}
 	return actor, isFound && actor.PeerGeneration == generation
 }

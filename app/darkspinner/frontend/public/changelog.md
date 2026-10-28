@@ -1,30 +1,16 @@
 # Changelog
 
+### 2026-10-28
+
+- [#141](https://github.com/darkspinnet/darkspin/issues/141) Accept build-103 signed editor costs so hero resets and removed cosmetic edits can refund DNA instead of returning an error.
+- [#141](https://github.com/darkspinnet/darkspin/issues/141) Reset the vendor page when leaving the Parts filter, preventing stale page indices from addressing the smaller Buyback list after inventory closes.
+- [#141](https://github.com/darkspinnet/darkspin/issues/141) Publish Reconstruct's animation reset and terminal release when action recovery interrupts its healing channel.
+- [#141](https://github.com/darkspinnet/darkspin/issues/141) Synchronize native hero health and maximum health alongside the squad HUD when Reconstruct's temporary health-capacity buff changes or expires.
+- [#141](https://github.com/darkspinnet/darkspin/issues/141) Restore selected campaign security portals' inactive sphere and authored one-second power-up and power-down effect transitions.
+- [#141](https://github.com/darkspinnet/darkspin/issues/141) Use Fast Swipe's authored 2.5-unit hit allowance beyond actor footprints instead of rejecting every hit outside direct contact.
+
 ### 2026-10-27
 
-- pve: Correct Celestial Comet's push origin from the caster to the impact center, its jump arc and landing recovery, and its muzzle and ground-effect timing.
-- pve: Correct Zetawatt Beam's live enemy selection, beam endpoint height and victim-attached hit effects.
-- pve: Restore Flak Cannon's missing power cost, correct ranked cooldowns and repeated-blast timing, and improve haste-effect ownership and cleanup.
-- pve: Correct Dazing Shot's higher-rank cost, splash scaling and ranked effects.
-- pve: Keep projectile bursts running through blocked or fully absorbed hits, and stop refunding an activation after a projectile has launched.
-- pvp: Restore Celestial Comet's knockback from its impact center, with authored jump parameters, landing recovery and recipient cleanup across hero replacement.
-- pvp: Match slow, stun and silence admission to build 103's game-mode checks, and prevent scenario hero replacement from broadcasting modifier cleanup twice.
-- pvp: Move Zetawatt Beam from immediate single-target fallback to delayed line damage and authored beam/impact effects, preserving live target selection and correct endpoint height.
-- pvp: Restore Flak Cannon's projectile interception, caster-owned slow before damage, repeated blasts and temporary attack-speed upgrades, with corrected ranked costs, cooldowns and effect lifetimes.
-- pvp: Restore Dazing Shot's primary/splash damage, caster-owned snares, stacked silence and ranked effects; correct higher-rank cost/scaling and preserve silence duration and instance on refresh.
-- pvp: Reject legacy ability requests while the casting hero is stunned or silenced.
-- pvp: Retire recipient modifiers before ordinary squad swaps so returning heroes do not retain stale movement or control state.
-- pvp: Add actor-scoped server ability-rank fixtures and read-only native rank observations for reusable scenario batches.
-- pvp: Restore Meteor Strike's accepted-hit stun, preserving it through caster swaps and clearing it on recipient death, replacement or expiry.
-- pvp: Add reusable parallel ability batches with health/power and cooldown resets, and prevent hot-swap rig crashes by separating actor retirement from recreation and verifying native rig readiness.
-- pvp: Execute Essence Volley and Thunderstorm through their shared projectile runtimes, with opposing-player targeting and effective life-steal healing attributed to the casting hero.
-- pvp: Restore Arakna's kill-earned souls and Phantom Burst's collected-soul projectile count, clearing soul bonuses on death and between rounds.
-- pvp: Keep projectile bursts running through blocked or fully absorbed hits, and stop refunding an activation after a projectile has launched.
-- pvp: Add scenario-only hero replacement, placement and health/power restoration so ability sweeps can reuse one live match without changing saved squads or combat statistics.
-- pvp: Restore Arc Weld and Chain Lightning hops between opposing heroes, and Reconstruct's allied healing, temporary health capacity and movement cancellation.
-- pvp: Execute Phantom Burst through its shared projectile runtime, with radial collisions, correct team ownership and arena-owned trapped-soul visual objects.
-- pvp: Restore flight and collisions for homing missiles, projectile waves, Missile Barrage, Electron Sphere and lobbed grenades, including allied healing on projectile impact.
-- pvp: Keep delayed damage attributed to the casting hero instead of the newly deployed hero after a squad swap.
 - [#139](https://github.com/darkspinnet/darkspin/issues/139) Preserve the configured advertised gameplay address instead of replacing it with a private TCP listener address during remote game setup.
 - [#138](https://github.com/darkspinnet/darkspin/issues/138) Preserve accepted Plasma Column and Arboreal Might lifetimes when unrelated commands are rejected or expire, including their reserved visual-effect slots.
 - [#138](https://github.com/darkspinnet/darkspin/issues/138) Keep Hardened Mantle's effect slot reserved through action recovery so its later expiry cannot remove a newly cast ability's visual effect.

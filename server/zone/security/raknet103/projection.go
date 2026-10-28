@@ -21,6 +21,14 @@ func State(
 	return statePublication(publication)
 }
 
+func Transition(objectID uint32, teleport zonesecurity.Teleport, isActive bool) ([][]byte, error) {
+	publication, err := zonesecurity.PublishTransition(objectID, teleport, isActive)
+	if err != nil {
+		return nil, fmt.Errorf("transitionPublication: %w", err)
+	}
+	return statePublication(publication)
+}
+
 func InitialState(objectID [zonesecurity.RouteCount]uint32) ([][]byte, error) {
 	packets, err := InitialStateWithRotations(objectID, [zonesecurity.RouteCount]raknet.Vector3{})
 	if err != nil {

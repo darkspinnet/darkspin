@@ -28,8 +28,9 @@ type Actor struct {
 }
 
 type Session struct {
-	mu     sync.RWMutex
-	actors map[uint64]Actor
+	mu            sync.RWMutex
+	actors        map[uint64]Actor
+	retiredActors map[uint64]bool
 }
 
 func NewSession() *Session {
@@ -74,6 +75,7 @@ func (s *Session) Put(actor Actor) error {
 		}
 	}
 	s.actors[actor.UserID] = actor
+	delete(s.retiredActors, actor.UserID)
 	return nil
 }
 
@@ -84,6 +86,9 @@ func (s *Session) Snapshot(userID uint64, peerGeneration uint64) (Actor, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	actor, isFound := s.actors[userID]
+	if s.retiredActors[userID] {
+		return Actor{}, false
+	}
 	return actor, isFound && actor.PeerGeneration == peerGeneration
 }
 
@@ -94,7 +99,7 @@ func (s *Session) SnapshotByObjectID(objectID uint32) (Actor, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, actor := range s.actors {
-		if actor.ObjectID == objectID {
+		if actor.ObjectID == objectID && !s.retiredActors[actor.UserID] {
 			return actor, true
 		}
 	}
@@ -109,6 +114,9 @@ func (s *Session) Snapshots() []Actor {
 	defer s.mu.RUnlock()
 	actor := make([]Actor, 0, len(s.actors))
 	for _, current := range s.actors {
+		if s.retiredActors[current.UserID] {
+			continue
+		}
 		actor = append(actor, current)
 	}
 	sort.Slice(actor, func(left int, right int) bool {
@@ -139,7 +147,7 @@ func (s *Session) UpdatePose(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	actor, isFound := s.actors[userID]
-	if !isFound || actor.PeerGeneration != peerGeneration ||
+	if !isFound || s.retiredActors[userID] || actor.PeerGeneration != peerGeneration ||
 		actor.ObjectID != objectID {
 		return errors.New("hero actor unavailable")
 	}
@@ -163,7 +171,7 @@ func (e *Session) SetOrientation(userID uint64, peerGeneration uint64, objectID 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	actor, isFound := e.actors[userID]
-	if !isFound || actor.PeerGeneration != peerGeneration || actor.ObjectID != objectID {
+	if !isFound || e.retiredActors[userID] || actor.PeerGeneration != peerGeneration || actor.ObjectID != objectID {
 		return errors.New("hero actor unavailable")
 	}
 	actor.Orientation = orientation
@@ -199,7 +207,7 @@ func (s *Session) SetResources(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	actor, isFound := s.actors[userID]
-	if !isFound || actor.PeerGeneration != peerGeneration ||
+	if !isFound || s.retiredActors[userID] || actor.PeerGeneration != peerGeneration ||
 		actor.ObjectID != objectID {
 		return Actor{}, errors.New("hero actor unavailable")
 	}
@@ -232,7 +240,7 @@ func (s *Session) SetStealthed(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	actor, isFound := s.actors[userID]
-	if !isFound || actor.PeerGeneration != peerGeneration ||
+	if !isFound || s.retiredActors[userID] || actor.PeerGeneration != peerGeneration ||
 		actor.ObjectID != objectID {
 		return errors.New("hero actor unavailable")
 	}
@@ -252,6 +260,7 @@ func (s *Session) Remove(userID uint64, peerGeneration uint64) bool {
 		return false
 	}
 	delete(s.actors, userID)
+	delete(s.retiredActors, userID)
 	return true
 }
 

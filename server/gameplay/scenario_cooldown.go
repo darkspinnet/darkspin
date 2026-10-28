@@ -49,9 +49,9 @@ func (e *gameplaySessionRegistry) resetScenarioCooldownsLocked(member gameplayPe
 		}
 	}
 	// Recovery/arrival locks and in-flight producers retain their lifetimes.
-	e.queueFieldMedicRealmPacketsLocked(nil, req.GameID, packets)
+	e.queueScenarioHeroPacketsLocked(member, packets)
 	return scenario.HeroResetReceipt{GameID: req.GameID, ObjectID: req.ObjectID,
 		Noun: member.binding.Creatures[member.deployedCreatureIndex].Noun, Index: member.deployedCreatureIndex,
 		HitPoint: member.deployedHitPoint(), ManaPoint: member.deployedManaPoint(), RecipientCount: recipientCount,
-		IsCooldownReset: true, CooldownCount: cooldownCount, IsQueued: true}, nil
+		ZoneGeneration: req.ZoneGeneration, IsCooldownReset: true, CooldownCount: cooldownCount, IsQueued: true}, nil
 }
