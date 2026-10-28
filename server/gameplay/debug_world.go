@@ -99,6 +99,8 @@ func (e *gameplaySessionRegistry) ScenarioWorldState(ctx context.Context, userID
 	}
 	if world.Hero != nil && world.Hero.Index < uint32(len(matched.binding.Creatures)) {
 		world.Hero.Noun = matched.binding.Creatures[world.Hero.Index].Noun
+		world.Hero.PassiveKillStack = matched.passiveKillStack[world.Hero.Index]
+		world.Hero.InputLockRemainingMS = abilityDurationMS(matched.heroInputLockRemaining(e.now()))
 	}
 	// The zone producer samples pickup availability and simulation expiry
 	// against this same captured clock, after acquiring the pinned epoch.

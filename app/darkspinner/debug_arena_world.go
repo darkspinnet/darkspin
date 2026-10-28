@@ -5,11 +5,13 @@ package main
 import "github.com/darkspinnet/darkspin/server/scenario"
 
 type debugWorldArena struct {
-	Team           uint16                  `json:"team"`
-	WinningTeam    uint32                  `json:"winning_team"`
-	IsCombatActive bool                    `json:"is_combat_active"`
-	IsResultReady  bool                    `json:"is_result_ready"`
-	Members        []debugWorldArenaMember `json:"members"`
+	FriendlyProjectileCount int                     `json:"friendly_projectile_count"`
+	HostileProjectileCount  int                     `json:"hostile_projectile_count"`
+	Team                    uint16                  `json:"team"`
+	WinningTeam             uint32                  `json:"winning_team"`
+	IsCombatActive          bool                    `json:"is_combat_active"`
+	IsResultReady           bool                    `json:"is_result_ready"`
+	Members                 []debugWorldArenaMember `json:"members"`
 }
 
 type debugWorldArenaMember struct {
@@ -29,6 +31,7 @@ func debugWorldArenaDTO(arena *scenario.WorldArena) *debugWorldArena {
 		return nil
 	}
 	result := &debugWorldArena{Team: arena.Team, WinningTeam: arena.WinningTeam,
+		FriendlyProjectileCount: arena.FriendlyProjectileCount, HostileProjectileCount: arena.HostileProjectileCount,
 		IsCombatActive: arena.IsCombatActive, IsResultReady: arena.IsResultReady,
 		Members: make([]debugWorldArenaMember, 0, len(arena.Members))}
 	for _, member := range arena.Members {
@@ -38,10 +41,13 @@ func debugWorldArenaDTO(arena *scenario.WorldArena) *debugWorldArena {
 			SwapRemainingMS: member.SwapRemainingMS,
 			DeployedIndex:   member.DeployedIndex, Characters: make([]debugWorldHero, 0, len(member.Characters))}
 		for _, hero := range member.Characters {
-			memberDTO.Characters = append(memberDTO.Characters, debugWorldHero{Index: hero.Index, Noun: hero.Noun,
-				HitPoint: hero.HitPoint, ManaPoint: hero.ManaPoint,
+			heroDTO := debugWorldHero{Index: hero.Index, Noun: hero.Noun,
+				PassiveKillStack: hero.PassiveKillStack,
+				HitPoint:         hero.HitPoint, ManaPoint: hero.ManaPoint,
 				MaximumHitPoint: hero.MaximumHitPoint, MaximumManaPoint: hero.MaximumManaPoint,
-				IsDefeated: hero.IsDefeated})
+				IsDefeated: hero.IsDefeated}
+			debugWorldHeroMotionDTO(&heroDTO, &hero)
+			memberDTO.Characters = append(memberDTO.Characters, heroDTO)
 		}
 		result.Members = append(result.Members, memberDTO)
 	}

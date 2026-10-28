@@ -134,7 +134,7 @@ func PlanShockwave(
 }
 
 func PlanZetawattBeam(
-	enemies TargetReader, sourceObjectID uint32, sourcePosition game.Vec3,
+	enemies TargetReader, sourceObjectID uint32, targetObjectID uint32, sourcePosition game.Vec3,
 	targetPosition game.Vec3, creature game.GameplayCreature, definition sim.AbilityDefinition,
 ) (AreaPlan, error) {
 	if enemies == nil || sourceObjectID == 0 || creature.Noun == 0 ||
@@ -143,6 +143,14 @@ func PlanZetawattBeam(
 		!isFinitePosition(sourcePosition) ||
 		!isFinitePosition(targetPosition) {
 		return AreaPlan{}, errors.New("invalid Zetawatt Beam ability")
+	}
+	// Build 103 resolves a still-hostile selected object at hit time before
+	// falling back to the submitted ground position.
+	if targetObjectID != 0 {
+		target, isFound := enemies.NPC(targetObjectID)
+		if isFound && !target.IsDefeated && target.HitPoint > 0 && target.Faction == zonenpc.FactionNonPlayerAligned {
+			targetPosition = target.Plan.Position
+		}
 	}
 	directionX := targetPosition.X - sourcePosition.X
 	directionY := targetPosition.Y - sourcePosition.Y

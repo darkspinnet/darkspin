@@ -70,7 +70,8 @@ type heroBurstStep struct {
 func (e heroBurstSchedule) applyLifeSteal(
 	peerSession *gameplayPeerSession, damage float32,
 ) ([][]byte, float32, error) {
-	if e.definition.LifeSteal <= 0 || damage <= 0 {
+	if e.definition.LifeSteal <= 0 || damage <= 0 || peerSession.deployedObjectID != e.sourceObjectID ||
+		peerSession.deployedCreatureIndex != e.creatureIndex || peerSession.deployedHitPoint() <= 0 {
 		return nil, 0, nil
 	}
 	healing, err := game.ApplyTargetHealingReduction(
@@ -194,7 +195,11 @@ func (e heroBurstStep) produceLaunch() ([][]byte, error) {
 		}
 	}
 	if schedule.definition.Name == "LightningTempest_Active" {
-		selectedTargetObjectID, selectedPosition := schedule.selectRetargetShot(peerSession)
+		selectedTargetObjectID, selectedPosition, targetErr := schedule.selectRetargetShot(peerSession)
+		if targetErr != nil {
+			schedule.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("burstRetarget: %w", targetErr)
+		}
 		targetObjectID = selectedTargetObjectID
 		schedule.shotTargetObjectIDs[e.index] = targetObjectID
 		targetPosition = selectedPosition
@@ -203,11 +208,12 @@ func (e heroBurstStep) produceLaunch() ([][]byte, error) {
 	}
 	geometry := zonenpc.ProjectileGeometry{}
 	if targetObjectID != 0 {
-		target, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
+		enemies := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, schedule.definition, schedule.packet.SourceTime)
+		target, isTargetFound := enemies.NPC(targetObjectID)
 		if isTargetFound && !target.IsDefeated && target.HitPoint > 0 {
 			var geometryErr error
-			geometry, _, geometryErr = campaignTargetProjectileGeometry(
-				schedule.runtime.program, target,
+			geometry, _, geometryErr = abilityTargetProjectileGeometryLocked(
+				schedule.runtime, peerSession, target,
 			)
 			if geometryErr != nil {
 				schedule.runtime.registry.mutex.Unlock()
@@ -308,8 +314,15 @@ func (e heroBurstStep) produceImpact() ([][]byte, error) {
 	if schedule.definition.Name == "LightningTempest_Active" {
 		return e.produceRetargetImpact(peerSession)
 	}
+	enemies := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, schedule.definition,
+		schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond))
+	random, randomErr := schedule.runtime.registry.abilityRandomLocked(peerSession)
+	if randomErr != nil {
+		schedule.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("burstRandom: %w", randomErr)
+	}
 	livePlan, planErr := zoneability.PlanBasic(zoneability.BasicCommand{
-		NPCs: peerSession.zone.NPCs(), SourceObjectID: schedule.sourceObjectID,
+		NPCs: enemies, SourceObjectID: schedule.sourceObjectID,
 		TargetObjectID: schedule.targetObjectID,
 		AbilityID:      schedule.plan.AbilityID,
 		SourcePosition: game.Vec3(peerSession.playerPosition),
@@ -317,10 +330,9 @@ func (e heroBurstStep) produceImpact() ([][]byte, error) {
 		Definition:     schedule.definition,
 		Damage:         schedule.plan.Damage,
 	})
-	liveNPC, isTargetFound :=
-		peerSession.zone.NPCs().NPC(schedule.targetObjectID)
+	liveNPC, isTargetFound := enemies.NPC(schedule.targetObjectID)
 	isHitChanceAccepted := schedule.definition.ShotHitChance <= 0 ||
-		peerSession.zone.Population().Random().Float64() <=
+		random.Float64() <=
 			float64(schedule.definition.ShotHitChance)
 	if planErr != nil || !isTargetFound || !isHitChanceAccepted {
 		impactPosition := schedule.planTargetPosition(peerSession, e.index)
@@ -377,13 +389,17 @@ func (e heroBurstStep) produceImpact() ([][]byte, error) {
 		return packets, nil
 	}
 	result, err := zoneability.CommitBasic(
-		peerSession.zone.Population().Random(), peerSession.zone.NPCs(),
+		random, enemies,
 		livePlan, schedule.creature, peerSession.binding.Difficulty,
 		schedule.runtime.program.Critical,
 	)
 	if err != nil {
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("heroBurstCommit[%d]: %w", e.index, err)
+	}
+	if targets, isArena := enemies.(*arenaAbilityTargets); isArena {
+		return e.finishArenaTargetedBurstLocked(peerSession, targets, liveNPC, result,
+			collision.Position, sim.Position(zoneability.ProjectileDirection(raknet.Vector3(shotSourcePosition), shotTargetPosition)))
 	}
 	transition, err := peerSession.applyCampaignDamageTransition(result.Damage)
 	if err != nil {
@@ -452,13 +468,17 @@ func (e heroBurstStep) produceImpact() ([][]byte, error) {
 
 func (e heroBurstSchedule) selectRetargetShot(
 	peerSession gameplayPeerSession,
-) (uint32, raknet.Vector3) {
-	random := peerSession.zone.Population().Random()
+) (uint32, raknet.Vector3, error) {
+	random, err := e.runtime.registry.abilityRandomLocked(peerSession)
+	if err != nil {
+		return 0, raknet.Vector3{}, fmt.Errorf("retargetRandom: %w", err)
+	}
+	enemies := e.runtime.registry.abilityTargetsLocked(e.runtime, peerSession, e.definition, e.packet.SourceTime)
 	isHit := e.definition.ShotHitChance <= 0 ||
 		random.Float64() <= float64(e.definition.ShotHitChance)
 	if isHit {
-		candidate := make([]zonenpc.Snapshot, 0)
-		for _, npc := range peerSession.zone.NPCs().LiveSnapshots() {
+		candidates := make([]zonenpc.Snapshot, 0)
+		for _, npc := range enemies.LiveSnapshots() {
 			if npc.Faction != zonenpc.FactionNonPlayerAligned || npc.Plan.IsFixture ||
 				npc.Plan.Position.Sub(e.sourcePosition).Length() > e.definition.Distance {
 				continue
@@ -471,15 +491,18 @@ func (e heroBurstSchedule) selectRetargetShot(
 				}
 			}
 			if !isUsed {
-				candidate = append(candidate, npc)
+				candidates = append(candidates, npc)
 			}
 		}
-		if len(candidate) > 0 {
-			index := min(
-				len(candidate)-1, int(random.Float64()*float64(len(candidate))),
-			)
-			return candidate[index].Plan.ObjectID,
-				raknet.Vector3(candidate[index].Plan.Position)
+		if len(candidates) > 0 {
+			index := 0
+			// Build 103's retarget loop draws a candidate index only when
+			// more than one unvisited enemy remains.
+			if len(candidates) > 1 {
+				index = min(len(candidates)-1, int(random.Float64()*float64(len(candidates))))
+			}
+			return candidates[index].Plan.ObjectID,
+				raknet.Vector3(candidates[index].Plan.Position), nil
 		}
 	}
 	angle := random.Float64() * 2 * math.Pi
@@ -488,7 +511,7 @@ func (e heroBurstSchedule) selectRetargetShot(
 		X: e.sourcePosition.X + float32(math.Cos(angle)*distance),
 		Y: e.sourcePosition.Y + float32(math.Sin(angle)*distance),
 		Z: e.sourcePosition.Z,
-	}
+	}, nil
 }
 
 func (e heroBurstStep) produceRetargetImpact(
@@ -507,9 +530,15 @@ func (e heroBurstStep) produceRetargetImpact(
 		if err != nil {
 			return nil, fmt.Errorf("heroBurstRetargetMiss[%d]: %w", e.index, err)
 		}
+		if peerSession.binding.Mode == game.ModeArena && schedule.runtime.logger != nil {
+			schedule.runtime.logger.Printf("Arena targeted burst miss ability=%s shot=%d source=%d deadline_ms=%d",
+				schedule.definition.Name, e.index, schedule.sourceObjectID, e.deadline.Milliseconds())
+		}
 		return packets, nil
 	}
-	liveNPC, isFound := peerSession.zone.NPCs().NPC(targetObjectID)
+	enemies := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, schedule.definition,
+		schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond))
+	liveNPC, isFound := enemies.NPC(targetObjectID)
 	if !isFound || liveNPC.IsDefeated || liveNPC.HitPoint <= 0 {
 		packets, err := schedule.run.ResolveCollision(
 			context.Background(), e.index, e.deadline, false, false, 0,
@@ -558,7 +587,7 @@ func (e heroBurstStep) produceRetargetImpact(
 		return packets, nil
 	}
 	livePlan, err := zoneability.PlanBasic(zoneability.BasicCommand{
-		NPCs: peerSession.zone.NPCs(), SourceObjectID: schedule.sourceObjectID,
+		NPCs: enemies, SourceObjectID: schedule.sourceObjectID,
 		TargetObjectID: targetObjectID, AbilityID: schedule.plan.AbilityID,
 		SourcePosition: schedule.sourcePosition, MaximumRange: schedule.admissionRange,
 		Definition: schedule.definition, Damage: schedule.plan.Damage,
@@ -567,14 +596,22 @@ func (e heroBurstStep) produceRetargetImpact(
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("heroBurstRetargetPlan[%d]: %w", e.index, err)
 	}
+	random, randomErr := schedule.runtime.registry.abilityRandomLocked(peerSession)
+	if randomErr != nil {
+		schedule.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("retargetRandom: %w", randomErr)
+	}
 	result, err := zoneability.CommitBasic(
-		peerSession.zone.Population().Random(), peerSession.zone.NPCs(), livePlan,
+		random, enemies, livePlan,
 		schedule.creature, peerSession.binding.Difficulty,
 		schedule.runtime.program.Critical,
 	)
 	if err != nil {
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("heroBurstRetargetCommit[%d]: %w", e.index, err)
+	}
+	if targets, isArena := enemies.(*arenaAbilityTargets); isArena {
+		return e.finishArenaTargetedBurstLocked(peerSession, targets, liveNPC, result, collision.Position, sim.Position{Z: -1})
 	}
 	transition, err := peerSession.applyCampaignDamageTransition(result.Damage)
 	if err != nil {
@@ -653,7 +690,8 @@ func (e heroBurstSchedule) planTargetPosition(
 			Z: e.targetPosition.Z,
 		}
 	}
-	npc, isFound := peerSession.zone.NPCs().NPC(e.targetObjectID)
+	enemies := e.runtime.registry.abilityTargetsLocked(e.runtime, peerSession, e.definition, e.packet.SourceTime)
+	npc, isFound := enemies.NPC(e.targetObjectID)
 	if isFound && !npc.IsDefeated && npc.HitPoint > 0 {
 		return raknet.Vector3(npc.Plan.Position)
 	}
@@ -966,27 +1004,26 @@ func (e heroBurstSchedule) fail(scheduleErr error) {
 		}
 		peerSession.failScenarioRide(e.scenarioCast, e.runtime.now(), scheduleErr.Error())
 		delete(peerSession.heroBurstAttacks, e.firstProjectileObjectID)
-		peerSession.restoreCampaignProjectileID(e.previousProjectileObjectID)
-		peerSession.abilityCooldownSession().Rollback(e.cooldownReservation)
-		peerSession.abilityReleaseSession().Rollback(e.releaseReservation)
-		_ = peerSession.setCampaignCharacterManaPoints(
-			e.creatureIndex, e.previousManaPoint,
-		)
-		peerSession.restorePassiveKill(e.creatureIndex, e.passiveKillStack)
-		soulPackets, soulErr := peerSession.syncSoulRavagerPresentation(e.runtime.registry)
-		if soulErr == nil {
-			publishErr := peerSession.publishPackets(soulPackets)
-			if publishErr != nil && e.runtime.logger != nil {
-				e.runtime.logger.Printf(
-					"RakNet Soul Ravager rollback presentation omitted for %s: %v",
-					e.sessionKey, publishErr,
-				)
+		// Once a shot has launched, damage and object IDs may already be
+		// published. A later failure cannot refund or reuse that activation.
+		if !e.run.IsShotLaunched(0) {
+			peerSession.restoreCampaignProjectileID(e.previousProjectileObjectID)
+			peerSession.abilityCooldownSession().Rollback(e.cooldownReservation)
+			peerSession.abilityReleaseSession().Rollback(e.releaseReservation)
+			manaErr := peerSession.setCampaignCharacterManaPoints(e.creatureIndex, e.previousManaPoint)
+			if manaErr != nil && e.runtime.logger != nil {
+				e.runtime.logger.Printf("Burst rollback power source=%d: %v", e.sourceObjectID, manaErr)
 			}
-		} else if e.runtime.logger != nil {
-			e.runtime.logger.Printf(
-				"RakNet Soul Ravager rollback presentation failed for %s: %v",
-				e.sessionKey, soulErr,
-			)
+			peerSession.restorePassiveKill(e.creatureIndex, e.passiveKillStack)
+			soulPackets, soulErr := peerSession.syncSoulRavagerPresentation(e.runtime.registry)
+			if soulErr == nil {
+				publishErr := peerSession.publishPackets(soulPackets)
+				if publishErr != nil && e.runtime.logger != nil {
+					e.runtime.logger.Printf("Burst rollback presentation source=%d: %v", e.sourceObjectID, publishErr)
+				}
+			} else if e.runtime.logger != nil {
+				e.runtime.logger.Printf("Burst rollback soul source=%d: %v", e.sourceObjectID, soulErr)
+			}
 		}
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 	}
@@ -1018,10 +1055,12 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 		targetPosition = command.Ability.CursorPosition
 	}
 	if definition.BurstTargeting == sim.ProjectileBurstTargetingCursorArea ||
+		definition.Name == "LightningTempest_Active" ||
 		(definition.BurstTargeting == sim.ProjectileBurstTargetingRadial && peerSession.binding.Mode == game.ModeArena) {
 		targetObjectID = 0
 	}
 	if targetObjectID == 0 &&
+		definition.Name != "LightningTempest_Active" &&
 		definition.BurstTargeting != sim.ProjectileBurstTargetingRadial &&
 		definition.BurstTargeting != sim.ProjectileBurstTargetingCursorArea {
 		targetObjectID = zoneability.CursorTarget(
@@ -1067,8 +1106,13 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 		}
 	}
 	if projected.Name == "LightningTempest_Active" {
+		random, randomErr := r.registry.abilityRandomLocked(peerSession)
+		if randomErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("cadenceRandom: %w", randomErr)
+		}
 		projected.HitDelays, err = projectRetargetBurstCadence(
-			peerSession, creature, projected,
+			random, creature, projected,
 		)
 		if err != nil {
 			r.registry.mutex.Unlock()
@@ -1193,7 +1237,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 				targetNPC = acquired
 			}
 		}
-		projectileGeometry, _, err = campaignTargetProjectileGeometry(r.program, targetNPC)
+		projectileGeometry, _, err = abilityTargetProjectileGeometryLocked(r, peerSession, targetNPC)
 		if err != nil {
 			peerSession.restoreCampaignProjectileID(previousProjectileObjectID)
 			r.registry.mutex.Unlock()
@@ -1454,13 +1498,12 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 }
 
 func projectRetargetBurstCadence(
-	peerSession gameplayPeerSession, creature game.GameplayCreature,
+	random *sim.SimulatorRandom, creature game.GameplayCreature,
 	definition sim.AbilityDefinition,
 ) ([]time.Duration, error) {
-	if definition.ShotCount == 0 || definition.FiringRate <= 0 {
+	if random == nil || definition.ShotCount == 0 || definition.FiringRate <= 0 {
 		return nil, fmt.Errorf("invalid retarget cadence")
 	}
-	random := peerSession.zone.Population().Random()
 	deadline := time.Duration(0)
 	delays := make([]time.Duration, definition.ShotCount)
 	for index := range delays {

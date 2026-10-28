@@ -36,7 +36,7 @@ func (e *debugLuaVM) register(state *lua.LState) {
 		"ResetProfile": e.resetProfile, "ClientWindow": e.clientWindow,
 		"Click":           e.click,
 		"SnapshotProfile": e.profileState, "WaitForReportedLocation": e.waitForReportedLocation,
-		"LaunchClient": e.launchClient, "SnapshotClient": e.clientState, "CloseClient": e.closeClient,
+		"LaunchClient": e.launchClient, "GetClient": e.getClient, "SnapshotClient": e.clientState, "CloseClient": e.closeClient,
 		"WaitForLogin": e.waitForLogin,
 		"Screenshot":   e.screenshot,
 	})
@@ -232,6 +232,16 @@ func (e *debugLuaVM) wrapClient(state *lua.LState, count int, clientID, profileN
 }
 
 func (e *debugLuaVM) clientHandle(state *lua.LState, client *debugLuaClient, snapshot *lua.LTable) (lua.LValue, *debugError) {
+	if snapshot.RawGetString("is_running") != lua.LTrue {
+		return lua.LNil, &debugError{Code: "conflict", Context: "clientIdentity", Message: "owned client is not running"}
+	}
+	if client.profileName == "" {
+		profileName, isProfile := snapshot.RawGetString("profile_name").(lua.LString)
+		if !isProfile || profileName == "" {
+			return lua.LNil, &debugError{Code: "invalid_result", Context: "clientProfile", Message: "owned client has no profile identity"}
+		}
+		client.profileName = string(profileName)
+	}
 	processID, isPID := snapshot.RawGetString("pid").(lua.LNumber)
 	instanceID, isInstance := snapshot.RawGetString("instance_id").(lua.LString)
 	if !isPID || processID < 1 || processID > math.MaxUint32 || math.Trunc(float64(processID)) != float64(processID) || !isInstance || instanceID == "" {
@@ -242,6 +252,11 @@ func (e *debugLuaVM) clientHandle(state *lua.LState, client *debugLuaClient, sna
 	resource.Value = client
 	state.SetMetatable(resource, state.GetTypeMetatable("ManagedClient"))
 	return resource, nil
+}
+func (e *debugLuaVM) getClient(state *lua.LState) int {
+	clientID := state.CheckString(1)
+	count := e.invoke(state, "client.state", map[string]any{"client_id": clientID}, true)
+	return e.wrapClient(state, count, clientID, "", 120000, time.Now())
 }
 func (e *debugLuaVM) clientState(state *lua.LState) int {
 	return e.invoke(state, "client.state", map[string]any{"client_id": state.CheckString(1)}, true)

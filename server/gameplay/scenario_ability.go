@@ -9,6 +9,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/scenario"
+	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/squad"
 	"github.com/darkspinnet/darkspin/server/zone"
 	zonecontent "github.com/darkspinnet/darkspin/server/zone/content"
@@ -26,6 +27,8 @@ type scenarioAbilityState struct {
 	nextRejection        uint64
 	last                 *scenarioRideCast
 	rejection            *scenario.AbilityRejection
+	retirement           *scenarioHeroRetirement
+	rankOverride         *scenarioHeroRankOverride
 }
 type scenarioRideCast struct {
 	mutex               sync.Mutex
@@ -54,7 +57,7 @@ func (e *gameplaySessionRegistry) configureScenarioAbility(program Programs) {
 // returns and therefore retain this exact preparing cast object. Publishing
 // preparation never sets acceptance or makes the actor available for a cast.
 func (e *gameplayPeerSession) prepareScenarioRide(req campaignCharacterAbilityRequest, ability zonecontent.HeroAbility, at time.Time, destination raknet.Vector3, targetObjectID uint32) *scenarioRideCast {
-	if ability.AssetName != "LightningRogueActive" && ability.AssetName != "MissileTempestActive" {
+	if ability.AssetName != "LightningRogueActive" && ability.Definition.Kind != sim.AbilityKindProjectileBurst {
 		return nil
 	}
 	zoneGeneration, actor, isActor := e.scenarioAbilityActor()
@@ -148,7 +151,7 @@ func (e *gameplayPeerSession) cancelScenarioRide(reason string, at time.Time) {
 	cast.mutex.Lock()
 	defer cast.mutex.Unlock()
 	isCompleted := cast.state.IsReleased && cast.state.IsArrived && cast.state.IsArrivalProcessed
-	if cast.state.AbilityAsset == "MissileTempestActive" {
+	if cast.state.ExpectedLaunchCount > 0 {
 		isCompleted = cast.state.IsReleased && cast.state.IsBurstCompleted
 	}
 	if isCompleted || cast.state.IsFailed {

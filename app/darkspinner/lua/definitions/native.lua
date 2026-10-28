@@ -1,6 +1,10 @@
 ---@meta
 
 ---@class NativeGameplaySnapshot
+---@field is_rig_observed boolean Build-103 controlled graphics/model/rig readiness was safely sampled on its gameplay owner thread.
+---@field is_rig_ready boolean The selected native model has a readable rig and skeleton; meaningful only when is_rig_observed is true. No native addresses are exposed.
+---@field is_ability_rank_available boolean Build-103 selected native character's nine retained ability ranks were safely sampled; independent of the outgoing action field named Rank.
+---@field ability_ranks integer[]|nil Native indices 0 through 8 at Lua positions 1 through 9; present only when is_ability_rank_available. Observation does not set ranks or certify every authored rank path.
 ---@field is_available boolean
 ---@field is_world_active boolean Recent actual gameplay poll in the same native scene and frame owner; not controllability.
 ---@field controlled_handle integer|nil Opaque native generation-bearing handle, not a server object ID.

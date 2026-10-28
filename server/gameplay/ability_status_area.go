@@ -118,6 +118,10 @@ func (r campaignAbilityCommandRuntime) applyTargetStatus(
 	messages := make([]raknet.ApplicationMessage, 0, len(targetObjectIDs))
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
+	if isFound && peerSession.generation == generation && peerSession.binding.Mode == game.ModeArena {
+		r.registry.mutex.Unlock()
+		return r.applyArenaTargetStatus(sessionKey, generation, sourceObjectID, hitTimestamp, plan, targetObjectIDs)
+	}
 	if !isFound || peerSession.generation != generation || peerSession.zone == nil {
 		r.registry.mutex.Unlock()
 		return nil, nil

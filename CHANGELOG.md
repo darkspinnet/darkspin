@@ -2,9 +2,6 @@
 
 ### 2026-10-27
 
-- Add scenario-only PvP hero replacement and health/power restoration so ability sweeps can reuse one live match without changing saved squads or combat statistics.
-- Restore PvP flight and collisions for homing missiles, projectile waves, Missile Barrage, Electron Sphere and lobbed grenades, including allied healing on projectile impact.
-- Keep delayed PvP damage attributed to the casting hero instead of the newly deployed hero after a squad swap.
 - #139 Preserve the configured advertised gameplay address instead of replacing it with a private TCP listener address during remote game setup.
 - #138 Preserve accepted Plasma Column and Arboreal Might lifetimes when unrelated commands are rejected or expire, including their reserved visual-effect slots.
 - #138 Keep Hardened Mantle's effect slot reserved through action recovery so its later expiry cannot remove a newly cast ability's visual effect.

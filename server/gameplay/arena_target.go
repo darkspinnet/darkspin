@@ -33,6 +33,7 @@ type arenaAbilityHit struct {
 	memberKey      string
 	generation     uint64
 	isTeamDefeated bool
+	isLethal       bool
 }
 
 func (e arenaAbilityTargets) member(objectID uint32) (string, gameplayPeerSession, bool) {
@@ -176,6 +177,7 @@ func (e *arenaAbilityTargets) Hit(req zonenpc.HitRequest) (zonenpc.DamageResult,
 		sourceObjectID: req.SourceObjectID,
 		flags:          flags, packets: packets, memberKey: key, generation: target.generation,
 		isTeamDefeated: target.isZoneGameOver(),
+		isLethal:       health <= 0 && damage > 0,
 	}
 	return zonenpc.DamageResult{
 		ObjectID: req.TargetObjectID, PreviousHealth: previousHealth, HitPoint: health,
@@ -187,7 +189,14 @@ func (e *arenaAbilityTargets) Hit(req zonenpc.HitRequest) (zonenpc.DamageResult,
 // finish runs after releasing the registry mutex. Round completion follows all
 // hit publications and checks the whole opposing team, including reserve slots.
 func (e arenaAbilityTargets) finish() {
-	for _, hit := range e.hits {
+	for objectID, hit := range e.hits {
+		if hit.isLethal {
+			hit.isLethal = false
+			e.hits[objectID] = hit
+			e.runtime.registry.mutex.Lock()
+			e.runtime.registry.applyArenaKillPassiveLocked(e.source, hit.sourceObjectID)
+			e.runtime.registry.mutex.Unlock()
+		}
 		if hit.isTeamDefeated {
 			e.runtime.commitArenaVictory(e.source.binding.GameID, uint32(e.source.binding.Team), hit.memberKey, hit.generation)
 		}

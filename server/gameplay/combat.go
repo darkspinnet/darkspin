@@ -6573,6 +6573,9 @@ func (s *gameplayPeerSession) enemyMovementSpeedBuff() float32 {
 		return 0
 	}
 	movementSpeedBuff := s.graviticMovementSpeedBuff() + s.arenaSphereMovementBuff()
+	statusMovement, statusAttack := s.arenaHitSlowBuffs(time.Now())
+	_ = statusAttack // Movement and attack share one status projection.
+	movementSpeedBuff += statusMovement
 	for _, run := range s.campaignNPCModifiers {
 		if run == nil || run.record.TargetObjectID != s.deployedObjectID ||
 			!run.isActive() {
@@ -6588,6 +6591,9 @@ func (s *gameplayPeerSession) enemyAttackSpeed() float32 {
 		return 0
 	}
 	attackSpeed := s.arenaSphereAttackSpeed()
+	statusMovement, statusAttack := s.arenaHitSlowBuffs(time.Now())
+	_ = statusMovement // Movement is applied by enemyMovementSpeedBuff.
+	attackSpeed += statusAttack
 	for _, run := range s.campaignNPCModifiers {
 		if run == nil || run.record.TargetObjectID != s.deployedObjectID ||
 			!run.isActive() {

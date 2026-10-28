@@ -140,7 +140,11 @@ func (e *debugLuaHost) serve(ctx context.Context) (*debugLuaFailure, error) {
 			}
 			if frame.Kind == "finished" {
 				if frame.Sequence != e.sequence || len(pendingFrames) != 0 || frame.Request != nil || frame.Bootstrap != nil || len(frame.Result) != 0 {
-					return nil, errors.New("helper finished with an invalid sequence or outstanding operations")
+					message := fmt.Sprintf("helper finished with sequence %d (expected %d) and %d outstanding operations", frame.Sequence, e.sequence, len(pendingFrames))
+					if frame.Failure != nil {
+						return &debugLuaFailure{Failure: &debugError{Code: "protocol_failed", Context: "helperFinished", Message: message, Cause: frame.Failure}, Traceback: frame.Traceback}, nil
+					}
+					return nil, errors.New(message)
 				}
 				if frame.Failure == nil {
 					return nil, nil

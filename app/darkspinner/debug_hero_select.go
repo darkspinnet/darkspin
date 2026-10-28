@@ -130,6 +130,13 @@ func selectDebugHero(ctx context.Context, host *debugHost, clientManager *debugC
 		if before.Hero.Index != initial.Hero.Index || before.Hero.ObjectID != initial.Hero.ObjectID {
 			return result, &control.ScenarioError{Code: control.OwnershipLost, Context: "heroBeforeActor", Message: "active hero changed before native dispatch"}
 		}
+		if before.Hero.InputLockRemainingMS > 0 {
+			err = waitDebugHeroTick(waitContext, ticker)
+			if err != nil {
+				return result, fmt.Errorf("heroRecoveryWait: %w", err)
+			}
+			continue
+		}
 		result.Action, err = clientManager.SelectHero(waitContext, req.ClientID, *req.Slot)
 		if err != nil {
 			if isDebugHeroDispatchBlocked(result.Action, *req.Slot, initialNative) {
@@ -163,7 +170,7 @@ func selectDebugHero(ctx context.Context, host *debugHost, clientManager *debugC
 			if native.OwnerThreadID != initialNative.OwnerThreadID {
 				return result, &control.ScenarioError{Code: control.OwnershipLost, Context: "heroNativeOwner", Message: "native gameplay owner changed during hero selection"}
 			}
-			if world.IsAvailable && world.Hero != nil && world.Hero.Index == *req.Slot && native.FrameSequence > initialNative.FrameSequence && *native.ControlledHandle != *initialNative.ControlledHandle {
+			if world.IsAvailable && world.Hero != nil && world.Hero.Index == *req.Slot && world.Hero.InputLockRemainingMS == 0 && native.FrameSequence > initialNative.FrameSequence && *native.ControlledHandle != *initialNative.ControlledHandle {
 				err = recheckDebugWorldOwner(waitContext, host, clientManager, owner)
 				if err != nil {
 					return result, fmt.Errorf("heroFinalOwner: %w", err)
@@ -263,7 +270,12 @@ func isDebugHeroDispatchBlocked(action any, slot uint32, initial *controlGamepla
 		return false
 	}
 	selection, isSelection := receipt["hero_selection"].(*controlHeroSelection)
-	if !isSelection || selection == nil || selection.IsQueryProcessed || selection.RequestedSlot != slot {
+	if !isSelection || selection == nil || selection.RequestedSlot != slot {
+		return false
+	}
+	// A sampled native cooldown/recovery refusal is also safe to wait on:
+	// both dispatch flags explicitly prove that no input edge was attempted.
+	if selection.IsQueryProcessed && (selection.EligibilityCode == nil || *selection.EligibilityCode == 0) {
 		return false
 	}
 	if selection.PreviousSlot != nil && (*selection.PreviousSlot > 2 || *selection.PreviousSlot == slot) {

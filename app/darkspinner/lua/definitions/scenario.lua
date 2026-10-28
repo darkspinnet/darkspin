@@ -51,7 +51,9 @@ function scenario.StartServer(req) end
 ---branch. Profile creation/logout, client launch/close and logging are supported, so
 ---workers can take successive jobs on one server. Lifecycle mutations serialize;
 ---independent client loads/waits overlap. StartServer and profile reset remain
----outside branches; nested Parallel is rejected.
+---outside branches; nested Parallel is rejected. Do not wrap yielding operations
+---inside pcall/xpcall in a branch; use returned operation errors or Parallel's
+---structured branch failures so the scheduler can drain outstanding requests.
 ---@param branches table<string,fun():nil|ScenarioError|string>
 ---@return ScenarioError|nil err
 function scenario.Parallel(branches) end
@@ -108,6 +110,12 @@ function scenario.WaitForReportedLocation(profileName, location, timeoutMs, afte
 ---@return ClientSnapshot|nil result
 ---@return ScenarioError|nil err
 function scenario.SnapshotClient(clientID) end
+
+---Returns a handle for an already running client owned by this supervisor, allowing another batch without relaunching. Its Time() clock starts at lookup. Missing or exited clients return an error; this never attaches to an external process.
+---@param clientID string
+---@return ManagedClient|nil result
+---@return ScenarioError|nil err
+function scenario.GetClient(clientID) end
 
 ---Compatibility entry point; prefer client.UI:InspectWindow().
 ---@deprecated

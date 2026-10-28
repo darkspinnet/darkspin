@@ -1,5 +1,5 @@
 ---Four native clients: owned-party/match fixtures, native chains and healing channels.
----Checks enemy-only hops, ally healing, capacity expiry and channel cancellation.
+---Checks enemy-only hops, ally healing, capacity expiry, cancellation and radial bursts on both teams.
 local must = scenario.Must
 local check = scenario.Check
 
@@ -352,7 +352,7 @@ local function verifyAbilities(participants)
     place(secondary,{x=anchor.x,y=anchor.y+3,z=anchor.z})
     place(ally,{x=anchor.x-3,y=anchor.y+3,z=anchor.z})
     local kits={
-        {noun=171910024,label="Arcweld"},
+        {noun=171910024,label="Arc Weld"},
         {noun=700180862,label="Chain Lightning"},
     }
     for _,kit in ipairs(kits) do
@@ -393,7 +393,7 @@ local function run(participants)
         end
     end
     verifyAbilities(participants)
-    check(scenario.Log("Shared chain and healing-channel family sweep completed"))
+    check(scenario.Log("Shared chain, healing-channel and radial-projectile family sweep completed"))
 end
 
 return function()

@@ -3,6 +3,7 @@ package gameplay
 import (
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
@@ -18,6 +19,21 @@ const binarySentinelPushDistance = float32(8)
 const binarySentinelPushSpeed = float32(20)
 const binarySentinelPushOutro = 250 * time.Millisecond
 const binarySentinelPushEffectName = "binary_sentinel_push_attractor.ServerEventDef"
+
+func cometKnockbackPlan(sourceObjectID, targetObjectID uint32, center, target game.Vec3) (zonenpc.AttackPlan, game.Vec3) {
+	// Build-103 vector439 normalizes with an epsilon, preserving zero input
+	// instead of inventing a direction when the victim is at the impact center.
+	delta := target.Sub(center)
+	length := float32(math.Sqrt(float64(delta.LengthSquared()) + 1e-8))
+	direction := delta.Scale(1 / length)
+	plan := zonenpc.AttackPlan{
+		SourceObjectID: sourceObjectID, TargetObjectID: targetObjectID,
+		SourcePosition: center, TargetPosition: target,
+		Profile: zonenpc.ActionProfile{ForcedMovementSpeed: 12, ForcedMovementDistance: 4,
+			ForcedMovementReactionName: "react_knockback"},
+	}
+	return plan, target.Add(direction.Scale(4))
+}
 
 type campaignAcceptedHitPushResetStep struct {
 	runtime          campaignDamageRuntime
@@ -128,7 +144,7 @@ func (e campaignDamageRuntime) applyAcceptedHitPushes(
 	packets := make([][]byte, 0)
 	for _, result := range results {
 		if result.Damage.IsDamageImmune || result.Damage.IsDefeated ||
-			result.Damage.IsTurtleStarted || result.Damage.Damage <= 0 {
+			result.Damage.IsTurtleStarted || (!isComet && result.Damage.Damage <= 0) {
 			continue
 		}
 		target, isTargetFound := peerSession.zone.NPCs().NPC(result.Damage.ObjectID)
@@ -148,6 +164,10 @@ func (e campaignDamageRuntime) applyAcceptedHitPushes(
 		desired := target.Plan.Position.Add(
 			delta.Scale(pushDistance / distance),
 		)
+		var cometPlan zonenpc.AttackPlan
+		if isComet {
+			cometPlan, desired = cometKnockbackPlan(sourceObjectID, target.Plan.ObjectID, plan.Center, target.Plan.Position)
+		}
 		destination, isDestinationFound, err := navigationClippedMovementDestination(
 			peerSession.zone.Navigation(), target.Plan.Position, desired,
 			max(target.NavigationRadius(), float32(0.25)), target.Navigation,
@@ -179,10 +199,15 @@ func (e campaignDamageRuntime) applyAcceptedHitPushes(
 				ForcedMovementReactionName: "react_knockback",
 			},
 		}
+		arcParameters := [3]float32{2, 2, 4}
+		if isComet {
+			attackPlan = cometPlan
+			arcParameters = [3]float32{2, 4, 4}
+		}
 		// The shared knockback template supplies a two-unit arc and a
 		// four-unit distance threshold; Kinetic Wave overrides speed/distance.
 		movementPackets, err := npcraknet.ForcedJump(
-			attackPlan, destination, timestamp, [3]float32{2, 2, 4},
+			attackPlan, destination, timestamp, arcParameters,
 		)
 		if err != nil {
 			return packets, fmt.Errorf("heroPushMarshal[%d]: %w", target.Plan.ObjectID, err)
@@ -215,11 +240,11 @@ func (e campaignDamageRuntime) applyAcceptedHitPushes(
 			reset := campaignAcceptedHitPushResetStep{
 				runtime: e, sessionKey: sessionKey, generation: generation,
 				objectID:         target.Plan.ObjectID,
-				timestamp:        timestamp + uint64(resetDelay/time.Millisecond),
+				timestamp:        timestamp + uint64(movementDuration/time.Millisecond),
 				actionGeneration: latestTarget.ActionGeneration,
 				positionRevision: latestTarget.PositionRevision,
 			}
-			err = packet.ScheduleFunc(resetDelay, reset.produce)
+			err = packet.ScheduleFunc(movementDuration, reset.produce)
 			if err != nil {
 				return packets, fmt.Errorf("cometResetSchedule[%d]: %w", target.Plan.ObjectID, err)
 			}

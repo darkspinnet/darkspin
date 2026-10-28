@@ -19,14 +19,18 @@ type controlWorldPoint struct {
 }
 
 type controlGameplayState struct {
-	IsAvailable      bool                   `json:"is_available"`
-	IsWorldActive    bool                   `json:"is_world_active"`
-	ControlledHandle *uint32                `json:"controlled_handle"`
-	PickedHandle     *uint32                `json:"picked_handle"`
-	Position         *controlWorldPoint     `json:"position"`
-	Camera           *controlCameraSnapshot `json:"camera"`
-	FrameSequence    uint32                 `json:"frame_sequence"`
-	OwnerThreadID    uint32                 `json:"owner_thread_id"`
+	IsAvailable            bool                   `json:"is_available"`
+	IsWorldActive          bool                   `json:"is_world_active"`
+	IsRigObserved          bool                   `json:"is_rig_observed"`
+	IsRigReady             bool                   `json:"is_rig_ready"`
+	IsAbilityRankAvailable bool                   `json:"is_ability_rank_available"`
+	AbilityRanks           []uint32               `json:"ability_ranks,omitempty"`
+	ControlledHandle       *uint32                `json:"controlled_handle"`
+	PickedHandle           *uint32                `json:"picked_handle"`
+	Position               *controlWorldPoint     `json:"position"`
+	Camera                 *controlCameraSnapshot `json:"camera"`
+	FrameSequence          uint32                 `json:"frame_sequence"`
+	OwnerThreadID          uint32                 `json:"owner_thread_id"`
 }
 
 type controlCameraSnapshot struct {
@@ -277,12 +281,20 @@ func (e *controlConnection) gameplayCommand(req controlEnvelope, response contro
 func controlGameplayReceipt(response controlEnvelope, receipt C.fang_control_window_receipt, snapshot C.fang_control_gameplay_state, projection C.fang_control_projection, click C.fang_control_gameplay_click, selection C.fang_control_hero_selection, cast C.fang_control_active_cast, deadline time.Time) controlEnvelope {
 	response = controlWindowReceipt(response, receipt, deadline)
 	state := &controlGameplayState{IsAvailable: snapshot.is_available != 0, IsWorldActive: snapshot.is_world_active != 0,
+		IsRigObserved: snapshot.is_rig_observed != 0, IsRigReady: snapshot.is_rig_ready != 0,
 		Camera:           controlCameraReceipt(snapshot.camera),
 		ControlledHandle: controlMapNumber(uint32(snapshot.fields), 1, uint32(snapshot.controlled_handle)),
 		PickedHandle:     controlMapNumber(uint32(snapshot.fields), 4, uint32(snapshot.picked_handle)),
 		FrameSequence:    uint32(snapshot.frame_sequence), OwnerThreadID: uint32(snapshot.owner_thread_id)}
 	if snapshot.fields&2 != 0 {
 		state.Position = &controlWorldPoint{X: float64(snapshot.x), Y: float64(snapshot.y), Z: float64(snapshot.z)}
+	}
+	if snapshot.is_ability_rank_available != 0 {
+		state.IsAbilityRankAvailable = true
+		state.AbilityRanks = make([]uint32, 9)
+		for index := range state.AbilityRanks {
+			state.AbilityRanks[index] = uint32(snapshot.ability_ranks[index])
+		}
 	}
 	response.Result.GameplayState = state
 	if response.Operation == "gameplay.cancel_ability" {

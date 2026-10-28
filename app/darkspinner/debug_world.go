@@ -19,15 +19,28 @@ type debugWorldPosition struct {
 	Z float32 `json:"z"`
 }
 type debugWorldHero struct {
-	ObjectID         uint32             `json:"object_id"`
-	Noun             uint32             `json:"noun"`
-	Index            uint32             `json:"index"`
-	Position         debugWorldPosition `json:"position"`
-	HitPoint         float32            `json:"hit_point"`
-	ManaPoint        float32            `json:"mana_point"`
-	MaximumHitPoint  float32            `json:"maximum_hit_point"`
-	MaximumManaPoint float32            `json:"maximum_mana_point"`
-	IsDefeated       bool               `json:"is_defeated"`
+	FlakStackCount            uint32             `json:"flak_stack_count"`
+	FlakAttackSpeed           float32            `json:"flak_attack_speed"`
+	IsSilenced                bool               `json:"is_silenced"`
+	IsStunned                 bool               `json:"is_stunned"`
+	HostileMovementModifier   float32            `json:"hostile_movement_modifier"`
+	HostileAttackModifier     float32            `json:"hostile_attack_modifier"`
+	SphereMembershipCount     int                `json:"sphere_membership_count"`
+	MovementPosition          debugWorldPosition `json:"movement_position"`
+	MovementSpeed             float32            `json:"movement_speed"`
+	IsMovementAvailable       bool               `json:"is_movement_available"`
+	MovementUnavailableReason string             `json:"movement_unavailable_reason,omitempty"`
+	InputLockRemainingMS      int64              `json:"input_lock_remaining_ms"`
+	ObjectID                  uint32             `json:"object_id"`
+	Noun                      uint32             `json:"noun"`
+	PassiveKillStack          uint32             `json:"passive_kill_stack"`
+	Index                     uint32             `json:"index"`
+	Position                  debugWorldPosition `json:"position"`
+	HitPoint                  float32            `json:"hit_point"`
+	ManaPoint                 float32            `json:"mana_point"`
+	MaximumHitPoint           float32            `json:"maximum_hit_point"`
+	MaximumManaPoint          float32            `json:"maximum_mana_point"`
+	IsDefeated                bool               `json:"is_defeated"`
 }
 type debugWorldNPC struct {
 	ObjectID             uint32             `json:"object_id"`
@@ -182,7 +195,9 @@ func observeDebugWorld(ctx context.Context, host *debugHost, clientManager *debu
 	}
 	if world.Hero != nil {
 		hero := world.Hero
-		result.Hero = &debugWorldHero{ObjectID: hero.ObjectID, Noun: hero.Noun, Index: hero.Index, Position: debugWorldPositionDTO(hero.Position), HitPoint: hero.HitPoint, ManaPoint: hero.ManaPoint, MaximumHitPoint: hero.MaximumHitPoint, MaximumManaPoint: hero.MaximumManaPoint, IsDefeated: hero.IsDefeated}
+		result.Hero = &debugWorldHero{ObjectID: hero.ObjectID, Noun: hero.Noun, PassiveKillStack: hero.PassiveKillStack, Index: hero.Index, Position: debugWorldPositionDTO(hero.Position), HitPoint: hero.HitPoint, ManaPoint: hero.ManaPoint, MaximumHitPoint: hero.MaximumHitPoint, MaximumManaPoint: hero.MaximumManaPoint, IsDefeated: hero.IsDefeated}
+		result.Hero.InputLockRemainingMS = hero.InputLockRemainingMS
+		debugWorldHeroMotionDTO(result.Hero, hero)
 	}
 	for _, npc := range world.NPCs {
 		result.NPCs = append(result.NPCs, debugWorldNPC{ObjectID: npc.ObjectID, Noun: npc.Noun, Position: debugWorldPositionDTO(npc.Position), HitPoint: npc.HitPoint, IsDead: npc.IsDead, IsPublished: npc.IsPublished, IsHostile: npc.IsHostile, IsHostilityAvailable: npc.IsHostilityAvailable, IsFixture: npc.IsFixture, IsBoss: npc.IsBoss, DistanceSquared: npc.DistanceSquared})

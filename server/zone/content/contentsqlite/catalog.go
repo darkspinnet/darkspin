@@ -826,7 +826,6 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 			IsAlwaysUseCursorPosition: true,
 			MuzzleEffectName:          "Comets_Muzzle.ServerEventDef",
 			HitEffectName:             "spacetime_random04_summon_effect.ServerEventDef",
-			ImpactEffectName:          "spacetime_random04_summon_effect.ServerEventDef",
 		},
 		"VoodooTempestSupport": {
 			Name: "VoodooTempestSupport", Kind: sim.AbilityKindStatusArea,
@@ -939,6 +938,7 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 			IsDescriptorFound: true, IsDamageTypeFound: true, IsDamageSourceFound: true,
 			IsAlwaysUseCursorPosition: true,
 			HitEffectName:             "cyber_shield_concussiveblast.ServerEventDef",
+			ImpactEffectName:          "cyber_shield_concussiveblast_hit.ServerEventDef",
 			MuzzleEffectName:          "Concussive_Blast_muzzle.ServerEventDef",
 			RootModifierID:            util.HashID("TCShieldedSentinel_Support_Snare"),
 			StatusKind:                sim.AbilityStatusKindSlow,
@@ -972,6 +972,7 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 			AnimationName: "missiletempest_support",
 			ReleaseDelay:  250 * time.Millisecond,
 			MinimumDamage: 3, MaximumDamage: 6, DamageCoefficient: 0.05,
+			ManaCost: 8, ManaCoefficient: 0.04,
 			DescriptorMask: 72, DamageType: 0, DamageSource: 0,
 			IsDescriptorFound: true, IsDamageTypeFound: true, IsDamageSourceFound: true,
 			IsAlwaysUseCursorPosition: true,

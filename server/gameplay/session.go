@@ -452,6 +452,9 @@ func (s *gameplayPeerSession) isEnemyStunActive(at time.Time) bool {
 	if s != nil && (s.isOperativeCaged(at) || s.isKnockbackActive(at)) {
 		return true
 	}
+	if s != nil && s.isArenaHitStunActive(at) {
+		return true
+	}
 	return s != nil && !at.IsZero() &&
 		s.deployedObjectID == s.enemyStunTargetObjectID &&
 		at.Before(s.enemyStunExpiresAt)
@@ -510,6 +513,10 @@ func (s *gameplayPeerSession) extendEnemySilence(
 	return true
 }
 
+func (e gameplayPeerSession) isEnemySilenceActive(at time.Time) bool {
+	return !at.IsZero() && (at.Before(e.enemySilenceExpiresAt) || e.isArenaHitSilenceActive(at))
+}
+
 type controlledHeroPresentation struct {
 	passiveModifierInstance      [3]uint32
 	arePassiveModifiersAllocated bool
@@ -539,6 +546,8 @@ type controlledHeroPresentation struct {
 	heroDrain                    *heroDrainRun
 	heroTimedArea                *heroTimedAreaRun
 	heroStatusAreas              map[uint32]*heroStatusAreaRun
+	arenaHitStatuses             map[arenaHitStatusKey]*arenaHitStatus
+	arenaHitPushes               map[uint32]*arenaHitPushRun
 	heroChannelArea              *heroChannelAreaRun
 	heroQuantumBlink             *heroQuantumBlinkRun
 	fireTempestActive            *fireTempestActiveRun
@@ -1660,6 +1669,8 @@ func (s *gameplayPeerSession) clearEnemyHeroStatuses() {
 	if s == nil {
 		return
 	}
+	s.clearScenarioHeroAbilityRank()
+	s.retireArenaHitStatuses()
 	s.enemySilenceExpiresAt = time.Time{}
 	s.enemySleepExpiresAt = time.Time{}
 	s.enemyStunExpiresAt = time.Time{}
@@ -1677,6 +1688,8 @@ func (s *gameplayPeerSession) resetRetainedTransportState() {
 	if s == nil {
 		return
 	}
+	s.clearScenarioHeroAbilityRank()
+	s.retireArenaHitStatuses()
 	s.operativeCage = nil
 	s.operativeChannels = nil
 	s.resetTeleporterSample()
@@ -3723,7 +3736,19 @@ func (s *gameplayPeerSession) applyDamageHitPoints(hitPoints float32, timestamp 
 func (s *gameplayPeerSession) applyArenaDamageHitPoints(
 	hitPoints float32, timestamp uint64,
 ) ([][]byte, error) {
-	return s.applyDamageHitPointsWithOutcome(hitPoints, timestamp, false)
+	if s == nil || s.squad == nil {
+		return nil, errors.New("arena damage squad unavailable")
+	}
+	creatureIndex, objectID := s.deployedCreatureIndex, s.deployedObjectID
+	isLethal := s.deployedHitPoint() > 0 && hitPoints <= 0
+	packets, err := s.applyDamageHitPointsWithOutcome(hitPoints, timestamp, false)
+	if err != nil {
+		return nil, fmt.Errorf("arenaHealth: %w", err)
+	}
+	if isLethal {
+		packets = append(packets, s.retireArenaKillPassive(creatureIndex, objectID)...)
+	}
+	return packets, nil
 }
 
 func (s *gameplayPeerSession) applyDamageHitPointsWithOutcome(
@@ -3788,6 +3813,22 @@ func (s *gameplayPeerSession) applyDamageHitPointsWithOutcome(
 	isGameOver, err := s.setDeployedHitPoints(hitPoints)
 	if err != nil {
 		return nil, fmt.Errorf("damageHealth: %w", err)
+	}
+	if isLethal && s.binding.Mode == game.ModeArena {
+		s.clearScenarioHeroAbilityRank()
+		if s.missileFlakRun != nil {
+			runtime := s.missileFlakRun.runtime
+			flakPacket, flakErr := stopMissileFlak(s, runtime.modifierPool)
+			if flakErr != nil && runtime.logger != nil {
+				runtime.logger.Printf("Arena defeated Flak cleanup failed: %v", flakErr)
+			}
+			if len(flakPacket) != 0 {
+				transitionPackets = append(transitionPackets, flakPacket)
+			}
+		}
+		// Retire the defeated recipient's modifiers before an automatic squad
+		// deployment changes its identity, including the all-defeated branch.
+		s.retireArenaHitStatuses()
 	}
 	if isGameOver {
 		return transitionPackets, nil

@@ -9,7 +9,53 @@ import (
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
+	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
+
+// Directed bursts keep the shared launch/collision schedule and target geometry.
+// Player defenses and healing statistics are committed against current owners.
+func (e heroBurstStep) finishArenaTargetedBurstLocked(member gameplayPeerSession, targets *arenaAbilityTargets,
+	target zonenpc.Snapshot, result zoneability.BasicResult, position sim.Position, facing sim.Position,
+) ([][]byte, error) {
+	schedule := e.schedule
+	packets, err := schedule.run.ResolveCollision(context.Background(), e.index, e.deadline,
+		true, true, result.Damage.PreviousHealth, result.Damage.Damage, result.IsCritical, position, facing)
+	if err != nil {
+		schedule.runtime.registry.mutex.Unlock()
+		targets.finish()
+		return nil, fmt.Errorf("targetedBurstResolve: %w", err)
+	}
+	var healingPackets [][]byte
+	healedAmount := float32(0)
+	current, isFound := schedule.runtime.registry.sessions[schedule.sessionKey]
+	if schedule.isCurrent(current, isFound) {
+		var healingErr error
+		healingPackets, healedAmount, healingErr = schedule.applyLifeSteal(&current, result.Damage.Damage)
+		if healingErr != nil && schedule.runtime.logger != nil {
+			schedule.runtime.logger.Printf("Arena burst healing source=%d: %v", schedule.sourceObjectID, healingErr)
+		}
+		schedule.runtime.registry.sessions[schedule.sessionKey] = current
+		match := schedule.runtime.registry.arenaMatches[member.binding.GameID]
+		if match != nil && match.isCombatActive && healedAmount > 0 {
+			match.result.recordHealing(schedule.binding.UserID, schedule.binding.UserID, healedAmount)
+		}
+		schedule.runtime.registry.queueArenaAbilityResourcesLocked(current, healingPackets)
+	}
+	schedule.runtime.registry.mutex.Unlock()
+	targets.finish()
+	hitPackets, hitErr := targets.packets([]zoneability.AreaResult{{Snapshot: target, Damage: result.Damage,
+		IsCritical: result.IsCritical, Definition: schedule.definition}})
+	if hitErr != nil {
+		return nil, fmt.Errorf("targetedBurstPublish: %w", hitErr)
+	}
+	if schedule.runtime.logger != nil {
+		schedule.runtime.logger.Printf("Arena targeted burst impact ability=%s shot=%d source=%d target=%d damage=%g healing=%g deadline_ms=%d",
+			schedule.definition.Name, e.index, schedule.sourceObjectID, target.Plan.ObjectID,
+			result.Damage.Damage, healedAmount, e.deadline.Milliseconds())
+	}
+	packets = append(filterProjectileCombatPackets(packets), hitPackets...)
+	return append(packets, healingPackets...), nil
+}
 
 // The shared burst owns launch times, scatter, flight and retirement. Only
 // the collision callback changes from an NPC to a real opposing squad member.

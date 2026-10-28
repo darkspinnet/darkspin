@@ -13,18 +13,31 @@ type HeroResetRequest struct {
 	Noun                uint32
 	Position            *WorldPosition
 	IsPlacement         bool
+	IsCooldownReset     bool
+	IsRetirement        bool
+	IsAbilityRankSet    bool
+	AbilityRank         int32
+	ObservedNoun        uint32
+	ObservedIndex       uint32
+	HitPoint            *float32
+	ManaPoint           *float32
 	OwnedUserIDs        []int64
 }
 
 type HeroResetReceipt struct {
-	GameID         uint32
-	ObjectID       uint32
-	Noun           uint32
-	Index          uint32
-	HitPoint       float32
-	ManaPoint      float32
-	RecipientCount int
-	IsReplacement  bool
-	IsPlacement    bool
-	IsQueued       bool
+	GameID           uint32
+	ObjectID         uint32
+	Noun             uint32
+	Index            uint32
+	HitPoint         float32
+	ManaPoint        float32
+	RecipientCount   int
+	IsReplacement    bool
+	IsPlacement      bool
+	IsCooldownReset  bool
+	IsRetirement     bool
+	IsAbilityRankSet bool
+	AbilityRank      int32
+	CooldownCount    int
+	IsQueued         bool
 }

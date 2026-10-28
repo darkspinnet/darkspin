@@ -3,9 +3,11 @@
 ---Server observations and guarded native actions; outcomes require independent observation.
 ---@class ClientWorld
 ---@field PlaceHero fun(self:ClientWorld,point:WorldPosition):table|nil,ScenarioError|nil Positions a living owned PvP hero through server teleport packets. Fixture setup only; does not prove native movement, restore resources or change statistics. Observe native arrival separately.
----@field RestoreHero fun(self:ClientWorld):table|nil,ScenarioError|nil Scenario-only PvP fixture. Restores the living deployed hero's health and power to current maxima without changing combat statistics, effects or cooldowns. Requires every arena participant to be owned. Returns queued server projection; observe both native clients separately.
----@field ReplaceHero fun(self:ClientWorld,noun:integer):table|nil,ScenarioError|nil Scenario-only PvP fixture. Replaces the active slot with an unequipped installed template noun, preserving its position, slot and saved deck. Interrupts owned effects and resets ability cooldowns. Requires all arena participants owned and combat active; completed deaths are not rewound. Returns queued projection, not native appearance proof.
----@field SelectHero fun(self:ClientWorld,slot:integer,timeout_ms?:integer):HeroSelectionResult|nil,ScenarioError|nil Waits for native eligibility, selects zero-based squad slot 0 through 2 through one guarded native edge, then waits for a changed native controlled handle and matching server index. Default client timeout bounds the operation; native dispatch/processing does not prove switching. No replay after error or unknown outcome.
+---@field RestoreHero fun(self:ClientWorld,options?:HeroResourceOptions):table|nil,ScenarioError|nil Scenario-only PvP fixture. Sets living hero resources to requested amounts, defaulting omitted amounts to current maxima. Leaves combat statistics, effects and cooldowns intact. Requires every arena participant owned; observe both native clients separately.
+---@field ResetCooldowns fun(self:ClientWorld):table|nil,ScenarioError|nil Scenario-only owned PvP fixture. Resets server and native ability/deployment cooldowns without resetting recovery, arrival locks, resources, statistics or in-flight producers. Receipt reports is_queued and cooldown_count; observe subsequent native acceptance separately.
+---@field SetAbilityRank fun(self:ClientWorld,rank:integer):table|nil,ScenarioError|nil Scenario-only owned PvP SERVER rank fixture,1..8 or0 to clear. Pins the current living actor lifetime; native UI/command rank, resources and cooldowns are unchanged. Receipt is_ability_rank_set/is_server_rank_fixture and ability_rank explicitly identify the server fixture; is_queued is false because no native packet is queued. Override expires on actor/slot/squad/transport changes.
+---@field ReplaceHero fun(self:ClientWorld,noun:integer):table|nil,ScenarioError|nil Scenario-only owned PvP fixture. Replaces the active slot while preserving position and saved deck. Observes deletion on both clients before recreation, performs native away/back deployment using a living reserve, and requires native rig readiness. Interrupts owned effects and resets cooldowns. Completed deaths are not rewound; partial retirement errors must not be replayed. Rig readiness does not certify pixels or remote appearance identity.
+---@field SelectHero fun(self:ClientWorld,slot:integer,timeout_ms?:integer):HeroSelectionResult|nil,ScenarioError|nil Waits for native eligibility and authoritative arrival recovery, selects zero-based squad slot 0 through 2 through one guarded native edge, then waits for a changed native controlled handle, matching server index and completed arrival recovery. No replay after an accepted edge or unknown outcome.
 ---@field Snapshot fun(self:ClientWorld):WorldSnapshot|nil,ScenarioError|nil Samples the owned server world once without waiting for availability. No movement or gameplay advancement.
 ---@field Ready fun(self:ClientWorld,timeout_ms?:integer):WorldSnapshot|nil,ScenarioError|nil Waits for committed server dungeon setup, a deployed hero and a processed native active-world/controlled-handle observation. Returns the ready snapshot with native_readiness. Uses client timeout; aborts on ownership changes. Does not prove visibility of each object or gameplay action success.
 ---@field SnapshotLiving fun(self:ClientWorld):WorldSnapshot|nil,ScenarioError|nil Samples once and fails if unavailable, terminal, or without a living deployed hero. No readiness wait; partial world accompanies failure.
@@ -19,6 +21,10 @@
 ---@field SpawnControlledNPC fun(self:ClientWorld,noun:string,timeout_ms?:integer):ControlledNPC|nil,ScenarioError|nil Spawns a supported installed enemy with AI disabled before admission and waits for server publication. Construct outside Parallel. On failure returns nil,error with partial receipt in err.Details.spawn_receipt; never retry an unknown spawn blindly.
 ---@field SpawnAsync fun(self:ClientWorld,noun:string):WorldSpawn|nil,ScenarioError|nil Returns the queued command receipt without waiting for publication; no automatic retry.
 ---@field SnapshotSpawn fun(self:ClientWorld,request_id:string):WorldSpawn|nil,ScenarioError|nil Reads a request owned by this run/account/game/peer/zone; failed commands retain partial receipts with an error.
+
+---@class HeroResourceOptions
+---@field hit_point? number Finite positive HP at or below current maximum; cannot revive a defeated hero.
+---@field mana_point? number Finite power between zero and current maximum.
 
 ---@class WorldRecipeOptions
 ---@field run_seed integer Positive integer up to 9007199254740991. Controls server gameplay RNG; no native layout RNG claim.
@@ -60,6 +66,19 @@
 ---@field z number
 
 ---@class WorldHero
+---@field flak_stack_count integer Current retained Flak Cannon upgrade stacks on the deployed actor.
+---@field flak_attack_speed number Current Flak Cannon contribution to attack-speed scaling.
+---@field is_stunned boolean Current authoritative stun input gate, including other forced-control guards checked by that gate; only populated for the deployed actor.
+---@field is_silenced boolean Current authoritative silence gate; basic attacks remain permitted. Only populated for the deployed actor.
+---@field hostile_movement_modifier number Additive hostile movement modifier used by server motion; excludes positive passive/equipment modifiers.
+---@field hostile_attack_modifier number Additive hostile attack-speed modifier used by server timing.
+---@field sphere_membership_count integer Number of retained Delaying Sphere memberships on this deployed actor, independent of numerical stacking.
+---@field movement_position WorldPosition Read-only projection of retained server motion at captured_at; valid only when is_movement_available.
+---@field movement_speed number Current server motion speed, valid only when is_movement_available.
+---@field is_movement_available boolean Movement producer sampled successfully; false for inactive slots or unavailable movement.
+---@field movement_unavailable_reason? string Explicit movement sampling failure or missing producer.
+---@field input_lock_remaining_ms integer Remaining authoritative deployment recovery, rounded upward. Zero permits server input; native eligibility remains independent.
+---@field passive_kill_stack integer Observed kill-passive stack count; read-only and independent of combat statistics.
 ---@field object_id integer
 ---@field noun integer Installed template noun ID, including live PvP replacements.
 ---@field index integer Zero-based squad index.
@@ -121,7 +140,7 @@
 ---@class WorldSnapshot
 ---@field arena? ArenaMatchSnapshot Read-only arena match/squad producer, including results after combat ends; independent of world availability and native results UI.
 ---@field native_readiness? NativeGameplaySnapshot Native active-world and controlled-handle sample retained by Ready() and Mission:Enter().
----@field ability AbilityState|nil Narrow Ride the Lightning semantic observer; support/availability are explicit.
+---@field ability AbilityState|nil Active readiness for the supported native adapter and terminal producer evidence for authored projectile bursts; support/availability are explicit.
 ---@field client_id string
 ---@field instance_id string
 ---@field pid integer
@@ -155,6 +174,8 @@
 
 ---@class ArenaMatchSnapshot
 ---@field team integer This participant's team.
+---@field friendly_projectile_count integer Published, nonretired projectile owners on this team; does not sample or advance flight.
+---@field hostile_projectile_count integer Published, nonretired projectile owners on opposing teams in this Arena.
 ---@field winning_team integer Zero until the match producer commits a winner.
 ---@field is_combat_active boolean
 ---@field is_result_ready boolean Server result commitment; not native UI receipt.

@@ -6,14 +6,23 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
+	"github.com/darkspinnet/darkspin/server/sim"
+	zonecontent "github.com/darkspinnet/darkspin/server/zone/content"
 )
 
 func (e *gameplayPeerSession) prepareScenarioBurst(req campaignCharacterAbilityRequest, abilityID uint32, at time.Time, destination raknet.Vector3, targetObjectID uint32, launchCount int) *scenarioRideCast {
-	if e.deployedCreatureIndex >= uint32(len(e.binding.Creatures)) {
+	if e.deployedCreatureIndex >= uint32(len(e.binding.Creatures)) || launchCount <= 0 {
 		return nil
 	}
-	ability := req.runtime.registry.abilitiesByNoun[e.binding.Creatures[e.deployedCreatureIndex].Noun]
-	if ability.ID != abilityID || ability.AssetName != "MissileTempestActive" {
+	kit := req.runtime.program.HeroKits[e.binding.Creatures[e.deployedCreatureIndex].Noun]
+	var ability zonecontent.HeroAbility
+	for _, candidate := range kit.Abilities {
+		if candidate.ID == abilityID && candidate.Definition.Kind == sim.AbilityKindProjectileBurst {
+			ability = candidate
+			break
+		}
+	}
+	if ability.ID == 0 {
 		return nil
 	}
 	cast := e.prepareScenarioRide(req, ability, at, destination, targetObjectID)

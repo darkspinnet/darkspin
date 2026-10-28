@@ -104,6 +104,10 @@ func debugLuaScopeIndex(state *lua.LState) int {
 		switch name {
 		case "RestoreHero":
 			state.Push(state.NewFunction(debugLuaWorldRestoreHero))
+		case "ResetCooldowns":
+			state.Push(state.NewFunction(debugLuaWorldResetCooldowns))
+		case "SetAbilityRank":
+			state.Push(state.NewFunction(debugLuaWorldSetAbilityRank))
 		case "PlaceHero":
 			state.Push(state.NewFunction(debugLuaWorldPlaceHero))
 		case "ReplaceHero":

@@ -137,6 +137,8 @@ typedef struct fang_control_gameplay_state {
     uint32_t frame_sequence, owner_thread_id;
     float x, y, z;
     fang_control_camera_snapshot camera;
+    uint32_t is_rig_observed, is_rig_ready;
+    uint32_t is_ability_rank_available, ability_ranks[9];
 } fang_control_gameplay_state;
 typedef struct fang_control_projection {
     uint32_t is_available, is_on_screen, client_width, client_height;

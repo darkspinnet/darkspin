@@ -43,12 +43,15 @@ func projectHeroAbilityRank(
 			definition.SecondaryModifierID = util.HashID("TerrifyDebuffNoDot")
 		}
 	case "TCShieldedSentinelSupport":
+		// The installed seven-entry effect table is clamped at its last entry.
+		if rank >= 6 {
+			definition.HitEffectName = "cyber_shield_concussiveblast_equalDamage.ServerEventDef"
+		} else if rank >= 4 {
+			definition.HitEffectName = "cyber_shield_concussiveblast_suppress.ServerEventDef"
+		}
 		if rank >= 7 {
 			definition.SecondaryMinimumDamage = definition.MinimumDamage
 			definition.SecondaryMaximumDamage = definition.MaximumDamage
-			definition.SecondaryDamageCoefficient = definition.DamageCoefficient
-			definition.ManaCost = 24
-			definition.ManaCoefficient = 0.12
 		}
 		if rank == 5 || rank == 6 {
 			definition.StatusKind = sim.AbilityStatusKindSilence
@@ -59,6 +62,12 @@ func projectHeroAbilityRank(
 			if rank == 6 {
 				definition.StatusDuration = time.Second
 			}
+		}
+	case "MissileTempestSupport":
+		if rank == 5 {
+			definition.Cooldown = 6 * time.Second
+		} else if rank == 6 {
+			definition.Cooldown = 12 * time.Second
 		}
 	case "RootingPlague":
 		if rank%2 == 0 {
@@ -144,6 +153,9 @@ func projectEvenHeroAbilityRank(
 	case "TCShieldedSentinelSupport":
 		definition.MinimumDamage = 16
 		definition.MaximumDamage = 24
+	case "MissileTempestSupport":
+		definition.StatusDuration = 4 * time.Second
+		definition.Cooldown = 6 * time.Second
 	case "BioRandom2":
 		definition.TickDuration = 3 * time.Second
 		definition.StatusDuration = 3 * time.Second

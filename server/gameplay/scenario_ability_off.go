@@ -12,6 +12,9 @@ type scenarioAbilityCatalog struct{}
 type scenarioAbilityState struct{}
 type scenarioRideCast struct{}
 
+func (e gameplayPeerSession) scenarioHeroAbilityRank(baseRank int32) int32 { return baseRank }
+func (e *gameplayPeerSession) clearScenarioHeroAbilityRank()               {}
+
 func (e *gameplaySessionRegistry) configureScenarioAbility(program Programs) {}
 func (e *gameplayPeerSession) prepareScenarioRide(req campaignCharacterAbilityRequest, ability zonecontent.HeroAbility, at time.Time, destination raknet.Vector3, targetObjectID uint32) *scenarioRideCast {
 	return nil

@@ -48,6 +48,7 @@ func (e campaignAbilityCommandRuntime) handleArenaAbility(
 	isShared := isFound && (ability.AssetName == "CastEnrage" || ability.AssetName == "TreeOfLife" ||
 		definition.Name == "MissileTempestActive" ||
 		definition.Name == "SoulRavagerActive" ||
+		definition.Name == "SoulRavagerSupport" || definition.Name == "LightningTempest_Active" ||
 		definition.Name == "FieldMedicSupport" ||
 		(definition.Kind == sim.AbilityKindToss && definition.Toss.Behavior == sim.TossAbilityBehaviorTrapper) ||
 		ability.AssetName == "ArborealMight" || ability.AssetName == "SpacetimeRandom2" ||
@@ -95,6 +96,21 @@ func isSharedArenaMelee(definition sim.AbilityDefinition) bool {
 }
 
 func isSharedArenaArea(definition sim.AbilityDefinition, index uint32) bool {
+	// Meteor's accepted-hit stun uses the target-owned Arena status runtime.
+	if definition.Name == "PlasmaRandom" && definition.Kind == sim.AbilityKindCursorArea {
+		return true
+	}
+	// Dazing Shot's snare and stacked silence belong to their recipients.
+	if definition.Name == "TCShieldedSentinelSupport" && definition.Kind == sim.AbilityKindCursorArea &&
+		(definition.StatusKind == sim.AbilityStatusKindSlow || definition.StatusKind == sim.AbilityStatusKindSilence) {
+		return true
+	}
+	if definition.Name == "MissileTempestSupport" && definition.Kind == sim.AbilityKindCursorArea {
+		return true
+	}
+	if definition.Name == "TechRandom" && definition.Kind == sim.AbilityKindCursorArea {
+		return true
+	}
 	if index == 0 && definition.Kind == sim.AbilityKindPointBlank && definition.BonusDamageMultiplier <= 0 {
 		return false
 	}
@@ -107,7 +123,7 @@ func isSharedArenaArea(definition sim.AbilityDefinition, index uint32) bool {
 		return false
 	}
 	switch definition.Name {
-	case "LightspeedTempestActive", binarySentinelSupportName, "LightningRogueSupport", "TechRandom":
+	case "LightspeedTempestActive", binarySentinelSupportName, "LightningRogueSupport":
 		return false
 	}
 	return true

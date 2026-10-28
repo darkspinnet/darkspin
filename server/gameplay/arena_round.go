@@ -45,6 +45,15 @@ func (e campaignAbilityCommandRuntime) commitArenaVictory(
 		if member.binding.GameID != gameID || member.binding.Mode != game.ModeArena {
 			continue
 		}
+		member.retireArenaHitStatuses()
+		member.clearScenarioHeroAbilityRank()
+		flakPacket, flakErr := stopMissileFlak(&member, e.modifierPool)
+		if flakErr != nil && e.logger != nil {
+			e.logger.Printf("Arena round Flak cleanup failed: %v", flakErr)
+		}
+		if len(flakPacket) != 0 {
+			member.queuePackets([][]byte{flakPacket})
+		}
 		member.isArenaCombatActive = false
 		member.isArenaSquadAccepted = false
 		member.arenaWinningTeam = winnerTeam
@@ -120,6 +129,9 @@ func (e arenaRoundEndJob) execute() {
 			continue
 		}
 		if !match.result.isCompleted {
+			for creatureIndex := range member.binding.Creatures {
+				member.resetPassiveKill(uint32(creatureIndex))
+			}
 			member.arenaWinningTeam = 0
 			member.isArenaLobbyEntered = false
 			member.isArenaLobbyTransitionSent = true

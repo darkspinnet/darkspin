@@ -102,12 +102,31 @@ func (e *gameplaySessionRegistry) scenarioAbilitySnapshot(peer gameplayPeerSessi
 	result.ZoneGeneration = zoneGeneration
 	result.ManaPoint = actor.ManaPoint
 	result.IsAvailable = true
-	if !result.IsSupported {
-		return result
-	}
 	if peer.scenarioAbility.isCaptureUnavailable {
 		result.IsAvailable = false
 		result.UnavailableReason = "ability admission epoch could not be sampled"
+		return result
+	}
+	// The last producer cast may belong to any authored burst slot. Keep
+	// active-slot readiness support separate from terminal burst evidence.
+	last := peer.scenarioAbility.last
+	if peer.isScenarioRideCurrent(last) && last.zoneGeneration == zoneGeneration {
+		if !last.mutex.TryLock() {
+			result.IsAvailable = false
+			result.UnavailableReason = "ability cast producer is busy"
+			return result
+		}
+		cast := last.state
+		last.mutex.Unlock()
+		cast.Phase = scenarioRidePhase(cast)
+		result.Cast = &cast
+		result.Phase = cast.Phase
+		if !cast.IsAccepted && !cast.IsFailed {
+			result.IsAvailable = false
+			result.UnavailableReason = "ability admission is preparing"
+		}
+	}
+	if !result.IsSupported {
 		return result
 	}
 	isOverdrive := peer.binding.IsOverdriveUnlocked && peer.overdriveObjectID == peer.deployedObjectID && actor.HitPoint > 0 && !now.Before(peer.overdriveStartsAt) && now.Before(peer.overdriveExpiresAt)
@@ -132,23 +151,6 @@ func (e *gameplaySessionRegistry) scenarioAbilitySnapshot(peer gameplayPeerSessi
 	result.CooldownRemainingMS = abilityDurationMS(cooldown)
 	result.ReleaseRemainingMS = abilityDurationMS(release)
 	result.IsGateStateAvailable = isCooldownAvailable && isReleaseAvailable
-	last := peer.scenarioAbility.last
-	if peer.isScenarioRideCurrent(last) && last.zoneGeneration == zoneGeneration {
-		if !last.mutex.TryLock() {
-			result.IsAvailable = false
-			result.UnavailableReason = "ability cast producer is busy"
-			return result
-		}
-		cast := last.state
-		last.mutex.Unlock()
-		cast.Phase = scenarioRidePhase(cast)
-		result.Cast = &cast
-		result.Phase = cast.Phase
-		if !cast.IsAccepted && !cast.IsFailed {
-			result.IsAvailable = false
-			result.UnavailableReason = "ability admission is preparing"
-		}
-	}
 	rejection := peer.scenarioAbility.rejection
 	if rejection != nil && rejection.ActorObjectID == peer.deployedObjectID && rejection.AbilityID == ability.ID {
 		copyRejection := *rejection

@@ -38,11 +38,13 @@ type WorldState struct {
 
 // WorldArena copies match and squad producers; it does not attest native UI.
 type WorldArena struct {
-	Team           uint16
-	WinningTeam    uint32
-	IsCombatActive bool
-	IsResultReady  bool
-	Members        []WorldArenaMember
+	FriendlyProjectileCount int
+	HostileProjectileCount  int
+	Team                    uint16
+	WinningTeam             uint32
+	IsCombatActive          bool
+	IsResultReady           bool
+	Members                 []WorldArenaMember
 }
 
 type WorldArenaMember struct {
@@ -67,15 +69,28 @@ type WorldOutcome struct {
 type WorldPosition struct{ X, Y, Z float32 }
 
 type WorldHero struct {
-	ObjectID         uint32
-	Noun             uint32
-	Index            uint32
-	Position         WorldPosition
-	HitPoint         float32
-	ManaPoint        float32
-	MaximumHitPoint  float32
-	MaximumManaPoint float32
-	IsDefeated       bool
+	FlakStackCount            uint32
+	FlakAttackSpeed           float32
+	IsSilenced                bool
+	IsStunned                 bool
+	HostileMovementModifier   float32
+	HostileAttackModifier     float32
+	SphereMembershipCount     int
+	MovementPosition          WorldPosition
+	MovementSpeed             float32
+	IsMovementAvailable       bool
+	MovementUnavailableReason string
+	InputLockRemainingMS      int64
+	ObjectID                  uint32
+	Noun                      uint32
+	PassiveKillStack          uint32
+	Index                     uint32
+	Position                  WorldPosition
+	HitPoint                  float32
+	ManaPoint                 float32
+	MaximumHitPoint           float32
+	MaximumManaPoint          float32
+	IsDefeated                bool
 }
 
 type WorldNPC struct {

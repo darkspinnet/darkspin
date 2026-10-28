@@ -136,6 +136,16 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("arenaSwitchSquad: %w", err)
 	}
+	// Retire recipient control while its old object/slot identity is intact.
+	peerSession.retireArenaHitStatuses()
+	peerSession.clearScenarioHeroAbilityRank()
+	flakPacket, flakErr := stopMissileFlak(&peerSession, r.modifierPool)
+	if flakErr != nil && r.logger != nil {
+		r.logger.Printf("Arena swap Flak cleanup failed: %v", flakErr)
+	}
+	if len(flakPacket) != 0 {
+		departurePackets = append(departurePackets, flakPacket)
+	}
 	err = peerSession.stopPlayerMovement(switchStartTime)
 	if err != nil && r.logger != nil {
 		r.logger.Printf(
@@ -316,6 +326,14 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 	if !isCurrent {
 		r.registry.mutex.Unlock()
 		return r.rejectArenaCharacter(command, "source unavailable")
+	}
+	if peerSession.isEnemyStunActive(attackTime) {
+		r.registry.mutex.Unlock()
+		return r.rejectArenaCharacter(command, "stunned")
+	}
+	if command.Ability.Index != 0 && peerSession.isEnemySilenceActive(attackTime) {
+		r.registry.mutex.Unlock()
+		return r.rejectArenaCharacter(command, "silenced")
 	}
 	if !peerSession.isArenaCombatActive {
 		r.registry.mutex.Unlock()
@@ -706,6 +724,9 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 		}
 		member.queuePackets([][]byte{squadHealthPacket})
 		r.registry.sessions[memberKey] = member
+	}
+	if hitPoint <= 0 && damage > 0 {
+		r.registry.applyArenaKillPassiveLocked(peerSession, command.Common.ObjectID)
 	}
 	r.registry.mutex.Unlock()
 	packets := [][]byte{acceptPacket, releasePacket}

@@ -17,14 +17,18 @@ type controlWorldPoint struct {
 }
 
 type controlGameplayState struct {
-	IsAvailable      bool                   `json:"is_available"`
-	IsWorldActive    bool                   `json:"is_world_active"`
-	ControlledHandle *uint32                `json:"controlled_handle"`
-	PickedHandle     *uint32                `json:"picked_handle"`
-	Position         *controlWorldPoint     `json:"position"`
-	Camera           *controlCameraSnapshot `json:"camera"`
-	FrameSequence    uint32                 `json:"frame_sequence"`
-	OwnerThreadID    uint32                 `json:"owner_thread_id"`
+	IsAvailable            bool                   `json:"is_available"`
+	IsWorldActive          bool                   `json:"is_world_active"`
+	IsRigObserved          bool                   `json:"is_rig_observed"`
+	IsRigReady             bool                   `json:"is_rig_ready"`
+	IsAbilityRankAvailable bool                   `json:"is_ability_rank_available"`
+	AbilityRanks           []uint32               `json:"ability_ranks,omitempty"`
+	ControlledHandle       *uint32                `json:"controlled_handle"`
+	PickedHandle           *uint32                `json:"picked_handle"`
+	Position               *controlWorldPoint     `json:"position"`
+	Camera                 *controlCameraSnapshot `json:"camera"`
+	FrameSequence          uint32                 `json:"frame_sequence"`
+	OwnerThreadID          uint32                 `json:"owner_thread_id"`
 }
 
 type controlCameraSnapshot struct {

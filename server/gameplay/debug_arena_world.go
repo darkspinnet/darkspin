@@ -11,10 +11,29 @@ func (e *gameplaySessionRegistry) scenarioArenaWorld(
 	peer gameplayPeerSession, result scenario.WorldState,
 ) scenario.WorldState {
 	match := e.arenaMatches[peer.binding.GameID]
+	ability := e.scenarioAbilitySnapshot(peer, e.now())
+	result.Ability = &ability
 	result.Arena = &scenario.WorldArena{
 		Team: peer.binding.Team, WinningTeam: peer.arenaWinningTeam,
 		IsCombatActive: match != nil && match.isCombatActive,
 		IsResultReady:  peer.isArenaResultReady,
+	}
+	// Read publication/retirement ownership only. Projectile Snapshot advances
+	// retained motion and therefore cannot be called from this observer.
+	for _, retirement := range e.projectileRetirements {
+		if retirement.arenaGameID != peer.binding.GameID || !retirement.isAdmitted || !retirement.isPublished ||
+			retirement.isRetired || retirement.isRetirementPending {
+			continue
+		}
+		owner, isFound := e.sessions[retirement.sessionKey]
+		if !isFound || owner.generation != retirement.generation || owner.binding.GameID != peer.binding.GameID {
+			continue
+		}
+		if owner.binding.Team == peer.binding.Team {
+			result.Arena.FriendlyProjectileCount++
+		} else {
+			result.Arena.HostileProjectileCount++
+		}
 	}
 	for _, member := range e.sessions {
 		if member.binding.GameID != peer.binding.GameID || member.squad == nil {
@@ -37,12 +56,15 @@ func (e *gameplaySessionRegistry) scenarioArenaWorld(
 				continue
 			}
 			maximumHitPoint, maximumManaPoint := member.characterResourceMaximum(uint32(index))
-			memberSS.Characters = append(memberSS.Characters, scenario.WorldHero{
+			hero := scenario.WorldHero{
 				Index: uint32(index), HitPoint: character.HitPoints, ManaPoint: character.ManaPoints,
-				Noun:            member.binding.Creatures[index].Noun,
-				MaximumHitPoint: maximumHitPoint, MaximumManaPoint: maximumManaPoint,
+				Noun:             member.binding.Creatures[index].Noun,
+				PassiveKillStack: member.passiveKillStack[index],
+				MaximumHitPoint:  maximumHitPoint, MaximumManaPoint: maximumManaPoint,
 				IsDefeated: character.HitPoints <= 0,
-			})
+			}
+			member.fillScenarioHeroMotion(&hero, result.CapturedAt)
+			memberSS.Characters = append(memberSS.Characters, hero)
 		}
 		result.Arena.Members = append(result.Arena.Members, memberSS)
 	}
@@ -62,8 +84,10 @@ func (e *gameplaySessionRegistry) scenarioArenaWorld(
 	}
 	maximumHitPoint, maximumManaPoint := peer.characterResourceMaximum(peer.deployedCreatureIndex)
 	result.Hero = &scenario.WorldHero{
-		ObjectID: peer.deployedObjectID, Index: peer.deployedCreatureIndex,
-		Noun: peer.binding.Creatures[peer.deployedCreatureIndex].Noun,
+		InputLockRemainingMS: abilityDurationMS(peer.heroInputLockRemaining(e.now())),
+		ObjectID:             peer.deployedObjectID, Index: peer.deployedCreatureIndex,
+		Noun:             peer.binding.Creatures[peer.deployedCreatureIndex].Noun,
+		PassiveKillStack: peer.passiveKillStack[peer.deployedCreatureIndex],
 		Position: scenario.WorldPosition{
 			X: peer.playerPosition.X, Y: peer.playerPosition.Y, Z: peer.playerPosition.Z,
 		},
@@ -72,5 +96,6 @@ func (e *gameplaySessionRegistry) scenarioArenaWorld(
 		IsDefeated: character.HitPoints <= 0,
 	}
 	result.IsAvailable = true
+	peer.fillScenarioHeroMotion(result.Hero, result.CapturedAt)
 	return result
 }

@@ -726,6 +726,22 @@ func (m DropPresentationMessage) EncodePayload() []byte {
 	return append(payload, 0xff)
 }
 
+// ObjectPresentationMessage is the minimal fields-6/7 one-shot ServerEvent
+// emitted by authored object-only notifications such as Dazing Shot's hit.
+type ObjectPresentationMessage struct {
+	Asset    uint32
+	ObjectID uint32
+}
+
+func (ObjectPresentationMessage) PacketID() PacketID { return ServerEvent }
+func (m ObjectPresentationMessage) EncodePayload() []byte {
+	payload := []byte{6}
+	payload = binary.LittleEndian.AppendUint32(payload, m.Asset)
+	payload = append(payload, 7)
+	payload = binary.LittleEndian.AppendUint32(payload, m.ObjectID)
+	return append(payload, 0xff)
+}
+
 // ObjectEffectMessage is the one-shot fields-5/6/7/9/11 ServerEvent used by
 // the shared melee template after accepted damage. It does not allocate an
 // attached-effect slot and therefore requires no removal packet.

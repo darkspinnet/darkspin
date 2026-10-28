@@ -949,20 +949,28 @@ func (r campaignAbilityCommandRuntime) handleCharacter(
 		commandSession: commandSession, startTime: abilityStartTime,
 		targetObjectID: targetObjectID, deployedCreature: deployedCreature,
 	}
-	if command.Ability.Index != 0 &&
-		abilityStartTime.Before(commandSession.enemySilenceExpiresAt) {
+	// Accepted Arena statuses share recipient-owned maps with expiry jobs.
+	// Sample control gates under their registry lock before dispatching.
+	r.registry.mutex.RLock()
+	isSilenced := commandSession.isEnemySilenceActive(abilityStartTime)
+	isAsleep := commandSession.isEnemySleepActive(abilityStartTime)
+	isDazed := commandSession.isScarabDazed()
+	isStunned := commandSession.isEnemyStunActive(abilityStartTime)
+	isTerrified := commandSession.isEnemyFearActive(abilityStartTime)
+	r.registry.mutex.RUnlock()
+	if command.Ability.Index != 0 && isSilenced {
 		return request.reject("silenced")
 	}
-	if commandSession.isEnemySleepActive(abilityStartTime) {
+	if isAsleep {
 		return request.reject("asleep")
 	}
-	if commandSession.isScarabDazed() {
+	if isDazed {
 		return request.reject("dazed")
 	}
-	if commandSession.isEnemyStunActive(abilityStartTime) {
+	if isStunned {
 		return request.reject("stunned")
 	}
-	if commandSession.isEnemyFearActive(abilityStartTime) {
+	if isTerrified {
 		return request.reject("terrified")
 	}
 	specialResponse, specialErr := r.handleSpecial(request)
@@ -1069,6 +1077,11 @@ func (r campaignAbilityCommandRuntime) handle(
 	commandSession, isSessionFound :=
 		r.registry.sessions[packet.Address.String()]
 	r.registry.mutex.RUnlock()
+	if isSessionFound && command.Ability != nil {
+		ability := *command.Ability
+		ability.Rank = commandSession.scenarioHeroAbilityRank(ability.Rank)
+		command.Ability = &ability
+	}
 	if isSessionFound && commandSession.binding.Mode == game.ModeArena {
 		return r.handleArenaAbility(ctx, packet, command, commandSession)
 	}
@@ -1176,6 +1189,8 @@ type campaignCursorAreaEffectStep struct {
 	generation     uint64
 	areaGeneration uint64
 	assetName      string
+	muzzleName     string
+	objectID       uint32
 	position       raknet.Vector3
 }
 
@@ -1192,7 +1207,16 @@ func (e campaignCursorAreaEffectStep) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cursorAreaEffect: %w", err)
 	}
-	return [][]byte{packet}, nil
+	if e.muzzleName == "" {
+		return [][]byte{packet}, nil
+	}
+	muzzle, muzzleErr := raknet.MarshalApplication(raknet.ObjectPresentationMessage{
+		Asset: util.HashID(e.muzzleName), ObjectID: e.objectID,
+	})
+	if muzzleErr != nil {
+		return nil, fmt.Errorf("cursorMuzzle: %w", muzzleErr)
+	}
+	return [][]byte{muzzle, packet}, nil
 }
 
 type campaignTeleportAreaStep struct {
@@ -1346,7 +1370,12 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 		}
 		e.sourcePosition = game.Vec3(current.playerPosition)
 	}
-	if e.definition.Kind == sim.AbilityKindCone {
+	if e.definition.Name == "TechRandom" {
+		e.sourcePosition = game.Vec3(current.playerPosition)
+		plan, err = zoneability.PlanZetawattBeam(
+			enemies, e.command.Common.ObjectID, e.targetObjectID, e.sourcePosition, e.center, e.creature, e.definition,
+		)
+	} else if e.definition.Kind == sim.AbilityKindCone {
 		plan, err = zoneability.PlanCone(
 			enemies, e.command.Common.ObjectID,
 			e.sourcePosition, e.center, e.creature, e.definition,
@@ -1395,6 +1424,14 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 		// Publish the working source before hits and retain those queued updates.
 		e.runtime.registry.sessions[e.sessionKey] = current
 	}
+	var arenaFlakPackets [][]byte
+	if current.binding.Mode == game.ModeArena && plan.Definition.Name == "MissileTempestSupport" {
+		arenaFlakPackets, err = e.prepareArenaFlakLocked(&current, plan)
+		if err != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("areaArenaFlak: %w", err)
+		}
+	}
 	results, err := zoneability.CommitArea(
 		random, enemies,
 		plan, e.creature, current.binding.Difficulty, e.runtime.program.Critical,
@@ -1404,13 +1441,32 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 		return nil, fmt.Errorf("campaignAreaBasicDamage: %w", err)
 	}
 	if arenaTargets, isArena := enemies.(*arenaAbilityTargets); isArena {
+		if plan.Definition.Name == "SpacetimeRandom3" {
+			publishErr := arenaTargets.publishCometLocked(plan, results)
+			e.runtime.registry.mutex.Unlock()
+			arenaTargets.finish()
+			if publishErr != nil {
+				return nil, fmt.Errorf("cometPublish: %w", publishErr)
+			}
+			return nil, nil
+		}
 		e.runtime.registry.mutex.Unlock()
 		packets, publishErr := e.publishArena(arenaTargets, plan, results)
-		arenaTargets.finish()
 		if publishErr != nil {
+			arenaTargets.finish()
 			return nil, fmt.Errorf("areaArenaPublish: %w", publishErr)
 		}
-		return packets, nil
+		if plan.Definition.Name == "MissileTempestSupport" {
+			// Keep Lua presentation, pre-damage slow and damage on one FIFO
+			// queue. Returning damage here overtakes queued modifier creation.
+			e.runtime.registry.mutex.Lock()
+			e.runtime.registry.queueFieldMedicRealmPacketsLocked(nil, current.binding.GameID, append(arenaFlakPackets, packets...))
+			e.runtime.registry.mutex.Unlock()
+			arenaTargets.finish()
+			return nil, nil
+		}
+		arenaTargets.finish()
+		return append(arenaFlakPackets, packets...), nil
 	}
 	transitions := make([]campaignDamageTransition, 0, len(results))
 	for index, result := range results {
@@ -1706,7 +1762,12 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 	enemies := r.registry.abilityTargetsLocked(r, peerSession, definition, packet.SourceTime)
 	var areaPlan zoneability.AreaPlan
 	var planErr error
-	if definition.Kind == sim.AbilityKindCone {
+	if definition.Name == "TechRandom" {
+		areaPlan, planErr = zoneability.PlanZetawattBeam(
+			enemies, command.Common.ObjectID, targetObjectID, sourcePosition,
+			game.Vec3(center), creature, definition,
+		)
+	} else if definition.Kind == sim.AbilityKindCone {
 		if !isReportedZonePosition(center) {
 			center = command.Ability.TargetPosition
 		}
@@ -1874,11 +1935,16 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 		return nil, fmt.Errorf("campaignAreaBasicStop: %w", err)
 	}
 	playerMotionRevision := peerSession.playerMotionRevision()
+	muzzleEffectName := areaPlan.Definition.MuzzleEffectName
+	if definition.Name == "TCShieldedSentinelSupport" || definition.Name == "MissileTempestSupport" || definition.Name == "SpacetimeRandom3" {
+		// Its Lua emits the object-only muzzle after waiting for the hit.
+		muzzleEffectName = ""
+	}
 	start, marshalErr := abilityraknet.StartAreaBasic(abilityraknet.AreaBasicStartRequest{
 		SyncStamp: command.Common.Unknown[0], SourceID: command.Common.ObjectID,
 		AbilityID: areaPlan.AbilityID, AbilityIndex: command.Ability.Index,
 		SourceTime: packet.SourceTime, AnimationName: selection.AnimationName,
-		MuzzleEffectName: areaPlan.Definition.MuzzleEffectName,
+		MuzzleEffectName: muzzleEffectName,
 		HitDelay:         selection.HitDelay, ReleaseDelay: selection.ReleaseDelay,
 		Cooldown: areaPlan.Definition.Cooldown,
 	})
@@ -1925,7 +1991,7 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 	r.registry.mutex.Unlock()
 
 	livePlanCenter := areaPlan.Center
-	if definition.Kind == sim.AbilityKindCone {
+	if definition.Kind == sim.AbilityKindCone || definition.Name == "TechRandom" {
 		livePlanCenter = game.Vec3{X: center.X, Y: center.Y, Z: center.Z}
 	}
 	hitStep := campaignAreaHitStep{
@@ -1948,8 +2014,9 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 		cursorEffectStep = &campaignCursorAreaEffectStep{
 			registry: r.registry, sessionKey: sessionKey,
 			generation: generation, areaGeneration: areaGeneration,
-			assetName: areaPlan.Definition.HitEffectName,
-			position:  center,
+			assetName:  areaPlan.Definition.HitEffectName,
+			muzzleName: areaPlan.Definition.MuzzleEffectName, objectID: command.Common.ObjectID,
+			position: center,
 		}
 	} else if definition.Name == "PlasmaRandom" {
 		hitStep.isEffectPresented = true
@@ -2004,7 +2071,8 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 	if definition.Name == "MissileTempestSupport" &&
 		(abilityRank == 5 || abilityRank == 6) {
 		for _, additionalDelay := range []time.Duration{
-			400 * time.Millisecond, 1100 * time.Millisecond,
+			selection.ReleaseDelay + 400*time.Millisecond,
+			selection.ReleaseDelay + 1100*time.Millisecond,
 		} {
 			additionalHit := hitStep
 			additionalHit.hitTimestamp = packet.SourceTime +

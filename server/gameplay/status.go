@@ -1309,13 +1309,10 @@ func (s gameplayPeerSession) deployedResourceMaximum() (float32, float32, error)
 	}
 	if s.binding.Mode == game.ModeArena {
 		creatureIndex := s.deployedCreatureIndex
-		if creatureIndex >= uint32(len(s.binding.Creatures)) ||
-			creatureIndex >= uint32(len(s.maximumHitPoints)) ||
-			creatureIndex >= uint32(len(s.maximumManaPoints)) {
+		if creatureIndex >= uint32(len(s.binding.Creatures)) {
 			return 0, 0, errors.New("deployed arena hero unavailable")
 		}
-		maximumHitPoint := s.maximumHitPoints[creatureIndex]
-		maximumManaPoint := s.maximumManaPoints[creatureIndex]
+		maximumHitPoint, maximumManaPoint := s.characterResourceMaximum(creatureIndex)
 		if maximumHitPoint <= 0 || maximumManaPoint <= 0 {
 			return 0, 0, errors.New("deployed arena hero resources unavailable")
 		}

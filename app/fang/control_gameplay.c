@@ -113,6 +113,97 @@ static int is_gameplay_float_finite(const float* scalar) {
     return (bits & 0x7F800000u) != 0x7F800000u;
 }
 
+/* Build 103's sub_4F3DB0 selects the final type-3 graphics part. Bone
+ * presentation then dereferences model+28 and rig+388. Observe that same
+ * chain on the existing gameplay owner thread; no pointers leave this sample. */
+static void read_gameplay_rig(const BYTE* object, uint32_t* is_observed, uint32_t* is_ready) {
+    const BYTE* graphics;
+    const BYTE* manager;
+    const BYTE* pool;
+    const BYTE* slots;
+    const uint32_t* handles;
+    uintptr_t begin, end, offset;
+    uint32_t count, capacity, stride, index;
+    *is_observed = 0;
+    *is_ready = 0;
+    if (!readable_range(object, 656)) return;
+    graphics = *(const BYTE* const*)(object + 652);
+    if (!graphics) { *is_observed = 1; return; }
+    if (!readable_range(graphics, 112)) return;
+    begin = *(const uintptr_t*)(graphics + 104);
+    end = *(const uintptr_t*)(graphics + 108);
+    if (end < begin || (end - begin) % sizeof(uint32_t) ||
+        end - begin > 256 * sizeof(uint32_t)) return;
+    count = (uint32_t)((end - begin) / sizeof(uint32_t));
+    if (!count) { *is_observed = 1; return; }
+    if (!readable_range((const void*)begin, end - begin)) return;
+    if (!readable_range(gameplay_image + 0x1038EF0, sizeof(void*))) return;
+    manager = *(const BYTE* const*)(gameplay_image + 0x1038EF0);
+    if (!manager || (uintptr_t)manager > UINTPTR_MAX - 102436) return;
+    pool = (const BYTE*)((uintptr_t)manager + 102436);
+    if (!readable_range(pool, 24)) return;
+    slots = *(const BYTE* const*)pool;
+    capacity = *(const uint32_t*)(pool + 16);
+    stride = *(const uint32_t*)(pool + 20);
+    if (!slots || !capacity || capacity > 65536 || stride < 16 || stride > 4096) return;
+    handles = (const uint32_t*)begin;
+    for (index = count; index > 0; index--) {
+        const BYTE* part;
+        const BYTE* model;
+        const BYTE* rig;
+        const BYTE* skeleton;
+        uint32_t slot = handles[index - 1] & 0xffffu;
+        if (slot >= capacity) return;
+        offset = (uintptr_t)slot * stride;
+        if (offset > UINTPTR_MAX - (uintptr_t)slots) return;
+        part = (const BYTE*)((uintptr_t)slots + offset);
+        if (!readable_range(part, 16)) return;
+        if (*(const uint32_t*)(part + 8) != 3) continue;
+        model = *(const BYTE* const*)(part + 12);
+        if (!model) { *is_observed = 1; return; }
+        if (!readable_range(model, 32)) return;
+        rig = *(const BYTE* const*)(model + 28);
+        if (!rig) { *is_observed = 1; return; }
+        if (!readable_range(rig, 392)) return;
+        skeleton = *(const BYTE* const*)(rig + 388);
+        if (skeleton && !readable_range(skeleton, sizeof(void*))) return;
+        *is_observed = 1;
+        *is_ready = skeleton != NULL;
+        return;
+    }
+    *is_observed = 1;
+}
+
+static void read_gameplay_ability_ranks(const BYTE* player) {
+    /* Build 103 sub_9C2970 reads player[378 * selected + 237 + index].
+     * Verify its installed accessor before observing the nine retained ranks;
+     * no native call, rank assignment, or gameplay decision occurs here. */
+    static const BYTE rank_entry[] = {
+        0x8B,0x44,0x24,0x08,0x83,0xF8,0xFF,0x75,0x06,0x8B,0x41,0x0C,
+        0x83,0xF8,0xFF,0x7E,0x14,0x69,0xC0,0x7A,0x01,0x00,0x00,
+        0x03,0x44,0x24,0x04,0x8B,0x84,0x81,0xB4,0x03,0x00,0x00,0xC2,0x08,0x00
+    };
+    const uint32_t* ranks;
+    int32_t selected;
+    uint32_t index;
+    if (!readable_range(gameplay_image + 0x5C2970, sizeof(rank_entry)) ||
+        memcmp(gameplay_image + 0x5C2970, rank_entry, sizeof(rank_entry)) ||
+        !readable_range(player, 16)) return;
+    selected = *(const int32_t*)(player + 12);
+    if (selected < 0 || selected > 2) return;
+    ranks = (const uint32_t*)(player + 1512u * (uint32_t)selected + 948u);
+    if (!readable_range(ranks, sizeof(gameplay_state.ability_ranks))) return;
+    for (index = 0; index < 9; index++) {
+        if (ranks[index] > 8) return;
+    }
+    memcpy(gameplay_state.ability_ranks, ranks, sizeof(gameplay_state.ability_ranks));
+    if (*(const int32_t*)(player + 12) != selected) {
+        memset(gameplay_state.ability_ranks, 0, sizeof(gameplay_state.ability_ranks));
+        return;
+    }
+    gameplay_state.is_ability_rank_available = 1;
+}
+
 static void read_gameplay_state(uint32_t sequence, const fang_control_snapshot* boundary) {
     const BYTE* root;
     const BYTE* player;
@@ -143,10 +234,16 @@ static void read_gameplay_state(uint32_t sequence, const fang_control_snapshot* 
         memcpy(&gameplay_state.x, object + 24, 3 * sizeof(float));
         gameplay_state.fields |= 2;
     }
+    read_gameplay_rig(object, &gameplay_state.is_rig_observed, &gameplay_state.is_rig_ready);
+    read_gameplay_ability_ranks(player);
     /* Double-check identity after copying. Handles retain their generation;
      * none of these pointers or server-ID assumptions leave this callback. */
     if (*(const uint32_t*)object != handle || *(const uint32_t*)(player + 4664) != handle) {
         gameplay_state.fields = 0;
+        gameplay_state.is_rig_observed = 0;
+        gameplay_state.is_rig_ready = 0;
+        gameplay_state.is_ability_rank_available = 0;
+        memset(gameplay_state.ability_ranks, 0, sizeof(gameplay_state.ability_ranks));
         return;
     }
     gameplay_state.is_world_active = 1;

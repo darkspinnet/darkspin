@@ -4,8 +4,9 @@ package scenario
 
 import "time"
 
-// AbilityState observes the authored Ride the Lightning and Rocket Barrage
-// paths. Server producer evidence never attests native input or rendering.
+// AbilityState observes active-slot readiness for Ride the Lightning and
+// Rocket Barrage, plus terminal producer evidence for any authored burst slot.
+// Server producer evidence never attests native input or rendering.
 type AbilityState struct {
 	IsArena              bool
 	CapturedAt           time.Time

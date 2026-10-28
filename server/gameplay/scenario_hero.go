@@ -41,6 +41,16 @@ func (e *gameplaySessionRegistry) configureScenarioHeroPools(modifierPool *modif
 // match statistics, immunity, or the production ability acceptance rules.
 func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req scenario.HeroResetRequest, creature game.GameplayCreature) (scenario.HeroResetReceipt, error) {
 	result := scenario.HeroResetReceipt{}
+	if ctx == nil {
+		return result, errors.New("hero reset requires context")
+	}
+	contextErr := ctx.Err()
+	if contextErr != nil {
+		return result, fmt.Errorf("resetContext: %w", contextErr)
+	}
+	if !req.IsAbilityRankSet && req.AbilityRank != 0 {
+		return result, errors.New("ability rank requires its explicit server fixture flag")
+	}
 	err := e.lockScenarioSpawn(ctx)
 	if err != nil {
 		return result, fmt.Errorf("resetLock: %w", err)
@@ -79,8 +89,29 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 	if !isFound || !character.IsAvailable || character.HitPoints <= 0 {
 		return result, errors.New("hero reset requires a living deployed hero; completed deaths are not rewound")
 	}
+	retirement := member.scenarioAbility.retirement
+	if retirement != nil {
+		if req.IsRetirement || req.IsPlacement || req.IsCooldownReset || req.IsAbilityRankSet || req.Noun == 0 ||
+			req.HitPoint != nil || req.ManaPoint != nil || !retirement.matches(member, req) {
+			return result, errors.New("hero replacement retirement is pending; only its matching commit is permitted")
+		}
+	} else if req.Noun != 0 && !req.IsRetirement {
+		return result, errors.New("hero replacement requires retirement and a native deletion fence before commit")
+	}
+	if req.IsRetirement && (req.Noun == 0 || req.IsPlacement || req.IsCooldownReset || req.IsAbilityRankSet || req.HitPoint != nil || req.ManaPoint != nil) {
+		return result, errors.New("hero retirement requires only a replacement noun and observed position")
+	}
+	if req.IsAbilityRankSet {
+		return e.setScenarioHeroAbilityRankLocked(member, req, result.RecipientCount)
+	}
 	if req.IsPlacement {
 		return e.placeScenarioHeroLocked(member, req, result.RecipientCount)
+	}
+	if req.IsCooldownReset {
+		return e.resetScenarioCooldownsLocked(member, req, result.RecipientCount)
+	}
+	if req.Noun != 0 && (req.HitPoint != nil || req.ManaPoint != nil) {
+		return result, errors.New("resource fields require a resource-only restore")
 	}
 	maximumHitPoint, maximumManaPoint := member.characterResourceMaximum(index)
 	if req.Noun != 0 {
@@ -89,6 +120,9 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 			return result, errors.New("replacement hero template unavailable")
 		}
 		maximumHitPoint, maximumManaPoint = creature.HitPoint, creature.PowerPoint
+	}
+	if req.IsRetirement {
+		return e.retireScenarioHeroLocked(ctx, member, req, creature, result.RecipientCount)
 	}
 	// Prepare the complete wire projection before any mutation.
 	projected := member
@@ -115,11 +149,23 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 		}
 		projected.squad = replacement
 	}
-	packets, err := scenarioHeroResetPackets(projected, maximumHitPoint, maximumManaPoint, req.Noun != 0)
+	restoredHitPoint, restoredManaPoint := maximumHitPoint, maximumManaPoint
+	if req.HitPoint != nil {
+		restoredHitPoint = *req.HitPoint
+	}
+	if req.ManaPoint != nil {
+		restoredManaPoint = *req.ManaPoint
+	}
+	if !isFiniteZonePosition(raknet.Vector3{X: restoredHitPoint, Y: restoredManaPoint}) ||
+		restoredHitPoint <= 0 || restoredHitPoint > maximumHitPoint || restoredManaPoint < 0 || restoredManaPoint > maximumManaPoint {
+		return result, errors.New("fixture resources must be finite and within the living hero maximum")
+	}
+	packets, err := scenarioHeroResetPackets(projected, restoredHitPoint, restoredManaPoint, req.Noun != 0)
 	if err != nil {
 		return result, fmt.Errorf("resetPackets: %w", err)
 	}
 	previousBatchID := member.nextPendingPacketID
+	previousBatchIDs := e.scenarioCleanupBatchIDsLocked(req.GameID)
 	if req.Noun != 0 {
 		// A fresh squad fences delayed callbacks holding the old actor identity.
 		e.retireFieldMedicBuffsLocked(&member, e.scenarioModifierPool)
@@ -139,7 +185,10 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 		member.binding.Creatures[index] = creature
 		member.squad = replacement
 		member.scenarioAbility.last = nil
+		member.clearScenarioHeroAbilityRank()
 		member.scenarioAbility.rejection = nil
+		member.scenarioAbility.retirement = nil
+		member.scenarioAbility.isCaptureUnavailable = false
 		err = member.teleportPlayer(e.now(), projected.playerPosition)
 		if err != nil && e.logger != nil {
 			e.logger.Printf("Scenario hero position preservation user=%d: %v", member.binding.UserID, err)
@@ -170,14 +219,14 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 		}
 		packets = append(packets, initialPackets...)
 	} else {
-		isGameOver, healthErr := member.squad.SetHitPoints(index, maximumHitPoint)
+		isGameOver, healthErr := member.squad.SetHitPoints(index, restoredHitPoint)
 		if healthErr != nil {
 			return result, fmt.Errorf("resetHealth: %w", healthErr)
 		}
 		if isGameOver {
 			return result, errors.New("resource restore unexpectedly ended the squad")
 		}
-		manaErr := member.squad.SetManaPoints(index, maximumManaPoint)
+		manaErr := member.squad.SetManaPoints(index, restoredManaPoint)
 		if manaErr != nil {
 			return result, fmt.Errorf("resetMana: %w", manaErr)
 		}
@@ -201,12 +250,12 @@ func (e *gameplaySessionRegistry) ScenarioResetHero(ctx context.Context, req sce
 				cleanupPackets = append(cleanupPackets, batch.packets...)
 			}
 		}
-		e.queueFieldMedicRealmPacketsLocked(nil, req.GameID, cleanupPackets, member.binding.UserID)
+		e.queueScenarioCleanupLocked(req.GameID, member.binding.UserID, cleanupPackets, previousBatchIDs)
 	}
 	e.commitChannelRemovalsLocked()
 	e.queueFieldMedicRealmPacketsLocked(nil, req.GameID, packets)
 	return scenario.HeroResetReceipt{GameID: req.GameID, ObjectID: req.ObjectID, Noun: member.binding.Creatures[index].Noun,
-		Index: index, HitPoint: maximumHitPoint, ManaPoint: maximumManaPoint, RecipientCount: result.RecipientCount,
+		Index: index, HitPoint: restoredHitPoint, ManaPoint: restoredManaPoint, RecipientCount: result.RecipientCount,
 		IsReplacement: req.Noun != 0, IsQueued: true}, nil
 }
 
@@ -249,30 +298,11 @@ func scenarioHeroResetPackets(member gameplayPeerSession, hitPoint, manaPoint fl
 	messages := make([]raknet.ApplicationMessage, 0, 12)
 	packets := make([][]byte, 0, 12)
 	if isReplacement {
-		deletePacket, err := raknet.MarshalApplication(raknet.ObjectDeleteMessage{ObjectID: []uint32{objectID}})
-		if err != nil {
-			return nil, fmt.Errorf("resetDelete: %w", err)
-		}
-		rosterBinding := member.binding
-		for characterIndex := range rosterBinding.Creatures {
-			if uint32(characterIndex) == index {
-				continue
-			}
-			character, isFound := member.squad.Character(uint32(characterIndex))
-			if !isFound {
-				return nil, errors.New("reset roster character unavailable")
-			}
-			maximumHealth, maximumPower := member.characterResourceMaximum(uint32(characterIndex))
-			rosterBinding.Creatures[characterIndex].HitPoint = character.HitPoints
-			rosterBinding.Creatures[characterIndex].PowerPoint = character.ManaPoints
-			rosterBinding.Creatures[characterIndex].MaximumHitPoint = maximumHealth
-			rosterBinding.Creatures[characterIndex].MaximumPowerPoint = maximumPower
-		}
-		statusPacket, err := marshalCampaignPlayer(rosterBinding, raknet.PlayerStatus{}, member.overdriveEnergy, false, true)
+		statusPacket, err := scenarioHeroRosterPacket(member)
 		if err != nil {
 			return nil, fmt.Errorf("resetRoster: %w", err)
 		}
-		packets = append(packets, deletePacket, statusPacket)
+		packets = append(packets, statusPacket)
 		creature := member.binding.Creatures[index]
 		messages = append(messages, raknet.ObjectCreateMessage{
 			ObjectID: objectID, Noun: creature.Noun, AssetID: zonehero.AppearanceAsset(creature),

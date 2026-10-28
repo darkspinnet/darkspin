@@ -258,7 +258,8 @@ type areaSpecialHitStep struct {
 }
 
 type areaSpecialEffect struct {
-	assetID uint32
+	assetID      uint32
+	isObjectOnly bool
 }
 
 func (e areaSpecialSchedule) isCurrent(
@@ -325,6 +326,15 @@ func (e areaSpecialSchedule) fail(scheduleErr error) {
 func (e areaSpecialEffect) produce(
 	result zoneability.AreaResult,
 ) ([]byte, error) {
+	if e.isObjectOnly {
+		packet, err := raknet.MarshalApplication(raknet.ObjectPresentationMessage{
+			Asset: e.assetID, ObjectID: result.Damage.ObjectID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("beamHitEffect: %w", err)
+		}
+		return packet, nil
+	}
 	packet, err := effectraknet.Event(effectraknet.EventRequest{
 		AssetID: e.assetID, ObjectID: result.Damage.ObjectID,
 	})
@@ -373,7 +383,7 @@ func (e areaSpecialHitStep) produce() ([][]byte, error) {
 	}
 	if schedule.isZetawatt {
 		livePlan, err = zoneability.PlanZetawattBeam(
-			peerSession.zone.NPCs(), schedule.sourceObjectID,
+			peerSession.zone.NPCs(), schedule.sourceObjectID, schedule.targetObjectID,
 			game.Vec3{
 				X: peerSession.playerPosition.X,
 				Y: peerSession.playerPosition.Y,
@@ -416,7 +426,7 @@ func (e areaSpecialHitStep) produce() ([][]byte, error) {
 			time.Millisecond,
 	)
 	effect := areaSpecialEffect{
-		assetID: util.HashID(livePlan.Definition.HitEffectName),
+		assetID: util.HashID(livePlan.Definition.HitEffectName), isObjectOnly: schedule.isZetawatt,
 	}
 	packets, err := schedule.runtime.damage.publishAreaResults(
 		schedule.packet, schedule.sessionKey, schedule.generation,
@@ -451,11 +461,9 @@ func (e areaSpecialHitStep) produce() ([][]byte, error) {
 		packets = append([][]byte{beamPacket}, packets...)
 	}
 	if schedule.isZetawatt {
-		beamPacket, beamErr := effectraknet.Beam(effectraknet.BeamRequest{
-			AssetID:        util.HashID(livePlan.Definition.ImpactEffectName),
-			SourceObjectID: schedule.sourceObjectID,
-			TargetPoint:    livePlan.Center,
-		})
+		beamPacket, beamErr := schedule.runtime.zetawattBeamPresentation(
+			schedule.sourceObjectID, game.Vec3(peerSession.playerPosition), schedule.creature, livePlan,
+		)
 		if beamErr != nil {
 			return nil, fmt.Errorf("zetawattBeamEffect: %w", beamErr)
 		}
@@ -1266,7 +1274,7 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 	isEnrageRequest := command.Ability.Index == 3 && isRandomAbilityFound &&
 		randomAbility.AssetName == "CastEnrage"
 	isZetawattRequest := command.Ability.Index == 3 && isRandomAbilityFound &&
-		randomAbility.AssetName == "TechRandom"
+		randomAbility.AssetName == "TechRandom" && commandSession.binding.Mode != game.ModeArena
 	specialTwoCooldownKey := zoneability.HeroAbilityCooldown(specialTwoAbility.ID)
 	supportCooldownKey := zoneability.HeroAbilityCooldown(supportAbility.ID)
 	randomCooldownKey := zoneability.HeroAbilityCooldown(randomAbility.ID)
@@ -1570,7 +1578,7 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 		}
 		if isZetawattRequest {
 			plan, planErr = zoneability.PlanZetawattBeam(
-				peerSession.zone.NPCs(), command.Common.ObjectID,
+				peerSession.zone.NPCs(), command.Common.ObjectID, targetObjectID,
 				sourcePosition, storedTargetPosition, creature, definition,
 			)
 		}
@@ -2421,7 +2429,7 @@ func (r campaignAbilityCommandRuntime) handleSquad(
 		r.registry.mutex.Unlock()
 		return r.rejectSquadAbility(command, "session unavailable")
 	}
-	if abilityStartTime.Before(peerSession.enemySilenceExpiresAt) {
+	if peerSession.isEnemySilenceActive(abilityStartTime) {
 		r.registry.mutex.Unlock()
 		return r.rejectSquadAbility(command, "silenced")
 	}
