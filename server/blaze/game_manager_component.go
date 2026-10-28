@@ -246,6 +246,18 @@ func sessionGameHostNetwork(
 	if session == nil || session.conn == nil {
 		return fallback, nil
 	}
+	// Dedicated deployments can accept TCP on a private container interface
+	// while advertising a public gameplay endpoint. Build 103 matches the UDP
+	// open reply against the address originally given to RakPeer.Connect.
+	// Replacing that endpoint with LocalAddr makes redirected replies fail
+	// the native pending-address lookup despite arriving successfully.
+	advertisedIP := net.IPv4(
+		byte(fallback.External.IP>>24), byte(fallback.External.IP>>16),
+		byte(fallback.External.IP>>8), byte(fallback.External.IP),
+	)
+	if fallback.External.IP != 0 && !advertisedIP.IsLoopback() {
+		return fallback, nil
+	}
 	localHost, _, err := net.SplitHostPort(session.conn.LocalAddr().String())
 	if err != nil {
 		return game.NetworkPair{}, fmt.Errorf("localAddressSplit: %w", err)

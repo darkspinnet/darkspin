@@ -16,7 +16,9 @@ import (
 )
 
 type scenarioAbilityCatalog struct {
-	abilitiesByNoun map[uint32]zonecontent.HeroAbility
+	abilitiesByNoun      map[uint32]zonecontent.HeroAbility
+	scenarioModifierPool *modifierPool
+	scenarioEffectPool   *attachedEffectPool
 }
 type scenarioAbilityState struct {
 	isCaptureUnavailable bool

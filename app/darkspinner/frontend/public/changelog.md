@@ -2,6 +2,10 @@
 
 ### 2026-10-27
 
+- Add scenario-only PvP hero replacement and health/power restoration so ability sweeps can reuse one live match without changing saved squads or combat statistics.
+- Restore PvP flight and collisions for homing missiles, projectile waves, Missile Barrage, Electron Sphere and lobbed grenades, including allied healing on projectile impact.
+- Keep delayed PvP damage attributed to the casting hero instead of the newly deployed hero after a squad swap.
+- [#139](https://github.com/darkspinnet/darkspin/issues/139) Preserve the configured advertised gameplay address instead of replacing it with a private TCP listener address during remote game setup.
 - [#138](https://github.com/darkspinnet/darkspin/issues/138) Preserve accepted Plasma Column and Arboreal Might lifetimes when unrelated commands are rejected or expire, including their reserved visual-effect slots.
 - [#138](https://github.com/darkspinnet/darkspin/issues/138) Keep Hardened Mantle's effect slot reserved through action recovery so its later expiry cannot remove a newly cast ability's visual effect.
 - Make Corruptor portal placement reproducible with a run-owned saved RNG stream and ordered portal waves instead of clock seeds and competing timers.
@@ -725,7 +729,7 @@
 - [#43](https://github.com/darkspinnet/darkspin/issues/43)  Remove Vex's Time Bubble visual and affected-target modifiers when an aura is stopped by a reset or scheduling failure, using the same client cleanup as normal expiry.
 - [#43](https://github.com/darkspinnet/darkspin/issues/43) Restore Vex's Time Lapse from a single-target melee hit to a nearby area attack that repeats each enemy's last 10 seconds of damage up to its Dexterity-scaled cap, with the authored hit effects.
 - [#43](https://github.com/darkspinnet/darkspin/issues/43) Recheck melee reach at impact for Protonic Sword and other melee basics, preventing damage to targets that have moved out of reach and using the hero's current position for cleave selection.
-- [#43](https://github.com/darkspinnet/darkspin/issues/43) Restore Rocket Barrage's cast-duration bar and animation cleanup, allow cancellation throughout the cast, and stop further launches without discarding rockets already in flight.
+- [#43](https://github.com/darkspinnet/darkspin/issues/43) Restore Missile Barrage's cast-duration bar and animation cleanup, allow cancellation throughout the cast, and stop further launches without discarding rockets already in flight.
 - [#43](https://github.com/darkspinnet/darkspin/issues/43) Restore SRS-42's rocket proximity homing without a stationary prerequisite and apply the authored 3-meter explosion radius, including area-radius bonuses, instead of single-target damage.
 - [#43](https://github.com/darkspinnet/darkspin/issues/43) Keep Rooted heroes at their authoritative position, stop existing pursuit, and block attack pursuit, distant trap placement, and following until the root expires while preserving attacks already in range.
 - [#43](https://github.com/darkspinnet/darkspin/issues/43) Send Chrono Blink's Frozen state to enemies and projectiles so their client animations and flight pause until the freeze expires, preserving overlapping freeze durations.

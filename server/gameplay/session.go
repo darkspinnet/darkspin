@@ -316,6 +316,7 @@ type controlledHeroState struct {
 	heroInputLockedObjectID       uint32
 	heroInputLockedUntil          time.Time
 	maximumHitPoints              [squad.Size]float32
+	arenaHitPointIncreases        [squad.Size]float32
 	maximumManaPoints             [squad.Size]float32
 	isHeroSelectionPending        bool
 	isHeroSelectionScheduled      bool
@@ -904,6 +905,9 @@ func (s *gameplayPeerSession) pendingPackets() ([][]byte, uint64) {
 		// A connected peer may still be loading its scene. Keep world packets
 		// queued until its dungeon setup and reconnect baseline commit, retaining
 		// their original ordering so removals cannot precede baseline creates.
+		if batch.channelCreation != nil && batch.channelCreation.isCreationBlocked(*s) {
+			break
+		}
 		if batch.isCampaignPresentation && (!s.dungeonSetup.IsCommitted() || s.isRejoinPending) {
 			break
 		}
@@ -5119,7 +5123,7 @@ func (s gameplayPeerSession) characterResourceMaximums(
 		// Arena binds its own character stats. Shared healing/resource paths
 		// must not substitute campaign defaults or apply campaign crystals.
 		creature := s.binding.Creatures[creatureIndex]
-		return characterResourceMaximum{hitPoint: creature.HitPoint, manaPoint: creature.PowerPoint}
+		return characterResourceMaximum{hitPoint: creature.HitPoint + s.arenaHitPointIncreases[creatureIndex], manaPoint: creature.PowerPoint}
 	}
 	if (s.binding.Mode != game.ModeChain && s.binding.Mode != game.ModeTutorial) ||
 		creatureIndex >= uint32(len(s.binding.Creatures)) {
@@ -5461,7 +5465,7 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 			}
 		}
 		s.resetPassiveKill(s.deployedCreatureIndex)
-		soulPackets, soulErr := s.syncSoulRavagerPresentation()
+		soulPackets, soulErr := s.syncSoulRavagerPresentation(nil)
 		if soulErr == nil {
 			hitPackets = append(hitPackets, soulPackets...)
 		}

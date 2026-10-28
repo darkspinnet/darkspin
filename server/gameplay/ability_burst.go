@@ -180,6 +180,9 @@ func (e heroBurstStep) produceLaunch() ([][]byte, error) {
 		targetObjectID, targetPosition = schedule.planArcTarget(peerSession, e.index)
 		schedule.shotTargetObjectIDs[e.index] = targetObjectID
 	} else if schedule.definition.BurstTargeting == sim.ProjectileBurstTargetingRadial {
+		if peerSession.binding.Mode == game.ModeArena {
+			targetObjectID = 0
+		}
 		targetPosition = schedule.planTargetPosition(peerSession, e.index)
 	} else if schedule.definition.BurstTargeting == sim.ProjectileBurstTargetingCursorArea {
 		targetObjectID = 0
@@ -970,7 +973,7 @@ func (e heroBurstSchedule) fail(scheduleErr error) {
 			e.creatureIndex, e.previousManaPoint,
 		)
 		peerSession.restorePassiveKill(e.creatureIndex, e.passiveKillStack)
-		soulPackets, soulErr := peerSession.syncSoulRavagerPresentation()
+		soulPackets, soulErr := peerSession.syncSoulRavagerPresentation(e.runtime.registry)
 		if soulErr == nil {
 			publishErr := peerSession.publishPackets(soulPackets)
 			if publishErr != nil && e.runtime.logger != nil {
@@ -1014,7 +1017,8 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 	if !isReportedZonePosition(targetPosition) {
 		targetPosition = command.Ability.CursorPosition
 	}
-	if definition.BurstTargeting == sim.ProjectileBurstTargetingCursorArea {
+	if definition.BurstTargeting == sim.ProjectileBurstTargetingCursorArea ||
+		(definition.BurstTargeting == sim.ProjectileBurstTargetingRadial && peerSession.binding.Mode == game.ModeArena) {
 		targetObjectID = 0
 	}
 	if targetObjectID == 0 &&
@@ -1251,7 +1255,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 		TargetPosition: sim.Position(targetPosition), ActorFacing: sim.Position(facing),
 		FootprintRadius: actorFootprint,
 		Damage:          definition.MaximumDamage, TargetHitPoint: targetHitPoint,
-		ActorTeam: 1, SourceTime: packet.SourceTime, StartedAt: abilityStartTime,
+		ActorTeam: abilityActorTeam(peerSession), SourceTime: packet.SourceTime, StartedAt: abilityStartTime,
 		IsImpactFacingOmitted: definition.Name == "LightningTempest_Active",
 	})
 	if err != nil {
@@ -1358,7 +1362,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 		r.registry.mutex.Unlock()
 		return request.rejectScenarioAbility("passive soul state unavailable")
 	}
-	soulPackets, soulErr := peerSession.syncSoulRavagerPresentation()
+	soulPackets, soulErr := peerSession.syncSoulRavagerPresentation(r.registry)
 	if soulErr != nil {
 		peerSession.restorePassiveKill(creatureIndex, passiveKillStack)
 		delete(peerSession.heroBurstAttacks, firstProjectileObjectID)

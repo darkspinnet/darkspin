@@ -250,19 +250,49 @@ func (r gameplayMovementRuntime) handleArena(
 		r.campaign.registry.mutex.Unlock()
 		return nil, nil
 	}
-	_, _, err := peerSession.advancePlayerMovement(
+	r.campaign.registry.mutex.Unlock()
+	interruption := r.campaign.action.interruptMovement(packet.Address.String(), commandSession.generation,
+		command.Common.ObjectID, game.Vec3(command.Movement.GoalPosition), r.campaign.now(), packet.SourceTime)
+	if interruption.isAttackBlocked {
+		return r.campaign.rejectActiveAttackMovement(command, interruption.playerPosition,
+			interruption.basicSyncStamp, interruption.attackPose)
+	}
+	r.campaign.registry.clearPursuitActionLeases(packet.Address.String(), commandSession.transportGeneration, command.Common.ObjectID)
+	if interruption.basicAttack != nil {
+		r.campaign.registry.clearActionLeasesForSync(packet.Address.String(), commandSession.transportGeneration,
+			command.Common.ObjectID, interruption.basicSyncStamp)
+	}
+	interruptionPackets, err := interruption.stopPackets(command.Common.ObjectID, packet.SourceTime)
+	if err != nil {
+		return nil, fmt.Errorf("arenaMoveInterrupt: %w", err)
+	}
+	r.campaign.registry.mutex.Lock()
+	peerSession, isFound = r.campaign.registry.sessions[packet.Address.String()]
+	if !isFound || peerSession.generation != commandSession.generation ||
+		peerSession.transportGeneration != commandSession.transportGeneration ||
+		peerSession.deployedObjectID != command.Common.ObjectID {
+		r.campaign.registry.mutex.Unlock()
+		return nil, errors.New("arena movement actor changed during interruption")
+	}
+	_, _, err = peerSession.advancePlayerMovement(
 		r.campaign.now(), command.Common.Position,
-		command.Movement.GoalPosition, false, 0,
+		command.Movement.GoalPosition, command.Movement.GoalFlags&0x20 != 0,
+		r.campaign.registry.passiveMovementIncrease(peerSession),
 	)
 	if err != nil {
 		r.campaign.registry.mutex.Unlock()
 		return nil, fmt.Errorf("arenaMovementAdvance: %w", err)
 	}
 	r.campaign.registry.sessions[packet.Address.String()] = peerSession
+	r.campaign.registry.commitChannelRemovalsLocked()
 	r.campaign.registry.mutex.Unlock()
-	return marshalZonePlayerMove(
+	packets, err := marshalZonePlayerMove(
 		command.Common.ObjectID, command.Movement.GoalPosition,
 	)
+	if err != nil {
+		return nil, fmt.Errorf("arenaMovePackets: %w", err)
+	}
+	return append(packets, interruptionPackets...), nil
 }
 
 func (r campaignAbilityCommandRuntime) handleArenaCharacter(
@@ -551,7 +581,7 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 	squadHealthPacket, err := raknet.MarshalApplication(raknet.LabsPlayerCharacterResourceMessage{
 		PlayerSlot: uint8(targetSession.binding.Slot), CreatureIndex: targetSession.deployedCreatureIndex,
 		Resource: raknet.LabsCharacterResource{
-			Health: hitPoint, MaxHealth: targetCreature.HitPoint,
+			Health: hitPoint, MaxHealth: targetSession.characterHitPointMaximum(targetSession.deployedCreatureIndex),
 			Mana: targetSession.deployedManaPoint(), MaxMana: targetCreature.PowerPoint,
 		},
 	})

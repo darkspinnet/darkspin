@@ -26,6 +26,8 @@ type fieldMedicBuffCapture struct {
 type fieldMedicHeroBuffRun struct {
 	mutex               sync.Mutex
 	zone                *zone.Zone
+	arenaGameID         uint32
+	effectInventory     *zoneeffect.Inventory
 	userID              uint64
 	generation          uint64
 	expiresAt           time.Time
@@ -43,6 +45,23 @@ type fieldMedicHeroBuffRun struct {
 	maximumHitPoint     float32
 	isCompanion         bool
 	cancel              raknet.CancelSchedule
+}
+
+func (e *fieldMedicHeroBuffRun) contains(member gameplayPeerSession) bool {
+	if e.arenaGameID != 0 {
+		return member.binding.Mode == game.ModeArena && member.binding.GameID == e.arenaGameID
+	}
+	return e.zone != nil && member.zone == e.zone
+}
+
+func (e *fieldMedicHeroBuffRun) inventory() *zoneeffect.Inventory {
+	if e.effectInventory != nil {
+		return e.effectInventory
+	}
+	if e.zone != nil {
+		return e.zone.Effect()
+	}
+	return nil
 }
 
 func (e *fieldMedicHeroBuffRun) remove(peerSession *gameplayPeerSession) error {
@@ -87,9 +106,11 @@ func (e *fieldMedicHeroBuffRun) remove(peerSession *gameplayPeerSession) error {
 	creature.PassiveMovementIncrease = max(
 		float32(0), creature.PassiveMovementIncrease-e.movementSpeedBuff,
 	)
-	peerSession.maximumHitPoints[e.creatureIndex] = max(
-		float32(0), peerSession.maximumHitPoints[e.creatureIndex]-e.maximumHitPoint,
-	)
+	if peerSession.binding.Mode == game.ModeArena {
+		peerSession.arenaHitPointIncreases[e.creatureIndex] = max(float32(0), peerSession.arenaHitPointIncreases[e.creatureIndex]-e.maximumHitPoint)
+	} else {
+		peerSession.maximumHitPoints[e.creatureIndex] = max(float32(0), peerSession.maximumHitPoints[e.creatureIndex]-e.maximumHitPoint)
+	}
 	e.damageBuff = 0
 	e.energyDamageBuff = 0
 	e.attackSpeed = 0
@@ -264,14 +285,14 @@ func (e fieldMedicHeroBuffExpiry) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	defer e.runtime.registry.mutex.Unlock()
 	for sessionKey, peerSession := range e.runtime.registry.sessions {
-		if peerSession.zone != e.run.zone || peerSession.generation != e.run.generation ||
+		if !e.run.contains(peerSession) || peerSession.generation != e.run.generation ||
 			peerSession.binding.UserID != e.run.userID ||
 			peerSession.fieldMedicHeroBuffs[e.run.instanceID] != e.run {
 			continue
 		}
 		packets, err := e.run.retire(&peerSession, e.runtime.modifierPool)
 		e.runtime.registry.sessions[sessionKey] = peerSession
-		e.runtime.registry.queueFieldMedicPacketsLocked(e.run.zone, packets)
+		e.runtime.registry.queueAbilityFieldMedicPacketsLocked(peerSession, packets)
 		releaseErr := e.run.release(e.runtime.modifierPool)
 		if releaseErr != nil {
 			err = errors.Join(err, releaseErr)
@@ -285,7 +306,7 @@ func (e fieldMedicHeroBuffExpiry) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	packets, err := e.run.retireMissingRecipient()
-	e.runtime.registry.queueFieldMedicPacketsLocked(e.run.zone, packets)
+	e.runtime.registry.queueFieldMedicRealmPacketsLocked(e.run.zone, e.run.arenaGameID, packets)
 	releaseErr := e.run.release(e.runtime.modifierPool)
 	if err != nil || releaseErr != nil {
 		return nil, fmt.Errorf("missingRecipient: %w", errors.Join(err, releaseErr))
@@ -303,6 +324,21 @@ func fieldMedicTargetResourcePackets(
 			peerSession.marshalCampaignCharacterResource(run.creatureIndex)
 		if err != nil {
 			return nil, fmt.Errorf("fieldMedicHeroResource: %w", err)
+		}
+		if peerSession.binding.Mode == game.ModeArena && run.creatureIndex == peerSession.deployedCreatureIndex {
+			maximumPacket, maximumErr := raknet.MarshalApplication(raknet.AttributeDataUpdateMessage{
+				ObjectID: run.targetObjectID, Value: map[uint8]float32{4: peerSession.characterHitPointMaximum(run.creatureIndex)},
+			})
+			if maximumErr != nil {
+				return nil, fmt.Errorf("fieldMedicMaximum: %w", maximumErr)
+			}
+			healthPacket, healthErr := raknet.MarshalApplication(raknet.CombatantDataDeltaMessage{
+				ObjectID: run.targetObjectID, HitPoints: peerSession.deployedHitPoint(), IsHitPointChanged: true,
+			})
+			if healthErr != nil {
+				return nil, fmt.Errorf("fieldMedicHealth: %w", healthErr)
+			}
+			return [][]byte{packet, maximumPacket, healthPacket}, nil
 		}
 		return [][]byte{packet}, nil
 	}
@@ -350,13 +386,16 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 	if !isFound || peerSession.generation != target.generation ||
 		!isSourceFound || sourceSession.deployedObjectID != sourceObjectID ||
 		!isActivePartyRecipient(peerSession, sourceSession) ||
-		peerSession.zone == nil || peerSession.zone.Effect() == nil ||
 		(!target.isCompanion &&
 			(target.creatureIndex >= uint32(len(peerSession.binding.Creatures)) ||
 				peerSession.deployedCreatureIndex != target.creatureIndex ||
 				peerSession.deployedObjectID != target.objectID ||
 				peerSession.deployedHitPoint() <= 0)) {
 		return nil, nil
+	}
+	inventory, err := r.registry.abilityEffectsLocked(peerSession)
+	if err != nil {
+		return nil, fmt.Errorf("healthInventory: %w", err)
 	}
 
 	packets := make([][]byte, 0, 3)
@@ -369,7 +408,7 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 		retiredPackets, err := previous.retire(&peerSession, r.modifierPool)
 		peerSession.queueCampaignPackets(retiredPackets)
 		r.registry.sessions[target.sessionKey] = peerSession
-		r.registry.queueFieldMedicPacketsLocked(peerSession.zone, retiredPackets, peerSession.binding.UserID)
+		r.registry.queueAbilityFieldMedicPacketsLocked(peerSession, retiredPackets, peerSession.binding.UserID)
 		if err != nil {
 			return nil, fmt.Errorf("fieldMedicHealthReplace: %w", err)
 		}
@@ -403,6 +442,7 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 		return nil, fmt.Errorf("fieldMedicHealthAllocate: %w", err)
 	}
 	run := &fieldMedicHeroBuffRun{
+		arenaGameID: arenaAbilityGameID(peerSession), effectInventory: inventory,
 		zone: peerSession.zone, userID: peerSession.binding.UserID,
 		generation: peerSession.generation, expiresAt: r.now().Add(definition.StatusDuration),
 		instanceID: instanceID, targetObjectID: target.objectID,
@@ -431,6 +471,8 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 		// Capacity application leaves the existing health unchanged.
 		_ = previousCompanion
 		_ = updatedCompanion
+	} else if peerSession.binding.Mode == game.ModeArena {
+		peerSession.arenaHitPointIncreases[target.creatureIndex] += maximumHitPoint
 	} else {
 		peerSession.maximumHitPoints[target.creatureIndex] += maximumHitPoint
 	}
@@ -443,7 +485,7 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 		peerSession.fieldMedicHeroBuffs = make(map[uint32]*fieldMedicHeroBuffRun)
 	}
 	peerSession.fieldMedicHeroBuffs[instanceID] = run
-	err = peerSession.zone.Effect().Put(zoneeffect.Modifier{
+	err = inventory.Put(zoneeffect.Modifier{
 		InstanceID: instanceID, GUID: definition.RootModifierID,
 		SourceObjectID: sourceObjectID, TargetObjectID: target.objectID,
 		Rank: 1, Duration: definition.StatusDuration,
@@ -484,7 +526,7 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 		return nil, fmt.Errorf("fieldMedicHealthSchedule: %w", errors.Join(scheduleErr, err))
 	}
 	run.cancel = cancel
-	if target.sessionKey != sourceSessionKey {
+	if target.sessionKey != sourceSessionKey && peerSession.zone != nil {
 		if target.isCompanion {
 			peerSession.zone.PublishCompanionResourceTo(target.userID, target.generation, target.objectID)
 		} else {
@@ -493,12 +535,15 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 	}
 	packets = append(packets, createPacket)
 	packets = append(packets, resourcePackets...)
+	if peerSession.binding.Mode == game.ModeArena {
+		r.registry.queueArenaAbilityResourcesLocked(sourceSession, resourcePackets)
+	}
 	if isHealthReplacement {
 		// Old retirement and the replacement share the same reliable pending
 		// stream so an old resource snapshot cannot follow the new capacity.
 		peerSession.queueCampaignPackets(packets)
 		r.registry.sessions[target.sessionKey] = peerSession
-		r.registry.queueFieldMedicPacketsLocked(peerSession.zone, packets, peerSession.binding.UserID)
+		r.registry.queueAbilityFieldMedicPacketsLocked(peerSession, packets, peerSession.binding.UserID)
 		return nil, nil
 	}
 	return packets, nil

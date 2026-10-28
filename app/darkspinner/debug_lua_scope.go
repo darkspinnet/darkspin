@@ -102,6 +102,12 @@ func debugLuaScopeIndex(state *lua.LState) int {
 	}
 	if scope.kind == "world" {
 		switch name {
+		case "RestoreHero":
+			state.Push(state.NewFunction(debugLuaWorldRestoreHero))
+		case "PlaceHero":
+			state.Push(state.NewFunction(debugLuaWorldPlaceHero))
+		case "ReplaceHero":
+			state.Push(state.NewFunction(debugLuaWorldReplaceHero))
 		case "SelectHero":
 			state.Push(state.NewFunction(debugLuaWorldSelectHero))
 		case "Path":

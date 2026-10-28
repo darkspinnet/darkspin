@@ -98,8 +98,17 @@ local function approach(client, opponent)
         local distance = separation(origin, destination)
         if distance <= 4 then return end
         local fraction = math.min(10, distance - 3) / distance
-        local point = {x=origin.x+(destination.x-origin.x)*fraction,
-            y=origin.y+(destination.y-origin.y)*fraction, z=origin.z+(destination.z-origin.z)*fraction}
+        local point = nil
+        local isVisible = false
+        for attempt = 1, 5 do
+            point = {x=origin.x+(destination.x-origin.x)*fraction,
+                y=origin.y+(destination.y-origin.y)*fraction, z=origin.z+(destination.z-origin.z)*fraction}
+            local projectionSS = must(client.World:Project(point))
+            isVisible = projectionSS.projection and projectionSS.projection.is_available and projectionSS.projection.is_on_screen
+            if isVisible then break end
+            fraction = fraction / 2
+        end
+        if not isVisible then error("PvP approach has no visible native camera projection; no input attempted") end
         local action = must(client.World:Click(point))
         if not action.is_processed then error("PvP approach input unprocessed; no replay") end
         check(scenario.Sleep(1200))
@@ -196,7 +205,8 @@ return function()
     check(scenario.RequireAPI(1))
     local server = must(scenario.StartServer({}))
     local firstProfile = must(server:CreateProfile({
-        name = "pvp-first", hero_nouns = {1667741389, 3618328019, 749013658}, chain_progression = 1, is_pvp_enabled = true,
+        -- Start each round with travelling projectiles so round cleanup also covers in-flight attacks.
+        name = "pvp-first", hero_nouns = {3524487169, 3618328019, 749013658}, chain_progression = 1, is_pvp_enabled = true,
     }))
     local secondProfile = must(server:CreateProfile({
         name = "pvp-second", source_login_name = firstProfile.login_name, is_source_clone_allowed = true, is_pvp_enabled = true,

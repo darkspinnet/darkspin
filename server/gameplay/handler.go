@@ -1325,6 +1325,7 @@ func newGameplayHandlerWithDependencies(
 	zoneRegistry := zone.NewRegistry()
 	modifierInstancePool := newModifierPool()
 	attachedEffectPool := newAttachedEffectPool()
+	sessionRegistry.configureScenarioHeroPools(modifierInstancePool, attachedEffectPool)
 	lootProgression, isLootProgression := progression.(campaignLootProgression)
 	if !isLootProgression {
 		lootProgression = nil

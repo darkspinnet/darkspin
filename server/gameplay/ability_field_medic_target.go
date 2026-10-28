@@ -30,7 +30,7 @@ func fieldMedicSupportTargetLocked(
 		creatureIndex: sourceSession.deployedCreatureIndex,
 		binding:       sourceSession.binding, position: game.Vec3(sourceSession.playerPosition),
 	}
-	if registry == nil || sourceSession.zone == nil || radius <= 0 {
+	if registry == nil || (sourceSession.zone == nil && sourceSession.binding.Mode != game.ModeArena) || radius <= 0 {
 		return fallback
 	}
 	nearestDistance := float32(math.MaxFloat32)
@@ -65,6 +65,12 @@ func fieldMedicSupportTargetLocked(
 		}
 		nearestDistance = distanceFromCursor
 		selected = current
+	}
+	if sourceSession.zone == nil {
+		if selected.objectID != 0 {
+			return selected
+		}
+		return fallback
 	}
 	for _, companion := range sourceSession.zone.Companion().Snapshots() {
 		if !companion.IsTargetable || companion.HitPoint <= 0 {

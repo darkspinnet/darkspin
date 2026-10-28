@@ -26,6 +26,8 @@ type arenaAbilityTargets struct {
 }
 
 type arenaAbilityHit struct {
+	// The casting object can differ from the player's deployed hero at impact.
+	sourceObjectID uint32
 	flags          uint16
 	packets        [][]byte
 	memberKey      string
@@ -131,7 +133,7 @@ func (e *arenaAbilityTargets) Hit(req zonenpc.HitRequest) (zonenpc.DamageResult,
 	creature := target.binding.Creatures[creatureIndex]
 	resourcePacket, err := raknet.MarshalApplication(raknet.LabsPlayerCharacterResourceMessage{
 		PlayerSlot: uint8(target.binding.Slot), CreatureIndex: creatureIndex,
-		Resource: raknet.LabsCharacterResource{Health: health, MaxHealth: creature.HitPoint,
+		Resource: raknet.LabsCharacterResource{Health: health, MaxHealth: target.characterHitPointMaximum(creatureIndex),
 			Mana: target.deployedManaPoint(), MaxMana: creature.PowerPoint},
 	})
 	if err != nil {
@@ -171,7 +173,8 @@ func (e *arenaAbilityTargets) Hit(req zonenpc.HitRequest) (zonenpc.DamageResult,
 	packets := append(shield.Packets, healthPacket, resourcePacket)
 	packets = append(packets, gameplayPeerPresentationPackets(transitions)...)
 	e.hits[req.TargetObjectID] = arenaAbilityHit{
-		flags: flags, packets: packets, memberKey: key, generation: target.generation,
+		sourceObjectID: req.SourceObjectID,
+		flags:          flags, packets: packets, memberKey: key, generation: target.generation,
 		isTeamDefeated: target.isZoneGameOver(),
 	}
 	return zonenpc.DamageResult{
@@ -207,13 +210,13 @@ func (e arenaAbilityTargets) packets(results []zoneability.AreaResult) ([][]byte
 		}
 		packet, err := raknet.MarshalApplication(raknet.DamageCombatEventMessage{
 			Flags: flags, DeltaHealth: result.Damage.Damage, TargetID: result.Damage.ObjectID,
-			SourceID: e.source.deployedObjectID, IntegerHPChange: -int32(result.Damage.Damage),
+			SourceID: hit.sourceObjectID, IntegerHPChange: -int32(result.Damage.Damage),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("arenaAreaEvent: %w", err)
 		}
 		if result.Damage.AbsorbedDamage > 0 {
-			packet, err = shieldCombatEvent(e.source.deployedObjectID, result.Damage.ObjectID,
+			packet, err = shieldCombatEvent(hit.sourceObjectID, result.Damage.ObjectID,
 				result.Damage.Damage, result.Damage.AbsorbedDamage, result.Damage.HitPoint, result.IsCritical && hit.flags == 0)
 			if err != nil {
 				return nil, fmt.Errorf("arenaAreaAbsorb: %w", err)

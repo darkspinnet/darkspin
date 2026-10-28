@@ -6,6 +6,7 @@ import (
 	"log"
 	"sync"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/zone"
 )
@@ -20,6 +21,7 @@ type channelEffectSlot struct {
 type channelEffects struct {
 	mutex           sync.Mutex
 	world           *zone.Zone
+	arenaGameID     uint32
 	pool            *attachedEffectPool
 	slots           []channelEffectSlot
 	creationPackets [][]byte
@@ -48,10 +50,33 @@ func (e *channelEffects) Slots() []channelEffectSlot {
 // The caller holds registry.mutex. AllocateHeld makes pool ownership atomic
 // even if unrelated actor cleanup is operating directly on the slot pool.
 func (e *gameplaySessionRegistry) allocateChannelEffectsLocked(world *zone.Zone, pool *attachedEffectPool, objectIDs []uint32) (*channelEffects, error) {
-	if e.isClosed || world == nil || pool == nil || len(objectIDs) == 0 {
+	effects, err := e.allocateChannelRealmLocked(world, 0, pool, objectIDs)
+	if err != nil {
+		return nil, fmt.Errorf("channelWorld: %w", err)
+	}
+	return effects, nil
+}
+
+func (e *gameplaySessionRegistry) allocateAbilityChannelEffectsLocked(member gameplayPeerSession, pool *attachedEffectPool, objectIDs []uint32) (*channelEffects, error) {
+	gameID := arenaAbilityGameID(member)
+	if gameID != 0 {
+		match := e.arenaMatches[gameID]
+		if match == nil || !match.isCombatActive || !member.isArenaCombatActive {
+			return nil, errors.New("channel arena unavailable")
+		}
+	}
+	effects, err := e.allocateChannelRealmLocked(member.zone, gameID, pool, objectIDs)
+	if err != nil {
+		return nil, fmt.Errorf("channelRealm: %w", err)
+	}
+	return effects, nil
+}
+
+func (e *gameplaySessionRegistry) allocateChannelRealmLocked(world *zone.Zone, arenaGameID uint32, pool *attachedEffectPool, objectIDs []uint32) (*channelEffects, error) {
+	if e.isClosed || (world == nil && arenaGameID == 0) || pool == nil || len(objectIDs) == 0 {
 		return nil, errors.New("channel effect allocation unavailable")
 	}
-	effects := &channelEffects{world: world, pool: pool}
+	effects := &channelEffects{world: world, arenaGameID: arenaGameID, pool: pool}
 	for _, objectID := range objectIDs {
 		slot, isAllocated := pool.AllocateHeld(objectID)
 		if !isAllocated {
@@ -62,6 +87,24 @@ func (e *gameplaySessionRegistry) allocateChannelEffectsLocked(world *zone.Zone,
 	}
 	e.channelEffects = append(e.channelEffects, effects)
 	return effects, nil
+}
+
+func (e *channelEffects) contains(member gameplayPeerSession) bool {
+	if e.arenaGameID != 0 {
+		return member.binding.Mode == game.ModeArena && member.binding.GameID == e.arenaGameID
+	}
+	return e.world != nil && member.zone == e.world
+}
+
+func (e *channelEffects) isCreationBlocked(member gameplayPeerSession) bool {
+	if e.arenaGameID == 0 || (member.dungeonSetup.IsCommitted() && !member.isRejoinPending) {
+		return false
+	}
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	// Retirement flushes an old create/removal pair before the round branch.
+	// Active effects must wait for the recipient's actor baseline on rejoin.
+	return !e.isRetired
 }
 
 // All slot-bearing creates and removals use the same recipient FIFO. A direct
@@ -78,7 +121,7 @@ func (e *gameplaySessionRegistry) publishChannelEffectsLocked(effects *channelEf
 	effects.isPublished = true
 	effects.creationPackets = clonePendingPackets(packets)
 	for sessionKey, member := range e.sessions {
-		if member.zone != effects.world || member.isZoneTerminal() {
+		if !effects.contains(member) || member.isZoneTerminal() {
 			continue
 		}
 		member.queueChannelCreation(effects)
@@ -86,7 +129,7 @@ func (e *gameplaySessionRegistry) publishChannelEffectsLocked(effects *channelEf
 		e.sessions[sessionKey] = member
 	}
 	for _, retained := range e.retainedSessions {
-		if retained.peerSession.zone == effects.world && !retained.peerSession.isZoneTerminal() {
+		if effects.contains(retained.peerSession) && !retained.peerSession.isZoneTerminal() {
 			retained.peerSession.channelRegistry = e
 			retained.peerSession.queueChannelCreation(effects)
 		}
@@ -103,7 +146,7 @@ func (e *gameplayPeerSession) queueChannelCreation(effects *channelEffects) {
 	e.nextPendingPacketID++
 	e.pendingPacketBatches = append(e.pendingPacketBatches, pendingPeerPacketBatch{
 		id: e.nextPendingPacketID, packets: clonePendingPackets(effects.creationPackets),
-		isCampaignPresentation: true, channelCreation: effects,
+		isCampaignPresentation: e.binding.Mode != game.ModeArena, channelCreation: effects,
 	})
 }
 
@@ -114,7 +157,7 @@ func (e *gameplaySessionRegistry) replayChannelEffectsLocked(member *gameplayPee
 		return
 	}
 	for _, effects := range e.channelEffects {
-		if effects.world != member.zone {
+		if !effects.contains(*member) {
 			continue
 		}
 		effects.mutex.Lock()
@@ -147,7 +190,7 @@ func (e *gameplayPeerSession) queueChannelRemoval(packets [][]byte, delivery *ch
 	e.nextPendingPacketID++
 	e.pendingPacketBatches = append(e.pendingPacketBatches, pendingPeerPacketBatch{
 		id: e.nextPendingPacketID, packets: clonePendingPackets(packets),
-		isCampaignPresentation: true, channelRemoval: delivery,
+		isCampaignPresentation: e.binding.Mode != game.ModeArena, channelRemoval: delivery,
 	})
 }
 
@@ -199,8 +242,17 @@ func (e *gameplaySessionRegistry) commitChannelRemovalsLocked() {
 			continue
 		}
 		removal := &channelRemoval{effects: effects, packets: packets}
-		for _, member := range effects.world.Snapshot().Members {
-			removal.deliveries = append(removal.deliveries, &channelDelivery{userID: member.UserID, generation: member.PeerGeneration})
+		if effects.arenaGameID == 0 {
+			for _, member := range effects.world.Snapshot().Members {
+				removal.deliveries = append(removal.deliveries, &channelDelivery{userID: member.UserID, generation: member.PeerGeneration})
+			}
+		} else {
+			for _, member := range e.sessions {
+				removal.addRecipient(member)
+			}
+			for _, retained := range e.retainedSessions {
+				removal.addRecipient(retained.peerSession)
+			}
 		}
 		e.channelRemovals = append(e.channelRemovals, removal)
 	}
@@ -208,13 +260,20 @@ func (e *gameplaySessionRegistry) commitChannelRemovalsLocked() {
 	removals := e.channelRemovals[:0]
 	for _, removal := range e.channelRemovals {
 		e.queuePendingChannelRemovalLocked(removal)
-		if !e.isClosed && removal.isPending() {
+		if !e.isClosed && removal.isPendingLocked(e) {
 			removals = append(removals, removal)
 			continue
 		}
 		removal.effects.commit()
 	}
 	e.channelRemovals = removals
+}
+
+func (e *channelRemoval) addRecipient(member gameplayPeerSession) {
+	if !e.effects.contains(member) || e.delivery(member.binding.UserID, member.generation) != nil {
+		return
+	}
+	e.deliveries = append(e.deliveries, &channelDelivery{userID: member.binding.UserID, generation: member.generation})
 }
 
 func (e *channelRemoval) delivery(userID uint64, generation uint64) *channelDelivery {
@@ -228,7 +287,7 @@ func (e *channelRemoval) delivery(userID uint64, generation uint64) *channelDeli
 
 func (e *gameplaySessionRegistry) queuePendingChannelRemovalLocked(removal *channelRemoval) {
 	for sessionKey, member := range e.sessions {
-		if member.zone != removal.effects.world {
+		if !removal.effects.contains(member) {
 			continue
 		}
 		delivery := removal.delivery(member.binding.UserID, member.generation)
@@ -241,7 +300,7 @@ func (e *gameplaySessionRegistry) queuePendingChannelRemovalLocked(removal *chan
 	}
 	for _, retained := range e.retainedSessions {
 		member := &retained.peerSession
-		if member.zone != removal.effects.world {
+		if !removal.effects.contains(*member) {
 			continue
 		}
 		delivery := removal.delivery(member.binding.UserID, member.generation)
@@ -252,9 +311,23 @@ func (e *gameplaySessionRegistry) queuePendingChannelRemovalLocked(removal *chan
 	}
 }
 
-func (e *channelRemoval) isPending() bool {
+func (e *channelRemoval) isPendingLocked(registry *gameplaySessionRegistry) bool {
 	for _, delivery := range e.deliveries {
 		if delivery.isCommitted {
+			continue
+		}
+		if e.effects.arenaGameID != 0 {
+			for _, member := range registry.sessions {
+				if e.effects.contains(member) && member.binding.UserID == delivery.userID && member.generation == delivery.generation {
+					return true
+				}
+			}
+			for _, retained := range registry.retainedSessions {
+				member := retained.peerSession
+				if e.effects.contains(member) && member.binding.UserID == delivery.userID && member.generation == delivery.generation {
+					return true
+				}
+			}
 			continue
 		}
 		for _, member := range e.effects.world.Snapshot().Members {

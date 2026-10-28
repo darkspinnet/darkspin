@@ -1249,7 +1249,8 @@ func (r campaignAbilityCommandRuntime) handleSpecial(
 	isPlasmaWreathRequest := isSupportCreatureFound && isSupportAbilityFound &&
 		supportAbility.AssetName == "LightningRogueSupport"
 	isArcWeldRequest := isSupportCreatureFound && isSupportAbilityFound &&
-		supportAbility.AssetName == "EnergySentinelActive"
+		supportAbility.AssetName == "EnergySentinelActive" &&
+		commandSession.binding.Mode != game.ModeArena
 	isShockwaveRequest := command.Ability.Index == 2 && isSpecialTwoFound &&
 		specialTwoAbility.AssetName == "EnergySentinelSupport"
 	isTeleportStrikeRequest := command.Ability.Index == 2 &&
@@ -2714,7 +2715,7 @@ func (r campaignAbilityCommandRuntime) handleSquad(
 	run, immediatePackets, runErr := abilityraknet.NewTargetedAOERun(abilityraknet.TargetedAOEInput{
 		Ability: definition, ActorObjectID: command.Common.ObjectID,
 		EffectObjectID: effectObjectID, Position: toSimPosition(position),
-		ManaPoint: remainingManaPoint, Team: 1, SourceTime: packet.SourceTime,
+		ManaPoint: remainingManaPoint, Team: abilityActorTeam(peerSession), SourceTime: packet.SourceTime,
 	})
 	if runErr != nil {
 		r.registry.mutex.Unlock()

@@ -31,14 +31,16 @@ func (e *gameplaySessionRegistry) scenarioArenaWorld(
 		if remaining > 0 {
 			memberSS.SwapRemainingMS = uint32(remaining + 1)
 		}
-		for index, creature := range member.binding.Creatures {
+		for index := range member.binding.Creatures {
 			character, isFound := member.squad.Character(uint32(index))
 			if !isFound || !character.IsAvailable {
 				continue
 			}
+			maximumHitPoint, maximumManaPoint := member.characterResourceMaximum(uint32(index))
 			memberSS.Characters = append(memberSS.Characters, scenario.WorldHero{
 				Index: uint32(index), HitPoint: character.HitPoints, ManaPoint: character.ManaPoints,
-				MaximumHitPoint: creature.MaximumHitPoint, MaximumManaPoint: creature.MaximumPowerPoint,
+				Noun:            member.binding.Creatures[index].Noun,
+				MaximumHitPoint: maximumHitPoint, MaximumManaPoint: maximumManaPoint,
 				IsDefeated: character.HitPoints <= 0,
 			})
 		}
@@ -58,14 +60,15 @@ func (e *gameplaySessionRegistry) scenarioArenaWorld(
 		result.UnavailableReason = "arena deployed hero snapshot is unavailable"
 		return result
 	}
-	creature := peer.binding.Creatures[peer.deployedCreatureIndex]
+	maximumHitPoint, maximumManaPoint := peer.characterResourceMaximum(peer.deployedCreatureIndex)
 	result.Hero = &scenario.WorldHero{
 		ObjectID: peer.deployedObjectID, Index: peer.deployedCreatureIndex,
+		Noun: peer.binding.Creatures[peer.deployedCreatureIndex].Noun,
 		Position: scenario.WorldPosition{
 			X: peer.playerPosition.X, Y: peer.playerPosition.Y, Z: peer.playerPosition.Z,
 		},
 		HitPoint: character.HitPoints, ManaPoint: character.ManaPoints,
-		MaximumHitPoint: creature.MaximumHitPoint, MaximumManaPoint: creature.MaximumPowerPoint,
+		MaximumHitPoint: maximumHitPoint, MaximumManaPoint: maximumManaPoint,
 		IsDefeated: character.HitPoints <= 0,
 	}
 	result.IsAvailable = true

@@ -104,10 +104,20 @@ func (e arenaRoundEndJob) execute() {
 			continue
 		}
 		member.isArenaResultReady = match.result.isCompleted
+		e.registry.retireFieldMedicBuffsLocked(&member, e.modifierPool)
 		e.registry.retireCampaignTreeOfLifeLocked(&member)
 		interrupted := member.resetFailedActionAdmission(e.modifierPool, e.effectPool)
 		if interrupted != nil {
 			interrupted.Stop()
+		}
+		e.registry.sessions[key] = member
+	}
+	// Retired channel attachments must precede the scene branch in every
+	// recipient FIFO, while their old hero objects still belong to this round.
+	e.registry.commitChannelRemovalsLocked()
+	for key, member := range e.registry.sessions {
+		if member.binding.GameID != e.gameID || member.binding.Mode != game.ModeArena {
+			continue
 		}
 		if !match.result.isCompleted {
 			member.arenaWinningTeam = 0

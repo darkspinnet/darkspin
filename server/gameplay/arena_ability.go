@@ -47,10 +47,13 @@ func (e campaignAbilityCommandRuntime) handleArenaAbility(
 	}
 	isShared := isFound && (ability.AssetName == "CastEnrage" || ability.AssetName == "TreeOfLife" ||
 		definition.Name == "MissileTempestActive" ||
+		definition.Name == "SoulRavagerActive" ||
+		definition.Name == "FieldMedicSupport" ||
 		(definition.Kind == sim.AbilityKindToss && definition.Toss.Behavior == sim.TossAbilityBehaviorTrapper) ||
 		ability.AssetName == "ArborealMight" || ability.AssetName == "SpacetimeRandom2" ||
 		isSharedArenaArea(definition, command.Ability.Index) || isSharedArenaProjectile(definition) ||
-		(command.Ability.Index == 0 && isSharedArenaMelee(definition)))
+		(isSharedArenaMelee(definition) && (command.Ability.Index == 0 ||
+			(definition.RootModifierID == 0 && definition.Name != "LFPoisonRavager_Expunge"))))
 	if !isShared {
 		return e.handleArenaCharacter(packet, command, member)
 	}
@@ -87,7 +90,7 @@ func (e campaignAbilityCommandRuntime) handleArenaAbility(
 // every hero-specific on-hit callback has been verified against player targets.
 func isSharedArenaMelee(definition sim.AbilityDefinition) bool {
 	return definition.Kind == sim.AbilityKindMelee &&
-		len(definition.MeleeHitPolicies) == 0 && definition.ChainLightning.MaximumHopCount == 0 &&
+		len(definition.MeleeHitPolicies) == 0 &&
 		definition.StatusDuration == 0 && definition.LifeSteal == 0
 }
 

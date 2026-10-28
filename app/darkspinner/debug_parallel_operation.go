@@ -28,6 +28,8 @@ func isIndependentDebugOperation(operation string) bool {
 		return true
 	case "client.select_hero":
 		return true
+	case "client.restore_hero", "client.replace_hero", "client.place_hero":
+		return true
 	case "client.debug_pause", "client.debug_resume", "client.debug_pause_state":
 		return true
 	case "client.beam_out":
@@ -161,6 +163,15 @@ func (e *debugSupervisor) executeIndependentDebugOperation(ctx context.Context, 
 			return result, fmt.Errorf("cancelNative: %w", err)
 		}
 		return result, nil
+	case "client.restore_hero", "client.replace_hero", "client.place_hero":
+		result, err := resetDebugHero(ctx, host, clientManager, operation, payload)
+		if err != nil {
+			return result, fmt.Errorf("heroFixture: %w", err)
+		}
+		return map[string]any{"game_id": result.GameID, "object_id": result.ObjectID, "noun": result.Noun,
+			"index": result.Index, "hit_point": result.HitPoint, "mana_point": result.ManaPoint,
+			"recipient_count": result.RecipientCount, "is_replacement": result.IsReplacement,
+			"is_placement": result.IsPlacement, "is_queued": result.IsQueued, "is_native_observed": false}, nil
 	case "client.select_hero":
 		result, err := selectDebugHero(ctx, host, clientManager, payload)
 		if err != nil {

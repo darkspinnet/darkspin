@@ -2948,7 +2948,7 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 		}
 		_, isPassiveChanged := s.applyPassiveKill()
 		if isPassiveChanged {
-			passivePackets, passiveErr := s.syncSoulRavagerPresentation()
+			passivePackets, passiveErr := s.syncSoulRavagerPresentation(nil)
 			if passiveErr != nil {
 				return campaignDamageTransition{},
 					fmt.Errorf("passiveKillPresentation: %w", passiveErr)

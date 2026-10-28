@@ -20,11 +20,23 @@ func (e heroBurstStep) produceArenaBurstImpact(member gameplayPeerSession) ([][]
 	position := schedule.shotTargetPositions[e.index]
 	targetID := uint32(0)
 	nearest := schedule.definition.Radius
+	isRadial := schedule.definition.BurstTargeting == sim.ProjectileBurstTargetingRadial
+	if isRadial {
+		nearest = schedule.definition.Distance + schedule.definition.Radius
+	}
 	for _, target := range targets.LiveSnapshots() {
 		if schedule.hitCounts[target.Plan.ObjectID] >= 4 {
 			continue
 		}
 		distance := target.Plan.Position.Sub(game.Vec3(position)).Length()
+		if isRadial {
+			origin := schedule.shotSourcePositions[e.index]
+			if chargeSegmentDistance(origin, game.Vec3(position), target.Plan.Position) >
+				schedule.definition.Radius+target.Plan.NPCProfile.FootprintRadius {
+				continue
+			}
+			distance = target.Plan.Position.Sub(origin).Length()
+		}
 		if distance > nearest {
 			continue
 		}
@@ -57,8 +69,12 @@ func (e heroBurstStep) produceArenaBurstImpact(member gameplayPeerSession) ([][]
 				IsCritical: result.IsCritical, Definition: schedule.definition})
 		}
 	}
+	facing := sim.Position{Z: -1}
+	if isRadial {
+		facing = sim.Position(zoneability.ProjectileDirection(raknet.Vector3(schedule.shotSourcePositions[e.index]), position))
+	}
 	packets, err := schedule.run.ResolveCollision(context.Background(), e.index, e.deadline,
-		true, len(results) != 0, previousHealth, damage, isCritical, sim.Position(position), sim.Position{Z: -1})
+		true, len(results) != 0, previousHealth, damage, isCritical, sim.Position(position), facing)
 	schedule.runtime.registry.mutex.Unlock()
 	targets.finish()
 	if err != nil {

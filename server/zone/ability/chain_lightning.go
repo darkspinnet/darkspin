@@ -19,7 +19,7 @@ type ChainLightningHopRequest struct {
 // nearest unvisited hostile within the leap radius, using the previous target's
 // position captured before the wait. Equal distances use object ID for stability.
 func PlanChainLightningHop(
-	enemies *zonenpc.Session, req ChainLightningHopRequest,
+	enemies TargetReader, req ChainLightningHopRequest,
 ) (BasicPlan, zonenpc.Snapshot, bool, error) {
 	plan := req.Plan
 	chain := plan.Definition.ChainLightning

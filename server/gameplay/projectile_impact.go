@@ -203,6 +203,11 @@ func (e campaignProjectileStep) produceElectronContact(
 	enemies := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, schedule.definition,
 		schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond))
 	launchPosition := campaignProjectileLaunchPosition(schedule.sourcePosition, game.Vec3(schedule.targetPosition), schedule.actorFootprint)
+	err := schedule.run.SetImpactTarget(liveNPC.Plan.ObjectID, sim.Position(liveNPC.Plan.Position))
+	if err != nil {
+		schedule.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("electronTarget: %w", err)
+	}
 	impactPlan, err := zoneability.PlanElectronSphereImpact(
 		enemies, schedule.sourceObjectID,
 		schedule.targetObjectID, impactPosition,

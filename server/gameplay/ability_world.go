@@ -9,6 +9,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
+	zoneeffect "github.com/darkspinnet/darkspin/server/zone/effect"
 	zoneobjectid "github.com/darkspinnet/darkspin/server/zone/objectid"
 )
 
@@ -18,6 +19,7 @@ type arenaAbilityWorld struct {
 	objectIDSession *zoneobjectid.Session
 	treeSession     *zoneability.TreeOfLifePresentationSession
 	forcePulses     map[arenaForcePulseKey]*arenaForcePulseRun
+	effectInventory *zoneeffect.Inventory
 }
 
 func abilityActorTeam(member gameplayPeerSession) uint8 {
@@ -39,8 +41,22 @@ func (e *gameplaySessionRegistry) arenaAbilityWorldLocked(gameID uint32) (*arena
 	if err != nil {
 		return nil, fmt.Errorf("arenaObjectIDs: %w", err)
 	}
-	match.abilityWorld = &arenaAbilityWorld{objectIDSession: objectIDSession, treeSession: zoneability.NewTreeOfLifePresentationSession()}
+	match.abilityWorld = &arenaAbilityWorld{objectIDSession: objectIDSession, treeSession: zoneability.NewTreeOfLifePresentationSession(), effectInventory: zoneeffect.NewInventory()}
 	return match.abilityWorld, nil
+}
+
+func (e *gameplaySessionRegistry) abilityEffectsLocked(member gameplayPeerSession) (*zoneeffect.Inventory, error) {
+	if member.binding.Mode != game.ModeArena {
+		if member.zone == nil || member.zone.Effect() == nil {
+			return nil, errors.New("ability effect inventory unavailable")
+		}
+		return member.zone.Effect(), nil
+	}
+	world, err := e.arenaAbilityWorldLocked(member.binding.GameID)
+	if err != nil {
+		return nil, fmt.Errorf("effectInventory: %w", err)
+	}
+	return world.effectInventory, nil
 }
 
 func (e *gameplaySessionRegistry) reserveAbilityObjectIDsLocked(member *gameplayPeerSession, count uint32, minimum uint32) (uint32, error) {

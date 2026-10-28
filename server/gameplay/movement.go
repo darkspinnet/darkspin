@@ -814,53 +814,10 @@ func (r campaignMovementCommandRuntime) handle(
 			command.Common.ObjectID, interruption.basicSyncStamp,
 		)
 	}
-	if interruption.basicAttack != nil {
-		interruption.basicAttack.Stop()
+	interruptionPackets, interruptErr := interruption.stopPackets(command.Common.ObjectID, packet.SourceTime)
+	if interruptErr != nil {
+		return nil, fmt.Errorf("movementInterrupt: %w", interruptErr)
 	}
-	drainStopPackets := make([][]byte, 0, 3)
-	if interruption.basicAttack != nil {
-		cancelPacket, cancelErr := raknet.MarshalApplication(raknet.ActionCommandResponseMessage{
-			SyncStamp: interruption.basicSyncStamp, ResponseType: raknet.ActionResponseRejected,
-			ObjectID: command.Common.ObjectID, UserData: 0xffffffff,
-		})
-		if cancelErr != nil {
-			return nil, fmt.Errorf("moveAttackCancel: %w", cancelErr)
-		}
-		resetPacket, resetErr := abilityraknet.AnimationReset(command.Common.ObjectID, packet.SourceTime)
-		if resetErr != nil {
-			return nil, fmt.Errorf("moveAttackReset: %w", resetErr)
-		}
-		drainStopPackets = append(drainStopPackets, cancelPacket, resetPacket)
-	}
-	if interruption.heroDrain != nil {
-		var drainErr error
-		drainStopPackets, drainErr = interruption.heroDrain.interruptionPacketsAt(
-			packet.SourceTime,
-		)
-		interruption.heroDrain.Stop()
-		if drainErr != nil {
-			return nil, fmt.Errorf("moveCampaignDrainStop: %w", drainErr)
-		}
-	}
-	if interruption.healingChannel != nil {
-		healingPackets, healingErr := interruption.healingChannel.interruptionPacketsAt(packet.SourceTime)
-		interruption.healingChannel.Stop()
-		if healingErr != nil {
-			return nil, fmt.Errorf("moveHealingStop: %w", healingErr)
-		}
-		drainStopPackets = append(drainStopPackets, healingPackets...)
-	}
-	danceStopPackets := make([][]byte, 0, 1)
-	if interruption.isDanceStopped {
-		danceStopPacket, marshalErr := abilityraknet.AnimationReset(
-			command.Common.ObjectID, packet.SourceTime,
-		)
-		if marshalErr != nil {
-			return nil, fmt.Errorf("moveCampaignDanceReset: %w", marshalErr)
-		}
-		danceStopPackets = append(danceStopPackets, danceStopPacket)
-	}
-	interruptionPackets := append(drainStopPackets, danceStopPackets...)
 	r.registry.mutex.Lock()
 	peerSession, isSessionFound := r.registry.sessions[packet.Address.String()]
 	isCurrent := isSessionFound && peerSession.generation == commandSession.generation
@@ -1388,7 +1345,7 @@ func (r campaignMovementCommandRuntime) handle(
 	movementSideEffectPackets := make([][]byte, 0)
 	movementSideEffectPackets = append(movementSideEffectPackets, companionFollowPackets...)
 	movementSideEffectPackets = append(movementSideEffectPackets, companionAttackPackets...)
-	movementSideEffectPackets = append(movementSideEffectPackets, drainStopPackets...)
+	movementSideEffectPackets = append(movementSideEffectPackets, interruptionPackets...)
 	movementSideEffectPackets = append(movementSideEffectPackets, campaignOrbPackets...)
 	movementSideEffectPackets = append(movementSideEffectPackets, missileTargetingPackets...)
 	movementSideEffectPackets = append(

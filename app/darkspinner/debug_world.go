@@ -20,6 +20,7 @@ type debugWorldPosition struct {
 }
 type debugWorldHero struct {
 	ObjectID         uint32             `json:"object_id"`
+	Noun             uint32             `json:"noun"`
 	Index            uint32             `json:"index"`
 	Position         debugWorldPosition `json:"position"`
 	HitPoint         float32            `json:"hit_point"`
@@ -181,7 +182,7 @@ func observeDebugWorld(ctx context.Context, host *debugHost, clientManager *debu
 	}
 	if world.Hero != nil {
 		hero := world.Hero
-		result.Hero = &debugWorldHero{ObjectID: hero.ObjectID, Index: hero.Index, Position: debugWorldPositionDTO(hero.Position), HitPoint: hero.HitPoint, ManaPoint: hero.ManaPoint, MaximumHitPoint: hero.MaximumHitPoint, MaximumManaPoint: hero.MaximumManaPoint, IsDefeated: hero.IsDefeated}
+		result.Hero = &debugWorldHero{ObjectID: hero.ObjectID, Noun: hero.Noun, Index: hero.Index, Position: debugWorldPositionDTO(hero.Position), HitPoint: hero.HitPoint, ManaPoint: hero.ManaPoint, MaximumHitPoint: hero.MaximumHitPoint, MaximumManaPoint: hero.MaximumManaPoint, IsDefeated: hero.IsDefeated}
 	}
 	for _, npc := range world.NPCs {
 		result.NPCs = append(result.NPCs, debugWorldNPC{ObjectID: npc.ObjectID, Noun: npc.Noun, Position: debugWorldPositionDTO(npc.Position), HitPoint: npc.HitPoint, IsDead: npc.IsDead, IsPublished: npc.IsPublished, IsHostile: npc.IsHostile, IsHostilityAvailable: npc.IsHostilityAvailable, IsFixture: npc.IsFixture, IsBoss: npc.IsBoss, DistanceSquared: npc.DistanceSquared})

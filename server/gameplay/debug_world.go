@@ -97,6 +97,9 @@ func (e *gameplaySessionRegistry) ScenarioWorldState(ctx context.Context, userID
 		result.UnavailableReason = "zone hero does not match current deployed gameplay object"
 		return result, nil
 	}
+	if world.Hero != nil && world.Hero.Index < uint32(len(matched.binding.Creatures)) {
+		world.Hero.Noun = matched.binding.Creatures[world.Hero.Index].Noun
+	}
 	// The zone producer samples pickup availability and simulation expiry
 	// against this same captured clock, after acquiring the pinned epoch.
 	world.GameID = result.GameID

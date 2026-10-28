@@ -12,6 +12,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/playerstat"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
+	"github.com/darkspinnet/darkspin/server/squad"
 	"github.com/darkspinnet/darkspin/server/util"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
@@ -2091,6 +2092,7 @@ type campaignBasicScheduleRun struct {
 }
 
 type campaignMeleeSchedule struct {
+	squad             *squad.Session
 	hitState          *campaignMeleeHitState
 	runtime           campaignAbilityCommandRuntime
 	packet            raknet.Packet
@@ -2275,6 +2277,13 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 		arenaTargets.finish()
 		if publishErr != nil {
 			return nil, fmt.Errorf("meleeArenaPublish: %w", publishErr)
+		}
+		if schedule.selected.ChainLightning.MaximumHopCount > 0 {
+			chainPackets, chainErr := schedule.startChainLightning(livePlan, liveNPC.Plan.Position, e.delay)
+			packets = append(packets, chainPackets...)
+			if chainErr != nil && runtime.logger != nil {
+				runtime.logger.Printf("Arena chain continuation omitted source=%d: %v", schedule.sourceObjectID, chainErr)
+			}
 		}
 		return packets, nil
 	}
@@ -3035,9 +3044,14 @@ func (e campaignTossLandingStep) produce() ([][]byte, error) {
 	impactPlan := schedule.plan
 	enemies := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, impactPlan.Definition,
 		schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond))
+	tossTargets, isTossSupported := enemies.(zoneability.TossTargets)
+	if !isTossSupported {
+		schedule.runtime.registry.mutex.Unlock()
+		return nil, errors.New("toss target status unavailable")
+	}
 	liveTarget, isTargetFound := enemies.NPC(impactPlan.TargetObjectID)
 	landingPlan, isStrongImpact, err := zoneability.ResolveTossImpact(
-		enemies.(zoneability.TossTargets), impactPlan, schedule.creature,
+		tossTargets, impactPlan, schedule.creature,
 		schedule.startTime.Add(e.deadline),
 	)
 	if err != nil {
@@ -3589,6 +3603,7 @@ func (r campaignAbilityCommandRuntime) handleMeleeBasic(
 	r.registry.mutex.Unlock()
 
 	meleeSchedule := campaignMeleeSchedule{
+		squad:    peerSession.squad,
 		hitState: hitState,
 		runtime:  r, packet: packet, sessionKey: sessionKey, generation: generation,
 		sourceObjectID: command.Common.ObjectID, targetObjectID: targetObjectID,

@@ -215,6 +215,8 @@ return function()
     end
     approach(firstClient, secondClient)
     if not damageOnce(firstClient,secondClient) then error("SRS-42 travelling basic produced no opponent damage") end
+    local stoppedWorldSS, stoppedNativeSS = nativeHero(firstClient)
+    must(firstClient.World:Click(stoppedNativeSS.position))
     check(scenario.Sleep(2000))
     local targetNativeSS = must(secondClient.World:SnapshotNative()).gameplay_state
     local castResult = nil
@@ -224,11 +226,19 @@ return function()
             return nil
         end,
         observe = function()
+            local captureCount = 0
             for index=1,20 do
                 local firstSS = must(firstClient.World:Snapshot())
                 local secondSS = must(secondClient.World:Snapshot())
-                check(scenario.Log("Rocket Barrage sample=" .. index .. " source_hp=" .. tostring(firstSS.hero and firstSS.hero.hit_point)
+                check(scenario.Log("Missile Barrage sample=" .. index .. " source_hp=" .. tostring(firstSS.hero and firstSS.hero.hit_point)
                     .. " target_hp=" .. tostring(secondSS.hero and secondSS.hero.hit_point)))
+                -- Do not interleave native window work with Ability:Cast's input admission.
+                local abilityObservation = must(firstClient.Ability:Snapshot())
+                local observedCast = abilityObservation.state.cast
+                if observedCast and observedCast.is_accepted and captureCount < 2 then
+                    must(firstClient.UI:Screenshot("pvp-rocket-barrage-flight-" .. index))
+                    captureCount = captureCount + 1
+                end
                 check(scenario.Sleep(250))
             end
             return nil
@@ -238,9 +248,9 @@ return function()
     if not castResult or not castResult.is_completed or not castSS or not castSS.is_accepted
         or not castSS.is_released or not castSS.is_burst_completed or castSS.is_failed
         or castSS.expected_launch_count <= 0 or castSS.launch_count ~= castSS.expected_launch_count then
-        error("PvP Rocket Barrage did not complete every authored launch, release and retirement")
+        error("PvP Missile Barrage did not complete every authored launch, release and retirement")
     end
-    check(scenario.Log("PvP Rocket Barrage completed launches=" .. castSS.launch_count))
+    check(scenario.Log("PvP Missile Barrage completed launches=" .. castSS.launch_count))
     must(firstClient.Diagnostics:Capture("pvp-shared-projectile-source"))
     must(secondClient.Diagnostics:Capture("pvp-shared-projectile-target"))
     return nil

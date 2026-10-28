@@ -263,7 +263,7 @@ func (e heroHealingTicksSchedule) tick(
 		)
 	}
 	if isRemoteTarget {
-		if !e.target.isCompanion {
+		if !e.target.isCompanion && targetSession.zone != nil {
 			targetSession.zone.PublishHeroResourceTo(
 				e.target.userID, e.target.generation,
 			)
@@ -287,9 +287,20 @@ func (e heroHealingTicksSchedule) tick(
 			return packets, nil
 		}
 	}
+	if peerSession.binding.Mode == game.ModeArena {
+		match := e.runtime.registry.arenaMatches[peerSession.binding.GameID]
+		if match != nil && match.isCombatActive {
+			match.result.recordHealing(e.binding.UserID, targetSession.binding.UserID, healedAmount)
+		}
+		if healedAmount > 0 && e.runtime.logger != nil {
+			e.runtime.logger.Printf("Arena shared healing tick ability=%s source=%d target=%d amount=%g final=%t",
+				e.definition.Name, e.sourceObjectID, e.target.objectID, healedAmount, isFinal)
+		}
+		e.runtime.registry.queueArenaAbilityResourcesLocked(peerSession, packets)
+	}
 	e.runtime.registry.mutex.Unlock()
 
-	if healedAmount <= 0 {
+	if healedAmount <= 0 || peerSession.binding.Mode == game.ModeArena {
 		return packets, nil
 	}
 	err = e.runtime.stats.Record(
@@ -594,7 +605,7 @@ func (r campaignAbilityCommandRuntime) handleHeroHealingTicks(
 		if isFieldMedicAlly {
 			objectIDs = append(objectIDs, req.command.Common.ObjectID)
 		}
-		run.effects, err = r.registry.allocateChannelEffectsLocked(peerSession.zone, r.effectPool, objectIDs)
+		run.effects, err = r.registry.allocateAbilityChannelEffectsLocked(peerSession, r.effectPool, objectIDs)
 		if err != nil {
 			peerSession.abilityCooldownSession().Rollback(cooldownReservation)
 			peerSession.abilityReleaseSession().Rollback(releaseReservation)

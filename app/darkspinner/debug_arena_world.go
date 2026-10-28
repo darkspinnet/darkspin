@@ -38,7 +38,7 @@ func debugWorldArenaDTO(arena *scenario.WorldArena) *debugWorldArena {
 			SwapRemainingMS: member.SwapRemainingMS,
 			DeployedIndex:   member.DeployedIndex, Characters: make([]debugWorldHero, 0, len(member.Characters))}
 		for _, hero := range member.Characters {
-			memberDTO.Characters = append(memberDTO.Characters, debugWorldHero{Index: hero.Index,
+			memberDTO.Characters = append(memberDTO.Characters, debugWorldHero{Index: hero.Index, Noun: hero.Noun,
 				HitPoint: hero.HitPoint, ManaPoint: hero.ManaPoint,
 				MaximumHitPoint: hero.MaximumHitPoint, MaximumManaPoint: hero.MaximumManaPoint,
 				IsDefeated: hero.IsDefeated})

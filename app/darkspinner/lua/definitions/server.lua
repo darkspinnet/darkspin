@@ -21,7 +21,7 @@
 ---@field StartPVP fun(self:ServerHandle,req:PVPRequest):PVPMatch|nil,ScenarioError|nil Requires participants in Navigation with established owned parties; 1v1 opponents share one two-player party. Forms explicit arena teams through production server setup notifications. Does not issue native matchmaking input or prove loading. PVP:Accept() all participants concurrently, then PVP:Wait(). Never replay after a partial/unknown failure.
 
 ---@class PVPRequest
----@field teams ManagedClient[][] Exactly two equal teams of one or two distinct authenticated clients outside games and parties. Team membership follows list order. Requires an owned unlocked PvP squad; create profiles with is_pvp_enabled=true.
+---@field teams ManagedClient[][] Exactly two equal teams of one or two distinct authenticated clients outside games, in established owned parties and Navigation. Team membership follows list order. Requires an owned unlocked PvP squad; create profiles with is_pvp_enabled=true.
 
 ---@class PVPParticipant
 ---@field client_id string

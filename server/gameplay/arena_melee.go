@@ -67,7 +67,7 @@ func (e campaignMeleeHitStep) commitArenaMeleeLocked(current gameplayPeerSession
 			return nil, fmt.Errorf("arenaMeleeEvent: %w", hitErr)
 		}
 		packets = append(packets, hitPackets...)
-		if schedule.selected.HitEffectName != "" {
+		if schedule.selected.HitEffectName != "" && schedule.selected.ChainLightning.MaximumHopCount == 0 {
 			impact := campaignMeleeImpact{assetName: schedule.selected.HitEffectName,
 				sourceObjectID: schedule.sourceObjectID, sourcePosition: current.playerPosition}
 			effectPacket, effectErr := impact.marshal(hit)

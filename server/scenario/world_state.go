@@ -68,6 +68,7 @@ type WorldPosition struct{ X, Y, Z float32 }
 
 type WorldHero struct {
 	ObjectID         uint32
+	Noun             uint32
 	Index            uint32
 	Position         WorldPosition
 	HitPoint         float32

@@ -2,6 +2,9 @@
 
 ---Server observations and guarded native actions; outcomes require independent observation.
 ---@class ClientWorld
+---@field PlaceHero fun(self:ClientWorld,point:WorldPosition):table|nil,ScenarioError|nil Positions a living owned PvP hero through server teleport packets. Fixture setup only; does not prove native movement, restore resources or change statistics. Observe native arrival separately.
+---@field RestoreHero fun(self:ClientWorld):table|nil,ScenarioError|nil Scenario-only PvP fixture. Restores the living deployed hero's health and power to current maxima without changing combat statistics, effects or cooldowns. Requires every arena participant to be owned. Returns queued server projection; observe both native clients separately.
+---@field ReplaceHero fun(self:ClientWorld,noun:integer):table|nil,ScenarioError|nil Scenario-only PvP fixture. Replaces the active slot with an unequipped installed template noun, preserving its position, slot and saved deck. Interrupts owned effects and resets ability cooldowns. Requires all arena participants owned and combat active; completed deaths are not rewound. Returns queued projection, not native appearance proof.
 ---@field SelectHero fun(self:ClientWorld,slot:integer,timeout_ms?:integer):HeroSelectionResult|nil,ScenarioError|nil Waits for native eligibility, selects zero-based squad slot 0 through 2 through one guarded native edge, then waits for a changed native controlled handle and matching server index. Default client timeout bounds the operation; native dispatch/processing does not prove switching. No replay after error or unknown outcome.
 ---@field Snapshot fun(self:ClientWorld):WorldSnapshot|nil,ScenarioError|nil Samples the owned server world once without waiting for availability. No movement or gameplay advancement.
 ---@field Ready fun(self:ClientWorld,timeout_ms?:integer):WorldSnapshot|nil,ScenarioError|nil Waits for committed server dungeon setup, a deployed hero and a processed native active-world/controlled-handle observation. Returns the ready snapshot with native_readiness. Uses client timeout; aborts on ownership changes. Does not prove visibility of each object or gameplay action success.
@@ -58,6 +61,7 @@
 
 ---@class WorldHero
 ---@field object_id integer
+---@field noun integer Installed template noun ID, including live PvP replacements.
 ---@field index integer Zero-based squad index.
 ---@field position WorldPosition Last committed server pose, not a continuously interpolated native movement sample. Use SnapshotNative().gameplay_state.position for observed client navigation.
 ---@field hit_point number
