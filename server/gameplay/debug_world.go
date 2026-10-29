@@ -11,6 +11,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/scenario"
 	zoneboss "github.com/darkspinnet/darkspin/server/zone/boss"
+	zoneobject "github.com/darkspinnet/darkspin/server/zone/object"
 )
 
 type scenarioWorldStateProvider interface {
@@ -158,6 +159,24 @@ func (e *gameplaySessionRegistry) ScenarioWorldState(ctx context.Context, userID
 				Destination: scenario.WorldPosition{X: tutorialBossTeleport.Destination.X, Y: tutorialBossTeleport.Destination.Y, Z: tutorialBossTeleport.Destination.Z},
 				IsBoss:      true, IsSecurity: true, IsActivationAvailable: isFound, IsActive: matched.isTutorialTeleporterActive})
 		}
+	}
+	for _, sceneryPlan := range matched.zone.SceneryPlans() {
+		publication, publishErr := zoneobject.PublishScenery(sceneryPlan)
+		if publishErr != nil {
+			return result, fmt.Errorf("hazardScenery: %w", publishErr)
+		}
+		abilityName := game.SceneryHazardAbility(publication.NounName)
+		if abilityName == "" {
+			continue
+		}
+		definition, isSelected := matched.zone.DirectorDefinition().SelectedMarkerDefinition(publication.ObjectID)
+		if !isSelected || definition.NounName != publication.NounName {
+			continue
+		}
+		world.SceneryHazards = append(world.SceneryHazards, scenario.WorldSceneryHazard{
+			ObjectID: publication.ObjectID, Noun: publication.NounName, Ability: abilityName,
+			Position: scenario.WorldPosition(publication.Position),
+		})
 	}
 	err = queryContext.Err()
 	if err != nil {

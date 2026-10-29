@@ -117,6 +117,7 @@ func (e gameplayPeerSession) isArenaHitSilenceActive(at time.Time) bool {
 
 func (e gameplayPeerSession) arenaSilenceAmount(at time.Time) float32 {
 	amount := e.projectPassiveCreature(e.deployedCreatureIndex, at).PartAttribute[14]
+	amount += float32(e.fixtureSilenceCount())
 	if at.Before(e.enemySilenceExpiresAt) {
 		amount++
 	}
@@ -296,7 +297,7 @@ func (e campaignAbilityCommandRuntime) applyArenaTargetStatusLocked(sessionKey s
 		createPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 			TargetID: objectID, ModifierGUID: status.modifierID, InstanceID: instanceID,
 			DurationMilliseconds: uint32(duration.Milliseconds()), StackCount: 1,
-			StartMilliseconds: timestamp, SourceID: sourceObjectID})
+			StartMilliseconds: timestamp, NPCAffixAssetID: 0})
 		if err != nil {
 			return nil, status.discard("arenaStatusCreate", err)
 		}

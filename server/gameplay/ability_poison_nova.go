@@ -114,7 +114,7 @@ func (e campaignAbilityCommandRuntime) applyPoisonNovaCooldownResetLocked(
 		TargetID:     run.objectID,
 		ModifierGUID: util.HashID(poisonNovaCooldownModifierName),
 		InstanceID:   instanceID, DurationMilliseconds: uint32(duration.Milliseconds()),
-		StackCount: 1, StartMilliseconds: timestamp, SourceID: run.objectID,
+		StackCount: 1, StartMilliseconds: timestamp, NPCAffixAssetID: 0,
 	})
 	if err != nil {
 		_ = e.modifierPool.Release(instanceID)

@@ -77,7 +77,7 @@ func (e campaignNPCOozeGrowthSchedule) hit() ([][]byte, error) {
 		InstanceID: run.modifier.instanceID, DurationMilliseconds: 0,
 		StackCount:        result.StackCount,
 		StartMilliseconds: e.timestamp + uint64(e.profile.HitDelay/time.Millisecond),
-		SourceID:          e.sourceObjectID,
+		NPCAffixAssetID:   0,
 	})
 	if err != nil {
 		if isNew {

@@ -92,7 +92,7 @@ func (e campaignAbilityCommandRuntime) applyArenaFearStatusLocked(source gamepla
 	creation, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: targetObjectID, ModifierGUID: modifierID, InstanceID: instanceID,
 		DurationMilliseconds: uint32(duration.Milliseconds()), StackCount: 1,
-		StartMilliseconds: timestamp, SourceID: source.deployedObjectID})
+		StartMilliseconds: timestamp, NPCAffixAssetID: 0})
 	if err != nil {
 		return nil, status.discard("arenaFearCreate", err)
 	}

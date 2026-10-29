@@ -128,6 +128,12 @@ func debugLuaScopeIndex(state *lua.LState) int {
 			state.Push(state.NewFunction(debugLuaWorldConfigure))
 		case "Spawn":
 			state.Push(state.NewFunction(debugLuaWorldSpawn))
+		case "SpawnOwnedNPC":
+			state.Push(state.NewFunction(debugLuaWorldSpawnOwned))
+		case "ActivateSpoffitCrystal":
+			state.Push(state.NewFunction(debugLuaWorldActivateSpoffit))
+		case "DeactivateSpoffitCrystal":
+			state.Push(state.NewFunction(debugLuaWorldDeactivateSpoffit))
 		case "SpawnControlledNPC", "SpawnControlled":
 			state.Push(state.NewFunction(debugLuaWorldSpawnControlled))
 		case "SpawnControlledFixture":

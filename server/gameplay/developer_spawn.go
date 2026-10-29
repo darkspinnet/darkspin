@@ -76,6 +76,11 @@ func (e gameplayPendingRuntime) spawnDeveloperNPCForRequest(
 		e.registry.mutex.Unlock()
 		return nil, false, fmt.Errorf("npcSpawnTutorial: %w", err)
 	}
+	plan, isOwnedDormant, err := e.registry.prepareScenarioOwnedPlanLocked(requestID, currentSession, plan)
+	if err != nil {
+		e.registry.mutex.Unlock()
+		return nil, false, fmt.Errorf("npcSpawnOwned: %w", err)
+	}
 	plans, err := currentSession.zone.AssignSpawnPlanIDs([]zonenpc.SpawnPlan{plan})
 	if err != nil {
 		e.registry.mutex.Unlock()
@@ -89,18 +94,28 @@ func (e gameplayPendingRuntime) spawnDeveloperNPCForRequest(
 	}
 	plans[0] = plan
 	targetObjectID := currentSession.deployedObjectID
-	packets, err := npcraknet.TargetedSpawn(plan, targetObjectID)
+	var packets [][]byte
+	if isOwnedDormant {
+		targetObjectID = 0
+		packets, err = npcraknet.DormantSpawns(plans)
+	} else {
+		packets, err = npcraknet.TargetedSpawn(plan, targetObjectID)
+	}
 	if err != nil {
 		e.registry.mutex.Unlock()
 		return nil, false, fmt.Errorf("npcSpawnMarshal: %w", err)
 	}
-	err = currentSession.zone.NPCs().Add(plans, targetObjectID)
+	if isOwnedDormant {
+		err = currentSession.zone.NPCs().AddDormant(plans)
+	} else {
+		err = currentSession.zone.NPCs().Add(plans, targetObjectID)
+	}
 	if err != nil {
 		e.registry.mutex.Unlock()
 		return nil, false, fmt.Errorf("npcSpawnAdd: %w", err)
 	}
 	err = currentSession.zone.PublishNPCSpawn(zoneprojection.NPCSpawn{
-		Plans: plans, TargetObjectID: targetObjectID,
+		Plans: plans, TargetObjectID: targetObjectID, IsDormant: isOwnedDormant,
 	}, currentSession.binding.UserID, currentSession.generation)
 	if err != nil {
 		rollbackErr := currentSession.zone.NPCs().RollbackAdd(plans)
@@ -131,6 +146,10 @@ func (e gameplayPendingRuntime) spawnDeveloperNPCForRequest(
 	publicationErr := e.registry.finishScenarioSpawnPublication(packet, requestID)
 	if publicationErr != nil {
 		return packets, true, fmt.Errorf("npcSpawnReceipt: %w", publicationErr)
+	}
+	ownedErr := e.finishScenarioOwnedSpawn(packet, requestID)
+	if ownedErr != nil {
+		return packets, true, fmt.Errorf("npcSpawnOwnedCommit: %w", ownedErr)
 	}
 	return packets, true, nil
 }

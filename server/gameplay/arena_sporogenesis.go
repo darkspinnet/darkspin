@@ -92,7 +92,7 @@ func (e heroHealingTicksSchedule) applyArenaSporogenesisLocked(
 	status.instanceID = instanceID
 	createPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: status.objectID, ModifierGUID: status.modifierID,
-		InstanceID: instanceID, SourceID: e.sourceObjectID, StackCount: 1,
+		InstanceID: instanceID, NPCAffixAssetID: 0, StackCount: 1,
 		StartMilliseconds: timestamp, DurationMilliseconds: uint32(duration / time.Millisecond),
 	})
 	if err != nil {

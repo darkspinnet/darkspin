@@ -167,7 +167,7 @@ func (e *sporogenesisHot) apply() error {
 	duration := time.Second + time.Duration(e.definition.NumberOfTicks-1)*e.definition.TickDuration
 	createPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: e.target.objectID, ModifierGUID: e.definition.RootModifierID, InstanceID: instanceID,
-		SourceID: e.sourceObjectID, StackCount: 1, StartMilliseconds: e.sourceTime,
+		NPCAffixAssetID: 0, StackCount: 1, StartMilliseconds: e.sourceTime,
 		DurationMilliseconds: uint32(duration / time.Millisecond),
 	})
 	if err != nil {

@@ -38,6 +38,25 @@ func debugLuaWorldSpawnFixture(state *lua.LState) int {
 	return debugLuaWorldSpawnControlledRole(state, "client.spawn_controlled_fixture")
 }
 
+func debugLuaWorldSpawnOwned(state *lua.LState) int {
+	scope := debugLuaScopeSelf(state)
+	if scope == nil {
+		return 0
+	}
+	userdata := state.CheckUserData(3)
+	owner, isOwner := userdata.Value.(*debugLuaNPC)
+	if !isOwner || owner.client != scope.client || owner.instanceID != scope.client.instanceID || owner.pid != scope.client.processID {
+		return scope.client.vm.returnOperation(state, nil, &debugError{Code: "invalid_request", Context: "ownedParent", Message: "parent must be this client's protected controlled NPC handle"}, true)
+	}
+	identity := debugNPCIdentity{UserID: owner.userID, GameID: owner.gameID, PeerGeneration: owner.peerGeneration,
+		TransportGeneration: owner.transportGeneration, ZoneGeneration: owner.zoneGeneration,
+		SpawnRequestID: owner.spawnRequestID, ObjectID: owner.objectID}
+	return scope.client.invoke(state, "client.spawn_owned_npc", map[string]any{
+		"client_id": scope.client.id, "noun": state.CheckString(2), "owner": identity,
+		"timeout_ms": debugLuaClientTimeout(state, scope.client, 4),
+	}, true)
+}
+
 func debugLuaWorldSpawnControlledRole(state *lua.LState, operation string) int {
 	scope := debugLuaScopeSelf(state)
 	if scope == nil {

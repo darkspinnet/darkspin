@@ -34,7 +34,9 @@ func ModifierCreate(req ModifierCreateRequest) ([]byte, error) {
 		DurationMilliseconds: uint32(req.Duration.Milliseconds()),
 		StackCount:           stackCount,
 		StartMilliseconds:    req.Timestamp,
-		SourceID:             req.SourceObjectID,
+		// Build 103 reads this slot as an NPC affix asset, not a caster ID.
+		// Ordinary modifiers retain their source in the feature-owned record.
+		NPCAffixAssetID: 0,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("modifierCreateMarshal: %w", err)

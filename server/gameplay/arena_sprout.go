@@ -241,7 +241,7 @@ func (e *arenaSproutWorld) enterTargetLocked(run *arenaSproutRun, objectID uint3
 		}, tickLimit: 1}
 	created, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: objectID, ModifierGUID: status.modifierID, InstanceID: instanceID,
-		StackCount: 1, SourceID: run.sourceObjectID,
+		StackCount: 1, NPCAffixAssetID: 0,
 		StartMilliseconds: run.packet.SourceTime + uint64(now.Sub(run.startedAt)/time.Millisecond),
 	})
 	if err != nil {

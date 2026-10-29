@@ -23,33 +23,41 @@ type FocusedRecipe struct {
 }
 
 type SpawnRequest struct {
-	RunID          string
-	UserID         int64
-	GameID         uint32
-	PeerGeneration uint64
-	ZoneGeneration uint64
-	NounName       string
-	IsAIEnabled    *bool
-	IsFixture      bool
+	RunID            string
+	UserID           int64
+	GameID           uint32
+	PeerGeneration   uint64
+	ZoneGeneration   uint64
+	NounName         string
+	IsAIEnabled      *bool
+	IsFixture        bool
+	Owner            *ControlledNPCIdentity
+	IsSpoffitCrystal bool
+	IsSpoffitRemoval bool
 }
 
 // IsPublished is the owning response's server send commitment, not native
 // rendering acknowledgment. All handles are qualified by peer and zone epochs.
 type SpawnReceipt struct {
-	RequestID           string
-	RunID               string
-	UserID              int64
-	State               string
-	GameID              uint32
-	PeerGeneration      uint64
-	TransportGeneration uint64
-	ZoneGeneration      uint64
-	ObjectID            uint32
-	NounName            string
-	IsAIEnabled         bool
-	IsFixture           bool
-	IsAdmitted          bool
-	IsPublished         bool
-	IsNativeObserved    bool
-	Failure             string
+	RequestID             string
+	RunID                 string
+	UserID                int64
+	State                 string
+	GameID                uint32
+	PeerGeneration        uint64
+	TransportGeneration   uint64
+	ZoneGeneration        uint64
+	ObjectID              uint32
+	NounName              string
+	IsAIEnabled           bool
+	IsFixture             bool
+	IsAdmitted            bool
+	IsPublished           bool
+	IsNativeObserved      bool
+	Failure               string
+	Owner                 *ControlledNPCIdentity
+	IsOwnerSupportStarted bool
+	IsSpoffitCrystal      bool
+	IsSpoffitRemoval      bool
+	HeroOwnerObjectID     uint32
 }

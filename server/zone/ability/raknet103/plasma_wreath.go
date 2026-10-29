@@ -119,7 +119,7 @@ func newPlasmaWreathRun(
 	messages = append(messages,
 		raknet.ModifierCreatedMessage{
 			TargetID: objectID, ModifierGUID: util.HashID("LightningRogueSupportModifier"),
-			InstanceID: instanceID, StackCount: 1, SourceID: objectID,
+			InstanceID: instanceID, StackCount: 1, NPCAffixAssetID: 0,
 		},
 		raknet.AttachedEffectMessage{
 			Slot: bubbleSlot + 1, IsForceAttached: true,

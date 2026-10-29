@@ -123,6 +123,11 @@ func (r gameplaySetupRuntime) publishRejoin(
 		return nil, fmt.Errorf("rejoinEnergyPassive: %w", err)
 	}
 	baseline = append(baseline, energyPackets...)
+	silencePackets, err := r.registry.silenceFieldPresentation(peerSession, packet.SourceTime)
+	if err != nil {
+		return nil, fmt.Errorf("rejoinSilenceField: %w", err)
+	}
+	baseline = append(baseline, silencePackets...)
 	beastPackets, err := r.registry.beastPetVulnerabilityReplay(peerSession, baselineTime, packet.SourceTime)
 	if err != nil {
 		return nil, fmt.Errorf("rejoinBeastDebuff: %w", err)
@@ -479,7 +484,7 @@ func marshalGameplayRejoinBaselineState(
 	if len(capturedTimes) > 0 {
 		introTime = capturedTimes[0]
 	}
-	liveNPCs := peerSession.zone.NPCs().LiveSnapshots()
+	liveNPCs := peerSession.zone.NPCs().LivePresentationSnapshots()
 	for index, npc := range liveNPCs {
 		if !npc.IsPublished {
 			continue

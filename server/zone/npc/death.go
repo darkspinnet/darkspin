@@ -35,7 +35,7 @@ func DeathPresentationForNoun(nounName string) (DeathPresentation, bool) {
 		return destructorDeathPresentation("ctd_boss_tc_death", 480), true
 	case "scaldronboss.noun", "scaldronboss_2.noun", "scaldronboss_3.noun":
 		return DeathPresentation{AnimationName: CorruptorStageOneDeathAnimation, PresentationDuration: CorruptorStageOneDeathDuration}, true
-	case "scaldronboss_stage2.noun":
+	case "scaldronboss_stage2.noun", "scaldronboss_stage2_2.noun", "scaldronboss_stage2_3.noun":
 		return destructorDeathPresentation("sca_boss_death", 662), true
 	case "nocturnabasichealthdrain.noun",
 		"nocturnabasichealthdrain_2.noun",

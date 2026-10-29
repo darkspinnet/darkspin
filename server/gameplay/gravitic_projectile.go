@@ -15,6 +15,7 @@ type graviticProjectile struct {
 	run        *abilityraknet.ProjectileRun
 	burst      *abilityraknet.BurstRun
 	lob        *graviticLob
+	retirement *campaignProjectileRetirement
 	objectID   uint32
 	instanceID uint32
 }
@@ -66,7 +67,6 @@ func (e gameplayPendingRuntime) updateGraviticProjectilesLocked(
 		runs = append(runs, member.fireTempestActive.attack)
 	}
 	projectiles := make(map[uint32]graviticProjectile)
-	sources := make(map[uint32]uint32)
 	lobs := make(map[uint32]*graviticLob, len(member.tossAttacks)+len(member.cloudLobAttacks))
 	for objectID, run := range member.tossAttacks {
 		lobs[objectID] = run.lob
@@ -79,15 +79,21 @@ func (e gameplayPendingRuntime) updateGraviticProjectilesLocked(
 		sourceID := graviticFieldSource(fields, position)
 		if isActive && sourceID != 0 {
 			projectiles[objectID] = graviticProjectile{lob: lob, objectID: objectID}
-			sources[objectID] = sourceID
 		}
 	}
 	for _, run := range runs {
 		snapshot := run.Snapshot(now)
+		retirement := e.registry.projectileRetirements[run]
+		if (member.sageAttacks[snapshot.ObjectID] == run && retirement == nil) ||
+			(retirement != nil && (!retirement.isAdmitted || !retirement.isPublished ||
+				retirement.isRetired || retirement.isRetirementPending)) {
+			// Advance can expose an active simulator before its launch producer
+			// publishes ObjectCreate. The retained wire owner admits contact.
+			continue
+		}
 		sourceID := graviticFieldSource(fields, game.Vec3(snapshot.Position))
 		if snapshot.IsActive && sourceID != 0 {
-			projectiles[snapshot.ObjectID] = graviticProjectile{run: run, objectID: snapshot.ObjectID}
-			sources[snapshot.ObjectID] = sourceID
+			projectiles[snapshot.ObjectID] = graviticProjectile{run: run, objectID: snapshot.ObjectID, retirement: retirement}
 		}
 	}
 	for _, run := range member.heroBurstAttacks {
@@ -95,14 +101,13 @@ func (e gameplayPendingRuntime) updateGraviticProjectilesLocked(
 			sourceID := graviticFieldSource(fields, game.Vec3(snapshot.Position))
 			if snapshot.IsActive && sourceID != 0 {
 				projectiles[snapshot.ObjectID] = graviticProjectile{burst: run, objectID: snapshot.ObjectID}
-				sources[snapshot.ObjectID] = sourceID
 			}
 		}
 	}
 	if member.graviticProjectiles == nil {
 		member.graviticProjectiles = make(map[uint32]graviticProjectile)
 	}
-	messages := make([]raknet.ApplicationMessage, 0)
+	packets := make([][]byte, 0)
 	for objectID, tracked := range member.graviticProjectiles {
 		current, isInside := projectiles[objectID]
 		if isInside && tracked.run == current.run && tracked.burst == current.burst && tracked.lob == current.lob {
@@ -114,7 +119,11 @@ func (e gameplayPendingRuntime) updateGraviticProjectilesLocked(
 			return nil, fmt.Errorf("graviticModifierRelease: %w", err)
 		}
 		delete(member.graviticProjectiles, objectID)
-		messages = append(messages, raknet.ModifierDeletedMessage{TargetID: objectID, InstanceID: tracked.instanceID})
+		packets, err = e.publishGraviticProjectileLocked(member, tracked,
+			raknet.ModifierDeletedMessage{TargetID: objectID, InstanceID: tracked.instanceID}, packets)
+		if err != nil {
+			return nil, fmt.Errorf("graviticDelete: %w", err)
+		}
 	}
 	for objectID, projectile := range projectiles {
 		if _, isTracked := member.graviticProjectiles[objectID]; isTracked {
@@ -133,19 +142,46 @@ func (e gameplayPendingRuntime) updateGraviticProjectilesLocked(
 		}
 		projectile.instanceID = instanceID
 		member.graviticProjectiles[objectID] = projectile
-		messages = append(messages, raknet.ModifierCreatedMessage{
+		packets, err = e.publishGraviticProjectileLocked(member, projectile, raknet.ModifierCreatedMessage{
 			TargetID: objectID, ModifierGUID: util.HashID("ZelemSlow"),
-			InstanceID: instanceID, StackCount: 1, SourceID: sources[objectID],
+			// Build 103's legacy SourceID slot is an NPC affix asset, not the
+			// fixture's object ID. Ordinary field slows have no affix association.
+			InstanceID: instanceID, StackCount: 1,
 			StartMilliseconds: 1,
-		})
-	}
-	packets := make([][]byte, 0, len(messages))
-	for _, message := range messages {
-		packet, err := raknet.MarshalApplication(message)
+		}, packets)
 		if err != nil {
-			return nil, fmt.Errorf("graviticProjectileMarshal: %w", err)
+			return nil, fmt.Errorf("graviticCreate: %w", err)
 		}
-		packets = append(packets, packet)
 	}
+	return packets, nil
+}
+
+// Projectile contact uses the launch owner's FIFO, never the polling response.
+// A response can otherwise overtake an already queued ObjectCreate on its caster.
+func (e gameplayPendingRuntime) publishGraviticProjectileLocked(
+	member *gameplayPeerSession, projectile graviticProjectile,
+	message raknet.ApplicationMessage, packets [][]byte,
+) ([][]byte, error) {
+	packet, err := raknet.MarshalApplication(message)
+	if err != nil {
+		return packets, fmt.Errorf("graviticMarshal: %w", err)
+	}
+	retirement := projectile.retirement
+	if retirement == nil {
+		return append(packets, packet), nil
+	}
+	if !retirement.isAdmitted || !retirement.isPublished || retirement.isRetired || retirement.isRetirementPending {
+		return packets, nil
+	}
+	owner, isFound := e.registry.sessions[retirement.sessionKey]
+	if !isFound || owner.generation != retirement.generation ||
+		owner.binding.UserID != member.binding.UserID || !retirement.isMemberRealm(*member) {
+		return packets, nil
+	}
+	// Persist this poll's modifier membership, then retain the publication's
+	// updated queues in the working session written back by the caller.
+	e.registry.sessions[retirement.sessionKey] = *member
+	e.registry.queueCampaignProjectilePublicationLocked(retirement, retirement.sessionKey, [][]byte{packet})
+	*member = e.registry.sessions[retirement.sessionKey]
 	return packets, nil
 }

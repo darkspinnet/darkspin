@@ -119,7 +119,7 @@ func (e *gameplayPeerSession) pollPetPlasmaBurns(
 			modifierPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 				TargetID: pet.ObjectID, ModifierGUID: run.record.GUID,
 				InstanceID: run.instanceID, StackCount: 1, StartMilliseconds: timestamp,
-				SourceID: pool.MarkerID,
+				NPCAffixAssetID: 0,
 			})
 			if err == nil {
 				err = e.trackCampaignNPCModifier(run)

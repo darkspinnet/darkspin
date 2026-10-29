@@ -425,7 +425,7 @@ func (e heroInfectionSchedule) tick(
 			StackCount:           1,
 			StartMilliseconds: e.packet.SourceTime +
 				uint64(deadline/time.Millisecond),
-			SourceID: e.sourceObjectID,
+			NPCAffixAssetID: 0,
 		})
 		if marshalErr != nil {
 			return nil, fmt.Errorf("infectionSpreadMarshal: %w", marshalErr)
@@ -670,14 +670,14 @@ func (r campaignAbilityCommandRuntime) handleHeroInfection(
 			InstanceID:           modifierInstanceID,
 			DurationMilliseconds: uint32(projected.Duration.Milliseconds()),
 			StackCount:           1, StartMilliseconds: req.packet.SourceTime,
-			SourceID: req.command.Common.ObjectID,
+			NPCAffixAssetID: 0,
 		},
 		raknet.ModifierCreatedMessage{
 			TargetID: targetObjectID, ModifierGUID: projected.SecondaryModifierID,
 			InstanceID:           rootInstanceID,
 			DurationMilliseconds: uint32(rootDuration.Milliseconds()),
 			StackCount:           1, StartMilliseconds: req.packet.SourceTime,
-			SourceID: req.command.Common.ObjectID,
+			NPCAffixAssetID: 0,
 		},
 	} {
 		packet, marshalErr := raknet.MarshalApplication(message)

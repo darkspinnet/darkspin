@@ -28,12 +28,19 @@ type plasmaBurnPresentation struct {
 
 // All calls hold the registry lock, including modifier retirement on death.
 func (e *plasmaBurnPresentation) stop() {
-	if e.isStopped {
+	if !e.release() {
 		return
+	}
+	e.publishToAllies([][]byte{e.packet})
+}
+
+func (e *plasmaBurnPresentation) release() bool {
+	if e.isStopped {
+		return false
 	}
 	e.isStopped = true
 	e.pool.Release(e.objectID, e.slot)
-	e.publishToAllies([][]byte{e.packet})
+	return true
 }
 
 func (e *plasmaBurnPresentation) publishToAllies(packets [][]byte) {
@@ -163,7 +170,9 @@ func (e campaignNPCActionRuntime) createPlasmaBurn(member *gameplayPeerSession, 
 	packet, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: member.deployedObjectID, ModifierGUID: run.record.GUID,
 		InstanceID: run.instanceID, StackCount: 1, StartMilliseconds: timestamp,
-		SourceID: sourceObjectID,
+		// This legacy-named wire field is NPCAffixAssetID, not the caster.
+		// The real scenery source remains in the owned modifier record.
+		NPCAffixAssetID: 0,
 	})
 	if err == nil {
 		err = member.trackCampaignNPCModifier(run)
@@ -182,7 +191,6 @@ func (e campaignNPCActionRuntime) createPlasmaBurn(member *gameplayPeerSession, 
 	run.cancel = presentation.stop
 	member.plasmaBurn = run
 	member.plasmaBurnEffect = presentation
-	presentation.publishToAllies([][]byte{packet, startEffectPacket})
 	return [][]byte{packet, startEffectPacket}, nil
 }
 
@@ -198,14 +206,8 @@ func (e campaignNPCActionRuntime) removePlasmaBurn(member *gameplayPeerSession) 
 	}
 	member.untrackCampaignNPCModifier(run)
 	packets := make([][]byte, 0, 2)
-	if member.plasmaBurnEffect != nil {
+	if member.plasmaBurnEffect != nil && member.plasmaBurnEffect.release() {
 		packets = append(packets, member.plasmaBurnEffect.packet)
-		if isCreated {
-			member.plasmaBurnEffect.publishToAllies([][]byte{packet})
-		}
-	}
-	if run.cancel != nil {
-		run.cancel()
 	}
 	member.plasmaBurn = nil
 	member.plasmaBurnEffect = nil

@@ -64,7 +64,7 @@ func (e heroAuraAreaSchedule) reconcileTimeBubbleLocked(peerSession *gameplayPee
 		packet, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 			TargetID: objectID, ModifierGUID: e.definition.RootModifierID,
 			InstanceID: instanceID, DurationMilliseconds: 0, StackCount: 1,
-			StartMilliseconds: e.packet.SourceTime + uint64(deadline/time.Millisecond), SourceID: e.sourceObjectID,
+			StartMilliseconds: e.packet.SourceTime + uint64(deadline/time.Millisecond), NPCAffixAssetID: 0,
 		})
 		if err != nil {
 			e.run.releaseBubbleAllocations(allocations)

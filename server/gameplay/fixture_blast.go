@@ -17,6 +17,9 @@ func isFactoryPipe(nounName string) bool {
 }
 
 func fixtureBlastProfile(nounName string) (zonenpc.ActionProfile, bool) {
+	if zonenpc.IsPoisonEgg(nounName) {
+		return zonenpc.PoisonEggDeathProfile(), true
+	}
 	if isExplodingTree(nounName) {
 		return explodingTreeDeathProfile(), true
 	}
@@ -59,18 +62,22 @@ func fixtureBlastProfile(nounName string) (zonenpc.ActionProfile, bool) {
 }
 
 type campaignFixtureBlastStep struct {
-	runtime     campaignDamageRuntime
-	packet      raknet.Packet
-	sessionKey  string
-	generation  uint64
-	source      zonenpc.Snapshot
-	npc         *zonenpc.Session
-	publication *campaignFixturePublication
-	timestamp   uint64
-	notBefore   time.Time
+	sourceProfile *game.DamageProfile
+	runtime       campaignDamageRuntime
+	packet        raknet.Packet
+	sessionKey    string
+	generation    uint64
+	source        zonenpc.Snapshot
+	npc           *zonenpc.Session
+	publication   *campaignFixturePublication
+	timestamp     uint64
+	notBefore     time.Time
 }
 
 func (e campaignFixtureBlastStep) produce() ([][]byte, error) {
+	if zonenpc.IsPoisonEgg(e.source.Plan.NounName) {
+		return e.producePoisonEgg()
+	}
 	profile, isKnown := fixtureBlastProfile(e.source.Plan.NounName)
 	if !isKnown {
 		return nil, nil
@@ -358,9 +365,13 @@ func (e campaignDamageRuntime) scheduleFixtureBlast(packet raknet.Packet, sessio
 	}
 	step := campaignFixtureBlastStep{runtime: e, packet: packet, sessionKey: sessionKey,
 		generation: generation, source: source, npc: member.zone.NPCs(), timestamp: timestamp}
-	if zonenpc.IsMutationEgg(source.Plan.NounName) {
+	if zonenpc.IsMutationEgg(source.Plan.NounName) || zonenpc.IsPoisonEgg(source.Plan.NounName) {
 		step.notBefore = e.npc.now().Add(mutationEggDelay)
 		step.timestamp += uint64(mutationEggDelay / time.Millisecond)
+	}
+	if zonenpc.IsPoisonEgg(source.Plan.NounName) {
+		frozenProfile := zonenpc.DamageProfileAt(source, e.npc.now())
+		step.sourceProfile = &frozenProfile
 	}
 	if isExplodingTree(source.Plan.NounName) {
 		step.notBefore = e.npc.now().Add(explodingTreeDelay)

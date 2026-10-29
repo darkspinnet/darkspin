@@ -68,7 +68,7 @@ func (e *arenaAbilityTargets) applyBasicBurnLocked(result zonenpc.DamageResult,
 	createPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: status.objectID, ModifierGUID: status.modifierID,
 		InstanceID: status.instanceID, DurationMilliseconds: 4000, StackCount: 1,
-		StartMilliseconds: timestamp, SourceID: status.sourceObjectID,
+		StartMilliseconds: timestamp, NPCAffixAssetID: 0,
 	})
 	if err != nil {
 		return status.discard("arenaBurnCreate", err)

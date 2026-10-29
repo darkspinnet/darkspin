@@ -26,17 +26,19 @@ const (
 )
 
 type campaignCorruptorState struct {
-	phaseGeneration  uint64
-	secondAggro      *corruptorCinematicRun
-	phases           [5]zonenpc.CorruptorPhase
-	phaseIndex       int
-	portalPositions  []game.Vec3
-	portalObjectIDs  []uint32
-	portalReadyAts   []time.Time
-	portals          map[uint32]campaignCorruptorPortalState
-	isStageTwo       bool
-	isPhasePending   bool
-	isPhaseActivated bool
+	phaseGeneration         uint64
+	secondAggro             *corruptorCinematicRun
+	phases                  [5]zonenpc.CorruptorPhase
+	phaseIndex              int
+	portalPositions         []game.Vec3
+	portalObjectIDs         []uint32
+	portalReadyAts          []time.Time
+	portals                 map[uint32]campaignCorruptorPortalState
+	isStageTwo              bool
+	isPhasePending          bool
+	isPhaseActivated        bool
+	isDirectEntry           bool
+	arePortalPositionsKnown bool
 }
 
 type campaignCorruptorPhaseStep struct {
@@ -73,9 +75,9 @@ func corruptorRank(nounName string) int {
 	switch strings.ToLower(nounName) {
 	case "scaldronboss.noun", "scaldronboss_stage2.noun":
 		return 1
-	case "scaldronboss_2.noun":
+	case "scaldronboss_2.noun", "scaldronboss_stage2_2.noun":
 		return 2
-	case "scaldronboss_3.noun":
+	case "scaldronboss_3.noun", "scaldronboss_stage2_3.noun":
 		return 3
 	default:
 		return 0
@@ -145,6 +147,13 @@ func (r campaignNPCActionRuntime) startCorruptorControllers(
 ) error {
 	for _, plan := range plans {
 		if corruptorRank(plan.NounName) == 0 || plan.OwnerObjectID != 0 {
+			continue
+		}
+		if zonenpc.IsDirectCorruptorStageTwo(plan) {
+			err := r.startDirectCorruptor(packet, sessionKey, generation, plan, timestamp)
+			if err != nil {
+				return fmt.Errorf("directCorruptor: %w", err)
+			}
 			continue
 		}
 		r.registry.mutex.Lock()
@@ -322,13 +331,12 @@ func (e campaignCorruptorPortalRespawnStep) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("portalTimers: %w", err)
 	}
-	actionPackets, err := e.runtime.scheduleOwnedFirstActions(
-		e.packet, e.sessionKey, e.generation, actionPlans, e.timestamp,
-	)
+	err = e.runtime.publishCorruptorBirth(e.packet, e.sessionKey, e.generation,
+		plans, actionPlans, packets, e.timestamp)
 	if err != nil {
 		return nil, fmt.Errorf("corruptorPortalAction: %w", err)
 	}
-	return append(packets, actionPackets...), nil
+	return nil, nil
 }
 
 func (r campaignNPCActionRuntime) advanceCorruptorPhase(
@@ -404,7 +412,7 @@ func (r campaignNPCActionRuntime) advanceCorruptorPhase(
 	}
 	state.isPhaseActivated = true
 	state.isPhasePending = false
-	if len(state.portalPositions) == 0 {
+	if len(state.portalPositions) == 0 && !state.arePortalPositionsKnown {
 		state.portalPositions = campaignCorruptorPortalPositions(
 			peerSession.zone.DirectorDefinition(), boss.Plan.Position,
 		)
@@ -584,7 +592,7 @@ func admitCorruptorPopulation(
 	for _, plan := range plans {
 		plainPlans = append(plainPlans, plan.Plan)
 	}
-	err := peerSession.zone.NPCs().Add(plainPlans, targetObjectID)
+	err := peerSession.zone.NPCs().AddPendingBirth(plainPlans, targetObjectID)
 	if err != nil {
 		return fmt.Errorf("corruptorPopulationAdd: %w", err)
 	}

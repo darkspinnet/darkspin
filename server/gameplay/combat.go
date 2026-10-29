@@ -6036,7 +6036,7 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 	packet raknet.Packet, sessionKey string, generation uint64,
 	plans []zonenpc.SpawnPlan, timestamp uint64,
 	introductionObjectIDs map[uint32]struct{},
-	areInitialPresentationsOwned ...bool,
+	initialPublications ...npcInitialPublication,
 ) ([][]byte, error) {
 	if len(plans) == 0 {
 		return nil, nil
@@ -6100,7 +6100,7 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 	immediatePackets = append(immediatePackets, supportPackets...)
 	producers := make([]raknet.ScheduledPacketProducer, 0, len(plans)*2)
 	aggroEvents := make([]zonenpc.ActionEvent, 0, len(plans))
-	isInitialPresentationOwned := len(areInitialPresentationsOwned) != 0 && areInitialPresentationsOwned[0]
+	isInitialPresentationOwned := len(initialPublications) != 0
 	initialIntroductions := make([]*campaignNPCInitialIntroduction, 0, len(plans))
 	owner := zonenpc.ActionOwner{UserID: userID, PeerGeneration: generation}
 	startedActions := make(map[uint32]uint64, len(plans))
@@ -6182,7 +6182,7 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 			continue
 		}
 		npc, isNPCFound := npcSession.NPC(plan.ObjectID)
-		if !isNPCFound || npc.IsDefeated {
+		if !isNPCFound || npc.IsDefeated || npc.IsBirthPending || npc.IsSecondAggroPending() {
 			continue
 		}
 		target, isTargetFound := peerSession.campaignNPCTarget(
@@ -6401,6 +6401,22 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 			producers = append(producers, raknet.ScheduledPacketProducer{Delay: delay, Produce: bossCombat.produce})
 		}
 		startedActions[objectID] = npc.ActionGeneration
+	}
+	if isInitialPresentationOwned {
+		// Keep the authored deadline origin, even if the birth write consumed
+		// time. Initial bytes precede any overdue/zero-delay action in the same
+		// ordered producer group instead of being queued behind that action.
+		startedAt := initialPublications[0].startedAt
+		if !startedAt.IsZero() {
+			for index := range producers {
+				producers[index].Delay = max(time.Duration(0), startedAt.Add(producers[index].Delay).Sub(r.now()))
+			}
+		}
+		if len(immediatePackets) != 0 {
+			initial := npcInitialPacketStep{packets: immediatePackets}
+			producers = append([]raknet.ScheduledPacketProducer{{Produce: initial.produce}}, producers...)
+			immediatePackets = nil
+		}
 	}
 	if len(producers) == 0 {
 		err = r.publishInitialIntroductions(initialIntroductions)
@@ -8028,7 +8044,7 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 	if plan.Profile.AbilityName == "MutationAgent_AoE" && plan.Profile.IsRetainedVolumeDamage {
 		target, isTargetFound = peerSession.zone.MutationTarget(receipt.Faction, plan.TargetObjectID, r.now())
 	}
-	if plan.Profile.AbilityName == "DrainerDeathDetonate" {
+	if plan.Profile.AbilityName == "DrainerDeathDetonate" || plan.Profile.AbilityName == "CryosGeyserPassive" {
 		target, isTargetFound = r.drainerDeathTargetLocked(peerSession.zone, plan.TargetObjectID)
 	}
 	if !isTargetFound || target.ObjectID != plan.TargetObjectID {
@@ -8082,9 +8098,13 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 		return packets, statDelta, false, err
 	}
 	if target.IsHero && targetSession.isHeroDamageImmune(r.now()) {
-		immunePacket, immunityErr := npcraknet.Immune(
-			plan.SourceObjectID, target.ObjectID,
-		)
+		var immunePacket []byte
+		var immunityErr error
+		if plan.Profile.AbilityName == "CryosGeyserPassive" && plan.SourceObjectID == 0 {
+			immunePacket, immunityErr = geyserImmunePacket(target.ObjectID)
+		} else {
+			immunePacket, immunityErr = npcraknet.Immune(plan.SourceObjectID, target.ObjectID)
+		}
 		if immunityErr != nil {
 			return nil, sporenet.PlayerStatDelta{}, false,
 				fmt.Errorf("enemyDamageImmuneMarshal: %w", immunityErr)
@@ -8206,7 +8226,9 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 	damage := zone.NPCTargetDamage{}
 	isApplied := false
 	var err error
-	if plan.Profile.AbilityName == "DrainerDeathDetonate" {
+	if plan.Profile.AbilityName == "CryosGeyserPassive" && plan.SourceObjectID == 0 {
+		damage, isApplied, err = peerSession.zone.ApplyCryosGeyserDamage(owner, plan.InitiatorObjectID, plan.TargetObjectID, result.Damage, r.now())
+	} else if plan.Profile.AbilityName == "DrainerDeathDetonate" {
 		damage, isApplied, err = peerSession.zone.ApplyDrainerDeathDamage(
 			owner, plan.SourceObjectID, plan.TargetObjectID, result.Damage,
 		)

@@ -65,23 +65,21 @@ func snapshotEnemyDamageTicks(peerSession gameplayPeerSession) []snapshot.Damage
 func snapshotCryosGeysers(
 	peerSession gameplayPeerSession, capturedAt time.Time,
 ) []snapshot.GeyserState {
-	cracks := peerSession.zone.DirectorDefinition().CryosLavaCracks()
-	states := make([]snapshot.GeyserState, 0, len(cracks))
-	for _, crack := range cracks {
-		objectID, isActive := peerSession.cryosGeyserSourceObjectID(crack.MarkerID)
-		phase, cycle := campaignCryosLavaPhase(crack.MarkerID, capturedAt)
+	geysers := peerSession.zone.CryosGeyserSnapshot()
+	states := make([]snapshot.GeyserState, 0, len(geysers))
+	for _, geyser := range geysers {
+		objectID, cycle := geyser.ObjectID, geyser.Cycle
 		phaseName := "rest"
-		switch phase {
-		case campaignLavaPhaseWarning:
-			phaseName = "warning"
-		case campaignLavaPhaseSpout:
+		if !capturedAt.Before(geyser.SpoutAt) && capturedAt.Before(geyser.EndsAt) {
 			phaseName = "spout"
+		} else if !capturedAt.Before(geyser.WarningAt) && capturedAt.Before(geyser.SpoutAt) {
+			phaseName = "warning"
 		}
 		warningCycle, isWarningRecorded := peerSession.cryosGeyserWarnings[objectID]
 		spoutCycle, isSpoutRecorded := peerSession.cryosGeyserSpouts[objectID]
 		states = append(states, snapshot.GeyserState{
-			MarkerID: crack.MarkerID, ObjectID: objectID, Position: vec3(crack.Position),
-			Phase: phaseName, Cycle: cycle, IsActive: isActive,
+			MarkerID: geyser.MarkerID, ObjectID: objectID, Position: vec3(geyser.Position),
+			Phase: phaseName, Cycle: cycle, IsActive: capturedAt.Before(geyser.EndsAt),
 			WarningCycle: warningCycle, SpoutCycle: spoutCycle,
 			IsWarningRecorded: isWarningRecorded, IsSpoutRecorded: isSpoutRecorded,
 		})

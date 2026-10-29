@@ -20,7 +20,7 @@ func affixAuraMessage(plan zonenpc.SpawnPlan, aura zonenpc.AffixAura) (raknet.Mo
 		return raknet.ModifierCreatedMessage{}, fmt.Errorf("auraInstance: %w", err)
 	}
 	return raknet.ModifierCreatedMessage{
-		TargetID: plan.ObjectID, SourceID: aura.SourceObjectID,
+		TargetID: plan.ObjectID, NPCAffixAssetID: 0,
 		ModifierGUID: util.HashID(aura.ModifierName), InstanceID: instanceID,
 		StartMilliseconds: permanentModifierStartMilliseconds, StackCount: 1,
 		DurationMilliseconds: uint32(zonenpc.EliteModifierDuration.Milliseconds()),

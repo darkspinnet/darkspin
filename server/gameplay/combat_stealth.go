@@ -205,7 +205,7 @@ func (e *campaignStealtherSchedule) beginTravelStealth(profile zonenpc.ActionPro
 	modifierPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: e.objectID, ModifierGUID: stealtherStealthModifierID,
 		InstanceID: modifier.instanceID, StackCount: 1,
-		StartMilliseconds: e.timestamp, SourceID: e.objectID,
+		StartMilliseconds: e.timestamp, NPCAffixAssetID: 0,
 	})
 	if err != nil {
 		e.rollbackStealth(modifier)
@@ -303,7 +303,7 @@ func (e campaignStealtherSchedule) cast(timestamp uint64) ([][]byte, error) {
 	modifierPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: e.objectID, ModifierGUID: stealtherStealthModifierID,
 		InstanceID: modifier.instanceID, DurationMilliseconds: 0,
-		StackCount: 1, StartMilliseconds: timestamp, SourceID: e.objectID,
+		StackCount: 1, StartMilliseconds: timestamp, NPCAffixAssetID: 0,
 	})
 	if err != nil {
 		e.rollbackStealth(modifier)
@@ -633,7 +633,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCFear(
 		InstanceID:           run.modifier.instanceID,
 		DurationMilliseconds: uint32(profile.ModifierDuration.Milliseconds()),
 		StackCount:           1, StartMilliseconds: timestamp,
-		SourceID: source.Plan.ObjectID,
+		NPCAffixAssetID: 0,
 	})
 	if err != nil {
 		r.rollbackCampaignNPCFear(

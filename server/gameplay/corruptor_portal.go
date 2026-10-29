@@ -296,12 +296,12 @@ func (e campaignCorruptorPortalStep) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("portalRepeat: %w", err)
 	}
-	actionPackets, err := e.runtime.scheduleOwnedFirstActions(e.packet, e.sessionKey,
-		e.generation, actionPlans, e.timestamp)
+	err = e.runtime.publishCorruptorBirth(e.packet, e.sessionKey, e.generation,
+		plans, actionPlans, packets, e.timestamp)
 	if err != nil {
 		return nil, fmt.Errorf("portalActions: %w", err)
 	}
-	return append(packets, actionPackets...), nil
+	return nil, nil
 }
 
 func (e campaignCorruptorPortalStep) scheduleNext() error {

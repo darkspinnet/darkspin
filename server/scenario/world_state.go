@@ -20,6 +20,7 @@ type WorldState struct {
 	Campaign                *WorldCampaign
 	Ability                 *AbilityState
 	NPCs                    []WorldNPC
+	SceneryHazards          []WorldSceneryHazard
 	NPCTotal                int
 	IsNPCTruncated          bool
 	Pickups                 []WorldPickup
@@ -36,6 +37,13 @@ type WorldState struct {
 	IsObjectiveComplete     bool
 	Boss                    *WorldBoss
 	BossTriggers            []WorldBossTrigger
+}
+
+type WorldSceneryHazard struct {
+	ObjectID uint32
+	Noun     string
+	Ability  string
+	Position WorldPosition
 }
 
 type WorldBossTrigger struct {

@@ -1644,7 +1644,7 @@ func (s campaignTutorialCreatureUnlockStep) produce() ([][]byte, error) {
 			ModifierGUID: peerSession.binding.Creatures[1].PassiveAbility,
 			InstanceID:   passiveInstanceID, StackCount: 1,
 			StartMilliseconds: s.timestamp,
-			SourceID:          zonehero.ObjectID(peerSession.binding.Slot, 1),
+			NPCAffixAssetID:   0,
 		})
 		if marshalErr != nil {
 			err = fmt.Errorf("passiveMarshal: %w", marshalErr)

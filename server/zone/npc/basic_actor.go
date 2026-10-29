@@ -18,6 +18,28 @@ func basicActorProfile(nounName string) (ActionProfile, bool) {
 	}
 }
 
+// Build-103 SpoffitVictim.Phase names chunk780's namespace instead of its
+// registered Bite name. Repair only that exact imported content reference.
+func spoffitVictimProfile(plan SpawnPlan) (ActionProfile, bool) {
+	graph := plan.NPCProfile.AIGraph
+	if !strings.EqualFold(plan.NounName, "SpoffitVictim.Noun") ||
+		!plan.NPCProfile.IsClassKnown || plan.NPCProfile.NPCClassInstanceID != 4189402980 ||
+		graph == nil || !graph.IsResolved || graph.DefinitionID != 4189402980 {
+		return ActionProfile{}, false
+	}
+	for _, node := range graph.Nodes {
+		if node.PhaseID != 4189402980 || node.Phase == nil {
+			continue
+		}
+		for _, gambit := range node.Phase.Gambits {
+			if gambit.Ability != nil && *gambit.Ability == "nAbility_Bite" {
+				return biteProfile(6, 6), true
+			}
+		}
+	}
+	return ActionProfile{}, false
+}
+
 // Build-103 chunk780 is shared by Critter and BabyMortar's close attack.
 func biteProfile(movementSpeed float32, nonCombatMovementSpeed float32) ActionProfile {
 	return ActionProfile{

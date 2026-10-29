@@ -187,6 +187,8 @@ func (e *campaignFixturePublication) completeBlast() {
 			continue
 		}
 		state.isCreationPublished = true
+		e.queueLocked(state.pendingRefreshes, true)
+		state.pendingRefreshes = nil
 		state.publication = nil
 		state.cursor = step
 		state.isCursorReady = true

@@ -15,6 +15,9 @@ import (
 // Stored on the generic modifier owner so every accepted lifecycle path sees
 // the same raw namespace, source snapshot and exact instance.
 type campaignFixtureBurnState struct {
+	effects             *channelEffects
+	sourceTimestamp     uint64
+	nextTickDeadline    time.Duration
 	blast               campaignFixtureBlastStep
 	profile             zonenpc.ActionProfile
 	npc                 *zonenpc.Session
@@ -30,6 +33,7 @@ type campaignFixtureBurnState struct {
 	isCreationPublished bool
 	isRetiring          bool
 	pendingDeletes      [][]byte
+	pendingRefreshes    [][]byte
 }
 
 // The generic modifier release holds its own mutex while calling this hook.
@@ -38,6 +42,9 @@ func (e *campaignNPCModifierRun) retireFixtureInfection() {
 		return
 	}
 	state := e.fixtureBurn
+	if state.effects != nil {
+		state.effects.Retire()
+	}
 	state.removeInventory(e.instanceID, e.record.TargetObjectID)
 	if !e.isCreated || state.profile.ModifierName != "LifePlagueSpread" {
 		return
@@ -53,6 +60,7 @@ func (e *campaignFixtureBurnState) removeInventory(instanceID, targetID uint32) 
 }
 
 type campaignFixtureBurnStep struct {
+	isExpiry           bool
 	blast              campaignFixtureBlastStep
 	run                *campaignNPCModifierRun
 	targetID           uint32
@@ -82,6 +90,13 @@ func (e campaignFixtureBlastStep) startContagiousBurn(targetID uint32, origin *c
 func (e campaignFixtureBlastStep) startBurnWithOrigin(targetID uint32, profile zonenpc.ActionProfile, origin *campaignNPCModifierRun) ([][]byte, error) {
 	if e.publication == nil {
 		return nil, errors.New("fixture publication unavailable")
+	}
+	if profile.ModifierName == "EggPoison" {
+		packets, err := e.startEggPoison(targetID, profile)
+		if err != nil {
+			return nil, fmt.Errorf("fixtureEggAdmit: %w", err)
+		}
+		return packets, nil
 	}
 	r := e.runtime
 	r.registry.mutex.Lock()
@@ -156,7 +171,7 @@ func (e campaignFixtureBlastStep) startBurnWithOrigin(targetID uint32, profile z
 	// CitadelPlasmaBurn explicitly authors duration=0 (until removal). The
 	// finite-duration codec rejects zero, so preserve the native wire contract here.
 	create, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
-		TargetID: targetID, SourceID: e.source.Plan.ObjectID,
+		TargetID: targetID, NPCAffixAssetID: 0,
 		ModifierGUID: modifierID, InstanceID: run.instanceID, StackCount: 1,
 		DurationMilliseconds: uint32(profile.ModifierDuration.Milliseconds()), StartMilliseconds: e.timestamp,
 	})
@@ -313,6 +328,13 @@ func (e campaignFixtureBurnStep) schedule() error {
 func (e campaignFixtureBurnStep) produce() ([][]byte, error) {
 	if !e.run.isActive() {
 		return nil, nil
+	}
+	if e.profile.ModifierName == "EggPoison" {
+		packets, err := e.produceEggPoison()
+		if err != nil {
+			return packets, fmt.Errorf("fixtureEggTick: %w", err)
+		}
+		return packets, nil
 	}
 	profile := e.profile
 	profile.MinimumDamage = profile.ModifierMinimumTickDamage

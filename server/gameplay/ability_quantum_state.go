@@ -428,7 +428,7 @@ func quantumStateModifierPacket(
 	packet, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: targetObjectID, ModifierGUID: util.HashID(modifierName),
 		InstanceID: instanceID, DurationMilliseconds: uint32(duration.Milliseconds()),
-		StackCount: 1, StartMilliseconds: timestamp, SourceID: sourceObjectID,
+		StackCount: 1, StartMilliseconds: timestamp, NPCAffixAssetID: 0,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("quantumStateModifierMarshal: %w", err)

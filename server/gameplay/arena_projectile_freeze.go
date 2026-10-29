@@ -42,7 +42,7 @@ func freezeArenaHostileProjectilesLocked(
 		created, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 			TargetID: owner.objectID, ModifierGUID: modifierID,
 			InstanceID: instanceID, DurationMilliseconds: uint32(duration / time.Millisecond),
-			StackCount: 1, StartMilliseconds: sourceTime, SourceID: sourceObjectID,
+			StackCount: 1, StartMilliseconds: sourceTime, NPCAffixAssetID: 0,
 		})
 		if err != nil {
 			owner.run.RollbackFreeze(reservation)

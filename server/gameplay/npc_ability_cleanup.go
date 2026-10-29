@@ -7,13 +7,16 @@ import "fmt"
 func (e campaignNPCActionRuntime) stopAdditionalNPCAbilities(
 	sessionKey string, generation uint64, objectID uint32,
 ) ([][]byte, error) {
+	packets, err := e.retireEggPoisonOnDeath(sessionKey, generation, objectID)
+	if err != nil {
+		return packets, fmt.Errorf("eggPoisonCleanup: %w", err)
+	}
 	e.registry.mutex.Lock()
 	defer e.registry.mutex.Unlock()
 	source, isFound := e.registry.sessions[sessionKey]
 	if !isFound || source.generation != generation || source.zone == nil {
 		return nil, nil
 	}
-	packets := make([][]byte, 0)
 	operativePackets, operativeErr := e.registry.retireOperativeSourceLocked(source.zone, objectID, e.modifierPool)
 	if operativeErr != nil {
 		return nil, fmt.Errorf("operativeCleanup: %w", operativeErr)

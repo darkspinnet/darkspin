@@ -220,6 +220,10 @@ func (e *gameplaySessionRegistry) retireOperativeChannelsLocked(
 	if member == nil {
 		return nil
 	}
+	silenceErr := e.retireSilenceFieldRecipientsLocked(member, pool)
+	if silenceErr != nil {
+		return fmt.Errorf("fieldRecipientCleanup: %w", silenceErr)
+	}
 	plasmaPackets, plasmaErr := member.stopPlasmaWalls(0)
 	if plasmaErr != nil {
 		return fmt.Errorf("plasmaRetire: %w", plasmaErr)

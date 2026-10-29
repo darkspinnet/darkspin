@@ -12,7 +12,7 @@ import (
 func (e heroAuraAreaSchedule) prepareNPCMembership(objectID, instanceID uint32, deadline time.Duration) ([][]byte, error) {
 	messages := []raknet.ApplicationMessage{raknet.ModifierCreatedMessage{
 		TargetID: objectID, ModifierGUID: e.definition.RootModifierID, InstanceID: instanceID,
-		StackCount: 1, SourceID: e.sourceObjectID,
+		StackCount: 1, NPCAffixAssetID: 0,
 		StartMilliseconds: e.packet.SourceTime + uint64(deadline/time.Millisecond),
 	}}
 	if e.definition.HitEffectName != "" && !e.run.isTimeBubble {

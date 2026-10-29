@@ -62,7 +62,7 @@ func (e *arenaAbilityTargets) applyPoisonNova(result zonenpc.DamageResult,
 	createPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: status.objectID, ModifierGUID: status.modifierID, InstanceID: status.instanceID,
 		DurationMilliseconds: uint32(definition.StatusDuration.Milliseconds()), StackCount: 1,
-		StartMilliseconds: timestamp, SourceID: status.sourceObjectID,
+		StartMilliseconds: timestamp, NPCAffixAssetID: 0,
 	})
 	if err != nil {
 		return status.discard("arenaPoisonCreate", err)

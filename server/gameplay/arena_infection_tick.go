@@ -50,7 +50,7 @@ func (e *arenaInfectionRun) admitEntryLocked(objectID uint32, isPrimary bool, no
 	created, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: objectID, ModifierGUID: modifierID, InstanceID: instanceID,
 		DurationMilliseconds: uint32(duration.Milliseconds()), StackCount: 1,
-		StartMilliseconds: timestamp, SourceID: e.sourceObjectID,
+		StartMilliseconds: timestamp, NPCAffixAssetID: 0,
 	})
 	if err != nil {
 		return status.discard("plagueModifierCreate", err)

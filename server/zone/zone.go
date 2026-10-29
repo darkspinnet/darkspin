@@ -184,6 +184,8 @@ type NPCTargetDamage struct {
 // Zone owns the state shared by every peer participating in one campaign
 // run. Connection-local presentation and transport state remain outside it.
 type Zone struct {
+	cryosGeysers           map[uint32]CryosGeyser
+	nextCryosGeyserCycle   uint64
 	treeOfLife             *zoneability.TreeOfLifePresentationSession
 	questMutex             sync.Mutex
 	mutationDamageRunCount uint32
@@ -207,6 +209,7 @@ type Zone struct {
 	experienceTotals       map[uint64]uint32
 	experienceCommits      map[uint64]ExperienceCommit
 	projection             *zoneprojection.Session
+	silenceFieldContacts   map[silenceFieldKey]SilenceFieldContact
 	clearedSpawnGroups     map[uint32]struct{}
 	checkpointHeroes       map[uint64]zonecheckpoint.Hero
 	checkpointSquads       map[uint64]zonecheckpoint.Squad

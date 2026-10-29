@@ -38,7 +38,7 @@ func isIndependentDebugOperation(operation string) bool {
 		return true
 	case "client.native_state", "client.project_world", "client.click_world", "client.hold_world":
 		return true
-	case "client.configure_world", "client.spawn_npc", "client.spawn_npc_async", "client.spawn_state":
+	case "client.configure_world", "client.spawn_npc", "client.spawn_npc_async", "client.spawn_state", "client.spawn_owned_npc", "client.activate_spoffit_crystal", "client.deactivate_spoffit_crystal":
 		return true
 	case "client.spawn_controlled_npc", "client.spawn_controlled_fixture", "client.controlled_npc_state", "client.controlled_npc_set_ai", "client.controlled_npc_move", "client.controlled_npc_cast", "client.controlled_npc_restore", "client.controlled_npc_defeat", "client.controlled_npc_retire":
 		return true
@@ -205,7 +205,7 @@ func (e *debugSupervisor) executeIndependentDebugOperation(ctx context.Context, 
 			return result, fmt.Errorf("worldConfigure: %w", err)
 		}
 		return result, nil
-	case "client.spawn_npc", "client.spawn_npc_async", "client.spawn_state", "client.spawn_controlled_npc", "client.spawn_controlled_fixture":
+	case "client.spawn_npc", "client.spawn_npc_async", "client.spawn_state", "client.spawn_controlled_npc", "client.spawn_controlled_fixture", "client.spawn_owned_npc", "client.activate_spoffit_crystal", "client.deactivate_spoffit_crystal":
 		result, err := executeDebugWorldSpawn(ctx, host, clientManager, operation, payload)
 		if err != nil {
 			return result, fmt.Errorf("worldSpawn: %w", err)

@@ -119,7 +119,7 @@ func (e *arenaAbilityTargets) prepareBasicStatusLocked(key string, target gamepl
 	createPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: status.objectID, ModifierGUID: status.modifierID, InstanceID: instanceID,
 		DurationMilliseconds: uint32(duration.Milliseconds()), StackCount: stackCount,
-		StartMilliseconds: timestamp, SourceID: status.sourceObjectID})
+		StartMilliseconds: timestamp, NPCAffixAssetID: 0})
 	if err != nil {
 		return nil, nil, status.discard("arenaBasicCreate", err)
 	}

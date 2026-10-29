@@ -2,6 +2,15 @@
 
 ### 2026-10-29
 
+- Restore all three directly spawned Corruptor second-stage variants' authored entrance and five-phase attacks, including Twin Laser, with matching co-op delivery.
+- Restore Trip Mine's authored warnings, three-missile salvos, projectile flight and co-op hit feedback.
+- Add owned Droid scenario spawning with authored untargetability, healing and owner cleanup, verified on both co-op clients.
+- Restore all four Cryos geyser nouns' authored warning, spout timing and flat damage, with living passives and death activation only for blocked geysers.
+- Restore Peaceful Inhabitant's Bite by resolving its exact authored ability reference.
+- Restore Silence Field's overlapping aura, exact exit cleanup and source destruction behavior on both co-op clients.
+- Deliver plasma-pool burn creation, stationary damage and exit cleanup once to both co-op clients.
+- Prevent ordinary ability modifiers from being misidentified as NPC affixes while preserving actual affix metadata.
+- Restore Exploding Egg's delayed poison, original-source tick timing, same-instance refresh and recipient-death cleanup.
 - Restore authored Drainer, Stealther and Cryos Poison behavior for 66 showcase noun aliases while preserving their own classes, ranks and attributes.
 - Let Drainer melee pursuit resume after its drain channel instead of repeatedly rejecting the secondary attack.
 - Restore Critter's Bite and Gunner's four-projectile BurstShot with their authored timing and effects.
@@ -15,6 +24,10 @@
 - Detect moving heroes inside hazard volumes and deliver factory vent damage feedback to co-op observers.
 - Restore factory light destruction, delayed Mutation Agent egg damage and deletion, and Exploding Tree's delayed three-second Fear with retained dead graphics.
 - Add controlled destructible scenario spawning and admit the seven tutorial actors' authored kits to co-op audit scenarios without enabling the tutorial director.
+- Prevent queued co-op updates from being replayed by overlapping responses or multiple application frames.
+- Publish The Corruptor's summoned enemies once, before their first actions and incoming damage, with matching delivery to both co-op clients.
+- Deliver Gravitic Stabilizer projectile slow modifiers after projectile creation on both co-op clients.
+
 ### 2026-10-28
 
 - Restore Lightning Pet's Lightning Cage casts by admitting the zero-damage control channel without requiring attack damage, verified for higher pet ranks and summons from all three NomadPets variants in co-op.

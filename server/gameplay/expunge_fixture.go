@@ -62,7 +62,7 @@ func (e *gameplayPeerSession) consumeExpungeFixtures(targetID uint32, at time.Ti
 func (e *campaignFixtureBurnState) expungeDefinition(at time.Time) (sim.AbilityDefinition, bool) {
 	source := sim.AbilityDefinition{DamageType: 3, DamageSource: 1, IsDamageTypeFound: true, IsDamageSourceFound: true}
 	switch e.profile.ModifierName {
-	case "LifePlagueSpread":
+	case "LifePlagueSpread", "EggPoison":
 		source.DamageType = 2
 	case "PlasmaSentinelBurn", "CitadelPlasmaBurn":
 	default:
@@ -72,7 +72,11 @@ func (e *campaignFixtureBurnState) expungeDefinition(at time.Time) (sim.AbilityD
 	// not turn a permanent modifier into an infinite Expunge damage budget.
 	tickCount := uint32(0)
 	if e.profile.ModifierDuration > 0 {
-		tickCount = expungeRemainingTickCount(e.expiresAt, at, time.Second)
+		tickDuration := time.Second
+		if e.profile.ModifierName == "EggPoison" {
+			tickDuration = e.profile.ModifierTickDuration
+		}
+		tickCount = expungeRemainingTickCount(e.expiresAt, at, tickDuration)
 	}
 	return expungeDamageDefinition(source, tickCount, e.profile.ModifierMinimumTickDamage, e.profile.ModifierMaximumTickDamage), true
 }

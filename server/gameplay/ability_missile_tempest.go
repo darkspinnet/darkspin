@@ -202,7 +202,7 @@ func (r campaignAbilityCommandRuntime) applyMissileFlakLocked(
 			"MissileTempest_Support_FlakUpgradeModifier",
 		),
 		InstanceID: instanceID, DurationMilliseconds: uint32(missileFlakDuration.Milliseconds()),
-		StackCount: stackCount, StartMilliseconds: timestamp, SourceID: run.objectID,
+		StackCount: stackCount, StartMilliseconds: timestamp, NPCAffixAssetID: 0,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("missileFlakCreate: %w", errors.Join(err, run.release(r.modifierPool)))

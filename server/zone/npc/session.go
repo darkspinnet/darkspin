@@ -628,7 +628,7 @@ func (s *Session) acquireTargets(
 		if bossObjectID != 0 && (objectID != bossObjectID || !npc.Plan.IsBoss || !npc.IsFirstActionStarted) {
 			continue
 		}
-		if npc.IsDefeated || !npc.IsPublished || !npc.IsScenarioAIEnabled() ||
+		if npc.IsDefeated || !npc.IsPublished || npc.IsBirthPending || npc.birthOwner.UserID != 0 || !npc.IsScenarioAIEnabled() ||
 			npc.Plan.IsFixture || npc.IsActionStarted {
 			continue
 		}
@@ -729,6 +729,9 @@ func (s *Session) startAction(
 	if !isFound || npc.IsDefeated || !npc.IsPublished || npc.HitPoint <= 0 {
 		return Snapshot{}, false, false, fmt.Errorf("npcActionMissing: %d", objectID)
 	}
+	if npc.IsBirthPending || (npc.birthOwner.UserID != 0 && npc.birthOwner != owner) {
+		return npc, false, false, nil
+	}
 	if !admitScenarioAction(npc, controlID) {
 		return npc, false, false, nil
 	}
@@ -768,6 +771,7 @@ func (s *Session) startAction(
 		}
 	}
 	npc.IsFirstActionStarted = true
+	npc.birthOwner = ActionOwner{}
 	npc.ActionOwner = owner
 	markScenarioAction(&npc, controlID)
 	s.npcs[objectID] = npc
@@ -1196,6 +1200,9 @@ func (s *Session) damage(
 	}
 	if !npc.IsPublished {
 		return DamageResult{}, fmt.Errorf("npcUnpublished: %d", targetObjectID)
+	}
+	if npc.IsBirthPending {
+		return DamageResult{}, fmt.Errorf("npcBirthPending: %d", targetObjectID)
 	}
 	if npc.IsDefeated {
 		return DamageResult{}, fmt.Errorf("npcDefeated: %d", targetObjectID)
@@ -2016,6 +2023,10 @@ func (s *Session) FacePosition(objectID uint32, position game.Vec3) error {
 }
 
 func (s *Session) LiveSnapshots() []Snapshot {
+	return s.liveSnapshots(false)
+}
+
+func (s *Session) liveSnapshots(isPendingBirthIncluded bool) []Snapshot {
 	if s == nil {
 		return nil
 	}
@@ -2025,7 +2036,7 @@ func (s *Session) LiveSnapshots() []Snapshot {
 	snapshots := make([]Snapshot, 0, len(s.objectIDs))
 	for _, objectID := range s.objectIDs {
 		npc := s.npcs[objectID]
-		if npc.IsDefeated {
+		if npc.IsDefeated || (npc.IsBirthPending && !isPendingBirthIncluded) {
 			continue
 		}
 		snapshots = append(snapshots, npc)
@@ -2114,7 +2125,7 @@ func (s *Session) NPC(objectID uint32) (Snapshot, bool) {
 
 func (s *Session) LiveNPC(objectID uint32) (Snapshot, bool) {
 	npc, isFound := s.NPC(objectID)
-	if !isFound || npc.IsDefeated || !npc.IsPublished || npc.HitPoint <= 0 {
+	if !isFound || npc.IsDefeated || !npc.IsPublished || npc.IsBirthPending || npc.HitPoint <= 0 {
 		return Snapshot{}, false
 	}
 	return npc, true

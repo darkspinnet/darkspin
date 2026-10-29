@@ -342,7 +342,7 @@ func scenarioHeroResetPackets(member gameplayPeerSession, hitPoint, manaPoint fl
 		messages = append(messages, campaignHeroResourceStateMessages(objectID, creature)...)
 		if creature.PassiveAbility != 0 && member.passiveModifierInstance[index] != 0 {
 			messages = append(messages, raknet.ModifierCreatedMessage{TargetID: objectID,
-				ModifierGUID: creature.PassiveAbility, InstanceID: member.passiveModifierInstance[index], StackCount: 1, SourceID: objectID})
+				ModifierGUID: creature.PassiveAbility, InstanceID: member.passiveModifierInstance[index], StackCount: 1, NPCAffixAssetID: 0})
 		}
 		messages = append(messages,
 			raknet.LabsPlayerControlledObjectMessage{Slot: uint8(member.binding.Slot), ObjectID: objectID},

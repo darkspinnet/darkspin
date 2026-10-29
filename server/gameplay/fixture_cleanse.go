@@ -9,7 +9,7 @@ import (
 )
 
 func isFixtureBurnNamespace(name string) bool {
-	return name == "LifePlagueSpread" || name == "PlasmaSentinelBurn" || name == "CitadelPlasmaBurn"
+	return name == "LifePlagueSpread" || name == "PlasmaSentinelBurn" || name == "CitadelPlasmaBurn" || name == "EggPoison"
 }
 
 // The caller holds the registry lock; NPC scalar debuffs do not own these runs.

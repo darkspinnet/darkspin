@@ -19,6 +19,9 @@
 ---@field Hold fun(self:ClientWorld,point:WorldPosition,duration_ms:integer):WindowCommandResult|nil,ScenarioError|nil Holds ordinary left input for 1 to 1200ms, then waits for paired release processing under the two-second native deadline. Does not guarantee attacks or movement. Unknown outcomes stop without replay.
 ---@field Configure fun(self:ClientWorld,options:WorldRecipeOptions):WorldRecipe|nil,ScenarioError|nil Installs an immutable server recipe after accepted login and before mission admission. Every member of a shared fresh campaign must configure the same run, seed and ambient setting before admission.
 ---@field Spawn fun(self:ClientWorld,noun:string,timeout_ms?:integer):WorldSpawn|nil,ScenarioError|nil Queues once and waits for correlated server publication under the client timeout. No native visibility assertion; timeout preserves the pending receipt without replay.
+---@field SpawnOwnedNPC fun(self:ClientWorld,noun:string,parent:ControlledNPC,timeout_ms?:integer):WorldSpawn|nil,ScenarioError|nil Scenario-only exact NomadCyberOne_Droid_2/_3 admission with this client's living AI-disabled NomadCyberOne parent handle. Preserves installed class/rank and initial native ownership, then starts existing support after birth publication. Requires a fresh parent without another droid/support. Returns an observational receipt, not a controlled child handle. Normal campaign summoning remains unchanged; never replay an unknown spawn.
+---@field ActivateSpoffitCrystal fun(self:ClientWorld,timeout_ms?:integer):WorldSpawn|nil,ScenarioError|nil Scenario-only invocation of installed SpoffitCrystal modifier/resource4260 on this owned real hero. Returns exact Spoffit child receipt after birth publication. Uses authored25HP, no stat mirror or combat fallback, normal2s emergence and follow. Normal crystal loot availability is unchanged; never replay unknown activation.
+---@field DeactivateSpoffitCrystal fun(self:ClientWorld,timeout_ms?:integer):WorldSpawn|nil,ScenarioError|nil Removes this hero's published SpoffitCrystal, waits for authored2s burrow/delete. Explicitly repairs source960's burrowModifer spelling to its defined LifeTempestPetBurrow resource. Returns a retired observational receipt; never force-deletes a controlled NPC.
 ---@field SpawnControlledNPC fun(self:ClientWorld,noun:string,timeout_ms?:integer):ControlledNPC|nil,ScenarioError|nil Spawns a supported installed enemy with AI disabled before admission and waits for server publication. On failure returns nil,error with partial receipt in err.Details.spawn_receipt; never retry an unknown spawn blindly.
 ---@field SpawnControlledFixture fun(self:ClientWorld,noun:string,timeout_ms?:integer):ControlledNPC|nil,ScenarioError|nil Admits an owned installed positive-HP fixture through its normal fixture owner. Unsupported callbacks and marker-only or noncombatant scenery sources fail explicitly. Supports observation and retirement; attack it through native input for actual death callbacks.
 ---@field SpawnAsync fun(self:ClientWorld,noun:string):WorldSpawn|nil,ScenarioError|nil Returns the queued command receipt without waiting for publication; no automatic retry.
@@ -55,6 +58,10 @@
 ---@field transport_generation integer
 ---@field zone_generation integer
 ---@field object_id integer Zero before admission; only valid in this game/peer/zone epoch.
+---@field owner_object_id integer Explicit owned-spawn parent, zero for ordinary spawns. Native birth ownership is assigned before creation; no post-spawn patch.
+---@field creator_modifier? string Registered creator name for explicit scenario-owned summon operations; SpoffitCrystal for the installed source960 invocation.
+---@field creator_resource_id? integer Installed creator-context noun resource4260 for SpoffitCrystal; this does not claim normal loot availability.
+---@field is_owner_support_started boolean Existing authored parent support was started after owned child birth publication; not native healing proof.
 ---@field noun string Exact installed director combat noun filename. Unsupported nouns fail explicitly.
 ---@field is_admitted boolean
 ---@field is_ai_enabled boolean False for SpawnControlled; ordinary Spawn retains default AI behavior.
@@ -193,6 +200,7 @@
 ---@field session_stage string
 ---@field hero WorldHero|nil Missing when unavailable.
 ---@field npcs WorldNPC[] Nearest 128 including dead and unpublished; stable object-ID tie break.
+---@field scenery_hazards table[] Actual selected scenery hazard objects with object_id, noun, ability and position; server ownership does not certify native visibility.
 ---@field npc_total integer Total current server NPC records, including dead and unpublished.
 ---@field is_npc_truncated boolean
 ---@field pickups WorldPickup[] Nearest 64 health/mana orb records, with stable object-ID distance ties; includes temporarily unavailable or reserved records.

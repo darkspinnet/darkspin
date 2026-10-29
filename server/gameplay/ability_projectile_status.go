@@ -507,7 +507,7 @@ func (e heroProjectileStatusSchedule) impactNow() ([][]byte, error) {
 		DurationMilliseconds: uint32(duration.Milliseconds()),
 		StackCount:           1,
 		StartMilliseconds:    e.packet.SourceTime + uint64(e.impactDeadline/time.Millisecond),
-		SourceID:             e.sourceObjectID,
+		NPCAffixAssetID:      0,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("projectileStatusModifierMarshal: %w", err)
@@ -604,7 +604,7 @@ func (e heroProjectileStatusSchedule) applyTerrifySplash(
 			ModifierGUID:         e.definition.SecondaryModifierID,
 			InstanceID:           modifier.instanceID,
 			DurationMilliseconds: uint32(modifier.duration.Milliseconds()),
-			StackCount:           1, StartMilliseconds: timestamp, SourceID: e.sourceObjectID,
+			StackCount:           1, StartMilliseconds: timestamp, NPCAffixAssetID: 0,
 		})
 		if err != nil {
 			return nil, nil, fmt.Errorf("splashMarshal[%d]: %w", index, err)

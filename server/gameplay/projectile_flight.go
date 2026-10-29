@@ -37,6 +37,7 @@ func (e campaignProjectileStep) produceFlight(
 	}
 	enemies := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, schedule.definition, schedule.packet.SourceTime)
 	targets := make([]sim.ProjectileCollisionTarget, 0)
+	fallbackObjectIDs := make(map[uint32]bool)
 	fallbackCount := 0
 	for _, target := range enemies.LiveSnapshots() {
 		if !target.IsPublished || target.IsDefeated || target.HitPoint <= 0 ||
@@ -50,6 +51,7 @@ func (e campaignProjectileStep) produceFlight(
 		}
 		if isFallback {
 			fallbackCount++
+			fallbackObjectIDs[target.Plan.ObjectID] = true
 		}
 		targets = append(targets, sim.ProjectileCollisionTarget{
 			ObjectID: target.Plan.ObjectID, Position: sim.Position(target.Plan.Position),
@@ -129,8 +131,9 @@ func (e campaignProjectileStep) produceFlight(
 		plan.Damage.Maximum += bonusDamage
 	}
 	schedule.runtime.logger.Printf(
-		"RakNet projectile flight contact projectile=%d selected_target=%d struck_target=%d distance=%.3f speed=%.3f flight_ms=%d candidate_count=%d geometry_fallback_count=%d",
+		"RakNet projectile flight contact projectile=%d selected_target=%d struck_target=%d struck_geometry_fallback=%t distance=%.3f speed=%.3f flight_ms=%d candidate_count=%d geometry_fallback_count=%d",
 		schedule.projectileObjectID, schedule.targetObjectID, result.TargetObjectID,
+		fallbackObjectIDs[result.TargetObjectID],
 		result.Distance, result.Speed, (e.deadline - schedule.projectile.HitDelay).Milliseconds(),
 		len(targets), fallbackCount,
 	)

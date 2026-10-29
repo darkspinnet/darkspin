@@ -166,7 +166,7 @@ func (r campaignAbilityCommandRuntime) applyTargetStatus(
 			TargetID: targetObjectID, ModifierGUID: definition.RootModifierID,
 			InstanceID:           instanceID,
 			DurationMilliseconds: uint32(duration.Milliseconds()),
-			StackCount:           1, StartMilliseconds: hitTimestamp, SourceID: sourceObjectID,
+			StackCount:           1, StartMilliseconds: hitTimestamp, NPCAffixAssetID: 0,
 		})
 	}
 	if len(messages) == 0 {
@@ -416,7 +416,7 @@ func (e heroStatusAreaSchedule) apply() ([][]byte, error) {
 			DurationMilliseconds: uint32(duration.Milliseconds()),
 			StackCount:           1, StartMilliseconds: e.packet.SourceTime +
 				uint64(e.definition.HitDelay/time.Millisecond),
-			SourceID: e.sourceObjectID,
+			NPCAffixAssetID: 0,
 		})
 	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession

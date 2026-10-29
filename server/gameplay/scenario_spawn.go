@@ -114,6 +114,28 @@ func (e *gameplaySessionRegistry) ScenarioSpawnNPC(ctx context.Context, req scen
 	if !isProfile || profile.HitPoint <= 0 {
 		return scenario.SpawnReceipt{}, errors.New("spawn noun has no supported combat profile in the installed mission catalog")
 	}
+	if req.IsSpoffitRemoval && !req.IsSpoffitCrystal {
+		return scenario.SpawnReceipt{}, errors.New("Spoffit removal requires the exact crystal operation")
+	}
+	if req.IsSpoffitCrystal {
+		spoffitErr := e.validateScenarioSpoffitLocked(peerSession, req)
+		if spoffitErr != nil {
+			return scenario.SpawnReceipt{}, fmt.Errorf("spawnSpoffit: %w", spoffitErr)
+		}
+	}
+	if req.Owner != nil {
+		if req.IsFixture || req.IsAIEnabled != nil || req.Owner.RunID != req.RunID {
+			return scenario.SpawnReceipt{}, errors.New("owned spawn requires an autonomous nonfixture child")
+		}
+		_, ownerErr := e.scenarioOwnedParentLocked(ctx, peerSession, req.NounName, *req.Owner, "")
+		if ownerErr != nil {
+			return scenario.SpawnReceipt{}, fmt.Errorf("spawnOwnedParent: %w", ownerErr)
+		}
+		graph := profile.AIGraph
+		if !profile.IsKnown || !profile.IsClassKnown || graph == nil || !graph.IsResolved || graph.DefinitionID != 748733188 {
+			return scenario.SpawnReceipt{}, errors.New("owned droid requires its exact installed class and resolved AI")
+		}
+	}
 	if len(e.spawnReceipts) >= 128 && !e.reclaimRetiredSpawnLocked() {
 		return scenario.SpawnReceipt{}, errors.New("focused spawn ledger is full with no retired controlled actor to reclaim")
 	}
@@ -141,6 +163,15 @@ func (e *gameplaySessionRegistry) ScenarioSpawnNPC(ctx context.Context, req scen
 	}
 	receipt := scenario.SpawnReceipt{RequestID: fmt.Sprintf("spawn-%016x", e.nextSpawnID), RunID: req.RunID, UserID: req.UserID, State: "queued", GameID: req.GameID, PeerGeneration: peerSession.generation, TransportGeneration: peerSession.transportGeneration, ZoneGeneration: req.ZoneGeneration, NounName: req.NounName, IsAIEnabled: isAIEnabled}
 	receipt.IsFixture = req.IsFixture
+	receipt.IsSpoffitCrystal = req.IsSpoffitCrystal
+	receipt.IsSpoffitRemoval = req.IsSpoffitRemoval
+	if req.IsSpoffitCrystal {
+		receipt.HeroOwnerObjectID = peerSession.deployedObjectID
+	}
+	if req.Owner != nil {
+		owner := *req.Owner
+		receipt.Owner = &owner
+	}
 	if e.spawnReceipts == nil {
 		e.spawnReceipts = make(map[string]scenario.SpawnReceipt)
 	}
@@ -277,7 +308,9 @@ func (e gameplayPendingRuntime) consumeScenarioSpawn(ctx context.Context, packet
 	}
 	var packets [][]byte
 	var isHandled bool
-	if receipt.IsFixture {
+	if receipt.IsSpoffitCrystal {
+		packets, isHandled, err = e.consumeScenarioSpoffit(packet, peerSession, receipt)
+	} else if receipt.IsFixture {
 		packets, isHandled, err = e.spawnScenarioFixture(packet, peerSession, receipt)
 	} else {
 		packets, isHandled, err = e.spawnDeveloperNPCForRequest(packet, peerSession, game.PlayerEventCommand{Name: "spawn", NounName: receipt.NounName}, receipt.RequestID)

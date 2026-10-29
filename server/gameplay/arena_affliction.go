@@ -251,7 +251,7 @@ func (e *arenaProjectileStatusRun) applyAfflictionLocked(targets *arenaAbilityTa
 		TargetID: objectID, ModifierGUID: status.modifierID, InstanceID: instanceID,
 		DurationMilliseconds: uint32(e.definition.StatusDuration.Milliseconds()),
 		StackCount:           1, StartMilliseconds: e.packet.SourceTime + uint64(deadline/time.Millisecond),
-		SourceID: e.sourceObjectID})
+		NPCAffixAssetID: 0})
 	if err != nil {
 		return status.discard("arenaAfflictionCreate", err)
 	}

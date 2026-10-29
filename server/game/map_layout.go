@@ -181,7 +181,8 @@ func (e CampaignDirector) MapDestructibles() (
 }
 
 func isMapDestructible(marker CampaignDirectorMarker) bool {
-	return IsGraviticRegulatorNoun(marker.NounName) || IsGraviticStabilizerNoun(marker.NounName) ||
+	return IsDestructibleDoor(marker.NounName, marker.NPCProfile) ||
+		IsGraviticRegulatorNoun(marker.NounName) || IsGraviticStabilizerNoun(marker.NounName) ||
 		isVerdanthCombatFixture(marker) || isNocturnaCombatFixture(marker) ||
 		isCryosOneFixtureNoun(marker.NounName) || isCryosTwoFixtureNoun(marker.NounName) ||
 		isCryosFourFixtureNoun(marker.NounName) || isCryosCaveFixtureNoun(marker.NounName) ||

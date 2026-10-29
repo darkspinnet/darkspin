@@ -227,7 +227,7 @@ function Lethal.run(job, emit)
         return {is_dead = true, is_confirmed = false, cast_count = 0, reason = "fixture was dead before this helper"}
     end
     local objectID = targetBefore.identity.object_id
-    local maxCasts = math.max(1, math.min(3, job.fixture_max_casts or 3))
+    local maxCasts = math.max(1, math.min(10, job.fixture_max_casts or 3))
     local previousCastRevision
     for castIndex = 1, maxCasts do
         local before, beforeError = read(source)
@@ -243,6 +243,10 @@ function Lethal.run(job, emit)
             return pending(emit, "another dispatch followed the previous intentional cast", castIndex - 1)
         end
         if castIndex > 1 then
+            local restored, restoreError = source.World:RestoreHero()
+            if restoreError or not restored then
+                return pending(emit, "completed prior cast resource restoration unavailable", castIndex - 1)
+            end
             local reset, resetError = source.World:ResetCooldowns()
             if resetError or not reset or not reset.is_cooldown_reset or not reset.is_queued then
                 return pending(emit, "completed prior cast cooldown reset unavailable", castIndex - 1)
@@ -250,7 +254,8 @@ function Lethal.run(job, emit)
             emit("fixture_lethal_next_cast", {cast_index = castIndex, previous_dispatch_revision = previous,
                 is_prior_authored_window_elapsed = true, is_producer_completion_observed = false})
         end
-        local aim = {x = actor.position.x, y = actor.position.y, z = actor.position.z + cast.aim_z}
+        local aim = {x = actor.position.x, y = actor.position.y,
+            z = actor.position.z + (job.fixture_aim_z or cast.aim_z)}
         local dx, dy, dz = aim.x - before.native.position.x, aim.y - before.native.position.y, aim.z - before.native.position.z
         if math.sqrt(dx * dx + dy * dy + dz * dz) > cast.maximum_range then
             return pending(emit, "fixture outside bounded direct-cast range; approach is not completion", castIndex - 1)
@@ -309,7 +314,7 @@ function Lethal.run(job, emit)
             is_producer_completion_observed = false, is_packet_delivery_verified = false})
         if lastActor.is_dead then return {is_dead = true, is_confirmed = true, cast_count = castIndex} end
     end
-    return pending(emit, "fixture remained alive after three separately accepted bounded casts", maxCasts)
+    return pending(emit, "fixture remained alive after the bounded native casts", maxCasts)
 end
 
 
@@ -418,21 +423,17 @@ function ObservedNPC.waitCastReady(client, timeoutMs)
 end
 
 
+-- Packet-confirmed cases are archived in the audit ledger; add only pending scopes here.
 local jobs = {
-    {id = "lane-1", hero = 709733043, cases = {
-        {noun = "dest_prefab_islands_instrument_scitech_7.noun", is_projectile_lane = true},
-        {noun = "dest_prefab_islands_instrument_scitech_7_noshadow.noun", is_projectile_lane = true},
-        {noun = "dest_islands_instrument_scitech_7.noun", is_projectile_lane = true},
+    {id = "egg-fixture", hero = 185979955, cases = {
+        {noun = "exploding_egg.Noun", is_poison_egg = true, poison_target_is_fixture = true},
     }},
-    {id = "lane-2", hero = 709733043, cases = {
-        {noun = "dest_islands_instrument_scitech_8.noun", is_projectile_lane = true},
-        {noun = "dest_prefab_islands_instrument_scitech_8.noun", is_projectile_lane = true},
+    {id = "door", hero = 709733043, cases = {
+        {noun = "design_blockin_door_destructible.Noun", is_fixture = true,
+            fixture_post_ms = 11000, fixture_max_casts = 10},
     }},
-    {id = "lane-ranged-replay", hero = 709733043, cases = {
-        {noun = "TutorialBasicRanged.Noun", is_observed = true, sample_count = 12},
-    }},
-    {id = "lane-scaldron3-replay", hero = 709733043, cases = {
-        {noun = "ScaldronBoss_3.Noun", is_observed = true, sample_count = 60, owner_attack_at = 20},
+    {id = "spoffit", hero = 576185321, cases = {
+        {noun = "Spoffit.Noun", is_spoffit_crystal = true},
     }},
 }
 local function log(job, label, fields)
@@ -450,7 +451,7 @@ local function launch(server, job, role)
         if candidate ~= noun and #nouns < 3 then nouns[#nouns + 1] = candidate end
     end
     local profile = must(server:CreateProfile({name = "phase-" .. job.id .. "-" .. role,
-        hero_nouns = nouns, chain_progression = 1}))
+        hero_nouns = nouns, chain_progression = math.max(1, (job.mission or 1) - 1)}))
     local client = must(profile:Launch({client_id = "phase-" .. job.id .. "-" .. role,
         launch_mode = "detached"}))
     must(client:Login())
@@ -472,7 +473,7 @@ local function prepare(job)
         must(client.World:Configure({run_seed = 104729, is_ambient_population_suppressed = true}))
         must(client.Scene:Set(scene.Navigation))
     end
-    must(job.victim.Mission:Select(1))
+    must(job.victim.Mission:Select(job.mission or 1))
     must(job.victim.Mission:Start())
     must(job.observer.Mission:WaitDeployment())
 end
@@ -677,25 +678,352 @@ local function fixtureSample(job, label)
     end
     return actor
 end
+
+local function hazardGoal(job, client, center, radius, isLocalDestination)
+    local origin = living(job, client).hero.position
+    for _, direction in ipairs({{1,0}, {-1,0}, {0,1}, {0,-1},
+        {0.7071,0.7071}, {-0.7071,0.7071}, {0.7071,-0.7071}, {-0.7071,-0.7071}}) do
+        local point = {x = center.x + direction[1] * radius,
+            y = center.y + direction[2] * radius, z = center.z}
+        -- PlaceHero is an explicit teleport. Distant scenery needs a verified
+        -- local destination, rather than a bounded route from mission spawn.
+        local start = isLocalDestination and {x = point.x - direction[2],
+            y = point.y + direction[1], z = point.z} or origin
+        local path = must(client.World:Path(start, point))
+        log(job, "hazard_path", {client = client.ID, radius = radius,
+            is_local_destination = isLocalDestination == true, is_available = path.is_available,
+            is_complete = path.is_complete, reason = path.unavailable_reason,
+            goal_distance = path.goal and path.goal.distance,
+            goal_x = path.goal and path.goal.position and path.goal.position.x,
+            goal_y = path.goal and path.goal.position and path.goal.position.y,
+            goal_z = path.goal and path.goal.position and path.goal.position.z})
+        if path.is_available and path.is_complete and path.goal
+            and distance(path.goal.position, point) <= 0.75
+            and math.abs(distance(path.goal.position, center) - radius) <= 1 then
+            return path.goal.position
+        end
+    end
+    error("hazard placement lacks an authored-mesh route")
+end
+
+local function requireSilence(job, client, isExpected, stage)
+    local deadline = scenario.Time() + 3000
+    repeat
+        local world = living(job, client)
+        if world.hero.is_silenced == isExpected then
+            local native = must(client.World:SnapshotNative()).gameplay_state
+            if not native or not native.is_available or not native.is_world_active then
+                error("silence observation lost native world")
+            end
+            log(job, "silence_state", {client = client.ID, stage = stage,
+                is_silenced = world.hero.is_silenced, frame = native.frame_sequence,
+                object = world.hero.object_id, hp = world.hero.hit_point, time = scenario.Time()})
+            return
+        end
+        if scenario.Time() >= deadline then error("silence state disagreed at " .. stage) end
+        check(scenario.Sleep(100))
+    until false
+end
+
+local function runSilenceFixture(job)
+    job.source = must(job.victim.World:SpawnControlledFixture(job.noun))
+    job.is_source_ai_disabled = true
+    local first = job.source
+    local firstActor = must(first:Snapshot())
+    log(job, "spawn", {noun = job.noun, object = firstActor.identity.object_id,
+        game = living(job, job.victim).game_id, time = scenario.Time(),
+        victim_pid = job.victim.PID, observer_pid = job.observer.PID})
+    for _, client in ipairs({job.victim, job.observer}) do
+        local contact = Contact.observe(client, firstActor.position, 11, 450,
+            function(label, fields) log(job, label, fields) end)
+        if not contact.is_confirmed then error("silence entry lacks native/server contact") end
+        requireSilence(job, client, true, "first_entry")
+    end
+    job.source = must(job.victim.World:SpawnControlledFixture(job.noun))
+    local second = must(job.source:Snapshot())
+    log(job, "silence_overlap", {first = firstActor.identity.object_id,
+        second = second.identity.object_id, time = scenario.Time()})
+    check(scenario.Sleep(500))
+    local retired = must(first:Retire())
+    if not retired.is_accepted or not retired.is_settled then error("first silence source retirement failed") end
+    for _, client in ipairs({job.victim, job.observer}) do requireSilence(job, client, true, "overlap_retained") end
+    -- This exact installed noun has no combatant component. Verify its
+    -- actual trigger lifetime through exit/reentry and explicit destruction.
+    local entry = living(job, job.victim).hero.position
+    local exit = hazardGoal(job, job.victim, second.position, 14)
+    local outside = Contact.verifyPlacement(job.victim, exit, exit, 0.75,
+        function(label, fields) log(job, label, fields) end)
+    if not outside.is_confirmed then error("silence exit lacks native/server arrival") end
+    requireSilence(job, job.victim, false, "exit")
+    requireSilence(job, job.observer, true, "observer_still_inside")
+    local inside = Contact.verifyPlacement(job.victim, entry, second.position, 11,
+        function(label, fields) log(job, label, fields) end)
+    if not inside.is_confirmed then error("silence reentry lacks native/server arrival") end
+    requireSilence(job, job.victim, true, "reentry")
+    finish(job, {object_id = second.identity.object_id})
+    for _, client in ipairs({job.victim, job.observer}) do requireSilence(job, client, false, "destroyed") end
+end
+
+local function runPlasmaScenery(job)
+    local world = living(job, job.victim)
+    local source
+    for _, hazard in ipairs(world.scenery_hazards or {}) do
+        if string.lower(hazard.noun) == string.lower(job.noun) and hazard.ability == "CitadelPlasmaBurn" then
+            source = hazard
+            break
+        end
+    end
+    if not source then error("selected mission has no published exact plasma scenery source") end
+    log(job, "spawn", {noun = job.noun, object = source.object_id,
+        game = world.game_id, is_selected_scenery = true, time = scenario.Time(),
+        x = source.position.x, y = source.position.y, z = source.position.z,
+        victim_pid = job.victim.PID, observer_pid = job.observer.PID})
+    local safe = hazardGoal(job, job.observer, source.position, 14, true)
+    local observerPlacement = Contact.verifyPlacement(job.observer, safe, safe, 0.75,
+        function(label, fields) log(job, label, fields) end)
+    if not observerPlacement.is_confirmed then error("plasma observer lacks native/server safe arrival") end
+    local entry = hazardGoal(job, job.victim, source.position, 3, true)
+    local contact = Contact.verifyPlacement(job.victim, entry, source.position, 5,
+        function(label, fields) log(job, label, fields) end)
+    if not contact.is_confirmed then error("plasma entry lacks native/server contact") end
+    local before = living(job, job.victim).hero.hit_point
+    local observed = Contact.observe(job.victim, source.position, 5, 4300,
+        function(label, fields) log(job, label, fields) end)
+    if not observed.is_confirmed then error("plasma contact did not remain confirmed") end
+    local after = living(job, job.victim).hero.hit_point
+    if after >= before then error("plasma contact produced no native-path damage") end
+    log(job, "plasma_contact_damage", {object = source.object_id, before_hp = before, hp = after})
+    local exit = hazardGoal(job, job.victim, source.position, 14, true)
+    local outside = Contact.verifyPlacement(job.victim, exit, exit, 0.75,
+        function(label, fields) log(job, label, fields) end)
+    if not outside.is_confirmed then error("plasma exit lacks native/server arrival") end
+    local exitHP = living(job, job.victim).hero.hit_point
+    check(scenario.Sleep(1800))
+    if living(job, job.victim).hero.hit_point ~= exitHP then error("plasma damage continued after confirmed exit") end
+    log(job, "plasma_exit", {object = source.object_id, hp = exitHP, time = scenario.Time()})
+    finish(job, {object_id = source.object_id})
+end
+
+local function runGeyserFixture(job)
+    job.source = must(job.victim.World:SpawnControlledFixture(job.noun))
+    job.is_source_ai_disabled = true
+    local actor = must(job.source:Snapshot())
+    local receipt = job.source.InitialSnapshot
+    log(job, "spawn", {noun = job.noun, object = actor.identity.object_id,
+        game = living(job, job.victim).game_id, time = scenario.Time(),
+        victim_pid = job.victim.PID, observer_pid = job.observer.PID})
+    local safe = hazardGoal(job, job.observer, actor.position, 14)
+    local observerPlacement = Contact.verifyPlacement(job.observer, safe, safe, 0.75,
+        function(label, fields) log(job, label, fields) end)
+    if not observerPlacement.is_confirmed then error("geyser observer lacks native/server safe arrival") end
+    if job.geyser_death then
+        local lethal = Lethal.run(job, function(label, fields) log(job, label, fields) end)
+        actor = must(job.source:Snapshot())
+        if not lethal.is_confirmed or not actor.is_dead then error("blocked geyser lacks native lethal cast") end
+        log(job, "geyser_unblocked", {object = actor.identity.object_id, time = scenario.Time()})
+    end
+    local origin = living(job, job.victim).hero.position
+    local path = must(job.victim.World:Path(origin, actor.position))
+    if not path.is_available or not path.is_complete or not path.goal or not path.footprint_radius then
+        error("geyser contact lacks a complete native-footprint mesh route")
+    end
+    local limit = 0.1 + path.footprint_radius
+    local contact = Contact.verifyPlacement(job.victim, path.goal.position, actor.position, limit,
+        function(label, fields) log(job, label, fields) end)
+    if not contact.is_confirmed then error("geyser contact lacks native/server arrival") end
+    local before = living(job, job.victim).hero.hit_point
+    local observed = Contact.observe(job.victim, actor.position, limit, 11000,
+        function(label, fields) log(job, label, fields) end)
+    if not observed.is_confirmed then error("geyser contact did not remain confirmed") end
+    local after = living(job, job.victim).hero.hit_point
+    if after >= before then error("geyser contact produced no native-path spout damage") end
+    log(job, "geyser_contact_damage", {object = actor.identity.object_id,
+        before_hp = before, hp = after, limit = limit, time = scenario.Time()})
+    finish(job, receipt)
+end
+
+local function castPoisonEgg(job, targetID, index, existingSource)
+    local source = existingSource or must(job.victim.World:SpawnControlledFixture(job.noun))
+    local actor = must(source:Snapshot())
+    local target = must(job.ally:Snapshot())
+    if distance(actor.position, target.position) >= 1.5 then error("egg recipient is outside exact query radius") end
+    job.source = source
+    job.is_source_ai_disabled = true
+    job.fixture_aim_z = 1.8
+    job.fixture_max_casts = 1
+    log(job, "spawn", {noun = job.noun, object = actor.identity.object_id, target = targetID,
+        game = living(job, job.victim).game_id, index = index, time = scenario.Time(),
+        victim_pid = job.victim.PID, observer_pid = job.observer.PID})
+    local lethal = Lethal.run(job, function(label, fields) log(job, label, fields) end)
+    local dispatch = living(job, job.victim).ability.last_dispatch
+    local dead = must(source:Snapshot())
+    if not lethal.is_confirmed or not dead.is_dead or not dispatch then
+        error("egg lacks a confirmed native cast and actual source death")
+    end
+    job.source = nil
+    log(job, "egg_native_death", {object = actor.identity.object_id, target = targetID,
+        index = index, revision = dispatch.revision, dispatch_target = dispatch.target_object_id,
+        is_selected_source = dispatch.target_object_id == actor.identity.object_id,
+        time = scenario.Time()})
+    return {source = source, object_id = actor.identity.object_id}
+end
+
+local function runPoisonEgg(job)
+    local initialEgg
+    if job.poison_target_is_fixture then
+        initialEgg = must(job.victim.World:SpawnControlledFixture(job.noun))
+        local actor = must(initialEgg:Snapshot())
+        local origin = living(job, job.victim).hero.position
+        local requested = {x = actor.position.x - 5, y = actor.position.y + 1.1, z = actor.position.z}
+        local path = must(job.victim.World:Path(origin, requested))
+        if not path.is_available or not path.is_complete or not path.goal
+            or distance(path.goal.position, requested) > 0.4 then
+            error("fixture recipient setup lacks a confirmed mesh route")
+        end
+        local placement = Contact.verifyPlacement(job.victim, path.goal.position, path.goal.position, 0.75,
+            function(label, fields) log(job, label, fields) end)
+        if not placement.is_confirmed then error("fixture recipient setup lacks native/server arrival") end
+        job.ally = must(job.victim.World:SpawnControlledFixture("DEST_cryos_stalagmite_small_destructible.Noun"))
+    else
+        job.ally = must(job.victim.World:SpawnControlledNPC("Critter.Noun"))
+        must(job.ally:SetAI(true))
+        check(scenario.Sleep(3500))
+        must(job.ally:SetAI(false))
+    end
+    local target = must(job.ally:Snapshot())
+    local world = living(job, job.victim)
+    local requested = {x = target.position.x - 5,
+        y = target.position.y + (job.poison_target_is_fixture and -1.1 or 1.1), z = target.position.z}
+    local path = must(job.victim.World:Path(world.hero.position, requested))
+    if not path.is_available or not path.is_complete or not path.goal
+        or distance(path.goal.position, requested) > 0.4 then
+        error("egg caster setup lacks a confirmed mesh route")
+    end
+    local placement = Contact.verifyPlacement(job.victim, path.goal.position, path.goal.position, 0.75,
+        function(label, fields) log(job, label, fields) end)
+    if not placement.is_confirmed then error("egg caster setup lacks native/server arrival") end
+    log(job, "egg_recipient", {object = target.identity.object_id, hp = target.hit_point,
+        is_fixture = job.poison_target_is_fixture == true, time = scenario.Time()})
+    local eggs = {castPoisonEgg(job, target.identity.object_id, 1, initialEgg)}
+    if job.egg_refresh then
+        must(job.victim.World:ResetCooldowns())
+        eggs[#eggs + 1] = castPoisonEgg(job, target.identity.object_id, 2)
+    end
+    if job.egg_recipient_death then
+        local damageJob = {victim = job.victim, observer = job.observer, source = job.ally}
+        local lethal = Lethal.run(damageJob, function(label, fields) log(job, label, fields) end)
+        local dead = must(job.ally:Snapshot())
+        if not lethal.is_confirmed or not dead.is_dead then error("poison recipient lacks a confirmed native death") end
+        log(job, "egg_recipient_death", {object = target.identity.object_id, time = scenario.Time()})
+    end
+    for index = 1, 7 do
+        check(scenario.Sleep(1000))
+        local actor = must(job.ally:Snapshot())
+        log(job, "egg_poison_sample", {object = target.identity.object_id,
+            hp = actor.hit_point, is_dead = actor.is_dead, sample = index, time = scenario.Time()})
+        for _, client in ipairs({job.victim, job.observer}) do living(job, client) end
+    end
+    for _, egg in ipairs(eggs) do
+        local retired = must(egg.source:Retire())
+        if not retired.is_accepted or not retired.is_settled then error("settled egg source retirement failed") end
+    end
+    finish(job, {object_id = eggs[1].object_id})
+end
+
+local function runSpoffitCrystal(job)
+    local owner = living(job, job.victim).hero
+    local receipt = must(job.victim.World:ActivateSpoffitCrystal())
+    if not receipt.object_id or receipt.object_id == 0 then error("Spoffit creator has no published child") end
+    log(job, "spawn", {noun = job.noun, object = receipt.object_id, owner = owner.object_id,
+        game = living(job, job.victim).game_id, time = scenario.Time(),
+        victim_pid = job.victim.PID, observer_pid = job.observer.PID})
+    check(scenario.Sleep(2300))
+    for index, offset in ipairs({{8, 0}, {0, 8}}) do
+        local world = living(job, job.victim)
+        local goal
+        for _, sign in ipairs({1, -1}) do
+            local requested = {x = world.hero.position.x + offset[1] * sign,
+                y = world.hero.position.y + offset[2] * sign, z = world.hero.position.z}
+            local path = must(job.victim.World:Path(world.hero.position, requested))
+            if path.is_available and path.is_complete and path.goal
+                and distance(path.goal.position, requested) <= 0.75 then
+                goal = path.goal.position
+                break
+            end
+        end
+        if not goal then error("Spoffit owner movement has no complete mesh route") end
+        local placement = Contact.verifyPlacement(job.victim, goal, goal, 0.75,
+            function(label, fields) log(job, label, fields) end)
+        if not placement.is_confirmed then error("Spoffit owner movement lacks native/server arrival") end
+        log(job, "spoffit_owner_move", {object = receipt.object_id, owner = owner.object_id,
+            x = goal.x, y = goal.y, z = goal.z, index = index, time = scenario.Time()})
+        check(scenario.Sleep(3000))
+        for _, client in ipairs({job.victim, job.observer}) do
+            local current = living(job, client)
+            local native = must(client.World:SnapshotNative()).gameplay_state
+            if not native or not native.is_available or not native.is_world_active then
+                error("Spoffit follow lost native world")
+            end
+            log(job, "spoffit_follow_window", {object = receipt.object_id, client = client.ID,
+                frame = native.frame_sequence, hp = current.hero.hit_point, index = index})
+        end
+    end
+    log(job, "spoffit_deactivate", {object = receipt.object_id, time = scenario.Time()})
+    local retired = must(job.victim.World:DeactivateSpoffitCrystal())
+    log(job, "spoffit_retired", {object = retired.object_id, state = retired.state, time = scenario.Time()})
+    finish(job, receipt)
+end
 local ProjectileLane = {}
 ProjectileLane.__index = ProjectileLane
+
+function ProjectileLane:outsideFoundation(center, target, caster)
+    local targetX, casterX = target.x - center.x, caster.x - center.x
+    local targetY, casterY = target.y - center.y, caster.y - center.y
+    return math.min(targetX, casterX) >= 6 or math.max(targetX, casterX) <= -6
+        or math.min(targetY, casterY) >= 6.5 or math.max(targetY, casterY) <= -6.5
+end
+
+function ProjectileLane:inspectPath(client, owner, start, goal, candidateIndex, stage)
+    local path, pathError = client.World:Path(start, goal)
+    local isIdentity = matches(path, owner) == true
+    local goalDistance = path and path.goal and path.goal.position and distance(path.goal.position, goal)
+    local startDistance = path and path.start and path.start.position and distance(path.start.position, start)
+    local reason = pathError and tostring(pathError) or not path and "missing_receipt"
+        or not path.is_available and "unavailable" or not isIdentity and "identity_mismatch"
+        or not path.is_complete and "incomplete" or path.is_truncated and "truncated"
+        or not goalDistance and "missing_goal" or goalDistance > 0.8 and "goal_projection_miss"
+        or not startDistance and "missing_start" or startDistance > 0.8 and "start_projection_miss"
+        or "accepted"
+    log(self.job, "projectile_lane_candidate_path", {noun = self.job.noun, candidate = candidateIndex,
+        stage = stage, reason = reason, is_available = path and path.is_available or false,
+        is_complete = path and path.is_complete or false, is_truncated = path and path.is_truncated or false,
+        is_identity_matching = isIdentity, goal_projection_distance = goalDistance or -1,
+        start_projection_distance = startDistance or -1, requested_x = goal.x, requested_y = goal.y,
+        projected_x = path and path.goal and path.goal.position.x,
+        projected_y = path and path.goal and path.goal.position.y,
+        unavailable_reason = path and path.unavailable_reason,
+        error_code = pathError and pathError.Code, error_context = pathError and pathError.Context,
+        error_message = pathError and pathError.Message})
+    if reason ~= "accepted" then return nil end
+    return path
+end
 
 function ProjectileLane:plan(center, helper)
     local caster = living(self.job, self.job.observer)
     local owner = living(self.job, self.job.victim)
-    for _, offset in ipairs({{4,7}, {-4,7}, {5,7}, {-5,7}, {4,-7}, {-4,-7}, {6,7}, {6,-7}, {0,8}}) do
+    -- Vertical lanes clear the foundation's width; horizontal lanes clear its depth.
+    for candidateIndex, offset in ipairs({{6,4,true}, {-6,4,true}, {6,5,true}, {-6,5,true},
+        {6,6,true}, {-6,6,true}, {7,4,true}, {-7,4,true}, {7,5,true}, {-7,5,true},
+        {4,7}, {-4,7}, {5,7}, {-5,7}, {4,-7}, {-4,-7},
+        {6,7}, {6,-7}, {0,8}}) do
         local targetPoint = {x = center.x + offset[1], y = center.y + offset[2], z = center.z}
-        local casterPoint = {x = center.x - (offset[1] == 0 and 8 or offset[1]),
-            y = center.y + offset[2], z = center.z}
-        local targetPath, targetError = self.job.victim.World:Path(helper.position, targetPoint)
-        local casterPath, casterError = self.job.observer.World:Path(caster.hero.position, casterPoint)
-        if not targetError and not casterError and matches(targetPath, owner) and matches(casterPath, caster)
-            and targetPath.is_complete and casterPath.is_complete and not targetPath.is_truncated
-            and not casterPath.is_truncated and targetPath.goal and casterPath.goal
-            and distance(targetPath.goal.position, targetPoint) <= 0.8
-            and distance(casterPath.goal.position, casterPoint) <= 0.8 then
+        local casterPoint = {x = offset[3] and targetPoint.x or center.x - (offset[1] == 0 and 8 or offset[1]),
+            y = center.y + (offset[3] and -offset[2] or offset[2]), z = center.z}
+        local targetPath = self:inspectPath(self.job.victim, owner, helper.position, targetPoint, candidateIndex, "target")
+        local casterPath = self:inspectPath(self.job.observer, caster, caster.hero.position, casterPoint, candidateIndex, "caster")
+        if targetPath and casterPath then
             targetPoint, casterPoint = targetPath.goal.position, casterPath.goal.position
-            local lanePath, laneError = self.job.observer.World:Path(casterPoint, targetPoint)
+            local lanePath = self:inspectPath(self.job.observer, caster, casterPoint, targetPoint, candidateIndex, "flight")
             local length = 0
             if lanePath and lanePath.points then
                 for index = 2, #lanePath.points do
@@ -703,14 +1031,15 @@ function ProjectileLane:plan(center, helper)
                 end
             end
             local direct = distance(casterPoint, targetPoint)
-            local targetY, casterY = targetPoint.y - center.y, casterPoint.y - center.y
-            if not laneError and matches(lanePath, caster) and lanePath.is_complete
-                and not lanePath.is_truncated and lanePath.goal and lanePath.start
-                and distance(lanePath.goal.position, targetPoint) <= 0.8
-                and distance(lanePath.start.position, casterPoint) <= 0.8
-                and length >= direct - 0.8 and length <= direct + 0.8 and direct >= 7 and direct <= 14
+            local isStraight = length >= direct - 0.8 and length <= direct + 0.8
+            local isOutside = self:outsideFoundation(center, targetPoint, casterPoint)
+            local isInAura = distance(targetPoint, center) <= 12 and distance(casterPoint, center) <= 12
+            log(self.job, "projectile_lane_candidate_geometry", {candidate = candidateIndex,
+                is_path_available = lanePath ~= nil, is_straight = isStraight, is_outside_foundation = isOutside,
+                is_in_aura = isInAura, direct_length = direct, path_length = length})
+            if lanePath and isStraight and direct >= 7 and direct <= 14
                 and distance(targetPoint, center) <= 12 and distance(casterPoint, center) <= 12
-                and targetY * casterY > 0 and math.min(math.abs(targetY), math.abs(casterY)) >= 6.5 then
+                and isOutside then
                 self.target_point, self.caster_point = targetPoint, casterPoint
                 log(self.job, "projectile_lane_plan", {target_x = targetPoint.x, target_y = targetPoint.y,
                     caster_x = casterPoint.x, caster_y = casterPoint.y, path_length = length,
@@ -823,7 +1152,7 @@ function ProjectileLane:finish(reason, isInputUnknown)
         until false
     end
     log(self.job, "projectile_lane_end", {noun = self.job.noun, cast_count = self.cast_count,
-        is_confirmed = not reason and self.cast_count == 12})
+        is_confirmed = not reason and self.cast_count == (self.job.maximum_casts or 12)})
     finish(self.job, self.receipt)
 end
 
@@ -868,7 +1197,7 @@ local function runProjectileLane(job)
     log(job, "spawn", {noun = job.noun, object = lane.receipt.object_id, game = lane.receipt.game_id,
         target = lane.target_id, victim_pid = job.victim.PID, observer_pid = job.observer.PID, time = scenario.Time()})
     local point = lane.caster_point
-    if math.min(math.abs(target.position.y - fixture.position.y), math.abs(point.y - fixture.position.y)) < 6.5
+    if not lane:outsideFoundation(fixture.position, target.position, point)
         or distance(target.position, fixture.position) > 12.5 or distance(point, fixture.position) > 12.5 then
         lane:finish("projectile lane actual placement violates foundation/aura bounds", false); return
     end
@@ -882,8 +1211,8 @@ local function runProjectileLane(job)
     log(job, "projectile_lane_geometry", {noun = job.noun, fixture = lane.receipt.object_id,
         target = lane.target_id, caster = lane.actor_id, center_x = fixture.position.x,
         center_y = fixture.position.y, target_x = target.position.x, target_y = target.position.y,
-        caster_x = point.x, caster_y = point.y, maximum_casts = 12})
-    for index = 1, 12 do
+        caster_x = point.x, caster_y = point.y, maximum_casts = job.maximum_casts or 12})
+    for index = 1, job.maximum_casts or 12 do
         local isConfirmed, reason, isInputUnknown = lane:cast(index)
         if not isConfirmed then lane:finish(reason, isInputUnknown); return end
     end
@@ -891,6 +1220,106 @@ local function runProjectileLane(job)
     if finalFixture.is_dead then lane:finish("projectile lane fixture did not remain alive", false); return end
     lane:finish()
 end
+local function runOwnedDroid(job)
+    job.source = must(job.victim.World:SpawnControlledNPC("NomadCyberOne.Noun"))
+    job.is_source_ai_disabled = true
+    local parent = must(job.source:Snapshot())
+    if parent.is_ai_enabled or parent.is_dead then error("owned droid parent is not idle and alive") end
+    local receipt = must(job.victim.World:SpawnOwnedNPC(job.noun, job.source))
+    if receipt.owner_object_id ~= parent.identity.object_id or not receipt.is_owner_support_started then
+        error("owned droid birth did not bind its real support owner")
+    end
+    log(job, "spawn", {noun = job.noun, object = receipt.object_id, owner = receipt.owner_object_id,
+        game = receipt.game_id, is_owner_support_started = receipt.is_owner_support_started,
+        victim_pid = job.victim.PID, observer_pid = job.observer.PID, time = scenario.Time()})
+    -- The AI-off owner retains its authored invisible pre-aggro state. Let
+    -- its normal entrance play after the exact child is bound, then freeze it.
+    must(job.source:SetAI(true))
+    check(scenario.Sleep(3500))
+    must(job.source:SetAI(false))
+    local visibleParent = must(job.source:Snapshot())
+    local requested = {x = visibleParent.position.x - 3, y = visibleParent.position.y, z = visibleParent.position.z}
+    local path = must(job.victim.World:Path(visibleParent.position, requested))
+    if not path.is_available or not path.is_complete or not path.goal
+        or distance(path.goal.position, requested) > 0.8 then
+        error("owned droid parent separation has no confirmed route")
+    end
+    local moved = must(job.source:Move(path.goal.position))
+    if not moved.is_completed then error("owned droid parent separation did not settle") end
+    log(job, "owned_droid_owner_entrance", {owner = parent.identity.object_id,
+        child = receipt.object_id, is_ai_enabled = false, time = scenario.Time()})
+    local before = living(job, job.observer)
+    local revision = before.ability.last_dispatch and before.ability.last_dispatch.revision or 0
+    hitOwner(job, parent.identity.object_id, job.observer)
+    local deadline = scenario.Time() + 2000
+    local isDispatched = false
+    repeat
+        local current = living(job, job.observer)
+        local dispatch = current.ability.last_dispatch
+        if dispatch and dispatch.revision > revision then
+            if dispatch.revision ~= revision + 1 or dispatch.actor_object_id ~= current.hero.object_id
+                or dispatch.target_object_id ~= parent.identity.object_id or dispatch.ability_asset ~= "FieldMedicBasic"
+                or dispatch.ability_id ~= 76539968 or dispatch.slot ~= "basic" then
+                error("owned droid damage input disagreed; no replay")
+            end
+            isDispatched = true
+            log(job, "owned_droid_damage_dispatch", {owner = parent.identity.object_id,
+                child = receipt.object_id, revision = dispatch.revision, ability_id = dispatch.ability_id})
+            break
+        end
+        check(scenario.Sleep(100))
+    until scenario.Time() >= deadline
+    if not isDispatched then error("owned droid lacks a fresh native damage dispatch; no replay") end
+    for index = 1, 12 do
+        check(scenario.Sleep(1000))
+        local actor = must(job.source:Snapshot())
+        if not actor.is_available or actor.is_dead or actor.is_ai_enabled then
+            error("owned droid parent changed during healing window")
+        end
+        for _, client in ipairs({job.victim, job.observer}) do
+            local world = living(job, client)
+            local isChildFound = false
+            for _, npc in ipairs(world.npcs) do
+                if npc.object_id == receipt.object_id then
+                    isChildFound = true
+                    log(job, "owned_droid_child", {client = client.ID, object = npc.object_id,
+                        noun = npc.noun, owner = npc.owner_object_id, hp = npc.hit_point, sample = index})
+                end
+            end
+            if not isChildFound then error("owned droid disappeared before healing window ended") end
+            log(job, "owned_droid_owner", {client = client.ID, object = parent.identity.object_id,
+                hp = actor.hit_point, sample = index, is_ai_enabled = actor.is_ai_enabled})
+        end
+    end
+    finish(job, receipt)
+    check(scenario.Sleep(1500))
+    for _, client in ipairs({job.victim, job.observer}) do
+        local world = living(job, client)
+        for _, npc in ipairs(world.npcs) do
+            if npc.object_id == parent.identity.object_id or npc.object_id == receipt.object_id then
+                error("owned droid source retirement did not remove its child")
+            end
+        end
+    end
+    log(job, "owned_droid_cleanup", {child = receipt.object_id, owner = parent.identity.object_id,
+        is_confirmed = true, time = scenario.Time()})
+end
+
+local function runPassiveFixture(job)
+    job.source = must(job.victim.World:SpawnControlledFixture(job.noun))
+    job.is_source_ai_disabled = true
+    local receipt = job.source.InitialSnapshot
+    log(job, "spawn", {noun = job.noun, object = receipt.object_id, game = receipt.game_id,
+        victim_pid = job.victim.PID, observer_pid = job.observer.PID, time = scenario.Time()})
+    for index = 1, job.sample_count do
+        check(scenario.Sleep(1000))
+        local actor = fixtureSample(job, "fixture_passive")
+        if actor.is_dead then error("passive fixture died before its capture window ended") end
+        log(job, "passive_fixture_sample", {noun = job.noun, object = receipt.object_id, sample = index})
+    end
+    finish(job, receipt)
+end
+
 local function runFixture(job)
     -- Position a helper before admitting a living aura that may forbid movement.
     if job.fixture_helper then
@@ -974,6 +1403,13 @@ local function runFixture(job)
     finish(job, receipt)
 end
 local function run(job)
+    if job.is_spoffit_crystal then runSpoffitCrystal(job); return end
+    if job.is_poison_egg then runPoisonEgg(job); return end
+    if job.is_geyser_fixture then runGeyserFixture(job); return end
+    if job.is_silence_fixture then runSilenceFixture(job); return end
+    if job.is_plasma_scenery then runPlasmaScenery(job); return end
+    if job.is_owned_droid then runOwnedDroid(job); return end
+    if job.is_passive_fixture then runPassiveFixture(job); return end
     if job.is_projectile_lane then runProjectileLane(job); return end
     if job.is_fixture then runFixture(job); return end
     if job.catalog_only then
@@ -1112,6 +1548,19 @@ local function runBatch(job)
     for _, case in ipairs(job.cases) do
         job.noun = case.noun
         job.is_observed = case.is_observed
+        job.is_owned_droid = case.is_owned_droid
+        job.is_spoffit_crystal = case.is_spoffit_crystal
+        job.is_poison_egg = case.is_poison_egg
+        job.poison_target_is_fixture = case.poison_target_is_fixture
+        job.egg_refresh = case.egg_refresh
+        job.egg_recipient_death = case.egg_recipient_death
+        job.fixture_aim_z = case.fixture_aim_z
+        job.fixture_max_casts = case.fixture_max_casts
+        job.is_geyser_fixture = case.is_geyser_fixture
+        job.geyser_death = case.geyser_death
+        job.is_silence_fixture = case.is_silence_fixture
+        job.is_plasma_scenery = case.is_plasma_scenery
+        job.is_passive_fixture = case.is_passive_fixture
         job.skip_kill = case.skip_kill
         job.distance = case.distance
         job.staged_source = case.distance ~= nil
@@ -1130,6 +1579,7 @@ local function runBatch(job)
         job.fixture_contact = case.fixture_contact
         job.fixture_projectile = case.fixture_projectile
         job.is_projectile_lane = case.is_projectile_lane
+        job.maximum_casts = case.maximum_casts or 12
         local heroNoun = case.hero or job.hero
         if living(job, job.victim).hero.noun ~= heroNoun then
             must(job.victim.World:ReplaceHero(heroNoun))

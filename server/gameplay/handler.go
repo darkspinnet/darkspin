@@ -1807,7 +1807,7 @@ func marshalCampaignDungeonSetup(
 			passivePacket, marshalErr := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 				TargetID: objectID, ModifierGUID: creature.PassiveAbility,
 				InstanceID: passiveModifierInstance[index], StackCount: 1,
-				StartMilliseconds: gameTime, SourceID: objectID,
+				StartMilliseconds: gameTime, NPCAffixAssetID: 0,
 			})
 			if marshalErr != nil {
 				return nil, fmt.Errorf("passive[%d]: %w", index, marshalErr)
@@ -2750,11 +2750,24 @@ func (r gameplayPendingRuntime) pollWorld(
 			}
 			peerSession.queueStatDelta(ventDelta)
 			rootHazardPackets = append(rootHazardPackets, ventPackets...)
-			geyserPackets, geyserErr := peerSession.pollCryosGeyserEffects(r.now())
+			minePackets, mineErr := r.pollTripMinesLocked(&peerSession, packet, r.now())
+			if mineErr != nil {
+				r.registry.mutex.Unlock()
+				return nil, fmt.Errorf("minePoll: %w", mineErr)
+			}
+			rootHazardPackets = append(rootHazardPackets, minePackets...)
+			silencePackets, silenceErr := r.pollSilenceFieldsLocked(&peerSession, packet, r.now())
+			if silenceErr != nil {
+				r.registry.mutex.Unlock()
+				return nil, fmt.Errorf("silenceFieldPoll: %w", silenceErr)
+			}
+			rootHazardPackets = append(rootHazardPackets, silencePackets...)
+			geyserPackets, geyserDelta, geyserErr := peerSession.pollCryosGeysers(r.damage.npc, packet, r.now())
 			if geyserErr != nil {
 				r.registry.mutex.Unlock()
 				return nil, fmt.Errorf("geyserPoll: %w", geyserErr)
 			}
+			peerSession.queueStatDelta(geyserDelta)
 			rootHazardPackets = append(rootHazardPackets, geyserPackets...)
 			lavaPackets, lavaDelta, lavaErr := peerSession.applyCampaignLavaContact(
 				game.Vec3(peerSession.playerPosition), packet.SourceTime, r.now(), r.damage.npc,
@@ -2762,6 +2775,13 @@ func (r gameplayPendingRuntime) pollWorld(
 			if lavaErr != nil {
 				r.registry.mutex.Unlock()
 				return nil, fmt.Errorf("lavaPoll: %w", lavaErr)
+			}
+			lavaPeerErr := peerSession.publishFireVentHitAfterCommit(
+				r.registry, packet, gameplayPeerPresentationPackets(lavaPackets),
+			)
+			if lavaPeerErr != nil {
+				r.registry.mutex.Unlock()
+				return nil, fmt.Errorf("lavaPeerCommit: %w", lavaPeerErr)
 			}
 			lavaPackets = append(lavaPackets, r.registry.takePlasmaWreathRestorationLocked(&peerSession)...)
 			peerSession.queueStatDelta(lavaDelta)
@@ -5417,7 +5437,7 @@ func marshalRestoredZoneNPCs(currentZone *zone.Zone) ([][]byte, error) {
 		return nil, errors.New("restored npc session unavailable")
 	}
 	packets := make([][]byte, 0)
-	for index, npc := range currentZone.NPCs().LiveSnapshots() {
+	for index, npc := range currentZone.NPCs().LivePresentationSnapshots() {
 		if !npc.IsPublished {
 			continue
 		}

@@ -911,9 +911,9 @@ func scaldronBossRank(nounName string) int {
 	switch strings.ToLower(nounName) {
 	case "scaldronboss.noun", "scaldronboss_stage2.noun":
 		return 1
-	case "scaldronboss_2.noun":
+	case "scaldronboss_2.noun", "scaldronboss_stage2_2.noun":
 		return 2
-	case "scaldronboss_3.noun":
+	case "scaldronboss_3.noun", "scaldronboss_stage2_3.noun":
 		return 3
 	default:
 		return 0
@@ -3720,8 +3720,9 @@ func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
 		return PlasmaWallProfile(), true
 	case "citadelboss.noun", "citadelboss_2.noun", "citadelboss_3.noun":
 		return citadelBossTwinLaserProfile(nounName)
-	case "scaldronboss.noun", "scaldronboss_stage2.noun",
-		"scaldronboss_2.noun", "scaldronboss_3.noun":
+	case "scaldronboss_stage2.noun", "scaldronboss_stage2_2.noun", "scaldronboss_stage2_3.noun":
+		return corruptorPoseProfile(0.5), true
+	case "scaldronboss.noun", "scaldronboss_2.noun", "scaldronboss_3.noun":
 		return scaldronBossTwinLaserProfile(nounName)
 	case "citadelspecificfour.noun":
 		return citadelSpecificFourBoltProfile(

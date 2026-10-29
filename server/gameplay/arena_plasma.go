@@ -103,7 +103,7 @@ func (e *arenaAbilityTargets) applyPlasmaBurnLocked(key string, target gameplayP
 	createPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: objectID, ModifierGUID: plan.ModifierID, InstanceID: instanceID,
 		DurationMilliseconds: uint32(plan.Duration.Milliseconds()), StackCount: 1,
-		StartMilliseconds: timestamp, SourceID: status.sourceObjectID,
+		StartMilliseconds: timestamp, NPCAffixAssetID: 0,
 	})
 	if err != nil {
 		return status.discard("arenaPlasmaBurnCreate", err)

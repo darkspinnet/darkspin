@@ -39,5 +39,9 @@ func ActionNounName(plan SpawnPlan) string {
 // Discovery and controlled admission must use the same shared-AI resolution as
 // normal gameplay before describing an authored action as recovered.
 func RecoveredActionProfileForPlan(plan SpawnPlan) (ActionProfile, bool) {
+	profile, isSpoffitVictim := spoffitVictimProfile(plan)
+	if isSpoffitVictim {
+		return profile, true
+	}
 	return ActionProfileForNoun(ActionNounName(plan))
 }

@@ -119,7 +119,7 @@ func (e *gameplaySessionRegistry) supportHealerRootReplay(member gameplayPeerSes
 		if !npc.IsSupportHealerRootCurrent(objectID, run.instanceID, at) {
 			continue
 		}
-		packet, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{TargetID: objectID, SourceID: run.sourceID,
+		packet, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{TargetID: objectID, NPCAffixAssetID: 0,
 			ModifierGUID: util.HashID("SupportHealer_RootModifier"), InstanceID: run.instanceID,
 			DurationMilliseconds: uint32(run.expiresAt.Sub(at) / time.Millisecond), StartMilliseconds: timestamp, StackCount: 1})
 		if err != nil {
@@ -208,7 +208,7 @@ func (e targetedAOESchedule) applySupportHealerRootsLocked(peerSession gameplayP
 			return packets, fmt.Errorf("briarRootAllocate: %w", err)
 		}
 		duration := zonenpc.CrowdControlDuration(target.Plan, 2*time.Second)
-		create, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{TargetID: targetID, SourceID: e.sourceObjectID,
+		create, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{TargetID: targetID, NPCAffixAssetID: 0,
 			ModifierGUID: util.HashID("SupportHealer_RootModifier"), InstanceID: instanceID,
 			DurationMilliseconds: uint32(duration / time.Millisecond), StartMilliseconds: timestamp, StackCount: 1})
 		if err != nil {

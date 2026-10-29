@@ -10,6 +10,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/util"
+	zone "github.com/darkspinnet/darkspin/server/zone"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
 	zoneaction "github.com/darkspinnet/darkspin/server/zone/action"
@@ -719,7 +720,7 @@ func (r campaignAbilityCommandRuntime) handleHeroSelfModifier(
 			InstanceID:           instanceID,
 			DurationMilliseconds: uint32(definition.Duration.Milliseconds()),
 			StackCount:           stackCount, StartMilliseconds: modifierStart,
-			SourceID: run.objectID,
+			NPCAffixAssetID: 0,
 		})
 	} else if !isArborealAtMaximum {
 		messages = append(messages, raknet.ModifierUpdatedMessage{
@@ -927,6 +928,25 @@ func (r campaignAbilityCommandRuntime) purgeHeroDebuffs(
 	for _, modifier := range peerSession.zone.Effect().Snapshot() {
 		if modifier.TargetObjectID != objectID ||
 			modifier.Kind != zoneeffect.ModifierKindDebuff {
+			continue
+		}
+		if modifier.GUID == util.HashID(silenceFieldModifier) {
+			fieldRuntime := gameplayPendingRuntime{registry: r.registry, modifierPool: r.modifierPool, now: r.now}
+			fieldPackets, fieldErr := fieldRuntime.retireSilenceFieldModifierLocked(peerSession.zone,
+				zone.SilenceFieldContact{SourceObjectID: modifier.SourceObjectID, TargetObjectID: objectID, InstanceID: modifier.InstanceID})
+			if fieldErr != nil {
+				return packets, fmt.Errorf("heroFieldPurge: %w", fieldErr)
+			}
+			packets = append(packets, fieldPackets...)
+			for _, contact := range peerSession.zone.SilenceFieldContacts() {
+				if contact.InstanceID == modifier.InstanceID {
+					contact.InstanceID = 0
+					fieldErr = peerSession.zone.PutSilenceFieldContact(contact)
+					if fieldErr != nil {
+						return packets, fmt.Errorf("heroFieldMembership: %w", fieldErr)
+					}
+				}
+			}
 			continue
 		}
 		run := peerSession.campaignNPCModifiers[modifier.InstanceID]

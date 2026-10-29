@@ -175,6 +175,9 @@ type Target struct {
 }
 
 type Snapshot struct {
+	poisonImmunity                  float32
+	IsBirthPending                  bool
+	birthOwner                      ActionOwner
 	Mutation                        MutationState
 	orcusConsumeBands               uint8
 	IsOrcusFollowing                bool

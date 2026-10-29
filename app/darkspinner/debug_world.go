@@ -18,6 +18,13 @@ type debugWorldPosition struct {
 	Y float32 `json:"y"`
 	Z float32 `json:"z"`
 }
+
+type debugWorldSceneryHazard struct {
+	ObjectID uint32             `json:"object_id"`
+	Noun     string             `json:"noun"`
+	Ability  string             `json:"ability"`
+	Position debugWorldPosition `json:"position"`
+}
 type debugWorldHero struct {
 	FlakStackCount            uint32             `json:"flak_stack_count"`
 	FlakAttackSpeed           float32            `json:"flak_attack_speed"`
@@ -82,41 +89,42 @@ type debugWorldBossTrigger struct {
 	Radius        float32            `json:"radius"`
 }
 type debugWorldState struct {
-	NativeReadiness         *controlGameplayState   `json:"native_readiness,omitempty"`
-	Ability                 *debugAbilityState      `json:"ability"`
-	ClientID                string                  `json:"client_id"`
-	InstanceID              string                  `json:"instance_id"`
-	PID                     uint32                  `json:"pid"`
-	UserID                  int64                   `json:"user_id"`
-	GameID                  uint32                  `json:"game_id"`
-	Source                  string                  `json:"source"`
-	CapturedAt              time.Time               `json:"captured_at"`
-	IsAvailable             bool                    `json:"is_available"`
-	UnavailableReason       string                  `json:"unavailable_reason,omitempty"`
-	PeerGeneration          uint64                  `json:"peer_generation"`
-	TransportGeneration     uint64                  `json:"transport_generation"`
-	ZoneGeneration          uint64                  `json:"zone_generation"`
-	SessionStage            string                  `json:"session_stage"`
-	Hero                    *debugWorldHero         `json:"hero"`
-	Arena                   *debugWorldArena        `json:"arena,omitempty"`
-	Campaign                *debugWorldCampaign     `json:"campaign,omitempty"`
-	NPCs                    []debugWorldNPC         `json:"npcs"`
-	NPCTotal                int                     `json:"npc_total"`
-	IsNPCTruncated          bool                    `json:"is_npc_truncated"`
-	Pickups                 []debugWorldPickup      `json:"pickups"`
-	PickupTotal             int                     `json:"pickup_total"`
-	IsPickupTruncated       bool                    `json:"is_pickup_truncated"`
-	IsPickupAvailable       bool                    `json:"is_pickup_available"`
-	PickupUnavailableReason string                  `json:"pickup_unavailable_reason,omitempty"`
-	Teleporters             []debugWorldTeleporter  `json:"teleporters"`
-	IsTeleporterTruncated   bool                    `json:"is_teleporter_truncated"`
-	IsMissionComplete       bool                    `json:"is_mission_complete"`
-	IsZoneTerminal          bool                    `json:"is_zone_terminal"`
-	IsVictoryAvailable      bool                    `json:"is_victory_available"`
-	IsVictoryCommitted      bool                    `json:"is_victory_committed"`
-	IsObjectiveComplete     bool                    `json:"is_objective_complete"`
-	Boss                    *debugWorldBoss         `json:"boss"`
-	BossTriggers            []debugWorldBossTrigger `json:"boss_triggers"`
+	NativeReadiness         *controlGameplayState     `json:"native_readiness,omitempty"`
+	Ability                 *debugAbilityState        `json:"ability"`
+	ClientID                string                    `json:"client_id"`
+	InstanceID              string                    `json:"instance_id"`
+	PID                     uint32                    `json:"pid"`
+	UserID                  int64                     `json:"user_id"`
+	GameID                  uint32                    `json:"game_id"`
+	Source                  string                    `json:"source"`
+	CapturedAt              time.Time                 `json:"captured_at"`
+	IsAvailable             bool                      `json:"is_available"`
+	UnavailableReason       string                    `json:"unavailable_reason,omitempty"`
+	PeerGeneration          uint64                    `json:"peer_generation"`
+	TransportGeneration     uint64                    `json:"transport_generation"`
+	ZoneGeneration          uint64                    `json:"zone_generation"`
+	SessionStage            string                    `json:"session_stage"`
+	Hero                    *debugWorldHero           `json:"hero"`
+	Arena                   *debugWorldArena          `json:"arena,omitempty"`
+	Campaign                *debugWorldCampaign       `json:"campaign,omitempty"`
+	NPCs                    []debugWorldNPC           `json:"npcs"`
+	SceneryHazards          []debugWorldSceneryHazard `json:"scenery_hazards"`
+	NPCTotal                int                       `json:"npc_total"`
+	IsNPCTruncated          bool                      `json:"is_npc_truncated"`
+	Pickups                 []debugWorldPickup        `json:"pickups"`
+	PickupTotal             int                       `json:"pickup_total"`
+	IsPickupTruncated       bool                      `json:"is_pickup_truncated"`
+	IsPickupAvailable       bool                      `json:"is_pickup_available"`
+	PickupUnavailableReason string                    `json:"pickup_unavailable_reason,omitempty"`
+	Teleporters             []debugWorldTeleporter    `json:"teleporters"`
+	IsTeleporterTruncated   bool                      `json:"is_teleporter_truncated"`
+	IsMissionComplete       bool                      `json:"is_mission_complete"`
+	IsZoneTerminal          bool                      `json:"is_zone_terminal"`
+	IsVictoryAvailable      bool                      `json:"is_victory_available"`
+	IsVictoryCommitted      bool                      `json:"is_victory_committed"`
+	IsObjectiveComplete     bool                      `json:"is_objective_complete"`
+	Boss                    *debugWorldBoss           `json:"boss"`
+	BossTriggers            []debugWorldBossTrigger   `json:"boss_triggers"`
 }
 
 func debugWorldPositionDTO(position scenario.WorldPosition) debugWorldPosition {
@@ -210,6 +218,12 @@ func observeDebugWorld(ctx context.Context, host *debugHost, clientManager *debu
 	}
 	for _, npc := range world.NPCs {
 		result.NPCs = append(result.NPCs, debugWorldNPC{ObjectID: npc.ObjectID, Noun: npc.Noun, Position: debugWorldPositionDTO(npc.Position), HitPoint: npc.HitPoint, IsDead: npc.IsDead, IsPublished: npc.IsPublished, IsHostile: npc.IsHostile, IsHostilityAvailable: npc.IsHostilityAvailable, IsFixture: npc.IsFixture, IsBoss: npc.IsBoss, DistanceSquared: npc.DistanceSquared})
+	}
+	for _, hazard := range world.SceneryHazards {
+		result.SceneryHazards = append(result.SceneryHazards, debugWorldSceneryHazard{
+			ObjectID: hazard.ObjectID, Noun: hazard.Noun, Ability: hazard.Ability,
+			Position: debugWorldPositionDTO(hazard.Position),
+		})
 	}
 	for _, teleporter := range world.Teleporters {
 		result.Teleporters = append(result.Teleporters, debugWorldTeleporter{RouteIndex: teleporter.RouteIndex, MarkerID: teleporter.MarkerID, DestinationMarkerID: teleporter.DestinationMarkerID, ObjectID: teleporter.ObjectID, Source: debugWorldPositionDTO(teleporter.Source), Destination: debugWorldPositionDTO(teleporter.Destination), IsSecurity: teleporter.IsSecurity, IsBoss: teleporter.IsBoss, IsTunnel: teleporter.IsTunnel, IsActivationAvailable: teleporter.IsActivationAvailable, IsActive: teleporter.IsActive})

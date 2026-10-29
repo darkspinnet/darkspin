@@ -120,7 +120,7 @@ func GhostFormStartPackets(
 		raknet.ModifierCreatedMessage{
 			TargetID: objectID, ModifierGUID: definition.RootModifierID,
 			InstanceID: instanceID, DurationMilliseconds: uint32(definition.Duration.Milliseconds()),
-			StackCount: 1, StartMilliseconds: timestamp, SourceID: objectID,
+			StackCount: 1, StartMilliseconds: timestamp, NPCAffixAssetID: 0,
 		},
 	}
 	packets, err := marshalMessages(messages, "ghostFormStart")

@@ -19,7 +19,7 @@ func MutationEggDeathProfile() ActionProfile {
 }
 
 func (e *Session) FinishMutationEggDeath(source Snapshot) bool {
-	if e == nil || !IsMutationEgg(source.Plan.NounName) {
+	if e == nil || (!IsMutationEgg(source.Plan.NounName) && !IsPoisonEgg(source.Plan.NounName)) {
 		return false
 	}
 	e.mu.Lock()

@@ -14,39 +14,54 @@ import (
 )
 
 type debugWorldSpawnRequest struct {
-	ClientID  string `json:"client_id"`
-	Noun      string `json:"noun,omitempty"`
-	RequestID string `json:"request_id,omitempty"`
-	TimeoutMS uint32 `json:"timeout_ms,omitempty"`
+	ClientID  string            `json:"client_id"`
+	Noun      string            `json:"noun,omitempty"`
+	RequestID string            `json:"request_id,omitempty"`
+	TimeoutMS uint32            `json:"timeout_ms,omitempty"`
+	Owner     *debugNPCIdentity `json:"owner,omitempty"`
 }
 
 // Publication is the ordinary response-send commitment, never native pixels.
 type debugWorldSpawn struct {
-	ClientID            string `json:"client_id"`
-	InstanceID          string `json:"instance_id"`
-	PID                 uint32 `json:"pid"`
-	UserID              int64  `json:"user_id"`
-	RequestID           string `json:"request_id"`
-	State               string `json:"state"`
-	GameID              uint32 `json:"game_id"`
-	PeerGeneration      uint64 `json:"peer_generation"`
-	TransportGeneration uint64 `json:"transport_generation"`
-	ZoneGeneration      uint64 `json:"zone_generation"`
-	ObjectID            uint32 `json:"object_id"`
-	Noun                string `json:"noun"`
-	IsAdmitted          bool   `json:"is_admitted"`
-	IsAIEnabled         bool   `json:"is_ai_enabled"`
-	IsFixture           bool   `json:"is_fixture"`
-	IsPublished         bool   `json:"is_published"`
-	IsNativeObserved    bool   `json:"is_native_observed"`
-	Failure             string `json:"failure,omitempty"`
-	Source              string `json:"source"`
+	ClientID              string `json:"client_id"`
+	InstanceID            string `json:"instance_id"`
+	PID                   uint32 `json:"pid"`
+	UserID                int64  `json:"user_id"`
+	RequestID             string `json:"request_id"`
+	State                 string `json:"state"`
+	GameID                uint32 `json:"game_id"`
+	PeerGeneration        uint64 `json:"peer_generation"`
+	TransportGeneration   uint64 `json:"transport_generation"`
+	ZoneGeneration        uint64 `json:"zone_generation"`
+	ObjectID              uint32 `json:"object_id"`
+	OwnerObjectID         uint32 `json:"owner_object_id"`
+	CreatorModifier       string `json:"creator_modifier,omitempty"`
+	CreatorResourceID     uint32 `json:"creator_resource_id,omitempty"`
+	IsOwnerSupportStarted bool   `json:"is_owner_support_started"`
+	Noun                  string `json:"noun"`
+	IsAdmitted            bool   `json:"is_admitted"`
+	IsAIEnabled           bool   `json:"is_ai_enabled"`
+	IsFixture             bool   `json:"is_fixture"`
+	IsPublished           bool   `json:"is_published"`
+	IsNativeObserved      bool   `json:"is_native_observed"`
+	Failure               string `json:"failure,omitempty"`
+	Source                string `json:"source"`
 }
 
 func debugWorldSpawnDTO(owner debugWorldOwner, receipt scenario.SpawnReceipt) debugWorldSpawn {
-	return debugWorldSpawn{ClientID: owner.client.ClientID, InstanceID: owner.client.InstanceID, PID: owner.client.ProcessID, UserID: owner.client.UserID,
+	result := debugWorldSpawn{ClientID: owner.client.ClientID, InstanceID: owner.client.InstanceID, PID: owner.client.ProcessID, UserID: owner.client.UserID,
 		RequestID: receipt.RequestID, State: receipt.State, GameID: receipt.GameID, PeerGeneration: receipt.PeerGeneration, TransportGeneration: receipt.TransportGeneration, ZoneGeneration: receipt.ZoneGeneration, IsAIEnabled: receipt.IsAIEnabled,
 		ObjectID: receipt.ObjectID, Noun: receipt.NounName, IsFixture: receipt.IsFixture, IsAdmitted: receipt.IsAdmitted, IsPublished: receipt.IsPublished, IsNativeObserved: false, Failure: receipt.Failure, Source: "server_spawn_receipt"}
+	if receipt.Owner != nil {
+		result.OwnerObjectID = receipt.Owner.ObjectID
+	}
+	if receipt.IsSpoffitCrystal {
+		result.OwnerObjectID = receipt.HeroOwnerObjectID
+		result.CreatorModifier = "SpoffitCrystal"
+		result.CreatorResourceID = 4260
+	}
+	result.IsOwnerSupportStarted = receipt.IsOwnerSupportStarted
+	return result
 }
 
 func inspectDebugWorldSpawn(ctx context.Context, host *debugHost, owner debugWorldOwner, receipt scenario.SpawnReceipt) error {
@@ -75,6 +90,9 @@ func executeDebugWorldSpawn(ctx context.Context, host *debugHost, clientManager 
 	}
 	if req.TimeoutMS > 120000 {
 		return result, errors.New("spawn timeout must not exceed 120000 milliseconds")
+	}
+	if (operation == "client.spawn_owned_npc") != (req.Owner != nil) {
+		return result, errors.New("owned spawn requires exactly one protected parent identity")
 	}
 	if operation == "client.spawn_state" {
 		if req.RequestID == "" || req.Noun != "" || req.TimeoutMS != 0 {
@@ -119,6 +137,14 @@ func executeDebugWorldSpawn(ctx context.Context, host *debugHost, clientManager 
 			spawnRequest.IsAIEnabled = &isAIEnabled
 		}
 		spawnRequest.IsFixture = operation == "client.spawn_controlled_fixture"
+		spawnRequest.IsSpoffitCrystal = operation == "client.activate_spoffit_crystal" || operation == "client.deactivate_spoffit_crystal"
+		spawnRequest.IsSpoffitRemoval = operation == "client.deactivate_spoffit_crystal"
+		if req.Owner != nil {
+			identity := req.Owner
+			spawnRequest.Owner = &scenario.ControlledNPCIdentity{RunID: host.runID, UserID: identity.UserID,
+				GameID: identity.GameID, PeerGeneration: identity.PeerGeneration, TransportGeneration: identity.TransportGeneration,
+				ZoneGeneration: identity.ZoneGeneration, SpawnRequestID: identity.SpawnRequestID, ObjectID: identity.ObjectID}
+		}
 		receipt, err = host.server.DebugSpawnNPC(waitContext, spawnRequest)
 		if err != nil {
 			return debugWorldSpawnDTO(owner, receipt), fmt.Errorf("spawnQueue: %w", err)
@@ -139,7 +165,11 @@ func executeDebugWorldSpawn(ctx context.Context, host *debugHost, clientManager 
 		if receipt.State == "failed" || receipt.Failure != "" {
 			return result, &control.ScenarioError{Code: control.NotAvailable, Context: "spawnFailed", Message: receipt.Failure}
 		}
-		if (operation != "client.spawn_npc" && operation != "client.spawn_controlled_npc" && operation != "client.spawn_controlled_fixture") || receipt.IsPublished {
+		isActivationReady := operation == "client.activate_spoffit_crystal" && receipt.IsPublished
+		isRemovalReady := operation == "client.deactivate_spoffit_crystal" && receipt.State == "retired"
+		isSpoffitOperation := operation == "client.activate_spoffit_crystal" || operation == "client.deactivate_spoffit_crystal"
+		if isActivationReady || isRemovalReady || !isSpoffitOperation && ((operation != "client.spawn_npc" && operation != "client.spawn_controlled_npc" && operation != "client.spawn_controlled_fixture" && operation != "client.spawn_owned_npc") ||
+			(receipt.IsPublished && (receipt.Owner == nil || receipt.IsOwnerSupportStarted))) {
 			return result, nil
 		}
 		select {

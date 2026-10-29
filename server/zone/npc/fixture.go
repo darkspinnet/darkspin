@@ -28,7 +28,7 @@ func IsGraviticRemnant(plan SpawnPlan) bool {
 
 // CryosGeyserDeath opens the ice plug and leaves the vent alive as a hazard.
 func IsCryosGeyser(plan SpawnPlan) bool {
-	return plan.IsFixture && strings.EqualFold(plan.NounName, "DEST_prefab_cryos_ice_crack1.Noun")
+	return plan.IsFixture && game.CryosGeyserHook(plan.NounName, plan.NPCProfile) == "CryosGeyserDeath"
 }
 
 // CryosACRemnantNoun is the separate damaged object created by AcDeath and

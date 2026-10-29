@@ -56,7 +56,7 @@ func (e gameplayPendingRuntime) pollNativeSilenceAuraLocked(member *gameplayPeer
 				packets = append(packets, attribute)
 			} else {
 				amount := float32(0)
-				if member.zone.Companion().SilenceRemaining(run.record.TargetObjectID, now) > 0 ||
+				if member.zone.Companion().IsSilenced(run.record.TargetObjectID, now) ||
 					member.zone.NPCs().SilenceRemaining(run.record.TargetObjectID, now) > 0 {
 					amount = 1
 				}

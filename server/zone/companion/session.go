@@ -37,6 +37,7 @@ type Actor struct {
 	IsSageCompanion        bool
 	IsAbilityControlled    bool
 	IsStationary           bool
+	IsFollowManaged        bool
 	IsIntangible           bool
 	AbilityAnimation       string
 	TargetObjectID         uint32
@@ -50,6 +51,9 @@ type Actor struct {
 	CooldownEnd            time.Time
 	AttackReleaseEnd       time.Time
 	silenceExpiresAt       time.Time
+	silenceLeases          map[uint32]struct{}
+	silenceImmunity        float32
+	poisonImmunity         float32
 	DamageBuff             float32
 	EnergyDamageBuff       float32
 	AttackSpeed            float32
@@ -463,6 +467,9 @@ func (e *Session) followActors(
 		if selectedObjectID != 0 && objectID != selectedObjectID {
 			continue
 		}
+		if selectedObjectID == 0 && actor.IsFollowManaged {
+			continue
+		}
 		if actor.UserID != userID ||
 			actor.PeerGeneration != peerGeneration ||
 			actor.OwnerObjectID != ownerObjectID ||
@@ -613,7 +620,7 @@ func (e *Session) ReserveAttacks(
 		e.actors[objectID] = actor
 		actor.Position = actor.followPosition(at)
 		if !actor.IsCombatant || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
-			at.Before(actor.silenceExpiresAt) ||
+			actor.isSilenced(at) ||
 			actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 ||
 			at.Before(actor.CooldownEnd) {
 			continue
@@ -691,7 +698,7 @@ func (e *Session) ReserveActorAttack(
 	defer e.mu.Unlock()
 	actor, isFound := e.actors[objectID]
 	if !isFound || !actor.IsCombatant || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
-		at.Before(actor.silenceExpiresAt) ||
+		actor.isSilenced(at) ||
 		actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 ||
 		at.Before(actor.CooldownEnd) {
 		return Attack{}, false, nil

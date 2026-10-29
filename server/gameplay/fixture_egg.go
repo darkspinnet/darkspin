@@ -12,8 +12,11 @@ import (
 const mutationEggDelay = 200 * time.Millisecond
 
 func withSmallFixtureDeath(snapshot zonenpc.Snapshot, definition zoneNPCDeathDefinition) zoneNPCDeathDefinition {
+	definition = withDestructibleDoorDeath(snapshot, definition)
+	definition = withTripMineDeath(snapshot, definition)
+	definition = withSilenceFieldDeath(snapshot, definition)
 	isLight := snapshot.Plan.IsFixture && zonenpc.IsFactoryLight(snapshot.Plan.NounName)
-	isEgg := snapshot.Plan.IsFixture && zonenpc.IsMutationEgg(snapshot.Plan.NounName)
+	isEgg := snapshot.Plan.IsFixture && (zonenpc.IsMutationEgg(snapshot.Plan.NounName) || zonenpc.IsPoisonEgg(snapshot.Plan.NounName))
 	if !isLight && !isEgg {
 		return definition
 	}
@@ -34,11 +37,14 @@ func withSmallFixtureDeath(snapshot zonenpc.Snapshot, definition zoneNPCDeathDef
 	definition.graphicsState = 0
 	definition.isCollisionRetained = true
 	definition.explosionEffectName = "nocturna_alien_egg_plasma_explosion.ServerEventDef"
+	if zonenpc.IsPoisonEgg(snapshot.Plan.NounName) {
+		definition.explosionEffectName = "detonate_impact_firetype.ServerEventDef"
+	}
 	return definition
 }
 
 func (e campaignFixtureBlastStep) finishMutationEgg() ([][]byte, error) {
-	if !zonenpc.IsMutationEgg(e.source.Plan.NounName) {
+	if !zonenpc.IsMutationEgg(e.source.Plan.NounName) && !zonenpc.IsPoisonEgg(e.source.Plan.NounName) {
 		return nil, nil
 	}
 	packet, err := raknet.MarshalApplication(raknet.ObjectDeleteMessage{ObjectID: []uint32{e.source.Plan.ObjectID}})

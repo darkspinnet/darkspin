@@ -75,7 +75,7 @@ func (e *arenaAbilityTargets) applyBinaryPullsLocked(plan zoneability.AreaPlan,
 		created, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 			TargetID: run.objectID, ModifierGUID: run.modifierID, InstanceID: instanceID,
 			StackCount: 1, DurationMilliseconds: uint32((travel + binarySentinelPullOutro).Milliseconds()),
-			StartMilliseconds: e.timestamp, SourceID: plan.SourceObjectID})
+			StartMilliseconds: e.timestamp, NPCAffixAssetID: 0})
 		if err != nil {
 			return packets, run.discard("arenaPullCreate", err)
 		}

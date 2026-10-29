@@ -241,6 +241,7 @@ type zonePresentationRuntime struct {
 	cryosGeyserWarnings     map[uint32]uint64
 	cryosGeyserSpouts       map[uint32]uint64
 	fireVents               map[uint32]*campaignFireVent
+	tripMines               map[uint32]*tripMineRun
 	fireVentWarnings        map[uint32]uint64
 	fireVentEruptions       map[uint32]uint64
 	warpTotems              map[uint32]*warpTotemCycle
@@ -535,7 +536,7 @@ func (s *gameplayPeerSession) extendEnemySilence(
 }
 
 func (e gameplayPeerSession) isEnemySilenceActive(at time.Time) bool {
-	return !at.IsZero() && (at.Before(e.enemySilenceExpiresAt) || e.isArenaHitSilenceActive(at))
+	return !at.IsZero() && (at.Before(e.enemySilenceExpiresAt) || e.isArenaHitSilenceActive(at) || e.fixtureSilenceCount() > 0)
 }
 
 type controlledHeroPresentation struct {
@@ -2204,6 +2205,7 @@ type gameplaySessionRegistry struct {
 	channelEffects           []*channelEffects
 	channelRemovals          []*channelRemoval
 	fixturePublications      map[*campaignFixturePublication]struct{}
+	spoffits                 map[*spoffitRun]struct{}
 	fixtureDiscards          map[*fixtureDiscard]struct{}
 	companionDeaths          map[companionDeathKey]*companionDeathRun
 	drainerDeaths            map[companionDeathKey]*drainerDeathRun

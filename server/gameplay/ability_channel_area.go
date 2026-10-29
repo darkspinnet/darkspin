@@ -196,7 +196,7 @@ func (e heroChannelAreaSchedule) lift() ([][]byte, error) {
 			DurationMilliseconds: uint32(duration.Milliseconds()),
 			StartMilliseconds: e.packet.SourceTime +
 				uint64(e.definition.HitDelay/time.Millisecond),
-			SourceID: e.sourceObjectID,
+			NPCAffixAssetID: 0,
 		})
 	}
 	if !e.run.SetTargets(targets) {

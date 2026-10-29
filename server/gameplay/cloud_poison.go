@@ -231,7 +231,7 @@ func (e campaignCloudLobSchedule) commitCloudPoisonTargetLocked(target *campaign
 		if err != nil {
 			return campaignCloudPoisonPublication{}, fmt.Errorf("cloudEntry: %w", err)
 		}
-		create, createErr := raknet.MarshalApplication(raknet.ModifierCreatedMessage{TargetID: enemy.Plan.ObjectID, ModifierGUID: util.HashID("SproutPoison"), InstanceID: target.instanceID, StackCount: 1, SourceID: origin.sourceObjectID, StartMilliseconds: target.startTimestamp})
+		create, createErr := raknet.MarshalApplication(raknet.ModifierCreatedMessage{TargetID: enemy.Plan.ObjectID, ModifierGUID: util.HashID("SproutPoison"), InstanceID: target.instanceID, StackCount: 1, NPCAffixAssetID: 0, StartMilliseconds: target.startTimestamp})
 		if createErr != nil {
 			return campaignCloudPoisonPublication{}, fmt.Errorf("cloudCreate: %w", createErr)
 		}

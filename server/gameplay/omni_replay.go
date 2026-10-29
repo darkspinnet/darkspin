@@ -17,7 +17,7 @@ func (e *omniShieldRun) presentationPackets(at time.Time, timestamp uint64) ([][
 	}
 	packets := make([][]byte, 0, 2)
 	for _, message := range []raknet.ApplicationMessage{
-		raknet.ModifierCreatedMessage{TargetID: e.objectID, SourceID: e.objectID, ModifierGUID: e.definition.RootModifierID,
+		raknet.ModifierCreatedMessage{TargetID: e.objectID, NPCAffixAssetID: 0, ModifierGUID: e.definition.RootModifierID,
 			InstanceID: e.instanceID, StackCount: 1, StartMilliseconds: timestamp, DurationMilliseconds: uint32(remaining / time.Millisecond)},
 		raknet.AttachedEffectMessage{ObjectID: e.objectID, Slot: e.effectSlot + 1, Asset: util.HashID(e.definition.ActivationEffectName), IsForceAttached: true},
 	} {

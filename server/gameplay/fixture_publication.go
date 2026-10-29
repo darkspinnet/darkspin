@@ -180,6 +180,8 @@ func (e *campaignFixturePublication) complete(isHandoff bool) {
 			continue
 		}
 		state.isCreationPublished = true
+		e.queueLocked(state.pendingRefreshes, true)
+		state.pendingRefreshes = nil
 		state.publication = nil
 		state.cursor = step
 		state.isCursorReady = true
@@ -192,6 +194,12 @@ func (e *campaignFixturePublication) complete(isHandoff bool) {
 			e.queueLocked(state.pendingDeletes, true)
 			state.pendingDeletes = nil
 			step.finalizeLocked()
+		} else if step.run.isActive() && step.profile.ModifierName == "EggPoison" {
+			step = step.nextEggPoisonLocked()
+			state.publication = nil
+			state.cursor = step
+			state.isCursorReady = true
+			steps = append(steps, step)
 		} else if step.run.isActive() && (step.isPermanent || step.remainingTickCount > 1) {
 			step.blast.timestamp += 1000
 			step.deadline += time.Second

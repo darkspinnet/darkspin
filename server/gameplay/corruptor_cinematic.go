@@ -19,36 +19,40 @@ import (
 // The registry lock owns the run. The clock belongs to the zone, not the
 // transport which happened to deliver the final hit of the first stage.
 type corruptorCinematicRun struct {
-	runtime              campaignNPCActionRuntime
-	zone                 *zone.Zone
-	objectID             uint32
-	sourceGeneration     uint64
-	entryAt              time.Time
-	deathEndsAt          time.Time
-	until                time.Time
-	timestamp            uint64
-	timestampAt          time.Time
-	state                campaignCorruptorState
-	entryBoss            zonenpc.Snapshot
-	prefixPackets        [][]byte
-	focus                raknet.Vector3
-	targets              []uint32
-	companions           []zonecompanion.Actor
-	lease                zonenpc.CinematicLease
-	modifiers            []zoneeffect.Modifier
-	stopContext          func() bool
-	isRetired            bool
-	isComplete           bool
-	isResuming           bool
-	isAdmitted           bool
-	isArmed              bool
-	isPrefixPrepared     bool
-	isDeathPresented     bool
-	isCorpseRetired      bool
-	isPortalGateComplete bool
-	portalObjectIDs      []uint32
-	continuation         corruptorPhaseContinuation
-	continuationIdentity gameplayProducerIdentity
+	runtime               campaignNPCActionRuntime
+	zone                  *zone.Zone
+	objectID              uint32
+	sourceGeneration      uint64
+	entryAt               time.Time
+	deathEndsAt           time.Time
+	until                 time.Time
+	timestamp             uint64
+	timestampAt           time.Time
+	state                 campaignCorruptorState
+	entryBoss             zonenpc.Snapshot
+	prefixPackets         [][]byte
+	focus                 raknet.Vector3
+	targets               []uint32
+	companions            []zonecompanion.Actor
+	lease                 zonenpc.CinematicLease
+	modifiers             []zoneeffect.Modifier
+	stopContext           func() bool
+	isRetired             bool
+	isComplete            bool
+	isResuming            bool
+	isAdmitted            bool
+	isArmed               bool
+	isPrefixPrepared      bool
+	isDeathPresented      bool
+	isCorpseRetired       bool
+	isPortalGateComplete  bool
+	isDirectEntry         bool
+	isDirectIdleStarted   bool
+	isDirectSetupComplete bool
+	directSetup           corruptorDirectSetup
+	portalObjectIDs       []uint32
+	continuation          corruptorPhaseContinuation
+	continuationIdentity  gameplayProducerIdentity
 }
 
 func (e *corruptorCinematicRun) key() string {
@@ -191,6 +195,9 @@ func (e *corruptorCinematicRun) sourceTimestamp(at time.Time) uint64 {
 }
 
 func (e *corruptorCinematicRun) prepareEntryPackets() ([][]byte, error) {
+	if e.isDirectEntry {
+		return e.prepareDirectEntryPackets()
+	}
 	portalObjectIDs := make([]uint32, 0, len(e.portalObjectIDs))
 	for _, objectID := range e.portalObjectIDs {
 		portal, isFound := e.zone.NPCs().NPC(objectID)
@@ -244,12 +251,14 @@ func (e *corruptorCinematicRun) admitLocked() ([][]byte, error) {
 	if e.runtime.now().Before(e.deathEndsAt) {
 		return e.presentStageOneDeathLocked(source)
 	}
-	isReady, err := e.waitForPortalsLocked()
-	if err != nil {
-		return nil, fmt.Errorf("portalGate: %w", err)
-	}
-	if !isReady {
-		return nil, nil
+	if !e.isDirectEntry {
+		isReady, err := e.waitForPortalsLocked()
+		if err != nil {
+			return nil, fmt.Errorf("portalGate: %w", err)
+		}
+		if !isReady {
+			return nil, nil
+		}
 	}
 	if !e.isPrefixPrepared {
 		packets, err := e.prepareEntryPackets()
@@ -624,6 +633,9 @@ func (e *corruptorCinematicRun) finish() {
 		member.campaignCorruptorStates = make(map[uint32]campaignCorruptorState)
 	}
 	state := e.state
+	if e.isDirectEntry {
+		state = e.directStateLocked()
+	}
 	if e.continuation.isPrepared {
 		state = e.latestContinuationStateLocked()
 		e.continuation.state = state
@@ -646,6 +658,9 @@ func (e *corruptorCinematicRun) finish() {
 	}
 	member.campaignCorruptorStates[e.objectID] = state
 	e.runtime.registry.sessions[sessionKey] = member
+	if e.isDirectEntry && e.deferDirectPassiveLocked(sessionKey, member, boss) {
+		return
+	}
 	e.isResuming = true
 	identity := gameplayProducerIdentityFromSession(sessionKey, member, true)
 	if e.continuationIdentity != identity {
