@@ -1423,8 +1423,19 @@ func (s campaignCrystalPickupStep) produce() ([][]byte, error) {
 			*s.pendingInventory,
 		)
 		if err == nil {
+			previewSession := peerSession
+			previewSession.setCrystalInventory(*s.pendingInventory)
+			resourcePackets, resourceErr := previewSession.marshalCrystalResources()
+			if resourceErr != nil {
+				err = fmt.Errorf("crystalResources: %w", resourceErr)
+			} else {
+				packet = append(packet, resourcePackets...)
+				worldPackets = append(worldPackets, resourcePackets...)
+			}
+		}
+		if err == nil {
 			// Deletion and player-indexed inventory/bonus state are shared.
-			// The final CrystalAcquired packet has no player selector and must
+			// The CrystalAcquired packet has no player selector and must
 			// remain local to the collecting player's HUD.
 			worldPackets = append(worldPackets, packet[:3]...)
 			err = peerSession.zone.SetCrystalInventory(

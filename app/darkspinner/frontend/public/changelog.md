@@ -2,6 +2,11 @@
 
 ### 2026-10-29
 
+- [#144](https://github.com/darkspinnet/darkspin/issues/144) Restore passive Cryos geyser hole scenery without reintroducing damageable health.
+- [#144](https://github.com/darkspinnet/darkspin/issues/144) Retire Voltroid discharge beams at their authored release boundary and on death instead of leaving untracked looping beams.
+- [#144](https://github.com/darkspinnet/darkspin/issues/144) Use authored health catalyst scaling and refresh native squad health and power capacities after catalyst pickup, rearrangement and removal.
+- [#144](https://github.com/darkspinnet/darkspin/issues/144) Correct Mechanoid suppression from a 10-unit generic silence to its authored 2-unit aura, modifier and refresh timing.
+- [#144](https://github.com/darkspinnet/darkspin/issues/144) Extend Syndrome Shift to cleanse and transfer Nomad slow debuffs with their captured duration and speed effects.
 - Correct Corruptor's first-stage portal snapshot and polling so second-stage entry honors the corpse, portal-clear and exit waits.
 - Restore Corruptor's final death job, timed minion immobilization and ordered cleanup, verified with matching co-op actor packets.
 - Restore all three directly spawned Corruptor second-stage variants' authored entrance and five-phase attacks, including Twin Laser, with matching co-op delivery.

@@ -318,6 +318,12 @@ func (i CrystalInventory) Attributes() map[int]float32 {
 func fixedCrystalAttribute(slot CrystalSlot) (int, float32, bool) {
 	rarity := min(max(slot.Rarity, int32(0)), int32(2))
 	switch slot.CrystalType {
+	case 14:
+		// Build 103 HealthCrystal (chunk 80) divides GetCrystalPoints
+		// (chunk 827) by the rarity coefficient, then floors the result.
+		points := 25 * math.Pow(float64(float32(1.0333)), float64(slot.CrystalLevel))
+		divisor := [...]float32{1.25, 0.67, 0.42}[rarity]
+		return 4, float32(math.Floor(points / float64(divisor))), true
 	case 0:
 		return 37, [...]float32{0.06, 0.12, 0.18}[rarity], true
 	case 1:

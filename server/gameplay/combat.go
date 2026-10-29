@@ -4869,9 +4869,8 @@ func (e campaignNPCAttackSchedule) hit() ([][]byte, error) {
 		}
 		return e.fail("enemyAttackPlan", err)
 	}
-	var beamPacket []byte
 	if currentPlan.Profile.AbilityName == "CitadelDischarge" {
-		beamPacket, err = npcraknet.BeamEffect(currentPlan)
+		err = runtime.startVoltroidDischargeBeamLocked(&current, req.sessionKey, currentPlan)
 		if err != nil {
 			runtime.registry.mutex.Unlock()
 			return e.fail("dischargeBeam", err)
@@ -4898,9 +4897,6 @@ func (e campaignNPCAttackSchedule) hit() ([][]byte, error) {
 	}
 	if !isApplied {
 		runtime.registry.mutex.Unlock()
-		if beamPacket != nil {
-			packets = append(packets, beamPacket)
-		}
 		if impactPacket != nil {
 			packets = append(packets, impactPacket)
 		}
@@ -4935,9 +4931,6 @@ func (e campaignNPCAttackSchedule) hit() ([][]byte, error) {
 	}
 	if impactPacket != nil {
 		packets = append([][]byte{impactPacket}, packets...)
-	}
-	if beamPacket != nil {
-		packets = append([][]byte{beamPacket}, packets...)
 	}
 	if isApplied && campaignDifficultyNounFamily(currentNPC.Plan.NounName) ==
 		"cryosbasicmelee" {

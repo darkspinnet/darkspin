@@ -1,6 +1,7 @@
 package gameplay
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -18,6 +19,81 @@ const (
 type campaignVoltroidActiveBeam struct {
 	targetID uint32
 	effects  *channelEffects
+}
+
+type voltroidDischargeBeamCleanup struct {
+	registry *gameplaySessionRegistry
+	objectID uint32
+	effects  *channelEffects
+}
+
+func (e voltroidDischargeBeamCleanup) retire() {
+	e.registry.mutex.Lock()
+	defer e.registry.mutex.Unlock()
+	e.effects.Retire()
+	for sessionKey, member := range e.registry.sessions {
+		beam, isFound := member.campaignNPCVoltroidBeams[e.objectID]
+		if isFound && beam.effects == e.effects {
+			delete(member.campaignNPCVoltroidBeams, e.objectID)
+			e.registry.sessions[sessionKey] = member
+		}
+	}
+	e.registry.commitChannelRemovalsLocked()
+}
+
+// Build 103's instant-cast template adds the channel at its hit and removes
+// that exact attachment on Deactivate after timetorelease. A chained event
+// has no removal identity and leaves the authored beam looping indefinitely.
+func (e campaignNPCActionRuntime) startVoltroidDischargeBeamLocked(
+	member *gameplayPeerSession, sessionKey string, plan zonenpc.AttackPlan,
+) error {
+	if e.timer == nil {
+		return errors.New("Voltroid discharge timer unavailable")
+	}
+	member.retireVoltroidBeamsForObject(plan.SourceObjectID)
+	e.registry.sessions[sessionKey] = *member
+	e.registry.commitChannelRemovalsLocked()
+	*member = e.registry.sessions[sessionKey]
+	effects, err := e.registry.allocateChannelEffectsLocked(member.zone, e.effectPool, []uint32{plan.SourceObjectID})
+	if err != nil {
+		return fmt.Errorf("dischargeSlot: %w", err)
+	}
+	slots := effects.Slots()
+	packet, err := npcraknet.VoltroidEffect(plan.SourceObjectID, plan.TargetObjectID,
+		slots[0].slot, plan.Profile.TrailEffectName, false)
+	if err != nil {
+		effects.Retire()
+		e.registry.commitChannelRemovalsLocked()
+		return fmt.Errorf("dischargeBeam: %w", err)
+	}
+	cleanup := voltroidDischargeBeamCleanup{registry: e.registry, objectID: plan.SourceObjectID, effects: effects}
+	cancel, err := e.timer.Schedule(max(time.Duration(0), plan.Profile.ReleaseDelay-plan.Profile.HitDelay), cleanup.retire)
+	if err != nil || cancel == nil {
+		if cancel != nil {
+			cancel()
+		}
+		effects.Retire()
+		e.registry.commitChannelRemovalsLocked()
+		if err != nil {
+			return fmt.Errorf("dischargeExpiry: %w", err)
+		}
+		return errors.New("Voltroid discharge cancellation unavailable")
+	}
+	if member.campaignNPCVoltroidBeams == nil {
+		member.campaignNPCVoltroidBeams = make(map[uint32]campaignVoltroidActiveBeam)
+	}
+	member.campaignNPCVoltroidBeams[plan.SourceObjectID] = campaignVoltroidActiveBeam{targetID: plan.TargetObjectID, effects: effects}
+	e.registry.sessions[sessionKey] = *member
+	err = e.registry.publishChannelEffectsLocked(effects, [][]byte{packet})
+	*member = e.registry.sessions[sessionKey]
+	if err != nil {
+		cancel()
+		member.retireVoltroidBeamsForObject(plan.SourceObjectID)
+		e.registry.sessions[sessionKey] = *member
+		e.registry.commitChannelRemovalsLocked()
+		return fmt.Errorf("dischargePublish: %w", err)
+	}
+	return nil
 }
 
 func (e *gameplayPeerSession) retireVoltroidBeamsForObject(objectID uint32) {

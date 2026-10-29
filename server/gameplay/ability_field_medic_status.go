@@ -68,7 +68,7 @@ func clearFieldMedicHeroStatus(
 	case util.HashID("StalkerShock"):
 		peerSession.enemyStunExpiresAt = time.Time{}
 		peerSession.enemyStunTargetObjectID = 0
-	case util.HashID("SilenceModifier"):
+	case util.HashID("SilenceModifier"), util.HashID("CitadelSpecialTwo_SilenceModifier"):
 		peerSession.enemySilenceExpiresAt = time.Time{}
 	case util.HashID("EntangleModifier"), util.HashID("VerdanthBasicRootmobModifier"):
 		peerSession.enemyRootExpiresAt = time.Time{}
@@ -80,22 +80,32 @@ func isFieldMedicStatusSupported(guid uint32) bool {
 	return guid == util.HashID("SleepModifier") ||
 		guid == util.HashID("StalkerShock") ||
 		guid == util.HashID("SilenceModifier") ||
+		guid == util.HashID("CitadelSpecialTwo_SilenceModifier") ||
 		guid == util.HashID("EntangleModifier") ||
-		guid == util.HashID("VerdanthBasicRootmobModifier")
+		guid == util.HashID("VerdanthBasicRootmobModifier") ||
+		guid == util.HashID("NomadSnipe_SlowDebuff")
 }
 
 func applyFieldMedicNPCStatus(
-	npc *zonenpc.Session, objectID uint32, guid uint32, expiresAt time.Time,
+	npc *zonenpc.Session, objectID uint32, modifier zoneeffect.Modifier, expiresAt time.Time,
 ) error {
-	switch guid {
+	switch modifier.GUID {
 	case util.HashID("SleepModifier"):
 		return npc.ApplySleep(objectID, expiresAt)
 	case util.HashID("StalkerShock"):
 		return npc.ApplyStun(objectID, expiresAt)
-	case util.HashID("SilenceModifier"):
+	case util.HashID("SilenceModifier"), util.HashID("CitadelSpecialTwo_SilenceModifier"):
 		return npc.ApplySilence(objectID, expiresAt)
 	case util.HashID("EntangleModifier"), util.HashID("VerdanthBasicRootmobModifier"):
 		return npc.ApplyRoot(objectID, expiresAt)
+	case util.HashID("NomadSnipe_SlowDebuff"):
+		err := npc.ApplySlow(objectID, expiresAt,
+			max(float32(0.05), 1+modifier.MovementSpeedBuff),
+			max(float32(0.05), 1+modifier.AttackSpeed))
+		if err != nil {
+			return fmt.Errorf("fieldMedicSlow: %w", err)
+		}
+		return nil
 	default:
 		return errors.New("unsupported Field Medic status")
 	}
@@ -112,11 +122,25 @@ func clearFieldMedicNPCStatus(
 		npc.ClearSleep(objectID, expiresAt)
 	case util.HashID("StalkerShock"):
 		npc.ClearStun(objectID, expiresAt)
-	case util.HashID("SilenceModifier"):
+	case util.HashID("SilenceModifier"), util.HashID("CitadelSpecialTwo_SilenceModifier"):
 		npc.ClearSilence(objectID, expiresAt)
 	case util.HashID("EntangleModifier"), util.HashID("VerdanthBasicRootmobModifier"):
 		npc.ClearRoot(objectID, expiresAt)
+	case util.HashID("NomadSnipe_SlowDebuff"):
+		npc.ClearSlow(objectID, expiresAt)
 	}
+}
+
+func fieldMedicSlowAttributes(peerSession gameplayPeerSession, modifier zoneeffect.Modifier, at time.Time) ([]byte, error) {
+	if modifier.GUID != util.HashID("NomadSnipe_SlowDebuff") {
+		return nil, nil
+	}
+	movementScale, attackScale := peerSession.zone.NPCs().SlowProfile(modifier.TargetObjectID, at)
+	packet, err := marshalCampaignNPCSlowAttributes(modifier.TargetObjectID, attackScale-1, movementScale-1)
+	if err != nil {
+		return nil, fmt.Errorf("fieldMedicSlowAttributes: %w", err)
+	}
+	return packet, nil
 }
 
 func fieldMedicEffectPacket(effectName string, objectID uint32) ([]byte, error) {

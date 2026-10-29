@@ -78,8 +78,8 @@ func (r campaignNPCActionRuntime) applyCampaignNPCSilence(
 	isRangedSilence := profile.ModifierName ==
 		"NocturnaBasicRanged_SilenceModifier" &&
 		profile.ModifierDuration == 2*time.Second
-	isSuppressionAura := profile.ModifierName == "SilenceModifier" &&
-		profile.ModifierDuration == time.Second
+	isSuppressionAura := profile.ModifierName == "CitadelSpecialTwo_SilenceModifier" &&
+		profile.ModifierDuration == 500*time.Millisecond
 	if sessionKey == "" || generation == 0 || plan.SourceObjectID == 0 ||
 		plan.TargetObjectID == 0 || (!isRangedSilence && !isSuppressionAura) {
 		return nil, errors.New("enemy silence request invalid")

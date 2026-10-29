@@ -49,6 +49,9 @@ func isServerSceneryNoun(nounName string) bool {
 	// component or native client-owned placement override.
 	switch strings.ToLower(nounName) {
 	case "dest_citadel_plasma_pool.noun",
+		// The network-owned CryosGeyserPassive prefab has no combatant.
+		// Its hole still needs a create after removal from fixture spawning.
+		"dest_prefab_cryos_ice_crack2.noun",
 		"phys_nocturna2_lvl2_herotree_yellow_1.noun",
 		"phys_design_object_block_1x1.noun",
 		"phys_design_object_block_3x3.noun",

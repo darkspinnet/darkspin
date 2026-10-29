@@ -716,7 +716,11 @@ func marshalGameplayCrystalState(
 	if err != nil {
 		return nil, fmt.Errorf("bonuses: %w", err)
 	}
-	return [][]byte{inventoryPacket, bonusPacket}, nil
+	resourcePackets, err := peerSession.marshalCrystalResources()
+	if err != nil {
+		return nil, fmt.Errorf("resources: %w", err)
+	}
+	return append([][]byte{inventoryPacket, bonusPacket}, resourcePackets...), nil
 }
 
 func marshalDungeonReconnectState() ([]byte, error) {
