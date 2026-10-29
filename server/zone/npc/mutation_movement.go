@@ -139,9 +139,7 @@ func mutationApproachSpeed(actor Snapshot, at time.Time) (float32, float32, erro
 	if at.Before(actor.status.slowExpiresAt) {
 		scale = max(float32(0.05), actor.status.slowMovementScale)
 	}
-	if at.Before(actor.status.areaShiftExpiresAt) {
-		scale *= 0.5
-	}
+	scale *= areaShiftMovementScale(actor, at)
 	return speed * max(float32(0.05), scale), bonus, nil
 }
 
@@ -275,9 +273,7 @@ func (e *Session) advanceMutationMovementLocked(source *Snapshot, req MutationMo
 	if req.At.Before(actor.status.slowExpiresAt) {
 		slowScale = max(float32(0.05), actor.status.slowMovementScale)
 	}
-	if req.At.Before(actor.status.areaShiftExpiresAt) {
-		slowScale *= 0.5
-	}
+	slowScale *= areaShiftMovementScale(actor, req.At)
 	speed *= max(float32(0.05), slowScale)
 	elapsed := req.At.Sub(state.UpdatedAt)
 	if elapsed > 0 && speed > 0 && actor.Plan.Position != state.Destination {

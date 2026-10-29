@@ -13,7 +13,8 @@ const (
 	nounModifierGeneration   = uint16(0xfffe)
 	nounAffixGenerationStart = nounModifierGeneration - game.MaxCampaignNPCAffixCount
 	nounSwiftGeneration      = nounAffixGenerationStart - 1
-	nounCaptainGeneration    = nounSwiftGeneration - 9
+	nounAuraCount            = 9
+	nounCaptainGeneration    = nounSwiftGeneration - nounAuraCount - 1
 )
 
 type modifierSlot struct {
@@ -83,7 +84,7 @@ func NounSwiftModifierInstanceID(objectID uint32) uint32 {
 // NounAuraModifierInstanceID reserves one stable handle per recipient and aura
 // child, below the existing Swift/affix handles and outside pooled lifetimes.
 func NounAuraModifierInstanceID(objectID uint32, auraIndex int) (uint32, error) {
-	if auraIndex < 0 || auraIndex >= 8 {
+	if auraIndex < 0 || auraIndex >= nounAuraCount {
 		return 0, errors.New("noun aura index invalid")
 	}
 	generation := nounSwiftGeneration - 1 - uint16(auraIndex)

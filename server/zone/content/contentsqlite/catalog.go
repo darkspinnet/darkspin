@@ -1411,6 +1411,13 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 	if sentryDroneLaser.Kind != sim.AbilityKindProjectile {
 		return zonecontent.Programs{}, fmt.Errorf("sentryDroneLaserKind: %s", sentryDroneLaser.Kind)
 	}
+	nomadDroneLaser, err := loadLuaAbilityDefinition(ctx, store, "NomadDroneLaser")
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("nomadDroneLaser: %w", err)
+	}
+	if nomadDroneLaser.Kind != sim.AbilityKindProjectile {
+		return zonecontent.Programs{}, fmt.Errorf("nomadDroneLaserKind: %s", nomadDroneLaser.Kind)
+	}
 	fireTempestPetBasic, err := loadLuaAbilityDefinition(ctx, store, "Fireball")
 	if err != nil {
 		return zonecontent.Programs{}, fmt.Errorf("fireTempestPetBasic: %w", err)
@@ -1752,6 +1759,7 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		SupportHealerPassive:       supportHealerPassiveDefinition,
 		SupportHealerPetBasic:      supportHealerPetBasic,
 		SentryDroneLaser:           sentryDroneLaser,
+		NomadDroneLaser:            nomadDroneLaser,
 		FireTempestPetBasic:        fireTempestPetBasic,
 		BeastPetBasic:              beastPetBasic,
 		PlasmaSentinelPetBasic:     plasmaSentinelPetBasic,

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/sim"
@@ -25,6 +26,9 @@ func ProjectDirector(
 		)
 	}
 	partyCoefficient := float32(participantCount - 1)
+	rawProfilesByNoun := director.NPCProfilesByNoun
+	director.OwnedSummonProfilesByNoun = make(map[string]game.CampaignNPCProfile, len(rawProfilesByNoun))
+	director.FixtureProfilesByNoun = make(map[string]game.CampaignNPCProfile, len(rawProfilesByNoun))
 	director.Pools = slices.Clone(director.Pools)
 	director.StandaloneBossEntries = slices.Clone(director.StandaloneBossEntries)
 	profilesByNoun := make(
@@ -61,6 +65,7 @@ func ProjectDirector(
 				)
 			}
 			profile.HitPoint = hitPoint
+			profile.BaseHitPoint = hitPoint
 			profile.DifficultyDamageMultiplier = damageMultiplier
 			director.Pools[poolIndex].Entries[entryIndex].NPCProfile = profile
 		}
@@ -88,6 +93,7 @@ func ProjectDirector(
 			)
 		}
 		profile.HitPoint = hitPoint
+		profile.BaseHitPoint = hitPoint
 		profile.DifficultyDamageMultiplier = damageMultiplier
 		director.StandaloneBossEntries[entryIndex].NPCProfile = profile
 	}
@@ -113,8 +119,37 @@ func ProjectDirector(
 			)
 		}
 		profile.HitPoint = hitPoint
+		profile.BaseHitPoint = hitPoint
 		profile.DifficultyDamageMultiplier = damageMultiplier
 		director.NPCProfilesByNoun[nounName] = profile
+	}
+	for nounName, rawProfile := range rawProfilesByNoun {
+		if !rawProfile.IsKnown || rawProfile.HitPoint <= 0 {
+			continue
+		}
+		projectedProfile := director.NPCProfilesByNoun[nounName]
+		ownedHealth, ownedErr := projectRoleHealth(rawProfile, difficulty, participantCount, tuning, director.EnemyPopulationRules.Resolved().OwnedSummonHealthScaling)
+		if ownedErr != nil {
+			return game.CampaignDirector{}, fmt.Errorf("ownedHealth[%s]: %w", nounName, ownedErr)
+		}
+		fixtureHealth, fixtureErr := projectRoleHealth(rawProfile, difficulty, participantCount, tuning, director.EnemyPopulationRules.Resolved().FixtureHealthScaling)
+		if fixtureErr != nil {
+			return game.CampaignDirector{}, fmt.Errorf("fixtureHealth[%s]: %w", nounName, fixtureErr)
+		}
+		ownedProfile, fixtureProfile := projectedProfile, rawProfile
+		ownedProfile.HitPoint = ownedHealth
+		ownedProfile.BaseHitPoint = ownedHealth
+		fixtureProfile.HitPoint = fixtureHealth
+		fixtureProfile.BaseHitPoint = fixtureHealth
+		director.OwnedSummonProfilesByNoun[nounName] = ownedProfile
+		director.FixtureProfilesByNoun[nounName] = fixtureProfile
+	}
+	for index := range director.OrdinaryAgentEntries {
+		entry := &director.OrdinaryAgentEntries[index]
+		profile, isFound := director.NPCProfilesByNoun[strings.ToLower(entry.NounName)]
+		if isFound {
+			entry.NPCProfile = profile
+		}
 	}
 	return director, nil
 }

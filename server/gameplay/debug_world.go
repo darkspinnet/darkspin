@@ -10,6 +10,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/scenario"
+	zoneboss "github.com/darkspinnet/darkspin/server/zone/boss"
 )
 
 type scenarioWorldStateProvider interface {
@@ -94,6 +95,21 @@ func (e *gameplaySessionRegistry) ScenarioWorldState(ctx context.Context, userID
 		return result, fmt.Errorf("worldZone: %w", err)
 	}
 	world.Campaign = e.scenarioCampaignMembers(*matched, world.CapturedAt)
+	if _, isNamedBoss := zoneboss.NamedBossNounForDirector(matched.zone.DirectorDefinition(), matched.binding.ChainLevelIndex); isNamedBoss {
+		for _, markerSet := range matched.zone.DirectorDefinition().MarkerSets {
+			for _, trigger := range markerSet.Triggers {
+				for _, event := range trigger.Events {
+					if event.CallbackName != zoneboss.GenericCallback || event.TriggerRadius <= 0 {
+						continue
+					}
+					world.BossTriggers = append(world.BossTriggers, scenario.WorldBossTrigger{
+						MarkerID: trigger.MarkerID, MarkerSetName: markerSet.Name,
+						Position: scenario.WorldPosition(trigger.Position), Radius: event.TriggerRadius,
+					})
+				}
+			}
+		}
+	}
 	if world.Hero != nil && (world.Hero.ObjectID != matched.deployedObjectID || world.Hero.Index != matched.deployedCreatureIndex) {
 		result.UnavailableReason = "zone hero does not match current deployed gameplay object"
 		return result, nil

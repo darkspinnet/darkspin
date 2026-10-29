@@ -997,11 +997,15 @@ func marshalGameplayCompanions(
 			return nil, fmt.Errorf("create[%d]: %w", index, err)
 		}
 		movementSpeed := float32(zonecompanion.CompatibilityMovementSpeed)
+		movementBuff, isMovementFound := peerSession.zone.Companion().MovementSpeedBuff(companion.ObjectID, at)
+		if !isMovementFound {
+			return nil, fmt.Errorf("companionMovement[%d]: actor missing", index)
+		}
 		if companion.MovementSpeed > 0 {
 			movementSpeed = companion.MovementSpeed
 		}
 		if motion.IsFollowing {
-			movementSpeed = motion.MovementSpeed
+			movementSpeed = motion.MovementSpeed / (1 + movementBuff)
 			if movementSpeed <= 0 || math.IsNaN(float64(movementSpeed)) || math.IsInf(float64(movementSpeed), 0) {
 				return nil, fmt.Errorf("companionSpeed[%d]: invalid retained motion", index)
 			}
@@ -1012,7 +1016,7 @@ func marshalGameplayCompanions(
 				4:   companion.MaximumHitPoint,
 				11:  movementSpeed,
 				12:  movementSpeed,
-				48:  0,
+				48:  movementBuff,
 				113: companion.BodyScale,
 			},
 		})

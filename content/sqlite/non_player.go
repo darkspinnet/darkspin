@@ -24,6 +24,7 @@ const classAttributeSize = 88
 const NonPlayerAffixLimit = 6
 
 type nonPlayerClassAsset struct {
+	classAttributePayload  []byte
 	instanceID             uint32
 	nounName               string
 	attributeName          string
@@ -76,7 +77,7 @@ func writeNonPlayerClasses(ctx context.Context, transaction *sql.Tx, installPath
 	}
 	statement, err := transaction.PrepareContext(ctx, `
 		INSERT INTO non_player_class (
-			content_source_resource_id, instance_id, noun_name, class_attribute_resource_id,
+			content_source_resource_id, instance_id, noun_name, class_attribute_resource_id, class_attribute_base,
 			display_name, display_name_locale_key, description, description_locale_key,
 			challenge_value, npc_rank, npc_type, creature_type,
 			is_targetable, is_player_pet, player_count_health_scale,
@@ -89,7 +90,7 @@ func writeNonPlayerClasses(ctx context.Context, transaction *sql.Tx, installPath
 			SELECT attribute.id FROM content_source_resource AS attribute
 			WHERE attribute.content_source_package_id=content_source_resource.content_source_package_id
 			  AND attribute.type_id=? AND attribute.group_id=? AND attribute.instance_id=?
-		), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		FROM content_source_resource
 		WHERE content_source_package_id=(
 			SELECT id FROM content_source_package WHERE package_name='AssetData_Binary.package'
@@ -164,6 +165,7 @@ func writeNonPlayerClasses(ctx context.Context, transaction *sql.Tx, installPath
 		if !isAttributeFound {
 			return fmt.Errorf("attributeMissing[%d]: %s", ordinal, class.attributeName)
 		}
+		class.classAttributePayload = attributes.classAttributePayload
 		class.hitPoint = attributes.hitPoint
 		class.powerPoint = attributes.powerPoint
 		class.strength = attributes.strength
@@ -177,7 +179,7 @@ func writeNonPlayerClasses(ctx context.Context, transaction *sql.Tx, installPath
 		result, insertErr := statement.ExecContext(
 			ctx, class.nounName, int64(combatAttributeAssetType),
 			int64(nonPlayerClassAssetGroup), int64(attributeInstanceID),
-			class.displayName, class.displayNameLocaleKey,
+			class.classAttributePayload, class.displayName, class.displayNameLocaleKey,
 			class.description, class.descriptionLocaleKey,
 			class.challengeValue, class.npcRank, class.npcType, class.creatureType, class.isTargetable,
 			class.isPlayerPet, class.playerCountHealthScale,
@@ -412,8 +414,15 @@ func decodeClassAttributes(entry dbpf.Entry, payload []byte) (nonPlayerClassAsse
 		offset := index * 4
 		return math.Float32frombits(binary.LittleEndian.Uint32(payload[offset : offset+4]))
 	}
+	for index := 0; index < 22; index++ {
+		scalar := field(index)
+		if math.IsNaN(float64(scalar)) || math.IsInf(float64(scalar), 0) {
+			return nonPlayerClassAsset{}, fmt.Errorf("attributeBase[%d]: not finite", index)
+		}
+	}
 	asset := nonPlayerClassAsset{
-		instanceID: uint32(entry.Instance), hitPoint: field(0), powerPoint: field(1),
+		classAttributePayload: append([]byte(nil), payload...),
+		instanceID:            uint32(entry.Instance), hitPoint: field(0), powerPoint: field(1),
 		strength: field(2), dexterity: field(3), mind: field(4),
 		dodgeRating:       field(5) + field(3)*6,
 		resistRating:      field(7) + field(4)*6,

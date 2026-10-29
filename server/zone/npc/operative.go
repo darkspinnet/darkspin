@@ -53,5 +53,43 @@ func OperativeProfile(nounName string) (ActionProfile, bool) {
 
 func IsOperativeCage(modifierName string) bool {
 	return modifierName == "NomadCyberOne_CageModifier" ||
-		modifierName == "NomadSpacetimeAgent_CageModifier"
+		modifierName == "NomadSpacetimeAgent_CageModifier" || modifierName == "NocturnaSpecialHaunt_LockdownModifier" || modifierName == "LightningCage"
+}
+
+// SpacetimeBlinkProfile follows build-103 chunk445. Its low-health admission
+// belongs to the phase selector, independent of the long blink cooldown.
+func SpacetimeBlinkProfile(nounName string) (ActionProfile, bool) {
+	family := strings.TrimSuffix(strings.ToLower(nounName), ".noun")
+	rankIndex := 0
+	if strings.HasSuffix(family, "_2") {
+		rankIndex = 1
+		family = strings.TrimSuffix(family, "_2")
+	}
+	if strings.HasSuffix(family, "_3") {
+		rankIndex = 2
+		family = strings.TrimSuffix(family, "_3")
+	}
+	if family != "nomadspacetimeagent" {
+		return ActionProfile{}, false
+	}
+	return ActionProfile{Family: ActionMelee, AbilityName: "NomadSpacetimeAgent_Blink", AnimationName: "nomad_lieu_sp_2_blink_out", HitDelay: 1299999952 * time.Nanosecond, ReleaseDelay: 1299999952 * time.Nanosecond, Cooldown: 300 * time.Second, Range: [...]float32{15, 20, 25}[rankIndex], TeleportMinimumDistance: 10, TeleportNormalDistance: 13, TeleportMaximumDistance: 20, TeleportAnimationName: "nomad_lieu_sp_2_blink_in", TeleportAnimationDelay: 2329999983 * time.Nanosecond, IsFirstAggroDurationKnown: true}, true
+}
+
+// HauntLockdownProfile uses build-103 chunks365/351/383. The phase's
+// MostIsolatedEnemy and Closest are alternate admission conditions for one cast.
+func HauntLockdownProfile(nounName string) (ActionProfile, bool) {
+	family := strings.TrimSuffix(strings.ToLower(nounName), ".noun")
+	rankIndex := 0
+	if strings.HasSuffix(family, "_2") {
+		rankIndex = 1
+		family = strings.TrimSuffix(family, "_2")
+	}
+	if strings.HasSuffix(family, "_3") {
+		rankIndex = 2
+		family = strings.TrimSuffix(family, "_3")
+	}
+	if family != "nocturnaspecialhaunt" {
+		return ActionProfile{}, false
+	}
+	return ActionProfile{Family: ActionMelee, AbilityName: "NocturnaSpecialHauntLockdown", AnimationName: "nomad_lieu_su_1_attack1_start", LoopAnimationName: "nomad_lieu_su_1_attack1_loop", EndAnimationName: "nomad_lieu_su_1_attack1_end", Range: 0.5, MovementSpeed: 5, HitDelay: 300000011 * time.Nanosecond, ReleaseDelay: 2333333015 * time.Nanosecond, Cooldown: [...]time.Duration{12 * time.Second, 8 * time.Second, 4 * time.Second}[rankIndex], TickDuration: 1133332967 * time.Nanosecond, EndAnimationDelay: 566667020 * time.Nanosecond, MinimumDamage: 6, MaximumDamage: 10, DescriptorMask: 128, DamageType: 4, DamageSource: 1, ModifierName: "NocturnaSpecialHaunt_LockdownModifier", ModifierDuration: 0, MaximumChannelDistance: 8, Radius: 10, HealingCoefficient: 0, IsDamageProfileKnown: true, IsFirstAggroDurationKnown: true}, true
 }

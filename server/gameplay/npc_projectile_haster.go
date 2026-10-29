@@ -79,6 +79,7 @@ func (r campaignNPCActionRuntime) produceHasterProjectile(
 	if planErr != nil {
 		profile, isProfileFound := zonenpc.ActionProfileForNoun(enemy.Plan.NounName)
 		attackProfile := zonenpc.ZelemHasterAttackProfile()
+		attackProfile = zonenpc.ApplyAffixTiming(attackProfile, enemy.Plan)
 		if isProfileFound && profile.Family == zonenpc.ActionZelemHaster {
 			attackProfile.MovementSpeed = profile.MovementSpeed
 			attackProfile.NonCombatMovementSpeed = profile.NonCombatMovementSpeed

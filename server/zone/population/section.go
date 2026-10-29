@@ -13,7 +13,7 @@ import (
 // special bags. The bucket counts are archetype counts, not occupied markers.
 func selectSectionThemes(
 	buckets []game.CampaignSectionBucket, roster campaignPopulationTheme,
-	random *sim.SimulatorRandom,
+	random *sim.SimulatorRandom, directors ...game.CampaignDirector,
 ) (map[sim.DirectorRouteSection]campaignPopulationTheme, error) {
 	if random == nil {
 		return nil, errors.New("sectionRandom: nil")
@@ -24,6 +24,15 @@ func selectSectionThemes(
 	remainingBuckets := append([]game.CampaignSectionBucket(nil), buckets...)
 	minionBag := sectionRosterBag{nouns: roster.minionNouns}
 	specialBag := sectionRosterBag{nouns: roster.lieutenantNouns}
+	if len(directors) > 0 && directors[0].EnemyPopulationRules.Resolved().RosterSelection == "local_and_external" {
+		director := directors[0]
+		minionBag.entries = PoolEntries(director, "minion")
+		specialBag.entries = PoolEntries(director, "special")
+		minionBag.isSourceWeighted = true
+		specialBag.isSourceWeighted = true
+		minionBag.externalWeightPercent = director.EnemyPopulationRules.ExternalRosterWeightPercent
+		specialBag.externalWeightPercent = minionBag.externalWeightPercent
+	}
 	themes := make(map[sim.DirectorRouteSection]campaignPopulationTheme, 3)
 	for _, section := range []sim.DirectorRouteSection{
 		sim.DirectorRouteSectionA, sim.DirectorRouteSectionB, sim.DirectorRouteSectionC,
@@ -50,8 +59,11 @@ func selectSectionThemes(
 }
 
 type sectionRosterBag struct {
-	nouns            []string
-	remainingIndexes []int
+	entries               []game.CampaignDirectorEntry
+	isSourceWeighted      bool
+	externalWeightPercent uint32
+	nouns                 []string
+	remainingIndexes      []int
 }
 
 func (e *sectionRosterBag) draw(count int, random *sim.SimulatorRandom) ([]string, error) {
@@ -68,7 +80,18 @@ func (e *sectionRosterBag) draw(count int, random *sim.SimulatorRandom) ([]strin
 				e.remainingIndexes = append(e.remainingIndexes, index)
 			}
 		}
-		bagIndex, err := random.Index(uint32(len(e.remainingIndexes)))
+		bagEntries := make([]game.CampaignDirectorEntry, 0, len(e.remainingIndexes))
+		for _, index := range e.remainingIndexes {
+			entry := game.CampaignDirectorEntry{NounName: e.nouns[index]}
+			for _, candidate := range e.entries {
+				if candidate.NounName == entry.NounName {
+					entry = candidate
+					break
+				}
+			}
+			bagEntries = append(bagEntries, entry)
+		}
+		bagIndex, err := game.RosterIndex(bagEntries, random, e.isSourceWeighted, e.externalWeightPercent)
 		if err != nil {
 			return nil, fmt.Errorf("archetypeRoll: %w", err)
 		}

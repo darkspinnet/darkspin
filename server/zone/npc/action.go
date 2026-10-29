@@ -38,13 +38,15 @@ const (
 type ActionProfile struct {
 	// IsRetainedVolumeDamage admits an already selected world-volume hit without
 	// requiring a current attack owner or treating it as damage over time.
-	IsRetainedVolumeDamage           bool
-	FirstAggroAbilityName            string
-	IsFirstAggroFacingSuppressed     bool
-	IsFacingSuppressed               bool
-	IsFacingPolicyKnown              bool
-	Family                           ActionFamily
-	AbilityName                      string
+	IsRetainedVolumeDamage       bool
+	FirstAggroAbilityName        string
+	IsFirstAggroFacingSuppressed bool
+	IsFacingSuppressed           bool
+	IsFacingPolicyKnown          bool
+	Family                       ActionFamily
+	AbilityName                  string
+	// The selected instance rank stays fixed through its scheduled callbacks.
+	AbilityRank                      int32
 	AnimationName                    string
 	NearAnimationName                string
 	FarAnimationName                 string
@@ -242,6 +244,11 @@ func PlanFirstAction(command FirstActionCommand) (FirstActionPlan, bool, error) 
 }
 
 func ActionProfileForPlan(plan SpawnPlan) (ActionProfile, bool) {
+	supportSpells := SupportSpells(plan)
+	if len(supportSpells) != 0 {
+		profile := supportSpells[0].Profile
+		return ApplyAffixTiming(authoredCombatSpeed(plan, IntroductionProfile(plan, profile)), plan), true
+	}
 	if plan.IsActionKnown {
 		profile := zelemSpecialTwoDecisionProfile(plan, plan.ActionProfile)
 		return ApplyAffixTiming(
@@ -416,11 +423,13 @@ func ZelemRangedShotProfile() ActionProfile {
 		ReleaseDelay: 1066667 * time.Microsecond, Cooldown: 5 * time.Second, Range: 12.5,
 		MovementSpeed: 5,
 		MinimumDamage: 2, MaximumDamage: 6, DamageCoefficient: 0.05,
-		ProjectileNoun:   "Ability_Fireball.Noun",
-		TrailEffectName:  "spacetime_shot_effect.ServerEventDef",
-		ImpactEffectName: "spacetime_bite.ServerEventDef",
-		MissEffectName:   "ineffective_common_small.ServerEventDef",
-		ProjectileSpeed:  8, ProjectileDistance: 30,
+		DescriptorMask: 1<<7 | 1<<13, DamageType: 1, DamageSource: 1,
+		IsDamageProfileKnown: true,
+		ProjectileNoun:       "Ability_Fireball.Noun",
+		TrailEffectName:      "spacetime_shot_effect.ServerEventDef",
+		ImpactEffectName:     "spacetime_bite.ServerEventDef",
+		MissEffectName:       "ineffective_common_small.ServerEventDef",
+		ProjectileSpeed:      8, ProjectileDistance: 30,
 		ProjectileOffset: game.Vec3{Z: 1},
 	}
 }
@@ -1325,7 +1334,7 @@ func NomadWithDroneShieldDuration(nounName string) (time.Duration, bool) {
 }
 
 func NomadDroneLaserProfile(definition sim.AbilityDefinition) (ActionProfile, error) {
-	if definition.Name != "SentryDroneLaser" ||
+	if definition.Name != "NomadDroneLaser" ||
 		definition.Kind != sim.AbilityKindProjectile || definition.Range <= 0 ||
 		definition.HitDelay <= 0 || definition.Cooldown <= 0 ||
 		definition.ProjectileNoun == "" || definition.Speed <= 0 ||
@@ -3668,6 +3677,18 @@ func ActionProfileFromAbility(
 }
 
 func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
+	additionalProfile, isAdditional := AdditionalKitProfile(nounName)
+	if isAdditional {
+		return additionalProfile, true
+	}
+	supportSpells := SupportSpells(SpawnPlan{NounName: nounName})
+	if len(supportSpells) != 0 {
+		return supportSpells[0].Profile, true
+	}
+	hauntProfile, isHauntFound := HauntLockdownProfile(nounName)
+	if isHauntFound {
+		return hauntProfile, true
+	}
 	operative, isOperative := OperativeProfile(nounName)
 	if isOperative {
 		return operative, true
@@ -3677,6 +3698,12 @@ func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
 		return fiendProfile, true
 	}
 	switch strings.ToLower(nounName) {
+	case "nomadpets.noun", "nomadpets_2.noun", "nomadpets_3.noun":
+		return NomadPetsMeleeProfile(), true
+	case "nomadfirepet.noun", "nomadfirepet_2.noun", "nomadfirepet_3.noun",
+		"nomadlightningpet.noun", "nomadlightningpet_2.noun", "nomadlightningpet_3.noun",
+		"nomadcyberone_droid.noun", "nomadcyberone_droid_2.noun", "nomadcyberone_droid_3.noun":
+		return AgentChildProfile(nounName, EffectiveNPCRank(SpawnPlan{NounName: nounName})), true
 	case "shadowboss.noun", "shadowboss_2.noun", "shadowboss_3.noun":
 		return NashiraShadowTossProfile(nounName)
 	case "cryosboss.noun", "cryosboss_2.noun", "cryosboss_3.noun":
@@ -4256,7 +4283,7 @@ func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
 			NonCombatMovementSpeed:    3,
 			IsFirstAggroDurationKnown: true,
 		}, true
-	case "zelembasicranged.noun":
+	case "zelembasicranged.noun", "zelembasicranged_2.noun", "zelembasicranged_3.noun":
 		return ActionProfile{
 			Family: ActionZelemRanged, AbilityName: "ZelemBasicRanged_Blink",
 			AnimationName: "zlm_minn_sp_1_blink_cast3",

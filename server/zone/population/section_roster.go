@@ -58,7 +58,7 @@ func loadSectionRosters(
 			buckets[index].SpecialCount = 0
 		}
 	}
-	themes, err := selectSectionThemes(buckets, roster, random)
+	themes, err := selectSectionThemes(buckets, roster, random, director)
 	if err != nil {
 		return nil, fmt.Errorf("rosterSections: %w", err)
 	}

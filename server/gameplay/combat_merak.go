@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 
+	zonedifficulty "github.com/darkspinnet/darkspin/server/zone/difficulty"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 	zoneprojection "github.com/darkspinnet/darkspin/server/zone/projection"
@@ -88,11 +89,14 @@ func (s *gameplayPeerSession) planCampaignMerakAdds(
 	}
 
 	director := s.zone.DirectorDefinition()
-	npcProfile, isProfileFound := director.NPCProfilesByNoun["cryosplasmaadd.noun"]
+	npcProfile, profileErr := zonedifficulty.ProjectOwnedSummon(director, campaignMerakAddNounName)
+	if profileErr != nil {
+		return nil, nil, fmt.Errorf("merakAddClass: %w", profileErr)
+	}
 	actionProfile, isActionFound := zonenpc.ActionProfileForNoun(
 		campaignMerakAddNounName,
 	)
-	if !isProfileFound || !npcProfile.IsKnown || !isActionFound {
+	if !isActionFound {
 		return nil, nil, errors.New("Merak add profile unavailable")
 	}
 	targetObjectID := merak.TargetObjectID

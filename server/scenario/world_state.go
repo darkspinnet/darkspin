@@ -35,6 +35,14 @@ type WorldState struct {
 	IsVictoryCommitted      bool
 	IsObjectiveComplete     bool
 	Boss                    *WorldBoss
+	BossTriggers            []WorldBossTrigger
+}
+
+type WorldBossTrigger struct {
+	MarkerID      uint32
+	MarkerSetName string
+	Position      WorldPosition
+	Radius        float32
 }
 
 type WorldCampaign struct {

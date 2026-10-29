@@ -112,6 +112,35 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 	objectID uint32, timestamp uint64, isPullAllowed bool,
 ) ([][]byte, error) {
 	isSilenced := r.isSilenced(sessionKey, generation, objectID)
+	supportPackets, isSupportHandled, supportErr := r.produceNPCSupport(packet, sessionKey, generation, objectID, timestamp)
+	if supportErr != nil {
+		return nil, fmt.Errorf("enemySupport: %w", supportErr)
+	}
+	if isSupportHandled {
+		return supportPackets, nil
+	}
+	if !isSilenced {
+		targetErr := r.selectHauntTarget(sessionKey, generation, objectID)
+		if targetErr != nil {
+			return nil, fmt.Errorf("hauntTarget: %w", targetErr)
+		}
+		petPackets, isPetHandled, petErr := r.produceAgentPetAction(packet, sessionKey, generation, objectID, timestamp)
+		if petErr != nil {
+			return nil, fmt.Errorf("agentPetAction: %w", petErr)
+		}
+		if isPetHandled {
+			return petPackets, nil
+		}
+	}
+	if !isSilenced {
+		blinkPackets, isBlinkHandled, blinkErr := r.produceSpacetimeBlinkIfReady(packet, sessionKey, generation, objectID, timestamp)
+		if blinkErr != nil {
+			return nil, fmt.Errorf("enemyBlink: %w", blinkErr)
+		}
+		if isBlinkHandled {
+			return blinkPackets, nil
+		}
+	}
 	if !isSilenced {
 		isDistracted, err := r.deferNoctBasicMeleeDogDistraction(
 			packet, sessionKey, generation, objectID, timestamp,

@@ -222,6 +222,11 @@ func validateScenarioNPCRequest(req scenario.NPCControlRequest, peer gameplayPee
 			actor.IsAIEnabled || actor.IsActionStarted {
 			return errors.New("NPC restore requires an idle AI-off actor and no other command fields")
 		}
+	case "defeat":
+		if req.IsAIEnabled != nil || req.Destination != nil || req.AbilityName != "" || req.TargetObjectID != 0 ||
+			actor.IsAIEnabled || actor.IsActionStarted || actor.IsDefeated {
+			return errors.New("NPC defeat requires a living idle AI-off actor and no other command fields")
+		}
 	case "retire":
 		if req.IsAIEnabled != nil || req.Destination != nil || req.AbilityName != "" || req.TargetObjectID != 0 || actor.IsAIEnabled {
 			return errors.New("NPC retire requires an AI-off actor and no other command fields")
@@ -254,7 +259,7 @@ func (e *gameplaySessionRegistry) refreshNPCControlLocked(requestID string, peer
 	if receipt.IsSettled || !receipt.IsAccepted {
 		return receipt
 	}
-	if receipt.Operation == "ability" && actor.IsSelfDetonationCompleted &&
+	if receipt.Operation == "ability" && actor.IsSelfDeathCompleted &&
 		receipt.ActionGeneration == actor.ActionGeneration {
 		receipt.State, receipt.IsCompleted, receipt.IsSettled = "completed", true, true
 	} else if actor.IsDefeated || actor.HitPoint <= 0 {

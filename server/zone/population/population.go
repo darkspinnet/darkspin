@@ -65,6 +65,7 @@ type CandidateSnapshot struct {
 }
 
 type Session struct {
+	populationRules          game.EnemyPopulationRules
 	mu                       sync.RWMutex
 	candidates               []candidate
 	insideStates             map[uint32]bool
@@ -288,6 +289,7 @@ func newSession(
 		groupChallengeMultiplier: multiplier,
 		mixedRandom:              &mixedGroupRandom{state: seed ^ 0x4d495845},
 		sectionRosters:           sectionRosters,
+		populationRules:          director.EnemyPopulationRules.Resolved(),
 		inputLoci:                inputLoci,
 		excludedLoci:             excludedLoci,
 		recipe:                   recipe,

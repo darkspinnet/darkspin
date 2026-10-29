@@ -334,6 +334,12 @@ type controlledHeroState struct {
 	enemyStunTargetObjectID       uint32
 	operativeCage                 *campaignNPCModifierRun
 	operativeChannels             map[uint32]*operativeCageState
+	agentBlinkReadiness           map[uint32]uint64
+	agentBlinkStates              map[uint32]*spacetimeBlinkStep
+	agentSupports                 map[uint32]*agentSupportState
+	droneFollows                  map[uint32]*campaignDroneFollowStep
+	npcSupportIdles               map[uint32]*campaignNPCSupportIdle
+	additionalKitMoves            map[uint32]*additionalKitMove
 	enemyRootExpiresAt            time.Time
 	enemyRootTargetObjectID       uint32
 	enemyControlPresentedObjectID uint32
@@ -667,6 +673,10 @@ type gameplayPeerSession struct {
 	campaignNashiraSplitObjectIDs        map[uint32][]uint32
 	campaignNashiraSplitPendingObjectIDs map[uint32]uint32
 	campaignNashiraPanicReadiness        map[uint32]uint64
+	campaignNashiraCurseReadiness        map[uint32]uint64
+	campaignNPCSupportReadiness          map[campaignNPCSupportKey]uint64
+	campaignMerakStormReadiness          map[uint32]uint64
+	campaignMerakStormRuns               map[uint32]*campaignMerakStormRun
 	campaignMerakPassiveStates           map[uint32]campaignMerakPassiveState
 }
 
@@ -1303,6 +1313,14 @@ func (s *gameplayPeerSession) stopCampaignNPCProjectiles() {
 	clear(s.campaignNashiraSplitObjectIDs)
 	clear(s.campaignNashiraSplitPendingObjectIDs)
 	clear(s.campaignNashiraPanicReadiness)
+	clear(s.campaignNashiraCurseReadiness)
+	clear(s.campaignNPCSupportReadiness)
+	clear(s.campaignMerakStormReadiness)
+	s.stopCampaignMerakStorms(0)
+	clear(s.agentBlinkReadiness)
+	clear(s.agentSupports)
+	clear(s.droneFollows)
+	s.clearNPCSupportIdles(0)
 	clear(s.campaignMerakPassiveStates)
 	for objectID, run := range s.campaignNPCShielderShields {
 		run.stop()
@@ -1717,6 +1735,21 @@ func (s *gameplayPeerSession) resetRetainedTransportState() {
 	s.retireArenaHitStatuses()
 	s.operativeCage = nil
 	s.operativeChannels = nil
+	passiveErr := s.retireAgentPassiveEffectsLocked(0)
+	if passiveErr != nil {
+		log.Printf("NPC passive reconnect cleanup failed: %v", passiveErr)
+	}
+	s.agentSupports = nil
+	s.droneFollows = nil
+	s.clearNPCSupportIdles(0)
+	blinkErr := s.retireSpacetimeBlinkLocked(0, 0)
+	if blinkErr != nil {
+		log.Printf("NPC blink reconnect cleanup failed: %v", blinkErr)
+	}
+	moveErr := s.retireAdditionalKitMovesLocked(0, 0)
+	if moveErr != nil {
+		log.Printf("NPC additional movement reconnect cleanup failed: %v", moveErr)
+	}
 	s.resetTeleporterSample()
 	s.resetPickupContacts()
 	s.resetAbilityRelease()

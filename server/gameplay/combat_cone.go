@@ -313,7 +313,7 @@ func (e campaignConeSchedule) hit() ([][]byte, error) {
 		packets = append(packets, beamPacket)
 	}
 	poisonPlans := make([]zonenpc.AttackPlan, 0)
-	shockPlans := make([]zonenpc.AttackPlan, 0)
+	timedModifierPlans := make([]zonenpc.AttackPlan, 0)
 	statDelta := sporenet.PlayerStatDelta{}
 	targets := peerSession.zone.LiveNPCTargets()
 	if isCryosBossChain {
@@ -458,8 +458,9 @@ func (e campaignConeSchedule) hit() ([][]byte, error) {
 		}
 		packets = append(packets, hitPackets...)
 		statDelta.PVEDamageTaken += targetStatDelta.PVEDamageTaken
-		if isApplied && isCryosBossChain {
-			shockPlans = append(shockPlans, plan)
+		if isApplied && (isCryosBossChain || plan.Profile.ModifierName != "" &&
+			plan.Profile.ModifierDuration > 0 && plan.Profile.MovementSpeedBuff < 0) {
+			timedModifierPlans = append(timedModifierPlans, plan)
 		}
 		if isApplied && plan.Profile.ModifierName == "Poison" &&
 			plan.Profile.ModifierChance > 0 {
@@ -505,13 +506,13 @@ func (e campaignConeSchedule) hit() ([][]byte, error) {
 		}
 		packets = append(packets, modifierPackets...)
 	}
-	for _, plan := range shockPlans {
+	for _, plan := range timedModifierPlans {
 		modifierPackets, modifierErr := e.runtime.applyCampaignNPCTimedModifier(
 			e.packet, e.sessionKey, e.generation, plan,
 			e.timestamp+uint64(e.plan.Profile.HitDelay/time.Millisecond),
 		)
 		if modifierErr != nil {
-			return nil, fmt.Errorf("enemyConeShock: %w", modifierErr)
+			return nil, fmt.Errorf("enemyConeModifier: %w", modifierErr)
 		}
 		packets = append(packets, modifierPackets...)
 	}
@@ -580,6 +581,13 @@ func (e campaignConeSchedule) next() ([][]byte, error) {
 		e.objectID, e.actionGeneration) {
 		return nil, nil
 	}
+	additionalPackets, isAdditionalHandled, additionalErr := e.runtime.produceAdditionalKitAction(e.packet, e.sessionKey, e.generation, e.objectID, timestamp)
+	if additionalErr != nil {
+		return nil, fmt.Errorf("additionalConeNext: %w", additionalErr)
+	}
+	if isAdditionalHandled {
+		return additionalPackets, nil
+	}
 	if e.laserZone != nil {
 		packets, err := e.resume(timestamp)
 		if err != nil {
@@ -628,6 +636,13 @@ func (r campaignNPCActionRuntime) produceEnemyCone(
 	}
 	if isLaunchHandled {
 		return launchPackets, nil
+	}
+	stormPackets, isStormHandled, stormErr := r.produceMerakStorm(packet, sessionKey, generation, objectID, timestamp)
+	if stormErr != nil {
+		return nil, fmt.Errorf("enemyStorm: %w", stormErr)
+	}
+	if isStormHandled {
+		return stormPackets, nil
 	}
 	phasePackets, isPhaseHandled, phaseErr := r.produceCitadelSpecialFour(
 		packet, sessionKey, generation, objectID, timestamp,

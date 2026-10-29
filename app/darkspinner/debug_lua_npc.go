@@ -35,12 +35,14 @@ func debugLuaWorldSpawnControlled(state *lua.LState) int {
 	if scope == nil {
 		return 0
 	}
-	if scope.client.vm.parallel != nil {
-		return scope.client.vm.returnOperation(state, nil, &debugError{Code: "unsupported_operation", Context: "npcHandle", Message: "create NPC handles outside Parallel; existing handles can be used inside its branches"}, true)
-	}
 	count := scope.client.invoke(state, "client.spawn_controlled_npc", map[string]any{
 		"client_id": scope.client.id, "noun": state.CheckString(2), "timeout_ms": debugLuaClientTimeout(state, scope.client, 3),
 	}, true)
+	request := debugLuaPendingYield(state, count)
+	if request != nil {
+		request.npcClient = scope.client
+		return count
+	}
 	if count != 2 {
 		return count
 	}
@@ -52,7 +54,16 @@ func debugLuaWorldSpawnControlled(state *lua.LState) int {
 	if !isTable {
 		return debugLuaNPCSpawnFailure(state, scope.client.vm, state.Get(-2), &debugError{Code: "invalid_result", Context: "npcHandle", Message: "spawn did not return a published NPC receipt"})
 	}
-	npc := &debugLuaNPC{client: scope.client, initialState: snapshot}
+	resource, failure := scope.client.vm.npcHandle(state, scope.client, snapshot)
+	if failure != nil {
+		return debugLuaNPCSpawnFailure(state, scope.client.vm, snapshot, failure)
+	}
+	state.Replace(-2, resource)
+	return count
+}
+
+func (e *debugLuaVM) npcHandle(state *lua.LState, client *debugLuaClient, snapshot *lua.LTable) (lua.LValue, *debugError) {
+	npc := &debugLuaNPC{client: client, initialState: snapshot}
 	instanceID, isInstance := snapshot.RawGetString("instance_id").(lua.LString)
 	requestID, isRequest := snapshot.RawGetString("request_id").(lua.LString)
 	isValid := isInstance && instanceID != "" && isRequest && requestID != "" && snapshot.RawGetString("is_published") == lua.LTrue && snapshot.RawGetString("is_ai_enabled") == lua.LFalse
@@ -69,15 +80,14 @@ func debugLuaWorldSpawnControlled(state *lua.LState) int {
 		identities = append(identities, uint64(identity))
 	}
 	if !isValid || identities[0] > math.MaxUint32 || identities[2] > math.MaxUint32 || identities[6] > math.MaxUint32 {
-		return debugLuaNPCSpawnFailure(state, scope.client.vm, snapshot, &debugError{Code: "invalid_result", Context: "npcIdentity", Message: "published spawn lacks an exact AI-disabled owned NPC identity"})
+		return lua.LNil, &debugError{Code: "invalid_result", Context: "npcIdentity", Message: "published spawn lacks an exact AI-disabled owned NPC identity"}
 	}
 	npc.pid, npc.userID, npc.gameID = uint32(identities[0]), int64(identities[1]), uint32(identities[2])
 	npc.peerGeneration, npc.transportGeneration, npc.zoneGeneration, npc.objectID = identities[3], identities[4], identities[5], uint32(identities[6])
 	userdata := state.NewUserData()
 	userdata.Value = npc
 	state.SetMetatable(userdata, state.GetTypeMetatable("ControlledNPC"))
-	state.Replace(-2, userdata)
-	return count
+	return userdata, nil
 }
 
 func debugLuaNPCSpawnFailure(state *lua.LState, vm *debugLuaVM, receipt lua.LValue, failure *debugError) int {
@@ -116,6 +126,8 @@ func debugLuaNPCIndex(state *lua.LState) int {
 		state.Push(state.NewFunction(debugLuaNPCCast))
 	case "Restore":
 		state.Push(state.NewFunction(debugLuaNPCRestore))
+	case "Defeat":
+		state.Push(state.NewFunction(debugLuaNPCDefeat))
 	case "Retire":
 		state.Push(state.NewFunction(debugLuaNPCRetire))
 	case "ObjectID":
@@ -148,6 +160,14 @@ func debugLuaNPCRestore(state *lua.LState) int {
 		return 0
 	}
 	return npc.client.invoke(state, "client.controlled_npc_restore", npc.request(), true)
+}
+
+func debugLuaNPCDefeat(state *lua.LState) int {
+	npc := debugLuaNPCSelf(state)
+	if npc == nil {
+		return 0
+	}
+	return npc.client.invoke(state, "client.controlled_npc_defeat", npc.request(), true)
 }
 
 func debugLuaNPCRetire(state *lua.LState) int {

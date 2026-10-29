@@ -59,6 +59,8 @@ var affixAuraDefinitions = [...]affixAuraDefinition{
 	{"Aura_Frenzied_NPCAffixModifier", "Frenzied_NPCAffixModifier"},
 	{"Aura_Unstoppable_NPCAffixModifier", "Unstoppable_NPCAffixModifier"},
 	{"Aura_Persistent_NpcAffix", "ResurrectModifier"},
+	// Native source gathering is owned by the AI passive, not a captain affix.
+	{"NocturnaSpecialLeech_HealAura", "NocturnaSpecialLeech_HealModifier"},
 }
 
 func AffixAuraIndex(name string) (int, bool) {
@@ -106,9 +108,12 @@ func (e *Session) RefreshAffixEffects(playerCount uint32) []AffixChange {
 	for _, objectID := range e.objectIDs {
 		target := e.npcs[objectID]
 		previousPlan := target.Plan
-		auras := make([]AffixAura, 0)
+		auras := e.nativePassiveAurasLocked(target, previousPlan.AffixAuras)
 		if isSwiftActorActive(target) && !target.Plan.IsFixture && target.Plan.NPCProfile.NPCType != 3 {
 			for _, definition := range affixAuraDefinitions {
+				if hasAuraModifier(auras, definition.ModifierName) {
+					continue
+				}
 				if target.Plan.BossIdentity.HasModifier(definition.ModifierName) ||
 					(definition.ModifierName == "ResurrectModifier" && target.IsAffixResurrectionTriggered) {
 					continue
@@ -179,6 +184,9 @@ func (e *Session) PrepareAffixPlans(plans []SpawnPlan) []SpawnPlan {
 }
 
 func (e *Session) prepareAffixPlan(plan SpawnPlan) SpawnPlan {
+	if plan.NPCPassiveRank == 0 {
+		plan.NPCPassiveRank = EffectiveNPCRank(plan)
+	}
 	if isPackfly(plan.NounName) && plan.PackflyPassiveRank == 0 {
 		plan.PackflyPassiveRank = packflyRank(plan)
 	}

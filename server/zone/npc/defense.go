@@ -81,9 +81,13 @@ func (e *Session) reduceDamage(npc Snapshot, profile ActionProfile, damage float
 		damage *= 1 - maximumPhaseReduction
 	}
 	damage = max(damage, incoming*(1-maximumPhaseReduction))
-	if isArea && npc.HasAffixModifier("Shifted_NPCAffixModifier") {
-		// Chunk 701 adds 0.75 AoeResistance independently of ordinary ratings.
-		damage *= 0.25
+	if isArea {
+		resistance := ZelemMeleeAOEResistance(npc.Plan)
+		if npc.HasAffixModifier("Shifted_NPCAffixModifier") {
+			resistance += 0.75
+		}
+		// AoeResistance is an authored attribute after ordinary rating budgets.
+		damage *= 1 - min(max(resistance, 0), 1)
 	}
 	if isPhysical || isEnergy {
 		// Authored flat armor is separate from the server's percentage-defense

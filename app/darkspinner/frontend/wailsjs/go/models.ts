@@ -792,6 +792,8 @@ export namespace runtime {
 	    }
 	}
 	export class BossSpawningConfiguration {
+	    leaderSelection: string;
+	    replayLeaderSelection: string;
 	    version: number;
 	    openingAddsPerAnchor: number;
 	    initialBossAddCount: number;
@@ -803,6 +805,8 @@ export namespace runtime {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.leaderSelection = source["leaderSelection"];
+	        this.replayLeaderSelection = source["replayLeaderSelection"];
 	        this.version = source["version"];
 	        this.openingAddsPerAnchor = source["openingAddsPerAnchor"];
 	        this.initialBossAddCount = source["initialBossAddCount"];
@@ -812,6 +816,14 @@ export namespace runtime {
 	export class EnemyPopulationConfiguration {
 	    version: number;
 	    enemiesPerSection: number;
+	    agentSelection: string;
+	    agentsPerSection: number;
+	    rosterSelection: string;
+	    externalRosterWeightPercent: number;
+	    isAmbientEliteEnabled: boolean;
+	    ambientEliteChancePercent: number;
+	    ownedSummonHealthScaling: string;
+	    fixtureHealthScaling: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new EnemyPopulationConfiguration(source);
@@ -821,6 +833,14 @@ export namespace runtime {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.version = source["version"];
 	        this.enemiesPerSection = source["enemiesPerSection"];
+	        this.agentSelection = source["agentSelection"];
+	        this.agentsPerSection = source["agentsPerSection"];
+	        this.rosterSelection = source["rosterSelection"];
+	        this.externalRosterWeightPercent = source["externalRosterWeightPercent"];
+	        this.isAmbientEliteEnabled = source["isAmbientEliteEnabled"];
+	        this.ambientEliteChancePercent = source["ambientEliteChancePercent"];
+	        this.ownedSummonHealthScaling = source["ownedSummonHealthScaling"];
+	        this.fixtureHealthScaling = source["fixtureHealthScaling"];
 	    }
 	}
 	export class MutationAgentConfiguration {

@@ -8,7 +8,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
-	"github.com/darkspinnet/darkspin/server/util"
+	zonedifficulty "github.com/darkspinnet/darkspin/server/zone/difficulty"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 	zoneprojection "github.com/darkspinnet/darkspin/server/zone/projection"
@@ -41,12 +41,25 @@ func (r campaignNPCActionRuntime) ensureInvincitronDrone(
 	}
 	owner, isOwnerFound := peerSession.zone.NPCs().NPC(ownerObjectID)
 	_, isInvincitron := zonenpc.NomadWithDroneShieldDuration(owner.Plan.NounName)
-	if !isOwnerFound || owner.IsDefeated || !isInvincitron ||
-		peerSession.zone.NPCs().OwnedActiveCount(ownerObjectID) != 0 {
+	if !isOwnerFound || owner.IsDefeated || !isInvincitron {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
-	profile, err := zonenpc.NomadDroneLaserProfile(r.program.SentryDroneLaser)
+	if peerSession.zone.NPCs().OwnedActiveCount(ownerObjectID) != 0 {
+		existingPlans := make([]zonenpc.SpawnPlan, 0, 1)
+		for _, child := range peerSession.zone.NPCs().LiveSnapshots() {
+			if child.Plan.OwnerObjectID == ownerObjectID && campaignDifficultyNounFamily(child.Plan.NounName) == "nomaddrone" {
+				existingPlans = append(existingPlans, child.Plan)
+			}
+		}
+		r.registry.mutex.Unlock()
+		err := r.startInvincitronDroneFollows(packet, sessionKey, generation, existingPlans)
+		if err != nil {
+			return nil, fmt.Errorf("droneFollowResume: %w", err)
+		}
+		return nil, nil
+	}
+	profile, err := zonenpc.NomadDroneLaserProfile(r.program.NomadDroneLaser)
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("invincitronDroneProfile: %w", err)
@@ -58,34 +71,24 @@ func (r campaignNPCActionRuntime) ensureInvincitronDrone(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("invincitronDroneReserve: %w", err)
 	}
-	hitPoint := r.program.NonPlayerHitPoint[util.HashID("NomadDrone")]
-	if hitPoint <= 0 {
-		hitPoint = 1
-	}
 	footprintRadius, footprintErr := r.program.FootprintRadius("NomadDrone.Noun")
 	if footprintErr != nil || footprintRadius <= 0 {
 		footprintRadius = 0.5
 	}
-	authoredProfile := peerSession.zone.DirectorDefinition().NPCProfilesByNoun["nomaddrone.noun"]
+	authoredProfile, profileErr := zonedifficulty.ProjectOwnedSummon(peerSession.zone.DirectorDefinition(), "NomadDrone.Noun")
+	if profileErr != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("droneClass: %w", profileErr)
+	}
+	authoredProfile.IsTargetable = false
+	authoredProfile.FootprintRadius = footprintRadius
 	plan := zonenpc.SpawnPlan{
 		ObjectID: objectID, OwnerObjectID: ownerObjectID,
 		NounName: "NomadDrone.Noun", Position: invincitronDronePosition(owner.Plan.Position, 0),
 		LocusID: owner.Plan.LocusID, MarkerSetName: owner.Plan.MarkerSetName,
 		IsEncounterAuxiliary: true,
-		NPCProfile: game.CampaignNPCProfile{
-			NPCRank:      owner.Plan.NPCProfile.NPCRank,
-			NPCType:      authoredProfile.NPCType,
-			IsClassKnown: authoredProfile.IsClassKnown,
-			IsTargetable: false, HitPoint: hitPoint,
-			AggroRange: authoredProfile.AggroRange, AlertRange: authoredProfile.AlertRange,
-			DropAggroRange:    authoredProfile.DropAggroRange,
-			IdleMovementSpeed: authoredProfile.IdleMovementSpeed,
-			Mind:              owner.Plan.NPCProfile.Mind,
-			GraphicsScale:     1, FootprintRadius: footprintRadius,
-			DifficultyDamageMultiplier: owner.Plan.NPCProfile.DifficultyDamageMultiplier,
-			IsKnown:                    true,
-		},
-		ActionProfile: profile, IsActionKnown: true,
+		NPCProfile:           authoredProfile,
+		ActionProfile:        profile, IsActionKnown: true,
 	}
 	err = peerSession.zone.NPCs().Add(
 		[]zonenpc.SpawnPlan{plan}, owner.TargetObjectID,
@@ -116,16 +119,82 @@ func (r campaignNPCActionRuntime) ensureInvincitronDrone(
 	if err != nil {
 		return nil, fmt.Errorf("invincitronDroneAction: %w", err)
 	}
-	follow := campaignDroneFollowStep{
-		runtime: r, packet: packet.Autonomous(), sessionKey: sessionKey,
-		generation: generation, objectID: objectID, ownerObjectID: ownerObjectID,
-		startedAt: r.now(),
-	}
-	err = follow.schedule()
-	if err != nil {
-		return nil, fmt.Errorf("droneFollowStart: %w", err)
-	}
 	return append(packets, actionPackets...), nil
+}
+
+// startInvincitronDroneFollows also admits restored drones, whose former
+// scheduler callbacks do not survive a checkpoint or transport replacement.
+func (r campaignNPCActionRuntime) startInvincitronDroneFollows(
+	packet raknet.Packet, sessionKey string, generation uint64, plans []zonenpc.SpawnPlan,
+) error {
+	for _, plan := range plans {
+		if plan.OwnerObjectID == 0 || campaignDifficultyNounFamily(plan.NounName) != "nomaddrone" {
+			continue
+		}
+		err := r.startInvincitronDroneFollow(packet.Autonomous(), sessionKey, generation, plan.ObjectID)
+		if err != nil {
+			return fmt.Errorf("droneFollowStart[%d]: %w", plan.ObjectID, err)
+		}
+	}
+	return nil
+}
+
+func (r campaignNPCActionRuntime) startInvincitronDroneFollow(
+	packet raknet.Packet, sessionKey string, generation uint64, objectID uint32,
+) error {
+	r.registry.mutex.Lock()
+	member, isFound := r.registry.sessions[sessionKey]
+	if !isFound || member.generation != generation || member.transportGeneration != packet.TransportGeneration ||
+		member.zone == nil || member.squad == nil || member.isZoneTerminal() {
+		r.registry.mutex.Unlock()
+		return nil
+	}
+	drone, isDroneFound := member.zone.NPCs().NPC(objectID)
+	owner, isOwnerFound := member.zone.NPCs().NPC(drone.Plan.OwnerObjectID)
+	_, isInvincitron := zonenpc.NomadWithDroneShieldDuration(owner.Plan.NounName)
+	if !isDroneFound || !isOwnerFound || !isInvincitron || drone.IsDefeated || owner.IsDefeated || !drone.IsPublished {
+		r.registry.mutex.Unlock()
+		return nil
+	}
+	// Several peers can discover the same actor. Keep one live zone callback,
+	// while allowing an obsolete transport's registration to be replaced.
+	for _, peer := range r.registry.sessions {
+		if peer.zone != member.zone || peer.squad == nil || peer.isZoneTerminal() {
+			continue
+		}
+		current := peer.droneFollows[objectID]
+		if current != nil && current.generation == peer.generation && current.packet.TransportGeneration == peer.transportGeneration {
+			r.registry.mutex.Unlock()
+			return nil
+		}
+	}
+	angle := math.Atan2(float64(drone.Plan.Position.Y-owner.Plan.Position.Y), float64(drone.Plan.Position.X-owner.Plan.Position.X))
+	if angle < 0 {
+		angle += 2 * math.Pi
+	}
+	follow := &campaignDroneFollowStep{
+		runtime: r, packet: packet, sessionKey: sessionKey, generation: generation,
+		objectID: objectID, ownerObjectID: drone.Plan.OwnerObjectID, advancedAt: r.now(),
+		orbitElapsed: time.Duration(angle / (2 * math.Pi) * float64(invincitronDroneOrbitDuration)),
+	}
+	if member.droneFollows == nil {
+		member.droneFollows = make(map[uint32]*campaignDroneFollowStep)
+	}
+	member.droneFollows[objectID] = follow
+	r.registry.sessions[sessionKey] = member
+	r.registry.mutex.Unlock()
+	err := follow.schedule()
+	if err != nil {
+		r.registry.mutex.Lock()
+		current, isCurrentFound := r.registry.sessions[sessionKey]
+		if isCurrentFound && current.droneFollows[objectID] == follow {
+			delete(current.droneFollows, objectID)
+			r.registry.sessions[sessionKey] = current
+		}
+		r.registry.mutex.Unlock()
+		return fmt.Errorf("droneFollowSchedule: %w", err)
+	}
+	return nil
 }
 
 type campaignDroneFollowStep struct {
@@ -135,7 +204,19 @@ type campaignDroneFollowStep struct {
 	generation    uint64
 	objectID      uint32
 	ownerObjectID uint32
-	startedAt     time.Time
+	advancedAt    time.Time
+	orbitElapsed  time.Duration
+}
+
+func (e *campaignDroneFollowStep) release() {
+	e.runtime.registry.mutex.Lock()
+	defer e.runtime.registry.mutex.Unlock()
+	member, isFound := e.runtime.registry.sessions[e.sessionKey]
+	if !isFound || member.droneFollows[e.objectID] != e {
+		return
+	}
+	delete(member.droneFollows, e.objectID)
+	e.runtime.registry.sessions[e.sessionKey] = member
 }
 
 // The packaged description requires an orbit, but its native trajectory is
@@ -163,7 +244,7 @@ func invincitronDroneFacing(position game.Vec3, goal game.Vec3) raknet.Vector3 {
 	}
 }
 
-func (e campaignDroneFollowStep) schedule() error {
+func (e *campaignDroneFollowStep) schedule() error {
 	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
 		Delay: invincitronDroneFollowDelay, Produce: e.produce,
 	}})
@@ -176,18 +257,21 @@ func (e campaignDroneFollowStep) schedule() error {
 	return nil
 }
 
-func (e campaignDroneFollowStep) produce() ([][]byte, error) {
+func (e *campaignDroneFollowStep) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.RLock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	// Orbiting belongs to the live drone, even between combat actions when
 	// IsActionStarted and ActionOwner are cleared.
 	isCurrent := isFound && peerSession.generation == e.generation &&
+		peerSession.transportGeneration == e.packet.TransportGeneration &&
+		peerSession.droneFollows[e.objectID] == e &&
 		peerSession.squad != nil && peerSession.zone != nil &&
 		!peerSession.isZoneTerminal() &&
 		peerSession.zone.NPCs() != nil &&
 		(peerSession.zone.Boss() == nil || !peerSession.zone.Boss().IsBeamOutCommitted())
 	if !isCurrent {
 		e.runtime.registry.mutex.RUnlock()
+		e.release()
 		return nil, nil
 	}
 	owner, isOwnerFound := peerSession.zone.NPCs().NPC(e.ownerObjectID)
@@ -196,12 +280,23 @@ func (e campaignDroneFollowStep) produce() ([][]byte, error) {
 		!drone.IsPublished || drone.HitPoint <= 0 ||
 		drone.Plan.OwnerObjectID != e.ownerObjectID {
 		e.runtime.registry.mutex.RUnlock()
+		e.release()
 		return nil, nil
 	}
-	elapsed := e.runtime.now().Sub(e.startedAt)
-	position := invincitronDronePosition(owner.Plan.Position, elapsed)
+	now := e.runtime.now()
+	interval := max(time.Duration(0), now.Sub(e.advancedAt))
+	e.orbitElapsed += interval
+	// Integrate the active interval so rage expiry cannot jump the orbit phase.
+	activeInterval := min(interval, max(time.Duration(0), drone.Plan.InvincitronRage.ExpiresAt.Sub(e.advancedAt)))
+	e.orbitElapsed += time.Duration(float64(activeInterval) * float64(drone.Plan.InvincitronRage.MovementBuff))
+	e.advancedAt = now
+	position := invincitronDronePosition(owner.Plan.Position, e.orbitElapsed)
+	lead := invincitronDroneGoalLead
+	if drone.Plan.InvincitronRage.IsActive(now) {
+		lead = time.Duration(float64(lead) * float64(1+drone.Plan.InvincitronRage.MovementBuff))
+	}
 	goal := invincitronDronePosition(
-		owner.Plan.Position, elapsed+invincitronDroneGoalLead,
+		owner.Plan.Position, e.orbitElapsed+lead,
 	)
 	isMoved := position != drone.Plan.Position
 	var err error
@@ -234,6 +329,7 @@ func (e campaignDroneFollowStep) produce() ([][]byte, error) {
 	}
 	err = e.schedule()
 	if err != nil {
+		e.release()
 		return nil, fmt.Errorf("droneFollowNext: %w", err)
 	}
 	return packets, nil

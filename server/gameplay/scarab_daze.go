@@ -3,6 +3,7 @@ package gameplay
 import (
 	"fmt"
 
+	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/util"
 )
 
@@ -21,12 +22,35 @@ func (e *gameplayPeerSession) isScarabDazed() bool {
 	return false
 }
 
-func (e campaignNPCActionRuntime) refreshScarabDazeMovement(sessionKey string, generation uint64) ([][]byte, error) {
+func (e campaignNPCActionRuntime) refreshScarabDazeMovement(sessionKey string, generation uint64, targetObjectIDs ...uint32) ([][]byte, error) {
 	e.registry.mutex.Lock()
 	defer e.registry.mutex.Unlock()
 	member, isFound := e.registry.sessions[sessionKey]
-	if !isFound || member.generation != generation || member.deployedObjectID == 0 {
+	if !isFound || member.generation != generation || member.zone == nil {
 		return nil, nil
+	}
+	targetObjectID := member.deployedObjectID
+	if len(targetObjectIDs) != 0 {
+		targetObjectID = targetObjectIDs[0]
+	}
+	if targetObjectID == 0 {
+		return nil, nil
+	}
+	if targetObjectID != member.deployedObjectID {
+		actor, isActorFound := member.zone.Companion().Snapshot(targetObjectID)
+		if !isActorFound || actor.UserID != member.binding.UserID || actor.PeerGeneration != generation || actor.HitPoint <= 0 {
+			return nil, nil
+		}
+		buff, isBuffFound := member.zone.Companion().MovementSpeedBuff(targetObjectID, e.now())
+		if !isBuffFound {
+			return nil, nil
+		}
+		packet, err := raknet.MarshalApplication(raknet.AttributeDataUpdateMessage{
+			ObjectID: targetObjectID, Value: map[uint8]float32{48: buff}})
+		if err != nil {
+			return nil, fmt.Errorf("companionSlowAttribute: %w", err)
+		}
+		return [][]byte{packet}, nil
 	}
 	if member.playerMotion != nil {
 		increase := max(float32(-0.9), e.registry.passiveMovementIncrease(member)+member.enemyMovementSpeedBuff())

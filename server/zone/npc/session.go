@@ -17,8 +17,10 @@ import (
 )
 
 type Session struct {
-	merakGeysers     map[uint32]MerakGeyser
-	merakControllers map[uint32]bool
+	attributeMirrorChanges map[uint32]bool
+	attributeMirrorIDs     []uint32
+	merakGeysers           map[uint32]MerakGeyser
+	merakControllers       map[uint32]bool
 	scenarioFixtureLedger
 	startupRandom        *sim.SimulatorRandom
 	navigationMesh       *navigation.Mesh
@@ -117,6 +119,7 @@ func (s *Session) add(plans []SpawnPlan, targetObjectID uint32) error {
 		plan = WithPendingIntroduction(plan)
 		plan = s.prepareAffixPlan(plan)
 		plan = s.attachActorFootprint(plan).Clone()
+		s.indexAttributeMirrorLocked(plan)
 		actorNavigation, navigationErr := s.navigationForPlan(plan)
 		if navigationErr != nil {
 			return fmt.Errorf("addNavigation: %w", navigationErr)
@@ -129,7 +132,7 @@ func (s *Session) add(plans []SpawnPlan, targetObjectID uint32) error {
 			Navigation:             actorNavigation,
 			Plan:                   plan, Origin: plan.Position, Faction: FactionNonPlayerAligned,
 			Facing:   plan.InitialFacing(),
-			HitPoint: plan.NPCProfile.HitPoint, ManaPoint: plan.NPCProfile.PowerPoint,
+			HitPoint: plan.SpawnHitPoint(), ManaPoint: plan.NPCProfile.PowerPoint,
 			TargetObjectID:               targetObjectID,
 			TargetFaction:                FactionPlayerAligned,
 			IsPublished:                  true,
@@ -198,7 +201,7 @@ func (s *Session) AddDormant(plans []SpawnPlan) error {
 			Navigation:             actorNavigation,
 			Plan:                   plan, Origin: plan.Position, Faction: FactionNonPlayerAligned,
 			Facing:                          plan.InitialFacing(),
-			HitPoint:                        plan.NPCProfile.HitPoint,
+			HitPoint:                        plan.SpawnHitPoint(),
 			ManaPoint:                       plan.NPCProfile.PowerPoint,
 			IsPublished:                     true,
 			IsSpawnStealthActive:            isSpawnStealthedPlan(plan),
@@ -242,7 +245,7 @@ func (s *Session) AddStaged(plans []SpawnPlan) error {
 			Navigation:             actorNavigation,
 			Plan:                   plan, Origin: plan.Position, Faction: FactionNonPlayerAligned,
 			Facing:                          plan.InitialFacing(),
-			HitPoint:                        plan.NPCProfile.HitPoint,
+			HitPoint:                        plan.SpawnHitPoint(),
 			ManaPoint:                       plan.NPCProfile.PowerPoint,
 			IsSpawnStealthActive:            isSpawnStealthedPlan(plan),
 			IsNavigationCollisionEnabled:    true,
@@ -275,6 +278,10 @@ func (s *Session) Restore(snapshots []Snapshot) error {
 		}
 		plans = append(plans, snapshot.Plan)
 	}
+	mirrorErr := validateAttributeMirrorSnapshots(snapshots)
+	if mirrorErr != nil {
+		return fmt.Errorf("restoreMirror: %w", mirrorErr)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.objectIDs) != 0 || len(s.npcs) != 0 {
@@ -286,6 +293,10 @@ func (s *Session) Restore(snapshots []Snapshot) error {
 	}
 	for _, snapshot := range snapshots {
 		plan := snapshot.Plan.Clone()
+		plan.SupportIdleMovementBuff = 0
+		if plan.NPCPassiveRank == 0 {
+			plan.NPCPassiveRank = EffectiveNPCRank(plan)
+		}
 		if !zonegeometry.IsFinite(snapshot.Origin) {
 			return fmt.Errorf("restoreOrigin[%d]: invalid", plan.ObjectID)
 		}
@@ -318,20 +329,27 @@ func (s *Session) Restore(snapshots []Snapshot) error {
 			return fmt.Errorf("restoreMutationLife[%d]: zero generation", plan.ObjectID)
 		}
 		restored := Snapshot{
-			IsNashiraPassiveActive:     snapshot.IsNashiraPassiveActive && !isDefeated,
-			NashiraFiendOwnerObjectID:  snapshot.NashiraFiendOwnerObjectID,
-			NashiraFiendCasterObjectID: snapshot.NashiraFiendCasterObjectID,
-			GraphState:                 snapshot.GraphState,
-			Navigation:                 snapshot.Navigation,
-			PerceptionOffset:           snapshot.PerceptionOffset,
-			IsPerceptionOffsetCached:   snapshot.IsPerceptionOffsetCached,
-			threats:                    slices.Clone(snapshot.threats),
-			IsInitialAggroSet:          snapshot.IsInitialAggroSet,
-			IsFirstActionStarted:       snapshot.IsFirstActionStarted,
-			introduction:               snapshot.introduction,
-			Mutation:                   mutation,
-			InitialAggroAnimationFlag:  snapshot.InitialAggroAnimationFlag,
-			Plan:                       plan, Origin: snapshot.Origin, Facing: snapshot.Facing,
+			AdditionalKit: RestoreAdditionalKit(snapshot.AdditionalKit),
+			// Consumed one-time abilities belong to the actor's saved life,
+			// even though active combat actions and modifiers restart idle.
+			IsSelfResurrectionTriggered:  snapshot.IsSelfResurrectionTriggered,
+			IsAffixResurrectionTriggered: snapshot.IsAffixResurrectionTriggered,
+			IsShieldTriggered:            snapshot.IsShieldTriggered,
+			IsTurtleTriggered:            snapshot.IsTurtleTriggered,
+			IsNashiraPassiveActive:       snapshot.IsNashiraPassiveActive && !isDefeated,
+			NashiraFiendOwnerObjectID:    snapshot.NashiraFiendOwnerObjectID,
+			NashiraFiendCasterObjectID:   snapshot.NashiraFiendCasterObjectID,
+			GraphState:                   snapshot.GraphState,
+			Navigation:                   snapshot.Navigation,
+			PerceptionOffset:             snapshot.PerceptionOffset,
+			IsPerceptionOffsetCached:     snapshot.IsPerceptionOffsetCached,
+			threats:                      slices.Clone(snapshot.threats),
+			IsInitialAggroSet:            snapshot.IsInitialAggroSet,
+			IsFirstActionStarted:         snapshot.IsFirstActionStarted,
+			introduction:                 snapshot.introduction,
+			Mutation:                     mutation,
+			InitialAggroAnimationFlag:    snapshot.InitialAggroAnimationFlag,
+			Plan:                         plan, Origin: snapshot.Origin, Facing: snapshot.Facing,
 			Faction:  FactionNonPlayerAligned,
 			HitPoint: snapshot.HitPoint, ManaPoint: snapshot.ManaPoint,
 			IsDefeated: isDefeated, IsPublished: snapshot.IsPublished,
@@ -352,8 +370,10 @@ func (s *Session) Restore(snapshots []Snapshot) error {
 		if restored.Facing.Length() <= 0 || !zonegeometry.IsFinite(restored.Facing) {
 			restored.Facing = plan.InitialFacing()
 		}
+		prepareSubsequentAggro(&restored)
 		s.objectIDs = append(s.objectIDs, plan.ObjectID)
 		s.npcs[plan.ObjectID] = restored
+		s.indexAttributeMirrorLocked(plan)
 		for _, threat := range restored.threats {
 			s.trackAttacker(plan.ObjectID, threat.ObjectID)
 		}
@@ -725,6 +745,11 @@ func (s *Session) startAction(
 		}
 		npc.Plan = plan
 	}
+	if npc.Plan.IsSubsequentAggroPending && npc.introduction.isComplete {
+		// A fresh idle-to-combat reaction replaces the completed entrance once.
+		// Canceled reactions retain their partial timeline for the next driver.
+		npc.introduction = introductionTimeline{}
+	}
 	if npc.TargetObjectID == 0 {
 		npc.TargetObjectID = targetObjectID
 		npc.TargetFaction = FactionPlayerAligned
@@ -735,7 +760,7 @@ func (s *Session) startAction(
 	}
 	npc.IsActionStarted = true
 	// A canceled delayed entrance must retry its reveal on the next action.
-	isFirstAction := !npc.IsFirstActionStarted || npc.Plan.IsIntroductionHidden || npc.IsIntroductionPending()
+	isFirstAction := !npc.IsFirstActionStarted || npc.Plan.IsIntroductionHidden || npc.IsIntroductionPending() || npc.Plan.IsSubsequentAggroPending
 	if isFirstAction && npc.introduction.startedAt.IsZero() && npc.Plan.Introduction != SpawnIntroductionFloorWarp {
 		profile, isProfileKnown := ActionProfileForPlan(npc.Plan)
 		if isProfileKnown && profile.FirstAggroRevealDelay > 0 {
@@ -860,7 +885,7 @@ func (s *Session) RollbackAdd(plans []SpawnPlan) error {
 		objectID := s.objectIDs[firstIndex+index]
 		npc, isFound := s.npcs[objectID]
 		if objectID != plan.ObjectID || !isFound || npc.Plan.ObjectID != plan.ObjectID ||
-			npc.IsDefeated || npc.HitPoint != plan.NPCProfile.HitPoint {
+			npc.IsDefeated || npc.HitPoint != plan.SpawnHitPoint() {
 			return fmt.Errorf("rollback npc add[%d]: changed", index)
 		}
 	}
@@ -926,6 +951,7 @@ func (s *Session) ReleaseTarget(targetObjectID uint32) ([]Snapshot, error) {
 			continue
 		}
 		previous := npc
+		queueSubsequentAggro(&npc)
 		npc.TargetObjectID = 0
 		npc.TargetFaction = FactionUnknown
 		npc.TargetOwner = ActionOwner{}
@@ -991,6 +1017,7 @@ func (s *Session) ReplaceTarget(
 			s.npcs[objectID] = npc
 			continue
 		}
+		queueSubsequentAggro(&npc)
 		npc.TargetObjectID = 0
 		npc.TargetFaction = FactionUnknown
 		npc.TargetOwner = ActionOwner{}
@@ -1050,6 +1077,7 @@ func (s *Session) ReturnHome(objectIDs []uint32) []Snapshot {
 			continue
 		}
 		npc.Plan.Position = npc.Origin
+		queueSubsequentAggro(&npc)
 		npc.TargetObjectID = 0
 		npc.TargetFaction = FactionUnknown
 		npc.TargetOwner = ActionOwner{}
@@ -1096,6 +1124,7 @@ func (s *Session) ClearTargets() error {
 		if npc.IsDefeated || npc.Plan.IsFixture {
 			continue
 		}
+		queueSubsequentAggro(&npc)
 		npc.TargetObjectID = 0
 		npc.TargetFaction = FactionUnknown
 		npc.TargetOwner = ActionOwner{}
@@ -1160,6 +1189,7 @@ func (s *Session) damage(
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.refreshAttributeMirrorsLocked()
 	npc, isFound := s.npcs[targetObjectID]
 	if !isFound {
 		return DamageResult{}, fmt.Errorf("npcMissing: %d", targetObjectID)
@@ -1243,21 +1273,12 @@ func (s *Session) damage(
 		absorbedDamage = 0
 	}
 	appliedDamage := min(damage, previousHealth)
-	if !meta.isForcedDefeat && !npc.IsTurtleTriggered && isNomadSpecialThreeNoun(npc.Plan.NounName) &&
-		npc.Plan.NPCProfile.HitPoint > 0 {
-		turtleThreshold := npc.Plan.NPCProfile.HitPoint * 0.5
-		isTurtleThresholdCrossed := previousHealth > turtleThreshold &&
-			previousHealth-appliedDamage <= turtleThreshold
-		if isTurtleThresholdCrossed {
-			appliedDamage = previousHealth - turtleThreshold
-		}
-	}
 	npc.HitPoint = max(0, previousHealth-appliedDamage)
 	if !meta.isForcedDefeat && appliedDamage > 0 {
 		npc.recordRecentDamage(now, appliedDamage)
 	}
 	npc.IsDefeated = npc.HitPoint == 0
-	markScenarioSelfDetonation(&npc, sourceObjectID, targetObjectID, meta.isForcedDefeat)
+	markScenarioSelfDeath(&npc, sourceObjectID, targetObjectID, meta.isForcedDefeat)
 	if appliedDamage > 0 && !npc.IsDefeated &&
 		species == "cryoselementalspecialthree" {
 		npc.status.isDamageFleePending = true
@@ -1285,7 +1306,7 @@ func (s *Session) damage(
 	}
 	isAreaShiftStarted := false
 	if !npc.IsDefeated && isAreaAttack &&
-		species == "zelembasicflyingmelee" {
+		(species == "zelembasicflyingmelee" || hasZelemMeleePassive(npc.Plan)) {
 		isAreaShiftStarted = !now.Before(npc.status.areaShiftExpiresAt)
 		npc.status.areaShiftExpiresAt = now.Add(4 * time.Second)
 	}
@@ -1320,7 +1341,7 @@ func (s *Session) damage(
 			owned := s.npcs[objectID]
 			if owned.Plan.OwnerObjectID != npc.Plan.ObjectID ||
 				owned.IsDefeated || !owned.IsPublished ||
-				!owned.Plan.IsEncounterAuxiliary {
+				!owned.Plan.IsEncounterAuxiliary || owned.Plan.IsOwnedDeathPersistent {
 				continue
 			}
 			owned.HitPoint = 0
@@ -1343,17 +1364,7 @@ func (s *Session) damage(
 	if isShieldStarted {
 		npc.IsShieldTriggered = true
 		npc.IsShieldActive = true
-		if npc.status.isHasteProfileStored {
-			npc.Plan.ActionProfile = npc.status.hasteActionProfile
-			npc.Plan.IsActionKnown = npc.status.isHasteActionKnown
-		}
-		previousStatus := npc.status
-		npc.status = status{
-			absorptionShieldAmount:   previousStatus.absorptionShieldAmount,
-			absorptionShieldMaximum:  previousStatus.absorptionShieldMaximum,
-			absorptionShieldReadyAt:  previousStatus.absorptionShieldReadyAt,
-			absorptionShieldRecharge: previousStatus.absorptionShieldRecharge,
-		}
+		purgeInvincitronDebuffs(&npc)
 	}
 	isTurtleStarted := !npc.IsDefeated && !npc.IsTurtleTriggered &&
 		isNomadSpecialThreeNoun(npc.Plan.NounName) &&
@@ -1420,24 +1431,26 @@ func (s *Session) applyNearbyLeechHeals(
 		return nil
 	}
 	heals := make([]PassiveHeal, 0, 1)
-	for _, objectID := range s.objectIDs {
-		candidate := s.npcs[objectID]
-		if candidate.Plan.ObjectID == damaged.Plan.ObjectID ||
+	for _, aura := range damaged.Plan.AffixAuras {
+		if aura.ModifierName != "NocturnaSpecialLeech_HealModifier" {
+			continue
+		}
+		candidate, isFound := s.npcs[aura.SourceObjectID]
+		if !isFound || candidate.Plan.ObjectID == damaged.Plan.ObjectID ||
 			candidate.IsDefeated || !candidate.IsPublished ||
 			candidate.Faction != damaged.Faction ||
-			nounSpecies(candidate.Plan.NounName) != "nocturnaspecialleech" ||
-			candidate.Plan.Position.Sub(damaged.Plan.Position).Length() > 12 {
+			NativePassiveAura(candidate.Plan) != "NocturnaSpecialLeech_HealAura" {
 			continue
 		}
 		amount := min(
 			candidate.Plan.NPCProfile.HitPoint-candidate.HitPoint,
-			appliedDamage*0.25,
+			appliedDamage*0.5,
 		)
 		if amount <= 0 {
 			continue
 		}
 		candidate.HitPoint += amount
-		s.npcs[objectID] = candidate
+		s.npcs[aura.SourceObjectID] = candidate
 		heals = append(heals, PassiveHeal{
 			SourceObjectID: damaged.Plan.ObjectID,
 			Target:         candidate,
@@ -1513,6 +1526,7 @@ func (s *Session) Heal(objectID uint32, amount float32) (Snapshot, float32, erro
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.refreshAttributeMirrorsLocked()
 	npc, isFound := s.npcs[objectID]
 	if !isFound || !npc.IsPublished || npc.IsDefeated || npc.HitPoint <= 0 {
 		return Snapshot{}, 0, fmt.Errorf("npcHealingUnavailable: %d", objectID)
@@ -1656,6 +1670,7 @@ func (s *Session) resurrect(
 		npc.Plan.IsActionKnown = true
 	}
 	npc.Plan.IsLootSuppressed = npc.Plan.IsLootSuppressed || isLootSuppressed
+	markScenarioResurrection(&npc)
 	s.npcs[objectID] = npc
 	return npc, nil
 }
@@ -2004,8 +2019,9 @@ func (s *Session) LiveSnapshots() []Snapshot {
 	if s == nil {
 		return nil
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refreshAttributeMirrorsLocked()
 	snapshots := make([]Snapshot, 0, len(s.objectIDs))
 	for _, objectID := range s.objectIDs {
 		npc := s.npcs[objectID]
@@ -2075,8 +2091,9 @@ func (s *Session) Snapshots() []Snapshot {
 	if s == nil {
 		return nil
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refreshAttributeMirrorsLocked()
 	snapshots := make([]Snapshot, 0, len(s.objectIDs))
 	for _, objectID := range s.objectIDs {
 		snapshots = append(snapshots, s.npcs[objectID])
@@ -2088,8 +2105,9 @@ func (s *Session) NPC(objectID uint32) (Snapshot, bool) {
 	if s == nil || objectID == 0 {
 		return Snapshot{}, false
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refreshAttributeMirrorsLocked()
 	npc, isFound := s.npcs[objectID]
 	return npc, isFound
 }

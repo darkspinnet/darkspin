@@ -21,6 +21,7 @@ func (e *Session) HoldFollow(objectID uint32, at time.Time, until time.Time) (Ac
 	if !isFound || actor.HitPoint <= 0 {
 		return Actor{}, errors.New("companion follow hold unavailable")
 	}
+	actor = e.refreshMovementModifiersLocked(actor, at)
 	actor.Position = actor.followPosition(at)
 	actor.clearFollow()
 	actor.FollowRevision = e.nextFollowRevision()
@@ -51,11 +52,13 @@ func (e *Session) MotionSnapshots(at time.Time) []MotionSnapshot {
 	if e == nil || at.IsZero() {
 		return nil
 	}
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	snapshots := make([]MotionSnapshot, 0, len(e.actors))
 	for _, actor := range e.actors {
-		actor.Position = actor.followPosition(at)
+		actor = e.refreshMovementModifiersLocked(actor, at)
+		e.actors[actor.ObjectID] = actor
+		actor.Position = actor.PositionAt(at)
 		snapshot := MotionSnapshot{Actor: actor}
 		if actor.IsFollowing && at.Before(actor.followDeadline) {
 			snapshot.MovementSpeed = actor.followPlan.Destination.Sub(actor.followPlan.Position).Length() /

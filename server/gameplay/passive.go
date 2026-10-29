@@ -342,6 +342,9 @@ func (s gameplayPeerSession) applyPassiveDamageReduction(
 		}
 	}
 	reduction := s.passiveDamageReduction(now)
+	if s.isOperativeCaged(now) {
+		reduction += 0.5
+	}
 	if s.deployedObjectID == s.roarReductionObjectID &&
 		now.Before(s.roarReductionExpiresAt) {
 		reduction += 0.25

@@ -21,17 +21,20 @@ type debugNPCCatalog struct {
 }
 
 type debugNPCCatalogEntry struct {
-	Noun               string  `json:"noun"`
-	HitPoint           float32 `json:"hit_point"`
-	Rank               int32   `json:"rank"`
-	AbilityName        string  `json:"ability_name"`
-	Family             string  `json:"family"`
-	TargetKind         string  `json:"target_kind"`
-	Range              float32 `json:"range"`
-	MinimumRange       float32 `json:"minimum_range"`
-	IsActionRecovered  bool    `json:"is_action_recovered"`
-	IsControlSupported bool    `json:"is_control_supported"`
-	IsFinalBoss        bool    `json:"is_final_boss"`
+	Noun                   string   `json:"noun"`
+	HitPoint               float32  `json:"hit_point"`
+	Rank                   int32    `json:"rank"`
+	AbilityName            string   `json:"ability_name"`
+	SupportedAbilityNames  []string `json:"supported_ability_names"`
+	AutonomousAbilityNames []string `json:"autonomous_ability_names"`
+	Family                 string   `json:"family"`
+	TargetKind             string   `json:"target_kind"`
+	Range                  float32  `json:"range"`
+	MinimumRange           float32  `json:"minimum_range"`
+	IsActionRecovered      bool     `json:"is_action_recovered"`
+	IsControlSupported     bool     `json:"is_control_supported"`
+	IsStagingSupported     bool     `json:"is_staging_supported"`
+	IsFinalBoss            bool     `json:"is_final_boss"`
 }
 
 func readDebugNPCCatalog(ctx context.Context, host *debugHost, clientManager *debugClientManager, payload json.RawMessage) (debugNPCCatalog, error) {
@@ -62,11 +65,14 @@ func readDebugNPCCatalog(ctx context.Context, host *debugHost, clientManager *de
 		result.Entries = append(result.Entries, debugNPCCatalogEntry{
 			Noun: entry.Noun, HitPoint: entry.HitPoint, Rank: entry.Rank,
 			AbilityName: entry.AbilityName, Family: entry.Family,
-			TargetKind:         entry.TargetKind,
-			Range:              entry.Range,
-			MinimumRange:       entry.MinimumRange,
-			IsActionRecovered:  entry.IsActionRecovered,
-			IsControlSupported: entry.IsControlSupported, IsFinalBoss: entry.IsFinalBoss,
+			SupportedAbilityNames:  append([]string(nil), entry.SupportedAbilityNames...),
+			AutonomousAbilityNames: append([]string(nil), entry.AutonomousAbilityNames...),
+			TargetKind:             entry.TargetKind,
+			Range:                  entry.Range,
+			MinimumRange:           entry.MinimumRange,
+			IsActionRecovered:      entry.IsActionRecovered,
+			IsControlSupported:     entry.IsControlSupported, IsFinalBoss: entry.IsFinalBoss,
+			IsStagingSupported: entry.IsStagingSupported,
 		})
 	}
 	return result, nil

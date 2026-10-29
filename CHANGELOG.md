@@ -2,13 +2,28 @@
 
 ### 2026-10-28
 
-
+- Restore missing NPC boss attacks, agent summons, support casts and passive effects, with authored higher-rank timing, reach and projectiles.
+- Resolve NPC summons and duplicates from their own class profiles, preserve current versus maximum health, and apply authored pet attribute mirroring.
+- Add Server Rules controls for enemy rosters, ordinary agents, ambient elites, boss selection, and summon and fixture health scaling.
+- Preserve consumed NPC resurrection, shield and turtle triggers across checkpoint restores and automatically rebuild outdated content caches before server startup.
+- Complete recovered BabyMortar, CreatureX, Stagnant and VerdanthBossTest kits for direct noun spawning.
+- Restore NPC reactivation and support retreats, resume saved drone movement, and apply NPC area slows to heroes and companion movement with timed expiry.
+- Correct Haunt and LightningPet channel timestamps, retain pets' startup persistence rank, and clear slowing effects and movement on recipient death.
+- Reject unsupported enemy population rule versions before merging older launcher settings.
 - Remove the saved-password status area below the Remote Crogenitor card.
 - Replace the remote profile's Check Connection button with a small refresh icon below the Crogenitor portrait.
 - Move remote server availability and shortened version into the Server row, highlight incompatible versions in red, and show full client/server versions on hover.
 - pve: Add a co-op batch scenario for all 95 castable hero abilities using hero swaps, controlled enemy restoration, cooldown resets, and caster/observer packet evidence.
 - pve: Preserve mission defense conversion during scenario hero swaps so defense-scaled basic attacks remain castable.
 - pve: Make Arc Weld hit an explicitly selected hostile target even when it is idle or attacking a co-op teammate.
+- pve: Sweep 257 recovered NPC noun variants and 33 secondary actions across four co-op pairs on one scenario server, with restored heroes and paired native captures.
+- pve: Extend the co-op NPC ability sweep from 257 ordinary variants to 323 including authored captain profiles, and verify 48 secondary actions with matching two-client receive content.
+- pve: Extend the co-op NPC sweep from 323 to 335 variants with Zelem Haster ally buffs and Rezzer resurrection, and verify 54 secondary actions across 389 matching two-client cast windows.
+- pve: Admit all three Shadow Boss minion ranks to the controlled co-op sweep and verify Shadow Boss Minion Bolt damage with exact two-client packet parity.
+- pve: Complete controlled NPC follow-on projectiles, paired beam links, clones, and pack actions through their authored effects and owned cleanup.
+- pve: Move Stealth Attack enemies to caster-reachable destinations so their stealth, fear, and hits play through in co-op.
+- pve: Align Shadow Boss and Cryos Boss melee selection with pursuit stop distance, preventing repeated pursuit at the melee boundary.
+- pve: Expose authored boss triggers to scenarios and verify six first-campaign boss encounters with paired native action captures.
 - pvp: Retire Phantom Charge and Omni Shield action leases when their release packets commit, preventing late rejected responses.
 - #140 Show live remote server availability and versions, block unreachable launches, and enforce matching client/server major and minor versions before launch and at login while allowing patch and unstable differences.
 - #140 Add a Docker maintenance update command that reuses player warnings, clean shutdown, backups, and bootstrap recovery, including when automatic updates are disabled.

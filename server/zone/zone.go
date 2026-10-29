@@ -297,6 +297,7 @@ func New(id uint64, generation uint64, info ZoneInfo) (*Zone, error) {
 		return nil, fmt.Errorf("zoneNavigation: %w", navigationErr)
 	}
 	info.Companion.ConfigureActorFootprints(info.DirectorDefinition.NounFootprintsByNoun)
+	info.Companion.BindMovementModifiers(info.Effect)
 	info.Companion.ConfigureNPCProfiles(info.DirectorDefinition.NPCProfilesByNoun)
 	info.NPCs.ConfigureAffixContext(info.Difficulty, uint32(len(zone.members)))
 	return zone, nil
@@ -2004,6 +2005,12 @@ func (e *Zone) restoreCheckpoint(snapshot zonecheckpoint.Snapshot) error {
 	if e == nil {
 		return errors.New("nil zone")
 	}
+	if snapshot.IsPopulationRandomSet && e.info.Population != nil {
+		err := e.info.Population.RestoreRandom(snapshot.PopulationRandom, snapshot.PopulationMixedRandomState)
+		if err != nil {
+			return fmt.Errorf("populationRestore: %w", err)
+		}
+	}
 	e.isNPCSpawnCommandUsed = snapshot.IsNPCSpawnCommandUsed
 	if e.info.MemberLimit != 0 &&
 		len(snapshot.Members) > int(e.info.MemberLimit) {
@@ -2045,6 +2052,7 @@ func (e *Zone) restoreCheckpoint(snapshot zonecheckpoint.Snapshot) error {
 		if introErr != nil {
 			return fmt.Errorf("checkpointIntroduction: %w", introErr)
 		}
+		restoredNPC = hydrateCheckpointClassBases(restoredNPC, e.info.DirectorDefinition)
 		mutation, mutationErr := zonecheckpoint.RebaseMutation(npc.State.Mutation, npc.MutationCapturedAt, restoreNPCAt)
 		if mutationErr != nil {
 			return fmt.Errorf("checkpointMutation: %w", mutationErr)
@@ -2406,6 +2414,7 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 	hordes := e.info.Horde.Snapshots()
 	triggerProgresses := e.info.Director.TriggerProgress()
 	snapshot := zonecheckpoint.Snapshot{
+		EnemyPopulationRules: e.info.DirectorDefinition.EnemyPopulationRules.Resolved(), BossSpawnRules: e.info.DirectorDefinition.BossSpawnRules.Resolved(), IsSpawnRuleSnapshotSet: true,
 		Version: zonecheckpoint.Version, ZoneID: zoneID, RunSeed: runSeed,
 		IsReplayRandomized: isReplayRandomized,
 		ZoneGeneration:     generation, CompletionID: e.CompletionID(),
@@ -2423,6 +2432,11 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 		ClearedSpawnGroupIDs: clearedSpawnGroupIDs,
 		DropRandom:           dropRandom, IsDropRandomSet: true,
 		CapsuleRandom: capsuleRandom, IsCapsuleRandomSet: true,
+	}
+	if e.info.Population != nil {
+		snapshot.PopulationRandom = e.info.Population.Random().Snapshot()
+		snapshot.PopulationMixedRandomState = e.info.Population.MixedRandomState()
+		snapshot.IsPopulationRandomSet = true
 	}
 	// Serialize the queue operation with terminal state. Without this final
 	// fence, completion could discard a checkpoint while an older capture was
@@ -3233,9 +3247,14 @@ func (e *Zone) resurrectNPC(
 	if e.Boss() != nil && !e.Boss().CanRevive(defeated) {
 		return zonenpc.Snapshot{}, false, nil
 	}
-	event, isRevived, err := e.Death().Revive(ctx, objectID)
-	if err != nil {
-		return zonenpc.Snapshot{}, false, fmt.Errorf("resurrectDeath: %w", err)
+	var event []zonenpc.DeathEvent
+	isRevived := defeated.IsScenarioDefeated()
+	var err error
+	if !isRevived {
+		event, isRevived, err = e.Death().Revive(ctx, objectID)
+		if err != nil {
+			return zonenpc.Snapshot{}, false, fmt.Errorf("resurrectDeath: %w", err)
+		}
 	}
 	if !isRevived {
 		return zonenpc.Snapshot{}, false, nil

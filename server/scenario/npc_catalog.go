@@ -11,15 +11,18 @@ type NPCCatalog struct {
 }
 
 type NPCCatalogEntry struct {
-	Noun               string
-	HitPoint           float32
-	Rank               int32
-	AbilityName        string
-	Family             string
-	TargetKind         string
-	Range              float32
-	MinimumRange       float32
-	IsActionRecovered  bool
-	IsControlSupported bool
-	IsFinalBoss        bool
+	Noun                   string
+	HitPoint               float32
+	Rank                   int32
+	AbilityName            string
+	SupportedAbilityNames  []string
+	AutonomousAbilityNames []string
+	Family                 string
+	TargetKind             string
+	Range                  float32
+	MinimumRange           float32
+	IsActionRecovered      bool
+	IsControlSupported     bool
+	IsStagingSupported     bool
+	IsFinalBoss            bool
 }

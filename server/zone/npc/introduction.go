@@ -83,6 +83,9 @@ func WithBossIntroduction(plan SpawnPlan, profile ActionProfile) ActionProfile {
 // IntroductionProfile retains ordinary aggro reactions but omits arrival
 // animations for actors that are already standing in the map.
 func IntroductionProfile(plan SpawnPlan, profile ActionProfile) ActionProfile {
+	if plan.IsSubsequentAggroPending {
+		return subsequentAggroProfile(plan, profile)
+	}
 	profile = WithBossIntroduction(plan, profile)
 	profile = authoredRobotEntrance(plan, profile)
 	profile = authoredFirstAggroReaction(plan, profile)

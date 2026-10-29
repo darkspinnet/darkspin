@@ -188,6 +188,20 @@ type campaignCompanionFollowStep struct {
 	logger     *log.Logger
 }
 
+func (e campaignCompanionFollowStep) scheduleAfter(delay time.Duration) error {
+	if e.registry.timer == nil {
+		return errors.New("companion follow timer unavailable")
+	}
+	cancel, err := e.registry.timer.Schedule(delay, e.execute)
+	if err != nil {
+		return fmt.Errorf("followTimer: %w", err)
+	}
+	if cancel == nil {
+		return errors.New("companion follow cancellation unavailable")
+	}
+	return nil
+}
+
 func (e campaignCompanionFollowStep) execute() {
 	packets, err := e.produce()
 	if err != nil && e.logger != nil {
@@ -210,6 +224,17 @@ func (e campaignCompanionFollowStep) produce() ([][]byte, error) {
 	if !isFound || actor.UserID != e.userID || actor.PeerGeneration != e.generation ||
 		actor.OwnerObjectID != e.plan.OwnerObjectID || actor.HitPoint <= 0 ||
 		!actor.IsFollowing || actor.FollowRevision != e.plan.Revision {
+		return nil, nil
+	}
+	remaining, isMotionCurrent := e.zone.Companion().FollowRemaining(e.plan.ObjectID, e.plan.Revision, time.Now())
+	if !isMotionCurrent {
+		return nil, nil
+	}
+	if remaining > 0 {
+		err := e.scheduleAfter(remaining)
+		if err != nil {
+			return nil, fmt.Errorf("followMotionWait: %w", err)
+		}
 		return nil, nil
 	}
 	packets, err := companionraknet.FollowArrival(e.plan)
@@ -298,14 +323,14 @@ func (e campaignCompanionFollowAdmission) arm() error {
 			registry: e.runtime.registry, zone: e.zone, userID: e.userID,
 			generation: e.generation, plan: plan, logger: e.runtime.logger,
 		}
-		cancel, err := e.runtime.npc.timer.Schedule(max(time.Duration(0), plan.Deadline.Sub(e.runtime.now())), step.execute)
+		delay, isMotionCurrent := e.zone.Companion().FollowRemaining(plan.ObjectID, plan.Revision, e.runtime.now())
+		if !isMotionCurrent {
+			continue
+		}
+		err := step.scheduleAfter(delay)
 		if err != nil {
 			e.cancel(true)
 			return fmt.Errorf("companionFollowSchedule: %w", err)
-		}
-		if cancel == nil {
-			e.cancel(true)
-			return errors.New("companion follow cancellation unavailable")
 		}
 	}
 	return nil
@@ -1393,9 +1418,9 @@ func (r campaignMovementCommandRuntime) handle(
 			decision.SpikeOutcome != 0, decision.IsPerformanceFallback, decision.IsDoingWell)
 	}
 	for _, plan := range populationPlans {
-		r.logger.Printf("RakNet campaign enemy planned for %s object=%d noun=%q marker_set=%q locus=%d kind=%d captain=%t position=(%.3f,%.3f,%.3f)",
+		r.logger.Printf("RakNet campaign enemy planned for %s object=%d noun=%q marker_set=%q locus=%d kind=%d captain=%t position=(%.3f,%.3f,%.3f) %s",
 			packet.Address, plan.ObjectID, plan.NounName, plan.MarkerSetName, plan.LocusID,
-			plan.Kind, plan.IsCaptain, plan.Position.X, plan.Position.Y, plan.Position.Z)
+			plan.Kind, plan.IsCaptain, plan.Position.X, plan.Position.Y, plan.Position.Z, npcPolicyDiagnostic(peerSession.zone.DirectorDefinition(), plan))
 	}
 	for _, plan := range populationAggroPlans {
 		r.logger.Printf("RakNet campaign enemy acquired hero for %s object=%d noun=%q radius=%.1f",

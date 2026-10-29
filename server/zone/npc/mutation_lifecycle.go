@@ -25,11 +25,7 @@ func isMutationAbilityBlocked(actor Snapshot, at time.Time) bool {
 
 func beginMutationPassive(actor *Snapshot, at time.Time) {
 	state := &actor.Mutation
-	rank := max(int32(1), actor.Plan.NPCProfile.NPCRank)
-	if actor.Plan.IsEliteModifierApplied() {
-		rank++
-	}
-	state.Rank = uint32(min(int32(3), rank))
+	state.Rank = uint32(EffectiveNPCRank(actor.Plan))
 	state.CurrentIndex = 1
 	if state.Rank > 1 {
 		state.CurrentIndex = 2

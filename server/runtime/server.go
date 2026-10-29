@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	contentruntime "github.com/darkspinnet/darkspin/content/runtime"
 	contentsqlite "github.com/darkspinnet/darkspin/content/sqlite"
 	serverauth "github.com/darkspinnet/darkspin/server/auth"
 	"github.com/darkspinnet/darkspin/server/blaze"
@@ -573,6 +574,17 @@ func New(options Options) (*Server, error) {
 	bindHost, host, err := config.NetworkHosts()
 	if err != nil {
 		return nil, fmt.Errorf("networkHosts: %w", err)
+	}
+	// Every host, including scenario/direct runtime hosts, crosses the same
+	// cache readiness boundary before any feature queries the schema.
+	err = contentruntime.Ensure(context.Background(), contentruntime.Options{
+		GamePath: gamePath, DatabasePath: contentDatabasePath,
+		OnProgress: func(progress contentsqlite.BuildProgress) {
+			logger.Printf("Content: %s (%d/%d)", progress.Phase, progress.Completed, progress.Total)
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("contentPrepare: %w", err)
 	}
 	contentStore, err := openContentStore(contentDatabasePath)
 	if err != nil {

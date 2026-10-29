@@ -9,6 +9,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/zone"
+	zonedifficulty "github.com/darkspinnet/darkspin/server/zone/difficulty"
 	zonenavigation "github.com/darkspinnet/darkspin/server/zone/navigation"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
@@ -49,10 +50,10 @@ func (e campaignNPCActionRuntime) produceOrcusConsume(packet raknet.Packet,
 		e.registry.mutex.Unlock()
 		return nil, false, nil
 	}
-	authoredProfile, isAuthoredProfileFound := member.zone.DirectorDefinition().NPCProfilesByNoun[strings.ToLower(definition.ServantNoun)]
-	if !isAuthoredProfileFound || !authoredProfile.IsKnown || authoredProfile.HitPoint <= 0 {
+	authoredProfile, profileErr := zonedifficulty.ProjectOwnedSummon(member.zone.DirectorDefinition(), definition.ServantNoun)
+	if profileErr != nil {
 		e.registry.mutex.Unlock()
-		return nil, true, fmt.Errorf("consumeClass: unavailable %q", definition.ServantNoun)
+		return nil, true, fmt.Errorf("consumeClass: %w", profileErr)
 	}
 	band, isClaimed := member.zone.NPCs().ClaimOrcusConsume(objectID)
 	if !isClaimed {

@@ -52,7 +52,7 @@ func (e Snapshot) IsIntroductionBossActive() bool {
 // whether they also request a camera hold. Floor warps and owned summons keep
 // their separate spawn lifecycles.
 func CanRetainIntroduction(plan SpawnPlan, profile ActionProfile) bool {
-	if plan.OwnerObjectID != 0 || plan.Introduction == SpawnIntroductionFloorWarp ||
+	if ((plan.OwnerObjectID != 0 || plan.Introduction == SpawnIntroductionFloorWarp) && !plan.IsSubsequentAggroPending) ||
 		!profile.IsFirstAggroDurationKnown {
 		return false
 	}
@@ -169,9 +169,11 @@ func (e *Session) RejectIntroduction(objectID uint32, generation uint64) {
 		return
 	}
 	npc.Plan.IsIntroductionHidden = npc.introduction.isInitiallyHidden
-	npc.Plan.IsIntroductionComplete = false
+	if !npc.Plan.IsSubsequentAggroPending {
+		npc.Plan.IsIntroductionComplete = false
+		npc.IsFirstActionStarted = false
+	}
 	npc.IsInvisibleToSecurityTeleporter = npc.Plan.IsIntroductionHidden
-	npc.IsFirstActionStarted = false
 	npc.introduction = introductionTimeline{}
 	e.npcs[objectID] = npc
 }

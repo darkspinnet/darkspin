@@ -24,6 +24,9 @@ type OrcusSpawnDefinition struct {
 }
 
 func OrcusSpawnProfile(nounName string) (OrcusSpawnDefinition, bool) {
+	if strings.EqualFold(nounName, "VerdanthBossTest.Noun") {
+		nounName = "VerdanthBoss.Noun"
+	}
 	servantNoun := ""
 	maximumServant := 0
 	movementSpeed := float32(0)
@@ -141,6 +144,9 @@ func OrcusDiseaseConeProfile(nounName string) (ActionProfile, bool) {
 }
 
 func OrcusConsumeProfile(nounName string) (ActionProfile, bool) {
+	if strings.EqualFold(nounName, "VerdanthBossTest.Noun") {
+		nounName = "VerdanthBoss.Noun"
+	}
 	fallback, isFound := OrcusFallbackProfile(nounName)
 	if !isFound {
 		return ActionProfile{}, false

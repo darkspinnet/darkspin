@@ -336,6 +336,15 @@ func (e campaignNPCProjectileSchedule) next() ([][]byte, error) {
 	timestamp := e.timestamp + uint64(e.nextDelay/time.Millisecond)
 	var packets [][]byte
 	var err error
+	if !(e.volley.isActive && e.volley.shotIndex+1 < int(e.plan.Profile.ProjectileShotCount)) {
+		additionalPackets, isAdditionalHandled, additionalErr := e.runtime.produceAdditionalKitAction(e.packet, e.sessionKey, e.generation, e.sourceObjectID, timestamp)
+		if additionalErr != nil {
+			return nil, fmt.Errorf("additionalProjectileNext: %w", additionalErr)
+		}
+		if isAdditionalHandled {
+			return additionalPackets, nil
+		}
+	}
 	if e.volley.isActive &&
 		e.volley.shotIndex+1 < int(e.plan.Profile.ProjectileShotCount) {
 		nextVolley := e.volley

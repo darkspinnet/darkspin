@@ -89,6 +89,9 @@ func (r campaignNPCActionRuntime) isNomadShielderGrenadeReady(
 }
 
 func (e campaignNPCLobSchedule) resume(timestamp uint64) ([][]byte, error) {
+	if e.plan.Profile.AbilityName == "BabyToss" || e.source.Plan.NounName == "BabyMortar.Noun" {
+		return e.runtime.produceEnemyLob(e.packet, e.sessionKey, e.generation, e.objectID, timestamp)
+	}
 	if e.plan.Profile.AbilityName == "HurlMagma" ||
 		e.plan.Profile.AbilityName == "NomadShielderGrenade" {
 		return e.runtime.produceEnemyMelee(
@@ -179,6 +182,9 @@ func (e campaignNPCLobSchedule) landing() ([][]byte, error) {
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
+	}
+	if e.plan.Profile.AbilityName == "BabyToss" {
+		return e.babyLandingLocked(&peerSession)
 	}
 	if isGrenade || isShielderGrenade {
 		source, isSourceFound := peerSession.zone.NPCs().NPC(e.objectID)
@@ -617,17 +623,34 @@ func (e campaignNPCLobSchedule) finishMagma() ([][]byte, error) {
 }
 
 func (e campaignNPCLobSchedule) next() ([][]byte, error) {
+	e.runtime.registry.mutex.RLock()
+	member, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isCurrent := isFound && member.isCampaignNPCSourceGenerationActive(e.generation, e.objectID, e.plan.ActionGeneration)
+	e.runtime.registry.mutex.RUnlock()
+	if !isCurrent {
+		return nil, nil
+	}
 	if e.runtime.finishScenarioNPCManualAction(e.sessionKey, e.generation,
 		e.objectID, e.plan.ActionGeneration) {
 		return nil, nil
 	}
 	delay := e.plan.Profile.Cooldown
+	if e.plan.Profile.AbilityName == "BabyToss" {
+		delay += e.plan.Profile.HitDelay
+	}
 	if e.plan.Profile.AbilityName == "HurlMagma" ||
 		e.plan.Profile.AbilityName == "NomadShielderGrenade" ||
 		e.plan.Profile.AbilityName == "SleepMushroom" {
 		delay = e.plan.Profile.ReleaseDelay
 	}
 	timestamp := e.timestamp + uint64(delay/time.Millisecond)
+	additionalPackets, isAdditionalHandled, additionalErr := e.runtime.produceAdditionalKitAction(e.packet, e.sessionKey, e.generation, e.objectID, timestamp)
+	if additionalErr != nil {
+		return e.fail("additionalLobNext", additionalErr)
+	}
+	if isAdditionalHandled {
+		return additionalPackets, nil
+	}
 	packets, err := e.resume(timestamp)
 	if err != nil {
 		return e.fail("enemyLobNext", err)
@@ -1013,6 +1036,10 @@ func (r campaignNPCActionRuntime) produceEnemyLob(
 	}
 	landingDelay := profile.HitDelay + lob.Duration
 	nextDelay := profile.Cooldown
+	if profile.AbilityName == "BabyToss" {
+		nextDelay += profile.HitDelay
+		peerSession.zone.NPCs().PayAdditionalKitCooldown(objectID, profile.AbilityName, timestamp+uint64(nextDelay/time.Millisecond))
+	}
 	if isMagma || isShielderGrenade || isSleepMushroom {
 		nextDelay = profile.ReleaseDelay
 	}

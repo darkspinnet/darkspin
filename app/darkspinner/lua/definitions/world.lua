@@ -19,7 +19,7 @@
 ---@field Hold fun(self:ClientWorld,point:WorldPosition,duration_ms:integer):WindowCommandResult|nil,ScenarioError|nil Holds ordinary left input for 1 to 1200ms, then waits for paired release processing under the two-second native deadline. Does not guarantee attacks or movement. Unknown outcomes stop without replay.
 ---@field Configure fun(self:ClientWorld,options:WorldRecipeOptions):WorldRecipe|nil,ScenarioError|nil Installs an immutable server recipe after accepted login and before mission admission. Every member of a shared fresh campaign must configure the same run, seed and ambient setting before admission.
 ---@field Spawn fun(self:ClientWorld,noun:string,timeout_ms?:integer):WorldSpawn|nil,ScenarioError|nil Queues once and waits for correlated server publication under the client timeout. No native visibility assertion; timeout preserves the pending receipt without replay.
----@field SpawnControlledNPC fun(self:ClientWorld,noun:string,timeout_ms?:integer):ControlledNPC|nil,ScenarioError|nil Spawns a supported installed enemy with AI disabled before admission and waits for server publication. Construct outside Parallel. On failure returns nil,error with partial receipt in err.Details.spawn_receipt; never retry an unknown spawn blindly.
+---@field SpawnControlledNPC fun(self:ClientWorld,noun:string,timeout_ms?:integer):ControlledNPC|nil,ScenarioError|nil Spawns a supported installed enemy with AI disabled before admission and waits for server publication. On failure returns nil,error with partial receipt in err.Details.spawn_receipt; never retry an unknown spawn blindly.
 ---@field SpawnAsync fun(self:ClientWorld,noun:string):WorldSpawn|nil,ScenarioError|nil Returns the queued command receipt without waiting for publication; no automatic retry.
 ---@field SnapshotSpawn fun(self:ClientWorld,request_id:string):WorldSpawn|nil,ScenarioError|nil Reads a request owned by this run/account/game/peer/zone; failed commands retain partial receipts with an error.
 
@@ -77,12 +77,15 @@
 ---@field hit_point number Installed baseline combat HP; positive HP is required for controlled spawn.
 ---@field rank integer Authored baseline NPC rank.
 ---@field ability_name string Default action ability name, including fallback names when is_action_recovered is false.
+---@field supported_ability_names string[] Exact ordinary first-action names available to a controlled spawn, including reachable distance-selected secondary actions. Empty when control is unsupported. The requested name must match the action selected at cast admission.
+---@field autonomous_ability_names string[] Authored phase/controller actions for autonomous encounters and owner-created children. Discovery only; does not grant manual casting or prove native playback. Phase-driven nouns may expose these while is_control_supported is false.
 ---@field family string Server default action family.
----@field target_kind 'hero'|'ally'|'unknown' Hero-target actions can use the owned deployed hero; ally-target families require separate scenario support.
+---@field target_kind 'hero'|'ally'|'unknown' Hero-target actions use the owned deployed hero; supported ally-target families require a controlled helper.
 ---@field range number Authored attack range before actor and target footprint adjustments; use to place close-range mobs before casting.
 ---@field minimum_range number Authored minimum range where applicable.
 ---@field is_action_recovered boolean True only when a noun-specific action profile is present, not a generic fallback.
----@field is_control_supported boolean True for a positive-HP, recovered, ordinary hero-target profile admitted by the current controlled-spawn gate. Final spawn admission may still reject encounter-specific modifiers.
+---@field is_control_supported boolean True when the controlled-spawn gate admits a positive-HP recovered profile with at least one manually supported action. Final spawn admission may still reject encounter-specific modifiers.
+---@field is_staging_supported boolean True when owned AI-off spawn, movement, and enabling normal AI are supported. Autonomous-only actors can be staged while is_control_supported is false; manual Cast remains server-rejected.
 ---@field is_final_boss boolean Known standalone final-boss noun; separate controller support is required.
 
 ---@class WorldPosition
@@ -162,6 +165,12 @@
 ---@field is_complete boolean
 ---@field is_beam_out_committed boolean
 
+---@class WorldBossTrigger
+---@field marker_id integer Authored marker identity, not a spawned object.
+---@field marker_set_name string Authored marker set containing the boss trigger.
+---@field position WorldPosition Authored trigger center.
+---@field radius number Authored trigger radius; occupancy and dwell still follow normal campaign rules.
+
 ---@class WorldSnapshot
 ---@field arena? ArenaMatchSnapshot Read-only arena match/squad producer, including results after combat ends; independent of world availability and native results UI.
 ---@field campaign? CampaignSnapshot Read-only committed campaign participant/squad producer. Includes unready members, which block owned world fixtures.
@@ -197,6 +206,7 @@
 ---@field is_victory_committed boolean Actual personal result transaction committed after completed boss admission with nonzero boss identity. Requires is_victory_available; not native result-screen or reward-cashout proof.
 ---@field is_objective_complete boolean Real zone objective producer.
 ---@field boss WorldBoss|nil Nil if unsupported or producer lock busy.
+---@field boss_triggers WorldBossTrigger[] Authored named-boss trigger centers in this committed campaign map; read-only and not proof of admission.
 
 ---@class CampaignSnapshot
 ---@field members CampaignMemberSnapshot[] Same-zone admitted campaign members, including unavailable participants.

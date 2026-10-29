@@ -2783,7 +2783,7 @@ func (r gameplayPendingRuntime) pollWorld(
 				return nil, fmt.Errorf("mutationPoll: %w", mutationErr)
 			}
 			rootHazardPackets = append(rootHazardPackets, mutationPackets...)
-			affixPackets, affixErr := r.pollAffixAurasLocked(&peerSession)
+			affixPackets, affixErr := r.pollAffixAurasLocked(&peerSession, packet.SourceTime)
 			if affixErr != nil {
 				r.registry.mutex.Unlock()
 				return nil, fmt.Errorf("affixPoll: %w", affixErr)
@@ -3096,8 +3096,8 @@ func (r gameplayPendingRuntime) recoverIdleNPCActions(
 	}
 	plans := make([]zonenpc.SpawnPlan, 0)
 	for _, npc := range peerSession.zone.NPCs().Snapshots() {
-		if npc.IsDefeated || npc.Plan.IsFixture || npc.TargetObjectID == 0 ||
-			npc.IsActionStarted {
+		if npc.IsDefeated || !npc.IsScenarioAIEnabled() || npc.Plan.IsFixture || npc.TargetObjectID == 0 ||
+			npc.IsActionStarted || zonenpc.IsAgentHealingChild(npc.Plan) {
 			continue
 		}
 		_, isTargetFound := peerSession.campaignNPCTarget(
@@ -3152,7 +3152,7 @@ func (r gameplayPendingRuntime) recoverNPCs(
 	plans := make([]zonenpc.SpawnPlan, 0)
 	for _, npc := range peerSession.zone.NPCs().Snapshots() {
 		if npc.IsDefeated || npc.Plan.IsFixture || npc.TargetObjectID == 0 ||
-			npc.IsActionStarted {
+			npc.IsActionStarted || zonenpc.IsAgentHealingChild(npc.Plan) {
 			continue
 		}
 		plans = append(plans, npc.Plan)
@@ -4959,10 +4959,10 @@ func (e campaignPopulationRuntime) activateOpening(
 	if isFirstRunLevel {
 		for _, plan := range result.spawnPlans {
 			e.logger.Printf(
-				"RakNet campaign opening enemy for %s object=%d noun=%q marker_set=%q locus=%d captain=%t introduction=%d position=(%.3f,%.3f,%.3f)",
+				"RakNet campaign opening enemy for %s object=%d noun=%q marker_set=%q locus=%d captain=%t introduction=%d position=(%.3f,%.3f,%.3f) %s",
 				packet.Address, plan.ObjectID, plan.NounName, plan.MarkerSetName,
 				plan.LocusID, plan.IsCaptain, plan.Introduction,
-				plan.Position.X, plan.Position.Y, plan.Position.Z,
+				plan.Position.X, plan.Position.Y, plan.Position.Z, npcPolicyDiagnostic(peerSession.zone.DirectorDefinition(), plan),
 			)
 		}
 	}
@@ -5833,6 +5833,32 @@ func (p campaignPreparation) loadDirector(
 	if isSpawnRuleSource {
 		director.BossSpawnRules = spawnRuleSource.BossSpawnRules()
 	}
+	missionRuleSource, isMissionRuleSource := p.spawnRuleSource.(interface {
+		SpawnRulesSnapshot() (game.EnemyPopulationRules, game.BossSpawnRules)
+	})
+	if isMissionRuleSource {
+		director.EnemyPopulationRules, director.BossSpawnRules = missionRuleSource.SpawnRulesSnapshot()
+	}
+	if p.checkpoint != nil {
+		snapshot, isFound, loadErr := p.checkpoint.Load(ctx, uint64(binding.GameID))
+		if loadErr != nil {
+			return game.CampaignDirector{}, fmt.Errorf("directorRuleCheckpoint: %w", loadErr)
+		}
+		if isFound && snapshot.IsSpawnRuleSnapshotSet {
+			validateErr := zonecheckpoint.Validate(snapshot, uint64(binding.GameID), binding.Level, binding.Difficulty, binding.UserID)
+			if validateErr == nil {
+				director.EnemyPopulationRules = snapshot.EnemyPopulationRules.Resolved()
+				director.BossSpawnRules = snapshot.BossSpawnRules.Resolved()
+			}
+		}
+	}
+	director, err = game.ApplyPopulationRules(director)
+	if err != nil {
+		return game.CampaignDirector{}, fmt.Errorf("directorPopulation: %w", err)
+	}
+	if p.logger != nil {
+		p.logger.Printf("Dark Spin NPC policy game=%d stage=%d party=%d population=%+v boss=%+v agents=%d leader_result=%s", binding.GameID, binding.Difficulty, binding.ParticipantCount, director.EnemyPopulationRules, director.BossSpawnRules, len(director.OrdinaryAgentEntries), zoneboss.LeaderPolicyResult(director))
+	}
 	director, err = p.selectInitialMapLayout(director, binding)
 	if err != nil {
 		return game.CampaignDirector{}, fmt.Errorf("directorLayout: %w", err)
@@ -6150,6 +6176,7 @@ func (p campaignPreparation) initialize(
 		return fmt.Errorf("statusMapFixtures: %w", fixtureErr)
 	}
 	if len(fixtureMarkers) != 0 {
+		fixtureMarkers = zonedifficulty.ProjectFixtures(director, fixtureMarkers)
 		fixturePlans, nextObjectID, fixtureErr = zonenpc.PlanFixtures(
 			fixtureMarkers, nextObjectID, zoneobject.ProjectileIDStart,
 		)

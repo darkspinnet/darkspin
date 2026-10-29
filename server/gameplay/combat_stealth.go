@@ -71,15 +71,10 @@ func (r campaignNPCActionRuntime) startStealtherStealth(
 		return nil, nil
 	}
 	destination, isDestinationFound, err :=
-		zonenavigation.RandomTeleportDestination(
+		zonenavigation.RandomStealthMovementDestination(
 			peerSession.zone.Navigation(), peerSession.zone.NPCRandom(),
-			zonenavigation.RandomTeleportRequest{
-				SourcePosition:  target.Position,
-				FootprintRadius: enemy.Plan.NPCProfile.FootprintRadius,
-				MinimumDistance: profile.MinimumRange,
-				NormalDistance:  7.5,
-				MaximumDistance: profile.Range - 5,
-			},
+			enemy.Plan.Position, target.Position,
+			enemy.NavigationRadius(), enemy.Navigation,
 		)
 	r.registry.mutex.RUnlock()
 	if err != nil {

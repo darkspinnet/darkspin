@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
@@ -51,6 +52,14 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 	if err == nil {
 		err = validateScenarioNPCRequest(req, peer, actor)
 	}
+	if err == nil && req.Operation == "ability" {
+		selectedAbility, selectedErr := scenarioSelectedNPCAbility(peer, req.Identity.ObjectID, req.TargetObjectID, packet.SourceTime)
+		if selectedErr != nil {
+			err = selectedErr
+		} else if selectedAbility != req.AbilityName {
+			err = fmt.Errorf("manual NPC ability %q would select %q at current positions", req.AbilityName, selectedAbility)
+		}
+	}
 	if err != nil {
 		e.registry.failNPCControlLocked(requestID, err)
 		e.registry.mutex.Unlock()
@@ -59,9 +68,11 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 	ref := zonenpc.ScenarioControlRef{ObjectID: req.Identity.ObjectID, ControlID: req.Identity.SpawnRequestID}
 	wasPublished := actor.IsPublished
 	wasDefeated := actor.IsDefeated
+	wasScenarioDefeated := actor.LastCommand == "defeat"
 	var action zonenpc.Snapshot
 	var isStarted bool
 	var isFirstAction bool
+	var retiredOwnedObjectIDs []uint32
 	switch req.Operation {
 	case "set_ai":
 		actor, err = peer.zone.NPCs().ScenarioSetAI(zonenpc.ScenarioAIRequest{Ref: ref, IsAIEnabled: *req.IsAIEnabled})
@@ -86,8 +97,10 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 		// The first movement step runs through the owning scheduler, not here.
 	case "restore":
 		actor, err = peer.zone.NPCs().ScenarioRestoreHitPoint(ref)
+	case "defeat":
+		actor, err = peer.zone.NPCs().ScenarioDefeat(ref)
 	case "retire":
-		actor, err = peer.zone.NPCs().ScenarioRetire(ref)
+		actor, retiredOwnedObjectIDs, err = peer.zone.NPCs().ScenarioRetire(ref)
 	default:
 		err = errors.New("NPC command operation is unsupported")
 	}
@@ -98,7 +111,7 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 	}
 	receipt := e.registry.npcControlReceipts[requestID]
 	receipt.IsAccepted, receipt.State, receipt.ActionGeneration = true, "admitted", actor.ActionGeneration
-	if req.Operation == "set_ai" || req.Operation == "restore" || req.Operation == "retire" {
+	if req.Operation == "set_ai" || req.Operation == "restore" || req.Operation == "defeat" || req.Operation == "retire" {
 		receipt.IsCompleted, receipt.IsSettled, receipt.State = true, true, "completed"
 	}
 	e.registry.npcControlReceipts[requestID] = receipt
@@ -135,7 +148,7 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 		step := scenarioNPCMoveStep{runtime: e, packet: packet.Autonomous(), requestID: requestID, req: req,
 			controlGeneration: actor.ControlGeneration, startedAt: e.damage.npc.now(), lastAt: e.damage.npc.now()}
 		err = step.schedule()
-	case "restore":
+	case "restore", "defeat":
 		var healthPacket []byte
 		healthPacket, err = raknet.MarshalApplication(raknet.CombatantDataDeltaMessage{
 			ObjectID: actor.ObjectID, HitPoints: actor.HitPoint, IsHitPointChanged: true,
@@ -144,9 +157,13 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 			packets = [][]byte{healthPacket}
 		}
 	case "retire":
-		if wasPublished && !wasDefeated {
+		deleteObjectIDs := retiredOwnedObjectIDs
+		if wasPublished && (!wasDefeated || wasScenarioDefeated) {
+			deleteObjectIDs = append([]uint32{actor.ObjectID}, deleteObjectIDs...)
+		}
+		if len(deleteObjectIDs) != 0 {
 			var deletePacket []byte
-			deletePacket, err = raknet.MarshalApplication(raknet.ObjectDeleteMessage{ObjectID: []uint32{actor.ObjectID}})
+			deletePacket, err = raknet.MarshalApplication(raknet.ObjectDeleteMessage{ObjectID: deleteObjectIDs})
 			if err == nil {
 				packets = [][]byte{deletePacket}
 			}
@@ -176,6 +193,80 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 		e.logger.Printf("Scenario manual NPC first action object=%d generation=%d", req.Identity.ObjectID, action.ActionGeneration)
 	}
 	return packets, true, nil
+}
+
+func scenarioSelectedNPCAbility(peer gameplayPeerSession, objectID uint32, targetObjectID uint32, timestamp uint64) (string, error) {
+	actor, isActorFound := peer.zone.NPCs().NPC(objectID)
+	target, isTargetFound := peer.campaignNPCTarget(peer.generation, targetObjectID)
+	if !isActorFound || !isTargetFound {
+		return "", errors.New("manual NPC action or target is unavailable")
+	}
+	profile, isProfileFound := campaignNPCActionProfile(actor.Plan, target.Position, target.ActorFootprintRadius)
+	if !isProfileFound || profile.AbilityName == "" {
+		return "", errors.New("manual NPC selected action profile is unavailable")
+	}
+	distance := target.Position.Sub(actor.Plan.Position).Length()
+	if profile.AbilityName == "Resurrect" {
+		for _, defeated := range peer.zone.NPCs().DefeatedCandidates(actor.Plan.Position, profile.Range) {
+			if strings.EqualFold(defeated.Plan.MarkerSetName, actor.Plan.MarkerSetName) {
+				return profile.AbilityName, nil
+			}
+		}
+		return "GhostlyBolt", nil
+	}
+	if profile.AbilityName == "ScaldronBasicDoppler_Shot" {
+		cloneProfile, isCloneFound := zonenpc.ScaldronBasicDopplerCloneProfile(actor.Plan.NounName)
+		if isCloneFound && cloneProfile.AbilityName != "" &&
+			peer.campaignNPCDopplerCloneReadiness[objectID] <= timestamp {
+			fakeObjectID := peer.campaignNPCDopplerFakeObjectIDs[objectID]
+			_, isFakeFound := peer.zone.NPCs().LiveNPC(fakeObjectID)
+			if !isFakeFound {
+				nearby, err := peer.zone.NPCs().ActorsInSphere(zonenpc.SphereRequest{
+					Center: actor.Plan.Position, Radius: 50,
+				})
+				if err != nil {
+					return "", fmt.Errorf("manualDopplerPopulation: %w", err)
+				}
+				if len(nearby) < 15 {
+					return cloneProfile.AbilityName, nil
+				}
+			}
+		}
+	}
+	if profile.AbilityName == "ScaldronBasicSinkhole_Projectile" {
+		wellProfile, isWellFound := zonenpc.ScaldronBasicSinkholeWellProfile(actor.Plan.NounName)
+		if isWellFound && distance <= wellProfile.Range+target.FootprintRadius &&
+			peer.campaignNPCSinkholeReadiness[objectID] <= timestamp {
+			return wellProfile.AbilityName, nil
+		}
+	}
+	if profile.AbilityName == "ZelemBasicPackMeleeAttack" &&
+		!peer.zone.NPCs().HasLivingAlly(objectID, 20) {
+		return "ZelemBasicPackMeleeCower", nil
+	}
+	if profile.AbilityName == "SleepMushroom" &&
+		(distance <= 10 || timestamp < peer.campaignNPCNextSleepMushrooms[objectID]) {
+		return "RezMelee", nil
+	}
+	if profile.AbilityName == "Puller" {
+		swipe, isSwipeFound := zonenpc.VerdanthSpecialThreeFastSwipeProfile(actor.Plan.NounName)
+		if isSwipeFound {
+			surfaceDistance := distance - actor.Plan.ActorFootprintRadius() - target.FootprintRadius
+			if surfaceDistance <= swipe.Range || peer.campaignNPCPullReadiness[objectID] > timestamp {
+				return "FastSwipe", nil
+			}
+		}
+	}
+	if profile.AbilityName == "CryosBasicCharge" && zonenpc.ShouldCryosBasicChargeHeadbutt(distance) {
+		return "CryosBasicChargeHeadbutt", nil
+	}
+	if profile.AbilityName == "VerdanthBasicPicky" {
+		surfaceDistance := max(float32(0), distance-actor.Plan.ActorFootprintRadius()-target.FootprintRadius)
+		if !zonenpc.ShouldVerdanthBasicPickyCharge(surfaceDistance) {
+			return "VerdanthBasicPickyMelee", nil
+		}
+	}
+	return profile.AbilityName, nil
 }
 
 func (e *gameplaySessionRegistry) failNPCControlLocked(requestID string, err error) {

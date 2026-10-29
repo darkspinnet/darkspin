@@ -75,41 +75,48 @@ type debugWorldBoss struct {
 	IsComplete         bool    `json:"is_complete"`
 	IsBeamOutCommitted bool    `json:"is_beam_out_committed"`
 }
+type debugWorldBossTrigger struct {
+	MarkerID      uint32             `json:"marker_id"`
+	MarkerSetName string             `json:"marker_set_name"`
+	Position      debugWorldPosition `json:"position"`
+	Radius        float32            `json:"radius"`
+}
 type debugWorldState struct {
-	NativeReadiness         *controlGameplayState  `json:"native_readiness,omitempty"`
-	Ability                 *debugAbilityState     `json:"ability"`
-	ClientID                string                 `json:"client_id"`
-	InstanceID              string                 `json:"instance_id"`
-	PID                     uint32                 `json:"pid"`
-	UserID                  int64                  `json:"user_id"`
-	GameID                  uint32                 `json:"game_id"`
-	Source                  string                 `json:"source"`
-	CapturedAt              time.Time              `json:"captured_at"`
-	IsAvailable             bool                   `json:"is_available"`
-	UnavailableReason       string                 `json:"unavailable_reason,omitempty"`
-	PeerGeneration          uint64                 `json:"peer_generation"`
-	TransportGeneration     uint64                 `json:"transport_generation"`
-	ZoneGeneration          uint64                 `json:"zone_generation"`
-	SessionStage            string                 `json:"session_stage"`
-	Hero                    *debugWorldHero        `json:"hero"`
-	Arena                   *debugWorldArena       `json:"arena,omitempty"`
-	Campaign                *debugWorldCampaign    `json:"campaign,omitempty"`
-	NPCs                    []debugWorldNPC        `json:"npcs"`
-	NPCTotal                int                    `json:"npc_total"`
-	IsNPCTruncated          bool                   `json:"is_npc_truncated"`
-	Pickups                 []debugWorldPickup     `json:"pickups"`
-	PickupTotal             int                    `json:"pickup_total"`
-	IsPickupTruncated       bool                   `json:"is_pickup_truncated"`
-	IsPickupAvailable       bool                   `json:"is_pickup_available"`
-	PickupUnavailableReason string                 `json:"pickup_unavailable_reason,omitempty"`
-	Teleporters             []debugWorldTeleporter `json:"teleporters"`
-	IsTeleporterTruncated   bool                   `json:"is_teleporter_truncated"`
-	IsMissionComplete       bool                   `json:"is_mission_complete"`
-	IsZoneTerminal          bool                   `json:"is_zone_terminal"`
-	IsVictoryAvailable      bool                   `json:"is_victory_available"`
-	IsVictoryCommitted      bool                   `json:"is_victory_committed"`
-	IsObjectiveComplete     bool                   `json:"is_objective_complete"`
-	Boss                    *debugWorldBoss        `json:"boss"`
+	NativeReadiness         *controlGameplayState   `json:"native_readiness,omitempty"`
+	Ability                 *debugAbilityState      `json:"ability"`
+	ClientID                string                  `json:"client_id"`
+	InstanceID              string                  `json:"instance_id"`
+	PID                     uint32                  `json:"pid"`
+	UserID                  int64                   `json:"user_id"`
+	GameID                  uint32                  `json:"game_id"`
+	Source                  string                  `json:"source"`
+	CapturedAt              time.Time               `json:"captured_at"`
+	IsAvailable             bool                    `json:"is_available"`
+	UnavailableReason       string                  `json:"unavailable_reason,omitempty"`
+	PeerGeneration          uint64                  `json:"peer_generation"`
+	TransportGeneration     uint64                  `json:"transport_generation"`
+	ZoneGeneration          uint64                  `json:"zone_generation"`
+	SessionStage            string                  `json:"session_stage"`
+	Hero                    *debugWorldHero         `json:"hero"`
+	Arena                   *debugWorldArena        `json:"arena,omitempty"`
+	Campaign                *debugWorldCampaign     `json:"campaign,omitempty"`
+	NPCs                    []debugWorldNPC         `json:"npcs"`
+	NPCTotal                int                     `json:"npc_total"`
+	IsNPCTruncated          bool                    `json:"is_npc_truncated"`
+	Pickups                 []debugWorldPickup      `json:"pickups"`
+	PickupTotal             int                     `json:"pickup_total"`
+	IsPickupTruncated       bool                    `json:"is_pickup_truncated"`
+	IsPickupAvailable       bool                    `json:"is_pickup_available"`
+	PickupUnavailableReason string                  `json:"pickup_unavailable_reason,omitempty"`
+	Teleporters             []debugWorldTeleporter  `json:"teleporters"`
+	IsTeleporterTruncated   bool                    `json:"is_teleporter_truncated"`
+	IsMissionComplete       bool                    `json:"is_mission_complete"`
+	IsZoneTerminal          bool                    `json:"is_zone_terminal"`
+	IsVictoryAvailable      bool                    `json:"is_victory_available"`
+	IsVictoryCommitted      bool                    `json:"is_victory_committed"`
+	IsObjectiveComplete     bool                    `json:"is_objective_complete"`
+	Boss                    *debugWorldBoss         `json:"boss"`
+	BossTriggers            []debugWorldBossTrigger `json:"boss_triggers"`
 }
 
 func debugWorldPositionDTO(position scenario.WorldPosition) debugWorldPosition {
@@ -210,6 +217,12 @@ func observeDebugWorld(ctx context.Context, host *debugHost, clientManager *debu
 	if world.Boss != nil {
 		boss := world.Boss
 		result.Boss = &debugWorldBoss{Phase: boss.Phase, LeaderObjectID: boss.LeaderObjectID, LeaderHitPoint: boss.LeaderHitPoint, IsComplete: boss.IsComplete, IsBeamOutCommitted: boss.IsBeamOutCommitted}
+	}
+	for _, trigger := range world.BossTriggers {
+		result.BossTriggers = append(result.BossTriggers, debugWorldBossTrigger{
+			MarkerID: trigger.MarkerID, MarkerSetName: trigger.MarkerSetName,
+			Position: debugWorldPositionDTO(trigger.Position), Radius: trigger.Radius,
+		})
 	}
 	return result, nil
 }

@@ -126,7 +126,7 @@ func NamedBossEntries(
 	}
 	entry := make([]game.CampaignDirectorEntry, 0, 1)
 	for _, pool := range director.Pools {
-		if director.IsReplay && (!strings.EqualFold(pool.ConfigurationName, "levelConfig") ||
+		if director.IsReplay && director.BossSpawnRules.Resolved().ReplayLeaderSelection != "same_as_first_clear" && (!strings.EqualFold(pool.ConfigurationName, "levelConfig") ||
 			!strings.EqualFold(pool.ConfigKind, "captain")) {
 			continue
 		}
@@ -181,12 +181,21 @@ func PrepareNamedBossDirector(
 	if !IsFinalBossNoun(nounName) {
 		return prepareNamedCaptainProfile(director, nounName)
 	}
-	rank, isRankFound := campaignBossRank(chainLevelIndex, director.Level)
-	if !isRankFound {
-		return game.CampaignDirector{}, errors.New("standalone boss rank unavailable")
-	}
 	normalizedName := strings.ToLower(nounName)
 	profile, isProfileFound := director.NPCProfilesByNoun[normalizedName]
+	rank := uint32(1)
+	if isProfileFound && profile.NPCRank > 0 {
+		rank = uint32(profile.NPCRank)
+	} else {
+		var isRankFound bool
+		rank, isRankFound = campaignBossRank(chainLevelIndex, director.Level)
+		if !isRankFound {
+			if director.Difficulty == 0 || director.Difficulty > 72 {
+				return game.CampaignDirector{}, errors.New("standalone boss rank unavailable")
+			}
+			rank = (director.Difficulty-1)/24 + 1
+		}
+	}
 	if !isProfileFound || !profile.IsKnown || profile.HitPoint <= 0 {
 		authoredProfile := profile
 		profile = standaloneBossClassProfile(rank)
@@ -198,7 +207,9 @@ func PrepareNamedBossDirector(
 			profile.IdleMovementSpeed = authoredProfile.IdleMovementSpeed
 		}
 	}
-	profile.NPCRank = int32(rank)
+	if profile.NPCRank <= 0 {
+		profile.NPCRank = int32(rank)
+	}
 	profile.IsTargetable = true
 	profile.IsKnown = true
 	if profile.PlayerCountHealthScale <= 0 {
@@ -248,7 +259,7 @@ func prepareNamedCaptainProfile(
 	}
 	director.Pools = append([]game.CampaignDirectorPool(nil), director.Pools...)
 	for poolIndex := range director.Pools {
-		if director.IsReplay && (!strings.EqualFold(director.Pools[poolIndex].ConfigurationName, "levelConfig") ||
+		if director.IsReplay && director.BossSpawnRules.Resolved().ReplayLeaderSelection != "same_as_first_clear" && (!strings.EqualFold(director.Pools[poolIndex].ConfigurationName, "levelConfig") ||
 			!strings.EqualFold(director.Pools[poolIndex].ConfigKind, "captain")) {
 			continue
 		}
@@ -259,6 +270,11 @@ func prepareNamedCaptainProfile(
 			entry := &director.Pools[poolIndex].Entries[entryIndex]
 			if !strings.EqualFold(entry.NounName, nounName) {
 				continue
+			}
+			// Complete imported profiles own the noun's class, graph, and stats.
+			// The legacy profile only repairs genuinely missing class data.
+			if entry.NPCProfile.IsKnown && entry.NPCProfile.HitPoint > 0 {
+				return director, nil
 			}
 			profile = retainBossClassMetadata(profile, entry.NPCProfile)
 			entry.NPCProfile = profile
@@ -337,9 +353,19 @@ func standaloneBossClassProfile(rank uint32) game.CampaignNPCProfile {
 func retainBossClassMetadata(
 	profile game.CampaignNPCProfile, authored game.CampaignNPCProfile,
 ) game.CampaignNPCProfile {
+	profile.ActorFootprint = authored.ActorFootprint
+	profile.AIGraph = authored.AIGraph
+	profile.NounType = authored.NounType
+	profile.NPCClassInstanceID = authored.NPCClassInstanceID
+	profile.ClassAttributeBases = authored.ClassAttributeBases
+	profile.AreClassAttributeBasesKnown = authored.AreClassAttributeBasesKnown
+	profile.BaseHitPoint = authored.BaseHitPoint
+	profile.AggroType = authored.AggroType
 	profile.ChallengeValue = authored.ChallengeValue
 	profile.NPCRank = authored.NPCRank
 	profile.NPCType = authored.NPCType
+	profile.CreatureType = authored.CreatureType
+	profile.DropTypes = authored.DropTypes
 	profile.IsTargetable = authored.IsTargetable
 	profile.IsPlayerPet = authored.IsPlayerPet
 	profile.IsClassKnown = authored.IsClassKnown
@@ -348,6 +374,8 @@ func retainBossClassMetadata(
 	profile.AlertRange = authored.AlertRange
 	profile.DropAggroRange = authored.DropAggroRange
 	profile.IdleMovementSpeed = authored.IdleMovementSpeed
+	profile.BaseCombatSpeed = authored.BaseCombatSpeed
+	profile.DifficultyDamageMultiplier = authored.DifficultyDamageMultiplier
 	return profile
 }
 

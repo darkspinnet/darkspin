@@ -28,6 +28,8 @@ type ServerRulesConfiguration struct {
 }
 
 type BossSpawningConfiguration struct {
+	LeaderSelection         string `json:"leaderSelection" toml:"leader_selection"`
+	ReplayLeaderSelection   string `json:"replayLeaderSelection" toml:"replay_leader_selection"`
 	Version                 uint32 `json:"version" toml:"version"`
 	OpeningAddsPerAnchor    uint32 `json:"openingAddsPerAnchor" toml:"opening_adds_per_anchor"`
 	InitialBossAddCount     uint32 `json:"initialBossAddCount" toml:"initial_boss_add_count"`
@@ -36,12 +38,12 @@ type BossSpawningConfiguration struct {
 
 func (e BossSpawningConfiguration) rules() game.BossSpawnRules {
 	return game.BossSpawnRules{OpeningAddsPerAnchor: e.OpeningAddsPerAnchor,
-		InitialBossAddCount: e.InitialBossAddCount, CaptainDelayMillisecond: e.CaptainDelayMillisecond}
+		InitialBossAddCount: e.InitialBossAddCount, CaptainDelayMillisecond: e.CaptainDelayMillisecond, LeaderSelection: e.LeaderSelection, ReplayLeaderSelection: e.ReplayLeaderSelection}
 }
 
 func bossSpawningConfiguration(rules game.BossSpawnRules) BossSpawningConfiguration {
 	return BossSpawningConfiguration{Version: 1, OpeningAddsPerAnchor: rules.OpeningAddsPerAnchor,
-		InitialBossAddCount: rules.InitialBossAddCount, CaptainDelayMillisecond: rules.CaptainDelayMillisecond}
+		InitialBossAddCount: rules.InitialBossAddCount, CaptainDelayMillisecond: rules.CaptainDelayMillisecond, LeaderSelection: rules.LeaderSelection, ReplayLeaderSelection: rules.ReplayLeaderSelection}
 }
 
 type AllyAlertConfiguration struct {
@@ -243,7 +245,7 @@ func decodeServerRules(payload []byte, isLegacy bool) (ServerRulesConfiguration,
 	if err != nil {
 		return ServerRulesConfiguration{}, false, fmt.Errorf("spawnValidate: %w", err)
 	}
-	return document, isReplaced, nil
+	return document, isReplaced || !metadata.IsDefined("boss_spawning", "leader_selection"), nil
 }
 
 func writeServerRules(ctx context.Context, path string, document ServerRulesConfiguration, sections map[string]any) (err error) {
@@ -329,10 +331,6 @@ func (e *Server) SetServerRulesConfiguration(
 		return ServerRulesConfiguration{}, errors.New("server settings version changed; reload before saving")
 	}
 	rules := req.AllyAlert.rules()
-	spawnErr := req.BossSpawning.rules().Validate()
-	if spawnErr != nil {
-		return ServerRulesConfiguration{}, fmt.Errorf("spawnValidate: %w", spawnErr)
-	}
 	err := rules.Validate()
 	if err != nil {
 		return ServerRulesConfiguration{}, fmt.Errorf("rulesValidate: %w", err)
@@ -340,6 +338,23 @@ func (e *Server) SetServerRulesConfiguration(
 	store := e.serverRuleStore
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	if req.BossSpawning.LeaderSelection == "" {
+		req.BossSpawning.LeaderSelection = store.spawnRules.LeaderSelection
+		req.BossSpawning.ReplayLeaderSelection = store.spawnRules.ReplayLeaderSelection
+	}
+	spawnErr := req.BossSpawning.rules().Validate()
+	if spawnErr != nil {
+		return ServerRulesConfiguration{}, fmt.Errorf("spawnValidate: %w", spawnErr)
+	}
+	// Compatibility with an older form must not erase an unsupported version.
+	if req.EnemyPopulation.Version != 0 && req.EnemyPopulation.Version != 1 {
+		return ServerRulesConfiguration{}, errors.New("enemy population settings version changed; reload before saving")
+	}
+	if req.EnemyPopulation.Version == 1 && req.EnemyPopulation.AgentSelection == "" {
+		enemiesPerSection := req.EnemyPopulation.EnemiesPerSection
+		req.EnemyPopulation = enemyPopulationConfiguration(store.populationRules)
+		req.EnemyPopulation.EnemiesPerSection = enemiesPerSection
+	}
 	if req.EnemyPopulation.Version == 0 {
 		req.EnemyPopulation = enemyPopulationConfiguration(store.populationRules)
 	}

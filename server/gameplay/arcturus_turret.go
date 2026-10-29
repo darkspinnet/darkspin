@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/util"
 	"github.com/darkspinnet/darkspin/server/zone"
+	zonedifficulty "github.com/darkspinnet/darkspin/server/zone/difficulty"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 	zoneprojection "github.com/darkspinnet/darkspin/server/zone/projection"
@@ -31,9 +31,9 @@ type campaignArcturusTurret struct {
 func (e campaignArcturusSpawnStep) startTurret(current *gameplayPeerSession, boss zonenpc.Snapshot) ([][]byte, error) {
 	rank := zonenpc.ArcturusRank(boss.Plan.NounName)
 	nounName := fmt.Sprintf("CitadelBossTurret_v%d.Noun", rank-1)
-	profile, isFound := current.zone.DirectorDefinition().NPCProfilesByNoun[strings.ToLower(nounName)]
-	if !isFound || !profile.IsKnown {
-		return nil, errors.New("arcturus turret profile unavailable")
+	profile, profileErr := zonedifficulty.ProjectOwnedSummon(current.zone.DirectorDefinition(), nounName)
+	if profileErr != nil {
+		return nil, fmt.Errorf("turretProfile: %w", profileErr)
 	}
 	objectID, err := current.reserveCampaignObjectID()
 	if err != nil {

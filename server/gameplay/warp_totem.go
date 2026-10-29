@@ -136,7 +136,7 @@ func warpTotemEffect(objectID uint32, name string) ([]byte, error) {
 
 func (e gameplayPendingRuntime) beginWarpTotemTeleport(member *gameplayPeerSession, source game.Vec3, now time.Time, timestamp uint64) ([][]byte, error) {
 	if member.deployedObjectID == 0 || member.deployedHitPoint() <= 0 || member.isHeroSelectionPending ||
-		member.randomTeleport.objectID != 0 || e.damage.npc.isTargetStatusImmuneLocked(member, member.deployedObjectID) {
+		member.randomTeleport.objectID != 0 || member.isOperativeCaged(now) || e.damage.npc.isTargetStatusImmuneLocked(member, member.deployedObjectID) {
 		return nil, nil
 	}
 	position := game.Vec3(member.playerPosition)

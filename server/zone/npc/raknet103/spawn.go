@@ -61,6 +61,23 @@ func SpawnSnapshot(snapshot zonenpc.Snapshot, now time.Time, sourceTime uint64) 
 	if err != nil {
 		return nil, fmt.Errorf("snapshotSpawn: %w", err)
 	}
+	if snapshot.AdditionalKit.IsHitAnimationDisabled && !snapshot.IsDefeated {
+		packet, attributeErr := raknet.MarshalApplication(raknet.AttributeDataUpdateMessage{
+			ObjectID: snapshot.Plan.ObjectID, Value: map[uint8]float32{110: 1},
+		})
+		if attributeErr != nil {
+			return nil, fmt.Errorf("snapshotHitAnimation: %w", attributeErr)
+		}
+		packets = append(packets, packet)
+		if !snapshot.IsNavigationCollisionEnabled {
+			movementPackets, movementErr := ChargeMovementState(snapshot.Plan.ObjectID,
+				zonenpc.EffectiveMovementSpeedBuff(snapshot.Plan), 0, true)
+			if movementErr != nil {
+				return nil, fmt.Errorf("snapshotBurrow: %w", movementErr)
+			}
+			packets = append(packets, movementPackets...)
+		}
+	}
 	if bodyScale := snapshot.MutationBodyScale(); bodyScale != snapshot.Plan.PermanentBodyScale() {
 		packet, scaleErr := raknet.MarshalApplication(raknet.AttributeDataUpdateMessage{
 			ObjectID: snapshot.Plan.ObjectID,
@@ -180,7 +197,7 @@ func spawnWithAnimation(plan zonenpc.SpawnPlan, isRemnant bool, reflection rakne
 	messages := []raknet.ApplicationMessage{
 		createMessage,
 		raknet.CombatantDataUpdateMessage{
-			ObjectID: plan.ObjectID, HitPoints: profile.HitPoint,
+			ObjectID: plan.ObjectID, HitPoints: plan.SpawnHitPoint(),
 			ManaPoints: profile.PowerPoint,
 		},
 		raknet.AttributeDataUpdateMessage{

@@ -53,11 +53,7 @@ func packflyRank(plan SpawnPlan) int32 {
 	}
 	// Native passive startup uses NonPlayerClass rank plus one when Elite is
 	// already active. The instance keeps that rank for its lifetime.
-	rank := max(int32(1), plan.NPCProfile.NPCRank)
-	if plan.IsElite || plan.IsCaptain || plan.IsBoss || plan.BossIdentity.HasModifier(EliteModifierName) {
-		rank++
-	}
-	return min(int32(3), rank)
+	return EffectivePassiveRank(plan)
 }
 
 // PackflyBoostEffectName is the native effect tier for the nearby helper count.
@@ -86,7 +82,11 @@ func CrowdControlDuration(plan SpawnPlan, duration time.Duration) time.Duration 
 // ApplyAffixTiming reproduces build-103 duration scaling for basic attacks
 // (descriptor bit 2) and other abilities. Bonuses are additive attributes.
 func ApplyAffixTiming(profile ActionProfile, plan SpawnPlan) ActionProfile {
-	attackSpeed := plan.AffixAttackSpeedBonus
+	if profile.AbilityName == "NomadSpecialThree" {
+		profile.PassiveEnergyDefense = NomadSpecialThreePassiveDefense(plan)
+	}
+	profile = RankedActionProfile(profile, plan)
+	attackSpeed := EffectiveAttackSpeedBonus(plan)
 	cooldownReduction := plan.AffixCooldownReductionBonus
 	if attackSpeed == 0 && cooldownReduction == 0 {
 		return profile
@@ -141,4 +141,14 @@ func (s *Session) sameSpeciesAllyCountLocked(
 		}
 	}
 	return helperCount
+}
+
+// EffectiveAttackSpeedBonus retains additive modifier ownership. Descriptor-based
+// timing in ApplyAffixTiming remains authoritative for basic/nonbasic abilities.
+func EffectiveAttackSpeedBonus(plan SpawnPlan) float32 {
+	bonus := plan.AffixAttackSpeedBonus
+	if plan.InvincitronRage.IsActive(time.Now()) {
+		bonus += plan.InvincitronRage.AttackBonus
+	}
+	return bonus
 }

@@ -230,7 +230,7 @@ func PlanControlWithProfile(
 	profile ActionProfile, targetFootprintRadius float32,
 ) (AttackPlan, error) {
 	isAnimationSupported := profile.AnimationName != "" ||
-		profile.AbilityName == "SentryDroneLaser"
+		profile.AbilityName == "SentryDroneLaser" || profile.AbilityName == "NomadDroneLaser"
 	if !isAnimationSupported || profile.Range <= 0 {
 		return AttackPlan{}, errors.New("npc control profile invalid")
 	}

@@ -309,8 +309,8 @@ func (r campaignDamageRuntime) startNomadSpecialThreeTurtle(
 	if isCurrent {
 		enemy, isEnemyFound = peerSession.zone.NPCs().NPC(objectID)
 	}
-	profile, isProfileFound := zonenpc.NomadSpecialThreeTurtleProfile(
-		enemy.Plan.NounName,
+	profile, isProfileFound := zonenpc.NomadSpecialThreeTurtleProfileForPlan(
+		enemy.Plan,
 	)
 	actionProfile, isActionProfileFound := zonenpc.ActionProfileForPlan(enemy.Plan)
 	isCurrent = isCurrent && isEnemyFound && !enemy.IsDefeated &&

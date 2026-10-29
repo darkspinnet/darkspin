@@ -110,6 +110,25 @@ func (e campaignNPCPoisonStep) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	profile := e.run.plan.Profile
+	if profile.ModifierName == "ShadowCurse" {
+		source, isSourceFound := peerSession.zone.NPCs().NPC(e.run.plan.SourceObjectID)
+		target, isTargetFound := peerSession.campaignNPCTarget(e.generation, e.run.plan.TargetObjectID)
+		if !isSourceFound || source.IsDefeated || source.HitPoint <= 0 ||
+			!isTargetFound || target.HitPoint <= 0 || peerSession.isZoneTerminal() {
+			delete(peerSession.campaignNPCPoisons, e.run.key)
+			peerSession.untrackCampaignNPCModifier(e.run.modifier)
+			e.runtime.registry.sessions[e.sessionKey] = peerSession
+			if e.run.cancel != nil {
+				e.run.cancel()
+			}
+			e.runtime.registry.mutex.Unlock()
+			packets, err := releaseNashiraCurse(e.run, e.runtime.modifierPool)
+			if err != nil {
+				return nil, fmt.Errorf("curseRetire: %w", err)
+			}
+			return packets, nil
+		}
+	}
 	if peerSession.zone.NPCRandom() == nil {
 		e.runtime.registry.mutex.Unlock()
 		return nil, errors.New("enemy poison random unavailable")
@@ -284,7 +303,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCDisease(
 		targetObjectID: plan.TargetObjectID, modifierName: profile.ModifierName,
 	}
 	previous := peerSession.campaignNPCPoisons[key]
-	if previous != nil && isCampaignNPCDiseaseProfile(profile) {
+	if previous != nil && (isCampaignNPCDiseaseProfile(profile) || profile.ModifierName == "ShadowCurse") {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}

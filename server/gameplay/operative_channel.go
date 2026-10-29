@@ -15,19 +15,25 @@ const operativeChannelStep = 250 * time.Millisecond
 // The registry lock owns this state, shared by the source action and its
 // target's modifier. Damage during the initial windup belongs to this cast.
 type operativeCageState struct {
-	plan               zonenpc.AttackPlan
-	startedAt          time.Time
-	elapsed            time.Duration
-	damageElapsed      time.Duration
-	totalDamage        float64
-	criticalRating     float32
-	isStartedAboveHalf bool
-	isComplete         bool
-	isRetryScheduled   bool
-	run                *campaignNPCModifierRun
-	cancel             raknet.CancelSchedule
-	scheduleGeneration uint64
-	retirementPackets  [][]byte
+	effects              []agentChannelEffect
+	connectedPlayerCount int
+	isHauntSnared        bool
+	isCooldownRemoved    bool
+	hauntLoopCount       uint32
+	plan                 zonenpc.AttackPlan
+	startedAt            time.Time
+	elapsed              time.Duration
+	damageElapsed        time.Duration
+	totalDamage          float64
+	criticalRating       float32
+	isStartedAboveHalf   bool
+	isComplete           bool
+	isRetryScheduled     bool
+	isManualAction       bool
+	run                  *campaignNPCModifierRun
+	cancel               raknet.CancelSchedule
+	scheduleGeneration   uint64
+	retirementPackets    [][]byte
 }
 
 type operativeCageSchedule struct {
@@ -64,6 +70,12 @@ func (e campaignNPCActionRuntime) produceOperativeCage(
 			e.registry.mutex.Unlock()
 			return nil, fmt.Errorf("cagePreviousRetire: %w", err)
 		}
+		effectPackets, effectErr := previous.retireSupportEffects()
+		if effectErr != nil {
+			e.registry.mutex.Unlock()
+			return nil, fmt.Errorf("cagePreviousEffect: %w", effectErr)
+		}
+		cleanupPackets = append(cleanupPackets, effectPackets...)
 		previous.isComplete = true
 		previous.cancelSchedule()
 		cleanupPackets = append(previous.retirementPackets, cleanupPackets...)
@@ -83,10 +95,19 @@ func (e campaignNPCActionRuntime) produceOperativeCage(
 		e.registry.mutex.Unlock()
 		return nil, nil
 	}
+	if plan.Profile.AbilityName == "NocturnaSpecialHauntLockdown" && member.zone.NPCs().IsStealthed(plan.SourceObjectID) {
+		revealPackets, revealErr := revealHauntLocked(member, plan.SourceObjectID)
+		if revealErr != nil {
+			e.registry.mutex.Unlock()
+			return nil, fmt.Errorf("hauntCastReveal: %w", revealErr)
+		}
+		cleanupPackets = append(cleanupPackets, revealPackets...)
+	}
 	state := &operativeCageState{
 		plan: plan, startedAt: e.now(),
 		criticalRating:     enemy.EffectiveCriticalRating(),
 		isStartedAboveHalf: enemy.HitPoint*2 > enemy.Plan.NPCProfile.HitPoint,
+		isManualAction:     enemy.IsScenarioControlled() && !enemy.IsScenarioAIEnabled(),
 		retirementPackets:  cleanupPackets,
 	}
 	if member.operativeChannels == nil {
@@ -149,6 +170,9 @@ func (e campaignNPCActionRuntime) abortOperativeCage(
 		(member.operativeChannels[state.plan.SourceObjectID] == state ||
 			member.operativeChannels[state.plan.SourceObjectID] == nil)
 	packets, err := e.registry.retireOperativeCageLocked(state.run, e.modifierPool)
+	effectPackets, effectErr := state.retireSupportEffects()
+	packets = append(packets, effectPackets...)
+	err = errors.Join(err, effectErr)
 	packets = append(state.retirementPackets, packets...)
 	state.retirementPackets = nil
 	state.isComplete = true
@@ -183,6 +207,9 @@ func (e operativeCageSchedule) begin(producer *operativeCageProducer) ([][]byte,
 	e.runtime.registry.mutex.RUnlock()
 	if !isCurrent {
 		return e.finish(producer)
+	}
+	if e.state.plan.Profile.AbilityName == "NocturnaSpecialHauntLockdown" || e.state.plan.Profile.AbilityName == "ChannelLightningCage" || e.state.plan.Profile.AbilityName == "FireStream" {
+		return e.beginSupportChannel(producer)
 	}
 	attack := campaignNPCAttackSchedule{
 		request: campaignNPCAttackRequest{
@@ -227,6 +254,12 @@ func (e operativeCageSchedule) currentLocked() (gameplayPeerSession, bool) {
 }
 
 func (e operativeCageSchedule) tick(producer *operativeCageProducer) ([][]byte, error) {
+	if e.state.plan.Profile.AbilityName == "NocturnaSpecialHauntLockdown" {
+		return e.tickHaunt(producer)
+	}
+	if e.state.plan.Profile.AbilityName == "FireStream" {
+		return e.tickFire(producer)
+	}
 	e.runtime.registry.mutex.Lock()
 	member, isCurrent := e.currentLocked()
 	isContinuing := isCurrent && !e.state.isComplete &&
@@ -258,7 +291,8 @@ func (e operativeCageSchedule) tick(producer *operativeCageProducer) ([][]byte, 
 	e.runtime.registry.mutex.RLock()
 	member, isCurrent = e.currentLocked()
 	isContinuing = isCurrent && !e.state.isComplete &&
-		e.state.totalDamage < 5000 && e.state.elapsed < e.state.plan.Profile.ModifierDuration
+		(e.state.plan.Profile.AbilityName == "ChannelLightningCage" || e.state.totalDamage < 5000) && (e.state.plan.Profile.ModifierDuration == 0 || e.state.elapsed < e.state.plan.Profile.ModifierDuration) &&
+		!(e.state.isManualAction && e.state.elapsed >= e.state.plan.Profile.TickDuration)
 	if isContinuing && e.state.plan.Profile.AbilityName == "NomadSpacetimeAgent_Cage" &&
 		e.state.isStartedAboveHalf {
 		enemy, isEnemyFound := member.zone.NPCs().NPC(e.state.plan.SourceObjectID)
@@ -280,9 +314,9 @@ func (e operativeCageSchedule) tick(producer *operativeCageProducer) ([][]byte, 
 func (e operativeCageSchedule) damage() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	member, isCurrent := e.currentLocked()
-	if !isCurrent || e.state.isComplete || !e.runtime.registry.isOperativeChannelLocked(
+	if !isCurrent || e.state.isComplete || (e.state.plan.Profile.AbilityName != "FireStream" && !e.runtime.registry.isOperativeChannelLocked(
 		member, e.state.plan.SourceObjectID, e.state.plan.TargetObjectID,
-	) {
+	)) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
@@ -317,6 +351,14 @@ func (e operativeCageSchedule) damage() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return packets, nil
 	}
+	if e.state.plan.Profile.AbilityName == "NocturnaSpecialHauntLockdown" {
+		healPackets, healErr := e.healHauntAlliesLocked(member, float32(statDelta.PVEDamageTaken))
+		if healErr != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("hauntHeal: %w", healErr)
+		}
+		packets = append(packets, healPackets...)
+	}
 	e.runtime.registry.sessions[e.sessionKey] = member
 	binding := member.binding
 	e.runtime.registry.mutex.Unlock()
@@ -349,6 +391,12 @@ func (e operativeCageSchedule) finish(producer *operativeCageProducer) ([][]byte
 		e.runtime.registry.mutex.Unlock()
 		return e.fail("cageEndModifier", err, nil)
 	}
+	effectPackets, effectErr := e.state.retireSupportEffects()
+	packets = append(packets, effectPackets...)
+	if effectErr != nil {
+		e.runtime.registry.mutex.Unlock()
+		return e.fail("cageEffectRetire", effectErr, packets)
+	}
 	e.state.isComplete = true
 	e.state.isRetryScheduled = true
 	e.runtime.registry.mutex.Unlock()
@@ -360,11 +408,35 @@ func (e operativeCageSchedule) finish(producer *operativeCageProducer) ([][]byte
 		return e.fail("cageEndAnimation", err, packets)
 	}
 	packets = append(packets, endPacket)
+	if e.runtime.finishScenarioNPCManualAction(e.sessionKey, e.generation,
+		e.state.plan.SourceObjectID, e.state.plan.ActionGeneration) {
+		e.runtime.registry.mutex.Lock()
+		member, isFound := e.runtime.registry.sessions[e.sessionKey]
+		if isFound && member.generation == e.generation &&
+			member.operativeChannels[e.state.plan.SourceObjectID] == e.state {
+			delete(member.operativeChannels, e.state.plan.SourceObjectID)
+			e.runtime.registry.sessions[e.sessionKey] = member
+		}
+		e.runtime.registry.mutex.Unlock()
+		return packets, nil
+	}
 	if member.isZoneTerminal() {
 		return packets, nil
 	}
 	producer.nextStep = operativeCageRetry
 	producer.nextDelay = e.state.plan.Profile.Cooldown
+	if e.state.plan.Profile.AbilityName == "NocturnaSpecialHauntLockdown" || e.state.plan.Profile.AbilityName == "ChannelLightningCage" {
+		cooldownStartDelay := e.state.plan.Profile.HitDelay
+		if e.state.plan.Profile.AbilityName == "NocturnaSpecialHauntLockdown" {
+			cooldownStartDelay = 2 * time.Second
+		}
+		readyAfter := cooldownStartDelay + e.state.plan.Profile.Cooldown
+		if e.state.isCooldownRemoved {
+			readyAfter = 0
+		}
+		remaining := max(time.Duration(0), readyAfter-e.runtime.now().Sub(e.state.startedAt))
+		producer.nextDelay = max(e.state.plan.Profile.EndAnimationDelay, remaining)
+	}
 	return packets, nil
 }
 
@@ -400,6 +472,24 @@ func (e gameplayProjectionRuntime) recordOperativeCageDamage(
 	source, isFound := e.registry.sessions[sessionKey]
 	if !isFound || source.generation != generation || source.zone == nil {
 		return
+	}
+	if source.zone.NPCs().IsStealthed(damage.TargetObjectID) {
+		enemy, isEnemyFound := source.zone.NPCs().NPC(damage.TargetObjectID)
+		if isEnemyFound && campaignDifficultyNounFamily(enemy.Plan.NounName) == "nocturnaspecialhaunt" {
+			packets, err := revealHauntLocked(source, damage.TargetObjectID)
+			if err != nil {
+				if e.logger != nil {
+					e.logger.Printf("Haunt damage reveal source=%d: %v", damage.TargetObjectID, err)
+				}
+			} else {
+				for memberKey, observer := range e.registry.sessions {
+					if observer.zone == source.zone {
+						observer.queueCampaignPackets(packets)
+						e.registry.sessions[memberKey] = observer
+					}
+				}
+			}
+		}
 	}
 	for _, member := range e.registry.sessions {
 		if member.zone != source.zone {

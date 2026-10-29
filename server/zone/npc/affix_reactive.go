@@ -83,6 +83,7 @@ func (s *Session) affixResurrectionFraction(npc Snapshot) float32 {
 		}
 		source, isSourceFound := s.npcs[aura.SourceObjectID]
 		if !isSourceFound || !source.IsPublished || source.IsDefeated ||
+			source.Plan.NounName == npc.Plan.NounName ||
 			source.Plan.Position.Sub(npc.Plan.Position).Length() > 11 {
 			return 0
 		}

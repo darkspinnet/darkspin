@@ -21,6 +21,9 @@ type levelDirectorStore interface {
 	LevelDirector(context.Context, string) (contentsqlite.LevelDirector, error)
 	NonPlayerNounProfiles(context.Context) ([]contentsqlite.NonPlayerNounProfile, error)
 	NPCAffixes(context.Context) ([]contentsqlite.NPCAffix, error)
+	EliteStageTunings(context.Context) ([]contentsqlite.EliteStageTuning, error)
+	ElitePromotionTuning(context.Context) (contentsqlite.ElitePromotionTuning, error)
+	AttributeMirrorTuning(context.Context) (contentsqlite.AttributeMirrorTuning, error)
 	NounNavigationEntries(context.Context) ([]contentsqlite.NounNavigation, error)
 	NounFootprints(context.Context) ([]contentsqlite.NounFootprint, error)
 	DirectorCompositionTuning(context.Context) (contentsqlite.DirectorCompositionTuning, error)
@@ -152,6 +155,10 @@ func (s *DirectorSource) LoadCampaignDirector(
 	if err != nil {
 		return game.CampaignDirector{}, fmt.Errorf("directorComposition: %w", err)
 	}
+	mirrorTuning, err := s.store.AttributeMirrorTuning(ctx)
+	if err != nil {
+		return game.CampaignDirector{}, fmt.Errorf("directorMirror: %w", err)
+	}
 	dnaTuning, err := loadDNADropTuning(ctx, s.store)
 	if err != nil {
 		return game.CampaignDirector{}, fmt.Errorf("directorDNA: %w", err)
@@ -177,6 +184,14 @@ func (s *DirectorSource) LoadCampaignDirector(
 			return game.CampaignDirector{}, fmt.Errorf("orbScaleStage[%d]: %d", index, tuning.Difficulty)
 		}
 		orbDifficultyScales[index] = tuning.OrbDifficultyScale
+	}
+	eliteTunings, err := s.store.EliteStageTunings(ctx)
+	if err != nil {
+		return game.CampaignDirector{}, fmt.Errorf("directorEliteStages: %w", err)
+	}
+	elitePromotion, err := s.store.ElitePromotionTuning(ctx)
+	if err != nil {
+		return game.CampaignDirector{}, fmt.Errorf("directorElitePromotion: %w", err)
 	}
 	profiles, err := s.store.NonPlayerNounProfiles(ctx)
 	if err != nil {
@@ -266,6 +281,17 @@ func (s *DirectorSource) LoadCampaignDirector(
 		profileByNoun[nounName] = authoredProfile
 	}
 	result := game.CampaignDirector{
+		AttributeMirrorTuning: game.AttributeMirrorTuning{
+			GlobalBaseMaximums:          mirrorTuning.GlobalBaseMaximums,
+			GlobalMaximums:              mirrorTuning.GlobalMaximums,
+			HealthPerStrength:           mirrorTuning.HealthPerStrength,
+			ManaPerMind:                 mirrorTuning.ManaPerMind,
+			PhysicalDefensePerDexterity: mirrorTuning.PhysicalDefensePerDexterity,
+			EnergyDefensePerMind:        mirrorTuning.EnergyDefensePerMind,
+			CriticalPerDexterity:        mirrorTuning.CriticalPerDexterity, IsKnown: true,
+		},
+		EliteMinionMinimumStage: elitePromotion.MinionMinimumStage, EliteSpecialMinimumStage: elitePromotion.SpecialMinimumStage,
+		EliteAffixesByNoun:        make(map[string][]game.CampaignEliteAffix),
 		IsEquipmentDropEnabled:    isEquipmentDropEnabled,
 		NounFootprintsByNoun:      nounFootprintsByNoun,
 		NounFootprintsByInstance:  nounFootprintsByInstance,
@@ -299,6 +325,9 @@ func (s *DirectorSource) LoadCampaignDirector(
 			map[string]game.CampaignNPCIdentity, len(profileByNoun),
 		),
 	}
+	for _, tuning := range eliteTunings {
+		result.EliteTunings = append(result.EliteTunings, game.CampaignEliteTuning{Stage: tuning.Stage, MinimumAffixCount: tuning.MinimumAffixCount, MaximumAffixCount: tuning.MaximumAffixCount, Chance: tuning.Chance, SpecialMinimumAffixCount: tuning.SpecialMinimumAffixCount, SpecialMaximumAffixCount: tuning.SpecialMaximumAffixCount, SpecialChance: tuning.SpecialChance})
+	}
 	if bucketStore, isAvailable := s.store.(sectionBucketStore); isAvailable {
 		chapter := (stage-1)/4 + 1
 		buckets, bucketErr := bucketStore.SectionBuckets(ctx, chapter)
@@ -317,7 +346,31 @@ func (s *DirectorSource) LoadCampaignDirector(
 		result.CameraYawOverride = director.Camera.Yaw
 	}
 	for nounName, profile := range profileByNoun {
+		for index, name := range profile.NPCAffixNames {
+			affix, isFound := affixesByName[strings.ToLower(name)]
+			if !isFound || affix.ModifierName == nil || *affix.ModifierName == "" {
+				continue
+			}
+			minimum, maximum := profile.NPCAffixMinimumDifficulties[index], profile.NPCAffixMaximumDifficulties[index]
+			if !profile.AreNPCAffixDifficultiesKnown {
+				minimum, maximum = 1, 72
+			}
+			parentName, childName := "", ""
+			if affix.ParentName != nil {
+				parentName = *affix.ParentName
+			}
+			if affix.ChildName != nil {
+				childName = *affix.ChildName
+			}
+			candidate := game.CampaignEliteAffix{Name: name, ParentName: parentName, ChildName: childName, ModifierName: *affix.ModifierName, ModifierID: affix.ModifierHash, MinimumDifficulty: minimum, MaximumDifficulty: maximum}
+			result.EliteAffixesByNoun[nounName] = append(result.EliteAffixesByNoun[nounName], candidate)
+			// Build 103 supplies these lists only on captain classes. Share the
+			// authored candidates and intervals for the opt-in ambient policy;
+			// do not mistake an ordinary class's empty list for no eligible affix.
+			result.AmbientEliteAffixes = append(result.AmbientEliteAffixes, candidate)
+		}
 		result.NPCProfilesByNoun[nounName] = game.CampaignNPCProfile{
+			NPCClassInstanceID: profile.NPCClassInstanceID, ClassAttributeBases: profile.ClassAttributeBases, AreClassAttributeBasesKnown: profile.IsClassKnown,
 			ActorFootprint: result.ActorFootprintForAsset(nounName),
 			AIGraph:        campaignAIGraph(profile.AIDefinitionInstanceID, graphsByID),
 			NounType:       result.NounTypeForAsset(nounName),
@@ -392,10 +445,12 @@ func (s *DirectorSource) LoadCampaignDirector(
 				}
 			}
 			mapped.Entries = append(mapped.Entries, game.CampaignDirectorEntry{
-				Ordinal: entry.Ordinal, ConfigurationEntryOrdinal: entry.ConfigurationEntryOrdinal,
+				IsExternalSource: poolIndex >= len(director.Pools),
+				Ordinal:          entry.Ordinal, ConfigurationEntryOrdinal: entry.ConfigurationEntryOrdinal,
 				NounName: entry.NounName, MinimumDifficulty: entry.MinimumDifficulty,
 				MaximumDifficulty: entry.MaximumDifficulty, IsHordeLegal: entry.IsHordeLegal,
 				NPCProfile: game.CampaignNPCProfile{
+					NPCClassInstanceID: profile.NPCClassInstanceID, ClassAttributeBases: profile.ClassAttributeBases, AreClassAttributeBasesKnown: profile.IsClassKnown,
 					ActorFootprint: result.ActorFootprintForAsset(entry.NounName),
 					AIGraph:        campaignAIGraph(profile.AIDefinitionInstanceID, graphsByID),
 					NounType:       result.NounTypeForAsset(entry.NounName),
@@ -621,6 +676,8 @@ func retainCampaignClassMetadata(
 	}
 	profile.NPCRank = authored.NPCRank
 	profile.AIDefinitionInstanceID = authored.AIDefinitionInstanceID
+	profile.NPCClassInstanceID = authored.NPCClassInstanceID
+	profile.ClassAttributeBases = authored.ClassAttributeBases
 	profile.AggroType = authored.AggroType
 	profile.NPCType = authored.NPCType
 	profile.CreatureType = authored.CreatureType

@@ -426,6 +426,11 @@ func (e campaignNPCActionRuntime) finishEnemyDamage(peerSession *gameplayPeerSes
 				return nil, sporenet.PlayerStatDelta{}, true, fmt.Errorf("damageEnergy: %w", err)
 			}
 			receipt.EnergyPackets = packets
+			supportPackets, supportErr := e.retireNPCSupportTargetLocked(peerSession, plan.TargetObjectID)
+			if supportErr != nil {
+				return nil, sporenet.PlayerStatDelta{}, true, fmt.Errorf("mutationSupportRetire: %w", supportErr)
+			}
+			receipt.EnergyPackets = append(receipt.EnergyPackets, supportPackets...)
 		}
 		receipt.Phase = 2
 	}

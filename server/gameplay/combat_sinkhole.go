@@ -174,16 +174,34 @@ func (e campaignScaldronSinkholeFizzle) produce() ([][]byte, error) {
 }
 
 type campaignScaldronSinkholeEnd struct {
-	runtime    campaignNPCActionRuntime
-	packet     raknet.Packet
-	sessionKey string
-	generation uint64
-	objectID   uint32
-	timestamp  uint64
-	profile    zonenpc.ActionProfile
+	runtime          campaignNPCActionRuntime
+	packet           raknet.Packet
+	sessionKey       string
+	generation       uint64
+	objectID         uint32
+	actionGeneration uint64
+	timestamp        uint64
+	profile          zonenpc.ActionProfile
 }
 
 func (e campaignScaldronSinkholeEnd) next() ([][]byte, error) {
+	e.runtime.registry.mutex.RLock()
+	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isManual := false
+	isWellOnCooldown := false
+	if isFound && peerSession.generation == e.generation && peerSession.zone != nil {
+		actor, isActorFound := peerSession.zone.NPCs().NPC(e.objectID)
+		isManual = isActorFound && actor.IsScenarioControlled() &&
+			!actor.IsScenarioAIEnabled() && actor.IsActionStarted &&
+			actor.ActionGeneration == e.actionGeneration
+		isWellOnCooldown = peerSession.campaignNPCSinkholeReadiness[e.objectID] > e.timestamp
+	}
+	e.runtime.registry.mutex.RUnlock()
+	if isManual && !isWellOnCooldown {
+		e.runtime.finishScenarioNPCManualAction(e.sessionKey, e.generation,
+			e.objectID, e.actionGeneration)
+		return nil, nil
+	}
 	packets, err := e.runtime.produceZelemShot(
 		e.packet, e.sessionKey, e.generation, e.objectID, e.timestamp,
 	)
@@ -321,8 +339,9 @@ func (r campaignNPCActionRuntime) produceScaldronBasicSinkhole(
 	end := campaignScaldronSinkholeEnd{
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID,
-		timestamp: timestamp + uint64((profile.ReleaseDelay-2*time.Second)/time.Millisecond),
-		profile:   profile,
+		actionGeneration: source.ActionGeneration,
+		timestamp:        timestamp + uint64((profile.ReleaseDelay-2*time.Second)/time.Millisecond),
+		profile:          profile,
 	}
 	producers = append(producers, raknet.ScheduledPacketProducer{
 		Delay: profile.ReleaseDelay - 2*time.Second, Produce: end.produce,

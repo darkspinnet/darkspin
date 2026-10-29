@@ -2,6 +2,7 @@ package gameplay
 
 import (
 	"fmt"
+	"time"
 
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
@@ -67,6 +68,11 @@ func marshalNPCAttack(
 	}
 	if !npcSession.CommitCorruptorAction(plan, timestamp) {
 		return nil, nil
+	}
+	additionalProfile, isAdditional := zonenpc.AdditionalKitProfile(snapshot.Plan.NounName)
+	if isAdditional && additionalProfile.AbilityName != "" {
+		npcSession.PayAdditionalKitCooldown(plan.SourceObjectID, plan.Profile.AbilityName,
+			timestamp+uint64((plan.Profile.HitDelay+plan.Profile.Cooldown)/time.Millisecond))
 	}
 	return packets, nil
 }

@@ -14,15 +14,15 @@ import (
 )
 
 type scenarioControlPlan struct {
-	controlID                string
-	isAIEnabled              bool
-	isManualAction           bool
-	generation               uint64
-	lastCommand              string
-	lastCommandAt            time.Time
-	lastMoveAt               time.Time
-	nextActionAt             time.Time
-	selfDetonationGeneration uint64
+	controlID           string
+	isAIEnabled         bool
+	isManualAction      bool
+	generation          uint64
+	lastCommand         string
+	lastCommandAt       time.Time
+	lastMoveAt          time.Time
+	nextActionAt        time.Time
+	selfDeathGeneration uint64
 }
 
 type ScenarioControlRef struct {
@@ -31,22 +31,22 @@ type ScenarioControlRef struct {
 }
 
 type ScenarioControlState struct {
-	ObjectID                  uint32
-	ControlID                 string
-	IsAIEnabled               bool
-	ControlGeneration         uint64
-	ActionGeneration          uint64
-	IsActionStarted           bool
-	IsDefeated                bool
-	IsPublished               bool
-	IsSelfDetonationCompleted bool
-	Position                  game.Vec3
-	HitPoint                  float32
-	DefaultAbility            string
-	SupportedAbilities        []string
-	LastCommand               string
-	LastCommandAt             time.Time
-	NextActionAt              time.Time
+	ObjectID             uint32
+	ControlID            string
+	IsAIEnabled          bool
+	ControlGeneration    uint64
+	ActionGeneration     uint64
+	IsActionStarted      bool
+	IsDefeated           bool
+	IsPublished          bool
+	IsSelfDeathCompleted bool
+	Position             game.Vec3
+	HitPoint             float32
+	DefaultAbility       string
+	SupportedAbilities   []string
+	LastCommand          string
+	LastCommandAt        time.Time
+	NextActionAt         time.Time
 }
 
 type ScenarioAIRequest struct {
@@ -77,15 +77,21 @@ type ScenarioMoveResult struct {
 	IsProjectedDestinationAvailable bool
 }
 
-// Controlled actors use the same authored default action as autonomous NPCs.
-// Independent boss and modifier controllers require separate scenario support.
+// Controlled actors retain the same authored selectors as autonomous NPCs.
+// Autonomous-only actors permit staging but reject manual action admission.
+// Independent boss controllers require separate scenario support. Captain
+// actions retain their authored identity and combat profile while AI is off.
 func PrepareScenarioControlledPlan(plan SpawnPlan, controlID string) (SpawnPlan, error) {
 	profile, isKnown := ActionProfileForPlan(plan)
 	_, isRecovered := ActionProfileForNoun(plan.NounName)
 	name := strings.ToLower(plan.NounName)
-	if controlID == "" || len(controlID) > 128 || strings.Contains(name, "boss") || strings.Contains(name, "_captain") ||
-		plan.OwnerObjectID != 0 || plan.IsFixture || plan.IsBoss || plan.IsCaptain || plan.IsElite || plan.IsArena ||
-		len(plan.AffixAuras) != 0 || plan.BossIdentity != (BossIdentity{}) || !isKnown || !isRecovered ||
+	isCaptain := strings.Contains(name, "_captain")
+	isStandaloneBoss := strings.Contains(name, "boss") && !strings.HasPrefix(name, "shadowbossminion")
+	if controlID == "" || len(controlID) > 128 || isStandaloneBoss ||
+		plan.OwnerObjectID != 0 || plan.IsFixture || plan.IsBoss || plan.IsElite || plan.IsArena ||
+		len(plan.AffixAuras) != 0 || isCaptain != plan.IsCaptain ||
+		(isCaptain && !IsBossIdentityValid(plan.BossIdentity)) ||
+		(!isCaptain && plan.BossIdentity != (BossIdentity{})) || !isKnown || !isRecovered ||
 		profile.AbilityName == "" || !isScenarioActionFamilySupported(profile.Family) {
 		return SpawnPlan{}, errors.New("controlled npc noun or profile is unsupported")
 	}
@@ -98,8 +104,8 @@ func PrepareScenarioControlledPlan(plan SpawnPlan, controlID string) (SpawnPlan,
 
 func isScenarioActionFamilySupported(family ActionFamily) bool {
 	switch family {
-	case ActionZelemRanged, ActionNomadSnipe, ActionNomadDrone,
-		ActionProjectile, ActionRetainedArea, ActionPushPull, ActionChannelDrain,
+	case ActionZelemRanged, ActionZelemHaster, ActionNomadSnipe, ActionNomadDrone,
+		ActionProjectile, ActionRetainedArea, ActionPushPull, ActionChannelDrain, ActionResurrect,
 		ActionCharge, ActionCone, ActionLeap, ActionMelee, ActionDetonate:
 		return true
 	default:
@@ -109,11 +115,27 @@ func isScenarioActionFamilySupported(family ActionFamily) bool {
 
 func (e Snapshot) IsScenarioControlled() bool { return e.Plan.scenarioControl.controlID != "" }
 
+func (e Snapshot) IsScenarioDefeated() bool {
+	return e.IsScenarioControlled() && e.IsDefeated && e.Plan.scenarioControl.lastCommand == "defeat"
+}
+
+func markScenarioResurrection(actor *Snapshot) {
+	if actor == nil || !actor.IsScenarioControlled() {
+		return
+	}
+	actor.Plan.scenarioControl.lastCommand = "resurrect"
+	actor.Plan.scenarioControl.lastCommandAt = time.Now()
+}
+
 func (e Snapshot) IsScenarioAIEnabled() bool {
 	return !e.IsScenarioControlled() || e.Plan.scenarioControl.isAIEnabled
 }
 
 func admitScenarioAction(actor Snapshot, controlID string) bool {
+	if controlID != "" && isScenarioAutonomousOnly(actor.Plan) {
+		// Staging and enabling normal AI never grants manual phase admission.
+		return false
+	}
 	if !actor.IsScenarioControlled() {
 		return controlID == ""
 	}
@@ -167,28 +189,144 @@ func scenarioControlState(actor Snapshot) ScenarioControlState {
 		IsAIEnabled: control.isAIEnabled, ControlGeneration: control.generation,
 		ActionGeneration: actor.ActionGeneration, IsActionStarted: actor.IsActionStarted,
 		IsDefeated: actor.IsDefeated, IsPublished: actor.IsPublished,
-		IsSelfDetonationCompleted: control.selfDetonationGeneration != 0 &&
-			control.selfDetonationGeneration == actor.ActionGeneration,
+		IsSelfDeathCompleted: control.selfDeathGeneration != 0 &&
+			control.selfDeathGeneration == actor.ActionGeneration,
 		Position: actor.Plan.Position, HitPoint: actor.HitPoint,
 		LastCommand: control.lastCommand, LastCommandAt: control.lastCommandAt, NextActionAt: control.nextActionAt,
 		SupportedAbilities: []string{}}
 	if isKnown {
 		state.DefaultAbility = profile.AbilityName
-		state.SupportedAbilities = []string{profile.AbilityName}
+		state.SupportedAbilities = ScenarioSupportedAbilityNames(actor.Plan)
 	}
 	return state
 }
 
-func markScenarioSelfDetonation(actor *Snapshot, sourceObjectID uint32, targetObjectID uint32, isForcedDefeat bool) {
+// ScenarioSupportedAbilityNames lists only authored actions that the ordinary
+// first-action dispatcher can select for this noun. The named command still
+// requires its selector conditions to hold at admission.
+func ScenarioSupportedAbilityNames(plan SpawnPlan) []string {
+	if isScenarioAutonomousOnly(plan) {
+		return []string{}
+	}
+	profile, isKnown := ActionProfileForPlan(plan)
+	if !isKnown || profile.AbilityName == "" {
+		return []string{}
+	}
+	names := []string{profile.AbilityName}
+	switch profile.AbilityName {
+	case "CitadelSpecialTwo_HomingStun":
+		names = append(names, "CitadelSpecialTwo_Melee")
+	case "CryosBasicCharge":
+		names = append(names, "CryosBasicChargeHeadbutt")
+	case "SleepMushroom":
+		names = append(names, "RezMelee")
+	case "NocturnaSpecialHomer":
+		names = append(names, "NocturnaSpecialHomerMelee")
+	case "NomadBioSpecialTwoSwipe":
+		names = append(names, "NomadBioSpecialTwoJumpAttack")
+	case "StealtherMelee":
+		names = append(names, "StealthAttack")
+	case "VerdanthBasicPicky":
+		names = append(names, "VerdanthBasicPickyMelee")
+	case "Puller":
+		names = append(names, "FastSwipe")
+	case "ZelemBasicHybridProjectile":
+		names = append(names, "ZelemBasicHybridMelee")
+	case "ScaldronBasicSinkhole_Projectile":
+		// The projectile follows the well while its cooldown is active. It is
+		// not independently selectable by a fresh controlled actor.
+		names = []string{"ScaldronBasicSinkhole_Sinkhole"}
+	case "ScaldronBasicDoppler_Shot":
+		_, isCloneKnown := ScaldronBasicDopplerCloneProfile(plan.NounName)
+		if isCloneKnown {
+			names = []string{"ScaldronBasicDoppler_Clone", profile.AbilityName}
+		}
+	case "ZelemBasicPackMeleeAttack":
+		names = append(names, "ZelemBasicPackMeleeCower")
+	case "Resurrect":
+		names = append(names, "GhostlyBolt")
+	}
+	return names
+}
+
+// Phase controllers own selection, target changes and child ownership. Exposing
+// these as manual first actions would bypass their production admission rules.
+func isScenarioAutonomousOnly(plan SpawnPlan) bool {
+	_, isAdditionalKit := AdditionalKitProfile(plan.NounName)
+	if isAdditionalKit {
+		return true
+	}
+	if len(SupportSpells(plan)) != 0 {
+		return true
+	}
+	name := strings.TrimSuffix(strings.ToLower(plan.NounName), ".noun")
+	name = strings.TrimSuffix(strings.TrimSuffix(name, "_2"), "_3")
+	switch name {
+	case "nomadspacetimeagent", "nomadcyberone", "nocturnaspecialhaunt",
+		"nomadpets", "nomadfirepet", "nomadlightningpet", "nomadcyberone_droid":
+		return true
+	default:
+		return false
+	}
+}
+
+// ScenarioAutonomousAbilityNames describes authored controller actions for
+// discovery only. Names here do not grant manual admission or certify playback.
+func ScenarioAutonomousAbilityNames(plan SpawnPlan) []string {
+	names := []string{}
+	for _, spell := range SupportSpells(plan) {
+		names = append(names, spell.Profile.AbilityName)
+	}
+	curse, isCurseKnown := NashiraCurseProfile(plan)
+	if isCurseKnown {
+		names = append(names, curse.AbilityName)
+	}
+	storm, isStormKnown := MerakStormProfile(plan)
+	if isStormKnown {
+		names = append(names, storm.AbilityName)
+	}
+	name := strings.TrimSuffix(strings.ToLower(plan.NounName), ".noun")
+	name = strings.TrimSuffix(strings.TrimSuffix(name, "_2"), "_3")
+	switch name {
+	case "babymortar":
+		names = append(names, "BabyToss", "Bite")
+	case "creaturex":
+		names = append(names, "InstantNova", "ThornBark", "Flee")
+	case "stagnant":
+		names = append(names, "SlowNova", "PoisonSpit", "Burrow", "StagnantNova")
+	case "verdanthbosstest":
+		names = append(names, "SelfHeal", "Consume", "Spawn", "DiseaseCone")
+	case "nomadspacetimeagent":
+		names = append(names, "NomadSpacetimeAgent_Cage", "NomadSpacetimeAgent_Blink")
+	case "nomadcyberone":
+		names = append(names, "NomadCyberOne_Cage")
+	case "nocturnaspecialhaunt":
+		names = append(names, "NocturnaSpecialHauntLockdown")
+	case "nomadcyberone_droid":
+		names = append(names, "NomadCyberOne_Droid_Heal")
+	case "nomadpets":
+		names = append(names, "SummonPlasmaMinion", "NomadPetsMelee", "PositionFirePet")
+	case "nomadfirepet":
+		names = append(names, "FireStream")
+	case "nomadlightningpet":
+		names = append(names, "ChannelLightningCage")
+	case "nomadspecialone", "nomadspecialone_captain":
+		names = append(names, "NomadSpecialOneCleave")
+	}
+	return names
+}
+
+func markScenarioSelfDeath(actor *Snapshot, sourceObjectID uint32, targetObjectID uint32, isForcedDefeat bool) {
 	if actor == nil || !isForcedDefeat || sourceObjectID != targetObjectID ||
 		!actor.IsScenarioControlled() || !actor.IsActionStarted || !actor.IsDefeated {
 		return
 	}
 	profile, isKnown := ActionProfileForPlan(actor.Plan)
-	if !isKnown || profile.Family != ActionDetonate {
+	if !isKnown || profile.Family != ActionDetonate &&
+		!(profile.Family == ActionChannelDrain && profile.AbilityName == "ManaDrain") {
 		return
 	}
-	actor.Plan.scenarioControl.selfDetonationGeneration = actor.ActionGeneration
+	actor.Plan.scenarioControl.selfDeathGeneration = actor.ActionGeneration
 }
 
 func (e *Session) scenarioControlledLocked(ref ScenarioControlRef) (Snapshot, error) {
@@ -276,9 +414,9 @@ func (e *Session) ScenarioRestoreHitPoint(ref ScenarioControlRef) (ScenarioContr
 	return scenarioControlState(actor), nil
 }
 
-// ScenarioRetire removes one controlled actor from live combat without death
-// rewards or encounter progress. Its handle remains readable until reclaimed.
-func (e *Session) ScenarioRetire(ref ScenarioControlRef) (ScenarioControlState, error) {
+// ScenarioDefeat leaves a published corpse for authored ally resurrection.
+// It does not run loot, encounter progress, or a normal damage producer.
+func (e *Session) ScenarioDefeat(ref ScenarioControlRef) (ScenarioControlState, error) {
 	if e == nil {
 		return ScenarioControlState{}, errors.New("controlled npc session is unavailable")
 	}
@@ -286,10 +424,72 @@ func (e *Session) ScenarioRetire(ref ScenarioControlRef) (ScenarioControlState, 
 	defer e.mu.Unlock()
 	actor, err := e.scenarioControlledLocked(ref)
 	if err != nil {
-		return ScenarioControlState{}, fmt.Errorf("controlRetire: %w", err)
+		return ScenarioControlState{}, fmt.Errorf("controlDefeat: %w", err)
+	}
+	if actor.IsScenarioAIEnabled() || actor.IsDefeated || !actor.IsPublished || actor.HitPoint <= 0 || actor.IsActionStarted {
+		return ScenarioControlState{}, errors.New("controlled npc defeat requires a living idle AI-off actor")
+	}
+	actor.HitPoint = 0
+	actor.IsDefeated = true
+	actor.ActionGeneration++
+	if actor.ActionGeneration == 0 {
+		actor.ActionGeneration = 1
+	}
+	actor.TargetObjectID = 0
+	actor.TargetFaction = FactionUnknown
+	actor.TargetOwner = ActionOwner{}
+	actor.ActionOwner = ActionOwner{}
+	actor.Plan.scenarioControl.lastCommand = "defeat"
+	actor.Plan.scenarioControl.lastCommandAt = time.Now()
+	e.npcs[ref.ObjectID] = actor
+	return scenarioControlState(actor), nil
+}
+
+// ScenarioRetire removes a controlled actor and its owned auxiliary actors
+// without death rewards or encounter progress. Its handle remains readable.
+func (e *Session) ScenarioRetire(ref ScenarioControlRef) (ScenarioControlState, []uint32, error) {
+	if e == nil {
+		return ScenarioControlState{}, nil, errors.New("controlled npc session is unavailable")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	actor, err := e.scenarioControlledLocked(ref)
+	if err != nil {
+		return ScenarioControlState{}, nil, fmt.Errorf("controlRetire: %w", err)
 	}
 	if actor.IsScenarioAIEnabled() || actor.Plan.scenarioControl.lastCommand == "retire" {
-		return ScenarioControlState{}, errors.New("controlled npc retire requires an AI-off actor not already retired")
+		return ScenarioControlState{}, nil, errors.New("controlled npc retire requires an AI-off actor not already retired")
+	}
+	retiredOwnedObjectIDs := make([]uint32, 0)
+	retiredOwners := map[uint32]bool{ref.ObjectID: true}
+	retiredAt := time.Now()
+	for _, objectID := range e.objectIDs {
+		owned := e.npcs[objectID]
+		isOwned := retiredOwners[owned.Plan.OwnerObjectID] ||
+			owned.Plan.scenarioControl.controlID == ref.ControlID
+		if !isOwned || !owned.Plan.IsEncounterAuxiliary ||
+			owned.IsDefeated || !owned.IsPublished || owned.HitPoint <= 0 {
+			continue
+		}
+		owned.HitPoint = 0
+		owned.IsDefeated = true
+		owned.IsPublished = false
+		owned.ActionGeneration++
+		if owned.ActionGeneration == 0 {
+			owned.ActionGeneration = 1
+		}
+		owned.TargetObjectID = 0
+		owned.TargetFaction = FactionUnknown
+		owned.TargetOwner = ActionOwner{}
+		owned.IsActionStarted = false
+		owned.ActionOwner = ActionOwner{}
+		owned.Plan.scenarioControl.controlID = ref.ControlID
+		owned.Plan.scenarioControl.isManualAction = false
+		owned.Plan.scenarioControl.lastCommand = "retire"
+		owned.Plan.scenarioControl.lastCommandAt = retiredAt
+		e.npcs[objectID] = owned
+		retiredOwnedObjectIDs = append(retiredOwnedObjectIDs, objectID)
+		retiredOwners[objectID] = true
 	}
 	actor.HitPoint = 0
 	actor.IsDefeated = true
@@ -310,9 +510,9 @@ func (e *Session) ScenarioRetire(ref ScenarioControlRef) (ScenarioControlState, 
 		control.generation = 1
 	}
 	control.lastCommand = "retire"
-	control.lastCommandAt = time.Now()
+	control.lastCommandAt = retiredAt
 	e.npcs[ref.ObjectID] = actor
-	return scenarioControlState(actor), nil
+	return scenarioControlState(actor), retiredOwnedObjectIDs, nil
 }
 
 func (e *Session) ScenarioStartAction(req ScenarioActionRequest) (Snapshot, bool, bool, error) {

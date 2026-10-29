@@ -9,7 +9,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
-	"github.com/darkspinnet/darkspin/server/util"
+	zonedifficulty "github.com/darkspinnet/darkspin/server/zone/difficulty"
 	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
 	zonenavigation "github.com/darkspinnet/darkspin/server/zone/navigation"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
@@ -422,25 +422,18 @@ func (r campaignNPCActionRuntime) producePolarisGravityOrb(
 		return nil, fmt.Errorf("enemyGravityOrbReserve: %w", err)
 	}
 	orbs := make([]campaignNPCGravityOrb, 0, orbCount)
-	hitPoint := r.program.NonPlayerHitPoint[util.HashID(profile.NounName)]
-	if hitPoint <= 0 {
-		hitPoint = 50
+	orbProfile, profileErr := zonedifficulty.ProjectOwnedSummon(peerSession.zone.DirectorDefinition(), profile.NounName)
+	if profileErr != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("orbClass: %w", profileErr)
 	}
 	footprintRadius, footprintErr := r.program.FootprintRadius(profile.NounName)
 	if footprintErr != nil || footprintRadius <= 0 {
 		footprintRadius = 0.5
 	}
 	for index, position := range positions {
-		npcProfile := game.CampaignNPCProfile{
-			ChallengeValue: 25, NPCRank: 1, IsTargetable: true,
-			PlayerCountHealthScale: 0.25,
-			HitPoint:               hitPoint, PowerPoint: 10,
-			Strength: 10, Dexterity: 10, Mind: 10,
-			DodgeRating: 60, ResistRating: 60, CriticalRating: 45,
-			GraphicsScale: 1, FootprintRadius: footprintRadius,
-			DifficultyDamageMultiplier: npc.Plan.NPCProfile.DifficultyDamageMultiplier,
-			IsKnown:                    true,
-		}
+		npcProfile := orbProfile
+		npcProfile.FootprintRadius = footprintRadius
 		plan := zonenpc.SpawnPlan{
 			ObjectID: firstObjectID + uint32(index), OwnerObjectID: objectID,
 			NounName: profile.NounName, Position: position,

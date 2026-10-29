@@ -20,7 +20,7 @@ import (
 const (
 	SourceVersion  = "5.3.0.103"
 	SourceBuild    = 103
-	RecipeVersion  = 94
+	RecipeVersion  = 95
 	ContentRelease = "build-103-content"
 	RuntimeRole    = "runtime-content"
 )
@@ -253,6 +253,22 @@ func Verify(ctx context.Context, path string) (*Verification, error) {
 	}
 	if recipeVersion != RecipeVersion {
 		return nil, fmt.Errorf("manifestRecipe: got %d, want %d", recipeVersion, RecipeVersion)
+	}
+	var invalidClassBaseCount int
+	err = database.QueryRowContext(ctx, "SELECT COUNT(*) FROM non_player_class WHERE class_attribute_base IS NULL OR LENGTH(class_attribute_base) != 88").Scan(&invalidClassBaseCount)
+	if err != nil {
+		return nil, fmt.Errorf("classBaseSchema: %w", err)
+	}
+	if invalidClassBaseCount != 0 {
+		return nil, fmt.Errorf("classBaseRows: %d invalid", invalidClassBaseCount)
+	}
+	mirrorStore := &Store{database: database}
+	mirrorTuning, mirrorErr := mirrorStore.AttributeMirrorTuning(ctx)
+	if mirrorErr != nil {
+		return nil, fmt.Errorf("mirrorTuningVerify: %w", mirrorErr)
+	}
+	if mirrorTuning.ManaPerMind <= 0 {
+		return nil, errors.New("mirror tuning mana coefficient unavailable")
 	}
 	if isRuntimeRequired != 1 {
 		return nil, fmt.Errorf("manifestRuntime: got %d", isRuntimeRequired)
@@ -1602,6 +1618,7 @@ func writeContentDatabase(
 			instance_id INTEGER NOT NULL UNIQUE,
 			noun_name TEXT NOT NULL COLLATE NOCASE,
 			class_attribute_resource_id INTEGER NOT NULL REFERENCES content_source_resource(id) ON DELETE CASCADE,
+			class_attribute_base BLOB NOT NULL CHECK (LENGTH(class_attribute_base) = 88),
 			display_name TEXT NOT NULL,
 			display_name_locale_key TEXT NOT NULL,
 			description TEXT NOT NULL,
@@ -2246,6 +2263,10 @@ func writeContentDatabase(
 	err = writeNonPlayerClasses(ctx, transaction, installPath)
 	if err != nil {
 		return fmt.Errorf("nonPlayerClassInsert: %w", err)
+	}
+	err = writeAttributeMirrorTuning(ctx, transaction, installPath)
+	if err != nil {
+		return fmt.Errorf("mirrorTuningWrite: %w", err)
 	}
 	progress.next("Importing object physics", 16, 20)
 	err = writeNounPhysics(ctx, transaction, installPath)

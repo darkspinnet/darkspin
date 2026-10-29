@@ -75,40 +75,46 @@ type ExperienceAward struct {
 }
 
 type Snapshot struct {
-	Version              uint32
-	ZoneID               uint64
-	RunSeed              uint64
-	IsReplayRandomized   bool
-	ZoneGeneration       uint64
-	CompletionID         uint64
-	Revision             uint64
-	Level                string
-	Difficulty           uint32
-	Reason               Reason
-	SavedAt              time.Time
-	Elapsed              time.Duration
-	Members              []Member
-	Heroes               []Hero
-	Squads               []Squad
-	NPCs                 []NPC
-	Hordes               []zonehorde.Snapshot
-	TriggerProgresses    []game.CampaignTriggerProgress
-	Crystals             []Crystal
-	ExperienceAwards     []ExperienceAward
-	MissionEquipments    []zoneloot.EquipmentInventory
-	Security             zonesecurity.Snapshot
-	Objectives           []sim.ObjectiveSnapshot
-	ObjectiveRuntimes    []sim.LuaObjectiveSnapshot
-	ObjectiveDrops       []zoneobjective.DropRequest
-	ObjectiveEvents      []sim.LuaObjectiveEvent
-	ObjectiveNextDropID  uint64
-	QuestCrystals        []zonequest.State
-	ScriptUses           []game.CampaignScriptUse
-	ClearedSpawnGroupIDs []uint32
-	DropRandom           sim.RandomSnapshot
-	IsDropRandomSet      bool
-	CapsuleRandom        sim.CapsuleRandomSnapshot
-	IsCapsuleRandomSet   bool
+	EnemyPopulationRules       game.EnemyPopulationRules
+	BossSpawnRules             game.BossSpawnRules
+	IsSpawnRuleSnapshotSet     bool
+	PopulationRandom           sim.RandomSnapshot
+	PopulationMixedRandomState uint32
+	IsPopulationRandomSet      bool
+	Version                    uint32
+	ZoneID                     uint64
+	RunSeed                    uint64
+	IsReplayRandomized         bool
+	ZoneGeneration             uint64
+	CompletionID               uint64
+	Revision                   uint64
+	Level                      string
+	Difficulty                 uint32
+	Reason                     Reason
+	SavedAt                    time.Time
+	Elapsed                    time.Duration
+	Members                    []Member
+	Heroes                     []Hero
+	Squads                     []Squad
+	NPCs                       []NPC
+	Hordes                     []zonehorde.Snapshot
+	TriggerProgresses          []game.CampaignTriggerProgress
+	Crystals                   []Crystal
+	ExperienceAwards           []ExperienceAward
+	MissionEquipments          []zoneloot.EquipmentInventory
+	Security                   zonesecurity.Snapshot
+	Objectives                 []sim.ObjectiveSnapshot
+	ObjectiveRuntimes          []sim.LuaObjectiveSnapshot
+	ObjectiveDrops             []zoneobjective.DropRequest
+	ObjectiveEvents            []sim.LuaObjectiveEvent
+	ObjectiveNextDropID        uint64
+	QuestCrystals              []zonequest.State
+	ScriptUses                 []game.CampaignScriptUse
+	ClearedSpawnGroupIDs       []uint32
+	DropRandom                 sim.RandomSnapshot
+	IsDropRandomSet            bool
+	CapsuleRandom              sim.CapsuleRandomSnapshot
+	IsCapsuleRandomSet         bool
 
 	IsNPCSpawnCommandUsed bool
 }
@@ -140,6 +146,25 @@ func Validate(
 ) error {
 	if snapshot.Version != Version {
 		return fmt.Errorf("checkpointVersion[%d]: unsupported", snapshot.Version)
+	}
+	if snapshot.IsSpawnRuleSnapshotSet {
+		err := snapshot.EnemyPopulationRules.Validate()
+		if err != nil {
+			return fmt.Errorf("checkpointPopulationRules: %w", err)
+		}
+		err = snapshot.BossSpawnRules.Validate()
+		if err != nil {
+			return fmt.Errorf("checkpointBossRules: %w", err)
+		}
+	}
+	if snapshot.IsPopulationRandomSet {
+		random, err := sim.NewSimulatorRandomFromSnapshot(snapshot.PopulationRandom)
+		if err != nil {
+			return fmt.Errorf("checkpointPopulationRandom: %w", err)
+		}
+		if random == nil {
+			return errors.New("checkpoint population random unavailable")
+		}
 	}
 	if snapshot.IsDropRandomSet {
 		restoredRandom, err := sim.NewSimulatorRandomFromSnapshot(snapshot.DropRandom)

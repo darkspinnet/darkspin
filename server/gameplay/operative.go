@@ -3,6 +3,7 @@ package gameplay
 import (
 	"errors"
 	"fmt"
+	zone "github.com/darkspinnet/darkspin/server/zone"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
@@ -15,7 +16,7 @@ func (e gameplayPeerSession) isOperativeCaged(at time.Time) bool {
 	if run == nil || !run.isActive() || e.zone == nil ||
 		(run.operativeCage != nil && run.operativeCage.isComplete) ||
 		run.record.TargetObjectID != e.deployedObjectID || e.deployedHitPoint() <= 0 ||
-		e.isHeroDebuffImmune(e.deployedObjectID) || e.isOverdriveActiveAt(at) {
+		e.isHeroDebuffImmune(e.deployedObjectID) || e.isOverdriveActiveAt(at) || e.zone.Horde().IsActive() {
 		return false
 	}
 	sourceID := run.record.SourceObjectID
@@ -68,7 +69,7 @@ func (e campaignNPCActionRuntime) canApplyOperativeCage(
 	defer e.registry.mutex.RUnlock()
 	source, isFound := e.registry.sessions[sessionKey]
 	if !isFound || source.generation != generation || source.zone == nil ||
-		source.zone.NPCs().SilenceRemaining(plan.SourceObjectID, e.now()) > 0 {
+		source.zone.NPCs().SilenceRemaining(plan.SourceObjectID, e.now()) > 0 || source.zone.Horde().IsActive() {
 		return false
 	}
 	for _, target := range e.registry.sessions {
@@ -107,6 +108,7 @@ func (e campaignNPCActionRuntime) bindOperativeCage(
 		target.basicSequenceSession().ReleaseHeld()
 		target.campaignPlayerPursuitSession().Cancel()
 		target.followTargetUserID = 0
+		state.connectedPlayerCount = e.registry.operativePlayerCountLocked(source.zone)
 		run.operativeCage = state
 		state.run = run
 		target.operativeCage = run
@@ -119,6 +121,10 @@ func (e campaignNPCActionRuntime) bindOperativeCage(
 func (e *gameplaySessionRegistry) isOperativeChannelLocked(
 	source gameplayPeerSession, sourceObjectID uint32, targetObjectID uint32,
 ) bool {
+	state := source.operativeChannels[sourceObjectID]
+	if source.zone.Horde().IsActive() || state == nil || state.connectedPlayerCount != e.operativePlayerCountLocked(source.zone) {
+		return false
+	}
 	for _, target := range e.sessions {
 		if target.zone == source.zone && target.deployedObjectID == targetObjectID &&
 			target.operativeCage != nil &&
@@ -135,7 +141,7 @@ func (e gameplayPendingRuntime) pollOperativeCages(packet raknet.Packet) error {
 	target, isFound := e.registry.sessions[packet.Address.String()]
 	run := target.operativeCage
 	if !isFound || run == nil ||
-		(target.isOperativeCaged(e.now()) && e.registry.hasOperativeRescuerLocked(target)) {
+		(target.isOperativeCaged(e.now()) && e.registry.hasOperativeRescuerLocked(target) && run.operativeCage != nil && run.operativeCage.connectedPlayerCount == e.registry.operativePlayerCountLocked(target.zone)) {
 		e.registry.mutex.Unlock()
 		return nil
 	}
@@ -212,7 +218,11 @@ func (e *gameplaySessionRegistry) retireOperativeChannelsLocked(
 	if member.operativeCage != nil {
 		runs[member.operativeCage.instanceID] = member.operativeCage
 	}
+	var effectRetireErr error
 	for _, state := range member.operativeChannels {
+		effectPackets, effectErr := state.retireSupportEffects()
+		packets = append(packets, effectPackets...)
+		effectRetireErr = errors.Join(effectRetireErr, effectErr)
 		state.isComplete = true
 		state.cancelSchedule()
 		packets = append(packets, state.retirementPackets...)
@@ -221,7 +231,7 @@ func (e *gameplaySessionRegistry) retireOperativeChannelsLocked(
 			runs[state.run.instanceID] = state.run
 		}
 	}
-	var retireErr error
+	retireErr := effectRetireErr
 	for _, run := range runs {
 		deletePackets, err := e.retireOperativeCageLocked(run, pool)
 		if err != nil {
@@ -247,4 +257,47 @@ func (e *gameplaySessionRegistry) retireOperativeChannelsLocked(
 		return fmt.Errorf("cageTeardown: %w", retireErr)
 	}
 	return nil
+}
+
+func (e *gameplaySessionRegistry) operativePlayerCountLocked(targetZone *zone.Zone) int {
+	count := 0
+	for _, member := range e.sessions {
+		if member.zone == targetZone && member.stage.IsDungeon() && !member.isRejoinPending {
+			count++
+		}
+	}
+	return count
+}
+
+// Retire one defeated/interrupted source across every party member. The source
+// channel and the target modifier may be owned by different transport sessions.
+func (e *gameplaySessionRegistry) retireOperativeSourceLocked(targetZone *zone.Zone, sourceID uint32, pool *modifierPool) ([][]byte, error) {
+	var packets [][]byte
+	for memberKey, member := range e.sessions {
+		if member.zone != targetZone {
+			continue
+		}
+		state := member.operativeChannels[sourceID]
+		if state == nil {
+			continue
+		}
+		effectPackets, effectErr := state.retireSupportEffects()
+		if effectErr != nil {
+			return packets, fmt.Errorf("operativeSourceEffect: %w", effectErr)
+		}
+		packets = append(packets, effectPackets...)
+		state.isComplete = true
+		state.cancelSchedule()
+		deletePackets, err := e.retireOperativeCageLocked(state.run, pool)
+		if err != nil {
+			return packets, fmt.Errorf("operativeSourceModifier: %w", err)
+		}
+		packets = append(packets, deletePackets...)
+		packets = append(packets, state.retirementPackets...)
+		state.retirementPackets = nil
+		member = e.sessions[memberKey]
+		delete(member.operativeChannels, sourceID)
+		e.sessions[memberKey] = member
+	}
+	return packets, nil
 }

@@ -113,7 +113,7 @@ func (e *gameplaySessionRegistry) ScenarioSpawnNPC(ctx context.Context, req scen
 	e.nextSpawnID++
 	isAIEnabled := req.IsAIEnabled == nil || *req.IsAIEnabled
 	if !isAIEnabled {
-		controlPlan := zonenpc.SpawnPlan{NounName: req.NounName, NPCProfile: profile}
+		controlPlan := scenarioNPCSpawnPlan(director, req.NounName, profile)
 		preparedPlan, prepareErr := zonenpc.PrepareScenarioControlledPlan(controlPlan, "admission")
 		if prepareErr != nil {
 			return scenario.SpawnReceipt{}, fmt.Errorf("spawnControlProfile: %w", prepareErr)

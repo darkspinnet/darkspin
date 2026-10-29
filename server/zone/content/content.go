@@ -70,6 +70,7 @@ type Programs struct {
 	SupportHealerPassive       sim.SummonPassiveDefinition
 	SupportHealerPetBasic      sim.AbilityDefinition
 	SentryDroneLaser           sim.AbilityDefinition
+	NomadDroneLaser            sim.AbilityDefinition
 	FireTempestPetBasic        sim.AbilityDefinition
 	BeastPetBasic              sim.AbilityDefinition
 	PlasmaSentinelPetBasic     sim.AbilityDefinition

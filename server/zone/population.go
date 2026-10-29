@@ -168,6 +168,24 @@ func (e *Zone) introduceInitialNPCs() ([]zonenpc.SpawnPlan, error) {
 func (e *Zone) planPopulation(
 	decisions []zonepopulation.Decision,
 ) ([]zonenpc.SpawnPlan, error) {
+	if e.info.Population == nil || e.info.Population.Random() == nil {
+		return nil, errors.New("population random unavailable")
+	}
+	randomSnapshot := e.info.Population.Random().Snapshot()
+	mixedState := e.info.Population.MixedRandomState()
+	plans, err := e.commitPopulationPlans(decisions)
+	if err != nil {
+		restoreErr := e.info.Population.RestoreRandom(randomSnapshot, mixedState)
+		return nil, fmt.Errorf("populationRollback: %w", errors.Join(err, restoreErr))
+	}
+	return plans, nil
+}
+
+// Commit the ordinary plans and their reconstructed policy draws together.
+// Rejected policy, validation, and insertion branches restore both RNG streams.
+func (e *Zone) commitPopulationPlans(
+	decisions []zonepopulation.Decision,
+) ([]zonenpc.SpawnPlan, error) {
 	occupiedSpawnGroups := make(map[uint32]struct{})
 	operativeCount := 0
 	compositionContext := zonepopulation.GroupCompositionContext{}
@@ -227,6 +245,10 @@ func (e *Zone) planPopulation(
 	plans = e.info.Population.AddOperatives(
 		e.info.DirectorDefinition, plans, connectedCount > 1, operativeCount,
 	)
+	plans, err = e.info.Population.ApplyRules(e.info.DirectorDefinition, plans, e.info.NPCs.Snapshots())
+	if err != nil {
+		return nil, fmt.Errorf("populationPolicy: %w", err)
+	}
 	firstObjectID, err := e.info.ObjectID.Reserve(uint32(len(plans)))
 	if err != nil {
 		return nil, fmt.Errorf("objectIDReserve: %w", err)
@@ -260,6 +282,10 @@ func (e *Zone) planPopulation(
 	if len(stagedPlans) != 0 {
 		err = e.info.NPCs.AddStaged(stagedPlans)
 		if err != nil {
+			if len(introducedPlans) != 0 {
+				rollbackErr := e.info.NPCs.RollbackAdd(introducedPlans)
+				return nil, fmt.Errorf("enemyStageRollback: %w", errors.Join(err, rollbackErr))
+			}
 			return nil, fmt.Errorf("enemyStage: %w", err)
 		}
 	}

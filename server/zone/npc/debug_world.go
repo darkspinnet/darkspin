@@ -29,6 +29,7 @@ func (e *Session) ScenarioNearby(ctx context.Context, center scenario.WorldPosit
 	}
 	defer e.mu.RUnlock()
 	npcs := make([]scenario.WorldNPC, 0, 128)
+	total := 0
 	for _, actor := range e.npcs {
 		err := ctx.Err()
 		if err != nil {
@@ -37,6 +38,7 @@ func (e *Session) ScenarioNearby(ctx context.Context, center scenario.WorldPosit
 		if actor.IsScenarioControlled() && actor.Plan.scenarioControl.lastCommand == "retire" {
 			continue
 		}
+		total++
 		position := actor.Plan.Position
 		dx, dy, dz := float64(position.X-center.X), float64(position.Y-center.Y), float64(position.Z-center.Z)
 		npc := scenario.WorldNPC{ObjectID: actor.Plan.ObjectID, Noun: actor.Plan.NounName,
@@ -57,5 +59,5 @@ func (e *Session) ScenarioNearby(ctx context.Context, center scenario.WorldPosit
 		copy(npcs[index+1:], npcs[index:len(npcs)-1])
 		npcs[index] = npc
 	}
-	return npcs, len(e.npcs), nil
+	return npcs, total, nil
 }

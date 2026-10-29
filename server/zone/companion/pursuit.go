@@ -23,4 +23,5 @@ func (e *Actor) clearPursuit() {
 	e.pursuitSource = game.Vec3{}
 	e.pursuitStartedAt = time.Time{}
 	e.pursuitDeadline = time.Time{}
+	e.isForcedPursuit = false
 }

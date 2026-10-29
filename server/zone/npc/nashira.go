@@ -184,7 +184,7 @@ func NashiraFiendProfile(nounName string) (ActionProfile, bool) {
 func IsTossActionProfile(profile ActionProfile) bool {
 	switch profile.AbilityName {
 	case "NoctFlyerLob", "SleepMushroom", "CitadelGrenadeRoll", "HurlMagma",
-		"NomadShielderGrenade", "ShadowToss":
+		"NomadShielderGrenade", "ShadowToss", "BabyToss":
 		return true
 	default:
 		return false

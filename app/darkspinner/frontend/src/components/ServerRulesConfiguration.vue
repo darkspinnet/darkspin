@@ -11,6 +11,21 @@ import { BrowserOpenURL, GetServerRulesConfiguration, SetServerRulesConfiguratio
 const props = defineProps({ buildVersion: { type: String, default: '' } })
 const emit = defineEmits(['close', 'interact'])
 
+const populationSelections = [
+  { key: 'agentSelection', label: 'ORDINARY AGENTS', help: 'Current co-op replacements, or stage-eligible external agents in solo and co-op. Agents replace ordinary slots; Mutation Agent hordes stay separate.', options: [['current_coop', 'Current co-op policy (default)'], ['authored_external', 'Authored external roster']] },
+  { key: 'rosterSelection', label: 'ROSTER SOURCES', help: 'Keep current composition, or combine eligible local and selected external records. Empty source sides fall back to available candidates.', options: [['current_composition', 'Current composition (default)'], ['local_and_external', 'Local and external']] },
+  { key: 'ownedSummonHealthScaling', label: 'OWNED SUMMON HEALTH', help: 'Resolve each child’s own profile once. Includes destructible ability objects; supplied current HP is capped to the child maximum.', options: [['run_and_party', 'Run and party (default)'], ['run_only', 'Run only'], ['base', 'Authored base']] },
+  { key: 'fixtureHealthScaling', label: 'MAP DESTRUCTIBLE HEALTH', help: 'Placed map objects keep authored base health by default. Health policy does not change their class rank.', options: [['base', 'Authored base (default)'], ['run_only', 'Run only'], ['run_and_party', 'Run and party']] },
+]
+const populationNumbers = [
+  { key: 'agentsPerSection', label: 'EXTERNAL AGENT CAP PER SECTION', min: 0, max: 3, help: '0–3; default 1. Used by authored external agent admission. Zero disables ordinary external agents.' },
+  { key: 'externalRosterWeightPercent', label: 'EXTERNAL SOURCE SHARE (%)', min: 0, max: 100, help: '0–100; default 50. Source probability for local-and-external selection, followed by an eligible noun draw; not an enemy count.' },
+  { key: 'ambientEliteChancePercent', label: 'AMBIENT ELITE CHANCE MULTIPLIER (%)', min: 0, max: 100, help: '0–100; default 100 uses authored stage/class chances. Uses eligible compatible affixes in name order; excludes explicit leaders, summons and fixtures.' },
+]
+const bossSelections = [
+  { key: 'leaderSelection', label: 'FIRST-CLEAR LEADER', help: 'Authored planet bosses substitute only on their matching boss map, with one eligible candidate. Missing or ambiguous candidates retain campaign selection and log the fallback.', options: [['current_campaign', 'Current campaign catalog (default)'], ['authored_planet_boss', 'Authored planet boss']] },
+  { key: 'replayLeaderSelection', label: 'REPLAY LEADER', help: 'Keep the eligible authored captain, or use the selected map’s first-clear policy for its threat tier. Encounter prerequisites still apply.', options: [['eligible_captain', 'Eligible captain (default)'], ['same_as_first_clear', 'Same as first clear']] },
+]
 const configuration = ref(null)
 const isBusy = ref(false)
 const message = ref('')
@@ -26,7 +41,7 @@ const isBossSpawningValid = computed(() => {
   return spawn &&
     Number.isInteger(spawn.openingAddsPerAnchor) && spawn.openingAddsPerAnchor >= 1 && spawn.openingAddsPerAnchor <= 4 &&
     Number.isInteger(spawn.initialBossAddCount) && spawn.initialBossAddCount >= 1 && spawn.initialBossAddCount <= 12 &&
-    Number.isInteger(spawn.captainDelayMillisecond) && spawn.captainDelayMillisecond >= 0 && spawn.captainDelayMillisecond <= 30000
+    Number.isInteger(spawn.captainDelayMillisecond) && spawn.captainDelayMillisecond >= 0 && spawn.captainDelayMillisecond <= 30000 && bossSelections.every(field => field.options.some(option => option[0] === spawn[field.key]))
 })
 const isMutationAgentValid = computed(() => {
   const mutation = configuration.value?.mutationAgent
@@ -40,7 +55,9 @@ const isMutationAgentValid = computed(() => {
 const isEnemyPopulationValid = computed(() => {
   const population = configuration.value?.enemyPopulation
   return population && population.version === 1 && Number.isInteger(population.enemiesPerSection) &&
-    population.enemiesPerSection >= 10 && population.enemiesPerSection <= 60
+    population.enemiesPerSection >= 10 && population.enemiesPerSection <= 60 &&
+    typeof population.isAmbientEliteEnabled === 'boolean' && populationSelections.every(field => field.options.some(option => option[0] === population[field.key])) &&
+    populationNumbers.every(field => Number.isInteger(population[field.key]) && population[field.key] >= field.min && population[field.key] <= field.max)
 })
 const isValid = computed(() => isAllyAlertValid.value && isBossSpawningValid.value && isMutationAgentValid.value && isEnemyPopulationValid.value)
 
@@ -84,6 +101,9 @@ function shareToGitHub() {
     '[enemy_population]',
     `version = ${population.version}`,
     `enemies_per_section = ${population.enemiesPerSection}`,
+    ...populationSelections.map(field => `${field.key.replace(/[A-Z]/g, letter => "_" + letter.toLowerCase())} = ${JSON.stringify(population[field.key])}`),
+    ...populationNumbers.map(field => `${field.key.replace(/[A-Z]/g, letter => "_" + letter.toLowerCase())} = ${population[field.key]}`),
+    `is_ambient_elite_enabled = ${population.isAmbientEliteEnabled}`,
     '',
     '[ally_alert]',
     `version = ${rules.version}`,
@@ -98,6 +118,7 @@ function shareToGitHub() {
     `opening_adds_per_anchor = ${spawn.openingAddsPerAnchor}`,
     `initial_boss_add_count = ${spawn.initialBossAddCount}`,
     `captain_delay_millisecond = ${spawn.captainDelayMillisecond}`,
+    ...bossSelections.map(field => `${field.key.replace(/[A-Z]/g, letter => "_" + letter.toLowerCase())} = ${JSON.stringify(spawn[field.key])}`),
     '',
     '[mutation_agent]',
     `version = ${mutation.version}`,
@@ -146,7 +167,7 @@ onMounted(reload)
     </header>
     <p class="rules-description">Tune the local server. Alerts update immediately; population, boss and horde settings apply to new missions.</p>
     <div v-if="configuration" class="rules-sections">
-      <details class="rules-group" open>
+      <details class="rules-group">
         <summary class="rules-group-heading">
           <span>ENEMY POPULATION</span><span class="rules-group-status" :class="{ 'rules-error': !isEnemyPopulationValid }">{{ isEnemyPopulationValid ? 'Experimental' : 'Check values' }}</span><span class="rules-chevron" aria-hidden="true"></span>
         </summary>
@@ -156,6 +177,14 @@ onMounted(reload)
             <div class="rules-numbers">
               <label for="population-section-count"><strong>ENEMY TARGET PER ROUTE SECTION</strong><Input id="population-section-count" v-model.number="configuration.enemyPopulation.enemiesPerSection" type="number" min="10" max="60" step="1" inputmode="numeric" /><small>Default: 15; allowed: 10–60. Each map normally has three route sections. Available spawn points can limit the result. Fixed opening encounters, companions, scripted spawns, hordes and boss waves have separate counts.</small></label>
             </div>
+
+            <div v-for="field in populationSelections" :key="field.key">
+              <label :for="'population-' + field.key"><strong>{{ field.label }}</strong></label>
+              <Select v-model="configuration.enemyPopulation[field.key]" :disabled="isBusy"><SelectTrigger :id="'population-' + field.key" class="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem v-for="option in field.options" :key="option[0]" :value="option[0]">{{ option[1] }}</SelectItem></SelectContent></Select>
+              <small>{{ field.help }}</small>
+            </div>
+            <label class="management-toggle"><Checkbox v-model="configuration.enemyPopulation.isAmbientEliteEnabled" :disabled="isBusy" /><span><strong>ENABLE AMBIENT ELITE PROMOTION</strong><small>Disabled by default. Dark Spin policy uses imported stage/class chances and affix bounds for ordinary minions and specials.</small></span></label>
+            <div class="rules-numbers"><label v-for="field in populationNumbers" :key="field.key" :for="'population-' + field.key"><strong>{{ field.label }}</strong><Input :id="'population-' + field.key" v-model.number="configuration.enemyPopulation[field.key]" type="number" :min="field.min" :max="field.max" step="1" inputmode="numeric" /><small>{{ field.help }}</small></label></div>
           </fieldset>
           <p class="rules-description">Share these settings with the mission, difficulty, first clear or replay, party size and a bug report. Higher targets mostly add ordinary enemies; they do not multiply every encounter.</p>
         </div>
@@ -173,6 +202,12 @@ onMounted(reload)
               <label for="boss-captain-delay"><strong>CAPTAIN DELAY (MS)</strong><Input id="boss-captain-delay" v-model.number="configuration.bossSpawning.captainDelayMillisecond" type="number" min="0" max="30000" step="100" inputmode="numeric" /><small>Delay after clearing the opening wave before the captain enters. Default: 2000; allowed: 0–30000.</small></label>
             </div>
           </fieldset>
+
+            <div v-for="field in bossSelections" :key="field.key">
+              <label :for="'boss-' + field.key"><strong>{{ field.label }}</strong></label>
+              <Select v-model="configuration.bossSpawning[field.key]" :disabled="isBusy"><SelectTrigger :id="'boss-' + field.key" class="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem v-for="option in field.options" :key="option[0]" :value="option[0]">{{ option[1] }}</SelectItem></SelectContent></Select>
+              <small>{{ field.help }}</small>
+            </div>
           <p v-if="!isBossSpawningValid" class="rules-error" role="alert">Enter whole numbers within the ranges shown.</p>
         </div>
       </details>

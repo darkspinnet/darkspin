@@ -15,6 +15,7 @@ import (
 // CampaignDirectorEntry is one difficulty-gated noun candidate from immutable
 // level content. It does not assign selection weight or encounter behavior.
 type CampaignDirectorEntry struct {
+	IsExternalSource          bool
 	Ordinal                   int
 	ConfigurationEntryOrdinal int
 	NounName                  string
@@ -40,34 +41,38 @@ type CampaignNPCIdentity struct {
 // CampaignNPCProfile is the transport- and storage-neutral authored
 // baseline for one director noun.
 type CampaignNPCProfile struct {
-	ActorFootprint         *NavigationFootprint
-	AIGraph                *CampaignAIGraph
-	IsClassKnown           bool
-	NounType               NounType
-	AggroType              uint32
-	ChallengeValue         int32
-	NPCRank                int32
-	NPCType                uint32
-	CreatureType           uint32
-	DropTypes              []uint32
-	IsTargetable           bool
-	IsPlayerPet            bool
-	PlayerCountHealthScale float32
-	AggroRange             float32
-	AlertRange             float32
-	DropAggroRange         float32
-	IdleMovementSpeed      float32
-	BaseCombatSpeed        float32
-	HitPoint               float32
-	PowerPoint             float32
-	Strength               float32
-	Dexterity              float32
-	Mind                   float32
-	DodgeRating            float32
-	ResistRating           float32
-	CriticalRating         float32
-	GraphicsScale          float32
-	FootprintRadius        float32
+	ClassAttributeBases         [22]float32
+	AreClassAttributeBasesKnown bool
+	BaseHitPoint                float32
+	NPCClassInstanceID          uint32
+	ActorFootprint              *NavigationFootprint
+	AIGraph                     *CampaignAIGraph
+	IsClassKnown                bool
+	NounType                    NounType
+	AggroType                   uint32
+	ChallengeValue              int32
+	NPCRank                     int32
+	NPCType                     uint32
+	CreatureType                uint32
+	DropTypes                   []uint32
+	IsTargetable                bool
+	IsPlayerPet                 bool
+	PlayerCountHealthScale      float32
+	AggroRange                  float32
+	AlertRange                  float32
+	DropAggroRange              float32
+	IdleMovementSpeed           float32
+	BaseCombatSpeed             float32
+	HitPoint                    float32
+	PowerPoint                  float32
+	Strength                    float32
+	Dexterity                   float32
+	Mind                        float32
+	DodgeRating                 float32
+	ResistRating                float32
+	CriticalRating              float32
+	GraphicsScale               float32
+	FootprintRadius             float32
 	// DifficultyDamageMultiplier is the already-selected shared difficulty
 	// stage. Zero preserves legacy/test profiles and is interpreted as one.
 	DifficultyDamageMultiplier float32
@@ -263,6 +268,19 @@ type CampaignScriptObject struct {
 
 // CampaignDirector is the immutable level input accepted by campaign setup.
 type CampaignDirector struct {
+	AttributeMirrorTuning    AttributeMirrorTuning
+	LocalPools               []CampaignDirectorPool
+	OrdinaryAgentEntries     []CampaignDirectorEntry
+	EliteTunings             []CampaignEliteTuning
+	EliteMinionMinimumStage  uint32
+	EliteSpecialMinimumStage uint32
+	EliteAffixesByNoun       map[string][]CampaignEliteAffix
+	// AmbientEliteAffixes is Dark Spin's reconstructed shared promotion pool.
+	// Imported class affix intervals remain eligibility evidence, not a native
+	// server selection algorithm; ordinary classes have no authored affix list.
+	AmbientEliteAffixes           []CampaignEliteAffix
+	OwnedSummonProfilesByNoun     map[string]CampaignNPCProfile
+	FixtureProfilesByNoun         map[string]CampaignNPCProfile
 	EnemyPopulationRules          EnemyPopulationRules
 	BossSpawnRules                BossSpawnRules
 	selectedDefinitionsByMarkerID map[uint32]CampaignMarkerDefinition
@@ -1067,6 +1085,7 @@ func (o *CampaignSetup) Execute(ctx context.Context, binding GameplayBinding) (C
 		pool.Entries = eligibleEntries
 	}
 	if !binding.IsWarped {
+		director.LocalPools = slices.Clone(director.Pools)
 		director, err = composeCampaignRoster(director, binding.RunSeed, binding.PartyCompletedStages)
 		if err != nil {
 			return CampaignDirector{}, fmt.Errorf("setupRoster: %w", err)

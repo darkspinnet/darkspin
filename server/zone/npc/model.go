@@ -2,6 +2,7 @@ package npc
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"reflect"
 	"slices"
@@ -33,6 +34,10 @@ const (
 )
 
 type SpawnPlan struct {
+	NPCPassiveRank         int32
+	AttributeMirror        AttributeMirror
+	InvincitronRage        InvincitronRage
+	PetHealthIncrease      float32
 	scenarioControl        scenarioControlPlan
 	ObjectID               uint32
 	OwnerObjectID          uint32
@@ -56,6 +61,7 @@ type SpawnPlan struct {
 	// Current presentation state, retained across rejoin until the entrance reveals it.
 	IsIntroductionHidden       bool
 	IsIntroductionComplete     bool
+	IsSubsequentAggroPending   bool
 	IsStartupInitialized       bool
 	IsRoarInitialized          bool
 	IsRoarSelected             bool
@@ -65,7 +71,9 @@ type SpawnPlan struct {
 	IsExperienceSuppressed     bool // Native object +154.
 	// Server encounter policy: excluded from progress and retired with its owner.
 	IsEncounterAuxiliary        bool
+	IsOwnedDeathPersistent      bool
 	MovementSpeedBuff           float32
+	SupportIdleMovementBuff     float32
 	SwiftAuraSourceObjectID     uint32
 	AffixAuras                  []AffixAura
 	AffixDifficulty             uint32
@@ -77,9 +85,11 @@ type SpawnPlan struct {
 	MarkerSetName               string
 	Introduction                SpawnIntroduction
 	NPCProfile                  game.CampaignNPCProfile
-	BossIdentity                BossIdentity
-	ActionProfile               ActionProfile
-	IsActionKnown               bool
+	// Optional supplied current HP from CreateCreature; zero starts at maximum.
+	InitialHitPoint float32
+	BossIdentity    BossIdentity
+	ActionProfile   ActionProfile
+	IsActionKnown   bool
 }
 
 func (e SpawnPlan) Clone() SpawnPlan {
@@ -95,7 +105,7 @@ func (e SpawnPlan) Clone() SpawnPlan {
 }
 
 func (e SpawnPlan) IsEqual(other SpawnPlan) bool {
-	return e.scenarioControl == other.scenarioControl && e.ObjectID == other.ObjectID &&
+	return e.NPCPassiveRank == other.NPCPassiveRank && e.AttributeMirror == other.AttributeMirror && e.InvincitronRage == other.InvincitronRage && e.PetHealthIncrease == other.PetHealthIncrease && e.scenarioControl == other.scenarioControl && e.ObjectID == other.ObjectID &&
 		e.OwnerObjectID == other.OwnerObjectID &&
 		e.NounName == other.NounName &&
 		e.AuthoredNounName == other.AuthoredNounName &&
@@ -113,12 +123,15 @@ func (e SpawnPlan) IsEqual(other SpawnPlan) bool {
 		e.IsElite == other.IsElite &&
 		e.IsBoss == other.IsBoss &&
 		e.IsArena == other.IsArena &&
+		e.IsSubsequentAggroPending == other.IsSubsequentAggroPending &&
 		e.IsFixture == other.IsFixture &&
 		e.IsAbsorptionShieldDepleted == other.IsAbsorptionShieldDepleted &&
 		e.IsLootSuppressed == other.IsLootSuppressed &&
 		e.IsExperienceSuppressed == other.IsExperienceSuppressed &&
 		e.IsEncounterAuxiliary == other.IsEncounterAuxiliary &&
+		e.IsOwnedDeathPersistent == other.IsOwnedDeathPersistent &&
 		e.MovementSpeedBuff == other.MovementSpeedBuff &&
+		e.SupportIdleMovementBuff == other.SupportIdleMovementBuff &&
 		e.SwiftAuraSourceObjectID == other.SwiftAuraSourceObjectID &&
 		slices.Equal(e.AffixAuras, other.AffixAuras) &&
 		e.AffixDifficulty == other.AffixDifficulty &&
@@ -128,6 +141,7 @@ func (e SpawnPlan) IsEqual(other SpawnPlan) bool {
 		e.PackflyHelperCount == other.PackflyHelperCount &&
 		e.PackflyPassiveRank == other.PackflyPassiveRank &&
 		e.MarkerSetName == other.MarkerSetName &&
+		e.InitialHitPoint == other.InitialHitPoint &&
 		e.Introduction == other.Introduction &&
 		reflect.DeepEqual(e.NPCProfile, other.NPCProfile) &&
 		e.BossIdentity == other.BossIdentity &&
@@ -191,6 +205,7 @@ type Snapshot struct {
 	IsDefeated                      bool
 	IsActionStarted                 bool
 	IsFirstActionStarted            bool
+	AdditionalKit                   AdditionalKitState
 	IsPublished                     bool
 	IsShieldTriggered               bool
 	IsShieldActive                  bool
@@ -328,7 +343,22 @@ type DeathEvent struct {
 }
 
 func ValidateSpawnPlan(plan SpawnPlan, objectIDLimit uint32) error {
+	if math.IsNaN(float64(plan.SupportIdleMovementBuff)) || math.IsInf(float64(plan.SupportIdleMovementBuff), 0) ||
+		plan.SupportIdleMovementBuff <= -1 || plan.SupportIdleMovementBuff > 0 {
+		return errors.New("invalid support idle movement buff")
+	}
+	if plan.NPCPassiveRank < 0 || plan.NPCPassiveRank > 3 {
+		return errors.New("invalid NPC passive rank")
+	}
+	mirrorErr := validateAttributeMirrorPlan(plan)
+	if mirrorErr != nil {
+		return fmt.Errorf("spawnMirror: %w", mirrorErr)
+	}
 	profile := plan.NPCProfile
+	if plan.InitialHitPoint < 0 || math.IsNaN(float64(plan.InitialHitPoint)) ||
+		math.IsInf(float64(plan.InitialHitPoint), 0) {
+		return errors.New("invalid initial health")
+	}
 	if math.IsNaN(float64(plan.ScalePreviewMultiplier)) || math.IsInf(float64(plan.ScalePreviewMultiplier), 0) ||
 		(plan.ScalePreviewMultiplier != 0 && (plan.ScalePreviewMultiplier < 0.25 || plan.ScalePreviewMultiplier > 4)) {
 		return errors.New("invalid scale preview")
@@ -366,4 +396,13 @@ func ValidateSpawnPlan(plan SpawnPlan, objectIDLimit uint32) error {
 		}
 	}
 	return nil
+}
+
+// SpawnHitPoint keeps supplied current health separate from class maximum HP.
+// Build 103 CreateCreature caps its optional HP operand after actor creation.
+func (e SpawnPlan) SpawnHitPoint() float32 {
+	if e.InitialHitPoint > 0 {
+		return min(e.InitialHitPoint, e.NPCProfile.HitPoint)
+	}
+	return e.NPCProfile.HitPoint
 }

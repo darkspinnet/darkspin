@@ -189,7 +189,7 @@ func (s *Session) selectPopulationEntry(
 	if s == nil || s.Random() == nil || len(entries) == 0 {
 		return game.CampaignDirectorEntry{}, errors.New("population entry unavailable")
 	}
-	nounIndex, err := s.Random().Index(uint32(len(entries)))
+	nounIndex, err := game.RosterIndex(entries, s.Random(), s.populationRules.RosterSelection == "local_and_external", s.populationRules.ExternalRosterWeightPercent)
 	if err != nil {
 		return game.CampaignDirectorEntry{}, fmt.Errorf("entryIndex: %w", err)
 	}

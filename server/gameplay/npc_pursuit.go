@@ -306,6 +306,9 @@ func (r campaignNPCPursuitRuntime) produceStep(
 	onArrival campaignNPCArrival, movementAt time.Time,
 	isMovementPaused bool, isCorridorActive bool,
 ) ([][]byte, error) {
+	if profile.AbilityName == "Burrow" || profile.AbilityName == "Flee" || profile.AbilityName == "NomadSpacetimeAgent_Blink" {
+		defer r.retireInterruptedMovement(sessionKey, generation, objectID, actionGeneration)
+	}
 	r.registry.mutex.Lock()
 	advancedAt := r.now()
 	elapsed := max(time.Duration(0), advancedAt.Sub(movementAt))
@@ -372,7 +375,8 @@ func (r campaignNPCPursuitRuntime) produceStep(
 	}
 	// Ordinary pursuit must observe aura entry/exit while a path is already
 	// running. Secondary actions retain their scripted charge/leap speed.
-	if !isSecondaryFamily && profile.Family != zonenpc.ActionCharge {
+	isAttributeDrivenRetreat := profile.AbilityName == "SupportFlee" || profile.AbilityName == "SupportFleeFacing" || profile.AbilityName == "Burrow"
+	if (!isSecondaryFamily && profile.Family != zonenpc.ActionCharge) || isAttributeDrivenRetreat {
 		profile.MovementSpeed = nounProfile.MovementSpeed
 		profile.NonCombatMovementSpeed = nounProfile.NonCombatMovementSpeed
 	}
@@ -431,9 +435,10 @@ func (r campaignNPCPursuitRuntime) produceStep(
 	// GhostlyBoltFlee is the Rezzer's fixed retreat point, not a chase of
 	// the hero retained as its combat target.
 	if profile.AbilityName == "StealthAttack" || profile.AbilityName == "Flee" ||
+		profile.AbilityName == "SupportFlee" || profile.AbilityName == "SupportFleeFacing" ||
 		profile.AbilityName == "GhostlyBoltFlee" ||
 		profile.AbilityName == "NoctGhostCharge" ||
-		profile.AbilityName == "NocturnaSpecialDriftCharge" {
+		profile.AbilityName == "NocturnaSpecialDriftCharge" || profile.AbilityName == "NomadSpacetimeAgent_Blink" || profile.AbilityName == "PositionFirePet" || profile.AbilityName == "Burrow" {
 		targetPosition = publishedGoal
 	}
 	movementSpeed := graspingDeadMovementSpeed(
@@ -529,6 +534,7 @@ func (r campaignNPCPursuitRuntime) produceStep(
 	// Ordinary pursuit publishes 0x41 with a live target ID. Projectile
 	// pursuit, fleeing, and pass-through charges retain movement-derived heading.
 	if profile.Family != zonenpc.ActionProjectile && profile.AbilityName != "Flee" &&
+		profile.AbilityName != "SupportFlee" &&
 		profile.AbilityName != "NocturnaSpecialDriftCharge" && profile.AbilityName != "NoctGhostCharge" {
 		isFacingCommitted := npcSession.CommitFacing(zonenpc.AttackPlan{
 			SourceObjectID: objectID, TargetObjectID: resolvedTargetObjectID,
@@ -578,11 +584,18 @@ func (r campaignNPCPursuitRuntime) produceStep(
 	if !isCorridorPursuit && isMovementPaused && !step.IsInRange {
 		// A goal-only update cannot restart the stopped native mover. Reissue
 		// the complete pursuit command even if the target has not moved.
-		resumePackets, resumeErr := npcraknet.Pursuit(zonenpc.FirstActionPlan{
-			ObjectID: objectID, TargetObjectID: resolvedTargetObjectID,
-			SourcePosition: step.Position, TargetPosition: targetPosition,
-			Profile: profile, IsPursuitNeeded: true,
-		})
+		var resumePackets [][]byte
+		var resumeErr error
+		if profile.AbilityName == "SupportFleeFacing" {
+			resumePackets, resumeErr = npcraknet.BoundedStrafe(objectID, step.Position, targetPosition,
+				resolvedTargetObjectID, facingTargetPosition, profile.Range)
+		} else {
+			resumePackets, resumeErr = npcraknet.Pursuit(zonenpc.FirstActionPlan{
+				ObjectID: objectID, TargetObjectID: resolvedTargetObjectID,
+				SourcePosition: step.Position, TargetPosition: targetPosition,
+				Profile: profile, IsPursuitNeeded: true,
+			})
+		}
 		if resumeErr != nil {
 			npcSession.ReleaseActionGeneration(objectID, owner, actionGeneration)
 			return nil, fmt.Errorf("enemyPursuitResume: %w", resumeErr)
@@ -632,6 +645,9 @@ func (r campaignNPCPursuitRuntime) produceStep(
 			if redirectErr == nil {
 				redirectPackets = append(redirectPackets, goalPacket)
 			}
+		} else if profile.AbilityName == "SupportFleeFacing" {
+			redirectPackets, redirectErr = npcraknet.BoundedStrafe(objectID, step.Position, targetPosition,
+				resolvedTargetObjectID, facingTargetPosition, profile.Range)
 		} else if profile.Family == zonenpc.ActionProjectile {
 			redirectPackets, redirectErr = npcraknet.ProjectilePursuitRedirect(
 				objectID, step.Position, resolvedTargetObjectID, targetPosition,

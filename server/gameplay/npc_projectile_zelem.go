@@ -80,6 +80,8 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 	}
 	r.registry.mutex.RLock()
 	peekSession, isPeekFound := r.registry.sessions[sessionKey]
+	prioritySource := zonenpc.Snapshot{}
+	isPriorityCandidate := false
 	isTurtleActive := false
 	isLob := false
 	isCryosRezMelee := false
@@ -91,6 +93,11 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 	if isPeekFound && peekSession.generation == generation &&
 		peekSession.zone != nil && peekSession.zone.NPCs() != nil {
 		peekNPC, isPeekNPCFound := peekSession.zone.NPCs().NPC(objectID)
+		if !volley.isActive && isPeekNPCFound && !peekNPC.IsIntroductionPending() &&
+			peekSession.isCampaignNPCActionActiveAt(generation, objectID, r.now()) {
+			prioritySource = peekNPC
+			isPriorityCandidate = true
+		}
 		isTurtleActive = isPeekNPCFound && peekNPC.IsTurtleActive
 		peekProfile, isPeekProfileFound := zonenpc.ActionProfileForPlan(peekNPC.Plan)
 		peekTarget, isPeekTargetFound := peekSession.campaignNPCTarget(
@@ -153,6 +160,17 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		}
 	}
 	r.registry.mutex.RUnlock()
+	if isPriorityCandidate {
+		priorityPackets, isPriorityHandled, priorityErr := r.producePriorityNPCAbility(
+			packet, sessionKey, generation, prioritySource, timestamp,
+		)
+		if priorityErr != nil {
+			return nil, fmt.Errorf("enemyShotPriority: %w", priorityErr)
+		}
+		if isPriorityHandled {
+			return priorityPackets, nil
+		}
+	}
 	if isPullerMelee {
 		return r.produceEnemyMeleeWithPull(packet, sessionKey, generation, objectID, timestamp, false)
 	}
@@ -343,7 +361,7 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		profile.TeleportNormalDistance > 0 {
 		// A blink hands this action chain to one ordinary shot. The shot's
 		// recovery returns to the blink planner without starting a second timer.
-		profile = zonenpc.ZelemRangedShotProfile()
+		profile = zonenpc.ApplyAffixTiming(zonenpc.ZelemRangedShotProfile(), enemy.Plan)
 	}
 	_, isHomerFamily := zonenpc.NocturnaSpecialHomerMeleeProfile(enemy.Plan.NounName)
 	if isHomerFamily {

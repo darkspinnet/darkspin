@@ -11,6 +11,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/util"
 	"github.com/darkspinnet/darkspin/server/zone"
+	zonedifficulty "github.com/darkspinnet/darkspin/server/zone/difficulty"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 	zoneprojection "github.com/darkspinnet/darkspin/server/zone/projection"
@@ -504,17 +505,9 @@ func (r campaignNPCActionRuntime) planCorruptorPhasePopulation(
 		delete(state.portals, objectID)
 		state.portalObjectIDs[index] = 0
 	}
-	portalProfile := boss.Plan.NPCProfile
-	portalNounKey := strings.ToLower(campaignCorruptorPortalNounName)
-	profile, isFound := peerSession.zone.DirectorDefinition().NPCProfilesByNoun[portalNounKey]
-	if isFound && profile.IsKnown && profile.HitPoint > 0 {
-		portalProfile = profile
-	} else {
-		portalProfile.HitPoint = 50
-		portalProfile.PowerPoint = 0
-		portalProfile.FootprintRadius = 1.5
-		portalProfile.IsTargetable = true
-		portalProfile.IsKnown = true
+	portalProfile, profileErr := zonedifficulty.ProjectOwnedSummon(peerSession.zone.DirectorDefinition(), campaignCorruptorPortalNounName)
+	if profileErr != nil {
+		return nil, state, fmt.Errorf("portalProfile: %w", profileErr)
 	}
 	for index, position := range state.portalPositions {
 		if state.portalObjectIDs[index] != 0 ||
@@ -618,31 +611,13 @@ func (r campaignNPCActionRuntime) corruptorMinionPlan(
 	}
 	nounName := entry.NounName
 	director := s.zone.DirectorDefinition()
-	npcProfile, isProfileFound := director.NPCProfilesByNoun[strings.ToLower(nounName)]
-	if !isProfileFound {
-		npcProfile = entry.NPCProfile
+	npcProfile, profileErr := zonedifficulty.ProjectOwnedSummon(director, nounName)
+	if profileErr != nil {
+		return zonenpc.SpawnPlan{}, fmt.Errorf("corruptorMinionClass: %w", profileErr)
 	}
 	actionProfile, isActionFound := zonenpc.ActionProfileForNoun(nounName)
 	if !isActionFound {
 		return zonenpc.SpawnPlan{}, fmt.Errorf("corruptorMinionProfile: %s", nounName)
-	}
-	if !npcProfile.IsKnown {
-		npcProfile = boss.Plan.NPCProfile
-		hitPoint := r.program.NonPlayerHitPoint[util.HashID(
-			strings.TrimSuffix(nounName, ".Noun"),
-		)]
-		if hitPoint <= 0 {
-			hitPoint = 20
-		}
-		footprintRadius, footprintErr := r.program.FootprintRadius(nounName)
-		if footprintErr != nil || footprintRadius <= 0 {
-			footprintRadius = 0.5
-		}
-		npcProfile.HitPoint = hitPoint
-		npcProfile.FootprintRadius = footprintRadius
-		npcProfile.GraphicsScale = 1
-		npcProfile.IsTargetable = true
-		npcProfile.IsKnown = true
 	}
 	position = r.corruptorScatterPosition(s, position, nounName, pendingPlans)
 	return zonenpc.SpawnPlan{

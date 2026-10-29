@@ -1098,6 +1098,15 @@ func (r campaignNPCActionRuntime) produceEnemyCharge(
 		}
 	}
 	target, isTargetFound := peerSession.campaignNPCTarget(generation, enemy.TargetObjectID)
+	// Build 103 NomadSpecialOne.Phase admits charge only beyond distance 10;
+	// its independent cleave remains available while charge is cooling down.
+	if isEnemyFound && isTargetFound && isProfileFound && profile.AbilityName == "NomadSpecialOneCharge" {
+		surfaceDistance := max(float32(0), zonegeometry.Distance(enemy.Plan.Position, target.Position)-enemy.Plan.ActorFootprintRadius()-target.ActorFootprintRadius)
+		if surfaceDistance <= 10 || peerSession.campaignNPCChargeReadiness[objectID] > timestamp {
+			r.registry.mutex.Unlock()
+			return r.produceNomadCleave(packet, sessionKey, generation, objectID, timestamp)
+		}
+	}
 	chargePursuit := zonenpc.FirstActionPlan{}
 	isChargePursuit := false
 	if isEnemyFound && isTargetFound && isProfileFound &&
@@ -1450,11 +1459,11 @@ func (r campaignNPCActionRuntime) produceVerdanthBasicPickyAttack(
 		return nil, fmt.Errorf("enemyPickyAttackTimeline: %w", err)
 	}
 	schedule := campaignNPCAttackSchedule{request: request, plan: plan}
-	next := campaignEnemyChargeNextStep{
+	next := campaignChargeMeleeNextStep{campaignEnemyChargeNextStep: campaignEnemyChargeNextStep{
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID,
 		timestamp: timestamp + uint64(timeline.NextDelay/time.Millisecond),
-	}
+	}, actionGeneration: plan.ActionGeneration}
 	_, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: timeline.HitDelay, Produce: schedule.hit},
 		{Delay: timeline.NextDelay, Produce: next.produce},
@@ -1579,11 +1588,11 @@ func (r campaignNPCActionRuntime) produceCryosBasicChargeHeadbutt(
 		return nil, fmt.Errorf("enemyHeadbuttTimeline: %w", err)
 	}
 	schedule := campaignNPCAttackSchedule{request: request, plan: plan}
-	next := campaignEnemyChargeNextStep{
+	next := campaignChargeMeleeNextStep{campaignEnemyChargeNextStep: campaignEnemyChargeNextStep{
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID,
 		timestamp: timestamp + uint64(timeline.NextDelay/time.Millisecond),
-	}
+	}, actionGeneration: plan.ActionGeneration}
 	_, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: timeline.HitDelay, Produce: schedule.hit},
 		{Delay: timeline.NextDelay, Produce: next.produce},
@@ -1593,6 +1602,19 @@ func (r campaignNPCActionRuntime) produceCryosBasicChargeHeadbutt(
 		return nil, fmt.Errorf("enemyHeadbuttSchedule: %w", scheduleErr)
 	}
 	return packets, nil
+}
+
+type campaignChargeMeleeNextStep struct {
+	campaignEnemyChargeNextStep
+	actionGeneration uint64
+}
+
+func (e campaignChargeMeleeNextStep) produce() ([][]byte, error) {
+	if e.runtime.finishScenarioNPCManualAction(e.sessionKey, e.generation,
+		e.objectID, e.actionGeneration) {
+		return nil, nil
+	}
+	return e.campaignEnemyChargeNextStep.produce()
 }
 
 type campaignNomadChargeAttackSchedule struct {
@@ -1692,7 +1714,7 @@ func (r campaignNPCActionRuntime) produceNomadChargeAttack(
 	nextDelay := timeline.NextDelay
 	if chargeReadyTimestamp > timestamp {
 		readyDelay := time.Duration(chargeReadyTimestamp-timestamp) * time.Millisecond
-		nextDelay = max(nextDelay, readyDelay)
+		nextDelay = min(nextDelay, readyDelay)
 	}
 	schedule := campaignNomadChargeAttackSchedule{
 		attack:    campaignNPCAttackSchedule{request: request, plan: plan},

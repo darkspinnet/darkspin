@@ -339,6 +339,10 @@ func (e *campaignScaldronCopterRun) strafe() ([][]byte, error) {
 		return nil, nil
 	}
 	source, isSourceFound := peerSession.zone.NPCs().NPC(e.objectID)
+	if isSourceFound && !source.IsScenarioAIEnabled() && !source.IsActionStarted {
+		e.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
 	if isSourceFound && !source.IsActionStarted {
 		packets, err := e.idleLocked(&peerSession, source)
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
@@ -428,7 +432,8 @@ func (r campaignNPCActionRuntime) produceScaldronBasicCopter(
 		return nil, nil
 	}
 	source, isSourceFound := peerSession.zone.NPCs().NPC(objectID)
-	if !isSourceFound || source.IsDefeated || !source.IsPublished || source.Plan.IsIntroductionHidden {
+	if !isSourceFound || source.IsDefeated || !source.IsPublished || source.Plan.IsIntroductionHidden ||
+		!source.IsScenarioAIEnabled() && !source.IsActionStarted {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
@@ -467,5 +472,7 @@ func (r campaignNPCActionRuntime) produceScaldronBasicCopter(
 	if err != nil {
 		return nil, fmt.Errorf("copterStrafeStart: %w", err)
 	}
+	r.finishScenarioNPCManualAction(sessionKey, generation, objectID,
+		source.ActionGeneration)
 	return append(passivePackets, strafePackets...), nil
 }

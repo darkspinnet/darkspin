@@ -58,6 +58,7 @@ type status struct {
 	isCorpseFading              bool
 	isCorpseFadePublished       bool
 	isStealthed                 bool
+	isHauntInitialized          bool
 	rootExpiresAt               time.Time
 	bioEntangleExpiresAt        time.Time
 	bioEntangleInstanceID       uint32
@@ -276,6 +277,7 @@ func (s *Session) ExpireTaunt(
 	npc.status.tauntExpiresAt = time.Time{}
 	npc.status.tauntTargetObjectID = 0
 	if npc.TargetObjectID == targetObjectID {
+		queueSubsequentAggro(&npc)
 		npc.TargetObjectID = 0
 		npc.TargetFaction = FactionUnknown
 		npc.TargetOwner = ActionOwner{}
@@ -390,9 +392,7 @@ func (s *Session) slowScales(
 		movementScale = max(float32(0.05), npc.status.slowMovementScale)
 		attackScale = max(float32(0.05), npc.status.slowAttackScale)
 	}
-	if at.Before(npc.status.areaShiftExpiresAt) {
-		movementScale *= 0.5
-	}
+	movementScale *= areaShiftMovementScale(npc, at)
 	return SlowScales{Movement: max(float32(0.05), movementScale), Attack: attackScale}
 }
 

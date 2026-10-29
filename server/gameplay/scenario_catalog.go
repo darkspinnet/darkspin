@@ -9,9 +9,11 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/scenario"
 	zoneboss "github.com/darkspinnet/darkspin/server/zone/boss"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
+	zonepopulation "github.com/darkspinnet/darkspin/server/zone/population"
 )
 
 type scenarioNPCCatalogProvider interface {
@@ -62,7 +64,7 @@ func (e *gameplaySessionRegistry) ScenarioNPCCatalog(ctx context.Context, userID
 	})
 	for _, noun := range nouns {
 		profile := director.NPCProfilesByNoun[noun]
-		plan := zonenpc.SpawnPlan{NounName: noun, NPCProfile: profile}
+		plan := scenarioNPCSpawnPlan(director, noun, profile)
 		action, isActionRecovered := zonenpc.ActionProfileForNoun(noun)
 		if !isActionRecovered {
 			fallbackAction, isActionKnown := zonenpc.ActionProfileForPlan(plan)
@@ -71,16 +73,36 @@ func (e *gameplaySessionRegistry) ScenarioNPCCatalog(ctx context.Context, userID
 			}
 		}
 		_, controlErr := zonenpc.PrepareScenarioControlledPlan(plan, "catalog")
+		isStagingSupported := profile.HitPoint > 0 && isActionRecovered && controlErr == nil
+		supportedAbilities := []string{}
+		if isStagingSupported {
+			supportedAbilities = zonenpc.ScenarioSupportedAbilityNames(plan)
+		}
+		isControlSupported := isStagingSupported && len(supportedAbilities) != 0
 		entry := scenario.NPCCatalogEntry{Noun: noun, HitPoint: profile.HitPoint,
 			Rank: profile.NPCRank, AbilityName: action.AbilityName,
-			Family: scenarioNPCFamilyName(action.Family), TargetKind: scenarioNPCTargetKind(action.Family),
+			SupportedAbilityNames:  supportedAbilities,
+			AutonomousAbilityNames: zonenpc.ScenarioAutonomousAbilityNames(plan),
+			Family:                 scenarioNPCFamilyName(action.Family), TargetKind: scenarioNPCTargetKind(action.Family),
 			Range: action.Range, MinimumRange: action.MinimumRange,
 			IsActionRecovered:  isActionRecovered,
-			IsControlSupported: profile.HitPoint > 0 && isActionRecovered && controlErr == nil,
+			IsControlSupported: isControlSupported,
+			IsStagingSupported: isStagingSupported,
 			IsFinalBoss:        zoneboss.IsFinalBossNoun(noun)}
 		catalog.Entries = append(catalog.Entries, entry)
 	}
 	return catalog, nil
+}
+
+func scenarioNPCSpawnPlan(director game.CampaignDirector, noun string, profile game.CampaignNPCProfile) zonenpc.SpawnPlan {
+	plan := zonenpc.SpawnPlan{NounName: noun, NPCProfile: profile}
+	if !strings.Contains(strings.ToLower(noun), "_captain") {
+		return plan
+	}
+	plan.IsCaptain = true
+	plan.BossIdentity = zonepopulation.CaptainIdentity(director, noun)
+	plan.NPCProfile = zonenpc.ApplyCaptainProfile(profile, plan.BossIdentity)
+	return plan
 }
 
 func scenarioNPCTargetKind(family zonenpc.ActionFamily) string {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
+	zonedifficulty "github.com/darkspinnet/darkspin/server/zone/difficulty"
 	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
@@ -97,12 +98,16 @@ func (e campaignDopplerCloneStep) spawn() ([][]byte, error) {
 		break
 	}
 	plan := source.Plan.Clone()
+	plan.NPCPassiveRank = 0
+	plan.InvincitronRage = zonenpc.InvincitronRage{}
 	plan.ObjectID = e.fakeObjectID
 	plan.NounName = e.profile.RetainedObjectNoun
 	plan.LocusID = 0
 	plan.Kind = 0
 	plan.IsCaptain = false
 	plan.IsBoss = false
+	plan.IsElite = source.Plan.IsEliteModifierApplied()
+	plan.Experience = 0
 	// Chunk 180 calls MarkCantDropLoot only; keep the source XP gate.
 	plan.IsLootSuppressed = true
 	plan.IsEncounterAuxiliary = true
@@ -110,7 +115,17 @@ func (e campaignDopplerCloneStep) spawn() ([][]byte, error) {
 	plan.BossIdentity = zonenpc.BossIdentity{}
 	plan.ActionProfile = zonenpc.ActionProfile{}
 	plan.IsActionKnown = false
-	plan.NPCProfile.HitPoint = source.HitPoint
+	childProfile, profileErr := zonedifficulty.ProjectOwnedSummon(peerSession.zone.DirectorDefinition(), plan.NounName)
+	if profileErr != nil {
+		e.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("dopplerCloneProfile: %w", profileErr)
+	}
+	if plan.IsElite {
+		childProfile = zonenpc.ApplyEliteProfile(childProfile)
+	}
+	plan.NPCProfile = childProfile
+	plan.InitialHitPoint = source.HitPoint
+	plan.AffixAuras = nil
 	spawnPackets, err := npcraknet.TargetedSpawn(plan, source.TargetObjectID)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()

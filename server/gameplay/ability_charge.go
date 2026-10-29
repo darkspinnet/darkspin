@@ -1003,7 +1003,7 @@ func prepareBeastPetCharge(
 	}
 	packets := make([][]byte, 0, 3)
 	if distance > centerRange {
-		reserved, isReserved, err := companion.ReserveActorPursuit(
+		reserved, isReserved, err := companion.ReserveActorForcedPursuit(
 			pet.ObjectID, []zonenpc.Snapshot{target}, 0.2, 125,
 			zonePlayerMoveSpeed*3, capturedTimes...,
 		)

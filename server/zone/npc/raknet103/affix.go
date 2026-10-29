@@ -92,12 +92,12 @@ func affixAttributes(npc zonenpc.Snapshot) map[uint8]float32 {
 	armor := plan.AffixFlatArmor()
 	attributes := map[uint8]float32{
 		7: plan.NPCProfile.DodgeRating + physical, 9: plan.NPCProfile.ResistRating + energy,
-		10: npc.EffectiveCriticalRating(), 23: plan.AffixAttackSpeedBonus,
-		24: plan.AffixCooldownReductionBonus, 27: 0, 48: zonenpc.EffectiveMovementSpeedBuff(plan),
+		10: npc.EffectiveCriticalRating(), 23: zonenpc.EffectiveAttackSpeedBonus(plan),
+		24: plan.AffixCooldownReductionBonus, 27: zonenpc.ZelemMeleeAOEResistance(plan), 48: zonenpc.EffectiveMovementSpeedBuff(plan),
 		61: 0, 72: 0, 73: 0, 75: 0, 76: 0, 77: 0, 78: 0, 84: 0, 93: 0, 102: armor, 103: armor,
 	}
 	if plan.HasAffixModifier("Shifted_NPCAffixModifier") {
-		attributes[27] = 0.75
+		attributes[27] = min(attributes[27]+0.75, 1)
 	}
 	if plan.IsCaptain {
 		attributes[93] = 0.5

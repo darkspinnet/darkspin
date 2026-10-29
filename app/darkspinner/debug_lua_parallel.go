@@ -35,6 +35,7 @@ type debugLuaYield struct {
 	isResult        bool
 	isProfileResult bool
 	client          *debugLuaClient
+	npcClient       *debugLuaClient
 }
 
 func debugLuaPendingYield(state *lua.LState, count int) *debugLuaYield {
@@ -152,7 +153,7 @@ func (e *debugLuaParallel) run() *debugLuaFailure {
 		args := make([]lua.LValue, 0, 2)
 		if branch.request.isResult {
 			response := debugLuaValue(branch.state, result)
-			if frame.Failure == nil && (branch.request.isProfileResult || branch.request.client != nil) {
+			if frame.Failure == nil && (branch.request.isProfileResult || branch.request.client != nil || branch.request.npcClient != nil) {
 				var failure *debugError
 				response, failure = e.wrapResult(branch.state, branch.request, response)
 				if failure != nil {
@@ -195,6 +196,9 @@ func (e *debugLuaParallel) wrapResult(state *lua.LState, request *debugLuaYield,
 	}
 	if request.isProfileResult {
 		return e.vm.profileHandle(state, snapshot)
+	}
+	if request.npcClient != nil {
+		return e.vm.npcHandle(state, request.npcClient, snapshot)
 	}
 	return e.vm.clientHandle(state, request.client, snapshot)
 }

@@ -194,7 +194,7 @@ func pursuit(plan zonenpc.FirstActionPlan) ([][]byte, error) {
 	}
 	source := vector(plan.SourcePosition)
 	target := vector(plan.TargetPosition)
-	if plan.Profile.AbilityName == "Flee" || plan.Profile.AbilityName == "GhostlyBoltFlee" {
+	if plan.Profile.AbilityName == "Flee" || plan.Profile.AbilityName == "GhostlyBoltFlee" || plan.Profile.AbilityName == "SupportFlee" {
 		return fleeMovement(plan.ObjectID, source, target, plan.Profile.Range)
 	}
 	if plan.Profile.AbilityName == "StealthAttack" ||
