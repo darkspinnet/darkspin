@@ -596,6 +596,10 @@ func (r campaignDamageRuntime) publishAreaResults(
 ) ([][]byte, error) {
 	packets := make([][]byte, 0, len(results)*3)
 	for _, transition := range transitions {
+		deathJobErr := r.npc.startCorruptorDeath(transition.corruptorDeath, timestamp)
+		if deathJobErr != nil {
+			return nil, fmt.Errorf("areaDeathJob: %w", deathJobErr)
+		}
 		err := r.npc.startCorruptorSecondAggro(transition.corruptorStageTwo, timestamp)
 		if err != nil {
 			return nil, fmt.Errorf("areaCinematic: %w", err)
@@ -1756,6 +1760,10 @@ func (r campaignDamageRuntime) publishTransition(
 	packet raknet.Packet, sessionKey string, generation uint64,
 	transition campaignDamageTransition, timestamp uint64,
 ) ([][]byte, error) {
+	deathJobErr := r.npc.startCorruptorDeath(transition.corruptorDeath, timestamp)
+	if deathJobErr != nil {
+		return nil, fmt.Errorf("transitionDeathJob: %w", deathJobErr)
+	}
 	// Retain accepted interwave work before unrelated presentation can fail.
 	if len(transition.hordePlans) != 0 {
 		err := r.retainHordeFollowup(transition)
@@ -2495,6 +2503,7 @@ type campaignDamageTransition struct {
 	selfResurrectionPlans        []zonenpc.SpawnPlan
 	affixResurrectionObjectIDs   []uint32
 	corruptorStageTwo            *corruptorCinematicRun
+	corruptorDeath               *corruptorDeathRun
 	corruptorPhaseObjectID       uint32
 	corruptorPortalRespawn       *campaignCorruptorPortalRespawnPlan
 	defeatedObjectID             uint32
@@ -3190,6 +3199,12 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 		!strings.Contains(strings.ToLower(result.MarkerSetName), "_ai_horde_")
 	if isOrdinarySpawnGroup {
 		s.zone.SaveSpawnGroupCheckpoint(result.LocusID)
+	}
+	if result.IsDefeated && isDefeatedNPCFound {
+		transition.corruptorDeath, err = s.acceptCorruptorDeath(defeatedNPC)
+		if err != nil {
+			return campaignDamageTransition{}, fmt.Errorf("corruptorDeathAccept: %w", err)
+		}
 	}
 	return transition, nil
 }

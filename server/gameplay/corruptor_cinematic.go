@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
@@ -25,6 +26,7 @@ type corruptorCinematicRun struct {
 	sourceGeneration      uint64
 	entryAt               time.Time
 	deathEndsAt           time.Time
+	portalWaitEndsAt      time.Time
 	until                 time.Time
 	timestamp             uint64
 	timestampAt           time.Time
@@ -201,7 +203,7 @@ func (e *corruptorCinematicRun) prepareEntryPackets() ([][]byte, error) {
 	portalObjectIDs := make([]uint32, 0, len(e.portalObjectIDs))
 	for _, objectID := range e.portalObjectIDs {
 		portal, isFound := e.zone.NPCs().NPC(objectID)
-		if isFound && portal.IsPublished && !portal.IsDefeated && portal.HitPoint > 0 {
+		if isFound && portal.IsPublished {
 			portalObjectIDs = append(portalObjectIDs, objectID)
 		}
 	}
@@ -409,31 +411,40 @@ func (e *corruptorCinematicRun) presentStageOneDeathLocked(source zonenpc.Snapsh
 // Stage1Death's job retires only the corpse, then waits for its existing
 // portals (at most 120 seconds). Minions keep fighting throughout this gap.
 func (e *corruptorCinematicRun) waitForPortalsLocked() (bool, error) {
+	now := e.runtime.now()
 	if !e.isCorpseRetired {
 		packet, err := raknet.MarshalApplication(raknet.ObjectDeleteMessage{ObjectID: []uint32{e.objectID}})
 		if err != nil {
 			return false, fmt.Errorf("corpseDelete: %w", err)
 		}
 		for _, npc := range e.zone.NPCs().Snapshots() {
-			if npc.Plan.OwnerObjectID == e.objectID && npc.Plan.NounName == campaignCorruptorPortalNounName &&
-				!npc.IsDefeated && npc.HitPoint > 0 {
+			// Chunk991 snapshots every valid EnemyPortal ornament, including
+			// dead bodies, without an owner, team or distance restriction.
+			if npc.IsPublished && strings.EqualFold(npc.Plan.NounName, campaignCorruptorPortalNounName) {
 				e.portalObjectIDs = append(e.portalObjectIDs, npc.Plan.ObjectID)
 			}
+		}
+		e.portalWaitEndsAt = now.Add(zonenpc.CorruptorStageOnePortalWait)
+		e.entryAt = e.portalWaitEndsAt.Add(zonenpc.CorruptorStageOneExitDelay)
+		e.until = e.entryAt.Add(zonenpc.SecondAggroCinematicDuration)
+		if !e.zone.NPCs().SetSecondAggroTiming(e.objectID, e.sourceGeneration, e.deathEndsAt, e.entryAt) {
+			return false, errors.New("corruptor portal wait timing rejected")
 		}
 		e.queueLocked([][]byte{packet})
 		e.isCorpseRetired = true
 	}
-	now := e.runtime.now()
 	if !e.isPortalGateComplete {
-		isPortalAlive := false
-		for _, objectID := range e.portalObjectIDs {
-			npc, isFound := e.zone.NPCs().NPC(objectID)
-			if isFound && !npc.IsDefeated && npc.HitPoint > 0 {
-				isPortalAlive = true
-				break
+		if len(e.portalObjectIDs) > 0 && now.Before(e.portalWaitEndsAt) {
+			portals := e.portalObjectIDs[:0]
+			for _, objectID := range e.portalObjectIDs {
+				npc, isFound := e.zone.NPCs().NPC(objectID)
+				if isFound && npc.IsPublished && !npc.IsDefeated && npc.HitPoint > 0 {
+					portals = append(portals, objectID)
+				}
 			}
-		}
-		if isPortalAlive && now.Before(e.deathEndsAt.Add(zonenpc.CorruptorStageOnePortalWait)) {
+			e.portalObjectIDs = portals
+			// The Lua waits after each prune pass, even the pass that removes
+			// its last portal. Its two-second exit wait starts on the next poll.
 			err := e.zone.Timeline().Schedule(e.key()+":entry", 500*time.Millisecond, e.retryAdmission, e.runtime.timer.Schedule)
 			if err != nil {
 				return false, fmt.Errorf("portalPoll: %w", err)

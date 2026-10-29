@@ -93,6 +93,7 @@ Each `local/` file is a runnable scenario. Files under `definitions/` describe t
 - `local/pvp_toss.lua` — Arena toss ability cast and target outcome.
 - `local/pvp_wave.lua` — Arena wave ability cast and target outcome.
 - `local/repeat_mission.lua` — Two seeded co-op mission passes on one server.
+- `local/scaldron_death.lua` — Real co-op Corruptor defeats, portal gating and timed minion teardown.
 - `local/screen_flow.lua` — Ship overlays and native screen selection.
 - `local/seed_reset.lua` — Profile reset, squad seed, and fresh accounts.
 - `local/social_flow.lua` — Native Social invitation and party flow.

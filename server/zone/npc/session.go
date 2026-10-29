@@ -1348,7 +1348,8 @@ func (s *Session) damage(
 			owned := s.npcs[objectID]
 			if owned.Plan.OwnerObjectID != npc.Plan.ObjectID ||
 				owned.IsDefeated || !owned.IsPublished ||
-				!owned.Plan.IsEncounterAuxiliary || owned.Plan.IsOwnedDeathPersistent {
+				!owned.Plan.IsEncounterAuxiliary || owned.Plan.IsOwnedDeathPersistent ||
+				preservesCorruptorDeathChildren(npc, isCorruptorStageTwoStarted) {
 				continue
 			}
 			owned.HitPoint = 0

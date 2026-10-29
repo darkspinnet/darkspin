@@ -2,6 +2,8 @@
 
 ### 2026-10-29
 
+- Correct Corruptor's first-stage portal snapshot and polling so second-stage entry honors the corpse, portal-clear and exit waits.
+- Restore Corruptor's final death job, timed minion immobilization and ordered cleanup, verified with matching co-op actor packets.
 - Restore all three directly spawned Corruptor second-stage variants' authored entrance and five-phase attacks, including Twin Laser, with matching co-op delivery.
 - Restore Trip Mine's authored warnings, three-missile salvos, projectile flight and co-op hit feedback.
 - Add owned Droid scenario spawning with authored untargetability, healing and owner cleanup, verified on both co-op clients.
