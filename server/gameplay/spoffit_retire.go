@@ -73,13 +73,39 @@ func (e *spoffitRun) beginBurrowLocked(now time.Time) ([][]byte, error) {
 	return append(packets, stop, animation), nil
 }
 
+func (e *spoffitRun) produceRemoval() ([][]byte, error) {
+	e.runtime.registry.mutex.Lock()
+	defer e.runtime.registry.mutex.Unlock()
+	if e.isStopped || e.isRemovalPublished {
+		return nil, nil
+	}
+	if e.removalPackets != nil {
+		return clonePendingPackets(e.removalPackets), nil
+	}
+	e.isRemovalProducing = true
+	packets, err := e.beginBurrowLocked(e.runtime.now())
+	e.isRemovalProducing = false
+	if err != nil {
+		return nil, fmt.Errorf("spoffitRemovalPrepare: %w", err)
+	}
+	e.removalPackets = packets
+	return clonePendingPackets(packets), nil
+}
+
 func (e *spoffitRun) commitRemoval() {
 	e.runtime.registry.mutex.Lock()
-	packets, err := e.beginBurrowLocked(e.runtime.now())
-	e.queueLocked(packets, true)
-	e.runtime.registry.mutex.Unlock()
-	if err != nil {
-		e.fail(fmt.Errorf("spoffitRemoval: %w", err))
+	defer e.runtime.registry.mutex.Unlock()
+	if e.isRemovalPublished || (e.isStopped && len(e.removalPackets) == 0) {
+		return
+	}
+	// The scheduled source write contains the real A4/stop/burrow batch.
+	// An empty gameplay response cannot strand this transition, and observers
+	// receive it before the independent world timer may publish child deletion.
+	e.queueLocked(e.removalPackets, false)
+	e.isRemovalPublished = true
+	e.birthCancel = nil
+	if e.isStopped {
+		e.runtime.registry.recordSpoffitRemovalLocked(e.removalRequestID, e.objectID, e.ownerObjectID, true)
 	}
 }
 
@@ -107,11 +133,13 @@ func (e *spoffitRun) deleteLocked() ([][]byte, error) {
 	}
 	// Packet schedule cancellation is a nonblocking context cancellation;
 	// its failure callback takes the registry lock after this transaction.
-	if e.birthCancel != nil {
+	if e.birthCancel != nil && !e.isRemovalProducing {
 		e.birthCancel()
 		e.birthCancel = nil
 	}
 	e.runtime.registry.recordSpoffitRemovalLocked(e.requestID, e.objectID, e.ownerObjectID, true)
-	e.runtime.registry.recordSpoffitRemovalLocked(e.removalRequestID, e.objectID, e.ownerObjectID, true)
+	if e.isRemovalPublished {
+		e.runtime.registry.recordSpoffitRemovalLocked(e.removalRequestID, e.objectID, e.ownerObjectID, true)
+	}
 	return packets, nil
 }

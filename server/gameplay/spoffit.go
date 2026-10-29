@@ -36,10 +36,13 @@ type spoffitRun struct {
 	isAbilityFollowing bool
 	isCreatorPublished bool
 	isBirthPublished   bool
+	isRemovalPublished bool
+	isRemovalProducing bool
 	isBurrowing        bool
 	isStopped          bool
 	creatorPackets     [][]byte
 	birthPackets       [][]byte
+	removalPackets     [][]byte
 	birthCancel        func()
 	pollCancel         func()
 	requestID          string
@@ -135,6 +138,9 @@ func (e *spoffitRun) advanceLocked(now time.Time) ([][]byte, error) {
 		return e.deleteLocked()
 	}
 	if e.isBurrowing {
+		if e.removalRequestID != "" && !e.isRemovalPublished {
+			return nil, nil
+		}
 		if !now.Before(e.burrowEndsAt) {
 			return e.deleteLocked()
 		}

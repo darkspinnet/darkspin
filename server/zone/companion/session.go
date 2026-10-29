@@ -34,6 +34,7 @@ type Actor struct {
 	BodyScale              float32
 	IsTargetable           bool
 	IsCombatant            bool
+	IsAttackDisabled       bool
 	IsSageCompanion        bool
 	IsAbilityControlled    bool
 	IsStationary           bool
@@ -619,7 +620,7 @@ func (e *Session) ReserveAttacks(
 		actor = e.refreshMovementModifiersLocked(actor, at)
 		e.actors[objectID] = actor
 		actor.Position = actor.followPosition(at)
-		if !actor.IsCombatant || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
+		if !actor.IsCombatant || actor.IsAttackDisabled || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
 			actor.isSilenced(at) ||
 			actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 ||
 			at.Before(actor.CooldownEnd) {
@@ -697,7 +698,7 @@ func (e *Session) ReserveActorAttack(
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	actor, isFound := e.actors[objectID]
-	if !isFound || !actor.IsCombatant || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
+	if !isFound || !actor.IsCombatant || actor.IsAttackDisabled || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
 		actor.isSilenced(at) ||
 		actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 ||
 		at.Before(actor.CooldownEnd) {
@@ -776,7 +777,7 @@ func (e *Session) ReservePursuits(
 		actor = e.refreshMovementModifiersLocked(actor, at)
 		e.actors[objectID] = actor
 		actor.Position = actor.followPosition(at)
-		if !actor.IsCombatant || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
+		if !actor.IsCombatant || actor.IsAttackDisabled || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
 			actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 || actor.IsCinematicImmobilized(at) {
 			continue
 		}
@@ -887,7 +888,7 @@ func (e *Session) reserveActorPursuit(
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	actor, isFound := e.actors[objectID]
-	if !isFound || !actor.IsCombatant || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
+	if !isFound || !actor.IsCombatant || actor.IsAttackDisabled || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
 		actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 {
 		return Pursuit{}, false, nil
 	}

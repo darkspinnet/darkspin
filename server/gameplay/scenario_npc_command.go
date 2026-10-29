@@ -76,6 +76,18 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 	var isStarted bool
 	var isFirstAction bool
 	var retiredOwnedObjectIDs []uint32
+	var destroyedObjectIDs map[uint32]bool
+	if req.Operation == "retire" {
+		// Capture presentation destruction before retirement changes actor state.
+		// Health and publication alone do not distinguish a retained corpse from
+		// an actor whose ordinary lifetime already sent ObjectDelete.
+		destroyedObjectIDs = make(map[uint32]bool)
+		for _, snapshot := range peer.zone.NPCs().Snapshots() {
+			if peer.zone.IsNPCDestroyed(snapshot.Plan.ObjectID) {
+				destroyedObjectIDs[snapshot.Plan.ObjectID] = true
+			}
+		}
+	}
 	switch req.Operation {
 	case "set_ai":
 		actor, err = peer.zone.NPCs().ScenarioSetAI(zonenpc.ScenarioAIRequest{Ref: ref, IsAIEnabled: *req.IsAIEnabled})
@@ -163,9 +175,15 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 			packets = [][]byte{healthPacket}
 		}
 	case "retire":
-		deleteObjectIDs := retiredOwnedObjectIDs
-		if wasPublished && (actor.IsFixture || !wasDefeated || wasScenarioDefeated) {
-			deleteObjectIDs = append([]uint32{actor.ObjectID}, deleteObjectIDs...)
+		deleteObjectIDs := make([]uint32, 0, len(retiredOwnedObjectIDs)+1)
+		if wasPublished && !destroyedObjectIDs[actor.ObjectID] &&
+			(actor.IsFixture || !wasDefeated || wasScenarioDefeated) {
+			deleteObjectIDs = append(deleteObjectIDs, actor.ObjectID)
+		}
+		for _, objectID := range retiredOwnedObjectIDs {
+			if !destroyedObjectIDs[objectID] {
+				deleteObjectIDs = append(deleteObjectIDs, objectID)
+			}
 		}
 		if len(deleteObjectIDs) != 0 {
 			var deletePacket []byte
@@ -182,12 +200,19 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 		e.registry.failNPCControl(requestID, err)
 		return packets, true, fmt.Errorf("npcNormalAction: %w", err)
 	}
+	commit := scenarioNPCResponseCommit{registry: e.registry, requestID: requestID}
+	if req.Operation == "retire" && len(packets) == 0 {
+		// Cleanup is complete without another wire publication. An empty
+		// response never runs the send fence, so settle it directly rather
+		// than inventing a packet to trigger completion.
+		commit.complete()
+		return packets, true, nil
+	}
 	err = publishCampaignPeersAfterCommit(e.registry, packet, packets)
 	if err != nil {
 		e.registry.failNPCControl(requestID, err)
 		return packets, true, fmt.Errorf("npcPeerPublication: %w", err)
 	}
-	commit := scenarioNPCResponseCommit{registry: e.registry, requestID: requestID}
 	err = packet.AfterResponseCommit(commit.complete)
 	if err != nil {
 		e.registry.failNPCControl(requestID, err)

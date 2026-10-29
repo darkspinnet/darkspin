@@ -72,7 +72,8 @@ func (e gameplayPendingRuntime) consumeScenarioSpoffit(req raknet.Packet, queued
 			return nil, true, errors.New("Spoffit crystal ended before removal consumption")
 		}
 		active.removalRequestID = receipt.RequestID
-		err = req.AfterResponseCommit(active.commitRemoval)
+		active.packet = req.Autonomous()
+		err = active.scheduleLocked(raknet.ScheduledPacketProducer{Produce: active.produceRemoval, AfterCommit: active.commitRemoval})
 		if err == nil {
 			receipt.IsAdmitted = true
 			receipt.State = "admitted"
@@ -83,7 +84,7 @@ func (e gameplayPendingRuntime) consumeScenarioSpoffit(req raknet.Packet, queued
 		}
 		e.registry.mutex.Unlock()
 		if err != nil {
-			return nil, true, fmt.Errorf("spoffitRemovalCommit: %w", err)
+			return nil, true, fmt.Errorf("spoffitRemovalSchedule: %w", err)
 		}
 		return nil, true, nil
 	}

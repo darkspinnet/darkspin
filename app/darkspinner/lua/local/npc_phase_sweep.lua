@@ -212,6 +212,7 @@ end
 -- job requires victim, observer and source (the owned ControlledNPC fixture).
 -- All failures return an explicit pending receipt; do not replay that attempt.
 -- Each next iteration is a NEW intentional cast after the prior bounded window.
+-- fixture_wound_fraction requests a living health threshold instead of defeat.
 function Lethal.run(job, emit)
     local source, observer, target = job.victim, job.observer, job.source
     local initial, initialError = read(source)
@@ -313,6 +314,10 @@ function Lethal.run(job, emit)
             elapsed_ms = scenario.Time() - acceptedAt, is_authored_window_elapsed = true,
             is_producer_completion_observed = false, is_packet_delivery_verified = false})
         if lastActor.is_dead then return {is_dead = true, is_confirmed = true, cast_count = castIndex} end
+        if job.fixture_wound_fraction and lastActor.hit_point > 0
+            and lastActor.hit_point <= targetBefore.hit_point * job.fixture_wound_fraction then
+            return {is_dead = false, is_confirmed = true, cast_count = castIndex}
+        end
     end
     return pending(emit, "fixture remained alive after the bounded native casts", maxCasts)
 end
@@ -423,19 +428,9 @@ function ObservedNPC.waitCastReady(client, timeoutMs)
 end
 
 
--- Packet-confirmed cases are archived in the audit ledger; add only pending scopes here.
-local jobs = {
-    {id = "egg-fixture", hero = 185979955, cases = {
-        {noun = "exploding_egg.Noun", is_poison_egg = true, poison_target_is_fixture = true},
-    }},
-    {id = "door", hero = 709733043, cases = {
-        {noun = "design_blockin_door_destructible.Noun", is_fixture = true,
-            fixture_post_ms = 11000, fixture_max_casts = 10},
-    }},
-    {id = "spoffit", hero = 576185321, cases = {
-        {noun = "Spoffit.Noun", is_spoffit_crystal = true},
-    }},
-}
+-- Only pending autonomous scopes with existing production selectors belong here.
+-- Failed/blocked nouns remain parked in notes/npc-audit-pending.md.
+local jobs = {}
 local function log(job, label, fields)
     local parts = {"npc_phase_sweep", label, "case=" .. job.id}
     for name, field in pairs(fields) do
@@ -554,9 +549,60 @@ local function castPetShield(job)
     until scenario.Time() >= deadline
     error("reactive summon native cast lacked exact dispatch; no replay")
 end
+local function prepareHelper(job)
+    local before = must(job.ally:Snapshot())
+    if job.helper_corpse then
+        local savedSource = job.source
+        job.source = job.ally
+        local lethal = Lethal.run(job, function(label, fields) log(job, label, fields) end)
+        job.source = savedSource
+        local actor = must(job.ally:Snapshot())
+        if not lethal.is_confirmed or not lethal.is_dead or not actor.is_dead then
+            return false, "helper native lethal cast did not confirm a corpse"
+        end
+        log(job, "helper_corpse", {noun = job.noun, helper = actor.identity.object_id,
+            hp = actor.hit_point, x = actor.position.x, y = actor.position.y,
+            cast_count = lethal.cast_count})
+        return true
+    end
+    local baseline = living(job, job.observer).ability.last_dispatch
+    local revision = baseline and baseline.revision or 0
+    hitOwner(job, before.identity.object_id)
+    local deadline = scenario.Time() + 3000
+    repeat
+        local actor = must(job.ally:Snapshot())
+        local dispatch = living(job, job.observer).ability.last_dispatch
+        if dispatch and dispatch.revision > revision then
+            if dispatch.revision ~= revision + 1 or dispatch.target_object_id ~= before.identity.object_id
+                or dispatch.ability_asset ~= "FieldMedicBasic" then
+                return false, "helper native damage dispatch disagreed; no replay"
+            end
+            if actor.is_dead then return false, "helper died instead of remaining wounded" end
+            if actor.hit_point > 0 and actor.hit_point < before.hit_point then
+                log(job, "helper_wounded", {noun = job.noun, helper = actor.identity.object_id,
+                    before_hp = before.hit_point, hp = actor.hit_point, revision = dispatch.revision})
+                return true
+            end
+        end
+        check(scenario.Sleep(100))
+    until scenario.Time() >= deadline
+    return false, "helper native injury unconfirmed; no replay"
+end
 local function stageSource(job)
-    local source = must(job.victim.World:SpawnControlledNPC(job.noun))
+    local source, spawnError = job.victim.World:SpawnControlledNPC(job.noun)
+    if not source then return nil, tostring(spawnError) end
     job.source = source
+    if job.warmup_ms then
+        must(source:SetAI(true))
+        check(scenario.Sleep(job.warmup_ms))
+        must(source:SetAI(false))
+        local introduced = must(source:Snapshot())
+        if introduced.is_dead or introduced.is_ai_enabled then
+            return nil, "source entrance did not leave a living AI-off actor"
+        end
+        log(job, "source_warmup", {noun = job.noun, source = introduced.identity.object_id,
+            elapsed_ms = job.warmup_ms, hp = introduced.hit_point})
+    end
     local actor = must(source:Snapshot())
     local world = living(job, job.victim)
     for _, direction in ipairs({{1,0}, {-1,0}, {0,1}, {0,-1},
@@ -573,28 +619,73 @@ local function stageSource(job)
                         z = (actor.position.z + path.goal.position.z) / 2}
                     local midpointPath = must(job.victim.World:Path(actor.position, midpoint))
                     if not midpointPath.is_available or not midpointPath.is_complete or not midpointPath.goal then
-                        error("staged source midpoint path unavailable")
+                        return nil, "staged source midpoint path unavailable"
                     end
-                    local step = must(source:Move(midpointPath.goal.position))
-                    if not step.is_completed then error("staged source midpoint movement incomplete") end
+                    local step, stepError = source:Move(midpointPath.goal.position)
+                    if not step or not step.is_completed then
+                        return nil, tostring(stepError or "staged source midpoint movement incomplete")
+                    end
                 end
-                local moved = must(source:Move(path.goal.position))
-                if not moved.is_completed then error("staged source did not complete movement") end
+                local moved, moveError = source:Move(path.goal.position)
+                if not moved or not moved.is_completed then
+                    return nil, tostring(moveError or "staged source did not complete movement")
+                end
                 actor = must(source:Snapshot())
                 world = living(job, job.victim)
                 dx, dy = actor.position.x - world.hero.position.x, actor.position.y - world.hero.position.y
                 local actualDistance = math.sqrt(dx * dx + dy * dy)
                 if math.abs(actualDistance - job.distance) > 1 then
-                    error("staged source did not reach its requested selector distance")
+                    return nil, "staged source did not reach its requested selector distance"
                 end
                 job.sourceOrigin = actor.position
+                if job.fixture_wound_fraction then
+                    local healthyHitPoint = actor.hit_point
+                    local injury = Lethal.run(job, function(label, fields) log(job, label, fields) end)
+                    actor = must(source:Snapshot())
+                    if not injury.is_confirmed or actor.is_dead or actor.hit_point <= 0
+                        or actor.hit_point > healthyHitPoint * job.fixture_wound_fraction then
+                        return nil, "source living low-health threshold unconfirmed; no replay"
+                    end
+                    log(job, "source_wounded", {noun = job.noun, source = actor.identity.object_id,
+                        healthy_hp = healthyHitPoint, hp = actor.hit_point, fraction = job.fixture_wound_fraction,
+                        cast_count = injury.cast_count})
+                end
+                if job.ally and job.helper_distance and not job.helper_corpse then
+                    local helper = must(job.ally:Snapshot())
+                    local helperGoal = {x = actor.position.x, y = actor.position.y + job.helper_distance,
+                        z = actor.position.z}
+                    local helperPath = must(job.victim.World:Path(helper.position, helperGoal))
+                    if not helperPath.is_available or not helperPath.is_complete or not helperPath.goal
+                        or distance(helperPath.goal.position, helperGoal) > 0.75 then
+                        return nil, "helper lacks a complete source-relative path"
+                    end
+                    local helperMove, helperError = job.ally:Move(helperPath.goal.position)
+                    if not helperMove or not helperMove.is_completed then
+                        return nil, tostring(helperError or "helper movement incomplete")
+                    end
+                    helper = must(job.ally:Snapshot())
+                    log(job, "helper_placement", {noun = job.noun, source = actor.identity.object_id,
+                        helper = helper.identity.object_id, distance = distance(actor.position, helper.position)})
+                end
+                if job.helper_wound then
+                    local isPrepared, helperError = prepareHelper(job)
+                    if not isPrepared then return nil, helperError end
+                end
+                if job.helper_corpse then
+                    local corpse = must(job.ally:Snapshot())
+                    if not corpse.is_dead or distance(actor.position, corpse.position) > 8 then
+                        return nil, "retained helper corpse is not within consume range"
+                    end
+                    log(job, "helper_corpse_range", {noun = job.noun, source = actor.identity.object_id,
+                        helper = corpse.identity.object_id, distance = distance(actor.position, corpse.position)})
+                end
                 must(source:SetAI(true))
                 log(job, "staged_source", {object = source.ObjectID, distance = math.sqrt(dx * dx + dy * dy)})
                 return source.InitialSnapshot
             end
         end
     end
-    error("staged source lacks a complete bounded mesh path")
+    return nil, "staged source lacks a complete bounded mesh path"
 end
 local function summonCompanion(job)
     local source = must(job.victim.World:SpawnControlledNPC(job.noun))
@@ -663,7 +754,8 @@ local function finish(job, receipt)
             end
         end
     end
-    log(job, "capture_end", {object = receipt and receipt.object_id, noun = job.noun, time = scenario.Time()})
+    log(job, receipt and "capture_end" or "case_cleanup_end",
+        {object = receipt and receipt.object_id, noun = job.noun, time = scenario.Time()})
 end
 local function fixtureSample(job, label)
     local actor = must(job.source:Snapshot())
@@ -1427,8 +1519,8 @@ local function run(job)
         return
     end
     if job.helper then
-        job.ally = must(job.victim.World:SpawnControlledNPC("BabyMortar.Noun"))
-        if job.helper_distance then
+        job.ally = must(job.victim.World:SpawnControlledNPC(job.helper_noun or "BabyMortar.Noun"))
+        if job.helper_distance and not job.staged_source then
             local helper = must(job.ally:Snapshot())
             local moved = must(job.ally:Move({x = helper.position.x, y = helper.position.y + job.helper_distance, z = helper.position.z}))
             if not moved.is_completed then error("mutation helper preposition did not complete") end
@@ -1437,13 +1529,29 @@ local function run(job)
     end
     local receipt
     local observed
+    if job.helper_corpse then
+        local isPrepared, helperError = prepareHelper(job)
+        if not isPrepared then
+            log(job, "case_pending", {noun = job.noun, reason = tostring(helperError)})
+            finish(job, nil)
+            return
+        end
+    end
     if job.is_observed then
         receipt = must(job.victim.World:Spawn(job.noun))
         observed = must(ObservedNPC.new(job.victim, receipt))
     elseif job.companion_slow then
         receipt = summonCompanion(job)
     elseif job.staged_source then
-        receipt = stageSource(job)
+        local stageError
+        receipt, stageError = stageSource(job)
+        if not receipt then
+            log(job, "case_pending", {noun = job.noun, reason = tostring(stageError)})
+            -- Keep going only after real retirement and both native worlds
+            -- pass the ordinary cleanup checks. No alternate ability is cast.
+            finish(job, nil)
+            return
+        end
     elseif job.cases then
         job.source = must(job.victim.World:SpawnControlledNPC(job.noun))
         receipt = job.source.InitialSnapshot
@@ -1547,6 +1655,11 @@ local function runBatch(job)
     local observerAnchor = living(job, job.observer).hero.position
     for _, case in ipairs(job.cases) do
         job.noun = case.noun
+        job.helper_noun = case.helper_noun
+        job.helper = case.helper_noun ~= nil
+        job.helper_distance = case.helper_distance
+        job.helper_wound = case.helper_wound
+        job.helper_corpse = case.helper_corpse
         job.is_observed = case.is_observed
         job.is_owned_droid = case.is_owned_droid
         job.is_spoffit_crystal = case.is_spoffit_crystal
@@ -1556,6 +1669,8 @@ local function runBatch(job)
         job.egg_recipient_death = case.egg_recipient_death
         job.fixture_aim_z = case.fixture_aim_z
         job.fixture_max_casts = case.fixture_max_casts
+        job.fixture_wound_fraction = case.wound_fraction
+        job.warmup_ms = case.warmup_ms
         job.is_geyser_fixture = case.is_geyser_fixture
         job.geyser_death = case.geyser_death
         job.is_silence_fixture = case.is_silence_fixture

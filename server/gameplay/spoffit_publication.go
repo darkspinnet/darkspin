@@ -153,8 +153,19 @@ func (e *spoffitRun) commitBirth() {
 func (e *spoffitRun) fail(cause error) {
 	e.runtime.registry.mutex.Lock()
 	if e.isStopped {
+		if len(e.removalPackets) != 0 && !e.isRemovalPublished {
+			e.queueLocked(e.removalPackets, false)
+			e.removalPackets = nil
+			e.runtime.registry.recordSpoffitFailureLocked(e.requestID, e.removalRequestID, cause)
+		}
 		e.runtime.registry.mutex.Unlock()
 		return
+	}
+	if len(e.removalPackets) != 0 && !e.isRemovalPublished {
+		// Only the scheduled source could have received this pending batch;
+		// observers have no delivery owner until its successful AfterCommit.
+		e.queueLocked(e.removalPackets, false)
+		e.removalPackets = nil
 	}
 	packets, err := e.deleteLocked()
 	e.queueLocked(packets, true)

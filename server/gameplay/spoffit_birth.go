@@ -120,7 +120,11 @@ func (e *spoffitRun) spawnLocked(member gameplayPeerSession, now time.Time) ([][
 		OwnerObjectID: e.ownerObjectID, Noun: util.HashID(spoffitNoun), Position: position,
 		FootprintRadius: e.footprintRadius, ActorFootprint: e.profile.ActorFootprint,
 		HitPoint: e.profile.HitPoint, MaximumHitPoint: e.profile.HitPoint,
-		IsTargetable: e.profile.IsTargetable, IsCombatant: false, IsFollowManaged: true,
+		// The native noun has a combatant body, even though its authored kit
+		// only follows. Receiving health/status rules must remain independent
+		// of attack/pursuit admission.
+		IsTargetable: e.profile.IsTargetable, IsCombatant: true,
+		IsAttackDisabled: true, IsFollowManaged: true,
 		MovementSpeed: e.profile.BaseCombatSpeed,
 	})
 	if err != nil {
