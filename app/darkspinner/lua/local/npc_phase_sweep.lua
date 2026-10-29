@@ -1,6 +1,6 @@
 ---Pending autonomous NPC phases on one fixed-port server.
 local must, check = scenario.Must, scenario.Check
-local jobs = {}
+local jobs = {{id = "catalog", catalog_only = true}}
 local function log(job, label, fields)
     local parts = {"npc_phase_sweep", label, "case=" .. job.id}
     for name, field in pairs(fields) do
@@ -159,6 +159,20 @@ local function moveOwner(job)
     error("owner movement lacks a visible complete mesh path")
 end
 local function run(job)
+    if job.catalog_only then
+        local catalog = must(job.victim.World:NPCCatalog())
+        for _, entry in ipairs(catalog.entries) do
+            log(job, "catalog_entry", {noun = entry.noun, ability = entry.ability_name,
+                rank = entry.rank, family = entry.family, hp = entry.hit_point,
+                is_recovered = entry.is_action_recovered,
+                is_manual = entry.is_control_supported, is_staging = entry.is_staging_supported,
+                is_boss = entry.is_final_boss,
+                manual = table.concat(entry.supported_ability_names or {}, ","),
+                autonomous = table.concat(entry.autonomous_ability_names or {}, ",")})
+        end
+        log(job, "catalog_end", {count = #catalog.entries})
+        return
+    end
     if job.helper then
         job.ally = must(job.victim.World:SpawnControlledNPC("CitadelBasicGunner.Noun"))
         log(job, "helper", {object = must(job.ally:Snapshot()).identity.object_id})

@@ -210,6 +210,9 @@ type zoneNPCDeathDefinition struct {
 func destructibleDeathPresentation(
 	snapshot zonenpc.Snapshot, physics zoneNounPhysics,
 ) (string, time.Duration) {
+	if isCryosStalagmite(snapshot.Plan.NounName) {
+		return "cryos_stalagmite_destruction_effect.ServerEventDef", 200 * time.Millisecond
+	}
 	if isFactoryPipe(snapshot.Plan.NounName) {
 		return factoryBlastEffect, time.Millisecond
 	}
@@ -366,10 +369,11 @@ func campaignNPCDeathDefinition(
 	}
 	isNocturnaPlant := isFixture && nocturnaPlantDeathEffect(snapshot.Plan.NounName) != ""
 	isToxicactusPlant := isFixture && isToxicactus(snapshot.Plan.NounName)
+	isStalagmite := isFixture && isCryosStalagmite(snapshot.Plan.NounName)
 	scaldronDeath := scaldronPlantDeathPresentation(snapshot.Plan.NounName)
 	isScaldronPlant := isFixture && scaldronDeath.effectName != ""
 	isScaldronRemnantRetained := isFixture && scaldronDeath.isRemnantRetained
-	if isNocturnaPlant || isToxicactusPlant || (isScaldronPlant && !isScaldronRemnantRetained) {
+	if isNocturnaPlant || isToxicactusPlant || isStalagmite || (isScaldronPlant && !isScaldronRemnantRetained) {
 		// The dedicated burst owns presentation; these authored death scripts
 		// do not request a dead graphics state or creature death animation.
 		graphicsState = 0
@@ -418,7 +422,7 @@ func campaignNPCDeathDefinition(
 		isRemnantRetained:   isNightmareVine || isGraviticRemnant || isVerdanthTotem || isWarpTotem || isCryosGeyser || isBossVent || isPipe || isScaldronRemnantRetained || replacementNoun != "",
 		isCollisionRetained: isGraviticRemnant || isBossVent,
 		isDeathAnimationSuppressed: isIllusion || isNightmareVine || isGraviticRemnant ||
-			isVerdanthTotem || isWarpTotem || isCryosGeyser || isBossVent || isNocturnaPlant || isToxicactusPlant || isPipe || isScaldronPlant || replacementNoun != "",
+			isVerdanthTotem || isWarpTotem || isCryosGeyser || isBossVent || isNocturnaPlant || isToxicactusPlant || isStalagmite || isPipe || isScaldronPlant || replacementNoun != "",
 		ordinaryDeathAnimation: ordinaryDeathAnimation,
 		corpseFadeDelay:        deathPresentation.PresentationDuration,
 		graphicsState:          graphicsState,

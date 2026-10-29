@@ -52,8 +52,7 @@ func (e CampaignDirector) InfinityFixtures(selectionID uint32) (
 
 func isInfinityFixtureNoun(nounName string) bool {
 	switch strings.ToLower(strings.TrimSpace(nounName)) {
-	case "dest_prefab_citadel_factoryvent.noun",
-		"dest_citadel_fuelcanister.noun",
+	case "dest_citadel_fuelcanister.noun",
 		"dest_prefab_citadel_factorypipe_plasma.noun",
 		"dest_prefab_citadel_factorypipe_smoke.noun":
 		return true
@@ -228,8 +227,7 @@ func isInfinityFourFixtureNoun(nounName string) bool {
 	case "dest_citadel_fuelcanister.noun",
 		"dest_prefab_citadel_factorypipe_plasma.noun",
 		"dest_prefab_citadel_factorypipe_smoke.noun",
-		"dest_prefab_citadel_factorypipe.noun",
-		"dest_prefab_citadel_factoryvent.noun":
+		"dest_prefab_citadel_factorypipe.noun":
 		return true
 	default:
 		return false

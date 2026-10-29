@@ -1942,6 +1942,10 @@ func (r campaignResultRuntime) continueChain(
 	nextBinding.IsReplayRandomized = snapshot.IsNextReplayRandomized
 	nextBinding.IsCatalystUnlocked = nextBinding.ChainProgression >= 3
 	for index := range nextBinding.Creatures {
+		maximumHitPoint := maximumHitPoints[index]
+		if maximumHitPoint > 0 {
+			nextBinding.Creatures[index].HitPoint = maximumHitPoint
+		}
 		maximumManaPoint := maximumManaPoints[index]
 		if maximumManaPoint <= 0 {
 			continue

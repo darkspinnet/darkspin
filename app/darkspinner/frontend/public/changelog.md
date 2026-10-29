@@ -2,6 +2,9 @@
 
 ### 2026-10-28
 
+- [#143](https://github.com/darkspinnet/darkspin/issues/143) Keep noncombatant Cryos geysers and factory vents out of damageable fixture spawning while retaining their automatic hazard cycles.
+- [#143](https://github.com/darkspinnet/darkspin/issues/143) Restore the authored Cryos stalagmite destruction effect and 0.2-second removal instead of generic explosions and creature death animations.
+- [#143](https://github.com/darkspinnet/darkspin/issues/143) Restore squad health as well as power when continuing into the next chained mission.
 - Restore missing NPC boss attacks, agent summons, support casts and passive effects, with authored higher-rank timing, reach and projectiles.
 - Resolve NPC summons and duplicates from their own class profiles, preserve current versus maximum health, and apply authored pet attribute mirroring.
 - Add Server Rules controls for enemy rosters, ordinary agents, ambient elites, boss selection, and summon and fixture health scaling.

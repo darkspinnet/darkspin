@@ -3,6 +3,7 @@ package gameplay
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,6 +11,21 @@ import (
 	zonedeath "github.com/darkspinnet/darkspin/server/zone/death"
 	deathraknet "github.com/darkspinnet/darkspin/server/zone/death/raknet103"
 )
+
+// Build 103 StalagmiteDeath emits the dedicated particle, waits 0.2 seconds,
+// then deletes the object; these untargetable crystals can still take area hits.
+func isCryosStalagmite(nounName string) bool {
+	switch strings.ToLower(strings.TrimSpace(nounName)) {
+	case "dest_prefab_cryos3_stalagmite_small.noun",
+		"dest_prefab_cryos3_stalagmite_large.noun",
+		"cryos_stalagmite_small_destructible.noun",
+		"dest_prefab_cryos_stalagmite_small.noun",
+		"dest_prefab_cryos_stalagmite_large.noun":
+		return true
+	default:
+		return false
+	}
+}
 
 type campaignFixtureDeath struct {
 	run        *deathraknet.Run
