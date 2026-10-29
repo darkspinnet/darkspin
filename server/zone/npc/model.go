@@ -336,6 +336,8 @@ type DeathEvent struct {
 	EffectSlot         uint8
 	GraphicsState      uint32
 	Position           game.Vec3
+	Facing             game.Vec3
+	IsFacingOmitted    bool
 	IsCritical         bool
 	IsTargetable       bool
 	IsEffectStopped    bool

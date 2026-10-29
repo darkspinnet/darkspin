@@ -17,6 +17,16 @@ func isFactoryPipe(nounName string) bool {
 }
 
 func fixtureBlastProfile(nounName string) (zonenpc.ActionProfile, bool) {
+	if isExplodingTree(nounName) {
+		return explodingTreeDeathProfile(), true
+	}
+	if zonenpc.IsMutationEgg(nounName) {
+		return zonenpc.MutationEggDeathProfile(), true
+	}
+	instrumentProfile, isInstrument := zonenpc.InstrumentDeathProfile(nounName)
+	if isInstrument {
+		return instrumentProfile, true
+	}
 	pustuleProfile, isPustule := scaldronPustuleProfile(nounName)
 	if isPustule {
 		return pustuleProfile, true
@@ -57,6 +67,7 @@ type campaignFixtureBlastStep struct {
 	npc         *zonenpc.Session
 	publication *campaignFixturePublication
 	timestamp   uint64
+	notBefore   time.Time
 }
 
 func (e campaignFixtureBlastStep) produce() ([][]byte, error) {
@@ -83,6 +94,18 @@ func (e campaignFixtureBlastStep) produce() ([][]byte, error) {
 			target.Plan.Position.Sub(e.source.Plan.Position).Length() > profile.Radius {
 			continue
 		}
+		if zonenpc.IsMutationEgg(e.source.Plan.NounName) && target.Plan.IsFixture {
+			continue
+		}
+		if isExplodingTree(e.source.Plan.NounName) {
+			fearPackets, fearErr := e.treeFear(target)
+			packets = append(packets, fearPackets...)
+			e.publication.recordPreparedPackets(fearPackets)
+			if fearErr != nil {
+				return packets, fmt.Errorf("treeFear: %w", fearErr)
+			}
+			continue
+		}
 		if profile.ModifierName == "LifePlagueSpread" {
 			// The authored kType_Creature query excludes other scenery. The
 			// pustule requests disease without an initial explosion damage hit.
@@ -105,12 +128,34 @@ func (e campaignFixtureBlastStep) produce() ([][]byte, error) {
 		if !isSurviving {
 			continue
 		}
+		if zonenpc.IsMutationEgg(e.source.Plan.NounName) {
+			continue
+		}
+		if profile.AbilityName == "InstrumentDeath" || profile.AbilityName == "InstrumentDeath2" {
+			pushPackets, pushErr := e.instrumentKnockback(target.Plan.ObjectID, profile)
+			if pushErr != nil {
+				return packets, fmt.Errorf("instrumentPush: %w", pushErr)
+			}
+			packets = append(packets, pushPackets...)
+			e.publication.recordPreparedPackets(pushPackets)
+			continue
+		}
 		burnPackets, burnErr := e.startBurn(target.Plan.ObjectID, profile)
 		if burnErr != nil {
 			return packets, fmt.Errorf("fixtureBlastBurn: %w", burnErr)
 		}
 		packets = append(packets, burnPackets...)
 		e.publication.recordPreparedPackets(burnPackets)
+	}
+	treePackets, err := e.finishExplodingTree()
+	packets = append(packets, treePackets...)
+	if err != nil {
+		return packets, fmt.Errorf("treeFinish: %w", err)
+	}
+	deletePackets, err := e.finishMutationEgg()
+	packets = append(packets, deletePackets...)
+	if err != nil {
+		return packets, fmt.Errorf("fixtureEggFinish: %w", err)
 	}
 	return packets, nil
 }
@@ -247,7 +292,12 @@ func (e campaignFixtureBlastStep) publishDamage(target zonenpc.Snapshot, damage 
 		if isInitial {
 			e.publication.stageDeath(campaignFixtureDeath{run: publication.deathRun, targetID: target.Plan.ObjectID, acceptedAt: acceptedAt})
 		}
-		err = r.projection.publishEnemyDeath(e.sessionKey, e.generation, publication.deathRun.DrainProjection())
+		deathEvents := publication.deathRun.DrainProjection()
+		if e.publication != nil {
+			err = e.recordOwnedDeath(deathEvents)
+		} else {
+			err = r.projection.publishEnemyDeath(e.sessionKey, e.generation, deathEvents)
+		}
 		if err != nil {
 			publication.deathRun.Stop()
 			return packets, fmt.Errorf("fixtureDeathProjection: %w", err)
@@ -265,6 +315,12 @@ func (e campaignFixtureBlastStep) publishDamage(target zonenpc.Snapshot, damage 
 		e.publication.recordPreparedPackets(lootPackets)
 		if lootErr != nil {
 			return packets, fmt.Errorf("fixtureDeathLoot: %w", lootErr)
+		}
+	} else if e.publication != nil && !damage.IsDamageImmune && damage.Damage > 0 {
+		hitPackets, err := e.publishOwnedHit(target, damage)
+		packets = append(packets, hitPackets...)
+		if err != nil {
+			return packets, fmt.Errorf("fixtureHitOwned: %w", err)
 		}
 	} else {
 		err := r.projection.publishEnemyDamage(e.sessionKey, e.generation, zonenpc.DamageEvent{
@@ -302,6 +358,14 @@ func (e campaignDamageRuntime) scheduleFixtureBlast(packet raknet.Packet, sessio
 	}
 	step := campaignFixtureBlastStep{runtime: e, packet: packet, sessionKey: sessionKey,
 		generation: generation, source: source, npc: member.zone.NPCs(), timestamp: timestamp}
+	if zonenpc.IsMutationEgg(source.Plan.NounName) {
+		step.notBefore = e.npc.now().Add(mutationEggDelay)
+		step.timestamp += uint64(mutationEggDelay / time.Millisecond)
+	}
+	if isExplodingTree(source.Plan.NounName) {
+		step.notBefore = e.npc.now().Add(explodingTreeDelay)
+		step.timestamp += uint64(explodingTreeDelay / time.Millisecond)
+	}
 	publication := &campaignFixturePublication{blast: &step}
 	for current := range e.registry.fixturePublications {
 		if current.blast.npc == step.npc && current.blast.source.Plan.ObjectID == objectID {

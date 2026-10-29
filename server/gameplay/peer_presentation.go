@@ -35,7 +35,7 @@ func (e gameplayProjectionRuntime) drainQueuedProjection(
 	peerSession, isFound := e.registry.sessions[sessionKey]
 	if !isFound || peerSession.zone == nil || peerSession.isRejoinPending ||
 		!peerSession.dungeonSetup.IsCommitted() ||
-		(request.TraceID != 0 && peerSession.pendingPacketResponseTraceID == request.TraceID) {
+		(request.ResponseID() != 0 && peerSession.pendingPacketResponseID == request.ResponseID()) {
 		e.registry.mutex.Unlock()
 		return nil, nil
 	}
@@ -61,18 +61,12 @@ func (e gameplayProjectionRuntime) drainQueuedProjection(
 		e.registry.mutex.Unlock()
 		return nil, fmt.Errorf("projectionPrepare: %w", err)
 	}
-	packets, batchID := peerSession.pendingPackets()
+	packets, batchID := peerSession.pendingPacketsForResponse(request.ResponseID())
 	overdriveFrames := peerSession.pendingOverdriveFrames(batchID)
 	questFrames := peerSession.pendingQuestFrames(batchID)
 	mutationElites := peerSession.pendingMutationElites(batchID)
 	mutationEvents := peerSession.pendingMutationEvents(batchID)
 	mutationFeedbacks := peerSession.pendingMutationFeedbacks(batchID)
-	if len(packets) != 0 {
-		// Pending batches are retained until transport commit. Only a batch
-		// already included by this request should suppress the outer drain;
-		// the existence of queued peer updates is a reason to send them.
-		peerSession.pendingPacketResponseTraceID = request.TraceID
-	}
 	e.registry.sessions[sessionKey] = peerSession
 	e.registry.mutex.Unlock()
 	if len(packets) == 0 {

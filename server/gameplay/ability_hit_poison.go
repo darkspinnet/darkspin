@@ -243,7 +243,7 @@ func (e campaignDamageRuntime) applyHeroHitPoison(
 			Delay: delay, Produce: step.produce,
 		})
 	}
-	cancel, scheduleErr := packet.ScheduleProducers(producers)
+	cancel, scheduleErr := scheduleNPCProducers(e.registry, packet, producers)
 	if scheduleErr == nil && cancel == nil {
 		scheduleErr = errors.New("nil cancellation")
 	}

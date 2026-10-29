@@ -459,6 +459,16 @@ func (e *Session) RecordNPCDeathState(deaths []zonenpc.DeathEvent) {
 }
 
 func (s *Session) PublishNPCSpawn(spawn NPCSpawn, excluded Subscriber) {
+	s.publishNPCSpawn(spawn, excluded, true)
+}
+
+// RecordNPCSpawn retains subscriber object knowledge when an explicit producer
+// already owns the complete live spawn bytes and their committed peer delivery.
+func (s *Session) RecordNPCSpawn(spawn NPCSpawn) {
+	s.publishNPCSpawn(spawn, Subscriber{}, false)
+}
+
+func (s *Session) publishNPCSpawn(spawn NPCSpawn, excluded Subscriber, isPresentationPublished bool) {
 	if s == nil || len(spawn.Plans) == 0 ||
 		(!spawn.IsDormant && spawn.TargetObjectID == 0) {
 		return
@@ -487,7 +497,7 @@ func (s *Session) PublishNPCSpawn(spawn NPCSpawn, excluded Subscriber) {
 			objectIDs[plan.ObjectID] = struct{}{}
 			plans = append(plans, plan)
 		}
-		if subscriber == excluded {
+		if !isPresentationPublished || subscriber == excluded {
 			continue
 		}
 		if len(plans) == 0 {

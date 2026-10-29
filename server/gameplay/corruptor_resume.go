@@ -99,7 +99,7 @@ func (e *corruptorPhaseContinuation) admit(step campaignCorruptorPhaseStep) ([][
 		if err != nil {
 			return e.drainPackets(), fmt.Errorf("actorCarrier: %w", err)
 		}
-		packets, err := runtime.scheduleFirstActions(step.packet, step.sessionKey, step.generation,
+		packets, err := runtime.scheduleOwnedFirstActions(step.packet, step.sessionKey, step.generation,
 			e.actionPlans, step.timestamp)
 		e.packets = append(e.packets, packets...)
 		if err != nil {

@@ -565,6 +565,10 @@ func (o *enemyDeathOutbox) ApplyPositionedEffect(
 		Position: game.Vec3{
 			X: intent.Position.X, Y: intent.Position.Y, Z: intent.Position.Z,
 		},
+		Facing: game.Vec3{
+			X: intent.Facing.X, Y: intent.Facing.Y, Z: intent.Facing.Z,
+		},
+		IsFacingOmitted: intent.IsFacingOmitted,
 	})
 	return nil
 }

@@ -255,7 +255,7 @@ func (r campaignDamageRuntime) applyPoisonRavagerPassive(
 			Delay: delay, Produce: step.produce,
 		})
 	}
-	cancel, scheduleErr := packet.ScheduleProducers(producer)
+	cancel, scheduleErr := scheduleNPCProducers(r.registry, packet, producer)
 	if scheduleErr == nil && cancel == nil {
 		scheduleErr = errors.New("nil cancellation")
 	}

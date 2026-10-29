@@ -1696,6 +1696,7 @@ func (e *Zone) ApplyNPCTargetStatusDamage(
 	sourceObjectID uint32,
 	targetObjectID uint32,
 	damage float32,
+	initiatorObjectIDs ...uint32,
 ) (NPCTargetDamage, bool, error) {
 	if e == nil {
 		return NPCTargetDamage{}, false, errors.New("nil campaign zone")
@@ -1715,7 +1716,16 @@ func (e *Zone) ApplyNPCTargetStatusDamage(
 	if !isFound || actionMember.PeerGeneration != owner.PeerGeneration {
 		return NPCTargetDamage{}, false, nil
 	}
-	_, isFound = e.info.NPCs.NPC(sourceObjectID)
+	if len(initiatorObjectIDs) > 1 {
+		return NPCTargetDamage{}, false, errors.New("campaign status initiator invalid")
+	}
+	initiatorObjectID := sourceObjectID
+	if len(initiatorObjectIDs) == 1 && initiatorObjectIDs[0] != 0 {
+		initiatorObjectID = initiatorObjectIDs[0]
+	}
+	// An admitted retained volume may outlive its NPC initiator. Keep the
+	// initiator record check, without requiring that record to remain alive.
+	_, isFound = e.info.NPCs.NPC(initiatorObjectID)
 	if !isFound {
 		return NPCTargetDamage{}, false, nil
 	}
@@ -2766,7 +2776,7 @@ func (e *Zone) FixturePlans() []zonenpc.SpawnPlan {
 		}
 		plans = append(plans, plan)
 	}
-	return plans
+	return append(plans, e.scenarioFixturePlans()...)
 }
 
 func (e *Zone) CatalystProgram() sim.Program {
@@ -3294,21 +3304,9 @@ func (e *Zone) PublishNPCSpawn(
 	spawn zoneprojection.NPCSpawn,
 	sourceUserID uint64, sourceGeneration uint64,
 ) error {
-	if e == nil {
-		return errors.New("npc spawn zone unavailable")
-	}
-	if e.info.ObjectiveProgress != nil {
-		objectIDs := make([]uint32, 0, len(spawn.Plans))
-		for _, plan := range spawn.Plans {
-			if plan.IsFixture || plan.IsEncounterAuxiliary {
-				continue
-			}
-			objectIDs = append(objectIDs, plan.ObjectID)
-		}
-		err := e.info.ObjectiveProgress.Register(objectIDs)
-		if err != nil {
-			return fmt.Errorf("npcSpawnObjective: %w", err)
-		}
+	err := e.recordNPCSpawnObjectives(spawn)
+	if err != nil {
+		return fmt.Errorf("spawnObjectives: %w", err)
 	}
 	e.projection.PublishNPCSpawn(spawn, zoneprojection.Subscriber{
 		UserID: sourceUserID, PeerGeneration: sourceGeneration,

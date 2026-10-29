@@ -52,6 +52,9 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 	if err == nil {
 		err = validateScenarioNPCRequest(req, peer, actor)
 	}
+	if err == nil && actor.IsFixture && req.Operation == "retire" {
+		err = e.registry.validateFixtureRetirementLocked(peer, req.Identity.ObjectID)
+	}
 	if err == nil && req.Operation == "ability" {
 		selectedAbility, selectedErr := scenarioSelectedNPCAbility(peer, req.Identity.ObjectID, req.TargetObjectID, packet.SourceTime)
 		if selectedErr != nil {
@@ -101,6 +104,9 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 		actor, err = peer.zone.NPCs().ScenarioDefeat(ref)
 	case "retire":
 		actor, retiredOwnedObjectIDs, err = peer.zone.NPCs().ScenarioRetire(ref)
+		if err == nil && actor.IsFixture {
+			err = e.retireFixtureHazardsLocked(peer, req.Identity.ObjectID)
+		}
 	default:
 		err = errors.New("NPC command operation is unsupported")
 	}
@@ -158,7 +164,7 @@ func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, p
 		}
 	case "retire":
 		deleteObjectIDs := retiredOwnedObjectIDs
-		if wasPublished && (!wasDefeated || wasScenarioDefeated) {
+		if wasPublished && (actor.IsFixture || !wasDefeated || wasScenarioDefeated) {
 			deleteObjectIDs = append([]uint32{actor.ObjectID}, deleteObjectIDs...)
 		}
 		if len(deleteObjectIDs) != 0 {

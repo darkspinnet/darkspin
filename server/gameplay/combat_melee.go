@@ -112,6 +112,20 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 	objectID uint32, timestamp uint64, isPullAllowed bool,
 ) ([][]byte, error) {
 	isSilenced := r.isSilenced(sessionKey, generation, objectID)
+	plasmaPackets, isPlasmaHandled, plasmaErr := r.producePlasmaWall(packet, sessionKey, generation, objectID, timestamp)
+	if plasmaErr != nil {
+		return nil, fmt.Errorf("plasmaWall: %w", plasmaErr)
+	}
+	if isPlasmaHandled {
+		return plasmaPackets, nil
+	}
+	frogPackets, isFrogHandled, frogErr := r.produceNomadFrogAction(packet, sessionKey, generation, objectID, timestamp)
+	if frogErr != nil {
+		return nil, fmt.Errorf("frogAction: %w", frogErr)
+	}
+	if isFrogHandled {
+		return frogPackets, nil
+	}
 	supportPackets, isSupportHandled, supportErr := r.produceNPCSupport(packet, sessionKey, generation, objectID, timestamp)
 	if supportErr != nil {
 		return nil, fmt.Errorf("enemySupport: %w", supportErr)
@@ -282,7 +296,7 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 		profile.ImpactEffectName = fmt.Sprintf("citadel_zap_hit_%d.ServerEventDef", stackCount)
 	}
 	drainerMeleeProfile, isDrainerMeleeFound :=
-		zonenpc.NoctMinionDrainerMeleeProfile(enemy.Plan.NounName)
+		zonenpc.NoctMinionDrainerMeleeProfile(zonenpc.ActionNounName(enemy.Plan))
 	if isDrainerMeleeFound {
 		profile = zonenpc.ApplyAffixTiming(drainerMeleeProfile, enemy.Plan)
 		isProfileFound = true
@@ -397,9 +411,17 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 	if isFleeHandled {
 		return fleePackets, nil
 	}
-	attackPlan, err := zonenpc.PlanAttackWithProfile(
-		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
-	)
+	var attackPlan zonenpc.AttackPlan
+	if profile.AbilityName == "ChannelLightningCage" {
+		// This channel binds without a damage hit; the attack planner rejects zero damage.
+		attackPlan, err = zonenpc.PlanControlWithProfile(
+			enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
+		)
+	} else {
+		attackPlan, err = zonenpc.PlanAttackWithProfile(
+			enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
+		)
+	}
 	if err != nil {
 		pursuitPosition := target.Position
 		if profile.AbilityName == "ScaldronBasicDog_Attack" {

@@ -3,6 +3,7 @@ package gameplay
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
 	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
@@ -64,7 +65,8 @@ func (e *campaignFixturePublication) scheduleBlast() error {
 	if packet.ScheduleGroupResult == nil {
 		return errors.New("fixture blast result scheduler unavailable")
 	}
-	producers := []raknet.ScheduledPacketProducer{{Produce: e.produce, AfterCommit: e.commit}}
+	delay := max(time.Duration(0), blast.notBefore.Sub(blast.runtime.npc.now()))
+	producers := []raknet.ScheduledPacketProducer{{Delay: delay, Produce: e.produce, AfterCommit: e.commit}}
 	cancel, err := packet.ScheduleGroupResult(producers, e.fail)
 	registry.mutex.Lock()
 	isCurrent := e.isCurrentLocked() && !e.isCommitted && !e.isFailed

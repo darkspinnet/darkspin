@@ -2690,6 +2690,10 @@ func (r gameplayPendingRuntime) pollWorld(
 	if err != nil {
 		return nil, fmt.Errorf("acMalfunctionPoll: %w", err)
 	}
+	mushroomPackets, err := r.pollMushroomAuras(packet)
+	if err != nil {
+		return nil, fmt.Errorf("mushroomPoll: %w", err)
+	}
 	graviticPackets, err := r.pollGraviticFields(packet)
 	if err != nil {
 		return nil, fmt.Errorf("graviticPoll: %w", err)
@@ -2739,7 +2743,7 @@ func (r gameplayPendingRuntime) pollWorld(
 		rootHazardPackets = append(rootHazardPackets, rootControlPackets...)
 		if peerSession.zone != nil && peerSession.stage.IsDungeon() &&
 			!peerSession.isZoneTerminal() && peerSession.dungeonSetup.IsCommitted() {
-			ventPackets, ventDelta, ventErr := peerSession.pollFireVents(r.damage.npc, packet.SourceTime, r.now())
+			ventPackets, ventDelta, ventErr := peerSession.pollFireVents(r.damage.npc, packet, r.now())
 			if ventErr != nil {
 				r.registry.mutex.Unlock()
 				return nil, fmt.Errorf("ventPoll: %w", ventErr)
@@ -2771,12 +2775,6 @@ func (r gameplayPendingRuntime) pollWorld(
 			}
 			peerSession.queueStatDelta(petBurnDelta)
 			rootHazardPackets = append(rootHazardPackets, petBurnPackets...)
-			fungusPackets, fungusErr := r.pollCryosFungusLocked(&peerSession, packet.SourceTime)
-			if fungusErr != nil {
-				r.registry.mutex.Unlock()
-				return nil, fmt.Errorf("fungusPoll: %w", fungusErr)
-			}
-			rootHazardPackets = append(rootHazardPackets, fungusPackets...)
 			mutationPackets, mutationErr := r.pollMutationAgentsLocked(&peerSession, packet.SourceTime)
 			if mutationErr != nil {
 				r.registry.mutex.Unlock()
@@ -2801,6 +2799,7 @@ func (r gameplayPendingRuntime) pollWorld(
 	rootHazardPackets = append(rootHazardPackets, graviticPackets...)
 	rootHazardPackets = append(rootHazardPackets, warpTotemPackets...)
 	rootHazardPackets = append(rootHazardPackets, acMalfunctionPackets...)
+	rootHazardPackets = append(rootHazardPackets, mushroomPackets...)
 	rootHazardPackets = append(rootHazardPackets, landingPackets...)
 	rootHazardPackets = append(rootHazardPackets, pickupPursuitPackets...)
 	rootHazardPackets = append(rootHazardPackets, interactablePursuitPackets...)
@@ -2836,15 +2835,12 @@ func (r gameplayPendingRuntime) pollWorld(
 		return nil, fmt.Errorf("mutationFeedbackPending: %w", mutationFeedbackErr)
 	}
 	pendingBatchCount := len(peerSession.pendingPacketBatches)
-	queuedPackets, pendingPacketBatchID := peerSession.pendingPackets()
+	queuedPackets, pendingPacketBatchID := peerSession.pendingPacketsForResponse(packet.ResponseID())
 	overdriveFrames := peerSession.pendingOverdriveFrames(pendingPacketBatchID)
 	questFrames := peerSession.pendingQuestFrames(pendingPacketBatchID)
 	mutationElites := peerSession.pendingMutationElites(pendingPacketBatchID)
 	mutationEvents := peerSession.pendingMutationEvents(pendingPacketBatchID)
 	mutationFeedbacks := peerSession.pendingMutationFeedbacks(pendingPacketBatchID)
-	if len(queuedPackets) != 0 {
-		peerSession.pendingPacketResponseTraceID = packet.TraceID
-	}
 	isPendingPacketOverflow := peerSession.isPendingPacketOverflow
 	peerSession.isPendingPacketOverflow = false
 	queuedStatDeltas := peerSession.takeStatDeltas()
@@ -4352,6 +4348,13 @@ func marshalCampaignDeathProjection(
 			Position: raknet.Vector3{
 				X: death.Position.X, Y: death.Position.Y, Z: death.Position.Z,
 			},
+			Facing: raknet.Vector3{X: death.Facing.X, Y: death.Facing.Y, Z: death.Facing.Z},
+		}
+		if death.IsFacingOmitted {
+			message = raknet.DropPresentationMessage{
+				Asset:    util.HashID(death.EffectName),
+				Position: raknet.Vector3{X: death.Position.X, Y: death.Position.Y, Z: death.Position.Z},
+			}
 		}
 	default:
 		return nil, fmt.Errorf("deathKind: %d", death.Kind)

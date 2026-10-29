@@ -385,7 +385,7 @@ func (r campaignNPCActionRuntime) publishNPCSelfDeath(
 	if err != nil {
 		return nil, fmt.Errorf("npcSelfDeathDamage: %w", err)
 	}
-	err = r.projection.publishEnemyDeath(
+	err = r.projection.recordEnemyDeathObjectives(
 		sessionKey, generation, publication.deathRun.DrainProjection(),
 	)
 	if err != nil {

@@ -376,7 +376,10 @@ func (r campaignNPCPursuitRuntime) produceStep(
 	// Ordinary pursuit must observe aura entry/exit while a path is already
 	// running. Secondary actions retain their scripted charge/leap speed.
 	isAttributeDrivenRetreat := profile.AbilityName == "SupportFlee" || profile.AbilityName == "SupportFleeFacing" || profile.AbilityName == "Burrow"
-	if (!isSecondaryFamily && profile.Family != zonenpc.ActionCharge) || isAttributeDrivenRetreat {
+	// The drainer switches from a channel to ordinary melee when its target
+	// runs out of mana. It retains class/aura speed rather than a scripted leap speed.
+	isDrainerMelee := profile.AbilityName == "DrainerMelee"
+	if (!isSecondaryFamily && profile.Family != zonenpc.ActionCharge) || isAttributeDrivenRetreat || isDrainerMelee {
 		profile.MovementSpeed = nounProfile.MovementSpeed
 		profile.NonCombatMovementSpeed = nounProfile.NonCombatMovementSpeed
 	}
@@ -556,7 +559,7 @@ func (r campaignNPCPursuitRuntime) produceStep(
 	// both goal vectors while preserving the mode installed by 5393D0.
 	stepPackets := make([][]byte, 0, 4)
 	isCorridorPursuit := step.IsWaypointKnown &&
-		(!isSecondaryFamily || profile.AbilityName == "RezMelee") &&
+		(!isSecondaryFamily || profile.AbilityName == "RezMelee" || isDrainerMelee) &&
 		profile.Family != zonenpc.ActionCharge && profile.AbilityName != "StealthAttack" &&
 		profile.AbilityName != "Flee"
 	isWaypointChanged := zonegeometry.DistanceSquared(publishedGoal, step.Waypoint) > 0.0001

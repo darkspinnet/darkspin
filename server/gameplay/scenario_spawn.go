@@ -101,6 +101,16 @@ func (e *gameplaySessionRegistry) ScenarioSpawnNPC(ctx context.Context, req scen
 		return scenario.SpawnReceipt{}, errors.New("spawn noun is absent from the installed mission content catalog")
 	}
 	profile, isProfile := developerNPCProfile(director, req.NounName)
+	if req.IsFixture {
+		profile, isProfile = director.FixtureProfilesByNoun[strings.ToLower(req.NounName)]
+		ownerErr := zonenpc.ScenarioFixtureSupport(req.NounName)
+		if ownerErr != nil {
+			return scenario.SpawnReceipt{}, fmt.Errorf("spawnFixtureOwner: %w", ownerErr)
+		}
+		if req.IsAIEnabled == nil || *req.IsAIEnabled {
+			return scenario.SpawnReceipt{}, errors.New("controlled fixture requires explicit AI-disabled admission")
+		}
+	}
 	if !isProfile || profile.HitPoint <= 0 {
 		return scenario.SpawnReceipt{}, errors.New("spawn noun has no supported combat profile in the installed mission catalog")
 	}
@@ -114,7 +124,14 @@ func (e *gameplaySessionRegistry) ScenarioSpawnNPC(ctx context.Context, req scen
 	isAIEnabled := req.IsAIEnabled == nil || *req.IsAIEnabled
 	if !isAIEnabled {
 		controlPlan := scenarioNPCSpawnPlan(director, req.NounName, profile)
-		preparedPlan, prepareErr := zonenpc.PrepareScenarioControlledPlan(controlPlan, "admission")
+		var preparedPlan zonenpc.SpawnPlan
+		var prepareErr error
+		if req.IsFixture {
+			controlPlan.IsFixture = true
+			preparedPlan, prepareErr = zonenpc.PrepareScenarioControlledFixture(controlPlan, "admission")
+		} else {
+			preparedPlan, prepareErr = zonenpc.PrepareScenarioControlledPlan(controlPlan, "admission")
+		}
 		if prepareErr != nil {
 			return scenario.SpawnReceipt{}, fmt.Errorf("spawnControlProfile: %w", prepareErr)
 		}
@@ -123,6 +140,7 @@ func (e *gameplaySessionRegistry) ScenarioSpawnNPC(ctx context.Context, req scen
 		}
 	}
 	receipt := scenario.SpawnReceipt{RequestID: fmt.Sprintf("spawn-%016x", e.nextSpawnID), RunID: req.RunID, UserID: req.UserID, State: "queued", GameID: req.GameID, PeerGeneration: peerSession.generation, TransportGeneration: peerSession.transportGeneration, ZoneGeneration: req.ZoneGeneration, NounName: req.NounName, IsAIEnabled: isAIEnabled}
+	receipt.IsFixture = req.IsFixture
 	if e.spawnReceipts == nil {
 		e.spawnReceipts = make(map[string]scenario.SpawnReceipt)
 	}
@@ -257,7 +275,13 @@ func (e gameplayPendingRuntime) consumeScenarioSpawn(ctx context.Context, packet
 		e.registry.recordScenarioSpawnFailure(receipt.RequestID, err)
 		return nil, true, fmt.Errorf("spawnConsumeIdentity: %w", err)
 	}
-	packets, isHandled, err := e.spawnDeveloperNPCForRequest(packet, peerSession, game.PlayerEventCommand{Name: "spawn", NounName: receipt.NounName}, receipt.RequestID)
+	var packets [][]byte
+	var isHandled bool
+	if receipt.IsFixture {
+		packets, isHandled, err = e.spawnScenarioFixture(packet, peerSession, receipt)
+	} else {
+		packets, isHandled, err = e.spawnDeveloperNPCForRequest(packet, peerSession, game.PlayerEventCommand{Name: "spawn", NounName: receipt.NounName}, receipt.RequestID)
+	}
 	if err != nil {
 		e.registry.recordScenarioSpawnFailure(receipt.RequestID, err)
 		return packets, isHandled, fmt.Errorf("spawnConsumeApply: %w", err)

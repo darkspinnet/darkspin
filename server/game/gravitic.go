@@ -10,6 +10,9 @@ const GraviticStabilizerNoun = "DEST_prefab_islands_instrument_scitech_7.Noun"
 func IsGraviticRegulatorNoun(nounName string) bool {
 	switch strings.ToLower(nounName) {
 	case "dest_prefab_islands_instrument_scitech_2.noun",
+		"dest_islands_instrument_scitech_2.noun",
+		"dest_islands_instrument_scitech_3.noun",
+		"dest_islands_instrument_scitech_11.noun",
 		"dest_prefab_islands_instrument_scitech_3.noun",
 		"dest_prefab_islands_instrument_scitech_11.noun",
 		"dest_prefab_islands_instrument_scitech_11_noshadow.noun":
@@ -20,8 +23,16 @@ func IsGraviticRegulatorNoun(nounName string) bool {
 }
 
 func IsGraviticStabilizerNoun(nounName string) bool {
-	return strings.EqualFold(nounName, GraviticStabilizerNoun) ||
-		strings.EqualFold(nounName, "DEST_prefab_islands_instrument_scitech_7_noShadow.Noun")
+	switch strings.ToLower(nounName) {
+	case strings.ToLower(GraviticStabilizerNoun),
+		"dest_prefab_islands_instrument_scitech_7_noshadow.noun",
+		"dest_islands_instrument_scitech_7.noun",
+		"dest_islands_instrument_scitech_8.noun",
+		"dest_prefab_islands_instrument_scitech_8.noun":
+		return true
+	default:
+		return false
+	}
 }
 
 // GraviticFixtures uses one authored smart-object variant plus the fixed

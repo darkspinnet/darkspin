@@ -152,7 +152,7 @@ func (e fireTempestPassiveSchedule) schedule(
 	delay time.Duration, produce func() ([][]byte, error),
 ) error {
 	producer := raknet.ScheduledPacketProducer{Delay: delay, Produce: produce}
-	cancel, err := e.packet.ScheduleProducers([]raknet.ScheduledPacketProducer{producer})
+	cancel, err := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{producer})
 	if err != nil {
 		return fmt.Errorf("firePassiveSchedule: %w", err)
 	}

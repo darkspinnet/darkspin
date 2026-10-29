@@ -71,6 +71,11 @@ func (e gameplayPendingRuntime) spawnDeveloperNPCForRequest(
 		plan.ActionProfile = zonenpc.MutationAgentActionProfile()
 		plan.IsActionKnown = true
 	}
+	plan, err := attachScenarioTutorialAction(requestID, plan, e.damage.npc.program)
+	if err != nil {
+		e.registry.mutex.Unlock()
+		return nil, false, fmt.Errorf("npcSpawnTutorial: %w", err)
+	}
 	plans, err := currentSession.zone.AssignSpawnPlanIDs([]zonenpc.SpawnPlan{plan})
 	if err != nil {
 		e.registry.mutex.Unlock()

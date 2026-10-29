@@ -103,7 +103,7 @@ func (e *Session) SelectAdditionalKitAction(objectID uint32, timestamp uint64, a
 	switch strings.ToLower(actor.Plan.NounName) {
 	case "babymortar.noun":
 		if distance <= 10 {
-			profile = ActionProfile{Family: ActionMelee, AbilityName: "Bite", AnimationName: "cast_bite", Range: 0.75, Radius: 1, Cooldown: 500 * time.Millisecond, HitDelay: 430000007 * time.Nanosecond, ReleaseDelay: 1429999948 * time.Nanosecond, MovementSpeed: 5.5, NonCombatMovementSpeed: 5.5, MinimumDamage: 8, MaximumDamage: 12, DamageType: 3, DescriptorMask: 67, IsDamageProfileKnown: true, IsFirstAggroDurationKnown: true}
+			profile = biteProfile(5.5, 5.5)
 			slot = 1
 		}
 	case "creaturex.noun":

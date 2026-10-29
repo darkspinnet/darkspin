@@ -107,7 +107,9 @@ func (e campaignNPCActionRuntime) produceCorruptorPose(
 		objectID: objectID, actionGeneration: npc.ActionGeneration,
 		timestamp: timestamp + uint64(profile.ReleaseDelay/time.Millisecond),
 	}
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	// The resumed cast returns its initial animation to this producer. Use the
+	// normal committed NPC fanout so observers see that cast after the pose.
+	cancel, err := scheduleNPCProducers(e.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: profile.ReleaseDelay, Produce: next.produce,
 	}})
 	if err == nil && cancel == nil {

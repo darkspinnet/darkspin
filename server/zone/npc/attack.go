@@ -23,13 +23,16 @@ const nonPlayerPrimaryAttributeBaseline = float32(8)
 const captainDamageBonus = float32(1.5 - 0.5)
 
 type AttackPlan struct {
-	SourceObjectID   uint32
-	TargetObjectID   uint32
-	ActionGeneration uint64
-	SourcePosition   game.Vec3
-	TargetPosition   game.Vec3
-	Profile          ActionProfile
-	Damage           game.DamageRange
+	SourceObjectID uint32
+	// Retained world sources keep the admitted NPC initiator as authority,
+	// independently of the source object that owns their modifier callbacks.
+	InitiatorObjectID uint32
+	TargetObjectID    uint32
+	ActionGeneration  uint64
+	SourcePosition    game.Vec3
+	TargetPosition    game.Vec3
+	Profile           ActionProfile
+	Damage            game.DamageRange
 }
 
 type AttackResult struct {

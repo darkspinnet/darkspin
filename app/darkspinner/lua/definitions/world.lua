@@ -20,6 +20,7 @@
 ---@field Configure fun(self:ClientWorld,options:WorldRecipeOptions):WorldRecipe|nil,ScenarioError|nil Installs an immutable server recipe after accepted login and before mission admission. Every member of a shared fresh campaign must configure the same run, seed and ambient setting before admission.
 ---@field Spawn fun(self:ClientWorld,noun:string,timeout_ms?:integer):WorldSpawn|nil,ScenarioError|nil Queues once and waits for correlated server publication under the client timeout. No native visibility assertion; timeout preserves the pending receipt without replay.
 ---@field SpawnControlledNPC fun(self:ClientWorld,noun:string,timeout_ms?:integer):ControlledNPC|nil,ScenarioError|nil Spawns a supported installed enemy with AI disabled before admission and waits for server publication. On failure returns nil,error with partial receipt in err.Details.spawn_receipt; never retry an unknown spawn blindly.
+---@field SpawnControlledFixture fun(self:ClientWorld,noun:string,timeout_ms?:integer):ControlledNPC|nil,ScenarioError|nil Admits an owned installed positive-HP fixture through its normal fixture owner. Unsupported callbacks and marker-only or noncombatant scenery sources fail explicitly. Supports observation and retirement; attack it through native input for actual death callbacks.
 ---@field SpawnAsync fun(self:ClientWorld,noun:string):WorldSpawn|nil,ScenarioError|nil Returns the queued command receipt without waiting for publication; no automatic retry.
 ---@field SnapshotSpawn fun(self:ClientWorld,request_id:string):WorldSpawn|nil,ScenarioError|nil Reads a request owned by this run/account/game/peer/zone; failed commands retain partial receipts with an error.
 
@@ -57,6 +58,7 @@
 ---@field noun string Exact installed director combat noun filename. Unsupported nouns fail explicitly.
 ---@field is_admitted boolean
 ---@field is_ai_enabled boolean False for SpawnControlled; ordinary Spawn retains default AI behavior.
+---@field is_fixture boolean True only for an admitted owned fixture, preserving its actual fixture class and callbacks.
 ---@field is_published boolean Server response-send commitment only.
 ---@field is_native_observed false Native rendering acknowledgment is not available from this producer.
 ---@field failure? string

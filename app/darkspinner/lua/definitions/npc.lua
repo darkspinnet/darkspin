@@ -31,6 +31,9 @@
 ---@field is_available boolean
 ---@field unavailable_reason? string
 ---@field is_ai_enabled boolean
+---@field is_fixture boolean Fixture handles cannot enable combat AI, move, cast, or synthesize death callbacks with Defeat.
+---@field is_retirement_ready boolean Read-only fixture readiness; true after authored death/publication/status producers settle. Check before the first Retire command instead of replaying mutations.
+---@field retirement_unavailable_reason? string The current authored callback or recipient status that still owns the fixture.
 ---@field position WorldPosition
 ---@field hit_point number
 ---@field is_dead boolean

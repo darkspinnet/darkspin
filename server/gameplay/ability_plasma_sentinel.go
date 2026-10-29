@@ -630,7 +630,18 @@ func (r campaignNPCActionRuntime) spawnPlasmaSentinelPet(
 	run.pets[petIndex].cancel = cancel
 	packets := append([][]byte{modifierPacket}, createPackets...)
 	packets = append(packets, attributePacket, spawnPacket)
-	return packets, nil
+	birth := plasmaPetBirthStep{
+		run: run, identity: gameplayProducerIdentityFromSession(run.sessionKey, *peerSession, true),
+		packet: run.packet.Autonomous(), objectID: objectID, timestamp: timestamp, packets: packets,
+	}
+	err = birth.schedule()
+	if err != nil {
+		cancel()
+		rollbackPlasmaSentinelPet(peerSession, run, objectID)
+		return nil, fmt.Errorf("plasmaSentinelBirth: %w", err)
+	}
+	// The birth producer owns these packets and seeds combat after commit.
+	return nil, nil
 }
 
 func rollbackPlasmaSentinelPet(

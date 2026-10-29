@@ -21,6 +21,15 @@ type campaignNPCTimedModifierExpiryStep struct {
 }
 
 func (e campaignNPCTimedModifierExpiryStep) produce() ([][]byte, error) {
+	if e.run.frogCage != nil {
+		e.runtime.registry.mutex.Lock()
+		packets, err := e.runtime.registry.retireOperativeCageLocked(e.run, e.runtime.modifierPool)
+		e.runtime.registry.mutex.Unlock()
+		if err != nil {
+			return nil, fmt.Errorf("frogCageExpiry: %w", err)
+		}
+		return packets, nil
+	}
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&

@@ -89,7 +89,7 @@ func (e campaignNPCActionRuntime) startAgentSupport(packet raknet.Packet, sessio
 			e.registry.mutex.Unlock()
 			continue
 		}
-		if family != "nomadcyberone" && family != "nomadpets" {
+		if family != "nomadcyberone" && family != "nomadpets" && family != "nomadspecialfour" {
 			continue
 		}
 		e.registry.mutex.Lock()
@@ -102,7 +102,9 @@ func (e campaignNPCActionRuntime) startAgentSupport(packet raknet.Packet, sessio
 		if member.agentSupports == nil {
 			member.agentSupports = make(map[uint32]*agentSupportState)
 		}
-		state.recoverChildrenLocked(member)
+		if family != "nomadspecialfour" {
+			state.recoverChildrenLocked(member)
+		}
 		member.agentSupports[plan.ObjectID] = state
 		currentPackets, passiveErr := state.attachPassiveEffects(e.registry, sessionKey, &member, e.effectPool, false)
 		e.registry.sessions[sessionKey] = member

@@ -39,6 +39,8 @@ func RankedActionProfile(profile ActionProfile, plan SpawnPlan) ActionProfile {
 	profile.AbilityRank = rank
 	index := rank - 1
 	switch profile.AbilityName {
+	case "NomadSpecialFour":
+		profile.Cooldown = NomadSpecialFourCooldown(rank)
 	case "PoisonSpit": // build-103 chunk395
 		profile.Range = [...]float32{14, 16, 18}[index]
 		profile.Cooldown = [...]time.Duration{3500 * time.Millisecond, 3 * time.Second, 2500 * time.Millisecond}[index]
@@ -52,6 +54,10 @@ func RankedActionProfile(profile ActionProfile, plan SpawnPlan) ActionProfile {
 		profile.Cooldown = [...]time.Duration{5 * time.Second, 4 * time.Second, 3 * time.Second}[index]
 		profile.Range = [...]float32{12.5, 15, 17.5}[index]
 		profile.ProjectileSpeed = [...]float32{8, 10, 12}[index]
+	case "BurstShot":
+		profile.Range = [...]float32{13, 15, 17}[index]
+		profile.ProjectileSpeed = [...]float32{25, 30, 35}[index]
+		profile.IsProjectileTrackingBetweenShots = index > 0
 	case "ZelemBasicRanged_Blink":
 		profile.Cooldown = [...]time.Duration{7 * time.Second, 6 * time.Second, 5 * time.Second}[index]
 		profile.HitDelay = [...]time.Duration{3200000047, 2200000047, 1200000047}[index]

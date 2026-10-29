@@ -210,6 +210,10 @@ type zoneNPCDeathDefinition struct {
 func destructibleDeathPresentation(
 	snapshot zonenpc.Snapshot, physics zoneNounPhysics,
 ) (string, time.Duration) {
+	instrument, isInstrument := zonenpc.InstrumentDeathProfile(snapshot.Plan.NounName)
+	if isInstrument {
+		return instrument.ImpactEffectName, time.Millisecond
+	}
 	if isCryosStalagmite(snapshot.Plan.NounName) {
 		return "cryos_stalagmite_destruction_effect.ServerEventDef", 200 * time.Millisecond
 	}
@@ -229,10 +233,6 @@ func destructibleDeathPresentation(
 	if strings.EqualFold(snapshot.Plan.NounName, "DEST_citadel_factoryvent_boss.Noun") {
 		// CitadelFactoryVentDeath keeps the dead vent and starts its flame cone.
 		return "", time.Millisecond
-	}
-	if strings.EqualFold(snapshot.Plan.NounName, game.CryosFungusNoun) {
-		// The dead graphics state and poison-stalk particle own this transition.
-		return "", 8 * time.Second
 	}
 	if strings.EqualFold(snapshot.Plan.NounName, nightmareVineNounName) {
 		return "effect_environment_nocturna_tree_death.ServerEventDef",
@@ -432,7 +432,7 @@ func campaignNPCDeathDefinition(
 		explosionEffectName: explosionEffectName,
 		deleteDelay:         deleteDelay,
 	}
-	return withMutationAgentDeath(snapshot, definition), nil
+	return withExplodingTreeDeath(snapshot, withSmallFixtureDeath(snapshot, withMushroomDeath(snapshot, withMutationAgentDeath(snapshot, definition)))), nil
 }
 
 type campaignShockwaveStunExpiryStep struct {
@@ -695,7 +695,9 @@ func (r campaignDamageRuntime) publishAreaResults(
 			if err != nil {
 				return nil, fmt.Errorf("areaDamagePublish: %w", err)
 			}
-			err = r.projection.publishEnemyDeath(
+			// Initial native death packets are returned to the caller's committed
+			// presentation owner; publishing them semantically here races that fanout.
+			err = r.projection.recordEnemyDeathObjectives(
 				sessionKey, generation, publication.deathRun.DrainProjection(),
 			)
 			if err != nil {
@@ -4297,7 +4299,7 @@ func campaignTargetProjectileGeometryForPhysics(program Programs, target zonenpc
 		return zonenpc.ProjectileGeometry{}, false,
 			errors.New("projectile geometry unavailable")
 	}
-	if zonenpc.IsGraviticStabilizer(target.Plan) {
+	if zonenpc.IsGraviticStabilizer(target.Plan) && hasGraviticFoundationGeometry(target.Plan.NounName) {
 		return graviticProjectileGeometry(target.Plan, halfExtent), false, nil
 	}
 	isTargetGeometryFound := isFound &&
@@ -4426,7 +4428,7 @@ func campaignNPCActionProfile(
 	if isCryosBossMeleeFound && campaignNPCWithinStopDistance(plan, targetPosition, targetFootprintRadius, cryosBossMeleeProfile) {
 		return campaignAffixActionProfile(plan, cryosBossMeleeProfile, true)
 	}
-	stealthProfile, isStealthFound := zonenpc.StealtherStealthProfile(plan.NounName)
+	stealthProfile, isStealthFound := zonenpc.StealtherStealthProfile(zonenpc.ActionNounName(plan))
 	if isStealthFound {
 		deltaX := targetPosition.X - plan.Position.X
 		deltaY := targetPosition.Y - plan.Position.Y
@@ -6034,6 +6036,7 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 	packet raknet.Packet, sessionKey string, generation uint64,
 	plans []zonenpc.SpawnPlan, timestamp uint64,
 	introductionObjectIDs map[uint32]struct{},
+	areInitialPresentationsOwned ...bool,
 ) ([][]byte, error) {
 	if len(plans) == 0 {
 		return nil, nil
@@ -6097,6 +6100,7 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 	immediatePackets = append(immediatePackets, supportPackets...)
 	producers := make([]raknet.ScheduledPacketProducer, 0, len(plans)*2)
 	aggroEvents := make([]zonenpc.ActionEvent, 0, len(plans))
+	isInitialPresentationOwned := len(areInitialPresentationsOwned) != 0 && areInitialPresentationsOwned[0]
 	initialIntroductions := make([]*campaignNPCInitialIntroduction, 0, len(plans))
 	owner := zonenpc.ActionOwner{UserID: userID, PeerGeneration: generation}
 	startedActions := make(map[uint32]uint64, len(plans))
@@ -6270,10 +6274,12 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 				})
 			} else {
 				immediatePackets = append(immediatePackets, aggroPackets...)
-				aggroEvents = append(aggroEvents, zonenpc.ActionEvent{
-					Kind: zonenpc.ActionEventAggro, Plan: action,
-					Timestamp: timestamp,
-				})
+				if !isInitialPresentationOwned {
+					aggroEvents = append(aggroEvents, zonenpc.ActionEvent{
+						Kind: zonenpc.ActionEventAggro, Plan: action,
+						Timestamp: timestamp,
+					})
+				}
 			}
 		}
 		if isFirstAction && !isFloorWarpIntroduction &&
@@ -6600,6 +6606,8 @@ func (campaignNPCActionRuntime) publishFirstAggro(
 type campaignNPCModifierRun struct {
 	fixtureBurn        *campaignFixtureBurnState
 	operativeCage      *operativeCageState
+	frogCage           *nomadFrogCage
+	mushroomEffects    *channelEffects
 	mu                 sync.Mutex
 	instanceID         uint32
 	record             zoneeffect.Modifier
@@ -6655,6 +6663,12 @@ func (r *campaignNPCModifierRun) release(pool *modifierPool) (bool, error) {
 		return false, fmt.Errorf("enemyModifierRelease: %w", err)
 	}
 	r.retireFixtureInfection()
+	if r.frogCage != nil {
+		r.frogCage.effects.Retire()
+	}
+	if r.mushroomEffects != nil {
+		r.mushroomEffects.Retire()
+	}
 	r.isReleased = true
 	return r.isCreated, nil
 }
@@ -7656,7 +7670,7 @@ func (r campaignNPCActionRuntime) produceHasterBuff(
 
 func isCampaignNPCSecondaryPursuit(abilityName string) bool {
 	switch abilityName {
-	case "CryosBasicChargeHeadbutt", "GhostlyBoltFlee",
+	case "CryosBasicChargeHeadbutt", "GhostlyBoltFlee", "DrainerMelee",
 		"NomadBioSpecialTwoJumpAttack", "CitadelSpecialTwo_Melee",
 		"Smash", "StealthAttack", "RezMelee", "FastSwipe",
 		"NomadSpecialOneCleave", "NomadSpacetimeAgent_Blink", "PositionFirePet",
@@ -7817,7 +7831,10 @@ func (r campaignNPCActionRuntime) commitHeroTargetDamage(
 	if isLocalTarget {
 		return packets, statDelta, nil
 	}
-	targetSession.queuePackets(packets)
+	// The producer/response broadcasts shared presentation after commit. Queue
+	// only the remote hero's private transition here, otherwise that recipient
+	// receives every shared combat event twice.
+	targetSession.queuePackets(mutationPrivateDamagePackets(packets))
 	targetSession.queueStatDelta(statDelta)
 	if targetSessionKey != "" {
 		r.registry.sessions[targetSessionKey] = *targetSession
@@ -7851,12 +7868,12 @@ func (r campaignNPCActionRuntime) deliverHeroTargetPackets(
 	if targetSession == nil || targetSession == peerSession {
 		return packets, statDelta, nil
 	}
-	targetSession.queuePackets(packets)
+	targetSession.queuePackets(mutationPrivateDamagePackets(packets))
 	targetSession.queueStatDelta(statDelta)
 	if targetSessionKey != "" {
 		r.registry.sessions[targetSessionKey] = *targetSession
 	}
-	return packets, sporenet.PlayerStatDelta{}, nil
+	return gameplayPeerPresentationPackets(packets), sporenet.PlayerStatDelta{}, nil
 }
 
 func (r campaignNPCActionRuntime) commitHeroTargetReactions(
@@ -7911,11 +7928,11 @@ func (r campaignNPCActionRuntime) commitHeroTargetReactions(
 	if targetSession == peerSession {
 		return append(packets, reactionPackets...), statDelta, nil
 	}
-	targetSession.queuePackets(reactionPackets)
+	targetSession.queuePackets(mutationPrivateDamagePackets(reactionPackets))
 	if targetSessionKey != "" {
 		r.registry.sessions[targetSessionKey] = *targetSession
 	}
-	return append(packets, reactionPackets...), statDelta, nil
+	return append(packets, gameplayPeerPresentationPackets(reactionPackets)...), statDelta, nil
 }
 
 func shieldCombatEvent(
@@ -8206,7 +8223,7 @@ func (r campaignNPCActionRuntime) applyEnemyDamage(
 		damage, isApplied, err = peerSession.zone.ApplyMutationAuraDamage(owner, receipt.EventID, plan.TargetObjectID, result.Damage, receipt.Faction, r.now())
 	} else if isRetainedStatus || plan.Profile.IsRetainedVolumeDamage {
 		damage, isApplied, err = peerSession.zone.ApplyNPCTargetStatusDamage(
-			owner, plan.SourceObjectID, plan.TargetObjectID, result.Damage,
+			owner, plan.SourceObjectID, plan.TargetObjectID, result.Damage, plan.InitiatorObjectID,
 		)
 	} else if isAreaAttack {
 		damage, isApplied, err = peerSession.zone.ApplyNPCAreaTargetDamage(

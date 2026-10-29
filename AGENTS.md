@@ -42,6 +42,7 @@ Never use .cache, instead put it in bin/cache/
 
 ## Configuration ownership
 
+- Keep development binaries and their runtime working directories under `bin`. Never place binaries in the repository root or run them there with an implicit runtime/configuration directory. Generating a default `darkspin.toml` in the proper runtime directory is allowed; use that directory and its explicit configuration path for diagnostics.
 - Store every user-exposed configuration option in `darkspin.toml`, including launcher preferences. Use named sections within that file instead of creating separate configuration files for individual features.
 - Do not create `darkspin/launcher.toml`, another `launcher.toml`, or other feature-specific TOML files. When replacing an older configuration file, migrate its settings into `darkspin.toml` and delete the old file only after a successful save. Preserve explicit settings already present in `darkspin.toml`.
 - Every TOML configuration file and its user-exposed settings must be editable through the launcher's Config interface; do not add settings that require users to edit files manually.

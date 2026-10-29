@@ -65,7 +65,7 @@ func (e *gameplaySessionRegistry) ScenarioNPCCatalog(ctx context.Context, userID
 	for _, noun := range nouns {
 		profile := director.NPCProfilesByNoun[noun]
 		plan := scenarioNPCSpawnPlan(director, noun, profile)
-		action, isActionRecovered := zonenpc.ActionProfileForNoun(noun)
+		action, isActionRecovered := zonenpc.RecoveredActionProfileForPlan(plan)
 		if !isActionRecovered {
 			fallbackAction, isActionKnown := zonenpc.ActionProfileForPlan(plan)
 			if isActionKnown {

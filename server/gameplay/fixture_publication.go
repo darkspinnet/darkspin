@@ -11,6 +11,7 @@ import (
 // The registry owns these phases, including the interval between a committed
 // NPC mutation and its final feedback. Transport callbacks never own the run.
 type campaignFixturePublication struct {
+	instrumentKnockbacks    []*instrumentKnockbackRun
 	burn                    *campaignFixtureBurnStep
 	blast                   *campaignFixtureBlastStep
 	stagedBurns             []campaignFixtureBurnStep
@@ -213,6 +214,9 @@ func (e *campaignFixturePublication) complete(isHandoff bool) {
 }
 
 func (e *campaignFixturePublication) queueLocked(packets [][]byte, isDriverIncluded bool) {
+	for _, run := range e.instrumentKnockbacks {
+		run.isPublished = true
+	}
 	blast := e.source()
 	registry := blast.runtime.registry
 	for key, member := range registry.sessions {

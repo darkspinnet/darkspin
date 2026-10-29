@@ -161,7 +161,8 @@ func (e *responseTransport) appendPayload(payloads [][]byte) {
 }
 
 type responseCommitCollector struct {
-	callbacks []func()
+	responseID uint64
+	callbacks  []func()
 }
 
 func (e *responseCommitCollector) append(callbacks []func()) {
@@ -316,6 +317,7 @@ func (s *Server) SetControlHandler(handler ControlHandler) {
 }
 
 type peer struct {
+	applicationResponseMu   sync.Mutex
 	outboundMu              sync.Mutex
 	generation              uint64
 	clientGUID              uint64
@@ -710,7 +712,21 @@ func (s *Server) HandleAndWriteDatagrams(ctx context.Context, address *net.UDPAd
 	if conn == nil {
 		return nil, errors.New("datagramConn: not listening")
 	}
-	commitCollector := &responseCommitCollector{}
+	if isConnectedDataDatagram(packet) {
+		err := lockPeerApplicationResponse(ctx, currentPeer)
+		if err != nil {
+			return nil, fmt.Errorf("datagramResponse: %w", err)
+		}
+		defer currentPeer.applicationResponseMu.Unlock()
+		s.mu.Lock()
+		isCurrent := s.peers[address.String()] == currentPeer &&
+			s.conn == conn && s.connGeneration == connGeneration
+		s.mu.Unlock()
+		if !isCurrent {
+			return nil, errors.New("datagramResponse: peer changed")
+		}
+	}
+	commitCollector := newResponseCommitCollector()
 	transport := &responseTransport{
 		peer: currentPeer, ready: make(chan struct{}),
 	}

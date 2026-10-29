@@ -36,6 +36,7 @@ type debugWorldSpawn struct {
 	Noun                string `json:"noun"`
 	IsAdmitted          bool   `json:"is_admitted"`
 	IsAIEnabled         bool   `json:"is_ai_enabled"`
+	IsFixture           bool   `json:"is_fixture"`
 	IsPublished         bool   `json:"is_published"`
 	IsNativeObserved    bool   `json:"is_native_observed"`
 	Failure             string `json:"failure,omitempty"`
@@ -45,7 +46,7 @@ type debugWorldSpawn struct {
 func debugWorldSpawnDTO(owner debugWorldOwner, receipt scenario.SpawnReceipt) debugWorldSpawn {
 	return debugWorldSpawn{ClientID: owner.client.ClientID, InstanceID: owner.client.InstanceID, PID: owner.client.ProcessID, UserID: owner.client.UserID,
 		RequestID: receipt.RequestID, State: receipt.State, GameID: receipt.GameID, PeerGeneration: receipt.PeerGeneration, TransportGeneration: receipt.TransportGeneration, ZoneGeneration: receipt.ZoneGeneration, IsAIEnabled: receipt.IsAIEnabled,
-		ObjectID: receipt.ObjectID, Noun: receipt.NounName, IsAdmitted: receipt.IsAdmitted, IsPublished: receipt.IsPublished, IsNativeObserved: false, Failure: receipt.Failure, Source: "server_spawn_receipt"}
+		ObjectID: receipt.ObjectID, Noun: receipt.NounName, IsFixture: receipt.IsFixture, IsAdmitted: receipt.IsAdmitted, IsPublished: receipt.IsPublished, IsNativeObserved: false, Failure: receipt.Failure, Source: "server_spawn_receipt"}
 }
 
 func inspectDebugWorldSpawn(ctx context.Context, host *debugHost, owner debugWorldOwner, receipt scenario.SpawnReceipt) error {
@@ -113,10 +114,11 @@ func executeDebugWorldSpawn(ctx context.Context, host *debugHost, clientManager 
 			return result, fmt.Errorf("spawnPrecheck: %w", err)
 		}
 		spawnRequest := scenario.SpawnRequest{RunID: host.runID, UserID: owner.client.UserID, GameID: world.GameID, PeerGeneration: world.PeerGeneration, ZoneGeneration: world.ZoneGeneration, NounName: req.Noun}
-		if operation == "client.spawn_controlled_npc" {
+		if operation == "client.spawn_controlled_npc" || operation == "client.spawn_controlled_fixture" {
 			isAIEnabled := false
 			spawnRequest.IsAIEnabled = &isAIEnabled
 		}
+		spawnRequest.IsFixture = operation == "client.spawn_controlled_fixture"
 		receipt, err = host.server.DebugSpawnNPC(waitContext, spawnRequest)
 		if err != nil {
 			return debugWorldSpawnDTO(owner, receipt), fmt.Errorf("spawnQueue: %w", err)
@@ -137,7 +139,7 @@ func executeDebugWorldSpawn(ctx context.Context, host *debugHost, clientManager 
 		if receipt.State == "failed" || receipt.Failure != "" {
 			return result, &control.ScenarioError{Code: control.NotAvailable, Context: "spawnFailed", Message: receipt.Failure}
 		}
-		if (operation != "client.spawn_npc" && operation != "client.spawn_controlled_npc") || receipt.IsPublished {
+		if (operation != "client.spawn_npc" && operation != "client.spawn_controlled_npc" && operation != "client.spawn_controlled_fixture") || receipt.IsPublished {
 			return result, nil
 		}
 		select {

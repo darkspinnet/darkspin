@@ -296,7 +296,7 @@ func (e campaignCorruptorPortalStep) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("portalRepeat: %w", err)
 	}
-	actionPackets, err := e.runtime.scheduleFirstActions(e.packet, e.sessionKey,
+	actionPackets, err := e.runtime.scheduleOwnedFirstActions(e.packet, e.sessionKey,
 		e.generation, actionPlans, e.timestamp)
 	if err != nil {
 		return nil, fmt.Errorf("portalActions: %w", err)

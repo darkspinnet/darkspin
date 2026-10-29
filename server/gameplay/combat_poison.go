@@ -9,6 +9,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
+	zoneeffect "github.com/darkspinnet/darkspin/server/zone/effect"
 	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
 	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
@@ -72,16 +73,20 @@ func (e *campaignNPCDiseaseRun) rollback(objectID uint32) {
 }
 
 type campaignNPCPoisonRun struct {
-	key        campaignNPCPoisonKey
-	modifier   *campaignNPCModifierRun
-	packet     raknet.Packet
-	plan       zonenpc.AttackPlan
-	binding    game.GameplayBinding
-	tickDamage game.DamageRange
-	revision   uint64
-	stackCount uint32
-	cancel     raknet.CancelSchedule
-	disease    *campaignNPCDiseaseRun
+	key                    campaignNPCPoisonKey
+	modifier               *campaignNPCModifierRun
+	packet                 raknet.Packet
+	plan                   zonenpc.AttackPlan
+	binding                game.GameplayBinding
+	tickDamage             game.DamageRange
+	revision               uint64
+	stackCount             uint32
+	cancel                 raknet.CancelSchedule
+	disease                *campaignNPCDiseaseRun
+	stackingExpiryRevision uint64
+	stackingExpiryCancel   raknet.CancelSchedule
+	stackingTickAt         time.Time
+	stackingTickTimestamp  uint64
 }
 
 type campaignNPCPoisonKey struct {
@@ -90,13 +95,14 @@ type campaignNPCPoisonKey struct {
 }
 
 type campaignNPCPoisonStep struct {
-	runtime    campaignNPCActionRuntime
-	sessionKey string
-	generation uint64
-	timestamp  uint64
-	tickIndex  uint32
-	revision   uint64
-	run        *campaignNPCPoisonRun
+	runtime        campaignNPCActionRuntime
+	sessionKey     string
+	generation     uint64
+	timestamp      uint64
+	tickIndex      uint32
+	revision       uint64
+	run            *campaignNPCPoisonRun
+	stackingTickAt time.Time
 }
 
 func (e campaignNPCPoisonStep) produce() ([][]byte, error) {
@@ -110,6 +116,10 @@ func (e campaignNPCPoisonStep) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	profile := e.run.plan.Profile
+	if isCadencedNPCPoison(profile.ModifierName) && e.run.stackingTickAt != e.stackingTickAt {
+		e.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
 	if profile.ModifierName == "ShadowCurse" {
 		source, isSourceFound := peerSession.zone.NPCs().NPC(e.run.plan.SourceObjectID)
 		target, isTargetFound := peerSession.campaignNPCTarget(e.generation, e.run.plan.TargetObjectID)
@@ -154,8 +164,15 @@ func (e campaignNPCPoisonStep) produce() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("enemyPoisonDamage: %w", err)
 	}
+	if isCadencedNPCPoison(profile.ModifierName) {
+		e.run.stackingTickAt = e.stackingTickAt.Add(profile.ModifierTickDuration)
+		e.run.stackingTickTimestamp = e.timestamp + uint64(profile.ModifierTickDuration/time.Millisecond)
+	}
 	isFinal := time.Duration(e.tickIndex)*profile.ModifierTickDuration >=
 		profile.ModifierDuration
+	if isCadencedNPCPoison(profile.ModifierName) {
+		isFinal = false
+	}
 	if isFinal {
 		delete(peerSession.campaignNPCPoisons, e.run.key)
 		peerSession.untrackCampaignNPCModifier(e.run.modifier)
@@ -224,6 +241,12 @@ func (e campaignNPCPoisonStep) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("enemyPoisonStats: %w", err)
 	}
+	if isCadencedNPCPoison(profile.ModifierName) {
+		err = e.scheduleStackingBurnTick()
+		if err != nil {
+			return packets, fmt.Errorf("burnTick: %w", err)
+		}
+	}
 	return packets, nil
 }
 
@@ -246,6 +269,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCDisease(
 	generation uint64,
 	plan zonenpc.AttackPlan,
 	timestamp uint64,
+	retainedTickDamages ...game.DamageRange,
 ) ([][]byte, error) {
 	profile := plan.Profile
 	if sessionKey == "" || generation == 0 ||
@@ -279,21 +303,29 @@ func (r campaignNPCActionRuntime) applyCampaignNPCDisease(
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
-	source, isSourceFound := peerSession.zone.NPCs().NPC(plan.SourceObjectID)
-	if !isSourceFound {
-		r.registry.mutex.Unlock()
-		return nil, nil
-	}
 	tickDamage := game.DamageRange{
 		Minimum: profile.ModifierTickDamage,
 		Maximum: profile.ModifierTickDamage,
 	}
-	if profile.ModifierMinimumTickDamage > 0 {
-		var err error
-		tickDamage, err = zonenpc.ResolveModifierTickDamage(source, profile)
-		if err != nil {
+	if len(retainedTickDamages) != 0 {
+		tickDamage = retainedTickDamages[0]
+	} else {
+		source, isSourceFound := peerSession.zone.NPCs().NPC(plan.SourceObjectID)
+		if !isSourceFound {
 			r.registry.mutex.Unlock()
-			return nil, fmt.Errorf("enemyPoisonTickDamage: %w", err)
+			return nil, nil
+		}
+		if profile.ModifierName == "MushroomCryosPoison" && (!source.IsPublished || source.IsDefeated || source.HitPoint <= 0) {
+			r.registry.mutex.Unlock()
+			return nil, nil
+		}
+		if profile.ModifierMinimumTickDamage > 0 {
+			var err error
+			tickDamage, err = zonenpc.ResolveModifierTickDamage(source, profile)
+			if err != nil {
+				r.registry.mutex.Unlock()
+				return nil, fmt.Errorf("enemyPoisonTickDamage: %w", err)
+			}
 		}
 	}
 	if peerSession.campaignNPCPoisons == nil {
@@ -303,7 +335,21 @@ func (r campaignNPCActionRuntime) applyCampaignNPCDisease(
 		targetObjectID: plan.TargetObjectID, modifierName: profile.ModifierName,
 	}
 	previous := peerSession.campaignNPCPoisons[key]
-	if previous != nil && (isCampaignNPCDiseaseProfile(profile) || profile.ModifierName == "ShadowCurse") {
+	if previous != nil && isCadencedNPCPoison(profile.ModifierName) {
+		var packets [][]byte
+		var refreshErr error
+		if profile.ModifierName == "MushroomCryosPoison" {
+			packets, refreshErr = r.refreshMushroomPoisonLocked(packet, sessionKey, generation, previous, timestamp)
+		} else {
+			packets, refreshErr = r.refreshStackingBurnLocked(packet, sessionKey, generation, previous, plan, timestamp)
+		}
+		r.registry.mutex.Unlock()
+		if refreshErr != nil {
+			return nil, fmt.Errorf("burnRefresh: %w", refreshErr)
+		}
+		return packets, nil
+	}
+	if previous != nil && (isCampaignNPCDiseaseProfile(profile) || profile.ModifierName == "ShadowCurse" || profile.ModifierName == "NomadSpecialFour_Poison") {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
@@ -330,6 +376,9 @@ func (r campaignNPCActionRuntime) applyCampaignNPCDisease(
 		run = &campaignNPCPoisonRun{
 			key: key, modifier: modifier, binding: peerSession.binding,
 			packet: packet, disease: disease,
+		}
+		if profile.ModifierName == "MushroomCryosPoison" {
+			modifier.record = zoneeffect.Modifier{InstanceID: modifier.instanceID, GUID: profile.ModifierGUID(), SourceObjectID: plan.SourceObjectID, TargetObjectID: plan.TargetObjectID, Duration: profile.ModifierDuration, Rank: uint32(max(int32(1), profile.AbilityRank)), Kind: zoneeffect.ModifierKindDebuff}
 		}
 		err = peerSession.trackCampaignNPCModifier(modifier)
 		if err != nil {
@@ -359,6 +408,10 @@ func (r campaignNPCActionRuntime) applyCampaignNPCDisease(
 	run.tickDamage = tickDamage
 	run.revision++
 	run.stackCount = min(profile.ModifierMaximumStack, run.stackCount+1)
+	if isCadencedNPCPoison(profile.ModifierName) {
+		run.stackingTickAt = r.now().Add(profile.ModifierTickDuration)
+		run.stackingTickTimestamp = timestamp + uint64(profile.ModifierTickDuration/time.Millisecond)
+	}
 	revision := run.revision
 	stackCount := run.stackCount
 	peerSession.campaignNPCPoisons[key] = run
@@ -386,6 +439,9 @@ func (r campaignNPCActionRuntime) applyCampaignNPCDisease(
 	}
 
 	tickCount := uint32(profile.ModifierDuration / profile.ModifierTickDuration)
+	if isCadencedNPCPoison(profile.ModifierName) {
+		tickCount = 1
+	}
 	producers := make([]raknet.ScheduledPacketProducer, 0, tickCount)
 	for tickIndex := uint32(1); tickIndex <= tickCount; tickIndex++ {
 		delay := time.Duration(tickIndex) * profile.ModifierTickDuration
@@ -393,6 +449,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCDisease(
 			runtime: r, sessionKey: sessionKey, generation: generation,
 			timestamp: timestamp + uint64(delay/time.Millisecond),
 			tickIndex: tickIndex, revision: revision, run: run,
+			stackingTickAt: run.stackingTickAt,
 		}
 		producers = append(producers, raknet.ScheduledPacketProducer{
 			Delay: delay, Produce: step.produce,
@@ -434,6 +491,30 @@ func (r campaignNPCActionRuntime) applyCampaignNPCDisease(
 	}
 	if isNew {
 		run.modifier.create()
+	}
+	if isCadencedNPCPoison(profile.ModifierName) {
+		r.registry.mutex.Lock()
+		refreshErr := r.scheduleStackingBurnExpiryLocked(packet, sessionKey, generation, run, timestamp)
+		r.registry.mutex.Unlock()
+		if refreshErr != nil {
+			cancel()
+			r.rollbackCampaignNPCPoison(sessionKey, generation, run, isNew, previousPlan,
+				previousTickDamage, previousRevision, revision, previousStackCount, previousCancel)
+			return nil, fmt.Errorf("burnExpiry: %w", refreshErr)
+		}
+	}
+	if isNew && profile.ModifierName == "MushroomCryosPoison" {
+		r.registry.mutex.Lock()
+		member, isFound := r.registry.sessions[sessionKey]
+		var effectErr error
+		if isFound && member.generation == generation && member.campaignNPCPoisons[key] == run {
+			effectErr = r.attachMushroomPoisonLocked(member, run.modifier)
+		}
+		r.registry.mutex.Unlock()
+		if effectErr != nil {
+			r.rollbackCampaignNPCPoison(sessionKey, generation, run, isNew, previousPlan, previousTickDamage, previousRevision, revision, previousStackCount, previousCancel)
+			return nil, fmt.Errorf("mushroomPoisonEffect: %w", effectErr)
+		}
 	}
 	return [][]byte{createPacket}, nil
 }

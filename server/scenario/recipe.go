@@ -30,6 +30,7 @@ type SpawnRequest struct {
 	ZoneGeneration uint64
 	NounName       string
 	IsAIEnabled    *bool
+	IsFixture      bool
 }
 
 // IsPublished is the owning response's server send commitment, not native
@@ -46,6 +47,7 @@ type SpawnReceipt struct {
 	ObjectID            uint32
 	NounName            string
 	IsAIEnabled         bool
+	IsFixture           bool
 	IsAdmitted          bool
 	IsPublished         bool
 	IsNativeObserved    bool

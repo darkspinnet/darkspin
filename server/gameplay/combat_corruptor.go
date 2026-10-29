@@ -322,7 +322,7 @@ func (e campaignCorruptorPortalRespawnStep) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("portalTimers: %w", err)
 	}
-	actionPackets, err := e.runtime.scheduleFirstActions(
+	actionPackets, err := e.runtime.scheduleOwnedFirstActions(
 		e.packet, e.sessionKey, e.generation, actionPlans, e.timestamp,
 	)
 	if err != nil {
@@ -588,9 +588,9 @@ func admitCorruptorPopulation(
 	if err != nil {
 		return fmt.Errorf("corruptorPopulationAdd: %w", err)
 	}
-	err = peerSession.zone.PublishNPCSpawn(zoneprojection.NPCSpawn{
+	err = peerSession.zone.RecordNPCSpawn(zoneprojection.NPCSpawn{
 		Plans: plainPlans, TargetObjectID: targetObjectID,
-	}, peerSession.binding.UserID, peerSession.generation)
+	})
 	if err != nil {
 		rollbackErr := peerSession.zone.NPCs().RollbackAdd(plainPlans)
 		return fmt.Errorf(

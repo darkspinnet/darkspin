@@ -44,14 +44,17 @@ type NPCControlReceipt struct {
 }
 
 type ControlledNPCState struct {
-	Identity              ControlledNPCIdentity
-	IsAvailable           bool
-	UnavailableReason     string
-	IsAIEnabled           bool
-	Position              WorldPosition
-	HitPoint              float32
-	IsDead                bool
-	SupportedAbilityNames []string
-	ActionGeneration      uint64
-	LastCommand           *NPCControlReceipt
+	Identity                    ControlledNPCIdentity
+	IsAvailable                 bool
+	UnavailableReason           string
+	IsAIEnabled                 bool
+	IsFixture                   bool
+	IsRetirementReady           bool
+	RetirementUnavailableReason string
+	Position                    WorldPosition
+	HitPoint                    float32
+	IsDead                      bool
+	SupportedAbilityNames       []string
+	ActionGeneration            uint64
+	LastCommand                 *NPCControlReceipt
 }

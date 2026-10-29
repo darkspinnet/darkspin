@@ -25,7 +25,7 @@ type campaignFireVent struct {
 	isDefeated     bool
 }
 
-func (e *gameplayPeerSession) pollFireVents(runtime campaignNPCActionRuntime, timestamp uint64, now time.Time) ([][]byte, sporenet.PlayerStatDelta, error) {
+func (e *gameplayPeerSession) pollFireVents(runtime campaignNPCActionRuntime, req raknet.Packet, now time.Time) ([][]byte, sporenet.PlayerStatDelta, error) {
 	packets := make([][]byte, 0)
 	stats := sporenet.PlayerStatDelta{}
 	if e.fireVents == nil {
@@ -96,7 +96,14 @@ func (e *gameplayPeerSession) pollFireVents(runtime campaignNPCActionRuntime, ti
 			packets = append(packets, packet)
 			if e.deployedObjectID != 0 && e.deployedHitPoint() > 0 {
 				target, isFound := e.campaignNPCTarget(e.generation, e.deployedObjectID)
-				if isFound && target.Position.Sub(vent.Plan.Position).Length() <= 0.1+target.ActorFootprintRadius {
+				if isFound {
+					target, sampleErr := e.sampleNPCTarget(target, now)
+					if sampleErr != nil {
+						return nil, stats, fmt.Errorf("ventPosition: %w", sampleErr)
+					}
+					if target.Position.Sub(vent.Plan.Position).Length() > 0.1+target.ActorFootprintRadius {
+						continue
+					}
 					profile := zonenpc.ActionProfile{Family: zonenpc.ActionRetainedArea,
 						AbilityName: "VentFlameCone", MinimumDamage: 10, MaximumDamage: 20,
 						IsRetainedVolumeDamage: true,
@@ -110,11 +117,12 @@ func (e *gameplayPeerSession) pollFireVents(runtime campaignNPCActionRuntime, ti
 					if err != nil {
 						return nil, stats, fmt.Errorf("ventRoll: %w", err)
 					}
-					hits, delta, isApplied, err := runtime.applyEnemyDamage(e, e.generation, plan, result, timestamp, false, false, false)
+					hits, delta, isApplied, err := runtime.applyEnemyDamage(e, e.generation, plan, result, req.SourceTime, false, false, false)
 					if err != nil {
 						return nil, stats, fmt.Errorf("ventDamage: %w", err)
 					}
 					packets = append(packets, hits...)
+					peerPackets := append([][]byte(nil), hits...)
 					stats.PVEDamageTaken += delta.PVEDamageTaken
 					if isApplied {
 						asset = 0x78da313e
@@ -123,12 +131,36 @@ func (e *gameplayPeerSession) pollFireVents(runtime campaignNPCActionRuntime, ti
 							return nil, stats, fmt.Errorf("ventHit: %w", err)
 						}
 						packets = append(packets, packet)
+						peerPackets = append(peerPackets, packet)
+					}
+					err = e.publishFireVentHitAfterCommit(runtime.registry, req, peerPackets)
+					if err != nil {
+						return nil, stats, fmt.Errorf("ventHitPublish: %w", err)
 					}
 				}
 			}
 		}
 	}
 	return packets, stats, nil
+}
+
+// The caller holds registry.mutex. Capture this recipient's identity directly
+// instead of asking producerGuard to acquire the same lock. Warnings and vent
+// eruptions already have one phase receipt per member; only a recipient's hit
+// feedback needs peer delivery after its local response commits.
+func (e gameplayPeerSession) publishFireVentHitAfterCommit(registry *gameplaySessionRegistry, req raknet.Packet, packets [][]byte) error {
+	if len(packets) == 0 {
+		return nil
+	}
+	publication := campaignPeerPublication{
+		registry: registry, identity: gameplayProducerIdentityFromSession(req.Address.String(), e, true),
+		packets: clonePendingPackets(packets),
+	}
+	err := req.AfterResponseCommit(publication.commit)
+	if err != nil {
+		return fmt.Errorf("ventPeerCommit: %w", err)
+	}
+	return nil
 }
 
 // Some maps place the bare, noncombatant vent instead of its damageable prefab.

@@ -340,6 +340,8 @@ type controlledHeroState struct {
 	droneFollows                  map[uint32]*campaignDroneFollowStep
 	npcSupportIdles               map[uint32]*campaignNPCSupportIdle
 	additionalKitMoves            map[uint32]*additionalKitMove
+	plasmaWall                    plasmaWallState
+	nomadFrogPools                map[uint32]*nomadFrogPool
 	enemyRootExpiresAt            time.Time
 	enemyRootTargetObjectID       uint32
 	enemyControlPresentedObjectID uint32
@@ -635,7 +637,7 @@ type gameplayPeerSession struct {
 	schedulePackets                      func(time.Duration, [][]byte) error
 	schedulePacket                       raknet.Packet
 	pendingPacketBatches                 []pendingPeerPacketBatch
-	pendingPacketResponseTraceID         uint64
+	pendingPacketResponseID              uint64
 	mutationBaselineRevision             uint64
 	isMutationBaselineRequired           bool
 	mutationResetObjectIDs               []uint32

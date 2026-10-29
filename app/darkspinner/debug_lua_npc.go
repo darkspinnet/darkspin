@@ -31,11 +31,19 @@ func registerDebugLuaNPC(state *lua.LState) {
 }
 
 func debugLuaWorldSpawnControlled(state *lua.LState) int {
+	return debugLuaWorldSpawnControlledRole(state, "client.spawn_controlled_npc")
+}
+
+func debugLuaWorldSpawnFixture(state *lua.LState) int {
+	return debugLuaWorldSpawnControlledRole(state, "client.spawn_controlled_fixture")
+}
+
+func debugLuaWorldSpawnControlledRole(state *lua.LState, operation string) int {
 	scope := debugLuaScopeSelf(state)
 	if scope == nil {
 		return 0
 	}
-	count := scope.client.invoke(state, "client.spawn_controlled_npc", map[string]any{
+	count := scope.client.invoke(state, operation, map[string]any{
 		"client_id": scope.client.id, "noun": state.CheckString(2), "timeout_ms": debugLuaClientTimeout(state, scope.client, 3),
 	}, true)
 	request := debugLuaPendingYield(state, count)

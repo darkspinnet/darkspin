@@ -53,7 +53,7 @@ func OperativeProfile(nounName string) (ActionProfile, bool) {
 
 func IsOperativeCage(modifierName string) bool {
 	return modifierName == "NomadCyberOne_CageModifier" ||
-		modifierName == "NomadSpacetimeAgent_CageModifier" || modifierName == "NocturnaSpecialHaunt_LockdownModifier" || modifierName == "LightningCage"
+		modifierName == "NomadSpacetimeAgent_CageModifier" || modifierName == "NocturnaSpecialHaunt_LockdownModifier" || modifierName == "LightningCage" || modifierName == "NomadSpecialFour_CageModifier"
 }
 
 // SpacetimeBlinkProfile follows build-103 chunk445. Its low-health admission

@@ -324,7 +324,11 @@ func (s *Server) pollAndWriteConnected(
 	candidate peerExpiryCandidate,
 ) error {
 	if candidate.address == nil || candidate.peer == nil ||
-		!candidate.peer.outboundMu.TryLock() {
+		!candidate.peer.applicationResponseMu.TryLock() {
+		return nil
+	}
+	defer candidate.peer.applicationResponseMu.Unlock()
+	if !candidate.peer.outboundMu.TryLock() {
 		return nil
 	}
 	defer candidate.peer.outboundMu.Unlock()
@@ -338,7 +342,7 @@ func (s *Server) pollAndWriteConnected(
 	if !isCurrent {
 		return nil
 	}
-	commitCollector := &responseCommitCollector{}
+	commitCollector := newResponseCommitCollector()
 	pollContext := context.WithValue(
 		ctx, responseCommitContextKey{}, commitCollector,
 	)

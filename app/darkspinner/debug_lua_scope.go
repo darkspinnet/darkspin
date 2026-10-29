@@ -130,6 +130,8 @@ func debugLuaScopeIndex(state *lua.LState) int {
 			state.Push(state.NewFunction(debugLuaWorldSpawn))
 		case "SpawnControlledNPC", "SpawnControlled":
 			state.Push(state.NewFunction(debugLuaWorldSpawnControlled))
+		case "SpawnControlledFixture":
+			state.Push(state.NewFunction(debugLuaWorldSpawnFixture))
 		case "SpawnAsync":
 			state.Push(state.NewFunction(debugLuaWorldSpawnAsync))
 		case "SnapshotSpawn", "SpawnSnapshot":

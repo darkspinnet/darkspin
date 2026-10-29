@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
+	"github.com/darkspinnet/darkspin/server/util"
 	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
@@ -20,6 +21,9 @@ func (e gameplayPeerSession) isOperativeCaged(at time.Time) bool {
 		return false
 	}
 	sourceID := run.record.SourceObjectID
+	if run.frogCage != nil {
+		return e.isNomadFrogCageActive(at)
+	}
 	enemy, isFound := e.zone.NPCs().NPC(sourceID)
 	return isFound && !enemy.IsDefeated && enemy.HitPoint > 0 &&
 		enemy.IsActionStarted &&
@@ -86,6 +90,9 @@ func (e campaignNPCActionRuntime) bindOperativeCage(
 ) ([][]byte, bool, error) {
 	e.registry.mutex.Lock()
 	defer e.registry.mutex.Unlock()
+	if run.record.GUID == util.HashID("NomadSpecialFour_CageModifier") {
+		return e.bindNomadFrogCage(source, run)
+	}
 	state := source.operativeChannels[run.record.SourceObjectID]
 	if state == nil || state.isComplete || state.run != nil {
 		return nil, false, nil
@@ -141,7 +148,7 @@ func (e gameplayPendingRuntime) pollOperativeCages(packet raknet.Packet) error {
 	target, isFound := e.registry.sessions[packet.Address.String()]
 	run := target.operativeCage
 	if !isFound || run == nil ||
-		(target.isOperativeCaged(e.now()) && e.registry.hasOperativeRescuerLocked(target) && run.operativeCage != nil && run.operativeCage.connectedPlayerCount == e.registry.operativePlayerCountLocked(target.zone)) {
+		target.isCageContinuationValid(e.registry, e.now()) {
 		e.registry.mutex.Unlock()
 		return nil
 	}
@@ -212,6 +219,15 @@ func (e *gameplaySessionRegistry) retireOperativeChannelsLocked(
 ) error {
 	if member == nil {
 		return nil
+	}
+	plasmaPackets, plasmaErr := member.stopPlasmaWalls(0)
+	if plasmaErr != nil {
+		return fmt.Errorf("plasmaRetire: %w", plasmaErr)
+	}
+	member.queuePackets(plasmaPackets)
+	poolErr := e.retireNomadFrogPoolsLocked(member)
+	if poolErr != nil {
+		return fmt.Errorf("frogPoolsRetire: %w", poolErr)
 	}
 	runs := make(map[uint32]*campaignNPCModifierRun)
 	var packets [][]byte

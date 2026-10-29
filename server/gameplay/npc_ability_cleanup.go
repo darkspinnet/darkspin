@@ -24,6 +24,11 @@ func (e campaignNPCActionRuntime) stopAdditionalNPCAbilities(
 			continue
 		}
 		member.stopCampaignMerakStorms(objectID)
+		plasmaPackets, plasmaErr := member.stopPlasmaWalls(objectID)
+		if plasmaErr != nil {
+			return nil, fmt.Errorf("plasmaCleanup: %w", plasmaErr)
+		}
+		packets = append(packets, plasmaPackets...)
 		blinkErr := member.retireSpacetimeBlinkLocked(objectID, 0)
 		if blinkErr != nil {
 			return nil, fmt.Errorf("blinkCleanup: %w", blinkErr)

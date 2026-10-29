@@ -255,7 +255,7 @@ func ActionProfileForPlan(plan SpawnPlan) (ActionProfile, bool) {
 			authoredCombatSpeed(plan, IntroductionProfile(plan, profile)), plan,
 		), true
 	}
-	profile, isFound := ActionProfileForNoun(plan.NounName)
+	profile, isFound := RecoveredActionProfileForPlan(plan)
 	if isFound {
 		profile = zelemSpecialTwoDecisionProfile(plan, profile)
 		return ApplyAffixTiming(
@@ -3681,6 +3681,14 @@ func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
 	if isAdditional {
 		return additionalProfile, true
 	}
+	basicProfile, isBasic := basicActorProfile(nounName)
+	if isBasic {
+		return basicProfile, true
+	}
+	frogProfile, isFrog := NomadSpecialFourProfile(nounName)
+	if isFrog {
+		return frogProfile, true
+	}
 	supportSpells := SupportSpells(SpawnPlan{NounName: nounName})
 	if len(supportSpells) != 0 {
 		return supportSpells[0].Profile, true
@@ -3708,13 +3716,8 @@ func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
 		return NashiraShadowTossProfile(nounName)
 	case "cryosboss.noun", "cryosboss_2.noun", "cryosboss_3.noun":
 		return CryosBossChainLightningProfile(nounName)
-	case "cryosplasmaadd.noun":
-		profile := cryosBasicFieryMeleeProfile(
-			2500*time.Millisecond, 3*time.Second,
-		)
-		profile.PassiveEffectName =
-			"fire_wall_minion_onfire_effect.ServerEventDef"
-		return profile, true
+	case "cryosplasmaadd.noun", "cryosplasmaadd_2.noun", "cryosplasmaadd_3.noun":
+		return PlasmaWallProfile(), true
 	case "citadelboss.noun", "citadelboss_2.noun", "citadelboss_3.noun":
 		return citadelBossTwinLaserProfile(nounName)
 	case "scaldronboss.noun", "scaldronboss_stage2.noun",

@@ -1,7 +1,24 @@
 # Changelog
 
+### 2026-10-29
+
+- Restore authored Drainer, Stealther and Cryos Poison behavior for 66 showcase noun aliases while preserving their own classes, ranks and attributes.
+- Let Drainer melee pursuit resume after its drain channel instead of repeatedly rejecting the secondary attack.
+- Restore Critter's Bite and Gunner's four-projectile BurstShot with their authored timing and effects.
+- Restore all three NomadSpecialFour ranks' distance-selected throws, close attacks, cages, poison pools and jump continuations.
+- Replace Cryos Plasma Add's generic melee with its authored moving plasma walls, retained segments and refreshed burn cadence across all three ranks.
+- Start Reactive Plasma Sentinel pets' attacks after their published birth so summoned pets attack on both co-op clients.
+- Deliver Concussive Orbit's impact and stun, Scaldron's continuing cast animations and remote hero hit feedback to the observing co-op player.
+- Prevent duplicate fixture destruction, NPC self-death and area-kill presentation by giving each transition one packet publication owner.
+- Restore instrument destruction damage and surviving targets' native knockback jumps, including navigation clipping, landing and recovery.
+- Restore both Cryos mushroom nouns' living poison aura, authored poison cadence and immediate death cleanup instead of a fabricated damaging dead cloud.
+- Detect moving heroes inside hazard volumes and deliver factory vent damage feedback to co-op observers.
+- Restore factory light destruction, delayed Mutation Agent egg damage and deletion, and Exploding Tree's delayed three-second Fear with retained dead graphics.
+- Add controlled destructible scenario spawning and admit the seven tutorial actors' authored kits to co-op audit scenarios without enabling the tutorial director.
 ### 2026-10-28
 
+- Restore Lightning Pet's Lightning Cage casts by admitting the zero-damage control channel without requiring attack damage, verified for higher pet ranks and summons from all three NomadPets variants in co-op.
+- Reuse co-op pairs across NPC scenario batches with hero restoration, AI-off retirement, paired final hero observations, and separate noun-case and client-pair totals.
 - #143 Keep noncombatant Cryos geysers and factory vents out of damageable fixture spawning while retaining their automatic hazard cycles.
 - #143 Restore the authored Cryos stalagmite destruction effect and 0.2-second removal instead of generic explosions and creature death animations.
 - #143 Restore squad health as well as power when continuing into the next chained mission.
@@ -16,18 +33,18 @@
 - Remove the saved-password status area below the Remote Crogenitor card.
 - Replace the remote profile's Check Connection button with a small refresh icon below the Crogenitor portrait.
 - Move remote server availability and shortened version into the Server row, highlight incompatible versions in red, and show full client/server versions on hover.
-- pve: Add a co-op batch scenario for all 95 castable hero abilities using hero swaps, controlled enemy restoration, cooldown resets, and caster/observer packet evidence.
-- pve: Preserve mission defense conversion during scenario hero swaps so defense-scaled basic attacks remain castable.
-- pve: Make Arc Weld hit an explicitly selected hostile target even when it is idle or attacking a co-op teammate.
-- pve: Sweep 257 recovered NPC noun variants and 33 secondary actions across four co-op pairs on one scenario server, with restored heroes and paired native captures.
-- pve: Extend the co-op NPC ability sweep from 257 ordinary variants to 323 including authored captain profiles, and verify 48 secondary actions with matching two-client receive content.
-- pve: Extend the co-op NPC sweep from 323 to 335 variants with Zelem Haster ally buffs and Rezzer resurrection, and verify 54 secondary actions across 389 matching two-client cast windows.
-- pve: Admit all three Shadow Boss minion ranks to the controlled co-op sweep and verify Shadow Boss Minion Bolt damage with exact two-client packet parity.
-- pve: Complete controlled NPC follow-on projectiles, paired beam links, clones, and pack actions through their authored effects and owned cleanup.
-- pve: Move Stealth Attack enemies to caster-reachable destinations so their stealth, fear, and hits play through in co-op.
-- pve: Align Shadow Boss and Cryos Boss melee selection with pursuit stop distance, preventing repeated pursuit at the melee boundary.
-- pve: Expose authored boss triggers to scenarios and verify six first-campaign boss encounters with paired native action captures.
-- pvp: Retire Phantom Charge and Omni Shield action leases when their release packets commit, preventing late rejected responses.
+- Add a co-op batch scenario for all 95 castable hero abilities using hero swaps, controlled enemy restoration, cooldown resets, and caster/observer packet evidence.
+- Preserve mission defense conversion during scenario hero swaps so defense-scaled basic attacks remain castable.
+- Make Arc Weld hit an explicitly selected hostile target even when it is idle or attacking a co-op teammate.
+- Sweep 257 recovered NPC noun variants and 33 secondary actions across four co-op pairs on one scenario server, with restored heroes and paired native captures.
+- Extend the co-op NPC ability sweep from 257 ordinary variants to 323 including authored captain profiles, and verify 48 secondary actions with matching two-client receive content.
+- Extend the co-op NPC sweep from 323 to 335 variants with Zelem Haster ally buffs and Rezzer resurrection, and verify 54 secondary actions across 389 matching two-client cast windows.
+- Admit all three Shadow Boss minion ranks to the controlled co-op sweep and verify Shadow Boss Minion Bolt damage with exact two-client packet parity.
+- Complete controlled NPC follow-on projectiles, paired beam links, clones, and pack actions through their authored effects and owned cleanup.
+- Move Stealth Attack enemies to caster-reachable destinations so their stealth, fear, and hits play through in co-op.
+- Align Shadow Boss and Cryos Boss melee selection with pursuit stop distance, preventing repeated pursuit at the melee boundary.
+- Expose authored boss triggers to scenarios and verify six first-campaign boss encounters with paired native action captures.
+- Retire Phantom Charge and Omni Shield action leases when their release packets commit, preventing late rejected responses.
 - #140 Show live remote server availability and versions, block unreachable launches, and enforce matching client/server major and minor versions before launch and at login while allowing patch and unstable differences.
 - #140 Add a Docker maintenance update command that reuses player warnings, clean shutdown, backups, and bootstrap recovery, including when automatic updates are disabled.
 - #141 Accept build-103 signed editor costs so hero resets and removed cosmetic edits can refund DNA instead of returning an error.

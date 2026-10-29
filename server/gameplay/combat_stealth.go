@@ -243,7 +243,7 @@ func (e campaignStealtherSchedule) cast(timestamp uint64) ([][]byte, error) {
 	target, isTargetFound := peerSession.campaignNPCTarget(
 		e.generation, enemy.TargetObjectID,
 	)
-	profile, isProfileFound := zonenpc.StealtherStealthProfile(enemy.Plan.NounName)
+	profile, isProfileFound := zonenpc.StealtherStealthProfile(zonenpc.ActionNounName(enemy.Plan))
 	if !isEnemyFound || !isTargetFound || !isProfileFound {
 		e.runtime.registry.mutex.Unlock()
 		e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)

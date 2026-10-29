@@ -42,19 +42,22 @@ type debugNPCCommand struct {
 }
 
 type debugNPCState struct {
-	ClientID              string             `json:"client_id"`
-	InstanceID            string             `json:"instance_id"`
-	PID                   uint32             `json:"pid"`
-	Identity              debugNPCIdentity   `json:"identity"`
-	IsAvailable           bool               `json:"is_available"`
-	UnavailableReason     string             `json:"unavailable_reason,omitempty"`
-	IsAIEnabled           bool               `json:"is_ai_enabled"`
-	Position              debugWorldPosition `json:"position"`
-	HitPoint              float32            `json:"hit_point"`
-	IsDead                bool               `json:"is_dead"`
-	SupportedAbilityNames []string           `json:"supported_ability_names"`
-	ActionGeneration      uint64             `json:"action_generation"`
-	LastCommand           *debugNPCCommand   `json:"last_command,omitempty"`
+	ClientID                    string             `json:"client_id"`
+	InstanceID                  string             `json:"instance_id"`
+	PID                         uint32             `json:"pid"`
+	Identity                    debugNPCIdentity   `json:"identity"`
+	IsAvailable                 bool               `json:"is_available"`
+	UnavailableReason           string             `json:"unavailable_reason,omitempty"`
+	IsAIEnabled                 bool               `json:"is_ai_enabled"`
+	IsFixture                   bool               `json:"is_fixture"`
+	IsRetirementReady           bool               `json:"is_retirement_ready"`
+	RetirementUnavailableReason string             `json:"retirement_unavailable_reason,omitempty"`
+	Position                    debugWorldPosition `json:"position"`
+	HitPoint                    float32            `json:"hit_point"`
+	IsDead                      bool               `json:"is_dead"`
+	SupportedAbilityNames       []string           `json:"supported_ability_names"`
+	ActionGeneration            uint64             `json:"action_generation"`
+	LastCommand                 *debugNPCCommand   `json:"last_command,omitempty"`
 }
 
 type debugNPCRequest struct {
@@ -153,7 +156,8 @@ func executeDebugNPC(ctx context.Context, host *debugHost, manager *debugClientM
 	if operation == "client.controlled_npc_state" {
 		state, stateErr := host.server.DebugControlledNPCState(waitContext, identity)
 		result := debugNPCState{ClientID: req.ClientID, InstanceID: req.InstanceID, PID: req.PID, Identity: debugNPCIdentityDTO(state.Identity),
-			IsAvailable: state.IsAvailable, UnavailableReason: state.UnavailableReason, IsAIEnabled: state.IsAIEnabled,
+			IsAvailable: state.IsAvailable, UnavailableReason: state.UnavailableReason, IsAIEnabled: state.IsAIEnabled, IsFixture: state.IsFixture,
+			IsRetirementReady: state.IsRetirementReady, RetirementUnavailableReason: state.RetirementUnavailableReason,
 			Position: debugWorldPositionDTO(state.Position), HitPoint: state.HitPoint, IsDead: state.IsDead,
 			SupportedAbilityNames: append([]string{}, state.SupportedAbilityNames...), ActionGeneration: state.ActionGeneration}
 		if state.LastCommand != nil {

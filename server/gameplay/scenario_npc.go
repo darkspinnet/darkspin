@@ -46,6 +46,9 @@ func (e *gameplaySessionRegistry) controlledNPCPeerLocked(ctx context.Context, r
 	if err != nil {
 		return peer, state, fmt.Errorf("npcActor: %w", err)
 	}
+	if state.IsFixture != spawn.IsFixture {
+		return peer, state, errors.New("controlled spawn role no longer matches its admitted fixture identity")
+	}
 	return peer, state, nil
 }
 
@@ -62,6 +65,15 @@ func (e *gameplaySessionRegistry) ScenarioControlledNPCState(ctx context.Context
 	}
 	result.IsAvailable = true
 	result.IsAIEnabled = actor.IsAIEnabled
+	result.IsFixture = actor.IsFixture
+	result.IsRetirementReady = true
+	if actor.IsFixture {
+		retirementErr := e.validateFixtureRetirementLocked(peer, req.ObjectID)
+		if retirementErr != nil {
+			result.IsRetirementReady = false
+			result.RetirementUnavailableReason = retirementErr.Error()
+		}
+	}
 	result.IsDead = actor.IsDefeated || actor.HitPoint <= 0
 	result.HitPoint = actor.HitPoint
 	result.Position = scenario.WorldPosition{X: actor.Position.X, Y: actor.Position.Y, Z: actor.Position.Z}
@@ -187,6 +199,9 @@ func (e *gameplaySessionRegistry) reclaimSettledNPCControlLocked() bool {
 }
 
 func validateScenarioNPCRequest(req scenario.NPCControlRequest, peer gameplayPeerSession, actor zonenpc.ScenarioControlState) error {
+	if actor.IsFixture && req.Operation != "restore" && req.Operation != "retire" {
+		return errors.New("controlled fixtures support observation, living health restore and retirement only; use a real hero ability for death callbacks")
+	}
 	switch req.Operation {
 	case "set_ai":
 		if req.IsAIEnabled == nil || req.Destination != nil || req.AbilityName != "" || req.TargetObjectID != 0 {

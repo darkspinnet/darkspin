@@ -162,11 +162,13 @@ func (e campaignNPCActionRuntime) publishThornBarkReflection(
 		e.registry.mutex.Lock()
 		targetSession, isFound := e.registry.sessions[sessionKey]
 		if isFound && targetSession.generation == generation {
-			targetSession.queuePackets(packets)
+			// Shared reflection feedback belongs to the attacking NPC producer's
+			// committed fanout, including delivery back to this remote hero.
+			targetSession.queuePackets(mutationPrivateDamagePackets(packets))
 			e.registry.sessions[sessionKey] = targetSession
 		}
 		e.registry.mutex.Unlock()
-		return nil, nil
+		return gameplayPeerPresentationPackets(packets), nil
 	}
 	return packets, nil
 }

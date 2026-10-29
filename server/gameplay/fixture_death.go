@@ -10,6 +10,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/zone"
 	zonedeath "github.com/darkspinnet/darkspin/server/zone/death"
 	deathraknet "github.com/darkspinnet/darkspin/server/zone/death/raknet103"
+	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
 // Build 103 StalagmiteDeath emits the dedicated particle, waits 0.2 seconds,
@@ -19,6 +20,8 @@ func isCryosStalagmite(nounName string) bool {
 	case "dest_prefab_cryos3_stalagmite_small.noun",
 		"dest_prefab_cryos3_stalagmite_large.noun",
 		"cryos_stalagmite_small_destructible.noun",
+		"dest_cryos2_lvl2_stalagmite_small_destructible.noun",
+		"dest_cryos_stalagmite_small_destructible.noun",
 		"dest_prefab_cryos_stalagmite_small.noun",
 		"dest_prefab_cryos_stalagmite_large.noun":
 		return true
@@ -32,6 +35,27 @@ type campaignFixtureDeath struct {
 	targetID   uint32
 	acceptedAt time.Time
 	world      *zone.Zone
+}
+
+// Fixture publications deliver exact death packets for both blasts and burn
+// ticks. Record state and objectives without creating a second wire owner;
+// subsequent corpse deadlines retain their normal world publication.
+func (e campaignFixtureBlastStep) recordOwnedDeath(deaths []zonenpc.DeathEvent) error {
+	registry := e.runtime.registry
+	registry.mutex.RLock()
+	member, isFound := registry.sessions[e.sessionKey]
+	isCurrent := isFound && member.generation == e.generation &&
+		member.zone != nil && member.zone.NPCs() == e.npc
+	world := member.zone
+	registry.mutex.RUnlock()
+	if !isCurrent {
+		return errors.New("fixture death world replaced")
+	}
+	err := world.RecordNPCDeathObjectives(world.Context(), deaths)
+	if err != nil {
+		return fmt.Errorf("fixtureDeathObjectives: %w", err)
+	}
+	return nil
 }
 
 // Initial feedback is durable before corpse deadlines are admitted. These are

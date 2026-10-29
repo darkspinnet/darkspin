@@ -162,6 +162,10 @@ func (r gameplayPendingRuntime) consumePlayerEventCommand(
 		if publishErr != nil {
 			return nil, false, fmt.Errorf("eventKillPublish: %w", publishErr)
 		}
+		publishErr = publishCampaignPeersAfterCommit(r.registry, packet, packets)
+		if publishErr != nil {
+			return nil, false, fmt.Errorf("eventKillPeers: %w", publishErr)
+		}
 		r.logger.Printf("RakNet developer kill defeated %d enemies for %s", len(result), packet.Address)
 		return packets, true, nil
 	}

@@ -34,6 +34,7 @@ type ScenarioControlState struct {
 	ObjectID             uint32
 	ControlID            string
 	IsAIEnabled          bool
+	IsFixture            bool
 	ControlGeneration    uint64
 	ActionGeneration     uint64
 	IsActionStarted      bool
@@ -83,7 +84,7 @@ type ScenarioMoveResult struct {
 // actions retain their authored identity and combat profile while AI is off.
 func PrepareScenarioControlledPlan(plan SpawnPlan, controlID string) (SpawnPlan, error) {
 	profile, isKnown := ActionProfileForPlan(plan)
-	_, isRecovered := ActionProfileForNoun(plan.NounName)
+	_, isRecovered := RecoveredActionProfileForPlan(plan)
 	name := strings.ToLower(plan.NounName)
 	isCaptain := strings.Contains(name, "_captain")
 	isStandaloneBoss := strings.Contains(name, "boss") && !strings.HasPrefix(name, "shadowbossminion")
@@ -186,6 +187,7 @@ func scenarioControlState(actor Snapshot) ScenarioControlState {
 	control := actor.Plan.scenarioControl
 	profile, isKnown := ActionProfileForPlan(actor.Plan)
 	state := ScenarioControlState{ObjectID: actor.Plan.ObjectID, ControlID: control.controlID,
+		IsFixture:   actor.Plan.IsFixture,
 		IsAIEnabled: control.isAIEnabled, ControlGeneration: control.generation,
 		ActionGeneration: actor.ActionGeneration, IsActionStarted: actor.IsActionStarted,
 		IsDefeated: actor.IsDefeated, IsPublished: actor.IsPublished,
@@ -194,7 +196,7 @@ func scenarioControlState(actor Snapshot) ScenarioControlState {
 		Position: actor.Plan.Position, HitPoint: actor.HitPoint,
 		LastCommand: control.lastCommand, LastCommandAt: control.lastCommandAt, NextActionAt: control.nextActionAt,
 		SupportedAbilities: []string{}}
-	if isKnown {
+	if isKnown && !actor.Plan.IsFixture {
 		state.DefaultAbility = profile.AbilityName
 		state.SupportedAbilities = ScenarioSupportedAbilityNames(actor.Plan)
 	}
@@ -263,7 +265,7 @@ func isScenarioAutonomousOnly(plan SpawnPlan) bool {
 	name = strings.TrimSuffix(strings.TrimSuffix(name, "_2"), "_3")
 	switch name {
 	case "nomadspacetimeagent", "nomadcyberone", "nocturnaspecialhaunt",
-		"nomadpets", "nomadfirepet", "nomadlightningpet", "nomadcyberone_droid":
+		"nomadpets", "nomadfirepet", "nomadlightningpet", "nomadcyberone_droid", "nomadspecialfour", "cryosplasmaadd":
 		return true
 	default:
 		return false
@@ -288,6 +290,10 @@ func ScenarioAutonomousAbilityNames(plan SpawnPlan) []string {
 	name := strings.TrimSuffix(strings.ToLower(plan.NounName), ".noun")
 	name = strings.TrimSuffix(strings.TrimSuffix(name, "_2"), "_3")
 	switch name {
+	case "nomadspecialfour":
+		names = append(names, "NomadSpecialFour", "NomadSpecialFourToss", "NomadSpecialFourVomit", "NomadSpecialFour_Poison", "NomadSpecialFour_CageModifier")
+	case "cryosplasmaadd":
+		names = append(names, "PlasmaWall")
 	case "babymortar":
 		names = append(names, "BabyToss", "Bite")
 	case "creaturex":
@@ -363,6 +369,9 @@ func (e *Session) ScenarioSetAI(req ScenarioAIRequest) (ScenarioControlState, er
 	if err != nil {
 		return ScenarioControlState{}, fmt.Errorf("controlAI: %w", err)
 	}
+	if actor.Plan.IsFixture {
+		return ScenarioControlState{}, errors.New("controlled fixture AI mutation is unsupported; passive owners run independently")
+	}
 	if actor.IsDefeated || actor.HitPoint <= 0 {
 		return ScenarioControlState{}, errors.New("controlled npc is defeated")
 	}
@@ -426,6 +435,9 @@ func (e *Session) ScenarioDefeat(ref ScenarioControlRef) (ScenarioControlState, 
 	if err != nil {
 		return ScenarioControlState{}, fmt.Errorf("controlDefeat: %w", err)
 	}
+	if actor.Plan.IsFixture {
+		return ScenarioControlState{}, errors.New("fixture defeat requires real hero ability damage and its normal callback owner")
+	}
 	if actor.IsScenarioAIEnabled() || actor.IsDefeated || !actor.IsPublished || actor.HitPoint <= 0 || actor.IsActionStarted {
 		return ScenarioControlState{}, errors.New("controlled npc defeat requires a living idle AI-off actor")
 	}
@@ -457,6 +469,9 @@ func (e *Session) ScenarioRetire(ref ScenarioControlRef) (ScenarioControlState, 
 	if err != nil {
 		return ScenarioControlState{}, nil, fmt.Errorf("controlRetire: %w", err)
 	}
+	if actor.Plan.IsFixture && actor.Plan.scenarioControl.lastCommand == "retire" {
+		return scenarioControlState(actor), nil, nil
+	}
 	if actor.IsScenarioAIEnabled() || actor.Plan.scenarioControl.lastCommand == "retire" {
 		return ScenarioControlState{}, nil, errors.New("controlled npc retire requires an AI-off actor not already retired")
 	}
@@ -464,6 +479,9 @@ func (e *Session) ScenarioRetire(ref ScenarioControlRef) (ScenarioControlState, 
 	retiredOwners := map[uint32]bool{ref.ObjectID: true}
 	retiredAt := time.Now()
 	for _, objectID := range e.objectIDs {
+		if objectID == ref.ObjectID {
+			continue
+		}
 		owned := e.npcs[objectID]
 		isOwned := retiredOwners[owned.Plan.OwnerObjectID] ||
 			owned.Plan.scenarioControl.controlID == ref.ControlID
@@ -494,6 +512,9 @@ func (e *Session) ScenarioRetire(ref ScenarioControlRef) (ScenarioControlState, 
 	actor.HitPoint = 0
 	actor.IsDefeated = true
 	actor.IsPublished = false
+	if actor.Plan.IsFixture {
+		actor.IsNavigationCollisionEnabled = false
+	}
 	actor.ActionGeneration++
 	if actor.ActionGeneration == 0 {
 		actor.ActionGeneration = 1
@@ -512,6 +533,9 @@ func (e *Session) ScenarioRetire(ref ScenarioControlRef) (ScenarioControlState, 
 	control.lastCommand = "retire"
 	control.lastCommandAt = retiredAt
 	e.npcs[ref.ObjectID] = actor
+	if actor.Plan.IsFixture {
+		e.recordScenarioFixtureRetirement(actor.Plan)
+	}
 	return scenarioControlState(actor), retiredOwnedObjectIDs, nil
 }
 
@@ -538,7 +562,7 @@ func (e *Session) ScenarioMove(req ScenarioMoveRequest) (ScenarioMoveResult, err
 	if err != nil {
 		return ScenarioMoveResult{}, fmt.Errorf("controlMove: %w", err)
 	}
-	if actor.IsScenarioAIEnabled() || actor.IsDefeated || actor.HitPoint <= 0 || !actor.IsPublished || actor.IsActionStarted ||
+	if actor.Plan.IsFixture || actor.IsScenarioAIEnabled() || actor.IsDefeated || actor.HitPoint <= 0 || !actor.IsPublished || actor.IsActionStarted ||
 		req.ControlGeneration != actor.Plan.scenarioControl.generation || e.navigationMesh == nil || !actor.Navigation.IsPresent {
 		return ScenarioMoveResult{}, errors.New("controlled npc movement is unavailable")
 	}
