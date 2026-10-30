@@ -432,7 +432,7 @@ func campaignNPCDeathDefinition(
 		explosionEffectName: explosionEffectName,
 		deleteDelay:         deleteDelay,
 	}
-	return withExplodingTreeDeath(snapshot, withSmallFixtureDeath(snapshot, withMushroomDeath(snapshot, withMutationAgentDeath(snapshot, definition)))), nil
+	return withDopplerFakeDeath(snapshot, withExplodingTreeDeath(snapshot, withSmallFixtureDeath(snapshot, withMushroomDeath(snapshot, withMutationAgentDeath(snapshot, definition))))), nil
 }
 
 type campaignShockwaveStunExpiryStep struct {

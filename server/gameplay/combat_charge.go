@@ -1173,6 +1173,9 @@ func (r campaignNPCActionRuntime) produceEnemyCharge(
 	readyTimestamp := peerSession.campaignNPCChargeReadiness[objectID]
 	if readyTimestamp > timestamp && profile.AbilityName != "ScaldronBoss_ShadowCharge" {
 		r.registry.mutex.Unlock()
+		if profile.AbilityName == "BoomerCharge" {
+			return r.produceBoomerSmash(packet, sessionKey, generation, objectID, timestamp)
+		}
 		if isProfileFound && profile.AbilityName == "NoctGhostCharge" {
 			return r.produceNoctGhostChargerPose(
 				packet, sessionKey, generation, objectID, timestamp, readyTimestamp,

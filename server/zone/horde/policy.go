@@ -20,7 +20,7 @@ type Policy struct {
 
 func DefaultPolicy() Policy {
 	return Policy{
-		IsMutationAgentEnabled: true, MutationAgentMinChainLevel: 7,
+		IsMutationAgentEnabled: true, MutationAgentMinChainLevel: 6,
 		WaveCount: 3, MutationAgentWaveOrdinal: 3,
 		InterWaveDelay: InterWaveDelay, IsMutationAgentDefeatCompleting: true,
 	}

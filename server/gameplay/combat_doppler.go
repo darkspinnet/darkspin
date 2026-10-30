@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
@@ -328,6 +329,20 @@ type campaignDopplerFakeExpiry struct {
 	timestamp      uint64
 }
 
+func withDopplerFakeDeath(snapshot zonenpc.Snapshot, definition zoneNPCDeathDefinition) zoneNPCDeathDefinition {
+	switch strings.ToLower(snapshot.Plan.NounName) {
+	case "scaldronbasicdopplerfake.noun", "scaldronbasicdopplerfake_2.noun", "scaldronbasicdopplerfake_3.noun":
+		definition.isImmediateDelete = true
+		definition.isDeathAnimationSuppressed = true
+		definition.ordinaryDeathAnimation = ""
+		definition.corpseFadeDelay = 0
+		definition.graphicsState = 0
+		definition.explosionEffectName = "shadow_doppler_death_effect.ServerEventDef"
+		definition.deleteDelay = 0
+	}
+	return definition
+}
+
 func (e campaignDopplerFakeExpiry) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
@@ -359,19 +374,13 @@ func (e campaignDopplerFakeExpiry) produce() ([][]byte, error) {
 	delete(peerSession.campaignNPCDopplerFakeObjectIDs, e.sourceObjectID)
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
-	effectPacket, err := npcraknet.PositionedEffect(
-		"shadow_doppler_death_effect.ServerEventDef", fake.Plan.Position,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("dopplerFakeDeathEffect: %w", err)
-	}
 	deathPackets, err := e.runtime.publishNPCSelfDeath(
 		e.packet, e.sessionKey, e.generation, fake, result, transition, e.timestamp,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("dopplerFakeDeathPublish: %w", err)
 	}
-	return append([][]byte{effectPacket}, deathPackets...), nil
+	return deathPackets, nil
 }
 
 func (r campaignNPCActionRuntime) produceScaldronBasicDopplerClone(

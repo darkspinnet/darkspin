@@ -416,7 +416,7 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 		},
 		"PipeBomb": {
 			Name: "PipeBomb", Kind: sim.AbilityKindTrap,
-			Range: 4, Radius: 8,
+			Cooldown: 12 * time.Second, Range: 4, Radius: 8,
 			AnimationName: "trapper_active_support",
 			HitDelay:      300 * time.Millisecond,
 			ReleaseDelay:  600 * time.Millisecond,

@@ -677,6 +677,7 @@ func (r campaignAbilityCommandRuntime) handleHeroTrap(
 		if hitPoint <= 0 {
 			hitPoint = turretFallbackHitPoint
 		}
+		hitPoint = peerSession.petHitPoint(hitPoint)
 		footprint, footprintErr := r.program.FootprintRadius(projected.SpawnNoun)
 		if footprintErr != nil || footprint <= 0 {
 			footprint = turretFallbackFootprint

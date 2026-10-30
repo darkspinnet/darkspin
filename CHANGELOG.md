@@ -2,6 +2,12 @@
 
 ### 2026-10-30
 
+- #146 Start Mutation Agent encounters on the first 2-3 run by moving the completed-progression threshold from 7 to 6.
+- #146 Let Lightning Juggernauts pursue and use Smash while Charge cools down instead of waiting motionless for the next charge.
+- #146 Scale Seraph-XS Alpha's Attractor Bomb and Auto Turret health from the casting hero instead of treating their authored fractional health as literal points.
+- #146 Restore Attractor Bomb's build-103 twelve-second cooldown.
+- #146 Remove defeated Split Beetle decoys immediately with their authored smoke effect while retaining the real beetle's corpse.
+- #146 Keep Invincitron's untargetable drone immune to ordinary damage while preserving owner-driven cleanup.
 - #145 Keep Plasma Column active across squad members by validating its timed-area run against the casting hero instead of the passive provider.
 - #145 Restore the authored Fragmented Peak fire vents through the selected Infinity 4 combat fixture layout.
 - Keep injured campaign co-op AI bots inside a nearby Tree of Life until healed, except when a ranged attacker is damaging them from beyond their attack reach.

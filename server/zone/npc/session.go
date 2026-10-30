@@ -1211,6 +1211,17 @@ func (s *Session) damage(
 	if len(metadata) > 0 {
 		meta = metadata[0]
 	}
+	// Build 103 spawns the Invincitron drone with SetIsTargetable(false).
+	// Its owner can still retire it through the forced-defeat lifecycle.
+	if !meta.isForcedDefeat && npc.Plan.OwnerObjectID != 0 &&
+		strings.EqualFold(npc.Plan.NounName, "NomadDrone.Noun") &&
+		!npc.Plan.NPCProfile.IsTargetable {
+		return DamageResult{
+			ObjectID: targetObjectID, LocusID: npc.Plan.LocusID,
+			MarkerSetName: npc.Plan.MarkerSetName, PreviousHealth: npc.HitPoint,
+			HitPoint: npc.HitPoint, IsDamageImmune: true,
+		}, nil
+	}
 	isAreaAttack = isAreaAttack || meta.DescriptorMask&8 != 0
 	isDamageOverTime = isDamageOverTime || meta.DescriptorMask&4 != 0
 	// Multi-target selection alone does not turn a melee/projectile strike
