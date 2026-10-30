@@ -225,6 +225,7 @@ func (e CampaignDirector) InfinityFourFixtures(selectionID uint32) (
 func isInfinityFourFixtureNoun(nounName string) bool {
 	switch strings.ToLower(strings.TrimSpace(nounName)) {
 	case "dest_citadel_fuelcanister.noun",
+		"dest_prefab_citadel_factoryvent.noun",
 		"dest_prefab_citadel_factorypipe_plasma.noun",
 		"dest_prefab_citadel_factorypipe_smoke.noun",
 		"dest_prefab_citadel_factorypipe.noun":

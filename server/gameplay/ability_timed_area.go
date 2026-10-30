@@ -78,7 +78,7 @@ func (e heroTimedAreaSchedule) isCurrent(
 		peerSession.deployedCreatureIndex == e.creatureIndex &&
 		e.creatureIndex < uint32(len(peerSession.binding.Creatures)) &&
 		e.sourceCreatureIndex < uint32(len(peerSession.binding.Creatures)) &&
-		peerSession.binding.Creatures[e.sourceCreatureIndex].Noun == e.creature.Noun
+		peerSession.binding.Creatures[e.creatureIndex].Noun == e.creature.Noun
 }
 
 func (e heroTimedAreaSchedule) tick(

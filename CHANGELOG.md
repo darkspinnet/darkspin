@@ -2,6 +2,8 @@
 
 ### 2026-10-30
 
+- #145 Keep Plasma Column active across squad members by validating its timed-area run against the casting hero instead of the passive provider.
+- #145 Restore the authored Fragmented Peak fire vents through the selected Infinity 4 combat fixture layout.
 - Keep injured campaign co-op AI bots inside a nearby Tree of Life until healed, except when a ranged attacker is damaging them from beyond their attack reach.
 - Raise the PvP DNA base from 1 to 10 per crogenitor level, halve losses, 1v1, and sub-three-minute matches, and keep the 2v2 winner bonus.
 - Spread co-op AI bots across reachable nearby positions and vary their enemy targets when several are close, while preserving urgent ally defense.
