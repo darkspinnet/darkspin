@@ -16,6 +16,41 @@ import (
 const campaignBotIdleLeash = float32(8)
 const campaignBotTankLeadDistance = float32(3.5)
 const campaignBotSupportTrailDistance = float32(2.5)
+const campaignBotSpacingDistance = float32(1.75)
+
+func (e gameplayPendingRuntime) campaignBotFormationLocked(member gameplayPeerSession) (int, int) {
+	if !member.binding.IsServerBot || member.binding.Mode != game.ModeChain {
+		return 0, 0
+	}
+	count, rank := 0, 0
+	for _, candidate := range e.registry.sessions {
+		if !candidate.binding.IsServerBot || candidate.binding.Mode != game.ModeChain ||
+			candidate.binding.GameID != member.binding.GameID || candidate.zone != member.zone ||
+			!isPlayerAISession(candidate) || candidate.deployedHitPoint() <= 0 {
+			continue
+		}
+		count++
+		if candidate.binding.Slot < member.binding.Slot {
+			rank++
+		}
+	}
+	return count, rank
+}
+
+func (e gameplayPendingRuntime) isCampaignBotGoalCrowdedLocked(member gameplayPeerSession, goal raknet.Vector3) bool {
+	for _, candidate := range e.registry.sessions {
+		if candidate.binding.UserID == member.binding.UserID || !candidate.binding.IsServerBot ||
+			candidate.binding.Mode != game.ModeChain || candidate.binding.GameID != member.binding.GameID ||
+			candidate.zone != member.zone || !isPlayerAISession(candidate) || candidate.deployedHitPoint() <= 0 {
+			continue
+		}
+		if zonegeometry.Distance(game.Vec3(candidate.playerMovementGoal), game.Vec3(goal)) < 2.5 ||
+			zonegeometry.Distance(game.Vec3(candidate.playerPosition), game.Vec3(goal)) < 2.5 {
+			return true
+		}
+	}
+	return false
+}
 
 func isCampaignSupportBot(member gameplayPeerSession) bool {
 	return member.binding.IsServerBot && member.binding.Mode == game.ModeChain &&
@@ -142,6 +177,25 @@ func (e gameplayPendingRuntime) playerAIMoveLocked(
 		member.deployedCampaignNavigationRadius(), uint8(member.binding.Mode),
 	)
 	if isLayerFound {
+		botCount, rank := e.campaignBotFormationLocked(*member)
+		if botCount > 1 && !member.playerAI.isTreeHealing &&
+			zonegeometry.Distance(game.Vec3(member.playerPosition), game.Vec3(goal)) > 0.75 &&
+			e.isCampaignBotGoalCrowdedLocked(*member, goal) {
+			angle := 2 * math.Pi * float64(rank) / float64(botCount)
+			spreadGoal := goal
+			spreadGoal.X += campaignBotSpacingDistance * float32(math.Cos(angle))
+			spreadGoal.Y += campaignBotSpacingDistance * float32(math.Sin(angle))
+			path, err := mesh.CreatePath(navigation.Vec3(member.playerPosition), navigation.Vec3(spreadGoal),
+				navigation.PathOptions{
+					ProjectionOptions: navigation.ProjectionOptions{
+						PlanLayer: planLayer, MaxDistance: zonenavigation.ProjectionDistance,
+					},
+					MaxVisitedPolygon: 2048,
+				})
+			if err == nil && len(path.Points) > 0 {
+				return playerAIMove(member, req, raknet.Vector3(path.Points[len(path.Points)-1]))
+			}
+		}
 		path, err := mesh.CreatePath(navigation.Vec3(member.playerPosition), navigation.Vec3(goal),
 			navigation.PathOptions{
 				ProjectionOptions: navigation.ProjectionOptions{

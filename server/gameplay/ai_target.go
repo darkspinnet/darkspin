@@ -1,6 +1,7 @@
 package gameplay
 
 import (
+	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -23,6 +24,12 @@ type playerAITarget struct {
 	aggroTargetID uint32
 	healthRatio   float32
 	isPriority    bool
+}
+
+type playerAITargetChoice struct {
+	target   playerAITarget
+	score    float32
+	distance float32
 }
 
 func (e gameplayPendingRuntime) playerAIAllyLocked(member gameplayPeerSession) (gameplayPeerSession, bool) {
@@ -48,7 +55,7 @@ func (e gameplayPendingRuntime) playerAIAllyLocked(member gameplayPeerSession) (
 }
 
 func (e gameplayPendingRuntime) playerAITargetLocked(
-	member gameplayPeerSession, ally gameplayPeerSession, isAllyFound bool, now time.Time,
+	member *gameplayPeerSession, ally gameplayPeerSession, isAllyFound bool, now time.Time,
 ) (playerAITarget, bool) {
 	targets := make([]playerAITarget, 0)
 	if member.binding.Mode == game.ModeArena {
@@ -85,6 +92,9 @@ func (e gameplayPendingRuntime) playerAITargetLocked(
 	}
 	selected := playerAITarget{}
 	bestScore := float32(0)
+	bestDistance := float32(0)
+	isBestUrgent := false
+	choices := make([]playerAITargetChoice, 0, len(targets))
 	isTankBot := member.binding.IsServerBot && member.binding.Mode == game.ModeChain && isAllyFound &&
 		strings.EqualFold(member.binding.Creatures[member.deployedCreatureIndex].ClassType, "sentinel")
 	isCampaignBot := member.binding.IsServerBot && member.binding.Mode == game.ModeChain
@@ -114,8 +124,9 @@ func (e gameplayPendingRuntime) playerAITargetLocked(
 		if target.healthRatio <= 0.20 && distance <= 10 {
 			score -= 15
 		}
-		if isAllyFound && target.aggroTargetID == ally.deployedObjectID &&
-			ally.deployedHitPoint() < ally.characterHitPointMaximum(ally.deployedCreatureIndex)*0.40 {
+		isUrgent := isAllyFound && target.aggroTargetID == ally.deployedObjectID &&
+			ally.deployedHitPoint() < ally.characterHitPointMaximum(ally.deployedCreatureIndex)*0.40
+		if isUrgent {
 			score -= 100
 		}
 		if isAllyFound && ally.assistTargetObjectID == target.objectID && now.Sub(ally.assistTargetAt) < 8*time.Second {
@@ -125,11 +136,40 @@ func (e gameplayPendingRuntime) playerAITargetLocked(
 		} else if member.assistTargetObjectID == target.objectID {
 			score -= 10
 		}
+		choices = append(choices, playerAITargetChoice{target: target, score: score, distance: distance})
 		if selected.objectID == 0 || score < bestScore ||
 			(score == bestScore && target.objectID < selected.objectID) {
-			selected, bestScore = target, score
+			selected, bestScore, bestDistance, isBestUrgent = target, score, distance, isUrgent
 		}
 	}
+	if !isCampaignBot || selected.objectID == 0 {
+		return selected, selected.objectID != 0
+	}
+	botCount, _ := e.campaignBotFormationLocked(*member)
+	if botCount < 2 {
+		return selected, true
+	}
+	// A recent choice stays put briefly, unless a much better nearby threat appears.
+	if now.Before(member.playerAI.targetUntil) {
+		for _, choice := range choices {
+			if choice.target.objectID == member.playerAI.targetObjectID &&
+				(choice.score <= bestScore+3 || (!isBestUrgent && choice.distance <= bestDistance+3)) {
+				return choice.target, true
+			}
+		}
+	}
+	nearChoices := make([]playerAITargetChoice, 0, len(choices))
+	for _, choice := range choices {
+		if choice.target.objectID != selected.objectID &&
+			(choice.score <= bestScore+3 || (!isBestUrgent && choice.distance <= bestDistance+3)) {
+			nearChoices = append(nearChoices, choice)
+		}
+	}
+	if len(nearChoices) > 0 && rand.Float64() < 0.4 {
+		selected = nearChoices[rand.IntN(len(nearChoices))].target
+	}
+	member.playerAI.targetObjectID = selected.objectID
+	member.playerAI.targetUntil = now.Add(2 * time.Second)
 	return selected, selected.objectID != 0
 }
 

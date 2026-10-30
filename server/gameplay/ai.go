@@ -40,6 +40,9 @@ type playerAIState struct {
 	idleWanderUntil  time.Time
 	idleWanderGoal   raknet.Vector3
 	isIdleWandering  bool
+	isTreeHealing    bool
+	targetObjectID   uint32
+	targetUntil      time.Time
 }
 
 func (e *gameplaySessionRegistry) cancelPlayerAI(sessionKey string, transportGeneration uint64) {
@@ -268,15 +271,37 @@ func (e gameplayPendingRuntime) planPlayerAILocked(
 		supportRetreatRatio = 0.65
 		supportApproachRatio = 0.75
 	}
-	target, isTargetFound := e.playerAITargetLocked(*member, ally, isAllyFound, now)
-	distance := zonegeometry.Distance(game.Vec3(member.playerPosition), game.Vec3(target.position))
+	target, isTargetFound := e.playerAITargetLocked(member, ally, isAllyFound, now)
 	attackRange := heroAbilityAdmissionRange(creature, definition)
+	treeGoal, isTreeHealing, rangedThreat := e.playerAITreeGoalLocked(*member, now,
+		attackRange+member.deployedCampaignActorFootprintRadius())
+	member.playerAI.isTreeHealing = isTreeHealing
+	if rangedThreat.objectID != 0 {
+		target, isTargetFound = rangedThreat, true
+	}
+	distance := zonegeometry.Distance(game.Vec3(member.playerPosition), game.Vec3(target.position))
 	attackRange += member.deployedCampaignActorFootprintRadius() + target.radius
+	if isTreeHealing {
+		member.playerAI.isIdleWandering = false
+		member.playerAI.nextIdleWanderAt = time.Time{}
+		if member.playerAI.isMoving && treeGoal == member.playerPosition {
+			return e.playerAIMoveLocked(member, command, member.playerPosition)
+		}
+		if treeGoal != member.playerPosition {
+			if member.isEnemyRootActive(now) {
+				return command, false, nil
+			}
+			return e.playerAIMoveLocked(member, command, treeGoal)
+		}
+		if !isTargetFound || distance > max(float32(1), attackRange*0.9) {
+			return e.playerAIMoveLocked(member, command, member.playerPosition)
+		}
+	}
 	isAttackReady := isBasicFound && isTargetFound && definition.Range > 0 &&
 		distance <= max(float32(1), attackRange*0.9) &&
 		!now.Before(member.playerAI.nextAttackAt) &&
 		(member.basicSequence == nil || member.basicSequence.IsReady(now))
-	if isRanged && !member.isEnemyRootActive(now) {
+	if !isTreeHealing && isRanged && !member.isEnemyRootActive(now) {
 		goal, isThreatened := e.playerAIDodgeGoalLocked(*member, now)
 		// Allow one evasive command before a ready shot, then reserve the next
 		// decision for firing instead of extending the dodge on every tick.
@@ -310,7 +335,7 @@ func (e gameplayPendingRuntime) planPlayerAILocked(
 		return command, false, nil
 	}
 	currentMaximum := member.characterHitPointMaximum(member.deployedCreatureIndex)
-	if currentMaximum > 0 && member.deployedHitPoint()/currentMaximum <= playerAIFleeHealthRatio &&
+	if !isTreeHealing && currentMaximum > 0 && member.deployedHitPoint()/currentMaximum <= playerAIFleeHealthRatio &&
 		!member.isEnemyRootActive(now) && !now.Before(member.playerAI.nextFleeAt) {
 		goal := playerAIFlee(member.playerPosition, target.position, 7)
 		member.playerAI.nextFleeAt = now.Add(4 * time.Second)
@@ -322,7 +347,7 @@ func (e gameplayPendingRuntime) planPlayerAILocked(
 	if isSupportRanged {
 		retreatRatio = supportRetreatRatio
 	}
-	if isRanged && distance < attackRange*retreatRatio && !member.isEnemyRootActive(now) &&
+	if !isTreeHealing && isRanged && distance < attackRange*retreatRatio && !member.isEnemyRootActive(now) &&
 		!now.Before(member.playerAI.nextRepositionAt) {
 		retreatDistance := attackRange*0.7 - distance
 		if isSupportRanged {
@@ -352,7 +377,7 @@ func (e gameplayPendingRuntime) planPlayerAILocked(
 	if member.playerAI.isMoving && (!isRanged || !isAttackReady) {
 		return e.playerAIMoveLocked(member, command, member.playerPosition)
 	}
-	if isRanged && !isAttackReady && !member.isEnemyRootActive(now) && !now.Before(member.playerAI.nextRepositionAt) {
+	if !isTreeHealing && isRanged && !isAttackReady && !member.isEnemyRootActive(now) && !now.Before(member.playerAI.nextRepositionAt) {
 		member.playerAI.isStrafeLeft = !member.playerAI.isStrafeLeft
 		goal := playerAIStrafeGoal(member.playerPosition, target.position, member.playerAI.isStrafeLeft)
 		member.playerAI.combatGoal = goal
@@ -365,7 +390,7 @@ func (e gameplayPendingRuntime) planPlayerAILocked(
 		return command, false, nil
 	}
 	abilityIndex := uint32(0)
-	if !now.Before(member.playerAI.nextAbilityAt) {
+	if !isTreeHealing && !now.Before(member.playerAI.nextAbilityAt) {
 		member.playerAI.nextAbilityAt = now.Add(playerAIAbilityIntervalFor(*member))
 		abilityCount := uint32(2)
 		if member.binding.Mode == game.ModeChain {

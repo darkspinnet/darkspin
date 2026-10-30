@@ -733,6 +733,7 @@ func (e treeOfLifeStep) produce() ([][]byte, error) {
 			ObjectID: schedule.objectID, SourceObjectID: schedule.actorObjectID,
 			NounName: schedule.definition.SpawnNoun,
 			Position: game.Vec3{X: schedule.position.X, Y: schedule.position.Y, Z: schedule.position.Z},
+			Radius:   schedule.definition.Radius,
 			Team:     abilityActorTeam(peerSession), Phase: zoneability.TreeOfLifeSpawned,
 			SpawnedAt: schedule.startedAt + schedule.definition.HitDelay,
 			ExpiresAt: schedule.startedAt + schedule.definition.HitDelay + schedule.definition.Duration,

@@ -2,6 +2,9 @@
 
 ### 2026-10-30
 
+- Keep injured campaign co-op AI bots inside a nearby Tree of Life until healed, except when a ranged attacker is damaging them from beyond their attack reach.
+- Raise the PvP DNA base from 1 to 10 per crogenitor level, halve losses, 1v1, and sub-three-minute matches, and keep the 2v2 winner bonus.
+- Spread co-op AI bots across reachable nearby positions and vary their enemy targets when several are close, while preserving urgent ally defense.
 - Let campaign matchmaking add 1–3 AI players from the launcher setting, and fill unranked PvP or campaign queues immediately for a lone online player or after 30 seconds when others are online.
 - Give campaign co-op AI the earliest unused unlocked PvE squad with a usable melee hero, carrying its saved equipment and appearance, and retain generated bots as fallback.
 - Regenerate living inactive Arena squad members by 1% of maximum power per second up to 50% power for players and AI bots.
