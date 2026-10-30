@@ -66,7 +66,7 @@ func (r campaignAbilityCommandRuntime) transferPlayerAbilityPursuit(
 		return nil, false, fmt.Errorf("campaignBasicPursuitTransfer: %w", marshalErr)
 	}
 	pursuitGoal, goalErr := zoneaction.PlayerPursuitDestination(
-		peerSession.zone.Navigation(), zonePosition(peerSession.playerPosition), targetEnemy.Plan.Position,
+		r.registry.abilityNavigationLocked(peerSession), zonePosition(peerSession.playerPosition), targetEnemy.Plan.Position,
 		peerSession.deployedCampaignNavigationRadius(), uint8(peerSession.binding.Mode), stopDistance,
 	)
 	if goalErr != nil {

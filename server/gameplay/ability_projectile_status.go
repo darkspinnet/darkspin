@@ -508,6 +508,7 @@ func (e heroProjectileStatusSchedule) impactNow() ([][]byte, error) {
 		StackCount:           1,
 		StartMilliseconds:    e.packet.SourceTime + uint64(e.impactDeadline/time.Millisecond),
 		NPCAffixAssetID:      0,
+		IsBound:              e.definition.StatusKind == sim.AbilityStatusKindStun,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("projectileStatusModifierMarshal: %w", err)

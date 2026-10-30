@@ -287,6 +287,14 @@ type UserManager struct {
 	sessions         [256]sync.Mutex
 }
 
+// CreatureTemplates returns the immutable installed hero catalog for match-local bots.
+func (m *UserManager) CreatureTemplates() []*TemplateCreature {
+	if m == nil || m.template == nil {
+		return nil
+	}
+	return m.template.List()
+}
+
 // PartScorer is the itemization-owned port used to derive authoritative editor
 // scores and authored prices without coupling the profile feature to content storage.
 type PartScorer interface {

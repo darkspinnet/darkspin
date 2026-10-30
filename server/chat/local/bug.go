@@ -200,6 +200,17 @@ func addBugText(archive *zip.Writer, req chat.BugCommand) error {
 	if err != nil {
 		return fmt.Errorf("contextWrite: %w", err)
 	}
+	for _, bot := range gameplay.CampaignAIBots {
+		_, err = fmt.Fprintf(w, "Campaign AI bot: slot=%d object=%d noun=%#x health=%.3f spawned=%t\n",
+			bot.Slot, bot.ObjectID, bot.NounID, bot.HitPoint, bot.IsSpawned)
+		if err != nil {
+			return fmt.Errorf("botContextWrite: %w", err)
+		}
+	}
+	_, err = fmt.Fprintf(w, "Participants: connected=%d combat=%d\n", gameplay.ParticipantCount, gameplay.CombatParticipantCount)
+	if err != nil {
+		return fmt.Errorf("participantContextWrite: %w", err)
+	}
 	_, err = fmt.Fprintf(w, "Command-spawned NPCs: %t\n", gameplay.IsNPCSpawnCommandUsed)
 	if err != nil {
 		return fmt.Errorf("spawnContextWrite: %w", err)

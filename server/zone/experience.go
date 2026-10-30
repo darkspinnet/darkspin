@@ -45,7 +45,8 @@ func (e *Zone) RecordNPCExperience(
 	}
 	totals := make(map[uint64]uint32, len(memberAwards))
 	for userID, experience := range memberAwards {
-		if userID == 0 || experience == 0 {
+		member, isMemberFound := e.members[userID]
+		if !isMemberFound || member.IsServerBot || experience == 0 {
 			continue
 		}
 		if experience > ^uint32(0)-e.experienceTotals[userID] {
@@ -83,6 +84,10 @@ func (e *Zone) ReserveExperienceCommit(userID uint64) (ExperienceCommit, bool) {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	member, isMemberFound := e.members[userID]
+	if !isMemberFound || member.IsServerBot {
+		return ExperienceCommit{}, false
+	}
 	current := e.experienceCommits[userID]
 	if current.IsCommitted || current.IsReserved {
 		return current, false

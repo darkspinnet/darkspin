@@ -809,6 +809,7 @@ func New(options Options) (*Server, error) {
 	}
 	presenceRegistry := blaze.NewPresenceRegistry()
 	matchmaking := pvp.NewMatchmaking()
+	registry.SetMatchmakingConfig(config)
 	if isDedicated {
 		err = blaze.RegisterDedicatedSporeNetComponentsWithMembership(
 			registry, userManager, loginTokenVerifier, partyService, presenceRegistry,
@@ -882,9 +883,10 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("resumeCoordinator: %w", err)
 	}
 	err = game.RegisterAPI(router, game.APIOptions{
-		IsDedicated: isDedicated,
-		IsModded:    options.IsModded,
-		UserManager: userManager, Template: templateDatabase, PartCatalog: partCatalog, Vendor: vendor,
+		BotPortraitFinder: gameManager,
+		IsDedicated:       isDedicated,
+		IsModded:          options.IsModded,
+		UserManager:       userManager, Template: templateDatabase, PartCatalog: partCatalog, Vendor: vendor,
 		PartShopRules:   serverRuleStore.shopRules,
 		ResumeActivator: resumeCoordinator,
 		Storage:         runtimePath, StaticFileSystem: webFileSystem,
@@ -947,7 +949,7 @@ func New(options Options) (*Server, error) {
 	gameplayJoin.UseTutorialEndPublisher(tutorialEndPublisher{servers: allBlazeServers})
 	gameplayJoin.UseInventoryPublisher(inventoryPublisher{servers: allBlazeServers})
 	gameplayJoin.UseSystemChatPublisher(systemChatPublisher{servers: allBlazeServers})
-	gameplayJoin.SetAppearanceStore(appearancefs.Store{Root: runtimePath})
+	gameplayJoin.SetAppearanceStore(appearancefs.Store{Root: runtimePath, Templates: webFileSystem, Logger: logger})
 	directorSource, err := gamecontentsqlite.NewDirectorSource(contentStore)
 	if err != nil {
 		return nil, fmt.Errorf("directorSource: %w", err)
@@ -1128,6 +1130,7 @@ func loadCreatureTemplates(store *contentsqlite.Store, database *sporenet.Templa
 			WeaponMaxDamage:      record.WeaponMaxDamage,
 			GearScore:            record.GearScore,
 			ClassType:            record.ClassType,
+			UnlockLevel:          record.UnlockLevel,
 			StatsTemplate:        record.StatTemplate,
 			AbilityPassive:       abilityPassive,
 			AbilityBasic:         abilityBasic,

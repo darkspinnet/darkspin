@@ -1450,13 +1450,15 @@ func newGameplayHandlerWithDependencies(
 	resultRuntime := campaignResultRuntime{
 		registry: sessionRegistry, chain: chainProgression,
 		cashOutProgression: cashOutProgression, gameplayJoin: gameplayJoin,
-		modifierPool: modifierInstancePool, effectPool: attachedEffectPool,
+		ratingConversions: program.Critical.RatingConversions,
+		modifierPool:      modifierInstancePool, effectPool: attachedEffectPool,
 		preparation: campaignPrepare,
 		logger:      logger,
 	}
 	pendingRuntime := gameplayPendingRuntime{
 		registry: sessionRegistry, gameplayJoin: gameplayJoin,
-		stats: statsRecorder, damage: damageRuntime, modifierPool: modifierInstancePool,
+		ratingConversions: program.Critical.RatingConversions,
+		stats:             statsRecorder, damage: damageRuntime, modifierPool: modifierInstancePool,
 		effectPool: attachedEffectPool,
 		projection: projectionRuntime, result: resultRuntime, setup: setupRuntime,
 		overdriveProgression: overdriveProgression,
@@ -2142,6 +2144,10 @@ func (r gameplayJoinRuntime) handle(
 				binding.GameID, binding.UserID, packet.Address,
 			)
 		}
+		botErr := r.installServerBots(ctx, packet, binding)
+		if botErr != nil {
+			return nil, fmt.Errorf("helloBots: %w", botErr)
+		}
 		rosterResponses, rosterErr := r.synchronizeRoster(sessionKey)
 		if rosterErr != nil {
 			return nil, fmt.Errorf("helloRoster: %w", rosterErr)
@@ -2376,6 +2382,10 @@ func (r gameplayJoinRuntime) handle(
 			binding.GameID, binding.UserID, packet.Address, transportGeneration,
 		)
 	}
+	err = r.installServerBots(ctx, packet, binding)
+	if err != nil {
+		return nil, fmt.Errorf("joinBots: %w", err)
+	}
 	rosterResponses, err := r.synchronizeRoster(sessionKey)
 	if err != nil {
 		return nil, fmt.Errorf("joinRoster: %w", err)
@@ -2448,8 +2458,10 @@ func (r gameplayJoinRuntime) synchronizeRoster(sessionKey string) ([][]byte, err
 	if expectedCount < 1 {
 		expectedCount = 1
 	}
+	// A socketless bot occupies a presented roster slot, but PlayerMask only
+	// tracks humans that must connect before the party merge can complete.
 	if len(peerSessionKeys) < expectedCount ||
-		connectedPlayerMask != joiningSession.binding.PlayerMask {
+		connectedPlayerMask&joiningSession.binding.PlayerMask != joiningSession.binding.PlayerMask {
 		if r.logger != nil {
 			r.logger.Printf(
 				"RakNet gameplay roster waiting game=%d connected=%d expected=%d connected_mask=%#x expected_mask=%#x",
@@ -2591,6 +2603,7 @@ type gameplayPendingRuntime struct {
 	projection           gameplayProjectionRuntime
 	setup                gameplaySetupRuntime
 	gameplayJoin         *game.GameplayJoin
+	ratingConversions    []float32
 	stats                *playerstat.Recorder
 	damage               campaignDamageRuntime
 	result               campaignResultRuntime
@@ -2955,8 +2968,10 @@ func (r gameplayPendingRuntime) pollWorld(
 		}
 		if isArenaPreparationRetry {
 			arenaRuntime := gameplayArenaRuntime{
-				registry: r.registry,
-				logger:   r.logger,
+				ratingConversions: r.ratingConversions,
+				registry:          r.registry,
+				logger:            r.logger,
+				gameplayJoin:      r.gameplayJoin,
 			}
 			preparationPackets, err := arenaRuntime.prepareSelectedDecks(
 				packet.Address.String(), peerSession.binding.GameID, true,
@@ -3060,7 +3075,15 @@ func (r gameplayPendingRuntime) pollWorld(
 	if len(responses) != 0 {
 		return responses, nil
 	}
-	return r.pollPlayerAI(ctx, packet)
+	responses, err = r.pollPlayerAI(ctx, packet)
+	if err != nil {
+		return nil, fmt.Errorf("playerAIPoll: %w", err)
+	}
+	sagePackets, err := r.pollArenaSagePets(packet)
+	if err != nil {
+		return nil, fmt.Errorf("arenaSagePoll: %w", err)
+	}
+	return append(responses, sagePackets...), nil
 }
 
 func (r gameplayPendingRuntime) persistOverdriveUnlock(
@@ -3303,6 +3326,9 @@ func (r gameplayPendingRuntime) consumePlayerResourceCommand(
 		queuedSession.squad != nil && !queuedSession.isZoneTerminal()
 	r.registry.mutex.RUnlock()
 	if !isSessionFound {
+		return nil, false, nil
+	}
+	if queuedSession.binding.IsServerBot {
 		return nil, false, nil
 	}
 	command, isCommandFound, err := r.gameplayJoin.ConsumePlayerResourceCommand(
@@ -5067,6 +5093,26 @@ func (r gameplaySetupRuntime) publishCampaign(
 			}
 		}
 	}
+	if peerSession.binding.IsServerBot {
+		restoredBot, isBotRestored := peerSession.zone.RestoredCampaignBot(peerSession.binding.Slot)
+		if isBotRestored {
+			peerSession.squad, err = newCampaignSquad(peerSession.binding.Creatures)
+			if err != nil {
+				return nil, false, fmt.Errorf("botRestoreSquad: %w", err)
+			}
+			peerSession.deployedCreatureIndex = restoredBot.CreatureIndex
+			peerSession.deployedObjectID = zonehero.ObjectID(peerSession.binding.Slot, restoredBot.CreatureIndex)
+			err = peerSession.squad.Deploy(restoredBot.CreatureIndex)
+			if err != nil {
+				return nil, false, fmt.Errorf("botRestoreDeploy: %w", err)
+			}
+			_, err = peerSession.squad.SetHitPoints(restoredBot.CreatureIndex, restoredBot.HitPoint)
+			if err != nil {
+				return nil, false, fmt.Errorf("botRestoreHealth: %w", err)
+			}
+			entryPosition = raknet.Vector3(restoredBot.Position)
+		}
+	}
 	playerMotion, err := zoneaction.NewMotion(toSimPosition(entryPosition), r.now())
 	if err != nil {
 		return nil, false, fmt.Errorf("pingCampaignMovement: %w", err)
@@ -5166,6 +5212,9 @@ func (r gameplaySetupRuntime) publishCampaign(
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("pingCampaignRoster: %w", err)
+	}
+	if peerSession.binding.IsServerBot {
+		return r.publishCampaignServerBot(packet, peerSession, setupEpoch, entryPosition, initialShieldPackets, fieldMedicPackets)
 	}
 	response, err := marshalCampaignDungeonSetup(
 		peerSession.binding, peerSession.zone.ScriptObjectPlans(),
@@ -5559,7 +5608,14 @@ func (r gameplaySetupRuntime) handle(
 	if publishErr != nil {
 		return nil, fmt.Errorf("pingZone: %w", publishErr)
 	}
-	if isPublished {
+	if peerSession.binding.Mode == game.ModeArena || peerSession.binding.Mode == game.ModeChain {
+		botPackets, botErr := r.publishServerBots(ctx, packet)
+		if botErr != nil {
+			return nil, fmt.Errorf("pingServerBots: %w", botErr)
+		}
+		packets = append(packets, botPackets...)
+	}
+	if isPublished || len(packets) != 0 {
 		return packets, nil
 	}
 	if !isVoteNeeded {
@@ -5880,7 +5936,7 @@ func (p campaignPreparation) loadDirector(
 		return game.CampaignDirector{}, fmt.Errorf("directorPopulation: %w", err)
 	}
 	if p.logger != nil {
-		p.logger.Printf("Dark Spin NPC policy game=%d stage=%d party=%d population=%+v boss=%+v agents=%d leader_result=%s", binding.GameID, binding.Difficulty, binding.ParticipantCount, director.EnemyPopulationRules, director.BossSpawnRules, len(director.OrdinaryAgentEntries), zoneboss.LeaderPolicyResult(director))
+		p.logger.Printf("Dark Spin NPC policy game=%d stage=%d party=%d population=%+v boss=%+v agents=%d leader_result=%s", binding.GameID, binding.Difficulty, binding.CombatParticipantCount, director.EnemyPopulationRules, director.BossSpawnRules, len(director.OrdinaryAgentEntries), zoneboss.LeaderPolicyResult(director))
 	}
 	director, err = p.selectInitialMapLayout(director, binding)
 	if err != nil {
@@ -5896,7 +5952,7 @@ func (p campaignPreparation) loadDirector(
 	}
 	if zonedifficulty.HasTuning(p.difficulty) {
 		director, err = zonedifficulty.ProjectDirector(
-			director, binding.Difficulty, binding.ParticipantCount,
+			director, binding.Difficulty, binding.CombatParticipantCount,
 			p.difficulty,
 		)
 		if err != nil {
@@ -6052,6 +6108,13 @@ func (p campaignPreparation) initialize(
 		return fmt.Errorf("initializeDefense: %w", err)
 	}
 	peerSession.binding = binding
+	if binding.IsServerBot {
+		err = p.initializeServerBot(binding, peerSession)
+		if err != nil {
+			return fmt.Errorf("initializeBot: %w", err)
+		}
+		return nil
+	}
 	director, setupErr := p.loadDirector(ctx, binding)
 	if setupErr != nil {
 		return fmt.Errorf("statusChainDirector: %w", setupErr)
@@ -6323,6 +6386,8 @@ func (p campaignPreparation) initialize(
 		uint64(binding.GameID),
 		zone.Member{
 			UserID:             binding.UserID,
+			IsServerBot:        binding.IsServerBot,
+			BotOwnerUserID:     binding.BotOwnerUserID,
 			PeerGeneration:     peerSession.generation,
 			Slot:               binding.Slot,
 			AbilityCount:       zoneunlock.InitialAbilityCount(binding),
@@ -6418,9 +6483,11 @@ func (p campaignPreparation) initialize(
 	if !isUnlockFound {
 		return errors.New("statusChainUnlock: unavailable")
 	}
-	planErr = peerSession.zone.Objective().Join(uint8(binding.Slot))
-	if planErr != nil {
-		return fmt.Errorf("statusChainObjectiveJoin: %w", planErr)
+	if !binding.IsServerBot {
+		planErr = peerSession.zone.Objective().Join(uint8(binding.Slot))
+		if planErr != nil {
+			return fmt.Errorf("statusChainObjectiveJoin: %w", planErr)
+		}
 	}
 	peerSession.nextProjectileObjectID = max(
 		peerSession.nextProjectileObjectID, firstProjectileObjectID,

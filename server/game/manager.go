@@ -26,6 +26,7 @@ type ResumeCheckpoint struct {
 	Slot                uint16
 	ExpectedPlayerCount uint16
 	IsReplayRandomized  bool
+	CampaignBots        []BotRequest
 }
 
 type ResumeSource interface {
@@ -136,6 +137,7 @@ type Instance struct {
 	CreatedAt                  time.Time
 	StartedAt                  time.Time
 	players                    map[int64]*sporenet.User
+	bots                       map[uint16]Bot
 	slots                      map[int64]uint16
 	teams                      map[int64]uint16
 	hostUserID                 int64
@@ -218,7 +220,7 @@ func (g *Instance) AddPlayer(user *sporenet.User) bool {
 		g.mu.Unlock()
 		return false
 	}
-	if g.Info.MaxPlayers != 0 && len(g.players) >= int(g.Info.MaxPlayers) {
+	if g.Info.MaxPlayers != 0 && len(g.players)+len(g.bots) >= int(g.Info.MaxPlayers) {
 		g.mu.Unlock()
 		return false
 	}
@@ -291,6 +293,10 @@ func (g *Instance) addPlayerAtSlot(
 			g.mu.Unlock()
 			return errors.New("game member slot occupied")
 		}
+	}
+	if _, isBotSlot := g.bots[slot]; isBotSlot {
+		g.mu.Unlock()
+		return errors.New("game member slot occupied by bot")
 	}
 	if !user.ClaimGame(g.ID) {
 		g.mu.Unlock()
@@ -416,7 +422,11 @@ func (g *Instance) tryStartReadyPlayersLocked() (
 		return false, false
 	}
 	expectedPlayerCount := int(g.Info.ExpectedPlayerCount)
-	if expectedPlayerCount == 0 {
+	// Socketless bots occupy client roster slots but have no mesh handshake.
+	if g.Info.Mode == ModeArena {
+		expectedPlayerCount -= len(g.bots)
+	}
+	if expectedPlayerCount <= 0 {
 		expectedPlayerCount = 1
 	}
 	if len(g.players) < expectedPlayerCount || len(g.readyPlayers) < expectedPlayerCount {
@@ -558,8 +568,8 @@ func (g *Instance) SetMaxPlayers(requested uint16) {
 		requested = MaxGamePlayers
 	}
 	g.mu.Lock()
-	if requested < uint16(len(g.players)) {
-		requested = uint16(len(g.players))
+	if requested < uint16(len(g.players)+len(g.bots)) {
+		requested = uint16(len(g.players) + len(g.bots))
 	}
 	g.Info.MaxPlayers = requested
 	g.mu.Unlock()
@@ -572,6 +582,9 @@ func (g *Instance) nextPlayerSlot() (uint16, bool) {
 	}
 	used := make(map[uint16]struct{}, len(g.slots))
 	for _, slot := range g.slots {
+		used[slot] = struct{}{}
+	}
+	for slot := range g.bots {
 		used[slot] = struct{}{}
 	}
 	for slot := uint16(0); slot < limit; slot++ {
@@ -709,6 +722,13 @@ func (g *Instance) playerMaskLocked() uint32 {
 	for _, slot := range g.slots {
 		if slot < 32 {
 			mask |= uint32(1) << slot
+		}
+	}
+	if g.Info.Mode == ModeArena {
+		for slot := range g.bots {
+			if slot < 32 {
+				mask |= uint32(1) << slot
+			}
 		}
 	}
 	return mask
@@ -1210,6 +1230,18 @@ func (m *Manager) Restore(
 		return nil, fmt.Errorf("gameRestoreMember: %w", err)
 	}
 	instance.SetExpectedPlayerCount(checkpoint.ExpectedPlayerCount)
+	for index, bot := range checkpoint.CampaignBots {
+		if existing, isFound := instance.Bot(bot.Slot); isFound {
+			if existing.OwnerUserID != bot.OwnerUserID {
+				return nil, fmt.Errorf("gameRestoreBot[%d]: owner mismatch", index)
+			}
+			continue
+		}
+		_, err = instance.AddBot(bot)
+		if err != nil {
+			return nil, fmt.Errorf("gameRestoreBot[%d]: %w", index, err)
+		}
+	}
 	if checkpoint.ExpectedPlayerCount > 1 {
 		instance.ReserveAdmission()
 	}

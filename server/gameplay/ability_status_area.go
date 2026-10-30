@@ -167,6 +167,7 @@ func (r campaignAbilityCommandRuntime) applyTargetStatus(
 			InstanceID:           instanceID,
 			DurationMilliseconds: uint32(duration.Milliseconds()),
 			StackCount:           1, StartMilliseconds: hitTimestamp, NPCAffixAssetID: 0,
+			IsBound: definition.StatusKind == sim.AbilityStatusKindStun,
 		})
 	}
 	if len(messages) == 0 {

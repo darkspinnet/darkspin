@@ -22,57 +22,61 @@ const DefaultConfigFilename = "darkspin.toml"
 type ConfigKey string
 
 const (
-	ConfigIsVersionLocked                ConfigKey = "IS_VERSION_LOCKED"
-	ConfigIsSingleplayerOnly             ConfigKey = "IS_SINGLEPLAYER_ONLY"
-	ConfigClientLocale                   ConfigKey = "CLIENT_LOCALE"
-	ConfigIsMultiplayerEnabled           ConfigKey = "IS_MULTIPLAYER_ENABLED"
-	ConfigServerPort                     ConfigKey = "SERVER_PORT"
-	ConfigServerBindHost                 ConfigKey = "SERVER_BIND_HOST"
-	ConfigServerAdvertisedHost           ConfigKey = "SERVER_ADVERTISED_HOST"
-	ConfigServerIsDedicated              ConfigKey = "SERVER_IS_DEDICATED"
-	ConfigContentPath                    ConfigKey = "CONTENT_PATH"
-	ConfigWorldPlayerLimit               ConfigKey = "WORLD_PLAYER_LIMIT"
-	ConfigIsChatStdoutEnabled            ConfigKey = "IS_CHAT_STDOUT_ENABLED"
-	ConfigStorageDriver                  ConfigKey = "STORAGE_DRIVER"
-	ConfigAuthJWTSecret                  ConfigKey = "AUTH_JWT_SECRET"
-	ConfigAuthJWTIssuer                  ConfigKey = "AUTH_JWT_ISSUER"
-	ConfigAuthJWTAudience                ConfigKey = "AUTH_JWT_AUDIENCE"
-	ConfigSnapshotMode                   ConfigKey = "SNAPSHOT_MODE"
-	ConfigSnapshotBufferSecond           ConfigKey = "SNAPSHOT_BUFFER_SECOND"
-	ConfigSnapshotDelaySecond            ConfigKey = "SNAPSHOT_DELAY_SECOND"
-	ConfigBootstrapIsUpdateEnabled       ConfigKey = "BOOTSTRAP_IS_UPDATE_ENABLED"
-	ConfigBootstrapUpdateCron            ConfigKey = "BOOTSTRAP_UPDATE_CRON"
-	ConfigBootstrapWarningMinutes        ConfigKey = "BOOTSTRAP_WARNING_MINUTES"
-	ConfigBootstrapStartupTimeoutSeconds ConfigKey = "BOOTSTRAP_STARTUP_TIMEOUT_SECONDS"
-	ConfigBootstrapBackupRetentionDays   ConfigKey = "BOOTSTRAP_BACKUP_RETENTION_DAYS"
-	ConfigBootstrapManifestURL           ConfigKey = "BOOTSTRAP_MANIFEST_URL"
+	ConfigIsVersionLocked                    ConfigKey = "IS_VERSION_LOCKED"
+	ConfigIsSingleplayerOnly                 ConfigKey = "IS_SINGLEPLAYER_ONLY"
+	ConfigClientLocale                       ConfigKey = "CLIENT_LOCALE"
+	ConfigCampaignMatchmakingBotSize         ConfigKey = "CAMPAIGN_MATCHMAKING_BOT_SIZE"
+	ConfigIsCampaignBotSquadMirroringEnabled ConfigKey = "IS_CAMPAIGN_BOT_SQUAD_MIRRORING_ENABLED"
+	ConfigIsMultiplayerEnabled               ConfigKey = "IS_MULTIPLAYER_ENABLED"
+	ConfigServerPort                         ConfigKey = "SERVER_PORT"
+	ConfigServerBindHost                     ConfigKey = "SERVER_BIND_HOST"
+	ConfigServerAdvertisedHost               ConfigKey = "SERVER_ADVERTISED_HOST"
+	ConfigServerIsDedicated                  ConfigKey = "SERVER_IS_DEDICATED"
+	ConfigContentPath                        ConfigKey = "CONTENT_PATH"
+	ConfigWorldPlayerLimit                   ConfigKey = "WORLD_PLAYER_LIMIT"
+	ConfigIsChatStdoutEnabled                ConfigKey = "IS_CHAT_STDOUT_ENABLED"
+	ConfigStorageDriver                      ConfigKey = "STORAGE_DRIVER"
+	ConfigAuthJWTSecret                      ConfigKey = "AUTH_JWT_SECRET"
+	ConfigAuthJWTIssuer                      ConfigKey = "AUTH_JWT_ISSUER"
+	ConfigAuthJWTAudience                    ConfigKey = "AUTH_JWT_AUDIENCE"
+	ConfigSnapshotMode                       ConfigKey = "SNAPSHOT_MODE"
+	ConfigSnapshotBufferSecond               ConfigKey = "SNAPSHOT_BUFFER_SECOND"
+	ConfigSnapshotDelaySecond                ConfigKey = "SNAPSHOT_DELAY_SECOND"
+	ConfigBootstrapIsUpdateEnabled           ConfigKey = "BOOTSTRAP_IS_UPDATE_ENABLED"
+	ConfigBootstrapUpdateCron                ConfigKey = "BOOTSTRAP_UPDATE_CRON"
+	ConfigBootstrapWarningMinutes            ConfigKey = "BOOTSTRAP_WARNING_MINUTES"
+	ConfigBootstrapStartupTimeoutSeconds     ConfigKey = "BOOTSTRAP_STARTUP_TIMEOUT_SECONDS"
+	ConfigBootstrapBackupRetentionDays       ConfigKey = "BOOTSTRAP_BACKUP_RETENTION_DAYS"
+	ConfigBootstrapManifestURL               ConfigKey = "BOOTSTRAP_MANIFEST_URL"
 )
 
 var defaultConfigValues = map[ConfigKey]string{
-	ConfigIsVersionLocked:                "false",
-	ConfigIsSingleplayerOnly:             "false",
-	ConfigClientLocale:                   "",
-	ConfigIsMultiplayerEnabled:           "false",
-	ConfigServerPort:                     "42127",
-	ConfigServerBindHost:                 "",
-	ConfigServerAdvertisedHost:           "127.0.0.1",
-	ConfigServerIsDedicated:              "false",
-	ConfigContentPath:                    "",
-	ConfigWorldPlayerLimit:               "25",
-	ConfigIsChatStdoutEnabled:            "true",
-	ConfigStorageDriver:                  "sqlite",
-	ConfigAuthJWTSecret:                  "darkspin-local-development-secret-do-not-use-in-production",
-	ConfigAuthJWTIssuer:                  "darkspin-web",
-	ConfigAuthJWTAudience:                "darkspin",
-	ConfigSnapshotMode:                   "auto",
-	ConfigSnapshotBufferSecond:           "60",
-	ConfigSnapshotDelaySecond:            "30",
-	ConfigBootstrapIsUpdateEnabled:       "true",
-	ConfigBootstrapUpdateCron:            "30 3 * * *",
-	ConfigBootstrapWarningMinutes:        "30",
-	ConfigBootstrapStartupTimeoutSeconds: "1800",
-	ConfigBootstrapBackupRetentionDays:   "7",
-	ConfigBootstrapManifestURL:           "https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-update-linux-amd64-unstable.zip",
+	ConfigIsVersionLocked:                    "false",
+	ConfigIsSingleplayerOnly:                 "false",
+	ConfigClientLocale:                       "",
+	ConfigCampaignMatchmakingBotSize:         "1",
+	ConfigIsCampaignBotSquadMirroringEnabled: "true",
+	ConfigIsMultiplayerEnabled:               "false",
+	ConfigServerPort:                         "42127",
+	ConfigServerBindHost:                     "",
+	ConfigServerAdvertisedHost:               "127.0.0.1",
+	ConfigServerIsDedicated:                  "false",
+	ConfigContentPath:                        "",
+	ConfigWorldPlayerLimit:                   "25",
+	ConfigIsChatStdoutEnabled:                "true",
+	ConfigStorageDriver:                      "sqlite",
+	ConfigAuthJWTSecret:                      "darkspin-local-development-secret-do-not-use-in-production",
+	ConfigAuthJWTIssuer:                      "darkspin-web",
+	ConfigAuthJWTAudience:                    "darkspin",
+	ConfigSnapshotMode:                       "auto",
+	ConfigSnapshotBufferSecond:               "60",
+	ConfigSnapshotDelaySecond:                "30",
+	ConfigBootstrapIsUpdateEnabled:           "true",
+	ConfigBootstrapUpdateCron:                "30 3 * * *",
+	ConfigBootstrapWarningMinutes:            "30",
+	ConfigBootstrapStartupTimeoutSeconds:     "1800",
+	ConfigBootstrapBackupRetentionDays:       "7",
+	ConfigBootstrapManifestURL:               "https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-update-linux-amd64-unstable.zip",
 }
 
 // Config is a concurrency-safe representation of darkspin.toml.
@@ -117,9 +121,11 @@ type configChat struct {
 }
 
 type configGame struct {
-	IsVersionLocked    *bool   `toml:"is_version_locked"`
-	IsSingleplayerOnly *bool   `toml:"is_singleplayer_only"`
-	ClientLocale       *string `toml:"locale"`
+	IsVersionLocked                    *bool   `toml:"is_version_locked"`
+	IsSingleplayerOnly                 *bool   `toml:"is_singleplayer_only"`
+	ClientLocale                       *string `toml:"locale"`
+	CampaignMatchmakingBotSize         *int64  `toml:"campaign_matchmaking_bot_size"`
+	IsCampaignBotSquadMirroringEnabled *bool   `toml:"is_campaign_bot_squad_mirroring_enabled"`
 }
 
 type configServer struct {
@@ -183,6 +189,8 @@ func LoadConfig(path string) (*Config, bool, error) {
 	config.setBool(ConfigIsVersionLocked, document.Game.IsVersionLocked)
 	config.setBool(ConfigIsSingleplayerOnly, document.Game.IsSingleplayerOnly)
 	config.setString(ConfigClientLocale, document.Game.ClientLocale)
+	config.setInt(ConfigCampaignMatchmakingBotSize, document.Game.CampaignMatchmakingBotSize)
+	config.setBool(ConfigIsCampaignBotSquadMirroringEnabled, document.Game.IsCampaignBotSquadMirroringEnabled)
 	config.setBool(ConfigIsMultiplayerEnabled, document.Server.IsMultiplayerEnabled)
 	config.setInt(ConfigServerPort, document.Server.Port)
 	config.setString(ConfigServerBindHost, document.Server.BindHost)
@@ -205,6 +213,10 @@ func LoadConfig(path string) (*Config, bool, error) {
 	config.setInt(ConfigBootstrapBackupRetentionDays, document.Bootstrap.BackupRetentionDays)
 	config.setString(ConfigBootstrapManifestURL, document.Bootstrap.ManifestURL)
 
+	_, err = config.CampaignMatchmakingBotSize()
+	if err != nil {
+		return nil, false, fmt.Errorf("campaignBotSize: %w", err)
+	}
 	return config, false, nil
 }
 
@@ -275,6 +287,13 @@ func encodeConfigDocument(values map[ConfigKey]string) (configDocument, error) {
 	if err != nil {
 		return configDocument{}, fmt.Errorf("worldPlayerLimit: %w", err)
 	}
+	campaignMatchmakingBotSize, err := integer(ConfigCampaignMatchmakingBotSize)
+	if err != nil {
+		return configDocument{}, fmt.Errorf("campaignBotSize: %w", err)
+	}
+	if *campaignMatchmakingBotSize < 1 || *campaignMatchmakingBotSize > 3 {
+		return configDocument{}, errors.New("campaign matchmaking bot size must be between 1 and 3")
+	}
 	snapshotBufferSecond, err := integer(ConfigSnapshotBufferSecond)
 	if err != nil {
 		return configDocument{}, fmt.Errorf("snapshotBuffer: %w", err)
@@ -306,9 +325,11 @@ func encodeConfigDocument(values map[ConfigKey]string) (configDocument, error) {
 		},
 		Content: configContent{Path: configPointer(values[ConfigContentPath])},
 		Game: configGame{
-			IsVersionLocked:    configPointer(configBool(values[ConfigIsVersionLocked])),
-			IsSingleplayerOnly: configPointer(configBool(values[ConfigIsSingleplayerOnly])),
-			ClientLocale:       configPointer(values[ConfigClientLocale]),
+			IsVersionLocked:                    configPointer(configBool(values[ConfigIsVersionLocked])),
+			IsSingleplayerOnly:                 configPointer(configBool(values[ConfigIsSingleplayerOnly])),
+			ClientLocale:                       configPointer(values[ConfigClientLocale]),
+			CampaignMatchmakingBotSize:         campaignMatchmakingBotSize,
+			IsCampaignBotSquadMirroringEnabled: configPointer(configBool(values[ConfigIsCampaignBotSquadMirroringEnabled])),
 		},
 		Server: configServer{
 			BindHost:             configPointer(values[ConfigServerBindHost]),
@@ -396,10 +417,31 @@ func (c *Config) Uint32(key ConfigKey) (uint32, error) {
 	return uint32(parsed), nil
 }
 
+// CampaignMatchmakingBotSize returns the maximum number of campaign AI players.
+func (e *Config) CampaignMatchmakingBotSize() (uint32, error) {
+	botSize, err := e.Uint32(ConfigCampaignMatchmakingBotSize)
+	if err != nil {
+		return 0, fmt.Errorf("botSizeParse: %w", err)
+	}
+	if botSize < 1 || botSize > 3 {
+		return 0, errors.New("campaign matchmaking bot size must be between 1 and 3")
+	}
+	return botSize, nil
+}
+
 // Set updates a known configuration value in memory.
 func (c *Config) Set(key ConfigKey, value string) error {
 	if _, known := defaultConfigValues[key]; !known {
 		return fmt.Errorf("unknown config key %q", key)
+	}
+	if key == ConfigCampaignMatchmakingBotSize {
+		botSize, err := strconv.ParseUint(value, 10, 32)
+		if err != nil {
+			return fmt.Errorf("botSizeParse: %w", err)
+		}
+		if botSize < 1 || botSize > 3 {
+			return errors.New("campaign matchmaking bot size must be between 1 and 3")
+		}
 	}
 	c.mu.Lock()
 	c.values[key] = value

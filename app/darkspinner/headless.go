@@ -222,6 +222,7 @@ func launcherMethods(app *App) map[string]any {
 		"GetProfiles":                  app.GetProfiles,
 		"GetRemoteProfiles":            app.GetRemoteProfiles,
 		"GetServerConfiguration":       app.GetServerConfiguration,
+		"GetSquadSnapshot":             app.GetSquadSnapshot,
 		"GetServerRulesConfiguration":  app.GetServerRulesConfiguration,
 		"GetStatus":                    app.GetStatus,
 		"GetWineRunnerConfiguration":   app.GetWineRunnerConfiguration,

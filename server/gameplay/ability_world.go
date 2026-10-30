@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
+	"github.com/darkspinnet/darkspin/server/navigation"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
@@ -24,6 +25,7 @@ type arenaAbilityWorld struct {
 	claymores       map[uint32]*arenaClaymoreRun
 	sprites         map[uint32]*arenaSpriteRun
 	combatPets      map[uint32]*arenaCombatPetRun
+	sages           map[uint32]*arenaSagePassive
 	charges         map[uint32]*arenaHeroChargeRun
 	gravityStorms   map[uint32]*arenaGravityStormRun
 	sproutWorld     *arenaSproutWorld
@@ -37,6 +39,20 @@ func abilityActorTeam(member gameplayPeerSession) uint8 {
 		return uint8(member.binding.Team)
 	}
 	return 1
+}
+
+func (e *gameplaySessionRegistry) abilityNavigationLocked(member gameplayPeerSession) *navigation.Mesh {
+	if member.binding.Mode == game.ModeArena {
+		match := e.arenaMatches[member.binding.GameID]
+		if match == nil {
+			return nil
+		}
+		return match.navigation
+	}
+	if member.zone == nil {
+		return nil
+	}
+	return member.zone.Navigation()
 }
 
 func (e *gameplaySessionRegistry) arenaAbilityWorldLocked(gameID uint32) (*arenaAbilityWorld, error) {

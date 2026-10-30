@@ -92,14 +92,20 @@ func (e campaignPursuitProgressProducer) produce() ([][]byte, error) {
 	now := e.runtime.now()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	pursuit := peerSession.campaignPlayerPursuitSession().Snapshot()
+	isWorldAvailable := peerSession.zone != nil && peerSession.zone.NPCs() != nil
+	if peerSession.binding.Mode == game.ModeArena {
+		match := e.runtime.registry.arenaMatches[peerSession.binding.GameID]
+		isWorldAvailable = match != nil && match.isCombatActive && peerSession.isArenaCombatActive
+	}
 	isCurrent := isFound && peerSession.generation == e.sessionGeneration &&
-		peerSession.zone != nil && peerSession.zone.NPCs() != nil &&
+		isWorldAvailable &&
 		pursuit.IsActive && pursuit.Generation == e.pursuitGeneration
 	if !isCurrent {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	target, isTargetFound := peerSession.zone.NPCs().NPC(pursuit.TargetObjectID)
+	targets := e.runtime.registry.abilityTargetsLocked(e.runtime, peerSession, sim.AbilityDefinition{}, e.packet.SourceTime)
+	target, isTargetFound := targets.NPC(pursuit.TargetObjectID)
 	if !pursuit.IsGround && (!isTargetFound || target.IsDefeated || target.HitPoint <= 0) {
 		cancelPacket, err := abilityraknet.Acknowledge(
 			abilityraknet.AcknowledgeRequest{
@@ -149,7 +155,7 @@ func (e campaignPursuitProgressProducer) produce() ([][]byte, error) {
 	if !pursuit.IsGround {
 		var goalErr error
 		pursuitGoal, goalErr = zoneaction.PlayerPursuitDestination(
-			peerSession.zone.Navigation(), zonePosition(peerSession.playerPosition), targetPosition,
+			e.runtime.registry.abilityNavigationLocked(peerSession), zonePosition(peerSession.playerPosition), targetPosition,
 			peerSession.deployedCampaignNavigationRadius(), uint8(peerSession.binding.Mode), e.stopDistance,
 		)
 		if goalErr != nil {
@@ -883,7 +889,7 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 		// ability with shouldPursue, including FireRavagerBasic projectiles.
 		// Advance the authoritative route instead of rejecting every retry
 		// while the client's local pursuit has already moved into range.
-		isPursuit := peerSession.binding.Mode != game.ModeArena && errors.As(planErr, &rangeErr) && targetObjectID != 0 &&
+		isPursuit := errors.As(planErr, &rangeErr) && targetObjectID != 0 &&
 			(definition.Kind == sim.AbilityKindMelee ||
 				definition.Kind == sim.AbilityKindProjectile) && definition.IsShouldPursue &&
 			targetFootprint > 0
@@ -2402,7 +2408,7 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 	if additionalTargetCount != 0 {
 		additionalTargets, targetErr := zoneability.AdditionalMeleeTargets(
 			enemies, livePlan.TargetObjectID,
-			livePlan.SourcePosition, liveNPC.Plan.Position,
+			livePlan.SourcePosition, state.arc.Facing,
 			schedule.selected.AdditionalTargetRange,
 			schedule.selected.AdditionalTargetAngle, additionalTargetCount,
 		)

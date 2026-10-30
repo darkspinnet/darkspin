@@ -11,6 +11,10 @@ Never use .cache, instead put it in bin/cache/
 
 - Write game and IDA reverse-engineering output under `bin/game/logs`. Do not
   write generated log files directly into `bin`.
+- Never create the repository-root `logs` directory or write files under it
+  (including `logs/log.txt` and `logs/logs.txt`). Run diagnostic tools with an
+  explicit working directory under `bin/game/logs` so their automatic logs stay
+  inside the diagnostic tree.
 - Keep protocol event captures under `bin/server/darkspin/logs/traces` so
   machine-readable traces remain with the server runtime.
 
@@ -108,6 +112,30 @@ Never use .cache, instead put it in bin/cache/
 
 - Run one scenario server instance on its configured port. Never add dynamic port allocation, change the scenario server port, or start another server to work around a binding conflict.
 - On a bind conflict, identify and shut down the existing owned scenario server, then make scenario clients and tooling use the server on its provided port. Check server lifecycle and client attachment before changing gameplay or networking code.
+
+### Scenario runner lifecycle
+
+- Build scenario-capable Darkspinner with `mage scenario:build`. Run only the
+  canonical `bin/game/darkspinner.exe`; never copy it to a temporary path or
+  start a second build/run command while a scenario is active.
+- Before a scenario launch, confirm the fixed scenario port is clear and no
+  prior scenario supervisor is still running. A failed `result.json` does not
+  mean its supervisor or game client exited.
+- Treat the supervisor and its `--scenario-script-worker` child as one expected
+  scenario runtime. A scenario may also own a Darkspore client child. Identify
+  ownership by process ID, parent process ID, executable path, command line,
+  and the scenario discovery record; never stop every process by image name.
+- To stop an owned scenario, read its
+  `bin/cache/scenario/<supervisor-id>/discovery.json` and call its authenticated
+  local `/shutdown` endpoint. Then verify the supervisor, script worker, and
+  scenario-owned Darkspore client have exited and the fixed UDP port is clear
+  before rebuilding or retrying. If normal process inspection cannot identify
+  the lock holder, use an elevated read-only process query; do not kill an
+  unidentified process.
+- Keep scenario output under `bin/game/logs/scenarios/<supervisor-id>` and
+  related retry logs under `bin/game/logs/scenarios`. On failure, inspect the
+  scenario result, script log, server log, and current supervisor status before
+  changing gameplay code or launching another run.
 
 ## Git safety
 

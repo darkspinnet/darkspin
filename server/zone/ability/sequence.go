@@ -226,8 +226,14 @@ func (s *Sequence) Accept(
 	} else if s.isFullSequenceComplete {
 		s.isFullSequenceComplete = false
 	}
-	sequenceIndex := s.index % sequenceLength
-	if sequenceIndex < 2 && s.starterIndex == 1 {
+	// The session can retain its sequence position across attack definitions.
+	// Keep both progression and opener alternation inside the current sequence.
+	s.index %= sequenceLength
+	if sequenceLength == 1 {
+		s.starterIndex = 0
+	}
+	sequenceIndex := s.index
+	if sequenceLength > 1 && sequenceIndex < 2 && s.starterIndex == 1 {
 		sequenceIndex = 1 - sequenceIndex
 	}
 	selection := Selection{

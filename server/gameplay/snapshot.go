@@ -163,7 +163,17 @@ func snapshotSession(
 	}
 	state.PendingPacketCount = len(state.PendingPackets)
 	state.ArenaLoading = snapshotArenaLoading(peerSession)
+	state.PlayerControl = snapshotPlayerControl(peerSession, capturedAt)
+	state.Cooldowns = snapshotCooldowns(peerSession, capturedAt)
+	state.ActionSchedules = snapshotActionSchedules(peerSession)
+	state.Squad = snapshotSquad(peerSession, capturedAt)
+	state.CrystalInventory = snapshotCrystalInventory(peerSession.crystalInventory)
+	state.AbilityRuntimes = snapshotAbilityRuntimes(peerSession, capturedAt)
+	state.HeroSpeed = snapshotHeroSpeed(peerSession)
 	if peerSession.zone == nil {
+		if peerSession.binding.Mode == game.ModeArena {
+			state.Objects = snapshotArenaHero(peerSession, capturedAt)
+		}
 		return state
 	}
 	zoneSnapshot := peerSession.zone.Snapshot()
@@ -186,15 +196,8 @@ func snapshotSession(
 	state.IsObjectiveComplete = zoneSnapshot.IsObjectiveComplete
 	state.ZoneMembers = snapshotZoneMembers(zoneSnapshot.Members)
 	state.DirectorPublications = snapshotDirectorPublications(peerSession)
-	state.PlayerControl = snapshotPlayerControl(peerSession, capturedAt)
-	state.Cooldowns = snapshotCooldowns(peerSession, capturedAt)
-	state.ActionSchedules = snapshotActionSchedules(peerSession)
 	state.Deaths = snapshotDeaths(peerSession)
 	state.Objectives = snapshotObjectives(peerSession)
-	state.Squad = snapshotSquad(peerSession, capturedAt)
-	state.CrystalInventory = snapshotCrystalInventory(peerSession.crystalInventory)
-	state.AbilityRuntimes = snapshotAbilityRuntimes(peerSession, capturedAt)
-	state.HeroSpeed = snapshotHeroSpeed(peerSession)
 	state.EnemyDamageTicks = snapshotEnemyDamageTicks(peerSession)
 	state.CryosGeysers = snapshotCryosGeysers(peerSession, capturedAt)
 	state.EncounterStages = snapshotEncounterStages(peerSession)

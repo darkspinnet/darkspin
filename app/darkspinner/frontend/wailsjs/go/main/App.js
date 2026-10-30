@@ -106,6 +106,10 @@ export function GetServerRulesConfiguration() {
   return window['go']['main']['App']['GetServerRulesConfiguration']();
 }
 
+export function GetSquadSnapshot(arg1) {
+  return window['go']['main']['App']['GetSquadSnapshot'](arg1);
+}
+
 export function GetStatus() {
   return window['go']['main']['App']['GetStatus']();
 }

@@ -9,6 +9,7 @@ var schemaStatements = []string{
 		completed_at_unix INTEGER NOT NULL,
 		is_victory INTEGER NOT NULL,
 		is_ranked INTEGER NOT NULL,
+		dna_reward INTEGER NOT NULL DEFAULT 0,
 		round_win INTEGER NOT NULL,
 		round_loss INTEGER NOT NULL,
 		play_time_second INTEGER NOT NULL,

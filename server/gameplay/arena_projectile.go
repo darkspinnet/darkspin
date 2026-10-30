@@ -7,6 +7,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/sim"
+	"github.com/darkspinnet/darkspin/server/util"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
@@ -127,10 +128,19 @@ func abilityTargetProjectileGeometryLocked(
 	}
 	targets := arenaAbilityTargets{runtime: runtime, source: member}
 	targetSessionKey, victim, isFound := targets.member(target.Plan.ObjectID)
-	if !isFound || targetSessionKey == "" {
+	noun := uint32(0)
+	if isFound && targetSessionKey != "" {
+		noun = victim.binding.Creatures[victim.deployedCreatureIndex].Noun
+	} else if pet, actor, isPetFound := targets.combatPet(target.Plan.ObjectID); isPetFound && pet != nil {
+		noun = actor.Noun
+	} else if sprite, actor, isSpriteFound := targets.sprite(target.Plan.ObjectID); isSpriteFound && sprite != nil {
+		noun = actor.Noun
+	} else if turret, isTurretFound := targets.turret(target.Plan.ObjectID); isTurretFound {
+		noun = util.HashID(turret.definition.SpawnNoun)
+	} else {
 		return zonenpc.ProjectileGeometry{}, false, fmt.Errorf("arenaTargetGeometry: target %d unavailable", target.Plan.ObjectID)
 	}
-	physics, isPhysicsFound := runtime.program.NounPhysicsByID[victim.binding.Creatures[victim.deployedCreatureIndex].Noun]
+	physics, isPhysicsFound := runtime.program.NounPhysicsByID[noun]
 	geometry, isFallback, err := campaignTargetProjectileGeometryForPhysics(runtime.program, target, physics, isPhysicsFound)
 	if err != nil {
 		return zonenpc.ProjectileGeometry{}, false, fmt.Errorf("arenaTargetPhysics: %w", err)

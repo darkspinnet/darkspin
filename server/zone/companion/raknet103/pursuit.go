@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	zonecompanion "github.com/darkspinnet/darkspin/server/zone/companion"
 )
@@ -51,4 +52,26 @@ func Pursuit(plan zonecompanion.Pursuit) ([][]byte, error) {
 		return nil, fmt.Errorf("pursuitCorrectionMarshal: %w", err)
 	}
 	return [][]byte{movePacket, correctionPacket}, nil
+}
+
+// PursuitStop corrects a campaign bot's visible position before it selects a
+// nearer target. The old server arrival is fenced by the pursuit revision.
+func PursuitStop(objectID uint32, position game.Vec3) ([][]byte, error) {
+	if objectID == 0 {
+		return nil, errors.New("companion pursuit stop invalid")
+	}
+	positionPacket, err := raknet.MarshalApplication(raknet.ObjectUpdateMessage{
+		ObjectID: objectID, PositionX: position.X, PositionY: position.Y,
+		PositionZ: position.Z, IsVisible: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pursuitStopPosition: %w", err)
+	}
+	stopPacket, err := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
+		ObjectID: objectID, GoalFlags: 0x20, GoalPosition: raknet.Vector3(position),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pursuitStopMove: %w", err)
+	}
+	return [][]byte{positionPacket, stopPacket}, nil
 }

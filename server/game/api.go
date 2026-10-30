@@ -55,6 +55,7 @@ type ResumeActivator interface {
 
 // API serves the legacy launcher, account, inventory, creature, and QoS HTTP APIs.
 type API struct {
+	botPortraitFinder   BotPortraitFinder
 	userManager         UserManager
 	template            *sporenet.TemplateDatabase
 	partCatalog         *PartCatalog
@@ -76,20 +77,21 @@ type API struct {
 }
 
 type APIOptions struct {
-	IsModded         bool
-	IsDedicated      bool
-	UserManager      UserManager
-	Template         *sporenet.TemplateDatabase
-	PartCatalog      *PartCatalog
-	Vendor           *sporenet.Vendor
-	PartShopRules    sporenet.PartShopRules
-	Storage          string
-	StaticFileSystem fs.FS
-	Host             string
-	HTTPPort         uint16
-	QoSPort          uint16
-	Logger           *log.Logger
-	ResumeActivator  ResumeActivator
+	BotPortraitFinder BotPortraitFinder
+	IsModded          bool
+	IsDedicated       bool
+	UserManager       UserManager
+	Template          *sporenet.TemplateDatabase
+	PartCatalog       *PartCatalog
+	Vendor            *sporenet.Vendor
+	PartShopRules     sporenet.PartShopRules
+	Storage           string
+	StaticFileSystem  fs.FS
+	Host              string
+	HTTPPort          uint16
+	QoSPort           uint16
+	Logger            *log.Logger
+	ResumeActivator   ResumeActivator
 }
 
 func RegisterAPI(router *recaphttp.Router, options APIOptions) error {
@@ -98,7 +100,8 @@ func RegisterAPI(router *recaphttp.Router, options APIOptions) error {
 		logger = log.New(io.Discard, "", 0)
 	}
 	api := &API{
-		userManager: options.UserManager, template: options.Template, partCatalog: options.PartCatalog, vendor: options.Vendor,
+		botPortraitFinder: options.BotPortraitFinder,
+		userManager:       options.UserManager, template: options.Template, partCatalog: options.PartCatalog, vendor: options.Vendor,
 		storage: options.Storage, staticFileSystem: options.StaticFileSystem,
 		host: options.Host, httpPort: options.HTTPPort, qosPort: options.QoSPort, logger: logger,
 		resumeActivator:     options.ResumeActivator,
@@ -1046,12 +1049,12 @@ func accountStatsNode(account sporenet.Account, stats sporenet.PlayerStats) stri
 		xmlText("pvp_playerKills", number(stats.PVPPlayerKill)),
 		xmlText("pvp_deaths", number(stats.PVPDeath)),
 		xmlText("pvp_killDeathRatio", profileKillDeathRatio(stats.PVPPlayerKill, stats.PVPDeath)),
-		xmlText("pvp_damageDealt", profileStatNumber(stats.PVPDamageDealt)),
-		xmlText("pvp_damageTaken", profileStatNumber(stats.PVPDamageTaken)),
-		xmlText("pvp_damageMax", profileStatNumber(stats.PVPDamageMaximum)),
-		xmlText("pvp_healing", profileStatNumber(stats.PVPHealing)),
-		xmlText("pvp_healingReceived", profileStatNumber(stats.PVPHealingReceived)),
-		xmlText("pvp_healingMax", profileStatNumber(stats.PVPHealingMaximum)),
+		xmlText("pvp_damageDealt", profileStatNumber(math.Round(stats.PVPDamageDealt))),
+		xmlText("pvp_damageTaken", profileStatNumber(math.Round(stats.PVPDamageTaken))),
+		xmlText("pvp_damageMax", profileStatNumber(math.Round(stats.PVPDamageMaximum))),
+		xmlText("pvp_healing", profileStatNumber(math.Round(stats.PVPHealing))),
+		xmlText("pvp_healingReceived", profileStatNumber(math.Round(stats.PVPHealingReceived))),
+		xmlText("pvp_healingMax", profileStatNumber(math.Round(stats.PVPHealingMaximum))),
 		xmlText("wins", number(stats.PVPWin)),
 	)
 }
@@ -1307,6 +1310,15 @@ func (a *API) profileImage(writer http.ResponseWriter, request *http.Request, _ 
 		accountID = 0
 	}
 	avatar := accountProfileAvatar(request.Context(), a.userManager, accountID)
+	if a.botPortraitFinder != nil && accountID > 0 {
+		avatarID, isBotFound := a.botPortraitFinder.BotAvatar(uint64(accountID))
+		if isBotFound {
+			botAvatar, isAvatarFound := contentcache.ProfileAvatarByID(avatarID)
+			if isAvatarFound {
+				avatar = botAvatar
+			}
+		}
+	}
 	writer.Header().Set("Cache-Control", "private, no-cache")
 	a.serveStaticFile(writer, request, avatar.Target)
 }
@@ -1364,10 +1376,44 @@ func (a *API) serveStaticFile(writer http.ResponseWriter, request *http.Request,
 }
 
 func (a *API) creatureImage(writer http.ResponseWriter, request *http.Request, uri *recaphttp.URI) {
+	generatedName := generatedBotAppearanceName(uri.Resource())
+	if generatedName != "" {
+		generatedPath := filepath.Join(a.storage, "cache", "bot_appearance", generatedName)
+		fi, statErr := os.Stat(generatedPath)
+		if statErr == nil && fi.Mode().IsRegular() {
+			if a.logger != nil {
+				a.logger.Printf("bot_appearance_served resource=%q file=%q", uri.Resource(), generatedName)
+			}
+			http.ServeFile(writer, request, generatedPath)
+			return
+		}
+		if a.logger != nil {
+			a.logger.Printf("bot_appearance_unavailable resource=%q file=%q error=%v", uri.Resource(), generatedName, statErr)
+		}
+	}
 	resource, err := gameplayAppearanceResource(uri.Resource())
 	if err != nil {
 		http.NotFound(writer, request)
 		return
+	}
+	name := filepath.Base(resource)
+	fields := strings.Split(name, "_")
+	if len(fields) == 3 {
+		creatureID, parseErr := strconv.ParseUint(fields[0], 10, 32)
+		if parseErr == nil && creatureID&0x80000000 != 0 {
+			generatedPath := filepath.Join(a.storage, "cache", "bot_appearance", name)
+			fi, statErr := os.Stat(generatedPath)
+			if statErr == nil && fi.Mode().IsRegular() {
+				if a.logger != nil {
+					a.logger.Printf("bot_appearance_served resource=%q file=%q", uri.Resource(), name)
+				}
+				http.ServeFile(writer, request, generatedPath)
+				return
+			}
+			if a.logger != nil {
+				a.logger.Printf("bot_appearance_unavailable resource=%q file=%q error=%v", uri.Resource(), name, statErr)
+			}
+		}
 	}
 	a.serveStorageFile(writer, request, a.storage, resource)
 }

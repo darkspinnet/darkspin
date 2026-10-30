@@ -1318,7 +1318,10 @@ type ModifierCreatedMessage struct {
 	// sub_537780 resolves it through sub_9C5FF0; HUD_NPCBar compares the resolved
 	// asset against Elite.NPCAffix, independently of ModifierGUID.
 	NPCAffixAssetID uint32
-	IsBound         bool
+	// Build 103 copies this wire byte to modifier-node +44. Its native
+	// attack gate (0x4DEFE0/0x4DF0A0) checks it independently of Immobilized.
+	// Set it for action-blocking control, not ordinary movement-only roots.
+	IsBound bool
 }
 
 func (ModifierCreatedMessage) PacketID() PacketID { return ModifierCreated }
@@ -2413,7 +2416,9 @@ func appendArenaResultsBody(payload []byte, result ArenaResultsBody) []byte {
 		for _, amount := range [...]float32{
 			player.DamageDealt, player.DamageTaken, player.HealingDealt, player.HealingReceived,
 		} {
-			payload = binary.LittleEndian.AppendUint32(payload, math.Float32bits(amount))
+			// The native results UI displays these floats without formatting.
+			// Round the presentation copy, retaining precise match statistics.
+			payload = binary.LittleEndian.AppendUint32(payload, math.Float32bits(float32(math.Round(float64(amount)))))
 		}
 		for _, round := range player.Round {
 			payload = binary.LittleEndian.AppendUint32(payload, round.Outcome)

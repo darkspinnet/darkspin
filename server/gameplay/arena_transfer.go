@@ -182,6 +182,14 @@ func (e arenaCountdownJob) activate() {
 	state.isCountdownScheduled = false
 	state.cancel = nil
 	e.registry.startArenaResultLocked(e.gameID, e.registry.now())
+	clock := &arenaRoundClock{registry: e.registry, match: state, gameID: e.gameID,
+		roundIndex: state.result.roundIndex, startedAt: state.result.startedAt,
+		sourceTime: e.animationTimestamp(state.result.startedAt)}
+	state.clock = clock
+	clockErr := clock.scheduleLocked()
+	if clockErr != nil && e.logger != nil {
+		e.logger.Printf("Arena round clock start failed game=%d: %v", e.gameID, clockErr)
+	}
 	if e.logger != nil {
 		e.logger.Printf("RakNet Arena combat started game=%d after authored teleport phases", e.gameID)
 	}

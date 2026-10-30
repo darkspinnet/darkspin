@@ -10,6 +10,7 @@ import (
 )
 
 const arenaRoundOverlayDuration = 5 * time.Second
+const arenaVictoryOverlayDuration = 10 * time.Second
 
 type arenaRoundEndJob struct {
 	registry     *gameplaySessionRegistry
@@ -39,7 +40,11 @@ func (e campaignAbilityCommandRuntime) commitArenaVictory(
 			return
 		}
 	}
+	celebration := e.arenaVictoryDanceLocked(match, target, winnerTeam)
 	e.registry.completeArenaResultLocked(gameID, winnerTeam)
+	if celebration != nil && match.result.isCompleted {
+		celebration.scheduleLocked()
+	}
 	e.registry.retireArenaForcePulsesLocked(gameID)
 	e.registry.retireArenaClaymoresLocked(gameID)
 	e.registry.retireArenaChargesLocked(gameID)
@@ -65,13 +70,17 @@ func (e campaignAbilityCommandRuntime) commitArenaVictory(
 		e.registry.sessions[key] = member
 	}
 	job := arenaRoundEndJob{registry: e.registry, modifierPool: e.modifierPool, effectPool: match.effectPool, gameID: gameID, roundIndex: match.result.roundIndex}
+	overlayDuration := arenaRoundOverlayDuration
+	if match.result.isCompleted {
+		overlayDuration = arenaVictoryOverlayDuration
+	}
 	e.registry.mutex.Unlock()
 	// Persistence is independent of both the presentation timer and Continue.
 	err := e.registry.saveArenaStats(context.Background(), gameID)
 	if err != nil && e.logger != nil {
 		e.logger.Printf("Arena completed-match statistics will retry game=%d: %v", gameID, err)
 	}
-	cancel, err := e.registry.timer.Schedule(arenaRoundOverlayDuration, job.execute)
+	cancel, err := e.registry.timer.Schedule(overlayDuration, job.execute)
 	if err == nil && cancel == nil {
 		err = errors.New("arena round timer returned no cancellation")
 	}
@@ -89,7 +98,7 @@ func (e campaignAbilityCommandRuntime) commitArenaVictory(
 	}
 	e.registry.mutex.Unlock()
 	if e.logger != nil {
-		e.logger.Printf("Arena round completed game=%d round=%d winner_team=%d overlay=5s", gameID, job.roundIndex+1, winnerTeam)
+		e.logger.Printf("Arena round completed game=%d round=%d winner_team=%d overlay=%s", gameID, job.roundIndex+1, winnerTeam, overlayDuration)
 	}
 }
 

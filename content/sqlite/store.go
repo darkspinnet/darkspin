@@ -32,6 +32,7 @@ type CreatureTemplate struct {
 	Name                 string
 	ElementType          string
 	ClassType            string
+	UnlockLevel          uint32
 	WeaponMinDamage      float64
 	WeaponMaxDamage      float64
 	GearScore            float32
@@ -259,7 +260,7 @@ func (s *Store) CreatureTemplates(ctx context.Context) ([]CreatureTemplate, erro
 	}
 	rows, err := s.database.QueryContext(ctx, `
 		SELECT id, name_locale_key, description_locale_key, name, element_type, class_type,
-		       weapon_min_damage, weapon_max_damage, gear_score, stat_template,
+		       unlock_level, weapon_min_damage, weapon_max_damage, gear_score, stat_template,
 		       ability_passive, ability_basic, ability_random, ability_special_1, ability_special_2,
 		       is_hand_present, is_foot_present
 		FROM creature_template
@@ -272,7 +273,7 @@ func (s *Store) CreatureTemplates(ctx context.Context) ([]CreatureTemplate, erro
 	for rows.Next() {
 		var template CreatureTemplate
 		err = rows.Scan(&template.ID, &template.NameLocaleKey, &template.DescriptionLocaleKey, &template.Name,
-			&template.ElementType, &template.ClassType, &template.WeaponMinDamage, &template.WeaponMaxDamage,
+			&template.ElementType, &template.ClassType, &template.UnlockLevel, &template.WeaponMinDamage, &template.WeaponMaxDamage,
 			&template.GearScore, &template.StatTemplate, &template.AbilityPassive, &template.AbilityBasic,
 			&template.AbilityRandom, &template.AbilitySpecial1, &template.AbilitySpecial2,
 			&template.IsHandPresent, &template.IsFootPresent)

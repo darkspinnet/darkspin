@@ -17,6 +17,9 @@ func (e *gameplaySessionRegistry) campaignRecipientPartRequestLocked(
 		return req
 	}
 	for _, member := range recipient.zone.Snapshot().Members {
+		if member.IsServerBot {
+			continue
+		}
 		for _, candidate := range e.sessions {
 			if candidate.zone != recipient.zone || candidate.binding.UserID != member.UserID ||
 				candidate.generation != member.PeerGeneration || candidate.lastPlayerStatus.Status&0x40 != 0 {

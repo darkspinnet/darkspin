@@ -34,6 +34,9 @@ func (r *Recorder) Record(
 	if statDelta == (sporenet.PlayerStatDelta{}) || r == nil || r.store == nil {
 		return nil
 	}
+	if binding.IsServerBot {
+		return nil
+	}
 	if ctx == nil {
 		return errors.New("player stats unavailable")
 	}

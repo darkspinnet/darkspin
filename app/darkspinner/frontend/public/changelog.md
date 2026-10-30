@@ -1,5 +1,12 @@
 # Changelog
 
+### 2026-10-30
+
+- Let campaign matchmaking add 1–3 AI players from the launcher setting, and fill unranked PvP or campaign queues immediately for a lone online player or after 30 seconds when others are online.
+- Give campaign co-op AI the earliest unused unlocked PvE squad with a usable melee hero, carrying its saved equipment and appearance, and retain generated bots as fallback.
+- Regenerate living inactive Arena squad members by 1% of maximum power per second up to 50% power for players and AI bots.
+- Add new AI bot options
+
 ### 2026-10-29
 
 - Rebuild Fang native feature packages when shared headers change to prevent stale cgo objects and missing hook symbols during incremental builds.

@@ -26,7 +26,7 @@ func (e campaignMeleeHitStep) commitArenaMeleeLocked(current gameplayPeerSession
 	}
 	if additionalCount > 0 {
 		additionalTargets, err := zoneability.AdditionalMeleeTargets(targets, plan.TargetObjectID,
-			plan.SourcePosition, primary.Plan.Position, schedule.selected.AdditionalTargetRange,
+			plan.SourcePosition, schedule.hitState.arc.Facing, schedule.selected.AdditionalTargetRange,
 			schedule.selected.AdditionalTargetAngle, additionalCount)
 		if err != nil {
 			return nil, fmt.Errorf("arenaMeleeTargets: %w", err)

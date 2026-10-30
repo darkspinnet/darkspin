@@ -15,6 +15,7 @@ type PVPMatchResult struct {
 	CompletedAtUnix int64
 	IsVictory       bool
 	IsRanked        bool
+	DNAReward       uint32
 	RoundWins       uint32
 	RoundLosses     uint32
 	PlayTimeSecond  uint64
@@ -117,6 +118,12 @@ func (e *UserManager) RecordPVPMatch(ctx context.Context, userID int64, req PVPM
 	next.PVPDamageMaximum = max(previous.PVPDamageMaximum, req.DamageMaximum)
 	next.PVPHealingMaximum = max(previous.PVPHealingMaximum, req.HealingMaximum)
 	previousResults := user.PVPResults
+	previousDNA := user.Account.DNA
+	if req.DNAReward > ^uint32(0)-previousDNA {
+		user.mu.Unlock()
+		return errors.New("PVP DNA balance overflow")
+	}
+	user.Account.DNA = previousDNA + req.DNAReward
 	user.Stats = next
 	user.PVPResults = append(append([]PVPMatchResult(nil), previousResults...), req)
 	user.mu.Unlock()
@@ -124,6 +131,7 @@ func (e *UserManager) RecordPVPMatch(ctx context.Context, userID int64, req PVPM
 	if err != nil {
 		user.mu.Lock()
 		user.Stats = previous
+		user.Account.DNA = previousDNA
 		user.PVPResults = previousResults
 		user.mu.Unlock()
 		return fmt.Errorf("pvpSave: %w", err)

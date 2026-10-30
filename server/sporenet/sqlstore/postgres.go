@@ -30,6 +30,10 @@ func NewPostgres(ctx context.Context, database *sqlx.DB) (*Repository, error) {
 			return nil, fmt.Errorf("schemaStep[%d]: %w", index, err)
 		}
 	}
+	_, err = tx.ExecContext(ctx, `ALTER TABLE pvp_match_result ADD COLUMN IF NOT EXISTS dna_reward BIGINT NOT NULL DEFAULT 0`)
+	if err != nil {
+		return nil, fmt.Errorf("schemaPVPReward: %w", err)
+	}
 	err = tx.Commit()
 	if err != nil {
 		return nil, fmt.Errorf("schemaCommit: %w", err)

@@ -14,6 +14,7 @@ type pvpMatchResultRow struct {
 	CompletedAtUnix int64   `db:"completed_at_unix"`
 	IsVictory       int64   `db:"is_victory"`
 	IsRanked        int64   `db:"is_ranked"`
+	DNAReward       uint32  `db:"dna_reward"`
 	RoundWins       uint32  `db:"round_win"`
 	RoundLosses     uint32  `db:"round_loss"`
 	PlayTimeSecond  uint64  `db:"play_time_second"`
@@ -32,6 +33,7 @@ func writePVPResults(ctx context.Context, tx *sqlx.Tx, record sporenet.UserRecor
 		row := pvpMatchResultRow{
 			UserID: record.Account.ID, MatchID: result.MatchID, CompletedAtUnix: result.CompletedAtUnix,
 			IsVictory: boolInteger(result.IsVictory), IsRanked: boolInteger(result.IsRanked),
+			DNAReward: result.DNAReward,
 			RoundWins: result.RoundWins, RoundLosses: result.RoundLosses, PlayTimeSecond: result.PlayTimeSecond,
 			PlayerKills: result.PlayerKills, Deaths: result.Deaths, DamageDealt: result.DamageDealt,
 			DamageTaken: result.DamageTaken, DamageMaximum: result.DamageMaximum,
@@ -39,11 +41,11 @@ func writePVPResults(ctx context.Context, tx *sqlx.Tx, record sporenet.UserRecor
 		}
 		resultExec, err := tx.NamedExecContext(ctx, `
 			INSERT INTO pvp_match_result (
-				user_id, match_id, completed_at_unix, is_victory, is_ranked, round_win, round_loss,
+				user_id, match_id, completed_at_unix, is_victory, is_ranked, dna_reward, round_win, round_loss,
 				play_time_second, player_kill, death, damage_dealt, damage_taken, damage_maximum,
 				healing, healing_received, healing_maximum
 			) VALUES (
-				:user_id, :match_id, :completed_at_unix, :is_victory, :is_ranked, :round_win, :round_loss,
+				:user_id, :match_id, :completed_at_unix, :is_victory, :is_ranked, :dna_reward, :round_win, :round_loss,
 				:play_time_second, :player_kill, :death, :damage_dealt, :damage_taken, :damage_maximum,
 				:healing, :healing_received, :healing_maximum
 			)`, row)
@@ -72,6 +74,7 @@ func loadPVPResults(ctx context.Context, tx *sqlx.Tx, userID int64) ([]sporenet.
 		results = append(results, sporenet.PVPMatchResult{
 			MatchID: row.MatchID, CompletedAtUnix: row.CompletedAtUnix,
 			IsVictory: row.IsVictory != 0, IsRanked: row.IsRanked != 0,
+			DNAReward: row.DNAReward,
 			RoundWins: row.RoundWins, RoundLosses: row.RoundLosses, PlayTimeSecond: row.PlayTimeSecond,
 			PlayerKills: row.PlayerKills, Deaths: row.Deaths, DamageDealt: row.DamageDealt,
 			DamageTaken: row.DamageTaken, DamageMaximum: row.DamageMaximum,

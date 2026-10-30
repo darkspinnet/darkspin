@@ -119,7 +119,8 @@ func (e *arenaAbilityTargets) prepareBasicStatusLocked(key string, target gamepl
 	createPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: status.objectID, ModifierGUID: status.modifierID, InstanceID: instanceID,
 		DurationMilliseconds: uint32(duration.Milliseconds()), StackCount: stackCount,
-		StartMilliseconds: timestamp, NPCAffixAssetID: 0})
+		StartMilliseconds: timestamp, NPCAffixAssetID: 0,
+		IsBound: kind == sim.AbilityStatusKindStun})
 	if err != nil {
 		return nil, nil, status.discard("arenaBasicCreate", err)
 	}
@@ -190,7 +191,8 @@ func (e *arenaAbilityTargets) applyPummelStatusLocked(result zonenpc.DamageResul
 func (e *arenaHitStatus) updateBasic(target *gameplayPeerSession, timestamp uint64, stackCount uint32) error {
 	updatePacket, err := raknet.MarshalApplication(raknet.ModifierUpdatedMessage{
 		TargetID: e.objectID, InstanceID: e.instanceID,
-		StartMilliseconds: int64(timestamp), StackCount: stackCount})
+		StartMilliseconds: int64(timestamp), StackCount: stackCount,
+		IsBound: e.kind == sim.AbilityStatusKindStun})
 	if err != nil {
 		return fmt.Errorf("basicUpdatePacket: %w", err)
 	}

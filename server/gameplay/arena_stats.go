@@ -40,13 +40,27 @@ func (e *arenaResultState) freezeStats(completedAt time.Time) {
 		return
 	}
 	for userID, player := range e.players {
+		if e.botUserIDs[userID] {
+			continue
+		}
 		wins, losses := e.body.CountA, e.body.CountB
 		if player.Team == 2 {
 			wins, losses = losses, wins
 		}
 		maximums := e.statMaximums[userID]
+		dnaReward := e.playerLevels[userID]
+		if len(e.players) == 4 && uint32(player.Team) == e.body.SelectorA {
+			dnaReward += dnaReward / 2
+		}
+		for index, participant := range e.body.Player {
+			if participant.PlayerID == userID {
+				e.body.DNAAmount[index] = dnaReward
+				break
+			}
+		}
 		e.statEntries = append(e.statEntries, arenaStatEntry{userID: userID, result: sporenet.PVPMatchResult{
 			MatchID: e.matchID, CompletedAtUnix: completedAt.Unix(),
+			DNAReward: dnaReward,
 			IsVictory: uint32(player.Team) == e.body.SelectorA,
 			IsRanked:  e.isRanked, RoundWins: wins, RoundLosses: losses,
 			PlayTimeSecond: uint64(max(int32(0), e.body.RoundTimeSeconds)),

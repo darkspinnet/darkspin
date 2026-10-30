@@ -38,6 +38,7 @@ const (
 )
 
 type arenaMatchState struct {
+	clock                *arenaRoundClock
 	abilityWorld         *arenaAbilityWorld
 	effectPool           *attachedEffectPool
 	navigation           *navigation.Mesh
@@ -70,6 +71,17 @@ type gameplayArenaRuntime struct {
 	logger            *log.Logger
 }
 
+// Arena has no campaign zone. Bind its match mesh explicitly so ordinary
+// movement cannot fall back to straight-line motion through level obstacles.
+func (e *gameplaySessionRegistry) bindArenaMotionLocked(member *gameplayPeerSession) {
+	match := e.arenaMatches[member.binding.GameID]
+	if member.playerMotion == nil || match == nil || match.navigation == nil {
+		return
+	}
+	member.playerMotion.SetActorNavigation(match.navigation, member.deployedCampaignNavigationRadius(),
+		member.deployedObjectID, uint8(member.binding.Mode))
+}
+
 func (r gameplaySwitchRuntime) handleArenaSwitch(
 	packet raknet.Packet, command raknet.ActionCommandData,
 	commandSession gameplayPeerSession, switchStartTime time.Time,
@@ -82,7 +94,7 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 		r.effectPool = match.effectPool
 	}
 	isCurrent := isFound && peerSession.generation == commandSession.generation &&
-		(match == nil || !match.isTransferActive) &&
+		match != nil && match.isCombatActive && !match.isTransferActive &&
 		peerSession.binding.Mode == game.ModeArena &&
 		peerSession.stage.IsDungeon() && peerSession.squad != nil &&
 		peerSession.deployedCreatureIndex <
@@ -112,6 +124,13 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 		r.registry.mutex.Unlock()
 		return r.rejectArenaSwitch(command, "target object unavailable")
 	}
+	// Stop advances the retained motion to this switch's time. Build arrival
+	// and departure from that same pose instead of the last command's pose.
+	err := peerSession.stopPlayerMovement(switchStartTime)
+	if err != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("arenaSwitchStop: %w", err)
+	}
 	switchPackets, err := marshalCampaignCharacterSwitch(
 		uint8(peerSession.binding.Slot), sourceObjectID, targetObjectID,
 		command.Value, peerSession.binding.Creatures[sourceCreatureIndex],
@@ -120,7 +139,7 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 		targetCharacter.HitPoints, targetCharacter.ManaPoints,
 		peerSession.playerPosition, command.Common.Orientation,
 		packet.SourceTime+uint64(campaignCreatureWarpOutDelay/time.Millisecond),
-		packet.SourceTime+uint64(standardCreatureSwapCooldown/time.Millisecond),
+		packet.SourceTime+uint64(arenaCreatureSwapCooldown/time.Millisecond),
 		true,
 	)
 	if err != nil {
@@ -136,12 +155,16 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 		return nil, fmt.Errorf("arenaSwitchDeparture: %w", err)
 	}
 	err = peerSession.squad.DeployWithCooldown(
-		command.Value, switchStartTime, standardCreatureSwapCooldown,
+		command.Value, switchStartTime, arenaCreatureSwapCooldown,
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("arenaSwitchSquad: %w", err)
 	}
+	// Owner cleanup queues client removals into the stored sessions. Publish
+	// the stopped pose first, then retain those queued packets below rather
+	// than overwriting them with this pre-cleanup session copy.
+	r.registry.sessions[sessionKey] = peerSession
 	r.registry.retireArenaClaymoresForOwnerLocked(peerSession.binding.GameID, sourceObjectID)
 	r.registry.retireArenaSpritesForOwnerLocked(peerSession.binding.GameID, sourceObjectID)
 	r.registry.retireArenaCombatPetsForOwnerLocked(peerSession.binding.GameID, sourceObjectID)
@@ -150,6 +173,7 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 	r.registry.retireArenaSproutsForOwnerLocked(peerSession.binding.GameID, sourceObjectID)
 	r.registry.retireArenaInfectionsForOwnerLocked(peerSession.binding.GameID, sourceObjectID)
 	r.registry.retireArenaRideForOwnerLocked(peerSession.binding.GameID, sourceObjectID)
+	peerSession = r.registry.sessions[sessionKey]
 	blinkErr := peerSession.retireQuantumBlinkLocked(switchStartTime)
 	if blinkErr != nil && r.logger != nil {
 		r.logger.Printf("Arena Quantum Blink switch cleanup failed owner=%d: %v", sourceObjectID, blinkErr)
@@ -164,13 +188,6 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 	if len(flakPacket) != 0 {
 		departurePackets = append(departurePackets, flakPacket)
 	}
-	err = peerSession.stopPlayerMovement(switchStartTime)
-	if err != nil && r.logger != nil {
-		r.logger.Printf(
-			"RakNet Arena movement cleanup omitted during switch remote=%s: %v",
-			packet.Address, err,
-		)
-	}
 	peerSession.resetPassiveDamageReduction(sourceCreatureIndex)
 	peerSession.resetFireRavagerBasic(sourceCreatureIndex)
 	peerSession.resetTCShield(sourceCreatureIndex)
@@ -179,6 +196,7 @@ func (r gameplaySwitchRuntime) handleArenaSwitch(
 	interruptedBasic := peerSession.resetAbilityAdmissionForSwitch()
 	peerSession.deployedCreatureIndex = command.Value
 	peerSession.deployedObjectID = targetObjectID
+	r.registry.bindArenaMotionLocked(&peerSession)
 	peerSession.heroInputLockedObjectID = sourceObjectID
 	peerSession.heroInputLockedUntil = switchStartTime.Add(campaignCreatureWarpOutDelay)
 	peerSession.isHeroSelectionPending = false
@@ -302,6 +320,7 @@ func (r gameplayMovementRuntime) handleArena(
 		r.campaign.registry.mutex.Unlock()
 		return nil, errors.New("arena movement actor changed during interruption")
 	}
+	r.campaign.registry.bindArenaMotionLocked(&peerSession)
 	_, _, err = peerSession.advancePlayerMovement(
 		r.campaign.now(), command.Common.Position,
 		command.Movement.GoalPosition, command.Movement.GoalFlags&0x20 != 0,
@@ -311,11 +330,12 @@ func (r gameplayMovementRuntime) handleArena(
 		r.campaign.registry.mutex.Unlock()
 		return nil, fmt.Errorf("arenaMovementAdvance: %w", err)
 	}
+	goal := peerSession.playerMovementGoal
 	r.campaign.registry.sessions[packet.Address.String()] = peerSession
 	r.campaign.registry.commitChannelRemovalsLocked()
 	r.campaign.registry.mutex.Unlock()
 	packets, err := marshalZonePlayerMove(
-		command.Common.ObjectID, command.Movement.GoalPosition,
+		command.Common.ObjectID, goal,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("arenaMovePackets: %w", err)
@@ -796,6 +816,7 @@ func (r campaignAbilityCommandRuntime) handleArenaCharacter(
 		r.registry.retireArenaForcePulseVictimLocked(peerSession.binding.GameID, targetObjectID)
 	}
 	matchState.result.recordDamage(peerSession.binding.UserID, targetSession.binding.UserID, damage+sharedDamage, hitPoint <= 0)
+	matchState.result.recordCombatExchange(peerSession.binding.UserID, targetSession.binding.UserID, damage, attackTime)
 	matchState.recordRecentDamage(targetObjectID, attackTime, damage)
 	var petPackets [][]byte
 	if hitPoint > 0 && damage > 0 && targetSession.deployedObjectID == targetObjectID &&
@@ -1298,6 +1319,7 @@ func (e arenaCountdownJob) teleport() {
 		candidate := e.registry.sessions[sessionKey]
 		candidate.playerMotion = motions[sessionKey]
 		candidate.playerPosition = position
+		e.registry.bindArenaMotionLocked(&candidate)
 		candidate.queuePackets(packets)
 		e.registry.sessions[sessionKey] = candidate
 	}
@@ -1488,6 +1510,11 @@ func (e gameplayArenaRuntime) prepareSelectedDecks(
 		if binding.GameID != gameID || binding.Mode != game.ModeArena || binding.Slot >= 32 {
 			continue
 		}
+		if binding.IsServerBot {
+			candidate.isArenaSquadAccepted = true
+			candidate.isArenaPreparationAcknowledged = true
+			e.registry.sessions[candidateKey] = candidate
+		}
 		bindingsByKey[candidateKey] = binding
 		expectedMask |= binding.PlayerMask
 		if binding.SquadID != 0 && candidate.isArenaSquadAccepted {
@@ -1504,6 +1531,29 @@ func (e gameplayArenaRuntime) prepareSelectedDecks(
 	slices.SortFunc(keys, func(left, right string) int {
 		return cmp.Compare(bindingsByKey[left].Slot, bindingsByKey[right].Slot)
 	})
+	matchBindings := make([]game.GameplayBinding, 0, len(keys))
+	for _, candidateKey := range keys {
+		matchBindings = append(matchBindings, bindingsByKey[candidateKey])
+	}
+	normalizedBindings, minimumItemLevel, err := e.gameplayJoin.NormalizeUnrankedArenaBindings(matchBindings)
+	if err != nil {
+		return nil, fmt.Errorf("arenaNormalize: %w", err)
+	}
+	for bindingIndex, binding := range normalizedBindings {
+		err = binding.ConfigureDefenseDamage(e.ratingConversions)
+		if err != nil {
+			return nil, fmt.Errorf("arenaNormalizeDefense[%d]: %w", binding.Slot, err)
+		}
+		candidateKey := keys[bindingIndex]
+		candidate := e.registry.sessions[candidateKey]
+		candidate.binding = binding
+		e.registry.sessions[candidateKey] = candidate
+		bindingsByKey[candidateKey] = binding
+	}
+	if minimumItemLevel > 0 && e.logger != nil {
+		e.logger.Printf("Arena unranked item-level normalization game_id=%d item_level=%d participants=%d",
+			gameID, minimumItemLevel, len(normalizedBindings))
+	}
 	isInitialPreparation := false
 	for _, candidateKey := range keys {
 		if !e.registry.sessions[candidateKey].isArenaPreparationSent {

@@ -39,6 +39,9 @@ func (e *gameplayPeerSession) collectCampaignDNA(
 	if e == nil || progression == nil || e.zone == nil || e.zone.DNA() == nil {
 		return nil, nil
 	}
+	if e.binding.IsServerBot {
+		return nil, nil
+	}
 	if registry == nil || registry.isClosed {
 		return nil, errors.New("DNA collection registry unavailable")
 	}
@@ -75,7 +78,7 @@ func (e *gameplayPeerSession) collectCampaignDNA(
 	}
 	userIDs := []uint64{e.binding.UserID}
 	for _, member := range registry.sessions {
-		if isActiveCoopPickupAlly(member, *e) {
+		if !member.binding.IsServerBot && isActiveCoopPickupAlly(member, *e) {
 			userIDs = append(userIDs, member.binding.UserID)
 		}
 	}

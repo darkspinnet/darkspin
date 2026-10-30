@@ -279,7 +279,7 @@ func (e *gameplayPeerSession) queueCampaignPackets(packets [][]byte) {
 	}
 	e.queuePackets(packets)
 	lastIndex := len(e.pendingPacketBatches) - 1
-	if e.pendingPacketBatches[lastIndex].id == e.nextPendingPacketID {
+	if lastIndex >= 0 && e.pendingPacketBatches[lastIndex].id == e.nextPendingPacketID {
 		e.pendingPacketBatches[lastIndex].isCampaignPresentation = true
 	}
 }

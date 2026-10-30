@@ -353,12 +353,12 @@ func (e *beastPetResurrectionRun) arenaFailedRevivalSwitch(member *gameplayPeerS
 			member.binding.Creatures[member.deployedCreatureIndex], member.binding.Creatures[index],
 			0, member.deployedManaPoint(), character.HitPoints, character.ManaPoints,
 			member.playerPosition, raknet.Quaternion{W: 1}, timestamp,
-			timestamp+uint64(standardCreatureSwapCooldown/time.Millisecond), false)
+			timestamp+uint64(arenaCreatureSwapCooldown/time.Millisecond), false)
 		if err != nil {
 			return nil, fmt.Errorf("arenaBeastReserveSwitchPacket: %w", err)
 		}
 		member.squad.ResetDeployCooldown()
-		err = member.deployZoneCharacter(index, at, standardCreatureSwapCooldown)
+		err = member.deployZoneCharacter(index, at, arenaCreatureSwapCooldown)
 		if err != nil {
 			return nil, fmt.Errorf("arenaBeastReserveDeploy: %w", err)
 		}

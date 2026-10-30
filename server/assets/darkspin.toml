@@ -7,6 +7,9 @@ is_version_locked = false
 # Restrict the web UI and matchmaking flow to single-player content.
 is_singleplayer_only = false
 locale = ""
+# Number of heroes in each campaign matchmaking bot squad (1 to 3).
+campaign_matchmaking_bot_size = 1
+is_campaign_bot_squad_mirroring_enabled = true
 
 [launcher]
 # Saved choices for new game instances. Explicit launch flags override them

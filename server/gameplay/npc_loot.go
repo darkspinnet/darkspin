@@ -20,7 +20,7 @@ func (e *gameplayPeerSession) campaignLootParticipantCount() uint32 {
 	if e == nil || e.zone == nil {
 		return 1
 	}
-	return max(uint32(1), uint32(len(e.zone.Snapshot().Members)))
+	return max(uint32(1), e.zone.HumanParticipantCount())
 }
 
 func campaignNPCLootSource(plan zonenpc.SpawnPlan, fallbackChallenge int32) (int32, uint32) {

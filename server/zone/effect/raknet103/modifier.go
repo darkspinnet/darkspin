@@ -17,6 +17,7 @@ type ModifierCreateRequest struct {
 	Duration       time.Duration
 	Timestamp      uint64
 	IsIndefinite   bool
+	IsBound        bool
 }
 
 func ModifierCreate(req ModifierCreateRequest) ([]byte, error) {
@@ -37,6 +38,7 @@ func ModifierCreate(req ModifierCreateRequest) ([]byte, error) {
 		// Build 103 reads this slot as an NPC affix asset, not a caster ID.
 		// Ordinary modifiers retain their source in the feature-owned record.
 		NPCAffixAssetID: 0,
+		IsBound:         req.IsBound,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("modifierCreateMarshal: %w", err)

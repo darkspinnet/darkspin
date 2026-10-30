@@ -55,6 +55,8 @@ export function GetServerConfiguration():Promise<main.ServerConfiguration>;
 
 export function GetServerRulesConfiguration():Promise<runtime.ServerRulesConfiguration>;
 
+export function GetSquadSnapshot(arg1:Array<string>):Promise<main.squadShareSnapshot>;
+
 export function GetStatus():Promise<main.LauncherStatus>;
 
 export function GetWineRunnerConfiguration():Promise<main.WineRunnerConfiguration>;

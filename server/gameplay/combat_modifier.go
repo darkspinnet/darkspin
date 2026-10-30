@@ -111,6 +111,8 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 	}
 	isRoot := profile.ModifierName == "EntangleModifier" ||
 		profile.ModifierName == "VerdanthBasicRootmobModifier"
+	isStun := profile.ModifierName == "StalkerShock" || profile.ModifierName == "AcFreeze" ||
+		profile.ModifierName == "CryosBossShock"
 	if (profile.ModifierName == "SleepModifier" ||
 		profile.ModifierName == "StalkerShock" ||
 		profile.ModifierName == "CryosBossShock" ||
@@ -183,7 +185,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 			ModifierID:     profile.ModifierGUID(),
 			InstanceID:     run.instanceID,
 			Duration:       profile.ModifierDuration, IsIndefinite: isIndefinite,
-			Timestamp: timestamp,
+			Timestamp: timestamp, IsBound: isStun,
 		},
 	)
 	if err != nil {
@@ -289,8 +291,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 		}
 		r.registry.mutex.Unlock()
 	}
-	if profile.ModifierName == "StalkerShock" || profile.ModifierName == "AcFreeze" ||
-		profile.ModifierName == "CryosBossShock" {
+	if isStun {
 		at := r.now()
 		expiresAt := at.Add(profile.ModifierDuration)
 		r.registry.mutex.Lock()

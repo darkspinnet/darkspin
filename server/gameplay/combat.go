@@ -537,6 +537,7 @@ func (r campaignDamageRuntime) publishNPCStuns(
 				InstanceID:     run.instanceID,
 				Duration:       statusDuration,
 				Timestamp:      timestamp,
+				IsBound:        true,
 			},
 		)
 		if err != nil {
@@ -1117,6 +1118,7 @@ type campaignCompanionAttackStep struct {
 	criticalNounID   uint32
 	isBeast          bool
 	isPlasmaSentinel bool
+	isCampaignBot    bool
 }
 
 type campaignCompanionPursuitStep struct {
@@ -1549,6 +1551,9 @@ func (e campaignCompanionAttackStep) schedule() error {
 }
 
 func (e campaignCompanionAttackStep) repeat() ([][]byte, error) {
+	if e.isCampaignBot {
+		return nil, nil
+	}
 	ability := e.ability
 	repeatDelay := max(
 		ability.ReleaseDelay, ability.HitDelay+ability.Cooldown,
@@ -3431,7 +3436,7 @@ func (r campaignDamageRuntime) publishExperience(
 	}
 	members := make(map[uint64]campaignExperienceMember)
 	for candidateKey, candidate := range r.registry.sessions {
-		if candidate.zone != source.zone || candidate.binding.UserID == 0 ||
+		if candidate.zone != source.zone || candidate.binding.IsServerBot || candidate.binding.UserID == 0 ||
 			candidate.deployedCreatureIndex >= uint32(len(candidate.binding.Creatures)) {
 			continue
 		}

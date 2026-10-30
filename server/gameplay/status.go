@@ -133,7 +133,25 @@ func (r gameplayStatusRuntime) handle(
 		}
 		return r.handleChain(ctx, packet, peerSession, statusContext.status)
 	case game.ModeChain:
-		return r.handleChain(ctx, packet, peerSession, statusContext.status)
+		status := statusContext.status
+		botPackets := make([][]byte, 0)
+		if !peerSession.binding.IsServerBot && (status.Status == 2 || status.Status == 4) {
+			botPackets, err = r.publishServerBotStatus(peerSession, status)
+			if err != nil {
+				return nil, fmt.Errorf("statusCampaignBots: %w", err)
+			}
+		}
+		packets, err := r.handleChain(ctx, packet, peerSession, status)
+		if err != nil {
+			return nil, fmt.Errorf("statusCampaign: %w", err)
+		}
+		if !peerSession.binding.IsServerBot && status.Status == 8 {
+			err = r.startServerBotDungeons(ctx, packet, peerSession)
+			if err != nil {
+				return nil, fmt.Errorf("statusCampaignBotStart: %w", err)
+			}
+		}
+		return append(packets, botPackets...), nil
 	case game.ModeArena:
 		return r.handleArena(ctx, packet, peerSession, statusContext.status)
 	default:
@@ -151,24 +169,28 @@ func (r gameplayStatusRuntime) handleArena(
 	switch status.Status {
 	case 2, 4:
 		peerSession = r.acknowledgeArenaPreparation(packet.Address.String(), peerSession)
-		return r.handleChain(ctx, packet, peerSession, status)
+		botPackets, err := r.publishServerBotStatus(peerSession, status)
+		if err != nil {
+			return nil, fmt.Errorf("statusArenaBotProgress: %w", err)
+		}
+		playerPackets, err := r.handleChain(ctx, packet, peerSession, status)
+		if err != nil {
+			return nil, fmt.Errorf("statusArenaLoading: %w", err)
+		}
+		return append(playerPackets, botPackets...), nil
 	case 8:
 		peerSession = r.acknowledgeArenaPreparation(packet.Address.String(), peerSession)
+		botErr := r.startServerBotDungeons(ctx, packet, peerSession)
+		if botErr != nil {
+			return nil, fmt.Errorf("statusArenaBots: %w", botErr)
+		}
 		startPackets, err := r.startArena(packet, peerSession, status)
 		if err != nil {
 			return nil, fmt.Errorf("statusArenaStart: %w", err)
 		}
-		setupPackets, isPublished, err := r.setup.publishDungeon(ctx, packet)
-		if err != nil {
-			return nil, fmt.Errorf("statusArenaSetup: %w", err)
-		}
-		if !isPublished {
-			r.logger.Printf(
-				"RakNet Arena hero setup deferred for %s after status 8",
-				packet.Address,
-			)
-		}
-		return append(startPackets, setupPackets...), nil
+		// Like campaign entry, wait for a subsequent client exchange before
+		// publishing gameplay objects. GameStart must first reach PreDungeon.
+		return startPackets, nil
 	default:
 		return nil, nil
 	}
@@ -429,12 +451,19 @@ func (r gameplayStatusRuntime) startArena(
 	)
 	// PreDungeon consumes subtype 9; prime the HUD before GameStart switches
 	// the native state to Dungeon, whose Arena listener ignores that subtype.
-	return [][]byte{playerPacket, countdownPacket, startPacket}, nil
+	pingPacket, err := developerraknet.Ping(uint64(time.Now().Unix()))
+	if err != nil {
+		return nil, fmt.Errorf("arenaStartPing: %w", err)
+	}
+	return [][]byte{playerPacket, countdownPacket, startPacket, pingPacket}, nil
 }
 
 func (r gameplayStatusRuntime) campaignBeamOut(
 	ctx context.Context, packet raknet.Packet, peerSession gameplayPeerSession,
 ) ([][]byte, error) {
+	if peerSession.binding.IsServerBot {
+		return nil, nil
+	}
 	sessionKey := packet.Address.String()
 	generation := peerSession.generation
 	currentSession, isReserved := r.reserveCampaignBeamOut(sessionKey, generation)
@@ -1048,6 +1077,7 @@ type campaignResultRuntime struct {
 	chain              campaignChainProgression
 	cashOutProgression campaignCashOutProgression
 	gameplayJoin       *game.GameplayJoin
+	ratingConversions  []float32
 	modifierPool       *modifierPool
 	effectPool         *attachedEffectPool
 	preparation        campaignPreparation
@@ -1924,6 +1954,9 @@ func (r campaignResultRuntime) continueChain(
 	ctx context.Context, packet raknet.Packet, peerSession gameplayPeerSession,
 	snapshot zoneresult.Snapshot, squadID uint32,
 ) ([][]byte, error) {
+	if peerSession.binding.IsServerBot {
+		return nil, nil
+	}
 	nextBinding := peerSession.binding
 	maximumHitPoints := peerSession.maximumHitPoints
 	maximumManaPoints := peerSession.maximumManaPoints
@@ -2032,7 +2065,17 @@ func (r campaignResultRuntime) continueChain(
 	if !isAccepted {
 		return nil, nil
 	}
+	r.retireCampaignServerBots(continueSession)
 	stopGameplayPeerSession(continueSession, r.modifierPool, r.effectPool)
+	joinRuntime := gameplayJoinRuntime{
+		registry: r.registry, gameplayJoin: r.gameplayJoin,
+		ratingConversions: r.ratingConversions, logger: r.logger,
+	}
+	err = joinRuntime.installServerBots(ctx, packet, nextBinding)
+	if err != nil {
+		r.logger.Printf("RakNet campaign Continue bot admission deferred game=%d owner=%d: %v",
+			nextBinding.GameID, nextBinding.UserID, err)
+	}
 	r.logger.Printf(
 		"RakNet campaign continue accepted for %s result=%d level=%q squad=%d chain_progression=%d without fabricated reward",
 		packet.Address, snapshot.ResultID, snapshot.NextLevel, nextBinding.SquadID, chainProgression,

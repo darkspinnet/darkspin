@@ -423,6 +423,10 @@ func (e *Repository) initializeSchema(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("schemaLimitedEdition: %w", err)
 	}
+	err = ensurePVPRewardColumn(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("schemaPVPReward: %w", err)
+	}
 	err = normalizeInventoryCapacity(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("schemaInventoryCapacity: %w", err)
@@ -434,6 +438,22 @@ func (e *Repository) initializeSchema(ctx context.Context) error {
 	err = tx.Commit()
 	if err != nil {
 		return fmt.Errorf("schemaCommit: %w", err)
+	}
+	return nil
+}
+
+func ensurePVPRewardColumn(ctx context.Context, tx *sqlx.Tx) error {
+	var count int
+	err := tx.GetContext(ctx, &count, `SELECT COUNT(*) FROM pragma_table_info('pvp_match_result') WHERE name = 'dna_reward'`)
+	if err != nil {
+		return fmt.Errorf("rewardColumnCheck: %w", err)
+	}
+	if count != 0 {
+		return nil
+	}
+	_, err = tx.ExecContext(ctx, `ALTER TABLE pvp_match_result ADD COLUMN dna_reward INTEGER NOT NULL DEFAULT 0`)
+	if err != nil {
+		return fmt.Errorf("rewardColumnAdd: %w", err)
 	}
 	return nil
 }

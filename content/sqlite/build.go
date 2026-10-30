@@ -20,7 +20,7 @@ import (
 const (
 	SourceVersion  = "5.3.0.103"
 	SourceBuild    = 103
-	RecipeVersion  = 95
+	RecipeVersion  = 96
 	ContentRelease = "build-103-content"
 	RuntimeRole    = "runtime-content"
 )
@@ -1472,6 +1472,7 @@ func writeContentDatabase(
 			name TEXT NOT NULL UNIQUE,
 			element_type TEXT NOT NULL,
 			class_type TEXT NOT NULL,
+			unlock_level INTEGER NOT NULL CHECK (unlock_level BETWEEN 1 AND 100),
 			weapon_min_damage REAL NOT NULL,
 			weapon_max_damage REAL NOT NULL,
 			gear_score REAL NOT NULL,

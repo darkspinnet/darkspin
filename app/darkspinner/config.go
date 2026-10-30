@@ -4,35 +4,27 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/darkspinnet/darkspin/server/game"
-	"github.com/darkspinnet/darkspin/server/maintenance"
 	server "github.com/darkspinnet/darkspin/server/runtime"
 	"github.com/darkspinnet/darkspin/server/snapshot"
 )
 
 // ServerConfiguration is the launcher-editable server and client configuration.
 type ServerConfiguration struct {
-	BindHost                       string         `json:"bindHost"`
-	AdvertisedHost                 string         `json:"advertisedHost"`
-	IsDedicated                    bool           `json:"isDedicated"`
-	ContentPath                    string         `json:"contentPath"`
-	JWTSecret                      string         `json:"jwtSecret"`
-	Port                           uint16         `json:"port"`
-	IsMultiplayerEnabled           bool           `json:"isMultiplayerEnabled"`
-	Locale                         string         `json:"locale"`
-	Locales                        []ClientLocale `json:"locales"`
-	SnapshotMode                   string         `json:"snapshotMode"`
-	IsBootstrapUpdateEnabled       bool           `json:"isBootstrapUpdateEnabled"`
-	BootstrapUpdateCron            string         `json:"bootstrapUpdateCron"`
-	BootstrapWarningMinutes        int            `json:"bootstrapWarningMinutes"`
-	BootstrapStartupTimeoutSeconds int            `json:"bootstrapStartupTimeoutSeconds"`
-	BootstrapBackupRetentionDays   int            `json:"bootstrapBackupRetentionDays"`
-	BootstrapManifestURL           string         `json:"bootstrapManifestUrl"`
+	BindHost                           string         `json:"bindHost"`
+	AdvertisedHost                     string         `json:"advertisedHost"`
+	IsDedicated                        bool           `json:"isDedicated"`
+	Port                               uint16         `json:"port"`
+	IsMultiplayerEnabled               bool           `json:"isMultiplayerEnabled"`
+	Locale                             string         `json:"locale"`
+	Locales                            []ClientLocale `json:"locales"`
+	SnapshotMode                       string         `json:"snapshotMode"`
+	CampaignMatchmakingBotSize         uint32         `json:"campaignMatchmakingBotSize"`
+	IsCampaignBotSquadMirroringEnabled bool           `json:"isCampaignBotSquadMirroringEnabled"`
 }
 
 // GetServerConfiguration returns the persisted local network configuration.
@@ -103,6 +95,9 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 	if port == 0 || port == ^uint16(0) {
 		return ServerConfiguration{}, errors.New("server port must be between 1 and 65534")
 	}
+	if req.CampaignMatchmakingBotSize < 1 || req.CampaignMatchmakingBotSize > 3 {
+		return ServerConfiguration{}, errors.New("campaign matchmaking bot size must be between 1 and 3")
+	}
 	e.serverMu.Lock()
 	defer e.serverMu.Unlock()
 
@@ -129,44 +124,23 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("configLoad: %w", err)
 	}
-	err = validateBootstrapConfiguration(req, pathSet.configPath)
-	if err != nil {
-		return ServerConfiguration{}, fmt.Errorf("bootstrapValidate: %w", err)
-	}
 	previousSettings := map[game.ConfigKey]string{
-		game.ConfigServerBindHost:                 config.String(game.ConfigServerBindHost),
-		game.ConfigServerAdvertisedHost:           config.String(game.ConfigServerAdvertisedHost),
-		game.ConfigServerIsDedicated:              config.String(game.ConfigServerIsDedicated),
-		game.ConfigContentPath:                    config.String(game.ConfigContentPath),
-		game.ConfigAuthJWTSecret:                  config.String(game.ConfigAuthJWTSecret),
-		game.ConfigBootstrapIsUpdateEnabled:       config.String(game.ConfigBootstrapIsUpdateEnabled),
-		game.ConfigBootstrapUpdateCron:            config.String(game.ConfigBootstrapUpdateCron),
-		game.ConfigBootstrapWarningMinutes:        config.String(game.ConfigBootstrapWarningMinutes),
-		game.ConfigBootstrapStartupTimeoutSeconds: config.String(game.ConfigBootstrapStartupTimeoutSeconds),
-		game.ConfigBootstrapBackupRetentionDays:   config.String(game.ConfigBootstrapBackupRetentionDays),
-		game.ConfigBootstrapManifestURL:           config.String(game.ConfigBootstrapManifestURL),
+		game.ConfigCampaignMatchmakingBotSize:         config.String(game.ConfigCampaignMatchmakingBotSize),
+		game.ConfigIsCampaignBotSquadMirroringEnabled: config.String(game.ConfigIsCampaignBotSquadMirroringEnabled),
+		game.ConfigServerBindHost:                     config.String(game.ConfigServerBindHost),
+		game.ConfigServerAdvertisedHost:               config.String(game.ConfigServerAdvertisedHost),
+		game.ConfigServerIsDedicated:                  config.String(game.ConfigServerIsDedicated),
 	}
 	settings := map[game.ConfigKey]string{
-		game.ConfigServerBindHost:                 strings.TrimSpace(req.BindHost),
-		game.ConfigServerAdvertisedHost:           strings.TrimSpace(req.AdvertisedHost),
-		game.ConfigServerIsDedicated:              strconv.FormatBool(req.IsDedicated),
-		game.ConfigContentPath:                    strings.TrimSpace(req.ContentPath),
-		game.ConfigAuthJWTSecret:                  req.JWTSecret,
-		game.ConfigBootstrapIsUpdateEnabled:       strconv.FormatBool(req.IsBootstrapUpdateEnabled),
-		game.ConfigBootstrapUpdateCron:            strings.TrimSpace(req.BootstrapUpdateCron),
-		game.ConfigBootstrapWarningMinutes:        strconv.Itoa(req.BootstrapWarningMinutes),
-		game.ConfigBootstrapStartupTimeoutSeconds: strconv.Itoa(req.BootstrapStartupTimeoutSeconds),
-		game.ConfigBootstrapBackupRetentionDays:   strconv.Itoa(req.BootstrapBackupRetentionDays),
-		game.ConfigBootstrapManifestURL:           strings.TrimSpace(req.BootstrapManifestURL),
+		game.ConfigCampaignMatchmakingBotSize:         strconv.FormatUint(uint64(req.CampaignMatchmakingBotSize), 10),
+		game.ConfigIsCampaignBotSquadMirroringEnabled: strconv.FormatBool(req.IsCampaignBotSquadMirroringEnabled),
+		game.ConfigServerBindHost:                     strings.TrimSpace(req.BindHost),
+		game.ConfigServerAdvertisedHost:               strings.TrimSpace(req.AdvertisedHost),
+		game.ConfigServerIsDedicated:                  strconv.FormatBool(req.IsDedicated),
 	}
 	isSetupChanged := false
-	isBootstrapChanged := false
 	for key, setting := range settings {
-		if strings.HasPrefix(string(key), "BOOTSTRAP_") {
-			isBootstrapChanged = isBootstrapChanged || setting != previousSettings[key]
-		} else {
-			isSetupChanged = isSetupChanged || setting != previousSettings[key]
-		}
+		isSetupChanged = isSetupChanged || setting != previousSettings[key]
 		err = config.Set(key, setting)
 		if err != nil {
 			return ServerConfiguration{}, fmt.Errorf("setupSet: %w", err)
@@ -208,7 +182,7 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 	if !hasClientLocale(locales, locale) {
 		return ServerConfiguration{}, fmt.Errorf("locale %q is not installed", locale)
 	}
-	if !isSetupChanged && !isBootstrapChanged && previousPort == port && isPreviouslyMultiplayerEnabled == isMultiplayerEnabled &&
+	if !isSetupChanged && previousPort == port && isPreviouslyMultiplayerEnabled == isMultiplayerEnabled &&
 		normalizeClientLocale(previousLocale) == locale &&
 		previousSnapshotMode == selectedSnapshotMode {
 		configuration, configErr := serverConfiguration(config, pathSet.gamePath)
@@ -376,6 +350,10 @@ func serverConfiguration(config *game.Config, gamePath string) (ServerConfigurat
 	if port == 0 || port == ^uint16(0) {
 		return ServerConfiguration{}, errors.New("server port must be between 1 and 65534")
 	}
+	campaignMatchmakingBotSize, err := config.CampaignMatchmakingBotSize()
+	if err != nil {
+		return ServerConfiguration{}, fmt.Errorf("campaignBotSize: %w", err)
+	}
 	locales, err := detectClientLocales(gamePath)
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("localeDetect: %w", err)
@@ -388,61 +366,18 @@ func serverConfiguration(config *game.Config, gamePath string) (ServerConfigurat
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("snapshotModeLoad: %w", err)
 	}
-	bootstrapWarningMinutes, err := config.Uint32(game.ConfigBootstrapWarningMinutes)
-	if err != nil {
-		return ServerConfiguration{}, fmt.Errorf("bootstrapWarningLoad: %w", err)
-	}
-	bootstrapStartupTimeoutSeconds, err := config.Uint32(game.ConfigBootstrapStartupTimeoutSeconds)
-	if err != nil {
-		return ServerConfiguration{}, fmt.Errorf("bootstrapTimeoutLoad: %w", err)
-	}
-	bootstrapBackupRetentionDays, err := config.Uint32(game.ConfigBootstrapBackupRetentionDays)
-	if err != nil {
-		return ServerConfiguration{}, fmt.Errorf("bootstrapRetentionLoad: %w", err)
-	}
 	return ServerConfiguration{
-		IsBootstrapUpdateEnabled:       config.Bool(game.ConfigBootstrapIsUpdateEnabled),
-		BootstrapUpdateCron:            config.String(game.ConfigBootstrapUpdateCron),
-		BootstrapWarningMinutes:        int(bootstrapWarningMinutes),
-		BootstrapStartupTimeoutSeconds: int(bootstrapStartupTimeoutSeconds),
-		BootstrapBackupRetentionDays:   int(bootstrapBackupRetentionDays),
-		BootstrapManifestURL:           config.String(game.ConfigBootstrapManifestURL),
-		BindHost:                       config.String(game.ConfigServerBindHost),
-		AdvertisedHost:                 config.String(game.ConfigServerAdvertisedHost),
-		IsDedicated:                    config.Bool(game.ConfigServerIsDedicated),
-		ContentPath:                    config.String(game.ConfigContentPath),
-		JWTSecret:                      config.String(game.ConfigAuthJWTSecret),
-		Port:                           port,
-		IsMultiplayerEnabled:           config.Bool(game.ConfigIsMultiplayerEnabled),
-		Locale:                         locale,
-		Locales:                        locales,
-		SnapshotMode:                   string(snapshotMode),
+		BindHost:                           config.String(game.ConfigServerBindHost),
+		AdvertisedHost:                     config.String(game.ConfigServerAdvertisedHost),
+		IsDedicated:                        config.Bool(game.ConfigServerIsDedicated),
+		Port:                               port,
+		IsMultiplayerEnabled:               config.Bool(game.ConfigIsMultiplayerEnabled),
+		Locale:                             locale,
+		Locales:                            locales,
+		SnapshotMode:                       string(snapshotMode),
+		CampaignMatchmakingBotSize:         campaignMatchmakingBotSize,
+		IsCampaignBotSquadMirroringEnabled: config.Bool(game.ConfigIsCampaignBotSquadMirroringEnabled),
 	}, nil
-}
-
-func validateBootstrapConfiguration(req ServerConfiguration, configPath string) error {
-	if req.BootstrapStartupTimeoutSeconds < 1 || req.BootstrapStartupTimeoutSeconds > 86400 {
-		return errors.New("bootstrap startup timeout must be between 1 and 86400 seconds")
-	}
-	if req.BootstrapBackupRetentionDays < 1 || req.BootstrapBackupRetentionDays > 3650 {
-		return errors.New("bootstrap backup retention must be between 1 and 3650 days")
-	}
-	err := maintenance.ValidateSchedule(maintenance.ScheduleOptions{
-		Cron:              req.BootstrapUpdateCron,
-		WarningMinutes:    req.BootstrapWarningMinutes,
-		UpdateRequestPath: filepath.Join(filepath.Dir(configPath), "update-request.json"),
-	})
-	if err != nil {
-		return fmt.Errorf("scheduleValidate: %w", err)
-	}
-	manifestURL, err := url.Parse(strings.TrimSpace(req.BootstrapManifestURL))
-	if err != nil {
-		return fmt.Errorf("manifestParse: %w", err)
-	}
-	if manifestURL.Scheme != "https" || manifestURL.Host == "" || manifestURL.User != nil || manifestURL.Fragment != "" {
-		return errors.New("bootstrap manifest URL must use HTTPS without credentials or a fragment")
-	}
-	return nil
 }
 
 func localServerAddress(gameServer *server.Server) (string, error) {

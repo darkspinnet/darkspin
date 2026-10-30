@@ -7,6 +7,33 @@ import (
 	"strings"
 )
 
+// Companion creates carry an appearance asset key without a separate roster
+// revision. A revision-1 request can still resolve a generated bot's encoded
+// revision; ordinary saved appearance validation remains unchanged.
+func generatedBotAppearanceName(resource string) string {
+	const prefix = "/creature_png/"
+	if !strings.HasPrefix(resource, prefix) {
+		return ""
+	}
+	fields := strings.Split(strings.TrimPrefix(resource, prefix), "_")
+	if len(fields) != 3 || (fields[2] != "thumb.png" && fields[2] != "large.png") {
+		return ""
+	}
+	assetID, err := strconv.ParseUint(fields[0], 10, 64)
+	if err != nil {
+		return ""
+	}
+	id, version := uint32(assetID), uint32(assetID>>32)
+	if id&0x80000000 == 0 || version <= 1 || version > 0x40000001 {
+		return ""
+	}
+	requestedVersion, err := strconv.ParseUint(fields[1], 10, 31)
+	if err != nil || (requestedVersion != 1 && requestedVersion != uint64(version)) {
+		return ""
+	}
+	return fmt.Sprintf("%d_%d_%s", id, version, fields[2])
+}
+
 // Gameplay appearances use a revision-qualified 64-bit asset ID because the
 // native client caches appearances by ID alone. Resolve the native reconstructed
 // URL to the existing immutable saved image; Arsenal URLs keep their local IDs.

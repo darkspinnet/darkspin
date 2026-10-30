@@ -221,10 +221,35 @@ body:has(.mod-accent) {
 .remote-registration-server { display: flex; gap: 8px; }
 .remote-registration-server button { font-size: 11px; }
 .remote-registration-notice > .profile-select-trigger { width: 100%; margin-top: 8px; }
-.report-composer-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
-.report-header-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.report-composer-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+.report-composer-header > .eyebrow { margin: 0; }
+.feedback-actions-menu { position: relative; z-index: 2; }
+.feedback-actions-menu > summary { display: flex; align-items: center; gap: 8px; padding: 8px 11px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--foreground); background: var(--background); font-size: 10px; letter-spacing: .08em; cursor: pointer; list-style: none; }
+.feedback-actions-menu > summary::-webkit-details-marker { display: none; }
+.feedback-actions-menu > summary:hover, .feedback-actions-menu[open] > summary { border-color: var(--primary); }
+.feedback-actions-menu > summary:focus-visible, .feedback-actions-list > button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.feedback-actions-list { position: absolute; top: calc(100% + 6px); right: 0; width: 210px; padding: 5px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); box-shadow: 0 12px 32px #0008; }
+.feedback-actions-list > button { display: block; width: 100%; padding: 9px 10px; border: 0; border-radius: calc(var(--radius) - 2px); color: var(--foreground); background: transparent; text-align: left; font-size: 10px; cursor: pointer; }
+.feedback-actions-list > button:hover:not(:disabled), .feedback-actions-list > button:focus-visible { background: var(--accent); }
+.feedback-actions-list > button:disabled { opacity: .5; cursor: default; }
+.feedback-actions-divider { height: 1px; margin: 4px 3px; background: var(--border); }
 .report-manage-link { color: var(--muted-foreground); font-size: 10px; height: auto; padding: 0; }
 .report-manage-link:hover { color: var(--foreground); }
+.squad-composer { display: flex; flex-direction: column; min-height: 0; }
+.squad-profile-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; max-height: 170px; overflow: auto; margin: 16px 0; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); }
+.squad-profile-options legend { padding-inline: 6px; color: var(--muted-foreground); font-size: 10px; letter-spacing: .08em; }
+.squad-profile-option { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 7px; border: 1px solid transparent; border-radius: var(--radius); background: var(--background); cursor: pointer; }
+.squad-profile-option:has(input:checked) { border-color: var(--primary); }
+.squad-profile-option input { flex: 0 0 auto; accent-color: var(--primary); }
+.squad-profile-option img { width: 38px; height: 38px; flex: 0 0 auto; border-radius: 5px; object-fit: cover; background: var(--muted); }
+.squad-profile-option > span { display: grid; min-width: 0; gap: 3px; }
+.squad-profile-option strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.squad-profile-option small { color: var(--muted-foreground); font-size: 9px; }
+.squad-empty-state { grid-column: 1 / -1; color: var(--muted-foreground); font-size: 11px; }
+.squad-appearance-note, .squad-snapshot-state { color: var(--muted-foreground); font-size: 11px; }
+.squad-snapshot-summary { margin: 8px 0; color: var(--muted-foreground); font-size: 10px; letter-spacing: .06em; }
+.squad-composer > label { margin: 8px 0 6px; font-size: 10px; letter-spacing: .08em; }
+.squad-json-preview { width: 100%; height: min(32vh, 280px); min-height: 120px; resize: vertical; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--muted-foreground); background: var(--background); font: 10px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .report-archives { padding-left: 18px; list-style: disc; font-size: 11px; color: var(--muted-foreground); overflow-wrap: anywhere; }
 .report-path { width: 100%; height: auto; white-space: normal; overflow-wrap: anywhere; text-align: left; font-size: 11px; margin-top: 12px; }
 .credits-list { display: flex; align-items: center; gap: 14px; margin-top: 16px; }

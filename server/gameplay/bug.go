@@ -33,7 +33,25 @@ func (e *gameplaySessionRegistry) BugContext(
 			(req.GameID != 0 && peerSession.binding.GameID != req.GameID) {
 			continue
 		}
-		return bugContextForSession(result, peerSession)
+		result, err = bugContextForSession(result, peerSession)
+		if err != nil {
+			return result, fmt.Errorf("bugSession: %w", err)
+		}
+		for _, bot := range e.sessions {
+			if !bot.binding.IsServerBot || bot.binding.Mode != game.ModeChain ||
+				bot.binding.GameID != peerSession.binding.GameID ||
+				bot.binding.BotOwnerUserID != peerSession.binding.UserID || bot.zone == nil ||
+				bot.deployedCreatureIndex >= uint32(len(bot.binding.Creatures)) {
+				continue
+			}
+			actor, isFound := bot.zone.Hero().Snapshot(bot.binding.UserID, bot.generation)
+			result.CampaignAIBots = append(result.CampaignAIBots, chat.BugCampaignAIBot{
+				Slot: bot.binding.Slot, ObjectID: bot.deployedObjectID,
+				NounID:   bot.binding.Creatures[bot.deployedCreatureIndex].Noun,
+				HitPoint: actor.HitPoint, IsSpawned: isFound && actor.HitPoint > 0,
+			})
+		}
+		return result, nil
 	}
 	return result, nil
 }
@@ -53,6 +71,16 @@ func bugContextForSession(
 	result.SquadID = binding.SquadID
 	result.MemberLimit = binding.MemberLimit
 	result.ParticipantCount = binding.ParticipantCount
+	result.CombatParticipantCount = binding.CombatParticipantCount
+	for slot, bot := range peerSession.campaignBots {
+		if bot == nil {
+			continue
+		}
+		result.CampaignAIBots = append(result.CampaignAIBots, chat.BugCampaignAIBot{
+			Slot: slot, ObjectID: bot.objectID, NounID: bot.creature.Noun,
+			HitPoint: bot.hitPoint, IsSpawned: bot.objectID != 0 && !bot.isDefeated,
+		})
+	}
 	result.CrogenitorLevel = binding.AvatarLevel
 	result.CampaignProgression = binding.ChainProgression
 	result.IsReplay = binding.IsReplay

@@ -701,7 +701,7 @@ func (r campaignInteractionRuntime) equipmentRollParticipantsLocked(
 	participants := make([]zoneloot.EquipmentRollParticipant, 0)
 	for _, candidate := range r.registry.sessions {
 		if candidate.zone != currentSession.zone || candidate.binding.UserID == 0 ||
-			candidate.isZoneTerminal() {
+			candidate.binding.IsServerBot || candidate.isZoneTerminal() {
 			continue
 		}
 		participants = append(participants, zoneloot.EquipmentRollParticipant{

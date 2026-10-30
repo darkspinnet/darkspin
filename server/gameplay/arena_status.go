@@ -297,7 +297,8 @@ func (e campaignAbilityCommandRuntime) applyArenaTargetStatusLocked(sessionKey s
 		createPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 			TargetID: objectID, ModifierGUID: status.modifierID, InstanceID: instanceID,
 			DurationMilliseconds: uint32(duration.Milliseconds()), StackCount: 1,
-			StartMilliseconds: timestamp, NPCAffixAssetID: 0})
+			StartMilliseconds: timestamp, NPCAffixAssetID: 0,
+			IsBound: status.kind == sim.AbilityStatusKindStun})
 		if err != nil {
 			return nil, status.discard("arenaStatusCreate", err)
 		}

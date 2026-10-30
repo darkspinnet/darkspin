@@ -72,6 +72,26 @@ func OrbPickup(req OrbPickupRequest) ([][]byte, error) {
 	return packets, nil
 }
 
+// OrbRestoreEffect presents a shared capsule restoration on a second hero
+// without deleting the capsule or applying its resource delta again.
+func OrbRestoreEffect(req OrbPickupRequest) ([]byte, error) {
+	if req.ActiveObjectID == 0 || (req.Kind != OrbHealth && req.Kind != OrbMana) {
+		return nil, errors.New("orb restoration effect invalid")
+	}
+	eventName := "health_orb_pickup.ServerEventDef"
+	if req.Kind == OrbMana {
+		eventName = "mana_orb_pickup.ServerEventDef"
+	}
+	packet, err := raknet.MarshalApplication(raknet.ServerEventMessage{
+		Asset: util.HashID(eventName), ObjectID: req.ActiveObjectID,
+		Position: req.Position, TextValue: req.Restored,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("orbRestoreEffectMarshal: %w", err)
+	}
+	return packet, nil
+}
+
 func orbResourceDelta(req OrbPickupRequest) raknet.CombatantDataDeltaMessage {
 	message := raknet.CombatantDataDeltaMessage{ObjectID: req.ActiveObjectID}
 	if req.Kind == OrbMana {

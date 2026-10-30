@@ -11,18 +11,22 @@ import (
 // Keep completed rounds independently of live network membership: build 103
 // leaves gameplay while opening the result screen.
 type arenaResultState struct {
-	matchID         string
-	isRanked        bool
-	statEntries     []arenaStatEntry
-	statMaximums    map[uint64]arenaStatMaximums
-	isStatsSaved    bool
-	startedAt       time.Time
-	elapsed         time.Duration
-	roundIndex      int
-	isRoundComplete bool
-	isCompleted     bool
-	players         map[uint64]raknet.ArenaPlayerResult
-	body            raknet.ArenaResultsBody
+	damageContributions map[arenaDamagePair][]arenaRecentDamage
+	lastKillers         map[uint64]uint64
+	matchID             string
+	isRanked            bool
+	statEntries         []arenaStatEntry
+	statMaximums        map[uint64]arenaStatMaximums
+	isStatsSaved        bool
+	startedAt           time.Time
+	elapsed             time.Duration
+	roundIndex          int
+	isRoundComplete     bool
+	isCompleted         bool
+	players             map[uint64]raknet.ArenaPlayerResult
+	botUserIDs          map[uint64]bool
+	playerLevels        map[uint64]uint32
+	body                raknet.ArenaResultsBody
 }
 
 func (e *gameplaySessionRegistry) startArenaResultLocked(gameID uint32, now time.Time) {
@@ -38,16 +42,28 @@ func (e *gameplaySessionRegistry) startArenaResultLocked(gameID uint32, now time
 	}
 	match.result.startedAt = now
 	match.result.isRoundComplete = false
+	match.result.damageContributions = make(map[arenaDamagePair][]arenaRecentDamage)
+	match.result.lastKillers = make(map[uint64]uint64)
 	match.recentDamages = nil
 	for _, member := range e.sessions {
 		if member.binding.GameID != gameID || member.binding.Mode != game.ModeArena {
 			continue
+		}
+		if member.binding.IsServerBot {
+			if match.result.botUserIDs == nil {
+				match.result.botUserIDs = make(map[uint64]bool)
+			}
+			match.result.botUserIDs[member.binding.UserID] = true
 		}
 		player, isFound := match.result.players[member.binding.UserID]
 		if !isFound {
 			player = arenaPlayerResult(member)
 		}
 		player.AvatarID = member.binding.AvatarID
+		if match.result.playerLevels == nil {
+			match.result.playerLevels = make(map[uint64]uint32)
+		}
+		match.result.playerLevels[member.binding.UserID] = member.binding.AvatarLevel
 		player.Team = uint8(member.binding.Team)
 		if match.result.roundIndex < len(player.Round) {
 			player.Round[match.result.roundIndex] = arenaPlayerResult(member).Round[0]
@@ -77,6 +93,10 @@ func (e *arenaResultState) recordDamage(sourceUserID uint64, targetUserID uint64
 	source.DamageDealt += amount
 	target.DamageTaken += amount
 	if isLethal {
+		if e.lastKillers == nil {
+			e.lastKillers = make(map[uint64]uint64)
+		}
+		e.lastKillers[targetUserID] = sourceUserID
 		source.Kills++
 		target.Deaths++
 	}
@@ -137,6 +157,10 @@ func (e *gameplaySessionRegistry) completeArenaResultLocked(gameID uint32, winne
 		return
 	}
 	result := &match.result
+	if match.clock != nil {
+		match.clock.stopLocked()
+		match.clock = nil
+	}
 	if result.roundIndex >= len(result.body.Player[0].Round) {
 		return
 	}
@@ -180,6 +204,49 @@ func (e *gameplaySessionRegistry) completeArenaResultLocked(gameID uint32, winne
 	result.isCompleted = result.body.CountA >= 2 || result.body.CountB >= 2
 	result.freezeStats(e.now())
 	match.isCombatActive = false
+}
+
+// A match with no human participant left cannot finish through combat. Record
+// the last departing player's team as the loser while its result roster is
+// still available, before session cleanup can retire the match.
+func (e *gameplaySessionRegistry) forfeitEmptyArenaLocked(departed gameplayPeerSession) bool {
+	if departed.binding.Mode != game.ModeArena || departed.binding.IsServerBot ||
+		departed.binding.Team < 1 || departed.binding.Team > 2 {
+		return false
+	}
+	gameID := departed.binding.GameID
+	match := e.arenaMatches[gameID]
+	if match == nil || match.result.startedAt.IsZero() || match.result.isCompleted {
+		return false
+	}
+	for _, member := range e.sessions {
+		if member.binding.GameID == gameID && member.binding.Mode == game.ModeArena &&
+			!member.binding.IsServerBot {
+			return false
+		}
+	}
+	winnerTeam := uint32(3 - departed.binding.Team)
+	if match.isCombatActive && !match.result.isRoundComplete {
+		e.completeArenaResultLocked(gameID, winnerTeam)
+		if !match.result.isRoundComplete {
+			return false
+		}
+	} else if !match.result.isRoundComplete {
+		return false
+	}
+	if match.cancel != nil {
+		match.cancel()
+		match.cancel = nil
+	}
+	if winnerTeam == 1 {
+		match.result.body.CountA = 2
+	} else {
+		match.result.body.CountB = 2
+	}
+	match.result.body.SelectorA = winnerTeam
+	match.result.isCompleted = true
+	match.result.freezeStats(e.now())
+	return true
 }
 
 func (e gameplayArenaRuntime) arenaResultBodyLocked(gameID uint32) raknet.ArenaResultsBody {
@@ -228,6 +295,10 @@ func (e *gameplaySessionRegistry) retireArenaResultLocked(gameID uint32) func() 
 	e.retireArenaChargesLocked(gameID)
 	e.retireArenaRidesLocked(gameID)
 	e.retireArenaQuantumBlinksLocked(gameID)
+	if match.clock != nil {
+		match.clock.stopLocked()
+		match.clock = nil
+	}
 	delete(e.arenaMatches, gameID)
 	delete(e.arenaEffectPools, gameID)
 	return match.cancel

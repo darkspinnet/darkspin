@@ -109,6 +109,8 @@ type ZoneInfo struct {
 }
 
 type Member struct {
+	IsServerBot        bool
+	BotOwnerUserID     uint64
 	UserID             uint64
 	PeerGeneration     uint64
 	Slot               uint16
@@ -213,6 +215,7 @@ type Zone struct {
 	clearedSpawnGroups     map[uint32]struct{}
 	checkpointHeroes       map[uint64]zonecheckpoint.Hero
 	checkpointSquads       map[uint64]zonecheckpoint.Squad
+	campaignBots           map[uint16]zonecheckpoint.CampaignBot
 	isPopulationPrimed     bool
 	isPickupSweepStarted   bool
 	isRestored             bool
@@ -416,6 +419,17 @@ func (e *Zone) Join(member Member) error {
 		return errors.New("campaign zone not active")
 	}
 	current, isFound := e.members[member.UserID]
+	if isFound && (current.IsServerBot != member.IsServerBot || current.BotOwnerUserID != member.BotOwnerUserID) {
+		e.mu.Unlock()
+		return errors.New("campaign member kind changed")
+	}
+	if member.IsServerBot {
+		owner, isOwnerFound := e.members[member.BotOwnerUserID]
+		if !isOwnerFound || owner.IsServerBot {
+			e.mu.Unlock()
+			return errors.New("campaign bot owner unavailable")
+		}
+	}
 	isRestoredPlaceholder := isFound && current.PeerGeneration == 0
 	if isFound && current.PeerGeneration != 0 &&
 		member.PeerGeneration < current.PeerGeneration {
@@ -438,69 +452,73 @@ func (e *Zone) Join(member Member) error {
 			}
 		}
 	}
-	err := e.projection.Join(zoneprojection.Subscriber{
-		UserID: member.UserID, PeerGeneration: member.PeerGeneration,
-	})
-	if err != nil {
-		e.mu.Unlock()
-		return fmt.Errorf("campaignProjectionJoin: %w", err)
-	}
-	err = e.info.Outcome.Join(zoneoutcome.Member{
-		UserID: member.UserID, PeerGeneration: member.PeerGeneration,
-	})
-	if err != nil {
-		e.projection.Leave(zoneprojection.Subscriber{
+	if !member.IsServerBot {
+		err := e.projection.Join(zoneprojection.Subscriber{
 			UserID: member.UserID, PeerGeneration: member.PeerGeneration,
 		})
-		e.mu.Unlock()
-		return fmt.Errorf("campaignOutcomeJoin: %w", err)
-	}
-	err = e.info.ResultVote.Join(zoneresult.Voter{
-		UserID: member.UserID, PeerGeneration: member.PeerGeneration,
-	})
-	if err != nil {
-		e.info.Outcome.Leave(zoneoutcome.Member{
-			UserID: member.UserID, PeerGeneration: member.PeerGeneration,
-		})
-		if isRestoredPlaceholder {
-			_ = e.info.Outcome.RestoreMember(member.UserID)
-		}
-		e.projection.Leave(zoneprojection.Subscriber{
-			UserID: member.UserID, PeerGeneration: member.PeerGeneration,
-		})
-		e.mu.Unlock()
-		return fmt.Errorf("campaignResultVoteJoin: %w", err)
-	}
-	if !isFound && e.info.Objective != nil {
-		err = e.info.Objective.Join(uint8(member.Slot))
 		if err != nil {
-			e.info.ResultVote.Leave(zoneresult.Voter{
-				UserID: member.UserID, PeerGeneration: member.PeerGeneration,
-			})
-			e.info.Outcome.Leave(zoneoutcome.Member{
-				UserID: member.UserID, PeerGeneration: member.PeerGeneration,
-			})
+			e.mu.Unlock()
+			return fmt.Errorf("campaignProjectionJoin: %w", err)
+		}
+		err = e.info.Outcome.Join(zoneoutcome.Member{
+			UserID: member.UserID, PeerGeneration: member.PeerGeneration,
+		})
+		if err != nil {
 			e.projection.Leave(zoneprojection.Subscriber{
 				UserID: member.UserID, PeerGeneration: member.PeerGeneration,
 			})
 			e.mu.Unlock()
-			return fmt.Errorf("campaignObjectiveJoin: %w", err)
+			return fmt.Errorf("campaignOutcomeJoin: %w", err)
+		}
+		err = e.info.ResultVote.Join(zoneresult.Voter{
+			UserID: member.UserID, PeerGeneration: member.PeerGeneration,
+		})
+		if err != nil {
+			e.info.Outcome.Leave(zoneoutcome.Member{
+				UserID: member.UserID, PeerGeneration: member.PeerGeneration,
+			})
+			if isRestoredPlaceholder {
+				_ = e.info.Outcome.RestoreMember(member.UserID)
+			}
+			e.projection.Leave(zoneprojection.Subscriber{
+				UserID: member.UserID, PeerGeneration: member.PeerGeneration,
+			})
+			e.mu.Unlock()
+			return fmt.Errorf("campaignResultVoteJoin: %w", err)
+		}
+		if !isFound && e.info.Objective != nil {
+			err = e.info.Objective.Join(uint8(member.Slot))
+			if err != nil {
+				e.info.ResultVote.Leave(zoneresult.Voter{
+					UserID: member.UserID, PeerGeneration: member.PeerGeneration,
+				})
+				e.info.Outcome.Leave(zoneoutcome.Member{
+					UserID: member.UserID, PeerGeneration: member.PeerGeneration,
+				})
+				e.projection.Leave(zoneprojection.Subscriber{
+					UserID: member.UserID, PeerGeneration: member.PeerGeneration,
+				})
+				e.mu.Unlock()
+				return fmt.Errorf("campaignObjectiveJoin: %w", err)
+			}
 		}
 	}
 	releasedAction := make([]zonenpc.Snapshot, 0)
 	if isFound && member.PeerGeneration > current.PeerGeneration {
 		e.info.Hero.Remove(current.UserID, current.PeerGeneration)
 		e.info.Companion.RemoveOwner(current.UserID, current.PeerGeneration)
-		e.info.Result.Rebind(zoneresult.Voter{
-			UserID: member.UserID, PeerGeneration: member.PeerGeneration,
-		})
+		if !member.IsServerBot {
+			e.info.Result.Rebind(zoneresult.Voter{
+				UserID: member.UserID, PeerGeneration: member.PeerGeneration,
+			})
+		}
 		releasedAction = e.info.NPCs.ReleaseActions(zonenpc.ActionOwner{
 			UserID: current.UserID, PeerGeneration: current.PeerGeneration,
 		})
 	}
 	e.members[member.UserID] = member
 	e.info.NPCs.ConfigureAffixContext(e.info.Difficulty, uint32(len(e.members)))
-	if !isFound && e.isPopulationPrimed && !e.isRestored {
+	if !member.IsServerBot && !isFound && e.isPopulationPrimed && !e.isRestored {
 		e.projection.SeedNPCs(zoneprojection.Subscriber{
 			UserID: member.UserID, PeerGeneration: member.PeerGeneration,
 		}, e.info.NPCs.Snapshots())
@@ -590,7 +608,7 @@ func (e *Zone) Disconnect(
 	e.members[userID] = member
 	isAnyConnected := false
 	for _, participant := range e.members {
-		if participant.IsConnected {
+		if participant.IsConnected && !participant.IsServerBot {
 			isAnyConnected = true
 			break
 		}
@@ -719,7 +737,7 @@ func (e *Zone) Leave(userID uint64, peerGeneration uint64) bool {
 		e.mu.Unlock()
 		return false
 	}
-	if e.info.Objective != nil {
+	if !current.IsServerBot && e.info.Objective != nil {
 		err := e.info.Objective.Leave(uint8(current.Slot))
 		if err != nil {
 			// Keep the member/slot reserved if authored state cannot be reset;
@@ -731,7 +749,7 @@ func (e *Zone) Leave(userID uint64, peerGeneration uint64) bool {
 	delete(e.members, userID)
 	isAnyConnected := false
 	for _, participant := range e.members {
-		if participant.IsConnected {
+		if participant.IsConnected && !participant.IsServerBot {
 			isAnyConnected = true
 			break
 		}
@@ -739,7 +757,9 @@ func (e *Zone) Leave(userID uint64, peerGeneration uint64) bool {
 	if !isAnyConnected && e.info.Director != nil {
 		e.info.Director.SuspendTriggers()
 	}
-	e.forfeitMissionEquipment(userID)
+	if !current.IsServerBot {
+		e.forfeitMissionEquipment(userID)
+	}
 	delete(e.crystals, userID)
 	delete(e.missionEquipments, userID)
 	delete(e.unlocks, userID)
@@ -801,7 +821,7 @@ func (e *Zone) Leave(userID uint64, peerGeneration uint64) bool {
 		acquired = nil
 	}
 	returning := e.returnUnacquiredNPCs(releasedTarget, acquired)
-	isEmpty := len(e.members) == 0
+	isEmpty := e.humanParticipantCount() == 0
 	isAllCommitted := e.info.Outcome.AreAllCommitted()
 	if isAllCommitted {
 		e.state = StateComplete
@@ -2025,6 +2045,10 @@ func (e *Zone) restoreCheckpoint(snapshot zonecheckpoint.Snapshot) error {
 		}
 	}
 	e.isNPCSpawnCommandUsed = snapshot.IsNPCSpawnCommandUsed
+	e.campaignBots = make(map[uint16]zonecheckpoint.CampaignBot, len(snapshot.CampaignBots))
+	for _, bot := range snapshot.CampaignBots {
+		e.campaignBots[bot.Request.Slot] = bot
+	}
 	if e.info.MemberLimit != 0 &&
 		len(snapshot.Members) > int(e.info.MemberLimit) {
 		return errors.New("checkpoint member capacity exceeded")
@@ -2095,7 +2119,7 @@ func (e *Zone) restoreCheckpoint(snapshot zonecheckpoint.Snapshot) error {
 	}
 	err = e.info.NPCs.ConfigureShieldedAffix(
 		restoredPlans, snapshot.Difficulty,
-		max(uint32(1), uint32(len(snapshot.Members))),
+		max(uint32(1), uint32(len(snapshot.Members)+len(snapshot.CampaignBots))),
 	)
 	if err != nil {
 		return fmt.Errorf("checkpointShieldedAffix: %w", err)
@@ -2215,10 +2239,101 @@ func (e *Zone) SetCheckpointSquad(
 	e.checkpointSquads[userID] = zonecheckpoint.Squad{
 		UserID: userID, Position: position, State: state,
 	}
-	if state.IsGameOver {
+	if state.IsGameOver && !member.IsServerBot {
 		e.forfeitMissionEquipment(userID)
 	}
 	return nil
+}
+
+func (e *Zone) SetCampaignBot(bot zonecheckpoint.CampaignBot) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	if e.campaignBots == nil {
+		e.campaignBots = make(map[uint16]zonecheckpoint.CampaignBot)
+	}
+	e.campaignBots[bot.Request.Slot] = bot
+	e.mu.Unlock()
+}
+
+func (e *Zone) DefeatCampaignBot(slot uint16) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	bot, isFound := e.campaignBots[slot]
+	if isFound {
+		bot.HitPoint = 0
+		bot.IsDefeated = true
+		e.campaignBots[slot] = bot
+	}
+	e.mu.Unlock()
+}
+
+func (e *Zone) CampaignBot(slot uint16) (zonecheckpoint.CampaignBot, bool) {
+	if e == nil {
+		return zonecheckpoint.CampaignBot{}, false
+	}
+	e.mu.RLock()
+	bot, isFound := e.campaignBots[slot]
+	e.mu.RUnlock()
+	return bot, isFound
+}
+
+func (e *Zone) UpdateCampaignBot(slot uint16, position game.Vec3, hitPoint float32) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	bot, isFound := e.campaignBots[slot]
+	if isFound {
+		bot.Position = position
+		bot.HitPoint = hitPoint
+		bot.IsDefeated = hitPoint <= 0
+		e.campaignBots[slot] = bot
+	}
+	e.mu.Unlock()
+}
+
+func (e *Zone) RestoredCampaignBot(slot uint16) (zonecheckpoint.CampaignBot, bool) {
+	if e == nil {
+		return zonecheckpoint.CampaignBot{}, false
+	}
+	e.mu.RLock()
+	bot, isFound := e.campaignBots[slot]
+	isRestored := e.isRestored
+	e.mu.RUnlock()
+	return bot, isFound && isRestored
+}
+
+func (e *Zone) campaignBotCheckpoint() []zonecheckpoint.CampaignBot {
+	e.mu.RLock()
+	bots := make([]zonecheckpoint.CampaignBot, 0, len(e.campaignBots))
+	for _, bot := range e.campaignBots {
+		bots = append(bots, bot)
+	}
+	e.mu.RUnlock()
+	heroes := e.info.Hero.Snapshots()
+	for index := range bots {
+		for _, hero := range heroes {
+			if hero.ObjectID != zonehero.ObjectID(bots[index].Request.Slot, hero.CreatureIndex) {
+				continue
+			}
+			bots[index].CreatureIndex = hero.CreatureIndex
+			bots[index].Position = hero.Position
+			bots[index].HitPoint = hero.HitPoint
+			bots[index].IsDefeated = hero.HitPoint <= 0
+		}
+		objectID := zonehero.ObjectID(bots[index].Request.Slot, bots[index].CreatureIndex)
+		actor, isFound := e.info.Companion.Snapshot(objectID)
+		if isFound {
+			bots[index].Position = actor.Position
+			bots[index].HitPoint = actor.HitPoint
+			bots[index].IsDefeated = actor.HitPoint <= 0
+		}
+	}
+	return bots
 }
 
 func (e *Zone) RestoredSquad(userID uint64) (zonecheckpoint.Squad, bool) {
@@ -2281,7 +2396,12 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 		return
 	}
 	members := make([]zonecheckpoint.Member, 0, len(e.members))
+	humanIDs := make(map[uint64]bool, len(e.members))
 	for _, member := range e.members {
+		if member.IsServerBot {
+			continue
+		}
+		humanIDs[member.UserID] = true
 		members = append(members, zonecheckpoint.Member{
 			UserID: member.UserID, Slot: member.Slot,
 			AbilityCount: member.AbilityCount,
@@ -2289,20 +2409,32 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 	}
 	crystals := make([]zonecheckpoint.Crystal, 0, len(e.crystals))
 	for userID, inventory := range e.crystals {
+		if !humanIDs[userID] {
+			continue
+		}
 		crystals = append(crystals, zonecheckpoint.Crystal{
 			UserID: userID, Inventory: inventory,
 		})
 	}
 	missionEquipments := make([]zoneloot.EquipmentInventory, 0, len(e.missionEquipments))
 	for _, inventory := range e.missionEquipments {
+		if !humanIDs[inventory.UserID] {
+			continue
+		}
 		missionEquipments = append(missionEquipments, inventory.Clone())
 	}
 	squads := make([]zonecheckpoint.Squad, 0, len(e.checkpointSquads))
 	for _, current := range e.checkpointSquads {
+		if !humanIDs[current.UserID] {
+			continue
+		}
 		squads = append(squads, current)
 	}
 	restoredHeroes := make([]zonecheckpoint.Hero, 0, len(e.checkpointHeroes))
 	for _, current := range e.checkpointHeroes {
+		if !humanIDs[current.UserID] {
+			continue
+		}
 		restoredHeroes = append(restoredHeroes, current)
 	}
 	clearedSpawnGroupIDs := make([]uint32, 0, len(e.clearedSpawnGroups))
@@ -2315,7 +2447,13 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 	for _, current := range e.experienceAwards {
 		memberAwards := make(map[uint64]uint32, len(current.MemberAwards))
 		for userID, experience := range current.MemberAwards {
+			if !humanIDs[userID] {
+				continue
+			}
 			memberAwards[userID] = experience
+		}
+		if len(memberAwards) == 0 {
+			continue
 		}
 		experienceAwards = append(experienceAwards, zonecheckpoint.ExperienceAward{
 			ObjectID: current.ObjectID, BaseExperience: current.BaseExperience,
@@ -2359,6 +2497,9 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 	})
 	heroes := make([]zonecheckpoint.Hero, 0, len(heroSnapshots)+len(restoredHeroes))
 	for _, hero := range heroSnapshots {
+		if !humanIDs[hero.UserID] {
+			continue
+		}
 		heroes = append(heroes, zonecheckpoint.Hero{
 			UserID: hero.UserID, ObjectID: hero.ObjectID,
 			CreatureIndex: hero.CreatureIndex, Position: hero.Position,
@@ -2433,7 +2574,8 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 		ZoneGeneration:     generation, CompletionID: e.CompletionID(),
 		Level: level, Difficulty: difficulty, Reason: reason,
 		SavedAt: now, Elapsed: elapsed, Members: members, Heroes: heroes,
-		Squads: squads, NPCs: npcs, Hordes: hordes, Crystals: crystals,
+		CampaignBots: e.campaignBotCheckpoint(),
+		Squads:       squads, NPCs: npcs, Hordes: hordes, Crystals: crystals,
 		TriggerProgresses: triggerProgresses,
 		ExperienceAwards:  experienceAwards,
 		MissionEquipments: missionEquipments,
@@ -2957,7 +3099,7 @@ func (e *Zone) RecordModifierCreated(
 	e.mu.RLock()
 	member, isMemberFound := e.members[target.UserID]
 	e.mu.RUnlock()
-	if !isMemberFound || member.Slot >= game.MaxGamePlayers {
+	if !isMemberFound || member.IsServerBot || member.Slot >= game.MaxGamePlayers {
 		return nil
 	}
 	updates, err := e.info.Objective.ApplyEvent(ctx, sim.LuaObjectiveEvent{
@@ -3061,6 +3203,9 @@ func (e *Zone) objectiveSource(
 	e.mu.RLock()
 	member, isMemberFound := e.members[userID]
 	e.mu.RUnlock()
+	if isMemberFound && member.IsServerBot {
+		return objectiveActor{}
+	}
 	if !isMemberFound || member.Slot >= game.MaxGamePlayers {
 		return objectiveActor{
 			UserID: userID, IsPlayerControlled: isPlayerControlled,
@@ -3085,7 +3230,7 @@ func (e *Zone) ApplyHeroDeathObjectives(
 	objective := e.info.Objective
 	progress := e.info.ObjectiveProgress
 	e.mu.RUnlock()
-	if !isFound || member.PeerGeneration != peerGeneration || objective == nil {
+	if !isFound || member.IsServerBot || member.PeerGeneration != peerGeneration || objective == nil {
 		return nil
 	}
 	killPercent := float64(0)

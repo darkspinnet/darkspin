@@ -17,6 +17,7 @@ const (
 	arenaCombatPetBeast arenaCombatPetKind = iota + 1
 	arenaCombatPetPlasma
 	arenaCombatPetFire
+	arenaCombatPetSage
 )
 
 // One Arena match owns companion actors independently of a campaign zone.
@@ -137,6 +138,7 @@ func (e *gameplaySessionRegistry) retireArenaCombatPetsLocked(gameID uint32) {
 	for _, run := range match.abilityWorld.combatPets {
 		run.retireLocked()
 	}
+	clear(match.abilityWorld.sages)
 }
 
 func (e *gameplaySessionRegistry) retireArenaCombatPetsForOwnerLocked(gameID uint32, objectID uint32) {
@@ -144,6 +146,7 @@ func (e *gameplaySessionRegistry) retireArenaCombatPetsForOwnerLocked(gameID uin
 	if match == nil || match.abilityWorld == nil {
 		return
 	}
+	delete(match.abilityWorld.sages, objectID)
 	for _, run := range match.abilityWorld.combatPets {
 		if run.ownerObjectID == objectID {
 			owner, isOwnerFound := e.sessions[run.sessionKey]

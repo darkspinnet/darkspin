@@ -258,6 +258,7 @@ func (e *arenaAbilityTargets) Hit(req zonenpc.HitRequest) (zonenpc.DamageResult,
 		e.runtime.registry.retireArenaForcePulseVictimLocked(e.source.binding.GameID, req.TargetObjectID)
 	}
 	match.result.recordDamage(e.source.binding.UserID, target.binding.UserID, damage+sharedDamage, health <= 0)
+	match.result.recordCombatExchange(e.source.binding.UserID, target.binding.UserID, damage, now)
 	match.recordRecentDamage(req.TargetObjectID, now, damage)
 	resourcePackets := append(sharePackets, resourcePacket)
 	e.runtime.registry.queueArenaAbilityResourcesLocked(e.source, resourcePackets)

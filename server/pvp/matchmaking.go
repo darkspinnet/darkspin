@@ -4,6 +4,7 @@ package pvp
 import (
 	"errors"
 	"sync"
+	"time"
 )
 
 const (
@@ -52,8 +53,9 @@ type MatchmakingSession struct {
 // MatchmakingAdmission contains the caller's queue session and, when the
 // compatible queue reaches capacity, the atomically consumed match roster.
 type MatchmakingAdmission struct {
-	Session  MatchmakingSession
-	Sessions []MatchmakingSession
+	Session      MatchmakingSession
+	Sessions     []MatchmakingSession
+	IsNewSession bool
 }
 
 // Matchmaking owns active campaign and PVP queue sessions. Match formation
@@ -67,11 +69,12 @@ type Matchmaking struct {
 }
 
 type matchmakingReservation struct {
-	ID       uint64
-	OwnerID  int64
-	UserIDs  []int64
-	PartyID  uint32
-	Criteria MatchmakingCriteria
+	ID        uint64
+	OwnerID   int64
+	UserIDs   []int64
+	PartyID   uint32
+	Criteria  MatchmakingCriteria
+	CreatedAt time.Time
 }
 
 func NewMatchmaking() *Matchmaking {
@@ -121,40 +124,20 @@ func (e *Matchmaking) Enter(req MatchmakingRequest) (MatchmakingAdmission, error
 	}
 	reservation := matchmakingReservation{
 		ID: e.nextID, OwnerID: req.UserID, UserIDs: userIDs,
-		PartyID: req.PartyID, Criteria: req.Criteria,
+		PartyID: req.PartyID, Criteria: req.Criteria, CreatedAt: time.Now(),
 	}
 	e.nextID++
 	e.sessions[reservation.ID] = reservation
 	for _, userID := range reservation.UserIDs {
 		e.sessionByUsers[userID] = reservation.ID
 	}
-	compatibleSessions := make([]MatchmakingSession, 0, req.Criteria.ExpectedPlayerCount)
-	for sessionID := uint64(1); sessionID < e.nextID; sessionID++ {
-		queuedReservation, isFound := e.sessions[sessionID]
-		if !isFound || queuedReservation.Criteria != req.Criteria {
-			continue
-		}
-		if len(compatibleSessions)+len(queuedReservation.UserIDs) >
-			int(req.Criteria.ExpectedPlayerCount) {
-			continue
-		}
-		for _, userID := range queuedReservation.UserIDs {
-			compatibleSessions = append(compatibleSessions, MatchmakingSession{
-				ID: queuedReservation.ID, OwnerID: queuedReservation.OwnerID,
-				UserID: userID, PartyID: queuedReservation.PartyID,
-				Criteria: queuedReservation.Criteria,
-			})
-		}
-		if len(compatibleSessions) == int(req.Criteria.ExpectedPlayerCount) {
-			break
-		}
-	}
+	compatibleSessions := e.compatibleSessions(req.Criteria)
 	if len(compatibleSessions) != int(req.Criteria.ExpectedPlayerCount) {
 		return MatchmakingAdmission{Session: MatchmakingSession{
 			ID: reservation.ID, OwnerID: reservation.OwnerID,
 			UserID: req.UserID, PartyID: reservation.PartyID,
 			Criteria: req.Criteria,
-		}}, nil
+		}, IsNewSession: true}, nil
 	}
 	for _, matchedSession := range compatibleSessions {
 		delete(e.sessionByUsers, matchedSession.UserID)
@@ -164,7 +147,71 @@ func (e *Matchmaking) Enter(req MatchmakingRequest) (MatchmakingAdmission, error
 		ID: reservation.ID, OwnerID: reservation.OwnerID,
 		UserID: req.UserID, PartyID: reservation.PartyID,
 		Criteria: req.Criteria,
-	}, Sessions: compatibleSessions}, nil
+	}, Sessions: compatibleSessions, IsNewSession: true}, nil
+}
+
+// PartialSessions snapshots compatible reservations without consuming them.
+// The caller can discard unavailable reservations before claiming the roster.
+func (e *Matchmaking) PartialSessions(sessionID uint64) []MatchmakingSession {
+	if e == nil {
+		return nil
+	}
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	reservation, isFound := e.sessions[sessionID]
+	if !isFound {
+		return nil
+	}
+	return e.compatibleSessions(reservation.Criteria)
+}
+
+// ClaimPartial atomically consumes a compatible roster only while the anchor
+// reservation still exists and has waited at least minAge. Cancellation and
+// ordinary full-human formation invalidate previously scheduled claims.
+func (e *Matchmaking) ClaimPartial(sessionID uint64, minAge time.Duration) []MatchmakingSession {
+	if e == nil {
+		return nil
+	}
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	reservation, isFound := e.sessions[sessionID]
+	if !isFound || time.Since(reservation.CreatedAt) < minAge {
+		return nil
+	}
+	sessions := e.compatibleSessions(reservation.Criteria)
+	isAnchorFound := false
+	for _, session := range sessions {
+		if session.ID == sessionID {
+			isAnchorFound = true
+		}
+	}
+	if !isAnchorFound {
+		return nil
+	}
+	for _, session := range sessions {
+		delete(e.sessionByUsers, session.UserID)
+		delete(e.sessions, session.ID)
+	}
+	return sessions
+}
+
+// compatibleSessions requires the matchmaking mutex to be held.
+func (e *Matchmaking) compatibleSessions(criteria MatchmakingCriteria) []MatchmakingSession {
+	sessions := make([]MatchmakingSession, 0, criteria.ExpectedPlayerCount)
+	for sessionID := uint64(1); sessionID < e.nextID; sessionID++ {
+		reservation, isFound := e.sessions[sessionID]
+		if !isFound || reservation.Criteria != criteria ||
+			len(sessions)+len(reservation.UserIDs) > int(criteria.ExpectedPlayerCount) {
+			continue
+		}
+		for _, userID := range reservation.UserIDs {
+			sessions = append(sessions, MatchmakingSession{
+				ID: reservation.ID, OwnerID: reservation.OwnerID,
+				UserID: userID, PartyID: reservation.PartyID, Criteria: criteria,
+			})
+		}
+	}
+	return sessions
 }
 
 // IsArenaPartySizeAllowed includes build 103's native Unranked 1v1 start:

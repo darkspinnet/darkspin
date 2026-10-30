@@ -48,6 +48,7 @@ var postgresSchemaStatements = []string{
 		completed_at_unix BIGINT NOT NULL,
 		is_victory BIGINT NOT NULL,
 		is_ranked BIGINT NOT NULL,
+		dna_reward BIGINT NOT NULL DEFAULT 0,
 		round_win BIGINT NOT NULL,
 		round_loss BIGINT NOT NULL,
 		play_time_second BIGINT NOT NULL,

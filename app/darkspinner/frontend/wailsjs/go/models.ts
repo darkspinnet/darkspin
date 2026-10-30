@@ -636,19 +636,13 @@ export namespace main {
 	    bindHost: string;
 	    advertisedHost: string;
 	    isDedicated: boolean;
-	    contentPath: string;
-	    jwtSecret: string;
 	    port: number;
 	    isMultiplayerEnabled: boolean;
 	    locale: string;
 	    locales: ClientLocale[];
 	    snapshotMode: string;
-	    isBootstrapUpdateEnabled: boolean;
-	    bootstrapUpdateCron: string;
-	    bootstrapWarningMinutes: number;
-	    bootstrapStartupTimeoutSeconds: number;
-	    bootstrapBackupRetentionDays: number;
-	    bootstrapManifestUrl: string;
+	    campaignMatchmakingBotSize: number;
+	    isCampaignBotSquadMirroringEnabled: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ServerConfiguration(source);
@@ -659,19 +653,13 @@ export namespace main {
 	        this.bindHost = source["bindHost"];
 	        this.advertisedHost = source["advertisedHost"];
 	        this.isDedicated = source["isDedicated"];
-	        this.contentPath = source["contentPath"];
-	        this.jwtSecret = source["jwtSecret"];
 	        this.port = source["port"];
 	        this.isMultiplayerEnabled = source["isMultiplayerEnabled"];
 	        this.locale = source["locale"];
 	        this.locales = this.convertValues(source["locales"], ClientLocale);
 	        this.snapshotMode = source["snapshotMode"];
-	        this.isBootstrapUpdateEnabled = source["isBootstrapUpdateEnabled"];
-	        this.bootstrapUpdateCron = source["bootstrapUpdateCron"];
-	        this.bootstrapWarningMinutes = source["bootstrapWarningMinutes"];
-	        this.bootstrapStartupTimeoutSeconds = source["bootstrapStartupTimeoutSeconds"];
-	        this.bootstrapBackupRetentionDays = source["bootstrapBackupRetentionDays"];
-	        this.bootstrapManifestUrl = source["bootstrapManifestUrl"];
+	        this.campaignMatchmakingBotSize = source["campaignMatchmakingBotSize"];
+	        this.isCampaignBotSquadMirroringEnabled = source["isCampaignBotSquadMirroringEnabled"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -768,6 +756,319 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class squadShareAbility {
+	    slot: string;
+	    id: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new squadShareAbility(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.slot = source["slot"];
+	        this.id = source["id"];
+	    }
+	}
+	export class squadShareAbilityStat {
+	    key: string;
+	    token: string;
+	    value: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new squadShareAbilityStat(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.token = source["token"];
+	        this.value = source["value"];
+	    }
+	}
+	export class squadShareAppearance {
+	    version: number;
+	    isCustom: boolean;
+	    previewPngBase64?: string;
+	    isPreviewAvailable: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new squadShareAppearance(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.isCustom = source["isCustom"];
+	        this.previewPngBase64 = source["previewPngBase64"];
+	        this.isPreviewAvailable = source["isPreviewAvailable"];
+	    }
+	}
+	export class squadSharePart {
+	    id: number;
+	    referenceId: number;
+	    level: number;
+	    rarity: number;
+	    isFlair: boolean;
+	    rigblockAssetId: number;
+	    prefixAssetId: number;
+	    prefixSecondaryAssetId: number;
+	    suffixAssetId: number;
+	    status: number;
+	    usage: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new squadSharePart(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.referenceId = source["referenceId"];
+	        this.level = source["level"];
+	        this.rarity = source["rarity"];
+	        this.isFlair = source["isFlair"];
+	        this.rigblockAssetId = source["rigblockAssetId"];
+	        this.prefixAssetId = source["prefixAssetId"];
+	        this.prefixSecondaryAssetId = source["prefixSecondaryAssetId"];
+	        this.suffixAssetId = source["suffixAssetId"];
+	        this.status = source["status"];
+	        this.usage = source["usage"];
+	    }
+	}
+	export class squadShareStat {
+	    name: string;
+	    maximum: number;
+	    current: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new squadShareStat(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.maximum = source["maximum"];
+	        this.current = source["current"];
+	    }
+	}
+	export class squadShareCreature {
+	    creatureId: number;
+	    templateName: string;
+	    templateNoun: number;
+	    isTemplateResolved: boolean;
+	    elementType?: string;
+	    classType?: string;
+	    version: number;
+	    gearScore: number;
+	    itemPoints: number;
+	    abilities: squadShareAbility[];
+	    stats: squadShareStat[];
+	    abilityStats: squadShareAbilityStat[];
+	    equipment: squadSharePart[];
+	    appearance: squadShareAppearance;
+	
+	    static createFrom(source: any = {}) {
+	        return new squadShareCreature(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.creatureId = source["creatureId"];
+	        this.templateName = source["templateName"];
+	        this.templateNoun = source["templateNoun"];
+	        this.isTemplateResolved = source["isTemplateResolved"];
+	        this.elementType = source["elementType"];
+	        this.classType = source["classType"];
+	        this.version = source["version"];
+	        this.gearScore = source["gearScore"];
+	        this.itemPoints = source["itemPoints"];
+	        this.abilities = this.convertValues(source["abilities"], squadShareAbility);
+	        this.stats = this.convertValues(source["stats"], squadShareStat);
+	        this.abilityStats = this.convertValues(source["abilityStats"], squadShareAbilityStat);
+	        this.equipment = this.convertValues(source["equipment"], squadSharePart);
+	        this.appearance = this.convertValues(source["appearance"], squadShareAppearance);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class squadShareSquad {
+	    name: string;
+	    category: string;
+	    slot: number;
+	    isLocked: boolean;
+	    members: squadShareCreature[];
+	
+	    static createFrom(source: any = {}) {
+	        return new squadShareSquad(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.category = source["category"];
+	        this.slot = source["slot"];
+	        this.isLocked = source["isLocked"];
+	        this.members = this.convertValues(source["members"], squadShareCreature);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class squadShareUnlocks {
+	    isAllAccessGranted: boolean;
+	    isOnlineAccessGranted: boolean;
+	    isOverdriveUnlocked: boolean;
+	    catalysts: number;
+	    diagonalCatalysts: number;
+	    inventory: number;
+	    fuelTanks: number;
+	    pveDecks: number;
+	    pvpDecks: number;
+	    stats: number;
+	    inventoryIdentify: number;
+	    editorFlairSlots: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new squadShareUnlocks(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.isAllAccessGranted = source["isAllAccessGranted"];
+	        this.isOnlineAccessGranted = source["isOnlineAccessGranted"];
+	        this.isOverdriveUnlocked = source["isOverdriveUnlocked"];
+	        this.catalysts = source["catalysts"];
+	        this.diagonalCatalysts = source["diagonalCatalysts"];
+	        this.inventory = source["inventory"];
+	        this.fuelTanks = source["fuelTanks"];
+	        this.pveDecks = source["pveDecks"];
+	        this.pvpDecks = source["pvpDecks"];
+	        this.stats = source["stats"];
+	        this.inventoryIdentify = source["inventoryIdentify"];
+	        this.editorFlairSlots = source["editorFlairSlots"];
+	    }
+	}
+	export class squadShareCrogenitor {
+	    displayName: string;
+	    level: number;
+	    experience: number;
+	    campaignProgression: number;
+	    highestCampaignUnlocked: number;
+	    defaultPveDeckId: number;
+	    defaultPvpDeckId: number;
+	    isTutorialCompleted: boolean;
+	    isTutorialCompletionPending: boolean;
+	    unlocks: squadShareUnlocks;
+	    squads: squadShareSquad[];
+	
+	    static createFrom(source: any = {}) {
+	        return new squadShareCrogenitor(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.displayName = source["displayName"];
+	        this.level = source["level"];
+	        this.experience = source["experience"];
+	        this.campaignProgression = source["campaignProgression"];
+	        this.highestCampaignUnlocked = source["highestCampaignUnlocked"];
+	        this.defaultPveDeckId = source["defaultPveDeckId"];
+	        this.defaultPvpDeckId = source["defaultPvpDeckId"];
+	        this.isTutorialCompleted = source["isTutorialCompleted"];
+	        this.isTutorialCompletionPending = source["isTutorialCompletionPending"];
+	        this.unlocks = this.convertValues(source["unlocks"], squadShareUnlocks);
+	        this.squads = this.convertValues(source["squads"], squadShareSquad);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class squadShareSnapshot {
+	    formatVersion: number;
+	    generatedAt: string;
+	    crogenitors: squadShareCrogenitor[];
+	    appearanceNote: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new squadShareSnapshot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.formatVersion = source["formatVersion"];
+	        this.generatedAt = source["generatedAt"];
+	        this.crogenitors = this.convertValues(source["crogenitors"], squadShareCrogenitor);
+	        this.appearanceNote = source["appearanceNote"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	
 
 }
 

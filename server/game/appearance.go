@@ -12,6 +12,30 @@ type AppearanceStore interface {
 	Version(context.Context, uint32, string) (uint32, error)
 }
 
+type BotAppearanceStore interface {
+	GenerateBot(context.Context, uint32, uint32, uint32, uint64) (uint32, uint32, error)
+}
+
+func (e *GameplayJoin) resolveBotAppearances(ctx context.Context, binding *GameplayBinding) error {
+	store, isAvailable := e.appearanceStore.(BotAppearanceStore)
+	if !isAvailable {
+		return nil
+	}
+	for index := range binding.Creatures {
+		creature := &binding.Creatures[index]
+		if creature.Noun == 0 {
+			continue
+		}
+		seed := binding.RunSeed ^ binding.UserID ^ uint64(index+1)*0x9e3779b97f4a7c15
+		id, version, err := store.GenerateBot(ctx, creature.ID, creature.AppearanceVersion, creature.Noun, seed)
+		if err != nil {
+			return fmt.Errorf("botAppearance[%d]: %w", index, err)
+		}
+		creature.ID, creature.AppearanceVersion = id, version
+	}
+	return nil
+}
+
 func (e *GameplayJoin) SetAppearanceStore(store AppearanceStore) {
 	e.appearanceStore = store
 }

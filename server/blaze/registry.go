@@ -8,6 +8,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/blaze/tdf"
 	"github.com/darkspinnet/darkspin/server/databuffer"
+	"github.com/darkspinnet/darkspin/server/game"
 )
 
 const (
@@ -120,8 +121,9 @@ type Component struct {
 
 // Registry owns all Blaze component command handlers.
 type Registry struct {
-	mu         sync.RWMutex
-	components map[uint16]Component
+	mu                sync.RWMutex
+	components        map[uint16]Component
+	matchmakingConfig *game.Config
 	// Serialize ship disconnect cleanup against replacement authentication and
 	// ordinary party/game admission. This gate is never held for socket writes.
 	partyLifecycle      sync.Mutex

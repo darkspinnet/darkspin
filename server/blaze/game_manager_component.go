@@ -903,7 +903,7 @@ func startMatchmakingHandler(
 	matchmaking *pvp.Matchmaking, gameManager *game.Manager,
 	userDirectory activeUserDirectory, partyDirectory partyDirectory,
 ) Handler {
-	return func(_ context.Context, request *Request) (*Response, error) {
+	return func(ctx context.Context, request *Request) (*Response, error) {
 		user := requestUser(request)
 		if user == nil {
 			return &Response{ErrorCode: authInvalidUser}, nil
@@ -951,37 +951,28 @@ func startMatchmakingHandler(
 			criteria.GameType, criteria.ExpectedPlayerCount, criteria.TeamSize,
 			criteria.IsRanked, traceFieldShapes(request.Fields),
 		)
-		if len(admission.Sessions) != 0 {
-			instance, formErr := formMatchmakingGame(
-				gameManager, userDirectory, admission.Sessions, criteria,
-			)
-			if formErr != nil {
-				err = queueMatchmakingFailures(request, admission.Sessions)
-				if err != nil {
-					return nil, fmt.Errorf("matchFailureNotify: %w", err)
-				}
-				logGameRequest(request,
-					"matchmaking_form session_id=%d result=%q error=%q",
-					admission.Session.ID, "rejected", formErr,
-				)
+		isBotFill := false
+		if len(admission.Sessions) == 0 && admission.IsNewSession &&
+			isBotFillCriteria(criteria) && request.Session != nil && request.Session.server != nil {
+			if authenticatedHumanCount(request.Session.server) == 1 {
+				admission.Sessions = matchmaking.ClaimPartial(admission.Session.ID, 0)
+				isBotFill = true
 			} else {
-				err = queueGameSetupRoster(
-					request, instance, gameSetupContextMatchmaking, admission.Sessions,
-				)
-				if err != nil {
-					gameManager.Remove(instance.ID)
-					return nil, fmt.Errorf("matchRoster: %w", err)
+				fill := matchmakingBotFill{
+					matchmaking: matchmaking, gameManager: gameManager,
+					userDirectory: userDirectory, server: request.Session.server,
+					session: admission.Session,
 				}
-				if instance.Info.IsWarped {
-					for _, session := range admission.Sessions {
-						gameManager.ConsumeCampaignWarp(session.UserID, instance.Info.Level)
-					}
-				}
-				logGameRequest(request,
-					"matchmaking_form session_id=%d game_id=%d level=%q result=%q players=%d",
-					admission.Session.ID, instance.ID, instance.Info.Level,
-					"matched", len(admission.Sessions),
-				)
+				// Network dispatch passes the server serve context through to
+				// handlers; it remains live after this request returns.
+				go fill.wait(ctx)
+			}
+		}
+		if len(admission.Sessions) != 0 {
+			err = queueMatchmakingFormation(request, gameManager, userDirectory,
+				admission.Sessions, criteria, isBotFill)
+			if err != nil {
+				return nil, fmt.Errorf("matchFormation: %w", err)
 			}
 		}
 		return &Response{Fields: []tdf.Field{
@@ -1358,7 +1349,16 @@ func gamePlayerFields(instance *game.Instance, player *sporenet.User) []tdf.Fiel
 	team, isTeamAssigned := instance.PlayerTeam(player.Account.ID)
 	if !isTeamAssigned {
 		team = 0xffff
-	} else if instance.Info.Mode == game.ModeArena {
+	}
+	return gameRosterPlayerFields(instance, uint64(player.Account.ID), player.DisplayName,
+		slot, team, gamePlayerStateConnecting, uint64(player.Account.ID))
+}
+
+func gameRosterPlayerFields(
+	instance *game.Instance, userID uint64, displayName string,
+	slot uint16, team uint16, state uint64, sessionID uint64,
+) []tdf.Field {
+	if instance.Info.Mode == game.ModeArena && team != 0xffff {
 		team--
 	}
 	playerNetwork := game.NetworkPair{
@@ -1369,19 +1369,19 @@ func gamePlayerFields(instance *game.Instance, player *sporenet.User) []tdf.Fiel
 		tdf.FieldNamed("EXID", tdf.IntegerValue(0)),
 		tdf.FieldNamed("GID", tdf.IntegerValue(uint64(instance.ID))),
 		tdf.FieldNamed("LOC", tdf.IntegerValue(0x656e5553)),
-		tdf.FieldNamed("NAME", tdf.StringValue(player.DisplayName)),
+		tdf.FieldNamed("NAME", tdf.StringValue(displayName)),
 		tdf.FieldNamed("PATT", tdf.MapValue(tdf.String, tdf.String)),
-		tdf.FieldNamed("PID", tdf.IntegerValue(uint64(player.Account.ID))),
+		tdf.FieldNamed("PID", tdf.IntegerValue(userID)),
 		tdf.FieldNamed("PNET", tdf.UnionValue(2,
 			tdf.FieldNamed("VALU", tdf.StructValue(networkPairFields(playerNetwork)...)),
 		)),
 		tdf.FieldNamed("SID", tdf.IntegerValue(uint64(slot))),
 		tdf.FieldNamed("SLOT", tdf.IntegerValue(gameSlotTypePublicParticipant)),
-		tdf.FieldNamed("STAT", tdf.IntegerValue(gamePlayerStateConnecting)),
+		tdf.FieldNamed("STAT", tdf.IntegerValue(state)),
 		tdf.FieldNamed("TIDX", tdf.IntegerValue(uint64(team))),
 		tdf.FieldNamed("TIME", tdf.IntegerValue(uint64(time.Now().Unix()))),
 		tdf.FieldNamed("UGID", tdf.Value{Type: tdf.ObjectID}),
-		tdf.FieldNamed("UID", tdf.IntegerValue(uint64(player.Account.ID))),
+		tdf.FieldNamed("UID", tdf.IntegerValue(sessionID)),
 	}
 }
 
@@ -1428,6 +1428,11 @@ func gameSetupFields(
 		replaceField(
 			playerFields, "UID", tdf.IntegerValue(uint64(playerSessionID)),
 		)
+		playerItems = append(playerItems, tdf.StructValue(playerFields...))
+	}
+	for _, bot := range instance.PlayerBots() {
+		playerFields := gameRosterPlayerFields(instance, bot.UserID, bot.DisplayName,
+			bot.Slot, bot.Team, gamePlayerStateConnected, uint64(bot.SessionID))
 		playerItems = append(playerItems, tdf.StructValue(playerFields...))
 	}
 	hostSessionID := uint32(hostUserID)

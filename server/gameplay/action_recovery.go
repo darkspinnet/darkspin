@@ -247,7 +247,6 @@ func (r gameplayActionRuntime) releaseFailedActionAdmission(
 		return false
 	}
 	pursuit := peerSession.campaignPlayerPursuitSession().Snapshot()
-	r.registry.retireCampaignTreeOfLifeLocked(&peerSession)
 	r.registry.retireHeroInfectionsLocked(&peerSession)
 	interruptedBasic := peerSession.resetFailedActionAdmission(
 		r.switcher.modifierPool, r.switcher.effectPool,
@@ -282,7 +281,6 @@ func (r gameplayActionRuntime) recoverRejectedActionAdmission(
 		r.registry.mutex.Unlock()
 		return nil
 	}
-	r.registry.retireCampaignTreeOfLifeLocked(&peerSession)
 	interruptedBasic := peerSession.resetRejectedActionAdmission(
 		r.switcher.modifierPool, r.switcher.effectPool,
 	)
@@ -570,7 +568,6 @@ func (e gameplayActionLeaseExpiry) produce() ([][]byte, error) {
 	}
 	delete(e.runtime.registry.actionLeases, e.key)
 	delete(e.runtime.registry.actionTerminals, e.key)
-	e.runtime.registry.retireCampaignTreeOfLifeLocked(&peerSession)
 	// An unanswered command may expire after a later independent ability has
 	// been accepted. Reject that command without canceling those effect agents.
 	interruptedBasic := peerSession.resetRejectedActionAdmission(

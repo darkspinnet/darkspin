@@ -16,8 +16,8 @@ import RemoteConnection from '@/components/RemoteConnection.vue'
 import { RefreshCw } from '@lucide/vue'
 import { campaignDetailFor, campaignLabelFor, campaignLevelFor, profileCreateDate, profileLastPlayedDate } from './profile'
 import ServerRulesConfiguration from '@/components/ServerRulesConfiguration.vue'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { BrowserOpenURL, CancelPatch, CheckRemoteServers, ClipboardSetText, CompactSnapshots, CloseDetachedGameInstances, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RefreshRemoteProfiles, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetIdentity, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { BrowserOpenURL, CancelPatch, CheckRemoteServers, ClipboardSetText, CompactSnapshots, CloseDetachedGameInstances, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetSquadSnapshot, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RefreshRemoteProfiles, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetIdentity, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
 
 const status = ref({ state:'starting', message:'Starting DarkSpinner', identity:'', auth:'Starting', server:'Starting', patch:'Pending', game:'Checking', avatar:'Preparing', profile:'Starting', content:'Pending', identityError:'', authError:'', serverError:'', patchError:'', gameError:'', avatarError:'', profileError:'', contentError:'', lastRun:'', launcherNotice:'', version:'', buildChannel:'production', progress:0, patchProgress:0, avatarProgress:0, contentProgress:0, isAuthenticated:false, isAuthOnline:false, isServerOnline:false, isPatchComplete:false, isPatchActive:false, isGameReady:false, isAvatarReady:false, isProfileStoreReady:false, isContentReady:false, isPlayReady:false, isCinematicSkipped:false, isIntroSkipped:false, isLastRunFailure:false, isStartupBlocked:false })
 const retainedProfileName = localStorage.getItem('darkspinner.selectedProfile') || localStorage.getItem('darkspinner.identity') || ''
@@ -63,17 +63,16 @@ const isRemotePasswordRemembered = ref(true)
 const isRemoteRegistration = ref(false)
 const isRemoteBusy = ref(false)
 const remoteMessage = ref('Enter a server address or ask for LAN suggestions.')
-const serverConfiguration = ref({ port:42127, isMultiplayerEnabled:false, locale:'en-us', locales:[], snapshotMode:'auto' })
+const serverConfiguration = ref({ port:42127, isMultiplayerEnabled:false, locale:'en-us', locales:[], snapshotMode:'auto', campaignMatchmakingBotSize:1, isCampaignBotSquadMirroringEnabled:true })
 const configuredServerPort = ref(42127)
 const configuredBindHost = ref('')
 const configuredAdvertisedHost = ref('127.0.0.1')
 const isConfiguredDedicated = ref(false)
-const configuredContentPath = ref('')
-const configuredJWTSecret = ref('')
 const isConfiguredMultiplayerEnabled = ref(false)
 const configuredLocale = ref('en-us')
 const configuredSnapshotMode = ref('auto')
-const configuredBootstrap = ref({ isUpdateEnabled:true, updateCron:'30 3 * * *', warningMinutes:30, startupTimeoutSeconds:1800, backupRetentionDays:7, manifestUrl:'https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-update-linux-amd64-unstable.zip' })
+const configuredCampaignMatchmakingBotSize = ref('1')
+const isConfiguredCampaignBotSquadMirroringEnabled = ref(true)
 const systemWineRunner = 'system'
 const wineRunnerConfiguration = ref({ isSupported:false, selectedPath:'', runners:[] })
 const configuredWineRunner = ref(systemWineRunner)
@@ -111,6 +110,13 @@ const isReportBusy = ref(false)
 const isSnapshotCompactBusy = ref(false)
 const isSnapshotCompactComplete = ref(false)
 const isReportComposerOpen = ref(false)
+const isSquadComposerOpen = ref(false)
+const isSquadSnapshotBusy = ref(false)
+const selectedSquadProfiles = ref([])
+const squadSnapshot = ref(null)
+const squadSnapshotMessage = ref('')
+const squadSnapshotRequestGeneration = ref(0)
+const reportActionsMenu = ref(null)
 const reportTitle = ref('')
 const reportResult = ref(null)
 const reportShareMessage = ref('')
@@ -199,6 +205,11 @@ const isFirstRunOnboarding = computed(() => isProfileListLoaded.value && profile
 const isInstallationRequired = computed(() => isInstallationLoaded.value && !installation.value.isLocalReady && !luaConsole.value.isSelected)
 const isIntegrationSelected = computed(() => isStartMenuShortcut.value || isDesktopShortcut.value || isSteamLaunch.value)
 const isReportReady = computed(() => !!reportTitle.value.trim() && !isReportBusy.value)
+const squadSnapshotJSON = computed(() => squadSnapshot.value ? JSON.stringify(squadSnapshot.value, null, 2) : '')
+const squadCount = computed(() => (squadSnapshot.value?.crogenitors || []).reduce((count, crogenitor) => count + (crogenitor.squads?.length || 0), 0))
+const squadSnapshotByteLength = computed(() => new TextEncoder().encode(squadSnapshotJSON.value).byteLength)
+const isSquadSnapshotLarge = computed(() => squadSnapshotByteLength.value > 60000)
+const isSquadSnapshotReady = computed(() => !!squadSnapshotJSON.value && !isSquadSnapshotBusy.value)
 const isNewProfileNameValid = computed(() => {
   const name = newProfileName.value.trim()
   return /^[A-Za-z0-9]{1,20}$/.test(name)
@@ -341,18 +352,6 @@ const isRemoteFormReady = computed(() => !!remoteServerAddress.value &&
   /^[A-Za-z0-9]{1,20}$/.test(remoteIdentity.value.trim()) &&
   (!!remotePassword.value || (!isRemoteRegistration.value && selectedRemoteProfile.value?.isPasswordRemembered)))
 const isServerPortValid = computed(() => isPortValid(configuredServerPort.value) && Number(configuredServerPort.value) <= 65534)
-const bootstrapValidationMessage = computed(() => {
-  const configuration = configuredBootstrap.value
-  if (configuration.updateCron.trim().split(/\s+/).length !== 5) return 'Maintenance schedule requires five cron fields: minute hour day month weekday (UTC).'
-  if (!Number.isInteger(configuration.warningMinutes) || configuration.warningMinutes < 1 || configuration.warningMinutes > 1440) return 'Maintenance warning must be between 1 and 1440 minutes.'
-  if (!Number.isInteger(configuration.startupTimeoutSeconds) || configuration.startupTimeoutSeconds < 1 || configuration.startupTimeoutSeconds > 86400) return 'Startup timeout must be between 1 and 86400 seconds.'
-  if (!Number.isInteger(configuration.backupRetentionDays) || configuration.backupRetentionDays < 1 || configuration.backupRetentionDays > 3650) return 'Backup retention must be between 1 and 3650 days.'
-  try {
-    const address = new URL(configuration.manifestUrl)
-    if (address.protocol !== 'https:' || address.username || address.password || address.hash) return 'Update manifest must use HTTPS without credentials or a fragment.'
-  } catch { return 'Enter a valid HTTPS update manifest URL.' }
-  return ''
-})
 // Remove this channel gate when remote, detached, and multiplayer configuration are ready for every build.
 const isExperimentalLauncherFeatureVisible = computed(() => ['development', 'unstable'].includes(status.value.buildChannel))
 
@@ -651,26 +650,14 @@ async function refreshServerConfiguration() {
     configuredBindHost.value = serverConfiguration.value.bindHost
     configuredAdvertisedHost.value = serverConfiguration.value.advertisedHost
     isConfiguredDedicated.value = serverConfiguration.value.isDedicated
-    configuredContentPath.value = serverConfiguration.value.contentPath
-    configuredJWTSecret.value = serverConfiguration.value.jwtSecret
     isConfiguredMultiplayerEnabled.value = serverConfiguration.value.isMultiplayerEnabled
     configuredLocale.value = serverConfiguration.value.locale
     configuredSnapshotMode.value = serverConfiguration.value.snapshotMode
-    applyBootstrapConfiguration(serverConfiguration.value)
+    configuredCampaignMatchmakingBotSize.value = String(serverConfiguration.value.campaignMatchmakingBotSize)
+    isConfiguredCampaignBotSquadMirroringEnabled.value = serverConfiguration.value.isCampaignBotSquadMirroringEnabled
   }
   catch (error) { serverConfigurationMessage.value = visibleLauncherText(error) }
   await refreshWineRunnerConfiguration()
-}
-
-function applyBootstrapConfiguration(configuration) {
-  configuredBootstrap.value = {
-    isUpdateEnabled:configuration.isBootstrapUpdateEnabled,
-    updateCron:configuration.bootstrapUpdateCron,
-    warningMinutes:configuration.bootstrapWarningMinutes,
-    startupTimeoutSeconds:configuration.bootstrapStartupTimeoutSeconds,
-    backupRetentionDays:configuration.bootstrapBackupRetentionDays,
-    manifestUrl:configuration.bootstrapManifestUrl,
-  }
 }
 
 function applyWineRunnerConfiguration(configuration) {
@@ -700,7 +687,7 @@ function wineRunnerLabel(runner) {
 const selectedWineRunner = computed(() => wineRunnerConfiguration.value.runners.find(runner => (runner.path || systemWineRunner) === configuredWineRunner.value))
 
 async function saveServerConfiguration() {
-  if (!isServerPortValid.value || bootstrapValidationMessage.value || isServerConfigurationBusy.value) return
+  if (!isServerPortValid.value || isServerConfigurationBusy.value) return
   if (isConfiguredMultiplayerEnabled.value && !serverConfiguration.value.isMultiplayerEnabled) {
     isMultiplayerConfirmOpen.value = true
     return
@@ -743,8 +730,8 @@ async function applyServerConfiguration() {
     configuredBindHost.value !== serverConfiguration.value.bindHost ||
     configuredAdvertisedHost.value !== serverConfiguration.value.advertisedHost ||
     isConfiguredDedicated.value !== serverConfiguration.value.isDedicated ||
-    configuredContentPath.value !== serverConfiguration.value.contentPath ||
-    configuredJWTSecret.value !== serverConfiguration.value.jwtSecret
+    Number(configuredCampaignMatchmakingBotSize.value) !== serverConfiguration.value.campaignMatchmakingBotSize ||
+    isConfiguredCampaignBotSquadMirroringEnabled.value !== serverConfiguration.value.isCampaignBotSquadMirroringEnabled
   const selectedWineRunnerPath = configuredWineRunner.value === systemWineRunner ? '' : configuredWineRunner.value
   if (wineRunnerConfiguration.value.isSupported && selectedWineRunnerPath !== wineRunnerConfiguration.value.selectedPath) {
     try { applyWineRunnerConfiguration(await SetWineRunner(selectedWineRunnerPath)) }
@@ -761,26 +748,20 @@ async function applyServerConfiguration() {
     serverConfiguration.value = await SetServerConfiguration({
       port:Number(configuredServerPort.value), isMultiplayerEnabled:isConfiguredMultiplayerEnabled.value,
       locale:configuredLocale.value, snapshotMode:configuredSnapshotMode.value,
+      campaignMatchmakingBotSize:Number(configuredCampaignMatchmakingBotSize.value),
+      isCampaignBotSquadMirroringEnabled:isConfiguredCampaignBotSquadMirroringEnabled.value,
       bindHost:configuredBindHost.value, advertisedHost:configuredAdvertisedHost.value,
-      isDedicated:isConfiguredDedicated.value, contentPath:configuredContentPath.value,
-      jwtSecret:configuredJWTSecret.value,
-      isBootstrapUpdateEnabled:configuredBootstrap.value.isUpdateEnabled,
-      bootstrapUpdateCron:configuredBootstrap.value.updateCron,
-      bootstrapWarningMinutes:configuredBootstrap.value.warningMinutes,
-      bootstrapStartupTimeoutSeconds:configuredBootstrap.value.startupTimeoutSeconds,
-      bootstrapBackupRetentionDays:configuredBootstrap.value.backupRetentionDays,
-      bootstrapManifestUrl:configuredBootstrap.value.manifestUrl,
+      isDedicated:isConfiguredDedicated.value,
     })
     configuredServerPort.value = serverConfiguration.value.port
     configuredBindHost.value = serverConfiguration.value.bindHost
     configuredAdvertisedHost.value = serverConfiguration.value.advertisedHost
     isConfiguredDedicated.value = serverConfiguration.value.isDedicated
-    configuredContentPath.value = serverConfiguration.value.contentPath
-    configuredJWTSecret.value = serverConfiguration.value.jwtSecret
     isConfiguredMultiplayerEnabled.value = serverConfiguration.value.isMultiplayerEnabled
     configuredLocale.value = serverConfiguration.value.locale
     configuredSnapshotMode.value = serverConfiguration.value.snapshotMode
-    applyBootstrapConfiguration(serverConfiguration.value)
+    configuredCampaignMatchmakingBotSize.value = String(serverConfiguration.value.campaignMatchmakingBotSize)
+    isConfiguredCampaignBotSquadMirroringEnabled.value = serverConfiguration.value.isCampaignBotSquadMirroringEnabled
     if (isNetworkChanged) {
       serverConfigurationMessage.value = `Server setup updated on port ${serverConfiguration.value.port}. Language: ${serverConfiguration.value.locale}.`
     } else {
@@ -1121,7 +1102,97 @@ async function openSteamInstall() {
 
 function openReportComposer() {
   reportResult.value = null
+  reportShareMessage.value = ''
   isReportComposerOpen.value = true
+}
+
+function closeReportActionsMenu() {
+  if (reportActionsMenu.value) reportActionsMenu.value.open = false
+}
+
+async function openSquadComposer() {
+  closeReportActionsMenu()
+  isReportComposerOpen.value = false
+  await nextTick()
+  squadSnapshot.value = null
+  squadSnapshotMessage.value = ''
+  const selectedProfileRecord = profiles.value.find(profile => profile.loginName === selectedProfile.value)
+  selectedSquadProfiles.value = selectedProfileRecord ? [selectedProfileRecord.loginName] : []
+  isSquadComposerOpen.value = true
+  if (selectedSquadProfiles.value.length) void prepareSquadSnapshot(selectedSquadProfiles.value)
+}
+
+function changeSquadProfile(profileName, event) {
+  const selectedProfileNames = new Set(selectedSquadProfiles.value)
+  if (event.target.checked) selectedProfileNames.add(profileName)
+  else selectedProfileNames.delete(profileName)
+  selectedSquadProfiles.value = [...selectedProfileNames]
+  squadSnapshot.value = null
+  squadSnapshotMessage.value = ''
+  if (selectedSquadProfiles.value.length === 0) {
+    squadSnapshotRequestGeneration.value++
+    isSquadSnapshotBusy.value = false
+    return
+  }
+  void prepareSquadSnapshot(selectedSquadProfiles.value)
+}
+
+async function prepareSquadSnapshot(profileNames) {
+  const requestGeneration = ++squadSnapshotRequestGeneration.value
+  isSquadSnapshotBusy.value = true
+  squadSnapshot.value = null
+  squadSnapshotMessage.value = ''
+  try {
+    const snapshot = await GetSquadSnapshot([...profileNames])
+    if (requestGeneration !== squadSnapshotRequestGeneration.value) return
+    squadSnapshot.value = snapshot
+    squadSnapshotMessage.value = 'Snapshot ready. Nothing has been uploaded.'
+  }
+  catch (error) {
+    if (requestGeneration === squadSnapshotRequestGeneration.value) {
+      squadSnapshotMessage.value = visibleLauncherText(error)
+    }
+  }
+  finally {
+    if (requestGeneration === squadSnapshotRequestGeneration.value) isSquadSnapshotBusy.value = false
+  }
+}
+
+async function copySquadSnapshot() {
+  if (!isSquadSnapshotReady.value) return
+  try {
+    await ClipboardSetText(squadSnapshotJSON.value)
+    squadSnapshotMessage.value = 'JSON copied to the clipboard. Review it before sharing.'
+  }
+  catch (error) { squadSnapshotMessage.value = visibleLauncherText(error) }
+}
+
+function downloadSquadSnapshot() {
+  if (!isSquadSnapshotReady.value) return
+  const blob = new Blob([squadSnapshotJSON.value], { type:'application/json' })
+  const downloadURL = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = downloadURL
+  link.download = 'darkspinner-crogenitor-squads.json'
+  link.click()
+  window.setTimeout(() => URL.revokeObjectURL(downloadURL), 0)
+  squadSnapshotMessage.value = 'JSON downloaded. Attach it if the GitHub issue text box cannot fit the snapshot.'
+}
+
+async function createSquadIssue() {
+  if (!isSquadSnapshotReady.value) return
+  const title = `Here is a snapshot of my Crogenitor ${squadCount.value} squads`
+  const issueURL = new URL('https://github.com/darkspinnet/darkspin/issues/new')
+  issueURL.searchParams.set('title', title)
+  issueURL.searchParams.set('body', isSquadSnapshotLarge.value
+    ? 'Paste the copied JSON squad snapshot below. If GitHub reports that it is too large, attach the downloaded JSON file instead.'
+    : 'Paste the JSON squad snapshot copied by Darkspinner below.')
+  try {
+    await ClipboardSetText(squadSnapshotJSON.value)
+    squadSnapshotMessage.value = 'JSON copied. Paste it into the new GitHub issue, then review and submit.'
+    BrowserOpenURL(issueURL.href)
+  }
+  catch (error) { squadSnapshotMessage.value = visibleLauncherText(error) }
 }
 
 function closeReportComposer() {
@@ -1434,7 +1505,7 @@ async function copyLauncherFailure() {
             <TabsTrigger value="config" :disabled="luaConsole.isSelected">Config</TabsTrigger>
             <TabsTrigger v-if="luaConsole.isAvailable" value="lua">Lua</TabsTrigger>
         </TabsList>
-        <Button variant="outline" class="report-button" type="button" :disabled="isReportBusy" @click="openReportComposer">SEND REPORT</Button>
+        <Button variant="outline" class="report-button" type="button" :disabled="isReportBusy" @click="openReportComposer">SEND FEEDBACK</Button>
       </div>
 
       <section v-if="isInstallationRequired" class="onboarding-frame install-frame">
@@ -1542,22 +1613,6 @@ async function copyLauncherFailure() {
           <Input id="config-bind-host" v-model="configuredBindHost" placeholder="Automatic" :disabled="isServerConfigurationBusy" />
           <label for="config-advertised-host">ADVERTISED IPv4</label>
           <Input id="config-advertised-host" v-model="configuredAdvertisedHost" placeholder="127.0.0.1" :disabled="isServerConfigurationBusy" />
-          <label for="config-content-path">PREPARED CONTENT DIRECTORY</label>
-          <Input id="config-content-path" v-model="configuredContentPath" placeholder="Automatic (darkspin/cache)" :disabled="isServerConfigurationBusy" />
-          <label for="config-jwt-secret">ACCOUNT SIGNING SECRET</label>
-          <Input id="config-jwt-secret" v-model="configuredJWTSecret" type="password" autocomplete="off" :disabled="isServerConfigurationBusy" />
-          <label class="management-toggle"><Checkbox v-model="configuredBootstrap.isUpdateEnabled" :disabled="isServerConfigurationBusy" /><span><strong>DEDICATED SERVER UPDATES</strong><small>Linux supervisor only. Scheduled maintenance backs up the stopped server and always restarts it, including when no update is available. Changes apply when the supervisor restarts.</small></span></label>
-          <label for="config-bootstrap-cron">MAINTENANCE SCHEDULE (UTC CRON)</label>
-          <Input id="config-bootstrap-cron" v-model="configuredBootstrap.updateCron" placeholder="30 3 * * *" :disabled="isServerConfigurationBusy" />
-          <label for="config-bootstrap-warning">MAINTENANCE WARNING (MINUTES)</label>
-          <Input id="config-bootstrap-warning" v-model.number="configuredBootstrap.warningMinutes" type="number" min="1" max="1440" :disabled="isServerConfigurationBusy" />
-          <label for="config-bootstrap-timeout">STARTUP TIMEOUT (SECONDS)</label>
-          <Input id="config-bootstrap-timeout" v-model.number="configuredBootstrap.startupTimeoutSeconds" type="number" min="1" max="86400" :disabled="isServerConfigurationBusy" />
-          <label for="config-bootstrap-retention">BACKUP RETENTION (DAYS)</label>
-          <Input id="config-bootstrap-retention" v-model.number="configuredBootstrap.backupRetentionDays" type="number" min="1" max="3650" :disabled="isServerConfigurationBusy" />
-          <label for="config-bootstrap-manifest">UPDATE MANIFEST URL</label>
-          <Input id="config-bootstrap-manifest" v-model="configuredBootstrap.manifestUrl" type="url" :disabled="isServerConfigurationBusy" />
-          <p v-if="bootstrapValidationMessage" class="management-message">{{ bootstrapValidationMessage }}</p>
           <label class="config-locale" for="config-client-locale"><strong>LANGUAGE</strong></label>
           <Select v-model="configuredLocale" :disabled="isServerConfigurationBusy">
             <SelectTrigger id="config-client-locale" class="w-full"><SelectValue /></SelectTrigger>
@@ -1588,8 +1643,19 @@ async function copyLauncherFailure() {
             </SelectContent>
             </Select>
           </template>
+          <label class="config-locale" for="config-campaign-bot-size"><strong>CAMPAIGN AI PLAYERS</strong></label>
+          <Select v-model="configuredCampaignMatchmakingBotSize" :disabled="isServerConfigurationBusy">
+            <SelectTrigger id="config-campaign-bot-size" class="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="1">1 BOT</SelectItem>
+              <SelectItem value="2">2 BOTS</SelectItem>
+              <SelectItem value="3">3 BOTS</SelectItem>
+            </SelectContent>
+          </Select>
+          <small>Maximum AI players added to a campaign match. Each bot has its own squad. Applies to new matches.</small>
+          <label class="management-toggle"><Checkbox v-model="isConfiguredCampaignBotSquadMirroringEnabled" :disabled="isServerConfigurationBusy" /><span><strong>USE SQUADS FOR BOTS</strong><small>Copy unused unlocked PvE squads into campaign bots. Turn off to generate bot squads instead.</small></span></label>
           <p v-if="serverConfigurationMessage" class="management-message">{{ serverConfigurationMessage }}</p>
-          <Button variant="default" class="config-save" type="button" :disabled="!isServerPortValid || !configuredLocale || !!bootstrapValidationMessage || isServerConfigurationBusy" @click="saveServerConfiguration">{{ isServerConfigurationBusy ? 'SAVING...' : 'SAVE CONFIGURATION' }}</Button>
+          <Button variant="default" class="config-save" type="button" :disabled="!isServerPortValid || !configuredLocale || isServerConfigurationBusy" @click="saveServerConfiguration">{{ isServerConfigurationBusy ? 'SAVING...' : 'SAVE CONFIGURATION' }}</Button>
         </Card>
         <Card class="management-card shortcuts-card">
           <div class="integration-row">
@@ -1857,12 +1923,21 @@ async function copyLauncherFailure() {
     <LauncherDialog @interact="handleLauncherInteraction" v-if="isReportComposerOpen" :is-dismissible="!isReportBusy" @close="closeReportComposer">
       <div class="notice-card report-composer">
         <div class="report-composer-header">
-          <Button variant="ghost" class="report-manage-link report-open-folder" type="button" @click="openReportFolder">OPEN BUG FOLDER ↗</Button>
-          <div class="report-header-actions">
-            <a class="report-manage-link" :href="myReportsURL" @click.prevent="openMyReports">MANAGE MY REPORTS ↗</a>
-            <Button variant="ghost" class="report-manage-link" type="button" :disabled="isSnapshotCompactBusy" :aria-busy="isSnapshotCompactBusy" :aria-label="isSnapshotCompactComplete ? 'Compact snapshots completed' : 'Compact snapshots'" @click="compactSnapshots">Compact snapshots <span v-if="isSnapshotCompactComplete" aria-hidden="true">✓</span></Button>
-          </div>
+          <p class="eyebrow">SEND FEEDBACK</p>
+          <details ref="reportActionsMenu" class="feedback-actions-menu">
+            <summary aria-label="Feedback actions">ACTIONS <span aria-hidden="true">⌄</span></summary>
+            <nav class="feedback-actions-list" aria-label="Feedback actions">
+              <button type="button" @click="openReportFolder(); closeReportActionsMenu()">OPEN BUG FOLDER ↗</button>
+              <button type="button" @click="openMyReports(); closeReportActionsMenu()">MANAGE MY REPORTS ↗</button>
+              <button type="button" :disabled="isSnapshotCompactBusy" @click="compactSnapshots(); closeReportActionsMenu()">{{ isSnapshotCompactBusy ? 'COMPACTING…' : isSnapshotCompactComplete ? 'COMPACT SNAPSHOTS ✓' : 'COMPACT SNAPSHOTS' }}</button>
+              <div class="feedback-actions-divider"></div>
+              <button type="button" @click="openSquadComposer">SEND SQUAD</button>
+            </nav>
+          </details>
         </div>
+        <p v-if="isSnapshotCompactComplete" class="report-share-message" role="status">Snapshot compaction completed.</p>
+        <p v-else-if="isSnapshotCompactBusy" class="report-share-message" role="status" aria-live="polite">Compacting snapshots…</p>
+        <p v-if="reportShareMessage" class="report-share-message" role="status">{{ reportShareMessage }}</p>
         <p class="eyebrow">LOCAL DIAGNOSTIC REPORT</p>
         <DialogTitle as="h2">NAME THIS REPORT</DialogTitle>
         <p>Give the report a short title. This title identifies the ZIP; add the full details when you create the GitHub issue.</p>
@@ -1874,6 +1949,38 @@ async function copyLauncherFailure() {
             <Button variant="default" class="report-folder-button" type="submit" :disabled="!isReportReady">{{ isReportBusy ? 'PREPARING...' : 'CREATE REPORT' }}</Button>
           </div>
         </form>
+      </div>
+    </LauncherDialog>
+
+    <LauncherDialog @interact="handleLauncherInteraction" v-if="isSquadComposerOpen" :is-dismissible="!isSquadSnapshotBusy" @close="isSquadComposerOpen = false" :width="760">
+      <div class="notice-card squad-composer">
+        <p class="eyebrow">SEND FEEDBACK · SQUAD SNAPSHOT</p>
+        <DialogTitle as="h2">SEND SQUAD</DialogTitle>
+        <p>Select local Crogenitors to include. The JSON contains their saved squads, hero templates, levels and unlocks, stats, equipment, and saved appearance previews. It stays on your device until you copy it or open GitHub.</p>
+        <p class="squad-appearance-note">Saved preview images are included where available. Darkspinner profiles do not store the editable 3D body geometry.</p>
+        <fieldset class="squad-profile-options" :disabled="isSquadSnapshotBusy">
+          <legend>LOCAL CROGENITORS</legend>
+          <label v-for="profile in profiles" :key="profile.loginName" class="squad-profile-option">
+            <input type="checkbox" :checked="selectedSquadProfiles.includes(profile.loginName)" @change="changeSquadProfile(profile.loginName, $event)" />
+            <img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt="" />
+            <span><strong>{{ profile.displayName }}</strong><small>CROGENITOR LEVEL {{ profile.crogenitorLevel }}</small></span>
+          </label>
+          <p v-if="profiles.length === 0" class="squad-empty-state">No local Crogenitors are available.</p>
+        </fieldset>
+        <div v-if="isSquadSnapshotBusy" class="squad-snapshot-state" role="status" aria-live="polite">PREPARING SQUAD SNAPSHOT…</div>
+        <template v-else-if="squadSnapshotJSON">
+          <div class="squad-snapshot-summary">{{ selectedSquadProfiles.length }} CROGENITOR{{ selectedSquadProfiles.length === 1 ? '' : 'S' }} · {{ squadCount }} SQUADS · {{ (squadSnapshotByteLength / 1024).toFixed(1) }} KB</div>
+          <label for="squad-snapshot-json">JSON PAYLOAD</label>
+          <textarea id="squad-snapshot-json" class="squad-json-preview" readonly :value="squadSnapshotJSON" aria-label="Generated Crogenitor squad snapshot JSON"></textarea>
+          <p v-if="isSquadSnapshotLarge" class="squad-snapshot-state">This snapshot may exceed GitHub’s issue text limit. Download it and attach the JSON file if pasting is rejected.</p>
+        </template>
+        <p v-if="squadSnapshotMessage" class="report-share-message" role="status" aria-live="polite">{{ squadSnapshotMessage }}</p>
+        <div class="notice-actions">
+          <Button variant="outline" class="onboarding-cancel" type="button" :disabled="isSquadSnapshotBusy" @click="isSquadComposerOpen = false">CLOSE</Button>
+          <Button v-if="isSquadSnapshotReady" variant="outline" class="report-folder-button" type="button" @click="downloadSquadSnapshot">DOWNLOAD JSON</Button>
+          <Button variant="outline" class="report-folder-button" type="button" :disabled="!isSquadSnapshotReady" @click="copySquadSnapshot">COPY JSON</Button>
+          <Button variant="default" class="report-folder-button" type="button" :disabled="!isSquadSnapshotReady" @click="createSquadIssue">CREATE NEW ISSUE</Button>
+        </div>
       </div>
     </LauncherDialog>
 

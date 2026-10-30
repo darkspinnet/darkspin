@@ -60,7 +60,7 @@ func (e *arenaCombatPetRun) startMelee() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	owner, _, isCurrent := e.currentLocked()
 	if !isCurrent || !e.isPublished || e.attackAbility.Kind != sim.AbilityKindMelee ||
-		(e.kind != arenaCombatPetBeast && e.kind != arenaCombatPetPlasma) {
+		(e.kind != arenaCombatPetBeast && e.kind != arenaCombatPetPlasma && e.kind != arenaCombatPetSage) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}

@@ -337,6 +337,19 @@ func (e *sagePassivePoll) spawnLocked(member *gameplayPeerSession, requests []su
 		}
 		member.sagePassiveActivations[req.ObjectID] = *activation
 		packets = append(packets, encoded...)
+		maximumPacket, maximumErr := raknet.MarshalApplication(raknet.AttributeDataUpdateMessage{
+			ObjectID: req.ObjectID, Value: map[uint8]float32{4: hitPoint},
+		})
+		if maximumErr != nil {
+			return packets, fmt.Errorf("sageMaximum: %w", maximumErr)
+		}
+		resourcePacket, resourceErr := raknet.MarshalApplication(raknet.CombatantDataUpdateMessage{
+			ObjectID: req.ObjectID, HitPoints: hitPoint,
+		})
+		if resourceErr != nil {
+			return packets, fmt.Errorf("sageResource: %w", resourceErr)
+		}
+		packets = append(packets, maximumPacket, resourcePacket)
 		err = member.zone.Companion().Recall(req.ObjectID, at, at.Add(sageSpawnDuration), sageSpawnAnimation)
 		if err != nil {
 			return packets, fmt.Errorf("sageSpawnControl: %w", err)

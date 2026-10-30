@@ -181,11 +181,12 @@ func NearestTarget(
 }
 
 // AdditionalMeleeTargets selects the nearest living enemies in the authored
-// attack arc, excluding the primary target. The deterministic ordering keeps
-// the same secondary victims authoritative for every connected client.
+// attack arc using the captured facing, excluding the primary target.
+// The deterministic ordering keeps the same secondary victims authoritative
+// for every connected client.
 func AdditionalMeleeTargets(
 	enemies TargetReader, primaryObjectID uint32,
-	sourcePosition game.Vec3, targetPosition game.Vec3,
+	sourcePosition game.Vec3, facing game.Vec3,
 	maximumRange float32, angle float32, maximumCount uint32,
 ) ([]zonenpc.Snapshot, error) {
 	if enemies == nil {
@@ -194,12 +195,12 @@ func AdditionalMeleeTargets(
 	if primaryObjectID == 0 || maximumCount == 0 {
 		return nil, nil
 	}
-	if !isFinitePosition(sourcePosition) || !isFinitePosition(targetPosition) ||
+	if !isFinitePosition(sourcePosition) || !isFinitePosition(facing) ||
 		invalidNumber(maximumRange) || maximumRange <= 0 ||
 		invalidNumber(angle) || angle <= 0 || angle > 360 {
 		return nil, errors.New("invalid melee arc")
 	}
-	arc, err := NewMeleeArc(sourcePosition, targetPosition.Sub(sourcePosition), maximumRange, angle)
+	arc, err := NewMeleeArc(sourcePosition, facing, maximumRange, angle)
 	if err != nil {
 		return nil, fmt.Errorf("additionalArc: %w", err)
 	}

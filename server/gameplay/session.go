@@ -51,7 +51,8 @@ type summonCompanionAttackStart = companionraknet.MeleeStart
 
 const zonePlayerMoveSpeed = float32(8.25)
 const zonePlayerPoseCorrectionRange = float32(12)
-const standardCreatureSwapCooldown = 5 * time.Second
+const arenaCreatureSwapCooldown = 5 * time.Second
+const campaignCreatureSwapCooldown = 5 * time.Second
 const campaignCreatureWarpOutDelay = 500 * time.Millisecond
 
 // campaignHeroDeathSelectionDelay is derived from the longest playable death
@@ -628,6 +629,7 @@ type gameplayPeerSession struct {
 	controlledHeroPresentation
 	zoneMembership
 	binding                              game.GameplayBinding
+	campaignBots                         map[uint16]*campaignBotRun
 	stage                                zonemember.Stage
 	lastPlayerStatus                     raknet.PlayerStatus
 	isPlayerStatusKnown                  bool
@@ -793,6 +795,9 @@ type pendingPeerPacketBatch struct {
 
 func (s *gameplayPeerSession) queuePackets(packets [][]byte) {
 	if s == nil || len(packets) == 0 {
+		return
+	}
+	if s.binding.IsServerBot {
 		return
 	}
 	s.nextPendingPacketID++
@@ -2105,11 +2110,8 @@ func (e *gameplayPeerSession) resetFailedActionAdmission(
 	// Full recovery cancels the accepted expiry job. Retire its client object
 	// in the same transition instead of leaving an inert, immortal presentation.
 	e.queueCampaignPackets(summonPackets)
-	treePackets, treeErr := e.stopCampaignTreeOfLife()
-	if treeErr != nil {
-		log.Printf("RakNet Tree of Life action reset cleanup failed user=%d: %v", e.binding.UserID, treeErr)
-	}
-	e.queueCampaignPackets(treePackets)
+	// Tree of Life owns its independent healing and expiry jobs. Its own failure
+	// callback and world teardown retire it; an unrelated action reset does not.
 	_, _ = e.stopTrapperStealth()
 	if e.enrageRun != nil {
 		e.enrageRun.Cancel()
@@ -2670,9 +2672,13 @@ func (e gameplaySessionLifecycle) discardMember(
 	peerSessions := make([]gameplayPeerSession, 0, 1)
 	retainedSessions := make([]gameplayPeerSession, 0, 1)
 	cancellations := make([]func(), 0)
+	var departedArenaMember gameplayPeerSession
 	for sessionKey, peerSession := range e.registry.sessions {
 		if gameplaySessionMemberKey(peerSession) != memberKey {
 			continue
+		}
+		if peerSession.binding.Mode == game.ModeArena && !peerSession.binding.IsServerBot {
+			departedArenaMember = peerSession
 		}
 		peerSession.retireChannelsLocked()
 		peerSession.retireAuraAreasLocked()
@@ -2725,10 +2731,14 @@ func (e gameplaySessionLifecycle) discardMember(
 	}
 	delete(e.registry.memberTransports, memberKey)
 	delete(e.registry.memberEndpoints, memberKey)
+	isArenaForfeit := e.registry.forfeitEmptyArenaLocked(departedArenaMember)
 	if cancel := e.registry.retireArenaResultLocked(gameID); cancel != nil {
 		cancellations = append(cancellations, cancel)
 	}
 	e.registry.mutex.Unlock()
+	if isArenaForfeit {
+		e.saveArenaForfeit(gameID)
+	}
 	for _, fixtureBatch := range fixtureBatches {
 		fixtureBatch.complete()
 	}
@@ -2835,6 +2845,10 @@ func (e gameplaySessionLifecycle) cleanup(
 		if state.cancel != nil {
 			arenaCancels = append(arenaCancels, state.cancel)
 		}
+		if state.clock != nil {
+			state.clock.stopLocked()
+			state.clock = nil
+		}
 		delete(e.registry.arenaMatches, gameID)
 	}
 	clear(e.registry.arenaEffectPools)
@@ -2906,6 +2920,20 @@ func (e gameplaySessionLifecycle) disconnect(
 	isDisconnected := e.disconnectMember(sessionKey, modifierInstancePool, effectPool)
 	if !isDisconnected {
 		e.retryDisconnect(sessionKey, transportGeneration, modifierInstancePool, effectPool)
+		return
+	}
+	e.registry.mutex.Lock()
+	isArenaForfeit := e.registry.forfeitEmptyArenaLocked(currentSession)
+	e.registry.mutex.Unlock()
+	if isArenaForfeit {
+		e.saveArenaForfeit(currentSession.binding.GameID)
+	}
+}
+
+func (e gameplaySessionLifecycle) saveArenaForfeit(gameID uint32) {
+	err := e.registry.saveArenaStats(context.Background(), gameID)
+	if err != nil && e.registry.logger != nil {
+		e.registry.logger.Printf("Arena forfeit statistics will retry game=%d: %v", gameID, err)
 	}
 }
 
@@ -3007,6 +3035,7 @@ func (e gameplaySessionLifecycle) disconnectMember(
 		e.registry.mutex.Unlock()
 		return true
 	}
+	defer e.disconnectServerBots(peerSession, modifierInstancePool, effectPool)
 	fixtureBatch, isDeferred := e.registry.prepareFixtureHandoffLocked(&peerSession)
 	if isDeferred {
 		e.registry.mutex.Unlock()
@@ -3320,7 +3349,9 @@ func (e *gameplaySessionRegistry) queuePeerPresentation(
 		isCandidateArena := isArena && candidate.binding.Mode == game.ModeArena
 		isCandidateCampaign := !isArena && candidate.zone == peerSession.zone &&
 			candidate.isCampaignPresentationAvailable()
-		if sessionKey == identity.sessionKey ||
+		if candidate.binding.IsServerBot ||
+			(isArena && peerSession.binding.IsServerBot && candidate.binding.UserID == peerSession.binding.BotOwnerUserID) ||
+			sessionKey == identity.sessionKey ||
 			candidate.isRejoinPending ||
 			candidate.binding.GameID != peerSession.binding.GameID ||
 			(!candidate.stage.IsDungeon() && !isCandidateCampaign) ||
@@ -3844,6 +3875,29 @@ func (s *gameplayPeerSession) applyArenaDamageHitPoints(
 	}
 	creatureIndex, objectID := s.deployedCreatureIndex, s.deployedObjectID
 	isLethal := s.deployedHitPoint() > 0 && hitPoints <= 0
+	deathPackets := make([][]byte, 0)
+	if isLethal {
+		// Arena does not use the campaign damage path that stops the mover and
+		// publishes the native hero death state before a reserve deployment.
+		err := s.stopPlayerMovement(time.Now())
+		if err != nil {
+			return nil, fmt.Errorf("arenaDeathMovement: %w", err)
+		}
+		stopPackets, err := marshalZonePlayerStop(objectID, s.playerPosition)
+		if err != nil {
+			return nil, fmt.Errorf("arenaDeathStop: %w", err)
+		}
+		deathPacket, err := raknet.MarshalApplication(raknet.SetAnimationStateMessage{
+			ObjectID: objectID, State: util.HashID("gen_player_death"),
+			Timestamp: timestamp, Scale: 1,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("arenaDeathAnimation: %w", err)
+		}
+		interruptedBasic := s.resetSharedActionAdmission()
+		interruptedBasic.Stop()
+		deathPackets = append(stopPackets, deathPacket)
+	}
 	isRevivalPending := false
 	if isLethal && s.beastPetResurrection != nil && s.beastPetResurrection.arenaWorld != nil {
 		isRevivalPending = s.reserveBeastPetRevival(s.beastPetResurrection.runtime.now())
@@ -3859,7 +3913,7 @@ func (s *gameplayPeerSession) applyArenaDamageHitPoints(
 	if isLethal {
 		packets = append(packets, s.retireArenaKillPassive(creatureIndex, objectID)...)
 	}
-	return packets, nil
+	return append(deathPackets, packets...), nil
 }
 
 func (s *gameplayPeerSession) applyDamageHitPointsWithOutcome(
@@ -3908,13 +3962,17 @@ func (s *gameplayPeerSession) applyDamageHitPointsWithOutcome(
 		if targetObjectID == 0 {
 			return nil, fmt.Errorf("livingObject[%d]: missing", livingIndex)
 		}
+		deployCooldownDeadline := timestamp
+		if s.binding.Mode != game.ModeArena {
+			deployCooldownDeadline += uint64(campaignCreatureSwapCooldown / time.Millisecond)
+		}
 		packets, err := marshalCampaignCharacterSwitch(
 			uint8(s.binding.Slot), s.deployedObjectID, targetObjectID, livingIndex,
 			s.binding.Creatures[s.deployedCreatureIndex], s.binding.Creatures[livingIndex],
 			0, s.deployedManaPoint(), targetCharacter.HitPoints, targetCharacter.ManaPoints,
 			s.playerPosition, raknet.Quaternion{W: 1}, timestamp,
-			timestamp+uint64(standardCreatureSwapCooldown/time.Millisecond),
-			false,
+			deployCooldownDeadline,
+			s.binding.Mode == game.ModeArena,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("livingSwitchMarshal: %w", err)
@@ -3957,9 +4015,13 @@ func (s *gameplayPeerSession) applyDamageHitPointsWithOutcome(
 		return nil, errors.New("living zone character missing")
 	}
 	s.squad.ResetDeployCooldown()
+	deployCooldown := campaignCreatureSwapCooldown
+	if s.binding.Mode == game.ModeArena {
+		deployCooldown = 0
+	}
 	err = s.deployZoneCharacter(
 		livingIndex, time.UnixMilli(int64(timestamp)),
-		standardCreatureSwapCooldown,
+		deployCooldown,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("livingSwitchDeploy: %w", err)
@@ -4799,7 +4861,7 @@ func (r gameplaySwitchRuntime) handle(
 		targetCharacter.HitPoints, targetCharacter.ManaPoints,
 		peerSession.playerPosition, command.Common.Orientation,
 		arrivalTimestamp,
-		packet.SourceTime+uint64(standardCreatureSwapCooldown/time.Millisecond),
+		packet.SourceTime+uint64(campaignCreatureSwapCooldown/time.Millisecond),
 		isDeathSelection || isVoluntarySwitch,
 	)
 	if err != nil {
@@ -4931,7 +4993,7 @@ func (r gameplaySwitchRuntime) handle(
 		}
 	}
 	err = peerSession.squad.DeployWithCooldown(
-		command.Value, switchPresentationTime, standardCreatureSwapCooldown,
+		command.Value, switchPresentationTime, campaignCreatureSwapCooldown,
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()

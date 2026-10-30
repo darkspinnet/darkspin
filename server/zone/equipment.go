@@ -23,7 +23,7 @@ func (e *Zone) RemoveMissionEquipment(member Member, objectID uint32) error {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.state != StateActive || !e.isCurrentMember(member) {
+	if e.state != StateActive || !e.isCurrentHumanMember(member) {
 		return errors.New("mission equipment member unavailable")
 	}
 	inventory := e.missionEquipments[member.UserID]
@@ -52,7 +52,7 @@ func (e *Zone) CollectMissionEquipment(
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.state != StateActive || !e.isCurrentMember(member) {
+	if e.state != StateActive || !e.isCurrentHumanMember(member) {
 		return errors.New("mission equipment member unavailable")
 	}
 	inventory := e.missionEquipments[member.UserID]
@@ -95,7 +95,7 @@ func (e *Zone) CommitMissionEquipment(
 ) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.state != StateActive || !e.isCurrentMember(member) || store == nil ||
+	if e.state != StateActive || !e.isCurrentHumanMember(member) || store == nil ||
 		e.info.Boss.Snapshot().Phase != zoneboss.PhaseComplete {
 		return errors.New("mission equipment completion unavailable")
 	}

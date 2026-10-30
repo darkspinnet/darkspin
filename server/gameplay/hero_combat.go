@@ -25,6 +25,11 @@ func (e gameplayPendingRuntime) poll(ctx context.Context, req raknet.Packet) ([]
 	if err != nil {
 		return nil, fmt.Errorf("worldPoll: %w", err)
 	}
+	botPackets, err := e.pollServerBots(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("serverBotPoll: %w", err)
+	}
+	packets = append(packets, botPackets...)
 	combatPackets, err := e.heroCombatPackets(req)
 	if err != nil {
 		return nil, fmt.Errorf("heroCombatPoll: %w", err)

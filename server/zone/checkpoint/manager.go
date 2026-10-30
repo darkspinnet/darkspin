@@ -168,7 +168,16 @@ func resumeCheckpoint(
 		Difficulty: snapshot.Difficulty, Slot: member.Slot,
 		ExpectedPlayerCount: uint16(len(snapshot.Members)),
 		IsReplayRandomized:  snapshot.IsReplayRandomized,
+		CampaignBots:        resumeCampaignBots(snapshot.CampaignBots),
 	}, true, nil
+}
+
+func resumeCampaignBots(bots []CampaignBot) []game.BotRequest {
+	requests := make([]game.BotRequest, 0, len(bots))
+	for _, bot := range bots {
+		requests = append(requests, bot.Request)
+	}
+	return requests
 }
 
 func NewManager(store Store, logger *log.Logger) *Manager {
@@ -687,6 +696,13 @@ func checkpointWithoutMembers(
 		members = append(members, member)
 	}
 	snapshot.Members = members
+	bots := make([]CampaignBot, 0, len(snapshot.CampaignBots))
+	for _, bot := range snapshot.CampaignBots {
+		if _, isRemoved := removedMembers[bot.Request.OwnerUserID]; !isRemoved {
+			bots = append(bots, bot)
+		}
+	}
+	snapshot.CampaignBots = bots
 	heroes := make([]Hero, 0, len(snapshot.Heroes))
 	for _, hero := range snapshot.Heroes {
 		if _, isRemoved := removedMembers[hero.UserID]; !isRemoved {

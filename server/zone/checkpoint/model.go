@@ -68,6 +68,14 @@ type Crystal struct {
 	Inventory sim.CrystalInventory
 }
 
+type CampaignBot struct {
+	Request       game.BotRequest
+	CreatureIndex uint32
+	Position      game.Vec3
+	HitPoint      float32
+	IsDefeated    bool
+}
+
 type ExperienceAward struct {
 	ObjectID       uint32
 	BaseExperience uint32
@@ -94,6 +102,7 @@ type Snapshot struct {
 	SavedAt                    time.Time
 	Elapsed                    time.Duration
 	Members                    []Member
+	CampaignBots               []CampaignBot
 	Heroes                     []Hero
 	Squads                     []Squad
 	NPCs                       []NPC
@@ -234,6 +243,22 @@ func Validate(
 		if member.UserID == userID {
 			isMemberFound = true
 		}
+	}
+	botSlots := make(map[uint16]bool, len(snapshot.CampaignBots))
+	for index, bot := range snapshot.CampaignBots {
+		if bot.Request.OwnerUserID == 0 || bot.Request.Slot >= game.MaxGamePlayers ||
+			botSlots[bot.Request.Slot] || bot.CreatureIndex >= uint32(len(bot.Request.Roster.Creatures)) ||
+			bot.Request.Roster.Creatures[bot.CreatureIndex].Noun == 0 ||
+			math.IsNaN(float64(bot.HitPoint)) || bot.HitPoint < 0 {
+			return fmt.Errorf("checkpointBot[%d]: invalid", index)
+		}
+		if _, isMember := memberIDs[bot.Request.OwnerUserID]; !isMember {
+			return fmt.Errorf("checkpointBot[%d]: owner unavailable", index)
+		}
+		if _, isMemberSlot := memberSlots[bot.Request.Slot]; isMemberSlot {
+			return fmt.Errorf("checkpointBot[%d]: slot occupied", index)
+		}
+		botSlots[bot.Request.Slot] = true
 	}
 	npcsByObjectID := make(map[uint32]zonenpc.Snapshot, len(snapshot.NPCs))
 	equipmentUserIDs := make(map[uint64]struct{}, len(snapshot.MissionEquipments))

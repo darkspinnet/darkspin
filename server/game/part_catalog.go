@@ -1149,8 +1149,9 @@ func (c *PartCatalog) standardModifiers(modifiers *[partAttributeCount]float32, 
 	}
 }
 
-// forGameplayMode retains Arena's existing weapon-stat behavior without changing
-// the shared immutable catalog or adding the unported native PvP level override.
+// forGameplayMode retains Arena's weapon-stat behavior without changing the
+// shared catalog. Match-wide unranked item-level caps are applied to detached
+// roster data before this catalog projects combat stats.
 func (e *PartCatalog) forGameplayMode(mode Mode) *PartCatalog {
 	if e == nil || mode != ModeArena {
 		return e

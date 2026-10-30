@@ -38,39 +38,45 @@ type ActiveUserFinder interface {
 type GameplayBinding struct {
 	scenarioMapBinding
 	scenarioRecipeBinding
-	Endpoint                   NetworkEndpoint
-	GameID                     uint32
-	RunSeed                    uint64
-	Level                      string
-	PlayerMask                 uint32
-	UserID                     uint64
-	AvatarID                   uint32
-	AvatarLevel                uint32
-	AvatarXP                   float32
-	StartingAvatarXP           float32
-	ChainProgression           uint32
-	PartyCompletedStages       []uint32
-	IsFirstTimeDirectorEnabled bool
-	ChainLevelIndex            uint32
-	IsOverdriveUnlocked        bool
-	IsCatalystUnlocked         bool
-	IsDiagonalCatalystUnlocked bool
-	CatalystSlotCount          uint32
-	IsReplay                   bool
-	IsReplayRandomized         bool
-	IsWarped                   bool
-	IsCheckpointRestore        bool
-	DNA                        uint32
-	Difficulty                 uint32
-	Mode                       Mode
-	IsRanked                   bool
-	Slot                       uint16
-	Team                       uint16
-	MemberLimit                uint16
-	ParticipantCount           uint16
-	SquadID                    uint32
-	Creatures                  [3]GameplayCreature
-	ActivatedCreatures         []GameplayCreature
+	Endpoint                    NetworkEndpoint
+	GameID                      uint32
+	RunSeed                     uint64
+	Level                       string
+	PlayerMask                  uint32
+	UserID                      uint64
+	IsServerBot                 bool
+	BotOwnerUserID              uint64
+	BotDisplayName              string
+	BotSourceSquadID            uint32
+	IsBotSquadMirroringDisabled bool
+	AvatarID                    uint32
+	AvatarLevel                 uint32
+	AvatarXP                    float32
+	StartingAvatarXP            float32
+	ChainProgression            uint32
+	PartyCompletedStages        []uint32
+	IsFirstTimeDirectorEnabled  bool
+	ChainLevelIndex             uint32
+	IsOverdriveUnlocked         bool
+	IsCatalystUnlocked          bool
+	IsDiagonalCatalystUnlocked  bool
+	CatalystSlotCount           uint32
+	IsReplay                    bool
+	IsReplayRandomized          bool
+	IsWarped                    bool
+	IsCheckpointRestore         bool
+	DNA                         uint32
+	Difficulty                  uint32
+	Mode                        Mode
+	IsRanked                    bool
+	Slot                        uint16
+	Team                        uint16
+	MemberLimit                 uint16
+	ParticipantCount            uint16
+	CombatParticipantCount      uint16
+	SquadID                     uint32
+	Creatures                   [3]GameplayCreature
+	ActivatedCreatures          []GameplayCreature
 }
 
 // RefreshReplay derives the build-103 HasBeatenThisLevel predicate from the
@@ -415,14 +421,15 @@ func (o *GameplayJoin) Execute(ctx context.Context, userID int64) (GameplayBindi
 		IsOverdriveUnlocked: user.Account.IsOverdriveUnlocked,
 		DNA:                 user.Account.DNA, Difficulty: difficulty,
 		Mode: instance.Info.Mode, Slot: slot, Team: team, MemberLimit: instance.Info.MaxPlayers,
-		IsRanked:            instance.Info.Mode == ModeArena && instance.Info.Attributes["Ranked"] == "1",
-		ParticipantCount:    instance.ParticipantCount(),
-		IsWarped:            instance.Info.IsWarped,
-		IsReplayRandomized:  instance.Info.IsReplayRandomized,
-		IsCheckpointRestore: instance.IsCheckpointRestore(),
-		SquadID:             squadID,
-		Creatures:           creatures,
-		ActivatedCreatures:  activatedGameplayCreatures(view, o.partCatalog.forGameplayMode(instance.Info.Mode)),
+		IsRanked:               instance.Info.Mode == ModeArena && instance.Info.Attributes["Ranked"] == "1",
+		ParticipantCount:       instance.RosterParticipantCount(),
+		CombatParticipantCount: instance.CombatParticipantCount(),
+		IsWarped:               instance.Info.IsWarped,
+		IsReplayRandomized:     instance.Info.IsReplayRandomized,
+		IsCheckpointRestore:    instance.IsCheckpointRestore(),
+		SquadID:                squadID,
+		Creatures:              creatures,
+		ActivatedCreatures:     activatedGameplayCreatures(view, o.partCatalog.forGameplayMode(instance.Info.Mode)),
 	}
 	if binding.Mode == ModeChain && binding.Level != "" {
 		selectedLevel, isSelected := o.gameManager.ChainLevelForSelection(binding.Difficulty)
