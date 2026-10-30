@@ -12,6 +12,7 @@ typedef void* (FANG_THISCALL* beam_modal_fn)(void*, int);
  * That stateless, argument-free thunk jumps4E4F80, which sends the ordinary
  * status request via538C30 and latches root+15784. No packet is constructed
  * here. HUD41B9A0 uses4E0430&&!4E4FB0 after the native death presentation. */
+// Reads: verifies installed build-103 beam-out code and callback registration signatures.
 static int is_beam_supported(BYTE* base) {
     static const BYTE thunk[] = {0xE9,0x8B,0x95,0x0C,0x00};
     static const BYTE ready[] = {0xA1,0x20,0x8B,0x43,0x01,0x8A,0x80,0xAB,0x00,0x00,0x00,0xC3};
@@ -35,6 +36,7 @@ static int is_beam_supported(BYTE* base) {
         !strcmp((char*)base + 0xBCED24, "MaxisBeamOut.OnBeamOutClicked");
 }
 
+// Reads: checks the native scene, window, root/director, input, and modal context for beam-out.
 static int is_beam_context_current(BYTE* base, uint32_t scene) {
     fang_control_snapshot boundary;
     fang_control_window_snapshot window;
@@ -56,6 +58,7 @@ static int is_beam_context_current(BYTE* base, uint32_t scene) {
     return ui_root && modal == ui_root;
 }
 
+// Reads/modifies: fills beam-out readiness and optionally invokes the native request/latch path, logging the result.
 uint32_t fang_control_beam_out(uint32_t scene, uint64_t deadline, int is_action, fang_control_beam_state* snapshot) {
     BYTE* base = (BYTE*)GetModuleHandleW(NULL);
     fang_control_snapshot boundary;

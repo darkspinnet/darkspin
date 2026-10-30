@@ -36,6 +36,7 @@ static struct {
     unsigned int stage;
 } selection;
 
+// Reads: returns a Scaleform boolean value for the requested state.
 static display_value boolean_value(int is_enabled) {
     display_value result = {0};
     result.type = 2;
@@ -43,6 +44,7 @@ static display_value boolean_value(int is_enabled) {
     return result;
 }
 
+// Reads: returns a Scaleform numeric value.
 static display_value number_value(double number) {
     display_value result = {0};
     result.type = 3;
@@ -50,6 +52,7 @@ static display_value number_value(double number) {
     return result;
 }
 
+// Reads: returns a Scaleform string value referencing the supplied text.
 static display_value string_value(const char* string) {
     display_value result = {0};
     result.type = 4;
@@ -57,11 +60,13 @@ static display_value string_value(const char* string) {
     return result;
 }
 
+// Reads: checks whether a Scaleform value has an object type and interface.
 static int is_object(display_value* property) {
     unsigned int type = property->type & 0x8F;
     return type >= 6 && type <= 8 && property->object_interface != NULL;
 }
 
+// Modifies: retrieves a Scaleform member into the output value through the native accessor.
 static int get(display_value* parent, const char* name, display_value* result) {
     if (!is_object(parent)) {
         return 0;
@@ -70,6 +75,7 @@ static int get(display_value* parent, const char* name, display_value* result) {
         (parent->type & 0x8F) == 8);
 }
 
+// Modifies: assigns a Scaleform member through the native setter.
 static int set(display_value* parent, const char* name, display_value property) {
     if (!is_object(parent)) {
         return 0;
@@ -78,6 +84,7 @@ static int set(display_value* parent, const char* name, display_value property) 
         (parent->type & 0x8F) == 8);
 }
 
+// Modifies: writes a boolean member to the caller's output and releases the native temporary value.
 static int read_boolean(display_value* parent, const char* name, int* is_enabled) {
     display_value property = {0};
     int is_valid = get(parent, name, &property) && (property.type & 0x8F) == 2;
@@ -88,6 +95,7 @@ static int read_boolean(display_value* parent, const char* name, int* is_enabled
     return is_valid;
 }
 
+// Modifies: writes a numeric member to the caller's output and releases the native temporary value.
 static int read_number(display_value* parent, const char* name, double* number) {
     display_value property = {0};
     int is_valid = get(parent, name, &property) && (property.type & 0x8F) == 3;
@@ -98,6 +106,7 @@ static int read_number(display_value* parent, const char* name, double* number) 
     return is_valid;
 }
 
+// Modifies: updates a Scaleform boolean member only when its current value differs.
 static int set_boolean(display_value* parent, const char* name, int is_enabled) {
     int is_previous;
     if (read_boolean(parent, name, &is_previous) && is_previous == is_enabled) {
@@ -106,6 +115,7 @@ static int set_boolean(display_value* parent, const char* name, int is_enabled) 
     return set(parent, name, boolean_value(is_enabled));
 }
 
+// Modifies: resolves the graphics tab into an output value and releases temporary native references.
 static int graphics_tab(BYTE* controller, display_value* graphics) {
     display_value scene = {0}, container = {0};
     int is_found = controller != NULL &&
@@ -117,6 +127,7 @@ static int graphics_tab(BYTE* controller, display_value* graphics) {
     return is_found;
 }
 
+// Modifies: resolves a sibling label by movie depth into the output value and releases the depth value.
 static int sibling_label(display_value* graphics, display_value* button,
     int depth_offset, display_value* label) {
     display_value depth = {0};
@@ -130,6 +141,7 @@ static int sibling_label(display_value* graphics, display_value* button,
     return is_found;
 }
 
+// Modifies: creates and initializes a live options control through native movie methods and properties.
 static int clone_control(display_value* graphics, display_value* source,
     const char* name, int depth, const char* caption, int is_checkbox) {
     display_value clone = {0};
@@ -186,6 +198,7 @@ done:
     return is_complete;
 }
 
+// Modifies: creates the live borderless and taskbar overlay checkboxes and labels.
 static int create_controls(display_value* graphics) {
     display_value source = {0}, label = {0};
     int is_created = get(graphics, "noBlood", &source) &&
@@ -199,6 +212,7 @@ static int create_controls(display_value* graphics) {
     return is_created;
 }
 
+// Modifies: returns a control's original vertical position and caches it on the live control when absent.
 static int original_y(display_value* control, double* y) {
     if (read_number(control, "fangOriginalY", y)) {
         return 1;
@@ -206,6 +220,7 @@ static int original_y(display_value* control, double* y) {
     return read_number(control, "_y", y) && set(control, "fangOriginalY", number_value(*y));
 }
 
+// Modifies: caches original positions and repositions the nine live graphics options rows.
 static int layout_controls(display_value* graphics) {
     /* Nine rows fit in the authored seven-row panel by reducing only spacing.
      * Keep checkbox and label sizes, and place the two display modes together.
@@ -256,6 +271,7 @@ done:
     return is_laid_out;
 }
 
+// Modifies: creates and synchronizes display controls, reconciles selections, and logs UI progress.
 void fang_update_display_ui(void) {
     display_value graphics = {0}, borderless = {0}, overlay = {0}, fullscreen = {0};
     int is_fullscreen, is_borderless, is_layout_ready = 0;
@@ -312,12 +328,14 @@ done:
     release_value(&graphics);
 }
 
+// Modifies: queues current or default display selections for the options UI.
 static void load_selection(int is_default) {
     selection.is_borderless = !is_default && fang_borderless_requested();
     selection.is_overlay = !is_default && fang_taskbar_overlay_requested();
     selection.is_pending = 1;
 }
 
+// Modifies: tracks options visibility, queues display selections, and invokes the native show handler.
 static void FANG_THISCALL hooked_show(BYTE* controller, unsigned char is_visible) {
     options_controller = is_visible ? controller : NULL;
     selection.stage = 0;
@@ -327,6 +345,7 @@ static void FANG_THISCALL hooked_show(BYTE* controller, unsigned char is_visible
     show_options(controller, is_visible);
 }
 
+// Modifies: clears the tracked options controller and invokes native destruction.
 static void FANG_THISCALL hooked_destroy(BYTE* controller) {
     if (options_controller == controller) {
         options_controller = NULL;
@@ -334,6 +353,7 @@ static void FANG_THISCALL hooked_destroy(BYTE* controller) {
     destroy_options(controller);
 }
 
+// Modifies: queues current or default display selections and invokes the native graphics handler.
 static void __cdecl hooked_get_graphics(BYTE* controller, const char* event,
     display_value* arguments) {
     int is_default = arguments != NULL && (arguments[0].type & 0x8F) == 2 &&
@@ -342,6 +362,7 @@ static void __cdecl hooked_get_graphics(BYTE* controller, const char* event,
     get_graphics(controller, event, arguments);
 }
 
+// Modifies: reads display selections, queues display changes, and invokes native settings saving.
 static void __cdecl hooked_save_settings(BYTE* controller, const char* event,
     display_value* arguments) {
     display_value graphics = {0}, borderless = {0}, overlay = {0};
@@ -370,6 +391,7 @@ static void __cdecl hooked_save_settings(BYTE* controller, const char* event,
     save_settings(controller, event, arguments);
 }
 
+// Modifies: binds Scaleform operations and patches options callbacks with rollback on failure.
 int fang_install_display_ui(BYTE* base) {
     void** show_slot = (void**)(base + 0xBD14A8);
     void** get_slot = (void**)(base + 0xD10240);

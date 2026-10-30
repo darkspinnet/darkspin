@@ -3,6 +3,7 @@
 #include "hook.h"
 #include <string.h>
 
+// Reads: compares bounded ASCII resource names case-insensitively.
 static int is_scenario_name_equal(const char* actual, const char* expected) {
     unsigned int index;
     for (index = 0; index < 64; index++) {
@@ -24,6 +25,7 @@ static int is_scenario_name_equal(const char* actual, const char* expected) {
     return 0;
 }
 
+// Reads: returns whether a resource name matches the marker-set or noun allowlist.
 static int is_supported_scenario_name(const char* name, int is_marker_set) {
     if (is_marker_set) {
         return is_scenario_name_equal(name, "zelems_3_design.Markerset") ||
@@ -37,6 +39,7 @@ static int is_supported_scenario_name(const char* name, int is_marker_set) {
             "DEST_prefab_islands_instrument_scitech_7.Noun");
 }
 
+// Reads/modifies: copies and rechecks native resource-name references into the output, recording validation failures.
 static void copy_scenario_resource_name(uint32_t holder, int is_marker_set,
     ScenarioResourceNameCopy* copy) {
     uint32_t name_address = 0;
@@ -112,6 +115,7 @@ static void copy_scenario_resource_name(uint32_t holder, int is_marker_set,
     copy->IsNameAvailable = 1;
 }
 
+// Reads/modifies: copies/rechecks native authored entry and resource names into the output observation.
 void copy_scenario_authored_input(const void* entry,
     uint32_t raw_marker_set_reference, ScenarioAuthoredInputCopy* copy) {
     uint32_t words[16] = {0};

@@ -40,6 +40,7 @@ static map_invoke_fn map_invoke;
 #define MAP_FASTCALL __fastcall
 #endif
 
+// Modifies: records Fang map ownership and generation, then runs native map entry with its effects.
 static int MAP_FASTCALL observe_map_enter(BYTE* controller, void* ignored) {
     int result;
     DWORD last_error = GetLastError();
@@ -56,6 +57,7 @@ static int MAP_FASTCALL observe_map_enter(BYTE* controller, void* ignored) {
     return result;
 }
 
+// Modifies: invalidates matching Fang map ownership, then runs native map exit with its effects.
 static void MAP_FASTCALL observe_map_leave(BYTE* controller, void* ignored) {
     DWORD last_error = GetLastError();
     (void)ignored;
@@ -72,6 +74,7 @@ static void MAP_FASTCALL observe_map_leave(BYTE* controller, void* ignored) {
     SetLastError(last_error);
 }
 
+// Modifies: initializes Fang map tracking, binds GFx helpers, and patches native lifecycle calls.
 int fang_control_map_install(HMODULE executable) {
     static const BYTE enter_call[] = {0xE8,0x44,0xFE,0xFF,0xFF};
     static const BYTE null_call[] = {0xE8,0x37,0xFE,0xFF,0xFF};
@@ -114,6 +117,7 @@ rollback_enter:
     return 0;
 }
 
+// Reads/modifies: queries a current native GFx member into the output, acquiring any managed result reference.
 static int read_map_member(const map_read_context* context, map_value* parent, const char* name, map_value* result) {
     uint32_t type = parent->type & 0x8F;
     if (map_generation != context->generation || map_controller != context->owner) return 0;
@@ -121,6 +125,7 @@ static int read_map_member(const map_read_context* context, map_value* parent, c
     return map_member(parent->object_interface, parent->data.object, name, result, type == 8) != 0;
 }
 
+// Reads/modifies: copies an integral native GFx number and availability bit out, then releases its temporary reference.
 static void read_map_number(const map_read_context* context, map_value* parent, const char* name, uint32_t* number, uint32_t bit, uint32_t* fields) {
     map_value result = {0};
     if (read_map_member(context, parent, name, &result) && (result.type & 0x8F) == 3 &&
@@ -132,6 +137,7 @@ static void read_map_number(const map_read_context* context, map_value* parent, 
     map_release(&result);
 }
 
+// Reads/modifies: copies a native GFx boolean and availability bit out, then releases its temporary reference.
 static void read_map_boolean(const map_read_context* context, map_value* parent, const char* name, uint32_t* is_true, uint32_t bit, uint32_t* fields) {
     map_value result = {0};
     if (read_map_member(context, parent, name, &result) && (result.type & 0x8F) == 2) {
@@ -141,6 +147,7 @@ static void read_map_boolean(const map_read_context* context, map_value* parent,
     map_release(&result);
 }
 
+// Reads/modifies: queries native button visibility/enabled state and balances temporary GFx references.
 static int is_map_button_ready(const map_read_context* context, map_value* parent, const char* name) {
     map_value button = {0};
     uint32_t fields = 0, is_disabled = 0, is_visible = 0;
@@ -154,6 +161,7 @@ static int is_map_button_ready(const map_read_context* context, map_value* paren
     return is_ready;
 }
 
+// Reads/modifies: derives selection readiness in the output snapshot from native GFx state, balancing temporary references.
 static void read_map_selection_ready(const map_read_context* context,
     map_value* root, fang_control_map_state* snapshot) {
     map_value switcher = {0};
@@ -182,6 +190,7 @@ done:
     map_release(&switcher);
 }
 
+// Reads/modifies: fills a native map-state snapshot through GFx queries and balances temporary managed references.
 int fang_control_map_read(fang_control_map_state* snapshot) {
     map_value controller = {0}, root = {0}, start = {0};
     BYTE* owner;
@@ -255,6 +264,7 @@ done:
 /* The authored handler performs the ordinary UI state transition and external
  * StartGame call. An Invoke failure after dispatch is an unknown outcome, never
  * permission to retry. The managed copy survives reentrant native teardown. */
+// Reads/modifies: fills the snapshot and invokes eligible native OnPlayClicked, logging the mission-start attempt.
 uint32_t fang_control_map_start(fang_control_map_state* snapshot) {
     map_value controller = {0}, result = {0};
     uint32_t status = 5;
@@ -287,6 +297,7 @@ done:
 
 /* Fixed ordinary UI handlers only. Their no-argument authored bodies retain
  * the game's animation, bounds, party and native external decision flow. */
+// Reads/modifies: fills the snapshot and invokes an eligible authored campaign/level-selection handler, logging the attempt.
 uint32_t fang_control_map_select(uint32_t kind, fang_control_map_state* snapshot) {
     map_value controller = {0}, result = {0};
     const char* handler;

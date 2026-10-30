@@ -3,6 +3,7 @@
 
 #include <string.h>
 
+// Modifies: patches named or ordinal import slots and updates optional diagnostic flags.
 int fang_patch_import(HMODULE module, const char* library_name, const char* function_name, WORD function_ordinal, void* replacement, unsigned int* diagnostics) {
     BYTE* base = (BYTE*)module;
     IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)base;
@@ -71,6 +72,7 @@ int fang_patch_import(HMODULE module, const char* library_name, const char* func
     return patched;
 }
 
+// Modifies: replaces import slots matching an address and updates optional diagnostic flags.
 int fang_patch_import_address(HMODULE module, void* original, void* replacement, unsigned int* diagnostics) {
     BYTE* base = (BYTE*)module;
     IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)base;

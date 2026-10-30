@@ -16,6 +16,7 @@ static scenario_object_delete_fn original_scenario_object_delete;
 static volatile LONG dispatch_observation_sequence;
 static volatile LONG observed_frame_thread;
 
+// Modifies: increments Fang sequencing, logs boundaries, and forwards native object creation with its effects.
 static void* WINAPI observe_scenario_object_create(void* stream) {
     DWORD incoming_last_error = GetLastError();
     unsigned int sequence = (unsigned int)InterlockedIncrement(
@@ -31,6 +32,7 @@ static void* WINAPI observe_scenario_object_create(void* stream) {
     return result;
 }
 
+// Modifies: increments Fang sequencing, logs boundaries, and forwards native object deletion with its effects.
 static int WINAPI observe_scenario_object_delete(void* stream) {
     DWORD incoming_last_error = GetLastError();
     unsigned int sequence = (unsigned int)InterlockedIncrement(
@@ -46,6 +48,7 @@ static int WINAPI observe_scenario_object_delete(void* stream) {
     return result;
 }
 
+// Modifies: updates Fang's observed frame thread and logs ownership changes while preserving LastError.
 void observe_scenario_dispatch_frame(void) {
     DWORD last_error = GetLastError();
     DWORD thread = GetCurrentThreadId();
@@ -58,6 +61,7 @@ void observe_scenario_dispatch_frame(void) {
     SetLastError(last_error);
 }
 
+// Modifies: binds native object dispatch helpers, patches their call sites, and logs installation results.
 int install_scenario_dispatch_observation(void* executable) {
     DWORD last_error = GetLastError();
     unsigned char* base = (unsigned char*)executable;

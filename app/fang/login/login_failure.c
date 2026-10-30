@@ -17,6 +17,7 @@ static BYTE login_body[2048];
 static char login_reason[96];
 static char login_message[512];
 
+// Modifies: decodes a bounded TDF string into an output buffer and advances the caller's offset.
 static int login_string(const BYTE* bytes, unsigned int size,
     unsigned int* offset, char* output, unsigned int capacity) {
     unsigned int length, shift = 6, count = 0;
@@ -39,6 +40,7 @@ static int login_string(const BYTE* bytes, unsigned int size,
     return 1;
 }
 
+// Modifies: caches valid reason and message strings from the assembled login error body.
 static void login_error_body(void) {
     unsigned int offset = 0;
     char reason[sizeof(login_reason)] = {0};
@@ -68,6 +70,7 @@ static void login_error_body(void) {
     }
 }
 
+// Modifies: assembles received Blaze frames and caches server login rejection details.
 void fang_login_receive(SOCKET socket, const char* bytes, unsigned int size) {
     unsigned int offset = 0;
     AcquireSRWLockExclusive(&login_failure_lock);
@@ -114,6 +117,7 @@ void fang_login_receive(SOCKET socket, const char* bytes, unsigned int size) {
     ReleaseSRWLockExclusive(&login_failure_lock);
 }
 
+// Modifies: writes escaped login text to a bounded JSON output buffer.
 static int login_json_text(const char* text, char* output, size_t capacity) {
     static const char hex[] = "0123456789abcdef";
     size_t used = 0;
@@ -134,6 +138,7 @@ static int login_json_text(const char* text, char* output, size_t capacity) {
     return 1;
 }
 
+// Modifies: atomically writes a login failure result file for the launcher.
 static int login_failure_result(const char* reason, const char* message) {
     char path[2048], launch_id[64], temporary[2100], document[4608];
     char escaped_reason[576], escaped_message[3072];
@@ -171,6 +176,7 @@ static int login_failure_result(const char* reason, const char* message) {
     return 1;
 }
 
+// Reads/modifies: reads cached rejection details and writes a launcher failure result with a fallback message.
 int fang_login_rejected(unsigned int code) {
     char reason[sizeof(login_reason)], message[sizeof(login_message)];
     AcquireSRWLockShared(&login_failure_lock);
@@ -185,6 +191,7 @@ int fang_login_rejected(unsigned int code) {
     return login_failure_result(reason, message);
 }
 
+// Modifies: writes a launcher failure result for a login service timeout.
 int fang_login_not_ready(void) {
     return login_failure_result("login-service-timeout",
         "The game could not reach the login service in time. Check the server connection and try again.");

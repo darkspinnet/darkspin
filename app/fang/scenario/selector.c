@@ -10,6 +10,7 @@ typedef unsigned int (FANG_THISCALL* scenario_selector_lookup_fn)(
 
 static scenario_selector_lookup_fn original_scenario_selector_lookup;
 
+// Reads/modifies: forwards the native selector query and logs selected raw results while preserving LastError.
 static unsigned int FANG_THISCALL observe_scenario_selector_lookup(
     void* lookup_context, unsigned int key) {
     unsigned int result = original_scenario_selector_lookup(lookup_context, key);
@@ -23,6 +24,7 @@ static unsigned int FANG_THISCALL observe_scenario_selector_lookup(
     return result;
 }
 
+// Modifies: binds the native selector lookup, patches its call site, and logs installation status.
 int install_scenario_selector_observation(void* executable) {
     DWORD last_error = GetLastError();
     unsigned char* base = (unsigned char*)executable;

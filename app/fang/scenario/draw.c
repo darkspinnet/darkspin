@@ -38,6 +38,7 @@ static unsigned int draw_record_sequence;
 static unsigned int draw_last_hint;
 static scenario_draw_record draw_records[96];
 
+// Reads/modifies: inspects the current D3D vertex declaration for normals and balances its temporary COM reference.
 static int is_mesh_declaration(IDirect3DDevice9* device) {
     IDirect3DVertexDeclaration9* declaration = NULL;
     D3DVERTEXELEMENT9 elements[MAXD3DDECLLENGTH + 1];
@@ -56,6 +57,7 @@ static int is_mesh_declaration(IDirect3DDevice9* device) {
     return is_mesh;
 }
 
+// Reads/modifies: logs the current D3D vertex elements and balances the temporary declaration reference.
 static void observe_ground_declaration(IDirect3DDevice9* device) {
     IDirect3DVertexDeclaration9* declaration = NULL;
     D3DVERTEXELEMENT9 elements[MAXD3DDECLLENGTH + 1];
@@ -82,6 +84,7 @@ typedef HRESULT (WINAPI* scenario_disassemble_fn)(const DWORD*, BOOL, const char
 typedef HRESULT (WINAPI* scenario_save_texture_fn)(const wchar_t*, int, IDirect3DBaseTexture9*, const void*);
 typedef HRESULT (WINAPI* scenario_save_surface_fn)(const wchar_t*, int, IDirect3DSurface9*, const void*, const RECT*);
 
+// Reads/modifies: logs D3D render-target details, saves a diagnostic image, and balances temporary surface references.
 static void observe_draw_target(IDirect3DDevice9* device, unsigned int ordinal) {
     IDirect3DSurface9* target = NULL;
     IDirect3DSurface9* back = NULL;
@@ -118,6 +121,7 @@ done:
     target->lpVtbl->Release(target);
 }
 
+// Reads/modifies: saves a bound D3D texture as a diagnostic image and balances its temporary reference, logging failures.
 static void save_draw_texture(IDirect3DDevice9* device, unsigned int ordinal, DWORD stage, const wchar_t* label) {
     IDirect3DBaseTexture9* texture = NULL;
     HMODULE module = GetModuleHandleW(L"d3dx9_27.dll");
@@ -142,6 +146,7 @@ static void save_draw_texture(IDirect3DDevice9* device, unsigned int ordinal, DW
     texture->lpVtbl->Release(texture);
 }
 
+// Reads/modifies: disassembles a bound D3D shader into a new diagnostic file and releases temporary allocations/references.
 static void save_draw_shader(IDirect3DDevice9* device, unsigned int hint, unsigned int ordinal, int is_pixel) {
     IDirect3DPixelShader9* pixel = NULL;
     IDirect3DVertexShader9* vertex = NULL;
@@ -199,6 +204,7 @@ done:
     if (vertex) vertex->lpVtbl->Release(vertex);
 }
 
+// Reads/modifies: copies D3D shaders, textures, constants, and render/sampler states into the record, balancing COM references.
 static void observe_draw_state(IDirect3DDevice9* device, scenario_draw_record* record) {
     static const D3DRENDERSTATETYPE states[12] = {D3DRS_ZENABLE, D3DRS_ZWRITEENABLE,
         D3DRS_ZFUNC, D3DRS_CULLMODE, D3DRS_STENCILENABLE, D3DRS_STENCILFUNC,
@@ -264,6 +270,7 @@ static void observe_draw_state(IDirect3DDevice9* device, scenario_draw_record* r
     if (FAILED(result)) record->error_flags |= 0x200000;
 }
 
+// Reads/modifies: samples/deduplicates editor draw state in Fang bookkeeping and writes shader/texture diagnostics and traces.
 static void record_editor_draw(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
     UINT vertex_count, UINT start_index, UINT primitive_count) {
     BYTE* editor = fang_mod_editor_active();
@@ -342,6 +349,7 @@ static void record_editor_draw(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
         trace_client_state("scenario_editor_draw_render_state", record.render_states[index]);
 }
 
+// Reads/modifies: samples bounded movie-like draw state, updates Fang capture counters, and writes diagnostic files/traces.
 static void record_movie_draw(IDirect3DDevice9* device, UINT primitive_count) {
     scenario_draw_record record;
     D3DVIEWPORT9 viewport;
@@ -382,6 +390,7 @@ static void record_movie_draw(IDirect3DDevice9* device, UINT primitive_count) {
     save_draw_shader(device, 124, movie_draw_count, 1);
 }
 
+// Reads/modifies: captures movie draw diagnostics, then forwards the original D3D draw with its rendering effects.
 static HRESULT WINAPI observe_primitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
     UINT start, UINT count) {
     DWORD last_error = GetLastError();
@@ -390,6 +399,7 @@ static HRESULT WINAPI observe_primitive(IDirect3DDevice9* device, D3DPRIMITIVETY
     return original_primitive(device, type, start, count);
 }
 
+// Reads/modifies: captures movie draw diagnostics, then forwards the original user-memory D3D draw with its rendering effects.
 static HRESULT WINAPI observe_primitive_up(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
     UINT count, const void* vertices, UINT stride) {
     DWORD last_error = GetLastError();
@@ -398,6 +408,7 @@ static HRESULT WINAPI observe_primitive_up(IDirect3DDevice9* device, D3DPRIMITIV
     return original_primitive_up(device, type, count, vertices, stride);
 }
 
+// Reads/modifies: captures diagnostics around the original indexed D3D draw, preserving its rendering effects and result.
 static HRESULT WINAPI observe_draw(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
     INT base_vertex, UINT minimum_vertex, UINT vertex_count, UINT start_index, UINT primitive_count) {
     DWORD last_error = GetLastError();
@@ -416,6 +427,7 @@ static HRESULT WINAPI observe_draw(IDirect3DDevice9* device, D3DPRIMITIVETYPE ty
     return result;
 }
 
+// Modifies: retains original D3D draw callbacks, patches device draw function pointers, and logs hook results.
 void observe_scenario_draw_device(void* pointer) {
     IDirect3DDevice9* device = (IDirect3DDevice9*)pointer;
     scenario_draw_fn draw;

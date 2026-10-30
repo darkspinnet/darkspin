@@ -11,6 +11,7 @@
 // across the original. The parent S/arguments remain in their original slots.
 // Actual emitted ABI, probes/XSTATE and native SEH compatibility need review
 // before installation is executed; these comments are not compiled proof.
+// Reads/modifies: preserves machine state around tracing, updates Fang loss flags, and forwards the original native call with its effects.
 __attribute__((naked, noinline)) void __cdecl scenario_alternate_bridge(void) {
     __asm__ volatile(
         ".intel_syntax noprefix\n"

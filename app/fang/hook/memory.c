@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+// Reads: checks whether a pointer lies in committed memory without guard or no-access protection.
 int fang_readable_pointer(const void* pointer) {
     MEMORY_BASIC_INFORMATION information;
     if (pointer == NULL || VirtualQuery(pointer, &information, sizeof(information)) == 0) {
@@ -16,6 +17,7 @@ int fang_readable_pointer(const void* pointer) {
     return 1;
 }
 
+// Reads: checks whether a span fits within one committed, accessible memory region.
 int readable_range(const void* pointer, size_t size) {
     MEMORY_BASIC_INFORMATION information;
     uintptr_t start = (uintptr_t)pointer;
@@ -34,6 +36,7 @@ int readable_range(const void* pointer, size_t size) {
     return end <= region_end;
 }
 
+// Reads: searches readable PE sections for an exact byte signature.
 BYTE* fang_find_signature(HMODULE module, const BYTE* signature, size_t signature_length) {
     BYTE* base = (BYTE*)module;
     IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)base;

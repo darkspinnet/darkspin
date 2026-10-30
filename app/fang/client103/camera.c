@@ -8,6 +8,7 @@ _Static_assert(sizeof(uint32_t) == 4, "build103 handles require 32 bits");
 _Static_assert(camera_native_max + sizeof(float) == camera_read_size, "checked zoom span");
 _Static_assert(camera_hold_timer + sizeof(float) == camera_snapshot_size, "checked cache span");
 
+// Reads/modifies: validates camera entry points and caches build-103 bindings and validation diagnostics.
 int fang_client103_camera_bind(HMODULE executable) {
     static const BYTE getter_signature[] = {
         0xE8, 0x2B, 0x11, 0x28, 0x00, 0x8B, 0x10, 0x8B, 0xC8,
@@ -40,6 +41,7 @@ int fang_client103_camera_bind(HMODULE executable) {
     return 1;
 }
 
+// Reads/modifies: validates mission zoom entry points and extends cached camera bindings.
 int fang_client103_camera_zoom_bind(HMODULE executable) {
     static const BYTE refresh_call[] = {
         0xE8, 0xF0, 0x3E, 0x09, 0x00, 0x50,
@@ -84,10 +86,12 @@ int fang_client103_camera_zoom_bind(HMODULE executable) {
     return 1;
 }
 
+// Reads: returns the cached camera bindings when the getter is available.
 const fang_client103_camera_bindings* fang_client103_camera_get_bindings(void) {
     return camera_bindings.camera == NULL ? NULL : &camera_bindings;
 }
 
+// Reads: validates a camera's accessible span and follow-camera vtable identity.
 int fang_client103_camera_is_valid(const fang_client103_camera_bindings* bindings,
     const BYTE* camera, size_t accessed_size) {
     return bindings != NULL && accessed_size >= sizeof(void*) &&

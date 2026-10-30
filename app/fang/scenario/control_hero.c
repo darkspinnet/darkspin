@@ -29,6 +29,7 @@ static HWND hero_window;
 static uint64_t hero_deadline;
 static fang_control_hero_selection hero_snapshot;
 
+// Reads: validates native window, scene, recent frame, and optional actor identity for the hero request.
 static int is_hero_owner_current(int is_actor_required) {
     fang_control_snapshot boundary;
     DWORD process_id = 0;
@@ -48,6 +49,7 @@ static int is_hero_owner_current(int is_actor_required) {
     return readable_range(player, 5000) && *(uint32_t*)(player + 4664) == hero_handle;
 }
 
+// Reads: checks physical input and native modal/root eligibility for hero switching.
 static int is_hero_input_clear(void) {
     BYTE* manager = *(BYTE**)(hero_image + 0x105EDCC);
     void* root;
@@ -62,6 +64,7 @@ static int is_hero_input_clear(void) {
     return root && modal == root;
 }
 
+// Reads/modifies: forwards native edge polling, substitutes eligible hero/ability edges, and records/logs Fang request progress.
 static unsigned char HERO_FASTCALL scoped_hero_edge(void* input, void* ignored, uint32_t action) {
     void* caller = HERO_CALLER();
     unsigned char result = original_hero_edge(input, action);
@@ -97,6 +100,7 @@ done:
     return result;
 }
 
+// Modifies: binds native hero helpers and patches the input-edge function pointer.
 int fang_control_hero_install(HMODULE executable) {
     static const BYTE edge_entry[] = {0x56,0x8B,0xF1,0x0F,0xB6,0x86,0xDC,0x01,0x00,0x00};
     static const BYTE eligibility_entry[] = {0x83,0xEC,0x08,0x53,0x8B,0x5C,0x24,0x10,0x56,0x8B,0xF1,0x3B,0x9E,0x78,0x13,0x00,0x00};
@@ -124,6 +128,7 @@ int fang_control_hero_install(HMODULE executable) {
     return 1;
 }
 
+// Reads/modifies: checks native slot eligibility, initializes Fang hero-switch tracking, and fills the output snapshot.
 uint32_t fang_control_hero_begin(uint32_t request_id, uint32_t scene, uint32_t handle, uint32_t slot,
     uint64_t deadline, fang_control_hero_selection* snapshot) {
     fang_control_window_snapshot window;
@@ -155,6 +160,7 @@ done:
     return status;
 }
 
+// Reads/modifies: samples native slot/actor identity, advances Fang hero request status, and copies the snapshot out.
 uint32_t fang_control_hero_frame(uint32_t request_id, fang_control_hero_selection* snapshot) {
     uint32_t status = 0;
     BYTE* player;
@@ -181,6 +187,7 @@ done:
     return status;
 }
 
+// Modifies: marks the matching Fang hero-switch request canceled.
 void fang_control_hero_cancel(uint32_t request_id) {
     AcquireSRWLockExclusive(&hero_lock);
     if (hero_request == request_id) hero_failure = 3;

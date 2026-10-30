@@ -9,6 +9,7 @@ static fang_hook_set zoom_hooks;
 static void* zoom_camera;
 static void* zoom_level;
 
+// Reads: checks that the camera is in the supported native follow and zoom modes.
 static int is_follow_camera(BYTE* camera) {
     return fang_client103_camera_is_valid(native_camera, camera, camera_read_size) &&
         camera[camera_override] == 0 &&
@@ -17,6 +18,7 @@ static int is_follow_camera(BYTE* camera) {
         *(unsigned int*)(camera + camera_follow_mode) == 4;
 }
 
+// Reads: returns a distance constrained to the supplied interval.
 static float camera_clamp(float distance, float minimum, float maximum) {
     if (distance < minimum) {
         return minimum;
@@ -32,6 +34,7 @@ static float camera_clamp(float distance, float minimum, float maximum) {
  * Let the refresh update the hero pose, angles and authored mission distance,
  * then reopen its collapsed zoom interval and retain the native wheel target.
  * No input is synthesized and no camera position or orientation is replaced. */
+// Modifies: runs native camera refresh, reopens mission zoom, preserves wheel distance, and updates tracking and traces.
 static void* __cdecl refresh_mission_camera(unsigned int hero_id) {
     BYTE* camera = (BYTE*)native_camera->camera();
     void* level = native_camera->level(native_camera->root());
@@ -93,6 +96,7 @@ static void* __cdecl refresh_mission_camera(unsigned int hero_id) {
     return result;
 }
 
+// Modifies: injects the mission camera zoom hook and updates installation bookkeeping.
 int fang_install_camera_zoom(HMODULE executable) {
     void* instruction;
     if (zoom_hooks.is_committed) return 1;

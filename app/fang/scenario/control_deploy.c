@@ -37,6 +37,7 @@ static deploy_invoke_fn deploy_invoke;
 #define DEPLOY_FASTCALL __fastcall
 #endif
 
+// Modifies: records Fang PlanetScreen ownership and generation, then runs native entry with its effects.
 static void DEPLOY_FASTCALL observe_deploy_enter(BYTE* owner, void* ignored, const void* req, const void* detail) {
     DWORD last_error = GetLastError();
     (void)ignored;
@@ -51,6 +52,7 @@ static void DEPLOY_FASTCALL observe_deploy_enter(BYTE* owner, void* ignored, con
     SetLastError(last_error);
 }
 
+// Modifies: invalidates matching Fang PlanetScreen ownership, then runs native exit with its effects.
 static void DEPLOY_FASTCALL observe_deploy_leave(BYTE* owner, void* ignored) {
     DWORD last_error = GetLastError();
     (void)ignored;
@@ -67,6 +69,7 @@ static void DEPLOY_FASTCALL observe_deploy_leave(BYTE* owner, void* ignored) {
     SetLastError(last_error);
 }
 
+// Modifies: initializes Fang deployment tracking, binds GFx helpers, and patches native lifecycle calls.
 int fang_control_deployment_install(HMODULE executable) {
     static const BYTE enter_call[] = {0xE8,0xBC,0xFE,0xFF,0xFF};
     static const BYTE leave_call[] = {0xE8,0xF0,0xFD,0xFF,0xFF};
@@ -102,12 +105,14 @@ int fang_control_deployment_install(HMODULE executable) {
     return 1;
 }
 
+// Reads/modifies: queries a current native GFx member into the output, acquiring any managed result reference.
 static int deployment_member(BYTE* owner, uint64_t generation, deploy_value* parent, const char* name, deploy_value* result) {
     uint32_t type = parent->type & 0x8F;
     if (deploy_owner != owner || deploy_generation != generation || !parent->object_interface || type < 6 || type > 8) return 0;
     return deploy_member(parent->object_interface, parent->data.object, name, result, type == 8) != 0;
 }
 
+// Reads/modifies: copies a typed native GFx scalar and availability bit out, then releases its temporary reference.
 static void deployment_scalar(BYTE* owner, uint64_t generation, deploy_value* parent, const char* name,
     uint32_t* scalar, uint32_t bit, uint32_t* fields, int is_boolean) {
     deploy_value result = {0};
@@ -126,12 +131,14 @@ static void deployment_scalar(BYTE* owner, uint64_t generation, deploy_value* pa
 
 /* Readiness means the authored Accept control is currently eligible. It does
  * not assert rendering completion or invent a carousel animation flag. */
+// Reads: returns whether the deployment snapshot permits its authored Accept control.
 static int can_continue_deployment(const fang_control_deployment_state* snapshot) {
     return snapshot->is_available && snapshot->is_loaded && !snapshot->is_results_screen &&
         (snapshot->fields & 63) == 63 && snapshot->squad_index >= 1 && snapshot->squad_index <= 3 &&
         snapshot->is_squad_valid && !snapshot->is_accept_disabled && snapshot->is_accept_visible;
 }
 
+// Reads/modifies: fills a deployment snapshot through native GFx queries and balances temporary managed references.
 int fang_control_deployment_read(fang_control_deployment_state* snapshot) {
     deploy_value controller = {0}, root = {0}, accept = {0}, squads = {0}, squad = {0};
     deploy_value left = {0}, right = {0};
@@ -200,6 +207,7 @@ done:
     return is_available;
 }
 
+// Reads/modifies: fills the snapshot and invokes the eligible native AcceptMission handler, logging the attempt.
 uint32_t fang_control_deployment_continue(fang_control_deployment_state* snapshot) {
     deploy_value controller = {0}, result = {0};
     uint32_t status = 5;

@@ -13,6 +13,7 @@ static uintptr_t exception_fang_base;
 // First-chance observation only: preserve the original exception and let the
 // client's handlers (or Windows) decide whether it is fatal. Avoid the normal
 // trace lock and Go callbacks: the fault may have interrupted either of them.
+// Reads/modifies: samples first-chance fault state, writes diagnostics, and updates the reentrancy guard before continuing exception search.
 static LONG CALLBACK observe_exception(EXCEPTION_POINTERS* exception) {
     EXCEPTION_RECORD* record;
     CONTEXT* context;
@@ -136,6 +137,7 @@ static LONG CALLBACK observe_exception(EXCEPTION_POINTERS* exception) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// Modifies: stores trace metadata and registers a first-chance vectored exception observer.
 int fang_install_exception_trace(HANDLE trace, HMODULE executable) {
     MEMORY_BASIC_INFORMATION region;
     SIZE_T region_size;

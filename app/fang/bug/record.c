@@ -29,6 +29,7 @@ static ULONGLONG snapshot_ring_capacity_dropped_byte_count;
 static ULONGLONG snapshot_ring_capacity_last_dropped_time_ms;
 
 #if FANG_SCENARIO
+// Modifies: records primary-base observations in the trace and snapshot ring and tracks recorder losses.
 void trace_scenario_primary_base(const ScenarioPrimaryBaseCallEvent* req) {
     const size_t maximum_bytes = 64u * 1024u * 1024u;
     const ULONGLONG maximum_age_ms = 300000;
@@ -251,6 +252,7 @@ void trace_scenario_primary_base(const ScenarioPrimaryBaseCallEvent* req) {
     SetLastError(last_error);
 }
 
+// Modifies: records alternate-selection observations in the trace and snapshot ring and tracks recorder losses.
 void trace_scenario_alternate_selection(const ScenarioAlternateSelectionEvent* req) {
     const size_t maximum_bytes = 64u * 1024u * 1024u;
     const ULONGLONG maximum_age_ms = 300000;
@@ -473,6 +475,7 @@ void trace_scenario_alternate_selection(const ScenarioAlternateSelectionEvent* r
     SetLastError(last_error);
 }
 
+// Modifies: records marker-mask observations in the trace and snapshot ring and tracks recorder losses.
 void trace_scenario_marker_mask(const ScenarioMarkerMaskObservation* req) {
     const size_t maximum_bytes = 64u * 1024u * 1024u;
     const ULONGLONG maximum_age_ms = 300000;
@@ -675,6 +678,7 @@ void trace_scenario_marker_mask(const ScenarioMarkerMaskObservation* req) {
 }
 #endif
 
+// Modifies: writes hexadecimal bytes into the destination buffer without a terminator.
 static void encode_hex(char* destination, const BYTE* data, unsigned int size) {
     static const char hexadecimal[] = "0123456789abcdef";
     unsigned int index;
@@ -685,6 +689,7 @@ static void encode_hex(char* destination, const BYTE* data, unsigned int size) {
     }
 }
 
+// Modifies: copies a record into the snapshot ring, evicts old entries, and tracks capacity losses.
 void snapshot_ring_append(const char* contents, unsigned int size) {
     const size_t maximum_bytes = 64u * 1024u * 1024u;
     const ULONGLONG maximum_age_ms = 300000;
@@ -731,6 +736,7 @@ void snapshot_ring_append(const char* contents, unsigned int size) {
     ReleaseSRWLockExclusive(&snapshot_ring_lock);
 }
 
+// Modifies: frees all snapshot ring records and resets ring and capacity-loss bookkeeping.
 void snapshot_ring_clear(void) {
     snapshot_line* line;
     AcquireSRWLockExclusive(&snapshot_ring_lock);
@@ -749,6 +755,7 @@ void snapshot_ring_clear(void) {
     ReleaseSRWLockExclusive(&snapshot_ring_lock);
 }
 
+// Reads/modifies: samples ring and frame metadata and appends a snapshot boundary marker.
 void snapshot_ring_marker(const char* kind, const char* request,
     unsigned long long server_time_unix_nano, unsigned int buffer_ms,
     const char* keyframe_status, unsigned long long client_received_time_ms) {
@@ -813,6 +820,7 @@ void snapshot_ring_marker(const char* kind, const char* request,
     snapshot_ring_append(line, (unsigned int)length);
 }
 
+// Reads: checks a snapshot directory name's length and permitted characters.
 int valid_snapshot_directory_name(const char* name) {
     size_t index;
     size_t length;
@@ -833,6 +841,7 @@ int valid_snapshot_directory_name(const char* name) {
     return 1;
 }
 
+// Reads/modifies: copies the requested ring time window and atomically writes its client-memory snapshot file.
 void snapshot_ring_dump(
     const char* directory_name, unsigned int buffer_ms) {
     char output_path[MAX_PATH * 4];
@@ -915,6 +924,7 @@ void snapshot_ring_dump(
     }
 }
 
+// Modifies: formats payload bytes as hex, writes the trace, and appends the record to the snapshot ring.
 void trace_hex_line(
     const char* header, int header_length,
     const BYTE* data, unsigned int size, const char* suffix) {

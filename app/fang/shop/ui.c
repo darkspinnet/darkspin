@@ -33,6 +33,7 @@ static unsigned int shop_market __attribute__((used)) = 2;
 static unsigned int shop_ui_stage;
 enum { shop_tab_index = 1000000 };
 
+// Modifies: tracks and logs changes in Parts UI initialization progress.
 static void shop_trace_stage(unsigned int stage) {
     if (shop_ui_stage != stage) {
         shop_ui_stage = stage;
@@ -40,6 +41,7 @@ static void shop_trace_stage(unsigned int stage) {
     }
 }
 
+// Reads: returns a Scaleform numeric value.
 static shop_value shop_number(double number) {
     shop_value result = {0};
     result.type = 3;
@@ -47,6 +49,7 @@ static shop_value shop_number(double number) {
     return result;
 }
 
+// Reads: returns a Scaleform string value referencing the supplied text.
 static shop_value shop_string(const char* string) {
     shop_value result = {0};
     result.type = 4;
@@ -54,6 +57,7 @@ static shop_value shop_string(const char* string) {
     return result;
 }
 
+// Reads: returns a Scaleform boolean value for the requested state.
 static shop_value shop_boolean(int is_enabled) {
     shop_value result = {0};
     result.type = 2;
@@ -61,6 +65,7 @@ static shop_value shop_boolean(int is_enabled) {
     return result;
 }
 
+// Modifies: retrieves a Scaleform member into the output value through the native accessor.
 static int shop_get(shop_value* parent, const char* name, shop_value* result) {
     unsigned int type = parent->type & 0x8F;
     if (type < 6 || type > 8 || parent->object_interface == NULL) {
@@ -70,6 +75,7 @@ static int shop_get(shop_value* parent, const char* name, shop_value* result) {
         result, type == 8);
 }
 
+// Modifies: assigns a live Scaleform member through the native setter.
 static void shop_set(shop_value* parent, const char* name, shop_value property) {
     unsigned int type = parent->type & 0x8F;
     if (type >= 6 && type <= 8 && parent->object_interface != NULL) {
@@ -78,6 +84,7 @@ static void shop_set(shop_value* parent, const char* name, shop_value property) 
     }
 }
 
+// Modifies: updates a button's label and text field and releases the temporary native value.
 static void shop_label(shop_value* button, const char* label) {
     shop_value text = {0};
     shop_set(button, "label", shop_string(label));
@@ -87,6 +94,7 @@ static void shop_label(shop_value* button, const char* label) {
     shop_release(&text);
 }
 
+// Modifies: sizes and positions four live vendor tabs using cached Parts layout metrics.
 static void shop_layout(shop_value* vendor, shop_value* clone) {
     static const char* names[] = {"btnTab1", "btnTab2", "fangPartsTab", "btnTab3"};
     shop_value start = {0}, stride = {0}, height = {0};
@@ -116,6 +124,7 @@ done:
     shop_release(&start);
 }
 
+// Modifies: plays the vendor transition and creates or positions the Parts tab flash animation.
 static void shop_play_transition(BYTE* controller) {
     shop_value content = {0}, vendor = {0}, transition = {0};
     shop_value source = {0}, flash = {0}, button = {0};
@@ -168,6 +177,7 @@ done:
     shop_release(&content);
 }
 
+// Modifies: creates and maintains the live Parts tab, header, layout, selection, and progress traces.
 static void shop_update_ui(BYTE* controller) {
     shop_value content = {0}, vendor = {0}, button = {0}, clone = {0};
     shop_value first = {0}, last = {0}, width = {0}, height = {0}, icon = {0};
@@ -297,6 +307,7 @@ done:
     shop_release(&content);
 }
 
+// Modifies: clears other vendor selections and resets native selection totals before adding a Parts offer.
 static void shop_select_offer(BYTE* controller, shop_value* arguments) {
     const BYTE* account;
     const BYTE* entries;
@@ -339,6 +350,7 @@ static void shop_select_offer(BYTE* controller, shop_value* arguments) {
     controller[12] = 1;
 }
 
+// Modifies: dispatches native inventory events and updates Parts mode, paging, selection, and live UI.
 static void __cdecl shop_on_event(BYTE* controller, const char* event,
     shop_value* arguments) {
     int is_tab_event = strcmp(event, "OnVendorTabClicked") == 0 ||
@@ -392,6 +404,7 @@ static void __cdecl shop_on_event(BYTE* controller, const char* event,
     }
 }
 
+// Modifies: tracks the active shop controller, runs native refresh, and maintains the Parts UI.
 static void FANG_THISCALL shop_on_refresh(BYTE* controller) {
     if (shop_controller != controller) {
         shop_controller = controller;
@@ -402,6 +415,7 @@ static void FANG_THISCALL shop_on_refresh(BYTE* controller) {
 }
 
 /* Replace only cmp eax,2 / jne skip. No shared account records are mutated. */
+// Reads/modifies: compares the active market filter and redirects the native return path for excluded entries.
 static void __attribute__((naked)) shop_filter(void) {
     __asm__(
         "cmpl _shop_market, %eax\n"
@@ -412,6 +426,7 @@ static void __attribute__((naked)) shop_filter(void) {
 
 static fang_hook_set ui_hooks;
 
+// Modifies: patches native refresh, event callbacks, and market filtering for the live Parts tab.
 int fang_install_shop_ui(HMODULE executable) {
     BYTE* base = (BYTE*)executable;
     void** callbacks = (void**)(base + 0xD0FAC0);

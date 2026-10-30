@@ -14,6 +14,7 @@ typedef unsigned char (FANG_THISCALL* login_invoke_fn)(login_value*,
     const char*, login_value*, const login_value*, unsigned int);
 typedef void (FANG_THISCALL* login_release_fn)(login_value*);
 
+// Modifies: writes the launcher account name or fallback label to an output buffer.
 static void login_account_text(char* account, unsigned int capacity) {
     WCHAR account_wide[256];
     DWORD length = GetEnvironmentVariableW(L"DARKSPIN_CLIENT_ACCOUNT", account_wide,
@@ -25,6 +26,7 @@ static void login_account_text(char* account, unsigned int capacity) {
     lstrcpynA(account, "Darkspinner", (int)capacity);
 }
 
+// Modifies: retrieves a login movie member into an output value through the native accessor.
 static int login_member(login_member_fn get, login_value* parent,
     const char* name, login_value* result) {
     unsigned int type = parent->type & 0x8f;
@@ -34,6 +36,7 @@ static int login_member(login_member_fn get, login_value* parent,
     return get(parent->object_interface, parent->data.object, name, result, type == 8);
 }
 
+// Modifies: assigns a login movie property through the native setter.
 static int login_property(login_member_fn set, login_value* parent,
     const char* name, login_value* property) {
     unsigned int type = parent->type & 0x8f;
@@ -45,6 +48,7 @@ static int login_property(login_member_fn set, login_value* parent,
  * presentation half of OnLoginClicked. Calling that handler itself would
  * submit the empty form a second time and expose the token to Flash fields.
  * Native DisplayError and scene teardown retain their normal ownership. */
+// Modifies: updates the live login processing presentation, disables manual submission, and logs displayed fields.
 int fang_login_processing(void* controller) {
     BYTE* base = (BYTE*)GetModuleHandleW(NULL);
     login_value* screen;

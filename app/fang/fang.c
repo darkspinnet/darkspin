@@ -243,23 +243,28 @@ enum {
     effect_preview_world_mode = 0x574F524C,
 };
 
+// Reads: returns whether diagnostic network capture is enabled.
 int fang_network_capture_is_enabled(void) {
     return InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0);
 }
 
+// Reads: returns the pending solo matchmaking marker.
 LONG fang_network_matchmaking_pending(void) {
     return InterlockedCompareExchange(&solo_unranked_1v1_matchmaking_pending, 0, 0);
 }
 
+// Reads: returns whether a token login is still awaiting completion.
 int fang_network_login_is_pending(void) {
     return jwt_login_token[0] != '\0' &&
         InterlockedCompareExchange(&jwt_login_completed, 0, 0) == 0;
 }
 
+// Reads: returns whether the shared trace sink is ready.
 int fang_record_trace_available(void) {
     return trace_file != INVALID_HANDLE_VALUE && trace_lock_ready;
 }
 
+// Modifies: serializes a trace-file write and reports the written byte count.
 BOOL fang_record_trace_write(const char* contents, DWORD length, DWORD* written) {
     BOOL result;
     EnterCriticalSection(&trace_lock);
@@ -268,30 +273,37 @@ BOOL fang_record_trace_write(const char* contents, DWORD length, DWORD* written)
     return result;
 }
 
+// Reads: returns the configured snapshot output directory.
 const char* fang_record_directory(void) {
     return snapshot_directory;
 }
 
+// Reads: returns the latest observed frame sequence.
 LONG fang_record_frame_sequence(void) {
     return InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0);
 }
 
+// Reads: returns the latest observed frame-delta bit pattern.
 LONG fang_record_frame_delta_bits(void) {
     return InterlockedCompareExchange(&snapshot_frame_delta_bits, 0, 0);
 }
 
+// Reads: returns the latest observed frame timestamp.
 LONG fang_record_frame_time_ms(void) {
     return InterlockedCompareExchange(&snapshot_frame_time_ms, 0, 0);
 }
 
+// Reads: returns when the latest keyframe capture started.
 LONG fang_record_keyframe_started_time_ms(void) {
     return InterlockedCompareExchange(&snapshot_keyframe_started_time_ms, 0, 0);
 }
 
+// Reads: returns when the latest keyframe capture completed.
 LONG fang_record_keyframe_completed_time_ms(void) {
     return InterlockedCompareExchange(&snapshot_keyframe_completed_time_ms, 0, 0);
 }
 
+// Reads/modifies: reads clipboard text and delivers normalized characters to native chat.
 static unsigned int paste_chat_clipboard(HWND window) {
     HANDLE clipboard_data;
     const WCHAR* wide_text;
@@ -344,6 +356,7 @@ static void trace_client_object_registry(void);
 static void trace_client_object_probe_registry(void);
 static void trace_snapshot_action_state(void);
 
+// Reads/modifies: observes an object association and appends diagnostic records.
 static void trace_object_association(const char* kind,
     unsigned int network_object_id, unsigned int client_handle) {
     char line[384];
@@ -373,6 +386,7 @@ static void trace_object_association(const char* kind,
     snapshot_ring_append(line, (unsigned int)length);
 }
 
+// Reads: resolves the recorded network ID for an exact client handle.
 static unsigned int mapped_network_object_id(unsigned int client_handle) {
     unsigned int slot = client_handle & 0xffffu;
     if ((unsigned int)InterlockedCompareExchange(
@@ -383,6 +397,7 @@ static unsigned int mapped_network_object_id(unsigned int client_handle) {
         &snapshot_network_object_ids_by_slot[slot], 0, 0);
 }
 
+// Modifies: records a client/network object association and logs it.
 static void remember_object_association(
     unsigned int network_object_id, unsigned int client_handle) {
     unsigned int slot;
@@ -396,6 +411,7 @@ static void remember_object_association(
     trace_object_association("object_association", network_object_id, client_handle);
 }
 
+// Modifies: clears matching object associations and logs their removal.
 static void forget_object_association(unsigned int network_object_id) {
     unsigned int slot;
     if (network_object_id == 0) {
@@ -417,6 +433,7 @@ static void forget_object_association(unsigned int network_object_id) {
     }
 }
 
+// Reads/modifies: forwards the native frame update, records timing, and services enabled diagnostics.
 static float __cdecl hooked_frame_delta(void* frame) {
     float delta = original_frame_delta(frame);
     unsigned int delta_bits;
@@ -453,6 +470,7 @@ static float __cdecl hooked_frame_delta(void* frame) {
     return delta;
 }
 
+// Modifies: applies a snapshot request and updates capture state and output.
 static void apply_snapshot_control(char* contents, char* last_request) {
     char request[256];
     char* mode;
@@ -537,6 +555,7 @@ static void apply_snapshot_control(char* contents, char* last_request) {
     }
 }
 
+// Reads/modifies: resolves the configured snapshot endpoint into the output address.
 static int snapshot_control_address(struct sockaddr_in* address) {
     const char* port_text;
     char* port_end;
@@ -572,6 +591,7 @@ static int snapshot_control_address(struct sockaddr_in* address) {
 }
 
 // Use unhooked Winsock exports so diagnostics never capture their own control traffic.
+// Modifies: maintains the snapshot control connection and applies incoming capture requests.
 static DWORD WINAPI watch_snapshot_control(LPVOID parameter) {
     struct sockaddr_in address;
     WSADATA startup;
@@ -645,6 +665,7 @@ typedef struct mana_cost_trace {
 static mana_cost_trace traced_mana_cost[64];
 static unsigned int traced_mana_cost_count;
 
+// Reads/modifies: observes mana-cost inputs and appends diagnostic records.
 static void trace_mana_cost(void* caller, void* ability, void* actor, int rank,
     float property, float coefficient, double cost) {
     char line[512];
@@ -696,6 +717,7 @@ static void trace_mana_cost(void* caller, void* ability, void* actor, int rank,
     LeaveCriticalSection(&trace_lock);
 }
 
+// Reads/modifies: forwards native mana-cost calculation and records its inputs and result.
 static double __cdecl hooked_mana_cost(void* ability, void* actor, int rank, float property) {
     void* caller = __builtin_return_address(0);
     double cost = original_mana_cost(ability, actor, rank, property);
@@ -718,6 +740,7 @@ typedef struct pending_sporenet_script {
 static pending_sporenet_script* pending_sporenet_script_head;
 static VOID CALLBACK sporenet_script_timer_callback(HWND window, UINT message, UINT_PTR timer, DWORD time);
 
+// Reads: returns a pointer-span length capped at the supplied maximum.
 static size_t bounded_text_length(const char* begin, const char* end, size_t maximum) {
     size_t length;
     if (begin == NULL || end == NULL || end < begin) {
@@ -727,6 +750,7 @@ static size_t bounded_text_length(const char* begin, const char* end, size_t max
     return length > maximum ? maximum : length;
 }
 
+// Reads/modifies: identifies a supported callback and writes its optional name length.
 static const char* sporenet_deferred_callback_name(void* request, size_t* name_length) {
     static const char account_callback[] = "accountinfocallback";
     static const char creature_callback[] = "spgetcreaturecallback";
@@ -783,6 +807,7 @@ static const char* sporenet_deferred_callback_name(void* request, size_t* name_l
     return NULL;
 }
 
+// Reads: returns whether the request names the expected callback.
 static int is_sporenet_callback_matching(void* request, const char* expected) {
     const char* callback;
     const char* callback_end;
@@ -798,6 +823,7 @@ static int is_sporenet_callback_matching(void* request, const char* expected) {
     return callback_length == expected_length && memcmp(callback, expected, expected_length) == 0;
 }
 
+// Reads: searches the native response body for the expected text.
 static int is_response_containing(void* response, const char* expected) {
     void* body_owner;
     void** response_vtable;
@@ -827,10 +853,12 @@ static int is_response_containing(void* response, const char* expected) {
     return 0;
 }
 
+// Reads: returns whether the request supports deferred profile delivery.
 static int is_sporenet_profile_request(void* request) {
     return sporenet_deferred_callback_name(request, NULL) != NULL;
 }
 
+// Modifies: allocates and schedules a deferred native web script.
 static int queue_sporenet_static_script(void* request, const wchar_t* script) {
     pending_sporenet_script* pending;
     size_t script_length;
@@ -865,6 +893,7 @@ static int queue_sporenet_static_script(void* request, const wchar_t* script) {
     return 1;
 }
 
+// Reads/modifies: checks account access and schedules the owned-account UI refresh.
 static int queue_owned_account_refresh(void* request, void* response) {
     static const char callback_name[] = "accountinfocallback";
     static const char online_access[] = "<grant_online_access>1</grant_online_access>";
@@ -893,6 +922,7 @@ static int queue_owned_account_refresh(void* request, void* response) {
     return queue_sporenet_static_script(request, refresh_script);
 }
 
+// Reads/modifies: observes request/response metadata and writes callback diagnostics.
 static void trace_sporenet_callback(void* request, void* response, const char* phase) {
     const char* method;
     const char* method_end;
@@ -942,6 +972,7 @@ static void trace_sporenet_callback(void* request, void* response, const char* p
     LeaveCriticalSection(&trace_lock);
 }
 
+// Reads/modifies: encodes a response into a deferred native web callback.
 static int queue_sporenet_profile_callback(void* request, void* response) {
     static const wchar_t account_prefix[] = L"try{accountinfocallback(decodeURIComponent('";
     static const wchar_t creature_prefix[] = L"spgetcreaturecallback(decodeURIComponent('";
@@ -1055,6 +1086,7 @@ static int queue_sporenet_profile_callback(void* request, void* response) {
     return 1;
 }
 
+// Modifies: removes a queued callback, executes its script, and releases its resources.
 static VOID CALLBACK sporenet_script_timer_callback(HWND window, UINT message, UINT_PTR timer, DWORD time) {
     pending_sporenet_script** link = &pending_sporenet_script_head;
     pending_sporenet_script* pending;
@@ -1084,6 +1116,7 @@ static VOID CALLBACK sporenet_script_timer_callback(HWND window, UINT message, U
     HeapFree(GetProcessHeap(), 0, pending);
 }
 
+// Modifies: dispatches or defers native web callbacks and updates token-login completion.
 static void FANG_THISCALL hooked_sporenet_callback(void* request, void* response) {
     if (is_sporenet_callback_matching(request, "accountinfocallback")) {
         int is_profile_queued;
@@ -1116,6 +1149,7 @@ static void FANG_THISCALL hooked_sporenet_callback(void* request, void* response
 static VOID CALLBACK jwt_login_timer_callback(HWND window, UINT message, UINT_PTR timer, DWORD time);
 static VOID CALLBACK jwt_login_ui_callback(HWND window, UINT message, UINT_PTR timer, DWORD time);
 
+// Modifies: writes the account-profile callback timeout result for the launcher.
 static int write_login_failure_result(void) {
     char temporary_path[2100];
     char document[768];
@@ -1160,6 +1194,7 @@ static int write_login_failure_result(void) {
     return 1;
 }
 
+// Modifies: watches login progress, writes timeout failure, and may terminate the production client.
 static DWORD WINAPI jwt_login_watchdog_thread(LPVOID parameter) {
     (void)parameter;
     Sleep(jwt_login_timeout_milliseconds);
@@ -1178,6 +1213,7 @@ static DWORD WINAPI jwt_login_watchdog_thread(LPVOID parameter) {
 #endif
 }
 
+// Modifies: starts the token-login watchdog once.
 static void start_jwt_login_watchdog(void) {
     HANDLE thread;
     if (client_result_path[0] == '\0' ||
@@ -1193,6 +1229,7 @@ static void start_jwt_login_watchdog(void) {
     CloseHandle(thread);
 }
 
+// Modifies: creates or initializes the native chat controller and tracks its lifetime.
 static void prepare_chat_ui(void) {
     void* chat = original_chat_lookup();
     if (chat == NULL) {
@@ -1222,6 +1259,7 @@ static void prepare_chat_ui(void) {
     trace_client_state("chat_initialize", 1);
 }
 
+// Modifies: initializes, shows, and opens the native chat interface.
 static int open_chat_ui(void) {
     void* chat;
     prepare_chat_ui();
@@ -1240,6 +1278,7 @@ static int open_chat_ui(void) {
     return 1;
 }
 
+// Modifies: clears the native pending movement, ability, and auxiliary action markers.
 static unsigned int clear_pending_action_descriptors(void) {
     BYTE* movement;
     BYTE* ability;
@@ -1266,6 +1305,7 @@ static unsigned int clear_pending_action_descriptors(void) {
     return cleared;
 }
 
+// Modifies: resets native input action intent after validating its memory span.
 static int clear_input_action_intent(void) {
     BYTE* input;
     if (executable_module == NULL) {
@@ -1286,6 +1326,7 @@ static int clear_input_action_intent(void) {
     return 1;
 }
 
+// Reads/modifies: observes native action intent and writes boundary diagnostics.
 static void trace_input_action_state(const char* boundary) {
     const BYTE* input;
     const BYTE* movement;
@@ -1340,6 +1381,7 @@ static void trace_input_action_state(const char* boundary) {
     }
 }
 
+// Reads/modifies: observes ability and input state and writes snapshot diagnostics.
 static void trace_snapshot_action_state(void) {
     const BYTE* state;
     const BYTE* player;
@@ -1385,6 +1427,7 @@ static void trace_snapshot_action_state(void) {
     }
 }
 
+// Modifies: clears pending native actions and resets combat input ownership.
 static unsigned int reset_combat_input_state(void) {
     void* state = original_combat_input_state != NULL ? original_combat_input_state() : NULL;
     trace_input_action_state("input_action_reset_before");
@@ -1403,6 +1446,7 @@ static unsigned int reset_combat_input_state(void) {
     }
 }
 
+// Modifies: dispatches native window input and applies the existing chat and input compatibility paths.
 static LRESULT CALLBACK hooked_game_wndproc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     static const UINT_PTR chat_timer = 0xD45C;
 #if FANG_SCENARIO
@@ -1467,6 +1511,7 @@ static LRESULT CALLBACK hooked_game_wndproc(HWND window, UINT message, WPARAM wp
     return CallWindowProcA(original_game_wndproc, window, message, wparam, lparam);
 }
 
+// Modifies: replaces the game window procedure once and retains its native predecessor.
 static void install_chat_wndproc(HWND window) {
     WNDPROC current = (WNDPROC)GetWindowLongPtrA(window, GWLP_WNDPROC);
     if (current == hooked_game_wndproc) {
@@ -1490,6 +1535,7 @@ static void install_chat_wndproc(HWND window) {
     trace_client_state("chat_wndproc", 1);
 }
 
+// Reads/modifies: polls chat key state and opens native chat on the selected key edge.
 static DWORD WINAPI poll_chat_key(LPVOID parameter) {
     LONG is_return_down = 0;
     (void)parameter;
@@ -1513,6 +1559,7 @@ static DWORD WINAPI poll_chat_key(LPVOID parameter) {
     }
 }
 
+// Reads/modifies: forwards native local events and records their identifiers.
 static void hooked_local_event(unsigned int event_id, void* event) {
     if (event_id == 0x615F3861 && event != NULL) {
         const unsigned char* value = (const unsigned char*)event;
@@ -1524,6 +1571,7 @@ static void hooked_local_event(unsigned int event_id, void* event) {
     original_local_event(event_id, event);
 }
 
+// Reads/modifies: delegates native loot conversion and logs the loot fields and conversion result.
 static unsigned char hooked_loot_convert(void* output, const void* loot,
     int is_local, int unknown) {
     if (loot != NULL) {
@@ -1542,6 +1590,7 @@ static unsigned char hooked_loot_convert(void* output, const void* loot,
     return result;
 }
 
+// Reads/modifies: delegates native loot formatting into the supplied output and logs the result.
 static unsigned char hooked_loot_format(void* output, const void* loot,
     int is_local, int unknown) {
     unsigned char result = original_loot_format(output, loot, is_local, unknown);
@@ -1549,6 +1598,7 @@ static unsigned char hooked_loot_format(void* output, const void* loot,
     return result;
 }
 
+// Reads/modifies: delegates resource lookup into the supplied output and logs the resolved loot resource.
 static void* hooked_loot_resource_lookup(void* asset, void* output) {
     void* result = original_creature_nested_lookup(asset, output);
     trace_client_state("loot_resource_arg0", (unsigned int)(uintptr_t)asset);
@@ -1562,6 +1612,7 @@ static int trace_xp_threshold_values(const unsigned int* begin, size_t count);
 static int trace_xp_thresholds(void);
 static int trace_xp_thresholds_from_resource(void);
 
+// Reads/modifies: queries native ability availability and records the result.
 static unsigned char __cdecl hooked_ability_blink_play_available(void* player, int ability_index) {
     unsigned char is_available = original_ability_available(player, ability_index);
     trace_client_state("ability_blink_play_call",
@@ -1569,6 +1620,7 @@ static unsigned char __cdecl hooked_ability_blink_play_available(void* player, i
     return is_available;
 }
 
+// Reads/modifies: queries native ability stop availability and records the result.
 static unsigned char __cdecl hooked_ability_blink_stop_available(void* player, int ability_index) {
     unsigned char is_available = original_ability_available(player, ability_index);
     trace_client_state("ability_blink_stop_call",
@@ -1576,6 +1628,7 @@ static unsigned char __cdecl hooked_ability_blink_stop_available(void* player, i
     return is_available;
 }
 
+// Reads/modifies: samples delayed ability availability and writes diagnostics.
 static DWORD WINAPI trace_ability_blink_later(LPVOID parameter) {
     BYTE* hud;
     unsigned int value = 0;
@@ -1591,9 +1644,11 @@ static DWORD WINAPI trace_ability_blink_later(LPVOID parameter) {
 }
 
 #if defined(__GNUC__)
+// Reads/modifies: forwards native cooldown application and records cooldown timing.
 static void __attribute__((fastcall)) hooked_cooldown_apply(void* object, void* ignored,
     uint64_t ability_key, int64_t duration, int64_t source_start, int64_t global_cooldown) {
 #else
+// Reads/modifies: forwards native cooldown application and records cooldown timing.
 static void __fastcall hooked_cooldown_apply(void* object, void* ignored,
     uint64_t ability_key, int64_t duration, int64_t source_start, int64_t global_cooldown) {
 #endif
@@ -1662,6 +1717,7 @@ static void __fastcall hooked_cooldown_apply(void* object, void* ignored,
     LeaveCriticalSection(&trace_lock);
 }
 
+// Reads/modifies: reads a received payload and appends bounded hexadecimal diagnostics.
 static void trace_client_message_payload(unsigned char id, const void* data, unsigned int size) {
     char header[320];
     const char suffix[] = "\"}\r\n";
@@ -1697,6 +1753,7 @@ static void trace_client_message_payload(unsigned char id, const void* data, uns
     HeapFree(GetProcessHeap(), 0, payload);
 }
 
+// Reads/modifies: observes received message fields and updates diagnostic object bookkeeping.
 static void trace_message_receive(unsigned char id, const void* data, unsigned int size) {
     char line[384];
     const unsigned char* byte = (const unsigned char*)data;
@@ -1748,6 +1805,7 @@ static void trace_message_receive(unsigned char id, const void* data, unsigned i
     LeaveCriticalSection(&trace_lock);
 }
 
+// Modifies: forwards native clock initialization and records the observed clock state.
 static void hooked_clock_initialize(uint64_t source_time) {
     char line[512];
     DWORD written;
@@ -1795,6 +1853,7 @@ static void hooked_clock_initialize(uint64_t source_time) {
     LeaveCriticalSection(&trace_lock);
 }
 
+// Reads/modifies: reads player reflection metadata and writes diagnostic fields.
 static void trace_player_reflection(void) {
     const unsigned int player_type_id = 0x15FF16E2;
     reflection_lookup_fn lookup;
@@ -1843,6 +1902,7 @@ static void trace_player_reflection(void) {
     }
 }
 
+// Reads/modifies: reads combat-text resource state and writes diagnostics.
 static void trace_combat_text_assets(void) {
     const unsigned int asset_rva[] = {
         COMBAT_TEXT_DAMAGE_RVA,
@@ -1885,6 +1945,7 @@ static void trace_combat_text_assets(void) {
     }
 }
 
+// Reads/modifies: reads native combat-text preferences and writes diagnostics.
 static void trace_combat_text_preferences(void) {
     const unsigned int preference_rva[] = {
         SHOW_DAMAGE_DONE_BY_ME_RVA,
@@ -1933,6 +1994,7 @@ static void trace_combat_text_preferences(void) {
     }
 }
 
+// Modifies: lazily allocates and stores this thread's movement trace context.
 static movement_trace_context* get_movement_trace_context(void) {
     movement_trace_context* context;
     if (movement_trace_tls_index == TLS_OUT_OF_INDEXES) {
@@ -1954,6 +2016,7 @@ static movement_trace_context* get_movement_trace_context(void) {
     return context;
 }
 
+// Reads/modifies: observes locomotion fields and writes a movement snapshot.
 static void trace_locomotion_snapshot(const char* phase,
     unsigned int object_id, const BYTE* object, const BYTE* locomotion) {
     char header[1536];
@@ -1996,6 +2059,7 @@ static void trace_locomotion_snapshot(const char* phase,
     trace_hex_line(header, length, locomotion, 440, suffix);
 }
 
+// Reads/modifies: reads validated client object spans and writes bounded diagnostics.
 static void trace_client_object_memory(
     unsigned int object_id, const BYTE* object) {
     char header[512];
@@ -2039,6 +2103,7 @@ static void trace_client_object_memory(
     trace_hex_line(header, length, object, 668, suffix);
 }
 
+// Reads/modifies: probes a client handle and records readable object state.
 static void trace_client_object_probe(
     unsigned int object_id, const BYTE* object) {
     char line[1024];
@@ -2101,6 +2166,7 @@ static void trace_client_object_probe(
     snapshot_ring_append(line, (unsigned int)length);
 }
 
+// Reads/modifies: observes registered object probes and writes diagnostics.
 static void trace_client_object_probe_registry(void) {
     const BYTE* registry;
     const BYTE* table;
@@ -2150,6 +2216,7 @@ static void trace_client_object_probe_registry(void) {
 }
 
 #if FANG_SCENARIO
+// Reads/modifies: formats observed scenario object state into diagnostic output.
 static void trace_scenario_registry(const char* status,
     ULONGLONG started_time_ms, unsigned int object_count,
     unsigned int unreadable_slot_count, unsigned int changed_handle_count,
@@ -2167,6 +2234,7 @@ static void trace_scenario_registry(const char* status,
 }
 #endif
 
+// Reads/modifies: observes native registry entries and writes object diagnostics.
 static void trace_client_object_registry(void) {
     const BYTE* registry;
     const BYTE* table;
@@ -2250,6 +2318,7 @@ static void trace_client_object_registry(void) {
 #endif
 }
 
+// Modifies: clears the current thread's movement trace context when present.
 static void reset_movement_trace_context(void) {
     movement_trace_context* context = get_movement_trace_context();
     if (context != NULL) {
@@ -2257,6 +2326,7 @@ static void reset_movement_trace_context(void) {
     }
 }
 
+// Reads/modifies: reads the resolved movement context and records its diagnostics.
 static void trace_resolved_movement_context(const char* phase) {
     movement_trace_context* context = get_movement_trace_context();
     if (context == NULL || context->object_id == 0) {
@@ -2266,6 +2336,7 @@ static void trace_resolved_movement_context(const char* phase) {
         phase, context->object_id, context->object, context->locomotion);
 }
 
+// Reads/modifies: resolves a native object and records movement associations and context.
 static void* __cdecl hooked_movement_object_resolve(unsigned int object_id) {
     void* result = original_game_object_resolve(object_id);
     const BYTE* object;
@@ -2332,6 +2403,7 @@ static void* __cdecl hooked_movement_object_resolve(unsigned int object_id) {
     return result;
 }
 
+// Reads/modifies: forwards native player movement reception and records its context.
 static void* __stdcall hooked_player_move_receiver(void* message) {
     void* result;
     reset_movement_trace_context();
@@ -2342,6 +2414,7 @@ static void* __stdcall hooked_player_move_receiver(void* message) {
     return result;
 }
 
+// Reads/modifies: forwards native locomotion updates and records their context.
 static void* __stdcall hooked_locomotion_update_receiver(void* message) {
     void* result;
     reset_movement_trace_context();
@@ -2352,6 +2425,7 @@ static void* __stdcall hooked_locomotion_update_receiver(void* message) {
     return result;
 }
 
+// Reads/modifies: forwards native unreliable locomotion updates and records their context.
 static void* __stdcall hooked_locomotion_unreliable_receiver(void* message) {
     void* result;
     reset_movement_trace_context();
@@ -2362,6 +2436,7 @@ static void* __stdcall hooked_locomotion_unreliable_receiver(void* message) {
     return result;
 }
 
+// Reads/modifies: observes controlled-player resource updates and stores diagnostic bookkeeping.
 static void observe_controlled_resource_update(
     unsigned char id, const void* data, unsigned int size) {
     const BYTE* payload = (const BYTE*)data;
@@ -2412,9 +2487,11 @@ static void observe_controlled_resource_update(
 }
 
 #if defined(__GNUC__)
+// Modifies: constructs a native message and updates the associated receive diagnostics.
 static void* __attribute__((fastcall)) hooked_message_construct(
     void* message, void* ignored, unsigned char id, const void* data, unsigned int size) {
 #else
+// Modifies: constructs a native message and updates the associated receive diagnostics.
 static void* __fastcall hooked_message_construct(
     void* message, void* ignored, unsigned char id, const void* data, unsigned int size) {
 #endif
@@ -2539,8 +2616,10 @@ typedef struct navigation_event {
 } navigation_event;
 
 #if defined(__GNUC__)
+// Modifies: forwards launcher readiness and posts the existing automatic-start continuation.
 static void __attribute__((fastcall)) hooked_launcher_ready(void* launcher, void* unused) {
 #else
+// Modifies: forwards launcher readiness and posts the existing automatic-start continuation.
 static void __fastcall hooked_launcher_ready(void* launcher, void* unused) {
 #endif
     HWND window;
@@ -2566,12 +2645,14 @@ static void __fastcall hooked_launcher_ready(void* launcher, void* unused) {
 
 
 
+// Reads: returns whether the supplied float bit pattern is finite.
 static int finite_float_bits(const void* pointer) {
     unsigned int bits;
     memcpy(&bits, pointer, sizeof(bits));
     return (bits & 0x7F800000u) != 0x7F800000u;
 }
 
+// Reads/modifies: validates native reflection offsets and caches the preview field layout.
 static int initialize_effect_preview_offsets(void) {
     const unsigned char* metadata;
     const unsigned char* field;
@@ -2632,6 +2713,7 @@ static int initialize_effect_preview_offsets(void) {
     return 1;
 }
 
+// Modifies: clears an unsafe debug preview event and records its rejection.
 static void neutralize_debug_effect_preview(unsigned char* event, unsigned int failure) {
     if (event == NULL || !effect_preview_field.is_ready) {
         return;
@@ -2646,6 +2728,7 @@ static void neutralize_debug_effect_preview(unsigned char* event, unsigned int f
     trace_client_state("effect_preview_failure", failure);
 }
 
+// Modifies: validates preview resources, clears native attachment fields, and writes a safe event position.
 static unsigned int prepare_debug_effect_preview(unsigned char* event) {
     const unsigned char* player;
     const unsigned char* object;
@@ -2699,6 +2782,7 @@ static unsigned int prepare_debug_effect_preview(unsigned char* event) {
     return 0;
 }
 
+// Modifies: decodes a native event and prepares or neutralizes recognized debug previews.
 static unsigned char __cdecl hooked_server_event_decode(void* stream, void* event,
     int flags, reflection_decode_callback_fn callback) {
     unsigned char result;
@@ -2750,6 +2834,7 @@ static unsigned char __cdecl hooked_server_event_decode(void* stream, void* even
     return result;
 }
 
+// Modifies: bypasses native validation for prepared previews, rechecks them, and neutralizes failures.
 static unsigned char __cdecl hooked_server_event_validate(void* event) {
     void* preview_event;
     unsigned int failure;
@@ -2770,6 +2855,7 @@ static unsigned char __cdecl hooked_server_event_validate(void* event) {
     return 1;
 }
 
+// Reads/modifies: reads stat-query arguments and writes the normalized diagnostic command.
 static int normalize_fang_stat_command(
     const char* text, const char* command_text, char* output, size_t output_capacity) {
     size_t prefix_length;
@@ -2811,6 +2897,7 @@ static int normalize_fang_stat_command(
     return (int)prefix_length + written;
 }
 
+// Modifies: normalizes supported commands and delegates native chat text conversion.
 static void* __cdecl hooked_chat_text_convert(void* output, const char* text, int length) {
     char* command_text;
     const char* converted_source = text;
@@ -2891,6 +2978,7 @@ static void* __cdecl hooked_chat_text_convert(void* output, const char* text, in
 /* The movie may construct/reset input widgets after its native controller
  * initializes. Keep the display-only identity synchronized on the UI thread
  * until login completes, rather than relying on a single pre-frame write. */
+// Modifies: refreshes the native token-login display and timer state.
 static VOID CALLBACK jwt_login_ui_callback(HWND window, UINT message, UINT_PTR timer, DWORD time) {
     unsigned int screen_type;
     (void)window;
@@ -2916,8 +3004,10 @@ static VOID CALLBACK jwt_login_ui_callback(HWND window, UINT message, UINT_PTR t
 }
 
 #if defined(__GNUC__)
+// Modifies: initializes token-login presentation, disables remembered login, and submits or schedules authentication.
 static void __attribute__((fastcall)) hooked_login_screen_init(void* controller, void* unused, void* manager) {
 #else
+// Modifies: initializes the native login screen and applies the existing token-login presentation.
 static void __fastcall hooked_login_screen_init(void* controller, void* unused, void* manager) {
 #endif
     UINT_PTR timer;
@@ -2971,6 +3061,7 @@ static void __fastcall hooked_login_screen_init(void* controller, void* unused, 
     trace_client_state("jwt_login_not_ready", 1);
 }
 
+// Modifies: submits the login token and starts its watchdog, or reports timeout and may terminate the client.
 static VOID CALLBACK jwt_login_timer_callback(HWND window, UINT message, UINT_PTR timer, DWORD time) {
     void** methods;
     login_ready_fn ready;
@@ -3024,6 +3115,7 @@ static VOID CALLBACK jwt_login_timer_callback(HWND window, UINT message, UINT_PT
        so the queued login cannot observe a cleared credential. */
 }
 
+// Modifies: appends a diagnostic line to the trace sink and snapshot ring.
 void fang_history_write(const char* line, unsigned int length) {
     DWORD written;
     if (trace_file == INVALID_HANDLE_VALUE || !trace_lock_ready) return;
@@ -3035,6 +3127,7 @@ void fang_history_write(const char* line, unsigned int length) {
     }
 }
 
+// Modifies: appends a named diagnostic field to the active history sample or trace output.
 void trace_client_state(const char* kind, unsigned int value) {
     char line[512];
     DWORD written;
@@ -3063,6 +3156,7 @@ void trace_client_state(const char* kind, unsigned int value) {
     }
 }
 
+// Reads/modifies: resolves an ability descriptor and records its native metadata.
 static void* hooked_ability_descriptor_lookup(unsigned int ability_guid) {
     char line[384];
     DWORD written;
@@ -3096,6 +3190,7 @@ static void* hooked_ability_descriptor_lookup(unsigned int ability_guid) {
     return descriptor;
 }
 
+// Reads/modifies: validates experience thresholds and writes their diagnostic values.
 static int trace_xp_threshold_values(const unsigned int* begin, size_t count) {
     size_t index;
     char line[256];
@@ -3129,6 +3224,7 @@ static int trace_xp_threshold_values(const unsigned int* begin, size_t count) {
     return 1;
 }
 
+// Reads/modifies: observes the native experience threshold table and writes diagnostics.
 static int trace_xp_thresholds(void) {
     const unsigned int* begin;
     const unsigned int* end;
@@ -3146,6 +3242,7 @@ static int trace_xp_thresholds(void) {
     return trace_xp_threshold_values(begin, (size_t)(end - begin));
 }
 
+// Reads/modifies: reads experience thresholds from native resources and records them.
 static int trace_xp_thresholds_from_resource(void) {
     void* manager;
     void** manager_method;
@@ -3190,6 +3287,7 @@ static int trace_xp_thresholds_from_resource(void) {
     return is_traced;
 }
 
+// Modifies: delegates native property decoding into the supplied vector and records thresholds.
 static unsigned char __cdecl hooked_property_vector_read(void* resource, unsigned int property_id,
     unsigned int* count, const unsigned int** value) {
     unsigned char is_read = original_property_vector_read(resource, property_id, count, value);
@@ -3199,6 +3297,7 @@ static unsigned char __cdecl hooked_property_vector_read(void* resource, unsigne
     return is_read;
 }
 
+// Reads/modifies: retries experience-threshold observation and records the resulting diagnostics.
 static DWORD WINAPI trace_xp_thresholds_later(LPVOID parameter) {
     int attempt;
     (void)parameter;
@@ -3222,6 +3321,7 @@ static DWORD WINAPI trace_xp_thresholds_later(LPVOID parameter) {
     return 1;
 }
 
+// Reads/modifies: reads scene identity and markers and writes scene diagnostics.
 static void trace_scene_state(const char* kind, unsigned int asset_id,
     unsigned int value_a, unsigned int value_b, int is_resolved) {
     char line[384];
@@ -3244,6 +3344,7 @@ static void trace_scene_state(const char* kind, unsigned int asset_id,
     LeaveCriticalSection(&trace_lock);
 }
 
+// Reads/modifies: observes decoded game-preparation fields and writes diagnostics.
 static void trace_game_prepare_decode(const unsigned int* value, unsigned int requested_size,
     unsigned int decoded_size, unsigned int stream_size, unsigned int context_offset) {
     char line[384];
@@ -3269,9 +3370,11 @@ static void trace_game_prepare_decode(const unsigned int* value, unsigned int re
 }
 
 #if defined(__GNUC__)
+// Modifies: delegates native quick-game decoding and records the decoded preparation fields.
 static unsigned int __attribute__((fastcall)) hooked_quick_game_read(
     void* stream, void* ignored, void* destination, unsigned int size, void* context) {
 #else
+// Modifies: delegates native quick-game decoding and records the decoded preparation fields.
 static unsigned int __fastcall hooked_quick_game_read(
     void* stream, void* ignored, void* destination, unsigned int size, void* context) {
 #endif
@@ -3287,6 +3390,7 @@ static unsigned int __fastcall hooked_quick_game_read(
     return decoded_size;
 }
 
+// Reads: returns a scene identifier from a readable native scene.
 static unsigned int traced_scene_id(void* scene) {
     void* current = InterlockedCompareExchangePointer(
         (PVOID volatile*)&traced_scene_asset, NULL, NULL);
@@ -3296,6 +3400,7 @@ static unsigned int traced_scene_id(void* scene) {
     return (unsigned int)InterlockedCompareExchange(&traced_scene_asset_id, 0, 0);
 }
 
+// Reads/modifies: resolves a native scene asset and records its identity.
 static void* __cdecl hooked_scene_asset_lookup(unsigned int asset_id) {
     void* scene = original_scene_asset_lookup(asset_id);
     InterlockedExchange(&traced_scene_asset_id, (LONG)asset_id);
@@ -3304,6 +3409,7 @@ static void* __cdecl hooked_scene_asset_lookup(unsigned int asset_id) {
     return scene;
 }
 
+// Reads/modifies: observes creature resource fields and writes lookup diagnostics.
 static void trace_creature_resource_lookup(const char* kind, const void* resource,
     const void* result, unsigned int nested_handle) {
     char line[512];
@@ -3331,6 +3437,7 @@ static void trace_creature_resource_lookup(const char* kind, const void* resourc
     }
 }
 
+// Modifies: delegates native creature lookup into the output and records resource diagnostics.
 static void* __cdecl hooked_creature_asset_lookup(void* resource, void* output) {
     /* Build 103's 9ECA10 tail-jumps to 9C8E70: resource and output arguments.
        Neither the property return nor its nested handle proves model readiness. */
@@ -3351,6 +3458,7 @@ static void* __cdecl hooked_creature_asset_lookup(void* resource, void* output) 
     return property;
 }
 
+// Modifies: delegates nested creature lookup into the output and records diagnostics.
 static void* __cdecl hooked_creature_nested_lookup(void* asset, void* output) {
     void* result = original_creature_nested_lookup(asset, output);
     DWORD native_error = GetLastError();
@@ -3359,6 +3467,7 @@ static void* __cdecl hooked_creature_nested_lookup(void* asset, void* output) {
     return result;
 }
 
+// Modifies: forwards native scene loading and records the scene transition.
 static void __cdecl hooked_scene_load(void* scene, unsigned int markerset, unsigned int index) {
     unsigned int asset_id = traced_scene_id(scene);
     trace_scene_state("scene_load_request", asset_id, markerset, index, asset_id != 0);
@@ -3380,6 +3489,7 @@ static void __cdecl hooked_scene_load(void* scene, unsigned int markerset, unsig
 #endif
 }
 
+// Modifies: forwards native scene changes and updates transition diagnostics.
 static void __cdecl hooked_scene_change(void* simulator, void* scene) {
     unsigned int asset_id = traced_scene_id(scene);
 #if FANG_DIAGNOSTICS
@@ -3408,6 +3518,7 @@ static void __cdecl hooked_scene_change(void* simulator, void* scene) {
 #endif
 }
 
+// Modifies: completes the active native spline and restores its camera/movie continuation.
 static int complete_active_spline(void) {
     void* skipped;
     void* registry;
@@ -3446,6 +3557,7 @@ static int complete_active_spline(void) {
     return skipped != NULL;
 }
 
+// Modifies: forwards or completes native spline playback and updates cinematic bookkeeping.
 static unsigned char __cdecl hooked_spline_update(void* camera, float delta) {
     if (camera != NULL) {
         BYTE* base = (BYTE*)camera;
@@ -3493,6 +3605,7 @@ static unsigned char __cdecl hooked_spline_update(void* camera, float delta) {
     return original_spline_update(camera, delta);
 }
 
+// Modifies: repairs the native Rooms target from the current platform state.
 static unsigned int repair_rooms_target(void) {
     void* platform = original_online_platform();
     void** rooms;
@@ -3539,6 +3652,7 @@ static unsigned int repair_rooms_target(void) {
     return 0;
 }
 
+// Modifies: repairs the chat controller's selected Rooms projection when needed.
 static unsigned int repair_chat_rooms_target(void) {
     void* platform = original_online_platform();
     void* chat = original_chat_lookup();
@@ -3561,6 +3675,7 @@ static unsigned int repair_chat_rooms_target(void) {
     return 1;
 }
 
+// Modifies: bootstraps and repairs the native chat Rooms target.
 static unsigned int prepare_chat_rooms_target(void) {
     void* platform;
     void* rooms;
@@ -3592,6 +3707,7 @@ static unsigned int prepare_chat_rooms_target(void) {
     return state;
 }
 
+// Reads/modifies: observes the native Rooms roster and writes bounded diagnostics.
 static void trace_rooms_roster(void) {
     void* platform = original_online_platform();
     void** rooms;
@@ -3639,6 +3755,7 @@ static void trace_rooms_roster(void) {
     trace_client_state("rooms_roster_resolved", resolved_count);
 }
 
+// Reads/modifies: observes party readiness and navigation state and writes diagnostics.
 static void trace_party_navigation_gate(void* party, unsigned char is_ready) {
     BYTE* party_bytes = (BYTE*)party;
     void** buckets;
@@ -3714,12 +3831,14 @@ static void trace_party_navigation_gate(void* party, unsigned char is_ready) {
     trace_client_state("party_navigation_traced", traced_count);
 }
 
+// Reads/modifies: queries native party readiness and records the navigation gate.
 static unsigned char FANG_THISCALL hooked_party_ready(void* party) {
     unsigned char is_ready = original_party_ready(party);
     trace_party_navigation_gate(party, is_ready);
     return is_ready;
 }
 
+// Modifies: advances native navigation and applies the existing tutorial/Rooms continuation.
 static void __cdecl hooked_navigation_update(void* controller) {
     navigation_event event;
     int is_return;
@@ -3808,12 +3927,14 @@ static void __cdecl hooked_navigation_update(void* controller) {
     trace_client_state(is_return ? "ship_return_start" : "ship_start", 1);
 }
 
+// Reads/modifies: queries native scene readiness and records its result.
 static unsigned char __cdecl hooked_scene_ready(void) {
     unsigned char ready = original_scene_ready();
     trace_client_state("scene_ready", ready);
     return ready;
 }
 
+// Reads/modifies: queries native UI readiness and records its result.
 static unsigned char __cdecl hooked_ui_ready(void) {
     unsigned char ready = original_ui_ready();
     trace_client_state("ui_ready", ready);
@@ -3821,8 +3942,10 @@ static unsigned char __cdecl hooked_ui_ready(void) {
 }
 
 #if defined(__GNUC__)
+// Modifies: forwards native screen events and updates login and cinematic transition state.
 static unsigned char __attribute__((fastcall)) hooked_screen_event(void* target, void* ignored, unsigned int event_id) {
 #else
+// Modifies: forwards native screen events and updates login and cinematic transition state.
 static unsigned char __fastcall hooked_screen_event(void* target, void* ignored, unsigned int event_id) {
 #endif
     unsigned char result;
@@ -3852,6 +3975,7 @@ static unsigned char __fastcall hooked_screen_event(void* target, void* ignored,
     return result;
 }
 
+// Reads: returns a caller's offset from the loaded game executable.
 uintptr_t fang_trace_caller_rva(void* caller) {
     if (executable_module == NULL || caller == NULL) {
         return 0;
@@ -3859,6 +3983,7 @@ uintptr_t fang_trace_caller_rva(void* caller) {
     return (uintptr_t)((BYTE*)caller - (BYTE*)executable_module);
 }
 
+// Reads: returns a bounded diagnostic digest of the supplied bytes.
 uint64_t fang_trace_digest(const char* buffer, int length) {
     uint64_t digest = 1469598103934665603ULL;
     int index;
@@ -3872,6 +3997,7 @@ uint64_t fang_trace_digest(const char* buffer, int length) {
     return digest;
 }
 
+// Reads/modifies: observes a native alert and writes a bounded diagnostic record.
 static void trace_alert_event(LPCWSTR text, uintptr_t caller_rva) {
     char utf8[384];
     char escaped[512];
@@ -3910,6 +4036,7 @@ static void trace_alert_event(LPCWSTR text, uintptr_t caller_rva) {
     LeaveCriticalSection(&trace_lock);
 }
 
+// Reads/modifies: observes a path lookup and writes a diagnostic record.
 static void trace_path_event(LPCWSTR path, uintptr_t caller_rva, DWORD result, DWORD error) {
     char utf8[512];
     char escaped[640];
@@ -3948,6 +4075,7 @@ static void trace_path_event(LPCWSTR path, uintptr_t caller_rva, DWORD result, D
     LeaveCriticalSection(&trace_lock);
 }
 
+// Reads/modifies: observes an internal alert and writes its diagnostic fields.
 static void trace_internal_alert_event(const char* message, int code, int severity, uintptr_t caller_rva) {
     WCHAR wide[384];
     char utf8[512];
@@ -3992,6 +4120,7 @@ static void trace_internal_alert_event(const char* message, int code, int severi
     LeaveCriticalSection(&trace_lock);
 }
 
+// Reads/modifies: observes a native login error and records its public failure state.
 static void trace_login_error_event(unsigned int code, uintptr_t caller_rva) {
     char line[384];
     DWORD written;
@@ -4011,6 +4140,7 @@ static void trace_login_error_event(unsigned int code, uintptr_t caller_rva) {
     LeaveCriticalSection(&trace_lock);
 }
 
+// Modifies: accepts a pending chat-exit confirmation, or logs and forwards the wide native dialog.
 static int WINAPI hooked_messageboxw(HWND window, LPCWSTR text, LPCWSTR caption, UINT type) {
     trace_alert_event(text, fang_trace_caller_rva(__builtin_return_address(0)));
     if (InterlockedExchange(&chat_exit_pending, 0) != 0) {
@@ -4024,6 +4154,7 @@ static int WINAPI hooked_messageboxw(HWND window, LPCWSTR text, LPCWSTR caption,
     return original_messageboxw(window, text, caption, type);
 }
 
+// Modifies: accepts a pending chat-exit confirmation, or logs and forwards the narrow native dialog.
 static int WINAPI hooked_messageboxa(HWND window, LPCSTR text, LPCSTR caption, UINT type) {
     WCHAR wide[384];
     int converted = text == NULL ? 0 : MultiByteToWideChar(CP_ACP, 0, text, -1, wide, sizeof(wide) / sizeof(wide[0]));
@@ -4042,6 +4173,7 @@ static int WINAPI hooked_messageboxa(HWND window, LPCSTR text, LPCSTR caption, U
     return original_messageboxa(window, text, caption, type);
 }
 
+// Reads/modifies: queries native file attributes and records the path lookup result.
 static DWORD WINAPI hooked_getfileattributesw(LPCWSTR file_name) {
     uintptr_t caller_rva = fang_trace_caller_rva(__builtin_return_address(0));
     DWORD result = original_getfileattributesw(file_name);
@@ -4053,11 +4185,13 @@ static DWORD WINAPI hooked_getfileattributesw(LPCWSTR file_name) {
     return result;
 }
 
+// Reads/modifies: records an internal alert and forwards it to the native handler.
 static void __cdecl hooked_internal_alert(const char* message, int code, int severity) {
     trace_internal_alert_event(message, code, severity, fang_trace_caller_rva(__builtin_return_address(0)));
     original_alert(message, code, severity);
 }
 
+// Modifies: completes failed login, records launcher rejection, and may terminate the production client.
 static void __cdecl hooked_login_error(unsigned int code, void* target) {
     LONG was_login_completed = InterlockedExchange(&jwt_login_completed, 1);
     trace_login_error_event(code, fang_trace_caller_rva(__builtin_return_address(0)));
@@ -4072,34 +4206,40 @@ static void __cdecl hooked_login_error(unsigned int code, void* target) {
     original_login_error(code, target);
 }
 
+// Reads: ignores verification arguments without modifying the TLS context.
 static void hooked_ssl_ctx_set_verify(void* context, int mode, void* callback) {
     (void)context;
     (void)mode;
     (void)callback;
 }
 
+// Reads: ignores the TLS input and returns a zero verification result.
 static long hooked_ssl_get_verify_result(const void* ssl) {
     (void)ssl;
     return 0;
 }
 
+// Reads: ignores both hostname inputs and returns a zero match result.
 static int hooked_wildcard_match_no_case(const char* first, const char* second) {
     (void)first;
     (void)second;
     return 0;
 }
 
+// Reads: ignores certificate inputs and returns a zero verification result.
 static int hooked_verify_certificate(void* certificate, int self_signed) {
     (void)certificate;
     (void)self_signed;
     return 0;
 }
 
+// Reads: returns whether a character can belong to a locale identifier.
 static int is_locale_letter(wchar_t character) {
     return (character >= L'a' && character <= L'z') ||
         (character >= L'A' && character <= L'Z');
 }
 
+// Reads: returns whether the process command line supplies a client locale.
 static int has_client_locale_argument(void) {
     const wchar_t* command_line = GetCommandLineW();
     const wchar_t* cursor;
@@ -4128,6 +4268,7 @@ static int has_client_locale_argument(void) {
     return 0;
 }
 
+// Modifies: makes the validated locale branch unconditional when a client locale argument exists.
 static int patch_locale_argument_precedence(HMODULE executable) {
     static const BYTE registry_branch_signature[] = {
         0xE8, 0xCE, 0x11, 0xFC, 0xFF, 0x83, 0xC4, 0x40,
@@ -4147,6 +4288,7 @@ static int patch_locale_argument_precedence(HMODULE executable) {
         sizeof(unconditional_jump));
 }
 
+// Modifies: reads the native stream, enables decoded PVPMode2V1 operands, and records patch bookkeeping.
 static int FANG_THISCALL hooked_scaleform_stream_read(void* stream,
     void* destination, int length) {
     /*
@@ -4227,6 +4369,7 @@ static int FANG_THISCALL hooked_scaleform_stream_read(void* stream,
 }
 
 #if defined(__GNUC__) && defined(__i386__)
+// Modifies: updates pending solo matchmaking from mode arguments and tail-calls native map-room startup.
 static void __attribute__((naked)) hooked_map_room_start_game(void) {
     __asm__ __volatile__(
         "pushfl\n\t"
@@ -4258,6 +4401,7 @@ static void __attribute__((naked)) hooked_map_room_start_game(void) {
 #endif
 
 
+// Modifies: installs existing network and system import hooks on loaded modules.
 static int patch_network_imports(void) {
     HMODULE modules[2];
     int module_count = 1;
@@ -4288,6 +4432,7 @@ static int patch_network_imports(void) {
     return (dns_patches > 0 ? 0 : (1 | (int)fang_network_diagnostics())) | (connect_patches > 0 ? 0 : 2);
 }
 
+// Modifies: retries import-hook installation on late-loaded client modules.
 static DWORD WINAPI patch_late_modules(LPVOID parameter) {
     int attempt;
     (void)parameter;
@@ -4303,6 +4448,7 @@ static DWORD WINAPI patch_late_modules(LPVOID parameter) {
 
 static char darkspin_window_title[128] = "Dark Spin v0.0.0";
 
+// Modifies: installs window integrations and applies the Dark Spin game-window title.
 static BOOL CALLBACK rename_game_window(HWND window, LPARAM parameter) {
     DWORD process_id = 0;
     char current_title[128];
@@ -4326,6 +4472,7 @@ static BOOL CALLBACK rename_game_window(HWND window, LPARAM parameter) {
     return TRUE;
 }
 
+// Modifies: retries game-window branding and window-hook attachment until confirmed.
 static DWORD WINAPI brand_game_window(LPVOID parameter) {
     int attempt;
     int confirmation;
@@ -4348,6 +4495,7 @@ static DWORD WINAPI brand_game_window(LPVOID parameter) {
     return 1;
 }
 
+// Modifies: binds build-103 interfaces and installs configured Fang hooks and diagnostic workers.
 int fang_install(const char* hostname, unsigned short port, unsigned short party_port,
     const char* trace_path, int skip_intro, int skip_cinematic,
     const char* jwt, const char* window_title) {
@@ -4845,6 +4993,7 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
     return result;
 }
 
+// Modifies: invokes Go-owned Fang initialization from the exported loader thread entry.
 __declspec(dllexport) DWORD WINAPI RecapInitializeThread(LPVOID parameter) {
     (void)parameter;
     return (DWORD)GoRecapInitialize();

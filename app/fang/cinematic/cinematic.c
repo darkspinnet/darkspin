@@ -29,6 +29,7 @@ static BYTE* image;
 static volatile LONG setting_flags;
 static volatile LONG is_installed;
 
+// Reads: queries the current native movie's playback status.
 static int cinematic_is_playing(void) {
     void* movie = movie_lookup();
     cinematic_playing_fn playing;
@@ -37,6 +38,7 @@ static int cinematic_is_playing(void) {
     return playing(movie) != 0;
 }
 
+// Reads/modifies: queries native input, substitutes enabled cinematic Escape results, and logs skips.
 static int CINEMATIC_FASTCALL cinematic_key(void* input, void* ignored, int key) {
     void* caller = CINEMATIC_CALLER();
     int is_pressed = original_key(input, key);
@@ -64,6 +66,7 @@ static int CINEMATIC_FASTCALL cinematic_key(void* input, void* ignored, int key)
     return is_pressed;
 }
 
+// Modifies: binds native cinematic queries, patches the key callback, and records skip settings.
 int fang_cinematic_install(HMODULE executable, int is_intro_skipped, int is_cinematic_skipped) {
     static const BYTE opening_query[] = {0x8B,0x17,0x8B,0x42,0x34,0x6A,0x1B,0x8B,0xCF,0xFF,0xD0};
     static const BYTE camera_query[] = {0x8B,0x55,0x00,0x8B,0x42,0x34,0x6A,0x1B,0x8B,0xCD,0xFF,0xD0};
@@ -84,6 +87,7 @@ int fang_cinematic_install(HMODULE executable, int is_intro_skipped, int is_cine
     return 1;
 }
 
+// Modifies: updates skip flags, fills completion metadata, and logs the resulting settings.
 int fang_cinematic_configure(uint32_t mask, uint32_t flags, fang_cinematic_setting* setting) {
     LONG previous, next;
     if (!setting || !mask || (mask & ~3u) || (flags & ~mask) ||

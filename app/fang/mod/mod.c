@@ -28,6 +28,7 @@ static wchar_t mod_manifest[32768];
 
 /* The retail service discovery still requests its fixed loopback ports after
  * bootstrap. A Mod client must never fall through to the normal save server. */
+// Reads/modifies: caches Mod mode and rewrites fixed loopback service ports in the caller's socket address.
 int fang_redirect_mod_address(struct sockaddr_in* address, unsigned short port, unsigned short party_port) {
     static LONG mode = -1;
     LONG is_enabled = InterlockedCompareExchange(&mode, -1, -1);
@@ -50,10 +51,12 @@ int fang_redirect_mod_address(struct sockaddr_in* address, unsigned short port, 
     return 0;
 }
 
+// Reads: checks readable native code bytes against an expected signature.
 static int mod_signature(BYTE* base, unsigned int offset, const BYTE* bytes, size_t count) {
     return readable_range(base + offset, count) && memcmp(base + offset, bytes, count) == 0;
 }
 
+// Reads: validates pointer width and native package and stream interfaces for the supported client.
 static int mod_supported(BYTE* base) {
     static const BYTE allocator[] = {0x56, 0xe8, 0x3a, 0x59, 0x02, 0x00};
     static const BYTE constructor[] = {0x53, 0x56, 0x8b, 0xf1};
@@ -73,6 +76,7 @@ static int mod_supported(BYTE* base) {
         database_methods[26] == base + 0x71a590;
 }
 
+// Reads/modifies: allocates a native database, attaches a source or private memory stream, and registers it with the resource manager.
 static int mod_mount(BYTE* base, void* manager, const wchar_t* path, int priority, unsigned int index,
     const BYTE* payload, unsigned int size) {
     mod_allocate_fn allocate = (mod_allocate_fn)(base + 0x6efda0);
@@ -116,6 +120,7 @@ static int mod_mount(BYTE* base, void* manager, const wchar_t* path, int priorit
     return is_added != 0;
 }
 
+// Reads/modifies: advances Mod updates, mounts configured resources once, installs native compatibility hooks, and records initialization state and traces.
 void fang_update_mod(void) {
     BYTE* base;
     void* manager;

@@ -8,6 +8,7 @@ typedef unsigned char (FANG_THISCALL *shop_editor_part_fn)(void*, const BYTE*, i
 static shop_editor_part_fn native_editor_part;
 static fang_hook_set inventory_hooks;
 
+// Modifies: admits owned inventory entries to the native palette operation and rejects market entries.
 static unsigned char FANG_THISCALL shop_editor_part(void* palette,
     const BYTE* entry, int is_update) {
     /* Build 103 sub_4BDFF0 checks genesis, class and equipped hero but not
@@ -23,6 +24,7 @@ static unsigned char FANG_THISCALL shop_editor_part(void* palette,
 /* At 431DC0 EDI is the live inventory entry. Replace only the Sell Value
  * localization selection; the existing half-cost math and server quote
  * bridge remain intact. 097AA9A1 is the client's normal purchase Cost text. */
+// Reads/modifies: selects the Cost or Sell Value localization ID in EAX from the live inventory entry.
 static void __attribute__((naked)) shop_cost_label(void) {
     __asm__(
         "pushfl\n"
@@ -36,6 +38,7 @@ static void __attribute__((naked)) shop_cost_label(void) {
         "ret\n");
 }
 
+// Modifies: patches editor inventory admission and offer cost labels with rollback on failure.
 int fang_install_shop_inventory(HMODULE executable) {
     static const unsigned int editor_calls[] = {0xBE2C6, 0xBE758, 0xBFE69, 0xC0457};
     static const BYTE label_signature[] = {0xB8, 0x18, 0x8B, 0x63, 0x0B};

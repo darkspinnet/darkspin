@@ -20,6 +20,7 @@ static volatile LONG alternate_call_count;
 static volatile LONG alternate_limit_reported;
 static volatile LONG alternate_install_attempted;
 
+// Modifies: reserves a bounded Fang alternate-call ordinal atomically.
 static uint32_t reserve_alternate_call(void) {
     LONG observed = InterlockedCompareExchange(&alternate_call_count, 0, 0);
     while (observed < SCENARIO_ALTERNATE_CALL_LIMIT) {
@@ -33,6 +34,7 @@ static uint32_t reserve_alternate_call(void) {
     return 0;
 }
 
+// Reads/modifies: copies authored native inputs into the frame, advances Fang counters, and traces entry while preserving LastError.
 void __cdecl scenario_alternate_before(ScenarioAlternateFrame* frame, const void* entry,
     uint32_t raw_marker_set_reference, int32_t entry_ordinal) {
     DWORD last_error = GetLastError();
@@ -58,6 +60,7 @@ void __cdecl scenario_alternate_before(ScenarioAlternateFrame* frame, const void
     SetLastError(last_error);
 }
 
+// Modifies: records normal return in the owned frame and traces it while preserving native LastError.
 void __cdecl scenario_alternate_after(ScenarioAlternateFrame* frame) {
     DWORD last_error = GetLastError();
     ScenarioAlternateSelectionEvent* req = &frame->EventArea.Event;
@@ -70,6 +73,7 @@ void __cdecl scenario_alternate_after(ScenarioAlternateFrame* frame) {
     SetLastError(last_error);
 }
 
+// Reads/modifies: checks CPU/OS state support and stores Fang save-mode, mask, and size settings.
 static int prepare_alternate_state(void) {
     SYSTEM_INFO system;
     unsigned int eax, ebx, ecx, edx;
@@ -109,6 +113,7 @@ static int prepare_alternate_state(void) {
     return 1;
 }
 
+// Modifies: prepares Fang state, patches the native alternate-selection call, and logs installation results.
 int install_scenario_alternate_observation(void* executable) {
     DWORD last_error = GetLastError();
     unsigned char* base = (unsigned char*)executable;

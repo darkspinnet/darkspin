@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+// Reads: checks a case-insensitive command prefix and its terminating boundary.
 static int is_darkspin_chat_command(const char* text, const char* command) {
     size_t command_length;
     size_t index;
@@ -285,6 +286,7 @@ static const char* fang_spawn_nouns[] = {
     "ZelemSpecialTwo_Captain.Noun"
 };
 
+// Reads: returns the ASCII lowercase form of a character.
 static char fang_ascii_lower(char character) {
     if (character >= 'A' && character <= 'Z') {
         return (char)(character + ('a' - 'A'));
@@ -292,6 +294,7 @@ static char fang_ascii_lower(char character) {
     return character;
 }
 
+// Reads: compares a complete location name with a case-insensitive argument.
 static int fang_warp_name_equals(
     const char* location, const char* partial, size_t partial_length) {
     size_t location_length = strlen(location);
@@ -307,6 +310,7 @@ static int fang_warp_name_equals(
     return 1;
 }
 
+// Reads: checks whether a location contains a case-insensitive argument.
 static int fang_warp_name_contains(
     const char* location, const char* partial, size_t partial_length) {
     size_t location_length = strlen(location);
@@ -329,6 +333,7 @@ static int fang_warp_name_contains(
     return 0;
 }
 
+// Reads: resolves a numeric warp alias to its canonical location.
 static const char* find_fang_warp_alias(const char* partial, size_t partial_length) {
     unsigned int alias = 0;
     size_t index;
@@ -353,6 +358,7 @@ static const char* find_fang_warp_alias(const char* partial, size_t partial_leng
     return fang_warp_aliases[alias - 1];
 }
 
+// Reads: resolves an alias, exact name, or unique partial location name.
 static const char* find_fang_warp_location(const char* partial, size_t partial_length) {
     const char* matched_location = find_fang_warp_alias(partial, partial_length);
     size_t location_index;
@@ -379,6 +385,7 @@ static const char* find_fang_warp_location(const char* partial, size_t partial_l
     return matched_location;
 }
 
+// Reads: compares a noun name with an argument, allowing an omitted .Noun suffix.
 static int fang_spawn_name_equals(
     const char* noun_name, const char* partial, size_t partial_length) {
     size_t noun_length = strlen(noun_name);
@@ -402,6 +409,7 @@ static int fang_spawn_name_equals(
     return 1;
 }
 
+// Reads: resolves an exact or unique partial spawn noun name.
 static const char* find_fang_spawn_noun(const char* partial, size_t partial_length) {
     const char* matched_noun = NULL;
     size_t noun_index;
@@ -425,6 +433,7 @@ static const char* find_fang_spawn_noun(const char* partial, size_t partial_leng
     return matched_noun;
 }
 
+// Modifies: writes the recognized command ID and returns its position in chat text.
 char* find_darkspin_chat_command(const char* text, int* command) {
     const char* cursor = text;
     size_t remaining = 1024;
@@ -566,6 +575,7 @@ char* find_darkspin_chat_command(const char* text, int* command) {
     return NULL;
 }
 
+// Modifies: writes chat text with a canonical warp destination or a bare /warp command.
 int normalize_fang_warp_command(
     const char* text, const char* command_text, char* output, size_t output_capacity) {
     const char* cursor = command_text + 5;
@@ -616,6 +626,7 @@ int normalize_fang_warp_command(
     return (int)output_length;
 }
 
+// Modifies: writes chat text with a canonical spawn noun or a bare /spawn command.
 int normalize_fang_spawn_command(
     const char* text, const char* command_text, char* output, size_t output_capacity) {
     const char* cursor = command_text + 6;

@@ -35,6 +35,7 @@ typedef struct control_window_scan {
     unsigned int count;
 } control_window_scan;
 
+// Reads/modifies: filters process windows and updates the caller's candidate window/count scan.
 static BOOL CALLBACK observe_control_window(HWND window, LPARAM parameter) {
     control_window_scan* scan = (control_window_scan*)parameter;
     DWORD process_id = 0;
@@ -53,6 +54,7 @@ static BOOL CALLBACK observe_control_window(HWND window, LPARAM parameter) {
 
 /* Read-only installed Win32 APIs. No game pointers, native callbacks, window
  * messages, cursor changes, activation, or retained window handles. */
+// Reads/modifies: reads Win32 window metadata and fills the caller's window snapshot.
 int fang_control_window_inspect(fang_control_window_snapshot* snapshot) {
     control_window_scan scan = {0};
     DWORD process_id = 0;
@@ -75,6 +77,7 @@ int fang_control_window_inspect(fang_control_window_snapshot* snapshot) {
     return 1;
 }
 
+// Modifies: registers the Fang wake-up message, retains the owned window, and rejects stale pending work on replacement.
 void fang_control_window_attach(HWND window) {
     DWORD process_id = 0;
     if (!window || !GetWindowThreadProcessId(window, &process_id) || process_id != GetCurrentProcessId()) return;
@@ -87,6 +90,7 @@ void fang_control_window_attach(HWND window) {
     ReleaseSRWLockExclusive(&window_lock);
 }
 
+// Reads: returns whether a window and client point are eligible for an owned finite click.
 static int control_click_window(HWND window, int32_t x, int32_t y) {
     DWORD process_id = 0;
     RECT rect;
@@ -97,6 +101,7 @@ static int control_click_window(HWND window, int32_t x, int32_t y) {
         rect.right <= 32767 && rect.bottom <= 32767;
 }
 
+// Modifies: queues a validated Fang window command and snapshots, then posts its owner-thread wake-up message.
 static int submit_control_window_with_owner(uint32_t request_id, int32_t x, int32_t y, uint32_t timeout_ms, int kind,
     const char* text, uint32_t length, uint64_t expected_owner_generation) {
     int is_posted = 0;
@@ -146,27 +151,33 @@ static int submit_control_window_with_owner(uint32_t request_id, int32_t x, int3
     return is_posted;
 }
 
+// Modifies: queues a Fang window command without an expected UI owner generation and posts its wake-up.
 static int submit_control_window(uint32_t request_id, int32_t x, int32_t y, uint32_t timeout_ms, int kind,
     const char* text, uint32_t length) {
     return submit_control_window_with_owner(request_id, x, y, timeout_ms, kind, text, length, 0);
 }
 
+// Modifies: queues a finite left click in Fang and posts its owner-thread wake-up.
 int fang_control_window_submit(uint32_t request_id, int32_t x, int32_t y, uint32_t timeout_ms) {
     return submit_control_window(request_id, x, y, timeout_ms, 0, NULL, 0);
 }
 
+// Modifies: queues a finite right click in Fang and posts its owner-thread wake-up.
 int fang_control_window_right_click(uint32_t request_id, int32_t x, int32_t y, uint32_t timeout_ms) {
     return submit_control_window(request_id, x, y, timeout_ms, 16, NULL, 0);
 }
 
+// Modifies: queues a responsiveness probe in Fang and posts its owner-thread wake-up.
 int fang_control_window_ready(uint32_t request_id, uint32_t timeout_ms) {
     return submit_control_window(request_id, 0, 0, timeout_ms, 1, NULL, 0);
 }
 
+// Modifies: queues a cinematic observation in Fang and posts its owner-thread wake-up.
 int fang_control_window_cinematic(uint32_t request_id, uint32_t timeout_ms) {
     return submit_control_window(request_id, 0, 0, timeout_ms, 23, NULL, 0);
 }
 
+// Reads/modifies: copies the matching completed Fang cinematic snapshot into the caller's output.
 int fang_control_window_cinematic_result(uint32_t request_id, fang_control_cinematic_snapshot* snapshot) {
     int is_found;
     if (!snapshot) return 0;
@@ -177,12 +188,14 @@ int fang_control_window_cinematic_result(uint32_t request_id, fang_control_cinem
     return is_found;
 }
 
+// Modifies: queues a screen observation or selection in Fang and posts its owner-thread wake-up.
 int fang_control_window_screen(uint32_t request_id, uint32_t screen, int is_action, uint64_t expected_owner_generation, uint32_t timeout_ms) {
     if ((screen > 5 && screen != 7) || (is_action && !expected_owner_generation)) return 0;
     return submit_control_window_with_owner(request_id, (int32_t)screen, 0, timeout_ms,
         is_action ? 18 : 17, NULL, 0, expected_owner_generation);
 }
 
+// Reads/modifies: copies the matching completed Fang screen snapshot into the caller's output.
 int fang_control_window_screen_result(uint32_t request_id, fang_control_screen_state* snapshot) {
     int is_found;
     if (!snapshot) return 0;
@@ -194,6 +207,7 @@ int fang_control_window_screen_result(uint32_t request_id, fang_control_screen_s
     return is_found;
 }
 
+// Reads: returns whether the matching Fang screen command remains pending and uncanceled.
 int fang_control_window_screen_current(uint32_t request_id) {
     int is_current;
     AcquireSRWLockShared(&window_lock);
@@ -203,42 +217,51 @@ int fang_control_window_screen_current(uint32_t request_id) {
     return is_current;
 }
 
+// Modifies: queues a native room-transition request in Fang and posts its owner-thread wake-up.
 int fang_control_window_scene(uint32_t request_id, uint32_t room, uint32_t timeout_ms) {
     if (room < 1 || room > 3) return 0;
     return submit_control_window(request_id, (int32_t)room, 0, timeout_ms, 2, NULL, 0);
 }
 
+// Modifies: queues a native room-readiness probe in Fang and posts its owner-thread wake-up.
 int fang_control_window_scene_ready(uint32_t request_id, uint32_t room, uint32_t timeout_ms) {
     if (room < 1 || room > 3) return 0;
     return submit_control_window(request_id, (int32_t)room, 0, timeout_ms, 3, NULL, 0);
 }
 
+// Modifies: queues an allowed finite key press in Fang and posts its owner-thread wake-up.
 int fang_control_window_press(uint32_t request_id, uint32_t key, uint32_t timeout_ms) {
     if (key != VK_ESCAPE && key != VK_RETURN) return 0;
     return submit_control_window(request_id, (int32_t)key, 0, timeout_ms, 4, NULL, 0);
 }
 
+// Modifies: queues bounded ASCII character delivery in Fang and posts its owner-thread wake-up.
 int fang_control_window_text(uint32_t request_id, const char* text, uint32_t length, uint32_t timeout_ms) {
     return submit_control_window(request_id, 0, 0, timeout_ms, 15, text, length);
 }
 
+// Modifies: queues a map-state observation in Fang and posts its owner-thread wake-up.
 int fang_control_window_map(uint32_t request_id, uint32_t timeout_ms) {
     return submit_control_window(request_id, 0, 0, timeout_ms, 5, NULL, 0);
 }
 
+// Modifies: queues a native editor Cancel click in Fang and posts its owner-thread wake-up.
 int fang_control_window_editor_cancel(uint32_t request_id, uint32_t timeout_ms) {
     return submit_control_window(request_id, 0, 0, timeout_ms, 12, NULL, 0);
 }
 
+// Modifies: queues an editor-tree observation in Fang and posts its owner-thread wake-up.
 int fang_control_window_editor_hierarchy(uint32_t request_id, uint32_t timeout_ms) {
     return submit_control_window(request_id, 0, 0, timeout_ms, 21, NULL, 0);
 }
 
+// Modifies: queues an owned editor-open action in Fang and posts its owner-thread wake-up.
 int fang_control_window_editor_open(uint32_t request_id, uint32_t hero_noun, int is_import, uint32_t timeout_ms) {
     if (!hero_noun) return 0;
     return submit_control_window(request_id, (int32_t)hero_noun, is_import != 0, timeout_ms, 22, NULL, 0);
 }
 
+// Reads: returns whether the matching Fang editor-tree command remains pending and uncanceled.
 int fang_control_window_editor_current(uint32_t request_id) {
     int is_current;
     AcquireSRWLockShared(&window_lock);
@@ -247,6 +270,7 @@ int fang_control_window_editor_current(uint32_t request_id) {
     return is_current;
 }
 
+// Reads/modifies: copies the matching completed Fang editor tree snapshot into the caller's output.
 int fang_control_window_editor_tree_result(uint32_t request_id, fang_control_editor_tree* snapshot) {
     int is_found;
     if (!snapshot) return 0;
@@ -260,11 +284,13 @@ int fang_control_window_editor_tree_result(uint32_t request_id, fang_control_edi
 /* Fixed allowlist: 6 authored Map Start, 7 deployment observation, 8 authored
  * deployment Continue, 9 Campaign, 10 Previous, 11 Next. No caller-selected
  * GFx name or arguments are accepted. */
+// Modifies: queues an allowed mission/arena/beam observation or action in Fang and posts its owner-thread wake-up.
 int fang_control_window_mission(uint32_t request_id, uint32_t kind, uint32_t timeout_ms) {
     if ((kind < 6 || kind > 11) && kind != 13 && kind != 14 && kind != 19 && kind != 20) return 0;
     return submit_control_window(request_id, 0, 0, timeout_ms, (int)kind, NULL, 0);
 }
 
+// Reads/modifies: copies the matching completed Fang beam snapshot into the caller's output.
 int fang_control_window_beam_result(uint32_t request_id, fang_control_beam_state* snapshot) {
     int is_found;
     if (!snapshot) return 0;
@@ -275,6 +301,7 @@ int fang_control_window_beam_result(uint32_t request_id, fang_control_beam_state
     return is_found;
 }
 
+// Reads/modifies: copies the matching completed Fang map snapshot into the caller's output.
 int fang_control_window_map_result(uint32_t request_id, fang_control_map_state* snapshot) {
     int is_found;
     if (!snapshot) return 0;
@@ -286,6 +313,7 @@ int fang_control_window_map_result(uint32_t request_id, fang_control_map_state* 
     return is_found;
 }
 
+// Reads/modifies: copies the matching completed Fang arena snapshot into the caller's output.
 int fang_control_window_arena_result(uint32_t request_id, fang_control_arena_state* snapshot) {
     int is_found;
     if (!snapshot) return 0;
@@ -296,6 +324,7 @@ int fang_control_window_arena_result(uint32_t request_id, fang_control_arena_sta
     return is_found;
 }
 
+// Reads/modifies: copies the matching completed Fang deployment snapshot into the caller's output.
 int fang_control_window_deployment_result(uint32_t request_id, fang_control_deployment_state* snapshot) {
     int is_found;
     if (!snapshot) return 0;
@@ -306,6 +335,7 @@ int fang_control_window_deployment_result(uint32_t request_id, fang_control_depl
     return is_found;
 }
 
+// Reads/modifies: checks held-key gates and dispatches an allowed key press/release through the game WndProc.
 static uint32_t process_control_key(HWND window, WNDPROC original, uint32_t key) {
     LPARAM scan;
     if (!original || (key != VK_ESCAPE && key != VK_RETURN) ||
@@ -318,6 +348,7 @@ static uint32_t process_control_key(HWND window, WNDPROC original, uint32_t key)
     return 1;
 }
 
+// Reads/modifies: copies the matching Fang window receipt into the caller's output.
 int fang_control_window_result(uint32_t request_id, fang_control_window_receipt* receipt) {
     int is_found;
     if (!receipt) return 0;
@@ -328,6 +359,7 @@ int fang_control_window_result(uint32_t request_id, fang_control_window_receipt*
     return is_found;
 }
 
+// Modifies: marks pending Fang window work canceled and clears text or records uncertain in-flight delivery.
 void fang_control_window_cancel(uint32_t request_id) {
     AcquireSRWLockExclusive(&window_lock);
     if (control_request == request_id && (control_kind == 17 || control_kind == 18) && control_receipt.status == 0)
@@ -352,6 +384,7 @@ void fang_control_window_cancel(uint32_t request_id) {
     ReleaseSRWLockExclusive(&window_lock);
 }
 
+// Reads/modifies: consumes Fang owner-thread commands, invokes requested native UI/input actions, and records receipts/snapshots.
 int fang_control_window_message(HWND window, UINT message, WPARAM wparam, LPARAM lparam, WNDPROC original) {
     DWORD process_id = 0;
     LPARAM point;

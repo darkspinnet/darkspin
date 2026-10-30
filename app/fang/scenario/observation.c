@@ -8,11 +8,13 @@ static volatile LONG observation_sequence;
 static volatile LONG scene_load_return_count;
 static volatile LONG object_message_construct_count;
 
+// Reads: returns Fang's atomic observed object-message construction count.
 unsigned long fang_scenario_message_count(void) {
     return (unsigned long)InterlockedCompareExchange(
         &object_message_construct_count, 0, 0);
 }
 
+// Modifies: advances Fang observation/load counters and formats a scene-load JSON record into the output buffer.
 int fang_scenario_scene_load_line(char* line, size_t capacity,
     unsigned int asset_id, unsigned int load_argument_0, unsigned int load_argument_1,
     unsigned long long time_ms, unsigned long frame, unsigned long thread) {
@@ -27,6 +29,7 @@ int fang_scenario_scene_load_line(char* line, size_t capacity,
         time_ms, sequence, count, asset_id, load_argument_0, load_argument_1, frame, thread);
 }
 
+// Modifies: advances Fang observation/message counters and formats a message JSON record into the output buffer.
 int fang_scenario_message_line(char* line, size_t capacity,
     unsigned int message_id, unsigned long long time_ms,
     unsigned long frame, unsigned long thread) {
@@ -40,6 +43,7 @@ int fang_scenario_message_line(char* line, size_t capacity,
         time_ms, sequence, count, message_id, frame, thread);
 }
 
+// Reads/modifies: samples Fang counters, advances observation sequencing, and formats registry JSON into the output buffer.
 int fang_scenario_registry_line(char* line, size_t capacity,
     const char* status, unsigned long long started_time_ms,
     unsigned long long completed_time_ms, unsigned long frame,

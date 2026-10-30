@@ -28,10 +28,12 @@ static struct {
     int is_dirty;
 } overlay;
 
+// Reads: returns the requested borderless mode.
 int fang_borderless_requested(void) {
     return borderless.is_requested;
 }
 
+// Modifies: updates the requested borderless mode, marks it dirty, and logs changes.
 void fang_request_borderless(int is_enabled) {
     if (borderless.is_requested != (is_enabled != 0)) {
         borderless.is_requested = is_enabled != 0;
@@ -40,10 +42,12 @@ void fang_request_borderless(int is_enabled) {
     }
 }
 
+// Reads: returns the requested taskbar overlay mode.
 int fang_taskbar_overlay_requested(void) {
     return overlay.is_requested;
 }
 
+// Modifies: updates the requested taskbar overlay, marks it dirty, and logs changes.
 void fang_request_taskbar_overlay(int is_enabled) {
     if (overlay.is_requested != (is_enabled != 0)) {
         overlay.is_requested = is_enabled != 0;
@@ -52,10 +56,12 @@ void fang_request_taskbar_overlay(int is_enabled) {
     }
 }
 
+// Modifies: atomically stores the game window used for display changes.
 void fang_set_display_window(HWND window) {
     InterlockedExchangePointer(&display_window, window);
 }
 
+// Modifies: writes the native display's fullscreen status to the caller's output.
 static int read_fullscreen(int* is_fullscreen) {
     void* display = display_getter();
     void** methods;
@@ -70,6 +76,7 @@ static int read_fullscreen(int* is_fullscreen) {
     return 1;
 }
 
+// Modifies: changes the shell fullscreen hint for the game window and logs the result.
 static int set_taskbar_overlay(HWND window, int is_enabled) {
     ITaskbarList2* taskbar = NULL;
     HRESULT initialization = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
@@ -101,6 +108,7 @@ static int set_taskbar_overlay(HWND window, int is_enabled) {
     return 1;
 }
 
+// Modifies: applies a pending taskbar overlay request and updates applied state.
 static void update_taskbar_overlay(void) {
     HWND window = (HWND)InterlockedCompareExchangePointer(&display_window, NULL, NULL);
     if (window == NULL || !IsWindow(window) ||
@@ -112,6 +120,7 @@ static void update_taskbar_overlay(void) {
     }
 }
 
+// Modifies: changes a window style field and logs Windows errors.
 static int set_window_style(HWND window, int index, LONG_PTR style) {
     SetLastError(0);
     if (SetWindowLongPtrW(window, index, style) == 0 && GetLastError() != 0) {
@@ -121,6 +130,7 @@ static int set_window_style(HWND window, int index, LONG_PTR style) {
     return 1;
 }
 
+// Modifies: saves or restores window decorations, refreshes the frame, and logs application or rollback failures.
 static int change_window_frame(HWND window, int is_borderless) {
     const LONG_PTR decoration = WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX |
         WS_MAXIMIZEBOX | WS_SYSMENU;
@@ -166,6 +176,7 @@ static int change_window_frame(HWND window, int is_borderless) {
     return 0;
 }
 
+// Modifies: writes dirty display preferences to disk, clears saved flags, and logs results.
 static void save_display_preferences(void) {
     if (borderless.config_path[0] == L'\0') {
         return;
@@ -190,6 +201,7 @@ static void save_display_preferences(void) {
     }
 }
 
+// Modifies: reconciles borderless requests with native fullscreen transitions and updates the window frame.
 static void update_borderless(void* app) {
     HWND window = (HWND)InterlockedCompareExchangePointer(&display_window, NULL, NULL);
     int is_fullscreen;
@@ -225,6 +237,7 @@ static void update_borderless(void* app) {
     }
 }
 
+// Modifies: runs native app updates and applies mod, display, preference, and options UI changes.
 static void FANG_THISCALL hooked_app_update(void* app, unsigned int elapsed) {
     update_borderless(app);
     original_app_update(app, elapsed);
@@ -234,6 +247,7 @@ static void FANG_THISCALL hooked_app_update(void* app, unsigned int elapsed) {
     fang_update_display_ui();
 }
 
+// Modifies: loads saved display modes into Fang state and logs the loaded settings.
 static void load_display_preferences(void) {
     static const wchar_t suffix[] = L"\\DarksporeData\\Preferences\\DarkspinDisplay.ini";
     DWORD capacity = sizeof(borderless.config_path) / sizeof(wchar_t);
@@ -255,6 +269,7 @@ static void load_display_preferences(void) {
     trace_client_state("display_taskbar_overlay_loaded", overlay.is_requested);
 }
 
+// Modifies: loads display preferences and patches native update and options UI callbacks.
 int fang_install_display_preferences(HMODULE executable) {
     static const BYTE signature[] = {
         0x83, 0xEC, 0x30, 0xB8, 0x64, 0x00, 0x00, 0x00, 0x55, 0x8B, 0xE9,

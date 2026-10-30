@@ -36,6 +36,7 @@ static arena_invoke_fn arena_invoke;
 #define ARENA_FASTCALL __fastcall
 #endif
 
+// Modifies: records Fang ArenaLobby ownership and generation, then runs native entry with its effects.
 static int ARENA_FASTCALL observe_arena_enter(BYTE* owner, void* ignored, const void* req) {
     int result;
     DWORD last_error = GetLastError();
@@ -52,6 +53,7 @@ static int ARENA_FASTCALL observe_arena_enter(BYTE* owner, void* ignored, const 
     return result;
 }
 
+// Modifies: invalidates matching Fang ArenaLobby ownership, then runs native exit with its effects.
 static int ARENA_FASTCALL observe_arena_leave(BYTE* owner, void* ignored) {
     int result;
     DWORD last_error = GetLastError();
@@ -70,6 +72,7 @@ static int ARENA_FASTCALL observe_arena_leave(BYTE* owner, void* ignored) {
     return result;
 }
 
+// Modifies: initializes Fang arena tracking, binds GFx helpers, and patches native lifecycle calls.
 int fang_control_arena_install(HMODULE executable) {
     static const BYTE enter_call[] = {0xE8,0x28,0xFF,0xFF,0xFF};
     static const BYTE leave_call[] = {0xE8,0x60,0xFE,0xFF,0xFF};
@@ -105,12 +108,14 @@ int fang_control_arena_install(HMODULE executable) {
     return 1;
 }
 
+// Reads/modifies: queries a current native GFx member into the output, acquiring any managed result reference.
 static int arena_value_member(BYTE* owner, uint64_t generation, arena_value* parent, const char* name, arena_value* result) {
     uint32_t type = parent->type & 0x8F;
     if (arena_owner != owner || arena_generation != generation || !parent->object_interface || type < 6 || type > 8) return 0;
     return arena_member(parent->object_interface, parent->data.object, name, result, type == 8) != 0;
 }
 
+// Reads/modifies: copies a typed native GFx scalar and availability bit out, then releases its temporary reference.
 static void arena_scalar(BYTE* owner, uint64_t generation, arena_value* parent, const char* name,
     uint32_t* scalar, uint32_t bit, uint32_t* fields, int is_boolean) {
     arena_value result = {0};
@@ -129,11 +134,13 @@ static void arena_scalar(BYTE* owner, uint64_t generation, arena_value* parent, 
 
 /* Readiness means the authored Accept control is currently eligible. It does
  * not assert rendering completion or invent a carousel animation flag. */
+// Reads: returns whether the snapshot's authored Accept control and squad are eligible.
 static int can_accept_arena(const fang_control_arena_state* snapshot) {
     return snapshot->is_available && snapshot->is_loaded && (snapshot->fields & 15) == 15 && snapshot->squad_index >= 1 && snapshot->squad_index <= 3 &&
         snapshot->is_squad_valid && !snapshot->is_accept_disabled && snapshot->is_accept_visible;
 }
 
+// Reads/modifies: fills an ArenaLobby snapshot through native GFx queries and balances temporary managed references.
 int fang_control_arena_read(fang_control_arena_state* snapshot) {
     arena_value controller = {0}, root = {0}, accept = {0}, squads = {0}, squad = {0};
     BYTE* owner;
@@ -188,6 +195,7 @@ done:
     return is_available;
 }
 
+// Reads/modifies: fills the snapshot and invokes the eligible native OnReadyClicked handler, logging the attempt.
 uint32_t fang_control_arena_accept(fang_control_arena_state* snapshot) {
     arena_value controller = {0}, result = {0};
     uint32_t status = 5;

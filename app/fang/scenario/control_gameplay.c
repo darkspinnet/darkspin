@@ -52,6 +52,7 @@ static int is_gameplay_input_started;
 /* This hook only observes the exact ordinary gameplay poll, and preserves the
  * original answer. A recent poll is evidence of that native phase, not proof
  * of controllability, rendering, or server mission completion. */
+// Reads/modifies: forwards native input polling, records Fang poll ownership, and may substitute an armed synthetic press.
 static int GAMEPLAY_FASTCALL observe_gameplay_mouse(void* input, void* ignored, int key) {
     void* caller = GAMEPLAY_CALLER();
     int is_pressed = native_gameplay_mouse(input, key);
@@ -74,6 +75,7 @@ static int GAMEPLAY_FASTCALL observe_gameplay_mouse(void* input, void* ignored, 
     return is_pressed;
 }
 
+// Modifies: binds native gameplay accessors, patches input polling, and installs/logs scoped input and ability hooks.
 int fang_control_gameplay_install(HMODULE executable) {
     int is_hero_ready;
     static const BYTE mouse_entry[] = {0x8B,0x44,0x24,0x04,0x80,0xBC,0x08,0xF8,0xFE,0xFF,0xFF,0x00};
@@ -108,6 +110,7 @@ int fang_control_gameplay_install(HMODULE executable) {
     return 1;
 }
 
+// Reads: returns whether the supplied float bit pattern is finite.
 static int is_gameplay_float_finite(const float* scalar) {
     uint32_t bits;
     memcpy(&bits, scalar, sizeof(bits));
@@ -117,6 +120,7 @@ static int is_gameplay_float_finite(const float* scalar) {
 /* Build 103's sub_4F3DB0 selects the final type-3 graphics part. Bone
  * presentation then dereferences model+28 and rig+388. Observe that same
  * chain on the existing gameplay owner thread; no pointers leave this sample. */
+// Reads/modifies: inspects the native graphics/model/rig chain and writes observation/readiness output flags.
 static void read_gameplay_rig(const BYTE* object, uint32_t* is_observed, uint32_t* is_ready) {
     const BYTE* graphics;
     const BYTE* manager;
@@ -175,6 +179,7 @@ static void read_gameplay_rig(const BYTE* object, uint32_t* is_observed, uint32_
     *is_observed = 1;
 }
 
+// Reads/modifies: validates and copies the native selected hero's retained ranks into Fang gameplay state.
 static void read_gameplay_ability_ranks(const BYTE* player) {
     /* Build 103 sub_9C2970 reads player[378 * selected + 237 + index].
      * Verify its installed accessor before observing the nine retained ranks;
@@ -205,6 +210,7 @@ static void read_gameplay_ability_ranks(const BYTE* player) {
     gameplay_state.is_ability_rank_available = 1;
 }
 
+// Reads/modifies: samples native actor, rig, ranks, camera, and targeting into Fang gameplay state.
 static void read_gameplay_state(uint32_t sequence, const fang_control_snapshot* boundary) {
     const BYTE* root;
     const BYTE* player;
@@ -254,6 +260,7 @@ static void read_gameplay_state(uint32_t sequence, const fang_control_snapshot* 
     gameplay_state.fields |= 4;
 }
 
+// Reads/modifies: invokes native visibility/projection queries and fills Fang's projected client coordinates.
 static int read_gameplay_projection(void) {
     BYTE* manager = *(BYTE**)(gameplay_image + 0x105DB28);
     BYTE* camera;
@@ -276,6 +283,7 @@ static int read_gameplay_projection(void) {
     return 1;
 }
 
+// Reads/modifies: advances pending Fang gameplay requests and may invoke native cancellation or arm scoped input actions.
 void fang_control_gameplay_frame(uint32_t sequence) {
     fang_control_snapshot boundary;
     if (!InterlockedCompareExchange(&is_gameplay_installed, 0, 0)) return;
@@ -361,6 +369,7 @@ done:
     ReleaseSRWLockExclusive(&gameplay_lock);
 }
 
+// Modifies: validates and stores a pending Fang gameplay request, clearing its tracked outputs.
 int fang_control_gameplay_submit(uint32_t request_id, uint32_t kind, float x, float y, float z, uint32_t timeout_ms, uint32_t hold_ms, uint32_t hero_slot, uint32_t ability_id) {
     int is_accepted = 0;
     fang_control_snapshot boundary;
@@ -397,6 +406,7 @@ int fang_control_gameplay_submit(uint32_t request_id, uint32_t kind, float x, fl
     return is_accepted;
 }
 
+// Reads/modifies: copies the matching Fang receipt and gameplay snapshots into caller outputs.
 int fang_control_gameplay_result(uint32_t request_id, fang_control_window_receipt* receipt,
     fang_control_gameplay_state* snapshot, fang_control_projection* projection, fang_control_gameplay_click* click,
     fang_control_hero_selection* selection, fang_control_active_cast* cast) {
@@ -409,6 +419,7 @@ int fang_control_gameplay_result(uint32_t request_id, fang_control_window_receip
     return is_found;
 }
 
+// Modifies: cancels matching Fang synthetic operations and records terminal receipts and snapshots.
 void fang_control_gameplay_cancel(uint32_t request_id) {
     AcquireSRWLockExclusive(&gameplay_lock);
     if (gameplay_request == request_id && !gameplay_receipt.status) {

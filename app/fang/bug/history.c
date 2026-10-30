@@ -15,6 +15,7 @@ static struct {
     int is_truncated;
 } history;
 
+// Modifies: reserves a rate-limited history sample and initializes its JSON buffer.
 int fang_history_begin(unsigned int frame, unsigned int delta_bits, unsigned int frame_time) {
     DWORD now = GetTickCount();
     int length;
@@ -39,6 +40,7 @@ int fang_history_begin(unsigned int frame, unsigned int delta_bits, unsigned int
     return 1;
 }
 
+// Modifies: appends a field to the owned history sample or marks it truncated.
 int fang_history_collect(const char* kind, unsigned int value) {
     char field[160];
     int length;
@@ -57,6 +59,7 @@ int fang_history_collect(const char* kind, unsigned int value) {
     return 1;
 }
 
+// Modifies: finishes and writes the owned history sample, then releases sample ownership.
 void fang_history_end(void) {
     int length;
     if ((DWORD)InterlockedCompareExchange(&history.owner, 0, 0) != GetCurrentThreadId()) return;
@@ -68,6 +71,7 @@ void fang_history_end(void) {
     InterlockedExchange(&history.owner, 0);
 }
 
+// Modifies: records selected mouse and focus window messages in control history.
 void fang_history_input(UINT message, WPARAM wparam) {
     char line[384];
     unsigned int buttons = 0;

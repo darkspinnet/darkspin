@@ -53,6 +53,7 @@ static fang_control_gameplay_click ground_snapshot;
 static uint32_t ground_request;
 static int is_aim_only;
 
+// Reads: validates the armed request's native window, scene, player, and owner thread.
 static int is_input_identity_current(void) {
     fang_control_snapshot boundary;
     const BYTE* root;
@@ -71,6 +72,7 @@ static int is_input_identity_current(void) {
     return readable_range(player, 4668) && *(const uint32_t*)(player + 4664) == input_handle;
 }
 
+// Reads: queries native UI root/modal ownership to check gameplay input eligibility.
 static int is_native_gameplay_modal_clear(void) {
     BYTE* manager = *(BYTE**)(input_image + 0x105EDCC);
     void* root;
@@ -83,6 +85,7 @@ static int is_native_gameplay_modal_clear(void) {
     return root && modal == root;
 }
 
+// Reads: checks mouse capture and held mouse/modifier keys.
 static int is_physical_input_clear(void) {
     return !GetCapture() && !(GetAsyncKeyState(VK_LBUTTON) & 0x8000) &&
         !(GetAsyncKeyState(VK_RBUTTON) & 0x8000) && !(GetAsyncKeyState(VK_SHIFT) & 0x8000) &&
@@ -93,6 +96,7 @@ static int is_physical_input_clear(void) {
 /* Observational diagnostics only: retain the same identity, physical-input
  * and native-modal gates, and identify which one interrupted an owned press.
  * Never replay an input whose release was not witnessed. */
+// Reads/modifies: validates native identity, physical input, and modal gates, logging an interrupted boundary.
 static int is_input_boundary_ready(void) {
     if (!is_input_identity_current()) {
         trace_client_state("scenario_gameplay_input_identity_changed", input_request);
@@ -109,6 +113,7 @@ static int is_input_boundary_ready(void) {
     return 1;
 }
 
+// Reads/modifies: returns a Fang-owned cursor copy with scoped aim coordinates and updates request observation/failure flags.
 static int32_t* INPUT_FASTCALL scoped_input_cursor(void* owner, void* ignored) {
     int32_t* cursor = original_input_cursor(owner);
     int32_t* result = cursor;
@@ -133,6 +138,7 @@ static int32_t* INPUT_FASTCALL scoped_input_cursor(void* owner, void* ignored) {
     return result;
 }
 
+// Reads/modifies: scopes synthetic cursor sampling around the native ray query, which writes its point outputs.
 static unsigned char INPUT_FASTCALL scoped_input_ray(void* camera, void* ignored, void* near_point, void* far_point) {
     unsigned char result;
     DWORD last_error = GetLastError();
@@ -162,6 +168,7 @@ static unsigned char INPUT_FASTCALL scoped_input_ray(void* camera, void* ignored
  * raw ray/terrain point, then native adjusted movement point. The query's
  * return is not movement acceptance. Outputs are copied only on success,
  * after our exact ray was observed, and published only by a consumed press. */
+// Reads/modifies: forwards the native ground query and its outputs, then copies matching successful samples into Fang state.
 static unsigned char __cdecl scoped_input_ground(float* ray_point, float* ground_point,
     uint32_t* picked_handle, unsigned char* pick_flag) {
     uint32_t request = 0;
@@ -198,6 +205,7 @@ static unsigned char __cdecl scoped_input_ground(float* ray_point, float* ground
     return result;
 }
 
+// Reads/modifies: substitutes an eligible synthetic press and records its deadline, phase, ground sample, and trace.
 int fang_control_input_press(void* caller, int key, int is_pressed) {
     int result = is_pressed;
     if (!InterlockedCompareExchange(&is_input_installed, 0, 0) ||
@@ -225,6 +233,7 @@ int fang_control_input_press(void* caller, int key, int is_pressed) {
     return result;
 }
 
+// Reads/modifies: forwards native held-input querying and substitutes finite request answers while tracking press/release phases.
 static int WINAPI scoped_input_held(int key) {
     void* caller = INPUT_CALLER();
     int result = original_input_held(key);
@@ -267,6 +276,7 @@ static int WINAPI scoped_input_held(int key) {
     return result;
 }
 
+// Modifies: binds native input helpers and patches cursor, held-button, ray, and ground-query hooks.
 int fang_control_input_install(HMODULE executable) {
     static const BYTE ray_call[] = {0xE8,0xF6,0x2F,0x36,0x00};
     static const BYTE ground_call[] = {0xE8,0xD2,0xF7,0xFF,0xFF};
@@ -317,6 +327,7 @@ rollback_cursor:
     return 0;
 }
 
+// Reads/modifies: checks native input gates, logs failures, and arms Fang's finite cursor/press request.
 int fang_control_input_begin(uint32_t request_id, uint32_t scene, uint32_t handle, int32_t x, int32_t y, uint64_t deadline, uint32_t hold_ms) {
     fang_control_window_snapshot window;
     if (!InterlockedCompareExchange(&is_input_installed, 0, 0) || hold_ms > 1200 || GetTickCount64() >= deadline) {
@@ -353,6 +364,7 @@ int fang_control_input_begin(uint32_t request_id, uint32_t scene, uint32_t handl
     return 1;
 }
 
+// Reads/modifies: advances Fang input completion/failure, logs transitions, and copies the click snapshot out.
 uint32_t fang_control_input_frame(uint32_t request_id, uint32_t scene, uint32_t handle, int is_world_active, fang_control_gameplay_click* snapshot) {
     uint32_t status = 0;
     AcquireSRWLockExclusive(&input_lock);
@@ -382,6 +394,7 @@ done:
     return status;
 }
 
+// Modifies: disarms the matching Fang input request and records cancellation.
 void fang_control_input_cancel(uint32_t request_id) {
     AcquireSRWLockExclusive(&input_lock);
     if (input_request == request_id) {
@@ -392,6 +405,7 @@ void fang_control_input_cancel(uint32_t request_id) {
     ReleaseSRWLockExclusive(&input_lock);
 }
 
+// Modifies: arms a Fang input request and marks it as aim-only.
 int fang_control_input_aim_begin(uint32_t request_id, uint32_t scene, uint32_t handle, int32_t x, int32_t y, uint64_t deadline) {
     if (!fang_control_input_begin(request_id, scene, handle, x, y, deadline, 0)) return 0;
     AcquireSRWLockExclusive(&input_lock);
@@ -400,6 +414,7 @@ int fang_control_input_aim_begin(uint32_t request_id, uint32_t scene, uint32_t h
     return 1;
 }
 
+// Reads/modifies: validates an armed aim request and copies its native ground observation into the output.
 int fang_control_input_aim_read(uint32_t request_id, fang_control_gameplay_click* snapshot) {
     int is_available = 0;
     if (!snapshot) return 0;

@@ -26,6 +26,7 @@ static shop_offer shop_offers[shop_capacity];
 static unsigned int shop_next_slot;
 static volatile LONG is_shop_enabled;
 
+// Modifies: updates or inserts a cached server offer price under the shop lock.
 static void shop_record(uint64_t reference_id, unsigned int price) {
     unsigned int index;
     AcquireSRWLockExclusive(&shop_lock);
@@ -46,6 +47,7 @@ static void shop_record(uint64_t reference_id, unsigned int price) {
     ReleaseSRWLockExclusive(&shop_lock);
 }
 
+// Reads: returns the cached offer price under the shop lock.
 static unsigned int shop_price(uint64_t reference_id) {
     unsigned int index;
     unsigned int price = 0;
@@ -60,6 +62,7 @@ static unsigned int shop_price(uint64_t reference_id) {
     return price;
 }
 
+// Modifies: invokes native offer parsing, updates the price cache, and logs valid quotes.
 static void* __cdecl shop_parse(void* output, void* nodes) {
     void* result = shop_binding.parse(output, nodes);
     const BYTE* entry;
@@ -95,6 +98,7 @@ static void* __cdecl shop_parse(void* output, void* nodes) {
     return result;
 }
 
+// Reads: finds the unowned Parts account entry matching a loot reference.
 static const BYTE* shop_entry(const void* loot) {
     const BYTE* account = (const BYTE*)shop_binding.account();
     const BYTE* entry;
@@ -123,6 +127,7 @@ static const BYTE* shop_entry(const void* loot) {
     return NULL;
 }
 
+// Modifies: invokes native loot resolution and writes the server quote into its price output, logging missing quotes.
 static unsigned char __cdecl shop_loot(void* output, const void* loot,
     int is_local, int unknown) {
     unsigned char is_resolved = shop_binding.loot(output, loot, is_local, unknown);
@@ -151,6 +156,7 @@ static unsigned char __cdecl shop_loot(void* output, const void* loot,
 static int __cdecl shop_has_funds(const BYTE* controller, unsigned int price,
     const BYTE* entry) __attribute__((used, noinline));
 
+// Reads: checks native funds, allowing an exact balance for a valid quoted Parts offer.
 static int __cdecl shop_has_funds(const BYTE* controller, unsigned int price,
     const BYTE* entry) {
     unsigned int dna = *(const unsigned int*)(controller + FANG_CLIENT103_SHOP_CONTROLLER_DNA);
@@ -163,6 +169,7 @@ static int __cdecl shop_has_funds(const BYTE* controller, unsigned int price,
         shop_price(*(const uint64_t*)(entry + FANG_CLIENT103_SHOP_ENTRY_REFERENCE)) == price;
 }
 
+// Modifies: redirects the native return path when the offer funds check fails while preserving registers and flags.
 static void __attribute__((naked)) shop_funds_bridge(void) {
     __asm__(
         "pushfl\n"
@@ -183,6 +190,7 @@ static void __attribute__((naked)) shop_funds_bridge(void) {
         "ret\n");
 }
 
+// Modifies: patches shop parsing, loot pricing, and funds checks and updates feature bookkeeping.
 int fang_install_shop_pricing(HMODULE executable) {
     fang_client103_shop binding;
     BYTE funds_call[FANG_CLIENT103_SHOP_FUNDS_SIZE] = {0xE8, 0, 0, 0, 0};

@@ -20,6 +20,7 @@ static HWND ability_window;
 static uint64_t ability_deadline;
 static fang_control_active_cast ability_snapshot;
 
+// Reads: checks the request's native player, window, scene, and recent owner-frame identity.
 static int is_ability_owner_current(void) {
     fang_control_snapshot boundary;
     BYTE* root;
@@ -38,6 +39,7 @@ static int is_ability_owner_current(void) {
     return readable_range(player, 5000) && *(uint32_t*)(player + 4664) == ability_handle;
 }
 
+// Reads: checks for mouse capture or any held physical key/button.
 static int is_ability_physical_clear(void) {
     int key;
     if (GetCapture()) return 0;
@@ -48,6 +50,7 @@ static int is_ability_physical_clear(void) {
 /* Build10344CF88 calls4DFBE0 with seven cdecl stack arguments and observes
  * EAX. This observer always executes the original caster with unchanged
  * arguments, including native target-validity. It creates no cast itself. */
+// Reads/modifies: forwards the native cast with its effects, then records and logs a matching Fang request's result.
 static int __cdecl observe_ability_cast(uint32_t index, const float* start_point, const float* target_point,
     uint32_t target_handle, uint32_t flag, uint32_t mode, uint32_t is_target_valid) {
     int result = original_ability_cast(index, start_point, target_point, target_handle, flag, mode, is_target_valid);
@@ -74,6 +77,7 @@ static int __cdecl observe_ability_cast(uint32_t index, const float* start_point
     return result;
 }
 
+// Reads/modifies: validates an armed cast, records its ground sample, and substitutes one native ability input edge.
 unsigned char fang_control_ability_edge(void* caller, uint32_t action, unsigned char is_pressed) {
     unsigned char result = is_pressed;
     fang_control_gameplay_click ground;
@@ -103,6 +107,7 @@ done:
     return result;
 }
 
+// Modifies: binds native ability functions, patches the cast observer call, and marks Fang installation.
 int fang_control_ability_install(HMODULE executable) {
     static const BYTE edge[] = {0x8B,0x4C,0x24,0x10,0x8B,0x11,0x8B,0x42,0x2C,0x68,0x11,0x00,0x00,0x10,0xFF,0xD0};
     static const BYTE caster_call[] = {0xE8,0x53,0x2C,0x09,0x00};
@@ -120,6 +125,7 @@ int fang_control_ability_install(HMODULE executable) {
     return 1;
 }
 
+// Reads/modifies: validates the native ability slot, arms Fang aim/cast tracking, and fills the output snapshot.
 uint32_t fang_control_ability_begin(uint32_t request_id, uint32_t scene, uint32_t handle, int32_t x, int32_t y,
     uint32_t ability_id, uint64_t deadline, fang_control_active_cast* snapshot) {
     fang_control_window_snapshot window;
@@ -152,6 +158,7 @@ done:
     return status;
 }
 
+// Reads/modifies: advances Fang cast status, cancels terminal synthetic aim, and copies the tracked snapshot out.
 uint32_t fang_control_ability_frame(uint32_t request_id, fang_control_active_cast* snapshot) {
     uint32_t status = 0;
     AcquireSRWLockExclusive(&ability_lock);
@@ -178,6 +185,7 @@ done:
     return status;
 }
 
+// Modifies: terminates the matching Fang cast request and cancels its synthetic aim.
 void fang_control_ability_cancel(uint32_t request_id) {
     AcquireSRWLockExclusive(&ability_lock);
     if (ability_request == request_id) {

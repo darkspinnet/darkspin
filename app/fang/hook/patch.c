@@ -38,6 +38,7 @@ static volatile LONG hook_capacity_rejections;
 
 /* Callers hold hook_lock. Save/restore whole instructions, not just rel32,
  * and never restore over a patch that no longer belongs to this record. */
+// Modifies: writes patch bytes, manages page protection, flushes code, and records failures.
 static int hook_write(hook_record* record, const BYTE* bytes) {
     DWORD protection;
     DWORD ignored;
@@ -70,6 +71,7 @@ static int hook_write(hook_record* record, const BYTE* bytes) {
     return !record->is_cleanup_pending;
 }
 
+// Modifies: restores an owned patch's original bytes and updates its cleanup state.
 static int hook_remove(hook_record* record) {
     enum hook_failure previous_failure = record->failure;
     DWORD previous_error = record->system_error;
@@ -95,6 +97,7 @@ static int hook_remove(hook_record* record) {
     return is_success;
 }
 
+// Modifies: finds or reserves a hook record and writes its index.
 static hook_record* hook_record_for(const char* owner, const char* name, BYTE* target,
     size_t length, unsigned int* index) {
     unsigned int ordinal;
@@ -111,6 +114,7 @@ static hook_record* hook_record_for(const char* owner, const char* name, BYTE* t
     return &hook_records[*index];
 }
 
+// Modifies: validates patch ownership, records installation state, and writes or rolls back target memory.
 static int hook_apply(fang_hook_set* set, const char* owner, const char* name,
     const char* evidence, const char* source, unsigned int line, void* target,
     const BYTE* expected, const BYTE* replacement, size_t length, int is_legacy, int is_code) {
@@ -188,6 +192,7 @@ static int hook_apply(fang_hook_set* set, const char* owner, const char* name,
     return is_success;
 }
 
+// Modifies: initializes an empty feature hook set with a new generation.
 void fang_hook_begin(fang_hook_set* set, const char* feature) {
     if (set == NULL || feature == NULL) return;
     AcquireSRWLockExclusive(&hook_lock);
@@ -203,6 +208,7 @@ void fang_hook_begin(fang_hook_set* set, const char* feature) {
     ReleaseSRWLockExclusive(&hook_lock);
 }
 
+// Modifies: writes expected and replacement relative CALL encodings to output buffers.
 static int hook_call_bytes(void* instruction, void* expected_target, void* replacement,
     BYTE* expected, BYTE* patched) {
     int32_t relative;
@@ -215,6 +221,7 @@ static int hook_call_bytes(void* instruction, void* expected_target, void* repla
     return 1;
 }
 
+// Modifies: installs a checked CALL replacement and records it in the hook set.
 int fang_hook_call(fang_hook_set* set, const char* name, void* instruction,
     void* expected_target, void* replacement, const char* evidence) {
     BYTE expected[5], patched[5];
@@ -222,6 +229,7 @@ int fang_hook_call(fang_hook_set* set, const char* name, void* instruction,
     return hook_apply(set, set->feature, name, evidence, NULL, 0, instruction, expected, patched, 5, 0, 1);
 }
 
+// Modifies: installs a checked pointer replacement and records it in the hook set.
 int fang_hook_pointer(fang_hook_set* set, const char* name, void** target,
     void* expected, void* replacement, const char* evidence) {
     if (set == NULL || replacement == NULL) return 0;
@@ -229,18 +237,21 @@ int fang_hook_pointer(fang_hook_set* set, const char* name, void** target,
         (const BYTE*)&expected, (const BYTE*)&replacement, sizeof(void*), 0, 0);
 }
 
+// Modifies: installs checked code bytes and records them in the hook set.
 int fang_hook_bytes(fang_hook_set* set, const char* name, void* target,
     const BYTE* expected, const BYTE* replacement, size_t length, const char* evidence) {
     if (set == NULL || expected == NULL) return 0;
     return hook_apply(set, set->feature, name, evidence, NULL, 0, target, expected, replacement, length, 0, 1);
 }
 
+// Modifies: marks a hook set committed under the registry lock.
 void fang_hook_commit(fang_hook_set* set) {
     AcquireSRWLockExclusive(&hook_lock);
     set->is_committed = 1;
     ReleaseSRWLockExclusive(&hook_lock);
 }
 
+// Modifies: restores a hook set in reverse order and retains records needing cleanup.
 int fang_hook_rollback(fang_hook_set* set) {
     int is_success = 1;
     unsigned int pending[FANG_HOOK_SET_CAPACITY];
@@ -266,6 +277,7 @@ int fang_hook_rollback(fang_hook_set* set) {
     return is_success;
 }
 
+// Modifies: installs or reverses a legacy checked CALL patch with source bookkeeping.
 int fang_hook_legacy_call(const char* owner, const char* name, const char* source, unsigned int line,
     void* instruction, void* expected_target, void* replacement) {
     BYTE expected[5], patched[5];
@@ -274,6 +286,7 @@ int fang_hook_legacy_call(const char* owner, const char* name, const char* sourc
         instruction, expected, patched, 5, 1, 1);
 }
 
+// Modifies: installs or reverses a legacy checked pointer patch with source bookkeeping.
 int fang_hook_legacy_pointer(const char* owner, const char* name, const char* source, unsigned int line,
     void** target, void* expected, void* replacement) {
     if (replacement == NULL) return 0;
@@ -281,6 +294,7 @@ int fang_hook_legacy_pointer(const char* owner, const char* name, const char* so
         target, (const BYTE*)&expected, (const BYTE*)&replacement, sizeof(void*), 1, 0);
 }
 
+// Modifies: installs a relative JMP and records its original bytes and source.
 int fang_hook_legacy_jump(const char* owner, const char* name, const char* source, unsigned int line,
     void* target, void* replacement) {
     BYTE patched[5] = {0xE9};
@@ -291,6 +305,7 @@ int fang_hook_legacy_jump(const char* owner, const char* name, const char* sourc
     return hook_apply(NULL, owner, name, "legacy-source-site", source, line, target, NULL, patched, 5, 1, 1);
 }
 
+// Modifies: installs legacy code bytes and records their originals and source.
 int fang_hook_legacy_bytes(const char* owner, const char* name, const char* source, unsigned int line,
     void* target, const BYTE* replacement, size_t length) {
     return hook_apply(NULL, owner, name, "legacy-source-site", source, line, target, NULL, replacement, length, 1, 1);
@@ -298,6 +313,7 @@ int fang_hook_legacy_bytes(const char* owner, const char* name, const char* sour
 
 /* Source paths are compiler-owned. Normalize separators and escape all JSON
  * metacharacters before handing a line to the existing bug-report recorder. */
+// Modifies: writes sanitized JSON text with normalized path separators to an output buffer.
 static void hook_json_text(char* output, size_t capacity, const char* text) {
     size_t count = 0;
     if (text == NULL) text = "";
@@ -311,6 +327,7 @@ static void hook_json_text(char* output, size_t capacity, const char* text) {
     output[count] = 0;
 }
 
+// Reads/modifies: snapshots hook records and sends JSON diagnostics to the supplied writer.
 void fang_hook_report(void (*write_line)(const char*, unsigned int)) {
     unsigned int index, count;
     DWORD previous_error = GetLastError();

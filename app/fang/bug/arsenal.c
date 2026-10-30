@@ -6,6 +6,7 @@
 
 /* Snapshot-only observations of build 103. Do not call collection methods
  * from the control thread: the Arsenal does not tick the gameplay clock. */
+// Modifies: copies a bounded process-memory span into the caller's output buffer.
 static int arsenal_read(uintptr_t address, void* output, size_t size) {
     SIZE_T copied = 0;
     if (address == 0 || address > UINTPTR_MAX - size) {
@@ -15,6 +16,7 @@ static int arsenal_read(uintptr_t address, void* output, size_t size) {
         output, size, &copied) && copied == size;
 }
 
+// Reads/modifies: validates sampled vector bounds and logs the count or an invalid-vector marker.
 static void arsenal_vector_count(const char* kind, unsigned int begin,
     unsigned int end, unsigned int stride) {
     if (end < begin || (end - begin) % stride != 0 ||
@@ -25,6 +27,7 @@ static void arsenal_vector_count(const char* kind, unsigned int begin,
     trace_client_state(kind, (end - begin) / stride);
 }
 
+// Modifies: logs a named field for an Arsenal slot.
 static void arsenal_slot_field(unsigned int index, const char* field,
     unsigned int number) {
     char kind[96];
@@ -34,6 +37,7 @@ static void arsenal_slot_field(unsigned int index, const char* field,
     }
 }
 
+// Reads/modifies: samples Arsenal slot and loader memory and logs bounded diagnostic fields.
 static void arsenal_slots(const unsigned int* states) {
     /* sub_414C10 builds an EASTL deque of 112-byte records, four per block.
      * sub_410BA0 starts the loader; sub_410C90 replaces it with a model ID.
@@ -109,6 +113,7 @@ static void arsenal_slots(const unsigned int* states) {
     trace_client_state("arsenal_slots_truncated", slot != finish);
 }
 
+// Reads/modifies: samples build-103 Arsenal and catalog memory and records diagnostic snapshots.
 void fang_trace_arsenal_snapshot(HMODULE executable) {
     uintptr_t base = (uintptr_t)executable;
     /* Keep the decompiler's virtual addresses explicit to avoid confusing

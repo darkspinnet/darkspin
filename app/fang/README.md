@@ -18,6 +18,10 @@ Fang's bootstrap and build-mode switches live at this directory's root. Each fea
 | `shop/` | Shop pricing, inventory availability and shop UI compatibility |
 | `zoom/` | Normal gameplay camera zoom compatibility |
 
+The `mod/` root retains its bootstrap and shared interfaces. Native implementations live in `animation/` (emote state and dance/audio coordination), `appearance/` (imported character identity, fit, scale and portraits), `audio/` (sound, music and voice), `editor/` (editor controls, previews and validation), `palette/` (palette pages and selection controls), `resource/` (source-backed streams), `scene/` (scene and environment assets), and `ui/` (shared button styling). Each subgroup is a cgo package imported by the mod bootstrap.
+
+Every C function has a short `//` summary describing its purpose and effects. `Reads` indicates a query or calculation without a persistent or caller-visible write; `Modifies` and `Reads/modifies` identify native operations, patches, Fang state changes, output-buffer writes, resource ownership, or diagnostic output. Existing detailed evidence and inline explanations remain alongside these summaries.
+
 ## Native bindings and hook ownership
 
 `client103/image.c` accepts a loaded PE32/i386 client with file version 5.3.0.103, resolves RVAs against its loaded base, checks readable bounds, and reports image identity and named validation failures. `bootstrap.h` names the existing bootstrap function and patch-site RVAs and their calling conventions. These transcribed legacy definitions are not new prologue evidence: existing call-target and signature checks remain necessary. Build 127 is not an implementation target.
@@ -39,5 +43,7 @@ The same file retains `fang_trace_camera_state` for ordinary diagnostic bug snap
 ## Build modes
 
 Use the existing Mage commands; no separate native build step is required. `mage build` compiles normal diagnostic Fang as part of the application build. `mage scenario:build` explicitly selects scenario support; a `fangdebug` build alone does not enable the control connection or scenario capability export. Release builds retain their existing diagnostic/scenario exclusions.
+
+Conditional `#cgo scenario,fangdebug CFLAGS` adds a native preprocessor define only when both build tags are present; it does not restrict the containing package to scenario builds. Only packages with scenario-specific branches retain that define: the root bootstrap, bug recorder and mod editor integration, plus the scenario package's own explicit build-mode files. Normal zoom and editor compatibility remain available without scenario support.
 
 Mage fingerprints all Fang headers into its C compilation flags because cgo does not track included headers outside a package's own directory. This prevents feature packages from reusing stale native objects after shared ABI or patch API changes. Mage preserves user-supplied `CGO_CFLAGS` and appends the fingerprint automatically.

@@ -20,6 +20,7 @@ static volatile LONG classification_call_count;
 static volatile LONG classification_limit_reported;
 static volatile LONG classification_install_attempted;
 
+// Modifies: reserves a bounded Fang marker-classification ordinal atomically.
 static uint32_t reserve_classification_call(void) {
     LONG observed = InterlockedCompareExchange(&classification_call_count, 0, 0);
     while (observed < SCENARIO_CLASSIFICATION_CALL_LIMIT) {
@@ -33,6 +34,7 @@ static uint32_t reserve_classification_call(void) {
     return 0;
 }
 
+// Reads/modifies: copies native marker and position words into the observation, including read-failure details.
 static void copy_classification_marker(const void* entry,
     ScenarioMarkerMaskObservation* req) {
     uintptr_t address = (uintptr_t)entry;
@@ -71,6 +73,7 @@ static void copy_classification_marker(const void* entry,
     req->IsPositionAvailable = 1;
 }
 
+// Reads/modifies: captures native marker input in the frame, advances Fang counters, and traces entry while preserving LastError.
 void __cdecl scenario_classification_before(ScenarioClassificationFrame* frame,
     const void* entry) {
     DWORD last_error = GetLastError();
@@ -94,6 +97,7 @@ void __cdecl scenario_classification_before(ScenarioClassificationFrame* frame,
     SetLastError(last_error);
 }
 
+// Modifies: stores the returned mask in the owned observation and traces normal return while preserving LastError.
 void __cdecl scenario_classification_after(ScenarioClassificationFrame* frame) {
     DWORD last_error = GetLastError();
     ScenarioMarkerMaskObservation* req = &frame->EventArea.Event;
@@ -107,6 +111,7 @@ void __cdecl scenario_classification_after(ScenarioClassificationFrame* frame) {
     SetLastError(last_error);
 }
 
+// Reads/modifies: checks CPU/OS state support and stores Fang save-mode, mask, and size settings.
 static int prepare_classification_state(void) {
     SYSTEM_INFO system;
     unsigned int eax, ebx, ecx, edx;
@@ -145,6 +150,7 @@ static int prepare_classification_state(void) {
     return 1;
 }
 
+// Modifies: prepares Fang state, patches the native classification call, and logs installation results.
 int install_scenario_classification_observation(void* executable) {
     DWORD last_error = GetLastError();
     unsigned char* base = (unsigned char*)executable;

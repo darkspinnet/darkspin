@@ -24,6 +24,7 @@ static uint64_t editor_last_reserved_id;
  * than the separate editor +156 field or the last saved equipment set.
  * Only a new palette placement is rejected; existing mirrored hands/feet
  * and ordinary manipulation of the attached geometry remain native. */
+// Reads: checks a live part's item ID, returning an error indicator for unreadable memory.
 static int editor_part_has_item(const BYTE* part, uint64_t item_id) {
     uint64_t attached_id;
     if (!readable_range(part, 48)) {
@@ -33,6 +34,7 @@ static int editor_part_has_item(const BYTE* part, uint64_t item_id) {
     return attached_id == item_id;
 }
 
+// Reads: searches live parts and mirrored children for an item ID, reporting unreadable geometry.
 static int editor_model_has_item(const BYTE* model, uint64_t item_id) {
     const BYTE* const* parts;
     const BYTE* const* end;
@@ -92,6 +94,7 @@ static int editor_model_has_item(const BYTE* model, uint64_t item_id) {
     return 0;
 }
 
+// Modifies: populates native unavailable-item error messages and returns the locked result.
 static int editor_item_locked(BYTE* error) {
     if (error != NULL && readable_range(error, 48)) {
         /* Same unavailable-item message and validation result as 4C39D0. */
@@ -102,6 +105,7 @@ static int editor_item_locked(BYTE* error) {
     return 2;
 }
 
+// Reads/modifies: checks ownership and live reservations, updates diagnostics, and delegates native validation or writes a locked error.
 static int FANG_THISCALL editor_available(BYTE* collection, const BYTE* item, BYTE* error) {
     const BYTE* editor;
     const BYTE* entry;
@@ -145,6 +149,7 @@ static int FANG_THISCALL editor_available(BYTE* collection, const BYTE* item, BY
     return native_editor_available(collection, item, error);
 }
 
+// Modifies: binds editor helpers and replaces the native item availability callback.
 int fang_install_editor_item(HMODULE executable) {
     BYTE* base = (BYTE*)executable;
     void** available = (void**)(base + 0xBD9FB4);

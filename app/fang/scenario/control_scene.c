@@ -33,6 +33,7 @@ static scene_spline_lookup_fn original_spline_lookup;
 static scene_spline_start_fn original_spline_start;
 static volatile LONG movie_observed_at;
 
+// Reads: returns whether Fang observed native movie progress recently.
 int is_scenario_movie_observed(void) {
     DWORD stamp = (DWORD)InterlockedCompareExchange(&movie_observed_at, 0, 0);
     return stamp != 0 && (DWORD)(GetTickCount() - stamp) < 1500;
@@ -40,6 +41,7 @@ int is_scenario_movie_observed(void) {
 
 /* Observe the exact native calls; retain their return values and last error.
  * These hooks never substitute a marker, advance a spline or replay a start. */
+// Reads/modifies: forwards the native spline lookup and logs its token/result while preserving LastError.
 static void* __cdecl observe_spline_lookup(uint32_t token) {
     void* spline = original_spline_lookup(token);
     DWORD last_error = GetLastError();
@@ -49,6 +51,7 @@ static void* __cdecl observe_spline_lookup(uint32_t token) {
     return spline;
 }
 
+// Modifies: forwards native spline activation and logs the call while preserving its result and LastError.
 static unsigned char __cdecl observe_spline_start(void* spline) {
     unsigned char result = original_spline_start(spline);
     DWORD last_error = GetLastError();
@@ -57,6 +60,7 @@ static unsigned char __cdecl observe_spline_start(void* spline) {
     return result;
 }
 
+// Reads/modifies: copies native movie/decoder state for logging and updates Fang's movie-observation timestamp.
 static void observe_movie_progress(void* movie) {
     /* Build 103: 79AAC0 tests manager+56 only. 79B610 advances +104;
      * the secondary draw interface at manager+4 enters 79AC70, sets +812,
@@ -95,6 +99,7 @@ static void observe_movie_progress(void* movie) {
 #define SCENE_FASTCALL __fastcall
 #endif
 
+// Modifies: runs native navigation initialization and records Fang controller/thread ownership.
 static int SCENE_FASTCALL capture_scene_navigation(void* controller, void* ignored) {
     int result = original_scene_init(controller);
     DWORD last_error = GetLastError();
@@ -107,6 +112,7 @@ static int SCENE_FASTCALL capture_scene_navigation(void* controller, void* ignor
     return result;
 }
 
+// Modifies: invalidates matching Fang navigation ownership and runs native closure with its effects.
 static void SCENE_FASTCALL release_scene_navigation(void* controller, void* ignored) {
     DWORD last_error = GetLastError();
     (void)ignored;
@@ -120,6 +126,7 @@ static void SCENE_FASTCALL release_scene_navigation(void* controller, void* igno
     original_scene_close(controller);
 }
 
+// Modifies: binds native scene helpers, patches navigation/spline calls, and installs/logs editor observation.
 int fang_control_scene_install(HMODULE executable) {
     static const BYTE create_call[] = {0xE8,0x41,0xFB,0xFF,0xFF};
     static const BYTE close_call[] = {0xE8,0x90,0xFB,0xFF,0xFF};
@@ -156,6 +163,7 @@ int fang_control_scene_install(HMODULE executable) {
 }
 
 /* Caller owns scene_lock throughout all use of the returned controller. */
+// Reads/modifies: checks native navigation/cinematic gates and fills controller/current-room output slots.
 static int eligible_scene_controller(uint32_t room, BYTE** controller_out, int* current_room_out) {
     BYTE* nav;
     BYTE* controller;
@@ -189,6 +197,7 @@ static int eligible_scene_controller(uint32_t room, BYTE** controller_out, int* 
 /* Called only by the owned HWND owner callback. Return 1 only for the actual
  * native request's accepted AL; 2 for native rejection, 5 for unavailable UI.
  * The host separately waits for a fresh client report and native readiness. */
+// Reads/modifies: validates native navigation, invokes an eligible room transition, and logs acceptance/rejection.
 static uint32_t validate_and_request_scene(uint32_t room) {
     BYTE* controller;
     int current_room;
@@ -202,6 +211,7 @@ static uint32_t validate_and_request_scene(uint32_t room) {
     return is_accepted ? 1 : 2;
 }
 
+// Modifies: serializes a validated native room-transition request through the Fang lifetime lock.
 uint32_t fang_control_scene_request(uint32_t room) {
     uint32_t status;
     if (!InterlockedCompareExchange(&is_scene_lock_initialized, 0, 0)) return 5;
@@ -219,6 +229,7 @@ uint32_t fang_control_scene_request(uint32_t room) {
  * finished pulse consumed by 448F70 before ship voting. Sample these boundaries
  * on the owned HWND thread without advancing, skipping or changing presentation.
  * A missing finished pulse in one sample is not evidence of a stuck gate. */
+// Reads/modifies: fills the cinematic snapshot from native state and logs movie progress when playing.
 uint32_t fang_control_scene_snapshot(fang_control_cinematic_snapshot* snapshot) {
     BYTE* controller;
     void* movie;
@@ -277,6 +288,7 @@ uint32_t fang_control_scene_snapshot(fang_control_cinematic_snapshot* snapshot) 
     return 1;
 }
 
+// Reads: checks native room or editor readiness without issuing a transition request.
 uint32_t fang_control_scene_ready(uint32_t room) {
     BYTE* controller;
     int current_room;

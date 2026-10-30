@@ -37,6 +37,7 @@ static const BYTE shop_funds_signature[FANG_CLIENT103_SHOP_FUNDS_SIZE] = {
     0x39, 0x6E, 0x24, 0x76, 0x09
 };
 
+// Reads/modifies: validates build-103 shop targets, writes resolved bindings, and records validation diagnostics.
 int fang_client103_bind_shop(HMODULE executable, fang_client103_shop* binding) {
     fang_client103_shop resolved;
     unsigned int index;

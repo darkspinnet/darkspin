@@ -15,6 +15,7 @@ static scenario_primary_base_fn original_scenario_primary_base;
 static volatile LONG primary_call_count;
 static volatile LONG primary_limit_reported;
 
+// Modifies: reserves a bounded Fang primary-call ordinal atomically.
 static uint32_t reserve_primary_call(void) {
     LONG observed = InterlockedCompareExchange(&primary_call_count, 0, 0);
     while (observed < SCENARIO_PRIMARY_CALL_LIMIT) {
@@ -28,6 +29,7 @@ static uint32_t reserve_primary_call(void) {
     return 0;
 }
 
+// Reads/modifies: copies/logs native authored inputs, updates Fang counters, and forwards the native primary call with its effects.
 static uint32_t FANG_THISCALL observe_scenario_primary_base(
     void* registry, const void* entry, uint32_t raw_marker_set_reference,
     int32_t entry_ordinal) {
@@ -78,6 +80,7 @@ static uint32_t FANG_THISCALL observe_scenario_primary_base(
     return result;
 }
 
+// Modifies: binds the native primary function, patches its call site, and logs installation status.
 int install_scenario_primary_observation(void* executable) {
     DWORD last_error = GetLastError();
     unsigned char* base = (unsigned char*)executable;

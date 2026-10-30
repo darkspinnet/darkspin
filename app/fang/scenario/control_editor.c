@@ -28,6 +28,7 @@ typedef float* (FANG_THISCALL* control_editor_point_fn)(BYTE*, float*, float, fl
 #define CONTROL_EDITOR_FASTCALL __fastcall
 #endif
 
+// Modifies: acquires the editor lifetime lock and invalidates matching Fang editor ownership.
 int fang_control_editor_exit_begin(BYTE* editor) {
     if (!InterlockedCompareExchange(&is_editor_lock_initialized, 0, 0)) return 0;
     EnterCriticalSection(&editor_lock);
@@ -39,10 +40,12 @@ int fang_control_editor_exit_begin(BYTE* editor) {
     return 1;
 }
 
+// Modifies: releases the editor lifetime lock when it was acquired.
 void fang_control_editor_exit_end(int is_entered) {
     if (is_entered) LeaveCriticalSection(&editor_lock);
 }
 
+// Modifies: records Fang editor ownership/generation and runs native configuration with its effects.
 static int CONTROL_EDITOR_FASTCALL observe_editor_config(BYTE* editor, void* ignored) {
     int result;
     DWORD last_error = GetLastError();
@@ -61,6 +64,7 @@ static int CONTROL_EDITOR_FASTCALL observe_editor_config(BYTE* editor, void* ign
     return result;
 }
 
+// Modifies: invalidates Fang editor ownership while running native editor exit with its effects.
 static void CONTROL_EDITOR_FASTCALL observe_editor_exit(BYTE* editor, void* ignored) {
     DWORD last_error = GetLastError();
     int is_entered = fang_control_editor_exit_begin(editor);
@@ -74,6 +78,7 @@ static void CONTROL_EDITOR_FASTCALL observe_editor_exit(BYTE* editor, void* igno
 
 /* This exact known wrapper can be composed by the later Mod installer. Never
  * accept arbitrary patched code as an original native lifecycle function. */
+// Reads: returns the verified installed Fang exit wrapper for hook composition.
 void* fang_control_editor_exit_target(BYTE* base) {
     void* target = NULL;
     if (!InterlockedCompareExchange(&is_editor_lock_initialized, 0, 0)) return NULL;
@@ -84,6 +89,7 @@ void* fang_control_editor_exit_target(BYTE* base) {
     return target;
 }
 
+// Modifies: initializes Fang editor tracking and patches native configuration/exit function pointers.
 int fang_control_editor_install(HMODULE executable) {
     BYTE* base = (BYTE*)executable;
     void* exit_target;
@@ -110,6 +116,7 @@ int fang_control_editor_install(HMODULE executable) {
     return 1;
 }
 
+// Reads: checks the observed native editor, UI ownership, enabled state, and model readiness.
 uint32_t fang_control_editor_ready(void) {
     BYTE* editor;
     BYTE* ui;
@@ -132,6 +139,7 @@ uint32_t fang_control_editor_ready(void) {
 
 typedef BYTE* (FANG_THISCALL* control_editor_iterator_fn)(BYTE*, BYTE**);
 
+// Reads/modifies: logs native editor render-group membership and active world groups.
 static void observe_editor_render_groups(BYTE* editor) {
     static const unsigned int offsets[] = {612, 628, 644, 692};
     static const char* names[] = {"build", "paint", "skin", "overlay"};
@@ -159,6 +167,7 @@ static void observe_editor_render_groups(BYTE* editor) {
  * iterator through an out slot; each link belongs to IWindow at link-4.
  * This ABI was observed in rea-editor-tree.js. Never retain these pointers
  * beyond this owner-thread observation, and never export them as handles. */
+// Reads/modifies: queries native window geometry/tree into the output snapshot and logs editor render groups.
 uint32_t fang_control_editor_hierarchy(uint32_t request_id, uint32_t scene, uint64_t deadline,
     fang_control_editor_tree* snapshot) {
     BYTE* windows[FANG_EDITOR_NODE_LIMIT];
@@ -257,6 +266,7 @@ done:
  * 0x103 to 73AED0, including its usual unsaved-change/prompt path. Deliver a
  * real finite button click at its current transformed center instead of
  * inventing 73AED0's inherited register/FPU context or calling native teardown. */
+// Reads/modifies: locates the native Cancel button and dispatches a finite click through the game WndProc, logging it.
 uint32_t fang_control_editor_cancel(HWND window, WNDPROC original) {
     BYTE* editor;
     BYTE* ui;

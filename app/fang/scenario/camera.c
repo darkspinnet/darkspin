@@ -5,6 +5,7 @@
 
 #include <string.h>
 
+// Reads/modifies: logs the three native vector component bit patterns.
 static void trace_camera_vector(const char* x_kind, const char* y_kind,
     const char* z_kind, const BYTE* vector) {
     trace_client_state(x_kind, *(const unsigned int*)vector);
@@ -14,6 +15,7 @@ static void trace_camera_vector(const char* x_kind, const char* y_kind,
 
 /* Mirror 103 sub_52D610's source selection without calling any camera getter
  * that can rebuild the cached transform or reset its smoothing state. */
+// Reads/modifies: resolves and logs the native follow-anchor source without refreshing the camera cache.
 static void trace_camera_follow_anchor(unsigned int handle) {
     const fang_client103_camera_bindings* bindings = fang_client103_camera_get_bindings();
     const BYTE* object;
@@ -67,6 +69,7 @@ static void trace_camera_follow_anchor(unsigned int handle) {
 }
 
 #if FANG_SCENARIO
+// Reads/modifies: validates finite source components and copies them into the destination buffer.
 static int copy_camera_vector(float* destination, const BYTE* source) {
     unsigned int index;
     for (index = 0; index < 3; index++) {
@@ -80,6 +83,7 @@ static int copy_camera_vector(float* destination, const BYTE* source) {
 
 /* Read only the already-validated native follow-camera cache. Do not invoke
  * sub_52FCA0: its lazy transform refresh would change the evidence. */
+// Reads/modifies: copies cached native camera and follow-anchor state into the output snapshot without refreshing it.
 void fang_control_camera_read(fang_control_camera_snapshot* snapshot) {
     const fang_client103_camera_bindings* bindings = fang_client103_camera_get_bindings();
     const BYTE* camera;
@@ -129,6 +133,7 @@ void fang_control_camera_read(fang_control_camera_snapshot* snapshot) {
 
 /* Snapshot/history observation. Never refresh, retarget or override a scripted
  * camera while collecting evidence of a lost follow target. */
+// Reads/modifies: logs cached native follow-camera state and anchor selection without refreshing it.
 void fang_trace_camera_state(void) {
     const fang_client103_camera_bindings* bindings = fang_client103_camera_get_bindings();
     BYTE* camera;

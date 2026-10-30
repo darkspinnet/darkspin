@@ -46,6 +46,7 @@ static screen_visible_fn native_inventory_visible;
 static screen_browser_fn native_screen_browser;
 static screen_variant_release_fn native_screen_variant_release;
 
+// Modifies: runs native inventory creation and records Fang UI ownership, thread, and generation.
 static BYTE* __cdecl observe_screen_create(void) {
     BYTE* inventory = native_screen_create();
     DWORD last_error = GetLastError();
@@ -59,6 +60,7 @@ static BYTE* __cdecl observe_screen_create(void) {
     return inventory;
 }
 
+// Modifies: invalidates matching Fang UI ownership and runs native inventory destruction.
 static void __cdecl observe_screen_destroy(BYTE* inventory) {
     DWORD last_error = GetLastError();
     EnterCriticalSection(&screen_lock);
@@ -77,6 +79,7 @@ static void __cdecl observe_screen_destroy(BYTE* inventory) {
     SetLastError(last_error);
 }
 
+// Modifies: binds native overlay helpers and patches inventory lifecycle calls for Fang ownership tracking.
 int fang_control_screen_install(HMODULE executable) {
     BYTE* base = (BYTE*)executable;
     static const BYTE create_call[] = {0xE8,0xAC,0x80,0x00,0x00};
@@ -123,6 +126,7 @@ int fang_control_screen_install(HMODULE executable) {
     return 1;
 }
 
+// Reads: checks observed native GameUI/inventory ownership, generation, and owner thread.
 static int is_screen_current(uint64_t generation) {
     return is_screen_installed && observed_gameui && observed_inventory &&
         generation == screen_generation && GetCurrentThreadId() == observed_thread &&
@@ -133,6 +137,7 @@ static int is_screen_current(uint64_t generation) {
         *(void**)observed_inventory == screen_image + 0xBD0B18;
 }
 
+// Reads: checks native overlay identities and visibility, treating invalid overlays as blocking.
 static int is_other_screen_open(void) {
     /* The other ordinary dispatcher-owned overlays must not become 'none'.
      * These exact constructors/vtables pair with their pure bool getters:
@@ -150,6 +155,7 @@ static int is_other_screen_open(void) {
     return 0;
 }
 
+// Reads: checks native dialog activity and modal count for screen-action blocking.
 static int is_screen_modal_blocked(void) {
     BYTE* dialog = *(BYTE**)(observed_gameui + 1724);
     /* The same explicit modal counter/dialog-active byte read by425490.
@@ -158,6 +164,7 @@ static int is_screen_modal_blocked(void) {
         (dialog && (!readable_range(dialog, 42) || dialog[41]));
 }
 
+// Reads: validates the screen request, deadline, UI generation, and scene boundary.
 static int is_screen_request_current(uint32_t request_id, uint64_t generation, uint32_t scene, uint64_t deadline) {
     fang_control_snapshot boundary;
     if (GetTickCount64() >= deadline || !is_screen_current(generation) ||
@@ -166,6 +173,7 @@ static int is_screen_request_current(uint32_t request_id, uint64_t generation, u
     return boundary.scene_load_return_count == scene;
 }
 
+// Reads/modifies: executes a DOM observation query, decodes the selected screen, and releases the native result allocation.
 static uint32_t read_browser_screen(BYTE* browser, uint32_t request_id, uint64_t generation, uint32_t scene, uint64_t deadline) {
     /* The authored root showPlayerProfile/showLeaderBoards/showWiki functions
      * display FRAME3 and select its tab but never update currentactive. Read
@@ -204,6 +212,7 @@ static uint32_t read_browser_screen(BYTE* browser, uint32_t request_id, uint64_t
     return screen;
 }
 
+// Reads/modifies: queries native overlay/browser state into the output snapshot, balancing native query allocations.
 static int read_screen_locked(fang_control_screen_state* snapshot, uint32_t request_id, uint32_t scene, uint64_t deadline) {
     BYTE* browser;
     void** table;
@@ -255,6 +264,7 @@ static int read_screen_locked(fang_control_screen_state* snapshot, uint32_t requ
     return 1;
 }
 
+// Reads/modifies: fills a screen snapshot and optionally invokes native overlay selection/toggle, recording invocation outcomes.
 uint32_t fang_control_screen(uint32_t request_id, uint32_t screen, int is_action, uint64_t expected_owner_generation, uint32_t scene, uint64_t deadline,
     fang_control_screen_state* snapshot) {
     uint32_t status = 5;
