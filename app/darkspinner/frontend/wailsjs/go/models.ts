@@ -94,6 +94,8 @@ export namespace main {
 	    profileError: string;
 	    contentError: string;
 	    lastRun: string;
+	    clientLoginFailure: string;
+	    clientLoginFailureId: string;
 	    launcherNotice: string;
 	    manifestUrl: string;
 	    gameDirectory: string;
@@ -148,6 +150,8 @@ export namespace main {
 	        this.profileError = source["profileError"];
 	        this.contentError = source["contentError"];
 	        this.lastRun = source["lastRun"];
+	        this.clientLoginFailure = source["clientLoginFailure"];
+	        this.clientLoginFailureId = source["clientLoginFailureId"];
 	        this.launcherNotice = source["launcherNotice"];
 	        this.manifestUrl = source["manifestUrl"];
 	        this.gameDirectory = source["gameDirectory"];

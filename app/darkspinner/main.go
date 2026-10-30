@@ -67,6 +67,7 @@ type options struct {
 	clientResult              string
 	launchID                  string
 	clientProfile             string
+	clientAccount             string
 	modManifest               string
 	isIntroSkipped            bool
 	isCinematicSkipped        bool
@@ -265,6 +266,7 @@ func runWithSnapshotControl(ctx context.Context, arguments []string, connection 
 	flags.StringVar(&configuration.clientResult, "client-result", "", "write a PID-bound client failure result")
 	flags.StringVar(&configuration.launchID, "launch-id", "", "correlate one managed game process with its launcher")
 	flags.StringVar(&configuration.clientProfile, "client-profile", "", "bind a managed game process to a launcher profile")
+	flags.StringVar(&configuration.clientAccount, "client-account", "", "display the selected account during automatic game login")
 	flags.StringVar(&configuration.modManifest, "mod-manifest", "", "use an explicit experimental Spore resource manifest for this client")
 	flags.BoolVar(&configuration.isIntroSkipped, "skip-intro", false, "skip opening movies through the client's Escape handling")
 	flags.BoolVar(&configuration.isCinematicSkipped, "skip-cinematic", false, "skip in-game cinematics through the client's Escape handling")
@@ -398,6 +400,17 @@ func runWithSnapshotControl(ctx context.Context, arguments []string, connection 
 	)
 	if err != nil {
 		return fmt.Errorf("clientFailure: %w", err)
+	}
+	clientAccount := configuration.clientAccount
+	if clientAccount == "" {
+		clientAccount = configuration.account
+	}
+	if clientAccount == "" {
+		clientAccount = clientProfile
+	}
+	err = os.Setenv("DARKSPIN_CLIENT_ACCOUNT", clientAccount)
+	if err != nil {
+		return fmt.Errorf("clientAccount: %w", err)
 	}
 	err = configureCinematicOptions(configuration.isIntroSkipped, configuration.isCinematicSkipped)
 	if err != nil {

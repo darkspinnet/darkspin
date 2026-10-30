@@ -145,15 +145,24 @@ func (v *JWTVerifier) verify(token string, isClientVersionRequired bool) (string
 	}
 	now := v.now().Unix()
 	if claims.ExpiresAt == 0 || now >= claims.ExpiresAt {
-		return "", errors.New("JWT has expired")
+		return "", &loginFailure{
+			reason: "launch-token-expired", message: "The launch token expired. Start the game again from Darkspinner.",
+			cause: errors.New("JWT has expired"),
+		}
 	}
 	if claims.NotBefore != 0 && now < claims.NotBefore {
-		return "", errors.New("JWT is not active")
+		return "", &loginFailure{
+			reason: "launch-token-not-active", message: "The launch token is not active yet. Check the client and server clocks, then try again.",
+			cause: errors.New("JWT is not active"),
+		}
 	}
 	if isClientVersionRequired || claims.ClientVersion != "" {
 		err = buildinfo.CheckCompatibility(claims.ClientVersion, buildinfo.Version)
 		if err != nil {
-			return "", fmt.Errorf("launchVersion: %w", err)
+			return "", &loginFailure{
+				reason: "client-version-incompatible", message: "The server requires a compatible Darkspinner version. Update your launcher and try again.",
+				cause: fmt.Errorf("launchVersion: %w", err),
+			}
 		}
 	}
 	loginName := strings.TrimSpace(claims.Email)

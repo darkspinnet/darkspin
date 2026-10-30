@@ -337,7 +337,15 @@ func (a *App) presentClientFailure(
 	message := fmt.Sprintf(
 		"%s: %s [%s]", formatClientRun(processRecord), failureRecord.Message, failureRecord.Reason,
 	)
-	a.setClientLastRun(message, true)
+	a.mu.Lock()
+	a.status.LastRun = message
+	a.status.IsLastRunFailure = true
+	if failureRecord.Stage == "login" || failureRecord.Stage == "account-profile" {
+		a.status.ClientLoginFailure = strings.TrimSpace(failureRecord.Message)
+		a.status.LoginFailureID = failureRecord.LaunchID
+	}
+	a.emitStatusLocked()
+	a.mu.Unlock()
 	a.log(message)
 	a.consumeClientResult(path)
 }

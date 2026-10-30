@@ -94,6 +94,15 @@ const isMultiplayerConfirmOpen = ref(false)
 const isRunningGameConfirmOpen = ref(false)
 const isRunningGameConfirmBusy = ref(false)
 const launcherNotice = ref('')
+const remoteLoginFailure = ref('')
+const dismissedClientLoginFailureID = ref('')
+const clientLoginFailure = computed(() => remoteLoginFailure.value || (status.value.clientLoginFailureId &&
+  status.value.clientLoginFailureId !== dismissedClientLoginFailureID.value
+  ? visibleLauncherText(status.value.clientLoginFailure) : ''))
+function dismissClientLoginFailure() {
+  remoteLoginFailure.value = ''
+  dismissedClientLoginFailureID.value = status.value.clientLoginFailureId || ''
+}
 let dismissedLauncherNotice = ''
 const isRemoteServerMenuOpen = ref(false)
 const isProfileListLoaded = ref(false)
@@ -848,6 +857,7 @@ async function launchRemote() {
   if (!isRemoteFormReady.value || isRemoteBusy.value) return
   if (!isRemoteConnectionReady.value) {
     remoteMessage.value = remoteConnectionReason.value
+    remoteLoginFailure.value = remoteMessage.value
     return
   }
   isRemoteBusy.value = true
@@ -855,6 +865,7 @@ async function launchRemote() {
     await refreshRemoteChecks()
     if (!isRemoteConnectionReady.value) {
       remoteMessage.value = remoteConnectionReason.value
+      remoteLoginFailure.value = remoteMessage.value
       return
     }
     await LaunchRemoteProfile(remoteServerAddress.value, remoteIdentity.value.trim(), remotePassword.value, isRemotePasswordRemembered.value)
@@ -863,7 +874,10 @@ async function launchRemote() {
     await refreshRemoteProfiles()
     if (isRemotePasswordRemembered.value) remotePassword.value = ''
   }
-  catch (error) { remoteMessage.value = visibleLauncherText(error) }
+  catch (error) {
+    remoteMessage.value = visibleLauncherText(error)
+    remoteLoginFailure.value = remoteMessage.value
+  }
   finally { isRemoteBusy.value = false }
 }
 
@@ -1817,7 +1831,19 @@ async function copyLauncherFailure() {
       </div>
     </LauncherDialog>
 
-    <LauncherDialog @interact="handleLauncherInteraction" v-if="launcherNotice">
+    <LauncherDialog @interact="handleLauncherInteraction" v-if="clientLoginFailure" :is-dismissible="true" @close="dismissClientLoginFailure">
+      <div class="notice-card danger-notice">
+        <p class="eyebrow">CONNECTION FAILED</p>
+        <DialogTitle as="h2">LOGIN COULD NOT FINISH</DialogTitle>
+        <p>{{ clientLoginFailure }}</p>
+        <p>You can try connecting again from Darkspinner.</p>
+        <div class="notice-actions">
+          <Button variant="outline" type="button" @click="dismissClientLoginFailure">CLOSE</Button>
+        </div>
+      </div>
+    </LauncherDialog>
+
+    <LauncherDialog @interact="handleLauncherInteraction" v-else-if="launcherNotice">
       <div class="notice-card danger-notice">
         <p class="eyebrow">{{ status.isStartupBlocked ? 'PRIVILEGE CHECK' : 'LAUNCHER ATTENTION REQUIRED' }}</p>
         <DialogTitle as="h2">{{ status.isStartupBlocked ? 'STANDARD USER REQUIRED' : 'SETUP COULD NOT FINISH' }}</DialogTitle>

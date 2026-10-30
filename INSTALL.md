@@ -22,6 +22,7 @@
 - `app/darkspinner` is the standalone desktop application that manages local
   authentication, server lifecycle, profiles, patching, and game launch.
 - `app/fang` builds the injected `fang.dll` compatibility hook.
+  Its feature directories and camera usage are documented in [the Fang source layout](app/fang/README.md).
 - `app/palp` builds the storage-independent `wasmauth.wasm` authentication
   bridge.
 

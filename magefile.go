@@ -4,6 +4,7 @@ package main
 
 import (
 	"archive/zip"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,7 +25,7 @@ import (
 
 // releaseSemver is the single source of truth for Dark Spin release versions.
 // Build targets inject it without rewriting application or frontend sources.
-const releaseSemver = "1.1.6"
+const releaseSemver = "1.2.0"
 
 const binaryName = "darkrun.exe"
 
@@ -260,6 +261,15 @@ func buildFang(isDiagnostics, isScenario bool, linkerFlags string) error {
 	}
 	fangPath := filepath.Join("bin", "game", "fang.dll")
 	environment := map[string]string{"GOOS": "windows", "GOARCH": "386", "CGO_ENABLED": "1"}
+	// cgo does not track included headers outside each package directory.
+	// Include all Fang header contents in the C action key across feature packages.
+	headerSources, err := fangHeaderSources(filepath.Join("app", "fang"))
+	if err != nil {
+		return fmt.Errorf("fangHeaders: %w", err)
+	}
+	headerDigest := sha256.Sum256([]byte(strings.Join(headerSources, "\x00")))
+	environment["CGO_CFLAGS"] = strings.TrimSpace(os.Getenv("CGO_CFLAGS") +
+		fmt.Sprintf(" -DFANG_HEADER_REVISION=0x%x", headerDigest[:8]))
 	arguments := []string{"build", "-ldflags", "-s -w " + linkerFlags, "-buildmode=c-shared", "-o", fangPath}
 	buildTags := ""
 	if isDiagnostics {
@@ -278,7 +288,7 @@ func buildFang(isDiagnostics, isScenario bool, linkerFlags string) error {
 		}
 		environment["CC"] = compiler
 	}
-	err := sh.RunWithV(
+	err = sh.RunWithV(
 		environment,
 		"go", arguments...,
 	)
@@ -291,6 +301,34 @@ func buildFang(isDiagnostics, isScenario bool, linkerFlags string) error {
 		return fmt.Errorf("headerRemove: %w", err)
 	}
 	return nil
+}
+
+func fangHeaderSources(directory string) ([]string, error) {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return nil, fmt.Errorf("headerList: %w", err)
+	}
+	headerSources := make([]string, 0)
+	for _, entry := range entries {
+		path := filepath.Join(directory, entry.Name())
+		if entry.IsDir() {
+			childSources, childErr := fangHeaderSources(path)
+			if childErr != nil {
+				return nil, fmt.Errorf("headerChild: %w", childErr)
+			}
+			headerSources = append(headerSources, childSources...)
+			continue
+		}
+		if filepath.Ext(path) != ".h" {
+			continue
+		}
+		headerSource, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil, fmt.Errorf("headerRead: %w", readErr)
+		}
+		headerSources = append(headerSources, filepath.ToSlash(path), string(headerSource))
+	}
+	return headerSources, nil
 }
 
 func buildLauncher(linkerFlags string) error {

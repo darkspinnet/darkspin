@@ -224,7 +224,7 @@ func loginHandlerWithPolicy(
 		isRemote := isDedicated || peerIP == nil || !peerIP.IsLoopback()
 		if isRemote && (password == "" || loginName != TokenLoginUsername || tokenVerifier == nil) {
 			logServerLoginAttempt(request, method, account, nil, false)
-			return &Response{ErrorCode: authInvalidUser}, nil
+			return loginFailureResponse("launcher-login-required", "This server requires a launch token. Connect through Darkspinner."), nil
 		}
 		if loginName == TokenLoginUsername && tokenVerifier != nil {
 			account = ""
@@ -246,6 +246,8 @@ func loginHandlerWithPolicy(
 				result = userManager.LoginTrusted(ctx, verifiedLoginName)
 			} else {
 				logJWTLoginRejection(request, err)
+				logServerLoginAttempt(request, method, account, nil, false)
+				return loginTokenFailureResponse(tokenVerifier, err), nil
 			}
 		} else {
 			result = userManager.Login(ctx, loginName, password)
@@ -253,7 +255,10 @@ func loginHandlerWithPolicy(
 		isAccepted := result.IsSuccess || result.IsAlreadyLoggedIn
 		logServerLoginAttempt(request, method, account, result.User, isAccepted)
 		if !isAccepted {
-			return &Response{ErrorCode: authInvalidUser}, nil
+			if result.IsWorldFull {
+				return loginFailureResponse("server-full", "The server is full. Try again later."), nil
+			}
+			return loginFailureResponse("account-login-rejected", "The server could not sign in this account. Sign in again from Darkspinner."), nil
 		}
 		reconcileLoginMembership(result.User, membershipReconciler)
 		request.Session.Set(sessionUserKey, result.User)

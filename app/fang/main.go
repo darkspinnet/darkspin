@@ -3,6 +3,7 @@
 package main
 
 /*
+#cgo scenario,fangdebug CFLAGS: -DFANG_SCENARIO=1
 #cgo windows LDFLAGS: -lws2_32 -lole32 -luuid -static-libgcc
 #include <stdlib.h>
 #include "fang.h"
@@ -17,6 +18,20 @@ import (
 	"os"
 	"strconv"
 	"unsafe"
+
+	_ "github.com/darkspinnet/darkspin/app/fang/bug"
+	_ "github.com/darkspinnet/darkspin/app/fang/chat"
+	_ "github.com/darkspinnet/darkspin/app/fang/cinematic"
+	_ "github.com/darkspinnet/darkspin/app/fang/client103"
+	_ "github.com/darkspinnet/darkspin/app/fang/display"
+	_ "github.com/darkspinnet/darkspin/app/fang/editor"
+	_ "github.com/darkspinnet/darkspin/app/fang/hook"
+	_ "github.com/darkspinnet/darkspin/app/fang/login"
+	_ "github.com/darkspinnet/darkspin/app/fang/mod"
+	_ "github.com/darkspinnet/darkspin/app/fang/network"
+	"github.com/darkspinnet/darkspin/app/fang/scenario"
+	_ "github.com/darkspinnet/darkspin/app/fang/shop"
+	_ "github.com/darkspinnet/darkspin/app/fang/zoom"
 )
 
 const (
@@ -59,7 +74,7 @@ func GoRecapInitialize() C.int {
 		isIntroSkipped, isCinematicSkipped, jwt, windowTitle,
 	)
 	if result == 0 {
-		startScenarioControl()
+		scenario.Start()
 	}
 	return C.int(result)
 }

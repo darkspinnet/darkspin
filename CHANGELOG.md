@@ -2,6 +2,13 @@
 
 ### 2026-10-29
 
+- Rebuild Fang native feature packages when shared headers change to prevent stale cgo objects and missing hook symbols during incremental builds.
+- Include named build-103 binding and hook installation failures in Fang bug diagnostics, and roll back incomplete shop and zoom hook installation.
+- Refresh the display-only login fields after timeline reconstruction so the selected username and masked placeholder remain visible while connecting.
+- Populate the display-only game login form with the selected account and a masked placeholder password, while disabling manual and remembered-password submission during token login.
+- Show the automatic-login processing indicator immediately instead of waiting through its one-second fade, and preserve it when delayed authentication begins.
+- Keep launcher token login in the native processing state and extend login-service readiness from 5 to 30 seconds for slower connections.
+- Close failed automatic logins and show a persistent Darkspinner error dialog with server-provided public rejection reasons when available.
 - #144 Restore passive Cryos geyser hole scenery without reintroducing damageable health.
 - #144 Retire Voltroid discharge beams at their authored release boundary and on death instead of leaving untracked looping beams.
 - #144 Use authored health catalyst scaling and refresh native squad health and power capacities after catalyst pickup, rearrangement and removal.

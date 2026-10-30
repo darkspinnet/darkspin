@@ -108,6 +108,7 @@ func (e *App) startDetachedGame(ctx context.Context, req detachedGameRequest) er
 		"--" + detachedGameArgument, "--multiple-instances",
 		"--user-data-dir", userDataPath,
 		"--client-profile", req.clientProfile,
+		"--client-account", req.account,
 		"--server-address", req.serverAddress,
 		"--launch-id", launchID, "--client-result", resultPath,
 	}

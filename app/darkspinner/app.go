@@ -80,6 +80,8 @@ type LauncherStatus struct {
 	ProfileError        string `json:"profileError"`
 	ContentError        string `json:"contentError"`
 	LastRun             string `json:"lastRun"`
+	ClientLoginFailure  string `json:"clientLoginFailure"`
+	LoginFailureID      string `json:"clientLoginFailureId"`
 	LauncherNotice      string `json:"launcherNotice"`
 	ManifestURL         string `json:"manifestUrl"`
 	GameDirectory       string `json:"gameDirectory"`
@@ -570,7 +572,8 @@ func (a *App) runGameLaunch(ctx context.Context, req gameLaunchRequest) {
 	a.clientSession.Track(launchID, clientProfile, "attached")
 	defer a.clientSession.Close(launchID)
 	arguments = append([]string{
-		"--client-profile", clientProfile, "--launch-id", launchID, "--client-result", resultPath,
+		"--client-profile", clientProfile, "--client-account", req.account,
+		"--launch-id", launchID, "--client-result", resultPath,
 	}, arguments...)
 	a.log("Starting game")
 	a.recordReportSession(req, launchID)
@@ -1049,6 +1052,7 @@ func visibleLauncherStatus(status LauncherStatus) LauncherStatus {
 	status.ProfileError = visibleLauncherText(status.ProfileError)
 	status.ContentError = visibleLauncherText(status.ContentError)
 	status.LastRun = visibleLauncherText(status.LastRun)
+	status.ClientLoginFailure = visibleLauncherText(status.ClientLoginFailure)
 	status.LauncherNotice = visibleLauncherText(status.LauncherNotice)
 	status.GameDirectory = visibleLauncherText(status.GameDirectory)
 	return status

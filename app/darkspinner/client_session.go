@@ -61,6 +61,9 @@ func (e *clientSession) Fail(record clientFailureRecord) bool {
 	if !isOwned || client.Failure != nil {
 		return false
 	}
+	if client.Process.PID != 0 && client.Process.PID != record.PID {
+		return false
+	}
 	client.Failure = &record
 	if client.Process.PID == 0 {
 		client.Process.PID = record.PID
