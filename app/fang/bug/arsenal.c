@@ -124,6 +124,8 @@ void fang_trace_arsenal_snapshot(HMODULE executable) {
     unsigned int states[0xD10 / 4];
     unsigned int root = 0;
     unsigned int catalog_count = 0;
+    unsigned int profile_level = 0;
+    unsigned int activation_credit = 0;
     unsigned int catalog_bounds[2];
     unsigned int nouns[256];
     unsigned int count;
@@ -140,6 +142,20 @@ void fang_trace_arsenal_snapshot(HMODULE executable) {
      * the ordered catalogue used by sub_41ACA0 is at +10324/+10328. */
     if (arsenal_read(base + (0x01438CB0u - 0x00400000u),
             &root, sizeof(root)) && root != 0) {
+        /* Build 103 sub_417AA0 gates Activate on profile+10780 credits and
+         * profile+10816 level; sub_4E4E20 returns root+1808. */
+        if (arsenal_read((uintptr_t)root + 12588, &activation_credit,
+                sizeof(activation_credit))) {
+            trace_client_state("arsenal_activation_credit_count", activation_credit);
+        } else {
+            trace_client_state("arsenal_activation_credit_unreadable", 1);
+        }
+        if (arsenal_read((uintptr_t)root + 12624, &profile_level,
+                sizeof(profile_level))) {
+            trace_client_state("arsenal_profile_level", profile_level);
+        } else {
+            trace_client_state("arsenal_profile_level_unreadable", 1);
+        }
         if (arsenal_read((uintptr_t)root + 2388, &catalog_count,
                 sizeof(catalog_count))) {
             trace_client_state("arsenal_catalog_count", catalog_count);

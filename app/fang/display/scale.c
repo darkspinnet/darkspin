@@ -15,9 +15,9 @@
  * Native frame/image/glyph presentation is scaled at the 912EF0 GPU submission
  * interface below; changing window transforms alone did not enlarge it.
  *
- * The logical root still shrinks for docking. However, 9193A0 uses its desired
- * area to compute SHARED mouse ratios, also consumed outside SPUI. Only its
- * two byte-confirmed getter calls receive the physical presentation rectangle.
+ * The logical root still shrinks for docking. 9193A0's shared mouse ratios and
+ * 908D20's world-picking bounds need the physical presentation rectangle.
+ * Only their byte-confirmed getter calls receive that physical rectangle.
  * All other callers see the native logical area. No shared ratio is patched,
  * no Flash viewport changes, and no installed layout resource is modified. */
 typedef BYTE* (__cdecl* scale_manager_fn)(void);
@@ -48,6 +48,8 @@ static scale_button_fn native_button_up;
 static scale_button_fn native_wheel;
 static scale_render_fn native_render;
 static int reported_render_percent;
+static int reported_pick_percent;
+static int requested_percent = 100;
 static struct {
     BYTE* owner;
     float physical_areas[4];
@@ -223,21 +225,26 @@ static void trace_scale_geometry(BYTE* manager, BYTE* root) {
     trace_client_state("display_ui_scale_popup_count", popup_count);
 }
 
-// Reads: returns the saved native-interface scale as a percentage.
+// Reads: returns this launch's native-interface scale as a percentage.
 int fang_native_ui_scale(void) {
     return scale.percent;
 }
 
-// Modifies: persists an accepted scale before requesting its native layout.
+// Reads: returns the saved choice for the next launch's options UI.
+int fang_native_ui_scale_requested(void) {
+    return requested_percent;
+}
+
+// Modifies: persists the next launch's scale without changing this session.
 int fang_request_native_ui_scale(int percent) {
     if (percent < 100 || percent > 300 || percent % 5) return 0;
-    if (percent == scale.percent) return 1;
+    if (percent == requested_percent) return 1;
     if (!scale.is_installed) return 0;
     if (!fang_ui_scale_save(percent)) {
         trace_client_state("display_ui_scale_save_failed", percent);
         return 0;
     }
-    scale.percent = percent;
+    requested_percent = percent;
     trace_client_state("display_ui_scale_requested", percent);
     return 1;
 }
@@ -251,15 +258,23 @@ static BYTE* scale_root(BYTE* manager) {
     return root;
 }
 
-// Reads: keeps shared mouse ratios physical while SPUI layout remains logical.
+// Reads: keeps shared mouse ratios and world picking bounds in physical pixels.
 static const float* FANG_THISCALL physical_input_area(BYTE* window) {
     BYTE* caller = (BYTE*)SCALE_CALLER();
     BYTE* manager = native_manager();
     BYTE* root = scale_root(manager);
     /* 9193DC and 91942E are the two indirect GetArea calls in 9193A0.
-     * Match their exact return addresses, not a broad caller interval. */
+     * 908D42 is the screen-bounds getter used by Arsenal picking (4132F0).
+     * It compares 919130's physical mouse position before casting the ray.
+     * Match exact return addresses while leaving SPUI layout getters logical. */
     if (root && window == root + 4 && scale.owner == manager &&
-        (caller == scale_image + 0x5193DE || caller == scale_image + 0x519430)) {
+        (caller == scale_image + 0x5193DE || caller == scale_image + 0x519430 ||
+         caller == scale_image + 0x508D44)) {
+        if (caller == scale_image + 0x508D44 &&
+            reported_pick_percent != scale.applied_percent) {
+            reported_pick_percent = scale.applied_percent;
+            trace_client_state("display_ui_scale_pick_bounds_preserved", scale.applied_percent);
+        }
         if (scale.reported_input_percent != scale.applied_percent) {
             scale.reported_input_percent = scale.applied_percent;
             trace_client_state("display_ui_scale_input_preserved", scale.applied_percent);
@@ -382,6 +397,8 @@ int fang_install_native_ui_scale(BYTE* base) {
         base[0x512EF6] != 0xE9 ||
         base + 0x512EFB + *(int*)(base + 0x512EF7) != base + 0x512AB0 ||
         !readable_range(base + 0x7E1900, 6) ||
+        !readable_range(base + 0x508D3F, 5) ||
+        memcmp(base + 0x508D3F, "\x8B\x42\x34\xFF\xD0", 5) != 0 ||
         !readable_range(base + 0x5193DC, 2) || !readable_range(base + 0x51942E, 2) ||
         !readable_range(base + 0x7E20B0, sizeof(dirty_signature)) ||
         memcmp(base + 0x7E20B0, dirty_signature, sizeof(dirty_signature)) ||
@@ -405,6 +422,7 @@ int fang_install_native_ui_scale(BYTE* base) {
     native_wheel = (scale_button_fn)(base + 0x5199C0);
     native_render = (scale_render_fn)(base + 0x512EF0);
     scale.percent = fang_ui_scale_load();
+    requested_percent = scale.percent;
     if (!patch_pointer(area_slot, native_area, physical_input_area)) return 0;
     if (!patch_call(base + 0x7E38D7, native_event, scaled_transform)) goto restore_area;
     if (!patch_pointer(resize_slot, native_resize, scaled_resize)) goto restore_transform;

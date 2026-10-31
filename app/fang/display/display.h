@@ -10,6 +10,7 @@ void fang_request_taskbar_overlay(int is_enabled);
 int fang_install_display_ui(BYTE* base);
 void fang_update_display_ui(void);
 int fang_native_ui_scale(void);
+int fang_native_ui_scale_requested(void);
 int fang_request_native_ui_scale(int percent);
 int fang_install_native_ui_scale(BYTE* base);
 void fang_update_native_ui_scale(void);

@@ -2,6 +2,9 @@
 
 ### 2026-10-31
 
+- Save Native UI Scale changes for the next game launch while keeping the running game's scale unchanged.
+- [#148](https://github.com/darkspinnet/darkspin/issues/148) Keep Arsenal hero picking aligned with the physical mouse position at enlarged Native UI Scale so hero action menus open normally.
+- Include the live Crogenitor level and hero activation credits in Arsenal bug snapshots.
 - Move Auto Patch and Auto Play into Config Advanced, migrate their preferences into darkspin.toml, and auto-launch the last selected Local, Remote, or Modded Crogenitor once ready.
 - Preserve each accepted melee attack's facing through teleport and release-pose cleanup so its scheduled hit can complete.
 - Retire healing-reduction ownership when its modifier is purged so later basic attacks can apply the effect again.

@@ -631,7 +631,7 @@ done:
 static void load_selection(int is_default) {
     selection.is_borderless = !is_default && fang_borderless_requested();
     selection.is_overlay = !is_default && fang_taskbar_overlay_requested();
-    selection.scale_percent = is_default ? 100 : fang_native_ui_scale();
+    selection.scale_percent = is_default ? 100 : fang_native_ui_scale_requested();
     selection.is_scale_pending = 1;
     selection.is_scale_save_failed = 0;
     selection.is_pending = 1;
