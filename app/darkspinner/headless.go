@@ -229,6 +229,8 @@ func launcherMethods(app *App) map[string]any {
 		"GetServerRulesConfiguration":        app.GetServerRulesConfiguration,
 		"GetStatus":                          app.GetStatus,
 		"GetLauncherAutomationConfiguration": app.GetLauncherAutomationConfiguration,
+		"GetLauncherLanguageConfiguration":   app.GetLauncherLanguageConfiguration,
+		"SetLauncherLocale":                  app.SetLauncherLocale,
 		"SetAutoPatch":                       app.SetAutoPatch,
 		"SetAutoPlay":                        app.SetAutoPlay,
 		"SetLocalServicesRequired":           app.SetLocalServicesRequired,

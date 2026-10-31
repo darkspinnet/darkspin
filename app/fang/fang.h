@@ -3,6 +3,7 @@
 
 #include <winsock2.h>
 #include <windows.h>
+#include "hook/text.h"
 
 int fang_install(const char* hostname, unsigned short port, unsigned short party_port,
     const char* trace_path, int skip_intro, int skip_cinematic,

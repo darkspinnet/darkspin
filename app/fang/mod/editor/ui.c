@@ -378,7 +378,7 @@ static int editor_make_button(BYTE* context, editor_value* button, double width,
     editor_set(button, "disabled", editor_boolean(0));
     editor_set(button, "label", editor_string(label));
     if (editor_get(button, "textField", &text))
-        editor_set(&text, "text", editor_string(label));
+        editor_set(&text, "text", editor_string(fang_text(label)));
     editor_set(button, "btnID", editor_number(3));
     arguments[0] = editor_string("click");
     arguments[1] = receiver;
@@ -470,7 +470,7 @@ static void editor_menu_update(BYTE* context) {
     }
     if (!editor_get(&button, "fangEditorReady", &ready) ||
         (ready.type & 0x8f) != 2 || !*(unsigned char*)&ready.data) {
-        if (!editor_make_button(context, &button, width, height, "CREATURE EDIT", fang_mod_editor_open)) goto done;
+        if (!editor_make_button(context, &button, width, height, fang_text("CREATURE EDIT"), fang_mod_editor_open)) goto done;
     }
     editor_set(&button, "_x", editor_number(x));
     /* Flash artwork bounds include more than the visible row. Continue the
@@ -658,7 +658,7 @@ static void editor_preview_label(editor_value* button, const char* label, LONG w
     editor_set(&text, "_y", editor_number(2));
     editor_set(&text, "_width", editor_number(width - 16));
     editor_set(&text, "_height", editor_number(height - 4));
-    editor_set(&text, "text", editor_string(label));
+    editor_set(&text, "text", editor_string(fang_text(label)));
     if (!editor_invoke(&text, "getTextFormat", &format, NULL, 0)) goto done;
     editor_set(&format, "size", editor_number(18));
     editor_set(&format, "align", editor_string("center"));
@@ -725,7 +725,7 @@ static void editor_preview_draw(editor_value* root, BYTE* editor, BYTE* ui) {
     int is_ready = is_test || fang_mod_editor_preview_ready(editor);
     BYTE* skin = *(BYTE**)(editor + 408);
     unsigned int status;
-    const char* label = is_test ? "RETURN TO BODY" : is_ready ? "TEST CREATURE" : "PREPARING PREVIEW";
+    const char* label = fang_text(is_test ? "RETURN TO BODY" : is_ready ? "TEST CREATURE" : "PREPARING PREVIEW");
     SetRectEmpty(&preview_area);
     if (!fang_mod_editor_is_scene(editor) || !body_window ||
         !GetClientRect(body_window, &client)) goto done;
@@ -910,7 +910,7 @@ static void editor_scene_update(int is_arsenal) {
     if (!editor_get(&button, "fangEditorReady", &ready) ||
         (ready.type & 0x8f) != 2 || !*(unsigned char*)&ready.data) {
         if (!editor_make_button(scene_context, &button, 180, 24,
-            "IMPORT EDITOR", editor_scene_open)) goto done;
+            fang_text("IMPORT EDITOR"), editor_scene_open)) goto done;
     }
     window = GetActiveWindow();
     if (!window || !GetClientRect(window, &client)) goto done;

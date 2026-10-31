@@ -12,6 +12,9 @@ campaign_matchmaking_bot_size = 1
 is_campaign_bot_squad_mirroring_enabled = true
 
 [launcher]
+# Launcher text language. On first use, inherit the previous explicit game
+# language or detect the operating-system language, then save independently.
+locale = ""
 # Saved choices for new game instances. Explicit launch flags override them
 # for the current launcher run without changing these preferences.
 is_intro_skipped = false

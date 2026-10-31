@@ -554,6 +554,14 @@ func postAuthJSON(ctx context.Context, client *http.Client, endpoint string, req
 		if readErr != nil {
 			return fmt.Errorf("errorRead: %w", readErr)
 		}
+		failure := struct {
+			Error string `json:"error"`
+			Code  string `json:"code"`
+		}{}
+		decodeErr := json.Unmarshal(message, &failure)
+		if decodeErr == nil && strings.TrimSpace(failure.Error) != "" {
+			return &authServiceError{statusCode: response.StatusCode, code: failure.Code, message: failure.Error}
+		}
 		return fmt.Errorf("authentication service returned %s: %s", response.Status, strings.TrimSpace(string(message)))
 	}
 	decoder := json.NewDecoder(io.LimitReader(response.Body, 16*1024))

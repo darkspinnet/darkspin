@@ -4,5 +4,6 @@
 #include "client103/abi.h"
 #include "hook/patch.h"
 #include "hook/trace.h"
+#include "hook/text.h"
 
 #endif

@@ -5,13 +5,14 @@ import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { BrowseModSporeDirectory, DetectModSporePath, GetModConfiguration, SetModSporePath } from '../platform'
 
+defineProps({ idPrefix:{ type:String, default:'config-spore' } })
+const emit = defineEmits(['saved'])
 const sourcePath = ref('')
 const isBusy = ref(false)
 const isBrowsing = ref(false)
 const directory = ref({ path:'', parent:'', directories:[], executables:[] })
 const browsePath = ref('')
 const error = ref('')
-const message = ref('')
 let saveDelay = null
 let isSavePending = false
 
@@ -19,9 +20,7 @@ async function refresh() {
   const configuration = await GetModConfiguration()
   sourcePath.value = configuration.sporePath
   error.value = configuration.sourceError
-  message.value = configuration.sporePath && !configuration.sourceError
-    ? 'Spore folder found.'
-    : configuration.sporePath ? '' : 'Spore folder not found. Enter a path, browse, or use Detect.'
+  return configuration
 }
 
 function cancelScheduledSave() {
@@ -34,7 +33,6 @@ function scheduleSave() {
   cancelScheduledSave()
   isSavePending = true
   error.value = ''
-  message.value = 'Checking Spore folder…'
   saveDelay = window.setTimeout(flushSave, 600)
 }
 
@@ -50,7 +48,6 @@ async function perform(operation) {
   if (isBusy.value) return
   isBusy.value = true
   error.value = ''
-  message.value = 'Checking Spore folder…'
   try { await operation() }
   catch (failure) { error.value = String(failure?.message || failure) }
   finally {
@@ -63,27 +60,29 @@ async function browse(path) {
   directory.value = await BrowseModSporeDirectory(path)
   browsePath.value = directory.value.path
   isBrowsing.value = true
-  message.value = 'Select SporeApp.exe to check and save its folder.'
 }
 
 async function detect() {
   cancelScheduledSave()
   sourcePath.value = await DetectModSporePath()
-  await refresh()
+  const configuration = await refresh()
   isBrowsing.value = false
-  if (!error.value) message.value = 'Spore folder detected and saved.'
+  if (!error.value) {
+    emit('saved', configuration)
+  }
 }
 
 async function save() {
   if (!sourcePath.value.trim()) {
-    message.value = ''
     error.value = 'Spore folder not found. Enter a path, browse, or use Detect.'
     return
   }
   await SetModSporePath(sourcePath.value)
-  await refresh()
+  const configuration = await refresh()
   isBrowsing.value = false
-  if (!error.value) message.value = 'Spore folder found and saved.'
+  if (!error.value) {
+    emit('saved', configuration)
+  }
 }
 
 async function selectSource(path) {
@@ -98,23 +97,23 @@ onBeforeUnmount(flushSave)
 
 <template>
   <Card class="management-card spore-configuration">
-    <label for="config-spore-path"><strong>SPORE FOLDER</strong></label>
-    <Input id="config-spore-path" v-model="sourcePath" :disabled="isBusy" aria-describedby="config-spore-status" @update:model-value="scheduleSave" />
-    <p id="config-spore-status" :class="{ 'spore-error':error }" :role="error ? 'alert' : 'status'" aria-live="polite">{{ error || message }}</p>
+    <label :for="`${idPrefix}-path`"><strong>{{ $t("SPORE FOLDER") }}</strong></label>
+    <Input :id="`${idPrefix}-path`" v-model="sourcePath" :disabled="isBusy" :aria-describedby="error ? `${idPrefix}-status` : undefined" @update:model-value="scheduleSave" />
+    <p v-if="error" :id="`${idPrefix}-status`" class="spore-error" role="alert">{{ $t(error) }}</p>
     <div class="spore-actions">
-      <Button variant="outline" :disabled="isBusy" @click="perform(detect)">DETECT</Button>
-      <Button variant="outline" :disabled="isBusy" @click="perform(() => browse(sourcePath))">BROWSE</Button>
+      <Button variant="outline" :disabled="isBusy" @click="perform(detect)">{{ $t("DETECT") }}</Button>
+      <Button variant="outline" :disabled="isBusy" @click="perform(() => browse(sourcePath))">{{ $t("BROWSE") }}</Button>
     </div>
     <div v-if="isBrowsing" class="spore-browser">
-      <label for="config-spore-browse">FIND SPOREAPP.EXE</label>
+      <label :for="`${idPrefix}-browse`">{{ $t("FIND SPOREAPP.EXE") }}</label>
       <div class="spore-actions">
-        <Input id="config-spore-browse" v-model="browsePath" :disabled="isBusy" @keyup.enter="perform(() => browse(browsePath))" />
-        <Button variant="outline" :disabled="isBusy" @click="perform(() => browse(browsePath))">GO</Button>
+        <Input :id="`${idPrefix}-browse`" v-model="browsePath" :disabled="isBusy" @keyup.enter="perform(() => browse(browsePath))" />
+        <Button variant="outline" :disabled="isBusy" @click="perform(() => browse(browsePath))">{{ $t("GO") }}</Button>
       </div>
-      <button type="button" :disabled="isBusy" @click="perform(() => browse(directory.parent))">↑ PARENT FOLDER</button>
+      <button type="button" :disabled="isBusy" @click="perform(() => browse(directory.parent))">{{ $t("↑ PARENT FOLDER") }}</button>
       <div class="spore-directory-list">
         <button v-for="path in directory.directories" :key="path" type="button" :disabled="isBusy" @click="perform(() => browse(path))">▸ {{ path.split(/[\\/]/).pop() }}</button>
-        <button v-for="path in directory.executables" :key="path" type="button" :disabled="isBusy" @click="perform(() => selectSource(path))">SELECT {{ path.split(/[\\/]/).pop() }}</button>
+        <button v-for="path in directory.executables" :key="path" type="button" :disabled="isBusy" @click="perform(() => selectSource(path))">{{ $t("SELECT ") }}{{ path.split(/[\\/]/).pop() }}</button>
       </div>
     </div>
   </Card>

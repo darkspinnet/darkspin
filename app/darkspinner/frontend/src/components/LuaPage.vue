@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { ComboboxRoot, ComboboxAnchor, ComboboxInput, ComboboxTrigger, ComboboxPortal, ComboboxContent, ComboboxViewport, ComboboxItem, ComboboxEmpty } from 'reka-ui'
 import { Check, Clipboard, ChevronDown } from '@lucide/vue'
 import { ClipboardSetText, GetLuaConsole, KillLuaSession, RunLuaScript, StopLuaScript } from '../platform'
+import { translate } from '../localization'
 
 const emit = defineEmits(['state'])
 const state = ref({ scripts:[], lines:[], phase:'idle', isActive:false, elapsedMs:0 })
@@ -33,8 +34,8 @@ const filteredScripts = computed(() => (state.value.scripts || []).filter(script
 function openPicker(isOpen) { isPickerOpen.value = isOpen; if (isOpen) search.value = '' }
 const resultLabel = computed(() => {
   const phase = state.value.phase || 'idle'
-  const label = phase === 'passed' ? 'Finished' : phase === 'interrupted' ? 'Stopped' : phase.charAt(0).toUpperCase() + phase.slice(1)
-  return state.value.elapsedMs > 0 ? `${label} · ${(state.value.elapsedMs / 1000).toFixed(2)}s` : label
+  const label = translate(phase === 'passed' ? 'Finished' : phase === 'interrupted' ? 'Stopped' : phase.charAt(0).toUpperCase() + phase.slice(1))
+  return state.value.elapsedMs > 0 ? translate('{0} · {1}s', [label, (state.value.elapsedMs / 1000).toFixed(2)]) : label
 })
 
 async function refresh() {
@@ -105,31 +106,31 @@ defineExpose({ run, stop, kill, isBusy, canRun, canStop, canKill })
 </script>
 
 <template>
-  <section class="lua-page management-frame" aria-label="Lua scenario runner">
+  <section class="lua-page management-frame" :aria-label='$t("Lua scenario runner")'>
     <Teleport to="#lua-scenario-picker" defer><div class="lua-controls">
       <div class="lua-select">
         <ComboboxRoot v-model="selected" :open="isPickerOpen" :open-on-click="true" :open-on-focus="true" :ignore-filter="true" :disabled="isBusy || isRunning || !!state.inventoryError" @update:open="openPicker">
           <ComboboxAnchor as-child><div class="lua-picker-anchor">
-            <ComboboxInput v-model="search" :disabled="isBusy || isRunning || !!state.inventoryError" :display-value="() => selectedName" as-child><input aria-label="Search Lua scenarios" placeholder="Search scenarios…" class="lua-picker-input" /></ComboboxInput>
-            <ComboboxTrigger as-child><button aria-label="Show Lua scenarios" class="lua-picker-toggle"><ChevronDown :size="16" /></button></ComboboxTrigger>
+            <ComboboxInput v-model="search" :disabled="isBusy || isRunning || !!state.inventoryError" :display-value="() => selectedName" as-child><input :aria-label='$t("Search Lua scenarios")' :placeholder='$t("Search scenarios…")' class="lua-picker-input" /></ComboboxInput>
+            <ComboboxTrigger as-child><button :aria-label='$t("Show Lua scenarios")' class="lua-picker-toggle"><ChevronDown :size="16" /></button></ComboboxTrigger>
           </div></ComboboxAnchor>
           <ComboboxPortal><ComboboxContent position="popper" align="start" :side-offset="4" :collision-padding="8" as-child><div class="lua-picker-content">
             <ComboboxViewport as-child><div class="lua-picker-viewport">
               <ComboboxItem v-for="script in filteredScripts" :key="script.path" :value="script.path" as-child><div class="lua-picker-item">{{ script.name }}</div></ComboboxItem>
-              <ComboboxEmpty as-child><p class="lua-picker-empty">No matching scenarios.</p></ComboboxEmpty>
+              <ComboboxEmpty as-child><p class="lua-picker-empty">{{ $t("No matching scenarios.") }}</p></ComboboxEmpty>
             </div></ComboboxViewport>
           </div></ComboboxContent></ComboboxPortal>
         </ComboboxRoot>
       </div>
     </div></Teleport>
-    <div ref="consoleElement" class="lua-console" role="log" aria-label="Scenario activity and failure traces" tabindex="0" @scroll="followScroll">
-      <p v-if="!state.lines?.length" class="lua-empty">Activity, completion time and failure traces will appear here.</p>
+    <div ref="consoleElement" class="lua-console" role="log" :aria-label='$t("Scenario activity and failure traces")' tabindex="0" @scroll="followScroll">
+      <p v-if="!state.lines?.length" class="lua-empty">{{ $t("Activity, completion time and failure traces will appear here.") }}</p>
       <div v-for="line in state.lines || []" :key="line.sequence" class="lua-line">{{ line.text }}</div>
-      <p v-if="consoleError" class="lua-error" role="alert">{{ consoleError }}</p>
+      <p v-if="consoleError" class="lua-error" role="alert">{{ $t(consoleError) }}</p>
     </div>
     <div class="lua-footer">
-      <p class="lua-status" :class="state.phase" role="status">{{ resultLabel }}</p>
-      <Button variant="ghost" size="icon" :disabled="!state.lines?.length && !consoleError" :aria-label="copiedSequence === state.lines?.at(-1)?.sequence ? 'Output copied' : 'Copy output'" :title="copiedSequence === state.lines?.at(-1)?.sequence ? 'Output copied' : 'Copy output'" @click="copyOutput"><Check v-if="copiedSequence === state.lines?.at(-1)?.sequence" :size="16" /><Clipboard v-else :size="16" /></Button>
+      <p class="lua-status" :class="state.phase" role="status">{{ $t(resultLabel) }}</p>
+      <Button variant="ghost" size="icon" :disabled="!state.lines?.length && !consoleError" :aria-label="$t(copiedSequence === state.lines?.at(-1)?.sequence ? 'Output copied' : 'Copy output')" :title="$t(copiedSequence === state.lines?.at(-1)?.sequence ? 'Output copied' : 'Copy output')" @click="copyOutput"><Check v-if="copiedSequence === state.lines?.at(-1)?.sequence" :size="16" /><Clipboard v-else :size="16" /></Button>
     </div>
   </section>
 </template>

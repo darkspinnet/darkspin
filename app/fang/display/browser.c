@@ -21,14 +21,18 @@ static int reported_percent = 100;
 static int is_webkit_rejected;
 static DWORD next_background_update;
 
-/* Build 103's profile border and Social search strip use repeating backgrounds.
+/* Build 103's profile border, Social search strip and lobby row highlights use
+ * image backgrounds. Social.html's hightlighttherow assigns rowhighlight.png
+ * to Friendrow1..10; the hover handlers change only backgroundImage, so sizing
+ * the live rows also covers later hover and selection changes.
  * This WebKit's full-page zoom tiles them at their old intrinsic size, leaving
- * repeated borders and a horizontal search-field seam. Size these live
+ * repeated borders and horizontal seams through enlarged rows. Size these live
  * backgrounds explicitly; restore their inline styles at 100%. */
 static void update_html_backgrounds(BYTE* browser, int percent) {
     static const char scaled_script[] =
         "(function visit(w){try{var d=w.document,ids=['Img_Frame',"
         "'Search_Container_Left','Search_Container_Middle','Search_Container_Right'];"
+        "if(d.getElementById('Players_Frame'))for(var r=1;r<=10;r++)ids.push('Friendrow'+r);"
         "for(var j=0;j<ids.length;j++){var e=d.getElementById(ids[j]);"
         "if(e){var s=e.style;if(!e.__fangZoomBackground)e.__fangZoomBackground="
         "{size:s.webkitBackgroundSize,repeat:s.backgroundRepeat};"
@@ -38,6 +42,7 @@ static void update_html_backgrounds(BYTE* browser, int percent) {
     static const char original_script[] =
         "(function visit(w){try{var d=w.document,ids=['Img_Frame',"
         "'Search_Container_Left','Search_Container_Middle','Search_Container_Right'];"
+        "if(d.getElementById('Players_Frame'))for(var r=1;r<=10;r++)ids.push('Friendrow'+r);"
         "for(var j=0;j<ids.length;j++){var e=d.getElementById(ids[j]);"
         "if(e&&e.__fangZoomBackground){var p=e.__fangZoomBackground;"
         "e.style.webkitBackgroundSize=p.size;e.style.backgroundRepeat=p.repeat;"

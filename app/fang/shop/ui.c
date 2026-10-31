@@ -248,7 +248,7 @@ static void shop_update_ui(BYTE* controller) {
      * These are the stock movie's lifecycle methods, not injected script. */
     shop_set(&clone, "__width", shop_number(stride - 2));
     shop_set(&clone, "__height", height);
-    shop_set(&clone, "_label", shop_string("PARTS"));
+    shop_set(&clone, "_label", shop_string(fang_text("PARTS")));
     shop_set(&clone, "_autoSize", shop_boolean(0));
     arguments[0] = shop_string("up");
     shop_invoke(&clone, "gotoAndStop", NULL, arguments, 1);
@@ -261,9 +261,9 @@ static void shop_update_ui(BYTE* controller) {
     shop_set(&clone, "_visible", shop_boolean(1));
     shop_set(&clone, "_alpha", shop_number(100));
     shop_set(&clone, "disabled", shop_boolean(0));
-    shop_label(&clone, "PARTS");
-    shop_set(&clone, "tooltipText", shop_string("PARTS"));
-    shop_set(&clone, "_tooltipText", shop_string("PARTS"));
+    shop_label(&clone, fang_text("PARTS"));
+    shop_set(&clone, "tooltipText", shop_string(fang_text("PARTS")));
+    shop_set(&clone, "_tooltipText", shop_string(fang_text("PARTS")));
     shop_set(&clone, "slotType", shop_number(0));
     if (shop_get(&clone, "btnTabIconMC", &icon)) {
         arguments[0] = shop_string("parts");
@@ -290,7 +290,7 @@ header:
     if (shop_controller == controller && shop_market == 1 &&
         *(unsigned int*)(controller + 1404) == 0 &&
         shop_get(&vendor, "vendorHeaderMC", &header)) {
-        shop_set(&header, "text", shop_string("PARTS"));
+        shop_set(&header, "text", shop_string(fang_text("PARTS")));
     }
 done:
     shop_trace_stage(stage);

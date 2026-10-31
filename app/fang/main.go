@@ -14,6 +14,7 @@ package main
 import "C"
 
 import (
+	"log"
 	"net"
 	"os"
 	"strconv"
@@ -43,6 +44,10 @@ const (
 
 //export GoRecapInitialize
 func GoRecapInitialize() C.int {
+	err := initializeTranslation()
+	if err != nil {
+		log.Printf("In-game translation initialization failed; unavailable captions use English: %v", err)
+	}
 	configuredAddress := os.Getenv("DARKSPIN_SERVER_ADDRESS")
 	if configuredAddress == "" {
 		configuredAddress = net.JoinHostPort(serverHost, strconv.Itoa(serverPort))

@@ -18,8 +18,8 @@ watch(() => props.creationId, async id => {
 </script>
 
 <template>
-  <img v-if="url" :src="url" :alt="label || 'Creature'" class="mod-portrait">
-  <span v-else class="mod-portrait mod-portrait-placeholder" :aria-label="label || 'Portrait unavailable'">?</span>
+  <img v-if="url" :src="url" :alt="label || $t('Creature')" class="mod-portrait">
+  <span v-else class="mod-portrait mod-portrait-placeholder" :aria-label="label || $t('Portrait unavailable')">?</span>
 </template>
 
 <style scoped>

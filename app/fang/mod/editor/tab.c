@@ -78,7 +78,7 @@ static int tab_create(BYTE* base, BYTE* ui, BYTE* source) {
     tooltip = ((BYTE* (FANG_THISCALL*)(BYTE*))(base + 0x51ce20))(allocation);
     ((tab_ref_fn)(*(void***)tooltip)[0])(tooltip);
     ((void (FANG_THISCALL*)(BYTE*, const wchar_t*, int, unsigned char))
-        (base + 0x51d030))(tooltip, L"BODY", -1, 0);
+        (base + 0x51d030))(tooltip, fang_text_wide(L"BODY"), -1, 0);
     ((tab_drawable_fn)(*(void***)window)[65])(window, tooltip);
     ((tab_ref_fn)(*(void***)tooltip)[1])(tooltip);
     if (!((tab_child_fn)(*(void***)parent)[54])(parent, window)) {

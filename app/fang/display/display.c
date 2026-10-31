@@ -167,6 +167,7 @@ static int change_window_frame(HWND window, int is_borderless) {
     LONG_PTR previous_ex_style = GetWindowLongPtrW(window, GWL_EXSTYLE);
     LONG_PTR style = previous_style & ~decoration;
     LONG_PTR ex_style = previous_ex_style & ~ex_decoration;
+    RECT client_area, outer_area;
     if (is_borderless) {
         if (!borderless.is_applied) {
             borderless.style = previous_style & decoration;
@@ -184,19 +185,31 @@ static int change_window_frame(HWND window, int is_borderless) {
         (borderless.is_applied || !is_borderless)) {
         return 1;
     }
-    /* Place the undecorated window at the desktop origin after changing its
-     * frame, retaining the native dimensions, maximize state and z-order. */
+    /* Preserve the client dimensions, not the decorated outer rectangle.
+     * Otherwise removing the frame enlarges the render target beyond the
+     * selected resolution (and can put a desktop-sized client off-screen). */
+    if (!GetClientRect(window, &client_area) || !GetWindowRect(window, &outer_area)) {
+        trace_client_state("display_frame_area_error", GetLastError());
+        return 0;
+    }
+    if (!AdjustWindowRectEx(&client_area, (DWORD)style, GetMenu(window) != NULL,
+        (DWORD)ex_style)) {
+        trace_client_state("display_frame_adjust_error", GetLastError());
+        return 0;
+    }
     if (set_window_style(window, GWL_STYLE, style) &&
         set_window_style(window, GWL_EXSTYLE, ex_style) &&
-        SetWindowPos(window, NULL, 0, 0, 0, 0, apply_flags)) {
+        SetWindowPos(window, NULL, 0, 0, client_area.right - client_area.left,
+            client_area.bottom - client_area.top, apply_flags & ~SWP_NOSIZE)) {
         trace_client_state("display_borderless", is_borderless);
         return 1;
     }
     trace_client_state("display_frame_apply_error", GetLastError());
     int is_style_restored = set_window_style(window, GWL_STYLE, previous_style);
     int is_ex_style_restored = set_window_style(window, GWL_EXSTYLE, previous_ex_style);
-    BOOL is_frame_restored = SetWindowPos(window, NULL, 0, 0, 0, 0,
-        frame_flags | SWP_NOMOVE);
+    BOOL is_frame_restored = SetWindowPos(window, NULL, outer_area.left, outer_area.top,
+        outer_area.right - outer_area.left, outer_area.bottom - outer_area.top,
+        frame_flags & ~SWP_NOSIZE);
     if (!is_style_restored || !is_ex_style_restored || !is_frame_restored) {
         trace_client_state("display_frame_rollback_error", GetLastError());
     }

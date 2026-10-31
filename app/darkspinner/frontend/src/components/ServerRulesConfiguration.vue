@@ -78,7 +78,7 @@ async function save() {
   if (isBusy.value || !isValid.value || !props.isServerOnline) return
   isBusy.value = true
   isError.value = false
-  message.value = 'Applying server rules…'
+  message.value = ''
   try {
     // Include the backend section version so stale views cannot restore old overrides.
     configuration.value = await SetServerRulesConfiguration({
@@ -87,7 +87,6 @@ async function save() {
       mutationAgent: { ...configuration.value.mutationAgent },
       enemyPopulation: { ...configuration.value.enemyPopulation },
     })
-    message.value = 'Saved. Alert changes apply immediately; enemy population, boss spawning and Mutation Agent horde changes apply to new missions.'
   }
   catch (error) { isError.value = true; message.value = String(error?.message || error) }
   finally { isBusy.value = false }
@@ -152,9 +151,9 @@ function shareToGitHub() {
   url.searchParams.set('title', 'Server rules feedback')
   url.searchParams.set('body', body)
   isError.value = false
+  message.value = ''
   try {
     BrowserOpenURL(url.href)
-    message.value = 'GitHub opened with these settings. Review and submit the new issue there.'
   }
   catch (error) { isError.value = true; message.value = String(error?.message || error) }
 }
@@ -167,109 +166,108 @@ watch(() => props.isActive && props.isServerOnline, isReady => {
 <template>
   <Card class="management-card server-rules-configuration">
     <header class="rules-heading">
-      <h2>SERVER RULES</h2>
-      <Button variant="outline" type="button" :disabled="isBusy || !isValid" @click="shareToGitHub">Share to GitHub</Button>
+      <h2>{{ $t("SERVER RULES") }}</h2>
+      <Button variant="outline" type="button" :disabled="isBusy || !isValid" @click="shareToGitHub">{{ $t("Share to GitHub") }}</Button>
     </header>
-    <p v-if="!isServerOnline" class="management-message" :class="{ 'rules-error':serverError }" :role="serverError ? 'alert' : 'status'">{{ serverError || 'Waiting for the local server to start… Server rules will load automatically when it is ready.' }}</p>
-    <p v-else-if="isBusy && !configuration" class="management-message" role="status">Loading server rules…</p>
+    <p v-if="!isServerOnline && serverError" class="management-message rules-error" role="alert">{{ $t(serverError) }}</p>
     <div v-if="configuration" class="rules-sections">
       <details class="rules-group">
         <summary class="rules-group-heading">
-          <span>ENEMY POPULATION</span><span class="rules-group-status" :class="{ 'rules-error': !isEnemyPopulationValid }">{{ isEnemyPopulationValid ? 'Enabled' : 'Check values' }}</span><span class="rules-chevron" aria-hidden="true"></span>
+          <span>{{ $t("ENEMY POPULATION") }}</span><span class="rules-group-status" :class="{ 'rules-error': !isEnemyPopulationValid }">{{ $t(isEnemyPopulationValid ? 'Enabled' : 'Check values') }}</span><span class="rules-chevron" aria-hidden="true"></span>
         </summary>
         <div class="rules-group-content">
-          <p class="rules-description">Standing enemies along campaign routes. The current default is a server estimate, not a recovered original count. Try 18 for a modest increase from 15, then enter a new mission.</p>
+          <p class="rules-description">{{ $t("Standing enemies along campaign routes. The current default is a server estimate, not a recovered original count. Try 18 for a modest increase from 15, then enter a new mission.") }}</p>
           <fieldset :disabled="isBusy" class="rules-fields">
             <div class="rules-numbers">
-              <label for="population-section-count"><strong>ENEMY TARGET PER ROUTE SECTION</strong><Input id="population-section-count" v-model.number="configuration.enemyPopulation.enemiesPerSection" type="number" min="10" max="60" step="1" inputmode="numeric" /><small>Default: 15; allowed: 10–60. Each map normally has three route sections. Available spawn points can limit the result. Fixed opening encounters, companions, scripted spawns, hordes and boss waves have separate counts.</small></label>
+              <label for="population-section-count"><strong>{{ $t("ENEMY TARGET PER ROUTE SECTION") }}</strong><Input id="population-section-count" v-model.number="configuration.enemyPopulation.enemiesPerSection" type="number" min="10" max="60" step="1" inputmode="numeric" /><small>{{ $t("Default: 15; allowed: 10–60. Each map normally has three route sections. Available spawn points can limit the result. Fixed opening encounters, companions, scripted spawns, hordes and boss waves have separate counts.") }}</small></label>
             </div>
 
             <div v-for="field in populationSelections" :key="field.key">
-              <label :for="'population-' + field.key"><strong>{{ field.label }}</strong></label>
-              <Select v-model="configuration.enemyPopulation[field.key]" :disabled="isBusy"><SelectTrigger :id="'population-' + field.key" class="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem v-for="option in field.options" :key="option[0]" :value="option[0]">{{ option[1] }}</SelectItem></SelectContent></Select>
-              <small>{{ field.help }}</small>
+              <label :for="'population-' + field.key"><strong>{{ $t(field.label) }}</strong></label>
+              <Select v-model="configuration.enemyPopulation[field.key]" :disabled="isBusy"><SelectTrigger :id="'population-' + field.key" class="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem v-for="option in field.options" :key="option[0]" :value="option[0]">{{ $t(option[1]) }}</SelectItem></SelectContent></Select>
+              <small>{{ $t(field.help) }}</small>
             </div>
-            <label class="management-toggle"><Checkbox v-model="configuration.enemyPopulation.isAmbientEliteEnabled" :disabled="isBusy" /><span><strong>ENABLE AMBIENT ELITE PROMOTION</strong><small>Disabled by default. Dark Spin policy uses imported stage/class chances and affix bounds for ordinary minions and specials.</small></span></label>
-            <div class="rules-numbers"><label v-for="field in populationNumbers" :key="field.key" :for="'population-' + field.key"><strong>{{ field.label }}</strong><Input :id="'population-' + field.key" v-model.number="configuration.enemyPopulation[field.key]" type="number" :min="field.min" :max="field.max" step="1" inputmode="numeric" /><small>{{ field.help }}</small></label></div>
+            <label class="management-toggle"><Checkbox v-model="configuration.enemyPopulation.isAmbientEliteEnabled" :disabled="isBusy" /><span><strong>{{ $t("ENABLE AMBIENT ELITE PROMOTION") }}</strong><small>{{ $t("Disabled by default. Dark Spin policy uses imported stage/class chances and affix bounds for ordinary minions and specials.") }}</small></span></label>
+            <div class="rules-numbers"><label v-for="field in populationNumbers" :key="field.key" :for="'population-' + field.key"><strong>{{ $t(field.label) }}</strong><Input :id="'population-' + field.key" v-model.number="configuration.enemyPopulation[field.key]" type="number" :min="field.min" :max="field.max" step="1" inputmode="numeric" /><small>{{ $t(field.help) }}</small></label></div>
           </fieldset>
-          <p class="rules-description">Share these settings with the mission, difficulty, first clear or replay, party size and a bug report. Higher targets mostly add ordinary enemies; they do not multiply every encounter.</p>
+          <p class="rules-description">{{ $t("Share these settings with the mission, difficulty, first clear or replay, party size and a bug report. Higher targets mostly add ordinary enemies; they do not multiply every encounter.") }}</p>
         </div>
       </details>
       <details class="rules-group">
         <summary class="rules-group-heading">
-          <span>BOSS SPAWNING</span><span class="rules-group-status" :class="{ 'rules-error': !isBossSpawningValid }">{{ isBossSpawningValid ? 'Enabled' : 'Check values' }}</span><span class="rules-chevron" aria-hidden="true"></span>
+          <span>{{ $t("BOSS SPAWNING") }}</span><span class="rules-group-status" :class="{ 'rules-error': !isBossSpawningValid }">{{ $t(isBossSpawningValid ? 'Enabled' : 'Check values') }}</span><span class="rules-chevron" aria-hidden="true"></span>
         </summary>
         <div class="rules-group-content">
-          <p class="rules-description">Reconstructed wave sizes and pacing. These defaults are server estimates; exact original wave counts and timing are not recovered. Authored enemy eligibility and spawn anchors still apply.</p>
+          <p class="rules-description">{{ $t("Reconstructed wave sizes and pacing. These defaults are server estimates; exact original wave counts and timing are not recovered. Authored enemy eligibility and spawn anchors still apply.") }}</p>
           <fieldset :disabled="isBusy" class="rules-fields">
             <div class="rules-numbers">
-              <label for="boss-opening-count"><strong>OPENING ADDS PER ANCHOR</strong><Input id="boss-opening-count" v-model.number="configuration.bossSpawning.openingAddsPerAnchor" type="number" min="1" max="4" step="1" inputmode="numeric" /><small>1–4 enemies per authored anchor in captain arenas. Default: 1; Illust has four anchors.</small></label>
-              <label for="boss-followup-count"><strong>ADDS ALONGSIDE ILLUST</strong><Input id="boss-followup-count" v-model.number="configuration.bossSpawning.initialBossAddCount" type="number" min="1" max="12" step="1" inputmode="numeric" /><small>1–12 enemies in the follow-up wave of mission 1-1. Default: 2.</small></label>
-              <label for="boss-captain-delay"><strong>CAPTAIN DELAY (MS)</strong><Input id="boss-captain-delay" v-model.number="configuration.bossSpawning.captainDelayMillisecond" type="number" min="0" max="30000" step="100" inputmode="numeric" /><small>Delay after clearing the opening wave before the captain enters. Default: 2000; allowed: 0–30000.</small></label>
+              <label for="boss-opening-count"><strong>{{ $t("OPENING ADDS PER ANCHOR") }}</strong><Input id="boss-opening-count" v-model.number="configuration.bossSpawning.openingAddsPerAnchor" type="number" min="1" max="4" step="1" inputmode="numeric" /><small>{{ $t("1–4 enemies per authored anchor in captain arenas. Default: 1; Illust has four anchors.") }}</small></label>
+              <label for="boss-followup-count"><strong>{{ $t("ADDS ALONGSIDE ILLUST") }}</strong><Input id="boss-followup-count" v-model.number="configuration.bossSpawning.initialBossAddCount" type="number" min="1" max="12" step="1" inputmode="numeric" /><small>{{ $t("1–12 enemies in the follow-up wave of mission 1-1. Default: 2.") }}</small></label>
+              <label for="boss-captain-delay"><strong>{{ $t("CAPTAIN DELAY (MS)") }}</strong><Input id="boss-captain-delay" v-model.number="configuration.bossSpawning.captainDelayMillisecond" type="number" min="0" max="30000" step="100" inputmode="numeric" /><small>{{ $t("Delay after clearing the opening wave before the captain enters. Default: 2000; allowed: 0–30000.") }}</small></label>
             </div>
           </fieldset>
 
             <div v-for="field in bossSelections" :key="field.key">
-              <label :for="'boss-' + field.key"><strong>{{ field.label }}</strong></label>
-              <Select v-model="configuration.bossSpawning[field.key]" :disabled="isBusy"><SelectTrigger :id="'boss-' + field.key" class="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem v-for="option in field.options" :key="option[0]" :value="option[0]">{{ option[1] }}</SelectItem></SelectContent></Select>
-              <small>{{ field.help }}</small>
+              <label :for="'boss-' + field.key"><strong>{{ $t(field.label) }}</strong></label>
+              <Select v-model="configuration.bossSpawning[field.key]" :disabled="isBusy"><SelectTrigger :id="'boss-' + field.key" class="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem v-for="option in field.options" :key="option[0]" :value="option[0]">{{ $t(option[1]) }}</SelectItem></SelectContent></Select>
+              <small>{{ $t(field.help) }}</small>
             </div>
-          <p v-if="!isBossSpawningValid" class="rules-error" role="alert">Enter whole numbers within the ranges shown.</p>
+          <p v-if="!isBossSpawningValid" class="rules-error" role="alert">{{ $t("Enter whole numbers within the ranges shown.") }}</p>
         </div>
       </details>
       <details class="rules-group">
         <summary class="rules-group-heading">
-          <span>MUTATION AGENT HORDES</span>
-          <span class="rules-group-status" :class="{ 'rules-error': !isMutationAgentValid }">{{ !isMutationAgentValid ? 'Check values' : configuration.mutationAgent.isEnabled ? 'Enabled' : 'Disabled' }}</span>
+          <span>{{ $t("MUTATION AGENT HORDES") }}</span>
+          <span class="rules-group-status" :class="{ 'rules-error': !isMutationAgentValid }">{{ $t(!isMutationAgentValid ? 'Check values' : configuration.mutationAgent.isEnabled ? 'Enabled' : 'Disabled') }}</span>
           <span class="rules-chevron" aria-hidden="true"></span>
         </summary>
         <div class="rules-group-content" v-if="configuration.mutationAgent">
-          <p class="rules-description">Control Mutation Agent eligibility and horde pacing. These defaults are server estimates. Eligibility uses completed campaign progression, including when replaying earlier missions. Below the minimum progression or with Mutation Agents disabled, ordinary horde rules apply; the delay also applies to ordinary horde follow-up waves.</p>
+          <p class="rules-description">{{ $t("Control Mutation Agent eligibility and horde pacing. These defaults are server estimates. Eligibility uses completed campaign progression, including when replaying earlier missions. Below the minimum progression or with Mutation Agents disabled, ordinary horde rules apply; the delay also applies to ordinary horde follow-up waves.") }}</p>
           <fieldset :disabled="isBusy" class="rules-fields">
-            <label class="management-toggle"><Checkbox v-model="configuration.mutationAgent.isEnabled" :disabled="isBusy" /><span><strong>ENABLE MUTATION AGENTS</strong><small>Allow Mutation Agents in all missions after reaching the minimum completed campaign progression.</small></span></label>
+            <label class="management-toggle"><Checkbox v-model="configuration.mutationAgent.isEnabled" :disabled="isBusy" /><span><strong>{{ $t("ENABLE MUTATION AGENTS") }}</strong><small>{{ $t("Allow Mutation Agents in all missions after reaching the minimum completed campaign progression.") }}</small></span></label>
             <div class="rules-numbers">
-              <label for="mutation-minimum-chain"><strong>MINIMUM COMPLETED PROGRESSION</strong><Input id="mutation-minimum-chain" v-model.number="configuration.mutationAgent.minimumChainLevel" type="number" min="1" max="72" step="1" inputmode="numeric" /><small>Completed campaign index from 1–72. Default: 7 (complete mission 2-3 once).</small></label>
-              <label for="mutation-wave-count"><strong>HORDE WAVE COUNT</strong><Input id="mutation-wave-count" v-model.number="configuration.mutationAgent.waveCount" type="number" min="1" max="10" step="1" inputmode="numeric" /><small>Allowed: 1–10. Default: 3.</small></label>
-              <label for="mutation-spawn-wave"><strong>MUTATION AGENT SPAWN WAVE</strong><Input id="mutation-spawn-wave" v-model.number="configuration.mutationAgent.spawnWave" type="number" min="1" :max="configuration.mutationAgent.waveCount" step="1" inputmode="numeric" /><small>Must be between 1 and the horde wave count. Default: 3.</small></label>
-              <label for="mutation-wave-delay"><strong>BETWEEN WAVES (MS)</strong><Input id="mutation-wave-delay" v-model.number="configuration.mutationAgent.interWaveDelayMillisecond" type="number" min="0" max="30000" step="1" inputmode="numeric" /><small>Delay before the next wave begins. Allowed: 0–30000. Default: 1500.</small></label>
+              <label for="mutation-minimum-chain"><strong>{{ $t("MINIMUM COMPLETED PROGRESSION") }}</strong><Input id="mutation-minimum-chain" v-model.number="configuration.mutationAgent.minimumChainLevel" type="number" min="1" max="72" step="1" inputmode="numeric" /><small>{{ $t("Completed campaign index from 1–72. Default: 7 (complete mission 2-3 once).") }}</small></label>
+              <label for="mutation-wave-count"><strong>{{ $t("HORDE WAVE COUNT") }}</strong><Input id="mutation-wave-count" v-model.number="configuration.mutationAgent.waveCount" type="number" min="1" max="10" step="1" inputmode="numeric" /><small>{{ $t("Allowed: 1–10. Default: 3.") }}</small></label>
+              <label for="mutation-spawn-wave"><strong>{{ $t("MUTATION AGENT SPAWN WAVE") }}</strong><Input id="mutation-spawn-wave" v-model.number="configuration.mutationAgent.spawnWave" type="number" min="1" :max="configuration.mutationAgent.waveCount" step="1" inputmode="numeric" /><small>{{ $t("Must be between 1 and the horde wave count. Default: 3.") }}</small></label>
+              <label for="mutation-wave-delay"><strong>{{ $t("BETWEEN WAVES (MS)") }}</strong><Input id="mutation-wave-delay" v-model.number="configuration.mutationAgent.interWaveDelayMillisecond" type="number" min="0" max="30000" step="1" inputmode="numeric" /><small>{{ $t("Delay before the next wave begins. Allowed: 0–30000. Default: 1500.") }}</small></label>
             </div>
-            <label class="management-toggle"><Checkbox v-model="configuration.mutationAgent.isAgentDefeatCompleting" :disabled="isBusy" /><span><strong>AGENT DEFEAT COMPLETES HORDE</strong><small>Finish the horde when its Mutation Agent is defeated. When disabled, continue clearing the configured waves.</small></span></label>
+            <label class="management-toggle"><Checkbox v-model="configuration.mutationAgent.isAgentDefeatCompleting" :disabled="isBusy" /><span><strong>{{ $t("AGENT DEFEAT COMPLETES HORDE") }}</strong><small>{{ $t("Finish the horde when its Mutation Agent is defeated. When disabled, continue clearing the configured waves.") }}</small></span></label>
           </fieldset>
-          <p v-if="!isMutationAgentValid" class="rules-error" role="alert">Enter whole numbers within the ranges shown. The spawn wave cannot exceed the horde wave count. Reload if the settings version has changed.</p>
+          <p v-if="!isMutationAgentValid" class="rules-error" role="alert">{{ $t("Enter whole numbers within the ranges shown. The spawn wave cannot exceed the horde wave count. Reload if the settings version has changed.") }}</p>
         </div>
-        <p v-else class="rules-description rules-group-content">Mutation Agent settings are unavailable. Update the local server and reload.</p>
+        <p v-else class="rules-description rules-group-content">{{ $t("Mutation Agent settings are unavailable. Update the local server and reload.") }}</p>
       </details>
       <details class="rules-group">
         <summary class="rules-group-heading">
-          <span>ALLY ALERT</span>
-          <span class="rules-group-status" :class="{ 'rules-error':!isAllyAlertValid }">{{ !isAllyAlertValid ? 'Check values' : configuration.allyAlert.isEnabled ? 'Enabled' : 'Disabled' }}</span>
+          <span>{{ $t("ALLY ALERT") }}</span>
+          <span class="rules-group-status" :class="{ 'rules-error':!isAllyAlertValid }">{{ $t(!isAllyAlertValid ? 'Check values' : configuration.allyAlert.isEnabled ? 'Enabled' : 'Disabled') }}</span>
           <span class="rules-chevron" aria-hidden="true"></span>
         </summary>
         <div class="rules-group-content">
-      <p class="rules-description">Experimental reconstruction of how nearby enemies share a target.</p>
+      <p class="rules-description">{{ $t("Experimental reconstruction of how nearby enemies share a target.") }}</p>
       <fieldset :disabled="isBusy" class="rules-fields">
-        <label class="management-toggle"><Checkbox v-model="configuration.allyAlert.isEnabled" :disabled="isBusy" /><span><strong>SHARE ENEMY ATTENTION</strong><small>Idle allies can join a nearby enemy's fight. Existing targets stay unchanged.</small></span></label>
+        <label class="management-toggle"><Checkbox v-model="configuration.allyAlert.isEnabled" :disabled="isBusy" /><span><strong>{{ $t("SHARE ENEMY ATTENTION") }}</strong><small>{{ $t("Idle allies can join a nearby enemy's fight. Existing targets stay unchanged.") }}</small></span></label>
         <div class="rules-numbers">
-          <label for="ally-alert-range"><strong>ALERT RANGE (%)</strong><Input id="ally-alert-range" v-model.number="configuration.allyAlert.rangePercent" type="number" min="1" max="1000" step="1" inputmode="numeric" /><small>100 uses the authored range. Allowed: 1–1000.</small></label>
-          <label for="ally-alert-hops"><strong>ALERT HOPS</strong><Input id="ally-alert-hops" v-model.number="configuration.allyAlert.maxHops" type="number" min="1" max="16" step="1" inputmode="numeric" /><small>1 alerts neighbors; 2 lets them alert another wave. Maximum: 16.</small></label>
+          <label for="ally-alert-range"><strong>{{ $t("ALERT RANGE (%)") }}</strong><Input id="ally-alert-range" v-model.number="configuration.allyAlert.rangePercent" type="number" min="1" max="1000" step="1" inputmode="numeric" /><small>{{ $t("100 uses the authored range. Allowed: 1–1000.") }}</small></label>
+          <label for="ally-alert-hops"><strong>{{ $t("ALERT HOPS") }}</strong><Input id="ally-alert-hops" v-model.number="configuration.allyAlert.maxHops" type="number" min="1" max="16" step="1" inputmode="numeric" /><small>{{ $t("1 alerts neighbors; 2 lets them alert another wave. Maximum: 16.") }}</small></label>
         </div>
         <div>
-          <label for="ally-alert-owner"><strong>WHOSE RANGE TO USE</strong></label>
+          <label for="ally-alert-owner"><strong>{{ $t("WHOSE RANGE TO USE") }}</strong></label>
           <Select v-model="configuration.allyAlert.rangeOwner" :disabled="isBusy">
             <SelectTrigger id="ally-alert-owner" class="w-full"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="recipient">Ally receiving the alert</SelectItem><SelectItem value="source">Enemy sending the alert</SelectItem></SelectContent>
+            <SelectContent><SelectItem value="recipient">{{ $t("Ally receiving the alert") }}</SelectItem><SelectItem value="source">{{ $t("Enemy sending the alert") }}</SelectItem></SelectContent>
           </Select>
         </div>
-        <label class="management-toggle"><Checkbox v-model="configuration.allyAlert.isDiagnosticLoggingEnabled" :disabled="isBusy" /><span><strong>LOG ALERT DETAILS</strong><small>Record participants, distance and hops for comparisons with gameplay recordings.</small></span></label>
+        <label class="management-toggle"><Checkbox v-model="configuration.allyAlert.isDiagnosticLoggingEnabled" :disabled="isBusy" /><span><strong>{{ $t("LOG ALERT DETAILS") }}</strong><small>{{ $t("Record participants, distance and hops for comparisons with gameplay recordings.") }}</small></span></label>
       </fieldset>
-      <p v-if="!isAllyAlertValid" class="rules-error" role="alert">Enter whole numbers within the ranges shown.</p>
+      <p v-if="!isAllyAlertValid" class="rules-error" role="alert">{{ $t("Enter whole numbers within the ranges shown.") }}</p>
         </div>
       </details>
     </div>
-    <p v-if="message" class="management-message" :class="{ 'rules-error':isError }" :role="isError ? 'alert' : 'status'" aria-live="polite">{{ message }}</p>
+    <p v-if="isError && message" class="management-message rules-error" role="alert">{{ $t(message) }}</p>
     <div class="rules-actions">
-      <Button type="button" :disabled="isBusy || !isValid || !isServerOnline" @click="save">{{ isBusy ? 'PLEASE WAIT…' : 'APPLY SERVER RULES' }}</Button>
-      <Button variant="outline" type="button" :disabled="isBusy || !isServerOnline" @click="reload">RELOAD</Button>
+      <Button type="button" :disabled="isBusy || !isValid || !isServerOnline" @click="save">{{ $t(isBusy ? 'PLEASE WAIT…' : 'APPLY SERVER RULES') }}</Button>
+      <Button variant="outline" type="button" :disabled="isBusy || !isServerOnline" @click="reload">{{ $t("RELOAD") }}</Button>
     </div>
   </Card>
 </template>

@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/sporenet"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -293,12 +295,13 @@ func (a *App) RegisterRemoteProfile(
 	if err != nil {
 		return fmt.Errorf("serverValidate: %w", err)
 	}
-	err = validateNewProfileIdentity(identity)
+	identity = strings.TrimSpace(identity)
+	err = sporenet.ValidateDesktopUsername(identity)
 	if err != nil {
 		return fmt.Errorf("identityValidate: %w", err)
 	}
 	if password == "" {
-		return errors.New("password is required for remote registration")
+		return fmt.Errorf("passwordValidate: %w", sporenet.ErrPasswordRequired)
 	}
 	response := struct {
 		Profile remoteProfileResponse `json:"profile"`
@@ -322,6 +325,19 @@ func (a *App) RegisterRemoteProfile(
 			return fmt.Errorf("existingSave: %w", err)
 		}
 		return nil
+	}
+	var authFailure *authServiceError
+	isCredentialRejected := errors.As(loginErr, &authFailure) && authFailure.statusCode == http.StatusUnauthorized
+	if !isCredentialRejected {
+		return fmt.Errorf("existingLogin: %w", loginErr)
+	}
+	if authFailure.code == "invalid_password" {
+		return fmt.Errorf("existingPassword: %w", loginErr)
+	}
+	// Apply storage limits only to new accounts, preserving valid legacy logins.
+	err = sporenet.ValidateDesktopPassword(password, true)
+	if err != nil {
+		return fmt.Errorf("passwordValidate: %w", err)
 	}
 	// A failed sign-in is expected for a new account. Registration below
 	// returns the server's specific conflict or validation result when needed.

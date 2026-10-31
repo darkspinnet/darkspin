@@ -2,6 +2,15 @@
 
 ### 2026-10-31
 
+- Keep English first in both language dropdowns, with other installed game languages ordered by their display names.
+- Split Config General language selection into independently saved Launcher Language and In-Game Language dropdowns, updating launcher text immediately and preserving the previous shared choice when creating the launcher preference.
+- Translate the in-game Insane Grass option through the selected game language instead of leaving its caption in English.
+- More UI Scaling improvements
+- Default chat to Lobby across ship rooms and gameplay, and deliver Lobby messages to all online players regardless of their current room or match.
+- Improvements to user creation on remote, namely better error responses
+- Populate all launcher and added in-game text with draft German, French, Polish, and Russian translations for native-speaker review, preserving message keys and formatting placeholders.
+- Preserve the client area's dimensions when removing or restoring the borderless window frame.
+- Add per-client Native UI Scale, screen size, and borderless options to Lua scenarios with an Arsenal/editor capture scenario.
 - Save Native UI Scale changes for the next game launch while keeping the running game's scale unchanged.
 - #148 Keep Arsenal hero picking aligned with the physical mouse position at enlarged Native UI Scale so hero action menus open normally.
 - Include the live Crogenitor level and hero activation credits in Arsenal bug snapshots.

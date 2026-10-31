@@ -87,24 +87,24 @@ void fang_mod_palette_tip_card(BYTE* base, BYTE* card) {
 // Reads: returns the localized category caption or a known installed-category fallback.
 const wchar_t* fang_mod_palette_category_name(BYTE* source) {
     const wchar_t* name;
-    if (!readable_range(source, 104)) return L"Body parts";
+    if (!readable_range(source, 104)) return fang_text_wide(L"Body parts");
     name = ((const wchar_t* (FANG_THISCALL*)(BYTE*))(tip_base + 0x3ae420))(source + 84);
     if (name && readable_range(name, 8) && name[0] && wcscmp(name, L"***") != 0) return name;
     /* Authored fallback labels from native Editors.package. These categories
      * reference unavailable localization tables, which resolve to ***. Their
      * private catalogue sequence numbers are stable; preserve other locales. */
     switch (*(unsigned int*)(source + 64)) {
-    case 10: return L"Tech";
-    case 20: return L"Plasma";
-    case 30: return L"BioGenesis";
-    case 40: return L"Spacetime";
-    case 50: return L"Necro";
-    case 60: return L"Armor";
-    case 70: return L"Class Weapons";
-    case 700: return L"Galactic Adventures";
-    case 800: return L"Cell Parts";
-    case 100000: return L"Labs User";
-    default: return L"Body parts";
+    case 10: return fang_text_wide(L"Tech");
+    case 20: return fang_text_wide(L"Plasma");
+    case 30: return fang_text_wide(L"BioGenesis");
+    case 40: return fang_text_wide(L"Spacetime");
+    case 50: return fang_text_wide(L"Necro");
+    case 60: return fang_text_wide(L"Armor");
+    case 70: return fang_text_wide(L"Class Weapons");
+    case 700: return fang_text_wide(L"Galactic Adventures");
+    case 800: return fang_text_wide(L"Cell Parts");
+    case 100000: return fang_text_wide(L"Labs User");
+    default: return fang_text_wide(L"Body parts");
     }
 }
 

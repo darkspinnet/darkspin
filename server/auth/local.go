@@ -127,13 +127,14 @@ func (b *LocalBroker) profile(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	identity := strings.TrimSpace(payload.Account)
-	if identity == "" || payload.Password == "" || len(identity) > 320 {
-		writeAuthError(writer, http.StatusBadRequest, "account and password are required")
+	err = validateDesktopLogin(identity, payload.Password, true)
+	if err != nil {
+		writeAuthError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
 	profile, err := b.accountManager.Authenticate(request.Context(), identity, payload.Password)
 	if err != nil || profile.LoginName == "" {
-		writeAuthError(writer, http.StatusUnauthorized, "invalid account or password")
+		b.writeDesktopAuthenticationError(writer, err)
 		return
 	}
 	writeAuthJSON(writer, http.StatusOK, map[string]any{"profile": desktopProfile(profile)})
@@ -159,13 +160,14 @@ func (b *LocalBroker) delete(writer http.ResponseWriter, request *http.Request) 
 		return
 	}
 	identity := strings.TrimSpace(payload.Account)
-	if identity == "" || payload.Password == "" || len(identity) > 320 {
-		writeAuthError(writer, http.StatusBadRequest, "account and password are required")
+	err = validateDesktopLogin(identity, payload.Password, true)
+	if err != nil {
+		writeAuthError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
 	profile, err := b.accountManager.Authenticate(request.Context(), identity, payload.Password)
 	if err != nil || profile.LoginName == "" {
-		writeAuthError(writer, http.StatusUnauthorized, "invalid account or password")
+		b.writeDesktopAuthenticationError(writer, err)
 		return
 	}
 	err = b.accountManager.DeleteProfile(request.Context(), profile.LoginName)
@@ -204,19 +206,16 @@ func (b *LocalBroker) start(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	identity = strings.TrimSpace(payload.Account)
-	if identity == "" || len(identity) > 320 {
-		writeAuthError(writer, http.StatusBadRequest, "invalid account")
+	err = validateDesktopLogin(identity, payload.Password, !isLoopback)
+	if err != nil {
+		writeAuthError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
 	profile := sporenet.UserIdentity{LoginName: identity, DisplayName: identity}
 	if !isLoopback {
-		if payload.Password == "" {
-			writeAuthError(writer, http.StatusUnauthorized, "password is required")
-			return
-		}
 		profile, err = b.accountManager.Authenticate(request.Context(), identity, payload.Password)
 		if err != nil {
-			writeAuthError(writer, http.StatusUnauthorized, "invalid account or password")
+			b.writeDesktopAuthenticationError(writer, err)
 			return
 		}
 	}
@@ -259,14 +258,19 @@ func (b *LocalBroker) register(writer http.ResponseWriter, request *http.Request
 		writeAuthError(writer, http.StatusBadRequest, "invalid request")
 		return
 	}
-	if !isLoopback && payload.Password == "" {
-		writeAuthError(writer, http.StatusBadRequest, "password is required")
-		return
-	}
 	identity := strings.TrimSpace(payload.Account)
 	displayName := strings.TrimSpace(payload.DisplayName)
-	if identity == "" || displayName == "" || len(identity) > 320 || len(displayName) > 320 {
-		writeAuthError(writer, http.StatusBadRequest, "invalid account")
+	err = validateDesktopLogin(identity, payload.Password, !isLoopback)
+	if err != nil {
+		writeAuthError(writer, http.StatusBadRequest, err.Error())
+		return
+	}
+	if displayName == "" {
+		writeAuthError(writer, http.StatusBadRequest, "Display name is required.")
+		return
+	}
+	if len(displayName) > 320 {
+		writeAuthError(writer, http.StatusBadRequest, "Display name is too long (maximum 320 UTF-8 bytes).")
 		return
 	}
 	user, err := b.accountManager.RegisterDesktop(request.Context(), sporenet.Registration{
@@ -274,7 +278,7 @@ func (b *LocalBroker) register(writer http.ResponseWriter, request *http.Request
 		AvatarID: payload.AvatarID, IsTutorialSkipped: payload.IsTutorialSkipped,
 	})
 	if err != nil {
-		writeAuthError(writer, http.StatusConflict, err.Error())
+		writeDesktopRegistrationError(writer, err)
 		return
 	}
 	view := user.View()

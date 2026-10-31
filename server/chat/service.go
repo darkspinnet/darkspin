@@ -61,8 +61,7 @@ const (
 	ScopeParty
 	ScopeGame
 	ScopeLobby
-	// ScopeGlobal is the temporary server-wide General channel used while
-	// cross-game lobby membership is not yet wired through the client flow.
+	// ScopeGlobal keeps the legacy General channel server-wide as well.
 	ScopeGlobal
 )
 

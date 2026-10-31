@@ -156,6 +156,35 @@ func (e *debugClientManager) launchClient(ctx context.Context, client *debugOwne
 	if err != nil {
 		return debugClientState{}, fmt.Errorf("clientPreference: %w", err)
 	}
+	displayPath := filepath.Join(profileDirectory, "AppData", "Roaming", "DarksporeData", "Preferences", "DarkspinDisplay.ini")
+	preferencePath := filepath.Join(profileDirectory, "AppData", "Roaming", "DarksporeData", "Preferences", "Preferences.prop")
+	preference, err := os.ReadFile(preferencePath)
+	if err != nil {
+		return debugClientState{}, fmt.Errorf("sizeRead: %w", err)
+	}
+	preference = replaceDisplaySetting(preference, "ScreenSizeWidth", " ", fmt.Sprint(req.ScreenWidth))
+	preference = replaceDisplaySetting(preference, "ScreenSizeHeight", " ", fmt.Sprint(req.ScreenHeight))
+	preference = replaceDisplaySetting(preference, "ScreenSizeRefresh", " ", "60")
+	err = os.WriteFile(preferencePath, preference, 0o600)
+	if err != nil {
+		return debugClientState{}, fmt.Errorf("sizeWrite: %w", err)
+	}
+	display, err := os.ReadFile(displayPath)
+	if errors.Is(err, os.ErrNotExist) {
+		display = []byte("[display]\r\n")
+	} else if err != nil {
+		return debugClientState{}, fmt.Errorf("displayRead: %w", err)
+	}
+	display = replaceDisplaySetting(display, "native_ui_scale_percent", "=", fmt.Sprint(req.NativeUIScalePercent))
+	borderlessSetting := "0"
+	if req.IsBorderlessMode {
+		borderlessSetting = "1"
+	}
+	display = replaceDisplaySetting(display, "is_borderless_mode", "=", borderlessSetting)
+	err = os.WriteFile(displayPath, display, 0o600)
+	if err != nil {
+		return debugClientState{}, fmt.Errorf("displayWrite: %w", err)
+	}
 	locales, err := detectClientLocales(req.GameDirectory)
 	if err != nil {
 		return debugClientState{}, fmt.Errorf("clientLocales: %w", err)

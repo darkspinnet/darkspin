@@ -157,19 +157,30 @@ const char* fang_mod_editor_validation_text(unsigned int page, unsigned int* pag
     for (bit = 0; bit < 128; ++bit) {
         uint32_t flag = UINT32_C(1) << (bit % 32);
         const char* name;
+        char page_number[16], page_count[16], bit_number[16];
+        const char* arguments[7];
         if (!(validation_bits[bit / 32] & flag) || row++ != page) continue;
         name = bit < sizeof(validation_names) / sizeof(validation_names[0]) ?
             validation_names[bit] : "Unmapped native validation error";
-        snprintf(text, sizeof(text), "Save blocked (%u/%u): [%u] %s%s\n%s%s",
-            page + 1, *pages, bit, name, validation_masks[bit / 32] & flag ? " [blocking]" : " [flagged]",
-            bit == 28 ? "Removing legs can change the foot count required by the original template. " : "",
-            *pages > 1 ? "Scroll over this hint for more errors; pages also advance automatically." :
-                "Correct the creation, then try Accept again.");
+        snprintf(page_number, sizeof(page_number), "%u", page + 1);
+        snprintf(page_count, sizeof(page_count), "%u", *pages);
+        snprintf(bit_number, sizeof(bit_number), "%u", bit);
+        arguments[0] = page_number;
+        arguments[1] = page_count;
+        arguments[2] = bit_number;
+        arguments[3] = fang_text(name);
+        arguments[4] = fang_text(validation_masks[bit / 32] & flag ? "[blocking]" : "[flagged]");
+        arguments[5] = bit == 28 ? fang_text("Removing legs can change the foot count required by the original template. ") : "";
+        arguments[6] = fang_text(*pages > 1 ? "Scroll over this hint for more errors; pages also advance automatically." :
+            "Correct the creation, then try Accept again.");
+        fang_format_text(text, sizeof(text), "Save blocked ({0}/{1}): [{2}] {3} {4}\n{5}{6}", arguments, 7);
         return text;
     }
-    snprintf(text, sizeof(text), "Save blocked: %s",
-        validation_status == 5 ? "Native editor counter limit exceeded." :
-        "Native editor validation failed without model error bits. Details recorded in the client trace.");
+    {
+        const char* arguments[] = {fang_text(validation_status == 5 ? "Native editor counter limit exceeded." :
+            "Native editor validation failed without model error bits. Details recorded in the client trace.")};
+        fang_format_text(text, sizeof(text), "Save blocked: {0}", arguments, 1);
+    }
     return text;
 }
 

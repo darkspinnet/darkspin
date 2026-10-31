@@ -83,7 +83,7 @@ static int control_create(BYTE* base, BYTE* ui) {
         control_windows[index] = window;
         ((void (FANG_THISCALL*)(BYTE*, uint32_t))(*(void***)window)[20])(window, 0xfad0b010u + index);
         ((void (FANG_THISCALL*)(BYTE*, BYTE*))(*(void***)window)[44])(window, drawable);
-        ((void (FANG_THISCALL*)(BYTE*, const wchar_t*))(*(void***)window)[32])(window, captions[index]);
+        ((void (FANG_THISCALL*)(BYTE*, const wchar_t*))(*(void***)window)[32])(window, fang_text_wide(captions[index]));
         if (!((preview_child_fn)(*(void***)parent)[54])(parent, window)) goto failed;
         allocation = ((BYTE* (__cdecl*)(unsigned int, unsigned int, const char*, BYTE*))
             (base + 0x7de7e0))(104, 4, "Darkspin/PreviewActionTooltip", allocator);
@@ -91,7 +91,7 @@ static int control_create(BYTE* base, BYTE* ui) {
         tooltip = ((BYTE* (FANG_THISCALL*)(BYTE*))(base + 0x51ce20))(allocation);
         ((preview_ref_fn)(*(void***)tooltip)[0])(tooltip);
         ((void (FANG_THISCALL*)(BYTE*, const wchar_t*, int, unsigned char))
-            (base + 0x51d030))(tooltip, tips[index], -1, 0);
+            (base + 0x51d030))(tooltip, fang_text_wide(tips[index]), -1, 0);
         ((void (FANG_THISCALL*)(BYTE*, BYTE*))(*(void***)window)[65])(window, tooltip);
         ((preview_ref_fn)(*(void***)tooltip)[1])(tooltip);
     }

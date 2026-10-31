@@ -43,6 +43,8 @@ export function GetLauncherAutomationConfiguration():Promise<main.LauncherAutoma
 
 export function GetLauncherIntegrationStatus():Promise<main.LauncherIntegrationStatus>;
 
+export function GetLauncherLanguageConfiguration():Promise<main.LauncherLanguageConfiguration>;
+
 export function GetLuaConsole():Promise<main.LuaConsoleSnapshot>;
 
 export function GetModConfiguration():Promise<main.ModConfiguration>;
@@ -120,6 +122,8 @@ export function SetAutoPatch(arg1:boolean):Promise<void>;
 export function SetAutoPlay(arg1:boolean):Promise<void>;
 
 export function SetIdentity(arg1:string):Promise<main.LauncherStatus>;
+
+export function SetLauncherLocale(arg1:string):Promise<void>;
 
 export function SetLocalServicesRequired(arg1:boolean):Promise<void>;
 

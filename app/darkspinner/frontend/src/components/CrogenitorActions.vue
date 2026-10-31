@@ -19,11 +19,11 @@ function choose(action) {
 
 <template>
   <details ref="menu" class="crogenitor-actions" :inert="disabled" :aria-disabled="disabled">
-    <Button as="summary" variant="outline" aria-label="Crogenitor actions">ACTIONS</Button>
+    <Button as="summary" variant="outline" :aria-label='$t("Crogenitor actions")'>{{ $t("ACTIONS") }}</Button>
     <div class="crogenitor-actions-list">
-      <button v-if="isEditable" type="button" @click="choose('edit')">EDIT</button>
-      <button v-if="isResettable" type="button" @click="choose('reset-display')">RESET DISPLAY</button>
-      <button v-if="isDeletable" type="button" class="crogenitor-delete-action" @click="choose('delete')">DELETE</button>
+      <button v-if="isEditable" type="button" @click="choose('edit')">{{ $t("EDIT") }}</button>
+      <button v-if="isResettable" type="button" @click="choose('reset-display')">{{ $t("RESET DISPLAY") }}</button>
+      <button v-if="isDeletable" type="button" class="crogenitor-delete-action" @click="choose('delete')">{{ $t("DELETE") }}</button>
     </div>
   </details>
 </template>

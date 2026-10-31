@@ -82,6 +82,10 @@ export function GetLauncherIntegrationStatus() {
   return window['go']['main']['App']['GetLauncherIntegrationStatus']();
 }
 
+export function GetLauncherLanguageConfiguration() {
+  return window['go']['main']['App']['GetLauncherLanguageConfiguration']();
+}
+
 export function GetLuaConsole() {
   return window['go']['main']['App']['GetLuaConsole']();
 }
@@ -236,6 +240,10 @@ export function SetAutoPlay(arg1) {
 
 export function SetIdentity(arg1) {
   return window['go']['main']['App']['SetIdentity'](arg1);
+}
+
+export function SetLauncherLocale(arg1) {
+  return window['go']['main']['App']['SetLauncherLocale'](arg1);
 }
 
 export function SetLocalServicesRequired(arg1) {

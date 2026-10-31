@@ -3,6 +3,10 @@
 ---@alias LaunchMode 'normal'|'detached'|'remote'
 
 ---@class ClientOptions
+---@field is_borderless_mode? boolean Use borderless display for this isolated client; defaults to false.
+---@field screen_width? integer Client width, 640..8192; supply with screen_height. Defaults to 1280x720.
+---@field screen_height? integer Client height, 360..8192; supply with screen_width.
+---@field native_ui_scale_percent? integer Native UI scale for this isolated client at launch, 100..300 in steps of 5; defaults to 100.
 ---@field is_modded? boolean Enable native Mod/creature editor hooks for a fresh scenario profile. Requires StartServer({is_modded=true}); independent of launch_mode.
 ---@field spore_path? string Optional installed Spore root for mod resource mounting; requires is_modded. Otherwise uses launcher configuration/detection, or stock editor assets if no source is configured.
 ---@field client_id string Managed process identity, independent of profile and party role.

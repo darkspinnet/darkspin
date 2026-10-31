@@ -395,6 +395,14 @@ func (m *UserManager) Register(ctx context.Context, command Registration) (*User
 // RegisterDesktop creates a normal playable profile submitted by a trusted
 // Darkspinner account-registration endpoint.
 func (m *UserManager) RegisterDesktop(ctx context.Context, command Registration) (*User, error) {
+	err := ValidateDesktopUsername(command.LoginName)
+	if err != nil {
+		return nil, fmt.Errorf("usernameValidate: %w", err)
+	}
+	err = ValidateDesktopPassword(command.Password, false)
+	if err != nil {
+		return nil, fmt.Errorf("passwordValidate: %w", err)
+	}
 	configure := func(user *User) {
 		user.Account.AvatarID = registrationAvatarID(command.AvatarID)
 		user.IsTutorialCompletionPending = command.IsTutorialSkipped
@@ -441,7 +449,7 @@ func (m *UserManager) createUser(ctx context.Context, displayName, loginName, pa
 	m.mu.RLock()
 	if _, isFound := m.activeUsers[loginKey(loginName)]; isFound {
 		m.mu.RUnlock()
-		return nil, errors.New("there is already a registered user with that e-mail")
+		return nil, fmt.Errorf("userExists: %w", ErrUserExists)
 	}
 	m.mu.RUnlock()
 
@@ -455,7 +463,7 @@ func (m *UserManager) createUser(ctx context.Context, displayName, loginName, pa
 	}
 	id, err := m.repository.Create(ctx, user.Record())
 	if errors.Is(err, ErrUserExists) {
-		return nil, errors.New("there is already a registered user with that e-mail")
+		return nil, fmt.Errorf("userExists: %w", ErrUserExists)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("userCreate: %w", err)
@@ -485,7 +493,7 @@ func (m *UserManager) Authenticate(
 		return UserIdentity{}, fmt.Errorf("credentialLoad: %w", err)
 	}
 	if !isPasswordMatch(record.Password, password) {
-		return UserIdentity{}, errors.New("invalid account or password")
+		return UserIdentity{}, fmt.Errorf("credentialPassword: %w", ErrPasswordIncorrect)
 	}
 	return UserIdentity{
 		LoginName: record.LoginName, DisplayName: record.DisplayName,

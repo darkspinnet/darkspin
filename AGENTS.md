@@ -61,6 +61,13 @@ Never use .cache, instead put it in bin/cache/
   logs, or carry it into the first themed launcher view. Do not create a native
   fallback popup.
 
+## Player-facing translations
+
+- Keep Dark Spin-owned launcher and in-game text in the JSON translation sources under `app/locale`. Add English source keys to `en-us.json` and empty fallback entries to unfinished language files, preserving supplied translations.
+- Use `translate`/`$t` for launcher text and `fang_text`, `fang_text_wide`, or `fang_format_text` for Fang-owned captions, tooltips, and hints. Use numbered placeholders for formatted translations, never translated printf format strings.
+- The launcher and Fang embed their own translations at build time. Follow `launcher.locale` for the launcher and `game.locale` through the game `-locale:` argument for in-game text. Both preferences belong in `darkspin.toml` and Config General; do not add runtime translation files or launcher translation-file controls.
+- Preserve player content, technical diagnostics, and installed game localization. Localize Dark Spin-owned additions and fallback captions without changing shipped assets.
+
 ## Configuration ownership
 
 - Keep development binaries and their runtime working directories under `bin`. Never place binaries in the repository root or run them there with an implicit runtime/configuration directory. Generating a default `darkspin.toml` in the proper runtime directory is allowed; use that directory and its explicit configuration path for diagnostics.

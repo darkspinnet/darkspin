@@ -16,6 +16,7 @@ var launcherConfigMu sync.Mutex
 
 // launcherSettings lives in [launcher] and its subtables in darkspin.toml.
 type launcherSettings struct {
+	Locale             string               `toml:"locale"`
 	IsAutoPatchEnabled *bool                `toml:"is_auto_patch_enabled"`
 	IsAutoPlayEnabled  *bool                `toml:"is_auto_play_enabled"`
 	Wine               launcherWineSettings `toml:"wine"`

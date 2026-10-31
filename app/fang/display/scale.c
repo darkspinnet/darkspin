@@ -11,18 +11,20 @@
 #define SCALE_CALLER() _ReturnAddress()
 #endif
 
-/* Build 103 only. BE3890 supplies SPUI's logical root and inverse hit geometry.
- * Native frame/image/glyph presentation is scaled at the 912EF0 GPU submission
- * interface below; changing window transforms alone did not enlarge it.
+/* Build 103 only. BE3890 supplies SPUI's root transform and inverse hit geometry.
+ * BE1EE0 must paint that transformed tree against the physical viewport.
+ * BE5560 uses this rectangle for both projection and CPU clipping, before GPU
+ * submission. Scaling again at 912EF0 cannot repair clipped controls.
  *
  * The logical root still shrinks for docking. 9193A0's shared mouse ratios and
- * 908D20's world-picking bounds need the physical presentation rectangle.
- * Only their byte-confirmed getter calls receive that physical rectangle.
+ * Arsenal's picking bounds need the physical presentation rectangle.
+ * Only the ratio getters and Arsenal's own picking call receive that rectangle.
  * All other callers see the native logical area. No shared ratio is patched,
  * no Flash viewport changes, and no installed layout resource is modified. */
 typedef BYTE* (__cdecl* scale_manager_fn)(void);
 typedef LONG (FANG_THISCALL* scale_resize_fn)(BYTE*, float, float);
 typedef const float* (FANG_THISCALL* scale_area_fn)(BYTE*);
+typedef float* (__cdecl* scale_bounds_fn)(float*);
 typedef unsigned char (FANG_THISCALL* scale_event_fn)(BYTE*, BYTE*, BYTE*,
     const BYTE*, unsigned char, unsigned char);
 typedef void (FANG_THISCALL* scale_dirty_fn)(BYTE*, BYTE*);
@@ -30,7 +32,8 @@ typedef void (FANG_THISCALL* scale_redraw_fn)(BYTE*);
 typedef unsigned char (FANG_THISCALL* scale_mouse_fn)(BYTE*, float, float, unsigned int);
 typedef unsigned char (FANG_THISCALL* scale_button_fn)(BYTE*, float, float,
     unsigned int, unsigned int);
-typedef void (__stdcall* scale_render_fn)(const BYTE*, void*);
+typedef void (FANG_THISCALL* scale_paint_fn)(BYTE*, const float*);
+typedef void (FANG_THISCALL* scale_set_area_fn)(BYTE*, const float*);
 
 extern int fang_ui_scale_load(void);
 extern int fang_ui_scale_save(int percent);
@@ -39,6 +42,7 @@ static BYTE* scale_image;
 static scale_manager_fn native_manager;
 static scale_resize_fn native_resize;
 static scale_area_fn native_area;
+static scale_bounds_fn native_bounds;
 static scale_event_fn native_event;
 static scale_dirty_fn native_dirty;
 static scale_redraw_fn native_redraw;
@@ -46,7 +50,7 @@ static scale_mouse_fn native_mouse;
 static scale_button_fn native_button_down;
 static scale_button_fn native_button_up;
 static scale_button_fn native_wheel;
-static scale_render_fn native_render;
+static scale_paint_fn native_paint;
 static int reported_render_percent;
 static int reported_pick_percent;
 static int requested_percent = 100;
@@ -66,46 +70,28 @@ static struct {
 
 static void trace_scale_number(const char* name, float coordinate);
 
-/* Build 103: 912EF0 -> 912AB0 submits SPUI geometry. The draw state contains
- * a clip-space matrix pointer, packed tint, and a pixel-space clipping rect.
- * 912AB0 copies the matrix into its GPU batch before returning. GFx has its
- * own renderer and never consumes this interface. Keep both temporaries local
- * rather than modifying a shared cached matrix or the installed UI resource. */
-// Modifies: scales native SPUI frame, image and glyph batches at GPU submission.
-static void __stdcall scaled_render(const BYTE* state, void* primitives) {
-    BYTE scaled_state[24];
-    float matrix[16];
-    const float* source;
-    float factor;
-    unsigned int row;
+/* Build 103: BE1EE0 passes its viewport to BE5560, which intersects packet
+ * clipping bounds and composes the projection with each packet's transform.
+ * The root transform already includes the requested scale. Using its reduced
+ * layout rectangle here clips bottom/right controls before they can be drawn;
+ * magnifying the final GPU matrix also applies the scale a second time.
+ * Keep this boundary physical and let the native renderer compose it once. */
+// Modifies: preserves physical projection and clipping for the scaled SPUI tree.
+static void FANG_THISCALL physical_paint(BYTE* manager, const float* area) {
     int percent = scale.applied_percent;
-    if (percent == 100 || !readable_range(state, sizeof(scaled_state))) {
-        native_render(state, primitives);
+    if (percent == 100 || manager != scale.owner || manager != native_manager()) {
+        native_paint(manager, area);
         return;
     }
-    source = *(const float* const*)state;
-    if (!readable_range(source, sizeof(matrix))) {
-        native_render(state, primitives);
-        return;
-    }
-    factor = percent / 100.0f;
-    memcpy(scaled_state, state, sizeof(scaled_state));
-    memcpy(matrix, source, sizeof(matrix));
-    /* Screen origin is (-1,+1) in this renderer's clip space. Compose about
-     * that corner, including the homogeneous column for non-affine batches. */
-    for (row = 0; row < 4; ++row) {
-        matrix[row * 4] = matrix[row * 4] * factor + matrix[row * 4 + 3] * (factor - 1.0f);
-        matrix[row * 4 + 1] = matrix[row * 4 + 1] * factor - matrix[row * 4 + 3] * (factor - 1.0f);
-    }
-    *(const float**)scaled_state = matrix;
-    for (row = 2; row < 6; ++row) ((float*)scaled_state)[row] *= factor;
     if (reported_render_percent != percent) {
         reported_render_percent = percent;
-        trace_client_state("display_ui_scale_gpu_submit", percent);
-        trace_scale_number("display_ui_scale_gpu_source_x_bits", source[0]);
-        trace_scale_number("display_ui_scale_gpu_source_y_bits", source[5]);
+        trace_client_state("display_ui_scale_physical_paint", percent);
+        if (readable_range(area, 4 * sizeof(float))) {
+            trace_scale_number("display_ui_scale_paint_input_width_bits", area[2] - area[0]);
+            trace_scale_number("display_ui_scale_paint_input_height_bits", area[3] - area[1]);
+        }
     }
-    native_render(scaled_state, primitives);
+    native_paint(manager, scale.physical_areas);
 }
 
 // Reads: reverses SPUI's root-local conversion only at the Flash forwarding boundary.
@@ -258,23 +244,43 @@ static BYTE* scale_root(BYTE* manager) {
     return root;
 }
 
-// Reads: keeps shared mouse ratios and world picking bounds in physical pixels.
+/* Build 103's full-screen layer windows retain their explicit physical areas
+ * when BE4020 resizes only the root. 90DA30 sizes newly attached layout roots
+ * from those layers' RealArea, so the editor otherwise stays full resolution
+ * beneath a magnified parent. Resize only direct children still equal to the
+ * physical rectangle; popup and authored child rectangles are not rewritten. */
+// Modifies: keeps full-screen native layers in the root's logical layout space.
+static void resize_root_layers(BYTE* root) {
+    BYTE* sentinel = root + 60;
+    BYTE* link = *(BYTE**)sentinel;
+    unsigned int count = 0;
+    const float* logical_area = (const float*)(root + 100);
+    if (scale.applied_percent == 100) return;
+    while (link != sentinel && ++count <= 1024) {
+        BYTE* child;
+        void** methods;
+        if (!readable_range(link, 8)) return;
+        child = link - 8;
+        link = *(BYTE**)link;
+        if (!readable_range(child, 132) ||
+            memcmp(child + 100, scale.physical_areas, sizeof(scale.physical_areas)) ||
+            memcmp(child + 116, scale.physical_areas, sizeof(scale.physical_areas))) continue;
+        methods = *(void***)(child + 4);
+        if (!readable_range(methods, 100)) continue;
+        ((scale_set_area_fn)methods[24])(child + 4, logical_area);
+        trace_client_state("display_ui_scale_layer_resized", scale.applied_percent);
+    }
+}
+
+// Reads: keeps shared mouse ratios physical while leaving layout getters logical.
 static const float* FANG_THISCALL physical_input_area(BYTE* window) {
     BYTE* caller = (BYTE*)SCALE_CALLER();
     BYTE* manager = native_manager();
     BYTE* root = scale_root(manager);
     /* 9193DC and 91942E are the two indirect GetArea calls in 9193A0.
-     * 908D42 is the screen-bounds getter used by Arsenal picking (4132F0).
-     * It compares 919130's physical mouse position before casting the ray.
-     * Match exact return addresses while leaving SPUI layout getters logical. */
+     * 908D20 is also used by layout code; it must retain native semantics. */
     if (root && window == root + 4 && scale.owner == manager &&
-        (caller == scale_image + 0x5193DE || caller == scale_image + 0x519430 ||
-         caller == scale_image + 0x508D44)) {
-        if (caller == scale_image + 0x508D44 &&
-            reported_pick_percent != scale.applied_percent) {
-            reported_pick_percent = scale.applied_percent;
-            trace_client_state("display_ui_scale_pick_bounds_preserved", scale.applied_percent);
-        }
+        (caller == scale_image + 0x5193DE || caller == scale_image + 0x519430)) {
         if (scale.reported_input_percent != scale.applied_percent) {
             scale.reported_input_percent = scale.applied_percent;
             trace_client_state("display_ui_scale_input_preserved", scale.applied_percent);
@@ -282,6 +288,19 @@ static const float* FANG_THISCALL physical_input_area(BYTE* window) {
         return scale.physical_areas;
     }
     return native_area(window);
+}
+
+// Reads: supplies physical bounds only to build-103 Arsenal's world picking.
+static float* __cdecl arsenal_picking_bounds(float* area) {
+    BYTE* manager = native_manager();
+    if (!area || !scale.is_installed || scale.owner != manager ||
+        !scale_root(manager)) return native_bounds(area);
+    memcpy(area, scale.physical_areas, sizeof(scale.physical_areas));
+    if (reported_pick_percent != scale.applied_percent) {
+        reported_pick_percent = scale.applied_percent;
+        trace_client_state("display_ui_scale_pick_bounds_preserved", scale.applied_percent);
+    }
+    return area;
 }
 
 // Modifies: composes native SPUI rendering and inverse hit geometry together.
@@ -361,6 +380,7 @@ void fang_update_native_ui_scale(void) {
         scale.owner = manager;
         scale.applied_percent = 100;
     }
+    resize_root_layers(root);
     trace_scale_geometry(manager, root);
     if (scale.applied_percent == scale.percent) return;
     scale.applied_percent = scale.percent;
@@ -382,7 +402,7 @@ int fang_install_native_ui_scale(BYTE* base) {
     void** down_slot = (void**)(base + 0xC1659C);
     void** up_slot = (void**)(base + 0xC165A0);
     void** wheel_slot = (void**)(base + 0xC165A8);
-    void** render_slot = (void**)(base + 0xC15E44);
+    void** paint_slot = (void**)(base + 0xC5E7C4);
     static const BYTE dirty_signature[] = {0x8B, 0x54, 0x24, 0x04, 0xF6, 0x42, 0x30, 0x20};
     static const BYTE redraw_signature[] = {0x53, 0x33, 0xDB, 0x38, 0x59, 0x25};
     if (!readable_range(resize_slot, 4) || !readable_range(area_slot, 4) ||
@@ -390,15 +410,10 @@ int fang_install_native_ui_scale(BYTE* base) {
         !readable_range(down_slot, 4) || *down_slot != base + 0x519660 ||
         !readable_range(up_slot, 4) || *up_slot != base + 0x5197C0 ||
         !readable_range(wheel_slot, 4) || *wheel_slot != base + 0x5199C0 ||
-        !readable_range(render_slot, 4) || *render_slot != base + 0x512EF0 ||
-        !readable_range(base + 0x512EF0, 11) ||
-        *(unsigned short*)(base + 0x512EF0) != 0x0D8B ||
-        *(BYTE**)(base + 0x512EF2) != base + 0x10BBAD8 ||
-        base[0x512EF6] != 0xE9 ||
-        base + 0x512EFB + *(int*)(base + 0x512EF7) != base + 0x512AB0 ||
+        !readable_range(paint_slot, 4) || *paint_slot != base + 0x7E1EE0 ||
         !readable_range(base + 0x7E1900, 6) ||
-        !readable_range(base + 0x508D3F, 5) ||
-        memcmp(base + 0x508D3F, "\x8B\x42\x34\xFF\xD0", 5) != 0 ||
+        !readable_range(base + 0x13313, 5) || base[0x13313] != 0xE8 ||
+        base + 0x13318 + *(int*)(base + 0x13314) != base + 0x508D20 ||
         !readable_range(base + 0x5193DC, 2) || !readable_range(base + 0x51942E, 2) ||
         !readable_range(base + 0x7E20B0, sizeof(dirty_signature)) ||
         memcmp(base + 0x7E20B0, dirty_signature, sizeof(dirty_signature)) ||
@@ -413,6 +428,7 @@ int fang_install_native_ui_scale(BYTE* base) {
     native_manager = (scale_manager_fn)(base + 0x7E1900);
     native_resize = (scale_resize_fn)(base + 0x7E4020);
     native_area = (scale_area_fn)(base + 0x7DE930);
+    native_bounds = (scale_bounds_fn)(base + 0x508D20);
     native_event = (scale_event_fn)(base + 0x7E2C50);
     native_dirty = (scale_dirty_fn)(base + 0x7E20B0);
     native_redraw = (scale_redraw_fn)(base + 0x7E1AE0);
@@ -420,17 +436,18 @@ int fang_install_native_ui_scale(BYTE* base) {
     native_button_down = (scale_button_fn)(base + 0x519660);
     native_button_up = (scale_button_fn)(base + 0x5197C0);
     native_wheel = (scale_button_fn)(base + 0x5199C0);
-    native_render = (scale_render_fn)(base + 0x512EF0);
+    native_paint = (scale_paint_fn)(base + 0x7E1EE0);
     scale.percent = fang_ui_scale_load();
     requested_percent = scale.percent;
     if (!patch_pointer(area_slot, native_area, physical_input_area)) return 0;
-    if (!patch_call(base + 0x7E38D7, native_event, scaled_transform)) goto restore_area;
+    if (!patch_call(base + 0x13313, native_bounds, arsenal_picking_bounds)) goto restore_area;
+    if (!patch_call(base + 0x7E38D7, native_event, scaled_transform)) goto restore_bounds;
     if (!patch_pointer(resize_slot, native_resize, scaled_resize)) goto restore_transform;
     if (!patch_pointer(mouse_slot, native_mouse, scaled_root_mouse)) goto restore_resize;
     if (!patch_pointer(down_slot, native_button_down, scaled_root_button_down)) goto restore_mouse;
     if (!patch_pointer(up_slot, native_button_up, scaled_root_button_up)) goto restore_down;
     if (!patch_pointer(wheel_slot, native_wheel, scaled_root_wheel)) goto restore_up;
-    if (!patch_pointer(render_slot, native_render, scaled_render)) goto restore_wheel;
+    if (!patch_pointer(paint_slot, native_paint, physical_paint)) goto restore_wheel;
     scale.is_installed = 1;
     trace_client_state("display_ui_scale_loaded", scale.percent);
     return 1;
@@ -452,6 +469,9 @@ restore_resize:
 restore_transform:
     if (!patch_call(base + 0x7E38D7, scaled_transform, native_event))
         trace_client_state("display_ui_scale_transform_rollback_failed", 1);
+restore_bounds:
+    if (!patch_call(base + 0x13313, arsenal_picking_bounds, native_bounds))
+        trace_client_state("display_ui_scale_pick_bounds_rollback_failed", 1);
 restore_area:
     if (!patch_pointer(area_slot, physical_input_area, native_area))
         trace_client_state("display_ui_scale_area_rollback_failed", 1);

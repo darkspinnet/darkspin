@@ -52,14 +52,18 @@ type debugEquippedPartRequest struct {
 }
 
 type debugLaunchRequest struct {
-	IsModded           bool   `json:"is_modded"`
-	SporePath          string `json:"spore_path,omitempty"`
-	ClientID           string `json:"client_id"`
-	ProfileName        string `json:"profile_name"`
-	IsDetached         bool   `json:"is_detached"`
-	LaunchMode         string `json:"launch_mode,omitempty"`
-	IsCinematicSkipped *bool  `json:"is_cinematic_skipped,omitempty"`
-	IsIntroSkipped     *bool  `json:"is_intro_skipped,omitempty"`
+	ScreenWidth          int    `json:"screen_width,omitempty"`
+	ScreenHeight         int    `json:"screen_height,omitempty"`
+	NativeUIScalePercent int    `json:"native_ui_scale_percent,omitempty"`
+	IsBorderlessMode     bool   `json:"is_borderless_mode,omitempty"`
+	IsModded             bool   `json:"is_modded"`
+	SporePath            string `json:"spore_path,omitempty"`
+	ClientID             string `json:"client_id"`
+	ProfileName          string `json:"profile_name"`
+	IsDetached           bool   `json:"is_detached"`
+	LaunchMode           string `json:"launch_mode,omitempty"`
+	IsCinematicSkipped   *bool  `json:"is_cinematic_skipped,omitempty"`
+	IsIntroSkipped       *bool  `json:"is_intro_skipped,omitempty"`
 }
 
 type debugClientRequest struct {
@@ -314,6 +318,18 @@ func (e *debugSupervisor) executeSerializedDebugOperation(ctx context.Context, o
 		if err != nil {
 			return nil, fmt.Errorf("launchRequest: %w", err)
 		}
+		if req.NativeUIScalePercent == 0 {
+			req.NativeUIScalePercent = 100
+		}
+		if req.NativeUIScalePercent < 100 || req.NativeUIScalePercent > 300 || req.NativeUIScalePercent%5 != 0 {
+			return nil, errors.New("native_ui_scale_percent must be from 100 to 300 in increments of 5")
+		}
+		if req.ScreenWidth == 0 && req.ScreenHeight == 0 {
+			req.ScreenWidth, req.ScreenHeight = 1280, 720
+		}
+		if req.ScreenWidth < 640 || req.ScreenWidth > 8192 || req.ScreenHeight < 360 || req.ScreenHeight > 8192 {
+			return nil, errors.New("screen_width and screen_height must specify a client size from 640x360 to 8192x8192")
+		}
 		switch req.LaunchMode {
 		case "", "normal":
 			if req.LaunchMode == "normal" && req.IsDetached {
@@ -355,7 +371,7 @@ func (e *debugSupervisor) executeSerializedDebugOperation(ctx context.Context, o
 		if err != nil {
 			return nil, fmt.Errorf("snapshotControl: %w", err)
 		}
-		client, err := state.clientManager.Launch(ctx, debugClientLaunchRequest{UserID: credential.UserID, ClientID: req.ClientID, ProfileName: req.ProfileName, GameDirectory: state.host.GameDirectory, FangPath: state.host.FangPath, ServerAddress: state.host.Address, JWT: credential.JWT, SnapshotEndpoint: snapshotEndpoint, SnapshotToken: snapshotToken, SnapshotDirectory: state.host.server.SnapshotControlDirectory(), IsDetached: req.IsDetached, IsModded: req.IsModded, ModManifest: manifestPath, IsCinematicSkipped: isCinematicSkipped, IsIntroSkipped: isIntroSkipped})
+		client, err := state.clientManager.Launch(ctx, debugClientLaunchRequest{IsBorderlessMode: req.IsBorderlessMode, ScreenWidth: req.ScreenWidth, ScreenHeight: req.ScreenHeight, NativeUIScalePercent: req.NativeUIScalePercent, UserID: credential.UserID, ClientID: req.ClientID, ProfileName: req.ProfileName, GameDirectory: state.host.GameDirectory, FangPath: state.host.FangPath, ServerAddress: state.host.Address, JWT: credential.JWT, SnapshotEndpoint: snapshotEndpoint, SnapshotToken: snapshotToken, SnapshotDirectory: state.host.server.SnapshotControlDirectory(), IsDetached: req.IsDetached, IsModded: req.IsModded, ModManifest: manifestPath, IsCinematicSkipped: isCinematicSkipped, IsIntroSkipped: isIntroSkipped})
 		if err != nil {
 			if client.ProcessID != 0 && client.Observation.Identity.PID != 0 {
 				registerErr := e.registry.RegisterClient(client.Observation.Identity)

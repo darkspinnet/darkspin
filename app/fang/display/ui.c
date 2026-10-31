@@ -143,6 +143,8 @@ static void update_context_menu_scale(void) {
     if (!get((display_value*)(party + 1360), "mContainer", &container) ||
         !get(&container, "mRoot", &root) || !get(&root, "ContextMenu", &menu) ||
         !is_object(&menu)) goto done;
+    /* The named child lookup is the scope boundary. GFx managed strings and
+     * display-object wrappers cannot be compared as raw C strings/pointers. */
     if (read_number(&menu, "_xscale", &x_scale) && x_scale == percent &&
         read_number(&menu, "_yscale", &y_scale) && y_scale == percent) goto done;
     if (set(&menu, "_xscale", number_value(percent)) &&
@@ -259,9 +261,9 @@ static int clone_control(display_value* graphics, display_value* source,
             goto done;
         }
     } else {
-        if (!set(&clone, "_text", string_value(caption)) ||
+        if (!set(&clone, "_text", string_value(fang_text(caption))) ||
             !invoke(&clone, "onLoadImpl", NULL, NULL, 0) ||
-            !set(&clone, "text", string_value(caption))) {
+            !set(&clone, "text", string_value(fang_text(caption)))) {
             goto done;
         }
     }
@@ -537,10 +539,21 @@ static void update_screen_size_caption(display_value* graphics) {
     display_value resolution = {0}, caption = {0};
     if (get(graphics, "screenResolutions", &resolution) &&
         sibling_label(graphics, &resolution, -2, &caption)) {
-        set(&caption, "text", string_value("Screen Size (restart required)"));
+        set(&caption, "text", string_value(fang_text("Screen Size (restart required)")));
     }
     release_value(&caption);
     release_value(&resolution);
+}
+
+// Modifies: translates build-103's Insane Grass caption at its existing live depth.
+static void update_insane_grass_caption(display_value* graphics) {
+    display_value checkbox = {0}, caption = {0};
+    if (get(graphics, "insaneGrass", &checkbox) &&
+        sibling_label(graphics, &checkbox, -2, &caption)) {
+        set(&caption, "text", string_value(fang_text("Insane Grass")));
+    }
+    release_value(&caption);
+    release_value(&checkbox);
 }
 
 // Modifies: creates and synchronizes display controls, reconciles selections, and logs UI progress.
@@ -557,6 +570,7 @@ void fang_update_display_ui(void) {
         goto done;
     }
     update_screen_size_caption(&graphics);
+    update_insane_grass_caption(&graphics);
     stage = 2;
     if (!read_boolean(&graphics, "isFangDisplayLayoutReady", &is_layout_ready) || !is_layout_ready) {
         if (!create_controls(&graphics) || !create_scale_control(&graphics) || !layout_controls(&graphics) ||
@@ -577,11 +591,10 @@ void fang_update_display_ui(void) {
     if (read_number(&slider, "value", &percent) && isfinite(percent) && percent >= 100 && percent <= 300) {
         if ((int)percent != selection.failed_scale_percent) selection.is_scale_save_failed = 0;
         if (selection.is_scale_save_failed) {
-            _snprintf(scale_caption, sizeof(scale_caption), "Could not save UI scale");
+            set(&caption, "text", string_value(fang_text("Could not save UI scale")));
         } else {
-            _snprintf(scale_caption, sizeof(scale_caption), "Native UI Scale (restart required)");
+            set(&caption, "text", string_value(fang_text("Native UI Scale (restart required)")));
         }
-        set(&caption, "text", string_value(scale_caption));
         _snprintf(scale_caption, sizeof(scale_caption), "%d%%", (int)percent);
         set(&level, "text", string_value(scale_caption));
     }
@@ -694,7 +707,7 @@ static void __cdecl hooked_save_settings(BYTE* controller, const char* event,
         selection.failed_scale_percent = (int)percent;
         display_value caption = {0};
         if (get(&graphics, "fangNativeScaleLabel", &caption))
-            set(&caption, "text", string_value("Could not save UI scale"));
+            set(&caption, "text", string_value(fang_text("Could not save UI scale")));
         release_value(&caption);
         release_value(&slider);
         release_value(&overlay);

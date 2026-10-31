@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import LauncherDialog from './LauncherDialog.vue'
 import ModPortrait from './ModPortrait.vue'
 import ProfileSummary from './ProfileSummary.vue'
+import SporeConfiguration from './SporeConfiguration.vue'
 import { GetModConfiguration, GetProfileAvatars, LaunchModProfile, SaveModProfile } from '../platform'
 
 const props = defineProps({ status:Object, isActive:Boolean })
@@ -116,6 +117,11 @@ function editProfile() {
   error.value = ''
 }
 
+function updateSporeConfiguration(savedConfiguration) {
+  configuration.value = savedConfiguration
+  emit('profiles', configuration.value.profiles)
+}
+
 function bind() {
   if (!creation.value || !hero.value) return
   if (bindings.value.some(binding => binding.heroNoun === hero.value.noun)) return
@@ -161,10 +167,10 @@ watch(() => props.status?.isProfileStoreReady && props.status?.isContentReady, i
         <div class="launch-pane">
           <div class="profile-core">
             <slot name="picker" />
-            <p v-if="error && !isEditing" class="mod-error" role="alert">{{ error }}</p>
+            <p v-if="error && !isEditing" class="mod-error" role="alert">{{ $t(error) }}</p>
             <div class="launch-profile-summary">
-              <ProfileSummary v-if="profile" :profile="profile" label="MODDED CROGENITOR" />
-              <div v-else-if="isConfigurationValid && !isBusy" class="mod-empty"><h2>CREATE YOUR CROGENITOR</h2><p>Create a modded Crogenitor and choose creature bindings in the creation wizard.</p><Button :disabled="!avatars.length" @click="newProfile">+ NEW CROGENITOR</Button></div>
+              <ProfileSummary v-if="profile" :profile="profile" :label='$t("MODDED CROGENITOR")' />
+              <div v-else-if="isConfigurationValid && !isBusy" class="mod-empty"><h2>{{ $t("CREATE YOUR CROGENITOR") }}</h2><p>{{ $t("Create a modded Crogenitor and choose creature bindings in the creation wizard.") }}</p><Button :disabled="!avatars.length" @click="newProfile">{{ $t("+ NEW CROGENITOR") }}</Button></div>
             </div>
           </div>
         </div>
@@ -173,57 +179,58 @@ watch(() => props.status?.isProfileStoreReady && props.status?.isContentReady, i
 
     <LauncherDialog v-if="isEditing" :is-dismissible="!isBusy" :width="wizardStep === 'bindings' ? 980 : undefined" @close="loadProfile">
       <div class="notice-card onboarding-card profile-creation-notice mod-editor">
-        <p v-if="isNew" class="eyebrow">{{ wizardStep === 'profile' ? 'STEP 1 OF 2 · CROGENITOR' : 'STEP 2 OF 2 · CREATURE BINDINGS' }}</p>
-        <DialogTitle as="h2">{{ isNew ? 'CREATE YOUR CROGENITOR' : `EDIT ${profile?.displayName || selectedProfile}` }}</DialogTitle>
+        <p v-if="isNew" class="eyebrow">{{ $t(wizardStep === 'profile' ? 'STEP 1 OF 2 · CROGENITOR' : 'STEP 2 OF 2 · CREATURE BINDINGS') }}</p>
+        <DialogTitle as="h2">{{ isNew ? $t('CREATE YOUR CROGENITOR') : $t('EDIT {0}', [profile?.displayName || selectedProfile]) }}</DialogTitle>
         <template v-if="isNew && wizardStep === 'profile'">
-          <label>CROGENITOR PHOTO</label>
-          <div v-if="avatars.length" class="avatar-picker" role="radiogroup" aria-label="Crogenitor photo">
-            <Button variant="outline" v-for="avatar in avatars" :key="avatar.id" type="button" role="radio" :aria-checked="avatar.id === avatarID" :class="{ selected:avatar.id === avatarID }" :disabled="isBusy" @click="avatarID = avatar.id"><img :src="avatar.url" :alt="`Crogenitor photo ${avatar.id}`"></Button>
+          <label>{{ $t("CROGENITOR PHOTO") }}</label>
+          <div v-if="avatars.length" class="avatar-picker" role="radiogroup" :aria-label='$t("Crogenitor photo")'>
+            <Button variant="outline" v-for="avatar in avatars" :key="avatar.id" type="button" role="radio" :aria-checked="avatar.id === avatarID" :class="{ selected:avatar.id === avatarID }" :disabled="isBusy" @click="avatarID = avatar.id"><img :src="avatar.url" :alt="$t(`Crogenitor photo ${avatar.id}`)"></Button>
           </div>
-          <div v-else class="avatar-preparing">RECOVERING CROGENITOR PHOTOS...</div>
-          <label for="mod-name">CROGENITOR NAME</label><Input id="mod-name" v-model="name" type="text" autofocus maxlength="20" pattern="[A-Za-z0-9]*" placeholder="ENTER NAME" autocomplete="off" spellcheck="false" :disabled="isBusy" @keyup.enter="isProfileReady && (wizardStep = 'bindings')" />
-          <p class="onboarding-rule">Use 1–20 letters or numbers.</p>
-          <label class="tutorial-skip"><Checkbox v-model="isTutorialSkipped" :disabled="isBusy" /><span><strong>SKIP TUTORIAL</strong><small>Begin on the ship with tutorial progression, starter heroes, DNA, and reward gear already granted.</small></span></label>
+          <div v-else class="avatar-preparing">{{ $t("RECOVERING CROGENITOR PHOTOS...") }}</div>
+          <label for="mod-name">{{ $t("CROGENITOR NAME") }}</label><Input id="mod-name" v-model="name" type="text" autofocus maxlength="20" pattern="[A-Za-z0-9]*" :placeholder='$t("ENTER NAME")' autocomplete="off" spellcheck="false" :disabled="isBusy" @keyup.enter="isProfileReady && (wizardStep = 'bindings')" />
+          <p class="onboarding-rule">{{ $t("Use 1–20 letters or numbers.") }}</p>
+          <label class="tutorial-skip"><Checkbox v-model="isTutorialSkipped" :disabled="isBusy" /><span><strong>{{ $t("SKIP TUTORIAL") }}</strong><small>{{ $t("Begin on the ship with tutorial progression, starter heroes, DNA, and reward gear already granted.") }}</small></span></label>
         </template>
         <template v-else>
-          <div v-if="!configuration.sporePath || configuration.sourceError" class="mod-source-status"><p class="mod-error">{{ configuration.sourceError || 'Set your Spore folder in Config to choose creatures.' }}</p><Button variant="outline" :disabled="isBusy" @click="emit('configure')">OPEN CONFIG</Button></div>
+          <SporeConfiguration v-if="isNew && (!configuration.sporePath || configuration.sourceError)" id-prefix="wizard-spore" @saved="updateSporeConfiguration" />
+          <div v-else-if="!configuration.sporePath || configuration.sourceError" class="mod-source-status"><p class="mod-error">{{ $t(configuration.sourceError || 'Set your Spore folder in Config to choose creatures.') }}</p><Button variant="outline" :disabled="isBusy" @click="emit('configure')">{{ $t("OPEN CONFIG") }}</Button></div>
           <div class="mod-grid">
             <Card class="mod-panel">
-              <h3>CREATURE &rarr; CHARACTER</h3>
-              <Input v-model="search" placeholder="SEARCH CREATURES" aria-label="Search creatures" :disabled="!isEditing || isBusy" />
+              <h3>{{ $t("CREATURE → CHARACTER") }}</h3>
+              <Input v-model="search" :placeholder='$t("SEARCH CREATURES")' :aria-label='$t("Search creatures")' :disabled="!isEditing || isBusy" />
               <div class="mod-selectors">
-              <div class="mod-selector"><label>CREATURE</label>
-              <Select v-model="selectedCreation" :disabled="!isEditing || isBusy || !configuration.creatures.length"><SelectTrigger aria-label="Creature"><span v-if="creation" class="mod-option"><ModPortrait :creation-id="creation.id" :label="creation.name" />{{ creation.name }}</span><SelectValue v-else placeholder="SELECT A CREATURE" /></SelectTrigger><SelectContent class="mod-selection"><SelectItem v-for="candidate in visibleCreatures" :key="candidate.id" :value="candidate.id"><span class="mod-option"><ModPortrait :creation-id="candidate.id" :label="candidate.name" /><span>{{ candidate.name }}<small v-if="candidate.isPersonal">YOUR CREATIONS</small></span></span></SelectItem><p v-if="visibleCreatures.length === 60" class="mod-copy">Search to narrow the list.</p></SelectContent></Select>
+              <div class="mod-selector"><label>{{ $t("CREATURE") }}</label>
+              <Select v-model="selectedCreation" :disabled="!isEditing || isBusy || !configuration.creatures.length"><SelectTrigger :aria-label='$t("Creature")'><span v-if="creation" class="mod-option"><ModPortrait :creation-id="creation.id" :label="creation.name" />{{ creation.name }}</span><SelectValue v-else :placeholder='$t("SELECT A CREATURE")' /></SelectTrigger><SelectContent class="mod-selection"><SelectItem v-for="candidate in visibleCreatures" :key="candidate.id" :value="candidate.id"><span class="mod-option"><ModPortrait :creation-id="candidate.id" :label="candidate.name" /><span>{{ candidate.name }}<small v-if="candidate.isPersonal">{{ $t("YOUR CREATIONS") }}</small></span></span></SelectItem><p v-if="visibleCreatures.length === 60" class="mod-copy">{{ $t("Search to narrow the list.") }}</p></SelectContent></Select>
               </div>
-              <div class="mod-selector"><label>CHARACTER</label>
-              <Select v-model="selectedCategory" :disabled="!isEditing || isBusy"><SelectTrigger aria-label="Character category" title="Bindings apply to the selected noun, including promoted variants that share it"><SelectValue placeholder="SELECT CATEGORY" /></SelectTrigger><SelectContent><SelectItem v-for="category in categories" :key="category" :value="category">{{ category }}</SelectItem></SelectContent></Select>
-              <Input v-model="characterSearch" placeholder="SEARCH CHARACTERS" aria-label="Search characters" :disabled="!isEditing || isBusy" />
-              <Select v-model="selectedHero" :disabled="!isEditing || !selectedCreation || isBusy"><SelectTrigger aria-label="Character"><span v-if="hero" class="mod-option"><img v-if="hero.portraitUrl" :src="hero.portraitUrl" alt="">{{ hero.name }}</span><SelectValue v-else placeholder="SELECT A CHARACTER" /></SelectTrigger><SelectContent class="mod-selection"><SelectItem v-for="candidate in visibleCharacters" :key="candidate.noun" :value="String(candidate.noun)" :disabled="bindings.some(binding => binding.heroNoun === candidate.noun)"><span class="mod-option"><img v-if="candidate.portraitUrl" :src="candidate.portraitUrl" alt=""><span>{{ candidate.name }}<small v-if="candidate.nounName">{{ candidate.nounName }}</small></span></span></SelectItem></SelectContent></Select>
+              <div class="mod-selector"><label>{{ $t("CHARACTER") }}</label>
+              <Select v-model="selectedCategory" :disabled="!isEditing || isBusy"><SelectTrigger :aria-label='$t("Character category")' :title='$t("Bindings apply to the selected noun, including promoted variants that share it")'><SelectValue :placeholder='$t("SELECT CATEGORY")' /></SelectTrigger><SelectContent><SelectItem v-for="category in categories" :key="category" :value="category">{{ $t(category) }}</SelectItem></SelectContent></Select>
+              <Input v-model="characterSearch" :placeholder='$t("SEARCH CHARACTERS")' :aria-label='$t("Search characters")' :disabled="!isEditing || isBusy" />
+              <Select v-model="selectedHero" :disabled="!isEditing || !selectedCreation || isBusy"><SelectTrigger :aria-label='$t("Character")'><span v-if="hero" class="mod-option"><img v-if="hero.portraitUrl" :src="hero.portraitUrl" alt="">{{ hero.name }}</span><SelectValue v-else :placeholder='$t("SELECT A CHARACTER")' /></SelectTrigger><SelectContent class="mod-selection"><SelectItem v-for="candidate in visibleCharacters" :key="candidate.noun" :value="String(candidate.noun)" :disabled="bindings.some(binding => binding.heroNoun === candidate.noun)"><span class="mod-option"><img v-if="candidate.portraitUrl" :src="candidate.portraitUrl" alt=""><span>{{ candidate.name }}<small v-if="candidate.nounName">{{ candidate.nounName }}</small></span></span></SelectItem></SelectContent></Select>
               </div>
               </div>
-              <Button :disabled="!isEditing || !creation || !hero || isBusy || bindings.some(binding => binding.heroNoun === hero?.noun)" @click="bind">ADD BINDING</Button>
+              <Button :disabled="!isEditing || !creation || !hero || isBusy || bindings.some(binding => binding.heroNoun === hero?.noun)" @click="bind">{{ $t("ADD BINDING") }}</Button>
             </Card>
 
             <Card class="mod-panel">
-              <h3>PROFILE BINDINGS <small>{{ bindings.length }}</small></h3>
-              <p v-if="!bindings.length" class="mod-copy">Select a creature, category and character.</p>
+              <h3>{{ $t("PROFILE BINDINGS ") }}<small>{{ $t(bindings.length) }}</small></h3>
+              <p v-if="!bindings.length" class="mod-copy">{{ $t("Select a creature, category and character.") }}</p>
               <div v-for="binding in bindings" :key="binding.heroNoun" class="mod-binding">
                 <ModPortrait :creation-id="binding.creationId" :label="creatureFor(binding.creationId)?.name" />
-                <span class="mod-binding-name">{{ creatureFor(binding.creationId)?.name || 'Imported creature' }}<small>→ {{ heroFor(binding.heroNoun)?.name || binding.heroNoun }} &middot; {{ heroFor(binding.heroNoun)?.category }}</small></span>
+                <span class="mod-binding-name">{{ creatureFor(binding.creationId)?.name || $t('Imported creature') }}<small>→ {{ heroFor(binding.heroNoun)?.name || binding.heroNoun }} &middot; {{ $t(heroFor(binding.heroNoun)?.category) }}</small></span>
                 <img v-if="heroFor(binding.heroNoun)?.portraitUrl" class="mod-hero-portrait" :src="heroFor(binding.heroNoun).portraitUrl" alt="">
-                <div v-if="isEditing" class="mod-binding-actions"><button type="button" :disabled="isBusy" @click="bindings = bindings.filter(candidate => candidate !== binding)">DELETE</button></div>
+                <div v-if="isEditing" class="mod-binding-actions"><button type="button" :disabled="isBusy" @click="bindings = bindings.filter(candidate => candidate !== binding)">{{ $t("DELETE") }}</button></div>
               </div>
             </Card>
           </div>
         </template>
-        <p v-if="error" class="mod-error" role="alert">{{ error }}</p>
-        <p v-if="!isNew" class="mod-copy">Resync saves these bindings and restores non-imported creatures to their installed appearance. Imported creatures, inventory and Crogenitor progress are kept.</p>
+        <p v-if="error" class="mod-error" role="alert">{{ $t(error) }}</p>
+        <p v-if="!isNew" class="mod-copy">{{ $t("Resync saves these bindings and restores non-imported creatures to their installed appearance. Imported creatures, inventory and Crogenitor progress are kept.") }}</p>
         <div class="onboarding-actions">
-          <Button variant="outline" :disabled="isBusy" @click="loadProfile">CANCEL</Button>
-          <Button v-if="!isNew" variant="outline" :disabled="isBusy" title="Save these bindings and refresh non-imported creatures from their installed templates. Keep previous appearance references, imported bindings, inventory and progression." @click="save(true)">RESYNC</Button>
-          <Button v-if="isNew && wizardStep === 'bindings'" variant="outline" :disabled="isBusy" @click="wizardStep = 'profile'">BACK</Button>
-          <Button v-if="isNew && wizardStep === 'profile'" :disabled="isBusy || !isProfileReady" @click="wizardStep = 'bindings'">NEXT · CREATURE BINDINGS</Button>
-          <Button v-else :disabled="isBusy || (isNew && !isProfileReady)" @click="save(false)">{{ isBusy ? 'SAVING...' : isNew ? 'CREATE CROGENITOR' : 'SAVE CROGENITOR' }}</Button>
+          <Button variant="outline" :disabled="isBusy" @click="loadProfile">{{ $t("CANCEL") }}</Button>
+          <Button v-if="!isNew" variant="outline" :disabled="isBusy" :title='$t("Save these bindings and refresh non-imported creatures from their installed templates. Keep previous appearance references, imported bindings, inventory and progression.")' @click="save(true)">{{ $t("RESYNC") }}</Button>
+          <Button v-if="isNew && wizardStep === 'bindings'" variant="outline" :disabled="isBusy" @click="wizardStep = 'profile'">{{ $t("BACK") }}</Button>
+          <Button v-if="isNew && wizardStep === 'profile'" :disabled="isBusy || !isProfileReady" @click="wizardStep = 'bindings'">{{ $t("NEXT · CREATURE BINDINGS") }}</Button>
+          <Button v-else :disabled="isBusy || (isNew && !isProfileReady)" @click="save(false)">{{ $t(isBusy ? 'SAVING...' : isNew ? 'CREATE CROGENITOR' : 'SAVE CROGENITOR') }}</Button>
         </div>
       </div>
     </LauncherDialog>

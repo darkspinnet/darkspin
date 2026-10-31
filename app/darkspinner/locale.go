@@ -61,6 +61,11 @@ func detectClientLocales(gamePath string) ([]ClientLocale, error) {
 		locales = append(locales, ClientLocale{Code: code, Label: label})
 	}
 	sort.Slice(locales, func(left, right int) bool {
+		isLeftEnglish := locales[left].Code == fallbackClientLocale
+		isRightEnglish := locales[right].Code == fallbackClientLocale
+		if isLeftEnglish != isRightEnglish {
+			return isLeftEnglish
+		}
 		return locales[left].Label < locales[right].Label
 	})
 	if len(locales) == 0 {

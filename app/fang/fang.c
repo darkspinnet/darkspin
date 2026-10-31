@@ -15,6 +15,7 @@
 #include "hook/import.h"
 #include "network/network.h"
 #include "chat/command.h"
+#include "chat/ui.h"
 #include "cinematic/cinematic.h"
 #include "bug/history.h"
 #include "bug/record.h"
@@ -1273,7 +1274,8 @@ static int open_chat_ui(void) {
         original_chat_show(chat, 1);
         trace_client_state("chat_gameplay_show", *((const BYTE*)chat + 41));
     }
-    original_chat_open(chat, 0x10000009);
+    /* A normal open keeps Lobby; 0x10000009 is native reply-to-whisper. */
+    original_chat_open(chat, 0);
     trace_client_state("chat_open", 1);
     return 1;
 }
@@ -3654,26 +3656,12 @@ static unsigned int repair_rooms_target(void) {
     return 0;
 }
 
-// Modifies: repairs the chat controller's selected Rooms projection when needed.
+// Modifies: repairs an invalid channel left by the former Rooms-pointer repair.
 static unsigned int repair_chat_rooms_target(void) {
-    void* platform = original_online_platform();
     void* chat = original_chat_lookup();
-    void** rooms;
-    void* room;
-    if (!readable_range(platform, 13 * sizeof(void*)) ||
-        !readable_range(chat, 13 * sizeof(void*))) {
-        return 0;
-    }
-    rooms = (void**)((void**)platform)[12];
-    if (!readable_range(rooms, 4 * sizeof(void*))) {
-        return 0;
-    }
-    room = rooms[3];
-    if (!readable_range(room, 4 * sizeof(void*)) ||
-        ((void**)room)[3] == NULL || ((void**)chat)[12] == room) {
-        return 0;
-    }
-    ((void**)chat)[12] = room;
+    /* Build 103 40B3C0/40A8A0: +48 is a channel enum, not a room pointer. */
+    if (!readable_range(chat, 52) || ((unsigned int*)chat)[12] <= 13) return 0;
+    ((unsigned int*)chat)[12] = 9;
     return 1;
 }
 
@@ -3895,12 +3883,8 @@ static void __cdecl hooked_navigation_update(void* controller) {
                 trace_client_state("rooms_target_ready", repair_state);
             }
         }
-        /*
-         * Result teardown can clear only the chat controller's selected Rooms
-         * pointer while the SDK-owned room remains valid. Repair that projection
-         * on every established ship frame so native /lobby works without first
-         * requiring a Darkspin developer command.
-         */
+        /* Repair invalid legacy channel state without replacing an explicit
+         * Party or whisper choice with a native room-object pointer. */
         if (repair_chat_rooms_target() != 0) {
             trace_client_state("chat_rooms_target_repaired", 1);
         }
@@ -4841,6 +4825,9 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
         if (!is_chat_command_hooked) {
             result |= 0x20000000;
         }
+        int is_lobby_chat_hooked = fang_install_lobby_chat((BYTE*)executable);
+        trace_client_state("chat_lobby_hook", (unsigned int)is_lobby_chat_hooked);
+        if (!is_lobby_chat_hooked) result |= 0x20000000;
     }
     {
         int is_cinematic_hooked = fang_cinematic_install(executable, skip_intro, skip_cinematic);

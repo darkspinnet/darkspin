@@ -178,6 +178,7 @@ body:has(.mod-accent) {
 .integration-row > span.installed { color: var(--primary); }
 .integration-row button { height: 28px; font-size: 10px; }
 .management-message { font-size: 11px; color: var(--muted-foreground); margin-top: 12px; overflow-wrap: anywhere; }
+.management-message.configuration-error { color: var(--destructive); }
 .shortcut-danger { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 16px; }
 .shortcut-danger strong, .shortcut-danger small { display: block; }
 .shortcut-danger strong { font-size: 11px; }
