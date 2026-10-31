@@ -2,6 +2,8 @@
 
 ### 2026-10-31
 
+- Fix a black launcher window at startup by initializing the selected local Crogenitor before registering its selection watcher.
+- Defer desktop local login/server startup when reopening with a saved Remote Crogenitor, start services on local selection or creation, and stop idle local services before remote launches; browser mode keeps its existing shared listener and local server running.
 - Revamp launcher UI, simplifying it
 - Render embedded HTML at the selected UI scale with native page zoom for sharper text while preserving nested layouts and mouse input.
 - Apply saved Borderless Mode changes on the next game launch instead of immediately, and label the option as requiring a restart.

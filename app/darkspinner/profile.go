@@ -198,6 +198,10 @@ func (a *App) CreateProfile(identity string, avatarID uint32, isTutorialSkipped 
 		a.setCriticalFailure("Identity", criticalErr)
 		return criticalErr
 	}
+	err = a.SetLocalServicesRequired(true)
+	if err != nil {
+		return fmt.Errorf("profileService: %w", err)
+	}
 	err = a.ensureLocalProfileWithAvatar(identity, avatarID, isTutorialSkipped)
 	if err != nil {
 		criticalErr := fmt.Errorf("profileEnsure: %w", err)

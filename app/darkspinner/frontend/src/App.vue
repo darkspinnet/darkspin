@@ -19,15 +19,17 @@ import { RefreshCw } from '@lucide/vue'
 import { campaignDetailFor, campaignLabelFor, profileCreateDate, profileLastPlayedDate, profileLastPlayedTime } from './profile'
 import ServerRulesConfiguration from '@/components/ServerRulesConfiguration.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { BrowserOpenURL, CancelPatch, CheckRemoteServers, ClipboardSetText, CompactSnapshots, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteModProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetSquadSnapshot, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, ResetModProfileDisplay, ResetProfileDisplay, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetIdentity, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
+import { BrowserOpenURL, CancelPatch, CheckRemoteServers, ClipboardSetText, CompactSnapshots, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteModProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetSquadSnapshot, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, ResetModProfileDisplay, ResetProfileDisplay, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetIdentity, SetLocalServicesRequired, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
 
 const status = ref({ state:'starting', message:'Starting DarkSpinner', identity:'', auth:'Starting', server:'Starting', patch:'Pending', game:'Checking', avatar:'Preparing', profile:'Starting', content:'Pending', identityError:'', authError:'', serverError:'', patchError:'', gameError:'', avatarError:'', profileError:'', contentError:'', lastRun:'', launcherNotice:'', version:'', buildChannel:'production', progress:0, patchProgress:0, avatarProgress:0, contentProgress:0, isAuthenticated:false, isAuthOnline:false, isServerOnline:false, isPatchComplete:false, isPatchActive:false, isGameReady:false, isAvatarReady:false, isProfileStoreReady:false, isContentReady:false, isPlayReady:false, isCinematicSkipped:false, isIntroSkipped:false, isLastRunFailure:false, isStartupBlocked:false })
 const retainedProfileName = localStorage.getItem('darkspinner.selectedProfile') || localStorage.getItem('darkspinner.identity') || ''
+const retainedLaunchKey = localStorage.getItem('darkspinner.launchProfile') || ''
 const identity = ref(localStorage.getItem('darkspinner.identity') || '')
 const selectedProfile = ref(retainedProfileName)
 const newProfileName = ref('')
 const maximumProfileNameLength = 20
 const profiles = ref([])
+const selectedProfileRecord = computed(() => profiles.value.find(candidate => candidate.loginName === selectedProfile.value))
 const profileAvatars = ref([])
 const selectedAvatarId = ref(1)
 const isTutorialSkipped = ref(true)
@@ -46,7 +48,8 @@ const isProfileDeletionBusy = ref(false)
 const isProfileDisplayResetBusy = ref(false)
 const isRemoteDeletionBusy = ref(false)
 const remoteDeletionError = ref('')
-const activePage = ref('play')
+const activePage = ref(retainedLaunchKey.startsWith('remote:') ? 'remote' : retainedLaunchKey.startsWith('mod:') ? 'mod' : 'play')
+const isServiceSelectionReady = ref(false)
 const luaConsole = ref({ isAvailable:false, isSelected:false })
 const luaPage = ref(null)
 const modPage = ref(null)
@@ -54,7 +57,7 @@ const isModPlayReady = ref(false)
 const modProfiles = ref([])
 const selectedModProfile = ref('')
 const isModBusy = ref(false)
-const launchPage = ref('play')
+const launchPage = ref(activePage.value)
 const remoteServers = ref([])
 const remoteProfiles = ref([])
 const remoteChecks = ref([])
@@ -63,7 +66,7 @@ let remoteCheckTimer = null
 let remoteCheckDelay = null
 let isRemoteViewDisposed = false
 const remoteServerAddress = ref(localStorage.getItem('darkspinner.remoteServer') || '')
-const remoteIdentity = ref('')
+const remoteIdentity = ref(retainedLaunchKey.startsWith('remote:') ? retainedLaunchKey.slice(retainedLaunchKey.lastIndexOf(':') + 1) : '')
 const remotePassword = ref('')
 const isRemotePasswordRemembered = ref(true)
 const isRemoteRegistration = ref(false)
@@ -233,8 +236,10 @@ const verificationStage = computed(() => {
 })
 const statusRows = computed(() => [
   { label:'Verify', ...verificationStage.value },
-  { label:'Auth', detail:status.value.auth, ready:status.value.isAuthOnline, error:status.value.authError },
-  { label:'Server', detail:status.value.server, ready:status.value.isServerOnline, error:status.value.serverError },
+  ...(launchPage.value !== 'remote' || status.value.isServerOnline ? [
+    { label:'Auth', detail:status.value.auth, ready:status.value.isAuthOnline, error:status.value.authError },
+    { label:'Server', detail:status.value.server, ready:status.value.isServerOnline, error:status.value.serverError },
+  ] : []),
 ])
 const readySystemCount = computed(() => statusRows.value.filter(row => row.ready).length)
 const systemCount = computed(() => statusRows.value.length)
@@ -361,6 +366,16 @@ const selectedLaunchKey = computed(() => {
   return selectedProfileRecord.value ? `play:${selectedProfileRecord.value.loginName}` : ''
 })
 
+watch(selectedLaunchKey, key => {
+  if (key && ['play', 'remote', 'mod'].includes(activePage.value)) localStorage.setItem('darkspinner.launchProfile', key)
+})
+async function syncSelectedLocalServices() {
+  if (!isServiceSelectionReady.value) return
+  try { await SetLocalServicesRequired(launchPage.value !== 'remote') }
+  catch (error) { recordError(error) }
+}
+watch([launchPage, isServiceSelectionReady], syncSelectedLocalServices)
+
 function chooseLaunchProfile(key) {
   const entry = launchProfiles.value.find(candidate => candidate.key === key)
   if (!entry) return
@@ -368,7 +383,9 @@ function chooseLaunchProfile(key) {
   if (entry.kind === 'remote') selectRemoteProfile(entry.profile)
   else if (entry.kind === 'mod') modPage.value?.selectProfile(entry.profile.loginName)
   else void chooseProfile(entry.profile.loginName)
+  const isSameLaunchPage = entry.kind === launchPage.value
   showPage(entry.kind)
+  if (isSameLaunchPage && entry.kind !== 'remote') void syncSelectedLocalServices()
 }
 
 async function createLaunchProfile(kind) {
@@ -423,7 +440,6 @@ watch(() => status.value.content, () => {
 const isProfileCreationReady = computed(() =>
   installation.value.isLocalReady && status.value.isAvatarReady &&
   isNewProfileNameValid.value && profileAvatars.value.length > 0 && status.value.isProfileStoreReady)
-const selectedProfileRecord = computed(() => profiles.value.find(candidate => candidate.loginName === selectedProfile.value))
 const readinessSummary = computed(() => {
   const failedSystem = statusRows.value.find(row => row.error)
   if (failedSystem) return { level:'error', label:`${failedSystem.label} failure`, message:failedSystem.error }
@@ -477,7 +493,7 @@ onMounted(async () => {
     if (next.patch === 'Update available') void maybeAutoPatch()
   })
   status.value = { ...status.value, ...(await GetStatus()) }
-  void refreshRemoteProfiles()
+  await refreshRemoteProfiles()
   luaConsole.value = await GetLuaConsole()
   if (luaConsole.value.isSelected) {
     activePage.value = 'lua'
@@ -489,6 +505,8 @@ onMounted(async () => {
   integrationStatus.value = await GetLauncherIntegrationStatus()
   isInstallationLoaded.value = true
   if (isInstallationRequired.value) return
+  if (activePage.value === 'remote' && (!isExperimentalLauncherFeatureVisible.value || !selectedRemoteProfile.value)) showPage('play')
+  isServiceSelectionReady.value = true
   if (status.value.isAutoPlayRequested) isAutoLaunchEnabled.value = true
   if (status.value.identity) identity.value = status.value.identity
   await refreshProfiles()

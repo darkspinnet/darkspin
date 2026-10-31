@@ -226,6 +226,10 @@ export function SetIdentity(arg1) {
   return window['go']['main']['App']['SetIdentity'](arg1);
 }
 
+export function SetLocalServicesRequired(arg1) {
+  return window['go']['main']['App']['SetLocalServicesRequired'](arg1);
+}
+
 export function SetModSporePath(arg1) {
   return window['go']['main']['App']['SetModSporePath'](arg1);
 }

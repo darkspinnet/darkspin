@@ -126,7 +126,8 @@ func (a *App) initialize(ctx context.Context, basePath string) {
 	}
 	patchResult := make(chan error, 1)
 	contentResult := make(chan error, 1)
-	a.setSubsystem("Auth", "Starting with server", false)
+	a.setSubsystem("Auth", "Waiting for local Crogenitor", false)
+	a.setSubsystem("Server", "Waiting for local Crogenitor", false)
 	patchCtx := a.beginPatchOperation(ctx)
 	go func() {
 		patchErr := a.preparePatch(patchCtx, pathSet.gamePath, pathSet.configPath)
@@ -148,7 +149,7 @@ func (a *App) initialize(ctx context.Context, basePath string) {
 	if err != nil {
 		return
 	}
-	err = a.startGameServer(ctx, pathSet)
+	err = a.syncLocalServices()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
@@ -156,7 +157,6 @@ func (a *App) initialize(ctx context.Context, basePath string) {
 		a.failSubsystem("Server", fmt.Errorf("serverStart: %w", err))
 		return
 	}
-	a.setSubsystem("Auth", "Online", true)
 	patchErr := <-patchResult
 	if patchErr != nil {
 		if errors.Is(patchErr, context.Canceled) {
@@ -166,8 +166,10 @@ func (a *App) initialize(ctx context.Context, basePath string) {
 		return
 	}
 	a.mu.Lock()
-	a.status.State = "ready"
-	a.status.Message = "DarkSpinner is ready"
+	if a.gameDone == nil && a.cancel == nil {
+		a.status.State = "ready"
+		a.status.Message = "DarkSpinner is ready"
+	}
 	a.updatePlayReadyLocked()
 	a.emitStatusLocked()
 	a.mu.Unlock()
@@ -588,8 +590,10 @@ func (e *App) setSubsystemProgress(
 		e.status.Content = message
 		e.status.ContentProgress = progress
 	}
-	e.status.State = state
-	e.status.Message = message
+	if e.gameDone == nil && e.cancel == nil {
+		e.status.State = state
+		e.status.Message = message
+	}
 	e.status.Progress = progress
 	e.updatePlayReadyLocked()
 	e.emitStatusLocked()
@@ -652,6 +656,8 @@ func (a *App) stopServices() {
 		cancel()
 	}
 	a.waitForShutdown("Initialization", initializeDone)
+	a.serverMu.Lock()
+	defer a.serverMu.Unlock()
 
 	a.mu.Lock()
 	gameServer := a.serviceSet.gameServer

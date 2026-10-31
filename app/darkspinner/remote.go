@@ -436,7 +436,15 @@ func (a *App) LaunchRemoteProfile(
 		return fmt.Errorf("remoteHost: %w", err)
 	}
 	clientProfile := identity + "@" + host
+	err = a.stopIdleLocalServices()
+	if err != nil {
+		return fmt.Errorf("remoteLocalStop: %w", err)
+	}
 	a.mu.Lock()
+	if a.cancel != nil || a.gameDone != nil || a.isShuttingDown {
+		a.mu.Unlock()
+		return errors.New("another launcher or game operation is active")
+	}
 	ctx, gameDone, gameCancel := a.beginGameLaunchLocked()
 	a.status.State = "launching"
 	a.status.Message = "Launching remote Crogenitor"

@@ -17,6 +17,8 @@ const detachedGameArgument = "detached-game"
 // StartDetachedGameInstance starts an independently supervised client while
 // the current launcher and its local services remain online.
 func (e *App) StartDetachedGameInstance(identity string) error {
+	e.serverMu.Lock()
+	defer e.serverMu.Unlock()
 	identity = strings.TrimSpace(identity)
 	err := validateProfileIdentity(identity)
 	if err != nil {

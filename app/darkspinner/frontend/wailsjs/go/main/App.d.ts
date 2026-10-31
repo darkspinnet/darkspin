@@ -115,6 +115,8 @@ export function SendReport(arg1:string):Promise<main.ReportResult>;
 
 export function SetIdentity(arg1:string):Promise<main.LauncherStatus>;
 
+export function SetLocalServicesRequired(arg1:boolean):Promise<void>;
+
 export function SetModSporePath(arg1:string):Promise<void>;
 
 export function SetServerConfiguration(arg1:number,arg2:boolean,arg3:string,arg4:string):Promise<main.ServerConfiguration>;

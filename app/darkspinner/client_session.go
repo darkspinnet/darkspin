@@ -104,3 +104,15 @@ func (e *clientSession) RunningRecords() []clientProcessRecord {
 	}
 	return records
 }
+
+func (e *clientSession) HasOpenClient() bool {
+	for _, client := range e.Results() {
+		if client.IsClosed {
+			continue
+		}
+		if client.Process.PID == 0 || isProcessIDRunning(client.Process.PID) {
+			return true
+		}
+	}
+	return false
+}

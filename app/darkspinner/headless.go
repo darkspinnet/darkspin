@@ -228,6 +228,7 @@ func launcherMethods(app *App) map[string]any {
 		"GetSquadSnapshot":             app.GetSquadSnapshot,
 		"GetServerRulesConfiguration":  app.GetServerRulesConfiguration,
 		"GetStatus":                    app.GetStatus,
+		"SetLocalServicesRequired":     app.SetLocalServicesRequired,
 		"GetWineRunnerConfiguration":   app.GetWineRunnerConfiguration,
 		"HasDetachedGameInstances":     app.HasDetachedGameInstances,
 		"IsProfileRunning":             app.IsProfileRunning,

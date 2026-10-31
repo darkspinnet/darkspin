@@ -22,42 +22,43 @@ const gameProcessName = "Darkspore.exe"
 var visibleProfilePattern = regexp.MustCompile(`(?i)\bprofiles?\b`)
 
 type App struct {
-	clientSession      clientSession
-	lua                *launcherLua
-	ctx                context.Context
-	lifecycleCtx       context.Context
-	mu                 sync.Mutex
-	serverMu           sync.Mutex
-	modMu              sync.Mutex
-	modState           modState
-	reportSession      launcherReportSession
-	remoteRefreshMu    sync.Mutex
-	snapshotCompactMu  sync.Mutex
-	logMu              sync.Mutex
-	timingMu           sync.Mutex
-	cancel             context.CancelFunc
-	patchCancel        context.CancelFunc
-	serviceSet         spinnerServiceSet
-	gameDone           <-chan struct{}
-	gameCancel         context.CancelFunc
-	clientFailuresDone <-chan struct{}
-	isShuttingDown     bool
-	isInitializing     bool
-	arguments          []string
-	authURL            string
-	embeddedAuthURL    string
-	token              string
-	status             LauncherStatus
-	installation       InstallationStatus
-	discoveredGameRoot string
-	integrationError   string
-	startupError       string
-	preparationTiming  *preparationTimingRecorder
-	presentation       launcherPresentation
-	launcherHandler    http.Handler
-	beforeServerStart  func() error
-	isHeadless         bool
-	wineRunnerCache    wineRunnerCache
+	clientSession            clientSession
+	lua                      *launcherLua
+	ctx                      context.Context
+	lifecycleCtx             context.Context
+	mu                       sync.Mutex
+	serverMu                 sync.Mutex
+	modMu                    sync.Mutex
+	modState                 modState
+	reportSession            launcherReportSession
+	remoteRefreshMu          sync.Mutex
+	snapshotCompactMu        sync.Mutex
+	logMu                    sync.Mutex
+	timingMu                 sync.Mutex
+	cancel                   context.CancelFunc
+	patchCancel              context.CancelFunc
+	serviceSet               spinnerServiceSet
+	areLocalServicesRequired bool
+	gameDone                 <-chan struct{}
+	gameCancel               context.CancelFunc
+	clientFailuresDone       <-chan struct{}
+	isShuttingDown           bool
+	isInitializing           bool
+	arguments                []string
+	authURL                  string
+	embeddedAuthURL          string
+	token                    string
+	status                   LauncherStatus
+	installation             InstallationStatus
+	discoveredGameRoot       string
+	integrationError         string
+	startupError             string
+	preparationTiming        *preparationTimingRecorder
+	presentation             launcherPresentation
+	launcherHandler          http.Handler
+	beforeServerStart        func() error
+	isHeadless               bool
+	wineRunnerCache          wineRunnerCache
 }
 
 type LauncherStatus struct {
@@ -115,11 +116,12 @@ type LauncherStatus struct {
 func NewApp(arguments []string) *App {
 	identity := launchArgumentValue(arguments, "account")
 	return &App{
-		lua:          newLauncherLua(arguments),
-		modState:     modState{userPath: initialSporeUserPath()},
-		arguments:    launcherLuaArguments(arguments),
-		authURL:      authServiceURL,
-		presentation: wailsPresentation{},
+		areLocalServicesRequired: identity != "",
+		lua:                      newLauncherLua(arguments),
+		modState:                 modState{userPath: initialSporeUserPath()},
+		arguments:                launcherLuaArguments(arguments),
+		authURL:                  authServiceURL,
+		presentation:             wailsPresentation{},
 		status: LauncherStatus{
 			State:               "starting",
 			Message:             "Starting DarkSpinner",
@@ -458,6 +460,8 @@ func (a *App) applyModPatch(ctx context.Context, plan *patcher.Plan) error {
 }
 
 func (a *App) Play() error {
+	a.serverMu.Lock()
+	defer a.serverMu.Unlock()
 	a.mu.Lock()
 	if a.isShuttingDown {
 		a.mu.Unlock()

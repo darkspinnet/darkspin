@@ -112,9 +112,6 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 	}
 	gameServer := e.serviceSet.gameServer
 	e.mu.Unlock()
-	if gameServer == nil {
-		return ServerConfiguration{}, errors.New("local server is not initialized")
-	}
 
 	pathSet, err := e.spinnerPaths()
 	if err != nil {
@@ -210,6 +207,13 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 	err = config.Save(pathSet.configPath)
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("configSave: %w", err)
+	}
+	if gameServer == nil {
+		configuration, configErr := serverConfiguration(config, pathSet.gamePath)
+		if configErr != nil {
+			return ServerConfiguration{}, fmt.Errorf("offlineRead: %w", configErr)
+		}
+		return configuration, nil
 	}
 
 	isNetworkChanged := isSetupChanged || previousPort != port ||

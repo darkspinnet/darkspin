@@ -419,6 +419,11 @@ func (s *Server) DiscardInterruptedMission(
 	return nil
 }
 
+// HasActiveProfiles reports authenticated players that still depend on this server.
+func (e *Server) HasActiveProfiles() bool {
+	return e != nil && e.userManager != nil && len(e.userManager.Users()) != 0
+}
+
 // DeleteProfile removes one inactive local account through the live user
 // manager so shutdown cannot resurrect a deleted in-memory snapshot.
 func (s *Server) DeleteProfile(ctx context.Context, loginName string) error {

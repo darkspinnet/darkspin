@@ -132,7 +132,7 @@ async function save(isResyncRequested = false) {
 }
 
 async function validate() {
-  if (!props.status?.isServerOnline || !props.status?.isContentReady) return
+  if (!props.status?.isProfileStoreReady || !props.status?.isContentReady) return
   await perform(async () => {
     isConfigurationValid.value = false
     await refresh()
@@ -148,7 +148,7 @@ watch(() => props.isActive, isActive => {
   loadProfile()
 }, { flush:'sync' })
 
-watch(() => props.status?.isServerOnline && props.status?.isContentReady, isReady => {
+watch(() => props.status?.isProfileStoreReady && props.status?.isContentReady, isReady => {
   if (isReady && !isEditing.value) void validate()
 }, { immediate:true })
 </script>
