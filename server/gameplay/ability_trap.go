@@ -415,8 +415,8 @@ func (e heroTrapSchedule) fireTurret() ([][]byte, error) {
 			continue
 		}
 		distance := game.Vec3(e.position).Sub(current.Plan.Position).Length()
-		maximumRange := e.definition.Range +
-			max(float32(0), current.Plan.NPCProfile.FootprintRadius)
+		maximumRange := autoTurretAttackRange(turret.AcquisitionRange(),
+			turret.ActorFootprintRadius(), current.Plan.ActorFootprintRadius())
 		if distance > maximumRange || distance > targetDistance {
 			continue
 		}

@@ -561,7 +561,8 @@ func (r campaignNPCActionRuntime) spawnPlasmaSentinelPet(
 		ObjectID: objectID, OwnerObjectID: run.ownerObjectID,
 		Noun:     util.HashID("PlasmaSentinelPet.Noun"),
 		Position: position, FootprintRadius: footprint,
-		HitPoint: hitPoint, MaximumHitPoint: hitPoint,
+		AggroRadius: r.program.NonPlayerAggroRanges[util.HashID("PlasmaSentinelPet.Noun")],
+		HitPoint:    hitPoint, MaximumHitPoint: hitPoint,
 		IsTargetable: true, IsCombatant: true,
 	})
 	if err != nil {
@@ -773,10 +774,15 @@ func (r campaignDamageRuntime) startPlasmaSentinelPetActorAttack(
 		return nil, fmt.Errorf("plasmaSentinelPetReserve: %w", err)
 	}
 	if !isPlanFound {
+		actor, isActorFound := peerSession.zone.Companion().Snapshot(objectID)
+		if !isActorFound {
+			r.registry.mutex.Unlock()
+			return nil, nil
+		}
 		pursuit, isPursuitFound, pursuitErr :=
 			peerSession.zone.Companion().ReserveActorPursuit(
 				objectID, peerSession.zone.NPCs().LiveSnapshots(), ability.Range,
-				zonecompanion.CompatibilityAggroRadius,
+				actor.AcquisitionRange(),
 				zonecompanion.CompatibilityMovementSpeed,
 				r.npc.now(),
 			)

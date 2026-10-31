@@ -285,7 +285,8 @@ path. It also selects the bridge's `START` action through the native spaceship
 navigation callback immediately after safely completing the ship tour. It then
 completes the follow-up camera transition and continues directly into the
 Arsenal/squad screen without waiting for input. Omitting both flags preserves
-the original flow.
+the original flow. The first-play prologue and tutorial introduction run even
+when cinematic skipping is enabled.
 
 Mage and the launcher use the repository-local playable installation at
 `bin/game/<Game>Bin/<Game>.exe`. Its game data remains alongside it at

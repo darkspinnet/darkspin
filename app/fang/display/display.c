@@ -130,14 +130,15 @@ static int set_window_style(HWND window, int index, LONG_PTR style) {
     return 1;
 }
 
-// Modifies: saves or restores window decorations, refreshes the frame, and logs application or rollback failures.
+// Modifies: saves or restores decorations, places borderless at (0, 0), and refreshes the frame.
 static int change_window_frame(HWND window, int is_borderless) {
     const LONG_PTR decoration = WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX |
         WS_MAXIMIZEBOX | WS_SYSMENU;
     const LONG_PTR ex_decoration = WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE |
         WS_EX_CLIENTEDGE | WS_EX_STATICEDGE;
-    const UINT frame_flags = SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE |
+    const UINT frame_flags = SWP_FRAMECHANGED | SWP_NOSIZE |
         SWP_NOZORDER | SWP_NOACTIVATE;
+    const UINT apply_flags = frame_flags | (is_borderless ? 0 : SWP_NOMOVE);
     LONG_PTR previous_style = GetWindowLongPtrW(window, GWL_STYLE);
     LONG_PTR previous_ex_style = GetWindowLongPtrW(window, GWL_EXSTYLE);
     LONG_PTR style = previous_style & ~decoration;
@@ -155,21 +156,23 @@ static int change_window_frame(HWND window, int is_borderless) {
         style |= borderless.style;
         ex_style |= borderless.ex_style;
     }
-    if (style == previous_style && ex_style == previous_ex_style) {
+    if (style == previous_style && ex_style == previous_ex_style &&
+        (borderless.is_applied || !is_borderless)) {
         return 1;
     }
-    /* Keep the native window position, dimensions, maximize state and z-order.
-     * Only recompute the non-client frame after changing decoration bits. */
+    /* Place the undecorated window at the desktop origin after changing its
+     * frame, retaining the native dimensions, maximize state and z-order. */
     if (set_window_style(window, GWL_STYLE, style) &&
         set_window_style(window, GWL_EXSTYLE, ex_style) &&
-        SetWindowPos(window, NULL, 0, 0, 0, 0, frame_flags)) {
+        SetWindowPos(window, NULL, 0, 0, 0, 0, apply_flags)) {
         trace_client_state("display_borderless", is_borderless);
         return 1;
     }
     trace_client_state("display_frame_apply_error", GetLastError());
     int is_style_restored = set_window_style(window, GWL_STYLE, previous_style);
     int is_ex_style_restored = set_window_style(window, GWL_EXSTYLE, previous_ex_style);
-    BOOL is_frame_restored = SetWindowPos(window, NULL, 0, 0, 0, 0, frame_flags);
+    BOOL is_frame_restored = SetWindowPos(window, NULL, 0, 0, 0, 0,
+        frame_flags | SWP_NOMOVE);
     if (!is_style_restored || !is_ex_style_restored || !is_frame_restored) {
         trace_client_state("display_frame_rollback_error", GetLastError());
     }

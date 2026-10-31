@@ -1127,15 +1127,21 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		return zonecontent.Programs{}, fmt.Errorf("defenseProfiles: %w", defenseErr)
 	}
 	nonPlayerDefenses := make(map[uint32]game.CampaignNPCProfile, len(defenseProfiles))
+	nonPlayerAggroRanges := make(map[uint32]float32, len(defenseProfiles))
 	for _, profile := range defenseProfiles {
+		nonPlayerAggroRanges[util.HashID(profile.NounName)] = profile.AggroRange
 		nonPlayerDefenses[util.HashID(profile.NounName)] = game.CampaignNPCProfile{
 			DodgeRating: profile.DodgeRating, ResistRating: profile.ResistRating,
 		}
 	}
 	nonPlayerCritical := make(map[uint32]sim.CriticalProfile, len(nonPlayerClasses))
+	supportHealerPetAggroRange := nonPlayerAggroRanges[util.HashID("HelperMelee.Noun")]
 	for _, class := range nonPlayerClasses {
 		nonPlayerHitPoint[class.InstanceID] = class.HitPoint
 		nonPlayerCritical[class.InstanceID] = sim.CriticalProfile{Rating: class.CriticalRating}
+	}
+	if supportHealerPetAggroRange <= 0 {
+		return zonecontent.Programs{}, errors.New("supportHealerPetAggroRange: missing")
 	}
 	nounPhysicsCatalog, err := store.NounPhysicsCatalog(ctx)
 	if err != nil {
@@ -1745,6 +1751,7 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		HeroKits:                   heroKits,
 		NonPlayerHitPoint:          nonPlayerHitPoint,
 		NonPlayerDefenses:          nonPlayerDefenses,
+		NonPlayerAggroRanges:       nonPlayerAggroRanges,
 		NonPlayerCritical:          nonPlayerCritical,
 		NounPhysics:                nounPhysics,
 		NounPhysicsByID:            nounPhysicsByID,
@@ -1758,6 +1765,7 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		SupportHealerBasic:         supportHealerBasic,
 		SupportHealerPassive:       supportHealerPassiveDefinition,
 		SupportHealerPetBasic:      supportHealerPetBasic,
+		SupportHealerPetAggroRange: supportHealerPetAggroRange,
 		SentryDroneLaser:           sentryDroneLaser,
 		NomadDroneLaser:            nomadDroneLaser,
 		FireTempestPetBasic:        fireTempestPetBasic,

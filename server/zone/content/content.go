@@ -56,6 +56,7 @@ type Programs struct {
 	HeroKits                   map[uint32]HeroKit
 	NonPlayerHitPoint          map[uint32]float32
 	NonPlayerDefenses          map[uint32]game.CampaignNPCProfile
+	NonPlayerAggroRanges       map[uint32]float32
 	NonPlayerCritical          map[uint32]sim.CriticalProfile
 	NounPhysics                map[string]NounPhysics
 	NounPhysicsByID            map[uint32]NounPhysics
@@ -69,6 +70,7 @@ type Programs struct {
 	SupportHealerBasic         sim.AbilityDefinition
 	SupportHealerPassive       sim.SummonPassiveDefinition
 	SupportHealerPetBasic      sim.AbilityDefinition
+	SupportHealerPetAggroRange float32
 	SentryDroneLaser           sim.AbilityDefinition
 	NomadDroneLaser            sim.AbilityDefinition
 	FireTempestPetBasic        sim.AbilityDefinition

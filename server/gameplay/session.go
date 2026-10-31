@@ -2240,6 +2240,7 @@ type gameplaySessionRegistry struct {
 	dnaCollections           []*campaignDNACollection
 	isDNACollectionRunning   bool
 	arenaMatches             map[uint32]*arenaMatchState
+	companionAggroRanges     map[uint32]float32
 	arenaEffectPools         map[uint32]*attachedEffectPool
 	producerGuard            gameplayProducerGuard
 	lifecycle                gameplaySessionLifecycle
@@ -4502,6 +4503,7 @@ func (s gameplaySwitchPassiveSchedule) produce() ([][]byte, error) {
 					Z: companion.Position.Z,
 				},
 				FootprintRadius: footprintRadius,
+				AggroRadius:     s.runtime.program.SupportHealerPetAggroRange,
 				HitPoint:        hitPoint, MaximumHitPoint: hitPoint,
 				IsTargetable: true, IsCombatant: true,
 			})

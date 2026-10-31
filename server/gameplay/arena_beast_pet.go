@@ -98,6 +98,7 @@ func (r campaignAbilityCommandRuntime) spawnArenaBeastPet(
 		ObjectID: objectID, OwnerObjectID: ownerObjectID,
 		Noun: util.HashID("BeastSentinelPet.Noun"), Position: position,
 		FootprintRadius: footprint, HitPoint: hitPoint, MaximumHitPoint: hitPoint,
+		AggroRadius:  r.program.NonPlayerAggroRanges[util.HashID("BeastSentinelPet.Noun")],
 		IsTargetable: true, IsCombatant: true})
 	if err != nil {
 		return nil, fmt.Errorf("arenaBeastPut: %w", err)

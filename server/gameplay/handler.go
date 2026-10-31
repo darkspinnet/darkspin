@@ -1304,6 +1304,7 @@ func newGameplayHandlerWithDependencies(
 		dependency.zoneTimer, dependency.now, logger,
 	)
 	sessionRegistry.playerStatRecorder = statsRecorder
+	sessionRegistry.companionAggroRanges = program.NonPlayerAggroRanges
 	sessionRegistry.configureScenarioAbility(program)
 	if dependency.registerBugContext != nil {
 		dependency.registerBugContext(sessionRegistry)
@@ -6421,7 +6422,7 @@ func (p campaignPreparation) initialize(
 			Effect:                  zoneeffect.NewInventory(),
 			NPCs:                    enemySession,
 			Hero:                    zonehero.NewSession(),
-			Companion:               zonecompanion.NewSession(),
+			Companion:               zonecompanion.NewSessionWithAggroRanges(p.program.NonPlayerAggroRanges),
 			Interactable:            zoneinteract.NewUseSession(),
 			Pickups:                 zoneinteract.NewPickupRegistry(),
 			PickupPayload:           zoneinteract.NewPickupPayloadRegistry(),

@@ -384,7 +384,8 @@ func (e *gameplayPeerSession) spawnBeastPet(
 		ObjectID: objectID, OwnerObjectID: ownerObjectID,
 		Noun:     util.HashID("BeastSentinelPet.Noun"),
 		Position: position, FootprintRadius: footprintRadius,
-		HitPoint: hitPoint, MaximumHitPoint: hitPoint,
+		AggroRadius: program.NonPlayerAggroRanges[util.HashID("BeastSentinelPet.Noun")],
+		HitPoint:    hitPoint, MaximumHitPoint: hitPoint,
 		IsTargetable: true, IsCombatant: true,
 	})
 	if err != nil {
@@ -929,11 +930,16 @@ func (r campaignDamageRuntime) startBeastPetAttackWithResume(
 		return nil, fmt.Errorf("beastPetReserve: %w", err)
 	}
 	if !isPlanFound {
+		actor, isActorFound := peerSession.zone.Companion().Snapshot(peerSession.beastPetObjectID)
+		if !isActorFound {
+			r.registry.mutex.Unlock()
+			return nil, nil
+		}
 		pursuit, isPursuitFound, pursuitErr :=
 			peerSession.zone.Companion().ReserveActorPursuit(
 				peerSession.beastPetObjectID,
 				peerSession.zone.NPCs().LiveSnapshots(), ability.Range,
-				zonecompanion.CompatibilityAggroRadius,
+				actor.AcquisitionRange(),
 				zonecompanion.CompatibilityMovementSpeed,
 				r.npc.now(),
 			)

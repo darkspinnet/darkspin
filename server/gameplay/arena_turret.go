@@ -33,7 +33,9 @@ func (e *arenaTurretStep) produce() ([][]byte, error) {
 			continue
 		}
 		distance := game.Vec3(e.run.position).Sub(current.Plan.Position).Length()
-		maximumRange := e.run.definition.Range + max(float32(0), current.Plan.NPCProfile.FootprintRadius)
+		maximumRange := autoTurretAttackRange(
+			e.run.runtime.program.NonPlayerAggroRanges[util.HashID(e.run.definition.SpawnNoun)],
+			e.run.footprint, current.Plan.ActorFootprintRadius())
 		if distance > maximumRange || distance > nearestDistance {
 			continue
 		}

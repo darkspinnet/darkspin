@@ -58,7 +58,7 @@ func (e *arenaCombatPetRun) scheduleMeleePoll(delay time.Duration) error {
 
 func (e *arenaCombatPetRun) startMelee() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
-	owner, _, isCurrent := e.currentLocked()
+	owner, actor, isCurrent := e.currentLocked()
 	if !isCurrent || !e.isPublished || e.attackAbility.Kind != sim.AbilityKindMelee ||
 		(e.kind != arenaCombatPetBeast && e.kind != arenaCombatPetPlasma && e.kind != arenaCombatPetSage) {
 		e.runtime.registry.mutex.Unlock()
@@ -87,7 +87,7 @@ func (e *arenaCombatPetRun) startMelee() ([][]byte, error) {
 	}
 	if !isPlanFound {
 		pursuit, isPursuitFound, pursuitErr := e.world.companion.ReserveActorPursuit(
-			e.objectID, snapshots, ability.Range, zonecompanion.CompatibilityAggroRadius,
+			e.objectID, snapshots, ability.Range, actor.AcquisitionRange(),
 			zonecompanion.CompatibilityMovementSpeed, e.runtime.now())
 		e.runtime.registry.mutex.Unlock()
 		if pursuitErr != nil {

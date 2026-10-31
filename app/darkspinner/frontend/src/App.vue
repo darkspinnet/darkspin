@@ -1630,7 +1630,7 @@ async function copyLauncherFailure() {
           </SelectContent>
           </Select>
           <label class="management-toggle"><Checkbox :model-value="status.isIntroSkipped" :disabled="isBusy || isServerConfigurationBusy" @update:model-value="setSkipIntro" /><span><strong>SKIP INTRO MOVIES</strong><small>Use the client's Escape handling for opening movies. Applies to new game instances.</small></span></label>
-          <label class="management-toggle"><Checkbox :model-value="status.isCinematicSkipped" :disabled="isBusy || isServerConfigurationBusy" @update:model-value="setSkipCinematic" /><span><strong>SKIP IN-GAME CINEMATICS</strong><small>Use the client's Escape handling for skippable cinematics. Applies to new game instances.</small></span></label>
+          <label class="management-toggle"><Checkbox :model-value="status.isCinematicSkipped" :disabled="isBusy || isServerConfigurationBusy" @update:model-value="setSkipCinematic" /><span><strong>SKIP IN-GAME CINEMATICS</strong><small>Use the client's Escape handling for skippable cinematics after the tutorial introduction. Applies to new game instances.</small></span></label>
           <template v-if="wineRunnerConfiguration.isSupported">
             <div class="config-wine-runner-heading">
               <label class="config-locale" for="config-wine-runner"><strong>WINE RUNTIME</strong></label>

@@ -1,6 +1,7 @@
 #include "hook/patch.h"
 #include "hook/trace.h"
 #include "cinematic/cinematic.h"
+#include "client103/bootstrap.h"
 #include <string.h>
 #if !defined(__GNUC__)
 #include <intrin.h>
@@ -25,6 +26,7 @@ typedef void* (__cdecl* cinematic_lookup_fn)(void);
 static cinematic_key_fn original_key;
 static cinematic_lookup_fn movie_lookup;
 static cinematic_lookup_fn camera_lookup;
+static new_player_progress_fn player_progress;
 static BYTE* image;
 static volatile LONG setting_flags;
 static volatile LONG is_installed;
@@ -52,7 +54,9 @@ static int CINEMATIC_FASTCALL cinematic_key(void* input, void* ignored, int key)
          * playback completion/transition remains with its original caller. */
         is_pressed = 1;
         trace_client_state("cinematic_escape_intro", 1);
-    } else if (caller == image + 0x12C1E0 && (flags & 2)) {
+    } else if (caller == image + 0x12C1E0 && (flags & 2) &&
+        player_progress() > 2000) {
+        /* Progress through 2000 owns the first-play prologue and tutorial. */
         /* The caller reached this query only through its own skippable-byte
          * gate. Require an actual current camera/movie as well. Returning one
          * Escape edge enters its ordinary finite cleanup immediately; nothing
@@ -80,6 +84,7 @@ int fang_cinematic_install(HMODULE executable, int is_intro_skipped, int is_cine
     original_key = (cinematic_key_fn)(image + 0x10B310);
     movie_lookup = (cinematic_lookup_fn)(image + 0x3B6FD0);
     camera_lookup = (cinematic_lookup_fn)(image + 0x619970);
+    player_progress = (new_player_progress_fn)(image + FANG103_ORIGINAL_NEW_PLAYER_PROGRESS_RVA);
     InterlockedExchange(&setting_flags, (is_intro_skipped ? 1 : 0) | (is_cinematic_skipped ? 2 : 0));
     if (!patch_pointer(slot, (void*)original_key, (void*)cinematic_key)) return 0;
     InterlockedExchange(&is_installed, 1);

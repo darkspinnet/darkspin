@@ -1316,7 +1316,7 @@ func (r campaignDamageRuntime) startCompanionPursuits(
 	for _, objectID := range objectIDs {
 		plan, isReserved, err := peerSession.zone.Companion().ReserveActorPursuit(
 			objectID, targets, r.npc.program.SupportHealerPetBasic.Range,
-			zonecompanion.CompatibilityAggroRadius,
+			r.npc.program.SupportHealerPetAggroRange,
 			zonecompanion.CompatibilityMovementSpeed,
 			r.npc.now(),
 		)

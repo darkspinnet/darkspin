@@ -3574,7 +3574,9 @@ static unsigned char __cdecl hooked_spline_update(void* camera, float delta) {
         traced_spline_nodes = node_count;
         traced_spline_time = current_time;
     }
-    if (camera != NULL && skip_cinematics_enabled) {
+    /* Progress through 2000 still owns the first-play tutorial introduction. */
+    if (camera != NULL && skip_cinematics_enabled &&
+        original_new_player_progress() > 2000) {
         BYTE* base = (BYTE*)camera;
         int node_count = *(int*)(base + 0x29C);
         float duration = *(float*)(base + 0x2A0) + *(float*)(base + 0x88);

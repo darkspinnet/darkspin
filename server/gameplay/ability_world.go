@@ -67,7 +67,7 @@ func (e *gameplaySessionRegistry) arenaAbilityWorldLocked(gameID uint32) (*arena
 	if err != nil {
 		return nil, fmt.Errorf("arenaObjectIDs: %w", err)
 	}
-	match.abilityWorld = &arenaAbilityWorld{objectIDSession: objectIDSession, companion: zonecompanion.NewSession(), treeSession: zoneability.NewTreeOfLifePresentationSession(), effectInventory: zoneeffect.NewInventory()}
+	match.abilityWorld = &arenaAbilityWorld{objectIDSession: objectIDSession, companion: zonecompanion.NewSessionWithAggroRanges(e.companionAggroRanges), treeSession: zoneability.NewTreeOfLifePresentationSession(), effectInventory: zoneeffect.NewInventory()}
 	return match.abilityWorld, nil
 }
 

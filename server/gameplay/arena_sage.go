@@ -165,6 +165,7 @@ func (e gameplayPendingRuntime) advanceArenaSageLocked(packet raknet.Packet, key
 		err = world.companion.Put(zonecompanion.Actor{UserID: member.binding.UserID, PeerGeneration: member.generation,
 			ObjectID: req.ObjectID, OwnerObjectID: req.OwnerObjectID, Noun: util.HashID(req.Spawn.NounName),
 			Position: game.Vec3(position), FootprintRadius: footprint, HitPoint: hitPoint, MaximumHitPoint: hitPoint,
+			AggroRadius:  e.damage.npc.program.SupportHealerPetAggroRange,
 			IsTargetable: true, IsCombatant: true, IsSageCompanion: true})
 		if err != nil {
 			return nil, nil, fmt.Errorf("sageActor: %w", err)

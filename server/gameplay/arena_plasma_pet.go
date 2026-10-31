@@ -167,6 +167,7 @@ func (r campaignNPCActionRuntime) spawnArenaPlasmaSentinelPet(
 		ObjectID: objectID, OwnerObjectID: run.ownerObjectID,
 		Noun: util.HashID("PlasmaSentinelPet.Noun"), Position: position,
 		FootprintRadius: footprint, HitPoint: hitPoint, MaximumHitPoint: hitPoint,
+		AggroRadius:  r.program.NonPlayerAggroRanges[util.HashID("PlasmaSentinelPet.Noun")],
 		IsTargetable: true, IsCombatant: true,
 	})
 	if err != nil {

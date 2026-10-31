@@ -330,6 +330,7 @@ func (e *sagePassivePoll) spawnLocked(member *gameplayPeerSession, requests []su
 			ObjectID: req.ObjectID, OwnerObjectID: req.OwnerObjectID,
 			Noun: util.HashID(req.Spawn.NounName), Position: game.Vec3{X: position.X, Y: position.Y, Z: position.Z},
 			FootprintRadius: footprintRadius, HitPoint: hitPoint, MaximumHitPoint: hitPoint,
+			AggroRadius:  e.runtime.program.SupportHealerPetAggroRange,
 			IsTargetable: true, IsCombatant: true, IsSageCompanion: true,
 		})
 		if err != nil {

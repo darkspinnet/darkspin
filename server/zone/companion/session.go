@@ -27,6 +27,7 @@ type Actor struct {
 	Noun                   uint32
 	Position               game.Vec3
 	FootprintRadius        float32
+	AggroRadius            float32
 	HitPoint               float32
 	MaximumHitPoint        float32
 	DeathRevision          uint64
@@ -73,6 +74,13 @@ type Actor struct {
 	cinematicUntil         time.Time
 	cinematicRevision      uint64
 	cinematicHolds         map[uint64]time.Time
+}
+
+func (e Actor) AcquisitionRange() float32 {
+	if e.AggroRadius > 0 {
+		return e.AggroRadius
+	}
+	return CompatibilityAggroRadius
 }
 
 type Buff struct {
@@ -122,6 +130,7 @@ type Pursuit struct {
 }
 
 type Session struct {
+	aggroRangesByNoun      map[uint32]float32
 	movementModifierSource MovementModifierSource
 	actorFootprints        map[uint32]game.NavigationFootprint
 	mu                     sync.RWMutex
@@ -167,6 +176,7 @@ func (e *Session) put(actor Actor, isRetained bool) error {
 		actor.ObjectID == 0 || actor.OwnerObjectID == 0 || actor.Noun == 0 ||
 		!isFinitePosition(actor.Position) ||
 		!isFinitePositive(actor.FootprintRadius) ||
+		!isFiniteNonNegative(actor.AggroRadius) ||
 		!isFinitePositive(actor.MaximumHitPoint) ||
 		!isFiniteNonNegative(actor.BodyScale) ||
 		math.IsNaN(float64(actor.HitPoint)) ||
@@ -179,6 +189,10 @@ func (e *Session) put(actor Actor, isRetained bool) error {
 	footprint, isFootprintFound := e.actorFootprints[actor.Noun]
 	if isFootprintFound {
 		actor.ActorFootprint = &footprint
+	}
+	aggroRadius, isAggroFound := e.aggroRangesByNoun[actor.Noun]
+	if isAggroFound && isFiniteNonNegative(aggroRadius) {
+		actor.AggroRadius = aggroRadius
 	}
 	if actor.ActorFootprint != nil {
 		radius, radiusErr := actor.ActorFootprint.ActorRadius(1)
@@ -494,7 +508,7 @@ func (e *Session) followActors(
 		}
 		isCombatReserved := actor.TargetObjectID != 0 || actor.PursuitObjectID != 0
 		if isCombatReserved && (distance <= desiredStopDistance*2 ||
-			hasNearbyCombatTarget(actor, targets, CompatibilityAggroRadius)) {
+			hasNearbyCombatTarget(actor, targets, actor.AcquisitionRange())) {
 			continue
 		}
 		goal := ownerPosition.Add(delta.Scale(actorStopDistance / distance))
@@ -639,7 +653,8 @@ func (e *Session) ReserveAttacks(
 				max(float32(0), target.Plan.ActorFootprintRadius()) +
 				attackRangeTolerance
 			distance := actor.Position.Sub(target.Plan.Position).Length()
-			if distance > centerRange || distance > selectedDistance {
+			if distance > centerRange || distance > selectedDistance ||
+				!actor.IsInAcquisitionRange(target.Plan.Position, target.Plan.ActorFootprintRadius()) {
 				continue
 			}
 			if distance == selectedDistance && selected.Plan.ObjectID != 0 &&
@@ -720,7 +735,8 @@ func (e *Session) ReserveActorAttack(
 			max(float32(0), target.Plan.ActorFootprintRadius()) +
 			attackRangeTolerance
 		distance := actor.Position.Sub(target.Plan.Position).Length()
-		if distance > centerRange || distance > selectedDistance {
+		if distance > centerRange || distance > selectedDistance ||
+			!actor.IsInAcquisitionRange(target.Plan.Position, target.Plan.ActorFootprintRadius()) {
 			continue
 		}
 		if distance == selectedDistance && selected.Plan.ObjectID != 0 &&
@@ -796,7 +812,11 @@ func (e *Session) ReservePursuits(
 			stopDistance := attackRange + actor.ActorFootprintRadius() +
 				max(float32(0), target.Plan.ActorFootprintRadius())
 			distance := actor.Position.Sub(target.Plan.Position).Length()
-			if distance <= stopDistance || distance > aggroRadius ||
+			maximumRange := aggroRadius
+			if actor.AggroRadius > 0 {
+				maximumRange = actor.acquisitionCenterRange(target.Plan.ActorFootprintRadius())
+			}
+			if distance <= stopDistance || distance > maximumRange ||
 				distance > selectedDistance {
 				continue
 			}
@@ -915,7 +935,11 @@ func (e *Session) reserveActorPursuit(
 		stopDistance := attackRange + actor.ActorFootprintRadius() +
 			max(float32(0), target.Plan.ActorFootprintRadius())
 		distance := actor.Position.Sub(target.Plan.Position).Length()
-		if distance <= stopDistance || distance > aggroRadius ||
+		maximumRange := aggroRadius
+		if !isForced && actor.AggroRadius > 0 {
+			maximumRange = actor.acquisitionCenterRange(target.Plan.ActorFootprintRadius())
+		}
+		if distance <= stopDistance || distance > maximumRange ||
 			distance > selectedDistance {
 			continue
 		}

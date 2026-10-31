@@ -2,6 +2,11 @@
 
 ### 2026-10-30
 
+- Move the game window to the desktop origin after enabling borderless mode and removing its decorations.
+- Use noun-authored aggro ranges for combat pets and drones in campaign and PvP, including acquisition, pursuit and target retention while their owner moves.
+- Correct Auto Turret's firing reach from its 4-unit placement range to its authored 10-unit laser range, bounded separately by its 12-unit aggro range.
+- Raise Sage's Dendrone target acquisition from the shared 10-unit companion radius to its authored 18-unit aggro range in campaign and PvP.
+- Keep the first-play prologue and tutorial introduction playing when Fang's in-game cinematic skip is enabled.
 - #146 Start Mutation Agent encounters on the first 2-3 run by moving the completed-progression threshold from 7 to 6.
 - #146 Let Lightning Juggernauts pursue and use Smash while Charge cools down instead of waiting motionless for the next charge.
 - #146 Scale Seraph-XS Alpha's Attractor Bomb and Auto Turret health from the casting hero instead of treating their authored fractional health as literal points.
