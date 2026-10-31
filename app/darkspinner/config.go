@@ -21,7 +21,6 @@ type ServerConfiguration struct {
 	Port                               uint16         `json:"port"`
 	IsMultiplayerEnabled               bool           `json:"isMultiplayerEnabled"`
 	Locale                             string         `json:"locale"`
-	NativeUIScalePercent               uint32         `json:"nativeUIScalePercent"`
 	Locales                            []ClientLocale `json:"locales"`
 	SnapshotMode                       string         `json:"snapshotMode"`
 	CampaignMatchmakingBotSize         uint32         `json:"campaignMatchmakingBotSize"`
@@ -99,9 +98,6 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 	if req.CampaignMatchmakingBotSize < 1 || req.CampaignMatchmakingBotSize > 3 {
 		return ServerConfiguration{}, errors.New("campaign matchmaking bot size must be between 1 and 3")
 	}
-	if req.NativeUIScalePercent < 100 || req.NativeUIScalePercent > 300 || req.NativeUIScalePercent%5 != 0 {
-		return ServerConfiguration{}, errors.New("native UI scale must be 100 to 300 percent in steps of 5")
-	}
 	e.serverMu.Lock()
 	defer e.serverMu.Unlock()
 
@@ -129,7 +125,6 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 		return ServerConfiguration{}, fmt.Errorf("configLoad: %w", err)
 	}
 	previousSettings := map[game.ConfigKey]string{
-		game.ConfigNativeUIScalePercent:               config.String(game.ConfigNativeUIScalePercent),
 		game.ConfigCampaignMatchmakingBotSize:         config.String(game.ConfigCampaignMatchmakingBotSize),
 		game.ConfigIsCampaignBotSquadMirroringEnabled: config.String(game.ConfigIsCampaignBotSquadMirroringEnabled),
 		game.ConfigServerBindHost:                     config.String(game.ConfigServerBindHost),
@@ -137,7 +132,6 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 		game.ConfigServerIsDedicated:                  config.String(game.ConfigServerIsDedicated),
 	}
 	settings := map[game.ConfigKey]string{
-		game.ConfigNativeUIScalePercent:               strconv.FormatUint(uint64(req.NativeUIScalePercent), 10),
 		game.ConfigCampaignMatchmakingBotSize:         strconv.FormatUint(uint64(req.CampaignMatchmakingBotSize), 10),
 		game.ConfigIsCampaignBotSquadMirroringEnabled: strconv.FormatBool(req.IsCampaignBotSquadMirroringEnabled),
 		game.ConfigServerBindHost:                     strings.TrimSpace(req.BindHost),
@@ -145,9 +139,8 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 		game.ConfigServerIsDedicated:                  strconv.FormatBool(req.IsDedicated),
 	}
 	isSetupChanged := false
-	isUIScaleChanged := settings[game.ConfigNativeUIScalePercent] != previousSettings[game.ConfigNativeUIScalePercent]
 	for key, setting := range settings {
-		isSetupChanged = isSetupChanged || (key != game.ConfigNativeUIScalePercent && setting != previousSettings[key])
+		isSetupChanged = isSetupChanged || setting != previousSettings[key]
 		err = config.Set(key, setting)
 		if err != nil {
 			return ServerConfiguration{}, fmt.Errorf("setupSet: %w", err)
@@ -189,7 +182,7 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 	if !hasClientLocale(locales, locale) {
 		return ServerConfiguration{}, fmt.Errorf("locale %q is not installed", locale)
 	}
-	if !isSetupChanged && !isUIScaleChanged && previousPort == port && isPreviouslyMultiplayerEnabled == isMultiplayerEnabled &&
+	if !isSetupChanged && previousPort == port && isPreviouslyMultiplayerEnabled == isMultiplayerEnabled &&
 		normalizeClientLocale(previousLocale) == locale &&
 		previousSnapshotMode == selectedSnapshotMode {
 		configuration, configErr := serverConfiguration(config, pathSet.gamePath)
@@ -350,10 +343,6 @@ func (e *App) spinnerPaths() (*spinnerPathSet, error) {
 }
 
 func serverConfiguration(config *game.Config, gamePath string) (ServerConfiguration, error) {
-	nativeUIScalePercent, err := config.Uint32(game.ConfigNativeUIScalePercent)
-	if err != nil {
-		return ServerConfiguration{}, fmt.Errorf("uiScaleLoad: %w", err)
-	}
 	port, err := config.Uint16(game.ConfigServerPort)
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("portLoad: %w", err)
@@ -384,7 +373,6 @@ func serverConfiguration(config *game.Config, gamePath string) (ServerConfigurat
 		Port:                               port,
 		IsMultiplayerEnabled:               config.Bool(game.ConfigIsMultiplayerEnabled),
 		Locale:                             locale,
-		NativeUIScalePercent:               nativeUIScalePercent,
 		Locales:                            locales,
 		SnapshotMode:                       string(snapshotMode),
 		CampaignMatchmakingBotSize:         campaignMatchmakingBotSize,

@@ -297,11 +297,14 @@ type DNAGranter interface {
 
 // BugCommand requests a local diagnostic bundle for an authenticated actor.
 type BugCommand struct {
-	Sender       Participant
-	GameID       uint32
-	Description  string
-	Context      BugContext
-	ContextError string
+	ServerAddress      string
+	ClientAddress      string
+	IsRemoteConnection bool
+	Sender             Participant
+	GameID             uint32
+	Description        string
+	Context            BugContext
+	ContextError       string
 }
 
 // BugReporter creates a server-owned diagnostic bundle without uploading it.

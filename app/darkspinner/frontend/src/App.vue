@@ -9,20 +9,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Progress } from '@/components/ui/progress'
 import LauncherDialog from '@/components/LauncherDialog.vue'
 import ModPage from '@/components/ModPage.vue'
+import LaunchCrogenitorPicker from '@/components/LaunchCrogenitorPicker.vue'
+import SporeConfiguration from '@/components/SporeConfiguration.vue'
 import LuaPage from '@/components/LuaPage.vue'
 import { GetLuaConsole } from './platform'
 import ProfileSummary from '@/components/ProfileSummary.vue'
-import CrogenitorActions from '@/components/CrogenitorActions.vue'
 import RemoteConnection from '@/components/RemoteConnection.vue'
 import { RefreshCw } from '@lucide/vue'
-import { campaignDetailFor, campaignLabelFor, campaignLevelFor, profileCreateDate, profileLastPlayedDate } from './profile'
+import { campaignDetailFor, campaignLabelFor, profileCreateDate, profileLastPlayedDate, profileLastPlayedTime } from './profile'
 import ServerRulesConfiguration from '@/components/ServerRulesConfiguration.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { BrowserOpenURL, CancelPatch, CheckRemoteServers, ClipboardSetText, CompactSnapshots, CloseDetachedGameInstances, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetSquadSnapshot, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RefreshRemoteProfiles, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, ResetProfileDisplay, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetIdentity, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
+import { BrowserOpenURL, CancelPatch, CheckRemoteServers, ClipboardSetText, CompactSnapshots, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteModProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetSquadSnapshot, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, ResetModProfileDisplay, ResetProfileDisplay, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetIdentity, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
 
 const status = ref({ state:'starting', message:'Starting DarkSpinner', identity:'', auth:'Starting', server:'Starting', patch:'Pending', game:'Checking', avatar:'Preparing', profile:'Starting', content:'Pending', identityError:'', authError:'', serverError:'', patchError:'', gameError:'', avatarError:'', profileError:'', contentError:'', lastRun:'', launcherNotice:'', version:'', buildChannel:'production', progress:0, patchProgress:0, avatarProgress:0, contentProgress:0, isAuthenticated:false, isAuthOnline:false, isServerOnline:false, isPatchComplete:false, isPatchActive:false, isGameReady:false, isAvatarReady:false, isProfileStoreReady:false, isContentReady:false, isPlayReady:false, isCinematicSkipped:false, isIntroSkipped:false, isLastRunFailure:false, isStartupBlocked:false })
 const retainedProfileName = localStorage.getItem('darkspinner.selectedProfile') || localStorage.getItem('darkspinner.identity') || ''
-const retainedDetachedProfileName = localStorage.getItem('darkspinner.detachedProfile') || ''
 const identity = ref(localStorage.getItem('darkspinner.identity') || '')
 const selectedProfile = ref(retainedProfileName)
 const newProfileName = ref('')
@@ -41,7 +41,6 @@ const profilePendingDelete = ref(null)
 const profilePendingDisplayReset = ref(null)
 const remoteProfilePendingDelete = ref(null)
 const interruptedMission = ref(null)
-const detachedInterruptedMission = ref(null)
 const isMissionChoiceBusy = ref(false)
 const isProfileDeletionBusy = ref(false)
 const isProfileDisplayResetBusy = ref(false)
@@ -52,6 +51,10 @@ const luaConsole = ref({ isAvailable:false, isSelected:false })
 const luaPage = ref(null)
 const modPage = ref(null)
 const isModPlayReady = ref(false)
+const modProfiles = ref([])
+const selectedModProfile = ref('')
+const isModBusy = ref(false)
+const launchPage = ref('play')
 const remoteServers = ref([])
 const remoteProfiles = ref([])
 const remoteChecks = ref([])
@@ -74,7 +77,6 @@ const isConfiguredDedicated = ref(false)
 const isConfiguredMultiplayerEnabled = ref(false)
 const configuredLocale = ref('en-us')
 const configuredSnapshotMode = ref('auto')
-const configuredNativeUIScalePercent = ref(100)
 const configuredCampaignMatchmakingBotSize = ref('1')
 const isConfiguredCampaignBotSquadMirroringEnabled = ref(true)
 const systemWineRunner = 'system'
@@ -82,14 +84,13 @@ const wineRunnerConfiguration = ref({ isSupported:false, selectedPath:'', runner
 const configuredWineRunner = ref(systemWineRunner)
 const isWineRunnerBusy = ref(false)
 const isServerConfigurationBusy = ref(false)
-const isServerRulesOpen = ref(false)
+const configTab = ref('general')
 const serverConfigurationMessage = ref('')
 const integrationStatus = ref({ isStartMenuInstalled:false, isDesktopInstalled:false, isSteamLaunchInstalled:false, isManagementSupported:false, message:'' })
 const isManagementBusy = ref(false)
-const detachedProfile = ref(retainedDetachedProfileName)
-const isDetachedLaunchBusy = ref(false)
+const isAdditionalLaunchBusy = ref(false)
+const isShiftHeld = ref(false)
 const isSelectedProfileRunning = ref(false)
-const isDetachedProfileRunning = ref(false)
 const isDetachedClientDetected = ref(false)
 const isClientStopBusy = ref(false)
 const isUninstallConfirmOpen = ref(false)
@@ -200,10 +201,9 @@ const contentPhaseEstimates = {
 }
 const isBusy = computed(() => ['authorizing','patching','launching','running'].includes(status.value.state))
 const isProfileActionDisabled = computed(() => isBusy.value || isDetachedClientDetected.value ||
-  isSelectedProfileRunning.value || isDetachedProfileRunning.value || isProfileDeletionBusy.value ||
+  isSelectedProfileRunning.value || isProfileDeletionBusy.value ||
   isProfileDisplayResetBusy.value || isRemoteDeletionBusy.value)
 const isPlayEnabled = computed(() => status.value.isPlayReady && !selectedProfileRecord.value?.isTutorialCompletionPending && !isBusy.value)
-const isDetachedReady = computed(() => status.value.isAuthOnline && status.value.isServerOnline && status.value.isPatchComplete && status.value.isGameReady)
 const isCreatingProfile = computed(() =>
   isInstallationLoaded.value && installation.value.isLocalReady &&
   isProfileListLoaded.value && status.value.isAvatarReady && profileAvatars.value.length > 0 &&
@@ -221,13 +221,6 @@ const isNewProfileNameValid = computed(() => {
   const name = newProfileName.value.trim()
   return /^[A-Za-z0-9]{1,20}$/.test(name)
 })
-const selectedProfileLabel = computed(() => {
-  const profile = profiles.value.find(candidate => candidate.loginName === selectedProfile.value)
-  return profile?.displayName || 'SELECT CROGENITOR'
-})
-const detachedProfileRecord = computed(() => profiles.value.find(candidate => candidate.loginName === detachedProfile.value))
-const detachedProfileLabel = computed(() => detachedProfileRecord.value?.displayName || 'SELECT CROGENITOR')
-const detachedProfileAvatar = computed(() => detachedProfileRecord.value?.avatarUrl || '')
 const verificationStage = computed(() => {
   const stages = [
     { detail:status.value.profile, progress:0, ready:status.value.isProfileStoreReady, error:status.value.profileError },
@@ -295,22 +288,19 @@ const isPreparationActive = computed(() => !launcherProgressFailureLabel.value &
 const isPatchBusy = computed(() => isPatchRequestBusy.value || status.value.isPatchActive || isPreparationActive.value)
 const isAutoLaunchCounting = computed(() => autoLaunchCountdown.value > 0)
 const isActiveProfileRunning = computed(() => activePage.value === 'play' && isSelectedProfileRunning.value)
-const isActiveClientDetected = computed(() => activePage.value === 'launcher'
-  ? isDetachedClientDetected.value
-  : activePage.value === 'play' && isSelectedProfileRunning.value)
-const activeInterruptedMission = computed(() => activePage.value === 'launcher'
-  ? detachedInterruptedMission.value
-  : activePage.value === 'play' ? interruptedMission.value : null)
-const isHeaderPlayEnabled = computed(() => activePage.value === 'launcher'
-  ? isDetachedReady.value && !!detachedProfile.value && !isDetachedLaunchBusy.value && !isMissionChoiceBusy.value
-  : activePage.value === 'remote'
+const activeInterruptedMission = computed(() => activePage.value === 'play' ? interruptedMission.value : null)
+const isHeaderPlayEnabled = computed(() => activePage.value === 'remote'
     ? isRemoteFormReady.value && isRemoteConnectionReady.value && !isRemoteBusy.value && !isActiveRouteRunning.value &&
       (isRemoteRegistration.value || (status.value.isPatchComplete && status.value.isGameReady))
   : !isActiveProfileRunning.value && isPlayEnabled.value && !isMissionChoiceBusy.value)
+const isAdditionalLaunchReady = computed(() => activePage.value === 'play' && !!selectedProfileRecord.value &&
+  !selectedProfileRecord.value.isTutorialCompletionPending && !isSelectedProfileRunning.value &&
+  status.value.isAuthOnline && status.value.isServerOnline && status.value.isPatchComplete && status.value.isGameReady &&
+  !['authorizing', 'patching', 'launching'].includes(status.value.state) && !isAdditionalLaunchBusy.value && !isMissionChoiceBusy.value)
 const isActiveRouteRunning = computed(() => status.value.state === 'running' && activeClientRoute.value === activePage.value)
 const isAttachedKillVisible = computed(() => ['play', 'remote', 'mod'].includes(activePage.value) && isActiveRouteRunning.value)
-const isDetachedKillVisible = computed(() => activePage.value === 'launcher' && isDetachedClientDetected.value)
 const dockPlayLabel = computed(() => {
+  if (activePage.value === 'play' && isShiftHeld.value) return isAdditionalLaunchBusy.value ? 'STARTING INSTANCE…' : 'PLAY ANOTHER INSTANCE'
   if (isAutoLaunchCounting.value) return `PLAY IN ${autoLaunchCountdown.value} · CANCEL`
   if (isActiveRouteRunning.value) return 'RUNNING'
   if (isActiveProfileRunning.value) return 'RUNNING'
@@ -319,10 +309,11 @@ const dockPlayLabel = computed(() => {
     if (isRemoteRegistration.value) return isRemoteBusy.value ? 'REGISTERING...' : 'REGISTER'
     return 'PLAY REMOTE'
   }
-  if (activePage.value === 'launcher') return 'PLAY DETACHED'
   return 'PLAY'
 })
-const dockPlayTitle = computed(() => activePage.value === 'config'
+const dockPlayTitle = computed(() => activePage.value === 'play' && isShiftHeld.value
+  ? 'Start another game instance for the selected local Crogenitor'
+  : activePage.value === 'config'
   ? 'Play is unavailable while editing configuration.'
   : isAutoLaunchCounting.value
     ? 'Cancel automatic launch'
@@ -330,11 +321,9 @@ const dockPlayTitle = computed(() => activePage.value === 'config'
     ? isRemoteRegistration.value
       ? 'Register this Crogenitor on the selected remote server'
       : !isRemoteConnectionReady.value ? remoteConnectionReason.value : 'Launch the selected remote Crogenitor'
-    : activePage.value === 'launcher'
-      ? `Launch another detached client for ${detachedProfileRecord.value?.displayName || 'selected Crogenitor'}`
       : activeInterruptedMission.value
         ? `Continue ${activeInterruptedMission.value.label}`
-        : 'Launch game')
+        : 'Launch game (hold Shift to start another instance)')
 const selectedRemoteProfile = computed(() => remoteProfiles.value.find(profile =>
   isSameRemoteServer(profile.serverAddress, remoteServerAddress.value) && profile.loginName === remoteIdentity.value))
 const selectedRemoteServer = computed(() => remoteServers.value.find(server =>
@@ -359,12 +348,44 @@ const isRemoteFormReady = computed(() => !!remoteServerAddress.value &&
   /^[A-Za-z0-9]{1,20}$/.test(remoteIdentity.value.trim()) &&
   (!!remotePassword.value || (!isRemoteRegistration.value && selectedRemoteProfile.value?.isPasswordRemembered)))
 const isServerPortValid = computed(() => isPortValid(configuredServerPort.value) && Number(configuredServerPort.value) <= 65534)
-// Remove this channel gate when remote, detached, and multiplayer configuration are ready for every build.
+// Remove this channel gate when remote and multiplayer configuration are ready for every build.
 const isExperimentalLauncherFeatureVisible = computed(() => ['development', 'unstable'].includes(status.value.buildChannel))
+const launchProfiles = computed(() => [
+  ...profiles.value.map(profile => ({ key:`play:${profile.loginName}`, kind:'play', profile })),
+  ...modProfiles.value.map(profile => ({ key:`mod:${profile.loginName}`, kind:'mod', profile })),
+  ...(isExperimentalLauncherFeatureVisible.value ? remoteProfiles.value.map(profile => ({ key:`remote:${profile.serverAddress}:${profile.loginName}`, kind:'remote', profile })) : []),
+].sort((first, second) => profileLastPlayedTime(second.profile) - profileLastPlayedTime(first.profile)))
+const selectedLaunchKey = computed(() => {
+  if (activePage.value === 'mod') return selectedModProfile.value ? `mod:${selectedModProfile.value}` : ''
+  if (activePage.value === 'remote') return selectedRemoteProfile.value ? `remote:${selectedRemoteProfile.value.serverAddress}:${selectedRemoteProfile.value.loginName}` : ''
+  return selectedProfileRecord.value ? `play:${selectedProfileRecord.value.loginName}` : ''
+})
+
+function chooseLaunchProfile(key) {
+  const entry = launchProfiles.value.find(candidate => candidate.key === key)
+  if (!entry) return
+  suppressAutoLaunch()
+  if (entry.kind === 'remote') selectRemoteProfile(entry.profile)
+  else if (entry.kind === 'mod') modPage.value?.selectProfile(entry.profile.loginName)
+  else void chooseProfile(entry.profile.loginName)
+  showPage(entry.kind)
+}
+
+async function createLaunchProfile(kind) {
+  if (kind === 'mod') {
+    modPage.value?.newProfile()
+    showPage(kind)
+    return
+  }
+  if (kind === 'remote') beginRemoteRegistration()
+  showPage(kind)
+  await nextTick()
+  if (kind !== 'remote') await chooseProfile('__create__')
+}
 
 watch(identity, next => localStorage.setItem('darkspinner.identity', next))
 watch(remoteServerAddress, next => localStorage.setItem('darkspinner.remoteServer', next))
-watch(remoteServerAddress, scheduleRemoteCheck)
+watch(() => selectedRemoteProfile.value ? `${selectedRemoteProfile.value.serverAddress}:${selectedRemoteProfile.value.loginName}` : '', scheduleRemoteCheck)
 watch(activePage, page => {
   if (remoteCheckTimer !== null) window.clearInterval(remoteCheckTimer)
   remoteCheckTimer = null
@@ -380,11 +401,6 @@ watch(selectedProfile, next => {
   if (next && next !== '__create__') localStorage.setItem('darkspinner.selectedProfile', next)
   cancelAutoLaunchCountdown()
   void refreshRunningProfiles()
-})
-watch(detachedProfile, next => {
-  if (next) localStorage.setItem('darkspinner.detachedProfile', next)
-  void refreshRunningProfiles()
-  void refreshDetachedInterruptedMission()
 })
 watch(isAutoPatchEnabled, next => {
   localStorage.setItem('darkspinner.autoPatch', String(next))
@@ -426,8 +442,7 @@ const footerStatus = computed(() => {
   if (isProfileCreationBusy.value) return { level:'waiting', label:'CROGENITOR', message:'Creating the new Crogenitor.' }
   if (isManagementBusy.value) return { level:'waiting', label:'CONFIG', message:'Applying the requested launcher change.' }
   if (isReportBusy.value) return { level:'waiting', label:'REPORT', message:'Preparing diagnostic files.' }
-  if (isDetachedLaunchBusy.value) return { level:'waiting', label:'DETACHED CLIENT', message:'Starting the selected Crogenitor client.' }
-  if (activePage.value === 'launcher') return null
+  if (isAdditionalLaunchBusy.value) return { level:'waiting', label:'ADDITIONAL INSTANCE', message:'Starting the selected Crogenitor client.' }
   if (status.value.state === 'running') return { level:'ready', label:'CLIENT ACTIVE', message:'The game client is running.' }
   const summary = readinessSummary.value
   if (summary.level !== 'ready') return summary
@@ -440,9 +455,6 @@ function markProfilePlayed(loginName) {
     profile.loginName === loginName ? { ...profile, lastConnectionDt:connectionDT } : profile,
   )
 }
-const detachedCampaignLevel = computed(() => campaignLevelFor(detachedProfileRecord.value))
-const detachedCampaignLabel = computed(() => campaignLabelFor(detachedCampaignLevel.value))
-const detachedCampaignDetail = computed(() => campaignDetailFor(detachedCampaignLevel.value))
 watch(isPlayEnabled, next => {
   if (!next) {
     cancelAutoLaunchCountdown()
@@ -451,11 +463,11 @@ watch(isPlayEnabled, next => {
   void refreshInterruptedMission()
   void maybeAutoLaunch()
 })
-watch(isDetachedReady, next => {
-  if (next) void refreshDetachedInterruptedMission()
-})
 
 onMounted(async () => {
+  window.addEventListener('keydown', updateShiftKey)
+  window.addEventListener('keyup', updateShiftKey)
+  window.addEventListener('blur', clearShiftKey)
   EventsOn('darkspinner:status', next => {
     status.value = { ...status.value, ...next }
     showLauncherNotice(next.launcherNotice)
@@ -465,6 +477,7 @@ onMounted(async () => {
     if (next.patch === 'Update available') void maybeAutoPatch()
   })
   status.value = { ...status.value, ...(await GetStatus()) }
+  void refreshRemoteProfiles()
   luaConsole.value = await GetLuaConsole()
   if (luaConsole.value.isSelected) {
     activePage.value = 'lua'
@@ -489,6 +502,9 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', updateShiftKey)
+  window.removeEventListener('keyup', updateShiftKey)
+  window.removeEventListener('blur', clearShiftKey)
   isRemoteViewDisposed = true
   if (remoteCheckTimer !== null) window.clearInterval(remoteCheckTimer)
   if (remoteCheckDelay !== null) window.clearTimeout(remoteCheckDelay)
@@ -501,28 +517,16 @@ async function refreshRunningProfiles() {
   if (isProcessStateRefreshing) return
   isProcessStateRefreshing = true
   const selectedName = selectedProfile.value
-  const detachedName = detachedProfile.value
   try {
-    const names = [...new Set([selectedName, detachedName]
-      .filter(name => name && name !== '__create__'))]
-    const [states, isDetachedDetected] = await Promise.all([
-      Promise.all(names.map(async name => [name, await IsProfileRunning(name)])),
+    const [isRunning, isAdditionalDetected] = await Promise.all([
+      selectedName && selectedName !== '__create__' ? IsProfileRunning(selectedName) : false,
       HasDetachedGameInstances(),
     ])
-    const statesByName = new Map(states)
-    isDetachedClientDetected.value = isDetachedDetected
-    if (selectedProfile.value === selectedName) {
-      const wasSelectedProfileRunning = isSelectedProfileRunning.value
-      isSelectedProfileRunning.value = statesByName.get(selectedName) || false
-      if (wasSelectedProfileRunning && !isSelectedProfileRunning.value) await refreshInterruptedMission()
-    }
-    if (detachedProfile.value === detachedName) {
-      const wasDetachedProfileRunning = isDetachedProfileRunning.value
-      isDetachedProfileRunning.value = statesByName.get(detachedName) || false
-      if (wasDetachedProfileRunning && !isDetachedProfileRunning.value) {
-        await refreshDetachedInterruptedMission()
-      }
-    }
+    isDetachedClientDetected.value = isAdditionalDetected
+    if (selectedProfile.value !== selectedName) return
+    const wasRunning = isSelectedProfileRunning.value
+    isSelectedProfileRunning.value = isRunning
+    if (wasRunning && !isRunning) await refreshInterruptedMission()
   } catch (error) { recordError(error) }
   finally { isProcessStateRefreshing = false }
 }
@@ -542,9 +546,6 @@ async function refreshProfiles() {
     const current = profiles.value.find(profile => profile.loginName === identity.value)
     const profile = retained || active || current || profiles.value[0]
     selectedProfile.value = profile.loginName
-    if (!profiles.value.some(candidate => candidate.loginName === detachedProfile.value)) {
-      detachedProfile.value = profiles.value.find(candidate => candidate.loginName !== profile.loginName)?.loginName || profile.loginName
-    }
     await applyIdentity(profile.loginName)
   }
   catch (error) { recordError(error) }
@@ -557,9 +558,8 @@ async function refreshRemoteProfiles() {
       isSameRemoteServer(profile.serverAddress, remoteServerAddress.value) && profile.loginName === remoteIdentity.value) ||
       remoteProfiles.value.find(profile => isSameRemoteServer(profile.serverAddress, remoteServerAddress.value)) ||
       remoteProfiles.value[0]
-    if (selected && !selectedRemoteProfile.value) selectRemoteProfile(selected)
+    if (selected && !selectedRemoteProfile.value && !isRemoteRegistration.value) selectRemoteProfile(selected)
     scheduleRemoteCheck()
-    void refreshStaleRemoteProfiles()
   }
   catch (error) { recordError(error) }
 }
@@ -568,30 +568,22 @@ function remoteCheckFor(address) {
   return remoteChecks.value.find(connection => isSameRemoteServer(connection.address, address))
 }
 
-function remoteProfileState(profile) {
-  const connection = remoteCheckFor(profile.serverAddress)
-  if (!connection) return 'Not checked'
-  if (!connection.isOnline) return 'Offline'
-  return connection.isVersionMatched ? 'Online' : 'Online · version mismatch'
-}
-
 function scheduleRemoteCheck() {
   if (remoteCheckDelay !== null) window.clearTimeout(remoteCheckDelay)
-  if (isRemoteViewDisposed || activePage.value !== 'remote') return
+  if (isRemoteViewDisposed || activePage.value !== 'remote' || !selectedRemoteProfile.value) return
   remoteCheckDelay = window.setTimeout(refreshVisibleRemoteChecks, 300)
 }
 
 function refreshVisibleRemoteChecks() {
-  if (activePage.value !== 'remote' || document.visibilityState === 'hidden') return
+  if (activePage.value !== 'remote' || document.visibilityState === 'hidden' || !selectedRemoteProfile.value) return
   void refreshRemoteChecks()
 }
 
 async function refreshRemoteChecks() {
-  if (isRemoteViewDisposed || isRemoteChecking.value) return
+  if (isRemoteViewDisposed || isRemoteChecking.value || (!selectedRemoteProfile.value && !isRemoteRegistration.value)) return
   const selectedAddress = remoteServerAddress.value
-  const addresses = [...new Set([selectedAddress, ...remoteProfiles.value.map(profile => profile.serverAddress)]
-    .map(address => address.trim()).filter(Boolean))]
-  if (!addresses.length) return
+  if (!selectedAddress.trim()) return
+  const addresses = [selectedAddress.trim()]
   isRemoteChecking.value = true
   try {
     const connections = await CheckRemoteServers(addresses)
@@ -604,11 +596,6 @@ async function refreshRemoteChecks() {
     isRemoteChecking.value = false
     if (selectedAddress !== remoteServerAddress.value) scheduleRemoteCheck()
   }
-}
-
-async function refreshStaleRemoteProfiles() {
-  try { remoteProfiles.value = await RefreshRemoteProfiles() || remoteProfiles.value }
-  catch { /* Cached remote profiles remain usable while their server is offline. */ }
 }
 
 async function scanRemoteServers() {
@@ -660,7 +647,6 @@ async function refreshServerConfiguration() {
     isConfiguredMultiplayerEnabled.value = serverConfiguration.value.isMultiplayerEnabled
     configuredLocale.value = serverConfiguration.value.locale
     configuredSnapshotMode.value = serverConfiguration.value.snapshotMode
-    configuredNativeUIScalePercent.value = serverConfiguration.value.nativeUIScalePercent ?? 100
     configuredCampaignMatchmakingBotSize.value = String(serverConfiguration.value.campaignMatchmakingBotSize)
     isConfiguredCampaignBotSquadMirroringEnabled.value = serverConfiguration.value.isCampaignBotSquadMirroringEnabled
   }
@@ -694,18 +680,46 @@ function wineRunnerLabel(runner) {
 
 const selectedWineRunner = computed(() => wineRunnerConfiguration.value.runners.find(runner => (runner.path || systemWineRunner) === configuredWineRunner.value))
 
-async function saveServerConfiguration() {
+async function saveMultiplayerConfiguration() {
   if (!isServerPortValid.value || isServerConfigurationBusy.value) return
+  if (Number(configuredServerPort.value) === Number(serverConfiguration.value.port) &&
+    isConfiguredMultiplayerEnabled.value === serverConfiguration.value.isMultiplayerEnabled) return
   if (isConfiguredMultiplayerEnabled.value && !serverConfiguration.value.isMultiplayerEnabled) {
     isMultiplayerConfirmOpen.value = true
     return
   }
-  await applyServerConfiguration()
+  await applyServerConfiguration(false, true)
+}
+
+async function saveGeneralConfiguration() {
+  if (isServerConfigurationBusy.value || !configuredLocale.value) return
+  await applyServerConfiguration(true)
+}
+
+async function saveSnapshotConfiguration() {
+  if (isServerConfigurationBusy.value || configuredSnapshotMode.value === serverConfiguration.value.snapshotMode) return
+  isServerConfigurationBusy.value = true
+  serverConfigurationMessage.value = 'Saving Sync Snapshot…'
+  const configuration = serverConfiguration.value
+  try {
+    serverConfiguration.value = await SetServerConfiguration({
+      port:configuration.port, isMultiplayerEnabled:configuration.isMultiplayerEnabled,
+      locale:configuration.locale, snapshotMode:configuredSnapshotMode.value,
+      campaignMatchmakingBotSize:configuration.campaignMatchmakingBotSize,
+      isCampaignBotSquadMirroringEnabled:configuration.isCampaignBotSquadMirroringEnabled,
+      bindHost:configuration.bindHost, advertisedHost:configuration.advertisedHost,
+      isDedicated:configuration.isDedicated,
+    })
+    configuredSnapshotMode.value = serverConfiguration.value.snapshotMode
+    serverConfigurationMessage.value = `Sync Snapshot saved: ${configuredSnapshotMode.value}.`
+  }
+  catch (error) { serverConfigurationMessage.value = visibleLauncherText(error) }
+  finally { isServerConfigurationBusy.value = false }
 }
 
 async function confirmMultiplayerConfiguration() {
   isMultiplayerConfirmOpen.value = false
-  await applyServerConfiguration()
+  await applyServerConfiguration(false, true)
 }
 
 function cancelMultiplayerConfiguration() {
@@ -723,25 +737,40 @@ async function setSkipCinematic(isSkipped) {
 }
 
 async function setSkipIntro(isSkipped) {
+  if (isServerConfigurationBusy.value) return
+  isServerConfigurationBusy.value = true
   try {
     const isEnabled = isSkipped === true
     await SetSkipIntro(isEnabled)
     status.value.isIntroSkipped = isEnabled
+    serverConfigurationMessage.value = 'Configuration saved.'
   }
   catch (error) { serverConfigurationMessage.value = visibleLauncherText(error) }
+  finally { isServerConfigurationBusy.value = false }
 }
 
-async function applyServerConfiguration() {
+async function applyServerConfiguration(isGeneralOnly = false, isMultiplayerOnly = false) {
   isServerConfigurationBusy.value = true
-  const isNetworkChanged = Number(configuredServerPort.value) !== Number(serverConfiguration.value.port) ||
-    isConfiguredMultiplayerEnabled.value !== serverConfiguration.value.isMultiplayerEnabled ||
-    configuredBindHost.value !== serverConfiguration.value.bindHost ||
-    configuredAdvertisedHost.value !== serverConfiguration.value.advertisedHost ||
-    isConfiguredDedicated.value !== serverConfiguration.value.isDedicated ||
-    Number(configuredCampaignMatchmakingBotSize.value) !== serverConfiguration.value.campaignMatchmakingBotSize ||
-    isConfiguredCampaignBotSquadMirroringEnabled.value !== serverConfiguration.value.isCampaignBotSquadMirroringEnabled
+  const req = {
+    port:isGeneralOnly ? serverConfiguration.value.port : Number(configuredServerPort.value),
+    isMultiplayerEnabled:isGeneralOnly ? serverConfiguration.value.isMultiplayerEnabled : isConfiguredMultiplayerEnabled.value,
+    locale:isMultiplayerOnly ? serverConfiguration.value.locale : configuredLocale.value,
+    snapshotMode:isGeneralOnly || isMultiplayerOnly ? serverConfiguration.value.snapshotMode : configuredSnapshotMode.value,
+    campaignMatchmakingBotSize:isMultiplayerOnly ? serverConfiguration.value.campaignMatchmakingBotSize : Number(configuredCampaignMatchmakingBotSize.value),
+    isCampaignBotSquadMirroringEnabled:isMultiplayerOnly ? serverConfiguration.value.isCampaignBotSquadMirroringEnabled : isConfiguredCampaignBotSquadMirroringEnabled.value,
+    bindHost:isGeneralOnly ? serverConfiguration.value.bindHost : configuredBindHost.value,
+    advertisedHost:isGeneralOnly ? serverConfiguration.value.advertisedHost : configuredAdvertisedHost.value,
+    isDedicated:isGeneralOnly ? serverConfiguration.value.isDedicated : isConfiguredDedicated.value,
+  }
+  const isNetworkChanged = req.port !== Number(serverConfiguration.value.port) ||
+    req.isMultiplayerEnabled !== serverConfiguration.value.isMultiplayerEnabled ||
+    req.bindHost !== serverConfiguration.value.bindHost ||
+    req.advertisedHost !== serverConfiguration.value.advertisedHost ||
+    req.isDedicated !== serverConfiguration.value.isDedicated ||
+    req.campaignMatchmakingBotSize !== serverConfiguration.value.campaignMatchmakingBotSize ||
+    req.isCampaignBotSquadMirroringEnabled !== serverConfiguration.value.isCampaignBotSquadMirroringEnabled
   const selectedWineRunnerPath = configuredWineRunner.value === systemWineRunner ? '' : configuredWineRunner.value
-  if (wineRunnerConfiguration.value.isSupported && selectedWineRunnerPath !== wineRunnerConfiguration.value.selectedPath) {
+  if (!isMultiplayerOnly && wineRunnerConfiguration.value.isSupported && selectedWineRunnerPath !== wineRunnerConfiguration.value.selectedPath) {
     try { applyWineRunnerConfiguration(await SetWineRunner(selectedWineRunnerPath)) }
     catch (error) {
       serverConfigurationMessage.value = visibleLauncherText(error)
@@ -753,22 +782,16 @@ async function applyServerConfiguration() {
     ? 'Saving darkspin.toml and restarting the local server...'
     : 'Saving darkspin.toml...'
   try {
-    serverConfiguration.value = await SetServerConfiguration({
-      port:Number(configuredServerPort.value), isMultiplayerEnabled:isConfiguredMultiplayerEnabled.value,
-      locale:configuredLocale.value, snapshotMode:configuredSnapshotMode.value,
-      nativeUIScalePercent:Number(configuredNativeUIScalePercent.value),
-      campaignMatchmakingBotSize:Number(configuredCampaignMatchmakingBotSize.value),
-      isCampaignBotSquadMirroringEnabled:isConfiguredCampaignBotSquadMirroringEnabled.value,
-      bindHost:configuredBindHost.value, advertisedHost:configuredAdvertisedHost.value,
-      isDedicated:isConfiguredDedicated.value,
-    })
-    configuredServerPort.value = serverConfiguration.value.port
-    configuredBindHost.value = serverConfiguration.value.bindHost
-    configuredAdvertisedHost.value = serverConfiguration.value.advertisedHost
-    isConfiguredDedicated.value = serverConfiguration.value.isDedicated
-    isConfiguredMultiplayerEnabled.value = serverConfiguration.value.isMultiplayerEnabled
+    serverConfiguration.value = await SetServerConfiguration(req)
+    if (!isGeneralOnly) {
+      configuredServerPort.value = serverConfiguration.value.port
+      configuredBindHost.value = serverConfiguration.value.bindHost
+      configuredAdvertisedHost.value = serverConfiguration.value.advertisedHost
+      isConfiguredDedicated.value = serverConfiguration.value.isDedicated
+      isConfiguredMultiplayerEnabled.value = serverConfiguration.value.isMultiplayerEnabled
+      if (!isMultiplayerOnly) configuredSnapshotMode.value = serverConfiguration.value.snapshotMode
+    }
     configuredLocale.value = serverConfiguration.value.locale
-    configuredSnapshotMode.value = serverConfiguration.value.snapshotMode
     configuredCampaignMatchmakingBotSize.value = String(serverConfiguration.value.campaignMatchmakingBotSize)
     isConfiguredCampaignBotSquadMirroringEnabled.value = serverConfiguration.value.isCampaignBotSquadMirroringEnabled
     if (isNetworkChanged) {
@@ -782,11 +805,6 @@ async function applyServerConfiguration() {
   }
   catch (error) { serverConfigurationMessage.value = visibleLauncherText(error) }
   finally { isServerConfigurationBusy.value = false }
-}
-
-function chooseRemoteProfileKey(key) {
-  const profile = remoteProfiles.value.find(candidate => `${candidate.serverAddress}:${candidate.loginName}` === key)
-  if (profile) selectRemoteProfile(profile)
 }
 
 function chooseRemoteServerAddress(address) {
@@ -931,18 +949,6 @@ async function refreshInterruptedMission() {
   catch (error) { recordError(error) }
 }
 
-async function refreshDetachedInterruptedMission() {
-  const profileName = detachedProfile.value
-  detachedInterruptedMission.value = null
-  if (!profileName || profileName === '__create__' || !status.value.isServerOnline) return
-  try {
-    const mission = await GetInterruptedMission(profileName)
-    if (detachedProfile.value === profileName && mission?.isAvailable) {
-      detachedInterruptedMission.value = mission
-    }
-  }
-  catch (error) { recordError(error) }
-}
 
 async function chooseProfile(profileName) {
   selectedProfile.value = profileName
@@ -950,14 +956,7 @@ async function chooseProfile(profileName) {
 }
 
 
-function chooseDetachedProfile(profileName) {
-  detachedProfile.value = profileName
-}
 
-async function createDetachedProfile() {
-  showPage('play')
-  await chooseProfile('__create__')
-}
 
 
 async function play() {
@@ -998,29 +997,23 @@ async function replaceRunningGame() {
 }
 
 async function launchSelectedProfile() {
+  const profileName = selectedProfile.value
   await Play()
-  markProfilePlayed(selectedProfile.value)
+  markProfilePlayed(profileName)
   activeClientRoute.value = 'play'
   isGameLaunchedThisSession.value = true
 }
 
 async function startFresh() {
   if (isMissionChoiceBusy.value) return
-  const isDetached = activePage.value === 'launcher'
-  const profileName = isDetached ? detachedProfile.value : selectedProfile.value
+  const profileName = selectedProfile.value
   if (!profileName || profileName === '__create__') return
   isMissionChoiceBusy.value = true
   try {
     await DiscardInterruptedMission(profileName)
-    if (isDetached) {
-      detachedInterruptedMission.value = null
-      await launchDetachedProfile(profileName)
-      await refreshRunningProfiles()
-    } else {
-      interruptedMission.value = null
-      await applyIdentity(profileName)
-      await launchSelectedProfile()
-    }
+    interruptedMission.value = null
+    await applyIdentity(profileName)
+    await launchSelectedProfile()
   }
   catch (error) { recordError(error) }
   finally { isMissionChoiceBusy.value = false }
@@ -1031,6 +1024,12 @@ async function deleteProfile() {
   if (!profile || isBusy.value) return
   isProfileDeletionBusy.value = true
   try {
+    if (profile.isModded) {
+      await DeleteModProfile(profile.loginName)
+      profilePendingDelete.value = null
+      await modPage.value?.refresh()
+      return
+    }
     await DeleteProfile(profile.loginName)
     if (identity.value === profile.loginName) {
       localStorage.removeItem('darkspinner.identity')
@@ -1040,10 +1039,6 @@ async function deleteProfile() {
       localStorage.removeItem('darkspinner.selectedProfile')
       selectedProfile.value = ''
     }
-    if (detachedProfile.value === profile.loginName) {
-      localStorage.removeItem('darkspinner.detachedProfile')
-      detachedProfile.value = ''
-    }
     profilePendingDelete.value = null
     await refreshProfiles()
   }
@@ -1052,18 +1047,21 @@ async function deleteProfile() {
 }
 
 function requestDeleteProfile() {
-  if (!selectedProfileRecord.value || isBusy.value) return
-  profilePendingDelete.value = selectedProfileRecord.value
+  if (isProfileActionDisabled.value) return
+  const isModded = activePage.value === 'mod'
+  const profile = isModded
+    ? modProfiles.value.find(candidate => candidate.loginName === selectedModProfile.value)
+    : selectedProfileRecord.value
+  if (!profile) return
+  profilePendingDelete.value = { ...profile, isModded }
 }
 
-function requestDetachedProfileDelete() {
-  if (!detachedProfileRecord.value || isBusy.value || isDetachedLaunchBusy.value) return
-  profilePendingDelete.value = detachedProfileRecord.value
-}
 
 function requestResetProfileDisplay(profile) {
+  const isModded = activePage.value === 'mod'
+  if (isModded) profile = modProfiles.value.find(candidate => candidate.loginName === selectedModProfile.value)
   if (!profile || isProfileActionDisabled.value) return
-  profilePendingDisplayReset.value = profile
+  profilePendingDisplayReset.value = { ...profile, isModded }
 }
 
 async function resetProfileDisplay() {
@@ -1071,7 +1069,8 @@ async function resetProfileDisplay() {
   if (!profile || isProfileActionDisabled.value) return
   isProfileDisplayResetBusy.value = true
   try {
-    await ResetProfileDisplay(profile.loginName, profile.serverAddress || '')
+    if (profile.isModded) await ResetModProfileDisplay(profile.loginName)
+    else await ResetProfileDisplay(profile.loginName, profile.serverAddress || '')
     profilePendingDisplayReset.value = null
   }
   catch (error) { recordError(error) }
@@ -1381,13 +1380,14 @@ function handleLauncherInteraction(event) {
   suppressAutoLaunch()
 }
 
-function handlePlayButton() {
-  if (isAutoLaunchCounting.value) {
-    cancelAutoLaunchCountdown()
+function handlePlayButton(event) {
+  if (activePage.value === 'play' && event?.shiftKey) {
+    suppressAutoLaunch()
+    void startAdditionalLocalGame()
     return
   }
-  if (activePage.value === 'launcher') {
-    void startDetachedGame()
+  if (isAutoLaunchCounting.value) {
+    cancelAutoLaunchCountdown()
     return
   }
   if (activePage.value === 'remote') {
@@ -1402,18 +1402,13 @@ function handlePlayButton() {
 }
 
 async function stopActiveClient() {
-	if (isClientStopBusy.value) return
-	const isDetached = activePage.value === 'launcher'
-	if (!isDetached && !isAttachedKillVisible.value) return
-	isClientStopBusy.value = true
-	cancelAutoLaunchCountdown()
-	try {
-		if (isDetached) await CloseDetachedGameInstances()
-		else {
-			await CloseRunningGame()
-			activeClientRoute.value = ''
-		}
-		await refreshRunningProfiles()
+  if (isClientStopBusy.value || !isAttachedKillVisible.value) return
+  isClientStopBusy.value = true
+  cancelAutoLaunchCountdown()
+  try {
+    await CloseRunningGame()
+    activeClientRoute.value = ''
+    await refreshRunningProfiles()
   }
   catch (error) { recordError(error) }
   finally { isClientStopBusy.value = false }
@@ -1421,11 +1416,7 @@ async function stopActiveClient() {
 
 function showPage(page) {
   if (page === activePage.value) return
-  isServerRulesOpen.value = false
   suppressAutoLaunch()
-  if (page === 'launcher') {
-    void refreshDetachedInterruptedMission()
-  }
   if (page === 'remote') {
     void refreshRemoteProfiles()
   }
@@ -1433,6 +1424,7 @@ function showPage(page) {
     void refreshServerConfiguration()
     void refreshIntegrations()
   }
+  if (['play', 'remote', 'mod'].includes(page)) launchPage.value = page
   activePage.value = page
 }
 
@@ -1457,27 +1449,27 @@ async function removeIntegration(kind) {
   finally { isManagementBusy.value = false }
 }
 
-async function startDetachedGame() {
-  if (!detachedProfile.value || isDetachedLaunchBusy.value) return
-  isDetachedLaunchBusy.value = true
+
+function updateShiftKey(event) {
+  isShiftHeld.value = event.shiftKey
+}
+
+function clearShiftKey() {
+  isShiftHeld.value = false
+}
+
+async function startAdditionalLocalGame() {
+  if (!isAdditionalLaunchReady.value) return
+  const profileName = selectedProfile.value
+  isAdditionalLaunchBusy.value = true
   try {
-    const profileName = detachedProfile.value
-    const offeredGameID = detachedInterruptedMission.value?.gameId
-    const mission = await GetInterruptedMission(profileName)
-    if (detachedProfile.value !== profileName) return
-    detachedInterruptedMission.value = mission?.isAvailable ? mission : null
-    if (mission?.isAvailable && offeredGameID !== mission.gameId) return
-    await launchDetachedProfile(profileName)
+    await StartDetachedGameInstance(profileName)
+    markProfilePlayed(profileName)
+    isGameLaunchedThisSession.value = true
     await refreshRunningProfiles()
   }
   catch (error) { recordError(error) }
-  finally { isDetachedLaunchBusy.value = false }
-}
-
-async function launchDetachedProfile(profileName) {
-  await StartDetachedGameInstance(profileName)
-  markProfilePlayed(profileName)
-  isGameLaunchedThisSession.value = true
+  finally { isAdditionalLaunchBusy.value = false }
 }
 
 async function uninstallDarkspinner() {
@@ -1519,15 +1511,12 @@ async function copyLauncherFailure() {
 </script>
 
 <template>
-  <main class="spinner-shell" :class="{ onboarding:isInstallationRequired, management:['launcher', 'remote', 'config', 'mod'].includes(activePage), 'remote-accent':activePage === 'remote', 'detached-accent':activePage === 'launcher', 'mod-accent':activePage === 'mod' }" @pointerdown.capture="handleLauncherInteraction" @keydown.capture="handleLauncherInteraction">
+  <main class="spinner-shell" :class="{ onboarding:isInstallationRequired, management:['remote', 'config', 'mod'].includes(activePage), 'remote-accent':activePage === 'remote', 'mod-accent':activePage === 'mod' }" @pointerdown.capture="handleLauncherInteraction" @keydown.capture="handleLauncherInteraction">
     <Tabs :model-value="activePage" @update:model-value="showPage" class="workspace" :class="{ 'navigation-hidden':isInstallationRequired }">
       <div v-if="!isInstallationRequired" class="workspace-navigation">
         <button class="workspace-wordmark" type="button" aria-label="Show Dark Spin credits" @click="isCreditsOpen = true"><span>DARK</span><strong>SPIN</strong></button>
         <TabsList aria-label="Launcher pages">
-            <TabsTrigger value="play" :disabled="luaConsole.isSelected">Launch</TabsTrigger>
-            <TabsTrigger value="mod" :disabled="luaConsole.isSelected">Mod</TabsTrigger>
-            <TabsTrigger v-if="isExperimentalLauncherFeatureVisible" value="remote" :disabled="luaConsole.isSelected">Remote</TabsTrigger>
-            <TabsTrigger v-if="isExperimentalLauncherFeatureVisible" value="launcher" :disabled="luaConsole.isSelected">Detached</TabsTrigger>
+            <TabsTrigger :value="launchPage" :disabled="luaConsole.isSelected">Launch</TabsTrigger>
             <TabsTrigger value="config" :disabled="luaConsole.isSelected">Config</TabsTrigger>
             <TabsTrigger v-if="luaConsole.isAvailable" value="lua">Lua</TabsTrigger>
         </TabsList>
@@ -1574,18 +1563,7 @@ async function copyLauncherFailure() {
         <Card class="bay launcher-bay">
           <div class="launch-pane">
             <div class="profile-core remote-profile-core">
-              <div class="pilot-select-row">
-                <Button variant="outline" class="identity-create" type="button" :disabled="isRemoteBusy || !profileAvatars.length" @click="beginRemoteRegistration">+ NEW</Button>
-                <Select v-if="remoteProfiles.length" :model-value="selectedRemoteProfile ? `${selectedRemoteProfile.serverAddress}:${selectedRemoteProfile.loginName}` : undefined" @update:model-value="chooseRemoteProfileKey" :disabled="isRemoteBusy">
-                  <SelectTrigger class="profile-select-trigger" aria-label="Remote Crogenitor"><SelectValue>{{ selectedRemoteProfileLabel }}</SelectValue></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem v-for="profile in remoteProfiles" :key="`${profile.serverAddress}:${profile.loginName}`" :value="`${profile.serverAddress}:${profile.loginName}`">
-                      <span class="profile-option profile-detail-option"><span class="profile-option-photo"><img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt=""></span><span class="profile-option-copy"><strong>{{ profile.displayName }}</strong><small>{{ profile.serverAddress }}</small><small class="remote-profile-state" :class="{ online:remoteCheckFor(profile.serverAddress)?.isOnline, mismatch:remoteCheckFor(profile.serverAddress)?.isOnline && !remoteCheckFor(profile.serverAddress)?.isVersionMatched }"><span aria-hidden="true">●</span> {{ remoteProfileState(profile) }}</small></span><span class="profile-option-level">LEVEL {{ profile.crogenitorLevel }}</span><small class="profile-option-last-played">LAST PLAYED {{ profileLastPlayedDate(profile) }}</small></span>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-                <CrogenitorActions v-if="remoteProfiles.length" :disabled="isProfileActionDisabled || isRemoteBusy || !selectedRemoteProfile" @reset-display="requestResetProfileDisplay(selectedRemoteProfile)" @delete="requestRemoteProfileDelete" />
-              </div>
+              <LaunchCrogenitorPicker :profiles="launchProfiles" :selected-key="selectedLaunchKey" :is-creation-disabled="isBusy" :is-disabled="isRemoteBusy || (activePage === 'mod' && isModBusy)" :is-action-disabled="isProfileActionDisabled" :is-remote-available="isExperimentalLauncherFeatureVisible" :is-mod="activePage === 'mod'" @select="chooseLaunchProfile" @create="createLaunchProfile" @edit="modPage?.editProfile()" @reset-display="requestResetProfileDisplay(activePage === 'remote' ? selectedRemoteProfile : selectedProfileRecord)" @delete="activePage === 'remote' ? requestRemoteProfileDelete() : requestDeleteProfile()" />
               <div v-if="selectedRemoteProfile" class="launch-profile-summary">
                 <div class="profile-info-card remote-profile-info-card" :aria-label="`${selectedRemoteProfileLabel} remote profile summary`">
                   <time v-if="profileCreateDate(selectedRemoteProfile)" class="profile-create-date" :datetime="selectedRemoteProfile.createDt">{{ profileCreateDate(selectedRemoteProfile) }}</time>
@@ -1624,94 +1602,114 @@ async function copyLauncherFailure() {
     </section></TabsContent>
 
     <TabsContent v-else-if="activePage === 'config'" value="config" as-child><section class="management-frame config-frame">
-      <div class="config-toolbar">
-        <Button variant="outline" type="button" @click="isServerRulesOpen = true">SERVER RULES</Button>
-      </div>
-      <div class="config-grid">
-        <Card class="management-card config-port-card">
-          <template v-if="isExperimentalLauncherFeatureVisible">
-            <label class="management-toggle config-multiplayer"><Checkbox v-model="isConfiguredMultiplayerEnabled" :disabled="isServerConfigurationBusy" /><span><strong>ALLOW MULTIPLAYER CONNECTIONS</strong><small>Still under development. Listen on LAN interfaces. Windows may request firewall access when enabled.</small></span></label>
-            <label for="config-server-port">PORT</label>
-            <Input id="config-server-port" v-model.number="configuredServerPort" type="number" min="1" max="65534" inputmode="numeric" :disabled="isServerConfigurationBusy" />
-          </template>
-          <label class="management-toggle"><Checkbox v-model="isConfiguredDedicated" :disabled="isServerConfigurationBusy" /><span><strong>DEDICATED SERVER</strong><small>Allow remote account login. Uses a private signing secret and a reachable advertised IPv4.</small></span></label>
-          <label for="config-bind-host">LISTEN IPv4</label>
-          <Input id="config-bind-host" v-model="configuredBindHost" placeholder="Automatic" :disabled="isServerConfigurationBusy" />
-          <label for="config-advertised-host">ADVERTISED IPv4</label>
-          <Input id="config-advertised-host" v-model="configuredAdvertisedHost" placeholder="127.0.0.1" :disabled="isServerConfigurationBusy" />
-          <label class="config-locale" for="config-client-locale"><strong>LANGUAGE</strong></label>
-          <Select v-model="configuredLocale" :disabled="isServerConfigurationBusy">
-            <SelectTrigger id="config-client-locale" class="w-full"><SelectValue /></SelectTrigger>
-            <SelectContent>
-            <SelectItem v-for="locale in serverConfiguration.locales" :key="locale.code" :value="locale.code">{{ locale.label }} — {{ locale.code }}</SelectItem>
-          </SelectContent>
-          </Select>
-          <label class="config-locale" for="config-snapshot-mode"><strong>SYNC SNAPSHOT</strong></label>
-          <Select v-model="configuredSnapshotMode" :disabled="isServerConfigurationBusy">
-            <SelectTrigger id="config-snapshot-mode" class="w-full"><SelectValue /></SelectTrigger>
-            <SelectContent>
-            <SelectItem value="off">OFF — no rolling capture</SelectItem>
-            <SelectItem value="manual">MANUAL — capture for /ss dump</SelectItem>
-            <SelectItem value="auto">AUTO — capture and detect ordering anomalies</SelectItem>
-          </SelectContent>
-          </Select>
-          <label class="management-toggle"><Checkbox :model-value="status.isIntroSkipped" :disabled="isBusy || isServerConfigurationBusy" @update:model-value="setSkipIntro" /><span><strong>SKIP INTRO MOVIES</strong><small>Use the client's Escape handling for opening movies. Applies to new game instances.</small></span></label>
-          <label class="management-toggle"><Checkbox :model-value="status.isCinematicSkipped" :disabled="isBusy || isServerConfigurationBusy" @update:model-value="setSkipCinematic" /><span><strong>SKIP IN-GAME CINEMATICS</strong><small>Use the client's Escape handling for skippable cinematics after the tutorial introduction. Applies to new game instances.</small></span></label>
-          <label class="config-locale" for="config-native-ui-scale"><strong>NATIVE UI SCALE — {{ configuredNativeUIScalePercent }}%</strong></label>
-          <input id="config-native-ui-scale" v-model.number="configuredNativeUIScalePercent" type="range" min="100" max="300" step="5" :disabled="isServerConfigurationBusy" aria-label="Native UI scale" />
-          <small>Enlarge the native interface, profile, embedded pages, and portrait context menu. Other Flash screens keep their existing size. Applies to new game instances.</small>
-          <template v-if="wineRunnerConfiguration.isSupported">
-            <div class="config-wine-runner-heading">
-              <label class="config-locale" for="config-wine-runner"><strong>WINE RUNTIME</strong></label>
-              <Button variant="outline" size="sm" type="button" :disabled="isWineRunnerBusy || isServerConfigurationBusy" @click="scanWineRunners">{{ isWineRunnerBusy ? 'SCANNING...' : 'RESCAN' }}</Button>
-            </div>
-            <Select v-model="configuredWineRunner" :disabled="isWineRunnerBusy || isServerConfigurationBusy">
-              <SelectTrigger id="config-wine-runner" class="w-full"><SelectValue /></SelectTrigger>
-              <SelectContent>
-              <SelectItem v-for="runner in wineRunnerConfiguration.runners" :key="runner.path || systemWineRunner" :value="runner.path || systemWineRunner" :title="runner.path">{{ wineRunnerLabel(runner) }}</SelectItem>
-            </SelectContent>
-            </Select>
-          </template>
-          <label class="config-locale" for="config-campaign-bot-size"><strong>CAMPAIGN AI PLAYERS</strong></label>
-          <Select v-model="configuredCampaignMatchmakingBotSize" :disabled="isServerConfigurationBusy">
-            <SelectTrigger id="config-campaign-bot-size" class="w-full"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="1">1 BOT</SelectItem>
-              <SelectItem value="2">2 BOTS</SelectItem>
-              <SelectItem value="3">3 BOTS</SelectItem>
-            </SelectContent>
-          </Select>
-          <small>Maximum AI players added to a campaign match. Each bot has its own squad. Applies to new matches.</small>
-          <label class="management-toggle"><Checkbox v-model="isConfiguredCampaignBotSquadMirroringEnabled" :disabled="isServerConfigurationBusy" /><span><strong>USE SQUADS FOR BOTS</strong><small>Copy unused unlocked PvE squads into campaign bots. Turn off to generate bot squads instead.</small></span></label>
+      <Tabs v-model="configTab" :unmount-on-hide="false" class="config-tabs">
+        <TabsList aria-label="Configuration sections">
+          <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger v-if="isExperimentalLauncherFeatureVisible" value="multiplayer">Multiplayer</TabsTrigger>
+          <TabsTrigger value="spore">Spore</TabsTrigger>
+          <TabsTrigger value="server-rules">Server Rules</TabsTrigger>
+          <TabsTrigger value="advanced">Advanced</TabsTrigger>
+        </TabsList>
+        <TabsContent value="general">
+          <div class="config-general-grid">
+            <Card class="management-card config-port-card">
+              <label class="config-locale" for="config-client-locale"><strong>LANGUAGE</strong></label>
+              <Select v-model="configuredLocale" @update:model-value="saveGeneralConfiguration" :disabled="isServerConfigurationBusy">
+                <SelectTrigger id="config-client-locale" class="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                <SelectItem v-for="locale in serverConfiguration.locales" :key="locale.code" :value="locale.code">{{ locale.label }} — {{ locale.code }}</SelectItem>
+              </SelectContent>
+              </Select>
+              <label class="management-toggle config-skip-intro"><Checkbox :model-value="status.isIntroSkipped" :disabled="isBusy || isServerConfigurationBusy" @update:model-value="setSkipIntro" /><span><strong>SKIP INTRO MOVIES</strong></span></label>
+              <template v-if="wineRunnerConfiguration.isSupported">
+                <div class="config-wine-runner-heading">
+                  <label class="config-locale" for="config-wine-runner"><strong>WINE RUNTIME</strong></label>
+                  <Button variant="outline" size="sm" type="button" :disabled="isWineRunnerBusy || isServerConfigurationBusy" @click="scanWineRunners">{{ isWineRunnerBusy ? 'SCANNING...' : 'RESCAN' }}</Button>
+                </div>
+                <Select v-model="configuredWineRunner" @update:model-value="saveGeneralConfiguration" :disabled="isWineRunnerBusy || isServerConfigurationBusy">
+                  <SelectTrigger id="config-wine-runner" class="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                  <SelectItem v-for="runner in wineRunnerConfiguration.runners" :key="runner.path || systemWineRunner" :value="runner.path || systemWineRunner" :title="runner.path">{{ wineRunnerLabel(runner) }}</SelectItem>
+                </SelectContent>
+                </Select>
+              </template>
+            </Card>
+            <Card class="management-card config-port-card">
+              <label class="config-locale" for="config-campaign-bot-size"><strong>MATCHMAKING</strong></label>
+              <Select v-model="configuredCampaignMatchmakingBotSize" @update:model-value="saveGeneralConfiguration" :disabled="isServerConfigurationBusy">
+                <SelectTrigger id="config-campaign-bot-size" class="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">1 BOT</SelectItem>
+                  <SelectItem value="2">2 BOTS</SelectItem>
+                  <SelectItem value="3">3 BOTS</SelectItem>
+                </SelectContent>
+              </Select>
+              <label class="management-toggle"><Checkbox v-model="isConfiguredCampaignBotSquadMirroringEnabled" @update:model-value="saveGeneralConfiguration" :disabled="isServerConfigurationBusy" /><span><strong>USE SQUADS FOR BOTS</strong><small>Copy unused unlocked PvE squads into matchmaking bots.</small></span></label>
+            </Card>
+          </div>
           <p v-if="serverConfigurationMessage" class="management-message">{{ serverConfigurationMessage }}</p>
-          <Button variant="default" class="config-save" type="button" :disabled="!isServerPortValid || !configuredLocale || isServerConfigurationBusy" @click="saveServerConfiguration">{{ isServerConfigurationBusy ? 'SAVING...' : 'SAVE CONFIGURATION' }}</Button>
-        </Card>
-        <Card class="management-card shortcuts-card">
-          <div class="integration-row">
-            <div><strong>START MENU</strong><small>Personal Darkspinner shortcut</small></div>
-            <span :class="{ installed:integrationStatus.isStartMenuInstalled }">{{ integrationStatus.isStartMenuInstalled ? 'INSTALLED' : 'NOT INSTALLED' }}</span>
-            <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('start-menu')">{{ integrationStatus.isStartMenuInstalled ? 'REPAIR' : 'INSTALL' }}</Button>
-            <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isStartMenuInstalled" @click="removeIntegration('start-menu')">REMOVE</Button>
+        </TabsContent>
+        <TabsContent v-if="isExperimentalLauncherFeatureVisible" value="multiplayer">
+          <div class="config-general-grid">
+            <Card class="management-card config-port-card">
+              <label class="management-toggle config-multiplayer"><Checkbox v-model="isConfiguredMultiplayerEnabled" @update:model-value="saveMultiplayerConfiguration" :disabled="isServerConfigurationBusy" /><span><strong>ALLOW MULTIPLAYER CONNECTIONS</strong></span></label>
+              <label for="config-server-port">PORT</label>
+              <Input id="config-server-port" v-model.number="configuredServerPort" @change="saveMultiplayerConfiguration" type="number" min="1" max="65534" inputmode="numeric" :disabled="isServerConfigurationBusy" />
+              <p v-if="serverConfigurationMessage" class="management-message">{{ serverConfigurationMessage }}</p>
+            </Card>
           </div>
-          <div class="integration-row">
-            <div><strong>DESKTOP</strong><small>Personal Darkspinner shortcut</small></div>
-            <span :class="{ installed:integrationStatus.isDesktopInstalled }">{{ integrationStatus.isDesktopInstalled ? 'INSTALLED' : 'NOT INSTALLED' }}</span>
-            <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('desktop')">{{ integrationStatus.isDesktopInstalled ? 'REPAIR' : 'INSTALL' }}</Button>
-            <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isDesktopInstalled" @click="removeIntegration('desktop')">REMOVE</Button>
+        </TabsContent>
+        <TabsContent value="server-rules">
+          <ServerRulesConfiguration :build-version="status.version" :is-active="configTab === 'server-rules'" :is-server-online="status.isServerOnline" :server-error="status.serverError" />
+        </TabsContent>
+        <TabsContent value="advanced">
+          <div class="config-general-grid">
+            <Card class="management-card config-port-card">
+              <label class="config-locale" for="config-snapshot-mode"><strong>SYNC SNAPSHOT</strong></label>
+              <Select v-model="configuredSnapshotMode" @update:model-value="saveSnapshotConfiguration" :disabled="isServerConfigurationBusy">
+                <SelectTrigger id="config-snapshot-mode" class="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                <SelectItem value="off">OFF — no rolling capture</SelectItem>
+                <SelectItem value="manual">MANUAL — capture for /ss dump</SelectItem>
+                <SelectItem value="auto">AUTO — capture and detect ordering anomalies</SelectItem>
+              </SelectContent>
+              </Select>
+              <label class="management-toggle"><Checkbox :model-value="status.isCinematicSkipped" :disabled="isBusy || isServerConfigurationBusy" @update:model-value="setSkipCinematic" /><span><strong>SKIP IN-GAME CINEMATICS</strong></span></label>
+              <p v-if="serverConfigurationMessage" class="management-message">{{ serverConfigurationMessage }}</p>
+            </Card>
+            <Card class="management-card shortcuts-card">
+              <div class="integration-row">
+                <div><strong>START MENU</strong><small>Personal Darkspinner shortcut</small></div>
+                <span :class="{ installed:integrationStatus.isStartMenuInstalled }">{{ integrationStatus.isStartMenuInstalled ? 'INSTALLED' : 'NOT INSTALLED' }}</span>
+                <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('start-menu')">{{ integrationStatus.isStartMenuInstalled ? 'REPAIR' : 'INSTALL' }}</Button>
+                <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isStartMenuInstalled" @click="removeIntegration('start-menu')">REMOVE</Button>
+              </div>
+              <div class="integration-row">
+                <div><strong>DESKTOP</strong><small>Personal Darkspinner shortcut</small></div>
+                <span :class="{ installed:integrationStatus.isDesktopInstalled }">{{ integrationStatus.isDesktopInstalled ? 'INSTALLED' : 'NOT INSTALLED' }}</span>
+                <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('desktop')">{{ integrationStatus.isDesktopInstalled ? 'REPAIR' : 'INSTALL' }}</Button>
+                <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isDesktopInstalled" @click="removeIntegration('desktop')">REMOVE</Button>
+              </div>
+              <div class="integration-row">
+                <div><strong>STEAM PLAY</strong><small>Route Steam launch through Darkspinner</small></div>
+                <span :class="{ installed:integrationStatus.isSteamLaunchInstalled }">{{ integrationStatus.isSteamLaunchInstalled ? 'INSTALLED' : 'NOT INSTALLED' }}</span>
+                <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('steam')">{{ integrationStatus.isSteamLaunchInstalled ? 'REPAIR' : 'INSTALL' }}</Button>
+                <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isSteamLaunchInstalled" @click="removeIntegration('steam')">REMOVE</Button>
+              </div>
+              <p class="management-message">{{ integrationStatus.message }}</p>
+              <div class="shortcut-danger">
+                <p><strong>UNINSTALL DARKSPINNER</strong><small>Remove local runtime data and owned shortcuts while preserving the installed game.</small></p>
+                <Button variant="destructive" type="button" class="danger-confirm" :disabled="isManagementBusy" @click="isUninstallConfirmOpen = true">UNINSTALL</Button>
+              </div>
+            </Card>
           </div>
-          <div class="integration-row">
-            <div><strong>STEAM PLAY</strong><small>Route Steam launch through Darkspinner</small></div>
-            <span :class="{ installed:integrationStatus.isSteamLaunchInstalled }">{{ integrationStatus.isSteamLaunchInstalled ? 'INSTALLED' : 'NOT INSTALLED' }}</span>
-            <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('steam')">{{ integrationStatus.isSteamLaunchInstalled ? 'REPAIR' : 'INSTALL' }}</Button>
-            <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isSteamLaunchInstalled" @click="removeIntegration('steam')">REMOVE</Button>
+        </TabsContent>
+        <TabsContent value="spore">
+          <div class="config-general-grid">
+            <SporeConfiguration />
           </div>
-          <p class="management-message">{{ integrationStatus.message }}</p>
-          <div class="shortcut-danger">
-            <p><strong>UNINSTALL DARKSPINNER</strong><small>Remove local runtime data and owned shortcuts while preserving the installed game.</small></p>
-            <Button variant="destructive" type="button" class="danger-confirm" :disabled="isManagementBusy" @click="isUninstallConfirmOpen = true">UNINSTALL</Button>
-          </div>
-        </Card>
-      </div>
+        </TabsContent>
+      </Tabs>
     </section></TabsContent>
 
     <TabsContent v-else-if="activePage === 'play'" value="play" as-child><section class="command-frame launch-command-frame">
@@ -1719,19 +1717,8 @@ async function copyLauncherFailure() {
         <Card class="bay launcher-bay">
           <div class="launch-pane">
             <div class="profile-core">
+              <LaunchCrogenitorPicker :profiles="launchProfiles" :selected-key="selectedLaunchKey" :is-creation-disabled="isBusy" :is-disabled="isRemoteBusy || (activePage === 'mod' && isModBusy)" :is-action-disabled="isProfileActionDisabled" :is-remote-available="isExperimentalLauncherFeatureVisible" :is-mod="activePage === 'mod'" @select="chooseLaunchProfile" @create="createLaunchProfile" @edit="modPage?.editProfile()" @reset-display="requestResetProfileDisplay(activePage === 'remote' ? selectedRemoteProfile : selectedProfileRecord)" @delete="activePage === 'remote' ? requestRemoteProfileDelete() : requestDeleteProfile()" />
               <template v-if="profiles.length">
-                <div class="pilot-select-row">
-                  <Button variant="outline" class="identity-create" type="button" :disabled="isBusy" @click="chooseProfile('__create__')">+ NEW</Button>
-                  <Select :model-value="selectedProfile" @update:model-value="chooseProfile" :disabled="isBusy">
-                  <SelectTrigger class="profile-select-trigger" aria-label="Crogenitor"><SelectValue>{{ selectedProfileLabel }}</SelectValue></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem v-for="profile in profiles" :key="profile.loginName" :value="profile.loginName">
-                      <span class="profile-option profile-detail-option"><span class="profile-option-photo"><img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt=""></span><span class="profile-option-copy"><strong>{{ profile.displayName }}</strong><small v-if="profile.isTutorialCompletionPending || profile.displayName !== profile.loginName">{{ profile.isTutorialCompletionPending ? 'Starter loadout queued' : profile.loginName }}</small></span><span class="profile-option-level">LEVEL {{ profile.crogenitorLevel }}</span><small class="profile-option-last-played">LAST PLAYED {{ profileLastPlayedDate(profile) }}</small></span>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-                  <CrogenitorActions :disabled="isProfileActionDisabled || !selectedProfileRecord" @reset-display="requestResetProfileDisplay(selectedProfileRecord)" @delete="requestDeleteProfile" />
-                </div>
                 <div class="launch-profile-summary">
                   <ProfileSummary v-if="selectedProfileRecord" :profile="selectedProfileRecord" />
                 </div>
@@ -1742,50 +1729,8 @@ async function copyLauncherFailure() {
       </div>
     </section></TabsContent>
 
-    <TabsContent v-else-if="activePage === 'launcher'" value="launcher" as-child><section class="management-frame detached-frame">
-      <div class="management-grid detached-grid">
-        <Card class="bay launcher-bay detached-card">
-          <div class="launch-pane">
-            <div class="profile-core">
-              <template v-if="profiles.length">
-                <div class="pilot-select-row">
-                  <Button variant="outline" class="identity-create" type="button" :disabled="isBusy || isDetachedLaunchBusy || isMissionChoiceBusy" @click="createDetachedProfile">+ NEW</Button>
-                  <Select :model-value="detachedProfile" @update:model-value="chooseDetachedProfile" :disabled="isDetachedLaunchBusy || isMissionChoiceBusy">
-                  <SelectTrigger class="profile-select-trigger" aria-label="Detached Crogenitor"><SelectValue>{{ detachedProfileLabel }}</SelectValue></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem v-for="profile in profiles" :key="profile.loginName" :value="profile.loginName">
-                      <span class="profile-option profile-detail-option"><span class="profile-option-photo"><img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt=""></span><span class="profile-option-copy"><strong>{{ profile.displayName }}</strong><small v-if="profile.isTutorialCompletionPending || profile.displayName !== profile.loginName">{{ profile.isTutorialCompletionPending ? 'Starter loadout queued' : profile.loginName }}</small></span><span class="profile-option-level">LEVEL {{ profile.crogenitorLevel }}</span><small class="profile-option-last-played">LAST PLAYED {{ profileLastPlayedDate(profile) }}</small></span>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-                  <CrogenitorActions :disabled="isProfileActionDisabled || isDetachedLaunchBusy || !detachedProfileRecord" @reset-display="requestResetProfileDisplay(detachedProfileRecord)" @delete="requestDetachedProfileDelete" />
-                </div>
-                <div class="launch-profile-summary">
-                  <div v-if="detachedProfileRecord" class="profile-info-card" :aria-label="`${detachedProfileLabel} detached profile summary`">
-                    <time v-if="profileCreateDate(detachedProfileRecord)" class="profile-create-date" :datetime="detachedProfileRecord.createDt">{{ profileCreateDate(detachedProfileRecord) }}</time>
-                    <div class="selected-profile-avatar-frame">
-                      <div class="selected-profile-avatar" :class="{ empty:!detachedProfileAvatar }">
-                        <img v-if="detachedProfileAvatar" :src="detachedProfileAvatar" :alt="`${detachedProfileLabel} Crogenitor photo`">
-                      </div>
-                      <span class="profile-level-badge" :aria-label="`Crogenitor level ${detachedProfileRecord.crogenitorLevel}`">{{ detachedProfileRecord.crogenitorLevel }}</span>
-                    </div>
-                    <div class="profile-info-content">
-                      <div class="profile-info-heading"><small>DETACHED CROGENITOR</small><strong>{{ detachedProfileLabel }}</strong></div>
-                      <div class="profile-progress">
-                        <span><small>CROGENITOR</small><strong>{{ detachedProfileRecord.crogenitorLevel }}</strong><em>{{ detachedProfileRecord.cumulativeXp }} XP</em></span>
-                        <span><small>PROGRESS</small><strong>{{ detachedCampaignLabel }}</strong><em>{{ detachedCampaignDetail }}</em></span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </template>
-            </div>
-          </div>
-        </Card>
-      </div>
-    </section></TabsContent>
 
-    <TabsContent v-if="!isInstallationRequired && !luaConsole.isSelected" v-show="activePage === 'mod'" value="mod" force-mount as-child><ModPage ref="modPage" :status="status" :is-active="activePage === 'mod'" @readiness="isModPlayReady = $event" @launch="activeClientRoute = 'mod'" /></TabsContent>
+    <TabsContent v-if="!isInstallationRequired && !luaConsole.isSelected" v-show="activePage === 'mod'" value="mod" force-mount as-child><ModPage ref="modPage" :status="status" :is-active="activePage === 'mod'" @configure="configTab = 'spore'; showPage('config')" @profiles="modProfiles = $event" @selection="selectedModProfile = $event" @busy="isModBusy = $event" @readiness="isModPlayReady = $event" @launch="activeClientRoute = 'mod'"><template #picker><LaunchCrogenitorPicker :profiles="launchProfiles" :selected-key="selectedLaunchKey" :is-creation-disabled="isBusy" :is-disabled="isRemoteBusy || (activePage === 'mod' && isModBusy)" :is-action-disabled="isProfileActionDisabled" :is-remote-available="isExperimentalLauncherFeatureVisible" :is-mod="activePage === 'mod'" @select="chooseLaunchProfile" @create="createLaunchProfile" @edit="modPage?.editProfile()" @reset-display="requestResetProfileDisplay(activePage === 'remote' ? selectedRemoteProfile : selectedProfileRecord)" @delete="activePage === 'remote' ? requestRemoteProfileDelete() : requestDeleteProfile()" /></template></ModPage></TabsContent>
     </Tabs>
 
     <footer :class="{ 'launch-footer':!isInstallationRequired }">
@@ -1818,10 +1763,9 @@ async function copyLauncherFailure() {
             <Button v-if="activePage === 'lua'" variant="destructive" class="launcher-action detach-action kill-detached-action" type="button" :disabled="!luaPage?.canKill" title="Terminate this scenario's owned clients and stop its server" @click="luaPage?.kill()">KILL ALL</Button>
             <Button v-if="activePage === 'lua'" variant="default" class="launcher-action play-action" type="button" :disabled="!luaPage?.canRun" @click="luaPage?.run()">{{ luaPage?.isBusy ? 'WORKING...' : 'RUN' }}</Button>
             <template v-else>
-            <Button variant="destructive" v-if="isDetachedKillVisible" class="launcher-action detach-action kill-detached-action" type="button" :disabled="isClientStopBusy" title="Close every detached or untracked game client" @click="stopActiveClient">{{ isClientStopBusy ? 'CLOSING...' : 'KILL ALL' }}</Button>
-			<Button variant="destructive" v-else-if="isAttachedKillVisible" class="launcher-action detach-action kill-detached-action" type="button" :disabled="isClientStopBusy" title="Close the active game client" @click="stopActiveClient">{{ isClientStopBusy ? 'CLOSING...' : 'KILL' }}</Button>
+			<Button variant="destructive" v-if="isAttachedKillVisible" class="launcher-action detach-action kill-detached-action" type="button" :disabled="isClientStopBusy" title="Close the active game client" @click="stopActiveClient">{{ isClientStopBusy ? 'CLOSING...' : 'KILL' }}</Button>
             <Button variant="outline" v-else-if="activeInterruptedMission" class="launcher-action detach-action mission-fresh" type="button" :disabled="!isHeaderPlayEnabled || isMissionChoiceBusy" title="Discard the interrupted deployment and start fresh" @click="startFresh">{{ isMissionChoiceBusy ? 'STARTING...' : 'START FRESH' }}</Button>
-            <Button variant="default" class="launcher-action play-action" type="button" :class="{ counting:isAutoLaunchCounting }" :disabled="activePage === 'mod' ? !isModPlayReady : activePage === 'config' || (!isHeaderPlayEnabled && !isAutoLaunchCounting)" :title="activePage === 'mod' ? 'Launch the selected modded Crogenitor' : dockPlayTitle" @click="activePage === 'mod' ? modPage?.launch() : handlePlayButton()">{{ activePage === 'mod' ? 'LAUNCH MODDED' : dockPlayLabel }}</Button>
+            <Button variant="default" class="launcher-action play-action" type="button" :class="{ counting:isAutoLaunchCounting }" :disabled="activePage === 'mod' ? !isModPlayReady : activePage === 'config' || (!(activePage === 'play' && isShiftHeld ? isAdditionalLaunchReady : isHeaderPlayEnabled) && !isAutoLaunchCounting)" :title="activePage === 'mod' ? 'Launch the selected modded Crogenitor' : dockPlayTitle" @click="activePage === 'mod' ? modPage?.launch() : handlePlayButton($event)">{{ activePage === 'mod' ? 'LAUNCH MODDED' : dockPlayLabel }}</Button>
             </template>
           </div>
         </div>
@@ -1833,7 +1777,6 @@ async function copyLauncherFailure() {
       </div>
     </footer>
 
-    <ServerRulesConfiguration v-if="isServerRulesOpen && activePage === 'config'" :build-version="status.version" @interact="handleLauncherInteraction" @close="isServerRulesOpen = false" />
 
     <LauncherDialog @interact="handleLauncherInteraction" v-if="isCreatingProfile && !['remote','config','mod'].includes(activePage)" :is-dismissible="!isFirstRunOnboarding && !isProfileCreationBusy" @close="cancelProfileCreation">
       <div class="notice-card onboarding-card profile-creation-notice">

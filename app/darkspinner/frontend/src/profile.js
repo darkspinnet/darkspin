@@ -27,6 +27,11 @@ export function profileLastPlayedDate(profile) {
   return lastPlayedDT.toISOString().slice(0, 10)
 }
 
+export function profileLastPlayedTime(profile) {
+  const timestamp = Date.parse(profile?.lastConnectionDt || profile?.lastConnectedDt || '')
+  return Number.isFinite(timestamp) ? Math.max(0, timestamp) : 0
+}
+
 export function campaignLabelFor(chainLevel) {
   if (!chainLevel) return 'TUTORIAL'
   const planet = Math.floor((chainLevel - 1) / 4) + 1

@@ -1,15 +1,18 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
-import { DialogTitle } from '@/components/ui/dialog'
-import LauncherDialog from '@/components/LauncherDialog.vue'
+import { Card } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { BrowserOpenURL, GetServerRulesConfiguration, SetServerRulesConfiguration } from '../platform'
 
-const props = defineProps({ buildVersion: { type: String, default: '' } })
-const emit = defineEmits(['close', 'interact'])
+const props = defineProps({
+  buildVersion: { type: String, default: '' },
+  isActive: Boolean,
+  isServerOnline: Boolean,
+  serverError: { type: String, default: '' },
+})
 
 const populationSelections = [
   { key: 'agentSelection', label: 'ORDINARY AGENTS', help: 'Current co-op replacements, or stage-eligible external agents in solo and co-op. Agents replace ordinary slots; Mutation Agent hordes stay separate.', options: [['current_coop', 'Current co-op policy (default)'], ['authored_external', 'Authored external roster']] },
@@ -62,6 +65,7 @@ const isEnemyPopulationValid = computed(() => {
 const isValid = computed(() => isAllyAlertValid.value && isBossSpawningValid.value && isMutationAgentValid.value && isEnemyPopulationValid.value)
 
 async function reload() {
+  if (isBusy.value || !props.isServerOnline) return
   isBusy.value = true
   isError.value = false
   message.value = ''
@@ -71,7 +75,7 @@ async function reload() {
 }
 
 async function save() {
-  if (isBusy.value || !isValid.value) return
+  if (isBusy.value || !isValid.value || !props.isServerOnline) return
   isBusy.value = true
   isError.value = false
   message.value = 'Applying server rules…'
@@ -132,7 +136,7 @@ function shareToGitHub() {
   const body = [
     '### Server rules',
     '',
-    'Settings currently shown in the Server Rules dialog; unapplied edits may be included.',
+    'Settings currently shown in the Server Rules tab; unapplied edits may be included.',
     '',
     '```toml',
     toml,
@@ -155,21 +159,23 @@ function shareToGitHub() {
   catch (error) { isError.value = true; message.value = String(error?.message || error) }
 }
 
-onMounted(reload)
+watch(() => props.isActive && props.isServerOnline, isReady => {
+  if (isReady && !configuration.value) void reload()
+}, { immediate: true })
 </script>
 
 <template>
-  <LauncherDialog :is-dismissible="!isBusy" @close="emit('close')" @interact="emit('interact', $event)">
-    <section class="server-rules-dialog">
+  <Card class="management-card server-rules-configuration">
     <header class="rules-heading">
-      <DialogTitle as="h2">SERVER RULES</DialogTitle>
+      <h2>SERVER RULES</h2>
       <Button variant="outline" type="button" :disabled="isBusy || !isValid" @click="shareToGitHub">Share to GitHub</Button>
     </header>
-    <p class="rules-description">Tune the local server. Alerts update immediately; population, boss and horde settings apply to new missions.</p>
+    <p v-if="!isServerOnline" class="management-message" :class="{ 'rules-error':serverError }" :role="serverError ? 'alert' : 'status'">{{ serverError || 'Waiting for the local server to start… Server rules will load automatically when it is ready.' }}</p>
+    <p v-else-if="isBusy && !configuration" class="management-message" role="status">Loading server rules…</p>
     <div v-if="configuration" class="rules-sections">
       <details class="rules-group">
         <summary class="rules-group-heading">
-          <span>ENEMY POPULATION</span><span class="rules-group-status" :class="{ 'rules-error': !isEnemyPopulationValid }">{{ isEnemyPopulationValid ? 'Experimental' : 'Check values' }}</span><span class="rules-chevron" aria-hidden="true"></span>
+          <span>ENEMY POPULATION</span><span class="rules-group-status" :class="{ 'rules-error': !isEnemyPopulationValid }">{{ isEnemyPopulationValid ? 'Enabled' : 'Check values' }}</span><span class="rules-chevron" aria-hidden="true"></span>
         </summary>
         <div class="rules-group-content">
           <p class="rules-description">Standing enemies along campaign routes. The current default is a server estimate, not a recovered original count. Try 18 for a modest increase from 15, then enter a new mission.</p>
@@ -191,7 +197,7 @@ onMounted(reload)
       </details>
       <details class="rules-group">
         <summary class="rules-group-heading">
-          <span>BOSS SPAWNING</span><span class="rules-group-status" :class="{ 'rules-error': !isBossSpawningValid }">{{ isBossSpawningValid ? 'Experimental' : 'Check values' }}</span><span class="rules-chevron" aria-hidden="true"></span>
+          <span>BOSS SPAWNING</span><span class="rules-group-status" :class="{ 'rules-error': !isBossSpawningValid }">{{ isBossSpawningValid ? 'Enabled' : 'Check values' }}</span><span class="rules-chevron" aria-hidden="true"></span>
         </summary>
         <div class="rules-group-content">
           <p class="rules-description">Reconstructed wave sizes and pacing. These defaults are server estimates; exact original wave counts and timing are not recovered. Authored enemy eligibility and spawn anchors still apply.</p>
@@ -262,20 +268,17 @@ onMounted(reload)
     </div>
     <p v-if="message" class="management-message" :class="{ 'rules-error':isError }" :role="isError ? 'alert' : 'status'" aria-live="polite">{{ message }}</p>
     <div class="rules-actions">
-      <Button type="button" :disabled="isBusy || !isValid" @click="save">{{ isBusy ? 'PLEASE WAIT…' : 'APPLY SERVER RULES' }}</Button>
-      <Button variant="outline" type="button" :disabled="isBusy" @click="reload">RELOAD</Button>
-      <Button variant="outline" class="rules-close" type="button" :disabled="isBusy" @click="emit('close')">CLOSE</Button>
+      <Button type="button" :disabled="isBusy || !isValid || !isServerOnline" @click="save">{{ isBusy ? 'PLEASE WAIT…' : 'APPLY SERVER RULES' }}</Button>
+      <Button variant="outline" type="button" :disabled="isBusy || !isServerOnline" @click="reload">RELOAD</Button>
     </div>
-    <p class="rules-description rules-footnote">Validated updates may reset changed sections to new defaults.</p>
-    </section>
-  </LauncherDialog>
+  </Card>
 </template>
 
 <style scoped>
 .rules-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .rules-heading h2 { font-size: 16px; font-weight: 700; margin: 0; }
 .rules-heading > button { margin-left: auto; }
-.rules-sections { display: grid; gap: 12px; margin-top: 18px; max-height: min(52dvh, 440px); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.rules-sections { display: grid; gap: 12px; margin-top: 18px; }
 .rules-group { min-width: 0; border: 1px solid var(--border); border-radius: 8px; }
 .rules-group-heading { display: flex; align-items: center; gap: 12px; padding: 14px; cursor: pointer; list-style: none; font-size: 12px; font-weight: 700; border-radius: 8px; }
 .rules-group-heading::-webkit-details-marker { display: none; }
@@ -291,9 +294,7 @@ onMounted(reload)
 .rules-numbers label { display: grid; gap: 6px; }
 strong { font-size: 11px; display: block; margin-bottom: 6px; }
 .rules-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
-.rules-close { margin-left: auto; }
 .rules-error { color: var(--destructive); }
-.rules-footnote { margin-top: 12px; }
 @media (max-width: 560px) { .rules-numbers { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .rules-chevron { transition: none; } }
 </style>

@@ -33,12 +33,15 @@ type BugReporter struct {
 }
 
 type bugMetadata struct {
-	Version      string          `json:"version"`
-	Platform     string          `json:"platform"`
-	CreatedAt    time.Time       `json:"created_at"`
-	Description  string          `json:"description"`
-	Context      chat.BugContext `json:"context"`
-	ContextError string          `json:"context_error,omitempty"`
+	ServerAddress      string          `json:"server_address,omitempty"`
+	ClientAddress      string          `json:"client_address,omitempty"`
+	IsRemoteConnection bool            `json:"is_remote_connection"`
+	Version            string          `json:"version"`
+	Platform           string          `json:"platform"`
+	CreatedAt          time.Time       `json:"created_at"`
+	Description        string          `json:"description"`
+	Context            chat.BugContext `json:"context"`
+	ContextError       string          `json:"context_error,omitempty"`
 }
 
 // NewBugReporter creates a filesystem-backed local bug reporter.
@@ -99,7 +102,9 @@ func (e *BugReporter) Report(ctx context.Context, req chat.BugCommand) (string, 
 		req.Context.UserName = req.Sender.Name
 	}
 	metadata := bugMetadata{
-		Version: version, Platform: runtime.GOOS + "/" + runtime.GOARCH,
+		ServerAddress: req.ServerAddress, ClientAddress: req.ClientAddress,
+		IsRemoteConnection: req.IsRemoteConnection,
+		Version:            version, Platform: runtime.GOOS + "/" + runtime.GOARCH,
 		CreatedAt: createdAt, Description: description,
 		Context: req.Context, ContextError: req.ContextError,
 	}
@@ -177,6 +182,13 @@ func addBugText(archive *zip.Writer, req chat.BugCommand) error {
 		return fmt.Errorf("textWrite: %w", err)
 	}
 	gameplay := req.Context
+	if req.ServerAddress != "" || req.ClientAddress != "" {
+		_, err = fmt.Fprintf(w, "Server address: %s\nClient address: %s\nRemote connection: %t\n",
+			req.ServerAddress, req.ClientAddress, req.IsRemoteConnection)
+		if err != nil {
+			return fmt.Errorf("connectionWrite: %w", err)
+		}
+	}
 	_, err = fmt.Fprintf(w, "Modded game: %t\nMods: %s\n", gameplay.IsModded, strings.Join(gameplay.ModNames, ", "))
 	if err != nil {
 		return fmt.Errorf("modContextWrite: %w", err)

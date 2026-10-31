@@ -46,6 +46,10 @@ export function CreateProfile(arg1, arg2, arg3) {
   return window['go']['main']['App']['CreateProfile'](arg1, arg2, arg3);
 }
 
+export function DeleteModProfile(arg1) {
+  return window['go']['main']['App']['DeleteModProfile'](arg1);
+}
+
 export function DeleteProfile(arg1) {
   return window['go']['main']['App']['DeleteProfile'](arg1);
 }
@@ -184,6 +188,10 @@ export function RemoveLauncherIntegration(arg1) {
 
 export function RepairLauncherIntegration(arg1) {
   return window['go']['main']['App']['RepairLauncherIntegration'](arg1);
+}
+
+export function ResetModProfileDisplay(arg1) {
+  return window['go']['main']['App']['ResetModProfileDisplay'](arg1);
 }
 
 export function ResetProfileDisplay(arg1, arg2) {

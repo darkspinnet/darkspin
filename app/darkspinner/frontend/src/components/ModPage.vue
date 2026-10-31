@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -9,11 +9,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import LauncherDialog from './LauncherDialog.vue'
 import ModPortrait from './ModPortrait.vue'
 import ProfileSummary from './ProfileSummary.vue'
-import { profileLastPlayedDate } from '../profile'
-import { BrowseModSporeDirectory, DetectModSporePath, GetModConfiguration, GetProfileAvatars, LaunchModProfile, SaveModProfile, SetModSporePath } from '../platform'
+import { GetModConfiguration, GetProfileAvatars, LaunchModProfile, SaveModProfile } from '../platform'
 
 const props = defineProps({ status:Object, isActive:Boolean })
-const emit = defineEmits(['readiness', 'launch'])
+const emit = defineEmits(['readiness', 'launch', 'configure', 'profiles', 'selection', 'busy'])
 const configuration = ref({ sporePath:'', creatures:[], heroes:[], profiles:[], sourceError:'' })
 const avatars = ref([])
 const selectedProfile = ref(localStorage.getItem('darkspinner.modProfile') || '')
@@ -26,17 +25,6 @@ const search = ref('')
 const isBusy = ref(false)
 const isConfigurationValid = ref(false)
 const error = ref('')
-const isSettingsOpen = ref(false)
-const settingsPanel = ref(null)
-
-function focusSettingsPanel(event) {
-  event.preventDefault()
-  settingsPanel.value?.focus({ preventScroll:true })
-}
-const sourcePath = ref('')
-const isBrowsing = ref(false)
-const directory = ref({ path:'', parent:'', directories:[], executables:[] })
-const browsePath = ref('')
 const isNew = ref(false)
 const isEditing = ref(false)
 const wizardStep = ref('profile')
@@ -54,27 +42,37 @@ watch(selectedCategory, () => {
   selectedHero.value = selectedCategory.value === 'Hero' ? '1667741389' : String(configuration.value.heroes.find(character => character.category === selectedCategory.value && !bindings.value.some(binding => binding.heroNoun === character.noun))?.noun || '')
 })
 
-const isLaunchReady = computed(() => props.isActive && isConfigurationValid.value && !!profile.value && !isEditing.value && !isSettingsOpen.value && !isBusy.value && props.status?.isGameReady && props.status?.isContentReady && props.status?.isPatchComplete && !['running','launching','stopping'].includes(props.status?.state))
+const isLaunchReady = computed(() => props.isActive && isConfigurationValid.value && !!profile.value && !isEditing.value && !isBusy.value && props.status?.isGameReady && props.status?.isContentReady && props.status?.isPatchComplete && !['running','launching','stopping'].includes(props.status?.state))
 const isProfileReady = computed(() => /^[A-Za-z0-9]{1,20}$/.test(name.value) && avatars.value.some(avatar => avatar.id === avatarID.value))
+watch([isBusy, isEditing], () => emit('busy', isBusy.value || isEditing.value))
 watch(isLaunchReady, isReady => emit('readiness', isReady), { immediate:true })
 
 async function launch() {
   if (!isLaunchReady.value) return
   await perform(async () => {
     await LaunchModProfile(selectedProfile.value)
+    const connectionDT = new Date().toISOString()
+    configuration.value.profiles = configuration.value.profiles.map(candidate =>
+      candidate.loginName === selectedProfile.value ? { ...candidate, lastConnectionDt:connectionDT } : candidate,
+    )
+    emit('profiles', configuration.value.profiles)
     emit('launch')
   })
 }
-defineExpose({ launch })
+function selectProfile(loginName) {
+  selectedProfile.value = loginName
+  loadProfile()
+}
+defineExpose({ launch, newProfile, editProfile, selectProfile, refresh })
 
 function heroFor(noun) { return configuration.value.heroes.find(candidate => candidate.noun === noun) }
 function creatureFor(id) { return configuration.value.creatures.find(candidate => candidate.id === id) }
 
-async function refresh(isDraftPreserved = false) {
+async function refresh() {
   configuration.value = await GetModConfiguration()
-  sourcePath.value = configuration.value.sporePath
+  emit('profiles', configuration.value.profiles)
   if (!profile.value) selectedProfile.value = configuration.value.profiles[0]?.loginName || ''
-  if (!isDraftPreserved) loadProfile()
+  loadProfile()
   isConfigurationValid.value = true
 }
 
@@ -89,6 +87,7 @@ async function perform(operation) {
 function loadProfile() {
   bindings.value = (profile.value?.bindings || []).map(binding => ({ ...binding }))
   localStorage.setItem('darkspinner.modProfile', selectedProfile.value)
+  emit('selection', selectedProfile.value)
   isEditing.value = false
   isNew.value = false
 }
@@ -132,32 +131,26 @@ async function save(isResyncRequested = false) {
   })
 }
 
-async function browse(path) {
-  directory.value = await BrowseModSporeDirectory(path)
-  browsePath.value = directory.value.path
-  isBrowsing.value = true
-}
-
 async function validate() {
+  if (!props.status?.isServerOnline || !props.status?.isContentReady) return
   await perform(async () => {
     isConfigurationValid.value = false
     await refresh()
     if (!avatars.value.length) avatars.value = await GetProfileAvatars()
-    if (props.isActive && !configuration.value.sporePath) isSettingsOpen.value = true
   })
 }
 
 watch(() => props.isActive, isActive => {
   if (isActive) {
-    void validate()
+    if (!isEditing.value) void validate()
     return
   }
-  isSettingsOpen.value = false
-  isBrowsing.value = false
   loadProfile()
 }, { flush:'sync' })
 
-onMounted(validate)
+watch(() => props.status?.isServerOnline && props.status?.isContentReady, isReady => {
+  if (isReady && !isEditing.value) void validate()
+}, { immediate:true })
 </script>
 
 <template>
@@ -166,20 +159,8 @@ onMounted(validate)
       <Card class="bay launcher-bay">
         <div class="launch-pane">
           <div class="profile-core">
-            <div class="pilot-select-row mod-profile-toolbar">
-              <Button variant="outline" class="identity-create" :disabled="isBusy || !isConfigurationValid || !avatars.length || isEditing" @click="newProfile">+ NEW</Button>
-              <Select v-model="selectedProfile" :disabled="isBusy || !isConfigurationValid || isEditing || !configuration.profiles.length" @update:model-value="loadProfile">
-                <SelectTrigger class="profile-select-trigger" aria-label="Modded Crogenitor"><SelectValue placeholder="SELECT CROGENITOR">{{ profile?.displayName || profile?.loginName || 'SELECT CROGENITOR' }}</SelectValue></SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="candidate in configuration.profiles" :key="candidate.loginName" :value="candidate.loginName">
-                    <span class="profile-option profile-detail-option"><span class="profile-option-photo"><img v-if="candidate.avatarUrl" :src="candidate.avatarUrl" alt=""></span><span class="profile-option-copy"><strong>{{ candidate.displayName || candidate.loginName }}</strong><small v-if="candidate.isTutorialCompletionPending">Starter loadout queued</small></span><span class="profile-option-level">LEVEL {{ candidate.crogenitorLevel }}</span><small class="profile-option-last-played">LAST PLAYED {{ profileLastPlayedDate(candidate) }}</small></span>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <Button variant="outline" class="mod-profile-edit" :disabled="isBusy || !isConfigurationValid || !profile || isEditing" @click="editProfile">EDIT CROGENITOR</Button>
-              <Button variant="outline" class="mod-settings-button" :disabled="isBusy || isEditing" @click="isSettingsOpen = true; isBrowsing = false">SETTINGS</Button>
-            </div>
-            <p v-if="error && !isEditing && !isSettingsOpen" class="mod-error" role="alert">{{ error }}</p>
+            <slot name="picker" />
+            <p v-if="error && !isEditing" class="mod-error" role="alert">{{ error }}</p>
             <div class="launch-profile-summary">
               <ProfileSummary v-if="profile" :profile="profile" label="MODDED CROGENITOR" />
               <div v-else-if="isConfigurationValid && !isBusy" class="mod-empty"><h2>CREATE YOUR CROGENITOR</h2><p>Create a modded Crogenitor and choose creature bindings in the creation wizard.</p><Button :disabled="!avatars.length" @click="newProfile">+ NEW CROGENITOR</Button></div>
@@ -189,7 +170,7 @@ onMounted(validate)
       </Card>
     </div>
 
-    <LauncherDialog v-if="isEditing && !isSettingsOpen" :is-dismissible="!isBusy" :width="wizardStep === 'bindings' ? 980 : undefined" @close="loadProfile">
+    <LauncherDialog v-if="isEditing" :is-dismissible="!isBusy" :width="wizardStep === 'bindings' ? 980 : undefined" @close="loadProfile">
       <div class="notice-card onboarding-card profile-creation-notice mod-editor">
         <p v-if="isNew" class="eyebrow">{{ wizardStep === 'profile' ? 'STEP 1 OF 2 · CROGENITOR' : 'STEP 2 OF 2 · CREATURE BINDINGS' }}</p>
         <DialogTitle as="h2">{{ isNew ? 'CREATE YOUR CROGENITOR' : `EDIT ${profile?.displayName || selectedProfile}` }}</DialogTitle>
@@ -204,7 +185,7 @@ onMounted(validate)
           <label class="tutorial-skip"><Checkbox v-model="isTutorialSkipped" :disabled="isBusy" /><span><strong>SKIP TUTORIAL</strong><small>Begin on the ship with tutorial progression, starter heroes, DNA, and reward gear already granted.</small></span></label>
         </template>
         <template v-else>
-          <div v-if="!configuration.sporePath || configuration.sourceError" class="mod-source-status"><p class="mod-error">{{ configuration.sourceError || 'Set your installation folder to choose creatures.' }}</p><Button variant="outline" :disabled="isBusy" @click="isSettingsOpen = true; isBrowsing = false">MOD SETTINGS</Button></div>
+          <div v-if="!configuration.sporePath || configuration.sourceError" class="mod-source-status"><p class="mod-error">{{ configuration.sourceError || 'Set your Spore folder in Config to choose creatures.' }}</p><Button variant="outline" :disabled="isBusy" @click="emit('configure')">OPEN CONFIG</Button></div>
           <div class="mod-grid">
             <Card class="mod-panel">
               <h3>CREATURE &rarr; CHARACTER</h3>
@@ -245,31 +226,17 @@ onMounted(validate)
         </div>
       </div>
     </LauncherDialog>
-
-    <LauncherDialog v-if="isSettingsOpen" :is-dismissible="!isBusy" @close="isSettingsOpen = false" @open-auto-focus="focusSettingsPanel">
-      <div ref="settingsPanel" class="notice-card mod-settings" tabindex="-1">
-        <DialogTitle as="h2">MOD SETTINGS</DialogTitle>
-        <p class="mod-copy">Select your installation folder for SporeApp.exe</p>
-        <label for="mod-spore-path">INSTALLATION PATH</label><Input id="mod-spore-path" v-model="sourcePath" :disabled="isBusy" />
-        <div class="mod-actions"><Button variant="outline" :disabled="isBusy" @click="perform(async () => { sourcePath = await DetectModSporePath(); await refresh(true) })">DETECT</Button><Button variant="outline" :disabled="isBusy" @click="perform(() => browse(sourcePath))">BROWSE</Button></div>
-        <div v-if="isBrowsing" class="mod-browser"><label>FIND SPOREAPP.EXE</label><div class="mod-actions"><Input v-model="browsePath" aria-label="Browse folder path" @keyup.enter="perform(() => browse(browsePath))" /><Button variant="outline" :disabled="isBusy" @click="perform(() => browse(browsePath))">GO</Button></div><button type="button" :disabled="isBusy" @click="perform(() => browse(directory.parent))">↑ PARENT FOLDER</button><div class="mod-directory-list"><button v-for="path in directory.directories" :key="path" type="button" :disabled="isBusy" @click="perform(() => browse(path))">▸ {{ path.split(/[\\/]/).pop() }}</button><button v-for="path in directory.executables" :key="path" type="button" :disabled="isBusy" @click="sourcePath = path; isBrowsing = false">SELECT {{ path.split(/[\\/]/).pop() }}</button></div></div>
-        <p v-if="error" class="mod-error" role="alert">{{ error }}</p>
-        <div class="mod-actions"><Button variant="outline" :disabled="isBusy" @click="isSettingsOpen = false">CLOSE</Button><Button :disabled="isBusy || !sourcePath" @click="perform(async () => { await SetModSporePath(sourcePath); await refresh(true); isSettingsOpen = false })">SAVE SOURCE</Button></div>
-      </div>
-    </LauncherDialog>
   </section>
 </template>
 
 <style scoped>
-.mod-profile-edit, .mod-settings-button { height:40px; font-size:10px; padding-inline:12px; border-radius:0; }
-.mod-settings-button { border-radius:0 var(--radius) var(--radius) 0; }
 .mod-copy, .mod-panel small { color:var(--muted-foreground); font-size:12px; line-height:1.5; }
 .mod-grid { display:grid; grid-template-columns:minmax(0, 1.3fr) minmax(0, 1fr); gap:16px; }
 .mod-selectors { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; }
 .mod-selector { display:flex; flex-direction:column; gap:8px; min-width:0; }
 .mod-panel { padding:16px; display:flex; flex-direction:column; gap:12px; min-width:0; }
 .mod-panel h3 { font-size:12px; letter-spacing:.12em; margin:0; }
-.mod-panel label, .mod-settings label { display:flex; gap:10px; flex-wrap:wrap; font-size:11px; letter-spacing:.08em; align-items:center; }
+.mod-panel label { display:flex; gap:10px; flex-wrap:wrap; font-size:11px; letter-spacing:.08em; align-items:center; }
 .mod-option { display:flex; gap:12px; align-items:center; min-height:44px; }
 .mod-panel :deep([data-slot="select-trigger"]) { width:100%; height:40px; min-width:0; overflow:hidden; }
 .mod-selector .mod-option { min-height:28px; gap:8px; font-size:12px; overflow:hidden; white-space:nowrap; }
@@ -279,17 +246,12 @@ onMounted(validate)
 .mod-binding { display:flex; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid var(--border); }
 .mod-binding-name { flex:1; min-width:0; overflow-wrap:anywhere; font-size:13px; }
 .mod-binding-actions { display:flex; flex-direction:column; gap:8px; }
-.mod-binding-actions button, .mod-browser button { color:var(--primary); font-size:11px; text-align:left; cursor:pointer; }
+.mod-binding-actions button { color:var(--primary); font-size:11px; text-align:left; cursor:pointer; }
 .mod-error { color:#ff9b8c; font-size:13px; overflow-wrap:anywhere; }
-.mod-settings { display:flex; flex-direction:column; gap:16px; }
-.mod-settings:focus { outline:none; }
 .mod-actions { display:flex; align-items:center; gap:12px; justify-content:flex-end; }
-.mod-browser { display:flex; flex-direction:column; gap:12px; }
-.mod-directory-list { display:flex; flex-direction:column; gap:12px; max-height:240px; overflow:auto; padding:12px; background:var(--muted); }
 .mod-selection { max-height:360px; }
 .mod-empty { display:flex; flex-direction:column; gap:16px; text-align:center; align-items:center; color:var(--muted-foreground); font-size:13px; }
 .mod-empty h2 { color:var(--foreground); }
 .mod-source-status { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
 @media (max-width:800px) { .mod-grid { grid-template-columns:1fr; } }
-@media (max-width:560px) { .mod-profile-toolbar { flex-wrap:wrap; gap:8px; } .mod-profile-toolbar > * { margin-left:0; border-radius:var(--radius); } .mod-profile-toolbar > .profile-select-trigger { min-width:160px; } }
 </style>

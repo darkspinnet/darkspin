@@ -25,6 +25,8 @@ export function CompactSnapshots():Promise<main.SnapshotCompactResult>;
 
 export function CreateProfile(arg1:string,arg2:number,arg3:boolean):Promise<void>;
 
+export function DeleteModProfile(arg1:string):Promise<void>;
+
 export function DeleteProfile(arg1:string):Promise<void>;
 
 export function DeleteRemoteProfile(arg1:string,arg2:string,arg3:string):Promise<void>;
@@ -94,6 +96,8 @@ export function RelocateToGameRoot(arg1:main.RelocationRequest):Promise<void>;
 export function RemoveLauncherIntegration(arg1:string):Promise<main.LauncherIntegrationStatus>;
 
 export function RepairLauncherIntegration(arg1:string):Promise<main.LauncherIntegrationStatus>;
+
+export function ResetModProfileDisplay(arg1:string):Promise<void>;
 
 export function ResetProfileDisplay(arg1:string,arg2:string):Promise<void>;
 

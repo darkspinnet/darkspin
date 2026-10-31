@@ -177,6 +177,10 @@ func (a *App) createReportArchive(
 	if manifest.Client.IsModded {
 		reportTitle = "[MODDED GAME]\nMods: " + strings.Join(manifest.Client.ModNames, ", ") + "\n" + title
 	}
+	if manifest.Client.ServerAddress != "" {
+		reportTitle += fmt.Sprintf("\nServer address: %s\nRemote connection: %t",
+			manifest.Client.ServerAddress, manifest.Client.IsRemoteConnection)
+	}
 	err = addReportText(archive, reportTitle, manifest.Gameplay)
 	if err != nil {
 		_ = archive.Close()
@@ -241,6 +245,10 @@ func (a *App) reportManifest(
 	a.mu.Unlock()
 	if session.client.IsModded {
 		gameServer = session.server
+		status.Identity = session.client.Profile
+	}
+	if session.client.IsRemoteConnection {
+		gameServer = nil
 		status.Identity = session.client.Profile
 	}
 	if ctx == nil {

@@ -4,18 +4,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 
 	server "github.com/darkspinnet/darkspin/server/runtime"
 )
 
 type reportClient struct {
-	Mode     string   `json:"mode"`
-	IsModded bool     `json:"is_modded"`
-	Profile  string   `json:"profile,omitempty"`
-	LaunchID string   `json:"launch_id,omitempty"`
-	ModNames []string `json:"mod_names,omitempty"`
+	ServerAddress      string   `json:"server_address,omitempty"`
+	IsRemoteConnection bool     `json:"is_remote_connection"`
+	Mode               string   `json:"mode"`
+	IsModded           bool     `json:"is_modded"`
+	Profile            string   `json:"profile,omitempty"`
+	LaunchID           string   `json:"launch_id,omitempty"`
+	ModNames           []string `json:"mod_names,omitempty"`
 }
 
 type launcherReportSession struct {
@@ -33,10 +37,22 @@ func (a *App) recordReportSession(req gameLaunchRequest, launchID string) {
 		session.client = reportClient{Mode: "standard", Profile: req.account}
 	}
 	session.client.LaunchID = launchID
+	session.client.ServerAddress = req.serverAddress
+	host, port, err := net.SplitHostPort(req.serverAddress)
+	if err != nil {
+		a.log(fmt.Sprintf("Unable to identify bug-report server endpoint: %v", err))
+		host = req.serverAddress
+	}
+	if port == "" && err == nil {
+		a.log("Bug-report server endpoint has no port")
+	}
+	ip := net.ParseIP(host)
+	session.client.IsRemoteConnection = host != "" && !strings.EqualFold(host, "localhost") &&
+		(ip == nil || !ip.IsLoopback())
 	a.mu.Lock()
 	a.reportSession = session
 	a.mu.Unlock()
-	err := a.saveReportClient(session.client)
+	err = a.saveReportClient(session.client)
 	if err != nil {
 		a.log(fmt.Sprintf("Unable to persist bug-report client context: %v", err))
 	}

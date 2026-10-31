@@ -33,6 +33,34 @@ func (a *App) ResetProfileDisplay(identity, serverAddress string) error {
 		}
 		identity += "@" + host
 	}
+	err = a.resetClientProfileDisplay(identity)
+	if err != nil {
+		return fmt.Errorf("displayReset: %w", err)
+	}
+	return nil
+}
+
+// ResetModProfileDisplay resets the separate client settings used by mod launches.
+func (e *App) ResetModProfileDisplay(identity string) error {
+	e.modMu.Lock()
+	defer e.modMu.Unlock()
+	identity = strings.TrimSpace(identity)
+	err := validateProfileIdentity(identity)
+	if err != nil {
+		return fmt.Errorf("modIdentity: %w", err)
+	}
+	err = e.requireModIdle()
+	if err != nil {
+		return fmt.Errorf("modIdle: %w", err)
+	}
+	err = e.resetClientProfileDisplay(modClientProfile(identity))
+	if err != nil {
+		return fmt.Errorf("modDisplay: %w", err)
+	}
+	return nil
+}
+
+func (e *App) resetClientProfileDisplay(identity string) error {
 	isRunning, err := appwindow.IsRunning(gameProcessName)
 	if err != nil {
 		return fmt.Errorf("displayProcess: %w", err)
@@ -40,9 +68,9 @@ func (a *App) ResetProfileDisplay(identity, serverAddress string) error {
 	if isRunning {
 		return errors.New("close the game before resetting display settings")
 	}
-	a.mu.Lock()
-	isLaunching := a.cancel != nil || a.gameDone != nil
-	a.mu.Unlock()
+	e.mu.Lock()
+	isLaunching := e.cancel != nil || e.gameDone != nil
+	e.mu.Unlock()
 	if isLaunching {
 		return errors.New("finish the active game launch before resetting display settings")
 	}
@@ -172,7 +200,7 @@ func seedCrogenitorDisplay(identity string) error {
 	if err != nil {
 		return fmt.Errorf("displayCreate: %w", err)
 	}
-	const displayPreference = "[display]\r\nis_borderless_mode=1\r\nis_taskbar_overlay=1\r\n"
+	const displayPreference = "[display]\r\nis_borderless_mode=1\r\nis_taskbar_overlay=1\r\nnative_ui_scale_percent=100\r\n"
 	written, writeErr := w.WriteString(displayPreference)
 	closeErr := w.Close()
 	if writeErr != nil {

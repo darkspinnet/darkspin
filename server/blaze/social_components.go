@@ -360,10 +360,17 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 				responseBody = bugReportSyntax
 				description := commandRemainder(body)
 				if description != "" {
+					peerAddress, peerErr := netip.ParseAddr(sessionRemoteIP(request.Session))
+					if peerErr != nil {
+						return nil, fmt.Errorf("bugPeer: %w", peerErr)
+					}
 					reportName, reportErr := messenger.ReportBug(ctx, chat.BugCommand{
-						Sender:      chat.Participant{ID: user.Account.ID, Name: user.DisplayName},
-						GameID:      user.CurrentGameID(),
-						Description: description,
+						ServerAddress:      request.Session.conn.LocalAddr().String(),
+						ClientAddress:      request.Session.conn.RemoteAddr().String(),
+						IsRemoteConnection: !peerAddress.Unmap().IsLoopback(),
+						Sender:             chat.Participant{ID: user.Account.ID, Name: user.DisplayName},
+						GameID:             user.CurrentGameID(),
+						Description:        description,
 					})
 					if reportErr == nil {
 						responseBody = "Bug report queued as " + reportName

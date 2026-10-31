@@ -639,7 +639,6 @@ export namespace main {
 	    port: number;
 	    isMultiplayerEnabled: boolean;
 	    locale: string;
-	    nativeUIScalePercent: number;
 	    locales: ClientLocale[];
 	    snapshotMode: string;
 	    campaignMatchmakingBotSize: number;
@@ -657,7 +656,6 @@ export namespace main {
 	        this.port = source["port"];
 	        this.isMultiplayerEnabled = source["isMultiplayerEnabled"];
 	        this.locale = source["locale"];
-	        this.nativeUIScalePercent = source["nativeUIScalePercent"];
 	        this.locales = this.convertValues(source["locales"], ClientLocale);
 	        this.snapshotMode = source["snapshotMode"];
 	        this.campaignMatchmakingBotSize = source["campaignMatchmakingBotSize"];

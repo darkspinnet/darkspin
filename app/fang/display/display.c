@@ -2,6 +2,7 @@
 #include "display/display.h"
 
 #include <shobjidl.h>
+#include <stdio.h>
 #include <string.h>
 #include <wchar.h>
 
@@ -28,6 +29,28 @@ static struct {
     int is_applied;
     int is_dirty;
 } overlay;
+
+// Reads: loads this Crogenitor's UI scale, defaulting to 100 percent.
+int fang_ui_scale_load(void) {
+    int percent;
+    if (!borderless.config_path[0]) return 100;
+    percent = GetPrivateProfileIntW(L"display", L"native_ui_scale_percent",
+        100, borderless.config_path);
+    if (percent < 100 || percent > 300 || percent % 5) return 100;
+    return percent;
+}
+
+// Modifies: saves UI scale alongside this Crogenitor's other display preferences.
+int fang_ui_scale_save(int percent) {
+    wchar_t text[16];
+    int length;
+    if (!borderless.config_path[0] || percent < 100 || percent > 300 || percent % 5)
+        return 0;
+    length = swprintf(text, sizeof(text) / sizeof(text[0]), L"%d", percent);
+    if (length <= 0 || length >= sizeof(text) / sizeof(text[0])) return 0;
+    return WritePrivateProfileStringW(L"display", L"native_ui_scale_percent",
+        text, borderless.config_path) != 0;
+}
 
 // Reads: returns the requested borderless mode.
 int fang_borderless_requested(void) {
