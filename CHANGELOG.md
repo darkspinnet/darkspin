@@ -2,6 +2,8 @@
 
 ### 2026-10-31
 
+- #150 Prevent sign-in crashes with saved offline friends by sending their Blaze identities and presence before friends-list replies and additions.
+- Add circled question-mark indicators with short hover and keyboard-focus explanations for launcher configuration options.
 - #151 Make Syndrome Shift cleanse nearby heroes, including its caster, of burns, poisons, and other debuffs even when those effects cannot be transferred to enemies.
 - #151 Exclude minion NPCs from resurrection auras and reject resurrection from stale minion modifier state.
 - #151 Keep passive Cryos geyser cracks as persistent hazards instead of applying generic destructible explosions, including when restoring a mission.

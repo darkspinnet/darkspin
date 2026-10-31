@@ -147,6 +147,13 @@ func associationUpdateHandler(userManager socialUserManager, isAddition bool) Ha
 			return nil, fmt.Errorf("associationUpdate: %w", err)
 		}
 		for index, member := range members {
+			if isAddition {
+				err = queueAssociationMemberVisibility(request, member)
+				if err != nil {
+					return nil, fmt.Errorf("associationAdded[%d]: %w", index, err)
+				}
+				continue
+			}
 			target := userManager.UserByID(member.ID)
 			presenceFields := userOfflineNotificationFields(member.ID)
 			if target != nil && isSocialUserOnline(request, member.ID) {
@@ -212,12 +219,20 @@ func associationGetListsHandler(_ context.Context, request *Request) (*Response,
 	}
 	requested, isFound := tdf.Find(request.Fields, "ALST")
 	lists := make([]tdf.Value, 0)
+	visibleMemberIDs := make(map[int64]bool)
 	if isFound && requested.Type == tdf.List {
 		for _, item := range requested.Items {
 			listType := associationListType(item.Fields)
 			members := user.AssociationSnapshot(listType)
 			memberValues := make([]tdf.Value, 0, len(members))
 			for _, member := range members {
+				if !visibleMemberIDs[member.ID] {
+					err := queueAssociationMemberVisibility(request, member)
+					if err != nil {
+						return nil, fmt.Errorf("associationMember[%d]: %w", member.ID, err)
+					}
+					visibleMemberIDs[member.ID] = true
+				}
 				memberValues = append(memberValues, tdf.StructValue(associationMemberFields(member)...))
 			}
 			listInfoFields := append([]tdf.Field(nil), item.Fields...)

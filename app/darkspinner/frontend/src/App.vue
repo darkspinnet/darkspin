@@ -1,4 +1,5 @@
 <script setup>
+import ConfigHelp from '@/components/ConfigHelp.vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -1739,24 +1740,24 @@ async function copyLauncherFailure() {
         <TabsContent value="general">
           <div class="config-general-grid">
             <Card class="management-card config-port-card">
-              <label class="config-locale" for="config-launcher-locale"><strong>{{ $t("LAUNCHER LANGUAGE") }}</strong></label>
+              <label class="config-locale" for="config-launcher-locale"><strong>{{ $t("LAUNCHER LANGUAGE") }}<ConfigHelp text="Choose the language used by Darkspinner." /></strong></label>
               <Select v-model="configuredLauncherLocale" @update:model-value="saveLauncherLanguage" :disabled="isServerConfigurationBusy || !isLauncherLanguageLoaded">
                 <SelectTrigger id="config-launcher-locale" class="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem v-for="locale in launcherLanguageConfiguration.locales" :key="locale.code" :value="locale.code">{{ locale.label }} — {{ locale.code }}</SelectItem>
                 </SelectContent>
               </Select>
-              <label class="config-locale config-game-language" for="config-client-locale"><strong>{{ $t("IN-GAME LANGUAGE") }}</strong></label>
+              <label class="config-locale config-game-language" for="config-client-locale"><strong>{{ $t("IN-GAME LANGUAGE") }}<ConfigHelp text="Choose the language used by the game on its next launch." /></strong></label>
               <Select v-model="configuredLocale" @update:model-value="saveGeneralConfiguration" :disabled="isServerConfigurationBusy">
                 <SelectTrigger id="config-client-locale" class="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                 <SelectItem v-for="locale in serverConfiguration.locales" :key="locale.code" :value="locale.code">{{ locale.label }} — {{ locale.code }}</SelectItem>
               </SelectContent>
               </Select>
-              <label class="management-toggle config-skip-intro"><Checkbox :model-value="status.isIntroSkipped" :disabled="isBusy || isServerConfigurationBusy" @update:model-value="setSkipIntro" /><span><strong>{{ $t("SKIP INTRO MOVIES") }}</strong></span></label>
+              <label class="management-toggle config-skip-intro"><Checkbox :model-value="status.isIntroSkipped" :disabled="isBusy || isServerConfigurationBusy" @update:model-value="setSkipIntro" /><span><strong>{{ $t("SKIP INTRO MOVIES") }}<ConfigHelp text="Skip the opening movies when starting the game." /></strong></span></label>
               <template v-if="wineRunnerConfiguration.isSupported">
                 <div class="config-wine-runner-heading">
-                  <label class="config-locale" for="config-wine-runner"><strong>{{ $t("WINE RUNTIME") }}</strong></label>
+                  <label class="config-locale" for="config-wine-runner"><strong>{{ $t("WINE RUNTIME") }}<ConfigHelp text="Choose which installed Wine runtime starts the game." /></strong></label>
                   <Button variant="outline" size="sm" type="button" :disabled="isWineRunnerBusy || isServerConfigurationBusy" @click="scanWineRunners">{{ $t(isWineRunnerBusy ? 'SCANNING...' : 'RESCAN') }}</Button>
                 </div>
                 <Select v-model="configuredWineRunner" @update:model-value="saveGeneralConfiguration" :disabled="isWineRunnerBusy || isServerConfigurationBusy">
@@ -1768,7 +1769,7 @@ async function copyLauncherFailure() {
               </template>
             </Card>
             <Card class="management-card config-port-card">
-              <label class="config-locale" for="config-campaign-bot-size"><strong>{{ $t("MATCHMAKING") }}</strong></label>
+              <label class="config-locale" for="config-campaign-bot-size"><strong>{{ $t("MATCHMAKING") }}<ConfigHelp text="Choose how many bots join your campaign party." /></strong></label>
               <Select v-model="configuredCampaignMatchmakingBotSize" @update:model-value="saveGeneralConfiguration" :disabled="isServerConfigurationBusy">
                 <SelectTrigger id="config-campaign-bot-size" class="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -1777,7 +1778,7 @@ async function copyLauncherFailure() {
                   <SelectItem value="3">{{ $t("3 BOTS") }}</SelectItem>
                 </SelectContent>
               </Select>
-              <label class="management-toggle"><Checkbox v-model="isConfiguredCampaignBotSquadMirroringEnabled" @update:model-value="saveGeneralConfiguration" :disabled="isServerConfigurationBusy" /><span><strong>{{ $t("USE SQUADS FOR BOTS") }}</strong><small>{{ $t("Copy unused unlocked PvE squads into matchmaking bots.") }}</small></span></label>
+              <label class="management-toggle"><Checkbox v-model="isConfiguredCampaignBotSquadMirroringEnabled" @update:model-value="saveGeneralConfiguration" :disabled="isServerConfigurationBusy" /><span><strong>{{ $t("USE SQUADS FOR BOTS") }}<ConfigHelp text="Use your other unlocked PvE squads as matchmaking bots." /></strong><small>{{ $t("Copy unused unlocked PvE squads into matchmaking bots.") }}</small></span></label>
             </Card>
           </div>
           <p v-if="serverConfigurationError" class="management-message configuration-error" role="alert">{{ $t(serverConfigurationError) }}</p>
@@ -1785,8 +1786,8 @@ async function copyLauncherFailure() {
         <TabsContent v-if="isExperimentalLauncherFeatureVisible" value="multiplayer">
           <div class="config-general-grid">
             <Card class="management-card config-port-card">
-              <label class="management-toggle config-multiplayer"><Checkbox v-model="isConfiguredMultiplayerEnabled" @update:model-value="saveMultiplayerConfiguration" :disabled="isServerConfigurationBusy" /><span><strong>{{ $t("ALLOW MULTIPLAYER CONNECTIONS") }}</strong></span></label>
-              <label for="config-server-port">{{ $t("PORT") }}</label>
+              <label class="management-toggle config-multiplayer"><Checkbox v-model="isConfiguredMultiplayerEnabled" @update:model-value="saveMultiplayerConfiguration" :disabled="isServerConfigurationBusy" /><span><strong>{{ $t("ALLOW MULTIPLAYER CONNECTIONS") }}<ConfigHelp text="Allow other computers to connect to your local server." /></strong></span></label>
+              <label for="config-server-port">{{ $t("PORT") }}<ConfigHelp text="Network port used by your local server. Other players must connect using this port." /></label>
               <Input id="config-server-port" v-model.number="configuredServerPort" @change="saveMultiplayerConfiguration" type="number" min="1" max="65534" inputmode="numeric" :disabled="isServerConfigurationBusy" />
               <p v-if="serverConfigurationError" class="management-message configuration-error" role="alert">{{ $t(serverConfigurationError) }}</p>
             </Card>
@@ -1798,9 +1799,9 @@ async function copyLauncherFailure() {
         <TabsContent value="advanced">
           <div class="config-general-grid">
             <Card class="management-card config-port-card">
-              <label class="management-toggle"><Checkbox :model-value="isAutoPatchEnabled" :disabled="!isAutomationConfigurationLoaded || isAutomationConfigurationBusy" @update:model-value="setAutoPatch" /><span><strong>{{ $t("AUTO PATCH") }}</strong></span></label>
-              <label class="management-toggle"><Checkbox :model-value="isAutoLaunchEnabled" :disabled="!isAutomationConfigurationLoaded || isAutomationConfigurationBusy" @update:model-value="setAutoPlay" /><span><strong>{{ $t("AUTO PLAY") }}</strong></span></label>
-              <label class="config-locale" for="config-snapshot-mode"><strong>{{ $t("SYNC SNAPSHOT") }}</strong></label>
+              <label class="management-toggle"><Checkbox :model-value="isAutoPatchEnabled" :disabled="!isAutomationConfigurationLoaded || isAutomationConfigurationBusy" @update:model-value="setAutoPatch" /><span><strong>{{ $t("AUTO PATCH") }}<ConfigHelp text="Apply available updates automatically when Darkspinner starts." /></strong></span></label>
+              <label class="management-toggle"><Checkbox :model-value="isAutoLaunchEnabled" :disabled="!isAutomationConfigurationLoaded || isAutomationConfigurationBusy" @update:model-value="setAutoPlay" /><span><strong>{{ $t("AUTO PLAY") }}<ConfigHelp text="Launch your last selected Crogenitor automatically when ready." /></strong></span></label>
+              <label class="config-locale" for="config-snapshot-mode"><strong>{{ $t("SYNC SNAPSHOT") }}<ConfigHelp text="Keep recent gameplay diagnostics for bug reports. Auto also captures detected sync problems." /></strong></label>
               <Select v-model="configuredSnapshotMode" @update:model-value="saveSnapshotConfiguration" :disabled="isServerConfigurationBusy">
                 <SelectTrigger id="config-snapshot-mode" class="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -1809,31 +1810,31 @@ async function copyLauncherFailure() {
                 <SelectItem value="auto">{{ $t("AUTO — capture and detect ordering anomalies") }}</SelectItem>
               </SelectContent>
               </Select>
-              <label class="management-toggle"><Checkbox :model-value="status.isCinematicSkipped" :disabled="isBusy || isServerConfigurationBusy" @update:model-value="setSkipCinematic" /><span><strong>{{ $t("SKIP IN-GAME CINEMATICS") }}</strong></span></label>
+              <label class="management-toggle"><Checkbox :model-value="status.isCinematicSkipped" :disabled="isBusy || isServerConfigurationBusy" @update:model-value="setSkipCinematic" /><span><strong>{{ $t("SKIP IN-GAME CINEMATICS") }}<ConfigHelp text="Skip supported story scenes during gameplay." /></strong></span></label>
               <p v-if="serverConfigurationError" class="management-message configuration-error" role="alert">{{ $t(serverConfigurationError) }}</p>
             </Card>
             <Card class="management-card shortcuts-card">
               <div class="integration-row">
-                <div><strong>{{ $t("START MENU") }}</strong><small>{{ $t("Personal Darkspinner shortcut") }}</small></div>
+                <div><strong>{{ $t("START MENU") }}<ConfigHelp text="Install or repair a Start menu shortcut for Darkspinner." /></strong><small>{{ $t("Personal Darkspinner shortcut") }}</small></div>
                 <span :class="{ installed:integrationStatus.isStartMenuInstalled }">{{ $t(integrationStatus.isStartMenuInstalled ? 'INSTALLED' : 'NOT INSTALLED') }}</span>
                 <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('start-menu')">{{ $t(integrationStatus.isStartMenuInstalled ? 'REPAIR' : 'INSTALL') }}</Button>
                 <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isStartMenuInstalled" @click="removeIntegration('start-menu')">{{ $t("REMOVE") }}</Button>
               </div>
               <div class="integration-row">
-                <div><strong>{{ $t("DESKTOP") }}</strong><small>{{ $t("Personal Darkspinner shortcut") }}</small></div>
+                <div><strong>{{ $t("DESKTOP") }}<ConfigHelp text="Install or repair a desktop shortcut for Darkspinner." /></strong><small>{{ $t("Personal Darkspinner shortcut") }}</small></div>
                 <span :class="{ installed:integrationStatus.isDesktopInstalled }">{{ $t(integrationStatus.isDesktopInstalled ? 'INSTALLED' : 'NOT INSTALLED') }}</span>
                 <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('desktop')">{{ $t(integrationStatus.isDesktopInstalled ? 'REPAIR' : 'INSTALL') }}</Button>
                 <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isDesktopInstalled" @click="removeIntegration('desktop')">{{ $t("REMOVE") }}</Button>
               </div>
               <div class="integration-row">
-                <div><strong>{{ $t("STEAM PLAY") }}</strong><small>{{ $t("Route Steam launch through Darkspinner") }}</small></div>
+                <div><strong>{{ $t("STEAM PLAY") }}<ConfigHelp text="Start Darkspinner when launching Darkspore from Steam." /></strong><small>{{ $t("Route Steam launch through Darkspinner") }}</small></div>
                 <span :class="{ installed:integrationStatus.isSteamLaunchInstalled }">{{ $t(integrationStatus.isSteamLaunchInstalled ? 'INSTALLED' : 'NOT INSTALLED') }}</span>
                 <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('steam')">{{ $t(integrationStatus.isSteamLaunchInstalled ? 'REPAIR' : 'INSTALL') }}</Button>
                 <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isSteamLaunchInstalled" @click="removeIntegration('steam')">{{ $t("REMOVE") }}</Button>
               </div>
               <p v-if="integrationStatus.error" class="management-message configuration-error" role="alert">{{ $t(integrationStatus.error) }}</p>
               <div class="shortcut-danger">
-                <p><strong>{{ $t("UNINSTALL DARKSPINNER") }}</strong><small>{{ $t("Remove local runtime data and owned shortcuts while preserving the installed game.") }}</small></p>
+                <p><strong>{{ $t("UNINSTALL DARKSPINNER") }}<ConfigHelp text="Remove Darkspinner data and shortcuts while keeping the installed game." /></strong><small>{{ $t("Remove local runtime data and owned shortcuts while preserving the installed game.") }}</small></p>
                 <Button variant="destructive" type="button" class="danger-confirm" :disabled="isManagementBusy" @click="isUninstallConfirmOpen = true">{{ $t("UNINSTALL") }}</Button>
               </div>
             </Card>

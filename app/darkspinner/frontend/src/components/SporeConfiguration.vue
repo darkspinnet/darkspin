@@ -1,4 +1,5 @@
 <script setup>
+import ConfigHelp from '@/components/ConfigHelp.vue'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -97,7 +98,7 @@ onBeforeUnmount(flushSave)
 
 <template>
   <Card class="management-card spore-configuration">
-    <label :for="`${idPrefix}-path`"><strong>{{ $t("SPORE FOLDER") }}</strong></label>
+    <label :for="`${idPrefix}-path`"><strong>{{ $t("SPORE FOLDER") }}<ConfigHelp text="Choose the installed Spore folder used to load creatures and parts for modded Crogenitors." /></strong></label>
     <Input :id="`${idPrefix}-path`" v-model="sourcePath" :disabled="isBusy" :aria-describedby="error ? `${idPrefix}-status` : undefined" @update:model-value="scheduleSave" />
     <p v-if="error" :id="`${idPrefix}-status`" class="spore-error" role="alert">{{ $t(error) }}</p>
     <div class="spore-actions">
