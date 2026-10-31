@@ -1671,8 +1671,18 @@ type ChainVoteMessage struct {
 	FirstVoice         uint32
 	// Record +0x49: L <= completed planets forces Cash Out unless L == 5.
 	ContinuationLimit int32
+	PlanetStats       [4]ChainPlanetStat
 	NextPresentation  [3]uint32
 	NextLevel         uint32
+}
+
+// ChainPlanetStat is the build-103 result row embedded in the A9 vote record.
+type ChainPlanetStat struct {
+	Kills           uint32
+	DamageDealt     float32
+	DamageTaken     float32
+	HealingDone     float32
+	HealingReceived float32
 }
 
 func (m ChainVoteMessage) PacketID() PacketID { return ChainVoteMsgs }
@@ -1694,6 +1704,17 @@ func (m ChainVoteMessage) EncodePayload() []byte {
 	}
 	binary.LittleEndian.PutUint32(data[0x045:0x049], m.FirstVoice)
 	binary.LittleEndian.PutUint32(data[0x049:0x04d], uint32(m.ContinuationLimit))
+	// Build 103 sub_449090 passes record+0x4d to sub_43E9A0. That
+	// receiver reads 25-byte player rows beginning 41 bytes into it.
+	for slot, stat := range m.PlanetStats {
+		offset := 0x076 + slot*25
+		binary.LittleEndian.PutUint32(data[offset:offset+4], stat.Kills)
+		binary.LittleEndian.PutUint32(data[offset+8:offset+12], math.Float32bits(stat.DamageDealt))
+		binary.LittleEndian.PutUint32(data[offset+12:offset+16], math.Float32bits(stat.DamageTaken))
+		binary.LittleEndian.PutUint32(data[offset+16:offset+20], math.Float32bits(stat.HealingDone))
+		binary.LittleEndian.PutUint32(data[offset+20:offset+24], math.Float32bits(stat.HealingReceived))
+		data[offset+24] = byte(slot)
+	}
 	for index, presentation := range m.NextPresentation {
 		offset := 0x0d9 + index*4
 		binary.LittleEndian.PutUint32(data[offset:offset+4], presentation)

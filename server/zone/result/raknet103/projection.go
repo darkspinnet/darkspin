@@ -52,14 +52,14 @@ func VotingTransition() ([]byte, error) {
 }
 
 func Vote(snapshot zoneresult.Snapshot) ([]byte, error) {
-	packet, err := VoteWithCountdown(snapshot, float32(zoneresult.VoteDuration.Seconds()))
+	packet, err := VoteWithCountdown(snapshot, float32(zoneresult.VoteDuration.Seconds()), [4]raknet.ChainPlanetStat{})
 	if err != nil {
 		return nil, fmt.Errorf("voteCountdown: %w", err)
 	}
 	return packet, nil
 }
 
-func VoteWithCountdown(snapshot zoneresult.Snapshot, seconds float32) ([]byte, error) {
+func VoteWithCountdown(snapshot zoneresult.Snapshot, seconds float32, planetStats [4]raknet.ChainPlanetStat) ([]byte, error) {
 	if seconds <= 0 || math.IsNaN(float64(seconds)) || math.IsInf(float64(seconds), 0) {
 		return nil, errors.New("vote countdown invalid")
 	}
@@ -114,6 +114,7 @@ func VoteWithCountdown(snapshot zoneresult.Snapshot, seconds float32) ([]byte, e
 		},
 		FirstVoice:        nextPresentation.CurrentVoice,
 		ContinuationLimit: continuationLimit,
+		PlanetStats:       planetStats,
 		NextPresentation: [3]uint32{
 			// Build 103 sub_449090 reads record+0xd9 as its preferred
 			// interlevel camera; the following fields cannot start it.

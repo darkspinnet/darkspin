@@ -10,6 +10,7 @@ import (
 	developerfeature "github.com/darkspinnet/darkspin/server/developer"
 	developerraknet "github.com/darkspinnet/darkspin/server/developer/raknet103"
 	"github.com/darkspinnet/darkspin/server/game"
+	"github.com/darkspinnet/darkspin/server/playerstat"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/sporenet"
@@ -1074,6 +1075,7 @@ func (r gameplayStatusRuntime) rollbackTutorialCompletion(
 
 type campaignResultRuntime struct {
 	registry           *gameplaySessionRegistry
+	stats              *playerstat.Recorder
 	chain              campaignChainProgression
 	cashOutProgression campaignCashOutProgression
 	gameplayJoin       *game.GameplayJoin
@@ -1318,7 +1320,20 @@ func (r campaignResultRuntime) votingData(
 		return nil, fmt.Errorf("campaignVoteProgression: %w", err)
 	}
 	seconds := float32(remaining.Seconds())
-	votePacket, err := resultraknet.VoteWithCountdown(snapshot, seconds)
+	planetStats := [4]raknet.ChainPlanetStat{}
+	if r.stats != nil {
+		missionStats := r.stats.SnapshotMission(peerSession.binding)
+		for slot, stat := range missionStats {
+			planetStats[slot] = raknet.ChainPlanetStat{
+				Kills:           uint32(min(stat.Kills, uint64(^uint32(0)))),
+				DamageDealt:     float32(stat.DamageDealt),
+				DamageTaken:     float32(stat.DamageTaken),
+				HealingDone:     float32(stat.HealingDone),
+				HealingReceived: float32(stat.HealingReceived),
+			}
+		}
+	}
+	votePacket, err := resultraknet.VoteWithCountdown(snapshot, seconds, planetStats)
 	if err != nil {
 		return nil, fmt.Errorf("campaignVote: %w", err)
 	}

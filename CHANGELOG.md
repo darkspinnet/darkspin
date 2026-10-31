@@ -2,6 +2,7 @@
 
 ### 2026-10-30
 
+- Populate each campaign mission's Results panel with build-103 player-slot kills, damage and healing counters instead of zeroes.
 - Move the game window to the desktop origin after enabling borderless mode and removing its decorations.
 - Use noun-authored aggro ranges for combat pets and drones in campaign and PvP, including acquisition, pursuit and target retention while their owner moves.
 - Correct Auto Turret's firing reach from its 4-unit placement range to its authored 10-unit laser range, bounded separately by its 12-unit aggro range.

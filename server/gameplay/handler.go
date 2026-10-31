@@ -1449,7 +1449,7 @@ func newGameplayHandlerWithDependencies(
 		publishEvent: dependency.publishCampaignEvent,
 	}
 	resultRuntime := campaignResultRuntime{
-		registry: sessionRegistry, chain: chainProgression,
+		registry: sessionRegistry, stats: statsRecorder, chain: chainProgression,
 		cashOutProgression: cashOutProgression, gameplayJoin: gameplayJoin,
 		ratingConversions: program.Critical.RatingConversions,
 		modifierPool:      modifierInstancePool, effectPool: attachedEffectPool,
