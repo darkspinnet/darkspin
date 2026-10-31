@@ -214,6 +214,7 @@ func launcherMethods(app *App) map[string]any {
 		"CreateProfile":                app.CreateProfile,
 		"DeleteProfile":                app.DeleteProfile,
 		"DeleteRemoteProfile":          app.DeleteRemoteProfile,
+		"ResetProfileDisplay":          app.ResetProfileDisplay,
 		"DiscardInterruptedMission":    app.DiscardInterruptedMission,
 		"GetInstallationStatus":        app.GetInstallationStatus,
 		"GetInterruptedMission":        app.GetInterruptedMission,

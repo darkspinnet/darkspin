@@ -29,27 +29,28 @@ import (
 const debugAPIPrefix = "/dev/scenario/v1"
 
 type debugSupervisor struct {
-	registry        *control.Registry
-	token           string
-	authority       string
-	id              string
-	scriptRoot      string
-	gameDirectory   string
-	reportDirectory string
-	operationMutex  sync.Mutex
-	operationState  *debugOperationState
-	diagnosticCount uint32
-	executionLimit  time.Duration
-	automation      debugAutomation
-	sessionContext  context.Context
-	stop            chan struct{}
-	stopOnce        sync.Once
-	isLauncherOwned bool
-	isKillRequested atomic.Bool
-	cancelSession   context.CancelFunc
-	scriptMutex     sync.Mutex
-	scriptControl   debugScriptControl
-	scriptRequests  chan string
+	registry         *control.Registry
+	token            string
+	authority        string
+	id               string
+	scriptRoot       string
+	gameDirectory    string
+	reportDirectory  string
+	operationMutex   sync.Mutex
+	operationState   *debugOperationState
+	diagnosticCount  uint32
+	executionLimit   time.Duration
+	automation       debugAutomation
+	sessionContext   context.Context
+	stop             chan struct{}
+	stopOnce         sync.Once
+	isLauncherOwned  bool
+	isLauncherClosed atomic.Bool
+	isKillRequested  atomic.Bool
+	cancelSession    context.CancelFunc
+	scriptMutex      sync.Mutex
+	scriptControl    debugScriptControl
+	scriptRequests   chan string
 }
 
 type debugDiscovery struct {
@@ -323,17 +324,60 @@ func (e *debugSupervisor) serve(root, scriptName string) error {
 	}
 	httpContext, httpCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer httpCancel()
-	err = server.Shutdown(httpContext)
-	if err != nil {
+	shutdownErr := server.Shutdown(httpContext)
+	if shutdownErr != nil {
 		closeErr := server.Close()
-		return fmt.Errorf("debugShutdown: %w", errors.Join(err, closeErr))
+		shutdownErr = fmt.Errorf("debugShutdown: %w", errors.Join(shutdownErr, closeErr))
 	}
-	err = e.registry.CompleteStop()
+	stopErr := e.registry.CompleteStop()
+	var directoryErr error
+	if cleanupErr == nil {
+		cacheErr := e.cleanupScenarioRunDirectory(parent)
+		directoryErr = cacheErr
+		// Keep report evidence if inspection retention expires while the launcher is open.
+		if e.isLauncherClosed.Load() {
+			reportErr := e.cleanupScenarioRunDirectory(filepath.Dir(e.reportDirectory))
+			directoryErr = errors.Join(cacheErr, reportErr)
+		}
+	}
+	if cleanupErr != nil || serveErr != nil || shutdownErr != nil || stopErr != nil || directoryErr != nil {
+		return fmt.Errorf("debugCleanup: %w", errors.Join(cleanupErr, serveErr, shutdownErr, stopErr, directoryErr))
+	}
+	return nil
+}
+
+func (e *debugSupervisor) cleanupScenarioRunDirectory(parent string) error {
+	fi, err := os.Lstat(parent)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
-		return fmt.Errorf("debugStopped: %w", err)
+		return fmt.Errorf("runParent: %w", err)
 	}
-	if cleanupErr != nil || serveErr != nil {
-		return fmt.Errorf("debugCleanup: %w", errors.Join(cleanupErr, serveErr))
+	if !fi.IsDir() {
+		return errors.New("scenario run parent is not a directory")
+	}
+	err = desktop.CheckAncestors(parent)
+	if err != nil {
+		return fmt.Errorf("runAncestors: %w", err)
+	}
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return fmt.Errorf("runList: %w", err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if name != e.id && !strings.HasPrefix(name, e.id+"-server-") {
+			continue
+		}
+		if !entry.IsDir() || entry.Type()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+			return fmt.Errorf("runEntry: unexpected run path %q", name)
+		}
+		path := filepath.Join(parent, name)
+		err = os.RemoveAll(path)
+		if err != nil {
+			return fmt.Errorf("runRemove[%s]: %w", name, err)
+		}
 	}
 	return nil
 }
@@ -342,9 +386,11 @@ func (e *debugSupervisor) watchLauncherInput() {
 	buffer := make([]byte, 1)
 	count, err := os.Stdin.Read(buffer)
 	if err != nil || count != 0 {
+		e.isLauncherClosed.Store(true)
 		e.stopOnce.Do(e.requestStop)
 		return
 	}
+	e.isLauncherClosed.Store(true)
 	e.stopOnce.Do(e.requestStop)
 }
 

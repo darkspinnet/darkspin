@@ -159,6 +159,13 @@ func prepareClientConfig(basePath, identity string) (string, error) {
 }
 
 func ensureWindowedClientPreference(rootPath string) error {
+	const preference = "OptionVersion 5\r\nOptionFullScreen 0\r\n" +
+		"AudioMasterVolume 1\r\n" +
+		"AudioMusicVolume 0.7\r\n" +
+		"AudioSFXVolume 0.8\r\n" +
+		"AudioAmbiencevolume 0.5\r\n" +
+		"AudioVOXVolume 0.9\r\n" +
+		"AudioMuteAll false\r\n"
 	preferencePath := filepath.Join(
 		rootPath, "AppData", "Roaming", "DarksporeData", "Preferences", "Preferences.prop",
 	)
@@ -166,16 +173,42 @@ func ensureWindowedClientPreference(rootPath string) error {
 	if err != nil {
 		return fmt.Errorf("windowedMkdir: %w", err)
 	}
-	// Seed new profiles only; existing preferences belong to the client and player.
+	// Seed new profiles and fill only absent audio keys in existing client preferences.
 	w, err := os.OpenFile(preferencePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if errors.Is(err, os.ErrExist) {
+		currentPreference, readErr := os.ReadFile(preferencePath)
+		if readErr != nil {
+			return fmt.Errorf("preferenceRead: %w", readErr)
+		}
+		missingAudio := ""
+		for _, audioSetting := range []struct{ key, line string }{
+			{"AudioMasterVolume", "AudioMasterVolume 1\r\n"},
+			{"AudioMusicVolume", "AudioMusicVolume 0.7\r\n"},
+			{"AudioSFXVolume", "AudioSFXVolume 0.8\r\n"},
+			{"AudioAmbiencevolume", "AudioAmbiencevolume 0.5\r\n"},
+			{"AudioVOXVolume", "AudioVOXVolume 0.9\r\n"},
+			{"AudioMuteAll", "AudioMuteAll false\r\n"},
+		} {
+			if !strings.Contains("\n"+string(currentPreference), "\n"+audioSetting.key+" ") {
+				missingAudio += audioSetting.line
+			}
+		}
+		if missingAudio != "" {
+			if len(currentPreference) > 0 && currentPreference[len(currentPreference)-1] != '\n' {
+				currentPreference = append(currentPreference, '\r', '\n')
+			}
+			currentPreference = append(currentPreference, missingAudio...)
+			writeErr := os.WriteFile(preferencePath, currentPreference, 0o600)
+			if writeErr != nil {
+				return fmt.Errorf("preferenceUpgrade: %w", writeErr)
+			}
+		}
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("windowedCreate: %w", err)
 	}
 	// Build 103 discards preferences without the current format version.
-	const preference = "OptionVersion 5\r\nOptionFullScreen 0\r\n"
 	written, writeErr := w.WriteString(preference)
 	closeErr := w.Close()
 	if writeErr != nil {

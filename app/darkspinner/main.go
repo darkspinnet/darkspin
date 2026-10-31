@@ -161,7 +161,7 @@ func main() {
 		cleanupErr = cleanupDetachedLogs(basePath)
 	}
 	if cleanupErr != nil {
-		count, outputErr := fmt.Fprintln(os.Stderr, "Previous client log cleanup:", cleanupErr)
+		count, outputErr := fmt.Fprintln(os.Stderr, "Launcher diagnostic cleanup:", cleanupErr)
 		if outputErr != nil || count == 0 { /* Startup remains available if a previous log is locked. */
 		}
 	}
@@ -411,6 +411,10 @@ func runWithSnapshotControl(ctx context.Context, arguments []string, connection 
 	err = os.Setenv("DARKSPIN_CLIENT_ACCOUNT", clientAccount)
 	if err != nil {
 		return fmt.Errorf("clientAccount: %w", err)
+	}
+	err = os.Setenv("DARKSPIN_CONFIG_PATH", pathSet.configPath)
+	if err != nil {
+		return fmt.Errorf("clientConfig: %w", err)
 	}
 	err = configureCinematicOptions(configuration.isIntroSkipped, configuration.isCinematicSkipped)
 	if err != nil {

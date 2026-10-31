@@ -16,6 +16,7 @@ static app_update_fn original_app_update;
 static PVOID volatile display_window;
 static struct {
     int is_requested;
+    int is_session_enabled;
     int is_applied;
     int is_dirty;
     LONG_PTR style;
@@ -33,7 +34,7 @@ int fang_borderless_requested(void) {
     return borderless.is_requested;
 }
 
-// Modifies: updates the requested borderless mode, marks it dirty, and logs changes.
+// Modifies: saves the next launch's borderless choice without changing this session.
 void fang_request_borderless(int is_enabled) {
     if (borderless.is_requested != (is_enabled != 0)) {
         borderless.is_requested = is_enabled != 0;
@@ -204,7 +205,7 @@ static void save_display_preferences(void) {
     }
 }
 
-// Modifies: reconciles borderless requests with native fullscreen transitions and updates the window frame.
+// Modifies: maintains the launch-time frame mode, yielding to native fullscreen transitions.
 static void update_borderless(void* app) {
     HWND window = (HWND)InterlockedCompareExchangePointer(&display_window, NULL, NULL);
     int is_fullscreen;
@@ -220,23 +221,25 @@ static void update_borderless(void* app) {
      * Do not intercept or suppress the client's device reset. */
     if (!is_fullscreen && is_toggle_pending) {
         fang_request_borderless(0);
+        borderless.is_session_enabled = 0;
     }
     if (is_fullscreen) {
         if (is_toggle_pending) {
             return;
         }
         fang_request_borderless(0);
+        borderless.is_session_enabled = 0;
         borderless.is_applied = 0;
         return;
     }
     if (*((BYTE*)app + 0x158) != 0) {
         return;
     }
-    if (borderless.is_requested || borderless.is_applied) {
-        if (!change_window_frame(window, borderless.is_requested)) {
+    if (borderless.is_session_enabled || borderless.is_applied) {
+        if (!change_window_frame(window, borderless.is_session_enabled)) {
             return;
         }
-        borderless.is_applied = borderless.is_requested;
+        borderless.is_applied = borderless.is_session_enabled;
     }
 }
 
@@ -248,6 +251,8 @@ static void FANG_THISCALL hooked_app_update(void* app, unsigned int elapsed) {
     update_taskbar_overlay();
     save_display_preferences();
     fang_update_display_ui();
+    fang_update_native_ui_scale();
+    fang_update_html_ui_scale();
 }
 
 // Modifies: loads saved display modes into Fang state and logs the loaded settings.
@@ -266,6 +271,7 @@ static void load_display_preferences(void) {
      * only restore a selection explicitly saved by the new graphics control. */
     borderless.is_requested = GetPrivateProfileIntW(
         L"display", L"is_borderless_mode", 0, borderless.config_path) == 1;
+    borderless.is_session_enabled = borderless.is_requested;
     overlay.is_requested = GetPrivateProfileIntW(
         L"display", L"is_taskbar_overlay", 0, borderless.config_path) == 1;
     trace_client_state("display_borderless_loaded", borderless.is_requested);
@@ -288,6 +294,12 @@ int fang_install_display_preferences(HMODULE executable) {
     display_getter = (display_getter_fn)(base + 0x3AEB90);
     original_app_update = (app_update_fn)(base + 0x3EA210);
     load_display_preferences();
+    if (!fang_install_native_ui_scale(base)) {
+        trace_client_state("display_ui_scale_install_failed", 1);
+    }
+    if (!fang_install_html_ui_scale(base)) {
+        trace_client_state("display_html_ui_scale_install_failed", 1);
+    }
     if (!patch_pointer(slot, original_app_update, hooked_app_update)) {
         return 0;
     }

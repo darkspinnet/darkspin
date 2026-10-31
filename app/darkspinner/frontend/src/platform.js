@@ -37,6 +37,7 @@ export const CloseRunningProfile = identity => call('CloseRunningProfile', ident
 export const CreateProfile = (identity, avatarID, isTutorialSkipped) => call('CreateProfile', identity, avatarID, isTutorialSkipped)
 export const DeleteProfile = identity => call('DeleteProfile', identity)
 export const DeleteRemoteProfile = (serverAddress, identity, password) => call('DeleteRemoteProfile', serverAddress, identity, password)
+export const ResetProfileDisplay = (identity, serverAddress = '') => call('ResetProfileDisplay', identity, serverAddress)
 export const DiscardInterruptedMission = identity => call('DiscardInterruptedMission', identity)
 export const GetInstallationStatus = () => call('GetInstallationStatus')
 export const GetInterruptedMission = identity => call('GetInterruptedMission', identity)

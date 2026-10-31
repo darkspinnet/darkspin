@@ -15,8 +15,22 @@ Never use .cache, instead put it in bin/cache/
   (including `logs/log.txt` and `logs/logs.txt`). Run diagnostic tools with an
   explicit working directory under `bin/game/logs` so their automatic logs stay
   inside the diagnostic tree.
+- FFDec creates `logs/log.txt` relative to its process working directory even when its export destination is elsewhere. Run FFDec with an explicit working directory under `bin/game/logs`; setting only its output path does not control this log.
 - Keep protocol event captures under `bin/server/darkspin/logs/traces` so
   machine-readable traces remain with the server runtime.
+
+## Scenario cleanup
+
+- When an AI-run scenario ends, do not immediately stop its launcher or owned
+  clients if their live state is needed to diagnose the outcome. Capture the
+  relevant snapshot, report, or trace first, then stop the scenario session.
+- When scenario work is complete, stop its owned clients and server and remove
+  that run's directories under both `bin/cache/scenario` and
+  `bin/game/logs/scenarios`. Preserve any report evidence needed for ongoing
+  investigation outside those run directories before stopping the session.
+- Before manually deleting a scenario run directory, verify its resolved
+  absolute path is an immediate child of this workspace's scenario cache or
+  report directory and that its owning scenario session has terminated.
 
 ## Bug report diagnostics
 
@@ -30,7 +44,10 @@ Never use .cache, instead put it in bin/cache/
   `bin/game/logs/bugs`. Do not retain resolved reports as an archive; Git and
   the durable implementation notes are the history.
 - Do not delete reports for unresolved bugs or reports that are still needed
-  to verify another active issue in the same batch.
+  to verify another active issue in the same batch during their two-week
+  retention window. Extracted report directories older than two weeks are
+  expired and may be removed even if their issue remains unresolved; copy any
+  evidence needed longer to a durable location before that window ends.
 
 ## Launcher dialogs
 
@@ -107,6 +124,14 @@ Never use .cache, instead put it in bin/cache/
 - Use `mage darkspinner:build` after changing the all-in-one desktop application
   and `mage darkspinner:run` to start its existing binary without rebuilding it.
 - Run `mage build` explicitly after changing the server, launcher, or Fang.
+
+### Browser launcher for agent verification
+
+- When the user authorizes building and live verification, use the workspace's browser launcher for both normal and scenario runs. Resolve `bin/game/darkspinner.exe` against the repository root and launch that exact executable with `--headless --no-browser`, with `bin/game` as its working directory. Start the process directly; app-name launch tools can resolve Darkspinner to a different installed copy.
+- Redirect launcher stdout and stderr to clearly named files under `bin/game/logs`. Open the exact `DarkSpinner browser launcher:` URL printed to stdout, including its session token, in the browser. Use the emitted URL rather than guessing a port or reusing a token from an earlier session; do not publish the token.
+- For normal verification, build with `mage build` when server, launcher, or Fang changed, then use the browser launcher's Launch page to select the intended Crogenitor and press PLAY. Verify the launcher and game executable paths are under this workspace's `bin/game` before inspecting behavior; a Steam-installed copy is not the development build.
+- For scenario verification, build with `mage scenario:build`, start that same canonical executable with `--headless --no-browser`, and use the browser launcher's Lua page to select and run the intended scenario. Let the scenario own its server and clients; do not also press normal PLAY or start another launcher/server to work around a failure. Follow the scenario ownership, shutdown, port, evidence, and cleanup rules below.
+- Before rebuilding or switching normal/scenario builds, shut down the owned session and verify its processes have exited. Identify processes by their actual executable paths and ownership, never by image name alone. Keep the browser launcher available during live diagnosis and request computer-control access when needed to inspect the launched game.
 
 ## Scenario server ownership
 

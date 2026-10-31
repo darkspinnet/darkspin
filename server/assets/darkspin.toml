@@ -7,6 +7,8 @@ is_version_locked = false
 # Restrict the web UI and matchmaking flow to single-player content.
 is_singleplayer_only = false
 locale = ""
+# Scales non-scaleform ui elements
+native_ui_scale_percent = 100
 # Number of heroes in each campaign matchmaking bot squad (1 to 3).
 campaign_matchmaking_bot_size = 1
 is_campaign_bot_squad_mirroring_enabled = true

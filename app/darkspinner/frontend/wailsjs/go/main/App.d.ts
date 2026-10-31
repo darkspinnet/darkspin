@@ -95,6 +95,8 @@ export function RemoveLauncherIntegration(arg1:string):Promise<main.LauncherInte
 
 export function RepairLauncherIntegration(arg1:string):Promise<main.LauncherIntegrationStatus>;
 
+export function ResetProfileDisplay(arg1:string,arg2:string):Promise<void>;
+
 export function RestartLauncher():Promise<void>;
 
 export function RunLuaScript(arg1:string):Promise<void>;

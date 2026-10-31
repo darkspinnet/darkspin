@@ -22,6 +22,7 @@ func cleanupDetachedLogs(basePath string) error {
 	resultErr := cleanupDetachedLogDirectory(resultDirectory, "", ".json")
 	temporaryErr := cleanupDetachedLogDirectory(resultDirectory, "", ".tmp")
 	consoleErr := cleanupPreviousLuaConsoleLogs(basePath)
+	bugErr := cleanupOldBugReports(basePath)
 	var legacyErr error
 	legacyPaths := []string{
 		filepath.Join(logDirectory, "chat.log"),
@@ -35,8 +36,8 @@ func cleanupDetachedLogs(basePath string) error {
 			legacyErr = errors.Join(legacyErr, fmt.Errorf("legacyRemove: %w", err))
 		}
 	}
-	if launchErr != nil || traceErr != nil || resultErr != nil || temporaryErr != nil || consoleErr != nil || legacyErr != nil {
-		return fmt.Errorf("clientLogs: %w", errors.Join(launchErr, traceErr, resultErr, temporaryErr, consoleErr, legacyErr))
+	if launchErr != nil || traceErr != nil || resultErr != nil || temporaryErr != nil || consoleErr != nil || bugErr != nil || legacyErr != nil {
+		return fmt.Errorf("clientLogs: %w", errors.Join(launchErr, traceErr, resultErr, temporaryErr, consoleErr, bugErr, legacyErr))
 	}
 	return nil
 }

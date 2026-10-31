@@ -143,6 +143,14 @@ func launchInjected(
 	command.Env = replaceEnvironment(command.Env, "DARKSPIN_VERSION_DLL", versionWinePath)
 	command.Env = replaceEnvironment(command.Env, serverAddressEnvironment, serverAddress)
 	command.Env = replaceEnvironment(command.Env, "DARKSPIN_MOD_MANIFEST", "")
+	configPath := os.Getenv("DARKSPIN_CONFIG_PATH")
+	if configPath != "" {
+		configWinePath, configErr := runner.windowsPath(ctx, configPath)
+		if configErr != nil {
+			return fmt.Errorf("configWinePath: %w", configErr)
+		}
+		command.Env = replaceEnvironment(command.Env, "DARKSPIN_CONFIG_PATH", configWinePath)
+	}
 	command.Env = replaceEnvironment(command.Env, "WINEDLLOVERRIDES", wineDLLOverrides(os.Getenv("WINEDLLOVERRIDES")))
 	proxyLogPath := filepath.Join(filepath.Dir(filepath.Dir(fangPath)), "logs", "fangproxy.log")
 	err = os.MkdirAll(filepath.Dir(proxyLogPath), 0o755)

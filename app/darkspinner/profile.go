@@ -207,10 +207,14 @@ func (a *App) CreateProfile(identity string, avatarID uint32, isTutorialSkipped 
 	if isTutorialSkipped {
 		a.completePendingTutorialProfile(identity)
 	}
+	err = seedCrogenitorDisplay(identity)
+	if err != nil {
+		return fmt.Errorf("profileDisplay: %w", err)
+	}
 	a.mu.Lock()
 	a.status.IdentityError = ""
-	a.emitStatusLocked()
 	a.mu.Unlock()
+	a.SetIdentity(identity)
 	return nil
 }
 

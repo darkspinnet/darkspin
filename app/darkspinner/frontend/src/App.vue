@@ -12,12 +12,13 @@ import ModPage from '@/components/ModPage.vue'
 import LuaPage from '@/components/LuaPage.vue'
 import { GetLuaConsole } from './platform'
 import ProfileSummary from '@/components/ProfileSummary.vue'
+import CrogenitorActions from '@/components/CrogenitorActions.vue'
 import RemoteConnection from '@/components/RemoteConnection.vue'
 import { RefreshCw } from '@lucide/vue'
 import { campaignDetailFor, campaignLabelFor, campaignLevelFor, profileCreateDate, profileLastPlayedDate } from './profile'
 import ServerRulesConfiguration from '@/components/ServerRulesConfiguration.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { BrowserOpenURL, CancelPatch, CheckRemoteServers, ClipboardSetText, CompactSnapshots, CloseDetachedGameInstances, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetSquadSnapshot, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RefreshRemoteProfiles, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetIdentity, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
+import { BrowserOpenURL, CancelPatch, CheckRemoteServers, ClipboardSetText, CompactSnapshots, CloseDetachedGameInstances, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetSquadSnapshot, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RefreshRemoteProfiles, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, ResetProfileDisplay, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetIdentity, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
 
 const status = ref({ state:'starting', message:'Starting DarkSpinner', identity:'', auth:'Starting', server:'Starting', patch:'Pending', game:'Checking', avatar:'Preparing', profile:'Starting', content:'Pending', identityError:'', authError:'', serverError:'', patchError:'', gameError:'', avatarError:'', profileError:'', contentError:'', lastRun:'', launcherNotice:'', version:'', buildChannel:'production', progress:0, patchProgress:0, avatarProgress:0, contentProgress:0, isAuthenticated:false, isAuthOnline:false, isServerOnline:false, isPatchComplete:false, isPatchActive:false, isGameReady:false, isAvatarReady:false, isProfileStoreReady:false, isContentReady:false, isPlayReady:false, isCinematicSkipped:false, isIntroSkipped:false, isLastRunFailure:false, isStartupBlocked:false })
 const retainedProfileName = localStorage.getItem('darkspinner.selectedProfile') || localStorage.getItem('darkspinner.identity') || ''
@@ -37,11 +38,13 @@ const isStartMenuShortcut = ref(true)
 const isDesktopShortcut = ref(false)
 const isSteamLaunch = ref(false)
 const profilePendingDelete = ref(null)
+const profilePendingDisplayReset = ref(null)
 const remoteProfilePendingDelete = ref(null)
 const interruptedMission = ref(null)
 const detachedInterruptedMission = ref(null)
 const isMissionChoiceBusy = ref(false)
 const isProfileDeletionBusy = ref(false)
+const isProfileDisplayResetBusy = ref(false)
 const isRemoteDeletionBusy = ref(false)
 const remoteDeletionError = ref('')
 const activePage = ref('play')
@@ -71,6 +74,7 @@ const isConfiguredDedicated = ref(false)
 const isConfiguredMultiplayerEnabled = ref(false)
 const configuredLocale = ref('en-us')
 const configuredSnapshotMode = ref('auto')
+const configuredNativeUIScalePercent = ref(100)
 const configuredCampaignMatchmakingBotSize = ref('1')
 const isConfiguredCampaignBotSquadMirroringEnabled = ref(true)
 const systemWineRunner = 'system'
@@ -195,6 +199,9 @@ const contentPhaseEstimates = {
   'Prepared content ready': { start:100, end:100, duration:1 },
 }
 const isBusy = computed(() => ['authorizing','patching','launching','running'].includes(status.value.state))
+const isProfileActionDisabled = computed(() => isBusy.value || isDetachedClientDetected.value ||
+  isSelectedProfileRunning.value || isDetachedProfileRunning.value || isProfileDeletionBusy.value ||
+  isProfileDisplayResetBusy.value || isRemoteDeletionBusy.value)
 const isPlayEnabled = computed(() => status.value.isPlayReady && !selectedProfileRecord.value?.isTutorialCompletionPending && !isBusy.value)
 const isDetachedReady = computed(() => status.value.isAuthOnline && status.value.isServerOnline && status.value.isPatchComplete && status.value.isGameReady)
 const isCreatingProfile = computed(() =>
@@ -653,6 +660,7 @@ async function refreshServerConfiguration() {
     isConfiguredMultiplayerEnabled.value = serverConfiguration.value.isMultiplayerEnabled
     configuredLocale.value = serverConfiguration.value.locale
     configuredSnapshotMode.value = serverConfiguration.value.snapshotMode
+    configuredNativeUIScalePercent.value = serverConfiguration.value.nativeUIScalePercent ?? 100
     configuredCampaignMatchmakingBotSize.value = String(serverConfiguration.value.campaignMatchmakingBotSize)
     isConfiguredCampaignBotSquadMirroringEnabled.value = serverConfiguration.value.isCampaignBotSquadMirroringEnabled
   }
@@ -748,6 +756,7 @@ async function applyServerConfiguration() {
     serverConfiguration.value = await SetServerConfiguration({
       port:Number(configuredServerPort.value), isMultiplayerEnabled:isConfiguredMultiplayerEnabled.value,
       locale:configuredLocale.value, snapshotMode:configuredSnapshotMode.value,
+      nativeUIScalePercent:Number(configuredNativeUIScalePercent.value),
       campaignMatchmakingBotSize:Number(configuredCampaignMatchmakingBotSize.value),
       isCampaignBotSquadMirroringEnabled:isConfiguredCampaignBotSquadMirroringEnabled.value,
       bindHost:configuredBindHost.value, advertisedHost:configuredAdvertisedHost.value,
@@ -1050,6 +1059,23 @@ function requestDeleteProfile() {
 function requestDetachedProfileDelete() {
   if (!detachedProfileRecord.value || isBusy.value || isDetachedLaunchBusy.value) return
   profilePendingDelete.value = detachedProfileRecord.value
+}
+
+function requestResetProfileDisplay(profile) {
+  if (!profile || isProfileActionDisabled.value) return
+  profilePendingDisplayReset.value = profile
+}
+
+async function resetProfileDisplay() {
+  const profile = profilePendingDisplayReset.value
+  if (!profile || isProfileActionDisabled.value) return
+  isProfileDisplayResetBusy.value = true
+  try {
+    await ResetProfileDisplay(profile.loginName, profile.serverAddress || '')
+    profilePendingDisplayReset.value = null
+  }
+  catch (error) { recordError(error) }
+  finally { isProfileDisplayResetBusy.value = false }
 }
 
 function requestRemoteProfileDelete() {
@@ -1558,7 +1584,7 @@ async function copyLauncherFailure() {
                     </SelectItem>
                   </SelectContent>
                 </Select>
-                <Button variant="outline" v-if="remoteProfiles.length" class="identity-delete" type="button" :disabled="isRemoteBusy || !selectedRemoteProfile" @click="requestRemoteProfileDelete">DELETE</Button>
+                <CrogenitorActions v-if="remoteProfiles.length" :disabled="isProfileActionDisabled || isRemoteBusy || !selectedRemoteProfile" @reset-display="requestResetProfileDisplay(selectedRemoteProfile)" @delete="requestRemoteProfileDelete" />
               </div>
               <div v-if="selectedRemoteProfile" class="launch-profile-summary">
                 <div class="profile-info-card remote-profile-info-card" :aria-label="`${selectedRemoteProfileLabel} remote profile summary`">
@@ -1631,6 +1657,9 @@ async function copyLauncherFailure() {
           </Select>
           <label class="management-toggle"><Checkbox :model-value="status.isIntroSkipped" :disabled="isBusy || isServerConfigurationBusy" @update:model-value="setSkipIntro" /><span><strong>SKIP INTRO MOVIES</strong><small>Use the client's Escape handling for opening movies. Applies to new game instances.</small></span></label>
           <label class="management-toggle"><Checkbox :model-value="status.isCinematicSkipped" :disabled="isBusy || isServerConfigurationBusy" @update:model-value="setSkipCinematic" /><span><strong>SKIP IN-GAME CINEMATICS</strong><small>Use the client's Escape handling for skippable cinematics after the tutorial introduction. Applies to new game instances.</small></span></label>
+          <label class="config-locale" for="config-native-ui-scale"><strong>NATIVE UI SCALE — {{ configuredNativeUIScalePercent }}%</strong></label>
+          <input id="config-native-ui-scale" v-model.number="configuredNativeUIScalePercent" type="range" min="100" max="300" step="5" :disabled="isServerConfigurationBusy" aria-label="Native UI scale" />
+          <small>Enlarge the native interface, profile, embedded pages, and portrait context menu. Other Flash screens keep their existing size. Applies to new game instances.</small>
           <template v-if="wineRunnerConfiguration.isSupported">
             <div class="config-wine-runner-heading">
               <label class="config-locale" for="config-wine-runner"><strong>WINE RUNTIME</strong></label>
@@ -1701,7 +1730,7 @@ async function copyLauncherFailure() {
                     </SelectItem>
                   </SelectContent>
                 </Select>
-                  <Button variant="outline" class="identity-delete" type="button" :disabled="isBusy || !selectedProfileRecord" @click="requestDeleteProfile">DELETE</Button>
+                  <CrogenitorActions :disabled="isProfileActionDisabled || !selectedProfileRecord" @reset-display="requestResetProfileDisplay(selectedProfileRecord)" @delete="requestDeleteProfile" />
                 </div>
                 <div class="launch-profile-summary">
                   <ProfileSummary v-if="selectedProfileRecord" :profile="selectedProfileRecord" />
@@ -1729,7 +1758,7 @@ async function copyLauncherFailure() {
                     </SelectItem>
                   </SelectContent>
                 </Select>
-                  <Button variant="outline" class="identity-delete" type="button" :disabled="isBusy || isDetachedLaunchBusy || !detachedProfileRecord" @click="requestDetachedProfileDelete">DELETE</Button>
+                  <CrogenitorActions :disabled="isProfileActionDisabled || isDetachedLaunchBusy || !detachedProfileRecord" @reset-display="requestResetProfileDisplay(detachedProfileRecord)" @delete="requestDetachedProfileDelete" />
                 </div>
                 <div class="launch-profile-summary">
                   <div v-if="detachedProfileRecord" class="profile-info-card" :aria-label="`${detachedProfileLabel} detached profile summary`">
@@ -1980,6 +2009,18 @@ async function copyLauncherFailure() {
           <Button v-if="isSquadSnapshotReady" variant="outline" class="report-folder-button" type="button" @click="downloadSquadSnapshot">DOWNLOAD JSON</Button>
           <Button variant="outline" class="report-folder-button" type="button" :disabled="!isSquadSnapshotReady" @click="copySquadSnapshot">COPY JSON</Button>
           <Button variant="default" class="report-folder-button" type="button" :disabled="!isSquadSnapshotReady" @click="createSquadIssue">CREATE NEW ISSUE</Button>
+        </div>
+      </div>
+    </LauncherDialog>
+
+    <LauncherDialog @interact="handleLauncherInteraction" v-if="profilePendingDisplayReset" :is-dismissible="!isProfileDisplayResetBusy" @close="profilePendingDisplayReset = null">
+      <div class="notice-card">
+        <p class="eyebrow">DISPLAY SETTINGS</p>
+        <DialogTitle as="h2">RESET DISPLAY FOR {{ profilePendingDisplayReset.displayName }}?</DialogTitle>
+        <p>This will change your profile to 720p windowed. Continue?</p>
+        <div class="notice-actions">
+          <Button variant="outline" type="button" class="onboarding-cancel" :disabled="isProfileDisplayResetBusy" @click="profilePendingDisplayReset = null">CANCEL</Button>
+          <Button variant="default" type="button" :disabled="isProfileDisplayResetBusy" @click="resetProfileDisplay">{{ isProfileDisplayResetBusy ? 'RESETTING...' : 'RESET DISPLAY' }}</Button>
         </div>
       </div>
     </LauncherDialog>

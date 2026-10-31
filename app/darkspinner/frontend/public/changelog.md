@@ -1,7 +1,17 @@
 # Changelog
 
+### 2026-10-31
+
+- Render embedded HTML at the selected UI scale with native page zoom for sharper text while preserving nested layouts and mouse input.
+- Apply saved Borderless Mode changes on the next game launch instead of immediately, and label the option as requiring a restart.
+- Add a Native UI Scale slider from 100% to 300% in Graphics settings and launcher Config for native controls, embedded HTML pages, and the portrait context menu, while preserving other Scaleform sizing.
+- Replace each Crogenitor Delete button with a disabled-during-game Actions menu offering Delete and a confirmed 720p windowed display reset.
+- Start newly created Crogenitors at the primary desktop resolution and refresh rate with high graphics, antialiasing, spotlight shadows, borderless mode, and taskbar overlay enabled.
+- Switch the launcher's active Crogenitor to a newly created profile as soon as creation succeeds.
+
 ### 2026-10-30
 
+- Populate each campaign mission's Results panel with build-103 player-slot kills, damage and healing counters instead of zeroes.
 - Move the game window to the desktop origin after enabling borderless mode and removing its decorations.
 - Use noun-authored aggro ranges for combat pets and drones in campaign and PvP, including acquisition, pursuit and target retention while their owner moves.
 - Correct Auto Turret's firing reach from its 4-unit placement range to its authored 10-unit laser range, bounded separately by its 12-unit aggro range.

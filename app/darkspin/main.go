@@ -169,6 +169,10 @@ func run(arguments []string) error {
 		jwt: jwt, isIntroSkipped: configuration.isIntroSkipped,
 		isCinematicSkipped: configuration.isCinematicSkipped,
 	}
+	err = os.Setenv("DARKSPIN_CONFIG_PATH", filepath.Join(baseDirectory, "darkspin.toml"))
+	if err != nil {
+		return fmt.Errorf("clientConfig: %w", err)
+	}
 	err = launchInjected(
 		gamePath, installDirectory(gameWorkingDirectory), fangPath, gameArguments, launchEnvironment,
 	)

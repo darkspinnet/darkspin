@@ -1,6 +1,8 @@
 #include "display/display.h"
 
 #include <string.h>
+#include <stdio.h>
+#include <math.h>
 
 /* Build 103 Options.swf: add live controls using its CheckBox and Label symbols.
  * Native settings (including No Blood) and packaged movies remain intact. */
@@ -29,10 +31,16 @@ static event_fn save_settings;
 static show_fn show_options;
 static destroy_fn destroy_options;
 static BYTE* options_controller;
+static BYTE* display_image;
+enum display_control_kind { DISPLAY_LABEL, DISPLAY_CHECKBOX, DISPLAY_SLIDER };
 static struct {
     int is_pending;
     int is_borderless;
     int is_overlay;
+    int scale_percent;
+    int is_scale_pending;
+    int is_scale_save_failed;
+    int failed_scale_percent;
     unsigned int stage;
 } selection;
 
@@ -115,6 +123,38 @@ static int set_boolean(display_value* parent, const char* name, int is_enabled) 
     return set(parent, name, boolean_value(is_enabled));
 }
 
+/* Build 103: Party.swf HUDParty.ShowContextMenu calls Container.ShowContextMenu,
+ * which attaches a clip named ContextMenu to mContainer.mRoot. 442350 retains
+ * Party's gData at controller+1360 and marks it ready at +1376; 4258E0 resolves
+ * that controller from GameUI+1732. Scale this clip only. GFx uses its display
+ * transform for button hit testing and local mouse coordinates as well. */
+// Modifies: magnifies only the live portrait context menu, preserving its anchor.
+static void update_context_menu_scale(void) {
+    BYTE* gameui;
+    BYTE* party;
+    display_value container = {0}, root = {0}, menu = {0};
+    double x_scale = 0, y_scale = 0;
+    int percent = fang_native_ui_scale();
+    if (!display_image) return;
+    gameui = *(BYTE**)(display_image + 0xDBEC40);
+    if (!readable_range(gameui, 1736)) return;
+    party = *(BYTE**)(gameui + 1732);
+    if (!readable_range(party, 1377) || !party[1376]) return;
+    if (!get((display_value*)(party + 1360), "mContainer", &container) ||
+        !get(&container, "mRoot", &root) || !get(&root, "ContextMenu", &menu) ||
+        !is_object(&menu)) goto done;
+    if (read_number(&menu, "_xscale", &x_scale) && x_scale == percent &&
+        read_number(&menu, "_yscale", &y_scale) && y_scale == percent) goto done;
+    if (set(&menu, "_xscale", number_value(percent)) &&
+        set(&menu, "_yscale", number_value(percent))) {
+        trace_client_state("display_context_menu_scale_applied", percent);
+    }
+done:
+    release_value(&menu);
+    release_value(&root);
+    release_value(&container);
+}
+
 // Modifies: resolves the graphics tab into an output value and releases temporary native references.
 static int graphics_tab(BYTE* controller, display_value* graphics) {
     display_value scene = {0}, container = {0};
@@ -141,9 +181,29 @@ static int sibling_label(display_value* graphics, display_value* button,
     return is_found;
 }
 
+// Modifies: initializes a cloned slider's native thumb or track mouse handlers.
+static int initialize_slider_button(display_value* slider, const char* name) {
+    display_value button = {0};
+    display_value state = string_value("up");
+    /* Build 103 Button.configUI installs onPress/onRelease. A duplicated
+     * compound control must initialize its children before Slider.configUI
+     * subscribes to their press events. onLoadImpl alone can return early
+     * when the duplicate already has initialized set. */
+    int is_ready = get(slider, name, &button) && is_object(&button) &&
+        set(&button, "bindingEnabled", boolean_value(0)) &&
+        invoke(&button, "gotoAndStop", NULL, &state, 1) &&
+        set(&button, "initialized", boolean_value(0)) &&
+        invoke(&button, "onLoadImpl", NULL, NULL, 0) &&
+        invoke(&button, "setState", NULL, &state, 1) &&
+        set(&button, "disabled", boolean_value(0)) &&
+        set(&button, "enabled", boolean_value(1));
+    release_value(&button);
+    return is_ready;
+}
+
 // Modifies: creates and initializes a live options control through native movie methods and properties.
 static int clone_control(display_value* graphics, display_value* source,
-    const char* name, int depth, const char* caption, int is_checkbox) {
+    const char* name, int depth, const char* caption, enum display_control_kind kind) {
     display_value clone = {0};
     display_value arguments[2] = {string_value(name), number_value(depth)};
     double width, height;
@@ -170,7 +230,26 @@ static int clone_control(display_value* graphics, display_value* source,
     }
     /* Dynamic instances lack authored placement initialization. Run the stock
      * lifecycle so CheckBox installs its mouse handlers and toggle behavior. */
-    if (is_checkbox) {
+    if (kind == DISPLAY_SLIDER) {
+        display_value state = string_value("default");
+        if (!invoke(&clone, "gotoAndStop", NULL, &state, 1) ||
+            !initialize_slider_button(&clone, "track") ||
+            !initialize_slider_button(&clone, "thumb") ||
+            !set(&clone, "maximum", number_value(300)) ||
+            !set(&clone, "minimum", number_value(100)) ||
+            !set(&clone, "snapInterval", number_value(5)) ||
+            !set_boolean(&clone, "snapping", 1) ||
+            !set_boolean(&clone, "liveDragging", 1) ||
+            !set(&clone, "offsetLeft", number_value(0)) ||
+            !set(&clone, "offsetRight", number_value(0)) ||
+            !set(&clone, "value", number_value(100)) ||
+            !set(&clone, "initialized", boolean_value(0)) ||
+            !set(&clone, "_disabled", boolean_value(0)) ||
+            !set(&clone, "enabled", boolean_value(1)) ||
+            !set(&clone, "focusEnabled", boolean_value(1)) ||
+            !set(&clone, "tabEnabled", boolean_value(1)) ||
+            !invoke(&clone, "onLoadImpl", NULL, NULL, 0)) goto done;
+    } else if (kind == DISPLAY_CHECKBOX) {
         arguments[0] = string_value("up");
         if (!set(&clone, "_label", string_value("")) ||
             !invoke(&clone, "gotoAndStop", NULL, arguments, 1) ||
@@ -203,11 +282,57 @@ static int create_controls(display_value* graphics) {
     display_value source = {0}, label = {0};
     int is_created = get(graphics, "noBlood", &source) &&
         sibling_label(graphics, &source, -2, &label) &&
-        clone_control(graphics, &source, "fangBorderless", 18000, "", 1) &&
-        clone_control(graphics, &label, "fangBorderlessLabel", 18001, "Borderless Mode", 0) &&
-        clone_control(graphics, &source, "fangTaskbarOverlay", 18002, "", 1) &&
-        clone_control(graphics, &label, "fangTaskbarOverlayLabel", 18003, "Taskbar Overlay", 0);
+        clone_control(graphics, &source, "fangBorderless", 18000, "", DISPLAY_CHECKBOX) &&
+        clone_control(graphics, &label, "fangBorderlessLabel", 18001, "Borderless Mode (restart required)", DISPLAY_LABEL) &&
+        clone_control(graphics, &source, "fangTaskbarOverlay", 18002, "", DISPLAY_CHECKBOX) &&
+        clone_control(graphics, &label, "fangTaskbarOverlayLabel", 18003, "Taskbar Overlay", DISPLAY_LABEL);
     release_value(&label);
+    release_value(&source);
+    return is_created;
+}
+
+/* Build 103 Options_Graphics.swf: brightness is at depth 176; its panel,
+ * heading, and readout are at 22, 128, and 180. Resolve relative live depths
+ * so GFx's depth offset is retained. All symbols come from installed assets. */
+// Modifies: clones the complete installed brightness grouping for UI scaling.
+static int create_scale_control(display_value* graphics) {
+    display_value source = {0}, panel = {0}, clone = {0}, label = {0}, level = {0};
+    display_value arguments[2] = {string_value("fangNativeScalePanel"), number_value(17999)};
+    int is_created = get(graphics, "brightness", &source) &&
+        sibling_label(graphics, &source, -154, &panel) &&
+        sibling_label(graphics, &source, -48, &label) &&
+        get(graphics, "brightnessLevel", &level);
+    if (!is_created) goto done;
+    if (!get(graphics, "fangNativeScalePanel", &clone) || !is_object(&clone)) {
+        invoke(&panel, "duplicateMovieClip", NULL, arguments, 2);
+        release_value(&clone);
+        memset(&clone, 0, sizeof(clone));
+        is_created = get(graphics, "fangNativeScalePanel", &clone) && is_object(&clone);
+    }
+    is_created = is_created &&
+        clone_control(graphics, &source, "fangNativeScale", 18004, "", DISPLAY_SLIDER) &&
+        clone_control(graphics, &label, "fangNativeScaleLabel", 18008, "Native UI Scale (restart required)", DISPLAY_LABEL) &&
+        clone_control(graphics, &level, "fangNativeScaleLevel", 18006, "100%", DISPLAY_LABEL);
+    if (is_created) {
+        display_value readout = {0}, text = {0};
+        double width;
+        /* brightnessLevel has an authored 31.67% horizontal placement scale.
+         * clone_control already applies its visible width through setSize;
+         * retaining that placement scale would squeeze the new text twice. */
+        is_created = get(graphics, "fangNativeScaleLevel", &readout) &&
+            set(&readout, "_xscale", number_value(100)) &&
+            read_number(&level, "_width", &width) &&
+            get(&readout, "textField", &text) &&
+            set(&text, "_x", number_value(0)) &&
+            set(&text, "_width", number_value(width));
+        release_value(&text);
+        release_value(&readout);
+    }
+done:
+    release_value(&level);
+    release_value(&label);
+    release_value(&clone);
+    release_value(&panel);
     release_value(&source);
     return is_created;
 }
@@ -220,9 +345,123 @@ static int original_y(display_value* control, double* y) {
     return read_number(control, "_y", y) && set(control, "fangOriginalY", number_value(*y));
 }
 
+/* The stock heading strips are part of one static shape containing several
+ * unrelated rows. A duplicated Label contains only text. Draw a new beveled
+ * strip sized from the live panel and label instead of embedding that asset. */
+// Modifies: supplies the scale panel's missing title background.
+static int layout_scale_heading(display_value* graphics, display_value* panel) {
+    display_value heading = {0}, label = {0};
+    display_value arguments[2] = {string_value("fangNativeScaleHeading"), number_value(18007)};
+    double x, y, width, label_y, label_height, height, corner;
+    int is_ready = 0;
+    if (!get(graphics, "fangNativeScaleHeading", &heading) || !is_object(&heading)) {
+        invoke(graphics, "createEmptyMovieClip", NULL, arguments, 2);
+        release_value(&heading);
+        memset(&heading, 0, sizeof(heading));
+        if (!get(graphics, "fangNativeScaleHeading", &heading) || !is_object(&heading)) goto done;
+    }
+    if (!get(graphics, "fangNativeScaleLabel", &label) ||
+        !read_number(panel, "_x", &x) || !read_number(panel, "_y", &y) ||
+        !read_number(panel, "_width", &width) ||
+        !read_number(&label, "_y", &label_y) || !read_number(&label, "_height", &label_height)) goto done;
+    x += 2;
+    y += 2;
+    width -= 4;
+    height = label_y - y + label_height;
+    corner = height / 5;
+    arguments[0] = number_value(0xFFFFFF);
+    arguments[1] = number_value(15);
+    if (!invoke(&heading, "clear", NULL, NULL, 0) ||
+        !invoke(&heading, "beginFill", NULL, arguments, 2)) goto done;
+    const double points[][2] = {
+        {x + corner, y}, {x + width - corner, y},
+        {x + width, y + corner}, {x + width, y + height - corner},
+        {x + width - corner, y + height}, {x + corner, y + height},
+        {x, y + height + corner}, {x, y + corner}, {x + corner, y},
+    };
+    for (unsigned int index = 0; index < sizeof(points) / sizeof(points[0]); ++index) {
+        arguments[0] = number_value(points[index][0]);
+        arguments[1] = number_value(points[index][1]);
+        if (!invoke(&heading, index == 0 ? "moveTo" : "lineTo", NULL, arguments, 2)) goto done;
+    }
+    is_ready = invoke(&heading, "endFill", NULL, NULL, 0);
+done:
+    release_value(&label);
+    release_value(&heading);
+    return is_ready;
+}
+
+// Modifies: extends the left frame and lowers the restart message below both columns.
+static int layout_graphics_footer(display_value* graphics, display_value* brightness,
+    display_value* checkbox_panel) {
+    display_value left_panel = {0}, tooltip = {0};
+    double bottom, height, top;
+    int is_ready = sibling_label(graphics, brightness, -174, &left_panel) &&
+        get(graphics, "tooltip", &tooltip) &&
+        read_number(checkbox_panel, "_y", &bottom) &&
+        read_number(checkbox_panel, "_height", &height) &&
+        read_number(&left_panel, "_y", &top);
+    if (is_ready) {
+        bottom += height;
+        is_ready = set(&left_panel, "_height", number_value(bottom - top)) &&
+            set(&tooltip, "_y", number_value(bottom + 16));
+    }
+    release_value(&tooltip);
+    release_value(&left_panel);
+    return is_ready;
+}
+
+// Modifies: places the scale grouping below brightness and moves the checkbox panel.
+static int layout_scale_group(display_value* graphics, double* checkbox_shift) {
+    display_value brightness = {0}, panel = {0}, checkbox_panel = {0}, scale_panel = {0};
+    static const struct { const char* source; const char* target; int depth_offset; } controls[] = {
+        {"brightness", "fangNativeScale", 0},
+        {"brightness", "fangNativeScaleLabel", -48},
+        {"brightnessLevel", "fangNativeScaleLevel", 0},
+    };
+    double panel_y, checkbox_y, x, y;
+    int is_ready = 0;
+    if (!get(graphics, "brightness", &brightness) ||
+        !sibling_label(graphics, &brightness, -154, &panel) ||
+        !sibling_label(graphics, &brightness, -144, &checkbox_panel) ||
+        !get(graphics, "fangNativeScalePanel", &scale_panel) ||
+        !original_y(&panel, &panel_y) || !original_y(&checkbox_panel, &checkbox_y) ||
+        !read_number(&panel, "_x", &x)) goto done;
+    *checkbox_shift = checkbox_y - panel_y;
+    if (*checkbox_shift <= 0 || !set(&scale_panel, "_x", number_value(x)) ||
+        !set(&scale_panel, "_y", number_value(checkbox_y)) ||
+        !set(&checkbox_panel, "_y", number_value(checkbox_y + *checkbox_shift)) ||
+        !set(&checkbox_panel, "_height", number_value(128))) goto done;
+    for (unsigned int index = 0; index < sizeof(controls) / sizeof(controls[0]); ++index) {
+        display_value source = {0}, target = {0}, heading = {0};
+        int is_positioned = get(graphics, controls[index].source, &source);
+        display_value* origin = &source;
+        if (is_positioned && controls[index].depth_offset) {
+            is_positioned = sibling_label(graphics, &source, controls[index].depth_offset, &heading);
+            origin = &heading;
+        }
+        is_positioned = is_positioned && get(graphics, controls[index].target, &target) &&
+            read_number(origin, "_x", &x) && read_number(origin, "_y", &y) &&
+            set(&target, "_x", number_value(x)) &&
+            set(&target, "_y", number_value(y + *checkbox_shift));
+        release_value(&heading);
+        release_value(&target);
+        release_value(&source);
+        if (!is_positioned) goto done;
+    }
+    is_ready = layout_scale_heading(graphics, &scale_panel) &&
+        layout_graphics_footer(graphics, &brightness, &checkbox_panel);
+done:
+    release_value(&scale_panel);
+    release_value(&checkbox_panel);
+    release_value(&panel);
+    release_value(&brightness);
+    return is_ready;
+}
+
 // Modifies: caches original positions and repositions the nine live graphics options rows.
 static int layout_controls(display_value* graphics) {
-    /* Nine rows fit in the authored seven-row panel by reducing only spacing.
+    /* Nine checkbox rows fit below the separate native scale grouping.
      * Keep checkbox and label sizes, and place the two display modes together.
      * Label offsets are relative live depths, including Scaleform's offset. */
     static const struct { const char* name; int label_offset; } rows[] = {
@@ -231,19 +470,20 @@ static int layout_controls(display_value* graphics) {
         {"spotlightShadows", 4}, {"noBlood", -2}, {"insaneGrass", -2},
     };
     display_value first = {0}, last = {0}, source = {0}, source_label = {0};
-    double top, bottom, button_x, label_x, source_y, label_y;
+    double top, bottom, button_x, label_x, source_y, label_y, checkbox_shift;
     int is_laid_out = 0;
     if (!get(graphics, "cloudShadows", &first) || !get(graphics, "insaneGrass", &last) ||
         !original_y(&first, &top) || !original_y(&last, &bottom) || bottom <= top ||
         !get(graphics, "noBlood", &source) || !sibling_label(graphics, &source, -2, &source_label) ||
         !read_number(&source, "_x", &button_x) || !read_number(&source_label, "_x", &label_x) ||
-        !original_y(&source, &source_y) || !original_y(&source_label, &label_y)) {
+        !original_y(&source, &source_y) || !original_y(&source_label, &label_y) ||
+        !layout_scale_group(graphics, &checkbox_shift)) {
         goto done;
     }
     for (unsigned int index = 0; index < sizeof(rows) / sizeof(rows[0]); ++index) {
         display_value button = {0}, label = {0};
         double button_y, caption_y;
-        double y = top + (bottom - top) * index / 8;
+        double y = top + checkbox_shift + (bottom - top) * index / 10;
         int is_row_ready = get(graphics, rows[index].name, &button) &&
             sibling_label(graphics, &button, rows[index].label_offset, &label);
         if (is_row_ready && (index == 3 || index == 4)) {
@@ -271,23 +511,79 @@ done:
     return is_laid_out;
 }
 
+// Modifies: matches the stock slider artwork without inheriting its input-disabled flag.
+static void update_scale_slider_style(display_value* graphics, display_value* slider) {
+    display_value brightness = {0};
+    static const char* names[] = {"track", "thumb"};
+    if (!get(graphics, "brightness", &brightness)) goto done;
+    for (unsigned int index = 0; index < sizeof(names) / sizeof(names[0]); ++index) {
+        display_value source = {0}, target = {0};
+        double frame, current_frame;
+        if (get(&brightness, names[index], &source) && get(slider, names[index], &target) &&
+            read_number(&source, "_currentframe", &frame) &&
+            read_number(&target, "_currentframe", &current_frame) && frame != current_frame) {
+            display_value argument = number_value(frame);
+            invoke(&target, "gotoAndStop", NULL, &argument, 1);
+        }
+        release_value(&target);
+        release_value(&source);
+    }
+done:
+    release_value(&brightness);
+}
+
+// Modifies: labels the live build-103 resolution heading at depth 120.
+static void update_screen_size_caption(display_value* graphics) {
+    display_value resolution = {0}, caption = {0};
+    if (get(graphics, "screenResolutions", &resolution) &&
+        sibling_label(graphics, &resolution, -2, &caption)) {
+        set(&caption, "text", string_value("Screen Size (restart required)"));
+    }
+    release_value(&caption);
+    release_value(&resolution);
+}
+
 // Modifies: creates and synchronizes display controls, reconciles selections, and logs UI progress.
 void fang_update_display_ui(void) {
     display_value graphics = {0}, borderless = {0}, overlay = {0}, fullscreen = {0};
+    display_value slider = {0}, caption = {0}, level = {0};
     int is_fullscreen, is_borderless, is_layout_ready = 0;
     unsigned int stage = 1;
+    update_context_menu_scale();
     if (options_controller == NULL || !options_controller[0x28]) {
         return;
     }
     if (!graphics_tab(options_controller, &graphics)) {
         goto done;
     }
+    update_screen_size_caption(&graphics);
     stage = 2;
     if (!read_boolean(&graphics, "isFangDisplayLayoutReady", &is_layout_ready) || !is_layout_ready) {
-        if (!create_controls(&graphics) || !layout_controls(&graphics) ||
+        if (!create_controls(&graphics) || !create_scale_control(&graphics) || !layout_controls(&graphics) ||
             !set(&graphics, "isFangDisplayLayoutReady", boolean_value(1))) {
             goto done;
         }
+    }
+    if (!get(&graphics, "fangNativeScale", &slider) ||
+        !get(&graphics, "fangNativeScaleLabel", &caption) ||
+        !get(&graphics, "fangNativeScaleLevel", &level)) goto done;
+    update_scale_slider_style(&graphics, &slider);
+    if (selection.is_scale_pending) {
+        if (!set(&slider, "value", number_value(selection.scale_percent))) goto done;
+        selection.is_scale_pending = 0;
+    }
+    double percent;
+    char scale_caption[64];
+    if (read_number(&slider, "value", &percent) && isfinite(percent) && percent >= 100 && percent <= 300) {
+        if ((int)percent != selection.failed_scale_percent) selection.is_scale_save_failed = 0;
+        if (selection.is_scale_save_failed) {
+            _snprintf(scale_caption, sizeof(scale_caption), "Could not save UI scale");
+        } else {
+            _snprintf(scale_caption, sizeof(scale_caption), "Native UI Scale (restart required)");
+        }
+        set(&caption, "text", string_value(scale_caption));
+        _snprintf(scale_caption, sizeof(scale_caption), "%d%%", (int)percent);
+        set(&level, "text", string_value(scale_caption));
     }
     stage = 3;
     if (!get(&graphics, "fangBorderless", &borderless) ||
@@ -326,12 +622,18 @@ done:
     release_value(&overlay);
     release_value(&borderless);
     release_value(&graphics);
+    release_value(&caption);
+    release_value(&slider);
+    release_value(&level);
 }
 
 // Modifies: queues current or default display selections for the options UI.
 static void load_selection(int is_default) {
     selection.is_borderless = !is_default && fang_borderless_requested();
     selection.is_overlay = !is_default && fang_taskbar_overlay_requested();
+    selection.scale_percent = is_default ? 100 : fang_native_ui_scale();
+    selection.is_scale_pending = 1;
+    selection.is_scale_save_failed = 0;
     selection.is_pending = 1;
 }
 
@@ -365,9 +667,10 @@ static void __cdecl hooked_get_graphics(BYTE* controller, const char* event,
 // Modifies: reads display selections, queues display changes, and invokes native settings saving.
 static void __cdecl hooked_save_settings(BYTE* controller, const char* event,
     display_value* arguments) {
-    display_value graphics = {0}, borderless = {0}, overlay = {0};
+    display_value graphics = {0}, borderless = {0}, overlay = {0}, slider = {0};
     int is_borderless = selection.is_borderless, is_overlay = selection.is_overlay;
     double fullscreen;
+    double percent = selection.scale_percent;
     /* StartSaveAndClose has a fixed list of numeric graphics fields. Read our
      * additional controls directly; leave its complete native DTO intact. */
     int is_valid = arguments != NULL && read_number(arguments, "fullScreen", &fullscreen) &&
@@ -379,6 +682,26 @@ static void __cdecl hooked_save_settings(BYTE* controller, const char* event,
             read_boolean(&borderless, "selected", &is_borderless) &&
             read_boolean(&overlay, "selected", &is_overlay);
     }
+    if (is_valid && !selection.is_scale_pending) {
+        is_valid = (is_object(&graphics) || graphics_tab(controller, &graphics)) &&
+            get(&graphics, "fangNativeScale", &slider) &&
+            read_number(&slider, "value", &percent);
+    }
+    is_valid = is_valid && isfinite(percent) && percent >= 100 && percent <= 300 &&
+        percent == (int)percent && (int)percent % 5 == 0;
+    if (is_valid && !fang_request_native_ui_scale((int)percent)) {
+        selection.is_scale_save_failed = 1;
+        selection.failed_scale_percent = (int)percent;
+        display_value caption = {0};
+        if (get(&graphics, "fangNativeScaleLabel", &caption))
+            set(&caption, "text", string_value("Could not save UI scale"));
+        release_value(&caption);
+        release_value(&slider);
+        release_value(&overlay);
+        release_value(&borderless);
+        release_value(&graphics);
+        return;
+    }
     if (is_valid) {
         fang_request_borderless(is_borderless && fullscreen == 0);
         fang_request_taskbar_overlay(is_overlay);
@@ -388,6 +711,7 @@ static void __cdecl hooked_save_settings(BYTE* controller, const char* event,
     release_value(&overlay);
     release_value(&borderless);
     release_value(&graphics);
+    release_value(&slider);
     save_settings(controller, event, arguments);
 }
 
@@ -421,6 +745,7 @@ int fang_install_display_ui(BYTE* base) {
     if (!patch_call(base + 0x3C8A3, destroy_options, hooked_destroy)) {
         goto restore_save;
     }
+    display_image = base;
     return 1;
 restore_save:
     if (!patch_pointer(save_slot, hooked_save_settings, save_settings)) {

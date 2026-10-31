@@ -25,6 +25,7 @@ const (
 	ConfigIsVersionLocked                    ConfigKey = "IS_VERSION_LOCKED"
 	ConfigIsSingleplayerOnly                 ConfigKey = "IS_SINGLEPLAYER_ONLY"
 	ConfigClientLocale                       ConfigKey = "CLIENT_LOCALE"
+	ConfigNativeUIScalePercent               ConfigKey = "NATIVE_UI_SCALE_PERCENT"
 	ConfigCampaignMatchmakingBotSize         ConfigKey = "CAMPAIGN_MATCHMAKING_BOT_SIZE"
 	ConfigIsCampaignBotSquadMirroringEnabled ConfigKey = "IS_CAMPAIGN_BOT_SQUAD_MIRRORING_ENABLED"
 	ConfigIsMultiplayerEnabled               ConfigKey = "IS_MULTIPLAYER_ENABLED"
@@ -54,6 +55,7 @@ var defaultConfigValues = map[ConfigKey]string{
 	ConfigIsVersionLocked:                    "false",
 	ConfigIsSingleplayerOnly:                 "false",
 	ConfigClientLocale:                       "",
+	ConfigNativeUIScalePercent:               "100",
 	ConfigCampaignMatchmakingBotSize:         "1",
 	ConfigIsCampaignBotSquadMirroringEnabled: "true",
 	ConfigIsMultiplayerEnabled:               "false",
@@ -81,8 +83,9 @@ var defaultConfigValues = map[ConfigKey]string{
 
 // Config is a concurrency-safe representation of darkspin.toml.
 type Config struct {
-	mu     sync.RWMutex
-	values map[ConfigKey]string
+	mu                   sync.RWMutex
+	values               map[ConfigKey]string
+	isNativeUIScaleDirty bool
 }
 
 type configDocument struct {
@@ -124,6 +127,7 @@ type configGame struct {
 	IsVersionLocked                    *bool   `toml:"is_version_locked"`
 	IsSingleplayerOnly                 *bool   `toml:"is_singleplayer_only"`
 	ClientLocale                       *string `toml:"locale"`
+	NativeUIScalePercent               *int64  `toml:"native_ui_scale_percent"`
 	CampaignMatchmakingBotSize         *int64  `toml:"campaign_matchmaking_bot_size"`
 	IsCampaignBotSquadMirroringEnabled *bool   `toml:"is_campaign_bot_squad_mirroring_enabled"`
 }
@@ -189,6 +193,7 @@ func LoadConfig(path string) (*Config, bool, error) {
 	config.setBool(ConfigIsVersionLocked, document.Game.IsVersionLocked)
 	config.setBool(ConfigIsSingleplayerOnly, document.Game.IsSingleplayerOnly)
 	config.setString(ConfigClientLocale, document.Game.ClientLocale)
+	config.setInt(ConfigNativeUIScalePercent, document.Game.NativeUIScalePercent)
 	config.setInt(ConfigCampaignMatchmakingBotSize, document.Game.CampaignMatchmakingBotSize)
 	config.setBool(ConfigIsCampaignBotSquadMirroringEnabled, document.Game.IsCampaignBotSquadMirroringEnabled)
 	config.setBool(ConfigIsMultiplayerEnabled, document.Server.IsMultiplayerEnabled)
@@ -223,6 +228,7 @@ func LoadConfig(path string) (*Config, bool, error) {
 // Save writes a compact, typed TOML configuration.
 func (c *Config) Save(path string) error {
 	c.mu.RLock()
+	isNativeUIScaleDirty := c.isNativeUIScaleDirty
 	values := make(map[ConfigKey]string, len(c.values))
 	for key, value := range c.values {
 		values[key] = value
@@ -246,6 +252,11 @@ func (c *Config) Save(path string) error {
 			return fmt.Errorf("launcherDecode: %w", decodeErr)
 		}
 		document.LauncherFields = currentDocument.LauncherFields
+		// The game can save this preference while the server retains an older
+		// Config. Other server saves must preserve that newer game selection.
+		if !isNativeUIScaleDirty && currentDocument.Game.NativeUIScalePercent != nil {
+			document.Game.NativeUIScalePercent = currentDocument.Game.NativeUIScalePercent
+		}
 	}
 	contents := bytes.Buffer{}
 	err = toml.NewEncoder(&contents).Encode(document)
@@ -267,6 +278,12 @@ func (c *Config) Save(path string) error {
 	if err != nil {
 		return fmt.Errorf("configWrite: %w", err)
 	}
+	c.mu.Lock()
+	if c.values[ConfigNativeUIScalePercent] == values[ConfigNativeUIScalePercent] {
+		c.values[ConfigNativeUIScalePercent] = strconv.FormatInt(*document.Game.NativeUIScalePercent, 10)
+		c.isNativeUIScaleDirty = false
+	}
+	c.mu.Unlock()
 	return nil
 }
 
@@ -282,6 +299,13 @@ func encodeConfigDocument(values map[ConfigKey]string) (configDocument, error) {
 	serverPort, err := integer(ConfigServerPort)
 	if err != nil {
 		return configDocument{}, fmt.Errorf("serverPort: %w", err)
+	}
+	nativeUIScalePercent, err := integer(ConfigNativeUIScalePercent)
+	if err != nil {
+		return configDocument{}, fmt.Errorf("uiScale: %w", err)
+	}
+	if *nativeUIScalePercent < 100 || *nativeUIScalePercent > 300 || *nativeUIScalePercent%5 != 0 {
+		return configDocument{}, errors.New("native UI scale must be 100 to 300 percent in steps of 5")
 	}
 	worldPlayerLimit, err := integer(ConfigWorldPlayerLimit)
 	if err != nil {
@@ -328,6 +352,7 @@ func encodeConfigDocument(values map[ConfigKey]string) (configDocument, error) {
 			IsVersionLocked:                    configPointer(configBool(values[ConfigIsVersionLocked])),
 			IsSingleplayerOnly:                 configPointer(configBool(values[ConfigIsSingleplayerOnly])),
 			ClientLocale:                       configPointer(values[ConfigClientLocale]),
+			NativeUIScalePercent:               nativeUIScalePercent,
 			CampaignMatchmakingBotSize:         campaignMatchmakingBotSize,
 			IsCampaignBotSquadMirroringEnabled: configPointer(configBool(values[ConfigIsCampaignBotSquadMirroringEnabled])),
 		},
@@ -445,6 +470,9 @@ func (c *Config) Set(key ConfigKey, value string) error {
 	}
 	c.mu.Lock()
 	c.values[key] = value
+	if key == ConfigNativeUIScalePercent {
+		c.isNativeUIScaleDirty = true
+	}
 	c.mu.Unlock()
 	return nil
 }

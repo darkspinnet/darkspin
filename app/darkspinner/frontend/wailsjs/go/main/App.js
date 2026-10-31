@@ -186,6 +186,10 @@ export function RepairLauncherIntegration(arg1) {
   return window['go']['main']['App']['RepairLauncherIntegration'](arg1);
 }
 
+export function ResetProfileDisplay(arg1, arg2) {
+  return window['go']['main']['App']['ResetProfileDisplay'](arg1, arg2);
+}
+
 export function RestartLauncher() {
   return window['go']['main']['App']['RestartLauncher']();
 }
