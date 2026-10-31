@@ -2141,7 +2141,9 @@ async function copyLauncherFailure() {
         <div class="credits-list" :aria-label='$t("Contributors")'>
           <Button variant="link" class="credits-link" type="button" @click="BrowserOpenURL('https://github.com/xackery/')">{{ $t("Xackery") }}</Button>
           <Button variant="link" class="credits-link" type="button" @click="BrowserOpenURL('https://github.com/Haminator69')">{{ $t("häminator") }}</Button>
+          <Button variant="link" class="credits-link" type="button" @click="BrowserOpenURL('https://github.com/GravityLizard98')">GravityLizard</Button>
         </div>
+        <img class="credits-image" src="https://darkspin.net/image/4.gif" alt="" loading="lazy" decoding="async" />
         <div class="notice-actions">
           <Button variant="outline" class="onboarding-cancel" type="button" @click="isCreditsOpen = false">{{ $t("CLOSE") }}</Button>
         </div>

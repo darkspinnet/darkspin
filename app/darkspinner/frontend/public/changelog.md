@@ -2,6 +2,8 @@
 
 ### 2026-10-31
 
+- Add GravityLizard to the credits with a link to their GitHub profile.
+- Lazy-load the Dark Spin GIF beneath the credits when the credits dialog is opened.
 - [#150](https://github.com/darkspinnet/darkspin/issues/150) Prevent sign-in crashes with saved offline friends by sending their Blaze identities and presence before friends-list replies and additions.
 - Add circled question-mark indicators with short hover and keyboard-focus explanations for launcher configuration options.
 - [#151](https://github.com/darkspinnet/darkspin/issues/151) Make Syndrome Shift cleanse nearby heroes, including its caster, of burns, poisons, and other debuffs even when those effects cannot be transferred to enemies.
