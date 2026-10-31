@@ -54,6 +54,20 @@ export namespace main {
 	        this.isAvailable = source["isAvailable"];
 	    }
 	}
+	export class LauncherAutomationConfiguration {
+	    isAutoPatchEnabled?: boolean;
+	    isAutoPlayEnabled?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new LauncherAutomationConfiguration(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.isAutoPatchEnabled = source["isAutoPatchEnabled"];
+	        this.isAutoPlayEnabled = source["isAutoPlayEnabled"];
+	    }
+	}
 	export class LauncherIntegrationStatus {
 	    isStartMenuInstalled: boolean;
 	    isDesktopInstalled: boolean;

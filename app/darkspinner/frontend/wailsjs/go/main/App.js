@@ -74,6 +74,10 @@ export function GetInterruptedMission(arg1) {
   return window['go']['main']['App']['GetInterruptedMission'](arg1);
 }
 
+export function GetLauncherAutomationConfiguration() {
+  return window['go']['main']['App']['GetLauncherAutomationConfiguration']();
+}
+
 export function GetLauncherIntegrationStatus() {
   return window['go']['main']['App']['GetLauncherIntegrationStatus']();
 }
@@ -220,6 +224,14 @@ export function ScanWineRunners() {
 
 export function SendReport(arg1) {
   return window['go']['main']['App']['SendReport'](arg1);
+}
+
+export function SetAutoPatch(arg1) {
+  return window['go']['main']['App']['SetAutoPatch'](arg1);
+}
+
+export function SetAutoPlay(arg1) {
+  return window['go']['main']['App']['SetAutoPlay'](arg1);
 }
 
 export function SetIdentity(arg1) {

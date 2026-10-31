@@ -2192,6 +2192,7 @@ type campaignMeleeSchedule struct {
 	generation        uint64
 	sourceObjectID    uint32
 	targetObjectID    uint32
+	attackFacing      raknet.Vector3
 	creature          game.GameplayCreature
 	definition        sim.AbilityDefinition
 	selection         zoneability.Selection
@@ -2298,13 +2299,15 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 	livePlan.Definition.ReleaseDelay = schedule.selection.ReleaseDelay
 	livePlan.Definition.HitEffectName = schedule.selected.HitEffectName
 	state := schedule.hitState
+	// Release presentation can be reset or replaced without retiring this run.
+	// Its melee sector and target scoring retain this attack's accepted facing.
+	facing := schedule.attackFacing
 	if state.arc == nil {
 		length := schedule.selected.Range
 		if schedule.selected.HitArcLength != nil {
 			length = *schedule.selected.HitArcLength
 		}
 		length += current.deployedCampaignActorFootprintRadius()
-		facing := current.attackPose.facing
 		arc, arcErr := zoneability.NewMeleeArc(livePlan.SourcePosition,
 			game.Vec3{X: facing.X, Y: facing.Y, Z: facing.Z}, length, schedule.selected.HitAngle)
 		if arcErr != nil {
@@ -2321,7 +2324,6 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 			state.arc.Contains(liveNPC.Plan.Position, liveNPC.Plan.ActorFootprintRadius())
 	}
 	if !isSelected {
-		facing := current.attackPose.facing
 		liveNPC, isSelected = state.arc.BestTarget(enemies, livePlan.SourcePosition,
 			game.Vec3{X: facing.X, Y: facing.Y, Z: facing.Z})
 	}
@@ -2448,7 +2450,7 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 		runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignBasicDeathDefinition: %w", err)
 	}
-	facing := geometryraknet.Direction(
+	deathFacing := geometryraknet.Direction(
 		current.playerPosition, deathDefinition.position,
 	)
 	preparedDamage := result.Damage.Damage
@@ -2459,7 +2461,7 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 		e.index, livePlan.TargetObjectID, !result.Damage.IsDamageImmune,
 		result.Damage.PreviousHealth, preparedDamage, result.IsCritical,
 		toSimPosition(deathDefinition.position),
-		sim.Position{X: facing.X, Y: facing.Y, Z: facing.Z},
+		sim.Position{X: deathFacing.X, Y: deathFacing.Y, Z: deathFacing.Z},
 	)
 	if err != nil {
 		runtime.registry.mutex.Unlock()
@@ -3546,23 +3548,19 @@ func (r campaignAbilityCommandRuntime) handleMeleeBasic(
 		r.registry.mutex.Unlock()
 		return request.reject("cursor position unavailable")
 	}
-	facing := geometryraknet.Direction(peerSession.playerPosition, targetPosition)
-	if isEnemyFound && targetPosition.X == peerSession.playerPosition.X && targetPosition.Y == peerSession.playerPosition.Y {
-		resolvedFacing, facingErr := campaignMeleeFacing(peerSession, command, targetPosition)
-		if facingErr != nil {
-			// Active melee abilities use SelectActivation and never mutate the
-			// basic sequence. Restore only admission actually made above.
-			isSequenceRestored := true
-			if !isActiveRequest {
-				isSequenceRestored = peerSession.basicSequenceSession().Restore(previousBasicSequence, basicSequenceRevision)
-			}
-			r.registry.mutex.Unlock()
-			if !isSequenceRestored {
-				return nil, fmt.Errorf("meleeFacingRestore: %w", errors.Join(facingErr, errors.New("basic sequence changed before facing rejection rollback")))
-			}
-			return request.reject(facingErr.Error())
+	facing, facingErr := campaignMeleeFacing(peerSession, command, targetPosition)
+	if facingErr != nil {
+		// Active melee abilities use SelectActivation and never mutate the
+		// basic sequence. Restore only admission actually made above.
+		isSequenceRestored := true
+		if !isActiveRequest {
+			isSequenceRestored = peerSession.basicSequenceSession().Restore(previousBasicSequence, basicSequenceRevision)
 		}
-		facing = resolvedFacing
+		r.registry.mutex.Unlock()
+		if !isSequenceRestored {
+			return nil, fmt.Errorf("meleeFacingRestore: %w", errors.Join(facingErr, errors.New("basic sequence changed before facing rejection rollback")))
+		}
+		return request.reject(facingErr.Error())
 	}
 	runTargetObjectID := targetObjectID
 	targetHitPoint := float32(0)
@@ -3699,7 +3697,8 @@ func (r campaignAbilityCommandRuntime) handleMeleeBasic(
 		hitState: hitState,
 		runtime:  r, packet: packet, sessionKey: sessionKey, generation: generation,
 		sourceObjectID: command.Common.ObjectID, targetObjectID: targetObjectID,
-		creature: creature, definition: definition,
+		attackFacing: facing,
+		creature:     creature, definition: definition,
 		selection: selection, selected: selectedDefinition, plan: plan,
 		binding: binding, run: basicRun, releaseResponse: releaseAckPacket,
 		isFireRavagerStun: isFireRavagerStun,

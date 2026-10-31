@@ -203,8 +203,6 @@ body:has(.mod-accent) {
 .launcher-control-center { display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 0; }
 #lua-scenario-picker { width:100%; }
 .launcher-progress-status { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; color: var(--muted-foreground); font-size: 11px; }
-.launcher-auto-options { display: flex; gap: 12px; }
-.launcher-auto-options label { display: flex; align-items: center; gap: 6px; font-size: 9px; white-space: nowrap; color: var(--muted-foreground); cursor: pointer; }
 .launcher-failure { display: flex; align-items: center; gap: 12px; padding: 10px 12px; color: var(--destructive); background: #f8717114; border: 1px solid #f8717140; border-radius: var(--radius); }
 .launcher-failure p { flex: 1; max-height: 48px; overflow: auto; overflow-wrap: anywhere; font-size: 11px; }
 .launcher-failure-copy { width: 30px; height: 30px; padding: 6px; }

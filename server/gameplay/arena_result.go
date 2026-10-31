@@ -225,6 +225,7 @@ func (e *gameplaySessionRegistry) forfeitEmptyArenaLocked(departed gameplayPeerS
 			return false
 		}
 	}
+	previousScoreA, previousScoreB := match.result.body.CountA, match.result.body.CountB
 	winnerTeam := uint32(3 - departed.binding.Team)
 	if match.isCombatActive && !match.result.isRoundComplete {
 		e.completeArenaResultLocked(gameID, winnerTeam)
@@ -246,6 +247,13 @@ func (e *gameplaySessionRegistry) forfeitEmptyArenaLocked(departed gameplayPeerS
 	match.result.body.SelectorA = winnerTeam
 	match.result.isCompleted = true
 	match.result.freezeStats(e.now())
+	if e.logger != nil {
+		e.logger.Printf(
+			"Arena match forfeited game=%d match=%s departed_user=%d losing_team=%d winning_team=%d score_before=%d-%d score_after=%d-%d",
+			gameID, match.result.matchID, departed.binding.UserID, departed.binding.Team,
+			winnerTeam, previousScoreA, previousScoreB, match.result.body.CountA, match.result.body.CountB,
+		)
+	}
 	return true
 }
 

@@ -137,6 +137,13 @@ func (e *gameplaySessionRegistry) persistArenaStats(ctx context.Context, gameID 
 	e.mutex.Unlock()
 	if e.logger != nil {
 		e.logger.Printf("Arena match statistics saved game=%d match=%s players=%d", gameID, match.result.matchID, len(entries))
+		for _, entry := range entries {
+			e.logger.Printf(
+				"Arena player statistics saved game=%d match=%s user=%d is_victory=%t round_wins=%d round_losses=%d",
+				gameID, entry.result.MatchID, entry.userID, entry.result.IsVictory,
+				entry.result.RoundWins, entry.result.RoundLosses,
+			)
+		}
 	}
 	return nil
 }

@@ -19,13 +19,13 @@ import { RefreshCw } from '@lucide/vue'
 import { campaignDetailFor, campaignLabelFor, profileCreateDate, profileLastPlayedDate, profileLastPlayedTime } from './profile'
 import ServerRulesConfiguration from '@/components/ServerRulesConfiguration.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { BrowserOpenURL, CancelPatch, CheckRemoteServers, ClipboardSetText, CompactSnapshots, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteModProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetSquadSnapshot, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, ResetModProfileDisplay, ResetProfileDisplay, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetIdentity, SetLocalServicesRequired, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
+import { BrowserOpenURL, CancelPatch, CheckRemoteServers, ClipboardSetText, CompactSnapshots, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteModProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherAutomationConfiguration, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetSquadSnapshot, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, ResetModProfileDisplay, ResetProfileDisplay, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetAutoPatch, SetAutoPlay, SetIdentity, SetLocalServicesRequired, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
 
 const status = ref({ state:'starting', message:'Starting DarkSpinner', identity:'', auth:'Starting', server:'Starting', patch:'Pending', game:'Checking', avatar:'Preparing', profile:'Starting', content:'Pending', identityError:'', authError:'', serverError:'', patchError:'', gameError:'', avatarError:'', profileError:'', contentError:'', lastRun:'', launcherNotice:'', version:'', buildChannel:'production', progress:0, patchProgress:0, avatarProgress:0, contentProgress:0, isAuthenticated:false, isAuthOnline:false, isServerOnline:false, isPatchComplete:false, isPatchActive:false, isGameReady:false, isAvatarReady:false, isProfileStoreReady:false, isContentReady:false, isPlayReady:false, isCinematicSkipped:false, isIntroSkipped:false, isLastRunFailure:false, isStartupBlocked:false })
 const retainedProfileName = localStorage.getItem('darkspinner.selectedProfile') || localStorage.getItem('darkspinner.identity') || ''
 const retainedLaunchKey = localStorage.getItem('darkspinner.launchProfile') || ''
 const identity = ref(localStorage.getItem('darkspinner.identity') || '')
-const selectedProfile = ref(retainedProfileName)
+const selectedProfile = ref(retainedLaunchKey.startsWith('play:') ? retainedLaunchKey.slice(5) : retainedProfileName)
 const newProfileName = ref('')
 const maximumProfileNameLength = 20
 const profiles = ref([])
@@ -65,7 +65,9 @@ const isRemoteChecking = ref(false)
 let remoteCheckTimer = null
 let remoteCheckDelay = null
 let isRemoteViewDisposed = false
-const remoteServerAddress = ref(localStorage.getItem('darkspinner.remoteServer') || '')
+const remoteServerAddress = ref(retainedLaunchKey.startsWith('remote:')
+  ? retainedLaunchKey.slice(7, retainedLaunchKey.lastIndexOf(':'))
+  : localStorage.getItem('darkspinner.remoteServer') || '')
 const remoteIdentity = ref(retainedLaunchKey.startsWith('remote:') ? retainedLaunchKey.slice(retainedLaunchKey.lastIndexOf(':') + 1) : '')
 const remotePassword = ref('')
 const isRemotePasswordRemembered = ref(true)
@@ -164,6 +166,8 @@ const changelogError = ref('')
 const retainedAutoPatch = localStorage.getItem('darkspinner.autoPatch')
 const isAutoPatchEnabled = ref(retainedAutoPatch === null || retainedAutoPatch === 'true')
 const isAutoLaunchEnabled = ref(localStorage.getItem('darkspinner.autoLaunch') === 'true')
+const isAutomationConfigurationLoaded = ref(false)
+const isAutomationConfigurationBusy = ref(false)
 const isPatchRequestBusy = ref(false)
 const isPatchCancelRequested = ref(false)
 const isLauncherFailureCopied = ref(false)
@@ -172,6 +176,7 @@ const autoLaunchCountdown = ref(0)
 const isGameLaunchedThisSession = ref(false)
 const activeClientRoute = ref('')
 let autoLaunchTimer = null
+let autoLaunchKey = ''
 let processStateTimer = null
 let preparationProgressTimer = null
 let isProcessStateRefreshing = false
@@ -365,6 +370,16 @@ const selectedLaunchKey = computed(() => {
   if (activePage.value === 'remote') return selectedRemoteProfile.value ? `remote:${selectedRemoteProfile.value.serverAddress}:${selectedRemoteProfile.value.loginName}` : ''
   return selectedProfileRecord.value ? `play:${selectedProfileRecord.value.loginName}` : ''
 })
+const isAutoLaunchReady = computed(() => {
+  if (!isAutomationConfigurationLoaded.value || !isServiceSelectionReady.value || !selectedLaunchKey.value || luaConsole.value.isSelected) return false
+  if (activePage.value === 'mod') return isModPlayReady.value
+  if (activePage.value === 'remote') return !!selectedRemoteProfile.value && !isRemoteRegistration.value && isHeaderPlayEnabled.value
+  return activePage.value === 'play' && isPlayEnabled.value && !isSelectedProfileRunning.value
+})
+watch(isAutoLaunchReady, isReady => {
+  if (isReady) void maybeAutoLaunch()
+  else cancelAutoLaunchCountdown()
+})
 
 watch(selectedLaunchKey, key => {
   if (key && ['play', 'remote', 'mod'].includes(activePage.value)) localStorage.setItem('darkspinner.launchProfile', key)
@@ -409,7 +424,7 @@ watch(activePage, page => {
   if (page !== 'remote') return
   scheduleRemoteCheck()
   remoteCheckTimer = window.setInterval(refreshVisibleRemoteChecks, 30000)
-})
+}, { immediate:true })
 watch(newProfileName, next => {
   const restricted = next.replace(/[^A-Za-z0-9]/g, '').slice(0, maximumProfileNameLength)
   if (restricted !== next) newProfileName.value = restricted
@@ -420,17 +435,15 @@ watch(selectedProfile, next => {
   void refreshRunningProfiles()
 })
 watch(isAutoPatchEnabled, next => {
-  localStorage.setItem('darkspinner.autoPatch', String(next))
   if (next) void maybeAutoPatch()
 })
 watch(isAutoLaunchEnabled, next => {
-  localStorage.setItem('darkspinner.autoLaunch', String(next))
   if (!next) {
     cancelAutoLaunchCountdown()
     return
   }
   hasAutoLaunchAttempted.value = false
-  if (activePage.value === 'play') void maybeAutoLaunch()
+  void maybeAutoLaunch()
 })
 watch(launcherFailure, () => { isLauncherFailureCopied.value = false })
 watch(() => status.value.content, () => {
@@ -472,12 +485,7 @@ function markProfilePlayed(loginName) {
   )
 }
 watch(isPlayEnabled, next => {
-  if (!next) {
-    cancelAutoLaunchCountdown()
-    return
-  }
-  void refreshInterruptedMission()
-  void maybeAutoLaunch()
+  if (next && activePage.value === 'play') void refreshInterruptedMission()
 })
 
 onMounted(async () => {
@@ -505,6 +513,7 @@ onMounted(async () => {
   integrationStatus.value = await GetLauncherIntegrationStatus()
   isInstallationLoaded.value = true
   if (isInstallationRequired.value) return
+  await refreshAutomationConfiguration()
   if (activePage.value === 'remote' && (!isExperimentalLauncherFeatureVisible.value || !selectedRemoteProfile.value)) showPage('play')
   isServiceSelectionReady.value = true
   if (status.value.isAutoPlayRequested) isAutoLaunchEnabled.value = true
@@ -653,6 +662,44 @@ function isSameRemoteServer(firstAddress, secondAddress) {
 
 function isPortValid(port) {
   return Number.isInteger(Number(port)) && Number(port) >= 1 && Number(port) <= 65535
+}
+
+async function refreshAutomationConfiguration() {
+  try {
+    const configuration = await GetLauncherAutomationConfiguration()
+    isAutoPatchEnabled.value = configuration.isAutoPatchEnabled ?? isAutoPatchEnabled.value
+    isAutoLaunchEnabled.value = configuration.isAutoPlayEnabled ?? isAutoLaunchEnabled.value
+    if (configuration.isAutoPatchEnabled === null) await SetAutoPatch(isAutoPatchEnabled.value)
+    if (configuration.isAutoPlayEnabled === null) await SetAutoPlay(isAutoLaunchEnabled.value)
+    localStorage.removeItem('darkspinner.autoPatch')
+    localStorage.removeItem('darkspinner.autoLaunch')
+    isAutomationConfigurationLoaded.value = true
+  }
+  catch (error) { serverConfigurationMessage.value = visibleLauncherText(error) }
+}
+
+async function setAutoPatch(isEnabled) {
+  if (isAutomationConfigurationBusy.value) return
+  isAutomationConfigurationBusy.value = true
+  try {
+    await SetAutoPatch(isEnabled === true)
+    isAutoPatchEnabled.value = isEnabled === true
+    serverConfigurationMessage.value = 'Auto Patch saved.'
+  }
+  catch (error) { serverConfigurationMessage.value = visibleLauncherText(error) }
+  finally { isAutomationConfigurationBusy.value = false }
+}
+
+async function setAutoPlay(isEnabled) {
+  if (isAutomationConfigurationBusy.value) return
+  isAutomationConfigurationBusy.value = true
+  try {
+    await SetAutoPlay(isEnabled === true)
+    isAutoLaunchEnabled.value = isEnabled === true
+    serverConfigurationMessage.value = 'Auto Play saved.'
+  }
+  catch (error) { serverConfigurationMessage.value = visibleLauncherText(error) }
+  finally { isAutomationConfigurationBusy.value = false }
 }
 
 async function refreshServerConfiguration() {
@@ -961,7 +1008,6 @@ async function refreshInterruptedMission() {
     const mission = await GetInterruptedMission(profileName)
     if (selectedProfile.value === profileName && mission?.isAvailable) {
       interruptedMission.value = mission
-      cancelAutoLaunchCountdown()
     }
   }
   catch (error) { recordError(error) }
@@ -1333,22 +1379,31 @@ function cancelProfileCreation() {
 }
 
 async function maybeAutoLaunch() {
-  if (activePage.value !== 'play' || !isAutoLaunchEnabled.value || hasAutoLaunchAttempted.value || !isPlayEnabled.value) return
+  if (!isAutoLaunchReady.value || !isAutoLaunchEnabled.value || hasAutoLaunchAttempted.value || isAutoLaunchCounting.value) return
   if (statusRows.value.some(row => row.error)) return
-  await refreshInterruptedMission()
-  if (interruptedMission.value || activePage.value !== 'play' || !isAutoLaunchEnabled.value || !isPlayEnabled.value || hasAutoLaunchAttempted.value) return
+  const key = selectedLaunchKey.value
+  if (retainedLaunchKey && key !== retainedLaunchKey) return
+  if (activePage.value === 'play') {
+    await refreshInterruptedMission()
+  }
+  if (selectedLaunchKey.value !== key || !isAutoLaunchReady.value || !isAutoLaunchEnabled.value || hasAutoLaunchAttempted.value) return
   hasAutoLaunchAttempted.value = true
+  autoLaunchKey = key
   autoLaunchCountdown.value = 3
-  autoLaunchTimer = window.setInterval(async () => {
-    autoLaunchCountdown.value -= 1
-    if (autoLaunchCountdown.value > 0) return
-    window.clearInterval(autoLaunchTimer)
-    autoLaunchTimer = null
-    if (activePage.value !== 'play' || !isAutoLaunchEnabled.value || !isPlayEnabled.value) {
-      return
-    }
-    await play()
-  }, 1000)
+  autoLaunchTimer = window.setInterval(advanceAutoLaunch, 1000)
+}
+
+async function advanceAutoLaunch() {
+  if (!isAutoLaunchReady.value || !isAutoLaunchEnabled.value || selectedLaunchKey.value !== autoLaunchKey) {
+    cancelAutoLaunchCountdown()
+    return
+  }
+  autoLaunchCountdown.value -= 1
+  if (autoLaunchCountdown.value > 0) return
+  cancelAutoLaunchCountdown()
+  if (activePage.value === 'mod') await modPage.value?.launch()
+  else if (activePage.value === 'remote') await launchRemote()
+  else await play()
 }
 
 async function requestPatch() {
@@ -1375,7 +1430,7 @@ async function requestPatch() {
 }
 
 async function maybeAutoPatch() {
-  if (!isAutoPatchEnabled.value || status.value.state !== 'ready' ||
+  if (!isAutomationConfigurationLoaded.value || !isAutoPatchEnabled.value || status.value.state !== 'ready' ||
     status.value.patch !== 'Update available' || isPatchBusy.value) return
   await requestPatch()
 }
@@ -1384,6 +1439,7 @@ function cancelAutoLaunchCountdown() {
   if (autoLaunchTimer !== null) window.clearInterval(autoLaunchTimer)
   autoLaunchTimer = null
   autoLaunchCountdown.value = 0
+  autoLaunchKey = ''
 }
 
 function suppressAutoLaunch() {
@@ -1399,13 +1455,17 @@ function handleLauncherInteraction(event) {
 }
 
 function handlePlayButton(event) {
+  if (isAutoLaunchCounting.value) {
+    suppressAutoLaunch()
+    return
+  }
   if (activePage.value === 'play' && event?.shiftKey) {
     suppressAutoLaunch()
     void startAdditionalLocalGame()
     return
   }
-  if (isAutoLaunchCounting.value) {
-    cancelAutoLaunchCountdown()
+  if (activePage.value === 'mod') {
+    void modPage.value?.launch()
     return
   }
   if (activePage.value === 'remote') {
@@ -1683,6 +1743,8 @@ async function copyLauncherFailure() {
         <TabsContent value="advanced">
           <div class="config-general-grid">
             <Card class="management-card config-port-card">
+              <label class="management-toggle"><Checkbox :model-value="isAutoPatchEnabled" :disabled="!isAutomationConfigurationLoaded || isAutomationConfigurationBusy" @update:model-value="setAutoPatch" /><span><strong>AUTO PATCH</strong></span></label>
+              <label class="management-toggle"><Checkbox :model-value="isAutoLaunchEnabled" :disabled="!isAutomationConfigurationLoaded || isAutomationConfigurationBusy" @update:model-value="setAutoPlay" /><span><strong>AUTO PLAY</strong></span></label>
               <label class="config-locale" for="config-snapshot-mode"><strong>SYNC SNAPSHOT</strong></label>
               <Select v-model="configuredSnapshotMode" @update:model-value="saveSnapshotConfiguration" :disabled="isServerConfigurationBusy">
                 <SelectTrigger id="config-snapshot-mode" class="w-full"><SelectValue /></SelectTrigger>
@@ -1772,10 +1834,7 @@ async function copyLauncherFailure() {
           <div class="launcher-control-center">
             <div v-if="activePage === 'lua'" id="lua-scenario-picker"></div>
             <template v-else><div class="launcher-progress-status" :title="launcherProgressLabel">{{ launcherProgressLabel }}</div>
-            <div class="launcher-auto-options">
-              <label><Checkbox v-model="isAutoPatchEnabled" /><span>AUTO PATCH</span></label>
-              <label><Checkbox v-model="isAutoLaunchEnabled" /><span>AUTO PLAY</span></label>
-            </div></template>
+            </template>
           </div>
           <div class="launcher-play-group">
             <Button v-if="activePage === 'lua'" variant="destructive" class="launcher-action detach-action kill-detached-action" type="button" :disabled="!luaPage?.canKill" title="Terminate this scenario's owned clients and stop its server" @click="luaPage?.kill()">KILL ALL</Button>
@@ -1783,7 +1842,7 @@ async function copyLauncherFailure() {
             <template v-else>
 			<Button variant="destructive" v-if="isAttachedKillVisible" class="launcher-action detach-action kill-detached-action" type="button" :disabled="isClientStopBusy" title="Close the active game client" @click="stopActiveClient">{{ isClientStopBusy ? 'CLOSING...' : 'KILL' }}</Button>
             <Button variant="outline" v-else-if="activeInterruptedMission" class="launcher-action detach-action mission-fresh" type="button" :disabled="!isHeaderPlayEnabled || isMissionChoiceBusy" title="Discard the interrupted deployment and start fresh" @click="startFresh">{{ isMissionChoiceBusy ? 'STARTING...' : 'START FRESH' }}</Button>
-            <Button variant="default" class="launcher-action play-action" type="button" :class="{ counting:isAutoLaunchCounting }" :disabled="activePage === 'mod' ? !isModPlayReady : activePage === 'config' || (!(activePage === 'play' && isShiftHeld ? isAdditionalLaunchReady : isHeaderPlayEnabled) && !isAutoLaunchCounting)" :title="activePage === 'mod' ? 'Launch the selected modded Crogenitor' : dockPlayTitle" @click="activePage === 'mod' ? modPage?.launch() : handlePlayButton($event)">{{ activePage === 'mod' ? 'LAUNCH MODDED' : dockPlayLabel }}</Button>
+            <Button variant="default" class="launcher-action play-action" type="button" :class="{ counting:isAutoLaunchCounting }" :disabled="activePage === 'mod' ? !isModPlayReady : activePage === 'config' || (!(activePage === 'play' && isShiftHeld ? isAdditionalLaunchReady : isHeaderPlayEnabled) && !isAutoLaunchCounting)" :title="activePage === 'mod' ? 'Launch the selected modded Crogenitor' : dockPlayTitle" @click="handlePlayButton($event)">{{ isAutoLaunchCounting ? dockPlayLabel : activePage === 'mod' ? 'LAUNCH MODDED' : dockPlayLabel }}</Button>
             </template>
           </div>
         </div>

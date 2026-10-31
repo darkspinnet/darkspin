@@ -2,6 +2,11 @@
 
 ### 2026-10-31
 
+- Move Auto Patch and Auto Play into Config Advanced, migrate their preferences into darkspin.toml, and auto-launch the last selected Local, Remote, or Modded Crogenitor once ready.
+- Preserve each accepted melee attack's facing through teleport and release-pose cleanup so its scheduled hit can complete.
+- Retire healing-reduction ownership when its modifier is purged so later basic attacks can apply the effect again.
+- Keep surviving boss NPCs damageable after developer victory completes their encounter.
+- Retire gameplay connections when their authenticated user disappears instead of repeatedly failing resource polls.
 - Fix a black launcher window at startup by initializing the selected local Crogenitor before registering its selection watcher.
 - Defer desktop local login/server startup when reopening with a saved Remote Crogenitor, start services on local selection or creation, and stop idle local services before remote launches; browser mode keeps its existing shared listener and local server running.
 - Revamp launcher UI, simplifying it

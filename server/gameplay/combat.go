@@ -6724,6 +6724,7 @@ func (s *gameplayPeerSession) untrackCampaignNPCModifier(
 	if s == nil || run == nil || s.campaignNPCModifiers[run.instanceID] != run {
 		return
 	}
+	s.forgetHeroHealingReduction(run)
 	delete(s.campaignNPCModifiers, run.instanceID)
 }
 

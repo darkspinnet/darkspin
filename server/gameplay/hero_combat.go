@@ -23,6 +23,13 @@ func (e gameplayPendingRuntime) poll(ctx context.Context, req raknet.Packet) ([]
 	}
 	packets, err := e.pollWorld(ctx, req)
 	if err != nil {
+		// Authentication logout can retire the user before the UDP peer closes.
+		// Retire this transport's gameplay state through normal disconnect cleanup
+		// rather than retrying its pending commands on every connected poll.
+		if errors.Is(err, game.ErrGameplayUserNotFound) {
+			e.retireCanceledTransport(req)
+			return nil, nil
+		}
 		return nil, fmt.Errorf("worldPoll: %w", err)
 	}
 	botPackets, err := e.pollServerBots(ctx, req)
