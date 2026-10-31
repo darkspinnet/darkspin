@@ -907,6 +907,16 @@ func (r campaignAbilityCommandRuntime) purgeHeroDebuffs(
 ) ([][]byte, error) {
 	r.registry.mutex.Lock()
 	defer r.registry.mutex.Unlock()
+	packets, err := r.purgeHeroDebuffsLocked(sessionKey, generation, objectID)
+	if err != nil {
+		return packets, fmt.Errorf("heroPurge: %w", err)
+	}
+	return packets, nil
+}
+
+func (r campaignAbilityCommandRuntime) purgeHeroDebuffsLocked(
+	sessionKey string, generation uint64, objectID uint32,
+) ([][]byte, error) {
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	if isFound && peerSession.generation == generation && peerSession.binding.Mode == game.ModeArena &&
 		peerSession.deployedObjectID == objectID {

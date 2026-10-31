@@ -2,6 +2,9 @@
 
 ### 2026-10-31
 
+- #151 Make Syndrome Shift cleanse nearby heroes, including its caster, of burns, poisons, and other debuffs even when those effects cannot be transferred to enemies.
+- #151 Exclude minion NPCs from resurrection auras and reject resurrection from stale minion modifier state.
+- #151 Keep passive Cryos geyser cracks as persistent hazards instead of applying generic destructible explosions, including when restoring a mission.
 - Keep English first in both language dropdowns, with other installed game languages ordered by their display names.
 - Split Config General language selection into independently saved Launcher Language and In-Game Language dropdowns, updating launcher text immediately and preserving the previous shared choice when creating the launcher preference.
 - Translate the in-game Insane Grass option through the selected game language instead of leaving its caption in English.

@@ -44,7 +44,8 @@ func (e *Session) nativePassiveAurasLocked(target Snapshot, previousAuras []Affi
 	}
 	auras := make([]AffixAura, 0, 2)
 	for _, modifierName := range []string{"ResurrectModifier", "NocturnaSpecialLeech_HealModifier"} {
-		if modifierName == "ResurrectModifier" && target.IsAffixResurrectionTriggered {
+		if modifierName == "ResurrectModifier" &&
+			(target.IsAffixResurrectionTriggered || !canReceiveResurrection(target.Plan)) {
 			continue
 		}
 		previousSourceID := uint32(0)

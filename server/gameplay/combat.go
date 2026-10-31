@@ -362,7 +362,10 @@ func campaignNPCDeathDefinition(
 	isBossVent := strings.EqualFold(snapshot.Plan.NounName, "DEST_citadel_factoryvent_boss.Noun")
 	isPipe := isFactoryPipe(snapshot.Plan.NounName)
 	if isCryosGeyser {
-		graphicsState = util.HashID("unblocked")
+		graphicsState = 0
+		if state := zonenpc.CryosGeyserDeathState(snapshot.Plan); state != "" {
+			graphicsState = util.HashID(state)
+		}
 	}
 	if replacementNoun != "" {
 		graphicsState = util.HashID("dead")

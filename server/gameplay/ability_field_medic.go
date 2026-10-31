@@ -141,6 +141,12 @@ func (e fieldMedicActiveSchedule) hit() ([][]byte, error) {
 			packets = append(packets, removePackets...)
 		}
 	}
+	cleansePackets, cleanseErr := e.cleanseHeroesLocked(peerSession, center, allyEffectTarget)
+	packets = append(packets, cleansePackets...)
+	if cleanseErr != nil {
+		e.runtime.registry.mutex.Unlock()
+		return packets, fmt.Errorf("fieldMedicCleanse: %w", cleanseErr)
+	}
 	peerSession = e.runtime.registry.sessions[e.sessionKey]
 	transferredBuffs, buffTargets, err := e.transferBuffsLocked(
 		&peerSession, center, buffs.winners,

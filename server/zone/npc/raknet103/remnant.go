@@ -25,7 +25,11 @@ func Remnants(snapshots []zonenpc.Snapshot) ([][]byte, error) {
 		}
 		graphicsState := util.HashID("dead")
 		if isGeyser {
-			graphicsState = util.HashID("unblocked")
+			graphicsState = 0
+			state := zonenpc.CryosGeyserDeathState(snapshot.Plan)
+			if state != "" {
+				graphicsState = util.HashID(state)
+			}
 		}
 		plan := snapshot.FacingSpawnPlan()
 		if replacementNoun != "" {
@@ -54,12 +58,14 @@ func Remnants(snapshots []zonenpc.Snapshot) ([][]byte, error) {
 			raknet.AgentBlackboardUpdateMessage{
 				ObjectID: snapshot.Plan.ObjectID, IsTargetable: false,
 			},
-			raknet.SetObjectGFXStateMessage{
-				ObjectID: snapshot.Plan.ObjectID, State: graphicsState,
-			},
 			raknet.ObjectCollisionUpdateMessage{
 				ObjectID: snapshot.Plan.ObjectID, IsCollisionEnabled: !isGeyser && !isPipe && !isWarpTotem,
 			},
+		}
+		if graphicsState != 0 {
+			messages = append(messages, raknet.SetObjectGFXStateMessage{
+				ObjectID: snapshot.Plan.ObjectID, State: graphicsState,
+			})
 		}
 		for index, message := range messages {
 			packet, err := raknet.MarshalApplication(message)

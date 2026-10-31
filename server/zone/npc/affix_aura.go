@@ -115,7 +115,8 @@ func (e *Session) RefreshAffixEffects(playerCount uint32) []AffixChange {
 					continue
 				}
 				if target.Plan.BossIdentity.HasModifier(definition.ModifierName) ||
-					(definition.ModifierName == "ResurrectModifier" && target.IsAffixResurrectionTriggered) {
+					(definition.ModifierName == "ResurrectModifier" &&
+						(target.IsAffixResurrectionTriggered || !canReceiveResurrection(target.Plan))) {
 					continue
 				}
 				previousSourceID := uint32(0)

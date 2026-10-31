@@ -55,7 +55,7 @@ func thornsDamage(npc Snapshot, sourceObjectID uint32, damage float32,
 // Persistent affix's rezzing child or the Persistent aura's Resurrect child.
 // The no-resurrect child makes either path one-shot for an actor lifetime.
 func AffixResurrectionFraction(npc Snapshot) float32 {
-	if npc.IsAffixResurrectionTriggered {
+	if npc.IsAffixResurrectionTriggered || !canReceiveResurrection(npc.Plan) {
 		return 0
 	}
 	if npc.HasAffixModifier("Persistent_NPCAffixModifier") {
@@ -66,6 +66,11 @@ func AffixResurrectionFraction(npc Snapshot) float32 {
 		return [...]float32{0.4, 0.6, 0.8}[rank-1]
 	}
 	return 0
+}
+
+func canReceiveResurrection(plan SpawnPlan) bool {
+	return !plan.IsFixture &&
+		(!plan.NPCProfile.IsClassKnown || plan.NPCProfile.NPCType != eliteMinionNPCType)
 }
 
 // affixResurrectionFraction validates the aura child at the instant of the

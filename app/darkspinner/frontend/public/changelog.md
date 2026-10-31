@@ -2,6 +2,7 @@
 
 ### 2026-10-31
 
+- Keep English first in both language dropdowns, with other installed game languages ordered by their display names.
 - Split Config General language selection into independently saved Launcher Language and In-Game Language dropdowns, updating launcher text immediately and preserving the previous shared choice when creating the launcher preference.
 - Translate the in-game Insane Grass option through the selected game language instead of leaving its caption in English.
 - More UI Scaling improvements

@@ -26,9 +26,17 @@ func IsGraviticRemnant(plan SpawnPlan) bool {
 	return IsGraviticRegulator(plan) || IsGraviticStabilizer(plan)
 }
 
-// CryosGeyserDeath opens the ice plug and leaves the vent alive as a hazard.
+// Both the breakable ice plug and passive cracks remain as geyser hazards.
 func IsCryosGeyser(plan SpawnPlan) bool {
-	return plan.IsFixture && game.CryosGeyserHook(plan.NounName, plan.NPCProfile) == "CryosGeyserDeath"
+	return plan.IsFixture && game.CryosGeyserHook(plan.NounName, plan.NPCProfile) != ""
+}
+
+// Passive cracks keep their authored appearance; only ice plugs open on death.
+func CryosGeyserDeathState(plan SpawnPlan) string {
+	if game.CryosGeyserHook(plan.NounName, plan.NPCProfile) == "CryosGeyserDeath" {
+		return "unblocked"
+	}
+	return ""
 }
 
 // CryosACRemnantNoun is the separate damaged object created by AcDeath and
