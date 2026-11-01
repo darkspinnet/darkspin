@@ -2,6 +2,8 @@
 
 ### 2026-11-01
 
+- Limit remote /bug and /b server captures to one every two minutes across players, preserving client-side reports and replying when host capture is skipped by the cooldown.
+- #153 #158 Include the free first PvE squad in saved and transmitted unlock counts so buying a stat upgrade no longer locks every squad and its heroes.
 - Add dedicated-server darkrun db user swap to atomically exchange a deleted and active Crogenitor's names before recovery.
 - Add dedicated-server emergency recovery through darkrun db user undelete, with name-collision protection, launch credentials bound to the original account, and Compose recovery instructions.
 - #155 Save remote /bug reports in the player's local bugs folder while retaining host diagnostics.

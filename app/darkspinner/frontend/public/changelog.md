@@ -2,8 +2,7 @@
 
 ### 2026-11-01
 
-- Use delete consistently in launcher actions and simplify Crogenitor confirmations to ask whether to delete the named profile.
-- Retain deleted local, modded, and remote Crogenitors for 120 days with blocked login and underscore-suffixed names, then permanently clean them up on startup.
+- Add dedicated-server darkrun db user swap to atomically exchange a deleted and active Crogenitor's names before recovery.
 - Add dedicated-server emergency recovery through darkrun db user undelete, with name-collision protection, launch credentials bound to the original account, and Compose recovery instructions.
 - [#155](https://github.com/darkspinnet/darkspin/issues/155) Save remote /bug reports in the player's local bugs folder while retaining host diagnostics.
 - [#155](https://github.com/darkspinnet/darkspin/issues/155) Complete deferred party departure after leaving a game so later invitations do not retain stale membership.

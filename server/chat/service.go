@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -49,6 +50,9 @@ var (
 	ErrResourceStatusUnavailable = errors.New("resource status unavailable")
 	// ErrBugReportUnavailable means the server cannot create a local diagnostic bundle.
 	ErrBugReportUnavailable = errors.New("bug report unavailable")
+	// ErrBugReportCooldown leaves client capture available while skipping
+	// another expensive server-side diagnostic capture.
+	ErrBugReportCooldown = errors.New("bug report cooldown")
 	// ErrSnapshotUnavailable means the sync snapshot service is disabled or unavailable.
 	ErrSnapshotUnavailable = errors.New("sync snapshot unavailable")
 )
@@ -361,6 +365,8 @@ type Service struct {
 	godModeToggler         GodModeToggler
 	dnaGranter             DNAGranter
 	bugReporter            BugReporter
+	remoteBugReportMu      sync.Mutex
+	nextRemoteBugReportAt  time.Time
 	bugContext             BugContextProvider
 	snapshotManager        SnapshotManager
 }
@@ -834,6 +840,9 @@ func (s *Service) ReportBug(ctx context.Context, command BugCommand) (string, er
 	command.Description = strings.TrimSpace(command.Description)
 	if command.Description == "" || s.bugReporter == nil {
 		return "", ErrBugReportUnavailable
+	}
+	if command.IsRemoteConnection && !s.reserveRemoteBugReport() {
+		return "", ErrBugReportCooldown
 	}
 	if s.bugContext != nil {
 		bugContext, contextErr := s.bugContext.BugContext(ctx, BugContextRequest{

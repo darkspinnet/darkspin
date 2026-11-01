@@ -389,6 +389,8 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 					})
 					if reportErr == nil {
 						responseBody = "Bug report queued as " + reportName
+					} else if errors.Is(reportErr, chat.ErrBugReportCooldown) {
+						responseBody = "Server bug-report capture is on a 2-minute cooldown. Only client-side diagnostics were captured; no new server report was queued."
 					} else if !errors.Is(reportErr, chat.ErrBugReportUnavailable) {
 						return nil, fmt.Errorf("commandBug: %w", reportErr)
 					}

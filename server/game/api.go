@@ -1018,7 +1018,9 @@ func (a *API) privateAccountFields(user *sporenet.User, view sporenet.UserView) 
 		xmlText("unlock_diagonal_catalysts", number(account.UnlockDiagonalCatalysts)),
 		xmlText("unlock_inventory", number(account.UnlockInventoryIdentify)),
 		xmlText("unlock_fuel_tanks", number(account.UnlockFuelTanks)),
-		xmlText("unlock_pve_decks", number(account.UnlockPVEDecks)),
+		// Build 103 recomputes every PvE squad lock after an upgrade. Its
+		// count includes the free first slot, matching IsLockedFor's floor.
+		xmlText("unlock_pve_decks", number(max(uint32(1), account.UnlockPVEDecks))),
 		xmlText("unlock_pvp_decks", number(account.UnlockPVPDecks)),
 		xmlText("unlock_stats", number(account.UnlockStats)),
 		xmlText("unlock_inventory_identify", number(account.UnlockInventory)),
