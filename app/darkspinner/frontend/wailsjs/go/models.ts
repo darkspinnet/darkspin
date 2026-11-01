@@ -1,5 +1,65 @@
 export namespace main {
 	
+	export class ReportResult {
+	    name: string;
+	    names: string[];
+	    directory: string;
+	    fileCount: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ReportResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.names = source["names"];
+	        this.directory = source["directory"];
+	        this.fileCount = source["fileCount"];
+	    }
+	}
+	export class AutomaticClientReport {
+	    launchId: string;
+	    title: string;
+	    message: string;
+	    isCrash: boolean;
+	    isPreparing: boolean;
+	    result: ReportResult;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AutomaticClientReport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.launchId = source["launchId"];
+	        this.title = source["title"];
+	        this.message = source["message"];
+	        this.isCrash = source["isCrash"];
+	        this.isPreparing = source["isPreparing"];
+	        this.result = this.convertValues(source["result"], ReportResult);
+	        this.error = source["error"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ClientLocale {
 	    code: string;
 	    label: string;
@@ -123,6 +183,7 @@ export namespace main {
 		}
 	}
 	export class LauncherStatus {
+	    automaticClientReport?: AutomaticClientReport;
 	    state: string;
 	    message: string;
 	    identity: string;
@@ -179,6 +240,7 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.automaticClientReport = this.convertValues(source["automaticClientReport"], AutomaticClientReport);
 	        this.state = source["state"];
 	        this.message = source["message"];
 	        this.identity = source["identity"];
@@ -229,6 +291,24 @@ export namespace main {
 	        this.isLastRunFailure = source["isLastRunFailure"];
 	        this.isStartupBlocked = source["isStartupBlocked"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class LuaConsoleLine {
 	    sequence: number;
@@ -662,24 +742,7 @@ export namespace main {
 	        this.checkedDt = source["checkedDt"];
 	    }
 	}
-	export class ReportResult {
-	    name: string;
-	    names: string[];
-	    directory: string;
-	    fileCount: number;
 	
-	    static createFrom(source: any = {}) {
-	        return new ReportResult(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.names = source["names"];
-	        this.directory = source["directory"];
-	        this.fileCount = source["fileCount"];
-	    }
-	}
 	export class ServerConfiguration {
 	    bindHost: string;
 	    advertisedHost: string;

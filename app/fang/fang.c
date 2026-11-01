@@ -1208,7 +1208,7 @@ static DWORD WINAPI jwt_login_watchdog_thread(LPVOID parameter) {
 #else
     trace_client_state("jwt_login_watchdog_expired", 1);
     if (write_login_failure_result()) {
-        ExitProcess(0xD15C0001u);
+        fang_login_terminate(0xD15C0001u);
     }
     return 0;
 #endif
@@ -3088,7 +3088,7 @@ static VOID CALLBACK jwt_login_timer_callback(HWND window, UINT message, UINT_PT
         trace_client_state("jwt_login_retry_expired", jwt_login_retry_count);
 #if !FANG_SCENARIO
         if (jwt_login_token[0] != '\0' && fang_login_not_ready()) {
-            ExitProcess(0xD15C0001u);
+            fang_login_terminate(0xD15C0001u);
         }
 #endif
         return;
@@ -4185,7 +4185,7 @@ static void __cdecl hooked_login_error(unsigned int code, void* target) {
     if (!was_login_completed && jwt_login_token[0] != '\0' && fang_login_rejected(code)) {
         /* The owning launcher retains the themed error after the client
          * closes, rather than routing an automatic launch to manual login. */
-        ExitProcess(0xD15C0002u);
+        fang_login_terminate(0xD15C0002u);
     }
 #endif
     (void)was_login_completed;

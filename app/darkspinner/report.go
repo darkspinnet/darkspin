@@ -77,6 +77,16 @@ type ReportResult struct {
 // excluded because they are separate diagnostic reports. It never uploads the
 // bundle or opens another application by itself.
 func (a *App) SendReport(title string) (ReportResult, error) {
+	result, err := a.sendSessionReport(title, nil)
+	if err != nil {
+		return ReportResult{}, fmt.Errorf("reportSend: %w", err)
+	}
+	return result, nil
+}
+
+func (a *App) sendSessionReport(title string, session *launcherReportSession) (ReportResult, error) {
+	a.reportMu.Lock()
+	defer a.reportMu.Unlock()
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return ReportResult{}, errors.New("report title is empty")
@@ -85,7 +95,7 @@ func (a *App) SendReport(title string) (ReportResult, error) {
 	if err != nil {
 		return ReportResult{}, fmt.Errorf("reportPaths: %w", err)
 	}
-	reportPath, records, err := a.createReportArchive(logPath, reportDirectory, title)
+	reportPath, records, err := a.createSessionReportArchive(logPath, reportDirectory, title, session)
 	if err != nil {
 		return ReportResult{}, fmt.Errorf("reportCreate: %w", err)
 	}
@@ -138,12 +148,22 @@ func (a *App) OpenReportFolder() error {
 func (a *App) createReportArchive(
 	logPath string, reportDirectory string, title string,
 ) (string, []reportFileRecord, error) {
+	path, records, err := a.createSessionReportArchive(logPath, reportDirectory, title, nil)
+	if err != nil {
+		return "", nil, fmt.Errorf("reportArchive: %w", err)
+	}
+	return path, records, nil
+}
+
+func (a *App) createSessionReportArchive(
+	logPath string, reportDirectory string, title string, session *launcherReportSession,
+) (string, []reportFileRecord, error) {
 	err := os.MkdirAll(reportDirectory, 0o755)
 	if err != nil {
 		return "", nil, fmt.Errorf("reportMkdir: %w", err)
 	}
 	createdAt := time.Now().UTC()
-	manifest := a.reportManifest(createdAt, title, nil)
+	manifest := a.sessionReportManifest(createdAt, title, nil, session)
 	level := strings.TrimSpace(manifest.Gameplay.Mission.Label)
 	if level == "" {
 		level = strings.TrimSpace(manifest.Gameplay.LocationLabel)
@@ -233,7 +253,20 @@ func (a *App) reportManifest(
 	createdAt time.Time, title string,
 	records []reportFileRecord,
 ) reportManifest {
-	session, sessionErr := a.readReportSession()
+	return a.sessionReportManifest(createdAt, title, records, nil)
+}
+
+func (a *App) sessionReportManifest(
+	createdAt time.Time, title string, records []reportFileRecord,
+	reportSession *launcherReportSession,
+) reportManifest {
+	var session launcherReportSession
+	var sessionErr error
+	if reportSession != nil {
+		session = *reportSession
+	} else {
+		session, sessionErr = a.readReportSession()
+	}
 	clientError := ""
 	if sessionErr != nil {
 		clientError = sessionErr.Error()
@@ -243,6 +276,9 @@ func (a *App) reportManifest(
 	gameServer := a.serviceSet.gameServer
 	ctx := a.lifecycleCtx
 	a.mu.Unlock()
+	if reportSession != nil {
+		status.Identity = session.client.Profile
+	}
 	if session.client.IsModded {
 		gameServer = session.server
 		status.Identity = session.client.Profile
@@ -386,7 +422,9 @@ func addReportFile(archive *zip.Writer, source reportSource) (reportFileRecord, 
 	if err != nil {
 		return reportFileRecord{}, fmt.Errorf("entryCreate: %w", err)
 	}
-	_, err = io.Copy(w, r)
+	// Capture the observed file size even when another client or the server
+	// keeps appending to a shared log during compression.
+	_, err = io.CopyN(w, r, fi.Size())
 	if err != nil {
 		return reportFileRecord{}, fmt.Errorf("entryCopy: %w", err)
 	}

@@ -25,12 +25,14 @@ const (
 var clientLaunchIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 type clientFailureRecord struct {
-	PID      uint32 `json:"pid"`
-	LaunchID string `json:"launch_id"`
-	Stage    string `json:"stage"`
-	Reason   string `json:"reason"`
-	Message  string `json:"message"`
-	TimeMS   uint64 `json:"time_ms"`
+	PID       uint32 `json:"pid"`
+	LaunchID  string `json:"launch_id"`
+	Stage     string `json:"stage"`
+	Reason    string `json:"reason"`
+	Message   string `json:"message"`
+	TimeMS    uint64 `json:"time_ms"`
+	ExitCode  uint32 `json:"exit_code,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
 }
 
 type clientProcessRecord struct {
@@ -347,6 +349,7 @@ func (a *App) presentClientFailure(
 	a.emitStatusLocked()
 	a.mu.Unlock()
 	a.log(message)
+	a.captureClientFailure(failureRecord)
 	a.consumeClientResult(path)
 }
 

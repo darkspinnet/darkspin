@@ -143,6 +143,24 @@ const reportActionsMenu = ref(null)
 const reportTitle = ref('')
 const reportResult = ref(null)
 const reportShareMessage = ref('')
+const dismissedAutomaticReportID = ref('')
+const automaticClientReport = computed(() => {
+  const report = status.value.automaticClientReport
+  return report && report.launchId !== dismissedAutomaticReportID.value ? report : null
+})
+function dismissAutomaticClientReport() {
+  dismissedAutomaticReportID.value = automaticClientReport.value?.launchId || ''
+  dismissClientLoginFailure()
+}
+async function openAutomaticReportIssue() {
+  const report = automaticClientReport.value
+  if (!report) return
+  const url = new URL('https://github.com/darkspinnet/darkspin/issues/new')
+  url.searchParams.set('title', report.isCrash ? 'Client crash' : 'Client login failure')
+  url.searchParams.set('body', `### What happened\n\n<!-- Describe what you were doing before the failure. -->\n\n### Failure\n${report.message}\n\n### Diagnostic archives\n${(report.result?.names || []).map(name => `- ${name}`).join('\n')}\n\nAttach every listed ZIP before submitting.`)
+  try { await BrowserOpenURL(url.href) }
+  catch (error) { recordError(error) }
+}
 const myReportsURL = 'https://github.com/darkspinnet/darkspin/issues?q=is%3Aissue%20author%3A%40me%20sort%3Aupdated-desc'
 const reportIssueBody = computed(() => {
   const report = reportResult.value
@@ -2004,7 +2022,28 @@ async function copyLauncherFailure() {
       </div>
     </LauncherDialog>
 
-    <LauncherDialog @interact="handleLauncherInteraction" v-if="clientLoginFailure" :is-dismissible="true" @close="dismissClientLoginFailure">
+    <LauncherDialog @interact="handleLauncherInteraction" v-if="automaticClientReport" :is-dismissible="!automaticClientReport.isPreparing" @close="dismissAutomaticClientReport">
+      <div class="notice-card report-notice">
+        <DialogTitle as="h2">{{ $t(automaticClientReport.isCrash ? 'CLIENT CRASH DETECTED' : 'CLIENT FAILURE DETECTED') }}</DialogTitle>
+        <p>{{ $t('The client closed unexpectedly. Dark Spin is working to prevent these failures. You can help developers investigate by sharing a report.') }}</p>
+        <p>{{ automaticClientReport.message }}</p>
+        <p>{{ $t('1. Create a GitHub issue describing what happened. If you cannot use GitHub, message Xackery on Discord or share the report in the Dark Spin Discord if you are comfortable doing so.') }}</p>
+        <p>{{ $t('2. Attach every ZIP listed below. Darkspinner collected these logs automatically after the failure. Nothing was uploaded automatically.') }}</p>
+        <p v-if="automaticClientReport.isPreparing" role="status">{{ $t('Collecting crash logs...') }}</p>
+        <p v-else-if="automaticClientReport.error" role="alert">{{ $t('Automatic report creation failed. Use Send Feedback to try again, or share the failure message with the developers.') }}</p>
+        <template v-else>
+          <ul class="report-archives"><li v-for="name in automaticClientReport.result.names" :key="name"><Button variant="link" class="report-archive-link" type="button" :title='$t("Open report folder")' @click="openReportFolder">{{ name }}</Button></li></ul>
+          <Button variant="outline" class="report-path" type="button" @click="openReportFolder">{{ automaticClientReport.result.directory }}</Button>
+        </template>
+        <div class="notice-actions">
+          <Button variant="outline" type="button" :disabled="automaticClientReport.isPreparing" @click="dismissAutomaticClientReport">{{ $t('CLOSE') }}</Button>
+          <Button variant="default" type="button" :disabled="automaticClientReport.isPreparing" @click="openAutomaticReportIssue">{{ $t('1. CREATE GITHUB ISSUE') }}</Button>
+          <Button v-if="automaticClientReport.result.directory" variant="default" type="button" @click="openReportFolder">{{ $t('2. OPEN BUG FOLDER') }}</Button>
+        </div>
+      </div>
+    </LauncherDialog>
+
+    <LauncherDialog @interact="handleLauncherInteraction" v-else-if="clientLoginFailure" :is-dismissible="true" @close="dismissClientLoginFailure">
       <div class="notice-card danger-notice">
         <p class="eyebrow">{{ $t("CONNECTION FAILED") }}</p>
         <DialogTitle as="h2">{{ $t("LOGIN COULD NOT FINISH") }}</DialogTitle>
@@ -2143,6 +2182,7 @@ async function copyLauncherFailure() {
           <Button variant="link" class="credits-link" type="button" @click="BrowserOpenURL('https://github.com/Haminator69')">{{ $t("häminator") }}</Button>
           <Button variant="link" class="credits-link" type="button" @click="BrowserOpenURL('https://github.com/GravityLizard98')">GravityLizard</Button>
           <Button variant="link" class="credits-link" type="button" @click="BrowserOpenURL('https://github.com/Flameskid')">Flameskid</Button>
+          <Button variant="link" class="credits-link" type="button" @click="BrowserOpenURL('https://github.com/xilit42')">xilit42</Button>
         </div>
         <img class="credits-image" src="https://darkspin.net/image/4.gif" alt="" loading="lazy" decoding="async" />
         <div class="notice-actions">

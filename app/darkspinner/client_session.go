@@ -3,9 +3,37 @@ package main
 import "sync"
 
 type clientSessionResult struct {
-	Process  clientProcessRecord  `json:"process"`
-	Failure  *clientFailureRecord `json:"failure,omitempty"`
-	IsClosed bool                 `json:"is_closed"`
+	Process       clientProcessRecord  `json:"process"`
+	Failure       *clientFailureRecord `json:"failure,omitempty"`
+	IsClosed      bool                 `json:"is_closed"`
+	reportSession launcherReportSession
+	reportDone    chan struct{}
+}
+
+func (e *clientSession) SetReportSession(launchID string, session launcherReportSession) {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	client, isOwned := e.clientsByLaunchID[launchID]
+	if !isOwned {
+		return
+	}
+	client.reportSession = session
+	e.clientsByLaunchID[launchID] = client
+}
+
+func (e *clientSession) beginReport(launchID string) (launcherReportSession, chan struct{}, bool) {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	client, isOwned := e.clientsByLaunchID[launchID]
+	if !isOwned {
+		return launcherReportSession{}, nil, false
+	}
+	if client.reportDone != nil {
+		return client.reportSession, client.reportDone, false
+	}
+	client.reportDone = make(chan struct{})
+	e.clientsByLaunchID[launchID] = client
+	return client.reportSession, client.reportDone, true
 }
 
 // Only launches issued by this App belong to its session. Native registration

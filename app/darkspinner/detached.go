@@ -105,6 +105,9 @@ func (e *App) startDetachedGame(ctx context.Context, req detachedGameRequest) er
 		return fmt.Errorf("failureTarget: %w", err)
 	}
 	e.clientSession.Track(launchID, req.clientProfile, "detached")
+	e.recordReportSession(gameLaunchRequest{
+		account: req.account, serverAddress: req.serverAddress,
+	}, launchID)
 	launchArguments := gameLaunchArguments(arguments, req.token)
 	prefixArguments := []string{
 		"--" + detachedGameArgument, "--multiple-instances",

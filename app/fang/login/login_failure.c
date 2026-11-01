@@ -17,6 +17,16 @@ static BYTE login_body[2048];
 static char login_reason[96];
 static char login_message[512];
 
+// The launcher failure result must already be flushed before this call.
+// ExitProcess runs third-party DLL detach handlers after stopping other
+// threads, which can crash or deadlock while a login request is pending.
+void fang_login_terminate(unsigned int exit_code) {
+    if (!TerminateProcess(GetCurrentProcess(), exit_code)) {
+        DWORD error = GetLastError();
+        trace_client_state("login_terminate_failed", error);
+    }
+}
+
 // Modifies: decodes a bounded TDF string into an output buffer and advances the caller's offset.
 static int login_string(const BYTE* bytes, unsigned int size,
     unsigned int* offset, char* output, unsigned int capacity) {

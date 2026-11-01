@@ -1071,5 +1071,12 @@
     "Choose whether replays use an eligible captain or the same leader policy as the first clear.": "Choose whether replays use an eligible captain or the same leader policy as the first clear.",
     "Choose the installed Spore folder used to load creatures and parts for modded Crogenitors.": "Choose the installed Spore folder used to load creatures and parts for modded Crogenitors.",
     "Network port used by your local server. Other players must connect using this port.": "Network port used by your local server. Other players must connect using this port."
-  }
+  },
+  "CLIENT CRASH DETECTED": "CLIENT CRASH DETECTED",
+  "CLIENT FAILURE DETECTED": "CLIENT FAILURE DETECTED",
+  "The client closed unexpectedly. Dark Spin is working to prevent these failures. You can help developers investigate by sharing a report.": "The client closed unexpectedly. Dark Spin is working to prevent these failures. You can help developers investigate by sharing a report.",
+  "1. Create a GitHub issue describing what happened. If you cannot use GitHub, message Xackery on Discord or share the report in the Dark Spin Discord if you are comfortable doing so.": "1. Create a GitHub issue describing what happened. If you cannot use GitHub, message Xackery on Discord or share the report in the Dark Spin Discord if you are comfortable doing so.",
+  "2. Attach every ZIP listed below. Darkspinner collected these logs automatically after the failure. Nothing was uploaded automatically.": "2. Attach every ZIP listed below. Darkspinner collected these logs automatically after the failure. Nothing was uploaded automatically.",
+  "Collecting crash logs...": "Collecting crash logs...",
+  "Automatic report creation failed. Use Send Feedback to try again, or share the failure message with the developers.": "Automatic report creation failed. Use Send Feedback to try again, or share the failure message with the developers."
 }

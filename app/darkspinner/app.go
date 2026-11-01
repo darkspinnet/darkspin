@@ -31,6 +31,7 @@ type App struct {
 	modMu                    sync.Mutex
 	modState                 modState
 	reportSession            launcherReportSession
+	reportMu                 sync.Mutex
 	remoteRefreshMu          sync.Mutex
 	snapshotCompactMu        sync.Mutex
 	logMu                    sync.Mutex
@@ -62,6 +63,8 @@ type App struct {
 }
 
 type LauncherStatus struct {
+	AutomaticClientReport *AutomaticClientReport `json:"automaticClientReport,omitempty"`
+
 	State               string `json:"state"`
 	Message             string `json:"message"`
 	Identity            string `json:"identity"`
@@ -605,6 +608,9 @@ func (a *App) runGameLaunch(ctx context.Context, req gameLaunchRequest) {
 	err = runWithSnapshotControl(ctx, arguments, connection)
 	close(launchDone)
 	<-detectionDone
+	if err != nil && !errors.Is(err, context.Canceled) {
+		a.captureLaunchFailure(resultPath, launchID)
+	}
 	if !a.isAttachedGameLaunch(req.done) {
 		if err != nil && !errors.Is(err, context.Canceled) {
 			a.log(fmt.Sprintf("Detached game closed with an error: %v", err))

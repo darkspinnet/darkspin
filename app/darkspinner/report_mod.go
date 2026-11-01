@@ -49,6 +49,7 @@ func (a *App) recordReportSession(req gameLaunchRequest, launchID string) {
 	ip := net.ParseIP(host)
 	session.client.IsRemoteConnection = host != "" && !strings.EqualFold(host, "localhost") &&
 		(ip == nil || !ip.IsLoopback())
+	a.clientSession.SetReportSession(launchID, session)
 	a.mu.Lock()
 	a.reportSession = session
 	a.mu.Unlock()

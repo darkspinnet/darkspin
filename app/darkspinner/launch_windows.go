@@ -127,6 +127,10 @@ func launchInjected(
 		return fmt.Errorf("exitCode: %w", err)
 	}
 	if exitCode != 0 {
+		reportErr := writeClientExitFailure(process.processID, exitCode)
+		if reportErr != nil {
+			return fmt.Errorf("exitReport: %w", errors.Join(gameExitError(exitCode), reportErr))
+		}
 		return gameExitError(exitCode)
 	}
 	return nil

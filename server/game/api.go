@@ -443,12 +443,18 @@ func (a *API) game(writer http.ResponseWriter, request *http.Request, uri *recap
 			writeXML(writer, http.StatusOK, xmlResponse(false))
 			return
 		}
+		before := user.View()
+		if a.logger != nil {
+			a.logger.Printf("account_upgrade account=%q unlock_id=%d result=%q",
+				before.LoginName, unlockID, "requested")
+		}
 		err = a.userManager.UnlockUpgrade(request.Context(), user, uint32(unlockID))
+		view := user.View()
+		a.logAccountUpgrade(uint32(unlockID), before, view, err)
 		if err != nil {
 			writeXML(writer, http.StatusOK, xmlResponse(false))
 			return
 		}
-		view := user.View()
 		writeXML(writer, http.StatusOK, xmlResponse(true, a.privateAccountFields(user, view)...))
 	case "api.account.setSettings":
 		if user == nil {
