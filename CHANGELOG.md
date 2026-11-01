@@ -2,6 +2,7 @@
 
 ### 2026-10-31
 
+- Add Flameskid to the credits with a link to their GitHub profile.
 - #150 Prevent sign-in crashes with saved offline friends by sending their Blaze identities and presence before friends-list replies and additions.
 - Add circled question-mark indicators with short hover and keyboard-focus explanations for launcher configuration options.
 - #151 Make Syndrome Shift cleanse nearby heroes, including its caster, of burns, poisons, and other debuffs even when those effects cannot be transferred to enemies.

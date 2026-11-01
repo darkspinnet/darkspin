@@ -2142,6 +2142,7 @@ async function copyLauncherFailure() {
           <Button variant="link" class="credits-link" type="button" @click="BrowserOpenURL('https://github.com/xackery/')">{{ $t("Xackery") }}</Button>
           <Button variant="link" class="credits-link" type="button" @click="BrowserOpenURL('https://github.com/Haminator69')">{{ $t("häminator") }}</Button>
           <Button variant="link" class="credits-link" type="button" @click="BrowserOpenURL('https://github.com/GravityLizard98')">GravityLizard</Button>
+          <Button variant="link" class="credits-link" type="button" @click="BrowserOpenURL('https://github.com/Flameskid')">Flameskid</Button>
         </div>
         <img class="credits-image" src="https://darkspin.net/image/4.gif" alt="" loading="lazy" decoding="async" />
         <div class="notice-actions">
