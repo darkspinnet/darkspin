@@ -425,7 +425,8 @@ func PlanCone(
 			targetScale = minimumScale
 		}
 		if projected.LargeTargetDamageMultiplier > 0 &&
-			(enemy.Plan.IsCaptain || enemy.Plan.IsElite || enemy.Plan.IsBoss) {
+			(enemy.Plan.IsEliteModifierApplied() ||
+				(enemy.Plan.NPCProfile.IsClassKnown && enemy.Plan.NPCProfile.NPCType != 0)) {
 			targetScale *= projected.LargeTargetDamageMultiplier
 		}
 		damageScale[enemy.Plan.ObjectID] = targetScale

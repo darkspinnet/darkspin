@@ -24,6 +24,36 @@ type playgroupShipDisconnect struct {
 	matchmaking     matchmakingDirectory
 }
 
+// A ship return can send Leave before RemovePlayer on the same Blaze session.
+// Once removal releases its game, finish that deferred leave without waiting
+// for a TCP disconnect. The registry's game/party lifecycle gate is held here.
+func completePendingPlaygroupLeave(ctx context.Context, req *Request, personaID int64) error {
+	if req == nil || req.Session == nil {
+		return nil
+	}
+	session := req.Session
+	pending := session.pendingPlaygroupLeave
+	user := requestUser(req)
+	if pending == nil || user == nil || user.Account.ID != personaID ||
+		pending.userID != personaID || user.CurrentGameID() != 0 {
+		return nil
+	}
+	before, isFound := pending.partyService.Lookup(pending.partyID)
+	if !isFound {
+		session.pendingPlaygroupLeave = nil
+		return nil
+	}
+	response, err := completePlaygroupLeave(ctx, req, pending.partyService, pending.networkRegistry, before, personaID)
+	if err != nil {
+		return fmt.Errorf("pendingLeave: %w", err)
+	}
+	if response.ErrorCode != 0 && response.ErrorCode != 0x0006 {
+		return fmt.Errorf("pendingReply: playgroup leave rejected with code %d", response.ErrorCode)
+	}
+	session.pendingPlaygroupLeave = nil
+	return nil
+}
+
 func (e *Registry) lockPartyLifecycle(ctx context.Context) error {
 	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()

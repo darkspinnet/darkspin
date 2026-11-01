@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/darkspinnet/darkspin/server/sporenet"
 )
@@ -201,6 +202,15 @@ func (e *Repository) DeleteByLoginName(ctx context.Context, loginName string) er
 	if err != nil {
 		return fmt.Errorf("deleteIdentity: %w", err)
 	}
+	// Preserve the latest accepted logout snapshot before archiving the row.
+	// The storage gate prevents the worker from racing this final write.
+	isSaved, err := e.save(ctx, record.Account.ID, true)
+	if err != nil {
+		return fmt.Errorf("deleteFlush: %w", err)
+	}
+	if isSaved && e.logger != nil {
+		e.logger.Printf("Profile save flushed before archival user=%d", record.Account.ID)
+	}
 	err = e.store.DeleteByLoginName(ctx, loginName)
 	if err != nil {
 		return fmt.Errorf("deleteStore: %w", err)
@@ -209,4 +219,58 @@ func (e *Repository) DeleteByLoginName(ctx context.Context, loginName string) er
 	delete(e.snapshots, record.Account.ID)
 	e.mutex.Unlock()
 	return nil
+}
+
+func (e *Repository) RestoreDeletedProfile(ctx context.Context, userID int64, loginName string) (string, error) {
+	repository, isSupported := e.store.(sporenet.UserRecoveryRepository)
+	if !isSupported {
+		return "", errors.New("recovery repository unavailable")
+	}
+	err := e.acquire(ctx)
+	if err != nil {
+		return "", fmt.Errorf("restoreGate: %w", err)
+	}
+	defer e.release()
+	restoredLoginName, err := repository.RestoreDeletedProfile(ctx, userID, loginName)
+	if err != nil {
+		return "", fmt.Errorf("restoreStore: %w", err)
+	}
+	e.mutex.Lock()
+	delete(e.snapshots, userID)
+	e.mutex.Unlock()
+	return restoredLoginName, nil
+}
+
+func (e *Repository) PurgeDeletedProfiles(ctx context.Context, cutoff time.Time) (int64, error) {
+	repository, isSupported := e.store.(sporenet.UserPurgeRepository)
+	if !isSupported {
+		return 0, errors.New("purge repository unavailable")
+	}
+	err := e.acquire(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("purgeGate: %w", err)
+	}
+	defer e.release()
+	purgedCount, err := repository.PurgeDeletedProfiles(ctx, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("purgeStore: %w", err)
+	}
+	return purgedCount, nil
+}
+
+func (e *Repository) LatestProfileDeletion(ctx context.Context, loginName string) (time.Time, error) {
+	repository, isSupported := e.store.(sporenet.UserDeletionHistoryRepository)
+	if !isSupported {
+		return time.Time{}, errors.New("deletion history repository unavailable")
+	}
+	err := e.acquire(ctx)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("historyGate: %w", err)
+	}
+	defer e.release()
+	deletedAt, err := repository.LatestProfileDeletion(ctx, loginName)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("historyStore: %w", err)
+	}
+	return deletedAt, nil
 }

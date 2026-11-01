@@ -1836,23 +1836,23 @@ async function copyLauncherFailure() {
                 <div><strong>{{ $t("START MENU") }}<ConfigHelp text="Install or repair a Start menu shortcut for Darkspinner." /></strong><small>{{ $t("Personal Darkspinner shortcut") }}</small></div>
                 <span :class="{ installed:integrationStatus.isStartMenuInstalled }">{{ $t(integrationStatus.isStartMenuInstalled ? 'INSTALLED' : 'NOT INSTALLED') }}</span>
                 <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('start-menu')">{{ $t(integrationStatus.isStartMenuInstalled ? 'REPAIR' : 'INSTALL') }}</Button>
-                <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isStartMenuInstalled" @click="removeIntegration('start-menu')">{{ $t("REMOVE") }}</Button>
+                <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isStartMenuInstalled" @click="removeIntegration('start-menu')">{{ $t("DELETE") }}</Button>
               </div>
               <div class="integration-row">
                 <div><strong>{{ $t("DESKTOP") }}<ConfigHelp text="Install or repair a desktop shortcut for Darkspinner." /></strong><small>{{ $t("Personal Darkspinner shortcut") }}</small></div>
                 <span :class="{ installed:integrationStatus.isDesktopInstalled }">{{ $t(integrationStatus.isDesktopInstalled ? 'INSTALLED' : 'NOT INSTALLED') }}</span>
                 <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('desktop')">{{ $t(integrationStatus.isDesktopInstalled ? 'REPAIR' : 'INSTALL') }}</Button>
-                <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isDesktopInstalled" @click="removeIntegration('desktop')">{{ $t("REMOVE") }}</Button>
+                <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isDesktopInstalled" @click="removeIntegration('desktop')">{{ $t("DELETE") }}</Button>
               </div>
               <div class="integration-row">
                 <div><strong>{{ $t("STEAM PLAY") }}<ConfigHelp text="Start Darkspinner when launching Darkspore from Steam." /></strong><small>{{ $t("Route Steam launch through Darkspinner") }}</small></div>
                 <span :class="{ installed:integrationStatus.isSteamLaunchInstalled }">{{ $t(integrationStatus.isSteamLaunchInstalled ? 'INSTALLED' : 'NOT INSTALLED') }}</span>
                 <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('steam')">{{ $t(integrationStatus.isSteamLaunchInstalled ? 'REPAIR' : 'INSTALL') }}</Button>
-                <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isSteamLaunchInstalled" @click="removeIntegration('steam')">{{ $t("REMOVE") }}</Button>
+                <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isSteamLaunchInstalled" @click="removeIntegration('steam')">{{ $t("DELETE") }}</Button>
               </div>
               <p v-if="integrationStatus.error" class="management-message configuration-error" role="alert">{{ $t(integrationStatus.error) }}</p>
               <div class="shortcut-danger">
-                <p><strong>{{ $t("UNINSTALL DARKSPINNER") }}<ConfigHelp text="Remove Darkspinner data and shortcuts while keeping the installed game." /></strong><small>{{ $t("Remove local runtime data and owned shortcuts while preserving the installed game.") }}</small></p>
+                <p><strong>{{ $t("UNINSTALL DARKSPINNER") }}<ConfigHelp text="Delete Darkspinner data and shortcuts while keeping the installed game." /></strong><small>{{ $t("Delete local runtime data and owned shortcuts while preserving the installed game.") }}</small></p>
                 <Button variant="destructive" type="button" class="danger-confirm" :disabled="isManagementBusy" @click="isUninstallConfirmOpen = true">{{ $t("UNINSTALL") }}</Button>
               </div>
             </Card>
@@ -2144,21 +2144,21 @@ async function copyLauncherFailure() {
 
     <LauncherDialog @interact="handleLauncherInteraction" v-if="profilePendingDelete" :is-dismissible="!isProfileDeletionBusy" @close="profilePendingDelete = null">
       <div class="notice-card danger-notice">
-        <p class="eyebrow">{{ $t("IRREVERSIBLE ACTION") }}</p>
+        <p class="eyebrow">{{ $t("DELETE CROGENITOR") }}</p>
         <DialogTitle as="h2">{{ $t('DELETE {0}?', [profilePendingDelete.displayName]) }}</DialogTitle>
-        <p>{{ $t("This permanently removes the Crogenitor and all locally saved progress. This action cannot be undone.") }}</p>
+        <p>{{ $t('Are you sure you want to delete the Crogenitor {0}?', [profilePendingDelete.displayName || profilePendingDelete.loginName]) }}</p>
         <div class="notice-actions">
           <Button variant="outline" type="button" class="onboarding-cancel" :disabled="isProfileDeletionBusy" @click="profilePendingDelete = null">{{ $t("KEEP CROGENITOR") }}</Button>
-          <Button variant="destructive" type="button" class="danger-confirm" :disabled="isProfileDeletionBusy" @click="deleteProfile">{{ $t(isProfileDeletionBusy ? 'DELETING...' : 'DELETE PERMANENTLY') }}</Button>
+          <Button variant="destructive" type="button" class="danger-confirm" :disabled="isProfileDeletionBusy" @click="deleteProfile">{{ $t(isProfileDeletionBusy ? 'DELETING...' : 'DELETE') }}</Button>
         </div>
       </div>
     </LauncherDialog>
 
     <LauncherDialog @interact="handleLauncherInteraction" v-if="remoteProfilePendingDelete" :is-dismissible="!isRemoteDeletionBusy" @close="cancelRemoteProfileDelete">
       <div class="notice-card danger-notice remote-delete-notice">
-        <p class="eyebrow">{{ $t("REMOTE IRREVERSIBLE ACTION") }}</p>
+        <p class="eyebrow">{{ $t("REMOTE CROGENITOR") }}</p>
         <DialogTitle as="h2">{{ $t('DELETE {0}?', [remoteProfilePendingDelete.displayName]) }}</DialogTitle>
-        <p>{{ $t("This permanently removes the Crogenitor and all progress from ") }}<strong>{{ remoteProfilePendingDelete.serverAddress }}</strong>{{ $t(", then removes its cached connection from this launcher.") }}</p>
+        <p>{{ $t('Are you sure you want to delete the Crogenitor {0}?', [remoteProfilePendingDelete.displayName || remoteProfilePendingDelete.loginName]) }}</p>
         <div class="remote-delete-password">
           <label for="remote-delete-password">{{ $t("PASSWORD") }}</label>
           <Input id="remote-delete-password" v-model="remoteDeletionPassword" type="password" autocomplete="current-password" :placeholder='$t("ENTER PASSWORD")' :disabled="isRemoteDeletionBusy" @keyup.enter="deleteRemoteProfile" />
@@ -2227,7 +2227,7 @@ async function copyLauncherFailure() {
       <div class="notice-card danger-notice">
         <p class="eyebrow">{{ $t("IRREVERSIBLE ACTION") }}</p>
         <DialogTitle as="h2">{{ $t("UNINSTALL DARKSPINNER?") }}</DialogTitle>
-        <p>{{ $t("This removes Darkspinner, all local Crogenitors and runtime data, its shortcuts, and its owned Steam launch integration. The original game installation remains intact.") }}</p>
+        <p>{{ $t("This deletes Darkspinner, all local Crogenitors and runtime data, its shortcuts, and its owned Steam launch integration. The original game installation remains intact.") }}</p>
         <div class="notice-actions">
           <Button variant="outline" type="button" class="onboarding-cancel" :disabled="isManagementBusy" @click="isUninstallConfirmOpen = false">{{ $t("CANCEL") }}</Button>
           <Button variant="destructive" type="button" class="danger-confirm" :disabled="isManagementBusy" @click="uninstallDarkspinner">{{ $t(isManagementBusy ? 'UNINSTALLING...' : 'UNINSTALL PERMANENTLY') }}</Button>

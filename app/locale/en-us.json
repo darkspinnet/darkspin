@@ -1070,7 +1070,12 @@
     "Choose the leader used for the first clear of a boss map.": "Choose the leader used for the first clear of a boss map.",
     "Choose whether replays use an eligible captain or the same leader policy as the first clear.": "Choose whether replays use an eligible captain or the same leader policy as the first clear.",
     "Choose the installed Spore folder used to load creatures and parts for modded Crogenitors.": "Choose the installed Spore folder used to load creatures and parts for modded Crogenitors.",
-    "Network port used by your local server. Other players must connect using this port.": "Network port used by your local server. Other players must connect using this port."
+    "Network port used by your local server. Other players must connect using this port.": "Network port used by your local server. Other players must connect using this port.",
+    "DELETE CROGENITOR": "DELETE CROGENITOR",
+    "Are you sure you want to delete the Crogenitor {0}?": "Are you sure you want to delete the Crogenitor {0}?",
+    "Delete Darkspinner data and shortcuts while keeping the installed game.": "Delete Darkspinner data and shortcuts while keeping the installed game.",
+    "Delete local runtime data and owned shortcuts while preserving the installed game.": "Delete local runtime data and owned shortcuts while preserving the installed game.",
+    "This deletes Darkspinner, all local Crogenitors and runtime data, its shortcuts, and its owned Steam launch integration. The original game installation remains intact.": "This deletes Darkspinner, all local Crogenitors and runtime data, its shortcuts, and its owned Steam launch integration. The original game installation remains intact."
   },
   "CLIENT CRASH DETECTED": "CLIENT CRASH DETECTED",
   "CLIENT FAILURE DETECTED": "CLIENT FAILURE DETECTED",

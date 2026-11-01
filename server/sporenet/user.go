@@ -477,7 +477,7 @@ func (m *UserManager) Login(ctx context.Context, loginName, password string) Log
 	verify := func(storedPassword string) bool {
 		return isPasswordMatch(storedPassword, password)
 	}
-	return m.login(ctx, loginName, verify)
+	return m.login(ctx, loginName, verify, -1, 0)
 }
 
 // Authenticate verifies credentials without activating a game session. It is
@@ -496,6 +496,7 @@ func (m *UserManager) Authenticate(
 		return UserIdentity{}, fmt.Errorf("credentialPassword: %w", ErrPasswordIncorrect)
 	}
 	return UserIdentity{
+		ID:        record.Account.ID,
 		LoginName: record.LoginName, DisplayName: record.DisplayName,
 		CreateDT: record.CreateDT, LastConnectionDT: record.LastConnectionDT,
 		AvatarID: record.Account.AvatarID, Level: record.Account.Level,
@@ -528,7 +529,45 @@ func isPasswordMatch(storedPassword, password string) bool {
 // external authentication verifier. It never compares or exposes the stored
 // account password.
 func (m *UserManager) LoginTrusted(ctx context.Context, loginName string) LoginResult {
-	return m.login(ctx, loginName, func(string) bool { return true })
+	return m.login(ctx, loginName, func(string) bool { return true }, -1, 0)
+}
+
+// LoginVerified activates the durable account named by a launch credential.
+// Legacy credentials without an account ID must postdate the identity's last
+// deletion. A freed name must never transfer an old credential to a new account.
+func (m *UserManager) LoginVerified(ctx context.Context, loginName string, accountID, notBefore int64) LoginResult {
+	if accountID < 0 {
+		return LoginResult{}
+	}
+	return m.login(ctx, loginName, func(string) bool { return true }, accountID, notBefore)
+}
+
+// ResolveDesktop resolves or creates an identity for trusted loopback launch.
+func (m *UserManager) ResolveDesktop(ctx context.Context, loginName string) (UserIdentity, error) {
+	if m == nil || m.repository == nil {
+		return UserIdentity{}, errors.New("user repository unavailable")
+	}
+	loginName = strings.TrimSpace(loginName)
+	if loginName == "" {
+		return UserIdentity{}, fmt.Errorf("desktopIdentity: %w", ErrUserNotFound)
+	}
+	record, err := m.repository.LoadByLoginName(ctx, loginName)
+	if errors.Is(err, ErrUserNotFound) {
+		user, createErr := m.SignUp(ctx, loginName, loginName, "")
+		if createErr != nil && !errors.Is(createErr, ErrUserExists) {
+			return UserIdentity{}, fmt.Errorf("desktopCreate: %w", createErr)
+		}
+		if createErr == nil {
+			record = user.Record()
+			err = nil
+		} else {
+			record, err = m.repository.LoadByLoginName(ctx, loginName)
+		}
+	}
+	if err != nil {
+		return UserIdentity{}, fmt.Errorf("desktopLoad: %w", err)
+	}
+	return UserIdentity{ID: record.Account.ID, LoginName: record.LoginName, DisplayName: record.DisplayName}, nil
 }
 
 // FindUserID resolves a durable profile without activating a login session.
@@ -555,16 +594,32 @@ func (m *UserManager) FindUserID(ctx context.Context, loginName string) (int64, 
 	return record.Account.ID, nil
 }
 
-func (m *UserManager) login(ctx context.Context, loginName string, verify func(string) bool) LoginResult {
+// A negative accountID selects password or trusted authentication; zero selects
+// a legacy name-bound credential, and a positive ID binds its durable account.
+func (m *UserManager) login(ctx context.Context, loginName string, verify func(string) bool, accountID, notBefore int64) LoginResult {
 	session := m.sessionLock(loginName)
 	session.Lock()
 	defer session.Unlock()
+	if accountID == 0 {
+		repository, isSupported := m.repository.(UserDeletionHistoryRepository)
+		if !isSupported {
+			return LoginResult{}
+		}
+		deletedAt, err := repository.LatestProfileDeletion(ctx, loginName)
+		if err != nil || (!deletedAt.IsZero() && notBefore <= deletedAt.Unix()) {
+			return LoginResult{}
+		}
+	}
 	m.mu.RLock()
 	active := m.activeUsers[loginKey(loginName)]
 	m.mu.RUnlock()
 	if active != nil {
 		active.mu.RLock()
-		isVerified := verify != nil && verify(active.Password)
+		isCurrentIdentity := accountID <= 0 || active.Account.ID == accountID
+		if accountID == 0 {
+			isCurrentIdentity = notBefore > active.CreateDT.Unix()
+		}
+		isVerified := isCurrentIdentity && verify != nil && verify(active.Password)
 		active.mu.RUnlock()
 		if !isVerified {
 			return LoginResult{}
@@ -573,6 +628,15 @@ func (m *UserManager) login(ctx context.Context, loginName string, verify func(s
 	}
 	record, err := m.repository.LoadByLoginName(ctx, loginName)
 	if err != nil {
+		return LoginResult{}
+	}
+	if accountID > 0 && record.Account.ID != accountID {
+		return LoginResult{}
+	}
+	// A name-only token must postdate this account's creation. This also
+	// protects a reused name after an older profile is restored under another
+	// name, when its previous login can no longer be inferred from that row.
+	if accountID == 0 && notBefore <= record.CreateDT.Unix() {
 		return LoginResult{}
 	}
 	user := NewUserFromRecord(record, m.template)
@@ -649,7 +713,7 @@ func (m *UserManager) Logout(ctx context.Context, user *User) error {
 	return nil
 }
 
-// DeleteProfile removes an inactive durable profile and all of its owned data.
+// DeleteProfile archives an inactive durable profile and releases its identity.
 func (m *UserManager) DeleteProfile(ctx context.Context, loginName string) error {
 	if strings.TrimSpace(loginName) == "" {
 		return fmt.Errorf("deleteIdentity: %w", ErrUserNotFound)

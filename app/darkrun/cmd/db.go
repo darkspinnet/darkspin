@@ -75,7 +75,7 @@ type databaseUserCopyResult struct {
 func newDatabaseCommand() *cobra.Command {
 	options := databaseCommandOptions{configPath: game.DefaultConfigFilename, limit: defaultDatabaseQueryLimit}
 	databaseCmd := &cobra.Command{
-		Use:   "db <table> <get|bget|set|complete|copy> [params...]",
+		Use:   "db <table> <get|bget|set|complete|copy|undelete|swap> [params...]",
 		Short: "Inspect or update configured database tables",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, arguments []string) error {
@@ -116,6 +116,20 @@ func runDatabaseCommand(ctx context.Context, output io.Writer, options databaseC
 	}
 	action := strings.ToLower(arguments[1])
 	parameters := arguments[2:]
+	if action == "swap" {
+		err = databaseSwapProfiles(ctx, output, configPath, table, parameters)
+		if err != nil {
+			return fmt.Errorf("swap: %w", err)
+		}
+		return nil
+	}
+	if action == "undelete" {
+		err = databaseUndelete(ctx, output, configPath, table, parameters)
+		if err != nil {
+			return fmt.Errorf("undelete: %w", err)
+		}
+		return nil
+	}
 	if action == "complete" {
 		if table != "user" || len(parameters) != 1 || strings.TrimSpace(parameters[0]) == "" {
 			return errors.New("complete usage: db user complete <login-name>")
@@ -189,7 +203,7 @@ func runDatabaseCommand(ctx context.Context, output io.Writer, options databaseC
 			return fmt.Errorf("set: %w", err)
 		}
 	default:
-		return fmt.Errorf("actionUnsupported: %q; supported actions are get, bget, set, complete, and copy", action)
+		return fmt.Errorf("actionUnsupported: %q; supported actions are get, bget, set, complete, copy, undelete, and swap", action)
 	}
 	return nil
 }

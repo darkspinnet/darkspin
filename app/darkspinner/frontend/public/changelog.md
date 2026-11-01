@@ -2,6 +2,16 @@
 
 ### 2026-11-01
 
+- Use delete consistently in launcher actions and simplify Crogenitor confirmations to ask whether to delete the named profile.
+- Retain deleted local, modded, and remote Crogenitors for 120 days with blocked login and underscore-suffixed names, then permanently clean them up on startup.
+- Add dedicated-server emergency recovery through darkrun db user undelete, with name-collision protection, launch credentials bound to the original account, and Compose recovery instructions.
+- [#155](https://github.com/darkspinnet/darkspin/issues/155) Save remote /bug reports in the player's local bugs folder while retaining host diagnostics.
+- [#155](https://github.com/darkspinnet/darkspin/issues/155) Complete deferred party departure after leaving a game so later invitations do not retain stale membership.
+- [#155](https://github.com/darkspinnet/darkspin/issues/155) Keep passive fire vents visible and indestructible instead of exploding and disappearing when attacked.
+- [#155](https://github.com/darkspinnet/darkspin/issues/155) Keep Cryos cave Toxic Fungus fixtures off the boss teleporter pad while preserving the selected map layout.
+- [#155](https://github.com/darkspinnet/darkspin/issues/155) Reject queued basic attacks before stun, sleep, or cage control cancels their retry, preventing heroes from remaining unable to attack.
+- [#155](https://github.com/darkspinnet/darkspin/issues/155) Apply Kinetic Wave's authored damage bonus to non-minion and elite targets at both upgraded ranks.
+- [#154](https://github.com/darkspinnet/darkspin/issues/154) Announce newly joined AI companions to every teammate before their heroes appear, preventing a missing-player crash after matchmaking.
 - Automatically save diagnostic ZIPs after client crashes and login failures, and show a launcher popup with GitHub/Discord reporting directions and links to the saved archives.
 - Add xilit42 to the credits with a link to their GitHub profile.
 - [#153](https://github.com/darkspinnet/darkspin/issues/153) Avoid DLL teardown when closing a failed login and log upgrade requests with before/after account progression and roster counts to investigate heroes locking after purchases.

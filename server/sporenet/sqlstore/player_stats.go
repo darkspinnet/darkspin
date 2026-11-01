@@ -42,7 +42,9 @@ func (e *Repository) SavePlayerStats(ctx context.Context, userID int64, stats sp
 			pvp_healing = :pvp_healing,
 			pvp_healing_received = :pvp_healing_received,
 			pvp_healing_maximum = :pvp_healing_maximum
-		WHERE user_id = :user_id`, userStatRowFromStats(userID, stats))
+		WHERE user_id = :user_id AND EXISTS (
+			SELECT 1 FROM "user" WHERE id = :user_id AND trmt_id = 0
+		)`, userStatRowFromStats(userID, stats))
 	if err != nil {
 		return fmt.Errorf("statUpdate: %w", err)
 	}

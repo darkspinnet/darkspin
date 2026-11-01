@@ -7,6 +7,7 @@ import (
 )
 
 type userIdentityRow struct {
+	ID                          int64  `db:"id"`
 	LoginName                   string `db:"login_name"`
 	DisplayName                 string `db:"display_name"`
 	CreateDT                    string `db:"create_dt"`
@@ -21,6 +22,8 @@ type userIdentityRow struct {
 
 type userRow struct {
 	ID                          int64  `db:"id"`
+	TerminationID               int64  `db:"trmt_id"`
+	TerminationDT               int64  `db:"trmt_dt"`
 	LoginName                   string `db:"login_name"`
 	DisplayName                 string `db:"display_name"`
 	Password                    string `db:"password"`

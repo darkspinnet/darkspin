@@ -236,7 +236,7 @@ func (a *App) completePendingTutorialProfile(identity string) {
 	}
 }
 
-// DeleteProfile permanently removes one inactive local player account.
+// DeleteProfile archives one inactive local player account for emergency recovery.
 func (a *App) DeleteProfile(identity string) error {
 	identity = strings.TrimSpace(identity)
 	err := validateProfileIdentity(identity)

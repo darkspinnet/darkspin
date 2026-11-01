@@ -65,6 +65,47 @@ docker compose exec darkrun /darkspin/bin/darkrun db user get player_name --conf
 
 Native Linux hosts can use `darkrun bootstrap --path PATH` with the same environment and PostgreSQL client tools on `PATH`. Bootstrap verifies it can connect to the `postgres` maintenance database and that its role is a superuser or owns the player database with `CREATEDB` permission. Do not use `postgres`, `template0`, or `template1` as the player database. The standard Compose role already meets these requirements. Multiple database hosts, service files, `PGHOSTADDR`, and unsupported URL options are rejected to avoid differences between the server and backup tools' connection targets.
 
+## Undelete a profile
+
+Profile deletion blocks login, hides the account, and adds `_`, `__`, or another available underscore suffix to its names so the original name can be reused. Account data remains for **120 days from deletion**. On startup, the server permanently removes deleted accounts older than that cutoff. Recovery is an administrator-only Darkrun command for dedicated servers; there is no launcher or local-server undelete option.
+
+Stop Darkrun before recovery and leave PostgreSQL running. From the directory containing `compose.yaml` and `.env`, list retained deleted accounts:
+
+```sh
+docker compose stop darkrun
+docker compose up -d postgres
+docker compose run --rm --no-deps --entrypoint /darkspin/bin/darkrun darkrun db user get trmt_id=1 --config /darkspin/runtime/darkspin.toml
+```
+
+Find the account's numeric `id` in the output. Recover that exact account, replacing `42` below with its ID:
+
+```sh
+docker compose run --rm --no-deps --entrypoint /darkspin/bin/darkrun darkrun db user undelete 42 --config /darkspin/runtime/darkspin.toml
+```
+
+The command restores the saved progress and original names. If another account has reclaimed the login, recovery fails without overwriting it. Supply an available replacement name instead:
+
+```sh
+docker compose run --rm --no-deps --entrypoint /darkspin/bin/darkrun darkrun db user undelete 42 RecoveredName --config /darkspin/runtime/darkspin.toml
+```
+
+To give a deleted account the name held by an active replacement account, swap their login and display names first. The first ID must be deleted and the second active. For example, if deleted account `42` is named `Alice_` and active account `84` is named `Alice`, this gives account `42` the name `Alice` and account `84` the name `Alice_`:
+
+```sh
+docker compose run --rm --no-deps --entrypoint /darkspin/bin/darkrun darkrun db user swap 42 84 --config /darkspin/runtime/darkspin.toml
+docker compose run --rm --no-deps --entrypoint /darkspin/bin/darkrun darkrun db user undelete 42 --config /darkspin/runtime/darkspin.toml
+```
+
+Swap changes names atomically and prints the resulting logins. Account IDs, passwords, progress, deletion flags, and retention dates stay with their existing accounts. The first account remains deleted until the separate `undelete` command succeeds. Keep Darkrun stopped throughout both commands.
+
+After successful recovery, start Darkrun again:
+
+```sh
+docker compose up -d --no-build darkrun
+```
+
+The one-off commands inherit the service's PostgreSQL environment and runtime mount. Overriding the entry point runs only the requested database command, without starting bootstrap or triggering startup cleanup. If an account has reached 120 days but still exists, recover it before starting the server again. Undelete cannot recover an account that startup cleanup has already permanently removed; that requires a separate backup recovery.
+
 ## Persistent layout
 
 **`docker compose down -v` or removing the volume deletes the database.** Persistence is not a backup. PostgreSQL major upgrades require a database upgrade or dump/restore; do not merely change the image's major version.

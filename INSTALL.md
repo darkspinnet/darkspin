@@ -545,6 +545,34 @@ is_agent_defeat_completing = true
 
 Use the launcher's **Server Rules → Mutation Agent Hordes** section to edit these settings, then select **Apply Server Rules**. Reload restores the saved settings, and Share to GitHub includes the Mutation Agent section. Changes apply to new missions; existing missions retain their captured policy. Stop the server before editing this file directly, then restart it. Invalid policy ranges reject configuration loading or saving. Authored beam timing, elite bonuses, aura damage, and transformation behavior are not overridden by these settings.
 
+## Deleted profiles and emergency recovery
+
+Deleting a local, modded, or remote Crogenitor marks its account with `trmt_id = 1` and blocks normal login and profile lookup. Its login and display names receive an underscore suffix; repeated deletions use additional underscores so a new account can use the original name. Progress and account data are retained for 120 days from deletion. Launcher/server startup permanently removes expired deleted accounts and their owned data; an already running server does not purge them on a timer.
+
+Emergency recovery is available only through Darkrun against a dedicated server's configured player database. There is no launcher recovery control or local-server undelete command. Stop the dedicated server before recovery so cached account state cannot conflict with the restored record. Use the server's normal PostgreSQL environment settings and configuration path:
+
+```sh
+darkrun db user get trmt_id=1 --config darkspin.toml
+darkrun db user undelete 42 --config darkspin.toml
+```
+
+The command restores the exact retained account ID, including its saved progress and original names. If another account has reclaimed its login, recovery fails without changing either account. Supply an available replacement name to recover it separately:
+
+```sh
+darkrun db user undelete 42 RecoveredName --config darkspin.toml
+```
+
+Alternatively, swap the names of a deleted account and an active replacement before recovery:
+
+```sh
+darkrun db user swap 42 84 --config darkspin.toml
+darkrun db user undelete 42 --config darkspin.toml
+```
+
+The first ID must be deleted and the second active. Swap atomically exchanges login and display names, prints the resulting logins, and keeps passwords, progress, deletion flags, and retention dates attached to their account IDs. For example, deleted `42: Alice_` and active `84: Alice` become deleted `42: Alice` and active `84: Alice_`; the subsequent undelete restores account `42`. Keep the server stopped for both commands.
+
+Recovery cannot restore an account after startup cleanup has permanently removed it. Run the command before restarting if an expired retained account needs emergency recovery.
+
 ## Verify
 
 ```sh

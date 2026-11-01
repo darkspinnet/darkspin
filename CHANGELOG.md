@@ -2,6 +2,14 @@
 
 ### 2026-11-01
 
+- Add dedicated-server darkrun db user swap to atomically exchange a deleted and active Crogenitor's names before recovery.
+- Add dedicated-server emergency recovery through darkrun db user undelete, with name-collision protection, launch credentials bound to the original account, and Compose recovery instructions.
+- #155 Save remote /bug reports in the player's local bugs folder while retaining host diagnostics.
+- #155 Complete deferred party departure after leaving a game so later invitations do not retain stale membership.
+- #155 Keep passive fire vents visible and indestructible instead of exploding and disappearing when attacked.
+- #155 Keep Cryos cave Toxic Fungus fixtures off the boss teleporter pad while preserving the selected map layout.
+- #155 Reject queued basic attacks before stun, sleep, or cage control cancels their retry, preventing heroes from remaining unable to attack.
+- #155 Apply Kinetic Wave's authored damage bonus to non-minion and elite targets at both upgraded ranks.
 - #154 Announce newly joined AI companions to every teammate before their heroes appear, preventing a missing-player crash after matchmaking.
 - Automatically save diagnostic ZIPs after client crashes and login failures, and show a launcher popup with GitHub/Discord reporting directions and links to the saved archives.
 - Add xilit42 to the credits with a link to their GitHub profile.

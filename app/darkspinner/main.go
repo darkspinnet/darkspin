@@ -52,6 +52,7 @@ const (
 	skipCinematicEnvironment      = "DARKSPIN_SKIP_CINEMATIC"
 	darkSpinnerVersionEnvironment = "DARKSPINNER_VERSION"
 	serverAddressEnvironment      = "DARKSPIN_SERVER_ADDRESS"
+	remoteServerEnvironment       = "DARKSPIN_REMOTE_SERVER"
 	snapshotModeEnvironment       = "DARKSPIN_SNAPSHOT_MODE"
 	snapshotEndpointEnvironment   = "DARKSPIN_SNAPSHOT_ENDPOINT"
 	snapshotTokenEnvironment      = "DARKSPIN_SNAPSHOT_TOKEN"
@@ -236,7 +237,7 @@ func run(ctx context.Context, arguments []string) error {
 	return runWithSnapshotControl(ctx, arguments, inheritedSnapshotControl())
 }
 
-func runWithSnapshotControl(ctx context.Context, arguments []string, connection snapshotControlConnection) error {
+func runWithSnapshotControl(ctx context.Context, arguments []string, connection snapshotControlConnection, remoteServerFlags ...bool) error {
 	if ctx == nil {
 		return errors.New("launch context is nil")
 	}
@@ -420,6 +421,23 @@ func runWithSnapshotControl(ctx context.Context, arguments []string, connection 
 	if err != nil {
 		return fmt.Errorf("cinematicOption: %w", err)
 	}
+	remoteServerFlag := ""
+	if len(remoteServerFlags) != 0 {
+		remoteServerFlag = "0"
+		if remoteServerFlags[0] {
+			remoteServerFlag = "1"
+		}
+	}
+	err = os.Setenv(remoteServerEnvironment, remoteServerFlag)
+	if err != nil {
+		return fmt.Errorf("remoteEnvironment: %w", err)
+	}
+	defer func() {
+		unsetErr := os.Unsetenv(remoteServerEnvironment)
+		if unsetErr != nil {
+			// The launched child already owns an independent environment block.
+		}
+	}()
 	fangPath, err := materializeFang(configuration.fangDLL, pathSet.fangPath, embeddedFang)
 	if err != nil {
 		return fmt.Errorf("fangPrepare: %w", err)

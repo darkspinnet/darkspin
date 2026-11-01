@@ -134,38 +134,6 @@ func (e *Repository) Create(ctx context.Context, record sporenet.UserRecord) (in
 	return id, nil
 }
 
-// DeleteByLoginName removes one profile. Foreign-key cascades remove every
-// aggregate child in the same transaction.
-func (e *Repository) DeleteByLoginName(ctx context.Context, loginName string) error {
-	if ctx == nil {
-		return errors.New("nil context")
-	}
-	if loginName == "" {
-		return fmt.Errorf("deleteIdentity: %w", sporenet.ErrUserNotFound)
-	}
-	tx, err := e.db.BeginTxx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("deleteBegin: %w", err)
-	}
-	defer rollback(tx)
-	result, err := tx.ExecContext(ctx, tx.Rebind("DELETE FROM \"user\" WHERE LOWER(login_name) = LOWER(?)"), loginName)
-	if err != nil {
-		return fmt.Errorf("deleteUser: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("deleteAffected: %w", err)
-	}
-	if affected == 0 {
-		return fmt.Errorf("deleteMissing: %w", sporenet.ErrUserNotFound)
-	}
-	err = tx.Commit()
-	if err != nil {
-		return fmt.Errorf("deleteCommit: %w", err)
-	}
-	return nil
-}
-
 // LoadByLoginName reads a consistent profile snapshot in one transaction.
 func (e *Repository) LoadByLoginName(ctx context.Context, loginName string) (sporenet.UserRecord, error) {
 	if ctx == nil {
@@ -201,7 +169,7 @@ func (e *Repository) LoadByID(ctx context.Context, id int64) (sporenet.UserRecor
 	}
 	defer rollback(tx)
 	var loginName string
-	err = tx.GetContext(ctx, &loginName, tx.Rebind(`SELECT login_name FROM "user" WHERE id = ?`), id)
+	err = tx.GetContext(ctx, &loginName, tx.Rebind(`SELECT login_name FROM "user" WHERE id = ? AND trmt_id = 0`), id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return sporenet.UserRecord{}, fmt.Errorf("loadIDMissing: %w", sporenet.ErrUserNotFound)
 	}
@@ -237,7 +205,7 @@ func (e *Repository) LoadByDisplayName(ctx context.Context, displayName string) 
 	err = tx.SelectContext(ctx, &loginName, tx.Rebind(`
 		SELECT login_name
 		FROM "user"
-		WHERE LOWER(display_name) = LOWER(?)
+		WHERE LOWER(display_name) = LOWER(?) AND trmt_id = 0
 		ORDER BY id
 		LIMIT 2
 	`), displayName)
@@ -268,10 +236,11 @@ func (e *Repository) ListIdentities(ctx context.Context) ([]sporenet.UserIdentit
 	}
 	rows := make([]userIdentityRow, 0)
 	err := e.db.SelectContext(ctx, &rows, e.db.Rebind(`
-		SELECT login_name, display_name, avatar_id, level, xp, chain_progression,
+		SELECT id, login_name, display_name, avatar_id, level, xp, chain_progression,
 			create_dt, last_connection_dt, onboarding_progress,
 			is_tutorial_completion_pending
 		FROM "user"
+		WHERE trmt_id = 0
 		ORDER BY display_name, login_name
 	`))
 	if err != nil {
@@ -291,6 +260,7 @@ func (e *Repository) ListIdentities(ctx context.Context) ([]sporenet.UserIdentit
 			}
 		}
 		identities = append(identities, sporenet.UserIdentity{
+			ID:        row.ID,
 			LoginName: row.LoginName, DisplayName: row.DisplayName, AvatarID: row.AvatarID,
 			CreateDT: createDT, LastConnectionDT: lastConnectionDT,
 			Level: row.Level, XP: row.XP, ChainProgression: row.ChainProgression,
@@ -312,7 +282,7 @@ func (e *Repository) RecordConnection(ctx context.Context, loginName string, con
 		return fmt.Errorf("connectionRecord: %w", sporenet.ErrInvalidUser)
 	}
 	result, err := e.db.ExecContext(ctx, e.db.Rebind(`
-		UPDATE "user" SET last_connection_dt = ? WHERE LOWER(login_name) = LOWER(?)`),
+		UPDATE "user" SET last_connection_dt = ? WHERE LOWER(login_name) = LOWER(?) AND trmt_id = 0`),
 		connectionDT.UTC().Format(time.RFC3339Nano), loginName)
 	if err != nil {
 		return fmt.Errorf("connectionUpdate: %w", err)
@@ -339,7 +309,7 @@ func (e *Repository) PendingTutorialCompletionLoginNames(
 	err := e.db.SelectContext(ctx, &loginNames, e.db.Rebind(`
 		SELECT login_name
 		FROM "user"
-		WHERE is_tutorial_completion_pending = 1
+		WHERE is_tutorial_completion_pending = 1 AND trmt_id = 0
 		ORDER BY id
 	`))
 	if err != nil {
@@ -398,6 +368,10 @@ func (e *Repository) initializeSchema(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("schemaStep[%d]: %w", index, err)
 		}
+	}
+	err = ensureProfileDeletionColumns(ctx, tx, false)
+	if err != nil {
+		return fmt.Errorf("schemaDeletion: %w", err)
 	}
 	err = ensurePartIdentityColumns(ctx, tx)
 	if err != nil {

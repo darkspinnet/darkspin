@@ -2959,6 +2959,9 @@ static void* __cdecl hooked_chat_text_convert(void* output, const char* text, in
     if (command != 0) {
         trace_client_state("chat_darkspin_command", (unsigned int)command);
     }
+    if (command == 18) {
+        GoFangReportBug(command_text);
+    }
     if (command == 4) {
         int is_posted;
         InterlockedExchange(&chat_exit_pending, 1);

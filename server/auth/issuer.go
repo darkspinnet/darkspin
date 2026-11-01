@@ -47,6 +47,26 @@ func (e *JWTIssuer) Issue(identity string, lifetime time.Duration) (string, erro
 // IssueForVersion binds an approved desktop launch to the launcher version.
 // An empty version is reserved for the existing local desktop flow.
 func (e *JWTIssuer) IssueForVersion(identity string, lifetime time.Duration, clientVersion string) (string, error) {
+	token, err := e.issue(identity, 0, lifetime, clientVersion)
+	if err != nil {
+		return "", fmt.Errorf("versionToken: %w", err)
+	}
+	return token, nil
+}
+
+// IssueForAccount binds a desktop grant to an existing account incarnation.
+func (e *JWTIssuer) IssueForAccount(identity string, accountID int64, lifetime time.Duration, clientVersion string) (string, error) {
+	if accountID <= 0 {
+		return "", errors.New("issue JWT: account ID is invalid")
+	}
+	token, err := e.issue(identity, accountID, lifetime, clientVersion)
+	if err != nil {
+		return "", fmt.Errorf("accountToken: %w", err)
+	}
+	return token, nil
+}
+
+func (e *JWTIssuer) issue(identity string, accountID int64, lifetime time.Duration, clientVersion string) (string, error) {
 	identity = strings.TrimSpace(identity)
 	if identity == "" {
 		return "", errors.New("issue JWT: identity is empty")
@@ -63,6 +83,7 @@ func (e *JWTIssuer) IssueForVersion(identity string, lifetime time.Duration, cli
 		"iss": e.issuer, "aud": e.audience, "sub": identity, "email": identity,
 		"nbf": now.Unix(), "exp": now.Add(lifetime).Unix(),
 		"client_version": clientVersion,
+		"account_id":     accountID,
 	})
 	if err != nil {
 		return "", fmt.Errorf("claimsMarshal: %w", err)

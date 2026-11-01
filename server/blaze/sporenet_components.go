@@ -52,6 +52,14 @@ type remoteLoginTokenVerifier interface {
 	VerifyRemote(string) (string, error)
 }
 
+type identityLoginTokenVerifier interface {
+	VerifyIdentity(string, bool) (string, int64, int64, error)
+}
+
+type verifiedUserManager interface {
+	LoginVerified(context.Context, string, int64, int64) sporenet.LoginResult
+}
+
 // UserManager is the Blaze adapter's application boundary. Blaze owns
 // TDF and session translation; profile rules and persistence stay behind it.
 type UserManager interface {
@@ -230,8 +238,13 @@ func loginHandlerWithPolicy(
 			account = ""
 			method = "jwt"
 			verifiedLoginName := ""
+			accountID := int64(0)
+			notBefore := int64(0)
 			var err error
-			if isRemote {
+			identityVerifier, isIdentitySupported := tokenVerifier.(identityLoginTokenVerifier)
+			if isIdentitySupported {
+				verifiedLoginName, accountID, notBefore, err = identityVerifier.VerifyIdentity(password, isRemote)
+			} else if isRemote {
 				remoteVerifier, isSupported := tokenVerifier.(remoteLoginTokenVerifier)
 				if !isSupported {
 					err = errors.New("remote login requires a version-aware launch verifier")
@@ -243,7 +256,14 @@ func loginHandlerWithPolicy(
 			}
 			if err == nil {
 				account = verifiedLoginName
-				result = userManager.LoginTrusted(ctx, verifiedLoginName)
+				if isIdentitySupported {
+					verifiedManager, isSupported := userManager.(verifiedUserManager)
+					if isSupported {
+						result = verifiedManager.LoginVerified(ctx, verifiedLoginName, accountID, notBefore)
+					}
+				} else {
+					result = userManager.LoginTrusted(ctx, verifiedLoginName)
+				}
 			} else {
 				logJWTLoginRejection(request, err)
 				logServerLoginAttempt(request, method, account, nil, false)

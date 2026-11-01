@@ -79,7 +79,7 @@ const updateUserQuery = `
 		cap_progression = :cap_progression,
 		limited_edition_miss_count = :limited_edition_miss_count,
 		limited_edition_used_mask = :limited_edition_used_mask
-	WHERE login_name = :login_name`
+	WHERE login_name = :login_name AND id = :id AND trmt_id = 0`
 
 func clearDependents(ctx context.Context, tx *sqlx.Tx, userID int64) error {
 	tables := []string{
@@ -289,7 +289,7 @@ func writeDependents(ctx context.Context, tx *sqlx.Tx, record sporenet.UserRecor
 
 func loadRecord(ctx context.Context, tx *sqlx.Tx, loginName string) (sporenet.UserRecord, error) {
 	user := userRow{}
-	err := tx.GetContext(ctx, &user, tx.Rebind(`SELECT * FROM "user" WHERE LOWER(login_name) = LOWER(?)`), loginName)
+	err := tx.GetContext(ctx, &user, tx.Rebind(`SELECT * FROM "user" WHERE LOWER(login_name) = LOWER(?) AND trmt_id = 0`), loginName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return sporenet.UserRecord{}, fmt.Errorf("userMissing: %w", sporenet.ErrUserNotFound)
 	}

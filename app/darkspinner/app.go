@@ -223,6 +223,7 @@ func (a *App) startup(ctx context.Context) {
 	}
 	go func() {
 		defer close(initializeDone)
+		a.cleanupExpiredLocalProfiles(lifecycleCtx, basePath)
 		a.initialize(lifecycleCtx, basePath)
 	}()
 }
@@ -605,7 +606,7 @@ func (a *App) runGameLaunch(ctx context.Context, req gameLaunchRequest) {
 	launchDone := make(chan struct{})
 	detectionDone := make(chan struct{})
 	go a.detectGameLaunch(ctx, launchDone, detectionDone, launchID)
-	err = runWithSnapshotControl(ctx, arguments, connection)
+	err = runWithSnapshotControl(ctx, arguments, connection, req.isRemoteServer)
 	close(launchDone)
 	<-detectionDone
 	if err != nil && !errors.Is(err, context.Canceled) {

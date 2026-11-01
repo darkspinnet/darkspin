@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/chat"
+	"github.com/darkspinnet/darkspin/server/sporenet"
 	"github.com/darkspinnet/darkspin/server/sporenet/savebuffer"
 	profilesql "github.com/darkspinnet/darkspin/server/sporenet/sqlstore"
 	"github.com/darkspinnet/darkspin/server/zone/checkpoint"
@@ -19,6 +20,8 @@ import (
 
 type Profile interface {
 	savebuffer.Store
+	sporenet.UserPurgeRepository
+	sporenet.UserRecoveryRepository
 	chat.Recorder
 	io.Closer
 }

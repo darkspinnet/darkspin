@@ -171,10 +171,17 @@ func (e CampaignDirector) MapDestructibles() (
 				return nil, nil, fmt.Errorf("selected fixture %d duplicated", marker.MarkerID)
 			}
 			markerIDs[marker.MarkerID] = struct{}{}
-			markers = append(markers, marker)
 			// Retire only this selected client's static copy before publishing
 			// the server-owned damageable object at its authored transform.
 			deletedObjectIDs = append(deletedObjectIDs, marker.MarkerID)
+			isOnTeleporter, err := e.isCryosFungusOnTeleporter(marker)
+			if err != nil {
+				return nil, nil, fmt.Errorf("fixturePad[%d]: %w", marker.MarkerID, err)
+			}
+			if isOnTeleporter {
+				continue
+			}
+			markers = append(markers, marker)
 		}
 	}
 	return markers, deletedObjectIDs, nil

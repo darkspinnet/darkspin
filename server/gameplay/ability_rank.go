@@ -83,8 +83,6 @@ func projectHeroAbilityRank(
 		if rank >= 7 {
 			definition.ManaCost = 24
 			definition.ManaCoefficient = 0.12
-		}
-		if rank == 8 {
 			definition.LargeTargetDamageMultiplier = 1.5
 		}
 	}

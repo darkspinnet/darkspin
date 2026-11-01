@@ -424,7 +424,7 @@ func (e *Server) HasActiveProfiles() bool {
 	return e != nil && e.userManager != nil && len(e.userManager.Users()) != 0
 }
 
-// DeleteProfile removes one inactive local account through the live user
+// DeleteProfile archives one inactive local account through the live user
 // manager so shutdown cannot resurrect a deleted in-memory snapshot.
 func (s *Server) DeleteProfile(ctx context.Context, loginName string) error {
 	if s == nil || s.userManager == nil {
@@ -636,6 +636,12 @@ func New(options Options) (*Server, error) {
 			}
 		}
 	}()
+	purgedCount, err := sporenet.PurgeExpiredProfiles(context.Background(), userRepository, time.Now())
+	if err != nil {
+		logger.Printf("Expired profile cleanup failed: %v", err)
+		return nil, fmt.Errorf("profilePurge: %w", err)
+	}
+	logger.Printf("Expired profile cleanup removed %d archived profiles", purgedCount)
 	profileBuffer := savebuffer.New(userRepository, logger)
 	defer func() {
 		if !isUserStoreTransferred {

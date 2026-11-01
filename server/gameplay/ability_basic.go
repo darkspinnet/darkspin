@@ -1308,8 +1308,8 @@ func (e campaignPointBlankImpact) marshal(
 	assetName := e.assetName
 	if e.largeTargetAssetName != "" &&
 		result.Definition.LargeTargetDamageMultiplier > 0 &&
-		(result.Snapshot.Plan.IsCaptain || result.Snapshot.Plan.IsElite ||
-			result.Snapshot.Plan.IsBoss) {
+		(result.Snapshot.Plan.IsEliteModifierApplied() ||
+			(result.Snapshot.Plan.NPCProfile.IsClassKnown && result.Snapshot.Plan.NPCProfile.NPCType != 0)) {
 		assetName = e.largeTargetAssetName
 	}
 	if assetName == "" {

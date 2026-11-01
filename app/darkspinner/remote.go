@@ -378,7 +378,7 @@ func (a *App) LoginRemoteProfile(
 	return nil
 }
 
-// DeleteRemoteProfile authenticates and permanently removes an account from
+// DeleteRemoteProfile authenticates and archives an account on
 // its host server before deleting the launcher's cached connection metadata.
 func (a *App) DeleteRemoteProfile(serverAddress, identity, password string) error {
 	serverAddress, err := normalizeRemoteServerAddress(serverAddress)

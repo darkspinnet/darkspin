@@ -607,6 +607,10 @@ func removePlayerHandler(
 			if err != nil {
 				return nil, fmt.Errorf("removeDestroyNotify: %w", err)
 			}
+			err = completePendingPlaygroupLeave(ctx, request, personaID)
+			if err != nil {
+				return nil, fmt.Errorf("removeAbortParty: %w", err)
+			}
 			return &Response{}, nil
 		}
 		err := queueGameNotification(request, players, 0x28, []tdf.Field{
@@ -617,6 +621,10 @@ func removePlayerHandler(
 		})
 		if err != nil {
 			return nil, fmt.Errorf("removeNotify: %w", err)
+		}
+		err = completePendingPlaygroupLeave(ctx, request, personaID)
+		if err != nil {
+			return nil, fmt.Errorf("removeMemberParty: %w", err)
 		}
 		return &Response{}, nil
 	}

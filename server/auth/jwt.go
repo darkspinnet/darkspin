@@ -32,6 +32,7 @@ type jwtHeader struct {
 }
 
 type jwtClaims struct {
+	AccountID     int64           `json:"account_id"`
 	ClientVersion string          `json:"client_version"`
 	Issuer        string          `json:"iss"`
 	Audience      json.RawMessage `json:"aud"`
@@ -66,9 +67,15 @@ func NewJWTVerifier(secret []byte, issuer, audience string) (*JWTVerifier, error
 // Verify validates a JWT and returns the account login name carried by its email
 // claim, falling back to subject for issuers that use the email as subject.
 func (v *JWTVerifier) Verify(token string) (string, error) {
-	identity, err := v.verify(token, v != nil && v.isClientVersionRequired)
+	identity, accountID, notBefore, err := v.VerifyIdentity(token, false)
 	if err != nil {
 		return "", fmt.Errorf("tokenVerify: %w", err)
+	}
+	if accountID < 0 {
+		return "", errors.New("JWT account ID is invalid")
+	}
+	if notBefore < 0 {
+		return "", errors.New("JWT activation time is invalid")
 	}
 	return identity, nil
 }
@@ -76,90 +83,98 @@ func (v *JWTVerifier) Verify(token string) (string, error) {
 // VerifyRemote additionally requires a version-bound credential for remote
 // game transports, including LAN listeners using the local desktop defaults.
 func (e *JWTVerifier) VerifyRemote(token string) (string, error) {
-	identity, err := e.verify(token, true)
+	identity, accountID, notBefore, err := e.VerifyIdentity(token, true)
 	if err != nil {
 		return "", fmt.Errorf("remoteVerify: %w", err)
+	}
+	if accountID < 0 {
+		return "", errors.New("JWT account ID is invalid")
+	}
+	if notBefore < 0 {
+		return "", errors.New("JWT activation time is invalid")
 	}
 	return identity, nil
 }
 
-func (v *JWTVerifier) verify(token string, isClientVersionRequired bool) (string, error) {
+// VerifyIdentity returns the login name, account binding and activation time.
+// External issuers may omit the binding; desktop brokers always supply it.
+func (v *JWTVerifier) VerifyIdentity(token string, isRemote bool) (string, int64, int64, error) {
 	if v == nil {
-		return "", errors.New("JWT authentication is disabled")
+		return "", 0, 0, errors.New("JWT authentication is disabled")
 	}
 	if len(token) == 0 || len(token) > maximumJWTLength {
-		return "", errors.New("JWT length is invalid")
+		return "", 0, 0, errors.New("JWT length is invalid")
 	}
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return "", errors.New("JWT must contain three segments")
+		return "", 0, 0, errors.New("JWT must contain three segments")
 	}
 
 	headerContents, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return "", fmt.Errorf("headerDecode: %w", err)
+		return "", 0, 0, fmt.Errorf("headerDecode: %w", err)
 	}
 	header := jwtHeader{}
 	err = json.Unmarshal(headerContents, &header)
 	if err != nil {
-		return "", fmt.Errorf("headerParse: %w", err)
+		return "", 0, 0, fmt.Errorf("headerParse: %w", err)
 	}
 	if header.Algorithm != "HS256" {
-		return "", errors.New("JWT algorithm is not HS256")
+		return "", 0, 0, errors.New("JWT algorithm is not HS256")
 	}
 	if header.Type != "" && !strings.EqualFold(header.Type, "JWT") {
-		return "", errors.New("JWT type is invalid")
+		return "", 0, 0, errors.New("JWT type is invalid")
 	}
 
 	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
-		return "", fmt.Errorf("signatureDecode: %w", err)
+		return "", 0, 0, fmt.Errorf("signatureDecode: %w", err)
 	}
 	mac := hmac.New(sha256.New, v.secret)
 	_, err = mac.Write([]byte(parts[0] + "." + parts[1]))
 	if err != nil {
-		return "", fmt.Errorf("signatureHash: %w", err)
+		return "", 0, 0, fmt.Errorf("signatureHash: %w", err)
 	}
 	if !hmac.Equal(signature, mac.Sum(nil)) {
-		return "", errors.New("JWT signature is invalid")
+		return "", 0, 0, errors.New("JWT signature is invalid")
 	}
 
 	claimContents, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return "", fmt.Errorf("claimsDecode: %w", err)
+		return "", 0, 0, fmt.Errorf("claimsDecode: %w", err)
 	}
 	claims := jwtClaims{}
 	err = json.Unmarshal(claimContents, &claims)
 	if err != nil {
-		return "", fmt.Errorf("claimsParse: %w", err)
+		return "", 0, 0, fmt.Errorf("claimsParse: %w", err)
 	}
 	if claims.Issuer != v.issuer {
-		return "", errors.New("JWT issuer is invalid")
+		return "", 0, 0, errors.New("JWT issuer is invalid")
 	}
 	audience, err := claimAudience(claims.Audience)
 	if err != nil {
-		return "", fmt.Errorf("audienceParse: %w", err)
+		return "", 0, 0, fmt.Errorf("audienceParse: %w", err)
 	}
 	if !containsAudience(audience, v.audience) {
-		return "", errors.New("JWT audience is invalid")
+		return "", 0, 0, errors.New("JWT audience is invalid")
 	}
 	now := v.now().Unix()
 	if claims.ExpiresAt == 0 || now >= claims.ExpiresAt {
-		return "", &loginFailure{
+		return "", 0, 0, &loginFailure{
 			reason: "launch-token-expired", message: "The launch token expired. Start the game again from Darkspinner.",
 			cause: errors.New("JWT has expired"),
 		}
 	}
 	if claims.NotBefore != 0 && now < claims.NotBefore {
-		return "", &loginFailure{
+		return "", 0, 0, &loginFailure{
 			reason: "launch-token-not-active", message: "The launch token is not active yet. Check the client and server clocks, then try again.",
 			cause: errors.New("JWT is not active"),
 		}
 	}
-	if isClientVersionRequired || claims.ClientVersion != "" {
+	if isRemote || v.isClientVersionRequired || claims.ClientVersion != "" {
 		err = buildinfo.CheckCompatibility(claims.ClientVersion, buildinfo.Version)
 		if err != nil {
-			return "", &loginFailure{
+			return "", 0, 0, &loginFailure{
 				reason: "client-version-incompatible", message: "The server requires a compatible Darkspinner version. Update your launcher and try again.",
 				cause: fmt.Errorf("launchVersion: %w", err),
 			}
@@ -170,9 +185,15 @@ func (v *JWTVerifier) verify(token string, isClientVersionRequired bool) (string
 		loginName = strings.TrimSpace(claims.Subject)
 	}
 	if loginName == "" {
-		return "", errors.New("JWT has no account identity")
+		return "", 0, 0, errors.New("JWT has no account identity")
 	}
-	return loginName, nil
+	if claims.AccountID < 0 {
+		return "", 0, 0, errors.New("JWT account ID is invalid")
+	}
+	if claims.NotBefore < 0 {
+		return "", 0, 0, errors.New("JWT activation time is invalid")
+	}
+	return loginName, claims.AccountID, claims.NotBefore, nil
 }
 
 func claimAudience(contents json.RawMessage) ([]string, error) {

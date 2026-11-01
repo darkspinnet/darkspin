@@ -27,6 +27,7 @@ const (
 
 type desktopGrant struct {
 	identity      string
+	accountID     int64
 	expiresAt     time.Time
 	clientVersion string
 }
@@ -46,6 +47,7 @@ type LocalBroker struct {
 type accountManager interface {
 	RegisterDesktop(context.Context, sporenet.Registration) (*sporenet.User, error)
 	Authenticate(context.Context, string, string) (sporenet.UserIdentity, error)
+	ResolveDesktop(context.Context, string) (sporenet.UserIdentity, error)
 	DeleteProfile(context.Context, string) error
 }
 
@@ -218,6 +220,12 @@ func (b *LocalBroker) start(writer http.ResponseWriter, request *http.Request) {
 			b.writeDesktopAuthenticationError(writer, err)
 			return
 		}
+	} else if b.accountManager != nil {
+		profile, err = b.accountManager.ResolveDesktop(request.Context(), identity)
+		if err != nil {
+			b.writeDesktopAuthenticationError(writer, err)
+			return
+		}
 	}
 	code, err := randomDesktopCode()
 	if err != nil {
@@ -226,7 +234,7 @@ func (b *LocalBroker) start(writer http.ResponseWriter, request *http.Request) {
 	}
 	b.mu.Lock()
 	b.grants[code] = desktopGrant{
-		identity: identity, expiresAt: b.now().Add(desktopCodeLifetime),
+		identity: profile.LoginName, accountID: profile.ID, expiresAt: b.now().Add(desktopCodeLifetime),
 		clientVersion: strings.TrimSpace(request.Header.Get(ClientVersionHeader)),
 	}
 	b.mu.Unlock()
@@ -323,7 +331,12 @@ func (b *LocalBroker) exchange(writer http.ResponseWriter, request *http.Request
 			return
 		}
 	}
-	token, err := b.issuer.IssueForVersion(grant.identity, launchTokenLifetime, grant.clientVersion)
+	token := ""
+	if b.accountManager != nil {
+		token, err = b.issuer.IssueForAccount(grant.identity, grant.accountID, launchTokenLifetime, grant.clientVersion)
+	} else {
+		token, err = b.issuer.IssueForVersion(grant.identity, launchTokenLifetime, grant.clientVersion)
+	}
 	if err != nil {
 		writeAuthError(writer, http.StatusInternalServerError, "token generation failed")
 		return

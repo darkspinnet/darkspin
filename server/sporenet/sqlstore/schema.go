@@ -31,6 +31,8 @@ var schemaStatements = []string{
 	)`,
 	`CREATE TABLE IF NOT EXISTS "user" (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		trmt_id INTEGER NOT NULL DEFAULT 0,
+		trmt_dt INTEGER NOT NULL DEFAULT 0,
 		login_name TEXT NOT NULL COLLATE NOCASE UNIQUE,
 		display_name TEXT NOT NULL,
 		password TEXT NOT NULL,
