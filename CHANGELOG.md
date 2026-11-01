@@ -2,6 +2,7 @@
 
 ### 2026-11-01
 
+- #159 Include the largest free virtual-memory region and free-region count in client crash traces to help investigate editor resource-loading failures.
 - Limit remote /bug and /b server captures to one every two minutes across players, preserving client-side reports and replying when host capture is skipped by the cooldown.
 - #153 #158 Include the free first PvE squad in saved and transmitted unlock counts so buying a stat upgrade no longer locks every squad and its heroes.
 - Add dedicated-server darkrun db user swap to atomically exchange a deleted and active Crogenitor's names before recovery.

@@ -10,6 +10,47 @@ static volatile LONG exception_trace_active;
 static uintptr_t exception_executable_base;
 static uintptr_t exception_fang_base;
 
+// Walk address-space metadata without allocating or touching region contents.
+// Aggregate free bytes cannot reveal fragmentation in the 32-bit client.
+static SIZE_T largest_free_region(DWORD* region_count, DWORD* scan_error) {
+    SYSTEM_INFO system;
+    MEMORY_BASIC_INFORMATION region;
+    uintptr_t address;
+    uintptr_t limit;
+    SIZE_T largest = 0;
+    DWORD query_count = 0;
+    GetSystemInfo(&system);
+    address = (uintptr_t)system.lpMinimumApplicationAddress;
+    limit = (uintptr_t)system.lpMaximumApplicationAddress;
+    *region_count = 0;
+    *scan_error = 0;
+    while (address < limit) {
+        uintptr_t next;
+        SIZE_T queried;
+        if (++query_count > 65536) {
+            *scan_error = ERROR_MORE_DATA;
+            break;
+        }
+        queried = VirtualQuery((LPCVOID)address, &region, sizeof(region));
+        if (queried != sizeof(region)) {
+            *scan_error = GetLastError();
+            if (*scan_error == 0) *scan_error = ERROR_INVALID_DATA;
+            break;
+        }
+        if (region.State == MEM_FREE) {
+            (*region_count)++;
+            if (region.RegionSize > largest) largest = region.RegionSize;
+        }
+        next = (uintptr_t)region.BaseAddress + region.RegionSize;
+        if (next <= address) {
+            *scan_error = ERROR_ARITHMETIC_OVERFLOW;
+            break;
+        }
+        address = next;
+    }
+    return largest;
+}
+
 // Read bounded diagnostic bytes without dereferencing a possibly corrupt HUD.
 // Keep this independent of the normal trace lock and allocation paths.
 static void trace_fault_memory(const char* role, uintptr_t address, SIZE_T size) {
@@ -101,6 +142,9 @@ static LONG CALLBACK observe_exception(EXCEPTION_POINTERS* exception) {
     BOOL is_written;
     BOOL is_memory_status_available;
     DWORD memory_status_error = 0;
+    DWORD free_region_count = 0;
+    DWORD virtual_scan_error = 0;
+    SIZE_T largest_free_region_bytes;
 
     if (exception == NULL || exception->ExceptionRecord == NULL ||
         exception->ContextRecord == NULL || exception_trace == INVALID_HANDLE_VALUE) {
@@ -145,6 +189,7 @@ static LONG CALLBACK observe_exception(EXCEPTION_POINTERS* exception) {
     if (!is_memory_status_available) {
         memory_status_error = GetLastError();
     }
+    largest_free_region_bytes = largest_free_region(&free_region_count, &virtual_scan_error);
     length = snprintf(line, sizeof(line),
         "{\"time_ms\":%lu,\"protocol\":\"client_exception\","
         "\"kind\":\"first_chance\",\"thread\":%lu,\"code\":\"0x%08lx\","
@@ -155,6 +200,8 @@ static LONG CALLBACK observe_exception(EXCEPTION_POINTERS* exception) {
         "\"is_memory_status_available\":%s,\"memory_status_error\":%lu,"
         "\"total_virtual_bytes\":%llu,\"available_virtual_bytes\":%llu,"
         "\"available_physical_bytes\":%llu,\"available_commit_bytes\":%llu,"
+        "\"largest_free_region_bytes\":%llu,\"free_region_count\":%lu,"
+        "\"is_virtual_scan_complete\":%s,\"virtual_scan_error\":%lu,"
 #if !defined(_WIN64)
         "\"eax\":\"0x%lx\",\"ebx\":\"0x%lx\",\"ecx\":\"0x%lx\","
         "\"edx\":\"0x%lx\",\"esi\":\"0x%lx\",\"edi\":\"0x%lx\","
@@ -170,7 +217,9 @@ static LONG CALLBACK observe_exception(EXCEPTION_POINTERS* exception) {
         (unsigned long long)memory_status.ullTotalVirtual,
         (unsigned long long)memory_status.ullAvailVirtual,
         (unsigned long long)memory_status.ullAvailPhys,
-        (unsigned long long)memory_status.ullAvailPageFile
+        (unsigned long long)memory_status.ullAvailPageFile,
+        (unsigned long long)largest_free_region_bytes, free_region_count,
+        virtual_scan_error == 0 ? "true" : "false", virtual_scan_error
 #if !defined(_WIN64)
         , context->Eax, context->Ebx, context->Ecx,
         context->Edx, context->Esi, context->Edi
