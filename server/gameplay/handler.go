@@ -2422,39 +2422,34 @@ func (r gameplayJoinRuntime) synchronizeRoster(sessionKey string) ([][]byte, err
 		return cmp.Compare(leftSlot, rightSlot)
 	})
 	responses := make([][]byte, 0, len(peerSessionKeys))
+	// A joining human can install new socketless bots as well. Announce every
+	// missing slot to every recipient, not just the human who triggered this
+	// synchronization: native hero presentation requires an owning CPlayer.
 	for _, peerSessionKey := range peerSessionKeys {
-		if peerSessionKey == sessionKey {
-			continue
-		}
 		peerSession := r.registry.sessions[peerSessionKey]
-		if peerSession.binding.Slot >= 32 || joiningSession.binding.Slot >= 32 {
-			return nil, errors.New("gameplay roster slot exceeds mask width")
-		}
-		peerBit := uint32(1) << peerSession.binding.Slot
-		if joiningSession.knownPlayerMask&peerBit == 0 {
+		joinedPackets := make([][]byte, 0, len(peerSessionKeys))
+		for _, rosterSessionKey := range peerSessionKeys {
+			rosterSession := r.registry.sessions[rosterSessionKey]
+			rosterBit := uint32(1) << rosterSession.binding.Slot
+			if rosterSessionKey == peerSessionKey || peerSession.knownPlayerMask&rosterBit != 0 {
+				continue
+			}
 			joinedPacket, err := raknet.MarshalApplication(raknet.PlayerSlotMessage{
-				ID: raknet.PlayerJoined, Slot: uint8(peerSession.binding.Slot),
+				ID: raknet.PlayerJoined, Slot: uint8(rosterSession.binding.Slot),
 			})
 			if err != nil {
-				return nil, fmt.Errorf("joiningPlayer[%d]: %w", peerSession.binding.Slot, err)
+				return nil, fmt.Errorf("rosterPlayer[%d]: %w", rosterSession.binding.Slot, err)
 			}
-			responses = append(responses, joinedPacket)
-			joiningSession.knownPlayerMask |= peerBit
+			joinedPackets = append(joinedPackets, joinedPacket)
+			peerSession.knownPlayerMask |= rosterBit
 		}
-		joiningBit := uint32(1) << joiningSession.binding.Slot
-		if peerSession.knownPlayerMask&joiningBit == 0 {
-			joinedPacket, err := raknet.MarshalApplication(raknet.PlayerSlotMessage{
-				ID: raknet.PlayerJoined, Slot: uint8(joiningSession.binding.Slot),
-			})
-			if err != nil {
-				return nil, fmt.Errorf("existingPlayer[%d]: %w", joiningSession.binding.Slot, err)
-			}
-			peerSession.queuePackets([][]byte{joinedPacket})
-			peerSession.knownPlayerMask |= joiningBit
-			r.registry.sessions[peerSessionKey] = peerSession
+		if peerSessionKey == sessionKey {
+			responses = append(responses, joinedPackets...)
+		} else {
+			peerSession.queuePackets(joinedPackets)
 		}
+		r.registry.sessions[peerSessionKey] = peerSession
 	}
-	r.registry.sessions[sessionKey] = joiningSession
 	expectedCount := int(joiningSession.binding.ParticipantCount)
 	if expectedCount < 1 {
 		expectedCount = 1

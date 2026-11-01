@@ -2,6 +2,7 @@
 
 ### 2026-11-01
 
+- #154 Announce newly joined AI companions to every teammate before their heroes appear, preventing a missing-player crash after matchmaking.
 - Automatically save diagnostic ZIPs after client crashes and login failures, and show a launcher popup with GitHub/Discord reporting directions and links to the saved archives.
 - Add xilit42 to the credits with a link to their GitHub profile.
 - #153 Avoid DLL teardown when closing a failed login and log upgrade requests with before/after account progression and roster counts to investigate heroes locking after purchases.
