@@ -1,5 +1,9 @@
 # Changelog
 
+### 2026-11-01
+
+- #152 Capture catalyst HUD Flash values and createGrid arguments when the native null-interface crash recurs to help diagnose shared campaign launch failures.
+
 ### 2026-10-31
 
 - Add Flameskid to the credits with a link to their GitHub profile.

@@ -10,6 +10,71 @@ static volatile LONG exception_trace_active;
 static uintptr_t exception_executable_base;
 static uintptr_t exception_fang_base;
 
+// Read bounded diagnostic bytes without dereferencing a possibly corrupt HUD.
+// Keep this independent of the normal trace lock and allocation paths.
+static void trace_fault_memory(const char* role, uintptr_t address, SIZE_T size) {
+    static const char digits[] = "0123456789abcdef";
+    BYTE payload[64] = {0};
+    char payload_hex[129];
+    char line[512];
+    SIZE_T bytes_read = 0;
+    DWORD read_error = 0;
+    DWORD written = 0;
+    BOOL is_read;
+    BOOL is_written;
+    SIZE_T index;
+    int length;
+
+    if (size > sizeof(payload)) return;
+    is_read = ReadProcessMemory(GetCurrentProcess(), (LPCVOID)address,
+        payload, size, &bytes_read);
+    if (!is_read) read_error = GetLastError();
+    if (bytes_read > size) bytes_read = size;
+    for (index = 0; index < bytes_read; index++) {
+        payload_hex[index * 2] = digits[payload[index] >> 4];
+        payload_hex[index * 2 + 1] = digits[payload[index] & 15];
+    }
+    payload_hex[bytes_read * 2] = '\0';
+    length = snprintf(line, sizeof(line),
+        "{\"time_ms\":%lu,\"protocol\":\"client_exception\","
+        "\"kind\":\"catalyst_hud_fault_memory\",\"thread\":%lu,"
+        "\"role\":\"%s\",\"address\":\"0x%llx\","
+        "\"requested_bytes\":%llu,\"read_bytes\":%llu,"
+        "\"is_read\":%s,\"read_error\":%lu,\"payload_hex\":\"%s\"}\r\n",
+        GetTickCount(), GetCurrentThreadId(), role,
+        (unsigned long long)address, (unsigned long long)size,
+        (unsigned long long)bytes_read, is_read ? "true" : "false",
+        read_error, payload_hex);
+    if (length <= 0 || (size_t)length >= sizeof(line)) return;
+    is_written = WriteFile(exception_trace, line, (DWORD)length, &written, NULL);
+    if (!is_written || written != (DWORD)length)
+        OutputDebugStringA("Fang: catalyst HUD fault trace write failed\n");
+}
+
+static void trace_catalyst_hud_fault(const CONTEXT* context,
+    const uintptr_t* stack_words, SIZE_T stack_bytes) {
+#if !defined(_WIN64)
+    // Build 103: 54D240 pushes EDI and reserves 0x34 bytes before 54D277.
+    // The return address is stack word 14; createGrid's four GFx values are
+    // addressed by word 18. 41CEDF is the return in MaxisHUDCatalysts init.
+    if (context->Eip != exception_executable_base + 0x14D277 ||
+        context->Edi != 0 || stack_bytes < 21 * sizeof(stack_words[0]) ||
+        stack_words[14] != exception_executable_base + 0x1CEDF ||
+        stack_words[17] != exception_executable_base + 0xBCEA08 ||
+        stack_words[19] != 4) return;
+
+    // The caller retains the component in EDI (saved at stack word 0) and
+    // its second GFx value in ESI. Verify that relation before sampling it.
+    if (context->Esi >= 24 && stack_words[0] == context->Esi - 24)
+        trace_fault_memory("component", stack_words[0], 64);
+    trace_fault_memory("invoke_arguments", stack_words[18], 64);
+#else
+    (void)context;
+    (void)stack_words;
+    (void)stack_bytes;
+#endif
+}
+
 // First-chance observation only: preserve the original exception and let the
 // client's handlers (or Windows) decide whether it is fatal. Avoid the normal
 // trace lock and Go callbacks: the fault may have interrupted either of them.
@@ -133,6 +198,7 @@ static LONG CALLBACK observe_exception(EXCEPTION_POINTERS* exception) {
     if (!is_written || written != (DWORD)length) {
         OutputDebugStringA("Fang: exception trace write failed\n");
     }
+    trace_catalyst_hud_fault(context, stack_words, stack_bytes);
     InterlockedExchange(&exception_trace_active, 0);
     return EXCEPTION_CONTINUE_SEARCH;
 }
