@@ -25,7 +25,7 @@ func (e gameplayPendingRuntime) pollMushroomAuras(packet raknet.Packet) ([][]byt
 		e.registry.mutex.RUnlock()
 		return nil, fmt.Errorf("mushroomTargets: %w", sampleErr)
 	}
-	for _, source := range member.zone.NPCs().Snapshots() {
+	for _, source := range member.zone.NPCs().SelectedSnapshots(zonenpc.SelectCryosFungus) {
 		if !zonenpc.IsCryosFungus(source.Plan) || !source.IsPublished || source.IsDefeated || source.HitPoint <= 0 {
 			continue
 		}

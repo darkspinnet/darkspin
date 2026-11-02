@@ -69,7 +69,7 @@ func (e gameplayPendingRuntime) updateWarpTotemsLocked(member *gameplayPeerSessi
 		member.warpTotemWarnings = make(map[uint32]uint64)
 		member.warpTotemDischarges = make(map[uint32]uint64)
 	}
-	for _, source := range member.zone.NPCs().Snapshots() {
+	for _, source := range member.zone.NPCs().SelectedSnapshots(zonenpc.SelectWarpTotem) {
 		if !zonenpc.IsWarpTotem(source.Plan) || !source.IsPublished || source.IsDefeated {
 			continue
 		}

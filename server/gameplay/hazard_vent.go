@@ -169,7 +169,7 @@ func (e gameplayPeerSession) publishFireVentHitAfterCommit(registry *gameplaySes
 func (e *gameplayPeerSession) fireVentSources() []zonenpc.Snapshot {
 	vents := make([]zonenpc.Snapshot, 0)
 	seenObjectIDs := make(map[uint32]bool)
-	for _, vent := range e.zone.NPCs().Snapshots() {
+	for _, vent := range e.zone.NPCs().SelectedSnapshots(zonenpc.SelectFireVent) {
 		if game.SceneryHazardAbility(vent.Plan.NounName) != "VentFlameCone" {
 			continue
 		}

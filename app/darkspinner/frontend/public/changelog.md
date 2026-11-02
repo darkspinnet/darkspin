@@ -1,7 +1,15 @@
 # Changelog
 
+### 2026-11-02
+
+- Reduce campaign NPC polling allocations by filtering hazard sources before copying and using compact security, combat-presence, and AI-target snapshots.
+- Fix raised projectile-burst turn goals affecting Webbed Lightning and Ghost Form modifier cleanup during command rejection and recovery ([#162](https://github.com/darkspinnet/darkspin/issues/162)).
+
 ### 2026-11-01
 
+- [#159](https://github.com/darkspinnet/darkspin/issues/159) Include the largest free virtual-memory region and free-region count in client crash traces to help investigate editor resource-loading failures.
+- Limit remote /bug and /b server captures to one every two minutes across players, preserving client-side reports and replying when host capture is skipped by the cooldown.
+- [#153](https://github.com/darkspinnet/darkspin/issues/153) [#158](https://github.com/darkspinnet/darkspin/issues/158) Include the free first PvE squad in saved and transmitted unlock counts so buying a stat upgrade no longer locks every squad and its heroes.
 - Add dedicated-server darkrun db user swap to atomically exchange a deleted and active Crogenitor's names before recovery.
 - Add dedicated-server emergency recovery through darkrun db user undelete, with name-collision protection, launch credentials bound to the original account, and Compose recovery instructions.
 - [#155](https://github.com/darkspinnet/darkspin/issues/155) Save remote /bug reports in the player's local bugs folder while retaining host diagnostics.

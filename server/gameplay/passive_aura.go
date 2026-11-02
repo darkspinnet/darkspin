@@ -78,7 +78,7 @@ func (e gameplayPendingRuntime) pollNativeSilenceAuraLocked(member *gameplayPeer
 		return packets, nil
 	}
 	var source zonenpc.Snapshot
-	for _, candidate := range member.zone.NPCs().LiveSnapshots() {
+	for _, candidate := range member.zone.NPCs().SelectedSnapshots(zonenpc.SelectNativeSilence) {
 		if !candidate.IsPublished || candidate.IsDefeated || candidate.HitPoint <= 0 ||
 			candidate.Faction == zonenpc.FactionPlayerAligned || candidate.Plan.IsIntroductionHidden ||
 			zonenpc.NativePassiveAura(candidate.Plan) != "CitadelSpecialTwo_SilenceAura" ||

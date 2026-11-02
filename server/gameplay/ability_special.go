@@ -2394,7 +2394,6 @@ type campaignGhostScheduleFailure struct {
 	previousManaPoint   float32
 	cooldownReservation zoneability.CooldownReservation
 	releaseReservation  zoneaction.ReleaseReservation
-	instanceID          uint32
 }
 
 func (f campaignGhostScheduleFailure) handle(scheduleErr error) {
@@ -2403,10 +2402,14 @@ func (f campaignGhostScheduleFailure) handle(scheduleErr error) {
 	isCurrent := isFound && peerSession.generation == f.generation &&
 		peerSession.ghostFormRun == f.run
 	if isCurrent {
-		peerSession.ghostFormRun = nil
-		_ = peerSession.setCampaignCharacterManaPoints(
+		peerSession.retireGhostForm(f.runtime.modifierPool)
+		manaErr := peerSession.setCampaignCharacterManaPoints(
 			f.creatureIndex, f.previousManaPoint,
 		)
+		if manaErr != nil {
+			f.runtime.logger.Printf("RakNet Ghost Form failure mana rollback failed user=%d: %v",
+				peerSession.binding.UserID, manaErr)
+		}
 		peerSession.abilityCooldownSession().Rollback(f.cooldownReservation)
 		peerSession.abilityReleaseSession().Rollback(f.releaseReservation)
 		f.runtime.registry.sessions[f.sessionKey] = peerSession
@@ -2415,8 +2418,6 @@ func (f campaignGhostScheduleFailure) handle(scheduleErr error) {
 	if !isCurrent {
 		return
 	}
-	f.run.ReleaseEffect()
-	_ = f.runtime.modifierPool.Release(f.instanceID)
 	f.runtime.logger.Printf(
 		"RakNet campaign Ghost Form stopped after schedule failure for %s: %v",
 		f.sessionKey, scheduleErr,
@@ -2668,7 +2669,6 @@ func (r campaignAbilityCommandRuntime) handleSquad(
 			previousManaPoint:   previousManaPoint,
 			cooldownReservation: cooldownReservation,
 			releaseReservation:  releaseReservation,
-			instanceID:          instanceID,
 		}
 		producers = r.registry.producerGuard.scheduledProducers(sessionKey, producers)
 		var cancel raknet.CancelSchedule

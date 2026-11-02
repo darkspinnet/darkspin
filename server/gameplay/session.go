@@ -2007,7 +2007,11 @@ func (e *gameplayPeerSession) resetRejectedActionAdmission(
 	beastObjectID := e.beastPetObjectID
 	summons := e.heroSummons
 	timedArea := e.heroTimedArea
+	ghostForm := e.ghostFormRun
 	retainedSlots := make([]uint8, 0, 2)
+	if ghostForm != nil {
+		retainedSlots = append(retainedSlots, ghostForm.EffectSlot())
+	}
 	if timedArea != nil && timedArea.isEffectBound {
 		retainedSlots = append(retainedSlots, timedArea.effectSlot)
 	}
@@ -2028,6 +2032,7 @@ func (e *gameplayPeerSession) resetRejectedActionAdmission(
 	e.beastPetObjectID = 0
 	e.heroSummons = nil
 	e.heroTimedArea = nil
+	e.ghostFormRun = nil
 	run := e.resetFailedActionAdmission(modifierInstancePool, effectPool, retainedSlots...)
 	e.heroTraps = traps
 	e.heroStatusAreas = statusAreas
@@ -2036,6 +2041,7 @@ func (e *gameplayPeerSession) resetRejectedActionAdmission(
 	e.beastPetObjectID = beastObjectID
 	e.heroSummons = summons
 	e.heroTimedArea = timedArea
+	e.ghostFormRun = ghostForm
 	if arborealMight != nil {
 		e.heroModifierRun = arborealMight
 	}
@@ -2129,14 +2135,7 @@ func (e *gameplayPeerSession) resetFailedActionAdmission(
 		}
 		e.enrageRun = nil
 	}
-	if e.ghostFormRun != nil {
-		e.ghostFormRun.Cancel()
-		e.ghostFormRun.ReleaseEffect()
-		if modifierInstancePool != nil {
-			_ = modifierInstancePool.Release(e.ghostFormRun.InstanceID())
-		}
-		e.ghostFormRun = nil
-	}
+	e.retireGhostForm(modifierInstancePool)
 	if e.heroModifierRun != nil {
 		e.heroModifierRun.Cancel()
 		if e.heroModifierRun.isShadowStealth {

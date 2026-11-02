@@ -69,7 +69,7 @@ func (e gameplayPendingRuntime) pollTripMinesLocked(member *gameplayPeerSession,
 		member.tripMines = make(map[uint32]*tripMineRun)
 	}
 	packets := make([][]byte, 0)
-	for _, source := range member.zone.NPCs().Snapshots() {
+	for _, source := range member.zone.NPCs().SelectedSnapshots(zonenpc.SelectTripMine) {
 		if !source.Plan.IsFixture || !isTripMine(source.Plan.NounName) || !source.IsPublished {
 			continue
 		}

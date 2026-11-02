@@ -134,7 +134,26 @@ func (r *GhostFormRun) ExpiryPackets(timestamp uint64) ([][]byte, error) {
 	if r == nil || r.objectID == 0 || r.instanceID == 0 || timestamp == 0 {
 		return nil, errors.New("ghost form expiry unavailable")
 	}
-	messages := make([]raknet.ApplicationMessage, 0, 3)
+	packets, err := r.CleanupPackets()
+	if err != nil {
+		return nil, fmt.Errorf("expiryCleanup: %w", err)
+	}
+	animationPacket, err := raknet.MarshalApplication(raknet.SetAnimationStateMessage{
+		ObjectID: r.objectID, Timestamp: timestamp, Scale: 1,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("expiryAnimation: %w", err)
+	}
+	return append(packets, animationPacket), nil
+}
+
+// CleanupPackets retires the attachment and HUD modifier without resetting
+// another action's animation or inventing a client-clock timestamp.
+func (r *GhostFormRun) CleanupPackets() ([][]byte, error) {
+	if r == nil || r.objectID == 0 || r.instanceID == 0 {
+		return nil, errors.New("ghost form cleanup unavailable")
+	}
+	messages := make([]raknet.ApplicationMessage, 0, 2)
 	if r.ReleaseEffect() {
 		messages = append(messages, raknet.AttachedEffectMessage{
 			Slot: r.effectSlot + 1, IsRemovalRequested: true,
@@ -144,12 +163,9 @@ func (r *GhostFormRun) ExpiryPackets(timestamp uint64) ([][]byte, error) {
 	messages = append(messages, raknet.ModifierDeletedMessage{
 		TargetID: r.objectID, InstanceID: r.instanceID,
 	})
-	messages = append(messages, raknet.SetAnimationStateMessage{
-		ObjectID: r.objectID, Timestamp: timestamp, Scale: 1,
-	})
-	packets, err := marshalMessages(messages, "ghostFormExpiry")
+	packets, err := marshalMessages(messages, "ghostFormCleanup")
 	if err != nil {
-		return nil, fmt.Errorf("expiryMarshal: %w", err)
+		return nil, fmt.Errorf("cleanupMarshal: %w", err)
 	}
 	return packets, nil
 }

@@ -98,7 +98,7 @@ func (e *Zone) CryosGeysers(at time.Time) ([]CryosGeyser, error) {
 func (e *Zone) cryosGeyserSourcesLocked() map[uint32]CryosGeyser {
 	sources := make(map[uint32]CryosGeyser)
 	seenObjectIDs := make(map[uint32]bool)
-	for _, source := range e.info.NPCs.Snapshots() {
+	for _, source := range e.info.NPCs.SelectedSnapshots(zonenpc.SelectCryosGeyser) {
 		hook := game.CryosGeyserHook(source.Plan.NounName, source.Plan.NPCProfile)
 		if hook == "" {
 			continue

@@ -1312,8 +1312,9 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileBurst(
 	run, immediatePackets, err := abilityraknet.NewBurstRun(abilityraknet.BurstInput{
 		Ability: simulationDefinition, ActorObjectID: command.Common.ObjectID,
 		TargetObjectID: runTargetObjectID, ProjectileObjectIDs: projectileObjectID,
-		ActorPosition:  sim.Position(actorPosition),
-		TargetPosition: sim.Position(targetPosition), ActorFacing: sim.Position(facing),
+		ActorPosition:    sim.Position(peerSession.playerPosition),
+		ProjectileHeight: max(float32(0), actorPosition.Z-peerSession.playerPosition.Z),
+		TargetPosition:   sim.Position(targetPosition), ActorFacing: sim.Position(facing),
 		FootprintRadius: actorFootprint,
 		Damage:          definition.MaximumDamage, TargetHitPoint: targetHitPoint,
 		ActorTeam: abilityActorTeam(peerSession), SourceTime: packet.SourceTime, StartedAt: abilityStartTime,

@@ -8,7 +8,6 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
-	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
 const playerAIEngagementDistance = float32(20)
@@ -71,23 +70,14 @@ func (e gameplayPendingRuntime) playerAITargetLocked(
 				healthRatio: candidate.deployedHitPoint() / max(float32(1), candidate.characterHitPointMaximum(candidate.deployedCreatureIndex))})
 		}
 	} else if member.zone != nil && member.zone.NPCs() != nil {
-		for _, npc := range member.zone.NPCs().Snapshots() {
-			if !npc.IsPublished || npc.IsDefeated || npc.HitPoint <= 0 ||
-				npc.Faction != zonenpc.FactionNonPlayerAligned || npc.IsSpawnStealthActive ||
-				!npc.Plan.NPCProfile.IsTargetable {
-				continue
-			}
-			isDestructible := npc.Plan.IsFixture ||
-				npc.Plan.NPCProfile.NounType == game.NounTypeDestructibleOrnament
-			if member.binding.IsServerBot && isDestructible &&
+		for _, npc := range member.zone.NPCs().TargetSnapshots() {
+			if member.binding.IsServerBot && npc.IsDestructible &&
 				(npc.TargetObjectID != member.deployedObjectID || member.playerAI.survival.recentLoss(now) <= 0) {
 				continue
 			}
-			radius := npc.Plan.ActorFootprintRadius()
-			targets = append(targets, playerAITarget{objectID: npc.Plan.ObjectID,
-				position: raknet.Vector3(npc.Plan.Position), radius: radius, aggroTargetID: npc.TargetObjectID,
-				healthRatio: npc.HitPoint / max(float32(1), npc.Plan.NPCProfile.HitPoint),
-				isPriority:  npc.Plan.IsElite || npc.Plan.IsCaptain || npc.Plan.IsBoss})
+			targets = append(targets, playerAITarget{objectID: npc.ObjectID,
+				position: raknet.Vector3(npc.Position), radius: npc.Radius, aggroTargetID: npc.TargetObjectID,
+				healthRatio: npc.HealthRatio, isPriority: npc.IsPriority})
 		}
 	}
 	selected := playerAITarget{}

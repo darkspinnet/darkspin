@@ -3130,7 +3130,7 @@ func (r gameplayPendingRuntime) recoverIdleNPCActions(
 		return nil, nil
 	}
 	plans := make([]zonenpc.SpawnPlan, 0)
-	for _, npc := range peerSession.zone.NPCs().Snapshots() {
+	for _, npc := range peerSession.zone.NPCs().SelectedSnapshots(zonenpc.SelectIdleAction) {
 		if npc.IsDefeated || !npc.IsScenarioAIEnabled() || npc.Plan.IsFixture || npc.TargetObjectID == 0 ||
 			npc.IsActionStarted || zonenpc.IsAgentHealingChild(npc.Plan) {
 			continue

@@ -31,7 +31,7 @@ func (e gameplayPendingRuntime) pollNativeAllySilenceLocked(member *gameplayPeer
 			return packets, nil
 		}
 	}
-	for _, actor := range member.zone.NPCs().LiveSnapshots() {
+	for _, actor := range member.zone.NPCs().SelectedSnapshots(zonenpc.SelectPlayerAligned) {
 		if !actor.IsPublished || actor.IsDefeated || actor.HitPoint <= 0 || actor.Faction != zonenpc.FactionPlayerAligned {
 			continue
 		}
@@ -59,7 +59,7 @@ func (e gameplayPendingRuntime) refreshNativeAllySilenceLocked(member *gameplayP
 		return nil, nil
 	}
 	var source zonenpc.Snapshot
-	for _, candidate := range member.zone.NPCs().LiveSnapshots() {
+	for _, candidate := range member.zone.NPCs().SelectedSnapshots(zonenpc.SelectNativeSilence) {
 		if candidate.IsPublished && !candidate.IsDefeated && candidate.HitPoint > 0 &&
 			!candidate.Plan.IsIntroductionHidden && candidate.Faction == zonenpc.FactionNonPlayerAligned &&
 			zonenpc.NativePassiveAura(candidate.Plan) == "CitadelSpecialTwo_SilenceAura" &&

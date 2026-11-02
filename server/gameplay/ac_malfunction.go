@@ -77,7 +77,7 @@ func (e gameplayPendingRuntime) updateACMalfunctionsLocked(
 	}
 	packets := make([][]byte, 0)
 	plans := make([]zonenpc.AttackPlan, 0)
-	for _, source := range member.zone.NPCs().Snapshots() {
+	for _, source := range member.zone.NPCs().SelectedSnapshots(zonenpc.SelectCryosMalfunction) {
 		if !zonenpc.IsCryosMalfunction(source.Plan) || !source.IsPublished || source.IsDefeated {
 			continue
 		}

@@ -64,7 +64,7 @@ func (e gameplayPendingRuntime) pollSilenceFieldsLocked(member *gameplayPeerSess
 	}
 	insideTargets := make(map[silenceFieldPair]zone.NPCTarget)
 	sources := make(map[uint32]zonenpc.Snapshot)
-	for _, source := range world.NPCs().Snapshots() {
+	for _, source := range world.NPCs().SelectedSnapshots(zonenpc.SelectSilenceField) {
 		if !isSilenceFieldSource(world, source.Plan.ObjectID) || source.Faction != zonenpc.FactionNonPlayerAligned {
 			continue
 		}

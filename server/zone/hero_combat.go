@@ -24,8 +24,8 @@ func (e *Zone) HeroCombatStates() []HeroCombatState {
 		return nil
 	}
 	attackerCountsByObjectID := make(map[uint32]uint32)
-	for _, npc := range e.info.NPCs.LiveSnapshots() {
-		if !npc.IsPublished || npc.Plan.IsFixture || npc.HitPoint <= 0 ||
+	for _, npc := range e.info.NPCs.LiveActorSnapshots() {
+		if !npc.IsPublished || npc.IsFixture || npc.HitPoint <= 0 ||
 			npc.Faction != zonenpc.FactionNonPlayerAligned || npc.TargetObjectID == 0 {
 			continue
 		}

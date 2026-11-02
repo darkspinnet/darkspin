@@ -2993,17 +2993,17 @@ func (e *Zone) SecurityThreats() []zonesecurity.Threat {
 	if e == nil || e.info.NPCs == nil {
 		return nil
 	}
-	npcs := e.info.NPCs.LiveSnapshots()
+	npcs := e.info.NPCs.LiveActorSnapshots()
 	threats := make([]zonesecurity.Threat, 0, len(npcs))
 	for _, npc := range npcs {
 		if npc.Faction == zonenpc.FactionPlayerAligned {
 			continue
 		}
 		threats = append(threats, zonesecurity.Threat{
-			Position:    npc.Plan.Position,
-			Footprint:   npc.Plan.NPCProfile.FootprintRadius,
-			IsDefeated:  npc.IsDefeated,
-			IsFixture:   npc.Plan.IsFixture,
+			Position:    npc.Position,
+			Footprint:   npc.FootprintRadius,
+			IsDefeated:  false,
+			IsFixture:   npc.IsFixture,
 			IsInvisible: npc.IsInvisibleToSecurityTeleporter,
 		})
 	}

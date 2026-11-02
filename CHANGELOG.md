@@ -1,5 +1,10 @@
 # Changelog
 
+### 2026-11-02
+
+- #162 Reduce campaign NPC polling allocations by filtering hazard sources before copying and using compact security, combat-presence, and AI-target snapshots.
+- #162 Fix raised projectile-burst turn goals affecting Webbed Lightning and Ghost Form modifier cleanup during command rejection and recovery.
+
 ### 2026-11-01
 
 - #159 Include the largest free virtual-memory region and free-region count in client crash traces to help investigate editor resource-loading failures.

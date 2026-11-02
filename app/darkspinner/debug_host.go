@@ -311,7 +311,7 @@ func (e *debugHost) createProfile(ctx context.Context, req sporenet.DebugProfile
 	if err != nil {
 		return sporenet.DebugProfile{}, fmt.Errorf("profileCreate: %w", err)
 	}
-	jwt, err := issueScenarioJWT(e.secret, profile.LoginName)
+	jwt, err := issueScenarioJWT(e.secret, profile.LoginName, profile.UserID)
 	if err != nil {
 		return sporenet.DebugProfile{}, fmt.Errorf("profileToken: %w", err)
 	}
@@ -332,7 +332,7 @@ func (e *debugHost) ProfileCredential(name string) (debugProfileCredential, erro
 	default:
 	}
 	// Inspection outlives a launch token; issue fresh credentials at launch time.
-	jwt, err := issueScenarioJWT(e.secret, credential.LoginName)
+	jwt, err := issueScenarioJWT(e.secret, credential.LoginName, credential.UserID)
 	if err != nil {
 		return debugProfileCredential{}, fmt.Errorf("profileRefresh: %w", err)
 	}
