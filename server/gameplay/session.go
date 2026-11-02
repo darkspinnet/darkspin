@@ -617,8 +617,9 @@ type zoneCombatPresentation struct {
 }
 
 type gameplayPeerSession struct {
-	channelRegistry *gameplaySessionRegistry
-	arenaEffectPool *attachedEffectPool
+	channelRegistry          *gameplaySessionRegistry
+	arenaEffectPool          *attachedEffectPool
+	acceptedActionGeneration uint64
 	scenarioPeerPreparation
 	scenarioPeerFixture
 	scenarioPeerReadiness
