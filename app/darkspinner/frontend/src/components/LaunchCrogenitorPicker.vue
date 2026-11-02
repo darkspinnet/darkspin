@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import CrogenitorActions from './CrogenitorActions.vue'
 import { profileLastPlayedDate } from '../profile'
 
-const props = defineProps({ profiles:Array, selectedKey:String, isDisabled:Boolean, isCreationDisabled:Boolean, isActionDisabled:Boolean, isRemoteAvailable:Boolean, isMod:Boolean })
+const props = defineProps({ profiles:Array, selectedKey:String, isDisabled:Boolean, isCreationDisabled:Boolean, isActionDisabled:Boolean, isMod:Boolean })
 const selectedProfile = computed(() => props.profiles.find(entry => entry.key === props.selectedKey)?.profile)
 const emit = defineEmits(['select', 'create', 'edit', 'reset-display', 'delete'])
 const newMenu = ref(null)
@@ -21,7 +21,7 @@ function create(kind) {
       <Button as="summary" variant="outline" class="identity-create">{{ $t("+ NEW") }}</Button>
       <div class="crogenitor-actions-list">
         <button type="button" @click="create('play')">{{ $t("LOCAL CROGENITOR") }}</button>
-        <button v-if="isRemoteAvailable" type="button" @click="create('remote')">{{ $t("REMOTE CROGENITOR") }}</button>
+        <button type="button" @click="create('remote')">{{ $t("REMOTE CROGENITOR") }}</button>
         <button type="button" @click="create('mod')">{{ $t("MODDED CROGENITOR") }}</button>
       </div>
     </details>

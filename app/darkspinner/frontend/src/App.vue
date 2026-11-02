@@ -389,12 +389,10 @@ const isRemoteFormReady = computed(() => !!remoteServerAddress.value &&
   !remoteUsernameError(remoteIdentity.value) &&
   !remotePasswordError(remotePassword.value, !isRemoteRegistration.value && selectedRemoteProfile.value?.isPasswordRemembered))
 const isServerPortValid = computed(() => isPortValid(configuredServerPort.value) && Number(configuredServerPort.value) <= 65534)
-// Remove this channel gate when remote and multiplayer configuration are ready for every build.
-const isExperimentalLauncherFeatureVisible = computed(() => ['development', 'unstable'].includes(status.value.buildChannel))
 const launchProfiles = computed(() => [
   ...profiles.value.map(profile => ({ key:`play:${profile.loginName}`, kind:'play', profile })),
   ...modProfiles.value.map(profile => ({ key:`mod:${profile.loginName}`, kind:'mod', profile })),
-  ...(isExperimentalLauncherFeatureVisible.value ? remoteProfiles.value.map(profile => ({ key:`remote:${profile.serverAddress}:${profile.loginName}`, kind:'remote', profile })) : []),
+  ...remoteProfiles.value.map(profile => ({ key:`remote:${profile.serverAddress}:${profile.loginName}`, kind:'remote', profile })),
 ].sort((first, second) => profileLastPlayedTime(second.profile) - profileLastPlayedTime(first.profile)))
 const selectedLaunchKey = computed(() => {
   if (activePage.value === 'mod') return selectedModProfile.value ? `mod:${selectedModProfile.value}` : ''
@@ -546,7 +544,7 @@ onMounted(async () => {
   isInstallationLoaded.value = true
   if (isInstallationRequired.value) return
   await refreshAutomationConfiguration()
-  if (activePage.value === 'remote' && (!isExperimentalLauncherFeatureVisible.value || !selectedRemoteProfile.value)) showPage('play')
+  if (activePage.value === 'remote' && !selectedRemoteProfile.value) showPage('play')
   isServiceSelectionReady.value = true
   if (status.value.isAutoPlayRequested) isAutoLaunchEnabled.value = true
   if (status.value.identity) identity.value = status.value.identity
@@ -1707,7 +1705,7 @@ async function copyLauncherFailure() {
         <Card class="bay launcher-bay">
           <div class="launch-pane">
             <div class="profile-core remote-profile-core">
-              <LaunchCrogenitorPicker :profiles="launchProfiles" :selected-key="selectedLaunchKey" :is-creation-disabled="isBusy" :is-disabled="isRemoteBusy || (activePage === 'mod' && isModBusy)" :is-action-disabled="isProfileActionDisabled" :is-remote-available="isExperimentalLauncherFeatureVisible" :is-mod="activePage === 'mod'" @select="chooseLaunchProfile" @create="createLaunchProfile" @edit="modPage?.editProfile()" @reset-display="requestResetProfileDisplay(activePage === 'remote' ? selectedRemoteProfile : selectedProfileRecord)" @delete="activePage === 'remote' ? requestRemoteProfileDelete() : requestDeleteProfile()" />
+              <LaunchCrogenitorPicker :profiles="launchProfiles" :selected-key="selectedLaunchKey" :is-creation-disabled="isBusy" :is-disabled="isRemoteBusy || (activePage === 'mod' && isModBusy)" :is-action-disabled="isProfileActionDisabled" :is-mod="activePage === 'mod'" @select="chooseLaunchProfile" @create="createLaunchProfile" @edit="modPage?.editProfile()" @reset-display="requestResetProfileDisplay(activePage === 'remote' ? selectedRemoteProfile : selectedProfileRecord)" @delete="activePage === 'remote' ? requestRemoteProfileDelete() : requestDeleteProfile()" />
               <div v-if="selectedRemoteProfile" class="launch-profile-summary">
                 <div class="profile-info-card remote-profile-info-card" :aria-label="$t(`${selectedRemoteProfileLabel} remote profile summary`)">
                   <time v-if="profileCreateDate(selectedRemoteProfile)" class="profile-create-date" :datetime="selectedRemoteProfile.createDt">{{ $t(profileCreateDate(selectedRemoteProfile)) }}</time>
@@ -1750,7 +1748,7 @@ async function copyLauncherFailure() {
       <Tabs v-model="configTab" :unmount-on-hide="false" class="config-tabs">
         <TabsList :aria-label='$t("Configuration sections")'>
           <TabsTrigger value="general">{{ $t("General") }}</TabsTrigger>
-          <TabsTrigger v-if="isExperimentalLauncherFeatureVisible" value="multiplayer">{{ $t("Multiplayer") }}</TabsTrigger>
+          <TabsTrigger value="multiplayer">{{ $t("Multiplayer") }}</TabsTrigger>
           <TabsTrigger value="spore">Spore</TabsTrigger>
           <TabsTrigger value="server-rules">{{ $t("Server Rules") }}</TabsTrigger>
           <TabsTrigger value="advanced">{{ $t("Advanced") }}</TabsTrigger>
@@ -1801,7 +1799,7 @@ async function copyLauncherFailure() {
           </div>
           <p v-if="serverConfigurationError" class="management-message configuration-error" role="alert">{{ $t(serverConfigurationError) }}</p>
         </TabsContent>
-        <TabsContent v-if="isExperimentalLauncherFeatureVisible" value="multiplayer">
+        <TabsContent value="multiplayer">
           <div class="config-general-grid">
             <Card class="management-card config-port-card">
               <label class="management-toggle config-multiplayer"><Checkbox v-model="isConfiguredMultiplayerEnabled" @update:model-value="saveMultiplayerConfiguration" :disabled="isServerConfigurationBusy" /><span><strong>{{ $t("ALLOW MULTIPLAYER CONNECTIONS") }}<ConfigHelp text="Allow other computers to connect to your local server." /></strong></span></label>
@@ -1871,7 +1869,7 @@ async function copyLauncherFailure() {
         <Card class="bay launcher-bay">
           <div class="launch-pane">
             <div class="profile-core">
-              <LaunchCrogenitorPicker :profiles="launchProfiles" :selected-key="selectedLaunchKey" :is-creation-disabled="isBusy" :is-disabled="isRemoteBusy || (activePage === 'mod' && isModBusy)" :is-action-disabled="isProfileActionDisabled" :is-remote-available="isExperimentalLauncherFeatureVisible" :is-mod="activePage === 'mod'" @select="chooseLaunchProfile" @create="createLaunchProfile" @edit="modPage?.editProfile()" @reset-display="requestResetProfileDisplay(activePage === 'remote' ? selectedRemoteProfile : selectedProfileRecord)" @delete="activePage === 'remote' ? requestRemoteProfileDelete() : requestDeleteProfile()" />
+              <LaunchCrogenitorPicker :profiles="launchProfiles" :selected-key="selectedLaunchKey" :is-creation-disabled="isBusy" :is-disabled="isRemoteBusy || (activePage === 'mod' && isModBusy)" :is-action-disabled="isProfileActionDisabled" :is-mod="activePage === 'mod'" @select="chooseLaunchProfile" @create="createLaunchProfile" @edit="modPage?.editProfile()" @reset-display="requestResetProfileDisplay(activePage === 'remote' ? selectedRemoteProfile : selectedProfileRecord)" @delete="activePage === 'remote' ? requestRemoteProfileDelete() : requestDeleteProfile()" />
               <template v-if="profiles.length">
                 <div class="launch-profile-summary">
                   <ProfileSummary v-if="selectedProfileRecord" :profile="selectedProfileRecord" />
@@ -1884,7 +1882,7 @@ async function copyLauncherFailure() {
     </section></TabsContent>
 
 
-    <TabsContent v-if="!isInstallationRequired && !luaConsole.isSelected" v-show="activePage === 'mod'" value="mod" force-mount as-child><ModPage ref="modPage" :status="status" :is-active="activePage === 'mod'" @configure="configTab = 'spore'; showPage('config')" @profiles="modProfiles = $event" @selection="selectedModProfile = $event" @busy="isModBusy = $event" @readiness="isModPlayReady = $event" @launch="activeClientRoute = 'mod'"><template #picker><LaunchCrogenitorPicker :profiles="launchProfiles" :selected-key="selectedLaunchKey" :is-creation-disabled="isBusy" :is-disabled="isRemoteBusy || (activePage === 'mod' && isModBusy)" :is-action-disabled="isProfileActionDisabled" :is-remote-available="isExperimentalLauncherFeatureVisible" :is-mod="activePage === 'mod'" @select="chooseLaunchProfile" @create="createLaunchProfile" @edit="modPage?.editProfile()" @reset-display="requestResetProfileDisplay(activePage === 'remote' ? selectedRemoteProfile : selectedProfileRecord)" @delete="activePage === 'remote' ? requestRemoteProfileDelete() : requestDeleteProfile()" /></template></ModPage></TabsContent>
+    <TabsContent v-if="!isInstallationRequired && !luaConsole.isSelected" v-show="activePage === 'mod'" value="mod" force-mount as-child><ModPage ref="modPage" :status="status" :is-active="activePage === 'mod'" @configure="configTab = 'spore'; showPage('config')" @profiles="modProfiles = $event" @selection="selectedModProfile = $event" @busy="isModBusy = $event" @readiness="isModPlayReady = $event" @launch="activeClientRoute = 'mod'"><template #picker><LaunchCrogenitorPicker :profiles="launchProfiles" :selected-key="selectedLaunchKey" :is-creation-disabled="isBusy" :is-disabled="isRemoteBusy || (activePage === 'mod' && isModBusy)" :is-action-disabled="isProfileActionDisabled" :is-mod="activePage === 'mod'" @select="chooseLaunchProfile" @create="createLaunchProfile" @edit="modPage?.editProfile()" @reset-display="requestResetProfileDisplay(activePage === 'remote' ? selectedRemoteProfile : selectedProfileRecord)" @delete="activePage === 'remote' ? requestRemoteProfileDelete() : requestDeleteProfile()" /></template></ModPage></TabsContent>
     </Tabs>
 
     <footer :class="{ 'launch-footer':!isInstallationRequired }">
