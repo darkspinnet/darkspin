@@ -15,7 +15,7 @@ func (e *Session) AddOperatives(
 	director game.CampaignDirector, plans []zonenpc.SpawnPlan, isCoop bool,
 	spawnedCount int,
 ) []zonenpc.SpawnPlan {
-	if e == nil || !isCoop || len(plans) == 0 {
+	if e == nil || director.EnemyPopulationRules.Resolved().AgentSelection != "current_coop" || !isCoop || len(plans) == 0 {
 		return plans
 	}
 	e.mu.RLock()

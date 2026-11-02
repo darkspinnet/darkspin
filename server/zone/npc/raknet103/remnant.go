@@ -2,6 +2,7 @@ package raknet103
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/util"
@@ -14,17 +15,38 @@ func Remnants(snapshots []zonenpc.Snapshot) ([][]byte, error) {
 	packets := make([][]byte, 0)
 	for _, snapshot := range snapshots {
 		isGeyser := zonenpc.IsCryosGeyser(snapshot.Plan)
+		isBossVent := strings.EqualFold(snapshot.Plan.NounName, "DEST_citadel_factoryvent_boss.Noun")
 		isPipe := zonenpc.IsFactoryPipe(snapshot.Plan.NounName)
 		isWarpTotem := zonenpc.IsWarpTotem(snapshot.Plan)
+		replacementNoun := zonenpc.CryosACRemnantNoun(snapshot.Plan)
 		if !snapshot.IsPublished || !snapshot.IsDefeated ||
-			(!zonenpc.IsGraviticRemnant(snapshot.Plan) && !isGeyser && !isPipe && !isWarpTotem) {
+			(!zonenpc.IsGraviticRemnant(snapshot.Plan) && !isGeyser && !isBossVent && !isPipe && !isWarpTotem && replacementNoun == "") {
 			continue
 		}
 		graphicsState := util.HashID("dead")
 		if isGeyser {
-			graphicsState = util.HashID("unblocked")
+			graphicsState = 0
+			state := zonenpc.CryosGeyserDeathState(snapshot.Plan)
+			if state != "" {
+				graphicsState = util.HashID(state)
+			}
 		}
-		spawnPackets, err := spawn(snapshot.FacingSpawnPlan(), true)
+		plan := snapshot.FacingSpawnPlan()
+		if replacementNoun != "" {
+			packet, err := raknet.MarshalApplication(raknet.ObjectCreateMessage{
+				ObjectID: plan.ObjectID, Noun: util.HashID(replacementNoun),
+				PositionX: plan.Position.X, PositionY: plan.Position.Y,
+				PositionZ: plan.Position.Z,
+				Rotation:  raknet.Vector3{X: plan.Rotation.X, Y: plan.Rotation.Y, Z: plan.Rotation.Z},
+				Scale:     1, IsCollisionEnabled: false,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("remnantReplacement[%d]: %w", plan.ObjectID, err)
+			}
+			packets = append(packets, packet)
+			continue
+		}
+		spawnPackets, err := spawn(plan, true)
 		if err != nil {
 			return nil, fmt.Errorf("remnantSpawn[%d]: %w", snapshot.Plan.ObjectID, err)
 		}
@@ -36,12 +58,14 @@ func Remnants(snapshots []zonenpc.Snapshot) ([][]byte, error) {
 			raknet.AgentBlackboardUpdateMessage{
 				ObjectID: snapshot.Plan.ObjectID, IsTargetable: false,
 			},
-			raknet.SetObjectGFXStateMessage{
-				ObjectID: snapshot.Plan.ObjectID, State: graphicsState,
-			},
 			raknet.ObjectCollisionUpdateMessage{
 				ObjectID: snapshot.Plan.ObjectID, IsCollisionEnabled: !isGeyser && !isPipe && !isWarpTotem,
 			},
+		}
+		if graphicsState != 0 {
+			messages = append(messages, raknet.SetObjectGFXStateMessage{
+				ObjectID: snapshot.Plan.ObjectID, State: graphicsState,
+			})
 		}
 		for index, message := range messages {
 			packet, err := raknet.MarshalApplication(message)

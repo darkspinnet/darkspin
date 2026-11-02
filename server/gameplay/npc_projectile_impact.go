@@ -305,10 +305,6 @@ func (e campaignNPCProjectileStep) produce() ([][]byte, error) {
 		runtime.registry.mutex.Unlock()
 		return schedule.fail("enemyProjectileDamage", err)
 	}
-	runtime.reserveSageCompanionRespawnLocked(
-		&current, schedule.sessionKey, schedule.generation,
-		schedule.plan.TargetObjectID,
-	)
 	isStunApplied := false
 	if isStatusEligible && schedule.plan.Profile.ModifierName == "StalkerShock" {
 		draw := current.zone.NPCRandom().Float64() * 100

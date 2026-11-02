@@ -19,36 +19,68 @@ const attackRangeTolerance = 0.25
 const minimumPursuitDuration = 50 * time.Millisecond
 
 type Actor struct {
-	ActorFootprint    *game.NavigationFootprint
-	UserID            uint64
-	PeerGeneration    uint64
-	ObjectID          uint32
-	OwnerObjectID     uint32
-	Noun              uint32
-	Position          game.Vec3
-	FootprintRadius   float32
-	HitPoint          float32
-	MaximumHitPoint   float32
-	BodyScale         float32
-	IsTargetable      bool
-	IsCombatant       bool
-	TargetObjectID    uint32
-	PursuitObjectID   uint32
-	PursuitPosition   game.Vec3
-	PursuitRevision   uint64
-	CooldownEnd       time.Time
-	DamageBuff        float32
-	EnergyDamageBuff  float32
-	AttackSpeed       float32
-	CooldownReduction float32
-	MovementSpeedBuff float32
-	MovementSpeed     float32
-	FollowDistance    float32
-	FollowRevision    uint64
-	IsFollowing       bool
-	followPlan        Follow
-	followStartedAt   time.Time
-	followDeadline    time.Time
+	ActorFootprint         *game.NavigationFootprint
+	UserID                 uint64
+	PeerGeneration         uint64
+	ObjectID               uint32
+	OwnerObjectID          uint32
+	Noun                   uint32
+	Position               game.Vec3
+	FootprintRadius        float32
+	AggroRadius            float32
+	HitPoint               float32
+	MaximumHitPoint        float32
+	DeathRevision          uint64
+	lifeRevision           uint64
+	BodyScale              float32
+	IsTargetable           bool
+	IsCombatant            bool
+	IsAttackDisabled       bool
+	IsSageCompanion        bool
+	IsAbilityControlled    bool
+	IsStationary           bool
+	IsFollowManaged        bool
+	IsIntangible           bool
+	AbilityAnimation       string
+	TargetObjectID         uint32
+	PursuitObjectID        uint32
+	PursuitPosition        game.Vec3
+	PursuitRevision        uint64
+	pursuitSource          game.Vec3
+	pursuitStartedAt       time.Time
+	pursuitDeadline        time.Time
+	isForcedPursuit        bool
+	CooldownEnd            time.Time
+	AttackReleaseEnd       time.Time
+	silenceExpiresAt       time.Time
+	silenceLeases          map[uint32]struct{}
+	silenceImmunity        float32
+	poisonImmunity         float32
+	DamageBuff             float32
+	EnergyDamageBuff       float32
+	AttackSpeed            float32
+	CooldownReduction      float32
+	MovementSpeedBuff      float32
+	movementModifierBuff   float32
+	movementModifierExpiry time.Time
+	MovementSpeed          float32
+	FollowDistance         float32
+	FollowRevision         uint64
+	IsFollowing            bool
+	followPlan             Follow
+	followStartedAt        time.Time
+	followDeadline         time.Time
+	followHoldUntil        time.Time
+	cinematicUntil         time.Time
+	cinematicRevision      uint64
+	cinematicHolds         map[uint64]time.Time
+}
+
+func (e Actor) AcquisitionRange() float32 {
+	if e.AggroRadius > 0 {
+		return e.AggroRadius
+	}
+	return CompatibilityAggroRadius
 }
 
 type Buff struct {
@@ -98,12 +130,19 @@ type Pursuit struct {
 }
 
 type Session struct {
-	actorFootprints map[uint32]game.NavigationFootprint
-	mu              sync.RWMutex
-	actors          map[uint32]Actor
-	pursuitRevision uint64
-	followRevision  uint64
-	motionRevision  uint64
+	aggroRangesByNoun      map[uint32]float32
+	movementModifierSource MovementModifierSource
+	actorFootprints        map[uint32]game.NavigationFootprint
+	mu                     sync.RWMutex
+	actors                 map[uint32]Actor
+	pursuitRevision        uint64
+	followRevision         uint64
+	motionRevision         uint64
+	cinematicRevision      uint64
+	npcTypesByNoun         map[uint32]uint32
+	actorRevisions         map[uint32]uint64
+	retainedActors         map[uint32]Actor
+	lifeRevision           uint64
 }
 
 func NewSession() *Session {
@@ -111,6 +150,25 @@ func NewSession() *Session {
 }
 
 func (e *Session) Put(actor Actor) error {
+	err := e.put(actor, false)
+	if err != nil {
+		return fmt.Errorf("actorPut: %w", err)
+	}
+	return nil
+}
+
+// RestoreRetained restores a server-owned snapshot after transient summon
+// teardown. A replacement admitted since capture invalidates its life token.
+func (e *Session) RestoreRetained(actor Actor) error {
+	err := e.put(actor, true)
+	if err != nil {
+		e.discardRetained(actor)
+		return fmt.Errorf("retainedPut: %w", err)
+	}
+	return nil
+}
+
+func (e *Session) put(actor Actor, isRetained bool) error {
 	if e == nil {
 		return errors.New("nil companion session")
 	}
@@ -118,6 +176,7 @@ func (e *Session) Put(actor Actor) error {
 		actor.ObjectID == 0 || actor.OwnerObjectID == 0 || actor.Noun == 0 ||
 		!isFinitePosition(actor.Position) ||
 		!isFinitePositive(actor.FootprintRadius) ||
+		!isFiniteNonNegative(actor.AggroRadius) ||
 		!isFinitePositive(actor.MaximumHitPoint) ||
 		!isFiniteNonNegative(actor.BodyScale) ||
 		math.IsNaN(float64(actor.HitPoint)) ||
@@ -131,6 +190,10 @@ func (e *Session) Put(actor Actor) error {
 	if isFootprintFound {
 		actor.ActorFootprint = &footprint
 	}
+	aggroRadius, isAggroFound := e.aggroRangesByNoun[actor.Noun]
+	if isAggroFound && isFiniteNonNegative(aggroRadius) {
+		actor.AggroRadius = aggroRadius
+	}
 	if actor.ActorFootprint != nil {
 		radius, radiusErr := actor.ActorFootprint.ActorRadius(1)
 		if radiusErr != nil {
@@ -141,12 +204,65 @@ func (e *Session) Put(actor Actor) error {
 		}
 	}
 	current, isFound := e.actors[actor.ObjectID]
+	if isRetained {
+		retained, isCaptured := e.retainedActors[actor.ObjectID]
+		if !isCaptured || retained.lifeRevision != actor.lifeRevision {
+			return errors.New("retained companion capture stale")
+		}
+		if isFound {
+			if current.lifeRevision != actor.lifeRevision {
+				return errors.New("retained companion replacement")
+			}
+			actor = current
+		} else {
+			actor = retained
+		}
+	}
+	if isRetained && (actor.lifeRevision == 0 ||
+		e.actorRevisions[actor.ObjectID] != actor.lifeRevision ||
+		(isFound && (!current.sameCinematicActor(actor) ||
+			(current.HitPoint <= 0 && actor.HitPoint > 0) ||
+			current.lifeRevision != actor.lifeRevision))) {
+		return errors.New("retained companion identity stale")
+	}
 	if isFound && actor.PeerGeneration < current.PeerGeneration {
 		return fmt.Errorf(
 			"companion generation stale: got %d, want >= %d",
 			actor.PeerGeneration, current.PeerGeneration,
 		)
 	}
+	if isFound && actor.UserID == current.UserID &&
+		actor.OwnerObjectID == current.OwnerObjectID && actor.Noun == current.Noun {
+		actor.DeathRevision = max(actor.DeathRevision, current.DeathRevision)
+		if current.HitPoint > 0 && actor.HitPoint == 0 {
+			actor.DeathRevision++
+		}
+	}
+	if isFound && actor.UserID == current.UserID && actor.OwnerObjectID == current.OwnerObjectID &&
+		actor.Noun == current.Noun && actor.DeathRevision == current.DeathRevision &&
+		actor.HitPoint > 0 && current.HitPoint > 0 {
+		actor.cinematicUntil = current.cinematicUntil
+		actor.cinematicRevision = current.cinematicRevision
+		actor.cinematicHolds = current.cinematicHolds
+		actor.lifeRevision = current.lifeRevision
+		if actor.PeerGeneration != current.PeerGeneration {
+			actor.lifeRevision = e.nextLifeRevision()
+		}
+		if current.IsCinematicImmobilized(time.Now()) {
+			actor.Position = current.Position
+		}
+	} else if !isRetained {
+		actor.clearCinematic()
+		actor.lifeRevision = e.nextLifeRevision()
+	}
+	if actor.HitPoint <= 0 {
+		actor.clearCinematic()
+	}
+	if e.actorRevisions == nil {
+		e.actorRevisions = make(map[uint32]uint64)
+	}
+	e.actorRevisions[actor.ObjectID] = actor.lifeRevision
+	delete(e.retainedActors, actor.ObjectID)
 	// Replacement and ownership resets cannot retain a movement reservation.
 	actor.clearFollow()
 	actor.FollowRevision = e.nextFollowRevision()
@@ -160,10 +276,7 @@ func (e *Session) Snapshot(objectID uint32) (Actor, bool) {
 	if e == nil || objectID == 0 {
 		return Actor{}, false
 	}
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	actor, isFound := e.actors[objectID]
-	return actor, isFound
+	return e.RefreshMovement(objectID, time.Now())
 }
 
 func (e *Session) SetPosition(objectID uint32, position game.Vec3) error {
@@ -241,10 +354,13 @@ func (e *Session) Snapshots() []Actor {
 	if e == nil {
 		return nil
 	}
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	actor := make([]Actor, 0, len(e.actors))
 	for _, current := range e.actors {
+		current = e.refreshMovementModifiersLocked(current, time.Now())
+		e.actors[current.ObjectID] = current
+		current.Position = current.PositionAt(time.Now())
 		actor = append(actor, current)
 	}
 	sort.Slice(actor, func(left int, right int) bool {
@@ -270,14 +386,21 @@ func (e *Session) SetHitPoint(
 		return Actor{}, Actor{}, errors.New("companion hit point invalid")
 	}
 	previous := actor
+	if actor.HitPoint > 0 && hitPoint == 0 {
+		actor.DeathRevision++
+		actor.lifeRevision = e.nextLifeRevision()
+		e.actorRevisions[objectID] = actor.lifeRevision
+		delete(e.retainedActors, objectID)
+	}
 	actor.HitPoint = hitPoint
 	if hitPoint == 0 {
+		actor.clearCinematic()
 		actor.clearFollow()
 		actor.FollowRevision = e.nextFollowRevision()
 		actor.clearPursuit()
 		actor.BodyScale = 0
 	}
-	e.actors[objectID] = actor
+	e.storeCinematicActor(actor, true)
 	return previous, actor, nil
 }
 
@@ -299,7 +422,7 @@ func (e *Session) SetMaximumHitPoint(
 	previous := actor
 	actor.MaximumHitPoint = maximumHitPoint
 	actor.HitPoint = min(actor.HitPoint, maximumHitPoint)
-	e.actors[objectID] = actor
+	e.storeCinematicActor(actor, true)
 	return previous, actor, nil
 }
 
@@ -359,12 +482,20 @@ func (e *Session) followActors(
 		if selectedObjectID != 0 && objectID != selectedObjectID {
 			continue
 		}
+		if selectedObjectID == 0 && actor.IsFollowManaged {
+			continue
+		}
 		if actor.UserID != userID ||
 			actor.PeerGeneration != peerGeneration ||
 			actor.OwnerObjectID != ownerObjectID ||
-			actor.HitPoint <= 0 {
+			actor.HitPoint <= 0 || actor.IsAbilityControlled || actor.IsStationary {
 			continue
 		}
+		if at.Before(actor.followHoldUntil) || actor.IsCinematicImmobilized(at) {
+			continue
+		}
+		actor = e.refreshMovementModifiersLocked(actor, at)
+		e.actors[objectID] = actor
 		actor.Position = actor.followPosition(at)
 		actorStopDistance := desiredStopDistance
 		if actor.FollowDistance > 0 {
@@ -377,13 +508,13 @@ func (e *Session) followActors(
 		}
 		isCombatReserved := actor.TargetObjectID != 0 || actor.PursuitObjectID != 0
 		if isCombatReserved && (distance <= desiredStopDistance*2 ||
-			hasNearbyCombatTarget(actor, targets, CompatibilityAggroRadius)) {
+			hasNearbyCombatTarget(actor, targets, actor.AcquisitionRange())) {
 			continue
 		}
 		goal := ownerPosition.Add(delta.Scale(actorStopDistance / distance))
-		actorMovementSpeed := movementSpeed * max(float32(0.05), 1+actor.MovementSpeedBuff)
+		actorMovementSpeed := movementSpeed * movementScale(actor)
 		if actor.MovementSpeed > 0 {
-			actorMovementSpeed = actor.MovementSpeed * max(float32(0.05), 1+actor.MovementSpeedBuff)
+			actorMovementSpeed = actor.MovementSpeed * movementScale(actor)
 		}
 		travelDuration := time.Duration(
 			float64((distance-actorStopDistance)/actorMovementSpeed) *
@@ -478,6 +609,7 @@ func (e *Session) CancelFollow(objectID uint32, revision uint64, capturedTimes .
 	if len(capturedTimes) > 1 || at.IsZero() {
 		return false
 	}
+	actor = e.refreshMovementModifiersLocked(actor, at)
 	actor.Position = actor.followPosition(at)
 	actor.clearFollow()
 	e.motionRevision++
@@ -499,8 +631,11 @@ func (e *Session) ReserveAttacks(
 	defer e.mu.Unlock()
 	attack := make([]Attack, 0)
 	for objectID, actor := range e.actors {
+		actor = e.refreshMovementModifiersLocked(actor, at)
+		e.actors[objectID] = actor
 		actor.Position = actor.followPosition(at)
-		if !actor.IsCombatant || actor.HitPoint <= 0 ||
+		if !actor.IsCombatant || actor.IsAttackDisabled || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
+			actor.isSilenced(at) ||
 			actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 ||
 			at.Before(actor.CooldownEnd) {
 			continue
@@ -518,7 +653,8 @@ func (e *Session) ReserveAttacks(
 				max(float32(0), target.Plan.ActorFootprintRadius()) +
 				attackRangeTolerance
 			distance := actor.Position.Sub(target.Plan.Position).Length()
-			if distance > centerRange || distance > selectedDistance {
+			if distance > centerRange || distance > selectedDistance ||
+				!actor.IsInAcquisitionRange(target.Plan.Position, target.Plan.ActorFootprintRadius()) {
 				continue
 			}
 			if distance == selectedDistance && selected.Plan.ObjectID != 0 &&
@@ -577,11 +713,14 @@ func (e *Session) ReserveActorAttack(
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	actor, isFound := e.actors[objectID]
-	if !isFound || !actor.IsCombatant || actor.HitPoint <= 0 ||
+	if !isFound || !actor.IsCombatant || actor.IsAttackDisabled || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
+		actor.isSilenced(at) ||
 		actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 ||
 		at.Before(actor.CooldownEnd) {
 		return Attack{}, false, nil
 	}
+	actor = e.refreshMovementModifiersLocked(actor, at)
+	e.actors[objectID] = actor
 	actor.Position = actor.followPosition(at)
 	var selected zonenpc.Snapshot
 	selectedDistance := float32(math.MaxFloat32)
@@ -596,7 +735,8 @@ func (e *Session) ReserveActorAttack(
 			max(float32(0), target.Plan.ActorFootprintRadius()) +
 			attackRangeTolerance
 		distance := actor.Position.Sub(target.Plan.Position).Length()
-		if distance > centerRange || distance > selectedDistance {
+		if distance > centerRange || distance > selectedDistance ||
+			!actor.IsInAcquisitionRange(target.Plan.Position, target.Plan.ActorFootprintRadius()) {
 			continue
 		}
 		if distance == selectedDistance && selected.Plan.ObjectID != 0 &&
@@ -650,9 +790,11 @@ func (e *Session) ReservePursuits(
 		at = capturedTimes[0]
 	}
 	for objectID, actor := range e.actors {
+		actor = e.refreshMovementModifiersLocked(actor, at)
+		e.actors[objectID] = actor
 		actor.Position = actor.followPosition(at)
-		if !actor.IsCombatant || actor.HitPoint <= 0 ||
-			actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 {
+		if !actor.IsCombatant || actor.IsAttackDisabled || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
+			actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 || actor.IsCinematicImmobilized(at) {
 			continue
 		}
 		var selected zonenpc.Snapshot
@@ -670,7 +812,11 @@ func (e *Session) ReservePursuits(
 			stopDistance := attackRange + actor.ActorFootprintRadius() +
 				max(float32(0), target.Plan.ActorFootprintRadius())
 			distance := actor.Position.Sub(target.Plan.Position).Length()
-			if distance <= stopDistance || distance > aggroRadius ||
+			maximumRange := aggroRadius
+			if actor.AggroRadius > 0 {
+				maximumRange = actor.acquisitionCenterRange(target.Plan.ActorFootprintRadius())
+			}
+			if distance <= stopDistance || distance > maximumRange ||
 				distance > selectedDistance {
 				continue
 			}
@@ -694,7 +840,7 @@ func (e *Session) ReservePursuits(
 		destination := selected.Plan.Position.Add(
 			delta.Scale(selectedStopDistance / selectedDistance),
 		)
-		actorMovementSpeed := movementSpeed * (1 + actor.MovementSpeedBuff)
+		actorMovementSpeed := movementSpeed * movementScale(actor)
 		travelDuration := time.Duration(
 			float64((selectedDistance-selectedStopDistance)/actorMovementSpeed) *
 				float64(time.Second),
@@ -706,6 +852,9 @@ func (e *Session) ReservePursuits(
 		actor.PursuitObjectID = selected.Plan.ObjectID
 		actor.PursuitPosition = destination
 		actor.PursuitRevision = e.nextPursuitRevision()
+		actor.pursuitSource = source
+		actor.pursuitStartedAt = at
+		actor.pursuitDeadline = at.Add(travelDuration)
 		e.actors[objectID] = actor
 		pursuit = append(pursuit, Pursuit{
 			ObjectID: objectID, TargetObjectID: selected.Plan.ObjectID,
@@ -727,6 +876,28 @@ func (e *Session) ReserveActorPursuit(
 	objectID uint32, targets []zonenpc.Snapshot, attackRange float32,
 	aggroRadius float32, movementSpeed float32, capturedTimes ...time.Time,
 ) (Pursuit, bool, error) {
+	plan, isFound, err := e.reserveActorPursuit(objectID, targets, attackRange, aggroRadius, movementSpeed, false, capturedTimes...)
+	if err != nil {
+		return Pursuit{}, false, fmt.Errorf("actorPursuit: %w", err)
+	}
+	return plan, isFound, nil
+}
+
+func (e *Session) ReserveActorForcedPursuit(
+	objectID uint32, targets []zonenpc.Snapshot, attackRange float32,
+	aggroRadius float32, movementSpeed float32, capturedTimes ...time.Time,
+) (Pursuit, bool, error) {
+	plan, isFound, err := e.reserveActorPursuit(objectID, targets, attackRange, aggroRadius, movementSpeed, true, capturedTimes...)
+	if err != nil {
+		return Pursuit{}, false, fmt.Errorf("forcedPursuit: %w", err)
+	}
+	return plan, isFound, nil
+}
+
+func (e *Session) reserveActorPursuit(
+	objectID uint32, targets []zonenpc.Snapshot, attackRange float32,
+	aggroRadius float32, movementSpeed float32, isForced bool, capturedTimes ...time.Time,
+) (Pursuit, bool, error) {
 	if e == nil {
 		return Pursuit{}, false, errors.New("nil companion session")
 	}
@@ -737,7 +908,7 @@ func (e *Session) ReserveActorPursuit(
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	actor, isFound := e.actors[objectID]
-	if !isFound || !actor.IsCombatant || actor.HitPoint <= 0 ||
+	if !isFound || !actor.IsCombatant || actor.IsAttackDisabled || actor.HitPoint <= 0 || actor.IsAbilityControlled ||
 		actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 {
 		return Pursuit{}, false, nil
 	}
@@ -745,6 +916,10 @@ func (e *Session) ReserveActorPursuit(
 	if len(capturedTimes) > 0 {
 		at = capturedTimes[0]
 	}
+	if actor.IsCinematicImmobilized(at) {
+		return Pursuit{}, false, nil
+	}
+	actor = e.refreshMovementModifiersLocked(actor, at)
 	actor.Position = actor.followPosition(at)
 	var selected zonenpc.Snapshot
 	selectedDistance := float32(math.MaxFloat32)
@@ -760,7 +935,11 @@ func (e *Session) ReserveActorPursuit(
 		stopDistance := attackRange + actor.ActorFootprintRadius() +
 			max(float32(0), target.Plan.ActorFootprintRadius())
 		distance := actor.Position.Sub(target.Plan.Position).Length()
-		if distance <= stopDistance || distance > aggroRadius ||
+		maximumRange := aggroRadius
+		if !isForced && actor.AggroRadius > 0 {
+			maximumRange = actor.acquisitionCenterRange(target.Plan.ActorFootprintRadius())
+		}
+		if distance <= stopDistance || distance > maximumRange ||
 			distance > selectedDistance {
 			continue
 		}
@@ -784,7 +963,10 @@ func (e *Session) ReserveActorPursuit(
 	destination := selected.Plan.Position.Add(
 		delta.Scale(selectedStopDistance / selectedDistance),
 	)
-	actorMovementSpeed := movementSpeed * (1 + actor.MovementSpeedBuff)
+	actorMovementSpeed := movementSpeed * movementScale(actor)
+	if isForced {
+		actorMovementSpeed = movementSpeed * max(float32(.05), 1+actor.MovementSpeedBuff)
+	}
 	travelDuration := time.Duration(
 		float64((selectedDistance-selectedStopDistance)/actorMovementSpeed) *
 			float64(time.Second),
@@ -794,8 +976,12 @@ func (e *Session) ReserveActorPursuit(
 	}
 	travelDuration = max(travelDuration, minimumPursuitDuration)
 	actor.PursuitObjectID = selected.Plan.ObjectID
+	actor.isForcedPursuit = isForced
 	actor.PursuitPosition = destination
 	actor.PursuitRevision = e.nextPursuitRevision()
+	actor.pursuitSource = source
+	actor.pursuitStartedAt = at
+	actor.pursuitDeadline = at.Add(travelDuration)
 	e.actors[objectID] = actor
 	return Pursuit{
 		ObjectID: objectID, TargetObjectID: selected.Plan.ObjectID,
@@ -867,6 +1053,7 @@ func (e *Session) ReleaseAttack(objectID uint32, targetObjectID uint32) bool {
 		return false
 	}
 	actor.TargetObjectID = 0
+	actor.AttackReleaseEnd = time.Time{}
 	e.actors[objectID] = actor
 	return true
 }
@@ -891,6 +1078,11 @@ func (e *Session) RemoveOwner(userID uint64, peerGeneration uint64) []Actor {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	for objectID, retained := range e.retainedActors {
+		if retained.UserID == userID && retained.PeerGeneration == peerGeneration {
+			delete(e.retainedActors, objectID)
+		}
+	}
 	removed := make([]Actor, 0)
 	for objectID, actor := range e.actors {
 		if actor.UserID != userID || actor.PeerGeneration != peerGeneration {

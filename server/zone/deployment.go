@@ -10,7 +10,10 @@ func (e *Zone) SaveDeploymentCheckpoint() {
 		return
 	}
 	e.mu.RLock()
-	for userID := range e.members {
+	for userID, member := range e.members {
+		if member.IsServerBot {
+			continue
+		}
 		if _, isFound := e.checkpointSquads[userID]; !isFound {
 			e.mu.RUnlock()
 			return

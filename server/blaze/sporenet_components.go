@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/blaze/tdf"
@@ -44,6 +46,18 @@ const TokenLoginUsername = "token@local.invalid"
 // local account login name named by it.
 type LoginTokenVerifier interface {
 	Verify(string) (string, error)
+}
+
+type remoteLoginTokenVerifier interface {
+	VerifyRemote(string) (string, error)
+}
+
+type identityLoginTokenVerifier interface {
+	VerifyIdentity(string, bool) (string, int64, int64, error)
+}
+
+type verifiedUserManager interface {
+	LoginVerified(context.Context, string, int64, int64) sporenet.LoginResult
 }
 
 // UserManager is the Blaze adapter's application boundary. Blaze owns
@@ -100,12 +114,48 @@ func registerSporeNetComponents(
 	membershipReconciler LoginMembershipReconciler,
 	presenceRegistries ...*PresenceRegistry,
 ) error {
+	err := registerSporeNetComponentsWithPolicy(
+		registry, userManager, tokenVerifier, membershipReconciler, false, presenceRegistries...,
+	)
+	if err != nil {
+		return fmt.Errorf("sporenetRegister: %w", err)
+	}
+	return nil
+}
+
+// RegisterDedicatedSporeNetComponentsWithMembership requires credentials for
+// new transports and confines express login to the authenticated session.
+func RegisterDedicatedSporeNetComponentsWithMembership(
+	registry *Registry, userManager UserManager,
+	tokenVerifier LoginTokenVerifier,
+	membershipReconciler LoginMembershipReconciler,
+	presenceRegistries ...*PresenceRegistry,
+) error {
+	err := registerSporeNetComponentsWithPolicy(
+		registry, userManager, tokenVerifier, membershipReconciler, true, presenceRegistries...,
+	)
+	if err != nil {
+		return fmt.Errorf("dedicatedRegister: %w", err)
+	}
+	return nil
+}
+
+func registerSporeNetComponentsWithPolicy(
+	registry *Registry, userManager UserManager,
+	tokenVerifier LoginTokenVerifier,
+	membershipReconciler LoginMembershipReconciler,
+	isDedicated bool,
+	presenceRegistries ...*PresenceRegistry,
+) error {
 	if userManager == nil {
 		return errors.New("register SporeNet components: nil user manager")
 	}
-	err := registry.Register(authenticationComponent(
-		userManager, tokenVerifier, membershipReconciler,
-	))
+	component := authenticationComponent(userManager, tokenVerifier, membershipReconciler)
+	if isDedicated {
+		component.Commands[authLogin] = loginHandlerWithPolicy(userManager, tokenVerifier, membershipReconciler, true)
+		component.Commands[authExpressLogin] = dedicatedExpressLoginHandler(membershipReconciler)
+	}
+	err := registry.Register(component)
 	if err != nil {
 		return fmt.Errorf("authRegister: %w", err)
 	}
@@ -164,6 +214,13 @@ func loginHandler(
 	userManager UserManager, tokenVerifier LoginTokenVerifier,
 	membershipReconciler LoginMembershipReconciler,
 ) Handler {
+	return loginHandlerWithPolicy(userManager, tokenVerifier, membershipReconciler, false)
+}
+
+func loginHandlerWithPolicy(
+	userManager UserManager, tokenVerifier LoginTokenVerifier,
+	membershipReconciler LoginMembershipReconciler, isDedicated bool,
+) Handler {
 	return func(ctx context.Context, request *Request) (*Response, error) {
 		clearSessionUser(request)
 		loginName := fieldString(request.Fields, "MAIL")
@@ -171,15 +228,46 @@ func loginHandler(
 		account := loginName
 		method := "password"
 		result := sporenet.LoginResult{}
+		peerIP := net.ParseIP(serverLoginRemoteIP(request))
+		isRemote := isDedicated || peerIP == nil || !peerIP.IsLoopback()
+		if isRemote && (password == "" || loginName != TokenLoginUsername || tokenVerifier == nil) {
+			logServerLoginAttempt(request, method, account, nil, false)
+			return loginFailureResponse("launcher-login-required", "This server requires a launch token. Connect through Darkspinner."), nil
+		}
 		if loginName == TokenLoginUsername && tokenVerifier != nil {
 			account = ""
 			method = "jwt"
-			verifiedLoginName, err := tokenVerifier.Verify(password)
+			verifiedLoginName := ""
+			accountID := int64(0)
+			notBefore := int64(0)
+			var err error
+			identityVerifier, isIdentitySupported := tokenVerifier.(identityLoginTokenVerifier)
+			if isIdentitySupported {
+				verifiedLoginName, accountID, notBefore, err = identityVerifier.VerifyIdentity(password, isRemote)
+			} else if isRemote {
+				remoteVerifier, isSupported := tokenVerifier.(remoteLoginTokenVerifier)
+				if !isSupported {
+					err = errors.New("remote login requires a version-aware launch verifier")
+				} else {
+					verifiedLoginName, err = remoteVerifier.VerifyRemote(password)
+				}
+			} else {
+				verifiedLoginName, err = tokenVerifier.Verify(password)
+			}
 			if err == nil {
 				account = verifiedLoginName
-				result = userManager.LoginTrusted(ctx, verifiedLoginName)
+				if isIdentitySupported {
+					verifiedManager, isSupported := userManager.(verifiedUserManager)
+					if isSupported {
+						result = verifiedManager.LoginVerified(ctx, verifiedLoginName, accountID, notBefore)
+					}
+				} else {
+					result = userManager.LoginTrusted(ctx, verifiedLoginName)
+				}
 			} else {
 				logJWTLoginRejection(request, err)
+				logServerLoginAttempt(request, method, account, nil, false)
+				return loginTokenFailureResponse(tokenVerifier, err), nil
 			}
 		} else {
 			result = userManager.Login(ctx, loginName, password)
@@ -187,7 +275,10 @@ func loginHandler(
 		isAccepted := result.IsSuccess || result.IsAlreadyLoggedIn
 		logServerLoginAttempt(request, method, account, result.User, isAccepted)
 		if !isAccepted {
-			return &Response{ErrorCode: authInvalidUser}, nil
+			if result.IsWorldFull {
+				return loginFailureResponse("server-full", "The server is full. Try again later."), nil
+			}
+			return loginFailureResponse("account-login-rejected", "The server could not sign in this account. Sign in again from Darkspinner."), nil
 		}
 		reconcileLoginMembership(result.User, membershipReconciler)
 		request.Session.Set(sessionUserKey, result.User)
@@ -230,6 +321,10 @@ func expressLoginHandler(
 	userManager UserManager, membershipReconciler LoginMembershipReconciler,
 ) Handler {
 	return func(_ context.Context, request *Request) (*Response, error) {
+		peerIP := net.ParseIP(serverLoginRemoteIP(request))
+		if peerIP == nil || !peerIP.IsLoopback() {
+			return authenticatedExpressLogin(request, membershipReconciler), nil
+		}
 		clearSessionUser(request)
 		account := fieldString(request.Fields, "MAIL")
 		user := userManager.UserByLoginName(account)
@@ -241,6 +336,25 @@ func expressLoginHandler(
 		request.Session.Set(sessionUserKey, user)
 		return &Response{Fields: fullLoginFields(user)}, nil
 	}
+}
+
+func dedicatedExpressLoginHandler(membershipReconciler LoginMembershipReconciler) Handler {
+	return func(_ context.Context, request *Request) (*Response, error) {
+		return authenticatedExpressLogin(request, membershipReconciler), nil
+	}
+}
+
+func authenticatedExpressLogin(request *Request, membershipReconciler LoginMembershipReconciler) *Response {
+	account := fieldString(request.Fields, "MAIL")
+	user := requestUser(request)
+	isAccepted := user != nil && strings.EqualFold(strings.TrimSpace(account), user.LoginName)
+	logServerLoginAttempt(request, "express", account, user, isAccepted)
+	if !isAccepted {
+		clearSessionUser(request)
+		return &Response{ErrorCode: authInvalidUser}
+	}
+	reconcileLoginMembership(user, membershipReconciler)
+	return &Response{Fields: fullLoginFields(user)}
 }
 
 func reconcileLoginMembership(
@@ -315,6 +429,9 @@ func queueLoginNotifications(request *Request, user *sporenet.User) error {
 func queuePeerLoginVisibility(request *Request, user *sporenet.User, peers []*sporenet.User) error {
 	for index, peer := range peers {
 		if peer == nil || peer.Account.ID == user.Account.ID {
+			continue
+		}
+		if !isSocialUserOnline(request, peer.Account.ID) {
 			continue
 		}
 		err := request.QueueNotification(
@@ -482,13 +599,6 @@ func updateUserSessionClientDataHandler(
 					continue
 				}
 				err := request.QueueUserNotification(
-					recipient.Account.ID, UserSessionComponentID, userSessionUserUpdated,
-					userUpdatedNotificationFields(user),
-				)
-				if err != nil {
-					return nil, fmt.Errorf("presenceOwnerUpdate[%d]: %w", recipientIndex, err)
-				}
-				err = request.QueueUserNotification(
 					recipient.Account.ID, UserSessionComponentID, userSessionExtendedData, fields,
 				)
 				if err != nil {
@@ -561,32 +671,41 @@ func replaceField(fields []tdf.Field, label string, value tdf.Value) {
 }
 
 func lookupUserHandler(userManager UserManager, presenceRegistry *PresenceRegistry) Handler {
-	return func(_ context.Context, request *Request) (*Response, error) {
-		name := fieldString(request.Fields, "NAME")
-		var user *sporenet.User
-		if name != "" {
-			user = userManager.UserByLoginName(name)
-			if user == nil {
-				user = userManager.UserByDisplayName(name)
-			}
-		}
-		if user == nil {
-			user = requestUser(request)
-		}
-		if user == nil {
+	return func(ctx context.Context, request *Request) (*Response, error) {
+		profile, err := lookupSocialIdentity(ctx, userManager, request.Fields)
+		if errors.Is(err, sporenet.ErrUserNotFound) || errors.Is(err, sporenet.ErrUserAmbiguous) {
 			return &Response{ErrorCode: authInvalidUser}, nil
 		}
+		if err != nil {
+			return nil, fmt.Errorf("lookupIdentity: %w", err)
+		}
+		isOnline := isSocialUserOnline(request, profile.Account.ID)
+		flags := uint64(1)
+		if isOnline {
+			flags = 3
+		}
 		variables := []tdf.Field(nil)
-		if presenceRegistry != nil {
-			record, isFound := presenceRegistry.lookup(user.Account.ID)
+		if presenceRegistry != nil && isOnline {
+			record, isFound := presenceRegistry.lookup(profile.Account.ID)
 			if isFound {
 				variables = record.variables
 			}
 		}
+		externalID := uint64(0)
+		if fieldInteger(request.Fields, "EXID") != 0 {
+			externalID = userExternalID(profile.Account.AvatarID)
+		}
 		return &Response{Fields: []tdf.Field{
-			tdf.FieldNamed("EDAT", tdf.StructValue(extendedDataFieldsWithPresence(user, variables)...)),
-			tdf.FieldNamed("FLGS", tdf.IntegerValue(3)),
-			tdf.FieldNamed("USER", tdf.StructValue(userLookupIdentificationFields(user, request.Fields)...)),
+			tdf.FieldNamed("EDAT", tdf.StructValue(extendedDataFieldsWithPresence(nil, variables)...)),
+			tdf.FieldNamed("FLGS", tdf.IntegerValue(flags)),
+			tdf.FieldNamed("USER", tdf.StructValue(
+				tdf.FieldNamed("AID", tdf.IntegerValue(uint64(profile.Account.ID))),
+				tdf.FieldNamed("ALOC", tdf.IntegerValue(0)),
+				tdf.FieldNamed("EXBB", tdf.BinaryValue(nil)),
+				tdf.FieldNamed("EXID", tdf.IntegerValue(externalID)),
+				tdf.FieldNamed("ID", tdf.IntegerValue(uint64(profile.Account.ID))),
+				tdf.FieldNamed("NAME", tdf.StringValue(profile.DisplayName)),
+			)),
 		}}, nil
 	}
 }

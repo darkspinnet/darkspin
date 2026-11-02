@@ -20,7 +20,7 @@ import (
 const (
 	SourceVersion  = "5.3.0.103"
 	SourceBuild    = 103
-	RecipeVersion  = 90
+	RecipeVersion  = 96
 	ContentRelease = "build-103-content"
 	RuntimeRole    = "runtime-content"
 )
@@ -31,6 +31,8 @@ type BuildOptions struct {
 	DatabasePath  string
 	OnProgress    func(BuildProgress)
 	OnStageTiming func(BuildStageTiming)
+	// IsReplacementAllowed installs a verified replacement over an existing cache.
+	IsReplacementAllowed bool
 }
 
 // BuildStageTiming reports elapsed time for one completed import phase.
@@ -135,7 +137,8 @@ var buildPackages = []packageSpec{
 }
 
 // Build creates the first recipe/version manifest and package inventory for a
-// future full content projection. The target must not already exist.
+// future full content projection. Existing targets require IsReplacementAllowed
+// and are replaced only after the new database passes verification.
 func Build(ctx context.Context, options BuildOptions) (resultErr error) {
 	if ctx == nil {
 		return errors.New("nil context")
@@ -144,10 +147,10 @@ func Build(ctx context.Context, options BuildOptions) (resultErr error) {
 		return errors.New("empty database path")
 	}
 	_, err := os.Stat(options.DatabasePath)
-	if err == nil {
+	if err == nil && !options.IsReplacementAllowed {
 		return fmt.Errorf("databaseExists: %q", options.DatabasePath)
 	}
-	if !errors.Is(err, os.ErrNotExist) {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("databaseStat: %w", err)
 	}
 
@@ -250,6 +253,22 @@ func Verify(ctx context.Context, path string) (*Verification, error) {
 	}
 	if recipeVersion != RecipeVersion {
 		return nil, fmt.Errorf("manifestRecipe: got %d, want %d", recipeVersion, RecipeVersion)
+	}
+	var invalidClassBaseCount int
+	err = database.QueryRowContext(ctx, "SELECT COUNT(*) FROM non_player_class WHERE class_attribute_base IS NULL OR LENGTH(class_attribute_base) != 88").Scan(&invalidClassBaseCount)
+	if err != nil {
+		return nil, fmt.Errorf("classBaseSchema: %w", err)
+	}
+	if invalidClassBaseCount != 0 {
+		return nil, fmt.Errorf("classBaseRows: %d invalid", invalidClassBaseCount)
+	}
+	mirrorStore := &Store{database: database}
+	mirrorTuning, mirrorErr := mirrorStore.AttributeMirrorTuning(ctx)
+	if mirrorErr != nil {
+		return nil, fmt.Errorf("mirrorTuningVerify: %w", mirrorErr)
+	}
+	if mirrorTuning.ManaPerMind <= 0 {
+		return nil, errors.New("mirror tuning mana coefficient unavailable")
 	}
 	if isRuntimeRequired != 1 {
 		return nil, fmt.Errorf("manifestRuntime: got %d", isRuntimeRequired)
@@ -397,6 +416,23 @@ func Verify(ctx context.Context, path string) (*Verification, error) {
 	}
 	if lootAffixCount != expectedLootAffixCount {
 		return nil, fmt.Errorf("lootAffixCount: got %d, want %d", lootAffixCount, expectedLootAffixCount)
+	}
+	isLootAffixTailStored, err := hasTable(ctx, database, "loot_affix_tail")
+	if err != nil {
+		return nil, fmt.Errorf("lootAffixTailTable: %w", err)
+	}
+	if !isLootAffixTailStored {
+		return nil, errors.New("lootAffixTailTable: missing")
+	}
+	var lootAffixTailCount int
+	err = database.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM loot_affix_tail
+		WHERE JSON_VALID(modifier_grant) AND JSON_VALID(ability_improvement)`).Scan(&lootAffixTailCount)
+	if err != nil {
+		return nil, fmt.Errorf("lootAffixTailCount: %w", err)
+	}
+	if lootAffixTailCount != expectedLootAffixCount {
+		return nil, fmt.Errorf("lootAffixTailCount: got %d, want %d", lootAffixTailCount, expectedLootAffixCount)
 	}
 	isLootTuningStored, err := hasTable(ctx, database, "loot_tuning")
 	if err != nil {
@@ -711,8 +747,10 @@ func Verify(ctx context.Context, path string) (*Verification, error) {
 	}
 	expectedNounShapeCount := 0
 	if assetResourceCount != 0 {
-		expectedNounShapeCount = 1
 		for _, spec := range tutorialNounPhysicsSpec {
+			if spec.projectileQueryDimension != [3]float32{} {
+				expectedNounShapeCount++
+			}
 			if spec.pickupTriggerOffset != 0 {
 				expectedNounShapeCount++
 			}
@@ -1434,6 +1472,7 @@ func writeContentDatabase(
 			name TEXT NOT NULL UNIQUE,
 			element_type TEXT NOT NULL,
 			class_type TEXT NOT NULL,
+			unlock_level INTEGER NOT NULL CHECK (unlock_level BETWEEN 1 AND 100),
 			weapon_min_damage REAL NOT NULL,
 			weapon_max_damage REAL NOT NULL,
 			gear_score REAL NOT NULL,
@@ -1477,6 +1516,14 @@ func writeContentDatabase(
 			is_unique_family INTEGER NOT NULL CHECK (is_unique_family IN (0, 1)),
 			is_basic_eligible INTEGER NOT NULL CHECK (is_basic_eligible IN (0, 1)),
 			PRIMARY KEY (kind, id)
+		);
+		CREATE TABLE loot_affix_tail (
+			kind TEXT NOT NULL,
+			id INTEGER NOT NULL,
+			modifier_grant TEXT NOT NULL,
+			ability_improvement TEXT NOT NULL,
+			PRIMARY KEY (kind, id),
+			FOREIGN KEY (kind, id) REFERENCES loot_affix(kind, id) ON DELETE CASCADE
 		);
 		CREATE TABLE loot_tuning (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -1572,6 +1619,7 @@ func writeContentDatabase(
 			instance_id INTEGER NOT NULL UNIQUE,
 			noun_name TEXT NOT NULL COLLATE NOCASE,
 			class_attribute_resource_id INTEGER NOT NULL REFERENCES content_source_resource(id) ON DELETE CASCADE,
+			class_attribute_base BLOB NOT NULL CHECK (LENGTH(class_attribute_base) = 88),
 			display_name TEXT NOT NULL,
 			display_name_locale_key TEXT NOT NULL,
 			description TEXT NOT NULL,
@@ -1708,6 +1756,7 @@ func writeContentDatabase(
 			event_listener_definition TEXT,
 			interactable_definition TEXT,
 			combatant_definition TEXT,
+			audio_definition TEXT,
 			is_combatant_component_present INTEGER NOT NULL CHECK (is_combatant_component_present IN (0, 1)),
 			CHECK ((is_door=0 AND is_click_to_open IS NULL AND is_click_to_close IS NULL AND door_initial_state IS NULL)
 			    OR (is_door=1 AND is_click_to_open IS NOT NULL AND is_click_to_close IS NOT NULL AND door_initial_state IS NOT NULL)),
@@ -1814,6 +1863,25 @@ func writeContentDatabase(
 			source_size INTEGER NOT NULL,
 			source_compression TEXT NOT NULL,
 			source_payload BLOB NOT NULL
+		);
+		CREATE TABLE objective_pool (
+			id INTEGER PRIMARY KEY REFERENCES content_source_resource(id) ON DELETE CASCADE,
+			instance_id INTEGER NOT NULL UNIQUE
+		);
+		CREATE TABLE objective_pool_entry (
+			objective_pool_id INTEGER NOT NULL REFERENCES objective_pool(id) ON DELETE CASCADE,
+			category TEXT NOT NULL,
+			ordinal INTEGER NOT NULL,
+			key_first INTEGER NOT NULL,
+			key_second INTEGER NOT NULL,
+			key_third INTEGER NOT NULL,
+			asset_name TEXT,
+			PRIMARY KEY (objective_pool_id, category, ordinal)
+		);
+		CREATE TABLE level_objective_pool (
+			level_id INTEGER PRIMARY KEY REFERENCES level(id) ON DELETE CASCADE,
+			asset_reference TEXT,
+			objective_pool_id INTEGER REFERENCES objective_pool(id)
 		);
 		CREATE TABLE level_navigation (
 			level_id INTEGER PRIMARY KEY REFERENCES level(id) ON DELETE CASCADE,
@@ -1922,6 +1990,7 @@ func writeContentDatabase(
 			event_listener_definition TEXT,
 			interactable_definition TEXT,
 			combatant_definition TEXT,
+			audio_definition TEXT,
 			UNIQUE (level_marker_set_id, ordinal)
 		);
 		CREATE TABLE level_event (
@@ -2143,6 +2212,10 @@ func writeContentDatabase(
 	if err != nil {
 		return fmt.Errorf("levelInsert: %w", err)
 	}
+	err = writeLevelObjectivePools(ctx, transaction, installPath)
+	if err != nil {
+		return fmt.Errorf("objectivePoolInsert: %w", err)
+	}
 	progress.next("Importing campaign chain", 11, 20)
 	err = writeChainLevels(ctx, transaction, installPath)
 	if err != nil {
@@ -2191,6 +2264,10 @@ func writeContentDatabase(
 	err = writeNonPlayerClasses(ctx, transaction, installPath)
 	if err != nil {
 		return fmt.Errorf("nonPlayerClassInsert: %w", err)
+	}
+	err = writeAttributeMirrorTuning(ctx, transaction, installPath)
+	if err != nil {
+		return fmt.Errorf("mirrorTuningWrite: %w", err)
 	}
 	progress.next("Importing object physics", 16, 20)
 	err = writeNounPhysics(ctx, transaction, installPath)

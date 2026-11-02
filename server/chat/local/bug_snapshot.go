@@ -3,6 +3,7 @@ package local
 import (
 	"archive/zip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,8 +13,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/chat"
 )
 
-// BugSnapshotProvider supplies completed diagnostics when automatic capture is
-// enabled, or an empty directory when it is disabled.
+// BugSnapshotProvider supplies completed diagnostics when capture is enabled.
 type BugSnapshotProvider interface {
 	CaptureBugSnapshot(context.Context, chat.BugCommand) (string, error)
 }
@@ -26,6 +26,9 @@ func (e *BugReporter) UseSnapshotProvider(provider BugSnapshotProvider) {
 func addBugSnapshot(
 	ctx context.Context, archive *zip.Writer, provider BugSnapshotProvider, req chat.BugCommand,
 ) error {
+	if provider == nil {
+		return addBugSnapshotFailure(archive, errors.New("snapshot provider unavailable"))
+	}
 	captureContext, cancel := context.WithTimeout(ctx, 15*time.Second)
 	directory, err := provider.CaptureBugSnapshot(captureContext, req)
 	cancel()
@@ -33,7 +36,7 @@ func addBugSnapshot(
 		return addBugSnapshotFailure(archive, err)
 	}
 	if directory == "" {
-		return nil
+		return addBugSnapshotFailure(archive, errors.New("snapshot provider returned no capture directory"))
 	}
 	err = addBugSnapshotFiles(ctx, archive, directory)
 	if err != nil {

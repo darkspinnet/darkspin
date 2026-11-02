@@ -36,7 +36,11 @@ func (e *scenarioClient) captureEntryWindow(ctx context.Context, req scenarioEnt
 		capture.Reason = "window requires owned client/run/sequence"
 		return capture
 	}
-	boundedCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	timeout := 500 * time.Millisecond
+	if req.WindowCaptureTimeout > 0 && req.WindowCaptureTimeout <= 3*time.Second {
+		timeout = req.WindowCaptureTimeout
+	}
+	boundedCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	// Preserve the caller's inherited apartment; these are read-only samples.
 	// The nested lock is balanced only after the child completion is joined.
@@ -127,7 +131,7 @@ func captureScenarioWindowOnThread(ctx context.Context, client *scenarioClient, 
 	capture.ProcessCreatedAt = createdAt
 	// Physical worker awareness and current owned geometry are measured here,
 	// on the actual capture child, independently of GDI/caller observations.
-	before, err := observeScenarioWindowCapture(ctx, client.processID, &capture.Before)
+	before, err := observeScenarioWindowCaptureMode(ctx, client.processID, &capture.Before, req.IsBackgroundWindowAllowed)
 	if err != nil {
 		capture.Reason = "window before unavailable: " + err.Error()
 		return capture
@@ -159,7 +163,7 @@ func captureScenarioWindowOnThread(ctx context.Context, client *scenarioClient, 
 		capture.Reason = "window surface unavailable: " + err.Error()
 		return capture
 	}
-	after, err := observeScenarioWindowCapture(ctx, client.processID, &capture.After)
+	after, err := observeScenarioWindowCaptureMode(ctx, client.processID, &capture.After, req.IsBackgroundWindowAllowed)
 	if err != nil {
 		capture.Reason = "window after unavailable: " + err.Error()
 		return capture
@@ -272,7 +276,11 @@ func appendScenarioWindowFailure(capture *scenarioEntryWindowCapture, reason str
 }
 
 func observeScenarioWindowCapture(ctx context.Context, processID uint32, observation *scenarioWindowObservation) (scenarioEntryWindowState, error) {
-	state, err := observeScenarioEntryOwnedWindow(ctx, processID)
+	return observeScenarioWindowCaptureMode(ctx, processID, observation, false)
+}
+
+func observeScenarioWindowCaptureMode(ctx context.Context, processID uint32, observation *scenarioWindowObservation, isBackgroundAllowed bool) (scenarioEntryWindowState, error) {
+	state, err := observeScenarioOwnedWindow(ctx, processID, isBackgroundAllowed)
 	observation.NativeWindow, observation.Calibration = uint64(state.window), state.calibration
 	if err != nil {
 		return state, fmt.Errorf("windowOwned: %w", err)

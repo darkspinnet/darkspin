@@ -12,6 +12,7 @@ const (
 	ScheduleInteractable ScheduleKind = iota + 1
 	ScheduleCrystal
 	ScheduleEquipment
+	ScheduleQuestCrystal
 )
 
 type Stopper interface {

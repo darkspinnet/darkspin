@@ -41,6 +41,8 @@ type replayEvent struct {
 	Request                 string                      `json:"request,omitempty"`
 	ServerTimeUnixNano      int64                       `json:"server_time_unix_nano,omitempty"`
 	ClientStateValue        *uint32                     `json:"client_state_value,omitempty"`
+	ClientStates            map[string]uint32           `json:"client_states,omitempty"`
+	IsClientStateTruncated  bool                        `json:"is_client_state_truncated,omitempty"`
 	ClientBufferMS          uint64                      `json:"client_buffer_ms,omitempty"`
 	ClientRingLineCount     uint64                      `json:"client_ring_line_count,omitempty"`
 	ClientRingByteCount     uint64                      `json:"client_ring_byte_count,omitempty"`
@@ -130,6 +132,9 @@ type clientTraceEvent struct {
 	ClientReceivedTimeMS      uint64   `json:"client_received_time_ms"`
 	KeyframeStartedTimeMS     uint64   `json:"keyframe_started_time_ms"`
 	KeyframeCompletedTimeMS   uint64   `json:"keyframe_completed_time_ms"`
+
+	States      map[string]uint32 `json:"states"`
+	IsTruncated bool              `json:"is_truncated"`
 }
 
 type clientTraceRecord struct {
@@ -211,6 +216,7 @@ func buildReplayTimeline(
 			FrameTimeMS: event.FrameTimeMS, Phase: event.Phase, Call: event.Call,
 			Request: event.Request, ServerTimeUnixNano: event.ServerTimeUnixNano,
 			ClientStateValue: cloneUint32(event.Value), ClientBufferMS: event.BufferMS,
+			ClientStates: event.States, IsClientStateTruncated: event.IsTruncated,
 			ClientRingLineCount:     event.RingLineCount,
 			ClientRingByteCount:     event.RingByteCount,
 			ClientOldestTimeMS:      event.OldestTimeMS,

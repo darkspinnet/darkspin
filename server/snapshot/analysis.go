@@ -16,6 +16,7 @@ const (
 )
 
 type analysisReport struct {
+	ClientControlHistory        clientControlHistory        `json:"client_control_history"`
 	TriggerObjectID             uint32                      `json:"trigger_object_id,omitempty"`
 	TriggerStateDelayMS         *float64                    `json:"trigger_state_delay_ms,omitempty"`
 	MovementSummaries           []movementSummary           `json:"movement_summaries,omitempty"`
@@ -53,41 +54,42 @@ type evidenceCompleteness struct {
 // serverSessionState keeps deterministic and command-admission context in the
 // derived analysis without repeating the complete random word arrays.
 type serverSessionState struct {
-	Remote               string                     `json:"remote"`
-	UserID               uint64                     `json:"user_id"`
-	GameID               uint32                     `json:"game_id"`
-	Stage                string                     `json:"stage"`
-	DeployedObjectID     uint32                     `json:"deployed_object_id"`
-	PlayerControl        PlayerControlState         `json:"player_control"`
-	Cooldowns            []CooldownState            `json:"cooldowns,omitempty"`
-	ActionSchedules      []ActionScheduleState      `json:"action_schedules,omitempty"`
-	Deaths               []DeathState               `json:"deaths,omitempty"`
-	Objectives           []ObjectiveState           `json:"objectives,omitempty"`
-	TimelineKeys         []string                   `json:"timeline_keys,omitempty"`
-	TimelineTasks        []TimelineTaskState        `json:"timeline_tasks,omitempty"`
-	Randoms              []randomSummary            `json:"randoms,omitempty"`
-	Squad                SquadState                 `json:"squad"`
-	CrystalInventory     CrystalInventoryState      `json:"crystal_inventory"`
-	AbilityRuntimes      []AbilityRuntimeState      `json:"ability_runtimes,omitempty"`
-	ZoneElapsedMS        int64                      `json:"zone_elapsed_ms,omitempty"`
-	ZoneCompletionID     uint64                     `json:"zone_completion_id,omitempty"`
-	ZoneLevel            string                     `json:"zone_level,omitempty"`
-	ZoneDifficulty       uint32                     `json:"zone_difficulty,omitempty"`
-	ZoneChainLevelIndex  uint32                     `json:"zone_chain_level_index,omitempty"`
-	ZoneMemberLimit      uint16                     `json:"zone_member_limit,omitempty"`
-	ClearedSpawnGroupIDs []uint32                   `json:"cleared_spawn_group_ids,omitempty"`
-	IsPopulationPrimed   bool                       `json:"is_population_primed"`
-	IsZoneRestored       bool                       `json:"is_zone_restored"`
-	IsObjectiveComplete  bool                       `json:"is_objective_complete"`
-	ZoneMembers          []ZoneMemberState          `json:"zone_members,omitempty"`
-	DirectorPublications []DirectorPublicationState `json:"director_publications,omitempty"`
-	EncounterStages      []EncounterStageState      `json:"encounter_stages,omitempty"`
-	Hordes               []HordeState               `json:"hordes,omitempty"`
-	Boss                 *BossState                 `json:"boss,omitempty"`
-	Security             *SecurityState             `json:"security,omitempty"`
-	Interactables        []InteractableState        `json:"interactables,omitempty"`
-	PendingPacketCount   int                        `json:"pending_packet_count"`
-	IsPendingOverflow    bool                       `json:"is_pending_overflow"`
+	EnemyTargetPerSection uint32                     `json:"enemy_target_per_section,omitempty"`
+	Remote                string                     `json:"remote"`
+	UserID                uint64                     `json:"user_id"`
+	GameID                uint32                     `json:"game_id"`
+	Stage                 string                     `json:"stage"`
+	DeployedObjectID      uint32                     `json:"deployed_object_id"`
+	PlayerControl         PlayerControlState         `json:"player_control"`
+	Cooldowns             []CooldownState            `json:"cooldowns,omitempty"`
+	ActionSchedules       []ActionScheduleState      `json:"action_schedules,omitempty"`
+	Deaths                []DeathState               `json:"deaths,omitempty"`
+	Objectives            []ObjectiveState           `json:"objectives,omitempty"`
+	TimelineKeys          []string                   `json:"timeline_keys,omitempty"`
+	TimelineTasks         []TimelineTaskState        `json:"timeline_tasks,omitempty"`
+	Randoms               []randomSummary            `json:"randoms,omitempty"`
+	Squad                 SquadState                 `json:"squad"`
+	CrystalInventory      CrystalInventoryState      `json:"crystal_inventory"`
+	AbilityRuntimes       []AbilityRuntimeState      `json:"ability_runtimes,omitempty"`
+	ZoneElapsedMS         int64                      `json:"zone_elapsed_ms,omitempty"`
+	ZoneCompletionID      uint64                     `json:"zone_completion_id,omitempty"`
+	ZoneLevel             string                     `json:"zone_level,omitempty"`
+	ZoneDifficulty        uint32                     `json:"zone_difficulty,omitempty"`
+	ZoneChainLevelIndex   uint32                     `json:"zone_chain_level_index,omitempty"`
+	ZoneMemberLimit       uint16                     `json:"zone_member_limit,omitempty"`
+	ClearedSpawnGroupIDs  []uint32                   `json:"cleared_spawn_group_ids,omitempty"`
+	IsPopulationPrimed    bool                       `json:"is_population_primed"`
+	IsZoneRestored        bool                       `json:"is_zone_restored"`
+	IsObjectiveComplete   bool                       `json:"is_objective_complete"`
+	ZoneMembers           []ZoneMemberState          `json:"zone_members,omitempty"`
+	DirectorPublications  []DirectorPublicationState `json:"director_publications,omitempty"`
+	EncounterStages       []EncounterStageState      `json:"encounter_stages,omitempty"`
+	Hordes                []HordeState               `json:"hordes,omitempty"`
+	Boss                  *BossState                 `json:"boss,omitempty"`
+	Security              *SecurityState             `json:"security,omitempty"`
+	Interactables         []InteractableState        `json:"interactables,omitempty"`
+	PendingPacketCount    int                        `json:"pending_packet_count"`
+	IsPendingOverflow     bool                       `json:"is_pending_overflow"`
 }
 
 type randomSummary struct {
@@ -259,7 +261,7 @@ func analyzeSnapshot(
 		createdAt = time.Now().UTC()
 	}
 	report := analysisReport{
-		FormatVersion: 10, SnapshotID: id, CreatedAt: createdAt.UTC(),
+		FormatVersion: 11, SnapshotID: id, CreatedAt: createdAt.UTC(),
 		Trigger: req.Trigger, Context: req.Context,
 		TriggerObjectID: req.ObjectID,
 		Findings:        make([]analysisFinding, 0),
@@ -277,6 +279,7 @@ func analyzeSnapshot(
 	analyzeTransport(&report, events)
 	analyzeTimeline(&report, timeline.Events)
 	analyzeClientBoundaryStates(&report, timeline.Events)
+	report.ClientControlHistory = analyzeClientControlHistory(timeline.Events)
 	analyzePendingServerPackets(&report, state)
 	analyzeServerSessions(&report, state)
 	analyzeObjectState(
@@ -318,7 +321,8 @@ func analyzeServerSessions(report *analysisReport, state StateFrame) {
 			})
 		}
 		report.ServerSessions = append(report.ServerSessions, serverSessionState{
-			Remote: session.Remote, UserID: session.UserID, GameID: session.GameID,
+			EnemyTargetPerSection: session.EnemyTargetPerSection,
+			Remote:                session.Remote, UserID: session.UserID, GameID: session.GameID,
 			Stage: session.Stage, DeployedObjectID: session.DeployedObjectID,
 			PlayerControl: session.PlayerControl, Cooldowns: session.Cooldowns,
 			ActionSchedules: session.ActionSchedules, Deaths: session.Deaths,
@@ -362,20 +366,25 @@ func isServerSessionReplayCaptured(session SessionState) bool {
 func analyzeClientBoundaryStates(report *analysisReport, events []replayEvent) {
 	isCollecting := false
 	states := make([]clientStateSample, 0)
+	latestStates := make([]clientStateSample, 0)
 	for _, event := range events {
 		if event.Source != "client" {
 			continue
 		}
 		if event.Kind == "action_snapshot_boundary" {
 			isCollecting = true
-			states = states[:0]
+			states = nil
 			continue
 		}
 		if !isCollecting {
 			continue
 		}
 		if event.Kind == "snapshot_boundary" {
-			break
+			// A capture ring can contain earlier snapshots. Keep the latest
+			// completed block instead of stopping at the first boundary.
+			latestStates = states
+			isCollecting = false
+			continue
 		}
 		if event.ClientStateValue == nil {
 			continue
@@ -386,8 +395,8 @@ func analyzeClientBoundaryStates(report *analysisReport, events []replayEvent) {
 			ThreadID: event.ClientThreadID, FrameSequence: event.FrameSequence,
 		})
 	}
-	report.ClientBoundaryStates = states
-	report.Metrics.ClientBoundaryStateCount = len(states)
+	report.ClientBoundaryStates = latestStates
+	report.Metrics.ClientBoundaryStateCount = len(latestStates)
 }
 
 func analyzePendingServerPackets(report *analysisReport, state StateFrame) {

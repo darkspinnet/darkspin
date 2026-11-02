@@ -119,12 +119,13 @@ func (b *TimedMeleeBehavior) hit(hitIndex int) error {
 	if !b.input.IsTargetValidAtHit {
 		return nil
 	}
-	intents := []Intent{
-		DamageIntent{
+	intents := make([]Intent, 0, 3)
+	if b.input.Damage > 0 {
+		intents = append(intents, DamageIntent{
 			ActorRole: b.input.ActorRole, TargetRole: b.input.TargetRole,
 			DeltaHealth: b.input.Damage, IntegerHitPointChange: -int32(b.input.Damage),
 			IsCritical: b.input.IsCritical,
-		},
+		})
 	}
 	if b.input.HitEffectName != "" {
 		intents = append(intents, EffectIntent{
@@ -168,7 +169,10 @@ func (b *TimedMeleeBehavior) PrepareHitAt(
 	if b.isCanceled || b.areHitsStarted[hitIndex] || b.simulator.Now() >= b.input.HitDelays[hitIndex] {
 		return errors.New("melee hit already started")
 	}
-	if targetHitPoint < 0 || damage <= 0 || !isFinitePosition(targetPosition) || !isFinitePosition(targetFacing) {
+	// Authored flat armor can fully mitigate a committed contact. Keep its
+	// hit effects and release instead of turning this valid zero-damage
+	// outcome into a failed scheduled action.
+	if targetHitPoint < 0 || damage < 0 || !isFinitePosition(targetPosition) || !isFinitePosition(targetFacing) {
 		return errors.New("invalid melee hit state")
 	}
 	b.input.IsTargetValidAtHit = isTargetValid

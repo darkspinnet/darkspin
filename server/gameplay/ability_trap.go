@@ -21,7 +21,10 @@ const turretFallbackHitPoint = float32(25)
 const turretFallbackFootprint = float32(0.5)
 const claymoreArmDelay = 400 * time.Millisecond
 const claymoreTriggerInterval = 250 * time.Millisecond
-const claymorePerceptionRadius = float32(20)
+
+// nAbility_ClaymoreTrap_Detonate.range is 3.5; perception alone does not
+// authorize the mine's detonation ability.
+const claymoreTriggerRange = float32(3.5)
 
 type heroTrapRun struct {
 	assetName     string
@@ -64,7 +67,14 @@ func (e *gameplayPeerSession) breakHeroTrap(
 	if err != nil {
 		return nil, true, fmt.Errorf("heroTrapBrokenDelete: %w", err)
 	}
-	return [][]byte{effectPacket, deletePacket}, true, nil
+	if run.assetName != "PipeBomb" {
+		return [][]byte{effectPacket, deletePacket}, true, nil
+	}
+	removeEffectPacket, err := abilityraknet.TrapRemoveEffect(objectID)
+	if err != nil {
+		return nil, true, fmt.Errorf("heroTrapBrokenEffectRemove: %w", err)
+	}
+	return [][]byte{removeEffectPacket, effectPacket, deletePacket}, true, nil
 }
 
 type heroTrapSchedule struct {
@@ -108,7 +118,17 @@ func (e heroTrapSchedule) spawn() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("heroTrapSpawn: %w", err)
 	}
-	packets := [][]byte{packet}
+	packets := make([][]byte, 0, 4)
+	if e.definition.MuzzleEffectName != "" {
+		muzzlePacket, muzzleErr := abilityraknet.TrapObjectEffect(
+			e.definition.MuzzleEffectName, e.sourceObjectID, e.sourceObjectID,
+		)
+		if muzzleErr != nil {
+			return nil, fmt.Errorf("heroTrapMuzzle: %w", muzzleErr)
+		}
+		packets = append(packets, muzzlePacket)
+	}
+	packets = append(packets, packet)
 	if e.definition.ActivationEffectName != "" {
 		effectPacket, effectErr := abilityraknet.TrapObjectEffect(
 			e.definition.ActivationEffectName, e.objectID, e.sourceObjectID,
@@ -119,6 +139,11 @@ func (e heroTrapSchedule) spawn() ([][]byte, error) {
 		packets = append(packets, effectPacket)
 	}
 	if e.definition.Name == "PipeBomb" {
+		tauntEffectPacket, tauntEffectErr := abilityraknet.PipeBombTauntEffect(e.objectID)
+		if tauntEffectErr != nil {
+			return nil, fmt.Errorf("heroPipeBombEffect: %w", tauntEffectErr)
+		}
+		packets = append(packets, tauntEffectPacket)
 		tauntPackets, tauntErr := e.tauntPipeBomb()
 		if tauntErr != nil {
 			return nil, fmt.Errorf("heroPipeBombTaunt: %w", tauntErr)
@@ -190,7 +215,7 @@ func (e heroTrapSchedule) trigger() ([][]byte, error) {
 	for _, npc := range peerSession.zone.NPCs().LiveSnapshots() {
 		if npc.Faction != zonenpc.FactionNonPlayerAligned || npc.IsDefeated ||
 			npc.HitPoint <= 0 || npc.Plan.IsFixture ||
-			center.Sub(npc.Plan.Position).Length() >= claymorePerceptionRadius {
+			center.Sub(npc.Plan.Position).Length() >= claymoreTriggerRange {
 			continue
 		}
 		isTriggered = true
@@ -323,6 +348,11 @@ func (e heroTrapSchedule) detonate() ([][]byte, error) {
 		return nil, fmt.Errorf("heroTrapPublish: %w", err)
 	}
 	if e.definition.Name == "PipeBomb" {
+		removeEffectPacket, removeEffectErr := abilityraknet.TrapRemoveEffect(e.objectID)
+		if removeEffectErr != nil {
+			return nil, fmt.Errorf("heroPipeBombEffectRemove: %w", removeEffectErr)
+		}
+		packets = append([][]byte{removeEffectPacket}, packets...)
 		packets = append(statusPackets, packets...)
 	} else {
 		packets = append(packets, statusPackets...)
@@ -385,8 +415,8 @@ func (e heroTrapSchedule) fireTurret() ([][]byte, error) {
 			continue
 		}
 		distance := game.Vec3(e.position).Sub(current.Plan.Position).Length()
-		maximumRange := e.definition.Range +
-			max(float32(0), current.Plan.NPCProfile.FootprintRadius)
+		maximumRange := autoTurretAttackRange(turret.AcquisitionRange(),
+			turret.ActorFootprintRadius(), current.Plan.ActorFootprintRadius())
 		if distance > maximumRange || distance > targetDistance {
 			continue
 		}
@@ -527,7 +557,7 @@ func (r campaignAbilityCommandRuntime) handleHeroTrap(
 		return req.reject("trap position unavailable")
 	}
 	if !isInsideZoneTrigger(peerSession.playerPosition, position, admissionRange) {
-		if definition.Name == "ClaymoreTrap" {
+		if definition.Name == "ClaymoreTrap" || definition.IsShouldPursue {
 			return r.pursueTrapLocked(req, peerSession, sessionKey, position, admissionRange)
 		}
 		r.registry.mutex.Unlock()
@@ -647,6 +677,7 @@ func (r campaignAbilityCommandRuntime) handleHeroTrap(
 		if hitPoint <= 0 {
 			hitPoint = turretFallbackHitPoint
 		}
+		hitPoint = peerSession.petHitPoint(hitPoint)
 		footprint, footprintErr := r.program.FootprintRadius(projected.SpawnNoun)
 		if footprintErr != nil || footprint <= 0 {
 			footprint = turretFallbackFootprint
@@ -658,7 +689,7 @@ func (r campaignAbilityCommandRuntime) handleHeroTrap(
 			Noun:     util.HashID(projected.SpawnNoun),
 			Position: game.Vec3(position), FootprintRadius: footprint,
 			HitPoint: hitPoint, MaximumHitPoint: hitPoint,
-			IsTargetable: true, IsCombatant: false,
+			IsTargetable: true, IsCombatant: false, IsStationary: true,
 		})
 		if err != nil {
 			_ = peerSession.setDeployedManaPoints(previousManaPoint)
@@ -693,10 +724,15 @@ func (r campaignAbilityCommandRuntime) handleHeroTrap(
 		releaseReservation:  releaseReservation, releasePacket: releasePacket,
 		detonationDelay: projected.Duration + projected.TickDuration,
 	}
+	if projected.Name == "ClaymoreTrap" {
+		// The passive modifier starts on the spawned mine, arms for 0.4s,
+		// then waits its 15s timeout before requesting the 0.2s detonation.
+		schedule.detonationDelay += projected.HitDelay + claymoreArmDelay
+	}
 	producers := []raknet.ScheduledPacketProducer{
 		{Delay: projected.HitDelay, Produce: schedule.spawn},
 		{Delay: projected.ReleaseDelay, Produce: schedule.release},
-		{Delay: projected.Duration + projected.TickDuration, Produce: schedule.detonate},
+		{Delay: schedule.detonationDelay, Produce: schedule.detonate},
 	}
 	if projected.Name == "TurretTrap" {
 		for tick := time.Second; tick < projected.Duration; tick += time.Second {
@@ -709,7 +745,8 @@ func (r campaignAbilityCommandRuntime) handleHeroTrap(
 			})
 		}
 	} else if projected.Name == "ClaymoreTrap" {
-		for delay := projected.HitDelay + claymoreArmDelay; delay < projected.Duration+projected.TickDuration; delay += claymoreTriggerInterval {
+		timeoutDelay := schedule.detonationDelay - projected.TickDuration
+		for delay := projected.HitDelay + claymoreArmDelay; delay < timeoutDelay; delay += claymoreTriggerInterval {
 			trigger := schedule
 			trigger.detonationDelay = delay
 			producers = append(producers, raknet.ScheduledPacketProducer{

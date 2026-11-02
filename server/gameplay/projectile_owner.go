@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/zone"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
@@ -34,10 +35,17 @@ func (e *gameplaySessionRegistry) hostileProjectileOwnersLocked(
 	conflicts := make(map[uint32]bool)
 	for _, ownerSessionKey := range sessionKeys {
 		member := e.sessions[ownerSessionKey]
-		if member.zone != peerSession.zone {
+		projectiles := member.campaignNPCProjectiles
+		if peerSession.binding.Mode == game.ModeArena {
+			if member.binding.Mode != game.ModeArena || member.binding.GameID != peerSession.binding.GameID ||
+				member.binding.Team == peerSession.binding.Team || !member.isArenaCombatActive {
+				continue
+			}
+			projectiles = member.sageAttacks
+		} else if peerSession.zone == nil || member.zone != peerSession.zone {
 			continue
 		}
-		for objectID, run := range member.campaignNPCProjectiles {
+		for objectID, run := range projectiles {
 			if run == nil {
 				continue
 			}
@@ -72,12 +80,22 @@ func (e *gameplaySessionRegistry) hostileProjectileOwnersLocked(
 }
 
 func (e *gameplaySessionRegistry) isHostileProjectileCurrentLocked(originZone *zone.Zone, objectID uint32, run *abilityraknet.ProjectileRun) bool {
+	retirement := e.projectileRetirements[run]
+	if originZone == nil && (retirement == nil || retirement.arenaGameID == 0) {
+		return false
+	}
 	isFound := false
 	for _, member := range e.sessions {
-		if member.zone != originZone {
+		projectiles := member.campaignNPCProjectiles
+		if originZone == nil {
+			if !retirement.isMemberRealm(member) {
+				continue
+			}
+			projectiles = member.sageAttacks
+		} else if member.zone != originZone {
 			continue
 		}
-		current := member.campaignNPCProjectiles[objectID]
+		current := projectiles[objectID]
 		if current != nil && current != run {
 			return false
 		}

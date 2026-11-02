@@ -11,24 +11,28 @@ type Presentation struct {
 type campaignScene struct {
 	chainLevelIndex uint32
 	movieName       string
+	returnMovieName string
 	voiceName       string
 }
 
-// AssetData_Binary 0xa8a25294:0:0x304f6f19 stores 72-byte records
+// Build 103 AssetData_Binary 0xa8a25294:0:0x304f6f19 stores 72-byte records
 // after a 12-byte header. The voice hash at record+56 belongs to that
 // record's level, not the following level in the serialized string pool.
+// Record+24 selects the return-from-gameplay camera. Its fade-in and linked
+// full movie must run together; starting record+8 directly leaves the
+// gameplay fade black.
 var campaignScenes = []campaignScene{
 	{chainLevelIndex: 1, movieName: "cam_fmv_02_zelems"},
-	{chainLevelIndex: 3, movieName: "cam_fmv_03_nocturna"},
-	{chainLevelIndex: 5, movieName: "cam_fmv_04_verdanth"},
+	{chainLevelIndex: 3, movieName: "cam_fmv_03_nocturna", returnMovieName: "cam_gameFMV_03_nocturna"},
+	{chainLevelIndex: 5, movieName: "cam_fmv_04_verdanth", returnMovieName: "cam_gameFMV_04_verdanth"},
 	{chainLevelIndex: 7, voiceName: "vo_ship_flow_reinfect_zelems"},
-	{chainLevelIndex: 9, movieName: "cam_fmv_05_cryos"},
+	{chainLevelIndex: 9, movieName: "cam_fmv_05_cryos", returnMovieName: "cam_gameFMV_05_cryos"},
 	{chainLevelIndex: 11, voiceName: "vo_ship_flow_reinfect_verdanth"},
-	{chainLevelIndex: 13, movieName: "cam_fmv_06_infinity"},
+	{chainLevelIndex: 13, movieName: "cam_fmv_06_infinity", returnMovieName: "cam_gameFMV_06_infinity"},
 	{chainLevelIndex: 15, voiceName: "vo_ship_flow_reinfect_cryos"},
 	{chainLevelIndex: 17, voiceName: "vo_ship_flow_reinfect_nocturna"},
 	{chainLevelIndex: 19, voiceName: "vo_ship_flow_reinfect_infinity"},
-	{chainLevelIndex: 21, movieName: "cam_fmv_07_scaldron"},
+	{chainLevelIndex: 21, movieName: "cam_fmv_07_scaldron", returnMovieName: "cam_gameFMV_07_scaldron"},
 }
 
 const campaignEpilogueMovieName = "cam_fmv_08_epilogue"
@@ -55,6 +59,9 @@ func CampaignPresentation(
 		}
 		if scene.chainLevelIndex == chainLevelIndex+1 && scene.movieName != "" {
 			presentation.NextMovie = util.HashID(scene.movieName)
+			if scene.returnMovieName != "" {
+				presentation.NextMovie = util.HashID(scene.returnMovieName)
+			}
 		}
 	}
 	if isCompleted && chainLevelIndex == 24 {

@@ -7,14 +7,14 @@ import (
 	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
 )
 
-// PlanFastSwipeHit follows FastSwipe's stillInRange=0 check for each of its
-// nine hits. Its 2.5-unit ability range admits the cast, not the damage.
+// PlanFastSwipeHit follows build 103 chunk 934's stillInRange=2.5 check for
+// each of its nine hits, measured beyond the two actor footprints.
 func PlanFastSwipeHit(
 	source Snapshot, targetObjectID uint32, targetPosition game.Vec3,
 	profile ActionProfile, targetFootprintRadius float32,
 ) (AttackPlan, error) {
-	contactDistance := source.Plan.ActorFootprintRadius() + targetFootprintRadius
-	if zonegeometry.Distance(source.Plan.Position, targetPosition) > contactDistance {
+	hitDistance := source.Plan.ActorFootprintRadius() + targetFootprintRadius + profile.Range
+	if zonegeometry.Distance(source.Plan.Position, targetPosition) > hitDistance {
 		return AttackPlan{}, ErrControlTargetOutOfRange
 	}
 	plan, err := PlanAreaAttackWithProfile(source, targetObjectID, targetPosition, profile)

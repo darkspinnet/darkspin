@@ -166,6 +166,7 @@ func (r campaignNPCActionRuntime) produceVerdanthBasicHealerRootedHeal(
 	if !isProfileFound {
 		return nil, false, nil
 	}
+	profile = zonenpc.ApplyAffixTiming(profile, source.Plan)
 	r.registry.mutex.RLock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation &&
@@ -287,6 +288,7 @@ func (r campaignNPCActionRuntime) produceVerdanthSpecialTwoHeal(
 	if !isProfileFound {
 		return nil, false, nil
 	}
+	profile = zonenpc.ApplyAffixTiming(profile, source.Plan)
 	r.registry.mutex.RLock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation &&

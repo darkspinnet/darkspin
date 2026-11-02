@@ -3,6 +3,7 @@ package gameplay
 import (
 	"fmt"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/sporenet"
@@ -30,14 +31,19 @@ func (e treeOfLifeSchedule) healPartyLocked(
 				return nil, nil, fmt.Errorf("treeSquad: %w", err)
 			}
 		}
-		companionHealings, err := candidate.healLivingZoneCompanions(amount, raknet.Vector3(pulse.Position), pulse.Radius)
-		if err != nil {
-			return nil, nil, fmt.Errorf("treeCompanions: %w", err)
+		companionHealings := make([]zoneSquadHealing, 0)
+		if candidate.zone != nil {
+			var healErr error
+			companionHealings, healErr = candidate.healLivingZoneCompanions(amount, raknet.Vector3(pulse.Position), pulse.Radius)
+			if healErr != nil {
+				return nil, nil, fmt.Errorf("treeCompanions: %w", healErr)
+			}
 		}
 		memberHealings = append(memberHealings, companionHealings...)
 		received := sporenet.PlayerStatDelta{}
 		for _, healed := range memberHealings {
 			var packet []byte
+			var err error
 			if healed.isCompanion {
 				packet, err = raknet.MarshalApplication(raknet.CombatantDataDeltaMessage{
 					ObjectID: healed.objectID, HitPoints: healed.hitPoint, IsHitPointChanged: true,
@@ -51,12 +57,21 @@ func (e treeOfLifeSchedule) healPartyLocked(
 			packets = append(packets, packet)
 			received.PVEHealingReceived += float64(healed.amount)
 		}
-		candidate.queueStatDelta(received)
+		if candidate.binding.Mode == game.ModeArena {
+			match := e.runtime.registry.arenaMatches[candidate.binding.GameID]
+			if match != nil && match.isCombatActive {
+				for _, healed := range memberHealings {
+					match.result.recordHealing(caster.binding.UserID, candidate.binding.UserID, healed.amount)
+				}
+			}
+		} else {
+			candidate.queueStatDelta(received)
+		}
 		if sessionKey == e.sessionKey {
 			*caster = candidate
 		} else {
 			e.runtime.registry.sessions[sessionKey] = candidate
-			if len(memberHealings) != 0 {
+			if len(memberHealings) != 0 && candidate.zone != nil {
 				candidate.zone.PublishHeroResourceTo(candidate.binding.UserID, candidate.generation)
 				for _, healed := range companionHealings {
 					candidate.zone.PublishCompanionResourceTo(candidate.binding.UserID, candidate.generation, healed.objectID)

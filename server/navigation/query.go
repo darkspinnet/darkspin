@@ -25,6 +25,7 @@ type Projection struct {
 }
 
 var ErrProjectionObstructed = errors.New("navigation projection obstructed")
+var ErrProjectionUnavailable = errors.New("navigation projection unavailable")
 
 type PathOptions struct {
 	ProjectionOptions
@@ -52,7 +53,10 @@ func (m *Mesh) Project(point Vec3, options ProjectionOptions) (Projection, error
 		return Projection{}, fmt.Errorf("projectPolygon: %w", err)
 	}
 	if m.isObstructed(projection.Position, options.PlanLayer) {
-		return Projection{}, ErrProjectionObstructed
+		projection, err = m.projectObstacleBoundary(point, projection, options)
+		if err != nil {
+			return Projection{}, fmt.Errorf("projectBoundary: %w", err)
+		}
 	}
 	return projection, nil
 }
@@ -107,7 +111,7 @@ func projectPolygonIndexes(
 		}
 	}
 	if math.IsInf(float64(bestSquared), 1) {
-		return Projection{}, errors.New("navigation projection unavailable")
+		return Projection{}, ErrProjectionUnavailable
 	}
 	return best, nil
 }

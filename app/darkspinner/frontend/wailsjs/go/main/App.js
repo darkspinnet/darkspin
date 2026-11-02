@@ -6,6 +6,10 @@ export function Authorize(arg1) {
   return window['go']['main']['App']['Authorize'](arg1);
 }
 
+export function BrowseModSporeDirectory(arg1) {
+  return window['go']['main']['App']['BrowseModSporeDirectory'](arg1);
+}
+
 export function Cancel() {
   return window['go']['main']['App']['Cancel']();
 }
@@ -16,6 +20,10 @@ export function CancelPatch() {
 
 export function Check() {
   return window['go']['main']['App']['Check']();
+}
+
+export function CheckRemoteServers(arg1) {
+  return window['go']['main']['App']['CheckRemoteServers'](arg1);
 }
 
 export function CloseDetachedGameInstances() {
@@ -38,12 +46,20 @@ export function CreateProfile(arg1, arg2, arg3) {
   return window['go']['main']['App']['CreateProfile'](arg1, arg2, arg3);
 }
 
+export function DeleteModProfile(arg1) {
+  return window['go']['main']['App']['DeleteModProfile'](arg1);
+}
+
 export function DeleteProfile(arg1) {
   return window['go']['main']['App']['DeleteProfile'](arg1);
 }
 
 export function DeleteRemoteProfile(arg1, arg2, arg3) {
   return window['go']['main']['App']['DeleteRemoteProfile'](arg1, arg2, arg3);
+}
+
+export function DetectModSporePath() {
+  return window['go']['main']['App']['DetectModSporePath']();
 }
 
 export function DiscardInterruptedMission(arg1) {
@@ -58,8 +74,28 @@ export function GetInterruptedMission(arg1) {
   return window['go']['main']['App']['GetInterruptedMission'](arg1);
 }
 
+export function GetLauncherAutomationConfiguration() {
+  return window['go']['main']['App']['GetLauncherAutomationConfiguration']();
+}
+
 export function GetLauncherIntegrationStatus() {
   return window['go']['main']['App']['GetLauncherIntegrationStatus']();
+}
+
+export function GetLauncherLanguageConfiguration() {
+  return window['go']['main']['App']['GetLauncherLanguageConfiguration']();
+}
+
+export function GetLuaConsole() {
+  return window['go']['main']['App']['GetLuaConsole']();
+}
+
+export function GetModConfiguration() {
+  return window['go']['main']['App']['GetModConfiguration']();
+}
+
+export function GetModPortrait(arg1) {
+  return window['go']['main']['App']['GetModPortrait'](arg1);
 }
 
 export function GetProfileAvatars() {
@@ -82,6 +118,10 @@ export function GetServerRulesConfiguration() {
   return window['go']['main']['App']['GetServerRulesConfiguration']();
 }
 
+export function GetSquadSnapshot(arg1) {
+  return window['go']['main']['App']['GetSquadSnapshot'](arg1);
+}
+
 export function GetStatus() {
   return window['go']['main']['App']['GetStatus']();
 }
@@ -96,6 +136,14 @@ export function HasDetachedGameInstances() {
 
 export function IsProfileRunning(arg1) {
   return window['go']['main']['App']['IsProfileRunning'](arg1);
+}
+
+export function KillLuaSession() {
+  return window['go']['main']['App']['KillLuaSession']();
+}
+
+export function LaunchModProfile(arg1) {
+  return window['go']['main']['App']['LaunchModProfile'](arg1);
 }
 
 export function LaunchRemoteProfile(arg1, arg2, arg3, arg4) {
@@ -150,8 +198,24 @@ export function RepairLauncherIntegration(arg1) {
   return window['go']['main']['App']['RepairLauncherIntegration'](arg1);
 }
 
+export function ResetModProfileDisplay(arg1) {
+  return window['go']['main']['App']['ResetModProfileDisplay'](arg1);
+}
+
+export function ResetProfileDisplay(arg1, arg2) {
+  return window['go']['main']['App']['ResetProfileDisplay'](arg1, arg2);
+}
+
 export function RestartLauncher() {
   return window['go']['main']['App']['RestartLauncher']();
+}
+
+export function RunLuaScript(arg1) {
+  return window['go']['main']['App']['RunLuaScript'](arg1);
+}
+
+export function SaveModProfile(arg1) {
+  return window['go']['main']['App']['SaveModProfile'](arg1);
 }
 
 export function ScanRemoteServers(arg1) {
@@ -166,12 +230,32 @@ export function SendReport(arg1) {
   return window['go']['main']['App']['SendReport'](arg1);
 }
 
+export function SetAutoPatch(arg1) {
+  return window['go']['main']['App']['SetAutoPatch'](arg1);
+}
+
+export function SetAutoPlay(arg1) {
+  return window['go']['main']['App']['SetAutoPlay'](arg1);
+}
+
 export function SetIdentity(arg1) {
   return window['go']['main']['App']['SetIdentity'](arg1);
 }
 
-export function SetServerConfiguration(arg1, arg2, arg3, arg4, arg5) {
-  return window['go']['main']['App']['SetServerConfiguration'](arg1, arg2, arg3, arg4, arg5);
+export function SetLauncherLocale(arg1) {
+  return window['go']['main']['App']['SetLauncherLocale'](arg1);
+}
+
+export function SetLocalServicesRequired(arg1) {
+  return window['go']['main']['App']['SetLocalServicesRequired'](arg1);
+}
+
+export function SetModSporePath(arg1) {
+  return window['go']['main']['App']['SetModSporePath'](arg1);
+}
+
+export function SetServerConfiguration(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SetServerConfiguration'](arg1, arg2, arg3, arg4);
 }
 
 export function SetServerPort(arg1) {
@@ -182,8 +266,16 @@ export function SetServerRulesConfiguration(arg1) {
   return window['go']['main']['App']['SetServerRulesConfiguration'](arg1);
 }
 
+export function SetServerSetup(arg1) {
+  return window['go']['main']['App']['SetServerSetup'](arg1);
+}
+
 export function SetSkipCinematic(arg1) {
   return window['go']['main']['App']['SetSkipCinematic'](arg1);
+}
+
+export function SetSkipIntro(arg1) {
+  return window['go']['main']['App']['SetSkipIntro'](arg1);
 }
 
 export function SetWineRunner(arg1) {
@@ -196,6 +288,10 @@ export function SignOut() {
 
 export function StartDetachedGameInstance(arg1) {
   return window['go']['main']['App']['StartDetachedGameInstance'](arg1);
+}
+
+export function StopLuaScript() {
+  return window['go']['main']['App']['StopLuaScript']();
 }
 
 export function UninstallDarkspinner() {

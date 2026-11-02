@@ -112,6 +112,49 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 	objectID uint32, timestamp uint64, isPullAllowed bool,
 ) ([][]byte, error) {
 	isSilenced := r.isSilenced(sessionKey, generation, objectID)
+	plasmaPackets, isPlasmaHandled, plasmaErr := r.producePlasmaWall(packet, sessionKey, generation, objectID, timestamp)
+	if plasmaErr != nil {
+		return nil, fmt.Errorf("plasmaWall: %w", plasmaErr)
+	}
+	if isPlasmaHandled {
+		return plasmaPackets, nil
+	}
+	frogPackets, isFrogHandled, frogErr := r.produceNomadFrogAction(packet, sessionKey, generation, objectID, timestamp)
+	if frogErr != nil {
+		return nil, fmt.Errorf("frogAction: %w", frogErr)
+	}
+	if isFrogHandled {
+		return frogPackets, nil
+	}
+	supportPackets, isSupportHandled, supportErr := r.produceNPCSupport(packet, sessionKey, generation, objectID, timestamp)
+	if supportErr != nil {
+		return nil, fmt.Errorf("enemySupport: %w", supportErr)
+	}
+	if isSupportHandled {
+		return supportPackets, nil
+	}
+	if !isSilenced {
+		targetErr := r.selectHauntTarget(sessionKey, generation, objectID)
+		if targetErr != nil {
+			return nil, fmt.Errorf("hauntTarget: %w", targetErr)
+		}
+		petPackets, isPetHandled, petErr := r.produceAgentPetAction(packet, sessionKey, generation, objectID, timestamp)
+		if petErr != nil {
+			return nil, fmt.Errorf("agentPetAction: %w", petErr)
+		}
+		if isPetHandled {
+			return petPackets, nil
+		}
+	}
+	if !isSilenced {
+		blinkPackets, isBlinkHandled, blinkErr := r.produceSpacetimeBlinkIfReady(packet, sessionKey, generation, objectID, timestamp)
+		if blinkErr != nil {
+			return nil, fmt.Errorf("enemyBlink: %w", blinkErr)
+		}
+		if isBlinkHandled {
+			return blinkPackets, nil
+		}
+	}
 	if !isSilenced {
 		isDistracted, err := r.deferNoctBasicMeleeDogDistraction(
 			packet, sessionKey, generation, objectID, timestamp,
@@ -240,30 +283,29 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 		enemy.Plan, target.Position, target.ActorFootprintRadius,
 	)
 	if profile.AbilityName == "CitadelDischarge" {
+		// CitadelDischarge adds a charge-counter bonus to its ranked base
+		// damage. With no counter, the client uses a bonus of zero.
+		chargeCount := min(peerSession.campaignNPCVoltroidCharges[objectID], uint32(5))
+		chargeDamage := [...]float32{0, 4, 9, 16, 25, 36}
+		profile.MinimumDamage += chargeDamage[chargeCount]
+		profile.MaximumDamage += chargeDamage[chargeCount]
 		// GetChannelEffect clamps the retained charge counter to four authored
 		// visual strengths, starting at one when no counter is present.
-		stackCount := min(max(uint32(1), peerSession.campaignNPCVoltroidCharges[objectID]), uint32(4))
+		stackCount := min(max(uint32(1), chargeCount), uint32(4))
 		profile.TrailEffectName = fmt.Sprintf("citadel_zap_discharge_%d.ServerEventDef", stackCount)
 		profile.ImpactEffectName = fmt.Sprintf("citadel_zap_hit_%d.ServerEventDef", stackCount)
 	}
-	isOperativeChannel := zonenpc.IsOperativeCage(profile.ModifierName) &&
-		r.registry.isOperativeChannelLocked(peerSession, objectID, target.ObjectID)
-	if isOperativeChannel {
-		profile.HitDelay = 0
-		profile.ReleaseDelay = 0
-		profile.Cooldown = 2 * time.Second
-	}
 	drainerMeleeProfile, isDrainerMeleeFound :=
-		zonenpc.NoctMinionDrainerMeleeProfile(enemy.Plan.NounName)
+		zonenpc.NoctMinionDrainerMeleeProfile(zonenpc.ActionNounName(enemy.Plan))
 	if isDrainerMeleeFound {
-		profile = drainerMeleeProfile
+		profile = zonenpc.ApplyAffixTiming(drainerMeleeProfile, enemy.Plan)
 		isProfileFound = true
 	}
 	grapplingSwipeProfile, isGrapplingPulsar := zonenpc.VerdanthSpecialThreeFastSwipeProfile(
 		enemy.Plan.NounName,
 	)
 	if isGrapplingPulsar {
-		profile = grapplingSwipeProfile
+		profile = zonenpc.ApplyAffixTiming(grapplingSwipeProfile, enemy.Plan)
 		isProfileFound = true
 	}
 	_, isHomerFamily := zonenpc.NocturnaSpecialHomerMeleeProfile(enemy.Plan.NounName)
@@ -271,11 +313,6 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 		profile = scaleNocturnaSpecialHomerCooldown(
 			profile, uint32(len(peerSession.zone.Snapshot().Members)),
 		)
-	}
-	if isProfileFound && profile.AbilityName == "PackflyAttack" &&
-		peerSession.zone.NPCs().HasSameSpeciesAlly(objectID, 10) {
-		profile.Cooldown = time.Duration(float64(profile.Cooldown) * 0.75)
-		profile.MovementSpeed *= 1.25
 	}
 	_, slowAttackScale := peerSession.zone.NPCs().SlowProfile(objectID, r.now())
 	profile = applyNPCSlowTiming(profile, slowAttackScale)
@@ -348,6 +385,7 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 	if profile.AbilityName == "ZelemChargeupStandardAttack" && !isSilenced {
 		if chargeupState.isCharged {
 			profile = zonenpc.ZelemChargeupDischargeProfile()
+			profile = zonenpc.ApplyAffixTiming(profile, enemy.Plan)
 		} else if chargeupState.isStandardAttackPerformed &&
 			timestamp >= chargeupState.nextBuildTimestamp {
 			return r.produceZelemChargeupBuild(
@@ -373,9 +411,17 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 	if isFleeHandled {
 		return fleePackets, nil
 	}
-	attackPlan, err := zonenpc.PlanAttackWithProfile(
-		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
-	)
+	var attackPlan zonenpc.AttackPlan
+	if profile.AbilityName == "ChannelLightningCage" {
+		// This channel binds without a damage hit; the attack planner rejects zero damage.
+		attackPlan, err = zonenpc.PlanControlWithProfile(
+			enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
+		)
+	} else {
+		attackPlan, err = zonenpc.PlanAttackWithProfile(
+			enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
+		)
+	}
 	if err != nil {
 		pursuitPosition := target.Position
 		if profile.AbilityName == "ScaldronBasicDog_Attack" {
@@ -406,12 +452,12 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 		}
 		return pursuitPackets, nil
 	}
-	var startPackets [][]byte
-	if !isOperativeChannel {
-		startPackets, err = r.startNPCAttack(sessionKey, generation, attackPlan, timestamp)
-		if err != nil {
-			return nil, fmt.Errorf("enemyMeleeStart: %w", err)
-		}
+	if zonenpc.IsOperativeCage(profile.ModifierName) {
+		return r.produceOperativeCage(packet, sessionKey, generation, attackPlan, timestamp)
+	}
+	startPackets, err := r.startNPCAttack(sessionKey, generation, attackPlan, timestamp)
+	if err != nil {
+		return nil, fmt.Errorf("enemyMeleeStart: %w", err)
 	}
 	timeline, err := zonenpc.TimelineForAttack(attackPlan)
 	if err != nil {
@@ -536,6 +582,7 @@ func (r campaignNPCActionRuntime) produceCryosRezMelee(
 		r.releaseAction(sessionKey, generation, objectID)
 		return nil, nil
 	}
+	profile = zonenpc.ApplyAffixTiming(profile, enemy.Plan)
 	plan, err := zonenpc.PlanAttackWithProfile(
 		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)

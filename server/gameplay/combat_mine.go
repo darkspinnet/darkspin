@@ -134,7 +134,7 @@ func (e campaignScaldronDeathMineSchedule) explode() ([][]byte, error) {
 		}
 		result, commitErr := zonenpc.CommitAttack(
 			peerSession.zone.NPCRandom(), plan,
-			e.source.Plan.NPCProfile.CriticalRating, e.runtime.program.Critical,
+			e.source.EffectiveCriticalRating(), e.runtime.program.Critical,
 		)
 		if commitErr != nil {
 			e.runtime.registry.mutex.Unlock()
@@ -231,7 +231,7 @@ func (r campaignNPCActionRuntime) spawnScaldronDeathMines(
 	packet raknet.Packet, sessionKey string, generation uint64,
 	objectID uint32, timestamp uint64,
 ) ([][]byte, bool, error) {
-	if packet.ScheduleProducers == nil {
+	if packet.ScheduleGroup == nil && packet.ScheduleGroupResult == nil {
 		return nil, false, errors.New("death mine scheduler unavailable")
 	}
 	r.registry.mutex.Lock()

@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// ChainLightningDefinition carries the operands of Lumin's OnHitTarget call to
-// TargetUtils.ChainHitTargets (Abilities/0x1494A6FC.lua, lines 70-76).
+// ChainLightningDefinition carries the operands of OnHitTarget calls to
+// TargetUtils.ChainHitTargets in Chain Lightning and Arc Weld.
 type ChainLightningDefinition struct {
 	LeapRadius         float32
 	UpgradedLeapRadius float32

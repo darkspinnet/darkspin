@@ -134,7 +134,7 @@ func (e npcSpawner) RequestNPCSpawn(
 		return fmt.Errorf("npcSpawnContext: %w", err)
 	}
 	instance := e.gameManager.Game(req.GameID)
-	if instance == nil || !instance.IsWarped() ||
+	if instance == nil ||
 		!instance.RequestPlayerEventCommand(req.Sender.ID, game.PlayerEventCommand{
 			Name: "spawn", NounName: req.NounName,
 		}) {

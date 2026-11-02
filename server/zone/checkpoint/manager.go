@@ -11,10 +11,18 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/sim"
 	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
+	zoneobjective "github.com/darkspinnet/darkspin/server/zone/objective"
+	zonequest "github.com/darkspinnet/darkspin/server/zone/quest"
 )
 
 const closeTimeout = 5 * time.Second
 const retryInterval = time.Second
+
+// ProfileSaver schedules profile persistence at the same safe boundary as a
+// Continue checkpoint. It must not wait for disk or a database lock.
+type ProfileSaver interface {
+	RequestSave(uint64)
+}
 
 // Manager coalesces immutable zone snapshots in memory and persists them off
 // the gameplay path. One pending snapshot per zone bounds write pressure.
@@ -36,6 +44,13 @@ type Manager struct {
 	revision            uint64
 	isClosing           bool
 	closeErr            error
+	profileSaver        ProfileSaver
+}
+
+func (e *Manager) UseProfileSaver(profileSaver ProfileSaver) {
+	e.mu.Lock()
+	e.profileSaver = profileSaver
+	e.mu.Unlock()
 }
 
 func (e *Manager) FindResume(
@@ -61,6 +76,9 @@ func (e *Manager) FindResume(
 	}
 	e.mu.Unlock()
 	if pending.ZoneID != 0 {
+		if pending.Version != Version {
+			return game.ResumeCheckpoint{}, false, nil
+		}
 		if game.IsTutorialLevel(pending.Level) {
 			e.Discard(pending.ZoneID)
 			return game.ResumeCheckpoint{}, false, nil
@@ -87,6 +105,12 @@ func (e *Manager) FindResume(
 		return game.ResumeCheckpoint{}, false, fmt.Errorf("resumeLoad: %w", err)
 	}
 	if !isFound {
+		return game.ResumeCheckpoint{}, false, nil
+	}
+	if snapshot.Version != Version {
+		// Older formats can lack authored objective state or accepted entrance
+		// progress. Neither can be recovered by inferring it from UI/actor
+		// flags. Keep the row, but do not offer an unfaithful resume.
 		return game.ResumeCheckpoint{}, false, nil
 	}
 	if game.IsTutorialLevel(snapshot.Level) {
@@ -143,7 +167,17 @@ func resumeCheckpoint(
 		GameID: uint32(snapshot.ZoneID), RunSeed: runSeed, Level: snapshot.Level,
 		Difficulty: snapshot.Difficulty, Slot: member.Slot,
 		ExpectedPlayerCount: uint16(len(snapshot.Members)),
+		IsReplayRandomized:  snapshot.IsReplayRandomized,
+		CampaignBots:        resumeCampaignBots(snapshot.CampaignBots),
 	}, true, nil
+}
+
+func resumeCampaignBots(bots []CampaignBot) []game.BotRequest {
+	requests := make([]game.BotRequest, 0, len(bots))
+	for _, bot := range bots {
+		requests = append(requests, bot.Request)
+	}
+	return requests
 }
 
 func NewManager(store Store, logger *log.Logger) *Manager {
@@ -179,9 +213,17 @@ func (e *Manager) Record(snapshot Snapshot) {
 		e.mu.Unlock()
 		return
 	}
-	snapshot = checkpointWithoutMembers(
+	var pruneErr error
+	snapshot, pruneErr = checkpointWithoutMembers(
 		snapshot, e.declinedMembers[snapshot.ZoneID],
 	)
+	if pruneErr != nil {
+		e.mu.Unlock()
+		if e.logger != nil {
+			e.logger.Printf("Zone checkpoint member prune rejected: %v", pruneErr)
+		}
+		return
+	}
 	snapshot = checkpointWithoutEquipment(snapshot, e.forfeitedEquipments[snapshot.ZoneID])
 	if len(snapshot.Members) == 0 {
 		e.mu.Unlock()
@@ -216,7 +258,13 @@ func (e *Manager) Record(snapshot Snapshot) {
 	case e.wake <- struct{}{}:
 	default:
 	}
+	profileSaver := e.profileSaver
 	e.mu.Unlock()
+	if profileSaver != nil {
+		for _, member := range snapshot.Members {
+			profileSaver.RequestSave(member.UserID)
+		}
+	}
 }
 
 // RemoveMemberNow durably removes one member's resume entitlement while
@@ -253,9 +301,13 @@ func (e *Manager) RemoveMemberNow(
 	declinedMembers[userID] = struct{}{}
 	delete(e.pendingSnapshots, zoneID)
 	e.mu.Unlock()
-	snapshot = checkpointWithoutMembers(
+	snapshot, err = checkpointWithoutMembers(
 		snapshot, map[uint64]struct{}{userID: {}},
 	)
+	if err != nil {
+		e.restoreDeclinedMember(zoneID, userID)
+		return 0, fmt.Errorf("memberPrune: %w", err)
+	}
 	if len(snapshot.Members) == 0 {
 		err = e.DiscardNow(ctx, zoneID)
 		if err != nil {
@@ -317,11 +369,19 @@ func (e *Manager) Load(ctx context.Context, zoneID uint64) (Snapshot, bool, erro
 	pending, isPending := e.pendingSnapshots[zoneID]
 	e.mu.Unlock()
 	if isPending {
+		if pending.Version != Version {
+			return Snapshot{}, false, nil
+		}
 		return cloneSnapshot(pending), true, nil
 	}
 	snapshot, isFound, err := e.load(ctx, zoneID)
 	if err != nil {
 		return Snapshot{}, false, fmt.Errorf("snapshotLoad: %w", err)
+	}
+	if isFound && snapshot.Version != Version {
+		// Older snapshots contain UI-only objective progress. They cannot
+		// safely resume; leave durable data untouched and start normally.
+		return Snapshot{}, false, nil
 	}
 	return snapshot, isFound, nil
 }
@@ -593,6 +653,13 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 	snapshot.Objectives = append(
 		[]sim.ObjectiveSnapshot(nil), snapshot.Objectives...,
 	)
+	snapshot.ObjectiveRuntimes = append([]sim.LuaObjectiveSnapshot(nil), snapshot.ObjectiveRuntimes...)
+	snapshot.ObjectiveDrops = append([]zoneobjective.DropRequest(nil), snapshot.ObjectiveDrops...)
+	snapshot.ObjectiveEvents = append([]sim.LuaObjectiveEvent(nil), snapshot.ObjectiveEvents...)
+	snapshot.QuestCrystals = append([]zonequest.State(nil), snapshot.QuestCrystals...)
+	for index := range snapshot.ObjectiveRuntimes {
+		snapshot.ObjectiveRuntimes[index] = snapshot.ObjectiveRuntimes[index].Clone()
+	}
 	snapshot.ScriptUses = append(
 		[]game.CampaignScriptUse(nil), snapshot.ScriptUses...,
 	)
@@ -614,9 +681,9 @@ func checkpointMember(snapshot Snapshot, userID uint64) (Member, bool) {
 
 func checkpointWithoutMembers(
 	snapshot Snapshot, removedMembers map[uint64]struct{},
-) Snapshot {
+) (Snapshot, error) {
 	if len(removedMembers) == 0 {
-		return snapshot
+		return snapshot, nil
 	}
 	snapshot = cloneSnapshot(snapshot)
 	removedSlots := make(map[uint16]struct{}, len(removedMembers))
@@ -629,6 +696,13 @@ func checkpointWithoutMembers(
 		members = append(members, member)
 	}
 	snapshot.Members = members
+	bots := make([]CampaignBot, 0, len(snapshot.CampaignBots))
+	for _, bot := range snapshot.CampaignBots {
+		if _, isRemoved := removedMembers[bot.Request.OwnerUserID]; !isRemoved {
+			bots = append(bots, bot)
+		}
+	}
+	snapshot.CampaignBots = bots
 	heroes := make([]Hero, 0, len(snapshot.Heroes))
 	for _, hero := range snapshot.Heroes {
 		if _, isRemoved := removedMembers[hero.UserID]; !isRemoved {
@@ -669,11 +743,23 @@ func checkpointWithoutMembers(
 		}
 	}
 	snapshot.ExperienceAwards = experienceAwards
+	for runtimeIndex, runtime := range snapshot.ObjectiveRuntimes {
+		objectiveID := runtime.ObjectiveID
+		for slot := range removedSlots {
+			var err error
+			runtime, err = zoneobjective.WithoutPlayer(runtime, uint8(slot))
+			if err != nil {
+				return Snapshot{}, fmt.Errorf("pruneObjective[%#x]: %w", objectiveID, err)
+			}
+		}
+		snapshot.ObjectiveRuntimes[runtimeIndex] = runtime
+	}
 	for objectiveIndex := range snapshot.Objectives {
 		for slot := range removedSlots {
 			snapshot.Objectives[objectiveIndex].State[slot] = 0
-			snapshot.Objectives[objectiveIndex].Token[slot] = [3]int32{}
+			// Group tokens retain shared progress for a later slot occupant.
+			// Individual counters are reset on restore from authored Init.
 		}
 	}
-	return snapshot
+	return snapshot, nil
 }

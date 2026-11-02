@@ -1,0 +1,52 @@
+---@meta
+
+---@class NativeGameplaySnapshot
+---@field is_rig_observed boolean Build-103 controlled graphics/model/rig readiness was safely sampled on its gameplay owner thread.
+---@field is_rig_ready boolean The selected native model has a readable rig and skeleton; meaningful only when is_rig_observed is true. No native addresses are exposed.
+---@field is_ability_rank_available boolean Build-103 selected native character's nine retained ability ranks were safely sampled; independent of the outgoing action field named Rank.
+---@field ability_ranks integer[]|nil Native indices 0 through 8 at Lua positions 1 through 9; present only when is_ability_rank_available. Observation does not set ranks or certify every authored rank path.
+---@field is_available boolean
+---@field is_world_active boolean Recent actual gameplay poll in the same native scene and frame owner; not controllability.
+---@field controlled_handle integer|nil Opaque native generation-bearing handle, not a server object ID.
+---@field picked_handle integer|nil Native retained target, not a fresh raycast or server object ID.
+---@field position WorldPosition|nil
+---@field camera NativeCameraSnapshot Read-only native follow cache; unavailable outside supported gameplay.
+---@field frame_sequence integer
+---@field owner_thread_id integer
+
+---@class NativeCameraSnapshot
+---@field is_available boolean
+---@field target_handle integer Opaque native handle, comparable to controlled_handle only when available.
+---@field is_override_active boolean Scripted camera override; ordinary follow expectations do not apply.
+---@field mode integer Ordinary mission follow uses mode 5, follow_mode 4, zoom_mode 3.
+---@field follow_mode integer
+---@field zoom_mode integer
+---@field center WorldPosition|nil Current smoothed native center.
+---@field desired_position WorldPosition|nil Native desired center.
+---@field anchor_position WorldPosition|nil Cached native follow anchor.
+---@field offset_anchor_position WorldPosition|nil Cached offset anchor.
+---@field is_anchor_available boolean Resolved target source_position is readable and finite.
+---@field source_position WorldPosition|nil Native follow source selected from control, render, or object position.
+---@field anchor_source string 'control', 'render', 'object', or empty when unavailable.
+---@field control_mode integer
+---@field hold_timer number|nil Native cached timer; no refresh or smoothing rebuild is invoked.
+---@field distance number|nil
+---@field distance_target number|nil
+
+---@class WorldProjection
+---@field is_available boolean
+---@field is_on_screen boolean Native camera front/frustum and owned client bounds checks.
+---@field x number|nil
+---@field y number|nil
+---@field client_width integer
+---@field client_height integer
+
+---Native input processing only; observe world changes independently.
+---@class WorldClickReceipt
+---@field is_native_ground_query_success boolean Native ray and movement-point query returned success; not movement acceptance.
+---@field ray_point WorldPosition|nil Terrain ray point sampled for the consumed press; may use a plane fallback.
+---@field chosen_ground_point WorldPosition|nil Native adjusted movement candidate, distinct from the requested projected point; not arrival proof.
+---@field is_projected boolean
+---@field is_press_poll_observed boolean
+---@field is_release_poll_observed boolean
+---@field retained_handle integer|nil Opaque native handle, not a server object ID.

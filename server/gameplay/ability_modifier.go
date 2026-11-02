@@ -10,6 +10,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/util"
+	zone "github.com/darkspinnet/darkspin/server/zone"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
 	zoneaction "github.com/darkspinnet/darkspin/server/zone/action"
@@ -60,14 +61,20 @@ type heroModifierRun struct {
 func (e gameplayPeerSession) setShadowRavagerStealth(
 	objectID uint32, isStealthed bool,
 ) ([]zonenpc.Snapshot, []byte, error) {
-	if e.zone == nil || objectID == 0 {
+	if objectID == 0 {
 		return nil, nil, errors.New("shadow stealth target unavailable")
 	}
-	acquired, err := e.zone.SetHeroStealthed(
-		e.binding.UserID, e.generation, objectID, isStealthed,
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf("shadowStealthTargeting: %w", err)
+	var acquired []zonenpc.Snapshot
+	if e.zone != nil {
+		var err error
+		acquired, err = e.zone.SetHeroStealthed(
+			e.binding.UserID, e.generation, objectID, isStealthed,
+		)
+		if err != nil {
+			return nil, nil, fmt.Errorf("shadowStealthTargeting: %w", err)
+		}
+	} else if e.binding.Mode != game.ModeArena {
+		return nil, nil, errors.New("shadow stealth world unavailable")
 	}
 	stealth := uint8(0)
 	if isStealthed {
@@ -231,6 +238,44 @@ func (e *heroModifierRun) Remove(peerSession *gameplayPeerSession) {
 	creature.AutoCrit = max(float32(0), creature.AutoCrit-e.autoCrit)
 	e.damageBuff = 0
 	e.autoCrit = 0
+}
+
+// stopPresentation mirrors expiry when action recovery cancels the expiry timer.
+func (e *heroModifierRun) stopPresentation(
+	effectPool *attachedEffectPool,
+) ([][]byte, error) {
+	if e == nil {
+		return nil, nil
+	}
+	packets := make([][]byte, 0, 3)
+	cleanupErrs := make([]error, 0)
+	modifierPacket, err := effectraknet.ModifierDelete(e.objectID, e.instanceID)
+	if err != nil {
+		cleanupErrs = append(cleanupErrs, fmt.Errorf("modifierDelete: %w", err))
+	} else {
+		packets = append(packets, modifierPacket)
+	}
+	effectPacket, err := e.stopEffect(effectPool)
+	if err != nil {
+		cleanupErrs = append(cleanupErrs, fmt.Errorf("modifierEffect: %w", err))
+	}
+	if effectPacket != nil {
+		packets = append(packets, effectPacket)
+	}
+	if e.isArborealMight {
+		scalePacket, err := raknet.MarshalApplication(raknet.AttributeDataUpdateMessage{
+			ObjectID: e.objectID, Value: map[uint8]float32{113: 0},
+		})
+		if err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("modifierScale: %w", err))
+		} else {
+			packets = append(packets, scalePacket)
+		}
+	}
+	if len(cleanupErrs) > 0 {
+		return packets, fmt.Errorf("modifierStop: %w", errors.Join(cleanupErrs...))
+	}
+	return packets, nil
 }
 
 type heroModifierReleaseStep struct {
@@ -478,7 +523,14 @@ func (r campaignAbilityCommandRuntime) handleHeroSelfModifier(
 	if abilityRank <= 0 {
 		abilityRank = 1
 	}
-	definition, err := zoneability.ProjectTiming(creature, definition)
+	var err error
+	if definition.Name == "TechRandom2" {
+		// Its one-argument Lua waits retain authored time; only payment's
+		// cooldown uses the creature timing projection.
+		definition.Cooldown, err = zoneability.ProjectCooldown(creature, definition)
+	} else {
+		definition, err = zoneability.ProjectTiming(creature, definition)
+	}
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("heroModifierTiming: %w", err)
@@ -494,6 +546,9 @@ func (r campaignAbilityCommandRuntime) handleHeroSelfModifier(
 	if peerSession.deployedManaPoint() < manaCost {
 		r.registry.mutex.Unlock()
 		return req.reject("power unavailable")
+	}
+	if definition.Name == "TechRandom2" {
+		return r.startOmniShieldLocked(req, ability, cooldownKey, sessionKey, peerSession, definition, manaCost)
 	}
 
 	previousRun := peerSession.heroModifierRun
@@ -665,7 +720,7 @@ func (r campaignAbilityCommandRuntime) handleHeroSelfModifier(
 			InstanceID:           instanceID,
 			DurationMilliseconds: uint32(definition.Duration.Milliseconds()),
 			StackCount:           stackCount, StartMilliseconds: modifierStart,
-			SourceID: run.objectID,
+			NPCAffixAssetID: 0,
 		})
 	} else if !isArborealAtMaximum {
 		messages = append(messages, raknet.ModifierUpdatedMessage{
@@ -852,7 +907,28 @@ func (r campaignAbilityCommandRuntime) purgeHeroDebuffs(
 ) ([][]byte, error) {
 	r.registry.mutex.Lock()
 	defer r.registry.mutex.Unlock()
+	packets, err := r.purgeHeroDebuffsLocked(sessionKey, generation, objectID)
+	if err != nil {
+		return packets, fmt.Errorf("heroPurge: %w", err)
+	}
+	return packets, nil
+}
+
+func (r campaignAbilityCommandRuntime) purgeHeroDebuffsLocked(
+	sessionKey string, generation uint64, objectID uint32,
+) ([][]byte, error) {
 	peerSession, isFound := r.registry.sessions[sessionKey]
+	if isFound && peerSession.generation == generation && peerSession.binding.Mode == game.ModeArena &&
+		peerSession.deployedObjectID == objectID {
+		for _, status := range peerSession.arenaHitStatuses {
+			if status.kind == arenaBasicHaste || status.kind == arenaSporogenesisHot {
+				continue
+			}
+			status.retire(&peerSession)
+		}
+		r.registry.sessions[sessionKey] = peerSession
+		return nil, nil
+	}
 	if !isFound || peerSession.generation != generation ||
 		peerSession.deployedObjectID != objectID || peerSession.zone == nil ||
 		peerSession.zone.Effect() == nil {
@@ -864,6 +940,25 @@ func (r campaignAbilityCommandRuntime) purgeHeroDebuffs(
 			modifier.Kind != zoneeffect.ModifierKindDebuff {
 			continue
 		}
+		if modifier.GUID == util.HashID(silenceFieldModifier) {
+			fieldRuntime := gameplayPendingRuntime{registry: r.registry, modifierPool: r.modifierPool, now: r.now}
+			fieldPackets, fieldErr := fieldRuntime.retireSilenceFieldModifierLocked(peerSession.zone,
+				zone.SilenceFieldContact{SourceObjectID: modifier.SourceObjectID, TargetObjectID: objectID, InstanceID: modifier.InstanceID})
+			if fieldErr != nil {
+				return packets, fmt.Errorf("heroFieldPurge: %w", fieldErr)
+			}
+			packets = append(packets, fieldPackets...)
+			for _, contact := range peerSession.zone.SilenceFieldContacts() {
+				if contact.InstanceID == modifier.InstanceID {
+					contact.InstanceID = 0
+					fieldErr = peerSession.zone.PutSilenceFieldContact(contact)
+					if fieldErr != nil {
+						return packets, fmt.Errorf("heroFieldMembership: %w", fieldErr)
+					}
+				}
+			}
+			continue
+		}
 		run := peerSession.campaignNPCModifiers[modifier.InstanceID]
 		if run == nil {
 			continue
@@ -872,7 +967,8 @@ func (r campaignAbilityCommandRuntime) purgeHeroDebuffs(
 			modifier.TargetObjectID, modifier.InstanceID,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("heroDebuffDelete: %w", err)
+			r.registry.sessions[sessionKey] = peerSession
+			return packets, fmt.Errorf("heroDebuffDelete: %w", err)
 		}
 		if run.cancel != nil {
 			run.cancel()
@@ -881,11 +977,15 @@ func (r campaignAbilityCommandRuntime) purgeHeroDebuffs(
 		clearFieldMedicHeroStatus(&peerSession, modifier)
 		peerSession.zone.Effect().Remove(modifier.InstanceID)
 		peerSession.untrackCampaignNPCModifier(run)
-		_, err = run.release(r.modifierPool)
-		if err != nil {
-			return nil, fmt.Errorf("heroDebuffRelease: %w", err)
-		}
+		isCreated, releaseErr := run.release(r.modifierPool)
 		packets = append(packets, packet)
+		if releaseErr != nil {
+			r.registry.sessions[sessionKey] = peerSession
+			return packets, fmt.Errorf("heroDebuffRelease: %w", releaseErr)
+		}
+		if !isCreated {
+			r.logger.Printf("Hero cleanse retired inactive modifier instance=%d", modifier.InstanceID)
+		}
 	}
 	for key, run := range peerSession.campaignNPCPoisons {
 		if key.targetObjectID != objectID || run == nil {
@@ -904,7 +1004,8 @@ func (r campaignAbilityCommandRuntime) purgeHeroDebuffs(
 			objectID, run.modifier, r.modifierPool,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("heroPoisonPurge: %w", err)
+			r.registry.sessions[sessionKey] = peerSession
+			return packets, fmt.Errorf("heroPoisonPurge: %w", err)
 		}
 		if packet != nil {
 			packets = append(packets, packet)
@@ -922,7 +1023,8 @@ func (r campaignAbilityCommandRuntime) purgeHeroDebuffs(
 			objectID, run.modifier, r.modifierPool,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("heroSilencePurge: %w", err)
+			r.registry.sessions[sessionKey] = peerSession
+			return packets, fmt.Errorf("heroSilencePurge: %w", err)
 		}
 		if packet != nil {
 			packets = append(packets, packet)
@@ -938,7 +1040,8 @@ func (r campaignAbilityCommandRuntime) purgeHeroDebuffs(
 			objectID, run.modifier, r.modifierPool,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("heroPhysicalVulnerabilityPurge: %w", err)
+			r.registry.sessions[sessionKey] = peerSession
+			return packets, fmt.Errorf("heroPhysicalVulnerabilityPurge: %w", err)
 		}
 		if packet != nil {
 			packets = append(packets, packet)
@@ -950,7 +1053,8 @@ func (r campaignAbilityCommandRuntime) purgeHeroDebuffs(
 			objectID, run.modifier, r.modifierPool,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("heroEnergyVulnerabilityPurge: %w", err)
+			r.registry.sessions[sessionKey] = peerSession
+			return packets, fmt.Errorf("heroEnergyVulnerabilityPurge: %w", err)
 		}
 		if packet != nil {
 			packets = append(packets, packet)
@@ -960,7 +1064,8 @@ func (r campaignAbilityCommandRuntime) purgeHeroDebuffs(
 		if peerSession.deployedObjectID == objectID {
 			stopPackets, stopErr := peerSession.stopHeroFearMovement(r.now())
 			if stopErr != nil {
-				return nil, fmt.Errorf("heroFearStop: %w", stopErr)
+				r.registry.sessions[sessionKey] = peerSession
+				return append(packets, stopPackets...), fmt.Errorf("heroFearStop: %w", stopErr)
 			}
 			packets = append(packets, stopPackets...)
 		}
@@ -975,7 +1080,8 @@ func (r campaignAbilityCommandRuntime) purgeHeroDebuffs(
 			objectID, run.modifier, r.modifierPool,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("heroFearPurge: %w", err)
+			r.registry.sessions[sessionKey] = peerSession
+			return packets, fmt.Errorf("heroFearPurge: %w", err)
 		}
 		if packet != nil {
 			packets = append(packets, packet)

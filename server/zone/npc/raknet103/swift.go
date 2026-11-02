@@ -11,7 +11,7 @@ import (
 
 func swiftAuraMessage(plan zonenpc.SpawnPlan) raknet.ModifierCreatedMessage {
 	return raknet.ModifierCreatedMessage{
-		TargetID: plan.ObjectID, SourceID: plan.SwiftAuraSourceObjectID,
+		TargetID: plan.ObjectID, NPCAffixAssetID: 0,
 		ModifierGUID:      util.HashID(zonenpc.SwiftModifierName),
 		InstanceID:        zoneeffect.NounSwiftModifierInstanceID(plan.ObjectID),
 		StartMilliseconds: permanentModifierStartMilliseconds, StackCount: 1,

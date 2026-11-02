@@ -14,6 +14,7 @@ import (
 )
 
 type SpawnRequest struct {
+	ActorTeam     uint8
 	ObjectID      uint32
 	OwnerObjectID uint32
 	Intent        sim.CompanionSpawnIntent
@@ -30,10 +31,14 @@ func Spawn(req SpawnRequest) ([][]byte, error) {
 	position := raknet.Vector3{
 		X: req.Position.X, Y: req.Position.Y, Z: req.Position.Z,
 	}
+	actorTeam := req.ActorTeam
+	if actorTeam == 0 {
+		actorTeam = 1
+	}
 	createPackets, err := Create(raknet.ObjectCreateMessage{
 		ObjectID: req.ObjectID, Noun: util.HashID(req.Intent.NounName),
 		PositionX: req.Position.X, PositionY: req.Position.Y,
-		PositionZ: req.Position.Z, Scale: 1, Team: 1,
+		PositionZ: req.Position.Z, Scale: 1, Team: actorTeam,
 		OwnerID: req.OwnerObjectID, IsCollisionEnabled: true,
 	})
 	if err != nil {

@@ -1,76 +1,98 @@
 package gameplay
 
 import (
+	"errors"
 	"fmt"
 
-	"github.com/darkspinnet/darkspin/server/game"
-	"github.com/darkspinnet/darkspin/server/raknet"
-	"github.com/darkspinnet/darkspin/server/util"
-	zoneeffect "github.com/darkspinnet/darkspin/server/zone/effect"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
-func (e gameplayPendingRuntime) pollMutationAgentsLocked(member *gameplayPeerSession) ([][]byte, error) {
-	packets := make([][]byte, 0)
-	for _, npc := range member.zone.NPCs().PromoteMutationAllies() {
-		messages := []raknet.ApplicationMessage{
-			raknet.AttributeDataUpdateMessage{
-				ObjectID: npc.Plan.ObjectID, Value: map[uint8]float32{
-					4:                              npc.Plan.NPCProfile.HitPoint,
-					uint8(game.AttributeBodyScale): zonenpc.EliteBonusForType(npc.Plan.NPCProfile.NPCType).BodyScale,
-				},
-			},
-			raknet.ModifierCreatedMessage{
-				TargetID: npc.Plan.ObjectID, SourceID: npc.Plan.ObjectID,
-				ModifierGUID:      util.HashID(zonenpc.EliteModifierName),
-				InstanceID:        zoneeffect.NounModifierInstanceID(npc.Plan.ObjectID),
-				StartMilliseconds: 1, StackCount: 1,
-				DurationMilliseconds: uint32(zonenpc.EliteModifierDuration.Milliseconds()),
-			},
-			raknet.CombatantDataDeltaMessage{
-				ObjectID: npc.Plan.ObjectID, HitPoints: npc.HitPoint, IsHitPointChanged: true,
-			},
-			raknet.ObjectEffectMessage{
-				ObjectID: npc.Plan.ObjectID,
-				Asset:    util.HashID("mutant_agent_infect_smoke_hit.ServerEventDef"),
-			},
-		}
-		for _, message := range messages {
-			packet, err := raknet.MarshalApplication(message)
-			if err != nil {
-				return nil, fmt.Errorf("mutationMarshal: %w", err)
-			}
-			packets = append(packets, packet)
+func (e gameplayPendingRuntime) pollMutationAgentsLocked(member *gameplayPeerSession, sourceTime uint64) ([][]byte, error) {
+	sessionKey := ""
+	for key, current := range e.registry.sessions {
+		if gameplaySessionMemberKey(current) == gameplaySessionMemberKey(*member) && current.generation == member.generation && current.transportGeneration == member.transportGeneration {
+			sessionKey = key
+			e.registry.sessions[key] = *member
+			break
 		}
 	}
-	if len(packets) != 0 {
-		for sessionKey, ally := range e.registry.sessions {
-			if ally.zone != member.zone || ally.binding.UserID == member.binding.UserID {
+	events, advanceErr := member.zone.AdvanceMutationAgents(e.now())
+	if advanceErr != nil {
+		// A later source may fail after earlier sources retained publications.
+		// Hand off every accepted outbox entry before reporting that failure.
+		events = member.zone.NPCs().MutationEvents()
+	}
+	mutationErrors := make([]error, 0)
+	if advanceErr != nil {
+		mutationErrors = append(mutationErrors, fmt.Errorf("mutationAdvance: %w", advanceErr))
+	}
+	for _, event := range events {
+		switch event.Kind {
+		case zonenpc.MutationEventActivate, zonenpc.MutationEventDeactivate:
+			e.registry.queueMutationEventLocked(member.zone, event, mutationSourceFrame)
+		case zonenpc.MutationEventBeamChannel, zonenpc.MutationEventBeamStop:
+			e.registry.queueMutationEventLocked(member.zone, event, mutationBeamFrame)
+			if event.Kind == zonenpc.MutationEventBeamStop {
+				e.registry.queueMutationEventLocked(member.zone, event, mutationMovementFrame)
+			}
+		case zonenpc.MutationEventTransformStart:
+			e.registry.queueMutationEventLocked(member.zone, event, mutationTransformFrame)
+		case zonenpc.MutationEventTransformComplete:
+			e.registry.queueMutationEliteLocked(member.zone, event.ID.ObjectID, true)
+		case zonenpc.MutationEventFullHeal:
+			// Lua650 resumes after its yield; the permanent attachment already
+			// belongs to this target. Publish only its current stats here.
+			e.registry.queueMutationEliteLocked(member.zone, event.ID.ObjectID, false)
+		case zonenpc.MutationEventAuraPulse:
+			e.registry.queueMutationEventLocked(member.zone, event, mutationPulseFrame)
+		case zonenpc.MutationEventMovement:
+			e.registry.queueMutationEventLocked(member.zone, event, mutationMovementFrame)
+		case zonenpc.MutationEventBeamStart:
+			// The authored PlayAnimationState override is empty.
+			e.registry.queueMutationEventLocked(member.zone, event, mutationMovementFrame)
+		case zonenpc.MutationEventAuraHit:
+			if sessionKey != "" {
+				*member = e.registry.sessions[sessionKey]
+			}
+			packets, damageErr := e.applyMutationAuraDamageLocked(member, event, sourceTime)
+			e.retainMutationDamageMemberLocked(member)
+			work, isWorkFound := member.zone.NPCs().MutationDamageWork(event.ID)
+			if isWorkFound && len(packets) != 0 {
+				e.registry.queueMutationFeedbackLocked(member.zone, work, packets)
+				e.acceptMutationAuraDamagePacketsLocked(member.zone, event.ID)
+			}
+			if sessionKey != "" {
+				*member = e.registry.sessions[sessionKey]
+			}
+			if damageErr != nil {
+				mutationErrors = append(mutationErrors, fmt.Errorf("mutationAuraDamage: %w", damageErr))
+			}
+			if !isWorkFound {
+				mutationErrors = append(mutationErrors, errors.New("mutation damage ledger unavailable"))
 				continue
 			}
-			ally.queuePackets(packets)
-			e.registry.sessions[sessionKey] = ally
+			if damageErr != nil || !work.IsComplete() {
+				continue
+			}
+			isCommitted := member.zone.NPCs().CommitMutationEvent(event.ID)
+			if isCommitted {
+				e.releaseMutationAuraDamageLocked(member.zone, event.ID)
+			}
+			continue
+		default:
+			continue
+		}
+		isCommitted := member.zone.NPCs().CommitMutationEvent(event.ID)
+		if !isCommitted && e.logger != nil {
+			e.logger.Printf("Mutation event handoff superseded object=%d sequence=%d", event.ID.ObjectID, event.ID.Sequence)
 		}
 	}
-	return packets, nil
-}
-
-func mutationAgentDeathPackets(objectID uint32) ([][]byte, error) {
-	messages := []raknet.ApplicationMessage{
-		raknet.AttachedEffectMessage{
-			Slot: 17, ObjectID: objectID, IsRemovalRequested: true, IsHardStop: true,
-		},
-		raknet.ObjectEffectMessage{
-			ObjectID: objectID, Asset: util.HashID("mutation_agent_explosion.ServerEventDef"),
-		},
+	if sessionKey != "" {
+		*member = e.registry.sessions[sessionKey]
 	}
-	packets := make([][]byte, 0, len(messages))
-	for _, message := range messages {
-		packet, err := raknet.MarshalApplication(message)
-		if err != nil {
-			return nil, fmt.Errorf("mutationDeath: %w", err)
-		}
-		packets = append(packets, packet)
+	mutationErr := errors.Join(mutationErrors...)
+	if mutationErr != nil {
+		return nil, fmt.Errorf("mutationEvents: %w", mutationErr)
 	}
-	return packets, nil
+	return nil, nil
 }

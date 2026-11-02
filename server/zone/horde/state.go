@@ -69,6 +69,7 @@ type encounter struct {
 type Session struct {
 	mu                       sync.RWMutex
 	areMutationAgentsEnabled bool
+	policy                   Policy
 	encountersByMarkerSet    map[string]*encounter
 	wavesByMarkerSet         map[string]*WaveSequence
 }
@@ -89,14 +90,24 @@ func (e *Session) IsActive() bool {
 	return false
 }
 
-func NewCampaignSession(chainLevelIndex uint32) *Session {
+func NewCampaignSession(chainProgression uint32) *Session {
+	return NewCampaignSessionWithPolicy(chainProgression, DefaultPolicy())
+}
+
+// The minimum is completed campaign progression, not the selected level.
+// Once unlocked, earlier missions retain Mutation Agents and later waves.
+// The explicit operator disable still applies to every run.
+func NewCampaignSessionWithPolicy(chainProgression uint32, policy Policy) *Session {
 	e := NewSession()
-	e.areMutationAgentsEnabled = chainLevelIndex >= 7
+	e.policy = policy
+	e.areMutationAgentsEnabled = policy.IsMutationAgentEnabled &&
+		chainProgression >= policy.MutationAgentMinChainLevel
 	return e
 }
 
 func NewSession() *Session {
 	return &Session{
+		policy:                DefaultPolicy(),
 		encountersByMarkerSet: make(map[string]*encounter),
 		wavesByMarkerSet:      make(map[string]*WaveSequence),
 	}
@@ -203,12 +214,17 @@ func (s *Session) AdmitFirstWave(
 	}
 	key := strings.ToLower(publication.MarkerSetName)
 	liveObjectIDs := make(map[uint32]bool, len(plans))
+	mutationAgentID := uint32(0)
 	for _, plan := range plans {
 		liveObjectIDs[plan.ObjectID] = true
+		if strings.EqualFold(plan.NounName, zonenpc.MutationAgentNounName) {
+			mutationAgentID = plan.ObjectID
+		}
 	}
 	s.encountersByMarkerSet[key] = &encounter{
 		publication: clonePublication(publication), phase: PhaseActiveWave,
 		waveOrdinal: 1, liveObjectIDs: liveObjectIDs, isGateActive: true,
+		mutationAgentID: mutationAgentID,
 	}
 	return nil
 }
@@ -260,15 +276,23 @@ func (s *Session) Defeat(
 	if encounter.phase == PhaseComplete {
 		return Transition{}, nil
 	}
-	if encounter.phase != PhaseActiveWave || !encounter.liveObjectIDs[result.ObjectID] {
+	// Owned summons share their owner's marker set without belonging to the
+	// admitted wave. Their deaths must not reject the whole combat publication.
+	if !encounter.liveObjectIDs[result.ObjectID] {
+		return Transition{}, nil
+	}
+	if encounter.phase != PhaseActiveWave {
 		return Transition{}, fmt.Errorf("horde defeat: unexpected actor %d", result.ObjectID)
 	}
 	delete(encounter.liveObjectIDs, result.ObjectID)
-	if len(encounter.liveObjectIDs) != 0 && result.ObjectID != encounter.mutationAgentID {
+	isMutationAgentCompletion := s.policy.IsMutationAgentDefeatCompleting &&
+		result.ObjectID == encounter.mutationAgentID
+	if len(encounter.liveObjectIDs) != 0 &&
+		!isMutationAgentCompletion {
 		return Transition{}, nil
 	}
 	transition := Transition{MarkerSetName: encounter.publication.MarkerSetName}
-	if s.areMutationAgentsEnabled && encounter.waveOrdinal < 3 {
+	if s.areMutationAgentsEnabled && !isMutationAgentCompletion && encounter.waveOrdinal < s.policy.WaveCount {
 		encounter.phase = PhaseInterWave
 		count, isFound := ListenerCount(encounter.publication)
 		if !isFound {
@@ -276,15 +300,15 @@ func (s *Session) Defeat(
 		}
 		transition.NextWaveActorCount = max(6, count*2)
 		transition.NextWaveOrdinal = encounter.waveOrdinal + 1
-		transition.NextWaveDelay = InterWaveDelay
+		transition.NextWaveDelay = s.policy.InterWaveDelay
 		return transition, nil
 	}
-	if strings.EqualFold(encounter.publication.MarkerSetName, "zelems_1_Ai_Horde_2.Markerset") &&
+	if !s.areMutationAgentsEnabled && strings.EqualFold(encounter.publication.MarkerSetName, "zelems_1_Ai_Horde_2.Markerset") &&
 		encounter.waveOrdinal == 1 {
 		encounter.phase = PhaseInterWave
 		transition.NextWaveActorCount = 3
 		transition.NextWaveOrdinal = 2
-		transition.NextWaveDelay = InterWaveDelay
+		transition.NextWaveDelay = s.policy.InterWaveDelay
 		return transition, nil
 	}
 	encounter.phase = PhaseComplete
@@ -301,7 +325,8 @@ func (s *Session) Defeat(
 
 func (s *Session) Revive(snapshot zonenpc.Snapshot) error {
 	if s == nil || snapshot.Plan.ObjectID == 0 ||
-		snapshot.Plan.MarkerSetName == "" || snapshot.IsDefeated {
+		snapshot.Plan.MarkerSetName == "" || snapshot.IsDefeated ||
+		snapshot.Plan.IsEncounterAuxiliary {
 		return nil
 	}
 	s.mu.Lock()
@@ -332,6 +357,7 @@ func (s *Session) AdmitNextWave(
 	}
 	encounter := s.encountersByMarkerSet[strings.ToLower(markerSetName)]
 	liveObjectIDs := make(map[uint32]bool, len(plans))
+	encounter.mutationAgentID = 0
 	for _, plan := range plans {
 		liveObjectIDs[plan.ObjectID] = true
 		if strings.EqualFold(plan.NounName, zonenpc.MutationAgentNounName) {
@@ -362,7 +388,7 @@ func (s *Session) canAdmitNextWave(
 		return errors.New("horde next wave: invalid admission")
 	}
 	encounter := s.encountersByMarkerSet[strings.ToLower(markerSetName)]
-	if encounter == nil || encounter.phase != PhaseInterWave || encounter.waveOrdinal >= 3 {
+	if encounter == nil || encounter.phase != PhaseInterWave || encounter.waveOrdinal >= max(2, s.policy.WaveCount) {
 		return errors.New("horde next wave: invalid state")
 	}
 	seenObjectIDs := make(map[uint32]bool, len(plans))
@@ -486,6 +512,17 @@ func ValidateCompletedSnapshots(snapshots []Snapshot) error {
 		markerSets[key] = struct{}{}
 	}
 	return nil
+}
+
+// IsAdmitted includes active waves and inter-wave delays: re-entering an
+// authored trigger does not start a second encounter for the same marker set.
+func (e *Session) IsAdmitted(markerSetName string) bool {
+	if e == nil {
+		return false
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.encountersByMarkerSet[strings.ToLower(markerSetName)] != nil
 }
 
 func (s *Session) IsComplete(markerSetName string) bool {

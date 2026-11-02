@@ -19,6 +19,7 @@ type heroTimedAreaRun struct {
 	effectPool    *attachedEffectPool
 	effectSlot    uint8
 	isEffectBound bool
+	isCommitted   bool
 	removalPacket []byte
 	cancel        raknet.CancelSchedule
 }
@@ -47,6 +48,7 @@ type heroTimedAreaSchedule struct {
 	generation          uint64
 	sourceObjectID      uint32
 	creatureIndex       uint32
+	sourceCreatureIndex uint32
 	previousManaPoint   float32
 	creature            game.GameplayCreature
 	definition          sim.AbilityDefinition
@@ -72,7 +74,11 @@ func (e heroTimedAreaSchedule) isCurrent(
 ) bool {
 	return isFound && peerSession.generation == e.generation &&
 		peerSession.heroTimedArea == e.run &&
-		peerSession.deployedObjectID == e.sourceObjectID
+		peerSession.deployedObjectID == e.sourceObjectID &&
+		peerSession.deployedCreatureIndex == e.creatureIndex &&
+		e.creatureIndex < uint32(len(peerSession.binding.Creatures)) &&
+		e.sourceCreatureIndex < uint32(len(peerSession.binding.Creatures)) &&
+		peerSession.binding.Creatures[e.creatureIndex].Noun == e.creature.Noun
 }
 
 func (e heroTimedAreaSchedule) tick(
@@ -84,9 +90,22 @@ func (e heroTimedAreaSchedule) tick(
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	// Damage production can precede the initial transport write. Once a tick
+	// starts, failure must not restore the cast's captured pre-payment state.
+	e.run.isCommitted = true
+	creature := e.creature
+	if e.definition.Name == "PlasmaSentinelSupport" {
+		// Cone template170 takes a new source snapshot inside every DoDamage.
+		creature = e.runtime.registry.projectPassiveCreature(
+			peerSession, e.sourceCreatureIndex, e.runtime.now(),
+		)
+	}
+	if peerSession.binding.Mode == game.ModeArena {
+		return e.tickArenaLocked(peerSession, creature, deadline, isFirst)
+	}
 	plan, err := zoneability.PlanArea(
 		peerSession.zone.NPCs(), e.sourceObjectID,
-		game.Vec3(peerSession.playerPosition), e.creature, e.definition,
+		game.Vec3(peerSession.playerPosition), creature, e.definition,
 	)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
@@ -94,7 +113,7 @@ func (e heroTimedAreaSchedule) tick(
 	}
 	results, err := zoneability.CommitArea(
 		peerSession.zone.Population().Random(), peerSession.zone.NPCs(),
-		plan, e.creature, peerSession.binding.Difficulty,
+		plan, creature, peerSession.binding.Difficulty,
 		e.runtime.program.Critical,
 	)
 	if err != nil {
@@ -136,6 +155,56 @@ func (e heroTimedAreaSchedule) tick(
 	return append([][]byte{effectPacket, e.releasePacket}, packets...), nil
 }
 
+func (e heroTimedAreaSchedule) tickArenaLocked(
+	peerSession gameplayPeerSession, creature game.GameplayCreature,
+	deadline time.Duration, isFirst bool,
+) ([][]byte, error) {
+	timestamp := e.packet.SourceTime + uint64(deadline/time.Millisecond)
+	targets := e.runtime.registry.abilityTargetsLocked(
+		e.runtime, peerSession, e.definition, timestamp,
+	).(*arenaAbilityTargets)
+	plan, err := zoneability.PlanArea(
+		targets, e.sourceObjectID, game.Vec3(peerSession.playerPosition),
+		creature, e.definition,
+	)
+	if err != nil {
+		e.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("arenaTimedAreaPlan: %w", err)
+	}
+	random, err := e.runtime.registry.abilityRandomLocked(peerSession)
+	if err != nil {
+		e.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("arenaTimedAreaRandom: %w", err)
+	}
+	results, err := zoneability.CommitArea(
+		random, targets, plan, creature, peerSession.binding.Difficulty,
+		e.runtime.program.Critical,
+	)
+	if err != nil {
+		e.runtime.registry.mutex.Unlock()
+		targets.finish()
+		return nil, fmt.Errorf("arenaTimedAreaDamage: %w", err)
+	}
+	packets, err := targets.packets(results)
+	e.runtime.registry.mutex.Unlock()
+	targets.finish()
+	if err != nil {
+		return nil, fmt.Errorf("arenaTimedAreaPackets: %w", err)
+	}
+	if !isFirst {
+		return packets, nil
+	}
+	effectPacket, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
+		Slot: e.run.effectSlot + 1, IsForceAttached: true,
+		Asset:    util.HashID(e.definition.ActivationEffectName),
+		ObjectID: e.sourceObjectID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("arenaTimedAreaEffect: %w", err)
+	}
+	return append([][]byte{effectPacket, e.releasePacket}, packets...), nil
+}
+
 func (e heroTimedAreaSchedule) finish() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
@@ -157,12 +226,18 @@ func (e heroTimedAreaSchedule) fail(scheduleErr error) {
 	isCurrent := e.isCurrent(peerSession, isFound)
 	if isCurrent {
 		peerSession.heroTimedArea = nil
+		e.run.Stop()
 		peerSession.queuePackets([][]byte{e.run.removalPacket})
-		_ = peerSession.setCampaignCharacterManaPoints(
-			e.creatureIndex, e.previousManaPoint,
-		)
-		peerSession.abilityCooldownSession().Rollback(e.cooldownReservation)
-		peerSession.abilityReleaseSession().Rollback(e.releaseReservation)
+		if !e.run.isCommitted {
+			manaErr := peerSession.setCampaignCharacterManaPoints(
+				e.creatureIndex, e.previousManaPoint,
+			)
+			if manaErr != nil {
+				e.runtime.logger.Printf("RakNet timed area admission mana rollback failed for %s: %v", e.sessionKey, manaErr)
+			}
+			peerSession.abilityCooldownSession().Rollback(e.cooldownReservation)
+			peerSession.abilityReleaseSession().Rollback(e.releaseReservation)
+		}
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 	}
 	e.runtime.registry.mutex.Unlock()
@@ -178,6 +253,15 @@ func (e heroTimedAreaSchedule) fail(scheduleErr error) {
 		"RakNet hero timed area stopped after schedule failure for %s: %v",
 		e.sessionKey, scheduleErr,
 	)
+}
+
+func (e heroTimedAreaSchedule) commitAdmission() {
+	e.runtime.registry.mutex.Lock()
+	defer e.runtime.registry.mutex.Unlock()
+	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
+	if e.isCurrent(peerSession, isFound) {
+		e.run.isCommitted = true
+	}
 }
 
 func (r campaignAbilityCommandRuntime) handleHeroTimedArea(
@@ -203,6 +287,13 @@ func (r campaignAbilityCommandRuntime) handleHeroTimedArea(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("timedAreaTiming: %w", err)
 	}
+	if projected.Name == "PlasmaSentinelSupport" {
+		// Template170 uses two-argument native waits. Descriptor152 is not
+		// Basic, and no third channel-scaling argument is supplied. Its custom
+		// TimeToHitAction also releases the agent immediately at the raw hit.
+		projected.HitDelay = definition.HitDelay
+		projected.ReleaseDelay = definition.HitDelay
+	}
 	if projected.IsAreaDurationScaled {
 		projected.Duration, err = game.ResolveAreaDuration(
 			projected.Duration, creature.AreaDurationIncrease,
@@ -211,9 +302,13 @@ func (r campaignAbilityCommandRuntime) handleHeroTimedArea(
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("timedAreaDuration: %w", err)
 		}
-		projected.NumberOfTicks, err = game.ResolveAreaDurationCount(
-			projected.NumberOfTicks, creature.AreaDurationIncrease,
-		)
+		if projected.Name == "PlasmaSentinelSupport" {
+			projected.NumberOfTicks, err = plasmaSentinelTickCount(projected, definition.HitDelay)
+		} else {
+			projected.NumberOfTicks, err = game.ResolveAreaDurationCount(
+				projected.NumberOfTicks, creature.AreaDurationIncrease,
+			)
+		}
 		if err != nil {
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("timedAreaTickCount: %w", err)
@@ -304,16 +399,26 @@ func (r campaignAbilityCommandRuntime) handleHeroTimedArea(
 	generation := peerSession.generation
 	binding := peerSession.binding
 	creatureIndex := peerSession.deployedCreatureIndex
+	sourceCreatureIndex := creatureIndex
+	if req.command.Ability.Index >= 6 && req.command.Ability.Index <= 8 {
+		sourceCreatureIndex = req.command.Ability.Index - 6
+	}
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
 
 	schedule := heroTimedAreaSchedule{
 		runtime: r, packet: req.packet, sessionKey: sessionKey,
 		generation: generation, sourceObjectID: req.command.Common.ObjectID,
-		creatureIndex: creatureIndex, previousManaPoint: previousManaPoint,
-		creature: creature, definition: projected, binding: binding, run: run,
+		creatureIndex: creatureIndex, sourceCreatureIndex: sourceCreatureIndex,
+		previousManaPoint: previousManaPoint,
+		creature:          creature, definition: projected, binding: binding, run: run,
 		cooldownReservation: cooldownReservation,
 		releaseReservation:  releaseReservation, releasePacket: start.Release,
+	}
+	err = req.packet.AfterResponseCommit(schedule.commitAdmission)
+	if err != nil {
+		schedule.fail(err)
+		return nil, fmt.Errorf("timedAreaAcceptance: %w", err)
 	}
 	producers := make([]raknet.ScheduledPacketProducer, 0, projected.NumberOfTicks+1)
 	for tick := uint32(0); tick < projected.NumberOfTicks; tick++ {
@@ -337,15 +442,45 @@ func (r campaignAbilityCommandRuntime) handleHeroTimedArea(
 	} else {
 		err = errors.New("schedule unavailable")
 	}
+	if err == nil && cancel == nil {
+		err = errors.New("nil timed area cancellation")
+	}
 	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
 		schedule.fail(err)
 		return nil, fmt.Errorf("timedAreaSchedule: %w", err)
 	}
-	run.cancel = cancel
+	r.registry.mutex.Lock()
+	current, isFound := r.registry.sessions[sessionKey]
+	isCurrent := schedule.isCurrent(current, isFound)
+	if isCurrent {
+		run.cancel = cancel
+	}
+	r.registry.mutex.Unlock()
+	if !isCurrent {
+		cancel()
+		return nil, errors.New("timed area stopped during admission")
+	}
 	r.logger.Printf(
 		"RakNet hero timed area accepted ability=%s source=%d ticks=%d",
 		projected.Name, req.command.Common.ObjectID, projected.NumberOfTicks,
 	)
 	packets := append([][]byte{start.Acknowledge, manaPacket}, start.Presentation...)
 	return packets, nil
+}
+
+func plasmaSentinelTickCount(definition sim.AbilityDefinition, authoredHitDelay time.Duration) (uint32, error) {
+	remaining := definition.Duration - authoredHitDelay
+	if remaining <= 0 || definition.TickDuration <= 0 {
+		return 0, errors.New("invalid plasma sentinel duration")
+	}
+	// Template170 damages once, waits an interval, subtracts it, and repeats
+	// only while the remaining duration is strictly greater than that interval.
+	count := max(time.Duration(1), (remaining-1)/definition.TickDuration)
+	if uint64(count) > uint64(^uint32(0)) {
+		return 0, errors.New("plasma sentinel tick count overflow")
+	}
+	return uint32(count), nil
 }

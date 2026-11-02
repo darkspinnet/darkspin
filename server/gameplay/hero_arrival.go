@@ -107,8 +107,8 @@ func (e gameplayPeerSession) isHeroArrivalProtected(at time.Time) bool {
 }
 
 func (e gameplayPeerSession) isHeroDamageImmune(at time.Time) bool {
-	return e.campaignTunnelTransfer != nil || e.isHeroArrivalProtected(at) || e.heroModifierRun.IsDamageImmune() ||
-		e.heroQuantumBlink != nil
+	return e.isGodModeEnabled || e.campaignTunnelTransfer != nil || e.isHeroArrivalProtected(at) || e.heroModifierRun.IsDamageImmune() ||
+		e.heroQuantumBlink != nil || e.hasOmniShieldAt(e.deployedObjectID, at) || e.isArenaBanished(at)
 }
 
 func advanceHeroArrivalTimestamp(
@@ -153,8 +153,14 @@ func (e heroArrivalCommit) commit() {
 		peerSession.deployedObjectID != e.objectID {
 		return
 	}
-	peerSession.beginHeroArrival(e.now())
+	at := e.now()
+	peerSession.beginHeroArrival(at)
+	packets, err := peerSession.refreshEnemyImmobilizedAttributes(at)
+	if err != nil {
+		e.registry.logger.Printf("RakNet hero arrival movement hold failed object=%d: %v", e.objectID, err)
+	}
 	e.registry.sessions[e.sessionKey] = peerSession
+	e.registry.queueProjectileRetirementLocked(peerSession.zone, packets)
 }
 
 func marshalCampaignCharacterDeparture(

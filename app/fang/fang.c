@@ -1,13 +1,33 @@
+#include "client103/bootstrap.h"
+#include "zoom/zoom.h"
+#include "editor/editor.h"
+#include "display/display.h"
+#include "shop/shop.h"
+#include "bug/bug.h"
+#include "scenario/camera.h"
+#include "login/login.h"
+#include "mod/mod.h"
+#include "hook/patch.h"
+#include "client103/camera.h"
+#include "client103/image.h"
 #include "fang.h"
 #include "hook.h"
-#include "scenario_observation.h"
+#include "hook/import.h"
+#include "network/network.h"
+#include "chat/command.h"
+#include "chat/ui.h"
+#include "cinematic/cinematic.h"
+#include "bug/history.h"
+#include "bug/record.h"
+#include "scenario/observation.h"
 #if FANG_SCENARIO
-#include "scenario_renderer.h"
-#include "scenario_dispatch.h"
-#include "scenario_selector.h"
-#include "scenario_primary.h"
-#include "scenario_alternate.h"
-#include "scenario_classification.h"
+#include "scenario/renderer.h"
+#include "scenario/dispatch.h"
+#include "scenario/selector.h"
+#include "scenario/primary.h"
+#include "scenario/alternate.h"
+#include "scenario/classification.h"
+#include "scenario/control.h"
 #endif
 
 #include <limits.h>
@@ -23,153 +43,6 @@
 #define FANG_DIAGNOSTICS 1
 #endif
 
-typedef struct hostent* (WSAAPI* gethostbyname_fn)(const char* name);
-typedef int (WSAAPI* connect_fn)(SOCKET socket, const struct sockaddr* name, int name_length);
-typedef int (WSAAPI* send_fn)(SOCKET socket, const char* buffer, int length, int flags);
-typedef int (WSAAPI* recv_fn)(SOCKET socket, char* buffer, int length, int flags);
-typedef int (WSAAPI* sendto_fn)(SOCKET socket, const char* buffer, int length, int flags, const struct sockaddr* destination, int destination_length);
-typedef int (WSAAPI* recvfrom_fn)(SOCKET socket, char* buffer, int length, int flags, struct sockaddr* source, int* source_length);
-typedef int (WSAAPI* closesocket_fn)(SOCKET socket);
-typedef int (WSAAPI* wsasend_fn)(SOCKET socket, LPWSABUF buffers, DWORD count, LPDWORD sent, DWORD flags, LPWSAOVERLAPPED overlapped, LPWSAOVERLAPPED_COMPLETION_ROUTINE completion);
-typedef int (WSAAPI* wsarecv_fn)(SOCKET socket, LPWSABUF buffers, DWORD count, LPDWORD received, LPDWORD flags, LPWSAOVERLAPPED overlapped, LPWSAOVERLAPPED_COMPLETION_ROUTINE completion);
-typedef int (WSAAPI* wsarecvfrom_fn)(SOCKET socket, LPWSABUF buffers, DWORD count, LPDWORD received, LPDWORD flags, struct sockaddr* source, LPINT source_length, LPWSAOVERLAPPED overlapped, LPWSAOVERLAPPED_COMPLETION_ROUTINE completion);
-typedef BOOL (WSAAPI* wsagetoverlappedresult_fn)(SOCKET socket, LPWSAOVERLAPPED overlapped, LPDWORD transferred, BOOL wait, LPDWORD flags);
-typedef int (WINAPI* messageboxw_fn)(HWND window, LPCWSTR text, LPCWSTR caption, UINT type);
-typedef int (WINAPI* messageboxa_fn)(HWND window, LPCSTR text, LPCSTR caption, UINT type);
-typedef DWORD (WINAPI* getfileattributesw_fn)(LPCWSTR file_name);
-typedef void* (__cdecl* chat_lookup_fn)(void);
-typedef void* (__cdecl* chat_create_fn)(void);
-typedef void* (__cdecl* chat_text_convert_fn)(void* output, const char* text, int length);
-typedef void (__cdecl* alert_fn)(const char* message, int code, int severity);
-typedef void (__cdecl* login_error_fn)(unsigned int code, void* target);
-typedef unsigned char (__cdecl* cinematic_ready_fn)(void);
-typedef void (__cdecl* movie_load_fn)(void* output, const char* name, int unknown_a, int unknown_b);
-typedef void* (__cdecl* movie_manager_fn)(void);
-typedef unsigned char (__cdecl* spline_update_fn)(void* camera, float delta);
-typedef void* (__cdecl* spline_skip_fn)(void);
-typedef void* (__cdecl* camera_registry_fn)(void);
-typedef void (__cdecl* navigation_update_fn)(void* controller);
-typedef void (__cdecl* go_to_room_fn)(void* event);
-typedef unsigned int (__cdecl* new_player_progress_fn)(void);
-typedef void (__cdecl* map_room_start_game_fn)(void);
-typedef void* (__cdecl* online_platform_fn)(void);
-typedef void* (__cdecl* scene_asset_lookup_fn)(unsigned int asset_id);
-typedef void* (__cdecl* creature_asset_lookup_fn)(unsigned int asset_id, void* output);
-typedef void* (__cdecl* creature_nested_lookup_fn)(void* asset, void* output);
-typedef void (__cdecl* scene_load_fn)(void* scene, unsigned int markerset, unsigned int index);
-typedef void (__cdecl* scene_change_fn)(void* simulator, void* scene);
-typedef void* (__cdecl* reflection_lookup_fn)(unsigned int type_id);
-typedef void* (__cdecl* ability_hud_fn)(void);
-typedef void* (__cdecl* game_clock_owner_fn)(void);
-typedef uint64_t (__cdecl* game_clock_now_fn)(void* owner);
-typedef void* (__cdecl* controlled_player_fn)(void);
-typedef void* (__cdecl* clock_root_fn)(void);
-typedef void* (__cdecl* clock_state_fn)(void* root);
-typedef void (__cdecl* clock_initialize_fn)(uint64_t source_time);
-typedef unsigned char (__cdecl* ability_available_fn)(void* player, int ability_index);
-typedef unsigned char (__cdecl* property_vector_read_fn)(void* resource, unsigned int property_id,
-    unsigned int* count, const unsigned int** value);
-typedef void* (__cdecl* resource_manager_fn)(void);
-typedef void (__cdecl* local_event_fn)(unsigned int event_id, void* event);
-typedef unsigned char (__cdecl* reflection_decode_callback_fn)(
-    int context, unsigned int* object, int* field, char* data);
-typedef unsigned char (__cdecl* server_event_decode_fn)(void* stream, void* event,
-    int flags, reflection_decode_callback_fn callback);
-typedef unsigned char (__cdecl* server_event_validate_fn)(void* event);
-typedef void* (__cdecl* effect_system_fn)(void);
-typedef unsigned char (__cdecl* loot_convert_fn)(void* output, const void* loot,
-    int is_local, int unknown);
-typedef double (__cdecl* mana_cost_fn)(void* ability, void* actor, int rank, float property);
-typedef void* (__cdecl* ability_descriptor_lookup_fn)(unsigned int ability_guid);
-typedef void* (__cdecl* combat_input_state_fn)(void);
-typedef void* (__cdecl* settings_manager_fn)(void);
-typedef void* (__cdecl* game_object_resolve_fn)(unsigned int object_id);
-typedef void* (__stdcall* locomotion_receiver_fn)(void* message);
-typedef float (__cdecl* frame_delta_fn)(void* frame);
-#if defined(__GNUC__)
-typedef void (__attribute__((thiscall))* sporenet_callback_fn)(void* request, void* response);
-typedef void (__attribute__((thiscall))* web_script_fn)(void* host, const wchar_t* script);
-typedef void (__attribute__((thiscall))* resource_lookup_fn)(void* manager,
-    unsigned int type_id, unsigned int instance_id, void** resource);
-typedef void (__attribute__((thiscall))* resource_release_fn)(void* resource);
-typedef void* (__attribute__((thiscall))* cooldown_lookup_fn)(void* cooldown_map, const uint64_t* ability_key);
-typedef void (__attribute__((thiscall))* cooldown_apply_fn)(void* object, uint64_t ability_key,
-    int64_t duration, int64_t source_start, int64_t global_cooldown);
-typedef void* (__attribute__((thiscall))* message_construct_fn)(void* message, unsigned char id,
-    const void* data, unsigned int size);
-typedef unsigned int (__attribute__((thiscall))* message_read_fn)(void* stream, void* destination,
-    unsigned int size, void* context);
-typedef unsigned char (__attribute__((thiscall))* screen_event_fn)(void* target, unsigned int event_id);
-typedef unsigned char (__attribute__((thiscall))* movie_playing_fn)(void* manager);
-typedef void (__attribute__((thiscall))* movie_stop_fn)(void* manager);
-typedef void* (__attribute__((thiscall))* object_method_fn)(void* target);
-typedef void* (__attribute__((thiscall))* lookup_method_fn)(void* target, unsigned int id);
-typedef int (__attribute__((thiscall))* setting_read_fn)(void* target, unsigned int key);
-typedef void (__attribute__((thiscall))* camera_set_fn)(void* camera, void* position, void* rotation,
-    float angle_x, float angle_y, float angle_z);
-typedef void (__attribute__((thiscall))* login_screen_init_fn)(void* controller, void* manager);
-typedef unsigned char (__attribute__((thiscall))* login_ready_fn)(void* manager);
-typedef void (__attribute__((thiscall))* login_submit_fn)(void* manager, const char* username, const char* password);
-typedef void (__attribute__((thiscall))* launcher_ready_fn)(void* launcher);
-typedef void (__attribute__((thiscall))* chat_initialize_fn)(void* chat);
-typedef void (__attribute__((thiscall))* chat_show_fn)(void* chat, unsigned char is_visible);
-typedef void (__attribute__((thiscall))* chat_open_fn)(void* chat, unsigned int action);
-#else
-typedef void (__thiscall* sporenet_callback_fn)(void* request, void* response);
-typedef void (__thiscall* web_script_fn)(void* host, const wchar_t* script);
-typedef void (__thiscall* resource_lookup_fn)(void* manager,
-    unsigned int type_id, unsigned int instance_id, void** resource);
-typedef void (__thiscall* resource_release_fn)(void* resource);
-typedef void* (__thiscall* cooldown_lookup_fn)(void* cooldown_map, const uint64_t* ability_key);
-typedef void (__thiscall* cooldown_apply_fn)(void* object, uint64_t ability_key,
-    int64_t duration, int64_t source_start, int64_t global_cooldown);
-typedef void* (__thiscall* message_construct_fn)(void* message, unsigned char id,
-    const void* data, unsigned int size);
-typedef unsigned int (__thiscall* message_read_fn)(void* stream, void* destination,
-    unsigned int size, void* context);
-typedef unsigned char (__thiscall* screen_event_fn)(void* target, unsigned int event_id);
-typedef unsigned char (__thiscall* movie_playing_fn)(void* manager);
-typedef void (__thiscall* movie_stop_fn)(void* manager);
-typedef void* (__thiscall* object_method_fn)(void* target);
-typedef void* (__thiscall* lookup_method_fn)(void* target, unsigned int id);
-typedef int (__thiscall* setting_read_fn)(void* target, unsigned int key);
-typedef void (__thiscall* camera_set_fn)(void* camera, void* position, void* rotation,
-    float angle_x, float angle_y, float angle_z);
-typedef void (__thiscall* login_screen_init_fn)(void* controller, void* manager);
-typedef unsigned char (__thiscall* login_ready_fn)(void* manager);
-typedef void (__thiscall* login_submit_fn)(void* manager, const char* username, const char* password);
-typedef void (__thiscall* launcher_ready_fn)(void* launcher);
-typedef void (__thiscall* chat_initialize_fn)(void* chat);
-typedef void (__thiscall* chat_show_fn)(void* chat, unsigned char is_visible);
-typedef void (__thiscall* chat_open_fn)(void* chat, unsigned int action);
-#endif
-typedef unsigned char (FANG_THISCALL* party_ready_fn)(void* party);
-typedef void (FANG_THISCALL* combat_input_reset_fn)(void* state);
-typedef void (FANG_THISCALL* rooms_bootstrap_fn)(void* platform);
-typedef void* (FANG_THISCALL* rooms_map_lookup_fn)(void* map, unsigned int id);
-typedef unsigned char (FANG_THISCALL* presence_query_fn)(void* platform,
-    unsigned int id_low, unsigned int id_high, unsigned int* presence,
-    unsigned short* playgroup, unsigned int* level_id, unsigned short* client_data);
-typedef int (FANG_THISCALL* scaleform_stream_read_fn)(void* stream,
-    void* destination, int length);
-
-typedef struct redirect_tls {
-    struct hostent host;
-    struct in_addr address;
-    char* addresses[2];
-} redirect_tls;
-
-static gethostbyname_fn original_gethostbyname;
-static connect_fn original_connect;
-static send_fn original_send;
-static recv_fn original_recv;
-static sendto_fn original_sendto;
-static recvfrom_fn original_recvfrom;
-static closesocket_fn original_closesocket;
-static wsasend_fn original_wsasend;
-static wsarecv_fn original_wsarecv;
-static wsarecvfrom_fn original_wsarecvfrom;
-static wsagetoverlappedresult_fn original_wsagetoverlappedresult;
 static messageboxw_fn original_messageboxw;
 static messageboxa_fn original_messageboxa;
 static getfileattributesw_fn original_getfileattributesw;
@@ -240,30 +113,11 @@ static locomotion_receiver_fn original_locomotion_unreliable_receiver;
 static frame_delta_fn original_frame_delta;
 static sporenet_callback_fn original_sporenet_callback;
 static scaleform_stream_read_fn original_scaleform_stream_read;
-static DWORD redirect_tls_index = TLS_OUT_OF_INDEXES;
 static DWORD effect_preview_tls_index = TLS_OUT_OF_INDEXES;
-static char redirect_hostname[256] = "localhost";
-static unsigned short redirect_port = 42127;
-static unsigned short redirect_party_port = 42128;
-static const unsigned char party_envelope[] = {'D', 'S', 'P', 'G', 1, 1, 0, 0};
-#define PARTY_SOCKET_LIMIT 64
-static SRWLOCK party_socket_lock = SRWLOCK_INIT;
-static SOCKET party_sockets[PARTY_SOCKET_LIMIT];
-static unsigned int party_socket_count;
-typedef struct party_receive {
-    SOCKET socket;
-    LPWSAOVERLAPPED overlapped;
-    struct sockaddr* source;
-    LPINT source_length;
-} party_receive;
-static party_receive party_receives[PARTY_SOCKET_LIMIT];
-static unsigned int party_receive_count;
-static unsigned int dns_diagnostics;
 static HANDLE trace_file = INVALID_HANDLE_VALUE;
 static CRITICAL_SECTION trace_lock;
 static int trace_lock_ready;
 static HMODULE executable_module;
-static volatile LONG movie_skip_pending;
 static volatile LONG ship_spline_skipped;
 static volatile LONG ship_spline_skip_active;
 static volatile LONG ship_navigation_ready;
@@ -284,8 +138,14 @@ static volatile LONG jwt_login_started;
 static volatile LONG jwt_login_completed;
 static volatile LONG jwt_login_watchdog_started;
 static void* jwt_login_manager;
+static void* jwt_login_controller;
+static void* jwt_login_controller_type;
 static UINT_PTR jwt_login_timer;
+static UINT_PTR jwt_login_ui_timer;
+static ULONGLONG jwt_login_ui_started_ms;
 static unsigned int jwt_login_retry_count;
+static ULONGLONG jwt_login_ready_started_ms;
+enum { jwt_login_timeout_milliseconds = 30000 };
 static char client_result_path[2048];
 static char client_launch_id[64];
 static volatile LONG multiplayer_auto_started;
@@ -319,22 +179,9 @@ static volatile LONG snapshot_keyframe_pending;
 static HANDLE snapshot_keyframe_event;
 static DWORD snapshot_last_probe_time;
 static DWORD movement_trace_tls_index = TLS_OUT_OF_INDEXES;
-static char snapshot_control_path[MAX_PATH * 4];
-
-typedef struct snapshot_line {
-    struct snapshot_line* next;
-    ULONGLONG time_ms;
-    unsigned int size;
-    char contents[1];
-} snapshot_line;
-
-static SRWLOCK snapshot_ring_lock = SRWLOCK_INIT;
-static snapshot_line* snapshot_ring_head;
-static snapshot_line* snapshot_ring_tail;
-static size_t snapshot_ring_byte_count;
-static ULONGLONG snapshot_ring_capacity_dropped_line_count;
-static ULONGLONG snapshot_ring_capacity_dropped_byte_count;
-static ULONGLONG snapshot_ring_capacity_last_dropped_time_ms;
+static char snapshot_directory[MAX_PATH * 4];
+static char snapshot_endpoint[64];
+static char snapshot_token[65];
 
 typedef struct movement_trace_context {
     unsigned int object_id;
@@ -397,6 +244,67 @@ enum {
     effect_preview_world_mode = 0x574F524C,
 };
 
+// Reads: returns whether diagnostic network capture is enabled.
+int fang_network_capture_is_enabled(void) {
+    return InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0);
+}
+
+// Reads: returns the pending solo matchmaking marker.
+LONG fang_network_matchmaking_pending(void) {
+    return InterlockedCompareExchange(&solo_unranked_1v1_matchmaking_pending, 0, 0);
+}
+
+// Reads: returns whether a token login is still awaiting completion.
+int fang_network_login_is_pending(void) {
+    return jwt_login_token[0] != '\0' &&
+        InterlockedCompareExchange(&jwt_login_completed, 0, 0) == 0;
+}
+
+// Reads: returns whether the shared trace sink is ready.
+int fang_record_trace_available(void) {
+    return trace_file != INVALID_HANDLE_VALUE && trace_lock_ready;
+}
+
+// Modifies: serializes a trace-file write and reports the written byte count.
+BOOL fang_record_trace_write(const char* contents, DWORD length, DWORD* written) {
+    BOOL result;
+    EnterCriticalSection(&trace_lock);
+    result = WriteFile(trace_file, contents, length, written, NULL);
+    LeaveCriticalSection(&trace_lock);
+    return result;
+}
+
+// Reads: returns the configured snapshot output directory.
+const char* fang_record_directory(void) {
+    return snapshot_directory;
+}
+
+// Reads: returns the latest observed frame sequence.
+LONG fang_record_frame_sequence(void) {
+    return InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0);
+}
+
+// Reads: returns the latest observed frame-delta bit pattern.
+LONG fang_record_frame_delta_bits(void) {
+    return InterlockedCompareExchange(&snapshot_frame_delta_bits, 0, 0);
+}
+
+// Reads: returns the latest observed frame timestamp.
+LONG fang_record_frame_time_ms(void) {
+    return InterlockedCompareExchange(&snapshot_frame_time_ms, 0, 0);
+}
+
+// Reads: returns when the latest keyframe capture started.
+LONG fang_record_keyframe_started_time_ms(void) {
+    return InterlockedCompareExchange(&snapshot_keyframe_started_time_ms, 0, 0);
+}
+
+// Reads: returns when the latest keyframe capture completed.
+LONG fang_record_keyframe_completed_time_ms(void) {
+    return InterlockedCompareExchange(&snapshot_keyframe_completed_time_ms, 0, 0);
+}
+
+// Reads/modifies: reads clipboard text and delivers normalized characters to native chat.
 static unsigned int paste_chat_clipboard(HWND window) {
     HANDLE clipboard_data;
     const WCHAR* wide_text;
@@ -444,676 +352,12 @@ static void trace_party_navigation_gate(void* party, unsigned char is_ready);
 static void* traced_spline_camera;
 static int traced_spline_nodes;
 static float traced_spline_time = -1.0f;
-static uintptr_t trace_caller_rva(void* caller);
 static void trace_client_message_payload(unsigned char id, const void* data, unsigned int size);
-static void trace_raknet_payload(const char* direction, const char* kind, SOCKET socket,
-    const struct sockaddr* address, const char* buffer, int length);
-static int is_party_socket(SOCKET socket);
-static void snapshot_ring_clear(void);
-static void snapshot_ring_append(const char* contents, unsigned int size);
-static void snapshot_ring_marker(const char* kind, const char* request,
-    unsigned long long server_time_unix_nano, unsigned int buffer_ms,
-    const char* keyframe_status, unsigned long long client_received_time_ms);
-static int valid_snapshot_directory_name(const char* name);
-static void snapshot_ring_dump(
-    const char* directory_name, unsigned int buffer_ms);
 static void trace_client_object_registry(void);
 static void trace_client_object_probe_registry(void);
 static void trace_snapshot_action_state(void);
 
-#if FANG_SCENARIO
-void trace_scenario_primary_base(const ScenarioPrimaryBaseCallEvent* req) {
-    const size_t maximum_bytes = 64u * 1024u * 1024u;
-    const ULONGLONG maximum_age_ms = 300000;
-    // Sticky loss bits: unavailable trace, failed/short write, ring allocation,
-    // formatting, failed ring-node free. They never wrap or affect the callee.
-    static volatile LONG recorder_loss_flags;
-    DWORD last_error = GetLastError();
-    char line[3072];
-    char input[384];
-    char name_jsons[2][512];
-    char quoted_name[66];
-    char call_ordinal[16];
-    char loss_digits[9];
-    const char* phase;
-    const char* input_json = "null";
-    const char* normal_return = "null";
-    const char* result_nonzero = "null";
-    const char* ordinal_json = "null";
-    char* status_field;
-    char* loss_field;
-    snapshot_line* recorded;
-    ULONGLONG now;
-    DWORD written = 0;
-    BOOL is_written = FALSE;
-    LONG loss_flags;
-    int length;
-    int is_limit;
-    size_t loss_offset;
-    unsigned int name_index;
-    const ScenarioPrimaryResourceNameCopy* name_copies[2];
-    static const char* name_failures[] = {
-        "none", "holder_word_unreadable", "name_address_zero",
-        "name_bytes_unreadable", "holder_recheck_unreadable",
-        "holder_word_changed", "name_unterminated", "name_empty",
-        "name_non_ascii", "name_unexpected", "entry_copy_unavailable",
-        "entry_noun_recheck_unreadable", "entry_noun_changed"
-    };
-    if (req == NULL) {
-        return;
-    }
-    is_limit = req->Phase == SCENARIO_PRIMARY_BASE_LIMIT;
-    if (req->Phase == SCENARIO_PRIMARY_BASE_ENTRY) {
-        phase = "entry";
-    } else if (req->Phase == SCENARIO_PRIMARY_BASE_NORMAL_RETURN) {
-        phase = "normal_return";
-        normal_return = "true";
-        result_nonzero = req->IsResultNonzero ? "true" : "false";
-    } else if (is_limit) {
-        phase = "limit";
-    } else {
-        InterlockedOr(&recorder_loss_flags, 8);
-        SetLastError(last_error);
-        return;
-    }
-    if (!is_limit) {
-        snprintf(call_ordinal, sizeof(call_ordinal), "%u", req->CallOrdinal);
-        ordinal_json = call_ordinal;
-    }
-    if (req->IsInputCopyAvailable) {
-        length = snprintf(input, sizeof(input),
-            "{\"marker_id\":%u,\"raw_noun_reference\":%u,"
-            "\"position_bits\":[%u,%u,%u],\"rotation_bits\":[%u,%u,%u],"
-            "\"scale_bits\":%u}",
-            req->MarkerID, req->RawNounReference,
-            req->PositionBits[0], req->PositionBits[1], req->PositionBits[2],
-            req->RotationBits[0], req->RotationBits[1], req->RotationBits[2],
-            req->ScaleBits);
-        if (length <= 0 || (size_t)length >= sizeof(input)) {
-            InterlockedOr(&recorder_loss_flags, 8);
-            SetLastError(last_error);
-            return;
-        }
-        input_json = input;
-    }
-    name_copies[0] = &req->MarkerSetName;
-    name_copies[1] = &req->NounName;
-    for (name_index = 0; name_index < 2; name_index++) {
-        const ScenarioPrimaryResourceNameCopy* copy = name_copies[name_index];
-        const char* name_json = "null";
-        const char* failure = "invalid_failure";
-        if (copy->Failure >= SCENARIO_PRIMARY_NAME_NONE &&
-            copy->Failure <= SCENARIO_PRIMARY_NAME_ENTRY_NOUN_CHANGED) {
-            failure = name_failures[copy->Failure];
-        }
-        if (!copy->IsCopyAttempted && copy->Failure == SCENARIO_PRIMARY_NAME_NONE) {
-            failure = "not_attempted";
-        }
-        if (copy->IsNameAvailable) {
-            // The producer accepts only the five exact ASCII asset names;
-            // their actual copied spelling contains no JSON escape characters.
-            length = snprintf(quoted_name, sizeof(quoted_name), "\"%s\"", copy->Name);
-            if (length <= 0 || (size_t)length >= sizeof(quoted_name)) {
-                InterlockedOr(&recorder_loss_flags, 8);
-                SetLastError(last_error);
-                return;
-            }
-            name_json = quoted_name;
-        }
-        length = snprintf(name_jsons[name_index], sizeof(name_jsons[name_index]),
-            "{\"name\":%s,\"is_name_available\":%s,"
-            "\"is_copy_attempted\":%s,\"is_holder_word_copied\":%s,"
-            "\"is_name_bytes_copied\":%s,\"is_holder_recheck_available\":%s,"
-            "\"is_holder_word_unchanged\":%s,\"failure_reason\":\"%s\"}",
-            name_json, copy->IsNameAvailable ? "true" : "false",
-            copy->IsCopyAttempted ? "true" : "false",
-            copy->IsHolderWordCopied ? "true" : "false",
-            copy->IsNameBytesCopied ? "true" : "false",
-            copy->IsHolderRecheckAvailable ? "true" : "false",
-            copy->IsHolderRecheckAvailable ?
-                (copy->IsHolderWordUnchanged ? "true" : "false") : "null", failure);
-        if (length <= 0 || (size_t)length >= sizeof(name_jsons[name_index])) {
-            InterlockedOr(&recorder_loss_flags, 8);
-            SetLastError(last_error);
-            return;
-        }
-    }
-    recorded = (snapshot_line*)HeapAlloc(
-        GetProcessHeap(), 0, sizeof(*recorded) - 1 + sizeof(line));
-    if (recorded == NULL) {
-        InterlockedOr(&recorder_loss_flags, 4);
-    }
-    if (trace_file == INVALID_HANDLE_VALUE || !trace_lock_ready) {
-        InterlockedOr(&recorder_loss_flags, 1);
-    }
-    loss_flags = InterlockedCompareExchange(&recorder_loss_flags, 0, 0);
-    now = GetTickCount64();
-    // Status 0 = not yet known, 1 = completed, 2 = failed/unavailable.
-    // A raw trace row cannot attest to its own completed write. The ring copy
-    // records the actual write outcome; neither row promises later retention.
-    length = snprintf(line, sizeof(line),
-        "{\"time_ms\":%llu,\"protocol\":\"client_state\","
-        "\"kind\":\"scenario_primary_base_call\",\"phase\":\"%s\","
-        "\"thread\":%lu,\"frame_sequence\":%lu,\"call_ordinal\":%s,"
-        "\"raw_marker_set_reference\":%u,\"entry_ordinal\":%d,"
-        "\"input_provenance\":\"pre_call\",\"input\":%s,"
-        "\"is_copy_attempted\":%s,\"is_input_copy_available\":%s,"
-        "\"copy_byte_count\":%u,\"copy_error\":%u,"
-        "\"marker_set_name\":%s,\"noun_name\":%s,"
-        "\"is_noun_association_recheck_attempted\":%s,"
-        "\"is_noun_association_recheck_available\":%s,"
-        "\"is_noun_association_unchanged\":%s,"
-        "\"is_resource_name_copy_atomic\":null,\"is_holder_aba_excluded\":null,"
-        "\"is_normal_return_observed\":%s,\"is_result_nonzero\":%s,"
-        "\"is_call_limit_reached\":%s,\"call_limit\":4096,"
-        "\"is_input_copy_atomic\":null,\"is_reentrancy_excluded\":null,"
-        "\"trace_write_status\":0,\"ring_append_status\":%d,"
-        "\"is_ring_retention_complete\":null,"
-        "\"recorder_loss_flags\":\"0x%08lx\"}\r\n",
-        (unsigned long long)now, phase, (unsigned long)GetCurrentThreadId(),
-        (unsigned long)InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0),
-        ordinal_json, req->RawMarkerSetReference, req->EntryOrdinal, input_json,
-        req->IsCopyAttempted ? "true" : "false",
-        req->IsInputCopyAvailable ? "true" : "false",
-        req->CopyByteCount, req->CopyError, name_jsons[0], name_jsons[1],
-        req->IsNounAssociationRecheckAttempted ? "true" : "false",
-        req->IsNounAssociationRecheckAvailable ? "true" : "false",
-        req->IsNounAssociationRecheckAvailable ?
-            (req->IsNounAssociationUnchanged ? "true" : "false") : "null",
-        normal_return, result_nonzero,
-        is_limit ? "true" : "false", recorded == NULL ? 2 : 0,
-        (unsigned long)loss_flags);
-    if (length <= 0 || (size_t)length >= sizeof(line)) {
-        InterlockedOr(&recorder_loss_flags, 8);
-        if (recorded != NULL && !HeapFree(GetProcessHeap(), 0, recorded)) {
-            InterlockedOr(&recorder_loss_flags, 16);
-        }
-        SetLastError(last_error);
-        return;
-    }
-    if (trace_file != INVALID_HANDLE_VALUE && trace_lock_ready) {
-        EnterCriticalSection(&trace_lock);
-        is_written = WriteFile(trace_file, line, (DWORD)length, &written, NULL);
-        LeaveCriticalSection(&trace_lock);
-        if (!is_written || written != (DWORD)length) {
-            InterlockedOr(&recorder_loss_flags, 2);
-        }
-    }
-    if (recorded == NULL) {
-        SetLastError(last_error);
-        return;
-    }
-    status_field = strstr(line, "\"trace_write_status\":0");
-    status_field[strlen("\"trace_write_status\":")] =
-        is_written && written == (DWORD)length ? '1' : '2';
-    status_field = strstr(line, "\"ring_append_status\":0");
-    status_field[strlen("\"ring_append_status\":")] = '1';
-    loss_field = strstr(line, "\"recorder_loss_flags\":\"0x");
-    loss_offset = (size_t)(loss_field - line) +
-        strlen("\"recorder_loss_flags\":\"0x");
-    recorded->next = NULL;
-    recorded->time_ms = now;
-    recorded->size = (unsigned int)length;
-    memcpy(recorded->contents, line, (size_t)length);
-    AcquireSRWLockExclusive(&snapshot_ring_lock);
-    if (snapshot_ring_tail == NULL) {
-        snapshot_ring_head = recorded;
-    } else {
-        snapshot_ring_tail->next = recorded;
-    }
-    snapshot_ring_tail = recorded;
-    snapshot_ring_byte_count += (size_t)length;
-    while (snapshot_ring_head != NULL &&
-        (snapshot_ring_byte_count > maximum_bytes ||
-         now - snapshot_ring_head->time_ms > maximum_age_ms)) {
-        snapshot_line* removed = snapshot_ring_head;
-        int is_capacity_drop = snapshot_ring_byte_count > maximum_bytes;
-        snapshot_ring_head = removed->next;
-        snapshot_ring_byte_count -= removed->size;
-        if (is_capacity_drop) {
-            snapshot_ring_capacity_dropped_line_count++;
-            snapshot_ring_capacity_dropped_byte_count += removed->size;
-            snapshot_ring_capacity_last_dropped_time_ms = removed->time_ms;
-        }
-        if (!HeapFree(GetProcessHeap(), 0, removed)) {
-            InterlockedOr(&recorder_loss_flags, 16);
-        }
-    }
-    loss_flags = InterlockedCompareExchange(&recorder_loss_flags, 0, 0);
-    snprintf(loss_digits, sizeof(loss_digits), "%08lx", (unsigned long)loss_flags);
-    memcpy(recorded->contents + loss_offset, loss_digits, 8);
-    ReleaseSRWLockExclusive(&snapshot_ring_lock);
-    SetLastError(last_error);
-}
-
-void trace_scenario_alternate_selection(const ScenarioAlternateSelectionEvent* req) {
-    const size_t maximum_bytes = 64u * 1024u * 1024u;
-    const ULONGLONG maximum_age_ms = 300000;
-    // Sticky loss bits: unavailable trace, failed/short write, ring allocation,
-    // formatting, failed ring-node free; bit32 adds a saved-state-only bypass.
-    // They never wrap or affect the callee.
-    static volatile LONG recorder_loss_flags;
-    DWORD last_error = GetLastError();
-    char line[3072];
-    char input[384];
-    char name_jsons[2][512];
-    char quoted_name[66];
-    char call_ordinal[16];
-    char loss_digits[9];
-    const char* phase;
-    const char* input_json = "null";
-    const char* normal_return = "null";
-    const char* ordinal_json = "null";
-    char* status_field;
-    char* loss_field;
-    snapshot_line* recorded;
-    ULONGLONG now;
-    DWORD written = 0;
-    BOOL is_written = FALSE;
-    LONG loss_flags;
-    int length;
-    int is_limit;
-    size_t loss_offset;
-    unsigned int name_index;
-    const ScenarioPrimaryResourceNameCopy* name_copies[2];
-    static const char* name_failures[] = {
-        "none", "holder_word_unreadable", "name_address_zero",
-        "name_bytes_unreadable", "holder_recheck_unreadable",
-        "holder_word_changed", "name_unterminated", "name_empty",
-        "name_non_ascii", "name_unexpected", "entry_copy_unavailable",
-        "entry_noun_recheck_unreadable", "entry_noun_changed"
-    };
-    if (req == NULL) {
-        return;
-    }
-    InterlockedOr(&recorder_loss_flags, (LONG)req->LossFlags);
-    is_limit = req->Phase == SCENARIO_ALTERNATE_LIMIT;
-    if (req->Phase == SCENARIO_ALTERNATE_ENTRY) {
-        phase = "entry";
-    } else if (req->Phase == SCENARIO_ALTERNATE_NORMAL_RETURN) {
-        phase = "normal_return";
-        normal_return = "true";
-    } else if (is_limit) {
-        phase = "limit";
-    } else {
-        InterlockedOr(&recorder_loss_flags, 8);
-        SetLastError(last_error);
-        return;
-    }
-    if (!is_limit) {
-        snprintf(call_ordinal, sizeof(call_ordinal), "%u", req->CallOrdinal);
-        ordinal_json = call_ordinal;
-    }
-    if (req->Input.IsInputCopyAvailable) {
-        length = snprintf(input, sizeof(input),
-            "{\"marker_id\":%u,\"raw_noun_reference\":%u,"
-            "\"position_bits\":[%u,%u,%u],\"rotation_bits\":[%u,%u,%u],"
-            "\"scale_bits\":%u}",
-            req->Input.MarkerID, req->Input.RawNounReference,
-            req->Input.PositionBits[0], req->Input.PositionBits[1], req->Input.PositionBits[2],
-            req->Input.RotationBits[0], req->Input.RotationBits[1], req->Input.RotationBits[2],
-            req->Input.ScaleBits);
-        if (length <= 0 || (size_t)length >= sizeof(input)) {
-            InterlockedOr(&recorder_loss_flags, 8);
-            SetLastError(last_error);
-            return;
-        }
-        input_json = input;
-    }
-    name_copies[0] = &req->Input.MarkerSetName;
-    name_copies[1] = &req->Input.NounName;
-    for (name_index = 0; name_index < 2; name_index++) {
-        const ScenarioPrimaryResourceNameCopy* copy = name_copies[name_index];
-        const char* name_json = "null";
-        const char* failure = "invalid_failure";
-        if (copy->Failure >= SCENARIO_PRIMARY_NAME_NONE &&
-            copy->Failure <= SCENARIO_PRIMARY_NAME_ENTRY_NOUN_CHANGED) {
-            failure = name_failures[copy->Failure];
-        }
-        if (!copy->IsCopyAttempted && copy->Failure == SCENARIO_PRIMARY_NAME_NONE) {
-            failure = "not_attempted";
-        }
-        if (copy->IsNameAvailable) {
-            // The producer accepts only the five exact ASCII asset names;
-            // their actual copied spelling contains no JSON escape characters.
-            length = snprintf(quoted_name, sizeof(quoted_name), "\"%s\"", copy->Name);
-            if (length <= 0 || (size_t)length >= sizeof(quoted_name)) {
-                InterlockedOr(&recorder_loss_flags, 8);
-                SetLastError(last_error);
-                return;
-            }
-            name_json = quoted_name;
-        }
-        length = snprintf(name_jsons[name_index], sizeof(name_jsons[name_index]),
-            "{\"name\":%s,\"is_name_available\":%s,"
-            "\"is_copy_attempted\":%s,\"is_holder_word_copied\":%s,"
-            "\"is_name_bytes_copied\":%s,\"is_holder_recheck_available\":%s,"
-            "\"is_holder_word_unchanged\":%s,\"failure_reason\":\"%s\"}",
-            name_json, copy->IsNameAvailable ? "true" : "false",
-            copy->IsCopyAttempted ? "true" : "false",
-            copy->IsHolderWordCopied ? "true" : "false",
-            copy->IsNameBytesCopied ? "true" : "false",
-            copy->IsHolderRecheckAvailable ? "true" : "false",
-            copy->IsHolderRecheckAvailable ?
-                (copy->IsHolderWordUnchanged ? "true" : "false") : "null", failure);
-        if (length <= 0 || (size_t)length >= sizeof(name_jsons[name_index])) {
-            InterlockedOr(&recorder_loss_flags, 8);
-            SetLastError(last_error);
-            return;
-        }
-    }
-    recorded = (snapshot_line*)HeapAlloc(
-        GetProcessHeap(), 0, sizeof(*recorded) - 1 + sizeof(line));
-    if (recorded == NULL) {
-        InterlockedOr(&recorder_loss_flags, 4);
-    }
-    if (trace_file == INVALID_HANDLE_VALUE || !trace_lock_ready) {
-        InterlockedOr(&recorder_loss_flags, 1);
-    }
-    loss_flags = InterlockedCompareExchange(&recorder_loss_flags, 0, 0);
-    now = GetTickCount64();
-    // Status 0 = not yet known, 1 = completed, 2 = failed/unavailable.
-    // A raw trace row cannot attest to its own completed write. The ring copy
-    // records the actual write outcome; neither row promises later retention.
-    length = snprintf(line, sizeof(line),
-        "{\"time_ms\":%llu,\"protocol\":\"client_state\","
-        "\"kind\":\"scenario_alternate_selection_call\",\"phase\":\"%s\","
-        "\"thread\":%lu,\"frame_sequence\":%lu,\"call_ordinal\":%s,"
-        "\"raw_marker_set_reference\":%u,\"entry_ordinal\":%d,"
-        "\"input_provenance\":\"pre_call\",\"input\":%s,"
-        "\"is_copy_attempted\":%s,\"is_input_copy_available\":%s,"
-        "\"copy_byte_count\":%u,\"copy_error\":%u,"
-        "\"marker_set_name\":%s,\"noun_name\":%s,"
-        "\"is_noun_association_recheck_attempted\":%s,"
-        "\"is_noun_association_recheck_available\":%s,"
-        "\"is_noun_association_unchanged\":%s,"
-        "\"is_resource_name_copy_atomic\":null,\"is_holder_aba_excluded\":null,"
-        "\"is_normal_return_observed\":%s,"
-        "\"is_call_limit_reached\":%s,\"call_limit\":4096,"
-        "\"is_input_copy_atomic\":null,\"is_reentrancy_excluded\":null,"
-        "\"trace_write_status\":0,\"ring_append_status\":%d,"
-        "\"is_ring_retention_complete\":null,"
-        "\"recorder_loss_flags\":\"0x%08lx\"}\r\n",
-        (unsigned long long)now, phase, (unsigned long)GetCurrentThreadId(),
-        (unsigned long)InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0),
-        ordinal_json, req->RawMarkerSetReference, req->EntryOrdinal, input_json,
-        req->Input.IsCopyAttempted ? "true" : "false",
-        req->Input.IsInputCopyAvailable ? "true" : "false",
-        req->Input.CopyByteCount, req->Input.CopyError, name_jsons[0], name_jsons[1],
-        req->Input.IsNounAssociationRecheckAttempted ? "true" : "false",
-        req->Input.IsNounAssociationRecheckAvailable ? "true" : "false",
-        req->Input.IsNounAssociationRecheckAvailable ?
-            (req->Input.IsNounAssociationUnchanged ? "true" : "false") : "null",
-        normal_return,
-        is_limit ? "true" : "false", recorded == NULL ? 2 : 0,
-        (unsigned long)loss_flags);
-    if (length <= 0 || (size_t)length >= sizeof(line)) {
-        InterlockedOr(&recorder_loss_flags, 8);
-        if (recorded != NULL && !HeapFree(GetProcessHeap(), 0, recorded)) {
-            InterlockedOr(&recorder_loss_flags, 16);
-        }
-        SetLastError(last_error);
-        return;
-    }
-    if (trace_file != INVALID_HANDLE_VALUE && trace_lock_ready) {
-        EnterCriticalSection(&trace_lock);
-        is_written = WriteFile(trace_file, line, (DWORD)length, &written, NULL);
-        LeaveCriticalSection(&trace_lock);
-        if (!is_written || written != (DWORD)length) {
-            InterlockedOr(&recorder_loss_flags, 2);
-        }
-    }
-    if (recorded == NULL) {
-        SetLastError(last_error);
-        return;
-    }
-    status_field = strstr(line, "\"trace_write_status\":0");
-    status_field[strlen("\"trace_write_status\":")] =
-        is_written && written == (DWORD)length ? '1' : '2';
-    status_field = strstr(line, "\"ring_append_status\":0");
-    status_field[strlen("\"ring_append_status\":")] = '1';
-    loss_field = strstr(line, "\"recorder_loss_flags\":\"0x");
-    loss_offset = (size_t)(loss_field - line) +
-        strlen("\"recorder_loss_flags\":\"0x");
-    recorded->next = NULL;
-    recorded->time_ms = now;
-    recorded->size = (unsigned int)length;
-    memcpy(recorded->contents, line, (size_t)length);
-    AcquireSRWLockExclusive(&snapshot_ring_lock);
-    if (snapshot_ring_tail == NULL) {
-        snapshot_ring_head = recorded;
-    } else {
-        snapshot_ring_tail->next = recorded;
-    }
-    snapshot_ring_tail = recorded;
-    snapshot_ring_byte_count += (size_t)length;
-    while (snapshot_ring_head != NULL &&
-        (snapshot_ring_byte_count > maximum_bytes ||
-         now - snapshot_ring_head->time_ms > maximum_age_ms)) {
-        snapshot_line* removed = snapshot_ring_head;
-        int is_capacity_drop = snapshot_ring_byte_count > maximum_bytes;
-        snapshot_ring_head = removed->next;
-        snapshot_ring_byte_count -= removed->size;
-        if (is_capacity_drop) {
-            snapshot_ring_capacity_dropped_line_count++;
-            snapshot_ring_capacity_dropped_byte_count += removed->size;
-            snapshot_ring_capacity_last_dropped_time_ms = removed->time_ms;
-        }
-        if (!HeapFree(GetProcessHeap(), 0, removed)) {
-            InterlockedOr(&recorder_loss_flags, 16);
-        }
-    }
-    loss_flags = InterlockedCompareExchange(&recorder_loss_flags, 0, 0);
-    snprintf(loss_digits, sizeof(loss_digits), "%08lx", (unsigned long)loss_flags);
-    memcpy(recorded->contents + loss_offset, loss_digits, 8);
-    ReleaseSRWLockExclusive(&snapshot_ring_lock);
-    SetLastError(last_error);
-}
-
-void trace_scenario_marker_mask(const ScenarioMarkerMaskObservation* req) {
-    const size_t maximum_bytes = 64u * 1024u * 1024u;
-    const ULONGLONG maximum_age_ms = 300000;
-    // Independent sticky loss: unavailable1/write2/allocation4/format8/free16,
-    // plus saved-state bypass32. No record attests to exhaustive retention.
-    static volatile LONG recorder_loss_flags;
-    DWORD last_error = GetLastError();
-    char line[768], digits[5][16], loss_digits[9], position_digits[35];
-    const char* position_bits = "null";
-    int digit_lengths[5];
-    unsigned int digit_index;
-    const char* phase;
-    const char* normal_return = "null";
-    const char* failure;
-    static const char* failures[] = {
-        "none", "entry_null", "address_range", "read_failed", "short_read"
-    };
-    snapshot_line* recorded;
-    char* write_field;
-    char* append_field;
-    char* loss_field;
-    size_t loss_offset;
-    ULONGLONG now;
-    DWORD written = 0;
-    BOOL is_written = FALSE;
-    LONG loss_flags;
-    int length;
-    int is_limit;
-    if (req == NULL) {
-        SetLastError(last_error);
-        return;
-    }
-    InterlockedOr(&recorder_loss_flags, (LONG)req->LossFlags);
-    is_limit = req->Phase == SCENARIO_MARKER_MASK_LIMIT;
-    if (req->Phase == SCENARIO_MARKER_MASK_ENTRY) {
-        phase = "entry";
-    } else if (req->Phase == SCENARIO_MARKER_MASK_NORMAL_RETURN) {
-        phase = "normal_return";
-        normal_return = "true";
-    } else if (is_limit) {
-        phase = "limit";
-    } else {
-        InterlockedOr(&recorder_loss_flags, 8);
-        SetLastError(last_error);
-        return;
-    }
-    if (req->CopyFailure < SCENARIO_MARKER_COPY_NONE ||
-        req->CopyFailure > SCENARIO_MARKER_COPY_SHORT_READ ||
-        (is_limit && (req->CallOrdinal != 0 || req->IsCopyAttempted ||
-            req->IsMarkerIDAvailable || req->IsPositionAvailable)) ||
-        (!is_limit && (req->CallOrdinal == 0 || req->CallOrdinal > 4096)) ||
-        req->IsPositionAvailable != req->IsMarkerIDAvailable ||
-        (req->IsMarkerIDAvailable && (!req->IsCopyAttempted ||
-            req->CopyFailure != SCENARIO_MARKER_COPY_NONE || req->CopyByteCount != 36))) {
-        InterlockedOr(&recorder_loss_flags, 8);
-        SetLastError(last_error);
-        return;
-    }
-    failure = failures[req->CopyFailure];
-    if (!req->IsCopyAttempted && req->CopyFailure == SCENARIO_MARKER_COPY_NONE) {
-        failure = "not_attempted";
-    }
-    digit_lengths[0] = snprintf(digits[0], sizeof(digits[0]), "%u", (unsigned int)req->CallOrdinal);
-    digit_lengths[1] = snprintf(digits[1], sizeof(digits[1]), "%u", (unsigned int)req->MarkerID);
-    digit_lengths[2] = snprintf(digits[2], sizeof(digits[2]), "%u", (unsigned int)req->RawMask);
-    digit_lengths[3] = snprintf(digits[3], sizeof(digits[3]), "%u", (unsigned int)req->CopyByteCount);
-    digit_lengths[4] = snprintf(digits[4], sizeof(digits[4]), "%u", (unsigned int)req->CopyError);
-    for (digit_index = 0; digit_index < 5; digit_index++) {
-        if (digit_lengths[digit_index] <= 0 || (size_t)digit_lengths[digit_index] >= sizeof(digits[0])) {
-            InterlockedOr(&recorder_loss_flags, 8);
-            SetLastError(last_error);
-            return;
-        }
-    }
-    if (req->IsPositionAvailable) {
-        length = snprintf(position_digits, sizeof(position_digits), "[%u,%u,%u]",
-            (unsigned int)req->PositionBits[0], (unsigned int)req->PositionBits[1],
-            (unsigned int)req->PositionBits[2]);
-        if (length <= 0 || (size_t)length >= sizeof(position_digits)) {
-            InterlockedOr(&recorder_loss_flags, 8);
-            SetLastError(last_error);
-            return;
-        }
-        position_bits = position_digits;
-    }
-    recorded = (snapshot_line*)HeapAlloc(
-        GetProcessHeap(), 0, sizeof(*recorded) - 1 + sizeof(line));
-    if (recorded == NULL) {
-        InterlockedOr(&recorder_loss_flags, 4);
-    }
-    if (trace_file == INVALID_HANDLE_VALUE || !trace_lock_ready) {
-        InterlockedOr(&recorder_loss_flags, 1);
-    }
-    loss_flags = InterlockedCompareExchange(&recorder_loss_flags, 0, 0);
-    now = GetTickCount64();
-    // Raw own write/append starts unknown0; only the later ring copy can
-    // describe actual completed write/append, without a retention promise.
-    length = snprintf(line, sizeof(line),
-        "{\"time_ms\":%llu,\"protocol\":\"client_state\","
-        "\"kind\":\"scenario_marker_mask_call\",\"phase\":\"%s\","
-        "\"thread\":%lu,\"frame_sequence\":%lu,\"call_ordinal\":%s,"
-        "\"marker_id\":%s,\"raw_mask\":%s,\"input_provenance\":\"pre_call\","
-        "\"is_copy_attempted\":%s,\"is_marker_id_available\":%s,"
-        "\"is_position_available\":%s,\"authored_position_bits\":%s,"
-        "\"copy_byte_count\":%s,\"copy_error\":%s,\"copy_failure\":\"%s\","
-        "\"is_normal_return_observed\":%s,\"is_call_limit_reached\":%s,"
-        "\"call_limit\":4096,\"is_input_copy_atomic\":null,"
-        "\"is_reentrancy_excluded\":null,\"trace_write_status\":0,"
-        "\"ring_append_status\":%d,\"is_ring_retention_complete\":null,"
-        "\"recorder_loss_flags\":\"0x%08lx\"}\r\n",
-        (unsigned long long)now, phase, (unsigned long)GetCurrentThreadId(),
-        (unsigned long)InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0),
-        is_limit ? "null" : digits[0], req->IsMarkerIDAvailable ? digits[1] : "null",
-        req->Phase == SCENARIO_MARKER_MASK_NORMAL_RETURN ? digits[2] : "null",
-        req->IsCopyAttempted ? "true" : "false", req->IsMarkerIDAvailable ? "true" : "false",
-        req->IsPositionAvailable ? "true" : "false", position_bits,
-        req->IsCopyAttempted ? digits[3] : "null",
-        req->CopyFailure == SCENARIO_MARKER_COPY_READ_FAILED ? digits[4] : "null",
-        failure, normal_return, is_limit ? "true" : "false", recorded == NULL ? 2 : 0,
-        (unsigned long)loss_flags);
-    if (length <= 0 || (size_t)length >= sizeof(line)) {
-        InterlockedOr(&recorder_loss_flags, 8);
-        if (recorded != NULL && !HeapFree(GetProcessHeap(), 0, recorded)) {
-            InterlockedOr(&recorder_loss_flags, 16);
-        }
-        SetLastError(last_error);
-        return;
-    }
-    if (trace_file != INVALID_HANDLE_VALUE && trace_lock_ready) {
-        EnterCriticalSection(&trace_lock);
-        is_written = WriteFile(trace_file, line, (DWORD)length, &written, NULL);
-        LeaveCriticalSection(&trace_lock);
-        if (!is_written || written != (DWORD)length) {
-            InterlockedOr(&recorder_loss_flags, 2);
-        }
-    }
-    if (recorded == NULL) {
-        SetLastError(last_error);
-        return;
-    }
-    write_field = strstr(line, "\"trace_write_status\":0");
-    append_field = strstr(line, "\"ring_append_status\":0");
-    loss_field = strstr(line, "\"recorder_loss_flags\":\"0x");
-    if (write_field == NULL || append_field == NULL || loss_field == NULL) {
-        InterlockedOr(&recorder_loss_flags, 8);
-        if (!HeapFree(GetProcessHeap(), 0, recorded)) {
-            InterlockedOr(&recorder_loss_flags, 16);
-        }
-        SetLastError(last_error);
-        return;
-    }
-    loss_offset = (size_t)(loss_field - line) + strlen("\"recorder_loss_flags\":\"0x");
-    if (loss_offset + 8 > (size_t)length) {
-        InterlockedOr(&recorder_loss_flags, 8);
-        if (!HeapFree(GetProcessHeap(), 0, recorded)) {
-            InterlockedOr(&recorder_loss_flags, 16);
-        }
-        SetLastError(last_error);
-        return;
-    }
-    write_field[strlen("\"trace_write_status\":")] =
-        is_written && written == (DWORD)length ? '1' : '2';
-    append_field[strlen("\"ring_append_status\":")] = '1';
-    recorded->next = NULL;
-    recorded->time_ms = now;
-    recorded->size = (unsigned int)length;
-    memcpy(recorded->contents, line, (size_t)length);
-    AcquireSRWLockExclusive(&snapshot_ring_lock);
-    if (snapshot_ring_tail == NULL) {
-        snapshot_ring_head = recorded;
-    } else {
-        snapshot_ring_tail->next = recorded;
-    }
-    snapshot_ring_tail = recorded;
-    snapshot_ring_byte_count += (size_t)length;
-    while (snapshot_ring_head != NULL &&
-        (snapshot_ring_byte_count > maximum_bytes ||
-         (now >= snapshot_ring_head->time_ms &&
-          now - snapshot_ring_head->time_ms > maximum_age_ms))) {
-        snapshot_line* removed = snapshot_ring_head;
-        int is_capacity_drop = snapshot_ring_byte_count > maximum_bytes;
-        snapshot_ring_head = removed->next;
-        snapshot_ring_byte_count -= removed->size;
-        if (is_capacity_drop) {
-            snapshot_ring_capacity_dropped_line_count++;
-            snapshot_ring_capacity_dropped_byte_count += removed->size;
-            snapshot_ring_capacity_last_dropped_time_ms = removed->time_ms;
-        }
-        if (!HeapFree(GetProcessHeap(), 0, removed)) {
-            InterlockedOr(&recorder_loss_flags, 16);
-        }
-    }
-    loss_flags = InterlockedCompareExchange(&recorder_loss_flags, 0, 0);
-    length = snprintf(loss_digits, sizeof(loss_digits), "%08lx", (unsigned long)loss_flags);
-    if (length == 8) {
-        memcpy(recorded->contents + loss_offset, loss_digits, 8);
-    } else {
-        InterlockedOr(&recorder_loss_flags, 8);
-    }
-    ReleaseSRWLockExclusive(&snapshot_ring_lock);
-    SetLastError(last_error);
-}
-#endif
-
+// Reads/modifies: observes an object association and appends diagnostic records.
 static void trace_object_association(const char* kind,
     unsigned int network_object_id, unsigned int client_handle) {
     char line[384];
@@ -1143,6 +387,7 @@ static void trace_object_association(const char* kind,
     snapshot_ring_append(line, (unsigned int)length);
 }
 
+// Reads: resolves the recorded network ID for an exact client handle.
 static unsigned int mapped_network_object_id(unsigned int client_handle) {
     unsigned int slot = client_handle & 0xffffu;
     if ((unsigned int)InterlockedCompareExchange(
@@ -1153,6 +398,7 @@ static unsigned int mapped_network_object_id(unsigned int client_handle) {
         &snapshot_network_object_ids_by_slot[slot], 0, 0);
 }
 
+// Modifies: records a client/network object association and logs it.
 static void remember_object_association(
     unsigned int network_object_id, unsigned int client_handle) {
     unsigned int slot;
@@ -1166,6 +412,7 @@ static void remember_object_association(
     trace_object_association("object_association", network_object_id, client_handle);
 }
 
+// Modifies: clears matching object associations and logs their removal.
 static void forget_object_association(unsigned int network_object_id) {
     unsigned int slot;
     if (network_object_id == 0) {
@@ -1187,6 +434,7 @@ static void forget_object_association(unsigned int network_object_id) {
     }
 }
 
+// Reads/modifies: forwards the native frame update, records timing, and services enabled diagnostics.
 static float __cdecl hooked_frame_delta(void* frame) {
     float delta = original_frame_delta(frame);
     unsigned int delta_bits;
@@ -1197,6 +445,7 @@ static float __cdecl hooked_frame_delta(void* frame) {
     InterlockedExchange(&snapshot_frame_time_ms, (LONG)GetTickCount());
 #if FANG_SCENARIO
     observe_scenario_dispatch_frame();
+    fang_control_frame((uint32_t)InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0));
 #endif
     if (InterlockedCompareExchange(&snapshot_keyframe_pending, 2, 1) == 1) {
         InterlockedExchange(&snapshot_keyframe_started_time_ms, (LONG)GetTickCount());
@@ -1209,6 +458,12 @@ static float __cdecl hooked_frame_delta(void* frame) {
     }
     probe_time = GetTickCount();
     if (InterlockedCompareExchange(&snapshot_auto_probe_enabled, 0, 0) != 0 &&
+        fang_history_begin((unsigned int)InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0),
+            delta_bits, (unsigned int)InterlockedCompareExchange(&snapshot_frame_time_ms, 0, 0))) {
+        trace_snapshot_action_state();
+        fang_history_end();
+    }
+    if (InterlockedCompareExchange(&snapshot_auto_probe_enabled, 0, 0) != 0 &&
         probe_time - snapshot_last_probe_time >= 250u) {
         snapshot_last_probe_time = probe_time;
         trace_client_object_probe_registry();
@@ -1216,105 +471,185 @@ static float __cdecl hooked_frame_delta(void* frame) {
     return delta;
 }
 
+// Modifies: applies a snapshot request and updates capture state and output.
+static void apply_snapshot_control(char* contents, char* last_request) {
+    char request[256];
+    char* mode;
+    char* request_line;
+    char* buffer_line;
+    char* server_time_line;
+    unsigned int buffer_ms = 30000;
+    unsigned long long server_time_unix_nano = 0;
+    unsigned long long client_received_time_ms = 0;
+    ZeroMemory(request, sizeof(request));
+    mode = strstr(contents, "mode=");
+    if (mode != NULL) {
+        mode += 5;
+    }
+    if (mode != NULL && _strnicmp(mode, "auto", 4) == 0) {
+        InterlockedExchange(&snapshot_capture_enabled, 1);
+        InterlockedExchange(&snapshot_auto_probe_enabled, 1);
+    } else if (mode != NULL && _strnicmp(mode, "manual", 6) == 0) {
+        InterlockedExchange(&snapshot_capture_enabled, 1);
+        InterlockedExchange(&snapshot_auto_probe_enabled, 1);
+    } else if (mode != NULL && _strnicmp(mode, "off", 3) == 0) {
+        InterlockedExchange(&snapshot_auto_probe_enabled, 0);
+        if (InterlockedExchange(&snapshot_capture_enabled, 0) != 0) {
+            snapshot_ring_clear();
+        }
+    }
+    request_line = strstr(contents, "request=");
+    if (request_line != NULL) {
+        size_t request_length;
+        request_line += 8;
+        request_length = strcspn(request_line, "\r\n");
+        if (request_length >= sizeof(request)) {
+            request_length = sizeof(request) - 1;
+        }
+        memcpy(request, request_line, request_length);
+        request[request_length] = '\0';
+    }
+    buffer_line = strstr(contents, "buffer_ms=");
+    if (buffer_line != NULL) {
+        unsigned long parsed = strtoul(buffer_line + 10, NULL, 10);
+        if (parsed >= 1000 && parsed <= 300000) {
+            buffer_ms = (unsigned int)parsed;
+        }
+    }
+    server_time_line = strstr(contents, "server_time_unix_nano=");
+    if (server_time_line != NULL) {
+        server_time_unix_nano = _strtoui64(
+            server_time_line + 22, NULL, 10);
+    }
+    if (request[0] != '\0' && strcmp(request, last_request) != 0 &&
+        valid_snapshot_directory_name(request) &&
+        InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) != 0) {
+        strncpy(last_request, request, sizeof(request) - 1);
+        last_request[sizeof(request) - 1] = '\0';
+        client_received_time_ms = GetTickCount64();
+        InterlockedExchange(&snapshot_keyframe_started_time_ms, 0);
+        InterlockedExchange(&snapshot_keyframe_completed_time_ms, 0);
+        {
+            const char* keyframe_status = "unavailable";
+            if (snapshot_keyframe_event != NULL) {
+                DWORD wait_result;
+                ResetEvent(snapshot_keyframe_event);
+                InterlockedExchange(&snapshot_keyframe_pending, 1);
+                wait_result = WaitForSingleObject(snapshot_keyframe_event, 250);
+                InterlockedExchange(&snapshot_keyframe_pending, 0);
+                if (wait_result == WAIT_OBJECT_0) {
+                    keyframe_status = "complete";
+                } else if (wait_result == WAIT_TIMEOUT) {
+                    keyframe_status = "timeout";
+                } else {
+                    keyframe_status = "wait_failed";
+                }
+            }
+            fang_trace_arsenal_snapshot(executable_module);
+            snapshot_ring_marker(
+                "snapshot_boundary", request, server_time_unix_nano,
+                buffer_ms, keyframe_status, client_received_time_ms);
+        }
+        fang_client103_report(fang_history_write);
+        fang_hook_report(fang_history_write);
+        snapshot_ring_dump(request, buffer_ms);
+    }
+}
+
+// Reads/modifies: resolves the configured snapshot endpoint into the output address.
+static int snapshot_control_address(struct sockaddr_in* address) {
+    const char* port_text;
+    char* port_end;
+    unsigned long port;
+    size_t index;
+    if (strncmp(snapshot_endpoint, "127.0.0.1:", 10) != 0 ||
+        strlen(snapshot_token) != 64 || snapshot_directory[0] == '\0') {
+        return 0;
+    }
+    for (index = 0; index < 64; index++) {
+        if (!isxdigit((unsigned char)snapshot_token[index])) {
+            return 0;
+        }
+    }
+    port_text = snapshot_endpoint + 10;
+    if (*port_text == '\0') {
+        return 0;
+    }
+    for (index = 0; port_text[index] != '\0'; index++) {
+        if (port_text[index] < '0' || port_text[index] > '9') {
+            return 0;
+        }
+    }
+    port = strtoul(port_text, &port_end, 10);
+    if (*port_end != '\0' || port == 0 || port > 65535) {
+        return 0;
+    }
+    ZeroMemory(address, sizeof(*address));
+    address->sin_family = AF_INET;
+    address->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address->sin_port = htons((unsigned short)port);
+    return 1;
+}
+
+// Use unhooked Winsock exports so diagnostics never capture their own control traffic.
+// Modifies: maintains the snapshot control connection and applies incoming capture requests.
 static DWORD WINAPI watch_snapshot_control(LPVOID parameter) {
+    struct sockaddr_in address;
+    WSADATA startup;
     char last_request[256];
+    char authentication[66];
     (void)parameter;
+    if (!snapshot_control_address(&address) || !fang_network_control_is_ready()) {
+        return 0;
+    }
+    if (WSAStartup(MAKEWORD(2, 2), &startup) != 0) {
+        return 0;
+    }
     ZeroMemory(last_request, sizeof(last_request));
+    memcpy(authentication, snapshot_token, 64);
+    authentication[64] = '\n';
+    authentication[65] = '\0';
     for (;;) {
-        HANDLE control;
+        SOCKET control = fang_network_control_open(&address);
         char contents[1024];
-        char request[256];
-        char* mode;
-        char* request_line;
-        char* buffer_line;
-        char* server_time_line;
-        DWORD read_count = 0;
-        unsigned int buffer_ms = 30000;
-        unsigned long long server_time_unix_nano = 0;
-        unsigned long long client_received_time_ms = 0;
-        ZeroMemory(contents, sizeof(contents));
-        ZeroMemory(request, sizeof(request));
-        control = CreateFileA(
-            snapshot_control_path, GENERIC_READ,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-        if (control != INVALID_HANDLE_VALUE) {
-            ReadFile(control, contents, (DWORD)(sizeof(contents) - 1), &read_count, NULL);
-            CloseHandle(control);
-            if (read_count != 0) {
-                mode = strstr(contents, "mode=");
-                if (mode != NULL) {
-                    mode += 5;
+        size_t used = 0;
+        int sent = 0;
+        if (control == INVALID_SOCKET) {
+            Sleep(500);
+            continue;
+        }
+        while (sent < 65) {
+            int count = fang_network_control_send(control, authentication + sent, 65 - sent, 0);
+            if (count <= 0) {
+                break;
+            }
+            sent += count;
+        }
+        while (sent == 65) {
+            char incoming[256];
+            int index;
+            int count = fang_network_control_recv(control, incoming, sizeof(incoming), 0);
+            if (count == SOCKET_ERROR && WSAGetLastError() == WSAETIMEDOUT) {
+                continue;
+            }
+            if (count <= 0) {
+                break;
+            }
+            for (index = 0; index < count; index++) {
+                if (used >= sizeof(contents) - 1) {
+                    sent = 0;
+                    break;
                 }
-                if (mode != NULL && _strnicmp(mode, "auto", 4) == 0) {
-                    InterlockedExchange(&snapshot_capture_enabled, 1);
-                    InterlockedExchange(&snapshot_auto_probe_enabled, 1);
-                } else if (mode != NULL && _strnicmp(mode, "manual", 6) == 0) {
-                    InterlockedExchange(&snapshot_capture_enabled, 1);
-                    InterlockedExchange(&snapshot_auto_probe_enabled, 1);
-                } else if (mode != NULL && _strnicmp(mode, "off", 3) == 0) {
-                    InterlockedExchange(&snapshot_auto_probe_enabled, 0);
-                    if (InterlockedExchange(&snapshot_capture_enabled, 0) != 0) {
-                        snapshot_ring_clear();
-                    }
-                }
-                request_line = strstr(contents, "request=");
-                if (request_line != NULL) {
-                    size_t request_length;
-                    request_line += 8;
-                    request_length = strcspn(request_line, "\r\n");
-                    if (request_length >= sizeof(request)) {
-                        request_length = sizeof(request) - 1;
-                    }
-                    memcpy(request, request_line, request_length);
-                    request[request_length] = '\0';
-                }
-                buffer_line = strstr(contents, "buffer_ms=");
-                if (buffer_line != NULL) {
-                    unsigned long parsed = strtoul(buffer_line + 10, NULL, 10);
-                    if (parsed >= 1000 && parsed <= 300000) {
-                        buffer_ms = (unsigned int)parsed;
-                    }
-                }
-                server_time_line = strstr(contents, "server_time_unix_nano=");
-                if (server_time_line != NULL) {
-                    server_time_unix_nano = _strtoui64(
-                        server_time_line + 22, NULL, 10);
-                }
-                if (request[0] != '\0' && strcmp(request, last_request) != 0 &&
-                    valid_snapshot_directory_name(request) &&
-                    InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) != 0) {
-                    strncpy(last_request, request, sizeof(last_request) - 1);
-                    last_request[sizeof(last_request) - 1] = '\0';
-                    client_received_time_ms = GetTickCount64();
-                    InterlockedExchange(&snapshot_keyframe_started_time_ms, 0);
-                    InterlockedExchange(&snapshot_keyframe_completed_time_ms, 0);
-                    {
-                        const char* keyframe_status = "unavailable";
-                    if (snapshot_keyframe_event != NULL) {
-                        DWORD wait_result;
-                        ResetEvent(snapshot_keyframe_event);
-                        InterlockedExchange(&snapshot_keyframe_pending, 1);
-                        wait_result = WaitForSingleObject(snapshot_keyframe_event, 250);
-                        InterlockedExchange(&snapshot_keyframe_pending, 0);
-                        if (wait_result == WAIT_OBJECT_0) {
-                            keyframe_status = "complete";
-                        } else if (wait_result == WAIT_TIMEOUT) {
-                            keyframe_status = "timeout";
-                        } else {
-                            keyframe_status = "wait_failed";
-                        }
-                    }
-                    fang_trace_arsenal_snapshot(executable_module);
-                    snapshot_ring_marker(
-                        "snapshot_boundary", request, server_time_unix_nano,
-                        buffer_ms, keyframe_status, client_received_time_ms);
-                    }
-                    snapshot_ring_dump(request, buffer_ms);
+                contents[used++] = incoming[index];
+                if (used >= 2 && contents[used - 1] == '\n' && contents[used - 2] == '\n') {
+                    contents[used] = '\0';
+                    apply_snapshot_control(contents, last_request);
+                    used = 0;
                 }
             }
         }
-        Sleep(250);
+        fang_network_control_close(control);
+        Sleep(500);
     }
 }
 
@@ -1331,6 +666,7 @@ typedef struct mana_cost_trace {
 static mana_cost_trace traced_mana_cost[64];
 static unsigned int traced_mana_cost_count;
 
+// Reads/modifies: observes mana-cost inputs and appends diagnostic records.
 static void trace_mana_cost(void* caller, void* ability, void* actor, int rank,
     float property, float coefficient, double cost) {
     char line[512];
@@ -1342,7 +678,7 @@ static void trace_mana_cost(void* caller, void* ability, void* actor, int rank,
     if (trace_file == INVALID_HANDLE_VALUE || !trace_lock_ready) {
         return;
     }
-    caller_rva = trace_caller_rva(caller);
+    caller_rva = fang_trace_caller_rva(caller);
     if (caller_rva >= 5) {
         caller_rva -= 5;
     }
@@ -1382,6 +718,7 @@ static void trace_mana_cost(void* caller, void* ability, void* actor, int rank,
     LeaveCriticalSection(&trace_lock);
 }
 
+// Reads/modifies: forwards native mana-cost calculation and records its inputs and result.
 static double __cdecl hooked_mana_cost(void* ability, void* actor, int rank, float property) {
     void* caller = __builtin_return_address(0);
     double cost = original_mana_cost(ability, actor, rank, property);
@@ -1392,8 +729,7 @@ static double __cdecl hooked_mana_cost(void* ability, void* actor, int rank, flo
     trace_mana_cost(caller, ability, actor, rank, property, coefficient, cost);
     return cost;
 }
-static uint64_t trace_digest(const char* buffer, int length);
-static int readable_pointer(const void* pointer);
+
 
 typedef struct pending_sporenet_script {
     UINT_PTR timer;
@@ -1405,6 +741,7 @@ typedef struct pending_sporenet_script {
 static pending_sporenet_script* pending_sporenet_script_head;
 static VOID CALLBACK sporenet_script_timer_callback(HWND window, UINT message, UINT_PTR timer, DWORD time);
 
+// Reads: returns a pointer-span length capped at the supplied maximum.
 static size_t bounded_text_length(const char* begin, const char* end, size_t maximum) {
     size_t length;
     if (begin == NULL || end == NULL || end < begin) {
@@ -1414,6 +751,7 @@ static size_t bounded_text_length(const char* begin, const char* end, size_t max
     return length > maximum ? maximum : length;
 }
 
+// Reads/modifies: identifies a supported callback and writes its optional name length.
 static const char* sporenet_deferred_callback_name(void* request, size_t* name_length) {
     static const char account_callback[] = "accountinfocallback";
     static const char creature_callback[] = "spgetcreaturecallback";
@@ -1470,6 +808,7 @@ static const char* sporenet_deferred_callback_name(void* request, size_t* name_l
     return NULL;
 }
 
+// Reads: returns whether the request names the expected callback.
 static int is_sporenet_callback_matching(void* request, const char* expected) {
     const char* callback;
     const char* callback_end;
@@ -1485,6 +824,7 @@ static int is_sporenet_callback_matching(void* request, const char* expected) {
     return callback_length == expected_length && memcmp(callback, expected, expected_length) == 0;
 }
 
+// Reads: searches the native response body for the expected text.
 static int is_response_containing(void* response, const char* expected) {
     void* body_owner;
     void** response_vtable;
@@ -1514,10 +854,12 @@ static int is_response_containing(void* response, const char* expected) {
     return 0;
 }
 
+// Reads: returns whether the request supports deferred profile delivery.
 static int is_sporenet_profile_request(void* request) {
     return sporenet_deferred_callback_name(request, NULL) != NULL;
 }
 
+// Modifies: allocates and schedules a deferred native web script.
 static int queue_sporenet_static_script(void* request, const wchar_t* script) {
     pending_sporenet_script* pending;
     size_t script_length;
@@ -1552,6 +894,7 @@ static int queue_sporenet_static_script(void* request, const wchar_t* script) {
     return 1;
 }
 
+// Reads/modifies: checks account access and schedules the owned-account UI refresh.
 static int queue_owned_account_refresh(void* request, void* response) {
     static const char callback_name[] = "accountinfocallback";
     static const char online_access[] = "<grant_online_access>1</grant_online_access>";
@@ -1580,6 +923,7 @@ static int queue_owned_account_refresh(void* request, void* response) {
     return queue_sporenet_static_script(request, refresh_script);
 }
 
+// Reads/modifies: observes request/response metadata and writes callback diagnostics.
 static void trace_sporenet_callback(void* request, void* response, const char* phase) {
     const char* method;
     const char* method_end;
@@ -1613,7 +957,7 @@ static void trace_sporenet_callback(void* request, void* response, const char* p
         if (body_owner != NULL && response_vtable != NULL && response_vtable[7] != NULL) {
             body = *(const char**)((BYTE*)body_owner + 8);
             body_length = ((unsigned int (__attribute__((thiscall))*)(void*))response_vtable[7])(response);
-            body_digest = trace_digest(body, (int)body_length);
+            body_digest = fang_trace_digest(body, (int)body_length);
         }
     }
     line_length = snprintf(line, sizeof(line),
@@ -1629,6 +973,7 @@ static void trace_sporenet_callback(void* request, void* response, const char* p
     LeaveCriticalSection(&trace_lock);
 }
 
+// Reads/modifies: encodes a response into a deferred native web callback.
 static int queue_sporenet_profile_callback(void* request, void* response) {
     static const wchar_t account_prefix[] = L"try{accountinfocallback(decodeURIComponent('";
     static const wchar_t creature_prefix[] = L"spgetcreaturecallback(decodeURIComponent('";
@@ -1742,6 +1087,7 @@ static int queue_sporenet_profile_callback(void* request, void* response) {
     return 1;
 }
 
+// Modifies: removes a queued callback, executes its script, and releases its resources.
 static VOID CALLBACK sporenet_script_timer_callback(HWND window, UINT message, UINT_PTR timer, DWORD time) {
     pending_sporenet_script** link = &pending_sporenet_script_head;
     pending_sporenet_script* pending;
@@ -1759,7 +1105,7 @@ static VOID CALLBACK sporenet_script_timer_callback(HWND window, UINT message, U
     }
     *link = pending->next;
     KillTimer(NULL, timer);
-    host_vtable = readable_pointer(pending->host) ? *(void***)pending->host : NULL;
+    host_vtable = fang_readable_pointer(pending->host) ? *(void***)pending->host : NULL;
     execute_script = host_vtable == NULL ? NULL : (web_script_fn)host_vtable[16];
     if (execute_script != NULL) {
         execute_script(pending->host, pending->script);
@@ -1771,6 +1117,7 @@ static VOID CALLBACK sporenet_script_timer_callback(HWND window, UINT message, U
     HeapFree(GetProcessHeap(), 0, pending);
 }
 
+// Modifies: dispatches or defers native web callbacks and updates token-login completion.
 static void FANG_THISCALL hooked_sporenet_callback(void* request, void* response) {
     if (is_sporenet_callback_matching(request, "accountinfocallback")) {
         int is_profile_queued;
@@ -1801,7 +1148,9 @@ static void FANG_THISCALL hooked_sporenet_callback(void* request, void* response
     trace_sporenet_callback(request, response, "returned");
 }
 static VOID CALLBACK jwt_login_timer_callback(HWND window, UINT message, UINT_PTR timer, DWORD time);
+static VOID CALLBACK jwt_login_ui_callback(HWND window, UINT message, UINT_PTR timer, DWORD time);
 
+// Modifies: writes the account-profile callback timeout result for the launcher.
 static int write_login_failure_result(void) {
     char temporary_path[2100];
     char document[768];
@@ -1820,7 +1169,7 @@ static int write_login_failure_result(void) {
     document_length = snprintf(document, sizeof(document),
         "{\"pid\":%lu,\"launch_id\":\"%s\",\"stage\":\"account-profile\","
         "\"reason\":\"client-callback-timeout\","
-        "\"message\":\"Game received the account response but did not finish loading it.\","
+        "\"message\":\"The game did not finish signing in. Check your connection and try again from Darkspinner.\","
         "\"time_ms\":%lu}\r\n",
         (unsigned long)GetCurrentProcessId(), client_launch_id, (unsigned long)GetTickCount());
     if (document_length <= 0 || document_length >= (int)sizeof(document)) {
@@ -1846,9 +1195,10 @@ static int write_login_failure_result(void) {
     return 1;
 }
 
+// Modifies: watches login progress, writes timeout failure, and may terminate the production client.
 static DWORD WINAPI jwt_login_watchdog_thread(LPVOID parameter) {
     (void)parameter;
-    Sleep(30000);
+    Sleep(jwt_login_timeout_milliseconds);
     if (InterlockedCompareExchange(&jwt_login_completed, 0, 0) != 0) {
         return 0;
     }
@@ -1858,12 +1208,13 @@ static DWORD WINAPI jwt_login_watchdog_thread(LPVOID parameter) {
 #else
     trace_client_state("jwt_login_watchdog_expired", 1);
     if (write_login_failure_result()) {
-        ExitProcess(0xD15C0001u);
+        fang_login_terminate(0xD15C0001u);
     }
     return 0;
 #endif
 }
 
+// Modifies: starts the token-login watchdog once.
 static void start_jwt_login_watchdog(void) {
     HANDLE thread;
     if (client_result_path[0] == '\0' ||
@@ -1879,6 +1230,7 @@ static void start_jwt_login_watchdog(void) {
     CloseHandle(thread);
 }
 
+// Modifies: creates or initializes the native chat controller and tracks its lifetime.
 static void prepare_chat_ui(void) {
     void* chat = original_chat_lookup();
     if (chat == NULL) {
@@ -1908,6 +1260,7 @@ static void prepare_chat_ui(void) {
     trace_client_state("chat_initialize", 1);
 }
 
+// Modifies: initializes, shows, and opens the native chat interface.
 static int open_chat_ui(void) {
     void* chat;
     prepare_chat_ui();
@@ -1921,11 +1274,13 @@ static int open_chat_ui(void) {
         original_chat_show(chat, 1);
         trace_client_state("chat_gameplay_show", *((const BYTE*)chat + 41));
     }
-    original_chat_open(chat, 0x10000009);
+    /* A normal open keeps Lobby; 0x10000009 is native reply-to-whisper. */
+    original_chat_open(chat, 0);
     trace_client_state("chat_open", 1);
     return 1;
 }
 
+// Modifies: clears the native pending movement, ability, and auxiliary action markers.
 static unsigned int clear_pending_action_descriptors(void) {
     BYTE* movement;
     BYTE* ability;
@@ -1937,21 +1292,22 @@ static unsigned int clear_pending_action_descriptors(void) {
     movement = (BYTE*)executable_module + PENDING_MOVEMENT_ACTIVE_RVA;
     ability = (BYTE*)executable_module + PENDING_ABILITY_ACTIVE_RVA;
     auxiliary = (BYTE*)executable_module + PENDING_AUXILIARY_ACTIVE_RVA;
-    if (readable_pointer(movement)) {
+    if (fang_readable_pointer(movement)) {
         *movement = 0;
         cleared |= 1;
     }
-    if (readable_pointer(ability)) {
+    if (fang_readable_pointer(ability)) {
         *ability = 0;
         cleared |= 2;
     }
-    if (readable_pointer(auxiliary)) {
+    if (fang_readable_pointer(auxiliary)) {
         *auxiliary = 0;
         cleared |= 4;
     }
     return cleared;
 }
 
+// Modifies: resets native input action intent after validating its memory span.
 static int clear_input_action_intent(void) {
     BYTE* input;
     if (executable_module == NULL) {
@@ -1972,6 +1328,7 @@ static int clear_input_action_intent(void) {
     return 1;
 }
 
+// Reads/modifies: observes native action intent and writes boundary diagnostics.
 static void trace_input_action_state(const char* boundary) {
     const BYTE* input;
     const BYTE* movement;
@@ -2018,7 +1375,7 @@ static void trace_input_action_state(const char* boundary) {
         trace_client_state("pending_auxiliary_sync", auxiliary[2]);
         trace_client_state("pending_auxiliary_type", *(const unsigned int*)(auxiliary + 4));
     }
-    if (readable_pointer(next_token)) {
+    if (fang_readable_pointer(next_token)) {
         trace_client_state("action_next_token", *next_token);
     }
     if (readable_range(last_user_data, 4)) {
@@ -2026,6 +1383,7 @@ static void trace_input_action_state(const char* boundary) {
     }
 }
 
+// Reads/modifies: observes ability and input state and writes snapshot diagnostics.
 static void trace_snapshot_action_state(void) {
     const BYTE* state;
     const BYTE* player;
@@ -2071,11 +1429,12 @@ static void trace_snapshot_action_state(void) {
     }
 }
 
+// Modifies: clears pending native actions and resets combat input ownership.
 static unsigned int reset_combat_input_state(void) {
     void* state = original_combat_input_state != NULL ? original_combat_input_state() : NULL;
     trace_input_action_state("input_action_reset_before");
-    if (original_combat_input_reset == NULL || !readable_pointer(state) ||
-        !readable_pointer((const BYTE*)state + 584)) {
+    if (original_combat_input_reset == NULL || !fang_readable_pointer(state) ||
+        !fang_readable_pointer((const BYTE*)state + 584)) {
         return 0;
     }
     original_combat_input_reset(state);
@@ -2089,8 +1448,18 @@ static unsigned int reset_combat_input_state(void) {
     }
 }
 
+// Modifies: dispatches native window input and applies the existing chat and input compatibility paths.
 static LRESULT CALLBACK hooked_game_wndproc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     static const UINT_PTR chat_timer = 0xD45C;
+#if FANG_SCENARIO
+    /* Scenario input must traverse the installed compatibility handler too,
+     * including ordinary Enter-to-open-chat behavior. Synthetic input messages
+     * are not the private wake message, so they fall through the control probe. */
+    if (fang_control_window_message(window, message, wparam, lparam, hooked_game_wndproc)) return 0;
+#endif
+    if (InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) != 0) {
+        fang_history_input(message, wparam);
+    }
     if (message == WM_KEYDOWN && (wparam == 'V' || wparam == 'v') &&
         (GetKeyState(VK_CONTROL) & 0x8000) != 0) {
         void* chat = original_chat_lookup();
@@ -2144,10 +1513,14 @@ static LRESULT CALLBACK hooked_game_wndproc(HWND window, UINT message, WPARAM wp
     return CallWindowProcA(original_game_wndproc, window, message, wparam, lparam);
 }
 
+// Modifies: replaces the game window procedure once and retains its native predecessor.
 static void install_chat_wndproc(HWND window) {
     WNDPROC current = (WNDPROC)GetWindowLongPtrA(window, GWLP_WNDPROC);
     if (current == hooked_game_wndproc) {
         chat_game_window = window;
+#if FANG_SCENARIO
+        fang_control_window_attach(window);
+#endif
         return;
     }
     original_game_wndproc = current;
@@ -2158,9 +1531,13 @@ static void install_chat_wndproc(HWND window) {
         return;
     }
     chat_game_window = window;
+#if FANG_SCENARIO
+    fang_control_window_attach(window);
+#endif
     trace_client_state("chat_wndproc", 1);
 }
 
+// Reads/modifies: polls chat key state and opens native chat on the selected key edge.
 static DWORD WINAPI poll_chat_key(LPVOID parameter) {
     LONG is_return_down = 0;
     (void)parameter;
@@ -2184,6 +1561,7 @@ static DWORD WINAPI poll_chat_key(LPVOID parameter) {
     }
 }
 
+// Reads/modifies: forwards native local events and records their identifiers.
 static void hooked_local_event(unsigned int event_id, void* event) {
     if (event_id == 0x615F3861 && event != NULL) {
         const unsigned char* value = (const unsigned char*)event;
@@ -2195,6 +1573,7 @@ static void hooked_local_event(unsigned int event_id, void* event) {
     original_local_event(event_id, event);
 }
 
+// Reads/modifies: delegates native loot conversion and logs the loot fields and conversion result.
 static unsigned char hooked_loot_convert(void* output, const void* loot,
     int is_local, int unknown) {
     if (loot != NULL) {
@@ -2213,6 +1592,7 @@ static unsigned char hooked_loot_convert(void* output, const void* loot,
     return result;
 }
 
+// Reads/modifies: delegates native loot formatting into the supplied output and logs the result.
 static unsigned char hooked_loot_format(void* output, const void* loot,
     int is_local, int unknown) {
     unsigned char result = original_loot_format(output, loot, is_local, unknown);
@@ -2220,6 +1600,7 @@ static unsigned char hooked_loot_format(void* output, const void* loot,
     return result;
 }
 
+// Reads/modifies: delegates resource lookup into the supplied output and logs the resolved loot resource.
 static void* hooked_loot_resource_lookup(void* asset, void* output) {
     void* result = original_creature_nested_lookup(asset, output);
     trace_client_state("loot_resource_arg0", (unsigned int)(uintptr_t)asset);
@@ -2233,6 +1614,7 @@ static int trace_xp_threshold_values(const unsigned int* begin, size_t count);
 static int trace_xp_thresholds(void);
 static int trace_xp_thresholds_from_resource(void);
 
+// Reads/modifies: queries native ability availability and records the result.
 static unsigned char __cdecl hooked_ability_blink_play_available(void* player, int ability_index) {
     unsigned char is_available = original_ability_available(player, ability_index);
     trace_client_state("ability_blink_play_call",
@@ -2240,6 +1622,7 @@ static unsigned char __cdecl hooked_ability_blink_play_available(void* player, i
     return is_available;
 }
 
+// Reads/modifies: queries native ability stop availability and records the result.
 static unsigned char __cdecl hooked_ability_blink_stop_available(void* player, int ability_index) {
     unsigned char is_available = original_ability_available(player, ability_index);
     trace_client_state("ability_blink_stop_call",
@@ -2247,13 +1630,14 @@ static unsigned char __cdecl hooked_ability_blink_stop_available(void* player, i
     return is_available;
 }
 
+// Reads/modifies: samples delayed ability availability and writes diagnostics.
 static DWORD WINAPI trace_ability_blink_later(LPVOID parameter) {
     BYTE* hud;
     unsigned int value = 0;
     (void)parameter;
     Sleep(2200);
     hud = (BYTE*)original_ability_hud();
-    if (readable_pointer(hud)) {
+    if (fang_readable_pointer(hud)) {
         value = (unsigned int)hud[2 + 0x0D] | ((unsigned int)hud[2 + 0x16] << 8);
     }
     trace_client_state("ability_blink_observe", value);
@@ -2262,9 +1646,11 @@ static DWORD WINAPI trace_ability_blink_later(LPVOID parameter) {
 }
 
 #if defined(__GNUC__)
+// Reads/modifies: forwards native cooldown application and records cooldown timing.
 static void __attribute__((fastcall)) hooked_cooldown_apply(void* object, void* ignored,
     uint64_t ability_key, int64_t duration, int64_t source_start, int64_t global_cooldown) {
 #else
+// Reads/modifies: forwards native cooldown application and records cooldown timing.
 static void __fastcall hooked_cooldown_apply(void* object, void* ignored,
     uint64_t ability_key, int64_t duration, int64_t source_start, int64_t global_cooldown) {
 #endif
@@ -2289,17 +1675,17 @@ static void __fastcall hooked_cooldown_apply(void* object, void* ignored,
     now = original_game_clock_now(original_game_clock_owner());
     original_cooldown_apply(object, ability_key, duration, source_start, global_cooldown);
     entry = original_cooldown_lookup((BYTE*)object + 0x54, &ability_key);
-    if (readable_pointer(entry)) {
+    if (fang_readable_pointer(entry)) {
         start = *(const uint64_t*)entry;
         end = *(const uint64_t*)((const BYTE*)entry + 8);
         is_active = *((const BYTE*)entry + 16);
     }
     clock_root = original_clock_root();
     clock_owner = original_clock_state(clock_root);
-    if (readable_pointer(clock_owner) && readable_pointer(*(void**)clock_owner)) {
+    if (fang_readable_pointer(clock_owner) && fang_readable_pointer(*(void**)clock_owner)) {
         clock_state = (const BYTE*)(*(void**)clock_owner) + 0x30;
     }
-    if (readable_pointer(clock_state)) {
+    if (fang_readable_pointer(clock_state)) {
         remote_current = *(const uint64_t*)(clock_state + 0x00);
         remote_origin = *(const uint64_t*)(clock_state + 0x08);
         local_origin = *(const uint64_t*)(clock_state + 0x10);
@@ -2333,293 +1719,7 @@ static void __fastcall hooked_cooldown_apply(void* object, void* ignored,
     LeaveCriticalSection(&trace_lock);
 }
 
-static void encode_hex(char* destination, const BYTE* data, unsigned int size) {
-    static const char hexadecimal[] = "0123456789abcdef";
-    unsigned int index;
-    for (index = 0; index < size; index++) {
-        BYTE value = data[index];
-        destination[index * 2] = hexadecimal[value >> 4];
-        destination[index * 2 + 1] = hexadecimal[value & 0x0f];
-    }
-}
-
-static void snapshot_ring_append(const char* contents, unsigned int size) {
-    const size_t maximum_bytes = 64u * 1024u * 1024u;
-    const ULONGLONG maximum_age_ms = 300000;
-    snapshot_line* line;
-    ULONGLONG now;
-    if (contents == NULL || size == 0 || size > maximum_bytes) {
-        return;
-    }
-    line = (snapshot_line*)HeapAlloc(
-        GetProcessHeap(), 0, sizeof(*line) - 1 + size);
-    if (line == NULL) {
-        return;
-    }
-    now = GetTickCount64();
-    line->next = NULL;
-    line->time_ms = now;
-    line->size = size;
-    memcpy(line->contents, contents, size);
-    AcquireSRWLockExclusive(&snapshot_ring_lock);
-    if (snapshot_ring_tail == NULL) {
-        snapshot_ring_head = line;
-    } else {
-        snapshot_ring_tail->next = line;
-    }
-    snapshot_ring_tail = line;
-    snapshot_ring_byte_count += size;
-    while (snapshot_ring_head != NULL &&
-        (snapshot_ring_byte_count > maximum_bytes ||
-         now - snapshot_ring_head->time_ms > maximum_age_ms)) {
-        snapshot_line* removed = snapshot_ring_head;
-        int is_capacity_drop = snapshot_ring_byte_count > maximum_bytes;
-        snapshot_ring_head = removed->next;
-        snapshot_ring_byte_count -= removed->size;
-        if (is_capacity_drop) {
-            snapshot_ring_capacity_dropped_line_count++;
-            snapshot_ring_capacity_dropped_byte_count += removed->size;
-            snapshot_ring_capacity_last_dropped_time_ms = removed->time_ms;
-        }
-        HeapFree(GetProcessHeap(), 0, removed);
-    }
-    if (snapshot_ring_head == NULL) {
-        snapshot_ring_tail = NULL;
-    }
-    ReleaseSRWLockExclusive(&snapshot_ring_lock);
-}
-
-static void snapshot_ring_clear(void) {
-    snapshot_line* line;
-    AcquireSRWLockExclusive(&snapshot_ring_lock);
-    line = snapshot_ring_head;
-    snapshot_ring_head = NULL;
-    snapshot_ring_tail = NULL;
-    snapshot_ring_byte_count = 0;
-    snapshot_ring_capacity_dropped_line_count = 0;
-    snapshot_ring_capacity_dropped_byte_count = 0;
-    snapshot_ring_capacity_last_dropped_time_ms = 0;
-    while (line != NULL) {
-        snapshot_line* next = line->next;
-        HeapFree(GetProcessHeap(), 0, line);
-        line = next;
-    }
-    ReleaseSRWLockExclusive(&snapshot_ring_lock);
-}
-
-static void snapshot_ring_marker(const char* kind, const char* request,
-    unsigned long long server_time_unix_nano, unsigned int buffer_ms,
-    const char* keyframe_status, unsigned long long client_received_time_ms) {
-    char line[768];
-    int length;
-    ULONGLONG oldest_time_ms = 0;
-    ULONGLONG newest_time_ms = 0;
-    ULONGLONG dropped_line_count;
-    ULONGLONG dropped_byte_count;
-    ULONGLONG last_dropped_time_ms;
-    size_t byte_count;
-    unsigned int line_count = 0;
-    snapshot_line* ring_line;
-    if (kind == NULL || request == NULL || keyframe_status == NULL) {
-        return;
-    }
-    AcquireSRWLockShared(&snapshot_ring_lock);
-    byte_count = snapshot_ring_byte_count;
-    dropped_line_count = snapshot_ring_capacity_dropped_line_count;
-    dropped_byte_count = snapshot_ring_capacity_dropped_byte_count;
-    last_dropped_time_ms = snapshot_ring_capacity_last_dropped_time_ms;
-    if (snapshot_ring_head != NULL) {
-        oldest_time_ms = snapshot_ring_head->time_ms;
-    }
-    if (snapshot_ring_tail != NULL) {
-        newest_time_ms = snapshot_ring_tail->time_ms;
-    }
-    for (ring_line = snapshot_ring_head; ring_line != NULL;
-        ring_line = ring_line->next) {
-        line_count++;
-    }
-    ReleaseSRWLockShared(&snapshot_ring_lock);
-    length = snprintf(line, sizeof(line),
-        "{\"time_ms\":%llu,\"protocol\":\"client_state\","
-        "\"kind\":\"%s\",\"thread\":%lu,\"frame_sequence\":%lu,"
-        "\"frame_delta_bits\":%lu,\"frame_time_ms\":%lu,\"request\":\"%s\","
-        "\"server_time_unix_nano\":%llu,\"ring_line_count\":%u,"
-        "\"ring_byte_count\":%llu,\"capacity_dropped_line_count\":%llu,"
-        "\"capacity_dropped_byte_count\":%llu,\"oldest_time_ms\":%llu,"
-        "\"newest_time_ms\":%llu,\"capacity_last_dropped_time_ms\":%llu,"
-        "\"buffer_ms\":%u,\"keyframe_status\":\"%s\","
-        "\"client_received_time_ms\":%llu,\"keyframe_started_time_ms\":%lu,"
-        "\"keyframe_completed_time_ms\":%lu}\r\n",
-        (unsigned long long)GetTickCount64(), kind,
-        (unsigned long)GetCurrentThreadId(),
-        (unsigned long)InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0),
-        (unsigned long)InterlockedCompareExchange(&snapshot_frame_delta_bits, 0, 0),
-        (unsigned long)InterlockedCompareExchange(&snapshot_frame_time_ms, 0, 0),
-        request, server_time_unix_nano, line_count,
-        (unsigned long long)byte_count,
-        (unsigned long long)dropped_line_count,
-        (unsigned long long)dropped_byte_count,
-        (unsigned long long)oldest_time_ms,
-        (unsigned long long)newest_time_ms,
-        (unsigned long long)last_dropped_time_ms, buffer_ms, keyframe_status,
-        client_received_time_ms,
-        (unsigned long)InterlockedCompareExchange(
-            &snapshot_keyframe_started_time_ms, 0, 0),
-        (unsigned long)InterlockedCompareExchange(
-            &snapshot_keyframe_completed_time_ms, 0, 0));
-    if (length <= 0 || (size_t)length >= sizeof(line)) {
-        return;
-    }
-    snapshot_ring_append(line, (unsigned int)length);
-}
-
-static int valid_snapshot_directory_name(const char* name) {
-    size_t index;
-    size_t length;
-    if (name == NULL) {
-        return 0;
-    }
-    length = strlen(name);
-    if (length == 0 || length >= 240) {
-        return 0;
-    }
-    for (index = 0; index < length; index++) {
-        unsigned char character = (unsigned char)name[index];
-        if (!isalnum(character) && character != '-' && character != '_' &&
-            character != '.') {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-static void snapshot_ring_dump(
-    const char* directory_name, unsigned int buffer_ms) {
-    char output_path[MAX_PATH * 4];
-    char temporary_path[MAX_PATH * 4];
-    char* separator;
-    snapshot_line* line;
-    char* contents = NULL;
-    size_t total = 0;
-    size_t offset = 0;
-    ULONGLONG now = GetTickCount64();
-    ULONGLONG cutoff = now > buffer_ms ? now - buffer_ms : 0;
-    HANDLE output;
-    int is_complete = 0;
-    int output_length;
-    int temporary_length;
-    size_t output_remaining;
-    if (!valid_snapshot_directory_name(directory_name) ||
-        snapshot_control_path[0] == '\0') {
-        return;
-    }
-    strncpy(output_path, snapshot_control_path, sizeof(output_path) - 1);
-    output_path[sizeof(output_path) - 1] = '\0';
-    separator = strrchr(output_path, '\\');
-    if (separator == NULL) {
-        separator = strrchr(output_path, '/');
-    }
-    if (separator == NULL) {
-        return;
-    }
-    separator[1] = '\0';
-    output_remaining = sizeof(output_path) -
-        (size_t)(separator + 1 - output_path);
-    output_length = snprintf(separator + 1, output_remaining,
-        "snapshots\\%s\\client-memory.jsonl", directory_name);
-    if (output_length <= 0 || (size_t)output_length >= output_remaining) {
-        return;
-    }
-    temporary_length = snprintf(
-        temporary_path, sizeof(temporary_path), "%s.tmp", output_path);
-    if (temporary_length <= 0 || (size_t)temporary_length >= sizeof(temporary_path)) {
-        return;
-    }
-    AcquireSRWLockShared(&snapshot_ring_lock);
-    for (line = snapshot_ring_head; line != NULL; line = line->next) {
-        if (line->time_ms >= cutoff) {
-            total += line->size;
-        }
-    }
-    if (total != 0) {
-        contents = (char*)HeapAlloc(GetProcessHeap(), 0, total);
-    }
-    if (total != 0 && contents != NULL) {
-        for (line = snapshot_ring_head; line != NULL; line = line->next) {
-            if (line->time_ms < cutoff) {
-                continue;
-            }
-            memcpy(contents + offset, line->contents, line->size);
-            offset += line->size;
-        }
-    }
-    ReleaseSRWLockShared(&snapshot_ring_lock);
-    if (total != 0 && contents == NULL) {
-        return;
-    }
-    output = CreateFileA(
-        temporary_path, GENERIC_WRITE, FILE_SHARE_READ,
-        NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (output != INVALID_HANDLE_VALUE) {
-        size_t written_total = 0;
-        while (written_total < total) {
-            DWORD requested = (DWORD)(total - written_total);
-            DWORD written = 0;
-            if (!WriteFile(output, contents + written_total, requested, &written, NULL) ||
-                written == 0) {
-                break;
-            }
-            written_total += written;
-        }
-        if (written_total == total && FlushFileBuffers(output)) {
-            is_complete = 1;
-        }
-        CloseHandle(output);
-    }
-    if (is_complete) {
-        if (!MoveFileExA(temporary_path, output_path,
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-            DeleteFileA(temporary_path);
-        }
-    } else {
-        DeleteFileA(temporary_path);
-    }
-    if (contents != NULL) {
-        HeapFree(GetProcessHeap(), 0, contents);
-    }
-}
-
-static void trace_hex_line(
-    const char* header, int header_length,
-    const BYTE* data, unsigned int size, const char* suffix) {
-    size_t suffix_length = strlen(suffix);
-    size_t total;
-    char* line;
-    DWORD written;
-    if (header == NULL || header_length <= 0 || data == NULL || suffix == NULL ||
-        size > (SIZE_MAX - (size_t)header_length - suffix_length) / 2) {
-        return;
-    }
-    total = (size_t)header_length + (size_t)size * 2 + suffix_length;
-    if (total > UINT_MAX) {
-        return;
-    }
-    line = (char*)HeapAlloc(GetProcessHeap(), 0, total);
-    if (line == NULL) {
-        return;
-    }
-    memcpy(line, header, (size_t)header_length);
-    encode_hex(line + header_length, data, size);
-    memcpy(line + header_length + size * 2, suffix, suffix_length);
-    if (trace_file != INVALID_HANDLE_VALUE && trace_lock_ready) {
-        EnterCriticalSection(&trace_lock);
-        WriteFile(trace_file, line, (DWORD)total, &written, NULL);
-        LeaveCriticalSection(&trace_lock);
-    }
-    snapshot_ring_append(line, (unsigned int)total);
-    HeapFree(GetProcessHeap(), 0, line);
-}
-
+// Reads/modifies: reads a received payload and appends bounded hexadecimal diagnostics.
 static void trace_client_message_payload(unsigned char id, const void* data, unsigned int size) {
     char header[320];
     const char suffix[] = "\"}\r\n";
@@ -2655,6 +1755,7 @@ static void trace_client_message_payload(unsigned char id, const void* data, uns
     HeapFree(GetProcessHeap(), 0, payload);
 }
 
+// Reads/modifies: observes received message fields and updates diagnostic object bookkeeping.
 static void trace_message_receive(unsigned char id, const void* data, unsigned int size) {
     char line[384];
     const unsigned char* byte = (const unsigned char*)data;
@@ -2706,6 +1807,7 @@ static void trace_message_receive(unsigned char id, const void* data, unsigned i
     LeaveCriticalSection(&trace_lock);
 }
 
+// Modifies: forwards native clock initialization and records the observed clock state.
 static void hooked_clock_initialize(uint64_t source_time) {
     char line[512];
     DWORD written;
@@ -2722,10 +1824,10 @@ static void hooked_clock_initialize(uint64_t source_time) {
     original_clock_initialize(source_time);
     clock_root = original_clock_root();
     clock_owner = original_clock_state(clock_root);
-    if (readable_pointer(clock_owner) && readable_pointer(*(void**)clock_owner)) {
+    if (fang_readable_pointer(clock_owner) && fang_readable_pointer(*(void**)clock_owner)) {
         clock_state = (const BYTE*)(*(void**)clock_owner) + 0x30;
     }
-    if (readable_pointer(clock_state)) {
+    if (fang_readable_pointer(clock_state)) {
         remote_current = *(const uint64_t*)(clock_state + 0x00);
         remote_origin = *(const uint64_t*)(clock_state + 0x08);
         local_origin = *(const uint64_t*)(clock_state + 0x10);
@@ -2753,6 +1855,7 @@ static void hooked_clock_initialize(uint64_t source_time) {
     LeaveCriticalSection(&trace_lock);
 }
 
+// Reads/modifies: reads player reflection metadata and writes diagnostic fields.
 static void trace_player_reflection(void) {
     const unsigned int player_type_id = 0x15FF16E2;
     reflection_lookup_fn lookup;
@@ -2771,13 +1874,13 @@ static void trace_player_reflection(void) {
     }
     lookup = (reflection_lookup_fn)((BYTE*)executable_module + 0x5EF610);
     metadata = (const unsigned char*)lookup(player_type_id);
-    if (!readable_pointer(metadata)) {
+    if (!fang_readable_pointer(metadata)) {
         trace_client_state("player_reflection_missing", player_type_id);
         return;
     }
     field = *(const unsigned char* const*)(metadata + 0x08);
     field_count = *(const unsigned int*)(metadata + 0x0C);
-    if (!readable_pointer(field) || field_count > 256) {
+    if (!fang_readable_pointer(field) || field_count > 256) {
         trace_client_state("player_reflection_invalid", field_count);
         return;
     }
@@ -2801,6 +1904,7 @@ static void trace_player_reflection(void) {
     }
 }
 
+// Reads/modifies: reads combat-text resource state and writes diagnostics.
 static void trace_combat_text_assets(void) {
     const unsigned int asset_rva[] = {
         COMBAT_TEXT_DAMAGE_RVA,
@@ -2843,6 +1947,7 @@ static void trace_combat_text_assets(void) {
     }
 }
 
+// Reads/modifies: reads native combat-text preferences and writes diagnostics.
 static void trace_combat_text_preferences(void) {
     const unsigned int preference_rva[] = {
         SHOW_DAMAGE_DONE_BY_ME_RVA,
@@ -2865,7 +1970,7 @@ static void trace_combat_text_preferences(void) {
         return;
     }
     manager = original_settings_manager();
-    if (!readable_pointer(manager)) {
+    if (!fang_readable_pointer(manager)) {
         trace_client_state("combat_text_settings_manager_missing", 1);
         return;
     }
@@ -2891,6 +1996,7 @@ static void trace_combat_text_preferences(void) {
     }
 }
 
+// Modifies: lazily allocates and stores this thread's movement trace context.
 static movement_trace_context* get_movement_trace_context(void) {
     movement_trace_context* context;
     if (movement_trace_tls_index == TLS_OUT_OF_INDEXES) {
@@ -2912,6 +2018,7 @@ static movement_trace_context* get_movement_trace_context(void) {
     return context;
 }
 
+// Reads/modifies: observes locomotion fields and writes a movement snapshot.
 static void trace_locomotion_snapshot(const char* phase,
     unsigned int object_id, const BYTE* object, const BYTE* locomotion) {
     char header[1536];
@@ -2954,6 +2061,7 @@ static void trace_locomotion_snapshot(const char* phase,
     trace_hex_line(header, length, locomotion, 440, suffix);
 }
 
+// Reads/modifies: reads validated client object spans and writes bounded diagnostics.
 static void trace_client_object_memory(
     unsigned int object_id, const BYTE* object) {
     char header[512];
@@ -2997,6 +2105,7 @@ static void trace_client_object_memory(
     trace_hex_line(header, length, object, 668, suffix);
 }
 
+// Reads/modifies: probes a client handle and records readable object state.
 static void trace_client_object_probe(
     unsigned int object_id, const BYTE* object) {
     char line[1024];
@@ -3023,7 +2132,9 @@ static void trace_client_object_probe(
         "\"sample_unix_nano\":%llu,\"position_bits\":[%u,%u,%u],"
         "\"flags\":%u,\"goal_bits\":[%u,%u,%u],"
         "\"partial_goal_bits\":[%u,%u,%u],\"target_object_id\":%u,"
-        "\"desired_stop_bits\":%u}\r\n",
+        "\"desired_stop_bits\":%u,\"graphics_component_pointer\":%u,"
+        "\"is_graphics_component_present\":%s,\"last_animation_state\":%u,"
+        "\"last_animation_play_milliseconds\":%llu}\r\n",
         (unsigned long long)GetTickCount64(),
         (unsigned long)GetCurrentThreadId(),
         (unsigned long)InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0),
@@ -3041,7 +2152,11 @@ static void trace_client_object_probe(
         *(const unsigned int*)(locomotion + 344),
         *(const unsigned int*)(locomotion + 348),
         *(const unsigned int*)(locomotion + 144),
-        *(const unsigned int*)(locomotion + 416));
+        *(const unsigned int*)(locomotion + 416),
+        *(const unsigned int*)(object + 652),
+        *(const unsigned int*)(object + 652) != 0 ? "true" : "false",
+        *(const unsigned int*)(object + 172),
+        (unsigned long long)*(const uint64_t*)(object + 184));
     if (length <= 0 || (size_t)length >= sizeof(line)) {
         return;
     }
@@ -3053,6 +2168,7 @@ static void trace_client_object_probe(
     snapshot_ring_append(line, (unsigned int)length);
 }
 
+// Reads/modifies: observes registered object probes and writes diagnostics.
 static void trace_client_object_probe_registry(void) {
     const BYTE* registry;
     const BYTE* table;
@@ -3102,6 +2218,7 @@ static void trace_client_object_probe_registry(void) {
 }
 
 #if FANG_SCENARIO
+// Reads/modifies: formats observed scenario object state into diagnostic output.
 static void trace_scenario_registry(const char* status,
     ULONGLONG started_time_ms, unsigned int object_count,
     unsigned int unreadable_slot_count, unsigned int changed_handle_count,
@@ -3119,6 +2236,7 @@ static void trace_scenario_registry(const char* status,
 }
 #endif
 
+// Reads/modifies: observes native registry entries and writes object diagnostics.
 static void trace_client_object_registry(void) {
     const BYTE* registry;
     const BYTE* table;
@@ -3202,6 +2320,7 @@ static void trace_client_object_registry(void) {
 #endif
 }
 
+// Modifies: clears the current thread's movement trace context when present.
 static void reset_movement_trace_context(void) {
     movement_trace_context* context = get_movement_trace_context();
     if (context != NULL) {
@@ -3209,6 +2328,7 @@ static void reset_movement_trace_context(void) {
     }
 }
 
+// Reads/modifies: reads the resolved movement context and records its diagnostics.
 static void trace_resolved_movement_context(const char* phase) {
     movement_trace_context* context = get_movement_trace_context();
     if (context == NULL || context->object_id == 0) {
@@ -3218,6 +2338,7 @@ static void trace_resolved_movement_context(const char* phase) {
         phase, context->object_id, context->object, context->locomotion);
 }
 
+// Reads/modifies: resolves a native object and records movement associations and context.
 static void* __cdecl hooked_movement_object_resolve(unsigned int object_id) {
     void* result = original_game_object_resolve(object_id);
     const BYTE* object;
@@ -3284,6 +2405,7 @@ static void* __cdecl hooked_movement_object_resolve(unsigned int object_id) {
     return result;
 }
 
+// Reads/modifies: forwards native player movement reception and records its context.
 static void* __stdcall hooked_player_move_receiver(void* message) {
     void* result;
     reset_movement_trace_context();
@@ -3294,6 +2416,7 @@ static void* __stdcall hooked_player_move_receiver(void* message) {
     return result;
 }
 
+// Reads/modifies: forwards native locomotion updates and records their context.
 static void* __stdcall hooked_locomotion_update_receiver(void* message) {
     void* result;
     reset_movement_trace_context();
@@ -3304,6 +2427,7 @@ static void* __stdcall hooked_locomotion_update_receiver(void* message) {
     return result;
 }
 
+// Reads/modifies: forwards native unreliable locomotion updates and records their context.
 static void* __stdcall hooked_locomotion_unreliable_receiver(void* message) {
     void* result;
     reset_movement_trace_context();
@@ -3314,6 +2438,7 @@ static void* __stdcall hooked_locomotion_unreliable_receiver(void* message) {
     return result;
 }
 
+// Reads/modifies: observes controlled-player resource updates and stores diagnostic bookkeeping.
 static void observe_controlled_resource_update(
     unsigned char id, const void* data, unsigned int size) {
     const BYTE* payload = (const BYTE*)data;
@@ -3364,9 +2489,11 @@ static void observe_controlled_resource_update(
 }
 
 #if defined(__GNUC__)
+// Modifies: constructs a native message and updates the associated receive diagnostics.
 static void* __attribute__((fastcall)) hooked_message_construct(
     void* message, void* ignored, unsigned char id, const void* data, unsigned int size) {
 #else
+// Modifies: constructs a native message and updates the associated receive diagnostics.
 static void* __fastcall hooked_message_construct(
     void* message, void* ignored, unsigned char id, const void* data, unsigned int size) {
 #endif
@@ -3388,7 +2515,7 @@ static void* __fastcall hooked_message_construct(
     if (InterlockedExchange(&action_response_trace_pending, 0) != 0 &&
         original_combat_input_state != NULL) {
         const BYTE* state = (const BYTE*)original_combat_input_state();
-        if (readable_pointer(state) && readable_pointer(state + 60)) {
+        if (fang_readable_pointer(state) && fang_readable_pointer(state + 60)) {
             trace_client_state("action_active_definition", *(const unsigned int*)(state + 4));
             trace_client_state("action_active_sync", *(const unsigned char*)(state + 8));
             trace_client_state("action_active_deadline", *(const unsigned int*)(state + 16));
@@ -3442,7 +2569,7 @@ static void* __fastcall hooked_message_construct(
         trace_combat_text_assets();
         trace_combat_text_preferences();
         const BYTE* player = (const BYTE*)original_controlled_player();
-        if (readable_pointer(player) && readable_pointer(player + 4664)) {
+        if (fang_readable_pointer(player) && fang_readable_pointer(player + 4664)) {
             unsigned int controlled_handle = *(const unsigned int*)(player + 4664);
             unsigned int controlled_object = (unsigned int)InterlockedCompareExchange(
                 &diagnostic_controlled_object_id, 0, 0);
@@ -3491,8 +2618,10 @@ typedef struct navigation_event {
 } navigation_event;
 
 #if defined(__GNUC__)
+// Modifies: forwards launcher readiness and posts the existing automatic-start continuation.
 static void __attribute__((fastcall)) hooked_launcher_ready(void* launcher, void* unused) {
 #else
+// Modifies: forwards launcher readiness and posts the existing automatic-start continuation.
 static void __fastcall hooked_launcher_ready(void* launcher, void* unused) {
 #endif
     HWND window;
@@ -3516,44 +2645,16 @@ static void __fastcall hooked_launcher_ready(void* launcher, void* unused) {
     trace_client_state("multiplayer_auto_start", is_posted != 0);
 }
 
-static int readable_pointer(const void* pointer) {
-    MEMORY_BASIC_INFORMATION information;
-    if (pointer == NULL || VirtualQuery(pointer, &information, sizeof(information)) == 0) {
-        return 0;
-    }
-    if (information.State != MEM_COMMIT) {
-        return 0;
-    }
-    if ((information.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0) {
-        return 0;
-    }
-    return 1;
-}
 
-int readable_range(const void* pointer, size_t size) {
-    MEMORY_BASIC_INFORMATION information;
-    uintptr_t start = (uintptr_t)pointer;
-    uintptr_t end;
-    uintptr_t region_end;
-    if (pointer == NULL || size == 0 || start > (uintptr_t)-1 - size) {
-        return 0;
-    }
-    if (VirtualQuery(pointer, &information, sizeof(information)) == 0 ||
-        information.State != MEM_COMMIT ||
-        (information.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0) {
-        return 0;
-    }
-    end = start + size;
-    region_end = (uintptr_t)information.BaseAddress + information.RegionSize;
-    return end <= region_end;
-}
 
+// Reads: returns whether the supplied float bit pattern is finite.
 static int finite_float_bits(const void* pointer) {
     unsigned int bits;
     memcpy(&bits, pointer, sizeof(bits));
     return (bits & 0x7F800000u) != 0x7F800000u;
 }
 
+// Reads/modifies: validates native reflection offsets and caches the preview field layout.
 static int initialize_effect_preview_offsets(void) {
     const unsigned char* metadata;
     const unsigned char* field;
@@ -3614,6 +2715,7 @@ static int initialize_effect_preview_offsets(void) {
     return 1;
 }
 
+// Modifies: clears an unsafe debug preview event and records its rejection.
 static void neutralize_debug_effect_preview(unsigned char* event, unsigned int failure) {
     if (event == NULL || !effect_preview_field.is_ready) {
         return;
@@ -3628,6 +2730,7 @@ static void neutralize_debug_effect_preview(unsigned char* event, unsigned int f
     trace_client_state("effect_preview_failure", failure);
 }
 
+// Modifies: validates preview resources, clears native attachment fields, and writes a safe event position.
 static unsigned int prepare_debug_effect_preview(unsigned char* event) {
     const unsigned char* player;
     const unsigned char* object;
@@ -3655,7 +2758,7 @@ static unsigned int prepare_debug_effect_preview(unsigned char* event) {
         return 4;
     }
     registry = original_game_object_registry();
-    if (!readable_pointer(registry)) {
+    if (!fang_readable_pointer(registry)) {
         return 5;
     }
     object = (const unsigned char*)original_game_object_lookup(registry, object_id);
@@ -3670,7 +2773,7 @@ static unsigned int prepare_debug_effect_preview(unsigned char* event) {
         return 8;
     }
     effect_system = original_effect_system();
-    if (!readable_pointer(effect_system)) {
+    if (!fang_readable_pointer(effect_system)) {
         return 9;
     }
     *(unsigned int*)(event + effect_preview_field.object_id) = 0;
@@ -3681,6 +2784,7 @@ static unsigned int prepare_debug_effect_preview(unsigned char* event) {
     return 0;
 }
 
+// Modifies: decodes a native event and prepares or neutralizes recognized debug previews.
 static unsigned char __cdecl hooked_server_event_decode(void* stream, void* event,
     int flags, reflection_decode_callback_fn callback) {
     unsigned char result;
@@ -3732,6 +2836,7 @@ static unsigned char __cdecl hooked_server_event_decode(void* stream, void* even
     return result;
 }
 
+// Modifies: bypasses native validation for prepared previews, rechecks them, and neutralizes failures.
 static unsigned char __cdecl hooked_server_event_validate(void* event) {
     void* preview_event;
     unsigned int failure;
@@ -3752,604 +2857,7 @@ static unsigned char __cdecl hooked_server_event_validate(void* event) {
     return 1;
 }
 
-static int is_darkspin_chat_command(const char* text, const char* command) {
-    size_t command_length;
-    size_t index;
-    char terminator;
-    if (!readable_pointer(text)) {
-        return 0;
-    }
-    command_length = strlen(command);
-    for (index = 0; index < command_length; index++) {
-        char text_character = text[index];
-        char command_character = command[index];
-        if (text_character >= 'A' && text_character <= 'Z') {
-            text_character = (char)(text_character + ('a' - 'A'));
-        }
-        if (command_character >= 'A' && command_character <= 'Z') {
-            command_character = (char)(command_character + ('a' - 'A'));
-        }
-        if (text_character != command_character) {
-            return 0;
-        }
-    }
-    terminator = text[command_length];
-    return terminator == '\0' || terminator == ' ' || terminator == '\t';
-}
-
-/* Keep the accepted destination names at the client compatibility boundary.
-   These are the complete build-103 Level resources indexed from Levels.package;
-   the server receives only an exact canonical name selected here. */
-static const char* fang_warp_locations[] = {
-    "Creature_Vid_Capture",
-    "CreatureEditor_EL",
-    "cryos_1",
-    "cryos_1_SM",
-    "cryos_2",
-    "cryos_2_PVP",
-    "cryos_3",
-    "cryos_4",
-    "Game_Tutorial_cryos_1",
-    "front_end_ship",
-    "infinity_1",
-    "infinity_1_PVP",
-    "infinity_2",
-    "infinity_3",
-    "infinity_4",
-    "infinity_4_SM",
-    "Juggernaut_Mode_Testing",
-    "nocturna_1",
-    "nocturna_2",
-    "nocturna_2_PVP",
-    "nocturna_3",
-    "nocturna_3_SM",
-    "nocturna_4",
-    "scaldron_1",
-    "scaldron_1_PVP",
-    "scaldron_2",
-    "scaldron_3",
-    "scaldron_4",
-    "scaldron_4_SM",
-    "Spectra_1",
-    "Spectra_2",
-    "Spectra_3",
-    "Spectra_4",
-    "test_AI_arena",
-    "test_AI_zoo",
-    "test_AI_zoo_bio",
-    "test_AI_zoo_chrono",
-    "test_AI_zoo_cyber",
-    "test_AI_zoo_elites",
-    "test_AI_zoo_plasma",
-    "test_AI_zoo_supernatural",
-    "test_AI_zoo_ugc",
-    "test_Creature_Vid_Capture",
-    "test_holodeck",
-    "test_survivor_arena",
-    "test_VFX_arena",
-    "tnx173_2",
-    "tnx173_3",
-    "TNX_173",
-    "verdanth_1",
-    "verdanth_2",
-    "verdanth_3",
-    "verdanth_3_PVP",
-    "verdanth_4",
-    "verdanth_4_SM",
-    "zelems_1",
-    "zelems_1_SM",
-    "zelems_2",
-    "zelems_2_PVP",
-    "zelems_3",
-    "zelems_4"
-};
-
-/* Number only the disconnected and special-purpose areas surfaced by the
-   level catalog. Keep this order aligned with the compact server chat listing;
-   named matching still uses the complete location list above. */
-static const char* fang_warp_aliases[] = {
-    "Game_Tutorial_cryos_1",
-    "CreatureEditor_EL",
-    "Creature_Vid_Capture",
-    "cryos_1_SM",
-    "cryos_2_PVP",
-    "front_end_ship",
-    "infinity_1_PVP",
-    "infinity_4_SM",
-    "Juggernaut_Mode_Testing",
-    "nocturna_2_PVP",
-    "nocturna_3_SM",
-    "scaldron_1_PVP",
-    "scaldron_4_SM",
-    "Spectra_1",
-    "Spectra_2",
-    "Spectra_3",
-    "Spectra_4",
-    "test_AI_arena",
-    "test_AI_zoo",
-    "test_AI_zoo_bio",
-    "test_AI_zoo_chrono",
-    "test_AI_zoo_cyber",
-    "test_AI_zoo_elites",
-    "test_AI_zoo_plasma",
-    "test_AI_zoo_supernatural",
-    "test_AI_zoo_ugc",
-    "test_Creature_Vid_Capture",
-    "test_holodeck",
-    "test_survivor_arena",
-    "test_VFX_arena",
-    "TNX_173",
-    "tnx173_2",
-    "tnx173_3",
-    "verdanth_3_PVP",
-    "verdanth_4_SM",
-    "zelems_1_SM",
-    "zelems_2_PVP"
-};
-
-/* Keep developer NPC admission at the client compatibility boundary too.
-   These are packaged, targetable combat families used by campaign, tutorial,
-   captain, and Destructor content. The server still validates the selected
-   canonical noun against the active warped zone's imported class catalog. */
-static const char* fang_spawn_nouns[] = {
-    "BabyMortar.Noun",
-    "Boomer.Noun",
-    "CitadelBasicGunner.Noun",
-    "CitadelBasicMelee.Noun",
-    "CitadelBasicRanged.Noun",
-    "CitadelBasicShield.Noun",
-    "CitadelBasicSuicide.Noun",
-    "CitadelBoss.Noun",
-    "CitadelBoss_2.Noun",
-    "CitadelBoss_3.Noun",
-    "CitadelSpecificFour.Noun",
-    "CitadelSpecificOne.Noun",
-    "CitadelSpecificThree.Noun",
-    "CitadelSpecificTwo.Noun",
-    "CitadelSpecialFour.Noun",
-    "CitadelSpecialFour_Captain.Noun",
-    "CitadelSpecialThree.Noun",
-    "CitadelSpecialThree_Captain.Noun",
-    "CitadelSpecialTwo.Noun",
-    "CitadelSpecialTwo_Captain.Noun",
-    "CryosBasicCharge.Noun",
-    "CryosBasicFiery.Noun",
-    "CryosBasicFireWave.Noun",
-    "CryosBasicLightningMelee.Noun",
-    "CryosBasicLightningRanged.Noun",
-    "CryosBasicMelee.Noun",
-    "CryosBasicPoison.Noun",
-    "CryosBasicRanged.Noun",
-    "CryosBoss.Noun",
-    "CryosBoss_2.Noun",
-    "CryosBoss_3.Noun",
-    "CryosElementalSpecialThree.Noun",
-    "CryosElementalSpecialThree_Captain.Noun",
-    "CryosSpecialOne.Noun",
-    "CryosSpecialOne_Captain.Noun",
-    "CryosSpecialThree.Noun",
-    "CryosSpecialThree_Captain.Noun",
-    "CryosSpecialTwo.Noun",
-    "CryosSpecialTwo_Captain.Noun",
-    "MutationAgent.Noun",
-    "nct_lieu_su_stealther.Noun",
-    "nct_lieu_su_stealther_Captain.Noun",
-    "nct_minn_su_drainer.Noun",
-    "NoctBasicFlyer.Noun",
-    "NoctBasicGhostCharger.Noun",
-    "NoctBasicHopper.Noun",
-    "NoctBasicMeleeDog.Noun",
-    "NocturnaBasicHealthDrain.Noun",
-    "NocturnaBasicRangedSilence.Noun",
-    "NocturnaBasicStealth.Noun",
-    "NocturnaSpecialDrift.Noun",
-    "NocturnaSpecialHomer.Noun",
-    "NocturnaSpecialLeech.Noun",
-    "NocturnaSpecialLeech_Captain.Noun",
-    "NocturnaSpecialMunch.Noun",
-    "NocturnaSpecialMunch_Captain.Noun",
-    "NomadBioSpecialTwo.Noun",
-    "NomadBioSpecialTwo_Captain.Noun",
-    "NomadCyberOne.Noun",
-    "NomadDrag.Noun",
-    "NomadRuption.Noun",
-    "NomadRuption_Captain.Noun",
-    "NomadScope.Noun",
-    "NomadScope_Captain.Noun",
-    "NomadShielder.Noun",
-    "NomadShielder_Captain.Noun",
-    "NomadSnipe.Noun",
-    "NomadSnipe_Captain.Noun",
-    "NomadSpacetimeAgent.Noun",
-    "NomadSpecialOne.Noun",
-    "NomadSpecialOne_Captain.Noun",
-    "NomadSpecialThree.Noun",
-    "NomadWithDrone.Noun",
-    "NomadWithDrone_Captain.Noun",
-    "Rezzer.Noun",
-    "Rezzer_Captain.Noun",
-    "ScaldronBasicBlink.Noun",
-    "ScaldronBasicCopter.Noun",
-    "ScaldronBasicDog.Noun",
-    "ScaldronBasicDoppler.Noun",
-    "ScaldronBasicMaser.Noun",
-    "ScaldronBasicMines.Noun",
-    "ScaldronBasicMonk.Noun",
-    "ScaldronBasicNestle.Noun",
-    "ScaldronBasicSinkhole.Noun",
-    "ScaldronBasicThorno.Noun",
-    "ScaldronBoss.Noun",
-    "ScaldronBoss_2.Noun",
-    "ScaldronBoss_3.Noun",
-    "ShadowBoss.Noun",
-    "ShadowBoss_2.Noun",
-    "ShadowBoss_3.Noun",
-    "ShadowBossMinion.Noun",
-    "Shooter.Noun",
-    "Sloth.Noun",
-    "TutorialBasicDiseased.Noun",
-    "TutorialBasicPoison.Noun",
-    "TutorialBasicRanged.Noun",
-    "TutorialSloth.Noun",
-    "TutorialSpecialOne.Noun",
-    "VerdanthBasicDiseased.Noun",
-    "VerdanthBasicHealer.Noun",
-    "VerdanthBasicMelee.Noun",
-    "VerdanthBasicOoze.Noun",
-    "VerdanthBasicPicky.Noun",
-    "VerdanthBasicPlunge.Noun",
-    "VerdanthBasicRanged.Noun",
-    "VerdanthBasicRootmob.Noun",
-    "VerdanthBasicSkeet.Noun",
-    "VerdanthBoss.Noun",
-    "VerdanthBoss_2.Noun",
-    "VerdanthBoss_3.Noun",
-    "VerdanthSpecialOne.Noun",
-    "VerdanthSpecialOne_Captain.Noun",
-    "VerdanthSpecialThree.Noun",
-    "VerdanthSpecialThree_Captain.Noun",
-    "VerdanthSpecialTwo.Noun",
-    "VerdanthSpecialTwo_Captain.Noun",
-    "ZelemBasicChargeup.Noun",
-    "ZelemBasicFlyingMelee.Noun",
-    "ZelemBasicHybrid.Noun",
-    "ZelemBasicMelee.Noun",
-    "ZelemBasicPackfly.Noun",
-    "ZelemBasicPackMelee.Noun",
-    "ZelemBasicRanged.Noun",
-    "ZelemBasicRangedHoming.Noun",
-    "ZelemBasicRepair.Noun",
-    "ZelemBoss.Noun",
-    "ZelemBoss_2.Noun",
-    "ZelemBoss_3.Noun",
-    "ZelemSpecialHaster.Noun",
-    "ZelemSpecialHaster_Captain.Noun",
-    "ZelemSpecialOne.Noun",
-    "ZelemSpecialOne_Captain.Noun",
-    "ZelemSpecialThree.Noun",
-    "ZelemSpecialTwo.Noun",
-    "ZelemSpecialTwo_Captain.Noun"
-};
-
-static char fang_ascii_lower(char character) {
-    if (character >= 'A' && character <= 'Z') {
-        return (char)(character + ('a' - 'A'));
-    }
-    return character;
-}
-
-static int fang_warp_name_equals(
-    const char* location, const char* partial, size_t partial_length) {
-    size_t location_length = strlen(location);
-    size_t index;
-    if (location_length != partial_length) {
-        return 0;
-    }
-    for (index = 0; index < partial_length; index++) {
-        if (fang_ascii_lower(location[index]) != fang_ascii_lower(partial[index])) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-static int fang_warp_name_contains(
-    const char* location, const char* partial, size_t partial_length) {
-    size_t location_length = strlen(location);
-    size_t start;
-    size_t index;
-    if (partial_length == 0 || partial_length > location_length) {
-        return 0;
-    }
-    for (start = 0; start + partial_length <= location_length; start++) {
-        for (index = 0; index < partial_length; index++) {
-            if (fang_ascii_lower(location[start + index]) !=
-                fang_ascii_lower(partial[index])) {
-                break;
-            }
-        }
-        if (index == partial_length) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
-static const char* find_fang_warp_alias(const char* partial, size_t partial_length) {
-    unsigned int alias = 0;
-    size_t index;
-    size_t alias_count = sizeof(fang_warp_aliases) / sizeof(fang_warp_aliases[0]);
-    if (partial_length == 0) {
-        return NULL;
-    }
-    for (index = 0; index < partial_length; index++) {
-        unsigned int digit;
-        if (partial[index] < '0' || partial[index] > '9') {
-            return NULL;
-        }
-        digit = (unsigned int)(partial[index] - '0');
-        if (alias > 1000) {
-            return NULL;
-        }
-        alias = alias * 10 + digit;
-    }
-    if (alias == 0 || alias > alias_count) {
-        return NULL;
-    }
-    return fang_warp_aliases[alias - 1];
-}
-
-static const char* find_fang_warp_location(const char* partial, size_t partial_length) {
-    const char* matched_location = find_fang_warp_alias(partial, partial_length);
-    size_t location_index;
-    unsigned int match_count = 0;
-    if (matched_location != NULL) {
-        return matched_location;
-    }
-    for (location_index = 0;
-        location_index < sizeof(fang_warp_locations) / sizeof(fang_warp_locations[0]);
-        location_index++) {
-        const char* location = fang_warp_locations[location_index];
-        if (fang_warp_name_equals(location, partial, partial_length)) {
-            return location;
-        }
-        if (!fang_warp_name_contains(location, partial, partial_length)) {
-            continue;
-        }
-        matched_location = location;
-        match_count++;
-    }
-    if (match_count != 1) {
-        return NULL;
-    }
-    return matched_location;
-}
-
-static int fang_spawn_name_equals(
-    const char* noun_name, const char* partial, size_t partial_length) {
-    size_t noun_length = strlen(noun_name);
-    size_t index;
-    if (fang_warp_name_equals(noun_name, partial, partial_length)) {
-        return 1;
-    }
-    if (noun_length <= 5 || partial_length != noun_length - 5 ||
-        fang_ascii_lower(noun_name[noun_length - 5]) != '.' ||
-        fang_ascii_lower(noun_name[noun_length - 4]) != 'n' ||
-        fang_ascii_lower(noun_name[noun_length - 3]) != 'o' ||
-        fang_ascii_lower(noun_name[noun_length - 2]) != 'u' ||
-        fang_ascii_lower(noun_name[noun_length - 1]) != 'n') {
-        return 0;
-    }
-    for (index = 0; index < partial_length; index++) {
-        if (fang_ascii_lower(noun_name[index]) != fang_ascii_lower(partial[index])) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-static const char* find_fang_spawn_noun(const char* partial, size_t partial_length) {
-    const char* matched_noun = NULL;
-    size_t noun_index;
-    unsigned int match_count = 0;
-    for (noun_index = 0;
-        noun_index < sizeof(fang_spawn_nouns) / sizeof(fang_spawn_nouns[0]);
-        noun_index++) {
-        const char* noun_name = fang_spawn_nouns[noun_index];
-        if (fang_spawn_name_equals(noun_name, partial, partial_length)) {
-            return noun_name;
-        }
-        if (!fang_warp_name_contains(noun_name, partial, partial_length)) {
-            continue;
-        }
-        matched_noun = noun_name;
-        match_count++;
-    }
-    if (match_count != 1) {
-        return NULL;
-    }
-    return matched_noun;
-}
-
-static char* find_darkspin_chat_command(const char* text, int* command) {
-    const char* cursor = text;
-    size_t remaining = 1024;
-    if (!readable_pointer(text)) {
-        return NULL;
-    }
-    while (remaining > 0 && *cursor != '\0') {
-        if (*cursor == '/' &&
-            (cursor == text || cursor[-1] == ' ' || cursor[-1] == '\t' || cursor[-1] == ']')) {
-            if (is_darkspin_chat_command(cursor, "/ping")) {
-                *command = 1;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/hint")) {
-                *command = 21;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/loc")) {
-                *command = 25;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/stat")) {
-                *command = 29;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/follow")) {
-                *command = 26;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/ai")) {
-                *command = 27;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/ss")) {
-                *command = 22;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/help")) {
-                *command = 3;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/exit")) {
-                *command = 4;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/effect")) {
-                *command = 5;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/summon")) {
-                *command = 6;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/level")) {
-                *command = 7;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/warp")) {
-                *command = 23;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/spawn")) {
-                *command = 24;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/drop")) {
-                *command = 28;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/dna")) {
-                *command = 19;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/damage")) {
-                *command = 8;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/heal")) {
-                *command = 9;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/power")) {
-                *command = 10;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/mana")) {
-                *command = 11;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/event")) {
-                *command = 12;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/goto")) {
-                *command = 13;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/kill")) {
-                *command = 14;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/reset")) {
-                *command = 15;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/recap")) {
-                *command = 20;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/victory")) {
-                *command = 16;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/defeat")) {
-                *command = 17;
-                return (char*)cursor;
-            }
-            if (is_darkspin_chat_command(cursor, "/bug") ||
-                is_darkspin_chat_command(cursor, "/b")) {
-                *command = 18;
-                return (char*)cursor;
-            }
-        }
-        cursor++;
-        remaining--;
-    }
-    return NULL;
-}
-
-static int normalize_fang_warp_command(
-    const char* text, const char* command_text, char* output, size_t output_capacity) {
-    const char* cursor = command_text + 5;
-    const char* partial;
-    const char* matched_location = NULL;
-    size_t prefix_length;
-    size_t partial_length;
-    size_t location_length = 0;
-    size_t output_length;
-    if (!readable_pointer(text) || command_text < text || output == NULL || output_capacity == 0) {
-        return -1;
-    }
-    while (*cursor == ' ' || *cursor == '\t') {
-        cursor++;
-    }
-    partial = cursor;
-    while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t' &&
-        *cursor != '\r' && *cursor != '\n') {
-        cursor++;
-    }
-    partial_length = (size_t)(cursor - partial);
-    while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') {
-        cursor++;
-    }
-    if (*cursor == '\0') {
-        matched_location = find_fang_warp_location(partial, partial_length);
-    }
-    prefix_length = (size_t)(command_text - text);
-    if (matched_location != NULL) {
-        location_length = strlen(matched_location);
-    }
-    output_length = prefix_length + 5;
-    if (matched_location != NULL) {
-        output_length += 1 + location_length;
-    }
-    if (output_length + 1 > output_capacity) {
-        return -1;
-    }
-    if (prefix_length != 0) {
-        memcpy(output, text, prefix_length);
-    }
-    memcpy(output + prefix_length, "/warp", 5);
-    if (matched_location != NULL) {
-        output[prefix_length + 5] = ' ';
-        memcpy(output + prefix_length + 6, matched_location, location_length);
-    }
-    output[output_length] = '\0';
-    return (int)output_length;
-}
-
+// Reads/modifies: reads stat-query arguments and writes the normalized diagnostic command.
 static int normalize_fang_stat_command(
     const char* text, const char* command_text, char* output, size_t output_capacity) {
     size_t prefix_length;
@@ -4359,7 +2867,7 @@ static int normalize_fang_stat_command(
     unsigned int power_point_bits;
     unsigned int resource_mask;
     int written;
-    if (!readable_pointer(text) || command_text < text || output == NULL || output_capacity == 0) {
+    if (!fang_readable_pointer(text) || command_text < text || output == NULL || output_capacity == 0) {
         return -1;
     }
     prefix_length = (size_t)(command_text - text);
@@ -4391,56 +2899,7 @@ static int normalize_fang_stat_command(
     return (int)prefix_length + written;
 }
 
-static int normalize_fang_spawn_command(
-    const char* text, const char* command_text, char* output, size_t output_capacity) {
-    const char* cursor = command_text + 6;
-    const char* partial;
-    const char* matched_noun = NULL;
-    size_t prefix_length;
-    size_t partial_length;
-    size_t noun_length = 0;
-    size_t output_length;
-    if (!readable_pointer(text) || command_text < text || output == NULL || output_capacity == 0) {
-        return -1;
-    }
-    while (*cursor == ' ' || *cursor == '\t') {
-        cursor++;
-    }
-    partial = cursor;
-    while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t' &&
-        *cursor != '\r' && *cursor != '\n') {
-        cursor++;
-    }
-    partial_length = (size_t)(cursor - partial);
-    while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') {
-        cursor++;
-    }
-    if (*cursor == '\0') {
-        matched_noun = find_fang_spawn_noun(partial, partial_length);
-    }
-    prefix_length = (size_t)(command_text - text);
-    if (matched_noun != NULL) {
-        noun_length = strlen(matched_noun);
-    }
-    output_length = prefix_length + 6;
-    if (matched_noun != NULL) {
-        output_length += 1 + noun_length;
-    }
-    if (output_length + 1 > output_capacity) {
-        return -1;
-    }
-    if (prefix_length != 0) {
-        memcpy(output, text, prefix_length);
-    }
-    memcpy(output + prefix_length, "/spawn", 6);
-    if (matched_noun != NULL) {
-        output[prefix_length + 6] = ' ';
-        memcpy(output + prefix_length + 7, matched_noun, noun_length);
-    }
-    output[output_length] = '\0';
-    return (int)output_length;
-}
-
+// Modifies: normalizes supported commands and delegates native chat text conversion.
 static void* __cdecl hooked_chat_text_convert(void* output, const char* text, int length) {
     char* command_text;
     const char* converted_source = text;
@@ -4500,6 +2959,9 @@ static void* __cdecl hooked_chat_text_convert(void* output, const char* text, in
     if (command != 0) {
         trace_client_state("chat_darkspin_command", (unsigned int)command);
     }
+    if (command == 18) {
+        GoFangReportBug(command_text);
+    }
     if (command == 4) {
         int is_posted;
         InterlockedExchange(&chat_exit_pending, 1);
@@ -4518,28 +2980,71 @@ static void* __cdecl hooked_chat_text_convert(void* output, const char* text, in
     return converted_text;
 }
 
+/* The movie may construct/reset input widgets after its native controller
+ * initializes. Keep the display-only identity synchronized on the UI thread
+ * until login completes, rather than relying on a single pre-frame write. */
+// Modifies: refreshes the native token-login display and timer state.
+static VOID CALLBACK jwt_login_ui_callback(HWND window, UINT message, UINT_PTR timer, DWORD time) {
+    unsigned int screen_type;
+    (void)window;
+    (void)message;
+    (void)time;
+    if (timer != jwt_login_ui_timer) return;
+    if (InterlockedCompareExchange(&jwt_login_completed, 0, 0) != 0 ||
+        GetTickCount64() - jwt_login_ui_started_ms >= 2 * jwt_login_timeout_milliseconds ||
+        !readable_range(jwt_login_controller, 40)) {
+        KillTimer(NULL, timer);
+        jwt_login_ui_timer = 0;
+        jwt_login_controller = NULL;
+        return;
+    }
+    screen_type = *(unsigned int*)((BYTE*)jwt_login_controller + 28) & 0x8f;
+    if (*(void**)jwt_login_controller != jwt_login_controller_type || screen_type < 6 || screen_type > 8) {
+        KillTimer(NULL, timer);
+        jwt_login_ui_timer = 0;
+        jwt_login_controller = NULL;
+        return;
+    }
+    fang_login_processing(jwt_login_controller);
+}
+
 #if defined(__GNUC__)
+// Modifies: initializes token-login presentation, disables remembered login, and submits or schedules authentication.
 static void __attribute__((fastcall)) hooked_login_screen_init(void* controller, void* unused, void* manager) {
 #else
+// Modifies: initializes the native login screen and applies the existing token-login presentation.
 static void __fastcall hooked_login_screen_init(void* controller, void* unused, void* manager) {
 #endif
     UINT_PTR timer;
     void** methods;
     login_ready_fn ready;
     login_submit_fn submit;
-    (void)controller;
     (void)unused;
+    if (jwt_login_token[0] != '\0' && readable_range(controller, 106)) {
+        /* Build 103 controller+105 enables native remembered-password login.
+         * The launcher token is the sole authentication owner for this run. */
+        *((BYTE*)controller + 105) = 0;
+    }
     original_login_screen_init(controller, manager);
     if (jwt_login_token[0] == '\0' || manager == NULL) {
         return;
     }
     jwt_login_manager = manager;
-    methods = readable_pointer(manager) ? *(void***)manager : NULL;
-    if (readable_pointer(methods)) {
+    jwt_login_controller = controller;
+    jwt_login_controller_type = readable_range(controller, sizeof(void*)) ? *(void**)controller : NULL;
+    trace_client_state("jwt_login_processing", (unsigned int)fang_login_processing(controller));
+    if (jwt_login_ui_timer == 0) {
+        jwt_login_ui_started_ms = GetTickCount64();
+        jwt_login_ui_timer = SetTimer(NULL, 0, 50, jwt_login_ui_callback);
+        if (jwt_login_ui_timer == 0) trace_client_state("jwt_login_ui_timer_failed", GetLastError());
+    }
+    methods = fang_readable_pointer(manager) ? *(void***)manager : NULL;
+    if (fang_readable_pointer(methods)) {
         ready = (login_ready_fn)methods[1];
         submit = (login_submit_fn)methods[2];
         if (ready != NULL && submit != NULL && ready(manager) &&
             InterlockedCompareExchange(&jwt_login_started, 1, 0) == 0) {
+            fang_login_processing(controller);
             trace_client_state("jwt_login_submit", 1);
             trace_client_state("jwt_login_length", (unsigned int)strlen(jwt_login_token));
             submit(manager, "token@local.invalid", jwt_login_token);
@@ -4551,6 +3056,7 @@ static void __fastcall hooked_login_screen_init(void* controller, void* unused, 
         return;
     }
     jwt_login_retry_count = 0;
+    jwt_login_ready_started_ms = GetTickCount64();
     timer = SetTimer(NULL, 0, 25, jwt_login_timer_callback);
     if (timer == 0) {
         trace_client_state("jwt_login_timer_failed", GetLastError());
@@ -4560,6 +3066,7 @@ static void __fastcall hooked_login_screen_init(void* controller, void* unused, 
     trace_client_state("jwt_login_not_ready", 1);
 }
 
+// Modifies: submits the login token and starts its watchdog, or reports timeout and may terminate the client.
 static VOID CALLBACK jwt_login_timer_callback(HWND window, UINT message, UINT_PTR timer, DWORD time) {
     void** methods;
     login_ready_fn ready;
@@ -4577,14 +3084,20 @@ static VOID CALLBACK jwt_login_timer_callback(HWND window, UINT message, UINT_PT
         return;
     }
     jwt_login_retry_count++;
-    if (jwt_login_retry_count > 200 || jwt_login_token[0] == '\0' || !readable_pointer(manager)) {
+    if (GetTickCount64() - jwt_login_ready_started_ms >= jwt_login_timeout_milliseconds ||
+        jwt_login_token[0] == '\0' || !fang_readable_pointer(manager)) {
         KillTimer(NULL, timer);
         jwt_login_timer = 0;
         trace_client_state("jwt_login_retry_expired", jwt_login_retry_count);
+#if !FANG_SCENARIO
+        if (jwt_login_token[0] != '\0' && fang_login_not_ready()) {
+            fang_login_terminate(0xD15C0001u);
+        }
+#endif
         return;
     }
     methods = *(void***)manager;
-    if (!readable_pointer(methods)) {
+    if (!fang_readable_pointer(methods)) {
         return;
     }
     ready = (login_ready_fn)methods[1];
@@ -4597,6 +3110,7 @@ static VOID CALLBACK jwt_login_timer_callback(HWND window, UINT message, UINT_PT
     }
     KillTimer(NULL, timer);
     jwt_login_timer = 0;
+    trace_client_state("jwt_login_processing", (unsigned int)fang_login_processing(jwt_login_controller));
     trace_client_state("jwt_login_submit", 1);
     trace_client_state("jwt_login_length", (unsigned int)strlen(jwt_login_token));
     submit(manager, "token@local.invalid", jwt_login_token);
@@ -4606,10 +3120,24 @@ static VOID CALLBACK jwt_login_timer_callback(HWND window, UINT message, UINT_PT
        so the queued login cannot observe a cleared credential. */
 }
 
+// Modifies: appends a diagnostic line to the trace sink and snapshot ring.
+void fang_history_write(const char* line, unsigned int length) {
+    DWORD written;
+    if (trace_file == INVALID_HANDLE_VALUE || !trace_lock_ready) return;
+    EnterCriticalSection(&trace_lock);
+    WriteFile(trace_file, line, length, &written, NULL);
+    LeaveCriticalSection(&trace_lock);
+    if (InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) != 0) {
+        snapshot_ring_append(line, length);
+    }
+}
+
+// Modifies: appends a named diagnostic field to the active history sample or trace output.
 void trace_client_state(const char* kind, unsigned int value) {
     char line[512];
     DWORD written;
     int length;
+    if (fang_history_collect(kind, value)) return;
     if (trace_file == INVALID_HANDLE_VALUE || !trace_lock_ready) {
         return;
     }
@@ -4633,6 +3161,7 @@ void trace_client_state(const char* kind, unsigned int value) {
     }
 }
 
+// Reads/modifies: resolves an ability descriptor and records its native metadata.
 static void* hooked_ability_descriptor_lookup(unsigned int ability_guid) {
     char line[384];
     DWORD written;
@@ -4666,6 +3195,7 @@ static void* hooked_ability_descriptor_lookup(unsigned int ability_guid) {
     return descriptor;
 }
 
+// Reads/modifies: validates experience thresholds and writes their diagnostic values.
 static int trace_xp_threshold_values(const unsigned int* begin, size_t count) {
     size_t index;
     char line[256];
@@ -4677,8 +3207,8 @@ static int trace_xp_threshold_values(const unsigned int* begin, size_t count) {
     if (trace_file == INVALID_HANDLE_VALUE || !trace_lock_ready) {
         return 0;
     }
-    if (count == 0 || count > 256 || !readable_pointer(begin) ||
-        !readable_pointer(begin + count - 1)) {
+    if (count == 0 || count > 256 || !fang_readable_pointer(begin) ||
+        !fang_readable_pointer(begin + count - 1)) {
         return 0;
     }
     if (InterlockedCompareExchange(&xp_thresholds_traced, 1, 0) != 0) {
@@ -4699,6 +3229,7 @@ static int trace_xp_threshold_values(const unsigned int* begin, size_t count) {
     return 1;
 }
 
+// Reads/modifies: observes the native experience threshold table and writes diagnostics.
 static int trace_xp_thresholds(void) {
     const unsigned int* begin;
     const unsigned int* end;
@@ -4710,12 +3241,13 @@ static int trace_xp_thresholds(void) {
     }
     begin = *(const unsigned int**)((const BYTE*)executable_module + 0xD64CA0);
     end = *(const unsigned int**)((const BYTE*)executable_module + 0xD64CA4);
-    if (!readable_pointer(begin) || !readable_pointer(end) || end <= begin) {
+    if (!fang_readable_pointer(begin) || !fang_readable_pointer(end) || end <= begin) {
         return 0;
     }
     return trace_xp_threshold_values(begin, (size_t)(end - begin));
 }
 
+// Reads/modifies: reads experience thresholds from native resources and records them.
 static int trace_xp_thresholds_from_resource(void) {
     void* manager;
     void** manager_method;
@@ -4731,19 +3263,19 @@ static int trace_xp_thresholds_from_resource(void) {
         return 0;
     }
     manager = original_resource_manager();
-    if (!readable_pointer(manager)) {
+    if (!fang_readable_pointer(manager)) {
         return 0;
     }
     manager_method = *(void***)manager;
-    if (!readable_pointer(manager_method) || !readable_pointer(manager_method + 11)) {
+    if (!fang_readable_pointer(manager_method) || !fang_readable_pointer(manager_method + 11)) {
         return 0;
     }
     lookup = (resource_lookup_fn)manager_method[11];
-    if (!readable_pointer((const void*)lookup)) {
+    if (!fang_readable_pointer((const void*)lookup)) {
         return 0;
     }
     lookup(manager, 0x3B01D7F6, 0x3B01D7F6, &resource);
-    if (!readable_pointer(resource)) {
+    if (!fang_readable_pointer(resource)) {
         return 0;
     }
     is_read = original_property_vector_read(resource, 0xC0B32F0F, &count, &value);
@@ -4751,15 +3283,16 @@ static int trace_xp_thresholds_from_resource(void) {
         is_traced = trace_xp_threshold_values(value, count);
     }
     resource_method = *(void***)resource;
-    if (readable_pointer(resource_method) && readable_pointer(resource_method + 1)) {
+    if (fang_readable_pointer(resource_method) && fang_readable_pointer(resource_method + 1)) {
         release = (resource_release_fn)resource_method[1];
-        if (readable_pointer((const void*)release)) {
+        if (fang_readable_pointer((const void*)release)) {
             release(resource);
         }
     }
     return is_traced;
 }
 
+// Modifies: delegates native property decoding into the supplied vector and records thresholds.
 static unsigned char __cdecl hooked_property_vector_read(void* resource, unsigned int property_id,
     unsigned int* count, const unsigned int** value) {
     unsigned char is_read = original_property_vector_read(resource, property_id, count, value);
@@ -4769,6 +3302,7 @@ static unsigned char __cdecl hooked_property_vector_read(void* resource, unsigne
     return is_read;
 }
 
+// Reads/modifies: retries experience-threshold observation and records the resulting diagnostics.
 static DWORD WINAPI trace_xp_thresholds_later(LPVOID parameter) {
     int attempt;
     (void)parameter;
@@ -4792,6 +3326,7 @@ static DWORD WINAPI trace_xp_thresholds_later(LPVOID parameter) {
     return 1;
 }
 
+// Reads/modifies: reads scene identity and markers and writes scene diagnostics.
 static void trace_scene_state(const char* kind, unsigned int asset_id,
     unsigned int value_a, unsigned int value_b, int is_resolved) {
     char line[384];
@@ -4814,6 +3349,7 @@ static void trace_scene_state(const char* kind, unsigned int asset_id,
     LeaveCriticalSection(&trace_lock);
 }
 
+// Reads/modifies: observes decoded game-preparation fields and writes diagnostics.
 static void trace_game_prepare_decode(const unsigned int* value, unsigned int requested_size,
     unsigned int decoded_size, unsigned int stream_size, unsigned int context_offset) {
     char line[384];
@@ -4839,9 +3375,11 @@ static void trace_game_prepare_decode(const unsigned int* value, unsigned int re
 }
 
 #if defined(__GNUC__)
+// Modifies: delegates native quick-game decoding and records the decoded preparation fields.
 static unsigned int __attribute__((fastcall)) hooked_quick_game_read(
     void* stream, void* ignored, void* destination, unsigned int size, void* context) {
 #else
+// Modifies: delegates native quick-game decoding and records the decoded preparation fields.
 static unsigned int __fastcall hooked_quick_game_read(
     void* stream, void* ignored, void* destination, unsigned int size, void* context) {
 #endif
@@ -4857,6 +3395,7 @@ static unsigned int __fastcall hooked_quick_game_read(
     return decoded_size;
 }
 
+// Reads: returns a scene identifier from a readable native scene.
 static unsigned int traced_scene_id(void* scene) {
     void* current = InterlockedCompareExchangePointer(
         (PVOID volatile*)&traced_scene_asset, NULL, NULL);
@@ -4866,6 +3405,7 @@ static unsigned int traced_scene_id(void* scene) {
     return (unsigned int)InterlockedCompareExchange(&traced_scene_asset_id, 0, 0);
 }
 
+// Reads/modifies: resolves a native scene asset and records its identity.
 static void* __cdecl hooked_scene_asset_lookup(unsigned int asset_id) {
     void* scene = original_scene_asset_lookup(asset_id);
     InterlockedExchange(&traced_scene_asset_id, (LONG)asset_id);
@@ -4874,31 +3414,71 @@ static void* __cdecl hooked_scene_asset_lookup(unsigned int asset_id) {
     return scene;
 }
 
-static void* __cdecl hooked_creature_asset_lookup(unsigned int asset_id, void* output) {
-    void* asset;
-    unsigned int nested_asset_id = 0;
-    trace_scene_state("creature_asset_lookup_input", asset_id,
-        (unsigned int)(uintptr_t)output, 0, asset_id != 0);
-    asset = original_creature_asset_lookup(asset_id, output);
-    if (readable_pointer(asset) && readable_pointer((const BYTE*)asset + 0xA4)) {
-        nested_asset_id = *(const unsigned int*)((const BYTE*)asset + 0xA4);
+// Reads/modifies: observes creature resource fields and writes lookup diagnostics.
+static void trace_creature_resource_lookup(const char* kind, const void* resource,
+    const void* result, unsigned int nested_handle) {
+    char line[512];
+    DWORD written;
+    int length;
+    if (InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) == 0 &&
+        (trace_file == INVALID_HANDLE_VALUE || !trace_lock_ready)) {
+        return;
     }
-    trace_scene_state("creature_asset_lookup", asset_id, nested_asset_id,
-        (unsigned int)(uintptr_t)asset, asset != NULL && nested_asset_id != 0);
-    return asset;
+    length = snprintf(line, sizeof(line),
+        "{\"time_ms\":%llu,\"protocol\":\"client_scene\",\"kind\":\"%s\","
+        "\"resource_pointer\":%u,\"result_pointer\":%u,\"nested_handle\":%u}\r\n",
+        (unsigned long long)GetTickCount64(), kind,
+        (unsigned int)(uintptr_t)resource, (unsigned int)(uintptr_t)result, nested_handle);
+    if (length <= 0 || (size_t)length >= sizeof(line)) {
+        return;
+    }
+    if (trace_file != INVALID_HANDLE_VALUE && trace_lock_ready) {
+        EnterCriticalSection(&trace_lock);
+        WriteFile(trace_file, line, (DWORD)length, &written, NULL);
+        LeaveCriticalSection(&trace_lock);
+    }
+    if (InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) != 0) {
+        snapshot_ring_append(line, (unsigned int)length);
+    }
 }
 
+// Modifies: delegates native creature lookup into the output and records resource diagnostics.
+static void* __cdecl hooked_creature_asset_lookup(void* resource, void* output) {
+    /* Build 103's 9ECA10 tail-jumps to 9C8E70: resource and output arguments.
+       Neither the property return nor its nested handle proves model readiness. */
+    void* property = original_creature_asset_lookup(resource, output);
+    DWORD native_error = GetLastError();
+    unsigned int nested_handle = 0;
+    if (InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) == 0 &&
+        (trace_file == INVALID_HANDLE_VALUE || !trace_lock_ready)) {
+        SetLastError(native_error);
+        return property;
+    }
+    if (readable_range(property, 0xA8)) {
+        nested_handle = *(const unsigned int*)((const BYTE*)property + 0xA4);
+    }
+    trace_creature_resource_lookup("creature_resource_property_lookup", resource,
+        property, nested_handle);
+    SetLastError(native_error);
+    return property;
+}
+
+// Modifies: delegates nested creature lookup into the output and records diagnostics.
 static void* __cdecl hooked_creature_nested_lookup(void* asset, void* output) {
-    trace_scene_state("creature_nested_lookup", (unsigned int)(uintptr_t)asset,
-        (unsigned int)(uintptr_t)output, 0, asset != NULL);
-    return original_creature_nested_lookup(asset, output);
+    void* result = original_creature_nested_lookup(asset, output);
+    DWORD native_error = GetLastError();
+    trace_creature_resource_lookup("creature_resource_nested_lookup", asset, result, 0);
+    SetLastError(native_error);
+    return result;
 }
 
+// Modifies: forwards native scene loading and records the scene transition.
 static void __cdecl hooked_scene_load(void* scene, unsigned int markerset, unsigned int index) {
     unsigned int asset_id = traced_scene_id(scene);
     trace_scene_state("scene_load_request", asset_id, markerset, index, asset_id != 0);
     original_scene_load(scene, markerset, index);
 #if FANG_SCENARIO
+    fang_control_scene(asset_id, (uint32_t)InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0));
     if (InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) != 0) {
         char line[512];
         unsigned int load_argument_0 = markerset;
@@ -4914,6 +3494,7 @@ static void __cdecl hooked_scene_load(void* scene, unsigned int markerset, unsig
 #endif
 }
 
+// Modifies: forwards native scene changes and updates transition diagnostics.
 static void __cdecl hooked_scene_change(void* simulator, void* scene) {
     unsigned int asset_id = traced_scene_id(scene);
 #if FANG_DIAGNOSTICS
@@ -4942,51 +3523,7 @@ static void __cdecl hooked_scene_change(void* simulator, void* scene) {
 #endif
 }
 
-static DWORD WINAPI stop_started_movie(LPVOID parameter) {
-    /*
-     * Game's boot state uses movie-manager vtable slot 5 (+0x14) to
-     * detect active playback and slot 9 (+0x24) for its native skip action.
-     * Wait until the scripted ship movie has actually started so stopping it
-     * preserves the loader/player lifecycle expected by the camera script.
-     */
-    int attempt;
-    (void)parameter;
-    for (attempt = 0; attempt < 2000; attempt++) {
-        void* manager = original_movie_manager();
-        if (manager != NULL) {
-            void** methods = *(void***)manager;
-            movie_playing_fn playing = (movie_playing_fn)methods[5];
-            movie_stop_fn stop = (movie_stop_fn)methods[9];
-            if (playing(manager)) {
-                stop(manager);
-                trace_client_state("movie_stop", 1);
-                InterlockedExchange(&movie_skip_pending, 0);
-                return 0;
-            }
-        }
-        Sleep(1);
-    }
-    trace_client_state("movie_stop_timeout", 1);
-    InterlockedExchange(&movie_skip_pending, 0);
-    return 1;
-}
-
-static void __cdecl hooked_movie_load(void* output, const char* name, int unknown_a, int unknown_b) {
-    size_t length = name == NULL ? 0 : strlen(name);
-    original_movie_load(output, name, unknown_a, unknown_b);
-    if (length >= 4 && _stricmp(name + length - 4, ".vp6") == 0 &&
-        InterlockedCompareExchange(&ship_spline_skip_active, 0, 0) == 0 &&
-        InterlockedCompareExchange(&movie_skip_pending, 1, 0) == 0) {
-        HANDLE stop_thread = CreateThread(NULL, 0, stop_started_movie, NULL, 0, NULL);
-        if (stop_thread != NULL) {
-            CloseHandle(stop_thread);
-        } else {
-            InterlockedExchange(&movie_skip_pending, 0);
-            trace_client_state("movie_stop_thread", 1);
-        }
-    }
-}
-
+// Modifies: completes the active native spline and restores its camera/movie continuation.
 static int complete_active_spline(void) {
     void* skipped;
     void* registry;
@@ -5025,6 +3562,7 @@ static int complete_active_spline(void) {
     return skipped != NULL;
 }
 
+// Modifies: forwards or completes native spline playback and updates cinematic bookkeeping.
 static unsigned char __cdecl hooked_spline_update(void* camera, float delta) {
     if (camera != NULL) {
         BYTE* base = (BYTE*)camera;
@@ -5041,7 +3579,9 @@ static unsigned char __cdecl hooked_spline_update(void* camera, float delta) {
         traced_spline_nodes = node_count;
         traced_spline_time = current_time;
     }
-    if (camera != NULL && skip_cinematics_enabled) {
+    /* Progress through 2000 still owns the first-play tutorial introduction. */
+    if (camera != NULL && skip_cinematics_enabled &&
+        original_new_player_progress() > 2000) {
         BYTE* base = (BYTE*)camera;
         int node_count = *(int*)(base + 0x29C);
         float duration = *(float*)(base + 0x2A0) + *(float*)(base + 0x88);
@@ -5072,6 +3612,7 @@ static unsigned char __cdecl hooked_spline_update(void* camera, float delta) {
     return original_spline_update(camera, delta);
 }
 
+// Modifies: repairs the native Rooms target from the current platform state.
 static unsigned int repair_rooms_target(void) {
     void* platform = original_online_platform();
     void** rooms;
@@ -5118,28 +3659,16 @@ static unsigned int repair_rooms_target(void) {
     return 0;
 }
 
+// Modifies: repairs an invalid channel left by the former Rooms-pointer repair.
 static unsigned int repair_chat_rooms_target(void) {
-    void* platform = original_online_platform();
     void* chat = original_chat_lookup();
-    void** rooms;
-    void* room;
-    if (!readable_range(platform, 13 * sizeof(void*)) ||
-        !readable_range(chat, 13 * sizeof(void*))) {
-        return 0;
-    }
-    rooms = (void**)((void**)platform)[12];
-    if (!readable_range(rooms, 4 * sizeof(void*))) {
-        return 0;
-    }
-    room = rooms[3];
-    if (!readable_range(room, 4 * sizeof(void*)) ||
-        ((void**)room)[3] == NULL || ((void**)chat)[12] == room) {
-        return 0;
-    }
-    ((void**)chat)[12] = room;
+    /* Build 103 40B3C0/40A8A0: +48 is a channel enum, not a room pointer. */
+    if (!readable_range(chat, 52) || ((unsigned int*)chat)[12] <= 13) return 0;
+    ((unsigned int*)chat)[12] = 9;
     return 1;
 }
 
+// Modifies: bootstraps and repairs the native chat Rooms target.
 static unsigned int prepare_chat_rooms_target(void) {
     void* platform;
     void* rooms;
@@ -5171,6 +3700,7 @@ static unsigned int prepare_chat_rooms_target(void) {
     return state;
 }
 
+// Reads/modifies: observes the native Rooms roster and writes bounded diagnostics.
 static void trace_rooms_roster(void) {
     void* platform = original_online_platform();
     void** rooms;
@@ -5218,6 +3748,7 @@ static void trace_rooms_roster(void) {
     trace_client_state("rooms_roster_resolved", resolved_count);
 }
 
+// Reads/modifies: observes party readiness and navigation state and writes diagnostics.
 static void trace_party_navigation_gate(void* party, unsigned char is_ready) {
     BYTE* party_bytes = (BYTE*)party;
     void** buckets;
@@ -5293,12 +3824,14 @@ static void trace_party_navigation_gate(void* party, unsigned char is_ready) {
     trace_client_state("party_navigation_traced", traced_count);
 }
 
+// Reads/modifies: queries native party readiness and records the navigation gate.
 static unsigned char FANG_THISCALL hooked_party_ready(void* party) {
     unsigned char is_ready = original_party_ready(party);
     trace_party_navigation_gate(party, is_ready);
     return is_ready;
 }
 
+// Modifies: advances native navigation and applies the existing tutorial/Rooms continuation.
 static void __cdecl hooked_navigation_update(void* controller) {
     navigation_event event;
     int is_return;
@@ -5353,12 +3886,8 @@ static void __cdecl hooked_navigation_update(void* controller) {
                 trace_client_state("rooms_target_ready", repair_state);
             }
         }
-        /*
-         * Result teardown can clear only the chat controller's selected Rooms
-         * pointer while the SDK-owned room remains valid. Repair that projection
-         * on every established ship frame so native /lobby works without first
-         * requiring a Darkspin developer command.
-         */
+        /* Repair invalid legacy channel state without replacing an explicit
+         * Party or whisper choice with a native room-object pointer. */
         if (repair_chat_rooms_target() != 0) {
             trace_client_state("chat_rooms_target_repaired", 1);
         }
@@ -5387,12 +3916,14 @@ static void __cdecl hooked_navigation_update(void* controller) {
     trace_client_state(is_return ? "ship_return_start" : "ship_start", 1);
 }
 
+// Reads/modifies: queries native scene readiness and records its result.
 static unsigned char __cdecl hooked_scene_ready(void) {
     unsigned char ready = original_scene_ready();
     trace_client_state("scene_ready", ready);
     return ready;
 }
 
+// Reads/modifies: queries native UI readiness and records its result.
 static unsigned char __cdecl hooked_ui_ready(void) {
     unsigned char ready = original_ui_ready();
     trace_client_state("ui_ready", ready);
@@ -5400,8 +3931,10 @@ static unsigned char __cdecl hooked_ui_ready(void) {
 }
 
 #if defined(__GNUC__)
+// Modifies: forwards native screen events and updates login and cinematic transition state.
 static unsigned char __attribute__((fastcall)) hooked_screen_event(void* target, void* ignored, unsigned int event_id) {
 #else
+// Modifies: forwards native screen events and updates login and cinematic transition state.
 static unsigned char __fastcall hooked_screen_event(void* target, void* ignored, unsigned int event_id) {
 #endif
     unsigned char result;
@@ -5431,14 +3964,16 @@ static unsigned char __fastcall hooked_screen_event(void* target, void* ignored,
     return result;
 }
 
-static uintptr_t trace_caller_rva(void* caller) {
+// Reads: returns a caller's offset from the loaded game executable.
+uintptr_t fang_trace_caller_rva(void* caller) {
     if (executable_module == NULL || caller == NULL) {
         return 0;
     }
     return (uintptr_t)((BYTE*)caller - (BYTE*)executable_module);
 }
 
-static uint64_t trace_digest(const char* buffer, int length) {
+// Reads: returns a bounded diagnostic digest of the supplied bytes.
+uint64_t fang_trace_digest(const char* buffer, int length) {
     uint64_t digest = 1469598103934665603ULL;
     int index;
     if (buffer == NULL || length <= 0) {
@@ -5451,98 +3986,7 @@ static uint64_t trace_digest(const char* buffer, int length) {
     return digest;
 }
 
-static void trace_endpoint(const struct sockaddr* address, char* host, size_t host_length, unsigned short* port) {
-    const struct sockaddr_in* ipv4;
-    uint32_t value;
-    if (host_length > 0) {
-        host[0] = '\0';
-    }
-    *port = 0;
-    if (address == NULL || address->sa_family != AF_INET) {
-        return;
-    }
-    ipv4 = (const struct sockaddr_in*)address;
-    value = ntohl(ipv4->sin_addr.s_addr);
-    snprintf(host, host_length, "%u.%u.%u.%u",
-        (unsigned int)((value >> 24) & 0xff),
-        (unsigned int)((value >> 16) & 0xff),
-        (unsigned int)((value >> 8) & 0xff),
-        (unsigned int)(value & 0xff));
-    *port = ntohs(ipv4->sin_port);
-}
-
-static void trace_socket_event(const char* kind, SOCKET socket, const struct sockaddr* address, uintptr_t caller_rva, int requested, int result, int error, uint64_t digest) {
-    char line[768];
-    char host[64];
-    unsigned short port;
-    DWORD written;
-    int length;
-    if (trace_file == INVALID_HANDLE_VALUE || !trace_lock_ready) {
-        return;
-    }
-    trace_endpoint(address, host, sizeof(host), &port);
-    length = snprintf(line, sizeof(line),
-        "{\"time_ms\":%llu,\"protocol\":\"socket\",\"kind\":\"%s\",\"thread\":%lu,\"socket\":%llu,\"caller_rva\":\"0x%llx\",\"remote\":\"%s\",\"port\":%u,\"requested\":%d,\"result\":%d,\"error\":%d,\"digest\":\"%016llx\"}\r\n",
-        (unsigned long long)GetTickCount(), kind, (unsigned long)GetCurrentThreadId(),
-        (unsigned long long)(uintptr_t)socket, (unsigned long long)caller_rva,
-        host, (unsigned int)port, requested, result, error, (unsigned long long)digest);
-    if (length <= 0) {
-        return;
-    }
-    if ((size_t)length > sizeof(line)) {
-        length = (int)sizeof(line);
-    }
-    EnterCriticalSection(&trace_lock);
-    WriteFile(trace_file, line, (DWORD)length, &written, NULL);
-    LeaveCriticalSection(&trace_lock);
-}
-
-static int is_datagram_socket(SOCKET socket) {
-    int socket_type = 0;
-    int length = sizeof(socket_type);
-    if (getsockopt(socket, SOL_SOCKET, SO_TYPE, (char*)&socket_type, &length) != 0) {
-        return 0;
-    }
-    return socket_type == SOCK_DGRAM;
-}
-
-static void trace_raknet_payload(const char* direction, const char* kind, SOCKET socket,
-    const struct sockaddr* address, const char* buffer, int length) {
-    char header[640];
-    char host[64];
-    const char suffix[] = "\"}\r\n";
-    unsigned short port;
-    int header_length;
-    int is_party;
-    if (InterlockedCompareExchange(&snapshot_capture_enabled, 0, 0) == 0 ||
-        buffer == NULL || length <= 0 || length > 65535 ||
-        !is_datagram_socket(socket)) {
-        return;
-    }
-    trace_endpoint(address, host, sizeof(host), &port);
-    is_party = is_party_socket(socket) || port == redirect_party_port;
-    if (port != redirect_port && port != redirect_party_port && !is_party) {
-        return;
-    }
-    header_length = snprintf(header, sizeof(header),
-        "{\"time_ms\":%llu,\"protocol\":\"client_raknet\","
-        "\"kind\":\"datagram\",\"direction\":\"%s\",\"call\":\"%s\","
-        "\"thread\":%lu,\"frame_sequence\":%lu,\"socket\":%llu,"
-        "\"remote\":\"%s\",\"port\":%u,"
-        "\"is_party\":%s,\"size\":%d,\"payload_hex\":\"",
-        (unsigned long long)GetTickCount(), direction, kind,
-        (unsigned long)GetCurrentThreadId(),
-        (unsigned long)InterlockedCompareExchange(&snapshot_frame_sequence, 0, 0),
-        (unsigned long long)(uintptr_t)socket, host, (unsigned int)port,
-        is_party ? "true" : "false", length);
-    if (header_length <= 0) {
-        return;
-    }
-    trace_hex_line(
-        header, header_length, (const BYTE*)buffer,
-        (unsigned int)length, suffix);
-}
-
+// Reads/modifies: observes a native alert and writes a bounded diagnostic record.
 static void trace_alert_event(LPCWSTR text, uintptr_t caller_rva) {
     char utf8[384];
     char escaped[512];
@@ -5581,6 +4025,7 @@ static void trace_alert_event(LPCWSTR text, uintptr_t caller_rva) {
     LeaveCriticalSection(&trace_lock);
 }
 
+// Reads/modifies: observes a path lookup and writes a diagnostic record.
 static void trace_path_event(LPCWSTR path, uintptr_t caller_rva, DWORD result, DWORD error) {
     char utf8[512];
     char escaped[640];
@@ -5619,6 +4064,7 @@ static void trace_path_event(LPCWSTR path, uintptr_t caller_rva, DWORD result, D
     LeaveCriticalSection(&trace_lock);
 }
 
+// Reads/modifies: observes an internal alert and writes its diagnostic fields.
 static void trace_internal_alert_event(const char* message, int code, int severity, uintptr_t caller_rva) {
     WCHAR wide[384];
     char utf8[512];
@@ -5663,6 +4109,7 @@ static void trace_internal_alert_event(const char* message, int code, int severi
     LeaveCriticalSection(&trace_lock);
 }
 
+// Reads/modifies: observes a native login error and records its public failure state.
 static void trace_login_error_event(unsigned int code, uintptr_t caller_rva) {
     char line[384];
     DWORD written;
@@ -5682,565 +4129,9 @@ static void trace_login_error_event(unsigned int code, uintptr_t caller_rva) {
     LeaveCriticalSection(&trace_lock);
 }
 
-static void peer_address(SOCKET socket, struct sockaddr_storage* storage, int* length) {
-    *length = sizeof(*storage);
-    memset(storage, 0, sizeof(*storage));
-    if (getpeername(socket, (struct sockaddr*)storage, length) != 0) {
-        *length = 0;
-    }
-}
-
-static redirect_tls* get_redirect_tls(void) {
-    redirect_tls* data;
-    if (redirect_tls_index == TLS_OUT_OF_INDEXES) {
-        return NULL;
-    }
-    data = (redirect_tls*)TlsGetValue(redirect_tls_index);
-    if (data != NULL) {
-        return data;
-    }
-    data = (redirect_tls*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(redirect_tls));
-    if (data == NULL) {
-        return NULL;
-    }
-    if (!TlsSetValue(redirect_tls_index, data)) {
-        HeapFree(GetProcessHeap(), 0, data);
-        return NULL;
-    }
-    return data;
-}
-
-static struct hostent* WSAAPI hooked_gethostbyname(const char* name) {
-    struct hostent* resolved;
-    redirect_tls* data;
-    if (name == NULL) {
-        return original_gethostbyname(name);
-    }
-    resolved = original_gethostbyname(redirect_hostname);
-    if (resolved == NULL || resolved->h_addr_list == NULL || resolved->h_addr_list[0] == NULL) {
-        return NULL;
-    }
-    data = get_redirect_tls();
-    if (data == NULL) {
-        return NULL;
-    }
-    memcpy(&data->address, resolved->h_addr_list[0], sizeof(data->address));
-    data->addresses[0] = (char*)&data->address;
-    data->addresses[1] = NULL;
-    data->host.h_name = NULL;
-    data->host.h_aliases = NULL;
-    data->host.h_addrtype = AF_INET;
-    data->host.h_length = sizeof(data->address);
-    data->host.h_addr_list = data->addresses;
-    return &data->host;
-}
-
-static int is_ipv4_port(const struct sockaddr* address, int length, unsigned short port) {
-    const struct sockaddr_in* ipv4;
-    if (address == NULL || length < (int)sizeof(struct sockaddr_in) ||
-        address->sa_family != AF_INET) {
-        return 0;
-    }
-    ipv4 = (const struct sockaddr_in*)address;
-    return ipv4->sin_port == htons(port);
-}
-
-static int redirect_ipv4(struct in_addr* address) {
-    struct hostent* resolved;
-    if (address == NULL) {
-        return 0;
-    }
-    resolved = original_gethostbyname(redirect_hostname);
-    if (resolved == NULL || resolved->h_addr_list == NULL || resolved->h_addr_list[0] == NULL) {
-        return 0;
-    }
-    memcpy(address, resolved->h_addr_list[0], sizeof(*address));
-    return 1;
-}
-
-static void remember_party_socket(SOCKET socket) {
-    unsigned int index;
-    AcquireSRWLockExclusive(&party_socket_lock);
-    for (index = 0; index < party_socket_count; index++) {
-        if (party_sockets[index] == socket) {
-            ReleaseSRWLockExclusive(&party_socket_lock);
-            return;
-        }
-    }
-    if (party_socket_count < PARTY_SOCKET_LIMIT) {
-        party_sockets[party_socket_count] = socket;
-        party_socket_count++;
-    }
-    ReleaseSRWLockExclusive(&party_socket_lock);
-}
-
-static int is_party_socket(SOCKET socket) {
-    unsigned int index;
-    int is_party = 0;
-    AcquireSRWLockShared(&party_socket_lock);
-    for (index = 0; index < party_socket_count; index++) {
-        if (party_sockets[index] == socket) {
-            is_party = 1;
-            break;
-        }
-    }
-    ReleaseSRWLockShared(&party_socket_lock);
-    return is_party;
-}
-
-static void restore_party_source(SOCKET socket, struct sockaddr* source, int source_length);
-
-static void forget_party_socket(SOCKET socket) {
-    unsigned int index;
-    AcquireSRWLockExclusive(&party_socket_lock);
-    for (index = 0; index < party_socket_count; index++) {
-        if (party_sockets[index] != socket) {
-            continue;
-        }
-        party_socket_count--;
-        party_sockets[index] = party_sockets[party_socket_count];
-        break;
-    }
-    index = 0;
-    while (index < party_receive_count) {
-        if (party_receives[index].socket != socket) {
-            index++;
-            continue;
-        }
-        party_receive_count--;
-        party_receives[index] = party_receives[party_receive_count];
-    }
-    ReleaseSRWLockExclusive(&party_socket_lock);
-}
-
-static void remember_party_receive(SOCKET socket, LPWSAOVERLAPPED overlapped,
-    struct sockaddr* source, LPINT source_length) {
-    unsigned int index;
-    if (overlapped == NULL || source == NULL || source_length == NULL) {
-        return;
-    }
-    AcquireSRWLockExclusive(&party_socket_lock);
-    for (index = 0; index < party_receive_count; index++) {
-        if (party_receives[index].socket == socket &&
-            party_receives[index].overlapped == overlapped) {
-            party_receives[index].source = source;
-            party_receives[index].source_length = source_length;
-            ReleaseSRWLockExclusive(&party_socket_lock);
-            return;
-        }
-    }
-    if (party_receive_count < PARTY_SOCKET_LIMIT) {
-        party_receives[party_receive_count].socket = socket;
-        party_receives[party_receive_count].overlapped = overlapped;
-        party_receives[party_receive_count].source = source;
-        party_receives[party_receive_count].source_length = source_length;
-        party_receive_count++;
-    }
-    ReleaseSRWLockExclusive(&party_socket_lock);
-}
-
-static void complete_party_receive(SOCKET socket, LPWSAOVERLAPPED overlapped) {
-    unsigned int index;
-    struct sockaddr* source = NULL;
-    LPINT source_length = NULL;
-    AcquireSRWLockExclusive(&party_socket_lock);
-    for (index = 0; index < party_receive_count; index++) {
-        if (party_receives[index].socket != socket ||
-            party_receives[index].overlapped != overlapped) {
-            continue;
-        }
-        source = party_receives[index].source;
-        source_length = party_receives[index].source_length;
-        party_receive_count--;
-        party_receives[index] = party_receives[party_receive_count];
-        break;
-    }
-    ReleaseSRWLockExclusive(&party_socket_lock);
-    if (source != NULL && source_length != NULL) {
-        restore_party_source(socket, source, *source_length);
-    }
-}
-
-static char* envelop_party_datagram(const char* buffer, int length, int* wrapped_length) {
-    char* wrapped;
-    size_t envelope_length = sizeof(party_envelope);
-    if (buffer == NULL || length < 0 || length > INT_MAX - (int)envelope_length) {
-        WSASetLastError(WSAEINVAL);
-        return NULL;
-    }
-    *wrapped_length = length + (int)envelope_length;
-    wrapped = (char*)HeapAlloc(GetProcessHeap(), 0, (SIZE_T)*wrapped_length);
-    if (wrapped == NULL) {
-        WSASetLastError(WSAENOBUFS);
-        return NULL;
-    }
-    memcpy(wrapped, party_envelope, envelope_length);
-    memcpy(wrapped + envelope_length, buffer, (size_t)length);
-    return wrapped;
-}
-
-static int party_send_result(int result, int original_length) {
-    if (result == SOCKET_ERROR) {
-        return SOCKET_ERROR;
-    }
-    if (result == original_length + (int)sizeof(party_envelope)) {
-        return original_length;
-    }
-    if (result <= (int)sizeof(party_envelope)) {
-        return 0;
-    }
-    return result - (int)sizeof(party_envelope);
-}
-
-static void restore_party_source(SOCKET socket, struct sockaddr* source, int source_length) {
-    struct sockaddr_in* ipv4;
-    if (!is_party_socket(socket) ||
-        !is_ipv4_port(source, source_length, redirect_port)) {
-        return;
-    }
-    ipv4 = (struct sockaddr_in*)source;
-    ipv4->sin_port = htons(redirect_party_port);
-}
-
-static int WSAAPI hooked_connect(SOCKET socket, const struct sockaddr* name, int name_length) {
-    struct sockaddr_in redirected;
-    const struct sockaddr* effective = name;
-    int result;
-    int error;
-    int is_party_destination = 0;
-    if (name != NULL && name_length >= (int)sizeof(struct sockaddr_in) && name->sa_family == AF_INET) {
-        memcpy(&redirected, name, sizeof(redirected));
-        if (redirected.sin_port == htons(80)) {
-            redirected.sin_port = htons(redirect_port);
-            redirect_ipv4(&redirected.sin_addr);
-            effective = (const struct sockaddr*)&redirected;
-        } else if (redirected.sin_port == htons(redirect_party_port)) {
-            is_party_destination = 1;
-            redirected.sin_port = htons(redirect_port);
-            redirect_ipv4(&redirected.sin_addr);
-            effective = (const struct sockaddr*)&redirected;
-        } else if (redirected.sin_port == htons(redirect_port)) {
-            redirect_ipv4(&redirected.sin_addr);
-            effective = (const struct sockaddr*)&redirected;
-        }
-    }
-    result = original_connect(socket, effective, name_length);
-    error = result == SOCKET_ERROR ? WSAGetLastError() : 0;
-    if (result != SOCKET_ERROR && is_party_destination) {
-        remember_party_socket(socket);
-    }
-    trace_socket_event("connect", socket, effective, trace_caller_rva(__builtin_return_address(0)), name_length, result, error, 0);
-    WSASetLastError(error);
-    return result;
-}
-
-static int patch_matchmaking_string(BYTE* payload, int length,
-    const char* key, char expected, char replacement) {
-    size_t key_length = strlen(key);
-    int patch_count = 0;
-    int index;
-    if (payload == NULL || key_length >= 63 || length <= 0) {
-        return 0;
-    }
-    for (index = 0; index + (int)key_length + 5 <= length; index++) {
-        BYTE* entry = payload + index;
-        if (entry[0] != (BYTE)(key_length + 1) ||
-            memcmp(entry + 1, key, key_length) != 0 ||
-            entry[key_length + 1] != 0 ||
-            entry[key_length + 2] != 2 ||
-            entry[key_length + 3] != (BYTE)expected ||
-            entry[key_length + 4] != 0) {
-            continue;
-        }
-        entry[key_length + 3] = (BYTE)replacement;
-        patch_count++;
-    }
-    return patch_count;
-}
-
-static int patch_solo_unranked_1v1_matchmaking(BYTE* buffer, int length) {
-    int offset = 0;
-    int patch_count = 0;
-    if (buffer == NULL || length < 12 ||
-        InterlockedCompareExchange(&solo_unranked_1v1_matchmaking_pending, 0, 0) == 0) {
-        return 0;
-    }
-    while (offset + 12 <= length) {
-        BYTE* frame = buffer + offset;
-        int payload_length = (int)frame[0] << 8 | (int)frame[1];
-        int frame_length = 12 + payload_length;
-        int expected_count;
-        int team_count;
-        if (frame_length > length - offset) {
-            break;
-        }
-        if (frame[2] != 0 || frame[3] != 4 ||
-            frame[4] != 0 || frame[5] != 13 || (frame[8] >> 4) != 0) {
-            offset += frame_length;
-            continue;
-        }
-        expected_count = patch_matchmaking_string(
-            frame + 12, payload_length, "ExpectedPlayerCount", '4', '4');
-        team_count = patch_matchmaking_string(
-            frame + 12, payload_length, "TeamSize", '2', '2');
-        if (expected_count == 0 || team_count == 0) {
-            offset += frame_length;
-            continue;
-        }
-        patch_count += patch_matchmaking_string(
-            frame + 12, payload_length, "ExpectedPlayerCount", '4', '2');
-        patch_count += patch_matchmaking_string(
-            frame + 12, payload_length, "TeamSize", '2', '1');
-        offset += frame_length;
-    }
-    if (patch_count != 0) {
-        trace_client_state("solo_unranked_1v1_matchmaking", (unsigned int)patch_count);
-    }
-    return patch_count;
-}
-
-static int WSAAPI hooked_send(SOCKET socket, const char* buffer, int length, int flags) {
-    struct sockaddr_storage remote;
-    int remote_length;
-    int wrapped_length = 0;
-    char* wrapped = NULL;
-    char* matchmaking = NULL;
-    const char* effective = buffer;
-    int result;
-    if (!is_party_socket(socket) && buffer != NULL && length > 0 &&
-        InterlockedCompareExchange(&solo_unranked_1v1_matchmaking_pending, 0, 0) != 0) {
-        matchmaking = (char*)HeapAlloc(GetProcessHeap(), 0, (SIZE_T)length);
-        if (matchmaking != NULL) {
-            memcpy(matchmaking, buffer, (size_t)length);
-            if (patch_solo_unranked_1v1_matchmaking((BYTE*)matchmaking, length) != 0) {
-                effective = matchmaking;
-            }
-        }
-    }
-    if (is_party_socket(socket)) {
-        wrapped = envelop_party_datagram(buffer, length, &wrapped_length);
-        if (wrapped == NULL) {
-            return SOCKET_ERROR;
-        }
-        result = original_send(socket, wrapped, wrapped_length, flags);
-    } else {
-        result = original_send(socket, effective, length, flags);
-    }
-    int error = result == SOCKET_ERROR ? WSAGetLastError() : 0;
-    if (matchmaking != NULL) {
-        HeapFree(GetProcessHeap(), 0, matchmaking);
-    }
-    if (wrapped != NULL) {
-        HeapFree(GetProcessHeap(), 0, wrapped);
-        result = party_send_result(result, length);
-    }
-    peer_address(socket, &remote, &remote_length);
-    trace_socket_event("send", socket, remote_length > 0 ? (struct sockaddr*)&remote : NULL, trace_caller_rva(__builtin_return_address(0)), length, result, error, trace_digest(buffer, result));
-    trace_raknet_payload("client_to_server", "send", socket,
-        remote_length > 0 ? (struct sockaddr*)&remote : NULL, buffer, result);
-    WSASetLastError(error);
-    return result;
-}
-
-static int WSAAPI hooked_recv(SOCKET socket, char* buffer, int length, int flags) {
-    struct sockaddr_storage remote;
-    int remote_length;
-    int result = original_recv(socket, buffer, length, flags);
-    int error = result == SOCKET_ERROR ? WSAGetLastError() : 0;
-    peer_address(socket, &remote, &remote_length);
-    if (result != 1 && error != WSAEWOULDBLOCK) {
-        trace_socket_event("recv", socket, remote_length > 0 ? (struct sockaddr*)&remote : NULL, trace_caller_rva(__builtin_return_address(0)), length, result, error, trace_digest(buffer, result));
-        trace_raknet_payload("server_to_client", "recv", socket,
-            remote_length > 0 ? (struct sockaddr*)&remote : NULL, buffer, result);
-    }
-    WSASetLastError(error);
-    return result;
-}
-
-static int WSAAPI hooked_sendto(SOCKET socket, const char* buffer, int length, int flags, const struct sockaddr* destination, int destination_length) {
-    struct sockaddr_in redirected;
-    const struct sockaddr* effective = destination;
-    int wrapped_length = 0;
-    char* wrapped = NULL;
-    int result;
-    if (is_ipv4_port(destination, destination_length, redirect_party_port)) {
-        remember_party_socket(socket);
-        memcpy(&redirected, destination, sizeof(redirected));
-        redirected.sin_port = htons(redirect_port);
-        redirect_ipv4(&redirected.sin_addr);
-        effective = (const struct sockaddr*)&redirected;
-        wrapped = envelop_party_datagram(buffer, length, &wrapped_length);
-        if (wrapped == NULL) {
-            return SOCKET_ERROR;
-        }
-        result = original_sendto(socket, wrapped, wrapped_length, flags, effective, destination_length);
-    } else if (is_ipv4_port(destination, destination_length, redirect_port)) {
-        memcpy(&redirected, destination, sizeof(redirected));
-        redirect_ipv4(&redirected.sin_addr);
-        effective = (const struct sockaddr*)&redirected;
-        result = original_sendto(socket, buffer, length, flags, effective, destination_length);
-    } else {
-        result = original_sendto(socket, buffer, length, flags, destination, destination_length);
-    }
-    int error = result == SOCKET_ERROR ? WSAGetLastError() : 0;
-    if (wrapped != NULL) {
-        HeapFree(GetProcessHeap(), 0, wrapped);
-        result = party_send_result(result, length);
-    }
-    trace_socket_event("sendto", socket, effective, trace_caller_rva(__builtin_return_address(0)), length, result, error, trace_digest(buffer, result));
-    trace_raknet_payload(
-        "client_to_server", "sendto", socket, effective, buffer, result);
-    WSASetLastError(error);
-    return result;
-}
-
-static int WSAAPI hooked_recvfrom(SOCKET socket, char* buffer, int length, int flags, struct sockaddr* source, int* source_length) {
-    int result = original_recvfrom(socket, buffer, length, flags, source, source_length);
-    int error = result == SOCKET_ERROR ? WSAGetLastError() : 0;
-    if (result != SOCKET_ERROR && source_length != NULL) {
-        restore_party_source(socket, source, *source_length);
-    }
-    trace_socket_event("recvfrom", socket, source, trace_caller_rva(__builtin_return_address(0)), length, result, error, trace_digest(buffer, result));
-    trace_raknet_payload(
-        "server_to_client", "recvfrom", socket, source, buffer, result);
-    WSASetLastError(error);
-    return result;
-}
-
-static int WSAAPI hooked_closesocket(SOCKET socket) {
-    int result;
-    forget_party_socket(socket);
-    result = original_closesocket(socket);
-    return result;
-}
-
-static DWORD wsabuf_length(LPWSABUF buffers, DWORD count) {
-    DWORD total = 0;
-    DWORD index;
-    for (index = 0; index < count; index++) {
-        total += buffers[index].len;
-    }
-    return total;
-}
-
-static void trace_wsabuf_payload(const char* direction, const char* kind,
-    SOCKET socket, const struct sockaddr* address, LPWSABUF buffers,
-    DWORD count, DWORD completed) {
-    BYTE* payload;
-    DWORD copied = 0;
-    DWORD index;
-    if (buffers == NULL || count == 0 || completed == 0 || completed > 65535) {
-        return;
-    }
-    payload = (BYTE*)HeapAlloc(GetProcessHeap(), 0, (SIZE_T)completed);
-    if (payload == NULL) {
-        return;
-    }
-    for (index = 0; index < count && copied < completed; index++) {
-        DWORD remaining = completed - copied;
-        DWORD copy_length = buffers[index].len < remaining ? buffers[index].len : remaining;
-        if (copy_length > 0 && buffers[index].buf != NULL) {
-            memcpy(payload + copied, buffers[index].buf, copy_length);
-            copied += copy_length;
-        }
-    }
-    if (copied == completed) {
-        trace_raknet_payload(
-            direction, kind, socket, address, (const char*)payload, (int)completed);
-    }
-    HeapFree(GetProcessHeap(), 0, payload);
-}
-
-static int WSAAPI hooked_wsasend(SOCKET socket, LPWSABUF buffers, DWORD count, LPDWORD sent, DWORD flags, LPWSAOVERLAPPED overlapped, LPWSAOVERLAPPED_COMPLETION_ROUTINE completion) {
-    struct sockaddr_storage remote;
-    int remote_length;
-    DWORD total = wsabuf_length(buffers, count);
-    BYTE* matchmaking = NULL;
-    DWORD offset = 0;
-    DWORD index;
-    if (!is_party_socket(socket) && buffers != NULL && total > 0 &&
-        InterlockedCompareExchange(&solo_unranked_1v1_matchmaking_pending, 0, 0) != 0) {
-        matchmaking = (BYTE*)HeapAlloc(GetProcessHeap(), 0, (SIZE_T)total);
-        if (matchmaking != NULL) {
-            for (index = 0; index < count; index++) {
-                memcpy(matchmaking + offset, buffers[index].buf, buffers[index].len);
-                offset += buffers[index].len;
-            }
-            if (patch_solo_unranked_1v1_matchmaking(matchmaking, (int)total) != 0) {
-                offset = 0;
-                for (index = 0; index < count; index++) {
-                    memcpy(buffers[index].buf, matchmaking + offset, buffers[index].len);
-                    offset += buffers[index].len;
-                }
-            }
-            HeapFree(GetProcessHeap(), 0, matchmaking);
-        }
-    }
-    int result = original_wsasend(socket, buffers, count, sent, flags, overlapped, completion);
-    int error = result == SOCKET_ERROR ? WSAGetLastError() : 0;
-    int completed = result == 0 && sent != NULL ? (int)*sent : result;
-    peer_address(socket, &remote, &remote_length);
-    trace_socket_event("WSASend", socket, remote_length > 0 ? (struct sockaddr*)&remote : NULL, trace_caller_rva(__builtin_return_address(0)), (int)total, completed, error, 0);
-    if (completed > 0) {
-        trace_wsabuf_payload(
-            "client_to_server", "WSASend", socket,
-            remote_length > 0 ? (struct sockaddr*)&remote : NULL,
-            buffers, count, (DWORD)completed);
-    }
-    WSASetLastError(error);
-    return result;
-}
-
-static int WSAAPI hooked_wsarecv(SOCKET socket, LPWSABUF buffers, DWORD count, LPDWORD received, LPDWORD flags, LPWSAOVERLAPPED overlapped, LPWSAOVERLAPPED_COMPLETION_ROUTINE completion) {
-    struct sockaddr_storage remote;
-    int remote_length;
-    int result = original_wsarecv(socket, buffers, count, received, flags, overlapped, completion);
-    int error = result == SOCKET_ERROR ? WSAGetLastError() : 0;
-    int completed = result == 0 && received != NULL ? (int)*received : result;
-    peer_address(socket, &remote, &remote_length);
-    trace_socket_event("WSARecv", socket, remote_length > 0 ? (struct sockaddr*)&remote : NULL, trace_caller_rva(__builtin_return_address(0)), (int)wsabuf_length(buffers, count), completed, error, 0);
-    if (completed > 0) {
-        trace_wsabuf_payload(
-            "server_to_client", "WSARecv", socket,
-            remote_length > 0 ? (struct sockaddr*)&remote : NULL,
-            buffers, count, (DWORD)completed);
-    }
-    WSASetLastError(error);
-    return result;
-}
-
-static int WSAAPI hooked_wsarecvfrom(SOCKET socket, LPWSABUF buffers, DWORD count, LPDWORD received, LPDWORD flags, struct sockaddr* source, LPINT source_length, LPWSAOVERLAPPED overlapped, LPWSAOVERLAPPED_COMPLETION_ROUTINE completion) {
-    int result = original_wsarecvfrom(socket, buffers, count, received, flags, source, source_length, overlapped, completion);
-    int error = result == SOCKET_ERROR ? WSAGetLastError() : 0;
-    int completed = result == 0 && received != NULL ? (int)*received : result;
-    if (result == 0 && source_length != NULL) {
-        restore_party_source(socket, source, *source_length);
-    } else if (result == SOCKET_ERROR && error == WSA_IO_PENDING) {
-        remember_party_receive(socket, overlapped, source, source_length);
-    }
-    trace_socket_event("WSARecvFrom", socket, source, trace_caller_rva(__builtin_return_address(0)), (int)wsabuf_length(buffers, count), completed, error, 0);
-    if (completed > 0) {
-        trace_wsabuf_payload(
-            "server_to_client", "WSARecvFrom", socket, source,
-            buffers, count, (DWORD)completed);
-    }
-    WSASetLastError(error);
-    return result;
-}
-
-static BOOL WSAAPI hooked_wsagetoverlappedresult(SOCKET socket,
-    LPWSAOVERLAPPED overlapped, LPDWORD transferred, BOOL wait, LPDWORD flags) {
-    BOOL result = original_wsagetoverlappedresult(socket, overlapped, transferred, wait, flags);
-    int error = result ? 0 : WSAGetLastError();
-    if (result) {
-        complete_party_receive(socket, overlapped);
-    }
-    WSASetLastError(error);
-    return result;
-}
-
+// Modifies: accepts a pending chat-exit confirmation, or logs and forwards the wide native dialog.
 static int WINAPI hooked_messageboxw(HWND window, LPCWSTR text, LPCWSTR caption, UINT type) {
-    trace_alert_event(text, trace_caller_rva(__builtin_return_address(0)));
+    trace_alert_event(text, fang_trace_caller_rva(__builtin_return_address(0)));
     if (InterlockedExchange(&chat_exit_pending, 0) != 0) {
         unsigned int buttons = type & MB_TYPEMASK;
         trace_client_state("chat_exit_confirm", buttons);
@@ -6252,13 +4143,14 @@ static int WINAPI hooked_messageboxw(HWND window, LPCWSTR text, LPCWSTR caption,
     return original_messageboxw(window, text, caption, type);
 }
 
+// Modifies: accepts a pending chat-exit confirmation, or logs and forwards the narrow native dialog.
 static int WINAPI hooked_messageboxa(HWND window, LPCSTR text, LPCSTR caption, UINT type) {
     WCHAR wide[384];
     int converted = text == NULL ? 0 : MultiByteToWideChar(CP_ACP, 0, text, -1, wide, sizeof(wide) / sizeof(wide[0]));
     if (converted <= 0) {
         wide[0] = L'\0';
     }
-    trace_alert_event(wide, trace_caller_rva(__builtin_return_address(0)));
+    trace_alert_event(wide, fang_trace_caller_rva(__builtin_return_address(0)));
     if (InterlockedExchange(&chat_exit_pending, 0) != 0) {
         unsigned int buttons = type & MB_TYPEMASK;
         trace_client_state("chat_exit_confirm", buttons);
@@ -6270,8 +4162,9 @@ static int WINAPI hooked_messageboxa(HWND window, LPCSTR text, LPCSTR caption, U
     return original_messageboxa(window, text, caption, type);
 }
 
+// Reads/modifies: queries native file attributes and records the path lookup result.
 static DWORD WINAPI hooked_getfileattributesw(LPCWSTR file_name) {
-    uintptr_t caller_rva = trace_caller_rva(__builtin_return_address(0));
+    uintptr_t caller_rva = fang_trace_caller_rva(__builtin_return_address(0));
     DWORD result = original_getfileattributesw(file_name);
     DWORD error = result == INVALID_FILE_ATTRIBUTES ? GetLastError() : 0;
     if (caller_rva == 0xAF2E85) {
@@ -6281,260 +4174,61 @@ static DWORD WINAPI hooked_getfileattributesw(LPCWSTR file_name) {
     return result;
 }
 
+// Reads/modifies: records an internal alert and forwards it to the native handler.
 static void __cdecl hooked_internal_alert(const char* message, int code, int severity) {
-    trace_internal_alert_event(message, code, severity, trace_caller_rva(__builtin_return_address(0)));
+    trace_internal_alert_event(message, code, severity, fang_trace_caller_rva(__builtin_return_address(0)));
     original_alert(message, code, severity);
 }
 
+// Modifies: completes failed login, records launcher rejection, and may terminate the production client.
 static void __cdecl hooked_login_error(unsigned int code, void* target) {
-    InterlockedExchange(&jwt_login_completed, 1);
-    trace_login_error_event(code, trace_caller_rva(__builtin_return_address(0)));
+    LONG was_login_completed = InterlockedExchange(&jwt_login_completed, 1);
+    trace_login_error_event(code, fang_trace_caller_rva(__builtin_return_address(0)));
+#if !FANG_SCENARIO
+    if (!was_login_completed && jwt_login_token[0] != '\0' && fang_login_rejected(code)) {
+        /* The owning launcher retains the themed error after the client
+         * closes, rather than routing an automatic launch to manual login. */
+        fang_login_terminate(0xD15C0002u);
+    }
+#endif
+    (void)was_login_completed;
     original_login_error(code, target);
 }
 
+// Reads: ignores verification arguments without modifying the TLS context.
 static void hooked_ssl_ctx_set_verify(void* context, int mode, void* callback) {
     (void)context;
     (void)mode;
     (void)callback;
 }
 
+// Reads: ignores the TLS input and returns a zero verification result.
 static long hooked_ssl_get_verify_result(const void* ssl) {
     (void)ssl;
     return 0;
 }
 
+// Reads: ignores both hostname inputs and returns a zero match result.
 static int hooked_wildcard_match_no_case(const char* first, const char* second) {
     (void)first;
     (void)second;
     return 0;
 }
 
+// Reads: ignores certificate inputs and returns a zero verification result.
 static int hooked_verify_certificate(void* certificate, int self_signed) {
     (void)certificate;
     (void)self_signed;
     return 0;
 }
 
-static int patch_import(HMODULE module, const char* library_name, const char* function_name, WORD function_ordinal, void* replacement) {
-    BYTE* base = (BYTE*)module;
-    IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)base;
-    IMAGE_NT_HEADERS* nt;
-    IMAGE_IMPORT_DESCRIPTOR* descriptor;
-    int patched = 0;
-    if (function_ordinal == 52) {
-        dns_diagnostics |= 0x1000;
-    }
-    if (dos == NULL || dos->e_magic != IMAGE_DOS_SIGNATURE) {
-        return 0;
-    }
-    nt = (IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
-    if (nt->Signature != IMAGE_NT_SIGNATURE) {
-        return 0;
-    }
-    if (nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress == 0) {
-        return 0;
-    }
-    descriptor = (IMAGE_IMPORT_DESCRIPTOR*)(base + nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
-    for (; descriptor->Name != 0; descriptor++) {
-        IMAGE_THUNK_DATA* names;
-        IMAGE_THUNK_DATA* addresses;
-        size_t index;
-        if (lstrcmpiA((const char*)(base + descriptor->Name), library_name) != 0) {
-            continue;
-        }
-        if (function_ordinal == 52) {
-            dns_diagnostics |= 0x2000;
-        }
-        if (descriptor->OriginalFirstThunk == 0 || descriptor->FirstThunk == 0) {
-            continue;
-        }
-        names = (IMAGE_THUNK_DATA*)(base + descriptor->OriginalFirstThunk);
-        addresses = (IMAGE_THUNK_DATA*)(base + descriptor->FirstThunk);
-        for (index = 0; names[index].u1.AddressOfData != 0; index++) {
-            IMAGE_IMPORT_BY_NAME* imported_name;
-            DWORD old_protection;
-            DWORD ignored;
-            if (IMAGE_SNAP_BY_ORDINAL(names[index].u1.Ordinal)) {
-                if (IMAGE_ORDINAL(names[index].u1.Ordinal) != function_ordinal) {
-                    continue;
-                }
-            } else {
-                imported_name = (IMAGE_IMPORT_BY_NAME*)(base + names[index].u1.AddressOfData);
-                if (strcmp((const char*)imported_name->Name, function_name) != 0) {
-                    continue;
-                }
-            }
-            if (function_ordinal == 52) {
-                dns_diagnostics |= 0x4000;
-            }
-            if (!VirtualProtect(&addresses[index].u1.Function, sizeof(ULONG_PTR), PAGE_READWRITE, &old_protection)) {
-                if (function_ordinal == 52) {
-                    dns_diagnostics |= 0x8000;
-                }
-                continue;
-            }
-            addresses[index].u1.Function = (ULONG_PTR)replacement;
-            VirtualProtect(&addresses[index].u1.Function, sizeof(ULONG_PTR), old_protection, &ignored);
-            patched++;
-        }
-    }
-    return patched;
-}
-
-static int patch_import_address(HMODULE module, void* original, void* replacement) {
-    BYTE* base = (BYTE*)module;
-    IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)base;
-    IMAGE_NT_HEADERS* nt;
-    IMAGE_IMPORT_DESCRIPTOR* descriptor;
-    int patched = 0;
-    if (original == (void*)original_gethostbyname) {
-        dns_diagnostics |= 0x10000;
-    }
-    if (dos == NULL || dos->e_magic != IMAGE_DOS_SIGNATURE) {
-        return 0;
-    }
-    nt = (IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
-    if (nt->Signature != IMAGE_NT_SIGNATURE) {
-        return 0;
-    }
-    if (nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress == 0) {
-        return 0;
-    }
-    descriptor = (IMAGE_IMPORT_DESCRIPTOR*)(base + nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
-    for (; descriptor->Name != 0; descriptor++) {
-        IMAGE_THUNK_DATA* addresses;
-        size_t index;
-        if (descriptor->FirstThunk == 0) {
-            continue;
-        }
-        addresses = (IMAGE_THUNK_DATA*)(base + descriptor->FirstThunk);
-        for (index = 0; addresses[index].u1.Function != 0; index++) {
-            DWORD old_protection;
-            DWORD ignored;
-            if (addresses[index].u1.Function != (ULONG_PTR)original) {
-                continue;
-            }
-            if (original == (void*)original_gethostbyname) {
-                dns_diagnostics |= 0x20000;
-            }
-            if (!VirtualProtect(&addresses[index].u1.Function, sizeof(ULONG_PTR), PAGE_READWRITE, &old_protection)) {
-                if (original == (void*)original_gethostbyname) {
-                    dns_diagnostics |= 0x40000;
-                }
-                continue;
-            }
-            addresses[index].u1.Function = (ULONG_PTR)replacement;
-            VirtualProtect(&addresses[index].u1.Function, sizeof(ULONG_PTR), old_protection, &ignored);
-            patched++;
-        }
-    }
-    return patched;
-}
-
-static BYTE* find_signature(HMODULE module, const BYTE* signature, size_t signature_length) {
-    BYTE* base = (BYTE*)module;
-    IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)base;
-    IMAGE_NT_HEADERS* nt;
-    IMAGE_SECTION_HEADER* section;
-    WORD section_index;
-    if (base == NULL || dos->e_magic != IMAGE_DOS_SIGNATURE) {
-        return NULL;
-    }
-    nt = (IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
-    if (nt->Signature != IMAGE_NT_SIGNATURE) {
-        return NULL;
-    }
-    section = IMAGE_FIRST_SECTION(nt);
-    for (section_index = 0; section_index < nt->FileHeader.NumberOfSections; section_index++, section++) {
-        BYTE* start;
-        size_t size;
-        size_t index;
-        if ((section->Characteristics & IMAGE_SCN_MEM_READ) == 0) {
-            continue;
-        }
-        size = section->Misc.VirtualSize;
-        if (size < section->SizeOfRawData) {
-            size = section->SizeOfRawData;
-        }
-        if (size < signature_length || section->VirtualAddress >= nt->OptionalHeader.SizeOfImage) {
-            continue;
-        }
-        if (size > nt->OptionalHeader.SizeOfImage - section->VirtualAddress) {
-            size = nt->OptionalHeader.SizeOfImage - section->VirtualAddress;
-        }
-        start = base + section->VirtualAddress;
-        for (index = 0; index <= size - signature_length; index++) {
-            if (memcmp(start + index, signature, signature_length) == 0) {
-                return start + index;
-            }
-        }
-    }
-    return NULL;
-}
-
-static int patch_jump(void* target, void* replacement) {
-    BYTE patch[5];
-    int32_t relative;
-    DWORD old_protection;
-    DWORD ignored;
-    if (target == NULL || replacement == NULL) {
-        return 0;
-    }
-    relative = (int32_t)((BYTE*)replacement - ((BYTE*)target + sizeof(patch)));
-    patch[0] = 0xE9;
-    memcpy(patch + 1, &relative, sizeof(relative));
-    if (!VirtualProtect(target, sizeof(patch), PAGE_EXECUTE_READWRITE, &old_protection)) {
-        return 0;
-    }
-    memcpy(target, patch, sizeof(patch));
-    FlushInstructionCache(GetCurrentProcess(), target, sizeof(patch));
-    VirtualProtect(target, sizeof(patch), old_protection, &ignored);
-    return 1;
-}
-
-int patch_call(void* instruction, void* expected_target, void* replacement) {
-    BYTE* call = (BYTE*)instruction;
-    DWORD old_protection;
-    DWORD ignored;
-    int32_t current_relative;
-    int32_t replacement_relative;
-    if (call == NULL || call[0] != 0xE8) {
-        return 0;
-    }
-    memcpy(&current_relative, call + 1, sizeof(current_relative));
-    if (call + 5 + current_relative != (BYTE*)expected_target) {
-        return 0;
-    }
-    replacement_relative = (int32_t)((BYTE*)replacement - (call + 5));
-    if (!VirtualProtect(call, 5, PAGE_EXECUTE_READWRITE, &old_protection)) {
-        return 0;
-    }
-    memcpy(call + 1, &replacement_relative, sizeof(replacement_relative));
-    FlushInstructionCache(GetCurrentProcess(), call, 5);
-    VirtualProtect(call, 5, old_protection, &ignored);
-    return 1;
-}
-
-static int patch_bytes(void* target, const BYTE* replacement, size_t length) {
-    DWORD old_protection;
-    DWORD ignored;
-    if (target == NULL || replacement == NULL || length == 0) {
-        return 0;
-    }
-    if (!VirtualProtect(target, length, PAGE_EXECUTE_READWRITE, &old_protection)) {
-        return 0;
-    }
-    memcpy(target, replacement, length);
-    FlushInstructionCache(GetCurrentProcess(), target, length);
-    VirtualProtect(target, length, old_protection, &ignored);
-    return 1;
-}
-
+// Reads: returns whether a character can belong to a locale identifier.
 static int is_locale_letter(wchar_t character) {
     return (character >= L'a' && character <= L'z') ||
         (character >= L'A' && character <= L'Z');
 }
 
+// Reads: returns whether the process command line supplies a client locale.
 static int has_client_locale_argument(void) {
     const wchar_t* command_line = GetCommandLineW();
     const wchar_t* cursor;
@@ -6563,6 +4257,7 @@ static int has_client_locale_argument(void) {
     return 0;
 }
 
+// Modifies: makes the validated locale branch unconditional when a client locale argument exists.
 static int patch_locale_argument_precedence(HMODULE executable) {
     static const BYTE registry_branch_signature[] = {
         0xE8, 0xCE, 0x11, 0xFC, 0xFF, 0x83, 0xC4, 0x40,
@@ -6573,7 +4268,7 @@ static int patch_locale_argument_precedence(HMODULE executable) {
     if (!has_client_locale_argument()) {
         return 1;
     }
-    registry_branch = find_signature(
+    registry_branch = fang_find_signature(
         executable, registry_branch_signature, sizeof(registry_branch_signature));
     if (registry_branch == NULL) {
         return 0;
@@ -6582,6 +4277,7 @@ static int patch_locale_argument_precedence(HMODULE executable) {
         sizeof(unconditional_jump));
 }
 
+// Modifies: reads the native stream, enables decoded PVPMode2V1 operands, and records patch bookkeeping.
 static int FANG_THISCALL hooked_scaleform_stream_read(void* stream,
     void* destination, int length) {
     /*
@@ -6662,6 +4358,7 @@ static int FANG_THISCALL hooked_scaleform_stream_read(void* stream,
 }
 
 #if defined(__GNUC__) && defined(__i386__)
+// Modifies: updates pending solo matchmaking from mode arguments and tail-calls native map-room startup.
 static void __attribute__((naked)) hooked_map_room_start_game(void) {
     __asm__ __volatile__(
         "pushfl\n\t"
@@ -6692,20 +4389,8 @@ static void __attribute__((naked)) hooked_map_room_start_game(void) {
 }
 #endif
 
-int patch_pointer(void** target, void* expected, void* replacement) {
-    DWORD old_protection;
-    DWORD ignored;
-    if (target == NULL || replacement == NULL || *target != expected) {
-        return 0;
-    }
-    if (!VirtualProtect(target, sizeof(void*), PAGE_READWRITE, &old_protection)) {
-        return 0;
-    }
-    *target = replacement;
-    VirtualProtect(target, sizeof(void*), old_protection, &ignored);
-    return 1;
-}
 
+// Modifies: installs existing network and system import hooks on loaded modules.
 static int patch_network_imports(void) {
     HMODULE modules[2];
     int module_count = 1;
@@ -6718,45 +4403,25 @@ static int patch_network_imports(void) {
         module_count = 2;
     }
     for (int index = 0; index < module_count; index++) {
-        dns_patches += patch_import(modules[index], "WS2_32.dll", "gethostbyname", 52, (void*)hooked_gethostbyname);
-        connect_patches += patch_import(modules[index], "WS2_32.dll", "connect", 4, (void*)hooked_connect);
-        dns_patches += patch_import_address(modules[index], (void*)original_gethostbyname, (void*)hooked_gethostbyname);
-        connect_patches += patch_import_address(modules[index], (void*)original_connect, (void*)hooked_connect);
-        trace_patches += patch_import(modules[index], "WS2_32.dll", "send", 19, (void*)hooked_send);
-        trace_patches += patch_import(modules[index], "WS2_32.dll", "recv", 16, (void*)hooked_recv);
-        trace_patches += patch_import(modules[index], "WS2_32.dll", "sendto", 20, (void*)hooked_sendto);
-        trace_patches += patch_import(modules[index], "WS2_32.dll", "recvfrom", 17, (void*)hooked_recvfrom);
-        trace_patches += patch_import(modules[index], "WS2_32.dll", "closesocket", 3, (void*)hooked_closesocket);
-        trace_patches += patch_import(modules[index], "WS2_32.dll", "WSASend", 0, (void*)hooked_wsasend);
-        trace_patches += patch_import(modules[index], "WS2_32.dll", "WSARecv", 0, (void*)hooked_wsarecv);
-        trace_patches += patch_import(modules[index], "WS2_32.dll", "WSARecvFrom", 0, (void*)hooked_wsarecvfrom);
-        trace_patches += patch_import(modules[index], "WS2_32.dll", "WSAGetOverlappedResult", 0, (void*)hooked_wsagetoverlappedresult);
-        trace_patches += patch_import_address(modules[index], (void*)original_send, (void*)hooked_send);
-        trace_patches += patch_import_address(modules[index], (void*)original_recv, (void*)hooked_recv);
-        trace_patches += patch_import_address(modules[index], (void*)original_sendto, (void*)hooked_sendto);
-        trace_patches += patch_import_address(modules[index], (void*)original_recvfrom, (void*)hooked_recvfrom);
-        trace_patches += patch_import_address(modules[index], (void*)original_closesocket, (void*)hooked_closesocket);
-        trace_patches += patch_import_address(modules[index], (void*)original_wsasend, (void*)hooked_wsasend);
-        trace_patches += patch_import_address(modules[index], (void*)original_wsarecv, (void*)hooked_wsarecv);
-        trace_patches += patch_import_address(modules[index], (void*)original_wsarecvfrom, (void*)hooked_wsarecvfrom);
-        trace_patches += patch_import_address(modules[index], (void*)original_wsagetoverlappedresult, (void*)hooked_wsagetoverlappedresult);
+        trace_patches += fang_network_install_module(modules[index], &dns_patches, &connect_patches);
         if (original_messageboxw != NULL) {
-            trace_patches += patch_import(modules[index], "USER32.dll", "MessageBoxW", 0, (void*)hooked_messageboxw);
-            trace_patches += patch_import_address(modules[index], (void*)original_messageboxw, (void*)hooked_messageboxw);
+            trace_patches += fang_patch_import(modules[index], "USER32.dll", "MessageBoxW", 0, (void*)hooked_messageboxw, NULL);
+            trace_patches += fang_patch_import_address(modules[index], (void*)original_messageboxw, (void*)hooked_messageboxw, NULL);
         }
         if (original_messageboxa != NULL) {
-            trace_patches += patch_import(modules[index], "USER32.dll", "MessageBoxA", 0, (void*)hooked_messageboxa);
-            trace_patches += patch_import_address(modules[index], (void*)original_messageboxa, (void*)hooked_messageboxa);
+            trace_patches += fang_patch_import(modules[index], "USER32.dll", "MessageBoxA", 0, (void*)hooked_messageboxa, NULL);
+            trace_patches += fang_patch_import_address(modules[index], (void*)original_messageboxa, (void*)hooked_messageboxa, NULL);
         }
         if (original_getfileattributesw != NULL) {
-            trace_patches += patch_import(modules[index], "KERNEL32.dll", "GetFileAttributesW", 0, (void*)hooked_getfileattributesw);
-            trace_patches += patch_import_address(modules[index], (void*)original_getfileattributesw, (void*)hooked_getfileattributesw);
+            trace_patches += fang_patch_import(modules[index], "KERNEL32.dll", "GetFileAttributesW", 0, (void*)hooked_getfileattributesw, NULL);
+            trace_patches += fang_patch_import_address(modules[index], (void*)original_getfileattributesw, (void*)hooked_getfileattributesw, NULL);
         }
     }
     (void)trace_patches;
-    return (dns_patches > 0 ? 0 : (1 | (int)dns_diagnostics)) | (connect_patches > 0 ? 0 : 2);
+    return (dns_patches > 0 ? 0 : (1 | (int)fang_network_diagnostics())) | (connect_patches > 0 ? 0 : 2);
 }
 
+// Modifies: retries import-hook installation on late-loaded client modules.
 static DWORD WINAPI patch_late_modules(LPVOID parameter) {
     int attempt;
     (void)parameter;
@@ -6772,6 +4437,7 @@ static DWORD WINAPI patch_late_modules(LPVOID parameter) {
 
 static char darkspin_window_title[128] = "Dark Spin v0.0.0";
 
+// Modifies: installs window integrations and applies the Dark Spin game-window title.
 static BOOL CALLBACK rename_game_window(HWND window, LPARAM parameter) {
     DWORD process_id = 0;
     char current_title[128];
@@ -6795,6 +4461,7 @@ static BOOL CALLBACK rename_game_window(HWND window, LPARAM parameter) {
     return TRUE;
 }
 
+// Modifies: retries game-window branding and window-hook attachment until confirmed.
 static DWORD WINAPI brand_game_window(LPVOID parameter) {
     int attempt;
     int confirmation;
@@ -6817,22 +4484,24 @@ static DWORD WINAPI brand_game_window(LPVOID parameter) {
     return 1;
 }
 
+// Modifies: binds build-103 interfaces and installs configured Fang hooks and diagnostic workers.
 int fang_install(const char* hostname, unsigned short port, unsigned short party_port,
     const char* trace_path, int skip_intro, int skip_cinematic,
-    int enable_borderless_fullscreen, const char* jwt, const char* window_title) {
+    const char* jwt, const char* window_title) {
     static const BYTE ssl_ctx_signature[] = {0x8B, 0x44, 0x24, 0x04, 0x8B, 0x4C, 0x24, 0x08, 0x8B, 0x54, 0x24, 0x0C, 0x89, 0x88};
     static const BYTE ssl_result_signature[] = {0x8B, 0x44, 0x24, 0x04, 0x8B, 0x80, 0xE0, 0x00, 0x00, 0x00, 0xC3};
     static const BYTE wildcard_signature[] = {0x53, 0x56, 0x8B, 0x74, 0x24, 0x10, 0x57, 0x8B, 0x7C, 0x24, 0x10, 0xEB, 0x03};
     static const BYTE certificate_signature[] = {0x83, 0x7C, 0x24, 0x04, 0x00, 0x56, 0x57, 0x8B, 0xF0};
     static const BYTE secure_connect_signature[] = {0x8B, 0x5C, 0x24, 0x14, 0x8B, 0xC6, 0x89, 0xBE, 0x20, 0x01, 0x00, 0x00, 0xC7, 0x86, 0x24, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00};
     static const BYTE force_plaintext[] = {0x31, 0xDB, 0x90, 0x90};
-    static const BYTE opening_movie_branch[] = {0x84, 0xC0, 0x74, 0x77, 0x8D, 0x44, 0x24, 0x0C};
-    static const BYTE unconditional_jump[] = {0xEB};
     HMODULE executable = GetModuleHandleA(NULL);
     HMODULE winsock = GetModuleHandleA("ws2_32.dll");
+    int is_network_ready;
     HMODULE user32 = GetModuleHandleA("user32.dll");
     HMODULE kernel32_module = GetModuleHandleA("kernel32.dll");
     int result = 0;
+    int is_bootstrap_bound = 1;
+    fang_client103_image client_image;
     int alert_patches = 0;
     int login_error_patches = 0;
     int cinematic_trace_patches = 0;
@@ -6841,15 +4510,40 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
     int loot_trace_patches = 0;
     int mana_cost_patches = 0;
     char snapshot_mode[16];
-    dns_diagnostics = 0;
+#if FANG_DIAGNOSTICS
+    if (trace_path != NULL && trace_path[0] != '\0') {
+        InitializeCriticalSection(&trace_lock);
+        trace_lock_ready = 1;
+        trace_file = CreateFileA(trace_path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+            NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    }
+#else
+    (void)trace_path;
+#endif
+    if (!fang_client103_image_open(executable, 0, &client_image)) {
+        fang_client103_report(fang_history_write);
+        return 0x8;
+    }
+    fang_network_reset_diagnostics();
     executable_module = executable;
     ZeroMemory(snapshot_mode, sizeof(snapshot_mode));
     GetEnvironmentVariableA(
         "DARKSPIN_SNAPSHOT_MODE", snapshot_mode, (DWORD)sizeof(snapshot_mode));
-    ZeroMemory(snapshot_control_path, sizeof(snapshot_control_path));
-    GetEnvironmentVariableA(
-        "DARKSPIN_SNAPSHOT_CONTROL", snapshot_control_path,
-        (DWORD)sizeof(snapshot_control_path));
+    ZeroMemory(snapshot_directory, sizeof(snapshot_directory));
+    ZeroMemory(snapshot_endpoint, sizeof(snapshot_endpoint));
+    ZeroMemory(snapshot_token, sizeof(snapshot_token));
+    if (GetEnvironmentVariableA("DARKSPIN_SNAPSHOT_DIRECTORY", snapshot_directory,
+        (DWORD)sizeof(snapshot_directory)) >= sizeof(snapshot_directory)) {
+        snapshot_directory[0] = '\0';
+    }
+    if (GetEnvironmentVariableA("DARKSPIN_SNAPSHOT_ENDPOINT", snapshot_endpoint,
+        (DWORD)sizeof(snapshot_endpoint)) >= sizeof(snapshot_endpoint)) {
+        snapshot_endpoint[0] = '\0';
+    }
+    if (GetEnvironmentVariableA("DARKSPIN_SNAPSHOT_TOKEN", snapshot_token,
+        (DWORD)sizeof(snapshot_token)) != 64) {
+        snapshot_token[0] = '\0';
+    }
     InterlockedExchange(&snapshot_capture_enabled,
         (_stricmp(snapshot_mode, "manual") == 0 ||
          _stricmp(snapshot_mode, "auto") == 0) ? 1 : 0);
@@ -6863,81 +4557,80 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
         (DWORD)sizeof(client_result_path));
     GetEnvironmentVariableA("DARKSPIN_CLIENT_LAUNCH_ID", client_launch_id,
         (DWORD)sizeof(client_launch_id));
-    original_alert = (alert_fn)((BYTE*)executable + 0x3BAC40);
-    original_login_error = (login_error_fn)((BYTE*)executable + 0x83FA80);
-    original_scene_ready = (cinematic_ready_fn)((BYTE*)executable + 0xF3FF0);
-    original_ui_ready = (cinematic_ready_fn)((BYTE*)executable + 0xE6310);
-    original_screen_event = (screen_event_fn)((BYTE*)executable + 0x50EAF0);
-    original_movie_load = (movie_load_fn)((BYTE*)executable + 0x3ADD40);
-    original_movie_manager = (movie_manager_fn)((BYTE*)executable + 0x3B6FD0);
-    original_spline_update = (spline_update_fn)((BYTE*)executable + 0x61AFE0);
-    original_spline_skip = (spline_skip_fn)((BYTE*)executable + 0x61B840);
-    original_camera_registry = (camera_registry_fn)((BYTE*)executable + 0x3AEBB0);
-    original_camera_set = (camera_set_fn)((BYTE*)executable + 0x12F0E0);
-    original_navigation_update = (navigation_update_fn)((BYTE*)executable + 0x12D600);
-    original_party_ready = (party_ready_fn)((BYTE*)executable + 0x119960);
-    original_go_to_room = (go_to_room_fn)((BYTE*)executable + 0x12CFD0);
-    original_new_player_progress = (new_player_progress_fn)((BYTE*)executable + 0x1187D0);
-    original_map_room_start_game = (map_room_start_game_fn)((BYTE*)executable + 0x116100);
-    original_online_platform = (online_platform_fn)((BYTE*)executable + 0x826F80);
-    original_rooms_bootstrap = (rooms_bootstrap_fn)((BYTE*)executable + 0x828550);
-    original_rooms_map_lookup = (rooms_map_lookup_fn)((BYTE*)executable + 0xA1BC10);
-    original_scene_asset_lookup = (scene_asset_lookup_fn)((BYTE*)executable + 0x5C5FF0);
-    original_creature_asset_lookup = (creature_asset_lookup_fn)((BYTE*)executable + 0x5ECA10);
-    original_creature_nested_lookup = (creature_nested_lookup_fn)((BYTE*)executable + 0x5C8E70);
-    original_scene_load = (scene_load_fn)((BYTE*)executable + 0xE7480);
-    original_scene_change = (scene_change_fn)((BYTE*)executable + 0xF3160);
-    original_ability_hud = (ability_hud_fn)((BYTE*)executable + 0x25980);
-    original_cooldown_lookup = (cooldown_lookup_fn)((BYTE*)executable + 0x21F50);
-    original_cooldown_apply = (cooldown_apply_fn)((BYTE*)executable + 0xD6320);
-    original_game_clock_owner = (game_clock_owner_fn)((BYTE*)executable + 0xE4DE0);
-    original_game_clock_now = (game_clock_now_fn)((BYTE*)executable + 0x5D2920);
-    original_controlled_player = (controlled_player_fn)((BYTE*)executable + 0xE57B0);
-    original_clock_root = (clock_root_fn)((BYTE*)executable + 0x5BCBE0);
-    original_clock_state = (clock_state_fn)((BYTE*)executable + 0x5BD190);
-    original_clock_initialize = (clock_initialize_fn)((BYTE*)executable + 0x5D2830);
-    original_ability_available = (ability_available_fn)((BYTE*)executable + 0x5C2A60);
-    original_property_vector_read = (property_vector_read_fn)((BYTE*)executable + 0x3B3E50);
-    original_resource_manager = (resource_manager_fn)((BYTE*)executable + 0x3AECE0);
-    original_reflection_lookup = (reflection_lookup_fn)((BYTE*)executable + 0x5EF610);
-    original_server_event_decode = (server_event_decode_fn)((BYTE*)executable + 0x61E1F0);
-    original_server_event_validate = (server_event_validate_fn)((BYTE*)executable + 0xDFFB0);
-    original_effect_system = (effect_system_fn)((BYTE*)executable + 0x3AEC80);
-    original_game_object_registry = (resource_manager_fn)((BYTE*)executable + 0x5BC740);
-    original_game_object_lookup = (lookup_method_fn)((BYTE*)executable + 0x5D1730);
-    original_message_construct = (message_construct_fn)((BYTE*)executable + 0x687850);
-    original_message_read = (message_read_fn)((BYTE*)executable + 0x687BF0);
-    original_login_screen_init = (login_screen_init_fn)((BYTE*)executable + 0x114530);
-    original_launcher_ready = (launcher_ready_fn)((BYTE*)executable + 0x10E7D0);
-    original_local_event = (local_event_fn)((BYTE*)executable + 0xE17E0);
-    original_loot_convert = (loot_convert_fn)((BYTE*)executable + 0x5CD7C0);
-    original_loot_format = (loot_convert_fn)((BYTE*)executable + 0x3A170);
-    original_mana_cost = (mana_cost_fn)((BYTE*)executable + 0x5DD720);
-    original_ability_descriptor_lookup =
-        (ability_descriptor_lookup_fn)((BYTE*)executable + 0x5DAC00);
-    original_combat_input_state = (combat_input_state_fn)((BYTE*)executable + 0xE4E00);
-    original_combat_input_reset = (combat_input_reset_fn)((BYTE*)executable + 0xD5EF0);
-    original_settings_manager = (settings_manager_fn)((BYTE*)executable + 0x3AEBD0);
-    original_game_object_resolve =
-        (game_object_resolve_fn)((BYTE*)executable + 0x5D94F0);
-    original_player_move_receiver =
-        (locomotion_receiver_fn)((BYTE*)executable + 0x1393D0);
-    original_locomotion_update_receiver =
-        (locomotion_receiver_fn)((BYTE*)executable + 0x139900);
-    original_locomotion_unreliable_receiver =
-        (locomotion_receiver_fn)((BYTE*)executable + 0x139810);
-    original_frame_delta =
-        (frame_delta_fn)((BYTE*)executable + 0x5D2960);
-    original_sporenet_callback = (sporenet_callback_fn)((BYTE*)executable + 0xA57D0);
-    original_scaleform_stream_read =
-        (scaleform_stream_read_fn)((BYTE*)executable + 0xA54240);
-    original_chat_lookup = (chat_lookup_fn)((BYTE*)executable + 0x25680);
-    original_chat_create = (chat_create_fn)((BYTE*)executable + 0xB5D0);
-    original_chat_initialize = (chat_initialize_fn)((BYTE*)executable + 0xABA0);
-    original_chat_show = (chat_show_fn)((BYTE*)executable + 0xD850);
-    original_chat_open = (chat_open_fn)((BYTE*)executable + 0xB8F0);
-    original_chat_text_convert = (chat_text_convert_fn)((BYTE*)executable + 0x6D9E40);
-    skip_cinematics_enabled = skip_cinematic;
+    original_alert = FANG103_BIND(&client_image, &is_bootstrap_bound, alert_fn, original_alert, FANG103_ORIGINAL_ALERT_RVA);
+    original_login_error = FANG103_BIND(&client_image, &is_bootstrap_bound, login_error_fn, original_login_error, FANG103_ORIGINAL_LOGIN_ERROR_RVA);
+    original_scene_ready = FANG103_BIND(&client_image, &is_bootstrap_bound, cinematic_ready_fn, original_scene_ready, FANG103_ORIGINAL_SCENE_READY_RVA);
+    original_ui_ready = FANG103_BIND(&client_image, &is_bootstrap_bound, cinematic_ready_fn, original_ui_ready, FANG103_ORIGINAL_UI_READY_RVA);
+    original_screen_event = FANG103_BIND(&client_image, &is_bootstrap_bound, screen_event_fn, original_screen_event, FANG103_ORIGINAL_SCREEN_EVENT_RVA);
+    original_movie_load = FANG103_BIND(&client_image, &is_bootstrap_bound, movie_load_fn, original_movie_load, FANG103_ORIGINAL_MOVIE_LOAD_RVA);
+    original_movie_manager = FANG103_BIND(&client_image, &is_bootstrap_bound, movie_manager_fn, original_movie_manager, FANG103_ORIGINAL_MOVIE_MANAGER_RVA);
+    original_spline_update = FANG103_BIND(&client_image, &is_bootstrap_bound, spline_update_fn, original_spline_update, FANG103_ORIGINAL_SPLINE_UPDATE_RVA);
+    original_spline_skip = FANG103_BIND(&client_image, &is_bootstrap_bound, spline_skip_fn, original_spline_skip, FANG103_ORIGINAL_SPLINE_SKIP_RVA);
+    original_camera_registry = FANG103_BIND(&client_image, &is_bootstrap_bound, camera_registry_fn, original_camera_registry, FANG103_ORIGINAL_CAMERA_REGISTRY_RVA);
+    original_camera_set = FANG103_BIND(&client_image, &is_bootstrap_bound, camera_set_fn, original_camera_set, FANG103_ORIGINAL_CAMERA_SET_RVA);
+    original_navigation_update = FANG103_BIND(&client_image, &is_bootstrap_bound, navigation_update_fn, original_navigation_update, FANG103_ORIGINAL_NAVIGATION_UPDATE_RVA);
+    original_party_ready = FANG103_BIND(&client_image, &is_bootstrap_bound, party_ready_fn, original_party_ready, FANG103_ORIGINAL_PARTY_READY_RVA);
+    original_go_to_room = FANG103_BIND(&client_image, &is_bootstrap_bound, go_to_room_fn, original_go_to_room, FANG103_ORIGINAL_GO_TO_ROOM_RVA);
+    original_new_player_progress = FANG103_BIND(&client_image, &is_bootstrap_bound, new_player_progress_fn, original_new_player_progress, FANG103_ORIGINAL_NEW_PLAYER_PROGRESS_RVA);
+    original_map_room_start_game = FANG103_BIND(&client_image, &is_bootstrap_bound, map_room_start_game_fn, original_map_room_start_game, FANG103_ORIGINAL_MAP_ROOM_START_GAME_RVA);
+    original_online_platform = FANG103_BIND(&client_image, &is_bootstrap_bound, online_platform_fn, original_online_platform, FANG103_ORIGINAL_ONLINE_PLATFORM_RVA);
+    original_rooms_bootstrap = FANG103_BIND(&client_image, &is_bootstrap_bound, rooms_bootstrap_fn, original_rooms_bootstrap, FANG103_ORIGINAL_ROOMS_BOOTSTRAP_RVA);
+    original_rooms_map_lookup = FANG103_BIND(&client_image, &is_bootstrap_bound, rooms_map_lookup_fn, original_rooms_map_lookup, FANG103_ORIGINAL_ROOMS_MAP_LOOKUP_RVA);
+    original_scene_asset_lookup = FANG103_BIND(&client_image, &is_bootstrap_bound, scene_asset_lookup_fn, original_scene_asset_lookup, FANG103_ORIGINAL_SCENE_ASSET_LOOKUP_RVA);
+    original_creature_asset_lookup = FANG103_BIND(&client_image, &is_bootstrap_bound, creature_asset_lookup_fn, original_creature_asset_lookup, FANG103_ORIGINAL_CREATURE_ASSET_LOOKUP_RVA);
+    original_creature_nested_lookup = FANG103_BIND(&client_image, &is_bootstrap_bound, creature_nested_lookup_fn, original_creature_nested_lookup, FANG103_ORIGINAL_CREATURE_NESTED_LOOKUP_RVA);
+    original_scene_load = FANG103_BIND(&client_image, &is_bootstrap_bound, scene_load_fn, original_scene_load, FANG103_ORIGINAL_SCENE_LOAD_RVA);
+    original_scene_change = FANG103_BIND(&client_image, &is_bootstrap_bound, scene_change_fn, original_scene_change, FANG103_ORIGINAL_SCENE_CHANGE_RVA);
+    original_ability_hud = FANG103_BIND(&client_image, &is_bootstrap_bound, ability_hud_fn, original_ability_hud, FANG103_ORIGINAL_ABILITY_HUD_RVA);
+    original_cooldown_lookup = FANG103_BIND(&client_image, &is_bootstrap_bound, cooldown_lookup_fn, original_cooldown_lookup, FANG103_ORIGINAL_COOLDOWN_LOOKUP_RVA);
+    original_cooldown_apply = FANG103_BIND(&client_image, &is_bootstrap_bound, cooldown_apply_fn, original_cooldown_apply, FANG103_ORIGINAL_COOLDOWN_APPLY_RVA);
+    original_game_clock_owner = FANG103_BIND(&client_image, &is_bootstrap_bound, game_clock_owner_fn, original_game_clock_owner, FANG103_ORIGINAL_GAME_CLOCK_OWNER_RVA);
+    original_game_clock_now = FANG103_BIND(&client_image, &is_bootstrap_bound, game_clock_now_fn, original_game_clock_now, FANG103_ORIGINAL_GAME_CLOCK_NOW_RVA);
+    original_controlled_player = FANG103_BIND(&client_image, &is_bootstrap_bound, controlled_player_fn, original_controlled_player, FANG103_ORIGINAL_CONTROLLED_PLAYER_RVA);
+    original_clock_root = FANG103_BIND(&client_image, &is_bootstrap_bound, clock_root_fn, original_clock_root, FANG103_ORIGINAL_CLOCK_ROOT_RVA);
+    original_clock_state = FANG103_BIND(&client_image, &is_bootstrap_bound, clock_state_fn, original_clock_state, FANG103_ORIGINAL_CLOCK_STATE_RVA);
+    original_clock_initialize = FANG103_BIND(&client_image, &is_bootstrap_bound, clock_initialize_fn, original_clock_initialize, FANG103_ORIGINAL_CLOCK_INITIALIZE_RVA);
+    original_ability_available = FANG103_BIND(&client_image, &is_bootstrap_bound, ability_available_fn, original_ability_available, FANG103_ORIGINAL_ABILITY_AVAILABLE_RVA);
+    original_property_vector_read = FANG103_BIND(&client_image, &is_bootstrap_bound, property_vector_read_fn, original_property_vector_read, FANG103_ORIGINAL_PROPERTY_VECTOR_READ_RVA);
+    original_resource_manager = FANG103_BIND(&client_image, &is_bootstrap_bound, resource_manager_fn, original_resource_manager, FANG103_ORIGINAL_RESOURCE_MANAGER_RVA);
+    original_reflection_lookup = FANG103_BIND(&client_image, &is_bootstrap_bound, reflection_lookup_fn, original_reflection_lookup, FANG103_ORIGINAL_REFLECTION_LOOKUP_RVA);
+    original_server_event_decode = FANG103_BIND(&client_image, &is_bootstrap_bound, server_event_decode_fn, original_server_event_decode, FANG103_ORIGINAL_SERVER_EVENT_DECODE_RVA);
+    original_server_event_validate = FANG103_BIND(&client_image, &is_bootstrap_bound, server_event_validate_fn, original_server_event_validate, FANG103_ORIGINAL_SERVER_EVENT_VALIDATE_RVA);
+    original_effect_system = FANG103_BIND(&client_image, &is_bootstrap_bound, effect_system_fn, original_effect_system, FANG103_ORIGINAL_EFFECT_SYSTEM_RVA);
+    original_game_object_registry = FANG103_BIND(&client_image, &is_bootstrap_bound, resource_manager_fn, original_game_object_registry, FANG103_ORIGINAL_GAME_OBJECT_REGISTRY_RVA);
+    original_game_object_lookup = FANG103_BIND(&client_image, &is_bootstrap_bound, lookup_method_fn, original_game_object_lookup, FANG103_ORIGINAL_GAME_OBJECT_LOOKUP_RVA);
+    original_message_construct = FANG103_BIND(&client_image, &is_bootstrap_bound, message_construct_fn, original_message_construct, FANG103_ORIGINAL_MESSAGE_CONSTRUCT_RVA);
+    original_message_read = FANG103_BIND(&client_image, &is_bootstrap_bound, message_read_fn, original_message_read, FANG103_ORIGINAL_MESSAGE_READ_RVA);
+    original_login_screen_init = FANG103_BIND(&client_image, &is_bootstrap_bound, login_screen_init_fn, original_login_screen_init, FANG103_ORIGINAL_LOGIN_SCREEN_INIT_RVA);
+    original_launcher_ready = FANG103_BIND(&client_image, &is_bootstrap_bound, launcher_ready_fn, original_launcher_ready, FANG103_ORIGINAL_LAUNCHER_READY_RVA);
+    original_local_event = FANG103_BIND(&client_image, &is_bootstrap_bound, local_event_fn, original_local_event, FANG103_ORIGINAL_LOCAL_EVENT_RVA);
+    original_loot_convert = FANG103_BIND(&client_image, &is_bootstrap_bound, loot_convert_fn, original_loot_convert, FANG103_ORIGINAL_LOOT_CONVERT_RVA);
+    original_loot_format = FANG103_BIND(&client_image, &is_bootstrap_bound, loot_convert_fn, original_loot_format, FANG103_ORIGINAL_LOOT_FORMAT_RVA);
+    original_mana_cost = FANG103_BIND(&client_image, &is_bootstrap_bound, mana_cost_fn, original_mana_cost, FANG103_ORIGINAL_MANA_COST_RVA);
+    original_ability_descriptor_lookup = FANG103_BIND(&client_image, &is_bootstrap_bound, ability_descriptor_lookup_fn, original_ability_descriptor_lookup, FANG103_ORIGINAL_ABILITY_DESCRIPTOR_LOOKUP_RVA);
+    original_combat_input_state = FANG103_BIND(&client_image, &is_bootstrap_bound, combat_input_state_fn, original_combat_input_state, FANG103_ORIGINAL_COMBAT_INPUT_STATE_RVA);
+    original_combat_input_reset = FANG103_BIND(&client_image, &is_bootstrap_bound, combat_input_reset_fn, original_combat_input_reset, FANG103_ORIGINAL_COMBAT_INPUT_RESET_RVA);
+    original_settings_manager = FANG103_BIND(&client_image, &is_bootstrap_bound, settings_manager_fn, original_settings_manager, FANG103_ORIGINAL_SETTINGS_MANAGER_RVA);
+    original_game_object_resolve = FANG103_BIND(&client_image, &is_bootstrap_bound, game_object_resolve_fn, original_game_object_resolve, FANG103_ORIGINAL_GAME_OBJECT_RESOLVE_RVA);
+    original_player_move_receiver = FANG103_BIND(&client_image, &is_bootstrap_bound, locomotion_receiver_fn, original_player_move_receiver, FANG103_ORIGINAL_PLAYER_MOVE_RECEIVER_RVA);
+    original_locomotion_update_receiver = FANG103_BIND(&client_image, &is_bootstrap_bound, locomotion_receiver_fn, original_locomotion_update_receiver, FANG103_ORIGINAL_LOCOMOTION_UPDATE_RECEIVER_RVA);
+    original_locomotion_unreliable_receiver = FANG103_BIND(&client_image, &is_bootstrap_bound, locomotion_receiver_fn, original_locomotion_unreliable_receiver, FANG103_ORIGINAL_LOCOMOTION_UNRELIABLE_RECEIVER_RVA);
+    original_frame_delta = FANG103_BIND(&client_image, &is_bootstrap_bound, frame_delta_fn, original_frame_delta, FANG103_ORIGINAL_FRAME_DELTA_RVA);
+    original_sporenet_callback = FANG103_BIND(&client_image, &is_bootstrap_bound, sporenet_callback_fn, original_sporenet_callback, FANG103_ORIGINAL_SPORENET_CALLBACK_RVA);
+    original_scaleform_stream_read = FANG103_BIND(&client_image, &is_bootstrap_bound, scaleform_stream_read_fn, original_scaleform_stream_read, FANG103_ORIGINAL_SCALEFORM_STREAM_READ_RVA);
+    original_chat_lookup = FANG103_BIND(&client_image, &is_bootstrap_bound, chat_lookup_fn, original_chat_lookup, FANG103_ORIGINAL_CHAT_LOOKUP_RVA);
+    original_chat_create = FANG103_BIND(&client_image, &is_bootstrap_bound, chat_create_fn, original_chat_create, FANG103_ORIGINAL_CHAT_CREATE_RVA);
+    original_chat_initialize = FANG103_BIND(&client_image, &is_bootstrap_bound, chat_initialize_fn, original_chat_initialize, FANG103_ORIGINAL_CHAT_INITIALIZE_RVA);
+    original_chat_show = FANG103_BIND(&client_image, &is_bootstrap_bound, chat_show_fn, original_chat_show, FANG103_ORIGINAL_CHAT_SHOW_RVA);
+    original_chat_open = FANG103_BIND(&client_image, &is_bootstrap_bound, chat_open_fn, original_chat_open, FANG103_ORIGINAL_CHAT_OPEN_RVA);
+    original_chat_text_convert = FANG103_BIND(&client_image, &is_bootstrap_bound, chat_text_convert_fn, original_chat_text_convert, FANG103_ORIGINAL_CHAT_TEXT_CONVERT_RVA);
+    if (!is_bootstrap_bound) {
+        fang_client103_report(fang_history_write);
+        return 0x8;
+    }
+    /* The option now supplies native Escape edges only. Legacy camera/menu
+     * acceleration helpers remain disabled and are never installed below. */
+    skip_cinematics_enabled = 0;
 	 if (jwt != NULL && jwt[0] != '\0') {
 		 strncpy(jwt_login_token, jwt, sizeof(jwt_login_token) - 1);
 		 jwt_login_token[sizeof(jwt_login_token) - 1] = '\0';
@@ -6958,45 +4651,26 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
             result |= 0x4000;
         }
     }
-    strncpy(redirect_hostname, hostname, sizeof(redirect_hostname) - 1);
-    redirect_hostname[sizeof(redirect_hostname) - 1] = '\0';
-    redirect_port = port;
-    redirect_party_port = party_port;
-    original_gethostbyname = (gethostbyname_fn)GetProcAddress(winsock, "gethostbyname");
-    original_connect = (connect_fn)GetProcAddress(winsock, "connect");
-	 original_send = (send_fn)GetProcAddress(winsock, "send");
-	 original_recv = (recv_fn)GetProcAddress(winsock, "recv");
-	 original_sendto = (sendto_fn)GetProcAddress(winsock, "sendto");
-	 original_recvfrom = (recvfrom_fn)GetProcAddress(winsock, "recvfrom");
-	 original_closesocket = (closesocket_fn)GetProcAddress(winsock, "closesocket");
-	 original_wsasend = (wsasend_fn)GetProcAddress(winsock, "WSASend");
-	 original_wsarecv = (wsarecv_fn)GetProcAddress(winsock, "WSARecv");
-	 original_wsarecvfrom = (wsarecvfrom_fn)GetProcAddress(winsock, "WSARecvFrom");
-	 original_wsagetoverlappedresult = (wsagetoverlappedresult_fn)GetProcAddress(winsock, "WSAGetOverlappedResult");
+    is_network_ready = fang_network_configure(hostname, port, party_port, winsock);
     original_messageboxw = user32 == NULL ? NULL : (messageboxw_fn)GetProcAddress(user32, "MessageBoxW");
     original_messageboxa = user32 == NULL ? NULL : (messageboxa_fn)GetProcAddress(user32, "MessageBoxA");
     original_getfileattributesw = kernel32_module == NULL ? NULL : (getfileattributesw_fn)GetProcAddress(kernel32_module, "GetFileAttributesW");
-    if (original_gethostbyname == NULL || original_connect == NULL) {
+    if (!is_network_ready) {
         return 0x200;
     }
 #if FANG_DIAGNOSTICS
-	 if (trace_path != NULL && trace_path[0] != '\0') {
-		 InitializeCriticalSection(&trace_lock);
-		 trace_lock_ready = 1;
-		 trace_file = CreateFileA(trace_path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-		 trace_client_state("exception_observer",
-		     (unsigned int)fang_install_exception_trace(trace_file, executable));
-	 }
-#else
-    (void)trace_path;
+    if (trace_file != INVALID_HANDLE_VALUE && trace_lock_ready) {
+        trace_client_state("exception_observer", (unsigned int)fang_install_exception_trace(trace_file, executable));
+    }
 #endif
-    if (snapshot_control_path[0] != '\0' && snapshot_keyframe_event == NULL) {
+    trace_client_state("camera_bindings", (unsigned int)fang_client103_camera_bind(executable));
+    if (snapshot_endpoint[0] != '\0' && snapshot_keyframe_event == NULL) {
         snapshot_keyframe_event = CreateEventA(NULL, TRUE, FALSE, NULL);
         if (snapshot_keyframe_event == NULL) {
             result |= 0x20000000;
         }
     }
-    if (snapshot_control_path[0] != '\0') {
+    if (snapshot_endpoint[0] != '\0') {
         HANDLE snapshot_thread = CreateThread(
             NULL, 0, watch_snapshot_control, NULL, 0, NULL);
         if (snapshot_thread != NULL) {
@@ -7009,6 +4683,12 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
         (unsigned int)InterlockedCompareExchange(
             &snapshot_capture_enabled, 0, 0));
 #if FANG_SCENARIO
+    trace_client_state("scenario_scene_hook", (unsigned int)fang_control_scene_install(executable));
+    trace_client_state("scenario_screen_hook", (unsigned int)fang_control_screen_install(executable));
+    trace_client_state("scenario_map_hook", (unsigned int)fang_control_map_install(executable));
+    trace_client_state("scenario_deployment_hook", (unsigned int)fang_control_deployment_install(executable));
+    trace_client_state("scenario_arena_hook", (unsigned int)fang_control_arena_install(executable));
+    trace_client_state("scenario_gameplay_hook", (unsigned int)fang_control_gameplay_install(executable));
     if (!install_scenario_renderer_observation(executable)) {
         result |= 0x8;
     }
@@ -7052,7 +4732,7 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
             result |= 0x8;
         }
     }
-    if (enable_borderless_fullscreen) {
+    {
         int is_display_hook_installed = fang_install_display_preferences(executable);
         trace_client_state("display_preferences_hook", (unsigned int)is_display_hook_installed);
         if (!is_display_hook_installed) {
@@ -7102,8 +4782,7 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
             result |= 0x10000000;
         }
     }
-    redirect_tls_index = TlsAlloc();
-    if (redirect_tls_index == TLS_OUT_OF_INDEXES) {
+    if (!fang_network_allocate_redirect_tls()) {
         return 0x400;
     }
 #if FANG_DIAGNOSTICS
@@ -7124,82 +4803,73 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
             result |= 0x2000;
         }
     }
-    if (!patch_jump(find_signature(executable, ssl_ctx_signature, sizeof(ssl_ctx_signature)), (void*)hooked_ssl_ctx_set_verify)) {
+    if (!patch_jump(fang_find_signature(executable, ssl_ctx_signature, sizeof(ssl_ctx_signature)), (void*)hooked_ssl_ctx_set_verify)) {
         result |= 0x10;
     }
-    if (!patch_jump(find_signature(executable, ssl_result_signature, sizeof(ssl_result_signature)), (void*)hooked_ssl_get_verify_result)) {
+    if (!patch_jump(fang_find_signature(executable, ssl_result_signature, sizeof(ssl_result_signature)), (void*)hooked_ssl_get_verify_result)) {
         result |= 0x20;
     }
-    if (!patch_jump(find_signature(executable, wildcard_signature, sizeof(wildcard_signature)), (void*)hooked_wildcard_match_no_case)) {
+    if (!patch_jump(fang_find_signature(executable, wildcard_signature, sizeof(wildcard_signature)), (void*)hooked_wildcard_match_no_case)) {
         result |= 0x40;
     }
-    if (!patch_jump(find_signature(executable, certificate_signature, sizeof(certificate_signature)), (void*)hooked_verify_certificate)) {
+    if (!patch_jump(fang_find_signature(executable, certificate_signature, sizeof(certificate_signature)), (void*)hooked_verify_certificate)) {
         result |= 0x80;
     }
-    if (!patch_bytes(find_signature(executable, secure_connect_signature, sizeof(secure_connect_signature)), force_plaintext, sizeof(force_plaintext))) {
+    if (!patch_bytes(fang_find_signature(executable, secure_connect_signature, sizeof(secure_connect_signature)), force_plaintext, sizeof(force_plaintext))) {
         result |= 0x1000;
     }
-    if (!patch_call((BYTE*)executable + 0x110BE6, (void*)original_launcher_ready, (void*)hooked_launcher_ready)) {
+    if (!patch_call((BYTE*)executable + FANG103_ORIGINAL_LAUNCHER_READY_CALL_1_RVA, (void*)original_launcher_ready, (void*)hooked_launcher_ready)) {
         result |= 0x2000000;
     }
     {
-        int is_chat_command_hooked = patch_call((BYTE*)executable + 0xC998,
+        int is_chat_command_hooked = patch_call((BYTE*)executable + FANG103_ORIGINAL_CHAT_TEXT_CONVERT_CALL_1_RVA,
             (void*)original_chat_text_convert, (void*)hooked_chat_text_convert);
         trace_client_state("chat_command_hook", (unsigned int)is_chat_command_hooked);
         if (!is_chat_command_hooked) {
             result |= 0x20000000;
         }
+        int is_lobby_chat_hooked = fang_install_lobby_chat((BYTE*)executable);
+        trace_client_state("chat_lobby_hook", (unsigned int)is_lobby_chat_hooked);
+        if (!is_lobby_chat_hooked) result |= 0x20000000;
     }
-    if (skip_intro || skip_cinematic) {
-        BYTE* opening_branch = find_signature(executable, opening_movie_branch, sizeof(opening_movie_branch));
-        if (opening_branch == NULL || !patch_bytes(opening_branch + 2, unconditional_jump, sizeof(unconditional_jump))) {
-            result |= 0x10000;
-        }
-    }
-    if (skip_cinematic) {
-        if (!patch_call((BYTE*)executable + 0x131F64, (void*)original_movie_load, (void*)hooked_movie_load)) {
-            result |= 0x200000;
-        }
-        if (!patch_call((BYTE*)executable + 0xF30D8, (void*)original_spline_update, (void*)hooked_spline_update)) {
-            result |= 0x400000;
-        }
-        if (!patch_call((BYTE*)executable + 0x555EE, (void*)original_navigation_update, (void*)hooked_navigation_update)) {
-            result |= 0x1000000;
-        }
+    {
+        int is_cinematic_hooked = fang_cinematic_install(executable, skip_intro, skip_cinematic);
+        trace_client_state("cinematic_escape_hook", (unsigned int)is_cinematic_hooked);
+        if (!is_cinematic_hooked && (skip_intro || skip_cinematic)) result |= 0x10000;
     }
 #if FANG_DIAGNOSTICS
     {
-        int is_party_ready_hooked = patch_call((BYTE*)executable + 0x115A3F,
+        int is_party_ready_hooked = patch_call((BYTE*)executable + FANG103_ORIGINAL_PARTY_READY_CALL_1_RVA,
             (void*)original_party_ready, (void*)hooked_party_ready);
         trace_client_state("party_navigation_hook", (unsigned int)is_party_ready_hooked);
     }
-    cinematic_trace_patches += patch_call((BYTE*)executable + 0x5557A, (void*)original_scene_ready, (void*)hooked_scene_ready);
-    cinematic_trace_patches += patch_call((BYTE*)executable + 0x55583, (void*)original_ui_ready, (void*)hooked_ui_ready);
+    cinematic_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_SCENE_READY_CALL_1_RVA, (void*)original_scene_ready, (void*)hooked_scene_ready);
+    cinematic_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_UI_READY_CALL_1_RVA, (void*)original_ui_ready, (void*)hooked_ui_ready);
 #endif
     if (FANG_DIAGNOSTICS || skip_cinematic) {
-        cinematic_trace_patches += patch_call((BYTE*)executable + 0x55401, (void*)original_screen_event, (void*)hooked_screen_event);
-        cinematic_trace_patches += patch_call((BYTE*)executable + 0x55567, (void*)original_screen_event, (void*)hooked_screen_event);
-        cinematic_trace_patches += patch_call((BYTE*)executable + 0x555CC, (void*)original_screen_event, (void*)hooked_screen_event);
+        cinematic_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_SCREEN_EVENT_CALL_1_RVA, (void*)original_screen_event, (void*)hooked_screen_event);
+        cinematic_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_SCREEN_EVENT_CALL_2_RVA, (void*)original_screen_event, (void*)hooked_screen_event);
+        cinematic_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_SCREEN_EVENT_CALL_3_RVA, (void*)original_screen_event, (void*)hooked_screen_event);
     }
     if (cinematic_trace_patches != (FANG_DIAGNOSTICS ? 5 : (skip_cinematic ? 3 : 0))) {
         result |= 0x100000;
     }
-    snapshot_trace_patches += patch_call((BYTE*)executable + 0x68A4D3,
+    snapshot_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_MESSAGE_CONSTRUCT_CALL_1_RVA,
         (void*)original_message_construct, (void*)hooked_message_construct);
-    snapshot_trace_patches += patch_call((BYTE*)executable + 0x139447,
+    snapshot_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_GAME_OBJECT_RESOLVE_CALL_1_RVA,
         (void*)original_game_object_resolve, (void*)hooked_movement_object_resolve);
-    snapshot_trace_patches += patch_call((BYTE*)executable + 0x139886,
+    snapshot_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_GAME_OBJECT_RESOLVE_CALL_2_RVA,
         (void*)original_game_object_resolve, (void*)hooked_movement_object_resolve);
-    snapshot_trace_patches += patch_call((BYTE*)executable + 0x13997B,
+    snapshot_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_GAME_OBJECT_RESOLVE_CALL_3_RVA,
         (void*)original_game_object_resolve, (void*)hooked_movement_object_resolve);
-    snapshot_trace_patches += patch_call((BYTE*)executable + 0x13AE74,
+    snapshot_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_PLAYER_MOVE_RECEIVER_CALL_1_RVA,
         (void*)original_player_move_receiver, (void*)hooked_player_move_receiver);
-    snapshot_trace_patches += patch_call((BYTE*)executable + 0x13AE9B,
+    snapshot_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_LOCOMOTION_UPDATE_RECEIVER_CALL_1_RVA,
         (void*)original_locomotion_update_receiver, (void*)hooked_locomotion_update_receiver);
-    snapshot_trace_patches += patch_call((BYTE*)executable + 0x13AEA8,
+    snapshot_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_LOCOMOTION_UNRELIABLE_RECEIVER_CALL_1_RVA,
         (void*)original_locomotion_unreliable_receiver,
         (void*)hooked_locomotion_unreliable_receiver);
-    snapshot_trace_patches += patch_call((BYTE*)executable + 0x5BF1F6,
+    snapshot_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_FRAME_DELTA_CALL_1_RVA,
         (void*)original_frame_delta, (void*)hooked_frame_delta);
     if (snapshot_trace_patches != 8) {
         result |= 0x4000000;
@@ -7207,38 +4877,38 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
 #if FANG_DIAGNOSTICS
     /* Scene observation and developer recovery hooks are omitted from release
        Fang builds. */
-    scene_trace_patches += patch_call((BYTE*)executable + 0x137E4B,
+    scene_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_SCENE_ASSET_LOOKUP_CALL_1_RVA,
         (void*)original_scene_asset_lookup, (void*)hooked_scene_asset_lookup);
-    scene_trace_patches += patch_call((BYTE*)executable + 0x137E37,
+    scene_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_MESSAGE_READ_CALL_1_RVA,
         (void*)original_message_read, (void*)hooked_quick_game_read);
-    scene_trace_patches += patch_call((BYTE*)executable + 0x1F9FD,
+    scene_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_CREATURE_ASSET_LOOKUP_CALL_1_RVA,
         (void*)original_creature_asset_lookup, (void*)hooked_creature_asset_lookup);
-    scene_trace_patches += patch_call((BYTE*)executable + 0x1FA0E,
+    scene_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_CREATURE_NESTED_LOOKUP_CALL_1_RVA,
         (void*)original_creature_nested_lookup, (void*)hooked_creature_nested_lookup);
-    scene_trace_patches += patch_call((BYTE*)executable + 0x12B9F9,
+    scene_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_SCENE_LOAD_CALL_1_RVA,
         (void*)original_scene_load, (void*)hooked_scene_load);
-    scene_trace_patches += patch_call((BYTE*)executable + 0x137F99,
+    scene_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_SCENE_LOAD_CALL_2_RVA,
         (void*)original_scene_load, (void*)hooked_scene_load);
-    scene_trace_patches += patch_call((BYTE*)executable + 0xE7495,
+    scene_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_SCENE_CHANGE_CALL_1_RVA,
         (void*)original_scene_change, (void*)hooked_scene_change);
-    scene_trace_patches += patch_call((BYTE*)executable + 0x13A5D7,
+    scene_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_COOLDOWN_APPLY_CALL_1_RVA,
         (void*)original_cooldown_apply, (void*)hooked_cooldown_apply);
-    scene_trace_patches += patch_call((BYTE*)executable + 0x137D30,
+    scene_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_CLOCK_INITIALIZE_CALL_1_RVA,
         (void*)original_clock_initialize, (void*)hooked_clock_initialize);
-    scene_trace_patches += patch_call((BYTE*)executable + 0x5CF595,
+    scene_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_PROPERTY_VECTOR_READ_CALL_1_RVA,
         (void*)original_property_vector_read, (void*)hooked_property_vector_read);
-    scene_trace_patches += patch_call((BYTE*)executable + 0xEC129,
+    scene_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_ABILITY_AVAILABLE_CALL_1_RVA,
         (void*)original_ability_available, (void*)hooked_ability_blink_play_available);
-    scene_trace_patches += patch_call((BYTE*)executable + 0xEC1A9,
+    scene_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_ABILITY_AVAILABLE_CALL_2_RVA,
         (void*)original_ability_available, (void*)hooked_ability_blink_stop_available);
-    scene_trace_patches += patch_call((BYTE*)executable + 0x21631,
+    scene_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_ABILITY_DESCRIPTOR_LOOKUP_CALL_1_RVA,
         (void*)original_ability_descriptor_lookup, (void*)hooked_ability_descriptor_lookup);
 #endif
 #if FANG_DIAGNOSTICS
     if (effect_preview_tls_index != TLS_OUT_OF_INDEXES) {
-        int is_decode_hooked = patch_call((BYTE*)executable + 0x139EDB,
+        int is_decode_hooked = patch_call((BYTE*)executable + FANG103_ORIGINAL_SERVER_EVENT_DECODE_CALL_1_RVA,
             (void*)original_server_event_decode, (void*)hooked_server_event_decode);
-        int is_validate_hooked = patch_call((BYTE*)executable + 0x106DB7,
+        int is_validate_hooked = patch_call((BYTE*)executable + FANG103_ORIGINAL_SERVER_EVENT_VALIDATE_CALL_1_RVA,
             (void*)original_server_event_validate, (void*)hooked_server_event_validate);
         trace_client_state("effect_preview_decode_hook", (unsigned int)is_decode_hooked);
         trace_client_state("effect_preview_validate_hook", (unsigned int)is_validate_hooked);
@@ -7251,68 +4921,71 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
         result |= 0x4000000;
     }
 #if FANG_DIAGNOSTICS
-    loot_trace_patches += patch_call((BYTE*)executable + 0x139F12,
+    loot_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_LOCAL_EVENT_CALL_1_RVA,
         (void*)original_local_event, (void*)hooked_local_event);
-    loot_trace_patches += patch_call((BYTE*)executable + 0xE1EBC,
+    loot_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_LOOT_CONVERT_CALL_1_RVA,
         (void*)original_loot_convert, (void*)hooked_loot_convert);
-    loot_trace_patches += patch_call((BYTE*)executable + 0xE1EDD,
+    loot_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_LOOT_FORMAT_CALL_1_RVA,
         (void*)original_loot_format, (void*)hooked_loot_format);
-    loot_trace_patches += patch_call((BYTE*)executable + 0x5CD800,
+    loot_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_CREATURE_NESTED_LOOKUP_CALL_2_RVA,
         (void*)original_creature_nested_lookup, (void*)hooked_loot_resource_lookup);
-    loot_trace_patches += patch_call((BYTE*)executable + 0x5CD82F,
+    loot_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_CREATURE_NESTED_LOOKUP_CALL_3_RVA,
         (void*)original_creature_nested_lookup, (void*)hooked_loot_resource_lookup);
-    loot_trace_patches += patch_call((BYTE*)executable + 0x5CD89C,
+    loot_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_CREATURE_NESTED_LOOKUP_CALL_4_RVA,
         (void*)original_creature_nested_lookup, (void*)hooked_loot_resource_lookup);
-    loot_trace_patches += patch_call((BYTE*)executable + 0x5CD8D2,
+    loot_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_CREATURE_NESTED_LOOKUP_CALL_5_RVA,
         (void*)original_creature_nested_lookup, (void*)hooked_loot_resource_lookup);
-    loot_trace_patches += patch_call((BYTE*)executable + 0x5CD90A,
+    loot_trace_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_CREATURE_NESTED_LOOKUP_CALL_6_RVA,
         (void*)original_creature_nested_lookup, (void*)hooked_loot_resource_lookup);
     if (loot_trace_patches != 8) {
         result |= 0x8000000;
     }
-    mana_cost_patches += patch_call((BYTE*)executable + 0x39284,
+    mana_cost_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_MANA_COST_CALL_1_RVA,
         (void*)original_mana_cost, (void*)hooked_mana_cost);
-    mana_cost_patches += patch_call((BYTE*)executable + 0xDEAD5,
+    mana_cost_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_MANA_COST_CALL_2_RVA,
         (void*)original_mana_cost, (void*)hooked_mana_cost);
-    mana_cost_patches += patch_call((BYTE*)executable + 0xE561D,
+    mana_cost_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_MANA_COST_CALL_3_RVA,
         (void*)original_mana_cost, (void*)hooked_mana_cost);
-    mana_cost_patches += patch_call((BYTE*)executable + 0x5E0863,
+    mana_cost_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_MANA_COST_CALL_4_RVA,
         (void*)original_mana_cost, (void*)hooked_mana_cost);
-    mana_cost_patches += patch_call((BYTE*)executable + 0x5E0D6D,
+    mana_cost_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_MANA_COST_CALL_5_RVA,
         (void*)original_mana_cost, (void*)hooked_mana_cost);
-    mana_cost_patches += patch_call((BYTE*)executable + 0x66824B,
+    mana_cost_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_MANA_COST_CALL_6_RVA,
         (void*)original_mana_cost, (void*)hooked_mana_cost);
     trace_client_state("mana_cost_hooks", (unsigned int)mana_cost_patches);
-    alert_patches += patch_call((BYTE*)executable + 0x10F47F, (void*)original_alert, (void*)hooked_internal_alert);
-    alert_patches += patch_call((BYTE*)executable + 0x10F82B, (void*)original_alert, (void*)hooked_internal_alert);
-    alert_patches += patch_call((BYTE*)executable + 0x13589B, (void*)original_alert, (void*)hooked_internal_alert);
-    alert_patches += patch_call((BYTE*)executable + 0x135A0F, (void*)original_alert, (void*)hooked_internal_alert);
-    alert_patches += patch_call((BYTE*)executable + 0x3E7835, (void*)original_alert, (void*)hooked_internal_alert);
-    alert_patches += patch_call((BYTE*)executable + 0x3E7990, (void*)original_alert, (void*)hooked_internal_alert);
-    alert_patches += patch_call((BYTE*)executable + 0x3E8CAF, (void*)original_alert, (void*)hooked_internal_alert);
-    alert_patches += patch_call((BYTE*)executable + 0x45483F, (void*)original_alert, (void*)hooked_internal_alert);
-    alert_patches += patch_call((BYTE*)executable + 0x454AFC, (void*)original_alert, (void*)hooked_internal_alert);
-    alert_patches += patch_call((BYTE*)executable + 0x459688, (void*)original_alert, (void*)hooked_internal_alert);
-    alert_patches += patch_call((BYTE*)executable + 0x4C9976, (void*)original_alert, (void*)hooked_internal_alert);
+    alert_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_ALERT_CALL_1_RVA, (void*)original_alert, (void*)hooked_internal_alert);
+    alert_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_ALERT_CALL_2_RVA, (void*)original_alert, (void*)hooked_internal_alert);
+    alert_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_ALERT_CALL_3_RVA, (void*)original_alert, (void*)hooked_internal_alert);
+    alert_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_ALERT_CALL_4_RVA, (void*)original_alert, (void*)hooked_internal_alert);
+    alert_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_ALERT_CALL_5_RVA, (void*)original_alert, (void*)hooked_internal_alert);
+    alert_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_ALERT_CALL_6_RVA, (void*)original_alert, (void*)hooked_internal_alert);
+    alert_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_ALERT_CALL_7_RVA, (void*)original_alert, (void*)hooked_internal_alert);
+    alert_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_ALERT_CALL_8_RVA, (void*)original_alert, (void*)hooked_internal_alert);
+    alert_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_ALERT_CALL_9_RVA, (void*)original_alert, (void*)hooked_internal_alert);
+    alert_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_ALERT_CALL_10_RVA, (void*)original_alert, (void*)hooked_internal_alert);
+    alert_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_ALERT_CALL_11_RVA, (void*)original_alert, (void*)hooked_internal_alert);
     if (alert_patches != 11) {
         result |= 0x4000;
     }
-    login_error_patches += patch_call((BYTE*)executable + 0x83FF3B, (void*)original_login_error, (void*)hooked_login_error);
-    login_error_patches += patch_call((BYTE*)executable + 0x83FF9B, (void*)original_login_error, (void*)hooked_login_error);
-    login_error_patches += patch_call((BYTE*)executable + 0x84033B, (void*)original_login_error, (void*)hooked_login_error);
-    login_error_patches += patch_call((BYTE*)executable + 0x84039B, (void*)original_login_error, (void*)hooked_login_error);
-    login_error_patches += patch_call((BYTE*)executable + 0x840481, (void*)original_login_error, (void*)hooked_login_error);
+    login_error_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_LOGIN_ERROR_CALL_1_RVA, (void*)original_login_error, (void*)hooked_login_error);
+    login_error_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_LOGIN_ERROR_CALL_2_RVA, (void*)original_login_error, (void*)hooked_login_error);
+    login_error_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_LOGIN_ERROR_CALL_3_RVA, (void*)original_login_error, (void*)hooked_login_error);
+    login_error_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_LOGIN_ERROR_CALL_4_RVA, (void*)original_login_error, (void*)hooked_login_error);
+    login_error_patches += patch_call((BYTE*)executable + FANG103_ORIGINAL_LOGIN_ERROR_CALL_5_RVA, (void*)original_login_error, (void*)hooked_login_error);
     if (login_error_patches != 5) {
         result |= 0x8000;
     }
 #endif
     if (jwt_login_token[0] != '\0' &&
-        !patch_pointer((void**)((BYTE*)executable + 0xBDF9A4), (void*)original_login_screen_init, (void*)hooked_login_screen_init)) {
+        !patch_pointer((void**)((BYTE*)executable + FANG103_ORIGINAL_LOGIN_SCREEN_INIT_POINTER_1_RVA), (void*)original_login_screen_init, (void*)hooked_login_screen_init)) {
         result |= 0x800000;
     }
+    fang_client103_report(fang_history_write);
+    fang_hook_report(fang_history_write);
     return result;
 }
 
+// Modifies: invokes Go-owned Fang initialization from the exported loader thread entry.
 __declspec(dllexport) DWORD WINAPI RecapInitializeThread(LPVOID parameter) {
     (void)parameter;
     return (DWORD)GoRecapInitialize();

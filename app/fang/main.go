@@ -3,7 +3,8 @@
 package main
 
 /*
-#cgo windows LDFLAGS: -lws2_32 -static-libgcc
+#cgo scenario,fangdebug CFLAGS: -DFANG_SCENARIO=1
+#cgo windows LDFLAGS: -lws2_32 -lole32 -luuid -static-libgcc
 #include <stdlib.h>
 #include "fang.h"
 
@@ -13,10 +14,25 @@ package main
 import "C"
 
 import (
+	"log"
 	"net"
 	"os"
 	"strconv"
 	"unsafe"
+
+	_ "github.com/darkspinnet/darkspin/app/fang/bug"
+	_ "github.com/darkspinnet/darkspin/app/fang/chat"
+	_ "github.com/darkspinnet/darkspin/app/fang/cinematic"
+	_ "github.com/darkspinnet/darkspin/app/fang/client103"
+	_ "github.com/darkspinnet/darkspin/app/fang/display"
+	_ "github.com/darkspinnet/darkspin/app/fang/editor"
+	_ "github.com/darkspinnet/darkspin/app/fang/hook"
+	_ "github.com/darkspinnet/darkspin/app/fang/login"
+	_ "github.com/darkspinnet/darkspin/app/fang/mod"
+	_ "github.com/darkspinnet/darkspin/app/fang/network"
+	"github.com/darkspinnet/darkspin/app/fang/scenario"
+	_ "github.com/darkspinnet/darkspin/app/fang/shop"
+	_ "github.com/darkspinnet/darkspin/app/fang/zoom"
 )
 
 const (
@@ -28,6 +44,10 @@ const (
 
 //export GoRecapInitialize
 func GoRecapInitialize() C.int {
+	err := initializeTranslation()
+	if err != nil {
+		log.Printf("In-game translation initialization failed; unavailable captions use English: %v", err)
+	}
 	configuredAddress := os.Getenv("DARKSPIN_SERVER_ADDRESS")
 	if configuredAddress == "" {
 		configuredAddress = net.JoinHostPort(serverHost, strconv.Itoa(serverPort))
@@ -45,10 +65,6 @@ func GoRecapInitialize() C.int {
 	if os.Getenv("DARKSPIN_SKIP_CINEMATIC") == "1" {
 		isCinematicSkipped = 1
 	}
-	isBorderlessFullscreenEnabled := C.int(0)
-	if os.Getenv("DARKSPIN_BORDERLESS_FULLSCREEN") == "1" {
-		isBorderlessFullscreenEnabled = 1
-	}
 	jwt := C.CString(os.Getenv("DARKSPIN_LAUNCH_JWT"))
 	defer C.free(unsafe.Pointer(jwt))
 	_ = os.Unsetenv("DARKSPIN_LAUNCH_JWT")
@@ -60,8 +76,11 @@ func GoRecapInitialize() C.int {
 	defer C.free(unsafe.Pointer(windowTitle))
 	result := C.fang_install(
 		host, C.ushort(configuredPort), C.ushort(configuredPort+1), tracePath,
-		isIntroSkipped, isCinematicSkipped, isBorderlessFullscreenEnabled, jwt, windowTitle,
+		isIntroSkipped, isCinematicSkipped, jwt, windowTitle,
 	)
+	if result == 0 {
+		scenario.Start()
+	}
 	return C.int(result)
 }
 

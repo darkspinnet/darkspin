@@ -42,6 +42,7 @@ type campaignProjectileSchedule struct {
 	flight             *sim.ProjectileFlight
 	startedAt          time.Time
 	retirement         *campaignProjectileRetirement
+	wave               *campaignProjectileWave
 }
 
 type campaignProjectileStep struct {
@@ -129,7 +130,9 @@ func (e campaignProjectileStep) produceElectronImpact(
 	peerSession gameplayPeerSession,
 ) ([][]byte, error) {
 	schedule := e.schedule
-	liveNPC, isLiveFound := peerSession.zone.NPCs().NPC(schedule.targetObjectID)
+	enemies := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, schedule.definition,
+		schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond))
+	liveNPC, isLiveFound := enemies.NPC(schedule.targetObjectID)
 	if schedule.targetObjectID == 0 || !isLiveFound {
 		launchPosition := campaignProjectileLaunchPosition(
 			schedule.sourcePosition, game.Vec3(schedule.targetPosition),
@@ -190,8 +193,23 @@ func (e campaignProjectileStep) produceElectronImpact(
 		return packets, nil
 	}
 	impactPosition := game.Vec3(collision.Position)
+	return e.produceElectronContact(peerSession, liveNPC, impactPosition)
+}
+
+func (e campaignProjectileStep) produceElectronContact(
+	peerSession gameplayPeerSession, liveNPC zonenpc.Snapshot, impactPosition game.Vec3,
+) ([][]byte, error) {
+	schedule := e.schedule
+	enemies := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, schedule.definition,
+		schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond))
+	launchPosition := campaignProjectileLaunchPosition(schedule.sourcePosition, game.Vec3(schedule.targetPosition), schedule.actorFootprint)
+	err := schedule.run.SetImpactTarget(liveNPC.Plan.ObjectID, sim.Position(liveNPC.Plan.Position))
+	if err != nil {
+		schedule.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("electronTarget: %w", err)
+	}
 	impactPlan, err := zoneability.PlanElectronSphereImpact(
-		peerSession.zone.NPCs(), schedule.sourceObjectID,
+		enemies, schedule.sourceObjectID,
 		schedule.targetObjectID, impactPosition,
 		schedule.creature, schedule.plan,
 	)
@@ -199,9 +217,13 @@ func (e campaignProjectileStep) produceElectronImpact(
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignElectronImpactPlan: %w", err)
 	}
+	random, err := schedule.runtime.registry.abilityRandomLocked(peerSession)
+	if err != nil {
+		schedule.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("electronRandom: %w", err)
+	}
 	results, err := zoneability.CommitArea(
-		peerSession.zone.Population().Random(),
-		peerSession.zone.NPCs(), impactPlan, schedule.creature,
+		random, enemies, impactPlan, schedule.creature,
 		peerSession.binding.Difficulty, schedule.runtime.program.Critical,
 	)
 	if err != nil {
@@ -210,6 +232,9 @@ func (e campaignProjectileStep) produceElectronImpact(
 	}
 	transitions := make([]campaignDamageTransition, 0, len(results))
 	for _, result := range results {
+		if peerSession.binding.Mode == game.ModeArena {
+			continue
+		}
 		transition, transitionErr :=
 			peerSession.applyCampaignDamageTransition(result.Damage)
 		if transitionErr != nil {
@@ -234,7 +259,15 @@ func (e campaignProjectileStep) produceElectronImpact(
 		previousHealth, damage, isCritical,
 		sim.Position(impactPosition), sim.Position(schedule.facing),
 	)
-	schedule.runtime.registry.sessions[schedule.sessionKey] = peerSession
+	if schedule.flight != nil {
+		if peerSession.binding.Mode == game.ModeArena {
+			peerSession = schedule.runtime.registry.sessions[schedule.sessionKey]
+		}
+		e.finishFlightLocked(&peerSession)
+	}
+	if peerSession.binding.Mode != game.ModeArena {
+		schedule.runtime.registry.sessions[schedule.sessionKey] = peerSession
+	}
 	schedule.runtime.registry.mutex.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("campaignElectronImpactCollision: %w", err)
@@ -255,6 +288,14 @@ func (e campaignProjectileStep) produceElectronImpact(
 	effect := areaSpecialEffect{
 		assetID: util.HashID(impactPlan.Definition.HitEffectName),
 	}
+	if arenaTargets, isArena := enemies.(*arenaAbilityTargets); isArena {
+		arenaTargets.finish()
+		hitPackets, hitErr := arenaTargets.packetsWithEffects(results, effect.produce, true)
+		if hitErr != nil {
+			return nil, fmt.Errorf("electronPublish: %w", hitErr)
+		}
+		return append(filteredPackets, hitPackets...), nil
+	}
 	resultPackets, err := schedule.runtime.damage.publishAreaResults(
 		schedule.packet, schedule.sessionKey, schedule.generation,
 		schedule.sourceObjectID, timestamp, schedule.binding,
@@ -272,9 +313,10 @@ func (e campaignProjectileStep) produceDirectImpact(
 	schedule := e.schedule
 	// Range was validated at acceptance. Moving the caster after launch
 	// must not invalidate a projectile already in flight.
+	targets := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, schedule.definition, schedule.packet.SourceTime)
 	livePlan := schedule.plan
 	liveNPC, isLiveFound :=
-		peerSession.zone.NPCs().NPC(schedule.targetObjectID)
+		targets.NPC(schedule.targetObjectID)
 	if !isLiveFound || liveNPC.IsDefeated || liveNPC.HitPoint <= 0 ||
 		schedule.definition.Name == "SupportHealerBasic" &&
 			!isSupportHealerBasicImpactTarget(liveNPC) {
@@ -346,14 +388,34 @@ func (e campaignProjectileStep) produceContact(
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("projectileTarget: %w", err)
 	}
+	targets := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, schedule.definition, schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond))
+	random, randomErr := schedule.runtime.registry.abilityRandomLocked(peerSession)
+	if randomErr != nil {
+		schedule.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("projectileRandom: %w", randomErr)
+	}
+	if peerSession.binding.Mode == game.ModeArena {
+		schedule.runtime.registry.sessions[schedule.sessionKey] = peerSession
+	}
 	result, err := zoneability.CommitBasic(
-		peerSession.zone.Population().Random(),
-		peerSession.zone.NPCs(), livePlan, schedule.creature,
+		random, targets, livePlan, schedule.creature,
 		peerSession.binding.Difficulty, schedule.runtime.program.Critical,
 	)
 	if err != nil {
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignProjectileCommit: %w", err)
+	}
+	if arenaTargets, isArena := targets.(*arenaAbilityTargets); isArena {
+		// Hit cleanup may have queued reliable removals to the shooter. Carry
+		// that updated session through flight retirement instead of overwriting it.
+		peerSession = schedule.runtime.registry.sessions[schedule.sessionKey]
+		packets, publishErr := e.commitArenaProjectileLocked(&peerSession, arenaTargets, liveNPC, result, collision)
+		schedule.runtime.registry.mutex.Unlock()
+		arenaTargets.finish()
+		if publishErr != nil {
+			return nil, fmt.Errorf("projectileArenaPublish: %w", publishErr)
+		}
+		return packets, nil
 	}
 	transition, err :=
 		peerSession.applyCampaignDamageTransition(result.Damage)
@@ -386,9 +448,13 @@ func (e campaignProjectileStep) produceContact(
 	healingPackets, healingErr := schedule.applyDamageHealingLocked(
 		peerSession.zone, game.Vec3(impactPosition), result.Damage.Damage,
 	)
+	cooldownPackets, cooldownErr := schedule.applyLightspeedCooldownsLocked(game.Vec3(impactPosition))
 	schedule.runtime.registry.mutex.Unlock()
 	if healingErr != nil {
 		return nil, fmt.Errorf("campaignProjectileHealing: %w", healingErr)
+	}
+	if cooldownErr != nil {
+		return nil, fmt.Errorf("projectileCooldown: %w", cooldownErr)
 	}
 	schedule.runtime.logger.Printf(
 		"RakNet projectile trajectory resolved kind=hero-basic projectile=%d source=%d target=%d outcome=hit aim=(%.3f,%.3f,%.3f) target_now=(%.3f,%.3f,%.3f) contact=(%.3f,%.3f,%.3f) drift=%.3f ability=%q weapon=(%.3f,%.3f) projected=(%.3f,%.3f) selected=%.3f applied=%.3f previous_health=%.3f critical=%t",
@@ -413,6 +479,7 @@ func (e campaignProjectileStep) produceContact(
 		schedule.packet, schedule.sessionKey, schedule.generation,
 		schedule.sourceObjectID, timestamp, schedule.binding,
 		[]zoneability.AreaResult{{
+			SourceRank: schedule.plan.SourceRank, SourceCreature: schedule.creature,
 			Snapshot: liveNPC, Damage: result.Damage,
 			IsCritical: result.IsCritical, Definition: schedule.plan.Definition,
 		}},
@@ -422,7 +489,8 @@ func (e campaignProjectileStep) produceContact(
 		return nil, fmt.Errorf("campaignProjectilePublish: %w", err)
 	}
 	packets = append(filteredPackets, resultPackets...)
-	return append(packets, healingPackets...), nil
+	packets = append(packets, healingPackets...)
+	return append(packets, cooldownPackets...), nil
 }
 
 func filterProjectileCombatPackets(packets [][]byte) [][]byte {

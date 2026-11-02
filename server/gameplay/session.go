@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
+	"github.com/darkspinnet/darkspin/server/playerstat"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/sporenet"
@@ -50,7 +51,8 @@ type summonCompanionAttackStart = companionraknet.MeleeStart
 
 const zonePlayerMoveSpeed = float32(8.25)
 const zonePlayerPoseCorrectionRange = float32(12)
-const standardCreatureSwapCooldown = 5 * time.Second
+const arenaCreatureSwapCooldown = 5 * time.Second
+const campaignCreatureSwapCooldown = 5 * time.Second
 const campaignCreatureWarpOutDelay = 500 * time.Millisecond
 
 // campaignHeroDeathSelectionDelay is derived from the longest playable death
@@ -203,6 +205,8 @@ type zoneEffectPresentation struct {
 	campaignNPCVoltroidChargeExpires    map[uint32]uint64
 	campaignNPCVoltroidChargeReadiness  map[uint32]uint64
 	campaignNPCVoltroidEffectSlots      map[uint32]uint8
+	campaignNPCVoltroidBeams            map[uint32]campaignVoltroidActiveBeam
+	campaignAcceptedHitPushEffects      map[uint32]*channelEffects
 	campaignNPCRecoveryActionCounts     map[uint32]uint32
 	campaignNPCPolarisStates            map[uint32]campaignNPCPolarisState
 	campaignNPCCitadelSpecialFourStates map[uint32]campaignCitadelSpecialFourState
@@ -213,6 +217,7 @@ type zoneEffectPresentation struct {
 	campaignTwinLaserEndpointIDs        map[uint32]uint32
 	campaignArcturusStates              map[uint32]*campaignArcturusState
 	pickupPursuit                       *campaignPickupTimeout
+	interactablePursuit                 *campaignInteractablePursuit
 	campaignCorruptorStates             map[uint32]campaignCorruptorState
 	campaignNPCRuptionNextMagmas        map[uint32]uint64
 	campaignNPCDragSlowShieldReadiness  map[uint32]uint64
@@ -230,24 +235,29 @@ type zoneEffectPresentation struct {
 // zonePresentationRuntime owns connection-local scheduling and transfers.
 // Authoritative world state remains on Zone.
 type zonePresentationRuntime struct {
-	cryosFungusExpirations map[uint32]time.Time
-	cryosGeyserWarnings    map[uint32]uint64
-	cryosGeyserSpouts      map[uint32]uint64
-	fireVents              map[uint32]*campaignFireVent
-	fireVentWarnings       map[uint32]uint64
-	fireVentEruptions      map[uint32]uint64
-	warpTotems             map[uint32]*warpTotemCycle
-	warpTotemWarnings      map[uint32]uint64
-	warpTotemDischarges    map[uint32]uint64
-	warpTotemTeleport      warpTotemTeleport
-	cryosPoisonReadyAt     time.Time
-	cryosPoisonExpiresAt   time.Time
-	cryosPoisonSourceID    uint32
-	cryosBurnExpiresAt     time.Time
-	cryosBurnHazard        campaignLavaHazard
-	plasmaBurn             *campaignNPCModifierRun
-	plasmaBurnEffect       *plasmaBurnPresentation
-	plasmaBurnReadyAt      time.Time
+	acMalfunctions          map[uint32]*acMalfunctionCycle
+	acMalfunctionWarnings   map[uint32]uint64
+	acMalfunctionDischarges map[uint32]uint64
+	cryosFungusExpirations  map[uint32]time.Time
+	cryosGeyserWarnings     map[uint32]uint64
+	cryosGeyserSpouts       map[uint32]uint64
+	fireVents               map[uint32]*campaignFireVent
+	tripMines               map[uint32]*tripMineRun
+	fireVentWarnings        map[uint32]uint64
+	fireVentEruptions       map[uint32]uint64
+	warpTotems              map[uint32]*warpTotemCycle
+	warpTotemWarnings       map[uint32]uint64
+	warpTotemDischarges     map[uint32]uint64
+	randomTeleport          randomTeleport
+	cryosPoisonReadyAt      time.Time
+	cryosPoisonExpiresAt    time.Time
+	cryosPoisonSourceID     uint32
+	cryosBurnExpiresAt      time.Time
+	cryosBurnHazard         campaignLavaHazard
+	plasmaBurn              *campaignNPCModifierRun
+	plasmaBurnEffect        *plasmaBurnPresentation
+	plasmaBurnReadyAt       time.Time
+	petPlasmaBurns          map[uint32]petPlasmaBurn
 	zoneCombatPresentation
 	campaignSchedule                        *zoneaction.ScheduleSession
 	campaignUnlockPresentation              *unlockraknet.ActiveSession
@@ -261,6 +271,7 @@ type zonePresentationRuntime struct {
 	isTutorialTeleporterPresentationPending bool
 	securityTeleporterStates                map[uint32]bool
 	campaignTeleporterStates                map[uint32]bool
+	campaignTeleporterTransitions           map[uint32]*campaignTeleporterTransition
 	campaignTunnelExitSource                game.Vec3
 	campaignTunnelExitRadius                float32
 	isCampaignTunnelExitPending             bool
@@ -285,6 +296,7 @@ type zoneMembership struct {
 }
 
 type controlledHeroState struct {
+	scenarioAbility               scenarioAbilityState
 	squad                         *squad.Session
 	abilityCooldown               *zoneability.CooldownSession
 	abilityRelease                *zoneaction.ReleaseSession
@@ -307,6 +319,8 @@ type controlledHeroState struct {
 	heroInputLockedObjectID       uint32
 	heroInputLockedUntil          time.Time
 	maximumHitPoints              [squad.Size]float32
+	scenarioHitPointMaximums      [squad.Size]float32
+	arenaHitPointIncreases        [squad.Size]float32
 	maximumManaPoints             [squad.Size]float32
 	isHeroSelectionPending        bool
 	isHeroSelectionScheduled      bool
@@ -321,8 +335,19 @@ type controlledHeroState struct {
 	enemyStunExpiresAt            time.Time
 	enemyStunTargetObjectID       uint32
 	operativeCage                 *campaignNPCModifierRun
+	operativeChannels             map[uint32]*operativeCageState
+	agentBlinkReadiness           map[uint32]uint64
+	agentBlinkStates              map[uint32]*spacetimeBlinkStep
+	agentSupports                 map[uint32]*agentSupportState
+	droneFollows                  map[uint32]*campaignDroneFollowStep
+	npcSupportIdles               map[uint32]*campaignNPCSupportIdle
+	additionalKitMoves            map[uint32]*additionalKitMove
+	plasmaWall                    plasmaWallState
+	nomadFrogPools                map[uint32]*nomadFrogPool
 	enemyRootExpiresAt            time.Time
 	enemyRootTargetObjectID       uint32
+	enemyControlPresentedObjectID uint32
+	enemyFrozenPresentedObjectID  uint32
 	heroKnockbackLanding          heroKnockbackLanding
 	enemyFearExpiresAt            time.Time
 	enemyFearTargetObjectID       uint32
@@ -337,8 +362,9 @@ type controlledHeroState struct {
 	isGraviticSpeedPresented      bool
 	campaignLavaWarningKey        uint64
 	campaignLavaSpoutKey          uint64
-	nightmareRootDamageReadyAt    time.Time
+	nightmareRootDamageReadyAts   map[uint32]time.Time
 	passiveKillStack              [squad.Size]uint32
+	voodooDeathRevision           uint64
 	soulRavagerObjectIDs          [5]uint32
 	soulRavagerOwnerObjectID      uint32
 	soulRavagerVisualStack        uint32
@@ -349,8 +375,10 @@ type controlledHeroState struct {
 	isMissileTargetingPresented   [squad.Size]bool
 	missileTargetingEffectSlots   [squad.Size]uint8
 	fireRavagerBasicCount         [squad.Size]uint32
+	fireRavagerPassive            fireRavagerPassiveState
 	tcShieldAmount                [squad.Size]float32
 	tcShieldReadyAt               [squad.Size]time.Time
+	tcShieldRuns                  [squad.Size]*tcShieldPassiveRun
 	tcShieldEffectSlot            [squad.Size]uint8
 	isTCShieldEffectAttached      [squad.Size]bool
 	lightspeedPassiveEpoch        uint64
@@ -364,6 +392,7 @@ type controlledHeroState struct {
 	overdriveExpiresAt            time.Time
 	overdriveActivation           uint64
 	overdriveObjectID             uint32
+	overdrivePresentation         overdrivePresentationState
 }
 
 func (e gameplayPeerSession) isOverdriveActiveAt(now time.Time) bool {
@@ -414,7 +443,18 @@ func (s *gameplayPeerSession) extendEnemySleep(
 }
 
 func (s *gameplayPeerSession) isEnemySleepActive(at time.Time) bool {
-	return s != nil && !at.IsZero() && at.Before(s.enemySleepExpiresAt)
+	if s == nil || at.IsZero() {
+		return false
+	}
+	if at.Before(s.enemySleepExpiresAt) {
+		return true
+	}
+	for _, status := range s.arenaHitStatuses {
+		if status != nil && status.kind == sim.AbilityStatusKindSleep && status.matches(*s) && at.Before(status.expiresAt) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *gameplayPeerSession) extendEnemyStun(
@@ -433,6 +473,9 @@ func (s *gameplayPeerSession) extendEnemyStun(
 
 func (s *gameplayPeerSession) isEnemyStunActive(at time.Time) bool {
 	if s != nil && (s.isOperativeCaged(at) || s.isKnockbackActive(at)) {
+		return true
+	}
+	if s != nil && s.isArenaHitStunActive(at) {
 		return true
 	}
 	return s != nil && !at.IsZero() &&
@@ -456,8 +499,8 @@ func (s *gameplayPeerSession) extendEnemyRoot(
 
 func (s *gameplayPeerSession) isEnemyRootActive(at time.Time) bool {
 	return s != nil && !at.IsZero() &&
-		s.deployedObjectID == s.enemyRootTargetObjectID &&
-		at.Before(s.enemyRootExpiresAt)
+		((s.deployedObjectID == s.enemyRootTargetObjectID && at.Before(s.enemyRootExpiresAt)) ||
+			s.isArenaHitRootActive(at))
 }
 
 func (s *gameplayPeerSession) extendEnemyFear(
@@ -476,8 +519,8 @@ func (s *gameplayPeerSession) extendEnemyFear(
 
 func (s *gameplayPeerSession) isEnemyFearActive(at time.Time) bool {
 	return s != nil && !at.IsZero() &&
-		s.deployedObjectID == s.enemyFearTargetObjectID &&
-		at.Before(s.enemyFearExpiresAt)
+		((s.deployedObjectID == s.enemyFearTargetObjectID && at.Before(s.enemyFearExpiresAt)) ||
+			s.isArenaHitFearActive(at))
 }
 
 func (s *gameplayPeerSession) extendEnemySilence(
@@ -493,14 +536,24 @@ func (s *gameplayPeerSession) extendEnemySilence(
 	return true
 }
 
+func (e gameplayPeerSession) isEnemySilenceActive(at time.Time) bool {
+	return !at.IsZero() && (at.Before(e.enemySilenceExpiresAt) || e.isArenaHitSilenceActive(at) || e.fixtureSilenceCount() > 0)
+}
+
 type controlledHeroPresentation struct {
 	passiveModifierInstance      [3]uint32
 	arePassiveModifiersAllocated bool
 	isDancing                    bool
 	plasmaWreathRun              *abilityraknet.PlasmaWreathRun
+	plasmaWreathPending          *plasmaWreathAdmission
+	plasmaWreathState            plasmaWreathState
+	plasmaWreathRestoreObjectID  uint32
+	plasmaWreathStoppedRuns      []*abilityraknet.PlasmaWreathRun
 	enrageRun                    *abilityraknet.EnrageRun
 	ghostFormRun                 *abilityraknet.GhostFormRun
 	heroModifierRun              *heroModifierRun
+	omniShields                  map[uint32]*omniShieldRun
+	omniShieldRegistry           *gameplaySessionRegistry
 	missileFlakRun               *missileFlakRun
 	poisonNovaCooldownRun        *poisonNovaCooldownRun
 	fieldMedicHeroBuffs          map[uint32]*fieldMedicHeroBuffRun
@@ -508,6 +561,7 @@ type controlledHeroPresentation struct {
 	enemyDeaths                  map[uint32]*deathraknet.Run
 	basicAttack                  *abilityraknet.MeleeRun
 	basicAttackSyncStamp         uint8
+	pendingBasic                 *campaignPendingBasic
 	sageAttacks                  map[uint32]*abilityraknet.ProjectileRun
 	heroBurstAttacks             map[uint32]*abilityraknet.BurstRun
 	rocketBarrage                *rocketBarrageChannel
@@ -515,13 +569,16 @@ type controlledHeroPresentation struct {
 	heroDrain                    *heroDrainRun
 	heroTimedArea                *heroTimedAreaRun
 	heroStatusAreas              map[uint32]*heroStatusAreaRun
+	arenaHitStatuses             map[arenaHitStatusKey]*arenaHitStatus
+	arenaHitPushes               map[uint32]*arenaHitPushRun
 	heroChannelArea              *heroChannelAreaRun
 	heroQuantumBlink             *heroQuantumBlinkRun
 	fireTempestActive            *fireTempestActiveRun
 	plasmaSentinelActive         *plasmaSentinelActiveRun
-	heroInfection                *heroInfectionRun
+	heroInfections               map[*heroInfectionRun]struct{}
 	heroHealingTicks             *heroHealingTicksRun
 	heroAuraAreas                map[uint32]*heroAuraAreaRun
+	arenaSphereSlows             map[uint32]uint32
 	heroProjectileRuns           map[uint32]*heroProjectileStatusRun
 	heroCharge                   *heroChargeRun
 	chargeRuns                   map[*heroChargeRun]struct{}
@@ -532,17 +589,18 @@ type controlledHeroPresentation struct {
 	energySentinelPassive        *energySentinelPassiveRun
 	tossAttacks                  map[uint32]*campaignTossRun
 	cloudLobAttacks              map[uint32]*campaignCloudLobRun
-	cloudPoison                  zoneability.CloudPoisonRuntime
 	sphereAttack                 *abilityraknet.TargetedAOERun
 	sphereObjectID               uint32
 	sagePassive                  *summonPassiveRun
+	sagePassiveSchedule          *sagePassivePoll
 	sagePassiveActivations       map[uint32]summonCompanionActivation
-	fieldMedicDroneObjectID      uint32
-	fieldMedicDroneAttack        *abilityraknet.ProjectileRun
+	fieldMedicDroneObjectIDs     []uint32
+	fieldMedicDroneAttacks       map[uint32]*abilityraknet.ProjectileRun
 	beastPetObjectID             uint32
 	beastPetDamage               float32
 	beastPetEnrage               *beastPetEnrageRun
 	beastPetDamageIncrease       float32
+	beastPetResurrection         *beastPetResurrectionRun
 	heroSummons                  map[uint32]*heroSummonRun
 	trapperStealthEpoch          uint64
 	isTrapperStealthed           bool
@@ -559,6 +617,9 @@ type zoneCombatPresentation struct {
 }
 
 type gameplayPeerSession struct {
+	channelRegistry          *gameplaySessionRegistry
+	arenaEffectPool          *attachedEffectPool
+	acceptedActionGeneration uint64
 	scenarioPeerPreparation
 	scenarioPeerFixture
 	scenarioPeerReadiness
@@ -569,16 +630,21 @@ type gameplayPeerSession struct {
 	controlledHeroPresentation
 	zoneMembership
 	binding                              game.GameplayBinding
+	campaignBots                         map[uint16]*campaignBotRun
 	stage                                zonemember.Stage
 	lastPlayerStatus                     raknet.PlayerStatus
 	isPlayerStatusKnown                  bool
 	isCampaignPlayerInitialized          bool
+	isGodModeEnabled                     bool
 	dungeonSetup                         zonemember.Setup
 	transportGeneration                  uint64
 	schedulePackets                      func(time.Duration, [][]byte) error
 	schedulePacket                       raknet.Packet
 	pendingPacketBatches                 []pendingPeerPacketBatch
-	pendingPacketResponseTraceID         uint64
+	pendingPacketResponseID              uint64
+	mutationBaselineRevision             uint64
+	isMutationBaselineRequired           bool
+	mutationResetObjectIDs               []uint32
 	nextPendingPacketID                  uint64
 	isPendingPacketOverflow              bool
 	pendingStatDeltas                    []sporenet.PlayerStatDelta
@@ -596,6 +662,7 @@ type gameplayPeerSession struct {
 	arenaLobbyTransitionAt               time.Time
 	arenaLobbyTransitionCount            uint32
 	isRejoinPending                      bool
+	campaignClock                        *campaignClockRun
 	isNPCRecoveryPending                 bool
 	isTutorialCapsuleDropUnlocked        bool
 	fullOrbContactObjectIDs              map[uint32]struct{}
@@ -612,6 +679,10 @@ type gameplayPeerSession struct {
 	campaignNashiraSplitObjectIDs        map[uint32][]uint32
 	campaignNashiraSplitPendingObjectIDs map[uint32]uint32
 	campaignNashiraPanicReadiness        map[uint32]uint64
+	campaignNashiraCurseReadiness        map[uint32]uint64
+	campaignNPCSupportReadiness          map[campaignNPCSupportKey]uint64
+	campaignMerakStormReadiness          map[uint32]uint64
+	campaignMerakStormRuns               map[uint32]*campaignMerakStormRun
 	campaignMerakPassiveStates           map[uint32]campaignMerakPassiveState
 }
 
@@ -688,6 +759,7 @@ func (s *gameplayPeerSession) setCrystalInventory(inventory sim.CrystalInventory
 			creature.DamageProfile.ScienceDamage[index] += next[attributeIndex] - previous[attributeIndex]
 		}
 		creature.DamageProfile.AreaDamage += next[37] - previous[37]
+		creature.DamageProfile.DamageBuff += next[13] - previous[13]
 		creature.DamageProfile.DirectAttackDamagePercent += next[109] - previous[109]
 		creature.TimingProfile.AttackSpeed += next[23] - previous[23]
 		creature.TimingProfile.CooldownReduction += next[24] - previous[24]
@@ -697,14 +769,36 @@ func (s *gameplayPeerSession) setCrystalInventory(inventory sim.CrystalInventory
 	s.crystalInventory = inventory
 }
 
+type pendingActionTerminal struct {
+	sessionKey          string
+	transportGeneration uint64
+	traceID             uint64
+	objectID            uint32
+	syncStamp           uint8
+}
+
 type pendingPeerPacketBatch struct {
+	mutationFeedback       *mutationDamageFeedback
+	mutationEvent          *mutationPendingEvent
+	mutationElite          *mutationEliteFrame
+	questFrame             *questPendingFrame
+	overdriveFrame         *overdrivePendingFrame
+	wreathRemoval          *plasmaWreathDelivery
+	omniRemoval            *omniShieldDelivery
+	channelRemoval         *channelDelivery
+	channelCreation        *channelEffects
+	actionTerminal         *pendingActionTerminal
 	id                     uint64
 	packets                [][]byte
+	cinematics             map[int]pendingCinematic
 	isCampaignPresentation bool
 }
 
 func (s *gameplayPeerSession) queuePackets(packets [][]byte) {
 	if s == nil || len(packets) == 0 {
+		return
+	}
+	if s.binding.IsServerBot {
 		return
 	}
 	s.nextPendingPacketID++
@@ -713,11 +807,19 @@ func (s *gameplayPeerSession) queuePackets(packets [][]byte) {
 	}
 	if len(packets) >= pendingPeerPacketLimit {
 		batch.packets = retainPendingPackets(packets, pendingPeerPacketLimit)
-		s.pendingPacketBatches = []pendingPeerPacketBatch{batch}
+		batch.cinematics = capturePendingCinematics(batch.packets, time.Now())
+		retainedBatches := make([]pendingPeerPacketBatch, 0, len(s.pendingPacketBatches)+1)
+		for _, pendingBatch := range s.pendingPacketBatches {
+			if pendingBatch.wreathRemoval != nil || pendingBatch.omniRemoval != nil || pendingBatch.channelRemoval != nil || pendingBatch.channelCreation != nil || pendingBatch.actionTerminal != nil || pendingBatch.questFrame != nil || pendingBatch.mutationElite != nil || pendingBatch.mutationEvent != nil {
+				retainedBatches = append(retainedBatches, pendingBatch)
+			}
+		}
+		s.pendingPacketBatches = append(retainedBatches, batch)
 		s.isPendingPacketOverflow = true
 		return
 	}
 	batch.packets = clonePendingPackets(packets)
+	batch.cinematics = capturePendingCinematics(batch.packets, time.Now())
 	s.pendingPacketBatches = append(s.pendingPacketBatches, batch)
 	packetCount := 0
 	for _, pendingBatch := range s.pendingPacketBatches {
@@ -725,6 +827,9 @@ func (s *gameplayPeerSession) queuePackets(packets [][]byte) {
 	}
 	for packetCount > pendingPeerPacketLimit && len(s.pendingPacketBatches) > 1 {
 		removedIndex := oldestDroppablePendingBatch(s.pendingPacketBatches)
+		if removedIndex < 0 {
+			break
+		}
 		packetCount -= len(s.pendingPacketBatches[removedIndex].packets)
 		s.pendingPacketBatches = slices.Delete(
 			s.pendingPacketBatches, removedIndex, removedIndex+1,
@@ -773,6 +878,9 @@ func retainPendingPackets(packets [][]byte, limit int) [][]byte {
 
 func oldestDroppablePendingBatch(batches []pendingPeerPacketBatch) int {
 	for index, batch := range batches {
+		if batch.wreathRemoval != nil || batch.omniRemoval != nil || batch.channelRemoval != nil || batch.channelCreation != nil || batch.actionTerminal != nil || batch.questFrame != nil || batch.mutationElite != nil || batch.mutationEvent != nil {
+			continue
+		}
 		isCritical := false
 		for _, packet := range batch.packets {
 			if isCriticalPendingPacket(packet) {
@@ -784,7 +892,12 @@ func oldestDroppablePendingBatch(batches []pendingPeerPacketBatch) int {
 			return index
 		}
 	}
-	return 0
+	for index, batch := range batches {
+		if batch.wreathRemoval == nil && batch.omniRemoval == nil && batch.channelRemoval == nil && batch.channelCreation == nil && batch.actionTerminal == nil && batch.questFrame == nil && batch.mutationElite == nil && batch.mutationEvent == nil {
+			return index
+		}
+	}
+	return -1
 }
 
 func isCriticalPendingPacket(packet []byte) bool {
@@ -829,6 +942,10 @@ func (s *gameplayPeerSession) pendingPackets() ([][]byte, uint64) {
 	if s == nil || len(s.pendingPacketBatches) == 0 {
 		return nil, 0
 	}
+	now := time.Now()
+	// No transport acknowledgement is required when every byte in an
+	// untagged batch has expired. Never discard an attachment delivery owner.
+	s.pendingPacketBatches = pruneExpiredCinematicBatches(s.pendingPacketBatches, now)
 	packetCount := 0
 	for _, batch := range s.pendingPacketBatches {
 		packetCount += len(batch.packets)
@@ -839,10 +956,13 @@ func (s *gameplayPeerSession) pendingPackets() ([][]byte, uint64) {
 		// A connected peer may still be loading its scene. Keep world packets
 		// queued until its dungeon setup and reconnect baseline commit, retaining
 		// their original ordering so removals cannot precede baseline creates.
+		if batch.channelCreation != nil && batch.channelCreation.isCreationBlocked(*s) {
+			break
+		}
 		if batch.isCampaignPresentation && (!s.dungeonSetup.IsCommitted() || s.isRejoinPending) {
 			break
 		}
-		packets = append(packets, batch.packets...)
+		packets = append(packets, batch.packetsAt(now)...)
 		batchID = batch.id
 	}
 	return packets, batchID
@@ -855,6 +975,15 @@ func (s *gameplayPeerSession) commitPendingPackets(batchID uint64) {
 	firstRetained := 0
 	for firstRetained < len(s.pendingPacketBatches) &&
 		s.pendingPacketBatches[firstRetained].id <= batchID {
+		if s.pendingPacketBatches[firstRetained].wreathRemoval != nil {
+			s.pendingPacketBatches[firstRetained].wreathRemoval.isCommitted = true
+		}
+		if s.pendingPacketBatches[firstRetained].omniRemoval != nil {
+			s.pendingPacketBatches[firstRetained].omniRemoval.isCommitted = true
+		}
+		if s.pendingPacketBatches[firstRetained].channelRemoval != nil {
+			s.pendingPacketBatches[firstRetained].channelRemoval.isCommitted = true
+		}
 		firstRetained++
 	}
 	s.pendingPacketBatches = s.pendingPacketBatches[firstRetained:]
@@ -925,8 +1054,10 @@ func (e campaignEnrageState) EnrageTarget(
 	if !isFound || objectID == 0 {
 		return abilityraknet.EnrageTarget{}, false
 	}
+	creature := e.session.binding.Creatures[creatureIndex]
+	creature.HealingTargetProfile = e.session.healingTargetProfile(creatureIndex)
 	return abilityraknet.EnrageTarget{
-		Creature:  e.session.binding.Creatures[creatureIndex],
+		Creature:  creature,
 		Character: character,
 		ObjectID:  objectID,
 	}, true
@@ -1070,7 +1201,7 @@ func (s *gameplayPeerSession) campaignNPCTarget(
 
 func (s *gameplayPeerSession) isHeroDebuffImmune(targetObjectID uint32) bool {
 	return s != nil && targetObjectID == s.deployedObjectID &&
-		(s.isHeroArrivalProtected(time.Now()) || s.heroModifierRun.IsDebuffImmune())
+		(s.isHeroArrivalProtected(time.Now()) || s.heroModifierRun.IsDebuffImmune() || s.hasOmniShieldAt(targetObjectID, time.Now()) || s.isArenaBanished(time.Now()))
 }
 
 func (s *gameplayPeerSession) trackCampaignNPCProjectile(
@@ -1107,12 +1238,12 @@ func (s *gameplayPeerSession) stopCampaignNPCProjectiles() {
 		delete(s.campaignNPCProjectiles, objectID)
 	}
 	for objectID, run := range s.campaignNPCDrainRuns {
-		run.End()
+		run.Stop()
 		run.ReleaseEffects()
 		delete(s.campaignNPCDrainRuns, objectID)
 	}
 	for objectID, run := range s.campaignNPCPullEffects {
-		_, _, isReleased := run.release()
+		_, isReleased := run.release()
 		if !isReleased {
 			// The scheduled cleanup already released this presentation lease.
 		}
@@ -1162,19 +1293,28 @@ func (s *gameplayPeerSession) stopCampaignNPCProjectiles() {
 	clear(s.campaignNPCVoltroidChargeExpires)
 	clear(s.campaignNPCVoltroidChargeReadiness)
 	clear(s.campaignNPCVoltroidEffectSlots)
+	clear(s.campaignNPCVoltroidBeams)
+	for objectID, effects := range s.campaignAcceptedHitPushEffects {
+		effects.Retire()
+		delete(s.campaignAcceptedHitPushEffects, objectID)
+	}
 	clear(s.campaignNPCCitadelSpecialFourStates)
 	clear(s.campaignNPCOrcusStates)
 	clear(s.campaignNPCLaserZones)
+	clear(s.acMalfunctions)
+	clear(s.acMalfunctionWarnings)
+	clear(s.acMalfunctionDischarges)
 	clear(s.fireVents)
 	clear(s.fireVentWarnings)
 	clear(s.fireVentEruptions)
 	clear(s.warpTotems)
 	clear(s.warpTotemWarnings)
 	clear(s.warpTotemDischarges)
-	s.warpTotemTeleport = warpTotemTeleport{}
+	s.randomTeleport = randomTeleport{}
 	clear(s.campaignTwinLaserEndpointIDs)
 	clear(s.campaignArcturusStates)
 	s.pickupPursuit = nil
+	s.interactablePursuit = nil
 	clear(s.campaignNPCRuptionNextMagmas)
 	clear(s.campaignNPCShielderNextGrenades)
 	clear(s.campaignNPCNextSleepMushrooms)
@@ -1182,6 +1322,14 @@ func (s *gameplayPeerSession) stopCampaignNPCProjectiles() {
 	clear(s.campaignNashiraSplitObjectIDs)
 	clear(s.campaignNashiraSplitPendingObjectIDs)
 	clear(s.campaignNashiraPanicReadiness)
+	clear(s.campaignNashiraCurseReadiness)
+	clear(s.campaignNPCSupportReadiness)
+	clear(s.campaignMerakStormReadiness)
+	s.stopCampaignMerakStorms(0)
+	clear(s.agentBlinkReadiness)
+	clear(s.agentSupports)
+	clear(s.droneFollows)
+	s.clearNPCSupportIdles(0)
 	clear(s.campaignMerakPassiveStates)
 	for objectID, run := range s.campaignNPCShielderShields {
 		run.stop()
@@ -1573,6 +1721,8 @@ func (s *gameplayPeerSession) clearEnemyHeroStatuses() {
 	if s == nil {
 		return
 	}
+	s.clearScenarioHeroAbilityRank()
+	s.retireArenaHitStatuses()
 	s.enemySilenceExpiresAt = time.Time{}
 	s.enemySleepExpiresAt = time.Time{}
 	s.enemyStunExpiresAt = time.Time{}
@@ -1590,14 +1740,39 @@ func (s *gameplayPeerSession) resetRetainedTransportState() {
 	if s == nil {
 		return
 	}
+	s.clearScenarioHeroAbilityRank()
+	s.retireArenaHitStatuses()
 	s.operativeCage = nil
+	s.operativeChannels = nil
+	passiveErr := s.retireAgentPassiveEffectsLocked(0)
+	if passiveErr != nil {
+		log.Printf("NPC passive reconnect cleanup failed: %v", passiveErr)
+	}
+	s.agentSupports = nil
+	s.droneFollows = nil
+	s.clearNPCSupportIdles(0)
+	blinkErr := s.retireSpacetimeBlinkLocked(0, 0)
+	if blinkErr != nil {
+		log.Printf("NPC blink reconnect cleanup failed: %v", blinkErr)
+	}
+	moveErr := s.retireAdditionalKitMovesLocked(0, 0)
+	if moveErr != nil {
+		log.Printf("NPC additional movement reconnect cleanup failed: %v", moveErr)
+	}
 	s.resetTeleporterSample()
 	s.resetPickupContacts()
 	s.resetAbilityRelease()
 	s.playerAI = playerAIState{}
 	// The rejoin baseline supersedes packets encoded for the retired transport.
-	// Durable stat deltas remain queued for the replacement peer.
-	s.pendingPacketBatches = nil
+	// Held attachment creates and deletions remain queued for the replacement
+	// peer; their slots cannot be reused before deletion delivery.
+	retainedBatches := s.pendingPacketBatches[:0]
+	for _, batch := range s.pendingPacketBatches {
+		if batch.wreathRemoval != nil || batch.omniRemoval != nil || batch.channelRemoval != nil || batch.channelCreation != nil {
+			retainedBatches = append(retainedBatches, batch)
+		}
+	}
+	s.pendingPacketBatches = retainedBatches
 	s.isPendingPacketOverflow = false
 	s.enemySilenceExpiresAt = time.Time{}
 	s.enemySleepExpiresAt = time.Time{}
@@ -1608,9 +1783,7 @@ func (s *gameplayPeerSession) resetRetainedTransportState() {
 	s.enemyFearExpiresAt = time.Time{}
 	s.enemyFearTargetObjectID = 0
 	s.isHeroSelectionScheduled = false
-	for index := range s.tcShieldAmount {
-		s.resetTCShield(uint32(index))
-	}
+	s.resetTCShieldTransport()
 	s.lightspeedPassiveEpoch = 0
 	s.lightspeedEffectObjectID = 0
 	s.lightspeedEffectSlot = 0
@@ -1619,6 +1792,9 @@ func (s *gameplayPeerSession) resetRetainedTransportState() {
 
 func (s *gameplayPeerSession) syncZoneHero() error {
 	if s == nil || s.zone == nil || s.deployedObjectID == 0 {
+		return nil
+	}
+	if s.isScenarioHeroRetired() {
 		return nil
 	}
 	character, err := s.normalizeCampaignCharacterResources(
@@ -1689,6 +1865,9 @@ func (s *gameplayPeerSession) syncZoneHeroPose() error {
 	if s == nil || s.zone == nil || s.deployedObjectID == 0 {
 		return nil
 	}
+	if s.isScenarioHeroRetired() {
+		return nil
+	}
 	velocity := sim.Position{}
 	if s.playerMotion != nil {
 		velocity = s.playerMotion.Velocity()
@@ -1715,6 +1894,10 @@ func (s *gameplayPeerSession) interruptBasicForMovement() *abilityraknet.MeleeRu
 	if s == nil {
 		return nil
 	}
+	err := s.cancelPendingBasic()
+	if err != nil {
+		log.Printf("RakNet pending basic movement cleanup failed user=%d: %v", s.binding.UserID, err)
+	}
 	run := s.basicAttack
 	s.basicAttack = nil
 	s.basicAttackSyncStamp = 0
@@ -1726,6 +1909,10 @@ func (s *gameplayPeerSession) interruptBasicForMovement() *abilityraknet.MeleeRu
 func (s *gameplayPeerSession) resetSharedActionAdmission() *abilityraknet.MeleeRun {
 	if s == nil {
 		return nil
+	}
+	err := s.cancelPendingBasic()
+	if err != nil {
+		log.Printf("RakNet pending basic admission cleanup failed user=%d: %v", s.binding.UserID, err)
 	}
 	run := s.basicAttack
 	s.basicAttack = nil
@@ -1753,8 +1940,10 @@ func (s *gameplayPeerSession) resetInterruptibleActionAdmission() *abilityraknet
 		s.heroChannelArea = nil
 	}
 	if s.heroQuantumBlink != nil {
-		s.heroQuantumBlink.Stop()
-		s.heroQuantumBlink = nil
+		cleanupErr := s.retireQuantumBlinkLocked(time.Now())
+		if cleanupErr != nil {
+			log.Printf("RakNet Quantum Blink interruption cleanup failed user=%d: %v", s.binding.UserID, cleanupErr)
+		}
 	}
 	if s.heroCharge != nil {
 		cleanupPackets := s.interruptChargeLocked(s.heroCharge)
@@ -1765,6 +1954,7 @@ func (s *gameplayPeerSession) resetInterruptibleActionAdmission() *abilityraknet
 }
 
 func (s *gameplayPeerSession) resetAbilityAdmissionForSwitch() *abilityraknet.MeleeRun {
+	s.cancelPendingOmniShieldsLocked()
 	if s == nil {
 		return nil
 	}
@@ -1785,13 +1975,9 @@ func (s *gameplayPeerSession) resetAbilityAdmissionForSwitch() *abilityraknet.Me
 		s.heroTimedArea.ReleaseEffect()
 		s.heroTimedArea = nil
 	}
-	if s.heroInfection != nil {
-		s.heroInfection.Stop()
-		s.heroInfection = nil
-	}
+	s.stopHeroInfections()
 	if s.heroHealingTicks != nil {
-		s.heroHealingTicks.Stop()
-		s.heroHealingTicks = nil
+		s.stopHealingTicksPresentation()
 	}
 	s.roarReductionObjectID = 0
 	s.roarReductionExpiresAt = time.Time{}
@@ -1807,11 +1993,71 @@ func (s *gameplayPeerSession) resetAbilityAdmissionForSwitch() *abilityraknet.Me
 	return run
 }
 
+// A rejected command does not deactivate previously accepted effect agents.
+// Keep their owned schedules alive; otherwise mines lose their detonation,
+// banishes lose their deletion, and infections lose their authored lifetime.
+// Producer failures still use the full failure cleanup; unanswered-command
+// expiry preserves accepted agents just like an explicit command rejection.
+func (e *gameplayPeerSession) resetRejectedActionAdmission(
+	modifierInstancePool *modifierPool, effectPool *attachedEffectPool,
+) *abilityraknet.MeleeRun {
+	traps := e.heroTraps
+	statusAreas := e.heroStatusAreas
+	infections := e.heroInfections
+	bursts := e.heroBurstAttacks
+	beastObjectID := e.beastPetObjectID
+	summons := e.heroSummons
+	timedArea := e.heroTimedArea
+	ghostForm := e.ghostFormRun
+	retainedSlots := make([]uint8, 0, 2)
+	if ghostForm != nil {
+		retainedSlots = append(retainedSlots, ghostForm.EffectSlot())
+	}
+	if timedArea != nil && timedArea.isEffectBound {
+		retainedSlots = append(retainedSlots, timedArea.effectSlot)
+	}
+	var arborealMight *heroModifierRun
+	if e.heroModifierRun != nil && e.heroModifierRun.isArborealMight {
+		arborealMight = e.heroModifierRun
+		if arborealMight.isEffectAttached {
+			retainedSlots = append(retainedSlots, arborealMight.effectSlot)
+		}
+		e.heroModifierRun = nil
+	}
+	e.heroTraps = nil
+	e.heroStatusAreas = nil
+	e.heroInfections = nil
+	e.heroBurstAttacks = nil
+	// Rejection is not an owner switch, death, or summon expiry. Preserve the
+	// accepted pets and their follow, healing, resurrection, and expiry jobs.
+	e.beastPetObjectID = 0
+	e.heroSummons = nil
+	e.heroTimedArea = nil
+	e.ghostFormRun = nil
+	run := e.resetFailedActionAdmission(modifierInstancePool, effectPool, retainedSlots...)
+	e.heroTraps = traps
+	e.heroStatusAreas = statusAreas
+	e.heroInfections = infections
+	e.heroBurstAttacks = bursts
+	e.beastPetObjectID = beastObjectID
+	e.heroSummons = summons
+	e.heroTimedArea = timedArea
+	e.ghostFormRun = ghostForm
+	if arborealMight != nil {
+		e.heroModifierRun = arborealMight
+	}
+	return run
+}
+
 func (e *gameplayPeerSession) resetFailedActionAdmission(
 	modifierInstancePool *modifierPool, effectPool *attachedEffectPool,
+	retainedSlots ...uint8,
 ) *abilityraknet.MeleeRun {
 	if e == nil {
 		return nil
+	}
+	if e.binding.Mode == game.ModeArena && e.arenaEffectPool != nil {
+		effectPool = e.arenaEffectPool
 	}
 	run := e.resetAbilityAdmissionForSwitch()
 	for _, trap := range e.heroTraps {
@@ -1838,8 +2084,9 @@ func (e *gameplayPeerSession) resetFailedActionAdmission(
 		}
 	}
 	e.cloudLobAttacks = nil
-	e.cloudPoison = zoneability.CloudPoisonRuntime{}
-	if e.sphereAttack != nil {
+	// Strangling Briars' accepted damageTicks thread belongs to its effect
+	// object; rejecting another command is not its native deactivation event.
+	if e.sphereAttack != nil && !e.sphereAttack.IsAcceptedAbility(supportHealerName) {
 		e.sphereAttack.Stop()
 		e.sphereAttack = nil
 	}
@@ -1858,13 +2105,20 @@ func (e *gameplayPeerSession) resetFailedActionAdmission(
 	// Removing authority must also retire the client object; otherwise the next
 	// Meditron deployment creates a second drone beside the orphaned one.
 	e.queueCampaignPackets(dronePackets)
-	_, _ = e.stopBeastPet()
-	_, _ = e.stopHeroSummons()
-	treePackets, treeErr := e.stopCampaignTreeOfLife()
-	if treeErr != nil {
-		log.Printf("RakNet Tree of Life action reset cleanup failed user=%d: %v", e.binding.UserID, treeErr)
+	beastPackets, beastErr := e.stopBeastPet()
+	if beastErr != nil {
+		log.Printf("RakNet Savage Ally action reset cleanup failed user=%d: %v", e.binding.UserID, beastErr)
 	}
-	e.queueCampaignPackets(treePackets)
+	e.queueCampaignPackets(beastPackets)
+	summonPackets, summonErr := e.stopHeroSummons()
+	if summonErr != nil {
+		log.Printf("RakNet Healing Sprite action reset cleanup failed user=%d: %v", e.binding.UserID, summonErr)
+	}
+	// Full recovery cancels the accepted expiry job. Retire its client object
+	// in the same transition instead of leaving an inert, immortal presentation.
+	e.queueCampaignPackets(summonPackets)
+	// Tree of Life owns its independent healing and expiry jobs. Its own failure
+	// callback and world teardown retire it; an unrelated action reset does not.
 	_, _ = e.stopTrapperStealth()
 	if e.enrageRun != nil {
 		e.enrageRun.Cancel()
@@ -1882,14 +2136,7 @@ func (e *gameplayPeerSession) resetFailedActionAdmission(
 		}
 		e.enrageRun = nil
 	}
-	if e.ghostFormRun != nil {
-		e.ghostFormRun.Cancel()
-		e.ghostFormRun.ReleaseEffect()
-		if modifierInstancePool != nil {
-			_ = modifierInstancePool.Release(e.ghostFormRun.InstanceID())
-		}
-		e.ghostFormRun = nil
-	}
+	e.retireGhostForm(modifierInstancePool)
 	if e.heroModifierRun != nil {
 		e.heroModifierRun.Cancel()
 		if e.heroModifierRun.isShadowStealth {
@@ -1904,6 +2151,12 @@ func (e *gameplayPeerSession) resetFailedActionAdmission(
 			}
 		}
 		e.heroModifierRun.Remove(e)
+		// Recovery retires the expiry callback, so publish its client cleanup now.
+		modifierPackets, modifierErr := e.heroModifierRun.stopPresentation(effectPool)
+		if modifierErr != nil {
+			log.Printf("RakNet hero modifier action reset cleanup failed user=%d: %v", e.binding.UserID, modifierErr)
+		}
+		e.queueCampaignPackets(modifierPackets)
 		if modifierInstancePool != nil {
 			_ = modifierInstancePool.Release(e.heroModifierRun.instanceID)
 		}
@@ -1911,12 +2164,17 @@ func (e *gameplayPeerSession) resetFailedActionAdmission(
 	}
 	_, _ = stopMissileFlak(e, modifierInstancePool)
 	_, _ = stopPoisonNovaCooldown(e, modifierInstancePool)
-	if e.plasmaWreathRun != nil {
-		_, _ = e.plasmaWreathRun.Stop()
-		e.plasmaWreathRun = nil
-	}
+	e.rollbackPendingPlasmaWreath()
 	if effectPool != nil {
-		effectPool.ReleaseObject(e.deployedObjectID)
+		if e.plasmaWreathRun != nil {
+			retainedSlots = append(retainedSlots, e.plasmaWreathRun.AttachmentSlots()...)
+		}
+		// Hardened Mantle retains its expiry job through action recovery. Its
+		// slot cannot be reused until that job publishes the passive's removal.
+		if e.hardenedMantleRun != nil {
+			retainedSlots = append(retainedSlots, e.hardenedMantleRun.attachmentSlots()...)
+		}
+		effectPool.ReleaseObjectExcept(e.deployedObjectID, retainedSlots)
 	}
 	return run
 }
@@ -1937,34 +2195,58 @@ type campaignAbilityPursuitAdmission struct {
 type gameplaySessionRegistry struct {
 	// Keep every atomically accessed 64-bit field first so it remains aligned
 	// in the Windows 386 build.
-	nextGeneration          uint64
-	nextActionGeneration    uint64
-	memberMutexes           [64]sync.Mutex
-	mutex                   sync.RWMutex
-	isClosed                bool
-	activeRequest           int
-	requestIdle             chan struct{}
-	sessions                map[string]gameplayPeerSession
-	chronoFreezes           map[chronoFreezeKey]*chronoFreezeStep
-	timeBubbles             map[*heroAuraAreaRun]struct{}
-	auraRuns                map[*heroAuraAreaRun]struct{}
-	projectileRetirements   map[*abilityraknet.ProjectileRun]*campaignProjectileRetirement
-	projectileFreezes       map[*abilityraknet.ProjectileRun]map[uint32]*hostileProjectileFreezeStep
-	chargeRuns              map[*heroChargeRun]struct{}
-	nextChannelCastRevision uint64
-	retainedSessions        map[gameplayMemberKey]*gameplayRetainedSession
-	memberTransports        map[gameplayMemberKey]uint64
-	memberEndpoints         map[gameplayMemberKey]string
-	actionLeases            map[gameplayActionLeaseKey]gameplayActionLease
-	actionAdmissions        map[gameplayActionLeaseKey]struct{}
-	actionTerminals         map[gameplayActionLeaseKey]struct{}
-	diagnosticDecisions     []gameplayDiagnosticDecision
-	arenaMatches            map[uint32]*arenaMatchState
-	producerGuard           gameplayProducerGuard
-	lifecycle               gameplaySessionLifecycle
-	timer                   zone.Timer
-	now                     func() time.Time
-	logger                  *log.Logger
+	nextGeneration       uint64
+	nextActionGeneration uint64
+	playerStatRecorder   *playerstat.Recorder
+	scenarioAbilityCatalog
+	scenarioSpawnState
+	scenarioNPCControlQueue
+	mutationDamageWorks      map[mutationDamageKey]*mutationDamageRun
+	plasmaWreathPublications []plasmaWreathPublication
+	omniShieldRemovals       []*omniShieldRemoval
+	channelEffects           []*channelEffects
+	channelRemovals          []*channelRemoval
+	fixturePublications      map[*campaignFixturePublication]struct{}
+	spoffits                 map[*spoffitRun]struct{}
+	fixtureDiscards          map[*fixtureDiscard]struct{}
+	companionDeaths          map[companionDeathKey]*companionDeathRun
+	drainerDeaths            map[companionDeathKey]*drainerDeathRun
+	memberMutexes            [64]sync.Mutex
+	mutex                    sync.RWMutex
+	isClosed                 bool
+	activeRequest            int
+	requestIdle              chan struct{}
+	sessions                 map[string]gameplayPeerSession
+	voodooCharms             voodooCharmWorld
+	beastPetVulnerabilities  map[*zonenpc.Session]map[uint32]*beastPetVulnerabilityRun
+	basicHitModifiers        map[*zonenpc.Session]map[basicHitModifierKey]*basicHitModifierRun
+	cloudPoisons             map[*zonenpc.Session]*campaignCloudPoisonWorld
+	hordeFollowups           map[campaignHordeFollowupKey]*campaignHordeFollowup
+	supportHealerRoots       map[*zonenpc.Session]map[uint32]*supportHealerRootRun
+	chronoFreezes            map[chronoFreezeKey]*chronoFreezeStep
+	timeBubbles              map[*heroAuraAreaRun]struct{}
+	auraRuns                 map[*heroAuraAreaRun]struct{}
+	projectileRetirements    map[*abilityraknet.ProjectileRun]*campaignProjectileRetirement
+	projectileFreezes        map[*abilityraknet.ProjectileRun]map[uint32]*hostileProjectileFreezeStep
+	chargeRuns               map[*heroChargeRun]struct{}
+	nextChannelCastRevision  uint64
+	retainedSessions         map[gameplayMemberKey]*gameplayRetainedSession
+	memberTransports         map[gameplayMemberKey]uint64
+	memberEndpoints          map[gameplayMemberKey]string
+	actionLeases             map[gameplayActionLeaseKey]gameplayActionLease
+	actionAdmissions         map[gameplayActionLeaseKey]struct{}
+	actionTerminals          map[gameplayActionLeaseKey]struct{}
+	diagnosticDecisions      []gameplayDiagnosticDecision
+	dnaCollections           []*campaignDNACollection
+	isDNACollectionRunning   bool
+	arenaMatches             map[uint32]*arenaMatchState
+	companionAggroRanges     map[uint32]float32
+	arenaEffectPools         map[uint32]*attachedEffectPool
+	producerGuard            gameplayProducerGuard
+	lifecycle                gameplaySessionLifecycle
+	timer                    zone.Timer
+	now                      func() time.Time
+	logger                   *log.Logger
 }
 
 type gameplayDiagnosticDecision struct {
@@ -2017,6 +2299,7 @@ func newGameplaySessionRegistry(
 		actionAdmissions: make(map[gameplayActionLeaseKey]struct{}),
 		actionTerminals:  make(map[gameplayActionLeaseKey]struct{}),
 		arenaMatches:     make(map[uint32]*arenaMatchState),
+		arenaEffectPools: make(map[uint32]*attachedEffectPool),
 		timer:            timer, now: now, logger: logger,
 	}
 	registry.producerGuard.registry = registry
@@ -2065,6 +2348,10 @@ func (e *gameplaySessionRegistry) beginRequest() bool {
 	}
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
+	return e.beginRequestLocked()
+}
+
+func (e *gameplaySessionRegistry) beginRequestLocked() bool {
 	if e.isClosed {
 		return false
 	}
@@ -2140,6 +2427,12 @@ func (e *gameplaySessionRegistry) takeRetained(
 		return gameplayPeerSession{}, false
 	}
 	delete(e.retainedSessions, key)
+	if retained.peerSession.zone != nil {
+		if e.voodooCharms.handovers == nil {
+			e.voodooCharms.handovers = make(map[gameplayMemberKey]*voodooCharmHandover)
+		}
+		e.voodooCharms.handovers[key] = &voodooCharmHandover{member: retained.peerSession}
+	}
 	if retained.cancel != nil {
 		retained.cancel()
 	}
@@ -2202,6 +2495,27 @@ func (e *gameplaySessionRegistry) clearActionLeasesForSync(
 	return cleared
 }
 
+func (e *gameplaySessionRegistry) clearActionLeaseForTrace(terminal pendingActionTerminal) {
+	e.mutex.Lock()
+	var cancel raknet.CancelSchedule
+	for key, lease := range e.actionLeases {
+		if key.sessionKey != terminal.sessionKey ||
+			key.transportGeneration != terminal.transportGeneration ||
+			key.traceID != terminal.traceID || key.syncStamp != terminal.syncStamp ||
+			lease.command.Common.ObjectID != terminal.objectID {
+			continue
+		}
+		delete(e.actionLeases, key)
+		delete(e.actionTerminals, key)
+		cancel = lease.cancel
+		break
+	}
+	e.mutex.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
 func (e *gameplaySessionRegistry) clearPursuitActionLeases(
 	sessionKey string, transportGeneration uint64, objectID uint32,
 ) int {
@@ -2241,6 +2555,8 @@ func (e gameplaySessionLifecycle) discardGame(
 		return
 	}
 	e.registry.mutex.Lock()
+	e.registry.retireCompanionDeathsLocked(gameID)
+	e.registry.retireDrainerDeathsLocked(gameID)
 	peerSessions := make([]gameplayPeerSession, 0)
 	retainedSessions := make([]gameplayPeerSession, 0)
 	cancellations := make([]func(), 0)
@@ -2254,6 +2570,13 @@ func (e gameplaySessionLifecycle) discardGame(
 		e.registry.retirePeerProjectileFreezesLocked(&peerSession)
 		e.registry.retireFieldMedicBuffsLocked(&peerSession, modifierInstancePool)
 		e.registry.retireCampaignTreeOfLifeLocked(&peerSession)
+		e.registry.retireHeroInfectionsLocked(&peerSession)
+		e.registry.retirePlasmaWreathLocked(&peerSession)
+		e.registry.retireOmniShieldsLocked(&peerSession, 0)
+		cageErr := e.registry.retireOperativeChannelsLocked(&peerSession, modifierInstancePool)
+		if cageErr != nil && e.registry.logger != nil {
+			e.registry.logger.Printf("RakNet operative channel retirement failed user=%d: %v", peerSession.binding.UserID, cageErr)
+		}
 		peerSessions = append(peerSessions, peerSession)
 		delete(e.registry.sessions, sessionKey)
 		for key, lease := range e.registry.actionLeases {
@@ -2285,6 +2608,7 @@ func (e gameplaySessionLifecycle) discardGame(
 		if key.gameID != gameID {
 			continue
 		}
+		e.registry.retireOmniShieldsLocked(&retained.peerSession, 0)
 		if retained.cancel != nil {
 			cancellations = append(cancellations, retained.cancel)
 		}
@@ -2298,6 +2622,9 @@ func (e gameplaySessionLifecycle) discardGame(
 			delete(e.registry.memberTransports, key)
 			delete(e.registry.memberEndpoints, key)
 		}
+	}
+	if cancel := e.registry.retireArenaResultLocked(gameID); cancel != nil {
+		cancellations = append(cancellations, cancel)
 	}
 	e.registry.mutex.Unlock()
 	for _, cancel := range cancellations {
@@ -2322,12 +2649,37 @@ func (e gameplaySessionLifecycle) discardMember(
 	}
 	memberKey := gameplayMemberKey{gameID: gameID, userID: userID}
 	e.registry.mutex.Lock()
-	peerSessions := make([]gameplayPeerSession, 0, 1)
-	retainedSessions := make([]gameplayPeerSession, 0, 1)
-	cancellations := make([]func(), 0)
+	fixtureBatches := make([]fixtureHandoffBatch, 0)
 	for sessionKey, peerSession := range e.registry.sessions {
 		if gameplaySessionMemberKey(peerSession) != memberKey {
 			continue
+		}
+		fixtureBatch, isDeferred := e.registry.prepareFixtureHandoffLocked(&peerSession)
+		if isDeferred {
+			e.registry.mutex.Unlock()
+			for _, preparedBatch := range fixtureBatches {
+				preparedBatch.complete()
+			}
+			retry := fixtureDiscardMemberRetry{
+				lifecycle: e, gameID: gameID, userID: userID,
+				modifierPool: modifierInstancePool, effectPool: effectPool,
+			}
+			retry.schedule()
+			return
+		}
+		e.registry.sessions[sessionKey] = peerSession
+		fixtureBatches = append(fixtureBatches, fixtureBatch)
+	}
+	peerSessions := make([]gameplayPeerSession, 0, 1)
+	retainedSessions := make([]gameplayPeerSession, 0, 1)
+	cancellations := make([]func(), 0)
+	var departedArenaMember gameplayPeerSession
+	for sessionKey, peerSession := range e.registry.sessions {
+		if gameplaySessionMemberKey(peerSession) != memberKey {
+			continue
+		}
+		if peerSession.binding.Mode == game.ModeArena && !peerSession.binding.IsServerBot {
+			departedArenaMember = peerSession
 		}
 		peerSession.retireChannelsLocked()
 		peerSession.retireAuraAreasLocked()
@@ -2335,6 +2687,13 @@ func (e gameplaySessionLifecycle) discardMember(
 		e.registry.retirePeerProjectileFreezesLocked(&peerSession)
 		e.registry.retireFieldMedicBuffsLocked(&peerSession, modifierInstancePool)
 		e.registry.retireCampaignTreeOfLifeLocked(&peerSession)
+		e.registry.retireHeroInfectionsLocked(&peerSession)
+		e.registry.retirePlasmaWreathLocked(&peerSession)
+		e.registry.retireOmniShieldsLocked(&peerSession, 0)
+		cageErr := e.registry.retireOperativeChannelsLocked(&peerSession, modifierInstancePool)
+		if cageErr != nil && e.registry.logger != nil {
+			e.registry.logger.Printf("RakNet operative channel retirement failed user=%d: %v", peerSession.binding.UserID, cageErr)
+		}
 		peerSessions = append(peerSessions, peerSession)
 		delete(e.registry.sessions, sessionKey)
 		for key, lease := range e.registry.actionLeases {
@@ -2364,6 +2723,7 @@ func (e gameplaySessionLifecycle) discardMember(
 	}
 	retained := e.registry.retainedSessions[memberKey]
 	if retained != nil {
+		e.registry.retireOmniShieldsLocked(&retained.peerSession, 0)
 		if retained.cancel != nil {
 			cancellations = append(cancellations, retained.cancel)
 		}
@@ -2372,7 +2732,17 @@ func (e gameplaySessionLifecycle) discardMember(
 	}
 	delete(e.registry.memberTransports, memberKey)
 	delete(e.registry.memberEndpoints, memberKey)
+	isArenaForfeit := e.registry.forfeitEmptyArenaLocked(departedArenaMember)
+	if cancel := e.registry.retireArenaResultLocked(gameID); cancel != nil {
+		cancellations = append(cancellations, cancel)
+	}
 	e.registry.mutex.Unlock()
+	if isArenaForfeit {
+		e.saveArenaForfeit(gameID)
+	}
+	for _, fixtureBatch := range fixtureBatches {
+		fixtureBatch.complete()
+	}
 	for _, cancel := range cancellations {
 		cancel()
 	}
@@ -2399,9 +2769,20 @@ func (e gameplaySessionLifecycle) cleanup(
 ) {
 	e.registry.mutex.Lock()
 	e.registry.isClosed = true
+	e.registry.stopHordeFollowupsLocked()
+	fixtureTicket := e.registry.beginFixtureBlastDiscardLocked(0)
+	if e.registry.voodooCharms.cancel != nil {
+		e.registry.voodooCharms.cancel()
+		e.registry.voodooCharms.cancel = nil
+	}
+	clear(e.registry.voodooCharms.providers)
+	clear(e.registry.voodooCharms.owners)
+	clear(e.registry.voodooCharms.deaths)
+	clear(e.registry.voodooCharms.handovers)
 	requestIdle := e.registry.requestIdle
 	activeRequest := e.registry.activeRequest
 	e.registry.mutex.Unlock()
+	fixtureTicket.wait()
 	if activeRequest > 0 && requestIdle != nil {
 		timer := time.NewTimer(gameplayCleanupWait)
 		select {
@@ -2421,6 +2802,7 @@ func (e gameplaySessionLifecycle) cleanup(
 			}
 		}
 	}
+	e.registry.flushArenaStats()
 	e.registry.mutex.Lock()
 	peerSessions := make([]gameplayPeerSession, 0, len(e.registry.sessions))
 	retainedSessions := make([]gameplayPeerSession, 0, len(e.registry.retainedSessions))
@@ -2432,10 +2814,18 @@ func (e gameplaySessionLifecycle) cleanup(
 		e.registry.retirePeerProjectileFreezesLocked(&peerSession)
 		e.registry.retireFieldMedicBuffsLocked(&peerSession, modifierInstancePool)
 		e.registry.retireCampaignTreeOfLifeLocked(&peerSession)
+		e.registry.retireHeroInfectionsLocked(&peerSession)
+		e.registry.retirePlasmaWreathLocked(&peerSession)
+		e.registry.retireOmniShieldsLocked(&peerSession, 0)
+		cageErr := e.registry.retireOperativeChannelsLocked(&peerSession, modifierInstancePool)
+		if cageErr != nil && e.registry.logger != nil {
+			e.registry.logger.Printf("RakNet operative channel retirement failed user=%d: %v", peerSession.binding.UserID, cageErr)
+		}
 		peerSessions = append(peerSessions, peerSession)
 		delete(e.registry.sessions, sessionKey)
 	}
 	for key, retained := range e.registry.retainedSessions {
+		e.registry.retireOmniShieldsLocked(&retained.peerSession, 0)
 		if retained.cancel != nil {
 			retained.cancel()
 		}
@@ -2443,16 +2833,37 @@ func (e gameplaySessionLifecycle) cleanup(
 		delete(e.registry.retainedSessions, key)
 	}
 	for gameID, state := range e.registry.arenaMatches {
+		e.registry.retireArenaForcePulsesLocked(gameID)
+		e.registry.retireArenaClaymoresLocked(gameID)
+		e.registry.retireArenaSpritesLocked(gameID)
+		e.registry.retireArenaCombatPetsLocked(gameID)
+		e.registry.retireArenaChargesLocked(gameID)
+		e.registry.retireArenaGravityStormsLocked(gameID)
+		e.registry.retireArenaSproutsLocked(gameID)
+		e.registry.retireArenaInfectionsLocked(gameID)
+		e.registry.retireArenaRidesLocked(gameID)
+		e.registry.retireArenaQuantumBlinksLocked(gameID)
 		if state.cancel != nil {
 			arenaCancels = append(arenaCancels, state.cancel)
 		}
+		if state.clock != nil {
+			state.clock.stopLocked()
+			state.clock = nil
+		}
 		delete(e.registry.arenaMatches, gameID)
 	}
+	clear(e.registry.arenaEffectPools)
 	clear(e.registry.actionLeases)
 	clear(e.registry.actionAdmissions)
 	clear(e.registry.actionTerminals)
 	clear(e.registry.memberTransports)
 	clear(e.registry.memberEndpoints)
+	e.registry.commitPlasmaWreathPublicationsLocked()
+	e.registry.commitOmniShieldRemovalsLocked()
+	e.registry.commitChannelRemovalsLocked()
+	e.registry.retireCompanionDeathsLocked(0)
+	e.registry.retireDrainerDeathsLocked(0)
+	fixtureTicket.finishLocked()
 	e.registry.mutex.Unlock()
 
 	for _, cancel := range arenaCancels {
@@ -2482,7 +2893,7 @@ func (e gameplaySessionLifecycle) disconnect(
 	}
 	if transportGeneration != 0 && currentTransport != 0 &&
 		currentTransport != transportGeneration {
-		e.recoverStaleTransport(sessionKey, transportGeneration)
+		e.recoverStaleTransport(sessionKey, transportGeneration, modifierInstancePool)
 		return
 	}
 	memberMutex := e.registry.memberMutex(memberKey)
@@ -2507,11 +2918,28 @@ func (e gameplaySessionLifecycle) disconnect(
 	if !isCurrent {
 		return
 	}
-	e.disconnectMember(sessionKey, modifierInstancePool, effectPool)
+	isDisconnected := e.disconnectMember(sessionKey, modifierInstancePool, effectPool)
+	if !isDisconnected {
+		e.retryDisconnect(sessionKey, transportGeneration, modifierInstancePool, effectPool)
+		return
+	}
+	e.registry.mutex.Lock()
+	isArenaForfeit := e.registry.forfeitEmptyArenaLocked(currentSession)
+	e.registry.mutex.Unlock()
+	if isArenaForfeit {
+		e.saveArenaForfeit(currentSession.binding.GameID)
+	}
+}
+
+func (e gameplaySessionLifecycle) saveArenaForfeit(gameID uint32) {
+	err := e.registry.saveArenaStats(context.Background(), gameID)
+	if err != nil && e.registry.logger != nil {
+		e.registry.logger.Printf("Arena forfeit statistics will retry game=%d: %v", gameID, err)
+	}
 }
 
 func (e gameplaySessionLifecycle) recoverStaleTransport(
-	sessionKey string, transportGeneration uint64,
+	sessionKey string, transportGeneration uint64, modifierInstancePool *modifierPool,
 ) {
 	if e.registry == nil || sessionKey == "" || transportGeneration == 0 {
 		return
@@ -2522,14 +2950,31 @@ func (e gameplaySessionLifecycle) recoverStaleTransport(
 		e.registry.mutex.Unlock()
 		return
 	}
+	fixtureBatch, isDeferred := e.registry.prepareFixtureHandoffLocked(&peerSession)
+	if isDeferred {
+		e.registry.mutex.Unlock()
+		retry := fixtureStaleTransportRetry{
+			lifecycle: e, sessionKey: sessionKey,
+			transportGeneration: transportGeneration, modifierPool: modifierInstancePool,
+		}
+		retry.schedule()
+		return
+	}
 	key := gameplaySessionMemberKey(peerSession)
 	currentTransport := e.registry.memberTransports[key]
 	currentEndpoint := e.registry.memberEndpoints[key]
 	e.registry.clearActionLeasesLocked(sessionKey, transportGeneration)
 	e.registry.retireCampaignTreeOfLifeLocked(&peerSession)
+	e.registry.retireHeroInfectionsLocked(&peerSession)
+	e.registry.retirePlasmaWreathLocked(&peerSession)
+	cageErr := e.registry.retireOperativeChannelsLocked(&peerSession, modifierInstancePool)
+	if cageErr != nil && e.registry.logger != nil {
+		e.registry.logger.Printf("RakNet operative channel retirement failed user=%d: %v", peerSession.binding.UserID, cageErr)
+	}
 	if currentTransport == 0 || currentEndpoint != sessionKey {
 		delete(e.registry.sessions, sessionKey)
 		e.registry.mutex.Unlock()
+		fixtureBatch.complete()
 		return
 	}
 	peerSession.transportGeneration = currentTransport
@@ -2538,6 +2983,7 @@ func (e gameplaySessionLifecycle) recoverStaleTransport(
 	peerSession.resetRetainedTransportState()
 	e.registry.sessions[sessionKey] = peerSession
 	e.registry.mutex.Unlock()
+	fixtureBatch.complete()
 	if peerSession.zone == nil || !peerSession.stage.IsDungeon() {
 		return
 	}
@@ -2583,12 +3029,18 @@ func (e gameplaySessionLifecycle) retryDisconnect(
 func (e gameplaySessionLifecycle) disconnectMember(
 	sessionKey string, modifierInstancePool *modifierPool,
 	effectPool *attachedEffectPool,
-) {
+) bool {
 	e.registry.mutex.Lock()
 	peerSession, isFound := e.registry.sessions[sessionKey]
 	if !isFound {
 		e.registry.mutex.Unlock()
-		return
+		return true
+	}
+	defer e.disconnectServerBots(peerSession, modifierInstancePool, effectPool)
+	fixtureBatch, isDeferred := e.registry.prepareFixtureHandoffLocked(&peerSession)
+	if isDeferred {
+		e.registry.mutex.Unlock()
+		return false
 	}
 	peerSession.retireChannelsLocked()
 	peerSession.retireAuraAreasLocked()
@@ -2596,6 +3048,12 @@ func (e gameplaySessionLifecycle) disconnectMember(
 	e.registry.retirePeerProjectileFreezesLocked(&peerSession)
 	e.registry.retireFieldMedicBuffsLocked(&peerSession, modifierInstancePool)
 	e.registry.retireCampaignTreeOfLifeLocked(&peerSession)
+	e.registry.retireHeroInfectionsLocked(&peerSession)
+	e.registry.retirePlasmaWreathLocked(&peerSession)
+	cageErr := e.registry.retireOperativeChannelsLocked(&peerSession, modifierInstancePool)
+	if cageErr != nil && e.registry.logger != nil {
+		e.registry.logger.Printf("RakNet operative channel retirement failed user=%d: %v", peerSession.binding.UserID, cageErr)
+	}
 	delete(e.registry.sessions, sessionKey)
 	e.registry.clearActionLeasesLocked(sessionKey, 0)
 	key := gameplaySessionMemberKey(peerSession)
@@ -2604,12 +3062,31 @@ func (e gameplaySessionLifecycle) disconnectMember(
 		delete(e.registry.memberEndpoints, key)
 	}
 	isRetainable := peerSession.zone != nil && peerSession.stage.IsDungeon()
+	var retainedBeast retainedBeastPassive
+	if isRetainable {
+		var beastErr error
+		retainedBeast, beastErr = peerSession.detachBeastPassive()
+		if beastErr != nil {
+			if e.registry.logger != nil {
+				e.registry.logger.Printf("RakNet Savage retention failed user=%d: %v", peerSession.binding.UserID, beastErr)
+			}
+			isRetainable = false
+		}
+	}
 	if !isRetainable {
 		e.registry.mutex.Unlock()
+		fixtureBatch.complete()
 		stopGameplayPeerSession(peerSession, modifierInstancePool, effectPool)
-		return
+		return true
 	}
+	if e.registry.voodooCharms.handovers == nil {
+		e.registry.voodooCharms.handovers = make(map[gameplayMemberKey]*voodooCharmHandover)
+	}
+	handover := &voodooCharmHandover{member: peerSession}
+	e.registry.voodooCharms.handovers[key] = handover
+	defer e.registry.releaseVoodooHandover(key, handover)
 	e.registry.mutex.Unlock()
+	fixtureBatch.complete()
 	disconnectedAt := e.registry.now()
 	moveErr := peerSession.stopPlayerMovement(disconnectedAt)
 	if moveErr != nil && e.registry.logger != nil {
@@ -2631,6 +3108,9 @@ func (e gameplaySessionLifecycle) disconnectMember(
 		peerSession.binding.UserID, peerSession.generation,
 	)
 	if !isDisconnected {
+		e.registry.mutex.Lock()
+		e.registry.restoreBeastPassiveLocked(&peerSession, retainedBeast)
+		e.registry.mutex.Unlock()
 		stopGameplayPeerRuntime(&peerSession, modifierInstancePool, effectPool)
 		if e.registry.logger != nil {
 			e.registry.logger.Printf(
@@ -2638,20 +3118,18 @@ func (e gameplaySessionLifecycle) disconnectMember(
 				key.gameID, key.userID, peerSession.generation,
 			)
 		}
-		return
+		return true
 	}
+	retainedSage := peerSession.detachSagePassive()
 	retainedCompanions := make([]zonecompanion.Actor, 0)
 	if peerSession.zone.Companion() != nil {
-		for _, companion := range peerSession.zone.Companion().Snapshots() {
-			if companion.UserID == peerSession.binding.UserID &&
-				companion.PeerGeneration == peerSession.generation {
-				retainedCompanions = append(retainedCompanions, companion)
-			}
-		}
+		retainedCompanions = peerSession.zone.Companion().CaptureRetainedOwner(
+			peerSession.binding.UserID, peerSession.generation,
+		)
 	}
 	stopGameplayPeerRuntime(&peerSession, modifierInstancePool, effectPool)
 	for _, companion := range retainedCompanions {
-		err := peerSession.zone.Companion().Put(companion)
+		err := peerSession.zone.Companion().RestoreRetained(companion)
 		if err != nil && e.registry.logger != nil {
 			e.registry.logger.Printf(
 				"RakNet retained companion restore failed game=%d user=%d object=%d: %v",
@@ -2663,6 +3141,10 @@ func (e gameplaySessionLifecycle) disconnectMember(
 	peerSession.zoneEffectPresentation = zoneEffectPresentation{}
 	peerSession.zonePresentationRuntime = zonePresentationRuntime{}
 	peerSession.controlledHeroPresentation = controlledHeroPresentation{}
+	peerSession.restoreSagePassive(retainedSage)
+	e.registry.mutex.Lock()
+	e.registry.restoreBeastPassiveLocked(&peerSession, retainedBeast)
+	e.registry.mutex.Unlock()
 	peerSession.resetRetainedTransportState()
 	peerSession.isRejoinPending = true
 	retained := &gameplayRetainedSession{
@@ -2673,13 +3155,13 @@ func (e gameplaySessionLifecycle) disconnectMember(
 	close(retained.ready)
 	if e.registry.timer == nil {
 		leaveGameplayPeerMembership(peerSession)
-		return
+		return true
 	}
 	e.registry.mutex.Lock()
 	if e.registry.isClosed {
 		e.registry.mutex.Unlock()
 		leaveGameplayPeerMembership(peerSession)
-		return
+		return true
 	}
 	for activeKey, active := range e.registry.sessions {
 		if active.zone != peerSession.zone || active.isZoneTerminal() {
@@ -2690,6 +3172,15 @@ func (e gameplaySessionLifecycle) disconnectMember(
 	}
 	previous := e.registry.retainedSessions[key]
 	e.registry.retainedSessions[key] = retained
+	e.registry.voodooCharms.releaseHandover(key, handover)
+	beastErr := retained.peerSession.scheduleRetainedBeastPassive()
+	if beastErr != nil && e.registry.logger != nil {
+		e.registry.logger.Printf("RakNet retained Savage scheduling failed user=%d: %v", peerSession.binding.UserID, beastErr)
+	}
+	shieldErr := retained.peerSession.scheduleTCShieldRecharge()
+	if shieldErr != nil && e.registry.logger != nil {
+		e.registry.logger.Printf("RakNet retained Titan recharge scheduling failed user=%d: %v", peerSession.binding.UserID, shieldErr)
+	}
 	e.registry.mutex.Unlock()
 	cancel, err := e.registry.timer.Schedule(
 		gameplayRejoinGrace, func() {
@@ -2698,21 +3189,24 @@ func (e gameplaySessionLifecycle) disconnectMember(
 	)
 	if err != nil {
 		e.registry.mutex.Lock()
-		if e.registry.retainedSessions[key] == retained {
+		isRetainedOwned := e.registry.retainedSessions[key] == retained
+		if isRetainedOwned {
 			delete(e.registry.retainedSessions, key)
 		}
 		e.registry.mutex.Unlock()
 		if previous != nil && previous.cancel != nil {
 			previous.cancel()
 		}
-		leaveGameplayPeerMembership(peerSession)
+		if isRetainedOwned {
+			leaveGameplayPeerMembership(retained.peerSession)
+		}
 		if e.registry.logger != nil {
 			e.registry.logger.Printf(
 				"RakNet rejoin expiry scheduling failed game=%d user=%d: %v",
 				key.gameID, key.userID, err,
 			)
 		}
-		return
+		return true
 	}
 	e.registry.mutex.Lock()
 	isCurrentRetained := e.registry.retainedSessions[key] == retained
@@ -2722,7 +3216,7 @@ func (e gameplaySessionLifecycle) disconnectMember(
 	e.registry.mutex.Unlock()
 	if !isCurrentRetained {
 		cancel()
-		return
+		return true
 	}
 	if previous != nil {
 		if previous.cancel != nil {
@@ -2740,6 +3234,7 @@ func (e gameplaySessionLifecycle) disconnectMember(
 			key.gameID, key.userID, retained.expiresAt,
 		)
 	}
+	return true
 }
 
 func (e gameplaySessionLifecycle) expireRetained(
@@ -2855,7 +3350,9 @@ func (e *gameplaySessionRegistry) queuePeerPresentation(
 		isCandidateArena := isArena && candidate.binding.Mode == game.ModeArena
 		isCandidateCampaign := !isArena && candidate.zone == peerSession.zone &&
 			candidate.isCampaignPresentationAvailable()
-		if sessionKey == identity.sessionKey ||
+		if candidate.binding.IsServerBot ||
+			(isArena && peerSession.binding.IsServerBot && candidate.binding.UserID == peerSession.binding.BotOwnerUserID) ||
+			sessionKey == identity.sessionKey ||
 			candidate.isRejoinPending ||
 			candidate.binding.GameID != peerSession.binding.GameID ||
 			(!candidate.stage.IsDungeon() && !isCandidateCampaign) ||
@@ -3076,6 +3573,10 @@ func (e campaignActionAuthority) cancel(
 	if !isCurrent {
 		return zoneaction.PursuitSnapshot{}, nil, nil, nil, false
 	}
+	pendingErr := peerSession.cancelPendingBasic()
+	if pendingErr != nil && e.registry.logger != nil {
+		e.registry.logger.Printf("RakNet pending basic input-release cleanup failed user=%d: %v", peerSession.binding.UserID, pendingErr)
+	}
 	pursuit := peerSession.campaignPlayerPursuitSession().Snapshot()
 	// Releasing held input ends repetition, not the accepted attack's recovery.
 	// Projectile attacks have no basicAttack run to protect below; retain their
@@ -3239,7 +3740,7 @@ func (s *gameplayPeerSession) commitTutorialCompletion() (bool, error) {
 func restartTutorialSession(
 	previous gameplayPeerSession, generation uint64, experience sporenet.TutorialExperience,
 ) gameplayPeerSession {
-	binding := previous.binding
+	binding := tutorialGameplayBinding(previous.binding)
 	binding.AvatarXP = float32(experience.CumulativeXP)
 	binding.AvatarLevel = experience.Level
 	return gameplayPeerSession{
@@ -3317,6 +3818,9 @@ func (s *gameplayPeerSession) setDeployedHitPoints(hitPoints float32) (bool, err
 	if err != nil {
 		return false, fmt.Errorf("squadHealthCheckpoint: %w", err)
 	}
+	if previousHitPoint > 0 && hitPoints <= 0 {
+		s.voodooDeathRevision++
+	}
 	return isGameOver, nil
 }
 
@@ -3367,7 +3871,50 @@ func (s *gameplayPeerSession) applyDamageHitPoints(hitPoints float32, timestamp 
 func (s *gameplayPeerSession) applyArenaDamageHitPoints(
 	hitPoints float32, timestamp uint64,
 ) ([][]byte, error) {
-	return s.applyDamageHitPointsWithOutcome(hitPoints, timestamp, false)
+	if s == nil || s.squad == nil {
+		return nil, errors.New("arena damage squad unavailable")
+	}
+	creatureIndex, objectID := s.deployedCreatureIndex, s.deployedObjectID
+	isLethal := s.deployedHitPoint() > 0 && hitPoints <= 0
+	deathPackets := make([][]byte, 0)
+	if isLethal {
+		// Arena does not use the campaign damage path that stops the mover and
+		// publishes the native hero death state before a reserve deployment.
+		err := s.stopPlayerMovement(time.Now())
+		if err != nil {
+			return nil, fmt.Errorf("arenaDeathMovement: %w", err)
+		}
+		stopPackets, err := marshalZonePlayerStop(objectID, s.playerPosition)
+		if err != nil {
+			return nil, fmt.Errorf("arenaDeathStop: %w", err)
+		}
+		deathPacket, err := raknet.MarshalApplication(raknet.SetAnimationStateMessage{
+			ObjectID: objectID, State: util.HashID("gen_player_death"),
+			Timestamp: timestamp, Scale: 1,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("arenaDeathAnimation: %w", err)
+		}
+		interruptedBasic := s.resetSharedActionAdmission()
+		interruptedBasic.Stop()
+		deathPackets = append(stopPackets, deathPacket)
+	}
+	isRevivalPending := false
+	if isLethal && s.beastPetResurrection != nil && s.beastPetResurrection.arenaWorld != nil {
+		isRevivalPending = s.reserveBeastPetRevival(s.beastPetResurrection.runtime.now())
+	}
+	packets, err := s.applyDamageHitPointsWithOutcome(hitPoints, timestamp, false)
+	if err != nil {
+		if isRevivalPending {
+			cancelErr := s.squad.CancelResurrection()
+			err = errors.Join(err, cancelErr)
+		}
+		return nil, fmt.Errorf("arenaHealth: %w", err)
+	}
+	if isLethal {
+		packets = append(packets, s.retireArenaKillPassive(creatureIndex, objectID)...)
+	}
+	return append(deathPackets, packets...), nil
 }
 
 func (s *gameplayPeerSession) applyDamageHitPointsWithOutcome(
@@ -3381,7 +3928,7 @@ func (s *gameplayPeerSession) applyDamageHitPointsWithOutcome(
 		return nil, nil
 	}
 	isLethal := previousHitPoint > 0 && hitPoints <= 0
-	isExpectedGameOver := isLethal && s.squad.LivingCount() == 1
+	isExpectedGameOver := isLethal && !s.squad.IsResurrectionPending() && s.squad.LivingCount() == 1
 	var transitionPackets [][]byte
 	livingIndex := uint32(squad.Size)
 	if isExpectedGameOver && isGameOverPacketEnabled && s.binding.Mode != game.ModeChain {
@@ -3390,8 +3937,13 @@ func (s *gameplayPeerSession) applyDamageHitPointsWithOutcome(
 			return nil, fmt.Errorf("gameOverMarshal: %w", err)
 		}
 		transitionPackets = [][]byte{packet}
-	} else if isLethal && !isExpectedGameOver {
+	} else if isLethal && !isExpectedGameOver && !s.squad.IsResurrectionPending() {
 		for index := uint32(0); index < squad.Size; index++ {
+			// The lethal HP update is committed below. The current slot still
+			// appears alive here and must not become its own replacement.
+			if index == s.deployedCreatureIndex {
+				continue
+			}
 			character, isFound := s.squad.Character(index)
 			if isFound && character.IsAvailable && character.HitPoints > 0 {
 				livingIndex = index
@@ -3411,13 +3963,17 @@ func (s *gameplayPeerSession) applyDamageHitPointsWithOutcome(
 		if targetObjectID == 0 {
 			return nil, fmt.Errorf("livingObject[%d]: missing", livingIndex)
 		}
+		deployCooldownDeadline := timestamp
+		if s.binding.Mode != game.ModeArena {
+			deployCooldownDeadline += uint64(campaignCreatureSwapCooldown / time.Millisecond)
+		}
 		packets, err := marshalCampaignCharacterSwitch(
 			uint8(s.binding.Slot), s.deployedObjectID, targetObjectID, livingIndex,
 			s.binding.Creatures[s.deployedCreatureIndex], s.binding.Creatures[livingIndex],
 			0, s.deployedManaPoint(), targetCharacter.HitPoints, targetCharacter.ManaPoints,
 			s.playerPosition, raknet.Quaternion{W: 1}, timestamp,
-			timestamp+uint64(standardCreatureSwapCooldown/time.Millisecond),
-			false,
+			deployCooldownDeadline,
+			s.binding.Mode == game.ModeArena,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("livingSwitchMarshal: %w", err)
@@ -3428,6 +3984,22 @@ func (s *gameplayPeerSession) applyDamageHitPointsWithOutcome(
 	if err != nil {
 		return nil, fmt.Errorf("damageHealth: %w", err)
 	}
+	if isLethal && s.binding.Mode == game.ModeArena {
+		s.clearScenarioHeroAbilityRank()
+		if s.missileFlakRun != nil {
+			runtime := s.missileFlakRun.runtime
+			flakPacket, flakErr := stopMissileFlak(s, runtime.modifierPool)
+			if flakErr != nil && runtime.logger != nil {
+				runtime.logger.Printf("Arena defeated Flak cleanup failed: %v", flakErr)
+			}
+			if len(flakPacket) != 0 {
+				transitionPackets = append(transitionPackets, flakPacket)
+			}
+		}
+		// Retire the defeated recipient's modifiers before an automatic squad
+		// deployment changes its identity, including the all-defeated branch.
+		s.retireArenaHitStatuses()
+	}
 	if isGameOver {
 		return transitionPackets, nil
 	}
@@ -3437,13 +4009,20 @@ func (s *gameplayPeerSession) applyDamageHitPointsWithOutcome(
 	if hitPoints > 0 {
 		return nil, nil
 	}
+	if s.squad.IsResurrectionPending() {
+		return transitionPackets, nil
+	}
 	if livingIndex >= squad.Size {
 		return nil, errors.New("living zone character missing")
 	}
 	s.squad.ResetDeployCooldown()
+	deployCooldown := campaignCreatureSwapCooldown
+	if s.binding.Mode == game.ModeArena {
+		deployCooldown = 0
+	}
 	err = s.deployZoneCharacter(
 		livingIndex, time.UnixMilli(int64(timestamp)),
-		standardCreatureSwapCooldown,
+		deployCooldown,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("livingSwitchDeploy: %w", err)
@@ -3588,7 +4167,7 @@ func (s *gameplayPeerSession) healLivingZoneSquadScaled(
 			restoreAmount = maximumHitPoint * maximumFraction
 		}
 		receivedAmount, err := game.ApplyTargetHealingReduction(
-			restoreAmount, s.binding.Creatures[index].HealingTargetProfile,
+			restoreAmount, s.healingTargetProfile(index),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("healReduction[%d]: %w", index, err)
@@ -3692,14 +4271,20 @@ type gameplaySwitchRuntime struct {
 }
 
 type gameplayDeathSelectionStep struct {
-	runtime    gameplaySwitchRuntime
-	packet     raknet.Packet
-	command    raknet.ActionCommandData
-	sessionKey string
-	generation uint64
+	runtime          gameplaySwitchRuntime
+	packet           raknet.Packet
+	command          raknet.ActionCommandData
+	sessionKey       string
+	generation       uint64
+	identity         gameplayProducerIdentity
+	publishedPackets [][]byte
+	sagePoll         *sagePassivePoll
 }
 
-func (e gameplayDeathSelectionStep) produce() ([][]byte, error) {
+func (e *gameplayDeathSelectionStep) produce() ([][]byte, error) {
+	if e.identity.isFound && !e.runtime.registry.producerGuard.isCurrent(e.identity) {
+		return nil, nil
+	}
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
@@ -3714,33 +4299,50 @@ func (e gameplayDeathSelectionStep) produce() ([][]byte, error) {
 	if !isCurrent {
 		return nil, nil
 	}
-	packets, err := e.runtime.handle(e.packet, e.command, peerSession, true)
+	publication := &sagePassivePublicationCommit{runtime: e.runtime, sessionKey: e.sessionKey, generation: e.generation}
+	packets, err := e.runtime.handle(e.packet, e.command, peerSession, true, publication)
 	if err != nil {
 		return nil, fmt.Errorf("deathSelectionHandle: %w", err)
 	}
+	e.publishedPackets = packets
+	e.sagePoll = publication.poll
 	return packets, nil
 }
 
 type gameplaySwitchArrivalStep struct {
-	runtime        gameplaySwitchRuntime
-	packet         raknet.Packet
-	packets        [][]byte
-	sessionKey     string
-	generation     uint64
-	targetObjectID uint32
-	timestamp      uint64
-	isKnockback    bool
+	runtime          gameplaySwitchRuntime
+	packet           raknet.Packet
+	packets          [][]byte
+	sessionKey       string
+	generation       uint64
+	targetObjectID   uint32
+	timestamp        uint64
+	isKnockback      bool
+	identity         gameplayProducerIdentity
+	publishedPackets [][]byte
+	sagePoll         *sagePassivePoll
 }
 
-func (s gameplaySwitchArrivalStep) produce() ([][]byte, error) {
+func (s *gameplaySwitchArrivalStep) produce() ([][]byte, error) {
+	if s.identity.isFound && !s.runtime.registry.producerGuard.isCurrent(s.identity) {
+		return nil, nil
+	}
 	isCurrent := true
+	controlPackets := make([][]byte, 0)
 	if s.runtime.registry != nil {
 		s.runtime.registry.mutex.Lock()
 		peerSession, isFound := s.runtime.registry.sessions[s.sessionKey]
 		isCurrent = isFound && peerSession.generation == s.generation &&
 			peerSession.deployedObjectID == s.targetObjectID
 		if isCurrent {
-			peerSession.beginHeroArrival(s.runtime.now())
+			at := s.runtime.now()
+			peerSession.beginHeroArrival(at)
+			var controlErr error
+			controlPackets, controlErr = peerSession.refreshEnemyImmobilizedAttributes(at)
+			if controlErr != nil {
+				s.runtime.registry.mutex.Unlock()
+				return nil, fmt.Errorf("switchArrivalControl: %w", controlErr)
+			}
 			s.runtime.registry.sessions[s.sessionKey] = peerSession
 		}
 		s.runtime.registry.mutex.Unlock()
@@ -3749,6 +4351,8 @@ func (s gameplaySwitchArrivalStep) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	packets := clonePendingPackets(s.packets)
+	packets = append(packets, controlPackets...)
+	s.publishedPackets = packets
 	if !s.isKnockback {
 		return packets, nil
 	}
@@ -3760,13 +4364,17 @@ func (r gameplaySwitchRuntime) recoverPassiveSchedule(
 	sessionKey string, generation uint64, objectID uint32,
 	run *summonPassiveRun, cause error,
 ) {
-	_, stopErr := run.Stop()
 	r.registry.mutex.Lock()
+	stopRequests, stopErr := run.Stop()
+	if stopErr != nil {
+		r.logger.Printf("RakNet Sage rollback cleanup failed owner=%d requests=%d: %v", objectID, len(stopRequests), stopErr)
+	}
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation &&
 		peerSession.deployedObjectID == objectID && peerSession.sagePassive == run
 	if isCurrent {
 		peerSession.sagePassive = nil
+		peerSession.sagePassiveSchedule = nil
 		peerSession.sagePassiveActivations = nil
 		r.registry.sessions[sessionKey] = peerSession
 	}
@@ -3786,15 +4394,29 @@ type gameplaySwitchPassiveSchedule struct {
 	targetCreatureIndex uint32
 	run                 *summonPassiveRun
 	isCampaign          bool
+	isScheduledCommit   bool
+	startedAt           time.Time
+	preparedPoll        *sagePassivePoll
 }
 
-func (s gameplaySwitchPassiveSchedule) start(packet raknet.Packet) error {
+func (s *gameplaySwitchPassiveSchedule) start(packet raknet.Packet) error {
+	if s.isCampaign {
+		poll, err := s.prepareWorldPoll(packet)
+		if err != nil {
+			return fmt.Errorf("sagePrepare: %w", err)
+		}
+		if poll == nil {
+			return errors.New("Sage prepared poll unavailable")
+		}
+		s.preparedPoll = poll
+		return nil
+	}
 	if packet.ScheduleGroup == nil && packet.ScheduleGroupResult == nil {
 		return fmt.Errorf("%s: %w", s.errorTag(), errors.New("unavailable"))
 	}
 	s.packet = packet
 	producer := raknet.ScheduledPacketProducer{
-		Delay:   s.runtime.program.SupportHealerPassive.SpawnDelay,
+		Delay:   s.run.Definition().SpawnDelay,
 		Produce: s.produce,
 	}
 	producers := s.runtime.registry.producerGuard.scheduledProducers(
@@ -3833,7 +4455,7 @@ func (s gameplaySwitchPassiveSchedule) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	requests, err := s.run.Advance(
-		s.runtime.program.SupportHealerPassive.SpawnDelay,
+		s.run.Definition().SpawnDelay,
 	)
 	if err != nil {
 		s.runtime.registry.mutex.Unlock()
@@ -3881,6 +4503,7 @@ func (s gameplaySwitchPassiveSchedule) produce() ([][]byte, error) {
 					Z: companion.Position.Z,
 				},
 				FootprintRadius: footprintRadius,
+				AggroRadius:     s.runtime.program.SupportHealerPetAggroRange,
 				HitPoint:        hitPoint, MaximumHitPoint: hitPoint,
 				IsTargetable: true, IsCombatant: true,
 			})
@@ -3909,7 +4532,7 @@ func (s gameplaySwitchPassiveSchedule) produce() ([][]byte, error) {
 		actionPackets, actionErr := s.runtime.npc.scheduleFirstActions(
 			s.packet, s.sessionKey, s.sessionGeneration, plans,
 			s.packet.SourceTime+uint64(
-				s.runtime.program.SupportHealerPassive.SpawnDelay/time.Millisecond,
+				s.run.Definition().SpawnDelay/time.Millisecond,
 			),
 		)
 		if actionErr != nil {
@@ -3919,7 +4542,7 @@ func (s gameplaySwitchPassiveSchedule) produce() ([][]byte, error) {
 		companionPackets, companionErr := s.runtime.damage.startCompanionAttacks(
 			s.packet, s.sessionKey, s.sessionGeneration,
 			s.packet.SourceTime+uint64(
-				s.runtime.program.SupportHealerPassive.SpawnDelay/time.Millisecond,
+				s.run.Definition().SpawnDelay/time.Millisecond,
 			),
 		)
 		if companionErr != nil {
@@ -3990,8 +4613,9 @@ func (s gameplaySwitchPassiveSchedule) spawnTag() string {
 
 func (r gameplaySwitchRuntime) handle(
 	packet raknet.Packet, command raknet.ActionCommandData,
-	commandSession gameplayPeerSession, isSessionFound bool,
+	commandSession gameplayPeerSession, isSessionFound bool, publications ...*sagePassivePublicationCommit,
 ) ([][]byte, error) {
+	isScheduledCommit := len(publications) == 1 && publications[0] != nil
 	switchStartTime := r.now()
 	if isSessionFound && commandSession.binding.Mode == game.ModeArena {
 		return r.handleArenaSwitch(
@@ -4063,13 +4687,12 @@ func (r gameplaySwitchRuntime) handle(
 		step := gameplayDeathSelectionStep{
 			runtime: r, packet: deferredPacket, command: command,
 			sessionKey: sessionKey, generation: commandSession.generation,
+			identity: r.registry.producerGuard.identity(sessionKey),
 		}
 		producer := raknet.ScheduledPacketProducer{
-			Delay: deathSelectionDelay, Produce: step.produce,
+			Delay: deathSelectionDelay, Produce: step.produce, AfterCommit: step.commit,
 		}
-		producers := r.registry.producerGuard.scheduledProducers(
-			sessionKey, []raknet.ScheduledPacketProducer{producer},
-		)
+		producers := []raknet.ScheduledPacketProducer{producer}
 		cancel, scheduleErr := packet.Autonomous().ScheduleProducers(producers)
 		if scheduleErr == nil && cancel == nil {
 			scheduleErr = errors.New("death selection cancellation unavailable")
@@ -4104,10 +4727,11 @@ func (r gameplaySwitchRuntime) handle(
 	var departurePackets [][]byte
 	var err error
 	var startedPassive *summonPassiveRun
+	var preparedSagePoll *sagePassivePoll
 	var interruptedBasic *abilityraknet.MeleeRun
 	var stoppedGhostRun *abilityraknet.GhostFormRun
 	var stoppedHeroModifierRun *heroModifierRun
-	stoppedPassiveRequest := []summonPassiveWorldRequest(nil)
+	stoppedSagePackets := [][]byte(nil)
 	stoppedWreathPackets := make([][]byte, 0)
 	stoppedGhostPackets := make([][]byte, 0)
 	stoppedHeroModifierPackets := make([][]byte, 0)
@@ -4161,6 +4785,11 @@ func (r gameplaySwitchRuntime) handle(
 	} else {
 		r.logger.Printf("RakNet Field Medic cleanup omitted during switch remote=%s: %v", packet.Address, fieldMedicErr)
 	}
+	stoppedBurnPackets, burnErr := peerSession.stopPetPlasmaBurns(r.npc)
+	beastPetPackets = append(beastPetPackets, stoppedBurnPackets...)
+	if burnErr != nil {
+		r.logger.Printf("RakNet pet plasma cleanup omitted during switch remote=%s: %v", packet.Address, burnErr)
+	}
 	stoppedBeastPackets, beastErr := peerSession.stopBeastPet()
 	if beastErr == nil {
 		beastPetPackets = append(beastPetPackets, stoppedBeastPackets...)
@@ -4193,7 +4822,7 @@ func (r gameplaySwitchRuntime) handle(
 	} else {
 		r.logger.Printf("RakNet Trapper stealth cleanup omitted during switch remote=%s: %v", packet.Address, stealthErr)
 	}
-	if isTargetSage && peerSession.sagePassive == nil {
+	if isTargetSage && (peerSession.sagePassive == nil || sourceObjectID != targetObjectID) {
 		companionCount := int(r.program.SupportHealerPassive.MaximumCompanion)
 		if companionCount <= 0 {
 			r.logger.Printf("RakNet Sage passive unavailable during switch remote=%s: no companions", packet.Address)
@@ -4234,7 +4863,7 @@ func (r gameplaySwitchRuntime) handle(
 		targetCharacter.HitPoints, targetCharacter.ManaPoints,
 		peerSession.playerPosition, command.Common.Orientation,
 		arrivalTimestamp,
-		packet.SourceTime+uint64(standardCreatureSwapCooldown/time.Millisecond),
+		packet.SourceTime+uint64(campaignCreatureSwapCooldown/time.Millisecond),
 		isDeathSelection || isVoluntarySwitch,
 	)
 	if err != nil {
@@ -4269,6 +4898,9 @@ func (r gameplaySwitchRuntime) handle(
 		shieldPackets = nil
 	}
 	peerSession.resetTCShield(previousCreatureIndex)
+	r.registry.retirePlasmaWreathLocked(&peerSession)
+	infectionPackets := peerSession.takeHeroInfections()
+	departurePackets = append(departurePackets, infectionPackets...)
 	interruptedBasic = peerSession.resetAbilityAdmissionForSwitch()
 	if peerSession.ghostFormRun != nil {
 		stoppedGhostRun = peerSession.ghostFormRun
@@ -4350,26 +4982,20 @@ func (r gameplaySwitchRuntime) handle(
 		r.logger.Printf("RakNet Poison Nova cleanup omitted during switch remote=%s: %v", packet.Address, poisonNovaErr)
 	}
 	if peerSession.plasmaWreathRun != nil {
-		stoppedWreathPackets, err = peerSession.plasmaWreathRun.Stop()
+		stoppedWreathPackets, err = peerSession.stopPlasmaWreath(switchStartTime)
 		if err != nil {
 			r.logger.Printf("RakNet Plasma Wreath cleanup omitted during switch remote=%s: %v", packet.Address, err)
-			stoppedWreathPackets = nil
 		}
 		peerSession.plasmaWreathRun = nil
 	}
-	if !isTargetSage && peerSession.sagePassive != nil {
-		stoppedPassiveRequest, err = peerSession.sagePassive.Stop()
+	if peerSession.sagePassive != nil && (!isTargetSage || sourceObjectID != targetObjectID) {
+		stoppedSagePackets, err = peerSession.stopCampaignSagePassive()
 		if err != nil {
 			r.logger.Printf("RakNet Sage passive cleanup omitted during switch remote=%s: %v", packet.Address, err)
-			stoppedPassiveRequest = nil
 		}
-		stopSummonCompanionAttacks(peerSession.sagePassiveActivations)
-		peerSession.removeCampaignCompanions()
-		peerSession.sagePassive = nil
-		peerSession.sagePassiveActivations = nil
 	}
 	err = peerSession.squad.DeployWithCooldown(
-		command.Value, switchPresentationTime, standardCreatureSwapCooldown,
+		command.Value, switchPresentationTime, campaignCreatureSwapCooldown,
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -4378,8 +5004,12 @@ func (r gameplaySwitchRuntime) handle(
 	peerSession.clearEnemyHeroStatuses()
 	peerSession.deployedCreatureIndex = command.Value
 	peerSession.passiveStationarySince[command.Value] = switchPresentationTime
-	peerSession.startTCShieldRecharge(command.Value, switchPresentationTime)
 	peerSession.deployedObjectID = targetObjectID
+	initialShieldPackets, err := peerSession.activateTCShield(command.Value, switchPresentationTime, r.effectPool, r.registry)
+	if err != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("switchInitialShield: %w", err)
+	}
 	peerSession.resetTeleporterSample()
 	peerSession.resetPickupContacts()
 	if isVoluntarySwitch {
@@ -4468,6 +5098,7 @@ func (r gameplaySwitchRuntime) handle(
 		enemyTargetPackets = nil
 	}
 	r.registry.sessions[packet.Address.String()] = peerSession
+	r.registry.refreshVoodooCharmsLocked(switchPresentationTime)
 	r.registry.mutex.Unlock()
 	if interruptedBasic != nil {
 		interruptedBasic.Stop()
@@ -4492,30 +5123,21 @@ func (r gameplaySwitchRuntime) handle(
 	switchPackets = append(switchPackets, heroSummonPackets...)
 	switchPackets = append(switchPackets, trapperStealthPackets...)
 	switchPackets = append(switchPackets, shieldPackets...)
+	switchPackets = append(switchPackets, initialShieldPackets...)
 	if missileTargetingStopPacket != nil {
 		departurePackets = append([][]byte{missileTargetingStopPacket}, departurePackets...)
 		if !isVoluntarySwitch {
 			switchPackets = append([][]byte{missileTargetingStopPacket}, switchPackets...)
 		}
 	}
-	for index, req := range stoppedPassiveRequest {
-		passivePackets, _, passiveErr := marshalSummonPassiveWorldRequest(
-			req, raknet.Vector3{},
-		)
-		if passiveErr != nil {
-			r.logger.Printf(
-				"RakNet campaign passive cleanup omitted remote=%s index=%d: %v",
-				packet.Address, index, passiveErr,
-			)
-			continue
-		}
-		switchPackets = append(switchPackets, passivePackets...)
-	}
+	switchPackets = append(switchPackets, stoppedSagePackets...)
 	if startedPassive != nil {
 		schedule := gameplaySwitchPassiveSchedule{
 			runtime: r, sessionKey: packet.Address.String(),
 			sessionGeneration: commandSession.generation,
 			targetObjectID:    targetObjectID, run: startedPassive, isCampaign: true,
+			startedAt:         switchStartTime,
+			isScheduledCommit: isVoluntarySwitch || isScheduledCommit,
 		}
 		err = schedule.start(packet)
 		if err != nil {
@@ -4524,6 +5146,10 @@ func (r gameplaySwitchRuntime) handle(
 				targetObjectID, startedPassive, err,
 			)
 		} else {
+			preparedSagePoll = schedule.preparedPoll
+			if isScheduledCommit {
+				publications[0].poll = preparedSagePoll
+			}
 			r.logger.Printf(
 				"RakNet campaign Sage passive scheduled for %s owner=%d delay=%s",
 				packet.Address, targetObjectID,
@@ -4623,13 +5249,13 @@ func (r gameplaySwitchRuntime) handle(
 			timestamp: packet.SourceTime +
 				uint64(campaignCreatureWarpOutDelay/time.Millisecond),
 			isKnockback: true,
+			identity:    r.registry.producerGuard.identity(packet.Address.String()),
+			sagePoll:    preparedSagePoll,
 		}
 		producer := raknet.ScheduledPacketProducer{
-			Delay: campaignCreatureWarpOutDelay, Produce: step.produce,
+			Delay: campaignCreatureWarpOutDelay, Produce: step.produce, AfterCommit: step.commit,
 		}
-		producers := r.registry.producerGuard.scheduledProducers(
-			packet.Address.String(), []raknet.ScheduledPacketProducer{producer},
-		)
+		producers := []raknet.ScheduledPacketProducer{producer}
 		cancel, scheduleErr := packet.Autonomous().ScheduleProducers(producers)
 		if scheduleErr == nil && cancel == nil {
 			scheduleErr = errors.New("switch arrival cancellation unavailable")
@@ -4649,10 +5275,14 @@ func (r gameplaySwitchRuntime) handle(
 		if arrivalErr != nil {
 			return nil, fmt.Errorf("switchArrivalFallback: %w", arrivalErr)
 		}
+		commitErr := r.armSageAfterResponse(packet, packet.Address.String(), commandSession.generation, preparedSagePoll)
+		if commitErr != nil {
+			return nil, fmt.Errorf("switchSageFallback: %w", commitErr)
+		}
 		return append(departurePackets, arrivalPackets...), nil
 	}
 	step := gameplaySwitchArrivalStep{
-		runtime: r, packet: packet.Autonomous(), packets: switchPackets,
+		runtime: r, packet: packet.Autonomous(), packets: append(infectionPackets, switchPackets...),
 		sessionKey:     packet.Address.String(),
 		generation:     commandSession.generation,
 		targetObjectID: targetObjectID,
@@ -4708,6 +5338,15 @@ func (s gameplayPeerSession) characterResourceMaximums(
 ) characterResourceMaximum {
 	hitPoint := campaignHeroResourceFallback
 	powerPoint := campaignHeroResourceFallback
+	if s.binding.Mode == game.ModeArena && creatureIndex < uint32(len(s.binding.Creatures)) {
+		// Arena binds its own character stats. Shared healing/resource paths
+		// must not substitute campaign defaults or apply campaign crystals.
+		creature := s.binding.Creatures[creatureIndex]
+		if s.scenarioHitPointMaximums[creatureIndex] > 0 {
+			return characterResourceMaximum{hitPoint: s.scenarioHitPointMaximums[creatureIndex], manaPoint: creature.PowerPoint}
+		}
+		return characterResourceMaximum{hitPoint: creature.HitPoint + s.arenaHitPointIncreases[creatureIndex], manaPoint: creature.PowerPoint}
+	}
 	if (s.binding.Mode != game.ModeChain && s.binding.Mode != game.ModeTutorial) ||
 		creatureIndex >= uint32(len(s.binding.Creatures)) {
 		return characterResourceMaximum{hitPoint: hitPoint, manaPoint: powerPoint}
@@ -4721,6 +5360,9 @@ func (s gameplayPeerSession) characterResourceMaximums(
 	attributes := s.crystalInventory.Attributes()
 	hitPoint += attributes[4]
 	powerPoint += attributes[5]
+	if s.scenarioHitPointMaximums[creatureIndex] > 0 {
+		hitPoint = s.scenarioHitPointMaximums[creatureIndex]
+	}
 	return characterResourceMaximum{hitPoint: hitPoint, manaPoint: powerPoint}
 }
 
@@ -4843,7 +5485,7 @@ func (s *gameplayPeerSession) setCampaignCharacterHitPoints(
 	creatureIndex uint32, hitPoint float32,
 ) (bool, error) {
 	if s == nil || s.squad == nil ||
-		(s.binding.Mode != game.ModeChain && s.binding.Mode != game.ModeTutorial) {
+		(s.binding.Mode != game.ModeChain && s.binding.Mode != game.ModeTutorial && s.binding.Mode != game.ModeArena) {
 		return false, errors.New("campaign squad unavailable")
 	}
 	if creatureIndex == s.squad.DeployedIndex() {
@@ -4864,7 +5506,7 @@ func (s *gameplayPeerSession) setCampaignCharacterManaPoints(
 	creatureIndex uint32, manaPoint float32,
 ) error {
 	if s == nil || s.squad == nil ||
-		(s.binding.Mode != game.ModeChain && s.binding.Mode != game.ModeTutorial) {
+		(s.binding.Mode != game.ModeChain && s.binding.Mode != game.ModeTutorial && s.binding.Mode != game.ModeArena) {
 		return errors.New("campaign squad unavailable")
 	}
 	if creatureIndex == s.squad.DeployedIndex() {
@@ -4893,9 +5535,10 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPackets(
 func (s *gameplayPeerSession) applyCampaignCommittedDamageHitPackets(
 	hitPackets [][]byte, previousHitPoint float32, hitPoint float32,
 	timestamp uint64, now time.Time,
+	receipts ...*enemyDamageReceipt,
 ) ([][]byte, sporenet.PlayerStatDelta, error) {
 	return s.applyCampaignDamageHitPacketsWithCommit(
-		hitPackets, 0, hitPoint, previousHitPoint, timestamp, now, true,
+		hitPackets, 0, hitPoint, previousHitPoint, timestamp, now, true, receipts...,
 	)
 }
 
@@ -4903,7 +5546,18 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 	hitPackets [][]byte, sourceObjectID uint32, hitPoint float32,
 	committedPreviousHitPoint float32, timestamp uint64, now time.Time,
 	isSharedCommitted bool,
+	receipts ...*enemyDamageReceipt,
 ) ([][]byte, sporenet.PlayerStatDelta, error) {
+	var receipt *enemyDamageReceipt
+	if len(receipts) != 0 {
+		receipt = receipts[0]
+	}
+	if receipt != nil {
+		hitPackets = append([][]byte(nil), hitPackets...)
+		baseCount := len(hitPackets)
+		hitPackets = append(hitPackets, receipt.HeroTransitionPackets...)
+		defer receipt.retainHeroTransitionOutput(&hitPackets, baseCount)
+	}
 	if s == nil || s.squad == nil ||
 		(s.binding.Mode != game.ModeChain && s.binding.Mode != game.ModeTutorial) {
 		return nil, sporenet.PlayerStatDelta{}, errors.New("campaign squad unavailable")
@@ -4946,7 +5600,21 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 		return s.finishCampaignDamage(hitPackets, sporenet.PlayerStatDelta{})
 	}
 	isLethal := previousHitPoint > 0 && hitPoint <= 0
-	isExpectedGameOver := isLethal && s.squad.LivingCount() == 1
+	isRevivalPending := false
+	if receipt != nil && receipt.IsHeroHeaderPrepared {
+		isRevivalPending = receipt.IsHeroRevivalPending
+	} else {
+		isRevivalPending = isLethal && s.reserveBeastPetRevival(now)
+	}
+	isExpectedGameOver := isLethal && !isRevivalPending && s.squad.LivingCount() == 1
+	if receipt != nil {
+		if receipt.IsHeroHeaderPrepared {
+			isRevivalPending, isExpectedGameOver = receipt.IsHeroRevivalPending, receipt.IsHeroExpectedGameOver
+		} else {
+			receipt.IsHeroHeaderPrepared = true
+			receipt.IsHeroRevivalPending, receipt.IsHeroExpectedGameOver = isRevivalPending, isExpectedGameOver
+		}
+	}
 	resourcePacket, err := s.marshalCampaignCharacterResourceAt(
 		s.squad.DeployedIndex(), hitPoint,
 	)
@@ -5010,54 +5678,89 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 	statDelta := sporenet.PlayerStatDelta{
 		PVEDamageTaken: float64(max(float32(0), previousHitPoint-hitPoint)),
 	}
-	if isLethal {
+	if isLethal && (receipt == nil || !receipt.IsHeroBusinessDone) {
 		statDelta.PVEDeath = 1
 		if s.zone != nil {
-			_ = s.zone.ApplyHeroDeathObjectives(
-				context.Background(), s.binding.UserID, s.generation,
+			objectiveErr := s.zone.ApplyHeroDeathObjectives(
+				s.zone.Context(), s.binding.UserID, s.generation,
 				s.deployedObjectID,
 			)
+			if objectiveErr != nil {
+				log.Printf("Hero death objective user=%d: %v", s.binding.UserID, objectiveErr)
+			}
 		}
 		s.resetPassiveKill(s.deployedCreatureIndex)
-		soulPackets, soulErr := s.syncSoulRavagerPresentation()
+		soulPackets, soulErr := s.syncSoulRavagerPresentation(nil)
 		if soulErr == nil {
 			hitPackets = append(hitPackets, soulPackets...)
 		}
 		s.resetPassiveDamageReduction(s.deployedCreatureIndex)
 		s.resetFireRavagerBasic(s.deployedCreatureIndex)
 		s.resetTCShield(s.deployedCreatureIndex)
-	}
-	if isLethal {
-		hitPackets = append(hitPackets, stopPackets...)
-	}
-	hitPackets = append(hitPackets, resourcePacket)
-	if hitPoint < previousHitPoint {
-		stealthPackets, stealthErr := s.breakTrapperStealth()
-		if stealthErr == nil {
-			hitPackets = append(hitPackets, stealthPackets...)
+		if receipt != nil {
+			receipt.IsHeroBusinessDone = true
 		}
 	}
 	if isLethal {
-		interruptedBasic := s.resetAbilityAdmissionForSwitch()
-		if interruptedBasic != nil {
-			interruptedBasic.Stop()
+		statDelta.PVEDeath = 1
+	}
+	if receipt == nil || !receipt.IsHeroOutputPrepared {
+		if isLethal {
+			hitPackets = append(hitPackets, stopPackets...)
 		}
-		drainPackets, drainErr := s.stopCampaignNPCDrainsTargeting(
-			s.deployedObjectID,
-		)
-		if drainErr != nil {
-			return nil, sporenet.PlayerStatDelta{},
-				fmt.Errorf("campaignDeathDrain: %w", drainErr)
+		hitPackets = append(hitPackets, resourcePacket)
+		if hitPoint < previousHitPoint {
+			stealthPackets, stealthErr := s.breakTrapperStealth()
+			if stealthErr == nil {
+				hitPackets = append(hitPackets, stealthPackets...)
+			}
 		}
-		hitPackets = append(hitPackets, drainPackets...)
-		pullPackets, pullErr := s.stopCampaignNPCPullEffectsTargeting(
-			s.deployedObjectID,
-		)
-		if pullErr != nil {
-			return nil, sporenet.PlayerStatDelta{},
-				fmt.Errorf("campaignDeathPullEffect: %w", pullErr)
+		if receipt != nil {
+			receipt.IsHeroOutputPrepared = true
 		}
-		hitPackets = append(hitPackets, pullPackets...)
+	}
+	if isLethal {
+		if receipt == nil || !receipt.IsHeroInitialCleanupDone {
+			s.retireOmniShieldsLocked(s.deployedObjectID)
+			hitPackets = append(hitPackets, s.takeHeroInfections()...)
+			interruptedBasic := s.resetAbilityAdmissionForSwitch()
+			if interruptedBasic != nil {
+				interruptedBasic.Stop()
+			}
+			if receipt != nil {
+				receipt.IsHeroInitialCleanupDone = true
+			}
+		}
+		if receipt == nil || !receipt.AreHeroDrainsDone {
+			drainPackets, drainErr := s.stopCampaignNPCDrainsTargeting(
+				s.deployedObjectID,
+			)
+			if drainErr != nil {
+				return nil, sporenet.PlayerStatDelta{},
+					fmt.Errorf("campaignDeathDrain: %w", drainErr)
+			}
+			hitPackets = append(hitPackets, drainPackets...)
+			if receipt != nil {
+				receipt.AreHeroDrainsDone = true
+			}
+		}
+		if receipt == nil || !receipt.AreHeroPullsDone {
+			var pullPackets [][]byte
+			var pullErr error
+			if receipt != nil {
+				pullPackets, pullErr = s.stopMutationPullEffectsTargeting(s.deployedObjectID, receipt)
+			} else {
+				pullPackets, pullErr = s.stopCampaignNPCPullEffectsTargeting(s.deployedObjectID)
+			}
+			if pullErr != nil {
+				return nil, sporenet.PlayerStatDelta{},
+					fmt.Errorf("campaignDeathPullEffect: %w", pullErr)
+			}
+			hitPackets = append(hitPackets, pullPackets...)
+			if receipt != nil {
+				receipt.AreHeroPullsDone = true
+			}
+		}
 		cooldownPacket, cooldownErr := heroraknet.DeployCooldown(
 			uint8(s.binding.Slot), s.deployedCreatureIndex, 0,
 		)
@@ -5114,9 +5817,12 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 		if droneErr == nil {
 			hitPackets = append(hitPackets, dronePackets...)
 		}
-		beastPackets, beastErr := s.stopBeastPet()
-		if beastErr == nil {
-			hitPackets = append(hitPackets, beastPackets...)
+		s.cancelPetPlasmaBurns()
+		if s.beastPetResurrection == nil {
+			beastPackets, beastErr := s.stopBeastPet()
+			if beastErr == nil {
+				hitPackets = append(hitPackets, beastPackets...)
+			}
 		}
 		summonPackets, summonErr := s.stopHeroSummons()
 		if summonErr == nil {
@@ -5135,12 +5841,15 @@ func (s *gameplayPeerSession) applyCampaignDamageHitPacketsWithCommit(
 			hitPackets = append(hitPackets, stealthPackets...)
 		}
 		if s.plasmaWreathRun != nil {
-			wreathPackets, wreathErr := s.plasmaWreathRun.Stop()
-			s.plasmaWreathRun = nil
-			if wreathErr == nil {
-				hitPackets = append(hitPackets, wreathPackets...)
+			wreathPackets, wreathErr := s.stopPlasmaWreath(now)
+			hitPackets = append(hitPackets, wreathPackets...)
+			if wreathErr != nil {
+				log.Printf("Plasma Wreath death cleanup user=%d: %v", s.binding.UserID, wreathErr)
 			}
 		}
+	}
+	if isRevivalPending {
+		return s.finishCampaignDamage(hitPackets, statDelta)
 	}
 	if isGameOver {
 		if s.binding.Mode == game.ModeChain && s.zone != nil {
@@ -5214,11 +5923,23 @@ func (s *gameplayPeerSession) stopCampaignSagePassive() ([][]byte, error) {
 	if s == nil || s.sagePassive == nil {
 		return nil, nil
 	}
+	if s.sagePassiveSchedule != nil {
+		packets, err := s.sagePassiveSchedule.stopOwner(s)
+		if err != nil {
+			return packets, fmt.Errorf("sageWorldStop: %w", err)
+		}
+		return packets, nil
+	}
 	run := s.sagePassive
 	s.sagePassive = nil
+	beastActivation, isBeastActivationFound := s.sagePassiveActivations[s.beastPetObjectID]
 	stopSummonCompanionAttacks(s.sagePassiveActivations)
 	s.removeCampaignCompanions()
 	s.sagePassiveActivations = nil
+	if isBeastActivationFound && s.beastPetResurrection != nil && s.deployedHitPoint() <= 0 {
+		beastActivation.Attack = nil
+		s.sagePassiveActivations = map[uint32]summonCompanionActivation{s.beastPetObjectID: beastActivation}
+	}
 	requests, err := run.Stop()
 	if err != nil {
 		return nil, fmt.Errorf("passiveStop: %w", err)
@@ -5239,6 +5960,10 @@ func (s *gameplayPeerSession) removeCampaignCompanions() {
 		return
 	}
 	for objectID := range s.sagePassiveActivations {
+		if objectID == s.beastPetObjectID && s.beastPetResurrection != nil && s.deployedHitPoint() <= 0 {
+			continue
+		}
+		s.cancelPetPlasmaBurn(objectID)
 		s.zone.Companion().Remove(objectID)
 	}
 }

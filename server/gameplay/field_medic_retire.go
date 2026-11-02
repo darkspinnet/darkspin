@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/zone"
 	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
@@ -64,8 +65,8 @@ func (e *fieldMedicHeroBuffRun) retire(peerSession *gameplayPeerSession, pool *m
 			retirementErr = errors.Join(retirementErr, fmt.Errorf("heroSync: %w", syncErr))
 		}
 	}
-	if e.zone != nil && e.zone.Effect() != nil {
-		e.zone.Effect().Remove(e.instanceID)
+	if inventory := e.inventory(); inventory != nil {
+		inventory.Remove(e.instanceID)
 	}
 	packets := [][]byte{deletePacket}
 	resourcePackets, resourceErr := fieldMedicTargetResourcePackets(*peerSession, e)
@@ -88,7 +89,7 @@ func (e *gameplaySessionRegistry) retireFieldMedicBuffsLocked(peerSession *gamep
 	companionPackets, companionErr := peerSession.stopFieldMedicCompanionBuffs(pool)
 	packets := append(heroPackets, companionPackets...)
 	peerSession.queueCampaignPackets(packets)
-	e.queueFieldMedicPacketsLocked(peerSession.zone, packets, peerSession.binding.UserID)
+	e.queueAbilityFieldMedicPacketsLocked(*peerSession, packets, peerSession.binding.UserID)
 	peerSession.releaseFieldMedicBuffs(pool)
 	for _, retirementErr := range []error{heroErr, companionErr} {
 		if retirementErr != nil && e.logger != nil {
@@ -127,8 +128,8 @@ func (e *fieldMedicHeroBuffRun) retireMissingRecipient() ([][]byte, error) {
 	}
 	// Recipient removal retires its stat storage. Never subtract an old run
 	// from a replacement member that happens to reuse the same hero object ID.
-	if e.zone != nil && e.zone.Effect() != nil {
-		e.zone.Effect().Remove(e.instanceID)
+	if inventory := e.inventory(); inventory != nil {
+		inventory.Remove(e.instanceID)
 	}
 	e.isRetired = true
 	return [][]byte{packet}, nil
@@ -222,11 +223,36 @@ func (e *gameplaySessionRegistry) queueFieldMedicPacketsLocked(originalZone *zon
 	}
 }
 
+func (e *gameplaySessionRegistry) queueAbilityFieldMedicPacketsLocked(source gameplayPeerSession, packets [][]byte, excludedUserIDs ...uint64) {
+	e.queueFieldMedicRealmPacketsLocked(source.zone, arenaAbilityGameID(source), packets, excludedUserIDs...)
+}
+
+func (e *gameplaySessionRegistry) queueFieldMedicRealmPacketsLocked(world *zone.Zone, arenaGameID uint32, packets [][]byte, excludedUserIDs ...uint64) {
+	if arenaGameID == 0 {
+		e.queueFieldMedicPacketsLocked(world, packets, excludedUserIDs...)
+		return
+	}
+	if len(packets) == 0 {
+		return
+	}
+	for key, member := range e.sessions {
+		if member.binding.Mode != game.ModeArena || member.binding.GameID != arenaGameID ||
+			(len(excludedUserIDs) == 1 && member.binding.UserID == excludedUserIDs[0]) {
+			continue
+		}
+		member.queuePackets(packets)
+		e.sessions[key] = member
+	}
+}
+
 func rollbackFieldMedicHeroBuff(peerSession *gameplayPeerSession, run *fieldMedicHeroBuffRun, pool *modifierPool) error {
 	run.mutex.Lock()
 	defer run.mutex.Unlock()
 	removeErr := run.remove(peerSession)
-	peerSession.zone.Effect().Remove(run.instanceID)
+	inventory := run.inventory()
+	if inventory != nil {
+		inventory.Remove(run.instanceID)
+	}
 	delete(peerSession.fieldMedicHeroBuffs, run.instanceID)
 	var syncErr error
 	if !run.isCompanion {

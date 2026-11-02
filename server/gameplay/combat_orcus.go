@@ -3,11 +3,11 @@ package gameplay
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
 	zone "github.com/darkspinnet/darkspin/server/zone"
+	zonedifficulty "github.com/darkspinnet/darkspin/server/zone/difficulty"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 	zoneprojection "github.com/darkspinnet/darkspin/server/zone/projection"
@@ -280,15 +280,12 @@ func (r campaignNPCActionRuntime) produceOrcusSpawn(
 		return nil, false, nil
 	}
 	director := peerSession.zone.DirectorDefinition()
-	nounKey := strings.ToLower(definition.ServantNoun)
-	authoredProfile, isAuthoredProfileFound := director.NPCProfilesByNoun[nounKey]
-	if !isAuthoredProfileFound || !authoredProfile.IsKnown || !authoredProfile.IsClassKnown ||
-		authoredProfile.HitPoint <= 0 {
+	authoredProfile, profileErr := zonedifficulty.ProjectOwnedSummon(director, definition.ServantNoun)
+	if profileErr != nil {
 		r.registry.mutex.Unlock()
-		return nil, true, fmt.Errorf("orcusServantDefinition: unavailable %q", definition.ServantNoun)
+		return nil, true, fmt.Errorf("orcusServantClass: %w", profileErr)
 	}
-	// ProjectDirector has already applied the selected run difficulty to this
-	// child's authored profile. The servant action and placement remain separate.
+	// Health is resolved once from this child and the mission’s owned-summon policy.
 	definition.ServantProfile = authoredProfile
 	isAbilityAvailable := peerSession.isCampaignNPCActionActiveAt(
 		generation, objectID, r.now(),

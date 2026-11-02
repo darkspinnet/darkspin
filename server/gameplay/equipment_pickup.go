@@ -104,7 +104,7 @@ func (e *campaignEquipmentPickupStep) prepareLocked(currentSession gameplayPeerS
 		}
 		return fmt.Errorf("winnerFull: %w", zone.ErrMissionInventoryFull)
 	}
-	if !e.pickup.IsWinnerReward {
+	if e.pickup.IsWinnerPartFinalized {
 		return nil
 	}
 	winnerSession := gameplayPeerSession{}
@@ -125,9 +125,18 @@ func (e *campaignEquipmentPickupStep) prepareLocked(currentSession gameplayPeerS
 		}
 		return errors.New("equipment winner session unavailable")
 	}
-	winnerPart, pendingCommit, err := winnerSession.materializeCampaignWinnerPart(
-		e.ctx, e.runtime.gameplayJoin, e.progression, e.pickup,
-	)
+	winnerPart := e.pickup.Part
+	pendingCommit := campaignPartBagCommit{}
+	if e.pickup.IsWinnerReward {
+		winnerPart, pendingCommit, err = winnerSession.materializeCampaignWinnerPart(
+			e.ctx, e.runtime.gameplayJoin, e.progression, e.pickup,
+		)
+	}
+	if err == nil {
+		winnerPart, err = e.runtime.gameplayJoin.FinalizeCampaignRecipientPart(
+			winnerPart, e.runtime.registry.campaignRecipientPartRequestLocked(winnerSession),
+		)
+	}
 	if err == nil {
 		var materializedPickup zoneinteract.EquipmentPickup
 		materializedPickup, err = currentSession.zone.PickupPayload().SetEquipmentWinnerPart(
@@ -229,6 +238,13 @@ func (e *campaignEquipmentPickupStep) produce() ([][]byte, error) {
 					"RakNet campaign equipment delayed full winner reset failed user=%d object=%d: %v",
 					e.userID, e.pickup.ObjectID, clearErr,
 				)
+			}
+		} else {
+			resetErr := sourceSession.zone.PickupPayload().ResetDeferredEquipmentWinnerPart(
+				e.pickup.ObjectID, e.userID,
+			)
+			if resetErr != nil {
+				err = errors.Join(err, fmt.Errorf("deferredReset: %w", resetErr))
 			}
 		}
 		sourceSession.zone.Pickups().Release(e.pickup.ObjectID)

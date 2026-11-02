@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/sim"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
 )
@@ -31,20 +32,26 @@ func (e campaignProjectileStep) produceFlight(
 		schedule.runtime.registry.mutex.Unlock()
 		return packets, nil
 	}
+	if schedule.wave != nil {
+		return e.produceWaveFlight(peerSession, now, isFinalScheduledStep, packets)
+	}
+	enemies := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, schedule.definition, schedule.packet.SourceTime)
 	targets := make([]sim.ProjectileCollisionTarget, 0)
+	fallbackObjectIDs := make(map[uint32]bool)
 	fallbackCount := 0
-	for _, target := range peerSession.zone.NPCs().LiveSnapshots() {
+	for _, target := range enemies.LiveSnapshots() {
 		if !target.IsPublished || target.IsDefeated || target.HitPoint <= 0 ||
 			!isSupportHealerBasicImpactTarget(target) {
 			continue
 		}
-		geometry, isFallback, geometryErr := campaignTargetProjectileGeometry(schedule.runtime.program, target)
+		geometry, isFallback, geometryErr := abilityTargetProjectileGeometryLocked(schedule.runtime, peerSession, target)
 		if geometryErr != nil {
 			schedule.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("flightGeometry[%d]: %w", target.Plan.ObjectID, geometryErr)
 		}
 		if isFallback {
 			fallbackCount++
+			fallbackObjectIDs[target.Plan.ObjectID] = true
 		}
 		targets = append(targets, sim.ProjectileCollisionTarget{
 			ObjectID: target.Plan.ObjectID, Position: sim.Position(target.Plan.Position),
@@ -111,7 +118,7 @@ func (e campaignProjectileStep) produceFlight(
 		)
 		return append(packets, impactPackets...), nil
 	}
-	target, isFound := peerSession.zone.NPCs().NPC(result.TargetObjectID)
+	target, isFound := enemies.NPC(result.TargetObjectID)
 	if !isFound {
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("flightContact: target %d unavailable", result.TargetObjectID)
@@ -124,11 +131,20 @@ func (e campaignProjectileStep) produceFlight(
 		plan.Damage.Maximum += bonusDamage
 	}
 	schedule.runtime.logger.Printf(
-		"RakNet projectile flight contact projectile=%d selected_target=%d struck_target=%d distance=%.3f speed=%.3f flight_ms=%d candidate_count=%d geometry_fallback_count=%d",
+		"RakNet projectile flight contact projectile=%d selected_target=%d struck_target=%d struck_geometry_fallback=%t distance=%.3f speed=%.3f flight_ms=%d candidate_count=%d geometry_fallback_count=%d",
 		schedule.projectileObjectID, schedule.targetObjectID, result.TargetObjectID,
+		fallbackObjectIDs[result.TargetObjectID],
 		result.Distance, result.Speed, (e.deadline - schedule.projectile.HitDelay).Milliseconds(),
 		len(targets), fallbackCount,
 	)
+	if schedule.isElectronSphere {
+		e.schedule.targetObjectID = result.TargetObjectID
+		impactPackets, impactErr := e.produceElectronContact(peerSession, target, game.Vec3(result.Position))
+		if impactErr != nil {
+			return nil, fmt.Errorf("electronContact: %w", impactErr)
+		}
+		return append(packets, impactPackets...), nil
+	}
 	impactPackets, err := e.produceContact(peerSession, target, plan, sim.ProjectileBoxCollision{
 		Position: result.Position, TravelDistance: result.Distance, IsDirectHit: true,
 	})

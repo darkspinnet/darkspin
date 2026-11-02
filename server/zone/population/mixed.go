@@ -70,6 +70,7 @@ func (s *Session) composeSpikeGroup(
 	agents := NewGroupRoster(agentEntries)
 	composer, err := NewGroupComposer(GroupComposerInput{
 		Random: s.Random(), Budget: decision.Challenge, Multiplier: s.groupChallengeMultiplier,
+		IsSourceWeighted: director.EnemyPopulationRules.Resolved().RosterSelection == "local_and_external", ExternalWeightPercent: director.EnemyPopulationRules.Resolved().ExternalRosterWeightPercent,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("mixedComposer: %w", err)

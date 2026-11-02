@@ -6,6 +6,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/game"
 	heroraknet "github.com/darkspinnet/darkspin/server/zone/hero/raknet103"
+	interactraknet "github.com/darkspinnet/darkspin/server/zone/interact/raknet103"
 )
 
 type alliedZoneSquadRestoration struct {
@@ -85,6 +86,17 @@ func (e *gameplaySessionRegistry) restoreAlliedZoneSquadsLocked(
 					)
 				}
 				worldPackets = append(worldPackets, worldPacket)
+				effectPacket, effectErr := marshalAlliedOrbRestoreEffect(
+					candidate, kind, healedCharacter.amount,
+				)
+				if effectErr != nil {
+					candidate.rollbackZoneSquadHealing(restoration.healing)
+					e.rollbackAlliedZoneSquadRestorationsLocked(restorations)
+					return nil, nil, nil, fmt.Errorf(
+						"allyHealthEffect[%d]: %w", candidate.binding.UserID, effectErr,
+					)
+				}
+				worldPackets = append(worldPackets, effectPacket)
 			}
 		}
 		for _, manaRestoration := range restoration.manaRestorations {
@@ -115,6 +127,17 @@ func (e *gameplaySessionRegistry) restoreAlliedZoneSquadsLocked(
 					)
 				}
 				worldPackets = append(worldPackets, worldPacket)
+				effectPacket, effectErr := marshalAlliedOrbRestoreEffect(
+					candidate, kind, manaRestoration.amount,
+				)
+				if effectErr != nil {
+					candidate.rollbackZoneSquadManaRestoration(restoration.manaRestorations)
+					e.rollbackAlliedZoneSquadRestorationsLocked(restorations)
+					return nil, nil, nil, fmt.Errorf(
+						"allyManaEffect[%d]: %w", candidate.binding.UserID, effectErr,
+					)
+				}
+				worldPackets = append(worldPackets, effectPacket)
 			}
 		}
 		if len(restoration.healing) == 0 &&
@@ -125,6 +148,24 @@ func (e *gameplaySessionRegistry) restoreAlliedZoneSquadsLocked(
 		restorations = append(restorations, restoration)
 	}
 	return restorations, resourcePackets, worldPackets, nil
+}
+
+func marshalAlliedOrbRestoreEffect(
+	candidate gameplayPeerSession, kind zoneOrbKind, amount float32,
+) ([]byte, error) {
+	orbKind := interactraknet.OrbHealth
+	if kind == zoneManaOrb {
+		orbKind = interactraknet.OrbMana
+	}
+	packet, err := interactraknet.OrbRestoreEffect(interactraknet.OrbPickupRequest{
+		ActiveObjectID: candidate.deployedObjectID,
+		Kind:           orbKind, Position: candidate.playerPosition,
+		Restored: campaignOrbRestoredText(amount),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("alliedOrbEffect: %w", err)
+	}
+	return packet, nil
 }
 
 func (e *gameplaySessionRegistry) rollbackAlliedZoneSquadRestorationsLocked(

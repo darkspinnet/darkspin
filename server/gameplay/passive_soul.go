@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/util"
 )
@@ -34,7 +35,7 @@ func startSoulRavagerPresentation(
 	if !isFound || peerSession.generation != generation {
 		return nil, nil
 	}
-	packets, err := peerSession.syncSoulRavagerPresentation()
+	packets, err := peerSession.syncSoulRavagerPresentation(runtime.registry)
 	if err != nil {
 		return nil, fmt.Errorf("soulPresentationSync: %w", err)
 	}
@@ -42,7 +43,7 @@ func startSoulRavagerPresentation(
 	return packets, nil
 }
 
-func (s *gameplayPeerSession) syncSoulRavagerPresentation() ([][]byte, error) {
+func (s *gameplayPeerSession) syncSoulRavagerPresentation(registry *gameplaySessionRegistry) ([][]byte, error) {
 	if s == nil {
 		return nil, nil
 	}
@@ -59,14 +60,14 @@ func (s *gameplayPeerSession) syncSoulRavagerPresentation() ([][]byte, error) {
 		if !isActive {
 			return packets, nil
 		}
-		spawnPackets, err := s.createSoulRavagerPresentation()
+		spawnPackets, err := s.createSoulRavagerPresentation(registry)
 		if err != nil {
 			return nil, fmt.Errorf("soulPresentationCreate: %w", err)
 		}
 		return append(packets, spawnPackets...), nil
 	}
 	if s.soulRavagerOwnerObjectID == 0 {
-		packets, err := s.createSoulRavagerPresentation()
+		packets, err := s.createSoulRavagerPresentation(registry)
 		if err != nil {
 			return nil, fmt.Errorf("soulPresentationCreate: %w", err)
 		}
@@ -111,12 +112,18 @@ func (s *gameplayPeerSession) syncSoulRavagerPresentation() ([][]byte, error) {
 	return packets, nil
 }
 
-func (s *gameplayPeerSession) createSoulRavagerPresentation() ([][]byte, error) {
-	if s == nil || s.zone == nil || s.deployedObjectID == 0 ||
+func (s *gameplayPeerSession) createSoulRavagerPresentation(registry *gameplaySessionRegistry) ([][]byte, error) {
+	if s == nil || (s.zone == nil && (s.binding.Mode != game.ModeArena || registry == nil)) || s.deployedObjectID == 0 ||
 		s.deployedCreatureIndex >= uint32(len(s.passiveKillStack)) {
 		return nil, errors.New("soul ravager owner unavailable")
 	}
-	firstObjectID, err := s.zone.ReserveObjectIDs(soulRavagerSlotCount)
+	firstObjectID := uint32(0)
+	var err error
+	if s.binding.Mode == game.ModeArena {
+		firstObjectID, err = registry.reserveAbilityObjectIDsLocked(s, soulRavagerSlotCount, 2000)
+	} else {
+		firstObjectID, err = s.zone.ReserveObjectIDs(soulRavagerSlotCount)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("soulObjectReserve: %w", err)
 	}

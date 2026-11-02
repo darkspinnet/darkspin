@@ -52,6 +52,8 @@ func (e fieldMedicTransferExpiry) produce() ([][]byte, error) {
 	isCurrent := isFound && peerSession.generation == e.generation &&
 		peerSession.zone != nil &&
 		peerSession.campaignNPCModifiers[e.run.instanceID] == e.run
+	var attributePacket []byte
+	var attributeErr error
 	if isCurrent {
 		clearFieldMedicNPCStatus(
 			peerSession.zone.NPCs(), e.targetObjectID,
@@ -60,6 +62,7 @@ func (e fieldMedicTransferExpiry) produce() ([][]byte, error) {
 		peerSession.zone.Effect().Remove(e.run.instanceID)
 		peerSession.untrackCampaignNPCModifier(e.run)
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
+		attributePacket, attributeErr = fieldMedicSlowAttributes(peerSession, e.run.record, e.runtime.now())
 	}
 	e.runtime.registry.mutex.Unlock()
 	if !isCurrent {
@@ -69,20 +72,28 @@ func (e fieldMedicTransferExpiry) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fieldMedicTransferRelease: %w", err)
 	}
+	if attributeErr != nil {
+		return nil, fmt.Errorf("fieldMedicExpiryAttributes: %w", attributeErr)
+	}
 	packet, err := effectraknet.ModifierDelete(
 		e.targetObjectID, e.run.instanceID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("fieldMedicTransferDelete: %w", err)
 	}
-	return [][]byte{packet}, nil
+	packets := [][]byte{packet}
+	if attributePacket != nil {
+		packets = append(packets, attributePacket)
+	}
+	return packets, nil
 }
 
 func (e fieldMedicActiveSchedule) isCurrent(
 	peerSession gameplayPeerSession, isFound bool,
 ) bool {
 	return isFound && peerSession.generation == e.generation &&
-		peerSession.zone != nil && peerSession.zone.Effect() != nil &&
+		((peerSession.zone != nil && peerSession.zone.Effect() != nil) ||
+			peerSession.binding.Mode == game.ModeArena && peerSession.isArenaCombatActive) &&
 		peerSession.deployedObjectID == e.sourceObjectID
 }
 
@@ -90,6 +101,12 @@ func (e fieldMedicActiveSchedule) hit() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	if !e.isCurrent(peerSession, isFound) {
+		e.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	if peerSession.binding.Mode == game.ModeArena {
+		// This adapter currently models NPC-origin status families only.
+		// Arena hero-origin transfers need their own typed status lifecycle.
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
@@ -124,6 +141,12 @@ func (e fieldMedicActiveSchedule) hit() ([][]byte, error) {
 			packets = append(packets, removePackets...)
 		}
 	}
+	cleansePackets, cleanseErr := e.cleanseHeroesLocked(peerSession, center, allyEffectTarget)
+	packets = append(packets, cleansePackets...)
+	if cleanseErr != nil {
+		e.runtime.registry.mutex.Unlock()
+		return packets, fmt.Errorf("fieldMedicCleanse: %w", cleanseErr)
+	}
 	peerSession = e.runtime.registry.sessions[e.sessionKey]
 	transferredBuffs, buffTargets, err := e.transferBuffsLocked(
 		&peerSession, center, buffs.winners,
@@ -157,7 +180,7 @@ func (e fieldMedicActiveSchedule) hit() ([][]byte, error) {
 	)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
-		return nil, err
+		return nil, fmt.Errorf("fieldMedicDebuffTransfer: %w", err)
 	}
 	packets = append(packets, transferred...)
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
@@ -195,7 +218,17 @@ func (e fieldMedicActiveSchedule) removeOriginalLocked(
 		if err != nil {
 			return false, nil, fmt.Errorf("fieldMedicOriginalDelete: %w", err)
 		}
-		return true, [][]byte{packet}, nil
+		packets := [][]byte{packet}
+		if modifier.AttackSpeed < 0 || modifier.MovementSpeedBuff < 0 {
+			attributePacket, attributeErr := candidate.marshalHeroSlowAttributes(
+				modifier.TargetObjectID, candidate.enemyAttackSpeed(), candidate.enemyMovementSpeedBuff(),
+			)
+			if attributeErr != nil {
+				return false, packets, fmt.Errorf("fieldMedicOriginalAttributes: %w", attributeErr)
+			}
+			packets = append(packets, attributePacket)
+		}
+		return true, packets, nil
 	}
 	return false, nil, nil
 }
@@ -250,9 +283,14 @@ func (e fieldMedicActiveSchedule) transferDebuffLocked(
 	if duration <= 0 || !isFieldMedicStatusSupported(modifier.GUID) {
 		return nil, false, nil
 	}
+	target, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
+	if !isTargetFound {
+		return nil, false, nil
+	}
+	duration = zonenpc.CrowdControlDuration(target.Plan, duration)
 	expiresAt := e.runtime.now().Add(duration)
 	err := applyFieldMedicNPCStatus(
-		peerSession.zone.NPCs(), targetObjectID, modifier.GUID, expiresAt,
+		peerSession.zone.NPCs(), targetObjectID, modifier, expiresAt,
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("fieldMedicStatusApply: %w", err)
@@ -270,6 +308,8 @@ func (e fieldMedicActiveSchedule) transferDebuffLocked(
 		Rank: modifier.Rank, Duration: duration,
 		Kind:            zoneeffect.ModifierKindDebuff,
 		InitiatorObject: modifier.InitiatorObject,
+		StackCount:      modifier.StackCount, AttackSpeed: modifier.AttackSpeed,
+		MovementSpeedBuff: modifier.MovementSpeedBuff,
 	}
 	err = peerSession.trackCampaignNPCModifier(run)
 	if err == nil {
@@ -325,7 +365,15 @@ func (e fieldMedicActiveSchedule) transferDebuffLocked(
 		_, _ = run.release(e.runtime.modifierPool)
 		return nil, false, errors.New("fieldMedicCreateRun: modifier unavailable")
 	}
-	return [][]byte{packet}, true, nil
+	packets := [][]byte{packet}
+	attributePacket, attributeErr := fieldMedicSlowAttributes(*peerSession, run.record, e.runtime.now())
+	if attributeErr != nil {
+		return packets, true, fmt.Errorf("fieldMedicTransferAttributes: %w", attributeErr)
+	}
+	if attributePacket != nil {
+		packets = append(packets, attributePacket)
+	}
+	return packets, true, nil
 }
 
 func (e fieldMedicActiveSchedule) release() ([][]byte, error) {

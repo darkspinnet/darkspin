@@ -21,7 +21,26 @@ func State(
 	return statePublication(publication)
 }
 
+func Transition(objectID uint32, teleport zonesecurity.Teleport, isActive bool) ([][]byte, error) {
+	publication, err := zonesecurity.PublishTransition(objectID, teleport, isActive)
+	if err != nil {
+		return nil, fmt.Errorf("transitionPublication: %w", err)
+	}
+	return statePublication(publication)
+}
+
 func InitialState(objectID [zonesecurity.RouteCount]uint32) ([][]byte, error) {
+	packets, err := InitialStateWithRotations(objectID, [zonesecurity.RouteCount]raknet.Vector3{})
+	if err != nil {
+		return nil, fmt.Errorf("initialRotations: %w", err)
+	}
+	return packets, nil
+}
+
+func InitialStateWithRotations(
+	objectID [zonesecurity.RouteCount]uint32,
+	rotations [zonesecurity.RouteCount]raknet.Vector3,
+) ([][]byte, error) {
 	publications, err := zonesecurity.PublishInitialState(objectID)
 	if err != nil {
 		return nil, fmt.Errorf("initialPublication: %w", err)
@@ -32,7 +51,7 @@ func InitialState(objectID [zonesecurity.RouteCount]uint32) ([][]byte, error) {
 		if !isFound {
 			return nil, fmt.Errorf("initialRoute[%d]: unavailable", index)
 		}
-		anchorPacket, err := Anchor(publication.ObjectID, teleport)
+		anchorPacket, err := AnchorWithRotation(publication.ObjectID, teleport, rotations[index])
 		if err != nil {
 			return nil, fmt.Errorf("initialAnchor[%d]: %w", index, err)
 		}
@@ -49,6 +68,19 @@ func InitialState(objectID [zonesecurity.RouteCount]uint32) ([][]byte, error) {
 func SnapshotState(
 	snapshot zonesecurity.Snapshot, threatGroups ...[]zonesecurity.Threat,
 ) ([][]byte, error) {
+	packets, err := SnapshotStateWithRotations(snapshot,
+		[zonesecurity.RouteCount]raknet.Vector3{}, threatGroups...)
+	if err != nil {
+		return nil, fmt.Errorf("snapshotRotations: %w", err)
+	}
+	return packets, nil
+}
+
+func SnapshotStateWithRotations(
+	snapshot zonesecurity.Snapshot,
+	rotations [zonesecurity.RouteCount]raknet.Vector3,
+	threatGroups ...[]zonesecurity.Threat,
+) ([][]byte, error) {
 	if snapshot.ObjectID == ([zonesecurity.RouteCount]uint32{}) {
 		return nil, nil
 	}
@@ -58,7 +90,7 @@ func SnapshotState(
 		if !isFound {
 			return nil, fmt.Errorf("snapshotRoute[%d]: unavailable", index)
 		}
-		anchorPacket, err := Anchor(objectID, teleport)
+		anchorPacket, err := AnchorWithRotation(objectID, teleport, rotations[index])
 		if err != nil {
 			return nil, fmt.Errorf("snapshotAnchor[%d]: %w", index, err)
 		}

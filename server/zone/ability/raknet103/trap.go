@@ -12,6 +12,7 @@ import (
 const turretLaserAnimation = "TurretLaser"
 const turretLaserBeamEffect = "cyber_laser_turret_beam.ServerEventDef"
 const turretLaserHitEffect = "cyber_common_hit_small.ServerEventDef"
+const pipeBombTauntEffect = "cyber_trapper_taunt.ServerEventDef"
 
 type TurretLaserRequest struct {
 	SourceObjectID uint32
@@ -105,6 +106,20 @@ func TrapRemoveEffect(objectID uint32) ([]byte, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("trapEffectRemoveMarshal: %w", err)
+	}
+	return packet, nil
+}
+
+func PipeBombTauntEffect(objectID uint32) ([]byte, error) {
+	if objectID == 0 {
+		return nil, errors.New("pipe bomb taunt effect invalid")
+	}
+	packet, err := raknet.MarshalApplication(raknet.AttachedEffectMessage{
+		Slot: 1, IsForceAttached: true,
+		Asset: util.HashID(pipeBombTauntEffect), ObjectID: objectID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pipeBombTauntMarshal: %w", err)
 	}
 	return packet, nil
 }

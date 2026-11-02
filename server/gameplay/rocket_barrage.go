@@ -10,6 +10,7 @@ import (
 // The registry lock owns channel state. Projectile lifetime remains with the
 // burst run, so interrupting the channel does not remove rockets in flight.
 type rocketBarrageChannel struct {
+	scenarioCast  *scenarioRideCast
 	run           *abilityraknet.BurstRun
 	startedAt     time.Time
 	sourceTime    uint64
@@ -25,6 +26,8 @@ func (e *gameplayPeerSession) interruptRocketBarrage(now time.Time) {
 	}
 	e.rocketBarrage = nil
 	channel.isInterrupted = true
+	e.releaseScenarioRide(channel.scenarioCast, now)
+	e.failScenarioRide(channel.scenarioCast, now, "Rocket Barrage channel interrupted")
 	channel.run.StopLaunching()
 	e.resetAbilityRelease()
 	timestamp := channel.sourceTime + uint64(max(time.Duration(0), now.Sub(channel.startedAt))/time.Millisecond)

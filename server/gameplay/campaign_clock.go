@@ -56,7 +56,7 @@ func marshalCampaignClock(
 	return packet, nil
 }
 
-func (e campaignClockRun) schedule() error {
+func (e *campaignClockRun) schedule() error {
 	if e.registry == nil || e.sessionKey == "" || e.generation == 0 ||
 		e.transportGeneration == 0 ||
 		(e.packet.ScheduleGroupResult == nil && e.packet.ScheduleGroup == nil) ||
@@ -78,11 +78,12 @@ func (e campaignClockRun) schedule() error {
 	return nil
 }
 
-func (e campaignClockRun) publish() ([][]byte, error) {
+func (e *campaignClockRun) publish() ([][]byte, error) {
 	e.registry.mutex.RLock()
 	peerSession, isFound := e.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
 		peerSession.transportGeneration == e.transportGeneration &&
+		peerSession.campaignClock == e &&
 		!peerSession.isRejoinPending && peerSession.stage.IsDungeon() &&
 		peerSession.zone != nil
 	e.registry.mutex.RUnlock()
@@ -152,8 +153,8 @@ func (e campaignClockRun) publish() ([][]byte, error) {
 
 func (r gameplaySetupRuntime) campaignClockRun(
 	packet raknet.Packet, peerSession gameplayPeerSession,
-) campaignClockRun {
-	return campaignClockRun{
+) *campaignClockRun {
+	return &campaignClockRun{
 		landedPickups: make(map[uint32]bool),
 		registry:      r.registry, packet: packet.Autonomous(),
 		sessionKey: packet.Address.String(), generation: peerSession.generation,
@@ -163,12 +164,46 @@ func (r gameplaySetupRuntime) campaignClockRun(
 	}
 }
 
+func (e *campaignClockRun) start() error {
+	e.registry.mutex.Lock()
+	peerSession, isFound := e.registry.sessions[e.sessionKey]
+	isCurrent := isFound && e.canReplace(peerSession)
+	if !isCurrent {
+		e.registry.mutex.Unlock()
+		return nil
+	}
+	// Scheduling only queues an asynchronous producer; it never invokes publish
+	// inline. Keep ownership locked until the producer is queued and installed.
+	err := e.schedule()
+	if err != nil {
+		e.registry.mutex.Unlock()
+		return fmt.Errorf("clockStart: %w", err)
+	}
+	// Setup and rejoin may commit again without replacing the transport. Only
+	// the latest committed clock may publish; parallel streams make the native
+	// remote-clock estimator consume near-identical, sometimes backward times.
+	// Publish ownership only after scheduling succeeds so a failed replacement
+	// leaves the previous stream running.
+	peerSession.campaignClock = e
+	e.registry.sessions[e.sessionKey] = peerSession
+	e.registry.mutex.Unlock()
+	return nil
+}
+
+func (e *campaignClockRun) canReplace(peerSession gameplayPeerSession) bool {
+	return peerSession.generation == e.generation &&
+		peerSession.transportGeneration == e.transportGeneration &&
+		!peerSession.isRejoinPending && peerSession.stage.IsDungeon() &&
+		peerSession.zone != nil && (peerSession.campaignClock == nil ||
+		!e.sourceStartedAt.Before(peerSession.campaignClock.sourceStartedAt))
+}
+
 func (r gameplaySetupRuntime) startCampaignClock(
 	packet raknet.Packet, peerSession gameplayPeerSession,
 ) error {
 	run := r.campaignClockRun(packet, peerSession)
 	err := packet.AfterResponseCommit(func() {
-		scheduleErr := run.schedule()
+		scheduleErr := run.start()
 		if scheduleErr != nil && r.logger != nil {
 			r.logger.Printf(
 				"RakNet campaign clock start failed game=%d user=%d remote=%s: %v",
@@ -187,7 +222,7 @@ func (r gameplaySetupRuntime) scheduleCampaignClock(
 	packet raknet.Packet, peerSession gameplayPeerSession,
 ) {
 	run := r.campaignClockRun(packet, peerSession)
-	err := run.schedule()
+	err := run.start()
 	if err != nil && r.logger != nil {
 		r.logger.Printf(
 			"RakNet campaign clock resume failed game=%d user=%d remote=%s: %v",

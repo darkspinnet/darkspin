@@ -1,6 +1,9 @@
 package npc
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 // RetireMarkerSet removes every remaining actor in one authored marker set
 // from live simulation without replacing the session that owns other sets.
@@ -24,6 +27,7 @@ func (s *Session) RetireMarkerSet(
 		}
 		npc.HitPoint = 0
 		npc.IsDefeated = true
+		stopMutationLife(&npc, time.Now())
 		fiendObjectIDs := s.deactivateNashiraPassive(&npc)
 		for _, fiendObjectID := range fiendObjectIDs {
 			retired = append(retired, s.npcs[fiendObjectID])

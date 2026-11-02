@@ -1,0 +1,350 @@
+//go:build scenario
+
+package gameplay
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/darkspinnet/darkspin/server/raknet"
+	"github.com/darkspinnet/darkspin/server/scenario"
+	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
+)
+
+func (e gameplayPendingRuntime) consumeScenarioNPCControl(ctx context.Context, packet raknet.Packet, queuedPeer gameplayPeerSession, isEligible bool) ([][]byte, bool, error) {
+	if packet.ScheduleGroup == nil && packet.ScheduleGroupResult == nil {
+		return nil, false, nil
+	}
+	err := e.registry.lockScenarioSpawn(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("npcConsumeLock: %w", err)
+	}
+	requestID := ""
+	for index, pendingID := range e.registry.pendingNPCControls {
+		req := e.registry.npcControlRequests[pendingID]
+		if req.Identity.UserID != int64(queuedPeer.binding.UserID) {
+			continue
+		}
+		requestID = pendingID
+		e.registry.pendingNPCControls = append(e.registry.pendingNPCControls[:index], e.registry.pendingNPCControls[index+1:]...)
+		break
+	}
+	if requestID == "" {
+		e.registry.mutex.Unlock()
+		return nil, false, nil
+	}
+	req := e.registry.npcControlRequests[requestID]
+	peer, actor, err := e.registry.controlledNPCPeerLocked(ctx, req.Identity)
+	if err == nil && !e.damage.npc.now().Before(e.registry.npcControlDeadlines[requestID]) {
+		err = errors.New("NPC command expired before packet-owner admission; no action was applied")
+	}
+	if err == nil && (!isEligible || peer.generation != queuedPeer.generation || peer.transportGeneration != packet.TransportGeneration) {
+		err = errors.New("NPC command packet owner changed before admission")
+	}
+	isCancellation := req.Operation == "retire" || req.Operation == "set_ai" && req.IsAIEnabled != nil && !*req.IsAIEnabled
+	isCleanup := isCancellation
+	if err == nil && (actor.IsDefeated || actor.HitPoint <= 0 || peer.deployedHitPoint() <= 0) && !isCleanup {
+		err = errors.New("NPC command source or owned hero is dead")
+	}
+	if err == nil {
+		err = validateScenarioNPCRequest(req, peer, actor)
+	}
+	if err == nil && actor.IsFixture && req.Operation == "retire" {
+		err = e.registry.validateFixtureRetirementLocked(peer, req.Identity.ObjectID)
+	}
+	if err == nil && req.Operation == "ability" {
+		selectedAbility, selectedErr := scenarioSelectedNPCAbility(peer, req.Identity.ObjectID, req.TargetObjectID, packet.SourceTime)
+		if selectedErr != nil {
+			err = selectedErr
+		} else if selectedAbility != req.AbilityName {
+			err = fmt.Errorf("manual NPC ability %q would select %q at current positions", req.AbilityName, selectedAbility)
+		}
+	}
+	if err != nil {
+		e.registry.failNPCControlLocked(requestID, err)
+		e.registry.mutex.Unlock()
+		return nil, true, fmt.Errorf("npcConsumeValidate: %w", err)
+	}
+	ref := zonenpc.ScenarioControlRef{ObjectID: req.Identity.ObjectID, ControlID: req.Identity.SpawnRequestID}
+	wasPublished := actor.IsPublished
+	wasDefeated := actor.IsDefeated
+	wasScenarioDefeated := actor.LastCommand == "defeat"
+	var action zonenpc.Snapshot
+	var isStarted bool
+	var isFirstAction bool
+	var retiredOwnedObjectIDs []uint32
+	var destroyedObjectIDs map[uint32]bool
+	if req.Operation == "retire" {
+		// Capture presentation destruction before retirement changes actor state.
+		// Health and publication alone do not distinguish a retained corpse from
+		// an actor whose ordinary lifetime already sent ObjectDelete.
+		destroyedObjectIDs = make(map[uint32]bool)
+		for _, snapshot := range peer.zone.NPCs().Snapshots() {
+			if peer.zone.IsNPCDestroyed(snapshot.Plan.ObjectID) {
+				destroyedObjectIDs[snapshot.Plan.ObjectID] = true
+			}
+		}
+	}
+	switch req.Operation {
+	case "set_ai":
+		actor, err = peer.zone.NPCs().ScenarioSetAI(zonenpc.ScenarioAIRequest{Ref: ref, IsAIEnabled: *req.IsAIEnabled})
+		if err == nil && *req.IsAIEnabled {
+			var isAcquired bool
+			action, isAcquired, err = peer.zone.NPCs().AcquireTarget(req.Identity.ObjectID, peer.deployedObjectID)
+			if err == nil && !isAcquired && action.TargetObjectID != peer.deployedObjectID {
+				err = errors.New("enabled NPC could not acquire the owned deployed hero")
+			}
+		}
+	case "ability":
+		action, isStarted, isFirstAction, err = peer.zone.NPCs().ScenarioStartAction(zonenpc.ScenarioActionRequest{
+			Ref: ref, Owner: zonenpc.ActionOwner{UserID: peer.binding.UserID, PeerGeneration: peer.generation}, TargetObjectID: req.TargetObjectID,
+		})
+		if err == nil && !isStarted {
+			err = errors.New("manual NPC ability admission was refused")
+		}
+		if err == nil {
+			actor.ActionGeneration = action.ActionGeneration
+		}
+	case "move":
+		// The first movement step runs through the owning scheduler, not here.
+	case "restore":
+		actor, err = peer.zone.NPCs().ScenarioRestoreHitPoint(ref)
+	case "defeat":
+		actor, err = peer.zone.NPCs().ScenarioDefeat(ref)
+	case "retire":
+		actor, retiredOwnedObjectIDs, err = peer.zone.NPCs().ScenarioRetire(ref)
+		if err == nil && actor.IsFixture {
+			err = e.retireFixtureHazardsLocked(peer, req.Identity.ObjectID)
+		}
+	default:
+		err = errors.New("NPC command operation is unsupported")
+	}
+	if err != nil {
+		e.registry.failNPCControlLocked(requestID, err)
+		e.registry.mutex.Unlock()
+		return nil, true, fmt.Errorf("npcConsumeApply: %w", err)
+	}
+	receipt := e.registry.npcControlReceipts[requestID]
+	receipt.IsAccepted, receipt.State, receipt.ActionGeneration = true, "admitted", actor.ActionGeneration
+	if req.Operation == "set_ai" || req.Operation == "restore" || req.Operation == "defeat" || req.Operation == "retire" {
+		receipt.IsCompleted, receipt.IsSettled, receipt.State = true, true, "completed"
+	}
+	e.registry.npcControlReceipts[requestID] = receipt
+	npcSession := peer.zone.NPCs()
+	if req.Operation == "set_ai" && *req.IsAIEnabled {
+		action, isStarted = npcSession.NPC(req.Identity.ObjectID)
+		if !isStarted {
+			err = errors.New("controlled NPC disappeared after enabling AI")
+		}
+	}
+	e.registry.mutex.Unlock()
+	if err != nil {
+		e.registry.failNPCControl(requestID, err)
+		return nil, true, fmt.Errorf("npcConsumeSnapshot: %w", err)
+	}
+	var packets [][]byte
+	switch req.Operation {
+	case "set_ai":
+		if *req.IsAIEnabled {
+			packets, err = e.damage.npc.scheduleFirstActions(packet, packet.Address.String(), peer.generation, []zonenpc.SpawnPlan{action.Plan}, packet.SourceTime)
+		} else {
+			packets, err = scenarioNPCStop(actor)
+		}
+	case "ability":
+		// Run the admitted action through the ordinary first-action producer.
+		// It selects the NPC family, pursues when needed, and schedules its
+		// authored release and impact. AI-off fences autonomous continuation.
+		step := campaignNPCFirstActionStep{runtime: e.damage.npc, packet: packet.Autonomous(),
+			sessionKey: packet.Address.String(), generation: peer.generation,
+			actionGeneration: action.ActionGeneration, objectID: req.Identity.ObjectID,
+			timestamp: packet.SourceTime}
+		packets, err = step.produce()
+	case "move":
+		step := scenarioNPCMoveStep{runtime: e, packet: packet.Autonomous(), requestID: requestID, req: req,
+			controlGeneration: actor.ControlGeneration, startedAt: e.damage.npc.now(), lastAt: e.damage.npc.now()}
+		err = step.schedule()
+	case "restore", "defeat":
+		var healthPacket []byte
+		healthPacket, err = raknet.MarshalApplication(raknet.CombatantDataDeltaMessage{
+			ObjectID: actor.ObjectID, HitPoints: actor.HitPoint, IsHitPointChanged: true,
+		})
+		if err == nil {
+			packets = [][]byte{healthPacket}
+		}
+	case "retire":
+		deleteObjectIDs := make([]uint32, 0, len(retiredOwnedObjectIDs)+1)
+		if wasPublished && !destroyedObjectIDs[actor.ObjectID] &&
+			(actor.IsFixture || !wasDefeated || wasScenarioDefeated) {
+			deleteObjectIDs = append(deleteObjectIDs, actor.ObjectID)
+		}
+		for _, objectID := range retiredOwnedObjectIDs {
+			if !destroyedObjectIDs[objectID] {
+				deleteObjectIDs = append(deleteObjectIDs, objectID)
+			}
+		}
+		if len(deleteObjectIDs) != 0 {
+			var deletePacket []byte
+			deletePacket, err = raknet.MarshalApplication(raknet.ObjectDeleteMessage{ObjectID: deleteObjectIDs})
+			if err == nil {
+				packets = [][]byte{deletePacket}
+			}
+		}
+	}
+	if err != nil {
+		if req.Operation == "ability" {
+			npcSession.ReleaseActionGeneration(req.Identity.ObjectID, action.ActionOwner, action.ActionGeneration)
+		}
+		e.registry.failNPCControl(requestID, err)
+		return packets, true, fmt.Errorf("npcNormalAction: %w", err)
+	}
+	commit := scenarioNPCResponseCommit{registry: e.registry, requestID: requestID}
+	if req.Operation == "retire" && len(packets) == 0 {
+		// Cleanup is complete without another wire publication. An empty
+		// response never runs the send fence, so settle it directly rather
+		// than inventing a packet to trigger completion.
+		commit.complete()
+		return packets, true, nil
+	}
+	err = publishCampaignPeersAfterCommit(e.registry, packet, packets)
+	if err != nil {
+		e.registry.failNPCControl(requestID, err)
+		return packets, true, fmt.Errorf("npcPeerPublication: %w", err)
+	}
+	err = packet.AfterResponseCommit(commit.complete)
+	if err != nil {
+		e.registry.failNPCControl(requestID, err)
+		return packets, true, fmt.Errorf("npcResponseCommit: %w", err)
+	}
+	if isFirstAction {
+		// Manual admission may establish ordinary first-action state; it does
+		// not grant an autonomous continuation or fabricate impact evidence.
+		e.logger.Printf("Scenario manual NPC first action object=%d generation=%d", req.Identity.ObjectID, action.ActionGeneration)
+	}
+	return packets, true, nil
+}
+
+func scenarioSelectedNPCAbility(peer gameplayPeerSession, objectID uint32, targetObjectID uint32, timestamp uint64) (string, error) {
+	actor, isActorFound := peer.zone.NPCs().NPC(objectID)
+	target, isTargetFound := peer.campaignNPCTarget(peer.generation, targetObjectID)
+	if !isActorFound || !isTargetFound {
+		return "", errors.New("manual NPC action or target is unavailable")
+	}
+	profile, isProfileFound := campaignNPCActionProfile(actor.Plan, target.Position, target.ActorFootprintRadius)
+	if !isProfileFound || profile.AbilityName == "" {
+		return "", errors.New("manual NPC selected action profile is unavailable")
+	}
+	distance := target.Position.Sub(actor.Plan.Position).Length()
+	if profile.AbilityName == "Resurrect" {
+		for _, defeated := range peer.zone.NPCs().DefeatedCandidates(actor.Plan.Position, profile.Range) {
+			if strings.EqualFold(defeated.Plan.MarkerSetName, actor.Plan.MarkerSetName) {
+				return profile.AbilityName, nil
+			}
+		}
+		return "GhostlyBolt", nil
+	}
+	if profile.AbilityName == "ScaldronBasicDoppler_Shot" {
+		cloneProfile, isCloneFound := zonenpc.ScaldronBasicDopplerCloneProfile(actor.Plan.NounName)
+		if isCloneFound && cloneProfile.AbilityName != "" &&
+			peer.campaignNPCDopplerCloneReadiness[objectID] <= timestamp {
+			fakeObjectID := peer.campaignNPCDopplerFakeObjectIDs[objectID]
+			_, isFakeFound := peer.zone.NPCs().LiveNPC(fakeObjectID)
+			if !isFakeFound {
+				nearby, err := peer.zone.NPCs().ActorsInSphere(zonenpc.SphereRequest{
+					Center: actor.Plan.Position, Radius: 50,
+				})
+				if err != nil {
+					return "", fmt.Errorf("manualDopplerPopulation: %w", err)
+				}
+				if len(nearby) < 15 {
+					return cloneProfile.AbilityName, nil
+				}
+			}
+		}
+	}
+	if profile.AbilityName == "ScaldronBasicSinkhole_Projectile" {
+		wellProfile, isWellFound := zonenpc.ScaldronBasicSinkholeWellProfile(actor.Plan.NounName)
+		if isWellFound && distance <= wellProfile.Range+target.FootprintRadius &&
+			peer.campaignNPCSinkholeReadiness[objectID] <= timestamp {
+			return wellProfile.AbilityName, nil
+		}
+	}
+	if profile.AbilityName == "ZelemBasicPackMeleeAttack" &&
+		!peer.zone.NPCs().HasLivingAlly(objectID, 20) {
+		return "ZelemBasicPackMeleeCower", nil
+	}
+	if profile.AbilityName == "SleepMushroom" &&
+		(distance <= 10 || timestamp < peer.campaignNPCNextSleepMushrooms[objectID]) {
+		return "RezMelee", nil
+	}
+	if profile.AbilityName == "Puller" {
+		swipe, isSwipeFound := zonenpc.VerdanthSpecialThreeFastSwipeProfile(actor.Plan.NounName)
+		if isSwipeFound {
+			surfaceDistance := distance - actor.Plan.ActorFootprintRadius() - target.FootprintRadius
+			if surfaceDistance <= swipe.Range || peer.campaignNPCPullReadiness[objectID] > timestamp {
+				return "FastSwipe", nil
+			}
+		}
+	}
+	if profile.AbilityName == "CryosBasicCharge" && zonenpc.ShouldCryosBasicChargeHeadbutt(distance) {
+		return "CryosBasicChargeHeadbutt", nil
+	}
+	if profile.AbilityName == "VerdanthBasicPicky" {
+		surfaceDistance := max(float32(0), distance-actor.Plan.ActorFootprintRadius()-target.FootprintRadius)
+		if !zonenpc.ShouldVerdanthBasicPickyCharge(surfaceDistance) {
+			return "VerdanthBasicPickyMelee", nil
+		}
+	}
+	return profile.AbilityName, nil
+}
+
+func (e *gameplaySessionRegistry) failNPCControlLocked(requestID string, err error) {
+	receipt, isFound := e.npcControlReceipts[requestID]
+	if !isFound || err == nil {
+		return
+	}
+	receipt.State, receipt.Failure, receipt.IsSettled = "failed", err.Error(), true
+	receipt.IsCompleted = false
+	e.npcControlReceipts[requestID] = receipt
+}
+
+func (e *gameplaySessionRegistry) failNPCControl(requestID string, err error) {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	e.failNPCControlLocked(requestID, err)
+}
+
+type scenarioNPCResponseCommit struct {
+	registry  *gameplaySessionRegistry
+	requestID string
+}
+
+func (e scenarioNPCResponseCommit) complete() {
+	e.registry.mutex.Lock()
+	defer e.registry.mutex.Unlock()
+	receipt, isFound := e.registry.npcControlReceipts[e.requestID]
+	if !isFound {
+		return
+	}
+	receipt.IsResponseCommitted = true
+	e.registry.npcControlReceipts[e.requestID] = receipt
+	if receipt.Operation == "retire" {
+		spawn := e.registry.spawnReceipts[receipt.Identity.SpawnRequestID]
+		spawn.State = "retired"
+		e.registry.spawnReceipts[receipt.Identity.SpawnRequestID] = spawn
+	}
+}
+
+// Move permits at most ten seconds of actor-footprint mesh progression. A
+// blocked, crowd-controlled, superseded or stale actor produces a partial error.
+type scenarioNPCMoveStep struct {
+	runtime           gameplayPendingRuntime
+	packet            raknet.Packet
+	requestID         string
+	req               scenario.NPCControlRequest
+	controlGeneration uint64
+	startedAt         time.Time
+	lastAt            time.Time
+}

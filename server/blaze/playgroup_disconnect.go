@@ -2,6 +2,8 @@ package blaze
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/darkspinnet/darkspin/server/party"
 )
@@ -13,6 +15,62 @@ type playgroupDisconnectLeave struct {
 	networkRegistry *playgroupNetworkRegistry
 	partyID         uint32
 	userID          int64
+}
+
+type playgroupShipDisconnect struct {
+	partyService    *party.Service
+	networkRegistry *playgroupNetworkRegistry
+	userManager     socialUserManager
+	matchmaking     matchmakingDirectory
+}
+
+// A ship return can send Leave before RemovePlayer on the same Blaze session.
+// Once removal releases its game, finish that deferred leave without waiting
+// for a TCP disconnect. The registry's game/party lifecycle gate is held here.
+func completePendingPlaygroupLeave(ctx context.Context, req *Request, personaID int64) error {
+	if req == nil || req.Session == nil {
+		return nil
+	}
+	session := req.Session
+	pending := session.pendingPlaygroupLeave
+	user := requestUser(req)
+	if pending == nil || user == nil || user.Account.ID != personaID ||
+		pending.userID != personaID || user.CurrentGameID() != 0 {
+		return nil
+	}
+	before, isFound := pending.partyService.Lookup(pending.partyID)
+	if !isFound {
+		session.pendingPlaygroupLeave = nil
+		return nil
+	}
+	response, err := completePlaygroupLeave(ctx, req, pending.partyService, pending.networkRegistry, before, personaID)
+	if err != nil {
+		return fmt.Errorf("pendingLeave: %w", err)
+	}
+	if response.ErrorCode != 0 && response.ErrorCode != 0x0006 {
+		return fmt.Errorf("pendingReply: playgroup leave rejected with code %d", response.ErrorCode)
+	}
+	session.pendingPlaygroupLeave = nil
+	return nil
+}
+
+func (e *Registry) lockPartyLifecycle(ctx context.Context) error {
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		err := ctx.Err()
+		if err != nil {
+			return fmt.Errorf("partyLifecycleContext: %w", err)
+		}
+		if e.partyLifecycle.TryLock() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("partyLifecycleWait: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func isPlaygroupHandoffFrame(frame Frame) bool {
@@ -33,23 +91,26 @@ func isPlaygroupHandoffFrame(frame Frame) bool {
 func (e *Session) completeDisconnectedPlaygroupLeave(ctx context.Context) {
 	pending := e.pendingPlaygroupLeave
 	e.pendingPlaygroupLeave = nil
-	if pending == nil || e.server == nil {
+	if e.server == nil {
 		return
 	}
-	if len(e.server.sessionsForUser(pending.userID)) != 0 {
-		return
-	}
-	before, isFound := pending.partyService.Lookup(pending.partyID)
-	if !isFound {
-		return
-	}
-	req := &Request{Session: e}
-	response, err := completePlaygroupLeave(
-		ctx, req, pending.partyService, pending.networkRegistry, before, pending.userID,
-	)
+	cleanupContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	err := e.server.registry.lockPartyLifecycle(cleanupContext)
 	if err != nil {
-		e.server.logger.Printf("Disconnected playgroup leave failed user=%d party=%d: %v",
-			pending.userID, pending.partyID, err)
+		e.server.logger.Printf("Disconnected playgroup stage failed session=%d: %v", e.ID, err)
+		return
+	}
+	req, response, err := e.prepareDisconnectedPlaygroupLeave(cleanupContext, pending)
+	e.server.registry.partyLifecycle.Unlock()
+	if req == nil {
+		if err != nil {
+			e.server.logger.Printf("Disconnected playgroup preparation failed session=%d: %v", e.ID, err)
+		}
+		return
+	}
+	if err != nil {
+		e.server.logger.Printf("Disconnected playgroup leave failed session=%d: %v", e.ID, err)
 	}
 	// Deliver already-encoded notifications even if a later encoding failed.
 	for _, notification := range req.targetedNotifications {
@@ -57,12 +118,49 @@ func (e *Session) completeDisconnectedPlaygroupLeave(ctx context.Context) {
 		target.traceFrame("out", notification.frame)
 		sendErr := target.send(notification.frame)
 		if sendErr != nil {
-			e.server.logger.Printf("Disconnected playgroup notification failed user=%d recipient=%d: %v",
-				pending.userID, target.ID, sendErr)
+			e.server.logger.Printf("Disconnected playgroup notification failed session=%d recipient=%d: %v",
+				e.ID, target.ID, sendErr)
 		}
 	}
 	if err == nil && response != nil && response.ErrorCode != 0 {
-		e.server.logger.Printf("Disconnected playgroup leave rejected user=%d party=%d code=%d",
-			pending.userID, pending.partyID, response.ErrorCode)
+		e.server.logger.Printf("Disconnected playgroup leave rejected session=%d code=%d",
+			e.ID, response.ErrorCode)
 	}
+}
+
+// Called under the disconnected session's request stage and the shared
+// lifecycle gate. Auth replacement and ordinary game admission cannot pass
+// the final-session/idle checks before the feature-owned leave commits.
+func (e *Session) prepareDisconnectedPlaygroupLeave(
+	ctx context.Context, pending *playgroupDisconnectLeave,
+) (*Request, *Response, error) {
+	user := requestUser(&Request{Session: e})
+	if user == nil || len(e.server.sessionsForUser(user.Account.ID)) != 0 || user.CurrentGameID() != 0 {
+		return nil, nil, nil
+	}
+	e.server.registry.mu.RLock()
+	owner := e.server.registry.playgroupDisconnect
+	e.server.registry.mu.RUnlock()
+	if owner == nil {
+		return nil, nil, nil
+	}
+	before, isFound := owner.partyService.PartyForMember(user.Account.ID)
+	if !isFound {
+		return nil, nil, nil
+	}
+	if pending != nil && (pending.userID != user.Account.ID || pending.partyID != before.ID) {
+		return nil, nil, nil
+	}
+	for _, member := range before.Members {
+		peer := owner.userManager.UserByID(member.ID)
+		if peer == nil || peer.CurrentGameID() != 0 || (owner.matchmaking != nil && owner.matchmaking.IsQueued(member.ID)) {
+			return nil, nil, nil
+		}
+	}
+	req := &Request{Session: e}
+	response, err := completePlaygroupLeave(ctx, req, owner.partyService, owner.networkRegistry, before, user.Account.ID)
+	if err != nil {
+		return req, response, fmt.Errorf("disconnectLeave: %w", err)
+	}
+	return req, response, nil
 }

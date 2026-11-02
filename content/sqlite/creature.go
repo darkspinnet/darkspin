@@ -31,6 +31,7 @@ type creatureTemplate struct {
 	Name            string
 	ElementType     string
 	ClassType       string
+	UnlockLevel     uint32
 	WeaponMinDamage float64
 	WeaponMaxDamage float64
 	StatTemplate    string
@@ -50,6 +51,7 @@ type playerClassIdentity struct {
 	NameLocaleKey   string
 	ElementType     string
 	ClassType       string
+	UnlockLevel     uint32
 	WeaponMinDamage float64
 	WeaponMaxDamage float64
 	IsHandPresent   bool
@@ -132,6 +134,7 @@ func writeCreatureTemplates(ctx context.Context, transaction *sql.Tx, installPat
 			Name:            baseName + " " + creatureVariant(noun.BaseName),
 			ElementType:     class.ElementType,
 			ClassType:       class.ClassType,
+			UnlockLevel:     class.UnlockLevel,
 			WeaponMinDamage: class.WeaponMinDamage,
 			WeaponMaxDamage: class.WeaponMaxDamage,
 			StatTemplate:    statTemplate,
@@ -211,6 +214,8 @@ func decodePlayerClass(payload []byte) (playerClassIdentity, bool) {
 	maximumDamage := math.Float32frombits(binary.LittleEndian.Uint32(payload[236:240]))
 	return playerClassIdentity{
 		BaseName: baseName, NameLocaleKey: fields[1], ElementType: creatureElement(element), ClassType: creatureClass(class),
+		// Build-103 PlayerClass.unlockLevel is the uint32 at fixed offset 80.
+		UnlockLevel:     binary.LittleEndian.Uint32(payload[80:84]),
 		WeaponMinDamage: float64(minimumDamage), WeaponMaxDamage: float64(maximumDamage),
 		IsHandPresent: payload[245] == 0, IsFootPresent: payload[246] == 0,
 		BasicAbility: fields[4], BasicAbilityID: binary.LittleEndian.Uint32(payload[96:100]),
@@ -281,11 +286,11 @@ func readStrings(payload []byte, offset, count int) ([]string, error) {
 func insertCreatureTemplates(ctx context.Context, transaction *sql.Tx, templates []creatureTemplate) error {
 	templateStatement, err := transaction.PrepareContext(ctx, `
 		INSERT INTO creature_template
-		(id, name_locale_key, description_locale_key, name, element_type, class_type,
+		(id, name_locale_key, description_locale_key, name, element_type, class_type, unlock_level,
 		 weapon_min_damage, weapon_max_damage, gear_score, stat_template,
 		 ability_passive, ability_basic, ability_random, ability_special_1, ability_special_2,
 		 is_hand_present, is_foot_present)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return fmt.Errorf("templatePrepare: %w", err)
 	}
@@ -322,7 +327,7 @@ func insertCreatureTemplates(ctx context.Context, transaction *sql.Tx, templates
 			return fmt.Errorf("abilitySpecial2[%d]: %w", template.ID, abilityErr)
 		}
 		_, err = templateStatement.ExecContext(ctx, template.ID, template.NameLocaleKey, descriptionLocaleKey, template.Name,
-			template.ElementType, template.ClassType, template.WeaponMinDamage, template.WeaponMaxDamage,
+			template.ElementType, template.ClassType, template.UnlockLevel, template.WeaponMinDamage, template.WeaponMaxDamage,
 			template.StatTemplate,
 			abilityPassive, abilityBasic, abilityRandom, abilitySpecial1, abilitySpecial2,
 			template.IsHandPresent, template.IsFootPresent)

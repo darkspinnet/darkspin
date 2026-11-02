@@ -204,6 +204,12 @@ func (s *Session) ObserveDamage(
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Developer victory can complete the encounter while its NPCs remain alive.
+	// Their subsequent combat belongs to the NPC session and cannot advance an
+	// already completed boss encounter.
+	if s.phase == PhaseComplete {
+		return Transition{}, nil
+	}
 	if result.ObjectID == 0 || result.MarkerSetName == "" ||
 		!strings.EqualFold(result.MarkerSetName, s.publication.MarkerSetName) {
 		return Transition{}, nil

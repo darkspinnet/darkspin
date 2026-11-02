@@ -58,7 +58,9 @@ func ResolveAbilityDamageRange(ability AbilityDamage, profile DamageProfile) (Da
 		ability.Maximum < ability.Minimum {
 		return DamageRange{}, errors.New("invalid ability damage")
 	}
-	if ability.IsDamageTypeFound && ability.DamageType >= uint8(len(profile.ScienceDamage)) {
+	// Build 103 defines Generic=5 after the five science types. Generic damage
+	// retains source/descriptor bonuses but has no science-specific attribute.
+	if ability.IsDamageTypeFound && ability.DamageType > uint8(len(profile.ScienceDamage)) {
 		return DamageRange{}, errors.New("invalid damage type")
 	}
 	profileNumber := []float32{
@@ -87,7 +89,7 @@ func ResolveAbilityDamageRange(ability AbilityDamage, profile DamageProfile) (Da
 		}
 		multiplier += defenseBonus
 	}
-	if ability.IsDamageTypeFound {
+	if ability.IsDamageTypeFound && ability.DamageType < uint8(len(profile.ScienceDamage)) {
 		multiplier += profile.ScienceDamage[ability.DamageType]
 	}
 	if ability.IsDescriptorFound && ability.Descriptor&8192 != 0 {

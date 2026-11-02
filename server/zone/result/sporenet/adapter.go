@@ -55,6 +55,7 @@ func (e PartGenerator) GenerateCampaignPart(
 	}
 	campaignStage := subject.CampaignStage
 	chainArgument := subject.ChainArgument
+	recipientPart := subject.RecipientPart
 	subject = eligible[choice%uint32(len(eligible))]
 	part, err := e.GameplayJoin.GenerateCampaignRewardPart(
 		game.GameplayCreature{
@@ -68,6 +69,10 @@ func (e PartGenerator) GenerateCampaignPart(
 	)
 	if err != nil {
 		return result.RewardPart{}, fmt.Errorf("partGenerate: %w", err)
+	}
+	part, err = e.GameplayJoin.FinalizeCampaignRecipientPart(part, recipientPart)
+	if err != nil {
+		return result.RewardPart{}, fmt.Errorf("partRecipient: %w", err)
 	}
 	return rewardPart(part), nil
 }

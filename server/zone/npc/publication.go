@@ -84,6 +84,7 @@ func (s *Session) SetPublished(
 		npc := s.npcs[objectID]
 		npc.IsPublished = isPublished
 		if !isPublished {
+			queueSubsequentAggro(&npc)
 			npc.TargetObjectID = 0
 			npc.TargetFaction = FactionUnknown
 			npc.TargetOwner = ActionOwner{}

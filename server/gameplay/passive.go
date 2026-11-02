@@ -10,7 +10,6 @@ import (
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/util"
-	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
 	zoneeffect "github.com/darkspinnet/darkspin/server/zone/effect"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
@@ -21,7 +20,7 @@ const (
 	campaignSameGenetypeDamageMultiplier = 2
 	missileTargetingEffectName           = "cyber_missileTempest_targetScanner.ServerEventDef"
 	missileTargetingDamagePerStack       = 0.05
-	missileTargetingOverdrivePerStack    = 0.12
+	missileTargetingOverdrivePerStack    = 0.08
 	missileTargetingMaximumStack         = uint32(5)
 )
 
@@ -120,10 +119,18 @@ func graspingDeadMovementSpeed(
 	}
 	creature := peerSession.binding.Creatures[peerSession.deployedCreatureIndex]
 	if creature.PassiveAbility != util.HashID("GraspingDead") ||
-		npcPosition.Sub(game.Vec3(peerSession.playerPosition)).Length() > graspingDeadRadius {
+		peerSession.deployedHitPoint() <= 0 {
 		return movementSpeed
 	}
-	return movementSpeed * (1 - graspingDeadSlow)
+	radius, slow := float32(graspingDeadRadius), float32(graspingDeadSlow)
+	if peerSession.isOverdriveActiveAt(time.Now()) {
+		// Chunk448's rank-three aura radius and MovementSpeedBuff operand.
+		radius, slow = 12, 0.40
+	}
+	if npcPosition.Sub(game.Vec3(peerSession.playerPosition)).Length() > radius {
+		return movementSpeed
+	}
+	return movementSpeed * (1 - slow)
 }
 
 const (
@@ -155,13 +162,25 @@ func (e *gameplayPeerSession) startTCShieldRecharge(
 		return
 	}
 	e.tcShieldAmount[creatureIndex] = 0
-	e.tcShieldReadyAt[creatureIndex] = now.Add(tcShieldRechargeDuration)
+	e.tcShieldReadyAt[creatureIndex] = now.Add(e.tcShieldRechargeDurationAt(now))
+}
+
+func (e gameplayPeerSession) tcShieldRechargeDurationAt(now time.Time) time.Duration {
+	if e.isOverdriveActiveAt(now) {
+		return 10 * time.Second
+	}
+	return tcShieldRechargeDuration
 }
 
 func (e *gameplayPeerSession) resetTCShield(creatureIndex uint32) {
 	if e == nil || creatureIndex >= uint32(len(e.tcShieldAmount)) {
 		return
 	}
+	run := e.tcShieldRuns[creatureIndex]
+	if run != nil && run.cancel != nil {
+		run.cancel()
+	}
+	e.tcShieldRuns[creatureIndex] = nil
 	e.tcShieldAmount[creatureIndex] = 0
 	e.tcShieldReadyAt[creatureIndex] = time.Time{}
 }
@@ -236,10 +255,14 @@ func (e *gameplayPeerSession) absorbTCShield(
 		if now.Before(readyAt) {
 			return result, nil
 		}
-		shieldStrength := tcShieldBaseStrength +
+		baseStrength := tcShieldBaseStrength
+		if e.isOverdriveActiveAt(now) {
+			baseStrength = 30
+		}
+		shieldStrength := baseStrength +
 			(creature.EnergyDefense-tcShieldDefenseOffset)*tcShieldDefenseScale
 		if shieldStrength <= 0 {
-			e.tcShieldReadyAt[creatureIndex] = now.Add(tcShieldRechargeDuration)
+			e.tcShieldReadyAt[creatureIndex] = now.Add(e.tcShieldRechargeDurationAt(now))
 			return result, nil
 		}
 		e.tcShieldAmount[creatureIndex] = shieldStrength
@@ -274,12 +297,18 @@ func (e *gameplayPeerSession) absorbTCShield(
 	result.Packets = append(result.Packets, hitPacket)
 	if e.tcShieldAmount[creatureIndex] <= 0 {
 		e.tcShieldAmount[creatureIndex] = 0
-		e.tcShieldReadyAt[creatureIndex] = now.Add(tcShieldRechargeDuration)
+		e.tcShieldReadyAt[creatureIndex] = now.Add(e.tcShieldRechargeDurationAt(now))
 		stopPackets, err := e.stopTCShield(creatureIndex, effectPool)
 		if err != nil {
 			return tcShieldAbsorption{}, fmt.Errorf("tcShieldDeplete: %w", err)
 		}
 		result.Packets = append(result.Packets, stopPackets...)
+		if effectPool != nil {
+			err = e.scheduleTCShieldRecharge()
+			if err != nil {
+				return tcShieldAbsorption{}, fmt.Errorf("tcShieldRechargeSchedule: %w", err)
+			}
+		}
 	}
 	return result, nil
 }
@@ -294,16 +323,12 @@ func (s gameplayPeerSession) applyPassiveDamageReduction(
 		s.deployedCreatureIndex >= uint32(len(s.binding.Creatures)) {
 		return damage
 	}
-	creature := s.binding.Creatures[s.deployedCreatureIndex]
+	creature := s.projectPassiveCreature(s.deployedCreatureIndex, now)
 	// Crushing Dread is selected once across the whole party below, including
 	// this hero's aura, rather than stacking a personal and an allied copy.
 	if creature.PassiveAbility == util.HashID("CrushingDread") {
 		creature.PhysicalDamageReduction = 0
 		creature.EnergyDamageReduction = 0
-	}
-	if s.isOverdriveActiveAt(now) &&
-		creature.PassiveAbility == util.HashID("QuantumPositioning") {
-		creature.EnergyDamageReduction += 0.50
 	}
 	if creature.PassiveAuraRadius > 0 {
 		isInAura := false
@@ -317,6 +342,9 @@ func (s gameplayPeerSession) applyPassiveDamageReduction(
 		}
 	}
 	reduction := s.passiveDamageReduction(now)
+	if s.isOperativeCaged(now) {
+		reduction += 0.5
+	}
 	if s.deployedObjectID == s.roarReductionObjectID &&
 		now.Before(s.roarReductionExpiresAt) {
 		reduction += 0.25
@@ -357,7 +385,7 @@ func (e gameplayPeerSession) crushingDreadReduction(sourcePosition game.Vec3, da
 	if e.deployedHitPoint() <= 0 || e.deployedCreatureIndex >= uint32(len(e.binding.Creatures)) {
 		return 0
 	}
-	creature := e.binding.Creatures[e.deployedCreatureIndex]
+	creature := e.projectPassiveCreature(e.deployedCreatureIndex, time.Now())
 	if creature.PassiveAbility != util.HashID("CrushingDread") ||
 		creature.PassiveAuraRadius <= 0 ||
 		sourcePosition.Sub(game.Vec3(e.playerPosition)).Length() > creature.PassiveAuraRadius {
@@ -423,29 +451,12 @@ func (s *gameplayPeerSession) resetPassiveDamageReduction(creatureIndex uint32) 
 	s.stopHardenedMantle()
 }
 
-func (s *gameplayPeerSession) advanceFireRavagerBasic(
-	creatureIndex uint32,
-) bool {
-	if s == nil || creatureIndex >= uint32(len(s.binding.Creatures)) ||
-		creatureIndex >= uint32(len(s.fireRavagerBasicCount)) ||
-		s.binding.Creatures[creatureIndex].PassiveAbility !=
-			util.HashID("FireRavagerPassive") {
-		return false
-	}
-	const useCount = uint32(4)
-	s.fireRavagerBasicCount[creatureIndex]++
-	if s.fireRavagerBasicCount[creatureIndex] < useCount {
-		return false
-	}
-	s.fireRavagerBasicCount[creatureIndex] = 0
-	return true
-}
-
 func (s *gameplayPeerSession) resetFireRavagerBasic(creatureIndex uint32) {
 	if s == nil || creatureIndex >= uint32(len(s.fireRavagerBasicCount)) {
 		return
 	}
 	s.fireRavagerBasicCount[creatureIndex] = 0
+	s.fireRavagerPassive = fireRavagerPassiveState{}
 }
 
 func (s gameplayPeerSession) projectPassiveCreature(
@@ -457,6 +468,19 @@ func (s gameplayPeerSession) projectPassiveCreature(
 	creature := s.binding.Creatures[creatureIndex]
 	if creatureIndex != s.deployedCreatureIndex {
 		return creature
+	}
+	if s.binding.Mode == game.ModeArena {
+		creature.DamageProfile.DamageBuff -= s.arenaBasicWeakness(now)
+		creature.DamageProfile.DamageBuff += s.arenaVoodooDamageBuff(now)
+		creature.TimingProfile.AttackSpeed += s.arenaBasicHasteIncrease(now)
+	}
+	creature.TimingProfile.AttackSpeed += s.arenaSphereAttackSpeed()
+	if s.isOverdriveActiveAt(now) {
+		creature = projectOverdrivePassiveRank(creature)
+		if creature.PassiveAbility == util.HashID("SoulRavagerPassive") &&
+			creatureIndex < uint32(len(s.passiveKillStack)) {
+			creature.DamageProfile.DamageBuff += float32(s.passiveKillStack[creatureIndex]) * 0.03
+		}
 	}
 	// Enemy modifiers live in the shared zone, including those applied by
 	// another peer's NPC simulation. Project them without changing base stats
@@ -486,13 +510,25 @@ func (s gameplayPeerSession) projectPassiveCreature(
 		creature.TimingProfile.AttackSpeed += 0.20
 		creature.TimingProfile.CooldownReduction += 0.40
 		switch creature.PassiveAbility {
+		case util.HashID("LightningRoguePassive"):
+			creature.CriticalRating += blitzOverdriveCriticalIncrease(creature)
 		case util.HashID("QuantumPositioning"):
-			creature.EnergyDamageReduction += 0.50
+			// Chunk 430 applies EnergyDefense with kPercentChange, not a
+			// direct reduction to incoming energy damage.
+			creature.EnergyDefense *= 1.50
+		case util.HashID("ThornBarkModifier"):
+			// Chunk 188 applies its 20% physical reduction to energy too
+			// when the passive activates at the overdrive rank.
+			creature.EnergyDamageReduction += 0.20
 		case util.HashID("ShadowRavagerPassive"):
 			creature.PassiveBehindDamage = max(
 				creature.PassiveBehindDamage, float32(0.30),
 			)
 		}
+	}
+	if s.plasmaWreathRun != nil && s.plasmaWreathState.isActive(now) {
+		creature.EnergyDefense += s.plasmaWreathState.energyDefenseIncrease
+		creature.TimingProfile.AttackSpeed += s.plasmaWreathState.attackSpeedIncrease
 	}
 	if now.IsZero() || creature.PassiveAbility != util.HashID("MissileTempestPassive") ||
 		creatureIndex >= uint32(len(s.passiveStationarySince)) {
@@ -518,7 +554,7 @@ func (e *gameplaySessionRegistry) projectPassiveCreature(
 	peerSession gameplayPeerSession, creatureIndex uint32, now time.Time,
 ) game.GameplayCreature {
 	creature := peerSession.projectPassiveCreature(creatureIndex, now)
-	if e == nil || peerSession.zone == nil ||
+	if e == nil || (peerSession.zone == nil && peerSession.binding.Mode != game.ModeArena) ||
 		creatureIndex != peerSession.deployedCreatureIndex {
 		return creature
 	}
@@ -536,14 +572,14 @@ func (e *gameplaySessionRegistry) projectPassiveCreature(
 		)
 	}
 	for _, candidate := range e.sessions {
-		if candidate.zone != peerSession.zone ||
+		if !isPassiveAuraRecipient(candidate, peerSession) ||
 			candidate.deployedObjectID == peerSession.deployedObjectID ||
 			candidate.deployedHitPoint() <= 0 ||
 			candidate.deployedCreatureIndex >=
 				uint32(len(candidate.binding.Creatures)) {
 			continue
 		}
-		aura := candidate.binding.Creatures[candidate.deployedCreatureIndex]
+		aura := candidate.projectPassiveCreature(candidate.deployedCreatureIndex, now)
 		if aura.PassiveAuraRadius <= 0 ||
 			game.Vec3(candidate.playerPosition).Sub(
 				game.Vec3(peerSession.playerPosition),
@@ -577,7 +613,7 @@ func (e *gameplaySessionRegistry) projectPassiveCreature(
 				continue
 			}
 			attackSpeedIncrease = max(
-				attackSpeedIncrease, aura.TimingProfile.AttackSpeed,
+				attackSpeedIncrease, float32(0.10),
 			)
 		case util.HashID("LightningTempest_Passive"):
 			// Both modifiers use kAddBest on the initiator's rating. A Lumin
@@ -611,7 +647,7 @@ func (e *gameplaySessionRegistry) passiveMovementIncrease(
 	peerSession gameplayPeerSession,
 ) float32 {
 	increase := peerSession.passiveMovementIncrease()
-	if e == nil || peerSession.zone == nil ||
+	if e == nil || (peerSession.zone == nil && peerSession.binding.Mode != game.ModeArena) ||
 		peerSession.deployedCreatureIndex >= uint32(len(peerSession.binding.Creatures)) {
 		return increase
 	}
@@ -621,14 +657,14 @@ func (e *gameplaySessionRegistry) passiveMovementIncrease(
 	}
 	allyIncrease := float32(0)
 	for _, candidate := range e.sessions {
-		if candidate.zone != peerSession.zone ||
+		if !isPassiveAuraRecipient(candidate, peerSession) ||
 			candidate.deployedObjectID == peerSession.deployedObjectID ||
 			candidate.deployedHitPoint() <= 0 ||
 			candidate.deployedCreatureIndex >=
 				uint32(len(candidate.binding.Creatures)) {
 			continue
 		}
-		aura := candidate.binding.Creatures[candidate.deployedCreatureIndex]
+		aura := candidate.projectPassiveCreature(candidate.deployedCreatureIndex, time.Now())
 		if aura.PassiveAbility != util.HashID("TimeRavagerPassiveModifier") ||
 			aura.PassiveAuraRadius <= 0 ||
 			game.Vec3(candidate.playerPosition).Sub(
@@ -639,6 +675,13 @@ func (e *gameplaySessionRegistry) passiveMovementIncrease(
 		allyIncrease = max(allyIncrease, aura.PassiveMovementIncrease)
 	}
 	return increase + allyIncrease
+}
+
+func isPassiveAuraRecipient(candidate, source gameplayPeerSession) bool {
+	if source.binding.Mode == game.ModeArena {
+		return source.isArenaCombatActive && isActivePartyRecipient(candidate, source)
+	}
+	return source.zone != nil && candidate.zone == source.zone
 }
 
 func (s gameplayPeerSession) passiveHealthRatio(creatureIndex uint32) float32 {
@@ -657,13 +700,8 @@ func (s gameplayPeerSession) passiveMovementIncrease() float32 {
 	if s.deployedCreatureIndex >= uint32(len(s.binding.Creatures)) {
 		return 0
 	}
-	creature := s.binding.Creatures[s.deployedCreatureIndex]
-	increase := creature.PassiveMovementIncrease
-	if creature.PassiveAbility == util.HashID("LightspeedTempestPassive") {
-		increase += s.passiveHealthRatio(s.deployedCreatureIndex) *
-			creature.PassiveHealthMovementMax
-	}
-	return increase
+	creature := s.projectPassiveCreature(s.deployedCreatureIndex, time.Now())
+	return creature.PassiveMovementIncrease
 }
 
 func (s *gameplayPeerSession) applyPassiveKill() (uint32, bool) {
@@ -680,7 +718,11 @@ func (s *gameplayPeerSession) applyPassiveKill() (uint32, bool) {
 	if stack >= creature.PassiveMaximumStack {
 		return stack, false
 	}
-	addedStack := min(creature.PassiveStackPerKill, creature.PassiveMaximumStack-stack)
+	stackPerKill := creature.PassiveStackPerKill
+	if creature.PassiveAbility == util.HashID("SoulRavagerPassive") && s.isOverdriveActiveAt(time.Now()) {
+		stackPerKill = 2
+	}
+	addedStack := min(stackPerKill, creature.PassiveMaximumStack-stack)
 	stack += addedStack
 	s.passiveKillStack[s.deployedCreatureIndex] = stack
 	creature.DamageProfile.DamageBuff +=
@@ -792,7 +834,10 @@ func (s *gameplayPeerSession) restorePassiveKill(
 		float32(restoredStack) * creature.PassiveKillDamageIncrease
 }
 
-const voodooCharmManaReturn = float32(0.02)
+type voodooCharmReturn struct {
+	manaRatio   float32
+	healthRatio float32
+}
 
 func (r campaignDamageRuntime) applyVoodooCharmKill(
 	sessionKey string, generation uint64, sourceObjectID uint32,
@@ -800,73 +845,106 @@ func (r campaignDamageRuntime) applyVoodooCharmKill(
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation &&
-		peerSession.deployedObjectID == sourceObjectID && peerSession.squad != nil &&
+		peerSession.squad != nil &&
 		peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures))
 	if !isCurrent {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
+	if peerSession.deployedObjectID != sourceObjectID {
+		packets, err := r.applyVoodooCompanionKillLocked(peerSession, sourceObjectID)
+		r.registry.mutex.Unlock()
+		if err != nil {
+			return nil, fmt.Errorf("voodooCompanion: %w", err)
+		}
+		return packets, nil
+	}
 	creatureIndex := peerSession.deployedCreatureIndex
-	if !r.registry.isVoodooCharmEligible(peerSession) {
+	charm := r.registry.voodooCharmReturn(peerSession)
+	if charm.manaRatio == 0 && charm.healthRatio == 0 {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
 	character, isCharacterFound := peerSession.squad.Character(creatureIndex)
-	_, maximumManaPoint := peerSession.characterResourceMaximum(creatureIndex)
-	if !isCharacterFound || !character.IsAvailable || character.HitPoints <= 0 ||
-		maximumManaPoint <= 0 || character.ManaPoints >= maximumManaPoint {
+	maximumHitPoint, maximumManaPoint := peerSession.characterResourceMaximum(creatureIndex)
+	if !isCharacterFound || !character.IsAvailable || character.HitPoints <= 0 {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
-	manaPoint := min(
-		maximumManaPoint,
-		character.ManaPoints+maximumManaPoint*voodooCharmManaReturn,
+	manaAward := maximumManaPoint * charm.manaRatio
+	manaPoint := character.ManaPoints
+	if manaAward > 0 {
+		manaPoint = min(maximumManaPoint, character.ManaPoints+manaAward)
+	}
+	healing, err := game.ApplyTargetHealingReduction(
+		maximumHitPoint*charm.healthRatio,
+		peerSession.healingTargetProfile(creatureIndex),
 	)
-	err := peerSession.setCampaignCharacterManaPoints(creatureIndex, manaPoint)
 	if err != nil {
 		r.registry.mutex.Unlock()
-		return nil, fmt.Errorf("voodooCharmMana: %w", err)
+		return nil, fmt.Errorf("voodooCharmHealing: %w", err)
+	}
+	hitPoint := min(maximumHitPoint, character.HitPoints+healing)
+	isResourceChanged := manaPoint != character.ManaPoints || hitPoint != character.HitPoints
+	packets := make([][]byte, 0, 2)
+	if isResourceChanged {
+		resourcePacket, resourceErr := raknet.MarshalApplication(raknet.CombatantDataUpdateMessage{
+			ObjectID: sourceObjectID, HitPoints: hitPoint, ManaPoints: manaPoint,
+		})
+		if resourceErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("voodooCharmResource: %w", resourceErr)
+		}
+		packets = append(packets, resourcePacket)
+	}
+	// Child811 notifies on a positive computed award, even when SetManaPoints
+	// clamps it to an already-full pool. Healing is a separate branch.
+	if manaAward > 0 {
+		effectPacket, effectErr := raknet.MarshalApplication(raknet.ObjectEffectMessage{
+			Asset:    util.HashID("shadow_mana_healing_target_effect.ServerEventDef"),
+			ObjectID: sourceObjectID,
+		})
+		if effectErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("voodooCharmEffect: %w", effectErr)
+		}
+		packets = append(packets, effectPacket)
+	}
+	if healing > 0 {
+		healingPacket, healingErr := raknet.MarshalApplication(raknet.DamageCombatEventMessage{
+			Flags: 0x0002, DeltaHealth: -healing,
+			TargetID: sourceObjectID, SourceID: 0,
+			IntegerHPChange: int32(character.HitPoints) - int32(hitPoint),
+		})
+		if healingErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("voodooCharmHealEvent: %w", healingErr)
+		}
+		packets = append(packets, healingPacket)
+	}
+	if !isResourceChanged {
+		r.registry.mutex.Unlock()
+		return packets, nil
+	}
+	if manaPoint != character.ManaPoints {
+		err = peerSession.setCampaignCharacterManaPoints(creatureIndex, manaPoint)
+		if err != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("voodooCharmMana: %w", err)
+		}
+	}
+	if hitPoint > character.HitPoints {
+		isGameOver, healErr := peerSession.setCampaignCharacterHitPoints(creatureIndex, hitPoint)
+		if healErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("voodooCharmHealth: %w", healErr)
+		}
+		if isGameOver {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("voodooCharmHealth: living recipient marked game over")
+		}
 	}
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
-
-	manaPacket, err := abilityraknet.Mana(sourceObjectID, manaPoint)
-	if err != nil {
-		return nil, fmt.Errorf("voodooCharmResource: %w", err)
-	}
-	effectPacket, err := raknet.MarshalApplication(raknet.ObjectEffectMessage{
-		Asset:    util.HashID("shadow_mana_healing_target_effect.ServerEventDef"),
-		ObjectID: sourceObjectID,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("voodooCharmEffect: %w", err)
-	}
-	return [][]byte{manaPacket, effectPacket}, nil
-}
-
-func (e *gameplaySessionRegistry) isVoodooCharmEligible(
-	peerSession gameplayPeerSession,
-) bool {
-	if e == nil || peerSession.zone == nil {
-		return false
-	}
-	for _, candidate := range e.sessions {
-		if candidate.zone != peerSession.zone || candidate.deployedHitPoint() <= 0 ||
-			candidate.deployedCreatureIndex >=
-				uint32(len(candidate.binding.Creatures)) {
-			continue
-		}
-		aura := candidate.binding.Creatures[candidate.deployedCreatureIndex]
-		if aura.PassiveAbility != util.HashID("VoodooTempestPassive") ||
-			aura.PassiveAuraRadius <= 0 {
-			continue
-		}
-		distance := game.Vec3(candidate.playerPosition).Sub(
-			game.Vec3(peerSession.playerPosition),
-		).Length()
-		if distance <= aura.PassiveAuraRadius {
-			return true
-		}
-	}
-	return false
+	return packets, nil
 }

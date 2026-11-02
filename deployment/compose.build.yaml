@@ -1,0 +1,6 @@
+# Developer-only infrastructure image build; excluded from the downloadable ZIP.
+services:
+  darkrun:
+    build:
+      context: .
+      dockerfile: Dockerfile

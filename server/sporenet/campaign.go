@@ -43,8 +43,8 @@ type CampaignCashOutBonus struct {
 	IsAvailable      bool
 }
 
-// CampaignCashOutReceipt is the immutable durable result used to construct
-// repeatable cash-out presentation.
+// CampaignCashOutReceipt carries the awarded result for cash-out presentation.
+// Durable replay resolves the recorded item IDs against the current inventory.
 type CampaignCashOutReceipt struct {
 	ResultID            uint64
 	ChainProgression    uint32
@@ -214,7 +214,8 @@ func (m *UserManager) AdvanceChainProgression(
 
 // CommitCampaignCashOut atomically persists chain progression, a bounded
 // reward ledger, and the result idempotency event through one repository save.
-// A replay returns every previously committed item without another write.
+// A replay resolves the recorded item IDs without another write; it fails if
+// an awarded item has since been removed from inventory.
 func (m *UserManager) CommitCampaignCashOut(
 	ctx context.Context, userID int64, reward CampaignCashOutReward,
 ) (CampaignCashOutReceipt, error) {
@@ -284,14 +285,11 @@ func (m *UserManager) CommitCampaignCashOut(
 		user.mu.Unlock()
 		return CampaignCashOutReceipt{}, errors.New("campaign cashout bonus time invalid")
 	}
-	capacity := user.Account.UnlockInventoryIdentify
-	ownedCount := uint64(0)
-	for index := range user.Parts {
-		if user.Parts[index].OccupiesInventorySlot() {
-			ownedCount++
-		}
-	}
-	if capacity == 0 || ownedCount+uint64(len(reward.Parts)) > uint64(capacity) {
+	// Cash-out has already been accepted by the result screen. Its bounded
+	// earned reward batch must commit even when pickups filled the inventory;
+	// otherwise the native 0xAB receipt never replaces its placeholder cards.
+	// Purchases and world pickups continue enforcing ordinary capacity.
+	if user.Account.UnlockInventoryIdentify == 0 {
 		user.mu.Unlock()
 		return CampaignCashOutReceipt{}, ErrInventoryFull
 	}

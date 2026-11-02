@@ -50,7 +50,7 @@ type browserCallResponse struct {
 	Error  string `json:"error,omitempty"`
 }
 
-func runHeadless(app *App) error {
+func runHeadless(app *App, isBrowserAutoOpenEnabled bool) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	app.isHeadless = true
@@ -60,7 +60,7 @@ func runHeadless(app *App) error {
 		return fmt.Errorf("handlerCreate: %w", err)
 	}
 	app.launcherHandler = handler
-	address, bootstrapServer, bootstrapDone, err := startLauncherBootstrap(handler, token)
+	address, bootstrapServer, bootstrapDone, err := startLauncherBootstrap(handler, token, app.lua != nil && app.GetLuaConsole().IsSelected)
 	if err != nil {
 		return fmt.Errorf("bootstrapStart: %w", err)
 	}
@@ -87,13 +87,13 @@ func runHeadless(app *App) error {
 	app.startup(ctx)
 	defer app.shutdown(context.Background())
 	fmt.Println("DarkSpinner browser launcher:", address)
-	runHeadlessTray(ctx, app, address, cancel)
+	runHeadlessTray(ctx, app, address, cancel, isBrowserAutoOpenEnabled)
 	cancel()
 	return nil
 }
 
 func startLauncherBootstrap(
-	handler http.Handler, token string,
+	handler http.Handler, token string, isLuaMode bool,
 ) (string, *http.Server, <-chan error, error) {
 	basePath, err := executableDirectory()
 	if err != nil {
@@ -117,6 +117,9 @@ func startLauncherBootstrap(
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", nil, nil, fmt.Errorf("configStat: %w", err)
 	}
+	if isLuaMode {
+		port = 0
+	}
 	listenerAddress := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", port))
 	listener, err := net.Listen("tcp", listenerAddress)
 	if err != nil {
@@ -134,7 +137,7 @@ func startLauncherBootstrap(
 	go func() {
 		bootstrapDone <- bootstrapServer.Serve(listener)
 	}()
-	address := "http://" + listenerAddress + launcherPath + "#token=" + token
+	address := "http://" + listener.Addr().String() + launcherPath + "#token=" + token
 	return address, bootstrapServer, bootstrapDone, nil
 }
 
@@ -190,56 +193,80 @@ func newLauncherHandler(app *App) (http.Handler, string, error) {
 
 func launcherMethods(app *App) map[string]any {
 	return map[string]any{
-		"Authorize":                    app.Authorize,
-		"Cancel":                       app.Cancel,
-		"CancelPatch":                  app.CancelPatch,
-		"Check":                        app.Check,
-		"CloseDetachedGameInstances":   app.CloseDetachedGameInstances,
-		"CloseRunningGame":             app.CloseRunningGame,
-		"CloseRunningProfile":          app.CloseRunningProfile,
-		"CreateProfile":                app.CreateProfile,
-		"DeleteProfile":                app.DeleteProfile,
-		"DeleteRemoteProfile":          app.DeleteRemoteProfile,
-		"DiscardInterruptedMission":    app.DiscardInterruptedMission,
-		"GetInstallationStatus":        app.GetInstallationStatus,
-		"GetInterruptedMission":        app.GetInterruptedMission,
-		"GetLauncherIntegrationStatus": app.GetLauncherIntegrationStatus,
-		"GetProfileAvatars":            app.GetProfileAvatars,
-		"GetProfiles":                  app.GetProfiles,
-		"GetRemoteProfiles":            app.GetRemoteProfiles,
-		"GetServerConfiguration":       app.GetServerConfiguration,
-		"GetServerRulesConfiguration":  app.GetServerRulesConfiguration,
-		"GetStatus":                    app.GetStatus,
-		"GetWineRunnerConfiguration":   app.GetWineRunnerConfiguration,
-		"HasDetachedGameInstances":     app.HasDetachedGameInstances,
-		"IsProfileRunning":             app.IsProfileRunning,
-		"LaunchRemoteProfile":          app.LaunchRemoteProfile,
-		"LoginRemoteProfile":           app.LoginRemoteProfile,
-		"OpenFirewallSettings":         app.OpenFirewallSettings,
-		"OpenReportFolder":             app.OpenReportFolder,
-		"OpenSteamDemoInstall":         app.OpenSteamDemoInstall,
-		"Patch":                        app.Patch,
-		"Play":                         app.Play,
-		"RefreshInstallationStatus":    app.RefreshInstallationStatus,
-		"RefreshRemoteProfiles":        app.RefreshRemoteProfiles,
-		"RegisterRemoteProfile":        app.RegisterRemoteProfile,
-		"RelocateToGameRoot":           app.RelocateToGameRoot,
-		"RemoveLauncherIntegration":    app.RemoveLauncherIntegration,
-		"RepairLauncherIntegration":    app.RepairLauncherIntegration,
-		"RestartLauncher":              app.RestartLauncher,
-		"ScanRemoteServers":            app.ScanRemoteServers,
-		"ScanWineRunners":              app.ScanWineRunners,
-		"SendReport":                   app.SendReport,
-		"CompactSnapshots":             app.CompactSnapshots,
-		"SetIdentity":                  app.SetIdentity,
-		"SetServerConfiguration":       app.SetServerConfiguration,
-		"SetServerRulesConfiguration":  app.SetServerRulesConfiguration,
-		"SetServerPort":                app.SetServerPort,
-		"SetSkipCinematic":             app.SetSkipCinematic,
-		"SetWineRunner":                app.SetWineRunner,
-		"SignOut":                      app.SignOut,
-		"StartDetachedGameInstance":    app.StartDetachedGameInstance,
-		"UninstallDarkspinner":         app.UninstallDarkspinner,
+		"GetLuaConsole":                      app.GetLuaConsole,
+		"RunLuaScript":                       app.RunLuaScript,
+		"KillLuaSession":                     app.KillLuaSession,
+		"StopLuaScript":                      app.StopLuaScript,
+		"GetModConfiguration":                app.GetModConfiguration,
+		"SetModSporePath":                    app.SetModSporePath,
+		"DetectModSporePath":                 app.DetectModSporePath,
+		"BrowseModSporeDirectory":            app.BrowseModSporeDirectory,
+		"GetModPortrait":                     app.GetModPortrait,
+		"SaveModProfile":                     app.SaveModProfile,
+		"LaunchModProfile":                   app.LaunchModProfile,
+		"Authorize":                          app.Authorize,
+		"Cancel":                             app.Cancel,
+		"CancelPatch":                        app.CancelPatch,
+		"Check":                              app.Check,
+		"CloseDetachedGameInstances":         app.CloseDetachedGameInstances,
+		"CloseRunningGame":                   app.CloseRunningGame,
+		"CloseRunningProfile":                app.CloseRunningProfile,
+		"CreateProfile":                      app.CreateProfile,
+		"DeleteProfile":                      app.DeleteProfile,
+		"DeleteModProfile":                   app.DeleteModProfile,
+		"DeleteRemoteProfile":                app.DeleteRemoteProfile,
+		"ResetProfileDisplay":                app.ResetProfileDisplay,
+		"ResetModProfileDisplay":             app.ResetModProfileDisplay,
+		"DiscardInterruptedMission":          app.DiscardInterruptedMission,
+		"GetInstallationStatus":              app.GetInstallationStatus,
+		"GetInterruptedMission":              app.GetInterruptedMission,
+		"GetLauncherIntegrationStatus":       app.GetLauncherIntegrationStatus,
+		"GetProfileAvatars":                  app.GetProfileAvatars,
+		"GetProfiles":                        app.GetProfiles,
+		"GetRemoteProfiles":                  app.GetRemoteProfiles,
+		"GetServerConfiguration":             app.GetServerConfiguration,
+		"GetSquadSnapshot":                   app.GetSquadSnapshot,
+		"GetServerRulesConfiguration":        app.GetServerRulesConfiguration,
+		"GetStatus":                          app.GetStatus,
+		"GetLauncherAutomationConfiguration": app.GetLauncherAutomationConfiguration,
+		"GetLauncherLanguageConfiguration":   app.GetLauncherLanguageConfiguration,
+		"SetLauncherLocale":                  app.SetLauncherLocale,
+		"SetAutoPatch":                       app.SetAutoPatch,
+		"SetAutoPlay":                        app.SetAutoPlay,
+		"SetLocalServicesRequired":           app.SetLocalServicesRequired,
+		"GetWineRunnerConfiguration":         app.GetWineRunnerConfiguration,
+		"HasDetachedGameInstances":           app.HasDetachedGameInstances,
+		"IsProfileRunning":                   app.IsProfileRunning,
+		"LaunchRemoteProfile":                app.LaunchRemoteProfile,
+		"LoginRemoteProfile":                 app.LoginRemoteProfile,
+		"OpenFirewallSettings":               app.OpenFirewallSettings,
+		"OpenReportFolder":                   app.OpenReportFolder,
+		"OpenSteamDemoInstall":               app.OpenSteamDemoInstall,
+		"Patch":                              app.Patch,
+		"Play":                               app.Play,
+		"RefreshInstallationStatus":          app.RefreshInstallationStatus,
+		"RefreshRemoteProfiles":              app.RefreshRemoteProfiles,
+		"CheckRemoteServers":                 app.CheckRemoteServers,
+		"RegisterRemoteProfile":              app.RegisterRemoteProfile,
+		"RelocateToGameRoot":                 app.RelocateToGameRoot,
+		"RemoveLauncherIntegration":          app.RemoveLauncherIntegration,
+		"RepairLauncherIntegration":          app.RepairLauncherIntegration,
+		"RestartLauncher":                    app.RestartLauncher,
+		"ScanRemoteServers":                  app.ScanRemoteServers,
+		"ScanWineRunners":                    app.ScanWineRunners,
+		"SendReport":                         app.SendReport,
+		"CompactSnapshots":                   app.CompactSnapshots,
+		"SetIdentity":                        app.SetIdentity,
+		"SetServerConfiguration":             app.SetServerConfiguration,
+		"SetServerSetup":                     app.SetServerSetup,
+		"SetServerRulesConfiguration":        app.SetServerRulesConfiguration,
+		"SetServerPort":                      app.SetServerPort,
+		"SetSkipCinematic":                   app.SetSkipCinematic,
+		"SetSkipIntro":                       app.SetSkipIntro,
+		"SetWineRunner":                      app.SetWineRunner,
+		"SignOut":                            app.SignOut,
+		"StartDetachedGameInstance":          app.StartDetachedGameInstance,
+		"UninstallDarkspinner":               app.UninstallDarkspinner,
 		"Quit": func() {
 			app.beginShutdown()
 			app.quit()
@@ -250,6 +277,16 @@ func launcherMethods(app *App) map[string]any {
 func handleLauncherCall(
 	writer http.ResponseWriter, request *http.Request, token string, methods map[string]any,
 ) {
+	peerHost, peerPort, err := net.SplitHostPort(request.RemoteAddr)
+	if err != nil || peerPort == "" {
+		http.Error(writer, "local launcher access required", http.StatusForbidden)
+		return
+	}
+	peerIP := net.ParseIP(peerHost)
+	if peerIP == nil || !peerIP.IsLoopback() {
+		http.Error(writer, "local launcher access required", http.StatusForbidden)
+		return
+	}
 	if request.Method != http.MethodPost {
 		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -268,7 +305,7 @@ func handleLauncherCall(
 	req := browserCallRequest{}
 	request.Body = http.MaxBytesReader(writer, request.Body, 1<<20)
 	decoder := json.NewDecoder(request.Body)
-	err := decoder.Decode(&req)
+	err = decoder.Decode(&req)
 	if err != nil {
 		writeLauncherResponse(writer, browserCallResponse{Error: "invalid request"})
 		return

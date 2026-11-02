@@ -23,10 +23,14 @@ func ForcedJump(
 	}
 	facing := plan.SourcePosition.Sub(plan.TargetPosition)
 	distance := facing.Length()
-	if distance <= 0 || !isFiniteVec3(facing) {
+	if !isFiniteVec3(facing) {
 		return nil, errors.New("forced jump facing unavailable")
 	}
-	facing = facing.Scale(1 / distance)
+	// Build 103 accepts a zero direction unchanged. A centered impact must
+	// not be redirected along an arbitrary axis by the wire adapter.
+	if distance > 0 {
+		facing = facing.Scale(1 / distance)
+	}
 	messages := make([]raknet.ApplicationMessage, 0, 3)
 	if profile.ForcedMovementReactionName != "" {
 		messages = append(messages, raknet.SetAnimationStateMessage{

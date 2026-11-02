@@ -36,14 +36,57 @@ func (e companionCorpseCleanup) execute() {
 func (e campaignNPCActionRuntime) companionDefeat(
 	peerSession *gameplayPeerSession, objectID uint32, timestamp uint64,
 ) ([][]byte, error) {
+	burnPackets := make([][]byte, 0)
+	for sessionKey, ownerSession := range e.registry.sessions {
+		if ownerSession.zone != peerSession.zone || ownerSession.beastPetObjectID != objectID || ownerSession.beastPetResurrection == nil {
+			continue
+		}
+		if ownerSession.binding.UserID == peerSession.binding.UserID && ownerSession.generation == peerSession.generation {
+			ownerSession = *peerSession
+		}
+		run := ownerSession.beastPetResurrection
+		ownerSession.beastPetResurrection = nil
+		resurrectionPackets, resurrectionErr := run.stop(&ownerSession)
+		if resurrectionErr != nil {
+			return nil, fmt.Errorf("beastDeathResurrection: %w", resurrectionErr)
+		}
+		burnPackets = append(burnPackets, resurrectionPackets...)
+		e.registry.sessions[sessionKey] = ownerSession
+		if ownerSession.binding.UserID == peerSession.binding.UserID && ownerSession.generation == peerSession.generation {
+			*peerSession = ownerSession
+		}
+	}
+	if burn, isFound := peerSession.petPlasmaBurns[objectID]; isFound {
+		plasmaPackets, err := peerSession.endPetPlasmaBurn(e, objectID, burn)
+		if err != nil {
+			return nil, fmt.Errorf("companionBurn: %w", err)
+		}
+		burnPackets = append(burnPackets, plasmaPackets...)
+	}
 	deletePacket, err := companionraknet.Defeat(objectID)
 	if err != nil {
 		return nil, fmt.Errorf("companionDelete: %w", err)
 	}
 	actor, isFound := peerSession.zone.Companion().Snapshot(objectID)
+	if isFound {
+		isDeathHandled, deathErr := e.scheduleCompanionDeathLocked(peerSession, actor, timestamp)
+		if deathErr != nil {
+			if e.logger != nil {
+				e.logger.Printf("Pet death callback object=%d: %v", objectID, deathErr)
+			}
+			if peerSession.zone.Companion().FinishDeath(actor) {
+				return append(burnPackets, deletePacket), nil
+			}
+			return burnPackets, nil
+		}
+		if isDeathHandled {
+			return burnPackets, nil
+		}
+	}
 	nounName := e.program.SupportHealerPassive.CompanionNoun
 	if !isFound || nounName == "" || actor.Noun != util.HashID(nounName) || e.timer == nil {
-		return [][]byte{deletePacket}, nil
+		e.reserveDefeatedSageCompanionRespawnLocked(peerSession, objectID)
+		return append(burnPackets, deletePacket), nil
 	}
 	physics := e.program.NPCDeathPhysics(nounName)
 	messages := []raknet.ApplicationMessage{
@@ -71,5 +114,6 @@ func (e campaignNPCActionRuntime) companionDefeat(
 	if cancel == nil {
 		return nil, fmt.Errorf("companionDeathSchedule: missing cancellation")
 	}
-	return packets, nil
+	e.reserveDefeatedSageCompanionRespawnLocked(peerSession, objectID)
+	return append(burnPackets, packets...), nil
 }

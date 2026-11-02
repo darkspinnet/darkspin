@@ -8,6 +8,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
+	zonedifficulty "github.com/darkspinnet/darkspin/server/zone/difficulty"
 	zonenavigation "github.com/darkspinnet/darkspin/server/zone/navigation"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
@@ -141,9 +142,13 @@ func (e *gameplayPeerSession) spawnArcturusScarab(boss zonenpc.Snapshot, center 
 		return nil, nil, errors.New("arcturus rank unavailable")
 	}
 	className := classNames[rank-1]
-	profile, isProfileFound := e.zone.DirectorDefinition().NPCProfilesByNoun[className]
+	nounName := fmt.Sprintf("CitadelBossMinon_v%d.Noun", rank)
+	profile, profileErr := zonedifficulty.ProjectOwnedSummon(e.zone.DirectorDefinition(), nounName)
+	if profileErr != nil {
+		return nil, nil, fmt.Errorf("scarabProfile: %w", profileErr)
+	}
 	action, isActionFound := zonenpc.ActionProfileForNoun(className)
-	if !isProfileFound || !profile.IsKnown || !isActionFound {
+	if !isActionFound {
 		return nil, nil, errors.New("arcturus scarab class unavailable")
 	}
 	angle := e.zone.NPCRandom().Float64() * 2 * math.Pi
@@ -170,7 +175,7 @@ func (e *gameplayPeerSession) spawnArcturusScarab(boss zonenpc.Snapshot, center 
 	action.FirstAggroDelay = 900 * time.Millisecond
 	action.IsFirstAggroDurationKnown = true
 	plans := []zonenpc.SpawnPlan{{ObjectID: objectID, OwnerObjectID: boss.Plan.ObjectID,
-		NounName: fmt.Sprintf("CitadelBossMinon_v%d.Noun", rank), Position: position,
+		NounName: nounName, Position: position,
 		LocusID: boss.Plan.LocusID, MarkerSetName: boss.Plan.MarkerSetName,
 		IsEncounterAuxiliary: true, NPCProfile: profile, ActionProfile: action, IsActionKnown: true}}
 	packets, err := npcraknet.TargetedSpawn(plans[0], boss.TargetObjectID)

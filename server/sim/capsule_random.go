@@ -5,9 +5,9 @@ import (
 	"sync"
 )
 
-// CapsuleRandom reproduces the AEAB30 floating draw used by the native
-// capsule selector. Its zone ownership and run-derived seed are server policy;
-// they do not reproduce the client's process-global consumer interleaving.
+// CapsuleRandom reproduces the build-103 AE52A0 floating draw used by the
+// native capsule selector and scatter sampler. Its zone ownership and run-derived
+// seed are server policy; they do not reproduce process-global interleaving.
 type CapsuleRandom struct {
 	mu    sync.Mutex
 	state uint32
@@ -20,7 +20,7 @@ type CapsuleRandomSnapshot struct {
 }
 
 func NewCapsuleRandom(seed uint32) *CapsuleRandom {
-	// AEAAE0 normalizes an explicit zero seed. Unlike native startup, the
+	// Build-103 AE5280 normalizes an explicit zero seed. Unlike native startup, the
 	// server never takes the nondeterministic RDTSC initialization branch.
 	if seed == 0 {
 		seed = 0xaaaaaaaa

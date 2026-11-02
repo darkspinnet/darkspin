@@ -38,14 +38,15 @@ type catalogResourceKey struct {
 }
 
 var catalogResourceTypes = map[string]uint32{
-	"lootrigblock":   0x1bced3d7,
-	"lootprefix":     0x6a1812c6,
-	"lootsuffix":     0x447dc2e5,
-	"markerset":      0xa11d3144,
-	"level":          0xb9193960,
-	"nonplayerclass": 0xd117afca,
-	"npcaffix":       npcAffixAssetType,
-	"levelconfig":    0x52d095f6,
+	"lootrigblock":    0x1bced3d7,
+	"lootprefix":      0x6a1812c6,
+	"lootsuffix":      0x447dc2e5,
+	"markerset":       0xa11d3144,
+	"level":           0xb9193960,
+	"nonplayerclass":  0xd117afca,
+	"npcaffix":        npcAffixAssetType,
+	"levelconfig":     0x52d095f6,
+	"levelobjectives": levelObjectivesAssetType,
 }
 
 func decodeAssetCatalog(payload []byte) ([]AssetCatalogEntry, error) {

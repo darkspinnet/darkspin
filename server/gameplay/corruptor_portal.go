@@ -1,6 +1,7 @@
 package gameplay
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/util"
+	"github.com/darkspinnet/darkspin/server/zone"
 )
 
 const (
@@ -59,45 +61,139 @@ func (e campaignCorruptorState) clonePortals() campaignCorruptorState {
 }
 
 type campaignCorruptorPortalStep struct {
-	runtime        campaignNPCActionRuntime
-	packet         raknet.Packet
-	sessionKey     string
-	generation     uint64
-	bossObjectID   uint32
-	portalObjectID uint32
-	timestamp      uint64
-	isStartup      bool
+	world           *zone.Zone
+	sceneGeneration uint64
+	identity        gameplayProducerIdentity
+	runtime         campaignNPCActionRuntime
+	packet          raknet.Packet
+	sessionKey      string
+	generation      uint64
+	bossObjectID    uint32
+	portalObjectID  uint32
+	timestamp       uint64
+	isStartup       bool
+	isGrouped       bool
+}
+
+type campaignCorruptorPortalGroup struct {
+	steps []campaignCorruptorPortalStep
+}
+
+func (e campaignCorruptorPortalGroup) produce() ([][]byte, error) {
+	if len(e.steps) == 0 {
+		return nil, nil
+	}
+	first := e.steps[0]
+	first.runtime.registry.mutex.RLock()
+	session, isFound := first.runtime.registry.sessions[first.sessionKey]
+	isCurrent := isFound && session.zone != nil && session.zone == first.world &&
+		session.generation == first.generation && !session.isZoneTerminal() && session.zone.IsActive()
+	if isCurrent {
+		boss, isBossFound := session.zone.NPCs().NPC(first.bossObjectID)
+		isCurrent = isBossFound && !boss.IsDefeated &&
+			(!boss.IsCorruptorStageTwo || boss.IsSecondAggroCinematic(first.sceneGeneration))
+	}
+	if isCurrent {
+		steps := make([]campaignCorruptorPortalStep, 0, len(e.steps))
+		for _, step := range e.steps {
+			portal, isPortalFound := session.zone.NPCs().NPC(step.portalObjectID)
+			if isPortalFound && !portal.IsDefeated && portal.Plan.OwnerObjectID == step.bossObjectID {
+				steps = append(steps, step)
+			}
+		}
+		e.steps = steps
+	}
+	first.runtime.registry.mutex.RUnlock()
+	if !isCurrent || len(e.steps) == 0 {
+		return nil, nil
+	}
+	var packets [][]byte
+	for index := range e.steps {
+		stepPackets, err := e.steps[index].produce()
+		if err != nil {
+			return nil, fmt.Errorf("portalWave[%d]: %w", index, err)
+		}
+		packets = append(packets, stepPackets...)
+		e.steps[index].isStartup = false
+		e.steps[index].timestamp += uint64(corruptorPortalSpawnDelay / time.Millisecond)
+	}
+	err := scheduleNPCProducer(first.runtime.registry, first.packet, corruptorPortalSpawnDelay, e.produce)
+	if err != nil {
+		return nil, fmt.Errorf("portalWaveSchedule: %w", err)
+	}
+	return packets, nil
 }
 
 func (r campaignNPCActionRuntime) scheduleCorruptorPortals(
 	packet raknet.Packet, sessionKey string, generation uint64, bossObjectID uint32,
 	plans []campaignCorruptorSpawnPlan, timestamp uint64,
 ) error {
+	cancel, err := r.scheduleCorruptorPortalGroup(packet, sessionKey, generation, bossObjectID, plans, timestamp)
+	if err != nil {
+		return fmt.Errorf("portalGroup: %w", err)
+	}
+	if cancel == nil {
+		return errors.New("corruptor portal cancellation unavailable")
+	}
+	return nil
+}
+
+func (r campaignNPCActionRuntime) scheduleCorruptorPortalGroup(
+	packet raknet.Packet, sessionKey string, generation uint64, bossObjectID uint32,
+	plans []campaignCorruptorSpawnPlan, timestamp uint64,
+) (raknet.CancelSchedule, error) {
+	r.registry.mutex.RLock()
+	member, isMemberFound := r.registry.sessions[sessionKey]
+	if !isMemberFound || member.generation != generation || member.zone == nil {
+		r.registry.mutex.RUnlock()
+		return nil, errors.New("corruptor portal source unavailable")
+	}
+	boss, isBossFound := member.zone.NPCs().NPC(bossObjectID)
+	identity := gameplayProducerIdentityFromSession(sessionKey, member, isMemberFound)
+	world := member.zone
+	r.registry.mutex.RUnlock()
+	if !identity.isFound || identity.zoneGeneration != generation || identity.transportGeneration != packet.TransportGeneration {
+		return nil, errors.New("corruptor portal carrier unavailable")
+	}
+	if !isBossFound || boss.IsDefeated {
+		return nil, errors.New("corruptor portal boss unavailable")
+	}
+	sceneGeneration := boss.SecondAggroGeneration()
+	group := campaignCorruptorPortalGroup{}
 	for _, plan := range plans {
 		if plan.Plan.NounName != campaignCorruptorPortalNounName {
 			continue
 		}
-		step := campaignCorruptorPortalStep{
+		group.steps = append(group.steps, campaignCorruptorPortalStep{
+			identity: identity, sceneGeneration: sceneGeneration, world: world,
 			runtime: r, packet: packet.Autonomous(), sessionKey: sessionKey,
 			generation: generation, bossObjectID: bossObjectID,
-			portalObjectID: plan.Plan.ObjectID, isStartup: true,
+			portalObjectID: plan.Plan.ObjectID, isStartup: true, isGrouped: true,
 			timestamp: timestamp + uint64(corruptorPortalStartupDelay/time.Millisecond),
-		}
-		err := scheduleNPCProducer(
-			r.registry, step.packet, corruptorPortalStartupDelay, step.produce,
-		)
-		if err != nil {
-			return fmt.Errorf("portalStartup: %w", err)
-		}
+		})
 	}
-	return nil
+	if len(group.steps) == 0 {
+		return nil, errors.New("corruptor portal group empty")
+	}
+	// One ordered producer prevents equal-deadline portal goroutines from
+	// assigning the same run's random draws to different portal positions.
+	cancel, err := scheduleNPCProducers(r.registry, packet.Autonomous(), []raknet.ScheduledPacketProducer{{
+		Delay: corruptorPortalStartupDelay, Produce: group.produce,
+	}})
+	if err != nil {
+		return nil, fmt.Errorf("portalStartup: %w", err)
+	}
+	return cancel, nil
 }
 
 func (e campaignCorruptorPortalStep) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	if !isFound || peerSession.generation != e.generation ||
-		peerSession.zone == nil || peerSession.zone.NPCs() == nil {
+		gameplayProducerIdentityFromSession(e.sessionKey, peerSession, isFound) != e.identity ||
+		peerSession.zone == nil || peerSession.zone.NPCs() == nil ||
+		peerSession.zone != e.world ||
+		peerSession.isZoneTerminal() || !peerSession.zone.IsActive() {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
@@ -106,6 +202,7 @@ func (e campaignCorruptorPortalStep) produce() ([][]byte, error) {
 	boss, isBossFound := peerSession.zone.NPCs().NPC(e.bossObjectID)
 	portal, isPortalFound := peerSession.zone.NPCs().NPC(e.portalObjectID)
 	if !isStateFound || !isPortalStateFound || !isBossFound || boss.IsDefeated ||
+		(boss.IsCorruptorStageTwo && !boss.IsSecondAggroCinematic(e.sceneGeneration)) ||
 		!isPortalFound || portal.IsDefeated || portal.Plan.OwnerObjectID != e.bossObjectID {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
@@ -199,15 +296,18 @@ func (e campaignCorruptorPortalStep) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("portalRepeat: %w", err)
 	}
-	actionPackets, err := e.runtime.scheduleFirstActions(e.packet, e.sessionKey,
-		e.generation, actionPlans, e.timestamp)
+	err = e.runtime.publishCorruptorBirth(e.packet, e.sessionKey, e.generation,
+		plans, actionPlans, packets, e.timestamp)
 	if err != nil {
 		return nil, fmt.Errorf("portalActions: %w", err)
 	}
-	return append(packets, actionPackets...), nil
+	return nil, nil
 }
 
 func (e campaignCorruptorPortalStep) scheduleNext() error {
+	if e.isGrouped {
+		return nil
+	}
 	e.isStartup = false
 	e.timestamp += uint64(corruptorPortalSpawnDelay / time.Millisecond)
 	err := scheduleNPCProducer(e.runtime.registry, e.packet, corruptorPortalSpawnDelay, e.produce)

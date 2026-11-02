@@ -167,6 +167,70 @@ func RandomTargetTeleportDestination(
 	return source, false, nil
 }
 
+// RandomStealthMovementDestination samples the StealthAttack movement ring
+// around the caster and accepts only a landing reachable from that caster.
+func RandomStealthMovementDestination(
+	mesh *basenavigation.Mesh, random *sim.SimulatorRandom,
+	source, target game.Vec3, footprintRadius float32,
+	actor basenavigation.ActorNavigation,
+) (game.Vec3, bool, error) {
+	if random == nil || footprintRadius < 0 {
+		return game.Vec3{}, false, errors.New("stealth movement input invalid")
+	}
+	if mesh == nil {
+		return source, false, nil
+	}
+	planLayer, isLayerFound := mesh.ActorLayer(max(footprintRadius, float32(0.1)), actor)
+	if !isLayerFound {
+		return source, false, nil
+	}
+	forward := math.Atan2(float64(target.Y-source.Y), float64(target.X-source.X))
+	for attempt := range 6 {
+		angle := (random.Float64()*90 - 45) * math.Pi / 180
+		if attempt >= 3 {
+			angle += math.Pi
+		}
+		distance := 5 + random.Float64()*5
+		desired := game.Vec3{
+			X: source.X + float32(math.Cos(forward+angle)*distance),
+			Y: source.Y + float32(math.Sin(forward+angle)*distance),
+			Z: source.Z,
+		}
+		path, err := mesh.CreatePath(
+			basenavigation.Vec3{X: source.X, Y: source.Y, Z: source.Z},
+			basenavigation.Vec3{X: desired.X, Y: desired.Y, Z: desired.Z},
+			basenavigation.PathOptions{
+				ProjectionOptions: basenavigation.ProjectionOptions{
+					PlanLayer: planLayer, MaxDistance: 12,
+				},
+				MaxVisitedPolygon: 2048,
+			},
+		)
+		if err != nil {
+			continue
+		}
+		destination := game.Vec3{
+			X: path.Goal.Position.X, Y: path.Goal.Position.Y, Z: path.Goal.Position.Z,
+		}
+		delta := destination.Sub(desired)
+		if delta.X*delta.X+delta.Y*delta.Y >= 0.01 || math.Abs(float64(delta.Z)) > 5 {
+			continue
+		}
+		isProgressing := false
+		for _, point := range path.Points {
+			if point.X != source.X || point.Y != source.Y || point.Z != source.Z {
+				isProgressing = true
+				break
+			}
+		}
+		if !isProgressing {
+			continue
+		}
+		return destination, true, nil
+	}
+	return source, false, nil
+}
+
 func ConnectedTeleportDestination(
 	mesh *basenavigation.Mesh,
 	random *sim.SimulatorRandom,

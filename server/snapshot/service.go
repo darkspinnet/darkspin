@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,13 +22,14 @@ type Options struct {
 	Directory        string
 	ArchiveDirectory string
 	TraceDirectory   string
-	ControlPath      string
-	Mode             Mode
-	BufferDuration   time.Duration
-	Delay            time.Duration
-	BuildVersion     string
-	Logger           *log.Logger
-	ResolveUserName  func(int64) string
+	// ControlPath is accepted only to clean up the obsolete control file.
+	ControlPath     string
+	Mode            Mode
+	BufferDuration  time.Duration
+	Delay           time.Duration
+	BuildVersion    string
+	Logger          *log.Logger
+	ResolveUserName func(int64) string
 }
 
 type trafficEvent struct {
@@ -154,7 +155,7 @@ type Service struct {
 	directory                string
 	archiveDirectory         string
 	traceDirectory           string
-	controlPath              string
+	controlBroker            *controlBroker
 	mode                     Mode
 	bufferDuration           time.Duration
 	delay                    time.Duration
@@ -212,10 +213,18 @@ func New(options Options) (*Service, error) {
 	if logger == nil {
 		logger = log.Default()
 	}
+	removeLegacyControl(options.TraceDirectory, logger)
+	if options.ControlPath != "" {
+		removeLegacyControl(filepath.Dir(options.ControlPath), logger)
+	}
+	broker, err := newControlBroker(mode, logger)
+	if err != nil {
+		return nil, fmt.Errorf("snapshotControl: %w", err)
+	}
 	service := &Service{
 		directory: options.Directory, archiveDirectory: options.ArchiveDirectory,
 		traceDirectory: options.TraceDirectory,
-		controlPath:    options.ControlPath,
+		controlBroker:  broker,
 		mode:           mode, bufferDuration: bufferDuration, delay: delay,
 		buildVersion: options.BuildVersion, logger: logger,
 		resolveUserName:        options.ResolveUserName,
@@ -239,7 +248,12 @@ func (e *Service) Close() {
 	if e == nil {
 		return
 	}
-	e.closeOnce.Do(func() { close(e.close) })
+	e.closeOnce.Do(func() {
+		close(e.close)
+		if e.controlBroker != nil {
+			e.controlBroker.close()
+		}
+	})
 }
 
 // UseStateProvider installs gameplay's authoritative keyframe provider.
@@ -931,17 +945,12 @@ func (e *Service) setMode(mode Mode) {
 }
 
 func (e *Service) writeControlMode(mode Mode) {
-	if strings.TrimSpace(e.controlPath) == "" {
+	if e.controlBroker == nil {
 		return
 	}
 	e.controlMu.Lock()
 	defer e.controlMu.Unlock()
-	err := os.WriteFile(
-		e.controlPath, []byte("mode="+string(mode)+"\n"), 0o644,
-	)
-	if err != nil {
-		e.logger.Printf("Sync Snapshot client mode update failed: %v", err)
-	}
+	e.controlBroker.publish("mode="+string(mode)+"\n\n", mode)
 }
 
 // SetMode applies a live launcher-selected collection mode.

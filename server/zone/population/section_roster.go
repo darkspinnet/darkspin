@@ -58,7 +58,7 @@ func loadSectionRosters(
 			buckets[index].SpecialCount = 0
 		}
 	}
-	themes, err := selectSectionThemes(buckets, roster, random)
+	themes, err := selectSectionThemes(buckets, roster, random, director)
 	if err != nil {
 		return nil, fmt.Errorf("rosterSections: %w", err)
 	}
@@ -129,7 +129,7 @@ func applyCampaignSectionPopulation(
 			eliteTarget = 0
 		}
 		floorPlans, err := planCampaignFloor(sectionCandidates, theme, random,
-			CampaignFloorPopulationTarget, eliteTarget, nil, false)
+			int(director.EnemyPopulationRules.Resolved().EnemiesPerSection), eliteTarget, nil, false)
 		if err != nil {
 			return nil, fmt.Errorf("sectionFloor[%d]: %w", section, err)
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -45,6 +46,8 @@ type LootAffix struct {
 	ClassType               string
 	ScienceType             string
 	Modifier                []float32
+	ModifierGrants          []string
+	AbilityImprovements     []string
 	IsUniqueFamily          bool
 	IsBasicEligible         bool
 }
@@ -150,6 +153,27 @@ func writeLootAffixes(ctx context.Context, transaction *sql.Tx, installPath stri
 		}
 		if rowCount != 1 {
 			return fmt.Errorf("affixSource[%d]: got %d rows", index, rowCount)
+		}
+		modifierGrants, marshalErr := json.Marshal(affix.ModifierGrants)
+		if marshalErr != nil {
+			return fmt.Errorf("grantMarshal[%d]: %w", index, marshalErr)
+		}
+		abilityImprovements, marshalErr := json.Marshal(affix.AbilityImprovements)
+		if marshalErr != nil {
+			return fmt.Errorf("improvementMarshal[%d]: %w", index, marshalErr)
+		}
+		tailResult, tailErr := transaction.ExecContext(ctx, `
+			INSERT INTO loot_affix_tail (kind, id, modifier_grant, ability_improvement)
+			VALUES (?, ?, ?, ?)`, affix.Kind, affix.ID, string(modifierGrants), string(abilityImprovements))
+		if tailErr != nil {
+			return fmt.Errorf("tailInsert[%d]: %w", index, tailErr)
+		}
+		tailCount, tailErr := tailResult.RowsAffected()
+		if tailErr != nil {
+			return fmt.Errorf("tailRows[%d]: %w", index, tailErr)
+		}
+		if tailCount != 1 {
+			return fmt.Errorf("tailSource[%d]: got %d rows", index, tailCount)
 		}
 	}
 	err = statement.Close()
@@ -322,16 +346,29 @@ func (s *Store) LootAffixes(ctx context.Context) ([]LootAffix, error) {
 	if ctx == nil {
 		return nil, errors.New("nil context")
 	}
+	// Existing recipe-92 caches still provide the stat catalog. Only freshly
+	// imported caches have retained the authored grants and improvement text.
+	isTailStored, err := hasTable(ctx, s.database, "loot_affix_tail")
+	if err != nil {
+		return nil, fmt.Errorf("tailTable: %w", err)
+	}
+	tailColumns := "'[]', '[]'"
+	tailJoin := ""
+	if isTailStored {
+		tailColumns = "tail.modifier_grant, tail.ability_improvement"
+		tailJoin = "LEFT JOIN loot_affix_tail AS tail ON tail.kind=loot_affix.kind AND tail.id=loot_affix.id"
+	}
 	rows, err := s.database.QueryContext(ctx, `
 		SELECT loot_affix.kind, loot_affix.id, loot_affix.minimum_level, loot_affix.maximum_level,
 		       loot_affix.part_type, loot_affix.class_type, loot_affix.science_type, loot_affix.modifier,
 		       loot_affix.content_source_resource_id,
-		       loot_affix.is_unique_family, loot_affix.is_basic_eligible, catalog.ordinal
+		       loot_affix.is_unique_family, loot_affix.is_basic_eligible, catalog.ordinal, `+tailColumns+`
 		FROM loot_affix
 		LEFT JOIN content_source_resource AS resource ON resource.id=loot_affix.content_source_resource_id
 		LEFT JOIN (SELECT content_source_resource_id, MIN(ordinal) AS ordinal FROM asset_catalog
 		           WHERE content_source_resource_id IS NOT NULL GROUP BY content_source_resource_id) AS catalog
 		           ON catalog.content_source_resource_id=loot_affix.content_source_resource_id
+		`+tailJoin+`
 		ORDER BY catalog.ordinal IS NULL, catalog.ordinal, resource.id`)
 	if err != nil {
 		return nil, fmt.Errorf("affixQuery: %w", err)
@@ -342,12 +379,22 @@ func (s *Store) LootAffixes(ctx context.Context) ([]LootAffix, error) {
 		var affix LootAffix
 		var payload []byte
 		var partType string
+		var modifierGrants string
+		var abilityImprovements string
 		var catalogOrdinal sql.NullInt64
 		err = rows.Scan(&affix.Kind, &affix.ID, &affix.MinimumLevel, &affix.MaximumLevel,
 			&partType, &affix.ClassType, &affix.ScienceType, &payload, &affix.ContentSourceResourceID,
-			&affix.IsUniqueFamily, &affix.IsBasicEligible, &catalogOrdinal)
+			&affix.IsUniqueFamily, &affix.IsBasicEligible, &catalogOrdinal, &modifierGrants, &abilityImprovements)
 		if err != nil {
 			return nil, fmt.Errorf("affixScan: %w", err)
+		}
+		err = json.Unmarshal([]byte(modifierGrants), &affix.ModifierGrants)
+		if err != nil {
+			return nil, fmt.Errorf("grantDecode[%s/%d]: %w", affix.Kind, affix.ID, err)
+		}
+		err = json.Unmarshal([]byte(abilityImprovements), &affix.AbilityImprovements)
+		if err != nil {
+			return nil, fmt.Errorf("improvementDecode[%s/%d]: %w", affix.Kind, affix.ID, err)
 		}
 		if catalogOrdinal.Valid {
 			if catalogOrdinal.Int64 < 0 || catalogOrdinal.Int64 > int64(^uint32(0)) {

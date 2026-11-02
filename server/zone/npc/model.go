@@ -2,6 +2,7 @@ package npc
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"reflect"
 	"slices"
@@ -33,41 +34,66 @@ const (
 )
 
 type SpawnPlan struct {
-	ObjectID         uint32
-	OwnerObjectID    uint32
-	NounName         string
-	AuthoredNounName string
-	Position         game.Vec3
-	Rotation         game.Vec3
-	PlacementScale   float32 // Authored marker multiplier; zero means one.
-	Experience       uint32
-	LocusID          uint32
-	Kind             sim.DirectorLocusKind
-	IsCaptain        bool
-	IsElite          bool
-	IsBoss           bool
-	IsArena          bool
-	IsFixture        bool
+	NPCPassiveRank         int32
+	AttributeMirror        AttributeMirror
+	InvincitronRage        InvincitronRage
+	PetHealthIncrease      float32
+	scenarioControl        scenarioControlPlan
+	ObjectID               uint32
+	OwnerObjectID          uint32
+	NounName               string
+	AuthoredNounName       string
+	Position               game.Vec3
+	Rotation               game.Vec3
+	PlacementScale         float32 // Authored marker multiplier; zero means one.
+	IsPlacementKnown       bool
+	IsPlacementVisible     bool
+	IsPlacementCollidable  bool
+	ScalePreviewMultiplier float32
+	Experience             uint32
+	LocusID                uint32
+	Kind                   sim.DirectorLocusKind
+	IsCaptain              bool
+	IsElite                bool
+	IsBoss                 bool
+	IsArena                bool
+	IsFixture              bool
 	// Current presentation state, retained across rejoin until the entrance reveals it.
-	IsIntroductionHidden   bool
-	IsIntroductionComplete bool
-	IsStartupInitialized   bool
-	IsSecondaryStart       bool
-	IsLootSuppressed       bool // Native object +153, independent of XP eligibility.
-	IsExperienceSuppressed bool // Native object +154.
+	IsIntroductionHidden       bool
+	IsIntroductionComplete     bool
+	IsSubsequentAggroPending   bool
+	IsStartupInitialized       bool
+	IsRoarInitialized          bool
+	IsRoarSelected             bool
+	IsAbsorptionShieldDepleted bool // Snapshot presentation; fresh spawns start charged.
+	IsSecondaryStart           bool
+	IsLootSuppressed           bool // Native object +153, independent of XP eligibility.
+	IsExperienceSuppressed     bool // Native object +154.
 	// Server encounter policy: excluded from progress and retired with its owner.
-	IsEncounterAuxiliary    bool
-	MovementSpeedBuff       float32
-	SwiftAuraSourceObjectID uint32
-	MarkerSetName           string
-	Introduction            SpawnIntroduction
-	NPCProfile              game.CampaignNPCProfile
-	BossIdentity            BossIdentity
-	ActionProfile           ActionProfile
-	IsActionKnown           bool
+	IsEncounterAuxiliary        bool
+	IsOwnedDeathPersistent      bool
+	MovementSpeedBuff           float32
+	SupportIdleMovementBuff     float32
+	SwiftAuraSourceObjectID     uint32
+	AffixAuras                  []AffixAura
+	AffixDifficulty             uint32
+	AffixAttackSpeedBonus       float32
+	AffixCooldownReductionBonus float32
+	AffixMovementSpeedBuff      float32
+	PackflyHelperCount          uint32
+	PackflyPassiveRank          int32
+	MarkerSetName               string
+	Introduction                SpawnIntroduction
+	NPCProfile                  game.CampaignNPCProfile
+	// Optional supplied current HP from CreateCreature; zero starts at maximum.
+	InitialHitPoint float32
+	BossIdentity    BossIdentity
+	ActionProfile   ActionProfile
+	IsActionKnown   bool
 }
 
 func (e SpawnPlan) Clone() SpawnPlan {
+	e.AffixAuras = slices.Clone(e.AffixAuras)
 	if e.NPCProfile.ActorFootprint != nil {
 		footprint := *e.NPCProfile.ActorFootprint
 		e.NPCProfile.ActorFootprint = &footprint
@@ -79,13 +105,17 @@ func (e SpawnPlan) Clone() SpawnPlan {
 }
 
 func (e SpawnPlan) IsEqual(other SpawnPlan) bool {
-	return e.ObjectID == other.ObjectID &&
+	return e.NPCPassiveRank == other.NPCPassiveRank && e.AttributeMirror == other.AttributeMirror && e.InvincitronRage == other.InvincitronRage && e.PetHealthIncrease == other.PetHealthIncrease && e.scenarioControl == other.scenarioControl && e.ObjectID == other.ObjectID &&
 		e.OwnerObjectID == other.OwnerObjectID &&
 		e.NounName == other.NounName &&
 		e.AuthoredNounName == other.AuthoredNounName &&
 		e.Position == other.Position &&
 		e.Rotation == other.Rotation &&
 		e.PlacementScale == other.PlacementScale &&
+		e.IsPlacementKnown == other.IsPlacementKnown &&
+		e.IsPlacementVisible == other.IsPlacementVisible &&
+		e.IsPlacementCollidable == other.IsPlacementCollidable &&
+		e.ScalePreviewMultiplier == other.ScalePreviewMultiplier &&
 		e.Experience == other.Experience &&
 		e.LocusID == other.LocusID &&
 		e.Kind == other.Kind &&
@@ -93,13 +123,25 @@ func (e SpawnPlan) IsEqual(other SpawnPlan) bool {
 		e.IsElite == other.IsElite &&
 		e.IsBoss == other.IsBoss &&
 		e.IsArena == other.IsArena &&
+		e.IsSubsequentAggroPending == other.IsSubsequentAggroPending &&
 		e.IsFixture == other.IsFixture &&
+		e.IsAbsorptionShieldDepleted == other.IsAbsorptionShieldDepleted &&
 		e.IsLootSuppressed == other.IsLootSuppressed &&
 		e.IsExperienceSuppressed == other.IsExperienceSuppressed &&
 		e.IsEncounterAuxiliary == other.IsEncounterAuxiliary &&
+		e.IsOwnedDeathPersistent == other.IsOwnedDeathPersistent &&
 		e.MovementSpeedBuff == other.MovementSpeedBuff &&
+		e.SupportIdleMovementBuff == other.SupportIdleMovementBuff &&
 		e.SwiftAuraSourceObjectID == other.SwiftAuraSourceObjectID &&
+		slices.Equal(e.AffixAuras, other.AffixAuras) &&
+		e.AffixDifficulty == other.AffixDifficulty &&
+		e.AffixAttackSpeedBonus == other.AffixAttackSpeedBonus &&
+		e.AffixCooldownReductionBonus == other.AffixCooldownReductionBonus &&
+		e.AffixMovementSpeedBuff == other.AffixMovementSpeedBuff &&
+		e.PackflyHelperCount == other.PackflyHelperCount &&
+		e.PackflyPassiveRank == other.PackflyPassiveRank &&
 		e.MarkerSetName == other.MarkerSetName &&
+		e.InitialHitPoint == other.InitialHitPoint &&
 		e.Introduction == other.Introduction &&
 		reflect.DeepEqual(e.NPCProfile, other.NPCProfile) &&
 		e.BossIdentity == other.BossIdentity &&
@@ -133,6 +175,10 @@ type Target struct {
 }
 
 type Snapshot struct {
+	poisonImmunity                  float32
+	IsBirthPending                  bool
+	birthOwner                      ActionOwner
+	Mutation                        MutationState
 	orcusConsumeBands               uint8
 	IsOrcusFollowing                bool
 	repairStackCount                uint32
@@ -162,6 +208,7 @@ type Snapshot struct {
 	IsDefeated                      bool
 	IsActionStarted                 bool
 	IsFirstActionStarted            bool
+	AdditionalKit                   AdditionalKitState
 	IsPublished                     bool
 	IsShieldTriggered               bool
 	IsShieldActive                  bool
@@ -169,14 +216,21 @@ type Snapshot struct {
 	IsTurtleTriggered               bool
 	IsTurtleActive                  bool
 	IsSelfResurrectionTriggered     bool
+	IsAffixResurrectionTriggered    bool
+	IsAffixResurrectionPending      bool
 	IsCorruptorStageTwo             bool
 	IsNavigationCollisionEnabled    bool
 	IsInvisibleToSecurityTeleporter bool
 	status                          status
 	corruptorCombat                 corruptorCombat
+	cinematic                       cinematicHold
+	zapCharge                       *zapChargeState
+	introduction                    introductionTimeline
 }
 
 type DamageResult struct {
+	Thorns                     *ThornsDamage
+	AffixResurrectionFraction  float32
 	ObjectID                   uint32
 	DeletedOwnedObjectIDs      []uint32
 	LocusID                    uint32
@@ -285,6 +339,8 @@ type DeathEvent struct {
 	EffectSlot         uint8
 	GraphicsState      uint32
 	Position           game.Vec3
+	Facing             game.Vec3
+	IsFacingOmitted    bool
 	IsCritical         bool
 	IsTargetable       bool
 	IsEffectStopped    bool
@@ -292,7 +348,26 @@ type DeathEvent struct {
 }
 
 func ValidateSpawnPlan(plan SpawnPlan, objectIDLimit uint32) error {
+	if math.IsNaN(float64(plan.SupportIdleMovementBuff)) || math.IsInf(float64(plan.SupportIdleMovementBuff), 0) ||
+		plan.SupportIdleMovementBuff <= -1 || plan.SupportIdleMovementBuff > 0 {
+		return errors.New("invalid support idle movement buff")
+	}
+	if plan.NPCPassiveRank < 0 || plan.NPCPassiveRank > 3 {
+		return errors.New("invalid NPC passive rank")
+	}
+	mirrorErr := validateAttributeMirrorPlan(plan)
+	if mirrorErr != nil {
+		return fmt.Errorf("spawnMirror: %w", mirrorErr)
+	}
 	profile := plan.NPCProfile
+	if plan.InitialHitPoint < 0 || math.IsNaN(float64(plan.InitialHitPoint)) ||
+		math.IsInf(float64(plan.InitialHitPoint), 0) {
+		return errors.New("invalid initial health")
+	}
+	if math.IsNaN(float64(plan.ScalePreviewMultiplier)) || math.IsInf(float64(plan.ScalePreviewMultiplier), 0) ||
+		(plan.ScalePreviewMultiplier != 0 && (plan.ScalePreviewMultiplier < 0.25 || plan.ScalePreviewMultiplier > 4)) {
+		return errors.New("invalid scale preview")
+	}
 	if plan.PlacementScale < 0 || math.IsNaN(float64(plan.PlacementScale)) ||
 		math.IsInf(float64(plan.PlacementScale), 0) {
 		return errors.New("invalid placement scale")
@@ -326,4 +401,13 @@ func ValidateSpawnPlan(plan SpawnPlan, objectIDLimit uint32) error {
 		}
 	}
 	return nil
+}
+
+// SpawnHitPoint keeps supplied current health separate from class maximum HP.
+// Build 103 CreateCreature caps its optional HP operand after actor creation.
+func (e SpawnPlan) SpawnHitPoint() float32 {
+	if e.InitialHitPoint > 0 {
+		return min(e.InitialHitPoint, e.NPCProfile.HitPoint)
+	}
+	return e.NPCProfile.HitPoint
 }

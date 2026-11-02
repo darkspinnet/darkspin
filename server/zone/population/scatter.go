@@ -1,37 +1,14 @@
 package population
 
 import (
-	"sync"
-	"time"
-
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/navigation"
+	"github.com/darkspinnet/darkspin/server/sim"
 	zonenavigation "github.com/darkspinnet/darkspin/server/zone/navigation"
 )
 
-// Native scatter uses process-global dword_1465600, separately from the map
-// layout state and simulator MT. Initialize from the clock in place of RDTSC.
-var portalScatterRandom scatterRandom
-
-type scatterRandom struct {
-	mu    sync.Mutex
-	state uint32
-}
-
-func (e *scatterRandom) draw() float64 {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.state == 0 {
-		e.state = uint32(time.Now().UnixNano())
-		if e.state == 0 {
-			e.state = 1
-		}
-	}
-	e.state *= 663608941
-	return float64(int32(e.state))*(1.0/4294967296.0) + 0.5
-}
-
 type ScatterRequest struct {
+	Random    *sim.CapsuleRandom
 	Origin    game.Vec3
 	Mode      uint8
 	Size      game.Vec3
@@ -40,10 +17,12 @@ type ScatterRequest struct {
 	Blockers  []game.BoundingBox
 }
 
-// ScatterPlacement follows sub_9F9150 -> sub_9F5850, retaining the exact
-// origin if no candidate passes projection, reachability, and box overlap.
+// ScatterPlacement follows build-103 sub_9FB180, retaining the exact origin
+// if no candidate passes projection, reachability, and box overlap. Native
+// draws share dword_145E1C8 with capsule selection; the server instead owns
+// that stream per zone so concurrent games and checkpoint restores are stable.
 func ScatterPlacement(req ScatterRequest) game.Vec3 {
-	if req.Size.X <= 0 || req.Size.Y <= 0 || req.Size.Z <= 0 {
+	if req.Random == nil || req.Size.X <= 0 || req.Size.Y <= 0 || req.Size.Z <= 0 {
 		return req.Origin
 	}
 	var originProjection navigation.Projection
@@ -73,8 +52,8 @@ func ScatterPlacement(req ScatterRequest) game.Vec3 {
 		}
 	}
 	for attempt := 0; attempt < 8; attempt++ {
-		x := float32(portalScatterRandom.draw() * 10)
-		y := float32(portalScatterRandom.draw() * 10)
+		x := float32(req.Random.Float64() * 10)
+		y := float32(req.Random.Float64() * 10)
 		position := game.Vec3{X: req.Origin.X + x, Y: req.Origin.Y + y, Z: req.Origin.Z}
 		if !isNavigationReady {
 			continue

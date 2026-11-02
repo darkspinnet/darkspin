@@ -35,14 +35,43 @@ type fieldMedicDroneAttackStep struct {
 func (r campaignDamageRuntime) startFieldMedicDroneAttack(
 	packet raknet.Packet, sessionKey string, generation uint64, sourceTime uint64,
 ) ([][]byte, error) {
+	r.registry.mutex.Lock()
+	peerSession, isFound := r.registry.sessions[sessionKey]
+	if !isFound || peerSession.generation != generation {
+		r.registry.mutex.Unlock()
+		return nil, nil
+	}
+	packets, err := peerSession.syncFieldMedicDrones(r.npc.program, r.npc.now())
+	if err != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("fieldMedicAttackSync: %w", err)
+	}
+	objectIDs := append([]uint32(nil), peerSession.fieldMedicDroneObjectIDs...)
+	r.registry.sessions[sessionKey] = peerSession
+	r.registry.mutex.Unlock()
+	for _, objectID := range objectIDs {
+		attackPackets, attackErr := r.startFieldMedicDroneAttackFor(
+			packet, sessionKey, generation, sourceTime, objectID,
+		)
+		if attackErr != nil {
+			return nil, fmt.Errorf("fieldMedicActorAttack: %w", attackErr)
+		}
+		packets = append(packets, attackPackets...)
+	}
+	return packets, nil
+}
+
+func (r campaignDamageRuntime) startFieldMedicDroneAttackFor(
+	packet raknet.Packet, sessionKey string, generation uint64, sourceTime uint64, objectID uint32,
+) ([][]byte, error) {
 	if packet.ScheduleGroup == nil && packet.ScheduleGroupResult == nil {
 		return nil, errors.New("field medic drone schedule unavailable")
 	}
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation &&
-		peerSession.fieldMedicDroneObjectID != 0 &&
-		peerSession.fieldMedicDroneAttack == nil && peerSession.zone != nil &&
+		objectID != 0 &&
+		peerSession.fieldMedicDroneAttacks[objectID] == nil && peerSession.zone != nil &&
 		peerSession.zone.Companion() != nil && peerSession.zone.NPCs() != nil
 	if !isCurrent {
 		r.registry.mutex.Unlock()
@@ -50,7 +79,7 @@ func (r campaignDamageRuntime) startFieldMedicDroneAttack(
 	}
 	ability := r.npc.program.SentryDroneLaser
 	plan, isPlanFound, err := peerSession.zone.Companion().ReserveActorAttack(
-		peerSession.fieldMedicDroneObjectID,
+		objectID,
 		peerSession.zone.NPCs().LiveSnapshots(), ability.Range, r.npc.now(),
 		ability.Cooldown,
 	)
@@ -137,7 +166,10 @@ func (r campaignDamageRuntime) startFieldMedicDroneAttack(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("fieldMedicDroneProjectile: %w", runErr)
 	}
-	peerSession.fieldMedicDroneAttack = run
+	if peerSession.fieldMedicDroneAttacks == nil {
+		peerSession.fieldMedicDroneAttacks = make(map[uint32]*abilityraknet.ProjectileRun)
+	}
+	peerSession.fieldMedicDroneAttacks[objectID] = run
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
 
@@ -181,7 +213,7 @@ func (e fieldMedicDroneAttackStep) launch() ([][]byte, error) {
 	e.runtime.registry.mutex.RLock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
-		peerSession.fieldMedicDroneAttack == e.run
+		peerSession.fieldMedicDroneAttacks[e.plan.ObjectID] == e.run
 	e.runtime.registry.mutex.RUnlock()
 	if !isCurrent {
 		return nil, nil
@@ -197,7 +229,7 @@ func (e fieldMedicDroneAttackStep) impact() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
-		peerSession.fieldMedicDroneAttack == e.run && peerSession.zone != nil
+		peerSession.fieldMedicDroneAttacks[e.plan.ObjectID] == e.run && peerSession.zone != nil
 	if !isCurrent {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
@@ -262,7 +294,7 @@ func (e fieldMedicDroneAttackStep) impact() ([][]byte, error) {
 		context.Background(), e.impactDeadline, isHit, isHit,
 		targetHitPoint, e.damage, false, sim.Position(impactPosition), sim.Position(facing),
 	)
-	peerSession.fieldMedicDroneAttack = nil
+	delete(peerSession.fieldMedicDroneAttacks, e.plan.ObjectID)
 	peerSession.zone.Companion().ReleaseAttack(e.plan.ObjectID, e.plan.TargetObjectID)
 	binding := peerSession.binding
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
@@ -291,9 +323,9 @@ func (e fieldMedicDroneAttackStep) impact() ([][]byte, error) {
 		}
 		packets = append(packets, resultPackets...)
 	}
-	repeatPackets, repeatErr := e.runtime.startFieldMedicDroneAttack(
+	repeatPackets, repeatErr := e.runtime.startFieldMedicDroneAttackFor(
 		e.packet, e.sessionKey, e.generation,
-		e.sourceTime+uint64(e.impactDeadline/time.Millisecond),
+		e.sourceTime+uint64(e.impactDeadline/time.Millisecond), e.plan.ObjectID,
 	)
 	if repeatErr != nil {
 		return nil, fmt.Errorf("fieldMedicDroneRepeat: %w", repeatErr)
@@ -305,9 +337,9 @@ func (e fieldMedicDroneAttackStep) fail(scheduleErr error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
-		peerSession.fieldMedicDroneAttack == e.run
+		peerSession.fieldMedicDroneAttacks[e.plan.ObjectID] == e.run
 	if isCurrent {
-		peerSession.fieldMedicDroneAttack = nil
+		delete(peerSession.fieldMedicDroneAttacks, e.plan.ObjectID)
 		if peerSession.zone != nil && peerSession.zone.Companion() != nil {
 			peerSession.zone.Companion().ReleaseAttack(
 				e.plan.ObjectID, e.plan.TargetObjectID,

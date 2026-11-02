@@ -85,6 +85,7 @@ type TemplateCreature struct {
 	WeaponMaxDamage      float64                      `json:"weaponMaxDamage"`
 	GearScore            float32                      `json:"gearScore"`
 	ClassType            string                       `json:"classType"`
+	UnlockLevel          uint32                       `json:"unlockLevel"`
 	StatsTemplate        string                       `json:"statsTemplate"`
 	AbilityPassive       uint32                       `json:"abilityPassive"`
 	AbilityBasic         uint32                       `json:"abilityBasic"`

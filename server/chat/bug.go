@@ -14,34 +14,45 @@ type BugContextRequest struct {
 
 // BugContext is the transport-neutral live state captured at report time.
 type BugContext struct {
-	CapturedAt          time.Time      `json:"captured_at"`
-	IsGameplayActive    bool           `json:"is_gameplay_active"`
-	UserID              int64          `json:"user_id"`
-	UserName            string         `json:"user_name"`
-	GameID              uint32         `json:"game_id"`
-	RunSeed             uint64         `json:"run_seed,omitempty"`
-	SessionGeneration   uint64         `json:"session_generation,omitempty"`
-	TransportGeneration uint64         `json:"transport_generation,omitempty"`
-	SessionStage        string         `json:"session_stage,omitempty"`
-	LocationLabel       string         `json:"location_label,omitempty"`
-	ZoneGeneration      uint64         `json:"zone_generation,omitempty"`
-	ZoneState           uint32         `json:"zone_state,omitempty"`
-	PlayerSlot          uint16         `json:"player_slot"`
-	SquadID             uint32         `json:"squad_id,omitempty"`
-	MemberLimit         uint16         `json:"member_limit"`
-	ParticipantCount    uint16         `json:"participant_count"`
-	CrogenitorLevel     uint32         `json:"crogenitor_level,omitempty"`
-	CampaignProgression uint32         `json:"campaign_progression,omitempty"`
-	AbilityCount        uint32         `json:"ability_count,omitempty"`
-	IsReplay            bool           `json:"is_replay,omitempty"`
-	IsCheckpointRestore bool           `json:"is_checkpoint_restore,omitempty"`
-	IsOverdriveUnlocked bool           `json:"is_overdrive_unlocked,omitempty"`
-	IsDungeonSetupReady bool           `json:"is_dungeon_setup_ready,omitempty"`
-	IsDungeonSetupFinal bool           `json:"is_dungeon_setup_final,omitempty"`
-	Mission             BugMission     `json:"mission"`
-	Hero                BugHero        `json:"active_hero"`
-	Location            BugLocation    `json:"location"`
-	SquadHeroes         []BugSquadHero `json:"squad_heroes,omitempty"`
+	IsModded               bool               `json:"is_modded"`
+	ModNames               []string           `json:"mod_names,omitempty"`
+	CapturedAt             time.Time          `json:"captured_at"`
+	IsGameplayActive       bool               `json:"is_gameplay_active"`
+	UserID                 int64              `json:"user_id"`
+	UserName               string             `json:"user_name"`
+	GameID                 uint32             `json:"game_id"`
+	RunSeed                uint64             `json:"run_seed,omitempty"`
+	SessionGeneration      uint64             `json:"session_generation,omitempty"`
+	TransportGeneration    uint64             `json:"transport_generation,omitempty"`
+	SessionStage           string             `json:"session_stage,omitempty"`
+	LocationLabel          string             `json:"location_label,omitempty"`
+	ZoneGeneration         uint64             `json:"zone_generation,omitempty"`
+	ZoneState              uint32             `json:"zone_state,omitempty"`
+	PlayerSlot             uint16             `json:"player_slot"`
+	SquadID                uint32             `json:"squad_id,omitempty"`
+	MemberLimit            uint16             `json:"member_limit"`
+	ParticipantCount       uint16             `json:"participant_count"`
+	CombatParticipantCount uint16             `json:"combat_participant_count"`
+	CampaignAIBots         []BugCampaignAIBot `json:"campaign_ai_bots,omitempty"`
+	CrogenitorLevel        uint32             `json:"crogenitor_level,omitempty"`
+	CampaignProgression    uint32             `json:"campaign_progression,omitempty"`
+	AbilityCount           uint32             `json:"ability_count,omitempty"`
+	IsReplay               bool               `json:"is_replay,omitempty"`
+	IsCheckpointRestore    bool               `json:"is_checkpoint_restore,omitempty"`
+	IsOverdriveUnlocked    bool               `json:"is_overdrive_unlocked,omitempty"`
+	IsDungeonSetupReady    bool               `json:"is_dungeon_setup_ready,omitempty"`
+	IsDungeonSetupFinal    bool               `json:"is_dungeon_setup_final,omitempty"`
+	Mission                BugMission         `json:"mission"`
+	Hero                   BugHero            `json:"active_hero"`
+	Location               BugLocation        `json:"location"`
+	SquadHeroes            []BugSquadHero     `json:"squad_heroes,omitempty"`
+	NearbyNPCs             []BugNPC           `json:"nearby_npcs,omitempty"`
+	AttackTargetNPC        *BugNPC            `json:"attack_target_npc,omitempty"`
+	NPCCount               int                `json:"npc_count"`
+
+	IsNPCSpawnCommandUsed bool              `json:"is_npc_spawn_command_used"`
+	IsGodModeEnabled      bool              `json:"is_god_mode_enabled"`
+	NPCScalePreviews      []NPCScalePreview `json:"npc_scale_previews,omitempty"`
 }
 
 type BugMission struct {
@@ -50,6 +61,14 @@ type BugMission struct {
 	Mode       string `json:"mode,omitempty"`
 	Index      uint32 `json:"index,omitempty"`
 	Difficulty uint32 `json:"difficulty,omitempty"`
+}
+
+type BugCampaignAIBot struct {
+	Slot      uint16  `json:"slot"`
+	ObjectID  uint32  `json:"object_id,omitempty"`
+	NounID    uint32  `json:"noun_id,omitempty"`
+	HitPoint  float32 `json:"hit_point,omitempty"`
+	IsSpawned bool    `json:"is_spawned"`
 }
 
 type BugHero struct {
@@ -94,6 +113,7 @@ type BugSquadHero struct {
 	PowerPoint                 float32 `json:"power_point,omitempty"`
 	MaximumPowerPoint          float32 `json:"maximum_power_point,omitempty"`
 	IsAvailable                bool    `json:"is_available"`
+	IsCharacterFound           bool    `json:"is_character_found"`
 	IsDefeated                 bool    `json:"is_defeated,omitempty"`
 	MinimumWeaponDamage        float32 `json:"minimum_weapon_damage,omitempty"`
 	MaximumWeaponDamage        float32 `json:"maximum_weapon_damage,omitempty"`
@@ -109,6 +129,20 @@ type BugSquadHero struct {
 	CriticalDamageIncrease     float32 `json:"critical_damage_increase,omitempty"`
 	AttackSpeed                float32 `json:"attack_speed,omitempty"`
 	CooldownReduction          float32 `json:"cooldown_reduction,omitempty"`
+}
+
+// BugNPC identifies nearby retained actors even when sync capture is disabled.
+// Distance orders candidates; it does not identify the subject of the report.
+type BugNPC struct {
+	ObjectID       uint32     `json:"object_id"`
+	NounName       string     `json:"noun_name"`
+	LocusID        uint32     `json:"locus_id"`
+	Position       [3]float32 `json:"position"`
+	Distance       float32    `json:"distance"`
+	HitPoint       float32    `json:"hit_point"`
+	TargetObjectID uint32     `json:"target_object_id"`
+	IsPublished    bool       `json:"is_published"`
+	IsDefeated     bool       `json:"is_defeated"`
 }
 
 // BugContextProvider freezes current gameplay state independently of the

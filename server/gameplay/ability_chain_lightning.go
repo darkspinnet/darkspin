@@ -66,13 +66,26 @@ func (e campaignChainLightningStep) produce() ([][]byte, error) {
 	current, isFound := runtime.registry.sessions[schedule.sessionKey]
 	if !isFound || current.generation != schedule.generation ||
 		current.deployedObjectID != schedule.sourceObjectID ||
-		current.zone == nil || !current.zone.IsActive() || current.isZoneTerminal() ||
+		current.binding.GameID != schedule.binding.GameID || current.binding.Mode != schedule.binding.Mode {
+		runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	if current.binding.Mode == game.ModeArena {
+		match := runtime.registry.arenaMatches[current.binding.GameID]
+		if current.squad != schedule.squad || !current.isArenaCombatActive ||
+			match == nil || !match.isCombatActive {
+			runtime.registry.mutex.Unlock()
+			return nil, nil
+		}
+	} else if current.zone == nil || !current.zone.IsActive() || current.isZoneTerminal() ||
 		current.zone.NPCs() == nil || current.zone.Population() == nil {
 		runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	enemies := runtime.registry.abilityTargetsLocked(runtime, current, e.plan.Definition,
+		schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond))
 	plan, target, isTargetFound, err := zoneability.PlanChainLightningHop(
-		current.zone.NPCs(), zoneability.ChainLightningHopRequest{
+		enemies, zoneability.ChainLightningHopRequest{
 			Plan: e.plan, Creature: schedule.creature,
 			PreviousPosition: e.previousPosition,
 			VisitedObjectIDs: e.visitedObjectIDs, HopIndex: e.hopIndex,
@@ -85,29 +98,44 @@ func (e campaignChainLightningStep) produce() ([][]byte, error) {
 		runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	result, err := zoneability.CommitBasic(current.zone.Population().Random(),
-		current.zone.NPCs(), plan, schedule.creature,
+	random, err := runtime.registry.abilityRandomLocked(current)
+	if err != nil {
+		runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("chainRandom: %w", err)
+	}
+	result, err := zoneability.CommitBasic(random,
+		enemies, plan, schedule.creature,
 		current.binding.Difficulty, runtime.program.Critical)
 	if err != nil {
 		runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("chainCommit: %w", err)
 	}
-	transition, err := current.applyCampaignDamageTransition(result.Damage)
-	if err != nil {
-		runtime.registry.mutex.Unlock()
-		return nil, fmt.Errorf("chainTransition: %w", err)
+	transitions := make([]campaignDamageTransition, 0, 1)
+	if current.binding.Mode != game.ModeArena {
+		transition, transitionErr := current.applyCampaignDamageTransition(result.Damage)
+		if transitionErr != nil {
+			runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("chainTransition: %w", transitionErr)
+		}
+		transitions = append(transitions, transition)
+		runtime.registry.sessions[schedule.sessionKey] = current
 	}
-	runtime.registry.sessions[schedule.sessionKey] = current
 	runtime.registry.mutex.Unlock()
 	results := []zoneability.AreaResult{{
 		Snapshot: target, Damage: result.Damage,
 		IsCritical: result.IsCritical, Definition: plan.Definition,
 	}}
 	timestamp := schedule.packet.SourceTime + uint64(e.deadline/time.Millisecond)
-	packets, err := runtime.damage.publishAreaResults(
-		schedule.packet, schedule.sessionKey, schedule.generation,
-		schedule.sourceObjectID, timestamp, schedule.binding, results,
-		[]campaignDamageTransition{transition}, nil, true)
+	var packets [][]byte
+	if arenaTargets, isArena := enemies.(*arenaAbilityTargets); isArena {
+		arenaTargets.finish()
+		packets, err = arenaTargets.packets(results)
+	} else {
+		packets, err = runtime.damage.publishAreaResults(
+			schedule.packet, schedule.sessionKey, schedule.generation,
+			schedule.sourceObjectID, timestamp, schedule.binding, results,
+			transitions, nil, true)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("chainPublish: %w", err)
 	}
@@ -116,6 +144,10 @@ func (e campaignChainLightningStep) produce() ([][]byte, error) {
 		return nil, fmt.Errorf("chainPresent: %w", err)
 	}
 	packets = append(packets, effectPackets...)
+	if current.binding.Mode == game.ModeArena && runtime.logger != nil {
+		runtime.logger.Printf("Arena chain lightning hop source=%d previous=%d target=%d hop=%d damage=%g",
+			schedule.sourceObjectID, e.previousObjectID, target.Plan.ObjectID, e.hopIndex, result.Damage.Damage)
+	}
 	e.previousObjectID = target.Plan.ObjectID
 	e.previousPosition = target.Plan.Position
 	e.visitedObjectIDs = append(e.visitedObjectIDs, target.Plan.ObjectID)

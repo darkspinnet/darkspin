@@ -17,12 +17,14 @@ const MaximumGroupMemberCount = maximumGroupMemberCount
 // GroupComposer owns the state shared by candidate draws. Callers own their
 // temporary eligible lists and decide whether to retry after a rejected draw.
 type GroupComposer struct {
-	random          *sim.SimulatorRandom
-	budget          uint32
-	multiplier      float32
-	sumChallenge    int64
-	cost            float32
-	selectedEntries []game.CampaignDirectorEntry
+	isSourceWeighted      bool
+	externalWeightPercent uint32
+	random                *sim.SimulatorRandom
+	budget                uint32
+	multiplier            float32
+	sumChallenge          int64
+	cost                  float32
+	selectedEntries       []game.CampaignDirectorEntry
 }
 
 type GroupRoster struct {
@@ -33,9 +35,11 @@ type groupComposer = GroupComposer
 type groupRoster = GroupRoster
 
 type GroupComposerInput struct {
-	Random     *sim.SimulatorRandom
-	Budget     uint32
-	Multiplier float32
+	IsSourceWeighted      bool
+	ExternalWeightPercent uint32
+	Random                *sim.SimulatorRandom
+	Budget                uint32
+	Multiplier            float32
 }
 
 func NewGroupComposer(req GroupComposerInput) (*GroupComposer, error) {
@@ -44,7 +48,7 @@ func NewGroupComposer(req GroupComposerInput) (*GroupComposer, error) {
 		return nil, errors.New("group composer input invalid")
 	}
 	return &GroupComposer{
-		random: req.Random, budget: req.Budget, multiplier: req.Multiplier,
+		random: req.Random, budget: req.Budget, multiplier: req.Multiplier, isSourceWeighted: req.IsSourceWeighted, externalWeightPercent: req.ExternalWeightPercent,
 		selectedEntries: make([]game.CampaignDirectorEntry, 0, MaximumGroupMemberCount),
 	}, nil
 }
@@ -101,7 +105,7 @@ func (e *GroupComposer) TryAdd(
 	if len(roster.entries) == 0 || len(e.selectedEntries) >= maximumGroupMemberCount {
 		return false, nil
 	}
-	nounIndex, err := e.random.Index(uint32(len(roster.entries)))
+	nounIndex, err := game.RosterIndex(roster.entries, e.random, e.isSourceWeighted, e.externalWeightPercent)
 	if err != nil {
 		return false, fmt.Errorf("groupIndex: %w", err)
 	}

@@ -101,7 +101,7 @@ func (s *Session) AdvancePursuit(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	npc, isFound := s.npcs[objectID]
-	if !isFound || npc.IsDefeated || npc.HitPoint <= 0 {
+	if !isFound || npc.IsDefeated || npc.HitPoint <= 0 || !isScenarioPursuitAllowed(npc) {
 		return PursuitStep{}, errors.New("npc pursuit unavailable")
 	}
 	source := npc.Plan.Position
@@ -112,10 +112,11 @@ func (s *Session) AdvancePursuit(
 	if distance < stopDistance {
 		return PursuitStep{Position: source, IsInRange: true}, nil
 	}
+	arrivalMargin := pursuitArrivalMargin(source, targetPosition, stopDistance)
 	travel := speed * float32(elapsed.Seconds())
 	// A late callback may cover several client frames. Stop at attack range
 	// instead of spending that entire interval moving into the target's center.
-	travel = min(travel, max(float32(0.0001), distance-stopDistance+0.0001))
+	travel = min(travel, max(arrivalMargin, distance-stopDistance+arrivalMargin))
 	if mesh != nil {
 		pathStep, pathErr := zoneaction.AdvancePursuitPathStep(
 			mesh, source, targetPosition, max(npc.NavigationRadius(), minimumNavigationFootprintRadius), travel, npc.Navigation,
@@ -147,7 +148,7 @@ func (s *Session) AdvancePursuit(
 	}
 	remaining := distance - stopDistance
 	if travel >= remaining {
-		travel = min(distance, remaining+0.0001)
+		travel = min(travel, distance, remaining+arrivalMargin)
 	}
 	scale := travel / distance
 	npc.Plan.Position = game.Vec3{
@@ -161,4 +162,14 @@ func (s *Session) AdvancePursuit(
 		Position:  npc.Plan.Position,
 		IsInRange: zonegeometry.Distance(npc.Plan.Position, targetPosition) < stopDistance,
 	}, nil
+}
+
+// Leave a few representable coordinates inside the strict stop radius. A
+// fixed submillimeter margin can round to no movement at distant map origins.
+func pursuitArrivalMargin(source game.Vec3, target game.Vec3, stopDistance float32) float32 {
+	xStep := float32(math.Abs(float64(math.Nextafter32(source.X, target.X) - source.X)))
+	yStep := float32(math.Abs(float64(math.Nextafter32(source.Y, target.Y) - source.Y)))
+	zStep := float32(math.Abs(float64(math.Nextafter32(source.Z, target.Z) - source.Z)))
+	rangeStep := math.Nextafter32(stopDistance, math.MaxFloat32) - stopDistance
+	return 4 * max(xStep, yStep, zStep, rangeStep)
 }

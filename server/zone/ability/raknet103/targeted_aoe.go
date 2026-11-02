@@ -24,14 +24,24 @@ type TargetedAOEInput struct {
 }
 
 type TargetedAOERun struct {
-	run     *zoneability.TargetedAOERun
-	encoder *targetedAOEEncoder
-	cancel  raknet.CancelSchedule
+	run        *zoneability.TargetedAOERun
+	encoder    *targetedAOEEncoder
+	cancel     raknet.CancelSchedule
+	isAccepted bool
 }
 
 type targetedAOEEncoder struct {
 	encoder *simraknet103.Encoder
 	req     TargetedAOEInput
+}
+
+func (e *TargetedAOERun) IsAcceptedAbility(name string) bool {
+	return e != nil && e.isAccepted && e.encoder != nil && e.encoder.req.Ability.Name == name
+}
+
+func (e *TargetedAOERun) AcceptSchedule(cancel raknet.CancelSchedule) {
+	e.cancel = cancel
+	e.isAccepted = true
 }
 
 func NewTargetedAOERun(req TargetedAOEInput) (*TargetedAOERun, [][]byte, error) {

@@ -19,6 +19,7 @@ const (
 	PickupCrystal
 	PickupDNA
 	PickupOrb
+	PickupQuestCrystal
 )
 
 type PickupAdmission uint8

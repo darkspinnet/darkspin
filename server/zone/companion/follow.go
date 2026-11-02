@@ -1,11 +1,34 @@
 package companion
 
 import (
+	"errors"
 	"sort"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
 )
+
+// HoldFollow stops the current owner-follow reservation at its sampled pose.
+// The revision also invalidates the old arrival job while an ability owns
+// locomotion, so owner movement cannot overwrite the ability's stationary pose.
+func (e *Session) HoldFollow(objectID uint32, at time.Time, until time.Time) (Actor, error) {
+	if e == nil || objectID == 0 || at.IsZero() || !until.After(at) {
+		return Actor{}, errors.New("companion follow hold invalid")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	actor, isFound := e.actors[objectID]
+	if !isFound || actor.HitPoint <= 0 {
+		return Actor{}, errors.New("companion follow hold unavailable")
+	}
+	actor = e.refreshMovementModifiersLocked(actor, at)
+	actor.Position = actor.followPosition(at)
+	actor.clearFollow()
+	actor.FollowRevision = e.nextFollowRevision()
+	actor.followHoldUntil = until
+	e.actors[objectID] = actor
+	return actor, nil
+}
 
 // MotionSnapshot samples an existing owner-follow reservation without changing
 // its revision, destination or original arrival deadline.
@@ -29,11 +52,13 @@ func (e *Session) MotionSnapshots(at time.Time) []MotionSnapshot {
 	if e == nil || at.IsZero() {
 		return nil
 	}
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	snapshots := make([]MotionSnapshot, 0, len(e.actors))
 	for _, actor := range e.actors {
-		actor.Position = actor.followPosition(at)
+		actor = e.refreshMovementModifiersLocked(actor, at)
+		e.actors[actor.ObjectID] = actor
+		actor.Position = actor.PositionAt(at)
 		snapshot := MotionSnapshot{Actor: actor}
 		if actor.IsFollowing && at.Before(actor.followDeadline) {
 			snapshot.MovementSpeed = actor.followPlan.Destination.Sub(actor.followPlan.Position).Length() /

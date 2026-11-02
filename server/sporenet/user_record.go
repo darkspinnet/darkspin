@@ -21,6 +21,7 @@ type UserRecord struct {
 	PartShop                    PartShopState
 	Events                      []UserEvent
 	CampaignExperiences         []CampaignExperience
+	PVPResults                  []PVPMatchResult
 	Associations                map[uint32][]AssociationMember
 	Settings                    map[string]string
 	Extensions                  []OpaqueField
@@ -32,6 +33,20 @@ type UserRecord struct {
 type OpaqueField struct {
 	Name  string
 	Value []byte
+}
+
+// Clone detaches a save snapshot from all caller-owned mutable collections.
+func (e UserRecord) Clone() UserRecord {
+	e.Squads = append([]Squad(nil), e.Squads...)
+	e.Creatures = cloneCreatures(e.Creatures)
+	e.Parts = append([]Part(nil), e.Parts...)
+	e.Events = append([]UserEvent(nil), e.Events...)
+	e.CampaignExperiences = append([]CampaignExperience(nil), e.CampaignExperiences...)
+	e.PVPResults = append([]PVPMatchResult(nil), e.PVPResults...)
+	e.Associations = cloneAssociations(e.Associations)
+	e.Settings = cloneSettings(e.Settings)
+	e.Extensions = cloneOpaqueFields(e.Extensions)
+	return e
 }
 
 // Record returns a detached, consistent copy suitable for persistence.
@@ -55,6 +70,7 @@ func (u *User) Record() UserRecord {
 		PartShop:                    u.PartShop,
 		Events:                      append([]UserEvent(nil), u.Events...),
 		CampaignExperiences:         append([]CampaignExperience(nil), u.CampaignExperiences...),
+		PVPResults:                  append([]PVPMatchResult(nil), u.PVPResults...),
 		Associations:                cloneAssociations(u.Associations),
 		Settings:                    cloneSettings(u.Settings),
 		Extensions:                  cloneOpaqueFields(u.extensions),
@@ -80,6 +96,7 @@ func NewUserFromRecord(record UserRecord, templateDatabase *TemplateDatabase) *U
 		PartShop:                    record.PartShop,
 		Events:                      append([]UserEvent(nil), record.Events...),
 		CampaignExperiences:         append([]CampaignExperience(nil), record.CampaignExperiences...),
+		PVPResults:                  append([]PVPMatchResult(nil), record.PVPResults...),
 		Associations:                cloneAssociations(record.Associations),
 		Settings:                    cloneSettings(record.Settings),
 		extensions:                  cloneOpaqueFields(record.Extensions),

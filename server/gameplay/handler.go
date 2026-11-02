@@ -188,8 +188,12 @@ func (r gameplayMovementRuntime) stop(
 		peerSession.deployedObjectID == command.Common.ObjectID
 	var targetingPacket []byte
 	if isCurrent {
+		effectPool := r.campaign.damage.effectPool
+		if peerSession.binding.Mode == game.ModeArena && peerSession.arenaEffectPool != nil {
+			effectPool = peerSession.arenaEffectPool
+		}
 		targetingPacket, err = peerSession.startMissileTargetingPresentation(
-			peerSession.deployedCreatureIndex, r.campaign.damage.effectPool,
+			peerSession.deployedCreatureIndex, effectPool,
 		)
 		if err == nil {
 			r.campaign.registry.sessions[packet.Address.String()] = peerSession
@@ -284,6 +288,14 @@ func (r gameplayActionRuntime) handleCommand(
 		r.registry.mutex.RLock()
 		currentSession, isCurrentFound :=
 			r.registry.sessions[packet.Address.String()]
+		pendingBasic, isPendingBasic := ctx.Value(campaignPendingBasicKey{}).(*campaignPendingBasic)
+		if isPendingBasic && !pendingBasic.isCurrent(currentSession, isCurrentFound) {
+			r.registry.mutex.RUnlock()
+			return nil, nil
+		}
+		if isPendingBasic {
+			command.Common.Position = currentSession.playerPosition
+		}
 		isCurrent := isCurrentFound &&
 			gameplaySessionMemberKey(currentSession) == memberKey &&
 			currentSession.generation == peerSession.generation &&
@@ -297,6 +309,13 @@ func (r gameplayActionRuntime) handleCommand(
 		}
 		peerSession = currentSession
 		if peerSession.campaignTunnelTransfer != nil {
+			if command.Common.Type == raknet.ActionMovement ||
+				command.Common.Type == raknet.ActionStopMovement {
+				// The tunnel transfer stopped the mover and owns its placement
+				// until relocation. Correcting every held poll replays teleports
+				// during the native PlayerEnteredTunnel fade.
+				return nil, nil
+			}
 			return r.reject(packet, command, r.now().Sub(startedAt), errors.New("tunnel traversal in progress"))
 		}
 		inputLockRemaining := peerSession.heroInputLockRemaining(r.now())
@@ -310,6 +329,17 @@ func (r gameplayActionRuntime) handleCommand(
 			isPredictedMovement := command.Common.ObjectID == peerSession.deployedObjectID &&
 				(command.Common.Type == raknet.ActionMovement ||
 					command.Common.Type == raknet.ActionStopMovement)
+			if isPredictedMovement && peerSession.enemyControlPresentedObjectID == peerSession.deployedObjectID &&
+				isFiniteZonePosition(command.Common.Position) {
+				// DeployModifier's native hold already stops this hero. Repeated
+				// held input at that pose must not replay placement corrections.
+				deltaX := command.Common.Position.X - peerSession.playerPosition.X
+				deltaY := command.Common.Position.Y - peerSession.playerPosition.Y
+				radius := peerSession.deployedCampaignNavigationRadius()
+				if radius > 0 && deltaX*deltaX+deltaY*deltaY <= radius*radius {
+					return nil, nil
+				}
+			}
 			if isActionTerminalResponseRequired(command.Common.Type) || isPredictedMovement {
 				// The client must receive a terminal response to clear its pending attack.
 				// The incoming hero can also predict movement during the deployment
@@ -357,6 +387,8 @@ func (r gameplayActionRuntime) handleCommand(
 			r.registry.mutex.Unlock()
 		}()
 	}
+	disposition := &gameplayActionDisposition{}
+	ctx = context.WithValue(ctx, gameplayActionDispositionKey{}, disposition)
 	response, err := r.dispatch(ctx, packet, command)
 	duration := r.now().Sub(startedAt)
 	if err != nil {
@@ -366,7 +398,7 @@ func (r gameplayActionRuntime) handleCommand(
 		}
 		return r.reject(packet, command, duration, err)
 	}
-	if isActionTerminalResponseRequired(command.Common.Type) &&
+	if isActionTerminalResponseRequired(command.Common.Type) && !disposition.isBasicRetained &&
 		!hasActionResponseForSync(response, command.Common.Unknown[0]) {
 		scheduleSet.cancelAll()
 		cause := errors.New("terminal response missing")
@@ -414,6 +446,29 @@ func (r gameplayActionRuntime) handleCommand(
 		return protected, err
 	}
 	scheduleSet.seal()
+	if command.Ability != nil && !disposition.isBasicRetained &&
+		hasActionResponseForSync(protected, command.Common.Unknown[0]) {
+		// A newly admitted attack or special replaces the queued basic intent.
+		// Rejected specials and coalesced repeats leave that intent intact.
+		r.registry.mutex.Lock()
+		current := r.registry.sessions[packet.Address.String()]
+		if current.generation == peerSession.generation &&
+			current.transportGeneration == peerSession.transportGeneration {
+			if current.pendingBasic != nil &&
+				current.pendingBasic.command.Common.Unknown[0] != command.Common.Unknown[0] {
+				// A different prediction still owns its own native response token.
+				// Clearing the pointer alone strands it after the accepted action.
+				cancelErr := current.cancelPendingBasic()
+				if cancelErr != nil {
+					log.Printf("RakNet accepted action pending-basic cleanup failed: %v", cancelErr)
+				}
+			} else {
+				current.pendingBasic = nil
+			}
+			r.registry.sessions[packet.Address.String()] = current
+		}
+		r.registry.mutex.Unlock()
+	}
 	if command.Ability != nil && command.Ability.TargetID != 0 &&
 		command.Ability.TargetID != command.Common.ObjectID && !isProtectedRejected {
 		r.registry.mutex.Lock()
@@ -445,12 +500,16 @@ func (r gameplayActionRuntime) handleCommand(
 			)
 		}
 	}
+	outcome := "accepted"
+	if disposition.isBasicRetained {
+		outcome = "retained"
+	}
 	r.registry.recordDiagnosticDecision(gameplayDiagnosticDecision{
 		occurredAt: r.now(), kind: "action_publication", traceID: packet.TraceID,
 		remote: packet.Address.String(), transportGeneration: peerSession.transportGeneration,
 		zoneGeneration: peerSession.generation, objectID: command.Common.ObjectID,
 		actionType: uint32(command.Common.Type), syncStamp: command.Common.Unknown[0],
-		outcome: "accepted", packetCount: len(protected),
+		outcome: outcome, packetCount: len(protected),
 	})
 	return protected, nil
 }
@@ -801,6 +860,7 @@ type NavigationSource interface {
 
 type gameplayHandlerDependencies struct {
 	allyAlertRuleSource    AllyAlertRuleSource
+	hordePolicySource      HordePolicySource
 	campaignSetup          *game.CampaignSetup
 	campaignNavigation     NavigationSource
 	publishCampaignEvent   func(game.CampaignDirectorPublication)
@@ -814,6 +874,8 @@ type gameplayHandlerDependencies struct {
 	registerHint           func(chat.HintProvider)
 	registerLocation       func(chat.LocationProvider)
 	registerResourceStatus func(chat.ResourceStatusProvider)
+	registerNPCScale       func(chat.NPCScalePreviewer)
+	registerGodMode        func(chat.GodModeToggler)
 	registerSyncSnapshot   func(snapshot.StateProvider)
 	zoneTimer              zone.Timer
 	checkpoint             zonecheckpoint.Repository
@@ -831,6 +893,8 @@ type Lifecycle struct {
 	hintProvider           chat.HintProvider
 	locationProvider       chat.LocationProvider
 	resourceStatusProvider chat.ResourceStatusProvider
+	npcScalePreviewer      chat.NPCScalePreviewer
+	godModeToggler         chat.GodModeToggler
 	syncSnapshot           snapshot.StateProvider
 }
 
@@ -1159,6 +1223,10 @@ func NewHandler(
 	dependency.allyAlertRuleSource = fixedAllyAlertRules{rules: zonenpc.DefaultAllyAlertRules()}
 	if len(allyAlertRuleSources) > 0 {
 		dependency.allyAlertRuleSource = allyAlertRuleSources[0]
+		hordePolicySource, isHordePolicySource := allyAlertRuleSources[0].(HordePolicySource)
+		if isHordePolicySource {
+			dependency.hordePolicySource = hordePolicySource
+		}
 	}
 	dependency.campaignSetup = campaignSetup
 	dependency.campaignNavigation = campaignNavigation
@@ -1184,6 +1252,12 @@ func NewHandler(
 	}
 	dependency.registerBugContext = func(registered chat.BugContextProvider) {
 		lifecycle.bugContext = registered
+	}
+	dependency.registerNPCScale = func(registered chat.NPCScalePreviewer) {
+		lifecycle.npcScalePreviewer = registered
+	}
+	dependency.registerGodMode = func(registered chat.GodModeToggler) {
+		lifecycle.godModeToggler = registered
 	}
 	dependency.registerHint = func(registered chat.HintProvider) {
 		lifecycle.hintProvider = registered
@@ -1229,6 +1303,9 @@ func newGameplayHandlerWithDependencies(
 	sessionRegistry := newGameplaySessionRegistry(
 		dependency.zoneTimer, dependency.now, logger,
 	)
+	sessionRegistry.playerStatRecorder = statsRecorder
+	sessionRegistry.companionAggroRanges = program.NonPlayerAggroRanges
+	sessionRegistry.configureScenarioAbility(program)
 	if dependency.registerBugContext != nil {
 		dependency.registerBugContext(sessionRegistry)
 	}
@@ -1241,12 +1318,19 @@ func newGameplayHandlerWithDependencies(
 	if dependency.registerResourceStatus != nil {
 		dependency.registerResourceStatus(sessionRegistry)
 	}
+	if dependency.registerNPCScale != nil {
+		dependency.registerNPCScale(sessionRegistry)
+	}
+	if dependency.registerGodMode != nil {
+		dependency.registerGodMode(sessionRegistry)
+	}
 	if dependency.registerSyncSnapshot != nil {
 		dependency.registerSyncSnapshot(sessionRegistry)
 	}
 	zoneRegistry := zone.NewRegistry()
 	modifierInstancePool := newModifierPool()
 	attachedEffectPool := newAttachedEffectPool()
+	sessionRegistry.configureScenarioHeroPools(modifierInstancePool, attachedEffectPool)
 	lootProgression, isLootProgression := progression.(campaignLootProgression)
 	if !isLootProgression {
 		lootProgression = nil
@@ -1282,8 +1366,9 @@ func newGameplayHandlerWithDependencies(
 		})
 	}
 	campaignPrepare := campaignPreparation{
-		spawnRuleSource: dependency.allyAlertRuleSource,
-		setup:           dependency.campaignSetup, difficulty: program.Difficulty, session: sessionRegistry,
+		spawnRuleSource:   dependency.allyAlertRuleSource,
+		hordePolicySource: dependency.hordePolicySource,
+		setup:             dependency.campaignSetup, difficulty: program.Difficulty, session: sessionRegistry,
 		zone:       zoneRegistry,
 		navigation: dependency.campaignNavigation, program: program,
 		timer:        dependency.zoneTimer,
@@ -1364,15 +1449,17 @@ func newGameplayHandlerWithDependencies(
 		publishEvent: dependency.publishCampaignEvent,
 	}
 	resultRuntime := campaignResultRuntime{
-		registry: sessionRegistry, chain: chainProgression,
+		registry: sessionRegistry, stats: statsRecorder, chain: chainProgression,
 		cashOutProgression: cashOutProgression, gameplayJoin: gameplayJoin,
-		modifierPool: modifierInstancePool, effectPool: attachedEffectPool,
+		ratingConversions: program.Critical.RatingConversions,
+		modifierPool:      modifierInstancePool, effectPool: attachedEffectPool,
 		preparation: campaignPrepare,
 		logger:      logger,
 	}
 	pendingRuntime := gameplayPendingRuntime{
 		registry: sessionRegistry, gameplayJoin: gameplayJoin,
-		stats: statsRecorder, damage: damageRuntime, modifierPool: modifierInstancePool,
+		ratingConversions: program.Critical.RatingConversions,
+		stats:             statsRecorder, damage: damageRuntime, modifierPool: modifierInstancePool,
 		effectPool: attachedEffectPool,
 		projection: projectionRuntime, result: resultRuntime, setup: setupRuntime,
 		overdriveProgression: overdriveProgression,
@@ -1419,10 +1506,12 @@ func newGameplayHandlerWithDependencies(
 		switcher: switchRuntime, ability: campaignAbility,
 		movement: movementRuntime, simple: simpleActionRuntime,
 		overdrive: campaignOverdriveRuntime{
+			switcher: switchRuntime,
 			registry: sessionRegistry, now: dependency.now, logger: logger,
 		},
 		now: dependency.now, logger: logger,
 	}
+	actionRuntime.ability.actionRuntime = &actionRuntime
 	pendingRuntime.action = actionRuntime
 	if dependency.registerPoll != nil {
 		dependency.registerPoll(pendingRuntime.poll)
@@ -1432,10 +1521,17 @@ func newGameplayHandlerWithDependencies(
 	}
 	if dependency.registerDiscard != nil {
 		dependency.registerDiscard(func(gameID uint32) {
+			sessionRegistry.mutex.Lock()
+			fixtureTicket := sessionRegistry.beginFixtureBlastDiscardLocked(gameID)
+			sessionRegistry.mutex.Unlock()
+			fixtureTicket.wait()
 			sessionRegistry.lifecycle.discardGame(
 				gameID, modifierInstancePool, attachedEffectPool,
 			)
 			zoneRegistry.Discard(uint64(gameID))
+			sessionRegistry.mutex.Lock()
+			fixtureTicket.finishLocked()
+			sessionRegistry.mutex.Unlock()
 		})
 	}
 	if dependency.registerDiscardMember != nil {
@@ -1449,7 +1545,8 @@ func newGameplayHandlerWithDependencies(
 		registry: sessionRegistry, join: joinRuntime, setup: setupRuntime,
 		inventory: inventoryRuntime, result: resultRuntime,
 		arena: gameplayArenaRuntime{
-			registry: sessionRegistry, logger: logger, gameplayJoin: gameplayJoin,
+			ratingConversions: program.Critical.RatingConversions,
+			registry:          sessionRegistry, logger: logger, gameplayJoin: gameplayJoin,
 		}, action: actionRuntime,
 		status: statusRuntime, pending: pendingRuntime,
 		projection: projectionRuntime,
@@ -1547,6 +1644,11 @@ func (e gameplayPacketHandler) logIgnored(packet raknet.Packet) {
 
 func tutorialGameplayBinding(binding game.GameplayBinding) game.GameplayBinding {
 	if binding.Mode == game.ModeTutorial {
+		// Authentication preloads owned starter appearances, but ownership must
+		// not bypass the tutorial's second-creature introduction and unlock.
+		// Keep the owned catalog available for restoring Sage at that boundary.
+		binding.Creatures[1] = game.GameplayCreature{}
+		binding.Creatures[2] = game.GameplayCreature{}
 		binding.DNA = tutorialStartingDNA
 		if binding.Creatures[0].Noun == 0 {
 			binding.Creatures[0].Noun = util.HashID("PC_EL_Rogue.Noun")
@@ -1577,6 +1679,14 @@ func tutorialGameplayBinding(binding game.GameplayBinding) game.GameplayBinding 
 func tutorialSageBinding(binding game.GameplayBinding) game.GameplayBinding {
 	if binding.Mode != game.ModeTutorial {
 		return binding
+	}
+	if binding.Creatures[1].Noun == 0 {
+		for _, creature := range binding.ActivatedCreatures {
+			if creature.Noun == util.HashID("PC_LF_Mage.Noun") {
+				binding.Creatures[1] = creature
+				break
+			}
+		}
 	}
 	if binding.Creatures[1].Noun == 0 {
 		binding.Creatures[1] = game.GameplayCreature{
@@ -1700,7 +1810,7 @@ func marshalCampaignDungeonSetup(
 			passivePacket, marshalErr := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 				TargetID: objectID, ModifierGUID: creature.PassiveAbility,
 				InstanceID: passiveModifierInstance[index], StackCount: 1,
-				StartMilliseconds: gameTime, SourceID: objectID,
+				StartMilliseconds: gameTime, NPCAffixAssetID: 0,
 			})
 			if marshalErr != nil {
 				return nil, fmt.Errorf("passive[%d]: %w", index, marshalErr)
@@ -1862,9 +1972,16 @@ func marshalZoneHeroRoster(
 	if err != nil {
 		return nil, fmt.Errorf("rosterDeploy: %w", err)
 	}
+	orientation := roster.Orientation
+	if orientation == (game.Quaternion{}) {
+		orientation.W = 1
+	}
 	placementPacket, err := raknet.MarshalApplication(raknet.ObjectTeleportMessage{
 		ObjectID: zonehero.ObjectID(roster.PlayerSlot, roster.CreatureIndex),
-		Position: raknet.Vector3(roster.Position), Orientation: raknet.Quaternion{W: 1},
+		Position: raknet.Vector3(roster.Position),
+		Orientation: raknet.Quaternion{
+			X: orientation.X, Y: orientation.Y, Z: orientation.Z, W: orientation.W,
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("rosterPlacement: %w", err)
@@ -1899,7 +2016,7 @@ func marshalOtherZoneHeroRosters(
 		rosterPackets, err := marshalZoneHeroRoster(
 			zoneprojection.HeroRoster{
 				UserID: member.UserID, PlayerSlot: member.Slot,
-				Roster: roster, Position: actor.Position,
+				Roster: roster, Position: actor.Position, Orientation: actor.Orientation,
 				CreatureIndex: actor.CreatureIndex,
 			},
 		)
@@ -2028,6 +2145,10 @@ func (r gameplayJoinRuntime) handle(
 				binding.GameID, binding.UserID, packet.Address,
 			)
 		}
+		botErr := r.installServerBots(ctx, packet, binding)
+		if botErr != nil {
+			return nil, fmt.Errorf("helloBots: %w", botErr)
+		}
 		rosterResponses, rosterErr := r.synchronizeRoster(sessionKey)
 		if rosterErr != nil {
 			return nil, fmt.Errorf("helloRoster: %w", rosterErr)
@@ -2083,15 +2204,21 @@ func (r gameplayJoinRuntime) handle(
 		return nil, errors.New("hello transport generation superseded")
 	}
 	if isSameMember {
-		r.registry.lifecycle.disconnectMember(
+		isDisconnected := r.registry.lifecycle.disconnectMember(
 			sessionKey, r.modifierPool, r.effectPool,
 		)
+		if !isDisconnected {
+			return nil, errors.New("hello fixture publication in progress")
+		}
 	}
 	activeSessionKeys := r.registry.activeSessionKeys(memberKey, sessionKey)
 	for _, activeSessionKey := range activeSessionKeys {
-		r.registry.lifecycle.disconnectMember(
+		isDisconnected := r.registry.lifecycle.disconnectMember(
 			activeSessionKey, r.modifierPool, r.effectPool,
 		)
+		if !isDisconnected {
+			return nil, errors.New("supersede fixture publication in progress")
+		}
 		if r.logger != nil {
 			r.logger.Printf(
 				"RakNet authenticated gameplay endpoint superseded game=%d user=%d old=%s new=%s",
@@ -2102,6 +2229,14 @@ func (r gameplayJoinRuntime) handle(
 	contextErr = ctx.Err()
 	if contextErr != nil {
 		return nil, fmt.Errorf("replaceContext: %w", contextErr)
+	}
+	r.registry.mutex.RLock()
+	preflightSession, isPreflightFound := r.registry.sessions[sessionKey]
+	retainedCandidate := r.registry.retainedSessions[memberKey]
+	isFixtureProducing := isPreflightFound && r.registry.isFixtureProducingLocked(preflightSession)
+	r.registry.mutex.RUnlock()
+	if isFixtureProducing {
+		return nil, errors.New("admit fixture publication in progress")
 	}
 	retainedSession, isRetained := r.registry.takeRetained(ctx, memberKey)
 	if isRetained && (retainedSession.binding.Level != binding.Level ||
@@ -2195,19 +2330,51 @@ func (r gameplayJoinRuntime) handle(
 		return nil, errors.New("gameplay registry closed")
 	}
 	previousSession, isPreviousFound := r.registry.sessions[sessionKey]
+	var fixtureBatch fixtureHandoffBatch
 	if isPreviousFound {
+		var isDeferred bool
+		fixtureBatch, isDeferred = r.registry.prepareFixtureHandoffLocked(&previousSession)
+		if isDeferred {
+			r.registry.mutex.Unlock()
+			if isRetained {
+				restore := fixtureRetainedJoinRestore{registry: r.registry, key: memberKey, retained: retainedCandidate}
+				restore.restore()
+			}
+			return nil, errors.New("install fixture publication in progress")
+		}
 		previousSession.retireChannelsLocked()
 		previousSession.retireAuraAreasLocked()
 		previousSession.retireChargeRunsLocked()
 		r.registry.retirePeerProjectileFreezesLocked(&previousSession)
 		r.registry.retireFieldMedicBuffsLocked(&previousSession, r.modifierPool)
 		r.registry.retireCampaignTreeOfLifeLocked(&previousSession)
+		r.registry.retireHeroInfectionsLocked(&previousSession)
+		r.registry.retirePlasmaWreathLocked(&previousSession)
 	}
 	r.registry.sessions[sessionKey] = nextSession
 	r.registry.memberTransports[memberKey] = transportGeneration
 	r.registry.memberEndpoints[memberKey] = sessionKey
+	if isRetained {
+		beastBindErr := nextSession.rebindBeastPassive(packet, sessionKey)
+		if beastBindErr != nil && r.logger != nil {
+			r.logger.Printf("RakNet rejoining Savage adapter failed user=%d: %v", nextSession.binding.UserID, beastBindErr)
+		}
+		beastErr := nextSession.scheduleRetainedBeastPassive()
+		if beastErr != nil && r.logger != nil {
+			r.logger.Printf("RakNet rejoining Savage scheduling failed user=%d: %v", nextSession.binding.UserID, beastErr)
+		}
+	}
+	if isRetained {
+		member := r.registry.sessions[sessionKey]
+		r.registry.replayChannelEffectsLocked(&member)
+		r.registry.sessions[sessionKey] = member
+	}
+	r.registry.commitChannelRemovalsLocked()
 	r.registry.mutex.Unlock()
-	if isPreviousFound {
+	fixtureBatch.complete()
+	isSameWorldMembership := previousSession.zone == nextSession.zone &&
+		previousSession.generation == nextSession.generation
+	if isPreviousFound && !isSameWorldMembership {
 		stopGameplayPeerSession(previousSession, r.modifierPool, r.effectPool)
 	}
 	if isRetained && r.logger != nil {
@@ -2215,6 +2382,10 @@ func (r gameplayJoinRuntime) handle(
 			"RakNet gameplay member reattached game=%d user=%d remote=%s transport_generation=%d",
 			binding.GameID, binding.UserID, packet.Address, transportGeneration,
 		)
+	}
+	err = r.installServerBots(ctx, packet, binding)
+	if err != nil {
+		return nil, fmt.Errorf("joinBots: %w", err)
 	}
 	rosterResponses, err := r.synchronizeRoster(sessionKey)
 	if err != nil {
@@ -2251,45 +2422,42 @@ func (r gameplayJoinRuntime) synchronizeRoster(sessionKey string) ([][]byte, err
 		return cmp.Compare(leftSlot, rightSlot)
 	})
 	responses := make([][]byte, 0, len(peerSessionKeys))
+	// A joining human can install new socketless bots as well. Announce every
+	// missing slot to every recipient, not just the human who triggered this
+	// synchronization: native hero presentation requires an owning CPlayer.
 	for _, peerSessionKey := range peerSessionKeys {
-		if peerSessionKey == sessionKey {
-			continue
-		}
 		peerSession := r.registry.sessions[peerSessionKey]
-		if peerSession.binding.Slot >= 32 || joiningSession.binding.Slot >= 32 {
-			return nil, errors.New("gameplay roster slot exceeds mask width")
-		}
-		peerBit := uint32(1) << peerSession.binding.Slot
-		if joiningSession.knownPlayerMask&peerBit == 0 {
+		joinedPackets := make([][]byte, 0, len(peerSessionKeys))
+		for _, rosterSessionKey := range peerSessionKeys {
+			rosterSession := r.registry.sessions[rosterSessionKey]
+			rosterBit := uint32(1) << rosterSession.binding.Slot
+			if rosterSessionKey == peerSessionKey || peerSession.knownPlayerMask&rosterBit != 0 {
+				continue
+			}
 			joinedPacket, err := raknet.MarshalApplication(raknet.PlayerSlotMessage{
-				ID: raknet.PlayerJoined, Slot: uint8(peerSession.binding.Slot),
+				ID: raknet.PlayerJoined, Slot: uint8(rosterSession.binding.Slot),
 			})
 			if err != nil {
-				return nil, fmt.Errorf("joiningPlayer[%d]: %w", peerSession.binding.Slot, err)
+				return nil, fmt.Errorf("rosterPlayer[%d]: %w", rosterSession.binding.Slot, err)
 			}
-			responses = append(responses, joinedPacket)
-			joiningSession.knownPlayerMask |= peerBit
+			joinedPackets = append(joinedPackets, joinedPacket)
+			peerSession.knownPlayerMask |= rosterBit
 		}
-		joiningBit := uint32(1) << joiningSession.binding.Slot
-		if peerSession.knownPlayerMask&joiningBit == 0 {
-			joinedPacket, err := raknet.MarshalApplication(raknet.PlayerSlotMessage{
-				ID: raknet.PlayerJoined, Slot: uint8(joiningSession.binding.Slot),
-			})
-			if err != nil {
-				return nil, fmt.Errorf("existingPlayer[%d]: %w", joiningSession.binding.Slot, err)
-			}
-			peerSession.queuePackets([][]byte{joinedPacket})
-			peerSession.knownPlayerMask |= joiningBit
-			r.registry.sessions[peerSessionKey] = peerSession
+		if peerSessionKey == sessionKey {
+			responses = append(responses, joinedPackets...)
+		} else {
+			peerSession.queuePackets(joinedPackets)
 		}
+		r.registry.sessions[peerSessionKey] = peerSession
 	}
-	r.registry.sessions[sessionKey] = joiningSession
 	expectedCount := int(joiningSession.binding.ParticipantCount)
 	if expectedCount < 1 {
 		expectedCount = 1
 	}
+	// A socketless bot occupies a presented roster slot, but PlayerMask only
+	// tracks humans that must connect before the party merge can complete.
 	if len(peerSessionKeys) < expectedCount ||
-		connectedPlayerMask != joiningSession.binding.PlayerMask {
+		connectedPlayerMask&joiningSession.binding.PlayerMask != joiningSession.binding.PlayerMask {
 		if r.logger != nil {
 			r.logger.Printf(
 				"RakNet gameplay roster waiting game=%d connected=%d expected=%d connected_mask=%#x expected_mask=%#x",
@@ -2416,9 +2584,12 @@ func (r gameplayJoinRuntime) retainReplacedEndpoint(
 	if !isCurrent {
 		return nil
 	}
-	r.registry.lifecycle.disconnectMember(
+	isDisconnected := r.registry.lifecycle.disconnectMember(
 		sessionKey, r.modifierPool, r.effectPool,
 	)
+	if !isDisconnected {
+		return errors.New("replace fixture publication in progress")
+	}
 	return nil
 }
 
@@ -2428,6 +2599,7 @@ type gameplayPendingRuntime struct {
 	projection           gameplayProjectionRuntime
 	setup                gameplaySetupRuntime
 	gameplayJoin         *game.GameplayJoin
+	ratingConversions    []float32
 	stats                *playerstat.Recorder
 	damage               campaignDamageRuntime
 	result               campaignResultRuntime
@@ -2449,22 +2621,26 @@ func (r gameplayPendingRuntime) retireCanceledTransport(packet raknet.Packet) {
 	)
 }
 
-func (r gameplayPendingRuntime) poll(
+func (r gameplayPendingRuntime) pollWorld(
 	ctx context.Context, packet raknet.Packet,
 ) ([][]byte, error) {
-	if !r.registry.beginRequest() {
-		return nil, errors.New("gameplay registry closed")
-	}
-	defer r.registry.endRequest()
-	if packet.Address == nil {
-		return nil, errors.New("pending poll: nil address")
-	}
+	r.observeScenarioHeroClock(packet)
 	r.persistOverdriveUnlock(ctx, packet.Address.String())
 	r.registry.mutex.RLock()
 	peerSession, isFound := r.registry.sessions[packet.Address.String()]
 	isRejoinNeeded := isFound && peerSession.isRejoinPending &&
 		peerSession.stage.IsDungeon() && peerSession.zone != nil
 	r.registry.mutex.RUnlock()
+	if isFound && peerSession.zone != nil {
+		questErr := r.publishQuestCrystals(ctx, packet, packet.Address.String())
+		if questErr != nil && r.logger != nil {
+			r.logger.Printf("Quest crystal delivery retained: %v", questErr)
+		}
+		recoveryErr := r.damage.npc.recoverCorruptorSecondAggro(packet.Address.String(), peerSession.generation, packet.SourceTime)
+		if recoveryErr != nil {
+			return nil, fmt.Errorf("corruptorRecovery: %w", recoveryErr)
+		}
+	}
 	if isRejoinNeeded {
 		packets, err := r.setup.publishRejoin(packet, peerSession)
 		if err != nil {
@@ -2487,7 +2663,27 @@ func (r gameplayPendingRuntime) poll(
 		// World packets must wait until the fresh client can consume a baseline.
 		return nil, nil
 	}
-	err := r.pollOperativeCages(packet)
+	arrivalPackets, arrivalErr := r.pollScenarioHeroArrival(packet)
+	if arrivalErr != nil {
+		return nil, fmt.Errorf("scenarioArrival: %w", arrivalErr)
+	}
+	if len(arrivalPackets) > 0 {
+		return arrivalPackets, nil
+	}
+	if isFound && peerSession.zone != nil && peerSession.dungeonSetup.IsCommitted() &&
+		(peerSession.isMutationBaselineRequired || peerSession.zone.IsProjectionBaselineRequired(peerSession.binding.UserID, peerSession.generation)) {
+		// Recovery must outrank continuously produced mutation publications.
+		packets, err := r.projection.drain(packet, packet.Address.String(), packet.SourceTime)
+		if err != nil {
+			return nil, fmt.Errorf("recoveryBaseline: %w", err)
+		}
+		return packets, nil
+	}
+	err := r.action.overdrive.reconcilePresentation(packet)
+	if err != nil {
+		return nil, fmt.Errorf("overdrivePoll: %w", err)
+	}
+	err = r.pollOperativeCages(packet)
 	if err != nil {
 		return nil, fmt.Errorf("operativePoll: %w", err)
 	}
@@ -2498,6 +2694,14 @@ func (r gameplayPendingRuntime) poll(
 	warpTotemPackets, err := r.pollWarpTotems(packet)
 	if err != nil {
 		return nil, fmt.Errorf("warpTotemPoll: %w", err)
+	}
+	acMalfunctionPackets, err := r.pollACMalfunctions(packet)
+	if err != nil {
+		return nil, fmt.Errorf("acMalfunctionPoll: %w", err)
+	}
+	mushroomPackets, err := r.pollMushroomAuras(packet)
+	if err != nil {
+		return nil, fmt.Errorf("mushroomPoll: %w", err)
 	}
 	graviticPackets, err := r.pollGraviticFields(packet)
 	if err != nil {
@@ -2511,12 +2715,18 @@ func (r gameplayPendingRuntime) poll(
 	if err != nil {
 		return nil, fmt.Errorf("pickupPursuitPoll: %w", err)
 	}
+	interactablePursuitPackets, err := r.pollInteractablePursuit(ctx, packet)
+	if err != nil {
+		return nil, fmt.Errorf("interactablePursuitPoll: %w", err)
+	}
 	r.registry.mutex.Lock()
+	r.registry.commitChannelRemovalsLocked()
 	peerSession, isFound = r.registry.sessions[packet.Address.String()]
 	// Follow must advance while the ally is moving, even between input packets.
 	playerFollowPublications := r.registry.updatePlayerFollowersLocked(
 		peerSession, r.now(), packet.SourceTime,
 	)
+	r.registry.refreshVoodooCharmsLocked(r.now())
 	peerSession, isFound = r.registry.sessions[packet.Address.String()]
 	var rootHazardPackets [][]byte
 	if isFound {
@@ -2533,20 +2743,40 @@ func (r gameplayPendingRuntime) poll(
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("nightmareRootPoll: %w", err)
 		}
+		rootControlPackets, rootControlErr := peerSession.refreshEnemyImmobilizedAttributes(r.now())
+		if rootControlErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("rootControlPoll: %w", rootControlErr)
+		}
+		r.registry.queueHeroControlPeersLocked(packet.Address.String(), peerSession, rootControlPackets)
+		rootHazardPackets = append(rootHazardPackets, rootControlPackets...)
 		if peerSession.zone != nil && peerSession.stage.IsDungeon() &&
 			!peerSession.isZoneTerminal() && peerSession.dungeonSetup.IsCommitted() {
-			ventPackets, ventDelta, ventErr := peerSession.pollFireVents(r.damage.npc, packet.SourceTime, r.now())
+			ventPackets, ventDelta, ventErr := peerSession.pollFireVents(r.damage.npc, packet, r.now())
 			if ventErr != nil {
 				r.registry.mutex.Unlock()
 				return nil, fmt.Errorf("ventPoll: %w", ventErr)
 			}
 			peerSession.queueStatDelta(ventDelta)
 			rootHazardPackets = append(rootHazardPackets, ventPackets...)
-			geyserPackets, geyserErr := peerSession.pollCryosGeyserEffects(r.now())
+			minePackets, mineErr := r.pollTripMinesLocked(&peerSession, packet, r.now())
+			if mineErr != nil {
+				r.registry.mutex.Unlock()
+				return nil, fmt.Errorf("minePoll: %w", mineErr)
+			}
+			rootHazardPackets = append(rootHazardPackets, minePackets...)
+			silencePackets, silenceErr := r.pollSilenceFieldsLocked(&peerSession, packet, r.now())
+			if silenceErr != nil {
+				r.registry.mutex.Unlock()
+				return nil, fmt.Errorf("silenceFieldPoll: %w", silenceErr)
+			}
+			rootHazardPackets = append(rootHazardPackets, silencePackets...)
+			geyserPackets, geyserDelta, geyserErr := peerSession.pollCryosGeysers(r.damage.npc, packet, r.now())
 			if geyserErr != nil {
 				r.registry.mutex.Unlock()
 				return nil, fmt.Errorf("geyserPoll: %w", geyserErr)
 			}
+			peerSession.queueStatDelta(geyserDelta)
 			rootHazardPackets = append(rootHazardPackets, geyserPackets...)
 			lavaPackets, lavaDelta, lavaErr := peerSession.applyCampaignLavaContact(
 				game.Vec3(peerSession.playerPosition), packet.SourceTime, r.now(), r.damage.npc,
@@ -2555,20 +2785,37 @@ func (r gameplayPendingRuntime) poll(
 				r.registry.mutex.Unlock()
 				return nil, fmt.Errorf("lavaPoll: %w", lavaErr)
 			}
+			lavaPeerErr := peerSession.publishFireVentHitAfterCommit(
+				r.registry, packet, gameplayPeerPresentationPackets(lavaPackets),
+			)
+			if lavaPeerErr != nil {
+				r.registry.mutex.Unlock()
+				return nil, fmt.Errorf("lavaPeerCommit: %w", lavaPeerErr)
+			}
+			lavaPackets = append(lavaPackets, r.registry.takePlasmaWreathRestorationLocked(&peerSession)...)
 			peerSession.queueStatDelta(lavaDelta)
 			rootHazardPackets = append(rootHazardPackets, lavaPackets...)
-			fungusPackets, fungusErr := r.pollCryosFungusLocked(&peerSession, packet.SourceTime)
-			if fungusErr != nil {
+			petBurnPackets, petBurnDelta, petBurnErr := peerSession.pollPetPlasmaBurns(
+				r.damage.npc, packet.SourceTime, r.now(),
+			)
+			if petBurnErr != nil {
 				r.registry.mutex.Unlock()
-				return nil, fmt.Errorf("fungusPoll: %w", fungusErr)
+				return nil, fmt.Errorf("petPlasmaPoll: %w", petBurnErr)
 			}
-			rootHazardPackets = append(rootHazardPackets, fungusPackets...)
-			mutationPackets, mutationErr := r.pollMutationAgentsLocked(&peerSession)
+			peerSession.queueStatDelta(petBurnDelta)
+			rootHazardPackets = append(rootHazardPackets, petBurnPackets...)
+			mutationPackets, mutationErr := r.pollMutationAgentsLocked(&peerSession, packet.SourceTime)
 			if mutationErr != nil {
 				r.registry.mutex.Unlock()
 				return nil, fmt.Errorf("mutationPoll: %w", mutationErr)
 			}
 			rootHazardPackets = append(rootHazardPackets, mutationPackets...)
+			affixPackets, affixErr := r.pollAffixAurasLocked(&peerSession, packet.SourceTime)
+			if affixErr != nil {
+				r.registry.mutex.Unlock()
+				return nil, fmt.Errorf("affixPoll: %w", affixErr)
+			}
+			rootHazardPackets = append(rootHazardPackets, affixPackets...)
 			swiftPackets, swiftErr := r.pollSwiftAurasLocked(&peerSession)
 			if swiftErr != nil {
 				r.registry.mutex.Unlock()
@@ -2580,13 +2827,49 @@ func (r gameplayPendingRuntime) poll(
 	}
 	rootHazardPackets = append(rootHazardPackets, graviticPackets...)
 	rootHazardPackets = append(rootHazardPackets, warpTotemPackets...)
+	rootHazardPackets = append(rootHazardPackets, acMalfunctionPackets...)
+	rootHazardPackets = append(rootHazardPackets, mushroomPackets...)
 	rootHazardPackets = append(rootHazardPackets, landingPackets...)
 	rootHazardPackets = append(rootHazardPackets, pickupPursuitPackets...)
+	rootHazardPackets = append(rootHazardPackets, interactablePursuitPackets...)
 	rootHazardPackets = append(rootHazardPackets, triggerPackets...)
-	queuedPackets, pendingPacketBatchID := peerSession.pendingPackets()
-	if len(queuedPackets) != 0 {
-		peerSession.pendingPacketResponseTraceID = packet.TraceID
+	overdriveErr := r.registry.refreshOverdriveFramesLocked(&peerSession, r.now())
+	if overdriveErr != nil {
+		r.registry.sessions[packet.Address.String()] = peerSession
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("overdrivePending: %w", overdriveErr)
 	}
+	questErr := r.registry.refreshQuestFramesLocked(&peerSession, r.now(), packet.SourceTime)
+	if questErr != nil {
+		r.registry.sessions[packet.Address.String()] = peerSession
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("questPending: %w", questErr)
+	}
+	mutationErr := r.registry.refreshMutationElitesLocked(&peerSession)
+	if mutationErr != nil {
+		r.registry.sessions[packet.Address.String()] = peerSession
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("mutationPending: %w", mutationErr)
+	}
+	mutationStageErr := r.registry.refreshMutationEventsLocked(&peerSession, r.now(), packet.SourceTime)
+	if mutationStageErr != nil {
+		r.registry.sessions[packet.Address.String()] = peerSession
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("mutationStagePending: %w", mutationStageErr)
+	}
+	mutationFeedbackErr := r.registry.refreshMutationFeedbackLocked(&peerSession)
+	if mutationFeedbackErr != nil {
+		r.registry.sessions[packet.Address.String()] = peerSession
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("mutationFeedbackPending: %w", mutationFeedbackErr)
+	}
+	pendingBatchCount := len(peerSession.pendingPacketBatches)
+	queuedPackets, pendingPacketBatchID := peerSession.pendingPacketsForResponse(packet.ResponseID())
+	overdriveFrames := peerSession.pendingOverdriveFrames(pendingPacketBatchID)
+	questFrames := peerSession.pendingQuestFrames(pendingPacketBatchID)
+	mutationElites := peerSession.pendingMutationElites(pendingPacketBatchID)
+	mutationEvents := peerSession.pendingMutationEvents(pendingPacketBatchID)
+	mutationFeedbacks := peerSession.pendingMutationFeedbacks(pendingPacketBatchID)
 	isPendingPacketOverflow := peerSession.isPendingPacketOverflow
 	peerSession.isPendingPacketOverflow = false
 	queuedStatDeltas := peerSession.takeStatDeltas()
@@ -2604,7 +2887,8 @@ func (r gameplayPendingRuntime) poll(
 	if isArenaTransitionRetry || isArenaPreparationRetry {
 		peerSession.arenaLobbyTransitionAt = r.now()
 	}
-	if isFound && (len(queuedPackets) != 0 || len(queuedStatDeltas) != 0 || isPendingPacketOverflow ||
+	if isFound && (len(peerSession.pendingPacketBatches) != pendingBatchCount ||
+		len(queuedPackets) != 0 || len(queuedStatDeltas) != 0 || isPendingPacketOverflow ||
 		isArenaTransitionRetry || isArenaPreparationRetry) {
 		r.registry.sessions[packet.Address.String()] = peerSession
 	}
@@ -2651,15 +2935,16 @@ func (r gameplayPendingRuntime) poll(
 		}
 	}
 	if len(queuedPackets) != 0 {
-		err := packet.AfterResponseCommit(func() {
-			r.registry.mutex.Lock()
-			currentSession, isCurrent := r.registry.sessions[packet.Address.String()]
-			if isCurrent && currentSession.transportGeneration == packet.TransportGeneration {
-				currentSession.commitPendingPackets(pendingPacketBatchID)
-				r.registry.sessions[packet.Address.String()] = currentSession
-			}
-			r.registry.mutex.Unlock()
-		})
+		delivery := campaignProjectionDelivery{
+			registry: r.registry, sessionKey: packet.Address.String(),
+			generation: peerSession.generation, transportGeneration: packet.TransportGeneration,
+			batchID: pendingPacketBatchID, overdriveFrames: overdriveFrames,
+			questFrames:       questFrames,
+			mutationElites:    mutationElites,
+			mutationEvents:    mutationEvents,
+			mutationFeedbacks: mutationFeedbacks,
+		}
+		err := packet.AfterResponseCommit(delivery.commit)
 		if err != nil {
 			return nil, fmt.Errorf("pendingCommit: %w", err)
 		}
@@ -2679,8 +2964,10 @@ func (r gameplayPendingRuntime) poll(
 		}
 		if isArenaPreparationRetry {
 			arenaRuntime := gameplayArenaRuntime{
-				registry: r.registry,
-				logger:   r.logger,
+				ratingConversions: r.ratingConversions,
+				registry:          r.registry,
+				logger:            r.logger,
+				gameplayJoin:      r.gameplayJoin,
 			}
 			preparationPackets, err := arenaRuntime.prepareSelectedDecks(
 				packet.Address.String(), peerSession.binding.GameID, true,
@@ -2742,14 +3029,6 @@ func (r gameplayPendingRuntime) poll(
 	if len(responses) != 0 {
 		return responses, nil
 	}
-	combatPackets, err := r.heroCombatPackets(packet)
-	if err != nil {
-		return nil, fmt.Errorf("heroCombatPoll: %w", err)
-	}
-	projected = append(projected, combatPackets...)
-	if len(projected) != 0 {
-		return projected, nil
-	}
 	responses, _, err = r.consumePlayerResourceCommand(ctx, packet)
 	if err != nil {
 		return nil, fmt.Errorf("resourcePoll: %w", err)
@@ -2792,7 +3071,15 @@ func (r gameplayPendingRuntime) poll(
 	if len(responses) != 0 {
 		return responses, nil
 	}
-	return r.pollPlayerAI(ctx, packet)
+	responses, err = r.pollPlayerAI(ctx, packet)
+	if err != nil {
+		return nil, fmt.Errorf("playerAIPoll: %w", err)
+	}
+	sagePackets, err := r.pollArenaSagePets(packet)
+	if err != nil {
+		return nil, fmt.Errorf("arenaSagePoll: %w", err)
+	}
+	return append(responses, sagePackets...), nil
 }
 
 func (r gameplayPendingRuntime) persistOverdriveUnlock(
@@ -2843,9 +3130,9 @@ func (r gameplayPendingRuntime) recoverIdleNPCActions(
 		return nil, nil
 	}
 	plans := make([]zonenpc.SpawnPlan, 0)
-	for _, npc := range peerSession.zone.NPCs().Snapshots() {
-		if npc.IsDefeated || npc.Plan.IsFixture || npc.TargetObjectID == 0 ||
-			npc.IsActionStarted {
+	for _, npc := range peerSession.zone.NPCs().SelectedSnapshots(zonenpc.SelectIdleAction) {
+		if npc.IsDefeated || !npc.IsScenarioAIEnabled() || npc.Plan.IsFixture || npc.TargetObjectID == 0 ||
+			npc.IsActionStarted || zonenpc.IsAgentHealingChild(npc.Plan) {
 			continue
 		}
 		_, isTargetFound := peerSession.campaignNPCTarget(
@@ -2900,7 +3187,7 @@ func (r gameplayPendingRuntime) recoverNPCs(
 	plans := make([]zonenpc.SpawnPlan, 0)
 	for _, npc := range peerSession.zone.NPCs().Snapshots() {
 		if npc.IsDefeated || npc.Plan.IsFixture || npc.TargetObjectID == 0 ||
-			npc.IsActionStarted {
+			npc.IsActionStarted || zonenpc.IsAgentHealingChild(npc.Plan) {
 			continue
 		}
 		plans = append(plans, npc.Plan)
@@ -2918,6 +3205,14 @@ func (r gameplayPendingRuntime) recoverNPCs(
 			packet.Address, len(plans),
 		)
 	}
+	companionPackets, err := r.damage.startCompanionAttacks(
+		packet, sessionKey, peerSession.generation, packet.SourceTime,
+	)
+	if err != nil {
+		r.restoreNPCRecovery(sessionKey, peerSession.transportGeneration)
+		return nil, fmt.Errorf("companionRecovery: %w", err)
+	}
+	packets = append(packets, companionPackets...)
 	return packets, nil
 }
 
@@ -3029,6 +3324,9 @@ func (r gameplayPendingRuntime) consumePlayerResourceCommand(
 	if !isSessionFound {
 		return nil, false, nil
 	}
+	if queuedSession.binding.IsServerBot {
+		return nil, false, nil
+	}
 	command, isCommandFound, err := r.gameplayJoin.ConsumePlayerResourceCommand(
 		ctx, int64(queuedSession.binding.UserID), queuedSession.binding.GameID,
 	)
@@ -3056,6 +3354,7 @@ func (r gameplayPendingRuntime) consumePlayerResourceCommand(
 		r.registry.mutex.Unlock()
 		return nil, false, fmt.Errorf("resourceApply: %w", applyErr)
 	}
+	packets = append(packets, r.registry.takePlasmaWreathRestorationLocked(&currentSession)...)
 	binding := currentSession.binding
 	r.registry.sessions[packet.Address.String()] = currentSession
 	r.registry.mutex.Unlock()
@@ -3069,323 +3368,6 @@ func (r gameplayPendingRuntime) consumePlayerResourceCommand(
 	)
 	return packets, true, nil
 }
-func (r gameplayPendingRuntime) consumePlayerEventCommand(
-	ctx context.Context, packet raknet.Packet,
-) ([][]byte, bool, error) {
-	r.registry.mutex.RLock()
-	queuedSession, isSessionFound := r.registry.sessions[packet.Address.String()]
-	isCommandEligible := isSessionFound && queuedSession.stage.IsDungeon() &&
-		queuedSession.dungeonSetup.IsCommitted() &&
-		queuedSession.deployedObjectID != 0 && !queuedSession.isZoneTerminal()
-	r.registry.mutex.RUnlock()
-	if !isSessionFound {
-		return nil, false, nil
-	}
-	command, isCommandFound, err := r.gameplayJoin.ConsumePlayerEventCommand(
-		ctx, int64(queuedSession.binding.UserID), queuedSession.binding.GameID,
-		packet.ScheduleGroup != nil || packet.ScheduleGroupResult != nil,
-	)
-	if err != nil {
-		return nil, false, fmt.Errorf("eventConsume: %w", err)
-	}
-	if !isCommandFound {
-		return nil, false, nil
-	}
-	if !isCommandEligible {
-		r.logger.Printf("RakNet discarded developer event %q during unavailable state for %s",
-			command.Name, packet.Address)
-		return nil, false, nil
-	}
-	if command.Name == "spawn" {
-		return r.spawnDeveloperNPC(packet, queuedSession, command)
-	}
-	if command.Name == "follow" {
-		return r.activatePlayerFollow(packet, queuedSession, command)
-	}
-	if command.Name == "ai" {
-		return r.togglePlayerAI(packet, queuedSession)
-	}
-	if command.Name == "drop-create" {
-		return r.createDeveloperEquipmentDrop(ctx, packet, queuedSession, command)
-	}
-	if command.Name == "recap" {
-		return r.recapParty(packet, queuedSession)
-	}
-	if command.Name == "victory" && queuedSession.binding.Mode == game.ModeArena {
-		return r.completeDeveloperArenaVictory(packet, queuedSession)
-	}
-	if command.Name == "victory" && queuedSession.binding.Mode == game.ModeTutorial {
-		return r.completeDeveloperTutorialVictory(ctx, packet, queuedSession)
-	}
-	if command.Name == "victory" &&
-		queuedSession.binding.Mode == game.ModeChain &&
-		queuedSession.binding.ChainLevelIndex == zoneunlock.OverdriveChainLevelIndex &&
-		!queuedSession.binding.IsOverdriveUnlocked {
-		if r.overdriveProgression == nil {
-			return nil, false, errors.New("eventVictoryOverdrive: progression unavailable")
-		}
-		_, unlockErr := r.overdriveProgression.UnlockOverdrive(
-			ctx, int64(queuedSession.binding.UserID),
-		)
-		if unlockErr != nil {
-			return nil, false, fmt.Errorf("eventVictoryOverdrive: %w", unlockErr)
-		}
-		queuedSession.binding.IsOverdriveUnlocked = true
-	}
-	r.registry.mutex.Lock()
-	currentSession, isCurrentFound := r.registry.sessions[packet.Address.String()]
-	isCurrent := isCurrentFound && currentSession.generation == queuedSession.generation
-	if !isCurrent {
-		r.registry.mutex.Unlock()
-		return nil, false, errors.New("eventSession: replaced")
-	}
-	if queuedSession.binding.IsOverdriveUnlocked {
-		currentSession.binding.IsOverdriveUnlocked = true
-		if !currentSession.isOverdriveSpent && currentSession.overdriveEnergy == 0 {
-			currentSession.overdriveEnergy = queuedSession.overdriveEnergy
-		}
-		currentSession.isOverdrivePersistencePending = false
-	}
-	if command.Name == "victory" {
-		completionPacket, bossObjectID, victoryErr :=
-			currentSession.applyDeveloperVictoryCommand()
-		if victoryErr != nil {
-			r.registry.mutex.Unlock()
-			return nil, false, fmt.Errorf("eventVictoryApply: %w", victoryErr)
-		}
-		r.registry.sessions[packet.Address.String()] = currentSession
-		r.registry.mutex.Unlock()
-		publishErr := publishCampaignPeersAfterCommit(
-			r.registry, packet, [][]byte{completionPacket},
-		)
-		if publishErr != nil {
-			return nil, false, fmt.Errorf("eventVictoryPublish: %w", publishErr)
-		}
-		r.logger.Printf(
-			"RakNet developer victory published shared boss completion boss=%d for %s; awaiting Return to Ship",
-			bossObjectID, packet.Address,
-		)
-		return [][]byte{completionPacket}, true, nil
-	}
-	if command.Name == "defeat" {
-		packets, defeatErr := currentSession.applyDeveloperDefeatCommand()
-		if defeatErr != nil {
-			r.registry.mutex.Unlock()
-			return nil, false, fmt.Errorf("eventDefeatApply: %w", defeatErr)
-		}
-		r.registry.sessions[packet.Address.String()] = currentSession
-		r.registry.mutex.Unlock()
-		r.logger.Printf("RakNet developer defeat entered Game Over for %s", packet.Address)
-		return packets, true, nil
-	}
-	if command.Name == "kill" {
-		result, transition, killErr := currentSession.applyDeveloperKillCommand()
-		if killErr != nil {
-			r.registry.mutex.Unlock()
-			return nil, false, fmt.Errorf("eventKillApply: %w", killErr)
-		}
-		binding := currentSession.binding
-		generation := currentSession.generation
-		r.registry.sessions[packet.Address.String()] = currentSession
-		r.registry.mutex.Unlock()
-		packets, publishErr := r.damage.publishAreaResults(
-			packet, packet.Address.String(), generation, currentSession.deployedObjectID,
-			packet.SourceTime, binding, result, transition, nil, false,
-		)
-		if publishErr != nil {
-			return nil, false, fmt.Errorf("eventKillPublish: %w", publishErr)
-		}
-		r.logger.Printf("RakNet developer kill defeated %d enemies for %s", len(result), packet.Address)
-		return packets, true, nil
-	}
-	if command.Name == "reset" && currentSession.securityTransfer != nil {
-		currentSession.securityTransfer.Stop()
-		currentSession.securityTransfer = nil
-	}
-	if command.Name == "reset" {
-		currentSession.retireChannelsLocked()
-		currentSession.retireAuraAreasLocked()
-		currentSession.retireChargeRunsLocked()
-		r.registry.retirePeerProjectileFreezesLocked(&currentSession)
-		r.registry.retireFieldMedicBuffsLocked(&currentSession, r.modifierPool)
-		r.registry.retireCampaignTreeOfLifeLocked(&currentSession)
-		r.registry.clearActionLeasesLocked(
-			packet.Address.String(), currentSession.transportGeneration,
-		)
-	}
-	packets, applyErr := currentSession.applyDeveloperEventCommand(
-		r.registry, command, r.now(), packet.SourceTime,
-	)
-	if applyErr != nil {
-		r.registry.mutex.Unlock()
-		return nil, false, fmt.Errorf("eventApply: %w", applyErr)
-	}
-	if command.Name == "reset" {
-		resetGameplayPeerRuntime(
-			&currentSession, r.modifierPool, r.effectPool,
-		)
-	}
-	restartedEnemyPlans := make([]zonenpc.SpawnPlan, 0)
-	if command.Name == "reset" && currentSession.zone != nil {
-		syncErr := currentSession.syncZoneHero()
-		if syncErr != nil {
-			r.logger.Printf(
-				"RakNet developer reset hero resync skipped for %s: %v",
-				packet.Address, syncErr,
-			)
-		} else {
-			restartedEnemy, restartErr := currentSession.zone.RestartHeroTarget(
-				currentSession.binding.UserID, currentSession.generation,
-				currentSession.deployedObjectID,
-			)
-			if restartErr != nil {
-				r.logger.Printf(
-					"RakNet developer reset enemy restart skipped for %s: %v",
-					packet.Address, restartErr,
-				)
-			} else {
-				for _, enemy := range restartedEnemy {
-					restartedEnemyPlans = append(
-						restartedEnemyPlans, enemy.Plan,
-					)
-				}
-			}
-		}
-	}
-	generation := currentSession.generation
-	r.registry.sessions[packet.Address.String()] = currentSession
-	r.registry.mutex.Unlock()
-	if command.Name == "reset" {
-		restartedEnemyPackets, restartErr := r.damage.npc.scheduleFirstActions(
-			packet, packet.Address.String(), generation, restartedEnemyPlans,
-			packet.SourceTime,
-		)
-		if restartErr != nil {
-			r.logger.Printf(
-				"RakNet developer reset retained player recovery for %s while NPC restart failed: %v",
-				packet.Address, restartErr,
-			)
-		} else {
-			packets = append(packets, restartedEnemyPackets...)
-		}
-	}
-	r.logger.Printf("RakNet developer event %q accepted for %s", command.Name, packet.Address)
-	return packets, true, nil
-}
-
-func (r gameplayPendingRuntime) spawnDeveloperNPC(
-	packet raknet.Packet, queuedSession gameplayPeerSession, command game.PlayerEventCommand,
-) ([][]byte, bool, error) {
-	sessionKey := packet.Address.String()
-	r.registry.mutex.Lock()
-	currentSession, isFound := r.registry.sessions[sessionKey]
-	isCurrent := isFound && currentSession.generation == queuedSession.generation &&
-		currentSession.binding.IsWarped && currentSession.zone != nil &&
-		currentSession.zone.NPCs() != nil && currentSession.deployedObjectID != 0 &&
-		!currentSession.isZoneTerminal()
-	if !isCurrent {
-		r.registry.mutex.Unlock()
-		return nil, false, errors.New("npcSpawnSession: unavailable")
-	}
-	director := currentSession.zone.DirectorDefinition()
-	profile, isProfileFound := developerNPCProfile(director, command.NounName)
-	if !isProfileFound {
-		r.registry.mutex.Unlock()
-		return nil, false, fmt.Errorf("npcSpawnProfile: unavailable %q", command.NounName)
-	}
-	profile = zoneboss.NormalizeFinalBossProfile(command.NounName, profile)
-	position := game.Vec3(currentSession.playerPosition)
-	position.X += 5
-	plan := zonenpc.SpawnPlan{
-		NounName: command.NounName, Position: position,
-		IsCaptain:            strings.Contains(strings.ToLower(command.NounName), "_captain"),
-		IsArena:              currentSession.binding.Mode == game.ModeArena,
-		IsEncounterAuxiliary: true, IsLootSuppressed: true, IsExperienceSuppressed: true, NPCProfile: profile,
-	}
-	if strings.EqualFold(command.NounName, zonenpc.MutationAgentNounName) {
-		bodyNounName, isBodyFound := developerMutationAgentBodyNoun(director)
-		if !isBodyFound {
-			r.registry.mutex.Unlock()
-			return nil, false, errors.New("npcSpawnMutationBody: unavailable")
-		}
-		plan.NounName = bodyNounName
-		plan.AuthoredNounName = command.NounName
-		plan.ActionProfile = zonenpc.MutationAgentActionProfile()
-		plan.IsActionKnown = true
-	}
-	plans, err := currentSession.zone.AssignSpawnPlanIDs([]zonenpc.SpawnPlan{plan})
-	if err != nil {
-		r.registry.mutex.Unlock()
-		return nil, false, fmt.Errorf("npcSpawnAllocate: %w", err)
-	}
-	plan = plans[0]
-	targetObjectID := currentSession.deployedObjectID
-	packets, err := npcraknet.TargetedSpawn(plan, targetObjectID)
-	if err != nil {
-		r.registry.mutex.Unlock()
-		return nil, false, fmt.Errorf("npcSpawnMarshal: %w", err)
-	}
-	err = currentSession.zone.NPCs().Add(plans, targetObjectID)
-	if err != nil {
-		r.registry.mutex.Unlock()
-		return nil, false, fmt.Errorf("npcSpawnAdd: %w", err)
-	}
-	err = currentSession.zone.PublishNPCSpawn(zoneprojection.NPCSpawn{
-		Plans: plans, TargetObjectID: targetObjectID,
-	}, currentSession.binding.UserID, currentSession.generation)
-	if err != nil {
-		rollbackErr := currentSession.zone.NPCs().RollbackAdd(plans)
-		r.registry.mutex.Unlock()
-		return nil, false, fmt.Errorf(
-			"npcSpawnPublish: %w", errors.Join(err, rollbackErr),
-		)
-	}
-	generation := currentSession.generation
-	r.registry.sessions[sessionKey] = currentSession
-	r.registry.mutex.Unlock()
-	actionPackets, actionErr := r.damage.npc.scheduleFirstActions(
-		packet, sessionKey, generation, plans, packet.SourceTime,
-	)
-	if actionErr != nil {
-		r.logger.Printf(
-			"RakNet developer NPC spawn retained object=%d noun=%q for %s while first action failed: %v",
-			plan.ObjectID, plan.NounName, packet.Address, actionErr,
-		)
-	} else {
-		packets = append(packets, actionPackets...)
-	}
-	r.logger.Printf(
-		"RakNet developer NPC spawn accepted object=%d noun=%q presentation_noun=%q for %s",
-		plan.ObjectID, command.NounName, plan.NounName, packet.Address,
-	)
-	return packets, true, nil
-}
-
-func developerMutationAgentBodyNoun(
-	director game.CampaignDirector,
-) (string, bool) {
-	entries := zonepopulation.PoolEntries(director, "minion")
-	for _, entry := range entries {
-		if strings.EqualFold(entry.NounName, zonenpc.MutationAgentNounName) ||
-			!entry.NPCProfile.IsKnown || !entry.NPCProfile.IsTargetable ||
-			entry.NPCProfile.HitPoint <= 0 {
-			continue
-		}
-		return entry.NounName, true
-	}
-	for _, pool := range director.Pools {
-		for _, entry := range pool.Entries {
-			if strings.EqualFold(entry.NounName, zonenpc.MutationAgentNounName) ||
-				!entry.NPCProfile.IsKnown || !entry.NPCProfile.IsTargetable ||
-				entry.NPCProfile.HitPoint <= 0 {
-				continue
-			}
-			return entry.NounName, true
-		}
-	}
-	return "", false
-}
-
 func developerNPCProfile(
 	director game.CampaignDirector, nounName string,
 ) (game.CampaignNPCProfile, bool) {
@@ -3789,6 +3771,7 @@ func (r gameplayProjectionRuntime) publishEnemyDamage(
 	if !isCurrent {
 		return errors.New("damage projection session replaced")
 	}
+	r.recordOperativeCageDamage(sessionKey, generation, damage)
 	err := peerSession.zone.RecordNPCDamage(context.Background(), damage)
 	if err != nil {
 		r.logger.Printf(
@@ -3859,11 +3842,10 @@ func (r gameplayProjectionRuntime) drain(
 	if !isFound || peerSession.zone == nil {
 		return nil, nil
 	}
-	if peerSession.isRejoinPending || !peerSession.dungeonSetup.IsCommitted() ||
-		len(peerSession.pendingPacketBatches) != 0 {
+	if peerSession.isRejoinPending || !peerSession.dungeonSetup.IsCommitted() {
 		return nil, nil
 	}
-	if peerSession.zone.IsProjectionBaselineRequired(
+	if peerSession.isMutationBaselineRequired || peerSession.zone.IsProjectionBaselineRequired(
 		peerSession.binding.UserID, peerSession.generation,
 	) {
 		packets, revision, err := marshalGameplayRejoinBaseline(
@@ -3871,6 +3853,27 @@ func (r gameplayProjectionRuntime) drain(
 		)
 		if err != nil {
 			return nil, fmt.Errorf("projectionBaseline: %w", err)
+		}
+		if peerSession.isMutationBaselineRequired && len(peerSession.mutationResetObjectIDs) != 0 {
+			resetPacket, resetErr := raknet.MarshalApplication(raknet.ObjectDeleteMessage{ObjectID: peerSession.mutationResetObjectIDs})
+			if resetErr != nil {
+				return nil, fmt.Errorf("baselineReset: %w", resetErr)
+			}
+			packets = append([][]byte{resetPacket}, packets...)
+		}
+		mutationPackets, mutationFrames, err := r.registry.mutationRejoinPackets(peerSession, r.registry.now(), sourceTime)
+		if err != nil {
+			return nil, fmt.Errorf("baselineMutation: %w", err)
+		}
+		packets = append(packets, mutationPackets...)
+		delivery := campaignProjectionDelivery{
+			registry: r.registry, sessionKey: sessionKey,
+			generation: peerSession.generation, transportGeneration: peerSession.transportGeneration,
+			mutationEvents: mutationFrames,
+		}
+		err = request.AfterResponseCommit(delivery.commit)
+		if err != nil {
+			return nil, fmt.Errorf("baselineMutationCommit: %w", err)
 		}
 		err = request.AfterResponseCommit(func() {
 			r.commitProjectionDelivery(
@@ -3887,6 +3890,9 @@ func (r gameplayProjectionRuntime) drain(
 			)
 		}
 		return packets, nil
+	}
+	if len(peerSession.pendingPacketBatches) != 0 {
+		return nil, nil
 	}
 	packets, err := r.drainQueuedProjection(request, sessionKey)
 	if err != nil {
@@ -3930,6 +3936,18 @@ func (r gameplayProjectionRuntime) commitProjectionDelivery(
 		)
 	}
 	if isCommitted {
+		if isBaseline {
+			r.registry.mutex.Lock()
+			member, isFound := r.registry.sessions[sessionKey]
+			if isFound && member.zone == expected.zone && member.generation == expected.generation &&
+				member.transportGeneration == expected.transportGeneration &&
+				member.mutationBaselineRevision == expected.mutationBaselineRevision {
+				member.isMutationBaselineRequired = false
+				member.mutationResetObjectIDs = nil
+				r.registry.sessions[sessionKey] = member
+			}
+			r.registry.mutex.Unlock()
+		}
 		return
 	}
 	err := expected.zone.RequireProjectionBaseline(
@@ -3982,12 +4000,18 @@ func marshalCampaignProjection(event zoneprojection.Event) ([][]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("damageHealthMarshal: %w", err)
 		}
+		if damage.Damage == 0 {
+			// Flat armor can fully mitigate a successful hit. Its contact and
+			// status effects belong to the accepted attack, but there
+			// is no health damage number to display. Retain the health state.
+			return [][]byte{healthPacket}, nil
+		}
 		textPacket, err := effectraknet.CombatText(effectraknet.CombatTextRequest{
 			ObjectID: damage.TargetObjectID, Position: damage.Position,
 			Amount: damage.Damage, IsCritical: damage.IsCritical,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("damageCombatText: %w", err)
+			return nil, fmt.Errorf("damageCombatText[%d/%g]: %w", damage.TargetObjectID, damage.Damage, err)
 		}
 		return [][]byte{eventPacket, healthPacket, textPacket}, nil
 	case zoneprojection.EventNPCDeath:
@@ -4130,13 +4154,14 @@ func marshalCampaignProjection(event zoneprojection.Event) ([][]byte, error) {
 			}
 			return packet, nil
 		case zonenpc.ActionEventReturn:
-			packet, err := actionraknet.PursuitStep(
+			packets, err := npcraknet.MovementPause(
 				action.Plan.ObjectID, action.Plan.TargetPosition,
+				action.Plan.SourceFacing,
 			)
 			if err != nil {
 				return nil, fmt.Errorf("npcActionReturn: %w", err)
 			}
-			return [][]byte{packet}, nil
+			return packets, nil
 		default:
 			return nil, fmt.Errorf("npcActionKind: %d", action.Kind)
 		}
@@ -4365,6 +4390,13 @@ func marshalCampaignDeathProjection(
 			Position: raknet.Vector3{
 				X: death.Position.X, Y: death.Position.Y, Z: death.Position.Z,
 			},
+			Facing: raknet.Vector3{X: death.Facing.X, Y: death.Facing.Y, Z: death.Facing.Z},
+		}
+		if death.IsFacingOmitted {
+			message = raknet.DropPresentationMessage{
+				Asset:    util.HashID(death.EffectName),
+				Position: raknet.Vector3{X: death.Position.X, Y: death.Position.Y, Z: death.Position.Z},
+			}
 		}
 	default:
 		return nil, fmt.Errorf("deathKind: %d", death.Kind)
@@ -4401,15 +4433,43 @@ func stopGameplayPeerSession(
 ) {
 	leaveGameplayPeerMembership(peerSession)
 	stopGameplayPeerRuntime(&peerSession, modifierInstancePool, effectPool)
+	peerSession.settleChannelRemovals()
 }
 
 func leaveGameplayPeerMembership(peerSession gameplayPeerSession) {
+	peerSession.retireOmniShields()
 	if peerSession.zone == nil {
 		return
+	}
+	if peerSession.beastPetResurrection != nil {
+		registry := peerSession.beastPetResurrection.runtime.registry
+		registry.mutex.Lock()
+		packets, err := peerSession.stopBeastPet()
+		if err != nil {
+			log.Printf("RakNet Savage membership cleanup failed user=%d: %v", peerSession.binding.UserID, err)
+		}
+		for sessionKey, member := range registry.sessions {
+			if member.zone != peerSession.zone || member.isRejoinPending ||
+				member.binding.UserID == peerSession.binding.UserID {
+				continue
+			}
+			member.queueCampaignPackets(packets)
+			registry.sessions[sessionKey] = member
+		}
+		registry.mutex.Unlock()
+	}
+	if peerSession.sagePassive != nil {
+		requests, err := peerSession.sagePassive.Stop()
+		if err != nil {
+			log.Printf("RakNet Sage membership cleanup failed user=%d requests=%d: %v", peerSession.binding.UserID, len(requests), err)
+		}
 	}
 	peerSession.zone.Leave(
 		peerSession.binding.UserID, peerSession.generation,
 	)
+	// Permanent departure can settle the final semantic-member deletion lease.
+	peerSession.retireOmniShields()
+	peerSession.settleChannelRemovals()
 }
 
 // stopGameplayPeerRuntime quiesces connection-local gameplay work without
@@ -4422,6 +4482,9 @@ func stopGameplayPeerRuntime(
 ) {
 	if peerSession == nil {
 		return
+	}
+	if peerSession.binding.Mode == game.ModeArena && peerSession.arenaEffectPool != nil {
+		effectPool = peerSession.arenaEffectPool
 	}
 	sinkholePackets, sinkholeErr := peerSession.updateSinkholeWind(0, effectPool)
 	if sinkholeErr != nil {
@@ -4520,14 +4583,22 @@ func stopGameplayPeerRuntime(
 		peerSession.heroChannelArea.Stop()
 	}
 	if peerSession.heroQuantumBlink != nil {
-		peerSession.heroQuantumBlink.Stop()
+		registry := peerSession.heroQuantumBlink.registry
+		if registry != nil {
+			registry.mutex.Lock()
+		}
+		cleanupErr := peerSession.retireQuantumBlinkLocked(time.Now())
+		if registry != nil {
+			registry.mutex.Unlock()
+		}
+		if cleanupErr != nil {
+			log.Printf("RakNet Quantum Blink runtime cleanup failed user=%d: %v", peerSession.binding.UserID, cleanupErr)
+		}
 	}
 	for _, run := range peerSession.heroStatusAreas {
 		run.Stop()
 	}
-	if peerSession.heroInfection != nil {
-		peerSession.heroInfection.Stop()
-	}
+	peerSession.stopHeroInfections()
 	if peerSession.heroHealingTicks != nil {
 		peerSession.heroHealingTicks.Stop()
 	}
@@ -4620,9 +4691,14 @@ func stopGameplayPeerRuntime(
 			errors.Join(fieldMedicHeroErr, fieldMedicCompanionErr))
 	}
 	if peerSession.plasmaWreathRun != nil {
-		_, _ = peerSession.plasmaWreathRun.Stop()
+		wreathPackets, wreathErr := peerSession.stopPlasmaWreath(time.Now())
+		peerSession.queueCampaignPackets(wreathPackets)
+		if wreathErr != nil {
+			log.Printf("Plasma Wreath teardown user=%d: %v", peerSession.binding.UserID, wreathErr)
+		}
 	}
 	if peerSession.rideCancel != nil {
+		peerSession.cancelScenarioRide("gameplay lifecycle closed ability", time.Now())
 		peerSession.rideCancel()
 	}
 	if peerSession.obeliskCancel != nil {
@@ -4642,6 +4718,12 @@ func resetGameplayPeerRuntime(
 ) {
 	if peerSession == nil {
 		return
+	}
+	// The developer reset caller owns the registry lock. Retire Blink here so
+	// detached runtime teardown below does not try to acquire it recursively.
+	err := peerSession.retireQuantumBlinkLocked(time.Now())
+	if err != nil {
+		log.Printf("RakNet Quantum Blink reset cleanup failed user=%d: %v", peerSession.binding.UserID, err)
 	}
 	stopGameplayPeerRuntime(peerSession, modifierInstancePool, effectPool)
 	peerSession.zoneEffectPresentation = zoneEffectPresentation{}
@@ -4670,6 +4752,9 @@ func resetGameplayPeerRuntime(
 	peerSession.isMissileTargetingPresented = [squad.Size]bool{}
 	peerSession.missileTargetingEffectSlots = [squad.Size]uint8{}
 	peerSession.fireRavagerBasicCount = [squad.Size]uint32{}
+	for index := range peerSession.tcShieldRuns {
+		peerSession.resetTCShield(uint32(index))
+	}
 	peerSession.tcShieldAmount = [squad.Size]float32{}
 	peerSession.tcShieldReadyAt = [squad.Size]time.Time{}
 	peerSession.tcShieldEffectSlot = [squad.Size]uint8{}
@@ -4851,6 +4936,7 @@ func (e campaignPopulationRuntime) activateOpening(
 		peerSession.recordScenarioDungeonCommit(setupEpoch)
 		peerSession.recordScenarioFixtureCommit()
 		e.registry.sessions[sessionKey] = peerSession
+		e.registry.refreshVoodooCharmsLocked(e.registry.now())
 	}
 	e.registry.mutex.Unlock()
 	if err != nil {
@@ -4918,10 +5004,10 @@ func (e campaignPopulationRuntime) activateOpening(
 	if isFirstRunLevel {
 		for _, plan := range result.spawnPlans {
 			e.logger.Printf(
-				"RakNet campaign opening enemy for %s object=%d noun=%q marker_set=%q locus=%d captain=%t introduction=%d position=(%.3f,%.3f,%.3f)",
+				"RakNet campaign opening enemy for %s object=%d noun=%q marker_set=%q locus=%d captain=%t introduction=%d position=(%.3f,%.3f,%.3f) %s",
 				packet.Address, plan.ObjectID, plan.NounName, plan.MarkerSetName,
 				plan.LocusID, plan.IsCaptain, plan.Introduction,
-				plan.Position.X, plan.Position.Y, plan.Position.Z,
+				plan.Position.X, plan.Position.Y, plan.Position.Z, npcPolicyDiagnostic(peerSession.zone.DirectorDefinition(), plan),
 			)
 		}
 	}
@@ -5003,6 +5089,26 @@ func (r gameplaySetupRuntime) publishCampaign(
 			}
 		}
 	}
+	if peerSession.binding.IsServerBot {
+		restoredBot, isBotRestored := peerSession.zone.RestoredCampaignBot(peerSession.binding.Slot)
+		if isBotRestored {
+			peerSession.squad, err = newCampaignSquad(peerSession.binding.Creatures)
+			if err != nil {
+				return nil, false, fmt.Errorf("botRestoreSquad: %w", err)
+			}
+			peerSession.deployedCreatureIndex = restoredBot.CreatureIndex
+			peerSession.deployedObjectID = zonehero.ObjectID(peerSession.binding.Slot, restoredBot.CreatureIndex)
+			err = peerSession.squad.Deploy(restoredBot.CreatureIndex)
+			if err != nil {
+				return nil, false, fmt.Errorf("botRestoreDeploy: %w", err)
+			}
+			_, err = peerSession.squad.SetHitPoints(restoredBot.CreatureIndex, restoredBot.HitPoint)
+			if err != nil {
+				return nil, false, fmt.Errorf("botRestoreHealth: %w", err)
+			}
+			entryPosition = raknet.Vector3(restoredBot.Position)
+		}
+	}
 	playerMotion, err := zoneaction.NewMotion(toSimPosition(entryPosition), r.now())
 	if err != nil {
 		return nil, false, fmt.Errorf("pingCampaignMovement: %w", err)
@@ -5012,7 +5118,12 @@ func (r gameplaySetupRuntime) publishCampaign(
 	peerSession.resetTeleporterSample()
 	peerSession.resetPickupContacts()
 	peerSession.passiveStationarySince[peerSession.deployedCreatureIndex] = r.now()
-	peerSession.startTCShieldRecharge(peerSession.deployedCreatureIndex, r.now())
+	initialShieldPackets, err := peerSession.activateTCShield(
+		peerSession.deployedCreatureIndex, r.now(), r.damage.effectPool, r.registry,
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("campaignInitialShield: %w", err)
+	}
 	if peerSession.squad == nil {
 		peerSession.squad, err = newCampaignSquad(peerSession.binding.Creatures)
 		if err != nil {
@@ -5098,6 +5209,9 @@ func (r gameplaySetupRuntime) publishCampaign(
 	if err != nil {
 		return nil, false, fmt.Errorf("pingCampaignRoster: %w", err)
 	}
+	if peerSession.binding.IsServerBot {
+		return r.publishCampaignServerBot(packet, peerSession, setupEpoch, entryPosition, initialShieldPackets, fieldMedicPackets)
+	}
 	response, err := marshalCampaignDungeonSetup(
 		peerSession.binding, peerSession.zone.ScriptObjectPlans(),
 		peerSession.zone.SceneryPlans(), peerSession.zone.SceneryDeleteObjectIDs(),
@@ -5112,6 +5226,7 @@ func (r gameplaySetupRuntime) publishCampaign(
 	if err != nil {
 		return nil, false, fmt.Errorf("pingDragShield: %w", err)
 	}
+	response = append(response, initialShieldPackets...)
 	response = append(response, shieldPackets...)
 	for index, use := range peerSession.zone.Script().SnapshotUses() {
 		usePackets, marshalErr := objectraknet.ScriptUseSnapshot(use)
@@ -5179,11 +5294,14 @@ func (r gameplaySetupRuntime) publishCampaign(
 	}
 	securityPackets := [][]byte(nil)
 	if isCheckpointBaseline {
-		securityPackets, err = securityraknet.SnapshotState(
-			securitySnapshot, peerSession.zone.SecurityThreats(),
+		securityPackets, err = securityraknet.SnapshotStateWithRotations(
+			securitySnapshot, peerSession.securityTeleporterRotations(),
+			peerSession.zone.SecurityThreats(),
 		)
 	} else {
-		securityPackets, err = securityraknet.InitialState(securitySnapshot.ObjectID)
+		securityPackets, err = securityraknet.InitialStateWithRotations(
+			securitySnapshot.ObjectID, peerSession.securityTeleporterRotations(),
+		)
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("pingCampaignSecurityState: %w", err)
@@ -5285,7 +5403,7 @@ func (r gameplaySetupRuntime) publishCampaign(
 		rosterPackets, rosterErr := marshalZoneHeroRoster(
 			zoneprojection.HeroRoster{
 				UserID: peerSession.binding.UserID, PlayerSlot: peerSession.binding.Slot,
-				Roster: peerSession.binding.Roster(), Position: heroActor.Position,
+				Roster: peerSession.binding.Roster(), Position: heroActor.Position, Orientation: heroActor.Orientation,
 				CreatureIndex: heroActor.CreatureIndex,
 			},
 		)
@@ -5326,6 +5444,13 @@ func (r gameplaySetupRuntime) publishCampaign(
 	if err != nil {
 		return nil, false, fmt.Errorf("deploymentArrivalCommit: %w", err)
 	}
+	// Arm Sage after the owner's response and the preceding co-op roster
+	// publication callbacks; retain the setup's accepted clock as its epoch.
+	sagePackets, err := r.startSagePassive(packet, packet.Address.String(), peerSession.generation, publishStartedAt)
+	if err != nil {
+		return nil, false, fmt.Errorf("pingCampaignSage: %w", err)
+	}
+	response = append(response, sagePackets...)
 	return response, true, nil
 }
 
@@ -5357,7 +5482,7 @@ func marshalRestoredZoneNPCs(currentZone *zone.Zone) ([][]byte, error) {
 		return nil, errors.New("restored npc session unavailable")
 	}
 	packets := make([][]byte, 0)
-	for index, npc := range currentZone.NPCs().LiveSnapshots() {
+	for index, npc := range currentZone.NPCs().LivePresentationSnapshots() {
 		if !npc.IsPublished {
 			continue
 		}
@@ -5479,7 +5604,14 @@ func (r gameplaySetupRuntime) handle(
 	if publishErr != nil {
 		return nil, fmt.Errorf("pingZone: %w", publishErr)
 	}
-	if isPublished {
+	if peerSession.binding.Mode == game.ModeArena || peerSession.binding.Mode == game.ModeChain {
+		botPackets, botErr := r.publishServerBots(ctx, packet)
+		if botErr != nil {
+			return nil, fmt.Errorf("pingServerBots: %w", botErr)
+		}
+		packets = append(packets, botPackets...)
+	}
+	if isPublished || len(packets) != 0 {
 		return packets, nil
 	}
 	if !isVoteNeeded {
@@ -5528,7 +5660,7 @@ func (r gameplaySetupRuntime) publishDungeon(
 		r.registry.sessions[packet.Address.String()] = peerSession
 		r.registry.mutex.Unlock()
 		packets, isPublished, publishErr := r.publishArena(
-			packet, peerSession, setupEpoch,
+			ctx, packet, peerSession, setupEpoch,
 		)
 		if publishErr != nil {
 			return nil, false, fmt.Errorf("arenaPublish: %w", publishErr)
@@ -5562,8 +5694,16 @@ func (r gameplaySetupRuntime) publishDungeon(
 }
 
 func (r gameplaySetupRuntime) publishArena(
-	packet raknet.Packet, peerSession gameplayPeerSession, setupEpoch uint64,
+	ctx context.Context, packet raknet.Packet, peerSession gameplayPeerSession, setupEpoch uint64,
 ) ([][]byte, bool, error) {
+	var arenaNav *navigation.Mesh
+	if r.preparation.navigation != nil {
+		mesh, err := r.preparation.navigation.LoadCampaignNavigation(ctx, peerSession.binding.Level)
+		if err != nil {
+			return nil, false, fmt.Errorf("arenaNavigation: %w", err)
+		}
+		arenaNav = mesh
+	}
 	peerSession.initializeCampaignResourceMaximums()
 	peerSession.deployedCreatureIndex = 0
 	peerSession.deployedObjectID = zonehero.ObjectID(peerSession.binding.Slot, 0)
@@ -5588,7 +5728,20 @@ func (r gameplaySetupRuntime) publishArena(
 	peerSession.resetTeleporterSample()
 	peerSession.resetPickupContacts()
 	peerSession.passiveStationarySince[peerSession.deployedCreatureIndex] = r.now()
-	peerSession.startTCShieldRecharge(peerSession.deployedCreatureIndex, r.now())
+	r.registry.mutex.Lock()
+	pool := r.registry.arenaEffectPools[peerSession.binding.GameID]
+	if pool == nil {
+		pool = newAttachedEffectPool()
+		r.registry.arenaEffectPools[peerSession.binding.GameID] = pool
+	}
+	r.registry.mutex.Unlock()
+	peerSession.arenaEffectPool = pool
+	initialShieldPackets, err := peerSession.activateTCShield(
+		peerSession.deployedCreatureIndex, r.now(), pool, r.registry,
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("arenaInitialShield: %w", err)
+	}
 	packets, err := marshalCampaignDungeonSetup(
 		peerSession.binding, nil, nil, nil, peerSession.passiveModifierInstance,
 		entryPosition, packet.SourceTime, 0,
@@ -5597,6 +5750,7 @@ func (r gameplaySetupRuntime) publishArena(
 	if err != nil {
 		return nil, false, fmt.Errorf("arenaSetup: %w", err)
 	}
+	packets = append(packets, initialShieldPackets...)
 	r.registry.mutex.RLock()
 	peerBindings := make([]game.GameplayBinding, 0, 6)
 	for sessionKey, candidate := range r.registry.sessions {
@@ -5642,7 +5796,7 @@ func (r gameplaySetupRuntime) publishArena(
 	r.registry.sessions[packet.Address.String()] = peerSession
 	r.registry.mutex.Unlock()
 	countdownErr := r.registry.scheduleArenaCountdown(
-		r.program, peerSession.binding.GameID,
+		r.program, peerSession.binding.GameID, packet.SourceTime, arenaNav,
 	)
 	if countdownErr != nil && r.logger != nil {
 		r.logger.Printf(
@@ -5679,17 +5833,18 @@ func (r gameplaySetupRuntime) publishVote(
 // by campaign levels. Level-specific differences stay in prepared director
 // data instead of branching in the gameplay transport.
 type campaignPreparation struct {
-	spawnRuleSource AllyAlertRuleSource
-	setup           *game.CampaignSetup
-	difficulty      sim.DifficultyCombatTuning
-	session         *gameplaySessionRegistry
-	zone            *zone.Registry
-	navigation      NavigationSource
-	program         Programs
-	timer           zone.Timer
-	checkpoint      zonecheckpoint.Repository
-	gameplayJoin    *game.GameplayJoin
-	logger          *log.Logger
+	spawnRuleSource   AllyAlertRuleSource
+	hordePolicySource HordePolicySource
+	setup             *game.CampaignSetup
+	difficulty        sim.DifficultyCombatTuning
+	session           *gameplaySessionRegistry
+	zone              *zone.Registry
+	navigation        NavigationSource
+	program           Programs
+	timer             zone.Timer
+	checkpoint        zonecheckpoint.Repository
+	gameplayJoin      *game.GameplayJoin
+	logger            *log.Logger
 }
 
 const campaignPopulationAggroRadius = float32(12)
@@ -5700,15 +5855,8 @@ func newCampaignPopulationSession(
 	director game.CampaignDirector, binding game.GameplayBinding,
 	mesh *navigation.Mesh,
 ) (*zonepopulation.Session, error) {
-	selectionID := binding.GameID
 	isFirstTimeRosterSelected := director.IsFirstTimeRosterSelected
-	if isFirstTimeRosterSelected {
-		selectionID = 0
-	}
-	seed := selectionID ^ (binding.Difficulty << 24) ^ 0x103
-	if isFirstTimeRosterSelected {
-		seed ^= (binding.ChainLevelIndex - 1) << 16
-	}
+	seed := campaignPopulationSeed(director, binding)
 	var session *zonepopulation.Session
 	var err error
 	if isFirstTimeRosterSelected {
@@ -5749,9 +5897,42 @@ func (p campaignPreparation) loadDirector(
 		return game.CampaignDirector{}, fmt.Errorf("directorLoad: %w", err)
 	}
 	director.BossSpawnRules = game.DefaultBossSpawnRules()
+	director.EnemyPopulationRules = game.DefaultEnemyPopulationRules()
+	populationRuleSource, isPopulationRuleSource := p.spawnRuleSource.(interface {
+		EnemyPopulationRules() game.EnemyPopulationRules
+	})
+	if isPopulationRuleSource {
+		director.EnemyPopulationRules = populationRuleSource.EnemyPopulationRules()
+	}
 	spawnRuleSource, isSpawnRuleSource := p.spawnRuleSource.(interface{ BossSpawnRules() game.BossSpawnRules })
 	if isSpawnRuleSource {
 		director.BossSpawnRules = spawnRuleSource.BossSpawnRules()
+	}
+	missionRuleSource, isMissionRuleSource := p.spawnRuleSource.(interface {
+		SpawnRulesSnapshot() (game.EnemyPopulationRules, game.BossSpawnRules)
+	})
+	if isMissionRuleSource {
+		director.EnemyPopulationRules, director.BossSpawnRules = missionRuleSource.SpawnRulesSnapshot()
+	}
+	if p.checkpoint != nil {
+		snapshot, isFound, loadErr := p.checkpoint.Load(ctx, uint64(binding.GameID))
+		if loadErr != nil {
+			return game.CampaignDirector{}, fmt.Errorf("directorRuleCheckpoint: %w", loadErr)
+		}
+		if isFound && snapshot.IsSpawnRuleSnapshotSet {
+			validateErr := zonecheckpoint.Validate(snapshot, uint64(binding.GameID), binding.Level, binding.Difficulty, binding.UserID)
+			if validateErr == nil {
+				director.EnemyPopulationRules = snapshot.EnemyPopulationRules.Resolved()
+				director.BossSpawnRules = snapshot.BossSpawnRules.Resolved()
+			}
+		}
+	}
+	director, err = game.ApplyPopulationRules(director)
+	if err != nil {
+		return game.CampaignDirector{}, fmt.Errorf("directorPopulation: %w", err)
+	}
+	if p.logger != nil {
+		p.logger.Printf("Dark Spin NPC policy game=%d stage=%d party=%d population=%+v boss=%+v agents=%d leader_result=%s", binding.GameID, binding.Difficulty, binding.CombatParticipantCount, director.EnemyPopulationRules, director.BossSpawnRules, len(director.OrdinaryAgentEntries), zoneboss.LeaderPolicyResult(director))
 	}
 	director, err = p.selectInitialMapLayout(director, binding)
 	if err != nil {
@@ -5767,7 +5948,7 @@ func (p campaignPreparation) loadDirector(
 	}
 	if zonedifficulty.HasTuning(p.difficulty) {
 		director, err = zonedifficulty.ProjectDirector(
-			director, binding.Difficulty, binding.ParticipantCount,
+			director, binding.Difficulty, binding.CombatParticipantCount,
 			p.difficulty,
 		)
 		if err != nil {
@@ -5923,6 +6104,13 @@ func (p campaignPreparation) initialize(
 		return fmt.Errorf("initializeDefense: %w", err)
 	}
 	peerSession.binding = binding
+	if binding.IsServerBot {
+		err = p.initializeServerBot(binding, peerSession)
+		if err != nil {
+			return fmt.Errorf("initializeBot: %w", err)
+		}
+		return nil
+	}
 	director, setupErr := p.loadDirector(ctx, binding)
 	if setupErr != nil {
 		return fmt.Errorf("statusChainDirector: %w", setupErr)
@@ -5948,6 +6136,7 @@ func (p campaignPreparation) initialize(
 				MarkerID: obstacle.MarkerID,
 				Position: navigation.Vec3(obstacle.Position), Minimum: navigation.Vec3(obstacle.Minimum),
 				Maximum: navigation.Vec3(obstacle.Maximum), Yaw: obstacle.Yaw,
+				IsBoundaryProjectionEnabled: obstacle.IsBoundaryProjectionEnabled,
 			})
 		}
 		campaignNav, setupErr = campaignNav.WithObstacles(obstacles)
@@ -6014,15 +6203,15 @@ func (p campaignPreparation) initialize(
 	if planErr != nil {
 		return fmt.Errorf("statusChainScriptObjectPlans: %w", planErr)
 	}
-	// Client-owned scenery stays native. Publish server-owned static trees from
+	// Client-owned scenery stays native. Publish audited server-owned scenery from
 	// that same selected layout, including on the shared rejoin baseline.
-	sceneryMarkers, sceneryErr := director.ServerTreeScenery()
+	sceneryMarkers, sceneryErr := director.ServerScenery()
 	if sceneryErr != nil {
-		return fmt.Errorf("statusTreeScenery: %w", sceneryErr)
+		return fmt.Errorf("statusServerScenery: %w", sceneryErr)
 	}
 	sceneryPlans, sceneryErr := zoneobject.PlanScenery(sceneryMarkers)
 	if sceneryErr != nil {
-		return fmt.Errorf("statusTreePlans: %w", sceneryErr)
+		return fmt.Errorf("statusSceneryPlans: %w", sceneryErr)
 	}
 	tutorialCapsulePlans := make([]tutorialCapsulePlan, 0)
 	if binding.Mode == game.ModeTutorial {
@@ -6069,6 +6258,7 @@ func (p campaignPreparation) initialize(
 		return fmt.Errorf("statusMapFixtures: %w", fixtureErr)
 	}
 	if len(fixtureMarkers) != 0 {
+		fixtureMarkers = zonedifficulty.ProjectFixtures(director, fixtureMarkers)
 		fixturePlans, nextObjectID, fixtureErr = zonenpc.PlanFixtures(
 			fixtureMarkers, nextObjectID, zoneobject.ProjectileIDStart,
 		)
@@ -6107,9 +6297,9 @@ func (p campaignPreparation) initialize(
 			return fmt.Errorf("statusChainSecurityObjectIDs: %w", securityErr)
 		}
 	}
-	objectiveSession, planErr := zoneobjective.NewSession(
+	objectiveSession, planErr := zoneobjective.NewDifficultySession(
 		ctx, p.program.ObjectiveInput, scriptObjects, uint8(binding.Slot),
-		binding.Mode,
+		binding.Difficulty, p.program.CrystalMinorStageCount, binding.Mode,
 	)
 	if planErr != nil {
 		return fmt.Errorf("statusChainObjective: %w", planErr)
@@ -6179,10 +6369,21 @@ func (p campaignPreparation) initialize(
 	if capsuleRandomErr != nil {
 		return fmt.Errorf("statusChainCapsuleRandom: %w", capsuleRandomErr)
 	}
+	hordePolicy := p.hordePolicy()
+	hordePolicyErr := hordePolicy.Validate()
+	if hordePolicyErr != nil {
+		return fmt.Errorf("hordePolicy: %w", hordePolicyErr)
+	}
+	recipeRunID, isAmbientPopulationSuppressed := binding.FocusedRecipeInputs()
+	if recipeRunID == "" {
+		isAmbientPopulationSuppressed = false
+	}
 	zone, _, zoneErr := zoneRegistry.Resolve(
 		uint64(binding.GameID),
 		zone.Member{
 			UserID:             binding.UserID,
+			IsServerBot:        binding.IsServerBot,
+			BotOwnerUserID:     binding.BotOwnerUserID,
 			PeerGeneration:     peerSession.generation,
 			Slot:               binding.Slot,
 			AbilityCount:       zoneunlock.InitialAbilityCount(binding),
@@ -6210,12 +6411,13 @@ func (p campaignPreparation) initialize(
 			CrystalDefinitions:      p.program.CrystalDefinitions,
 			CrystalLevelOffsets:     p.program.CrystalLevelOffsets,
 			CrystalMinorStageCount:  p.program.CrystalMinorStageCount,
+			EliteRewardBonus:        p.program.EliteRewardBonus,
 			TutorialMajorStageCount: p.program.TutorialMajorStageCount,
 			Security:                zonesecurity.NewSession(securityObjectID),
 			Effect:                  zoneeffect.NewInventory(),
 			NPCs:                    enemySession,
 			Hero:                    zonehero.NewSession(),
-			Companion:               zonecompanion.NewSession(),
+			Companion:               zonecompanion.NewSessionWithAggroRanges(p.program.NonPlayerAggroRanges),
 			Interactable:            zoneinteract.NewUseSession(),
 			Pickups:                 zoneinteract.NewPickupRegistry(),
 			PickupPayload:           zoneinteract.NewPickupPayloadRegistry(),
@@ -6226,7 +6428,7 @@ func (p campaignPreparation) initialize(
 			Director:                directorSession,
 			Script:                  scriptRegistry,
 			Encounter:               zoneencounter.NewStageSession(),
-			Horde:                   zonehorde.NewCampaignSession(binding.ChainLevelIndex),
+			Horde:                   zonehorde.NewCampaignSessionWithPolicy(binding.ChainProgression, hordePolicy),
 			Boss:                    zoneboss.NewSession(director.BossSpawnRules),
 			Death:                   zonedeath.NewSession(),
 			Objective:               objectiveSession,
@@ -6236,14 +6438,15 @@ func (p campaignPreparation) initialize(
 			Outcome:                 zoneoutcome.NewSession(),
 			Result:                  zoneresult.NewLedger(),
 
-			ResultVote:    zoneresult.NewVoteSession(),
-			Timeline:      zonetimeline.NewSession(),
-			Timer:         p.timer,
-			NPCRandom:     dropRandom,
-			DropRandom:    dropRandom,
-			CapsuleRandom: capsuleRandom,
-			Checkpoint:    p.checkpoint,
-			Restore:       restoreSnapshot,
+			ResultVote:                    zoneresult.NewVoteSession(),
+			Timeline:                      zonetimeline.NewSession(),
+			Timer:                         p.timer,
+			IsAmbientPopulationSuppressed: isAmbientPopulationSuppressed,
+			NPCRandom:                     dropRandom,
+			DropRandom:                    dropRandom,
+			CapsuleRandom:                 capsuleRandom,
+			Checkpoint:                    p.checkpoint,
+			Restore:                       restoreSnapshot,
 		},
 	)
 	if zoneErr != nil {
@@ -6251,6 +6454,7 @@ func (p campaignPreparation) initialize(
 	}
 	peerSession.tutorialHorde = tutorialHorde
 	peerSession.zone = zone
+	peerSession.nightmareRootDamageReadyAts = nil
 	if binding.IsCheckpointRestore {
 		crystalInventory, isCrystalFound := peerSession.zone.CrystalInventory(
 			binding.UserID, peerSession.generation,
@@ -6275,9 +6479,11 @@ func (p campaignPreparation) initialize(
 	if !isUnlockFound {
 		return errors.New("statusChainUnlock: unavailable")
 	}
-	planErr = peerSession.zone.Objective().Join(uint8(binding.Slot))
-	if planErr != nil {
-		return fmt.Errorf("statusChainObjectiveJoin: %w", planErr)
+	if !binding.IsServerBot {
+		planErr = peerSession.zone.Objective().Join(uint8(binding.Slot))
+		if planErr != nil {
+			return fmt.Errorf("statusChainObjectiveJoin: %w", planErr)
+		}
 	}
 	peerSession.nextProjectileObjectID = max(
 		peerSession.nextProjectileObjectID, firstProjectileObjectID,

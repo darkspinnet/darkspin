@@ -53,6 +53,9 @@ func (e heroRepulsionSchedule) hit() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	if peerSession.binding.Mode == game.ModeArena {
+		return e.hitArenaLocked(peerSession)
+	}
 	packets := make([][]byte, 0)
 	projectilePackets, reflectedProjectileCount, err :=
 		reflectHostileProjectilesLocked(
@@ -77,6 +80,9 @@ func (e heroRepulsionSchedule) hit() ([][]byte, error) {
 			continue
 		}
 		targets = append(targets, target)
+		if target.IsMutationKnockbackImmune() || target.HasAffixModifier(surefootedNPCAffixModifierName) {
+			continue
+		}
 		if distance <= 0 {
 			delta = game.Vec3{X: 1}
 			distance = 1

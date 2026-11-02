@@ -37,37 +37,46 @@ type ActiveUserFinder interface {
 // transport. It deliberately contains no RakNet representation details.
 type GameplayBinding struct {
 	scenarioMapBinding
-	Endpoint                   NetworkEndpoint
-	GameID                     uint32
-	RunSeed                    uint64
-	Level                      string
-	PlayerMask                 uint32
-	UserID                     uint64
-	AvatarID                   uint32
-	AvatarLevel                uint32
-	AvatarXP                   float32
-	StartingAvatarXP           float32
-	ChainProgression           uint32
-	PartyCompletedStages       []uint32
-	IsFirstTimeDirectorEnabled bool
-	ChainLevelIndex            uint32
-	IsOverdriveUnlocked        bool
-	IsCatalystUnlocked         bool
-	IsDiagonalCatalystUnlocked bool
-	CatalystSlotCount          uint32
-	IsReplay                   bool
-	IsWarped                   bool
-	IsCheckpointRestore        bool
-	DNA                        uint32
-	Difficulty                 uint32
-	Mode                       Mode
-	Slot                       uint16
-	Team                       uint16
-	MemberLimit                uint16
-	ParticipantCount           uint16
-	SquadID                    uint32
-	Creatures                  [3]GameplayCreature
-	ActivatedCreatures         []GameplayCreature
+	scenarioRecipeBinding
+	Endpoint                    NetworkEndpoint
+	GameID                      uint32
+	RunSeed                     uint64
+	Level                       string
+	PlayerMask                  uint32
+	UserID                      uint64
+	IsServerBot                 bool
+	BotOwnerUserID              uint64
+	BotDisplayName              string
+	BotSourceSquadID            uint32
+	IsBotSquadMirroringDisabled bool
+	AvatarID                    uint32
+	AvatarLevel                 uint32
+	AvatarXP                    float32
+	StartingAvatarXP            float32
+	ChainProgression            uint32
+	PartyCompletedStages        []uint32
+	IsFirstTimeDirectorEnabled  bool
+	ChainLevelIndex             uint32
+	IsOverdriveUnlocked         bool
+	IsCatalystUnlocked          bool
+	IsDiagonalCatalystUnlocked  bool
+	CatalystSlotCount           uint32
+	IsReplay                    bool
+	IsReplayRandomized          bool
+	IsWarped                    bool
+	IsCheckpointRestore         bool
+	DNA                         uint32
+	Difficulty                  uint32
+	Mode                        Mode
+	IsRanked                    bool
+	Slot                        uint16
+	Team                        uint16
+	MemberLimit                 uint16
+	ParticipantCount            uint16
+	CombatParticipantCount      uint16
+	SquadID                     uint32
+	Creatures                   [3]GameplayCreature
+	ActivatedCreatures          []GameplayCreature
 }
 
 // RefreshReplay derives the build-103 HasBeatenThisLevel predicate from the
@@ -110,6 +119,7 @@ func (e GameplayBinding) Roster() GameplayRoster {
 // GameplayCreature is the transport-neutral selected hero identity needed to
 // construct a gameplay roster. Appearance assets remain a RakNet adapter concern.
 type GameplayCreature struct {
+	IsModBound                 bool
 	ID                         uint32
 	Name                       string
 	Noun                       uint32
@@ -142,6 +152,7 @@ type GameplayCreature struct {
 	HealingTargetProfile       HealingTargetProfile
 	TimingProfile              TimingProfile
 	CriticalRating             float32
+	CriticalRatingPerPercent   float32
 	PhysicalDefense            float32
 	EnergyDefense              float32
 	PetDamage                  float32
@@ -359,12 +370,27 @@ func (o *GameplayJoin) Execute(ctx context.Context, userID int64) (GameplayBindi
 	if instance == nil {
 		return GameplayBinding{}, fmt.Errorf("joinGame: %w", ErrGameplayGameNotFound)
 	}
-	if !instance.IsGameplayJoinable() {
-		return GameplayBinding{}, fmt.Errorf("joinReady: %w", ErrGameplayNotReady)
-	}
 	slot, playerMask, isFound := instance.PlayerBinding(user.Account.ID)
 	if !isFound {
 		return GameplayBinding{}, fmt.Errorf("joinSlot: %w", ErrGameplaySlotNotFound)
+	}
+	err = instance.waitGameplayReady(ctx)
+	if err != nil {
+		return GameplayBinding{}, fmt.Errorf("joinReady: %w", err)
+	}
+	err = ctx.Err()
+	if err != nil {
+		return GameplayBinding{}, fmt.Errorf("joinWaitContext: %w", err)
+	}
+	if o.userFinder.UserByID(userID) != user {
+		return GameplayBinding{}, fmt.Errorf("joinIdentity: %w", ErrGameplayUserNotFound)
+	}
+	if o.gameManager.Game(user.CurrentGameID()) != instance {
+		return GameplayBinding{}, fmt.Errorf("joinInstance: %w", ErrGameplayGameNotFound)
+	}
+	slot, playerMask, isFound = instance.PlayerBinding(user.Account.ID)
+	if !isFound {
+		return GameplayBinding{}, fmt.Errorf("joinMember: %w", ErrGameplaySlotNotFound)
 	}
 	team, isTeamFound := instance.PlayerTeam(user.Account.ID)
 	if instance.Info.Mode == ModeArena && !isTeamFound {
@@ -395,19 +421,28 @@ func (o *GameplayJoin) Execute(ctx context.Context, userID int64) (GameplayBindi
 		IsOverdriveUnlocked: user.Account.IsOverdriveUnlocked,
 		DNA:                 user.Account.DNA, Difficulty: difficulty,
 		Mode: instance.Info.Mode, Slot: slot, Team: team, MemberLimit: instance.Info.MaxPlayers,
-		ParticipantCount:    instance.ParticipantCount(),
-		IsWarped:            instance.Info.IsWarped,
-		IsCheckpointRestore: instance.IsCheckpointRestore(),
-		SquadID:             squadID,
-		Creatures:           creatures,
-		ActivatedCreatures:  activatedGameplayCreatures(view, o.partCatalog.forGameplayMode(instance.Info.Mode)),
+		IsRanked:               instance.Info.Mode == ModeArena && instance.Info.Attributes["Ranked"] == "1",
+		ParticipantCount:       instance.RosterParticipantCount(),
+		CombatParticipantCount: instance.CombatParticipantCount(),
+		IsWarped:               instance.Info.IsWarped,
+		IsReplayRandomized:     instance.Info.IsReplayRandomized,
+		IsCheckpointRestore:    instance.IsCheckpointRestore(),
+		SquadID:                squadID,
+		Creatures:              creatures,
+		ActivatedCreatures:     activatedGameplayCreatures(view, o.partCatalog.forGameplayMode(instance.Info.Mode)),
 	}
 	if binding.Mode == ModeChain && binding.Level != "" {
 		selectedLevel, isSelected := o.gameManager.ChainLevelForSelection(binding.Difficulty)
-		if binding.IsWarped && !isSelected {
+		if (binding.IsWarped || binding.IsReplayRandomized) && !isSelected {
 			return GameplayBinding{}, fmt.Errorf(
 				"joinWarpSelection[%d]: unavailable", binding.Difficulty,
 			)
+		} else if binding.IsReplayRandomized {
+			err = o.gameManager.ValidateCampaignAdmission(instance, binding.ChainProgression)
+			if err != nil {
+				return GameplayBinding{}, fmt.Errorf("joinReplay: %w", err)
+			}
+			binding.ChainLevelIndex = binding.Difficulty
 		} else if binding.IsWarped {
 			binding.ChainLevelIndex = binding.Difficulty
 		} else if isSelected {
@@ -444,6 +479,10 @@ func (o *GameplayJoin) Execute(ctx context.Context, userID int64) (GameplayBindi
 	err = o.gameManager.attachScenarioMap(&binding)
 	if err != nil {
 		return GameplayBinding{}, fmt.Errorf("joinScenario: %w", err)
+	}
+	err = o.gameManager.attachFocusedRecipe(&binding)
+	if err != nil {
+		return GameplayBinding{}, fmt.Errorf("joinRecipe: %w", err)
 	}
 	return binding, nil
 }
@@ -521,6 +560,10 @@ func (o *GameplayJoin) SelectCampaignSquad(
 	if err != nil {
 		return GameplayBinding{}, fmt.Errorf("squadScenario: %w", err)
 	}
+	err = o.gameManager.attachFocusedRecipe(&binding)
+	if err != nil {
+		return GameplayBinding{}, fmt.Errorf("squadRecipe: %w", err)
+	}
 	return binding, nil
 }
 
@@ -582,8 +625,9 @@ func gameplayCreature(
 ) GameplayCreature {
 	selected := GameplayCreature{
 		ID: creature.ID, Name: creature.Name(), Noun: creature.Noun(),
-		Version:   creature.Version,
-		GearScore: creature.GearScore, FlattenedGearScore: creature.FlattenedGearScore(),
+		IsModBound: view.Settings["mod.binding."+strconv.FormatUint(uint64(creature.Noun()), 10)] != "",
+		Version:    creature.Version,
+		GearScore:  creature.GearScore, FlattenedGearScore: creature.FlattenedGearScore(),
 	}
 	if creature.Template != nil {
 		selected.PassiveAbility = creature.Template.AbilityPassive
@@ -594,11 +638,16 @@ func gameplayCreature(
 	}
 	partAttribute := [partAttributeCount]float32{}
 	weaponDamageModifier := float32(0)
+	maximumUnclassifiedItemLevel := uint32(0)
 	equippedParts, ignoredPartCount := gameplayEquippedParts(view.Parts, creature.ID)
-	selected.FunctionalItemCount = uint32(len(equippedParts))
 	selected.IgnoredFunctionalItemCount = ignoredPartCount
 	for index := range equippedParts {
 		part := &equippedParts[index]
+		if partCatalog != nil && !partCatalog.isPartAffixValid(part) {
+			selected.IgnoredFunctionalItemCount++
+			continue
+		}
+		selected.FunctionalItemCount++
 		partLevel := uint32(part.Level)
 		if selected.MinimumFunctionalItemLevel == 0 ||
 			partLevel < selected.MinimumFunctionalItemLevel {
@@ -608,6 +657,9 @@ func gameplayCreature(
 			selected.MaximumFunctionalItemLevel, partLevel,
 		)
 		definition, isDefinitionFound := partCatalog.ByRigblock(part.RigblockAssetID)
+		if !isDefinitionFound {
+			maximumUnclassifiedItemLevel = max(maximumUnclassifiedItemLevel, partLevel)
+		}
 		if isDefinitionFound && definition.SlotType == "weapon" {
 			selected.FunctionalWeaponItemCount++
 			selected.WeaponItemLevel = max(selected.WeaponItemLevel, partLevel)
@@ -624,13 +676,12 @@ func gameplayCreature(
 			weaponDamageModifier = max(weaponDamageModifier, modifier)
 		}
 	}
-	// Persisted equipment records do not retain their editor slot. When every
-	// equipped item has lost its catalog weapon classification, preserve the
-	// playable loadout by treating its highest-level functional item as the
-	// missing weapon.
-	if weaponDamageModifier <= 0 && len(equippedParts) > 0 {
+	// A missing catalog definition cannot recover the persisted editor slot.
+	// Retain that recovery only for unclassified items: known armor must never
+	// supply a weapon level when the hero has no equipped weapon.
+	if weaponDamageModifier <= 0 && maximumUnclassifiedItemLevel > 0 {
 		selected.FunctionalWeaponItemCount = 1
-		selected.WeaponItemLevel = selected.MaximumFunctionalItemLevel
+		selected.WeaponItemLevel = maximumUnclassifiedItemLevel
 		weaponDamageModifier = partCatalog.weaponDamageModifier(selected.WeaponItemLevel)
 	}
 	if weaponDamageModifier <= 0 {
@@ -665,6 +716,9 @@ func gameplayCreature(
 		}
 	}
 	selected.PetDamage += partAttribute[63]
+	// Equipment refresh applies movement deltas to this same baseline. Include
+	// the initial loadout too, so ordinary movement and slow recovery agree.
+	selected.PassiveMovementIncrease += partAttribute[48]
 	selected.PetHealthIncrease += partAttribute[64]
 	selected.RangeIncrease += partAttribute[67]
 	selected.AreaDurationIncrease += partAttribute[95]
@@ -772,7 +826,10 @@ func gameplayCreatureStats(
 		}
 		maximum := max(float32(0), float32(stats[index].Maximum)+partAttributes[attributeIndex])
 		stats[index].Maximum = uint32(maximum)
-		stats[index].Current = stats[index].Maximum
+		// The legacy Stat field names describe neither health nor resources:
+		// build 103 serializes this pair as base plus bonus. This total already
+		// includes equipment, so repeating it as the bonus doubles profiles.
+		stats[index].Current = 0
 	}
 	return stats
 }
@@ -857,6 +914,22 @@ func applyRecoveredPassiveProperties(selected *GameplayCreature) {
 		return
 	}
 	switch selected.PassiveAbility {
+	case util.HashID("CrushingDread"):
+		selected.PassiveAuraRadius = max(selected.PassiveAuraRadius, 12)
+		selected.PhysicalDamageReduction = max(selected.PhysicalDamageReduction, 0.15)
+		selected.EnergyDamageReduction = max(selected.EnergyDamageReduction, 0.15)
+	case util.HashID("RampantGrowth"):
+		selected.DamageProfile.DamageOverTimeIncrease = max(selected.DamageProfile.DamageOverTimeIncrease, 0.25)
+		selected.HealingProfile.HealingOverTimeIncrease = max(selected.HealingProfile.HealingOverTimeIncrease, 0.25)
+	case util.HashID("GravityTempestPassive"):
+		selected.TimingProfile.ProjectileSpeedIncrease = max(selected.TimingProfile.ProjectileSpeedIncrease, 0.25)
+		selected.DamageProfile.ProjectileDamage = max(selected.DamageProfile.ProjectileDamage, 0.10)
+	case util.HashID("SoulRavagerPassive"):
+		selected.PassiveKillDamageIncrease = max(selected.PassiveKillDamageIncrease, 0.05)
+		selected.PassiveMaximumStack = max(selected.PassiveMaximumStack, 5)
+		selected.PassiveStackPerKill = max(selected.PassiveStackPerKill, 1)
+	case util.HashID("BinarySentinelPassive"):
+		selected.DamageProfile.BasicDefenseBoost = max(selected.DamageProfile.BasicDefenseBoost, 0.01)
 	case util.HashID("LightningTempest_Passive"):
 		selected.PassiveAuraRadius = max(selected.PassiveAuraRadius, 30)
 	case util.HashID("VoodooTempestPassive"):

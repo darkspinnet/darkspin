@@ -1,5 +1,7 @@
 package npc
 
+import "time"
+
 // Swift's indexed Lua (chunk 157) adds MovementSpeedBuff=1. Its
 // UniqueIrreplaceable activation prevents direct and aura instances stacking.
 const SwiftModifierName = "Swift_NPCAffixModifier"
@@ -7,7 +9,10 @@ const SwiftModifierName = "Swift_NPCAffixModifier"
 const swiftAuraModifierName = "Aura_Swift_NPCAffixModifier"
 
 func EffectiveMovementSpeedBuff(plan SpawnPlan) float32 {
-	bonus := plan.MovementSpeedBuff
+	bonus := plan.MovementSpeedBuff + plan.AffixMovementSpeedBuff + plan.AttributeMirror.MovementSpeedBuff + plan.SupportIdleMovementBuff
+	if plan.InvincitronRage.IsActive(time.Now()) {
+		bonus += plan.InvincitronRage.MovementBuff
+	}
 	if plan.BossIdentity.HasModifier(SwiftModifierName) || plan.SwiftAuraSourceObjectID != 0 {
 		bonus++
 	}
@@ -46,7 +51,7 @@ func (e *Session) RefreshSwift() []SwiftChange {
 				if source.Faction != target.Faction {
 					continue
 				}
-				rank := max(int32(1), min(int32(3), source.Plan.NPCProfile.NPCRank))
+				rank := source.Plan.AffixRank(swiftAuraModifierName)
 				radius := float32(8 + 4*rank)
 				if target.Plan.Position.Sub(source.Plan.Position).Length() > radius {
 					continue

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"log"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -12,7 +14,9 @@ import (
 )
 
 type Store struct {
-	Root string
+	Root      string
+	Templates fs.FS
+	Logger    *log.Logger
 }
 
 // Version advertises only saved images that the HTTP creature route can serve.

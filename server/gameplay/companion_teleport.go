@@ -23,7 +23,7 @@ func (e *gameplayPeerSession) teleportOwnedCompanions(
 		if companion.UserID != e.binding.UserID ||
 			companion.PeerGeneration != e.generation ||
 			companion.OwnerObjectID != e.deployedObjectID ||
-			companion.HitPoint <= 0 {
+			companion.HitPoint <= 0 || companion.IsStationary {
 			continue
 		}
 		// Only the unlaunched Fire Tempest shot belongs to the old pose.

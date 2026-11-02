@@ -7,12 +7,27 @@ is_version_locked = false
 # Restrict the web UI and matchmaking flow to single-player content.
 is_singleplayer_only = false
 locale = ""
-# Development builds only. Replace exclusive fullscreen with the experimental
-# borderless implementation when the launcher passes the setting to Fang.
-is_borderless_fullscreen_enabled = false
+# Number of heroes in each campaign matchmaking bot squad (1 to 3).
+campaign_matchmaking_bot_size = 1
+is_campaign_bot_squad_mirroring_enabled = true
+
+[launcher]
+# Launcher text language. On first use, inherit the previous explicit game
+# language or detect the operating-system language, then save independently.
+locale = ""
+# Saved choices for new game instances. Explicit launch flags override them
+# for the current launcher run without changing these preferences.
+is_intro_skipped = false
+is_cinematic_skipped = false
 
 [server]
 is_multiplayer_enabled = false
+# Dedicated mode requires a non-loopback advertised IPv4 and a private JWT secret.
+is_dedicated = false
+# Empty selects loopback, or all interfaces for multiplayer/dedicated mode.
+bind_host = ""
+# Client-visible literal IPv4; never use 0.0.0.0 or a container DNS name here.
+advertised_host = "127.0.0.1"
 port = 42127
 # Maximum simultaneously authenticated players across the server. This is
 # separate from the four-player limit of an individual Game game instance.
@@ -22,13 +37,19 @@ world_player_limit = 25
 
 [chat]
 # Accepted messages are always written to chat_log when SQLite is active.
-# Stdout and this append-only JSONL file provide convenient live diagnostics.
+# Optional stdout output provides live diagnostics without a separate chat file.
 is_stdout_enabled = true
-file_path = "chat.log"
 
 [storage]
-# SQLite is the current embedded adapter. PostgreSQL is planned.
+# SQLite is for desktop local play. Dedicated darkrun requires PostgreSQL through
+# DARKSPIN_POSTGRES_URL or PGHOST/PGDATABASE/PGUSER environment settings.
+# PostgreSQL connection credentials are never saved to this file.
 driver = "sqlite"
+
+[content]
+# Private prepared directory containing content.db and www/static. Empty uses
+# darkspin/cache beside this configuration; relative paths start beside it.
+path = ""
 
 [auth]
 # Shared HS256 signing secret used by the desktop auth broker and game server.
@@ -44,3 +65,12 @@ jwt_audience = "darkspin"
 mode = "auto"
 buffer_duration_seconds = 60
 delay_seconds = 30
+
+[bootstrap]
+# Dedicated Linux supervisor only; schedule uses UTC. Maintenance always restarts.
+is_update_enabled = true
+update_cron = "30 3 * * *"
+warning_minutes = 30
+startup_timeout_seconds = 1800
+backup_retention_days = 7
+manifest_url = "https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-update-linux-amd64-unstable.zip"

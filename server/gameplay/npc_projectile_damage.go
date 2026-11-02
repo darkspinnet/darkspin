@@ -265,6 +265,11 @@ func (r campaignNPCActionRuntime) applyEnemyProjectileDamage(
 			return nil, sporenet.PlayerStatDelta{}, false,
 				fmt.Errorf("enemyProjectileEnergyVulnerability: %w", err)
 		}
+		supportPackets, supportErr := r.retireNPCSupportTargetLocked(peerSession, plan.TargetObjectID)
+		if supportErr != nil {
+			return nil, sporenet.PlayerStatDelta{}, false, fmt.Errorf("projectileSupportRetire: %w", supportErr)
+		}
+		energyVulnerabilityPackets = append(energyVulnerabilityPackets, supportPackets...)
 	}
 	// The projectile behavior subtracts damage when it publishes world HP.
 	// Passing committed HP here would apply the hit twice on the client while

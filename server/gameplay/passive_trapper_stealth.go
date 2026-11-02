@@ -14,6 +14,14 @@ const trapperStealthCooldown = 12 * time.Second
 const trapperStealthDuration = 3 * time.Second
 const trapperTechnologyStealth = uint8(1)
 
+func (e gameplayPeerSession) trapperStealthCooldownAt(now time.Time) time.Duration {
+	// Chunk818 snapshots the ranked cooldown before beginning its wait.
+	if e.isOverdriveActiveAt(now) {
+		return 3 * time.Second
+	}
+	return trapperStealthCooldown
+}
+
 type trapperStealthStep struct {
 	runtime    campaignDamageRuntime
 	packet     raknet.Packet
@@ -44,13 +52,14 @@ func startTrapperStealth(
 	peerSession.trapperStealthEpoch++
 	peerSession.isTrapperStealthed = false
 	epoch := peerSession.trapperStealthEpoch
+	cooldown := peerSession.trapperStealthCooldownAt(time.Now())
 	registry.sessions[sessionKey] = peerSession
 	registry.mutex.Unlock()
 	step := trapperStealthStep{
 		runtime: runtime, packet: packet,
 		sessionKey: sessionKey, generation: generation, epoch: epoch,
 	}
-	err := packet.ScheduleFunc(trapperStealthCooldown, step.produce)
+	err := packet.ScheduleFunc(cooldown, step.produce)
 	if err != nil {
 		return fmt.Errorf("trapperStealthEntrySchedule: %w", err)
 	}
@@ -96,7 +105,7 @@ func (e trapperStealthStep) produce() ([][]byte, error) {
 	next.isExit = !e.isExit
 	delay := trapperStealthDuration
 	if e.isExit {
-		delay = trapperStealthCooldown
+		delay = peerSession.trapperStealthCooldownAt(time.Now())
 	}
 	err = e.packet.ScheduleFunc(delay, next.produce)
 	if err != nil && e.runtime.logger != nil {

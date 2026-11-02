@@ -5,11 +5,15 @@ import {runtime} from '../models';
 
 export function Authorize(arg1:string):Promise<void>;
 
+export function BrowseModSporeDirectory(arg1:string):Promise<main.ModDirectory>;
+
 export function Cancel():Promise<void>;
 
 export function CancelPatch():Promise<void>;
 
 export function Check():Promise<void>;
+
+export function CheckRemoteServers(arg1:Array<string>):Promise<Array<main.RemoteServerStatus>>;
 
 export function CloseDetachedGameInstances():Promise<void>;
 
@@ -21,9 +25,13 @@ export function CompactSnapshots():Promise<main.SnapshotCompactResult>;
 
 export function CreateProfile(arg1:string,arg2:number,arg3:boolean):Promise<void>;
 
+export function DeleteModProfile(arg1:string):Promise<void>;
+
 export function DeleteProfile(arg1:string):Promise<void>;
 
 export function DeleteRemoteProfile(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function DetectModSporePath():Promise<string>;
 
 export function DiscardInterruptedMission(arg1:string):Promise<void>;
 
@@ -31,7 +39,17 @@ export function GetInstallationStatus():Promise<main.InstallationStatus>;
 
 export function GetInterruptedMission(arg1:string):Promise<main.InterruptedMission>;
 
+export function GetLauncherAutomationConfiguration():Promise<main.LauncherAutomationConfiguration>;
+
 export function GetLauncherIntegrationStatus():Promise<main.LauncherIntegrationStatus>;
+
+export function GetLauncherLanguageConfiguration():Promise<main.LauncherLanguageConfiguration>;
+
+export function GetLuaConsole():Promise<main.LuaConsoleSnapshot>;
+
+export function GetModConfiguration():Promise<main.ModConfiguration>;
+
+export function GetModPortrait(arg1:string):Promise<string>;
 
 export function GetProfileAvatars():Promise<Array<main.ProfileAvatar>>;
 
@@ -43,6 +61,8 @@ export function GetServerConfiguration():Promise<main.ServerConfiguration>;
 
 export function GetServerRulesConfiguration():Promise<runtime.ServerRulesConfiguration>;
 
+export function GetSquadSnapshot(arg1:Array<string>):Promise<main.squadShareSnapshot>;
+
 export function GetStatus():Promise<main.LauncherStatus>;
 
 export function GetWineRunnerConfiguration():Promise<main.WineRunnerConfiguration>;
@@ -50,6 +70,10 @@ export function GetWineRunnerConfiguration():Promise<main.WineRunnerConfiguratio
 export function HasDetachedGameInstances():Promise<boolean>;
 
 export function IsProfileRunning(arg1:string):Promise<boolean>;
+
+export function KillLuaSession():Promise<void>;
+
+export function LaunchModProfile(arg1:string):Promise<void>;
 
 export function LaunchRemoteProfile(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<void>;
 
@@ -77,7 +101,15 @@ export function RemoveLauncherIntegration(arg1:string):Promise<main.LauncherInte
 
 export function RepairLauncherIntegration(arg1:string):Promise<main.LauncherIntegrationStatus>;
 
+export function ResetModProfileDisplay(arg1:string):Promise<void>;
+
+export function ResetProfileDisplay(arg1:string,arg2:string):Promise<void>;
+
 export function RestartLauncher():Promise<void>;
+
+export function RunLuaScript(arg1:string):Promise<void>;
+
+export function SaveModProfile(arg1:main.ModProfileRequest):Promise<void>;
 
 export function ScanRemoteServers(arg1:string):Promise<Array<main.RemoteServer>>;
 
@@ -85,20 +117,36 @@ export function ScanWineRunners():Promise<main.WineRunnerConfiguration>;
 
 export function SendReport(arg1:string):Promise<main.ReportResult>;
 
+export function SetAutoPatch(arg1:boolean):Promise<void>;
+
+export function SetAutoPlay(arg1:boolean):Promise<void>;
+
 export function SetIdentity(arg1:string):Promise<main.LauncherStatus>;
 
-export function SetServerConfiguration(arg1:number,arg2:boolean,arg3:string,arg4:string,arg5:boolean):Promise<main.ServerConfiguration>;
+export function SetLauncherLocale(arg1:string):Promise<void>;
+
+export function SetLocalServicesRequired(arg1:boolean):Promise<void>;
+
+export function SetModSporePath(arg1:string):Promise<void>;
+
+export function SetServerConfiguration(arg1:number,arg2:boolean,arg3:string,arg4:string):Promise<main.ServerConfiguration>;
 
 export function SetServerPort(arg1:number):Promise<main.ServerConfiguration>;
 
 export function SetServerRulesConfiguration(arg1:runtime.ServerRulesConfiguration):Promise<runtime.ServerRulesConfiguration>;
 
+export function SetServerSetup(arg1:main.ServerConfiguration):Promise<main.ServerConfiguration>;
+
 export function SetSkipCinematic(arg1:boolean):Promise<void>;
+
+export function SetSkipIntro(arg1:boolean):Promise<void>;
 
 export function SetWineRunner(arg1:string):Promise<main.WineRunnerConfiguration>;
 
 export function SignOut():Promise<void>;
 
 export function StartDetachedGameInstance(arg1:string):Promise<void>;
+
+export function StopLuaScript():Promise<void>;
 
 export function UninstallDarkspinner():Promise<void>;

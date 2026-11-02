@@ -1,0 +1,60 @@
+name: Bootstrap image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - deployment/Dockerfile
+      - deployment/Dockerfile.dockerignore
+      - deployment/entrypoint.sh
+      - .github/workflows/bootstrap-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: darkrun-bootstrap-image
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Publish generic bootstrap image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Resolve image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/darkrun-bootstrap" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish bootstrap image
+        uses: docker/build-push-action@v6
+        with:
+          context: deployment
+          file: deployment/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:1
+            ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}

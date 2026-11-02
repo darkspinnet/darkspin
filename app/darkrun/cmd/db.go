@@ -17,6 +17,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 	server "github.com/darkspinnet/darkspin/server/runtime"
 	"github.com/darkspinnet/darkspin/server/sporenet"
+	"github.com/jmoiron/sqlx"
 	"github.com/spf13/cobra"
 	_ "modernc.org/sqlite"
 )
@@ -37,7 +38,7 @@ type databaseCommandOptions struct {
 }
 
 type databaseTarget struct {
-	database *sql.DB
+	database *sqlx.DB
 	name     string
 }
 
@@ -74,7 +75,7 @@ type databaseUserCopyResult struct {
 func newDatabaseCommand() *cobra.Command {
 	options := databaseCommandOptions{configPath: game.DefaultConfigFilename, limit: defaultDatabaseQueryLimit}
 	databaseCmd := &cobra.Command{
-		Use:   "db <table> <get|bget|set|complete|copy> [params...]",
+		Use:   "db <table> <get|bget|set|complete|copy|undelete|swap> [params...]",
 		Short: "Inspect or update configured database tables",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, arguments []string) error {
@@ -115,6 +116,20 @@ func runDatabaseCommand(ctx context.Context, output io.Writer, options databaseC
 	}
 	action := strings.ToLower(arguments[1])
 	parameters := arguments[2:]
+	if action == "swap" {
+		err = databaseSwapProfiles(ctx, output, configPath, table, parameters)
+		if err != nil {
+			return fmt.Errorf("swap: %w", err)
+		}
+		return nil
+	}
+	if action == "undelete" {
+		err = databaseUndelete(ctx, output, configPath, table, parameters)
+		if err != nil {
+			return fmt.Errorf("undelete: %w", err)
+		}
+		return nil
+	}
 	if action == "complete" {
 		if table != "user" || len(parameters) != 1 || strings.TrimSpace(parameters[0]) == "" {
 			return errors.New("complete usage: db user complete <login-name>")
@@ -158,7 +173,11 @@ func runDatabaseCommand(ctx context.Context, output io.Writer, options databaseC
 		return nil
 	}
 	runtimePath := filepath.Join(filepath.Dir(configPath), server.DarkspinDirectory)
-	target, err := openDatabaseTarget(ctx, runtimePath, table)
+	contentPath, err := config.ContentPath(configPath)
+	if err != nil {
+		return fmt.Errorf("contentPath: %w", err)
+	}
+	target, err := openConfiguredDatabaseTarget(ctx, config, runtimePath, contentPath, table)
 	if err != nil {
 		return fmt.Errorf("targetOpen: %w", err)
 	}
@@ -184,18 +203,18 @@ func runDatabaseCommand(ctx context.Context, output io.Writer, options databaseC
 			return fmt.Errorf("set: %w", err)
 		}
 	default:
-		return fmt.Errorf("actionUnsupported: %q; supported actions are get, bget, set, complete, and copy", action)
+		return fmt.Errorf("actionUnsupported: %q; supported actions are get, bget, set, complete, copy, undelete, and swap", action)
 	}
 	return nil
 }
 
-func openDatabaseTarget(ctx context.Context, runtimePath, table string) (*databaseTarget, error) {
+func openDatabaseTarget(ctx context.Context, runtimePath, contentPath, table string) (*databaseTarget, error) {
 	files := []struct {
 		name string
 		path string
 	}{
 		{name: "user", path: filepath.Join(runtimePath, server.SaveDirectory, server.UserDatabaseFilename)},
-		{name: "content", path: filepath.Join(runtimePath, server.CacheDirectory, server.ContentDatabaseFilename)},
+		{name: "content", path: filepath.Join(contentPath, server.ContentDatabaseFilename)},
 	}
 	matches := make([]*databaseTarget, 0, 1)
 	for _, file := range files {
@@ -224,7 +243,7 @@ func openDatabaseTarget(ctx context.Context, runtimePath, table string) (*databa
 			_ = database.Close()
 			continue
 		}
-		matches = append(matches, &databaseTarget{database: database, name: file.name})
+		matches = append(matches, &databaseTarget{database: sqlx.NewDb(database, "sqlite"), name: file.name})
 	}
 	if len(matches) == 0 {
 		return nil, fmt.Errorf("tableMissing: %q was not found in user.db or content.db", table)
@@ -267,29 +286,19 @@ func openExistingSQLite(ctx context.Context, path string) (*sql.DB, error) {
 	return database, nil
 }
 
-func databaseColumns(ctx context.Context, database *sql.DB, table string) (map[string]struct{}, error) {
-	rows, err := database.QueryContext(ctx, `PRAGMA table_info(`+quoteDatabaseIdentifier(table)+`)`)
+func databaseColumns(ctx context.Context, database *sqlx.DB, table string) (map[string]struct{}, error) {
+	rows, err := database.QueryContext(ctx, `SELECT * FROM `+quoteDatabaseIdentifier(table)+` LIMIT 0`)
 	if err != nil {
 		return nil, fmt.Errorf("tableInfo: %w", err)
 	}
 	defer rows.Close()
-	columns := make(map[string]struct{})
-	for rows.Next() {
-		var position, isNotNull, primaryKey int
-		var name, valueType string
-		var defaultValue sql.NullString
-		err = rows.Scan(&position, &name, &valueType, &isNotNull, &defaultValue, &primaryKey)
-		if err != nil {
-			return nil, fmt.Errorf("columnScan: %w", err)
-		}
-		columns[strings.ToLower(name)] = struct{}{}
-	}
-	err = rows.Err()
+	names, err := rows.Columns()
 	if err != nil {
-		return nil, fmt.Errorf("columnRows: %w", err)
+		return nil, fmt.Errorf("columnNames: %w", err)
 	}
-	if len(columns) == 0 {
-		return nil, errors.New("table has no columns")
+	columns := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		columns[strings.ToLower(name)] = struct{}{}
 	}
 	return columns, nil
 }
@@ -305,7 +314,7 @@ func databaseGet(ctx context.Context, output io.Writer, target *databaseTarget, 
 	}
 	query += ` LIMIT ?`
 	values = append(values, limit)
-	rows, err := target.database.QueryContext(ctx, query, values...)
+	rows, err := target.database.QueryContext(ctx, target.bind(query), values...)
 	if err != nil {
 		return fmt.Errorf("queryExecute: %w", err)
 	}
@@ -340,7 +349,7 @@ func databaseSet(ctx context.Context, output io.Writer, target *databaseTarget, 
 	query := `UPDATE ` + quoteDatabaseIdentifier(table) + ` SET ` + quoteDatabaseIdentifier(key) + ` = ?`
 	query, values := buildDatabaseWhere(query, predicates)
 	values = append([]any{parseDatabaseValue(parameters[1])}, values...)
-	result, err := target.database.ExecContext(ctx, query, values...)
+	result, err := target.database.ExecContext(ctx, target.bind(query), values...)
 	if err != nil {
 		return fmt.Errorf("updateExecute: %w", err)
 	}

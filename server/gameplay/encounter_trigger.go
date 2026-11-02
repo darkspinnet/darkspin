@@ -21,6 +21,15 @@ func (e campaignEncounterRuntime) acceptTriggerPublicationsLocked(
 	packet raknet.Packet, peerSession *gameplayPeerSession, result campaignEncounterAdvance,
 ) (campaignEncounterAdvance, error) {
 	for _, publication := range result.publications {
+		if zonehorde.IsTrigger(publication) && !peerSession.zone.IsHordeTriggerEnabled(publication) {
+			// Consume the trigger without spawning actors or closing barriers.
+			// Disabling only the agent left an orphan opening wave on early runs.
+			err := peerSession.zone.AcceptPublication(publication)
+			if err != nil {
+				return result, fmt.Errorf("hordeDisabledAccept: %w", err)
+			}
+			continue
+		}
 		if publication.IsDwellComplete && zoneboss.IsNamedCallback(publication.CallbackName) {
 			if publication.CallbackName == zoneboss.GenericCallback {
 				// The named-boss operation owns its transactional admission.
@@ -45,11 +54,13 @@ func (e campaignEncounterRuntime) acceptTriggerPublicationsLocked(
 			continue
 		}
 		if zonehorde.IsTrigger(publication) &&
-			peerSession.zone.Horde().IsComplete(publication.MarkerSetName) {
+			peerSession.zone.Horde().IsAdmitted(publication.MarkerSetName) {
+			// Consume re-entry publications while the original encounter owns
+			// its actors and barriers, including the delay between waves.
 			acceptErr := peerSession.zone.AcceptPublication(publication)
 			if acceptErr != nil {
 				return result, fmt.Errorf(
-					"moveCampaignRestoredHordeAccept: %w", acceptErr,
+					"moveCampaignAdmittedHordeAccept: %w", acceptErr,
 				)
 			}
 			continue
@@ -77,39 +88,38 @@ func (e campaignEncounterRuntime) acceptTriggerPublicationsLocked(
 		abilityCount, isAbilityCountFound := peerSession.zone.AbilityCount(
 			zoneResultMember(*peerSession),
 		)
-		if zoneunlock.IsRandomPublication(publication) &&
-			isAbilityCountFound &&
-			abilityCount == zoneunlock.InitialAbilityBoundary {
-			unlockErr := peerSession.zone.AcceptPublication(publication)
+		if zoneunlock.IsRandomPublication(publication) {
+			unlockKey := ""
+			unlockErr := peerSession.zone.CanAcceptPublication(publication)
 			if unlockErr != nil {
+				return result, fmt.Errorf("randomPartyCheck: %w", unlockErr)
+			}
+			if e.hasPartyAbilityUnlockLocked(*peerSession, zoneunlock.InitialAbilityBoundary) {
+				unlockKey, unlockErr = e.startPartyAbilityUnlockLocked(*peerSession,
+					publication, zonecallback.RandomUnlock)
+				if unlockErr != nil {
+					return result, fmt.Errorf("randomPartySchedule: %w", unlockErr)
+				}
+			}
+			unlockErr = peerSession.zone.AcceptPublication(publication)
+			if unlockErr != nil {
+				cancelPartyAbilityUnlock(peerSession.zone, unlockKey)
 				return result, fmt.Errorf("moveCampaignRandomUnlockAccept: %w", unlockErr)
 			}
-			result.randomUnlockPublication = publication
 			continue
 		}
 		if zoneunlock.IsSupportPublication(publication) {
+			unlockKey := ""
 			unlockErr := peerSession.zone.CanAcceptPublication(publication)
 			if unlockErr != nil {
 				return result, fmt.Errorf("moveCampaignSupportUnlockCheck: %w", unlockErr)
 			}
-			abilityCount, isAbilityCountFound := peerSession.zone.AbilityCount(
-				zoneResultMember(*peerSession),
-			)
-			isUnlockNeeded := abilityCount ==
-				zoneunlock.FullAbilityBoundary &&
-				isAbilityCountFound &&
-				peerSession.binding.ChainProgression <
-					zoneunlock.SecondChainLevelIndex
-			if isUnlockNeeded && len(encounterPlan.Boss) == 0 {
-				if peerSession.campaignUnlockPresentationSession().Support() != nil {
-					return result, errors.New("moveCampaignSupportUnlock: already active")
-				}
-				result.supportUnlockRun, unlockErr = unlockraknet.NewSupportRun(
-					e.supportUnlock, uint8(peerSession.binding.Slot),
-					abilityCount,
-				)
+			if len(encounterPlan.Boss) == 0 &&
+				e.hasPartyAbilityUnlockLocked(*peerSession, zoneunlock.FullAbilityBoundary) {
+				unlockKey, unlockErr = e.startPartyAbilityUnlockLocked(*peerSession,
+					publication, zonecallback.SupportUnlock)
 				if unlockErr != nil {
-					return result, fmt.Errorf("moveCampaignSupportUnlockRun: %w", unlockErr)
+					return result, fmt.Errorf("supportPartySchedule: %w", unlockErr)
 				}
 			}
 			// The initial 1-1 final-arena trigger owns both the support
@@ -119,22 +129,9 @@ func (e campaignEncounterRuntime) acceptTriggerPublicationsLocked(
 			if len(encounterPlan.Boss) == 0 {
 				unlockErr = peerSession.zone.AcceptPublication(publication)
 				if unlockErr != nil {
-					if result.supportUnlockRun != nil {
-						result.supportUnlockRun.Stop()
-					}
+					cancelPartyAbilityUnlock(peerSession.zone, unlockKey)
 					return result, fmt.Errorf("moveCampaignSupportUnlockAccept: %w", unlockErr)
 				}
-			}
-			if result.supportUnlockRun != nil && len(encounterPlan.Boss) == 0 {
-				unlockErr = peerSession.campaignUnlockPresentationSession().
-					InstallSupport(result.supportUnlockRun)
-				if unlockErr != nil {
-					result.supportUnlockRun.Stop()
-					return result, fmt.Errorf(
-						"moveCampaignSupportUnlockInstall: %w", unlockErr,
-					)
-				}
-				result.supportUnlockPublication = publication
 			}
 			if len(encounterPlan.Boss) == 0 {
 				continue

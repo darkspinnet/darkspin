@@ -78,9 +78,22 @@ func snapshotScenarioContent(ctx context.Context, sourcePath, destinationPath st
 	if err != nil {
 		return scenario.Artifact{}, fmt.Errorf("sourceAncestors: %w", err)
 	}
+	for _, suffix := range []string{"-wal", "-journal", "-shm"} {
+		fi, statErr := os.Lstat(sourcePath + suffix)
+		if errors.Is(statErr, os.ErrNotExist) {
+			continue
+		}
+		if statErr != nil {
+			return scenario.Artifact{}, fmt.Errorf("snapshotSidecar: %w", statErr)
+		}
+		if !fi.Mode().IsRegular() {
+			return scenario.Artifact{}, errors.New("SQLite sidecar must be a regular file")
+		}
+		return snapshotLiveScenarioContent(ctx, sourcePath, destinationPath)
+	}
 	r, err := openScenarioContent(sourcePath)
 	if err != nil {
-		return scenario.Artifact{}, fmt.Errorf("sourceOpen: %w", err)
+		return snapshotLiveScenarioContent(ctx, sourcePath, destinationPath)
 	}
 	artifact, copyErr := copyScenarioContent(ctx, r, sourcePath, destinationPath)
 	closeErr := r.Close()

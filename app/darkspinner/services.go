@@ -13,6 +13,7 @@ import (
 	"time"
 
 	contentcache "github.com/darkspinnet/darkspin/content"
+	contentruntime "github.com/darkspinnet/darkspin/content/runtime"
 	contentsqlite "github.com/darkspinnet/darkspin/content/sqlite"
 	"github.com/darkspinnet/darkspin/server/game"
 	server "github.com/darkspinnet/darkspin/server/runtime"
@@ -37,7 +38,6 @@ type spinnerPathSet struct {
 	configPath     string
 	contentPath    string
 	staticPath     string
-	settingPath    string
 }
 
 func resolveSpinnerPaths(basePath string) (*spinnerPathSet, error) {
@@ -64,8 +64,17 @@ func resolveSpinnerPaths(basePath string) (*spinnerPathSet, error) {
 		configPath:     filepath.Join(basePath, game.DefaultConfigFilename),
 		contentPath:    filepath.Join(cachePath, server.ContentDatabaseFilename),
 		staticPath:     filepath.Join(cachePath, "www", "static"),
-		settingPath:    filepath.Join(runtimePath, "launcher.toml"),
 	}
+	config, _, err := game.LoadConfig(pathSet.configPath)
+	if err != nil {
+		return nil, fmt.Errorf("configLoad: %w", err)
+	}
+	contentPath, err := config.ContentPath(pathSet.configPath)
+	if err != nil {
+		return nil, fmt.Errorf("contentPath: %w", err)
+	}
+	pathSet.contentPath = filepath.Join(contentPath, server.ContentDatabaseFilename)
+	pathSet.staticPath = filepath.Join(contentPath, "www", "static")
 	return pathSet, nil
 }
 
@@ -117,7 +126,8 @@ func (a *App) initialize(ctx context.Context, basePath string) {
 	}
 	patchResult := make(chan error, 1)
 	contentResult := make(chan error, 1)
-	a.setSubsystem("Auth", "Starting with server", false)
+	a.setSubsystem("Auth", "Waiting for local Crogenitor", false)
+	a.setSubsystem("Server", "Waiting for local Crogenitor", false)
 	patchCtx := a.beginPatchOperation(ctx)
 	go func() {
 		patchErr := a.preparePatch(patchCtx, pathSet.gamePath, pathSet.configPath)
@@ -139,7 +149,7 @@ func (a *App) initialize(ctx context.Context, basePath string) {
 	if err != nil {
 		return
 	}
-	err = a.startGameServer(ctx, pathSet)
+	err = a.syncLocalServices()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
@@ -147,7 +157,6 @@ func (a *App) initialize(ctx context.Context, basePath string) {
 		a.failSubsystem("Server", fmt.Errorf("serverStart: %w", err))
 		return
 	}
-	a.setSubsystem("Auth", "Online", true)
 	patchErr := <-patchResult
 	if patchErr != nil {
 		if errors.Is(patchErr, context.Canceled) {
@@ -157,8 +166,10 @@ func (a *App) initialize(ctx context.Context, basePath string) {
 		return
 	}
 	a.mu.Lock()
-	a.status.State = "ready"
-	a.status.Message = "DarkSpinner is ready"
+	if a.gameDone == nil && a.cancel == nil {
+		a.status.State = "ready"
+		a.status.Message = "DarkSpinner is ready"
+	}
 	a.updatePlayReadyLocked()
 	a.emitStatusLocked()
 	a.mu.Unlock()
@@ -207,6 +218,10 @@ func prepareSpinnerRuntime(pathSet *spinnerPathSet) error {
 			return fmt.Errorf("directoryCreate[%d]: %w", index, err)
 		}
 	}
+	err := migrateLauncherSettings(pathSet.configPath)
+	if err != nil {
+		return fmt.Errorf("launcherMigrate: %w", err)
+	}
 	return nil
 }
 
@@ -238,63 +253,45 @@ func (a *App) prepareGame(pathSet *spinnerPathSet) error {
 	return nil
 }
 
-func (a *App) prepareContent(ctx context.Context, pathSet *spinnerPathSet) error {
-	a.setSubsystemProgress("Content", "preparing", "Preparing visual assets", 5)
-	err := contentcache.PrepareWeb(ctx, contentcache.WebOptions{
-		GamePath: filepath.Join(pathSet.gamePath, "DarksporeBin"), StaticPath: pathSet.staticPath,
+func (e *App) prepareContent(ctx context.Context, pathSet *spinnerPathSet) error {
+	e.setSubsystemProgress("Content", "preparing", "Checking prepared content", 5)
+	err := contentruntime.Ensure(ctx, contentruntime.Options{
+		GamePath:     filepath.Join(pathSet.gamePath, "DarksporeBin"),
+		DatabasePath: pathSet.contentPath, StaticPath: pathSet.staticPath,
+		OnProgress: e.contentBuildProgress, OnStageTiming: e.contentBuildStageTiming,
 	})
 	if err != nil {
-		return fmt.Errorf("webPrepare: %w", err)
+		return fmt.Errorf("contentPrepare: %w", err)
 	}
-	a.setSubsystemProgress("Content", "preparing", "Checking prepared content", 15)
-	stageTiming := func(timing contentsqlite.BuildStageTiming) {
-		a.log(fmt.Sprintf("Content import phase=%q elapsed=%s complete=%t",
-			timing.Phase, timing.Duration, timing.IsComplete))
-	}
-	_, err = os.Stat(pathSet.contentPath)
-	if err == nil {
-		_, err = contentsqlite.Verify(ctx, pathSet.contentPath)
-		if err == nil {
-			a.setSubsystemProgress("Content", "preparing", "Prepared content ready", 100)
-			a.setSubsystem("Content", "Ready", true)
-			return nil
-		}
-		removeErr := os.Remove(pathSet.contentPath)
-		if removeErr != nil {
-			return fmt.Errorf("contentReplace: %w", errors.Join(err, removeErr))
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("contentStat: %w", err)
-	}
-	err = contentsqlite.Build(ctx, contentsqlite.BuildOptions{
-		GamePath: filepath.Join(pathSet.gamePath, "DarksporeBin"), DatabasePath: pathSet.contentPath,
-		OnProgress: func(progress contentsqlite.BuildProgress) {
-			percent := 20
-			if progress.Total > 0 {
-				percent += progress.Completed * 75 / progress.Total
-			}
-			a.setSubsystemProgress("Content", "preparing", progress.Phase, percent)
-		},
-		OnStageTiming: stageTiming,
-	})
-	if err != nil {
-		return fmt.Errorf("contentBuild: %w", err)
-	}
-	a.setSubsystemProgress("Content", "preparing", "Prepared content ready", 100)
-	a.setSubsystem("Content", "Ready", true)
+	e.setSubsystemProgress("Content", "preparing", "Prepared content ready", 100)
+	e.setSubsystem("Content", "Ready", true)
 	return nil
+}
+
+func (e *App) contentBuildProgress(progress contentsqlite.BuildProgress) {
+	percent := 20
+	if progress.Total > 0 {
+		percent += progress.Completed * 75 / progress.Total
+	}
+	e.setSubsystemProgress("Content", "preparing", progress.Phase, percent)
+}
+
+func (e *App) contentBuildStageTiming(timing contentsqlite.BuildStageTiming) {
+	e.log(fmt.Sprintf("Content import phase=%q elapsed=%s complete=%t",
+		timing.Phase, timing.Duration, timing.IsComplete))
 }
 
 func (a *App) startGameServer(ctx context.Context, pathSet *spinnerPathSet) error {
 	a.setSubsystem("Server", "Starting", false)
 	logger := log.New(&spinnerLogWriter{app: a, prefix: "Server"}, "", 0)
 	gameServer, err := server.New(server.Options{
-		GamePath:    pathSet.gamePath,
-		ConfigPath:  pathSet.configPath,
-		Logger:      logger,
-		RuntimePath: pathSet.runtimePath,
-		TracePath:   "server.jsonl",
-		HTTPRoutes:  a.launcherHTTPRoutes(),
+		GamePath:            pathSet.gamePath,
+		ConfigPath:          pathSet.configPath,
+		Logger:              logger,
+		RuntimePath:         pathSet.runtimePath,
+		ContentDatabasePath: pathSet.contentPath,
+		StaticPath:          pathSet.staticPath,
+		HTTPRoutes:          a.launcherHTTPRoutes(),
 	})
 	if err != nil {
 		return fmt.Errorf("serverCreate: %w", err)
@@ -323,14 +320,24 @@ func (a *App) startGameServer(ctx context.Context, pathSet *spinnerPathSet) erro
 			a.failSubsystem("Server", fmt.Errorf("run: %w", runErr))
 		}
 	}()
-	serverHost := "127.0.0.1"
+	serverHost, advertisedHost, err := gameServer.Config().NetworkHosts()
+	if err != nil {
+		return fmt.Errorf("serverHosts: %w", err)
+	}
+	if advertisedHost == "" {
+		return errors.New("advertised server host is empty")
+	}
+	if serverHost == "0.0.0.0" {
+		serverHost = "127.0.0.1"
+	}
 	serverPort, err := gameServer.Config().Uint16(game.ConfigServerPort)
 	if err != nil {
 		return fmt.Errorf("serverPort: %w", err)
 	}
 	a.mu.Lock()
-	if isLoopbackAuthURL(a.authURL) {
-		a.authURL = fmt.Sprintf("http://127.0.0.1:%d", serverPort)
+	if isLoopbackAuthURL(a.authURL) || a.authURL == a.embeddedAuthURL {
+		a.embeddedAuthURL = "http://" + net.JoinHostPort(serverHost, fmt.Sprintf("%d", serverPort))
+		a.authURL = a.embeddedAuthURL
 	}
 	a.mu.Unlock()
 	address := net.JoinHostPort(serverHost, fmt.Sprintf("%d", serverPort))
@@ -583,8 +590,10 @@ func (e *App) setSubsystemProgress(
 		e.status.Content = message
 		e.status.ContentProgress = progress
 	}
-	e.status.State = state
-	e.status.Message = message
+	if e.gameDone == nil && e.cancel == nil {
+		e.status.State = state
+		e.status.Message = message
+	}
 	e.status.Progress = progress
 	e.updatePlayReadyLocked()
 	e.emitStatusLocked()
@@ -647,6 +656,8 @@ func (a *App) stopServices() {
 		cancel()
 	}
 	a.waitForShutdown("Initialization", initializeDone)
+	a.serverMu.Lock()
+	defer a.serverMu.Unlock()
 
 	a.mu.Lock()
 	gameServer := a.serviceSet.gameServer

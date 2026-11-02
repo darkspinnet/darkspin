@@ -96,7 +96,7 @@ func IsHostileMeleeTarget(enemy zonenpc.Snapshot) bool {
 
 // BestTarget keeps the first enumerated hostile candidate on equal native
 // distance-plus-angle scores. Query enumeration remains the session's policy.
-func (e MeleeArc) BestTarget(enemies *zonenpc.Session, actorPosition game.Vec3, facing game.Vec3) (zonenpc.Snapshot, bool) {
+func (e MeleeArc) BestTarget(enemies TargetReader, actorPosition game.Vec3, facing game.Vec3) (zonenpc.Snapshot, bool) {
 	if enemies == nil || !isFinitePosition(actorPosition) || !isFinitePosition(facing) {
 		return zonenpc.Snapshot{}, false
 	}

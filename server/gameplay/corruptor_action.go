@@ -6,13 +6,14 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
+	"github.com/darkspinnet/darkspin/server/zone"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
 
 func (e campaignNPCActionRuntime) restartCorruptorAction(
 	packet raknet.Packet, sessionKey string, generation uint64,
-	boss zonenpc.Snapshot, timestamp uint64,
+	boss zonenpc.Snapshot, timestamp uint64, sceneGeneration uint64, world *zone.Zone,
 ) ([][]byte, error) {
 	// The old cast has been retired. Stop at the authoritative pose before
 	// starting a new action generation on the same actor.
@@ -25,14 +26,25 @@ func (e campaignNPCActionRuntime) restartCorruptorAction(
 		return nil, fmt.Errorf("phaseStop: %w", err)
 	}
 	packets = append([][]byte{posePacket}, packets...)
+	// Phase replacement invalidates the outgoing charge's callbacks. Restore
+	// its scoped speed modifier here rather than waiting for a retired arrival.
+	speedPackets, speedErr := npcraknet.ChargeMovementSpeed(
+		boss.Plan.ObjectID, zonenpc.EffectiveMovementSpeedBuff(boss.Plan),
+	)
+	if speedErr != nil {
+		return nil, fmt.Errorf("phaseSpeed: %w", speedErr)
+	}
+	packets = append(speedPackets, packets...)
 	e.registry.mutex.RLock()
 	session, isFound := e.registry.sessions[sessionKey]
-	if !isFound || session.generation != generation || session.zone == nil || session.isZoneTerminal() {
+	if !isFound || session.generation != generation || session.zone == nil || session.isZoneTerminal() ||
+		(world != nil && session.zone != world) {
 		e.registry.mutex.RUnlock()
 		return nil, nil
 	}
 	current, isNPCFound := session.zone.NPCs().NPC(boss.Plan.ObjectID)
-	if !isNPCFound || current.IsDefeated || current.ActionGeneration != boss.ActionGeneration {
+	if !isNPCFound || current.IsDefeated || current.ActionGeneration != boss.ActionGeneration ||
+		(current.IsCorruptorStageTwo && !current.IsSecondAggroCinematic(sceneGeneration)) {
 		e.registry.mutex.RUnlock()
 		return nil, nil
 	}
@@ -95,7 +107,9 @@ func (e campaignNPCActionRuntime) produceCorruptorPose(
 		objectID: objectID, actionGeneration: npc.ActionGeneration,
 		timestamp: timestamp + uint64(profile.ReleaseDelay/time.Millisecond),
 	}
-	cancel, err := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
+	// The resumed cast returns its initial animation to this producer. Use the
+	// normal committed NPC fanout so observers see that cast after the pose.
+	cancel, err := scheduleNPCProducers(e.registry, packet, []raknet.ScheduledPacketProducer{{
 		Delay: profile.ReleaseDelay, Produce: next.produce,
 	}})
 	if err == nil && cancel == nil {

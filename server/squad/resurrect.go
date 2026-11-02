@@ -48,7 +48,49 @@ func (e *Session) ResurrectCharacter(index uint32, hitPoint float32) error {
 	}
 	e.characters[index].HitPoints = hitPoint
 	if hitPoint > 0 {
+		e.isResurrectionPending = false
 		e.isGameOver = false
+		e.isRestartReserved = false
+	}
+	return nil
+}
+
+// ReserveResurrection keeps a pending self-revival from committing a squad wipe.
+// The use counter belongs to the mission's player, across hero and pet changes.
+func (e *Session) ReserveResurrection() {
+	if e != nil {
+		e.isResurrectionPending = true
+	}
+}
+
+func (e *Session) IsResurrectionPending() bool {
+	return e != nil && e.isResurrectionPending
+}
+
+func (e *Session) IsBeastResurrectionUsed() bool {
+	return e != nil && e.isBeastResurrectionUsed
+}
+
+func (e *Session) ConsumeBeastResurrection() {
+	if e != nil {
+		e.isBeastResurrectionUsed = true
+	}
+}
+
+func (e *Session) CancelResurrection() error {
+	if e == nil || !e.isResurrectionPending {
+		return nil
+	}
+	e.isResurrectionPending = false
+	character, isFound := e.DeployedCharacter()
+	if !isFound {
+		return errors.New("resurrection character unavailable")
+	}
+	isGameOver, err := e.SetHitPoints(e.characterIndex, character.HitPoints)
+	if err != nil {
+		return fmt.Errorf("cancelHealth: %w", err)
+	}
+	if isGameOver {
 		e.isRestartReserved = false
 	}
 	return nil

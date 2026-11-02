@@ -17,6 +17,8 @@ const detachedGameArgument = "detached-game"
 // StartDetachedGameInstance starts an independently supervised client while
 // the current launcher and its local services remain online.
 func (e *App) StartDetachedGameInstance(identity string) error {
+	e.serverMu.Lock()
+	defer e.serverMu.Unlock()
 	identity = strings.TrimSpace(identity)
 	err := validateProfileIdentity(identity)
 	if err != nil {
@@ -27,9 +29,13 @@ func (e *App) StartDetachedGameInstance(identity string) error {
 		e.status.IsPatchComplete && e.status.IsGameReady
 	arguments := append([]string(nil), e.arguments...)
 	gameServer := e.serviceSet.gameServer
+	ctx := e.lifecycleCtx
 	e.mu.Unlock()
 	if !isReady {
 		return errors.New("authentication, server, patch, and game must be ready")
+	}
+	if ctx == nil {
+		return errors.New("launcher lifetime is unavailable")
 	}
 	serverAddress, err := localServerAddress(gameServer)
 	if err != nil {
@@ -53,7 +59,7 @@ func (e *App) StartDetachedGameInstance(identity string) error {
 	if err != nil {
 		return fmt.Errorf("detachedConnection: %w", err)
 	}
-	err = e.startDetachedGame(detachedGameRequest{
+	err = e.startDetachedGame(ctx, detachedGameRequest{
 		account: identity, clientProfile: identity, serverAddress: serverAddress,
 		arguments: arguments,
 	})
@@ -72,13 +78,13 @@ type detachedGameRequest struct {
 	arguments     []string
 }
 
-func (e *App) startDetachedGame(req detachedGameRequest) error {
+func (e *App) startDetachedGame(ctx context.Context, req detachedGameRequest) error {
 	executablePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("executable: %w", err)
 	}
 	basePath := filepath.Dir(executablePath)
-	isProfileRunning, err := isClientProfileRunning(basePath, req.clientProfile)
+	isProfileRunning, err := e.isClientProfileRunning(req.clientProfile)
 	if err != nil {
 		return fmt.Errorf("profileCheck: %w", err)
 	}
@@ -98,11 +104,16 @@ func (e *App) startDetachedGame(req detachedGameRequest) error {
 	if err != nil {
 		return fmt.Errorf("failureTarget: %w", err)
 	}
+	e.clientSession.Track(launchID, req.clientProfile, "detached")
+	e.recordReportSession(gameLaunchRequest{
+		account: req.account, serverAddress: req.serverAddress,
+	}, launchID)
 	launchArguments := gameLaunchArguments(arguments, req.token)
 	prefixArguments := []string{
 		"--" + detachedGameArgument, "--multiple-instances",
 		"--user-data-dir", userDataPath,
 		"--client-profile", req.clientProfile,
+		"--client-account", req.account,
 		"--server-address", req.serverAddress,
 		"--launch-id", launchID, "--client-result", resultPath,
 	}
@@ -110,8 +121,21 @@ func (e *App) startDetachedGame(req detachedGameRequest) error {
 		prefixArguments = append(prefixArguments, "--account", req.account)
 	}
 	launchArguments = append(prefixArguments, launchArguments...)
-	err = startDetachedProcess(executablePath, launchArguments)
+	e.mu.Lock()
+	gameServer := e.serviceSet.gameServer
+	e.mu.Unlock()
+	connection := snapshotControlConnection{}
+	if gameServer != nil {
+		connection.endpoint, connection.token, err = gameServer.SnapshotClientControl(ctx, req.account)
+		if err != nil {
+			return fmt.Errorf("snapshotControl: %w", err)
+		}
+		connection.directory = gameServer.SnapshotControlDirectory()
+	}
+	environmentEntries := connection.environmentEntries(os.Environ())
+	err = startDetachedProcess(executablePath, launchArguments, environmentEntries)
 	if err != nil {
+		e.clientSession.Close(launchID)
 		return fmt.Errorf("processStart: %w", err)
 	}
 	return nil
@@ -140,6 +164,13 @@ func prepareClientConfig(basePath, identity string) (string, error) {
 }
 
 func ensureWindowedClientPreference(rootPath string) error {
+	const preference = "OptionVersion 5\r\nOptionFullScreen 0\r\n" +
+		"AudioMasterVolume 1\r\n" +
+		"AudioMusicVolume 0.7\r\n" +
+		"AudioSFXVolume 0.8\r\n" +
+		"AudioAmbiencevolume 0.5\r\n" +
+		"AudioVOXVolume 0.9\r\n" +
+		"AudioMuteAll false\r\n"
 	preferencePath := filepath.Join(
 		rootPath, "AppData", "Roaming", "DarksporeData", "Preferences", "Preferences.prop",
 	)
@@ -147,16 +178,42 @@ func ensureWindowedClientPreference(rootPath string) error {
 	if err != nil {
 		return fmt.Errorf("windowedMkdir: %w", err)
 	}
-	// Seed new profiles only; existing preferences belong to the client and player.
+	// Seed new profiles and fill only absent audio keys in existing client preferences.
 	w, err := os.OpenFile(preferencePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if errors.Is(err, os.ErrExist) {
+		currentPreference, readErr := os.ReadFile(preferencePath)
+		if readErr != nil {
+			return fmt.Errorf("preferenceRead: %w", readErr)
+		}
+		missingAudio := ""
+		for _, audioSetting := range []struct{ key, line string }{
+			{"AudioMasterVolume", "AudioMasterVolume 1\r\n"},
+			{"AudioMusicVolume", "AudioMusicVolume 0.7\r\n"},
+			{"AudioSFXVolume", "AudioSFXVolume 0.8\r\n"},
+			{"AudioAmbiencevolume", "AudioAmbiencevolume 0.5\r\n"},
+			{"AudioVOXVolume", "AudioVOXVolume 0.9\r\n"},
+			{"AudioMuteAll", "AudioMuteAll false\r\n"},
+		} {
+			if !strings.Contains("\n"+string(currentPreference), "\n"+audioSetting.key+" ") {
+				missingAudio += audioSetting.line
+			}
+		}
+		if missingAudio != "" {
+			if len(currentPreference) > 0 && currentPreference[len(currentPreference)-1] != '\n' {
+				currentPreference = append(currentPreference, '\r', '\n')
+			}
+			currentPreference = append(currentPreference, missingAudio...)
+			writeErr := os.WriteFile(preferencePath, currentPreference, 0o600)
+			if writeErr != nil {
+				return fmt.Errorf("preferenceUpgrade: %w", writeErr)
+			}
+		}
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("windowedCreate: %w", err)
 	}
 	// Build 103 discards preferences without the current format version.
-	const preference = "OptionVersion 5\r\nOptionFullScreen 0\r\n"
 	written, writeErr := w.WriteString(preference)
 	closeErr := w.Close()
 	if writeErr != nil {
@@ -251,6 +308,10 @@ func configureClientEnvironment(rootPath string) (string, error) {
 }
 
 func runDetachedGame(arguments []string) error {
+	return runDetachedGameContext(context.Background(), arguments)
+}
+
+func runDetachedGameContext(ctx context.Context, arguments []string) error {
 	filteredArguments := make([]string, 0, len(arguments))
 	for _, argument := range arguments {
 		if argument == "--"+detachedGameArgument || argument == "-"+detachedGameArgument {
@@ -262,7 +323,7 @@ func runDetachedGame(arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("detachedRuntime: %w", err)
 	}
-	err = run(context.Background(), filteredArguments)
+	err = run(ctx, filteredArguments)
 	if err != nil {
 		writeDetachedLaunchError(err)
 		return fmt.Errorf("detachedLaunch: %w", err)

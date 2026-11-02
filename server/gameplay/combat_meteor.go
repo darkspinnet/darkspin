@@ -90,7 +90,7 @@ func (e campaignNPCAttackSchedule) hitNomadDragMeteor() ([][]byte, error) {
 		}
 		result, err := zonenpc.CommitAttack(
 			peerSession.zone.NPCRandom(), plan,
-			source.Plan.NPCProfile.CriticalRating, runtime.program.Critical,
+			source.EffectiveCriticalRating(), runtime.program.Critical,
 		)
 		if err != nil {
 			runtime.registry.mutex.Unlock()

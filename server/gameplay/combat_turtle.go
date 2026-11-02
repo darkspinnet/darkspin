@@ -124,7 +124,7 @@ func (e *campaignNomadSpecialThreeTurtleRun) pulse(
 		}
 		result, err := zonenpc.CommitAttack(
 			peerSession.zone.NPCRandom(), plan,
-			source.Plan.NPCProfile.CriticalRating, e.runtime.npc.program.Critical,
+			source.EffectiveCriticalRating(), e.runtime.npc.program.Critical,
 		)
 		if err != nil {
 			e.runtime.registry.mutex.Unlock()
@@ -309,8 +309,8 @@ func (r campaignDamageRuntime) startNomadSpecialThreeTurtle(
 	if isCurrent {
 		enemy, isEnemyFound = peerSession.zone.NPCs().NPC(objectID)
 	}
-	profile, isProfileFound := zonenpc.NomadSpecialThreeTurtleProfile(
-		enemy.Plan.NounName,
+	profile, isProfileFound := zonenpc.NomadSpecialThreeTurtleProfileForPlan(
+		enemy.Plan,
 	)
 	actionProfile, isActionProfileFound := zonenpc.ActionProfileForPlan(enemy.Plan)
 	isCurrent = isCurrent && isEnemyFound && !enemy.IsDefeated &&
@@ -432,7 +432,13 @@ func (r campaignDamageRuntime) startNomadSpecialThreeTurtle(
 		run.cleanup(err)
 		return nil, fmt.Errorf("turtleDefenseRemove: %w", err)
 	}
-	return [][]byte{
+	stopPackets, stopErr := npcraknet.MovementPause(objectID, enemy.Plan.Position, enemy.Facing)
+	if stopErr != nil {
+		cancel()
+		run.cleanup(stopErr)
+		return nil, fmt.Errorf("turtleMovementStop: %w", stopErr)
+	}
+	return append(stopPackets,
 		modifierPacket, animationPacket, passiveEffectRemove, attributePacket,
-	}, nil
+	), nil
 }

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	server "github.com/darkspinnet/darkspin/server/runtime"
@@ -13,12 +15,16 @@ import (
 
 // ServerConfiguration is the launcher-editable server and client configuration.
 type ServerConfiguration struct {
-	Port                          uint16         `json:"port"`
-	IsMultiplayerEnabled          bool           `json:"isMultiplayerEnabled"`
-	Locale                        string         `json:"locale"`
-	Locales                       []ClientLocale `json:"locales"`
-	SnapshotMode                  string         `json:"snapshotMode"`
-	IsBorderlessFullscreenEnabled bool           `json:"isBorderlessFullscreenEnabled"`
+	BindHost                           string         `json:"bindHost"`
+	AdvertisedHost                     string         `json:"advertisedHost"`
+	IsDedicated                        bool           `json:"isDedicated"`
+	Port                               uint16         `json:"port"`
+	IsMultiplayerEnabled               bool           `json:"isMultiplayerEnabled"`
+	Locale                             string         `json:"locale"`
+	Locales                            []ClientLocale `json:"locales"`
+	SnapshotMode                       string         `json:"snapshotMode"`
+	CampaignMatchmakingBotSize         uint32         `json:"campaignMatchmakingBotSize"`
+	IsCampaignBotSquadMirroringEnabled bool           `json:"isCampaignBotSquadMirroringEnabled"`
 }
 
 // GetServerConfiguration returns the persisted local network configuration.
@@ -56,7 +62,6 @@ func (e *App) SetServerPort(port uint16) (ServerConfiguration, error) {
 	return e.SetServerConfiguration(
 		port, configuration.IsMultiplayerEnabled,
 		configuration.Locale, configuration.SnapshotMode,
-		configuration.IsBorderlessFullscreenEnabled,
 	)
 }
 
@@ -64,10 +69,34 @@ func (e *App) SetServerPort(port uint16) (ServerConfiguration, error) {
 // server only when its network binding changed.
 func (e *App) SetServerConfiguration(
 	port uint16, isMultiplayerEnabled bool, locale string, snapshotMode string,
-	isBorderlessFullscreenEnabled bool,
 ) (ServerConfiguration, error) {
+	req, err := e.GetServerConfiguration()
+	if err != nil {
+		return ServerConfiguration{}, fmt.Errorf("configRead: %w", err)
+	}
+	req.Port = port
+	req.IsMultiplayerEnabled = isMultiplayerEnabled
+	req.Locale = locale
+	req.SnapshotMode = snapshotMode
+	configuration, err := e.SetServerSetup(req)
+	if err != nil {
+		return ServerConfiguration{}, fmt.Errorf("setupApply: %w", err)
+	}
+	return configuration, nil
+}
+
+// SetServerSetup edits the persisted setup through the same restart and
+// rollback flow as the launcher network controls.
+func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, error) {
+	port := req.Port
+	isMultiplayerEnabled := req.IsMultiplayerEnabled
+	locale := req.Locale
+	snapshotMode := req.SnapshotMode
 	if port == 0 || port == ^uint16(0) {
 		return ServerConfiguration{}, errors.New("server port must be between 1 and 65534")
+	}
+	if req.CampaignMatchmakingBotSize < 1 || req.CampaignMatchmakingBotSize > 3 {
+		return ServerConfiguration{}, errors.New("campaign matchmaking bot size must be between 1 and 3")
 	}
 	e.serverMu.Lock()
 	defer e.serverMu.Unlock()
@@ -83,9 +112,6 @@ func (e *App) SetServerConfiguration(
 	}
 	gameServer := e.serviceSet.gameServer
 	e.mu.Unlock()
-	if gameServer == nil {
-		return ServerConfiguration{}, errors.New("local server is not initialized")
-	}
 
 	pathSet, err := e.spinnerPaths()
 	if err != nil {
@@ -95,16 +121,46 @@ func (e *App) SetServerConfiguration(
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("configLoad: %w", err)
 	}
+	previousSettings := map[game.ConfigKey]string{
+		game.ConfigCampaignMatchmakingBotSize:         config.String(game.ConfigCampaignMatchmakingBotSize),
+		game.ConfigIsCampaignBotSquadMirroringEnabled: config.String(game.ConfigIsCampaignBotSquadMirroringEnabled),
+		game.ConfigServerBindHost:                     config.String(game.ConfigServerBindHost),
+		game.ConfigServerAdvertisedHost:               config.String(game.ConfigServerAdvertisedHost),
+		game.ConfigServerIsDedicated:                  config.String(game.ConfigServerIsDedicated),
+	}
+	settings := map[game.ConfigKey]string{
+		game.ConfigCampaignMatchmakingBotSize:         strconv.FormatUint(uint64(req.CampaignMatchmakingBotSize), 10),
+		game.ConfigIsCampaignBotSquadMirroringEnabled: strconv.FormatBool(req.IsCampaignBotSquadMirroringEnabled),
+		game.ConfigServerBindHost:                     strings.TrimSpace(req.BindHost),
+		game.ConfigServerAdvertisedHost:               strings.TrimSpace(req.AdvertisedHost),
+		game.ConfigServerIsDedicated:                  strconv.FormatBool(req.IsDedicated),
+	}
+	isSetupChanged := false
+	for key, setting := range settings {
+		isSetupChanged = isSetupChanged || setting != previousSettings[key]
+		err = config.Set(key, setting)
+		if err != nil {
+			return ServerConfiguration{}, fmt.Errorf("setupSet: %w", err)
+		}
+	}
+	bindHost, advertisedHost, err := config.NetworkHosts()
+	if err != nil {
+		return ServerConfiguration{}, fmt.Errorf("networkValidate: %w", err)
+	}
+	if bindHost == "" || advertisedHost == "" {
+		return ServerConfiguration{}, errors.New("network hosts are empty")
+	}
+	isAuthPrepared, err := config.PrepareDedicatedAuth()
+	if err != nil {
+		return ServerConfiguration{}, fmt.Errorf("authPrepare: %w", err)
+	}
+	isSetupChanged = isSetupChanged || isAuthPrepared
 	previousPort, err := config.Uint16(game.ConfigServerPort)
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("previousPort: %w", err)
 	}
 	isPreviouslyMultiplayerEnabled := config.Bool(game.ConfigIsMultiplayerEnabled)
 	previousLocale := config.String(game.ConfigClientLocale)
-	isPreviouslyBorderlessFullscreenEnabled := config.Bool(game.ConfigIsBorderlessFullscreenEnabled)
-	if BuildChannel != "development" {
-		isBorderlessFullscreenEnabled = isPreviouslyBorderlessFullscreenEnabled
-	}
 	previousSnapshotMode, err := snapshot.ParseMode(
 		config.String(game.ConfigSnapshotMode),
 	)
@@ -123,10 +179,9 @@ func (e *App) SetServerConfiguration(
 	if !hasClientLocale(locales, locale) {
 		return ServerConfiguration{}, fmt.Errorf("locale %q is not installed", locale)
 	}
-	if previousPort == port && isPreviouslyMultiplayerEnabled == isMultiplayerEnabled &&
+	if !isSetupChanged && previousPort == port && isPreviouslyMultiplayerEnabled == isMultiplayerEnabled &&
 		normalizeClientLocale(previousLocale) == locale &&
-		previousSnapshotMode == selectedSnapshotMode &&
-		isPreviouslyBorderlessFullscreenEnabled == isBorderlessFullscreenEnabled {
+		previousSnapshotMode == selectedSnapshotMode {
 		configuration, configErr := serverConfiguration(config, pathSet.gamePath)
 		if configErr != nil {
 			return ServerConfiguration{}, fmt.Errorf("configRead: %w", configErr)
@@ -149,19 +204,19 @@ func (e *App) SetServerConfiguration(
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("snapshotModeSet: %w", err)
 	}
-	err = config.Set(
-		game.ConfigIsBorderlessFullscreenEnabled,
-		strconv.FormatBool(isBorderlessFullscreenEnabled),
-	)
-	if err != nil {
-		return ServerConfiguration{}, fmt.Errorf("borderlessSet: %w", err)
-	}
 	err = config.Save(pathSet.configPath)
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("configSave: %w", err)
 	}
+	if gameServer == nil {
+		configuration, configErr := serverConfiguration(config, pathSet.gamePath)
+		if configErr != nil {
+			return ServerConfiguration{}, fmt.Errorf("offlineRead: %w", configErr)
+		}
+		return configuration, nil
+	}
 
-	isNetworkChanged := previousPort != port ||
+	isNetworkChanged := isSetupChanged || previousPort != port ||
 		isPreviouslyMultiplayerEnabled != isMultiplayerEnabled
 	if !isNetworkChanged {
 		if previousSnapshotMode != selectedSnapshotMode {
@@ -192,6 +247,12 @@ func (e *App) SetServerConfiguration(
 		return configuration, nil
 	}
 	restartErr := err
+	for key, setting := range previousSettings {
+		restoreErr := config.Set(key, setting)
+		if restoreErr != nil {
+			return ServerConfiguration{}, fmt.Errorf("setupRestore: %w", restoreErr)
+		}
+	}
 	rollbackErr := config.Set(game.ConfigServerPort, fmt.Sprintf("%d", previousPort))
 	if rollbackErr == nil {
 		rollbackErr = config.Set(
@@ -205,12 +266,6 @@ func (e *App) SetServerConfiguration(
 	if rollbackErr == nil {
 		rollbackErr = config.Set(
 			game.ConfigSnapshotMode, string(previousSnapshotMode),
-		)
-	}
-	if rollbackErr == nil {
-		rollbackErr = config.Set(
-			game.ConfigIsBorderlessFullscreenEnabled,
-			strconv.FormatBool(isPreviouslyBorderlessFullscreenEnabled),
 		)
 	}
 	if rollbackErr == nil {
@@ -231,6 +286,11 @@ func (e *App) SetServerConfiguration(
 }
 
 func (e *App) restartGameServer(pathSet *spinnerPathSet) error {
+	refreshedPathSet, err := resolveSpinnerPaths(filepath.Dir(pathSet.configPath))
+	if err != nil {
+		return fmt.Errorf("pathsRefresh: %w", err)
+	}
+	pathSet = refreshedPathSet
 	e.mu.Lock()
 	gameServer := e.serviceSet.gameServer
 	serverDone := e.serviceSet.serverDone
@@ -255,7 +315,11 @@ func (e *App) restartGameServer(pathSet *spinnerPathSet) error {
 	if ctx == nil {
 		ctx = context.TODO()
 	}
-	err := e.startGameServer(ctx, pathSet)
+	err = e.prepareContent(ctx, pathSet)
+	if err != nil {
+		return fmt.Errorf("contentPrepare: %w", err)
+	}
+	err = e.startGameServer(ctx, pathSet)
 	if err != nil {
 		e.failSubsystem("Server", fmt.Errorf("restartStart: %w", err))
 		return fmt.Errorf("restartStart: %w", err)
@@ -290,6 +354,10 @@ func serverConfiguration(config *game.Config, gamePath string) (ServerConfigurat
 	if port == 0 || port == ^uint16(0) {
 		return ServerConfiguration{}, errors.New("server port must be between 1 and 65534")
 	}
+	campaignMatchmakingBotSize, err := config.CampaignMatchmakingBotSize()
+	if err != nil {
+		return ServerConfiguration{}, fmt.Errorf("campaignBotSize: %w", err)
+	}
 	locales, err := detectClientLocales(gamePath)
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("localeDetect: %w", err)
@@ -303,13 +371,16 @@ func serverConfiguration(config *game.Config, gamePath string) (ServerConfigurat
 		return ServerConfiguration{}, fmt.Errorf("snapshotModeLoad: %w", err)
 	}
 	return ServerConfiguration{
-		Port:                 port,
-		IsMultiplayerEnabled: config.Bool(game.ConfigIsMultiplayerEnabled),
-		Locale:               locale,
-		Locales:              locales,
-		SnapshotMode:         string(snapshotMode),
-		IsBorderlessFullscreenEnabled: BuildChannel == "development" &&
-			config.Bool(game.ConfigIsBorderlessFullscreenEnabled),
+		BindHost:                           config.String(game.ConfigServerBindHost),
+		AdvertisedHost:                     config.String(game.ConfigServerAdvertisedHost),
+		IsDedicated:                        config.Bool(game.ConfigServerIsDedicated),
+		Port:                               port,
+		IsMultiplayerEnabled:               config.Bool(game.ConfigIsMultiplayerEnabled),
+		Locale:                             locale,
+		Locales:                            locales,
+		SnapshotMode:                       string(snapshotMode),
+		CampaignMatchmakingBotSize:         campaignMatchmakingBotSize,
+		IsCampaignBotSquadMirroringEnabled: config.Bool(game.ConfigIsCampaignBotSquadMirroringEnabled),
 	}, nil
 }
 

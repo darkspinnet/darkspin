@@ -1,0 +1,59 @@
+---@meta
+
+---Protected handle for one owned scenario spawn. Cannot retarget an installed
+---fixture or acquire an arbitrary object ID. Invalid after process/session/game,
+---peer/transport/zone change. Commands never replay an attempted mutation.
+---@class ControlledNPC
+---@field ObjectID integer The captured replicated server object ID.
+---@field InitialSnapshot WorldSpawn Detached constructor receipt; editing this table cannot change handle identity.
+---@field Snapshot fun(self:ControlledNPC):ControlledNPCSnapshot|nil,ScenarioError|nil Reads scalar state, including after NPC death when the record remains available. Availability is explicit; no native rendering assertion.
+---@field SetAI fun(self:ControlledNPC,is_enabled:boolean):NPCControlCommand|nil,ScenarioError|nil Changes scenario spawn AI policy through the feature owner and waits for the correlated receipt. Suppression does not freeze simulation or rewind earlier actions.
+---@field Move fun(self:ControlledNPC,destination:WorldPosition):NPCControlCommand|nil,ScenarioError|nil Queues one supported normal NPC movement command; completion requires observed arrival. Uses client timeout; partial receipt accompanies errors. No teleport or direct pose rewrite.
+---@field Cast fun(self:ControlledNPC,ability_name:string,target_object_id:integer,timeout_ms?:integer):NPCControlCommand|nil,ScenarioError|nil Uses an exact Snapshot().supported_ability_names entry and a current eligible target. Settled producer does not prove damage; independently observe hero/world HP. Optional timeout is 1–120000ms; no replay after error.
+---@field Restore fun(self:ControlledNPC):NPCControlCommand|nil,ScenarioError|nil Restores a living idle AI-off controlled NPC to its authored maximum HP. Publishes a native health delta without gameplay healing credit; does not revive, remove statuses, or cancel launched effects.
+---@field Defeat fun(self:ControlledNPC):NPCControlCommand|nil,ScenarioError|nil Marks a living idle AI-off controlled NPC as a published zero-HP corpse for ally resurrection scenarios. Skips death rewards, objectives, and the ordinary death timeline.
+---@field Retire fun(self:ControlledNPC):NPCControlCommand|nil,ScenarioError|nil Explicitly cancels and retires an AI-off controlled NPC, including an active cast or already defeated actor, without death rewards or encounter progress. Deletes a published living actor or scenario corpse. A committed retirement makes its spawn receipt eligible for bounded ledger reclamation.
+
+---@class ControlledNPCIdentity
+---@field user_id integer
+---@field game_id integer
+---@field peer_generation integer
+---@field transport_generation integer
+---@field zone_generation integer
+---@field spawn_request_id string
+---@field object_id integer
+
+---@class ControlledNPCSnapshot
+---@field client_id string
+---@field instance_id string
+---@field pid integer
+---@field identity ControlledNPCIdentity
+---@field is_available boolean
+---@field unavailable_reason? string
+---@field is_ai_enabled boolean
+---@field is_fixture boolean Fixture handles cannot enable combat AI, move, cast, or synthesize death callbacks with Defeat.
+---@field is_retirement_ready boolean Read-only fixture readiness; true after authored death/publication/status producers settle. Check before the first Retire command instead of replaying mutations.
+---@field retirement_unavailable_reason? string The current authored callback or recipient status that still owns the fixture.
+---@field position WorldPosition
+---@field hit_point number
+---@field is_dead boolean
+---@field supported_ability_names string[] Exact installed names supported by the existing normal action producer. Unsupported nouns or abilities fail explicitly.
+---@field action_generation integer
+---@field last_command NPCControlCommand|nil
+
+---@class NPCControlCommand
+---@field identity ControlledNPCIdentity
+---@field request_id string Correlated command identity retained after a timeout; do not automatically replay.
+---@field operation 'set_ai'|'move'|'ability'|'restore'|'defeat'|'retire'
+---@field state string
+---@field is_accepted boolean Command admission only.
+---@field is_completed boolean Actual operation-specific completion; never inferred from action release alone.
+---@field is_settled boolean The ordinary action producer reached its terminal boundary. May settle without success or damage; inspect errors and operation-specific observations.
+---@field is_response_committed boolean Server response-send commitment, not native rendering.
+---@field action_generation integer
+---@field failure? string
+---@field superseded_request_id? string Prior command explicitly superseded by this AI-off request, including when its settled receipt was reclaimed at the bounded retention limit.
+---@field superseded_failure? string Retained supersession reason; does not claim the earlier action was never applied.
+---@field requested_destination? WorldPosition Exact requested movement point, retained in partial receipts.
+---@field projected_destination? WorldPosition Actual actor-footprint mesh projection when known, retained even after a subsequent failure. Arrival completion refers to this projected destination.
+---@field is_projected_destination_available boolean True only when projected_destination was observed; unknown never becomes a zero point.

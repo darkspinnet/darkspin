@@ -38,6 +38,25 @@ type heroHealingReductionExpiry struct {
 	run        *heroHealingReductionRun
 }
 
+// Generic debuff retirement must also retire its feature owner. Otherwise a
+// refresh can reuse a released instance and an obsolete expiry can remove a
+// later allocation with the same instance ID. The caller holds the registry lock.
+func (e *gameplayPeerSession) forgetHeroHealingReduction(modifier *campaignNPCModifierRun) {
+	for key, run := range e.heroHealingReductions {
+		if run == nil || run.modifier != modifier {
+			continue
+		}
+		if run.cancel != nil {
+			run.cancel()
+			run.cancel = nil
+		}
+		if e.zone != nil && e.zone.NPCs() != nil {
+			e.zone.NPCs().ClearHealingReduction(run.targetObjectID, run.expiresAt)
+		}
+		delete(e.heroHealingReductions, key)
+	}
+}
+
 func (e campaignDamageRuntime) stopHeroHealingReductions(
 	sessionKey string, generation uint64, targetObjectID uint32,
 ) ([][]byte, error) {
@@ -58,15 +77,8 @@ func (e campaignDamageRuntime) stopHeroHealingReductions(
 		if key.targetObjectID != targetObjectID || run == nil {
 			continue
 		}
-		if run.cancel != nil {
-			run.cancel()
-		}
-		peerSession.zone.NPCs().ClearHealingReduction(
-			targetObjectID, run.expiresAt,
-		)
 		peerSession.zone.Effect().Remove(run.modifier.instanceID)
 		peerSession.untrackCampaignNPCModifier(run.modifier)
-		delete(peerSession.heroHealingReductions, key)
 		runs = append(runs, run)
 	}
 	e.registry.sessions[sessionKey] = peerSession
@@ -101,12 +113,10 @@ func (e heroHealingReductionExpiry) produce() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	peerSession.zone.NPCs().ClearHealingReduction(
-		e.run.targetObjectID, e.run.expiresAt,
-	)
+	// This expiry owns the deletion publication; do not cancel its own group.
+	e.run.cancel = nil
 	peerSession.zone.Effect().Remove(e.run.modifier.instanceID)
 	peerSession.untrackCampaignNPCModifier(e.run.modifier)
-	delete(peerSession.heroHealingReductions, e.run.key)
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
 	isCreated, err := e.run.modifier.release(e.runtime.npc.modifierPool)
@@ -168,7 +178,10 @@ func (e campaignDamageRuntime) applyHeroHealingReduction(
 		err = peerSession.trackCampaignNPCModifier(modifier)
 		if err != nil {
 			e.registry.mutex.Unlock()
-			_, releaseErr := modifier.release(e.npc.modifierPool)
+			isCreated, releaseErr := modifier.release(e.npc.modifierPool)
+			if isCreated {
+				err = errors.Join(err, errors.New("unpublished healing modifier was created"))
+			}
 			return nil, fmt.Errorf(
 				"healingReductionTrack: %w", errors.Join(err, releaseErr),
 			)
@@ -178,43 +191,59 @@ func (e campaignDamageRuntime) applyHeroHealingReduction(
 	previousRevision := run.revision
 	previousExpiresAt := run.expiresAt
 	previousCancel := run.cancel
-	run.sourceObjectID = sourceObjectID
-	run.revision++
-	run.expiresAt = e.npc.now().Add(definition.StatusDuration)
+	revision := previousRevision + 1
+	expiresAt := e.npc.now().Add(definition.StatusDuration)
 	err := peerSession.zone.NPCs().ApplyHealingReduction(
-		targetObjectID, heroHealingReduction, run.expiresAt,
+		targetObjectID, heroHealingReduction, expiresAt,
 	)
 	if err != nil {
 		if isNew {
 			peerSession.untrackCampaignNPCModifier(run.modifier)
-			_, _ = run.modifier.release(e.npc.modifierPool)
+			isCreated, releaseErr := run.modifier.release(e.npc.modifierPool)
+			if isCreated {
+				err = errors.Join(err, errors.New("unpublished healing modifier was created"))
+			}
+			err = errors.Join(err, releaseErr)
 		}
 		e.registry.mutex.Unlock()
 		return nil, fmt.Errorf("healingReductionApply: %w", err)
 	}
-	run.modifier.record = zoneeffect.Modifier{
+	record := zoneeffect.Modifier{
 		InstanceID: run.modifier.instanceID, GUID: definition.RootModifierID,
 		SourceObjectID: sourceObjectID, TargetObjectID: targetObjectID,
-		Rank: 1, Duration: definition.StatusDuration,
+		Rank: 1, Duration: definition.StatusDuration, ExpiresAt: expiresAt,
 		Kind: zoneeffect.ModifierKindDebuff, InitiatorObject: sourceObjectID,
 		StackCount: 1, HealingReduction: heroHealingReduction,
 	}
 	if isNew {
-		err = peerSession.zone.Effect().Put(run.modifier.record)
+		err = peerSession.zone.Effect().Put(record)
 	} else {
-		err = peerSession.zone.Effect().Update(run.modifier.record)
+		err = peerSession.zone.Effect().Update(record)
 	}
 	if err != nil {
-		peerSession.zone.NPCs().ClearHealingReduction(targetObjectID, run.expiresAt)
+		peerSession.zone.NPCs().ClearHealingReduction(targetObjectID, expiresAt)
 		if isNew {
 			peerSession.untrackCampaignNPCModifier(run.modifier)
-			_, _ = run.modifier.release(e.npc.modifierPool)
+			isCreated, releaseErr := run.modifier.release(e.npc.modifierPool)
+			if isCreated {
+				err = errors.Join(err, errors.New("unpublished healing modifier was created"))
+			}
+			err = errors.Join(err, releaseErr)
 		} else {
-			run.modifier.record = previousRecord
+			restoreErr := peerSession.zone.NPCs().ApplyHealingReduction(
+				targetObjectID, heroHealingReduction, previousExpiresAt,
+			)
+			if restoreErr != nil {
+				err = errors.Join(err, fmt.Errorf("healingReductionRestore: %w", restoreErr))
+			}
 		}
 		e.registry.mutex.Unlock()
 		return nil, fmt.Errorf("healingReductionInventory: %w", err)
 	}
+	run.sourceObjectID = sourceObjectID
+	run.revision = revision
+	run.expiresAt = expiresAt
+	run.modifier.record = record
 	peerSession.heroHealingReductions[key] = run
 	e.registry.sessions[sessionKey] = peerSession
 	e.registry.mutex.Unlock()
@@ -225,15 +254,15 @@ func (e campaignDamageRuntime) applyHeroHealingReduction(
 		StackCount: 1, Duration: definition.StatusDuration, Timestamp: timestamp,
 	})
 	if err != nil {
-		e.rollbackHeroHealingReduction(
-			sessionKey, generation, run, isNew, previousRecord,
+		rollbackErr := e.rollbackHeroHealingReduction(
+			sessionKey, generation, run, revision, isNew, previousRecord,
 			previousRevision, previousExpiresAt, previousCancel,
 		)
-		return nil, fmt.Errorf("healingReductionCreate: %w", err)
+		return nil, fmt.Errorf("healingReductionCreate: %w", errors.Join(err, rollbackErr))
 	}
 	expiry := heroHealingReductionExpiry{
 		runtime: e, sessionKey: sessionKey, generation: generation,
-		revision: run.revision, run: run,
+		revision: revision, run: run,
 	}
 	cancel, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
 		Delay: definition.StatusDuration, Produce: expiry.produce,
@@ -242,11 +271,11 @@ func (e campaignDamageRuntime) applyHeroHealingReduction(
 		scheduleErr = errors.New("nil cancellation")
 	}
 	if scheduleErr != nil {
-		e.rollbackHeroHealingReduction(
-			sessionKey, generation, run, isNew, previousRecord,
+		rollbackErr := e.rollbackHeroHealingReduction(
+			sessionKey, generation, run, revision, isNew, previousRecord,
 			previousRevision, previousExpiresAt, previousCancel,
 		)
-		return nil, fmt.Errorf("healingReductionSchedule: %w", scheduleErr)
+		return nil, fmt.Errorf("healingReductionSchedule: %w", errors.Join(scheduleErr, rollbackErr))
 	}
 	e.registry.mutex.Lock()
 	latest, isLatestFound := e.registry.sessions[sessionKey]
@@ -273,13 +302,14 @@ func (e campaignDamageRuntime) applyHeroHealingReduction(
 
 func (e campaignDamageRuntime) rollbackHeroHealingReduction(
 	sessionKey string, generation uint64, run *heroHealingReductionRun,
-	isNew bool, previousRecord zoneeffect.Modifier, previousRevision uint64,
+	revision uint64, isNew bool, previousRecord zoneeffect.Modifier, previousRevision uint64,
 	previousExpiresAt time.Time, previousCancel raknet.CancelSchedule,
-) {
+) error {
 	e.registry.mutex.Lock()
 	peerSession, isFound := e.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation &&
-		peerSession.heroHealingReductions[run.key] == run
+		peerSession.heroHealingReductions[run.key] == run && run.revision == revision
+	var restoreErr error
 	if isCurrent {
 		peerSession.zone.NPCs().ClearHealingReduction(
 			run.targetObjectID, run.expiresAt,
@@ -288,23 +318,39 @@ func (e campaignDamageRuntime) rollbackHeroHealingReduction(
 	if isCurrent && isNew {
 		peerSession.zone.Effect().Remove(run.modifier.instanceID)
 		peerSession.untrackCampaignNPCModifier(run.modifier)
-		delete(peerSession.heroHealingReductions, run.key)
 	}
 	if isCurrent && !isNew {
 		run.modifier.record = previousRecord
+		run.sourceObjectID = previousRecord.SourceObjectID
 		run.revision = previousRevision
 		run.expiresAt = previousExpiresAt
 		run.cancel = previousCancel
-		_ = peerSession.zone.NPCs().ApplyHealingReduction(
+		healingErr := peerSession.zone.NPCs().ApplyHealingReduction(
 			run.targetObjectID, heroHealingReduction, previousExpiresAt,
 		)
-		_ = peerSession.zone.Effect().Update(previousRecord)
+		if healingErr != nil {
+			restoreErr = fmt.Errorf("healingReductionRestore: %w", healingErr)
+		}
+		inventoryErr := peerSession.zone.Effect().Update(previousRecord)
+		if inventoryErr != nil {
+			restoreErr = errors.Join(restoreErr, fmt.Errorf("healingReductionRestoreInventory: %w", inventoryErr))
+		}
 	}
 	if isCurrent {
 		e.registry.sessions[sessionKey] = peerSession
 	}
 	e.registry.mutex.Unlock()
 	if isNew && isCurrent {
-		_, _ = run.modifier.release(e.npc.modifierPool)
+		isCreated, releaseErr := run.modifier.release(e.npc.modifierPool)
+		if releaseErr != nil {
+			return fmt.Errorf("healingReductionRollbackRelease: %w", releaseErr)
+		}
+		if isCreated {
+			return errors.New("unpublished healing modifier was created")
+		}
 	}
+	if restoreErr != nil {
+		return fmt.Errorf("healingReductionRollback: %w", restoreErr)
+	}
+	return nil
 }

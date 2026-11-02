@@ -7,8 +7,9 @@ import (
 	"os/exec"
 )
 
-func startDetachedProcess(executablePath string, arguments []string) error {
+func startDetachedProcess(executablePath string, arguments, environmentEntries []string) error {
 	cmd := exec.Command(executablePath, arguments...)
+	cmd.Env = environmentEntries
 	err := cmd.Start()
 	if err != nil {
 		return fmt.Errorf("processStart: %w", err)

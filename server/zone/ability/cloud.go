@@ -135,7 +135,11 @@ func PlanCloudLobAt(req CloudLobRequest) (CloudLobPlan, error) {
 		minimumDamage = creature.MinimumWeaponDamage
 		maximumDamage = creature.MaximumWeaponDamage
 	}
+	// SproutPoison splits one weapon-damage range over dotNumTicks.
+	minimumDamage /= float32(projected.CloudLob.TickCount)
+	maximumDamage /= float32(projected.CloudLob.TickCount)
 	damageDefinition := projected
+	damageDefinition.IsWeaponDamageRange = false
 	damageDefinition.DamageType = projected.CloudLob.PoisonDamageType
 	damageDefinition.DamageSource = projected.CloudLob.PoisonDamageSource
 	damageDefinition.IsDamageTypeFound = true
@@ -376,17 +380,15 @@ func (e *CloudPoisonRuntime) resolve(
 			continue
 		}
 		tailTick := e.state.tailTicksByObjectID[enemy.Plan.ObjectID]
+		// SproutPoison resumes its wait, advances the outside count and
+		// checks the loop limit before dealing the next damage tick.
+		tailTick++
 		if tailTick >= plan.Definition.CloudLob.TickCount {
 			delete(e.state.tailTicksByObjectID, enemy.Plan.ObjectID)
 			continue
 		}
 		target = append(target, enemy)
-		tailTick++
-		if tailTick >= plan.Definition.CloudLob.TickCount {
-			delete(e.state.tailTicksByObjectID, enemy.Plan.ObjectID)
-		} else {
-			e.state.tailTicksByObjectID[enemy.Plan.ObjectID] = tailTick
-		}
+		e.state.tailTicksByObjectID[enemy.Plan.ObjectID] = tailTick
 	}
 	return CloudPoisonTick{
 		Plan: AreaPlan{

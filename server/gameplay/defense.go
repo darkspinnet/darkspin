@@ -29,7 +29,8 @@ func (e gameplayPeerSession) equipmentDefense() combat.DefenseProfile {
 	if e.deployedCreatureIndex >= uint32(len(e.binding.Creatures)) {
 		return combat.DefenseProfile{}
 	}
-	creature := e.binding.Creatures[e.deployedCreatureIndex]
+	now := time.Now()
+	creature := e.projectPassiveCreature(e.deployedCreatureIndex, now)
 	attributes := creature.PartAttribute
 	profile := combat.DefenseProfile{
 		DodgeRating: creature.PhysicalDefense, ResistRating: creature.EnergyDefense,
@@ -38,7 +39,7 @@ func (e gameplayPeerSession) equipmentDefense() combat.DefenseProfile {
 		PhysicalArmor: attributes[102], EnergyArmor: attributes[103],
 	}
 	copy(profile.ScienceResistances[:], attributes[43:48])
-	if e.isOverdriveActiveAt(time.Now()) {
+	if e.isOverdriveActiveAt(now) {
 		profile.DamageReduction += 0.50
 	}
 	return profile

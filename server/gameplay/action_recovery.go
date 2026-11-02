@@ -246,8 +246,12 @@ func (r gameplayActionRuntime) releaseFailedActionAdmission(
 		r.registry.mutex.Unlock()
 		return false
 	}
+	if isActionRecoverySuperseded(peerSession, key) {
+		r.registry.mutex.Unlock()
+		return true
+	}
 	pursuit := peerSession.campaignPlayerPursuitSession().Snapshot()
-	r.registry.retireCampaignTreeOfLifeLocked(&peerSession)
+	r.registry.retireHeroInfectionsLocked(&peerSession)
 	interruptedBasic := peerSession.resetFailedActionAdmission(
 		r.switcher.modifierPool, r.switcher.effectPool,
 	)
@@ -277,12 +281,12 @@ func (r gameplayActionRuntime) recoverRejectedActionAdmission(
 ) [][]byte {
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[key.sessionKey]
-	if !isFound || !isActionSessionCurrent(peerSession, key) {
+	if !isFound || !isActionSessionCurrent(peerSession, key) ||
+		isActionRecoverySuperseded(peerSession, key) {
 		r.registry.mutex.Unlock()
 		return nil
 	}
-	r.registry.retireCampaignTreeOfLifeLocked(&peerSession)
-	interruptedBasic := peerSession.resetFailedActionAdmission(
+	interruptedBasic := peerSession.resetRejectedActionAdmission(
 		r.switcher.modifierPool, r.switcher.effectPool,
 	)
 	movementErr := peerSession.stopPlayerMovement(r.now())
@@ -309,7 +313,8 @@ func (r gameplayActionRuntime) marshalActionRecoveryBaseline(
 ) [][]byte {
 	r.registry.mutex.RLock()
 	peerSession, isFound := r.registry.sessions[key.sessionKey]
-	isCurrent := isFound && isActionSessionCurrent(peerSession, key)
+	isCurrent := isFound && isActionSessionCurrent(peerSession, key) &&
+		!isActionRecoverySuperseded(peerSession, key)
 	r.registry.mutex.RUnlock()
 	if !isCurrent || peerSession.isHeroSelectionPending ||
 		peerSession.deployedObjectID == 0 || peerSession.deployedHitPoint() <= 0 {
@@ -493,6 +498,25 @@ func isActionSessionCurrent(
 		!peerSession.isZoneTerminal()
 }
 
+// A delayed rejection still owes its own native response, but it no longer
+// owns the hero's ability or movement after a newer action was accepted.
+func isActionRecoverySuperseded(peerSession gameplayPeerSession, key gameplayActionLeaseKey) bool {
+	return key.actionGeneration != 0 &&
+		peerSession.acceptedActionGeneration > key.actionGeneration
+}
+
+func (e gameplayActionRuntime) recordAcceptedAction(key gameplayActionLeaseKey) {
+	e.registry.mutex.Lock()
+	defer e.registry.mutex.Unlock()
+	peerSession, isFound := e.registry.sessions[key.sessionKey]
+	if !isFound || !isActionSessionCurrent(peerSession, key) ||
+		peerSession.acceptedActionGeneration >= key.actionGeneration {
+		return
+	}
+	peerSession.acceptedActionGeneration = key.actionGeneration
+	e.registry.sessions[key.sessionKey] = peerSession
+}
+
 func (r gameplayActionRuntime) protectResponse(
 	packet raknet.Packet, command raknet.ActionCommandData,
 	key gameplayActionLeaseKey, packets [][]byte,
@@ -501,6 +525,10 @@ func (r gameplayActionRuntime) protectResponse(
 		packet.SourceTime, packets,
 	)
 	r.observeActionResponses(key, packets)
+	if (command.Common.Type == raknet.ActionMovement || command.Common.Type == raknet.ActionStopMovement) &&
+		!hasRejectedActionResponse(packets) {
+		r.recordAcceptedAction(key)
+	}
 	if !isDeferred {
 		r.registry.mutex.Lock()
 		delete(r.registry.actionTerminals, key)
@@ -569,8 +597,19 @@ func (e gameplayActionLeaseExpiry) produce() ([][]byte, error) {
 	}
 	delete(e.runtime.registry.actionLeases, e.key)
 	delete(e.runtime.registry.actionTerminals, e.key)
-	e.runtime.registry.retireCampaignTreeOfLifeLocked(&peerSession)
-	interruptedBasic := peerSession.resetFailedActionAdmission(
+	if isActionRecoverySuperseded(peerSession, e.key) {
+		e.runtime.registry.mutex.Unlock()
+		packet, err := actionraknet.Reject(lease.command)
+		if err != nil {
+			return nil, fmt.Errorf("expiredReject: %w", err)
+		}
+		e.runtime.logger.Printf("RakNet expired action answered without resetting newer action trace=%d generation=%d accepted=%d",
+			e.key.traceID, e.key.actionGeneration, peerSession.acceptedActionGeneration)
+		return [][]byte{packet}, nil
+	}
+	// An unanswered command may expire after a later independent ability has
+	// been accepted. Reject that command without canceling those effect agents.
+	interruptedBasic := peerSession.resetRejectedActionAdmission(
 		e.runtime.switcher.modifierPool, e.runtime.switcher.effectPool,
 	)
 	movementErr := peerSession.stopPlayerMovement(e.runtime.now())
@@ -607,6 +646,10 @@ func (r gameplayActionRuntime) observeActionResponses(
 ) {
 	for _, packet := range packets {
 		syncStamp, responseType, isFound := actionResponse(packet)
+		if isFound && syncStamp == key.syncStamp &&
+			(responseType == raknet.ActionResponseAccepted || responseType == raknet.ActionResponsePursuit) {
+			r.recordAcceptedAction(key)
+		}
 		if !isFound || (responseType != raknet.ActionResponseRejected &&
 			responseType != raknet.ActionResponseReleased) {
 			continue
@@ -616,10 +659,10 @@ func (r gameplayActionRuntime) observeActionResponses(
 		}
 		var cancel raknet.CancelSchedule
 		r.registry.mutex.Lock()
-		if lease, isLeased := r.registry.actionLeases[key]; isLeased {
+		if lease, isFound := r.registry.actionLeases[key]; isFound {
 			cancel = lease.cancel
 			delete(r.registry.actionLeases, key)
-		} else if _, isAdmitting := r.registry.actionAdmissions[key]; isAdmitting {
+		} else if _, isFound = r.registry.actionAdmissions[key]; isFound {
 			r.registry.actionTerminals[key] = struct{}{}
 		}
 		r.registry.mutex.Unlock()

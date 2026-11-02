@@ -10,15 +10,20 @@ import (
 )
 
 type campaignPackCowerSchedule struct {
-	runtime    campaignNPCActionRuntime
-	packet     raknet.Packet
-	sessionKey string
-	generation uint64
-	objectID   uint32
-	timestamp  uint64
+	runtime          campaignNPCActionRuntime
+	packet           raknet.Packet
+	sessionKey       string
+	generation       uint64
+	objectID         uint32
+	actionGeneration uint64
+	timestamp        uint64
 }
 
 func (e campaignPackCowerSchedule) next() ([][]byte, error) {
+	if e.runtime.finishScenarioNPCManualAction(e.sessionKey, e.generation,
+		e.objectID, e.actionGeneration) {
+		return nil, nil
+	}
 	packets, err := e.runtime.produceEnemyMelee(
 		e.packet, e.sessionKey, e.generation, e.objectID, e.timestamp,
 	)
@@ -75,10 +80,15 @@ func (r campaignNPCActionRuntime) producePackMeleeCower(
 	schedule := campaignPackCowerSchedule{
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID,
-		timestamp: timestamp + uint64(profile.Cooldown/time.Millisecond),
+		actionGeneration: source.ActionGeneration,
+		timestamp:        timestamp + uint64(profile.Cooldown/time.Millisecond),
+	}
+	resumeDelay := profile.Cooldown
+	if source.IsScenarioControlled() && !source.IsScenarioAIEnabled() {
+		resumeDelay = profile.ReleaseDelay
 	}
 	_, err = scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{{
-		Delay: profile.Cooldown, Produce: schedule.next,
+		Delay: resumeDelay, Produce: schedule.next,
 	}})
 	if err != nil {
 		r.releaseAction(sessionKey, generation, objectID)

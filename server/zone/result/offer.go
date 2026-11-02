@@ -8,9 +8,10 @@ import (
 
 // OfferCommand describes the completed chain level and authored level order.
 type OfferCommand struct {
-	CurrentLevel    string
-	ChainLevelIndex uint32
-	ChainLevel      []string
+	CurrentLevel       string
+	ChainLevelIndex    uint32
+	ChainLevel         []string
+	IsReplayRandomized bool
 }
 
 // Offer identifies the completed progression index and next playable level.
@@ -31,7 +32,17 @@ func ResolveOffer(command OfferCommand) (Offer, error) {
 		return Offer{}, fmt.Errorf("offer index unavailable: %d", command.ChainLevelIndex)
 	}
 	currentReference := strings.TrimSuffix(command.ChainLevel[completedOrdinal], ".Level")
-	if !strings.EqualFold(currentReference, command.CurrentLevel) {
+	isAuthoredMap := false
+	for _, levelReference := range command.ChainLevel {
+		if strings.EqualFold(strings.TrimSuffix(levelReference, ".Level"), command.CurrentLevel) {
+			isAuthoredMap = true
+			break
+		}
+	}
+	if command.IsReplayRandomized && !isAuthoredMap {
+		return Offer{}, errors.New("offer replay map unavailable")
+	}
+	if !command.IsReplayRandomized && !strings.EqualFold(currentReference, command.CurrentLevel) {
 		return Offer{}, fmt.Errorf(
 			"offer level mismatch: got %s, want %s",
 			command.CurrentLevel, currentReference,
@@ -40,7 +51,7 @@ func ResolveOffer(command OfferCommand) (Offer, error) {
 	if completedOrdinal+1 == len(command.ChainLevel) {
 		return Offer{
 			CompletedIndex: command.ChainLevelIndex,
-			NextLevel:      currentReference,
+			NextLevel:      command.CurrentLevel,
 			IsTerminal:     true,
 		}, nil
 	}

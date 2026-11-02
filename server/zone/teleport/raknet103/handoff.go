@@ -101,7 +101,7 @@ func (h *Handoff) AcceptEntrant(
 		TargetID: objectID, ModifierGUID: zoneteleport.ModifierGUIDID,
 		InstanceID:           instanceID,
 		DurationMilliseconds: 0, Overdrive: 1, StackCount: 1,
-		StartMilliseconds: sourceTime, SourceID: 0, IsBound: true,
+		StartMilliseconds: sourceTime, NPCAffixAssetID: 0, IsBound: true,
 	})
 	if err != nil {
 		run.Abort()

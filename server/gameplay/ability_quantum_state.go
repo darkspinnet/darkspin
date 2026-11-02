@@ -99,10 +99,15 @@ func reserveQuantumStateReactionLocked(
 	if err != nil {
 		return fmt.Errorf("quantumStateChoice: %w", err)
 	}
+	kind := quantumStateReactionKind(choice)
+	if kind == quantumStateReactionKnockback && target.IsMutationKnockbackImmune() ||
+		kind == quantumStateReactionBanish && target.IsMutationBanishImmune() {
+		return nil
+	}
 	run.quantum.nextActivation = now.Add(quantumStateLockout)
 	step := quantumStateReactionStep{
 		run: run, targetObjectID: targetObjectID, timestamp: timestamp,
-		kind: quantumStateReactionKind(choice),
+		kind: kind,
 	}
 	_, err = run.quantum.packet.ScheduleProducers(
 		[]raknet.ScheduledPacketProducer{{Produce: step.produce}},
@@ -180,6 +185,10 @@ func (e quantumStateReactionStep) produceStatusLocked(
 	if !isFound || target.IsDefeated {
 		return nil, quantumStateStatusExpiry{}, nil
 	}
+	if e.kind == quantumStateReactionKnockback && target.IsMutationKnockbackImmune() ||
+		e.kind == quantumStateReactionBanish && target.IsMutationBanishImmune() {
+		return nil, quantumStateStatusExpiry{}, nil
+	}
 	duration := quantumStateSlowDuration
 	modifierName := "QuantumSlowDebuff"
 	if e.run.quantum.rank%2 == 0 {
@@ -199,6 +208,7 @@ func (e quantumStateReactionStep) produceStatusLocked(
 		duration = quantumStateBanishDuration
 		modifierName = "QuantumBanishDebuff"
 	}
+	duration = zonenpc.CrowdControlDuration(target.Plan, duration)
 	expiresAt := runtime.npc.now().Add(duration)
 	instanceID, err := runtime.npc.modifierPool.Allocate()
 	if err != nil {
@@ -275,7 +285,7 @@ func clearQuantumStateStatus(
 func (e quantumStateReactionStep) applyKnockbackLocked(
 	peerSession gameplayPeerSession, target zonenpc.Snapshot,
 ) ([][]byte, error) {
-	if target.IsTurtleActive {
+	if target.IsMutationKnockbackImmune() || target.IsTurtleActive || target.HasAffixModifier(surefootedNPCAffixModifierName) {
 		return nil, nil
 	}
 	source := game.Vec3(peerSession.playerPosition)
@@ -418,7 +428,8 @@ func quantumStateModifierPacket(
 	packet, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: targetObjectID, ModifierGUID: util.HashID(modifierName),
 		InstanceID: instanceID, DurationMilliseconds: uint32(duration.Milliseconds()),
-		StackCount: 1, StartMilliseconds: timestamp, SourceID: sourceObjectID,
+		StackCount: 1, StartMilliseconds: timestamp, NPCAffixAssetID: 0,
+		IsBound: modifierName == "QuantumStunDebuff",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("quantumStateModifierMarshal: %w", err)

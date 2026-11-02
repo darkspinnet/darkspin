@@ -103,6 +103,10 @@ func (e campaignNomadDragTauntResetStep) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dragTauntReset: %w", err)
 	}
+	if e.runtime.finishScenarioNPCManualAction(e.sessionKey, e.generation,
+		e.objectID, e.actionGeneration) {
+		return [][]byte{resetPacket}, nil
+	}
 	strafePackets, err := e.runtime.produceBoundedStrafeOrIdle(
 		e.packet, e.sessionKey, e.generation, e.objectID,
 		e.actionGeneration, e.timestamp, e.profile,

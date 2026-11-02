@@ -55,3 +55,20 @@ func ShieldEffectAsset(
 	}
 	return packet, nil
 }
+
+func AbsorptionShieldGenerate(objectID uint32) ([][]byte, error) {
+	generationPacket, err := raknet.MarshalApplication(raknet.ObjectEffectMessage{
+		Asset:    util.HashID("cyber_shield_generate_shield.ServerEventDef"),
+		ObjectID: objectID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("shieldGenerate: %w", err)
+	}
+	shieldPacket, err := ShieldEffectAsset(
+		objectID, 15, "citadelBasicShield_Shield.ServerEventDef", false,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("shieldAttach: %w", err)
+	}
+	return [][]byte{generationPacket, shieldPacket}, nil
+}

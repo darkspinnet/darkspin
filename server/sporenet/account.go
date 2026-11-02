@@ -50,6 +50,7 @@ func defaultAccount() Account {
 		DefaultDeckPVPID:        1,
 		Level:                   1,
 		UnlockFuelTanks:         unlockedFuelTankCapacity,
+		UnlockPVEDecks:          1,
 		UnlockPVPDecks:          1,
 		UnlockInventoryIdentify: defaultInventoryCapacity,
 		UnlockEditorFlairSlots:  defaultEditorFlairSlotCount,
@@ -59,6 +60,9 @@ func defaultAccount() Account {
 func normalizeAccount(account Account) Account {
 	account.IsAllAccessGranted = true
 	account.IsOnlineAccessGranted = true
+	if account.UnlockPVEDecks == 0 {
+		account.UnlockPVEDecks = 1
+	}
 	if account.UnlockPVPDecks == 0 {
 		account.UnlockPVPDecks = 1
 	}

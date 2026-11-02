@@ -17,6 +17,7 @@ type MovementCommand struct {
 	ObjectID         uint32
 	DeployedObjectID uint32
 	Position         game.Vec3
+	NavigationStart  game.Vec3
 	Goal             game.Vec3
 	FootprintRadius  float32
 	Navigation       *basenavigation.Mesh
@@ -41,7 +42,7 @@ func AdmitMovement(command MovementCommand) (MovementAdmission, error) {
 		return admission, nil
 	}
 	goal, err := zonenavigation.ResolveMovementGoal(
-		command.Navigation, command.Position, command.Goal,
+		command.Navigation, command.NavigationStart, command.Goal,
 		command.FootprintRadius, command.NavigationActor,
 	)
 	if err != nil {

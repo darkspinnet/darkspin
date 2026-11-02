@@ -85,10 +85,11 @@ func RegisterSocialComponents(
 	if len(presenceRegistries) != 0 && presenceRegistries[0] != nil {
 		presenceRegistry = presenceRegistries[0]
 	}
+	networkRegistry := newPlaygroupNetworkRegistry(relay)
 	components := []Component{
 		associationComponent(userManager), messagingComponent(messenger, partyService),
 		playgroupsComponent(
-			partyService, userManager, presenceRegistry, relay, matchmaking,
+			partyService, userManager, presenceRegistry, relay, matchmaking, networkRegistry,
 		),
 		roomsComponent(roomManager, presenceRegistry),
 	}
@@ -98,6 +99,12 @@ func RegisterSocialComponents(
 			return fmt.Errorf("socialRegister[%q]: %w", component.Name, err)
 		}
 	}
+	registry.mu.Lock()
+	registry.playgroupDisconnect = &playgroupShipDisconnect{
+		partyService: partyService, networkRegistry: networkRegistry,
+		userManager: userManager, matchmaking: matchmaking,
+	}
+	registry.mu.Unlock()
 	return nil
 }
 
@@ -123,6 +130,9 @@ func associationUpdateHandler(userManager socialUserManager, isAddition bool) Ha
 		}
 		listType := associationListType(request.Fields)
 		members, isResolved := associationMembers(userManager, request.Fields)
+		if !isAddition {
+			members, isResolved = storedAssociationMembers(user, listType, request.Fields)
+		}
 		if !isResolved {
 			return &Response{ErrorCode: 0x0001}, nil
 		}
@@ -137,13 +147,21 @@ func associationUpdateHandler(userManager socialUserManager, isAddition bool) Ha
 			return nil, fmt.Errorf("associationUpdate: %w", err)
 		}
 		for index, member := range members {
-			target := userManager.UserByID(member.ID)
-			if target == nil {
+			if isAddition {
+				err = queueAssociationMemberVisibility(request, member)
+				if err != nil {
+					return nil, fmt.Errorf("associationAdded[%d]: %w", index, err)
+				}
 				continue
+			}
+			target := userManager.UserByID(member.ID)
+			presenceFields := userOfflineNotificationFields(member.ID)
+			if target != nil && isSocialUserOnline(request, member.ID) {
+				presenceFields = userUpdatedNotificationFields(target)
 			}
 			err = request.QueueNotification(
 				UserSessionComponentID, userSessionUserUpdated,
-				userUpdatedNotificationFields(target),
+				presenceFields,
 			)
 			if err != nil {
 				return nil, fmt.Errorf("associationPresence[%d]: %w", index, err)
@@ -201,12 +219,20 @@ func associationGetListsHandler(_ context.Context, request *Request) (*Response,
 	}
 	requested, isFound := tdf.Find(request.Fields, "ALST")
 	lists := make([]tdf.Value, 0)
+	visibleMemberIDs := make(map[int64]bool)
 	if isFound && requested.Type == tdf.List {
 		for _, item := range requested.Items {
 			listType := associationListType(item.Fields)
 			members := user.AssociationSnapshot(listType)
 			memberValues := make([]tdf.Value, 0, len(members))
 			for _, member := range members {
+				if !visibleMemberIDs[member.ID] {
+					err := queueAssociationMemberVisibility(request, member)
+					if err != nil {
+						return nil, fmt.Errorf("associationMember[%d]: %w", member.ID, err)
+					}
+					visibleMemberIDs[member.ID] = true
+				}
 				memberValues = append(memberValues, tdf.StructValue(associationMemberFields(member)...))
 			}
 			listInfoFields := append([]tdf.Field(nil), item.Fields...)
@@ -329,9 +355,18 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 		}
 		commandName, isCommand := messagingCommandName(body)
 		if isCommand {
-			responseBody := fmt.Sprintf("Unknown command %s. Available: /help, /taunt, /ss, /bug, /b, /ping, /hint, /loc, /stat, /follow, /ai, /effect, /summon, /level, /warp, /spawn, /drop, /dna, /damage, /heal, /power, /mana, /event, /goto, /kill, /reset, /recap, /victory, /defeat, /exit", commandName)
+			responseBody := fmt.Sprintf("Unknown command %s. Available: /help, /emote, /taunt, /ss, /bug, /b, /ping, /hint, /loc, /stat, /follow, /ai, /effect, /summon, /level, /warp, /spawn, /drop, /dna, /damage, /heal, /power, /mana, /event, /goto, /kill, /reset, /recap, /victory, /defeat, /exit", commandName)
 			if commandName == "/help" {
 				responseBody = darkspinChatHelp
+			}
+			if commandName == "/emote" {
+				responseBody, err = messagingEmote(ctx, messenger, chat.EmoteRequest{
+					Sender: chat.Participant{ID: user.Account.ID, Name: user.DisplayName},
+					GameID: user.CurrentGameID(), Name: commandRemainder(body),
+				})
+				if err != nil {
+					return nil, fmt.Errorf("commandEmote: %w", err)
+				}
 			}
 			if commandName == "/taunt" {
 				responseBody = "Unfortunately, /taunt was added in a newer Darkspore build than Darkspin supports, so taunt animations are unavailable."
@@ -340,13 +375,22 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 				responseBody = bugReportSyntax
 				description := commandRemainder(body)
 				if description != "" {
+					peerAddress, peerErr := netip.ParseAddr(sessionRemoteIP(request.Session))
+					if peerErr != nil {
+						return nil, fmt.Errorf("bugPeer: %w", peerErr)
+					}
 					reportName, reportErr := messenger.ReportBug(ctx, chat.BugCommand{
-						Sender:      chat.Participant{ID: user.Account.ID, Name: user.DisplayName},
-						GameID:      user.CurrentGameID(),
-						Description: description,
+						ServerAddress:      request.Session.conn.LocalAddr().String(),
+						ClientAddress:      request.Session.conn.RemoteAddr().String(),
+						IsRemoteConnection: !peerAddress.Unmap().IsLoopback(),
+						Sender:             chat.Participant{ID: user.Account.ID, Name: user.DisplayName},
+						GameID:             user.CurrentGameID(),
+						Description:        description,
 					})
 					if reportErr == nil {
 						responseBody = "Bug report queued as " + reportName
+					} else if errors.Is(reportErr, chat.ErrBugReportCooldown) {
+						responseBody = "Server bug-report capture is on a 2-minute cooldown. Only client-side diagnostics were captured; no new server report was queued."
 					} else if !errors.Is(reportErr, chat.ErrBugReportUnavailable) {
 						return nil, fmt.Errorf("commandBug: %w", reportErr)
 					}
@@ -597,9 +641,34 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 					if spawnErr == nil {
 						responseBody = fmt.Sprintf("Spawn queued: %s", nounName)
 					} else if errors.Is(spawnErr, chat.ErrNPCSpawnUnavailable) {
-						responseBody = "Spawn only works inside a campaign mission entered with /warp"
+						responseBody = "Spawn requires an active campaign or tutorial mission and a supported NPC noun"
 					} else {
 						return nil, fmt.Errorf("commandNPCSpawn: %w", spawnErr)
+					}
+				}
+			}
+			if commandName == "/scale" {
+				responseBody, err = previewNPCScaleCommand(ctx, messenger, user, body)
+				if err != nil {
+					return nil, fmt.Errorf("commandScale: %w", err)
+				}
+			}
+			if commandName == "/god" {
+				responseBody = "Syntax: /god (toggle invulnerability)"
+				if len(strings.Fields(body)) == 1 {
+					isEnabled, godErr := messenger.ToggleGodMode(ctx, chat.GodModeRequest{
+						Sender: chat.Participant{ID: user.Account.ID, Name: user.DisplayName},
+						GameID: user.CurrentGameID(),
+					})
+					if godErr == nil {
+						responseBody = "God mode disabled"
+						if isEnabled {
+							responseBody = "God mode enabled"
+						}
+					} else if errors.Is(godErr, chat.ErrGodModeUnavailable) {
+						responseBody = "God mode requires a living hero in an active mission"
+					} else {
+						return nil, fmt.Errorf("commandGod: %w", godErr)
 					}
 				}
 			}
@@ -898,14 +967,6 @@ func forwardPartyInvite(
 		Invitee: party.Member{ID: inviteeID},
 	})
 	if errors.Is(err, party.ErrAlreadyMember) {
-		existing, isFound := partyService.PartyForMember(inviteeID)
-		if isFound && existing.ID == partyID {
-			messageGroup, messageIDs := messagingAttributeIDs(request.Fields)
-			return &Response{Fields: []tdf.Field{
-				tdf.FieldNamed("MGID", tdf.IntegerValue(messageGroup)),
-				tdf.FieldNamed("MIDS", tdf.ListValue(tdf.Integer, messageIDs...)),
-			}}, nil
-		}
 		return &Response{ErrorCode: messagingErrorTargetNotFound}, nil
 	}
 	if errors.Is(err, party.ErrPartyMissing) || errors.Is(err, party.ErrFull) ||
@@ -1029,8 +1090,8 @@ const victorySyntax = "Syntax: /victory"
 
 const defeatSyntax = "Syntax: /defeat"
 
-const darkspinChatHelp = "Darkspin: /help | /taunt (availability info) | " + snapshotSyntax + " | /bug <what happened> | /b <what happened> | /ping | /hint | /loc | /stat | /follow [ally name] | /ai | /effect <exact-authored-name> [world] | " +
-	"/summon <rigid> <primary> <secondary> <suffix> | /level <1-100> | /warp [area] | /spawn <noun> | /drop create [weapon|hand|foot|offense|defense|utility] | /dna <amount> | " +
+const darkspinChatHelp = "Darkspin: /help | /emote (Mod only) | /taunt (availability info) | " + snapshotSyntax + " | /bug <what happened> | /b <what happened> | /ping | /hint | /loc | /stat | /follow [ally name] | /ai | /effect <exact-authored-name> [world] | " +
+	"/summon <rigid> <primary> <secondary> <suffix> | /level <1-100> | /warp [area] | /spawn <noun> | /scale <multiplier|reset> [radius] [noun filter] | /god (toggle invulnerability) | /drop create [weapon|hand|foot|offense|defense|utility] | /dna <amount> | " +
 	"/damage <amount> | /heal | /power [negative amount] | /mana [negative amount] | /event [1|security-next|2|boss-start|3|boss-complete] | /goto <x> <y> <z> | /kill | /reset | /recap | /victory | /defeat | /exit | " +
 	"Built-in: /tell <player> <message> | /party <message> | /game <message> | /lobby <message> | " +
 	"/invite <player> | /leave | /friend <player> | /unfriend <player> | /block <player> | " +
@@ -1175,6 +1236,22 @@ func (s *Server) NotifySystemChat(
 	if s == nil || userID == 0 || strings.TrimSpace(body) == "" {
 		return 0, errors.New("system chat notification invalid")
 	}
+	notification := systemChatNotification(userID, gameID, body)
+	sessions := s.sessionsForUser(userID)
+	var notifyErrors []error
+	deliveryCount := 0
+	for index, session := range sessions {
+		err := session.Notify(MessagingComponentID, 0x01, notification)
+		if err != nil {
+			notifyErrors = append(notifyErrors, fmt.Errorf("systemChat[%d]: %w", index, err))
+			continue
+		}
+		deliveryCount++
+	}
+	return deliveryCount, errors.Join(notifyErrors...)
+}
+
+func systemChatNotification(userID int64, gameID uint32, body string) []tdf.Field {
 	targetComponentID := uint64(UserSessionComponentID)
 	targetObjectType := userSessionObjectType
 	targetObjectID := uint64(userID)
@@ -1195,7 +1272,7 @@ func (s *Server) NotifySystemChat(
 		}}),
 		tdf.FieldNamed("TYPE", tdf.IntegerValue(messagingChatType)),
 	}
-	notification := []tdf.Field{
+	return []tdf.Field{
 		tdf.FieldNamed("FLAG", tdf.IntegerValue(0)),
 		tdf.FieldNamed("MGID", tdf.IntegerValue(nextSystemMessageID.Add(1))),
 		tdf.FieldNamed("NAME", tdf.StringValue("Darkspin")),
@@ -1205,18 +1282,6 @@ func (s *Server) NotifySystemChat(
 		}}),
 		tdf.FieldNamed("TIME", tdf.IntegerValue(uint64(time.Now().Unix()))),
 	}
-	sessions := s.sessionsForUser(userID)
-	var notifyErrors []error
-	deliveryCount := 0
-	for index, session := range sessions {
-		err := session.Notify(MessagingComponentID, 0x01, notification)
-		if err != nil {
-			notifyErrors = append(notifyErrors, fmt.Errorf("systemChat[%d]: %w", index, err))
-			continue
-		}
-		deliveryCount++
-	}
-	return deliveryCount, errors.Join(notifyErrors...)
 }
 
 func messagingPayloadWithBody(fields []tdf.Field, body string) []tdf.Field {
@@ -1322,8 +1387,12 @@ func playgroupsComponent(
 	partyService *party.Service, userManager socialUserManager,
 	presenceRegistry *PresenceRegistry, relay playgroupRelay,
 	matchmaking matchmakingDirectory,
+	networkRegistries ...*playgroupNetworkRegistry,
 ) Component {
 	networkRegistry := newPlaygroupNetworkRegistry(relay)
+	if len(networkRegistries) != 0 && networkRegistries[0] != nil {
+		networkRegistry = networkRegistries[0]
+	}
 	commands := make(map[uint16]Handler)
 	for command := uint16(1); command <= 0x0b; command++ {
 		commands[command] = func(context.Context, *Request) (*Response, error) { return &Response{}, nil }
@@ -1539,111 +1608,29 @@ func playgroupCreateHandler(
 				partySnapshot.ID, user.Account.ID, playgroup, publishedNetwork,
 			)
 		}
-		isGameHandoff := isExisting && fieldString(playgroup.Fields, "UKEY") != ""
 		rosterFields := playgroupJoinFields(
 			partySnapshot, user.Account.ID, networkRegistry, attributes,
 		)
-		if !isExisting {
-			err = request.QueueNotificationBeforeReply(
-				PlaygroupsComponentID, 0x33, rosterFields,
-			)
-			if err != nil {
-				return nil, fmt.Errorf("playgroupCreateRoster: %w", err)
-			}
-		} else if isGameHandoff {
-			err = request.QueueUserNotification(
-				user.Account.ID, PlaygroupsComponentID, 0x33,
-				rosterFields,
-			)
-			if err != nil {
-				return nil, fmt.Errorf("playgroupCreateRoster: %w", err)
-			}
+		// Build 103's successful Create RPC callback (E04480/E04170)
+		// allocates a fresh pending SDK playgroup even when server membership
+		// already exists. Its initial roster belongs only to this caller and
+		// must follow the reply that creates the pending native object.
+		err = request.QueueNotification(
+			PlaygroupsComponentID, 0x33, rosterFields,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("playgroupCreateRoster: %w", err)
 		}
 		logPlaygroupCreate(
 			request, playgroup, attributes, partySnapshot.ID, networkRegistry,
 		)
-		if !isExisting && fieldString(playgroup.Fields, "UKEY") == "" && len(attributes.Entries) == 0 {
-			err = recoverSinglePeerPartyInvite(
-				ctx, request, user, partySnapshot, userManager, partyService,
-			)
-			if err != nil {
-				return nil, fmt.Errorf("playgroupInviteRecovery: %w", err)
-			}
-		}
+
 		return &Response{Fields: []tdf.Field{
 			tdf.FieldNamed("INFO", playgroupInfoValueWithNetwork(
 				partySnapshot, networkRegistry, user.Account.ID, attributes,
 			)),
 		}}, nil
 	}
-}
-
-func recoverSinglePeerPartyInvite(
-	ctx context.Context, request *Request, inviter *sporenet.User, partySnapshot party.Snapshot,
-	userManager socialUserManager, partyService *party.Service,
-) error {
-	if request == nil || request.Session == nil || request.Session.server == nil {
-		return nil
-	}
-	inviteeID, isUnique := request.Session.server.uniqueOtherUserID(inviter.Account.ID)
-	if !isUnique {
-		return nil
-	}
-	invitee := userManager.UserByID(inviteeID)
-	if invitee == nil {
-		return nil
-	}
-	_, err := partyService.Invite(ctx, party.InviteRequest{
-		PartyID: partySnapshot.ID,
-		Inviter: party.Member{
-			ID: inviter.Account.ID, Name: inviter.DisplayName, AvatarID: inviter.Account.AvatarID,
-		},
-		Invitee: party.Member{
-			ID: invitee.Account.ID, Name: invitee.DisplayName, AvatarID: invitee.Account.AvatarID,
-		},
-	})
-	if errors.Is(err, party.ErrAlreadyMember) || errors.Is(err, party.ErrFull) ||
-		errors.Is(err, party.ErrClosed) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("inviteRecord: %w", err)
-	}
-	payload := []tdf.Field{
-		tdf.FieldNamed("ATTR", tdf.MapValue(tdf.Integer, tdf.String,
-			tdf.MapEntry{Key: tdf.IntegerValue(65282), Value: tdf.StringValue(invitee.DisplayName)},
-			tdf.MapEntry{
-				Key:   tdf.IntegerValue(720897),
-				Value: tdf.StringValue(strconv.FormatUint(uint64(partySnapshot.ID), 10)),
-			},
-		)),
-		tdf.FieldNamed("FLAG", tdf.IntegerValue(4)),
-		tdf.FieldNamed("TARG", tdf.Value{Type: tdf.ObjectID, ObjectID: [3]uint64{
-			uint64(UserSessionComponentID), userSessionObjectType, uint64(invitee.Account.ID),
-		}}),
-		tdf.FieldNamed("TYPE", tdf.IntegerValue(messagingPartyInviteType)),
-	}
-	notification := []tdf.Field{
-		tdf.FieldNamed("FLAG", tdf.IntegerValue(0)),
-		tdf.FieldNamed("MGID", tdf.IntegerValue(nextSystemMessageID.Add(1))),
-		tdf.FieldNamed("NAME", tdf.StringValue(inviter.DisplayName)),
-		tdf.FieldNamed("PYLD", tdf.StructValue(payload...)),
-		tdf.FieldNamed("SRCE", tdf.Value{Type: tdf.ObjectID, ObjectID: [3]uint64{
-			uint64(UserSessionComponentID), userSessionObjectType, uint64(inviter.Account.ID),
-		}}),
-		tdf.FieldNamed("TIME", tdf.IntegerValue(uint64(time.Now().Unix()))),
-	}
-	err = request.QueueUserNotification(invitee.Account.ID, MessagingComponentID, 0x01, notification)
-	if err != nil {
-		return fmt.Errorf("inviteNotify: %w", err)
-	}
-	if request.Session.server.logger != nil {
-		request.Session.server.logger.Printf(
-			"playgroup_invite_recovered inviter=%q invitee=%q party_id=%d reason=%q",
-			inviter.DisplayName, invitee.DisplayName, partySnapshot.ID, "single_online_peer",
-		)
-	}
-	return nil
 }
 
 func playgroupCreateInfo(fields []tdf.Field) tdf.Value {
@@ -1758,12 +1745,47 @@ func playgroupJoinHandler(
 		if err != nil {
 			return nil, fmt.Errorf("playgroupJoin: %w", err)
 		}
-		member := partySnapshot.Members[len(partySnapshot.Members)-1]
+		var member party.Member
+		for _, candidate := range partySnapshot.Members {
+			if candidate.ID == user.Account.ID {
+				member = candidate
+				break
+			}
+		}
+		if member.ID == 0 {
+			return nil, errors.New("playgroup joining member missing")
+		}
 		publishedNetwork, isPublishedNetworkFound := requestNetwork(request)
 		if !isPublishedNetworkFound {
 			publishedNetwork = tdf.Value{}
 		}
 		networkRegistry.recordMember(partyID, member.ID, request.Fields, publishedNetwork)
+		if member.ID == partySnapshot.LeaderID {
+			host, isHostFound := networkRegistry.member(partyID, member.ID)
+			if isHostFound {
+				networkRegistry.mu.Lock()
+				networkRegistry.hostsByParty[partyID] = host
+				networkRegistry.mu.Unlock()
+			}
+		}
+		for _, existing := range before.Members {
+			if existing.ID != member.ID {
+				continue
+			}
+			// Build 103 E04810 routes Join through the same E04480 pending
+			// object constructor as Create. Server membership may be unchanged,
+			// but this caller still needs its initial roster after the reply.
+			// Existing peers need no event: a full roster appends duplicates.
+			err = request.QueueNotification(PlaygroupsComponentID, 0x33,
+				playgroupJoinFields(partySnapshot, member.ID, networkRegistry))
+			if err != nil {
+				return nil, fmt.Errorf("playgroupRejoinRoster: %w", err)
+			}
+			return &Response{Fields: []tdf.Field{
+				tdf.FieldNamed("INFO", playgroupInfoValueWithNetwork(
+					partySnapshot, networkRegistry, member.ID)),
+			}}, nil
+		}
 		memberNetwork, isMemberNetworkFound := networkRegistry.member(partyID, member.ID)
 		if !isMemberNetworkFound {
 			memberNetwork = tdf.Value{}
@@ -1795,13 +1817,10 @@ func playgroupJoinHandler(
 					return nil, fmt.Errorf("playgroupExistingVisibility[%d]: %w", index, err)
 				}
 			}
-			err = request.QueueUserNotification(
-				existing.ID, PlaygroupsComponentID, 0x33,
-				playgroupJoinFields(partySnapshot, existing.ID, networkRegistry),
-			)
-			if err != nil {
-				return nil, fmt.Errorf("playgroupRosterNotify[%d]: %w", existing.JoinOrdinal, err)
-			}
+			// Existing SDK members need only the incremental member event.
+			// Build 103 E043F0 appends a NotifyJoin roster without clearing it;
+			// repeating the initial roster duplicates the owner's member and
+			// breaks the pointer comparison used by E02BD0's leader check.
 			err = request.QueueUserNotification(existing.ID, PlaygroupsComponentID, 0x34, []tdf.Field{
 				tdf.FieldNamed("MEMB", memberValue),
 				tdf.FieldNamed("PGID", tdf.IntegerValue(uint64(partyID))),
@@ -1810,8 +1829,8 @@ func playgroupJoinHandler(
 				return nil, fmt.Errorf("playgroupMemberNotify[%d]: %w", existing.JoinOrdinal, err)
 			}
 		}
-		err = request.QueueUserNotification(
-			user.Account.ID, PlaygroupsComponentID, 0x33,
+		err = request.QueueNotification(
+			PlaygroupsComponentID, 0x33,
 			playgroupJoinFields(partySnapshot, user.Account.ID, networkRegistry),
 		)
 		if err != nil {
@@ -1887,7 +1906,9 @@ func completePlaygroupLeave(
 		networkRegistry.removeParty(partyID)
 	}
 	removedFields := []tdf.Field{
-		tdf.FieldNamed("MLST", tdf.ListValue(tdf.Integer, tdf.IntegerValue(removedSlotID))),
+		// Build 103 E3C060 visits MLST as a scalar 64-bit user identity,
+		// matching the member identity consumed by C2E2C0, not a slot list.
+		tdf.FieldNamed("MLST", tdf.IntegerValue(uint64(userID))),
 		tdf.FieldNamed("PGID", tdf.IntegerValue(uint64(partyID))),
 		tdf.FieldNamed("REAS", tdf.IntegerValue(0)),
 	}

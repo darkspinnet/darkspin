@@ -121,7 +121,9 @@ func (d directory) lobbyMembers(id uint64) []chat.Participant {
 	if room == nil {
 		return nil
 	}
-	return participants(room.Users()...)
+	// Lobby is shared by every online player, including players in missions,
+	// PvP, and other ship rooms. The room ID still has to identify a real lobby.
+	return d.globalMembers()
 }
 
 func participants(users ...*sporenet.User) []chat.Participant {

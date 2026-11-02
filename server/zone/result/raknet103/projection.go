@@ -52,14 +52,14 @@ func VotingTransition() ([]byte, error) {
 }
 
 func Vote(snapshot zoneresult.Snapshot) ([]byte, error) {
-	packet, err := VoteWithCountdown(snapshot, float32(zoneresult.VoteDuration.Seconds()))
+	packet, err := VoteWithCountdown(snapshot, float32(zoneresult.VoteDuration.Seconds()), [4]raknet.ChainPlanetStat{})
 	if err != nil {
 		return nil, fmt.Errorf("voteCountdown: %w", err)
 	}
 	return packet, nil
 }
 
-func VoteWithCountdown(snapshot zoneresult.Snapshot, seconds float32) ([]byte, error) {
+func VoteWithCountdown(snapshot zoneresult.Snapshot, seconds float32, planetStats [4]raknet.ChainPlanetStat) ([]byte, error) {
 	if seconds <= 0 || math.IsNaN(float64(seconds)) || math.IsInf(float64(seconds), 0) {
 		return nil, errors.New("vote countdown invalid")
 	}
@@ -84,6 +84,16 @@ func VoteWithCountdown(snapshot zoneresult.Snapshot, seconds float32) ([]byte, e
 	// record+4 minus one. Narration therefore introduces the offered level;
 	// using the completed level repeats its introduction one mission late.
 	nextPresentation := zonepreview.CampaignPresentation(nextDifficulty, false)
+	if snapshot.IsReplayRandomized {
+		presentation.CurrentMovie = 0
+		presentation.CurrentVoice = 0
+	}
+	if snapshot.IsNextReplayRandomized {
+		// Story scenes belong to authored progression maps. A replay offer
+		// retains its sampled destination without introducing another planet.
+		presentation.NextMovie = 0
+		nextPresentation = zonepreview.Presentation{}
+	}
 	currentVoice := presentation.CurrentVoice
 	if currentVoice == 0 {
 		currentVoice = presentation.CurrentMovie
@@ -104,6 +114,7 @@ func VoteWithCountdown(snapshot zoneresult.Snapshot, seconds float32) ([]byte, e
 		},
 		FirstVoice:        nextPresentation.CurrentVoice,
 		ContinuationLimit: continuationLimit,
+		PlanetStats:       planetStats,
 		NextPresentation: [3]uint32{
 			// Build 103 sub_449090 reads record+0xd9 as its preferred
 			// interlevel camera; the following fields cannot start it.

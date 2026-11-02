@@ -5,7 +5,9 @@ import (
 	"strings"
 )
 
-// SelectArenaSquad replaces the provisional deck with an owned, unlocked PVP deck.
+// SelectArenaSquad authorizes the deck selected by build 103's Arena lobby.
+// sub_4039A0 and sub_401C70 use the same native roster vector as the campaign
+// selector, so an owned campaign deck is also a valid Arena selection.
 func (e *GameplayJoin) SelectArenaSquad(
 	binding GameplayBinding, squadID uint32,
 ) (GameplayBinding, error) {
@@ -21,8 +23,9 @@ func (e *GameplayJoin) SelectArenaSquad(
 		if squad.ID != squadID {
 			continue
 		}
-		if squad.IsLocked || squad.Slot == 0 || squad.Slot > view.Account.UnlockPVPDecks ||
-			!strings.EqualFold(squad.Category, "pvp") {
+		isKnownCategory := squad.Category == "" || strings.EqualFold(squad.Category, "pve") ||
+			strings.EqualFold(squad.Category, "pvp")
+		if view.Account.UnlockPVPDecks == 0 || squad.IsLockedFor(view.Account) || !isKnownCategory {
 			return GameplayBinding{}, ErrGameplaySquadInvalid
 		}
 		creatures := selectedGameplayCreatures(view, e.partCatalog.forGameplayMode(binding.Mode), squadID)
@@ -36,9 +39,28 @@ func (e *GameplayJoin) SelectArenaSquad(
 				}
 			}
 		}
+		// Squad selection rebuilds equipment-derived stats, but the appearance
+		// revisions were resolved independently when this player joined.
+		for index := range creatures {
+			for _, previous := range binding.ActivatedCreatures {
+				if creatures[index].ID == previous.ID {
+					creatures[index].AppearanceVersion = previous.AppearanceVersion
+					break
+				}
+			}
+		}
 		binding.SquadID = squadID
 		binding.Creatures = creatures
-		binding.ActivatedCreatures = activatedGameplayCreatures(view, e.partCatalog.forGameplayMode(binding.Mode))
+		activatedCreatures := activatedGameplayCreatures(view, e.partCatalog.forGameplayMode(binding.Mode))
+		for index := range activatedCreatures {
+			for _, previous := range binding.ActivatedCreatures {
+				if activatedCreatures[index].ID == previous.ID {
+					activatedCreatures[index].AppearanceVersion = previous.AppearanceVersion
+					break
+				}
+			}
+		}
+		binding.ActivatedCreatures = activatedCreatures
 		return binding, nil
 	}
 	return GameplayBinding{}, ErrGameplaySquadInvalid

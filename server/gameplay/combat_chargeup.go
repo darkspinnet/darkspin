@@ -108,6 +108,7 @@ func (r campaignNPCActionRuntime) produceZelemChargeupBuild(
 		r.releaseAction(sessionKey, generation, objectID)
 		return nil, nil
 	}
+	profile = zonenpc.ApplyAffixTiming(profile, enemy.Plan)
 	if peerSession.zone.NPCs().SilenceRemaining(objectID, r.now()) > 0 {
 		r.registry.mutex.Unlock()
 		return nil, nil

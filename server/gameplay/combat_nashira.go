@@ -4,11 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
+	zonedifficulty "github.com/darkspinnet/darkspin/server/zone/difficulty"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 	zoneprojection "github.com/darkspinnet/darkspin/server/zone/projection"
@@ -209,10 +209,9 @@ func (r campaignNPCActionRuntime) planCampaignNashiraFiend(
 		return nil, nil, nil
 	}
 	director := s.zone.DirectorDefinition()
-	npcProfile, isNPCProfileFound := director.NPCProfilesByNoun[strings.ToLower(nounName)]
-	if !isNPCProfileFound || !npcProfile.IsKnown || !npcProfile.IsClassKnown ||
-		npcProfile.HitPoint <= 0 {
-		return nil, nil, fmt.Errorf("fiendDefinition: unavailable %q", nounName)
+	npcProfile, profileErr := zonedifficulty.ProjectOwnedSummon(director, nounName)
+	if profileErr != nil {
+		return nil, nil, fmt.Errorf("fiendDefinition: %w", profileErr)
 	}
 	// ProjectDirector already applies run difficulty and party health scaling
 	// to the child profile, including its DifficultyDamageMultiplier. Retain
@@ -306,6 +305,11 @@ func (s *gameplayPeerSession) planCampaignNashiraSplit(
 	plan := campaignNashiraClonePlan(
 		nashira, targetPosition, objectID, cloneCount,
 	)
+	childProfile, profileErr := zonedifficulty.ProjectOwnedSummon(s.zone.DirectorDefinition(), plan.NounName)
+	if profileErr != nil {
+		return nil, nil, fmt.Errorf("cloneProfile: %w", profileErr)
+	}
+	plan.NPCProfile = childProfile
 	plans := []zonenpc.SpawnPlan{plan}
 	if s.campaignNashiraSplitObjectIDs == nil {
 		s.campaignNashiraSplitObjectIDs = make(map[uint32][]uint32)
@@ -352,6 +356,8 @@ func campaignNashiraClonePlan(
 	objectID uint32, cloneIndex int,
 ) zonenpc.SpawnPlan {
 	plan := nashira.Plan.Clone()
+	plan.NPCPassiveRank = 0
+	plan.InvincitronRage = zonenpc.InvincitronRage{}
 	plan.ObjectID = objectID
 	plan.OwnerObjectID = nashira.Plan.ObjectID
 	plan.Position = campaignNashiraClonePosition(
@@ -371,7 +377,7 @@ func campaignNashiraClonePlan(
 	plan.BossIdentity = zonenpc.BossIdentity{}
 	// ShadowBossDuplicate copies remaining health; SetIsDuplicate supplies
 	// the physical/energy vulnerability in the NPC damage path instead.
-	plan.NPCProfile.HitPoint = nashira.HitPoint
+	plan.InitialHitPoint = nashira.HitPoint
 	// Resolve noun-backed profiles before overriding them; otherwise lookup
 	// discards the cleared introduction and reloads the original boss profile.
 	profile, isProfileFound := zonenpc.ActionProfileForPlan(nashira.Plan)

@@ -37,6 +37,7 @@ type heroAuraAreaRun struct {
 	npc               *zonenpc.Session
 	modifierPool      *modifierPool
 	targets           map[uint32]heroAuraAreaTarget
+	sleepAttempts     map[uint32]struct{}
 	projectiles       map[uint32]heroAuraAreaProjectile
 	statusKind        sim.AbilityStatusKind
 	objectID          uint32
@@ -49,6 +50,8 @@ type heroAuraAreaRun struct {
 	expiresAt         time.Time
 	runtime           campaignAbilityCommandRuntime
 	originalZone      *zone.Zone
+	arenaGameID       uint32
+	arenaStatuses     map[uint32]*arenaHitStatus
 	stopContext       func() bool
 }
 
@@ -143,6 +146,10 @@ func (r campaignDamageRuntime) breakSleepingCloudOnDamage(
 }
 
 func (e *heroAuraAreaRun) clearStatus(objectID uint32, expiresAt time.Time) {
+	if e.arenaGameID != 0 {
+		e.clearArenaSphereSlowLocked(objectID)
+		return
+	}
 	switch e.statusKind {
 	case sim.AbilityStatusKindSilence:
 		e.npc.ClearSilence(objectID, expiresAt)
@@ -186,7 +193,8 @@ func (e heroAuraAreaSchedule) isCurrent(
 	isActive := !e.run.isCleaned && !e.run.isStopping
 	e.run.mutex.Unlock()
 	return isActive && isFound && peerSession.generation == e.generation &&
-		peerSession.heroAuraAreas[e.abilityID] == e.run
+		peerSession.heroAuraAreas[e.abilityID] == e.run &&
+		(peerSession.binding.Mode != game.ModeArena || peerSession.isArenaCombatActive)
 }
 
 func (e heroAuraAreaSchedule) tick(
@@ -202,13 +210,13 @@ func (e heroAuraAreaSchedule) tick(
 	// encoding/publication failure. Its paid activation is no longer rollbackable.
 	e.run.cast.activateLocked(e.run.cast.revision)
 	if e.run.isTimeBubble && index == 0 {
-		spawnPackets, spawnErr := marshalAuraAreaSpawn(e.run.objectID, e.sourceObjectID, e.center, e.definition)
+		spawnPackets, spawnErr := marshalAuraAreaSpawn(e.run.objectID, e.sourceObjectID, e.center, e.definition, abilityActorTeam(peerSession))
 		if spawnErr != nil {
 			e.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("bubbleSpawn: %w", spawnErr)
 		}
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
-		e.runtime.registry.queueTimeBubblePresentationLocked(e.run.originalZone, spawnPackets)
+		e.run.queuePresentationLocked(spawnPackets, false)
 		peerSession = e.runtime.registry.sessions[e.sessionKey]
 		e.run.mutex.Lock()
 		e.run.isObjectPublished = true
@@ -216,7 +224,7 @@ func (e heroAuraAreaSchedule) tick(
 	}
 	if index == 0 && e.definition.SpawnNoun != "" && !e.run.isTimeBubble {
 		spawnPackets, marshalErr := marshalAuraAreaSpawn(
-			e.run.objectID, e.sourceObjectID, e.center, e.definition,
+			e.run.objectID, e.sourceObjectID, e.center, e.definition, abilityActorTeam(peerSession),
 		)
 		if marshalErr != nil {
 			e.runtime.registry.mutex.Unlock()
@@ -240,6 +248,12 @@ func (e heroAuraAreaSchedule) tick(
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("auraAreaReconcile: %w", err)
+	}
+	if peerSession.binding.Mode == game.ModeArena && e.definition.Name == "Psistorm" {
+		return e.tickArenaPsistormLocked(peerSession, deadline, index, isFinal, statusPackets)
+	}
+	if peerSession.binding.Mode == game.ModeArena && e.definition.Name == "SleepingCloud" {
+		return e.tickArenaSleepingCloudLocked(isFinal, statusPackets)
 	}
 	results := make([]zoneability.AreaResult, 0)
 	transitions := make([]campaignDamageTransition, 0)
@@ -323,6 +337,15 @@ func (e heroAuraAreaSchedule) reconcile(
 	elapsed := max(time.Duration(0), deadline-e.definition.HitDelay)
 	remaining := max(heroAuraAreaScanInterval, e.definition.Duration-elapsed)
 	expiresAt := now.Add(remaining)
+	if e.run.arenaGameID != 0 {
+		if e.run.isTimeBubble {
+			return nil, e.reconcileArenaSphereLocked(peerSession, deadline, expiresAt)
+		}
+		if e.definition.Name == "Psistorm" || e.definition.Name == "SleepingCloud" {
+			return nil, e.reconcileArenaControlAuraLocked(peerSession, deadline, expiresAt)
+		}
+		return nil, errors.New("Arena aura runtime unavailable")
+	}
 	live := make(map[uint32]zonenpc.Snapshot)
 	for _, target := range peerSession.zone.NPCs().LiveSnapshots() {
 		if target.Faction != zonenpc.FactionNonPlayerAligned ||
@@ -355,6 +378,11 @@ func (e heroAuraAreaSchedule) reconcile(
 		if _, isTracked := e.run.targets[objectID]; isTracked {
 			continue
 		}
+		if e.run.isSleepingCloud {
+			if _, isAttempted := e.run.sleepAttempts[objectID]; isAttempted {
+				continue
+			}
+		}
 		instanceID, err := e.run.modifierPool.Allocate()
 		if err != nil {
 			return nil, fmt.Errorf("auraEntryAllocate: %w", err)
@@ -368,6 +396,14 @@ func (e heroAuraAreaSchedule) reconcile(
 		if err != nil {
 			e.run.releaseAuraInstance(instanceID)
 			return nil, fmt.Errorf("auraEntryApply: %w", err)
+		}
+		if e.run.isSleepingCloud {
+			// The Lua cloud retains idModifiers[target] after damage ends the
+			// sleep. A membership scan must not turn that into another entry.
+			if e.run.sleepAttempts == nil {
+				e.run.sleepAttempts = make(map[uint32]struct{})
+			}
+			e.run.sleepAttempts[objectID] = struct{}{}
 		}
 		if e.statusRemaining(peerSession.zone.NPCs(), objectID, now) == 0 {
 			e.run.releaseAuraInstance(instanceID)
@@ -460,7 +496,7 @@ func (e heroAuraAreaSchedule) fail(scheduleErr error) {
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 	}
 	if len(refundPacket) != 0 {
-		e.runtime.registry.queueChannelPresentationLocked(e.run.originalZone, [][]byte{refundPacket})
+		e.run.queuePresentationLocked([][]byte{refundPacket}, false)
 		peerSession = e.runtime.registry.sessions[e.sessionKey]
 	}
 	if refundErr != nil {
@@ -499,7 +535,7 @@ func marshalAuraAreaDeletes(targets []heroAuraAreaTargetDelete) ([][]byte, error
 
 func marshalAuraAreaSpawn(
 	objectID uint32, ownerObjectID uint32, position raknet.Vector3,
-	definition sim.AbilityDefinition,
+	definition sim.AbilityDefinition, team uint8,
 ) ([][]byte, error) {
 	if objectID == 0 || ownerObjectID == 0 || definition.SpawnNoun == "" ||
 		definition.Radius <= 0 {
@@ -509,7 +545,7 @@ func marshalAuraAreaSpawn(
 		raknet.ObjectCreateMessage{
 			ObjectID: objectID, Noun: util.HashID(definition.SpawnNoun),
 			PositionX: position.X, PositionY: position.Y, PositionZ: position.Z,
-			Scale: definition.Radius, Team: 1, OwnerID: ownerObjectID,
+			Scale: definition.Radius, Team: team, OwnerID: ownerObjectID,
 			IsCollisionEnabled: false,
 		},
 	}
@@ -576,9 +612,15 @@ func (r campaignAbilityCommandRuntime) handleHeroAuraArea(
 		return nil, fmt.Errorf("auraAreaTiming: %w", err)
 	}
 	if projected.IsAreaDurationScaled {
-		projected.NumberOfTicks, err = game.ResolveAreaDurationCount(
-			projected.NumberOfTicks, creature.AreaDurationIncrease,
-		)
+		if projected.Name == "Psistorm" {
+			projected.NumberOfTicks, err = psistormTickCount(
+				projected.NumberOfTicks, creature.AreaDurationIncrease,
+			)
+		} else {
+			projected.NumberOfTicks, err = game.ResolveAreaDurationCount(
+				projected.NumberOfTicks, creature.AreaDurationIncrease,
+			)
+		}
 		if err != nil {
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("auraAreaDuration: %w", err)
@@ -601,7 +643,11 @@ func (r campaignAbilityCommandRuntime) handleHeroAuraArea(
 	remainingManaPoint := peerSession.deployedManaPoint() - manaCost
 	objectID := uint32(0)
 	if projected.SpawnNoun != "" {
-		objectID, err = peerSession.reserveCampaignObjectID()
+		if peerSession.binding.Mode == game.ModeArena {
+			objectID, err = r.registry.reserveAbilityObjectIDsLocked(&peerSession, 1, 1000)
+		} else {
+			objectID, err = peerSession.reserveCampaignObjectID()
+		}
 		if err != nil {
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("auraAreaObjectID: %w", err)
@@ -655,6 +701,13 @@ func (r campaignAbilityCommandRuntime) handleHeroAuraArea(
 	err = peerSession.stopPlayerMovement(abilityStartTime)
 	if err == nil && isSleepingCloud {
 		movementPackets, err = marshalZonePlayerStop(req.command.Common.ObjectID, peerSession.playerPosition)
+		if err == nil {
+			var holdPacket []byte
+			holdPacket, err = marshalEnemyImmobilizedAttribute(req.command.Common.ObjectID, 1)
+			if err == nil {
+				movementPackets = append(movementPackets, holdPacket)
+			}
+		}
 	}
 	if err == nil {
 		err = cast.debitLocked(&peerSession, manaCost)
@@ -663,7 +716,7 @@ func (r campaignAbilityCommandRuntime) handleHeroAuraArea(
 		refundPacket, refundErr := cast.failLocked(&peerSession, true, cast.revision)
 		r.registry.sessions[sessionKey] = peerSession
 		if len(refundPacket) != 0 {
-			r.registry.queueChannelPresentationLocked(peerSession.zone, [][]byte{refundPacket})
+			r.registry.queueAuraPresentationLocked(peerSession.zone, arenaAbilityGameID(peerSession), [][]byte{refundPacket}, false)
 		}
 		if refundErr != nil {
 			r.logger.Printf("RakNet hero aura admission refund failed: %v", refundErr)
@@ -676,14 +729,20 @@ func (r campaignAbilityCommandRuntime) handleHeroAuraArea(
 		isSleepingCloud: isSleepingCloud, expiresAt: abilityStartTime.Add(projected.ReleaseDelay),
 		runtime: r, originalZone: peerSession.zone,
 		isTimeBubble: definition.Name == timeBubbleAbilityName,
-		npc:          peerSession.zone.NPCs(), modifierPool: r.modifierPool,
+		arenaGameID:  arenaAbilityGameID(peerSession), modifierPool: r.modifierPool,
 		targets: make(map[uint32]heroAuraAreaTarget), statusKind: projected.StatusKind,
 		projectiles: make(map[uint32]heroAuraAreaProjectile), objectID: objectID,
+	}
+	if peerSession.zone != nil {
+		run.npc = peerSession.zone.NPCs()
 	}
 	if peerSession.heroAuraAreas == nil {
 		peerSession.heroAuraAreas = make(map[uint32]*heroAuraAreaRun)
 	}
 	peerSession.heroAuraAreas[activeAbilityID] = run
+	if isSleepingCloud {
+		peerSession.enemyControlPresentedObjectID = req.command.Common.ObjectID
+	}
 	generation := peerSession.generation
 	binding := peerSession.binding
 	r.registry.sessions[sessionKey] = peerSession

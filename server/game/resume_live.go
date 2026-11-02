@@ -22,6 +22,7 @@ func (e *Manager) FindLiveResume(userID int64) (ResumeCheckpoint, bool, error) {
 			GameID: instance.ID, RunSeed: instance.RunSeed, Level: instance.Info.Level,
 			Difficulty: difficulty, Slot: slot,
 			ExpectedPlayerCount: instance.Info.ExpectedPlayerCount,
+			IsReplayRandomized:  instance.Info.IsReplayRandomized,
 		}
 		instance.mu.RUnlock()
 		if err != nil {

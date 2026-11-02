@@ -28,10 +28,16 @@ type AreaPlan struct {
 }
 
 type AreaResult struct {
-	Snapshot   zonenpc.Snapshot
-	Damage     zonenpc.DamageResult
-	IsCritical bool
-	Definition sim.AbilityDefinition
+	// ActivationID follows the initiator attribute snapshot, independently of
+	// the definition executing this particular damage callback.
+	ActivationID           uint64
+	ActivationDefinitionID uint32
+	SourceRank             uint32
+	SourceCreature         game.GameplayCreature
+	Snapshot               zonenpc.Snapshot
+	Damage                 zonenpc.DamageResult
+	IsCritical             bool
+	Definition             sim.AbilityDefinition
 }
 
 func projectAreaRadius(
@@ -49,7 +55,7 @@ func projectAreaRadius(
 }
 
 func PlanShockwave(
-	enemies *zonenpc.Session, sourceObjectID uint32, targetObjectID uint32,
+	enemies TargetReader, sourceObjectID uint32, targetObjectID uint32,
 	sourcePosition game.Vec3, targetPosition game.Vec3, creature game.GameplayCreature,
 	definition sim.AbilityDefinition,
 ) (AreaPlan, error) {
@@ -128,7 +134,7 @@ func PlanShockwave(
 }
 
 func PlanZetawattBeam(
-	enemies *zonenpc.Session, sourceObjectID uint32, sourcePosition game.Vec3,
+	enemies TargetReader, sourceObjectID uint32, targetObjectID uint32, sourcePosition game.Vec3,
 	targetPosition game.Vec3, creature game.GameplayCreature, definition sim.AbilityDefinition,
 ) (AreaPlan, error) {
 	if enemies == nil || sourceObjectID == 0 || creature.Noun == 0 ||
@@ -137,6 +143,14 @@ func PlanZetawattBeam(
 		!isFinitePosition(sourcePosition) ||
 		!isFinitePosition(targetPosition) {
 		return AreaPlan{}, errors.New("invalid Zetawatt Beam ability")
+	}
+	// Build 103 resolves a still-hostile selected object at hit time before
+	// falling back to the submitted ground position.
+	if targetObjectID != 0 {
+		target, isFound := enemies.NPC(targetObjectID)
+		if isFound && !target.IsDefeated && target.HitPoint > 0 && target.Faction == zonenpc.FactionNonPlayerAligned {
+			targetPosition = target.Plan.Position
+		}
 	}
 	directionX := targetPosition.X - sourcePosition.X
 	directionY := targetPosition.Y - sourcePosition.Y
@@ -208,7 +222,7 @@ func PlanZetawattBeam(
 }
 
 func PlanArea(
-	enemies *zonenpc.Session, sourceObjectID uint32, sourcePosition game.Vec3,
+	enemies TargetReader, sourceObjectID uint32, sourcePosition game.Vec3,
 	creature game.GameplayCreature, definition sim.AbilityDefinition,
 ) (AreaPlan, error) {
 	if enemies == nil || sourceObjectID == 0 || creature.Noun == 0 {
@@ -252,9 +266,28 @@ func PlanArea(
 }
 
 func PlanCursorArea(
-	enemies *zonenpc.Session, sourceObjectID uint32, targetObjectID uint32,
+	enemies TargetReader, sourceObjectID uint32, targetObjectID uint32,
 	sourcePosition game.Vec3, center game.Vec3, creature game.GameplayCreature,
 	definition sim.AbilityDefinition,
+) (AreaPlan, error) {
+	admissionRange := game.AbilityAdmissionRange(
+		definition.Range, creature.RangeIncrease, definition.DescriptorMask,
+		definition.IsDescriptorFound,
+	)
+	plan, err := PlanCursorAreaWithAdmission(
+		enemies, sourceObjectID, targetObjectID, sourcePosition, center,
+		creature, definition, admissionRange,
+	)
+	if err != nil {
+		return AreaPlan{}, fmt.Errorf("cursorAdmission: %w", err)
+	}
+	return plan, nil
+}
+
+func PlanCursorAreaWithAdmission(
+	enemies TargetReader, sourceObjectID uint32, targetObjectID uint32,
+	sourcePosition game.Vec3, center game.Vec3, creature game.GameplayCreature,
+	definition sim.AbilityDefinition, admissionRange float32,
 ) (AreaPlan, error) {
 	if enemies == nil || sourceObjectID == 0 || creature.Noun == 0 {
 		return AreaPlan{}, errors.New("invalid cursor area identity")
@@ -270,12 +303,12 @@ func PlanCursorArea(
 	if !isFinitePosition(sourcePosition) || !isFinitePosition(center) {
 		return AreaPlan{}, errors.New("invalid cursor area position")
 	}
-	admissionRange := game.AbilityAdmissionRange(
-		definition.Range, creature.RangeIncrease, definition.DescriptorMask,
-		definition.IsDescriptorFound,
-	)
-	if positionDistance(sourcePosition, center) > admissionRange {
-		return AreaPlan{}, errors.New("cursor area center out of range")
+	if invalidNumber(admissionRange) || admissionRange <= 0 {
+		return AreaPlan{}, errors.New("invalid cursor area admission range")
+	}
+	admissionDistance := positionDistance(sourcePosition, center)
+	if admissionDistance > admissionRange {
+		return AreaPlan{}, TargetRangeError{Distance: admissionDistance, Maximum: admissionRange}
 	}
 	projected, err := ProjectTiming(creature, definition)
 	if err != nil {
@@ -319,7 +352,7 @@ func PlanCursorArea(
 }
 
 func PlanCone(
-	enemies *zonenpc.Session, sourceObjectID uint32, sourcePosition game.Vec3,
+	enemies TargetReader, sourceObjectID uint32, sourcePosition game.Vec3,
 	targetPosition game.Vec3, creature game.GameplayCreature,
 	definition sim.AbilityDefinition,
 ) (AreaPlan, error) {
@@ -392,7 +425,8 @@ func PlanCone(
 			targetScale = minimumScale
 		}
 		if projected.LargeTargetDamageMultiplier > 0 &&
-			(enemy.Plan.IsCaptain || enemy.Plan.IsElite || enemy.Plan.IsBoss) {
+			(enemy.Plan.IsEliteModifierApplied() ||
+				(enemy.Plan.NPCProfile.IsClassKnown && enemy.Plan.NPCProfile.NPCType != 0)) {
 			targetScale *= projected.LargeTargetDamageMultiplier
 		}
 		damageScale[enemy.Plan.ObjectID] = targetScale
@@ -406,7 +440,7 @@ func PlanCone(
 }
 
 func cursorAreaTargets(
-	enemies *zonenpc.Session, sourceObjectID uint32, targetObjectID uint32,
+	enemies TargetReader, sourceObjectID uint32, targetObjectID uint32,
 	center game.Vec3, radius float32,
 ) []zonenpc.Snapshot {
 	target := make([]zonenpc.Snapshot, 0)
@@ -430,7 +464,7 @@ func cursorAreaTargets(
 }
 
 func PlanTargetedAOEPulse(
-	enemies *zonenpc.Session, sourceObjectID uint32, center game.Vec3,
+	enemies TargetReader, sourceObjectID uint32, center game.Vec3,
 	creature game.GameplayCreature, definition sim.AbilityDefinition,
 	minimum float32, maximum float32, coefficient float32,
 ) (AreaPlan, error) {
@@ -455,7 +489,7 @@ func PlanTargetedAOEPulse(
 }
 
 func PlanPointBlankBasic(
-	enemies *zonenpc.Session, sourceObjectID uint32,
+	enemies TargetReader, sourceObjectID uint32,
 	sourcePosition game.Vec3, creature game.GameplayCreature, definition sim.AbilityDefinition,
 ) (AreaPlan, error) {
 	if enemies == nil || sourceObjectID == 0 || creature.Noun == 0 {
@@ -477,7 +511,7 @@ func PlanPointBlankBasic(
 }
 
 func ResolvePointBlankBasicHit(
-	enemies *zonenpc.Session, sourceObjectID uint32, sourcePosition game.Vec3,
+	enemies TargetReader, sourceObjectID uint32, sourcePosition game.Vec3,
 	creature game.GameplayCreature, definition sim.AbilityDefinition,
 ) (AreaPlan, error) {
 	if enemies == nil || sourceObjectID == 0 || creature.Noun == 0 ||
@@ -526,7 +560,7 @@ func ResolvePointBlankBasicHit(
 }
 
 func CommitArea(
-	random *sim.SimulatorRandom, enemies *zonenpc.Session, plan AreaPlan,
+	random *sim.SimulatorRandom, enemies DamageTargets, plan AreaPlan,
 	creature game.GameplayCreature, difficulty uint32, tuning sim.CriticalTuning,
 ) ([]AreaResult, error) {
 	if random == nil || enemies == nil || plan.SourceObjectID == 0 || plan.AbilityID == 0 {
@@ -594,7 +628,7 @@ func CommitArea(
 }
 
 func PlanTrapArea(
-	enemies *zonenpc.Session, sourceObjectID uint32, center game.Vec3,
+	enemies TargetReader, sourceObjectID uint32, center game.Vec3,
 	creature game.GameplayCreature, definition sim.AbilityDefinition,
 ) (AreaPlan, error) {
 	if enemies == nil || sourceObjectID == 0 || creature.Noun == 0 ||
@@ -623,7 +657,7 @@ func PlanTrapArea(
 }
 
 func PlanFixedArea(
-	enemies *zonenpc.Session, sourceObjectID uint32, center game.Vec3,
+	enemies TargetReader, sourceObjectID uint32, center game.Vec3,
 	creature game.GameplayCreature, definition sim.AbilityDefinition,
 ) (AreaPlan, error) {
 	if enemies == nil || sourceObjectID == 0 || creature.Noun == 0 ||

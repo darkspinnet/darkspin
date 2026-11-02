@@ -29,6 +29,15 @@ func (w *traceResponseWriter) WriteHeader(status int) {
 }
 
 func (w *traceResponseWriter) Write(contents []byte) (int, error) {
+	// Keep the response type explicit on the underlying writer at the body
+	// sink as well as WriteHeader. Preserve declared formats; only untyped
+	// responses receive the non-HTML fallback.
+	contentType := w.ResponseWriter.Header().Get("Content-Type")
+	if contentType == "" {
+		contentType = "text/plain; charset=utf-8"
+	}
+	w.ResponseWriter.Header().Set("Content-Type", contentType)
+	w.ResponseWriter.Header().Set("X-Content-Type-Options", "nosniff")
 	if w.status == 0 {
 		w.WriteHeader(http.StatusOK)
 	}

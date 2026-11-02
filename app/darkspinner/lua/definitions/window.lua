@@ -1,0 +1,41 @@
+---@meta
+
+---@class WindowSnapshot
+---@field is_available boolean
+---@field process_id integer
+---@field thread_id integer Native window owner thread, not the pipe reader thread.
+---@field window_id string Opaque diagnostic identity, never a Lua command target.
+---@field width integer Client-coordinate width.
+---@field height integer Client-coordinate height.
+---@field is_enabled boolean
+---@field is_minimized boolean
+
+---Processed clicks or metadata requests prove no menu/world outcome. Clicks use
+---client coordinates from InspectWindow(), without moving the desktop cursor or
+---activating a window. After timeout/disconnect, inspect the possibly unknown
+---outcome before issuing another action.
+---@class WindowCommandResult
+---@field processed_character_count integer|nil Number of original window-handler character calls completed, including on partial failure. Does not prove text acceptance or delivery.
+---@field active_cast NativeActiveCast|nil Native active admission/approach/queue receipt, not server impact or cast completion.
+---@field hero_selection NativeHeroSelection|nil Native selection query and local input-edge processing, not hero switch completion.
+---@field client_id string
+---@field profile_name string
+---@field instance_id string
+---@field pid integer
+---@field status string
+---@field is_processed boolean Processing completed; gameplay success is not implied.
+---@field is_gameplay_complete boolean Always false for the window adapter.
+---@field thread_id integer
+---@field completed_tick_ms integer Client monotonic uptime, not UTC.
+---@field window WindowSnapshot|nil
+---@field map_state MissionSelection|nil Present for Mission:Selection/WaitSelection.
+---@field screen_state NativeScreenState|nil Fresh overlay selection; independent of ship rooms and browser content readiness.
+---@field deployment_state MissionDeployment|nil Present for native deployment observations and Continue receipts.
+---@field gameplay_state NativeGameplaySnapshot|nil Fresh native frame observation; handles are not server object IDs.
+---@field projection WorldProjection|nil Native camera projection of the requested world point.
+---@field gameplay_click WorldClickReceipt|nil Native press/release evidence; unknown outcomes must not be replayed.
+---@field is_invocation_attempted boolean|nil Nil when outcome is unknown or operation is not an authored UI invocation.
+---@field is_invocation_accepted boolean|nil True means the authored invocation returned success, not that the game completed the action.
+
+---Compatibility type name; prefer WindowCommandResult.
+---@alias WindowReceipt WindowCommandResult

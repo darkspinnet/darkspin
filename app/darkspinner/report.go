@@ -21,14 +21,18 @@ import (
 const maximumReportSlugSize = 60
 
 type reportManifest struct {
-	Version       string             `json:"version"`
-	CreatedAt     string             `json:"created_at"`
-	Platform      string             `json:"platform"`
-	Title         string             `json:"title"`
-	State         reportState        `json:"state"`
-	Gameplay      chat.BugContext    `json:"gameplay"`
-	GameplayError string             `json:"gameplay_error,omitempty"`
-	Files         []reportFileRecord `json:"files"`
+	ClientResults     []clientSessionResult `json:"client_results,omitempty"`
+	Version           string                `json:"version"`
+	CreatedAt         string                `json:"created_at"`
+	Platform          string                `json:"platform"`
+	Title             string                `json:"title"`
+	Client            reportClient          `json:"client"`
+	ClientError       string                `json:"client_error,omitempty"`
+	State             reportState           `json:"state"`
+	Gameplay          chat.BugContext       `json:"gameplay"`
+	GameplayError     string                `json:"gameplay_error,omitempty"`
+	Files             []reportFileRecord    `json:"files"`
+	NativeCrashErrors []string              `json:"native_crash_errors,omitempty"`
 }
 
 type reportState struct {
@@ -74,6 +78,16 @@ type ReportResult struct {
 // excluded because they are separate diagnostic reports. It never uploads the
 // bundle or opens another application by itself.
 func (a *App) SendReport(title string) (ReportResult, error) {
+	result, err := a.sendSessionReport(title, nil)
+	if err != nil {
+		return ReportResult{}, fmt.Errorf("reportSend: %w", err)
+	}
+	return result, nil
+}
+
+func (a *App) sendSessionReport(title string, session *launcherReportSession) (ReportResult, error) {
+	a.reportMu.Lock()
+	defer a.reportMu.Unlock()
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return ReportResult{}, errors.New("report title is empty")
@@ -82,7 +96,7 @@ func (a *App) SendReport(title string) (ReportResult, error) {
 	if err != nil {
 		return ReportResult{}, fmt.Errorf("reportPaths: %w", err)
 	}
-	reportPath, records, err := a.createReportArchive(logPath, reportDirectory, title)
+	reportPath, records, err := a.createSessionReportArchive(logPath, reportDirectory, title, session)
 	if err != nil {
 		return ReportResult{}, fmt.Errorf("reportCreate: %w", err)
 	}
@@ -94,7 +108,7 @@ func (a *App) SendReport(title string) (ReportResult, error) {
 	for _, path := range paths {
 		names = append(names, filepath.Base(path))
 	}
-	a.log(fmt.Sprintf("Report ready: %s (%d ZIPs, %d complete log files)", reportDirectory, len(names), len(records)))
+	a.log(fmt.Sprintf("Report ready: %s (%d ZIPs, %d complete diagnostic files)", reportDirectory, len(names), len(records)))
 	return ReportResult{
 		Name: names[0], Names: names, Directory: reportDirectory,
 		FileCount: len(records),
@@ -135,12 +149,22 @@ func (a *App) OpenReportFolder() error {
 func (a *App) createReportArchive(
 	logPath string, reportDirectory string, title string,
 ) (string, []reportFileRecord, error) {
+	path, records, err := a.createSessionReportArchive(logPath, reportDirectory, title, nil)
+	if err != nil {
+		return "", nil, fmt.Errorf("reportArchive: %w", err)
+	}
+	return path, records, nil
+}
+
+func (a *App) createSessionReportArchive(
+	logPath string, reportDirectory string, title string, session *launcherReportSession,
+) (string, []reportFileRecord, error) {
 	err := os.MkdirAll(reportDirectory, 0o755)
 	if err != nil {
 		return "", nil, fmt.Errorf("reportMkdir: %w", err)
 	}
 	createdAt := time.Now().UTC()
-	manifest := a.reportManifest(createdAt, title, nil)
+	manifest := a.sessionReportManifest(createdAt, title, nil, session)
 	level := strings.TrimSpace(manifest.Gameplay.Mission.Label)
 	if level == "" {
 		level = strings.TrimSpace(manifest.Gameplay.LocationLabel)
@@ -152,6 +176,9 @@ func (a *App) createReportArchive(
 		"%s-%s-%s-%s.zip", reportSlug(title), reportSlug(level), Version,
 		createdAt.Format("20060102T150405.000000000Z"),
 	)
+	if manifest.Client.IsModded {
+		reportName = "mod-" + reportName
+	}
 	reportPath := filepath.Join(reportDirectory, reportName)
 	w, err := os.CreateTemp(reportDirectory, ".darkspin-report-*.zip")
 	if err != nil {
@@ -167,13 +194,24 @@ func (a *App) createReportArchive(
 
 	archive := zip.NewWriter(w)
 	records := make([]reportFileRecord, 0, 5)
-	err = addReportText(archive, title)
+	reportTitle := title
+	if manifest.Client.IsModded {
+		reportTitle = "[MODDED GAME]\nMods: " + strings.Join(manifest.Client.ModNames, ", ") + "\n" + title
+	}
+	if manifest.Client.ServerAddress != "" {
+		reportTitle += fmt.Sprintf("\nServer address: %s\nRemote connection: %t",
+			manifest.Client.ServerAddress, manifest.Client.IsRemoteConnection)
+	}
+	err = addReportText(archive, reportTitle, manifest.Gameplay)
 	if err != nil {
 		_ = archive.Close()
 		_ = w.Close()
 		return "", nil, fmt.Errorf("reportText: %w", err)
 	}
 	sources, err := reportSources(logPath)
+	if err == nil && manifest.Client.IsModded {
+		sources, err = modReportSources(logPath, sources)
+	}
 	if err != nil {
 		_ = archive.Close()
 		_ = w.Close()
@@ -188,6 +226,9 @@ func (a *App) createReportArchive(
 		}
 		records = append(records, record)
 	}
+	nativeRecords, nativeFailures := a.addNativeCrashReports(archive, session)
+	records = append(records, nativeRecords...)
+	manifest.NativeCrashErrors = nativeFailures
 	manifest.Files = records
 	err = addReportManifest(archive, manifest)
 	if err != nil {
@@ -216,11 +257,40 @@ func (a *App) reportManifest(
 	createdAt time.Time, title string,
 	records []reportFileRecord,
 ) reportManifest {
+	return a.sessionReportManifest(createdAt, title, records, nil)
+}
+
+func (a *App) sessionReportManifest(
+	createdAt time.Time, title string, records []reportFileRecord,
+	reportSession *launcherReportSession,
+) reportManifest {
+	var session launcherReportSession
+	var sessionErr error
+	if reportSession != nil {
+		session = *reportSession
+	} else {
+		session, sessionErr = a.readReportSession()
+	}
+	clientError := ""
+	if sessionErr != nil {
+		clientError = sessionErr.Error()
+	}
 	a.mu.Lock()
 	status := a.status
 	gameServer := a.serviceSet.gameServer
 	ctx := a.lifecycleCtx
 	a.mu.Unlock()
+	if reportSession != nil {
+		status.Identity = session.client.Profile
+	}
+	if session.client.IsModded {
+		gameServer = session.server
+		status.Identity = session.client.Profile
+	}
+	if session.client.IsRemoteConnection {
+		gameServer = nil
+		status.Identity = session.client.Profile
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -240,7 +310,11 @@ func (a *App) reportManifest(
 			gameplay.CapturedAt = createdAt
 		}
 	}
+	gameplay.IsModded = session.client.IsModded
+	gameplay.ModNames = append([]string(nil), session.client.ModNames...)
 	return reportManifest{
+		ClientResults: a.clientSession.Results(),
+		Client:        session.client, ClientError: clientError,
 		Version: Version, CreatedAt: createdAt.Format(time.RFC3339), Platform: runtime.GOOS + "/" + runtime.GOARCH,
 		Title: title,
 		State: reportState{
@@ -258,7 +332,7 @@ func (a *App) reportManifest(
 	}
 }
 
-func addReportText(archive *zip.Writer, title string) error {
+func addReportText(archive *zip.Writer, title string, gameplay chat.BugContext) error {
 	w, err := archive.Create("report.txt")
 	if err != nil {
 		return fmt.Errorf("textCreate: %w", err)
@@ -266,6 +340,10 @@ func addReportText(archive *zip.Writer, title string) error {
 	_, err = fmt.Fprintln(w, title)
 	if err != nil {
 		return fmt.Errorf("textWrite: %w", err)
+	}
+	_, err = fmt.Fprintf(w, "Command-spawned NPCs: %t\n", gameplay.IsNPCSpawnCommandUsed)
+	if err != nil {
+		return fmt.Errorf("spawnContextWrite: %w", err)
 	}
 	return nil
 }
@@ -348,7 +426,9 @@ func addReportFile(archive *zip.Writer, source reportSource) (reportFileRecord, 
 	if err != nil {
 		return reportFileRecord{}, fmt.Errorf("entryCreate: %w", err)
 	}
-	_, err = io.Copy(w, r)
+	// Capture the observed file size even when another client or the server
+	// keeps appending to a shared log during compression.
+	_, err = io.CopyN(w, r, fi.Size())
 	if err != nil {
 		return reportFileRecord{}, fmt.Errorf("entryCopy: %w", err)
 	}

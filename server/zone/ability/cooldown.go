@@ -1,10 +1,48 @@
 package ability
 
 import (
+	"errors"
+	"math"
 	"sort"
 	"sync"
 	"time"
 )
+
+// ScaleRemaining follows the native cooldown operation's millisecond delta.
+// Release admission is independent and remains the floor for the current cast.
+func (e *CooldownSession) ScaleRemaining(at time.Time, scale float32, releaseEnds ...time.Time) ([]CooldownSnapshot, error) {
+	if e == nil || at.IsZero() || math.IsNaN(float64(scale)) || math.IsInf(float64(scale), 0) || scale < 0 {
+		return nil, errors.New("cooldown scale invalid")
+	}
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	snapshots := make([]CooldownSnapshot, 0)
+	releaseRemaining := time.Duration(0)
+	for _, releaseEnd := range releaseEnds {
+		releaseRemaining = max(releaseRemaining, releaseEnd.Sub(at))
+	}
+	for key, current := range e.entries {
+		remaining := current.end.Sub(at)
+		if remaining <= releaseRemaining {
+			continue
+		}
+		delta := time.Duration(int64(float32(scale-1)*float32(remaining/time.Millisecond))) * time.Millisecond
+		if delta == 0 {
+			continue
+		}
+		current.end = current.end.Add(delta)
+		current.revision++
+		e.entries[key] = current
+		isHeroAbility := key&heroAbilityCooldownMask != 0
+		abilityID := uint32(0)
+		if isHeroAbility {
+			abilityID = uint32(key & ^heroAbilityCooldownMask)
+		}
+		snapshots = append(snapshots, CooldownSnapshot{Key: key, AbilityID: abilityID, End: current.end, Revision: current.revision, IsHeroAbility: isHeroAbility})
+	}
+	sort.Slice(snapshots, func(left int, right int) bool { return snapshots[left].Key < snapshots[right].Key })
+	return snapshots, nil
+}
 
 type CooldownKey uint64
 

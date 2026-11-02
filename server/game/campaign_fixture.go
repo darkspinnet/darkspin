@@ -612,12 +612,16 @@ func (e CampaignDirector) CryosLavaCracks() []CampaignDirectorMarker {
 		markerSetName = cryosCaveSceneryMarkerSet
 	case strings.EqualFold(e.Level, cryosGeyserLevel):
 		markerSetName = cryosGeyserMarkerSet
+	case e.IsInitialLayoutSelected && strings.EqualFold(e.Level, "cryos_4"):
+		// Crack2 already owns CryosGeyserPassive and has no combatant
+		// component. Its selected native scenery remains active immediately.
+		markerSetName = ""
 	default:
 		return nil
 	}
 	markers := make([]CampaignDirectorMarker, 0)
 	for _, markerSet := range e.MarkerSets {
-		if !strings.EqualFold(markerSet.Name, markerSetName) &&
+		if markerSetName != "" && !strings.EqualFold(markerSet.Name, markerSetName) &&
 			!(strings.EqualFold(e.Level, cryosGeyserLevel) &&
 				strings.HasPrefix(strings.ToLower(markerSet.Name), "cryos_1_smart_object_")) &&
 			!(strings.EqualFold(e.Level, cryosCaveLevel) &&
@@ -625,7 +629,8 @@ func (e CampaignDirector) CryosLavaCracks() []CampaignDirectorMarker {
 			continue
 		}
 		for _, marker := range markerSet.Markers {
-			if strings.EqualFold(marker.NounName, "DEST_prefab_cryos_ice_crack1.Noun") &&
+			if (strings.EqualFold(marker.NounName, "DEST_prefab_cryos_ice_crack1.Noun") ||
+				strings.EqualFold(marker.NounName, "DEST_prefab_cryos_ice_crack2.Noun")) &&
 				marker.MarkerID != 0 && isFiniteCampaignPosition(marker.Position) {
 				markers = append(markers, marker)
 			}

@@ -26,7 +26,6 @@ import (
 	zoneinteract "github.com/darkspinnet/darkspin/server/zone/interact"
 	interactraknet "github.com/darkspinnet/darkspin/server/zone/interact/raknet103"
 	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
-	lootraknet "github.com/darkspinnet/darkspin/server/zone/loot/raknet103"
 	zonenavigation "github.com/darkspinnet/darkspin/server/zone/navigation"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	objectraknet "github.com/darkspinnet/darkspin/server/zone/object/raknet103"
@@ -304,6 +303,16 @@ func (r campaignInteractionRuntime) handlePickup(
 	}
 	r.registry.sessions[sessionKey] = currentSession
 	abilityIndex := uint32(0)
+	questCrystal, isQuestCrystal := currentSession.zone.QuestCrystals().Crystal(command.Value, r.now())
+	if isQuestCrystal {
+		maximumDistance := questCrystalDistance(currentSession)
+		if zoneability.Distance(game.Vec3(currentSession.playerPosition), game.Vec3(questCrystal.Flight.Position)) > maximumDistance {
+			r.registry.mutex.Unlock()
+			return r.pursuePickup(packet, sessionKey, command, zoneinteract.Pickup{ObjectID: questCrystal.ObjectID,
+				Kind: zoneinteract.PickupQuestCrystal, Position: game.Vec3(questCrystal.Flight.Position)}, maximumDistance)
+		}
+		return r.beginQuestCrystalPickupLocked(packet, command, sessionKey, currentSession, questCrystal)
+	}
 	if command.Ability != nil {
 		abilityIndex = command.Ability.Index
 	}
@@ -692,7 +701,7 @@ func (r campaignInteractionRuntime) equipmentRollParticipantsLocked(
 	participants := make([]zoneloot.EquipmentRollParticipant, 0)
 	for _, candidate := range r.registry.sessions {
 		if candidate.zone != currentSession.zone || candidate.binding.UserID == 0 ||
-			candidate.isZoneTerminal() {
+			candidate.binding.IsServerBot || candidate.isZoneTerminal() {
 			continue
 		}
 		participants = append(participants, zoneloot.EquipmentRollParticipant{
@@ -1414,8 +1423,19 @@ func (s campaignCrystalPickupStep) produce() ([][]byte, error) {
 			*s.pendingInventory,
 		)
 		if err == nil {
+			previewSession := peerSession
+			previewSession.setCrystalInventory(*s.pendingInventory)
+			resourcePackets, resourceErr := previewSession.marshalCrystalResources()
+			if resourceErr != nil {
+				err = fmt.Errorf("crystalResources: %w", resourceErr)
+			} else {
+				packet = append(packet, resourcePackets...)
+				worldPackets = append(worldPackets, resourcePackets...)
+			}
+		}
+		if err == nil {
 			// Deletion and player-indexed inventory/bonus state are shared.
-			// The final CrystalAcquired packet has no player selector and must
+			// The CrystalAcquired packet has no player selector and must
 			// remain local to the collecting player's HUD.
 			worldPackets = append(worldPackets, packet[:3]...)
 			err = peerSession.zone.SetCrystalInventory(
@@ -1591,9 +1611,15 @@ func (s *gameplayPeerSession) spawnCampaignNPCDNA(
 		reservation.Release()
 		return nil, 0, fmt.Errorf("dnaAmount: %w", err)
 	}
-	amount, err := zoneloot.NPCDNAAmount(
-		s.binding.Difficulty, s.campaignPartAttribute(campaignDNADroppedAttribute), amountDraw,
-	)
+	// Unresolved source classes retain the prior 11-challenge compatibility
+	// amount; resolved classes and active Elite attachments own their challenge.
+	challenge, npcType := s.campaignNPCRewardSource(enemy.Plan, 11)
+	// DNA has one emission per source, independent of the NPC attempt class.
+	_ = npcType
+	amount, err := zoneloot.NPCDNAAmount(zoneloot.NPCDNAAmountInput{
+		Stage: stage, Challenge: challenge, Tuning: tuning,
+		DroppedMultiplier: s.campaignPartAttribute(campaignDNADroppedAttribute), RandomDraw: amountDraw,
+	})
 	if err != nil {
 		reservation.Release()
 		return nil, 0, fmt.Errorf("dnaAmountResolve: %w", err)
@@ -1603,7 +1629,13 @@ func (s *gameplayPeerSession) spawnCampaignNPCDNA(
 		Y: enemy.Plan.Position.Y,
 		Z: enemy.Plan.Position.Z,
 	}
-	destination := s.reachableCampaignDropDestination(source)
+	clearance := float32(0)
+	if zonenpc.IsGraviticRemnant(enemy.Plan) {
+		// These fixtures keep a solid foundation after death. A two-unit lob
+		// lands inside their authored bounds, outside the hero's pickup reach.
+		clearance = enemy.Plan.ActorFootprintRadius() + s.deployedCampaignNavigationRadius()
+	}
+	destination := s.reachableCampaignDropDestinationWithClearance(source, clearance)
 	objectID, err := s.reserveCampaignObjectID()
 	if err != nil {
 		reservation.Release()
@@ -1645,123 +1677,6 @@ func (s *gameplayPeerSession) spawnCampaignNPCDNA(
 		return nil, 0, fmt.Errorf("dnaCommit: %w", err)
 	}
 	return packets, objectID, nil
-}
-
-func (s *gameplayPeerSession) collectCampaignDNA(
-	ctx context.Context, progression zoneloot.DNAGranter,
-	registry *gameplaySessionRegistry,
-	start raknet.Vector3, end raknet.Vector3, now time.Time, objectIDs ...uint32,
-) ([][]byte, error) {
-	if s == nil || progression == nil || s.zone == nil || s.zone.DNA() == nil {
-		return nil, nil
-	}
-	objectID := uint32(0)
-	if len(objectIDs) == 1 {
-		objectID = objectIDs[0]
-	}
-	dnaReservation, isReserved := s.zone.DNA().ReserveContactID(
-		objectID,
-		game.Vec3{X: start.X, Y: start.Y, Z: start.Z},
-		game.Vec3{X: end.X, Y: end.Y, Z: end.Z},
-		now, campaignDNAPickupRadius,
-	)
-	if !isReserved {
-		if objectID != 0 && s.zone.DNA().IsReserved(objectID) {
-			return nil, errors.New("DNA contact temporarily reserved")
-		}
-		return nil, nil
-	}
-	pickup := dnaReservation.Pickup()
-	if pickup.Amount > ^uint32(0)-s.binding.DNA {
-		if !dnaReservation.Release() {
-			return nil, errors.New("DNA overflow with missing reservation release")
-		}
-		return nil, errors.New("DNA overflow")
-	}
-	packets, err := lootraknet.MarshalDNACollection(lootraknet.DNACollectionRequest{
-		Slot: uint8(s.binding.Slot), Amount: pickup.Amount,
-		ActorObjectID: s.deployedObjectID, PickupObjectID: pickup.ObjectID,
-		Position: raknet.Vector3{
-			X: pickup.Position.X,
-			Y: pickup.Position.Y,
-			Z: pickup.Position.Z,
-		},
-	})
-	if err != nil {
-		if !dnaReservation.Release() {
-			return nil, errors.Join(
-				fmt.Errorf("dnaCollectionMarshal: %w", err),
-				errors.New("DNA reservation release missing"),
-			)
-		}
-		return nil, fmt.Errorf("dnaCollectionMarshal: %w", err)
-	}
-	grantedDNA, err := progression.GrantDNA(ctx, int64(s.binding.UserID), pickup.Amount)
-	if err != nil {
-		if !dnaReservation.Release() {
-			return nil, errors.Join(fmt.Errorf("dnaGrant: %w", err), errors.New("DNA reservation release missing"))
-		}
-		return nil, fmt.Errorf("dnaGrant: %w", err)
-	}
-	s.binding.DNA = grantedDNA
-	packets[0] = lootraknet.DNAAccountUpdate(uint8(s.binding.Slot), grantedDNA)
-	isCommitted := dnaReservation.Commit()
-	if !isCommitted {
-		// The persistent grant is accepted even if its in-memory reservation
-		// disappeared. Never release it for another grant attempt.
-		isRemoved := s.zone.DNA().Remove(pickup.ObjectID)
-		if !isRemoved && registry != nil && registry.logger != nil {
-			registry.logger.Printf("RakNet committed DNA pickup already absent object=%d", pickup.ObjectID)
-		}
-	}
-	s.publishCommittedPickupLocked(registry, packets, nil)
-	if !isCommitted {
-		return nil, errors.New("DNA reservation commit missing after accepted grant")
-	}
-	if registry != nil {
-		sessionKeys := make([]string, 0, len(registry.sessions))
-		for sessionKey, candidate := range registry.sessions {
-			if !isActiveCoopPickupAlly(candidate, *s) {
-				continue
-			}
-			sessionKeys = append(sessionKeys, sessionKey)
-		}
-		sort.Strings(sessionKeys)
-		allyUserIDs := make(map[uint64]struct{}, len(sessionKeys))
-		for _, sessionKey := range sessionKeys {
-			candidate := registry.sessions[sessionKey]
-			if _, isFound := allyUserIDs[candidate.binding.UserID]; isFound {
-				continue
-			}
-			allyUserIDs[candidate.binding.UserID] = struct{}{}
-			if pickup.Amount > ^uint32(0)-candidate.binding.DNA {
-				if registry.logger != nil {
-					registry.logger.Printf(
-						"RakNet co-op DNA grant skipped for overflow game=%d user=%d",
-						candidate.binding.GameID, candidate.binding.UserID,
-					)
-				}
-				continue
-			}
-			allyDNA, grantErr := progression.GrantDNA(
-				ctx, int64(candidate.binding.UserID), pickup.Amount,
-			)
-			if grantErr != nil {
-				if registry.logger != nil {
-					registry.logger.Printf(
-						"RakNet co-op DNA grant failed game=%d user=%d: %v",
-						candidate.binding.GameID, candidate.binding.UserID, grantErr,
-					)
-				}
-				continue
-			}
-			candidate.binding.DNA = allyDNA
-			updatePacket := lootraknet.DNAAccountUpdate(uint8(candidate.binding.Slot), allyDNA)
-			candidate.queueCampaignPackets([][]byte{updatePacket})
-			registry.sessions[sessionKey] = candidate
-		}
-	}
-	return nil, nil
 }
 
 const campaignOrbLifetime = 30 * time.Second
@@ -2284,19 +2199,36 @@ func campaignDropDestination(
 func (s *gameplayPeerSession) reachableCampaignDropDestination(
 	source sim.Position,
 ) sim.Position {
+	destination := s.reachableCampaignDropDestinationWithClearance(source, 0)
+	return s.separatedCampaignDropDestination(source, destination)
+}
+
+func (s *gameplayPeerSession) reachableCampaignDropDestinationWithClearance(
+	source sim.Position, clearance float32,
+) sim.Position {
 	if s == nil {
 		return source
 	}
 	fallback := campaignDropDestination(source, s.playerPosition)
+	if clearance > 2 {
+		fallback.X = source.X + (fallback.X-source.X)*clearance/2
+		fallback.Y = source.Y + (fallback.Y-source.Y)*clearance/2
+	}
+	unprojectedFallback := fallback
+	if clearance > 0 {
+		// If terrain cannot validate the longer lob, use the hero's observed
+		// stand point rather than inventing a landing beyond a platform edge.
+		unprojectedFallback = sim.Position(s.playerPosition)
+	}
 	campaignNav := s.zone.Navigation()
 	if campaignNav == nil {
-		return fallback
+		return unprojectedFallback
 	}
 	planLayer, isLayerFound := campaignNav.SelectLayerForMode(
 		campaignSecurityBlitzFootprintFallback, uint8(s.binding.Mode),
 	)
 	if !isLayerFound {
-		return fallback
+		return unprojectedFallback
 	}
 	options := navigation.ProjectionOptions{
 		PlanLayer:   planLayer,
@@ -2308,7 +2240,7 @@ func (s *gameplayPeerSession) reachableCampaignDropDestination(
 		Z: s.playerPosition.Z,
 	}, options)
 	if err != nil {
-		return fallback
+		return unprojectedFallback
 	}
 	options.ComponentID = playerProjection.ComponentID
 	options.IsComponentConstrained = true
@@ -2317,6 +2249,12 @@ func (s *gameplayPeerSession) reachableCampaignDropDestination(
 		X: fallback.X, Y: fallback.Y, Z: fallback.Z,
 	}, options)
 	if err != nil {
+		destination = playerProjection
+	}
+	// Projection must not put a cleared drop back into the retained fixture.
+	deltaX := destination.Position.X - source.X
+	deltaY := destination.Position.Y - source.Y
+	if clearance > 0 && deltaX*deltaX+deltaY*deltaY < clearance*clearance {
 		destination = playerProjection
 	}
 	return sim.Position{
@@ -2821,7 +2759,22 @@ func (r campaignInteractionRuntime) handleScriptUse(
 	}
 	var use game.CampaignScriptUse
 	rejection := game.CampaignScriptUseRejectedIdentity
-	if isCurrentFound && currentSession.zone.Script() != nil {
+	if isCurrentFound && currentSession.zone != nil && command.Common.ObjectID == currentSession.deployedObjectID &&
+		currentSession.zone.Script() != nil {
+		currentSession.interactablePursuit = nil
+		// Native interactable pursuit moves the hero without ground-move
+		// commands. Sample its bounded server route before testing use range.
+		err = currentSession.advancePlayerPosition(r.now(), command.Common.Position)
+		if err != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("interactablePosition: %w", err)
+		}
+		err = currentSession.syncZoneHeroPose()
+		if err != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("interactablePose: %w", err)
+		}
+		r.registry.sessions[sessionKey] = currentSession
 		use, rejection, err = currentSession.zone.Script().PrepareUse(
 			currentSession.deployedObjectID, command.Common.ObjectID, command.Value,
 			game.Vec3{
@@ -2835,8 +2788,10 @@ func (r campaignInteractionRuntime) handleScriptUse(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignInteractablePrepare: %w", err)
 	}
+	approach := use.Invocation.Position
 	if rejection == "" || rejection == game.CampaignScriptUseRejectedDistance {
-		navigationErr := zonenavigation.ValidateInteraction(
+		var navigationErr error
+		approach, navigationErr = zonenavigation.InteractionDestination(
 			currentSession.zone.Navigation(),
 			game.Vec3{
 				X: currentSession.playerPosition.X,
@@ -2869,10 +2824,41 @@ func (r campaignInteractionRuntime) handleScriptUse(
 			pursuitPackets, marshalErr := actionraknet.PursuitTransfer(
 				command.Common.Unknown[0], command.Common.ObjectID,
 			)
-			r.registry.mutex.Unlock()
 			if marshalErr != nil {
+				r.registry.mutex.Unlock()
 				return nil, fmt.Errorf("campaignInteractablePursuit: %w", marshalErr)
 			}
+			if currentSession.isEnemyRootActive(r.now()) || currentSession.isSleepingCloudActive(r.now()) {
+				r.registry.mutex.Unlock()
+				packets, rejectErr := r.rejectScriptUse(command, "cannot pursue while immobilized")
+				if rejectErr != nil {
+					return nil, fmt.Errorf("interactableRootReject: %w", rejectErr)
+				}
+				return packets, nil
+			}
+			previousPosition, playerPosition, movementErr := currentSession.advancePlayerPursuitMovement(
+				r.now(), currentSession.playerPosition, raknet.Vector3(approach),
+				r.registry.passiveMovementIncrease(currentSession),
+			)
+			if movementErr != nil {
+				r.registry.mutex.Unlock()
+				return nil, fmt.Errorf("interactablePursuitPath: %w", movementErr)
+			}
+			if previousPosition != playerPosition {
+				poseErr := currentSession.syncZoneHeroPose()
+				if poseErr != nil {
+					r.registry.mutex.Unlock()
+					return nil, fmt.Errorf("interactablePursuitPose: %w", poseErr)
+				}
+			}
+			currentSession.interactablePursuit = &campaignInteractablePursuit{
+				runtime: r, sessionKey: sessionKey, generation: currentSession.generation,
+				transportGeneration: currentSession.transportGeneration,
+				motionRevision:      currentSession.playerMotionRevision(), command: command,
+				destination: approach, expiresAt: r.now().Add(zoneaction.PursuitTimeout),
+			}
+			r.registry.sessions[sessionKey] = currentSession
+			r.registry.mutex.Unlock()
 			r.logger.Printf("RakNet campaign interactable pursuit transferred source=%d target=%d source_position=(%g,%g,%g) target_position=(%g,%g,%g) range=%g",
 				command.Common.ObjectID, command.Value,
 				currentSession.playerPosition.X, currentSession.playerPosition.Y,
@@ -3055,6 +3041,16 @@ func (r campaignInteractionRuntime) handleScriptUse(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("campaignInteractableTrack: %w", err)
 	}
+	err = currentSession.zone.Script().CommitUse(use)
+	if err != nil {
+		currentSession.releaseCampaignInteractableSchedule(
+			use.Invocation.TargetObjectID, interactableRun,
+		)
+		interactableCancel()
+		interactableRun.Stop()
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("campaignInteractableCommit: %w", err)
+	}
 	if isObjectiveObelisk {
 		objectiveEventKind := sim.LuaObjectiveEventTouchedObelisk
 		if use.Invocation.CallbackName == "InteractHealthObelisk" {
@@ -3084,21 +3080,13 @@ func (r campaignInteractionRuntime) handleScriptUse(
 			objectiveUpdates, uint8(currentSession.binding.Slot),
 		)
 		if err != nil {
-			interactableCancel()
-			interactableRun.Stop()
-			r.registry.mutex.Unlock()
-			return nil, fmt.Errorf("campaignInteractableObeliskVoice: %w", err)
+			// The use and objective are committed. Optional voice projection
+			// must not cancel the accepted interactable execution afterward.
+			obeliskVoicePackets = nil
+			if r.logger != nil {
+				r.logger.Printf("RakNet campaign obelisk voice omitted: %v", err)
+			}
 		}
-	}
-	err = currentSession.zone.Script().CommitUse(use)
-	if err != nil {
-		currentSession.releaseCampaignInteractableSchedule(
-			use.Invocation.TargetObjectID, interactableRun,
-		)
-		interactableCancel()
-		interactableRun.Stop()
-		r.registry.mutex.Unlock()
-		return nil, fmt.Errorf("campaignInteractableCommit: %w", err)
 	}
 	currentSession.zone.PublishObjective(objectiveUpdates)
 	r.registry.sessions[sessionKey] = currentSession

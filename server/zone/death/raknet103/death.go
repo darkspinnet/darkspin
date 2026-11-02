@@ -39,12 +39,15 @@ type Target struct {
 	IsAnimationSuppressed  bool
 	CorpseFadeDelay        time.Duration
 	GraphicsState          uint32
+	ReplacementNoun        string
+	Rotation               raknet.Vector3
 	ExplosionEffectName    string
 	CreatureType           uint32
 	IsCreatureTypeKnown    bool
 	IsFixture              bool
 	IsBoss                 bool
 	IsRemnantRetained      bool
+	IsImmediateDelete      bool
 	IsCollisionRetained    bool
 	DeleteDelay            time.Duration
 }
@@ -138,6 +141,7 @@ func NewRun(
 		IsCritical:           isCritical, IsFastCriticalDeath: isFastCriticalDeath,
 		IsBoss:              target.IsBoss,
 		IsRemnantRetained:   target.IsRemnantRetained,
+		IsImmediateDelete:   target.IsImmediateDelete,
 		IsCollisionRetained: target.IsCollisionRetained,
 		DeleteDelay:         deleteDelay,
 		DamageProvenance: sim.Provenance{
@@ -155,7 +159,9 @@ func NewRun(
 		return nil, nil, fmt.Errorf("immediateDispatch: %w", err)
 	}
 	deadlines := ordinaryEnemyDeathDeadlines
-	if deleteDelay > 0 {
+	if target.IsImmediateDelete {
+		deadlines = nil
+	} else if deleteDelay > 0 {
 		deadlines = []time.Duration{deleteDelay}
 	} else if isFastCriticalDeath {
 		deadlines = criticalEnemyDeathDeadlines
@@ -485,6 +491,31 @@ func (o *enemyDeathOutbox) SetGraphicsState(
 	if intent.Role != enemyDeathTargetRole || intent.State == 0 {
 		return fmt.Errorf("graphicsIntent: %#v", intent)
 	}
+	if o.target.ReplacementNoun != "" {
+		messages := []raknet.ApplicationMessage{
+			raknet.ObjectDeleteMessage{ObjectID: []uint32{o.target.ObjectID}},
+			raknet.ObjectCreateMessage{
+				ObjectID: o.target.ObjectID, Noun: util.HashID(o.target.ReplacementNoun),
+				PositionX: o.target.Position.X, PositionY: o.target.Position.Y,
+				PositionZ: o.target.Position.Z, Rotation: o.target.Rotation, Scale: 1,
+				IsCollisionEnabled: o.target.IsCollisionRetained,
+			},
+			raknet.CombatantDataDeltaMessage{
+				ObjectID: o.target.ObjectID, HitPoints: 0, IsHitPointChanged: true,
+			},
+			raknet.AgentBlackboardUpdateMessage{
+				ObjectID: o.target.ObjectID, IsTargetable: false,
+			},
+		}
+		for index, message := range messages {
+			packet, err := raknet.MarshalApplication(message)
+			if err != nil {
+				return fmt.Errorf("replacementMarshal[%d]: %w", index, err)
+			}
+			o.packets = append(o.packets, packet)
+		}
+		return nil
+	}
 	packet, err := raknet.MarshalApplication(raknet.SetObjectGFXStateMessage{
 		ObjectID: o.target.ObjectID, State: intent.State,
 		Timestamp: o.sourceTime + uint64(meta.At/time.Millisecond),
@@ -534,6 +565,10 @@ func (o *enemyDeathOutbox) ApplyPositionedEffect(
 		Position: game.Vec3{
 			X: intent.Position.X, Y: intent.Position.Y, Z: intent.Position.Z,
 		},
+		Facing: game.Vec3{
+			X: intent.Facing.X, Y: intent.Facing.Y, Z: intent.Facing.Z,
+		},
+		IsFacingOmitted: intent.IsFacingOmitted,
 	})
 	return nil
 }

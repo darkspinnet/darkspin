@@ -68,6 +68,18 @@ func (e *injectedProcess) terminate() error {
 	}
 	err = windows.TerminateProcess(e.process, 1)
 	if err != nil {
+		// Another owned cancellation path or normal exit may have completed
+		// between the status read and TerminateProcess. Only the signaled
+		// retained handle can establish that termination is already complete.
+		if err == windows.ERROR_ACCESS_DENIED {
+			status, statusErr := windows.WaitForSingleObject(e.process, 0)
+			if statusErr != nil {
+				return fmt.Errorf("terminateRecheck: %w", statusErr)
+			}
+			if status == windows.WAIT_OBJECT_0 {
+				return nil
+			}
+		}
 		return fmt.Errorf("processTerminate: %w", err)
 	}
 	return nil

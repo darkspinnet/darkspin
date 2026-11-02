@@ -115,7 +115,7 @@ func (r *EnrageRun) Apply(
 				TargetID: target.ObjectID, ModifierGUID: definition.RootModifierID,
 				InstanceID:           r.instanceID,
 				DurationMilliseconds: uint32(EnrageDuration.Milliseconds()),
-				StackCount:           1, StartMilliseconds: timestamp, SourceID: target.ObjectID,
+				StackCount:           1, StartMilliseconds: timestamp, NPCAffixAssetID: 0,
 			},
 			raknet.AttachedEffectMessage{
 				Slot: r.effectSlot + 1, IsForceAttached: true,
@@ -151,7 +151,7 @@ func (r *EnrageRun) Apply(
 				TargetID: target.ObjectID, ModifierGUID: definition.RootModifierID,
 				InstanceID:           r.instanceID,
 				DurationMilliseconds: uint32(EnrageDuration.Milliseconds()),
-				StackCount:           1, StartMilliseconds: timestamp, SourceID: target.ObjectID,
+				StackCount:           1, StartMilliseconds: timestamp, NPCAffixAssetID: 0,
 			},
 			raknet.AttachedEffectMessage{
 				Slot: r.effectSlot + 1, IsForceAttached: true,

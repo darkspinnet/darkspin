@@ -81,7 +81,9 @@ func PlanInitialEncounter(
 	if len(agentEntry) == 0 {
 		return nil, firstObjectID, errors.New("boss plan: empty pool")
 	}
-	leaderEntry, err := SelectInitialLeader(leaderEntries, chainLevelIndex)
+	leaderEntry, err := SelectNamedLeader(
+		director, leaderEntries, chainLevelIndex, gameID, bossMarker.MarkerID,
+	)
 	if err != nil {
 		return nil, firstObjectID, fmt.Errorf("boss plan leader: %w", err)
 	}
@@ -91,7 +93,7 @@ func PlanInitialEncounter(
 	if !isBossIdentityFound {
 		return nil, firstObjectID, errors.New("boss plan identity: missing")
 	}
-	leaderEntry.NPCProfile = zonenpc.ApplyEliteProfile(leaderEntry.NPCProfile)
+	leaderEntry.NPCProfile = zonenpc.ApplyCaptainProfile(leaderEntry.NPCProfile, bossIdentity)
 	plans := []zonenpc.SpawnPlan{{
 		ObjectID: firstObjectID, NounName: leaderEntry.NounName,
 		Position: bossMarker.Position, LocusID: bossMarker.MarkerID,

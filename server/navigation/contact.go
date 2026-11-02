@@ -66,7 +66,7 @@ func (e *Mesh) projectContactTarget(
 	// Keep the actor just outside the expanded box after terrain projection.
 	contactFraction = max(float32(0), contactFraction-0.05/distance)
 	contact := add(start.Position, scale(delta, contactFraction))
-	projection, err := e.Project(contact, options)
+	projection, err := e.projectContactApproach(start, contact, options)
 	if err != nil {
 		return Projection{}, fmt.Errorf("contactProject: %w", err)
 	}
@@ -81,6 +81,41 @@ func (e *Mesh) projectContactTarget(
 		return Projection{}, errors.New("interaction contact too distant")
 	}
 	return projection, nil
+}
+
+// Terrain projection can move the near contact into another collision box or
+// outside the walkable mesh. Back off to a validated approach in either case.
+func (e *Mesh) projectContactApproach(
+	start Projection, contact Vec3, options ProjectionOptions,
+) (Projection, error) {
+	projection, err := e.Project(contact, options)
+	if !errors.Is(err, ErrProjectionObstructed) && !errors.Is(err, ErrProjectionUnavailable) {
+		if err != nil {
+			return Projection{}, fmt.Errorf("approachProject: %w", err)
+		}
+		return projection, nil
+	}
+	approach, err := e.Project(start.Position, options)
+	if err != nil {
+		return Projection{}, fmt.Errorf("approachStart: %w", err)
+	}
+	delta := subtract(contact, start.Position)
+	nearFraction, farFraction := float32(0), float32(1)
+	for pass := 0; pass < 16; pass++ {
+		fraction := (nearFraction + farFraction) / 2
+		candidate := add(start.Position, scale(delta, fraction))
+		projection, err = e.Project(candidate, options)
+		if errors.Is(err, ErrProjectionObstructed) || errors.Is(err, ErrProjectionUnavailable) {
+			farFraction = fraction
+			continue
+		}
+		if err != nil {
+			return Projection{}, fmt.Errorf("approachBackoff: %w", err)
+		}
+		approach = projection
+		nearFraction = fraction
+	}
+	return approach, nil
 }
 
 func (e Obstacle) interactionContactFraction(

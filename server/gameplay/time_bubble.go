@@ -64,7 +64,7 @@ func (e heroAuraAreaSchedule) reconcileTimeBubbleLocked(peerSession *gameplayPee
 		packet, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 			TargetID: objectID, ModifierGUID: e.definition.RootModifierID,
 			InstanceID: instanceID, DurationMilliseconds: 0, StackCount: 1,
-			StartMilliseconds: e.packet.SourceTime + uint64(deadline/time.Millisecond), SourceID: e.sourceObjectID,
+			StartMilliseconds: e.packet.SourceTime + uint64(deadline/time.Millisecond), NPCAffixAssetID: 0,
 		})
 		if err != nil {
 			e.run.releaseBubbleAllocations(allocations)
@@ -157,7 +157,9 @@ func (e *gameplaySessionRegistry) queueTimeBubbleControlLocked(originZone *zone.
 		retirement.controlPacketBatches = append(retirement.controlPacketBatches, timeBubbleControlBatch{packets: clonePendingPackets(packets), releases: releases})
 		return
 	}
-	if len(releases) != 0 {
+	if retirement != nil && retirement.arenaGameID != 0 {
+		e.queueProjectileRetirementForOwnerLocked(retirement, packets)
+	} else if len(releases) != 0 {
 		e.queueProjectileRetirementLocked(originZone, packets)
 	} else {
 		e.queueTimeBubblePresentationLocked(originZone, packets)
@@ -255,7 +257,9 @@ func (e *heroAuraAreaRun) retainTimeBubbleLocked() {
 	}
 	e.runtime.registry.timeBubbles[e] = struct{}{}
 	retirement := timeBubbleRetirement{run: e}
-	e.stopContext = context.AfterFunc(e.originalZone.Context(), retirement.execute)
+	if e.originalZone != nil {
+		e.stopContext = context.AfterFunc(e.originalZone.Context(), retirement.execute)
+	}
 }
 
 func (e *heroAuraAreaRun) retireTimeBubbleLocked(now time.Time) error {
@@ -291,7 +295,7 @@ func (e *heroAuraAreaRun) retireTimeBubbleLocked(now time.Time) error {
 		}
 		packets = append(packets, effectPacket, deletePacket)
 	}
-	e.runtime.registry.queueProjectileRetirementLocked(e.originalZone, packets)
+	e.queuePresentationLocked(packets, true)
 	for _, change := range changes {
 		e.removeBubbleProjectileLocked(change.objectID, change.projectile, change.packets, now)
 	}

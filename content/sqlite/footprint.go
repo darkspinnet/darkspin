@@ -54,15 +54,12 @@ func (e *Store) NounFootprints(ctx context.Context) ([]NounFootprint, error) {
 		stem := strings.TrimSuffix(strings.ToLower(noun.AssetName), ".noun")
 		namesByInstance[hashID(stem)] = noun.AssetName
 	}
-	catalogs, catalogErr := e.AssetCatalogEntries(ctx)
+	catalogNames, catalogErr := e.assetCatalogNounNames(ctx)
 	if catalogErr != nil {
 		return nil, fmt.Errorf("footprintCatalog: %w", catalogErr)
 	}
-	for _, catalog := range catalogs {
-		if catalog.AssetName == nil {
-			continue
-		}
-		nounName := path.Base(strings.ReplaceAll(*catalog.AssetName, "\\", "/"))
+	for _, catalogName := range catalogNames {
+		nounName := path.Base(strings.ReplaceAll(catalogName, "\\", "/"))
 		if !strings.EqualFold(path.Ext(nounName), ".noun") {
 			continue
 		}
@@ -91,4 +88,29 @@ func (e *Store) NounFootprints(ctx context.Context) ([]NounFootprint, error) {
 		})
 	}
 	return footprints, nil
+}
+
+// Footprints need noun identities, not the full catalog's tags and metadata.
+// Preserve catalog order so duplicate names resolve as in AssetCatalogEntries.
+func (e *Store) assetCatalogNounNames(ctx context.Context) (names []string, resultErr error) {
+	rows, err := e.database.QueryContext(ctx, `SELECT asset_name FROM asset_catalog
+		WHERE asset_name IS NOT NULL AND LOWER(SUBSTR(asset_name, -5))='.noun'
+		ORDER BY ordinal`)
+	if err != nil {
+		return nil, fmt.Errorf("catalogNameQuery: %w", err)
+	}
+	defer closeContentRows(rows, &resultErr)
+	for rows.Next() {
+		var name string
+		err = rows.Scan(&name)
+		if err != nil {
+			return nil, fmt.Errorf("catalogNameScan: %w", err)
+		}
+		names = append(names, name)
+	}
+	err = rows.Err()
+	if err != nil {
+		return nil, fmt.Errorf("catalogNameRows: %w", err)
+	}
+	return names, nil
 }

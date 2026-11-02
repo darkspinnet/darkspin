@@ -8,7 +8,6 @@ import (
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/util"
-	zoneaction "github.com/darkspinnet/darkspin/server/zone/action"
 	zonenavigation "github.com/darkspinnet/darkspin/server/zone/navigation"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
@@ -32,15 +31,6 @@ func (e *warpTotemCycle) rest(random *sim.SimulatorRandom, now time.Time) {
 	e.cycle++
 }
 
-type warpTotemTeleport struct {
-	objectID    uint32
-	destination game.Vec3
-	moveAt      time.Time
-	resetAt     time.Time
-	reservation zoneaction.ReleaseReservation
-	isMoved     bool
-}
-
 func (e gameplayPendingRuntime) pollWarpTotems(packet raknet.Packet) ([][]byte, error) {
 	key := packet.Address.String()
 	e.registry.mutex.Lock()
@@ -51,7 +41,7 @@ func (e gameplayPendingRuntime) pollWarpTotems(packet raknet.Packet) ([][]byte, 
 		return nil, nil
 	}
 	now := e.now()
-	peerPackets, err := member.advanceWarpTotemTeleport(now, packet.SourceTime)
+	peerPackets, err := member.advanceRandomTeleport(now, packet.SourceTime)
 	if err != nil {
 		e.registry.mutex.Unlock()
 		return nil, fmt.Errorf("totemTeleportAdvance: %w", err)
@@ -79,7 +69,7 @@ func (e gameplayPendingRuntime) updateWarpTotemsLocked(member *gameplayPeerSessi
 		member.warpTotemWarnings = make(map[uint32]uint64)
 		member.warpTotemDischarges = make(map[uint32]uint64)
 	}
-	for _, source := range member.zone.NPCs().Snapshots() {
+	for _, source := range member.zone.NPCs().SelectedSnapshots(zonenpc.SelectWarpTotem) {
 		if !zonenpc.IsWarpTotem(source.Plan) || !source.IsPublished || source.IsDefeated {
 			continue
 		}
@@ -146,7 +136,7 @@ func warpTotemEffect(objectID uint32, name string) ([]byte, error) {
 
 func (e gameplayPendingRuntime) beginWarpTotemTeleport(member *gameplayPeerSession, source game.Vec3, now time.Time, timestamp uint64) ([][]byte, error) {
 	if member.deployedObjectID == 0 || member.deployedHitPoint() <= 0 || member.isHeroSelectionPending ||
-		member.warpTotemTeleport.objectID != 0 || e.damage.npc.isTargetStatusImmuneLocked(member, member.deployedObjectID) {
+		member.randomTeleport.objectID != 0 || member.isOperativeCaged(now) || e.damage.npc.isTargetStatusImmuneLocked(member, member.deployedObjectID) {
 		return nil, nil
 	}
 	position := game.Vec3(member.playerPosition)
@@ -202,46 +192,7 @@ func (e gameplayPendingRuntime) beginWarpTotemTeleport(member *gameplayPeerSessi
 	if !isReserved {
 		return nil, fmt.Errorf("totemReserve: release unavailable")
 	}
-	member.warpTotemTeleport = warpTotemTeleport{objectID: member.deployedObjectID, destination: destination,
+	member.randomTeleport = randomTeleport{objectID: member.deployedObjectID, destination: destination,
 		moveAt: now.Add(100 * time.Millisecond), resetAt: now.Add(200 * time.Millisecond), reservation: reservation}
 	return [][]byte{stopPacket, exitPacket, reactionPacket}, nil
-}
-
-func (e *gameplayPeerSession) advanceWarpTotemTeleport(now time.Time, timestamp uint64) ([][]byte, error) {
-	state := e.warpTotemTeleport
-	if state.objectID == 0 {
-		return nil, nil
-	}
-	if state.objectID != e.deployedObjectID || e.deployedHitPoint() <= 0 || !e.abilityReleaseSession().IsCurrent(state.reservation) {
-		e.warpTotemTeleport = warpTotemTeleport{}
-		return nil, nil
-	}
-	packets := make([][]byte, 0)
-	if !state.isMoved && !now.Before(state.moveAt) {
-		movementPackets, err := marshalPlayerMovementCorrection(state.objectID, raknet.Vector3(state.destination), raknet.Quaternion{W: 1})
-		if err != nil {
-			return nil, fmt.Errorf("totemPlacement: %w", err)
-		}
-		err = e.teleportPlayer(now, raknet.Vector3(state.destination))
-		if err != nil {
-			return nil, fmt.Errorf("totemMove: %w", err)
-		}
-		err = e.syncZoneHeroPose()
-		if err != nil {
-			return nil, fmt.Errorf("totemPose: %w", err)
-		}
-		e.playerMovementGoal = raknet.Vector3(state.destination)
-		packets = append(packets, movementPackets...)
-		state.isMoved = true
-		e.warpTotemTeleport = state
-	}
-	if !now.Before(state.resetAt) {
-		resetPacket, err := npcraknet.ResetAnimation(state.objectID, timestamp)
-		if err != nil {
-			return nil, fmt.Errorf("totemReset: %w", err)
-		}
-		packets = append(packets, resetPacket)
-		e.warpTotemTeleport = warpTotemTeleport{}
-	}
-	return packets, nil
 }

@@ -12,6 +12,10 @@ import (
 
 type PopulationRequest struct {
 	Position game.Vec3
+	// Nil retains the explicit local doing-well policy. A supplied result must
+	// come from a trusted performance classifier; the native producer is not
+	// recovered, so current gameplay callers leave this unset.
+	IsDoingWell *bool
 }
 
 type PopulationTransition struct {
@@ -44,15 +48,17 @@ func (e *Zone) PrimePopulation(
 				return PopulationTransition{}, fmt.Errorf("fixtureAdd: %w", err)
 			}
 		}
-		transition.Decisions, err = e.info.Population.PrimeOpening(req.Position)
-		if err != nil {
-			return PopulationTransition{}, fmt.Errorf("openingPrime: %w", err)
+		if !e.info.IsAmbientPopulationSuppressed {
+			transition.Decisions, err = e.info.Population.PrimeOpening(req.Position)
+			if err != nil {
+				return PopulationTransition{}, fmt.Errorf("openingPrime: %w", err)
+			}
+			introducedPlans, planErr := e.planPopulation(transition.Decisions)
+			if planErr != nil {
+				return PopulationTransition{}, fmt.Errorf("openingPlan: %w", planErr)
+			}
+			transition.SpawnPlans = append(transition.SpawnPlans, introducedPlans...)
 		}
-		introducedPlans, err := e.planPopulation(transition.Decisions)
-		if err != nil {
-			return PopulationTransition{}, fmt.Errorf("openingPlan: %w", err)
-		}
-		transition.SpawnPlans = append(transition.SpawnPlans, introducedPlans...)
 		e.isPopulationPrimed = true
 	}
 	targets := e.livePlayerAlignedTargets()
@@ -86,9 +92,24 @@ func (e *Zone) AdvancePopulation(
 	if err != nil {
 		return PopulationTransition{}, fmt.Errorf("initialNPCIntroduce: %w", err)
 	}
-	decisions, err := e.info.Population.Observe(req.Position, true)
-	if err != nil {
-		return PopulationTransition{}, fmt.Errorf("populationObserve: %w", err)
+	isDoingWell := true
+	isPerformanceFallback := req.IsDoingWell == nil
+	if req.IsDoingWell != nil {
+		isDoingWell = *req.IsDoingWell
+	}
+	var decisions []zonepopulation.Decision
+	if !e.info.IsAmbientPopulationSuppressed {
+		decisions, err = e.info.Population.Observe(req.Position, isDoingWell)
+		if err != nil {
+			return PopulationTransition{}, fmt.Errorf("populationObserve: %w", err)
+		}
+	}
+	for index := range decisions {
+		if decisions[index].SpikeOutcome == 0 {
+			continue
+		}
+		decisions[index].IsDoingWell = isDoingWell
+		decisions[index].IsPerformanceFallback = isPerformanceFallback
 	}
 	introducedPlans, err := e.planPopulation(decisions)
 	if err != nil {
@@ -145,6 +166,24 @@ func (e *Zone) introduceInitialNPCs() ([]zonenpc.SpawnPlan, error) {
 }
 
 func (e *Zone) planPopulation(
+	decisions []zonepopulation.Decision,
+) ([]zonenpc.SpawnPlan, error) {
+	if e.info.Population == nil || e.info.Population.Random() == nil {
+		return nil, errors.New("population random unavailable")
+	}
+	randomSnapshot := e.info.Population.Random().Snapshot()
+	mixedState := e.info.Population.MixedRandomState()
+	plans, err := e.commitPopulationPlans(decisions)
+	if err != nil {
+		restoreErr := e.info.Population.RestoreRandom(randomSnapshot, mixedState)
+		return nil, fmt.Errorf("populationRollback: %w", errors.Join(err, restoreErr))
+	}
+	return plans, nil
+}
+
+// Commit the ordinary plans and their reconstructed policy draws together.
+// Rejected policy, validation, and insertion branches restore both RNG streams.
+func (e *Zone) commitPopulationPlans(
 	decisions []zonepopulation.Decision,
 ) ([]zonenpc.SpawnPlan, error) {
 	occupiedSpawnGroups := make(map[uint32]struct{})
@@ -206,6 +245,10 @@ func (e *Zone) planPopulation(
 	plans = e.info.Population.AddOperatives(
 		e.info.DirectorDefinition, plans, connectedCount > 1, operativeCount,
 	)
+	plans, err = e.info.Population.ApplyRules(e.info.DirectorDefinition, plans, e.info.NPCs.Snapshots())
+	if err != nil {
+		return nil, fmt.Errorf("populationPolicy: %w", err)
+	}
 	firstObjectID, err := e.info.ObjectID.Reserve(uint32(len(plans)))
 	if err != nil {
 		return nil, fmt.Errorf("objectIDReserve: %w", err)
@@ -239,6 +282,10 @@ func (e *Zone) planPopulation(
 	if len(stagedPlans) != 0 {
 		err = e.info.NPCs.AddStaged(stagedPlans)
 		if err != nil {
+			if len(introducedPlans) != 0 {
+				rollbackErr := e.info.NPCs.RollbackAdd(introducedPlans)
+				return nil, fmt.Errorf("enemyStageRollback: %w", errors.Join(err, rollbackErr))
+			}
 			return nil, fmt.Errorf("enemyStage: %w", err)
 		}
 	}

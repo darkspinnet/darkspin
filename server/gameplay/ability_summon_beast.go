@@ -3,6 +3,7 @@ package gameplay
 import (
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
@@ -28,14 +29,19 @@ const beastPetEnrageBodyScale = float32(0.20)
 const beastPetSpawnReleaseDelay = 1400 * time.Millisecond
 
 type beastPetEnrageRun struct {
-	runtime    campaignAbilityCommandRuntime
-	packet     raknet.Packet
-	sessionKey string
-	generation uint64
-	objectID   uint32
-	instanceID uint32
-	timestamp  uint64
-	cancel     raknet.CancelSchedule
+	runtime        campaignAbilityCommandRuntime
+	packet         raknet.Packet
+	arenaWorld     *arenaAbilityWorld
+	sessionKey     string
+	generation     uint64
+	objectID       uint32
+	instanceID     uint32
+	timestamp      uint64
+	healingProfile game.HealingProfile
+	criticalRating float32
+	autoCrit       float32
+	difficulty     uint32
+	cancel         raknet.CancelSchedule
 }
 
 func (e *beastPetEnrageRun) stop() ([]byte, error) {
@@ -77,6 +83,25 @@ type beastPetSpawnReleaseStep struct {
 func (e beastPetSpawnReleaseStep) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.RLock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
+	if isFound && peerSession.binding.Mode == game.ModeArena {
+		run := peerSession.beastPetResurrection
+		isCurrent := peerSession.generation == e.generation && peerSession.beastPetObjectID == e.objectID &&
+			run != nil && run.arenaWorld != nil && run.arenaWorld.combatPets[e.objectID] != nil
+		e.runtime.registry.mutex.RUnlock()
+		if !isCurrent {
+			return nil, nil
+		}
+		speedPacket, err := heroChargeSpeedPacket(e.objectID, zonecompanion.CompatibilityMovementSpeed)
+		if err != nil {
+			return nil, fmt.Errorf("arenaBeastSpawnSpeed: %w", err)
+		}
+		pet := run.arenaWorld.combatPets[e.objectID]
+		err = pet.scheduleMeleePoll(time.Millisecond)
+		if err != nil {
+			return nil, fmt.Errorf("arenaBeastSpawnAttack: %w", err)
+		}
+		return [][]byte{speedPacket}, nil
+	}
 	isCurrent := isFound && peerSession.generation == e.generation &&
 		peerSession.beastPetObjectID == e.objectID && peerSession.zone != nil &&
 		peerSession.zone.Companion() != nil
@@ -110,19 +135,46 @@ func (e *beastPetEnrageRun) isCurrent(peerSession gameplayPeerSession, isFound b
 }
 
 func (e *beastPetEnrageRun) activate() ([][]byte, error) {
+	if e.arenaWorld != nil {
+		return e.activateArena()
+	}
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	if !e.isCurrent(peerSession, isFound) || peerSession.zone == nil {
+	if !e.isCurrent(peerSession, isFound) || peerSession.zone == nil ||
+		peerSession.deployedCreatureIndex >= uint32(len(peerSession.binding.Creatures)) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	// RequestModifier captures its hero initiator at the authored hit time.
+	// Every Rage tick uses that snapshot, including the healing-over-time bonus.
+	creature := e.runtime.registry.projectPassiveCreature(
+		peerSession, peerSession.deployedCreatureIndex, e.runtime.now(),
+	)
+	e.healingProfile = creature.HealingProfile
+	e.criticalRating = creature.CriticalRating
+	e.autoCrit = creature.AutoCrit
+	e.difficulty = peerSession.binding.Difficulty
 	peerSession.beastPetDamageIncrease = beastPetEnrageDamageIncrease
-	healPacket, err := e.healLocked(&peerSession)
+	healPackets, err := e.healLocked(&peerSession)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("beastPetEnrageInitialHeal: %w", err)
 	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
+	// The HP commit is accepted independently of later taunt/presentation work.
+	// Publish through the original world's retained queues before unlocking.
+	for sessionKey, member := range e.runtime.registry.sessions {
+		if member.zone != peerSession.zone || member.isZoneTerminal() {
+			continue
+		}
+		member.queueCampaignPackets(healPackets)
+		e.runtime.registry.sessions[sessionKey] = member
+	}
+	for _, retained := range e.runtime.registry.retainedSessions {
+		if retained.peerSession.zone == peerSession.zone && !retained.peerSession.isZoneTerminal() {
+			retained.peerSession.queueCampaignPackets(healPackets)
+		}
+	}
 	e.runtime.registry.mutex.Unlock()
 	acquired, err := peerSession.zone.TauntCompanion(
 		peerSession.binding.UserID, e.generation, e.objectID, 5,
@@ -176,11 +228,14 @@ func (e *beastPetEnrageRun) activate() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("beastPetEnrageScaleCommit: %w", err)
 	}
-	packets := append([][]byte{modifierPacket, effectPacket, attributePacket}, healPacket...)
+	packets := [][]byte{modifierPacket, effectPacket, attributePacket}
 	return append(packets, actionPackets...), nil
 }
 
 func (e *beastPetEnrageRun) heal() ([][]byte, error) {
+	if e.arenaWorld != nil {
+		return e.healArena()
+	}
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	if !e.isCurrent(peerSession, isFound) || peerSession.zone == nil {
@@ -205,19 +260,50 @@ func (e *beastPetEnrageRun) healLocked(
 	if !isFound || companion.HitPoint <= 0 {
 		return nil, nil
 	}
-	healing := companion.MaximumHitPoint * beastPetEnrageHealingPercent
+	multiplier := e.runtime.program.Critical.DamageBonus
+	if multiplier <= 0 || math.IsNaN(float64(multiplier)) || math.IsInf(float64(multiplier), 0) {
+		return nil, errors.New("invalid rage healing critical multiplier")
+	}
+	amount := companion.MaximumHitPoint * beastPetEnrageHealingPercent
+	healingRange := sim.DamageRange{
+		Minimum: amount, Maximum: amount,
+	}
+	random := peerSession.zone.Population().Random()
+	if random == nil {
+		return nil, errors.New("rage healing random unavailable")
+	}
+	// Native 9BCEF0 draws even for equal, potentially fractional endpoints.
+	rangeDraw := float32(random.Float64())
+	amount = healingRange.Minimum + (healingRange.Maximum-healingRange.Minimum)*rangeDraw
+	healing, err := game.ResolveAbilityHealing(game.AbilityHealing{
+		Amount:     amount,
+		Descriptor: 4096, IsDescriptorFound: true,
+	}, e.healingProfile)
+	if err != nil {
+		return nil, fmt.Errorf("beastPetEnrageHealing: %w", err)
+	}
+	isCritical, err := sim.RollCritical(peerSession.zone.Population().Random(),
+		e.criticalRating, e.autoCrit, e.difficulty, e.runtime.program.Critical.RatingConversions,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("rageHealCritical: %w", err)
+	}
+	flags := uint16(0x0002)
+	if isCritical {
+		healing *= multiplier
+		flags |= 0x0008
+	}
+	if math.IsNaN(float64(healing)) || math.IsInf(float64(healing), 0) {
+		return nil, errors.New("invalid critical rage healing")
+	}
 	hitPoint := min(companion.MaximumHitPoint, companion.HitPoint+healing)
 	if hitPoint <= companion.HitPoint {
 		return nil, nil
 	}
-	_, _, err := peerSession.zone.Companion().SetHitPoint(e.objectID, hitPoint)
-	if err != nil {
-		return nil, fmt.Errorf("beastPetEnrageResource: %w", err)
-	}
 	integerChange := int32(hitPoint) - int32(companion.HitPoint)
 	messages := []raknet.ApplicationMessage{
 		raknet.DamageCombatEventMessage{
-			Flags: 0x0002, DeltaHealth: -(hitPoint - companion.HitPoint),
+			Flags: flags, DeltaHealth: -healing,
 			TargetID: e.objectID, SourceID: peerSession.deployedObjectID,
 			IntegerHPChange: -integerChange,
 		},
@@ -233,10 +319,20 @@ func (e *beastPetEnrageRun) healLocked(
 		}
 		packets = append(packets, packet)
 	}
+	isRestored, err := peerSession.zone.Companion().RestoreHitPoint(companion, hitPoint)
+	if err != nil {
+		return nil, fmt.Errorf("beastPetEnrageResource: %w", err)
+	}
+	if !isRestored {
+		return nil, nil
+	}
 	return packets, nil
 }
 
 func (e *beastPetEnrageRun) expire() ([][]byte, error) {
+	if e.arenaWorld != nil {
+		return e.expireArena()
+	}
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	if !e.isCurrent(peerSession, isFound) {
@@ -288,7 +384,8 @@ func (e *gameplayPeerSession) spawnBeastPet(
 		ObjectID: objectID, OwnerObjectID: ownerObjectID,
 		Noun:     util.HashID("BeastSentinelPet.Noun"),
 		Position: position, FootprintRadius: footprintRadius,
-		HitPoint: hitPoint, MaximumHitPoint: hitPoint,
+		AggroRadius: program.NonPlayerAggroRanges[util.HashID("BeastSentinelPet.Noun")],
+		HitPoint:    hitPoint, MaximumHitPoint: hitPoint,
 		IsTargetable: true, IsCombatant: true,
 	})
 	if err != nil {
@@ -340,11 +437,25 @@ func (e *gameplayPeerSession) stopBeastPet() ([][]byte, error) {
 	if e == nil || e.beastPetObjectID == 0 {
 		return nil, nil
 	}
+	if e.beastPetResurrection != nil && e.beastPetResurrection.arenaWorld != nil {
+		return e.stopArenaBeastPet()
+	}
 	objectID := e.beastPetObjectID
+	var resurrectionPackets [][]byte
+	if e.beastPetResurrection != nil {
+		run := e.beastPetResurrection
+		e.beastPetResurrection = nil
+		var err error
+		resurrectionPackets, err = run.stop(e)
+		if err != nil {
+			return nil, fmt.Errorf("beastResurrectionStop: %w", err)
+		}
+	}
+	e.cancelPetPlasmaBurn(objectID)
 	e.beastPetObjectID = 0
 	e.beastPetDamage = 0
 	e.beastPetDamageIncrease = 0
-	packet := make([][]byte, 0, 2)
+	packet := resurrectionPackets
 	if e.zone != nil && e.zone.Companion() != nil {
 		e.zone.Companion().Remove(objectID)
 	}
@@ -459,6 +570,9 @@ func (r campaignAbilityCommandRuntime) handleSummonBeastEnrage(
 		instanceID: instanceID,
 		timestamp:  req.packet.SourceTime + uint64(activationDelay/time.Millisecond),
 	}
+	if peerSession.binding.Mode == game.ModeArena && peerSession.beastPetResurrection != nil {
+		run.arenaWorld = peerSession.beastPetResurrection.arenaWorld
+	}
 	peerSession.beastPetEnrage = run
 	r.registry.sessions[run.sessionKey] = peerSession
 	r.registry.mutex.Unlock()
@@ -524,10 +638,18 @@ func (r campaignAbilityCommandRuntime) handleSummonBeast(
 	sessionKey := req.packet.Address.String()
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
+	var arenaWorld *arenaAbilityWorld
+	if isFound && peerSession.binding.Mode == game.ModeArena {
+		world, worldErr := r.registry.arenaAbilityWorldLocked(peerSession.binding.GameID)
+		if worldErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("beastArenaWorld: %w", worldErr)
+		}
+		arenaWorld = world
+	}
 	isAvailable := isFound && peerSession.generation == req.commandSession.generation &&
 		req.command.Common.ObjectID == peerSession.deployedObjectID &&
-		peerSession.zone != nil &&
-		peerSession.zone.Companion() != nil &&
+		(peerSession.zone != nil && peerSession.zone.Companion() != nil || arenaWorld != nil) &&
 		peerSession.abilityCooldownSession().IsReady(
 			zoneability.HeroAbilityCooldown(ability.ID), req.startTime,
 		) && peerSession.isAbilityReleaseReady(req.startTime)
@@ -548,9 +670,13 @@ func (r campaignAbilityCommandRuntime) handleSummonBeast(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("summonBeastMana: %w", err)
 	}
-	pet, isPetFound := peerSession.zone.Companion().Snapshot(
-		peerSession.beastPetObjectID,
-	)
+	pet := zonecompanion.Actor{}
+	isPetFound := false
+	if arenaWorld != nil {
+		pet, isPetFound = arenaWorld.companion.Snapshot(peerSession.beastPetObjectID)
+	} else {
+		pet, isPetFound = peerSession.zone.Companion().Snapshot(peerSession.beastPetObjectID)
+	}
 	isEnrage := isPetFound && pet.HitPoint > 0
 	if peerSession.beastPetObjectID != 0 && !isEnrage {
 		peerSession.beastPetObjectID = 0
@@ -568,7 +694,12 @@ func (r campaignAbilityCommandRuntime) handleSummonBeast(
 			req, ability, peerSession, definition, manaCost,
 		)
 	}
-	objectID, err := peerSession.reserveCampaignObjectID()
+	var objectID uint32
+	if arenaWorld != nil {
+		objectID, err = arenaWorld.objectIDSession.Reserve(1)
+	} else {
+		objectID, err = peerSession.reserveCampaignObjectID()
+	}
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("summonBeastObjectID: %w", err)
@@ -647,10 +778,14 @@ func (r campaignAbilityCommandRuntime) handleSummonBeast(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("summonBeastCommit: %w", err)
 	}
-	spawnPackets, err := peerSession.spawnBeastPet(
-		r.program, objectID, req.command.Common.ObjectID,
-		position, supportCreature.PetDamage,
-	)
+	var spawnPackets [][]byte
+	if arenaWorld != nil {
+		spawnPackets, err = r.spawnArenaBeastPet(&peerSession, arenaWorld,
+			req.packet, objectID, req.command.Common.ObjectID, position, supportCreature.PetDamage)
+	} else {
+		spawnPackets, err = peerSession.spawnBeastPet(r.program, objectID,
+			req.command.Common.ObjectID, position, supportCreature.PetDamage)
+	}
 	if err != nil {
 		_ = peerSession.setDeployedManaPoints(previousManaPoint)
 		peerSession.abilityCooldownSession().Rollback(cooldownReservation)
@@ -664,6 +799,35 @@ func (r campaignAbilityCommandRuntime) handleSummonBeast(
 	peerSession.sagePassiveActivations[objectID] = summonCompanionActivation{
 		ObjectID: objectID, OwnerObjectID: req.command.Common.ObjectID,
 		Position: raknet.Vector3{X: position.X, Y: position.Y, Z: position.Z},
+	}
+	if arenaWorld != nil {
+		err = peerSession.startArenaBeastResurrection(r.damage, req.packet, sessionKey,
+			arenaWorld, req.packet.SourceTime)
+	} else {
+		err = peerSession.startBeastResurrection(r.damage, req.packet, sessionKey, req.packet.SourceTime)
+	}
+	if err != nil {
+		if arenaWorld != nil {
+			pet := arenaWorld.combatPets[objectID]
+			if pet != nil {
+				pet.isPublished = false
+				pet.retireLocked()
+			}
+			peerSession.beastPetObjectID = 0
+			peerSession.beastPetDamage = 0
+			delete(peerSession.sagePassiveActivations, objectID)
+			paymentErr := peerSession.setDeployedManaPoints(previousManaPoint)
+			peerSession.abilityCooldownSession().Rollback(cooldownReservation)
+			peerSession.abilityReleaseSession().Rollback(releaseReservation)
+			r.registry.sessions[sessionKey] = peerSession
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("arenaBeastResurrection: %w", errors.Join(err, paymentErr))
+		}
+		cleanupPackets, cleanupErr := peerSession.stopBeastPet()
+		peerSession.queueCampaignPackets(cleanupPackets)
+		r.registry.sessions[sessionKey] = peerSession
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("summonResurrection: %w", errors.Join(err, cleanupErr))
 	}
 	generation := peerSession.generation
 	r.registry.sessions[sessionKey] = peerSession
@@ -697,6 +861,17 @@ func (r campaignAbilityCommandRuntime) handleSummonBeast(
 func (r campaignDamageRuntime) startBeastPetAttack(
 	packet raknet.Packet, sessionKey string, generation uint64, sourceTime uint64,
 ) ([][]byte, error) {
+	packets, err := r.startBeastPetAttackWithResume(packet, sessionKey, generation, sourceTime, nil, 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("beastAttack: %w", err)
+	}
+	return packets, nil
+}
+
+func (r campaignDamageRuntime) startBeastPetAttackWithResume(
+	packet raknet.Packet, sessionKey string, generation uint64, sourceTime uint64,
+	resurrection *beastPetResurrectionRun, resumeRevision uint64, transportGeneration uint64,
+) ([][]byte, error) {
 	if packet.ScheduleGroup == nil && packet.ScheduleGroupResult == nil {
 		return nil, errors.New("beast pet schedule unavailable")
 	}
@@ -705,6 +880,15 @@ func (r campaignDamageRuntime) startBeastPetAttack(
 	isCurrent := isFound && peerSession.generation == generation &&
 		peerSession.beastPetObjectID != 0 && peerSession.zone != nil &&
 		peerSession.zone.Companion() != nil && peerSession.zone.NPCs() != nil
+	if resurrection != nil {
+		isCurrent = isCurrent && peerSession.beastPetResurrection == resurrection &&
+			resurrection.resumeRevision == resumeRevision && peerSession.transportGeneration == transportGeneration &&
+			!peerSession.isRejoinPending && peerSession.deployedHitPoint() > 0
+	}
+	if isCurrent && peerSession.beastPetResurrection != nil {
+		state := peerSession.beastPetResurrection.state
+		isCurrent = !state.IsCasting && !state.IsBurrowing
+	}
 	if !isCurrent {
 		r.registry.mutex.Unlock()
 		return nil, nil
@@ -746,11 +930,16 @@ func (r campaignDamageRuntime) startBeastPetAttack(
 		return nil, fmt.Errorf("beastPetReserve: %w", err)
 	}
 	if !isPlanFound {
+		actor, isActorFound := peerSession.zone.Companion().Snapshot(peerSession.beastPetObjectID)
+		if !isActorFound {
+			r.registry.mutex.Unlock()
+			return nil, nil
+		}
 		pursuit, isPursuitFound, pursuitErr :=
 			peerSession.zone.Companion().ReserveActorPursuit(
 				peerSession.beastPetObjectID,
 				peerSession.zone.NPCs().LiveSnapshots(), ability.Range,
-				zonecompanion.CompatibilityAggroRadius,
+				actor.AcquisitionRange(),
 				zonecompanion.CompatibilityMovementSpeed,
 				r.npc.now(),
 			)

@@ -26,6 +26,7 @@ type campaignChargeSchedule struct {
 	objectID   uint32
 	timestamp  uint64
 	plan       zonenpc.AttackPlan
+	isLanding  bool
 }
 
 func (e campaignChargeSchedule) fail(
@@ -52,7 +53,10 @@ func (e campaignChargeSchedule) fail(
 
 func (e campaignChargeSchedule) restoreMovementState() ([][]byte, error) {
 	if e.plan.Profile.AbilityName != "BoomerCharge" &&
-		e.plan.Profile.AbilityName != "NocturnaSpecialDriftCharge" {
+		e.plan.Profile.AbilityName != "NocturnaSpecialDriftCharge" &&
+		e.plan.Profile.AbilityName != "VerdanthBasicPicky" &&
+		e.plan.Profile.AbilityName != "ScaldronBoss_ShadowCharge" &&
+		e.plan.Profile.AbilityName != "NomadSpecialOneCharge" {
 		return nil, nil
 	}
 	e.runtime.registry.mutex.RLock()
@@ -65,6 +69,17 @@ func (e campaignChargeSchedule) restoreMovementState() ([][]byte, error) {
 	e.runtime.registry.mutex.RUnlock()
 	if !isEnemyFound || (e.plan.ActionGeneration != 0 && enemy.ActionGeneration != e.plan.ActionGeneration) {
 		return nil, nil
+	}
+	if e.plan.Profile.AbilityName == "NomadSpecialOneCharge" ||
+		e.plan.Profile.AbilityName == "ScaldronBoss_ShadowCharge" ||
+		e.plan.Profile.AbilityName == "VerdanthBasicPicky" {
+		packets, err := npcraknet.ChargeMovementSpeed(
+			e.objectID, zonenpc.EffectiveMovementSpeedBuff(enemy.Plan),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("nomadSpeedRestore: %w", err)
+		}
+		return packets, nil
 	}
 	packets, err := npcraknet.ChargeMovementState(
 		e.objectID, zonenpc.EffectiveMovementSpeedBuff(enemy.Plan), e.plan.Profile.StealthType, false,
@@ -104,6 +119,13 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 	)
 	if !isCurrent {
 		e.runtime.registry.mutex.RUnlock()
+		if e.isLanding {
+			packets, err := e.restoreMovementState()
+			if err != nil {
+				return e.fail("nomadLandingCancelRestore", err)
+			}
+			return packets, nil
+		}
 		return nil, nil
 	}
 	enemy, isEnemyFound := peerSession.zone.NPCs().NPC(e.objectID)
@@ -112,19 +134,42 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 	)
 	e.runtime.registry.mutex.RUnlock()
 	if !isEnemyFound || !isTargetFound {
+		if e.isLanding && isEnemyFound {
+			packets, err := e.restoreMovementState()
+			if err != nil {
+				return e.fail("nomadLandingRestore", err)
+			}
+			e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
+			return packets, nil
+		}
 		e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
 		return nil, nil
 	}
 	movementProfile := e.plan.Profile
 	movementProfile.Range = movementProfile.ForcedMovementStopDistance
+	if movementProfile.AbilityName == "NomadSpecialOneCharge" && !e.isLanding {
+		// The authored charge approaches to distanceBeforeLanding=4 before
+		// playing the land animation and closing the remaining gap.
+		movementProfile.Range = 4
+	}
 	movementProfile.MovementSpeed *= 1 + movementProfile.MovementSpeedBuff
 	movementProfile.MovementSpeed += movementProfile.ForcedMovementSpeed
-	if movementProfile.AbilityName == "BoomerCharge" {
-		// The charge template adds speedIncrease to attribute 48, which native
+	if movementProfile.AbilityName == "BoomerCharge" ||
+		movementProfile.AbilityName == "NomadSpecialOneCharge" ||
+		movementProfile.AbilityName == "VerdanthBasicPicky" ||
+		movementProfile.AbilityName == "NocturnaSpecialDriftCharge" {
+		// These charge scripts add speedIncrease to attribute 48, which native
 		// locomotion applies as a multiplier, not as flat world units/second.
 		baseSpeed := enemy.Plan.NPCProfile.BaseCombatSpeed
 		if baseSpeed <= 0 {
 			baseSpeed = 3
+			if movementProfile.AbilityName == "NomadSpecialOneCharge" {
+				baseSpeed = 4
+			} else if movementProfile.AbilityName == "VerdanthBasicPicky" {
+				baseSpeed = 4.5
+			} else if movementProfile.AbilityName == "NocturnaSpecialDriftCharge" {
+				baseSpeed = 5
+			}
 		}
 		movementProfile.MovementSpeed = baseSpeed *
 			(1 + zonenpc.EffectiveMovementSpeedBuff(enemy.Plan) + movementProfile.ForcedMovementSpeed)
@@ -227,8 +272,15 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 		}
 		return e.fail("enemyChargeMovePlan", err)
 	}
+	movementTimestamp := e.timestamp + uint64(e.plan.Profile.HitDelay/time.Millisecond)
+	if e.isLanding {
+		movementTimestamp = e.timestamp
+	}
 	if !action.IsPursuitNeeded {
-		return e.followup(e.timestamp + uint64(e.plan.Profile.HitDelay/time.Millisecond))
+		if movementProfile.AbilityName == "NomadSpecialOneCharge" && !e.isLanding {
+			return e.land(movementTimestamp)
+		}
+		return e.followup(movementTimestamp)
 	}
 	packets, err := npcraknet.Pursuit(action)
 	if err != nil {
@@ -237,12 +289,23 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 		}
 		return e.fail("enemyChargeMoveMarshal", err)
 	}
+	if movementProfile.AbilityName == "NomadSpecialOneCharge" ||
+		movementProfile.AbilityName == "VerdanthBasicPicky" {
+		// Abilities/0x5FEB4BF9.lua and 0x14E8B3F5.lua add
+		// MovementSpeedBuff=3 until the charge's final approach completes.
+		statePackets, stateErr := npcraknet.ChargeMovementSpeed(
+			e.objectID, zonenpc.EffectiveMovementSpeedBuff(enemy.Plan)+
+				movementProfile.ForcedMovementSpeed,
+		)
+		if stateErr != nil {
+			return e.fail("nomadSpeedMarshal", stateErr)
+		}
+		packets = append(statePackets, packets...)
+	}
 	if movementProfile.AbilityName == "NocturnaSpecialDriftCharge" ||
 		movementProfile.AbilityName == "BoomerCharge" {
-		movementSpeedBuff := movementProfile.ForcedMovementSpeed
-		if movementProfile.AbilityName == "BoomerCharge" {
-			movementSpeedBuff += zonenpc.EffectiveMovementSpeedBuff(enemy.Plan)
-		}
+		movementSpeedBuff := zonenpc.EffectiveMovementSpeedBuff(enemy.Plan) +
+			movementProfile.ForcedMovementSpeed
 		statePackets, stateErr := npcraknet.ChargeMovementState(
 			e.objectID, movementSpeedBuff, 0, true,
 		)
@@ -251,10 +314,21 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 		}
 		packets = append(statePackets, packets...)
 	}
+	if movementProfile.AbilityName == "ScaldronBoss_ShadowCharge" {
+		// Abilities/0xF6F64C82.lua adds MovementSpeedBuff=30 around
+		// MoveTowardObject. The server already simulates that multiplier;
+		// the native mover must receive it before the pursuit command.
+		speedPackets, speedErr := npcraknet.ChargeMovementSpeed(
+			e.objectID, zonenpc.EffectiveMovementSpeedBuff(enemy.Plan)+e.plan.Profile.MovementSpeedBuff,
+		)
+		if speedErr != nil {
+			return e.fail("shadowChargeSpeed", speedErr)
+		}
+		packets = append(speedPackets, packets...)
+	}
 	err = e.runtime.pursuit.schedule(
 		e.packet, e.sessionKey, e.generation, e.objectID,
-		e.timestamp+uint64(e.plan.Profile.HitDelay/time.Millisecond),
-		action.TargetPosition, movementProfile, e.followup,
+		movementTimestamp, action.TargetPosition, action.Profile, e.arrive,
 	)
 	if err != nil {
 		if isGhostCharge {
@@ -262,12 +336,12 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 		}
 		return e.fail("enemyChargeMoveSchedule", err)
 	}
-	if e.plan.Profile.LoopAnimationName == "" {
+	if e.isLanding || e.plan.Profile.LoopAnimationName == "" {
 		return packets, nil
 	}
 	loopPacket, err := npcraknet.AnimationState(
 		e.objectID, e.plan.Profile.LoopAnimationName,
-		e.timestamp+uint64(e.plan.Profile.HitDelay/time.Millisecond),
+		movementTimestamp,
 	)
 	if err != nil {
 		e.runtime.logger.Printf(
@@ -278,6 +352,51 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 	}
 	// Set locomotion first so its default pose cannot replace the charge loop.
 	return append(packets, loopPacket), nil
+}
+
+func (e campaignChargeSchedule) arrive(timestamp uint64) ([][]byte, error) {
+	if e.plan.Profile.AbilityName == "NomadSpecialOneCharge" && !e.isLanding {
+		return e.land(timestamp)
+	}
+	return e.followup(timestamp)
+}
+
+func (e campaignChargeSchedule) land(timestamp uint64) ([][]byte, error) {
+	landing := e
+	landing.timestamp = timestamp
+	landing.isLanding = true
+	landingPackets, err := landing.move()
+	if err != nil {
+		return nil, fmt.Errorf("nomadLandingMove: %w", err)
+	}
+	animationPacket, err := npcraknet.ChargeRelax(
+		e.objectID, e.plan.Profile.EndAnimationName, timestamp,
+	)
+	if err != nil {
+		e.runtime.logger.Printf(
+			"RakNet campaign NPC nomad landing presentation omitted object=%d: %v",
+			e.objectID, err,
+		)
+		return landingPackets, nil
+	}
+	return append([][]byte{animationPacket}, landingPackets...), nil
+}
+
+func chargeCancelSpeed(
+	objectID uint32, enemy zonenpc.Snapshot, profile zonenpc.ActionProfile,
+) ([][]byte, error) {
+	if profile.AbilityName != "NomadSpecialOneCharge" &&
+		profile.AbilityName != "ScaldronBoss_ShadowCharge" &&
+		profile.AbilityName != "VerdanthBasicPicky" {
+		return nil, nil
+	}
+	packets, err := npcraknet.ChargeMovementSpeed(
+		objectID, zonenpc.EffectiveMovementSpeedBuff(enemy.Plan),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("nomadCancelSpeed: %w", err)
+	}
+	return packets, nil
 }
 
 func isTemplateContactCharge(abilityName string) bool {
@@ -398,9 +517,20 @@ func navigationClippedMovementDestination(
 }
 
 func (e campaignChargeSchedule) followup(timestamp uint64) ([][]byte, error) {
+	e.runtime.registry.mutex.RLock()
+	member, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isCurrent := isFound && member.isCampaignNPCSourceGenerationActive(
+		e.generation, e.objectID, e.plan.ActionGeneration,
+	)
+	e.runtime.registry.mutex.RUnlock()
+	if !isCurrent {
+		return nil, nil
+	}
 	var restoredStatePackets [][]byte
 	if e.plan.Profile.AbilityName == "NocturnaSpecialDriftCharge" ||
-		e.plan.Profile.AbilityName == "BoomerCharge" {
+		e.plan.Profile.AbilityName == "BoomerCharge" ||
+		e.plan.Profile.AbilityName == "ScaldronBoss_ShadowCharge" ||
+		e.plan.Profile.AbilityName == "NomadSpecialOneCharge" {
 		var stateErr error
 		restoredStatePackets, stateErr = e.restoreMovementState()
 		if stateErr != nil {
@@ -413,19 +543,27 @@ func (e campaignChargeSchedule) followup(timestamp uint64) ([][]byte, error) {
 		)
 	}
 	if isTemplateContactCharge(e.plan.Profile.AbilityName) {
-		return e.runtime.produceChargeContactHit(
+		contactPackets, contactErr := e.runtime.produceChargeContactHit(
 			e.packet, e.sessionKey, e.generation, e.objectID, timestamp, e.plan,
 		)
+		if contactErr != nil {
+			return nil, fmt.Errorf("chargeContact: %w", contactErr)
+		}
+		return append(restoredStatePackets, contactPackets...), nil
 	}
-	relaxPacket, err := npcraknet.ChargeRelax(
-		e.objectID, e.plan.Profile.EndAnimationName, timestamp,
-	)
-	if err != nil {
-		e.runtime.logger.Printf(
-			"RakNet campaign NPC charge relax presentation omitted object=%d: %v",
-			e.objectID, err,
+	var relaxPacket []byte
+	var err error
+	if e.plan.Profile.AbilityName != "NomadSpecialOneCharge" {
+		relaxPacket, err = npcraknet.ChargeRelax(
+			e.objectID, e.plan.Profile.EndAnimationName, timestamp,
 		)
-		relaxPacket = nil
+		if err != nil {
+			e.runtime.logger.Printf(
+				"RakNet campaign NPC charge relax presentation omitted object=%d: %v",
+				e.objectID, err,
+			)
+			relaxPacket = nil
+		}
 	}
 	followupTimestamp := timestamp +
 		uint64(e.plan.Profile.EndAnimationDelay/time.Millisecond)
@@ -480,6 +618,9 @@ func (e campaignChargeSchedule) followup(timestamp uint64) ([][]byte, error) {
 			followupPackets = append([][]byte{relaxPacket}, followupPackets...)
 		}
 		return append(followupPackets, restoredStatePackets...), nil
+	}
+	if e.plan.Profile.AbilityName == "NomadSpecialOneCharge" {
+		return append(restoredStatePackets, followupPackets...), nil
 	}
 	if relaxPacket == nil {
 		return followupPackets, nil
@@ -641,6 +782,10 @@ func (r campaignNPCActionRuntime) produceChargeContactHit(
 		nextTimestamp = timestamp +
 			uint64(chargePlan.Profile.EndAnimationDelay/time.Millisecond)
 	}
+	if r.finishScenarioNPCManualAction(sessionKey, generation, objectID,
+		chargePlan.ActionGeneration) {
+		return packets, nil
+	}
 	next := campaignEnemyChargeNextStep{
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID, timestamp: nextTimestamp,
@@ -681,15 +826,29 @@ func campaignChargeSegmentTargets(
 }
 
 type campaignNocturnaDriftNextSchedule struct {
-	runtime    campaignNPCActionRuntime
-	packet     raknet.Packet
-	sessionKey string
-	generation uint64
-	objectID   uint32
-	timestamp  uint64
+	runtime          campaignNPCActionRuntime
+	packet           raknet.Packet
+	sessionKey       string
+	generation       uint64
+	actionGeneration uint64
+	objectID         uint32
+	timestamp        uint64
 }
 
 func (e campaignNocturnaDriftNextSchedule) produce() ([][]byte, error) {
+	e.runtime.registry.mutex.RLock()
+	member, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isCurrent := isFound && member.isCampaignNPCSourceGenerationActive(
+		e.generation, e.objectID, e.actionGeneration,
+	)
+	e.runtime.registry.mutex.RUnlock()
+	if !isCurrent {
+		return nil, nil
+	}
+	if e.runtime.finishScenarioNPCManualAction(e.sessionKey, e.generation,
+		e.objectID, e.actionGeneration) {
+		return nil, nil
+	}
 	return e.runtime.produceEnemyCharge(
 		e.packet, e.sessionKey, e.generation, e.objectID, e.timestamp,
 	)
@@ -726,6 +885,7 @@ func (r campaignNPCActionRuntime) produceChargeSegmentCollision(
 	next := campaignNocturnaDriftNextSchedule{
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID, timestamp: nextTimestamp,
+		actionGeneration: chargePlan.ActionGeneration,
 	}
 	poseEnd := campaignChargePoseEnd{
 		runtime: r, sessionKey: sessionKey, generation: generation,
@@ -787,7 +947,7 @@ func (r campaignNPCActionRuntime) produceChargeSegmentCollision(
 		}
 		result, commitErr := zonenpc.CommitAttack(
 			peerSession.zone.NPCRandom(), plan,
-			enemy.Plan.NPCProfile.CriticalRating, r.program.Critical,
+			enemy.EffectiveCriticalRating(), r.program.Critical,
 		)
 		if commitErr != nil {
 			r.registry.mutex.Unlock()
@@ -829,7 +989,7 @@ func (r campaignNPCActionRuntime) produceChargeSegmentCollision(
 			}
 			result, commitErr := zonenpc.CommitAttack(
 				peerSession.zone.NPCRandom(), plan,
-				enemy.Plan.NPCProfile.CriticalRating, r.program.Critical,
+				enemy.EffectiveCriticalRating(), r.program.Critical,
 			)
 			if commitErr != nil {
 				r.registry.mutex.Unlock()
@@ -938,6 +1098,15 @@ func (r campaignNPCActionRuntime) produceEnemyCharge(
 		}
 	}
 	target, isTargetFound := peerSession.campaignNPCTarget(generation, enemy.TargetObjectID)
+	// Build 103 NomadSpecialOne.Phase admits charge only beyond distance 10;
+	// its independent cleave remains available while charge is cooling down.
+	if isEnemyFound && isTargetFound && isProfileFound && profile.AbilityName == "NomadSpecialOneCharge" {
+		surfaceDistance := max(float32(0), zonegeometry.Distance(enemy.Plan.Position, target.Position)-enemy.Plan.ActorFootprintRadius()-target.ActorFootprintRadius)
+		if surfaceDistance <= 10 || peerSession.campaignNPCChargeReadiness[objectID] > timestamp {
+			r.registry.mutex.Unlock()
+			return r.produceNomadCleave(packet, sessionKey, generation, objectID, timestamp)
+		}
+	}
 	chargePursuit := zonenpc.FirstActionPlan{}
 	isChargePursuit := false
 	if isEnemyFound && isTargetFound && isProfileFound &&
@@ -965,7 +1134,7 @@ func (r campaignNPCActionRuntime) produceEnemyCharge(
 		}
 		scheduleErr := r.pursuit.schedule(
 			packet, sessionKey, generation, objectID, timestamp,
-			chargePursuit.TargetPosition, profile, step.resume,
+			chargePursuit.TargetPosition, chargePursuit.Profile, step.resume,
 		)
 		if scheduleErr != nil {
 			return nil, fmt.Errorf("enemyChargePursuitSchedule: %w", scheduleErr)
@@ -1004,6 +1173,9 @@ func (r campaignNPCActionRuntime) produceEnemyCharge(
 	readyTimestamp := peerSession.campaignNPCChargeReadiness[objectID]
 	if readyTimestamp > timestamp && profile.AbilityName != "ScaldronBoss_ShadowCharge" {
 		r.registry.mutex.Unlock()
+		if profile.AbilityName == "BoomerCharge" {
+			return r.produceBoomerSmash(packet, sessionKey, generation, objectID, timestamp)
+		}
 		if isProfileFound && profile.AbilityName == "NoctGhostCharge" {
 			return r.produceNoctGhostChargerPose(
 				packet, sessionKey, generation, objectID, timestamp, readyTimestamp,
@@ -1118,28 +1290,41 @@ type campaignPickyLandingStep struct {
 	sessionKey string
 	generation uint64
 	objectID   uint32
+	charge     campaignChargeSchedule
 }
 
 func (e campaignPickyLandingStep) attack(timestamp uint64) ([][]byte, error) {
-	return e.runtime.produceVerdanthBasicPickyAttack(
+	restorePackets, restoreErr := e.charge.restoreMovementState()
+	if restoreErr != nil {
+		return e.charge.fail("pickySpeedRestore", restoreErr)
+	}
+	attackPackets, attackErr := e.runtime.produceVerdanthBasicPickyAttack(
 		e.packet, e.sessionKey, e.generation, e.objectID, timestamp, true,
 	)
+	if attackErr != nil {
+		return e.charge.fail("pickyLandingAttack", attackErr)
+	}
+	return append(restorePackets, attackPackets...), nil
 }
 
 func (r campaignNPCActionRuntime) produceVerdanthBasicPickyLanding(
 	packet raknet.Packet, sessionKey string, generation uint64,
 	objectID uint32, timestamp uint64, chargePlan zonenpc.AttackPlan,
 ) ([][]byte, error) {
+	charge := campaignChargeSchedule{
+		runtime: r, packet: packet, sessionKey: sessionKey,
+		generation: generation, objectID: objectID, plan: chargePlan,
+	}
 	landPacket, err := npcraknet.AnimationState(
 		objectID, chargePlan.Profile.EndAnimationName, timestamp,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("enemyPickyLand: %w", err)
+		return charge.fail("enemyPickyLand", err)
 	}
 	r.registry.mutex.RLock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
-	isCurrent := isFound && peerSession.isCampaignNPCSourceActive(
-		generation, objectID,
+	isCurrent := isFound && peerSession.isCampaignNPCSourceGenerationActive(
+		generation, objectID, chargePlan.ActionGeneration,
 	)
 	if !isCurrent {
 		r.registry.mutex.RUnlock()
@@ -1151,42 +1336,54 @@ func (r campaignNPCActionRuntime) produceVerdanthBasicPickyLanding(
 	)
 	r.registry.mutex.RUnlock()
 	if !isEnemyFound || !isTargetFound {
-		r.releaseAction(sessionKey, generation, objectID)
-		return nil, nil
+		return charge.fail("pickyLandingTarget", errors.New("target unavailable"))
 	}
 	movementProfile := chargePlan.Profile
 	movementProfile.Range = 0.75
-	movementProfile.MovementSpeed += movementProfile.ForcedMovementSpeed
+	baseSpeed := enemy.Plan.NPCProfile.BaseCombatSpeed
+	if baseSpeed <= 0 {
+		baseSpeed = movementProfile.MovementSpeed
+	}
+	movementProfile.MovementSpeed = baseSpeed *
+		(1 + zonenpc.EffectiveMovementSpeedBuff(enemy.Plan) + movementProfile.ForcedMovementSpeed)
 	action, err := campaignNPCActionWithProfile(
 		enemy.Plan, target.ObjectID, target.Position, movementProfile,
 		target.ActorFootprintRadius,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("enemyPickyFinalApproachPlan: %w", err)
+		return charge.fail("pickyApproachPlan", err)
 	}
 	step := campaignPickyLandingStep{
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID,
+		charge: charge,
 	}
 	if !action.IsPursuitNeeded {
 		attackPackets, attackErr := step.attack(timestamp)
 		if attackErr != nil {
-			return nil, attackErr
+			return nil, fmt.Errorf("pickyCloseAttack: %w", attackErr)
 		}
 		return append([][]byte{landPacket}, attackPackets...), nil
 	}
 	pursuitPackets, err := npcraknet.Pursuit(action)
 	if err != nil {
-		return nil, fmt.Errorf("enemyPickyFinalApproachMarshal: %w", err)
+		return charge.fail("pickyApproachMarshal", err)
+	}
+	speedPackets, speedErr := npcraknet.ChargeMovementSpeed(
+		objectID, zonenpc.EffectiveMovementSpeedBuff(enemy.Plan)+movementProfile.ForcedMovementSpeed,
+	)
+	if speedErr != nil {
+		return charge.fail("pickyApproachSpeed", speedErr)
 	}
 	err = r.pursuit.schedule(
 		packet, sessionKey, generation, objectID, timestamp,
-		action.TargetPosition, movementProfile, step.attack,
+		action.TargetPosition, action.Profile, step.attack,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("enemyPickyFinalApproachSchedule: %w", err)
+		return charge.fail("pickyApproachSchedule", err)
 	}
-	return append([][]byte{landPacket}, pursuitPackets...), nil
+	packets := append([][]byte{landPacket}, speedPackets...)
+	return append(packets, pursuitPackets...), nil
 }
 
 func (r campaignNPCActionRuntime) produceVerdanthBasicPickyAttack(
@@ -1231,6 +1428,7 @@ func (r campaignNPCActionRuntime) produceVerdanthBasicPickyAttack(
 		r.releaseAction(sessionKey, generation, objectID)
 		return nil, nil
 	}
+	profile = zonenpc.ApplyAffixTiming(profile, enemy.Plan)
 	plan, err := zonenpc.PlanAttackWithProfile(
 		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
@@ -1248,7 +1446,7 @@ func (r campaignNPCActionRuntime) produceVerdanthBasicPickyAttack(
 		}
 		scheduleErr := r.pursuit.schedule(
 			packet, sessionKey, generation, objectID, timestamp,
-			action.TargetPosition, profile, request.resume,
+			action.TargetPosition, action.Profile, request.resume,
 		)
 		if scheduleErr != nil {
 			return nil, fmt.Errorf("enemyPickyAttackPursuitSchedule: %w", scheduleErr)
@@ -1264,11 +1462,11 @@ func (r campaignNPCActionRuntime) produceVerdanthBasicPickyAttack(
 		return nil, fmt.Errorf("enemyPickyAttackTimeline: %w", err)
 	}
 	schedule := campaignNPCAttackSchedule{request: request, plan: plan}
-	next := campaignEnemyChargeNextStep{
+	next := campaignChargeMeleeNextStep{campaignEnemyChargeNextStep: campaignEnemyChargeNextStep{
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID,
 		timestamp: timestamp + uint64(timeline.NextDelay/time.Millisecond),
-	}
+	}, actionGeneration: plan.ActionGeneration}
 	_, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: timeline.HitDelay, Produce: schedule.hit},
 		{Delay: timeline.NextDelay, Produce: next.produce},
@@ -1359,6 +1557,7 @@ func (r campaignNPCActionRuntime) produceCryosBasicChargeHeadbutt(
 		headbuttCooldown, chargeProfile.MovementSpeed,
 		chargeProfile.NonCombatMovementSpeed,
 	)
+	profile = zonenpc.ApplyAffixTiming(profile, enemy.Plan)
 	plan, err := zonenpc.PlanAttackWithProfile(
 		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
@@ -1392,11 +1591,11 @@ func (r campaignNPCActionRuntime) produceCryosBasicChargeHeadbutt(
 		return nil, fmt.Errorf("enemyHeadbuttTimeline: %w", err)
 	}
 	schedule := campaignNPCAttackSchedule{request: request, plan: plan}
-	next := campaignEnemyChargeNextStep{
+	next := campaignChargeMeleeNextStep{campaignEnemyChargeNextStep: campaignEnemyChargeNextStep{
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID,
 		timestamp: timestamp + uint64(timeline.NextDelay/time.Millisecond),
-	}
+	}, actionGeneration: plan.ActionGeneration}
 	_, scheduleErr := scheduleNPCProducers(r.registry, packet, []raknet.ScheduledPacketProducer{
 		{Delay: timeline.HitDelay, Produce: schedule.hit},
 		{Delay: timeline.NextDelay, Produce: next.produce},
@@ -1408,6 +1607,19 @@ func (r campaignNPCActionRuntime) produceCryosBasicChargeHeadbutt(
 	return packets, nil
 }
 
+type campaignChargeMeleeNextStep struct {
+	campaignEnemyChargeNextStep
+	actionGeneration uint64
+}
+
+func (e campaignChargeMeleeNextStep) produce() ([][]byte, error) {
+	if e.runtime.finishScenarioNPCManualAction(e.sessionKey, e.generation,
+		e.objectID, e.actionGeneration) {
+		return nil, nil
+	}
+	return e.campaignEnemyChargeNextStep.produce()
+}
+
 type campaignNomadChargeAttackSchedule struct {
 	attack    campaignNPCAttackSchedule
 	nextDelay time.Duration
@@ -1415,6 +1627,10 @@ type campaignNomadChargeAttackSchedule struct {
 
 func (e campaignNomadChargeAttackSchedule) next() ([][]byte, error) {
 	req := e.attack.request
+	if req.runtime.finishScenarioNPCManualAction(req.sessionKey, req.generation,
+		req.objectID, e.attack.plan.ActionGeneration) {
+		return nil, nil
+	}
 	timestamp := req.timestamp + uint64(e.nextDelay/time.Millisecond)
 	packets, err := req.runtime.produceEnemyCharge(
 		req.packet, req.sessionKey, req.generation, req.objectID, timestamp,
@@ -1462,6 +1678,7 @@ func (r campaignNPCActionRuntime) produceNomadChargeAttack(
 		return nil, nil
 	}
 	profile := zonenpc.NomadSpecialOneChargingAttackProfile()
+	profile = zonenpc.ApplyAffixTiming(profile, enemy.Plan)
 	plan, err := zonenpc.PlanAttackWithProfile(
 		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
@@ -1500,7 +1717,7 @@ func (r campaignNPCActionRuntime) produceNomadChargeAttack(
 	nextDelay := timeline.NextDelay
 	if chargeReadyTimestamp > timestamp {
 		readyDelay := time.Duration(chargeReadyTimestamp-timestamp) * time.Millisecond
-		nextDelay = max(nextDelay, readyDelay)
+		nextDelay = min(nextDelay, readyDelay)
 	}
 	schedule := campaignNomadChargeAttackSchedule{
 		attack:    campaignNPCAttackSchedule{request: request, plan: plan},
@@ -1537,6 +1754,7 @@ func (r campaignNPCActionRuntime) produceBoomerSmash(
 		return nil, nil
 	}
 	profile := zonenpc.BoomerSmashProfile()
+	profile = zonenpc.ApplyAffixTiming(profile, enemy.Plan)
 	plan, err := zonenpc.PlanAttackWithProfile(
 		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)

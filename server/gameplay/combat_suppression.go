@@ -10,7 +10,8 @@ import (
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
-const campaignSuppressionTick = 500 * time.Millisecond
+// Build 103's aura renews the half-second recipient modifier every 0.4 seconds.
+const campaignSuppressionTick = 400 * time.Millisecond
 
 type campaignSuppressionRun struct {
 	runtime    campaignNPCActionRuntime
@@ -62,11 +63,12 @@ func (e *campaignSuppressionRun) produce() ([][]byte, error) {
 		return nil, nil
 	}
 	profile := zonenpc.ActionProfile{
-		ModifierName: "SilenceModifier", ModifierDuration: time.Second,
+		ModifierName:     "CitadelSpecialTwo_SilenceModifier",
+		ModifierDuration: 500 * time.Millisecond,
 	}
 	plans := make([]zonenpc.AttackPlan, 0)
 	for _, target := range peerSession.zone.LiveNPCTargets() {
-		if zonegeometry.Distance(source.Plan.Position, target.Position) > 10 {
+		if zonegeometry.Distance(source.Plan.Position, target.Position) > 2 {
 			continue
 		}
 		plans = append(plans, zonenpc.AttackPlan{

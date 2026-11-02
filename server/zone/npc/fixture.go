@@ -26,9 +26,35 @@ func IsGraviticRemnant(plan SpawnPlan) bool {
 	return IsGraviticRegulator(plan) || IsGraviticStabilizer(plan)
 }
 
-// CryosGeyserDeath opens the ice plug and leaves the vent alive as a hazard.
+// Both the breakable ice plug and passive cracks remain as geyser hazards.
 func IsCryosGeyser(plan SpawnPlan) bool {
-	return plan.IsFixture && strings.EqualFold(plan.NounName, "DEST_prefab_cryos_ice_crack1.Noun")
+	return plan.IsFixture && game.CryosGeyserHook(plan.NounName, plan.NPCProfile) != ""
+}
+
+// Passive cracks keep their authored appearance; only ice plugs open on death.
+func CryosGeyserDeathState(plan SpawnPlan) string {
+	if game.CryosGeyserHook(plan.NounName, plan.NPCProfile) == "CryosGeyserDeath" {
+		return "unblocked"
+	}
+	return ""
+}
+
+// CryosACRemnantNoun is the separate damaged object created by AcDeath and
+// AcDeathFreeze, rather than a graphics state on the original AC unit.
+func CryosACRemnantNoun(plan SpawnPlan) string {
+	if !plan.IsFixture {
+		return ""
+	}
+	switch strings.ToLower(plan.NounName) {
+	case "dest_prefab_cryos_acunit_small_animated.noun", "dest_prefab_cryos_acunit_small.noun":
+		return "prefab_cryos_acunit_small_dam.Noun"
+	default:
+		return ""
+	}
+}
+
+func IsCryosMalfunction(plan SpawnPlan) bool {
+	return plan.IsFixture && strings.EqualFold(plan.NounName, "DEST_prefab_cryos_acunit_small.Noun")
 }
 
 // Gravitic Regulators leave a solid base after their machinery is destroyed.
@@ -97,6 +123,9 @@ func planMarkers(
 		}
 		if isFixture {
 			currentPlan.PlacementScale = currentMarker.Scale
+			currentPlan.IsPlacementKnown = true
+			currentPlan.IsPlacementVisible = currentMarker.IsVisible
+			currentPlan.IsPlacementCollidable = currentMarker.IsCollisionEnabled
 		}
 		if IsGraviticStabilizer(currentPlan) && currentMarker.Scale > 0 {
 			currentPlan.NPCProfile.FootprintRadius *= currentMarker.Scale

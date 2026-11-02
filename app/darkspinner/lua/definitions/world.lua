@@ -1,0 +1,283 @@
+---@meta
+
+---Server observations and guarded native actions; outcomes require independent observation.
+---@class ClientWorld
+---@field PlaceHero fun(self:ClientWorld,point:WorldPosition):table|nil,ScenarioError|nil Positions a living owned Arena or committed campaign hero through server teleport packets. Requires every world participant owned and ready. Fixture setup only; does not prove native movement, restore resources or change statistics. Observe native arrival separately.
+---@field RestoreHero fun(self:ClientWorld,options?:HeroResourceOptions):table|nil,ScenarioError|nil Scenario-only Arena or committed campaign fixture. Sets living hero resources to requested amounts, defaulting omitted amounts to current maxima. Leaves combat statistics, effects and cooldowns intact. Requires every world participant owned and ready; observe each native client separately.
+---@field ResetCooldowns fun(self:ClientWorld):table|nil,ScenarioError|nil Scenario-only owned Arena or committed campaign fixture. Resets server and native ability/deployment cooldowns without resetting recovery, arrival locks, resources, statistics or in-flight producers. Receipt reports is_queued and cooldown_count; observe subsequent native acceptance separately.
+---@field SetAbilityRank fun(self:ClientWorld,rank:integer):table|nil,ScenarioError|nil Scenario-only owned PvP SERVER rank fixture,1..8 or0 to clear. Pins the current living actor lifetime; native UI/command rank, resources and cooldowns are unchanged. Receipt is_ability_rank_set/is_server_rank_fixture and ability_rank explicitly identify the server fixture; is_queued is false because no native packet is queued. Override expires on actor/slot/squad/transport changes.
+---@field ReplaceHero fun(self:ClientWorld,noun:integer):table|nil,ScenarioError|nil Scenario-only owned Arena or committed campaign solo/co-op fixture. Requires every world participant owned and ready. Replaces the active slot while preserving position and saved deck. Observes deletion on every owned client before recreation, performs native away/back deployment using a living reserve, and requires native rig readiness. Pins game, zone, peer, transport and actor identities; interrupts owned effects and resets cooldowns. Completed deaths are not rewound; partial retirement errors must not be replayed. Rig readiness does not certify pixels or remote appearance identity.
+---@field SelectHero fun(self:ClientWorld,slot:integer,timeout_ms?:integer):HeroSelectionResult|nil,ScenarioError|nil Waits for native eligibility and authoritative arrival recovery, selects zero-based squad slot 0 through 2 through one guarded native edge, then waits for a changed native controlled handle, matching server index and completed arrival recovery. No replay after an accepted edge or unknown outcome.
+---@field Snapshot fun(self:ClientWorld):WorldSnapshot|nil,ScenarioError|nil Samples the owned server world once without waiting for availability. No movement or gameplay advancement.
+---@field Ready fun(self:ClientWorld,timeout_ms?:integer):WorldSnapshot|nil,ScenarioError|nil Waits for committed server dungeon setup, a deployed hero and a processed native active-world/controlled-handle observation. Returns the ready snapshot with native_readiness. Uses client timeout; aborts on ownership changes. Does not prove visibility of each object or gameplay action success.
+---@field SnapshotLiving fun(self:ClientWorld):WorldSnapshot|nil,ScenarioError|nil Samples once and fails if unavailable, terminal, or without a living deployed hero. No readiness wait; partial world accompanies failure.
+---@field NPCCatalog fun(self:ClientWorld):NPCCatalog|nil,ScenarioError|nil Returns the current committed campaign director's sorted installed NPC nouns and baseline action profiles. Recovered and scenario-control support flags are separate; no native playback assertion.
+---@field Path fun(self:ClientWorld,start:WorldPosition,goal:WorldPosition):WorldPath|nil,ScenarioError|nil Read-only bounded installed-mesh path with this hero's footprint and scene obstacles. Complete means the projected goal is reached, never authored-target arrival or native movement acceptance.
+---@field SnapshotNative fun(self:ClientWorld):WindowCommandResult|nil,ScenarioError|nil Reads native gameplay_state; availability is explicit.
+---@field Project fun(self:ClientWorld,point:WorldPosition):WindowCommandResult|nil,ScenarioError|nil Reads native camera projection of a world point; does not send input.
+---@field Click fun(self:ClientWorld,point:WorldPosition):WindowCommandResult|nil,ScenarioError|nil Projects one world point through the ordinary native ray/input polls. Processing is not movement, damage or interaction proof. Never replay an unknown outcome.
+---@field Hold fun(self:ClientWorld,point:WorldPosition,duration_ms:integer):WindowCommandResult|nil,ScenarioError|nil Holds ordinary left input for 1 to 1200ms, then waits for paired release processing under the two-second native deadline. Does not guarantee attacks or movement. Unknown outcomes stop without replay.
+---@field Configure fun(self:ClientWorld,options:WorldRecipeOptions):WorldRecipe|nil,ScenarioError|nil Installs an immutable server recipe after accepted login and before mission admission. Every member of a shared fresh campaign must configure the same run, seed and ambient setting before admission.
+---@field Spawn fun(self:ClientWorld,noun:string,timeout_ms?:integer):WorldSpawn|nil,ScenarioError|nil Queues once and waits for correlated server publication under the client timeout. No native visibility assertion; timeout preserves the pending receipt without replay.
+---@field SpawnOwnedNPC fun(self:ClientWorld,noun:string,parent:ControlledNPC,timeout_ms?:integer):WorldSpawn|nil,ScenarioError|nil Scenario-only exact NomadCyberOne_Droid_2/_3 admission with this client's living AI-disabled NomadCyberOne parent handle. Preserves installed class/rank and initial native ownership, then starts existing support after birth publication. Requires a fresh parent without another droid/support. Returns an observational receipt, not a controlled child handle. Normal campaign summoning remains unchanged; never replay an unknown spawn.
+---@field ActivateSpoffitCrystal fun(self:ClientWorld,timeout_ms?:integer):WorldSpawn|nil,ScenarioError|nil Scenario-only invocation of installed SpoffitCrystal modifier/resource4260 on this owned real hero. Returns exact Spoffit child receipt after birth publication. Uses authored25HP, no stat mirror or combat fallback, normal2s emergence and follow. Normal crystal loot availability is unchanged; never replay unknown activation.
+---@field DeactivateSpoffitCrystal fun(self:ClientWorld,timeout_ms?:integer):WorldSpawn|nil,ScenarioError|nil Removes this hero's published SpoffitCrystal, waits for authored2s burrow/delete. Explicitly repairs source960's burrowModifer spelling to its defined LifeTempestPetBurrow resource. Returns a retired observational receipt; never force-deletes a controlled NPC.
+---@field SpawnControlledNPC fun(self:ClientWorld,noun:string,timeout_ms?:integer):ControlledNPC|nil,ScenarioError|nil Spawns a supported installed enemy with AI disabled before admission and waits for server publication. On failure returns nil,error with partial receipt in err.Details.spawn_receipt; never retry an unknown spawn blindly.
+---@field SpawnControlledFixture fun(self:ClientWorld,noun:string,timeout_ms?:integer):ControlledNPC|nil,ScenarioError|nil Admits an owned installed positive-HP fixture through its normal fixture owner. Unsupported callbacks and marker-only or noncombatant scenery sources fail explicitly. Supports observation and retirement; attack it through native input for actual death callbacks.
+---@field SpawnAsync fun(self:ClientWorld,noun:string):WorldSpawn|nil,ScenarioError|nil Returns the queued command receipt without waiting for publication; no automatic retry.
+---@field SnapshotSpawn fun(self:ClientWorld,request_id:string):WorldSpawn|nil,ScenarioError|nil Reads a request owned by this run/account/game/peer/zone; failed commands retain partial receipts with an error.
+
+---@class HeroResourceOptions
+---@field hit_point? number Finite positive HP at or below current maximum; cannot revive a defeated hero.
+---@field maximum_hit_point? number Scenario-only maximum HP from the hero's base maximum through 1000000. Use with hit_point to keep a durable high-health victim.
+---@field mana_point? number Finite power between zero and current maximum.
+
+---@class WorldRecipeOptions
+---@field run_seed integer Positive integer up to 9007199254740991. Controls server gameplay RNG; no native layout RNG claim.
+---@field population_seed? integer Optional unsigned 32-bit diagnostic population seed, including zero. Overrides standing-population and section-roster RNG independently of run/layout seeds; does not reconstruct the original server seed or override combat/drop RNG. Immutable and identical for every cohort member; scenario builds only.
+---@field is_ambient_population_suppressed? boolean Omitting or false retains ambient population. True preserves fixed scene actors and normal scene loading, suppressing ambient population only.
+
+---@class WorldRecipe
+---@field client_id string
+---@field instance_id string
+---@field pid integer
+---@field user_id integer
+---@field run_seed integer
+---@field is_ambient_population_suppressed boolean
+---@field source 'server_focused_recipe'
+
+---@class WorldSpawn
+---@field client_id string
+---@field instance_id string
+---@field pid integer
+---@field user_id integer
+---@field request_id string Retain this ID after a timeout; do not blindly replay Spawn.
+---@field state 'queued'|'admitted'|'published'|'retired'|'failed'
+---@field game_id integer
+---@field peer_generation integer
+---@field transport_generation integer
+---@field zone_generation integer
+---@field object_id integer Zero before admission; only valid in this game/peer/zone epoch.
+---@field owner_object_id integer Explicit owned-spawn parent, zero for ordinary spawns. Native birth ownership is assigned before creation; no post-spawn patch.
+---@field creator_modifier? string Registered creator name for explicit scenario-owned summon operations; SpoffitCrystal for the installed source960 invocation.
+---@field creator_resource_id? integer Installed creator-context noun resource4260 for SpoffitCrystal; this does not claim normal loot availability.
+---@field is_owner_support_started boolean Existing authored parent support was started after owned child birth publication; not native healing proof.
+---@field noun string Exact installed director combat noun filename. Unsupported nouns fail explicitly.
+---@field is_admitted boolean
+---@field is_ai_enabled boolean False for SpawnControlled; ordinary Spawn retains default AI behavior.
+---@field is_fixture boolean True only for an admitted owned fixture, preserving its actual fixture class and callbacks.
+---@field is_published boolean Server response-send commitment only.
+---@field is_native_observed false Native rendering acknowledgment is not available from this producer.
+---@field failure? string
+---@field source 'server_spawn_receipt'
+
+---@class NPCCatalog
+---@field client_id string
+---@field instance_id string
+---@field pid integer
+---@field game_id integer
+---@field zone_generation integer
+---@field level string Current director level.
+---@field difficulty integer Numeric selected campaign difficulty; named mode mapping requires separate build-103 evidence.
+---@field entries NPCCatalogEntry[] Sorted by case-insensitive noun name.
+
+---@class NPCCatalogEntry
+---@field noun string Exact installed director noun filename.
+---@field hit_point number Installed baseline combat HP; positive HP is required for controlled spawn.
+---@field rank integer Authored baseline NPC rank.
+---@field ability_name string Default action ability name, including fallback names when is_action_recovered is false.
+---@field supported_ability_names string[] Exact ordinary first-action names available to a controlled spawn, including reachable distance-selected secondary actions. Empty when control is unsupported. The requested name must match the action selected at cast admission.
+---@field autonomous_ability_names string[] Authored phase/controller actions for autonomous encounters and owner-created children. Discovery only; does not grant manual casting or prove native playback. Phase-driven nouns may expose these while is_control_supported is false.
+---@field family string Server default action family.
+---@field target_kind 'hero'|'ally'|'unknown' Hero-target actions use the owned deployed hero; supported ally-target families require a controlled helper.
+---@field range number Authored attack range before actor and target footprint adjustments; use to place close-range mobs before casting.
+---@field minimum_range number Authored minimum range where applicable.
+---@field is_action_recovered boolean True only when a noun-specific action profile is present, not a generic fallback.
+---@field is_control_supported boolean True when the controlled-spawn gate admits a positive-HP recovered profile with at least one manually supported action. Final spawn admission may still reject encounter-specific modifiers.
+---@field is_staging_supported boolean True when owned AI-off spawn, movement, and enabling normal AI are supported. Autonomous-only actors can be staged while is_control_supported is false; manual Cast remains server-rejected.
+---@field is_final_boss boolean Known standalone final-boss noun; separate controller support is required.
+
+---@class WorldPosition
+---@field x number
+---@field y number
+---@field z number
+
+---@class WorldHero
+---@field flak_stack_count integer Current retained Flak Cannon upgrade stacks on the deployed actor.
+---@field flak_attack_speed number Current Flak Cannon contribution to attack-speed scaling.
+---@field is_stunned boolean Current authoritative stun input gate, including other forced-control guards checked by that gate; only populated for the deployed actor.
+---@field is_silenced boolean Current authoritative silence gate; basic attacks remain permitted. Only populated for the deployed actor.
+---@field hostile_movement_modifier number Additive hostile movement modifier used by server motion; excludes positive passive/equipment modifiers.
+---@field hostile_attack_modifier number Additive hostile attack-speed modifier used by server timing.
+---@field sphere_membership_count integer Number of retained Delaying Sphere memberships on this deployed actor, independent of numerical stacking.
+---@field movement_position WorldPosition Read-only projection of retained server motion at captured_at; valid only when is_movement_available.
+---@field movement_speed number Current server motion speed, valid only when is_movement_available.
+---@field is_movement_available boolean Movement producer sampled successfully; false for inactive slots or unavailable movement.
+---@field movement_unavailable_reason? string Explicit movement sampling failure or missing producer.
+---@field input_lock_remaining_ms integer Remaining authoritative deployment recovery, rounded upward. Zero permits server input; native eligibility remains independent.
+---@field passive_kill_stack integer Observed kill-passive stack count; read-only and independent of combat statistics.
+---@field object_id integer
+---@field noun integer Installed template noun ID, including live PvP replacements.
+---@field index integer Zero-based squad index.
+---@field position WorldPosition Last committed server pose, not a continuously interpolated native movement sample. Use SnapshotNative().gameplay_state.position for observed client navigation.
+---@field hit_point number
+---@field mana_point number
+---@field maximum_hit_point number
+---@field maximum_mana_point number
+---@field is_defeated boolean
+
+---@class WorldNPC
+---@field object_id integer
+---@field noun string
+---@field position WorldPosition
+---@field hit_point number
+---@field is_dead boolean
+---@field is_published boolean Server global publication; not native or per-client visibility.
+---@field is_hostile boolean Server non-player-aligned faction; not a targetability guarantee.
+---@field is_hostility_available boolean False if producer faction is unknown.
+---@field is_fixture boolean
+---@field is_boss boolean
+---@field distance_squared number Three-dimensional distance from sampled hero.
+
+---@class WorldTeleporter
+---@field route_index integer Recovered initial-chain route index, otherwise -1.
+---@field marker_id integer Authored route identity, not a replicated object.
+---@field destination_marker_id integer
+---@field object_id integer Zero when the presentation anchor is unknown or busy.
+---@field source WorldPosition
+---@field destination WorldPosition
+---@field is_security boolean
+---@field is_boss boolean
+---@field is_tunnel boolean
+---@field is_activation_available boolean The owned peer has a retained campaign activation publication.
+---@field is_active boolean Meaningful only when is_activation_available; not native interactability.
+
+---Server-owned resource-orb state only. No packet delivery, native visibility or healing assertion.
+---@class WorldPickup
+---@field object_id integer Identity scoped to the owning world game/peer/zone epochs.
+---@field kind 'health'|'mana' Resurrection orbs are excluded.
+---@field position WorldPosition Ordinary automatic-contact destination, not rendered projectile position.
+---@field destination WorldPosition Same resource-orb contact destination.
+---@field available_in_ms integer Nonnegative remaining delay at world.captured_at, rounded upward. Zero permits contact sampling.
+---@field expires_in_ms integer Nonnegative remaining lifetime on the authoritative zone clock at world.captured_at, rounded upward.
+---@field is_collectible boolean Server registration is unreserved, available and unexpired. Does not assert a living eligible hero, resource need, path access or healing.
+---@field is_reserved boolean Actual pickup lifecycle reservation, sampled without modifying it.
+---@field is_expired boolean Registered record awaits ordinary expiry cleanup; do not pursue it.
+---@field is_server_registered boolean Both orb and pickup lifecycle owners retain this identity. Does not prove publication or native delivery.
+---@field distance_squared number Three-dimensional distance from sampled server hero pose.
+---@field pickup_radius number Ordinary automatic resource-orb contact sphere, currently 2.5 world units.
+
+---@class WorldBoss
+---@field phase integer Dormant=0, arming=1, active=2, complete=3.
+---@field leader_object_id integer
+---@field leader_hit_point number
+---@field is_complete boolean
+---@field is_beam_out_committed boolean
+
+---@class WorldBossTrigger
+---@field marker_id integer Authored marker identity, not a spawned object.
+---@field marker_set_name string Authored marker set containing the boss trigger.
+---@field position WorldPosition Authored trigger center.
+---@field radius number Authored trigger radius; occupancy and dwell still follow normal campaign rules.
+
+---@class WorldSnapshot
+---@field arena? ArenaMatchSnapshot Read-only arena match/squad producer, including results after combat ends; independent of world availability and native results UI.
+---@field campaign? CampaignSnapshot Read-only committed campaign participant/squad producer. Includes unready members, which block owned world fixtures.
+---@field native_readiness? NativeGameplaySnapshot Native active-world and controlled-handle sample retained by Ready() and Mission:Enter().
+---@field ability AbilityState|nil Active readiness for the supported native adapter and terminal producer evidence for authored projectile bursts; support/availability are explicit.
+---@field client_id string
+---@field instance_id string
+---@field pid integer
+---@field user_id integer
+---@field game_id integer
+---@field source 'server_world_snapshot'
+---@field captured_at string
+---@field is_available boolean Check before using world fields.
+---@field unavailable_reason? string
+---@field peer_generation integer
+---@field transport_generation integer
+---@field zone_generation integer
+---@field session_stage string
+---@field hero WorldHero|nil Missing when unavailable.
+---@field npcs WorldNPC[] Nearest 128 including dead and unpublished; stable object-ID tie break.
+---@field scenery_hazards table[] Actual selected scenery hazard objects with object_id, noun, ability and position; server ownership does not certify native visibility.
+---@field npc_total integer Total current server NPC records, including dead and unpublished.
+---@field is_npc_truncated boolean
+---@field pickups WorldPickup[] Nearest 64 health/mana orb records, with stable object-ID distance ties; includes temporarily unavailable or reserved records.
+---@field pickup_total integer Total joined health/mana orb records, including unavailable, reserved and awaiting-expiry records.
+---@field is_pickup_truncated boolean More than 64 records exist; absence from this bounded sample does not prove absence from the world.
+---@field is_pickup_available boolean True distinguishes a valid empty sample from missing, contended or inconsistent pickup producers.
+---@field pickup_unavailable_reason? string Check when is_pickup_available is false; do not treat unknown as an empty world.
+---@field teleporters WorldTeleporter[] At most 128 authored campaign routes.
+---@field is_teleporter_truncated boolean
+---@field is_mission_complete boolean Compatibility alias of is_zone_terminal; retirement or discard does not prove victory.
+---@field is_zone_terminal boolean Server zone is terminal, including discard or retirement; independent of victory.
+---@field is_victory_available boolean The outcome producer observed this exact user/peer generation. False when missing or temporarily busy.
+---@field is_victory_committed boolean Actual personal result transaction committed after completed boss admission with nonzero boss identity. Requires is_victory_available; not native result-screen or reward-cashout proof.
+---@field is_objective_complete boolean Real zone objective producer.
+---@field boss WorldBoss|nil Nil if unsupported or producer lock busy.
+---@field boss_triggers WorldBossTrigger[] Authored named-boss trigger centers in this committed campaign map; read-only and not proof of admission.
+
+---@class CampaignSnapshot
+---@field members CampaignMemberSnapshot[] Same-zone admitted campaign members, including unavailable participants.
+
+---@class CampaignMemberSnapshot
+---@field user_id integer
+---@field peer_generation integer
+---@field transport_generation integer
+---@field zone_generation integer
+---@field deployed_index integer
+---@field is_ready boolean Committed current transport and squad are available; not proof of native readiness.
+---@field characters WorldHero[] Current server squad resources; no saved-deck mutation.
+
+---@class ArenaMatchSnapshot
+---@field team integer This participant's team.
+---@field friendly_projectile_count integer Published, nonretired projectile owners on this team; does not sample or advance flight.
+---@field hostile_projectile_count integer Published, nonretired projectile owners on opposing teams in this Arena.
+---@field winning_team integer Zero until the match producer commits a winner.
+---@field is_combat_active boolean
+---@field is_result_ready boolean Server result commitment; not native UI receipt.
+---@field members ArenaMemberSnapshot[] Current admitted match members; order unspecified.
+
+---@class ArenaMemberSnapshot
+---@field damage_done number Effective damage credited to this player in the current match.
+---@field damage_taken number Effective damage received in the current match.
+---@field healing_done number Actual restored health credited to this player, excluding overhealing.
+---@field healing_received number Actual restored health received, excluding overhealing.
+---@field swap_remaining_ms integer Remaining server swap cooldown at capture time; zero allows admission but does not prove native eligibility.
+---@field user_id integer
+---@field team integer
+---@field deployed_index integer Zero-based squad slot.
+---@field characters WorldHero[] Available squad characters; only index and resource fields are sampled, not position/object identity.
+
+---@class WorldPathProjection
+---@field position WorldPosition Mesh projection, which may differ from the requested point.
+---@field polygon_id integer
+---@field component_id integer
+---@field distance number Projection distance from the requested point.
+
+---@class WorldPath
+---@field client_id string
+---@field instance_id string
+---@field pid integer
+---@field user_id integer
+---@field captured_at string
+---@field game_id integer
+---@field peer_generation integer
+---@field transport_generation integer
+---@field zone_generation integer
+---@field source 'server_navigation_path'
+---@field is_available boolean
+---@field unavailable_reason? string No supported route within the fixed search budget is not a mathematical proof of unreachability.
+---@field is_complete boolean Reaches the projected goal only; no authored target arrival guarantee.
+---@field is_truncated boolean Truncated paths are unavailable and incomplete.
+---@field plan_layer integer
+---@field footprint_radius number The owned deployed hero's footprint used by navigation.
+---@field max_projection_distance number
+---@field max_visited_polygon integer
+---@field requested_start WorldPosition Caller-supplied native position, not a claimed authoritative server pose.
+---@field requested_goal WorldPosition
+---@field start WorldPathProjection
+---@field goal WorldPathProjection
+---@field points WorldPosition[] At most 128, including projected start and goal when complete.
+---@field point_total integer

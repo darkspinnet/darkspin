@@ -195,7 +195,7 @@ func (e campaignConeSchedule) hit() ([][]byte, error) {
 				// action owner leaves the boss permanently inactive.
 				nextPackets, nextErr := e.runtime.restartCorruptorAction(
 					e.packet, e.sessionKey, e.generation, source,
-					e.timestamp+uint64(hitDelay/time.Millisecond),
+					e.timestamp+uint64(hitDelay/time.Millisecond), source.SecondAggroGeneration(), peerSession.zone,
 				)
 				if nextErr != nil {
 					return nil, fmt.Errorf("laserRestart: %w", nextErr)
@@ -313,7 +313,7 @@ func (e campaignConeSchedule) hit() ([][]byte, error) {
 		packets = append(packets, beamPacket)
 	}
 	poisonPlans := make([]zonenpc.AttackPlan, 0)
-	shockPlans := make([]zonenpc.AttackPlan, 0)
+	timedModifierPlans := make([]zonenpc.AttackPlan, 0)
 	statDelta := sporenet.PlayerStatDelta{}
 	targets := peerSession.zone.LiveNPCTargets()
 	if isCryosBossChain {
@@ -341,6 +341,21 @@ func (e campaignConeSchedule) hit() ([][]byte, error) {
 			source.Plan.Position, facing, target,
 			e.plan.Profile.Radius, e.plan.Profile.Angle,
 		)
+		if e.plan.Profile.AbilityName == "NomadBioSpecialTwoSwipe" &&
+			target.ObjectID == primary.ObjectID {
+			// Build 103 chunk 702 inherits the primary melee hit; its
+			// additionalTargetsRange of 3 only bounds the extra victim.
+			// Reuse melee range validation, including both actor footprints.
+			primaryPlan, controlErr := zonenpc.PlanControlWithProfile(
+				source, target.ObjectID, target.Position, e.plan.Profile,
+				target.ActorFootprintRadius,
+			)
+			if controlErr != nil && !errors.Is(controlErr, zonenpc.ErrControlTargetOutOfRange) {
+				e.runtime.registry.mutex.Unlock()
+				return nil, fmt.Errorf("enemySwipePrimary: %w", controlErr)
+			}
+			isTargeted = controlErr == nil && primaryPlan.TargetObjectID == target.ObjectID
+		}
 		if isTwinLaser {
 			isTargeted = false
 			for index, endpoint := range e.laserEndpoints {
@@ -422,7 +437,7 @@ func (e campaignConeSchedule) hit() ([][]byte, error) {
 		}
 		result, err := zonenpc.CommitAttack(
 			peerSession.zone.NPCRandom(), plan,
-			source.Plan.NPCProfile.CriticalRating, e.runtime.program.Critical,
+			source.EffectiveCriticalRating(), e.runtime.program.Critical,
 		)
 		if err != nil {
 			e.runtime.registry.mutex.Unlock()
@@ -443,8 +458,9 @@ func (e campaignConeSchedule) hit() ([][]byte, error) {
 		}
 		packets = append(packets, hitPackets...)
 		statDelta.PVEDamageTaken += targetStatDelta.PVEDamageTaken
-		if isApplied && isCryosBossChain {
-			shockPlans = append(shockPlans, plan)
+		if isApplied && (isCryosBossChain || plan.Profile.ModifierName != "" &&
+			plan.Profile.ModifierDuration > 0 && plan.Profile.MovementSpeedBuff < 0) {
+			timedModifierPlans = append(timedModifierPlans, plan)
 		}
 		if isApplied && plan.Profile.ModifierName == "Poison" &&
 			plan.Profile.ModifierChance > 0 {
@@ -490,13 +506,13 @@ func (e campaignConeSchedule) hit() ([][]byte, error) {
 		}
 		packets = append(packets, modifierPackets...)
 	}
-	for _, plan := range shockPlans {
+	for _, plan := range timedModifierPlans {
 		modifierPackets, modifierErr := e.runtime.applyCampaignNPCTimedModifier(
 			e.packet, e.sessionKey, e.generation, plan,
 			e.timestamp+uint64(e.plan.Profile.HitDelay/time.Millisecond),
 		)
 		if modifierErr != nil {
-			return nil, fmt.Errorf("enemyConeShock: %w", modifierErr)
+			return nil, fmt.Errorf("enemyConeModifier: %w", modifierErr)
 		}
 		packets = append(packets, modifierPackets...)
 	}
@@ -561,6 +577,17 @@ func (e campaignConeSchedule) releaseCryosBossChain() ([][]byte, error) {
 
 func (e campaignConeSchedule) next() ([][]byte, error) {
 	timestamp := e.timestamp + uint64(e.nextDelay/time.Millisecond)
+	if e.runtime.finishScenarioNPCManualAction(e.sessionKey, e.generation,
+		e.objectID, e.actionGeneration) {
+		return nil, nil
+	}
+	additionalPackets, isAdditionalHandled, additionalErr := e.runtime.produceAdditionalKitAction(e.packet, e.sessionKey, e.generation, e.objectID, timestamp)
+	if additionalErr != nil {
+		return nil, fmt.Errorf("additionalConeNext: %w", additionalErr)
+	}
+	if isAdditionalHandled {
+		return additionalPackets, nil
+	}
 	if e.laserZone != nil {
 		packets, err := e.resume(timestamp)
 		if err != nil {
@@ -609,6 +636,13 @@ func (r campaignNPCActionRuntime) produceEnemyCone(
 	}
 	if isLaunchHandled {
 		return launchPackets, nil
+	}
+	stormPackets, isStormHandled, stormErr := r.produceMerakStorm(packet, sessionKey, generation, objectID, timestamp)
+	if stormErr != nil {
+		return nil, fmt.Errorf("enemyStorm: %w", stormErr)
+	}
+	if isStormHandled {
+		return stormPackets, nil
 	}
 	phasePackets, isPhaseHandled, phaseErr := r.produceCitadelSpecialFour(
 		packet, sessionKey, generation, objectID, timestamp,
@@ -844,25 +878,10 @@ func (r campaignNPCActionRuntime) produceEnemyCone(
 			raknet.ScheduledPacketProducer{Delay: nextDelay, Produce: resume.next},
 		)
 	}
-	var intangibleRun *campaignNPCIntangibleRun
 	if profile.AbilityName == "StagnantNovaAbove" {
-		modifierPackets, run, modifierErr := r.prepareStagnantNovaIntangible(
-			sessionKey, generation, plan, timestamp,
-		)
-		if modifierErr != nil {
-			return nil, fmt.Errorf("enemyConeIntangible: %w", modifierErr)
-		}
-		startPackets = append(startPackets, modifierPackets...)
-		intangibleRun = run
-		if run != nil {
-			expiry := campaignNPCIntangibleExpiry{
-				runtime: r, sessionKey: sessionKey,
-				generation: generation, run: run,
-			}
-			producers = append(producers, raknet.ScheduledPacketProducer{
-				Delay: profile.EmergeDelay, Produce: expiry.produce,
-			})
-		}
+		producers = append(producers, raknet.ScheduledPacketProducer{
+			Delay: profile.ReleaseDelay, Produce: resume.endStagnantNovaAbove,
+		})
 	}
 	sortScheduledPacketProducersByDelay(producers)
 	cancel, err := scheduleNPCProducers(r.registry, packet, producers)
@@ -870,15 +889,7 @@ func (r campaignNPCActionRuntime) produceEnemyCone(
 		err = errors.New("nil cancellation")
 	}
 	if err != nil {
-		r.rollbackStagnantNovaIntangible(sessionKey, generation, intangibleRun)
 		return nil, fmt.Errorf("enemyConeSchedule: %w", err)
-	}
-	if intangibleRun != nil && !r.activateStagnantNovaIntangible(
-		sessionKey, generation, intangibleRun, cancel,
-	) {
-		cancel()
-		r.rollbackStagnantNovaIntangible(sessionKey, generation, intangibleRun)
-		return nil, nil
 	}
 	return startPackets, nil
 }

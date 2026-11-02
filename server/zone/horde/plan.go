@@ -47,6 +47,17 @@ func PlanFirstWaveWithSections(
 	director game.CampaignDirector, publication game.CampaignDirectorPublication,
 	firstObjectID uint32, gameID uint32, sections []zonepopulation.SectionRoster,
 ) ([]zonenpc.SpawnPlan, uint32, error) {
+	plans, nextObjectID, err := PlanFirstWaveWithPolicy(director, publication, firstObjectID, gameID, sections, DefaultPolicy())
+	if err != nil {
+		return nil, firstObjectID, fmt.Errorf("firstWavePolicy: %w", err)
+	}
+	return plans, nextObjectID, nil
+}
+
+func PlanFirstWaveWithPolicy(
+	director game.CampaignDirector, publication game.CampaignDirectorPublication,
+	firstObjectID uint32, gameID uint32, sections []zonepopulation.SectionRoster, policy Policy,
+) ([]zonenpc.SpawnPlan, uint32, error) {
 	if !IsTrigger(publication) {
 		return nil, firstObjectID, nil
 	}
@@ -58,8 +69,8 @@ func PlanFirstWaveWithSections(
 	if !strings.HasPrefix(strings.ToLower(publication.MarkerSetName), "zelems_1_") {
 		actorCount = max(6, actorCount*2)
 	}
-	plans, nextObjectID, err := PlanWaveWithSections(
-		director, publication, firstObjectID, gameID, actorCount, 1, sections,
+	plans, nextObjectID, err := PlanWaveWithPolicy(
+		director, publication, firstObjectID, gameID, actorCount, 1, sections, policy,
 	)
 	if err != nil {
 		return nil, firstObjectID, fmt.Errorf("firstWave: %w", err)
@@ -86,6 +97,18 @@ func PlanWaveWithSections(
 	director game.CampaignDirector, publication game.CampaignDirectorPublication,
 	firstObjectID uint32, gameID uint32, actorCount int, waveOrdinal int,
 	sections []zonepopulation.SectionRoster,
+) ([]zonenpc.SpawnPlan, uint32, error) {
+	plans, nextObjectID, err := PlanWaveWithPolicy(director, publication, firstObjectID, gameID, actorCount, waveOrdinal, sections, DefaultPolicy())
+	if err != nil {
+		return nil, firstObjectID, fmt.Errorf("wavePolicy: %w", err)
+	}
+	return plans, nextObjectID, nil
+}
+
+func PlanWaveWithPolicy(
+	director game.CampaignDirector, publication game.CampaignDirectorPublication,
+	firstObjectID uint32, gameID uint32, actorCount int, waveOrdinal int,
+	sections []zonepopulation.SectionRoster, policy Policy,
 ) ([]zonenpc.SpawnPlan, uint32, error) {
 	listenerCount, isHorde := ListenerCount(publication)
 	if !isHorde || actorCount <= 0 || waveOrdinal <= 0 {
@@ -161,7 +184,7 @@ func PlanWaveWithSections(
 			NPCProfile:    entry.NPCProfile,
 		})
 	}
-	if waveOrdinal == 3 {
+	if policy.IsMutationAgentEnabled && waveOrdinal == policy.MutationAgentWaveOrdinal {
 		profile, isFound := director.NPCProfilesByNoun[strings.ToLower(zonenpc.MutationAgentNounName)]
 		if !isFound || !profile.IsKnown {
 			return nil, firstObjectID, errors.New("mutation agent profile unavailable")

@@ -33,12 +33,15 @@ type BugReporter struct {
 }
 
 type bugMetadata struct {
-	Version      string          `json:"version"`
-	Platform     string          `json:"platform"`
-	CreatedAt    time.Time       `json:"created_at"`
-	Description  string          `json:"description"`
-	Context      chat.BugContext `json:"context"`
-	ContextError string          `json:"context_error,omitempty"`
+	ServerAddress      string          `json:"server_address,omitempty"`
+	ClientAddress      string          `json:"client_address,omitempty"`
+	IsRemoteConnection bool            `json:"is_remote_connection"`
+	Version            string          `json:"version"`
+	Platform           string          `json:"platform"`
+	CreatedAt          time.Time       `json:"created_at"`
+	Description        string          `json:"description"`
+	Context            chat.BugContext `json:"context"`
+	ContextError       string          `json:"context_error,omitempty"`
 }
 
 // NewBugReporter creates a filesystem-backed local bug reporter.
@@ -82,6 +85,9 @@ func (e *BugReporter) Report(ctx context.Context, req chat.BugCommand) (string, 
 		"%s-%s-%s-%s.zip", bugSlug(description), bugSlug(level), version,
 		createdAt.Format("20060102T150405.000000000Z"),
 	)
+	if req.Context.IsModded {
+		archiveName = "mod-" + archiveName
+	}
 	archivePath := filepath.Join(bugPath, archiveName)
 	output, err := os.CreateTemp(bugPath, ".bug-*.zip")
 	if err != nil {
@@ -96,7 +102,9 @@ func (e *BugReporter) Report(ctx context.Context, req chat.BugCommand) (string, 
 		req.Context.UserName = req.Sender.Name
 	}
 	metadata := bugMetadata{
-		Version: version, Platform: runtime.GOOS + "/" + runtime.GOARCH,
+		ServerAddress: req.ServerAddress, ClientAddress: req.ClientAddress,
+		IsRemoteConnection: req.IsRemoteConnection,
+		Version:            version, Platform: runtime.GOOS + "/" + runtime.GOARCH,
 		CreatedAt: createdAt, Description: description,
 		Context: req.Context, ContextError: req.ContextError,
 	}
@@ -136,7 +144,7 @@ func writeBugArchive(
 	if err == nil {
 		err = addBugMetadata(archive, metadata)
 	}
-	if err == nil && snapshotProvider != nil {
+	if err == nil {
 		err = addBugSnapshot(ctx, archive, snapshotProvider, req)
 	}
 	if err == nil {
@@ -174,6 +182,17 @@ func addBugText(archive *zip.Writer, req chat.BugCommand) error {
 		return fmt.Errorf("textWrite: %w", err)
 	}
 	gameplay := req.Context
+	if req.ServerAddress != "" || req.ClientAddress != "" {
+		_, err = fmt.Fprintf(w, "Server address: %s\nClient address: %s\nRemote connection: %t\n",
+			req.ServerAddress, req.ClientAddress, req.IsRemoteConnection)
+		if err != nil {
+			return fmt.Errorf("connectionWrite: %w", err)
+		}
+	}
+	_, err = fmt.Fprintf(w, "Modded game: %t\nMods: %s\n", gameplay.IsModded, strings.Join(gameplay.ModNames, ", "))
+	if err != nil {
+		return fmt.Errorf("modContextWrite: %w", err)
+	}
 	_, err = fmt.Fprintf(
 		w,
 		"\nCaptured gameplay context\nActive: %t\nCrogenitor: %s (%d)\nMission: %s [%s]\nHero: %s, level %d, creature %d, noun %#x, squad index %d\nLocation: %.3f, %.3f, %.3f; nearest %s / %s (%.3f)\nGame: %d; run seed %016x; difficulty %d; mode %s; stage %s; session generation %d; transport generation %d; zone generation %d\nResources: %.3f/%.3f health, %.3f/%.3f power\n",
@@ -192,6 +211,31 @@ func addBugText(archive *zip.Writer, req chat.BugCommand) error {
 	)
 	if err != nil {
 		return fmt.Errorf("contextWrite: %w", err)
+	}
+	for _, bot := range gameplay.CampaignAIBots {
+		_, err = fmt.Fprintf(w, "Campaign AI bot: slot=%d object=%d noun=%#x health=%.3f spawned=%t\n",
+			bot.Slot, bot.ObjectID, bot.NounID, bot.HitPoint, bot.IsSpawned)
+		if err != nil {
+			return fmt.Errorf("botContextWrite: %w", err)
+		}
+	}
+	_, err = fmt.Fprintf(w, "Participants: connected=%d combat=%d\n", gameplay.ParticipantCount, gameplay.CombatParticipantCount)
+	if err != nil {
+		return fmt.Errorf("participantContextWrite: %w", err)
+	}
+	_, err = fmt.Fprintf(w, "Command-spawned NPCs: %t\n", gameplay.IsNPCSpawnCommandUsed)
+	if err != nil {
+		return fmt.Errorf("spawnContextWrite: %w", err)
+	}
+	for _, preview := range gameplay.NPCScalePreviews {
+		_, err = fmt.Fprintf(w, "NPC scale preview: %s object=%d multiplier=%g object_scale=%g\n", preview.NounName, preview.ObjectID, preview.Multiplier, preview.ObjectScale)
+		if err != nil {
+			return fmt.Errorf("scaleContextWrite: %w", err)
+		}
+	}
+	_, err = fmt.Fprintf(w, "God mode: %t\n", gameplay.IsGodModeEnabled)
+	if err != nil {
+		return fmt.Errorf("godContextWrite: %w", err)
 	}
 	return nil
 }
@@ -215,9 +259,25 @@ func addBugMetadata(archive *zip.Writer, metadata bugMetadata) error {
 func addRecentBugLogs(
 	ctx context.Context, archive *zip.Writer, logPath string, createdAt time.Time,
 ) error {
+	capture := bugLogCapture{
+		RequestedWindowStartedAt: createdAt.Add(-bugLogWindow), RequestedWindowEndedAt: createdAt,
+		MaximumSourceBytes: maximumBugLogSize,
+		Sources:            make([]bugLogSource, 0),
+	}
 	err := filepath.WalkDir(logPath, func(path string, entry os.DirEntry, walkErr error) error {
+		contextErr := ctx.Err()
+		if contextErr != nil {
+			return fmt.Errorf("contextCheck: %w", contextErr)
+		}
 		if walkErr != nil {
-			return fmt.Errorf("logWalk: %w", walkErr)
+			relativePath, relativeErr := filepath.Rel(logPath, path)
+			if relativeErr != nil {
+				return fmt.Errorf("failureRelative: %w", relativeErr)
+			}
+			capture.Sources = append(capture.Sources, bugLogSource{
+				Name: filepath.ToSlash(relativePath), Failure: walkErr.Error(),
+			})
+			return nil
 		}
 		if entry.IsDir() && strings.EqualFold(entry.Name(), "snapshots") {
 			return filepath.SkipDir
@@ -232,20 +292,19 @@ func addRecentBugLogs(
 		if extension != ".log" && extension != ".jsonl" {
 			return nil
 		}
-		contextErr := ctx.Err()
-		if contextErr != nil {
-			return fmt.Errorf("contextCheck: %w", contextErr)
-		}
-		contents, readErr := recentBugLog(path, createdAt)
-		if readErr != nil {
-			return fmt.Errorf("logRead[%s]: %w", entry.Name(), readErr)
-		}
-		if len(contents) == 0 {
-			return nil
-		}
 		relativePath, relativeErr := filepath.Rel(logPath, path)
 		if relativeErr != nil {
 			return fmt.Errorf("logRelative: %w", relativeErr)
+		}
+		contents, source, readErr := captureRecentBugLog(path, createdAt)
+		source.Name = filepath.ToSlash(relativePath)
+		if readErr != nil {
+			source.Failure = readErr.Error()
+			source.IncludedBytes = 0
+		}
+		capture.Sources = append(capture.Sources, source)
+		if readErr != nil || len(contents) == 0 {
+			return nil
 		}
 		w, createErr := archive.Create(filepath.ToSlash(filepath.Join("logs", relativePath)))
 		if createErr != nil {
@@ -257,44 +316,14 @@ func addRecentBugLogs(
 		}
 		return nil
 	})
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
 	if err != nil {
 		return fmt.Errorf("logsWalk: %w", err)
 	}
+	err = writeBugLogCapture(archive, capture)
+	if err != nil {
+		return fmt.Errorf("logsCapture: %w", err)
+	}
 	return nil
-}
-
-func recentBugLog(path string, createdAt time.Time) ([]byte, error) {
-	r, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("sourceOpen: %w", err)
-	}
-	defer r.Close()
-	fi, err := r.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("sourceStat: %w", err)
-	}
-	if fi.ModTime().Before(createdAt.Add(-bugLogWindow)) {
-		return nil, nil
-	}
-	offset := fi.Size() - maximumBugLogSize
-	if offset < 0 {
-		offset = 0
-	}
-	contents, err := io.ReadAll(io.NewSectionReader(r, offset, fi.Size()-offset))
-	if err != nil {
-		return nil, fmt.Errorf("sourceRead: %w", err)
-	}
-	if offset > 0 {
-		separator := bytes.IndexByte(contents, '\n')
-		if separator < 0 {
-			return nil, nil
-		}
-		contents = contents[separator+1:]
-	}
-	return recentBugLines(contents, createdAt), nil
 }
 
 func recentBugLines(contents []byte, createdAt time.Time) []byte {

@@ -1,0 +1,12 @@
+---@meta
+
+---Session lifetime is independent of script outcome; failure retains inspection.
+---@class SessionSnapshot
+---@field id string
+---@field state string
+---@field lease_owner string
+---@field lease_generation integer
+---@field created_at string
+---@field inspection_expires_at string
+---@field clients ClientObservationSnapshot[]
+---@field script_result table|nil Final attempt; inspection does not revise its outcome.

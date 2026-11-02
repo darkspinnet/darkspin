@@ -55,6 +55,7 @@ type ResumeActivator interface {
 
 // API serves the legacy launcher, account, inventory, creature, and QoS HTTP APIs.
 type API struct {
+	botPortraitFinder   BotPortraitFinder
 	userManager         UserManager
 	template            *sporenet.TemplateDatabase
 	partCatalog         *PartCatalog
@@ -69,23 +70,28 @@ type API struct {
 	qosPort             uint16
 	logger              *log.Logger
 	resumeActivator     ResumeActivator
+	isModded            bool
+	isDedicated         bool
 	broadcastMutex      sync.Mutex
 	broadcastRecipients map[string]struct{}
 }
 
 type APIOptions struct {
-	UserManager      UserManager
-	Template         *sporenet.TemplateDatabase
-	PartCatalog      *PartCatalog
-	Vendor           *sporenet.Vendor
-	PartShopRules    sporenet.PartShopRules
-	Storage          string
-	StaticFileSystem fs.FS
-	Host             string
-	HTTPPort         uint16
-	QoSPort          uint16
-	Logger           *log.Logger
-	ResumeActivator  ResumeActivator
+	BotPortraitFinder BotPortraitFinder
+	IsModded          bool
+	IsDedicated       bool
+	UserManager       UserManager
+	Template          *sporenet.TemplateDatabase
+	PartCatalog       *PartCatalog
+	Vendor            *sporenet.Vendor
+	PartShopRules     sporenet.PartShopRules
+	Storage           string
+	StaticFileSystem  fs.FS
+	Host              string
+	HTTPPort          uint16
+	QoSPort           uint16
+	Logger            *log.Logger
+	ResumeActivator   ResumeActivator
 }
 
 func RegisterAPI(router *recaphttp.Router, options APIOptions) error {
@@ -94,10 +100,13 @@ func RegisterAPI(router *recaphttp.Router, options APIOptions) error {
 		logger = log.New(io.Discard, "", 0)
 	}
 	api := &API{
-		userManager: options.UserManager, template: options.Template, partCatalog: options.PartCatalog, vendor: options.Vendor,
+		botPortraitFinder: options.BotPortraitFinder,
+		userManager:       options.UserManager, template: options.Template, partCatalog: options.PartCatalog, vendor: options.Vendor,
 		storage: options.Storage, staticFileSystem: options.StaticFileSystem,
 		host: options.Host, httpPort: options.HTTPPort, qosPort: options.QoSPort, logger: logger,
 		resumeActivator:     options.ResumeActivator,
+		isModded:            options.IsModded,
+		isDedicated:         options.IsDedicated,
 		partShopRules:       options.PartShopRules,
 		broadcastRecipients: make(map[string]struct{}),
 	}
@@ -215,6 +224,12 @@ func (a *API) recap(writer http.ResponseWriter, request *http.Request, uri *reca
 	values := requestValues(request, uri)
 	switch values.Get("method") {
 	case "api.game.registration":
+		if a.isDedicated {
+			writeJSON(writer, http.StatusForbidden, map[string]any{
+				"success": false, "error": "use desktop account registration",
+			})
+			return
+		}
 		if !isLoopbackRequest(request.RemoteAddr) && values.Get("pass") == "" {
 			writeJSON(writer, http.StatusBadRequest, map[string]any{
 				"success": false, "error": "password is required for remote registration",
@@ -237,6 +252,12 @@ func (a *API) recap(writer http.ResponseWriter, request *http.Request, uri *reca
 	case "api.game.status":
 		writeJSON(writer, http.StatusOK, map[string]any{"status": "ok", "users": len(a.userManager.Users())})
 	case "api.panel.listUsers":
+		if a.isDedicated {
+			writeJSON(writer, http.StatusForbidden, map[string]any{
+				"success": false, "error": "legacy account listing is disabled",
+			})
+			return
+		}
 		writeJSON(writer, http.StatusOK, map[string]any{"users": a.userManager.Users()})
 	default:
 		writeJSON(writer, http.StatusOK, map[string]any{"stat": "ok"})
@@ -350,7 +371,7 @@ func (a *API) game(writer http.ResponseWriter, request *http.Request, uri *recap
 	case "api.creature.getCreature":
 		a.creatureResponse(request.Context(), writer, user, values)
 	case "api.creature.getTemplate":
-		a.templateResponse(writer, values.Get("id"))
+		a.templateResponse(request.Context(), writer, user, values.Get("id"))
 	case "api.creature.unlockCreature":
 		templateID := values.Get("template_id")
 		if templateID == "" {
@@ -422,12 +443,18 @@ func (a *API) game(writer http.ResponseWriter, request *http.Request, uri *recap
 			writeXML(writer, http.StatusOK, xmlResponse(false))
 			return
 		}
+		before := user.View()
+		if a.logger != nil {
+			a.logger.Printf("account_upgrade account=%q unlock_id=%d result=%q",
+				before.LoginName, unlockID, "requested")
+		}
 		err = a.userManager.UnlockUpgrade(request.Context(), user, uint32(unlockID))
+		view := user.View()
+		a.logAccountUpgrade(uint32(unlockID), before, view, err)
 		if err != nil {
 			writeXML(writer, http.StatusOK, xmlResponse(false))
 			return
 		}
-		view := user.View()
 		writeXML(writer, http.StatusOK, xmlResponse(true, a.privateAccountFields(user, view)...))
 	case "api.account.setSettings":
 		if user == nil {
@@ -691,8 +718,23 @@ func (a *API) updateCreature(writer http.ResponseWriter, request *http.Request, 
 		writeXML(writer, http.StatusOK, xmlResponse(false))
 		return
 	}
+	if !values.Has("cost") {
+		writeXML(writer, http.StatusOK, xmlResponse(false))
+		return
+	}
+	// Build 103 serializes the editor's cost delta with signed "%d".
+	// Removing cosmetic edits, including resetting a hero, can refund DNA.
+	editCost, err := strconv.ParseInt(values.Get("cost"), 10, 32)
+	if err != nil {
+		if a.logger != nil {
+			a.logger.Printf("creature_update invalid cost account=%q cost=%q error=%q", userLoginName(user), values.Get("cost"), err)
+		}
+		writeXML(writer, http.StatusOK, xmlResponse(false))
+		return
+	}
 	creature, err := a.userManager.UpdateCreature(request.Context(), user, sporenet.CreatureUpdate{
 		CreatureID: creatureID, GearScore: float32(gearScore), ItemPoints: float32(itemPoints),
+		Cost:            int32(editCost),
 		PreviousVersion: savedCreature.Version, SavedVersion: version,
 		Stats: values.Get("stats"), AbilityStats: values.Get("stats_ability_keyvalues"), EquippedPartID: partIDs,
 		LargeImageURL: largeURL, ThumbImageURL: thumbURL,
@@ -976,7 +1018,9 @@ func (a *API) privateAccountFields(user *sporenet.User, view sporenet.UserView) 
 		xmlText("unlock_diagonal_catalysts", number(account.UnlockDiagonalCatalysts)),
 		xmlText("unlock_inventory", number(account.UnlockInventoryIdentify)),
 		xmlText("unlock_fuel_tanks", number(account.UnlockFuelTanks)),
-		xmlText("unlock_pve_decks", number(account.UnlockPVEDecks)),
+		// Build 103 recomputes every PvE squad lock after an upgrade. Its
+		// count includes the free first slot, matching IsLockedFor's floor.
+		xmlText("unlock_pve_decks", number(max(uint32(1), account.UnlockPVEDecks))),
 		xmlText("unlock_pvp_decks", number(account.UnlockPVPDecks)),
 		xmlText("unlock_stats", number(account.UnlockStats)),
 		xmlText("unlock_inventory_identify", number(account.UnlockInventory)),
@@ -1013,12 +1057,12 @@ func accountStatsNode(account sporenet.Account, stats sporenet.PlayerStats) stri
 		xmlText("pvp_playerKills", number(stats.PVPPlayerKill)),
 		xmlText("pvp_deaths", number(stats.PVPDeath)),
 		xmlText("pvp_killDeathRatio", profileKillDeathRatio(stats.PVPPlayerKill, stats.PVPDeath)),
-		xmlText("pvp_damageDealt", profileStatNumber(stats.PVPDamageDealt)),
-		xmlText("pvp_damageTaken", profileStatNumber(stats.PVPDamageTaken)),
-		xmlText("pvp_damageMax", profileStatNumber(stats.PVPDamageMaximum)),
-		xmlText("pvp_healing", profileStatNumber(stats.PVPHealing)),
-		xmlText("pvp_healingReceived", profileStatNumber(stats.PVPHealingReceived)),
-		xmlText("pvp_healingMax", profileStatNumber(stats.PVPHealingMaximum)),
+		xmlText("pvp_damageDealt", profileStatNumber(math.Round(stats.PVPDamageDealt))),
+		xmlText("pvp_damageTaken", profileStatNumber(math.Round(stats.PVPDamageTaken))),
+		xmlText("pvp_damageMax", profileStatNumber(math.Round(stats.PVPDamageMaximum))),
+		xmlText("pvp_healing", profileStatNumber(math.Round(stats.PVPHealing))),
+		xmlText("pvp_healingReceived", profileStatNumber(math.Round(stats.PVPHealingReceived))),
+		xmlText("pvp_healingMax", profileStatNumber(math.Round(stats.PVPHealingMaximum))),
 		xmlText("wins", number(stats.PVPWin)),
 	)
 }
@@ -1197,7 +1241,7 @@ func (a *API) creatureResponse(ctx context.Context, writer http.ResponseWriter, 
 	writeXML(writer, http.StatusOK, xmlResponse(true, profileXML))
 }
 
-func (a *API) templateResponse(writer http.ResponseWriter, rawID string) {
+func (a *API) templateResponse(ctx context.Context, writer http.ResponseWriter, user *sporenet.User, rawID string) {
 	id, err := strconv.ParseUint(rawID, 0, 32)
 	if err != nil {
 		writeXML(writer, http.StatusOK, xmlResponse(false))
@@ -1211,6 +1255,11 @@ func (a *API) templateResponse(writer http.ResponseWriter, rawID string) {
 	creature := sporenet.NewCreature(template)
 	creature.ID = template.Noun
 	creature.Stats = append([]sporenet.Stat(nil), template.Stats...)
+	portrait := a.modPortraitCreature(ctx, user, template.Noun)
+	if portrait != nil {
+		creature.ThumbImageURL = portrait.ThumbImageURL
+		creature.LargeImageURL = portrait.LargeImageURL
+	}
 	imageURL := fmt.Sprintf("http://%s:%d/game/service/png?template_id=%d", a.host, a.httpPort, template.Noun)
 	profileXML := profileTemplateNode(creature, imageURL, a.partCatalog)
 	if a.logger != nil {
@@ -1258,6 +1307,9 @@ func (a *API) profileImage(writer http.ResponseWriter, request *http.Request, _ 
 	query := request.URL.Query()
 	templateID, err := strconv.ParseUint(query.Get("template_id"), 10, 32)
 	if err == nil && templateID > 0 {
+		if a.serveModPortrait(writer, request, uint32(templateID)) {
+			return
+		}
 		a.serveStaticFile(writer, request, fmt.Sprintf("template_png/%d_thumb.png", templateID))
 		return
 	}
@@ -1266,6 +1318,15 @@ func (a *API) profileImage(writer http.ResponseWriter, request *http.Request, _ 
 		accountID = 0
 	}
 	avatar := accountProfileAvatar(request.Context(), a.userManager, accountID)
+	if a.botPortraitFinder != nil && accountID > 0 {
+		avatarID, isBotFound := a.botPortraitFinder.BotAvatar(uint64(accountID))
+		if isBotFound {
+			botAvatar, isAvatarFound := contentcache.ProfileAvatarByID(avatarID)
+			if isAvatarFound {
+				avatar = botAvatar
+			}
+		}
+	}
 	writer.Header().Set("Cache-Control", "private, no-cache")
 	a.serveStaticFile(writer, request, avatar.Target)
 }
@@ -1323,10 +1384,44 @@ func (a *API) serveStaticFile(writer http.ResponseWriter, request *http.Request,
 }
 
 func (a *API) creatureImage(writer http.ResponseWriter, request *http.Request, uri *recaphttp.URI) {
+	generatedName := generatedBotAppearanceName(uri.Resource())
+	if generatedName != "" {
+		generatedPath := filepath.Join(a.storage, "cache", "bot_appearance", generatedName)
+		fi, statErr := os.Stat(generatedPath)
+		if statErr == nil && fi.Mode().IsRegular() {
+			if a.logger != nil {
+				a.logger.Printf("bot_appearance_served resource=%q file=%q", uri.Resource(), generatedName)
+			}
+			http.ServeFile(writer, request, generatedPath)
+			return
+		}
+		if a.logger != nil {
+			a.logger.Printf("bot_appearance_unavailable resource=%q file=%q error=%v", uri.Resource(), generatedName, statErr)
+		}
+	}
 	resource, err := gameplayAppearanceResource(uri.Resource())
 	if err != nil {
 		http.NotFound(writer, request)
 		return
+	}
+	name := filepath.Base(resource)
+	fields := strings.Split(name, "_")
+	if len(fields) == 3 {
+		creatureID, parseErr := strconv.ParseUint(fields[0], 10, 32)
+		if parseErr == nil && creatureID&0x80000000 != 0 {
+			generatedPath := filepath.Join(a.storage, "cache", "bot_appearance", name)
+			fi, statErr := os.Stat(generatedPath)
+			if statErr == nil && fi.Mode().IsRegular() {
+				if a.logger != nil {
+					a.logger.Printf("bot_appearance_served resource=%q file=%q", uri.Resource(), name)
+				}
+				http.ServeFile(writer, request, generatedPath)
+				return
+			}
+			if a.logger != nil {
+				a.logger.Printf("bot_appearance_unavailable resource=%q file=%q error=%v", uri.Resource(), name, statErr)
+			}
+		}
 	}
 	a.serveStorageFile(writer, request, a.storage, resource)
 }
@@ -1505,6 +1600,12 @@ func profileNode(nodeName string, creature *sporenet.Creature, parts []sporenet.
 		attributes = profilePartAttributes(functionalParts, partCatalog)
 		stats = gameplayCreatureStats(creature, attributes)
 	}
+	profileStatAttributes := attributes
+	if len(template.Stats) == 0 {
+		// gameplayCreatureStats falls back to the saved editor vector here;
+		// those fields may already include the equipped part contributions.
+		profileStatAttributes = [partAttributeCount]float32{}
+	}
 	abilityStats := encodeAbilityStats(creature.AbilityStats)
 	if abilityStats == "" && template.Noun != 1667741389 && len(stats) > 0 {
 		abilityStats = profileAbilityStatsWithAttributes(template, profile.abilityID, stats, attributes)
@@ -1531,7 +1632,7 @@ func profileNode(nodeName string, creature *sporenet.Creature, parts []sporenet.
 		xmlText("weapon_min_damage", fmt.Sprint(template.WeaponMinDamage)), xmlText("weapon_max_damage", fmt.Sprint(template.WeaponMaxDamage)),
 		xmlText("gear_score", fmt.Sprint(creature.GearScore)), xmlText("item_points", fmt.Sprint(creature.ItemPoints)),
 		xmlText("class", strings.ToLower(template.ClassType)),
-		xmlText("stats", profileStatsText(stats, profile.stats)),
+		xmlText("stats", profileStatsWithAttributes(stats, profile.stats, profileStatAttributes)),
 		xmlText("stats_template", profileStatsText(template.Stats, profile.stats)),
 		xmlText("stats_template_ability", profile.abilityBase),
 		xmlText("stats_template_ability_keyvalues", profile.abilityStats),

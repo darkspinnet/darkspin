@@ -142,8 +142,8 @@ func (s *Session) planSpawns(
 			profile := selectedEntry.NPCProfile
 			bossIdentity := zonenpc.BossIdentity{}
 			if isCaptain {
-				profile = zonenpc.ApplyEliteProfile(profile)
-				bossIdentity = captainIdentity(director, selectedEntry.NounName)
+				bossIdentity = CaptainIdentity(director, selectedEntry.NounName)
+				profile = zonenpc.ApplyCaptainProfile(profile, bossIdentity)
 			}
 			plans = append(plans, zonenpc.SpawnPlan{
 				ObjectID: nextObjectID, NounName: selectedEntry.NounName,
@@ -189,7 +189,7 @@ func (s *Session) selectPopulationEntry(
 	if s == nil || s.Random() == nil || len(entries) == 0 {
 		return game.CampaignDirectorEntry{}, errors.New("population entry unavailable")
 	}
-	nounIndex, err := s.Random().Index(uint32(len(entries)))
+	nounIndex, err := game.RosterIndex(entries, s.Random(), s.populationRules.RosterSelection == "local_and_external", s.populationRules.ExternalRosterWeightPercent)
 	if err != nil {
 		return game.CampaignDirectorEntry{}, fmt.Errorf("entryIndex: %w", err)
 	}
@@ -386,8 +386,8 @@ func appendAuthoredPlans(
 		profile := selectedEntry.NPCProfile
 		bossIdentity := zonenpc.BossIdentity{}
 		if isCaptain {
-			profile = zonenpc.ApplyEliteProfile(profile)
-			bossIdentity = captainIdentity(director, selectedEntry.NounName)
+			bossIdentity = CaptainIdentity(director, selectedEntry.NounName)
+			profile = zonenpc.ApplyCaptainProfile(profile, bossIdentity)
 		}
 		plans = append(plans, zonenpc.SpawnPlan{
 			ObjectID: nextObjectID, NounName: selectedEntry.NounName,
@@ -402,7 +402,9 @@ func appendAuthoredPlans(
 	return plans, nextObjectID, nil
 }
 
-func captainIdentity(
+// CaptainIdentity resolves the authored captain affixes for encounter and
+// developer spawns through the same content lookup.
+func CaptainIdentity(
 	director game.CampaignDirector, nounName string,
 ) zonenpc.BossIdentity {
 	nounKey := strings.ToLower(strings.TrimSpace(nounName))

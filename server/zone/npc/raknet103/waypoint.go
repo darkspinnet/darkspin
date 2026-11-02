@@ -25,3 +25,25 @@ func PursuitWaypoint(objectID uint32, waypoint game.Vec3) ([][]byte, error) {
 	}
 	return packets, nil
 }
+
+// CircleTarget composes MoveToPointExact (103 A147D0, flag 1) with
+// FaceObjectDuringMove (103 A00740, flag 0x100 and the facing target ID).
+// Object-follow flag 0x40 would steer toward the hero instead of the circle.
+func CircleTargetMovement(objectID uint32, destination game.Vec3, targetObjectID uint32) ([][]byte, error) {
+	if objectID == 0 || targetObjectID == 0 || !isFiniteVec3(destination) {
+		return nil, errors.New("npc circle movement invalid")
+	}
+	packets, err := marshalMessages([]raknet.ApplicationMessage{
+		raknet.ObjectPlayerMoveMessage{
+			ObjectID: objectID, GoalFlags: 0x101, GoalPosition: vector(destination),
+			TargetObjectID: targetObjectID,
+		},
+		raknet.LocomotionUnreliableMessage{
+			ObjectID: objectID, GoalPosition: vector(destination),
+		},
+	}, "circleMovement")
+	if err != nil {
+		return nil, fmt.Errorf("circleMarshal: %w", err)
+	}
+	return packets, nil
+}

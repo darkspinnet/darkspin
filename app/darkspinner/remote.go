@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/darkspinnet/darkspin/server/sporenet"
 
 	_ "modernc.org/sqlite"
 )
@@ -209,7 +212,7 @@ func probeRemoteServer(ctx context.Context, client *http.Client, address string)
 		ServerVersion string `json:"server_version"`
 		GameVersion   string `json:"game_version"`
 	}{}
-	err = json.NewDecoder(response.Body).Decode(&payload)
+	err = json.NewDecoder(io.LimitReader(response.Body, 16*1024)).Decode(&payload)
 	if err != nil {
 		return RemoteServer{}, fmt.Errorf("probeDecode: %w", err)
 	}
@@ -292,12 +295,13 @@ func (a *App) RegisterRemoteProfile(
 	if err != nil {
 		return fmt.Errorf("serverValidate: %w", err)
 	}
-	err = validateNewProfileIdentity(identity)
+	identity = strings.TrimSpace(identity)
+	err = sporenet.ValidateDesktopUsername(identity)
 	if err != nil {
 		return fmt.Errorf("identityValidate: %w", err)
 	}
 	if password == "" {
-		return errors.New("password is required for remote registration")
+		return fmt.Errorf("passwordValidate: %w", sporenet.ErrPasswordRequired)
 	}
 	response := struct {
 		Profile remoteProfileResponse `json:"profile"`
@@ -306,16 +310,9 @@ func (a *App) RegisterRemoteProfile(
 	if ctx == nil {
 		ctx = context.TODO()
 	}
-	availabilityCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	remoteServer, err := probeRemoteServer(
-		availabilityCtx, &http.Client{Timeout: 2 * time.Second}, serverAddress,
-	)
-	cancel()
+	err = requireRemoteCompatibility(ctx, serverAddress)
 	if err != nil {
-		return fmt.Errorf("remoteUnavailable[%s]: %w", serverAddress, err)
-	}
-	if remoteServer.Address == "" {
-		return fmt.Errorf("remote server %s returned an empty address", serverAddress)
+		return fmt.Errorf("remoteCompatibility: %w", err)
 	}
 	_, existingProfile, resolvedPassword, loginErr := a.remoteCredential(
 		serverAddress, identity, password,
@@ -329,13 +326,28 @@ func (a *App) RegisterRemoteProfile(
 		}
 		return nil
 	}
+	var authFailure *authServiceError
+	isCredentialRejected := errors.As(loginErr, &authFailure) && authFailure.statusCode == http.StatusUnauthorized
+	if !isCredentialRejected {
+		return fmt.Errorf("existingLogin: %w", loginErr)
+	}
+	if authFailure.code == "invalid_password" {
+		return fmt.Errorf("existingPassword: %w", loginErr)
+	}
+	// Apply storage limits only to new accounts, preserving valid legacy logins.
+	err = sporenet.ValidateDesktopPassword(password, true)
+	if err != nil {
+		return fmt.Errorf("passwordValidate: %w", err)
+	}
 	// A failed sign-in is expected for a new account. Registration below
 	// returns the server's specific conflict or validation result when needed.
 	err = validateProfileAvatarID(avatarID)
 	if err != nil {
 		return fmt.Errorf("avatarValidate: %w", err)
 	}
-	err = postAuthJSON(ctx, &http.Client{Timeout: 15 * time.Second},
+	client := remoteHTTPClient(15 * time.Second)
+	defer client.CloseIdleConnections()
+	err = postAuthJSON(ctx, client,
 		"http://"+serverAddress+"/api/desktop/register", map[string]any{
 			"account": identity, "display_name": identity, "password": password,
 			"avatar_id": avatarID, "is_tutorial_skipped": isTutorialSkipped,
@@ -366,7 +378,7 @@ func (a *App) LoginRemoteProfile(
 	return nil
 }
 
-// DeleteRemoteProfile authenticates and permanently removes an account from
+// DeleteRemoteProfile authenticates and archives an account on
 // its host server before deleting the launcher's cached connection metadata.
 func (a *App) DeleteRemoteProfile(serverAddress, identity, password string) error {
 	serverAddress, err := normalizeRemoteServerAddress(serverAddress)
@@ -393,7 +405,9 @@ func (a *App) DeleteRemoteProfile(serverAddress, identity, password string) erro
 	if ctx == nil {
 		ctx = context.TODO()
 	}
-	err = postAuthJSON(ctx, &http.Client{Timeout: 15 * time.Second},
+	client := remoteHTTPClient(15 * time.Second)
+	defer client.CloseIdleConnections()
+	err = postAuthJSON(ctx, client,
 		"http://"+serverAddress+"/api/desktop/delete",
 		map[string]string{"account": identity, "password": password}, &response)
 	if err != nil {
@@ -438,7 +452,15 @@ func (a *App) LaunchRemoteProfile(
 		return fmt.Errorf("remoteHost: %w", err)
 	}
 	clientProfile := identity + "@" + host
+	err = a.stopIdleLocalServices()
+	if err != nil {
+		return fmt.Errorf("remoteLocalStop: %w", err)
+	}
 	a.mu.Lock()
+	if a.cancel != nil || a.gameDone != nil || a.isShuttingDown {
+		a.mu.Unlock()
+		return errors.New("another launcher or game operation is active")
+	}
 	ctx, gameDone, gameCancel := a.beginGameLaunchLocked()
 	a.status.State = "launching"
 	a.status.Message = "Launching remote Crogenitor"
@@ -453,6 +475,7 @@ func (a *App) LaunchRemoteProfile(
 }
 
 func (a *App) runRemoteGameLaunch(ctx context.Context, req gameLaunchRequest, password string) {
+	req.isRemoteServer = true
 	a.runGameLaunch(ctx, req)
 	refreshCtx := a.lifecycleCtx
 	if refreshCtx == nil {
@@ -489,10 +512,15 @@ func (a *App) remoteCredential(
 		return "", remoteProfileResponse{}, "", errors.New("password is required")
 	}
 	start := remoteStartResponse{}
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := remoteHTTPClient(15 * time.Second)
+	defer client.CloseIdleConnections()
 	ctx := a.lifecycleCtx
 	if ctx == nil {
 		ctx = context.TODO()
+	}
+	err = requireRemoteCompatibility(ctx, serverAddress)
+	if err != nil {
+		return "", remoteProfileResponse{}, "", fmt.Errorf("remoteCompatibility: %w", err)
 	}
 	err = postAuthJSON(ctx, client, "http://"+serverAddress+"/api/desktop/start",
 		map[string]string{"account": identity, "password": password}, &start)
@@ -551,8 +579,8 @@ func normalizeRemoteHost(host string) (string, error) {
 	ip := net.ParseIP(host)
 	if ip != nil {
 		ip = ip.To4()
-		if ip == nil || (!ip.IsPrivate() && !ip.IsLoopback()) {
-			return "", errors.New("server IP must be a private IPv4 address")
+		if ip == nil || (!ip.IsGlobalUnicast() && !ip.IsLoopback()) {
+			return "", errors.New("server IP must be a unicast IPv4 address")
 		}
 		return ip.String(), nil
 	}
@@ -808,7 +836,8 @@ func (a *App) refreshRemoteCache(
 	if closeErr != nil {
 		return fmt.Errorf("entryClose: %w", closeErr)
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := remoteHTTPClient(5 * time.Second)
+	defer client.CloseIdleConnections()
 	serversByAddress := make(map[string]RemoteServer)
 	offlineServers := make(map[string]bool)
 	for _, entry := range entries {

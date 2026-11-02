@@ -8,6 +8,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/util"
+	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
 	companionraknet "github.com/darkspinnet/darkspin/server/zone/companion/raknet103"
 )
 
@@ -15,6 +16,14 @@ import (
 // sting animation, and healing at 0.333333343 seconds. Its flying idle follows
 // the owner at averageDistance=4; its class movement speed is 12.
 func (e *heroSummonRun) sting() ([][]byte, error) {
+	return e.followOrSting(true)
+}
+
+func (e *heroSummonRun) resumeFollow() ([][]byte, error) {
+	return e.followOrSting(false)
+}
+
+func (e *heroSummonRun) followOrSting(isSting bool) ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	if !e.isCurrent(peerSession, isFound) || peerSession.zone == nil ||
@@ -22,13 +31,18 @@ func (e *heroSummonRun) sting() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	at := e.runtime.now()
+	if !isSting && at.Before(e.healUntil) {
+		e.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	isStingReleased := !isSting && !e.healUntil.IsZero()
 	e.healUntil = time.Time{}
 	companion, isFound := peerSession.zone.Companion().Snapshot(e.objectID)
 	if !isFound || companion.HitPoint <= 0 {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	at := e.runtime.now()
 	if e.runtime.registry.timer == nil {
 		e.runtime.registry.mutex.Unlock()
 		return nil, errors.New("sprite follow timer unavailable")
@@ -43,16 +57,30 @@ func (e *heroSummonRun) sting() ([][]byte, error) {
 	}
 	ownerPosition := peerSession.playerPosition
 	character, isCharacterFound := peerSession.squad.Character(peerSession.squad.DeployedIndex())
-	isHealing := len(plans) == 0 && isCharacterFound && character.IsAvailable &&
+	isHealing := isSting && len(plans) == 0 && isCharacterFound && character.IsAvailable &&
 		character.HitPoints > 0 && character.HitPoints <
 		peerSession.characterHitPointMaximum(peerSession.squad.DeployedIndex())
 	if isHealing {
-		e.healUntil = at.Add(time.Second)
+		healUntil := at.Add(time.Second)
+		companion, err = peerSession.zone.Companion().HoldFollow(e.objectID, at, healUntil)
+		if err != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("spriteStingHold: %w", err)
+		}
+		e.healUntil = healUntil
 	}
 	e.runtime.registry.mutex.Unlock()
 	packets, err := companionraknet.Follow(plans)
 	if err != nil {
 		return nil, fmt.Errorf("spriteFollowMarshal: %w", err)
+	}
+	if isStingReleased {
+		resetPacket, resetErr := abilityraknet.AnimationReset(e.objectID,
+			e.packet.SourceTime+uint64(at.Sub(e.castStartedAt)/time.Millisecond))
+		if resetErr != nil {
+			return nil, fmt.Errorf("spriteStingReset: %w", resetErr)
+		}
+		packets = append([][]byte{resetPacket}, packets...)
 	}
 	for _, plan := range plans {
 		step := campaignCompanionFollowStep{

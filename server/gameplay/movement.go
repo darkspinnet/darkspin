@@ -188,6 +188,20 @@ type campaignCompanionFollowStep struct {
 	logger     *log.Logger
 }
 
+func (e campaignCompanionFollowStep) scheduleAfter(delay time.Duration) error {
+	if e.registry.timer == nil {
+		return errors.New("companion follow timer unavailable")
+	}
+	cancel, err := e.registry.timer.Schedule(delay, e.execute)
+	if err != nil {
+		return fmt.Errorf("followTimer: %w", err)
+	}
+	if cancel == nil {
+		return errors.New("companion follow cancellation unavailable")
+	}
+	return nil
+}
+
 func (e campaignCompanionFollowStep) execute() {
 	packets, err := e.produce()
 	if err != nil && e.logger != nil {
@@ -210,6 +224,17 @@ func (e campaignCompanionFollowStep) produce() ([][]byte, error) {
 	if !isFound || actor.UserID != e.userID || actor.PeerGeneration != e.generation ||
 		actor.OwnerObjectID != e.plan.OwnerObjectID || actor.HitPoint <= 0 ||
 		!actor.IsFollowing || actor.FollowRevision != e.plan.Revision {
+		return nil, nil
+	}
+	remaining, isMotionCurrent := e.zone.Companion().FollowRemaining(e.plan.ObjectID, e.plan.Revision, time.Now())
+	if !isMotionCurrent {
+		return nil, nil
+	}
+	if remaining > 0 {
+		err := e.scheduleAfter(remaining)
+		if err != nil {
+			return nil, fmt.Errorf("followMotionWait: %w", err)
+		}
 		return nil, nil
 	}
 	packets, err := companionraknet.FollowArrival(e.plan)
@@ -298,14 +323,14 @@ func (e campaignCompanionFollowAdmission) arm() error {
 			registry: e.runtime.registry, zone: e.zone, userID: e.userID,
 			generation: e.generation, plan: plan, logger: e.runtime.logger,
 		}
-		cancel, err := e.runtime.npc.timer.Schedule(max(time.Duration(0), plan.Deadline.Sub(e.runtime.now())), step.execute)
+		delay, isMotionCurrent := e.zone.Companion().FollowRemaining(plan.ObjectID, plan.Revision, e.runtime.now())
+		if !isMotionCurrent {
+			continue
+		}
+		err := step.scheduleAfter(delay)
 		if err != nil {
 			e.cancel(true)
 			return fmt.Errorf("companionFollowSchedule: %w", err)
-		}
-		if cancel == nil {
-			e.cancel(true)
-			return errors.New("companion follow cancellation unavailable")
 		}
 	}
 	return nil
@@ -627,8 +652,17 @@ func (r campaignMovementCommandRuntime) handle(
 ) ([][]byte, error) {
 	var err error
 	if commandSession.isSleepingCloudActive(r.now()) {
-		packets, marshalErr := marshalZonePlayerStop(
-			command.Common.ObjectID, commandSession.playerPosition,
+		// Immobilized holds the native mover for this fixed-duration cast.
+		// Repeated walking input at the held pose needs no placement reset.
+		deltaX := command.Common.Position.X - commandSession.playerPosition.X
+		deltaY := command.Common.Position.Y - commandSession.playerPosition.Y
+		radius := commandSession.deployedCampaignNavigationRadius()
+		if isFiniteZonePosition(command.Common.Position) && radius > 0 &&
+			deltaX*deltaX+deltaY*deltaY <= radius*radius {
+			return nil, nil
+		}
+		packets, marshalErr := marshalPlayerMovementCorrection(
+			command.Common.ObjectID, commandSession.playerPosition, command.Common.Orientation,
 		)
 		if marshalErr != nil {
 			return nil, fmt.Errorf("moveSleepingCloud: %w", marshalErr)
@@ -641,8 +675,18 @@ func (r campaignMovementCommandRuntime) handle(
 		return nil, nil
 	}
 	if commandSession.isEnemySleepActive(r.now()) {
-		response, marshalErr := marshalZonePlayerMove(
-			command.Common.ObjectID, commandSession.playerPosition,
+		// SleepModifier's authored Immobilized attribute already holds the
+		// native mover. Do not reset placement for every held walking poll at
+		// that pose, including the normal render-height offset.
+		deltaX := command.Common.Position.X - commandSession.playerPosition.X
+		deltaY := command.Common.Position.Y - commandSession.playerPosition.Y
+		radius := commandSession.deployedCampaignNavigationRadius()
+		if isFiniteZonePosition(command.Common.Position) && radius > 0 &&
+			deltaX*deltaX+deltaY*deltaY <= radius*radius {
+			return nil, nil
+		}
+		response, marshalErr := marshalPlayerMovementCorrection(
+			command.Common.ObjectID, commandSession.playerPosition, command.Common.Orientation,
 		)
 		if marshalErr != nil {
 			return nil, fmt.Errorf("moveCampaignSleepMarshal: %w", marshalErr)
@@ -654,8 +698,17 @@ func (r campaignMovementCommandRuntime) handle(
 		return response, nil
 	}
 	if commandSession.isEnemyStunActive(r.now()) {
-		response, marshalErr := marshalZonePlayerMove(
-			command.Common.ObjectID, commandSession.playerPosition,
+		// The native Immobilized attribute holds actual stun effects. Held
+		// clicks at that pose need no placement reset on every input poll.
+		deltaX := command.Common.Position.X - commandSession.playerPosition.X
+		deltaY := command.Common.Position.Y - commandSession.playerPosition.Y
+		radius := commandSession.deployedCampaignNavigationRadius()
+		if isFiniteZonePosition(command.Common.Position) && radius > 0 &&
+			deltaX*deltaX+deltaY*deltaY <= radius*radius {
+			return nil, nil
+		}
+		response, marshalErr := marshalPlayerMovementCorrection(
+			command.Common.ObjectID, commandSession.playerPosition, command.Common.Orientation,
 		)
 		if marshalErr != nil {
 			return nil, fmt.Errorf("moveCampaignStunMarshal: %w", marshalErr)
@@ -667,10 +720,18 @@ func (r campaignMovementCommandRuntime) handle(
 		return response, nil
 	}
 	if commandSession.isEnemyRootActive(r.now()) {
-		// A correction must be a stop, not a new route. The stop adapter also
-		// preserves this response instead of substituting the reported position.
-		response, marshalErr := marshalZonePlayerStop(
-			command.Common.ObjectID, commandSession.playerPosition,
+		// Immobilized now holds the native mover. Correct a genuine escaped
+		// prediction, but do not repeatedly teleport an already stopped hero
+		// for each held movement command (including its render height offset).
+		deltaX := command.Common.Position.X - commandSession.playerPosition.X
+		deltaY := command.Common.Position.Y - commandSession.playerPosition.Y
+		radius := commandSession.deployedCampaignNavigationRadius()
+		if isFiniteZonePosition(command.Common.Position) && radius > 0 &&
+			deltaX*deltaX+deltaY*deltaY <= radius*radius {
+			return nil, nil
+		}
+		response, marshalErr := marshalPlayerMovementCorrection(
+			command.Common.ObjectID, commandSession.playerPosition, command.Common.Orientation,
 		)
 		if marshalErr != nil {
 			return nil, fmt.Errorf("moveCampaignRootMarshal: %w", marshalErr)
@@ -697,6 +758,18 @@ func (r campaignMovementCommandRuntime) handle(
 	footprintRadius := commandSession.deployedCampaignNavigationRadius()
 	navigationActor := commandSession.playerMotion.NavigationSettings()
 	navigationActor.Mode = uint8(commandSession.binding.Mode)
+	// The predicted pose is an observation for Motion's bounded reconciliation.
+	// It may already be inside the collision overlay while input is held at a
+	// blocked click. Resolve the next goal from the running authoritative route
+	// so admission does not turn that rejected observation into a teleport.
+	navigationStart := game.Vec3(commandSession.playerPosition)
+	if commandSession.playerMotion != nil {
+		position, sampleErr := commandSession.playerMotion.SamplePosition(r.now())
+		if sampleErr != nil {
+			return nil, fmt.Errorf("moveNavigationStart: %w", sampleErr)
+		}
+		navigationStart = game.Vec3(position)
+	}
 	admission, admissionErr := action.AdmitMovement(
 		action.MovementCommand{
 			NavigationActor:  navigationActor,
@@ -706,6 +779,7 @@ func (r campaignMovementCommandRuntime) handle(
 				X: command.Common.Position.X, Y: command.Common.Position.Y,
 				Z: command.Common.Position.Z,
 			},
+			NavigationStart: navigationStart,
 			Goal:            game.Vec3{X: goal.X, Y: goal.Y, Z: goal.Z},
 			FootprintRadius: footprintRadius,
 			Navigation:      commandSession.zone.Navigation(),
@@ -765,53 +839,10 @@ func (r campaignMovementCommandRuntime) handle(
 			command.Common.ObjectID, interruption.basicSyncStamp,
 		)
 	}
-	if interruption.basicAttack != nil {
-		interruption.basicAttack.Stop()
+	interruptionPackets, interruptErr := interruption.stopPackets(command.Common.ObjectID, packet.SourceTime)
+	if interruptErr != nil {
+		return nil, fmt.Errorf("movementInterrupt: %w", interruptErr)
 	}
-	drainStopPackets := make([][]byte, 0, 3)
-	if interruption.basicAttack != nil {
-		cancelPacket, cancelErr := raknet.MarshalApplication(raknet.ActionCommandResponseMessage{
-			SyncStamp: interruption.basicSyncStamp, ResponseType: raknet.ActionResponseRejected,
-			ObjectID: command.Common.ObjectID, UserData: 0xffffffff,
-		})
-		if cancelErr != nil {
-			return nil, fmt.Errorf("moveAttackCancel: %w", cancelErr)
-		}
-		resetPacket, resetErr := abilityraknet.AnimationReset(command.Common.ObjectID, packet.SourceTime)
-		if resetErr != nil {
-			return nil, fmt.Errorf("moveAttackReset: %w", resetErr)
-		}
-		drainStopPackets = append(drainStopPackets, cancelPacket, resetPacket)
-	}
-	if interruption.heroDrain != nil {
-		var drainErr error
-		drainStopPackets, drainErr = interruption.heroDrain.interruptionPacketsAt(
-			packet.SourceTime,
-		)
-		interruption.heroDrain.Stop()
-		if drainErr != nil {
-			return nil, fmt.Errorf("moveCampaignDrainStop: %w", drainErr)
-		}
-	}
-	if interruption.healingChannel != nil {
-		healingPackets, healingErr := interruption.healingChannel.interruptionPacketsAt(packet.SourceTime)
-		interruption.healingChannel.Stop()
-		if healingErr != nil {
-			return nil, fmt.Errorf("moveHealingStop: %w", healingErr)
-		}
-		drainStopPackets = append(drainStopPackets, healingPackets...)
-	}
-	danceStopPackets := make([][]byte, 0, 1)
-	if interruption.isDanceStopped {
-		danceStopPacket, marshalErr := abilityraknet.AnimationReset(
-			command.Common.ObjectID, packet.SourceTime,
-		)
-		if marshalErr != nil {
-			return nil, fmt.Errorf("moveCampaignDanceReset: %w", marshalErr)
-		}
-		danceStopPackets = append(danceStopPackets, danceStopPacket)
-	}
-	interruptionPackets := append(drainStopPackets, danceStopPackets...)
 	r.registry.mutex.Lock()
 	peerSession, isSessionFound := r.registry.sessions[packet.Address.String()]
 	isCurrent := isSessionFound && peerSession.generation == commandSession.generation
@@ -855,7 +886,6 @@ func (r campaignMovementCommandRuntime) handle(
 	bossPublication := game.CampaignDirectorPublication{}
 	namedBossPlans := make([]zonenpc.SpawnPlan, 0)
 	namedBossPackets := make([][]byte, 0)
-	randomUnlockPublication := game.CampaignDirectorPublication{}
 	supportUnlockPublication := game.CampaignDirectorPublication{}
 	var tutorialAbilityUnlock *unlockraknet.AbilityUnlockRun
 	var tutorialCreatureUnlock *unlockraknet.CreatureUnlockRun
@@ -900,6 +930,14 @@ func (r campaignMovementCommandRuntime) handle(
 		if movementErr != nil {
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("moveCampaignAdvance: %w", movementErr)
+		}
+		orientationErr := peerSession.zone.Hero().SetOrientation(
+			peerSession.binding.UserID, peerSession.generation, peerSession.deployedObjectID,
+			normalizedHeroOrientation(command.Common.Orientation),
+		)
+		if orientationErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("moveHeroOrientation: %w", orientationErr)
 		}
 		if !isStop {
 			targetingPacket, targetingErr := peerSession.stopMissileTargetingPresentation(
@@ -1042,7 +1080,6 @@ func (r campaignMovementCommandRuntime) handle(
 		bossPublication = encounterResult.bossPublication
 		namedBossPlans = encounterResult.namedBossPlans
 		namedBossPackets = encounterResult.namedBossPackets
-		randomUnlockPublication = encounterResult.randomUnlockPublication
 		supportUnlockPublication = encounterResult.supportUnlockPublication
 		tutorialAbilityUnlock = encounterResult.tutorialAbilityUnlock
 		tutorialCreatureUnlock = encounterResult.tutorialCreatureUnlock
@@ -1227,6 +1264,7 @@ func (r campaignMovementCommandRuntime) handle(
 		playerFollowPublications = r.registry.updatePlayerFollowersLocked(
 			peerSession, movementNow, packet.SourceTime,
 		)
+		r.registry.refreshVoodooCharmsLocked(movementNow)
 	}
 	r.registry.mutex.Unlock()
 	publishPlayerFollowMovements(playerFollowPublications)
@@ -1332,7 +1370,7 @@ func (r campaignMovementCommandRuntime) handle(
 	movementSideEffectPackets := make([][]byte, 0)
 	movementSideEffectPackets = append(movementSideEffectPackets, companionFollowPackets...)
 	movementSideEffectPackets = append(movementSideEffectPackets, companionAttackPackets...)
-	movementSideEffectPackets = append(movementSideEffectPackets, drainStopPackets...)
+	movementSideEffectPackets = append(movementSideEffectPackets, interruptionPackets...)
 	movementSideEffectPackets = append(movementSideEffectPackets, campaignOrbPackets...)
 	movementSideEffectPackets = append(movementSideEffectPackets, missileTargetingPackets...)
 	movementSideEffectPackets = append(
@@ -1346,7 +1384,6 @@ func (r campaignMovementCommandRuntime) handle(
 		packet, commandSession, campaignEncounterAdvance{
 			bossPlans: bossPlans, bossPackets: bossPackets,
 			bossPublication:          bossPublication,
-			randomUnlockPublication:  randomUnlockPublication,
 			supportUnlockPublication: supportUnlockPublication,
 			tutorialAbilityUnlock:    tutorialAbilityUnlock,
 			tutorialCreatureUnlock:   tutorialCreatureUnlock,
@@ -1372,17 +1409,18 @@ func (r campaignMovementCommandRuntime) handle(
 		}
 	}
 	for _, decision := range populationDecisions {
-		r.logger.Printf("RakNet campaign population decision for %s marker_set=%q locus=%d kind=%d section=%d component=%d floor=%t ambush=%t provisional_count=%d wanderer_spawn=%t wanderer_count=%d spike_outcome=%d challenge=%d",
+		r.logger.Printf("RakNet campaign population decision for %s marker_set=%q locus=%d kind=%d section=%d component=%d floor=%t ambush=%t provisional_count=%d wanderer_spawn=%t wanderer_count=%d spike_outcome=%d challenge=%d performance_used=%t performance_fallback=%t doing_well=%t",
 			packet.Address, decision.MarkerSetName, decision.LocusID, decision.Kind,
 			decision.Section, decision.NavigationComponentID,
 			decision.IsFloorIntroduction, decision.IsAmbush,
 			decision.ProvisionalCount, decision.Wanderer.IsSpawn, decision.Wanderer.ClumpSize,
-			decision.SpikeOutcome, decision.Challenge)
+			decision.SpikeOutcome, decision.Challenge,
+			decision.SpikeOutcome != 0, decision.IsPerformanceFallback, decision.IsDoingWell)
 	}
 	for _, plan := range populationPlans {
-		r.logger.Printf("RakNet campaign enemy planned for %s object=%d noun=%q marker_set=%q locus=%d kind=%d captain=%t position=(%.3f,%.3f,%.3f)",
+		r.logger.Printf("RakNet campaign enemy planned for %s object=%d noun=%q marker_set=%q locus=%d kind=%d captain=%t position=(%.3f,%.3f,%.3f) %s",
 			packet.Address, plan.ObjectID, plan.NounName, plan.MarkerSetName, plan.LocusID,
-			plan.Kind, plan.IsCaptain, plan.Position.X, plan.Position.Y, plan.Position.Z)
+			plan.Kind, plan.IsCaptain, plan.Position.X, plan.Position.Y, plan.Position.Z, npcPolicyDiagnostic(peerSession.zone.DirectorDefinition(), plan))
 	}
 	for _, plan := range populationAggroPlans {
 		r.logger.Printf("RakNet campaign enemy acquired hero for %s object=%d noun=%q radius=%.1f",
@@ -1397,6 +1435,15 @@ func (r campaignMovementCommandRuntime) handle(
 	response, marshalErr := marshalZonePlayerMove(command.Common.ObjectID, goal)
 	if marshalErr != nil {
 		return nil, fmt.Errorf("moveCampaignMarshal: %w", marshalErr)
+	}
+	if !isCampaignTunnel && !isTutorialTeleport && !isSecurityTeleport {
+		correctionPackets, correctionErr := marshalAcceptedPlayerStopCorrection(
+			command, peerSession.playerPosition, peerSession.deployedCampaignNavigationRadius(),
+		)
+		if correctionErr != nil {
+			return nil, fmt.Errorf("moveAcceptedStop: %w", correctionErr)
+		}
+		response = append(response, correctionPackets...)
 	}
 	commandSession.zone.PublishHeroMovement(zoneprojection.HeroMovement{
 		ObjectID:           command.Common.ObjectID,
@@ -1547,7 +1594,6 @@ type campaignEncounterAdvance struct {
 	bossPublication          game.CampaignDirectorPublication
 	namedBossPlans           []zonenpc.SpawnPlan
 	namedBossPackets         [][]byte
-	randomUnlockPublication  game.CampaignDirectorPublication
 	supportUnlockPublication game.CampaignDirectorPublication
 	tutorialAbilityUnlock    *unlockraknet.AbilityUnlockRun
 	tutorialCreatureUnlock   *unlockraknet.CreatureUnlockRun
@@ -1598,7 +1644,7 @@ func (s campaignTutorialCreatureUnlockStep) produce() ([][]byte, error) {
 			ModifierGUID: peerSession.binding.Creatures[1].PassiveAbility,
 			InstanceID:   passiveInstanceID, StackCount: 1,
 			StartMilliseconds: s.timestamp,
-			SourceID:          zonehero.ObjectID(peerSession.binding.Slot, 1),
+			NPCAffixAssetID:   0,
 		})
 		if marshalErr != nil {
 			err = fmt.Errorf("passiveMarshal: %w", marshalErr)
@@ -1715,35 +1761,6 @@ func (s campaignTutorialAbilityUnlockStep) clear() {
 			ClearTutorialAbility(s.run)
 	}
 	s.runtime.registry.mutex.Unlock()
-}
-
-type campaignRandomUnlockStep struct {
-	runtime    campaignEncounterRuntime
-	zone       *zone.Zone
-	member     zone.Member
-	sessionKey string
-	slot       uint16
-	markerID   uint32
-}
-
-func (s campaignRandomUnlockStep) produce() ([][]byte, error) {
-	packet, err := unlockraknet.AbilityCount(s.slot, zoneunlock.RandomAbilityBoundary)
-	if err != nil {
-		return nil, fmt.Errorf("campaignRandomUnlockMarshal: %w", err)
-	}
-	isCurrent := s.zone.CompareAndSetAbilityCount(
-		s.member,
-		zoneunlock.InitialAbilityBoundary,
-		zoneunlock.RandomAbilityBoundary,
-	)
-	if !isCurrent {
-		return nil, nil
-	}
-	s.runtime.logger.Printf(
-		"RakNet campaign random ability unlocked for %s marker=%d boundary=%d",
-		s.sessionKey, s.markerID, zoneunlock.RandomAbilityBoundary,
-	)
-	return [][]byte{packet}, nil
 }
 
 type campaignSupportUnlockStep struct {
@@ -1980,31 +1997,6 @@ func (r campaignEncounterRuntime) schedulePublications(
 			r.logger.Printf(
 				"RakNet tutorial Sage published immediately after schedule failure: %v",
 				scheduleErr,
-			)
-		}
-	}
-	if encounter.randomUnlockPublication.TriggerMarkerID != 0 {
-		step := campaignRandomUnlockStep{
-			runtime: r, zone: commandSession.zone,
-			member: zoneResultMember(commandSession), sessionKey: sessionKey,
-			slot:     commandSession.binding.Slot,
-			markerID: encounter.randomUnlockPublication.TriggerMarkerID,
-		}
-		producers := r.registry.producerGuard.scheduledProducers(
-			sessionKey, []raknet.ScheduledPacketProducer{{
-				Delay: zoneunlock.RandomDelay, Produce: step.produce,
-			}},
-		)
-		scheduleErr := scheduleEncounterProducers(packet, producers)
-		if scheduleErr != nil {
-			var err error
-			immediateUnlockPackets, err = step.produce()
-			if err != nil {
-				return nil, nil, fmt.Errorf("campaignRandomUnlockFallback: %w", err)
-			}
-			r.logger.Printf(
-				"RakNet campaign random ability published immediately after schedule failure marker=%d: %v",
-				step.markerID, scheduleErr,
 			)
 		}
 	}

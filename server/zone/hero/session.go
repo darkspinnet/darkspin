@@ -11,11 +11,13 @@ import (
 )
 
 type Actor struct {
+	DeathRevision    uint64
 	UserID           uint64
 	PeerGeneration   uint64
 	ObjectID         uint32
 	CreatureIndex    uint32
 	Position         game.Vec3
+	Orientation      game.Quaternion
 	LinearVelocity   game.Vec3
 	FootprintRadius  float32
 	HitPoint         float32
@@ -26,8 +28,9 @@ type Actor struct {
 }
 
 type Session struct {
-	mu     sync.RWMutex
-	actors map[uint64]Actor
+	mu            sync.RWMutex
+	actors        map[uint64]Actor
+	retiredActors map[uint64]bool
 }
 
 func NewSession() *Session {
@@ -48,6 +51,14 @@ func (s *Session) Put(actor Actor) error {
 		!isFiniteActorResource(actor.ManaPoint, actor.MaximumManaPoint) {
 		return errors.New("hero actor invalid")
 	}
+	if actor.Orientation == (game.Quaternion{}) {
+		actor.Orientation.W = 1
+	}
+	orientation, err := normalizeOrientation(actor.Orientation)
+	if err != nil {
+		return fmt.Errorf("actorOrientation: %w", err)
+	}
+	actor.Orientation = orientation
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	current, isFound := s.actors[actor.UserID]
@@ -57,7 +68,14 @@ func (s *Session) Put(actor Actor) error {
 			actor.PeerGeneration, current.PeerGeneration,
 		)
 	}
+	if isFound && actor.ObjectID == current.ObjectID {
+		actor.DeathRevision = max(actor.DeathRevision, current.DeathRevision)
+		if current.HitPoint > 0 && actor.HitPoint <= 0 {
+			actor.DeathRevision++
+		}
+	}
 	s.actors[actor.UserID] = actor
+	delete(s.retiredActors, actor.UserID)
 	return nil
 }
 
@@ -68,6 +86,9 @@ func (s *Session) Snapshot(userID uint64, peerGeneration uint64) (Actor, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	actor, isFound := s.actors[userID]
+	if s.retiredActors[userID] {
+		return Actor{}, false
+	}
 	return actor, isFound && actor.PeerGeneration == peerGeneration
 }
 
@@ -78,7 +99,7 @@ func (s *Session) SnapshotByObjectID(objectID uint32) (Actor, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, actor := range s.actors {
-		if actor.ObjectID == objectID {
+		if actor.ObjectID == objectID && !s.retiredActors[actor.UserID] {
 			return actor, true
 		}
 	}
@@ -93,6 +114,9 @@ func (s *Session) Snapshots() []Actor {
 	defer s.mu.RUnlock()
 	actor := make([]Actor, 0, len(s.actors))
 	for _, current := range s.actors {
+		if s.retiredActors[current.UserID] {
+			continue
+		}
 		actor = append(actor, current)
 	}
 	sort.Slice(actor, func(left int, right int) bool {
@@ -123,7 +147,7 @@ func (s *Session) UpdatePose(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	actor, isFound := s.actors[userID]
-	if !isFound || actor.PeerGeneration != peerGeneration ||
+	if !isFound || s.retiredActors[userID] || actor.PeerGeneration != peerGeneration ||
 		actor.ObjectID != objectID {
 		return errors.New("hero actor unavailable")
 	}
@@ -132,6 +156,42 @@ func (s *Session) UpdatePose(
 	actor.FootprintRadius = footprintRadius
 	s.actors[userID] = actor
 	return nil
+}
+
+// SetOrientation retains authoritative ability facing across ordinary pose
+// updates and peer baselines. Position-only teleports preserve this rotation.
+func (e *Session) SetOrientation(userID uint64, peerGeneration uint64, objectID uint32, orientation game.Quaternion) error {
+	if e == nil {
+		return errors.New("nil hero session")
+	}
+	orientation, err := normalizeOrientation(orientation)
+	if err != nil {
+		return fmt.Errorf("setOrientation: %w", err)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	actor, isFound := e.actors[userID]
+	if !isFound || e.retiredActors[userID] || actor.PeerGeneration != peerGeneration || actor.ObjectID != objectID {
+		return errors.New("hero actor unavailable")
+	}
+	actor.Orientation = orientation
+	e.actors[userID] = actor
+	return nil
+}
+
+func normalizeOrientation(orientation game.Quaternion) (game.Quaternion, error) {
+	lengthSquared := float64(orientation.X)*float64(orientation.X) +
+		float64(orientation.Y)*float64(orientation.Y) +
+		float64(orientation.Z)*float64(orientation.Z) +
+		float64(orientation.W)*float64(orientation.W)
+	if lengthSquared <= 0 || math.IsNaN(lengthSquared) || math.IsInf(lengthSquared, 0) {
+		return game.Quaternion{}, errors.New("hero orientation invalid")
+	}
+	length := math.Sqrt(lengthSquared)
+	return game.Quaternion{
+		X: float32(float64(orientation.X) / length), Y: float32(float64(orientation.Y) / length),
+		Z: float32(float64(orientation.Z) / length), W: float32(float64(orientation.W) / length),
+	}, nil
 }
 
 func (s *Session) SetResources(
@@ -147,7 +207,7 @@ func (s *Session) SetResources(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	actor, isFound := s.actors[userID]
-	if !isFound || actor.PeerGeneration != peerGeneration ||
+	if !isFound || s.retiredActors[userID] || actor.PeerGeneration != peerGeneration ||
 		actor.ObjectID != objectID {
 		return Actor{}, errors.New("hero actor unavailable")
 	}
@@ -159,6 +219,9 @@ func (s *Session) SetResources(
 		return Actor{}, errors.New("hero resurrection requires lifecycle operation")
 	}
 	previous := actor
+	if actor.HitPoint > 0 && hitPoint <= 0 {
+		actor.DeathRevision++
+	}
 	actor.HitPoint = hitPoint
 	actor.ManaPoint = manaPoint
 	s.actors[userID] = actor
@@ -177,7 +240,7 @@ func (s *Session) SetStealthed(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	actor, isFound := s.actors[userID]
-	if !isFound || actor.PeerGeneration != peerGeneration ||
+	if !isFound || s.retiredActors[userID] || actor.PeerGeneration != peerGeneration ||
 		actor.ObjectID != objectID {
 		return errors.New("hero actor unavailable")
 	}
@@ -197,6 +260,7 @@ func (s *Session) Remove(userID uint64, peerGeneration uint64) bool {
 		return false
 	}
 	delete(s.actors, userID)
+	delete(s.retiredActors, userID)
 	return true
 }
 

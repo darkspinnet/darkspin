@@ -10,6 +10,8 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/util"
+	"github.com/darkspinnet/darkspin/server/zone"
+	zonedifficulty "github.com/darkspinnet/darkspin/server/zone/difficulty"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 	zoneprojection "github.com/darkspinnet/darkspin/server/zone/projection"
@@ -24,18 +26,27 @@ const (
 )
 
 type campaignCorruptorState struct {
-	phases           [5]zonenpc.CorruptorPhase
-	phaseIndex       int
-	portalPositions  []game.Vec3
-	portalObjectIDs  []uint32
-	portalReadyAts   []time.Time
-	portals          map[uint32]campaignCorruptorPortalState
-	isStageTwo       bool
-	isPhasePending   bool
-	isPhaseActivated bool
+	phaseGeneration         uint64
+	secondAggro             *corruptorCinematicRun
+	phases                  [5]zonenpc.CorruptorPhase
+	phaseIndex              int
+	portalPositions         []game.Vec3
+	portalObjectIDs         []uint32
+	portalReadyAts          []time.Time
+	portals                 map[uint32]campaignCorruptorPortalState
+	isStageTwo              bool
+	isPhasePending          bool
+	isPhaseActivated        bool
+	isDirectEntry           bool
+	arePortalPositionsKnown bool
 }
 
 type campaignCorruptorPhaseStep struct {
+	world           *zone.Zone
+	sceneGeneration uint64
+	identity        gameplayProducerIdentity
+	continuation    *corruptorPhaseContinuation
+	phaseGeneration uint64
 	runtime         campaignNPCActionRuntime
 	packet          raknet.Packet
 	sessionKey      string
@@ -64,9 +75,9 @@ func corruptorRank(nounName string) int {
 	switch strings.ToLower(nounName) {
 	case "scaldronboss.noun", "scaldronboss_stage2.noun":
 		return 1
-	case "scaldronboss_2.noun":
+	case "scaldronboss_2.noun", "scaldronboss_stage2_2.noun":
 		return 2
-	case "scaldronboss_3.noun":
+	case "scaldronboss_3.noun", "scaldronboss_stage2_3.noun":
 		return 3
 	default:
 		return 0
@@ -136,6 +147,13 @@ func (r campaignNPCActionRuntime) startCorruptorControllers(
 ) error {
 	for _, plan := range plans {
 		if corruptorRank(plan.NounName) == 0 || plan.OwnerObjectID != 0 {
+			continue
+		}
+		if zonenpc.IsDirectCorruptorStageTwo(plan) {
+			err := r.startDirectCorruptor(packet, sessionKey, generation, plan, timestamp)
+			if err != nil {
+				return fmt.Errorf("directCorruptor: %w", err)
+			}
 			continue
 		}
 		r.registry.mutex.Lock()
@@ -213,6 +231,7 @@ func (s *gameplayPeerSession) prepareCampaignCorruptorStageTwo(objectID uint32) 
 		randomFloat = s.zone.NPCRandom().Float64
 	}
 	state := newCampaignCorruptorState(randomFloat)
+	state.phaseGeneration = s.campaignCorruptorStates[objectID].phaseGeneration + 1
 	state.isStageTwo = true
 	state.isPhasePending = true
 	s.campaignCorruptorStates[objectID] = state
@@ -312,13 +331,12 @@ func (e campaignCorruptorPortalRespawnStep) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("portalTimers: %w", err)
 	}
-	actionPackets, err := e.runtime.scheduleFirstActions(
-		e.packet, e.sessionKey, e.generation, actionPlans, e.timestamp,
-	)
+	err = e.runtime.publishCorruptorBirth(e.packet, e.sessionKey, e.generation,
+		plans, actionPlans, packets, e.timestamp)
 	if err != nil {
 		return nil, fmt.Errorf("corruptorPortalAction: %w", err)
 	}
-	return append(packets, actionPackets...), nil
+	return nil, nil
 }
 
 func (r campaignNPCActionRuntime) advanceCorruptorPhase(
@@ -327,19 +345,50 @@ func (r campaignNPCActionRuntime) advanceCorruptorPhase(
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[step.sessionKey]
 	isCurrent := isFound && peerSession.generation == step.generation &&
-		peerSession.zone != nil && peerSession.zone.NPCs() != nil
+		peerSession.zone != nil && peerSession.zone.NPCs() != nil &&
+		!peerSession.isZoneTerminal() && peerSession.zone.IsActive()
 	if !isCurrent {
+		r.registry.mutex.Unlock()
+		return nil, nil
+	}
+	if (step.world != nil && peerSession.zone != step.world) ||
+		(step.identity.isFound && gameplayProducerIdentityFromSession(step.sessionKey, peerSession, isFound) != step.identity) {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
 	state, isStateFound := peerSession.campaignCorruptorStates[step.objectID]
 	boss, isBossFound := peerSession.zone.NPCs().NPC(step.objectID)
-	if !isStateFound || !isBossFound || boss.IsDefeated {
+	if !isStateFound || !isBossFound || boss.IsDefeated || state.phaseGeneration != step.phaseGeneration ||
+		(state.secondAggro != nil && !step.isStageTwoStart) ||
+		(boss.IsCorruptorStageTwo && (!state.isStageTwo || !boss.IsSecondAggroCinematic(step.sceneGeneration) || !boss.IsSecondAggroController(
+			zonenpc.ActionOwner{UserID: peerSession.binding.UserID, PeerGeneration: peerSession.generation}))) {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
 	if step.isStageTwoStart {
 		state.isStageTwo = true
+	}
+	// The phase controller's ten-second startup is independent of the client
+	// FirstAggro_ScaldronBoss entrance: 0.5 + 14.4 + 0.5 seconds. Never let
+	// changing phase retire that introduction and begin pursuit early.
+	delay := boss.IntroductionCombatDelay(r.now())
+	if boss.IsIntroductionPending() && delay <= 0 {
+		// Completion's native packets must commit before phase replacement
+		// invalidates the entrance action generation at the same deadline.
+		delay = 10 * time.Millisecond
+	}
+	if delay > 0 {
+		r.registry.mutex.Unlock()
+		step.timestamp += uint64((delay + time.Millisecond - 1) / time.Millisecond)
+		err := scheduleNPCProducer(r.registry, step.packet, delay, step.produce)
+		if err != nil {
+			return nil, fmt.Errorf("corruptorIntroWait: %w", err)
+		}
+		return nil, nil
+	}
+	if step.continuation != nil && step.continuation.isPrepared {
+		r.registry.mutex.Unlock()
+		return step.continuation.admit(step)
 	}
 	state.phaseIndex++
 	if state.phaseIndex >= len(state.phases) {
@@ -363,7 +412,7 @@ func (r campaignNPCActionRuntime) advanceCorruptorPhase(
 	}
 	state.isPhaseActivated = true
 	state.isPhasePending = false
-	if len(state.portalPositions) == 0 {
+	if len(state.portalPositions) == 0 && !state.arePortalPositionsKnown {
 		state.portalPositions = campaignCorruptorPortalPositions(
 			peerSession.zone.DirectorDefinition(), boss.Plan.Position,
 		)
@@ -383,6 +432,11 @@ func (r campaignNPCActionRuntime) advanceCorruptorPhase(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("corruptorPhaseSpawn: %w", err)
 	}
+	phasePackets, err := corruptorPhasePackets(boss.Plan.ObjectID, phase)
+	if err != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("phasePackets: %w", err)
+	}
 	err = admitCorruptorPopulation(&peerSession, plans, targetObjectID)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -390,41 +444,21 @@ func (r campaignNPCActionRuntime) advanceCorruptorPhase(
 	}
 	peerSession.campaignCorruptorStates[step.objectID] = state
 	r.registry.sessions[step.sessionKey] = peerSession
+	continuation := step.continuation
+	if continuation == nil {
+		continuation = &corruptorPhaseContinuation{}
+	}
+	continuation.boss = boss
+	continuation.state = state
+	continuation.plans = plans
+	continuation.actionPlans = spawnedActionPlans
+	continuation.packets = append(phasePackets, spawnPackets...)
+	continuation.isPrepared = true
+	continuation.isStageTwo = state.isStageTwo
 	r.registry.mutex.Unlock()
-	err = r.scheduleCorruptorPortals(step.packet, step.sessionKey, step.generation,
-		step.objectID, plans, step.timestamp)
+	packets, err := continuation.admit(step)
 	if err != nil {
-		return nil, fmt.Errorf("phasePortalTimers: %w", err)
-	}
-
-	packets, err := corruptorPhasePackets(boss.Plan.ObjectID, phase)
-	if err != nil {
-		return nil, err
-	}
-	packets = append(packets, spawnPackets...)
-	resumePackets, err := r.restartCorruptorAction(
-		step.packet, step.sessionKey, step.generation, boss, step.timestamp,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("phaseResume: %w", err)
-	}
-	packets = append(packets, resumePackets...)
-	actionPackets, err := r.scheduleFirstActions(
-		step.packet, step.sessionKey, step.generation, spawnedActionPlans, step.timestamp,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("corruptorPhaseAction: %w", err)
-	}
-	packets = append(packets, actionPackets...)
-	if state.isStageTwo {
-		period := corruptorPhasePeriod(corruptorRank(boss.Plan.NounName))
-		next := step
-		next.timestamp += uint64(period / time.Millisecond)
-		next.isStageTwoStart = false
-		err = scheduleNPCProducer(r.registry, step.packet, period, next.produce)
-		if err != nil {
-			return nil, fmt.Errorf("corruptorPhaseSchedule: %w", err)
-		}
+		return packets, fmt.Errorf("phaseAdmission: %w", err)
 	}
 	return packets, nil
 }
@@ -479,17 +513,9 @@ func (r campaignNPCActionRuntime) planCorruptorPhasePopulation(
 		delete(state.portals, objectID)
 		state.portalObjectIDs[index] = 0
 	}
-	portalProfile := boss.Plan.NPCProfile
-	portalNounKey := strings.ToLower(campaignCorruptorPortalNounName)
-	profile, isFound := peerSession.zone.DirectorDefinition().NPCProfilesByNoun[portalNounKey]
-	if isFound && profile.IsKnown && profile.HitPoint > 0 {
-		portalProfile = profile
-	} else {
-		portalProfile.HitPoint = 50
-		portalProfile.PowerPoint = 0
-		portalProfile.FootprintRadius = 1.5
-		portalProfile.IsTargetable = true
-		portalProfile.IsKnown = true
+	portalProfile, profileErr := zonedifficulty.ProjectOwnedSummon(peerSession.zone.DirectorDefinition(), campaignCorruptorPortalNounName)
+	if profileErr != nil {
+		return nil, state, fmt.Errorf("portalProfile: %w", profileErr)
 	}
 	for index, position := range state.portalPositions {
 		if state.portalObjectIDs[index] != 0 ||
@@ -566,13 +592,13 @@ func admitCorruptorPopulation(
 	for _, plan := range plans {
 		plainPlans = append(plainPlans, plan.Plan)
 	}
-	err := peerSession.zone.NPCs().Add(plainPlans, targetObjectID)
+	err := peerSession.zone.NPCs().AddPendingBirth(plainPlans, targetObjectID)
 	if err != nil {
 		return fmt.Errorf("corruptorPopulationAdd: %w", err)
 	}
-	err = peerSession.zone.PublishNPCSpawn(zoneprojection.NPCSpawn{
+	err = peerSession.zone.RecordNPCSpawn(zoneprojection.NPCSpawn{
 		Plans: plainPlans, TargetObjectID: targetObjectID,
-	}, peerSession.binding.UserID, peerSession.generation)
+	})
 	if err != nil {
 		rollbackErr := peerSession.zone.NPCs().RollbackAdd(plainPlans)
 		return fmt.Errorf(
@@ -593,31 +619,13 @@ func (r campaignNPCActionRuntime) corruptorMinionPlan(
 	}
 	nounName := entry.NounName
 	director := s.zone.DirectorDefinition()
-	npcProfile, isProfileFound := director.NPCProfilesByNoun[strings.ToLower(nounName)]
-	if !isProfileFound {
-		npcProfile = entry.NPCProfile
+	npcProfile, profileErr := zonedifficulty.ProjectOwnedSummon(director, nounName)
+	if profileErr != nil {
+		return zonenpc.SpawnPlan{}, fmt.Errorf("corruptorMinionClass: %w", profileErr)
 	}
 	actionProfile, isActionFound := zonenpc.ActionProfileForNoun(nounName)
 	if !isActionFound {
 		return zonenpc.SpawnPlan{}, fmt.Errorf("corruptorMinionProfile: %s", nounName)
-	}
-	if !npcProfile.IsKnown {
-		npcProfile = boss.Plan.NPCProfile
-		hitPoint := r.program.NonPlayerHitPoint[util.HashID(
-			strings.TrimSuffix(nounName, ".Noun"),
-		)]
-		if hitPoint <= 0 {
-			hitPoint = 20
-		}
-		footprintRadius, footprintErr := r.program.FootprintRadius(nounName)
-		if footprintErr != nil || footprintRadius <= 0 {
-			footprintRadius = 0.5
-		}
-		npcProfile.HitPoint = hitPoint
-		npcProfile.FootprintRadius = footprintRadius
-		npcProfile.GraphicsScale = 1
-		npcProfile.IsTargetable = true
-		npcProfile.IsKnown = true
 	}
 	position = r.corruptorScatterPosition(s, position, nounName, pendingPlans)
 	return zonenpc.SpawnPlan{

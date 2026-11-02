@@ -36,7 +36,37 @@ func NewJWTIssuer(secret []byte, issuer, audience string) (*JWTIssuer, error) {
 }
 
 // Issue creates a token carrying the requested local account identity.
-func (i *JWTIssuer) Issue(identity string, lifetime time.Duration) (string, error) {
+func (e *JWTIssuer) Issue(identity string, lifetime time.Duration) (string, error) {
+	token, err := e.IssueForVersion(identity, lifetime, "")
+	if err != nil {
+		return "", fmt.Errorf("versionIssue: %w", err)
+	}
+	return token, nil
+}
+
+// IssueForVersion binds an approved desktop launch to the launcher version.
+// An empty version is reserved for the existing local desktop flow.
+func (e *JWTIssuer) IssueForVersion(identity string, lifetime time.Duration, clientVersion string) (string, error) {
+	token, err := e.issue(identity, 0, lifetime, clientVersion)
+	if err != nil {
+		return "", fmt.Errorf("versionToken: %w", err)
+	}
+	return token, nil
+}
+
+// IssueForAccount binds a desktop grant to an existing account incarnation.
+func (e *JWTIssuer) IssueForAccount(identity string, accountID int64, lifetime time.Duration, clientVersion string) (string, error) {
+	if accountID <= 0 {
+		return "", errors.New("issue JWT: account ID is invalid")
+	}
+	token, err := e.issue(identity, accountID, lifetime, clientVersion)
+	if err != nil {
+		return "", fmt.Errorf("accountToken: %w", err)
+	}
+	return token, nil
+}
+
+func (e *JWTIssuer) issue(identity string, accountID int64, lifetime time.Duration, clientVersion string) (string, error) {
 	identity = strings.TrimSpace(identity)
 	if identity == "" {
 		return "", errors.New("issue JWT: identity is empty")
@@ -48,10 +78,12 @@ func (i *JWTIssuer) Issue(identity string, lifetime time.Duration) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("headerMarshal: %w", err)
 	}
-	now := i.now()
+	now := e.now()
 	claims, err := json.Marshal(map[string]any{
-		"iss": i.issuer, "aud": i.audience, "sub": identity, "email": identity,
+		"iss": e.issuer, "aud": e.audience, "sub": identity, "email": identity,
 		"nbf": now.Unix(), "exp": now.Add(lifetime).Unix(),
+		"client_version": clientVersion,
+		"account_id":     accountID,
 	})
 	if err != nil {
 		return "", fmt.Errorf("claimsMarshal: %w", err)
@@ -59,7 +91,7 @@ func (i *JWTIssuer) Issue(identity string, lifetime time.Duration) (string, erro
 	encodedHeader := base64.RawURLEncoding.EncodeToString(header)
 	encodedClaims := base64.RawURLEncoding.EncodeToString(claims)
 	signingInput := encodedHeader + "." + encodedClaims
-	mac := hmac.New(sha256.New, i.secret)
+	mac := hmac.New(sha256.New, e.secret)
 	_, err = mac.Write([]byte(signingInput))
 	if err != nil {
 		return "", fmt.Errorf("signatureHash: %w", err)

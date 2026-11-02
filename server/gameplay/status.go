@@ -10,6 +10,7 @@ import (
 	developerfeature "github.com/darkspinnet/darkspin/server/developer"
 	developerraknet "github.com/darkspinnet/darkspin/server/developer/raknet103"
 	"github.com/darkspinnet/darkspin/server/game"
+	"github.com/darkspinnet/darkspin/server/playerstat"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/sporenet"
@@ -133,7 +134,25 @@ func (r gameplayStatusRuntime) handle(
 		}
 		return r.handleChain(ctx, packet, peerSession, statusContext.status)
 	case game.ModeChain:
-		return r.handleChain(ctx, packet, peerSession, statusContext.status)
+		status := statusContext.status
+		botPackets := make([][]byte, 0)
+		if !peerSession.binding.IsServerBot && (status.Status == 2 || status.Status == 4) {
+			botPackets, err = r.publishServerBotStatus(peerSession, status)
+			if err != nil {
+				return nil, fmt.Errorf("statusCampaignBots: %w", err)
+			}
+		}
+		packets, err := r.handleChain(ctx, packet, peerSession, status)
+		if err != nil {
+			return nil, fmt.Errorf("statusCampaign: %w", err)
+		}
+		if !peerSession.binding.IsServerBot && status.Status == 8 {
+			err = r.startServerBotDungeons(ctx, packet, peerSession)
+			if err != nil {
+				return nil, fmt.Errorf("statusCampaignBotStart: %w", err)
+			}
+		}
+		return append(packets, botPackets...), nil
 	case game.ModeArena:
 		return r.handleArena(ctx, packet, peerSession, statusContext.status)
 	default:
@@ -151,24 +170,28 @@ func (r gameplayStatusRuntime) handleArena(
 	switch status.Status {
 	case 2, 4:
 		peerSession = r.acknowledgeArenaPreparation(packet.Address.String(), peerSession)
-		return r.handleChain(ctx, packet, peerSession, status)
+		botPackets, err := r.publishServerBotStatus(peerSession, status)
+		if err != nil {
+			return nil, fmt.Errorf("statusArenaBotProgress: %w", err)
+		}
+		playerPackets, err := r.handleChain(ctx, packet, peerSession, status)
+		if err != nil {
+			return nil, fmt.Errorf("statusArenaLoading: %w", err)
+		}
+		return append(playerPackets, botPackets...), nil
 	case 8:
 		peerSession = r.acknowledgeArenaPreparation(packet.Address.String(), peerSession)
+		botErr := r.startServerBotDungeons(ctx, packet, peerSession)
+		if botErr != nil {
+			return nil, fmt.Errorf("statusArenaBots: %w", botErr)
+		}
 		startPackets, err := r.startArena(packet, peerSession, status)
 		if err != nil {
 			return nil, fmt.Errorf("statusArenaStart: %w", err)
 		}
-		setupPackets, isPublished, err := r.setup.publishDungeon(ctx, packet)
-		if err != nil {
-			return nil, fmt.Errorf("statusArenaSetup: %w", err)
-		}
-		if !isPublished {
-			r.logger.Printf(
-				"RakNet Arena hero setup deferred for %s after status 8",
-				packet.Address,
-			)
-		}
-		return append(startPackets, setupPackets...), nil
+		// Like campaign entry, wait for a subsequent client exchange before
+		// publishing gameplay objects. GameStart must first reach PreDungeon.
+		return startPackets, nil
 	default:
 		return nil, nil
 	}
@@ -383,6 +406,12 @@ func (r gameplayStatusRuntime) startArena(
 	if err != nil {
 		return nil, fmt.Errorf("statusArenaStart: %w", err)
 	}
+	countdownPacket, err := raknet.MarshalApplication(raknet.ArenaCountdownMessage{
+		Seconds: float32(arenaOpeningDuration.Seconds()),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("arenaCountdown: %w", err)
+	}
 	playerPacket, err := memberraknet.Status(memberraknet.StatusRequest{
 		PlayerIndex: uint8(peerSession.binding.Slot),
 		Status:      status.Status, Progress: status.Progress,
@@ -400,6 +429,16 @@ func (r gameplayStatusRuntime) startArena(
 		peerSession.arePassiveModifiersAllocated = true
 	}
 	r.registry.mutex.Lock()
+	currentSession, isFound := r.registry.sessions[packet.Address.String()]
+	if !isFound || currentSession.generation != peerSession.generation {
+		r.registry.mutex.Unlock()
+		return nil, errors.New("arena start session stale")
+	}
+	// Other participants can publish loading/roster packets while this
+	// handshake is prepared. Keep their reliable queues on the live session.
+	peerSession.pendingPacketBatches = currentSession.pendingPacketBatches
+	peerSession.nextPendingPacketID = currentSession.nextPendingPacketID
+	peerSession.isPendingPacketOverflow = currentSession.isPendingPacketOverflow
 	peerSession.stage.EnterDungeon()
 	r.registry.sessions[packet.Address.String()] = peerSession
 	r.registry.mutex.Unlock()
@@ -411,12 +450,21 @@ func (r gameplayStatusRuntime) startArena(
 		packet.Address, peerSession.binding.Level, peerSession.binding.Team,
 		statusRecipients,
 	)
-	return [][]byte{playerPacket, startPacket}, nil
+	// PreDungeon consumes subtype 9; prime the HUD before GameStart switches
+	// the native state to Dungeon, whose Arena listener ignores that subtype.
+	pingPacket, err := developerraknet.Ping(uint64(time.Now().Unix()))
+	if err != nil {
+		return nil, fmt.Errorf("arenaStartPing: %w", err)
+	}
+	return [][]byte{playerPacket, countdownPacket, startPacket, pingPacket}, nil
 }
 
 func (r gameplayStatusRuntime) campaignBeamOut(
 	ctx context.Context, packet raknet.Packet, peerSession gameplayPeerSession,
 ) ([][]byte, error) {
+	if peerSession.binding.IsServerBot {
+		return nil, nil
+	}
 	sessionKey := packet.Address.String()
 	generation := peerSession.generation
 	currentSession, isReserved := r.reserveCampaignBeamOut(sessionKey, generation)
@@ -494,6 +542,17 @@ func (r gameplayStatusRuntime) campaignBeamOut(
 		nextBinding.ChainLevelIndex++
 	}
 	nextBinding.Difficulty = nextBinding.ChainLevelIndex
+	if !snapshot.IsTerminal {
+		destination, destinationErr := r.gameplayJoin.ResolveCampaignDestination(ctx, nextBinding)
+		if destinationErr != nil {
+			rollbackErr := r.rollbackCampaignBeamOut(sessionKey, generation)
+			return nil, fmt.Errorf("statusCampaignDestination: %w", errors.Join(destinationErr, rollbackErr))
+		}
+		snapshot.NextLevel = destination.Level
+		snapshot.IsNextReplayRandomized = destination.IsReplayRandomized
+		nextBinding.Level = destination.Level
+	}
+	nextBinding.IsReplayRandomized = snapshot.IsNextReplayRandomized
 	nextBinding.RefreshReplay()
 	nextDirector, err := r.preparation.loadPreview(ctx, nextBinding)
 	if err != nil {
@@ -729,12 +788,26 @@ func (r gameplayStatusRuntime) commitCampaignBeamOut(
 		return gameplayPeerSession{}, false
 	}
 	peerSession.chainResult = resultSession
+	// The world poll and the detached runtime teardown share this run. Retire
+	// it under the registry lock before returning the detached session copy.
+	sagePoll := peerSession.sagePassiveSchedule
+	sagePackets, sageErr := peerSession.stopCampaignSagePassive()
+	if sageErr != nil && r.logger != nil {
+		r.logger.Printf("RakNet Sage Beam Out cleanup failed user=%d: %v", peerSession.binding.UserID, sageErr)
+	}
+	peerSession.queueCampaignPackets(sagePackets)
+	r.registry.sessions[sessionKey] = peerSession
+	if sagePoll != nil {
+		sagePoll.publishLocked(sagePackets)
+	}
 	peerSession.retireChannelsLocked()
 	peerSession.retireAuraAreasLocked()
 	peerSession.retireChargeRunsLocked()
 	r.registry.retirePeerProjectileFreezesLocked(&peerSession)
 	r.registry.retireFieldMedicBuffsLocked(&peerSession, r.modifierPool)
 	r.registry.retireCampaignTreeOfLifeLocked(&peerSession)
+	r.registry.retireHeroInfectionsLocked(&peerSession)
+	r.registry.retirePlasmaWreathLocked(&peerSession)
 	if snapshot.FinalLevel != 0 {
 		peerSession.binding.AvatarLevel = snapshot.FinalLevel
 		peerSession.binding.AvatarXP = float32(snapshot.FinalExperience)
@@ -1002,9 +1075,11 @@ func (r gameplayStatusRuntime) rollbackTutorialCompletion(
 
 type campaignResultRuntime struct {
 	registry           *gameplaySessionRegistry
+	stats              *playerstat.Recorder
 	chain              campaignChainProgression
 	cashOutProgression campaignCashOutProgression
 	gameplayJoin       *game.GameplayJoin
+	ratingConversions  []float32
 	modifierPool       *modifierPool
 	effectPool         *attachedEffectPool
 	preparation        campaignPreparation
@@ -1245,7 +1320,20 @@ func (r campaignResultRuntime) votingData(
 		return nil, fmt.Errorf("campaignVoteProgression: %w", err)
 	}
 	seconds := float32(remaining.Seconds())
-	votePacket, err := resultraknet.VoteWithCountdown(snapshot, seconds)
+	planetStats := [4]raknet.ChainPlanetStat{}
+	if r.stats != nil {
+		missionStats := r.stats.SnapshotMission(peerSession.binding)
+		for slot, stat := range missionStats {
+			planetStats[slot] = raknet.ChainPlanetStat{
+				Kills:           uint32(min(stat.Kills, uint64(^uint32(0)))),
+				DamageDealt:     float32(stat.DamageDealt),
+				DamageTaken:     float32(stat.DamageTaken),
+				HealingDone:     float32(stat.HealingDone),
+				HealingReceived: float32(stat.HealingReceived),
+			}
+		}
+	}
+	votePacket, err := resultraknet.VoteWithCountdown(snapshot, seconds, planetStats)
 	if err != nil {
 		return nil, fmt.Errorf("campaignVote: %w", err)
 	}
@@ -1266,13 +1354,10 @@ func (s gameplayPeerSession) deployedResourceMaximum() (float32, float32, error)
 	}
 	if s.binding.Mode == game.ModeArena {
 		creatureIndex := s.deployedCreatureIndex
-		if creatureIndex >= uint32(len(s.binding.Creatures)) ||
-			creatureIndex >= uint32(len(s.maximumHitPoints)) ||
-			creatureIndex >= uint32(len(s.maximumManaPoints)) {
+		if creatureIndex >= uint32(len(s.binding.Creatures)) {
 			return 0, 0, errors.New("deployed arena hero unavailable")
 		}
-		maximumHitPoint := s.maximumHitPoints[creatureIndex]
-		maximumManaPoint := s.maximumManaPoints[creatureIndex]
+		maximumHitPoint, maximumManaPoint := s.characterResourceMaximum(creatureIndex)
 		if maximumHitPoint <= 0 || maximumManaPoint <= 0 {
 			return 0, 0, errors.New("deployed arena hero resources unavailable")
 		}
@@ -1319,6 +1404,9 @@ func (s *gameplayPeerSession) applyDeveloperResourceCommand(
 	)
 	if err != nil {
 		return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("resourcePlan: %w", err)
+	}
+	if s.isGodModeEnabled && mutation.Damage > 0 {
+		return nil, sporenet.PlayerStatDelta{}, nil
 	}
 	if mutation.IsHitPointChanged && mutation.Damage == 0 {
 		_, err = s.setDeployedHitPoints(mutation.HitPoint)
@@ -1627,11 +1715,13 @@ func (s *gameplayPeerSession) applyDeveloperResetCommand(
 	if plasmaErr == nil {
 		packets = append(packets, plasmaPackets...)
 	}
+	packets = append(packets, s.takeHeroInfections()...)
 	interruptedBasic := s.resetAbilityAdmissionForSwitch()
 	if interruptedBasic != nil {
 		interruptedBasic.Stop()
 	}
 	if s.rideCancel != nil {
+		s.cancelScenarioRide("hero lifecycle canceled ability", time.Now())
 		s.rideCancel()
 		s.rideCancel = nil
 	}
@@ -1689,7 +1779,7 @@ func (s *gameplayPeerSession) marshalResetBaselineAt(
 	if s.deployedCreatureIndex >= uint32(len(s.binding.Creatures)) {
 		return nil, errors.New("reset creature unavailable")
 	}
-	creature := s.binding.Creatures[s.deployedCreatureIndex]
+	creature := s.projectPassiveCreature(s.deployedCreatureIndex, time.Now())
 	creature.HitPoint, creature.PowerPoint = hitPoint, manaPoint
 	creature.MaximumHitPoint, creature.MaximumPowerPoint = maximumHitPoint, maximumManaPoint
 	for index, message := range campaignHeroResourceStateMessages(s.deployedObjectID, creature) {
@@ -1819,6 +1909,7 @@ func (s *gameplayPeerSession) applyDeveloperDefeatCommand() ([][]byte, error) {
 		s.deployedObjectID == 0 || s.isZoneTerminal() {
 		return nil, errors.New("defeat session unavailable")
 	}
+	infectionPackets := s.takeHeroInfections()
 	interruptedBasic := s.resetAbilityAdmissionForSwitch()
 	if interruptedBasic != nil {
 		interruptedBasic.Stop()
@@ -1828,7 +1919,7 @@ func (s *gameplayPeerSession) applyDeveloperDefeatCommand() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("defeatPassive: %w", err)
 	}
-	packets := append([][]byte(nil), passivePackets...)
+	packets := append(infectionPackets, passivePackets...)
 	summonPackets, err := s.stopHeroSummons()
 	if err != nil {
 		return nil, fmt.Errorf("defeatHeroSummon: %w", err)
@@ -1878,6 +1969,9 @@ func (r campaignResultRuntime) continueChain(
 	ctx context.Context, packet raknet.Packet, peerSession gameplayPeerSession,
 	snapshot zoneresult.Snapshot, squadID uint32,
 ) ([][]byte, error) {
+	if peerSession.binding.IsServerBot {
+		return nil, nil
+	}
 	nextBinding := peerSession.binding
 	maximumHitPoints := peerSession.maximumHitPoints
 	maximumManaPoints := peerSession.maximumManaPoints
@@ -1893,8 +1987,13 @@ func (r campaignResultRuntime) continueChain(
 	nextBinding.Level = snapshot.NextLevel
 	nextBinding.ChainLevelIndex = snapshot.CompletedIndex + 1
 	nextBinding.Difficulty = nextBinding.ChainLevelIndex
+	nextBinding.IsReplayRandomized = snapshot.IsNextReplayRandomized
 	nextBinding.IsCatalystUnlocked = nextBinding.ChainProgression >= 3
 	for index := range nextBinding.Creatures {
+		maximumHitPoint := maximumHitPoints[index]
+		if maximumHitPoint > 0 {
+			nextBinding.Creatures[index].HitPoint = maximumHitPoint
+		}
 		maximumManaPoint := maximumManaPoints[index]
 		if maximumManaPoint <= 0 {
 			continue
@@ -1924,18 +2023,32 @@ func (r campaignResultRuntime) continueChain(
 	}
 	r.registry.mutex.Lock()
 	continueSession, isContinueFound := r.registry.sessions[packet.Address.String()]
-	isAccepted := isContinueFound && continueSession.generation == peerSession.generation &&
-		continueSession.chainResult != nil &&
-		continueSession.chainResult.AcceptContinue(squadID, snapshot.NextLevel)
-	if isAccepted {
-		nextGeneration := r.registry.lifecycle.nextGeneration()
-		crystalInventory, isCrystalFound := continueSession.zone.CrystalInventory(
+	isCurrent := isContinueFound && continueSession.generation == peerSession.generation &&
+		continueSession.chainResult != nil
+	if isCurrent {
+		currentSnapshot := continueSession.chainResult.Snapshot()
+		isCurrent = currentSnapshot.ResultID == snapshot.ResultID &&
+			currentSnapshot.Phase == zoneresult.ChainVoting && !currentSnapshot.IsTerminal
+	}
+	var crystalInventory sim.CrystalInventory
+	if isCurrent {
+		var isCrystalFound bool
+		crystalInventory, isCrystalFound = continueSession.zone.CrystalInventory(
 			continueSession.binding.UserID, continueSession.generation,
 		)
 		if !isCrystalFound {
 			r.registry.mutex.Unlock()
 			return nil, errors.New("campaignContinueCrystal: unavailable")
 		}
+		err = r.gameplayJoin.RetainCampaignDestination(nextBinding)
+		if err != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("campaignContinueDestination: %w", err)
+		}
+	}
+	isAccepted := isCurrent && continueSession.chainResult.AcceptContinue(squadID, snapshot.NextLevel)
+	if isAccepted {
+		nextGeneration := r.registry.lifecycle.nextGeneration()
 		nextBinding.ChainProgression = max(nextBinding.ChainProgression, chainProgression)
 		nextBinding.RefreshReplay()
 		r.registry.sessions[packet.Address.String()] = gameplayPeerSession{
@@ -1967,7 +2080,17 @@ func (r campaignResultRuntime) continueChain(
 	if !isAccepted {
 		return nil, nil
 	}
+	r.retireCampaignServerBots(continueSession)
 	stopGameplayPeerSession(continueSession, r.modifierPool, r.effectPool)
+	joinRuntime := gameplayJoinRuntime{
+		registry: r.registry, gameplayJoin: r.gameplayJoin,
+		ratingConversions: r.ratingConversions, logger: r.logger,
+	}
+	err = joinRuntime.installServerBots(ctx, packet, nextBinding)
+	if err != nil {
+		r.logger.Printf("RakNet campaign Continue bot admission deferred game=%d owner=%d: %v",
+			nextBinding.GameID, nextBinding.UserID, err)
+	}
 	r.logger.Printf(
 		"RakNet campaign continue accepted for %s result=%d level=%q squad=%d chain_progression=%d without fabricated reward",
 		packet.Address, snapshot.ResultID, snapshot.NextLevel, nextBinding.SquadID, chainProgression,
@@ -2031,6 +2154,9 @@ func (r campaignResultRuntime) presentCashOut(
 	}
 	primaryRewardSubject := rewardSubjects[0]
 	primaryRewardSubject.Alternates = rewardSubjects[1:]
+	r.registry.mutex.Lock()
+	primaryRewardSubject.RecipientPart = r.registry.campaignRecipientPartRequestLocked(peerSession)
+	r.registry.mutex.Unlock()
 	collectResult, err := zoneresult.CollectCashOut(
 		ctx,
 		peerSession.chainResult,

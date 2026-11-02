@@ -19,6 +19,7 @@ func (e gameplayPendingRuntime) pollTeleporters(packet raknet.Packet) ([][]byte,
 		peerSession.zone == nil || !peerSession.stage.IsDungeon() ||
 		!peerSession.dungeonSetup.IsCommitted() || peerSession.isRejoinPending ||
 		peerSession.isZoneTerminal() || peerSession.isHeroSelectionPending ||
+		peerSession.isHeroArrivalProtected(e.now()) ||
 		peerSession.deployedObjectID == 0 || peerSession.deployedHitPoint() <= 0 ||
 		(peerSession.binding.Mode != game.ModeChain && peerSession.binding.Mode != game.ModeTutorial) {
 		if isFound && peerSession.transportGeneration == packet.TransportGeneration {
@@ -82,6 +83,12 @@ func (e gameplayPendingRuntime) pollTeleporters(packet raknet.Packet) ([][]byte,
 func (e *gameplayPeerSession) pollTeleporterContacts(
 	now time.Time, timestamp uint64, orientation raknet.Quaternion,
 ) ([][]byte, game.CampaignTeleportRoute, bool, error) {
+	if e.isHeroArrivalProtected(now) {
+		// A voluntary switch selects the incoming actor before its delayed
+		// arrival presentation commits. Portal polling must not relocate that
+		// actor and then let the captured arrival packet place it back again.
+		return nil, game.CampaignTeleportRoute{}, false, nil
+	}
 	positionBeforeContact := e.playerPosition
 	current := game.Vec3(e.playerPosition)
 	if e.playerMotion != nil {

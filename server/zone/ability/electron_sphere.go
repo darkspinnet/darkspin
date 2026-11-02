@@ -29,7 +29,7 @@ func ProjectAreaRadius(creature game.GameplayCreature, baseRadius float32) (floa
 }
 
 func PlanElectronSphereImpact(
-	enemies *zonenpc.Session, sourceObjectID uint32, directTargetObjectID uint32,
+	enemies TargetReader, sourceObjectID uint32, directTargetObjectID uint32,
 	impactPosition game.Vec3, creature game.GameplayCreature, plan BasicPlan,
 ) (AreaPlan, error) {
 	if enemies == nil || sourceObjectID == 0 || creature.Noun == 0 ||
@@ -99,7 +99,7 @@ func ElectronSphereSecondaryDelay(
 }
 
 func PlanElectronSphereSecondary(
-	enemies *zonenpc.Session, sourceObjectID uint32, projectilePosition game.Vec3,
+	enemies TargetReader, sourceObjectID uint32, projectilePosition game.Vec3,
 	creature game.GameplayCreature, definition sim.AbilityDefinition,
 ) (AreaPlan, error) {
 	secondary := definition.LightningSecondary
@@ -175,7 +175,7 @@ func isElectronSphereTarget(enemy zonenpc.Snapshot) bool {
 }
 
 func CommitElectronSphereSecondary(
-	random *sim.SimulatorRandom, enemies *zonenpc.Session,
+	random *sim.SimulatorRandom, enemies DamageTargets,
 	plan AreaPlan, creature game.GameplayCreature,
 	difficulty uint32, tuning sim.CriticalTuning,
 ) ([]AreaResult, error) {

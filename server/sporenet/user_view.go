@@ -4,6 +4,7 @@ import "time"
 
 // UserIdentity is the stable profile identity shown by local management tools.
 type UserIdentity struct {
+	ID                          int64
 	LoginName                   string
 	DisplayName                 string
 	CreateDT                    time.Time

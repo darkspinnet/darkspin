@@ -28,26 +28,50 @@ type Character struct {
 // safe gameplay boundary. Deployment cooldowns and restart reservations are
 // deliberately transient and are not restored.
 type State struct {
-	CharacterIndex uint32
-	Characters     [Size]Character
-	IsGameOver     bool
+	CharacterIndex          uint32
+	Characters              [Size]Character
+	IsGameOver              bool
+	IsBeastResurrectionUsed bool
+	IsResurrectionPending   bool
 }
 
 // Squad owns the three selected match characters and the terminal solo-player
 // wipe latch. Only an explicit resurrection can clear it; ordinary health
 // changes cannot resume the same match.
 type Session struct {
-	characterIndex    uint32
-	characters        [Size]Character
-	deployCooldownEnd time.Time
-	isGameOver        bool
-	isRestartReserved bool
+	characterIndex          uint32
+	characters              [Size]Character
+	deployCooldownEnd       time.Time
+	isGameOver              bool
+	isRestartReserved       bool
+	isBeastResurrectionUsed bool
+	isResurrectionPending   bool
 }
 
 type Snapshot struct {
 	State             State
 	DeployCooldownEnd time.Time
 	IsRestartReserved bool
+}
+
+// Clone saves match-local squad state for rollback while preserving the
+// published squad pointer used by scheduled gameplay callbacks.
+func (e *Session) Clone() (*Session, error) {
+	if e == nil {
+		return nil, errors.New("nil squad")
+	}
+	clone := *e
+	return &clone, nil
+}
+
+// CommitClone restores a saved squad state without changing the published
+// pointer identity used by scheduled match effects.
+func (e *Session) CommitClone(staged *Session) error {
+	if e == nil || staged == nil {
+		return errors.New("nil squad transition")
+	}
+	*e = *staged
+	return nil
 }
 
 func New(characters [Size]Character, characterIndex uint32) (*Session, error) {
@@ -83,6 +107,7 @@ func Restore(state State) (*Session, error) {
 	if state.IsGameOver {
 		return nil, errors.New("squadRestore: terminal squad")
 	}
+	session.isBeastResurrectionUsed = state.IsBeastResurrectionUsed
 	return session, nil
 }
 
@@ -91,9 +116,11 @@ func (s *Session) State() State {
 		return State{}
 	}
 	return State{
-		CharacterIndex: s.characterIndex,
-		Characters:     s.characters,
-		IsGameOver:     s.isGameOver,
+		CharacterIndex:          s.characterIndex,
+		Characters:              s.characters,
+		IsGameOver:              s.isGameOver,
+		IsBeastResurrectionUsed: s.isBeastResurrectionUsed,
+		IsResurrectionPending:   s.isResurrectionPending,
 	}
 }
 
@@ -224,7 +251,7 @@ func (s *Session) SetHitPoints(index uint32, hitPoints float32) (bool, error) {
 	}
 	character.HitPoints = hitPoints
 	s.characters[index] = character
-	if s.isGameOver || s.LivingCount() != 0 {
+	if s.isGameOver || s.LivingCount() != 0 || s.isResurrectionPending {
 		return false, nil
 	}
 	s.isGameOver = true

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -29,7 +30,7 @@ var (
 	ErrLevelUnavailable = errors.New("level unavailable")
 	// ErrWarpUnavailable means a one-shot campaign destination cannot be queued.
 	ErrWarpUnavailable = errors.New("warp unavailable")
-	// ErrNPCSpawnUnavailable means an NPC cannot be queued in the active warped zone.
+	// ErrNPCSpawnUnavailable means an NPC cannot be queued in the active mission.
 	ErrNPCSpawnUnavailable = errors.New("npc spawn unavailable")
 	// ErrDNAUnavailable means a DNA grant cannot be applied.
 	ErrDNAUnavailable = errors.New("DNA unavailable")
@@ -49,6 +50,9 @@ var (
 	ErrResourceStatusUnavailable = errors.New("resource status unavailable")
 	// ErrBugReportUnavailable means the server cannot create a local diagnostic bundle.
 	ErrBugReportUnavailable = errors.New("bug report unavailable")
+	// ErrBugReportCooldown leaves client capture available while skipping
+	// another expensive server-side diagnostic capture.
+	ErrBugReportCooldown = errors.New("bug report cooldown")
 	// ErrSnapshotUnavailable means the sync snapshot service is disabled or unavailable.
 	ErrSnapshotUnavailable = errors.New("sync snapshot unavailable")
 )
@@ -61,8 +65,7 @@ const (
 	ScopeParty
 	ScopeGame
 	ScopeLobby
-	// ScopeGlobal is the temporary server-wide General channel used while
-	// cross-game lobby membership is not yet wired through the client flow.
+	// ScopeGlobal keeps the legacy General channel server-wide as well.
 	ScopeGlobal
 )
 
@@ -297,11 +300,14 @@ type DNAGranter interface {
 
 // BugCommand requests a local diagnostic bundle for an authenticated actor.
 type BugCommand struct {
-	Sender       Participant
-	GameID       uint32
-	Description  string
-	Context      BugContext
-	ContextError string
+	ServerAddress      string
+	ClientAddress      string
+	IsRemoteConnection bool
+	Sender             Participant
+	GameID             uint32
+	Description        string
+	Context            BugContext
+	ContextError       string
 }
 
 // BugReporter creates a server-owned diagnostic bundle without uploading it.
@@ -346,6 +352,7 @@ type Service struct {
 	previewer              EffectPreviewer
 	resourceMutator        ResourceMutator
 	eventTriggerer         EventTriggerer
+	emoteRequester         EmoteRequester
 	followRequester        FollowRequester
 	hintProvider           HintProvider
 	locationProvider       LocationProvider
@@ -354,8 +361,12 @@ type Service struct {
 	leveler                LevelSetter
 	warpRequester          WarpRequester
 	npcSpawner             NPCSpawner
+	npcScalePreviewer      NPCScalePreviewer
+	godModeToggler         GodModeToggler
 	dnaGranter             DNAGranter
 	bugReporter            BugReporter
+	remoteBugReportMu      sync.Mutex
+	nextRemoteBugReportAt  time.Time
 	bugContext             BugContextProvider
 	snapshotManager        SnapshotManager
 }
@@ -409,7 +420,7 @@ func (s *Service) UseWarpRequester(warpRequester WarpRequester) {
 	s.warpRequester = warpRequester
 }
 
-// UseNPCSpawner installs the gameplay-owned warped-zone NPC adapter.
+// UseNPCSpawner installs the gameplay-owned mission NPC adapter.
 func (s *Service) UseNPCSpawner(npcSpawner NPCSpawner) {
 	s.npcSpawner = npcSpawner
 }
@@ -829,6 +840,9 @@ func (s *Service) ReportBug(ctx context.Context, command BugCommand) (string, er
 	command.Description = strings.TrimSpace(command.Description)
 	if command.Description == "" || s.bugReporter == nil {
 		return "", ErrBugReportUnavailable
+	}
+	if command.IsRemoteConnection && !s.reserveRemoteBugReport() {
+		return "", ErrBugReportCooldown
 	}
 	if s.bugContext != nil {
 		bugContext, contextErr := s.bugContext.BugContext(ctx, BugContextRequest{

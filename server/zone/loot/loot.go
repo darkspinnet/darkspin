@@ -6,13 +6,13 @@ import (
 	"math"
 	"sync"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/sim"
 )
 
 const DNAChanceBasis = uint32(10000)
 
 const dnaChanceThreshold = uint32(5000)
-const enemyDNASourceAmount = float64(11)
 
 type NPCDropKind uint8
 
@@ -237,33 +237,56 @@ func IsNPCDNADrop(randomDraw uint32) (bool, error) {
 	return randomDraw < dnaChanceThreshold, nil
 }
 
-func NPCDNAAmount(difficulty uint32, droppedMultiplier float32, randomDraw uint32) (uint32, error) {
-	if difficulty == 0 || droppedMultiplier < 0 || randomDraw > DNAChanceBasis ||
-		math.IsNaN(float64(droppedMultiplier)) || math.IsInf(float64(droppedMultiplier), 0) {
+type NPCDNAAmountInput struct {
+	Stage             uint32
+	Challenge         int32
+	DroppedMultiplier float32
+	RandomDraw        uint32
+	Tuning            game.DNADropTuning
+}
+
+func NPCDNAAmount(req NPCDNAAmountInput) (uint32, error) {
+	err := req.Tuning.Validate()
+	if err != nil {
+		return 0, fmt.Errorf("dnaTuning: %w", err)
+	}
+	if req.Stage == 0 || req.DroppedMultiplier < 0 || req.RandomDraw > DNAChanceBasis ||
+		math.IsNaN(float64(req.DroppedMultiplier)) || math.IsInf(float64(req.DroppedMultiplier), 0) {
 		return 0, errors.New("invalid campaign DNA amount input")
 	}
-	quarter := (difficulty + 3) / 4
-	remainder := (difficulty-1)%4 + 1
+	quarter := (uint64(req.Stage) + 3) / 4
+	remainder := (uint64(req.Stage)-1)%4 + 1
 	exponent := 10*quarter + remainder
-	growth := math.Pow(1.03, float64(min(exponent, uint32(70))))
-	if exponent > 70 {
-		growth *= math.Pow(1.02, float64(min(exponent-70, uint32(60))))
-	}
+	// Native sub_9CF9A0 stores the later pow result and the >130
+	// intermediate product as float32 before multiplying the first segment.
+	firstGrowth := math.Pow(float64(req.Tuning.FirstGrowthBase), float64(min(exponent, uint64(70))))
+	growth := float32(firstGrowth)
 	if exponent > 130 {
-		growth *= math.Pow(1.01, float64(exponent-130))
+		lastGrowth := float32(math.Pow(float64(float32(1.01)), float64(exponent-130)))
+		laterGrowth := float32(math.Pow(float64(float32(1.02)), 60) * float64(lastGrowth))
+		growth = float32(firstGrowth * float64(laterGrowth))
+	} else if exponent > 70 {
+		laterGrowth := float32(math.Pow(float64(float32(1.02)), float64(exponent-70)))
+		growth = float32(firstGrowth * float64(laterGrowth))
 	}
-	randomFactor := 0.5 + float64(randomDraw)/float64(DNAChanceBasis)
-	amount := math.Trunc(
-		0.4 * enemyDNASourceAmount * growth * randomFactor *
-			(float64(droppedMultiplier) + 1),
-	)
+	factorWidth := float32(req.Tuning.AmountFactors[1] - req.Tuning.AmountFactors[0])
+	randomFactor := float32(float64(req.Tuning.AmountFactors[0]) +
+		float64(factorWidth)*float64(req.RandomDraw)/float64(DNAChanceBasis))
+	// Explicit conversions preserve each native float32 rounding boundary and
+	// prevent fused operations from changing the final signed truncation.
+	amount := float32(1 / float64(req.Tuning.Chance))
+	amount = float32(amount * float32(req.Challenge))
+	amount = float32(amount * req.Tuning.AmountScalar)
+	amount = float32(amount * growth)
+	amount = float32(amount * randomFactor)
+	amount = float32(amount * float32(req.DroppedMultiplier+1))
+	if math.IsNaN(float64(amount)) || math.IsInf(float64(amount), 0) || float64(amount) >= float64(math.MaxInt32)+1 {
+		return 0, errors.New("campaign DNA amount overflow")
+	}
 	if amount < 1 {
 		return 1, nil
 	}
-	if amount > math.MaxUint32 {
-		return 0, errors.New("campaign DNA amount overflow")
-	}
-	return uint32(amount), nil
+	return uint32(int32(amount)), nil
 }
 
 func EquipmentContainerNoun(rarity Rarity) (string, bool) {

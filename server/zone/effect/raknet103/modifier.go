@@ -16,11 +16,13 @@ type ModifierCreateRequest struct {
 	StackCount     uint32
 	Duration       time.Duration
 	Timestamp      uint64
+	IsIndefinite   bool
+	IsBound        bool
 }
 
 func ModifierCreate(req ModifierCreateRequest) ([]byte, error) {
 	if req.SourceObjectID == 0 || req.TargetObjectID == 0 ||
-		req.ModifierID == 0 || req.InstanceID == 0 || req.Duration <= 0 {
+		req.ModifierID == 0 || req.InstanceID == 0 || req.Duration < 0 || (req.Duration == 0 && !req.IsIndefinite) {
 		return nil, errors.New("modifier create invalid")
 	}
 	stackCount := req.StackCount
@@ -33,7 +35,10 @@ func ModifierCreate(req ModifierCreateRequest) ([]byte, error) {
 		DurationMilliseconds: uint32(req.Duration.Milliseconds()),
 		StackCount:           stackCount,
 		StartMilliseconds:    req.Timestamp,
-		SourceID:             req.SourceObjectID,
+		// Build 103 reads this slot as an NPC affix asset, not a caster ID.
+		// Ordinary modifiers retain their source in the feature-owned record.
+		NPCAffixAssetID: 0,
+		IsBound:         req.IsBound,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("modifierCreateMarshal: %w", err)

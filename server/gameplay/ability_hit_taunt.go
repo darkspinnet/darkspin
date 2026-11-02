@@ -126,6 +126,12 @@ func (e campaignDamageRuntime) applyHeroTaunt(
 		e.registry.mutex.Unlock()
 		return nil, nil
 	}
+	target, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
+	if !isTargetFound || target.HasAffixModifier("Unstoppable_NPCAffixModifier") {
+		e.registry.mutex.Unlock()
+		return nil, nil
+	}
+	duration := zonenpc.CrowdControlDuration(target.Plan, definition.StatusDuration)
 	if peerSession.heroTaunts == nil {
 		peerSession.heroTaunts = make(map[uint32]*heroTauntRun)
 	}
@@ -152,7 +158,7 @@ func (e campaignDamageRuntime) applyHeroTaunt(
 	previousCancel := run.cancel
 	run.sourceObjectID = sourceObjectID
 	run.revision++
-	run.expiresAt = e.npc.now().Add(definition.StatusDuration)
+	run.expiresAt = e.npc.now().Add(duration)
 	var err error
 	var acquired []zonenpc.Snapshot
 	if sourceObjectID == peerSession.deployedObjectID {
@@ -177,7 +183,7 @@ func (e campaignDamageRuntime) applyHeroTaunt(
 	run.modifier.record = zoneeffect.Modifier{
 		InstanceID: run.modifier.instanceID, GUID: definition.RootModifierID,
 		SourceObjectID: sourceObjectID, TargetObjectID: targetObjectID,
-		Rank: 1, Duration: definition.StatusDuration,
+		Rank: 1, Duration: duration,
 		Kind: zoneeffect.ModifierKindDebuff, InitiatorObject: sourceObjectID,
 		StackCount: 1,
 	}
@@ -202,7 +208,7 @@ func (e campaignDamageRuntime) applyHeroTaunt(
 	createPacket, err := effectraknet.ModifierCreate(effectraknet.ModifierCreateRequest{
 		SourceObjectID: sourceObjectID, TargetObjectID: targetObjectID,
 		ModifierID: definition.RootModifierID, InstanceID: run.modifier.instanceID,
-		StackCount: 1, Duration: definition.StatusDuration, Timestamp: timestamp,
+		StackCount: 1, Duration: duration, Timestamp: timestamp,
 	})
 	if err != nil {
 		e.rollbackHeroTaunt(
@@ -215,11 +221,11 @@ func (e campaignDamageRuntime) applyHeroTaunt(
 	expiry := heroTauntExpiry{
 		runtime: e, packet: packet, sessionKey: sessionKey,
 		generation: generation, revision: run.revision,
-		timestamp: timestamp + uint64(definition.StatusDuration/time.Millisecond),
+		timestamp: timestamp + uint64(duration/time.Millisecond),
 		run:       run,
 	}
 	cancel, scheduleErr := packet.ScheduleProducers([]raknet.ScheduledPacketProducer{{
-		Delay: definition.StatusDuration, Produce: expiry.produce,
+		Delay: duration, Produce: expiry.produce,
 	}})
 	if scheduleErr == nil && cancel == nil {
 		scheduleErr = errors.New("nil cancellation")

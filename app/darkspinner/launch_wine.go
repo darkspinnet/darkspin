@@ -142,6 +142,15 @@ func launchInjected(
 	command.Env = replaceEnvironment(command.Env, "DARKSPIN_FANG_DLL", fangWinePath)
 	command.Env = replaceEnvironment(command.Env, "DARKSPIN_VERSION_DLL", versionWinePath)
 	command.Env = replaceEnvironment(command.Env, serverAddressEnvironment, serverAddress)
+	command.Env = replaceEnvironment(command.Env, "DARKSPIN_MOD_MANIFEST", "")
+	configPath := os.Getenv("DARKSPIN_CONFIG_PATH")
+	if configPath != "" {
+		configWinePath, configErr := runner.windowsPath(ctx, configPath)
+		if configErr != nil {
+			return fmt.Errorf("configWinePath: %w", configErr)
+		}
+		command.Env = replaceEnvironment(command.Env, "DARKSPIN_CONFIG_PATH", configWinePath)
+	}
 	command.Env = replaceEnvironment(command.Env, "WINEDLLOVERRIDES", wineDLLOverrides(os.Getenv("WINEDLLOVERRIDES")))
 	proxyLogPath := filepath.Join(filepath.Dir(filepath.Dir(fangPath)), "logs", "fangproxy.log")
 	err = os.MkdirAll(filepath.Dir(proxyLogPath), 0o755)
@@ -172,14 +181,14 @@ func launchInjected(
 		}
 		command.Env = replaceEnvironment(command.Env, "DARKSPIN_CLIENT_TRACE", traceWinePath)
 	}
-	snapshotControlPath := os.Getenv(snapshotControlEnvironment)
-	if snapshotControlPath != "" {
-		snapshotControlWinePath, controlErr := runner.windowsPath(ctx, snapshotControlPath)
-		if controlErr != nil {
-			return fmt.Errorf("snapshotControlWinePath: %w", controlErr)
+	snapshotDirectory := os.Getenv(snapshotDirectoryEnvironment)
+	if snapshotDirectory != "" {
+		snapshotWineDirectory, directoryErr := runner.windowsPath(ctx, snapshotDirectory)
+		if directoryErr != nil {
+			return fmt.Errorf("snapshotDirectoryWinePath: %w", directoryErr)
 		}
 		command.Env = replaceEnvironment(
-			command.Env, snapshotControlEnvironment, snapshotControlWinePath,
+			command.Env, snapshotDirectoryEnvironment, snapshotWineDirectory,
 		)
 	}
 	err = command.Run()

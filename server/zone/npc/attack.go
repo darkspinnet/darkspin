@@ -18,14 +18,21 @@ var ErrControlTargetOutOfRange = errors.New("npc control target out of range")
 // offset 52. sub_9E4E60 subtracts it before applying an ability coefficient.
 const nonPlayerPrimaryAttributeBaseline = float32(8)
 
+// Chunk 802 adds this to a captain's EliteModifier DamageBuff. Its authored
+// 1.5 captain total subtracts the lieutenant elite bonus of 0.5.
+const captainDamageBonus = float32(1.5 - 0.5)
+
 type AttackPlan struct {
-	SourceObjectID   uint32
-	TargetObjectID   uint32
-	ActionGeneration uint64
-	SourcePosition   game.Vec3
-	TargetPosition   game.Vec3
-	Profile          ActionProfile
-	Damage           game.DamageRange
+	SourceObjectID uint32
+	// Retained world sources keep the admitted NPC initiator as authority,
+	// independently of the source object that owns their modifier callbacks.
+	InitiatorObjectID uint32
+	TargetObjectID    uint32
+	ActionGeneration  uint64
+	SourcePosition    game.Vec3
+	TargetPosition    game.Vec3
+	Profile           ActionProfile
+	Damage            game.DamageRange
 }
 
 type AttackResult struct {
@@ -131,20 +138,15 @@ func PlanRetainedAreaAttackWithProfile(
 	}, nil
 }
 
-func resolveAttackDamage(
-	npc Snapshot, profile ActionProfile,
-) (game.DamageRange, error) {
-	if profile.MinimumDamage <= 0 ||
-		profile.MaximumDamage < profile.MinimumDamage {
-		return game.DamageRange{}, errors.New("npc attack profile invalid")
-	}
+// DamageProfileAt captures the source attributes used by an accepted native snapshot.
+func DamageProfileAt(npc Snapshot, at time.Time) game.DamageProfile {
 	damageProfile := game.DamageProfile{
 		PrimaryAttribute:                npc.Plan.NPCProfile.Mind,
 		IsPrimaryAttributeFound:         true,
 		PrimaryAttributeBaseline:        nonPlayerPrimaryAttributeBaseline,
 		IsPrimaryAttributeBaselineFound: true,
 	}
-	at := time.Now()
+
 	if at.Before(npc.status.curseExpiresAt) {
 		damageProfile.DamageBuff = npc.status.curseDamage.DamageBuff
 		damageProfile.PhysicalAbilityDamageIncrease =
@@ -159,11 +161,37 @@ func resolveAttackDamage(
 		damageProfile.DamageBuff += npc.status.munchDamageIncrease
 	}
 	damageProfile.DamageBuff += npc.status.passiveDamageIncrease
+	damageProfile.DamageBuff -= npc.status.basicWeakness(at)
 	damageProfile.DamageBuff += npc.status.oozeGrowthDamageIncrease
 	if npc.Plan.IsCaptain || npc.Plan.IsElite || npc.Plan.IsBoss ||
 		npc.Plan.BossIdentity.HasModifier(EliteModifierName) {
 		damageProfile.DamageBuff += EliteBonusForType(npc.Plan.NPCProfile.NPCType).Damage
 	}
+	if npc.Plan.IsCaptain {
+		damageProfile.DamageBuff += captainDamageBonus
+	}
+	if npc.HasAffixModifier("Deadly_NPCAffixModifier") {
+		damageProfile.DamageBuff += 0.5
+	}
+	return damageProfile
+}
+
+func resolveAttackDamage(
+	npc Snapshot, profile ActionProfile,
+) (game.DamageRange, error) {
+	damage, err := resolveAttackDamageAt(npc, profile, time.Now())
+	if err != nil {
+		return game.DamageRange{}, fmt.Errorf("attackAt: %w", err)
+	}
+	return damage, nil
+}
+
+func resolveAttackDamageAt(npc Snapshot, profile ActionProfile, at time.Time) (game.DamageRange, error) {
+	if profile.MinimumDamage <= 0 ||
+		profile.MaximumDamage < profile.MinimumDamage {
+		return game.DamageRange{}, errors.New("npc attack profile invalid")
+	}
+	damageProfile := DamageProfileAt(npc, at)
 	descriptorMask := uint32(1 | 1<<6)
 	damageType := uint8(0)
 	damageSource := uint8(0)
@@ -205,7 +233,7 @@ func PlanControlWithProfile(
 	profile ActionProfile, targetFootprintRadius float32,
 ) (AttackPlan, error) {
 	isAnimationSupported := profile.AnimationName != "" ||
-		profile.AbilityName == "SentryDroneLaser"
+		profile.AbilityName == "SentryDroneLaser" || profile.AbilityName == "NomadDroneLaser"
 	if !isAnimationSupported || profile.Range <= 0 {
 		return AttackPlan{}, errors.New("npc control profile invalid")
 	}

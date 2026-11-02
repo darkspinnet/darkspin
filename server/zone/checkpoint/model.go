@@ -16,17 +16,20 @@ import (
 	zonehorde "github.com/darkspinnet/darkspin/server/zone/horde"
 	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
+	zoneobjective "github.com/darkspinnet/darkspin/server/zone/objective"
+	zonequest "github.com/darkspinnet/darkspin/server/zone/quest"
 	zonesecurity "github.com/darkspinnet/darkspin/server/zone/security"
 )
 
-const Version = uint32(7)
+const Version = uint32(11)
 
 type Reason string
 
 const (
-	ReasonSpawnGroupCleared Reason = "spawn-group-cleared"
-	ReasonSafePickup        Reason = "safe-pickup"
-	ReasonDeployment        Reason = "deployment"
+	ReasonSpawnGroupCleared    Reason = "spawn-group-cleared"
+	ReasonSafePickup           Reason = "safe-pickup"
+	ReasonDeployment           Reason = "deployment"
+	ReasonIntroductionProgress Reason = "introduction-progress"
 )
 
 type Member struct {
@@ -49,7 +52,9 @@ type Hero struct {
 }
 
 type NPC struct {
-	State zonenpc.Snapshot
+	State              zonenpc.Snapshot
+	Introduction       zonenpc.IntroductionState
+	MutationCapturedAt time.Time
 }
 
 type Squad struct {
@@ -63,6 +68,14 @@ type Crystal struct {
 	Inventory sim.CrystalInventory
 }
 
+type CampaignBot struct {
+	Request       game.BotRequest
+	CreatureIndex uint32
+	Position      game.Vec3
+	HitPoint      float32
+	IsDefeated    bool
+}
+
 type ExperienceAward struct {
 	ObjectID       uint32
 	BaseExperience uint32
@@ -70,34 +83,49 @@ type ExperienceAward struct {
 }
 
 type Snapshot struct {
-	Version              uint32
-	ZoneID               uint64
-	RunSeed              uint64
-	ZoneGeneration       uint64
-	CompletionID         uint64
-	Revision             uint64
-	Level                string
-	Difficulty           uint32
-	Reason               Reason
-	SavedAt              time.Time
-	Elapsed              time.Duration
-	Members              []Member
-	Heroes               []Hero
-	Squads               []Squad
-	NPCs                 []NPC
-	Hordes               []zonehorde.Snapshot
-	TriggerProgresses    []game.CampaignTriggerProgress
-	Crystals             []Crystal
-	ExperienceAwards     []ExperienceAward
-	MissionEquipments    []zoneloot.EquipmentInventory
-	Security             zonesecurity.Snapshot
-	Objectives           []sim.ObjectiveSnapshot
-	ScriptUses           []game.CampaignScriptUse
-	ClearedSpawnGroupIDs []uint32
-	DropRandom           sim.RandomSnapshot
-	IsDropRandomSet      bool
-	CapsuleRandom        sim.CapsuleRandomSnapshot
-	IsCapsuleRandomSet   bool
+	EnemyPopulationRules       game.EnemyPopulationRules
+	BossSpawnRules             game.BossSpawnRules
+	IsSpawnRuleSnapshotSet     bool
+	PopulationRandom           sim.RandomSnapshot
+	PopulationMixedRandomState uint32
+	IsPopulationRandomSet      bool
+	Version                    uint32
+	ZoneID                     uint64
+	RunSeed                    uint64
+	IsReplayRandomized         bool
+	ZoneGeneration             uint64
+	CompletionID               uint64
+	Revision                   uint64
+	Level                      string
+	Difficulty                 uint32
+	Reason                     Reason
+	SavedAt                    time.Time
+	Elapsed                    time.Duration
+	Members                    []Member
+	CampaignBots               []CampaignBot
+	Heroes                     []Hero
+	Squads                     []Squad
+	NPCs                       []NPC
+	Hordes                     []zonehorde.Snapshot
+	TriggerProgresses          []game.CampaignTriggerProgress
+	Crystals                   []Crystal
+	ExperienceAwards           []ExperienceAward
+	MissionEquipments          []zoneloot.EquipmentInventory
+	Security                   zonesecurity.Snapshot
+	Objectives                 []sim.ObjectiveSnapshot
+	ObjectiveRuntimes          []sim.LuaObjectiveSnapshot
+	ObjectiveDrops             []zoneobjective.DropRequest
+	ObjectiveEvents            []sim.LuaObjectiveEvent
+	ObjectiveNextDropID        uint64
+	QuestCrystals              []zonequest.State
+	ScriptUses                 []game.CampaignScriptUse
+	ClearedSpawnGroupIDs       []uint32
+	DropRandom                 sim.RandomSnapshot
+	IsDropRandomSet            bool
+	CapsuleRandom              sim.CapsuleRandomSnapshot
+	IsCapsuleRandomSet         bool
+
+	IsNPCSpawnCommandUsed bool
 }
 
 type Store interface {
@@ -127,6 +155,25 @@ func Validate(
 ) error {
 	if snapshot.Version != Version {
 		return fmt.Errorf("checkpointVersion[%d]: unsupported", snapshot.Version)
+	}
+	if snapshot.IsSpawnRuleSnapshotSet {
+		err := snapshot.EnemyPopulationRules.Validate()
+		if err != nil {
+			return fmt.Errorf("checkpointPopulationRules: %w", err)
+		}
+		err = snapshot.BossSpawnRules.Validate()
+		if err != nil {
+			return fmt.Errorf("checkpointBossRules: %w", err)
+		}
+	}
+	if snapshot.IsPopulationRandomSet {
+		random, err := sim.NewSimulatorRandomFromSnapshot(snapshot.PopulationRandom)
+		if err != nil {
+			return fmt.Errorf("checkpointPopulationRandom: %w", err)
+		}
+		if random == nil {
+			return errors.New("checkpoint population random unavailable")
+		}
 	}
 	if snapshot.IsDropRandomSet {
 		restoredRandom, err := sim.NewSimulatorRandomFromSnapshot(snapshot.DropRandom)
@@ -162,7 +209,8 @@ func Validate(
 		return errors.New("checkpoint mission mismatch")
 	}
 	if snapshot.Reason != ReasonSpawnGroupCleared &&
-		snapshot.Reason != ReasonSafePickup && snapshot.Reason != ReasonDeployment {
+		snapshot.Reason != ReasonSafePickup && snapshot.Reason != ReasonDeployment &&
+		snapshot.Reason != ReasonIntroductionProgress {
 		return fmt.Errorf("checkpointReason: %q", snapshot.Reason)
 	}
 	err := zonesecurity.ValidateSnapshot(snapshot.Security)
@@ -196,6 +244,22 @@ func Validate(
 			isMemberFound = true
 		}
 	}
+	botSlots := make(map[uint16]bool, len(snapshot.CampaignBots))
+	for index, bot := range snapshot.CampaignBots {
+		if bot.Request.OwnerUserID == 0 || bot.Request.Slot >= game.MaxGamePlayers ||
+			botSlots[bot.Request.Slot] || bot.CreatureIndex >= uint32(len(bot.Request.Roster.Creatures)) ||
+			bot.Request.Roster.Creatures[bot.CreatureIndex].Noun == 0 ||
+			math.IsNaN(float64(bot.HitPoint)) || bot.HitPoint < 0 {
+			return fmt.Errorf("checkpointBot[%d]: invalid", index)
+		}
+		if _, isMember := memberIDs[bot.Request.OwnerUserID]; !isMember {
+			return fmt.Errorf("checkpointBot[%d]: owner unavailable", index)
+		}
+		if _, isMemberSlot := memberSlots[bot.Request.Slot]; isMemberSlot {
+			return fmt.Errorf("checkpointBot[%d]: slot occupied", index)
+		}
+		botSlots[bot.Request.Slot] = true
+	}
 	npcsByObjectID := make(map[uint32]zonenpc.Snapshot, len(snapshot.NPCs))
 	equipmentUserIDs := make(map[uint64]struct{}, len(snapshot.MissionEquipments))
 	equipmentObjectIDs := make(map[uint32]struct{})
@@ -221,7 +285,15 @@ func Validate(
 		}
 	}
 	for index, npc := range snapshot.NPCs {
-		err := npc.State.GraphState.Validate(npc.State.Plan.NPCProfile.AIGraph)
+		err := ValidateMutation(npc)
+		if err != nil {
+			return fmt.Errorf("checkpointMutation[%d]: %w", index, err)
+		}
+		err = zonenpc.ValidateIntroductionState(npc.State.Plan, npc.Introduction)
+		if err != nil {
+			return fmt.Errorf("checkpointIntroduction[%d]: %w", index, err)
+		}
+		err = npc.State.GraphState.Validate(npc.State.Plan.NPCProfile.AIGraph)
 		if err != nil {
 			return fmt.Errorf("checkpointGraph[%d]: %w", index, err)
 		}
@@ -388,6 +460,26 @@ func Validate(
 			}
 		}
 		objectiveIDs[objective.ObjectiveID] = struct{}{}
+	}
+	if len(snapshot.ObjectiveRuntimes) != len(snapshot.Objectives) {
+		return errors.New("checkpoint objective runtime count mismatch")
+	}
+	runtimeIDs := make(map[uint32]struct{}, len(snapshot.ObjectiveRuntimes))
+	for index, runtime := range snapshot.ObjectiveRuntimes {
+		_, isObjective := objectiveIDs[runtime.ObjectiveID]
+		_, isDuplicate := runtimeIDs[runtime.ObjectiveID]
+		if !isObjective || isDuplicate {
+			return fmt.Errorf("checkpointObjectiveRuntime[%d]: invalid", index)
+		}
+		err := zoneobjective.ValidateCheckpointRuntime(runtime)
+		if err != nil {
+			return fmt.Errorf("checkpointRuntime[%d]: %w", index, err)
+		}
+		runtimeIDs[runtime.ObjectiveID] = struct{}{}
+	}
+	err = validateQuestCrystals(snapshot)
+	if err != nil {
+		return fmt.Errorf("checkpointQuest: %w", err)
 	}
 	clearedSpawnGroupIDs := make(map[uint32]struct{}, len(snapshot.ClearedSpawnGroupIDs))
 	for index, spawnGroupID := range snapshot.ClearedSpawnGroupIDs {

@@ -26,6 +26,7 @@ type TreeOfLifePresentation struct {
 	SourceObjectID uint32
 	NounName       string
 	Position       game.Vec3
+	Radius         float32
 	Team           uint8
 	Phase          TreeOfLifePhase
 	SpawnedAt      time.Duration
@@ -44,7 +45,7 @@ func NewTreeOfLifePresentationSession() *TreeOfLifePresentationSession {
 
 func (e *TreeOfLifePresentationSession) Commit(tree TreeOfLifePresentation) error {
 	if tree.ObjectID == 0 || tree.SourceObjectID == 0 || tree.NounName == "" ||
-		!isFinitePosition(tree.Position) || tree.Phase != TreeOfLifeSpawned ||
+		!isFinitePosition(tree.Position) || !(tree.Radius > 0) || tree.Phase != TreeOfLifeSpawned ||
 		tree.SpawnedAt < 0 || tree.ExpiresAt <= tree.SpawnedAt {
 		return errors.New("invalid tree presentation")
 	}

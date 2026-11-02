@@ -18,6 +18,8 @@ import (
 )
 
 type heroProjectileStatusRun struct {
+	activationID      uint64
+	arena             *arenaProjectileStatusRun
 	mutex             sync.Mutex
 	projectile        *abilityraknet.ProjectileRun
 	npc               *zonenpc.Session
@@ -68,6 +70,9 @@ func (e *heroProjectileStatusRun) Stop() {
 	}
 	if e.projectile != nil {
 		e.projectile.Finish()
+	}
+	if e.arena != nil {
+		return
 	}
 	e.Cleanup()
 	e.CleanupSplash()
@@ -475,7 +480,8 @@ func (e heroProjectileStatusSchedule) impactNow() ([][]byte, error) {
 		),
 	)
 	packets = filterProjectileCombatPackets(packets)
-	expiresAt := e.runtime.now().Add(e.definition.StatusDuration)
+	duration := zonenpc.CrowdControlDuration(target.Plan, e.definition.StatusDuration)
+	expiresAt := e.runtime.now().Add(duration)
 	err = e.applyStatus(peerSession.zone.NPCs(), expiresAt)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
@@ -498,10 +504,11 @@ func (e heroProjectileStatusSchedule) impactNow() ([][]byte, error) {
 	modifierPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: e.targetObjectID, ModifierGUID: e.definition.RootModifierID,
 		InstanceID:           instanceID,
-		DurationMilliseconds: uint32(e.definition.StatusDuration.Milliseconds()),
+		DurationMilliseconds: uint32(duration.Milliseconds()),
 		StackCount:           1,
 		StartMilliseconds:    e.packet.SourceTime + uint64(e.impactDeadline/time.Millisecond),
-		SourceID:             e.sourceObjectID,
+		NPCAffixAssetID:      0,
+		IsBound:              e.definition.StatusKind == sim.AbilityStatusKindStun,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("projectileStatusModifierMarshal: %w", err)
@@ -511,7 +518,7 @@ func (e heroProjectileStatusSchedule) impactNow() ([][]byte, error) {
 		return packets, nil
 	}
 	splashPackets, splashTargetIDs, err := e.applyTerrifySplash(
-		impactPosition, expiresAt,
+		impactPosition,
 		e.packet.SourceTime+uint64(e.impactDeadline/time.Millisecond),
 	)
 	if err != nil {
@@ -542,7 +549,7 @@ func (e heroProjectileStatusSchedule) impactNow() ([][]byte, error) {
 }
 
 func (e heroProjectileStatusSchedule) applyTerrifySplash(
-	center raknet.Vector3, expiresAt time.Time, timestamp uint64,
+	center raknet.Vector3, timestamp uint64,
 ) ([][]byte, []uint32, error) {
 	if e.definition.SecondaryModifierID == 0 || e.definition.Radius <= 0 {
 		return nil, nil, nil
@@ -556,6 +563,7 @@ func (e heroProjectileStatusSchedule) applyTerrifySplash(
 	type splashModifier struct {
 		targetID   uint32
 		instanceID uint32
+		duration   time.Duration
 	}
 	modifiers := make([]splashModifier, 0)
 	for _, candidate := range peerSession.zone.NPCs().LiveSnapshots() {
@@ -565,6 +573,8 @@ func (e heroProjectileStatusSchedule) applyTerrifySplash(
 			candidate.Plan.Position.Sub(game.Vec3(center)).Length() > e.definition.Radius {
 			continue
 		}
+		duration := zonenpc.CrowdControlDuration(candidate.Plan, e.definition.StatusDuration)
+		expiresAt := e.runtime.now().Add(duration)
 		err := peerSession.zone.NPCs().ApplyFear(candidate.Plan.ObjectID, expiresAt)
 		if err != nil {
 			e.runtime.registry.mutex.Unlock()
@@ -582,7 +592,7 @@ func (e heroProjectileStatusSchedule) applyTerrifySplash(
 			continue
 		}
 		modifiers = append(modifiers, splashModifier{
-			targetID: candidate.Plan.ObjectID, instanceID: instanceID,
+			targetID: candidate.Plan.ObjectID, instanceID: instanceID, duration: duration,
 		})
 	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
@@ -594,8 +604,8 @@ func (e heroProjectileStatusSchedule) applyTerrifySplash(
 			TargetID:             modifier.targetID,
 			ModifierGUID:         e.definition.SecondaryModifierID,
 			InstanceID:           modifier.instanceID,
-			DurationMilliseconds: uint32(e.definition.StatusDuration.Milliseconds()),
-			StackCount:           1, StartMilliseconds: timestamp, SourceID: e.sourceObjectID,
+			DurationMilliseconds: uint32(modifier.duration.Milliseconds()),
+			StackCount:           1, StartMilliseconds: timestamp, NPCAffixAssetID: 0,
 		})
 		if err != nil {
 			return nil, nil, fmt.Errorf("splashMarshal[%d]: %w", index, err)
@@ -692,6 +702,20 @@ func (e heroProjectileStatusSchedule) finish() ([][]byte, error) {
 			return nil, fmt.Errorf("projectileStatusDelete[%d]: %w", index, err)
 		}
 		packets = append(packets, packet)
+		if e.definition.StatusKind == sim.AbilityStatusKindFear {
+			restartPackets, restartErr := e.runtime.npc.restartAfterTerrify(
+				e.packet, e.sessionKey, e.generation, target.targetID,
+				e.packet.SourceTime+uint64((e.impactDeadline+e.definition.StatusDuration)/time.Millisecond),
+			)
+			if restartErr != nil {
+				if e.runtime.logger != nil {
+					e.runtime.logger.Printf("RakNet Terrifying Curse restart failed target=%d: %v",
+						target.targetID, restartErr)
+				}
+				continue
+			}
+			packets = append(packets, restartPackets...)
+		}
 	}
 	return packets, nil
 }
@@ -771,6 +795,10 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 	activeAbilityID uint32, targetObjectID uint32, sessionKey string,
 	abilityStartTime time.Time,
 ) ([][]byte, error) {
+	if peerSession.binding.Mode == game.ModeArena {
+		return r.handleArenaProjectileStatus(req, peerSession, creature, definition,
+			activeAbilityID, targetObjectID, sessionKey, abilityStartTime)
+	}
 	isStatusSupported := definition.StatusKind == sim.AbilityStatusKindFear ||
 		definition.StatusKind == sim.AbilityStatusKindCurse ||
 		definition.StatusKind == sim.AbilityStatusKindStun
@@ -952,7 +980,8 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 		return nil, fmt.Errorf("projectileStatusCommit: %w", err)
 	}
 	run := &heroProjectileStatusRun{
-		projectile: projectileRun, npc: peerSession.zone.NPCs(),
+		activationID: r.damage.activationID,
+		projectile:   projectileRun, npc: peerSession.zone.NPCs(),
 		modifierPool: r.modifierPool, targetID: targetObjectID,
 		statusKind: projected.StatusKind,
 		definition: projected, creature: creature,

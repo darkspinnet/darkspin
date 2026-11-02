@@ -73,10 +73,18 @@ func newMapCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("mapConfigPath: %w", err)
 			}
-			databasePath := filepath.Join(
-				filepath.Dir(resolvedConfigPath), server.DarkspinDirectory,
-				server.CacheDirectory, server.ContentDatabaseFilename,
-			)
+			config, isConfigCreated, err := game.LoadConfig(resolvedConfigPath)
+			if err != nil {
+				return fmt.Errorf("mapConfigLoad: %w", err)
+			}
+			if isConfigCreated {
+				return errors.New("map requires prepared content; run darkrun server --prepare-only --game-path <installation>")
+			}
+			contentPath, err := config.ContentPath(resolvedConfigPath)
+			if err != nil {
+				return fmt.Errorf("mapContentPath: %w", err)
+			}
+			databasePath := filepath.Join(contentPath, server.ContentDatabaseFilename)
 			_, err = os.Stat(databasePath)
 			if err != nil {
 				return fmt.Errorf("mapDatabaseStat: %w", err)

@@ -312,7 +312,7 @@ func (r campaignNPCActionRuntime) restartAfterTerrify(
 	npcSession := peerSession.zone.NPCs()
 	npc, isNPCFound := npcSession.NPC(objectID)
 	if !isNPCFound || npc.IsDefeated || npc.HitPoint <= 0 ||
-		npc.TargetObjectID == 0 {
+		npc.TargetObjectID == 0 || npcSession.FearRemaining(objectID, r.now()) > 0 {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
@@ -350,16 +350,28 @@ func (r campaignAbilityCommandRuntime) applyHeroNPCFear(
 	targetObjectID uint32, sourceObjectID uint32, duration time.Duration,
 	timestamp uint64,
 ) ([][]byte, error) {
+	packets, err := r.applyNPCFear(packet, sessionKey, generation, targetObjectID,
+		sourceObjectID, duration, timestamp, "DeathsEmbraceDebuff", false)
+	if err != nil {
+		return packets, fmt.Errorf("heroFear: %w", err)
+	}
+	return packets, nil
+}
+
+func (r campaignAbilityCommandRuntime) applyNPCFear(
+	packet raknet.Packet, sessionKey string, generation uint64,
+	targetObjectID uint32, sourceObjectID uint32, duration time.Duration,
+	timestamp uint64, modifierName string, isFriendlyCreatureOnly bool,
+) ([][]byte, error) {
 	if r.now == nil || r.registry == nil || r.modifierPool == nil ||
 		sessionKey == "" || generation == 0 || targetObjectID == 0 ||
-		sourceObjectID == 0 || duration <= 0 {
+		sourceObjectID == 0 || duration <= 0 || modifierName == "" {
 		return nil, errors.New("hero fear request invalid")
 	}
 	run, err := newCampaignNPCModifierRun(r.modifierPool)
 	if err != nil {
 		return nil, fmt.Errorf("heroFearRun: %w", err)
 	}
-	expiresAt := r.now().Add(duration)
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation &&
@@ -373,7 +385,13 @@ func (r campaignAbilityCommandRuntime) applyHeroNPCFear(
 		return nil, nil
 	}
 	target, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
-	if !isTargetFound || target.IsDefeated || target.HitPoint <= 0 {
+	isTargetAccepted := isTargetFound && !target.IsDefeated && target.HitPoint > 0
+	if isTargetAccepted && isFriendlyCreatureOnly {
+		source, isSourceFound := peerSession.zone.NPCs().NPC(sourceObjectID)
+		isTargetAccepted = isSourceFound && target.IsPublished && !target.Plan.IsFixture &&
+			target.Faction == source.Faction
+	}
+	if !isTargetAccepted {
 		r.registry.mutex.Unlock()
 		_, releaseErr := run.release(r.modifierPool)
 		if releaseErr != nil {
@@ -381,6 +399,8 @@ func (r campaignAbilityCommandRuntime) applyHeroNPCFear(
 		}
 		return nil, nil
 	}
+	duration = zonenpc.CrowdControlDuration(target.Plan, duration)
+	expiresAt := r.now().Add(duration)
 	err = peerSession.zone.NPCs().ApplyFear(targetObjectID, expiresAt)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -399,7 +419,7 @@ func (r campaignAbilityCommandRuntime) applyHeroNPCFear(
 		return nil, nil
 	}
 	run.record = zoneeffect.Modifier{
-		InstanceID: run.instanceID, GUID: util.HashID("DeathsEmbraceDebuff"),
+		InstanceID: run.instanceID, GUID: util.HashID(modifierName),
 		SourceObjectID: sourceObjectID, TargetObjectID: targetObjectID,
 		Rank: 1, Duration: duration, Kind: zoneeffect.ModifierKindDebuff,
 	}
@@ -490,13 +510,30 @@ func (r campaignAbilityCommandRuntime) applyHeroNPCFear(
 	}
 	run.create()
 	packets := [][]byte{modifierPacket}
+	profile, isProfileFound := zonenpc.ActionProfileForPlan(target.Plan)
+	if isProfileFound && target.IsActionStarted && profile.Family == zonenpc.ActionCharge {
+		// Restore temporary charge attributes before Flee retires the old
+		// action generation. Its normal completion can no longer clean up.
+		charge := campaignChargeSchedule{
+			runtime: r.npc, sessionKey: sessionKey, generation: generation,
+			objectID: targetObjectID,
+			plan: zonenpc.AttackPlan{
+				ActionGeneration: target.ActionGeneration, Profile: profile,
+			},
+		}
+		restorePackets, restoreErr := charge.restoreMovementState()
+		if restoreErr != nil {
+			return packets, fmt.Errorf("heroFearChargeRestore: %w", restoreErr)
+		}
+		packets = append(packets, restorePackets...)
+	}
 	fleePackets, err := r.startTerrifyFlee(
 		packet, sessionKey, generation, targetObjectID, sourceObjectID, timestamp,
 	)
 	if err != nil {
 		if r.logger != nil {
 			r.logger.Printf(
-				"RakNet Death's Embrace fear movement skipped target=%d: %v",
+				"RakNet NPC fear movement skipped target=%d: %v",
 				targetObjectID, err,
 			)
 		}

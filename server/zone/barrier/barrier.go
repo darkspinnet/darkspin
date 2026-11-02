@@ -71,27 +71,29 @@ func CreatePublication(plans []Plan) ([]ObjectPublication, error) {
 			!zonepopulation.IsFinitePosition(plan.marker.Position) || plan.marker.Scale <= 0 {
 			return nil, fmt.Errorf("hordeBarrierCreate[%d]: invalid", planIndex)
 		}
+		// Markers describe the initially open placement. Native CloseDoor
+		// enables collision when the horde starts (127 sub_A3FC00).
 		publication = append(publication, ObjectPublication{
 			ObjectID:           plan.objectID,
 			NounName:           plan.marker.NounName,
 			Position:           plan.marker.Position,
 			Rotation:           plan.marker.Rotation,
 			Scale:              plan.marker.Scale,
-			IsCollisionEnabled: plan.marker.IsCollisionEnabled,
+			IsCollisionEnabled: true,
 			IsVisible:          plan.marker.IsVisible,
 		})
 	}
 	return publication, nil
 }
 
-func DeletePublication(plans []Plan) ([]uint32, error) {
+func OpenPublication(plans []Plan) ([]uint32, error) {
 	if len(plans) == 0 {
-		return nil, errors.New("horde barrier delete: invalid plans")
+		return nil, errors.New("horde barrier open: invalid plans")
 	}
 	objectIDs := make([]uint32, 0, len(plans))
 	for planIndex, plan := range plans {
 		if plan.objectID == 0 {
-			return nil, fmt.Errorf("hordeBarrierDelete[%d]: invalid", planIndex)
+			return nil, fmt.Errorf("hordeBarrierOpen[%d]: invalid", planIndex)
 		}
 		objectIDs = append(objectIDs, plan.objectID)
 	}

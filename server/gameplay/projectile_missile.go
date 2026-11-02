@@ -24,13 +24,17 @@ func (e campaignProjectileSchedule) trackMissileTarget(
 	targetID := uint32(0)
 	aim := sim.Position{}
 	nearest := float32(10)
-	for _, target := range member.zone.NPCs().LiveSnapshots() {
+	enemies := e.runtime.registry.abilityTargetsLocked(e.runtime, member, e.definition, e.packet.SourceTime)
+	for _, target := range enemies.LiveSnapshots() {
 		if !target.IsPublished || target.IsDefeated || target.HitPoint <= 0 ||
 			target.Plan.IsFixture || target.Faction != zonenpc.FactionNonPlayerAligned ||
-			target.IsSpawnStealthActive || member.zone.NPCs().IsStealthed(target.Plan.ObjectID) {
+			target.IsSpawnStealthActive {
 			continue
 		}
-		geometry, isFallback, err := campaignTargetProjectileGeometry(e.runtime.program, target)
+		if member.zone != nil && member.zone.NPCs().IsStealthed(target.Plan.ObjectID) {
+			continue
+		}
+		geometry, isFallback, err := abilityTargetProjectileGeometryLocked(e.runtime, member, target)
 		if err != nil {
 			return nil, fmt.Errorf("missileGeometry: %w", err)
 		}
@@ -77,8 +81,10 @@ func (e campaignProjectileStep) produceMissileExplosion(
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("missileRadius: %w", err)
 	}
+	enemies := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, member, schedule.definition,
+		schedule.packet.SourceTime+uint64(e.deadline/time.Millisecond))
 	targets := make([]zonenpc.Snapshot, 0)
-	for _, target := range member.zone.NPCs().LiveSnapshots() {
+	for _, target := range enemies.LiveSnapshots() {
 		if !target.IsPublished || target.IsDefeated || target.HitPoint <= 0 ||
 			!isSupportHealerBasicImpactTarget(target) {
 			continue
@@ -98,12 +104,36 @@ func (e campaignProjectileStep) produceMissileExplosion(
 		Definition: schedule.projectile, Damage: schedule.plan.Damage,
 		Center: game.Vec3(position), Target: targets,
 	}
-	results, err := zoneability.CommitArea(member.zone.Population().Random(),
-		member.zone.NPCs(), plan, schedule.creature, member.binding.Difficulty,
+	random, err := schedule.runtime.registry.abilityRandomLocked(member)
+	if err != nil {
+		schedule.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("missileRandom: %w", err)
+	}
+	if member.binding.Mode == game.ModeArena {
+		schedule.runtime.registry.sessions[schedule.sessionKey] = member
+	}
+	results, err := zoneability.CommitArea(random,
+		enemies, plan, schedule.creature, member.binding.Difficulty,
 		schedule.runtime.program.Critical)
 	if err != nil {
 		schedule.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("missileDamage: %w", err)
+	}
+	if arenaTargets, isArena := enemies.(*arenaAbilityTargets); isArena {
+		member = schedule.runtime.registry.sessions[schedule.sessionKey]
+		packets, resolveErr := schedule.run.ResolveCollision(context.Background(), e.deadline,
+			false, false, 0, schedule.plan.Damage.Maximum, false, position, sim.Position(schedule.facing))
+		e.finishFlightLocked(&member)
+		schedule.runtime.registry.mutex.Unlock()
+		arenaTargets.finish()
+		if resolveErr != nil {
+			return nil, fmt.Errorf("arenaMissileResolve: %w", resolveErr)
+		}
+		hitPackets, hitErr := arenaTargets.packets(results)
+		if hitErr != nil {
+			return nil, fmt.Errorf("arenaMissileHit: %w", hitErr)
+		}
+		return append(filterProjectileCombatPackets(packets), hitPackets...), nil
 	}
 	transitions := make([]campaignDamageTransition, 0, len(results))
 	for _, result := range results {

@@ -1,0 +1,29 @@
+---@meta
+
+---@class ClientDebug
+---@field Pause fun(self:ClientDebug,duration_ms?:integer):ClientDebugPause|nil,ScenarioError|nil Captures diagnostics, then requests a bounded debugger pause of this owned client. Default 2000ms; integer 1 through 5000ms. Independent helper lease expiry resumes the client.
+---@field Resume fun(self:ClientDebug,pause_id:string):ClientDebugPause|nil,ScenarioError|nil Resumes the exact owned pause and waits for a fresh bridge/frame plus accepted login/game identity. Partial state survives errors.
+---@field Snapshot fun(self:ClientDebug):ClientDebugPause|nil,ScenarioError|nil Observes the retained debugger lease; is_paused does not mean the server simulation is paused.
+
+---@class ClientDebugPause
+---@field client_id string
+---@field run_id string Owned supervisor run identity.
+---@field instance_id string
+---@field pid integer
+---@field process_creation string Pinned process creation identity as 16 hexadecimal digits, independent of PID reuse and Lua numeric precision.
+---@field pause_id string Exact pause identity required by Resume.
+---@field status 'idle'|'preparing'|'paused'|'resuming'|'resumed'|'terminated'|'cleanup_failed'
+---@field is_paused boolean Actual owned debugger-stop observation, not a simulation pause.
+---@field is_recovered boolean Recovery observation, independent of merely requesting resume.
+---@field is_bridge_recovered boolean Fresh owned bridge response observed after resume.
+---@field is_frame_recovered boolean Fresh native gameplay frame observed after resume when required.
+---@field is_account_recovered boolean Accepted account/game identity revalidated after resume.
+---@field scope string Identifies the bounded owned-client debugger scope.
+---@field is_simulation_paused false Server/network clocks continue.
+---@field stop_event_thread_id integer
+---@field stopped_at? string
+---@field started_at string
+---@field expires_at string
+---@field resumed_at? string
+---@field pre_pause_manifest_path? string Diagnostic capture finalized before debugger attach.
+---@field failure? string Partial state and failure details can accompany an error.

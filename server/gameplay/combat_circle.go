@@ -140,8 +140,11 @@ func (e campaignCircleTargetStep) produce() ([][]byte, error) {
 	if step.IsBlocked {
 		packets, err = npcraknet.StopAtPose(e.objectID, step.Position, enemy.Facing)
 	} else {
-		packets, err = npcraknet.PursuitRedirect(
-			e.objectID, step.Position, target.ObjectID, target.Position, 0.1,
+		// CircleTarget moves to its computed lateral point while facing the
+		// hero. Sending the hero as the movement goal makes the client charge
+		// straight inward while the authoritative actor circles elsewhere.
+		packets, err = npcraknet.CircleTargetMovement(
+			e.objectID, destination, target.ObjectID,
 		)
 	}
 	if err != nil {

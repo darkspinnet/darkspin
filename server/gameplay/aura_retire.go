@@ -12,7 +12,7 @@ import (
 func (e heroAuraAreaSchedule) prepareNPCMembership(objectID, instanceID uint32, deadline time.Duration) ([][]byte, error) {
 	messages := []raknet.ApplicationMessage{raknet.ModifierCreatedMessage{
 		TargetID: objectID, ModifierGUID: e.definition.RootModifierID, InstanceID: instanceID,
-		StackCount: 1, SourceID: e.sourceObjectID,
+		StackCount: 1, NPCAffixAssetID: 0,
 		StartMilliseconds: e.packet.SourceTime + uint64(deadline/time.Millisecond),
 	}}
 	if e.definition.HitEffectName != "" && !e.run.isTimeBubble {
@@ -33,9 +33,9 @@ func (e heroAuraAreaSchedule) prepareNPCMembership(objectID, instanceID uint32, 
 func (e heroAuraAreaSchedule) queueNPCMembershipLocked(peerSession *gameplayPeerSession, packets [][]byte, isCreate bool) {
 	e.runtime.registry.sessions[e.sessionKey] = *peerSession
 	if isCreate {
-		e.runtime.registry.queueTimeBubblePresentationLocked(e.run.originalZone, packets)
+		e.run.queuePresentationLocked(packets, false)
 	} else {
-		e.runtime.registry.queueProjectileRetirementLocked(e.run.originalZone, packets)
+		e.run.queuePresentationLocked(packets, true)
 	}
 	*peerSession = e.runtime.registry.sessions[e.sessionKey]
 }
@@ -52,6 +52,9 @@ func (e *heroAuraAreaRun) retainAuraLocked() {
 		e.runtime.registry.auraRuns = make(map[*heroAuraAreaRun]struct{})
 	}
 	e.runtime.registry.auraRuns[e] = struct{}{}
+	if e.arenaGameID != 0 {
+		return
+	}
 	retirement := auraRetirement{run: e}
 	e.stopContext = context.AfterFunc(e.originalZone.Context(), retirement.execute)
 }
@@ -65,6 +68,10 @@ func (e *heroAuraAreaRun) retireAuraLocked() error {
 		}
 		return nil
 	}
+	if e.arenaGameID != 0 {
+		return e.retireArenaPsistormLocked()
+	}
+	defer e.refreshSleepingCloudControlLocked()
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 	if e.isCleaned {

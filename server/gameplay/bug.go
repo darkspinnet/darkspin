@@ -2,6 +2,7 @@ package gameplay
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -32,7 +33,25 @@ func (e *gameplaySessionRegistry) BugContext(
 			(req.GameID != 0 && peerSession.binding.GameID != req.GameID) {
 			continue
 		}
-		return bugContextForSession(result, peerSession)
+		result, err = bugContextForSession(result, peerSession)
+		if err != nil {
+			return result, fmt.Errorf("bugSession: %w", err)
+		}
+		for _, bot := range e.sessions {
+			if !bot.binding.IsServerBot || bot.binding.Mode != game.ModeChain ||
+				bot.binding.GameID != peerSession.binding.GameID ||
+				bot.binding.BotOwnerUserID != peerSession.binding.UserID || bot.zone == nil ||
+				bot.deployedCreatureIndex >= uint32(len(bot.binding.Creatures)) {
+				continue
+			}
+			actor, isFound := bot.zone.Hero().Snapshot(bot.binding.UserID, bot.generation)
+			result.CampaignAIBots = append(result.CampaignAIBots, chat.BugCampaignAIBot{
+				Slot: bot.binding.Slot, ObjectID: bot.deployedObjectID,
+				NounID:   bot.binding.Creatures[bot.deployedCreatureIndex].Noun,
+				HitPoint: actor.HitPoint, IsSpawned: isFound && actor.HitPoint > 0,
+			})
+		}
+		return result, nil
 	}
 	return result, nil
 }
@@ -41,6 +60,7 @@ func bugContextForSession(
 	result chat.BugContext, peerSession gameplayPeerSession,
 ) (chat.BugContext, error) {
 	binding := peerSession.binding
+	var contextErrors []error
 	result.IsGameplayActive = true
 	result.GameID = binding.GameID
 	result.RunSeed = binding.RunSeed
@@ -51,11 +71,22 @@ func bugContextForSession(
 	result.SquadID = binding.SquadID
 	result.MemberLimit = binding.MemberLimit
 	result.ParticipantCount = binding.ParticipantCount
+	result.CombatParticipantCount = binding.CombatParticipantCount
+	for slot, bot := range peerSession.campaignBots {
+		if bot == nil {
+			continue
+		}
+		result.CampaignAIBots = append(result.CampaignAIBots, chat.BugCampaignAIBot{
+			Slot: slot, ObjectID: bot.objectID, NounID: bot.creature.Noun,
+			HitPoint: bot.hitPoint, IsSpawned: bot.objectID != 0 && !bot.isDefeated,
+		})
+	}
 	result.CrogenitorLevel = binding.AvatarLevel
 	result.CampaignProgression = binding.ChainProgression
 	result.IsReplay = binding.IsReplay
 	result.IsCheckpointRestore = binding.IsCheckpointRestore
 	result.IsOverdriveUnlocked = binding.IsOverdriveUnlocked
+	result.IsGodModeEnabled = peerSession.isGodModeEnabled
 	result.IsDungeonSetupReady = peerSession.dungeonSetup.CanReserve()
 	result.IsDungeonSetupFinal = peerSession.dungeonSetup.IsCommitted()
 	result.Mission = chat.BugMission{
@@ -74,7 +105,7 @@ func bugContextForSession(
 		)
 		character, isCharacterFound := peerSession.squad.Character(uint32(index))
 		if !isCharacterFound {
-			return result, fmt.Errorf("bugSquadCharacter[%d]: unavailable", index)
+			contextErrors = append(contextErrors, fmt.Errorf("bugSquadCharacter[%d]: unavailable", index))
 		}
 		result.SquadHeroes = append(result.SquadHeroes, chat.BugSquadHero{
 			Index: uint32(index), Name: creature.Name,
@@ -93,6 +124,7 @@ func bugContextForSession(
 			PowerPoint:                 character.ManaPoints,
 			MaximumPowerPoint:          maximumPowerPoint,
 			IsAvailable:                character.IsAvailable,
+			IsCharacterFound:           isCharacterFound,
 			IsDefeated:                 character.IsAvailable && character.HitPoints <= 0,
 			MinimumWeaponDamage:        creature.MinimumWeaponDamage,
 			MaximumWeaponDamage:        creature.MaximumWeaponDamage,
@@ -110,11 +142,12 @@ func bugContextForSession(
 			CooldownReduction:          creature.TimingProfile.CooldownReduction,
 		})
 	}
-	if peerSession.deployedCreatureIndex < uint32(len(binding.Creatures)) {
+	if peerSession.deployedObjectID != 0 &&
+		peerSession.deployedCreatureIndex < uint32(len(binding.Creatures)) {
 		creature := binding.Creatures[peerSession.deployedCreatureIndex]
 		maximumHitPoint, maximumPowerPoint, err := peerSession.deployedResourceMaximum()
 		if err != nil {
-			return result, fmt.Errorf("bugHeroResources: %w", err)
+			contextErrors = append(contextErrors, fmt.Errorf("bugHeroResources: %w", err))
 		}
 		result.Hero = chat.BugHero{
 			Name: creature.Name, CreatureID: creature.ID, NounID: creature.Noun,
@@ -128,15 +161,29 @@ func bugContextForSession(
 		}
 	}
 	if peerSession.zone != nil {
+		appendBugNPCs(&result, peerSession)
 		zoneSnapshot := peerSession.zone.Snapshot()
 		result.ZoneGeneration = zoneSnapshot.Generation
 		result.ZoneState = uint32(zoneSnapshot.State)
+		result.IsNPCSpawnCommandUsed = zoneSnapshot.IsNPCSpawnCommandUsed
+		for _, npc := range peerSession.zone.NPCs().LiveSnapshots() {
+			if npc.Plan.ScalePreviewMultiplier > 0 {
+				result.NPCScalePreviews = append(result.NPCScalePreviews, chat.NPCScalePreview{
+					ObjectID: npc.Plan.ObjectID, NounName: npc.Plan.NounName, Multiplier: npc.Plan.ScalePreviewMultiplier,
+					ObjectScale: npc.Plan.RuntimeObjectScale(),
+				})
+			}
+		}
 		abilityCount, isFound := peerSession.zone.AbilityCount(
 			zoneResultMember(peerSession),
 		)
 		if isFound {
 			result.AbilityCount = abilityCount
 		}
+	}
+	contextErr := errors.Join(contextErrors...)
+	if contextErr != nil {
+		return result, fmt.Errorf("bugPartial: %w", contextErr)
 	}
 	return result, nil
 }

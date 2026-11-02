@@ -202,7 +202,6 @@ func (e campaignNPCProjectileStep) sampleFlightLocked(current *gameplayPeerSessi
 		return nil, sporenet.PlayerStatDelta{}, nil, fmt.Errorf("enemyFlightDamage: %w", err)
 	}
 	status := e.selectStatusLocked(current, plan, isStatusEligible)
-	schedule.runtime.reserveSageCompanionRespawnLocked(current, schedule.sessionKey, schedule.generation, target.ObjectID)
 	schedule.runtime.logger.Printf("RakNet projectile flight contact kind=npc projectile=%d selected_target=%d struck_target=%d distance=%.3f flight_ms=%d candidates=%d geometry_fallback_count=%d",
 		schedule.projectileObjectID, schedule.target.ObjectID, target.ObjectID, result.Distance,
 		(e.deadline - schedule.flight.hitDelay).Milliseconds(), len(targets), fallbackCount)

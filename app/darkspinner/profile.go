@@ -198,6 +198,10 @@ func (a *App) CreateProfile(identity string, avatarID uint32, isTutorialSkipped 
 		a.setCriticalFailure("Identity", criticalErr)
 		return criticalErr
 	}
+	err = a.SetLocalServicesRequired(true)
+	if err != nil {
+		return fmt.Errorf("profileService: %w", err)
+	}
 	err = a.ensureLocalProfileWithAvatar(identity, avatarID, isTutorialSkipped)
 	if err != nil {
 		criticalErr := fmt.Errorf("profileEnsure: %w", err)
@@ -207,10 +211,14 @@ func (a *App) CreateProfile(identity string, avatarID uint32, isTutorialSkipped 
 	if isTutorialSkipped {
 		a.completePendingTutorialProfile(identity)
 	}
+	err = seedCrogenitorDisplay(identity)
+	if err != nil {
+		return fmt.Errorf("profileDisplay: %w", err)
+	}
 	a.mu.Lock()
 	a.status.IdentityError = ""
-	a.emitStatusLocked()
 	a.mu.Unlock()
+	a.SetIdentity(identity)
 	return nil
 }
 
@@ -228,7 +236,7 @@ func (a *App) completePendingTutorialProfile(identity string) {
 	}
 }
 
-// DeleteProfile permanently removes one inactive local player account.
+// DeleteProfile archives one inactive local player account for emergency recovery.
 func (a *App) DeleteProfile(identity string) error {
 	identity = strings.TrimSpace(identity)
 	err := validateProfileIdentity(identity)

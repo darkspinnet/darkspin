@@ -29,7 +29,11 @@ func (e *hostileProjectileFreezeStep) releaseLocked(isRetiring bool) error {
 		e.stopContext = nil
 	}
 	if !e.isDeletionQueued {
-		e.runtime.registry.queueProjectileRetirementLocked(e.originalZone, [][]byte{packet})
+		if e.arenaGameID != 0 {
+			e.runtime.registry.queueArenaForcePulsePacketsLocked(e.arenaGameID, [][]byte{packet})
+		} else {
+			e.runtime.registry.queueProjectileRetirementLocked(e.originalZone, [][]byte{packet})
+		}
 		e.isDeletionQueued = true
 	}
 	err = e.runtime.modifierPool.Release(e.instanceID)
@@ -41,6 +45,15 @@ func (e *hostileProjectileFreezeStep) releaseLocked(isRetiring bool) error {
 	delete(freezes, e.instanceID)
 	if len(freezes) == 0 {
 		delete(e.runtime.registry.projectileFreezes, e.run)
+		if e.arenaGameID != 0 && !isRetiring {
+			thawPacket, marshalErr := raknet.MarshalApplication(raknet.AttributeDataUpdateMessage{
+				ObjectID: e.projectileObjectID, Value: map[uint8]float32{chronoFrozenAttribute: 0},
+			})
+			if marshalErr != nil {
+				return fmt.Errorf("arenaFreezeThaw: %w", marshalErr)
+			}
+			e.runtime.registry.queueArenaForcePulsePacketsLocked(e.arenaGameID, [][]byte{thawPacket})
+		}
 	}
 	return nil
 }

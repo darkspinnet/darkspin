@@ -146,7 +146,7 @@ func (e heroAfflictionBoltStep) scan() ([][]byte, error) {
 			StackCount: 1,
 			StartMilliseconds: e.schedule.packet.SourceTime +
 				uint64(e.deadline/time.Millisecond),
-			SourceID: e.schedule.sourceObjectID,
+			NPCAffixAssetID: 0,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("afflictionModifierMarshal[%d]: %w", index, err)

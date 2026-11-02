@@ -4,8 +4,10 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -30,6 +32,7 @@ type CreatureTemplate struct {
 	Name                 string
 	ElementType          string
 	ClassType            string
+	UnlockLevel          uint32
 	WeaponMinDamage      float64
 	WeaponMaxDamage      float64
 	GearScore            float32
@@ -75,6 +78,7 @@ type CreatureAbilityProperty struct {
 // NonPlayerClass is the proven runtime combat-stat projection for one
 // non-player noun base instance.
 type NonPlayerClass struct {
+	ClassAttributeBases          [22]float32
 	InstanceID                   uint32
 	NounName                     string
 	DisplayName                  string
@@ -111,6 +115,8 @@ type NonPlayerClass struct {
 // NonPlayerNounProfile joins one noun to its authored non-player class and
 // physical scale without exposing storage IDs to the game feature.
 type NonPlayerNounProfile struct {
+	ClassAttributeBases          [22]float32
+	NPCClassInstanceID           uint32
 	AIDefinitionInstanceID       uint32
 	IsClassKnown                 bool
 	AggroType                    uint32
@@ -254,7 +260,7 @@ func (s *Store) CreatureTemplates(ctx context.Context) ([]CreatureTemplate, erro
 	}
 	rows, err := s.database.QueryContext(ctx, `
 		SELECT id, name_locale_key, description_locale_key, name, element_type, class_type,
-		       weapon_min_damage, weapon_max_damage, gear_score, stat_template,
+		       unlock_level, weapon_min_damage, weapon_max_damage, gear_score, stat_template,
 		       ability_passive, ability_basic, ability_random, ability_special_1, ability_special_2,
 		       is_hand_present, is_foot_present
 		FROM creature_template
@@ -267,7 +273,7 @@ func (s *Store) CreatureTemplates(ctx context.Context) ([]CreatureTemplate, erro
 	for rows.Next() {
 		var template CreatureTemplate
 		err = rows.Scan(&template.ID, &template.NameLocaleKey, &template.DescriptionLocaleKey, &template.Name,
-			&template.ElementType, &template.ClassType, &template.WeaponMinDamage, &template.WeaponMaxDamage,
+			&template.ElementType, &template.ClassType, &template.UnlockLevel, &template.WeaponMinDamage, &template.WeaponMaxDamage,
 			&template.GearScore, &template.StatTemplate, &template.AbilityPassive, &template.AbilityBasic,
 			&template.AbilityRandom, &template.AbilitySpecial1, &template.AbilitySpecial2,
 			&template.IsHandPresent, &template.IsFootPresent)
@@ -654,7 +660,7 @@ func (s *Store) NonPlayerClasses(ctx context.Context) ([]NonPlayerClass, error) 
 			player_count_health_scale, aggro_range, alert_range, drop_aggro_range,
 			idle_movement_speed, base_combat_speed,
 			hit_point, power_point, strength, dexterity, mind,
-			dodge_rating, resist_rating, critical_rating
+			dodge_rating, resist_rating, critical_rating,class_attribute_base
 		FROM non_player_class ORDER BY instance_id`)
 	if err != nil {
 		return nil, fmt.Errorf("nonPlayerClassQuery: %w", err)
@@ -663,6 +669,7 @@ func (s *Store) NonPlayerClasses(ctx context.Context) ([]NonPlayerClass, error) 
 	classes := make([]NonPlayerClass, 0, 100)
 	for rows.Next() {
 		var class NonPlayerClass
+		var classAttributePayload []byte
 		err = rows.Scan(
 			&class.InstanceID, &class.NounName, &class.DisplayName,
 			&class.DisplayNameLocaleKey, &class.Description, &class.DescriptionLocaleKey,
@@ -672,10 +679,16 @@ func (s *Store) NonPlayerClasses(ctx context.Context) ([]NonPlayerClass, error) 
 			&class.IdleMovementSpeed, &class.BaseCombatSpeed,
 			&class.HitPoint, &class.PowerPoint,
 			&class.Strength, &class.Dexterity, &class.Mind,
-			&class.DodgeRating, &class.ResistRating, &class.CriticalRating,
+			&class.DodgeRating, &class.ResistRating, &class.CriticalRating, &classAttributePayload,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("nonPlayerClassScan: %w", err)
+		}
+		if len(classAttributePayload) != 88 {
+			return nil, fmt.Errorf("classBaseSize[%s]: %d", class.NounName, len(classAttributePayload))
+		}
+		for index := range class.ClassAttributeBases {
+			class.ClassAttributeBases[index] = math.Float32frombits(binary.LittleEndian.Uint32(classAttributePayload[index*4:]))
 		}
 		classes = append(classes, class)
 	}
@@ -810,6 +823,7 @@ func (e *Store) NonPlayerNounProfiles(ctx context.Context) ([]NonPlayerNounProfi
 		}
 		profile := nonPlayerClassProfile(nounName, class)
 		profile.AIDefinitionInstanceID = aiDefinitionInstanceID
+		profile.NPCClassInstanceID = classInstanceID
 		if aggroType.Valid {
 			profile.AggroType = uint32(aggroType.Int64)
 		}
@@ -828,8 +842,10 @@ func (e *Store) NonPlayerNounProfiles(ctx context.Context) ([]NonPlayerNounProfi
 
 func nonPlayerClassProfile(nounName string, class NonPlayerClass) NonPlayerNounProfile {
 	return NonPlayerNounProfile{
-		IsClassKnown: true,
-		NounName:     nounName, DisplayName: class.DisplayName,
+		NPCClassInstanceID:  class.InstanceID,
+		ClassAttributeBases: class.ClassAttributeBases,
+		IsClassKnown:        true,
+		NounName:            nounName, DisplayName: class.DisplayName,
 		DisplayNameLocaleKey:         class.DisplayNameLocaleKey,
 		Description:                  class.Description,
 		DescriptionLocaleKey:         class.DescriptionLocaleKey,

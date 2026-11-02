@@ -37,6 +37,9 @@ func (e *Session) RevealIntroduction(objectID uint32, owner ActionOwner, generat
 		npc.ActionOwner != owner || npc.ActionGeneration != generation {
 		return false
 	}
+	if !npc.introduction.startedAt.IsZero() && npc.introduction.profile.FirstAggroRevealDelay > 0 && !npc.Plan.IsIntroductionHidden {
+		return false
+	}
 	npc.Plan.IsIntroductionHidden = false
 	npc.Plan.IsIntroductionComplete = true
 	npc.IsInvisibleToSecurityTeleporter = false
@@ -64,6 +67,7 @@ func WithBossIntroduction(plan SpawnPlan, profile ActionProfile) ActionProfile {
 		return profile
 	}
 	profile.FirstAggroAnimationName = intro.FirstAggroAnimationName
+	profile.FirstAggroAnimationDelay = intro.FirstAggroAnimationDelay
 	profile.FirstAggroAbilityName = intro.FirstAggroAbilityName
 	profile.FirstAggroEffectName = intro.FirstAggroEffectName
 	profile.FirstAggroEffectDelay = intro.FirstAggroEffectDelay
@@ -71,6 +75,7 @@ func WithBossIntroduction(plan SpawnPlan, profile ActionProfile) ActionProfile {
 	profile.FirstAggroRevealDelay = intro.FirstAggroRevealDelay
 	profile.FirstAggroCinematicDuration = intro.FirstAggroCinematicDuration
 	profile.FirstAggroCinematicRadius = intro.FirstAggroCinematicRadius
+	profile.FirstAggroCinematicOffset = intro.FirstAggroCinematicOffset
 	profile.IsFirstAggroDurationKnown = intro.IsFirstAggroDurationKnown
 	return profile
 }
@@ -78,7 +83,12 @@ func WithBossIntroduction(plan SpawnPlan, profile ActionProfile) ActionProfile {
 // IntroductionProfile retains ordinary aggro reactions but omits arrival
 // animations for actors that are already standing in the map.
 func IntroductionProfile(plan SpawnPlan, profile ActionProfile) ActionProfile {
+	if plan.IsSubsequentAggroPending {
+		return subsequentAggroProfile(plan, profile)
+	}
 	profile = WithBossIntroduction(plan, profile)
+	profile = authoredRobotEntrance(plan, profile)
+	profile = authoredFirstAggroReaction(plan, profile)
 	if plan.IsStartupInitialized && plan.IsSecondaryStart &&
 		plan.Introduction != SpawnIntroductionFloorWarp {
 		graph := plan.NPCProfile.AIGraph

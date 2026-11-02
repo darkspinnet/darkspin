@@ -85,6 +85,24 @@ func (s *ReleaseSession) IsCurrent(reservation ReleaseReservation) bool {
 		s.end.Equal(reservation.currentEnd)
 }
 
+// Complete shortens only the matching action's gate. A delayed completion
+// cannot release a newer reservation or extend an already elapsed gate.
+func (e *ReleaseSession) Complete(reservation ReleaseReservation, at time.Time) bool {
+	if e == nil || reservation.currentRevision == 0 || at.IsZero() {
+		return false
+	}
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	if e.revision != reservation.currentRevision || !e.end.Equal(reservation.currentEnd) {
+		return false
+	}
+	if at.Before(e.end) {
+		e.end = at
+	}
+	e.revision++
+	return true
+}
+
 func (s *ReleaseSession) Reset() bool {
 	if s == nil {
 		return false

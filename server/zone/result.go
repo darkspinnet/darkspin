@@ -18,7 +18,7 @@ func (e *Zone) ReserveResult(member Member) (uint32, bool) {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if !e.isCurrentMember(member) || e.info.Boss == nil ||
+	if !e.isCurrentHumanMember(member) || e.info.Boss == nil ||
 		e.info.Outcome == nil {
 		return 0, false
 	}
@@ -41,7 +41,7 @@ func (e *Zone) ReservedResultBossObjectID(member Member) (uint32, bool) {
 	}
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	if !e.isCurrentMember(member) || e.info.Outcome == nil {
+	if !e.isCurrentHumanMember(member) || e.info.Outcome == nil {
 		return 0, false
 	}
 	return e.info.Outcome.ReservedBossObjectID(outcomeMember(member))
@@ -53,7 +53,7 @@ func (e *Zone) RollbackResult(member Member) error {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if !e.isCurrentMember(member) || e.info.Outcome == nil {
+	if !e.isCurrentHumanMember(member) || e.info.Outcome == nil {
 		return errors.New("zone result member unavailable")
 	}
 	err := e.info.Outcome.Rollback(outcomeMember(member))
@@ -73,7 +73,7 @@ func (e *Zone) CommitResult(
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if !e.isCurrentMember(member) || e.info.Boss == nil ||
+	if !e.isCurrentHumanMember(member) || e.info.Boss == nil ||
 		e.info.Outcome == nil || e.info.ResultVote == nil ||
 		e.info.Result == nil {
 		return nil, errors.New("zone result authority unavailable")
@@ -132,7 +132,7 @@ func (e *Zone) CastResultVote(
 	}
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	if !e.isCurrentMember(member) || e.info.ResultVote == nil {
+	if !e.isCurrentHumanMember(member) || e.info.ResultVote == nil {
 		return zoneresult.VoteSnapshot{}, false
 	}
 	voteSnapshot := e.info.ResultVote.Snapshot()
@@ -149,7 +149,7 @@ func (e *Zone) ResultVoteDecision(
 	}
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	if !e.isCurrentMember(member) || e.info.ResultVote == nil {
+	if !e.isCurrentHumanMember(member) || e.info.ResultVote == nil {
 		return zoneresult.VoteDecisionPending, false
 	}
 	voteSnapshot := e.info.ResultVote.Snapshot()
@@ -164,7 +164,7 @@ func (e *Zone) ResultVoteCountdown(member Member) (time.Duration, bool) {
 	}
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	if !e.isCurrentMember(member) || e.info.ResultVote == nil {
+	if !e.isCurrentHumanMember(member) || e.info.ResultVote == nil {
 		return 0, false
 	}
 	voteSnapshot := e.info.ResultVote.Snapshot()
@@ -198,9 +198,9 @@ func (e *Zone) CompleteForDeveloper() (uint32, error) {
 	return bossObjectID, nil
 }
 
-func (e *Zone) isCurrentMember(member Member) bool {
+func (e *Zone) isCurrentHumanMember(member Member) bool {
 	current, isFound := e.members[member.UserID]
-	return isFound && current.PeerGeneration == member.PeerGeneration
+	return isFound && !current.IsServerBot && current.PeerGeneration == member.PeerGeneration
 }
 
 func outcomeMember(member Member) zoneoutcome.Member {

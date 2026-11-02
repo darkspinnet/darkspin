@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
@@ -163,6 +164,28 @@ func ForcedMovementEffect(
 }
 
 func Pursuit(plan zonenpc.FirstActionPlan) ([][]byte, error) {
+	packets, err := pursuit(plan)
+	if err != nil {
+		return nil, fmt.Errorf("pursuitPlan: %w", err)
+	}
+	if plan.Profile.AbilityName != "CitadelBasicRanged_Bolt" &&
+		plan.Profile.AbilityName != "CitadelSpecificFour_Bolt" {
+		return packets, nil
+	}
+	// Dormant actors have zero idle movement speed. These profiles omit a
+	// first-aggro animation, but must still enter combat before they approach.
+	combatPacket, err := raknet.MarshalApplication(raknet.AgentBlackboardUpdateMessage{
+		ObjectID: plan.ObjectID, TargetID: plan.TargetObjectID,
+		IsInCombat: true, IsTargetable: true, AttackerCount: 1,
+		Stealth: uint8(plan.Profile.StealthType),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pursuitCombat: %w", err)
+	}
+	return append([][]byte{combatPacket}, packets...), nil
+}
+
+func pursuit(plan zonenpc.FirstActionPlan) ([][]byte, error) {
 	if plan.ObjectID == 0 || plan.TargetObjectID == 0 || !plan.IsPursuitNeeded ||
 		plan.Profile.Range <= 0 || math.IsNaN(float64(plan.Profile.Range)) ||
 		math.IsInf(float64(plan.Profile.Range), 0) ||
@@ -171,7 +194,7 @@ func Pursuit(plan zonenpc.FirstActionPlan) ([][]byte, error) {
 	}
 	source := vector(plan.SourcePosition)
 	target := vector(plan.TargetPosition)
-	if plan.Profile.AbilityName == "Flee" || plan.Profile.AbilityName == "GhostlyBoltFlee" {
+	if plan.Profile.AbilityName == "Flee" || plan.Profile.AbilityName == "GhostlyBoltFlee" || plan.Profile.AbilityName == "SupportFlee" {
 		return fleeMovement(plan.ObjectID, source, target, plan.Profile.Range)
 	}
 	if plan.Profile.AbilityName == "StealthAttack" ||
@@ -456,6 +479,14 @@ func PursuitProgress(
 }
 
 func FirstAggro(plan zonenpc.FirstActionPlan, timestamp uint64) ([][]byte, error) {
+	packets, err := firstAggro(plan, timestamp, plan.Profile.FirstAggroCinematicDuration, true)
+	if err != nil {
+		return nil, fmt.Errorf("aggroMarshal: %w", err)
+	}
+	return packets, nil
+}
+
+func firstAggro(plan zonenpc.FirstActionPlan, timestamp uint64, cameraDuration time.Duration, isRevealPending bool) ([][]byte, error) {
 	if plan.ObjectID == 0 || plan.TargetObjectID == 0 ||
 		!isFiniteVec3(plan.SourcePosition) ||
 		!plan.Profile.IsFirstAggroDurationKnown {
@@ -463,9 +494,9 @@ func FirstAggro(plan zonenpc.FirstActionPlan, timestamp uint64) ([][]byte, error
 	}
 	source := vector(plan.SourcePosition)
 	messages := make([]raknet.ApplicationMessage, 0, 6)
-	if plan.Profile.FirstAggroCinematicDuration > 0 {
+	if cameraDuration > 0 {
 		messages = append(messages, raknet.NewCinematicMessage(
-			plan.Profile.FirstAggroCinematicDuration, source,
+			cameraDuration, vector(plan.IntroductionFocus()),
 			plan.Profile.FirstAggroCinematicRadius,
 		))
 	}
@@ -481,7 +512,7 @@ func FirstAggro(plan zonenpc.FirstActionPlan, timestamp uint64) ([][]byte, error
 		raknet.ObjectUpdateMessage{
 			ObjectID: plan.ObjectID, PositionX: source.X,
 			PositionY: source.Y, PositionZ: source.Z,
-			IsVisible: plan.Profile.FirstAggroRevealDelay <= 0,
+			IsVisible: plan.Profile.FirstAggroRevealDelay <= 0 || !isRevealPending,
 		},
 		raknet.AgentBlackboardUpdateMessage{
 			ObjectID: plan.ObjectID, TargetID: targetObjectID,
@@ -490,13 +521,14 @@ func FirstAggro(plan zonenpc.FirstActionPlan, timestamp uint64) ([][]byte, error
 		},
 	)
 	turn := attackTurn(plan.FirstAggroFacingPlan())
-	if plan.Profile.FirstAggroAnimationName == "shadowboss_onaggro" {
+	if plan.Profile.FirstAggroAnimationName == "shadowboss_onaggro" ||
+		plan.Profile.FirstAggroAnimationName == "ctd_boss_tc_aggro" {
 		// TurnToFace(..., true): build 103 sub_A0A800 adds 0x800 to the
 		// captured-point goal produced by sub_A15610.
 		turn.GoalFlags |= 0x800
 	}
 	messages = append(messages, turn)
-	if plan.Profile.FirstAggroRevealDelay <= 0 && plan.Profile.FirstAggroAnimationName != "" {
+	if plan.Profile.FirstAggroRevealDelay <= 0 && plan.Profile.FirstAggroAnimationDelay <= 0 && plan.Profile.FirstAggroAnimationName != "" {
 		messages = append(messages, raknet.SetAnimationStateMessage{
 			ObjectID:  plan.ObjectID,
 			State:     util.HashID(plan.Profile.FirstAggroAnimationName),
@@ -586,7 +618,7 @@ func AttackStart(plan zonenpc.AttackPlan, timestamp uint64) ([][]byte, error) {
 		return nil, errors.New("npc attack start invalid")
 	}
 	source := vector(plan.SourcePosition)
-	return marshalMessages([]raknet.ApplicationMessage{
+	messages := []raknet.ApplicationMessage{
 		raknet.ObjectPositionUpdateMessage{
 			ObjectID: plan.SourceObjectID, PositionX: source.X,
 			PositionY: source.Y, PositionZ: source.Z,
@@ -596,7 +628,18 @@ func AttackStart(plan zonenpc.AttackPlan, timestamp uint64) ([][]byte, error) {
 			ObjectID: plan.SourceObjectID, State: util.HashID(plan.Profile.AnimationName),
 			Timestamp: timestamp, Scale: 1,
 		},
-	}, "attackStart")
+	}
+	if plan.Profile.AbilityName == "CitadelBasicRanged_Bolt" ||
+		plan.Profile.AbilityName == "CitadelSpecificFour_Bolt" {
+		// These profiles have no separate first-aggro presentation. Their
+		// animation reset must return to combat idle rather than dormancy.
+		messages = append([]raknet.ApplicationMessage{raknet.AgentBlackboardUpdateMessage{
+			ObjectID: plan.SourceObjectID, TargetID: plan.TargetObjectID,
+			IsInCombat: true, IsTargetable: true, AttackerCount: 1,
+			Stealth: uint8(plan.Profile.StealthType),
+		}}, messages...)
+	}
+	return marshalMessages(messages, "attackStart")
 }
 
 func MovementStop(objectID uint32, position game.Vec3) ([][]byte, error) {
@@ -1336,6 +1379,20 @@ func ChargeStart(
 		})
 	}
 	return marshalMessages(messages, "chargeStart")
+}
+
+// ChargeMovementSpeed publishes the authored additive attribute modifier;
+// native locomotion multiplies its combat speed by 1 + attribute 48.
+func ChargeMovementSpeed(objectID uint32, movementSpeedBuff float32) ([][]byte, error) {
+	if objectID == 0 || math.IsNaN(float64(movementSpeedBuff)) ||
+		math.IsInf(float64(movementSpeedBuff), 0) {
+		return nil, errors.New("npc charge movement speed invalid")
+	}
+	return marshalMessages([]raknet.ApplicationMessage{
+		raknet.AttributeDataUpdateMessage{
+			ObjectID: objectID, Value: map[uint8]float32{48: movementSpeedBuff},
+		},
+	}, "chargeSpeed")
 }
 
 func ChargeMovementState(

@@ -21,9 +21,11 @@ type Modifier struct {
 	TargetObjectID            uint32
 	Rank                      uint32
 	Duration                  time.Duration
+	ExpiresAt                 time.Time
 	Kind                      ModifierKind
 	IsChannel                 bool
 	IsHaste                   bool
+	IsIndefinite              bool
 	InitiatorObject           uint32
 	StackCount                uint32
 	DamageBuff                float32
@@ -38,7 +40,7 @@ type Modifier struct {
 func (e *Inventory) Update(modifier Modifier) error {
 	if e == nil || modifier.InstanceID == 0 || modifier.GUID == 0 ||
 		modifier.SourceObjectID == 0 || modifier.TargetObjectID == 0 ||
-		modifier.Rank == 0 || modifier.Duration <= 0 ||
+		modifier.Rank == 0 || modifier.Duration < 0 || (modifier.Duration == 0 && !modifier.IsIndefinite) ||
 		modifier.Kind != ModifierKindBuff && modifier.Kind != ModifierKindDebuff {
 		return errors.New("modifier inventory entry invalid")
 	}
@@ -63,7 +65,7 @@ func NewInventory() *Inventory {
 func (e *Inventory) Put(modifier Modifier) error {
 	if e == nil || modifier.InstanceID == 0 || modifier.GUID == 0 ||
 		modifier.SourceObjectID == 0 || modifier.TargetObjectID == 0 ||
-		modifier.Rank == 0 || modifier.Duration <= 0 ||
+		modifier.Rank == 0 || modifier.Duration < 0 || (modifier.Duration == 0 && !modifier.IsIndefinite) ||
 		modifier.Kind != ModifierKindBuff && modifier.Kind != ModifierKindDebuff {
 		return errors.New("modifier inventory entry invalid")
 	}
@@ -97,6 +99,12 @@ func (e *Inventory) Snapshot() []Modifier {
 	defer e.mu.RUnlock()
 	modifier := make([]Modifier, 0, len(e.modifiers))
 	for _, current := range e.modifiers {
+		if !current.ExpiresAt.IsZero() {
+			current.Duration = time.Until(current.ExpiresAt)
+			if current.Duration <= 0 {
+				continue
+			}
+		}
 		modifier = append(modifier, current)
 	}
 	sort.Slice(modifier, func(left int, right int) bool {

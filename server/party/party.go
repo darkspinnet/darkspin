@@ -187,7 +187,13 @@ func (e *Service) Invite(ctx context.Context, req InviteRequest) (Snapshot, erro
 	if _, isMember := party.members[req.Inviter.ID]; !isMember {
 		return Snapshot{}, fmt.Errorf("inviteAuthority: %w", ErrNotAuthorized)
 	}
-	if _, isMember := party.members[req.Invitee.ID]; isMember || e.partyIDByUser[req.Invitee.ID] != 0 {
+	if _, isMember := party.members[req.Invitee.ID]; isMember {
+		// A returning native client may need an ordinary invitation and Join
+		// callback to reconstruct its local party. Delivery does not renew or
+		// mutate membership, invitations, or the party revision.
+		return snapshot(party), nil
+	}
+	if e.partyIDByUser[req.Invitee.ID] != 0 {
 		return Snapshot{}, fmt.Errorf("inviteJoined: %w", ErrAlreadyMember)
 	}
 	if len(party.members) >= MaximumMembers {

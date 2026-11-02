@@ -98,9 +98,10 @@ func (e *debugEventLoop) detach() error {
 
 func launchInjected(
 	ctx context.Context, gamePath, gameWorkingDirectory, fangPath string,
-	gameArguments []string, serverAddress string, _ wineLaunchEnvironment,
+	gameArguments []string, serverAddress string, wineLaunch wineLaunchEnvironment,
 ) (err error) {
-	process, err := startInjectedProcess(ctx, gamePath, gameWorkingDirectory, fangPath, gameArguments, serverAddress, nil)
+	observer := debugDetachedLaunchObserver()
+	process, err := startInjectedProcess(ctx, gamePath, gameWorkingDirectory, fangPath, gameArguments, serverAddress, observer, wineLaunch.modManifest)
 	if err != nil {
 		return fmt.Errorf("launchStart: %w", err)
 	}
@@ -108,7 +109,7 @@ func launchInjected(
 	defer process.closeOnFailure(&err)
 	cancellation := process.watch(ctx)
 	defer cancellation.stop()
-	err = process.resume(ctx, nil)
+	err = process.resume(ctx, observer)
 	if err != nil {
 		return fmt.Errorf("launchResume: %w", err)
 	}
@@ -126,6 +127,10 @@ func launchInjected(
 		return fmt.Errorf("exitCode: %w", err)
 	}
 	if exitCode != 0 {
+		reportErr := writeClientExitFailure(process.processID, exitCode)
+		if reportErr != nil {
+			return fmt.Errorf("exitReport: %w", errors.Join(gameExitError(exitCode), reportErr))
+		}
 		return gameExitError(exitCode)
 	}
 	return nil
@@ -137,9 +142,14 @@ type injectedLaunchObserver interface {
 	AfterResume(ctx context.Context, processID uint32) error
 }
 
+// Optional per-child overrides avoid mutating process-global launch state.
+type injectedEnvironmentProvider interface {
+	GameEnvironment() map[string]string
+}
+
 func startInjectedProcess(
 	ctx context.Context, gamePath, gameWorkingDirectory, fangPath string,
-	gameArguments []string, serverAddress string, observer injectedLaunchObserver,
+	gameArguments []string, serverAddress string, observer injectedLaunchObserver, modManifests ...string,
 ) (ownedProcess *injectedProcess, err error) {
 	err = ctx.Err()
 	if err != nil {
@@ -156,7 +166,13 @@ func startInjectedProcess(
 	}
 	startup := windows.StartupInfo{Cb: uint32(unsafe.Sizeof(windows.StartupInfo{}))}
 	process := windows.ProcessInformation{}
-	environmentBlock := managedGameEnvironment(serverAddress)
+	var environmentEntries map[string]string
+	environmentProvider, isEnvironmentProvided := observer.(injectedEnvironmentProvider)
+	if isEnvironmentProvided {
+		environmentEntries = environmentProvider.GameEnvironment()
+	}
+	isPrivateEnvironment := environmentEntries != nil
+	environmentBlock := managedGameEnvironmentEntries(serverAddress, environmentEntries, modManifests...)
 	creationFlags := uint32(windows.CREATE_DEFAULT_ERROR_MODE | windows.CREATE_SUSPENDED | windows.CREATE_UNICODE_ENVIRONMENT)
 	isWineDebugLaunch := os.Getenv("DARKSPIN_WINE_DEBUG_LAUNCH") == "1"
 	if isWineDebugLaunch {
@@ -170,9 +186,11 @@ func startInjectedProcess(
 	defer ownedProcess.closeOnFailure(&err)
 	cancellation := ownedProcess.watch(ctx)
 	defer cancellation.stop()
-	err = writeClientProcessRegistration(process.ProcessId)
-	if err != nil {
-		return nil, fmt.Errorf("processRegister: %w", err)
+	if !isPrivateEnvironment {
+		err = writeClientProcessRegistration(process.ProcessId)
+		if err != nil {
+			return nil, fmt.Errorf("processRegister: %w", err)
+		}
 	}
 	if isWineDebugLaunch {
 		ownedProcess.stopDebug, err = continueDebugEvents(ctx, process.ProcessId)
@@ -180,9 +198,11 @@ func startInjectedProcess(
 			return nil, fmt.Errorf("debugStart: %w", err)
 		}
 	}
-	err = os.Unsetenv(launchJWTEnvironment)
-	if err != nil {
-		return nil, fmt.Errorf("jwtParentClear: %w", err)
+	if !isPrivateEnvironment {
+		err = os.Unsetenv(launchJWTEnvironment)
+		if err != nil {
+			return nil, fmt.Errorf("jwtParentClear: %w", err)
+		}
 	}
 	moduleHandle, err := injectDLL(ctx, process.Process, fangPath)
 	if err != nil {
@@ -212,21 +232,45 @@ func startInjectedProcess(
 	return ownedProcess, nil
 }
 
-func managedGameEnvironment(serverAddress string) []uint16 {
+func managedGameEnvironment(serverAddress string, modManifests ...string) []uint16 {
+	return managedGameEnvironmentEntries(serverAddress, nil, modManifests...)
+}
+
+func managedGameEnvironmentEntries(serverAddress string, overrides map[string]string, modManifests ...string) []uint16 {
 	managedPrefix := managedLaunchEnvironment + "="
 	serverPrefix := serverAddressEnvironment + "="
 	environmentEntries := make([]string, 0, len(os.Environ())+2)
 	for _, entry := range os.Environ() {
 		upperEntry := strings.ToUpper(entry)
+		separator := strings.IndexByte(upperEntry, '=')
+		if separator > 0 {
+			isOverridden := false
+			for name := range overrides {
+				if strings.EqualFold(name, upperEntry[:separator]) {
+					isOverridden = true
+					break
+				}
+			}
+			if isOverridden {
+				continue
+			}
+		}
 		if strings.HasPrefix(upperEntry, strings.ToUpper(managedPrefix)) ||
-			strings.HasPrefix(upperEntry, strings.ToUpper(serverPrefix)) {
+			strings.HasPrefix(upperEntry, strings.ToUpper(serverPrefix)) ||
+			strings.HasPrefix(upperEntry, "DARKSPIN_MOD_MANIFEST=") {
 			continue
 		}
 		environmentEntries = append(environmentEntries, entry)
 	}
 	environmentEntries = append(environmentEntries, managedPrefix+"1")
+	if len(modManifests) == 1 && modManifests[0] != "" {
+		environmentEntries = append(environmentEntries, "DARKSPIN_MOD_MANIFEST="+modManifests[0])
+	}
 	if serverAddress != "" {
 		environmentEntries = append(environmentEntries, serverPrefix+serverAddress)
+	}
+	for name, contents := range overrides {
+		environmentEntries = append(environmentEntries, name+"="+contents)
 	}
 	sort.Slice(environmentEntries, func(left, right int) bool {
 		return strings.ToUpper(environmentEntries[left]) < strings.ToUpper(environmentEntries[right])

@@ -6,6 +6,9 @@ import (
 	"github.com/darkspinnet/darkspin/server/sporenet"
 )
 
+// Campaign drops span all five genesis types independently of the active squad.
+const campaignLootScienceMask uint32 = 1<<5 - 1
+
 // Native catalog collectors use slot/science intersections and item-level
 // bounds. Class masks belong to equip rules and separate hero-targeted policy.
 func isCampaignRigblockEligible(

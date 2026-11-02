@@ -14,6 +14,28 @@ import (
 
 const poisonNovaCooldownModifierName = "LFPoisonRavager_Support_CooldownUpgradeModifier"
 
+// The upgraded cast announces its available cooldown reset before the
+// inherited point-blank animation and hit, without reserving the reset token.
+func (e gameplayPeerSession) preparePoisonNovaCooldownCue(
+	abilityName string, rank int32, now time.Time,
+) ([]byte, error) {
+	if abilityName != poisonNovaName || (rank != 5 && rank != 6) {
+		return nil, nil
+	}
+	if e.poisonNovaCooldownRun != nil &&
+		now.Before(e.poisonNovaCooldownRun.expiresAt) {
+		return nil, nil
+	}
+	packet, err := raknet.MarshalApplication(raknet.ServerEventMessage{
+		Asset:    util.HashID("Thornado_Spines_Refresh.ServerEventDef"),
+		ObjectID: e.deployedObjectID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("poisonNovaCue: %w", err)
+	}
+	return packet, nil
+}
+
 type poisonNovaCooldownRun struct {
 	objectID   uint32
 	instanceID uint32
@@ -92,7 +114,7 @@ func (e campaignAbilityCommandRuntime) applyPoisonNovaCooldownResetLocked(
 		TargetID:     run.objectID,
 		ModifierGUID: util.HashID(poisonNovaCooldownModifierName),
 		InstanceID:   instanceID, DurationMilliseconds: uint32(duration.Milliseconds()),
-		StackCount: 1, StartMilliseconds: timestamp, SourceID: run.objectID,
+		StackCount: 1, StartMilliseconds: timestamp, NPCAffixAssetID: 0,
 	})
 	if err != nil {
 		_ = e.modifierPool.Release(instanceID)

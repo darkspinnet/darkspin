@@ -162,7 +162,18 @@ func snapshotSession(
 		}
 	}
 	state.PendingPacketCount = len(state.PendingPackets)
+	state.ArenaLoading = snapshotArenaLoading(peerSession)
+	state.PlayerControl = snapshotPlayerControl(peerSession, capturedAt)
+	state.Cooldowns = snapshotCooldowns(peerSession, capturedAt)
+	state.ActionSchedules = snapshotActionSchedules(peerSession)
+	state.Squad = snapshotSquad(peerSession, capturedAt)
+	state.CrystalInventory = snapshotCrystalInventory(peerSession.crystalInventory)
+	state.AbilityRuntimes = snapshotAbilityRuntimes(peerSession, capturedAt)
+	state.HeroSpeed = snapshotHeroSpeed(peerSession)
 	if peerSession.zone == nil {
+		if peerSession.binding.Mode == game.ModeArena {
+			state.Objects = snapshotArenaHero(peerSession, capturedAt)
+		}
 		return state
 	}
 	zoneSnapshot := peerSession.zone.Snapshot()
@@ -178,18 +189,17 @@ func snapshotSession(
 	state.ZoneMemberLimit = zoneSnapshot.MemberLimit
 	state.ClearedSpawnGroupIDs = zoneSnapshot.ClearedSpawnGroupIDs
 	state.IsPopulationPrimed = zoneSnapshot.IsPopulationPrimed
+	if peerSession.zone.Population() != nil {
+		state.EnemyTargetPerSection = peerSession.zone.DirectorDefinition().EnemyPopulationRules.Resolved().EnemiesPerSection
+	}
 	state.IsZoneRestored = zoneSnapshot.IsRestored
 	state.IsObjectiveComplete = zoneSnapshot.IsObjectiveComplete
 	state.ZoneMembers = snapshotZoneMembers(zoneSnapshot.Members)
 	state.DirectorPublications = snapshotDirectorPublications(peerSession)
-	state.PlayerControl = snapshotPlayerControl(peerSession, capturedAt)
-	state.Cooldowns = snapshotCooldowns(peerSession, capturedAt)
-	state.ActionSchedules = snapshotActionSchedules(peerSession)
 	state.Deaths = snapshotDeaths(peerSession)
 	state.Objectives = snapshotObjectives(peerSession)
-	state.Squad = snapshotSquad(peerSession, capturedAt)
-	state.CrystalInventory = snapshotCrystalInventory(peerSession.crystalInventory)
-	state.AbilityRuntimes = snapshotAbilityRuntimes(peerSession, capturedAt)
+	state.EnemyDamageTicks = snapshotEnemyDamageTicks(peerSession)
+	state.CryosGeysers = snapshotCryosGeysers(peerSession, capturedAt)
 	state.EncounterStages = snapshotEncounterStages(peerSession)
 	state.Hordes = snapshotHordes(peerSession)
 	state.Boss = snapshotBoss(peerSession)
@@ -217,6 +227,9 @@ func snapshotSession(
 			IsTargetable: hero.HitPoint > 0,
 		}
 		if hero.ObjectID == peerSession.deployedObjectID {
+			if peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures)) {
+				object.NounID = peerSession.binding.Creatures[peerSession.deployedCreatureIndex].Noun
+			}
 			object.GoalPosition = vector3(peerSession.playerMovementGoal)
 			object.Facing = vector3(peerSession.attackPose.facing)
 			object.TargetPosition = vector3(peerSession.attackPose.targetPosition)
@@ -255,6 +268,7 @@ func snapshotSession(
 		companion := motion.Actor
 		object := snapshot.ObjectState{
 			Kind: "companion", ObjectID: companion.ObjectID,
+			NounID:        companion.Noun,
 			OwnerObjectID: companion.OwnerObjectID, UserID: companion.UserID,
 			PeerGeneration: companion.PeerGeneration,
 			Position:       vec3(companion.Position), HitPoint: companion.HitPoint,
@@ -504,6 +518,8 @@ func snapshotActionScheduleKind(kind zoneaction.ScheduleKind) string {
 		return "crystal"
 	case zoneaction.ScheduleEquipment:
 		return "equipment"
+	case zoneaction.ScheduleQuestCrystal:
+		return "quest-crystal"
 	default:
 		return fmt.Sprintf("unknown-%d", kind)
 	}
@@ -692,19 +708,22 @@ func snapshotAbilityRuntimes(
 		}
 	}
 	states = appendActiveAbilityRuntime(states, "basic_attack", peerSession.basicAttack != nil)
+	states = appendActiveAbilityRuntime(states, "sage_passive", peerSession.sagePassive != nil)
 	states = appendActiveAbilityRuntime(states, "channel_drain", peerSession.heroDrain != nil)
 	states = appendActiveAbilityRuntime(states, "timed_area", peerSession.heroTimedArea != nil)
 	states = appendActiveAbilityRuntime(states, "channel_area", peerSession.heroChannelArea != nil)
 	states = appendActiveAbilityRuntime(states, "quantum_blink", peerSession.heroQuantumBlink != nil)
 	states = appendActiveAbilityRuntime(states, "fire_tempest", peerSession.fireTempestActive != nil)
 	states = appendActiveAbilityRuntime(states, "plasma_sentinel", peerSession.plasmaSentinelActive != nil)
-	states = appendActiveAbilityRuntime(states, "infection", peerSession.heroInfection != nil)
+	states = appendActiveAbilityRuntime(states, "infection", len(peerSession.heroInfections) != 0)
 	states = appendActiveAbilityRuntime(states, "healing_ticks", peerSession.heroHealingTicks != nil)
 	states = appendActiveAbilityRuntime(states, "charge", peerSession.heroCharge != nil)
 	states = appendActiveAbilityRuntime(states, "electron_sphere", peerSession.sphereAttack != nil)
 	states = appendActiveAbilityRuntime(states, "tree_of_life", peerSession.treeOfLifeRun != nil)
 	states = appendAbilityObjectRuntime(states, "electron_sphere_object", peerSession.sphereObjectID)
-	states = appendAbilityObjectRuntime(states, "field_medic_drone", peerSession.fieldMedicDroneObjectID)
+	for _, objectID := range peerSession.fieldMedicDroneObjectIDs {
+		states = appendAbilityObjectRuntime(states, "field_medic_drone", objectID)
+	}
 	states = appendAbilityObjectRuntime(states, "beast_pet", peerSession.beastPetObjectID)
 	states = appendAbilityObjectRuntime(states, "tree_of_life_object", peerSession.treeOfLifeObjectID)
 	states = appendAbilityObjectRuntime(states, "lightspeed_effect", peerSession.lightspeedEffectObjectID)
@@ -901,9 +920,9 @@ func snapshotProjectileObjects(
 	for _, burstRun := range peerSession.heroBurstAttacks {
 		collectSnapshotBurstProjectiles(projectilesByID, burstRun, capturedAt)
 	}
-	collectSnapshotProjectile(
-		projectilesByID, peerSession.fieldMedicDroneAttack, capturedAt,
-	)
+	for _, attack := range peerSession.fieldMedicDroneAttacks {
+		collectSnapshotProjectile(projectilesByID, attack, capturedAt)
+	}
 	if peerSession.fireTempestActive != nil {
 		collectSnapshotProjectile(
 			projectilesByID, peerSession.fireTempestActive.attack, capturedAt,

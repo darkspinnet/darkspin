@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/buildinfo"
 	"github.com/darkspinnet/darkspin/server/sporenet"
 )
 
@@ -25,8 +26,10 @@ const (
 )
 
 type desktopGrant struct {
-	identity  string
-	expiresAt time.Time
+	identity      string
+	accountID     int64
+	expiresAt     time.Time
+	clientVersion string
 }
 
 // LocalBroker substitutes loopback identity approval for OAuth in development.
@@ -34,6 +37,7 @@ type LocalBroker struct {
 	issuer         *JWTIssuer
 	host           string
 	accountManager accountManager
+	isDedicated    bool
 	logger         *log.Logger
 	now            func() time.Time
 	mu             sync.Mutex
@@ -43,6 +47,7 @@ type LocalBroker struct {
 type accountManager interface {
 	RegisterDesktop(context.Context, sporenet.Registration) (*sporenet.User, error)
 	Authenticate(context.Context, string, string) (sporenet.UserIdentity, error)
+	ResolveDesktop(context.Context, string) (sporenet.UserIdentity, error)
 	DeleteProfile(context.Context, string) error
 }
 
@@ -60,6 +65,19 @@ func NewAccountBroker(
 		return nil, errors.New("create account broker: nil account manager")
 	}
 	return newBroker(issuer, host, accountManager, logger)
+}
+
+// NewDedicatedBroker requires account credentials from every desktop client,
+// including connections arriving through a local container bridge or proxy.
+func NewDedicatedBroker(
+	issuer *JWTIssuer, host string, accountManager accountManager, logger *log.Logger,
+) (*LocalBroker, error) {
+	broker, err := NewAccountBroker(issuer, host, accountManager, logger)
+	if err != nil {
+		return nil, fmt.Errorf("dedicatedBroker: %w", err)
+	}
+	broker.isDedicated = true
+	return broker, nil
 }
 
 func newBroker(
@@ -88,7 +106,7 @@ func (b *LocalBroker) Handler() http.Handler {
 	mux.HandleFunc("/api/desktop/profile", b.profile)
 	mux.HandleFunc("/api/desktop/exchange", b.exchange)
 	mux.HandleFunc("/api/desktop/delete", b.delete)
-	return mux
+	return b.compatibleRequests(mux)
 }
 
 func (b *LocalBroker) profile(writer http.ResponseWriter, request *http.Request) {
@@ -111,13 +129,14 @@ func (b *LocalBroker) profile(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	identity := strings.TrimSpace(payload.Account)
-	if identity == "" || payload.Password == "" || len(identity) > 320 {
-		writeAuthError(writer, http.StatusBadRequest, "account and password are required")
+	err = validateDesktopLogin(identity, payload.Password, true)
+	if err != nil {
+		writeAuthError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
 	profile, err := b.accountManager.Authenticate(request.Context(), identity, payload.Password)
 	if err != nil || profile.LoginName == "" {
-		writeAuthError(writer, http.StatusUnauthorized, "invalid account or password")
+		b.writeDesktopAuthenticationError(writer, err)
 		return
 	}
 	writeAuthJSON(writer, http.StatusOK, map[string]any{"profile": desktopProfile(profile)})
@@ -143,13 +162,14 @@ func (b *LocalBroker) delete(writer http.ResponseWriter, request *http.Request) 
 		return
 	}
 	identity := strings.TrimSpace(payload.Account)
-	if identity == "" || payload.Password == "" || len(identity) > 320 {
-		writeAuthError(writer, http.StatusBadRequest, "account and password are required")
+	err = validateDesktopLogin(identity, payload.Password, true)
+	if err != nil {
+		writeAuthError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
 	profile, err := b.accountManager.Authenticate(request.Context(), identity, payload.Password)
 	if err != nil || profile.LoginName == "" {
-		writeAuthError(writer, http.StatusUnauthorized, "invalid account or password")
+		b.writeDesktopAuthenticationError(writer, err)
 		return
 	}
 	err = b.accountManager.DeleteProfile(request.Context(), profile.LoginName)
@@ -188,19 +208,22 @@ func (b *LocalBroker) start(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	identity = strings.TrimSpace(payload.Account)
-	if identity == "" || len(identity) > 320 {
-		writeAuthError(writer, http.StatusBadRequest, "invalid account")
+	err = validateDesktopLogin(identity, payload.Password, !isLoopback)
+	if err != nil {
+		writeAuthError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
 	profile := sporenet.UserIdentity{LoginName: identity, DisplayName: identity}
 	if !isLoopback {
-		if payload.Password == "" {
-			writeAuthError(writer, http.StatusUnauthorized, "password is required")
-			return
-		}
 		profile, err = b.accountManager.Authenticate(request.Context(), identity, payload.Password)
 		if err != nil {
-			writeAuthError(writer, http.StatusUnauthorized, "invalid account or password")
+			b.writeDesktopAuthenticationError(writer, err)
+			return
+		}
+	} else if b.accountManager != nil {
+		profile, err = b.accountManager.ResolveDesktop(request.Context(), identity)
+		if err != nil {
+			b.writeDesktopAuthenticationError(writer, err)
 			return
 		}
 	}
@@ -210,7 +233,10 @@ func (b *LocalBroker) start(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	b.mu.Lock()
-	b.grants[code] = desktopGrant{identity: identity, expiresAt: b.now().Add(desktopCodeLifetime)}
+	b.grants[code] = desktopGrant{
+		identity: profile.LoginName, accountID: profile.ID, expiresAt: b.now().Add(desktopCodeLifetime),
+		clientVersion: strings.TrimSpace(request.Header.Get(ClientVersionHeader)),
+	}
 	b.mu.Unlock()
 	result = "approved"
 	writeAuthJSON(writer, http.StatusOK, map[string]any{
@@ -220,7 +246,7 @@ func (b *LocalBroker) start(writer http.ResponseWriter, request *http.Request) {
 
 func (b *LocalBroker) register(writer http.ResponseWriter, request *http.Request) {
 	isLoopback, isAllowed := b.requestAccess(request)
-	if !isAllowed {
+	if !isAllowed || b.accountManager == nil {
 		writeAuthError(writer, http.StatusForbidden, "local network request required")
 		return
 	}
@@ -240,14 +266,19 @@ func (b *LocalBroker) register(writer http.ResponseWriter, request *http.Request
 		writeAuthError(writer, http.StatusBadRequest, "invalid request")
 		return
 	}
-	if !isLoopback && payload.Password == "" {
-		writeAuthError(writer, http.StatusBadRequest, "password is required")
-		return
-	}
 	identity := strings.TrimSpace(payload.Account)
 	displayName := strings.TrimSpace(payload.DisplayName)
-	if identity == "" || displayName == "" || len(identity) > 320 || len(displayName) > 320 {
-		writeAuthError(writer, http.StatusBadRequest, "invalid account")
+	err = validateDesktopLogin(identity, payload.Password, !isLoopback)
+	if err != nil {
+		writeAuthError(writer, http.StatusBadRequest, err.Error())
+		return
+	}
+	if displayName == "" {
+		writeAuthError(writer, http.StatusBadRequest, "Display name is required.")
+		return
+	}
+	if len(displayName) > 320 {
+		writeAuthError(writer, http.StatusBadRequest, "Display name is too long (maximum 320 UTF-8 bytes).")
 		return
 	}
 	user, err := b.accountManager.RegisterDesktop(request.Context(), sporenet.Registration{
@@ -255,7 +286,7 @@ func (b *LocalBroker) register(writer http.ResponseWriter, request *http.Request
 		AvatarID: payload.AvatarID, IsTutorialSkipped: payload.IsTutorialSkipped,
 	})
 	if err != nil {
-		writeAuthError(writer, http.StatusConflict, err.Error())
+		writeDesktopRegistrationError(writer, err)
 		return
 	}
 	view := user.View()
@@ -268,7 +299,7 @@ func (b *LocalBroker) register(writer http.ResponseWriter, request *http.Request
 }
 
 func (b *LocalBroker) exchange(writer http.ResponseWriter, request *http.Request) {
-	_, isAllowed := b.requestAccess(request)
+	isLoopback, isAllowed := b.requestAccess(request)
 	if !isAllowed {
 		writeAuthError(writer, http.StatusForbidden, "local network request required")
 		return
@@ -293,7 +324,19 @@ func (b *LocalBroker) exchange(writer http.ResponseWriter, request *http.Request
 		writeAuthError(writer, http.StatusUnauthorized, "invalid or expired code")
 		return
 	}
-	token, err := b.issuer.Issue(grant.identity, launchTokenLifetime)
+	if !isLoopback || grant.clientVersion != "" {
+		err = buildinfo.CheckCompatibility(grant.clientVersion, buildinfo.Version)
+		if err != nil {
+			writeAuthError(writer, http.StatusConflict, err.Error())
+			return
+		}
+	}
+	token := ""
+	if b.accountManager != nil {
+		token, err = b.issuer.IssueForAccount(grant.identity, grant.accountID, launchTokenLifetime, grant.clientVersion)
+	} else {
+		token, err = b.issuer.IssueForVersion(grant.identity, launchTokenLifetime, grant.clientVersion)
+	}
 	if err != nil {
 		writeAuthError(writer, http.StatusInternalServerError, "token generation failed")
 		return
@@ -312,6 +355,9 @@ func (b *LocalBroker) requestAccess(request *http.Request) (bool, bool) {
 	ip := net.ParseIP(address)
 	if ip == nil {
 		return false, false
+	}
+	if b.isDedicated {
+		return false, b.accountManager != nil && (ip.IsGlobalUnicast() || ip.IsLoopback())
 	}
 	if ip.IsLoopback() {
 		_, expectedPort, expectedErr := net.SplitHostPort(b.host)

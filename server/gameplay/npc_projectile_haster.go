@@ -79,6 +79,7 @@ func (r campaignNPCActionRuntime) produceHasterProjectile(
 	if planErr != nil {
 		profile, isProfileFound := zonenpc.ActionProfileForNoun(enemy.Plan.NounName)
 		attackProfile := zonenpc.ZelemHasterAttackProfile()
+		attackProfile = zonenpc.ApplyAffixTiming(attackProfile, enemy.Plan)
 		if isProfileFound && profile.Family == zonenpc.ActionZelemHaster {
 			attackProfile.MovementSpeed = profile.MovementSpeed
 			attackProfile.NonCombatMovementSpeed = profile.NonCombatMovementSpeed
@@ -117,7 +118,7 @@ func (r campaignNPCActionRuntime) produceHasterProjectile(
 		return nil, errors.New("enemy random unavailable")
 	}
 	result, commitErr := zonenpc.CommitAttack(
-		peerSession.zone.NPCRandom(), plan, enemy.Plan.NPCProfile.CriticalRating, r.program.Critical,
+		peerSession.zone.NPCRandom(), plan, enemy.EffectiveCriticalRating(), r.program.Critical,
 	)
 	if commitErr != nil {
 		r.registry.mutex.Unlock()

@@ -4,6 +4,7 @@ package main
 
 import (
 	"archive/zip"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,13 +18,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/darkspinnet/darkspin/window"
 	"github.com/magefile/mage/mg"
 	"github.com/magefile/mage/sh"
 )
 
 // releaseSemver is the single source of truth for Dark Spin release versions.
 // Build targets inject it without rewriting application or frontend sources.
-const releaseSemver = "1.1.5"
+const releaseSemver = "1.2.1"
 
 const binaryName = "darkrun.exe"
 
@@ -259,6 +261,15 @@ func buildFang(isDiagnostics, isScenario bool, linkerFlags string) error {
 	}
 	fangPath := filepath.Join("bin", "game", "fang.dll")
 	environment := map[string]string{"GOOS": "windows", "GOARCH": "386", "CGO_ENABLED": "1"}
+	// cgo does not track included headers outside each package directory.
+	// Include all Fang header contents in the C action key across feature packages.
+	headerSources, err := fangHeaderSources(filepath.Join("app", "fang"))
+	if err != nil {
+		return fmt.Errorf("fangHeaders: %w", err)
+	}
+	headerDigest := sha256.Sum256([]byte(strings.Join(headerSources, "\x00")))
+	environment["CGO_CFLAGS"] = strings.TrimSpace(os.Getenv("CGO_CFLAGS") +
+		fmt.Sprintf(" -DFANG_HEADER_REVISION=0x%x", headerDigest[:8]))
 	arguments := []string{"build", "-ldflags", "-s -w " + linkerFlags, "-buildmode=c-shared", "-o", fangPath}
 	buildTags := ""
 	if isDiagnostics {
@@ -277,7 +288,7 @@ func buildFang(isDiagnostics, isScenario bool, linkerFlags string) error {
 		}
 		environment["CC"] = compiler
 	}
-	err := sh.RunWithV(
+	err = sh.RunWithV(
 		environment,
 		"go", arguments...,
 	)
@@ -290,6 +301,34 @@ func buildFang(isDiagnostics, isScenario bool, linkerFlags string) error {
 		return fmt.Errorf("headerRemove: %w", err)
 	}
 	return nil
+}
+
+func fangHeaderSources(directory string) ([]string, error) {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return nil, fmt.Errorf("headerList: %w", err)
+	}
+	headerSources := make([]string, 0)
+	for _, entry := range entries {
+		path := filepath.Join(directory, entry.Name())
+		if entry.IsDir() {
+			childSources, childErr := fangHeaderSources(path)
+			if childErr != nil {
+				return nil, fmt.Errorf("headerChild: %w", childErr)
+			}
+			headerSources = append(headerSources, childSources...)
+			continue
+		}
+		if filepath.Ext(path) != ".h" {
+			continue
+		}
+		headerSource, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil, fmt.Errorf("headerRead: %w", readErr)
+		}
+		headerSources = append(headerSources, filepath.ToSlash(path), string(headerSource))
+	}
+	return headerSources, nil
 }
 
 func buildLauncher(linkerFlags string) error {
@@ -665,9 +704,13 @@ func (Darkspinner) Build() error {
 	return nil
 }
 
-// BuildRun builds and then launches the all-in-one desktop runtime.
+// BuildRun closes running Darkspinner instances, builds, and launches the runtime.
 func (e Darkspinner) BuildRun() error {
-	err := e.Build()
+	err := stopDarkSpinnerInstances()
+	if err != nil {
+		return fmt.Errorf("darkSpinnerStop: %w", err)
+	}
+	err = e.Build()
 	if err != nil {
 		return fmt.Errorf("darkSpinnerBuildRunBuild: %w", err)
 	}
@@ -679,6 +722,39 @@ func (e Darkspinner) BuildRun() error {
 	if err != nil {
 		return fmt.Errorf("darkSpinnerBuildRunLaunch: %w", err)
 	}
+	return nil
+}
+
+func stopDarkSpinnerInstances() error {
+	binaryName := darkSpinnerBinaryName
+	if runtime.GOOS != "windows" {
+		binaryName = darkSpinnerLinuxBinaryName
+	}
+	processIDs, err := window.Running(binaryName)
+	if err != nil {
+		return fmt.Errorf("processList: %w", err)
+	}
+	if len(processIDs) == 0 {
+		return nil
+	}
+	fmt.Printf("Closing %d running Darkspinner instance(s) before rebuilding...\n", len(processIDs))
+	stopErrors := make([]error, 0, len(processIDs))
+	for _, processID := range processIDs {
+		err = window.StopProcess(processID)
+		if err != nil {
+			stopErrors = append(stopErrors, fmt.Errorf("processStop[%d]: %w", processID, err))
+		}
+	}
+	remainingIDs, err := window.Running(binaryName)
+	if err != nil {
+		return fmt.Errorf("processVerify: %w", err)
+	}
+	if len(remainingIDs) != 0 {
+		stopErrors = append(stopErrors, fmt.Errorf("Darkspinner processes still running: %v", remainingIDs))
+		return fmt.Errorf("processExit: %w", errors.Join(stopErrors...))
+	}
+	// Stopping a supervisor can also stop another snapshotted instance. A stale
+	// PID failure is harmless once the final process inventory confirms exit.
 	return nil
 }
 
@@ -882,6 +958,17 @@ func runVersionedWailsBuild(projectPath string, arguments ...string) error {
 	if err != nil {
 		return fmt.Errorf("configDecode: %w", err)
 	}
+	projectName, isName := projectFields["name"].(string)
+	if !isName || projectName == "" {
+		return errors.New("config name must be a nonempty string")
+	}
+	// Wails generates bindings with the host architecture before it recreates
+	// its target resource. An interrupted cross-build can leave this file behind.
+	resourcePath := filepath.Join(projectPath, strings.ReplaceAll(projectName, " ", "_")+"-res.syso")
+	err = os.Remove(resourcePath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("resourceRemove: %w", err)
+	}
 	infoFields := make(map[string]any)
 	configuredInfo, isFound := projectFields["info"]
 	if isFound {
@@ -1020,7 +1107,6 @@ func (Darkrun) Server() error {
 	arguments := []string{
 		"server",
 		"--game-path", installPath,
-		"--trace", "server.jsonl",
 	}
 	command := exec.Command(binaryPath, arguments...)
 	command.Dir = filepath.Dir(binaryPath)

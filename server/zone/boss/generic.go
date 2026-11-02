@@ -80,7 +80,7 @@ func PlanNamedEncounter(
 		return game.CampaignDirectorPublication{}, nil, firstObjectID,
 			errors.New("named boss plan: boss anchor unavailable")
 	}
-	namedBossNoun, isNamedBoss := NamedBossNoun(chainLevelIndex, director.Level)
+	namedBossNoun, isNamedBoss := NamedBossNounForDirector(director, chainLevelIndex)
 	if isNamedBoss && IsFinalBossNoun(namedBossNoun) {
 		// Shared named-event listeners also contain captain-wave anchors.
 		// Destructors own their summons; these anchors are not opening adds.
@@ -150,7 +150,12 @@ func PlanNamedEncounter(
 			)
 	}
 	isCaptain := !IsFinalBossNoun(leader.NounName)
-	profile := zonenpc.ApplyEliteProfile(leader.NPCProfile)
+	profile := leader.NPCProfile
+	if isCaptain {
+		profile = zonenpc.ApplyCaptainProfile(profile, bossIdentity)
+	} else {
+		profile = zonenpc.ApplyEliteProfile(profile)
+	}
 	plan := []zonenpc.SpawnPlan{{
 		ObjectID:      firstObjectID,
 		NounName:      leader.NounName,

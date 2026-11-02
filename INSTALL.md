@@ -22,6 +22,7 @@
 - `app/darkspinner` is the standalone desktop application that manages local
   authentication, server lifecycle, profiles, patching, and game launch.
 - `app/fang` builds the injected `fang.dll` compatibility hook.
+  Its feature directories and camera usage are documented in [the Fang source layout](app/fang/README.md).
 - `app/palp` builds the storage-independent `wasmauth.wasm` authentication
   bridge.
 
@@ -36,6 +37,65 @@ into the patch engine.
 The root `window` package owns Windows process discovery, termination, taskbar
 restoration, and single-instance replacement. Desktop applications provide
 their executable names and dialog text without duplicating Win32 operations.
+
+## Headless container deployment
+
+The headless server requires PostgreSQL for player storage and runs account login and gameplay together in one process. Provide a readable build-103 installation and keep it available for content rebuilds; startup creates its internal TOML settings, authentication secret, and missing PostgreSQL tables. A separate `darkrun auth` process is not needed. New Darkrun configurations require account passwords and default to loopback. On a native host, provision a PostgreSQL database and role with table-creation permission, then export its connection settings before starting:
+
+```sh
+export PGHOST=database.example PGDATABASE=darkspin PGUSER=darkspin
+export PGPASSWORD='replace-with-your-password' PGSSLMODE=verify-full
+DARKSPIN_ADVERTISED_HOST=192.0.2.10 DARKSPIN_GAME_PATH=/path/to/Game darkrun server --dedicated
+```
+
+Replace `192.0.2.10` with the IPv4 address players can reach. Later starts reuse saved network settings, but keep `DARKSPIN_GAME_PATH` set on every invocation (or use the installation beside the executable). Environment settings use the existing CLI parsing and saved configuration, with precedence **explicit CLI flags → nonempty environment settings → persisted settings or defaults**. Empty environment settings are ignored; reset optional saved settings explicitly with CLI flags, such as `--content-path=""` or `--bind-host=""`.
+
+| Environment setting | Equivalent flag | Purpose |
+| --- | --- | --- |
+| `DARKSPIN_ADVERTISED_HOST` | `--advertised-host` | IPv4 address players can reach; saved internally. |
+| `DARKSPIN_GAME_PATH` | `--game-path` | Required installed build-103 client used to rebuild missing or stale `content.db` and web assets automatically on startup; the installation is read-only. |
+| `DARKSPIN_CONTENT_PATH` | `--content-path` | Native generated-cache directory containing `content.db` and `www/static`; Compose fixes this to `/darkspin/runtime/darkspin/cache`. |
+| `DARKSPIN_CONFIG_PATH` | `--config` | Persistent settings file; player saves and diagnostics live in its sibling `darkspin` directory. |
+| `DARKSPIN_BIND_HOST` | `--bind-host` | Listener IPv4 address; saved internally. |
+| `DARKSPIN_PORT` | `--port` | Shared TCP/UDP port, from 1 to 65534; saved internally. |
+| `DARKSPIN_IS_DEDICATED` | `--dedicated` | Password-required login mode (`true` or `false`); saved internally. |
+
+The game path is only a preparation source, never a destination for writes. Darkrun and Darkspinner call the same content preparation routine: valid caches are reused, while missing or stale caches are rebuilt from this path before server listeners start. Keep the source mount available across upgrades for automatic rebuilds. Headless startup and update preflight validate the source version and required package indexes even when caches are current; copied caches cannot replace the required installation. A failed database import leaves the previous database in place and stops startup. Relative content-path options are saved as absolute paths. Config and content paths remain internal TOML-backed settings where applicable; environment variables provide startup inputs rather than a separate configuration store.
+
+The server holds an operating-system lock for its runtime through preparation, startup and shutdown. Another correctly configured `darkrun server` invocation for that runtime reports that an instance is running or starting and exits without changing its settings or opening another database. This is an ownership check, not a readiness or gameplay check. Stop the owner before changing startup settings or using `--prepare-only`. The lock file may remain after exit; the operating system releases the lock when the process exits. Keep one server service per runtime and PostgreSQL player database.
+
+Add `--prepare-only` to generate settings and prepare or verify content without opening server listeners. The same setup fields are editable through Darkspinner's Config interface. Connect from another Darkspinner using its Remote Servers account flow; dedicated mode requires a password even for loopback connections. Existing passwordless local profiles must not be used as dedicated login credentials.
+
+When reusing an existing local configuration, explicitly set `DARKSPIN_IS_DEDICATED=true` once to switch it to password-required login. A new configuration enables this automatically. Local preparation and serving auth/game traffic run in the same process; no separate `darkrun auth` service is needed.
+
+## Downloadable Compose setup
+
+Use the [Compose setup guide](deployment/README.md) for the [unstable setup ZIP](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-compose-unstable.zip), required game mount, PostgreSQL initialization, and persistent storage. Stable setup is not available yet.
+
+Compose always provisions PostgreSQL with a persistent named volume and starts `darkrun bootstrap` after database readiness. The container downloads and verifies its initial binary into the writable runtime mount. Bootstrap supervises the server, captures a compressed `pg_dump` alongside stopped-runtime file backups, and restores the matching database and files if an update fails its first boot. The infrastructure image includes PostgreSQL 18 client tools.
+
+Mount the complete `darkspin/` directory containing `bin/darkrun`, `runtime/`, and `backup/`. Configuration lives at `runtime/darkspin.toml`; live PostgreSQL data lives in its separate named volume, and completed snapshots include `backup/<date>/<snapshot>/postgres.dump`. The game installation remains a required read-only mount at `/game`. See the guide before migrating an older runtime layout; existing SQLite players are not imported automatically.
+
+## Packaging and source development
+
+Package the standalone setup without building application binaries:
+
+```sh
+mage darkrun:compose
+```
+
+This creates `bin/deployment/darkrun-compose-v<version>.zip` and an allowlisted bundle containing `compose.yaml`, `.env.example`, `README.md`, and `VERSION`. It excludes local settings, binaries, backups, game assets and saves. `DARKSPIN_BUILD_VERSION` sets the bundle version; `DARKSPIN_COMPOSE_IMAGE` optionally sets the infrastructure image reference.
+
+`main-build` publishes the setup ZIP and Linux binary/manifest artifacts. The manifest pins the executable's SHA-256 and immutable Actions artifact URL. A separate `bootstrap-image` workflow publishes the infrastructure image only when its inputs change or it is manually dispatched.
+
+For local infrastructure development:
+
+```sh
+cd deployment
+docker compose -f compose.yaml -f compose.build.yaml build darkrun
+```
+
+The deployment Dockerfile installs only download tools and the initial-install entry point. Its build context is `deployment/`, allowlisted to the Dockerfile and entry point. Application source is not compiled into this image. Container startup, updates and multiplayer behavior require runtime validation; source and packaging checks alone do not establish readiness.
 
 ## Run
 
@@ -64,9 +124,13 @@ mage tutorial:debug
 runs the server with `bin/server` as its working directory. That directory also
 contains `darkspin.toml`, server data, and the generated `darkspin` runtime
 directory.
-The Mage target supplies the repository-local `bin/game` installation and writes
-the default server protocol trace to
-`bin/server/darkspin/logs/traces/server.jsonl`.
+The Mage target supplies the repository-local `bin/game` installation. Normal
+server and launcher runs do not write a continuous server protocol trace.
+Use `darkrun server --trace server.jsonl` for an explicit capture beneath
+`darkspin/logs/traces`; Lua diagnostic sessions and `mage tutorial:debug` also
+request protocol captures. Sync Snapshot's rolling gameplay history and `/bug`
+capture do not depend on that file. The protocol trace adds HTTP, Blaze, and QoS
+metadata that is distinct from the snapshot's gameplay traffic.
 Generated IDA and game reverse-engineering logs belong under `bin/game/logs`.
 
 `mage darkspin:auth` rebuilds darkspin and runs `darkspin auth --local` from `bin/server`.
@@ -75,7 +139,19 @@ The auth broker and game server read the same `[auth]` settings from
 
 The DarkSpinner all-in-one Wails application builds into `bin/game`, beside `DarksporeBin` and `Data`,
 with its own server data, configuration, saves, cache, logs, and traces. It manages local auth,
-the darkspin server, retained player profiles, patch readiness, and game launch:
+the darkspin server, retained player profiles, patch readiness, and game launch.
+
+Launcher preferences share `darkspin.toml` with server settings. Skip-intro and
+skip-cinematic choices persist independently as `is_intro_skipped` and
+`is_cinematic_skipped` in `[launcher]` and are restored on startup. Explicit
+`--skip-intro` and `--skip-cinematic` flags override the saved choices for that
+run without changing them. The Wine runtime
+selection is stored in `[launcher.wine]` as `runtime_path`; the Spore installation
+and detection flag are stored in `[launcher.mod]` as `spore_path` and
+`is_detection_attempted`. Older `darkspin/launcher.toml` and root `launcher.toml`
+files are merged automatically, with existing `darkspin.toml` settings taking
+precedence. The old file is deleted only after the combined configuration is
+successfully saved. Server configuration saves preserve the launcher tables.
 
 ```sh
 mage darkspinner:build
@@ -209,7 +285,8 @@ path. It also selects the bridge's `START` action through the native spaceship
 navigation callback immediately after safely completing the ship tour. It then
 completes the follow-up camera transition and continues directly into the
 Arsenal/squad screen without waiting for input. Omitting both flags preserves
-the original flow.
+the original flow. The first-play prologue and tutorial introduction run even
+when cinematic skipping is enabled.
 
 Mage and the launcher use the repository-local playable installation at
 `bin/game/<Game>Bin/<Game>.exe`. Its game data remains alongside it at
@@ -240,21 +317,20 @@ world_player_limit = 25
 
 `world_player_limit` caps simultaneously authenticated users across the server;
 it is separate from game's four-player limit for an individual Blaze game
-instance. Local SQLite defaults to 25. A future PostgreSQL deployment can raise
+instance. The default is 25. A PostgreSQL deployment can raise
 the value explicitly after sizing the database and server host.
 
-Accepted chat messages are stored in SQLite's `chat_log` table and emitted as
-JSON Lines to stdout and `darkspin/logs/chat.log` by default:
+Accepted chat messages are stored in the selected player database's `chat_log` table and emitted as
+JSON Lines to stdout by default; no separate chat log file is written:
 
 ```toml
 [chat]
 is_stdout_enabled = true
-file_path = "chat.log"
 ```
 
-Relative chat file paths are resolved beneath the fixed `darkspin/logs` directory.
-Set `file_path = ""` to disable file output. The database audit remains enabled
-when the SQLite storage adapter is active.
+Set `is_stdout_enabled = false` to disable stdout output. The database audit
+remains enabled with either SQLite or PostgreSQL. Legacy `file_path`
+settings are ignored.
 
 Persistence uses `darkspin/saves/darkspin.db` for mutable player state and
 `darkspin/cache/content.db` for reference content. SQLite uses WAL mode, foreign keys,
@@ -265,6 +341,12 @@ migration/version bookkeeping during the current destructive development phase:
 [storage]
 driver = "sqlite"
 ```
+
+`darkrun server` requires PostgreSQL and dedicated mode. Set `DARKSPIN_POSTGRES_URL`, or supply the standard `PGHOST`, `PGDATABASE`, and `PGUSER` variables together. `PGPORT`, `PGPASSWORD`, `PGSSLMODE`, `PGSSLROOTCERT`, and `PGCONNECT_TIMEOUT` configure the connection. Missing or partial settings and connection failures stop startup rather than falling back. Connection credentials are never saved to TOML, and desktop local play remains on SQLite.
+
+PostgreSQL stores player profiles, statistics, chat, and mission checkpoints; `content.db` remains local SQLite. Switching storage does not migrate existing data. Use one active server per player database. Linux `darkrun bootstrap` supports scheduled file-plus-`pg_dump` snapshots, binary updates, and matching database restoration. It requires `pg_dump`/`pg_restore`, access to the `postgres` maintenance database, and ownership plus `CREATEDB` (or a superuser) for rollback. Direct `darkrun server` does not schedule backups. See [the Compose guide](deployment/README.md#scheduled-backups-updates-and-recovery) for configuration and recovery details.
+
+Compose always provisions PostgreSQL. `POSTGRES_DB`, `POSTGRES_USER`, and required `POSTGRES_PASSWORD` configure both PostgreSQL initialization and Darkrun's connection. Compose persists PostgreSQL 18 in a named disk volume and waits for database readiness; Darkrun creates its tables at startup. Initialization settings only apply to an empty volume. Ordinary container replacement and `docker compose down` retain data; `down -v` deletes the database volume. SQLite player storage is reserved for desktop local play.
 
 Runtime layout is intentionally implicit: SQLite uses
 `darkspin/saves/darkspin.db` and `darkspin/cache/content.db`, web content is
@@ -296,8 +378,7 @@ when the game exits. A marked proxy left by a crash is removed on the next
 DarkSpinner startup; an unrelated `VERSION.dll` is never overwritten.
 
 Use the built-in database command for focused inspection and updates. It reads
-the storage driver from `darkspin.toml` and resolves the requested table to either
-`darkspin/saves/darkspin.db` or `darkspin/cache/content.db`:
+the configuration and resolves the requested table to either `darkspin/saves/darkspin.db` or `darkspin/cache/content.db`. With a dedicated configuration and PostgreSQL environment settings, `darkrun db` routes player tables to PostgreSQL and content tables to local SQLite. Use the same environment as the running server:
 
 ```sh
 darkspin db user get 1
@@ -440,6 +521,57 @@ boundary.
   catalysts, levels, markersets, noun data, combat, and events
 - pure-Go Lua runtime for the external global and ability scripts
 - server-data extraction/merge support in the `installer` package
+
+## Mutation Agent horde settings
+
+Gameplay policy settings live in `server.toml` beside the selected `darkspin.toml`. The server adds the following section when it is absent. These are adjustable compatibility rules; the original server's horde selection policy has not been recovered.
+
+```toml
+[mutation_agent]
+version = 1
+is_enabled = true
+minimum_chain_level = 7
+wave_count = 3
+spawn_wave = 3
+inter_wave_delay_millisecond = 1500
+is_agent_defeat_completing = true
+```
+
+- `minimum_chain_level` is the one-based campaign index, from 1 to 72; 7 is mission 2-3.
+- `wave_count` accepts 1–10. `spawn_wave` accepts 1 through `wave_count` and adds one Mutation Agent alongside that wave's normal enemies.
+- `inter_wave_delay_millisecond` accepts 0–30000. A disconnect or retry does not shorten the retained deadline.
+- `is_agent_defeat_completing = true` ends the encounter when its Mutation Agent dies, even if other wave members remain. Set it to `false` to require normal wave clearing.
+- Disabling the section's behavior, or playing below its minimum index, retains the earlier ordinary/tutorial horde rules. It does not disable a developer-spawned Mutation Agent's authored abilities.
+
+Use the launcher's **Server Rules → Mutation Agent Hordes** section to edit these settings, then select **Apply Server Rules**. Reload restores the saved settings, and Share to GitHub includes the Mutation Agent section. Changes apply to new missions; existing missions retain their captured policy. Stop the server before editing this file directly, then restart it. Invalid policy ranges reject configuration loading or saving. Authored beam timing, elite bonuses, aura damage, and transformation behavior are not overridden by these settings.
+
+## Deleted profiles and emergency recovery
+
+Deleting a local, modded, or remote Crogenitor marks its account with `trmt_id = 1` and blocks normal login and profile lookup. Its login and display names receive an underscore suffix; repeated deletions use additional underscores so a new account can use the original name. Progress and account data are retained for 120 days from deletion. Launcher/server startup permanently removes expired deleted accounts and their owned data; an already running server does not purge them on a timer.
+
+Emergency recovery is available only through Darkrun against a dedicated server's configured player database. There is no launcher recovery control or local-server undelete command. Stop the dedicated server before recovery so cached account state cannot conflict with the restored record. Use the server's normal PostgreSQL environment settings and configuration path:
+
+```sh
+darkrun db user get trmt_id=1 --config darkspin.toml
+darkrun db user undelete 42 --config darkspin.toml
+```
+
+The command restores the exact retained account ID, including its saved progress and original names. If another account has reclaimed its login, recovery fails without changing either account. Supply an available replacement name to recover it separately:
+
+```sh
+darkrun db user undelete 42 RecoveredName --config darkspin.toml
+```
+
+Alternatively, swap the names of a deleted account and an active replacement before recovery:
+
+```sh
+darkrun db user swap 42 84 --config darkspin.toml
+darkrun db user undelete 42 --config darkspin.toml
+```
+
+The first ID must be deleted and the second active. Swap atomically exchanges login and display names, prints the resulting logins, and keeps passwords, progress, deletion flags, and retention dates attached to their account IDs. For example, deleted `42: Alice_` and active `84: Alice` become deleted `42: Alice` and active `84: Alice_`; the subsequent undelete restores account `42`. Keep the server stopped for both commands.
+
+Recovery cannot restore an account after startup cleanup has permanently removed it. Run the command before restarting if an expired retained account needs emergency recovery.
 
 ## Verify
 

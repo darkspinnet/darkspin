@@ -38,13 +38,15 @@ const (
 type ActionProfile struct {
 	// IsRetainedVolumeDamage admits an already selected world-volume hit without
 	// requiring a current attack owner or treating it as damage over time.
-	IsRetainedVolumeDamage           bool
-	FirstAggroAbilityName            string
-	IsFirstAggroFacingSuppressed     bool
-	IsFacingSuppressed               bool
-	IsFacingPolicyKnown              bool
-	Family                           ActionFamily
-	AbilityName                      string
+	IsRetainedVolumeDamage       bool
+	FirstAggroAbilityName        string
+	IsFirstAggroFacingSuppressed bool
+	IsFacingSuppressed           bool
+	IsFacingPolicyKnown          bool
+	Family                       ActionFamily
+	AbilityName                  string
+	// The selected instance rank stays fixed through its scheduled callbacks.
+	AbilityRank                      int32
 	AnimationName                    string
 	NearAnimationName                string
 	FarAnimationName                 string
@@ -53,12 +55,14 @@ type ActionProfile struct {
 	RecoveryAnimationName            string
 	PreAggroAnimationName            string
 	FirstAggroAnimationName          string
+	FirstAggroAnimationDelay         time.Duration
 	FirstAggroEffectName             string
 	FirstAggroEffectDelay            time.Duration
 	FirstAggroDelay                  time.Duration
 	FirstAggroRevealDelay            time.Duration
 	FirstAggroCinematicDuration      time.Duration
 	FirstAggroCinematicRadius        float32
+	FirstAggroCinematicOffset        game.Vec3
 	HitDelay                         time.Duration
 	ReleaseDelay                     time.Duration
 	Cooldown                         time.Duration
@@ -224,6 +228,7 @@ type FirstActionPlan struct {
 	TargetObjectID   uint32
 	ActionGeneration uint64
 	SourcePosition   game.Vec3
+	SourceFacing     game.Vec3
 	TargetPosition   game.Vec3
 	Profile          ActionProfile
 	IsPursuitNeeded  bool
@@ -239,19 +244,30 @@ func PlanFirstAction(command FirstActionCommand) (FirstActionPlan, bool, error) 
 }
 
 func ActionProfileForPlan(plan SpawnPlan) (ActionProfile, bool) {
+	supportSpells := SupportSpells(plan)
+	if len(supportSpells) != 0 {
+		profile := supportSpells[0].Profile
+		return ApplyAffixTiming(authoredCombatSpeed(plan, IntroductionProfile(plan, profile)), plan), true
+	}
 	if plan.IsActionKnown {
 		profile := zelemSpecialTwoDecisionProfile(plan, plan.ActionProfile)
-		return authoredCombatSpeed(plan, IntroductionProfile(plan, profile)), true
+		return ApplyAffixTiming(
+			authoredCombatSpeed(plan, IntroductionProfile(plan, profile)), plan,
+		), true
 	}
-	profile, isFound := ActionProfileForNoun(plan.NounName)
+	profile, isFound := RecoveredActionProfileForPlan(plan)
 	if isFound {
 		profile = zelemSpecialTwoDecisionProfile(plan, profile)
-		return authoredCombatSpeed(plan, IntroductionProfile(plan, profile)), true
+		return ApplyAffixTiming(
+			authoredCombatSpeed(plan, IntroductionProfile(plan, profile)), plan,
+		), true
 	}
 	if plan.IsFixture || plan.NounName == "" {
 		return ActionProfile{}, false
 	}
-	return authoredCombatSpeed(plan, IntroductionProfile(plan, fallbackActionProfile(plan.NounName))), true
+	return ApplyAffixTiming(authoredCombatSpeed(
+		plan, IntroductionProfile(plan, fallbackActionProfile(plan.NounName)),
+	), plan), true
 }
 
 func authoredCombatSpeed(plan SpawnPlan, profile ActionProfile) ActionProfile {
@@ -407,11 +423,13 @@ func ZelemRangedShotProfile() ActionProfile {
 		ReleaseDelay: 1066667 * time.Microsecond, Cooldown: 5 * time.Second, Range: 12.5,
 		MovementSpeed: 5,
 		MinimumDamage: 2, MaximumDamage: 6, DamageCoefficient: 0.05,
-		ProjectileNoun:   "Ability_Fireball.Noun",
-		TrailEffectName:  "spacetime_shot_effect.ServerEventDef",
-		ImpactEffectName: "spacetime_bite.ServerEventDef",
-		MissEffectName:   "ineffective_common_small.ServerEventDef",
-		ProjectileSpeed:  8, ProjectileDistance: 30,
+		DescriptorMask: 1<<7 | 1<<13, DamageType: 1, DamageSource: 1,
+		IsDamageProfileKnown: true,
+		ProjectileNoun:       "Ability_Fireball.Noun",
+		TrailEffectName:      "spacetime_shot_effect.ServerEventDef",
+		ImpactEffectName:     "spacetime_bite.ServerEventDef",
+		MissEffectName:       "ineffective_common_small.ServerEventDef",
+		ProjectileSpeed:      8, ProjectileDistance: 30,
 		ProjectileOffset: game.Vec3{Z: 1},
 	}
 }
@@ -498,7 +516,7 @@ func noctHopperJumpProfile(
 		HitDelay:               533333 * time.Microsecond,
 		ReleaseDelay:           1900 * time.Millisecond,
 		Cooldown:               1125 * time.Millisecond,
-		Range:                  15,
+		Range:                  50,
 		MinimumRange:           6,
 		Radius:                 4,
 		MovementSpeed:          movementSpeed,
@@ -776,8 +794,8 @@ func citadelBossTwinLaserProfile(nounName string) (ActionProfile, bool) {
 		Family: ActionCone, AbilityName: "TwinLaser",
 		AnimationName:               "ctd_boss_tc_attack2_part_1",
 		FirstAggroAnimationName:     "ctd_boss_tc_aggro",
-		FirstAggroDelay:             7125 * time.Millisecond,
-		FirstAggroCinematicDuration: 7125 * time.Millisecond,
+		FirstAggroDelay:             6979166984 * time.Nanosecond,
+		FirstAggroCinematicDuration: 5979166984 * time.Nanosecond,
 		FirstAggroCinematicRadius:   100,
 		LoopAnimationName:           "ctd_boss_tc_attack2_part_2",
 		EndAnimationName:            "ctd_boss_tc_attack2_part_3",
@@ -843,8 +861,9 @@ func scaldronBossTwinLaserProfile(nounName string) (ActionProfile, bool) {
 		TickDuration:                500 * time.Millisecond,
 		NumberOfTicks:               7,
 		FirstAggroAnimationName:     "sca_boss_aggro",
-		FirstAggroDelay:             14433334 * time.Microsecond,
-		FirstAggroCinematicDuration: 14433334 * time.Microsecond,
+		FirstAggroDelay:             15399999618 * time.Nanosecond,
+		FirstAggroRevealDelay:       500 * time.Millisecond,
+		FirstAggroCinematicDuration: 15399999618 * time.Nanosecond,
 		FirstAggroCinematicRadius:   100,
 		IsDamageProfileKnown:        true,
 		IsFirstAggroDurationKnown:   true,
@@ -892,9 +911,9 @@ func scaldronBossRank(nounName string) int {
 	switch strings.ToLower(nounName) {
 	case "scaldronboss.noun", "scaldronboss_stage2.noun":
 		return 1
-	case "scaldronboss_2.noun":
+	case "scaldronboss_2.noun", "scaldronboss_stage2_2.noun":
 		return 2
-	case "scaldronboss_3.noun":
+	case "scaldronboss_3.noun", "scaldronboss_stage2_3.noun":
 		return 3
 	default:
 		return 0
@@ -1315,7 +1334,7 @@ func NomadWithDroneShieldDuration(nounName string) (time.Duration, bool) {
 }
 
 func NomadDroneLaserProfile(definition sim.AbilityDefinition) (ActionProfile, error) {
-	if definition.Name != "SentryDroneLaser" ||
+	if definition.Name != "NomadDroneLaser" ||
 		definition.Kind != sim.AbilityKindProjectile || definition.Range <= 0 ||
 		definition.HitDelay <= 0 || definition.Cooldown <= 0 ||
 		definition.ProjectileNoun == "" || definition.Speed <= 0 ||
@@ -2397,11 +2416,11 @@ func VerdanthBasicHealerRootedHealProfile(
 func stagnantNovaAboveProfile(cooldown time.Duration) ActionProfile {
 	return ActionProfile{
 		Family: ActionCone, AbilityName: "StagnantNovaAbove",
-		AnimationName:          "burrow_tunnelling",
-		EmergeDelay:            1500 * time.Millisecond,
-		HitDelay:               2800 * time.Millisecond,
-		ReleaseDelay:           3400 * time.Millisecond,
-		Cooldown:               3400*time.Millisecond + cooldown,
+		AnimationName:          "burrow_attack2",
+		EndAnimationName:       "burrow_idle",
+		HitDelay:               600 * time.Millisecond,
+		ReleaseDelay:           1900 * time.Millisecond,
+		Cooldown:               cooldown,
 		Range:                  8,
 		Radius:                 8,
 		Angle:                  360,
@@ -3548,7 +3567,7 @@ func ZelemSpecialTwoActionProfileForPlan(
 		cooldowns := [...]time.Duration{8 * time.Second, 6 * time.Second, 4 * time.Second}
 		profile.Cooldown = cooldowns[rank-1]
 	}
-	return authoredCombatSpeed(plan, profile), nil
+	return ApplyAffixTiming(authoredCombatSpeed(plan, profile), plan), nil
 }
 
 func zelemSpecialTwoRank(plan SpawnPlan) int32 {
@@ -3658,6 +3677,26 @@ func ActionProfileFromAbility(
 }
 
 func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
+	additionalProfile, isAdditional := AdditionalKitProfile(nounName)
+	if isAdditional {
+		return additionalProfile, true
+	}
+	basicProfile, isBasic := basicActorProfile(nounName)
+	if isBasic {
+		return basicProfile, true
+	}
+	frogProfile, isFrog := NomadSpecialFourProfile(nounName)
+	if isFrog {
+		return frogProfile, true
+	}
+	supportSpells := SupportSpells(SpawnPlan{NounName: nounName})
+	if len(supportSpells) != 0 {
+		return supportSpells[0].Profile, true
+	}
+	hauntProfile, isHauntFound := HauntLockdownProfile(nounName)
+	if isHauntFound {
+		return hauntProfile, true
+	}
 	operative, isOperative := OperativeProfile(nounName)
 	if isOperative {
 		return operative, true
@@ -3667,21 +3706,23 @@ func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
 		return fiendProfile, true
 	}
 	switch strings.ToLower(nounName) {
+	case "nomadpets.noun", "nomadpets_2.noun", "nomadpets_3.noun":
+		return NomadPetsMeleeProfile(), true
+	case "nomadfirepet.noun", "nomadfirepet_2.noun", "nomadfirepet_3.noun",
+		"nomadlightningpet.noun", "nomadlightningpet_2.noun", "nomadlightningpet_3.noun",
+		"nomadcyberone_droid.noun", "nomadcyberone_droid_2.noun", "nomadcyberone_droid_3.noun":
+		return AgentChildProfile(nounName, EffectiveNPCRank(SpawnPlan{NounName: nounName})), true
 	case "shadowboss.noun", "shadowboss_2.noun", "shadowboss_3.noun":
 		return NashiraShadowTossProfile(nounName)
 	case "cryosboss.noun", "cryosboss_2.noun", "cryosboss_3.noun":
 		return CryosBossChainLightningProfile(nounName)
-	case "cryosplasmaadd.noun":
-		profile := cryosBasicFieryMeleeProfile(
-			2500*time.Millisecond, 3*time.Second,
-		)
-		profile.PassiveEffectName =
-			"fire_wall_minion_onfire_effect.ServerEventDef"
-		return profile, true
+	case "cryosplasmaadd.noun", "cryosplasmaadd_2.noun", "cryosplasmaadd_3.noun":
+		return PlasmaWallProfile(), true
 	case "citadelboss.noun", "citadelboss_2.noun", "citadelboss_3.noun":
 		return citadelBossTwinLaserProfile(nounName)
-	case "scaldronboss.noun", "scaldronboss_stage2.noun",
-		"scaldronboss_2.noun", "scaldronboss_3.noun":
+	case "scaldronboss_stage2.noun", "scaldronboss_stage2_2.noun", "scaldronboss_stage2_3.noun":
+		return corruptorPoseProfile(0.5), true
+	case "scaldronboss.noun", "scaldronboss_2.noun", "scaldronboss_3.noun":
 		return scaldronBossTwinLaserProfile(nounName)
 	case "citadelspecificfour.noun":
 		return citadelSpecificFourBoltProfile(
@@ -3820,15 +3861,15 @@ func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
 		return citadelSpecialTwoHomingStunProfile(8*time.Second, 10, 5), true
 	case "citadelspecificone.noun":
 		return citadelSpecificOneDischargeProfile(
-			3*time.Second, 12, 39, 41, 6, 4.5,
+			3*time.Second, 12, 3, 5, 6, 4.5,
 		), true
 	case "citadelspecificone_2.noun":
 		return citadelSpecificOneDischargeProfile(
-			2500*time.Millisecond, 15, 40, 42, 9, 6,
+			2500*time.Millisecond, 15, 4, 6, 9, 6,
 		), true
 	case "citadelspecificone_3.noun":
 		return citadelSpecificOneDischargeProfile(
-			2*time.Second, 18, 41, 43, 12, 7.5,
+			2*time.Second, 18, 5, 7, 12, 7.5,
 		), true
 	case "nomadscope.noun", "nomadscope_captain.noun":
 		return nomadScopeBurningDebuffProfile(4 * time.Second), true
@@ -4246,7 +4287,7 @@ func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
 			NonCombatMovementSpeed:    3,
 			IsFirstAggroDurationKnown: true,
 		}, true
-	case "zelembasicranged.noun":
+	case "zelembasicranged.noun", "zelembasicranged_2.noun", "zelembasicranged_3.noun":
 		return ActionProfile{
 			Family: ActionZelemRanged, AbilityName: "ZelemBasicRanged_Blink",
 			AnimationName: "zlm_minn_sp_1_blink_cast3",

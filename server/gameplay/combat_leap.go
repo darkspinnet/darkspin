@@ -25,12 +25,26 @@ type campaignLeapSchedule struct {
 	objectID         uint32
 	timestamp        uint64
 	plan             zonenpc.AttackPlan
+	origin           game.Vec3
+	destination      game.Vec3
+	isHopperNormal   bool
+	isHopperRetreat  bool
+	isHopperJumped   bool
+	hopperDistance   float32
+	flightDuration   time.Duration
+	flightElapsed    time.Duration
 }
 
 func (e campaignLeapSchedule) fail(
 	step string, err error,
 ) ([][]byte, error) {
-	e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
+	if e.actionGeneration != 0 {
+		e.runtime.releaseActionGeneration(
+			e.sessionKey, e.generation, e.objectID, e.actionGeneration,
+		)
+	} else {
+		e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
+	}
 	return nil, fmt.Errorf("%s: %w", step, err)
 }
 
@@ -47,8 +61,9 @@ func (e campaignLeapSchedule) resume(timestamp uint64) ([][]byte, error) {
 func (e campaignLeapSchedule) launch() ([][]byte, error) {
 	e.runtime.registry.mutex.RLock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := isFound && peerSession.isCampaignNPCAttackActiveAt(
-		e.generation, e.objectID, e.plan.TargetObjectID, e.runtime.now(),
+	isCurrent := isFound && peerSession.isCampaignNPCAttackGenerationActiveAt(
+		e.generation, e.objectID, e.plan.TargetObjectID,
+		e.actionGeneration, e.runtime.now(),
 	)
 	if !isCurrent {
 		e.runtime.registry.mutex.RUnlock()
@@ -59,8 +74,10 @@ func (e campaignLeapSchedule) launch() ([][]byte, error) {
 		e.generation, e.plan.TargetObjectID,
 	)
 	e.runtime.registry.mutex.RUnlock()
-	if !isEnemyFound || !isTargetFound {
-		e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
+	if !isEnemyFound || !isTargetFound || enemy.ActionGeneration != e.actionGeneration {
+		e.runtime.releaseActionGeneration(
+			e.sessionKey, e.generation, e.objectID, e.actionGeneration,
+		)
 		return nil, nil
 	}
 	animationPacket, err := npcraknet.AnimationState(
@@ -69,6 +86,9 @@ func (e campaignLeapSchedule) launch() ([][]byte, error) {
 	)
 	if err != nil {
 		return e.fail("enemyLeapAirAnimation", err)
+	}
+	if e.plan.Profile.AbilityName == "NoctHopperJump" {
+		return e.launchHopper(enemy, target.Position, animationPacket)
 	}
 	deltaX := target.Position.X - enemy.Plan.Position.X
 	deltaY := target.Position.Y - enemy.Plan.Position.Y
@@ -119,7 +139,7 @@ func (e campaignLeapSchedule) launch() ([][]byte, error) {
 	arrivalTimestamp := e.timestamp + uint64(e.plan.Profile.HitDelay/time.Millisecond)
 	err = e.runtime.pursuit.schedule(
 		e.packet, e.sessionKey, e.generation, e.objectID,
-		arrivalTimestamp, action.TargetPosition, movementProfile, e.landWithDamage,
+		arrivalTimestamp, action.TargetPosition, action.Profile, e.landWithDamage,
 	)
 	if err != nil {
 		return e.fail("enemyLeapMoveSchedule", err)
@@ -131,6 +151,12 @@ func (e campaignLeapSchedule) landWithDamage(
 	timestamp uint64,
 ) ([][]byte, error) {
 	return e.land(timestamp, true)
+}
+
+func (e campaignLeapSchedule) landHopper() ([][]byte, error) {
+	timestamp := e.timestamp +
+		uint64((e.plan.Profile.HitDelay+e.flightDuration)/time.Millisecond)
+	return e.land(timestamp, e.isHopperJumped && !e.isHopperNormal)
 }
 
 func (e campaignLeapSchedule) landAtCloseRange() ([][]byte, error) {
@@ -154,18 +180,44 @@ func (e campaignLeapSchedule) land(
 ) ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := isFound && peerSession.isCampaignNPCAttackActiveAt(
-		e.generation, e.objectID, e.plan.TargetObjectID, e.runtime.now(),
-	)
+	isCurrent := false
+	if isFound {
+		if e.plan.Profile.AbilityName == "NoctHopperJump" {
+			isCurrent = peerSession.isCampaignNPCSourceGenerationActive(
+				e.generation, e.objectID, e.actionGeneration,
+			)
+		} else {
+			isCurrent = peerSession.isCampaignNPCAttackGenerationActiveAt(
+				e.generation, e.objectID, e.plan.TargetObjectID,
+				e.actionGeneration, e.runtime.now(),
+			)
+		}
+	}
 	if !isCurrent {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
 	source, isSourceFound := peerSession.zone.NPCs().NPC(e.objectID)
-	if !isSourceFound || peerSession.zone.NPCRandom() == nil {
+	if !isSourceFound || source.ActionGeneration != e.actionGeneration ||
+		peerSession.zone.NPCRandom() == nil {
 		e.runtime.registry.mutex.Unlock()
-		e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
+		e.runtime.releaseActionGeneration(
+			e.sessionKey, e.generation, e.objectID, e.actionGeneration,
+		)
 		return nil, nil
+	}
+	if e.plan.Profile.AbilityName == "NoctHopperJump" &&
+		e.destination != source.Plan.Position {
+		err := peerSession.zone.NPCs().SetPosition(e.objectID, e.destination)
+		if err != nil {
+			e.runtime.registry.mutex.Unlock()
+			return e.fail("hopperJumpPosition", err)
+		}
+		source, isSourceFound = peerSession.zone.NPCs().NPC(e.objectID)
+		if !isSourceFound {
+			e.runtime.registry.mutex.Unlock()
+			return e.fail("hopperJumpSource", errors.New("source unavailable after landing"))
+		}
 	}
 	packets := make([][]byte, 0)
 	statDelta := sporenet.PlayerStatDelta{}
@@ -192,7 +244,7 @@ func (e campaignLeapSchedule) land(
 			}
 			result, err := zonenpc.CommitAttack(
 				peerSession.zone.NPCRandom(), plan,
-				source.Plan.NPCProfile.CriticalRating, e.runtime.program.Critical,
+				source.EffectiveCriticalRating(), e.runtime.program.Critical,
 			)
 			if err != nil {
 				e.runtime.registry.mutex.Unlock()
@@ -214,13 +266,14 @@ func (e campaignLeapSchedule) land(
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
 	presentationPackets := make([][]byte, 0, 2)
-	if e.plan.Profile.AbilityName == "NomadBioSpecialTwoJumpAttack" {
+	if e.plan.Profile.AbilityName == "NomadBioSpecialTwoJumpAttack" ||
+		e.plan.Profile.AbilityName == "NoctHopperJump" {
 		positionPacket, positionErr := npcraknet.LeapPosition(
 			e.objectID, source.Plan.Position, e.plan.TargetPosition,
 		)
 		if positionErr != nil {
 			e.runtime.logger.Printf(
-				"RakNet Pouncing Stalker landing position omitted object=%d: %v",
+				"RakNet campaign NPC leap landing position omitted object=%d: %v",
 				e.objectID, positionErr,
 			)
 		} else {
@@ -262,6 +315,10 @@ func (e campaignLeapSchedule) land(
 }
 
 func (e campaignLeapSchedule) next() ([][]byte, error) {
+	if e.runtime.finishScenarioNPCManualAction(e.sessionKey, e.generation,
+		e.objectID, e.actionGeneration) {
+		return nil, nil
+	}
 	nextDelay := max(e.plan.Profile.EndAnimationDelay, e.plan.Profile.Cooldown)
 	timestamp := e.timestamp + uint64(nextDelay/time.Millisecond)
 	step := campaignNPCFirstActionStep{
@@ -329,6 +386,25 @@ func (r campaignNPCActionRuntime) produceEnemyLeap(
 		r.releaseAction(sessionKey, generation, objectID)
 		return nil, nil
 	}
+	if profile.AbilityName == "NoctHopperJump" {
+		delta := target.Position.Sub(enemy.Plan.Position)
+		centerDistance := delta.Length()
+		surfaceDistance := max(float32(0), centerDistance-enemy.Plan.ActorFootprintRadius())
+		resume.isHopperRetreat = surfaceDistance < profile.MinimumRange
+		resume.isHopperNormal = resume.isHopperRetreat ||
+			surfaceDistance > campaignHopperMaxJumpDistance ||
+			peerSession.zone.NPCs().SilenceRemaining(objectID, r.now()) > 0
+		if surfaceDistance > campaignHopperMaxJumpDistance {
+			resume.hopperDistance = campaignHopperMaxJumpDistance * 0.4
+		} else if !resume.isHopperRetreat {
+			resume.hopperDistance = surfaceDistance - profile.Radius*0.5
+		}
+		if resume.isHopperNormal {
+			profile.AnimationName = "nct_minn_su_04_jump_intro"
+			profile.LoopAnimationName = "nct_minn_su_04_jump_in_air"
+			profile.EndAnimationName = "nct_minn_su_04_jump_landing"
+		}
+	}
 	plan, err := zonenpc.PlanAttackWithProfile(
 		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
@@ -348,7 +424,7 @@ func (r campaignNPCActionRuntime) produceEnemyLeap(
 		}
 		scheduleErr := r.pursuit.schedule(
 			packet, sessionKey, generation, objectID, timestamp,
-			action.TargetPosition, profile, resume.resume,
+			action.TargetPosition, action.Profile, resume.resume,
 		)
 		if scheduleErr != nil {
 			r.releaseAction(sessionKey, generation, objectID)

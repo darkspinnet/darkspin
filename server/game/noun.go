@@ -19,6 +19,22 @@ func (e CampaignDirector) NounTypeForAsset(nounName string) NounType {
 	return e.NounTypesByInstance[util.HashID(nounStem)]
 }
 
+// NounTypeForAssetID resolves a full .Noun asset hash from the imported stem
+// hash. HashID is FNV-1, so continuing it with the canonical suffix is exact.
+func (e CampaignDirector) NounTypeForAssetID(nounID uint32) NounType {
+	for stemID, nounType := range e.NounTypesByInstance {
+		assetID := stemID
+		for _, suffixByte := range []byte(".noun") {
+			assetID *= 0x01000193
+			assetID ^= uint32(suffixByte)
+		}
+		if assetID == nounID {
+			return nounType
+		}
+	}
+	return 0
+}
+
 const (
 	NounTypeCreature             NounType = 0x06c27d00
 	NounTypeVehicle              NounType = 0x78bddf27

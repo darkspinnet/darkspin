@@ -139,6 +139,12 @@ func observeScenarioEntryWindow(ctx context.Context, processID uint32) (scenario
 
 // Shared ownership/calibration observation; GDI still rejects every overlap.
 func observeScenarioEntryOwnedWindow(ctx context.Context, processID uint32) (scenarioEntryWindowState, error) {
+	return observeScenarioOwnedWindow(ctx, processID, false)
+}
+
+// Background allowance is limited to owned-window WGC diagnostics. It never
+// grants desktop-crop or input eligibility and does not activate the window.
+func observeScenarioOwnedWindow(ctx context.Context, processID uint32, isBackgroundAllowed bool) (scenarioEntryWindowState, error) {
 	state := scenarioEntryWindowState{}
 	scan := scenarioEntryWindowScan{processID: processID}
 	result, err := callScenarioEntry(entryEnumWindows, entryWindowCallback, uintptr(unsafe.Pointer(&scan)))
@@ -154,8 +160,7 @@ func observeScenarioEntryOwnedWindow(ctx context.Context, processID uint32) (sce
 	}
 	state.window = scan.windows[0]
 	if queryScenarioEntry(entryGetWindow, state.window, 4) != 0 ||
-		queryScenarioEntry(entryForeground) != state.window ||
-		queryScenarioEntry(entryEnabled, state.window) == 0 ||
+		(!isBackgroundAllowed && (queryScenarioEntry(entryForeground) != state.window || queryScenarioEntry(entryEnabled, state.window) == 0)) ||
 		queryScenarioEntry(entryIconic, state.window) != 0 {
 		return state, errors.New("entry window is owned-popup, unfocused, disabled or minimized")
 	}

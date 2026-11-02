@@ -8,8 +8,9 @@ import (
 	"syscall"
 )
 
-func startDetachedProcess(executablePath string, arguments []string) error {
+func startDetachedProcess(executablePath string, arguments, environmentEntries []string) error {
 	cmd := exec.Command(executablePath, arguments...)
+	cmd.Env = environmentEntries
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
 		HideWindow:    true,

@@ -1,0 +1,176 @@
+# Darkrun with Docker Compose
+
+**Stable setup is not available yet. Use unstable.** You need Linux amd64, Docker Engine with the Compose plugin, and a complete build-103 game installation.
+
+## Download and prepare
+
+[Download the unstable Compose setup ZIP](https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-compose-unstable.zip). Extract it into its own directory, such as `/srv/darkspin`. It contains `compose.yaml`, `.env.example`, this `README.md`, and `VERSION`.
+
+```sh
+cd /srv/darkspin
+cp .env.example .env
+mkdir -p darkspin
+sudo chown -R 65532:65532 darkspin
+```
+
+Edit `.env`:
+
+```dotenv
+COMPOSE_PROJECT_NAME=darkspin
+DARKSPIN_ADVERTISED_HOST=192.0.2.10
+DARKSPIN_PORT=42127
+DARKSPIN_HOME_PATH=./darkspin
+DARKSPIN_GAME_HOST_PATH=/srv/game-build-103
+POSTGRES_DB=darkspin
+POSTGRES_USER=darkspin
+POSTGRES_PASSWORD='replace-with-a-long-unique-password'
+```
+
+Replace the example address with the IPv4 players can reach and choose a long, unique database password. Single quotes preserve literal `$` characters in `.env`. Restrict access to `.env`, which contains credentials. Compose rejects an empty or omitted `POSTGRES_PASSWORD`.
+
+The game root must contain `DarksporeBin/` and `Data/`. UID/GID 65532 must be able to read and traverse it. Allow the configured game port for **both TCP and UDP**.
+
+## Start and stop
+
+```sh
+docker compose pull
+docker compose up -d --no-build darkrun
+docker compose logs -f postgres darkrun
+docker compose ps
+```
+
+On first launch, the Darkrun entry point downloads a versioned manifest and its exact binary artifact, verifies its SHA-256 and build identity, and installs it in the runtime mount. It then runs `darkrun bootstrap`, which starts the dedicated server with `/darkspin/runtime/darkspin.toml`. Subsequent launches recover pending updates before serving players. The server creates its settings, authentication secret, content cache, and missing player tables before accepting players.
+
+Connect through Darkspinner's Remote Servers account flow using the advertised address and port. This prototype uses username/password login; HTTPS and OAuth are not configured. Darkrun's health check probes its maintenance and main server endpoints; it does not establish that a multiplayer session works.
+
+Darkspinner shows the full remote server version. Remote login requires client and server versions to share the same major and minor numbers: `1.2.1-unstable` and `1.2.5` work in either direction, while `1.3` is incompatible with `1.2`. The server enforces this at login. Older remote clients that do not send their version must upgrade once to a build with this protocol.
+
+```sh
+docker compose stop
+```
+
+This stops both services while preserving their data. `docker compose stop darkrun` stops only the game server and leaves PostgreSQL running. Normal `docker compose down` removes the containers and network while preserving the database volume.
+
+## PostgreSQL player storage
+
+`POSTGRES_DB`, `POSTGRES_USER`, and required `POSTGRES_PASSWORD` are the single source for both database initialization and Darkrun's `PGDATABASE`, `PGUSER`, and `PGPASSWORD`. Compose sets `PGHOST=postgres`, port 5432, and `PGSSLMODE=disable` for its private network. No second Compose variant or TOML database flag is needed.
+
+For a native host deployment with an existing database, set `DARKSPIN_POSTGRES_URL` or `PGHOST`, `PGDATABASE`, and `PGUSER`, plus authentication/TLS settings, and run `darkrun server --dedicated --config PATH/darkspin.toml`. The database and role must already exist with permission to create tables. URL passwords must be URL-encoded. Darkrun requires these settings even outside Compose. Desktop local play remains on SQLite.
+
+For administration inside Compose, the running container already has the correct connection environment:
+
+```sh
+docker compose exec darkrun /darkspin/bin/darkrun db user get player_name --config /darkspin/runtime/darkspin.toml
+```
+
+Native Linux hosts can use `darkrun bootstrap --path PATH` with the same environment and PostgreSQL client tools on `PATH`. Bootstrap verifies it can connect to the `postgres` maintenance database and that its role is a superuser or owns the player database with `CREATEDB` permission. Do not use `postgres`, `template0`, or `template1` as the player database. The standard Compose role already meets these requirements. Multiple database hosts, service files, `PGHOSTADDR`, and unsupported URL options are rejected to avoid differences between the server and backup tools' connection targets.
+
+## Undelete a profile
+
+Profile deletion blocks login, hides the account, and adds `_`, `__`, or another available underscore suffix to its names so the original name can be reused. Account data remains for **120 days from deletion**. On startup, the server permanently removes deleted accounts older than that cutoff. Recovery is an administrator-only Darkrun command for dedicated servers; there is no launcher or local-server undelete option.
+
+Stop Darkrun before recovery and leave PostgreSQL running. From the directory containing `compose.yaml` and `.env`, list retained deleted accounts:
+
+```sh
+docker compose stop darkrun
+docker compose up -d postgres
+docker compose run --rm --no-deps --entrypoint /darkspin/bin/darkrun darkrun db user get trmt_id=1 --config /darkspin/runtime/darkspin.toml
+```
+
+Find the account's numeric `id` in the output. Recover that exact account, replacing `42` below with its ID:
+
+```sh
+docker compose run --rm --no-deps --entrypoint /darkspin/bin/darkrun darkrun db user undelete 42 --config /darkspin/runtime/darkspin.toml
+```
+
+The command restores the saved progress and original names. If another account has reclaimed the login, recovery fails without overwriting it. Supply an available replacement name instead:
+
+```sh
+docker compose run --rm --no-deps --entrypoint /darkspin/bin/darkrun darkrun db user undelete 42 RecoveredName --config /darkspin/runtime/darkspin.toml
+```
+
+To give a deleted account the name held by an active replacement account, swap their login and display names first. The first ID must be deleted and the second active. For example, if deleted account `42` is named `Alice_` and active account `84` is named `Alice`, this gives account `42` the name `Alice` and account `84` the name `Alice_`:
+
+```sh
+docker compose run --rm --no-deps --entrypoint /darkspin/bin/darkrun darkrun db user swap 42 84 --config /darkspin/runtime/darkspin.toml
+docker compose run --rm --no-deps --entrypoint /darkspin/bin/darkrun darkrun db user undelete 42 --config /darkspin/runtime/darkspin.toml
+```
+
+Swap changes names atomically and prints the resulting logins. Account IDs, passwords, progress, deletion flags, and retention dates stay with their existing accounts. The first account remains deleted until the separate `undelete` command succeeds. Keep Darkrun stopped throughout both commands.
+
+After successful recovery, start Darkrun again:
+
+```sh
+docker compose up -d --no-build darkrun
+```
+
+The one-off commands inherit the service's PostgreSQL environment and runtime mount. Overriding the entry point runs only the requested database command, without starting bootstrap or triggering startup cleanup. If an account has reached 120 days but still exists, recover it before starting the server again. Undelete cannot recover an account that startup cleanup has already permanently removed; that requires a separate backup recovery.
+
+## Persistent layout
+
+**`docker compose down -v` or removing the volume deletes the database.** Persistence is not a backup. PostgreSQL major upgrades require a database upgrade or dump/restore; do not merely change the image's major version.
+
+The separate `DARKSPIN_HOME_PATH` directory is mounted writable at `/darkspin`:
+
+```text
+darkspin/
+  bin/darkrun
+  runtime/
+    darkspin.toml
+    server.toml
+    darkspin/
+      saves/      # appearance files; old SQLite saves may remain
+      cache/      # SQLite content.db and generated web content
+      logs/
+  backup/
+    YYYY-MM-DD/
+      <timestamp-and-build>/
+        postgres.dump
+        snapshot.json
+        bin/darkrun
+        runtime/  # settings and saves from the same stopped server
+  firstboot.json  # durable update/recovery state, when present
+```
+
+Scheduled snapshots include PostgreSQL alongside authentication secrets and uploaded appearance files. Keep an independent copy of completed backups outside this host. Copying only `runtime/` does not capture PostgreSQL player data, and a dump is not continuous point-in-time recovery. Keep the game mount read-only and never point multiple servers at the same runtime.
+
+## Scheduled backups, updates and recovery
+
+By default, maintenance warnings start daily at **03:30 UTC**, with shutdown after a **30-minute warning**. The existing `[bootstrap]` settings in `runtime/darkspin.toml` remain editable through Darkspinner's Config interface. Optional `.env` overrides are shown in `.env.example`; omitted inputs preserve saved settings. The defaults allow 30 minutes for candidate startup and retain completed backups for seven days. Set `DARKSPIN_IS_UPDATE_ENABLED=false` to disable scheduled maintenance.
+
+Each scheduled clean shutdown follows this sequence, even when no new binary is available:
+
+1. Darkrun disconnects players, flushes pending writes and checkpoints, closes its database connections, and exits. Bootstrap acquires the runtime lock. PostgreSQL remains running.
+2. Bootstrap copies the installed binary, settings, and appearance/save files, then runs `pg_dump --format=custom` against the same configured player database. The compressed `postgres.dump` includes schema, rows, and sequences. It does not include cluster-wide roles or passwords.
+3. The dump is flushed to disk, its archive table of contents is checked with `pg_restore --list`, and its SHA-256 and destination identity are recorded in `snapshot.json`. Only then is the snapshot marked complete. A dump failure prevents installation of an update; the existing server can restart without accepting a partial snapshot as a backup.
+4. Bootstrap fetches and verifies an available candidate binary. Its durable `firstboot.json` marker identifies the matching backup before installation. Three readiness probes commit the candidate; only completed backups outside the retention window are pruned.
+5. A failed candidate or interrupted first boot restores the database with `pg_restore --clean --if-exists --create --exit-on-error`, then restores its matching binary and runtime files. Recreating the player database removes any tables added by the failed candidate. The archive hash and configured destination must match before restoration. Failed file state is retained for diagnostics; failed PostgreSQL state is replaced by the snapshot.
+
+Restore uses the `postgres` maintenance database so it can retry after interruption even if the player database was already dropped. It is not a single transaction: the recovery marker remains until all database and file restoration succeeds, and the server stays stopped on failure. Only the configured game database is recreated; the PostgreSQL service and cluster remain running. Do not connect another server or writer to that database during maintenance or recovery. Changing the host, port, or database while recovery is pending is rejected; use the original destination to recover first.
+
+Dump and restore commands each have a 30-minute limit and are cancelled on supervisor shutdown. Ordinary container stops do not create a scheduled snapshot. `pg_restore --list` checks archive readability, not a full restore rehearsal. Keep independent backups for failures discovered after a candidate has already been committed healthy.
+
+## Request an update from Docker
+
+Request a self-update through the running server's authenticated local maintenance channel:
+
+```sh
+docker compose exec darkrun /darkspin/bin/darkrun maintenance update --config /darkspin/runtime/darkspin.toml
+```
+
+The command returns after accepting the request; follow `docker compose logs -f darkrun` for the backup and update result. The default warning is 30 minutes. Choose a shorter interval with `--minutes 5`, or use `--minutes 0` to skip the countdown and begin the final announcement and clean shutdown immediately. Warnings repeat at the same remaining-minute intervals as scheduled maintenance, including every minute during the final five minutes. Players who join during the countdown receive the next reminder.
+
+This command performs the same stopped-server backup, verified binary check, startup validation, and recovery sequence described above. It also works with `DARKSPIN_IS_UPDATE_ENABLED=false`: that option disables automatic scheduling, while an explicit update still uses the configured manifest. The server restarts even if the manifest has no newer binary. A normal `docker compose restart darkrun` remains an ordinary restart and does not request this update/backup sequence.
+
+Check or cancel a pending update:
+
+```sh
+docker compose exec darkrun /darkspin/bin/darkrun maintenance status --config /darkspin/runtime/darkspin.toml
+docker compose exec darkrun /darkspin/bin/darkrun maintenance cancel --config /darkspin/runtime/darkspin.toml
+```
+
+Repeating `maintenance update` preserves the active update's deadline. Cancel it first to request a different interval. `maintenance announce` remains warning-only and does not schedule a shutdown; an active warning-only countdown must be cancelled before requesting an update. The update command requires a bootstrap-managed server and reports an error for ordinary standalone server runs. After final shutdown begins, the process can no longer accept cancellation.
+
+Recreate Darkrun after changing environment overrides. The running bootstrap process keeps its loaded updater code while replacing the child binary; a later container restart loads the new updater.
+
+For packaging with `mage darkrun:compose` and source builds, see [INSTALL.md](https://github.com/darkspinnet/darkspin/blob/main/INSTALL.md#packaging-and-source-development).

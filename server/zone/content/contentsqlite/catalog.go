@@ -133,6 +133,10 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 			DescriptorMask: 129, DamageType: 0, DamageSource: 1,
 			IsDescriptorFound: true, IsDamageTypeFound: true, IsDamageSourceFound: true,
 			HitEffectName: "cyber_energy_arcweld_hit.ServerEventDef",
+			ChainLightning: sim.ChainLightningDefinition{
+				LeapRadius: 10, UpgradedLeapRadius: 10, MaximumHopCount: 4, DamageIncrease: 0.25, HopDelay: 100 * time.Millisecond,
+				EffectNames: []string{"cyber_energy_arcweld_beam1.ServerEventDef", "cyber_energy_arcweld_beam2.ServerEventDef", "cyber_energy_arcweld_beam3.ServerEventDef", "cyber_energy_arcweld_beam4.ServerEventDef"},
+			},
 		},
 		"EnergySentinelSupport": {
 			Name: "EnergySentinelSupport", Kind: sim.AbilityKindMelee,
@@ -271,16 +275,14 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 				"sp_quantumRavager_active_pose_3",
 				"sp_quantumRavager_active_pose_4",
 			},
-			SecondaryAnimationName: "sp_quantumRavager_active_end",
-			HitDelay:               100 * time.Millisecond, ReleaseDelay: 2100 * time.Millisecond,
+			HitDelay: 100 * time.Millisecond, ReleaseDelay: 1100 * time.Millisecond,
 			ManaCost: 18, ManaCoefficient: 0.09,
 			MinimumDamage: 4, MaximumDamage: 16, DamageCoefficient: 0.05,
 			DescriptorMask: 65, DamageType: 2, DamageSource: 0,
 			IsDescriptorFound: true, IsDamageTypeFound: true,
 			IsDamageSourceFound: true,
 			ShotCount:           5, TickDuration: 200 * time.Millisecond,
-			FinalWaitDelay: time.Second,
-			HitEffectName:  "spacetime_large_hit_effect.ServerEventDef",
+			HitEffectName: "spacetime_large_hit_effect.ServerEventDef",
 		},
 		"SummonBeast": {
 			Name: "SummonBeast", Kind: sim.AbilityKindSummonBuff,
@@ -388,6 +390,7 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 			DescriptorMask: 136, DamageType: 0, DamageSource: 1,
 			IsDescriptorFound: true, IsDamageTypeFound: true, IsDamageSourceFound: true,
 			SpawnNoun:           "ClaymoreTrap.Noun",
+			ImpactEffectName:    "claymore_explode.ServerEventDef",
 			RootModifierID:      util.HashID("ClaymoreTrap_Daze"),
 			StatusKind:          sim.AbilityStatusKindSlow,
 			StatusDuration:      6 * time.Second,
@@ -397,7 +400,7 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 		"TurretTrap": {
 			Name: "TurretTrap", Kind: sim.AbilityKindTrap,
 			Cooldown: 12 * time.Second, Range: 4,
-			AnimationName: "cyber_trapper_autoturret",
+			AnimationName: "trapper_active_support",
 			HitDelay:      300 * time.Millisecond,
 			ReleaseDelay:  700 * time.Millisecond,
 			Duration:      10 * time.Second,
@@ -405,14 +408,15 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 			ManaCost: 18, ManaCoefficient: 0.09,
 			DescriptorMask: 136, DamageType: 0, DamageSource: 1,
 			IsDescriptorFound: true, IsDamageTypeFound: true,
-			IsDamageSourceFound: true,
-			SpawnNoun:           "TurretTrap.Noun",
-			HitEffectName:       "cyber_trapper_trapBroken.ServerEventDef",
-			ImpactEffectName:    "cyber_trapper_autoturret_repack.ServerEventDef",
+			IsDamageSourceFound: true, IsShouldPursue: true,
+			SpawnNoun:        "TurretTrap.Noun",
+			MuzzleEffectName: "Turret_Trap_muzzle.ServerEventDef",
+			HitEffectName:    "cyber_trapper_trapBroken.ServerEventDef",
+			ImpactEffectName: "cyber_trapper_autoturret_repack.ServerEventDef",
 		},
 		"PipeBomb": {
 			Name: "PipeBomb", Kind: sim.AbilityKindTrap,
-			Range: 4, Radius: 8,
+			Cooldown: 12 * time.Second, Range: 4, Radius: 8,
 			AnimationName: "trapper_active_support",
 			HitDelay:      300 * time.Millisecond,
 			ReleaseDelay:  600 * time.Millisecond,
@@ -822,7 +826,6 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 			IsAlwaysUseCursorPosition: true,
 			MuzzleEffectName:          "Comets_Muzzle.ServerEventDef",
 			HitEffectName:             "spacetime_random04_summon_effect.ServerEventDef",
-			ImpactEffectName:          "spacetime_random04_summon_effect.ServerEventDef",
 		},
 		"VoodooTempestSupport": {
 			Name: "VoodooTempestSupport", Kind: sim.AbilityKindStatusArea,
@@ -935,6 +938,7 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 			IsDescriptorFound: true, IsDamageTypeFound: true, IsDamageSourceFound: true,
 			IsAlwaysUseCursorPosition: true,
 			HitEffectName:             "cyber_shield_concussiveblast.ServerEventDef",
+			ImpactEffectName:          "cyber_shield_concussiveblast_hit.ServerEventDef",
 			MuzzleEffectName:          "Concussive_Blast_muzzle.ServerEventDef",
 			RootModifierID:            util.HashID("TCShieldedSentinel_Support_Snare"),
 			StatusKind:                sim.AbilityStatusKindSlow,
@@ -968,6 +972,7 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 			AnimationName: "missiletempest_support",
 			ReleaseDelay:  250 * time.Millisecond,
 			MinimumDamage: 3, MaximumDamage: 6, DamageCoefficient: 0.05,
+			ManaCost: 8, ManaCoefficient: 0.04,
 			DescriptorMask: 72, DamageType: 0, DamageSource: 0,
 			IsDescriptorFound: true, IsDamageTypeFound: true, IsDamageSourceFound: true,
 			IsAlwaysUseCursorPosition: true,
@@ -1055,7 +1060,9 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 	if store == nil {
 		return zonecontent.Programs{}, errors.New("nil content store")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// This budget covers the complete simulation catalog, not one query.
+	// Cold database reads must not compete for a ten-second request deadline.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	isAvailable, err := store.IsLuaCatalogAvailable(ctx)
 	if err != nil {
@@ -1120,15 +1127,21 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		return zonecontent.Programs{}, fmt.Errorf("defenseProfiles: %w", defenseErr)
 	}
 	nonPlayerDefenses := make(map[uint32]game.CampaignNPCProfile, len(defenseProfiles))
+	nonPlayerAggroRanges := make(map[uint32]float32, len(defenseProfiles))
 	for _, profile := range defenseProfiles {
+		nonPlayerAggroRanges[util.HashID(profile.NounName)] = profile.AggroRange
 		nonPlayerDefenses[util.HashID(profile.NounName)] = game.CampaignNPCProfile{
 			DodgeRating: profile.DodgeRating, ResistRating: profile.ResistRating,
 		}
 	}
 	nonPlayerCritical := make(map[uint32]sim.CriticalProfile, len(nonPlayerClasses))
+	supportHealerPetAggroRange := nonPlayerAggroRanges[util.HashID("HelperMelee.Noun")]
 	for _, class := range nonPlayerClasses {
 		nonPlayerHitPoint[class.InstanceID] = class.HitPoint
 		nonPlayerCritical[class.InstanceID] = sim.CriticalProfile{Rating: class.CriticalRating}
+	}
+	if supportHealerPetAggroRange <= 0 {
+		return zonecontent.Programs{}, errors.New("supportHealerPetAggroRange: missing")
 	}
 	nounPhysicsCatalog, err := store.NounPhysicsCatalog(ctx)
 	if err != nil {
@@ -1208,6 +1221,14 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 	}
 	var projectileHalfExtent sim.Position
 	for _, shape := range shapes {
+		if shape.ShapeRole == "projectile_query" && shape.ShapeKind == "box" {
+			noun := nounPhysics[shape.AssetName]
+			noun.ProjectileQueryHalfExtent = sim.Position{
+				X: shape.DimensionX / 2, Y: shape.DimensionY / 2, Z: shape.DimensionZ / 2,
+			}
+			nounPhysics[shape.AssetName] = noun
+			nounPhysicsByID[util.HashID(shape.AssetName)] = noun
+		}
 		if shape.AssetName == "Ability_Fireball.Noun" && shape.ShapeRole == "projectile_query" &&
 			shape.ShapeKind == "box" {
 			projectileHalfExtent = sim.Position{
@@ -1395,6 +1416,13 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 	}
 	if sentryDroneLaser.Kind != sim.AbilityKindProjectile {
 		return zonecontent.Programs{}, fmt.Errorf("sentryDroneLaserKind: %s", sentryDroneLaser.Kind)
+	}
+	nomadDroneLaser, err := loadLuaAbilityDefinition(ctx, store, "NomadDroneLaser")
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("nomadDroneLaser: %w", err)
+	}
+	if nomadDroneLaser.Kind != sim.AbilityKindProjectile {
+		return zonecontent.Programs{}, fmt.Errorf("nomadDroneLaserKind: %s", nomadDroneLaser.Kind)
 	}
 	fireTempestPetBasic, err := loadLuaAbilityDefinition(ctx, store, "Fireball")
 	if err != nil {
@@ -1723,6 +1751,7 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		HeroKits:                   heroKits,
 		NonPlayerHitPoint:          nonPlayerHitPoint,
 		NonPlayerDefenses:          nonPlayerDefenses,
+		NonPlayerAggroRanges:       nonPlayerAggroRanges,
 		NonPlayerCritical:          nonPlayerCritical,
 		NounPhysics:                nounPhysics,
 		NounPhysicsByID:            nounPhysicsByID,
@@ -1736,7 +1765,9 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		SupportHealerBasic:         supportHealerBasic,
 		SupportHealerPassive:       supportHealerPassiveDefinition,
 		SupportHealerPetBasic:      supportHealerPetBasic,
+		SupportHealerPetAggroRange: supportHealerPetAggroRange,
 		SentryDroneLaser:           sentryDroneLaser,
+		NomadDroneLaser:            nomadDroneLaser,
 		FireTempestPetBasic:        fireTempestPetBasic,
 		BeastPetBasic:              beastPetBasic,
 		PlasmaSentinelPetBasic:     plasmaSentinelPetBasic,
@@ -1764,6 +1795,7 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		CrystalLevelOffsets:        crystalLevelOffsets,
 		CrystalLineBonusPercent:    crystalTuning.ThreeInARowBonusPercent,
 		CrystalMinorStageCount:     rewardTuning.Progression.MinorStageCount,
+		EliteRewardBonus:           rewardTuning.EliteRewardBonus,
 		TutorialMajorStageCount:    rewardTuning.Progression.MajorStageCount,
 		IntroAbilitySecond: zonecontent.MarkerProgram{
 			Program: abilitySecondProgram,
@@ -1919,6 +1951,11 @@ func loadPlayerBasicAbilities(
 		// basic classified as an unsupported runtime shape.
 		if definition.Name == "TimeRavagerBasic" {
 			definition.Kind = sim.AbilityKindMelee
+			// The authored hitEffect is a PreloadAsset result, which the
+			// materialized Lua table does not retain as a string.
+			if definition.HitEffectName == "" {
+				definition.HitEffectName = "spacetime_slowing_hit_effect.ServerEventDef"
+			}
 		}
 		if definition.Name == lightspeedBasicName {
 			definition.AnimationProjectileOffsets = [][]sim.Position{
@@ -2038,20 +2075,22 @@ func loadHeroKits(
 					definitionsByAsset[active.assetName] = definition
 				}
 			}
-			// These custom callbacks expose generic registrations, but their actual
-			// payload is owned by a recovered specialized runtime. CastEnrage's
+			// These abilities need recovered definitions for their custom payload.
+			// Charged Strike's target taunt otherwise classifies it as a modifier
+			// instead of the authored pursuing melee strike. CastEnrage's
 			// hitEffect otherwise classifies it as melee, losing its self animation,
 			// muzzle effect, and Enrage modifier identity.
+			// NecroRandom's protective modifier likewise masks its drain channel.
 			switch active.assetName {
 			case "BinarySentinelActive", "BinarySentinelSupport",
 				"CastEnrage", "RootingPlague", "Sporogenesis", "FieldMedicSupport",
-				"Psistorm", "SleepingCloud", "SoulRavagerActive", "SpacetimeRandom2",
+				"Psistorm", "SleepingCloud", "SoulRavagerActive", "SpacetimeRandom2", "NecroRandom",
 				"Terrify", "TimeRavagerSupport", "TurretTrap", "RepulsionWave",
 				"GravityStorm", "QuantumBlink", "QuantumState",
 				"PlasmaRandom_WebbedLightning",
 				"SoulRavagerSupport", "AfflictionBolt", "BeastCharge", "BioRandom2",
 				"SummonSprite", "SpacetimeRandom3", "LightspeedTempestActive",
-				"EntanglingRush", "PhantomCharge":
+				"EntanglingRush", "PhantomCharge", "TechRandom3":
 				recovered, isRecovered := recoveredDefinitions[active.assetName]
 				if isRecovered {
 					definition = recovered
@@ -2067,6 +2106,13 @@ func loadHeroKits(
 					definitionsByAsset[active.assetName] = recovered
 				}
 			}
+			if active.assetName == "FireTempestSupport" && definition.StatusDuration <= 0 {
+				// The compiled pulse script does not expose the healing reduction's
+				// lifetime. Keep its recovered build-103 rank-one duration.
+				recovered := recoveredDefinitions[active.assetName]
+				definition.StatusDuration = recovered.StatusDuration
+				definitionsByAsset[active.assetName] = definition
+			}
 			if active.assetName == "ShadowRavagerActive" {
 				// Shadow Sting inherits a target modifier alongside its melee arc. The
 				// generic Lua modifier discriminator sees that field first, so restore
@@ -2080,6 +2126,16 @@ func loadHeroKits(
 				definition.RootModifierID = util.HashID(
 					"ShadowRavagerPhysicalVulnerabilityModifier",
 				)
+			}
+			if active.assetName == "EnergySentinelSupport" {
+				// Shockwave's melee arc also authors a stun modifier. The generic
+				// modifier discriminator sees that field before the inherited melee
+				// arc and leaves this strike without a radius or hit event.
+				definition.Kind = sim.AbilityKindMelee
+				if definition.HitArcLength != nil {
+					definition.Radius = *definition.HitArcLength
+				}
+				definition.HitEffectName = "cyber_cleave_hit.ServerEventDef"
 			}
 			definition = applyRecoveredAreaRadiusPolicy(definition)
 			definition = applyRecoveredAreaDurationPolicy(definition)

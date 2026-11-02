@@ -24,6 +24,7 @@ type LauncherIntegrationStatus struct {
 	IsSteamLaunchInstalled bool   `json:"isSteamLaunchInstalled"`
 	IsManagementSupported  bool   `json:"isManagementSupported"`
 	Message                string `json:"message"`
+	Error                  string `json:"error"`
 }
 
 func launcherManagementPaths() (string, string, error) {
@@ -47,11 +48,12 @@ func launcherManagementPaths() (string, string, error) {
 func (e *App) GetLauncherIntegrationStatus() LauncherIntegrationStatus {
 	executablePath, basePath, err := launcherManagementPaths()
 	if err != nil {
-		return LauncherIntegrationStatus{Message: err.Error()}
+		return LauncherIntegrationStatus{Message: err.Error(), Error: err.Error()}
 	}
 	status, err := inspectLauncherIntegrations(executablePath, basePath)
 	if err != nil {
 		status.Message = err.Error()
+		status.Error = err.Error()
 	}
 	return status
 }

@@ -2,6 +2,35 @@ package npc
 
 import "time"
 
+// Chunk 875's first-aggro template plays the special robot activation before
+// releasing its combat action. Select the same startup branch as the idle;
+// an absent secondary ability must not fall back to the primary entrance.
+func authoredRobotEntrance(plan SpawnPlan, profile ActionProfile) ActionProfile {
+	if plan.IsFixture || plan.OwnerObjectID != 0 || plan.IsIntroductionComplete ||
+		plan.Introduction == SpawnIntroductionFloorWarp ||
+		profile.FirstAggroAnimationName != "" || profile.FirstAggroDelay > 0 ||
+		profile.FirstAggroRevealDelay > 0 || profile.FirstAggroCinematicDuration > 0 {
+		return profile
+	}
+	graph := plan.NPCProfile.AIGraph
+	if graph == nil || !graph.IsResolved {
+		return profile
+	}
+	ability := graph.FirstAggroAbility
+	if plan.IsStartupInitialized && plan.IsSecondaryStart {
+		ability = graph.FirstAggroAbility2
+	}
+	if ability == nil || *ability != "FirstAggro_ActivateSpecialRobot" {
+		return profile
+	}
+	profile.FirstAggroAbilityName = *ability
+	profile.FirstAggroAnimationName = "zlm_lieu_tc_3_aggro"
+	profile.FirstAggroDelay = 1559999942 * time.Nanosecond
+	profile.IsFirstAggroFacingSuppressed = true
+	profile.IsFirstAggroDurationKnown = true
+	return profile
+}
+
 // These ordinary entrance animations/times come from the indexed client Lua
 // FirstAggro scripts, not the attack chosen by a noun's combat profile. Boss
 // cinematics and SetAnimationStateToAggro keep their existing dedicated paths.

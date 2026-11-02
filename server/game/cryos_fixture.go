@@ -170,8 +170,7 @@ func (e CampaignDirector) CryosFourFixtures(selectionID uint32) (
 
 func isCryosFourFixtureNoun(nounName string) bool {
 	switch strings.ToLower(strings.TrimSpace(nounName)) {
-	case "dest_prefab_cryos_ice_crack2.noun",
-		"dest_prefab_cryos_acunit_small.noun",
+	case "dest_prefab_cryos_acunit_small.noun",
 		"dest_prefab_cryos_acunit_small_animated.noun":
 		return true
 	default:

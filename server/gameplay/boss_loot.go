@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
@@ -17,7 +18,26 @@ import (
 )
 
 func isCampaignDestructorLoot(plan zonenpc.SpawnPlan) bool {
-	return plan.OwnerObjectID == 0 && zoneboss.IsFinalBossNoun(plan.NounName)
+	return plan.OwnerObjectID == 0 && (zoneboss.IsFinalBossNoun(plan.NounName) ||
+		strings.EqualFold(plan.NounName, "ScaldronBoss_Stage2.Noun"))
+}
+
+// Stage two swaps the native noun while retaining the scaled combat actor.
+// Its death rewards must follow that noun's class rather than stage one's
+// zero-challenge, no-equipment class. Preserve the live combat statistics.
+func (e *gameplayPeerSession) campaignDeathRewardSnapshot(enemy zonenpc.Snapshot) (zonenpc.Snapshot, error) {
+	if !strings.EqualFold(enemy.Plan.NounName, campaignCorruptorStageTwoNounName) {
+		return enemy, nil
+	}
+	profile, isFound := e.zone.DirectorDefinition().NPCProfilesByNoun[strings.ToLower(enemy.Plan.NounName)]
+	if !isFound || !profile.IsKnown || !profile.IsClassKnown {
+		return zonenpc.Snapshot{}, errors.New("Corruptor stage-two reward class unavailable")
+	}
+	enemy.Plan.NPCProfile.ChallengeValue = profile.ChallengeValue
+	enemy.Plan.NPCProfile.NPCType = profile.NPCType
+	enemy.Plan.NPCProfile.DropTypes = append([]uint32(nil), profile.DropTypes...)
+	enemy.Plan.NPCProfile.IsClassKnown = true
+	return enemy, nil
 }
 
 type destructorEquipmentDrop struct {
@@ -44,7 +64,7 @@ func (e *gameplayPeerSession) spawnDestructorEquipment(
 		return nil, 0, fmt.Errorf("bossPlacement: %w", err)
 	}
 	participantCount := e.campaignLootParticipantCount()
-	challenge, npcType := campaignNPCLootSource(enemy.Plan, 500)
+	challenge, npcType := e.campaignNPCRewardSource(enemy.Plan, 500)
 	if challenge <= 0 {
 		return nil, 0, nil
 	}

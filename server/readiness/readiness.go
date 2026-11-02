@@ -26,6 +26,7 @@ func Register(
 			writer http.ResponseWriter, _ *http.Request, _ *recaphttp.URI,
 		) {
 			writer.Header().Set("Content-Type", "application/json")
+			writer.Header().Set("Cache-Control", "no-store")
 			_ = json.NewEncoder(writer).Encode(response{
 				BuildID:       buildinfo.ID,
 				ServerVersion: serverVersion,

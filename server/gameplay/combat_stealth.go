@@ -71,15 +71,10 @@ func (r campaignNPCActionRuntime) startStealtherStealth(
 		return nil, nil
 	}
 	destination, isDestinationFound, err :=
-		zonenavigation.RandomTeleportDestination(
+		zonenavigation.RandomStealthMovementDestination(
 			peerSession.zone.Navigation(), peerSession.zone.NPCRandom(),
-			zonenavigation.RandomTeleportRequest{
-				SourcePosition:  target.Position,
-				FootprintRadius: enemy.Plan.NPCProfile.FootprintRadius,
-				MinimumDistance: profile.MinimumRange,
-				NormalDistance:  7.5,
-				MaximumDistance: profile.Range - 5,
-			},
+			enemy.Plan.Position, target.Position,
+			enemy.NavigationRadius(), enemy.Navigation,
 		)
 	r.registry.mutex.RUnlock()
 	if err != nil {
@@ -210,7 +205,7 @@ func (e *campaignStealtherSchedule) beginTravelStealth(profile zonenpc.ActionPro
 	modifierPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: e.objectID, ModifierGUID: stealtherStealthModifierID,
 		InstanceID: modifier.instanceID, StackCount: 1,
-		StartMilliseconds: e.timestamp, SourceID: e.objectID,
+		StartMilliseconds: e.timestamp, NPCAffixAssetID: 0,
 	})
 	if err != nil {
 		e.rollbackStealth(modifier)
@@ -248,12 +243,13 @@ func (e campaignStealtherSchedule) cast(timestamp uint64) ([][]byte, error) {
 	target, isTargetFound := peerSession.campaignNPCTarget(
 		e.generation, enemy.TargetObjectID,
 	)
-	profile, isProfileFound := zonenpc.StealtherStealthProfile(enemy.Plan.NounName)
+	profile, isProfileFound := zonenpc.StealtherStealthProfile(zonenpc.ActionNounName(enemy.Plan))
 	if !isEnemyFound || !isTargetFound || !isProfileFound {
 		e.runtime.registry.mutex.Unlock()
 		e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
 		return e.finishStealth(true, timestamp), nil
 	}
+	profile = zonenpc.ApplyAffixTiming(profile, enemy.Plan)
 	plan, err := zonenpc.PlanAttackWithProfile(
 		enemy, target.ObjectID, target.Position, profile, target.ActorFootprintRadius,
 	)
@@ -307,7 +303,7 @@ func (e campaignStealtherSchedule) cast(timestamp uint64) ([][]byte, error) {
 	modifierPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: e.objectID, ModifierGUID: stealtherStealthModifierID,
 		InstanceID: modifier.instanceID, DurationMilliseconds: 0,
-		StackCount: 1, StartMilliseconds: timestamp, SourceID: e.objectID,
+		StackCount: 1, StartMilliseconds: timestamp, NPCAffixAssetID: 0,
 	})
 	if err != nil {
 		e.rollbackStealth(modifier)
@@ -395,7 +391,7 @@ func (e campaignStealtherSchedule) hit() ([][]byte, error) {
 	}
 	result, err := zonenpc.CommitAttack(
 		peerSession.zone.NPCRandom(), plan,
-		enemy.Plan.NPCProfile.CriticalRating, e.runtime.program.Critical,
+		enemy.EffectiveCriticalRating(), e.runtime.program.Critical,
 	)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
@@ -637,7 +633,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCFear(
 		InstanceID:           run.modifier.instanceID,
 		DurationMilliseconds: uint32(profile.ModifierDuration.Milliseconds()),
 		StackCount:           1, StartMilliseconds: timestamp,
-		SourceID: source.Plan.ObjectID,
+		NPCAffixAssetID: 0,
 	})
 	if err != nil {
 		r.rollbackCampaignNPCFear(

@@ -440,6 +440,8 @@ type LobParameter struct {
 // dirtied by build-103's generic lob initializer. This type deliberately does
 // not choose its ordering relative to object creation or another component;
 // the original authoritative sender is absent from the client-shaped executable.
+// StartTimeMilliseconds uses the server clock: the lobStartTime reflection
+// setter converts it to the receiving client's simulation clock.
 type LobLocomotionMessage struct {
 	ObjectID              uint32
 	StartTimeMilliseconds uint64
@@ -721,6 +723,22 @@ func (m DropPresentationMessage) EncodePayload() []byte {
 	payload = binary.LittleEndian.AppendUint32(payload, m.Asset)
 	payload = append(payload, 10)
 	payload = appendVector3(payload, m.Position.X, m.Position.Y, m.Position.Z)
+	return append(payload, 0xff)
+}
+
+// ObjectPresentationMessage is the minimal fields-6/7 one-shot ServerEvent
+// emitted by authored object-only notifications such as Dazing Shot's hit.
+type ObjectPresentationMessage struct {
+	Asset    uint32
+	ObjectID uint32
+}
+
+func (ObjectPresentationMessage) PacketID() PacketID { return ServerEvent }
+func (m ObjectPresentationMessage) EncodePayload() []byte {
+	payload := []byte{6}
+	payload = binary.LittleEndian.AppendUint32(payload, m.Asset)
+	payload = append(payload, 7)
+	payload = binary.LittleEndian.AppendUint32(payload, m.ObjectID)
 	return append(payload, 0xff)
 }
 
@@ -1300,10 +1318,10 @@ type ModifierCreatedMessage struct {
 	// sub_537780 resolves it through sub_9C5FF0; HUD_NPCBar compares the resolved
 	// asset against Elite.NPCAffix, independently of ModifierGUID.
 	NPCAffixAssetID uint32
-	// SourceID retains the legacy wire-field alias for existing callers. This
-	// field is not the modifier's originating object ID on the retail client.
-	SourceID uint32
-	IsBound  bool
+	// Build 103 copies this wire byte to modifier-node +44. Its native
+	// attack gate (0x4DEFE0/0x4DF0A0) checks it independently of Immobilized.
+	// Set it for action-blocking control, not ordinary movement-only roots.
+	IsBound bool
 }
 
 func (ModifierCreatedMessage) PacketID() PacketID { return ModifierCreated }
@@ -1316,11 +1334,7 @@ func (m ModifierCreatedMessage) EncodePayload() []byte {
 	payload = binary.LittleEndian.AppendUint32(payload, m.Overdrive)
 	payload = binary.LittleEndian.AppendUint32(payload, m.StackCount)
 	payload = binary.LittleEndian.AppendUint64(payload, m.StartMilliseconds)
-	affixAssetID := m.NPCAffixAssetID
-	if affixAssetID == 0 {
-		affixAssetID = m.SourceID
-	}
-	payload = binary.LittleEndian.AppendUint32(payload, affixAssetID)
+	payload = binary.LittleEndian.AppendUint32(payload, m.NPCAffixAssetID)
 	return append(payload, boolByte(m.IsBound))
 }
 
@@ -1657,8 +1671,18 @@ type ChainVoteMessage struct {
 	FirstVoice         uint32
 	// Record +0x49: L <= completed planets forces Cash Out unless L == 5.
 	ContinuationLimit int32
+	PlanetStats       [4]ChainPlanetStat
 	NextPresentation  [3]uint32
 	NextLevel         uint32
+}
+
+// ChainPlanetStat is the build-103 result row embedded in the A9 vote record.
+type ChainPlanetStat struct {
+	Kills           uint32
+	DamageDealt     float32
+	DamageTaken     float32
+	HealingDone     float32
+	HealingReceived float32
 }
 
 func (m ChainVoteMessage) PacketID() PacketID { return ChainVoteMsgs }
@@ -1680,6 +1704,17 @@ func (m ChainVoteMessage) EncodePayload() []byte {
 	}
 	binary.LittleEndian.PutUint32(data[0x045:0x049], m.FirstVoice)
 	binary.LittleEndian.PutUint32(data[0x049:0x04d], uint32(m.ContinuationLimit))
+	// Build 103 sub_449090 passes record+0x4d to sub_43E9A0. That
+	// receiver reads 25-byte player rows beginning 41 bytes into it.
+	for slot, stat := range m.PlanetStats {
+		offset := 0x076 + slot*25
+		binary.LittleEndian.PutUint32(data[offset:offset+4], stat.Kills)
+		binary.LittleEndian.PutUint32(data[offset+8:offset+12], math.Float32bits(stat.DamageDealt))
+		binary.LittleEndian.PutUint32(data[offset+12:offset+16], math.Float32bits(stat.DamageTaken))
+		binary.LittleEndian.PutUint32(data[offset+16:offset+20], math.Float32bits(stat.HealingDone))
+		binary.LittleEndian.PutUint32(data[offset+20:offset+24], math.Float32bits(stat.HealingReceived))
+		data[offset+24] = byte(slot)
+	}
 	for index, presentation := range m.NextPresentation {
 		offset := 0x0d9 + index*4
 		binary.LittleEndian.PutUint32(data[offset:offset+4], presentation)
@@ -2311,6 +2346,18 @@ type ArenaGamePlayerWordMessage struct {
 	Word    uint32
 }
 
+// ArenaCountdownMessage primes build 103's native PvP HUD while PreDungeon
+// still owns ArenaGameMsgs. Subtype 9 reads a float32 into the HUD timer;
+// the Dungeon state's Arena handler does not accept this subtype.
+type ArenaCountdownMessage struct {
+	Seconds float32
+}
+
+func (ArenaCountdownMessage) PacketID() PacketID { return ArenaGameMsgs }
+func (m ArenaCountdownMessage) EncodePayload() []byte {
+	return binary.LittleEndian.AppendUint32([]byte{9}, math.Float32bits(m.Seconds))
+}
+
 func (ArenaGamePlayerWordMessage) PacketID() PacketID { return ArenaGameMsgs }
 func (m ArenaGamePlayerWordMessage) EncodePayload() []byte {
 	if m.Subtype != 9 && m.Subtype != 10 {
@@ -2390,7 +2437,9 @@ func appendArenaResultsBody(payload []byte, result ArenaResultsBody) []byte {
 		for _, amount := range [...]float32{
 			player.DamageDealt, player.DamageTaken, player.HealingDealt, player.HealingReceived,
 		} {
-			payload = binary.LittleEndian.AppendUint32(payload, math.Float32bits(amount))
+			// The native results UI displays these floats without formatting.
+			// Round the presentation copy, retaining precise match statistics.
+			payload = binary.LittleEndian.AppendUint32(payload, math.Float32bits(float32(math.Round(float64(amount)))))
 		}
 		for _, round := range player.Round {
 			payload = binary.LittleEndian.AppendUint32(payload, round.Outcome)

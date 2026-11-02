@@ -8,14 +8,15 @@ import (
 )
 
 type headlessTray struct {
-	app     *App
-	address string
-	cancel  context.CancelFunc
-	ctx     context.Context
+	app                      *App
+	address                  string
+	cancel                   context.CancelFunc
+	ctx                      context.Context
+	isBrowserAutoOpenEnabled bool
 }
 
-func runHeadlessTray(ctx context.Context, app *App, address string, cancel context.CancelFunc) {
-	tray := &headlessTray{app: app, address: address, cancel: cancel, ctx: ctx}
+func runHeadlessTray(ctx context.Context, app *App, address string, cancel context.CancelFunc, isBrowserAutoOpenEnabled bool) {
+	tray := &headlessTray{app: app, address: address, cancel: cancel, ctx: ctx, isBrowserAutoOpenEnabled: isBrowserAutoOpenEnabled}
 	go tray.quitWhenDone(ctx)
 	systray.Run(tray.ready, nil)
 }
@@ -33,7 +34,9 @@ func (e *headlessTray) ready() {
 	systray.AddSeparator()
 	shutdownItem := systray.AddMenuItem("Shut down Darkspinner", "Stop the game server and exit")
 	go e.handleMenu(openItem.ClickedCh, shutdownItem.ClickedCh)
-	e.open()
+	if e.isBrowserAutoOpenEnabled {
+		e.open()
+	}
 }
 
 func (e *headlessTray) open() {

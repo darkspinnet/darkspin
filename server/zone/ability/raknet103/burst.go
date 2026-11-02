@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
@@ -21,6 +22,7 @@ type BurstInput struct {
 	TargetObjectID        uint32
 	ProjectileObjectIDs   []uint32
 	ActorPosition         sim.Position
+	ProjectileHeight      float32
 	TargetPosition        sim.Position
 	ActorFacing           sim.Position
 	FootprintRadius       float32
@@ -72,6 +74,10 @@ func NewBurstRun(input BurstInput) (*BurstRun, [][]byte, error) {
 		input.TargetHitPoint < 0 || len(input.ProjectileObjectIDs) == 0 ||
 		len(input.ProjectileObjectIDs) != len(input.Ability.HitDelays) {
 		return nil, nil, errors.New("invalid projectile burst input")
+	}
+	if input.ProjectileHeight < 0 || math.IsNaN(float64(input.ProjectileHeight)) ||
+		math.IsInf(float64(input.ProjectileHeight), 0) {
+		return nil, nil, errors.New("invalid projectile burst height")
 	}
 	resolver := projectileBurstRoleResolver{
 		projectileBurstActorRole: {
@@ -127,6 +133,11 @@ func NewBurstRun(input BurstInput) (*BurstRun, [][]byte, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("facingEmit: %w", err)
 	}
+	// Turning stops at the actor's ground pose. Only projectile construction
+	// uses the raised muzzle origin; reflecting it as a locomotion goal moves
+	// the client hero away from the authoritative actor position.
+	projectilePosition := input.ActorPosition
+	projectilePosition.Z += input.ProjectileHeight
 	behavior, err := sim.StartProjectileBurst(simulator, scope, sim.ProjectileBurstInput{
 		ActorRole: projectileBurstActorRole, TargetRole: projectileBurstTargetRole,
 		ProjectileRoles: projectileRoles, AbilityName: input.Ability.Name,
@@ -134,7 +145,7 @@ func NewBurstRun(input BurstInput) (*BurstRun, [][]byte, error) {
 		MuzzleEffectName: input.Ability.MuzzleEffectName,
 		TrailEffectName:  input.Ability.TrailEffectName,
 		ImpactEffectName: input.Ability.ImpactEffectName, MissEffectName: input.Ability.MissEffectName,
-		ActorPosition: input.ActorPosition, ActorFacing: input.ActorFacing,
+		ActorPosition: projectilePosition, ActorFacing: input.ActorFacing,
 		TargetPosition: input.TargetPosition, FootprintRadius: input.FootprintRadius,
 		ShotDelays: input.Ability.HitDelays, ReleaseDelay: input.Ability.ReleaseDelay,
 		Cooldown: input.Ability.Cooldown, ProjectileSpeed: input.Ability.Speed,

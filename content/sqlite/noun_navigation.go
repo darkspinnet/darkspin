@@ -16,6 +16,8 @@ import (
 // Numeric enums retain their authored bits. Actor transforms, movement state,
 // collision enablement and obstacle handles belong to the runtime object.
 type NounNavigation struct {
+	// audioTrigger is an import-only projection exposed through database inspection.
+	audioTrigger                *AudioTriggerDefinition
 	ResourceID                  int64
 	InstanceID                  uint64
 	NounType                    uint32
@@ -116,14 +118,18 @@ func writeNounNavigations(ctx context.Context, transaction *sql.Tx, pkg *dbpf.Re
 		if err != nil {
 			return fmt.Errorf("nounCombatantEncode[%d]: %w", ordinal, err)
 		}
+		audioDefinition, err := encodeAudioTriggerDefinition(noun.audioTrigger)
+		if err != nil {
+			return fmt.Errorf("nounAudioEncode[%d]: %w", ordinal, err)
+		}
 		result, err := transaction.ExecContext(ctx, `
 			INSERT INTO noun_navigation (content_source_resource_id, noun_type, is_fixed,
 			 minimum_x, minimum_y, minimum_z, maximum_x, maximum_y, maximum_z,
 			 preset_extents, physics_type, is_dynamic_wall, is_door, is_switch, is_pressure_switch,
 			 is_click_to_open, is_click_to_close, door_initial_state, acceleration, deceleration, turn_rate,
 			 is_projectile_present, lifetime_seconds, trigger_definition, event_listener_definition,
-			 interactable_definition, combatant_definition, is_combatant_component_present)
-			SELECT resource.id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+			 interactable_definition, combatant_definition, is_combatant_component_present, audio_definition)
+			SELECT resource.id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 			FROM content_source_resource AS resource
 			JOIN content_source_package AS package ON package.id=resource.content_source_package_id
 			WHERE package.package_name=? AND resource.ordinal=?`,
@@ -133,7 +139,7 @@ func writeNounNavigations(ctx context.Context, transaction *sql.Tx, pkg *dbpf.Re
 			noun.IsDoor, noun.IsSwitch, noun.IsPressureSwitch, noun.IsClickToOpen, noun.IsClickToClose,
 			noun.DoorInitialState, acceleration, deceleration, turnRate, noun.IsProjectilePresent, noun.LifetimeSeconds,
 			triggerDefinition, listenerDefinition, interactableDefinition, combatantDefinition,
-			noun.IsCombatantComponentPresent, lootAssetPackage, ordinal)
+			noun.IsCombatantComponentPresent, audioDefinition, lootAssetPackage, ordinal)
 		if err != nil {
 			return fmt.Errorf("nounNavigationInsert[%d]: %w", ordinal, err)
 		}

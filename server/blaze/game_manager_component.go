@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -177,6 +178,7 @@ func resetDedicatedServerHandler(
 				return &Response{ErrorCode: 0x0004}, nil
 			}
 			instance.Info.Level = level
+			instance.Info.Attributes["SelectedDifficulty"] = strconv.FormatUint(uint64(selection), 10)
 		}
 		warpLevel := ""
 		if !isRestored && instance.Info.Mode == game.ModeChain {
@@ -198,6 +200,11 @@ func resetDedicatedServerHandler(
 		}
 		if !isRestored {
 			err = reservePartyGame(instance, user, userDirectory, partyDirectory)
+			if err != nil {
+				rollbackResetGame(gameManager, instance, user, false)
+				return &Response{ErrorCode: 0x0004}, nil
+			}
+			err = gameManager.SelectCampaignDestination(instance)
 			if err != nil {
 				rollbackResetGame(gameManager, instance, user, false)
 				return &Response{ErrorCode: 0x0004}, nil
@@ -237,6 +244,18 @@ func sessionGameHostNetwork(
 	session *Session, fallback game.NetworkPair,
 ) (game.NetworkPair, error) {
 	if session == nil || session.conn == nil {
+		return fallback, nil
+	}
+	// Dedicated deployments can accept TCP on a private container interface
+	// while advertising a public gameplay endpoint. Build 103 matches the UDP
+	// open reply against the address originally given to RakPeer.Connect.
+	// Replacing that endpoint with LocalAddr makes redirected replies fail
+	// the native pending-address lookup despite arriving successfully.
+	advertisedIP := net.IPv4(
+		byte(fallback.External.IP>>24), byte(fallback.External.IP>>16),
+		byte(fallback.External.IP>>8), byte(fallback.External.IP),
+	)
+	if fallback.External.IP != 0 && !advertisedIP.IsLoopback() {
 		return fallback, nil
 	}
 	localHost, _, err := net.SplitHostPort(session.conn.LocalAddr().String())
@@ -466,6 +485,10 @@ func joinGameHandler(gameManager *game.Manager) Handler {
 		if err != nil {
 			return nil, fmt.Errorf("joinHostNetwork: %w", err)
 		}
+		err = gameManager.ValidateCampaignAdmission(instance, user.PresenceSnapshot().ChainProgression)
+		if err != nil {
+			return &Response{ErrorCode: 0x0004}, nil
+		}
 		existingPlayers := instance.Players()
 		if !instance.AddPlayer(user) {
 			return &Response{ErrorCode: 0x0004}, nil
@@ -535,8 +558,11 @@ func removePlayerHandler(
 			}
 			// Aborting leaves only this member while a co-op teammate remains.
 			// RemoveMember transfers host ownership through the normal roster path.
+			// Build 103 also removes itself while opening Arena results. Its
+			// departure must not destroy the opponent's pending results screen.
 			isGameAbort := reason == returnToShipReason && user != nil &&
 				user.Account.ID == personaID && instance.HostUserID() == personaID &&
+				instance.Info.Mode != game.ModeArena &&
 				(instance.Info.Mode != game.ModeChain || len(players) <= 1)
 			if reason == returnToShipReason && user != nil &&
 				user.Account.ID == personaID &&
@@ -581,6 +607,10 @@ func removePlayerHandler(
 			if err != nil {
 				return nil, fmt.Errorf("removeDestroyNotify: %w", err)
 			}
+			err = completePendingPlaygroupLeave(ctx, request, personaID)
+			if err != nil {
+				return nil, fmt.Errorf("removeAbortParty: %w", err)
+			}
 			return &Response{}, nil
 		}
 		err := queueGameNotification(request, players, 0x28, []tdf.Field{
@@ -591,6 +621,10 @@ func removePlayerHandler(
 		})
 		if err != nil {
 			return nil, fmt.Errorf("removeNotify: %w", err)
+		}
+		err = completePendingPlaygroupLeave(ctx, request, personaID)
+		if err != nil {
+			return nil, fmt.Errorf("removeMemberParty: %w", err)
 		}
 		return &Response{}, nil
 	}
@@ -877,7 +911,7 @@ func startMatchmakingHandler(
 	matchmaking *pvp.Matchmaking, gameManager *game.Manager,
 	userDirectory activeUserDirectory, partyDirectory partyDirectory,
 ) Handler {
-	return func(_ context.Context, request *Request) (*Response, error) {
+	return func(ctx context.Context, request *Request) (*Response, error) {
 		user := requestUser(request)
 		if user == nil {
 			return &Response{ErrorCode: authInvalidUser}, nil
@@ -925,37 +959,28 @@ func startMatchmakingHandler(
 			criteria.GameType, criteria.ExpectedPlayerCount, criteria.TeamSize,
 			criteria.IsRanked, traceFieldShapes(request.Fields),
 		)
-		if len(admission.Sessions) != 0 {
-			instance, formErr := formMatchmakingGame(
-				gameManager, userDirectory, admission.Sessions, criteria,
-			)
-			if formErr != nil {
-				err = queueMatchmakingFailures(request, admission.Sessions)
-				if err != nil {
-					return nil, fmt.Errorf("matchFailureNotify: %w", err)
-				}
-				logGameRequest(request,
-					"matchmaking_form session_id=%d result=%q error=%q",
-					admission.Session.ID, "rejected", formErr,
-				)
+		isBotFill := false
+		if len(admission.Sessions) == 0 && admission.IsNewSession &&
+			isBotFillCriteria(criteria) && request.Session != nil && request.Session.server != nil {
+			if authenticatedHumanCount(request.Session.server) == 1 {
+				admission.Sessions = matchmaking.ClaimPartial(admission.Session.ID, 0)
+				isBotFill = true
 			} else {
-				err = queueGameSetupRoster(
-					request, instance, gameSetupContextMatchmaking, admission.Sessions,
-				)
-				if err != nil {
-					gameManager.Remove(instance.ID)
-					return nil, fmt.Errorf("matchRoster: %w", err)
+				fill := matchmakingBotFill{
+					matchmaking: matchmaking, gameManager: gameManager,
+					userDirectory: userDirectory, server: request.Session.server,
+					session: admission.Session,
 				}
-				if instance.Info.IsWarped {
-					for _, session := range admission.Sessions {
-						gameManager.ConsumeCampaignWarp(session.UserID, instance.Info.Level)
-					}
-				}
-				logGameRequest(request,
-					"matchmaking_form session_id=%d game_id=%d level=%q result=%q players=%d",
-					admission.Session.ID, instance.ID, instance.Info.Level,
-					"matched", len(admission.Sessions),
-				)
+				// Network dispatch passes the server serve context through to
+				// handlers; it remains live after this request returns.
+				go fill.wait(ctx)
+			}
+		}
+		if len(admission.Sessions) != 0 {
+			err = queueMatchmakingFormation(request, gameManager, userDirectory,
+				admission.Sessions, criteria, isBotFill)
+			if err != nil {
+				return nil, fmt.Errorf("matchFormation: %w", err)
 			}
 		}
 		return &Response{Fields: []tdf.Field{
@@ -986,7 +1011,7 @@ func matchmakingUsers(
 		}
 		return nil, 0, errors.New("arena party leader required")
 	}
-	if len(partySnapshot.Members) > int(criteria.TeamSize) {
+	if !pvp.IsArenaPartySizeAllowed(criteria, partySnapshot.ID, len(partySnapshot.Members)) {
 		return nil, 0, errors.New("arena party exceeds team size")
 	}
 	userIDs = make([]int64, 0, len(partySnapshot.Members))
@@ -1085,6 +1110,11 @@ func formCampaignGame(
 			return nil, fmt.Errorf("campaignMember[%d]: %w", playerIndex, err)
 		}
 	}
+	err = gameManager.SelectCampaignDestination(instance)
+	if err != nil {
+		gameManager.Remove(instance.ID)
+		return nil, fmt.Errorf("campaignDestination: %w", err)
+	}
 	return instance, nil
 }
 
@@ -1097,16 +1127,9 @@ func formArenaGame(
 		len(sessions) != int(criteria.ExpectedPlayerCount) {
 		return nil, errors.New("arena formation invalid")
 	}
-	orderedSessions := make([]pvp.MatchmakingSession, 0, len(sessions))
-	for _, session := range sessions {
-		if session.PartyID != 0 {
-			orderedSessions = append(orderedSessions, session)
-		}
-	}
-	for _, session := range sessions {
-		if session.PartyID == 0 {
-			orderedSessions = append(orderedSessions, session)
-		}
+	orderedSessions, err := pvp.OrderArenaSessions(sessions, criteria)
+	if err != nil {
+		return nil, fmt.Errorf("arenaRoster: %w", err)
 	}
 	sessions = orderedSessions
 	players := make([]*sporenet.User, 0, len(sessions))
@@ -1334,7 +1357,16 @@ func gamePlayerFields(instance *game.Instance, player *sporenet.User) []tdf.Fiel
 	team, isTeamAssigned := instance.PlayerTeam(player.Account.ID)
 	if !isTeamAssigned {
 		team = 0xffff
-	} else if instance.Info.Mode == game.ModeArena {
+	}
+	return gameRosterPlayerFields(instance, uint64(player.Account.ID), player.DisplayName,
+		slot, team, gamePlayerStateConnecting, uint64(player.Account.ID))
+}
+
+func gameRosterPlayerFields(
+	instance *game.Instance, userID uint64, displayName string,
+	slot uint16, team uint16, state uint64, sessionID uint64,
+) []tdf.Field {
+	if instance.Info.Mode == game.ModeArena && team != 0xffff {
 		team--
 	}
 	playerNetwork := game.NetworkPair{
@@ -1345,19 +1377,19 @@ func gamePlayerFields(instance *game.Instance, player *sporenet.User) []tdf.Fiel
 		tdf.FieldNamed("EXID", tdf.IntegerValue(0)),
 		tdf.FieldNamed("GID", tdf.IntegerValue(uint64(instance.ID))),
 		tdf.FieldNamed("LOC", tdf.IntegerValue(0x656e5553)),
-		tdf.FieldNamed("NAME", tdf.StringValue(player.DisplayName)),
+		tdf.FieldNamed("NAME", tdf.StringValue(displayName)),
 		tdf.FieldNamed("PATT", tdf.MapValue(tdf.String, tdf.String)),
-		tdf.FieldNamed("PID", tdf.IntegerValue(uint64(player.Account.ID))),
+		tdf.FieldNamed("PID", tdf.IntegerValue(userID)),
 		tdf.FieldNamed("PNET", tdf.UnionValue(2,
 			tdf.FieldNamed("VALU", tdf.StructValue(networkPairFields(playerNetwork)...)),
 		)),
 		tdf.FieldNamed("SID", tdf.IntegerValue(uint64(slot))),
 		tdf.FieldNamed("SLOT", tdf.IntegerValue(gameSlotTypePublicParticipant)),
-		tdf.FieldNamed("STAT", tdf.IntegerValue(gamePlayerStateConnecting)),
+		tdf.FieldNamed("STAT", tdf.IntegerValue(state)),
 		tdf.FieldNamed("TIDX", tdf.IntegerValue(uint64(team))),
 		tdf.FieldNamed("TIME", tdf.IntegerValue(uint64(time.Now().Unix()))),
 		tdf.FieldNamed("UGID", tdf.Value{Type: tdf.ObjectID}),
-		tdf.FieldNamed("UID", tdf.IntegerValue(uint64(player.Account.ID))),
+		tdf.FieldNamed("UID", tdf.IntegerValue(sessionID)),
 	}
 }
 
@@ -1404,6 +1436,11 @@ func gameSetupFields(
 		replaceField(
 			playerFields, "UID", tdf.IntegerValue(uint64(playerSessionID)),
 		)
+		playerItems = append(playerItems, tdf.StructValue(playerFields...))
+	}
+	for _, bot := range instance.PlayerBots() {
+		playerFields := gameRosterPlayerFields(instance, bot.UserID, bot.DisplayName,
+			bot.Slot, bot.Team, gamePlayerStateConnected, uint64(bot.SessionID))
 		playerItems = append(playerItems, tdf.StructValue(playerFields...))
 	}
 	hostSessionID := uint32(hostUserID)
@@ -1608,8 +1645,17 @@ func endpointFromFields(fields []tdf.Field) game.NetworkEndpoint {
 
 func stringMapValue(values map[string]string) tdf.Value {
 	entries := make([]tdf.MapEntry, 0, len(values))
-	for key, value := range values {
-		entries = append(entries, tdf.MapEntry{Key: tdf.StringValue(key), Value: tdf.StringValue(value)})
+	// Build 103 retains this order in a sorted-vector map and uses binary
+	// search for GameType and the other game attributes.
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	slices.SortFunc(keys, func(left, right string) int {
+		return strings.Compare(strings.ToLower(left), strings.ToLower(right))
+	})
+	for _, key := range keys {
+		entries = append(entries, tdf.MapEntry{Key: tdf.StringValue(key), Value: tdf.StringValue(values[key])})
 	}
 	return tdf.MapValue(tdf.String, tdf.String, entries...)
 }

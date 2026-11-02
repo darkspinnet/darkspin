@@ -281,7 +281,7 @@ func (b *ProjectileBurstBehavior) ResolveCollision(
 		return errors.New("invalid burst collision")
 	}
 	shot := &b.shots[index]
-	if !shot.isLaunched || shot.isResolved || targetHitPoint < 0 || damage <= 0 ||
+	if !shot.isLaunched || shot.isResolved || targetHitPoint < 0 || damage < 0 ||
 		!isFinitePosition(impactPosition) || !isFinitePosition(facing) {
 		return errors.New("burst collision unavailable")
 	}
@@ -320,7 +320,9 @@ func (b *ProjectileBurstBehavior) ResolveCollision(
 			return fmt.Errorf("effectEmit[%d]: %w", index, err)
 		}
 	}
-	if targetRole != "" {
+	// A blocked or fully absorbed collision still impacts and retires the
+	// projectile. It must not abort the burst or invent a health change.
+	if targetRole != "" && damage > 0 {
 		err = b.emit(DamageIntent{
 			ActorRole: b.input.ActorRole, TargetRole: targetRole,
 			DeltaHealth: damage, IntegerHitPointChange: -int32(damage), IsCritical: isCritical,

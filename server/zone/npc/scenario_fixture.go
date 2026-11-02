@@ -159,6 +159,13 @@ func (e *Session) ScenarioFixtureLifetimes(req ScenarioFixtureLifetimeRequest) S
 			objectIDs[record.ObjectID] = false
 			npc, isFound := e.npcs[record.ObjectID]
 			switch {
+			case record.State == "retired":
+				if !isFound || !scenarioFixtureRecordMatches(record, npc.Plan) || npc.IsPublished || npc.IsNavigationCollisionEnabled {
+					result.IsComplete = false
+					if result.Reason == "" {
+						result.Reason = "retired fixture retains current presentation or geometry"
+					}
+				}
 			case record.State == "rolled_back":
 				if isFound {
 					result.IsComplete = false

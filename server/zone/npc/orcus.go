@@ -24,6 +24,9 @@ type OrcusSpawnDefinition struct {
 }
 
 func OrcusSpawnProfile(nounName string) (OrcusSpawnDefinition, bool) {
+	if strings.EqualFold(nounName, "VerdanthBossTest.Noun") {
+		nounName = "VerdanthBoss.Noun"
+	}
 	servantNoun := ""
 	maximumServant := 0
 	movementSpeed := float32(0)
@@ -89,6 +92,7 @@ func OrcusFallbackProfile(nounName string) (ActionProfile, bool) {
 		NonCombatMovementSpeed: nonCombatMovementSpeed,
 		MinimumDamage:          5, MaximumDamage: 8,
 		FirstAggroAnimationName:     "boss_lf_spawneater_aggro",
+		FirstAggroAnimationDelay:    1600000023 * time.Nanosecond,
 		FirstAggroDelay:             9199999929 * time.Nanosecond,
 		FirstAggroCinematicDuration: 9199999929 * time.Nanosecond,
 		FirstAggroCinematicRadius:   100,
@@ -140,6 +144,9 @@ func OrcusDiseaseConeProfile(nounName string) (ActionProfile, bool) {
 }
 
 func OrcusConsumeProfile(nounName string) (ActionProfile, bool) {
+	if strings.EqualFold(nounName, "VerdanthBossTest.Noun") {
+		nounName = "VerdanthBoss.Noun"
+	}
 	fallback, isFound := OrcusFallbackProfile(nounName)
 	if !isFound {
 		return ActionProfile{}, false

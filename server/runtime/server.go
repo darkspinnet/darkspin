@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	contentruntime "github.com/darkspinnet/darkspin/content/runtime"
 	contentsqlite "github.com/darkspinnet/darkspin/content/sqlite"
 	serverauth "github.com/darkspinnet/darkspin/server/auth"
 	"github.com/darkspinnet/darkspin/server/blaze"
@@ -29,6 +30,8 @@ import (
 	gamecontentsqlite "github.com/darkspinnet/darkspin/server/game/contentsqlite"
 	"github.com/darkspinnet/darkspin/server/gameplay"
 	recaphttp "github.com/darkspinnet/darkspin/server/http"
+	"github.com/darkspinnet/darkspin/server/instance"
+	"github.com/darkspinnet/darkspin/server/maintenance"
 	navigationcontentsqlite "github.com/darkspinnet/darkspin/server/navigation/contentsqlite"
 	"github.com/darkspinnet/darkspin/server/party"
 	partylocal "github.com/darkspinnet/darkspin/server/party/local"
@@ -39,14 +42,14 @@ import (
 	"github.com/darkspinnet/darkspin/server/scheduler"
 	"github.com/darkspinnet/darkspin/server/snapshot"
 	"github.com/darkspinnet/darkspin/server/sporenet"
-	sporenetsqlite "github.com/darkspinnet/darkspin/server/sporenet/sqlite"
+	"github.com/darkspinnet/darkspin/server/sporenet/savebuffer"
 	sharedtcp "github.com/darkspinnet/darkspin/server/tcp"
 	sharedudp "github.com/darkspinnet/darkspin/server/udp"
 	"github.com/darkspinnet/darkspin/server/util"
 	"github.com/darkspinnet/darkspin/server/zone"
 	zonecheckpoint "github.com/darkspinnet/darkspin/server/zone/checkpoint"
-	checkpointsqlite "github.com/darkspinnet/darkspin/server/zone/checkpoint/sqlite"
 	zonecontentsqlite "github.com/darkspinnet/darkspin/server/zone/content/contentsqlite"
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -57,11 +60,6 @@ const (
 	CacheDirectory          = "cache"
 	UserDatabaseFilename    = "darkspin.db"
 	ContentDatabaseFilename = "content.db"
-	advertisedServerHost    = "127.0.0.1"
-	multiplayerBindHost     = "0.0.0.0"
-	sqliteOpenLimit         = 8
-	sqliteIdleLimit         = 4
-	sqliteBusyTimeout       = 5 * time.Second
 )
 
 // TutorialProfileCompletion reports the durable profile produced by the
@@ -135,8 +133,12 @@ func CompleteTutorialProfile(
 		return TutorialProfileCompletion{}, fmt.Errorf("configLoad: %w", err)
 	}
 	runtimePath := filepath.Join(filepath.Dir(configPath), DarkspinDirectory)
+	contentPath, err := config.ContentPath(configPath)
+	if err != nil {
+		return TutorialProfileCompletion{}, fmt.Errorf("contentPath: %w", err)
+	}
 	contentStore, err := openContentStore(
-		filepath.Join(runtimePath, CacheDirectory, ContentDatabaseFilename),
+		filepath.Join(contentPath, ContentDatabaseFilename),
 	)
 	if err != nil {
 		return TutorialProfileCompletion{}, fmt.Errorf("contentStore: %w", err)
@@ -183,6 +185,10 @@ func CompleteTutorialProfile(
 
 // Options controls construction of a Server.
 type Options struct {
+	// Postgres is supplied only by the dedicated darkrun host.
+	Postgres              *pgx.ConnConfig
+	IsModded              bool
+	ModNames              []string
 	GamePath              string
 	ConfigPath            string
 	IsTimestampingEnabled bool
@@ -191,8 +197,15 @@ type Options struct {
 	BlazePrivateKeyPath   string
 	TracePath             string
 	RuntimePath           string
+	UserDatabasePath      string
+	ContentDatabasePath   string
+	StaticPath            string
 	HTTPRoutes            []HTTPRoute
-	workingDirectory      string
+	MaintenanceSchedule   *maintenance.ScheduleOptions
+	// InstanceLease transfers an already acquired startup lease to the server.
+	// When nil, New acquires the runtime lease before opening persistent stores.
+	InstanceLease    *instance.Lease
+	workingDirectory string
 }
 
 // HTTPRoute mounts an optional host-owned handler on the server's HTTP ports.
@@ -215,6 +228,17 @@ type Environment struct {
 
 // Server coordinates the lifetime of all Game server subsystems.
 type Server struct {
+	instanceLease         *instance.Lease
+	maintenanceControl    *maintenance.Control
+	maintenanceServers    []*blaze.Server
+	maintenanceSchedule   *maintenance.ScheduleOptions
+	maintenanceDone       chan struct{}
+	isMaintenanceUpdate   bool
+	closeErr              error
+	lifecycleMu           sync.Mutex
+	runCancel             context.CancelFunc
+	isClosed              bool
+	isRunning             bool
 	environment           Environment
 	config                *game.Config
 	serverRuleStore       *serverRuleStore
@@ -232,12 +256,13 @@ type Server struct {
 	httpRouter            *recaphttp.Router
 	userManager           *sporenet.UserManager
 	userStore             io.Closer
+	saveBuffer            *savebuffer.Repository
 	contentStore          io.Closer
 	checkpoint            *zonecheckpoint.Manager
 	checkpointStore       io.Closer
-	chatLogOutput         io.Closer
 	roomManager           *sporenet.RoomManager
 	gameManager           *game.Manager
+	partyService          *party.Service
 	template              *sporenet.TemplateDatabase
 	vendor                *sporenet.Vendor
 	logger                *log.Logger
@@ -394,7 +419,12 @@ func (s *Server) DiscardInterruptedMission(
 	return nil
 }
 
-// DeleteProfile removes one inactive local account through the live user
+// HasActiveProfiles reports authenticated players that still depend on this server.
+func (e *Server) HasActiveProfiles() bool {
+	return e != nil && e.userManager != nil && len(e.userManager.Users()) != 0
+}
+
+// DeleteProfile archives one inactive local account through the live user
 // manager so shutdown cannot resurrect a deleted in-memory snapshot.
 func (s *Server) DeleteProfile(ctx context.Context, loginName string) error {
 	if s == nil || s.userManager == nil {
@@ -439,6 +469,15 @@ func (s *Server) CompletePendingTutorialProfiles(ctx context.Context) (int, erro
 
 // New initializes the process environment required by the server.
 func New(options Options) (*Server, error) {
+	var maintenanceSchedule *maintenance.ScheduleOptions
+	if options.MaintenanceSchedule != nil {
+		req := *options.MaintenanceSchedule
+		err := maintenance.ValidateSchedule(req)
+		if err != nil {
+			return nil, fmt.Errorf("maintenanceSchedule: %w", err)
+		}
+		maintenanceSchedule = &req
+	}
 	workingDirectory := options.workingDirectory
 	if workingDirectory == "" {
 		var err error
@@ -451,25 +490,6 @@ func New(options Options) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cwdResolve: %w", err)
 	}
-	runtimePath := options.RuntimePath
-	if runtimePath == "" {
-		runtimePath = filepath.Join(workingDirectory, DarkspinDirectory)
-	}
-	runtimePath, err = filepath.Abs(runtimePath)
-	if err != nil {
-		return nil, fmt.Errorf("runtimePath: %w", err)
-	}
-	logPath := filepath.Join(runtimePath, LogDirectory)
-	traceDirectoryPath := filepath.Join(logPath, TraceDirectory)
-	userDatabasePath := filepath.Join(runtimePath, SaveDirectory, UserDatabaseFilename)
-	contentDatabasePath := filepath.Join(runtimePath, CacheDirectory, ContentDatabaseFilename)
-	for index, directory := range []string{logPath, traceDirectoryPath, filepath.Dir(userDatabasePath), filepath.Dir(contentDatabasePath)} {
-		err = os.MkdirAll(directory, 0o755)
-		if err != nil {
-			return nil, fmt.Errorf("runtimeMkdir[%d]: %w", index, err)
-		}
-	}
-
 	configPath := options.ConfigPath
 	if configPath == "" {
 		configPath = game.DefaultConfigFilename
@@ -477,6 +497,47 @@ func New(options Options) (*Server, error) {
 	configPath, err = filepath.Abs(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("configPath: %w", err)
+	}
+	runtimePath := options.RuntimePath
+	if runtimePath == "" {
+		runtimePath = filepath.Join(filepath.Dir(configPath), DarkspinDirectory)
+	}
+	runtimePath, err = filepath.Abs(runtimePath)
+	if err != nil {
+		return nil, fmt.Errorf("runtimePath: %w", err)
+	}
+	instanceLease := options.InstanceLease
+	if instanceLease == nil {
+		instanceLease, err = instance.Acquire(runtimePath)
+		if err != nil {
+			return nil, fmt.Errorf("instanceAcquire: %w", err)
+		}
+	}
+	isInstanceTransferred := false
+	defer func() {
+		if isInstanceTransferred {
+			return
+		}
+		closeErr := instanceLease.Close()
+		if closeErr != nil {
+			log.Printf("Server startup lease close failed: %v", closeErr)
+		}
+	}()
+	logPath := filepath.Join(runtimePath, LogDirectory)
+	traceDirectoryPath := filepath.Join(logPath, TraceDirectory)
+	userDatabasePath := filepath.Join(runtimePath, SaveDirectory, UserDatabaseFilename)
+	contentDatabasePath := filepath.Join(runtimePath, CacheDirectory, ContentDatabaseFilename)
+	if options.UserDatabasePath != "" {
+		userDatabasePath = options.UserDatabasePath
+	}
+	if options.ContentDatabasePath != "" {
+		contentDatabasePath = options.ContentDatabasePath
+	}
+	for index, directory := range []string{logPath, traceDirectoryPath, filepath.Dir(userDatabasePath), filepath.Dir(contentDatabasePath)} {
+		err = os.MkdirAll(directory, 0o755)
+		if err != nil {
+			return nil, fmt.Errorf("runtimeMkdir[%d]: %w", index, err)
+		}
 	}
 
 	gamePath, err := detectGame(options.GamePath)
@@ -487,6 +548,16 @@ func New(options Options) (*Server, error) {
 	config, isConfigGenerated, err := game.LoadConfig(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("configLoad: %w", err)
+	}
+	contentPath := filepath.Join(runtimePath, CacheDirectory)
+	if config.String(game.ConfigContentPath) != "" {
+		contentPath, err = config.ContentPath(configPath)
+		if err != nil {
+			return nil, fmt.Errorf("contentDirectory: %w", err)
+		}
+	}
+	if options.ContentDatabasePath == "" {
+		contentDatabasePath = filepath.Join(contentPath, ContentDatabaseFilename)
 	}
 	serverRuleStore, err := loadServerRuleStore(context.Background(), configPath)
 	if err != nil {
@@ -505,10 +576,20 @@ func New(options Options) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tlsLoad: %w", err)
 	}
-	host := advertisedServerHost
-	bindHost := advertisedServerHost
-	if config.Bool(game.ConfigIsMultiplayerEnabled) {
-		bindHost = multiplayerBindHost
+	bindHost, host, err := config.NetworkHosts()
+	if err != nil {
+		return nil, fmt.Errorf("networkHosts: %w", err)
+	}
+	// Every host, including scenario/direct runtime hosts, crosses the same
+	// cache readiness boundary before any feature queries the schema.
+	err = contentruntime.Ensure(context.Background(), contentruntime.Options{
+		GamePath: gamePath, DatabasePath: contentDatabasePath,
+		OnProgress: func(progress contentsqlite.BuildProgress) {
+			logger.Printf("Content: %s (%d/%d)", progress.Phase, progress.Completed, progress.Total)
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("contentPrepare: %w", err)
 	}
 	contentStore, err := openContentStore(contentDatabasePath)
 	if err != nil {
@@ -529,17 +610,48 @@ func New(options Options) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("simulationProgram: %w", err)
 	}
-	userRepository, userStore, err := openUserRepository(config, userDatabasePath)
+	playerStore, err := openPlayerStore(config, userDatabasePath, options.Postgres)
 	if err != nil {
 		return nil, fmt.Errorf("userStore: %w", err)
 	}
+	isCheckpointStoreTransferred := false
+	userRepository := playerStore.Profile
+	userStore := playerStore.Profile
+	checkpointStore := playerStore.Checkpoint
+	logger.Printf("Player storage backend: %s; content storage: sqlite", playerStore.Driver)
+	defer func() {
+		if !isCheckpointStoreTransferred {
+			closeErr := checkpointStore.Close()
+			if closeErr != nil {
+				logger.Printf("Checkpoint initialization cleanup failed: %v", closeErr)
+			}
+		}
+	}()
 	isUserStoreTransferred := false
 	defer func() {
 		if !isUserStoreTransferred && userStore != nil {
-			_ = userStore.Close()
+			closeErr := userStore.Close()
+			if closeErr != nil {
+				logger.Printf("Player storage initialization cleanup failed: %v", closeErr)
+			}
 		}
 	}()
-	userManager, err := sporenet.NewUserManagerWithRepository(userRepository, templateDatabase)
+	purgedCount, err := sporenet.PurgeExpiredProfiles(context.Background(), userRepository, time.Now())
+	if err != nil {
+		logger.Printf("Expired profile cleanup failed: %v", err)
+		return nil, fmt.Errorf("profilePurge: %w", err)
+	}
+	logger.Printf("Expired profile cleanup removed %d archived profiles", purgedCount)
+	profileBuffer := savebuffer.New(userRepository, logger)
+	defer func() {
+		if !isUserStoreTransferred {
+			closeErr := profileBuffer.Close()
+			if closeErr != nil {
+				logger.Printf("Profile save buffer initialization cleanup failed: %v", closeErr)
+			}
+		}
+	}()
+	userManager, err := sporenet.NewUserManagerWithRepository(profileBuffer, templateDatabase)
 	if err != nil {
 		return nil, fmt.Errorf("userInit: %w", err)
 	}
@@ -559,7 +671,6 @@ func New(options Options) (*Server, error) {
 		Directory:        filepath.Join(traceDirectoryPath, "snapshots"),
 		ArchiveDirectory: filepath.Join(runtimePath, "bugs"),
 		TraceDirectory:   traceDirectoryPath, Mode: snapshotMode,
-		ControlPath:    filepath.Join(traceDirectoryPath, "snapshot-control.txt"),
 		BufferDuration: time.Duration(snapshotBufferSecond) * time.Second,
 		Delay:          time.Duration(snapshotDelaySecond) * time.Second,
 		BuildVersion:   buildinfo.Version, Logger: logger,
@@ -592,23 +703,16 @@ func New(options Options) (*Server, error) {
 			completedProfileCount,
 		)
 	}
-	checkpointCtx, checkpointCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	checkpointStore, err := checkpointsqlite.New(
-		checkpointCtx, userDatabasePath,
-		checkpointsqlite.Options{BusyTimeout: sqliteBusyTimeout},
-	)
-	checkpointCancel()
-	if err != nil {
-		return nil, fmt.Errorf("checkpointStore: %w", err)
-	}
 	checkpointManager := zonecheckpoint.NewManager(checkpointStore, logger)
-	isCheckpointStoreTransferred := false
+	checkpointManager.UseProfileSaver(profileBuffer)
 	defer func() {
 		if isCheckpointStoreTransferred {
 			return
 		}
-		_ = checkpointManager.Close()
-		_ = checkpointStore.Close()
+		closeErr := checkpointManager.Close()
+		if closeErr != nil {
+			logger.Printf("Checkpoint manager initialization cleanup failed: %v", closeErr)
+		}
 	}()
 	worldPlayerLimit, err := config.Uint32(game.ConfigWorldPlayerLimit)
 	if err != nil {
@@ -618,13 +722,21 @@ func New(options Options) (*Server, error) {
 	var loginTokenVerifier blaze.LoginTokenVerifier
 	var localAuthHandler http.Handler
 	jwtSecret := config.String(game.ConfigAuthJWTSecret)
+	isDedicated := config.Bool(game.ConfigServerIsDedicated)
+	if isDedicated && (jwtSecret == "" || jwtSecret == game.DefaultConfig().String(game.ConfigAuthJWTSecret)) {
+		return nil, errors.New("dedicated server requires a private auth.jwt_secret of at least 32 bytes")
+	}
 	if jwtSecret != "" {
 		jwtIssuer := config.String(game.ConfigAuthJWTIssuer)
 		jwtAudience := config.String(game.ConfigAuthJWTAudience)
-		loginTokenVerifier, err = serverauth.NewJWTVerifier([]byte(jwtSecret), jwtIssuer, jwtAudience)
-		if err != nil {
-			return nil, fmt.Errorf("jwtInit: %w", err)
+		jwtVerifier, verifierErr := serverauth.NewJWTVerifier([]byte(jwtSecret), jwtIssuer, jwtAudience)
+		if verifierErr != nil {
+			return nil, fmt.Errorf("jwtInit: %w", verifierErr)
 		}
+		if isDedicated {
+			jwtVerifier.RequireClientVersion()
+		}
+		loginTokenVerifier = jwtVerifier
 		logger.Printf("JWT launch login enabled for issuer %q and audience %q", jwtIssuer, jwtAudience)
 		issuer, issuerErr := serverauth.NewJWTIssuer(
 			[]byte(jwtSecret), jwtIssuer, jwtAudience,
@@ -633,9 +745,13 @@ func New(options Options) (*Server, error) {
 			return nil, fmt.Errorf("accountAuthIssuer: %w", issuerErr)
 		}
 		authAddress := net.JoinHostPort(host, fmt.Sprintf("%d", ports.http))
-		broker, brokerErr := serverauth.NewAccountBroker(
-			issuer, authAddress, userManager, logger,
-		)
+		var broker *serverauth.LocalBroker
+		var brokerErr error
+		if isDedicated {
+			broker, brokerErr = serverauth.NewDedicatedBroker(issuer, authAddress, userManager, logger)
+		} else {
+			broker, brokerErr = serverauth.NewAccountBroker(issuer, authAddress, userManager, logger)
+		}
 		if brokerErr != nil {
 			return nil, fmt.Errorf("accountAuthBroker: %w", brokerErr)
 		}
@@ -658,16 +774,10 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("gameHostNetwork: %w", err)
 	}
 	gameManager.SetHostNetwork(hostNetwork)
-	chatRecorders, chatLogOutput, err := openChatRecorders(config, logPath, userRepository, logger)
+	chatRecorders, err := openChatRecorders(config, userRepository, logger)
 	if err != nil {
 		return nil, fmt.Errorf("chatLogInit: %w", err)
 	}
-	isChatLogOutputTransferred := false
-	defer func() {
-		if !isChatLogOutputTransferred && chatLogOutput != nil {
-			_ = chatLogOutput.Close()
-		}
-	}()
 	directory := chatlocal.NewDirectory(
 		userManager, roomManager, gameManager, partyService,
 	)
@@ -678,6 +788,7 @@ func New(options Options) (*Server, error) {
 	chatService.UseEffectPreviewer(chatlocal.NewEffectPreviewer(gameManager))
 	chatService.UseResourceMutator(chatlocal.NewResourceMutator(gameManager))
 	chatService.UseEventTriggerer(chatlocal.NewEventTriggerer(gameManager))
+	chatService.UseEmoteRequester(chatlocal.NewModEmoteRequester(gameManager, options.IsModded))
 	chatService.UseFollowRequester(chatlocal.NewFollowRequester(gameManager))
 	chatService.UseItemSummoner(chatlocal.NewItemSummoner(userManager, gameManager))
 	chatService.UseLevelSetter(chatlocal.NewLevelSetter(userManager, gameManager))
@@ -709,9 +820,16 @@ func New(options Options) (*Server, error) {
 	}
 	presenceRegistry := blaze.NewPresenceRegistry()
 	matchmaking := pvp.NewMatchmaking()
-	err = blaze.RegisterSporeNetComponentsWithMembership(
-		registry, userManager, loginTokenVerifier, partyService, presenceRegistry,
-	)
+	registry.SetMatchmakingConfig(config)
+	if isDedicated {
+		err = blaze.RegisterDedicatedSporeNetComponentsWithMembership(
+			registry, userManager, loginTokenVerifier, partyService, presenceRegistry,
+		)
+	} else {
+		err = blaze.RegisterSporeNetComponentsWithMembership(
+			registry, userManager, loginTokenVerifier, partyService, presenceRegistry,
+		)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("sporenetRegister: %w", err)
 	}
@@ -758,7 +876,11 @@ func New(options Options) (*Server, error) {
 			}
 		}
 	}
-	webFileSystem := os.DirFS(filepath.Join(runtimePath, CacheDirectory, "www", "static"))
+	staticPath := options.StaticPath
+	if staticPath == "" {
+		staticPath = filepath.Join(contentPath, "www", "static")
+	}
+	webFileSystem := os.DirFS(staticPath)
 	partCatalogContext, partCatalogCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	partCatalog, err := gamecontentsqlite.LoadPartCatalog(partCatalogContext, contentStore)
 	partCatalogCancel()
@@ -772,7 +894,10 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("resumeCoordinator: %w", err)
 	}
 	err = game.RegisterAPI(router, game.APIOptions{
-		UserManager: userManager, Template: templateDatabase, PartCatalog: partCatalog, Vendor: vendor,
+		BotPortraitFinder: gameManager,
+		IsDedicated:       isDedicated,
+		IsModded:          options.IsModded,
+		UserManager:       userManager, Template: templateDatabase, PartCatalog: partCatalog, Vendor: vendor,
 		PartShopRules:   serverRuleStore.shopRules,
 		ResumeActivator: resumeCoordinator,
 		Storage:         runtimePath, StaticFileSystem: webFileSystem,
@@ -835,7 +960,7 @@ func New(options Options) (*Server, error) {
 	gameplayJoin.UseTutorialEndPublisher(tutorialEndPublisher{servers: allBlazeServers})
 	gameplayJoin.UseInventoryPublisher(inventoryPublisher{servers: allBlazeServers})
 	gameplayJoin.UseSystemChatPublisher(systemChatPublisher{servers: allBlazeServers})
-	gameplayJoin.SetAppearanceStore(appearancefs.Store{Root: runtimePath})
+	gameplayJoin.SetAppearanceStore(appearancefs.Store{Root: runtimePath, Templates: webFileSystem, Logger: logger})
 	directorSource, err := gamecontentsqlite.NewDirectorSource(contentStore)
 	if err != nil {
 		return nil, fmt.Errorf("directorSource: %w", err)
@@ -853,15 +978,25 @@ func New(options Options) (*Server, error) {
 	logger.Printf("NPC ally alert policy enabled=%t range_percent=%d range_owner=%s max_hops=%d diagnostics=%t",
 		allyAlertRules.IsEnabled, allyAlertRules.RangePercent, allyAlertRules.RangeOwner,
 		allyAlertRules.MaxHops, allyAlertRules.IsDiagnosticLoggingEnabled)
+	hordePolicy := serverRuleStore.HordePolicy()
+	logger.Printf("Mutation Agent horde policy enabled=%t minimum_chain_level=%d waves=%d spawn_wave=%d delay=%s agent_defeat_completes=%t",
+		hordePolicy.IsMutationAgentEnabled, hordePolicy.MutationAgentMinChainLevel,
+		hordePolicy.WaveCount, hordePolicy.MutationAgentWaveOrdinal,
+		hordePolicy.InterWaveDelay, hordePolicy.IsMutationAgentDefeatCompleting)
 	gameplayHandler, gameplayLifecycle := gameplay.NewHandler(
 		gameplayJoin, userManager, simulationProgram, logger, campaignSetup, navigationSource,
 		zone.NewSchedulerTimer(taskScheduler), checkpointManager, serverRuleStore,
 	)
-	reportContext := reportContextProvider{gameplay: gameplayLifecycle, presence: presenceRegistry}
+	reportContext := reportContextProvider{
+		gameplay: gameplayLifecycle, presence: presenceRegistry,
+		isModded: options.IsModded, modNames: append([]string(nil), options.ModNames...),
+	}
 	chatService.UseBugContextProvider(reportContext)
 	chatService.UseHintProvider(gameplayLifecycle)
 	chatService.UseLocationProvider(gameplayLifecycle)
 	chatService.UseResourceStatusProvider(gameplayLifecycle)
+	chatService.UseNPCScalePreviewer(gameplayLifecycle)
+	chatService.UseGodModeToggler(gameplayLifecycle)
 	snapshotService.UseStateProvider(gameplayLifecycle)
 	snapshotService.UseNotifier(snapshotNotifier{servers: allBlazeServers})
 	gameManager.UseRemovalObserver(gameplayLifecycle.DiscardGame)
@@ -887,6 +1022,8 @@ func New(options Options) (*Server, error) {
 	)
 
 	application := &Server{
+		instanceLease:       instanceLease,
+		maintenanceSchedule: maintenanceSchedule,
 		environment: Environment{
 			WorkingDirectory: workingDirectory,
 			RuntimePath:      runtimePath,
@@ -899,6 +1036,7 @@ func New(options Options) (*Server, error) {
 		isConfigGenerated:     isConfigGenerated,
 		scheduler:             taskScheduler,
 		blazeServers:          blazeServers,
+		maintenanceServers:    allBlazeServers,
 		sharedTCPServers:      sharedTCPServers,
 		udpServer:             udpServer,
 		gameplayCleanup:       gameplayLifecycle.Cleanup,
@@ -910,12 +1048,13 @@ func New(options Options) (*Server, error) {
 		httpRouter:            router,
 		userManager:           userManager,
 		userStore:             userStore,
+		saveBuffer:            profileBuffer,
 		contentStore:          contentStore,
 		checkpoint:            checkpointManager,
 		checkpointStore:       checkpointStore,
-		chatLogOutput:         chatLogOutput,
 		roomManager:           roomManager,
 		gameManager:           gameManager,
+		partyService:          partyService,
 		template:              templateDatabase,
 		vendor:                vendor,
 		logger:                logger,
@@ -925,29 +1064,9 @@ func New(options Options) (*Server, error) {
 	isUserStoreTransferred = true
 	isContentStoreTransferred = true
 	isCheckpointStoreTransferred = true
-	isChatLogOutputTransferred = true
 	isSnapshotTransferred = true
+	isInstanceTransferred = true
 	return application, nil
-}
-
-func openUserRepository(config *game.Config, databasePath string) (sporenet.UserRepository, io.Closer, error) {
-	driver := strings.ToLower(strings.TrimSpace(config.String(game.ConfigStorageDriver)))
-	switch driver {
-	case "", "sqlite":
-		openCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		repository, err := sporenetsqlite.New(openCtx, databasePath, sporenetsqlite.Options{
-			MaxOpenConnections: sqliteOpenLimit,
-			MaxIdleConnections: sqliteIdleLimit,
-			BusyTimeout:        sqliteBusyTimeout,
-		})
-		if err != nil {
-			return nil, nil, fmt.Errorf("sqliteOpen: %w", err)
-		}
-		return repository, repository, nil
-	default:
-		return nil, nil, fmt.Errorf("storageDriver: unsupported %q", driver)
-	}
 }
 
 func openContentStore(databasePath string) (*contentsqlite.Store, error) {
@@ -1022,6 +1141,7 @@ func loadCreatureTemplates(store *contentsqlite.Store, database *sporenet.Templa
 			WeaponMaxDamage:      record.WeaponMaxDamage,
 			GearScore:            record.GearScore,
 			ClassType:            record.ClassType,
+			UnlockLevel:          record.UnlockLevel,
 			StatsTemplate:        record.StatTemplate,
 			AbilityPassive:       abilityPassive,
 			AbilityBasic:         abilityBasic,
@@ -1067,8 +1187,8 @@ func (r bestEffortChatRecorder) Record(ctx context.Context, message chat.Message
 	return nil
 }
 
-func openChatRecorders(config *game.Config, logPath string, repository sporenet.UserRepository, logger *log.Logger) ([]chat.Recorder, io.Closer, error) {
-	recorders := make([]chat.Recorder, 0, 3)
+func openChatRecorders(config *game.Config, repository sporenet.UserRepository, logger *log.Logger) ([]chat.Recorder, error) {
+	recorders := make([]chat.Recorder, 0, 2)
 	databaseRecorder, isSupported := repository.(chat.Recorder)
 	if isSupported {
 		recorders = append(recorders, databaseRecorder)
@@ -1076,32 +1196,11 @@ func openChatRecorders(config *game.Config, logPath string, repository sporenet.
 	if config.Bool(game.ConfigIsChatStdoutEnabled) {
 		stdoutRecorder, err := textlog.New(os.Stdout)
 		if err != nil {
-			return nil, nil, fmt.Errorf("stdoutCreate: %w", err)
+			return nil, fmt.Errorf("stdoutCreate: %w", err)
 		}
 		recorders = append(recorders, bestEffortChatRecorder{recorder: stdoutRecorder, logger: logger, label: "stdout"})
 	}
-	filePath := strings.TrimSpace(config.String(game.ConfigChatFilePath))
-	if filePath == "" {
-		return recorders, nil, nil
-	}
-	if !filepath.IsAbs(filePath) {
-		filePath = filepath.Join(logPath, filepath.FromSlash(filePath))
-	}
-	err := os.MkdirAll(filepath.Dir(filePath), 0o755)
-	if err != nil {
-		return nil, nil, fmt.Errorf("fileDirectory: %w", err)
-	}
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return nil, nil, fmt.Errorf("fileOpen: %w", err)
-	}
-	fileRecorder, err := textlog.New(file)
-	if err != nil {
-		_ = file.Close()
-		return nil, nil, fmt.Errorf("fileCreate: %w", err)
-	}
-	recorders = append(recorders, bestEffortChatRecorder{recorder: fileRecorder, logger: logger, label: "file"})
-	return recorders, file, nil
+	return recorders, nil
 }
 
 // Environment returns a copy of the initialized runtime environment.
@@ -1141,6 +1240,25 @@ func (s *Server) Run(ctx context.Context) error {
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	s.lifecycleMu.Lock()
+	if s.isClosed || s.isRunning {
+		s.lifecycleMu.Unlock()
+		return errors.New("server has already started or closed")
+	}
+	control, err := maintenance.Start(s.environment.RuntimePath, s.broadcastMaintenance)
+	if err != nil {
+		s.lifecycleMu.Unlock()
+		s.Close()
+		return fmt.Errorf("maintenanceStart: %w", err)
+	}
+	s.maintenanceControl = control
+	s.runCancel = cancel
+	s.isRunning = true
+	if s.maintenanceSchedule != nil {
+		control.EnableUpdates()
+		s.maintenanceDone = make(chan struct{})
+		go s.runMaintenanceSchedule(runCtx, cancel)
+	}
 	serviceCount := len(s.blazeServers) + len(s.sharedTCPServers) + len(s.httpServers) + 1
 	results := make(chan error, serviceCount)
 	for _, service := range s.blazeServers {
@@ -1161,6 +1279,7 @@ func (s *Server) Run(ctx context.Context) error {
 			results <- current.ListenAndServe(runCtx)
 		}(service)
 	}
+	s.lifecycleMu.Unlock()
 
 	var runErr error
 	for completed := 0; completed < serviceCount; completed++ {
@@ -1172,9 +1291,13 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 	s.Close()
-	s.logger.Print("Stopping recap server")
+	s.logger.Print("Stopping server")
 	if runErr != nil {
 		return fmt.Errorf("servicesRun: %w", runErr)
+	}
+	err = s.writeMaintenanceRequest(ctx)
+	if err != nil {
+		return fmt.Errorf("maintenanceRequest: %w", err)
 	}
 	return nil
 }
@@ -1182,6 +1305,22 @@ func (s *Server) Run(ctx context.Context) error {
 // Close releases initialized server subsystems. It is safe to call repeatedly.
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
+		s.lifecycleMu.Lock()
+		s.isClosed = true
+		if s.runCancel != nil {
+			s.runCancel()
+		}
+		s.lifecycleMu.Unlock()
+		if s.maintenanceDone != nil {
+			<-s.maintenanceDone
+		}
+		if s.maintenanceControl != nil {
+			err := s.maintenanceControl.Close()
+			if err != nil {
+				s.logger.Printf("Maintenance control close failed: %v", err)
+				s.closeErr = errors.Join(s.closeErr, fmt.Errorf("controlClose: %w", err))
+			}
+		}
 		s.closeNetworkServices()
 		if s.snapshot != nil {
 			s.snapshot.Close()
@@ -1194,12 +1333,14 @@ func (s *Server) Close() {
 			err := s.checkpoint.Close()
 			if err != nil {
 				s.logger.Printf("Zone checkpoint flush failed: %v", err)
+				s.closeErr = errors.Join(s.closeErr, fmt.Errorf("checkpointFlush: %w", err))
 			}
 		}
 		if s.checkpointStore != nil {
 			err := s.checkpointStore.Close()
 			if err != nil {
 				s.logger.Printf("Zone checkpoint storage close failed: %v", err)
+				s.closeErr = errors.Join(s.closeErr, fmt.Errorf("checkpointClose: %w", err))
 			}
 		}
 		flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1207,29 +1348,41 @@ func (s *Server) Close() {
 		err := s.userManager.Flush(flushCtx)
 		if err != nil {
 			s.logger.Printf("Active user flush failed: %v", err)
+			s.closeErr = errors.Join(s.closeErr, fmt.Errorf("userFlush: %w", err))
+		}
+		if s.saveBuffer != nil {
+			err = s.saveBuffer.Close()
+			if err != nil {
+				s.logger.Printf("Profile save buffer drain failed: %v", err)
+				s.closeErr = errors.Join(s.closeErr, fmt.Errorf("saveBufferDrain: %w", err))
+			}
 		}
 		if s.userStore != nil {
 			err = s.userStore.Close()
 			if err != nil {
 				s.logger.Printf("User storage close failed: %v", err)
+				s.closeErr = errors.Join(s.closeErr, fmt.Errorf("userClose: %w", err))
 			}
 		}
 		if s.contentStore != nil {
 			err = s.contentStore.Close()
 			if err != nil {
 				s.logger.Printf("Content storage close failed: %v", err)
-			}
-		}
-		if s.chatLogOutput != nil {
-			err = s.chatLogOutput.Close()
-			if err != nil {
-				s.logger.Printf("Chat log close failed: %v", err)
+				s.closeErr = errors.Join(s.closeErr, fmt.Errorf("contentClose: %w", err))
 			}
 		}
 		if s.traceRecorder != nil {
 			err := s.traceRecorder.Close()
 			if err != nil {
 				s.logger.Printf("Protocol trace close failed: %v", err)
+				s.closeErr = errors.Join(s.closeErr, fmt.Errorf("traceClose: %w", err))
+			}
+		}
+		if s.instanceLease != nil {
+			err := s.instanceLease.Close()
+			if err != nil {
+				s.logger.Printf("Server instance lease close failed: %v", err)
+				s.closeErr = errors.Join(s.closeErr, fmt.Errorf("leaseClose: %w", err))
 			}
 		}
 	})

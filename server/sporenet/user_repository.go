@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 )
 
 var (
@@ -27,10 +28,32 @@ type UserProfileRepository interface {
 	LoadByDisplayName(context.Context, string) (UserRecord, error)
 }
 
-// UserDeletionRepository removes one complete durable profile. It is an
+// UserDeletionRepository archives one complete durable profile. It is an
 // optional administrative port and is never used by gameplay transports.
 type UserDeletionRepository interface {
 	DeleteByLoginName(context.Context, string) error
+}
+
+// UserRecoveryRepository restores an archived profile for dedicated-server administration.
+// An empty login name requests its original identity, if still available.
+type UserRecoveryRepository interface {
+	RestoreDeletedProfile(context.Context, int64, string) (string, error)
+}
+
+// UserNameSwapRepository exchanges only the names of an archived and active profile.
+type UserNameSwapRepository interface {
+	SwapProfileNames(context.Context, ProfileNameSwapRequest) (ProfileNameSwap, error)
+}
+
+// UserPurgeRepository permanently removes profiles archived before a cutoff.
+type UserPurgeRepository interface {
+	PurgeDeletedProfiles(context.Context, time.Time) (int64, error)
+}
+
+// UserDeletionHistoryRepository invalidates legacy name-bound credentials after
+// an identity has been released by an archived profile.
+type UserDeletionHistoryRepository interface {
+	LatestProfileDeletion(context.Context, string) (time.Time, error)
 }
 
 // TutorialCompletionQueueRepository lists profiles whose content-backed
@@ -44,8 +67,11 @@ type TutorialCompletionQueueRepository interface {
 type UserRepository interface {
 	Create(context.Context, UserRecord) (int64, error)
 	// LoadByLoginName matches the player identity without case sensitivity and
-	// returns its canonically stored spelling in UserRecord.LoginName.
+	// returns its canonically stored spelling in UserRecord.LoginName. Archived
+	// profiles must be excluded from every normal repository lookup.
 	LoadByLoginName(context.Context, string) (UserRecord, error)
+	// Save atomically accepts a detached profile snapshot. Runtime adapters may
+	// buffer durability; failed admission must not replace the accepted snapshot.
 	Save(context.Context, UserRecord) error
 }
 

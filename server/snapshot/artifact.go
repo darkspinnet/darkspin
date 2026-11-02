@@ -189,7 +189,7 @@ func (e *Service) dump(ctx context.Context, req dumpRequest) (dumpResult, error)
 	}
 	clientMemoryPath := filepath.Join(directory, "client-memory.jsonl")
 	clientCaptureResult := e.requestClientMemory(
-		ctx, directoryName, clientMemoryPath, bufferDuration, mode,
+		ctx, directoryName, clientMemoryPath, bufferDuration, mode, req.Actor.UserID,
 	)
 
 	client, err := readClientTail(e.traceDirectory, bufferDuration)
@@ -564,53 +564,57 @@ func addSnapshotArchiveFile(
 
 func (e *Service) requestClientMemory(
 	ctx context.Context, directoryName string, outputPath string,
-	bufferDuration time.Duration, mode Mode,
+	bufferDuration time.Duration, mode Mode, userIDs ...int64,
 ) clientCapture {
-	if strings.TrimSpace(e.controlPath) == "" || mode == ModeOff {
+	if e.controlBroker == nil || mode == ModeOff {
 		return clientCapture{Status: "unavailable"}
 	}
 	e.controlMu.Lock()
 	defer e.controlMu.Unlock()
 	requestedAt := time.Now().UTC()
 	control := fmt.Sprintf(
-		"mode=%s\nrequest=%s\nbuffer_ms=%d\nserver_time_unix_nano=%d\n",
+		"mode=%s\nrequest=%s\nbuffer_ms=%d\nserver_time_unix_nano=%d\n\n",
 		mode, directoryName, bufferDuration/time.Millisecond, requestedAt.UnixNano(),
 	)
-	err := os.WriteFile(e.controlPath, []byte(control), 0o644)
-	if err != nil {
-		e.logger.Printf("Sync Snapshot client request failed: %v", err)
-		return clientCapture{Status: "request_failed", RequestedAt: requestedAt}
+	userID := int64(0)
+	if len(userIDs) == 1 {
+		userID = userIDs[0]
 	}
-	deadline := time.Now().Add(750 * time.Millisecond)
-	lastSize := int64(-1)
-	stableCount := 0
-	for time.Now().Before(deadline) {
+	if !e.controlBroker.publishCapture(control, userID) {
+		return clientCapture{Status: "unavailable", RequestedAt: requestedAt}
+	}
+	// Fang flushes and closes a temporary file before atomically publishing
+	// this path. Large captures can take longer than 750 ms to publish even
+	// when their frame-thread keyframe completed promptly. File-size stability
+	// neither proves a boundary nor needs to delay an atomically published file.
+	waitContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
 		fi, statErr := os.Stat(outputPath)
-		err = statErr
-		if err == nil {
-			if fi.Size() == lastSize {
-				stableCount++
-			} else {
-				lastSize = fi.Size()
-				stableCount = 0
-			}
-			if stableCount >= 2 {
+		if statErr == nil {
+			if fi.Mode().IsRegular() && fi.Size() > 0 {
 				return clientCapture{
 					IsCaptured: true, RequestedAt: requestedAt,
 					RespondedAt: time.Now().UTC(),
 				}
 			}
 		}
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			e.logger.Printf("Sync Snapshot client response failed: %v", err)
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			e.logger.Printf("Sync Snapshot client response failed: %v", statErr)
 			return clientCapture{Status: "response_failed", RequestedAt: requestedAt}
 		}
-		if ctx.Err() != nil {
-			return clientCapture{Status: "canceled", RequestedAt: requestedAt}
+		select {
+		case <-waitContext.Done():
+			status := "response_timeout"
+			if ctx.Err() != nil {
+				status = "canceled"
+			}
+			return clientCapture{Status: status, RequestedAt: requestedAt}
+		case <-ticker.C:
 		}
-		time.Sleep(25 * time.Millisecond)
 	}
-	return clientCapture{Status: "response_timeout", RequestedAt: requestedAt}
 }
 
 func readSnapshotLines(path string) ([][]byte, error) {

@@ -65,7 +65,7 @@ func NewTransfer(req TransferRequest) (*Transfer, [][]byte, error) {
 		TargetID: req.ObjectID, ModifierGUID: zoneteleport.ModifierGUIDID,
 		InstanceID: instanceID, DurationMilliseconds: 0,
 		Overdrive: 1, StackCount: 1,
-		StartMilliseconds: req.SourceTime, SourceID: 0, IsBound: true,
+		StartMilliseconds: req.SourceTime, NPCAffixAssetID: 0, IsBound: true,
 	})
 	if err != nil {
 		run.Abort()

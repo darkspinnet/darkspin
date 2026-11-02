@@ -92,12 +92,13 @@ func (e gameplayInventoryRuntime) drop(
 }
 
 func missionLootDropObjectID(itemID uint64) (uint32, bool) {
-	const missionItemNamespace = uint64(1) << 32
-	const missionItemLimit = missionItemNamespace << 1
-	if itemID < missionItemNamespace || itemID >= missionItemLimit {
+	// Recently Acquired returns the transient identity assigned by
+	// collectMissionEquipment, including its reserved 32-bit namespace bit.
+	const missionItemLimit = campaignEquipmentTransientIDMask << 1
+	if itemID < campaignEquipmentTransientIDMask || itemID >= missionItemLimit {
 		return 0, false
 	}
-	objectID := uint32(itemID - missionItemNamespace)
+	objectID := uint32(itemID &^ campaignEquipmentTransientIDMask)
 	return objectID, objectID != 0
 }
 

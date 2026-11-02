@@ -6,8 +6,10 @@ import (
 	"github.com/darkspinnet/darkspin/server/sim"
 )
 
-// BindStartupRandom shares the zone's checkpointed simulator stream. Native
-// A28070 (127) draws once for positive useSecondaryStart, never per observer.
+// BindStartupRandom shares the zone's checkpointed simulator stream. Build 103
+// A22A50 gates one startup draw on a positive definition probability; 9BCF40
+// calls AE54A0 for its simulator float. Sharing our checkpointed population
+// stream is Dark Spin policy, not proof of historical interleaved draw order.
 func (e *Session) BindStartupRandom(random *sim.SimulatorRandom) {
 	if e == nil {
 		return
@@ -21,6 +23,7 @@ func (e *Session) BindStartupRandom(random *sim.SimulatorRandom) {
 // construction. Its returned plans must be used for both, preserving one choice
 // for all peers. Already prepared/restored plans consume no additional draws.
 func (e *Session) PrepareIntroductions(plans []SpawnPlan) []SpawnPlan {
+	plans = e.PrepareAffixPlans(plans)
 	preparedPlans := make([]SpawnPlan, len(plans))
 	if e == nil {
 		copy(preparedPlans, plans)
