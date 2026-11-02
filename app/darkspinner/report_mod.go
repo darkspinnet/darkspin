@@ -23,8 +23,10 @@ type reportClient struct {
 }
 
 type launcherReportSession struct {
-	client reportClient
-	server *server.Server
+	client              reportClient
+	server              *server.Server
+	nativeCrash         *nativeCrashReport
+	isNativeCrashReport bool
 }
 
 func modReportNames() []string {
@@ -37,6 +39,7 @@ func (a *App) recordReportSession(req gameLaunchRequest, launchID string) {
 		session.client = reportClient{Mode: "standard", Profile: req.account}
 	}
 	session.client.LaunchID = launchID
+	session.nativeCrash = a.snapshotNativeCrashReports()
 	session.client.ServerAddress = req.serverAddress
 	host, port, err := net.SplitHostPort(req.serverAddress)
 	if err != nil {

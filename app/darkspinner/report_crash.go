@@ -99,6 +99,7 @@ func (e *App) captureClientFailure(failure clientFailureRecord) {
 		IsCrash: failure.Stage == "client-exit", IsPreparing: true,
 	}
 	e.publishAutomaticClientReport(notice)
+	session.isNativeCrashReport = notice.IsCrash
 	result, err := e.sendSessionReport(title, &session)
 	notice.IsPreparing = false
 	if err != nil {

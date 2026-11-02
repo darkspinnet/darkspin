@@ -21,17 +21,18 @@ import (
 const maximumReportSlugSize = 60
 
 type reportManifest struct {
-	ClientResults []clientSessionResult `json:"client_results,omitempty"`
-	Version       string                `json:"version"`
-	CreatedAt     string                `json:"created_at"`
-	Platform      string                `json:"platform"`
-	Title         string                `json:"title"`
-	Client        reportClient          `json:"client"`
-	ClientError   string                `json:"client_error,omitempty"`
-	State         reportState           `json:"state"`
-	Gameplay      chat.BugContext       `json:"gameplay"`
-	GameplayError string                `json:"gameplay_error,omitempty"`
-	Files         []reportFileRecord    `json:"files"`
+	ClientResults     []clientSessionResult `json:"client_results,omitempty"`
+	Version           string                `json:"version"`
+	CreatedAt         string                `json:"created_at"`
+	Platform          string                `json:"platform"`
+	Title             string                `json:"title"`
+	Client            reportClient          `json:"client"`
+	ClientError       string                `json:"client_error,omitempty"`
+	State             reportState           `json:"state"`
+	Gameplay          chat.BugContext       `json:"gameplay"`
+	GameplayError     string                `json:"gameplay_error,omitempty"`
+	Files             []reportFileRecord    `json:"files"`
+	NativeCrashErrors []string              `json:"native_crash_errors,omitempty"`
 }
 
 type reportState struct {
@@ -107,7 +108,7 @@ func (a *App) sendSessionReport(title string, session *launcherReportSession) (R
 	for _, path := range paths {
 		names = append(names, filepath.Base(path))
 	}
-	a.log(fmt.Sprintf("Report ready: %s (%d ZIPs, %d complete log files)", reportDirectory, len(names), len(records)))
+	a.log(fmt.Sprintf("Report ready: %s (%d ZIPs, %d complete diagnostic files)", reportDirectory, len(names), len(records)))
 	return ReportResult{
 		Name: names[0], Names: names, Directory: reportDirectory,
 		FileCount: len(records),
@@ -225,6 +226,9 @@ func (a *App) createSessionReportArchive(
 		}
 		records = append(records, record)
 	}
+	nativeRecords, nativeFailures := a.addNativeCrashReports(archive, session)
+	records = append(records, nativeRecords...)
+	manifest.NativeCrashErrors = nativeFailures
 	manifest.Files = records
 	err = addReportManifest(archive, manifest)
 	if err != nil {

@@ -2,6 +2,7 @@
 
 ### 2026-11-02
 
+- #163 Include native exception reports and minidumps created or changed since client launch in automatic crash ZIPs, preserving ordinary logs when a native report is unavailable.
 - #162 Reduce campaign NPC polling allocations by filtering hazard sources before copying and using compact security, combat-presence, and AI-target snapshots.
 - #162 Fix raised projectile-burst turn goals affecting Webbed Lightning and Ghost Form modifier cleanup during command rejection and recovery.
 
