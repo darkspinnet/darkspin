@@ -38,7 +38,7 @@ function create(kind) {
         </SelectItem>
       </SelectContent>
     </Select>
-    <CrogenitorActions :is-shift-held="isShiftHeld" :disabled="isDisabled || !selectedKey || (isMod && isActionDisabled)" :is-mutation-disabled="isActionDisabled" :is-control-panel-available="!isMod" :is-editable="isMod" @control-panel="emit('control-panel')" @edit="emit('edit')" @reset-display="emit('reset-display')" @delete="emit('delete', $event)" />
+    <CrogenitorActions :is-shift-held="isShiftHeld" :disabled="isDisabled || !selectedKey || (isMod && isActionDisabled)" :is-mutation-disabled="isActionDisabled" :is-control-panel-available="!isMod" :is-editable="isMod" :is-deletable="isMod" @control-panel="emit('control-panel')" @edit="emit('edit')" @reset-display="emit('reset-display')" @delete="emit('delete', $event)" />
   </div>
 </template>
 

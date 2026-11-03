@@ -201,6 +201,7 @@ type Options struct {
 	ConfigPath            string
 	IsTimestampingEnabled bool
 	Logger                *log.Logger
+	Output                io.Writer
 	BlazeCertificatePath  string
 	BlazePrivateKeyPath   string
 	TracePath             string
@@ -857,7 +858,7 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("gameHostNetwork: %w", err)
 	}
 	gameManager.SetHostNetwork(hostNetwork)
-	chatRecorders, err := openChatRecorders(config, userRepository, logger)
+	chatRecorders, err := openChatRecorders(config, userRepository, logger, options.Output)
 	if err != nil {
 		return nil, fmt.Errorf("chatLogInit: %w", err)
 	}
@@ -1293,14 +1294,17 @@ func (r bestEffortChatRecorder) Record(ctx context.Context, message chat.Message
 	return nil
 }
 
-func openChatRecorders(config *game.Config, repository sporenet.UserRepository, logger *log.Logger) ([]chat.Recorder, error) {
+func openChatRecorders(config *game.Config, repository sporenet.UserRepository, logger *log.Logger, output io.Writer) ([]chat.Recorder, error) {
 	recorders := make([]chat.Recorder, 0, 2)
 	databaseRecorder, isSupported := repository.(chat.Recorder)
 	if isSupported {
 		recorders = append(recorders, databaseRecorder)
 	}
 	if config.Bool(game.ConfigIsChatStdoutEnabled) {
-		stdoutRecorder, err := textlog.New(os.Stdout)
+		if output == nil {
+			output = os.Stdout
+		}
+		stdoutRecorder, err := textlog.New(output)
 		if err != nil {
 			return nil, fmt.Errorf("stdoutCreate: %w", err)
 		}

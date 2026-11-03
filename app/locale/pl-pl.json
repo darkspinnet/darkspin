@@ -1860,6 +1860,10 @@
     "Mission participation statistics are unavailable from this server.": "",
     "This account cannot access the server.": "",
     "Maintenance": "",
-    "Server maintenance: {0}": ""
+    "Server maintenance: {0}": "",
+    "SAVE PASSWORD": "",
+    "New passwords do not match.": "",
+    "Password changed. Sign in again.": "",
+    "Password changed, but the launcher could not update the saved password. Sign in again.": ""
   }
 }

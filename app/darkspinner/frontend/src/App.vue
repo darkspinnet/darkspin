@@ -337,7 +337,7 @@ const isAutoLaunchCounting = computed(() => autoLaunchCountdown.value > 0)
 const isActiveProfileRunning = computed(() => activePage.value === 'play' && isSelectedProfileRunning.value)
 const activeInterruptedMission = computed(() => activePage.value === 'play' ? interruptedMission.value : null)
 const isHeaderPlayEnabled = computed(() => activePage.value === 'remote'
-    ? isRemoteFormReady.value && isRemoteConnectionReady.value && !isRemoteBusy.value && !isActiveRouteRunning.value && !isRemoteAdmissionBlocked.value &&
+    ? isRemoteFormReady.value && isRemoteConnectionReady.value && !isRemoteBusy.value && !isBusy.value && !isRemoteAdmissionBlocked.value &&
       (isRemoteRegistration.value || (status.value.isPatchComplete && status.value.isGameReady))
   : !isActiveProfileRunning.value && isPlayEnabled.value && !isMissionChoiceBusy.value)
 const isAdditionalLaunchReady = computed(() => activePage.value === 'play' && !!selectedProfileRecord.value &&
@@ -354,6 +354,7 @@ const dockPlayLabel = computed(() => {
   if (activeInterruptedMission.value) return 'CONTINUE'
   if (activePage.value === 'remote') {
     if (isRemoteRegistration.value) return isRemoteBusy.value ? 'REGISTERING...' : 'REGISTER'
+    if (isRemoteBusy.value || status.value.state === 'launching') return 'STARTING...'
     return 'PLAY REMOTE'
   }
   return 'PLAY'
@@ -992,7 +993,7 @@ async function launchRemote() {
   if (isRemoteAdmissionBlocked.value) return
   isRemoteUsernameTouched.value = true
   isRemotePasswordTouched.value = true
-  if (!isRemoteFormReady.value || isRemoteBusy.value) return
+  if (!isRemoteFormReady.value || isRemoteBusy.value || isBusy.value) return
   if (!isRemoteConnectionReady.value) {
     remoteMessage.value = remoteConnectionReason.value
     remoteLoginFailure.value = remoteMessage.value
@@ -1008,6 +1009,7 @@ async function launchRemote() {
     }
     await LaunchRemoteProfile(remoteServerAddress.value, remoteIdentity.value.trim(), remotePassword.value, isRemotePasswordRemembered.value)
     activeClientRoute.value = 'remote'
+    status.value = { ...status.value, ...(await GetStatus()) }
     remoteMessage.value = 'Remote game launch requested.'
     await refreshRemoteProfiles()
     if (isRemotePasswordRemembered.value) remotePassword.value = ''
@@ -1204,6 +1206,12 @@ async function resetProfileDisplay() {
   }
   catch (error) { recordError(error) }
   finally { isProfileDisplayResetBusy.value = false }
+}
+
+async function remotePasswordChanged(result) {
+  remotePassword.value = ''
+  isRemotePasswordRemembered.value = !!result.is_cache_updated && !!result.isPasswordRemembered
+  await refreshRemoteProfiles()
 }
 
 function requestRemoteProfileDelete(isLocalOnly = false) {
@@ -1720,7 +1728,7 @@ async function copyLauncherFailure() {
 
     <TabsContent v-else-if="activePage === 'lua'" value="lua" as-child><LuaPage ref="luaPage" @state="luaConsole = $event" /></TabsContent>
     <TabsContent v-else-if="activePage === 'remote'" value="remote" as-child><section class="command-frame launch-command-frame remote-command-frame">
-      <RemoteControlPanel @renamed="refreshRemoteProfiles" ref="controlPanel" :profile="selectedRemoteProfile" :password="remotePassword" @interact="handleLauncherInteraction" @maintenance="isRemoteAdmissionBlocked = !!$event?.is_admission_blocked" @password="remotePassword = $event" />
+      <RemoteControlPanel @renamed="refreshRemoteProfiles" @password-changed="remotePasswordChanged" ref="controlPanel" :profile="selectedRemoteProfile" :password="remotePassword" :is-shift-held="isShiftHeld" :is-deletion-disabled="isProfileActionDisabled || isRemoteBusy" @delete="requestRemoteProfileDelete" @interact="handleLauncherInteraction" @maintenance="isRemoteAdmissionBlocked = !!$event?.is_admission_blocked" @password="remotePassword = $event" />
       <div class="launch-main">
         <Card class="bay launcher-bay">
           <div class="launch-pane">
@@ -1886,7 +1894,7 @@ async function copyLauncherFailure() {
     </section></TabsContent>
 
     <TabsContent v-else-if="activePage === 'play'" value="play" as-child><section class="command-frame launch-command-frame">
-      <RemoteControlPanel ref="localControlPanel" :profile="selectedProfileRecord" is-local @interact="handleLauncherInteraction" />
+      <RemoteControlPanel ref="localControlPanel" :profile="selectedProfileRecord" is-local :is-deletion-disabled="isProfileActionDisabled" @delete="requestDeleteProfile" @interact="handleLauncherInteraction" />
       <div class="launch-main">
         <Card class="bay launcher-bay">
           <div class="launch-pane">

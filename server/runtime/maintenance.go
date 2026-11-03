@@ -128,7 +128,8 @@ func (e *Server) writeCleanMaintenanceRequest(ctx context.Context) error {
 
 func (e *Server) recoverRestoredMaintenance(control *maintenance.Control) error {
 	state := control.Status()
-	if state.Phase != "stopping" {
+	isLegacySupervisor := e.maintenanceSchedule != nil && os.Getenv("DARKSPIN_BOOTSTRAP_VERSION") == ""
+	if state.Phase != "stopping" && !(state.Phase == "failed" && isLegacySupervisor) {
 		return nil
 	}
 	result, err := bootstrap.ReadMaintenanceResult(filepath.Dir(e.environment.ConfigPath))
@@ -139,6 +140,12 @@ func (e *Server) recoverRestoredMaintenance(control *maintenance.Control) error 
 	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		e.logger.Printf("Restored maintenance supervisor result unavailable operation=%s: %v", state.ID, err)
+	}
+	if isLegacySupervisor && (err == nil || errors.Is(err, os.ErrNotExist)) && e.panelMaintenance != nil &&
+		(state.Action == "restart" || state.Action == "update") {
+		e.panelMaintenance.startupRecoveryID = state.ID
+		e.logger.Printf("Legacy supervisor maintenance recovery awaiting four stable image-verified readiness probes operation=%s action=%s", state.ID, state.Action)
+		return nil
 	}
 	resolveErr := control.Resolve(state.ID, "failed")
 	if resolveErr != nil {

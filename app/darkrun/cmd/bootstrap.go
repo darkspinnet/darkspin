@@ -69,19 +69,11 @@ func runBuildInfo(command *cobra.Command, args []string) error {
 	return nil
 }
 
-func (e *bootstrapOptions) run(command *cobra.Command, args []string) error {
-	configuration, err := playerstore.FromEnvironment()
-	if err != nil {
-		return fmt.Errorf("postgresEnvironment: %w", err)
-	}
+func (e *bootstrapOptions) run(command *cobra.Command, args []string) (resultErr error) {
 	if runtime.GOOS != "linux" {
 		return errors.New("dedicated bootstrap requires Linux; use server mode on this platform")
 	}
-	databaseBackup, err := postgresbackup.New(command.Context(), configuration)
-	if err != nil {
-		return fmt.Errorf("postgresBackup: %w", err)
-	}
-	err = applyBootstrapEnvironment(command)
+	err := applyBootstrapEnvironment(command)
 	if err != nil {
 		return fmt.Errorf("bootstrapEnvironment: %w", err)
 	}
@@ -102,6 +94,34 @@ func (e *bootstrapOptions) run(command *cobra.Command, args []string) error {
 			return errors.New("bootstrap config must be PATH/runtime/darkspin.toml")
 		}
 	}
+	diagnostic, err := openDedicatedDiagnostics(command.Context(),
+		filepath.Join(rootPath, "runtime", "darkspin"), "", false)
+	if err != nil {
+		return fmt.Errorf("bootstrapLog: %w", err)
+	}
+	previousOutput, previousError := command.OutOrStdout(), command.ErrOrStderr()
+	command.SetOut(diagnostic)
+	command.SetErr(diagnostic)
+	logger := slog.New(slog.NewTextHandler(diagnostic, nil))
+	defer func() {
+		if resultErr != nil {
+			logger.Error("bootstrap stopped", "error", resultErr)
+		}
+		command.SetOut(previousOutput)
+		command.SetErr(previousError)
+		closeErr := diagnostic.Close()
+		if closeErr != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("bootstrapLogClose: %w", closeErr))
+		}
+	}()
+	configuration, err := playerstore.FromEnvironment()
+	if err != nil {
+		return fmt.Errorf("postgresEnvironment: %w", err)
+	}
+	databaseBackup, err := postgresbackup.New(command.Context(), configuration)
+	if err != nil {
+		return fmt.Errorf("postgresBackup: %w", err)
+	}
 	storage, err := bootstrap.NewStorage(rootPath, 7)
 	if err != nil {
 		return fmt.Errorf("bootstrapLayout: %w", err)
@@ -119,7 +139,8 @@ func (e *bootstrapOptions) run(command *cobra.Command, args []string) error {
 	options.BootstrapLease = lease
 	options.DatabaseBackup = databaseBackup
 	options.OperationAudit = databaseBackup
-	options.Logger = slog.New(slog.NewTextHandler(command.ErrOrStderr(), nil))
+	options.Logger = logger
+	options.Output = diagnostic
 	err = bootstrap.Run(command.Context(), options)
 	if err != nil {
 		return fmt.Errorf("bootstrapRun: %w", err)

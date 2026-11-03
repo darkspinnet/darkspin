@@ -191,6 +191,10 @@ export function SetModSporePath(arg1:string):Promise<void>;
 
 export function SetRemoteControlIdentity(arg1:string,arg2:string,arg3:main.ServerIdentityConfiguration):Promise<main.ServerIdentityConfiguration>;
 
+export function SetRemoteControlPassword(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<main.RemoteControlActionResult>;
+
+export function SetRemoteControlUserAccess(arg1:string,arg2:string,arg3:number,arg4:number,arg5:string,arg6:string):Promise<main.RemoteControlAccessResult>;
+
 export function SetServerConfiguration(arg1:number,arg2:boolean,arg3:string,arg4:string):Promise<main.ServerConfiguration>;
 
 export function SetServerPort(arg1:number):Promise<main.ServerConfiguration>;
@@ -216,5 +220,3 @@ export function StopLuaScript():Promise<void>;
 export function TimeoutRemoteControlUser(arg1:string,arg2:string,arg3:number,arg4:number,arg5:string):Promise<main.RemoteControlActionResult>;
 
 export function UninstallDarkspinner():Promise<void>;
-
-export function SetRemoteControlUserAccess(arg1:string,arg2:string,arg3:number,arg4:number,arg5:string,arg6:string):Promise<main.RemoteControlAccessResult>;

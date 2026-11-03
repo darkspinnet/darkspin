@@ -170,6 +170,8 @@ func (e *Control) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		state, err = e.announceLocal(request.Context(), req.Minutes)
 	case "/cancel":
 		state, err = e.cancelLocal(request.Context(), req.ID)
+	case "/ready":
+		state, err = e.observeReady(request.Context(), req.ID)
 	case "/update":
 		state, err = e.requestLocal(request.Context(), Request{Action: "update", WarningMinutes: req.Minutes})
 	default:

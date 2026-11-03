@@ -292,6 +292,11 @@ func (a *API) bootstrap(writer http.ResponseWriter, request *http.Request, uri *
 func (a *API) game(writer http.ResponseWriter, request *http.Request, uri *recaphttp.URI) {
 	values := requestValues(request, uri)
 	method := values.Get("method")
+	accountResponse := a.beginAccountHTTP(writer, request, method)
+	if accountResponse != nil {
+		writer = accountResponse
+		defer accountResponse.finish(request.Context())
+	}
 	if strings.EqualFold(method, "api.status.getStatus") {
 		isBroadcastIncluded := queryBool(values, "include_broadcasts", "includeBroadcasts") &&
 			a.claimBroadcast(request.RemoteAddr)
@@ -305,6 +310,9 @@ func (a *API) game(writer http.ResponseWriter, request *http.Request, uri *recap
 		return
 	}
 	user := a.userFromRequest(request, values)
+	if accountResponse != nil && user != nil {
+		accountResponse.accountID = user.AccountID()
+	}
 	if method == "" {
 		if user == nil {
 			method = "api.account.auth"
@@ -810,11 +818,17 @@ func parseUint64CSV(encoded string) ([]uint64, error) {
 func canonicalizePartStatusIDs(partIDs []uint64) {
 	const clientPartStatusNamespace = uint64(1) << 32
 	const clientPartStatusLimit = clientPartStatusNamespace << 1
+	const clientDetailNamespace = uint64(1) << 31
 	for index, partID := range partIDs {
-		if partID < clientPartStatusNamespace || partID >= clientPartStatusLimit {
+		if partID >= clientPartStatusNamespace && partID < clientPartStatusLimit {
+			partIDs[index] = partID - clientPartStatusNamespace
 			continue
 		}
-		partIDs[index] = partID - clientPartStatusNamespace
+		// Build 103 also sends Create Detail IDs with bit 31 set (for
+		// example, 2147483749 refers to owned part 101).
+		if partID >= clientDetailNamespace && partID < clientPartStatusNamespace {
+			partIDs[index] = partID - clientDetailNamespace
+		}
 	}
 }
 

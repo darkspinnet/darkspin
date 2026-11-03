@@ -12,11 +12,11 @@ import RemoteControlAdmin from './RemoteControlAdmin.vue'
 import RemoteControlActivity from './RemoteControlActivity.vue'
 import RemoteControlPersonalActivity from './RemoteControlPersonalActivity.vue'
 import RemoteControlFeatures from './RemoteControlFeatures.vue'
-import { OpenLocalControlPanel, OpenRemoteControlPanel, GetRemoteControlPanel, CloseRemoteControlPanel } from '../platform'
+import { OpenLocalControlPanel, OpenRemoteControlPanel, GetRemoteControlPanel, CloseRemoteControlPanel, CheckRemoteServers } from '../platform'
 import { panelError, maintenancePhaseLabel, maintenanceActionLabel } from '../control_panel'
 
-const props = defineProps({ profile:Object, password:String, isLocal:{ type:Boolean, default:false } })
-const emit = defineEmits(['capabilities', 'password', 'server-name', 'maintenance', 'interact', 'renamed'])
+const props = defineProps({ profile:Object, password:String, isLocal:{ type:Boolean, default:false }, isDeletionDisabled:Boolean, isShiftHeld:Boolean })
+const emit = defineEmits(['capabilities', 'password', 'server-name', 'maintenance', 'interact', 'renamed', 'delete', 'password-changed'])
 const panel = ref(null)
 const maintenance = ref(null)
 const page = ref('')
@@ -25,7 +25,12 @@ const isActionBusy = ref(false)
 const isPromptOpen = ref(false)
 const enteredPassword = ref('')
 const error = ref('')
+const notice = ref('')
 let generation = 0
+let maintenanceAddress = ''
+let isMaintenanceRefreshing = false
+let isDisposed = false
+const maintenanceTimer = window.setInterval(refreshMaintenance, 5000)
 const isAdmin = computed(() => !!panel.value?.capabilities?.is_admin)
 const isPlayerReviewAvailable = computed(() => isAdmin.value && ['admin.users.list', 'admin.users.activity'].every(operation => panel.value?.server?.supported_operations?.includes(operation)))
 const effectiveProfile = computed(() => panel.value ? { ...props.profile, serverAddress:panel.value.server_address, loginName:panel.value.profile.login_name } : props.profile)
@@ -39,7 +44,26 @@ function setMaintenance(result) {
 }
 function acceptPanel(result) {
   panel.value = result
+  maintenanceAddress = result.server_address
   setMaintenance(result.server.maintenance)
+}
+async function refreshMaintenance() {
+  if (isDisposed || page.value || !maintenance.value?.is_admission_blocked || !maintenanceAddress ||
+      isMaintenanceRefreshing || document.visibilityState === 'hidden') return
+  const current = generation
+  const observation = maintenance.value
+  isMaintenanceRefreshing = true
+  try {
+    const connections = await CheckRemoteServers([maintenanceAddress])
+    if (isDisposed || current !== generation || page.value || maintenance.value !== observation) return
+    const connection = connections?.[0]
+    if (connection?.isOnline && connection.isMaintenance === false) setMaintenance(null)
+  } catch (failure) {
+    // An unavailable probe cannot establish that maintenance has ended.
+    console.warn('Maintenance status refresh failed', failure)
+  } finally {
+    isMaintenanceRefreshing = false
+  }
 }
 function displayDate(timestamp, isDaily = false) { return formatControlTime(timestamp, isDaily) }
 async function serverChanged() {
@@ -56,6 +80,7 @@ async function signIn() {
   if (!profile) return
   isBusy.value = true
   error.value = ''
+  notice.value = ''
   try {
     const result = isLocal
       ? await OpenLocalControlPanel(profile.loginName)
@@ -95,6 +120,8 @@ function close() {
   isBusy.value = false
   isActionBusy.value = false
   error.value = ''
+  notice.value = ''
+  void refreshMaintenance()
   void CloseRemoteControlPanel().catch(() => {})
 }
 
@@ -125,20 +152,44 @@ function accountRenamed(result) {
   if (panel.value) panel.value.profile.display_name = result.display_name
   emit('renamed')
 }
+function requestDelete(isLocalOnly) {
+  if (props.isDeletionDisabled || isBusy.value || isActionBusy.value) return
+  close()
+  emit('delete', isLocalOnly)
+}
+function passwordChanged(result) {
+  generation++
+  panel.value = null
+  enteredPassword.value = ''
+  isActionBusy.value = false
+  error.value = ''
+  notice.value = result.is_cache_updated ? 'Password changed. Sign in again.'
+    : 'Password changed, but the launcher could not update the saved password. Sign in again.'
+  emit('capabilities', false)
+  emit('server-name', '')
+  emit('password', '')
+  emit('password-changed', result)
+}
 
 watch(() => `${props.isLocal}/${props.profile?.serverAddress || ''}/${props.profile?.loginName || ''}`, () => {
+  maintenanceAddress = ''
   close()
   setMaintenance(null)
   // Panel authentication and projections wait until the player opens the panel.
 }, { immediate:true, flush:'sync' })
-onBeforeUnmount(close)
+function dispose() {
+  isDisposed = true
+  window.clearInterval(maintenanceTimer)
+  close()
+}
+onBeforeUnmount(dispose)
 defineExpose({ open })
 </script>
 
 <template>
   <aside v-if="!page && maintenance?.is_admission_blocked" class="control-welcome" role="status"><strong>{{ $t('SERVER MAINTENANCE') }}</strong><p class="control-server-copy">{{ maintenance.reason }}</p><p>{{ $t(maintenancePhaseLabel(maintenance.phase)) }} · {{ $t(displayDate(maintenance.deadline)) }}</p><p>{{ $t('New game sessions are currently blocked on this server.') }}</p></aside>
   <aside v-if="!page && panel?.server?.welcome" class="control-welcome"><strong>{{ panel.server.name }}</strong><p class="control-server-copy">{{ panel.server.welcome }}</p></aside>
-  <LauncherDialog v-if="page" :is-dismissible="true" :width="isPromptOpen && !isLocal ? null : 1120" :height="isPromptOpen && !isLocal ? null : 720" @close="close" @interact="emit('interact', $event)">
+  <LauncherDialog v-if="page" :is-dismissible="!isBusy && !isActionBusy" :width="isPromptOpen && !isLocal ? null : 1120" :height="isPromptOpen && !isLocal ? null : 720" @close="close" @interact="emit('interact', $event)">
     <Tabs v-if="!isPromptOpen || isLocal" v-model="page" as="section" class="control-page" :aria-label="$t('Server control panel')">
       <header>
         <DialogTitle class="sr-only">{{ $t('Server control panel') }}</DialogTitle>
@@ -147,14 +198,15 @@ defineExpose({ open })
           <TabsTrigger value="dashboard" :disabled="isBusy || isActionBusy">{{ $t('DASHBOARD') }}</TabsTrigger>
           <TabsTrigger v-if="isAdmin" value="admin" :disabled="isBusy || isActionBusy">{{ $t('ADMIN') }}</TabsTrigger>
         </TabsList>
-        <Button class="control-close" variant="ghost" size="icon" :aria-label="$t('Close control panel')" :title="$t('Close control panel')" @click="close"><X :size="18" aria-hidden="true" /></Button>
+        <Button class="control-close" variant="ghost" size="icon" :disabled="isBusy || isActionBusy" :aria-label="$t('Close control panel')" :title="$t('Close control panel')" @click="close"><X :size="18" aria-hidden="true" /></Button>
       </header>
       <div class="control-body">
       <p v-if="error" role="alert">{{ $t(error) }}</p>
+      <p v-if="notice" role="status">{{ $t(notice) }}</p>
       <p v-if="isBusy && !panel">{{ $t('SIGNING IN...') }}</p>
       <template v-if="panel">
         <TabsContent v-if="page === 'features'" value="features" class="control-content">
-          <RemoteControlFeatures :profile="effectiveProfile" :panel="panel" @busy="isActionBusy = $event" @renamed="accountRenamed" @invalidated="invalidated" />
+          <RemoteControlFeatures :profile="effectiveProfile" :panel="panel" :is-local="isLocal" :is-shift-held="isShiftHeld" :is-deletion-disabled="isDeletionDisabled" @password-changed="passwordChanged" @delete="requestDelete" @busy="isActionBusy = $event" @renamed="accountRenamed" @invalidated="invalidated" />
         </TabsContent>
         <TabsContent v-else-if="page === 'dashboard'" value="dashboard" class="control-content">
           <RemoteControlActivity :is-player-review-available="isPlayerReviewAvailable" v-if="panel.server.supported_operations?.includes('server.activity.read')" :profile="effectiveProfile" :is-level-available="panel.server.supported_operations.includes('server.activity.level.read')" :is-dna-available="panel.server.supported_operations.includes('server.activity.dna.read')" :is-progression-available="panel.server.supported_operations.includes('server.activity.progression.read')" :is-personal-available="panel.server.supported_operations.includes('account.activity.read')" @busy="isActionBusy = $event" @invalidated="invalidated" />

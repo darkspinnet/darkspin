@@ -24,6 +24,55 @@ type panelMaintenance struct {
 	auditMu           sync.Mutex
 	completions       map[string]maintenanceCompletion
 	connectionControl *panelConnectionControl
+	startupRecoveryID string
+	readinessCount    int
+	lastReadinessAt   time.Time
+}
+
+// ObserveReady is reachable only through the authenticated loopback maintenance
+// channel, after the probe verifies the main endpoint against the running image.
+// Only the operation restored at startup under a legacy supervisor is eligible.
+func (e *panelMaintenance) ObserveReady(ctx context.Context, id string) (maintenance.State, error) {
+	lease, err := e.gate.Change(ctx)
+	if err != nil {
+		return maintenance.State{}, fmt.Errorf("readyGate: %w", err)
+	}
+	defer e.closeLease(lease)
+	current, err := e.control()
+	if err != nil {
+		return maintenance.State{}, fmt.Errorf("readyControl: %w", err)
+	}
+	state := current.control.Status()
+	if id == "" || id != e.startupRecoveryID || id != state.ID ||
+		(state.Phase != "stopping" && state.Phase != "failed") ||
+		(state.Action != "restart" && state.Action != "update") {
+		return state, nil
+	}
+	now := time.Now()
+	if !e.lastReadinessAt.IsZero() && now.Sub(e.lastReadinessAt) < 4*time.Second {
+		return state, nil
+	}
+	if !e.lastReadinessAt.IsZero() && now.Sub(e.lastReadinessAt) > 8*time.Second {
+		e.readinessCount = 0
+	}
+	e.lastReadinessAt = now
+	e.readinessCount++
+	// The legacy supervisor validates startup after three successful probes.
+	// A fourth proves it kept this child after first-boot validation/commit.
+	if e.readinessCount < 4 {
+		return state, nil
+	}
+	err = current.control.Resolve(id, "healthy")
+	if err != nil {
+		return state, fmt.Errorf("readyResolve: %w", err)
+	}
+	e.startupRecoveryID = ""
+	e.server.logger.Printf("Legacy supervisor startup recovered; reopening player admission operation=%s action=%s; update installation outcome is unavailable", id, state.Action)
+	err = e.complete(ctx, id, true, "legacy_server_ready")
+	if err != nil {
+		e.server.logger.Printf("Legacy maintenance recovery audit queued operation=%s: %v", id, err)
+	}
+	return current.control.Status(), nil
 }
 
 type maintenanceCompletion struct {

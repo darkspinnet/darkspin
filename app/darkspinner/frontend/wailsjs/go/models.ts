@@ -1,17 +1,4 @@
 export namespace main {
-  export class RemoteControlAccessResult {
-    status: number;
-    ip_limit: string;
-    is_disconnect_pending: boolean;
-    static createFrom(source: any = {}) { return new RemoteControlAccessResult(source); }
-    constructor(source: any = {}) {
-      if ('string' === typeof source) source = JSON.parse(source);
-      this.status = source['status'];
-      this.ip_limit = source['ip_limit'];
-      this.is_disconnect_pending = source['is_disconnect_pending'];
-    }
-  }
-
 	
 	export class ReportResult {
 	    name: string;
@@ -673,6 +660,22 @@ export namespace main {
 	        this.isStartMenuShortcut = source["isStartMenuShortcut"];
 	        this.isDesktopShortcut = source["isDesktopShortcut"];
 	        this.isSteamLaunch = source["isSteamLaunch"];
+	    }
+	}
+	export class RemoteControlAccessResult {
+	    status: number;
+	    ip_limit: string;
+	    is_disconnect_pending: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new RemoteControlAccessResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.status = source["status"];
+	        this.ip_limit = source["ip_limit"];
+	        this.is_disconnect_pending = source["is_disconnect_pending"];
 	    }
 	}
 	export class RemoteControlAccountSample {
@@ -1877,12 +1880,12 @@ export namespace main {
 	    }
 	}
 	export class RemoteControlUser {
-	    ip_limit: string;
 	    id: number;
 	    login_name: string;
 	    display_name: string;
 	    level: number;
 	    status: number;
+	    ip_limit: string;
 	    is_banned: boolean;
 	    is_timed_out: boolean;
 	    timeout_until_unix: number;

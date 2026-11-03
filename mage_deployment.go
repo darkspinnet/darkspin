@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/magefile/mage/mg"
 )
@@ -83,15 +85,100 @@ func (Deployment) Status() error {
 	return nil
 }
 
-// Logs prints recent deployment logs without starting or changing services.
+// Logs prints the latest daily server log without requiring Docker.
 func (Deployment) Logs() error {
-	command, err := newDeploymentCommand()
+	repositoryRoot, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("deploymentInit: %w", err)
+		return fmt.Errorf("repositoryPath: %w", err)
 	}
-	err = command.run("logs", "--tail", "100")
+	logPath := filepath.Join(repositoryRoot, "bin", "deployment", "runtime", "runtime", "darkspin", "logs", "logs")
+	entries, err := os.ReadDir(logPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("logDirectory: %w", err)
+	}
+	latestName := ""
+	for _, entry := range entries {
+		name := entry.Name()
+		if !entry.Type().IsRegular() || !strings.HasSuffix(name, ".txt") {
+			continue
+		}
+		date, parseErr := time.Parse(time.DateOnly, strings.TrimSuffix(name, ".txt"))
+		if parseErr != nil || date.Format(time.DateOnly)+".txt" != name {
+			continue
+		}
+		if name > latestName {
+			latestName = name
+		}
+	}
+	if latestName == "" {
+		noticeCount, noticeErr := fmt.Fprintln(os.Stdout, "No daily server log is available yet; logs appear after the updated dedicated server starts.")
+		if noticeErr != nil {
+			return fmt.Errorf("logNotice[%d]: %w", noticeCount, noticeErr)
+		}
+		return nil
+	}
+	err = printDeploymentLogTail(filepath.Join(logPath, latestName))
 	if err != nil {
 		return fmt.Errorf("deploymentLogs: %w", err)
+	}
+	return nil
+}
+
+func printDeploymentLogTail(path string) (resultErr error) {
+	r, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("logOpen: %w", err)
+	}
+	defer func() {
+		closeErr := r.Close()
+		if closeErr != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("logClose: %w", closeErr))
+		}
+	}()
+	fi, err := r.Stat()
+	if err != nil {
+		return fmt.Errorf("logStat: %w", err)
+	}
+	if !fi.Mode().IsRegular() {
+		return errors.New("daily log is not a regular file")
+	}
+	const byteLimit int64 = 64 * 1024
+	offset := max(fi.Size()-byteLimit, 0)
+	readOffset, err := r.Seek(offset, io.SeekStart)
+	if err != nil {
+		return fmt.Errorf("logSeek: %w", err)
+	}
+	if readOffset != offset {
+		return errors.New("daily log seek did not reach the requested offset")
+	}
+	payload, err := io.ReadAll(io.LimitReader(r, byteLimit))
+	if err != nil {
+		return fmt.Errorf("logRead: %w", err)
+	}
+	if offset > 0 {
+		lineEnd := bytes.IndexByte(payload, '\n')
+		if lineEnd >= 0 && lineEnd < len(payload)-1 {
+			payload = payload[lineEnd+1:]
+		}
+		limitCount, limitErr := fmt.Fprintln(os.Stdout, "[Showing at most the last 64 KiB and 100 lines of the daily log.]")
+		if limitErr != nil {
+			return fmt.Errorf("logLimit[%d]: %w", limitCount, limitErr)
+		}
+	}
+	lines := bytes.SplitAfter(payload, []byte{'\n'})
+	if len(lines[len(lines)-1]) == 0 {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) > 100 {
+		lines = lines[len(lines)-100:]
+	}
+	tail := bytes.Join(lines, nil)
+	writtenCount, err := os.Stdout.Write(tail)
+	if err != nil {
+		return fmt.Errorf("logPrint: %w", err)
+	}
+	if writtenCount != len(tail) {
+		return fmt.Errorf("logShort: %w", io.ErrShortWrite)
 	}
 	return nil
 }

@@ -85,6 +85,7 @@ export const ModerateRemoteControlUser = (...args) => controlPanelCall('Moderate
 export const TimeoutRemoteControlUser = (...args) => controlPanelCall('TimeoutRemoteControlUser', ...args)
 export const RenameRemoteControlAccount = (...args) => controlPanelCall('RenameRemoteControlAccount', ...args)
 export const ChangeRemoteControlPassword = (...args) => controlPanelCall('ChangeRemoteControlPassword', ...args)
+export const SetRemoteControlPassword = (...args) => controlPanelCall('SetRemoteControlPassword', ...args)
 export const DeleteRemoteControlAccount = (...args) => controlPanelCall('DeleteRemoteControlAccount', ...args)
 export const GetRemoteControlIdentity = (...args) => controlPanelCall('GetRemoteControlIdentity', ...args)
 export const SetRemoteControlIdentity = (...args) => controlPanelCall('SetRemoteControlIdentity', ...args)

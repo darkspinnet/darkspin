@@ -15,6 +15,24 @@ type LocalTransition interface {
 	AbortLocal(context.Context, string) error
 }
 
+// StartupRecovery observes successful image-verified readiness probes from a
+// supervisor that predates maintenance outcome reporting.
+type StartupRecovery interface {
+	ObserveReady(context.Context, string) (State, error)
+}
+
+func (e *Control) observeReady(ctx context.Context, id string) (State, error) {
+	recovery, isSupported := e.transition().(StartupRecovery)
+	if !isSupported {
+		return e.Status(), nil
+	}
+	state, err := recovery.ObserveReady(ctx, id)
+	if err != nil {
+		return state, fmt.Errorf("readyObserve: %w", err)
+	}
+	return state, nil
+}
+
 func (e *Control) announceLocal(ctx context.Context, minutes int) (State, error) {
 	transition := e.transition()
 	var state State

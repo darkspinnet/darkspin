@@ -2,10 +2,22 @@
 
 ### 2026-11-03
 
-- Add a control-panel close button and open Manage by default when entering Admin.
-- Separate Diagnostic snapshots from bugs and logs, with newest-first ordering and date-based pagination.
-- Add audited administrator editing of user status and Allow IP, with rank protection, credential revocation, and gameplay disconnection.
-- Enable manual update checks from the configured bootstrap source without requiring a supervisor-managed server, and show unsupported checks explicitly.
+- Group Feature actions into separate sections, align new and repeated password fields on one row, and remove the password-session explanation.
+- [#169](https://github.com/darkspinnet/darkspin/issues/169) Recover restart/update admission after stable startup under older dedicated supervisors that cannot publish maintenance outcomes, while preserving manual maintenance holds and current supervisor validation.
+- Accept build 103's bit-31 item-detail identifiers so Create Detail requests resolve owned parts instead of failing with part not found.
+- Log credential-free account HTTP request and response-delivery metadata to diagnose login callback timeouts after successful authentication.
+- Write dedicated server and supervisor output to UTC daily files under darkspin/logs/logs, retaining seven daily logs and expiring trace and bug artifacts after seven days at startup and midnight.
+- Read the latest daily server log directly with mage deployment:logs instead of Docker console logs.
+- Add remote Crogenitor password changes to Feature with current password verification, matching new-password fields, and an option to save the new password in the launcher.
+- Move local and remote Crogenitor deletion from Actions into the control panel Feature tab, preserving confirmation and Shift-based local connection deletion.
+- Refresh retained maintenance banners after closing the control panel so reopened servers clear the warning and stale launch blocking automatically.
+- Keep PLAY REMOTE disabled with a STARTING label from the launch request until client startup completes, preventing a brief misleading re-enable before running controls appear.
+- [#170](https://github.com/darkspinnet/darkspin/issues/170) Add a control-panel close button and open Manage by default when entering Admin.
+- [#170](https://github.com/darkspinnet/darkspin/issues/170) Separate Diagnostic snapshots from bugs and logs, with newest-first ordering and date-based pagination.
+- [#170](https://github.com/darkspinnet/darkspin/issues/170) Add audited administrator editing of user status and Allow IP, with rank protection, credential revocation, and gameplay disconnection.
+- [#170](https://github.com/darkspinnet/darkspin/issues/170) Enable manual update checks from the configured bootstrap source without requiring a supervisor-managed server, and show unsupported checks explicitly.
+    - [#169](https://github.com/darkspinnet/darkspin/issues/169) Show remote server Maintenance status and its reason in the launcher before starting the client, block player launches while maintenance is active, and keep administrator panel access available.
+    - [#169](https://github.com/darkspinnet/darkspin/issues/169) Show maintenance login-rejection details when the server includes a deadline, with a translated fallback when no maintenance reason is supplied.
 - [#169](https://github.com/darkspinnet/darkspin/issues/169) Preserve server login-rejection details across interleaved TCP connections and identify launcher-requested login exits instead of reporting an unknown diagnosis.
 
 ### 2026-11-02

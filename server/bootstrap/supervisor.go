@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -25,6 +26,7 @@ type Options struct {
 	ManifestURL     string
 	ServerArgs      []string
 	Logger          *slog.Logger
+	Output          io.Writer
 	StartupTimeout  time.Duration
 	ShutdownTimeout time.Duration
 	RetentionDays   int
@@ -398,6 +400,9 @@ func (e *supervisor) runChild(ctx context.Context, isFirstBoot bool) childResult
 	cmd.Dir = filepath.Dir(e.option.ConfigPath)
 	cmd.Env = e.childEnvs()
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if e.option.Output != nil {
+		cmd.Stdout, cmd.Stderr = e.option.Output, e.option.Output
+	}
 	configureChild(cmd)
 	err = cmd.Start()
 	if err != nil {

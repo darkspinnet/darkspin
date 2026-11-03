@@ -378,6 +378,14 @@ export function SetRemoteControlIdentity(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetRemoteControlIdentity'](arg1, arg2, arg3);
 }
 
+export function SetRemoteControlPassword(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SetRemoteControlPassword'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function SetRemoteControlUserAccess(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['SetRemoteControlUserAccess'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
 export function SetServerConfiguration(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['SetServerConfiguration'](arg1, arg2, arg3, arg4);
 }
@@ -428,8 +436,4 @@ export function TimeoutRemoteControlUser(arg1, arg2, arg3, arg4, arg5) {
 
 export function UninstallDarkspinner() {
   return window['go']['main']['App']['UninstallDarkspinner']();
-}
-
-export function SetRemoteControlUserAccess(arg1, arg2, arg3, arg4, arg5, arg6) {
-  return window['go']['main']['App']['SetRemoteControlUserAccess'](arg1, arg2, arg3, arg4, arg5, arg6);
 }

@@ -62,6 +62,13 @@ func (e *maintenanceOptions) run(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("serverReadiness: %w", err)
 		}
+		if reply.IsAdmissionBlocked && (reply.Phase == "stopping" || reply.Phase == "failed") &&
+			(reply.Action == "restart" || reply.Action == "update") {
+			reply, err = maintenance.Execute(ctx, runtimePath, "ready", 0, reply.ID)
+			if err != nil {
+				return fmt.Errorf("readinessObserve: %w", err)
+			}
+		}
 	}
 	err = json.NewEncoder(cmd.OutOrStdout()).Encode(reply)
 	if err != nil {

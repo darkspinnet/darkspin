@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	contentruntime "github.com/darkspinnet/darkspin/content/runtime"
 	"github.com/darkspinnet/darkspin/server/game"
@@ -48,8 +49,8 @@ func newServerCommand() *cobra.Command {
 		&options.server.IsTimestampingEnabled,
 		"timestamps",
 		"t",
-		false,
-		"include timestamps in server logs",
+		true,
+		"include UTC timestamps in dedicated server logs",
 	)
 	serverCmd.Flags().StringVar(
 		&options.server.BlazeCertificatePath,
@@ -148,6 +149,31 @@ func (e *serverCommandOptions) run(cmd *cobra.Command, _ []string) (resultErr er
 	if !config.Bool(game.ConfigServerIsDedicated) {
 		return errors.New("PostgreSQL player storage requires --dedicated")
 	}
+	diagnostic, err := openDedicatedDiagnostics(cmd.Context(), e.server.RuntimePath, e.server.TracePath, !e.setup.isPrepareOnly)
+	if err != nil {
+		return fmt.Errorf("serverLog: %w", err)
+	}
+	previousOutput, previousError := cmd.OutOrStdout(), cmd.ErrOrStderr()
+	previousLogOutput := log.Writer()
+	cmd.SetOut(diagnostic)
+	cmd.SetErr(diagnostic)
+	log.SetOutput(diagnostic)
+	e.server.Output = diagnostic
+	defer func() {
+		if resultErr != nil {
+			count, writeErr := fmt.Fprintf(diagnostic, "%s Dedicated server stopped: %v\n", time.Now().UTC().Format(time.RFC3339), resultErr)
+			if writeErr != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("serverLogError[%d]: %w", count, writeErr))
+			}
+		}
+		cmd.SetOut(previousOutput)
+		cmd.SetErr(previousError)
+		log.SetOutput(previousLogOutput)
+		closeErr := diagnostic.Close()
+		if closeErr != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("serverLogClose: %w", closeErr))
+		}
+	}()
 	if bootstrapRoot != "" {
 		e.server.MaintenanceSchedule, err = bootstrapSchedule(config, bootstrapRoot)
 		if err != nil {
@@ -165,7 +191,7 @@ func (e *serverCommandOptions) run(cmd *cobra.Command, _ []string) (resultErr er
 	}
 	flags := 0
 	if e.server.IsTimestampingEnabled {
-		flags = log.LstdFlags | log.Lmicroseconds
+		flags = log.LstdFlags | log.Lmicroseconds | log.LUTC
 	}
 	e.server.Logger = log.New(cmd.ErrOrStderr(), "", flags)
 	if e.setup.isPrepareOnly {

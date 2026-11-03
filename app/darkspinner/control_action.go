@@ -112,7 +112,7 @@ func (e *App) RenameRemoteControlAccount(serverAddress, identity, currentPasswor
 	if err != nil {
 		return RemoteControlActionResult{}, fmt.Errorf("panelRename: %w", err)
 	}
-	err = e.updateRemoteControlCacheLocked(result.DisplayName, false)
+	err = e.updateRemoteControlCacheLocked(result.DisplayName, false, "")
 	result.IsCacheUpdated = err == nil
 	if err != nil {
 		e.log("Remote display name changed, but the launcher cache could not be updated")
@@ -121,16 +121,28 @@ func (e *App) RenameRemoteControlAccount(serverAddress, identity, currentPasswor
 }
 
 func (e *App) ChangeRemoteControlPassword(serverAddress, identity, currentPassword, newPassword string) (RemoteControlActionResult, error) {
+	result, err := e.SetRemoteControlPassword(serverAddress, identity, currentPassword, newPassword, false)
+	if err != nil {
+		return RemoteControlActionResult{}, fmt.Errorf("passwordChange: %w", err)
+	}
+	return result, nil
+}
+
+func (e *App) SetRemoteControlPassword(serverAddress, identity, currentPassword, newPassword string, isPasswordRemembered bool) (RemoteControlActionResult, error) {
 	e.controlPanelMu.Lock()
 	defer e.controlPanelMu.Unlock()
 	err := e.remoteControlActionLocked(serverAddress, identity, http.MethodPost, "/account/password", map[string]string{"current_password": currentPassword, "new_password": newPassword}, nil)
 	if err != nil {
 		return RemoteControlActionResult{}, fmt.Errorf("panelPassword: %w", err)
 	}
-	err = e.updateRemoteControlCacheLocked("", true)
+	cachedPassword := ""
+	if isPasswordRemembered {
+		cachedPassword = newPassword
+	}
+	err = e.updateRemoteControlCacheLocked("", true, cachedPassword)
 	e.controlPanel = remoteControlSession{}
 	if err != nil {
-		e.log("Remote password changed, but the launcher cache could not be cleared")
+		e.log("Remote password changed, but the launcher password cache could not be updated")
 	}
 	return RemoteControlActionResult{IsCacheUpdated: err == nil}, nil
 }
@@ -183,7 +195,7 @@ func (e *App) remoteControlActionLocked(serverAddress, identity, method, path st
 	return nil
 }
 
-func (e *App) updateRemoteControlCacheLocked(displayName string, isPasswordCleared bool) error {
+func (e *App) updateRemoteControlCacheLocked(displayName string, isPasswordChanged bool, password string) error {
 	ctx := e.lifecycleCtx
 	if ctx == nil {
 		ctx = context.TODO()
@@ -194,8 +206,8 @@ func (e *App) updateRemoteControlCacheLocked(displayName string, isPasswordClear
 	}
 	defer database.Close()
 	var cacheResult sql.Result
-	if isPasswordCleared {
-		cacheResult, err = database.ExecContext(ctx, `UPDATE remote_profile SET password = '' WHERE server_address = ? AND login_name = ?`, e.controlPanel.address, e.controlPanel.identity)
+	if isPasswordChanged {
+		cacheResult, err = database.ExecContext(ctx, `UPDATE remote_profile SET password = ? WHERE server_address = ? AND login_name = ?`, password, e.controlPanel.address, e.controlPanel.identity)
 	} else {
 		cacheResult, err = database.ExecContext(ctx, `UPDATE remote_profile SET display_name = ? WHERE server_address = ? AND login_name = ?`, displayName, e.controlPanel.address, e.controlPanel.identity)
 	}
