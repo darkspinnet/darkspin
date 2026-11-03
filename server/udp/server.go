@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/accountaccess"
 	"github.com/darkspinnet/darkspin/server/qos"
 	"github.com/darkspinnet/darkspin/server/raknet"
 )
@@ -576,6 +577,11 @@ func (s *SharedServer) processRakNetPacket(
 	ctx context.Context, remote *net.UDPAddr, packet []byte,
 	rakNetServer *raknet.Server, channel rakNetChannel,
 ) ([][]byte, string, error) {
+	peerAddress := ""
+	if remote != nil {
+		peerAddress = remote.String()
+	}
+	ctx = accountaccess.WithPeer(ctx, peerAddress)
 	s.mu.Lock()
 	isAttached := s.connection != nil
 	s.mu.Unlock()

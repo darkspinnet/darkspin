@@ -5,9 +5,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import CrogenitorActions from './CrogenitorActions.vue'
 import { profileLastPlayedDate } from '../profile'
 
-const props = defineProps({ profiles:Array, selectedKey:String, isDisabled:Boolean, isCreationDisabled:Boolean, isActionDisabled:Boolean, isMod:Boolean })
+const props = defineProps({ profiles:Array, selectedKey:String, isDisabled:Boolean, isCreationDisabled:Boolean, isActionDisabled:Boolean, isMod:Boolean, isShiftHeld:Boolean })
 const selectedProfile = computed(() => props.profiles.find(entry => entry.key === props.selectedKey)?.profile)
-const emit = defineEmits(['select', 'create', 'edit', 'reset-display', 'delete'])
+const emit = defineEmits(['select', 'create', 'control-panel', 'edit', 'reset-display', 'delete'])
 const newMenu = ref(null)
 function create(kind) {
   newMenu.value.open = false
@@ -38,7 +38,7 @@ function create(kind) {
         </SelectItem>
       </SelectContent>
     </Select>
-    <CrogenitorActions :disabled="isDisabled || isActionDisabled || !selectedKey" :is-editable="isMod" @edit="emit('edit')" @reset-display="emit('reset-display')" @delete="emit('delete')" />
+    <CrogenitorActions :is-shift-held="isShiftHeld" :disabled="isDisabled || !selectedKey || (isMod && isActionDisabled)" :is-mutation-disabled="isActionDisabled" :is-control-panel-available="!isMod" :is-editable="isMod" @control-panel="emit('control-panel')" @edit="emit('edit')" @reset-display="emit('reset-display')" @delete="emit('delete', $event)" />
   </div>
 </template>
 

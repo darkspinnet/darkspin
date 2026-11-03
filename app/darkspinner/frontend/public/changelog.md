@@ -2,8 +2,17 @@
 
 ### 2026-11-02
 
-- Reduce campaign NPC polling allocations by filtering hazard sources before copying and using compact security, combat-presence, and AI-target snapshots.
-- Fix raised projectile-burst turn goals affecting Webbed Lightning and Ghost Form modifier cleanup during command rejection and recovery ([#162](https://github.com/darkspinnet/darkspin/issues/162)).
+- Show an explanatory Server Rule message when a remote Crogenitor is selected.
+- Show shortcut Delete buttons only for shortcuts owned by the running Darkspinner executable, and replace ownership failures with a concise message.
+- Show update-check status beside the Check for Updates button in Manage.
+- Consolidate Manage into a shared update, gameplay-admission, and health status overview, with one refresh control, grouped operation controls, and expandable technical details.
+- Add circled help beside Update with Backup, Restart, and Hold in Maintenance explaining each operation.
+- Keep the control panel height and top navigation stable across Feature, Dashboard, Admin, and User views, with content scrolling beneath a fixed tab row.
+
+- [#165](https://github.com/darkspinnet/darkspin/issues/165) Prevent delayed recovery of older commands from canceling Quantum Superposition or resetting newer accepted abilities and movement.
+- [#163](https://github.com/darkspinnet/darkspin/issues/163) Include native exception reports and minidumps created or changed since client launch in automatic crash ZIPs, preserving ordinary logs when a native report is unavailable.
+- [#162](https://github.com/darkspinnet/darkspin/issues/162) Reduce campaign NPC polling allocations by filtering hazard sources before copying and using compact security, combat-presence, and AI-target snapshots.
+- [#162](https://github.com/darkspinnet/darkspin/issues/162) Fix raised projectile-burst turn goals affecting Webbed Lightning and Ghost Form modifier cleanup during command rejection and recovery.
 
 ### 2026-11-01
 

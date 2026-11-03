@@ -118,6 +118,7 @@ func (e *bootstrapOptions) run(command *cobra.Command, args []string) error {
 	}
 	options.BootstrapLease = lease
 	options.DatabaseBackup = databaseBackup
+	options.OperationAudit = databaseBackup
 	options.Logger = slog.New(slog.NewTextHandler(command.ErrOrStderr(), nil))
 	err = bootstrap.Run(command.Context(), options)
 	if err != nil {

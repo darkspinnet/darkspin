@@ -20,8 +20,9 @@ type launcherLua struct {
 	operationMutex sync.Mutex
 	options        debugLaunchOptions
 	state          LuaConsoleSnapshot
-	child          *launcherLuaProcess
+	child          *launcherLuaSession
 	sequence       uint64
+	isRunPending   bool
 }
 
 func newLauncherLua(arguments []string) *launcherLua {
@@ -127,8 +128,6 @@ func (a *App) RunLuaScript(path string) error {
 	if e == nil {
 		return errors.New("Lua scenarios are unavailable")
 	}
-	e.operationMutex.Lock()
-	defer e.operationMutex.Unlock()
 	choices, err := launcherLuaChoices()
 	e.mutex.Lock()
 	e.state.Scripts = choices
@@ -150,6 +149,33 @@ func (a *App) RunLuaScript(path string) error {
 	if selectedPath == "" {
 		return errors.New("select an available Lua scenario")
 	}
+	e.mutex.Lock()
+	if e.isRunPending {
+		e.mutex.Unlock()
+		return errors.New("wait for the scenario session to start")
+	}
+	e.isRunPending = true
+	e.mutex.Unlock()
+	// Respond before shutting down the HTTP server serving this Run request.
+	go a.runLauncherLua(selectedPath)
+	return nil
+}
+
+func (a *App) runLauncherLua(path string) {
+	e := a.lua
+	e.operationMutex.Lock()
+	err := a.prepareLauncherLua(path)
+	e.operationMutex.Unlock()
+	e.mutex.Lock()
+	e.isRunPending = false
+	e.mutex.Unlock()
+	if err != nil {
+		e.fail(err)
+	}
+}
+
+func (a *App) prepareLauncherLua(selectedPath string) error {
+	e := a.lua
 	a.mu.Lock()
 	isBusy := a.isShuttingDown || a.gameDone != nil || a.cancel != nil || a.status.IsPatchActive
 	initializeDone := a.serviceSet.initializeDone
@@ -176,14 +202,9 @@ func (a *App) RunLuaScript(path string) error {
 		runtime.WindowSetPosition(a.ctx, 0, 0)
 	}
 	if child != nil {
-		select {
-		case <-child.done:
-		default:
-			err = child.runScript(a.ctx, selectedPath)
-			if err != nil {
-				return fmt.Errorf("luaReuse: %w", err)
-			}
-			return nil
+		err := child.stop(a.ctx)
+		if err != nil {
+			return fmt.Errorf("luaReset: %w", err)
 		}
 	}
 	e.mutex.Lock()
@@ -194,7 +215,7 @@ func (a *App) RunLuaScript(path string) error {
 	e.state.ElapsedMS = 0
 	e.state.RunID = ""
 	e.mutex.Unlock()
-	err = e.launch(a.ctx, selectedPath)
+	err := e.launch(a.ctx, a, selectedPath)
 	if err != nil {
 		e.fail(err)
 		return fmt.Errorf("luaStart: %w", err)
@@ -280,7 +301,9 @@ func (a *App) stopLauncherLua() {
 	if child == nil {
 		return
 	}
-	err := child.stop(a.ctx)
+	shutdownContext, cancel := context.WithTimeout(context.WithoutCancel(a.ctx), 45*time.Second)
+	defer cancel()
+	err := child.stop(shutdownContext)
 	if err != nil {
 		a.log("Lua shutdown: " + err.Error())
 	}
@@ -297,10 +320,10 @@ func (a *App) KillLuaSession() error {
 	if child == nil {
 		return nil
 	}
-	err := child.kill(a.ctx)
-	if err != nil {
-		return fmt.Errorf("luaKill: %w", err)
-	}
+	// Acknowledge the browser request before its scenario HTTP server closes.
+	// The session owner performs and reports cleanup asynchronously.
+	child.supervisor.isKillRequested.Store(true)
+	child.requestStop()
 	return nil
 }
 

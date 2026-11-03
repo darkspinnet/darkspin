@@ -36,6 +36,7 @@ type playerAIState struct {
 	moveUntil        time.Time
 	combatGoal       raknet.Vector3
 	isStrafeLeft     bool
+	nextRoleCheckAt  time.Time
 	nextIdleWanderAt time.Time
 	idleWanderUntil  time.Time
 	idleWanderGoal   raknet.Vector3
@@ -317,6 +318,10 @@ func (e gameplayPendingRuntime) planPlayerAILocked(
 		}
 	}
 	if !isTargetFound {
+		roleCommand, isRoleSwap := e.playerAIRoleSwapLocked(member, command, now)
+		if isRoleSwap {
+			return roleCommand, true, nil
+		}
 		if member.isEnemyRootActive(now) {
 			return command, false, nil
 		}

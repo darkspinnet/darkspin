@@ -28,10 +28,11 @@ func (e *debugLuaVM) register(state *lua.LState) {
 	namespace := state.NewTable()
 	state.SetFuncs(namespace, map[string]lua.LGFunction{
 		"Check": debugLuaCheck, "Must": debugLuaMust, "RequireAPI": debugLuaRequireAPI,
-		"Parallel": e.runParallel,
-		"Sleep":    e.sleep,
-		"Log":      e.logMessage,
-		"Time":     e.elapsedTime,
+		"Parallel":     e.runParallel,
+		"Sleep":        e.sleep,
+		"Log":          e.logMessage,
+		"Time":         e.elapsedTime,
+		"ProfileStart": e.profileStart, "ProfileStop": e.profileStop,
 		"Snapshot": e.status, "Status": e.status, "StartServer": e.startServer, "CreateProfile": e.createProfile,
 		"ResetProfile": e.resetProfile, "ClientWindow": e.clientWindow,
 		"Click":           e.click,
@@ -49,6 +50,14 @@ func (e *debugLuaVM) sleep(state *lua.LState) int {
 
 func (e *debugLuaVM) logMessage(state *lua.LState) int {
 	return e.invoke(state, "scenario.log", map[string]any{"message": state.CheckString(1)}, false)
+}
+
+func (e *debugLuaVM) profileStart(state *lua.LState) int {
+	return e.invoke(state, "profile.start", map[string]any{"label": state.CheckString(1)}, true)
+}
+
+func (e *debugLuaVM) profileStop(state *lua.LState) int {
+	return e.invoke(state, "profile.stop", map[string]any{}, true)
 }
 
 func (e *debugLuaVM) elapsedTime(state *lua.LState) int {

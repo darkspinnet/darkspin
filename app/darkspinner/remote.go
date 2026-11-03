@@ -378,6 +378,28 @@ func (a *App) LoginRemoteProfile(
 	return nil
 }
 
+// DeleteRemoteConnection deletes only the locally saved connection, without
+// contacting its server or requiring the account password.
+func (e *App) DeleteRemoteConnection(serverAddress, identity string) error {
+	address, err := normalizeRemoteServerAddress(serverAddress)
+	if err != nil {
+		return fmt.Errorf("connectionAddress: %w", err)
+	}
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return errors.New("identity is required")
+	}
+	ctx := e.lifecycleCtx
+	if ctx == nil {
+		ctx = context.TODO()
+	}
+	err = e.deleteCachedRemoteProfile(ctx, address, identity)
+	if err != nil {
+		return fmt.Errorf("connectionDelete: %w", err)
+	}
+	return nil
+}
+
 // DeleteRemoteProfile authenticates and archives an account on
 // its host server before deleting the launcher's cached connection metadata.
 func (a *App) DeleteRemoteProfile(serverAddress, identity, password string) error {

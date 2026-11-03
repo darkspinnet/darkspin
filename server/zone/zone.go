@@ -2571,6 +2571,7 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 		EnemyPopulationRules: e.info.DirectorDefinition.EnemyPopulationRules.Resolved(), BossSpawnRules: e.info.DirectorDefinition.BossSpawnRules.Resolved(), IsSpawnRuleSnapshotSet: true,
 		Version: zonecheckpoint.Version, ZoneID: zoneID, RunSeed: runSeed,
 		IsReplayRandomized: isReplayRandomized,
+		IsNoReplay:         e.info.DirectorDefinition.IsNoReplay,
 		ZoneGeneration:     generation, CompletionID: e.CompletionID(),
 		Level: level, Difficulty: difficulty, Reason: reason,
 		SavedAt: now, Elapsed: elapsed, Members: members, Heroes: heroes,

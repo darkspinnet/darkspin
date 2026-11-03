@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"strconv"
 	"sync"
 	"time"
@@ -25,13 +26,15 @@ import (
 )
 
 type debugHostRequest struct {
-	RunID         string
-	Paths         scenario.RunPaths
-	GameDirectory string
-	ContentPath   string
-	FangPath      string
-	Port          uint16
-	IsModded      bool
+	RunID           string
+	Paths           scenario.RunPaths
+	GameDirectory   string
+	ContentPath     string
+	FangPath        string
+	Port            uint16
+	IsModded        bool
+	LauncherHandler http.Handler
+	BeforeStart     func() error
 }
 
 type debugProfileCredential struct {
@@ -65,6 +68,10 @@ func newDebugHost(ctx context.Context, req debugHostRequest) (*debugHost, error)
 	if ctx == nil {
 		return nil, errors.New("debug host requires a session lifetime context")
 	}
+	parentContext := ctx
+	ctx = pprof.WithLabels(ctx, pprof.Labels("darkspin.component", "server"))
+	pprof.SetGoroutineLabels(ctx)
+	defer pprof.SetGoroutineLabels(parentContext)
 	err := ctx.Err()
 	if err != nil {
 		return nil, fmt.Errorf("hostContext: %w", err)
@@ -167,12 +174,17 @@ func newDebugHost(ctx context.Context, req debugHostRequest) (*debugHost, error)
 		serverLogPath: filepath.Join(req.Paths.ReportDirectory, "server.log"), serverTracePath: filepath.Join(req.Paths.TraceDirectory, "server.jsonl"),
 		FangPath: req.FangPath, ContentPath: working.Path, IsModded: req.IsModded, Address: net.JoinHostPort("127.0.0.1", strconv.Itoa(int(req.Port))),
 		credentialsByName: make(map[string]debugProfileCredential), done: make(chan struct{}), logOutput: logOutput}
+	routes := []serverruntime.HTTPRoute{{Pattern: "/scenario/ready", Methods: []string{http.MethodGet}, Handler: scenarioReadyHandler{marker: marker}}}
+	if req.LauncherHandler != nil {
+		routes = append(routes, serverruntime.HTTPRoute{Pattern: "/launcher(?:/.*)?",
+			Methods: []string{http.MethodGet, http.MethodPost}, Handler: req.LauncherHandler})
+	}
 	host.server, err = serverruntime.New(serverruntime.Options{
 		GamePath: req.GameDirectory, ConfigPath: configPath, RuntimePath: runtimePath,
 		IsModded:   req.IsModded,
 		Logger:     log.New(logOutput, "", log.LstdFlags|log.LUTC),
 		TracePath:  filepath.Join(req.Paths.TraceDirectory, "server.jsonl"),
-		HTTPRoutes: []serverruntime.HTTPRoute{{Pattern: "/scenario/ready", Methods: []string{http.MethodGet}, Handler: scenarioReadyHandler{marker: marker}}},
+		HTTPRoutes: routes,
 	})
 	if err != nil {
 		closeErr := logOutput.Close()
@@ -184,6 +196,14 @@ func newDebugHost(ctx context.Context, req debugHostRequest) (*debugHost, error)
 		host.server.Close()
 		closeErr := logOutput.Close()
 		return nil, fmt.Errorf("hostCapture: %w", errors.Join(err, closeErr))
+	}
+	if req.BeforeStart != nil {
+		err = req.BeforeStart()
+		if err != nil {
+			host.server.Close()
+			closeErr := logOutput.Close()
+			return nil, fmt.Errorf("hostHandoff: %w", errors.Join(err, closeErr))
+		}
 	}
 	runContext, cancel := context.WithCancel(ctx)
 	host.cancel = cancel

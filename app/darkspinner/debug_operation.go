@@ -177,6 +177,25 @@ func (e *debugSupervisor) executeSerializedDebugOperation(ctx context.Context, o
 	}
 	state := e.operationState
 	switch operation {
+	case "profile.start":
+		var req struct {
+			Label string `json:"label"`
+		}
+		err := decodeDebugPayload(payload, &req)
+		if err != nil {
+			return nil, fmt.Errorf("profileRequest: %w", err)
+		}
+		result, err := e.startProfiling(req.Label)
+		if err != nil {
+			return result, fmt.Errorf("profileStart: %w", err)
+		}
+		return result, nil
+	case "profile.stop":
+		result, err := e.stopProfiling()
+		if err != nil {
+			return result, fmt.Errorf("profileStop: %w", err)
+		}
+		return result, nil
 	case "scenario.log":
 		var req struct {
 			Message string `json:"message"`
@@ -241,7 +260,8 @@ func (e *debugSupervisor) executeSerializedDebugOperation(ctx context.Context, o
 				return nil, fmt.Errorf("serverDirectory: %w", err)
 			}
 		}
-		state.host, err = newDebugHost(e.sessionContext, debugHostRequest{RunID: e.id, Paths: paths, GameDirectory: req.GameDirectory, ContentPath: req.ContentPath, FangPath: req.FangPath, Port: desktop.CanonicalServerPort, IsModded: req.IsModded})
+		state.host, err = newDebugHost(e.sessionContext, debugHostRequest{RunID: e.id, Paths: paths, GameDirectory: req.GameDirectory, ContentPath: req.ContentPath, FangPath: req.FangPath, Port: desktop.CanonicalServerPort, IsModded: req.IsModded,
+			LauncherHandler: e.launcherHandler, BeforeStart: e.beforeHostStart})
 		if err != nil {
 			return nil, fmt.Errorf("serverStart: %w", err)
 		}

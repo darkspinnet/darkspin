@@ -34,6 +34,17 @@ func NewPostgres(ctx context.Context, database *sqlx.DB) (*Repository, error) {
 	if err != nil {
 		return nil, fmt.Errorf("schemaDeletion: %w", err)
 	}
+	dnaResult, err := tx.ExecContext(ctx, `ALTER TABLE user_stat ADD COLUMN IF NOT EXISTS dna_earned BIGINT NOT NULL DEFAULT 0`)
+	if err != nil {
+		return nil, fmt.Errorf("schemaDNAEarned: %w", err)
+	}
+	dnaAffectedCount, err := dnaResult.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("schemaDNAAffected: %w", err)
+	}
+	if dnaAffectedCount < 0 {
+		return nil, errors.New("negative DNA column affected count")
+	}
 	_, err = tx.ExecContext(ctx, `ALTER TABLE pvp_match_result ADD COLUMN IF NOT EXISTS dna_reward BIGINT NOT NULL DEFAULT 0`)
 	if err != nil {
 		return nil, fmt.Errorf("schemaPVPReward: %w", err)
@@ -42,7 +53,16 @@ func NewPostgres(ctx context.Context, database *sqlx.DB) (*Repository, error) {
 	if err != nil {
 		return nil, fmt.Errorf("schemaCommit: %w", err)
 	}
-	return &Repository{db: database, isPostgres: true}, nil
+	repository := &Repository{db: database, isPostgres: true}
+	err = repository.AccountAccess().EnsureSchema(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("accessSchema: %w", err)
+	}
+	err = repository.ensureActivitySchema(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("activitySchema: %w", err)
+	}
+	return repository, nil
 }
 
 func (e *Repository) readOptions() *sql.TxOptions {

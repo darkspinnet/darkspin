@@ -79,6 +79,7 @@ var schemaStatements = []string{
 	)`,
 	`CREATE TABLE IF NOT EXISTS user_stat (
 		user_id INTEGER PRIMARY KEY REFERENCES "user"(id) ON DELETE CASCADE,
+		dna_earned BIGINT NOT NULL DEFAULT 0,
 		pve_play_time_second INTEGER NOT NULL DEFAULT 0,
 		pve_minion_kill INTEGER NOT NULL DEFAULT 0,
 		pve_special_kill INTEGER NOT NULL DEFAULT 0,

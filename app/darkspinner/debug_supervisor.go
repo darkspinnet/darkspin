@@ -51,6 +51,11 @@ type debugSupervisor struct {
 	scriptMutex      sync.Mutex
 	scriptControl    debugScriptControl
 	scriptRequests   chan string
+	launcherHandler  http.Handler
+	beforeHostStart  func() error
+	onReady          func(debugDiscovery)
+	onLog            func(string)
+	profiling        *debugProfiling
 }
 
 type debugDiscovery struct {
@@ -129,42 +134,50 @@ func runDebugSupervisor(arguments []string) (bool, error) {
 	if err != nil {
 		return true, fmt.Errorf("debugPrivilege: %w", err)
 	}
-	executable, err := os.Executable()
+	supervisor, root, err := newDebugSupervisor(options)
 	if err != nil {
-		return true, fmt.Errorf("debugExecutable: %w", err)
+		return true, fmt.Errorf("debugCreate: %w", err)
 	}
-	executable, err = filepath.EvalSymlinks(executable)
-	if err != nil {
-		return true, fmt.Errorf("debugResolve: %w", err)
-	}
-	gameDirectory := filepath.Dir(executable)
-	root := debugWorkspaceRoot(gameDirectory)
-	scriptRoot, err := resolveDebugLuaRoot(gameDirectory)
-	if err != nil {
-		return true, fmt.Errorf("debugLuaRoot: %w", err)
-	}
-	entropy := make([]byte, 32)
-	count, err := rand.Read(entropy)
-	if err != nil || count != len(entropy) {
-		return true, fmt.Errorf("debugEntropy: %w", errors.Join(err, errors.New("could not allocate supervisor identity")))
-	}
-	id := "supervisor-" + hex.EncodeToString(entropy[:12])
-	registry, err := control.NewRegistry(id)
-	if err != nil {
-		return true, fmt.Errorf("debugRegistry: %w", err)
-	}
-	supervisor := &debugSupervisor{registry: registry, id: id, scriptRequests: make(chan string, 1),
-		isLauncherOwned: isLauncherOwned,
-		executionLimit:  options.executionLimit,
-		token:           hex.EncodeToString(entropy), stop: make(chan struct{}),
-		scriptRoot:      scriptRoot,
-		gameDirectory:   gameDirectory,
-		reportDirectory: filepath.Join(root, "bin", "game", "logs", "scenarios", id)}
+	supervisor.isLauncherOwned = isLauncherOwned
 	err = supervisor.serve(root, options.scriptName)
 	if err != nil {
 		return true, fmt.Errorf("debugServe: %w", err)
 	}
 	return true, nil
+}
+
+func newDebugSupervisor(options debugLaunchOptions) (*debugSupervisor, string, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, "", fmt.Errorf("debugExecutable: %w", err)
+	}
+	executable, err = filepath.EvalSymlinks(executable)
+	if err != nil {
+		return nil, "", fmt.Errorf("debugResolve: %w", err)
+	}
+	gameDirectory := filepath.Dir(executable)
+	root := debugWorkspaceRoot(gameDirectory)
+	scriptRoot, err := resolveDebugLuaRoot(gameDirectory)
+	if err != nil {
+		return nil, "", fmt.Errorf("debugLuaRoot: %w", err)
+	}
+	entropy := make([]byte, 32)
+	count, err := rand.Read(entropy)
+	if err != nil || count != len(entropy) {
+		return nil, "", fmt.Errorf("debugEntropy: %w", errors.Join(err, errors.New("could not allocate supervisor identity")))
+	}
+	id := "supervisor-" + hex.EncodeToString(entropy[:12])
+	registry, err := control.NewRegistry(id)
+	if err != nil {
+		return nil, "", fmt.Errorf("debugRegistry: %w", err)
+	}
+	supervisor := &debugSupervisor{registry: registry, id: id, scriptRequests: make(chan string, 1),
+		executionLimit: options.executionLimit,
+		token:          hex.EncodeToString(entropy), stop: make(chan struct{}),
+		scriptRoot:      scriptRoot,
+		gameDirectory:   gameDirectory,
+		reportDirectory: filepath.Join(root, "bin", "game", "logs", "scenarios", id)}
+	return supervisor, root, nil
 }
 
 func parseDebugArguments(arguments []string) (string, error) {
@@ -238,6 +251,10 @@ func (e *debugSupervisor) serve(root, scriptName string) error {
 	defer sessionCancel()
 	e.sessionContext = sessionContext
 	e.cancelSession = sessionCancel
+	if e.onReady != nil {
+		e.onReady(debugDiscovery{Schema: 1, ID: e.id, PID: os.Getpid(),
+			URL: "http://" + e.authority + debugAPIPrefix, Token: e.token, CreatedAt: time.Now().UTC()})
+	}
 	if scriptName != "" {
 		err = e.registry.BeginScript()
 		if err != nil {
@@ -273,6 +290,10 @@ func (e *debugSupervisor) serve(root, scriptName string) error {
 		retention.Reset(control.InspectionRetention)
 	}
 	defer retention.Stop()
+	var retentionDeadline <-chan time.Time
+	if e.onReady == nil {
+		retentionDeadline = retention.C
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	isStopping := false
@@ -288,7 +309,7 @@ func (e *debugSupervisor) serve(root, scriptName string) error {
 			isStopping = true
 		case <-e.stop:
 			isStopping = true
-		case <-retention.C:
+		case <-retentionDeadline:
 			isStopping = true
 		case <-scriptDone:
 			scriptDone = nil
@@ -453,7 +474,7 @@ func (e *debugSupervisor) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	case "GET " + debugAPIPrefix + "/capabilities":
 		e.respond(w, http.StatusOK, map[string]any{"schema": 1, "is_scenario": true,
 			"script_stop": map[string]string{"method": "POST", "path": debugAPIPrefix + "/scripts/stop", "scope": "Lua script only; clients and server remain running"},
-			"available":   []string{"status", "script_source_inventory", "lua_source_execution", "scenario.sleep", "scenario.log", "server.start", "profile.create", "profile.reset", "profile.logout", "profile.wait_login", "profile.state", "profile.wait_location", "login_observation", "client.launch", "client.state", "client.window", "client.open_creature_editor", "client.ui_hierarchy", "client.click", "client.press", "client.type", "client.ready", "client.wait_scene", "client.set_scene", "client.mission_state", "client.wait_mission", "client.wait_deployment", "client.mission_selection", "client.wait_selection", "client.select_mission", "client.deployment_state", "client.wait_deployment_ready", "client.start_mission", "client.continue_mission", "client.beam_out", "client.close", "client.screenshot", "client.capture", "client.wait_signal", "client.screen_state", "client.set_screen", "client.wait_screen", "client.world_state", "client.world_living", "client.wait_world_ready", "client.enter_mission", "client.world_path", "client.configure_world", "client.spawn_npc", "client.spawn_npc_async", "client.spawn_state", "client.spawn_controlled_npc", "client.spawn_controlled_fixture", "client.spawn_owned_npc", "client.activate_spoffit_crystal", "client.deactivate_spoffit_crystal", "client.controlled_npc_state", "client.controlled_npc_set_ai", "client.controlled_npc_move", "client.controlled_npc_cast", "client.controlled_npc_restore", "client.native_state", "client.project_world", "client.click_world", "client.hold_world", "client.select_hero", "client.restore_hero", "client.replace_hero", "client.place_hero", "client.reset_cooldowns", "client.set_ability_rank", "client.ability_state", "client.cast_active", "client.cancel_ability", "automation.state", "automation.pause", "automation.resume", "cinematic.configure", "cinematic.snapshot", "pvp.start", "client.arena_lobby", "client.accept_arena", "client.wait_arena", "party.create", "party.invite", "party.join", "party.state", "client.debug_pause", "client.debug_resume", "client.debug_pause_state", "graceful_shutdown"},
+			"available":   []string{"profile.start", "profile.stop", "status", "script_source_inventory", "lua_source_execution", "scenario.sleep", "scenario.log", "server.start", "profile.create", "profile.reset", "profile.logout", "profile.wait_login", "profile.state", "profile.wait_location", "login_observation", "client.launch", "client.state", "client.window", "client.open_creature_editor", "client.ui_hierarchy", "client.click", "client.press", "client.type", "client.ready", "client.wait_scene", "client.set_scene", "client.mission_state", "client.wait_mission", "client.wait_deployment", "client.mission_selection", "client.wait_selection", "client.select_mission", "client.deployment_state", "client.wait_deployment_ready", "client.start_mission", "client.continue_mission", "client.beam_out", "client.close", "client.screenshot", "client.capture", "client.wait_signal", "client.screen_state", "client.set_screen", "client.wait_screen", "client.world_state", "client.world_living", "client.wait_world_ready", "client.enter_mission", "client.world_path", "client.configure_world", "client.spawn_npc", "client.spawn_npc_async", "client.spawn_state", "client.spawn_controlled_npc", "client.spawn_controlled_fixture", "client.spawn_owned_npc", "client.activate_spoffit_crystal", "client.deactivate_spoffit_crystal", "client.controlled_npc_state", "client.controlled_npc_set_ai", "client.controlled_npc_move", "client.controlled_npc_cast", "client.controlled_npc_restore", "client.native_state", "client.project_world", "client.click_world", "client.hold_world", "client.select_hero", "client.restore_hero", "client.replace_hero", "client.place_hero", "client.reset_cooldowns", "client.set_ability_rank", "client.ability_state", "client.cast_active", "client.cancel_ability", "automation.state", "automation.pause", "automation.resume", "cinematic.configure", "cinematic.snapshot", "pvp.start", "client.arena_lobby", "client.accept_arena", "client.wait_arena", "party.create", "party.invite", "party.join", "party.state", "client.debug_pause", "client.debug_resume", "client.debug_pause_state", "graceful_shutdown"},
 			"unavailable": []string{"generic_menu_actions", "native_party_input", "generic_gameplay_actions", "simulation_pause", "remote_client_control"}})
 	case "GET " + debugAPIPrefix + "/status":
 		e.refreshDebugClients()

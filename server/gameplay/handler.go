@@ -859,6 +859,7 @@ type NavigationSource interface {
 }
 
 type gameplayHandlerDependencies struct {
+	accountTransportSource *gameplayAccountTransportSource
 	allyAlertRuleSource    AllyAlertRuleSource
 	hordePolicySource      HordePolicySource
 	campaignSetup          *game.CampaignSetup
@@ -883,6 +884,7 @@ type gameplayHandlerDependencies struct {
 }
 
 type Lifecycle struct {
+	accountTransportSource accountTransportSource
 	cleanup                func()
 	disconnectAddress      func(string, uint64)
 	discardGame            func(uint32)
@@ -1218,8 +1220,10 @@ func NewHandler(
 	checkpoint zonecheckpoint.Repository,
 	allyAlertRuleSources ...AllyAlertRuleSource,
 ) (raknet.Handler, Lifecycle) {
-	lifecycle := Lifecycle{}
+	transportSource := &gameplayAccountTransportSource{}
+	lifecycle := Lifecycle{accountTransportSource: transportSource}
 	dependency := defaultGameplayHandlerDependencies()
+	dependency.accountTransportSource = transportSource
 	dependency.allyAlertRuleSource = fixedAllyAlertRules{rules: zonenpc.DefaultAllyAlertRules()}
 	if len(allyAlertRuleSources) > 0 {
 		dependency.allyAlertRuleSource = allyAlertRuleSources[0]
@@ -1303,6 +1307,9 @@ func newGameplayHandlerWithDependencies(
 	sessionRegistry := newGameplaySessionRegistry(
 		dependency.zoneTimer, dependency.now, logger,
 	)
+	if dependency.accountTransportSource != nil {
+		dependency.accountTransportSource.registry = sessionRegistry
+	}
 	sessionRegistry.playerStatRecorder = statsRecorder
 	sessionRegistry.companionAggroRanges = program.NonPlayerAggroRanges
 	sessionRegistry.configureScenarioAbility(program)
@@ -5108,6 +5115,10 @@ func (r gameplaySetupRuntime) publishCampaign(
 			}
 			entryPosition = raknet.Vector3(restoredBot.Position)
 		}
+	}
+	err = r.initializeCampaignBotRole(&peerSession)
+	if err != nil {
+		return nil, false, fmt.Errorf("campaignBotRole: %w", err)
 	}
 	playerMotion, err := zoneaction.NewMotion(toSimPosition(entryPosition), r.now())
 	if err != nil {

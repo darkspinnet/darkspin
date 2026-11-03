@@ -2,6 +2,7 @@ package blaze
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -87,7 +88,13 @@ func (e *matchmakingBotFill) complete(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("fillLock: %w", err)
 	}
+	lease, err := registry.enterGameplayAdmission(ctx)
+	if err != nil {
+		cancelErr := e.cancelClosedAdmission(registry)
+		return fmt.Errorf("fillAdmission: %w", errors.Join(err, cancelErr))
+	}
 	request, err := e.prepare()
+	closeBlazeAdmission(lease, nil)
 	registry.partyLifecycle.Unlock()
 	if err != nil {
 		return fmt.Errorf("fillPrepare: %w", err)
@@ -102,6 +109,35 @@ func (e *matchmakingBotFill) complete(ctx context.Context) error {
 		if err != nil {
 			e.server.logger.Printf("matchmaking bot fill notify session_id=%d failed: %v", target.ID, err)
 		}
+	}
+	return nil
+}
+
+// Caller owns partyLifecycle. Cancel the captured reservation, never a newer
+// reservation for the same account. Release the gate before socket writes.
+func (e *matchmakingBotFill) cancelClosedAdmission(registry *Registry) error {
+	sessions := e.matchmaking.PartialSessions(e.session.ID)
+	isCancelled := e.matchmaking.Cancel(e.session.OwnerID, e.session.ID)
+	request := &Request{Session: &Session{server: e.server}}
+	var queueErr error
+	if isCancelled {
+		queueErr = queueAccountMatchCancellation(request, sessions)
+	}
+	registry.partyLifecycle.Unlock()
+	failures := make([]error, 0)
+	if queueErr != nil {
+		failures = append(failures, fmt.Errorf("fillCancelQueue: %w", queueErr))
+	}
+	for _, notification := range request.targetedNotifications {
+		target := notification.session
+		target.traceFrame("out", notification.frame)
+		err := target.send(notification.frame)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("fillCancelNotify[%d]: %w", target.ID, err))
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("fillCancel: %w", errors.Join(failures...))
 	}
 	return nil
 }

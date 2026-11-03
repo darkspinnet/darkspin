@@ -27,6 +27,8 @@ type Server struct {
 	isClosed      bool
 	activeRequest int
 	requestIdle   chan struct{}
+	closeOnce     sync.Once
+	closeErr      error
 }
 
 // NewServer creates an HTTP server with bounded request, response, and idle I/O.
@@ -126,33 +128,32 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 	return fmt.Errorf("serve: %w", err)
 }
 
-// Close immediately closes the HTTP listener and active connections.
+// Close stops admission and lets in-flight responses finish before closing
+// connections, including the launcher request that initiated a server handoff.
 func (s *Server) Close() error {
+	s.closeOnce.Do(s.close)
+	if s.closeErr != nil {
+		return fmt.Errorf("httpClose: %w", s.closeErr)
+	}
+	return nil
+}
+
+func (s *Server) close() {
 	s.mu.Lock()
 	s.isClosed = true
-	activeRequest := s.activeRequest
-	requestIdle := s.requestIdle
 	s.mu.Unlock()
-	err := s.server.Close()
-	if activeRequest != 0 && requestIdle != nil {
-		timer := time.NewTimer(requestShutdownWait)
-		select {
-		case <-requestIdle:
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-		case <-timer.C:
-			log.Printf(
-				"HTTP shutdown continuing with %d active requests after %s",
-				activeRequest, requestShutdownWait,
-			)
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), requestShutdownWait)
+	defer cancel()
+	err := s.server.Shutdown(ctx)
+	if err == nil {
+		return
 	}
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
+	s.mu.Lock()
+	activeRequest := s.activeRequest
+	s.mu.Unlock()
+	log.Printf("HTTP graceful shutdown ended with %d active requests: %v", activeRequest, err)
+	closeErr := s.server.Close()
+	if closeErr != nil && !errors.Is(closeErr, http.ErrServerClosed) {
+		s.closeErr = fmt.Errorf("shutdownForce: %w", errors.Join(err, closeErr))
 	}
-	return fmt.Errorf("httpClose: %w", err)
 }

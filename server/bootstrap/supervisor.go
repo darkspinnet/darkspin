@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/buildinfo"
 	"github.com/darkspinnet/darkspin/server/instance"
 )
 
@@ -28,6 +29,7 @@ type Options struct {
 	ShutdownTimeout time.Duration
 	RetentionDays   int
 	DatabaseBackup  DatabaseBackup
+	OperationAudit  OperationAudit
 	// BootstrapLease may be acquired by the CLI before preparing configuration.
 	// Run closes this lease on return, including startup failures.
 	BootstrapLease *instance.Lease
@@ -38,6 +40,8 @@ type supervisor struct {
 	storage     *Storage
 	binaryPath  string
 	runtimePath string
+	operation   *MaintenanceResult
+	isRollback  bool
 }
 
 type childResult struct {
@@ -90,6 +94,7 @@ func Run(ctx context.Context, req Options) error {
 		return fmt.Errorf("storageOpen: %w", err)
 	}
 	storage.DatabaseBackup = req.DatabaseBackup
+	storage.logger = req.Logger
 	bootstrapLease := req.BootstrapLease
 	if bootstrapLease == nil {
 		bootstrapLease, err = instance.Acquire(filepath.Join(rootPath, "bootstrap-lock"))
@@ -101,6 +106,10 @@ func Run(ctx context.Context, req Options) error {
 	e := &supervisor{option: req, storage: storage,
 		binaryPath:  filepath.Join(rootPath, "bin", installedBinaryName()),
 		runtimePath: filepath.Join(filepath.Dir(req.ConfigPath), "darkspin")}
+	err = e.loadOperation()
+	if err != nil {
+		return fmt.Errorf("startupOperation: %w", err)
+	}
 	err = e.recoverStopped(ctx)
 	if err != nil {
 		return fmt.Errorf("startupRecover: %w", err)
@@ -108,8 +117,10 @@ func Run(ctx context.Context, req Options) error {
 	isFirstBoot, err := e.updateStopped(ctx)
 	if err != nil {
 		req.Logger.Error("startup update failed; restoring installed server", "error", err)
+		e.failOperation("update_failed")
 		err = e.rollbackStopped(ctx)
 		if err != nil {
+			e.failOperation("rollback_failed")
 			return fmt.Errorf("startupRollback: %w", err)
 		}
 	}
@@ -138,6 +149,10 @@ func (e *supervisor) recoverStopped(ctx context.Context) error {
 		return fmt.Errorf("candidateRecover: %w", err)
 	}
 	if isRecovered {
+		err = e.markRecovered()
+		if err != nil {
+			return fmt.Errorf("recoveryProgress: %w", err)
+		}
 		e.option.Logger.Warn("restored matching executable and database after interrupted first boot")
 		err = e.discardRequest()
 		if err != nil {
@@ -158,6 +173,7 @@ func (e *supervisor) run(ctx context.Context, isFirstBoot bool) error {
 		if isFirstBoot && !result.isHealthy {
 			err := e.rollbackStopped(ctx)
 			if err != nil {
+				e.failOperation("rollback_failed")
 				return fmt.Errorf("firstbootRollback: %w", err)
 			}
 			isFirstBoot = false
@@ -168,10 +184,12 @@ func (e *supervisor) run(ctx context.Context, isFirstBoot bool) error {
 			var err error
 			isFirstBoot, err = e.updateStopped(ctx)
 			if err != nil {
+				e.failOperation("update_failed")
 				e.option.Logger.Error("maintenance update failed; restarting installed server", "error", err)
 				// A failed install may already have written firstboot. Restore before restart.
 				err = e.rollbackStopped(ctx)
 				if err != nil {
+					e.failOperation("rollback_failed")
 					return fmt.Errorf("updateRollback: %w", err)
 				}
 			}
@@ -212,6 +230,10 @@ func (e *supervisor) rollbackStopped(ctx context.Context) error {
 		return fmt.Errorf("candidateRollback: %w", err)
 	}
 	if isRecovered {
+		err = e.markRecovered()
+		if err != nil {
+			return fmt.Errorf("rollbackProgress: %w", err)
+		}
 		e.option.Logger.Warn("restored matching executable and database after failed candidate")
 		err = e.discardRequest()
 		if err != nil {
@@ -239,6 +261,8 @@ func (e *supervisor) updateStopped(ctx context.Context) (bool, error) {
 		BuildID         string    `json:"build_id"`
 		RequestedAt     time.Time `json:"requested_at"`
 		IsCleanShutdown bool      `json:"is_clean_shutdown"`
+		Action          string    `json:"action"`
+		OperationID     string    `json:"operation_id"`
 	}
 	err = json.Unmarshal(payload, &request)
 	if err != nil {
@@ -247,26 +271,44 @@ func (e *supervisor) updateStopped(ctx context.Context) (bool, error) {
 	if request.Version != 1 || request.BuildID == "" || !request.IsCleanShutdown || request.RequestedAt.IsZero() {
 		return false, errors.New("maintenance update request has no valid clean shutdown identity")
 	}
-	buildCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	buildCmd := exec.CommandContext(buildCtx, e.binaryPath, "build-info")
-	buildCmd.Dir = filepath.Dir(e.option.ConfigPath)
-	buildCmd.Env = e.childEnvs()
-	identityPayload, err := buildCmd.Output()
-	if err != nil {
-		return false, fmt.Errorf("identityRead: %w", err)
+	if request.Action == "" {
+		request.Action = "update"
 	}
-	var identity struct {
-		BuildID string `json:"build_id"`
+	if request.OperationID == "" {
+		request.OperationID = "legacy-" + request.RequestedAt.UTC().Format("20060102T150405.000000000")
 	}
-	err = json.Unmarshal(identityPayload, &identity)
+	if (request.Action != "restart" && request.Action != "update") ||
+		!safeResultText(request.OperationID, 128) {
+		return false, errors.New("invalid maintenance request action or operation ID")
+	}
+	e.operation = &MaintenanceResult{
+		OperationID: request.OperationID, Action: request.Action, UpdatedAt: time.Now().UTC(),
+	}
+	e.isRollback = false
+	identity, err := e.installedIdentity(ctx)
 	if err != nil {
-		return false, fmt.Errorf("identityDecode: %w", err)
+		return false, fmt.Errorf("requestIdentity: %w", err)
 	}
 	if identity.BuildID != request.BuildID {
 		return false, errors.New("maintenance request does not match the installed server build")
 	}
-	backupID, err := e.storage.SnapshotContext(ctx, request.BuildID)
+	e.operation.InstalledVersion = identity.Version
+	if request.Action == "restart" {
+		err = e.progress("starting")
+		if err != nil {
+			return false, fmt.Errorf("restartProgress: %w", err)
+		}
+		err = e.discardRequest()
+		if err != nil {
+			return false, fmt.Errorf("restartConsume: %w", err)
+		}
+		return false, nil
+	}
+	err = e.progress("backing_up")
+	if err != nil {
+		return false, fmt.Errorf("backupProgress: %w", err)
+	}
+	backupID, err := e.observedSnapshot(ctx, request.BuildID)
 	if err != nil {
 		return false, fmt.Errorf("runtimeSnapshot: %w", err)
 	}
@@ -275,12 +317,33 @@ func (e *supervisor) updateStopped(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("requestConsume: %w", err)
 	}
 	if e.option.ManifestURL == "" {
+		e.failOperation("update_source_unavailable")
 		e.pruneCompleted()
 		return false, nil
 	}
-	isUpdated, err := e.storage.CheckUpdate(ctx, e.option.ManifestURL, backupID)
+	err = e.progress("checking")
 	if err != nil {
+		return false, fmt.Errorf("checkProgress: %w", err)
+	}
+	isUpdated, err := e.storage.checkUpdate(ctx, e.option.ManifestURL, backupID, request.OperationID, identity.Version)
+	e.operation.CandidateVersion = e.storage.candidateVersion
+	if err != nil {
+		e.failOperation("update_check_failed")
+		if e.storage.isCandidateRestored {
+			progressErr := e.markRecovered()
+			if progressErr != nil {
+				return false, fmt.Errorf("candidateRestoreProgress: %w", errors.Join(err, progressErr))
+			}
+		}
 		return false, fmt.Errorf("candidateInstall: %w", err)
+	}
+	if isUpdated {
+		var transaction updateTransaction
+		err = readJSON(e.storage.path("firstboot.json"), &transaction)
+		if err != nil {
+			return false, fmt.Errorf("candidateProgress: %w", err)
+		}
+		e.operation.CandidateVersion = transaction.CandidateVersion
 	}
 	if !isUpdated {
 		e.pruneCompleted()
@@ -309,9 +372,11 @@ func (e *supervisor) runChild(ctx context.Context, isFirstBoot bool) childResult
 		result.isCancelled = true
 		return result
 	}
+	restoreClaim := e.storage.claimRestoredStartup(isFirstBoot)
 	err := executableExists(e.binaryPath)
 	if err != nil {
 		e.option.Logger.Error("server executable unavailable", "error", err)
+		e.failOperation("server_unavailable")
 		return result
 	}
 	// A clean-stop request can survive a failed snapshot while stopped, but
@@ -319,6 +384,12 @@ func (e *supervisor) runChild(ctx context.Context, isFirstBoot bool) childResult
 	err = e.discardRequest()
 	if err != nil {
 		e.option.Logger.Error("refusing to start server with stale maintenance request", "error", err)
+		e.failOperation("request_consume_failed")
+		return result
+	}
+	err = e.progress("starting")
+	if err != nil {
+		e.option.Logger.Error("record maintenance startup", "error", err)
 		return result
 	}
 	args := append([]string{"server"}, e.option.ServerArgs...)
@@ -331,6 +402,15 @@ func (e *supervisor) runChild(ctx context.Context, isFirstBoot bool) childResult
 	err = cmd.Start()
 	if err != nil {
 		e.option.Logger.Error("start server", "error", err)
+		e.failOperation("server_start_failed")
+		return result
+	}
+	err = e.progress("validating")
+	if err != nil {
+		e.option.Logger.Error("record maintenance validation", "error", err)
+		exits := make(chan error, 1)
+		go waitChild(cmd, exits)
+		result.isClean = e.stopChild(cmd, exits)
 		return result
 	}
 	exits := make(chan error, 1)
@@ -348,10 +428,14 @@ func (e *supervisor) runChild(ctx context.Context, isFirstBoot bool) childResult
 			return result
 		case err = <-exits:
 			result.isClean = err == nil
+			if !result.isHealthy {
+				e.failOperation("startup_exited")
+			}
 			e.option.Logger.Info("server exited", "pid", cmd.Process.Pid, "error", err)
 			return result
 		case <-startup.C:
 			e.option.Logger.Error("server did not become ready before startup deadline")
+			e.failOperation("startup_timeout")
 			result.isClean = e.stopChild(cmd, exits)
 			return result
 		case <-probe.C:
@@ -379,11 +463,19 @@ func (e *supervisor) runChild(ctx context.Context, isFirstBoot bool) childResult
 				err = e.storage.ConfirmHealthy()
 				if err != nil {
 					e.option.Logger.Error("complete first boot bookkeeping", "error", err)
+					e.failOperation("candidate_commit_failed")
 					result.isClean = e.stopChild(cmd, exits)
 					return result
 				}
 			}
+			err = e.completeHealthyOperation()
+			if err != nil {
+				e.option.Logger.Error("complete maintenance progress", "error", err)
+				result.isClean = e.stopChild(cmd, exits)
+				return result
+			}
 			e.pruneCompleted()
+			e.storage.confirmRestoredStartup(restoreClaim)
 			result.isHealthy = true
 		}
 	}
@@ -442,14 +534,21 @@ func (e *supervisor) probe(ctx context.Context) error {
 
 func (e *supervisor) childEnvs() []string {
 	envs := os.Environ()
-	forwardedEnvs := make([]string, 0, len(envs)+1)
+	forwardedEnvs := make([]string, 0, len(envs)+4)
 	for _, setting := range envs {
-		if strings.HasPrefix(strings.ToUpper(setting), "DARKSPIN_BOOTSTRAP_ROOT=") {
+		upperSetting := strings.ToUpper(setting)
+		if strings.HasPrefix(upperSetting, "DARKSPIN_BOOTSTRAP_ROOT=") ||
+			strings.HasPrefix(upperSetting, "DARKSPIN_BOOTSTRAP_VERSION=") ||
+			strings.HasPrefix(upperSetting, "DARKSPIN_BOOTSTRAP_BUILD_ID=") ||
+			strings.HasPrefix(upperSetting, "DARKSPIN_BOOTSTRAP_MANIFEST_URL=") {
 			continue
 		}
 		forwardedEnvs = append(forwardedEnvs, setting)
 	}
-	return append(forwardedEnvs, "DARKSPIN_BOOTSTRAP_ROOT="+e.option.RootPath)
+	return append(forwardedEnvs, "DARKSPIN_BOOTSTRAP_ROOT="+e.option.RootPath,
+		"DARKSPIN_BOOTSTRAP_VERSION="+buildinfo.Version,
+		"DARKSPIN_BOOTSTRAP_BUILD_ID="+buildinfo.ID,
+		"DARKSPIN_BOOTSTRAP_MANIFEST_URL="+e.option.ManifestURL)
 }
 
 func (e *supervisor) stopChild(cmd *exec.Cmd, exits <-chan error) bool {

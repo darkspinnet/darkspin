@@ -25,7 +25,7 @@ func composeCampaignRoster(
 	random := sim.NewSimulatorRandom(rosterSeed)
 	director.IsFirstTimeRosterSelected = false
 	var firstTimeSpecials []CampaignDirectorEntry
-	if !director.IsReplay && director.IsFirstTimeDirectorEnabled && isPartyBelowStage(partyCompletedStages, director.Difficulty) {
+	if !director.IsReplay && director.IsFirstTimeDirectorEnabled && (director.IsNoReplay || isPartyBelowStage(partyCompletedStages, director.Difficulty)) {
 		var err error
 		director, err = selectFirstTimeRoster(director, random)
 		if err != nil {

@@ -149,7 +149,12 @@ func (e *Storage) Rollback() error {
 	return nil
 }
 
-func (e *Storage) RollbackContext(ctx context.Context) error {
+func (e *Storage) RollbackContext(ctx context.Context) (rollbackErr error) {
+	e.restoreStartedAt = time.Time{}
+	attempt := restoreAttempt{record: restoreRecord{RestoreObservation: RestoreObservation{
+		StartedAt: time.Now().UTC(), Status: "restoring",
+	}}}
+	defer e.finishRestoreObservation(&attempt, &rollbackErr)
 	statePath := e.path("firstboot.json")
 	var transaction updateTransaction
 	err := e.checkPath(statePath)
@@ -160,6 +165,7 @@ func (e *Storage) RollbackContext(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("rollbackState: %w", err)
 	}
+	e.startRestoreObservation(&attempt, transaction.Backup)
 	backup, err := e.backupPath(transaction.Backup)
 	if err != nil {
 		return fmt.Errorf("rollbackPath: %w", err)
@@ -192,6 +198,7 @@ func (e *Storage) RollbackContext(ctx context.Context) error {
 	if actualHash != manifest.PreviousHash {
 		return errors.New("rollback binary checksum mismatch")
 	}
+	attempt.record.BinaryHash = actualHash
 	err = e.validateDatabaseSnapshot(backup, manifest)
 	if err != nil {
 		return fmt.Errorf("databaseValidate: %w", err)
@@ -218,6 +225,10 @@ func (e *Storage) RollbackContext(ctx context.Context) error {
 	err = e.preserveFailed(backup, "runtime/darkspin/cache")
 	if err != nil {
 		return fmt.Errorf("rollbackCache: %w", err)
+	}
+	err = e.recordRestoredOperation(transaction)
+	if err != nil {
+		return fmt.Errorf("rollbackProgress: %w", err)
 	}
 	err = os.Remove(statePath)
 	if err != nil {

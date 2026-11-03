@@ -29,8 +29,9 @@ func (e *Repository) DeleteByLoginName(ctx context.Context, loginName string) er
 		ID          int64  `db:"id"`
 		LoginName   string `db:"login_name"`
 		DisplayName string `db:"display_name"`
+		Password    string `db:"password"`
 	}
-	query := `SELECT id, login_name, display_name FROM "user" WHERE LOWER(login_name) = LOWER(?) AND trmt_id = 0`
+	query := `SELECT id, login_name, display_name, password FROM "user" WHERE LOWER(login_name) = LOWER(?) AND trmt_id = 0`
 	if e.isPostgres {
 		query += ` FOR UPDATE`
 	}
@@ -41,11 +42,23 @@ func (e *Repository) DeleteByLoginName(ctx context.Context, loginName string) er
 	if err != nil {
 		return fmt.Errorf("deleteSelect: %w", err)
 	}
+	err = e.archiveAccount(ctx, tx, row.ID, row.LoginName, row.DisplayName, row.Password)
+	if err != nil {
+		return fmt.Errorf("deleteArchive: %w", err)
+	}
+	err = tx.Commit()
+	if err != nil {
+		return fmt.Errorf("deleteCommit: %w", err)
+	}
+	return nil
+}
+
+func (e *Repository) archiveAccount(ctx context.Context, tx *sqlx.Tx, userID int64, loginName, displayName, expectedPassword string) error {
 	suffix := "_"
 	for {
 		var count int
-		err = tx.GetContext(ctx, &count, tx.Rebind(`SELECT COUNT(*) FROM "user"
-			WHERE LOWER(login_name) = LOWER(?) OR LOWER(display_name) = LOWER(?)`), row.LoginName+suffix, row.DisplayName+suffix)
+		err := tx.GetContext(ctx, &count, tx.Rebind(`SELECT COUNT(*) FROM "user"
+			WHERE LOWER(login_name) = LOWER(?) OR LOWER(display_name) = LOWER(?)`), loginName+suffix, displayName+suffix)
 		if err != nil {
 			return fmt.Errorf("deleteCollision: %w", err)
 		}
@@ -56,7 +69,7 @@ func (e *Repository) DeleteByLoginName(ctx context.Context, loginName string) er
 	}
 	result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE "user"
 		SET trmt_id = 1, trmt_dt = ?, login_name = ?, display_name = ?
-		WHERE id = ? AND trmt_id = 0`), time.Now().UTC().Unix(), row.LoginName+suffix, row.DisplayName+suffix, row.ID)
+		WHERE id = ? AND trmt_id = 0 AND password = ?`), time.Now().UTC().Unix(), loginName+suffix, displayName+suffix, userID, expectedPassword)
 	if err != nil {
 		return fmt.Errorf("deleteUpdate: %w", err)
 	}
@@ -67,9 +80,9 @@ func (e *Repository) DeleteByLoginName(ctx context.Context, loginName string) er
 	if affected != 1 {
 		return fmt.Errorf("deleteChanged: %w", sporenet.ErrUserNotFound)
 	}
-	err = tx.Commit()
+	err = e.AccountAccess().InvalidateUser(ctx, tx, userID)
 	if err != nil {
-		return fmt.Errorf("deleteCommit: %w", err)
+		return fmt.Errorf("deleteCredentials: %w", err)
 	}
 	return nil
 }

@@ -33,6 +33,10 @@ type App struct {
 	reportSession            launcherReportSession
 	reportMu                 sync.Mutex
 	remoteRefreshMu          sync.Mutex
+	controlPanelMu           sync.Mutex
+	controlPanel             remoteControlSession
+	controlActivityCache     remoteControlActivityCache
+	controlOperation         remoteControlOperation
 	snapshotCompactMu        sync.Mutex
 	logMu                    sync.Mutex
 	timingMu                 sync.Mutex
@@ -58,6 +62,7 @@ type App struct {
 	presentation             launcherPresentation
 	launcherHandler          http.Handler
 	beforeServerStart        func() error
+	resumeLauncherHTTP       func() error
 	isHeadless               bool
 	wineRunnerCache          wineRunnerCache
 }
@@ -254,6 +259,7 @@ func (a *App) beginShutdown() {
 
 func (a *App) shutdown(context.Context) {
 	a.stopLauncherLua()
+	a.CloseRemoteControlPanel()
 	a.beginShutdown()
 	a.mu.Lock()
 	gameDone := a.gameDone

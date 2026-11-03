@@ -21,6 +21,7 @@ type Backup struct {
 	restorePath string
 	envs        []string
 	identity    string
+	auditConfig *pgx.ConnConfig
 }
 
 // New uses the server's parsed destination and credentials. The entire database
@@ -55,7 +56,7 @@ func New(ctx context.Context, config *pgx.ConnConfig) (*Backup, error) {
 	}
 	target := config.Host + "\x00" + strconv.Itoa(int(config.Port)) + "\x00" + config.Database
 	checksum := sha256.Sum256([]byte(target))
-	return &Backup{dumpPath: dumpPath, restorePath: restorePath, envs: envs,
+	return &Backup{dumpPath: dumpPath, restorePath: restorePath, envs: envs, auditConfig: config.Copy(),
 		identity: fmt.Sprintf("postgresql:%x", checksum)}, nil
 }
 

@@ -495,6 +495,10 @@ char* find_darkspin_chat_command(const char* text, int* command) {
                 *command = 7;
                 return (char*)cursor;
             }
+            if (is_darkspin_chat_command(cursor, "/noreplay")) {
+                *command = 33;
+                return (char*)cursor;
+            }
             if (is_darkspin_chat_command(cursor, "/warp")) {
                 *command = 23;
                 return (char*)cursor;

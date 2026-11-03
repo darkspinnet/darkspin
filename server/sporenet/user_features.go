@@ -130,7 +130,24 @@ func (m *UserManager) GrantTutorialExperience(ctx context.Context, userID int64,
 // GrantDNA atomically adds collected campaign currency and returns the durable
 // account total used by the in-match sparse player update.
 func (m *UserManager) GrantDNA(ctx context.Context, userID int64, amount uint32) (uint32, error) {
-	user := m.UserByID(userID)
+	dna, err := m.grantDNA(ctx, userID, amount, true)
+	if err != nil {
+		return 0, fmt.Errorf("campaignDNA: %w", err)
+	}
+	return dna, nil
+}
+
+// GrantDeveloperDNA changes the balance without recording gameplay earnings.
+func (e *UserManager) GrantDeveloperDNA(ctx context.Context, userID int64, amount uint32) (uint32, error) {
+	dna, err := e.grantDNA(ctx, userID, amount, false)
+	if err != nil {
+		return 0, fmt.Errorf("developerDNA: %w", err)
+	}
+	return dna, nil
+}
+
+func (e *UserManager) grantDNA(ctx context.Context, userID int64, amount uint32, isEarned bool) (uint32, error) {
+	user := e.UserByID(userID)
 	if user == nil {
 		return 0, ErrInvalidUser
 	}
@@ -138,9 +155,17 @@ func (m *UserManager) GrantDNA(ctx context.Context, userID int64, amount uint32)
 	defer user.mutation.Unlock()
 	user.mu.Lock()
 	previous := user.Account
+	previousDNAEarned := user.Stats.DNAEarned
 	if amount > ^uint32(0)-user.Account.DNA {
 		user.mu.Unlock()
 		return 0, ErrDNAOverflow
+	}
+	if isEarned {
+		err := addDNAEarned(&user.Stats, amount)
+		if err != nil {
+			user.mu.Unlock()
+			return 0, fmt.Errorf("dnaEarned: %w", err)
+		}
 	}
 	user.Account.DNA += amount
 	dna := user.Account.DNA
@@ -148,9 +173,12 @@ func (m *UserManager) GrantDNA(ctx context.Context, userID int64, amount uint32)
 	if amount == 0 {
 		return dna, nil
 	}
-	err := m.repository.Save(ctx, user.Record())
+	err := e.repository.Save(ctx, user.Record())
 	if err != nil {
-		user.restoreAccount(previous)
+		user.mu.Lock()
+		user.Account = previous
+		user.Stats.DNAEarned = previousDNAEarned
+		user.mu.Unlock()
 		return 0, fmt.Errorf("dnaSave: %w", err)
 	}
 	return dna, nil
@@ -976,6 +1004,12 @@ func (m *UserManager) CompleteTutorial(ctx context.Context, userID int64) (Tutor
 		user.mu.Unlock()
 		return TutorialCompletion{}, errors.New("tutorial experience exceeds build-103 width")
 	}
+	dnaReward := max(user.Account.DNA, tutorialCompletionDNA) - user.Account.DNA
+	err := addDNAEarned(&user.Stats, dnaReward)
+	if err != nil {
+		user.mu.Unlock()
+		return TutorialCompletion{}, fmt.Errorf("tutorialDNA: %w", err)
+	}
 	isChanged := completeTutorialAccount(&user.Account)
 	blitzID := uint32(0)
 	if blitzTemplate != nil && sageTemplate != nil {
@@ -997,6 +1031,7 @@ func (m *UserManager) CompleteTutorial(ctx context.Context, userID int64) (Tutor
 	partChanged, err := user.grantPartOnce(userID, part)
 	if err != nil {
 		user.mu.Unlock()
+		user.restoreTutorialCompletion(previous)
 		return TutorialCompletion{}, fmt.Errorf("tutorialPart: %w", err)
 	}
 	partEquipped := user.equipTutorialPart(part, blitzID)
@@ -1188,6 +1223,7 @@ func (u *User) restoreTutorialCompletion(previous UserRecord) {
 	u.mu.Lock()
 	u.IsTutorialCompletionPending = previous.IsTutorialCompletionPending
 	u.Account = previous.Account
+	u.Stats = previous.Stats
 	u.Squads = append(u.Squads[:0], previous.Squads...)
 	u.Creatures = cloneCreatures(previous.Creatures)
 	u.Parts = append(u.Parts[:0], previous.Parts...)

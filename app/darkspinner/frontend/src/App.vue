@@ -16,6 +16,7 @@ import LuaPage from '@/components/LuaPage.vue'
 import { GetLuaConsole } from './platform'
 import ProfileSummary from '@/components/ProfileSummary.vue'
 import RemoteConnection from '@/components/RemoteConnection.vue'
+import RemoteControlPanel from '@/components/RemoteControlPanel.vue'
 import { RefreshCw } from '@lucide/vue'
 import { setLauncherLocale } from './localization'
 import { remoteErrorText, remoteUsernameError, remotePasswordError } from './remote'
@@ -23,7 +24,7 @@ import { GetLauncherLanguageConfiguration, SetLauncherLocale } from './platform'
 import { campaignDetailFor, campaignLabelFor, profileCreateDate, profileLastPlayedDate, profileLastPlayedTime } from './profile'
 import ServerRulesConfiguration from '@/components/ServerRulesConfiguration.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { BrowserOpenURL, CancelPatch, CheckRemoteServers, ClipboardSetText, CompactSnapshots, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteModProfile, DeleteProfile, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherAutomationConfiguration, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetSquadSnapshot, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, ResetModProfileDisplay, ResetProfileDisplay, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetAutoPatch, SetAutoPlay, SetIdentity, SetLocalServicesRequired, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
+import { BrowserOpenURL, CancelPatch, CheckRemoteServers, ClipboardSetText, CompactSnapshots, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteModProfile, DeleteProfile, DeleteRemoteConnection, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherAutomationConfiguration, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetSquadSnapshot, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, ResetModProfileDisplay, ResetProfileDisplay, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetAutoPatch, SetAutoPlay, SetIdentity, SetLocalServicesRequired, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
 
 const status = ref({ state:'starting', message:'Starting DarkSpinner', identity:'', auth:'Starting', server:'Starting', patch:'Pending', game:'Checking', avatar:'Preparing', profile:'Starting', content:'Pending', identityError:'', authError:'', serverError:'', patchError:'', gameError:'', avatarError:'', profileError:'', contentError:'', lastRun:'', launcherNotice:'', version:'', buildChannel:'production', progress:0, patchProgress:0, avatarProgress:0, contentProgress:0, isAuthenticated:false, isAuthOnline:false, isServerOnline:false, isPatchComplete:false, isPatchActive:false, isGameReady:false, isAvatarReady:false, isProfileStoreReady:false, isContentReady:false, isPlayReady:false, isCinematicSkipped:false, isIntroSkipped:false, isLastRunFailure:false, isStartupBlocked:false })
 const retainedProfileName = localStorage.getItem('darkspinner.selectedProfile') || localStorage.getItem('darkspinner.identity') || ''
@@ -67,6 +68,7 @@ const remoteServers = ref([])
 const remoteProfiles = ref([])
 const remoteChecks = ref([])
 const isRemoteChecking = ref(false)
+let isRemoteCheckPending = false
 let remoteCheckTimer = null
 let remoteCheckDelay = null
 let isRemoteViewDisposed = false
@@ -75,6 +77,10 @@ const remoteServerAddress = ref(retainedLaunchKey.startsWith('remote:')
   : localStorage.getItem('darkspinner.remoteServer') || '')
 const remoteIdentity = ref(retainedLaunchKey.startsWith('remote:') ? retainedLaunchKey.slice(retainedLaunchKey.lastIndexOf(':') + 1) : '')
 const remotePassword = ref('')
+const controlPanel = ref(null)
+const localControlPanel = ref(null)
+
+const isRemoteAdmissionBlocked = ref(false)
 const isRemoteUsernameTouched = ref(false)
 const isRemotePasswordTouched = ref(false)
 const remoteUsernameValidation = computed(() => isRemoteUsernameTouched.value ? remoteUsernameError(remoteIdentity.value) : '')
@@ -331,7 +337,7 @@ const isAutoLaunchCounting = computed(() => autoLaunchCountdown.value > 0)
 const isActiveProfileRunning = computed(() => activePage.value === 'play' && isSelectedProfileRunning.value)
 const activeInterruptedMission = computed(() => activePage.value === 'play' ? interruptedMission.value : null)
 const isHeaderPlayEnabled = computed(() => activePage.value === 'remote'
-    ? isRemoteFormReady.value && isRemoteConnectionReady.value && !isRemoteBusy.value && !isActiveRouteRunning.value &&
+    ? isRemoteFormReady.value && isRemoteConnectionReady.value && !isRemoteBusy.value && !isActiveRouteRunning.value && !isRemoteAdmissionBlocked.value &&
       (isRemoteRegistration.value || (status.value.isPatchComplete && status.value.isGameReady))
   : !isActiveProfileRunning.value && isPlayEnabled.value && !isMissionChoiceBusy.value)
 const isAdditionalLaunchReady = computed(() => activePage.value === 'play' && !!selectedProfileRecord.value &&
@@ -637,9 +643,14 @@ function refreshVisibleRemoteChecks() {
 }
 
 async function refreshRemoteChecks() {
-  if (isRemoteViewDisposed || isRemoteChecking.value || (!selectedRemoteProfile.value && !isRemoteRegistration.value)) return
+  if (isRemoteViewDisposed || (!selectedRemoteProfile.value && !isRemoteRegistration.value)) return
   const selectedAddress = remoteServerAddress.value
   if (!selectedAddress.trim()) return
+  if (isRemoteChecking.value) {
+    isRemoteCheckPending = true
+    return
+  }
+  isRemoteCheckPending = false
   const addresses = [selectedAddress.trim()]
   isRemoteChecking.value = true
   try {
@@ -651,7 +662,8 @@ async function refreshRemoteChecks() {
     }))
   } finally {
     isRemoteChecking.value = false
-    if (selectedAddress !== remoteServerAddress.value) scheduleRemoteCheck()
+    if (isRemoteCheckPending) void refreshRemoteChecks()
+    else if (selectedAddress !== remoteServerAddress.value) scheduleRemoteCheck()
   }
 }
 
@@ -973,6 +985,7 @@ async function submitRemoteAccount() {
 }
 
 async function launchRemote() {
+  if (isRemoteAdmissionBlocked.value) return
   isRemoteUsernameTouched.value = true
   isRemotePasswordTouched.value = true
   if (!isRemoteFormReady.value || isRemoteBusy.value) return
@@ -1189,9 +1202,9 @@ async function resetProfileDisplay() {
   finally { isProfileDisplayResetBusy.value = false }
 }
 
-function requestRemoteProfileDelete() {
+function requestRemoteProfileDelete(isLocalOnly = false) {
   if (!selectedRemoteProfile.value || isRemoteBusy.value) return
-  remoteProfilePendingDelete.value = selectedRemoteProfile.value
+  remoteProfilePendingDelete.value = { ...selectedRemoteProfile.value, isLocalOnly }
   remoteDeletionError.value = ''
   remoteDeletionPassword.value = ''
 }
@@ -1206,7 +1219,7 @@ function cancelRemoteProfileDelete() {
 async function deleteRemoteProfile() {
   const profile = remoteProfilePendingDelete.value
   if (!profile || isRemoteDeletionBusy.value) return
-  const passwordError = remotePasswordError(remoteDeletionPassword.value, profile.isPasswordRemembered)
+  const passwordError = profile.isLocalOnly ? '' : remotePasswordError(remoteDeletionPassword.value, profile.isPasswordRemembered)
   if (passwordError) {
     remoteDeletionError.value = passwordError
     return
@@ -1214,14 +1227,15 @@ async function deleteRemoteProfile() {
   isRemoteDeletionBusy.value = true
   remoteDeletionError.value = ''
   try {
-    await DeleteRemoteProfile(profile.serverAddress, profile.loginName, remoteDeletionPassword.value)
+    if (profile.isLocalOnly) await DeleteRemoteConnection(profile.serverAddress, profile.loginName)
+    else await DeleteRemoteProfile(profile.serverAddress, profile.loginName, remoteDeletionPassword.value)
     remoteProfilePendingDelete.value = null
     remoteDeletionPassword.value = ''
     await refreshRemoteProfiles()
     if (!remoteProfiles.value.length) {
       remoteIdentity.value = ''
     }
-    remoteMessage.value = `Remote Crogenitor deleted from ${profile.serverAddress}.`
+    remoteMessage.value = profile.isLocalOnly ? 'Saved connection deleted.' : `Remote Crogenitor deleted from ${profile.serverAddress}.`
   }
   catch (error) {
     const failure = remoteErrorText(error)
@@ -1626,6 +1640,7 @@ async function uninstallDarkspinner() {
 }
 
 function visibleLauncherText(message) {
+  if (String(message ?? '').includes('shortcut_not_owned')) return 'This shortcut points to another application or Darkspinner installation and cannot be deleted here.'
   return String(message ?? '')
     .replace(/\bprofiles\b/giu, 'Crogenitors')
     .replace(/\bprofile\b/giu, 'Crogenitor')
@@ -1694,18 +1709,19 @@ async function copyLauncherFailure() {
         <div class="install-actions">
           <Button variant="default" type="button" v-if="installation.isSteamInstalled && !installation.isGameInstalled" class="onboarding-create" :disabled="isInstallationBusy" @click="openSteamInstall">{{ $t("OPEN STEAM INSTALL ") }}<span>&rsaquo;</span></Button>
           <Button variant="default" type="button" v-if="installation.canRelocate" class="onboarding-create" :disabled="isInstallationBusy" @click="relocateLauncher">{{ $t(isInstallationBusy ? 'RESTARTING...' : isIntegrationSelected ? 'INSTALL AND RESTART' : 'COPY AND RESTART') }} <span>&rsaquo;</span></Button>
-          <Button variant="outline" type="button" class="onboarding-cancel" :disabled="isInstallationBusy" @click="refreshInstallation">{{ $t(installation.isSteamInstalled ? 'REFRESH' : 'RETRY SCAN') }}</Button>
+          <Button variant="outline" type="button" class="onboarding-cancel" :size="installation.isSteamInstalled ? 'icon' : undefined" :disabled="isInstallationBusy" :aria-label="$t(installation.isSteamInstalled ? 'REFRESH' : 'RETRY SCAN')" :title="$t(installation.isSteamInstalled ? 'REFRESH' : 'RETRY SCAN')" @click="refreshInstallation"><RefreshCw v-if="installation.isSteamInstalled" :size="16" aria-hidden="true" /><template v-else>{{ $t('RETRY SCAN') }}</template></Button>
         </div>
       </Card>
     </section>
 
     <TabsContent v-else-if="activePage === 'lua'" value="lua" as-child><LuaPage ref="luaPage" @state="luaConsole = $event" /></TabsContent>
     <TabsContent v-else-if="activePage === 'remote'" value="remote" as-child><section class="command-frame launch-command-frame remote-command-frame">
+      <RemoteControlPanel @renamed="refreshRemoteProfiles" ref="controlPanel" :profile="selectedRemoteProfile" :password="remotePassword" @interact="handleLauncherInteraction" @maintenance="isRemoteAdmissionBlocked = !!$event?.is_admission_blocked" @password="remotePassword = $event" />
       <div class="launch-main">
         <Card class="bay launcher-bay">
           <div class="launch-pane">
             <div class="profile-core remote-profile-core">
-              <LaunchCrogenitorPicker :profiles="launchProfiles" :selected-key="selectedLaunchKey" :is-creation-disabled="isBusy" :is-disabled="isRemoteBusy || (activePage === 'mod' && isModBusy)" :is-action-disabled="isProfileActionDisabled" :is-mod="activePage === 'mod'" @select="chooseLaunchProfile" @create="createLaunchProfile" @edit="modPage?.editProfile()" @reset-display="requestResetProfileDisplay(activePage === 'remote' ? selectedRemoteProfile : selectedProfileRecord)" @delete="activePage === 'remote' ? requestRemoteProfileDelete() : requestDeleteProfile()" />
+              <LaunchCrogenitorPicker :is-shift-held="isShiftHeld" :profiles="launchProfiles" :selected-key="selectedLaunchKey" :is-creation-disabled="isBusy" :is-disabled="isRemoteBusy || (activePage === 'mod' && isModBusy)" :is-action-disabled="isProfileActionDisabled" :is-mod="activePage === 'mod'" @select="chooseLaunchProfile" @create="createLaunchProfile" @control-panel="activePage === 'remote' ? controlPanel?.open() : localControlPanel?.open()" @edit="modPage?.editProfile()" @reset-display="requestResetProfileDisplay(activePage === 'remote' ? selectedRemoteProfile : selectedProfileRecord)" @delete="activePage === 'remote' ? requestRemoteProfileDelete($event) : requestDeleteProfile()" />
               <div v-if="selectedRemoteProfile" class="launch-profile-summary">
                 <div class="profile-info-card remote-profile-info-card" :aria-label="$t(`${selectedRemoteProfileLabel} remote profile summary`)">
                   <time v-if="profileCreateDate(selectedRemoteProfile)" class="profile-create-date" :datetime="selectedRemoteProfile.createDt">{{ $t(profileCreateDate(selectedRemoteProfile)) }}</time>
@@ -1750,7 +1766,7 @@ async function copyLauncherFailure() {
           <TabsTrigger value="general">{{ $t("General") }}</TabsTrigger>
           <TabsTrigger value="multiplayer">{{ $t("Multiplayer") }}</TabsTrigger>
           <TabsTrigger value="spore">Spore</TabsTrigger>
-          <TabsTrigger value="server-rules">{{ $t("Server Rules") }}</TabsTrigger>
+          <TabsTrigger value="server-rules">{{ $t("Server Rule") }}</TabsTrigger>
           <TabsTrigger value="advanced">{{ $t("Advanced") }}</TabsTrigger>
         </TabsList>
         <TabsContent value="general">
@@ -1810,7 +1826,8 @@ async function copyLauncherFailure() {
           </div>
         </TabsContent>
         <TabsContent value="server-rules">
-          <ServerRulesConfiguration :build-version="status.version" :is-active="configTab === 'server-rules'" :is-server-online="status.isServerOnline" :server-error="status.serverError" />
+          <p v-if="launchPage === 'remote'" class="management-message">{{ $t('Server Rules are not shown for remote crogenitors') }}</p>
+          <ServerRulesConfiguration v-else :build-version="status.version" :is-active="configTab === 'server-rules'" :is-server-online="status.isServerOnline" :server-error="status.serverError" />
         </TabsContent>
         <TabsContent value="advanced">
           <div class="config-general-grid">
@@ -1834,13 +1851,13 @@ async function copyLauncherFailure() {
                 <div><strong>{{ $t("START MENU") }}<ConfigHelp text="Install or repair a Start menu shortcut for Darkspinner." /></strong><small>{{ $t("Personal Darkspinner shortcut") }}</small></div>
                 <span :class="{ installed:integrationStatus.isStartMenuInstalled }">{{ $t(integrationStatus.isStartMenuInstalled ? 'INSTALLED' : 'NOT INSTALLED') }}</span>
                 <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('start-menu')">{{ $t(integrationStatus.isStartMenuInstalled ? 'REPAIR' : 'INSTALL') }}</Button>
-                <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isStartMenuInstalled" @click="removeIntegration('start-menu')">{{ $t("DELETE") }}</Button>
+                <Button v-if="integrationStatus.isStartMenuOwned" variant="outline" type="button" :disabled="isManagementBusy" @click="removeIntegration('start-menu')">{{ $t("DELETE") }}</Button>
               </div>
               <div class="integration-row">
                 <div><strong>{{ $t("DESKTOP") }}<ConfigHelp text="Install or repair a desktop shortcut for Darkspinner." /></strong><small>{{ $t("Personal Darkspinner shortcut") }}</small></div>
                 <span :class="{ installed:integrationStatus.isDesktopInstalled }">{{ $t(integrationStatus.isDesktopInstalled ? 'INSTALLED' : 'NOT INSTALLED') }}</span>
                 <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isManagementSupported" @click="repairIntegration('desktop')">{{ $t(integrationStatus.isDesktopInstalled ? 'REPAIR' : 'INSTALL') }}</Button>
-                <Button variant="outline" type="button" :disabled="isManagementBusy || !integrationStatus.isDesktopInstalled" @click="removeIntegration('desktop')">{{ $t("DELETE") }}</Button>
+                <Button v-if="integrationStatus.isDesktopOwned" variant="outline" type="button" :disabled="isManagementBusy" @click="removeIntegration('desktop')">{{ $t("DELETE") }}</Button>
               </div>
               <div class="integration-row">
                 <div><strong>{{ $t("STEAM PLAY") }}<ConfigHelp text="Start Darkspinner when launching Darkspore from Steam." /></strong><small>{{ $t("Route Steam launch through Darkspinner") }}</small></div>
@@ -1865,11 +1882,12 @@ async function copyLauncherFailure() {
     </section></TabsContent>
 
     <TabsContent v-else-if="activePage === 'play'" value="play" as-child><section class="command-frame launch-command-frame">
+      <RemoteControlPanel ref="localControlPanel" :profile="selectedProfileRecord" is-local @interact="handleLauncherInteraction" />
       <div class="launch-main">
         <Card class="bay launcher-bay">
           <div class="launch-pane">
             <div class="profile-core">
-              <LaunchCrogenitorPicker :profiles="launchProfiles" :selected-key="selectedLaunchKey" :is-creation-disabled="isBusy" :is-disabled="isRemoteBusy || (activePage === 'mod' && isModBusy)" :is-action-disabled="isProfileActionDisabled" :is-mod="activePage === 'mod'" @select="chooseLaunchProfile" @create="createLaunchProfile" @edit="modPage?.editProfile()" @reset-display="requestResetProfileDisplay(activePage === 'remote' ? selectedRemoteProfile : selectedProfileRecord)" @delete="activePage === 'remote' ? requestRemoteProfileDelete() : requestDeleteProfile()" />
+              <LaunchCrogenitorPicker :is-shift-held="isShiftHeld" :profiles="launchProfiles" :selected-key="selectedLaunchKey" :is-creation-disabled="isBusy" :is-disabled="isRemoteBusy || (activePage === 'mod' && isModBusy)" :is-action-disabled="isProfileActionDisabled" :is-mod="activePage === 'mod'" @select="chooseLaunchProfile" @create="createLaunchProfile" @control-panel="activePage === 'remote' ? controlPanel?.open() : localControlPanel?.open()" @edit="modPage?.editProfile()" @reset-display="requestResetProfileDisplay(activePage === 'remote' ? selectedRemoteProfile : selectedProfileRecord)" @delete="activePage === 'remote' ? requestRemoteProfileDelete($event) : requestDeleteProfile()" />
               <template v-if="profiles.length">
                 <div class="launch-profile-summary">
                   <ProfileSummary v-if="selectedProfileRecord" :profile="selectedProfileRecord" />
@@ -1882,7 +1900,7 @@ async function copyLauncherFailure() {
     </section></TabsContent>
 
 
-    <TabsContent v-if="!isInstallationRequired && !luaConsole.isSelected" v-show="activePage === 'mod'" value="mod" force-mount as-child><ModPage ref="modPage" :status="status" :is-active="activePage === 'mod'" @configure="configTab = 'spore'; showPage('config')" @profiles="modProfiles = $event" @selection="selectedModProfile = $event" @busy="isModBusy = $event" @readiness="isModPlayReady = $event" @launch="activeClientRoute = 'mod'"><template #picker><LaunchCrogenitorPicker :profiles="launchProfiles" :selected-key="selectedLaunchKey" :is-creation-disabled="isBusy" :is-disabled="isRemoteBusy || (activePage === 'mod' && isModBusy)" :is-action-disabled="isProfileActionDisabled" :is-mod="activePage === 'mod'" @select="chooseLaunchProfile" @create="createLaunchProfile" @edit="modPage?.editProfile()" @reset-display="requestResetProfileDisplay(activePage === 'remote' ? selectedRemoteProfile : selectedProfileRecord)" @delete="activePage === 'remote' ? requestRemoteProfileDelete() : requestDeleteProfile()" /></template></ModPage></TabsContent>
+    <TabsContent v-if="!isInstallationRequired && !luaConsole.isSelected" v-show="activePage === 'mod'" value="mod" force-mount as-child><ModPage ref="modPage" :status="status" :is-active="activePage === 'mod'" @configure="configTab = 'spore'; showPage('config')" @profiles="modProfiles = $event" @selection="selectedModProfile = $event" @busy="isModBusy = $event" @readiness="isModPlayReady = $event" @launch="activeClientRoute = 'mod'"><template #picker><LaunchCrogenitorPicker :is-shift-held="isShiftHeld" :profiles="launchProfiles" :selected-key="selectedLaunchKey" :is-creation-disabled="isBusy" :is-disabled="isRemoteBusy || (activePage === 'mod' && isModBusy)" :is-action-disabled="isProfileActionDisabled" :is-mod="activePage === 'mod'" @select="chooseLaunchProfile" @create="createLaunchProfile" @control-panel="activePage === 'remote' ? controlPanel?.open() : localControlPanel?.open()" @edit="modPage?.editProfile()" @reset-display="requestResetProfileDisplay(activePage === 'remote' ? selectedRemoteProfile : selectedProfileRecord)" @delete="activePage === 'remote' ? requestRemoteProfileDelete($event) : requestDeleteProfile()" /></template></ModPage></TabsContent>
     </Tabs>
 
     <footer :class="{ 'launch-footer':!isInstallationRequired }">
@@ -1961,10 +1979,10 @@ async function copyLauncherFailure() {
         <label for="remote-server">{{ $t("SERVER") }}</label>
         <div class="remote-registration-server">
           <Button variant="outline" type="button" :disabled="isRemoteBusy" @click="scanRemoteServers">{{ $t(isRemoteBusy ? 'SUGGESTING...' : 'SUGGEST') }}</Button>
-          <Input id="remote-server" v-model="remoteServerAddress" type="text" :placeholder='$t("darkspin.local:42127")' autocomplete="off" spellcheck="false" :disabled="isRemoteBusy" />
+          <Input id="remote-server" v-model="remoteServerAddress" type="text" :placeholder='$t("darkspin.local:42127")' autocomplete="off" spellcheck="false" :disabled="isRemoteBusy" @blur="refreshRemoteChecks" />
+          <Button variant="outline" class="remote-registration-refresh" type="button" :disabled="!remoteServerAddress.trim() || isRemoteChecking || isRemoteBusy" :aria-busy="isRemoteChecking" :aria-label='$t("Refresh server connection")' :title="$t(isRemoteChecking ? 'Checking server…' : 'Refresh server connection')" @click="refreshRemoteChecks"><RefreshCw :size="16" aria-hidden="true" /></Button>
+          <RemoteConnection :connection="selectedRemoteCheck" :is-checking="isRemoteChecking" :client-version="status.version" />
         </div>
-        <RemoteConnection v-if="remoteServerAddress" :connection="selectedRemoteCheck" :is-checking="isRemoteChecking" :client-version="status.version" />
-        <Button v-if="remoteServerAddress" variant="outline" type="button" :disabled="isRemoteChecking || isRemoteBusy" @click="refreshRemoteChecks">{{ $t("CHECK CONNECTION") }}</Button>
         <Select v-if="remoteServers.length" v-model:open="isRemoteServerMenuOpen" :model-value="remoteServerAddress" @update:model-value="chooseRemoteServerAddress" :disabled="isRemoteBusy">
                   <SelectTrigger class="profile-select-trigger" :aria-label='$t("Detected Darkspinner instances")'><SelectValue>{{ $t(selectedRemoteServer?.address || remoteServerAddress) }}</SelectValue></SelectTrigger>
                   <SelectContent>
@@ -2155,9 +2173,10 @@ async function copyLauncherFailure() {
     <LauncherDialog @interact="handleLauncherInteraction" v-if="remoteProfilePendingDelete" :is-dismissible="!isRemoteDeletionBusy" @close="cancelRemoteProfileDelete">
       <div class="notice-card danger-notice remote-delete-notice">
         <p class="eyebrow">{{ $t("REMOTE CROGENITOR") }}</p>
-        <DialogTitle as="h2">{{ $t('DELETE {0}?', [remoteProfilePendingDelete.displayName]) }}</DialogTitle>
+        <DialogTitle as="h2">{{ $t(remoteProfilePendingDelete.isLocalOnly ? 'LOCAL DELETE {0}?' : 'DELETE {0}?', [remoteProfilePendingDelete.displayName || remoteProfilePendingDelete.loginName]) }}</DialogTitle>
         <p>{{ $t('Are you sure you want to delete the Crogenitor {0}?', [remoteProfilePendingDelete.displayName || remoteProfilePendingDelete.loginName]) }}</p>
-        <div class="remote-delete-password">
+        <p v-if="remoteProfilePendingDelete.isLocalOnly">{{ $t('This deletes connection info locally only, but keeps server data intact.') }}</p>
+        <div v-else class="remote-delete-password">
           <label for="remote-delete-password">{{ $t("PASSWORD") }}</label>
           <Input id="remote-delete-password" v-model="remoteDeletionPassword" type="password" autocomplete="current-password" :placeholder='$t("ENTER PASSWORD")' :disabled="isRemoteDeletionBusy" @keyup.enter="deleteRemoteProfile" />
           <small v-if="remoteProfilePendingDelete.isPasswordRemembered">{{ $t('Leave blank to use the saved password.') }}</small>
@@ -2165,7 +2184,7 @@ async function copyLauncherFailure() {
         <p v-if="remoteDeletionError" class="remote-delete-error">{{ $t(remoteDeletionError) }}</p>
         <div class="notice-actions">
           <Button variant="outline" class="onboarding-cancel" type="button" :disabled="isRemoteDeletionBusy" @click="cancelRemoteProfileDelete">{{ $t("KEEP CROGENITOR") }}</Button>
-          <Button variant="destructive" class="danger-confirm" type="button" :disabled="isRemoteDeletionBusy || (!remoteProfilePendingDelete.isPasswordRemembered && !remoteDeletionPassword)" @click="deleteRemoteProfile">{{ $t(isRemoteDeletionBusy ? 'DELETING...' : 'DELETE REMOTELY') }}</Button>
+          <Button variant="destructive" class="danger-confirm" type="button" :disabled="isRemoteDeletionBusy || (!remoteProfilePendingDelete.isLocalOnly && !remoteProfilePendingDelete.isPasswordRemembered && !remoteDeletionPassword)" @click="deleteRemoteProfile">{{ $t(isRemoteDeletionBusy ? 'DELETING...' : remoteProfilePendingDelete.isLocalOnly ? 'LOCAL DELETE' : 'DELETE REMOTELY') }}</Button>
         </div>
       </div>
     </LauncherDialog>

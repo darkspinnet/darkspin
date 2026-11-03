@@ -11,11 +11,19 @@ export function Cancel():Promise<void>;
 
 export function CancelPatch():Promise<void>;
 
+export function CancelRemoteControlMaintenance(arg1:string,arg2:string,arg3:string):Promise<main.RemoteControlMaintenance>;
+
+export function ChangeRemoteControlPassword(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.RemoteControlActionResult>;
+
 export function Check():Promise<void>;
+
+export function CheckRemoteControlUpdate(arg1:string,arg2:string):Promise<main.RemoteControlUpdate>;
 
 export function CheckRemoteServers(arg1:Array<string>):Promise<Array<main.RemoteServerStatus>>;
 
 export function CloseDetachedGameInstances():Promise<void>;
+
+export function CloseRemoteControlPanel():Promise<void>;
 
 export function CloseRunningGame():Promise<void>;
 
@@ -29,11 +37,21 @@ export function DeleteModProfile(arg1:string):Promise<void>;
 
 export function DeleteProfile(arg1:string):Promise<void>;
 
+export function DeleteRemoteConnection(arg1:string,arg2:string):Promise<void>;
+
+export function DeleteRemoteControlAccount(arg1:string,arg2:string,arg3:string):Promise<main.RemoteControlActionResult>;
+
+export function DeleteRemoteControlDiagnostic(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+
 export function DeleteRemoteProfile(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function DetectModSporePath():Promise<string>;
 
 export function DiscardInterruptedMission(arg1:string):Promise<void>;
+
+export function DownloadRemoteControlDiagnostic(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.RemoteControlDiagnosticDownload>;
+
+export function FilterRemoteControlHistory(arg1:string,arg2:string,arg3:main.RemoteControlHistoryFilter):Promise<main.RemoteControlHistory>;
 
 export function GetInstallationStatus():Promise<main.InstallationStatus>;
 
@@ -51,9 +69,25 @@ export function GetModConfiguration():Promise<main.ModConfiguration>;
 
 export function GetModPortrait(arg1:string):Promise<string>;
 
+export function GetMyControlActivity(arg1:string,arg2:string,arg3:string):Promise<main.RemoteControlPersonalActivity>;
+
 export function GetProfileAvatars():Promise<Array<main.ProfileAvatar>>;
 
 export function GetProfiles():Promise<Array<main.Profile>>;
+
+export function GetRemoteControlActivity(arg1:string,arg2:string,arg3:string):Promise<main.RemoteControlActivity>;
+
+export function GetRemoteControlAnnouncements(arg1:string,arg2:string):Promise<main.RemoteControlAnnouncementList>;
+
+export function GetRemoteControlHealth(arg1:string,arg2:string):Promise<main.RemoteControlHealth>;
+
+export function GetRemoteControlIdentity(arg1:string,arg2:string):Promise<main.ServerIdentityConfiguration>;
+
+export function GetRemoteControlMaintenance(arg1:string,arg2:string):Promise<main.RemoteControlMaintenance>;
+
+export function GetRemoteControlPanel(arg1:string,arg2:string):Promise<main.RemoteControlPanel>;
+
+export function GetRemoteControlUpdate(arg1:string,arg2:string):Promise<main.RemoteControlUpdate>;
 
 export function GetRemoteProfiles():Promise<Array<main.RemoteProfile>>;
 
@@ -64,6 +98,10 @@ export function GetServerRulesConfiguration():Promise<runtime.ServerRulesConfigu
 export function GetSquadSnapshot(arg1:Array<string>):Promise<main.squadShareSnapshot>;
 
 export function GetStatus():Promise<main.LauncherStatus>;
+
+export function GetUserControlActivity(arg1:string,arg2:string,arg3:number,arg4:string,arg5:string):Promise<main.RemoteControlPersonalActivity>;
+
+export function GetUserControlLoginHistory(arg1:string,arg2:string,arg3:number,arg4:string,arg5:string,arg6:string,arg7:string):Promise<main.RemoteControlLoginHistory>;
 
 export function GetWineRunnerConfiguration():Promise<main.WineRunnerConfiguration>;
 
@@ -77,9 +115,23 @@ export function LaunchModProfile(arg1:string):Promise<void>;
 
 export function LaunchRemoteProfile(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<void>;
 
+export function ListRemoteControlDiagnostics(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.RemoteControlDiagnosticList>;
+
+export function ListRemoteControlHistory(arg1:string,arg2:string,arg3:number,arg4:number):Promise<main.RemoteControlHistory>;
+
+export function ListRemoteControlSessions(arg1:string,arg2:string):Promise<main.RemoteControlSessionList>;
+
+export function ListRemoteControlUsers(arg1:string,arg2:string,arg3:string,arg4:number):Promise<main.RemoteControlUserList>;
+
 export function LoginRemoteProfile(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<void>;
 
+export function ModerateRemoteControlUser(arg1:string,arg2:string,arg3:number,arg4:string,arg5:string):Promise<main.RemoteControlActionResult>;
+
 export function OpenFirewallSettings():Promise<void>;
+
+export function OpenLocalControlPanel(arg1:string):Promise<main.RemoteControlPanel>;
+
+export function OpenRemoteControlPanel(arg1:string,arg2:string,arg3:string):Promise<main.RemoteControlPanel>;
 
 export function OpenReportFolder():Promise<void>;
 
@@ -99,6 +151,8 @@ export function RelocateToGameRoot(arg1:main.RelocationRequest):Promise<void>;
 
 export function RemoveLauncherIntegration(arg1:string):Promise<main.LauncherIntegrationStatus>;
 
+export function RenameRemoteControlAccount(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.RemoteControlActionResult>;
+
 export function RepairLauncherIntegration(arg1:string):Promise<main.LauncherIntegrationStatus>;
 
 export function ResetModProfileDisplay(arg1:string):Promise<void>;
@@ -107,6 +161,10 @@ export function ResetProfileDisplay(arg1:string,arg2:string):Promise<void>;
 
 export function RestartLauncher():Promise<void>;
 
+export function RevokeOtherRemoteControlSessions(arg1:string,arg2:string,arg3:string):Promise<main.RemoteControlSessionResult>;
+
+export function RevokeRemoteControlSession(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.RemoteControlSessionResult>;
+
 export function RunLuaScript(arg1:string):Promise<void>;
 
 export function SaveModProfile(arg1:main.ModProfileRequest):Promise<void>;
@@ -114,6 +172,8 @@ export function SaveModProfile(arg1:main.ModProfileRequest):Promise<void>;
 export function ScanRemoteServers(arg1:string):Promise<Array<main.RemoteServer>>;
 
 export function ScanWineRunners():Promise<main.WineRunnerConfiguration>;
+
+export function SendRemoteControlAnnouncement(arg1:string,arg2:string,arg3:string):Promise<main.RemoteControlAnnouncement>;
 
 export function SendReport(arg1:string):Promise<main.ReportResult>;
 
@@ -128,6 +188,8 @@ export function SetLauncherLocale(arg1:string):Promise<void>;
 export function SetLocalServicesRequired(arg1:boolean):Promise<void>;
 
 export function SetModSporePath(arg1:string):Promise<void>;
+
+export function SetRemoteControlIdentity(arg1:string,arg2:string,arg3:main.ServerIdentityConfiguration):Promise<main.ServerIdentityConfiguration>;
 
 export function SetServerConfiguration(arg1:number,arg2:boolean,arg3:string,arg4:string):Promise<main.ServerConfiguration>;
 
@@ -147,6 +209,10 @@ export function SignOut():Promise<void>;
 
 export function StartDetachedGameInstance(arg1:string):Promise<void>;
 
+export function StartRemoteControlMaintenance(arg1:string,arg2:string,arg3:main.RemoteControlMaintenanceRequest):Promise<main.RemoteControlMaintenance>;
+
 export function StopLuaScript():Promise<void>;
+
+export function TimeoutRemoteControlUser(arg1:string,arg2:string,arg3:number,arg4:number,arg5:string):Promise<main.RemoteControlActionResult>;
 
 export function UninstallDarkspinner():Promise<void>;

@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/BurntSushi/toml"
+	"github.com/darkspinnet/darkspin/server/game"
 )
 
 var launcherConfigMu sync.Mutex
@@ -66,30 +67,41 @@ func writeLauncherSettings(path string, settings launcherSettings) error {
 	if err != nil {
 		return fmt.Errorf("settingMigrate: %w", err)
 	}
-	sections, err := readLauncherSections(path)
-	if err != nil {
-		return fmt.Errorf("settingRead: %w", err)
-	}
-	launcherSections, err := launcherSection(sections, "launcher")
-	if err != nil {
-		return fmt.Errorf("settingSection: %w", err)
-	}
-	wineFields, err := launcherSection(launcherSections, "wine")
-	if err != nil {
-		return fmt.Errorf("wineSection: %w", err)
-	}
-	modFields, err := launcherSection(launcherSections, "mod")
-	if err != nil {
-		return fmt.Errorf("modSection: %w", err)
-	}
-	wineFields["runtime_path"] = settings.Wine.RuntimePath
-	modFields["spore_path"] = settings.Mod.SporePath
-	modFields["is_detection_attempted"] = settings.Mod.IsDetectionAttempted
-	err = saveLauncherSections(path, sections)
+	edit := launcherSettingsEdit{settings: settings}
+	err = game.WithConfiguration(path, edit.apply)
 	if err != nil {
 		return fmt.Errorf("settingSave: %w", err)
 	}
 	return nil
+}
+
+type launcherSettingsEdit struct{ settings launcherSettings }
+
+func (e launcherSettingsEdit) apply(contents []byte) ([]byte, error) {
+	sections, err := decodeLauncherSections(contents)
+	if err != nil {
+		return nil, fmt.Errorf("settingRead: %w", err)
+	}
+	launcherSections, err := launcherSection(sections, "launcher")
+	if err != nil {
+		return nil, fmt.Errorf("settingSection: %w", err)
+	}
+	wineFields, err := launcherSection(launcherSections, "wine")
+	if err != nil {
+		return nil, fmt.Errorf("wineSection: %w", err)
+	}
+	modFields, err := launcherSection(launcherSections, "mod")
+	if err != nil {
+		return nil, fmt.Errorf("modSection: %w", err)
+	}
+	wineFields["runtime_path"] = e.settings.Wine.RuntimePath
+	modFields["spore_path"] = e.settings.Mod.SporePath
+	modFields["is_detection_attempted"] = e.settings.Mod.IsDetectionAttempted
+	encoded, err := encodeLauncherSections(sections)
+	if err != nil {
+		return nil, fmt.Errorf("settingEncode: %w", err)
+	}
+	return encoded, nil
 }
 
 // writeLauncherConfigLine replaces or inserts one `key = ...` line in the
@@ -97,10 +109,17 @@ func writeLauncherSettings(path string, settings launcherSettings) error {
 func writeLauncherConfigLine(configPath, key, line string) error {
 	launcherConfigMu.Lock()
 	defer launcherConfigMu.Unlock()
-	contents, err := os.ReadFile(configPath)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("launcherConfigRead: %w", err)
+	edit := launcherLineEdit{key: key, line: line}
+	err := game.WithConfiguration(configPath, edit.apply)
+	if err != nil {
+		return fmt.Errorf("launcherLine: %w", err)
 	}
+	return nil
+}
+
+type launcherLineEdit struct{ key, line string }
+
+func (e launcherLineEdit) apply(contents []byte) ([]byte, error) {
 	lineEnding := "\n"
 	if bytes.Contains(contents, []byte("\r\n")) {
 		lineEnding = "\r\n"
@@ -121,26 +140,22 @@ func writeLauncherConfigLine(configPath, key, line string) error {
 			}
 			continue
 		}
-		if sectionStart >= 0 && isLauncherConfigKeyLine(trimmed, key) {
+		if sectionStart >= 0 && isLauncherConfigKeyLine(trimmed, e.key) {
 			keyIndex = index
 		}
 	}
 	switch {
 	case keyIndex >= 0:
-		lines[keyIndex] = line
+		lines[keyIndex] = e.line
 	case sectionStart >= 0:
-		lines = append(lines[:sectionEnd], append([]string{line}, lines[sectionEnd:]...)...)
+		lines = append(lines[:sectionEnd], append([]string{e.line}, lines[sectionEnd:]...)...)
 	default:
 		for len(lines) > 0 && lines[len(lines)-1] == "" {
 			lines = lines[:len(lines)-1]
 		}
-		lines = append(lines, "", "[launcher]", line, "")
+		lines = append(lines, "", "[launcher]", e.line, "")
 	}
-	err = replaceLauncherConfig(configPath, []byte(strings.Join(lines, lineEnding)))
-	if err != nil {
-		return fmt.Errorf("launcherConfigReplace: %w", err)
-	}
-	return nil
+	return []byte(strings.Join(lines, lineEnding)), nil
 }
 
 func isLauncherConfigKeyLine(trimmedLine, key string) bool {

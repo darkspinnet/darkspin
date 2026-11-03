@@ -143,7 +143,7 @@ func RegisterAPI(router *recaphttp.Router, options APIOptions) error {
 		{`/assets/.*`, api.static},
 	}
 	for _, route := range routes {
-		err := router.Add(route.path, []string{http.MethodGet, http.MethodPost}, route.handler)
+		err := router.Add(route.path, []string{http.MethodGet, http.MethodPost}, observedPeerHandler(route.handler))
 		if err != nil {
 			return fmt.Errorf("routeRegister[%q]: %w", route.path, err)
 		}
@@ -1443,11 +1443,6 @@ func (a *API) serveStorageFile(writer http.ResponseWriter, request *http.Request
 		path = filepath.Join(path, "index.html")
 	}
 	http.ServeFile(writer, request, path)
-}
-
-func (a *API) userFromRequest(request *http.Request, values interface{ Get(string) string }) *sporenet.User {
-	token := authTokenFromRequest(request, values)
-	return a.userManager.UserByAuthToken(token)
 }
 
 func authTokenFromRequest(request *http.Request, values interface{ Get(string) string }) string {

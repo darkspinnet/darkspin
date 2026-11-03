@@ -19,18 +19,25 @@ import (
 
 	contentruntime "github.com/darkspinnet/darkspin/content/runtime"
 	contentsqlite "github.com/darkspinnet/darkspin/content/sqlite"
+	"github.com/darkspinnet/darkspin/server/accountaccess"
+	"github.com/darkspinnet/darkspin/server/activity"
+	"github.com/darkspinnet/darkspin/server/admission"
 	serverauth "github.com/darkspinnet/darkspin/server/auth"
 	"github.com/darkspinnet/darkspin/server/blaze"
 	"github.com/darkspinnet/darkspin/server/buildinfo"
 	"github.com/darkspinnet/darkspin/server/chat"
 	chatlocal "github.com/darkspinnet/darkspin/server/chat/local"
 	"github.com/darkspinnet/darkspin/server/chat/textlog"
+	"github.com/darkspinnet/darkspin/server/controlpanel"
+	"github.com/darkspinnet/darkspin/server/diagnostic"
+	"github.com/darkspinnet/darkspin/server/diagnostic/localstore"
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/game/appearancefs"
 	gamecontentsqlite "github.com/darkspinnet/darkspin/server/game/contentsqlite"
 	"github.com/darkspinnet/darkspin/server/gameplay"
 	recaphttp "github.com/darkspinnet/darkspin/server/http"
 	"github.com/darkspinnet/darkspin/server/instance"
+	"github.com/darkspinnet/darkspin/server/loginhistory"
 	"github.com/darkspinnet/darkspin/server/maintenance"
 	navigationcontentsqlite "github.com/darkspinnet/darkspin/server/navigation/contentsqlite"
 	"github.com/darkspinnet/darkspin/server/party"
@@ -40,6 +47,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/pvp"
 	"github.com/darkspinnet/darkspin/server/readiness"
 	"github.com/darkspinnet/darkspin/server/scheduler"
+	"github.com/darkspinnet/darkspin/server/serverinfo"
 	"github.com/darkspinnet/darkspin/server/snapshot"
 	"github.com/darkspinnet/darkspin/server/sporenet"
 	"github.com/darkspinnet/darkspin/server/sporenet/savebuffer"
@@ -228,49 +236,57 @@ type Environment struct {
 
 // Server coordinates the lifetime of all Game server subsystems.
 type Server struct {
-	instanceLease         *instance.Lease
-	maintenanceControl    *maintenance.Control
-	maintenanceServers    []*blaze.Server
-	maintenanceSchedule   *maintenance.ScheduleOptions
-	maintenanceDone       chan struct{}
-	isMaintenanceUpdate   bool
-	closeErr              error
-	lifecycleMu           sync.Mutex
-	runCancel             context.CancelFunc
-	isClosed              bool
-	isRunning             bool
-	environment           Environment
-	config                *game.Config
-	serverRuleStore       *serverRuleStore
-	isConfigGenerated     bool
-	scheduler             *scheduler.Scheduler
-	blazeServers          []*blaze.Server
-	sharedTCPServers      []*sharedtcp.SharedServer
-	udpServer             *sharedudp.SharedServer
-	gameplayCleanup       func()
-	gameplayDiscard       func(uint32)
-	gameplayDiscardMember func(uint32, uint64)
-	bugContext            chat.BugContextProvider
-	reportContext         chat.BugContextProvider
-	httpServers           []*recaphttp.Server
-	httpRouter            *recaphttp.Router
-	userManager           *sporenet.UserManager
-	userStore             io.Closer
-	saveBuffer            *savebuffer.Repository
-	contentStore          io.Closer
-	checkpoint            *zonecheckpoint.Manager
-	checkpointStore       io.Closer
-	roomManager           *sporenet.RoomManager
-	gameManager           *game.Manager
-	partyService          *party.Service
-	template              *sporenet.TemplateDatabase
-	vendor                *sporenet.Vendor
-	logger                *log.Logger
-	traceRecorder         *protocoltrace.JSONRecorder
-	snapshot              *snapshot.Service
-	networkCloseOnce      sync.Once
-	gameplayCloseOnce     sync.Once
-	closeOnce             sync.Once
+	instanceLease                 *instance.Lease
+	maintenanceControl            *maintenance.Control
+	maintenanceServers            []*blaze.Server
+	maintenanceSchedule           *maintenance.ScheduleOptions
+	maintenanceDone               chan struct{}
+	maintenanceReconciliationDone chan struct{}
+	panelMaintenance              *panelMaintenance
+	controlPanel                  *controlpanel.Service
+	activity                      *activity.Service
+	activityDone                  chan struct{}
+	isMaintenanceStop             bool
+	maintenanceOperationID        string
+	maintenanceAction             string
+	closeErr                      error
+	lifecycleMu                   sync.Mutex
+	runCancel                     context.CancelFunc
+	isClosed                      bool
+	isRunning                     bool
+	environment                   Environment
+	config                        *game.Config
+	serverRuleStore               *serverRuleStore
+	isConfigGenerated             bool
+	scheduler                     *scheduler.Scheduler
+	blazeServers                  []*blaze.Server
+	sharedTCPServers              []*sharedtcp.SharedServer
+	udpServer                     *sharedudp.SharedServer
+	gameplayCleanup               func()
+	gameplayDiscard               func(uint32)
+	gameplayDiscardMember         func(uint32, uint64)
+	bugContext                    chat.BugContextProvider
+	reportContext                 chat.BugContextProvider
+	httpServers                   []*recaphttp.Server
+	httpRouter                    *recaphttp.Router
+	userManager                   *sporenet.UserManager
+	userStore                     io.Closer
+	saveBuffer                    *savebuffer.Repository
+	contentStore                  io.Closer
+	checkpoint                    *zonecheckpoint.Manager
+	checkpointStore               io.Closer
+	roomManager                   *sporenet.RoomManager
+	gameManager                   *game.Manager
+	matchmaking                   *pvp.Matchmaking
+	partyService                  *party.Service
+	template                      *sporenet.TemplateDatabase
+	vendor                        *sporenet.Vendor
+	logger                        *log.Logger
+	traceRecorder                 *protocoltrace.JSONRecorder
+	snapshot                      *snapshot.Service
+	networkCloseOnce              sync.Once
+	gameplayCloseOnce             sync.Once
+	closeOnce                     sync.Once
 }
 
 // InterruptedMission describes one durable zone that a local profile may
@@ -655,6 +671,73 @@ func New(options Options) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("userInit: %w", err)
 	}
+	accessProvider, isAccessAvailable := userRepository.(accountAccessProvider)
+	if !isAccessAvailable {
+		return nil, errors.New("account access storage unavailable")
+	}
+	accessService := accountaccess.New(accessProvider.AccountAccess())
+	activityProvider, isActivityAvailable := userRepository.(interface {
+		ActivityStore() activity.Store
+	})
+	if !isActivityAvailable {
+		return nil, errors.New("activity storage unavailable")
+	}
+	activityService := activity.NewService(activityProvider.ActivityStore())
+	userManager.SetGameplayActivityObserver(activityService, logger)
+	var loginHistoryReviewer controlpanel.LoginHistoryReviewer
+	if config.Bool(game.ConfigServerIsDedicated) {
+		loginHistoryStore, historyErr := installLoginIPRecorder(context.Background(), userRepository, userManager)
+		if historyErr != nil {
+			return nil, fmt.Errorf("loginIPInit: %w", historyErr)
+		}
+		loginHistoryReviewer = loginhistory.NewReviewer(loginHistoryStore, accessService)
+	}
+	userManager.SetAdmissionPolicy(&accountAdmission{accessService: accessService})
+	panelMaintenance := &panelMaintenance{accessService: accessService}
+	admissionGate := admission.New(panelMaintenance)
+	panelMaintenance.gate = admissionGate
+	userManager.SetGameplayAdmissionGate(admissionGate)
+	connectionChecker, isConnectionCheckAvailable := userRepository.(profileConnectionChecker)
+	if !isConnectionCheckAvailable {
+		return nil, errors.New("profile connection observation unavailable")
+	}
+	healthReader := &panelHealth{connectionChecker: connectionChecker, profileBuffer: profileBuffer,
+		runtimePath: runtimePath, configPath: configPath, isManaged: maintenanceSchedule != nil}
+	announcementBroadcast := &panelAnnouncementBroadcast{}
+	var information *serverinfo.Service
+	var informationProvider controlpanel.Information
+	if config.Bool(game.ConfigServerIsDedicated) {
+		identityStore, identityErr := initializeServerIdentity(context.Background(), userRepository)
+		if identityErr != nil {
+			return nil, fmt.Errorf("identityInit: %w", identityErr)
+		}
+		information = serverinfo.New(identityStore, accessService, announcementBroadcast)
+		informationProvider = information
+	}
+	panelObserver := &panelObservation{
+		userManager: userManager, startedAt: time.Now().UTC(), name: host,
+		information: information, healthReader: healthReader,
+	}
+	panelConnection := &panelConnectionControl{accessService: accessService}
+	panelMaintenance.connectionControl = panelConnection
+	panel, err := controlpanel.New(controlpanel.Config{
+		Host:          net.JoinHostPort(host, fmt.Sprintf("%d", ports.http)),
+		IsDedicated:   config.Bool(game.ConfigServerIsDedicated),
+		Authenticator: userManager, IdentityReader: panelObserver,
+		AccessReader: accessService, Observer: panelObserver,
+		AccountController: userManager, Moderator: accessService, ConnectionControl: panelConnection,
+		Information: informationProvider, HealthReader: healthReader,
+		ActivityReader:        activityService,
+		UserActivityReader:    activityService,
+		MetricsReviewer:       accessService,
+		LoginHistoryReviewer:  loginHistoryReviewer,
+		MaintenanceController: panelMaintenance,
+		UpdateReader:          newPanelUpdate(configPath, maintenanceSchedule != nil, accessService),
+		Diagnostic:            diagnostic.New(localstore.New(runtimePath), accessService),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("panelInit: %w", err)
+	}
 	snapshotMode, err := snapshot.ParseMode(config.String(game.ConfigSnapshotMode))
 	if err != nil {
 		return nil, fmt.Errorf("snapshotMode: %w", err)
@@ -785,6 +868,7 @@ func New(options Options) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("chatInit: %w", err)
 	}
+	chatService.UseCommandAuthorizer(accessService)
 	chatService.UseEffectPreviewer(chatlocal.NewEffectPreviewer(gameManager))
 	chatService.UseResourceMutator(chatlocal.NewResourceMutator(gameManager))
 	chatService.UseEventTriggerer(chatlocal.NewEventTriggerer(gameManager))
@@ -793,6 +877,7 @@ func New(options Options) (*Server, error) {
 	chatService.UseItemSummoner(chatlocal.NewItemSummoner(userManager, gameManager))
 	chatService.UseLevelSetter(chatlocal.NewLevelSetter(userManager, gameManager))
 	chatService.UseWarpRequester(chatlocal.NewWarpRequester(gameManager))
+	chatService.UseNoReplaySetter(chatlocal.NewNoReplaySetter(userManager))
 	chatService.UseNPCSpawner(chatlocal.NewNPCSpawner(gameManager))
 	chatService.UseDNAGranter(chatlocal.NewDNAGranter(userManager, gameManager))
 	bugReporter := chatlocal.NewBugReporter(runtimePath)
@@ -806,6 +891,10 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("vendorLoad: %w", err)
 	}
 	registry := blaze.NewRegistry()
+	registry.UseAdmissionGate(admissionGate)
+	if information != nil {
+		registry.UseWelcomeProvider(information)
+	}
 	err = blaze.RegisterCoreComponents(registry, blaze.Endpoints{
 		Host:          host,
 		BlazePort:     ports.blaze,
@@ -848,6 +937,13 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("gamesRegister: %w", err)
 	}
 	router := recaphttp.NewRouter()
+	err = router.Add("/api/control/.*", []string{
+		http.MethodGet, http.MethodPost, http.MethodDelete, http.MethodPut,
+		http.MethodPatch, http.MethodOptions, http.MethodHead,
+	}, controlPanelRoute(panel.Handler()))
+	if err != nil {
+		return nil, fmt.Errorf("panelRoute: %w", err)
+	}
 	for index, route := range options.HTTPRoutes {
 		if route.Handler == nil {
 			return nil, fmt.Errorf("httpRoute[%d]: nil handler", index)
@@ -1047,6 +1143,8 @@ func New(options Options) (*Server, error) {
 		httpServers:           httpServers,
 		httpRouter:            router,
 		userManager:           userManager,
+		controlPanel:          panel,
+		activity:              activityService,
 		userStore:             userStore,
 		saveBuffer:            profileBuffer,
 		contentStore:          contentStore,
@@ -1054,6 +1152,7 @@ func New(options Options) (*Server, error) {
 		checkpointStore:       checkpointStore,
 		roomManager:           roomManager,
 		gameManager:           gameManager,
+		matchmaking:           matchmaking,
 		partyService:          partyService,
 		template:              templateDatabase,
 		vendor:                vendor,
@@ -1061,6 +1160,13 @@ func New(options Options) (*Server, error) {
 		traceRecorder:         traceRecorder,
 		snapshot:              snapshotService,
 	}
+	panelMaintenance.server = application
+	application.panelMaintenance = panelMaintenance
+	panelConnection.server = application
+	announcementBroadcast.server = application
+	panelConnection.gameplayLifecycle = gameplayLifecycle
+	panelConnection.partyRelay = partyRelay
+	panelConnection.timer = zone.NewSchedulerTimer(taskScheduler)
 	isUserStoreTransferred = true
 	isContentStoreTransferred = true
 	isCheckpointStoreTransferred = true
@@ -1252,13 +1358,28 @@ func (s *Server) Run(ctx context.Context) error {
 		return fmt.Errorf("maintenanceStart: %w", err)
 	}
 	s.maintenanceControl = control
+	err = s.recoverRestoredMaintenance(control)
+	if err != nil {
+		s.lifecycleMu.Unlock()
+		s.Close()
+		return fmt.Errorf("maintenanceRestore: %w", err)
+	}
+	if s.panelMaintenance == nil {
+		s.panelMaintenance = &panelMaintenance{server: s}
+	}
+	control.ConfigureDrain(s.panelMaintenance)
+	control.ConfigureLocalTransition(s.panelMaintenance)
 	s.runCancel = cancel
 	s.isRunning = true
 	if s.maintenanceSchedule != nil {
 		control.EnableUpdates()
-		s.maintenanceDone = make(chan struct{})
-		go s.runMaintenanceSchedule(runCtx, cancel)
 	}
+	s.maintenanceDone = make(chan struct{})
+	s.maintenanceReconciliationDone = make(chan struct{})
+	s.activityDone = make(chan struct{})
+	go s.runActivitySampling(runCtx)
+	go s.runMaintenanceSchedule(ctx, runCtx, cancel)
+	go s.runMaintenanceReconciliation(runCtx)
 	serviceCount := len(s.blazeServers) + len(s.sharedTCPServers) + len(s.httpServers) + 1
 	results := make(chan error, serviceCount)
 	for _, service := range s.blazeServers {
@@ -1313,6 +1434,12 @@ func (s *Server) Close() {
 		s.lifecycleMu.Unlock()
 		if s.maintenanceDone != nil {
 			<-s.maintenanceDone
+		}
+		if s.activityDone != nil {
+			<-s.activityDone
+		}
+		if s.maintenanceReconciliationDone != nil {
+			<-s.maintenanceReconciliationDone
 		}
 		if s.maintenanceControl != nil {
 			err := s.maintenanceControl.Close()

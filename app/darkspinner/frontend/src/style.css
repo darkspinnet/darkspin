@@ -154,6 +154,16 @@ body:has(.mod-accent) {
 .remote-profile-info-card { align-items: start; }
 .remote-profile-core .selected-profile-avatar { width: 88px; height: 88px; }
 .remote-profile-avatar { display:flex; flex-direction:column; align-items:center; gap:8px; }
+.remote-server-image-frame { position:relative; width:88px; height:88px; }
+.remote-server-image { display:flex; flex-direction:column; gap:4px; align-items:center; justify-content:center; color:#a6caff; background:radial-gradient(circle at 30% 20%, #24539b, #101c32 75%); cursor:pointer; }
+.remote-server-name { max-width:74px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:9px; }
+.remote-server-image:hover { filter:brightness(1.2); }
+.remote-server-image:active { transform:scale(.97); }
+.remote-server-image-frame button:focus-visible { outline:2px solid var(--ring); outline-offset:3px; }
+.remote-server-account, .remote-server-admin { position:absolute; right:-8px; display:flex; align-items:center; justify-content:center; width:28px; height:28px; border:1px solid var(--border); border-radius:50%; background:var(--card); color:var(--foreground); cursor:pointer; }
+.remote-server-account { bottom:-5px; }
+.remote-server-admin { top:-5px; color:#facc15; }
+.remote-server-account:hover, .remote-server-admin:hover { background:var(--muted); }
 .remote-refresh-button { width:28px; height:28px; padding:0; color:var(--muted-foreground); }
 .config-tabs { gap:16px; }
 .config-tabs > [data-slot="tabs-list"] { position:sticky; top:0; z-index:10; flex-shrink:0; width:100%; justify-content:flex-start; background:var(--background); }
@@ -223,8 +233,11 @@ body:has(.mod-accent) {
 .avatar-picker button { width: 100%; height: auto; aspect-ratio: 1; padding: 3px; }
 .avatar-picker img { width: 100%; height: 100%; border-radius: 4px; object-fit: cover; }
 .avatar-picker button.selected { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
-.remote-registration-server { display: flex; gap: 8px; }
+.remote-registration-server { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.remote-registration-server > input { flex: 1 1 160px; width: auto; }
 .remote-registration-server button { font-size: 11px; }
+.remote-registration-server > .remote-registration-refresh { flex: 0 0 36px; width: 36px; padding: 0; }
+.remote-registration-server > .remote-connection { flex: 0 0 160px; width: 160px; min-height: 36px; display: flex; align-items: center; }
 .remote-registration-notice > .profile-select-trigger { width: 100%; margin-top: 8px; }
 .report-composer-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
 .report-composer-header > .eyebrow { margin: 0; }

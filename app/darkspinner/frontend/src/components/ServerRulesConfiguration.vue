@@ -1,4 +1,5 @@
 <script setup>
+import { RefreshCw } from '@lucide/vue'
 import ConfigHelp from '@/components/ConfigHelp.vue'
 import { computed, ref, watch } from 'vue'
 import { Button } from '@/components/ui/button'
@@ -268,7 +269,7 @@ watch(() => props.isActive && props.isServerOnline, isReady => {
     <p v-if="isError && message" class="management-message rules-error" role="alert">{{ $t(message) }}</p>
     <div class="rules-actions">
       <Button type="button" :disabled="isBusy || !isValid || !isServerOnline" @click="save">{{ $t(isBusy ? 'PLEASE WAIT…' : 'APPLY SERVER RULES') }}</Button>
-      <Button variant="outline" type="button" :disabled="isBusy || !isServerOnline" @click="reload">{{ $t("RELOAD") }}</Button>
+      <Button variant="outline" type="button" :disabled="isBusy || !isServerOnline" @click="reload" size="icon" :aria-label="$t('RELOAD')" :title="$t('RELOAD')"><RefreshCw :size="16" aria-hidden="true" /></Button>
     </div>
   </Card>
 </template>

@@ -63,6 +63,7 @@ type GameplayBinding struct {
 	CatalystSlotCount           uint32
 	IsReplay                    bool
 	IsReplayRandomized          bool
+	IsNoReplay                  bool
 	IsWarped                    bool
 	IsCheckpointRestore         bool
 	DNA                         uint32
@@ -366,6 +367,10 @@ func (o *GameplayJoin) Execute(ctx context.Context, userID int64) (GameplayBindi
 	if user == nil {
 		return GameplayBinding{}, fmt.Errorf("joinUser: %w", ErrGameplayUserNotFound)
 	}
+	err = authorizeGameplayAccount(ctx, o.userFinder, userID)
+	if err != nil {
+		return GameplayBinding{}, fmt.Errorf("joinAccess: %w", err)
+	}
 	instance := o.gameManager.Game(user.CurrentGameID())
 	if instance == nil {
 		return GameplayBinding{}, fmt.Errorf("joinGame: %w", ErrGameplayGameNotFound)
@@ -384,6 +389,10 @@ func (o *GameplayJoin) Execute(ctx context.Context, userID int64) (GameplayBindi
 	}
 	if o.userFinder.UserByID(userID) != user {
 		return GameplayBinding{}, fmt.Errorf("joinIdentity: %w", ErrGameplayUserNotFound)
+	}
+	err = authorizeGameplayAccount(ctx, o.userFinder, userID)
+	if err != nil {
+		return GameplayBinding{}, fmt.Errorf("joinAdmission: %w", err)
 	}
 	if o.gameManager.Game(user.CurrentGameID()) != instance {
 		return GameplayBinding{}, fmt.Errorf("joinInstance: %w", ErrGameplayGameNotFound)
@@ -426,6 +435,7 @@ func (o *GameplayJoin) Execute(ctx context.Context, userID int64) (GameplayBindi
 		CombatParticipantCount: instance.CombatParticipantCount(),
 		IsWarped:               instance.Info.IsWarped,
 		IsReplayRandomized:     instance.Info.IsReplayRandomized,
+		IsNoReplay:             instance.Info.IsNoReplay,
 		IsCheckpointRestore:    instance.IsCheckpointRestore(),
 		SquadID:                squadID,
 		Creatures:              creatures,

@@ -31,6 +31,11 @@ func (e *Storage) snapshotDatabase(ctx context.Context, destination string, mani
 	}
 	manifest.DatabaseTarget = e.DatabaseBackup.Identity()
 	manifest.DatabaseHash = checksum
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("dumpStat: %w", err)
+	}
+	manifest.DatabaseBytes = fi.Size()
 	return nil
 }
 

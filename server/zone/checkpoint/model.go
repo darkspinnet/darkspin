@@ -93,6 +93,7 @@ type Snapshot struct {
 	ZoneID                     uint64
 	RunSeed                    uint64
 	IsReplayRandomized         bool
+	IsNoReplay                 bool
 	ZoneGeneration             uint64
 	CompletionID               uint64
 	Revision                   uint64

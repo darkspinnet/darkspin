@@ -123,6 +123,7 @@ func (e *Repository) save(ctx context.Context, userID int64, isClosing bool) (bo
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 	current = e.snapshots[userID]
+	e.observeSaveLocked(userID, err == nil)
 	if err != nil {
 		current.retryAfter = time.Now().Add(retryDelay)
 		current.isReady = true

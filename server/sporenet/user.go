@@ -6,9 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/darkspinnet/darkspin/server/admission"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -40,6 +43,7 @@ type User struct {
 	PlaygroupID                 uint32
 	Associations                map[uint32][]AssociationMember
 	Settings                    map[string]string
+	isNoReplay                  bool
 	playStartedAt               time.Time
 
 	extensions []OpaqueField
@@ -61,6 +65,7 @@ func (u *User) startPlayTime(now time.Time) {
 	}
 	u.mu.Lock()
 	u.playStartedAt = now
+	u.isNoReplay = false
 	u.mu.Unlock()
 }
 
@@ -275,16 +280,21 @@ func (u *User) CurrentPlaygroupID() uint32 {
 
 // UserManager owns active users and delegates durable profiles to a repository.
 type UserManager struct {
-	repository       UserRepository
-	partScorer       PartScorer
-	roomManager      *RoomManager
-	mu               sync.RWMutex
-	activeUsers      map[string]*User
-	activeUsersByID  map[int64]*User
-	usersByToken     map[string]*User
-	template         *TemplateDatabase
-	worldPlayerLimit uint32
-	sessions         [256]sync.Mutex
+	repository            UserRepository
+	partScorer            PartScorer
+	admissionPolicy       AdmissionPolicy
+	gameplayAdmissionGate *admission.Gate
+	activityObserver      GameplayActivityObserver
+	activityLogger        *log.Logger
+	loginIPRecorder       GameplayLoginIPRecorder
+	roomManager           *RoomManager
+	mu                    sync.RWMutex
+	activeUsers           map[string]*User
+	activeUsersByID       map[int64]*User
+	usersByToken          map[string]*User
+	template              *TemplateDatabase
+	worldPlayerLimit      uint32
+	sessions              [256]sync.Mutex
 }
 
 // CreatureTemplates returns the immutable installed hero catalog for match-local bots.
@@ -326,6 +336,9 @@ type LoginResult struct {
 	IsSuccess         bool
 	IsAlreadyLoggedIn bool
 	IsWorldFull       bool
+	IsAdmissionClosed bool
+	AdmissionReason   string
+	AdmissionDeadline time.Time
 }
 
 // SetWorldPlayerLimit sets the maximum number of simultaneously authenticated
@@ -461,7 +474,14 @@ func (m *UserManager) createUser(ctx context.Context, displayName, loginName, pa
 	if configure != nil {
 		configure(user)
 	}
-	id, err := m.repository.Create(ctx, user.Record())
+	var id int64
+	registrationRepository, isRegistrationAvailable := m.repository.(UserRegistrationRepository)
+	if isRegistrationAvailable {
+		id, err = registrationRepository.CreateRegistered(ctx, user.Record())
+	} else {
+		// Legacy repository adapters can still create profiles without activity collection.
+		id, err = m.repository.Create(ctx, user.Record())
+	}
 	if errors.Is(err, ErrUserExists) {
 		return nil, fmt.Errorf("userExists: %w", ErrUserExists)
 	}
@@ -492,8 +512,26 @@ func (m *UserManager) Authenticate(
 	if err != nil {
 		return UserIdentity{}, fmt.Errorf("credentialLoad: %w", err)
 	}
-	if !isPasswordMatch(record.Password, password) {
+	storedPassword := record.Password
+	credentialRepository, isCredentialAvailable := m.repository.(AccountControlRepository)
+	if isCredentialAvailable {
+		// Buffered gameplay snapshots never own current credentials. A late
+		// snapshot must not make an old password valid after a password change.
+		credential, credentialErr := credentialRepository.LoadAccountCredential(ctx, record.Account.ID)
+		if credentialErr != nil {
+			return UserIdentity{}, fmt.Errorf("credentialCurrent: %w", credentialErr)
+		}
+		if !strings.EqualFold(credential.LoginName, strings.TrimSpace(loginName)) {
+			return UserIdentity{}, fmt.Errorf("credentialIdentity: %w", ErrUserNotFound)
+		}
+		storedPassword = credential.Password
+	}
+	if !isPasswordMatch(storedPassword, password) {
 		return UserIdentity{}, fmt.Errorf("credentialPassword: %w", ErrPasswordIncorrect)
+	}
+	err = m.checkAdmission(ctx, record.Account.ID)
+	if err != nil {
+		return UserIdentity{}, fmt.Errorf("credentialAccess: %w", err)
 	}
 	return UserIdentity{
 		ID:        record.Account.ID,
@@ -567,6 +605,10 @@ func (m *UserManager) ResolveDesktop(ctx context.Context, loginName string) (Use
 	if err != nil {
 		return UserIdentity{}, fmt.Errorf("desktopLoad: %w", err)
 	}
+	err = m.checkAdmission(ctx, record.Account.ID)
+	if err != nil {
+		return UserIdentity{}, fmt.Errorf("desktopAccess: %w", err)
+	}
 	return UserIdentity{ID: record.Account.ID, LoginName: record.LoginName, DisplayName: record.DisplayName}, nil
 }
 
@@ -615,6 +657,7 @@ func (m *UserManager) login(ctx context.Context, loginName string, verify func(s
 	m.mu.RUnlock()
 	if active != nil {
 		active.mu.RLock()
+		activeID := active.Account.ID
 		isCurrentIdentity := accountID <= 0 || active.Account.ID == accountID
 		if accountID == 0 {
 			isCurrentIdentity = notBefore > active.CreateDT.Unix()
@@ -623,6 +666,17 @@ func (m *UserManager) login(ctx context.Context, loginName string, verify func(s
 		active.mu.RUnlock()
 		if !isVerified {
 			return LoginResult{}
+		}
+		err := m.checkAdmission(ctx, activeID)
+		if err != nil {
+			return LoginResult{}
+		}
+		if active.CurrentGameID() == 0 {
+			lease, admissionResult := m.enterGameplayAdmission(ctx)
+			if lease == nil {
+				return admissionResult
+			}
+			defer closeGameplayAdmission(lease)
 		}
 		return LoginResult{User: active, IsAlreadyLoggedIn: true}
 	}
@@ -653,6 +707,15 @@ func (m *UserManager) login(ctx context.Context, loginName string, verify func(s
 	if verify == nil || !verify(record.Password) {
 		return LoginResult{User: user}
 	}
+	err = m.checkAdmission(ctx, record.Account.ID)
+	if err != nil {
+		return LoginResult{}
+	}
+	lease, admissionResult := m.enterGameplayAdmission(ctx)
+	if lease == nil {
+		return admissionResult
+	}
+	defer closeGameplayAdmission(lease)
 	err = m.prepareTutorialRoster(ctx, user)
 	if err != nil {
 		return LoginResult{User: user}

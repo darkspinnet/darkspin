@@ -78,6 +78,7 @@ var postgresSchemaStatements = []string{
 	)`,
 	`CREATE TABLE IF NOT EXISTS user_stat (
 		user_id BIGINT PRIMARY KEY REFERENCES "user"(id) ON DELETE CASCADE,
+		dna_earned BIGINT NOT NULL DEFAULT 0,
 		pve_play_time_second BIGINT NOT NULL DEFAULT 0,
 		pve_minion_kill BIGINT NOT NULL DEFAULT 0,
 		pve_special_kill BIGINT NOT NULL DEFAULT 0,

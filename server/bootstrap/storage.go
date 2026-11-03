@@ -9,18 +9,24 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Storage owns stopped-server snapshots and the durable candidate transaction.
 // Its methods must only be used while the supervised process is stopped, except
 // ConfirmHealthy, which only commits metadata and prunes old snapshots.
 type Storage struct {
-	root           string
-	retentionDays  int
-	DatabaseBackup DatabaseBackup
+	root                string
+	retentionDays       int
+	DatabaseBackup      DatabaseBackup
+	candidateVersion    string
+	isCandidateRestored bool
+	logger              *slog.Logger
+	restoreStartedAt    time.Time
 }
 
 // DatabaseBackup captures and restores the exclusive player database while the
@@ -40,11 +46,15 @@ type snapshotManifest struct {
 	IsComplete     bool   `json:"is_complete"`
 	DatabaseTarget string `json:"database_target,omitempty"`
 	DatabaseHash   string `json:"database_sha256,omitempty"`
+	DatabaseBytes  int64  `json:"database_bytes,omitempty"`
 }
 
 type updateTransaction struct {
-	Backup string `json:"backup"`
-	Phase  string `json:"phase"`
+	Backup           string `json:"backup"`
+	Phase            string `json:"phase"`
+	OperationID      string `json:"operation_id,omitempty"`
+	InstalledVersion string `json:"installed_version,omitempty"`
+	CandidateVersion string `json:"candidate_version,omitempty"`
 }
 
 func NewStorage(root string, retentionDays int) (*Storage, error) {
@@ -63,6 +73,9 @@ func NewStorage(root string, retentionDays int) (*Storage, error) {
 	ownedPaths := []string{
 		"bin/darkrun", "bin/darkrun.candidate", "backup", "bootstrap-lock/server.lock",
 		"firstboot.json", "firstboot.json.tmp", "update-request.json",
+		"runtime/maintenance-result.json", "runtime/maintenance-result.json.tmp",
+		"runtime/backup-observation.json", "runtime/backup-observation.json.tmp",
+		"runtime/restore-observation.json", "runtime/restore-observation.json.tmp",
 		"runtime/darkspin.toml", "runtime/server.toml", "runtime/darkspin/server.lock", "runtime/darkspin/maintenance.json",
 		"runtime/darkspin/saves/darkspin.db", "runtime/darkspin/saves/darkspin.db-wal",
 		"runtime/darkspin/saves/darkspin.db-shm", "runtime/darkspin/cache/content.db",

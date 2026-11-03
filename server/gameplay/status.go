@@ -56,6 +56,10 @@ type tutorialStatusProgression interface {
 	GrantCampaignExperience(context.Context, int64, uint64, uint32) (sporenet.TutorialExperience, error)
 }
 
+type campaignCompletionProgression interface {
+	GrantCampaignCompletionExperience(context.Context, int64, sporenet.CampaignCompletionExperience) (sporenet.TutorialExperience, error)
+}
+
 type gameplayStatusContext struct {
 	status      raknet.PlayerStatus
 	peerSession gameplayPeerSession
@@ -382,6 +386,7 @@ func (r gameplayStatusRuntime) startCampaign(
 		return [][]byte{playerPacket, startPacket, pingPacket}, nil
 	}
 	r.registry.recordScenarioPrepareAccepted(packet, peerSession, status)
+	r.observeCampaignMissionStart(ctx, peerSession)
 	r.logger.Printf(
 		"RakNet campaign game start handshake sent to %s level=%q difficulty=%d director_pools=%d director_marker_sets=%d director_markers=%d director_triggers=%d script_objects=%d peers=%d",
 		packet.Address, peerSession.binding.Level, peerSession.binding.Difficulty,
@@ -550,9 +555,11 @@ func (r gameplayStatusRuntime) campaignBeamOut(
 		}
 		snapshot.NextLevel = destination.Level
 		snapshot.IsNextReplayRandomized = destination.IsReplayRandomized
+		snapshot.IsNextNoReplay = destination.IsNoReplay
 		nextBinding.Level = destination.Level
 	}
 	nextBinding.IsReplayRandomized = snapshot.IsNextReplayRandomized
+	nextBinding.IsNoReplay = snapshot.IsNextNoReplay
 	nextBinding.RefreshReplay()
 	nextDirector, err := r.preparation.loadPreview(ctx, nextBinding)
 	if err != nil {
@@ -718,10 +725,16 @@ func (r gameplayStatusRuntime) commitCampaignExperience(
 		}
 		return zone.ExperienceCommit{}, errors.New("campaign experience busy")
 	}
-	experience, err := r.progression.GrantCampaignExperience(
-		ctx, int64(peerSession.binding.UserID), peerSession.zone.CompletionID(),
-		commit.Amount,
-	)
+	var experience sporenet.TutorialExperience
+	var err error
+	completionProgression, isCompletionAvailable := r.progression.(campaignCompletionProgression)
+	if isCompletionAvailable && peerSession.binding.Mode == game.ModeChain && !peerSession.binding.IsServerBot {
+		experience, err = completionProgression.GrantCampaignCompletionExperience(ctx, int64(peerSession.binding.UserID), sporenet.CampaignCompletionExperience{
+			ResultID: peerSession.zone.CompletionID(), Amount: commit.Amount, LevelIndex: peerSession.binding.ChainLevelIndex,
+		})
+	} else {
+		experience, err = r.progression.GrantCampaignExperience(ctx, int64(peerSession.binding.UserID), peerSession.zone.CompletionID(), commit.Amount)
+	}
 	if err != nil {
 		peerSession.zone.RollbackExperienceCommit(peerSession.binding.UserID)
 		return zone.ExperienceCommit{}, fmt.Errorf("experienceGrant: %w", err)
@@ -1988,6 +2001,14 @@ func (r campaignResultRuntime) continueChain(
 	nextBinding.ChainLevelIndex = snapshot.CompletedIndex + 1
 	nextBinding.Difficulty = nextBinding.ChainLevelIndex
 	nextBinding.IsReplayRandomized = snapshot.IsNextReplayRandomized
+	nextBinding.IsNoReplay = snapshot.IsNextNoReplay
+	destination, destinationErr := r.gameplayJoin.ResolveCampaignDestination(ctx, nextBinding)
+	if destinationErr != nil {
+		return nil, fmt.Errorf("continueDestination: %w", destinationErr)
+	}
+	nextBinding.Level = destination.Level
+	nextBinding.IsReplayRandomized = destination.IsReplayRandomized
+	nextBinding.IsNoReplay = destination.IsNoReplay
 	nextBinding.IsCatalystUnlocked = nextBinding.ChainProgression >= 3
 	for index := range nextBinding.Creatures {
 		maximumHitPoint := maximumHitPoints[index]

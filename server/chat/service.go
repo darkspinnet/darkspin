@@ -360,6 +360,8 @@ type Service struct {
 	summoner               ItemSummoner
 	leveler                LevelSetter
 	warpRequester          WarpRequester
+	noReplaySetter         NoReplaySetter
+	commandAuthorizer      CommandAuthorizer
 	npcSpawner             NPCSpawner
 	npcScalePreviewer      NPCScalePreviewer
 	godModeToggler         GodModeToggler
@@ -852,6 +854,9 @@ func (s *Service) ReportBug(ctx context.Context, command BugCommand) (string, er
 		if contextErr != nil {
 			command.ContextError = contextErr.Error()
 		}
+	}
+	if s.noReplaySetter != nil {
+		command.Context.IsNoReplayEnabled = s.noReplaySetter.IsNoReplayEnabled(command.Sender.ID)
 	}
 	reportName, err := s.bugReporter.Report(ctx, command)
 	if err != nil {

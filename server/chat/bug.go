@@ -38,6 +38,9 @@ type BugContext struct {
 	CampaignProgression    uint32             `json:"campaign_progression,omitempty"`
 	AbilityCount           uint32             `json:"ability_count,omitempty"`
 	IsReplay               bool               `json:"is_replay,omitempty"`
+	IsReplayRandomized     bool               `json:"is_replay_randomized"`
+	IsNoReplay             bool               `json:"is_noreplay"`
+	IsNoReplayEnabled      bool               `json:"is_noreplay_enabled"`
 	IsCheckpointRestore    bool               `json:"is_checkpoint_restore,omitempty"`
 	IsOverdriveUnlocked    bool               `json:"is_overdrive_unlocked,omitempty"`
 	IsDungeonSetupReady    bool               `json:"is_dungeon_setup_ready,omitempty"`

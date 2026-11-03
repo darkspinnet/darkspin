@@ -71,6 +71,7 @@ type debugScript struct {
 }
 
 func (e *debugSupervisor) prepareScript(ctx context.Context, name string) {
+	defer e.finishProfiling()
 	startedAt := time.Now().UTC()
 	scriptDirectory := filepath.Join(e.reportDirectory, "scripts", startedAt.Format("20060102T150405.000000000"))
 	script, source, err := readDebugScript(e.scriptRoot, name)
@@ -144,12 +145,18 @@ func (e *debugSupervisor) prepareScript(ctx context.Context, name string) {
 }
 
 func (e *debugSupervisor) logLuaActivity(message string) {
+	if e.onLog != nil {
+		e.onLog("Lua: " + message)
+	}
 	count, err := fmt.Fprintln(os.Stderr, "Lua:", message)
 	if err != nil || count == 0 { /* The durable script result remains available through the supervisor. */
 	}
 }
 
 func (e *debugSupervisor) logFailure(step string, err error) {
+	if e.onLog != nil {
+		e.onLog(step + ": " + err.Error())
+	}
 	count, outputErr := fmt.Fprintln(os.Stderr, step+":", err)
 	if outputErr != nil || count == 0 {
 		// Stderr has no consumer; registry state remains available through the API.

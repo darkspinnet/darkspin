@@ -6,6 +6,9 @@ import (
 	"runtime/debug"
 	"sync"
 
+	"github.com/darkspinnet/darkspin/server/accountaccess"
+	"github.com/darkspinnet/darkspin/server/admission"
+
 	"github.com/darkspinnet/darkspin/server/blaze/tdf"
 	"github.com/darkspinnet/darkspin/server/databuffer"
 	"github.com/darkspinnet/darkspin/server/game"
@@ -124,6 +127,9 @@ type Registry struct {
 	mu                sync.RWMutex
 	components        map[uint16]Component
 	matchmakingConfig *game.Config
+	admissionGate     *admission.Gate
+	welcomeProvider   WelcomeProvider
+	accountAuthorizer sessionAdmissionAuthorizer
 	// Serialize ship disconnect cleanup against replacement authentication and
 	// ordinary party/game admission. This gate is never held for socket writes.
 	partyLifecycle      sync.Mutex
@@ -174,6 +180,13 @@ func (r *Registry) dispatch(
 		MessageID: frame.MessageID,
 	}
 	defer recoverDispatch(session, frame, reply, &result)
+	ctx = accountaccess.WithPeer(ctx, sessionRemoteIP(session))
+	err := r.authorizeSession(ctx, session)
+	if err != nil {
+		reply.Type = ErrorReply
+		reply.ErrorCode = authInvalidUser
+		return dispatchResult{reply: reply}
+	}
 	if frame.Component == AuthComponentID || frame.Component == GameManagerComponentID || frame.Component == PlaygroupsComponentID {
 		lockErr := r.lockPartyLifecycle(ctx)
 		if lockErr != nil {
@@ -182,6 +195,14 @@ func (r *Registry) dispatch(
 			return dispatchResult{reply: reply}
 		}
 		defer r.partyLifecycle.Unlock()
+	}
+	if isGameAdmissionFrame(frame) {
+		lease, admissionErr := r.enterGameplayAdmission(ctx)
+		if admissionErr != nil {
+			return admissionFrameFailure(reply, admissionErr)
+		}
+		defer closeBlazeAdmission(lease, session)
+		ctx = lease.Context(ctx)
 	}
 
 	component, isFound := r.Component(frame.Component)
@@ -234,6 +255,9 @@ func (r *Registry) dispatch(
 		return dispatchResult{reply: reply}
 	}
 	reply.Payload = payload.Bytes()
+	if reply.Type == Reply {
+		r.queueSessionWelcome(ctx, request)
+	}
 	return dispatchResult{
 		reply: reply, beforeReplyFrames: request.beforeReplyFrames,
 		notifications: request.notifications, targetedNotifications: request.targetedNotifications,

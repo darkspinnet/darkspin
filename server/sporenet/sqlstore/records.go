@@ -44,8 +44,6 @@ const insertUserQuery = `
 
 const updateUserQuery = `
 	UPDATE "user" SET
-		display_name = :display_name,
-		password = :password,
 		last_connection_dt = :last_connection_dt,
 		is_tutorial_completion_pending = :is_tutorial_completion_pending,
 		is_all_access_granted = :is_all_access_granted,
@@ -103,7 +101,7 @@ func writeDependents(ctx context.Context, tx *sqlx.Tx, record sporenet.UserRecor
 	}
 	_, err = tx.NamedExecContext(ctx, `
 		INSERT INTO user_stat (
-			user_id, pve_play_time_second, pve_minion_kill, pve_special_kill,
+			user_id, dna_earned, pve_play_time_second, pve_minion_kill, pve_special_kill,
 			pve_boss_kill, pve_total_kill, pve_death, pve_damage_dealt,
 			pve_damage_taken, pve_damage_maximum, pve_healing,
 			pve_healing_received, pve_healing_maximum, pvp_play_time_second,
@@ -111,7 +109,7 @@ func writeDependents(ctx context.Context, tx *sqlx.Tx, record sporenet.UserRecor
 			pvp_damage_taken, pvp_damage_maximum, pvp_healing,
 			pvp_healing_received, pvp_healing_maximum
 		) VALUES (
-			:user_id, :pve_play_time_second, :pve_minion_kill, :pve_special_kill,
+			:user_id, :dna_earned, :pve_play_time_second, :pve_minion_kill, :pve_special_kill,
 			:pve_boss_kill, :pve_total_kill, :pve_death, :pve_damage_dealt,
 			:pve_damage_taken, :pve_damage_maximum, :pve_healing,
 			:pve_healing_received, :pve_healing_maximum, :pvp_play_time_second,
@@ -162,7 +160,9 @@ func writeDependents(ctx context.Context, tx *sqlx.Tx, record sporenet.UserRecor
 		for index, member := range members {
 			_, err = tx.NamedExecContext(ctx, `
 				INSERT INTO user_association (user_id, list_type, member_id, name, associated_at)
-				VALUES (:user_id, :list_type, :member_id, :name, :associated_at)`, userAssociationRow{
+				VALUES (:user_id, :list_type, :member_id,
+					COALESCE((SELECT display_name FROM "user" WHERE id = :member_id AND trmt_id = 0), :name),
+					:associated_at)`, userAssociationRow{
 				UserID: record.Account.ID, ListType: listType, MemberID: member.ID,
 				Name: member.Name, AssociatedAt: member.Time,
 			})

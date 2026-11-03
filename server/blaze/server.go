@@ -67,6 +67,8 @@ type Session struct {
 	displayName           string
 	recentRequests        map[requestKey]requestRecord
 	pendingPlaygroupLeave *playgroupDisconnectLeave
+	loginHistoryMutex     sync.Mutex
+	loginHistoryUsers     map[int64]struct{}
 }
 
 type requestKey struct {
@@ -302,6 +304,11 @@ func (s *Session) serve(ctx context.Context) {
 		}
 		s.traceFrame("in", frame)
 		if s.isRequestReplay(frame, time.Now()) {
+			err = s.server.registry.authorizeSession(ctx, s)
+			if err != nil {
+				s.server.logger.Printf("Blaze session %d replay access denied: %v", s.ID, err)
+				return
+			}
 			s.traceReplay(frame)
 			reply, isFound := s.cachedRequestReply(frame)
 			if isFound {

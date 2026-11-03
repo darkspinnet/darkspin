@@ -21,6 +21,7 @@ type DebugProfileState struct {
 	UserID                    int64
 	IsAuthenticated           bool
 	SessionID                 string
+	IsNoReplayEnabled         bool
 	IsUserActive              bool
 	GameID                    uint32
 	PlaygroupID               uint32
@@ -34,6 +35,9 @@ type DebugProfileState struct {
 	SessionStage              string
 	MissionLabel              string
 	MissionAsset              string
+	IsReplay                  bool
+	IsReplayRandomized        bool
+	IsNoReplay                bool
 	MissionDifficulty         uint32
 	IsDungeonSetupFinal       bool
 	IsArena                   bool
@@ -90,6 +94,7 @@ func (e *Server) DebugProfileState(ctx context.Context, userID int64) (DebugProf
 		return result, nil
 	}
 	result.GameID = user.CurrentGameID()
+	result.IsNoReplayEnabled = user.IsNoReplayEnabled()
 	result.PlaygroupID = user.CurrentPlaygroupID()
 	provider, isSupported := e.bugContext.(debugGameplayStateProvider)
 	if !isSupported {
@@ -109,6 +114,9 @@ func (e *Server) DebugProfileState(ctx context.Context, userID int64) (DebugProf
 		return result, nil
 	}
 	result.IsGameplayActive = gameplay.IsGameplayActive
+	result.IsReplay = gameplay.IsReplay
+	result.IsReplayRandomized = gameplay.IsReplayRandomized
+	result.IsNoReplay = gameplay.IsNoReplay
 	if !gameplay.IsGameplayActive {
 		return result, nil
 	}

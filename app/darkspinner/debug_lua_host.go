@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"sync"
 	"time"
 )
@@ -40,73 +39,61 @@ type debugLuaCompletion struct {
 }
 
 func (e *debugSupervisor) executeLua(ctx context.Context, script debugScript, source []byte) *debugLuaFailure {
-	executable, err := os.Executable()
-	if err != nil {
-		return debugLuaGoFailure("helperExecutable", err)
-	}
 	limit := e.executionLimit
 	if limit == 0 {
 		limit = debugLuaExecutionLimit
 	}
 	deadline := time.Now().Add(limit)
-	helperContext, cancel := context.WithDeadline(ctx, deadline.Add(5*time.Second))
+	helperContext, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
-	command := exec.CommandContext(helperContext, executable, debugLuaWorkerArgument)
-	configureDebugLuaProcess(command)
-	command.WaitDelay = 2 * time.Second
-	w, err := os.CreateTemp(e.reportDirectory, "lua-helper-*.log")
-	if err != nil {
-		return debugLuaGoFailure("helperLog", err)
-	}
-	defer e.closeLuaPipe(w)
-	command.Stderr = w
-	input, err := command.StdinPipe()
-	if err != nil {
-		return debugLuaGoFailure("helperInput", err)
-	}
+	// Keep the bounded operation protocol and single Lua-state owner, using
+	// memory pipes rather than another Darkspinner process. SetContext interrupts
+	// Lua execution; cancellation closes both pipes to release pending operations.
+	vmInput, input := io.Pipe()
+	output, vmOutput := io.Pipe()
 	defer e.closeLuaPipe(input)
-	output, err := command.StdoutPipe()
-	if err != nil {
-		return debugLuaGoFailure("helperOutput", err)
-	}
 	defer e.closeLuaPipe(output)
-	err = command.Start()
-	if err != nil {
-		return debugLuaGoFailure("helperStart", err)
-	}
-	job, err := containDebugLuaProcess(command.Process)
-	if err != nil {
-		killErr := command.Process.Kill()
-		waitErr := command.Wait()
-		return debugLuaGoFailure("helperContain", errors.Join(err, killErr, waitErr))
-	}
-	defer e.closeLuaJob(job)
+	vmDone := make(chan struct{})
+	go e.runEmbeddedLua(helperContext, debugLuaBootstrap{Name: script.Name, Source: string(source), Deadline: deadline}, vmInput, vmOutput, vmDone)
 	scanner := bufio.NewScanner(output)
 	scanner.Buffer(make([]byte, 4096), debugLuaFrameLimit)
 	host := &debugLuaHost{supervisor: e, scanner: scanner, encoder: json.NewEncoder(input), input: input, output: output}
-	err = host.encoder.Encode(debugLuaFrame{Version: 1, Kind: "bootstrap", Bootstrap: &debugLuaBootstrap{
-		Name: script.Name, Source: string(source), Deadline: deadline}})
-	if err != nil {
-		cancel()
-		waitErr := command.Wait()
-		return debugLuaGoFailure("helperBootstrap", errors.Join(err, waitErr))
-	}
 	// This owner writes responses; bounded operation workers own no Lua state.
 	failure, exchangeErr := host.serve(helperContext)
 	if exchangeErr != nil {
 		cancel()
 	}
-	waitErr := command.Wait()
+	<-vmDone
 	if ctx.Err() != nil {
 		return &debugLuaFailure{Failure: &debugError{Code: "interrupted", Context: "scriptStop", Message: ctx.Err().Error()}}
 	}
 	if errors.Is(helperContext.Err(), context.DeadlineExceeded) {
 		return &debugLuaFailure{Failure: &debugError{Code: "deadline_exceeded", Context: "scriptDeadline", Message: helperContext.Err().Error()}}
 	}
-	if exchangeErr != nil || waitErr != nil {
-		return debugLuaGoFailure("helperExit", errors.Join(exchangeErr, waitErr))
+	if exchangeErr != nil {
+		return debugLuaGoFailure("luaExchange", exchangeErr)
 	}
 	return failure
+}
+
+func (e *debugSupervisor) runEmbeddedLua(ctx context.Context, bootstrap debugLuaBootstrap,
+	input *io.PipeReader, output *io.PipeWriter, done chan<- struct{}) {
+	defer close(done)
+	defer e.closeLuaPipe(input)
+	defer e.closeLuaPipe(output)
+	scanner := bufio.NewScanner(input)
+	scanner.Buffer(make([]byte, 4096), debugLuaFrameLimit)
+	vm := &debugLuaVM{scanner: scanner, encoder: json.NewEncoder(output)}
+	failure := vm.execute(ctx, bootstrap)
+	response := debugLuaFrame{Version: 1, Kind: "finished", Sequence: vm.sequence}
+	if failure != nil {
+		response.Failure = failure.Failure
+		response.Traceback = failure.Traceback
+	}
+	err := vm.encoder.Encode(response)
+	if err != nil && ctx.Err() == nil {
+		e.logFailure("Lua completion", err)
+	}
 }
 
 func (e *debugSupervisor) closeLuaPipe(pipe io.Closer) {

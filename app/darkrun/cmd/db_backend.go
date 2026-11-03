@@ -56,7 +56,19 @@ func isPlayerTable(table string) bool {
 	case "user", "setting", "user_stat", "user_event", "campaign_experience",
 		"pvp_match_result", "user_association", "squad", "squad_creature",
 		"creature", "creature_stat", "creature_ability_stat", "part", "part_shop",
-		"extension", "chat_log", "zone_checkpoint", "zone_checkpoint_member":
+		"extension", "chat_log", "zone_checkpoint", "zone_checkpoint_member",
+		"account_access", "admin_event", "user_login_ip", "server_identity",
+		"activity_collection", "activity_maintenance", "activity_signup_sample",
+		"activity_hour_distribution", "activity_day_distribution",
+		"activity_hour_queue", "activity_day_queue",
+		"activity_campaign_first_completion", "activity_campaign_completion", "activity_campaign_day", "activity_campaign_sample",
+		"activity_campaign_level",
+		"activity_mission", "activity_mission_day",
+		"activity_population_sample", "activity_first_admission", "activity_level_sample",
+		"activity_progression_sample", "activity_user_sample", "activity_sample", "activity_presence",
+		"activity_hour_sample", "activity_hour_presence", "activity_day_sample", "activity_day_presence",
+		"activity_hour_dna", "activity_day_dna", "activity_user_hour_dna", "activity_user_day_dna",
+		"activity_user_day_presence":
 		return true
 	default:
 		return false

@@ -21,6 +21,8 @@ const (
 type LauncherIntegrationStatus struct {
 	IsStartMenuInstalled   bool   `json:"isStartMenuInstalled"`
 	IsDesktopInstalled     bool   `json:"isDesktopInstalled"`
+	IsStartMenuOwned       bool   `json:"isStartMenuOwned"`
+	IsDesktopOwned         bool   `json:"isDesktopOwned"`
 	IsSteamLaunchInstalled bool   `json:"isSteamLaunchInstalled"`
 	IsManagementSupported  bool   `json:"isManagementSupported"`
 	Message                string `json:"message"`

@@ -6,13 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/BurntSushi/toml"
-	"github.com/darkspinnet/darkspin/server/assets"
 )
 
 // DefaultConfigFilename is the conventional server configuration filename.
@@ -81,8 +79,9 @@ var defaultConfigValues = map[ConfigKey]string{
 
 // Config is a concurrency-safe representation of darkspin.toml.
 type Config struct {
-	mu     sync.RWMutex
-	values map[ConfigKey]string
+	mu      sync.RWMutex
+	values  map[ConfigKey]string
+	changes map[ConfigKey]string
 }
 
 type configDocument struct {
@@ -162,26 +161,26 @@ func DefaultConfig() *Config {
 func LoadConfig(path string) (*Config, bool, error) {
 	config := DefaultConfig()
 
-	file, err := os.Open(path)
+	contents, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		directory := filepath.Dir(path)
-		err = os.MkdirAll(directory, 0o755)
-		if err != nil {
-			return nil, false, fmt.Errorf("defaultDirectory: %w", err)
+		isCreated, createErr := createDefaultConfiguration(path)
+		if createErr != nil {
+			return nil, false, fmt.Errorf("defaultCreate: %w", createErr)
 		}
-		err = os.WriteFile(path, assets.DefaultConfigTOML, 0o644)
-		if err != nil {
-			return nil, false, fmt.Errorf("defaultSave: %w", err)
+		if !isCreated {
+			currentConfig, isCurrentCreated, loadErr := LoadConfig(path)
+			if loadErr != nil {
+				return nil, false, fmt.Errorf("defaultReload: %w", loadErr)
+			}
+			return currentConfig, isCurrentCreated, nil
 		}
 		return config, true, nil
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("configOpen: %w", err)
 	}
-	defer file.Close()
-
 	document := configDocument{}
-	_, err = toml.NewDecoder(file).Decode(&document)
+	err = toml.Unmarshal(contents, &document)
 	if err != nil {
 		return nil, false, fmt.Errorf("configDecode: %w", err)
 	}
@@ -220,54 +219,123 @@ func LoadConfig(path string) (*Config, bool, error) {
 	return config, false, nil
 }
 
-// Save writes a compact, typed TOML configuration.
-func (c *Config) Save(path string) error {
-	c.mu.RLock()
-	values := make(map[ConfigKey]string, len(c.values))
-	for key, value := range c.values {
-		values[key] = value
+// Save merges explicitly changed settings into the latest shared document.
+// Settings owned by other features retain their current values.
+func (e *Config) Save(path string) error {
+	e.mu.RLock()
+	settings := make(map[ConfigKey]string, len(e.values))
+	for key, setting := range e.values {
+		settings[key] = setting
 	}
-	c.mu.RUnlock()
-
-	document, err := encodeConfigDocument(values)
+	changes := make(map[ConfigKey]string, len(e.changes))
+	for key, setting := range e.changes {
+		changes[key] = setting
+	}
+	e.mu.RUnlock()
+	document, err := encodeConfigDocument(settings)
 	if err != nil {
 		return fmt.Errorf("configEncode: %w", err)
 	}
-	// Launcher-owned settings are read at save time so an older server Config
-	// cannot overwrite a launcher preference changed since the server started.
-	currentContents, readErr := os.ReadFile(path)
-	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
-		return fmt.Errorf("launcherRead: %w", readErr)
+	var typedContents bytes.Buffer
+	err = toml.NewEncoder(&typedContents).Encode(document)
+	if err != nil {
+		return fmt.Errorf("configMarshal: %w", err)
 	}
-	if readErr == nil {
-		var currentDocument configDocument
-		decodeErr := toml.Unmarshal(currentContents, &currentDocument)
-		if decodeErr != nil {
-			return fmt.Errorf("launcherDecode: %w", decodeErr)
+	typedSections := make(map[string]any)
+	err = toml.Unmarshal(typedContents.Bytes(), &typedSections)
+	if err != nil {
+		return fmt.Errorf("configProjection: %w", err)
+	}
+	configurationMutex.Lock()
+	defer configurationMutex.Unlock()
+	currentContents, err := readConfiguration(path)
+	if err != nil {
+		return fmt.Errorf("configRead: %w", err)
+	}
+	sections := make(map[string]any)
+	err = toml.Unmarshal(currentContents, &sections)
+	if err != nil {
+		return fmt.Errorf("configDecode: %w", err)
+	}
+	if len(sections) == 0 {
+		sections = typedSections
+	} else {
+		for key := range changes {
+			fieldPath, isKnown := configFieldPaths[key]
+			if !isKnown {
+				return fmt.Errorf("unknown configuration field %q", key)
+			}
+			typedFields, isTypedTable := typedSections[fieldPath[0]].(map[string]any)
+			if !isTypedTable {
+				return fmt.Errorf("invalid configuration section %q", fieldPath[0])
+			}
+			fields, isTable := sections[fieldPath[0]].(map[string]any)
+			if !isTable {
+				fields = make(map[string]any)
+				sections[fieldPath[0]] = fields
+			}
+			fields[fieldPath[1]] = typedFields[fieldPath[1]]
 		}
-		document.LauncherFields = currentDocument.LauncherFields
 	}
-	contents := bytes.Buffer{}
-	err = toml.NewEncoder(&contents).Encode(document)
+	if len(changes) == 0 && len(currentContents) > 0 {
+		serverFields, isServerTable := sections["server"].(map[string]any)
+		isDedicated, isDedicatedBoolean := serverFields["is_dedicated"].(bool)
+		if isServerTable && isDedicatedBoolean && isDedicated {
+			// A no-op save must still retain the dedicated signing-key protection
+			// enforced by the shared replacement writer on changed documents.
+			err = os.Chmod(path, 0o600)
+			if err != nil {
+				return fmt.Errorf("configProtect: %w", err)
+			}
+		}
+		return nil
+	}
+	var contents bytes.Buffer
+	err = toml.NewEncoder(&contents).Encode(sections)
 	if err != nil {
 		return fmt.Errorf("tomlEncode: %w", err)
 	}
-
-	mode := os.FileMode(0o644)
-	if configBool(values[ConfigServerIsDedicated]) {
-		mode = 0o600
-		// Tighten an existing file before writing the dedicated signing key.
-		// WriteFile only applies its mode when creating a new file.
-		err = os.Chmod(path, mode)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("configProtect: %w", err)
-		}
-	}
-	err = os.WriteFile(path, contents.Bytes(), mode)
+	err = replaceConfiguration(path, currentContents, contents.Bytes())
 	if err != nil {
 		return fmt.Errorf("configWrite: %w", err)
 	}
+	e.mu.Lock()
+	for key, setting := range changes {
+		if e.changes[key] == setting {
+			delete(e.changes, key)
+		}
+	}
+	e.mu.Unlock()
 	return nil
+}
+
+var configFieldPaths = map[ConfigKey][2]string{
+	ConfigIsVersionLocked:                    {"game", "is_version_locked"},
+	ConfigIsSingleplayerOnly:                 {"game", "is_singleplayer_only"},
+	ConfigClientLocale:                       {"game", "locale"},
+	ConfigCampaignMatchmakingBotSize:         {"game", "campaign_matchmaking_bot_size"},
+	ConfigIsCampaignBotSquadMirroringEnabled: {"game", "is_campaign_bot_squad_mirroring_enabled"},
+	ConfigServerPort:                         {"server", "port"},
+	ConfigServerBindHost:                     {"server", "bind_host"},
+	ConfigServerAdvertisedHost:               {"server", "advertised_host"},
+	ConfigServerIsDedicated:                  {"server", "is_dedicated"},
+	ConfigIsMultiplayerEnabled:               {"server", "is_multiplayer_enabled"},
+	ConfigWorldPlayerLimit:                   {"server", "world_player_limit"},
+	ConfigContentPath:                        {"content", "path"},
+	ConfigIsChatStdoutEnabled:                {"chat", "is_stdout_enabled"},
+	ConfigStorageDriver:                      {"storage", "driver"},
+	ConfigAuthJWTSecret:                      {"auth", "jwt_secret"},
+	ConfigAuthJWTIssuer:                      {"auth", "jwt_issuer"},
+	ConfigAuthJWTAudience:                    {"auth", "jwt_audience"},
+	ConfigSnapshotMode:                       {"snapshot", "mode"},
+	ConfigSnapshotBufferSecond:               {"snapshot", "buffer_duration_seconds"},
+	ConfigSnapshotDelaySecond:                {"snapshot", "delay_seconds"},
+	ConfigBootstrapIsUpdateEnabled:           {"bootstrap", "is_update_enabled"},
+	ConfigBootstrapUpdateCron:                {"bootstrap", "update_cron"},
+	ConfigBootstrapWarningMinutes:            {"bootstrap", "warning_minutes"},
+	ConfigBootstrapStartupTimeoutSeconds:     {"bootstrap", "startup_timeout_seconds"},
+	ConfigBootstrapBackupRetentionDays:       {"bootstrap", "backup_retention_days"},
+	ConfigBootstrapManifestURL:               {"bootstrap", "manifest_url"},
 }
 
 func encodeConfigDocument(values map[ConfigKey]string) (configDocument, error) {
@@ -445,6 +513,10 @@ func (c *Config) Set(key ConfigKey, value string) error {
 	}
 	c.mu.Lock()
 	c.values[key] = value
+	if c.changes == nil {
+		c.changes = make(map[ConfigKey]string)
+	}
+	c.changes[key] = value
 	c.mu.Unlock()
 	return nil
 }

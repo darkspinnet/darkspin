@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/darkspinnet/darkspin/server/accountaccess"
 	"github.com/darkspinnet/darkspin/server/sporenet"
 )
 
@@ -23,8 +24,8 @@ func validateDesktopLogin(username, password string, isPasswordRequired bool) er
 }
 
 func writeDesktopRegistrationError(writer http.ResponseWriter, err error) {
-	status := http.StatusConflict
-	message := err.Error()
+	status := http.StatusServiceUnavailable
+	message := "Account registration is unavailable."
 	switch {
 	case errors.Is(err, sporenet.ErrUsernameRequired):
 		status, message = http.StatusBadRequest, sporenet.ErrUsernameRequired.Error()
@@ -37,6 +38,7 @@ func writeDesktopRegistrationError(writer http.ResponseWriter, err error) {
 	case errors.Is(err, sporenet.ErrPasswordTooLong):
 		status, message = http.StatusBadRequest, sporenet.ErrPasswordTooLong.Error()
 	case errors.Is(err, sporenet.ErrUserExists):
+		status = http.StatusConflict
 		message = "Username already exists on this server. Check your password or choose another username."
 	}
 	writeAuthError(writer, status, message)
@@ -47,6 +49,10 @@ func (e *LocalBroker) writeDesktopAuthenticationError(writer http.ResponseWriter
 	code := "invalid_credentials"
 	message := "Username or password is incorrect."
 	switch {
+	case errors.Is(err, accountaccess.ErrAccessDenied):
+		status = http.StatusForbidden
+		code = "access_denied"
+		message = "This account cannot access the server."
 	case errors.Is(err, sporenet.ErrPasswordIncorrect):
 		code = "invalid_password"
 		message = "Username already exists on this server, but the password is incorrect."

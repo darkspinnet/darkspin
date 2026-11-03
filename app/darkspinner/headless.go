@@ -17,7 +17,6 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -60,30 +59,14 @@ func runHeadless(app *App, isBrowserAutoOpenEnabled bool) error {
 		return fmt.Errorf("handlerCreate: %w", err)
 	}
 	app.launcherHandler = handler
-	address, bootstrapServer, bootstrapDone, err := startLauncherBootstrap(handler, token, app.lua != nil && app.GetLuaConsole().IsSelected)
+	bootstrap := &launcherBrowserHost{ctx: ctx, handler: handler, token: token}
+	address, err := bootstrap.start()
 	if err != nil {
 		return fmt.Errorf("bootstrapStart: %w", err)
 	}
-	var bootstrapStopOnce sync.Once
-	var bootstrapStopErr error
-	stopBootstrap := func() error {
-		bootstrapStopOnce.Do(func() {
-			closeErr := bootstrapServer.Close()
-			serveErr := <-bootstrapDone
-			if closeErr != nil {
-				bootstrapStopErr = fmt.Errorf("bootstrapClose: %w", closeErr)
-				return
-			}
-			if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-				bootstrapStopErr = fmt.Errorf("bootstrapServe: %w", serveErr)
-			}
-		})
-		return bootstrapStopErr
-	}
-	app.beforeServerStart = stopBootstrap
-	defer func() {
-		_ = stopBootstrap()
-	}()
+	app.beforeServerStart = bootstrap.stop
+	app.resumeLauncherHTTP = bootstrap.resume
+	defer bootstrap.close()
 	app.startup(ctx)
 	defer app.shutdown(context.Background())
 	fmt.Println("DarkSpinner browser launcher:", address)
@@ -92,9 +75,7 @@ func runHeadless(app *App, isBrowserAutoOpenEnabled bool) error {
 	return nil
 }
 
-func startLauncherBootstrap(
-	handler http.Handler, token string, isLuaMode bool,
-) (string, *http.Server, <-chan error, error) {
+func startLauncherBootstrap(handler http.Handler, token string) (string, *http.Server, <-chan error, error) {
 	basePath, err := executableDirectory()
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("executableDirectory: %w", err)
@@ -116,9 +97,6 @@ func startLauncherBootstrap(
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", nil, nil, fmt.Errorf("configStat: %w", err)
-	}
-	if isLuaMode {
-		port = 0
 	}
 	listenerAddress := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", port))
 	listener, err := net.Listen("tcp", listenerAddress)
@@ -215,6 +193,7 @@ func launcherMethods(app *App) map[string]any {
 		"DeleteProfile":                      app.DeleteProfile,
 		"DeleteModProfile":                   app.DeleteModProfile,
 		"DeleteRemoteProfile":                app.DeleteRemoteProfile,
+		"DeleteRemoteConnection":             app.DeleteRemoteConnection,
 		"ResetProfileDisplay":                app.ResetProfileDisplay,
 		"ResetModProfileDisplay":             app.ResetModProfileDisplay,
 		"DiscardInterruptedMission":          app.DiscardInterruptedMission,
@@ -239,6 +218,38 @@ func launcherMethods(app *App) map[string]any {
 		"IsProfileRunning":                   app.IsProfileRunning,
 		"LaunchRemoteProfile":                app.LaunchRemoteProfile,
 		"LoginRemoteProfile":                 app.LoginRemoteProfile,
+		"OpenRemoteControlPanel":             app.OpenRemoteControlPanel,
+		"OpenLocalControlPanel":              app.OpenLocalControlPanel,
+		"GetRemoteControlPanel":              app.GetRemoteControlPanel,
+		"GetRemoteControlActivity":           app.GetRemoteControlActivity,
+		"GetMyControlActivity":               app.GetMyControlActivity,
+		"GetUserControlActivity":             app.GetUserControlActivity,
+		"GetUserControlLoginHistory":         app.GetUserControlLoginHistory,
+		"CloseRemoteControlPanel":            app.CloseRemoteControlPanel,
+		"ListRemoteControlUsers":             app.ListRemoteControlUsers,
+		"ListRemoteControlDiagnostics":       app.ListRemoteControlDiagnostics,
+		"DownloadRemoteControlDiagnostic":    app.DownloadRemoteControlDiagnostic,
+		"DeleteRemoteControlDiagnostic":      app.DeleteRemoteControlDiagnostic,
+		"ListRemoteControlHistory":           app.ListRemoteControlHistory,
+		"FilterRemoteControlHistory":         app.FilterRemoteControlHistory,
+		"ModerateRemoteControlUser":          app.ModerateRemoteControlUser,
+		"TimeoutRemoteControlUser":           app.TimeoutRemoteControlUser,
+		"RenameRemoteControlAccount":         app.RenameRemoteControlAccount,
+		"ChangeRemoteControlPassword":        app.ChangeRemoteControlPassword,
+		"DeleteRemoteControlAccount":         app.DeleteRemoteControlAccount,
+		"GetRemoteControlIdentity":           app.GetRemoteControlIdentity,
+		"SetRemoteControlIdentity":           app.SetRemoteControlIdentity,
+		"GetRemoteControlAnnouncements":      app.GetRemoteControlAnnouncements,
+		"SendRemoteControlAnnouncement":      app.SendRemoteControlAnnouncement,
+		"GetRemoteControlHealth":             app.GetRemoteControlHealth,
+		"GetRemoteControlUpdate":             app.GetRemoteControlUpdate,
+		"CheckRemoteControlUpdate":           app.CheckRemoteControlUpdate,
+		"ListRemoteControlSessions":          app.ListRemoteControlSessions,
+		"RevokeRemoteControlSession":         app.RevokeRemoteControlSession,
+		"RevokeOtherRemoteControlSessions":   app.RevokeOtherRemoteControlSessions,
+		"GetRemoteControlMaintenance":        app.GetRemoteControlMaintenance,
+		"StartRemoteControlMaintenance":      app.StartRemoteControlMaintenance,
+		"CancelRemoteControlMaintenance":     app.CancelRemoteControlMaintenance,
 		"OpenFirewallSettings":               app.OpenFirewallSettings,
 		"OpenReportFolder":                   app.OpenReportFolder,
 		"OpenSteamDemoInstall":               app.OpenSteamDemoInstall,

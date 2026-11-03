@@ -121,6 +121,5 @@ BYTE* fang_mod_scene_floor(const BYTE* source, unsigned int stored, unsigned int
 
 
 void fang_update_mod(void);
-int fang_redirect_mod_address(struct sockaddr_in* address, unsigned short port, unsigned short party_port);
 
 #endif

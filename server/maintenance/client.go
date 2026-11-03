@@ -20,6 +20,18 @@ func Execute(ctx context.Context, runtimePath, action string, minutes int, id st
 	if action != "announce" && action != "cancel" && action != "status" && action != "update" {
 		return Reply{}, errors.New("unknown maintenance command")
 	}
+	if action == "cancel" && id == "" {
+		// Preserve the local CLI's optional --id convenience while every
+		// cancellation sent to the owner names the exact observed operation.
+		current, statusErr := Execute(ctx, runtimePath, "status", 0, "")
+		if statusErr != nil {
+			return Reply{}, fmt.Errorf("cancelStatus: %w", statusErr)
+		}
+		if current.ID == "" {
+			return current, nil
+		}
+		id = current.ID
+	}
 	payload, err := os.ReadFile(filepath.Join(runtimePath, descriptorFilename))
 	if err != nil {
 		return Reply{}, fmt.Errorf("controlDiscover: %w", err)

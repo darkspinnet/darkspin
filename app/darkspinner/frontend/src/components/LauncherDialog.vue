@@ -1,7 +1,7 @@
 <script setup>
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 
-defineProps({ isDismissible: { type: Boolean, default: false }, width: { type:Number, default:null } })
+defineProps({ isDismissible: { type: Boolean, default: false }, width: { type:Number, default:null }, height: { type:Number, default:null } })
 const emit = defineEmits(['close', 'interact', 'openAutoFocus'])
 const previousFocus = document.activeElement
 
@@ -15,7 +15,7 @@ function restoreFocus(event) {
   <Dialog :open="true" @update:open="isDismissible && emit('close')">
     <DialogContent
       class="launcher-dialog"
-      :style="width ? { width:`min(${width}px, calc(100% - 32px))`, maxWidth:`${width}px` } : undefined"
+      :style="{ ...(width ? { width:`min(${width}px, calc(100% - 32px))`, maxWidth:`${width}px` } : {}), ...(height ? { height:`min(${height}px, calc(100dvh - 32px))` } : {}) }"
       :show-close-button="false"
       :aria-describedby="undefined"
       @open-auto-focus="emit('openAutoFocus', $event)"

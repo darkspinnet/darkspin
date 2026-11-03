@@ -355,7 +355,11 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 		}
 		commandName, isCommand := messagingCommandName(body)
 		if isCommand {
-			responseBody := fmt.Sprintf("Unknown command %s. Available: /help, /emote, /taunt, /ss, /bug, /b, /ping, /hint, /loc, /stat, /follow, /ai, /effect, /summon, /level, /warp, /spawn, /drop, /dna, /damage, /heal, /power, /mana, /event, /goto, /kill, /reset, /recap, /victory, /defeat, /exit", commandName)
+			err = messenger.AuthorizeCommand(ctx, user.AccountID(), commandName)
+			if err != nil {
+				return &Response{ErrorCode: messagingErrorUnknown}, nil
+			}
+			responseBody := fmt.Sprintf("Unknown command %s. Available: /help, /emote, /taunt, /ss, /bug, /b, /ping, /hint, /loc, /stat, /follow, /ai, /effect, /summon, /level, /warp, /noreplay, /spawn, /drop, /dna, /damage, /heal, /power, /mana, /event, /goto, /kill, /reset, /recap, /victory, /defeat, /exit", commandName)
 			if commandName == "/help" {
 				responseBody = darkspinChatHelp
 			}
@@ -608,6 +612,37 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 						} else if !errors.Is(levelErr, chat.ErrLevelUnavailable) {
 							return nil, fmt.Errorf("commandLevel: %w", levelErr)
 						}
+					}
+				}
+			}
+			if commandName == "/noreplay" {
+				responseBody = "Syntax: /noreplay [on|off]"
+				fields := strings.Fields(body)
+				var isEnabled *bool
+				isValid := len(fields) == 1
+				if len(fields) == 2 {
+					switch strings.ToLower(fields[1]) {
+					case "on":
+						enabled := true
+						isEnabled = &enabled
+						isValid = true
+					case "off":
+						enabled := false
+						isEnabled = &enabled
+						isValid = true
+					}
+				}
+				if isValid {
+					isActive, toggleErr := messenger.SetNoReplay(ctx, chat.NoReplayRequest{
+						Sender:    chat.Participant{ID: user.Account.ID, Name: user.DisplayName},
+						IsEnabled: isEnabled,
+					})
+					if toggleErr != nil {
+						return nil, fmt.Errorf("commandNoReplay: %w", toggleErr)
+					}
+					responseBody = "No replay OFF: future campaign missions use normal replay selection."
+					if isActive {
+						responseBody = "No replay ON for this login session: when hosting, future campaign missions use their seeded first-time map and roster."
 					}
 				}
 			}
@@ -1091,7 +1126,7 @@ const victorySyntax = "Syntax: /victory"
 const defeatSyntax = "Syntax: /defeat"
 
 const darkspinChatHelp = "Darkspin: /help | /emote (Mod only) | /taunt (availability info) | " + snapshotSyntax + " | /bug <what happened> | /b <what happened> | /ping | /hint | /loc | /stat | /follow [ally name] | /ai | /effect <exact-authored-name> [world] | " +
-	"/summon <rigid> <primary> <secondary> <suffix> | /level <1-100> | /warp [area] | /spawn <noun> | /scale <multiplier|reset> [radius] [noun filter] | /god (toggle invulnerability) | /drop create [weapon|hand|foot|offense|defense|utility] | /dna <amount> | " +
+	"/summon <rigid> <primary> <secondary> <suffix> | /level <1-100> | /warp [area] | /noreplay [on|off] | /spawn <noun> | /scale <multiplier|reset> [radius] [noun filter] | /god (toggle invulnerability) | /drop create [weapon|hand|foot|offense|defense|utility] | /dna <amount> | " +
 	"/damage <amount> | /heal | /power [negative amount] | /mana [negative amount] | /event [1|security-next|2|boss-start|3|boss-complete] | /goto <x> <y> <z> | /kill | /reset | /recap | /victory | /defeat | /exit | " +
 	"Built-in: /tell <player> <message> | /party <message> | /game <message> | /lobby <message> | " +
 	"/invite <player> | /leave | /friend <player> | /unfriend <player> | /block <player> | " +

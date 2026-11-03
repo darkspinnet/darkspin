@@ -32,6 +32,10 @@ type debugProfileState struct {
 	CapturedAt                time.Time     `json:"captured_at"`
 	IsAuthenticated           bool          `json:"is_authenticated"`
 	SessionID                 string        `json:"session_id"`
+	IsReplay                  bool          `json:"is_replay"`
+	IsReplayRandomized        bool          `json:"is_replay_randomized"`
+	IsNoReplay                bool          `json:"is_noreplay"`
+	IsNoReplayEnabled         bool          `json:"is_noreplay_enabled"`
 	IsUserActive              bool          `json:"is_user_active"`
 	GameID                    uint32        `json:"game_id"`
 	PlaygroupID               uint32        `json:"playgroup_id"`
@@ -88,6 +92,7 @@ func debugProfileStateDTO(name string, observation serverruntime.DebugProfileSta
 		presenceStatus = "stale"
 	}
 	return debugProfileState{Name: name, UserID: observation.UserID, CapturedAt: observation.CapturedAt,
+		IsReplay: observation.IsReplay, IsReplayRandomized: observation.IsReplayRandomized, IsNoReplay: observation.IsNoReplay, IsNoReplayEnabled: observation.IsNoReplayEnabled,
 		IsAuthenticated: observation.IsAuthenticated, SessionID: observation.SessionID, IsUserActive: observation.IsUserActive,
 		GameID: observation.GameID, PlaygroupID: observation.PlaygroupID,
 		Presence:         debugPresence{Status: presenceStatus, Source: "last_client_reported_presence", Location: observation.LastReportedLocation, Revision: observation.PresenceRevision},

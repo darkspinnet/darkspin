@@ -1,6 +1,7 @@
 package maintenance
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -30,22 +31,27 @@ type command struct {
 
 // Reply is the local control channel's allowlisted response representation.
 type Reply struct {
-	ID        string    `json:"id"`
-	Deadline  time.Time `json:"deadline"`
-	Delivered int       `json:"delivered"`
-	IsActive  bool      `json:"is_active"`
-	Error     string    `json:"error,omitempty"`
+	ID                 string    `json:"id"`
+	Deadline           time.Time `json:"deadline"`
+	Delivered          int       `json:"delivered"`
+	IsActive           bool      `json:"is_active"`
+	Error              string    `json:"error,omitempty"`
+	Action             string    `json:"action"`
+	Reason             string    `json:"reason"`
+	Phase              string    `json:"phase"`
+	IsAdmissionBlocked bool      `json:"is_admission_blocked"`
 }
 
 // Control owns a loopback-only authenticated maintenance listener.
 type Control struct {
-	announcement   announcement
-	server         *http.Server
-	descriptor     descriptor
-	descriptorPath string
-	done           chan error
-	closeOnce      sync.Once
-	closeErr       error
+	announcement    announcement
+	server          *http.Server
+	descriptor      descriptor
+	descriptorPath  string
+	done            chan error
+	closeOnce       sync.Once
+	closeErr        error
+	localTransition LocalTransition
 }
 
 // Start starts a private control listener. The runtime must already be leased
@@ -58,6 +64,11 @@ func Start(runtimePath string, broadcast Broadcast) (*Control, error) {
 	if err != nil {
 		return nil, fmt.Errorf("runtimeCreate: %w", err)
 	}
+	statePath := filepath.Join(runtimePath, stateFilename)
+	state, err := restoreState(statePath)
+	if err != nil {
+		return nil, fmt.Errorf("controlRestore: %w", err)
+	}
 	token, err := randomToken()
 	if err != nil {
 		return nil, fmt.Errorf("controlToken: %w", err)
@@ -67,7 +78,7 @@ func Start(runtimePath string, broadcast Broadcast) (*Control, error) {
 		return nil, fmt.Errorf("controlListen: %w", err)
 	}
 	e := &Control{
-		announcement:   announcement{broadcast: broadcast, changed: make(chan struct{}, 1)},
+		announcement:   announcement{broadcast: broadcast, changed: make(chan struct{}, 1), state: state, statePath: statePath},
 		descriptor:     descriptor{Address: listener.Addr().String(), Token: token},
 		descriptorPath: filepath.Join(runtimePath, descriptorFilename),
 		done:           make(chan error, 1),
@@ -128,8 +139,8 @@ func (e *Control) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	}
 	if request.Method != http.MethodPost {
 		if request.Method == http.MethodGet && request.URL.Path == "/status" {
-			state := e.announcement.status()
-			encodeErr := json.NewEncoder(writer).Encode(Reply{ID: state.ID, Deadline: state.Deadline, Delivered: state.Delivered, IsActive: state.IsActive})
+			state := e.Status()
+			encodeErr := json.NewEncoder(writer).Encode(stateReply(state))
 			if encodeErr != nil {
 				// The local status client disconnected.
 				return
@@ -153,19 +164,19 @@ func (e *Control) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		http.Error(writer, "unexpected request data", http.StatusBadRequest)
 		return
 	}
-	var state countdown
+	var state State
 	switch request.URL.Path {
 	case "/announce":
-		state, err = e.announcement.announce(request.Context(), req.Minutes)
+		state, err = e.announceLocal(request.Context(), req.Minutes)
 	case "/cancel":
-		state, err = e.announcement.cancel(request.Context(), req.ID)
+		state, err = e.cancelLocal(request.Context(), req.ID)
 	case "/update":
-		state, err = e.announcement.requestUpdate(req.Minutes)
+		state, err = e.requestLocal(request.Context(), Request{Action: "update", WarningMinutes: req.Minutes})
 	default:
 		http.Error(writer, "unknown maintenance command", http.StatusNotFound)
 		return
 	}
-	reply := Reply{ID: state.ID, Deadline: state.Deadline, Delivered: state.Delivered, IsActive: state.IsActive}
+	reply := stateReply(state)
 	if err != nil {
 		reply.Error = err.Error()
 		statusCode := http.StatusServiceUnavailable
@@ -175,7 +186,7 @@ func (e *Control) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		writer.WriteHeader(statusCode)
 	}
 	if request.URL.Path == "/update" && err == nil {
-		defer e.announcement.discardUnstartedUpdate(state.ID)
+		defer e.abortUnflushed(request.Context(), state.ID)
 		// A fixed response length lets the client receive the complete reply
 		// before a zero-minute update closes this listener.
 		payload, marshalErr := json.Marshal(reply)
@@ -199,13 +210,33 @@ func (e *Control) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			slog.Warn("Maintenance update acceptance flush failed", "countdown_id", state.ID, "error", flushErr)
 			return
 		}
-		e.announcement.activateUpdate(state.ID)
+		activationCtx, activationCancel := context.WithTimeout(context.WithoutCancel(request.Context()), 5*time.Second)
+		defer activationCancel()
+		activateErr := e.activateLocal(activationCtx, state.ID)
+		if activateErr != nil {
+			slog.Warn("Maintenance update activation failed", "operation_id", state.ID, "error", activateErr)
+		}
 		return
 	}
 	encodeErr := json.NewEncoder(writer).Encode(reply)
 	if encodeErr != nil {
 		// The caller disconnected; notification attempts have already completed.
 		return
+	}
+}
+
+func stateReply(state State) Reply {
+	return Reply{ID: state.ID, Deadline: state.Deadline, Delivered: state.Delivered,
+		IsActive: state.IsActive, Action: state.Action, Reason: state.Reason,
+		Phase: state.Phase, IsAdmissionBlocked: state.IsAdmissionBlocked}
+}
+
+func (e *Control) abortUnflushed(ctx context.Context, id string) {
+	abortCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	err := e.abortLocal(abortCtx, id)
+	if err != nil {
+		slog.Warn("Maintenance unflushed request cleanup failed", "operation_id", id, "error", err)
 	}
 }
 

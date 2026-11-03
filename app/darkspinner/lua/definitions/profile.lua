@@ -63,6 +63,10 @@
 ---@field captured_at string Collection time, not the client's publication time.
 ---@field is_authenticated boolean Accepted live Blaze login, sampled separately from other fields.
 ---@field session_id string
+---@field is_replay boolean Account has already cleared this campaign stage.
+---@field is_replay_randomized boolean Current mission uses replay randomization.
+---@field is_noreplay boolean Current mission was selected with the no-replay override.
+---@field is_noreplay_enabled boolean Current login preference; applies to future hosted missions.
 ---@field is_user_active boolean
 ---@field game_id integer Active-user membership; zero proves no native UI readiness.
 ---@field playgroup_id integer Current server party membership.
