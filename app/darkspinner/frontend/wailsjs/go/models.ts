@@ -1,4 +1,17 @@
 export namespace main {
+  export class RemoteControlAccessResult {
+    status: number;
+    ip_limit: string;
+    is_disconnect_pending: boolean;
+    static createFrom(source: any = {}) { return new RemoteControlAccessResult(source); }
+    constructor(source: any = {}) {
+      if ('string' === typeof source) source = JSON.parse(source);
+      this.status = source['status'];
+      this.ip_limit = source['ip_limit'];
+      this.is_disconnect_pending = source['is_disconnect_pending'];
+    }
+  }
+
 	
 	export class ReportResult {
 	    name: string;
@@ -1864,6 +1877,7 @@ export namespace main {
 	    }
 	}
 	export class RemoteControlUser {
+	    ip_limit: string;
 	    id: number;
 	    login_name: string;
 	    display_name: string;
@@ -1885,6 +1899,7 @@ export namespace main {
 	        this.display_name = source["display_name"];
 	        this.level = source["level"];
 	        this.status = source["status"];
+	        this.ip_limit = source["ip_limit"];
 	        this.is_banned = source["is_banned"];
 	        this.is_timed_out = source["is_timed_out"];
 	        this.timeout_until_unix = source["timeout_until_unix"];
@@ -1971,6 +1986,8 @@ export namespace main {
 	    address: string;
 	    serverVersion: string;
 	    gameVersion: string;
+	    isMaintenance: boolean;
+	    maintenanceReason: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new RemoteServer(source);
@@ -1981,11 +1998,15 @@ export namespace main {
 	        this.address = source["address"];
 	        this.serverVersion = source["serverVersion"];
 	        this.gameVersion = source["gameVersion"];
+	        this.isMaintenance = source["isMaintenance"];
+	        this.maintenanceReason = source["maintenanceReason"];
 	    }
 	}
 	export class RemoteServerStatus {
 	    address: string;
 	    isOnline: boolean;
+	    isMaintenance: boolean;
+	    maintenanceReason: string;
 	    serverVersion: string;
 	    clientVersion: string;
 	    isVersionMatched: boolean;
@@ -2000,6 +2021,8 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.address = source["address"];
 	        this.isOnline = source["isOnline"];
+	        this.isMaintenance = source["isMaintenance"];
+	        this.maintenanceReason = source["maintenanceReason"];
 	        this.serverVersion = source["serverVersion"];
 	        this.clientVersion = source["clientVersion"];
 	        this.isVersionMatched = source["isVersionMatched"];

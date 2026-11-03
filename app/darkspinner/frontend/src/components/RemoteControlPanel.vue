@@ -1,4 +1,5 @@
 <script setup>
+import { X } from '@lucide/vue'
 import { formatControlTime } from '../control_time'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { DialogTitle } from '@/components/ui/dialog'
@@ -146,6 +147,7 @@ defineExpose({ open })
           <TabsTrigger value="dashboard" :disabled="isBusy || isActionBusy">{{ $t('DASHBOARD') }}</TabsTrigger>
           <TabsTrigger v-if="isAdmin" value="admin" :disabled="isBusy || isActionBusy">{{ $t('ADMIN') }}</TabsTrigger>
         </TabsList>
+        <Button class="control-close" variant="ghost" size="icon" :aria-label="$t('Close control panel')" :title="$t('Close control panel')" @click="close"><X :size="18" aria-hidden="true" /></Button>
       </header>
       <div class="control-body">
       <p v-if="error" role="alert">{{ $t(error) }}</p>
@@ -166,7 +168,7 @@ defineExpose({ open })
       </div>
     </Tabs>
     <form v-else class="notice-card control-sign-in" @submit.prevent="signIn">
-      <DialogTitle>{{ $t('SERVER CONTROL PANEL SIGN IN') }}</DialogTitle>
+      <div class="control-sign-in-heading"><DialogTitle>{{ $t('SERVER CONTROL PANEL SIGN IN') }}</DialogTitle><Button variant="ghost" size="icon" :aria-label="$t('Close control panel')" :title="$t('Close control panel')" @click="close" type="button"><X :size="18" aria-hidden="true" /></Button></div>
       <p>{{ profile?.displayName }} · {{ profile?.serverAddress }}</p>
       <label for="control-password">{{ $t('PASSWORD') }}</label>
       <Input id="control-password" v-model="enteredPassword" type="password" autocomplete="current-password" :disabled="isBusy" />
@@ -181,8 +183,10 @@ defineExpose({ open })
 
 <style scoped>
 .control-page { display:grid; grid-template-rows:40px minmax(0,1fr); gap:18px; min-width:0; min-height:0; height:100%; }
-.control-page > header { height:40px; min-height:40px; max-height:40px; min-width:0; }
-.control-tabs { max-width:100%; height:40px; min-height:40px; max-height:40px; overflow-x:auto; overflow-y:hidden; justify-content:flex-start; }
+.control-page > header { display:flex; align-items:center; justify-content:space-between; gap:12px; height:40px; min-height:40px; max-height:40px; min-width:0; }
+.control-tabs { max-width:calc(100% - 52px); height:40px; min-height:40px; max-height:40px; overflow-x:auto; overflow-y:hidden; justify-content:flex-start; }
+.control-close { flex-shrink:0; }
+.control-sign-in-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .control-tabs :deep([data-slot="tabs-trigger"]) { flex:0 0 auto; height:40px; min-height:40px; max-height:40px; }
 .control-body { min-width:0; min-height:0; overflow-y:auto; scrollbar-gutter:stable; }
 .control-content { min-width:0; }

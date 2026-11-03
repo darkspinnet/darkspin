@@ -14,6 +14,7 @@ type adminUserDTO struct {
 	DisplayName      string `json:"display_name"`
 	Level            int64  `json:"level"`
 	Status           int64  `json:"status"`
+	IPLimit          string `json:"ip_limit"`
 	IsBanned         bool   `json:"is_banned"`
 	IsTimedOut       bool   `json:"is_timed_out"`
 	TimeoutUntilUnix int64  `json:"timeout_until_unix"`
@@ -79,7 +80,7 @@ func (e *Service) listUsers(writer http.ResponseWriter, req *http.Request, actor
 	for _, user := range result.Users {
 		users = append(users, adminUserDTO{
 			ID: user.UserID, LoginName: user.LoginName, DisplayName: user.DisplayName,
-			Level: user.Level, Status: user.Status, IsBanned: user.IsBanned,
+			Level: user.Level, Status: user.Status, IPLimit: user.IPLimit, IsBanned: user.IsBanned,
 			IsTimedOut: user.IsTimedOut, TimeoutUntilUnix: user.TimeoutUntilUnix,
 			IsOnline: e.config.ConnectionControl.IsOnline(user.UserID),
 		})
@@ -134,6 +135,10 @@ func (e *Service) listHistory(writer http.ResponseWriter, req *http.Request, act
 
 func (e *Service) moderateUser(writer http.ResponseWriter, req *http.Request, actor accountaccess.Actor) {
 	targetID, action := moderationPath(req.URL.Path)
+	if action == "access" {
+		e.changeUserAccess(writer, req, actor, targetID)
+		return
+	}
 	command := struct {
 		Reason          string `json:"reason"`
 		DurationMinutes int64  `json:"duration_minutes"`

@@ -216,3 +216,5 @@ export function StopLuaScript():Promise<void>;
 export function TimeoutRemoteControlUser(arg1:string,arg2:string,arg3:number,arg4:number,arg5:string):Promise<main.RemoteControlActionResult>;
 
 export function UninstallDarkspinner():Promise<void>;
+
+export function SetRemoteControlUserAccess(arg1:string,arg2:string,arg3:number,arg4:number,arg5:string,arg6:string):Promise<main.RemoteControlAccessResult>;

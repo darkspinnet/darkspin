@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,11 +30,13 @@ type panelUpdate struct {
 	nextCheckAt   time.Time
 }
 
-func newPanelUpdate(configPath string, isManaged bool, accessService *accountaccess.Service) *panelUpdate {
+func newPanelUpdate(configPath string, config *game.Config, isManaged bool, accessService *accountaccess.Service) *panelUpdate {
 	snapshot := controlpanel.UpdateSnapshot{
 		InstalledVersion: buildinfo.Version, InstalledBuildID: buildinfo.ID, CheckStatus: "unknown",
 	}
-	manifestURL := ""
+	// Checking metadata does not require supervisor-owned installation support.
+	// Use the same configured source as bootstrap without accepting a request URL.
+	manifestURL := config.String(game.ConfigBootstrapManifestURL)
 	rootPath := os.Getenv("DARKSPIN_BOOTSTRAP_ROOT")
 	if isManaged && rootPath != "" && filepath.IsAbs(rootPath) &&
 		filepath.Clean(configPath) == filepath.Join(rootPath, "runtime", game.DefaultConfigFilename) {
@@ -42,15 +45,24 @@ func newPanelUpdate(configPath string, isManaged bool, accessService *accountacc
 		snapshot.BootstrapVersion = updateIdentityLabel(os.Getenv("DARKSPIN_BOOTSTRAP_VERSION"))
 		snapshot.BootstrapBuildID = updateIdentityLabel(os.Getenv("DARKSPIN_BOOTSTRAP_BUILD_ID"))
 		effectiveURL, isPresent := os.LookupEnv("DARKSPIN_BOOTSTRAP_MANIFEST_URL")
-		if isPresent && snapshot.BootstrapVersion != "" && snapshot.BootstrapBuildID != "" {
+		// The supervisor may deliberately disable or override the on-disk source.
+		manifestURL = ""
+		if isPresent {
 			manifestURL = effectiveURL
 		}
 	}
 	manifestURL = strings.TrimSpace(manifestURL)
+	manifestSource, err := url.Parse(manifestURL)
+	if err != nil || manifestSource.Scheme != "https" || manifestSource.Host == "" ||
+		manifestSource.User != nil || manifestSource.Fragment != "" {
+		manifestURL = ""
+	}
 	snapshot.IsCheckSupported = manifestURL != ""
 	if snapshot.IsCheckSupported {
 		// There is no channel setting in the bootstrap manifest contract.
 		snapshot.Channel = "configured"
+	} else {
+		snapshot.CheckStatus = "unsupported"
 	}
 	return &panelUpdate{accessService: accessService, manifestURL: manifestURL, snapshot: snapshot}
 }

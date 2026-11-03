@@ -1,6 +1,18 @@
 {
   "locale": "en-us",
   "messages": {
+    "You cannot edit your own access or an account with a higher status, or grant a status above your own.": "You cannot edit your own access or an account with a higher status, or grant a status above your own.",
+    "Close control panel": "Close control panel",
+    "EDIT ACCESS": "EDIT ACCESS",
+    "EDIT USER ACCESS": "EDIT USER ACCESS",
+    "ALLOW IP": "ALLOW IP",
+    "IP address or CIDR": "IP address or CIDR",
+    "Status must be a nonnegative integer.": "Status must be a nonnegative integer.",
+    "Status 250 or higher requires an allowed IP address or CIDR.": "Status 250 or higher requires an allowed IP address or CIDR.",
+    "Enter a nonnegative status, a valid IP address or CIDR, and a reason.": "Enter a nonnegative status, a valid IP address or CIDR, and a reason.",
+    "Access settings saved.": "Access settings saved.",
+    "Access settings saved. Disconnecting the active game session is still pending.": "Access settings saved. Disconnecting the active game session is still pending.",
+    "The server is undergoing maintenance. Try again later.": "The server is undergoing maintenance. Try again later.",
     "Account registration is unavailable.": "Account registration is unavailable.",
     "Account deletion could not be completed. Sign in again.": "Account deletion could not be completed. Sign in again.",
     "Close the game before changing this account.": "Close the game before changing this account.",
@@ -12,6 +24,7 @@
     "SERVER STATUS": "SERVER STATUS",
     "UP TO DATE": "UP TO DATE",
     "NOT CHECKED": "NOT CHECKED",
+    "UPDATE CHECK UNSUPPORTED": "UPDATE CHECK UNSUPPORTED",
     "UPDATE DETAILS": "UPDATE DETAILS",
     "HEALTH DETAILS": "HEALTH DETAILS",
     "OPERATION DETAILS": "OPERATION DETAILS",
@@ -26,6 +39,7 @@
     "DIAGNOSTIC": "DIAGNOSTIC",
     "LOG": "LOG",
     "BUG": "BUG",
+    "SNAPSHOT": "SNAPSHOT",
     "Diagnostic files": "Diagnostic files",
     "Saved to {0}": "Saved to {0}",
     "SIZE (BYTES)": "SIZE (BYTES)",
@@ -1844,6 +1858,8 @@
     "Mission participation collection started: {0}": "Mission participation collection started: {0}",
     "No recorded mission participation observations are available for this range.": "No recorded mission participation observations are available for this range.",
     "Mission participation statistics are unavailable from this server.": "Mission participation statistics are unavailable from this server.",
-    "This account cannot access the server.": "This account cannot access the server."
+    "This account cannot access the server.": "This account cannot access the server.",
+    "Maintenance": "Maintenance",
+    "Server maintenance: {0}": "Server maintenance: {0}"
   }
 }

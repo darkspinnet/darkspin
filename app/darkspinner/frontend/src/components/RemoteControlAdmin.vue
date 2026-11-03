@@ -12,6 +12,7 @@ import RemoteControlHistory from './RemoteControlHistory.vue'
 import RemoteControlPersonalActivity from './RemoteControlPersonalActivity.vue'
 import RemoteControlLoginHistory from './RemoteControlLoginHistory.vue'
 import RemoteControlDiagnostic from './RemoteControlDiagnostic.vue'
+import RemoteControlUserAccess from './RemoteControlUserAccess.vue'
 import { ListRemoteControlUsers, ModerateRemoteControlUser, TimeoutRemoteControlUser } from '../platform'
 import { panelError } from '../control_panel'
 import { formatControlTime } from '../control_time'
@@ -28,7 +29,9 @@ const isManageBusy = ref(false)
 const isHistoryBusy = ref(false)
 const isReviewBusy = ref(false)
 const isDiagnosticBusy = ref(false)
-const isAnyBusy = computed(() => isBusy.value || isServerBusy.value || isManageBusy.value || isHistoryBusy.value || isReviewBusy.value || isDiagnosticBusy.value)
+const isAccessBusy = ref(false)
+const accessUser = ref(null)
+const isAnyBusy = computed(() => isBusy.value || isServerBusy.value || isManageBusy.value || isHistoryBusy.value || isReviewBusy.value || isDiagnosticBusy.value || isAccessBusy.value)
 const reviewUser = ref(null)
 const loginReviewUser = ref(null)
 const error = ref('')
@@ -52,6 +55,7 @@ watch(() => `${props.profile?.serverAddress}/${props.profile?.loginName}`, () =>
   reviewUser.value = null
   loginReviewUser.value = null
   pendingUser.value = null
+  accessUser.value = null
   reason.value = ''
   error.value = ''
   notice.value = ''
@@ -65,8 +69,8 @@ const operations = computed(() => props.panel.server.supported_operations || [])
 watch(isAnyBusy, next => emit('busy', next), { flush:'sync' })
 function initialTab() {
   const operations = props.panel.server.supported_operations || []
+  if (operations.some(operation => ['admin.maintenance.read', 'admin.update.read', 'admin.health.read'].includes(operation))) return 'manage'
   if (operations.some(operation => ['server.identity.read', 'admin.announcements.write'].includes(operation))) return 'server'
-  if (operations.includes('admin.health.read')) return 'manage'
   if (props.panel.requested_maintenance_id && operations.includes('admin.maintenance.read')) return 'manage'
   if (operations.includes('admin.diagnostics.list')) return 'diagnostic'
   if (operations.includes('admin.users.list')) return 'users'
@@ -114,6 +118,15 @@ function reviewLoginHistory(user) {
   if (isAnyBusy.value) return
   reviewUser.value = null
   loginReviewUser.value = { id:user.id, displayName:user.display_name, loginName:user.login_name }
+}
+function editAccess(user) {
+  if (isAnyBusy.value || user.login_name === props.profile.loginName) return
+  accessUser.value = { ...user }
+}
+function accessSaved(result) {
+  accessUser.value = null
+  notice.value = result.is_disconnect_pending ? 'Access settings saved. Disconnecting the active game session is still pending.' : 'Access settings saved.'
+  void loadUsers()
 }
 function confirm(user, action) {
   if (isAnyBusy.value) return
@@ -190,8 +203,8 @@ if (tab.value === 'users' && operations.value.includes('admin.users.list')) void
         <thead><tr><th>{{ $t('ACCOUNT') }}</th><th>{{ $t('LEVEL') }}</th><th>{{ $t('STATUS') }}</th><th>{{ $t('GAME SESSION') }}</th><th>{{ $t('ACCESS') }}</th><th>{{ $t('ACTION') }}</th></tr></thead>
         <tbody><tr v-for="user in users" :key="user.id">
           <td>{{ user.display_name }}<small>{{ user.login_name }} · {{ user.id }}</small></td>
-          <td>{{ user.level }}</td><td>{{ user.status }}</td><td>{{ $t(user.is_online ? 'ONLINE' : 'OFFLINE') }}</td><td>{{ $t(user.is_banned ? 'BANNED' : isUserTimedOut(user) ? 'TIMED OUT' : 'ALLOWED') }}<small v-if="isUserTimedOut(user)">{{ formatControlTime(user.timeout_until_unix * 1000) }}</small></td>
-          <td class="admin-user-actions"><Button v-if="operations.includes('admin.users.loginHistory')" variant="outline" :disabled="isAnyBusy" @click="reviewLoginHistory(user)">{{ $t('REVIEW LOGIN HISTORY') }}</Button><Button v-if="operations.includes('admin.users.activity')" variant="outline" :disabled="isAnyBusy" @click="review(user)">{{ $t('REVIEW METRICS') }}</Button><Button v-if="operations.includes(user.is_banned || isUserTimedOut(user) ? 'admin.users.unban' : 'admin.users.ban')" :variant="user.is_banned || isUserTimedOut(user) ? 'outline' : 'destructive'" :disabled="isAnyBusy || user.status > 250 || user.login_name === profile.loginName" @click="confirm(user, user.is_banned || isUserTimedOut(user) ? 'unban' : 'ban')">{{ $t(user.is_banned ? 'UNBAN' : isUserTimedOut(user) ? 'END TIMEOUT' : 'BAN') }}</Button><Button v-if="operations.includes('admin.users.timeout')" variant="outline" :disabled="isAnyBusy || user.is_banned || user.status > 250 || user.login_name === profile.loginName" @click="confirm(user, 'timeout')">{{ $t('TIMEOUT') }}</Button><Button v-if="operations.includes('admin.users.kick')" variant="outline" :disabled="isAnyBusy || !user.is_online || user.status > 250 || user.login_name === profile.loginName" @click="confirm(user, 'kick')">{{ $t('KICK') }}</Button></td>
+          <td>{{ user.level }}</td><td>{{ user.status }}<small v-if="user.ip_limit">{{ $t('ALLOW IP') }}: {{ user.ip_limit }}</small></td><td>{{ $t(user.is_online ? 'ONLINE' : 'OFFLINE') }}</td><td>{{ $t(user.is_banned ? 'BANNED' : isUserTimedOut(user) ? 'TIMED OUT' : 'ALLOWED') }}<small v-if="isUserTimedOut(user)">{{ formatControlTime(user.timeout_until_unix * 1000) }}</small></td>
+          <td class="admin-user-actions"><Button v-if="operations.includes('admin.users.access')" variant="outline" :disabled="isAnyBusy || user.login_name === profile.loginName" @click="editAccess(user)">{{ $t('EDIT ACCESS') }}</Button><Button v-if="operations.includes('admin.users.loginHistory')" variant="outline" :disabled="isAnyBusy" @click="reviewLoginHistory(user)">{{ $t('REVIEW LOGIN HISTORY') }}</Button><Button v-if="operations.includes('admin.users.activity')" variant="outline" :disabled="isAnyBusy" @click="review(user)">{{ $t('REVIEW METRICS') }}</Button><Button v-if="operations.includes(user.is_banned || isUserTimedOut(user) ? 'admin.users.unban' : 'admin.users.ban')" :variant="user.is_banned || isUserTimedOut(user) ? 'outline' : 'destructive'" :disabled="isAnyBusy || user.status > 250 || user.login_name === profile.loginName" @click="confirm(user, user.is_banned || isUserTimedOut(user) ? 'unban' : 'ban')">{{ $t(user.is_banned ? 'UNBAN' : isUserTimedOut(user) ? 'END TIMEOUT' : 'BAN') }}</Button><Button v-if="operations.includes('admin.users.timeout')" variant="outline" :disabled="isAnyBusy || user.is_banned || user.status > 250 || user.login_name === profile.loginName" @click="confirm(user, 'timeout')">{{ $t('TIMEOUT') }}</Button><Button v-if="operations.includes('admin.users.kick')" variant="outline" :disabled="isAnyBusy || !user.is_online || user.status > 250 || user.login_name === profile.loginName" @click="confirm(user, 'kick')">{{ $t('KICK') }}</Button></td>
         </tr></tbody>
       </table></div>
       <p v-if="!users.length && !isBusy">{{ $t('No matching accounts.') }}</p>
@@ -207,6 +220,7 @@ if (tab.value === 'users' && operations.value.includes('admin.users.list')) void
     </TabsContent>
     <TabsContent v-if="tab === 'history' && operations.includes('admin.history.list')" value="history"><RemoteControlHistory :profile="profile" @busy="isHistoryBusy = $event" @invalidated="emit('invalidated', $event)" /></TabsContent>
   </Tabs>
+  <RemoteControlUserAccess v-if="accessUser" :key="accessUser.id" :profile="profile" :user="accessUser" @close="accessUser = null" @busy="isAccessBusy = $event" @saved="accessSaved" @invalidated="emit('invalidated', $event)" />
   <LauncherDialog v-if="pendingUser" :is-dismissible="!isBusy" @close="cancel">
     <form class="notice-card admin-confirmation" @submit.prevent="moderate">
       <DialogTitle>{{ $t(pendingAction === 'timeout' ? 'TIMEOUT CROGENITOR?' : pendingAction === 'kick' ? 'KICK GAME SESSION?' : pendingAction === 'unban' ? pendingUser.is_banned ? 'UNBAN ACCOUNT?' : 'END TIMEOUT?' : 'BAN ACCOUNT?') }}</DialogTitle>

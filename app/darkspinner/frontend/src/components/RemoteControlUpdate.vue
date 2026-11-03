@@ -1,7 +1,6 @@
 <script setup>
 import { formatControlTime } from '../control_time'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { Button } from '@/components/ui/button'
 import { GetRemoteControlUpdate, CheckRemoteControlUpdate } from '../platform'
 import { panelError } from '../control_panel'
 
@@ -78,7 +77,6 @@ defineExpose({ reload, check })
       </dl>
       <p v-if="state.check_status === 'failed'" role="alert">{{ $t(failureLabel(state.failure_code)) }}</p>
       <p v-if="state.is_check_in_progress">{{ $t('A check is in progress. Refresh to read its result.') }}</p>
-      <p v-if="!state.is_check_supported">{{ $t('This deployment does not support update checks.') }}</p>
     </details>
     <p v-else-if="!isBusy">{{ $t('Update information is unavailable. Refresh or sign in again; no update status is assumed.') }}</p>
   </section>

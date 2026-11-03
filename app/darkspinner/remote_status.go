@@ -13,13 +13,15 @@ import (
 // RemoteServerStatus is a live unauthenticated endpoint check, separate from
 // the two-day profile metadata cache.
 type RemoteServerStatus struct {
-	Address          string `json:"address"`
-	IsOnline         bool   `json:"isOnline"`
-	ServerVersion    string `json:"serverVersion"`
-	ClientVersion    string `json:"clientVersion"`
-	IsVersionMatched bool   `json:"isVersionMatched"`
-	Error            string `json:"error"`
-	CheckedDT        string `json:"checkedDt"`
+	Address           string `json:"address"`
+	IsOnline          bool   `json:"isOnline"`
+	IsMaintenance     bool   `json:"isMaintenance"`
+	MaintenanceReason string `json:"maintenanceReason"`
+	ServerVersion     string `json:"serverVersion"`
+	ClientVersion     string `json:"clientVersion"`
+	IsVersionMatched  bool   `json:"isVersionMatched"`
+	Error             string `json:"error"`
+	CheckedDT         string `json:"checkedDt"`
 }
 
 // CheckRemoteServers probes each normalized address once without credentials.
@@ -101,6 +103,8 @@ func checkRemoteServer(ctx context.Context, client *http.Client, address string)
 		return status
 	}
 	status.IsOnline = true
+	status.IsMaintenance = server.IsMaintenance
+	status.MaintenanceReason = server.MaintenanceReason
 	status.ServerVersion = server.ServerVersion
 	err = buildinfo.CheckCompatibility(Version, server.ServerVersion)
 	status.IsVersionMatched = err == nil
@@ -111,11 +115,33 @@ func checkRemoteServer(ctx context.Context, client *http.Client, address string)
 }
 
 func requireRemoteCompatibility(ctx context.Context, address string) error {
+	err := requireRemoteServer(ctx, address, false)
+	if err != nil {
+		return fmt.Errorf("compatibilityProbe: %w", err)
+	}
+	return nil
+}
+
+func requireRemoteLaunch(ctx context.Context, address string) error {
+	err := requireRemoteServer(ctx, address, true)
+	if err != nil {
+		return fmt.Errorf("launchProbe: %w", err)
+	}
+	return nil
+}
+
+func requireRemoteServer(ctx context.Context, address string, isAdmissionRequired bool) error {
 	client := remoteHTTPClient(3 * time.Second)
 	defer client.CloseIdleConnections()
 	status := checkRemoteServer(ctx, client, address)
 	if !status.IsOnline || !status.IsVersionMatched {
 		return fmt.Errorf("remote server %s: %s", address, status.Error)
+	}
+	if isAdmissionRequired && status.IsMaintenance {
+		if status.MaintenanceReason != "" {
+			return fmt.Errorf("Server maintenance: %s", status.MaintenanceReason)
+		}
+		return fmt.Errorf("The server is undergoing maintenance. Try again later.")
 	}
 	return nil
 }

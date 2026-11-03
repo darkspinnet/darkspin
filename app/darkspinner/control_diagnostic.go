@@ -80,7 +80,7 @@ func (e *App) DownloadRemoteControlDiagnostic(serverAddress, identity, kind, nam
 		e.controlPanel = remoteControlSession{}
 		return RemoteControlDiagnosticDownload{}, errors.New("controlPanel:unauthorized")
 	}
-	if (kind != "log" && kind != "bug") || name == "" || len(name) > 512 ||
+	if (kind != "log" && kind != "bug" && kind != "snapshot") || name == "" || len(name) > 512 ||
 		!filepath.IsLocal(name) || strings.Contains(name, "\\") || path.Clean(name) != name {
 		return RemoteControlDiagnosticDownload{}, errors.New("controlPanel:invalid_request")
 	}

@@ -17,9 +17,10 @@ const versionLabel = computed(() => {
 
 <template>
   <div class="remote-connection" role="status" aria-live="polite"
-    :class="{ online:connection?.isOnline, mismatch:connection?.isOnline && !connection?.isVersionMatched }"
+    :class="{ online:connection?.isOnline, mismatch:connection?.isOnline && !connection?.isVersionMatched, maintenance:connection?.isOnline && connection?.isMaintenance }"
     :title="$t('Client {0} vs Server {1}', [connection?.clientVersion || clientVersion || $t('unknown'), connection?.serverVersion || $t('unknown')]) + (connection?.error ? '\n' + connection.error : '')">
-    <span class="connection-state"><span class="connection-dot" aria-hidden="true"></span><template v-if="connection?.isOnline && !isChecking">{{ versionLabel }}<template v-if="!connection.isVersionMatched"> {{ $t('Out of Date') }}</template></template><template v-else>{{ $t(isChecking ? 'Checking…' : !connection ? 'Not checked' : 'Offline / Unreachable') }}</template></span>
+    <span class="connection-state"><span class="connection-dot" aria-hidden="true"></span><template v-if="connection?.isOnline && !isChecking"><template v-if="connection.isMaintenance">{{ $t('Maintenance') }} · </template>{{ versionLabel }}<template v-if="!connection.isVersionMatched"> {{ $t('Out of Date') }}</template></template><template v-else>{{ $t(isChecking ? 'Checking…' : !connection ? 'Not checked' : 'Offline / Unreachable') }}</template></span>
+    <div v-if="connection?.isOnline && connection?.isMaintenance && !isChecking" class="maintenance-reason">{{ connection.maintenanceReason || $t('The server is undergoing maintenance. Try again later.') }}</div>
   </div>
 </template>
 
@@ -29,4 +30,6 @@ const versionLabel = computed(() => {
 .connection-dot { width:8px; height:8px; flex-shrink:0; border-radius:50%; background:currentColor; }
 .online .connection-state { color:#89d5b1; }
 .mismatch .connection-state { color:#f87171; }
+.maintenance .connection-state, .maintenance-reason { color:#fbbf24; }
+.maintenance-reason { margin-top:4px; }
 </style>

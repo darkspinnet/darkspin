@@ -29,9 +29,11 @@ const remoteRefreshInterval = 48 * time.Hour
 
 // RemoteServer is one Darkspinner instance found on the local network.
 type RemoteServer struct {
-	Address       string `json:"address"`
-	ServerVersion string `json:"serverVersion"`
-	GameVersion   string `json:"gameVersion"`
+	Address           string `json:"address"`
+	ServerVersion     string `json:"serverVersion"`
+	GameVersion       string `json:"gameVersion"`
+	IsMaintenance     bool   `json:"isMaintenance"`
+	MaintenanceReason string `json:"maintenanceReason"`
 }
 
 // RemoteProfile is locally cached metadata for one account on another server.
@@ -209,8 +211,10 @@ func probeRemoteServer(ctx context.Context, client *http.Client, address string)
 		return RemoteServer{}, fmt.Errorf("probeStatus: %s", response.Status)
 	}
 	payload := struct {
-		ServerVersion string `json:"server_version"`
-		GameVersion   string `json:"game_version"`
+		ServerVersion     string `json:"server_version"`
+		GameVersion       string `json:"game_version"`
+		IsMaintenance     bool   `json:"is_maintenance"`
+		MaintenanceReason string `json:"maintenance_reason"`
 	}{}
 	err = json.NewDecoder(io.LimitReader(response.Body, 16*1024)).Decode(&payload)
 	if err != nil {
@@ -218,7 +222,8 @@ func probeRemoteServer(ctx context.Context, client *http.Client, address string)
 	}
 	return RemoteServer{
 		Address: address, ServerVersion: payload.ServerVersion,
-		GameVersion: payload.GameVersion,
+		GameVersion:   payload.GameVersion,
+		IsMaintenance: payload.IsMaintenance, MaintenanceReason: payload.MaintenanceReason,
 	}, nil
 }
 
@@ -310,7 +315,7 @@ func (a *App) RegisterRemoteProfile(
 	if ctx == nil {
 		ctx = context.TODO()
 	}
-	err = requireRemoteCompatibility(ctx, serverAddress)
+	err = requireRemoteLaunch(ctx, serverAddress)
 	if err != nil {
 		return fmt.Errorf("remoteCompatibility: %w", err)
 	}
@@ -540,7 +545,7 @@ func (a *App) remoteCredential(
 	if ctx == nil {
 		ctx = context.TODO()
 	}
-	err = requireRemoteCompatibility(ctx, serverAddress)
+	err = requireRemoteLaunch(ctx, serverAddress)
 	if err != nil {
 		return "", remoteProfileResponse{}, "", fmt.Errorf("remoteCompatibility: %w", err)
 	}

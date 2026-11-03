@@ -429,3 +429,7 @@ export function TimeoutRemoteControlUser(arg1, arg2, arg3, arg4, arg5) {
 export function UninstallDarkspinner() {
   return window['go']['main']['App']['UninstallDarkspinner']();
 }
+
+export function SetRemoteControlUserAccess(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['SetRemoteControlUserAccess'](arg1, arg2, arg3, arg4, arg5, arg6);
+}

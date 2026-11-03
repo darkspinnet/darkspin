@@ -232,6 +232,7 @@ func launcherMethods(app *App) map[string]any {
 		"DeleteRemoteControlDiagnostic":      app.DeleteRemoteControlDiagnostic,
 		"ListRemoteControlHistory":           app.ListRemoteControlHistory,
 		"FilterRemoteControlHistory":         app.FilterRemoteControlHistory,
+		"SetRemoteControlUserAccess":         app.SetRemoteControlUserAccess,
 		"ModerateRemoteControlUser":          app.ModerateRemoteControlUser,
 		"TimeoutRemoteControlUser":           app.TimeoutRemoteControlUser,
 		"RenameRemoteControlAccount":         app.RenameRemoteControlAccount,

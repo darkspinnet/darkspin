@@ -1,6 +1,7 @@
 export function panelError(failure) {
   const message = String(failure)
   const errors = [
+    ['access_protected', 'You cannot edit your own access or an account with a higher status, or grant a status above your own.'],
     ['diagnostic_invalid_request', 'Choose a valid diagnostic file and try again.'],
     ['diagnostic_not_found', 'The file is no longer available. Refresh the list.'],
     ['diagnostic_unavailable', 'The server could not access the diagnostic file. Try again later.'],

@@ -67,7 +67,7 @@ func controlMethod(path string) string {
 		return http.MethodPost
 	}
 	targetID, action := moderationPath(path)
-	if targetID > 0 && (action == "ban" || action == "unban" || action == "kick" || action == "timeout") {
+	if targetID > 0 && (action == "ban" || action == "unban" || action == "kick" || action == "timeout" || action == "access") {
 		return http.MethodPost
 	}
 	return ""
@@ -92,6 +92,10 @@ func (e *Service) supportedOperations() []string {
 	}
 	if e.config.Moderator != nil && e.config.ConnectionControl != nil {
 		operations = append(operations, "admin.users.list", "admin.history.list", "admin.users.ban", "admin.users.unban", "admin.users.kick", "admin.users.timeout")
+		accessEditor, isAccessSupported := e.config.Moderator.(accountaccess.AccessEditor)
+		if isAccessSupported && accessEditor != nil {
+			operations = append(operations, "admin.users.access")
+		}
 	}
 	if e.config.Information != nil {
 		operations = append(operations, "server.identity.read", "server.announcements.read", "admin.identity.write", "admin.announcements.write")

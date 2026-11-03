@@ -16,6 +16,7 @@ type RemoteControlUser struct {
 	DisplayName      string `json:"display_name"`
 	Level            int64  `json:"level"`
 	Status           int64  `json:"status"`
+	IPLimit          string `json:"ip_limit"`
 	IsBanned         bool   `json:"is_banned"`
 	IsTimedOut       bool   `json:"is_timed_out"`
 	TimeoutUntilUnix int64  `json:"timeout_until_unix"`

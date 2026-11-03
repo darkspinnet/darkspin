@@ -123,6 +123,7 @@ void read()
         <TabsList :aria-label="$t('Diagnostic files')">
           <TabsTrigger value="log" :disabled="isBusy || !!pendingFile">{{ $t('LOG') }}</TabsTrigger>
           <TabsTrigger value="bug" :disabled="isBusy || !!pendingFile">{{ $t('BUG') }}</TabsTrigger>
+          <TabsTrigger value="snapshot" :disabled="isBusy || !!pendingFile">{{ $t('SNAPSHOT') }}</TabsTrigger>
         </TabsList>
         <Button variant="outline" size="icon" :disabled="isBusy" :aria-label="$t('REFRESH')" :title="$t('REFRESH')" @click="read(false)"><RefreshCw :size="16" aria-hidden="true" /></Button>
       </header>

@@ -1,4 +1,4 @@
-// Package localstore confines diagnostic access to runtime logs and bug reports.
+// Package localstore confines diagnostic access to runtime diagnostic roots.
 package localstore
 
 import (
@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -45,7 +46,7 @@ func storageError(step string, err error) error {
 	return fmt.Errorf("%s: %w", step, errors.Join(diagnostic.ErrUnavailable, err))
 }
 
-func (e *Store) openRoot(ctx context.Context, kind string) (*os.Root, error) {
+func (e *Store) openRoot(ctx context.Context, kind, source string) (*os.Root, error) {
 	if ctx == nil {
 		return nil, diagnostic.ErrInvalidRequest
 	}
@@ -69,12 +70,23 @@ func (e *Store) openRoot(ctx context.Context, kind string) (*os.Root, error) {
 	if kind == "bug" {
 		dir = "bugs"
 	}
-	fi, err := runtimeRoot.Lstat(dir)
-	if err != nil {
-		return nil, storageError("rootStat", err)
+	if kind == "snapshot" {
+		dir = "logs/traces/snapshots"
+		if source == "archives" {
+			dir = "bugs"
+		}
 	}
-	if !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
-		return nil, diagnostic.ErrUnavailable
+	// Check every component before following a directory handle; in particular,
+	// the nested snapshot root must not traverse a symlink inside logs.
+	parts := strings.Split(dir, "/")
+	for index := range parts {
+		fi, statErr := runtimeRoot.Lstat(strings.Join(parts[:index+1], "/"))
+		if statErr != nil {
+			return nil, storageError("rootStat", statErr)
+		}
+		if !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
+			return nil, diagnostic.ErrUnavailable
+		}
 	}
 	root, err := runtimeRoot.OpenRoot(dir)
 	if err != nil {
@@ -83,7 +95,29 @@ func (e *Store) openRoot(ctx context.Context, kind string) (*os.Root, error) {
 	return root, nil
 }
 
+var snapshotArchivePattern = regexp.MustCompile(`(?i)^SS-[0-9]{6,}-darkspin-snapshot-.+-[0-9]{8}T[0-9]{6}\.[0-9]{9}Z\.zip$`)
+var snapshotCapturePattern = regexp.MustCompile(`^SS-[0-9]{6,}_[0-9]{8}T[0-9]{6}\.[0-9]{9}Z$`)
+
 func isAllowed(kind, name string) bool {
+	if kind == "snapshot" {
+		if snapshotArchivePattern.MatchString(path.Base(name)) {
+			return !strings.Contains(name, "/")
+		}
+		if !snapshotCapturePattern.MatchString(path.Dir(name)) {
+			return false
+		}
+		switch path.Base(name) {
+		case "raknet.jsonl", "server-state.json", "movement.json", "server-state-trigger.json", "client-memory.jsonl", "client.jsonl", "timeline.jsonl", "analysis.json", "manifest.json", "report.md":
+			return true
+		}
+		return false
+	}
+	if kind == "log" && (strings.EqualFold(name, "traces/snapshots") || strings.HasPrefix(strings.ToLower(name), "traces/snapshots/")) {
+		return false
+	}
+	if kind == "bug" && (snapshotArchivePattern.MatchString(path.Base(name)) || strings.HasPrefix(strings.ToLower(path.Base(name)), ".snapshot-")) {
+		return false
+	}
 	ext := strings.ToLower(path.Ext(name))
 	switch ext {
 	case ".log", ".txt", ".json", ".jsonl", ".dmp":
@@ -143,33 +177,35 @@ func (e *Store) List(ctx context.Context, req diagnostic.ListRequest) (diagnosti
 	if req.Limit < 1 || req.Limit > 100 {
 		return diagnostic.List{}, diagnostic.ErrInvalidRequest
 	}
-	if req.After != "" {
-		err := diagnostic.ValidateName(req.After)
-		if err != nil {
-			return diagnostic.List{}, fmt.Errorf("listAfter: %w", err)
+	cursor, err := diagnostic.DecodeCursor(req.After)
+	if err != nil {
+		return diagnostic.List{}, fmt.Errorf("listAfter: %w", err)
+	}
+	files, err := e.listFiles(ctx, req.Kind, "captures")
+	if err != nil {
+		return diagnostic.List{}, fmt.Errorf("listCaptures: %w", err)
+	}
+	if req.Kind == "snapshot" {
+		archives, archiveErr := e.listFiles(ctx, req.Kind, "archives")
+		if archiveErr != nil {
+			return diagnostic.List{}, fmt.Errorf("listArchives: %w", archiveErr)
 		}
+		files = append(files, archives...)
 	}
-	root, err := e.openRoot(ctx, req.Kind)
-	if errors.Is(err, diagnostic.ErrNotFound) {
-		return diagnostic.List{Files: []diagnostic.File{}}, nil
-	}
-	if err != nil {
-		return diagnostic.List{}, fmt.Errorf("listRoot: %w", err)
-	}
-	defer closeRoot(root)
-	scan := scanner{root: root, kind: req.Kind, files: make([]diagnostic.File, 0)}
-	err = scan.walk(ctx, ".", 0)
-	if err != nil {
-		return diagnostic.List{}, fmt.Errorf("listScan: %w", err)
-	}
-	sort.Slice(scan.files, func(i, j int) bool { return scan.files[i].Name < scan.files[j].Name })
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].ModifiedAt.Equal(files[j].ModifiedAt) {
+			return files[i].Name < files[j].Name
+		}
+		return files[i].ModifiedAt.After(files[j].ModifiedAt)
+	})
 	result := diagnostic.List{Files: make([]diagnostic.File, 0, req.Limit)}
-	for _, entry := range scan.files {
-		if entry.Name <= req.After {
+	for _, entry := range files {
+		if req.After != "" && (entry.ModifiedAt.After(cursor.ModifiedAt) ||
+			(entry.ModifiedAt.Equal(cursor.ModifiedAt) && entry.Name <= cursor.Name)) {
 			continue
 		}
 		if len(result.Files) == req.Limit {
-			result.Next = result.Files[len(result.Files)-1].Name
+			result.Next = diagnostic.EncodeCursor(result.Files[len(result.Files)-1])
 			break
 		}
 		result.Files = append(result.Files, entry)
@@ -177,9 +213,38 @@ func (e *Store) List(ctx context.Context, req diagnostic.ListRequest) (diagnosti
 	return result, nil
 }
 
+func (e *Store) listFiles(ctx context.Context, kind, source string) ([]diagnostic.File, error) {
+	root, err := e.openRoot(ctx, kind, source)
+	if errors.Is(err, diagnostic.ErrNotFound) {
+		return []diagnostic.File{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("listRoot: %w", err)
+	}
+	defer closeRoot(root)
+	scan := scanner{root: root, kind: kind, source: source, files: make([]diagnostic.File, 0)}
+	err = scan.walk(ctx, ".", 0)
+	if err != nil {
+		return nil, fmt.Errorf("listScan: %w", err)
+	}
+	if kind == "snapshot" {
+		files := make([]diagnostic.File, 0, len(scan.files))
+		for index := range scan.files {
+			scan.files[index].Name = source + "/" + scan.files[index].Name
+			nameErr := diagnostic.ValidateName(scan.files[index].Name)
+			if nameErr == nil {
+				files = append(files, scan.files[index])
+			}
+		}
+		return files, nil
+	}
+	return scan.files, nil
+}
+
 type scanner struct {
 	root    *os.Root
 	kind    string
+	source  string
 	files   []diagnostic.File
 	scanned int
 }
@@ -227,13 +292,20 @@ func (e *scanner) walk(ctx context.Context, dir string, depth int) error {
 				continue
 			}
 			if fi.IsDir() {
+				if e.kind == "log" && strings.EqualFold(name, "traces/snapshots") {
+					continue
+				}
+				if e.kind == "snapshot" && (e.source == "archives" || !snapshotCapturePattern.MatchString(name)) {
+					continue
+				}
 				err = e.walk(ctx, name, depth+1)
 				if err != nil {
 					return fmt.Errorf("scanChild: %w", err)
 				}
 				continue
 			}
-			if fi.Mode().IsRegular() && isAllowed(e.kind, name) {
+			if fi.Mode().IsRegular() && isAllowed(e.kind, name) &&
+				(e.kind != "snapshot" || e.source == "archives" || !snapshotArchivePattern.MatchString(name)) {
 				e.files = append(e.files, metadata(name, fi))
 			}
 		}
@@ -264,7 +336,12 @@ func (e contextReader) Read(payload []byte) (int, error) {
 }
 
 func (e *Store) Download(ctx context.Context, req diagnostic.FileRequest) (diagnostic.Download, error) {
-	root, err := e.openRoot(ctx, req.Kind)
+	originalName := req.Name
+	source, req, err := fileSource(req)
+	if err != nil {
+		return diagnostic.Download{}, fmt.Errorf("downloadSource: %w", err)
+	}
+	root, err := e.openRoot(ctx, req.Kind, source)
 	if err != nil {
 		return diagnostic.Download{}, fmt.Errorf("downloadRoot: %w", err)
 	}
@@ -302,13 +379,17 @@ func (e *Store) Download(ctx context.Context, req diagnostic.FileRequest) (diagn
 	if err != nil {
 		return diagnostic.Download{}, fmt.Errorf("downloadContext: %w", err)
 	}
-	file := metadata(req.Name, openedFI)
+	file := metadata(originalName, openedFI)
 	file.Size = int64(len(payload))
 	return diagnostic.Download{File: file, Content: payload}, nil
 }
 
 func (e *Store) Delete(ctx context.Context, req diagnostic.FileRequest) error {
-	root, err := e.openRoot(ctx, req.Kind)
+	source, req, err := fileSource(req)
+	if err != nil {
+		return fmt.Errorf("deleteSource: %w", err)
+	}
+	root, err := e.openRoot(ctx, req.Kind, source)
 	if err != nil {
 		return fmt.Errorf("deleteRoot: %w", err)
 	}
@@ -329,4 +410,22 @@ func (e *Store) Delete(ctx context.Context, req diagnostic.FileRequest) error {
 		return storageError("deleteRemove", err)
 	}
 	return nil
+}
+
+func fileSource(req diagnostic.FileRequest) (string, diagnostic.FileRequest, error) {
+	err := diagnostic.ValidateName(req.Name)
+	if err != nil {
+		return "", req, fmt.Errorf("sourceName: %w", err)
+	}
+	if req.Kind != "snapshot" {
+		return "", req, nil
+	}
+	source, name, isFound := strings.Cut(req.Name, "/")
+	if !isFound || (source != "captures" && source != "archives") ||
+		(source == "archives" && !snapshotArchivePattern.MatchString(name)) ||
+		(source == "captures" && snapshotArchivePattern.MatchString(path.Base(name))) {
+		return "", req, diagnostic.ErrInvalidRequest
+	}
+	req.Name = name
+	return source, req, nil
 }

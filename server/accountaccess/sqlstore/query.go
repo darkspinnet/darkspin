@@ -15,6 +15,7 @@ type summaryRow struct {
 	DisplayName      string `db:"display_name"`
 	Level            int64  `db:"level"`
 	Status           int64  `db:"status"`
+	IPLimit          string `db:"ip_limit"`
 	IsBanned         bool   `db:"is_banned"`
 	TimeoutUntilUnix int64  `db:"timeout_until_unix"`
 }
@@ -40,7 +41,7 @@ func (e *Store) ListUsers(ctx context.Context, actor accountaccess.Actor, req ac
 	if err != nil {
 		return accountaccess.UserList{}, fmt.Errorf("usersAuthorize: %w", err)
 	}
-	query := `SELECT u.id AS user_id, u.login_name, u.display_name, u.level, a.status, a.is_banned, a.timeout_until_unix
+	query := `SELECT u.id AS user_id, u.login_name, u.display_name, u.level, a.status, a.ip_limit, a.is_banned, a.timeout_until_unix
 		FROM "user" u JOIN account_access a ON a.user_id = u.id
 		WHERE u.trmt_id = 0 AND u.id > ?`
 	arguments := []any{req.AfterUserID}
@@ -65,7 +66,7 @@ func (e *Store) ListUsers(ctx context.Context, actor accountaccess.Actor, req ac
 	for _, row := range rows {
 		result.Users = append(result.Users, accountaccess.UserSummary{
 			UserID: row.UserID, LoginName: row.LoginName, DisplayName: row.DisplayName,
-			Level: row.Level, Status: row.Status, IsBanned: row.IsBanned,
+			Level: row.Level, Status: row.Status, IPLimit: row.IPLimit, IsBanned: row.IsBanned,
 			TimeoutUntilUnix: row.TimeoutUntilUnix,
 			IsTimedOut:       (accountaccess.Access{TimeoutUntilUnix: row.TimeoutUntilUnix}).IsTimedOut(),
 		})

@@ -80,6 +80,7 @@ export const DownloadRemoteControlDiagnostic = (...args) => controlPanelCall('Do
 export const DeleteRemoteControlDiagnostic = (...args) => controlPanelCall('DeleteRemoteControlDiagnostic', ...args)
 export const ListRemoteControlHistory = (...args) => controlPanelCall('ListRemoteControlHistory', ...args)
 export const FilterRemoteControlHistory = (...args) => controlPanelCall('FilterRemoteControlHistory', ...args)
+export const SetRemoteControlUserAccess = (...args) => controlPanelCall('SetRemoteControlUserAccess', ...args)
 export const ModerateRemoteControlUser = (...args) => controlPanelCall('ModerateRemoteControlUser', ...args)
 export const TimeoutRemoteControlUser = (...args) => controlPanelCall('TimeoutRemoteControlUser', ...args)
 export const RenameRemoteControlAccount = (...args) => controlPanelCall('RenameRemoteControlAccount', ...args)

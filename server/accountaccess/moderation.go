@@ -29,6 +29,7 @@ type UserSummary struct {
 	DisplayName      string
 	Level            int64
 	Status           int64
+	IPLimit          string
 	IsBanned         bool
 	TimeoutUntilUnix int64
 	IsTimedOut       bool

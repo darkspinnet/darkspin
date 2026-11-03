@@ -732,7 +732,7 @@ func New(options Options) (*Server, error) {
 		MetricsReviewer:       accessService,
 		LoginHistoryReviewer:  loginHistoryReviewer,
 		MaintenanceController: panelMaintenance,
-		UpdateReader:          newPanelUpdate(configPath, maintenanceSchedule != nil, accessService),
+		UpdateReader:          newPanelUpdate(configPath, config, maintenanceSchedule != nil, accessService),
 		Diagnostic:            diagnostic.New(localstore.New(runtimePath), accessService),
 	})
 	if err != nil {
@@ -1003,7 +1003,7 @@ func New(options Options) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("apiRegister: %w", err)
 	}
-	err = readiness.Register(router, buildinfo.Version, gameVersion)
+	err = readiness.RegisterWithAdmission(router, buildinfo.Version, gameVersion, panelMaintenance)
 	if err != nil {
 		return nil, fmt.Errorf("readinessRegister: %w", err)
 	}

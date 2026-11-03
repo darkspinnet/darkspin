@@ -1,5 +1,6 @@
 #include "login/login.h"
 #include "hook.h"
+#include "hook/text.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -93,6 +94,21 @@ static int login_string(const BYTE* bytes, unsigned int size,
     return 1;
 }
 
+// DUTC is the optional maintenance deadline. Its unsigned TDF integer uses six
+// bits in the first byte and seven in each continuation, at most 64 bits.
+static int login_skip_deadline(const BYTE* bytes, unsigned int size, unsigned int* offset) {
+    unsigned int count;
+    for (count = 0; count < 10; count++) {
+        BYTE part;
+        if (*offset >= size) return 0;
+        part = bytes[(*offset)++];
+        if (count == 0 && (part & 0x40)) return 0;
+        if (count == 9 && (part & 0x7c)) return 0;
+        if ((part & 0x80) == 0) return 1;
+    }
+    return 0;
+}
+
 // Modifies: caches valid reason and message strings from the assembled login error body.
 static void login_error_body(const login_failure_stream* stream) {
     unsigned int offset = 0;
@@ -104,6 +120,11 @@ static void login_error_body(const login_failure_stream* stream) {
         unsigned int capacity;
         if (stream->body_length - offset < 4) return;
         tag = stream->body + offset;
+        if (tag[0] == 0x93 && tag[1] == 0x5d && tag[2] == 0x23 && tag[3] == 0) {
+            offset += 4;
+            if (!login_skip_deadline(stream->body, stream->body_length, &offset)) return;
+            continue;
+        }
         if (tag[3] != 1) return;
         if (tag[0] == 0xca && tag[1] == 0x58 && tag[2] == 0x73 && !reason[0]) {
             text = reason;
@@ -116,6 +137,10 @@ static void login_error_body(const login_failure_stream* stream) {
         }
         offset += 4;
         if (!login_string(stream->body, stream->body_length, &offset, text, capacity)) return;
+    }
+    if (!message[0] && strcmp(reason, "server-maintenance") == 0) {
+        snprintf(message, sizeof(message), "%s",
+            fang_text("The server is undergoing maintenance. Try again later."));
     }
     if (reason[0] && message[0]) {
         memcpy(login_reason, reason, sizeof(reason));

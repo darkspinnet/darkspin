@@ -18,7 +18,7 @@ import ProfileSummary from '@/components/ProfileSummary.vue'
 import RemoteConnection from '@/components/RemoteConnection.vue'
 import RemoteControlPanel from '@/components/RemoteControlPanel.vue'
 import { RefreshCw } from '@lucide/vue'
-import { setLauncherLocale } from './localization'
+import { setLauncherLocale, translate } from './localization'
 import { remoteErrorText, remoteUsernameError, remotePasswordError } from './remote'
 import { GetLauncherLanguageConfiguration, SetLauncherLocale } from './platform'
 import { campaignDetailFor, campaignLabelFor, profileCreateDate, profileLastPlayedDate, profileLastPlayedTime } from './profile'
@@ -379,12 +379,16 @@ const selectedRemoteProfileLabel = computed(() => selectedRemoteProfile.value?.d
 const selectedRemoteProfileAvatar = computed(() => selectedRemoteProfile.value?.avatarUrl || '')
 const selectedRemoteCheck = computed(() => remoteCheckFor(remoteServerAddress.value))
 const isRemoteConnectionReady = computed(() => !isRemoteChecking.value &&
-  selectedRemoteCheck.value?.isOnline && selectedRemoteCheck.value?.isVersionMatched)
+  selectedRemoteCheck.value?.isOnline && selectedRemoteCheck.value?.isVersionMatched &&
+  !selectedRemoteCheck.value?.isMaintenance)
 const remoteConnectionReason = computed(() => {
   if (isRemoteChecking.value) return 'Checking remote server availability and version…'
   const connection = selectedRemoteCheck.value
   if (!connection) return 'Check the remote server before launching.'
   if (!connection.isOnline) return connection.error || 'The remote server is offline or unreachable.'
+  if (connection.isMaintenance) return connection.maintenanceReason
+    ? translate('Server maintenance: {0}', [connection.maintenanceReason])
+    : translate('The server is undergoing maintenance. Try again later.')
   if (!connection.isVersionMatched) return connection.error || 'Server and launcher major/minor versions must match.'
   return ''
 })

@@ -2,6 +2,12 @@
 
 ### 2026-11-03
 
+- #170 Add a control-panel close button and open Manage by default when entering Admin.
+- #170 Separate Diagnostic snapshots from bugs and logs, with newest-first ordering and date-based pagination.
+- #170 Add audited administrator editing of user status and Allow IP, with rank protection, credential revocation, and gameplay disconnection.
+- #170 Enable manual update checks from the configured bootstrap source without requiring a supervisor-managed server, and show unsupported checks explicitly.
+    - #169 Show remote server Maintenance status and its reason in the launcher before starting the client, block player launches while maintenance is active, and keep administrator panel access available.
+    - #169 Show maintenance login-rejection details when the server includes a deadline, with a translated fallback when no maintenance reason is supplied.
 - #169 Preserve server login-rejection details across interleaved TCP connections and identify launcher-requested login exits instead of reporting an unknown diagnosis.
 
 ### 2026-11-02

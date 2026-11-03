@@ -1,6 +1,18 @@
 {
   "locale": "de-de",
   "messages": {
+    "You cannot edit your own access or an account with a higher status, or grant a status above your own.": "",
+    "Close control panel": "",
+    "EDIT ACCESS": "",
+    "EDIT USER ACCESS": "",
+    "ALLOW IP": "",
+    "IP address or CIDR": "",
+    "Status must be a nonnegative integer.": "",
+    "Status 250 or higher requires an allowed IP address or CIDR.": "",
+    "Enter a nonnegative status, a valid IP address or CIDR, and a reason.": "",
+    "Access settings saved.": "",
+    "Access settings saved. Disconnecting the active game session is still pending.": "",
+    "The server is undergoing maintenance. Try again later.": "",
     "Account registration is unavailable.": "",
     "Account deletion could not be completed. Sign in again.": "",
     "Close the game before changing this account.": "",
@@ -12,6 +24,7 @@
     "SERVER STATUS": "",
     "UP TO DATE": "",
     "NOT CHECKED": "",
+    "UPDATE CHECK UNSUPPORTED": "",
     "UPDATE DETAILS": "",
     "HEALTH DETAILS": "",
     "OPERATION DETAILS": "",
@@ -26,6 +39,7 @@
     "DIAGNOSTIC": "",
     "LOG": "",
     "BUG": "",
+    "SNAPSHOT": "",
     "Diagnostic files": "",
     "Saved to {0}": "",
     "SIZE (BYTES)": "",
@@ -1844,6 +1858,8 @@
     "Mission participation collection started: {0}": "",
     "No recorded mission participation observations are available for this range.": "",
     "Mission participation statistics are unavailable from this server.": "",
-    "This account cannot access the server.": ""
+    "This account cannot access the server.": "",
+    "Maintenance": "",
+    "Server maintenance: {0}": ""
   }
 }

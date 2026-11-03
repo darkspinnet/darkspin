@@ -23,7 +23,9 @@ const isHealthBusy = ref(false)
 const operations = computed(() => props.panel.server.supported_operations || [])
 const isBusy = computed(() => isUpdateBusy.value || isMaintenanceBusy.value || isHealthBusy.value)
 const updateStatus = computed(() => {
+  if (!operations.value.includes('admin.update.check')) return 'UPDATE CHECK UNSUPPORTED'
   if (!update.value) return 'UNKNOWN'
+  if (update.value.is_check_supported !== true) return 'UPDATE CHECK UNSUPPORTED'
   if (update.value?.is_check_in_progress) return 'CHECKING FOR UPDATES'
   return { checking:'CHECKING FOR UPDATES', available:'UPDATE AVAILABLE', current:'UP TO DATE', failed:'UPDATE CHECK FAILED' }[update.value?.check_status] || 'NOT CHECKED'
 })
@@ -58,9 +60,10 @@ onBeforeUnmount(() => emit('busy', false))
       <article v-if="operations.includes('admin.update.read')" class="manage-status manage-update" :data-status="update?.check_status">
         <h4>{{ $t('UPDATE') }}</h4>
         <div class="update-check">
-          <Button v-if="operations.includes('admin.update.check')" variant="outline" :disabled="isUpdateBusy || !update?.is_check_supported || update?.is_check_in_progress || maintenance?.is_active" @click="updateView?.check()">{{ $t('CHECK FOR UPDATES') }}</Button>
+          <Button variant="outline" :disabled="isUpdateBusy || !operations.includes('admin.update.check') || update?.is_check_supported !== true || update?.is_check_in_progress || maintenance?.is_active" @click="updateView?.check()">{{ $t('CHECK FOR UPDATES') }}</Button>
           <strong role="status">{{ $t(updateStatus) }}</strong>
         </div>
+        <p v-if="!operations.includes('admin.update.check') || (update && update.is_check_supported !== true)">{{ $t('This deployment does not support update checks.') }}</p>
         <p v-if="update?.candidate_version">{{ $t('CANDIDATE VERSION') }}: {{ update.candidate_version }}</p>
         <p v-if="update?.checked_at">{{ formatControlTime(update.checked_at) }}</p>
       </article>

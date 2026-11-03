@@ -3,6 +3,7 @@ package diagnostic
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"path"
@@ -97,10 +98,43 @@ func ValidateName(name string) error {
 }
 
 func ValidateKind(kind string) error {
-	if kind != "log" && kind != "bug" {
+	if kind != "log" && kind != "bug" && kind != "snapshot" {
 		return ErrInvalidRequest
 	}
 	return nil
+}
+
+// EncodeCursor carries the last ordering key, so pagination remains valid even
+// when that file has been deleted between requests.
+func EncodeCursor(file File) string {
+	payload := file.ModifiedAt.UTC().Format(time.RFC3339Nano) + "\n" + file.Name
+	return base64.RawURLEncoding.EncodeToString([]byte(payload))
+}
+
+func DecodeCursor(cursor string) (File, error) {
+	if cursor == "" {
+		return File{}, nil
+	}
+	if len(cursor) > 768 {
+		return File{}, ErrInvalidRequest
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return File{}, fmt.Errorf("cursorDecode: %w", ErrInvalidRequest)
+	}
+	stamp, name, isFound := strings.Cut(string(payload), "\n")
+	if !isFound {
+		return File{}, ErrInvalidRequest
+	}
+	modifiedAt, err := time.Parse(time.RFC3339Nano, stamp)
+	if err != nil {
+		return File{}, fmt.Errorf("cursorTime: %w", ErrInvalidRequest)
+	}
+	err = ValidateName(name)
+	if err != nil {
+		return File{}, fmt.Errorf("cursorName: %w", err)
+	}
+	return File{Name: name, ModifiedAt: modifiedAt}, nil
 }
 
 func (e *Service) authorize(ctx context.Context, actor accountaccess.Actor) error {
@@ -137,10 +171,11 @@ func (e *Service) List(ctx context.Context, actor accountaccess.Actor, req ListR
 		return List{}, fmt.Errorf("listKind: %w", err)
 	}
 	if req.After != "" {
-		err = ValidateName(req.After)
-		if err != nil {
-			return List{}, fmt.Errorf("listCursor: %w", err)
+		cursor, cursorErr := DecodeCursor(req.After)
+		if cursorErr != nil {
+			return List{}, fmt.Errorf("listCursor: %w", cursorErr)
 		}
+		req.After = EncodeCursor(cursor)
 	}
 	if req.Limit == 0 {
 		req.Limit = 100
