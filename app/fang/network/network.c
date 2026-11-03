@@ -639,8 +639,12 @@ static int WSAAPI hooked_recvfrom(SOCKET socket, char* buffer, int length, int f
 // Modifies: removes party bookkeeping and closes the native socket.
 static int WSAAPI hooked_closesocket(SOCKET socket) {
     int result;
+    int error;
     forget_party_socket(socket);
     result = original_closesocket(socket);
+    error = WSAGetLastError();
+    if (result == 0) fang_login_forget_socket(socket);
+    WSASetLastError(error);
     return result;
 }
 

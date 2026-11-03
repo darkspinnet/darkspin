@@ -917,6 +917,7 @@ func gameExitDescription(exitCode uint32) (string, bool) {
 		0xc0000374: "heap corruption detected",
 		0xc0000409: "stack buffer overrun or fail-fast termination",
 		0xd15c0001: "Darkspinner closed the client after its login watchdog expired",
+		0xd15c0002: "Darkspinner closed the client after login was rejected; see the launcher login failure details",
 	}[exitCode]
 	return description, description != ""
 }

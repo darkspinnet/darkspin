@@ -1,13 +1,12 @@
 # Changelog
 
+### 2026-11-03
+
+- [#169](https://github.com/darkspinnet/darkspin/issues/169) Preserve server login-rejection details across interleaved TCP connections and identify launcher-requested login exits instead of reporting an unknown diagnosis.
+
 ### 2026-11-02
 
-- Show an explanatory Server Rule message when a remote Crogenitor is selected.
-- Show shortcut Delete buttons only for shortcuts owned by the running Darkspinner executable, and replace ownership failures with a concise message.
-- Show update-check status beside the Check for Updates button in Manage.
-- Consolidate Manage into a shared update, gameplay-admission, and health status overview, with one refresh control, grouped operation controls, and expandable technical details.
-- Add circled help beside Update with Backup, Restart, and Hold in Maintenance explaining each operation.
-- Keep the control panel height and top navigation stable across Feature, Dashboard, Admin, and User views, with content scrolling beneath a fixed tab row.
+- Widen the Manage update card and adapt status cards to narrow panels so update-check status remains readable beside its button.
 
 - [#165](https://github.com/darkspinnet/darkspin/issues/165) Prevent delayed recovery of older commands from canceling Quantum Superposition or resetting newer accepted abilities and movement.
 - [#163](https://github.com/darkspinnet/darkspin/issues/163) Include native exception reports and minidumps created or changed since client launch in automatic crash ZIPs, preserving ordinary logs when a native report is unavailable.

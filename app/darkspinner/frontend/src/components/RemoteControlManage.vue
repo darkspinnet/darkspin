@@ -55,7 +55,7 @@ onBeforeUnmount(() => emit('busy', false))
       <Button variant="outline" size="icon" :disabled="isBusy" :aria-label="$t('REFRESH')" :title="$t('REFRESH')" @click="refresh"><RefreshCw :size="16" aria-hidden="true" /></Button>
     </header>
     <div class="manage-statuses">
-      <article v-if="operations.includes('admin.update.read')" class="manage-status" :data-status="update?.check_status">
+      <article v-if="operations.includes('admin.update.read')" class="manage-status manage-update" :data-status="update?.check_status">
         <h4>{{ $t('UPDATE') }}</h4>
         <div class="update-check">
           <Button v-if="operations.includes('admin.update.check')" variant="outline" :disabled="isUpdateBusy || !update?.is_check_supported || update?.is_check_in_progress || maintenance?.is_active" @click="updateView?.check()">{{ $t('CHECK FOR UPDATES') }}</Button>
@@ -89,18 +89,25 @@ onBeforeUnmount(() => emit('busy', false))
 </template>
 
 <style scoped>
-.manage-overview { display:flex; flex-direction:column; gap:18px; }
+.manage-overview { display:flex; flex-direction:column; gap:18px; container-type:inline-size; }
 .manage-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
-.manage-statuses { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:12px; }
+.manage-statuses { display:grid; grid-template-columns:minmax(0,2fr) repeat(2,minmax(0,1fr)); gap:12px; }
 .manage-status { display:flex; flex-direction:column; align-items:flex-start; gap:10px; min-width:0; padding:16px; border:1px solid var(--border); border-radius:8px; background:var(--background); }
 .manage-status h4 { color:var(--muted-foreground); font-size:11px; }
 .manage-status strong { font-size:14px; }
-.update-check { display:flex; align-items:center; gap:12px; width:100%; }
-.update-check > button { flex-shrink:0; }
-.update-check > strong { min-width:0; font-size:12px; overflow-wrap:anywhere; }
+.update-check { display:flex; align-items:center; flex-wrap:wrap; gap:12px; width:100%; }
+.update-check > button { flex-shrink:0; max-width:100%; min-height:40px; height:auto; white-space:normal; }
+.update-check > strong { flex:1 0 100px; max-width:100%; font-size:12px; overflow-wrap:normal; word-break:normal; }
 .manage-status p { font-size:12px; color:var(--muted-foreground); overflow-wrap:anywhere; }
 .manage-status[data-status="available"] strong, .manage-status[data-status="healthy"] strong { color:var(--primary); }
 .manage-status[data-status="failed"] strong, .manage-status[data-status="degraded"] strong { color:var(--destructive); }
 .manage-operations, .manage-details { padding-top:18px; border-top:1px solid var(--border); }
 .manage-details { display:flex; flex-direction:column; gap:16px; }
+@container (max-width:740px) {
+  .manage-statuses { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .manage-update { grid-column:1 / -1; }
+}
+@container (max-width:440px) {
+  .manage-statuses { grid-template-columns:minmax(0,1fr); }
+}
 </style>

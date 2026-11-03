@@ -129,10 +129,10 @@ export namespace main {
 	    }
 	}
 	export class LauncherIntegrationStatus {
-	    isStartMenuOwned: boolean;
-	    isDesktopOwned: boolean;
 	    isStartMenuInstalled: boolean;
 	    isDesktopInstalled: boolean;
+	    isStartMenuOwned: boolean;
+	    isDesktopOwned: boolean;
 	    isSteamLaunchInstalled: boolean;
 	    isManagementSupported: boolean;
 	    message: string;

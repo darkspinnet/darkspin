@@ -8,14 +8,57 @@
  * the 12-byte header or coalesce multiple frames, including an error body.
  * REAS/MESG are Darkspin extensions, not native client error-text fields. */
 static SRWLOCK login_failure_lock = SRWLOCK_INIT;
-static SOCKET login_socket = INVALID_SOCKET;
-static BYTE login_header[12];
-static unsigned int login_header_length;
-static unsigned int login_body_length;
-static unsigned int login_body_received;
-static BYTE login_body[2048];
+typedef struct login_failure_stream {
+    SOCKET socket;
+    int is_used;
+    BYTE header[12];
+    unsigned int header_length;
+    unsigned int body_length;
+    unsigned int body_received;
+    BYTE body[2048];
+} login_failure_stream;
+
+static login_failure_stream login_streams[16];
+static unsigned int login_stream_cursor;
 static char login_reason[96];
 static char login_message[512];
+
+/* The caller holds login_failure_lock. Keep bounded per-socket framing:
+ * another HTTP/Blaze connection must not discard a partial login reply. */
+static login_failure_stream* login_stream_for_socket(SOCKET socket) {
+    unsigned int index;
+    login_failure_stream* stream;
+    for (index = 0; index < 16; index++) {
+        if (login_streams[index].is_used && login_streams[index].socket == socket)
+            return &login_streams[index];
+    }
+    for (index = 0; index < 16; index++) {
+        if (!login_streams[index].is_used) break;
+    }
+    if (index == 16) {
+        index = login_stream_cursor;
+        login_stream_cursor = (login_stream_cursor + 1) % 16;
+    }
+    stream = &login_streams[index];
+    ZeroMemory(stream, sizeof(*stream));
+    stream->socket = socket;
+    stream->is_used = 1;
+    return stream;
+}
+
+// Retire framing before Winsock can reuse this handle for another connection.
+// Keep a completed rejection cached until native login-error dispatch reads it.
+void fang_login_forget_socket(SOCKET socket) {
+    unsigned int index;
+    AcquireSRWLockExclusive(&login_failure_lock);
+    for (index = 0; index < 16; index++) {
+        if (login_streams[index].is_used && login_streams[index].socket == socket) {
+            ZeroMemory(&login_streams[index], sizeof(login_streams[index]));
+            break;
+        }
+    }
+    ReleaseSRWLockExclusive(&login_failure_lock);
+}
 
 // The launcher failure result must already be flushed before this call.
 // ExitProcess runs third-party DLL detach handlers after stopping other
@@ -51,16 +94,16 @@ static int login_string(const BYTE* bytes, unsigned int size,
 }
 
 // Modifies: caches valid reason and message strings from the assembled login error body.
-static void login_error_body(void) {
+static void login_error_body(const login_failure_stream* stream) {
     unsigned int offset = 0;
     char reason[sizeof(login_reason)] = {0};
     char message[sizeof(login_message)] = {0};
-    while (offset < login_body_length) {
+    while (offset < stream->body_length) {
         const BYTE* tag;
         char* text;
         unsigned int capacity;
-        if (login_body_length - offset < 4) return;
-        tag = login_body + offset;
+        if (stream->body_length - offset < 4) return;
+        tag = stream->body + offset;
         if (tag[3] != 1) return;
         if (tag[0] == 0xca && tag[1] == 0x58 && tag[2] == 0x73 && !reason[0]) {
             text = reason;
@@ -72,7 +115,7 @@ static void login_error_body(void) {
             return;
         }
         offset += 4;
-        if (!login_string(login_body, login_body_length, &offset, text, capacity)) return;
+        if (!login_string(stream->body, stream->body_length, &offset, text, capacity)) return;
     }
     if (reason[0] && message[0]) {
         memcpy(login_reason, reason, sizeof(reason));
@@ -83,46 +126,42 @@ static void login_error_body(void) {
 // Modifies: assembles received Blaze frames and caches server login rejection details.
 void fang_login_receive(SOCKET socket, const char* bytes, unsigned int size) {
     unsigned int offset = 0;
+    login_failure_stream* stream;
     AcquireSRWLockExclusive(&login_failure_lock);
-    if (login_socket != socket) {
-        login_socket = socket;
-        login_header_length = 0;
-        login_body_received = 0;
-        login_body_length = 0;
-        login_reason[0] = 0;
-        login_message[0] = 0;
-    }
+    stream = login_stream_for_socket(socket);
     while (offset < size) {
         unsigned int count;
-        if (login_header_length < sizeof(login_header)) {
+        if (stream->header_length < sizeof(stream->header)) {
             count = size - offset;
-            if (count > sizeof(login_header) - login_header_length) {
-                count = (unsigned int)sizeof(login_header) - login_header_length;
+            if (count > sizeof(stream->header) - stream->header_length) {
+                count = (unsigned int)sizeof(stream->header) - stream->header_length;
             }
-            memcpy(login_header + login_header_length, bytes + offset, count);
-            login_header_length += count;
+            memcpy(stream->header + stream->header_length, bytes + offset, count);
+            stream->header_length += count;
             offset += count;
-            if (login_header_length != sizeof(login_header)) continue;
-            login_body_length = ((unsigned int)login_header[0] << 8) | login_header[1];
-            login_body_received = 0;
+            if (stream->header_length != sizeof(stream->header)) continue;
+            stream->body_length = ((unsigned int)stream->header[0] << 8) | stream->header[1];
+            stream->body_received = 0;
         }
         count = size - offset;
-        if (count > login_body_length - login_body_received) {
-            count = login_body_length - login_body_received;
+        if (count > stream->body_length - stream->body_received) {
+            count = stream->body_length - stream->body_received;
         }
-        if (login_body_length <= sizeof(login_body)) {
-            memcpy(login_body + login_body_received, bytes + offset, count);
+        if (stream->body_length <= sizeof(stream->body)) {
+            memcpy(stream->body + stream->body_received, bytes + offset, count);
         }
-        login_body_received += count;
+        stream->body_received += count;
         offset += count;
-        if (login_body_received != login_body_length) continue;
-        if (login_body_length <= sizeof(login_body) &&
-            login_header[2] == 0 && login_header[3] == 1 &&
-            login_header[4] == 0 && login_header[5] == 0x28 &&
-            (login_header[8] >> 4) == 3) {
-            login_error_body();
+        if (stream->body_received != stream->body_length) continue;
+        if (stream->body_length <= sizeof(stream->body) &&
+            stream->header[2] == 0 && stream->header[3] == 1 &&
+            stream->header[4] == 0 && stream->header[5] == 0x28 &&
+            (stream->header[8] >> 4) == 3) {
+            login_reason[0] = 0;
+            login_message[0] = 0;
+            login_error_body(stream);
         }
-        login_header_length = 0;
+        stream->header_length = 0;
     }
     ReleaseSRWLockExclusive(&login_failure_lock);
 }
