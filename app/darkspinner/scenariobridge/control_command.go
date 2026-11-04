@@ -1,9 +1,9 @@
-//go:build windows && cgo && scenario && fangdebug
+//go:build windows && cgo && scenario
 
-package scenario
+package scenariobridge
 
 /*
-#include "scenario/control.h"
+#include "proxy.h"
 #include "cinematic/cinematic.h"
 #include <stdlib.h>
 */
@@ -23,6 +23,7 @@ import (
 // One owner writes both heartbeat and command receipts. The reader has a
 // bounded mailbox and performs no gameplay/native input work.
 type controlConnection struct {
+	target                *C.fang_proxy_target
 	r                     *os.File
 	identity              controlEnvelope
 	commands              chan controlReceivedCommand
@@ -42,6 +43,8 @@ type controlReceivedCommand struct {
 }
 
 func (e *controlConnection) readCommands() {
+	defer C.fang_proxy_release(e.target)
+	defer bindTarget(e.target)()
 	defer e.disconnect()
 	for {
 		message, err := readControlEnvelope(e.r)
@@ -118,6 +121,7 @@ func (e *controlConnection) run() error {
 			default:
 			}
 			isPending = true
+			C.fang_proxy_retain(e.target)
 			go e.processCommand(request, replies)
 		case response := <-replies:
 			isPending = false
@@ -136,6 +140,8 @@ func (e *controlConnection) run() error {
 }
 
 func (e *controlConnection) processCommand(req controlReceivedCommand, replies chan<- controlEnvelope) {
+	defer C.fang_proxy_release(e.target)
+	defer bindTarget(e.target)()
 	response := e.command(req.envelope, req.receivedAt)
 	select {
 	case replies <- response:

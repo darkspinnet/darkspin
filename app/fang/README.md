@@ -1,6 +1,8 @@
 # Fang source layout
 
-Fang's bootstrap and build-mode switches live at this directory's root. Each feature subdirectory is a cgo package imported by the bootstrap, so Go compiles its C sources as separate translation units. `fang.h` exposes initialization; `hook.h` forwards only common ABI, patch and trace infrastructure. Feature interfaces belong in their owning directory.
+Fang is a native C DLL; it contains no Go runtime or cgo bindings. `mage_fang.go` compiles its feature sources with a 32-bit MinGW compiler and generates embedded Dark Spin translation catalogs under `bin/cache/fang-native`. `bootstrap.c` owns initialization; `fang.h` exposes initialization and `hook.h` forwards common ABI, patch and trace infrastructure. Feature interfaces belong in their owning directory.
+
+ZIP collection runs in the existing Darkspinner game supervisor, including remote and detached launches, independently of the launcher window or local game server. Fang publishes a small launch-scoped mailbox request for `/bug`. Scenario JSON, scheduling and artifact creation live in `app/darkspinner/scenariobridge`; Fang retains bounded native observation and action requests. Requests carry compiled build identity and native deadlines, and the private pipe verifies the exact owning Darkspinner process separately from the observed game PID.
 
 | Directory | Responsibility |
 | --- | --- |
@@ -14,11 +16,11 @@ Fang's bootstrap and build-mode switches live at this directory's root. Each fea
 | `login/` | Existing native login presentation and failure reporting |
 | `mod/` | Mod resource mounting, editor/palette integration, appearance and audio compatibility |
 | `network/` | Winsock redirection, party envelopes, network capture and the scenario control transport's original-function access |
-| `scenario/` | Development control connection, native input/observation, renderer and selection diagnostics, and capability reporting |
+| `scenario/` | Bounded native control ABI, native input/observation, renderer and selection diagnostics, and capability reporting |
 | `shop/` | Shop pricing, inventory availability and shop UI compatibility |
 | `zoom/` | Normal gameplay camera zoom compatibility |
 
-The `mod/` root retains its bootstrap and shared interfaces. Native implementations live in `animation/` (emote state and dance/audio coordination), `appearance/` (imported character identity, fit, scale and portraits), `audio/` (sound, music and voice), `editor/` (editor controls, previews and validation), `palette/` (palette pages and selection controls), `resource/` (source-backed streams), `scene/` (scene and environment assets), and `ui/` (shared button styling). Each subgroup is a cgo package imported by the mod bootstrap.
+The `mod/` root retains its bootstrap and shared interfaces. Native implementations live in `animation/` (emote state and dance/audio coordination), `appearance/` (imported character identity, fit, scale and portraits), `audio/` (sound, music and voice), `editor/` (editor controls, previews and validation), `palette/` (palette pages and selection controls), `resource/` (source-backed streams), `scene/` (scene and environment assets), and `ui/` (shared button styling).
 
 Every C function has a short `//` summary describing its purpose and effects. `Reads` indicates a query or calculation without a persistent or caller-visible write; `Modifies` and `Reads/modifies` identify native operations, patches, Fang state changes, output-buffer writes, resource ownership, or diagnostic output. Existing detailed evidence and inline explanations remain alongside these summaries.
 

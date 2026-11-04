@@ -1,7 +1,8 @@
 #include "scenario/thread.h"
 
 #if FANG_SCENARIO
-extern int GoScenarioCapability(unsigned char* destination, unsigned int capacity);
+#include <string.h>
+#include "fang_generated.h"
 
 /* This thread only reports compiled metadata; it performs no client action. */
 // Modifies: validates the request and writes compiled capability metadata and required length into its output.
@@ -12,7 +13,8 @@ __declspec(dllexport) DWORD WINAPI RecapScenarioCapabilityThread(LPVOID paramete
         request->capacity != sizeof(request->payload) || request->reserved != 0) {
         return 1;
     }
-    request->required = GoScenarioCapability(request->payload, request->capacity);
+    request->required = sizeof(FANG_CAPABILITY_JSON);
+    if (request->required <= request->capacity) memcpy(request->payload, FANG_CAPABILITY_JSON, request->required);
     if (request->required <= 0 ||
         (unsigned int)request->required > request->capacity) {
         return 2;

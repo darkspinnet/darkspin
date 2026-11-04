@@ -6,6 +6,7 @@
 int fang_mod_attach_dbbf(void* database, const wchar_t* path, unsigned int package_index);
 void* fang_mod_open_source(const wchar_t* path);
 void fang_mod_close_source(void* stream);
+wchar_t* fang_mod_retain_path(const wchar_t* path);
 int fang_mod_import_source(const wchar_t* path, uint32_t instance, uint32_t* key, void** retained);
 void fang_mod_install_character(BYTE* base, const wchar_t* manifest);
 uint32_t fang_mod_noun_id(uintptr_t reference);

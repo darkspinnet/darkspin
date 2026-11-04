@@ -60,7 +60,7 @@ static unsigned int editor_foot_count;
 typedef struct {
     uint32_t noun;
     uint32_t source;
-    wchar_t path[32768];
+    wchar_t* path;
 } editor_reset_source;
 
 static editor_reset_source reset_sources[128];
@@ -536,6 +536,7 @@ static int FANG_THISCALL editor_configure(BYTE* editor) {
 // Reads/modifies: loads reset bindings, patches editor callbacks, initializes dependent Mod features, and logs or rolls back failures.
 void fang_mod_install_editor(BYTE* base, const wchar_t* manifest) {
     unsigned int index;
+    wchar_t path[32768];
     static const BYTE agent_signature[] = {0x8b, 0x49, 0x04, 0xe9};
     static const BYTE config_signature[] = {0x83, 0xec, 0x08, 0x56, 0x8b, 0xf1, 0xe8};
     editor_exit_fn exit_target = (editor_exit_fn)(base + 0xb9470);
@@ -566,7 +567,12 @@ void fang_mod_install_editor(BYTE* base, const wchar_t* manifest) {
         _snwprintf(name, 32, L"source%u", index);
         source->source = GetPrivateProfileIntW(L"mod", name, 0, manifest);
         _snwprintf(name, 32, L"reset_png%u", index);
-        GetPrivateProfileStringW(L"mod", name, L"", source->path, 32768, manifest);
+        GetPrivateProfileStringW(L"mod", name, L"", path, 32768, manifest);
+        source->path = fang_mod_retain_path(path);
+        if (source->path == NULL) {
+            trace_client_state("mod_editor_reset_path_allocation_failed", index);
+            return;
+        }
         /* Retain even a missing path: a broken import must fail closed. */
         ++reset_source_count;
     }

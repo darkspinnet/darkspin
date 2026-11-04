@@ -4,7 +4,6 @@ package main
 
 import (
 	"archive/zip"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,7 +24,7 @@ import (
 
 // releaseSemver is the single source of truth for Dark Spin release versions.
 // Build targets inject it without rewriting application or frontend sources.
-const releaseSemver = "1.2.1"
+const releaseSemver = "1.2.2"
 
 const binaryName = "darkrun.exe"
 
@@ -259,76 +258,7 @@ func buildFang(isDiagnostics, isScenario bool, linkerFlags string) error {
 	if isScenario && !isDiagnostics {
 		return errors.New("scenario Fang requires fangdebug diagnostics")
 	}
-	fangPath := filepath.Join("bin", "game", "fang.dll")
-	environment := map[string]string{"GOOS": "windows", "GOARCH": "386", "CGO_ENABLED": "1"}
-	// cgo does not track included headers outside each package directory.
-	// Include all Fang header contents in the C action key across feature packages.
-	headerSources, err := fangHeaderSources(filepath.Join("app", "fang"))
-	if err != nil {
-		return fmt.Errorf("fangHeaders: %w", err)
-	}
-	headerDigest := sha256.Sum256([]byte(strings.Join(headerSources, "\x00")))
-	environment["CGO_CFLAGS"] = strings.TrimSpace(os.Getenv("CGO_CFLAGS") +
-		fmt.Sprintf(" -DFANG_HEADER_REVISION=0x%x", headerDigest[:8]))
-	arguments := []string{"build", "-ldflags", "-s -w " + linkerFlags, "-buildmode=c-shared", "-o", fangPath}
-	buildTags := ""
-	if isDiagnostics {
-		buildTags = "fangdebug"
-		if isScenario {
-			buildTags += ",scenario"
-		}
-	}
-	arguments = append(arguments, "-tags", buildTags)
-	arguments = append(arguments, "./app/fang")
-	if runtime.GOOS != "windows" {
-		compiler := "i686-w64-mingw32-gcc"
-		_, err := exec.LookPath(compiler)
-		if err != nil {
-			return fmt.Errorf("compilerLookup: %s is required to cross-compile fang.dll", compiler)
-		}
-		environment["CC"] = compiler
-	}
-	err = sh.RunWithV(
-		environment,
-		"go", arguments...,
-	)
-	if err != nil {
-		return fmt.Errorf("fangCompile: %w", err)
-	}
-	generatedHeaderPath := filepath.Join("bin", "game", "fang.h")
-	err = os.Remove(generatedHeaderPath)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("headerRemove: %w", err)
-	}
-	return nil
-}
-
-func fangHeaderSources(directory string) ([]string, error) {
-	entries, err := os.ReadDir(directory)
-	if err != nil {
-		return nil, fmt.Errorf("headerList: %w", err)
-	}
-	headerSources := make([]string, 0)
-	for _, entry := range entries {
-		path := filepath.Join(directory, entry.Name())
-		if entry.IsDir() {
-			childSources, childErr := fangHeaderSources(path)
-			if childErr != nil {
-				return nil, fmt.Errorf("headerChild: %w", childErr)
-			}
-			headerSources = append(headerSources, childSources...)
-			continue
-		}
-		if filepath.Ext(path) != ".h" {
-			continue
-		}
-		headerSource, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return nil, fmt.Errorf("headerRead: %w", readErr)
-		}
-		headerSources = append(headerSources, filepath.ToSlash(path), string(headerSource))
-	}
-	return headerSources, nil
+	return buildNativeFang(isDiagnostics, isScenario, linkerFlags)
 }
 
 func buildLauncher(linkerFlags string) error {
@@ -427,7 +357,17 @@ func buildDarkSpinner(linkerFlags, outputPath, targetOS string, isScenario bool)
 		"-ldflags", linkerFlags,
 	}
 	arguments = appendCrossBuildArguments(arguments, targetOS)
-	buildErr := runVersionedWailsBuild(projectPath, arguments...)
+	// Scenario-only native bridge code targets the 32-bit game ABI. Wails'
+	// binding generator runs as a host-architecture program; the scenario
+	// bridge adds no exported App methods, so reuse the regular bindings.
+	if isScenario && runtime.GOOS == "windows" && targetOS == "windows" {
+		arguments = append(arguments, "-skipbindings")
+	}
+	environment := map[string]string{}
+	if isScenario {
+		environment["CGO_ENABLED"] = "1"
+	}
+	buildErr := runVersionedWailsBuildEnvironment(projectPath, environment, arguments...)
 	removeFangErr := os.Remove(embeddedFangPath)
 	var removeProxyErr error
 	if embeddedProxyPath != "" {
@@ -944,6 +884,10 @@ func buildDarkSpinnerTarget(isDevelopment, isFangDiagnostics, isScenario bool, l
 }
 
 func runVersionedWailsBuild(projectPath string, arguments ...string) error {
+	return runVersionedWailsBuildEnvironment(projectPath, nil, arguments...)
+}
+
+func runVersionedWailsBuildEnvironment(projectPath string, environment map[string]string, arguments ...string) error {
 	configurationPath := filepath.Join(projectPath, "wails.json")
 	contents, err := os.ReadFile(configurationPath)
 	if err != nil {
@@ -992,7 +936,7 @@ func runVersionedWailsBuild(projectPath string, arguments ...string) error {
 	if err != nil {
 		return fmt.Errorf("configWrite: %w", err)
 	}
-	buildErr := runCommand(projectPath, "wails", arguments...)
+	buildErr := runCommandWithEnvironment(projectPath, environment, "wails", arguments...)
 	restoreErr := os.WriteFile(configurationPath, contents, fi.Mode())
 	if buildErr != nil && restoreErr != nil {
 		return errors.Join(

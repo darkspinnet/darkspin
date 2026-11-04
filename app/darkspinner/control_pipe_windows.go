@@ -41,6 +41,7 @@ type controlPipe struct {
 	runID           string
 	clientID        string
 	generation      string
+	peerPID         uint32
 }
 
 type controlPending struct {
@@ -78,7 +79,7 @@ func (e *controlRequestError) Unwrap() error { return e.Cause }
 
 // startControlPipe creates a private single-instance observation endpoint.
 // The caller must supply the PID of its suspended owned client before resume.
-func startControlPipe(ctx context.Context, pipeName, token string, expectedPID uint32, runID, clientID string) (*controlPipe, error) {
+func startControlPipe(ctx context.Context, pipeName, token string, expectedPID uint32, runID, clientID string, peerPIDs ...uint32) (*controlPipe, error) {
 	if expectedPID == 0 || runID == "" || clientID == "" || len(token) < 32 || !strings.HasPrefix(pipeName, `\\.\pipe\darkspin-`) {
 		return nil, fmt.Errorf("invalid control pipe identity")
 	}
@@ -101,6 +102,10 @@ func startControlPipe(ctx context.Context, pipeName, token string, expectedPID u
 	}
 	lifetime, cancel := context.WithCancel(ctx)
 	pipe := &controlPipe{handle: handle, cancel: cancel, writers: make(chan struct{}, 1), runID: runID, clientID: clientID}
+	pipe.peerPID = expectedPID
+	if len(peerPIDs) == 1 && peerPIDs[0] != 0 {
+		pipe.peerPID = peerPIDs[0]
+	}
 	go pipe.run(lifetime, token, expectedPID, runID, clientID)
 	return pipe, nil
 }
@@ -562,7 +567,7 @@ func (e *controlPipe) serve(ctx context.Context, handle windows.Handle, token st
 	if err != nil {
 		return fmt.Errorf("pipePeer: %w", err)
 	}
-	if actualPID != expectedPID {
+	if actualPID != e.peerPID {
 		return fmt.Errorf("unexpected pipe peer")
 	}
 	e.mutex.Lock()

@@ -2,6 +2,8 @@
 
 ### 2026-11-03
 
+- Remove the embedded Go runtime from Fang and move scenario control and remote `/bug` ZIP collection into Darkspinner to free client address space, including capture support in detached game supervisors without a launcher window or local server.
+- Reduce Fang's always-mapped mod path storage by roughly 16 MiB and avoid temporary heap copies for common diagnostic packet formatting, received application messages and single-buffer Winsock captures.
 - [#171](https://github.com/darkspinnet/darkspin/issues/171) Refresh NPC silence through existing modifier updates instead of repeated creation packets.
 - [#171](https://github.com/darkspinnet/darkspin/issues/171) Resolve Blastopod rocket damage against travelled homing segments instead of a fixed launch-to-target timer.
 - [#171](https://github.com/darkspinnet/darkspin/issues/171) Preserve Dashing Brute charge progress when redirecting toward a moving target.

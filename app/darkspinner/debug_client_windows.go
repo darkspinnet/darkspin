@@ -304,7 +304,13 @@ func (e *debugOwnedClient) BeforeResume(ctx context.Context, process uintptr, mo
 	if err != nil {
 		return fmt.Errorf("ownedPID: %w", err)
 	}
-	bridge, err := startControlPipe(e.lifetime, e.pipeName, e.token, processID, e.runID, e.state.InstanceID)
+	peerPID := uint32(os.Getpid())
+	e.mutex.Lock()
+	if e.helper != nil && e.helper.command.Process != nil {
+		peerPID = uint32(e.helper.command.Process.Pid)
+	}
+	e.mutex.Unlock()
+	bridge, err := startControlPipe(e.lifetime, e.pipeName, e.token, processID, e.runID, e.state.InstanceID, peerPID)
 	if err != nil {
 		return fmt.Errorf("bridgeStart: %w", err)
 	}

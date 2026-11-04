@@ -1,9 +1,9 @@
-//go:build windows && cgo && scenario && fangdebug
+//go:build windows && cgo && scenario
 
-package scenario
+package scenariobridge
 
 /*
-#include "scenario/control.h"
+#include "proxy.h"
 */
 import "C"
 

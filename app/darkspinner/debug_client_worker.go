@@ -103,7 +103,11 @@ func debugDetachedGameDirectory(directory string) string {
 }
 
 func (e *debugDetachedWorker) BeforeResume(ctx context.Context, process uintptr, moduleHandle uint32, fangPath string) error {
-	observer := &scenarioClient{}
+	observer := &scenarioClient{environmentEntries: map[string]string{
+		"DARKSPIN_DEBUG_PIPE":   os.Getenv("DARKSPIN_DEBUG_PIPE"),
+		"DARKSPIN_DEBUG_TOKEN":  os.Getenv("DARKSPIN_DEBUG_TOKEN"),
+		"DARKSPIN_CLIENT_TRACE": os.Getenv("DARKSPIN_CLIENT_TRACE"),
+	}}
 	err := observer.BeforeResume(ctx, process, moduleHandle, fangPath)
 	if err != nil {
 		return fmt.Errorf("workerCapability: %w", err)

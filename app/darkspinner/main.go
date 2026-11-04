@@ -395,6 +395,12 @@ func runWithSnapshotControl(ctx context.Context, arguments []string, connection 
 	if clientProfile == "" {
 		clientProfile = configuration.account
 	}
+	if configuration.clientResult == "" && configuration.launchID == "" {
+		configuration.launchID, configuration.clientResult, err = newClientFailureTarget(baseDirectory)
+		if err != nil {
+			return fmt.Errorf("captureTarget: %w", err)
+		}
+	}
 	err = configureClientFailure(
 		configuration.clientResult, configuration.launchID, pathSet.tracePath,
 		clientProfile, configuration.isMultipleInstanceAllowed,
@@ -447,6 +453,8 @@ func runWithSnapshotControl(ctx context.Context, arguments []string, connection 
 		return fmt.Errorf("winePrefix: %w", err)
 	}
 	wineLaunch.modManifest = configuration.modManifest
+	bugCapture := startClientBugCapture(ctx, configuration.serverAddress)
+	defer bugCapture.stop()
 	err = launchInjected(
 		ctx, gamePath, installDirectory(gameWorkingDirectory), fangPath,
 		gameArguments, configuration.serverAddress, wineLaunch,

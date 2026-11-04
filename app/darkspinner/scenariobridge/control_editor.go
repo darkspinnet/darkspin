@@ -1,9 +1,9 @@
-//go:build windows && cgo && scenario && fangdebug
+//go:build windows && cgo && scenario
 
-package scenario
+package scenariobridge
 
 /*
-#include "scenario/control.h"
+#include "proxy.h"
 */
 import "C"
 
@@ -65,11 +65,11 @@ func saveControlEditorHierarchy(requestID uint32) (*controlEditorArtifact, error
 		IsImportEditor          bool                `json:"is_import_editor"`
 		IsEnvironmentRegistered bool                `json:"is_environment_registered"`
 		Nodes                   []controlEditorNode `json:"nodes"`
-	}{"native-editor-spui", os.Getpid(), time.Now().UTC(), uint32(snapshot.owner_generation), snapshot.is_complete != 0, snapshot.is_body_mode != 0, uint32(snapshot.editor_mode), snapshot.is_mod_editor != 0, snapshot.is_import_editor != 0, snapshot.is_environment_registered != 0, nodes})
+	}{"native-editor-spui", int(C.fang_proxy_pid()), time.Now().UTC(), uint32(snapshot.owner_generation), snapshot.is_complete != 0, snapshot.is_body_mode != 0, uint32(snapshot.editor_mode), snapshot.is_mod_editor != 0, snapshot.is_import_editor != 0, snapshot.is_environment_registered != 0, nodes})
 	if err != nil {
 		return nil, fmt.Errorf("treeMarshal: %w", err)
 	}
-	tracePath := os.Getenv("DARKSPIN_CLIENT_TRACE")
+	tracePath := C.GoString(C.fang_proxy_trace())
 	if !filepath.IsAbs(tracePath) {
 		return nil, errors.New("editor hierarchy requires an owned absolute trace directory")
 	}

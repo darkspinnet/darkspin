@@ -1,9 +1,9 @@
-//go:build windows && cgo && scenario && fangdebug
+//go:build windows && cgo && scenario
 
-package scenario
+package scenariobridge
 
 /*
-#include "scenario/control.h"
+#include "proxy.h"
 */
 import "C"
 
@@ -14,9 +14,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
-	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/darkspinnet/darkspin/server/buildinfo"
 	"golang.org/x/sys/windows"
@@ -137,25 +138,31 @@ type controlState struct {
 	UI        controlField `json:"ui"`
 }
 
-var controlStart sync.Once
-
-// Start runs after installation, outside every native callback.
-func Start() {
-	controlStart.Do(startControlBootstrap)
-}
-
-func startControlBootstrap() {
-	pipeName := os.Getenv("DARKSPIN_DEBUG_PIPE")
-	token := os.Getenv("DARKSPIN_DEBUG_TOKEN")
-	pipeErr := os.Unsetenv("DARKSPIN_DEBUG_PIPE")
-	tokenErr := os.Unsetenv("DARKSPIN_DEBUG_TOKEN")
-	if pipeErr != nil || tokenErr != nil || token == "" || !strings.HasPrefix(pipeName, `\\.\pipe\darkspin-`) {
-		return
+// Start owns the scenario protocol in Darkspinner, never in the game process.
+func Start(process, entry uintptr, processID uint32, pipeName, token, tracePath string) bool {
+	if token == "" || !strings.HasPrefix(pipeName, "\\\\.\\pipe\\darkspin-") {
+		return false
 	}
-	go runControlClient(pipeName, token)
+	trace := C.CString(tracePath)
+	defer C.free(unsafe.Pointer(trace))
+	target := C.fang_proxy_create(C.uintptr_t(process), C.uintptr_t(entry), C.uint32_t(processID), trace)
+	if target == nil {
+		return false
+	}
+	go runControlClient(target, pipeName, token)
+	return true
 }
 
-func runControlClient(pipeName, token string) {
+func bindTarget(target *C.fang_proxy_target) func() {
+	runtime.LockOSThread()
+	C.fang_proxy_bind(target)
+	return unbindTarget
+}
+func unbindTarget() { C.fang_proxy_bind(nil); runtime.UnlockOSThread() }
+
+func runControlClient(target *C.fang_proxy_target, pipeName, token string) {
+	defer C.fang_proxy_release(target)
+	defer bindTarget(target)()
 	r, err := openControlPipe(pipeName)
 	if err != nil {
 		return // Development bridge failure never changes native gameplay.
@@ -165,7 +172,7 @@ func runControlClient(pipeName, token string) {
 	if err != nil {
 		return
 	}
-	err = writeControlEnvelope(r, controlEnvelope{ProtocolVersion: 1, Kind: "hello", Token: token, ProcessID: uint32(os.Getpid()), BuildID: buildinfo.ID})
+	err = writeControlEnvelope(r, controlEnvelope{ProtocolVersion: 1, Kind: "hello", Token: token, ProcessID: uint32(C.fang_proxy_pid()), BuildID: buildinfo.ID})
 	token = ""
 	if err != nil {
 		return
@@ -178,7 +185,8 @@ func runControlClient(pipeName, token string) {
 	if err != nil {
 		return
 	}
-	connection := controlConnection{r: r, identity: accepted, commands: make(chan controlReceivedCommand, 1), done: make(chan struct{})}
+	connection := controlConnection{target: target, r: r, identity: accepted, commands: make(chan controlReceivedCommand, 1), done: make(chan struct{})}
+	C.fang_proxy_retain(target)
 	go connection.readCommands()
 	err = connection.run()
 	if err != nil {
@@ -224,7 +232,7 @@ func observeControlState() controlState {
 	if !scene.IsAvailable {
 		scene.Reason = "not_observed"
 	}
-	return controlState{ProcessID: uint32(os.Getpid()), BuildID: buildinfo.ID, Frame: frame, Scene: scene, World: controlField{Reason: "not_observed"}, Hero: controlField{Reason: "not_observed"}, UI: controlField{Reason: "not_observed"}}
+	return controlState{ProcessID: uint32(C.fang_proxy_pid()), BuildID: buildinfo.ID, Frame: frame, Scene: scene, World: controlField{Reason: "not_observed"}, Hero: controlField{Reason: "not_observed"}, UI: controlField{Reason: "not_observed"}}
 }
 
 func writeControlEnvelope(w io.Writer, envelope controlEnvelope) error {

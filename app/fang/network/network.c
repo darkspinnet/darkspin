@@ -665,7 +665,12 @@ static void trace_wsabuf_payload(const char* direction, const char* kind,
     BYTE* payload;
     DWORD copied = 0;
     DWORD index;
-    if (buffers == NULL || count == 0 || completed == 0 || completed > 65535) {
+    if (fang_network_capture_is_enabled() == 0 ||
+        buffers == NULL || count == 0 || completed == 0 || completed > 65535) {
+        return;
+    }
+    if (count == 1 && buffers[0].buf != NULL && completed <= buffers[0].len) {
+        trace_raknet_payload(direction, kind, socket, address, buffers[0].buf, (int)completed);
         return;
     }
     payload = (BYTE*)HeapAlloc(GetProcessHeap(), 0, (SIZE_T)completed);
