@@ -2,6 +2,8 @@
 
 ### 2026-11-03
 
+- #175 Resolve Arachno Terror's homing fear projectile against travelled collision segments and its range limit instead of moving the hit-check endpoint to the hero's current position.
+- Show a chat explanation and log the technical error when a Sync Snapshot command fails unexpectedly instead of returning a silent command error.
 - Disable Darwin amd64 and arm64 builds for unstable artifacts.
 - [#173](https://github.com/darkspinnet/darkspin/issues/173) Validate NPC pursuit before publishing movement and back off blocked routes instead of repeatedly restarting the chase; include blocked-route and melee-miss details in server snapshots.
 - Remove the embedded Go runtime from Fang and move scenario control and remote `/bug` ZIP collection into Darkspinner to free client address space, including capture support in detached game supervisors without a launcher window or local server.

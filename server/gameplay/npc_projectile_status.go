@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/zone"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
@@ -14,6 +15,7 @@ type campaignNPCProjectileStatus struct {
 	timestamp uint64
 	isStun    bool
 	isSilence bool
+	isFear    bool
 }
 
 func (e campaignNPCProjectileStep) selectStatusLocked(
@@ -27,24 +29,35 @@ func (e campaignNPCProjectileStep) selectStatusLocked(
 	}
 	isStun := plan.Profile.ModifierName == "StalkerShock"
 	isSilence := plan.Profile.ModifierName == "NocturnaBasicRanged_SilenceModifier"
-	if !isStun && !isSilence && !isCampaignNPCDamageOverTimeProfile(plan.Profile) {
+	isFear := plan.Profile.ModifierName == "NocturnaSpecialHomerFear"
+	if !isStun && !isSilence && !isFear && !isCampaignNPCDamageOverTimeProfile(plan.Profile) {
 		return nil
 	}
 	// StalkerShock always rolls its chance; damage-over-time profiles with no
 	// positive chance apply unconditionally, preserving the existing rules.
-	if isStun || (!isSilence && plan.Profile.ModifierChance > 0) {
+	if isStun || (!isSilence && !isFear && plan.Profile.ModifierChance > 0) {
 		draw := current.zone.NPCRandom().Float64() * 100
 		if draw >= float64(plan.Profile.ModifierChance) {
 			return nil
 		}
 	}
 	return &campaignNPCProjectileStatus{
-		plan: plan, isStun: isStun, isSilence: isSilence,
+		plan: plan, isStun: isStun, isSilence: isSilence, isFear: isFear,
 		timestamp: e.schedule.timestamp + uint64(e.deadline/time.Millisecond),
 	}
 }
 
 func (e campaignNPCProjectileStatus) apply(schedule campaignNPCProjectileSchedule) ([][]byte, error) {
+	if e.isFear {
+		packets, err := schedule.runtime.applyCampaignNPCFear(
+			schedule.packet, schedule.sessionKey, schedule.generation,
+			schedule.source, zone.NPCTarget{ObjectID: e.plan.TargetObjectID}, e.plan.Profile, e.timestamp,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("projectileFear: %w", err)
+		}
+		return packets, nil
+	}
 	if e.isSilence {
 		packets, err := schedule.runtime.applyCampaignNPCSilence(
 			schedule.packet, schedule.sessionKey, schedule.generation, e.plan, e.timestamp,

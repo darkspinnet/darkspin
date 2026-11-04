@@ -175,15 +175,8 @@ func (e campaignNPCProjectileStep) produce() ([][]byte, error) {
 			schedule.source.Plan.NPCProfile.FootprintRadius,
 		)
 		projectileTargetPosition := schedule.projectileTargetPosition
-		if schedule.plan.Profile.AbilityName == "NocturnaSpecialHomer" {
-			// Arachno Striker's fear projectile follows its selected target.
-			// Preserve the authored aim offset while tracking the target's move;
-			// the original launch ray would incorrectly turn that move into a miss.
-			projectileTargetPosition = projectileTargetPosition.Add(
-				currentTarget.Position.Sub(schedule.target.Position),
-			)
-		}
-		// Other homing profiles retain their dodgeable launched trajectory.
+		// Sampled homing profiles resolve travelled segments in produceFlight.
+		// Remaining legacy profiles retain their launched trajectory.
 		collision, err = zonenpc.ResolveProjectileCollision(
 			projectileLaunchPosition, projectileTargetPosition,
 			currentTarget.Position,

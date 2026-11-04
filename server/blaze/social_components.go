@@ -421,7 +421,11 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 				} else if errors.Is(snapshotErr, chat.ErrSnapshotUnavailable) {
 					responseBody = "Sync Snapshot is unavailable on this server"
 				} else {
-					return nil, fmt.Errorf("commandSnapshot: %w", snapshotErr)
+					responseBody = "Sync Snapshot failed. Check the server logs for details."
+					if request.Session != nil && request.Session.server != nil && request.Session.server.logger != nil {
+						request.Session.server.logger.Printf("Sync Snapshot command failed user=%d game=%d action=%q: %v",
+							user.Account.ID, user.CurrentGameID(), snapshotCommand.Action, snapshotErr)
+					}
 				}
 			}
 			if commandName == "/ping" {

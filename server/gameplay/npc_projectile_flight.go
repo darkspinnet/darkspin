@@ -29,7 +29,7 @@ func newCampaignNPCProjectileFlight(
 	position game.Vec3, direction sim.Position, halfExtent sim.Position, startedAt time.Time,
 ) (*campaignNPCProjectileFlight, error) {
 	// Only profiles whose contact operation supports retained launch authority
-	// enter this path; Blastopod homing also samples actual travelled segments.
+	// enter this path; homing projectiles also sample actual travelled segments.
 	if !isCampaignNPCProjectileSampled(profile) {
 		return nil, nil
 	}
@@ -46,10 +46,12 @@ func newCampaignNPCProjectileFlight(
 }
 
 func isCampaignNPCProjectileSampled(profile zonenpc.ActionProfile) bool {
-	if (profile.HomingDelay > 0 && profile.AbilityName != "CitadelSpecificFour_Bolt") || profile.IsProjectilePiercing || profile.AbilityName == "Puller" {
+	if (profile.HomingDelay > 0 && profile.AbilityName != "CitadelSpecificFour_Bolt" &&
+		profile.AbilityName != "NocturnaSpecialHomer") || profile.IsProjectilePiercing || profile.AbilityName == "Puller" {
 		return false
 	}
 	return profile.ModifierName == "" || profile.ModifierName == "StalkerShock" ||
+		profile.ModifierName == "NocturnaSpecialHomerFear" ||
 		(profile.ModifierName == "NocturnaBasicRanged_SilenceModifier" && profile.ModifierDuration == 2*time.Second) ||
 		isCampaignNPCDamageOverTimeProfile(profile)
 }

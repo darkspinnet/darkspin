@@ -1,6 +1,7 @@
 {
   "locale": "en-us",
   "messages": {
+    "Sync Snapshot failed. Check the server logs for details.": "Sync Snapshot failed. Check the server logs for details.",
     "You cannot edit your own access or an account with a higher status, or grant a status above your own.": "You cannot edit your own access or an account with a higher status, or grant a status above your own.",
     "Close control panel": "Close control panel",
     "EDIT ACCESS": "EDIT ACCESS",
