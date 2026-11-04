@@ -2,6 +2,8 @@
 
 ### 2026-11-03
 
+- Disable Darwin amd64 and arm64 builds for unstable artifacts.
+- #173 Validate NPC pursuit before publishing movement and back off blocked routes instead of repeatedly restarting the chase; include blocked-route and melee-miss details in server snapshots.
 - Remove the embedded Go runtime from Fang and move scenario control and remote `/bug` ZIP collection into Darkspinner to free client address space, including capture support in detached game supervisors without a launcher window or local server.
 - Reduce Fang's always-mapped mod path storage by roughly 16 MiB and avoid temporary heap copies for common diagnostic packet formatting, received application messages and single-buffer Winsock captures.
 - #171 Refresh NPC silence through existing modifier updates instead of repeated creation packets.

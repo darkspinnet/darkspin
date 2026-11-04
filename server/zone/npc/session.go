@@ -738,7 +738,7 @@ func (s *Session) startAction(
 	if npc.TargetObjectID != 0 && npc.TargetObjectID != targetObjectID {
 		return npc, false, false, nil
 	}
-	if isMutationAgent(npc.Plan) || npc.IsMutationTransforming() || npc.IsActionStarted || npc.IsOrcusFollowing || npc.cinematic.isPending || time.Now().Before(npc.cinematic.intangibleUntil) {
+	if isMutationAgent(npc.Plan) || npc.IsMutationTransforming() || npc.IsActionStarted || npc.IsOrcusFollowing || npc.cinematic.isPending || time.Now().Before(npc.cinematic.intangibleUntil) || time.Now().Before(npc.actionRetryAt) {
 		return npc, false, false, nil
 	}
 	if !npc.IsFirstActionStarted {
@@ -833,20 +833,31 @@ func (s *Session) ReleaseAction(objectID uint32, owner ActionOwner) bool {
 func (s *Session) ReleaseActionGeneration(
 	objectID uint32, owner ActionOwner, actionGeneration uint64,
 ) bool {
-	if s == nil || objectID == 0 || owner.UserID == 0 ||
+	return s.releaseActionGeneration(objectID, owner, actionGeneration, time.Time{})
+}
+
+// ReleaseBlockedPursuit preserves a short idle period before the normal action
+// planner retries, including any ranged or secondary ability it may choose.
+func (e *Session) ReleaseBlockedPursuit(objectID uint32, owner ActionOwner, actionGeneration uint64, retryAt time.Time) bool {
+	return e.releaseActionGeneration(objectID, owner, actionGeneration, retryAt)
+}
+
+func (e *Session) releaseActionGeneration(objectID uint32, owner ActionOwner, actionGeneration uint64, retryAt time.Time) bool {
+	if e == nil || objectID == 0 || owner.UserID == 0 ||
 		owner.PeerGeneration == 0 || actionGeneration == 0 {
 		return false
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	npc, isFound := s.npcs[objectID]
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	npc, isFound := e.npcs[objectID]
 	if !isFound || !npc.IsActionStarted || npc.ActionOwner != owner ||
 		npc.ActionGeneration != actionGeneration {
 		return false
 	}
 	npc.IsActionStarted = false
 	npc.ActionOwner = ActionOwner{}
-	s.npcs[objectID] = npc
+	npc.actionRetryAt = retryAt
+	e.npcs[objectID] = npc
 	return true
 }
 

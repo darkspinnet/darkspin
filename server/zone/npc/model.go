@@ -6,6 +6,7 @@ import (
 	"math"
 	"reflect"
 	"slices"
+	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/navigation"
@@ -224,6 +225,7 @@ type Snapshot struct {
 	status                          status
 	corruptorCombat                 corruptorCombat
 	cinematic                       cinematicHold
+	actionRetryAt                   time.Time
 	zapCharge                       *zapChargeState
 	introduction                    introductionTimeline
 }

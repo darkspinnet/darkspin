@@ -2,6 +2,7 @@ package npc
 
 import (
 	"strings"
+	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
 )
@@ -61,7 +62,8 @@ func matchesSnapshotSelection(npc *Snapshot, selection SnapshotSelection) bool {
 		return npc.Plan.IsFixture && strings.EqualFold(npc.Plan.NounName, "DEST_prefab_tnx_object_silenceField.Noun")
 	case SelectIdleAction:
 		return !npc.IsDefeated && npc.IsScenarioAIEnabled() && !npc.Plan.IsFixture &&
-			npc.TargetObjectID != 0 && !npc.IsActionStarted && !IsAgentHealingChild(npc.Plan)
+			npc.TargetObjectID != 0 && !npc.IsActionStarted && !IsAgentHealingChild(npc.Plan) &&
+			!time.Now().Before(npc.actionRetryAt)
 	case SelectScenarioFixture:
 		return npc.Plan.IsFixture && npc.IsScenarioControlled()
 	case SelectNativeSilence:

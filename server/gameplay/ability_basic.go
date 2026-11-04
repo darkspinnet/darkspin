@@ -2345,6 +2345,15 @@ func (e campaignMeleeHitStep) produce() ([][]byte, error) {
 		if advanceErr != nil {
 			return nil, fmt.Errorf("campaignBasicMissAdvance: %w", advanceErr)
 		}
+		runtime.registry.recordDiagnosticDecision(gameplayDiagnosticDecision{
+			occurredAt: runtime.now(), kind: "melee_hit", traceID: schedule.packet.TraceID,
+			remote: schedule.sessionKey, transportGeneration: current.transportGeneration,
+			zoneGeneration: schedule.generation, objectID: schedule.sourceObjectID,
+			actionType: uint32(raknet.ActionUseCharacterAbility), outcome: "miss",
+			reason: fmt.Sprintf("ability=%s hit=%d target=%d source=%v target_start=%v facing=%v start_in_range=%t: no hostile target in accepted melee arc",
+				schedule.selected.Name, e.index, schedule.targetObjectID, livePlan.SourcePosition,
+				state.initialTargetPosition, facing, state.isTargetInRangeAtStart),
+		})
 		return packets, nil
 	}
 	livePlan.TargetObjectID = liveNPC.Plan.ObjectID

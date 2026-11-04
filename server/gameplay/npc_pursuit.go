@@ -280,9 +280,7 @@ func (r campaignNPCPursuitRuntime) scheduleActionCorrection(
 		isCorridorActive:         isCorridorActive,
 	}
 	producer := raknet.ScheduledPacketProducer{
-
-		Delay:   campaignPursuitFallbackTick,
-		Produce: step.produce,
+		Delay: campaignPursuitFallbackTick, Produce: step.produce,
 	}
 	producers := r.registry.producerGuard.scheduledProducers(
 		sessionKey, []raknet.ScheduledPacketProducer{producer},
@@ -518,7 +516,17 @@ func (r campaignNPCPursuitRuntime) produceStep(
 	}
 	if step.IsBlocked {
 		restorePackets, restoreErr := chargeCancelSpeed(objectID, enemy, profile)
-		npcSession.ReleaseActionGeneration(objectID, owner, actionGeneration)
+		isRetry := !isSecondaryFamily && profile.Family != zonenpc.ActionCharge
+		isReleased := false
+		if isRetry {
+			isReleased = npcSession.ReleaseBlockedPursuit(objectID, owner, actionGeneration, advancedAt.Add(500*time.Millisecond))
+		} else {
+			isReleased = npcSession.ReleaseActionGeneration(objectID, owner, actionGeneration)
+		}
+		if !isReleased {
+			r.registry.mutex.Unlock()
+			return nil, nil
+		}
 		r.registry.sessions[sessionKey] = peerSession
 		r.registry.mutex.Unlock()
 		if restoreErr != nil {
@@ -527,6 +535,16 @@ func (r campaignNPCPursuitRuntime) produceStep(
 		if r.logger != nil {
 			r.logger.Printf("RakNet NPC pursuit blocked object=%d noun=%q target=%d reason=%q",
 				objectID, enemy.Plan.NounName, resolvedTargetObjectID, step.NavigationFallbackReason)
+		}
+		r.registry.recordDiagnosticDecision(gameplayDiagnosticDecision{
+			occurredAt: advancedAt, kind: "npc_pursuit", traceID: packet.TraceID,
+			remote: sessionKey, transportGeneration: peerSession.transportGeneration,
+			zoneGeneration: generation, objectID: objectID, outcome: "navigation_blocked",
+			reason: fmt.Sprintf("target=%d source=%v goal=%v: %s", resolvedTargetObjectID,
+				step.Position, targetPosition, step.NavigationFallbackReason),
+		})
+		if isRetry && isMovementPaused {
+			return restorePackets, nil
 		}
 		packets, stopErr := npcraknet.StopAtPose(objectID, step.Position, enemy.Facing)
 		if stopErr != nil {
@@ -566,6 +584,20 @@ func (r campaignNPCPursuitRuntime) produceStep(
 	if isCorridorPursuit && !step.IsInRange &&
 		(!isCorridorActive || isMovementPaused || isWaypointChanged) {
 		if !isCorridorActive || isMovementPaused {
+			if isMovementPaused {
+				// Preserve combat-entry presentation (including dormant ranged
+				// actors' blackboard) before installing the validated waypoint.
+				startPackets, startErr := npcraknet.Pursuit(zonenpc.FirstActionPlan{
+					ObjectID: objectID, TargetObjectID: resolvedTargetObjectID,
+					SourcePosition: step.Position, TargetPosition: targetPosition,
+					Profile: profile, IsPursuitNeeded: true,
+				})
+				if startErr != nil {
+					npcSession.ReleaseActionGeneration(objectID, owner, actionGeneration)
+					return nil, fmt.Errorf("enemyWaypointEntry: %w", startErr)
+				}
+				stepPackets = append(stepPackets, startPackets...)
+			}
 			waypointPackets, waypointErr := npcraknet.PursuitWaypoint(objectID, step.Waypoint)
 			if waypointErr != nil {
 				npcSession.ReleaseActionGeneration(objectID, owner, actionGeneration)

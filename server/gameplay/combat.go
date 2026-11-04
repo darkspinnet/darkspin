@@ -5655,9 +5655,14 @@ func (e campaignNPCFirstActionStep) produce() ([][]byte, error) {
 		action.TargetPosition.X, action.TargetPosition.Y, action.TargetPosition.Z,
 		action.Profile.Range, action.Profile.MovementSpeed, pursuitGoalFlags,
 	)
-	err = e.runtime.pursuit.schedule(
-		e.packet, e.sessionKey, e.generation, e.objectID,
-		actionTimestamp, action.TargetPosition, action.Profile, arrival,
+	// The first authoritative path step publishes movement after it succeeds.
+	// Publishing a target-follow command here lets the client chase even when
+	// the next server step rejects that same route.
+	// Zero selects the live player target; nonzero IDs select NPC targets.
+	err = e.runtime.pursuit.scheduleActionCorrection(
+		e.packet, e.sessionKey, e.generation, e.actionGeneration, e.objectID,
+		0, actionTimestamp, action.TargetPosition, actionTimestamp,
+		action.Profile, arrival, e.runtime.now(), true, false,
 	)
 	if err != nil {
 		e.releaseAction(latest)
@@ -5667,12 +5672,7 @@ func (e campaignNPCFirstActionStep) produce() ([][]byte, error) {
 		)
 		return nil, nil
 	}
-	pursuitPacket, err := npcraknet.Pursuit(action)
-	if err != nil {
-		e.releaseAction(latest)
-		return nil, fmt.Errorf("enemyPursuitMarshal: %w", err)
-	}
-	return append(activationPackets, pursuitPacket...), nil
+	return activationPackets, nil
 }
 
 func (e campaignNPCFirstActionStep) releaseAction(
