@@ -1747,7 +1747,7 @@ func (s *Session) DefeatedCandidates(
 	candidate := make([]Snapshot, 0)
 	for _, objectID := range s.objectIDs {
 		npc := s.npcs[objectID]
-		if !npc.IsDefeated || !npc.IsPublished || npc.Plan.IsFixture ||
+		if !npc.IsDefeated || !npc.IsPublished || npc.Plan.IsFixture || IsResurrectionBlocked(npc.Plan) ||
 			zonegeometry.Distance(source, npc.Plan.Position) > maximumRange {
 			continue
 		}

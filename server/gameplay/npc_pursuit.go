@@ -638,7 +638,7 @@ func (r campaignNPCPursuitRuntime) produceStep(
 	if isRedirectDue {
 		var redirectPackets [][]byte
 		var redirectErr error
-		if profile.AbilityName == "BoomerCharge" {
+		if profile.AbilityName == "BoomerCharge" || profile.AbilityName == "VerdanthBasicPicky" {
 			// The charge already installed its target and stopping distance.
 			// Native 5393D0/539900 reset mover progress on every complete
 			// command/reflection. Preserve that progress while following a

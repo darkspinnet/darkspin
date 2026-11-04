@@ -26,6 +26,7 @@ type Actor struct {
 	OwnerObjectID          uint32
 	Noun                   uint32
 	Position               game.Vec3
+	Facing                 game.Vec3
 	FootprintRadius        float32
 	AggroRadius            float32
 	HitPoint               float32
@@ -92,6 +93,7 @@ type Buff struct {
 }
 
 type Follow struct {
+	IsExact               bool
 	ObjectID              uint32
 	OwnerObjectID         uint32
 	Position              game.Vec3

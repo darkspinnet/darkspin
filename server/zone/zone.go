@@ -3400,7 +3400,7 @@ func (e *Zone) resurrectNPC(
 		return zonenpc.Snapshot{}, false, errors.New("npc resurrection unavailable")
 	}
 	defeated, isFound := e.NPCs().NPC(objectID)
-	if !isFound || !defeated.IsDefeated || defeated.Plan.IsFixture {
+	if !isFound || !defeated.IsDefeated || defeated.Plan.IsFixture || zonenpc.IsResurrectionBlocked(defeated.Plan) {
 		return zonenpc.Snapshot{}, false, nil
 	}
 	if e.Boss() != nil && !e.Boss().CanRevive(defeated) {

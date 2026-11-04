@@ -2,6 +2,12 @@
 
 ### 2026-11-03
 
+- #171 Refresh NPC silence through existing modifier updates instead of repeated creation packets.
+- #171 Resolve Blastopod rocket damage against travelled homing segments instead of a fixed launch-to-target timer.
+- #171 Preserve Dashing Brute charge progress when redirecting toward a moving target.
+- #171 Match Skar Beta and Gamma template names to their authored variants so Beta has Soul Link and Gamma has Phantom Charge.
+- #171 Prevent resurrection sources from reviving Sau the Electrocutioner after his defeat.
+- #171 Replace Healing Sprite ground-style follow with authored short flying steering goals at 200 ms intervals, preserving its healing pause.
 - Group Feature actions into separate sections, align new and repeated password fields on one row, and remove the password-session explanation.
 - #169 Recover restart/update admission after stable startup under older dedicated supervisors that cannot publish maintenance outcomes, while preserving manual maintenance holds and current supervisor validation.
 - Accept build 103's bit-31 item-detail identifiers so Create Detail requests resolve owned parts instead of failing with part not found.

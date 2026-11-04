@@ -13,11 +13,12 @@ import (
 )
 
 type campaignNPCSilenceRun struct {
-	modifier  *campaignNPCModifierRun
-	targetID  uint32
-	expiresAt time.Time
-	revision  uint64
-	cancel    raknet.CancelSchedule
+	modifier   *campaignNPCModifierRun
+	modifierID uint32
+	targetID   uint32
+	expiresAt  time.Time
+	revision   uint64
+	cancel     raknet.CancelSchedule
 }
 
 type campaignNPCSilenceExpiryStep struct {
@@ -143,6 +144,8 @@ func (r campaignNPCActionRuntime) applyCampaignNPCSilence(
 	previousRevision := run.revision
 	previousCancel := run.cancel
 	previousHeroExpiresAt := peerSession.enemySilenceExpiresAt
+	modifierID := util.HashID(profile.ModifierName)
+	isRefresh := !isNew && run.modifierID == modifierID
 	startedAt := r.now()
 	run.expiresAt = startedAt.Add(profile.ModifierDuration)
 	if previousExpiresAt.After(run.expiresAt) {
@@ -158,16 +161,27 @@ func (r campaignNPCActionRuntime) applyCampaignNPCSilence(
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
 
-	createPacket, err := effectraknet.ModifierCreate(
-		effectraknet.ModifierCreateRequest{
-			SourceObjectID: plan.SourceObjectID,
-			TargetObjectID: plan.TargetObjectID,
-			ModifierID:     util.HashID(profile.ModifierName),
-			InstanceID:     run.modifier.instanceID,
-			Duration:       expiresAt.Sub(startedAt),
-			Timestamp:      timestamp,
-		},
-	)
+	var createPacket []byte
+	var err error
+	if isRefresh {
+		// Build 103 refreshes the existing Lua modifier through Stacks on A3.
+		// Repeating A2 replaces its snapshot without refreshing that context.
+		createPacket, err = raknet.MarshalApplication(raknet.ModifierUpdatedMessage{
+			TargetID: plan.TargetObjectID, InstanceID: run.modifier.instanceID,
+			StartMilliseconds: int64(timestamp), StackCount: 1,
+		})
+	} else {
+		createPacket, err = effectraknet.ModifierCreate(
+			effectraknet.ModifierCreateRequest{
+				SourceObjectID: plan.SourceObjectID,
+				TargetObjectID: plan.TargetObjectID,
+				ModifierID:     modifierID,
+				InstanceID:     run.modifier.instanceID,
+				Duration:       expiresAt.Sub(startedAt),
+				Timestamp:      timestamp,
+			},
+		)
+	}
 	if err != nil {
 		r.rollbackNocturnaBasicRangedSilence(
 			sessionKey, generation, run, isNew, previousExpiresAt,
@@ -199,6 +213,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCSilence(
 		isLatest = run.modifier.create()
 	}
 	if isLatest {
+		run.modifierID = modifierID
 		run.cancel = raknet.CancelSchedule(cancel)
 		r.registry.sessions[sessionKey] = latest
 	}

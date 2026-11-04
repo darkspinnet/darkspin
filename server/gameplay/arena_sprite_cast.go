@@ -160,10 +160,10 @@ func (e campaignAbilityCommandRuntime) handleArenaSprite(
 	err = world.companion.Put(zonecompanion.Actor{
 		UserID: source.binding.UserID, PeerGeneration: source.generation,
 		ObjectID: objectID, OwnerObjectID: command.Common.ObjectID,
-		Noun: util.HashID(projected.SpawnNoun), Position: position,
+		Noun: util.HashID(projected.SpawnNoun), Position: position, Facing: game.Vec3(facing),
 		FootprintRadius: footprint, HitPoint: hitPoint, MaximumHitPoint: hitPoint,
 		MovementSpeed: spriteMovementSpeed, FollowDistance: spriteFollowDistance,
-		IsTargetable: true, IsCombatant: false,
+		IsTargetable: true, IsCombatant: false, IsFollowManaged: true,
 	})
 	if err != nil {
 		manaErr := source.setDeployedManaPoints(previousMana)
@@ -186,15 +186,14 @@ func (e campaignAbilityCommandRuntime) handleArenaSprite(
 	e.registry.sessions[sessionKey] = source
 	e.registry.mutex.Unlock()
 	producers := []raknet.ScheduledPacketProducer{{Delay: projected.ReleaseDelay, Produce: run.release}}
+	for delay := projected.ReleaseDelay + spriteFollowInterval; delay < projected.Duration; delay += spriteFollowInterval {
+		producers = append(producers, raknet.ScheduledPacketProducer{Delay: delay, Produce: run.resumeFollow})
+	}
 	for delay := projected.ReleaseDelay; delay < projected.Duration; delay += spriteHealingInterval {
 		producers = append(producers, raknet.ScheduledPacketProducer{Delay: delay, Produce: run.sting})
 		if delay+spriteHealingHitDelay < projected.Duration {
 			producers = append(producers, raknet.ScheduledPacketProducer{
 				Delay: delay + spriteHealingHitDelay, Produce: run.tick})
-		}
-		if delay+time.Second < projected.Duration {
-			producers = append(producers, raknet.ScheduledPacketProducer{
-				Delay: delay + time.Second, Produce: run.resumeFollow})
 		}
 	}
 	producers = append(producers, raknet.ScheduledPacketProducer{Delay: projected.Duration, Produce: run.expire})

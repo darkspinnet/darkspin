@@ -10,6 +10,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/util"
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
+	zonecompanion "github.com/darkspinnet/darkspin/server/zone/companion"
 	companionraknet "github.com/darkspinnet/darkspin/server/zone/companion/raknet103"
 )
 
@@ -146,15 +147,18 @@ func (e *arenaSpriteRun) followOrSting(isSting bool) ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	plans, err := e.world.companion.FollowActor(source.binding.UserID, e.generation,
-		e.ownerObjectID, e.objectID, game.Vec3(source.playerPosition),
-		spriteFollowDistance, spriteMovementSpeed, at)
-	if err != nil {
-		e.runtime.registry.mutex.Unlock()
-		return nil, fmt.Errorf("arenaSpriteFollow: %w", err)
-	}
-	isHealing := isSting && len(plans) == 0 && source.deployedHitPoint() > 0 &&
+	isHealing := isSting && actor.PositionAt(at).Sub(game.Vec3(source.playerPosition)).Length() <= 20 && source.deployedHitPoint() > 0 &&
 		source.deployedHitPoint() < source.characterHitPointMaximum(source.deployedCreatureIndex)
+	var plans []zonecompanion.Follow
+	var err error
+	if !isHealing {
+		plans, err = e.world.companion.FollowFlyingActor(source.binding.UserID, e.generation,
+			e.ownerObjectID, e.objectID, game.Vec3(source.playerPosition), at)
+		if err != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("arenaSpriteFollow: %w", err)
+		}
+	}
 	if isHealing {
 		actor, err = e.world.companion.HoldFollow(e.objectID, at, at.Add(time.Second))
 		if err != nil {

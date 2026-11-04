@@ -78,6 +78,7 @@ type ProjectileRun struct {
 	motionSpeedScale   float32
 	timeBubbleLeases   map[*ProjectileTimeBubbleLease]struct{}
 	isCollisionSampled bool
+	homingDelay        time.Duration
 	motionSegments     []sim.ProjectileMotionSegment
 	frozenUntil        time.Time
 	freezeRevision     uint64
@@ -266,6 +267,9 @@ func NewProjectileRun(input ProjectileInput) (*ProjectileRun, [][]byte, error) {
 	}
 	run.motionSpeedScale = 1
 	run.isCollisionSampled = input.IsCollisionSampled
+	if input.IsHoming {
+		run.homingDelay = input.HomingDelay
+	}
 	err = session.DispatchPending(context.Background())
 	if err != nil {
 		return nil, nil, fmt.Errorf("immediateDispatch: %w", err)

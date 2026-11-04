@@ -29,7 +29,7 @@ func newCampaignNPCProjectileFlight(
 	position game.Vec3, direction sim.Position, halfExtent sim.Position, startedAt time.Time,
 ) (*campaignNPCProjectileFlight, error) {
 	// Only profiles whose contact operation supports retained launch authority
-	// enter this path; homing, piercing, and control remain separate.
+	// enter this path; Blastopod homing also samples actual travelled segments.
 	if !isCampaignNPCProjectileSampled(profile) {
 		return nil, nil
 	}
@@ -46,7 +46,7 @@ func newCampaignNPCProjectileFlight(
 }
 
 func isCampaignNPCProjectileSampled(profile zonenpc.ActionProfile) bool {
-	if profile.HomingDelay > 0 || profile.IsProjectilePiercing || profile.AbilityName == "Puller" {
+	if (profile.HomingDelay > 0 && profile.AbilityName != "CitadelSpecificFour_Bolt") || profile.IsProjectilePiercing || profile.AbilityName == "Puller" {
 		return false
 	}
 	return profile.ModifierName == "" || profile.ModifierName == "StalkerShock" ||
@@ -153,6 +153,16 @@ func (e campaignNPCProjectileStep) sampleFlightLocked(current *gameplayPeerSessi
 			return nil, sporenet.PlayerStatDelta{}, nil, fmt.Errorf("enemyFlightPose: %w", poseErr)
 		}
 		*current = updated
+	}
+	if schedule.plan.Profile.HomingDelay > 0 {
+		target, isTargetFound := current.campaignNPCTarget(schedule.generation, schedule.target.ObjectID)
+		if isTargetFound {
+			aim := schedule.projectileTargetPosition.Add(target.Position.Sub(schedule.target.Position))
+			err = schedule.run.SteerHomingTarget(now, sim.Position(aim))
+			if err != nil {
+				return nil, sporenet.PlayerStatDelta{}, nil, fmt.Errorf("enemyFlightHoming: %w", err)
+			}
+		}
 	}
 	targets := make([]sim.ProjectileCollisionTarget, 0)
 	fallbackCount := 0

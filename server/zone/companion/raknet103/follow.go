@@ -13,7 +13,7 @@ func Follow(plans []zonecompanion.Follow) ([][]byte, error) {
 	packets := make([][]byte, 0, len(plans)*2)
 	for index, current := range plans {
 		if current.ObjectID == 0 || current.OwnerObjectID == 0 ||
-			current.DesiredStopDistance <= 0 {
+			(!current.IsExact && current.DesiredStopDistance <= 0) {
 			return nil, fmt.Errorf("follow[%d]: invalid", index)
 		}
 		// TravelDuration and Revision belong to scheduled server arrival.
@@ -26,8 +26,15 @@ func Follow(plans []zonecompanion.Follow) ([][]byte, error) {
 		if facingLength <= 0 {
 			return nil, fmt.Errorf("follow[%d]: zero direction", index)
 		}
+		goalFlags := uint32(0x41)
+		targetID := current.OwnerObjectID
+		if current.IsExact {
+			// Build 103 MoveToPointExact (A147D0) sets goal flag 1.
+			goalFlags = 1
+			targetID = 0
+		}
 		movePacket, err := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
-			ObjectID: current.ObjectID, GoalFlags: 0x41,
+			ObjectID: current.ObjectID, GoalFlags: goalFlags,
 			GoalPosition: raknet.Vector3{
 				X: current.Goal.X, Y: current.Goal.Y, Z: current.Goal.Z,
 			},
@@ -41,7 +48,7 @@ func Follow(plans []zonecompanion.Follow) ([][]byte, error) {
 			TargetPosition: raknet.Vector3{
 				X: current.Goal.X, Y: current.Goal.Y, Z: current.Goal.Z,
 			},
-			TargetObjectID: current.OwnerObjectID,
+			TargetObjectID: targetID,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("followMarshal[%d]: %w", index, err)

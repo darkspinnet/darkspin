@@ -131,7 +131,7 @@ func writeCreatureTemplates(ctx context.Context, transaction *sql.Tx, installPat
 		templates = append(templates, creatureTemplate{
 			ID:              hashID(noun.BaseName + ".Noun"),
 			NameLocaleKey:   localeKey(class.NameLocaleKey),
-			Name:            baseName + " " + creatureVariant(noun.BaseName),
+			Name:            creatureAuthoredVariant(baseName+" "+creatureVariant(noun.BaseName), localeKey(class.NameLocaleKey)),
 			ElementType:     class.ElementType,
 			ClassType:       class.ClassType,
 			UnlockLevel:     class.UnlockLevel,
@@ -398,6 +398,27 @@ func creatureVariant(baseName string) string {
 	default:
 		return "Alpha"
 	}
+}
+
+// Build 103's Skar variants do not follow noun _v1/_v2 ordering. The
+// PlayerClass localization key identifies the displayed variant directly.
+func creatureAuthoredVariant(name, nameLocaleKey string) string {
+	variant := ""
+	switch strings.ToLower(nameLocaleKey) {
+	case "0x0b6527ab":
+		variant = "Beta"
+	case "0x0b6527ac":
+		variant = "Gamma"
+	case "0x0b6527ad":
+		variant = "Delta"
+	default:
+		return name
+	}
+	separator := strings.LastIndexByte(name, ' ')
+	if separator <= 0 {
+		return name
+	}
+	return name[:separator+1] + variant
 }
 
 func creatureElement(element int) string {
