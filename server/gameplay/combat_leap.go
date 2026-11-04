@@ -372,6 +372,13 @@ func (r campaignNPCActionRuntime) produceEnemyLeap(
 	}
 	resume.actionGeneration = enemy.ActionGeneration
 	if profile.AbilityName == "StealthAttack" {
+		if !enemy.IsStealthReady(r.now()) {
+			packets, meleeErr := r.produceEnemyMelee(packet, sessionKey, generation, objectID, timestamp)
+			if meleeErr != nil {
+				return nil, fmt.Errorf("stealthRecoveryMelee: %w", meleeErr)
+			}
+			return packets, nil
+		}
 		return r.startStealtherStealth(
 			packet, sessionKey, generation, enemy, target, profile, timestamp,
 		)

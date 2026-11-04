@@ -2,6 +2,9 @@
 
 ### 2026-11-03
 
+- #174 Resume Pterodyne melee pursuit after its scare recovery while keeping Stealth Attack on its separate cooldown.
+- #174 Validate Vampiric Lurcher jump landings without requiring a straight walking corridor, preventing repeated stationary jump cycles around ground-path bends.
+- #174 Publish Ghostly Tracker's charge speed and disabled repulsion to the client and restore them on completion or cancellation, including interrupted Shade Drifter charges.
 - #175 Resolve Arachno Terror's homing fear projectile against travelled collision segments and its range limit instead of moving the hit-check endpoint to the hero's current position.
 - Show a chat explanation and log the technical error when a Sync Snapshot command fails unexpectedly instead of returning a silent command error.
 - Disable Darwin amd64 and arm64 builds for unstable artifacts.

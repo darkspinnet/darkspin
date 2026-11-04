@@ -282,6 +282,9 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 	profile, isProfileFound := campaignNPCActionProfile(
 		enemy.Plan, target.Position, target.ActorFootprintRadius,
 	)
+	if profile.AbilityName == "StealthAttack" && !enemy.IsStealthReady(r.now()) {
+		profile, isProfileFound = zonenpc.ActionProfileForPlan(enemy.Plan)
+	}
 	if profile.AbilityName == "CitadelDischarge" {
 		// CitadelDischarge adds a charge-counter bonus to its ranked base
 		// damage. With no counter, the client uses a bonus of zero.

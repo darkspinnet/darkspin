@@ -500,9 +500,28 @@ func (e campaignStealtherSchedule) finishStealth(
 }
 
 func (e campaignStealtherSchedule) scheduleNext(timestamp uint64) {
-	// Travel and its expiry must not consume the visible recovery window.
-	// Start the authored cooldown when stealth ends, including interrupted travel.
-	delay := e.plan.Profile.Cooldown
+	// The special cooldown must not prevent melee pursuit after the scream.
+	e.runtime.registry.mutex.RLock()
+	member, isFound := e.runtime.registry.sessions[e.sessionKey]
+	if !isFound || member.generation != e.generation || member.zone == nil {
+		e.runtime.registry.mutex.RUnlock()
+		return
+	}
+	err := member.zone.NPCs().BeginStealthCooldown(
+		e.objectID, e.plan.ActionGeneration, e.runtime.now().Add(e.plan.Profile.Cooldown),
+	)
+	e.runtime.registry.mutex.RUnlock()
+	if err != nil {
+		if e.runtime.logger != nil {
+			e.runtime.logger.Printf("Stealth cooldown not started object=%d: %v", e.objectID, err)
+		}
+		return
+	}
+	elapsed := time.Duration(0)
+	if timestamp >= e.timestamp {
+		elapsed = time.Duration(timestamp-e.timestamp) * time.Millisecond
+	}
+	delay := max(time.Duration(0), e.plan.Profile.ReleaseDelay-elapsed)
 	next := campaignNPCFirstActionStep{
 		runtime: e.runtime, packet: e.packet, sessionKey: e.sessionKey,
 		generation: e.generation, objectID: e.objectID,

@@ -57,9 +57,10 @@ func (e campaignLeapSchedule) launchHopper(
 	var err error
 	mesh := peerSession.zone.Navigation()
 	if mesh != nil {
-		destination, isReachable, err = zoneaction.NPCDirectMovementDestination(
-			mesh, enemy.Plan.Position, desired,
-			enemy.Plan.ActorFootprintRadius(), enemy.Navigation,
+		// JumpInDirection is airborne travel, not a straight walking corridor.
+		// A bend in the ground path must not cancel an otherwise valid landing.
+		destination, isReachable, err = zoneaction.NPCProjectPosition(
+			mesh, desired, enemy.NavigationRadius(), enemy.Navigation,
 		)
 	}
 	if err != nil {

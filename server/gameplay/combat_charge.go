@@ -303,9 +303,14 @@ func (e campaignChargeSchedule) move() ([][]byte, error) {
 		packets = append(statePackets, packets...)
 	}
 	if movementProfile.AbilityName == "NocturnaSpecialDriftCharge" ||
+		movementProfile.AbilityName == "NoctGhostCharge" ||
 		movementProfile.AbilityName == "BoomerCharge" {
 		movementSpeedBuff := zonenpc.EffectiveMovementSpeedBuff(enemy.Plan) +
 			movementProfile.ForcedMovementSpeed
+		if isGhostCharge {
+			movementSpeedBuff = (1+zonenpc.EffectiveMovementSpeedBuff(enemy.Plan))*
+				(1+e.plan.Profile.MovementSpeedBuff) - 1
+		}
 		statePackets, stateErr := npcraknet.ChargeMovementState(
 			e.objectID, movementSpeedBuff, 0, true,
 		)
@@ -385,6 +390,16 @@ func (e campaignChargeSchedule) land(timestamp uint64) ([][]byte, error) {
 func chargeCancelSpeed(
 	objectID uint32, enemy zonenpc.Snapshot, profile zonenpc.ActionProfile,
 ) ([][]byte, error) {
+	if profile.AbilityName == "NoctGhostCharge" ||
+		profile.AbilityName == "NocturnaSpecialDriftCharge" || profile.AbilityName == "BoomerCharge" {
+		packets, err := npcraknet.ChargeMovementState(
+			objectID, zonenpc.EffectiveMovementSpeedBuff(enemy.Plan), profile.StealthType, false,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("chargeCancelState: %w", err)
+		}
+		return packets, nil
+	}
 	if profile.AbilityName != "NomadSpecialOneCharge" &&
 		profile.AbilityName != "ScaldronBoss_ShadowCharge" &&
 		profile.AbilityName != "VerdanthBasicPicky" {
@@ -528,6 +543,7 @@ func (e campaignChargeSchedule) followup(timestamp uint64) ([][]byte, error) {
 	}
 	var restoredStatePackets [][]byte
 	if e.plan.Profile.AbilityName == "NocturnaSpecialDriftCharge" ||
+		e.plan.Profile.AbilityName == "NoctGhostCharge" ||
 		e.plan.Profile.AbilityName == "BoomerCharge" ||
 		e.plan.Profile.AbilityName == "ScaldronBoss_ShadowCharge" ||
 		e.plan.Profile.AbilityName == "NomadSpecialOneCharge" {
@@ -592,6 +608,7 @@ func (e campaignChargeSchedule) followup(timestamp uint64) ([][]byte, error) {
 		return e.fail("enemyChargeFollowup", err)
 	}
 	if e.plan.Profile.AbilityName == "NoctGhostCharge" {
+		followupPackets = append(restoredStatePackets, followupPackets...)
 		cleanupPackets, cleanupErr := e.runtime.finishNoctGhostCharge(
 			e.sessionKey, e.generation, e.objectID, e.plan,
 		)

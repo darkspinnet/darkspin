@@ -10,6 +10,7 @@ type status struct {
 	beastVulnerability          BeastVulnerability
 	basicModifiers              map[BasicModifierKey]BasicModifier
 	repairBlockedUntil          time.Time
+	stealthReadyAt              time.Time
 	swiftMovementSpeedBuff      float32
 	areaShiftExpiresAt          time.Time
 	absorptionShieldAmount      float32
