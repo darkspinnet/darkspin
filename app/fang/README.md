@@ -18,6 +18,7 @@ ZIP collection runs in the existing Darkspinner game supervisor, including remot
 | `network/` | Winsock redirection, party envelopes, network capture and the scenario control transport's original-function access |
 | `scenario/` | Bounded native control ABI, native input/observation, renderer and selection diagnostics, and capability reporting |
 | `shop/` | Shop pricing, inventory availability and shop UI compatibility |
+| `tooltip/` | Approved build-103 Sentry Drone tooltip calculation compatibility |
 | `zoom/` | Normal gameplay camera zoom compatibility |
 
 The `mod/` root retains its bootstrap and shared interfaces. Native implementations live in `animation/` (emote state and dance/audio coordination), `appearance/` (imported character identity, fit, scale and portraits), `audio/` (sound, music and voice), `editor/` (editor controls, previews and validation), `palette/` (palette pages and selection controls), `resource/` (source-backed streams), `scene/` (scene and environment assets), and `ui/` (shared button styling).

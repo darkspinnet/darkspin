@@ -82,6 +82,8 @@ func (r campaignNPCActionRuntime) ensureInvincitronDrone(
 	}
 	authoredProfile.IsTargetable = false
 	authoredProfile.FootprintRadius = footprintRadius
+	authoredProfile.BaseCombatSpeed = invincitronDroneOrbitSpeed
+	authoredProfile.IdleMovementSpeed = invincitronDroneOrbitSpeed
 	plan := zonenpc.SpawnPlan{
 		ObjectID: objectID, OwnerObjectID: ownerObjectID,
 		NounName: "NomadDrone.Noun", Position: invincitronDronePosition(owner.Plan.Position, 0),
@@ -307,8 +309,14 @@ func (e *campaignDroneFollowStep) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("droneFollowPosition: %w", err)
 	}
-	packets := make([][]byte, 0, 2)
+	packets := make([][]byte, 0, 3)
 	if isMoved {
+		positionPacket, positionErr := raknet.MarshalApplication(raknet.ObjectPositionUpdateMessage{
+			ObjectID: e.objectID, PositionX: position.X, PositionY: position.Y, PositionZ: position.Z,
+		})
+		if positionErr != nil {
+			return nil, fmt.Errorf("droneFollowPose: %w", positionErr)
+		}
 		goalPosition := raknet.Vector3(goal)
 		goalPacket, marshalErr := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
 			ObjectID: e.objectID, GoalFlags: 0x01, GoalPosition: goalPosition,
@@ -325,7 +333,7 @@ func (e *campaignDroneFollowStep) produce() ([][]byte, error) {
 		if marshalErr != nil {
 			return nil, fmt.Errorf("droneFollowLocomotion: %w", marshalErr)
 		}
-		packets = append(packets, goalPacket, locomotionPacket)
+		packets = append(packets, positionPacket, goalPacket, locomotionPacket)
 	}
 	err = e.schedule()
 	if err != nil {

@@ -30,7 +30,7 @@ func (e gameplayPendingRuntime) pollMutationAgentsLocked(member *gameplayPeerSes
 		switch event.Kind {
 		case zonenpc.MutationEventActivate, zonenpc.MutationEventDeactivate:
 			e.registry.queueMutationEventLocked(member.zone, event, mutationSourceFrame)
-		case zonenpc.MutationEventBeamChannel, zonenpc.MutationEventBeamStop:
+		case zonenpc.MutationEventBeamModel, zonenpc.MutationEventBeamChannel, zonenpc.MutationEventBeamStop:
 			e.registry.queueMutationEventLocked(member.zone, event, mutationBeamFrame)
 			if event.Kind == zonenpc.MutationEventBeamStop {
 				e.registry.queueMutationEventLocked(member.zone, event, mutationMovementFrame)
@@ -48,7 +48,8 @@ func (e gameplayPendingRuntime) pollMutationAgentsLocked(member *gameplayPeerSes
 		case zonenpc.MutationEventMovement:
 			e.registry.queueMutationEventLocked(member.zone, event, mutationMovementFrame)
 		case zonenpc.MutationEventBeamStart:
-			// The authored PlayAnimationState override is empty.
+			// Its override swaps model effects even though it sends no pose.
+			e.registry.queueMutationEventLocked(member.zone, event, mutationBeamFrame)
 			e.registry.queueMutationEventLocked(member.zone, event, mutationMovementFrame)
 		case zonenpc.MutationEventAuraHit:
 			if sessionKey != "" {

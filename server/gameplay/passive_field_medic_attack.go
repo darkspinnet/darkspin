@@ -13,6 +13,7 @@ import (
 	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
 	zonecompanion "github.com/darkspinnet/darkspin/server/zone/companion"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
+	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
 
 type fieldMedicDroneAttackStep struct {
@@ -91,6 +92,16 @@ func (r campaignDamageRuntime) startFieldMedicDroneAttackFor(
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
+	// Reservation stops the server follow route. Hold and publish that same
+	// pose so the native drone cannot keep following its old goal at launch.
+	attackAt := r.npc.now()
+	heldDrone, holdErr := peerSession.zone.Companion().HoldFollow(objectID, attackAt, attackAt.Add(ability.HitDelay))
+	if holdErr != nil {
+		peerSession.zone.Companion().ReleaseAttack(plan.ObjectID, plan.TargetObjectID)
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("fieldMedicDroneHold: %w", holdErr)
+	}
+	plan.Position = heldDrone.Position
 	target, isTargetFound := peerSession.zone.NPCs().NPC(plan.TargetObjectID)
 	if !isTargetFound || target.IsDefeated || target.HitPoint <= 0 {
 		peerSession.zone.Companion().ReleaseAttack(plan.ObjectID, plan.TargetObjectID)
@@ -147,6 +158,14 @@ func (r campaignDamageRuntime) startFieldMedicDroneAttackFor(
 	facing := targetPosition.Sub(plan.Position)
 	if facing.Length() > 0 {
 		facing = facing.Scale(1 / facing.Length())
+	} else {
+		facing = game.Vec3{X: 1}
+	}
+	posePackets, poseErr := npcraknet.StopAtPose(plan.ObjectID, plan.Position, facing)
+	if poseErr != nil {
+		peerSession.zone.Companion().ReleaseAttack(plan.ObjectID, plan.TargetObjectID)
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("fieldMedicDronePose: %w", poseErr)
 	}
 	run, packets, runErr := abilityraknet.NewProjectileRun(abilityraknet.ProjectileInput{
 		Ability: ability, ActorObjectID: plan.ObjectID,
@@ -166,6 +185,7 @@ func (r campaignDamageRuntime) startFieldMedicDroneAttackFor(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("fieldMedicDroneProjectile: %w", runErr)
 	}
+	packets = append(posePackets, packets...)
 	if peerSession.fieldMedicDroneAttacks == nil {
 		peerSession.fieldMedicDroneAttacks = make(map[uint32]*abilityraknet.ProjectileRun)
 	}

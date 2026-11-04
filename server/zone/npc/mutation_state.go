@@ -20,6 +20,7 @@ const (
 	MutationEventDeactivate
 	MutationEventMovement
 	MutationEventFullHeal
+	MutationEventBeamModel
 )
 
 type MutationEventID struct {
@@ -64,6 +65,7 @@ type MutationBeamState struct {
 	ReleaseAt        time.Time
 	IsActive         bool
 	IsChannelActive  bool
+	IsModelActive    bool
 	IsPromoted       bool
 }
 

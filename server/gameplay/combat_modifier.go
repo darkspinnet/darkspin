@@ -275,6 +275,10 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 				!targetSession.extendEnemySleep(plan.TargetObjectID, expiresAt) {
 				continue
 			}
+			interruptedBasic := targetSession.resetInterruptibleActionAdmission()
+			if interruptedBasic != nil {
+				interruptedBasic.Stop()
+			}
 			stopPackets, stopErr := stopEnemyControlledHeroMovement(&targetSession, at)
 			if stopErr != nil {
 				r.logger.Printf("RakNet sleeping hero stop omitted target=%d: %v", plan.TargetObjectID, stopErr)
@@ -394,6 +398,11 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 			return nil, fmt.Errorf("scarabDazeSpeed: %w", speedErr)
 		}
 		packets = append(packets, speedPackets...)
+	}
+	if profile.ModifierName == "SleepModifier" {
+		// Native pose corrections must finish before SleepModifier takes
+		// animation ownership; otherwise the stop can replace status_sleep.
+		packets = append(packets[1:], createPacket)
 	}
 	return packets, nil
 }

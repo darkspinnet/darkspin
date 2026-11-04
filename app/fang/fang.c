@@ -17,6 +17,7 @@
 #include "chat/command.h"
 #include "chat/ui.h"
 #include "cinematic/cinematic.h"
+#include "tooltip/tooltip.h"
 #include "bug/history.h"
 #include "bug/record.h"
 #include "scenario/observation.h"
@@ -4516,6 +4517,7 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
         return 0x8;
     }
     fang_network_reset_diagnostics();
+    trace_client_state("sentry_tooltip_hook", (unsigned int)fang_tooltip_install(executable));
     executable_module = executable;
     ZeroMemory(snapshot_mode, sizeof(snapshot_mode));
     GetEnvironmentVariableA(

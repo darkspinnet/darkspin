@@ -3105,13 +3105,17 @@ func (e campaignTossSchedule) produceRelease() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	animationPacket, err := abilityraknet.AnimationReset(
-		e.sourceObjectID,
-		e.packet.SourceTime+uint64(e.plan.Definition.ReleaseDelay/time.Millisecond),
-	)
-	if err != nil {
-		e.runtime.registry.mutex.Unlock()
-		return nil, fmt.Errorf("campaignTossReleaseAnimation: %w", err)
+	packets := [][]byte{e.releaseResponse}
+	if peerSession.deployedObjectID != e.sourceObjectID || !peerSession.isEnemySleepActive(e.runtime.now()) {
+		animationPacket, err := abilityraknet.AnimationReset(
+			e.sourceObjectID,
+			e.packet.SourceTime+uint64(e.plan.Definition.ReleaseDelay/time.Millisecond),
+		)
+		if err != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("campaignTossReleaseAnimation: %w", err)
+		}
+		packets = append(packets, animationPacket)
 	}
 	e.run.isReleased = true
 	if e.run.isLanded {
@@ -3120,7 +3124,7 @@ func (e campaignTossSchedule) produceRelease() ([][]byte, error) {
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 	}
 	e.runtime.registry.mutex.Unlock()
-	return [][]byte{e.releaseResponse, animationPacket}, nil
+	return packets, nil
 }
 
 func (e campaignTossLandingStep) produce() ([][]byte, error) {

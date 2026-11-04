@@ -23,6 +23,8 @@ type mutationVisualSnapshot struct {
 	startedAt         time.Time
 	targetID          uint32
 	isActive          bool
+	isFiring          bool
+	isSourceActive    bool
 	position          game.Vec3
 	facing            game.Vec3
 	waypoint          game.Vec3
@@ -84,9 +86,11 @@ func mutationVisual(frame mutationPendingEvent, npc zonenpc.Snapshot, at time.Ti
 	if frame.event.ID.Generation != npc.Mutation.Generation {
 		return snapshot
 	}
+	snapshot.isSourceActive = npc.IsPublished && !npc.IsDefeated && npc.HitPoint > 0 && npc.Mutation.IsPassiveActive
+	snapshot.isFiring = snapshot.isSourceActive && npc.Mutation.Beam.IsActive && npc.Mutation.Beam.IsModelActive && at.Before(npc.Mutation.Beam.ReleaseAt)
 	switch frame.group {
 	case mutationSourceFrame:
-		snapshot.isActive = npc.IsPublished && !npc.IsDefeated && npc.HitPoint > 0 && npc.Mutation.IsPassiveActive
+		snapshot.isActive = snapshot.isSourceActive
 	case mutationBeamFrame:
 		beam := npc.Mutation.Beam
 		snapshot.isActive = npc.IsPublished && !npc.IsDefeated && npc.HitPoint > 0 && beam.IsActive && beam.IsChannelActive && at.Before(beam.ReleaseAt)
@@ -114,12 +118,26 @@ func marshalMutationVisual(frame mutationPendingEvent, snapshot mutationVisualSn
 	switch frame.group {
 	case mutationSourceFrame:
 		for index, asset := range []string{"effect_environment_mutant_agent_smoke.ServerEventDef", "effect_environment_mutant_agent_smoke_model.ServerEventDef"} {
+			isActive := snapshot.isActive && (index == 0 || !snapshot.isFiring)
 			messages = append(messages, raknet.AttachedEffectMessage{
 				Slot: uint8(16 + index), ObjectID: objectID, Asset: util.HashID(asset),
-				IsForceAttached: snapshot.isActive, IsRemovalRequested: !snapshot.isActive, IsHardStop: !snapshot.isActive,
+				IsForceAttached: isActive, IsRemovalRequested: !isActive, IsHardStop: !isActive,
 			})
 		}
 	case mutationBeamFrame:
+		// Build-103 MutationAgent_Shot swaps the idle model effect for its
+		// firing model after its initial windup, then removes it on deactivation.
+		isIdleModelActive := snapshot.isSourceActive && !snapshot.isFiring
+		messages = append(messages,
+			raknet.AttachedEffectMessage{
+				Slot: 17, ObjectID: objectID, Asset: util.HashID("effect_environment_mutant_agent_smoke_model.ServerEventDef"),
+				IsForceAttached: isIdleModelActive, IsRemovalRequested: !isIdleModelActive, IsHardStop: !isIdleModelActive,
+			},
+			raknet.AttachedEffectMessage{
+				Slot: 22, ObjectID: objectID, Asset: util.HashID("mutant_agent_infect_smoke_muzzle_model.ServerEventDef"),
+				IsForceAttached: snapshot.isFiring, IsRemovalRequested: !snapshot.isFiring, IsHardStop: !snapshot.isFiring,
+			},
+		)
 		for index, asset := range []string{"mutation_beam.ServerEventDef", "mutation_particles.ServerEventDef"} {
 			messages = append(messages, raknet.AttachedEffectMessage{
 				Slot: uint8(20 + index), ObjectID: objectID, SecondaryObjectID: snapshot.targetID,

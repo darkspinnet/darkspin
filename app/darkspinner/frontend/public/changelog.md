@@ -1,11 +1,19 @@
 # Changelog
 
+### 2026-11-04
+
+- [#176](https://github.com/darkspinnet/darkspin/issues/176) Fix Meditron's Sentry Drone tooltip damage growing on repeated refreshes while preserving pet-damage bonuses.
+- [#176](https://github.com/darkspinnet/darkspin/issues/176) Interrupt existing hero attacks and channels when sleep begins, apply the sleep modifier after movement corrections, and prevent delayed toss release from resetting the sleeping hero's animation.
+- [#176](https://github.com/darkspinnet/darkspin/issues/176) Synchronize Meditron's Sentry Drone firing pose with its projectile origin and hold that pose through the shot's windup.
+- [#176](https://github.com/darkspinnet/darkspin/issues/176) Match Invincitron drone movement speed to its orbit, publish orbit poses, and keep laser targeting from replacing its movement goal.
+- [#176](https://github.com/darkspinnet/darkspin/issues/176) Add Mutation Agent firing-model effects after the authored windup and restore the idle model when the beam ends.
+
 ### 2026-11-03
 
-- #174 Resume Pterodyne melee pursuit after its scare recovery while keeping Stealth Attack on its separate cooldown.
-- #174 Validate Vampiric Lurcher jump landings without requiring a straight walking corridor, preventing repeated stationary jump cycles around ground-path bends.
-- #174 Publish Ghostly Tracker's charge speed and disabled repulsion to the client and restore them on completion or cancellation, including interrupted Shade Drifter charges.
-- #175 Resolve Arachno Terror's homing fear projectile against travelled collision segments and its range limit instead of moving the hit-check endpoint to the hero's current position.
+- [#174](https://github.com/darkspinnet/darkspin/issues/174) Resume Pterodyne melee pursuit after its scare recovery while keeping Stealth Attack on its separate cooldown.
+- [#174](https://github.com/darkspinnet/darkspin/issues/174) Validate Vampiric Lurcher jump landings without requiring a straight walking corridor, preventing repeated stationary jump cycles around ground-path bends.
+- [#174](https://github.com/darkspinnet/darkspin/issues/174) Publish Ghostly Tracker's charge speed and disabled repulsion to the client and restore them on completion or cancellation, including interrupted Shade Drifter charges.
+- [#175](https://github.com/darkspinnet/darkspin/issues/175) Resolve Arachno Terror's homing fear projectile against travelled collision segments and its range limit instead of moving the hit-check endpoint to the hero's current position.
 - Show a chat explanation and log the technical error when a Sync Snapshot command fails unexpectedly instead of returning a silent command error.
 - Disable Darwin amd64 and arm64 builds for unstable artifacts.
 - [#173](https://github.com/darkspinnet/darkspin/issues/173) Validate NPC pursuit before publishing movement and back off blocked routes instead of repeatedly restarting the chase; include blocked-route and melee-miss details in server snapshots.

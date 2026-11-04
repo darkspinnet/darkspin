@@ -4,10 +4,12 @@
 ---@field squad_category 'pve'|'pvp'
 ---@field hero_index integer Zero-based slot in the requested squad.
 ---@field rigblock_asset_id integer Installed LootRigblock ID.
+---@field prefix_asset_id? integer Installed LootPrefix ID, 1..338; omitted or zero means none.
 ---@field level integer Item level, 1 through 100.
 ---@field rarity integer Normal=0, uncommon=1, rare=2, epic=3.
 
 ---@class SeedProfileRequest
+---@field is_overdrive_unlocked? boolean Seeds the owned account's ordinary Overdrive unlock; defaults false.
 ---@field equipped_parts? SeedEquippedPart[] Real owned equipment on this fresh profile; does not create an edited creature mesh or simulate an editor save.
 ---@field is_pvp_enabled? boolean Seeds an unlocked PvP squad with independent owned copies of the supplied heroes; preserves the campaign squad.
 ---@field name string Unique profile alias in the isolated session.
@@ -15,6 +17,7 @@
 ---@field chain_progression? integer Supplied completed-campaign progression; defaults to 0.
 
 ---@class CloneProfileRequest
+---@field is_overdrive_unlocked? boolean Explicit Overdrive unlock for the new owned account; source unlocks are not copied.
 ---@field equipped_parts? SeedEquippedPart[] Explicit fresh equipment; source inventory is never copied.
 ---@field is_pvp_enabled? boolean Seeds an unlocked PvP squad using copies of the resolved source hero templates.
 ---@field name string Unique profile alias in the isolated session.

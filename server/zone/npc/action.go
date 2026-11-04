@@ -1361,6 +1361,8 @@ func NomadDroneLaserProfile(definition sim.AbilityDefinition) (ActionProfile, er
 		MissEffectName:     definition.MissEffectName,
 		ProjectileSpeed:    definition.Speed,
 		ProjectileDistance: definition.Distance,
+		// The drone fires while its owner-follow motion remains active.
+		IsFacingPolicyKnown: true, IsFacingSuppressed: true,
 		IsDamageProfileKnown: definition.IsDescriptorFound &&
 			definition.IsDamageTypeFound && definition.IsDamageSourceFound,
 		IsFirstAggroDurationKnown: true,

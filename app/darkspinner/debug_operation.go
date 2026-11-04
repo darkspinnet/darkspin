@@ -40,6 +40,7 @@ type debugProfileCreateRequest struct {
 	SourceLoginName      string                     `json:"source_login_name"`
 	IsSourceCloneAllowed bool                       `json:"is_source_clone_allowed"`
 	IsPVPEnabled         bool                       `json:"is_pvp_enabled"`
+	IsOverdriveUnlocked  bool                       `json:"is_overdrive_unlocked"`
 	EquippedParts        []debugEquippedPartRequest `json:"equipped_parts"`
 }
 
@@ -47,6 +48,7 @@ type debugEquippedPartRequest struct {
 	SquadCategory   string              `json:"squad_category"`
 	HeroIndex       uint32              `json:"hero_index"`
 	RigblockAssetID uint16              `json:"rigblock_asset_id"`
+	PrefixAssetID   uint16              `json:"prefix_asset_id,omitempty"`
 	Level           uint16              `json:"level"`
 	Rarity          sporenet.PartRarity `json:"rarity"`
 }
@@ -306,10 +308,12 @@ func (e *debugSupervisor) executeSerializedDebugOperation(ctx context.Context, o
 			return nil, errors.New("source cloning cannot also supply hero nouns")
 		}
 		profileReq := sporenet.DebugProfileRequest{RunID: e.id, ClientName: req.Name, HeroNouns: heroNouns, ChainProgression: req.ChainProgression, SourceLoginName: req.SourceLoginName, IsSourceCloneAllowed: req.IsSourceCloneAllowed, IsPVPEnabled: req.IsPVPEnabled}
+		profileReq.IsOverdriveUnlocked = req.IsOverdriveUnlocked
 		for _, part := range req.EquippedParts {
 			profileReq.EquippedParts = append(profileReq.EquippedParts, sporenet.DebugEquippedPart{
 				SquadCategory: part.SquadCategory, HeroIndex: part.HeroIndex,
 				RigblockAssetID: part.RigblockAssetID, Level: part.Level, Rarity: part.Rarity,
+				PrefixAssetID: part.PrefixAssetID,
 			})
 		}
 		var profile sporenet.DebugProfile

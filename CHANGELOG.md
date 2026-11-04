@@ -1,5 +1,13 @@
 # Changelog
 
+### 2026-11-04
+
+- #176 Fix Meditron's Sentry Drone tooltip damage growing on repeated refreshes while preserving pet-damage bonuses.
+- #176 Interrupt existing hero attacks and channels when sleep begins, apply the sleep modifier after movement corrections, and prevent delayed toss release from resetting the sleeping hero's animation.
+- #176 Synchronize Meditron's Sentry Drone firing pose with its projectile origin and hold that pose through the shot's windup.
+- #176 Match Invincitron drone movement speed to its orbit, publish orbit poses, and keep laser targeting from replacing its movement goal.
+- #176 Add Mutation Agent firing-model effects after the authored windup and restore the idle model when the beam ends.
+
 ### 2026-11-03
 
 - #174 Resume Pterodyne melee pursuit after its scare recovery while keeping Stealth Attack on its separate cooldown.

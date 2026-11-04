@@ -142,6 +142,13 @@ func (e *Session) advanceMutationBeam(actor *Snapshot, req MutationAdvanceReques
 		stopMutationBeam(actor, req.At)
 		return
 	}
+	if !beam.IsModelActive && !req.At.Before(beam.StartedAt.Add(500*time.Millisecond)) {
+		isAccepted := appendMutationEvent(actor, MutationEvent{Kind: MutationEventBeamModel, At: req.At})
+		if !isAccepted {
+			return
+		}
+		beam.IsModelActive = true
+	}
 	if !beam.IsChannelActive {
 		if req.At.Before(beam.ChannelAt) {
 			return
