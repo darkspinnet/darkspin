@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/darkspinnet/darkspin/server/diagnostic"
 )
@@ -123,7 +124,15 @@ func isAllowed(kind, name string) bool {
 	case ".log", ".txt", ".json", ".jsonl", ".dmp":
 		return true
 	case ".zip":
-		return kind == "bug"
+		if kind == "bug" {
+			return true
+		}
+		if kind != "log" || path.Dir(name) != "logs" {
+			return false
+		}
+		base := path.Base(name)
+		date, err := time.Parse("2006-01-02.zip", base)
+		return err == nil && date.Format("2006-01-02.zip") == base
 	}
 	if kind != "bug" || len(ext) != 4 || !strings.EqualFold(path.Ext(strings.TrimSuffix(name, path.Ext(name))), ".zip") {
 		return false
@@ -315,26 +324,6 @@ func (e *scanner) walk(ctx context.Context, dir string, depth int) error {
 	}
 }
 
-type contextReader struct {
-	ctx context.Context
-	r   io.Reader
-}
-
-func (e contextReader) Read(payload []byte) (int, error) {
-	err := e.ctx.Err()
-	if err != nil {
-		return 0, fmt.Errorf("readContext: %w", err)
-	}
-	count, err := e.r.Read(payload)
-	if errors.Is(err, io.EOF) {
-		return count, io.EOF
-	}
-	if err != nil {
-		return count, fmt.Errorf("readFile: %w", err)
-	}
-	return count, nil
-}
-
 func (e *Store) Download(ctx context.Context, req diagnostic.FileRequest) (diagnostic.Download, error) {
 	originalName := req.Name
 	source, req, err := fileSource(req)
@@ -357,31 +346,25 @@ func (e *Store) Download(ctx context.Context, req diagnostic.FileRequest) (diagn
 	if err != nil {
 		return diagnostic.Download{}, storageError("downloadOpen", err)
 	}
-	defer closeReader(r)
 	openedFI, err := r.Stat()
 	if err != nil {
+		closeReader(r)
 		return diagnostic.Download{}, storageError("downloadStat", err)
 	}
 	if !openedFI.Mode().IsRegular() || !os.SameFile(fi, openedFI) {
+		closeReader(r)
 		return diagnostic.Download{}, diagnostic.ErrConflict
 	}
 	if openedFI.Size() > diagnostic.MaxDownloadSize {
-		return diagnostic.Download{}, diagnostic.ErrTooLarge
-	}
-	payload, err := io.ReadAll(io.LimitReader(contextReader{ctx: ctx, r: r}, diagnostic.MaxDownloadSize+1))
-	if err != nil {
-		return diagnostic.Download{}, fmt.Errorf("downloadRead: %w", errors.Join(diagnostic.ErrUnavailable, err))
-	}
-	if len(payload) > diagnostic.MaxDownloadSize {
+		closeReader(r)
 		return diagnostic.Download{}, diagnostic.ErrTooLarge
 	}
 	err = ctx.Err()
 	if err != nil {
+		closeReader(r)
 		return diagnostic.Download{}, fmt.Errorf("downloadContext: %w", err)
 	}
-	file := metadata(originalName, openedFI)
-	file.Size = int64(len(payload))
-	return diagnostic.Download{File: file, Content: payload}, nil
+	return diagnostic.Download{File: metadata(originalName, openedFI), Content: r}, nil
 }
 
 func (e *Store) Delete(ctx context.Context, req diagnostic.FileRequest) error {

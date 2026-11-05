@@ -1,4 +1,4 @@
-// Package retention removes expired files from the dedicated server's diagnostics.
+// Package retention archives closed daily logs and removes expired diagnostics.
 package retention
 
 import (
@@ -17,6 +17,7 @@ const retentionAge = 7 * 24 * time.Hour
 
 type sweep struct {
 	cutoff         time.Time
+	today          time.Time
 	firstDate      time.Time
 	protectedPaths map[string]bool
 }
@@ -33,7 +34,7 @@ func Sweep(ctx context.Context, runtimePath string, protectedPaths []string) err
 	return nil
 }
 
-// SweepLogs expires only dated daily logs, allowing the bootstrap process to
+// SweepLogs maintains only dated daily logs, allowing the bootstrap process to
 // retain logs without touching artifacts owned by its running server child.
 func SweepLogs(ctx context.Context, runtimePath string) error {
 	err := sweepTrees(ctx, runtimePath, nil, false)
@@ -53,9 +54,11 @@ func sweepTrees(ctx context.Context, runtimePath string, protectedPaths []string
 		return fmt.Errorf("runtimePath: %w", err)
 	}
 	now := time.Now().UTC()
+	today := now.Truncate(24 * time.Hour)
 	e := sweep{
 		cutoff:         now.Add(-retentionAge),
-		firstDate:      time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -6),
+		today:          today,
+		firstDate:      today.AddDate(0, 0, -6),
 		protectedPaths: make(map[string]bool, len(protectedPaths)),
 	}
 	for _, protectedPath := range protectedPaths {
@@ -201,8 +204,17 @@ func (e *sweep) entry(ctx context.Context, root *os.Root, absPath, name string, 
 			return nil
 		}
 	} else {
-		date, parseErr := time.Parse("2006-01-02.txt", name)
-		if parseErr != nil || date.Format("2006-01-02.txt") != name || !date.Before(e.firstDate) {
+		date, isDailyLog := dailyLogDate(name)
+		if !isDailyLog {
+			return nil
+		}
+		if !date.Before(e.firstDate) {
+			if date.Before(e.today) && fi.ModTime().Before(e.today) && filepath.Ext(name) == ".txt" {
+				err = archiveDailyLog(ctx, root, name, fi)
+				if err != nil {
+					return fmt.Errorf("dailyArchive: %w", err)
+				}
+			}
 			return nil
 		}
 	}

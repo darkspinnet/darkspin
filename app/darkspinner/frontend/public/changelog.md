@@ -2,6 +2,8 @@
 
 ### 2026-11-04
 
+- Compress completed daily server logs into ZIPs available from the Control Panel, with seven-day retention.
+- Raise Control Panel diagnostic downloads from 64 MiB to 256 MiB and stream files from the server.
 - [#176](https://github.com/darkspinnet/darkspin/issues/176) Fix Meditron's Sentry Drone tooltip damage growing on repeated refreshes while preserving pet-damage bonuses.
 - [#176](https://github.com/darkspinnet/darkspin/issues/176) Interrupt existing hero attacks and channels when sleep begins, apply the sleep modifier after movement corrections, and prevent delayed toss release from resetting the sleeping hero's animation.
 - [#176](https://github.com/darkspinnet/darkspin/issues/176) Synchronize Meditron's Sentry Drone firing pose with its projectile origin and hold that pose through the shot's windup.

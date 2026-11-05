@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"path"
 	"strings"
 	"sync"
@@ -16,7 +17,10 @@ import (
 	"github.com/darkspinnet/darkspin/server/accountaccess"
 )
 
-const MaxDownloadSize = 64 << 20
+const (
+	MaxDownloadSize = 256 << 20
+	DownloadTimeout = 3 * time.Minute
+)
 
 var (
 	ErrInvalidRequest = errors.New("invalid diagnostic request")
@@ -51,7 +55,7 @@ type List struct {
 
 type Download struct {
 	File    File
-	Content []byte
+	Content io.ReadCloser // The caller owns the opened reader on success.
 }
 
 type Store interface {
@@ -245,11 +249,22 @@ func (e *Service) Download(ctx context.Context, actor accountaccess.Actor, req F
 		return Download{}, fmt.Errorf("downloadBegin: %w", err)
 	}
 	result, operationErr := e.store.Download(ctx, req)
-	if operationErr == nil && (len(result.Content) > MaxDownloadSize || result.File.Size > MaxDownloadSize) {
-		operationErr = ErrTooLarge
+	if operationErr == nil {
+		switch {
+		case result.File.Size > MaxDownloadSize:
+			operationErr = ErrTooLarge
+		case result.Content == nil || result.File.Size < 0:
+			operationErr = ErrUnavailable
+		}
 	}
 	err = e.complete(ctx, operationID, operationErr)
 	if err != nil {
+		if result.Content != nil {
+			closeErr := result.Content.Close()
+			if closeErr != nil {
+				err = errors.Join(err, fmt.Errorf("downloadClose: %w", closeErr))
+			}
+		}
 		return Download{}, fmt.Errorf("downloadComplete: %w", err)
 	}
 	return result, nil

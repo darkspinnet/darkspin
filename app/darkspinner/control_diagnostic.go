@@ -88,7 +88,8 @@ func (e *App) DownloadRemoteControlDiagnostic(serverAddress, identity, kind, nam
 	if ctx == nil {
 		ctx = context.TODO()
 	}
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	timeout := diagnostic.DownloadTimeout + 10*time.Second
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	payload, err := json.Marshal(map[string]string{"kind": kind, "name": name})
 	if err != nil {
@@ -101,7 +102,7 @@ func (e *App) DownloadRemoteControlDiagnostic(serverAddress, identity, kind, nam
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Darkspin-Client-Version", Version)
 	req.Header.Set("Authorization", "Bearer "+e.controlPanel.token)
-	client := remoteHTTPClient(60 * time.Second)
+	client := remoteHTTPClient(timeout)
 	defer client.CloseIdleConnections()
 	response, err := client.Do(req)
 	if err != nil {

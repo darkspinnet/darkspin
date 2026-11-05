@@ -3,6 +3,7 @@ package controlpanel
 import (
 	"context"
 	"errors"
+	"io"
 	"log"
 	"mime"
 	"net/http"
@@ -93,26 +94,41 @@ func (e *Service) listDiagnostics(writer http.ResponseWriter, req *http.Request,
 }
 
 func (e *Service) downloadDiagnostic(writer http.ResponseWriter, req *http.Request, actor accountaccess.Actor, command diagnostic.FileRequest) {
-	// Keep at most one bounded file response in memory until transmission ends.
+	// Limit concurrent reads and network traffic from diagnostic transfers.
 	if !e.diagnosticDownloadMu.TryLock() {
 		writeDiagnosticError(writer, diagnostic.ErrConflict)
 		return
 	}
 	defer e.diagnosticDownloadMu.Unlock()
-	ctx, cancel := context.WithTimeout(req.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
 	defer cancel()
 	result, err := e.config.Diagnostic.Download(ctx, actor, command)
 	if err != nil {
 		writeDiagnosticError(writer, err)
 		return
 	}
+	defer closeDiagnosticContent(result.Content)
+	err = http.NewResponseController(writer).SetWriteDeadline(time.Now().Add(diagnostic.DownloadTimeout))
+	if err != nil && !errors.Is(err, http.ErrNotSupported) {
+		log.Printf("control panel diagnostic download deadline failed: %v", err)
+		writeDiagnosticError(writer, diagnostic.ErrUnavailable)
+		return
+	}
 	name := path.Base(strings.ReplaceAll(result.File.Name, "\\", "/"))
 	writer.Header().Set("Content-Type", "application/octet-stream")
 	writer.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
-	writer.Header().Set("Content-Length", strconv.Itoa(len(result.Content)))
-	written, err := writer.Write(result.Content)
+	writer.Header().Set("Content-Length", strconv.FormatInt(result.File.Size, 10))
+	// A live log can grow during the transfer. Send only the opened size.
+	written, err := io.CopyN(writer, result.Content, result.File.Size)
 	if err != nil {
 		log.Printf("control panel diagnostic download interrupted after %d bytes", written)
+	}
+}
+
+func closeDiagnosticContent(content io.ReadCloser) {
+	err := content.Close()
+	if err != nil {
+		log.Printf("control panel diagnostic reader close failed: %v", err)
 	}
 }
 

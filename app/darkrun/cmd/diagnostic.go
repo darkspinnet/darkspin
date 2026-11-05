@@ -55,7 +55,6 @@ func openDedicatedDiagnostics(ctx context.Context, runtimePath, tracePath string
 		}
 		e.protectedPaths = []string{filepath.Clean(tracePath)}
 	}
-	e.maintain(workerCtx)
 	go e.run(workerCtx)
 	return e, nil
 }
@@ -78,6 +77,7 @@ func (e *dedicatedDiagnostics) Write(payload []byte) (int, error) {
 
 func (e *dedicatedDiagnostics) run(ctx context.Context) {
 	defer close(e.done)
+	e.maintain(ctx)
 	for {
 		now := time.Now().UTC()
 		midnight := now.Truncate(24 * time.Hour).Add(24 * time.Hour)
@@ -99,6 +99,7 @@ func (e *dedicatedDiagnostics) maintain(ctx context.Context) {
 	err := e.writer.Rotate()
 	if err != nil {
 		e.report("Daily log rotation failed", err)
+		return
 	}
 	sweepCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -106,11 +107,11 @@ func (e *dedicatedDiagnostics) maintain(ctx context.Context) {
 		err = retention.Sweep(sweepCtx, e.runtimePath, e.protectedPaths)
 	} else {
 		// The supervisor cannot identify its child's active trace file. The
-		// child owns artifact cleanup; the supervisor still expires daily logs.
+		// child owns artifact cleanup; the supervisor still maintains daily logs.
 		err = retention.SweepLogs(sweepCtx, e.runtimePath)
 	}
 	if err != nil && !errors.Is(err, context.Canceled) {
-		e.report("Diagnostic retention cleanup failed", err)
+		e.report("Diagnostic maintenance failed", err)
 	}
 }
 

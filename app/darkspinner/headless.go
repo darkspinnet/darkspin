@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/diagnostic"
 	"github.com/darkspinnet/darkspin/server/game"
 	server "github.com/darkspinnet/darkspin/server/runtime"
 )
@@ -322,6 +323,13 @@ func handleLauncherCall(
 	if err != nil {
 		writeLauncherResponse(writer, browserCallResponse{Error: "invalid request"})
 		return
+	}
+	if methodName == "DownloadRemoteControlDiagnostic" {
+		err = http.NewResponseController(writer).SetWriteDeadline(time.Now().Add(diagnostic.DownloadTimeout + 15*time.Second))
+		if err != nil && !errors.Is(err, http.ErrNotSupported) {
+			writeLauncherResponse(writer, browserCallResponse{Error: "diagnostic download deadline unavailable"})
+			return
+		}
 	}
 	result, err := invokeLauncherMethod(method, req.Arguments)
 	if err != nil {
