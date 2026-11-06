@@ -77,7 +77,8 @@ func stopMutationBeam(actor *Snapshot, at time.Time) bool {
 		return true
 	}
 	isAccepted := appendMutationEvent(actor, MutationEvent{Kind: MutationEventBeamStop, At: at,
-		TargetObjectID: actor.Mutation.Beam.TargetObjectID, TargetGeneration: actor.Mutation.Beam.TargetGeneration})
+		TargetObjectID: actor.Mutation.Beam.TargetObjectID, TargetGeneration: actor.Mutation.Beam.TargetGeneration,
+		IsBeamModelActive: actor.Mutation.Beam.IsModelActive})
 	if !isAccepted {
 		return false
 	}

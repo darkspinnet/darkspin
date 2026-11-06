@@ -95,6 +95,18 @@ func (s *Session) Join(playerIndex uint8) error {
 		if err != nil {
 			return fmt.Errorf("objectiveJoin[%d]: %w", index, err)
 		}
+		if objective.ObjectiveID == ObeliskID {
+			// The obelisk objective is shared across the zone.
+			for _, medal := range objective.State {
+				if medal == 4 {
+					err = s.state.SetMedal(ObeliskID, playerIndex, medal)
+					if err != nil {
+						return fmt.Errorf("obeliskJoin: %w", err)
+					}
+					break
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -489,6 +501,38 @@ func ApplyState(
 	updates, err := applyProgram(ctx, state, objectiveID, program)
 	if err != nil {
 		return nil, fmt.Errorf("objectiveProgram: %w", err)
+	}
+	if objectiveID == ObeliskID && event.Kind == sim.LuaObjectiveEventTouchedObelisk && len(updates) != 0 {
+		// TouchAllObelisks is a shared, monotonic count. Once its authored
+		// callback awards gold, publish it with the final token values.
+		result, statusErr := objectiveRuntime.EvaluateStatus(sim.LuaObjectiveStatusInput{})
+		if statusErr != nil {
+			return updates, fmt.Errorf("obeliskStatus: %w", statusErr)
+		}
+		if result.Status == sim.LuaObjectiveStatusGold {
+			goldUpdates, goldErr := setObeliskGold(state)
+			if goldErr != nil {
+				return updates, fmt.Errorf("obeliskGold: %w", goldErr)
+			}
+			return goldUpdates, nil
+		}
+	}
+	return updates, nil
+}
+
+func setObeliskGold(state *sim.ObjectiveState) ([]Update, error) {
+	intent := sim.ObjectiveDataIntent{ObjectiveID: ObeliskID, PlayerIndex: sim.ObjectiveAllPlayers}
+	updates, err := Updates(state, intent)
+	if err != nil {
+		return nil, fmt.Errorf("obeliskUpdates: %w", err)
+	}
+	for index := range updates {
+		update := &updates[index]
+		err = state.SetMedal(update.ObjectiveID, update.PlayerIndex, 4)
+		if err != nil {
+			return updates, fmt.Errorf("obeliskMedal: %w", err)
+		}
+		update.Medal = 4
 	}
 	return updates, nil
 }

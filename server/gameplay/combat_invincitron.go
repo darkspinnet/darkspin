@@ -311,29 +311,32 @@ func (e *campaignDroneFollowStep) produce() ([][]byte, error) {
 	}
 	packets := make([][]byte, 0, 3)
 	if isMoved {
-		positionPacket, positionErr := raknet.MarshalApplication(raknet.ObjectPositionUpdateMessage{
-			ObjectID: e.objectID, PositionX: position.X, PositionY: position.Y, PositionZ: position.Z,
-		})
-		if positionErr != nil {
-			return nil, fmt.Errorf("droneFollowPose: %w", positionErr)
+		// Keep ordinary orbit steps interpolated. Reconcile discontinuities
+		// such as an owner warp with a position update.
+		if position.Sub(drone.Plan.Position).Length() > 2*invincitronDroneOrbitRadius {
+			positionPacket, positionErr := raknet.MarshalApplication(raknet.ObjectPositionUpdateMessage{
+				ObjectID: e.objectID, PositionX: position.X, PositionY: position.Y, PositionZ: position.Z,
+			})
+			if positionErr != nil {
+				return nil, fmt.Errorf("droneFollowPose: %w", positionErr)
+			}
+			packets = append(packets, positionPacket)
 		}
 		goalPosition := raknet.Vector3(goal)
+		locomotionPacket, marshalErr := raknet.MarshalApplication(raknet.LocomotionUpdateContractMessage{
+			ObjectID: e.objectID, Locomotion: raknet.LocomotionReflection{PartialGoalPosition: &goalPosition},
+		})
+		if marshalErr != nil {
+			return nil, fmt.Errorf("droneFollowLocomotion: %w", marshalErr)
+		}
 		goalPacket, marshalErr := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
-			ObjectID: e.objectID, GoalFlags: 0x01, GoalPosition: goalPosition,
-			Facing: invincitronDroneFacing(position, goal),
+			ObjectID: e.objectID, GoalFlags: 0x41, GoalPosition: goalPosition,
+			Facing: invincitronDroneFacing(position, goal), TargetPosition: goalPosition,
 		})
 		if marshalErr != nil {
 			return nil, fmt.Errorf("droneFollowGoal: %w", marshalErr)
 		}
-		locomotionPacket, marshalErr := raknet.MarshalApplication(
-			raknet.LocomotionUnreliableMessage{
-				ObjectID: e.objectID, GoalPosition: goalPosition,
-			},
-		)
-		if marshalErr != nil {
-			return nil, fmt.Errorf("droneFollowLocomotion: %w", marshalErr)
-		}
-		packets = append(packets, positionPacket, goalPacket, locomotionPacket)
+		packets = append(packets, locomotionPacket, goalPacket)
 	}
 	err = e.schedule()
 	if err != nil {

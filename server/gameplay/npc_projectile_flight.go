@@ -16,12 +16,13 @@ import (
 )
 
 type campaignNPCProjectileFlight struct {
-	collision    *sim.ProjectileFlight
-	attack       *zone.NPCProjectileAttack
-	startedAt    time.Time
-	hitDelay     time.Duration
-	releaseDelay time.Duration
-	isPolling    bool
+	collision      *sim.ProjectileFlight
+	attack         *zone.NPCProjectileAttack
+	startedAt      time.Time
+	hitDelay       time.Duration
+	releaseDelay   time.Duration
+	isPolling      bool
+	piercedTargets map[uint32]struct{}
 }
 
 func newCampaignNPCProjectileFlight(
@@ -40,12 +41,19 @@ func newCampaignNPCProjectileFlight(
 	if err != nil {
 		return nil, fmt.Errorf("enemyFlightCreate: %w", err)
 	}
-	return &campaignNPCProjectileFlight{
+	flight := &campaignNPCProjectileFlight{
 		collision: collision, startedAt: startedAt, hitDelay: ability.HitDelay, releaseDelay: ability.ReleaseDelay,
-	}, nil
+	}
+	if profile.IsProjectilePiercing {
+		flight.piercedTargets = make(map[uint32]struct{})
+	}
+	return flight, nil
 }
 
 func isCampaignNPCProjectileSampled(profile zonenpc.ActionProfile) bool {
+	if profile.AbilityName == "ZelemSpecialThree" {
+		return true
+	}
 	if (profile.HomingDelay > 0 && profile.AbilityName != "CitadelSpecificFour_Bolt" &&
 		profile.AbilityName != "NocturnaSpecialHomer") || profile.IsProjectilePiercing || profile.AbilityName == "Puller" {
 		return false
@@ -179,6 +187,13 @@ func (e campaignNPCProjectileStep) sampleFlightLocked(current *gameplayPeerSessi
 		})
 	}
 	snapshot, segments := schedule.run.SampleCollisionMotion(now)
+	if schedule.flight.piercedTargets != nil {
+		impactPackets, statDelta, impactErr := e.samplePiercingFlightLocked(current, snapshot, segments, targets)
+		if impactErr != nil {
+			return nil, statDelta, nil, fmt.Errorf("enemyFlightPiercing: %w", impactErr)
+		}
+		return append(packets, impactPackets...), statDelta, nil, nil
+	}
 	result, err := schedule.flight.collision.AdvanceMotion(e.deadline-schedule.flight.hitDelay,
 		segments, snapshot.IsActive && snapshot.RemainingDistance <= 0, targets)
 	if err != nil {

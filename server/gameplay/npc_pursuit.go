@@ -466,6 +466,19 @@ func (r campaignNPCPursuitRuntime) produceStep(
 			peerSession = r.registry.sessions[sessionKey]
 		}
 	}
+	if enemy.IsShieldActive && (profile.AbilityName == "NomadShielderBash" || profile.AbilityName == "NomadShielderGrenade") {
+		// A target can move out of range after the stance check. Let the
+		// shield monitor end the stance and restart the action after recovery.
+		shieldErr := npcSession.EndShield(objectID)
+		if shieldErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("pursuitShieldEnd: %w", shieldErr)
+		}
+		if peerSession.campaignNPCShielderShields[objectID] != nil {
+			r.registry.mutex.Unlock()
+			return nil, nil
+		}
+	}
 	isMovementDisabled := movementSpeed <= 0 ||
 		(enemy.IsShieldActive && profile.Family == zonenpc.ActionNomadDrone) ||
 		peerSession.campaignNPCShielderShieldSetups[objectID] ||

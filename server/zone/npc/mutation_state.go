@@ -51,6 +51,7 @@ type MutationEvent struct {
 	MovementSpeedBuff float32
 	DamageSource      MutationDamageSource
 	IsDamageClaimed   bool
+	IsBeamModelActive bool
 	// Published work is immutable; updates replace it with a fresh copy.
 	DamageWork *MutationDamageWork
 }

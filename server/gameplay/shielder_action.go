@@ -19,9 +19,17 @@ func isNomadShielderBashTarget(enemy zonenpc.Snapshot, target zone.NPCTarget) bo
 		return false
 	}
 	// Bash inherits the melee template's ninety-degree hit arc. Restrict
-	// admission to its actual attack reach so it never pursues with a shield.
+	// admission to the same 3D range the attack planner uses.
+	return isNomadShielderAttackPosition(enemy, target, profile, 90)
+}
+
+func isNomadShielderAttackPosition(enemy zonenpc.Snapshot, target zone.NPCTarget, profile zonenpc.ActionProfile, angle float32) bool {
+	plan, err := campaignNPCActionWithProfile(enemy.Plan, target.ObjectID, target.Position, profile, target.ActorFootprintRadius)
+	if err != nil || plan.IsPursuitNeeded {
+		return false
+	}
 	return isCampaignConeTarget(enemy.Plan.Position, enemy.Facing, target,
-		profile.Range+enemy.Plan.ActorFootprintRadius(), 90)
+		profile.Range+enemy.Plan.ActorFootprintRadius(), angle)
 }
 
 func (e campaignNPCActionRuntime) produceShieldedNomadAction(
@@ -36,9 +44,9 @@ func (e campaignNPCActionRuntime) produceShieldedNomadAction(
 	shield, isShieldFound := zonenpc.NomadShielderDirectionalShieldProfile(enemy.Plan.NounName)
 	// PositionForAttack's IsAbleToHit requires a target within twenty metres,
 	// facing within ten degrees. Leave the shield stance before repositioning.
+	grenade.Range = min(shield.Range, grenade.Range)
 	isPositioned := isTargetFound && isGrenadeFound && isShieldFound &&
-		isCampaignConeTarget(enemy.Plan.Position, enemy.Facing, target,
-			min(shield.Range, grenade.Range)+enemy.Plan.ActorFootprintRadius(), 20)
+		isNomadShielderAttackPosition(enemy, target, grenade, 20)
 	if !isPositioned {
 		e.registry.mutex.Lock()
 		member, isFound := e.registry.sessions[sessionKey]

@@ -74,10 +74,17 @@ func (e *Session) ApplyRules(director game.CampaignDirector, plans []zonenpc.Spa
 		if authored, isFound := director.NPCIdentitiesByNoun[strings.ToLower(plan.NounName)]; isFound && authored.DisplayName != "" {
 			identity.DisplayName = authored.DisplayName
 		}
-		// Dark Spin compatibility order is authored-name order. Duplicate
-		// modifiers and a parent/child pair cannot occupy two affix slots.
+		// Draw from the eligible catalog without replacement. Keep the catalog
+		// ordered before drawing so seeded runs are reproducible.
 		selectedAffixes := make([]game.CampaignEliteAffix, 0, count)
-		for _, affix := range affixes {
+		for index := 0; index < len(affixes) && len(selectedAffixes) < int(count); index++ {
+			draw, err := e.Random().Index(uint32(len(affixes) - index))
+			if err != nil {
+				return nil, fmt.Errorf("eliteAffix: %w", err)
+			}
+			selectedIndex := index + int(draw)
+			affixes[index], affixes[selectedIndex] = affixes[selectedIndex], affixes[index]
+			affix := affixes[index]
 			isCompatible := true
 			for _, selected := range selectedAffixes {
 				if affix.ModifierID == selected.ModifierID || affix.ParentName == selected.Name || selected.ParentName == affix.Name || affix.ChildName == selected.Name || selected.ChildName == affix.Name {
@@ -89,9 +96,6 @@ func (e *Session) ApplyRules(director game.CampaignDirector, plans []zonenpc.Spa
 				continue
 			}
 			slot := len(selectedAffixes)
-			if slot >= int(count) {
-				break
-			}
 			identity.NPCAffixNames[slot] = affix.Name
 			identity.NPCAffixModifierNames[slot] = affix.ModifierName
 			identity.NPCAffixModifierIDs[slot] = affix.ModifierID

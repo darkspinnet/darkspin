@@ -1,5 +1,14 @@
 # Changelog
 
+### 2026-11-05
+
+- [#181](https://github.com/darkspinnet/darkspin/issues/181) Swap Mutation Agent models only when the firing model starts or stops, removing the outgoing model first.
+- [#181](https://github.com/darkspinnet/darkspin/issues/181) Let Invincitron's drone interpolate ordinary orbit movement and face along its path.
+- [#181](https://github.com/darkspinnet/darkspin/issues/181) Let Nomad Shielders lower their shield and reposition when a target leaves attack range.
+- [#181](https://github.com/darkspinnet/darkspin/issues/181) Randomize ordinary elite affixes across the eligible pool for the mission difficulty.
+- [#181](https://github.com/darkspinnet/darkspin/issues/181) Show the gold Crogenitor Archive Obelisk medal in the Objectives Log as soon as it is earned.
+- [#181](https://github.com/darkspinnet/darkspin/issues/181) Resolve Raytheoid laser damage as the projectile passes through each target.
+
 ### 2026-11-04
 
 - Compress completed daily server logs into ZIPs available from the Control Panel, with seven-day retention.

@@ -13,6 +13,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/sporenet"
 	zone "github.com/darkspinnet/darkspin/server/zone"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
+	abilityraknet "github.com/darkspinnet/darkspin/server/zone/ability/raknet103"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
@@ -22,6 +23,78 @@ type campaignNPCPiercingContact struct {
 	entryPosition  game.Vec3
 	exitPosition   game.Vec3
 	travelDistance float32
+}
+
+func (e campaignNPCProjectileStep) samplePiercingFlightLocked(
+	member *gameplayPeerSession, snapshot abilityraknet.ProjectileSnapshot,
+	segments []sim.ProjectileMotionSegment, targets []sim.ProjectileCollisionTarget,
+) ([][]byte, sporenet.PlayerStatDelta, error) {
+	schedule := e.schedule
+	flight := schedule.flight
+	travel, err := flight.collision.AdvanceMotion(e.deadline-flight.hitDelay, segments,
+		snapshot.IsActive && snapshot.RemainingDistance <= 0, nil)
+	statDelta := sporenet.PlayerStatDelta{}
+	if err != nil {
+		return nil, statDelta, fmt.Errorf("piercingTravel: %w", err)
+	}
+	if travel.IsResolved {
+		packets, resolveErr := schedule.run.ResolveCollision(context.Background(), e.deadline,
+			false, false, 0, schedule.result.Damage, schedule.result.IsCritical, travel.Position, snapshot.Direction)
+		if resolveErr != nil {
+			return nil, statDelta, fmt.Errorf("piercingExpire: %w", resolveErr)
+		}
+		return packets, statDelta, nil
+	}
+	remainingDistance := snapshot.RemainingDistance
+	for _, segment := range segments {
+		remainingDistance += segment.Distance
+	}
+	packets := make([][]byte, 0)
+	for _, segment := range segments {
+		contacts := make([]campaignNPCPiercingContact, 0)
+		for _, target := range targets {
+			if _, isPierced := flight.piercedTargets[target.ObjectID]; isPierced {
+				continue
+			}
+			collision, collisionErr := sim.ResolveProjectileBoxCollision(sim.ProjectileBoxCollisionInput{
+				ProjectilePosition: segment.Position, ProjectileDirection: segment.Direction,
+				ProjectileHalfExtent: schedule.geometry.ProjectileHalfExtent,
+				MaximumDistance:      remainingDistance, TargetPosition: target.Position,
+				TargetMinimum: target.Minimum, TargetMaximum: target.Maximum,
+			})
+			if collisionErr != nil {
+				return nil, statDelta, fmt.Errorf("piercingTarget[%d]: %w", target.ObjectID, collisionErr)
+			}
+			if !collision.IsDirectHit || collision.TravelDistance > segment.Distance {
+				continue
+			}
+			current, isFound := member.zone.NPCTarget(target.ObjectID)
+			if isFound {
+				contacts = append(contacts, campaignNPCPiercingContact{
+					target: current, entryPosition: game.Vec3(collision.Position),
+					exitPosition: game.Vec3(collision.ExitPosition), travelDistance: collision.TravelDistance,
+				})
+			}
+		}
+		sort.Slice(contacts, func(left, right int) bool {
+			if contacts[left].travelDistance == contacts[right].travelDistance {
+				return contacts[left].target.ObjectID < contacts[right].target.ObjectID
+			}
+			return contacts[left].travelDistance < contacts[right].travelDistance
+		})
+		for _, contact := range contacts {
+			flight.piercedTargets[contact.target.ObjectID] = struct{}{}
+			contact.travelDistance += schedule.plan.Profile.ProjectileDistance - remainingDistance
+			current, delta, contactErr := schedule.piercingContact(member, contact, e.deadline)
+			if contactErr != nil {
+				return nil, statDelta, fmt.Errorf("piercingContact: %w", contactErr)
+			}
+			packets = append(packets, current...)
+			statDelta.PVEDamageTaken += delta.PVEDamageTaken
+		}
+		remainingDistance -= segment.Distance
+	}
+	return packets, statDelta, nil
 }
 
 func campaignNPCProjectileRangeEndpoint(
@@ -135,42 +208,13 @@ func (e campaignNPCProjectileSchedule) producePiercingImpact(
 	}
 	packets := make([][]byte, 0, len(contacts)*3+2)
 	statDelta := sporenet.PlayerStatDelta{}
-	timestamp := e.timestamp + uint64(deadline/time.Millisecond)
 	for _, contact := range contacts {
-		plan := e.plan
-		plan.TargetObjectID = contact.target.ObjectID
-		plan.TargetPosition = contact.target.Position
-		result := e.result
-		result.Damage *= campaignNPCPiercingDamageMultiplier(
-			contact.travelDistance, plan.Profile.ProjectileDistance,
-			plan.Profile.MinimumDamagePercent,
-			plan.Profile.AbilityName == "CryosBasicFireWave",
-		)
-		impactPacket, marshalErr := npcraknet.PositionedEffect(
-			plan.Profile.ImpactEffectName, contact.entryPosition,
-		)
-		if marshalErr != nil {
-			return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("impactMarshal[%d]: %w", contact.target.ObjectID, marshalErr)
-		}
-		packets = append(packets, impactPacket)
-		hitPackets, targetStatDelta, _, damageErr := e.runtime.applyEnemyAreaAttackDamage(
-			peerSession, e.generation, plan, result, timestamp,
-		)
-		if damageErr != nil {
-			return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("targetDamage[%d]: %w", contact.target.ObjectID, damageErr)
+		hitPackets, targetStatDelta, contactErr := e.piercingContact(peerSession, contact, deadline)
+		if contactErr != nil {
+			return nil, statDelta, fmt.Errorf("impactContact: %w", contactErr)
 		}
 		packets = append(packets, hitPackets...)
 		statDelta.PVEDamageTaken += targetStatDelta.PVEDamageTaken
-		if plan.Profile.ProjectileExitEffectName == "" {
-			continue
-		}
-		exitPacket, marshalErr := npcraknet.PositionedEffect(
-			plan.Profile.ProjectileExitEffectName, contact.exitPosition,
-		)
-		if marshalErr != nil {
-			return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("exitMarshal[%d]: %w", contact.target.ObjectID, marshalErr)
-		}
-		packets = append(packets, exitPacket)
 	}
 	terminalPackets, err := e.run.ResolveCollision(
 		context.Background(), deadline, false, false, 0,
@@ -186,5 +230,42 @@ func (e campaignNPCProjectileSchedule) producePiercingImpact(
 		return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("terminalResolve: %w", err)
 	}
 	packets = append(packets, terminalPackets...)
+	return packets, statDelta, nil
+}
+
+func (e campaignNPCProjectileSchedule) piercingContact(
+	member *gameplayPeerSession, contact campaignNPCPiercingContact, deadline time.Duration,
+) ([][]byte, sporenet.PlayerStatDelta, error) {
+	plan := e.plan
+	plan.TargetObjectID = contact.target.ObjectID
+	plan.TargetPosition = contact.target.Position
+	result := e.result
+	result.Damage *= campaignNPCPiercingDamageMultiplier(
+		contact.travelDistance, plan.Profile.ProjectileDistance, plan.Profile.MinimumDamagePercent,
+		plan.Profile.AbilityName == "CryosBasicFireWave",
+	)
+	impactPacket, err := npcraknet.PositionedEffect(plan.Profile.ImpactEffectName, contact.entryPosition)
+	if err != nil {
+		return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("impactMarshal[%d]: %w", contact.target.ObjectID, err)
+	}
+	packets := [][]byte{impactPacket}
+	var exitPacket []byte
+	if plan.Profile.ProjectileExitEffectName != "" {
+		exitPacket, err = npcraknet.PositionedEffect(plan.Profile.ProjectileExitEffectName, contact.exitPosition)
+		if err != nil {
+			return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("exitMarshal[%d]: %w", contact.target.ObjectID, err)
+		}
+	}
+	timestamp := e.timestamp + uint64(deadline/time.Millisecond)
+	hitPackets, statDelta, isStatusEligible, err := e.runtime.applyEnemyAreaAttackDamage(member, e.generation, plan, result, timestamp)
+	if err != nil {
+		return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("targetDamage[%d]: %w", contact.target.ObjectID, err)
+	}
+	// Piercing profiles on this path have no on-hit status to schedule.
+	_ = isStatusEligible
+	packets = append(packets, hitPackets...)
+	if exitPacket != nil {
+		packets = append(packets, exitPacket)
+	}
 	return packets, statDelta, nil
 }
