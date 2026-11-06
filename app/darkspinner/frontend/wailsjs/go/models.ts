@@ -1991,6 +1991,8 @@ export namespace main {
 	    gameVersion: string;
 	    isMaintenance: boolean;
 	    maintenanceReason: string;
+	    maintenancePhase?: string;
+	    maintenanceDeadline?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new RemoteServer(source);
@@ -2003,6 +2005,8 @@ export namespace main {
 	        this.gameVersion = source["gameVersion"];
 	        this.isMaintenance = source["isMaintenance"];
 	        this.maintenanceReason = source["maintenanceReason"];
+	        this.maintenancePhase = source["maintenancePhase"];
+	        this.maintenanceDeadline = source["maintenanceDeadline"];
 	    }
 	}
 	export class RemoteServerStatus {
@@ -2010,6 +2014,8 @@ export namespace main {
 	    isOnline: boolean;
 	    isMaintenance: boolean;
 	    maintenanceReason: string;
+	    maintenancePhase?: string;
+	    maintenanceDeadline?: string;
 	    serverVersion: string;
 	    clientVersion: string;
 	    isVersionMatched: boolean;
@@ -2026,6 +2032,8 @@ export namespace main {
 	        this.isOnline = source["isOnline"];
 	        this.isMaintenance = source["isMaintenance"];
 	        this.maintenanceReason = source["maintenanceReason"];
+	        this.maintenancePhase = source["maintenancePhase"];
+	        this.maintenanceDeadline = source["maintenanceDeadline"];
 	        this.serverVersion = source["serverVersion"];
 	        this.clientVersion = source["clientVersion"];
 	        this.isVersionMatched = source["isVersionMatched"];

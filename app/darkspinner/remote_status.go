@@ -13,15 +13,17 @@ import (
 // RemoteServerStatus is a live unauthenticated endpoint check, separate from
 // the two-day profile metadata cache.
 type RemoteServerStatus struct {
-	Address           string `json:"address"`
-	IsOnline          bool   `json:"isOnline"`
-	IsMaintenance     bool   `json:"isMaintenance"`
-	MaintenanceReason string `json:"maintenanceReason"`
-	ServerVersion     string `json:"serverVersion"`
-	ClientVersion     string `json:"clientVersion"`
-	IsVersionMatched  bool   `json:"isVersionMatched"`
-	Error             string `json:"error"`
-	CheckedDT         string `json:"checkedDt"`
+	Address             string `json:"address"`
+	IsOnline            bool   `json:"isOnline"`
+	IsMaintenance       bool   `json:"isMaintenance"`
+	MaintenanceReason   string `json:"maintenanceReason"`
+	MaintenancePhase    string `json:"maintenancePhase,omitempty"`
+	MaintenanceDeadline string `json:"maintenanceDeadline,omitempty"`
+	ServerVersion       string `json:"serverVersion"`
+	ClientVersion       string `json:"clientVersion"`
+	IsVersionMatched    bool   `json:"isVersionMatched"`
+	Error               string `json:"error"`
+	CheckedDT           string `json:"checkedDt"`
 }
 
 // CheckRemoteServers probes each normalized address once without credentials.
@@ -105,6 +107,8 @@ func checkRemoteServer(ctx context.Context, client *http.Client, address string)
 	status.IsOnline = true
 	status.IsMaintenance = server.IsMaintenance
 	status.MaintenanceReason = server.MaintenanceReason
+	status.MaintenancePhase = server.MaintenancePhase
+	status.MaintenanceDeadline = server.MaintenanceDeadline
 	status.ServerVersion = server.ServerVersion
 	err = buildinfo.CheckCompatibility(Version, server.ServerVersion)
 	status.IsVersionMatched = err == nil

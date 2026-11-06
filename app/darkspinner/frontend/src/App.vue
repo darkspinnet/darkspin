@@ -80,7 +80,7 @@ const remotePassword = ref('')
 const controlPanel = ref(null)
 const localControlPanel = ref(null)
 
-const isRemoteAdmissionBlocked = ref(false)
+const remotePanelMaintenance = ref(null)
 const isRemoteUsernameTouched = ref(false)
 const isRemotePasswordTouched = ref(false)
 const remoteUsernameValidation = computed(() => isRemoteUsernameTouched.value ? remoteUsernameError(remoteIdentity.value) : '')
@@ -337,7 +337,7 @@ const isAutoLaunchCounting = computed(() => autoLaunchCountdown.value > 0)
 const isActiveProfileRunning = computed(() => activePage.value === 'play' && isSelectedProfileRunning.value)
 const activeInterruptedMission = computed(() => activePage.value === 'play' ? interruptedMission.value : null)
 const isHeaderPlayEnabled = computed(() => activePage.value === 'remote'
-    ? isRemoteFormReady.value && isRemoteConnectionReady.value && !isRemoteBusy.value && !isBusy.value && !isRemoteAdmissionBlocked.value &&
+    ? isRemoteFormReady.value && isRemoteConnectionReady.value && !isRemoteBusy.value && !isBusy.value &&
       (isRemoteRegistration.value || (status.value.isPatchComplete && status.value.isGameReady))
   : !isActiveProfileRunning.value && isPlayEnabled.value && !isMissionChoiceBusy.value)
 const isAdditionalLaunchReady = computed(() => activePage.value === 'play' && !!selectedProfileRecord.value &&
@@ -379,17 +379,29 @@ const selectedRemoteServer = computed(() => remoteServers.value.find(server =>
 const selectedRemoteProfileLabel = computed(() => selectedRemoteProfile.value?.displayName || 'SELECT CROGENITOR')
 const selectedRemoteProfileAvatar = computed(() => selectedRemoteProfile.value?.avatarUrl || '')
 const selectedRemoteCheck = computed(() => remoteCheckFor(remoteServerAddress.value))
+const selectedRemoteMaintenance = computed(() => {
+  const panel = remotePanelMaintenance.value
+  const panelDetails = panel && isSameRemoteServer(panel.address, remoteServerAddress.value) ? panel.details : null
+  const connection = selectedRemoteCheck.value
+  if (!connection?.isMaintenance) return panelDetails
+  return {
+    reason: connection.maintenanceReason || panelDetails?.reason,
+    phase: connection.maintenancePhase || panelDetails?.phase,
+    deadline: connection.maintenanceDeadline || panelDetails?.deadline,
+  }
+})
 const isRemoteConnectionReady = computed(() => !isRemoteChecking.value &&
   selectedRemoteCheck.value?.isOnline && selectedRemoteCheck.value?.isVersionMatched &&
-  !selectedRemoteCheck.value?.isMaintenance)
+  !selectedRemoteMaintenance.value)
 const remoteConnectionReason = computed(() => {
+  const maintenance = selectedRemoteMaintenance.value
+  if (maintenance) return maintenance.reason
+    ? translate('Server maintenance: {0}', [maintenance.reason])
+    : translate('The server is undergoing maintenance. Try again later.')
   if (isRemoteChecking.value) return 'Checking remote server availability and version…'
   const connection = selectedRemoteCheck.value
   if (!connection) return 'Check the remote server before launching.'
   if (!connection.isOnline) return connection.error || 'The remote server is offline or unreachable.'
-  if (connection.isMaintenance) return connection.maintenanceReason
-    ? translate('Server maintenance: {0}', [connection.maintenanceReason])
-    : translate('The server is undergoing maintenance. Try again later.')
   if (!connection.isVersionMatched) return connection.error || 'Server and launcher major/minor versions must match.'
   return ''
 })
@@ -636,6 +648,12 @@ function remoteCheckFor(address) {
   return remoteChecks.value.find(connection => isSameRemoteServer(connection.address, address))
 }
 
+function remoteMaintenanceChanged(details, address) {
+  const previous = remotePanelMaintenance.value
+  remotePanelMaintenance.value = details?.is_admission_blocked ? { address, details } : null
+  if (previous || remotePanelMaintenance.value) scheduleRemoteCheck()
+}
+
 function scheduleRemoteCheck() {
   if (remoteCheckDelay !== null) window.clearTimeout(remoteCheckDelay)
   if (isRemoteViewDisposed || activePage.value !== 'remote' || !selectedRemoteProfile.value) return
@@ -657,10 +675,19 @@ async function refreshRemoteChecks() {
   }
   isRemoteCheckPending = false
   const addresses = [selectedAddress.trim()]
+  const panelObservation = remotePanelMaintenance.value
   isRemoteChecking.value = true
   try {
     const connections = await CheckRemoteServers(addresses)
-    if (!isRemoteViewDisposed) remoteChecks.value = connections || []
+    if (!isRemoteViewDisposed) {
+      remoteChecks.value = connections || []
+      const connection = remoteCheckFor(selectedAddress)
+      if (panelObservation && remotePanelMaintenance.value === panelObservation &&
+          isSameRemoteServer(panelObservation.address, selectedAddress) &&
+          connection?.isOnline && connection.isMaintenance === false) {
+        remotePanelMaintenance.value = null
+      }
+    }
   } catch (error) {
     if (!isRemoteViewDisposed) remoteChecks.value = addresses.map(address => ({
       address, isOnline:false, isVersionMatched:false, error:visibleLauncherText(error),
@@ -990,7 +1017,6 @@ async function submitRemoteAccount() {
 }
 
 async function launchRemote() {
-  if (isRemoteAdmissionBlocked.value) return
   isRemoteUsernameTouched.value = true
   isRemotePasswordTouched.value = true
   if (!isRemoteFormReady.value || isRemoteBusy.value || isBusy.value) return
@@ -1728,7 +1754,7 @@ async function copyLauncherFailure() {
 
     <TabsContent v-else-if="activePage === 'lua'" value="lua" as-child><LuaPage ref="luaPage" @state="luaConsole = $event" /></TabsContent>
     <TabsContent v-else-if="activePage === 'remote'" value="remote" as-child><section class="command-frame launch-command-frame remote-command-frame">
-      <RemoteControlPanel @renamed="refreshRemoteProfiles" @password-changed="remotePasswordChanged" ref="controlPanel" :profile="selectedRemoteProfile" :password="remotePassword" :is-shift-held="isShiftHeld" :is-deletion-disabled="isProfileActionDisabled || isRemoteBusy" @delete="requestRemoteProfileDelete" @interact="handleLauncherInteraction" @maintenance="isRemoteAdmissionBlocked = !!$event?.is_admission_blocked" @password="remotePassword = $event" />
+      <RemoteControlPanel @renamed="refreshRemoteProfiles" @password-changed="remotePasswordChanged" ref="controlPanel" :profile="selectedRemoteProfile" :password="remotePassword" :is-shift-held="isShiftHeld" :is-deletion-disabled="isProfileActionDisabled || isRemoteBusy" @delete="requestRemoteProfileDelete" @interact="handleLauncherInteraction" @maintenance="remoteMaintenanceChanged" @password="remotePassword = $event" />
       <div class="launch-main">
         <Card class="bay launcher-bay">
           <div class="launch-pane">
@@ -1751,7 +1777,7 @@ async function copyLauncherFailure() {
                     <div class="profile-progress">
                       <span><small>{{ $t("CROGENITOR") }}</small><strong>{{ $t(selectedRemoteProfile.crogenitorLevel) }}</strong><em>{{ $t(selectedRemoteProfile.cumulativeXp) }} XP</em></span>
                       <span><small>{{ $t("PROGRESS") }}</small><strong>{{ $t(selectedRemoteCampaignLabel) }}</strong><em>{{ $t(selectedRemoteCampaignDetail) }}</em></span>
-                      <span class="remote-profile-server" :title="$t(`Client ${selectedRemoteCheck?.clientVersion || status.version || 'unknown'} vs Server ${selectedRemoteCheck?.serverVersion || 'unknown'}`)"><small>{{ $t("SERVER") }}</small><strong>{{ selectedRemoteProfile.serverAddress }}</strong><em><RemoteConnection :connection="selectedRemoteCheck" :is-checking="isRemoteChecking" :client-version="status.version" /></em></span>
+                      <span class="remote-profile-server"><small>{{ $t("SERVER") }}</small><strong>{{ selectedRemoteProfile.serverAddress }}</strong><em><RemoteConnection :connection="selectedRemoteCheck" :maintenance="selectedRemoteMaintenance" :is-checking="isRemoteChecking" :client-version="status.version" /></em></span>
                     </div>
                     <div v-if="!selectedRemoteProfile.isPasswordRemembered" class="remote-profile-password">
                       <label for="remote-profile-password">{{ $t("PASSWORD") }}</label>
@@ -1993,7 +2019,7 @@ async function copyLauncherFailure() {
           <Button variant="outline" type="button" :disabled="isRemoteBusy" @click="scanRemoteServers">{{ $t(isRemoteBusy ? 'SUGGESTING...' : 'SUGGEST') }}</Button>
           <Input id="remote-server" v-model="remoteServerAddress" type="text" :placeholder='$t("darkspin.local:42127")' autocomplete="off" spellcheck="false" :disabled="isRemoteBusy" @blur="refreshRemoteChecks" />
           <Button variant="outline" class="remote-registration-refresh" type="button" :disabled="!remoteServerAddress.trim() || isRemoteChecking || isRemoteBusy" :aria-busy="isRemoteChecking" :aria-label='$t("Refresh server connection")' :title="$t(isRemoteChecking ? 'Checking server…' : 'Refresh server connection')" @click="refreshRemoteChecks"><RefreshCw :size="16" aria-hidden="true" /></Button>
-          <RemoteConnection :connection="selectedRemoteCheck" :is-checking="isRemoteChecking" :client-version="status.version" />
+          <RemoteConnection :connection="selectedRemoteCheck" :maintenance="selectedRemoteMaintenance" :is-checking="isRemoteChecking" :client-version="status.version" />
         </div>
         <Select v-if="remoteServers.length" v-model:open="isRemoteServerMenuOpen" :model-value="remoteServerAddress" @update:model-value="chooseRemoteServerAddress" :disabled="isRemoteBusy">
                   <SelectTrigger class="profile-select-trigger" :aria-label='$t("Detected Darkspinner instances")'><SelectValue>{{ $t(selectedRemoteServer?.address || remoteServerAddress) }}</SelectValue></SelectTrigger>

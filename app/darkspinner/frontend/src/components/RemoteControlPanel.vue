@@ -1,6 +1,5 @@
 <script setup>
 import { X } from '@lucide/vue'
-import { formatControlTime } from '../control_time'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -13,7 +12,7 @@ import RemoteControlActivity from './RemoteControlActivity.vue'
 import RemoteControlPersonalActivity from './RemoteControlPersonalActivity.vue'
 import RemoteControlFeatures from './RemoteControlFeatures.vue'
 import { OpenLocalControlPanel, OpenRemoteControlPanel, GetRemoteControlPanel, CloseRemoteControlPanel, CheckRemoteServers } from '../platform'
-import { panelError, maintenancePhaseLabel, maintenanceActionLabel } from '../control_panel'
+import { panelError } from '../control_panel'
 
 const props = defineProps({ profile:Object, password:String, isLocal:{ type:Boolean, default:false }, isDeletionDisabled:Boolean, isShiftHeld:Boolean })
 const emit = defineEmits(['capabilities', 'password', 'server-name', 'maintenance', 'interact', 'renamed', 'delete', 'password-changed'])
@@ -40,7 +39,7 @@ function isSelectedPanel(result, profile, isLocal = props.isLocal) {
 function setMaintenance(result) {
   maintenance.value = result || null
   if (panel.value) panel.value.server.maintenance = result
-  emit('maintenance', result || null)
+  emit('maintenance', result || null, maintenanceAddress)
 }
 function acceptPanel(result) {
   panel.value = result
@@ -65,7 +64,6 @@ async function refreshMaintenance() {
     isMaintenanceRefreshing = false
   }
 }
-function displayDate(timestamp, isDaily = false) { return formatControlTime(timestamp, isDaily) }
 async function serverChanged() {
   await nextTick()
   await refresh()
@@ -187,7 +185,6 @@ defineExpose({ open })
 </script>
 
 <template>
-  <aside v-if="!page && maintenance?.is_admission_blocked" class="control-welcome" role="status"><strong>{{ $t('SERVER MAINTENANCE') }}</strong><p class="control-server-copy">{{ maintenance.reason }}</p><p>{{ $t(maintenancePhaseLabel(maintenance.phase)) }} · {{ $t(displayDate(maintenance.deadline)) }}</p><p>{{ $t('New game sessions are currently blocked on this server.') }}</p></aside>
   <aside v-if="!page && panel?.server?.welcome" class="control-welcome"><strong>{{ panel.server.name }}</strong><p class="control-server-copy">{{ panel.server.welcome }}</p></aside>
   <LauncherDialog v-if="page" :is-dismissible="!isBusy && !isActionBusy" :width="isPromptOpen && !isLocal ? null : 1120" :height="isPromptOpen && !isLocal ? null : 720" @close="close" @interact="emit('interact', $event)">
     <Tabs v-if="!isPromptOpen || isLocal" v-model="page" as="section" class="control-page" :aria-label="$t('Server control panel')">

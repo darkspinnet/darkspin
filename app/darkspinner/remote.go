@@ -29,11 +29,13 @@ const remoteRefreshInterval = 48 * time.Hour
 
 // RemoteServer is one Darkspinner instance found on the local network.
 type RemoteServer struct {
-	Address           string `json:"address"`
-	ServerVersion     string `json:"serverVersion"`
-	GameVersion       string `json:"gameVersion"`
-	IsMaintenance     bool   `json:"isMaintenance"`
-	MaintenanceReason string `json:"maintenanceReason"`
+	Address             string `json:"address"`
+	ServerVersion       string `json:"serverVersion"`
+	GameVersion         string `json:"gameVersion"`
+	IsMaintenance       bool   `json:"isMaintenance"`
+	MaintenanceReason   string `json:"maintenanceReason"`
+	MaintenancePhase    string `json:"maintenancePhase,omitempty"`
+	MaintenanceDeadline string `json:"maintenanceDeadline,omitempty"`
 }
 
 // RemoteProfile is locally cached metadata for one account on another server.
@@ -211,10 +213,12 @@ func probeRemoteServer(ctx context.Context, client *http.Client, address string)
 		return RemoteServer{}, fmt.Errorf("probeStatus: %s", response.Status)
 	}
 	payload := struct {
-		ServerVersion     string `json:"server_version"`
-		GameVersion       string `json:"game_version"`
-		IsMaintenance     bool   `json:"is_maintenance"`
-		MaintenanceReason string `json:"maintenance_reason"`
+		ServerVersion       string `json:"server_version"`
+		GameVersion         string `json:"game_version"`
+		IsMaintenance       bool   `json:"is_maintenance"`
+		MaintenanceReason   string `json:"maintenance_reason"`
+		MaintenancePhase    string `json:"maintenance_phase"`
+		MaintenanceDeadline string `json:"maintenance_deadline"`
 	}{}
 	err = json.NewDecoder(io.LimitReader(response.Body, 16*1024)).Decode(&payload)
 	if err != nil {
@@ -224,6 +228,7 @@ func probeRemoteServer(ctx context.Context, client *http.Client, address string)
 		Address: address, ServerVersion: payload.ServerVersion,
 		GameVersion:   payload.GameVersion,
 		IsMaintenance: payload.IsMaintenance, MaintenanceReason: payload.MaintenanceReason,
+		MaintenancePhase: payload.MaintenancePhase, MaintenanceDeadline: payload.MaintenanceDeadline,
 	}, nil
 }
 

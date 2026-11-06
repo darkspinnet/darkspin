@@ -15,6 +15,7 @@ var ErrClosed = errors.New("gameplay admission is closed")
 type State struct {
 	IsBlocked bool
 	Reason    string
+	Phase     string
 	Deadline  time.Time
 }
 

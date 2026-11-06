@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/darkspinnet/darkspin/server/admission"
 	"github.com/darkspinnet/darkspin/server/buildinfo"
@@ -12,11 +13,13 @@ import (
 )
 
 type response struct {
-	BuildID           string `json:"build_id"`
-	ServerVersion     string `json:"server_version"`
-	GameVersion       string `json:"game_version"`
-	IsMaintenance     bool   `json:"is_maintenance"`
-	MaintenanceReason string `json:"maintenance_reason,omitempty"`
+	BuildID             string `json:"build_id"`
+	ServerVersion       string `json:"server_version"`
+	GameVersion         string `json:"game_version"`
+	IsMaintenance       bool   `json:"is_maintenance"`
+	MaintenanceReason   string `json:"maintenance_reason,omitempty"`
+	MaintenancePhase    string `json:"maintenance_phase,omitempty"`
+	MaintenanceDeadline string `json:"maintenance_deadline,omitempty"`
 }
 
 // Register adds the server identity endpoint without maintenance state.
@@ -54,6 +57,10 @@ func RegisterWithAdmission(
 				identity.IsMaintenance = state.IsBlocked
 				if state.IsBlocked {
 					identity.MaintenanceReason = state.Reason
+					identity.MaintenancePhase = state.Phase
+					if !state.Deadline.IsZero() {
+						identity.MaintenanceDeadline = state.Deadline.UTC().Format(time.RFC3339)
+					}
 				}
 			}
 			encodeErr := json.NewEncoder(writer).Encode(identity)

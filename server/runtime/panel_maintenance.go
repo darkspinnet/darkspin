@@ -112,7 +112,12 @@ func (e *panelMaintenance) CurrentAdmission() admission.State {
 	if state.IsAdmissionBlocked && strings.TrimSpace(state.Reason) == "" {
 		state.Reason = "Server maintenance is in progress."
 	}
-	return admission.State{IsBlocked: state.IsAdmissionBlocked, Reason: state.Reason, Deadline: state.Deadline}
+	return admission.State{
+		IsBlocked: state.IsAdmissionBlocked,
+		Reason:    state.Reason,
+		Phase:     state.Phase,
+		Deadline:  state.Deadline,
+	}
 }
 
 func (e *panelMaintenance) ActiveMatchCount() int {
