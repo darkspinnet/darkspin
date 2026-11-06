@@ -2,6 +2,7 @@
 
 ### 2026-11-05
 
+- #182 Let Tree of Life heal nearby players and AI Companions in either direction by treating members of the same campaign party as allies.
 - #180 Fix Frigid Caverns loading when Toxic Fungus must be removed from a teleporter without spawning a replacement.
 - Make campaign AI Companions target the enemy holding a teammate in a cage so they can free them through combat.
 - #181 Swap Mutation Agent models only when the firing model starts or stops, removing the outgoing model first.
