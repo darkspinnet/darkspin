@@ -1,5 +1,9 @@
 # Changelog
 
+### 2026-11-06
+
+- [#186](https://github.com/darkspinnet/darkspin/issues/186) Prevent a client crash when continuing a campaign with an AI Companion in a slot vacated by a player.
+
 ### 2026-11-05
 
 - [#183](https://github.com/darkspinnet/darkspin/issues/183) Move remote server maintenance notices into the yellow Server status, with details on hover or keyboard focus.

@@ -2031,7 +2031,11 @@ func (r campaignResultRuntime) continueChain(
 			"RakNet campaign continue replayed for %s result=%d level=%q",
 			packet.Address, snapshot.ResultID, snapshot.NextLevel,
 		)
-		return [][]byte{setupPacket}, nil
+		packets, rosterErr := r.campaignContinueSetup(packet, nextBinding, setupPacket)
+		if rosterErr != nil {
+			return nil, fmt.Errorf("continueReplayRoster: %w", rosterErr)
+		}
+		return packets, nil
 	}
 	if r.chain == nil {
 		return nil, errors.New("campaignContinueProgression: unavailable")
@@ -2085,6 +2089,7 @@ func (r campaignResultRuntime) continueChain(
 			},
 			binding:                     nextBinding,
 			transportGeneration:         continueSession.transportGeneration,
+			knownPlayerMask:             continueSession.knownPlayerMask,
 			schedulePackets:             continueSession.schedulePackets,
 			schedulePacket:              continueSession.schedulePacket,
 			crystalInventory:            crystalInventory,
@@ -2116,7 +2121,11 @@ func (r campaignResultRuntime) continueChain(
 		"RakNet campaign continue accepted for %s result=%d level=%q squad=%d chain_progression=%d without fabricated reward",
 		packet.Address, snapshot.ResultID, snapshot.NextLevel, nextBinding.SquadID, chainProgression,
 	)
-	return [][]byte{setupPacket}, nil
+	packets, rosterErr := r.campaignContinueSetup(packet, nextBinding, setupPacket)
+	if rosterErr != nil {
+		return nil, fmt.Errorf("continueRoster: %w", rosterErr)
+	}
+	return packets, nil
 }
 
 func (r campaignResultRuntime) cashOut(
