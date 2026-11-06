@@ -2,6 +2,8 @@
 
 ### 2026-11-05
 
+- #180 Fix Frigid Caverns loading when Toxic Fungus must be removed from a teleporter without spawning a replacement.
+- Make campaign AI Companions target the enemy holding a teammate in a cage so they can free them through combat.
 - #181 Swap Mutation Agent models only when the firing model starts or stops, removing the outgoing model first.
 - #181 Let Invincitron's drone interpolate ordinary orbit movement and face along its path.
 - #181 Let Nomad Shielders lower their shield and reposition when a target leaves attack range.

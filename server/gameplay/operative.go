@@ -57,11 +57,15 @@ func (e gameplayPeerSession) releaseOperativeCage(pool *modifierPool) error {
 // Never trap the last free, living player, including after an ally disconnects.
 func (e *gameplaySessionRegistry) hasOperativeRescuerLocked(target gameplayPeerSession) bool {
 	for _, ally := range e.sessions {
-		if ally.zone == target.zone && ally.binding.UserID != target.binding.UserID &&
-			ally.stage.IsDungeon() && !ally.isRejoinPending && ally.deployedHitPoint() > 0 &&
-			!ally.isOperativeCaged(e.now()) {
-			return true
+		if ally.zone != target.zone || ally.binding.UserID == target.binding.UserID ||
+			!ally.stage.IsDungeon() || ally.isRejoinPending || ally.deployedHitPoint() <= 0 ||
+			ally.isOperativeCaged(e.now()) {
+			continue
 		}
+		if ally.binding.IsServerBot && (!isPlayerAISession(ally) || !ally.playerAI.isEnabled || ally.isZoneTerminal()) {
+			continue
+		}
+		return true
 	}
 	return false
 }

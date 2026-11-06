@@ -6264,7 +6264,7 @@ func (p campaignPreparation) initialize(
 			return fmt.Errorf("statusTutorialHordePlans: %w", markerErr)
 		}
 	}
-	fixtureMarkers, sceneryDeleteObjectIDs, fixtureErr := director.MapDestructibles()
+	fixtureMarkers, takeoverObjectIDs, removalOnlyObjectIDs, fixtureErr := director.MapDestructibles()
 	if fixtureErr != nil {
 		return fmt.Errorf("statusMapFixtures: %w", fixtureErr)
 	}
@@ -6278,14 +6278,15 @@ func (p campaignPreparation) initialize(
 		}
 	}
 	fixtureErr = p.auditSelectedFixtureTakeover(
-		director, fixtureMarkers, sceneryDeleteObjectIDs, fixturePlans,
+		director, fixtureMarkers, takeoverObjectIDs, fixturePlans,
 	)
 	if fixtureErr != nil {
 		return fmt.Errorf("statusFixtureAudit: %w", fixtureErr)
 	}
 	peerSession.recordScenarioFixtureTakeover(
-		director, fixtureMarkers, sceneryDeleteObjectIDs, fixturePlans,
+		director, fixtureMarkers, takeoverObjectIDs, fixturePlans,
 	)
+	sceneryDeleteObjectIDs := append(takeoverObjectIDs, removalOnlyObjectIDs...)
 	if binding.Mode == game.ModeChain {
 		barrierSets, barrierErr := director.HordeBarriers()
 		if barrierErr != nil {

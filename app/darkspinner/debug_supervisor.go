@@ -120,6 +120,12 @@ func runDebugSupervisor(arguments []string) (bool, error) {
 		return false, nil
 	}
 	if !isLauncherOwned && !isAPI {
+		if !launcherLuaRequested(arguments) {
+			_, err := parseDebugLaunchOptions(launcherLuaOnlyArguments(arguments))
+			if err != nil {
+				return true, fmt.Errorf("launcherLuaFlags: %w", err)
+			}
+		}
 		return false, nil
 	}
 	arguments = filteredArguments

@@ -412,11 +412,11 @@ func (d CampaignDirector) InitialChainDestructibles(selectionID uint32) (
 		return nil, nil, fmt.Errorf("fixtureLevel: %q", d.Level)
 	}
 	if d.IsInitialLayoutSelected {
-		markers, deletedObjectIDs, err := d.MapDestructibles()
+		markers, takeoverObjectIDs, removalOnlyObjectIDs, err := d.MapDestructibles()
 		if err != nil {
 			return nil, nil, fmt.Errorf("fixtureLayout: %w", err)
 		}
-		return markers, deletedObjectIDs, nil
+		return markers, append(takeoverObjectIDs, removalOnlyObjectIDs...), nil
 	}
 	selectedSet := fmt.Sprintf("zelems_1_smart_objects_%d.markerset", selectionID%3+1)
 	fixtures := make([]CampaignDirectorMarker, 0)

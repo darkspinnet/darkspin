@@ -156,7 +156,7 @@ func (e *gameplayPeerSession) recordScenarioFixtureSelection(director game.Campa
 	}
 	startedAt := time.Now().UTC()
 	peerGeneration := e.generation
-	markers, deletedObjectIDs, err := director.MapDestructibles()
+	markers, takeoverObjectIDs, removalOnlyObjectIDs, err := director.MapDestructibles()
 	boundary := snapshot.ScenarioBoundary{Name: "fixture_takeover", Stage: snapshot.ScenarioSelectedPlan,
 		SessionGeneration: &peerGeneration, StartedAt: &startedAt,
 		Completeness: "complete", Reason: "scope: selected takeover fixtures only; retained before server zone resolution; native observation and publication are unobserved"}
@@ -166,10 +166,13 @@ func (e *gameplayPeerSession) recordScenarioFixtureSelection(director game.Campa
 	boundary.IsBeforeMutation = &isBeforeMutation
 	boundary.IsMutationObserved = &isMutationObserved
 	boundary.DroppedRecordCount = &droppedRecordCount
-	if err != nil || len(markers) != len(deletedObjectIDs) {
+	if err != nil || len(markers) != len(takeoverObjectIDs) {
 		boundary.Completeness = "unavailable"
 		boundary.Reason = "selected fixture markers are unavailable"
 	} else {
+		if len(removalOnlyObjectIDs) != 0 {
+			boundary.Reason = fmt.Sprintf("%s; %d obstructions planned for removal without replacements", boundary.Reason, len(removalOnlyObjectIDs))
+		}
 		for _, marker := range markers {
 			boundary.Objects = append(boundary.Objects, scenarioFixtureMarker(director, marker, startedAt))
 		}

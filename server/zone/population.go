@@ -236,6 +236,7 @@ func (e *Zone) commitPopulationPlans(
 	if len(plans) == 0 {
 		return nil, nil
 	}
+	// Matchmaking bots join the zone as connected members. Summoned pets do not.
 	connectedCount := 0
 	for _, member := range e.members {
 		if member.IsConnected {

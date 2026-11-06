@@ -144,16 +144,17 @@ func (e CampaignDirector) InitialMapLayout(seed uint32, ordinals []int) (Campaig
 	return e, nil
 }
 
-// MapDestructibles transfers only selected client fixtures to authoritative
-// NPC ownership. Unselected alternatives never produce deletion or spawn IDs.
+// MapDestructibles returns selected fixtures, their static copies to delete,
+// and selected teleporter obstructions to remove without replacements.
 func (e CampaignDirector) MapDestructibles() (
-	[]CampaignDirectorMarker, []uint32, error,
+	[]CampaignDirectorMarker, []uint32, []uint32, error,
 ) {
 	if !e.IsInitialLayoutSelected {
-		return nil, nil, errors.New("map destructible layout unavailable")
+		return nil, nil, nil, errors.New("map destructible layout unavailable")
 	}
 	markers := make([]CampaignDirectorMarker, 0)
-	deletedObjectIDs := make([]uint32, 0)
+	takeoverObjectIDs := make([]uint32, 0)
+	var removalOnlyObjectIDs []uint32
 	markerIDs := make(map[uint32]struct{})
 	for _, set := range e.MarkerSets {
 		for _, marker := range set.Markers {
@@ -164,27 +165,26 @@ func (e CampaignDirector) MapDestructibles() (
 				!isFiniteCampaignPosition(marker.Rotation) || marker.Scale <= 0 ||
 				!marker.NPCProfile.IsKnown || marker.NPCProfile.HitPoint <= 0 ||
 				(!marker.NPCProfile.IsTargetable && !isUntargetableMapFixtureNoun(marker.NounName)) {
-				return nil, nil, fmt.Errorf("selected fixture %d invalid", marker.MarkerID)
+				return nil, nil, nil, fmt.Errorf("selected fixture %d invalid", marker.MarkerID)
 			}
 			_, isDuplicate := markerIDs[marker.MarkerID]
 			if isDuplicate {
-				return nil, nil, fmt.Errorf("selected fixture %d duplicated", marker.MarkerID)
+				return nil, nil, nil, fmt.Errorf("selected fixture %d duplicated", marker.MarkerID)
 			}
 			markerIDs[marker.MarkerID] = struct{}{}
-			// Retire only this selected client's static copy before publishing
-			// the server-owned damageable object at its authored transform.
-			deletedObjectIDs = append(deletedObjectIDs, marker.MarkerID)
 			isOnTeleporter, err := e.isCryosFungusOnTeleporter(marker)
 			if err != nil {
-				return nil, nil, fmt.Errorf("fixturePad[%d]: %w", marker.MarkerID, err)
+				return nil, nil, nil, fmt.Errorf("fixturePad[%d]: %w", marker.MarkerID, err)
 			}
 			if isOnTeleporter {
+				removalOnlyObjectIDs = append(removalOnlyObjectIDs, marker.MarkerID)
 				continue
 			}
 			markers = append(markers, marker)
+			takeoverObjectIDs = append(takeoverObjectIDs, marker.MarkerID)
 		}
 	}
-	return markers, deletedObjectIDs, nil
+	return markers, takeoverObjectIDs, removalOnlyObjectIDs, nil
 }
 
 func isMapDestructible(marker CampaignDirectorMarker) bool {
