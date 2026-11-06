@@ -266,6 +266,9 @@ func (e operativeCageSchedule) tick(producer *operativeCageProducer) ([][]byte, 
 		e.runtime.registry.isOperativeChannelLocked(
 			member, e.state.plan.SourceObjectID, e.state.plan.TargetObjectID,
 		)
+	if isContinuing && !e.state.isManualAction && e.state.plan.Profile.AbilityName == omicronCageAbility {
+		isContinuing = !member.zone.NPCs().IsOmicronRecentlyHit(e.state.plan.SourceObjectID, e.runtime.now())
+	}
 	if !isContinuing {
 		e.runtime.registry.mutex.Unlock()
 		return e.finish(producer)
@@ -399,6 +402,19 @@ func (e operativeCageSchedule) finish(producer *operativeCageProducer) ([][]byte
 	}
 	e.state.isComplete = true
 	e.state.isRetryScheduled = true
+	isOmicronRetreat := !e.state.isManualAction && e.state.plan.Profile.AbilityName == omicronCageAbility
+	if isOmicronRetreat {
+		// The cage releases before the idle mover starts. Preserve the
+		// authored cooldown independently of how long the retreat lasts.
+		member = e.runtime.registry.sessions[e.sessionKey]
+		if member.campaignNPCSupportReadiness == nil {
+			member.campaignNPCSupportReadiness = make(map[campaignNPCSupportKey]uint64)
+		}
+		key := campaignNPCSupportKey{objectID: e.state.plan.SourceObjectID, abilityName: omicronCageAbility}
+		cooldown := e.state.plan.Profile.Cooldown
+		member.campaignNPCSupportReadiness[key] = e.timestamp + uint64((max(e.runtime.now().Sub(e.state.startedAt), 0)+cooldown)/time.Millisecond)
+		e.runtime.registry.sessions[e.sessionKey] = member
+	}
 	e.runtime.registry.mutex.Unlock()
 	endPacket, err := raknet.MarshalApplication(raknet.SetAnimationStateMessage{
 		ObjectID: e.state.plan.SourceObjectID, State: util.HashID(e.state.plan.Profile.EndAnimationName),
@@ -425,6 +441,9 @@ func (e operativeCageSchedule) finish(producer *operativeCageProducer) ([][]byte
 	}
 	producer.nextStep = operativeCageRetry
 	producer.nextDelay = e.state.plan.Profile.Cooldown
+	if isOmicronRetreat {
+		producer.nextDelay = e.state.plan.Profile.EndAnimationDelay
+	}
 	if e.state.plan.Profile.AbilityName == "NocturnaSpecialHauntLockdown" || e.state.plan.Profile.AbilityName == "ChannelLightningCage" {
 		cooldownStartDelay := e.state.plan.Profile.HitDelay
 		if e.state.plan.Profile.AbilityName == "NocturnaSpecialHauntLockdown" {

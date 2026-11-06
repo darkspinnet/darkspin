@@ -326,6 +326,15 @@ func (r campaignNPCActionRuntime) produceEnemyMeleeWithPull(
 	}
 	chargeupState := peerSession.campaignNPCChargeups[objectID]
 	r.registry.mutex.RUnlock()
+	if isEnemyFound && isTargetFound && isProfileFound && profile.AbilityName == omicronCageAbility {
+		retreatPackets, isRetreating, retreatErr := r.produceOmicronRetreat(packet, sessionKey, generation, objectID, timestamp)
+		if retreatErr != nil {
+			return nil, fmt.Errorf("enemyOmicronRetreat: %w", retreatErr)
+		}
+		if isRetreating {
+			return retreatPackets, nil
+		}
+	}
 	if isEnemyFound && isTargetFound && isProfileFound &&
 		profile.AbilityName == "NocturnaSpecialHomer" {
 		return r.produceZelemShot(

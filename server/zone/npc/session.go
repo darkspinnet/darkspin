@@ -1304,7 +1304,7 @@ func (s *Session) damage(
 	appliedDamage := min(damage, previousHealth)
 	npc.HitPoint = max(0, previousHealth-appliedDamage)
 	if !meta.isForcedDefeat && appliedDamage > 0 {
-		npc.recordRecentDamage(now, appliedDamage)
+		npc.recordRecentDamage(now, appliedDamage, isDamageOverTime)
 	}
 	npc.IsDefeated = npc.HitPoint == 0
 	markScenarioSelfDeath(&npc, sourceObjectID, targetObjectID, meta.isForcedDefeat)

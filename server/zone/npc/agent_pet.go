@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+const agentHealingDroneIdleSpeed = 3
+
 // IsAgentHealingChild identifies the child whose passive owner schedules heals.
 // Its target link is ownership context, never admission to a combat pursuit.
 func IsAgentHealingChild(plan SpawnPlan) bool {
@@ -18,7 +20,7 @@ func NomadPetsMeleeProfile() ActionProfile {
 func AgentChildProfile(nounName string, rank int32) ActionProfile {
 	family := strings.TrimSuffix(strings.ToLower(nounName), ".noun")
 	family = strings.TrimSuffix(strings.TrimSuffix(family, "_2"), "_3")
-	profile := ActionProfile{Family: ActionUnknown, AbilityName: "NomadCyberOne_Droid_Heal", MinimumHealing: 3, MaximumHealing: 3, TickDuration: time.Second, NumberOfTicks: 301, IsFirstAggroDurationKnown: true}
+	profile := ActionProfile{Family: ActionUnknown, AbilityName: "NomadCyberOne_Droid_Heal", MinimumHealing: 3, MaximumHealing: 3, TickDuration: time.Second, NumberOfTicks: 301, NonCombatMovementSpeed: agentHealingDroneIdleSpeed, IsFirstAggroDurationKnown: true}
 	if family == "nomadcyberone_droid" {
 		return profile
 	}

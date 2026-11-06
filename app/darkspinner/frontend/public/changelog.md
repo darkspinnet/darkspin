@@ -2,6 +2,8 @@
 
 ### 2026-11-05
 
+- Let Omicron release its cage and retreat after taking enough direct damage, and have its repair drone orbit while healing.
+
 - [#182](https://github.com/darkspinnet/darkspin/issues/182) Let Tree of Life heal nearby players and AI Companions in either direction by treating members of the same campaign party as allies.
 
 - Show the Lua tab in development scenario builds only when Darkspinner starts with `--lua`.

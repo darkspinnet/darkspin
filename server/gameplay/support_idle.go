@@ -23,6 +23,7 @@ type campaignNPCSupportIdle struct {
 	pauseUntil   time.Time
 	movementBuff float32
 	isTired      bool
+	isOmicron    bool
 }
 
 type campaignNPCSupportIdleResume struct {
@@ -80,6 +81,13 @@ func (e campaignNPCSupportIdleResume) produce(timestamp uint64) ([][]byte, error
 	}
 	e.runtime.registry.sessions[e.sessionKey] = member
 	e.runtime.registry.mutex.Unlock()
+	if e.idle.isOmicron {
+		packets, err := e.runtime.produceEnemyMelee(e.packet, e.sessionKey, e.generation, e.objectID, timestamp)
+		if err != nil {
+			return nil, fmt.Errorf("omicronIdleResume: %w", err)
+		}
+		return packets, nil
+	}
 	step := campaignNPCFirstActionStep{runtime: e.runtime, packet: e.packet,
 		sessionKey: e.sessionKey, generation: e.generation, objectID: e.objectID,
 		actionGeneration: e.actionGeneration, timestamp: timestamp}
@@ -96,20 +104,26 @@ func (e *campaignNPCSupportIdle) advance(now time.Time, isFacing bool) {
 	}
 	delay := 3 * time.Second
 	firstLength := 500 * time.Millisecond
+	secondLength := 500 * time.Millisecond
+	pauseLength := 2 * time.Second
 	firstBuff, secondBuff := float32(-.2), float32(-.4)
 	if isFacing {
 		delay, firstLength = time.Second, 2*time.Second
 		firstBuff, secondBuff = -.15, -.3
+	}
+	if e.isOmicron {
+		// Build-103 chunk 184 uses immediate fatigue stages and a five-second pause.
+		delay, firstLength, secondLength, pauseLength = 2*time.Second, 0, 0, 5*time.Second
 	}
 	switch e.phase {
 	case 0:
 		e.movementBuff, e.phase, e.nextAt = firstBuff, 1, now.Add(firstLength)
 		e.isTired = true
 	case 1:
-		e.movementBuff, e.phase, e.nextAt = secondBuff, 2, now.Add(500*time.Millisecond)
+		e.movementBuff, e.phase, e.nextAt = secondBuff, 2, now.Add(secondLength)
 	case 2:
 		e.movementBuff, e.phase, e.nextAt = 0, 0, now.Add(delay)
-		e.pauseUntil = now.Add(2 * time.Second)
+		e.pauseUntil = now.Add(pauseLength)
 	}
 }
 
@@ -125,6 +139,7 @@ func (e campaignNPCActionRuntime) produceNPCSupportIdle(packet raknet.Packet,
 	target, isTargetFound := member.campaignNPCTarget(generation, source.TargetObjectID)
 	profile, isProfileFound := zonenpc.ActionProfileForPlan(source.Plan)
 	isFacing := strings.HasPrefix(strings.ToLower(source.Plan.NounName), "nomadscope")
+	isOmicron := campaignDifficultyNounFamily(source.Plan.NounName) == "nomadcyberone"
 	delay := 500 * time.Millisecond
 	packets := make([][]byte, 0, 3)
 	resume := campaignNPCSupportIdleResume{runtime: e, packet: packet, sessionKey: sessionKey,
@@ -138,7 +153,10 @@ func (e campaignNPCActionRuntime) produceNPCSupportIdle(packet raknet.Packet,
 		if isFacing {
 			fatigueDelay = time.Second
 		}
-		state = &campaignNPCSupportIdle{registry: e.registry, nextAt: e.now().Add(fatigueDelay)}
+		if isOmicron {
+			fatigueDelay = 2 * time.Second
+		}
+		state = &campaignNPCSupportIdle{registry: e.registry, nextAt: e.now().Add(fatigueDelay), isOmicron: isOmicron}
 		member.npcSupportIdles[source.Plan.ObjectID] = state
 	}
 	resume.idle = state
@@ -165,6 +183,9 @@ func (e campaignNPCActionRuntime) produceNPCSupportIdle(packet raknet.Packet,
 	safeDistance := float32(14)
 	if isFacing {
 		safeDistance = 10
+	}
+	if isOmicron {
+		safeDistance = 15
 	}
 	if source.Plan.Position.Sub(target.Position).Length() >= safeDistance {
 		e.registry.mutex.Unlock()
@@ -286,6 +307,14 @@ func (e *campaignNPCSupportIdle) queuePacketsLocked(owner *gameplayPeerSession, 
 func scheduleNPCSupportWait(registry *gameplaySessionRegistry, packet raknet.Packet,
 	resume campaignNPCSupportIdleResume, timestamp uint64, delay time.Duration,
 ) ([][]byte, error) {
+	if resume.idle.isOmicron {
+		producer := campaignNPCSupportIdleWait{resume: resume, timestamp: timestamp + uint64(delay/time.Millisecond)}
+		err := scheduleNPCProducer(registry, packet, delay, producer.produce)
+		if err != nil {
+			return nil, fmt.Errorf("omicronWaitSchedule: %w", err)
+		}
+		return nil, nil
+	}
 	step := campaignNPCFirstActionStep{runtime: resume.runtime, packet: packet, sessionKey: resume.sessionKey,
 		generation: resume.generation, objectID: resume.objectID, actionGeneration: resume.actionGeneration,
 		timestamp: timestamp + uint64(delay/time.Millisecond)}
@@ -294,6 +323,19 @@ func scheduleNPCSupportWait(registry *gameplaySessionRegistry, packet raknet.Pac
 		return nil, fmt.Errorf("supportWaitSchedule: %w", err)
 	}
 	return nil, nil
+}
+
+type campaignNPCSupportIdleWait struct {
+	resume    campaignNPCSupportIdleResume
+	timestamp uint64
+}
+
+func (e campaignNPCSupportIdleWait) produce() ([][]byte, error) {
+	packets, err := e.resume.produce(e.timestamp)
+	if err != nil {
+		return nil, fmt.Errorf("omicronWaitResume: %w", err)
+	}
+	return packets, nil
 }
 
 func supportRetreatDestination(member gameplayPeerSession, source zonenpc.Snapshot,
