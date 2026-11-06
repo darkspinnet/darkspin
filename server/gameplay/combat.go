@@ -2650,6 +2650,11 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 		transition.immediatePackets = append(
 			transition.immediatePackets, lifeStealPackets...,
 		)
+		powerStealPackets, err := s.applyEquippedPowerSteal(result.Damage)
+		if err != nil {
+			return campaignDamageTransition{}, fmt.Errorf("powerSteal: %w", err)
+		}
+		transition.immediatePackets = append(transition.immediatePackets, powerStealPackets...)
 		if healedAmount > 0 {
 			s.queueStatDelta(sporenet.PlayerStatDelta{
 				PVEHealing:         float64(healedAmount),

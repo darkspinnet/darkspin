@@ -942,6 +942,12 @@ func abilityDefinitionFromLua(table *luaTable, provenance Provenance) (AbilityDe
 	if err != nil {
 		return AbilityDefinition{}, fmt.Errorf("object: %w", err)
 	}
+	if definition.Name == "SentryDroneLaser" {
+		muzzleEffect := table.get(stringLuaKey("muzzleEvent"))
+		if muzzleEffect.kind == luaString {
+			definition.MuzzleEffectName = muzzleEffect.text
+		}
+	}
 	impactEffect := table.get(stringLuaKey("impactEvent"))
 	if impactEffect.kind == luaString {
 		definition.ImpactEffectName = impactEffect.text

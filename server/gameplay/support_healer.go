@@ -31,6 +31,8 @@ func (e targetedAOESchedule) queueSupportHealerPacketsLocked(npc *zonenpc.Sessio
 func (e targetedAOESchedule) commitSupportHealerPulseLocked(caster gameplayPeerSession, plan zoneability.AreaPlan, timestamp uint64) ([]zoneability.AreaResult, [][]byte, error) {
 	results := make([]zoneability.AreaResult, 0, len(plan.Target))
 	packets := make([][]byte, 0)
+	npc := caster.zone.NPCs()
+	now := e.runtime.now()
 	for _, target := range plan.Target {
 		single := plan
 		single.Target = []zonenpc.Snapshot{target}
@@ -47,9 +49,20 @@ func (e targetedAOESchedule) commitSupportHealerPulseLocked(caster gameplayPeerS
 			if e.rank == 7 || e.rank == 8 {
 				movementScale = 0.4
 			}
-			err = caster.zone.NPCs().ApplySlow(result.Damage.ObjectID, e.runtime.now().Add(zonenpc.CrowdControlDuration(target.Plan, time.Second)), movementScale, 1)
+			err = npc.ApplySlow(result.Damage.ObjectID, now.Add(zonenpc.CrowdControlDuration(target.Plan, time.Second)), movementScale, 1)
 			if err != nil {
 				return results, packets, fmt.Errorf("briarSnare: %w", err)
+			}
+			profile, isProfileKnown := zonenpc.ActionProfileForPlan(target.Plan)
+			if isProfileKnown && profile.Family == zonenpc.ActionCharge {
+				continue
+			}
+			slowPacket, slowErr := marshalNPCSlowMovement(npc, target.Plan, npc.SlowMovementScale(result.Damage.ObjectID, now))
+			if slowErr != nil {
+				return results, packets, fmt.Errorf("briarSnarePublish: %w", slowErr)
+			}
+			if slowPacket != nil {
+				packets = append(packets, slowPacket)
 			}
 		}
 		rootPackets, rootErr := e.applySupportHealerRootsLocked(caster, committed, timestamp)
@@ -59,6 +72,20 @@ func (e targetedAOESchedule) commitSupportHealerPulseLocked(caster gameplayPeerS
 		}
 	}
 	return results, packets, nil
+}
+
+func marshalNPCSlowMovement(npc *zonenpc.Session, plan zonenpc.SpawnPlan, scale float32) ([]byte, error) {
+	movementBuff := (1+zonenpc.EffectiveMovementSpeedBuff(plan))*scale - 1
+	packet, err := raknet.MarshalApplication(raknet.AttributeDataUpdateMessage{
+		ObjectID: plan.ObjectID, Value: map[uint8]float32{48: movementBuff},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("slowMovementPacket: %w", err)
+	}
+	if !npc.CommitSlowMovementPublication(plan.ObjectID, scale) {
+		return nil, nil
+	}
+	return packet, nil
 }
 
 func projectSupportHealerRank(definition sim.AbilityDefinition, rank int32) sim.AbilityDefinition {

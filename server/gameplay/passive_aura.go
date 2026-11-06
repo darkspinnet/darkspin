@@ -77,6 +77,10 @@ func (e gameplayPendingRuntime) pollNativeSilenceAuraLocked(member *gameplayPeer
 	if !isTargetFound {
 		return packets, nil
 	}
+	target, err := member.sampleNPCTarget(target, now)
+	if err != nil {
+		return packets, fmt.Errorf("auraSilencePose: %w", err)
+	}
 	var source zonenpc.Snapshot
 	for _, candidate := range member.zone.NPCs().SelectedSnapshots(zonenpc.SelectNativeSilence) {
 		if !candidate.IsPublished || candidate.IsDefeated || candidate.HitPoint <= 0 ||
@@ -85,8 +89,9 @@ func (e gameplayPendingRuntime) pollNativeSilenceAuraLocked(member *gameplayPeer
 			candidate.Plan.Position.Sub(target.Position).Length() > 2 {
 			continue
 		}
-		source = candidate
-		break
+		if source.Plan.ObjectID == 0 || (current != nil && current.record.SourceObjectID == candidate.Plan.ObjectID) {
+			source = candidate
+		}
 	}
 	if source.Plan.ObjectID == 0 || current != nil && current.record.ExpiresAt.Sub(now) > 100*time.Millisecond {
 		return packets, nil
@@ -103,9 +108,7 @@ func (e gameplayPendingRuntime) pollNativeSilenceAuraLocked(member *gameplayPeer
 		SourceObjectID: source.Plan.ObjectID, TargetObjectID: member.deployedObjectID,
 		InitiatorObject: source.Plan.ObjectID, Rank: uint32(zonenpc.EffectivePassiveRank(source.Plan)),
 		Kind: zoneeffect.ModifierKindDebuff, Duration: 500 * time.Millisecond, ExpiresAt: now.Add(500 * time.Millisecond)}
-	created, err := effectraknet.ModifierCreate(effectraknet.ModifierCreateRequest{
-		SourceObjectID: record.SourceObjectID, TargetObjectID: record.TargetObjectID,
-		ModifierID: record.GUID, InstanceID: record.InstanceID, Duration: record.Duration, Timestamp: timestamp})
+	created, err := marshalNativeSilenceChild(current, record, timestamp)
 	if err != nil {
 		if isNew {
 			isCreated, releaseErr := current.release(e.modifierPool)
@@ -136,6 +139,10 @@ func (e gameplayPendingRuntime) pollNativeSilenceAuraLocked(member *gameplayPeer
 		current.create()
 	}
 	member.extendEnemySilence(record.TargetObjectID, record.ExpiresAt)
+	packets = append(packets, created)
+	if !isNew {
+		return packets, nil
+	}
 	interrupts, interruptErr := member.interruptNativeSilenceChannelsLocked(now, timestamp)
 	if interruptErr != nil {
 		return packets, fmt.Errorf("auraSilenceInterrupt: %w", interruptErr)
@@ -144,8 +151,31 @@ func (e gameplayPendingRuntime) pollNativeSilenceAuraLocked(member *gameplayPeer
 	if attributeErr != nil {
 		return packets, fmt.Errorf("auraSilenceAttribute: %w", attributeErr)
 	}
-	packets = append(packets, created, attribute)
+	packets = append(packets, attribute)
 	return append(packets, interrupts...), nil
+}
+
+func marshalNativeSilenceChild(
+	run *campaignNPCModifierRun, record zoneeffect.Modifier, timestamp uint64,
+) ([]byte, error) {
+	if run.record.SourceObjectID == record.SourceObjectID {
+		packet, err := raknet.MarshalApplication(raknet.ModifierUpdatedMessage{
+			TargetID: record.TargetObjectID, InstanceID: record.InstanceID,
+			StartMilliseconds: int64(timestamp), StackCount: 1,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("silenceChildRefresh: %w", err)
+		}
+		return packet, nil
+	}
+	packet, err := effectraknet.ModifierCreate(effectraknet.ModifierCreateRequest{
+		SourceObjectID: record.SourceObjectID, TargetObjectID: record.TargetObjectID,
+		ModifierID: record.GUID, InstanceID: record.InstanceID, Duration: record.Duration, Timestamp: timestamp,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("silenceChildCreate: %w", err)
+	}
+	return packet, nil
 }
 
 func nativeSilenceRecipientAlive(member gameplayPeerSession, objectID uint32) bool {

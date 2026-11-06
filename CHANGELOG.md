@@ -3,6 +3,10 @@
 ### 2026-11-06
 
 - #186 Prevent a client crash when continuing a campaign with an AI Companion in a slot vacated by a player.
+- #184 Refill Health and Power to their catalyst-adjusted maximums when continuing a campaign, and restore Power on damaging hits with Power Leech.
+- #184 Refresh Suppression from proximity and publish the Strangling Briars slow when each pulse lands.
+- #184 Keep Blastopod missiles alive until contact or range exhaustion, and stop Ghostly Tracker charges without a teleport.
+- #184 Update Invincitron's orbit without restarting its mover each step, and restore the authored Sentry Drone Laser muzzle effect.
 
 ### 2026-11-05
 

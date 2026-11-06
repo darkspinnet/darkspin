@@ -1988,7 +1988,8 @@ func (r campaignResultRuntime) continueChain(
 	nextBinding := peerSession.binding
 	maximumHitPoints := peerSession.maximumHitPoints
 	maximumManaPoints := peerSession.maximumManaPoints
-	if squadID != nextBinding.SquadID {
+	isSquadChanged := squadID != nextBinding.SquadID
+	if isSquadChanged {
 		selectedBinding, err := r.gameplayJoin.SelectCampaignSquad(nextBinding, squadID)
 		if err != nil {
 			return nil, fmt.Errorf("continueSelection: %w", err)
@@ -2076,7 +2077,7 @@ func (r campaignResultRuntime) continueChain(
 		nextGeneration := r.registry.lifecycle.nextGeneration()
 		nextBinding.ChainProgression = max(nextBinding.ChainProgression, chainProgression)
 		nextBinding.RefreshReplay()
-		r.registry.sessions[packet.Address.String()] = gameplayPeerSession{
+		nextSession := gameplayPeerSession{
 			zoneMembership: zoneMembership{generation: nextGeneration},
 			chainPeerRuntime: chainPeerRuntime{
 				chainPlanetsCompleted: snapshot.PlanetsCompleted,
@@ -2101,6 +2102,20 @@ func (r campaignResultRuntime) continueChain(
 			campaignCrystalDropBag:      continueSession.campaignCrystalDropBag,
 			campaignCrystalSelectionBag: continueSession.campaignCrystalSelectionBag.Clone(),
 		}
+		if isSquadChanged {
+			nextSession.crystalInventory = sim.CrystalInventory{}
+			nextSession.setCrystalInventory(crystalInventory)
+		}
+		nextSession.initializeCampaignResourceMaximums()
+		for index := range nextSession.binding.Creatures {
+			creature := &nextSession.binding.Creatures[index]
+			if creature.Noun == 0 {
+				continue
+			}
+			creature.HitPoint = creature.MaximumHitPoint
+			creature.PowerPoint = creature.MaximumPowerPoint
+		}
+		r.registry.sessions[packet.Address.String()] = nextSession
 	}
 	r.registry.mutex.Unlock()
 	if !isAccepted {

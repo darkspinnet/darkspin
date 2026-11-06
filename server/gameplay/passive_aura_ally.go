@@ -9,7 +9,6 @@ import (
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/util"
 	zoneeffect "github.com/darkspinnet/darkspin/server/zone/effect"
-	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
@@ -64,8 +63,9 @@ func (e gameplayPendingRuntime) refreshNativeAllySilenceLocked(member *gameplayP
 			!candidate.Plan.IsIntroductionHidden && candidate.Faction == zonenpc.FactionNonPlayerAligned &&
 			zonenpc.NativePassiveAura(candidate.Plan) == "CitadelSpecialTwo_SilenceAura" &&
 			candidate.Plan.Position.Sub(position).Length() <= 2 {
-			source = candidate
-			break
+			if source.Plan.ObjectID == 0 || (current != nil && current.record.SourceObjectID == candidate.Plan.ObjectID) {
+				source = candidate
+			}
 		}
 	}
 	if source.Plan.ObjectID == 0 {
@@ -83,9 +83,7 @@ func (e gameplayPendingRuntime) refreshNativeAllySilenceLocked(member *gameplayP
 		SourceObjectID: source.Plan.ObjectID, TargetObjectID: targetObjectID,
 		InitiatorObject: source.Plan.ObjectID, Rank: uint32(zonenpc.EffectivePassiveRank(source.Plan)),
 		Kind: zoneeffect.ModifierKindDebuff, Duration: 500 * time.Millisecond, ExpiresAt: now.Add(500 * time.Millisecond)}
-	created, err := effectraknet.ModifierCreate(effectraknet.ModifierCreateRequest{
-		SourceObjectID: record.SourceObjectID, TargetObjectID: record.TargetObjectID,
-		ModifierID: record.GUID, InstanceID: record.InstanceID, Duration: record.Duration, Timestamp: timestamp})
+	created, err := marshalNativeSilenceChild(current, record, timestamp)
 	if err == nil {
 		if isNew {
 			err = member.trackCampaignNPCModifier(current)

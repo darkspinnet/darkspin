@@ -174,12 +174,6 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 	if isPullerMelee {
 		return r.produceEnemyMeleeWithPull(packet, sessionKey, generation, objectID, timestamp, false)
 	}
-	err := r.startCampaignSuppressionAura(
-		packet, sessionKey, generation, objectID, timestamp,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("suppressionAuraStart: %w", err)
-	}
 	if isTurtleActive {
 		return nil, nil
 	}
@@ -718,7 +712,9 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 			producers, projectileSchedule.producer(scheduledDeadline),
 		)
 	}
-	if profile.HomingDelay > 0 {
+	// Sampled missiles expire when the flight exhausts its actual range. A
+	// wall-clock deadline based on nominal speed can cut a slowed flight short.
+	if profile.HomingDelay > 0 && flight == nil {
 		expiryDelay := ability.HitDelay + time.Duration(
 			float64(profile.ProjectileDistance)/float64(profile.ProjectileSpeed)*
 				float64(time.Second),

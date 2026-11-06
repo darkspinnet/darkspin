@@ -336,7 +336,8 @@ func fixedCrystalAttribute(slot CrystalSlot) (int, float32, bool) {
 		return 13, [...]float32{0.04, 0.08, 0.12}[rarity], true
 	case 20:
 		return 35, [...]float32{0.02, 0.03, 0.04}[rarity], true
-	case 22:
+	case 23:
+		// Build 103 ManaLeechCrystal (chunk 435) contributes ManaSteal.
 		return 52, [...]float32{0.01, 0.015, 0.02}[rarity], true
 	case 25:
 		// The ordinary epic noun is authored with AttackSpeedCrystalEpic.
@@ -447,8 +448,6 @@ func crystalAttribute(crystalType int32) (int, bool, bool) {
 		return 35, true, true
 	case 21:
 		return 5, false, true
-	case 22:
-		return 24, true, true
 	case 23:
 		return 52, true, true
 	case 24:

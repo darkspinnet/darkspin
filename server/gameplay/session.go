@@ -196,7 +196,6 @@ type zoneEffectPresentation struct {
 	campaignNPCSinkholeFields           map[uint32]sinkholeField
 	campaignNPCNestleWanderReadiness    map[uint32]uint64
 	campaignNPCCopterRuns               map[uint32]*campaignScaldronCopterRun
-	campaignNPCSuppressionRuns          map[uint32]*campaignSuppressionRun
 	campaignNPCDopplerCloneReadiness    map[uint32]uint64
 	campaignNPCDopplerFakeObjectIDs     map[uint32]uint32
 	campaignNPCMaserCleanseReadiness    map[uint32]uint64
@@ -1283,7 +1282,6 @@ func (s *gameplayPeerSession) stopCampaignNPCProjectiles() {
 		s.queueCampaignPackets(cleanupPackets)
 		delete(s.campaignNPCCopterRuns, objectID)
 	}
-	clear(s.campaignNPCSuppressionRuns)
 	clear(s.campaignNPCDopplerCloneReadiness)
 	clear(s.campaignNPCDopplerFakeObjectIDs)
 	clear(s.campaignNPCMaserCleanseReadiness)

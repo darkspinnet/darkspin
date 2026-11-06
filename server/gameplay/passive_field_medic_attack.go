@@ -145,7 +145,7 @@ func (r campaignDamageRuntime) startFieldMedicDroneAttackFor(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("fieldMedicDroneDamage: %w", damageErr)
 	}
-	const droneFootprint = float32(0.5)
+	droneFootprint := heldDrone.FootprintRadius
 	targetPosition := campaignProjectileAimPosition(
 		plan.TargetPosition, target.Plan.NPCProfile.FootprintRadius, geometry,
 	)

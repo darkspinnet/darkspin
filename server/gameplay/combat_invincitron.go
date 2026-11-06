@@ -216,6 +216,7 @@ type campaignDroneFollowStep struct {
 	advancedAt    time.Time
 	orbitElapsed  time.Duration
 	orbitPeriod   time.Duration
+	isMoveStarted bool
 }
 
 func (e *campaignDroneFollowStep) release() {
@@ -320,7 +321,8 @@ func (e *campaignDroneFollowStep) produce() ([][]byte, error) {
 	if isMoved {
 		// Keep ordinary orbit steps interpolated. Reconcile discontinuities
 		// such as an owner warp with a position update.
-		if position.Sub(drone.Plan.Position).Length() > 2*invincitronDroneOrbitRadius {
+		isDiscontinuous := position.Sub(drone.Plan.Position).Length() > 2*invincitronDroneOrbitRadius
+		if isDiscontinuous {
 			positionPacket, positionErr := raknet.MarshalApplication(raknet.ObjectPositionUpdateMessage{
 				ObjectID: e.objectID, PositionX: position.X, PositionY: position.Y, PositionZ: position.Z,
 			})
@@ -330,20 +332,27 @@ func (e *campaignDroneFollowStep) produce() ([][]byte, error) {
 			packets = append(packets, positionPacket)
 		}
 		goalPosition := raknet.Vector3(goal)
+		facing := invincitronDroneFacing(position, goal)
+		if !e.isMoveStarted || isDiscontinuous {
+			goalPacket, marshalErr := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
+				ObjectID: e.objectID, GoalFlags: 0x01, GoalPosition: goalPosition, Facing: facing,
+			})
+			if marshalErr != nil {
+				return nil, fmt.Errorf("droneFollowStart: %w", marshalErr)
+			}
+			packets = append(packets, goalPacket)
+		}
+		// Refresh the active mover's goals without resetting travel progress.
 		locomotionPacket, marshalErr := raknet.MarshalApplication(raknet.LocomotionUpdateContractMessage{
-			ObjectID: e.objectID, Locomotion: raknet.LocomotionReflection{PartialGoalPosition: &goalPosition},
+			ObjectID: e.objectID, Locomotion: raknet.LocomotionReflection{
+				GoalPosition: &goalPosition, PartialGoalPosition: &goalPosition, Facing: &facing,
+			},
 		})
 		if marshalErr != nil {
 			return nil, fmt.Errorf("droneFollowLocomotion: %w", marshalErr)
 		}
-		goalPacket, marshalErr := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
-			ObjectID: e.objectID, GoalFlags: 0x41, GoalPosition: goalPosition,
-			Facing: invincitronDroneFacing(position, goal), TargetPosition: goalPosition,
-		})
-		if marshalErr != nil {
-			return nil, fmt.Errorf("droneFollowGoal: %w", marshalErr)
-		}
-		packets = append(packets, locomotionPacket, goalPacket)
+		packets = append(packets, locomotionPacket)
+		e.isMoveStarted = true
 	}
 	err = e.schedule()
 	if err != nil {

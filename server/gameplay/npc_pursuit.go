@@ -453,15 +453,12 @@ func (r campaignNPCPursuitRuntime) produceStep(
 	// attribute 48, so mirror the authoritative slow and restore it on expiry.
 	// Preserve the noun's base combat speed and its permanent movement bonus.
 	if profile.Family != zonenpc.ActionCharge {
-		movementBuff := (1+zonenpc.EffectiveMovementSpeedBuff(enemy.Plan))*slowMovementScale - 1
-		slowPacket, slowErr := raknet.MarshalApplication(raknet.AttributeDataUpdateMessage{
-			ObjectID: objectID, Value: map[uint8]float32{48: movementBuff},
-		})
+		slowPacket, slowErr := marshalNPCSlowMovement(npcSession, enemy.Plan, slowMovementScale)
 		if slowErr != nil {
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("pursuitSlow: %w", slowErr)
 		}
-		if npcSession.CommitSlowMovementPublication(objectID, slowMovementScale) {
+		if slowPacket != nil {
 			r.registry.queueChannelPresentationLocked(peerSession.zone, [][]byte{slowPacket})
 			peerSession = r.registry.sessions[sessionKey]
 		}
@@ -717,7 +714,21 @@ func (r campaignNPCPursuitRuntime) produceStep(
 		isCorridorActive = false
 	}
 	if step.IsInRange {
-		stopPackets, stopErr := npcraknet.StopAtPose(objectID, step.Position, enemy.Facing)
+		var stopPackets [][]byte
+		var stopErr error
+		if profile.AbilityName == "NoctGhostCharge" {
+			// The client is already sliding to this fixed goal. A pose
+			// correction here teleports the Ghostly Tracker to the end.
+			stopPacket, marshalErr := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
+				ObjectID: objectID, GoalFlags: 0x20, GoalPosition: raknet.Vector3(step.Position),
+			})
+			stopErr = marshalErr
+			if stopErr == nil {
+				stopPackets = [][]byte{stopPacket}
+			}
+		} else {
+			stopPackets, stopErr = npcraknet.StopAtPose(objectID, step.Position, enemy.Facing)
+		}
 		if stopErr != nil {
 			npcSession.ReleaseActionGeneration(objectID, owner, actionGeneration)
 			return nil, fmt.Errorf("enemyPursuitStop: %w", stopErr)
