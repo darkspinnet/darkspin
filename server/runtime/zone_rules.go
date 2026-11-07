@@ -20,11 +20,17 @@ import (
 var embeddedZoneRules []byte
 
 type zoneRuleDocument struct {
-	Default   zoneRuleConfiguration            `json:"default"`
-	Campaigns map[string]zoneRuleConfiguration `json:"campaign"`
-	Replays   map[string]zoneRuleConfiguration `json:"replay"`
-	Tutorial  *zoneRuleConfiguration           `json:"tutorial,omitempty"`
-	Arena     *zoneRuleConfiguration           `json:"arena,omitempty"`
+	Default       zoneRuleConfiguration            `json:"default"`
+	ReplayDefault *zoneRuleOverrides               `json:"replay_default,omitempty"`
+	Campaigns     map[string]zoneRuleConfiguration `json:"campaign"`
+	Replays       map[string]zoneRuleConfiguration `json:"replay"`
+	Tutorial      *zoneRuleConfiguration           `json:"tutorial,omitempty"`
+	Arena         *zoneRuleConfiguration           `json:"arena,omitempty"`
+}
+
+// Mode overrides inherit the shared default rather than copying unrelated tuning.
+type zoneRuleOverrides struct {
+	MutationAgent *zoneMutationConfiguration `json:"mutation_agent,omitempty"`
 }
 
 type zonePopulationConfiguration struct {
@@ -44,11 +50,32 @@ type zoneAllyAlertConfiguration struct {
 }
 
 type zoneMutationConfiguration struct {
-	MinimumChainLevel         uint32 `json:"minimum_chain_level"`
-	WaveCount                 int    `json:"wave_count"`
-	SpawnWave                 int    `json:"spawn_wave"`
-	InterWaveDelayMillisecond uint32 `json:"inter_wave_delay_millisecond"`
-	Completion                string `json:"completion"`
+	MinimumChainLevel            uint32                          `json:"minimum_chain_level"`
+	WaveCount                    int                             `json:"wave_count"`
+	AdditionalWaveChancePercents []uint32                        `json:"additional_wave_chance_percents,omitempty"`
+	FixedWaves                   [][]zoneHordeEnemyConfiguration `json:"fixed_waves,omitempty"`
+	LieutenantChancePercent      uint32                          `json:"lieutenant_chance_percent"`
+	LieutenantLimitPerWave       int                             `json:"lieutenant_limit_per_wave"`
+	InterWaveDelayMillisecond    uint32                          `json:"inter_wave_delay_millisecond"`
+	Completion                   string                          `json:"completion"`
+}
+
+type zoneHordeEnemyConfiguration struct {
+	Noun  string `json:"noun"`
+	Count uint32 `json:"count"`
+}
+
+func (e zoneMutationConfiguration) fixedWaves() [][]game.ZoneHordeEnemy {
+	if e.FixedWaves == nil {
+		return nil
+	}
+	waves := make([][]game.ZoneHordeEnemy, len(e.FixedWaves))
+	for index, enemies := range e.FixedWaves {
+		for _, enemy := range enemies {
+			waves[index] = append(waves[index], game.ZoneHordeEnemy{NounName: enemy.Noun, Count: enemy.Count})
+		}
+	}
+	return waves
 }
 
 type zoneBossConfiguration struct {
@@ -82,6 +109,7 @@ func (e zoneRuleConfiguration) rules(key string) game.ZoneRules {
 		}, BossSpawning: boss,
 		AllyAlert: game.ZoneAllyAlertRules{RangePercent: 100, RangeOwner: "recipient", MaxHops: 1},
 		MutationAgent: game.ZoneMutationAgentRules{MinimumChainLevel: 6, WaveCount: 3, SpawnWave: 3,
+			LieutenantChancePercent: 30, LieutenantLimitPerWave: 1,
 			InterWaveDelayMillisecond: 500, IsAgentDefeatCompleting: true},
 	}
 	if e.AllyAlert != nil {
@@ -91,7 +119,11 @@ func (e zoneRuleConfiguration) rules(key string) game.ZoneRules {
 	if e.MutationAgent != nil {
 		rules.MutationAgent = game.ZoneMutationAgentRules{IsEnabled: true,
 			MinimumChainLevel: e.MutationAgent.MinimumChainLevel, WaveCount: e.MutationAgent.WaveCount,
-			SpawnWave: e.MutationAgent.SpawnWave, InterWaveDelayMillisecond: e.MutationAgent.InterWaveDelayMillisecond,
+			AdditionalWaveChancePercents: append([]uint32(nil), e.MutationAgent.AdditionalWaveChancePercents...),
+			FixedWaves:                   e.MutationAgent.fixedWaves(),
+			LieutenantChancePercent:      e.MutationAgent.LieutenantChancePercent,
+			LieutenantLimitPerWave:       e.MutationAgent.LieutenantLimitPerWave,
+			SpawnWave:                    e.MutationAgent.WaveCount, InterWaveDelayMillisecond: e.MutationAgent.InterWaveDelayMillisecond,
 			IsAgentDefeatCompleting: e.MutationAgent.Completion == "agent_defeat"}
 	}
 	return rules
@@ -125,6 +157,13 @@ func (e zoneRuleDocument) configuration(key string) zoneRuleConfiguration {
 		if isFound {
 			return configuration
 		}
+		if mode == "replay" && e.ReplayDefault != nil {
+			configuration = e.Default
+			if e.ReplayDefault.MutationAgent != nil {
+				configuration.MutationAgent = e.ReplayDefault.MutationAgent
+			}
+			return configuration
+		}
 	}
 	return e.Default
 }
@@ -149,6 +188,15 @@ func decodeZoneRules(payload []byte) (zoneRuleDocument, error) {
 	if err != nil {
 		return zoneRuleDocument{}, fmt.Errorf("zoneDefault: %w", err)
 	}
+	if document.Default.MutationAgent != nil && len(document.Default.MutationAgent.AdditionalWaveChancePercents) != 0 {
+		return zoneRuleDocument{}, errors.New("campaign default requires a fixed wave count")
+	}
+	if document.ReplayDefault != nil {
+		err = document.configuration("replay:default").validate("replay:default")
+		if err != nil {
+			return zoneRuleDocument{}, fmt.Errorf("zoneReplayDefault: %w", err)
+		}
+	}
 	missions := make(map[string]bool, 72)
 	for stage := uint32(1); stage <= 72; stage++ {
 		missions[fmt.Sprintf("%d-%d", (stage-1)/4+1, (stage-1)%4+1)] = true
@@ -156,6 +204,10 @@ func decodeZoneRules(payload []byte) (zoneRuleDocument, error) {
 	groups := map[string]map[string]zoneRuleConfiguration{"campaign": document.Campaigns, "replay": document.Replays}
 	for mode, entries := range groups {
 		for mission, configuration := range entries {
+			if mode == "campaign" && configuration.MutationAgent != nil &&
+				len(configuration.MutationAgent.AdditionalWaveChancePercents) != 0 {
+				return zoneRuleDocument{}, fmt.Errorf("zoneCampaign[%s]: requires a fixed wave count", mission)
+			}
 			if !missions[mission] {
 				return zoneRuleDocument{}, fmt.Errorf("zoneMission[%s:%s]: outside campaign", mode, mission)
 			}

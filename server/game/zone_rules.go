@@ -25,9 +25,14 @@ type ZoneAllyAlertRules struct {
 }
 
 type ZoneMutationAgentRules struct {
-	IsEnabled                 bool
-	MinimumChainLevel         uint32
-	WaveCount                 int
+	IsEnabled                    bool
+	MinimumChainLevel            uint32
+	WaveCount                    int
+	AdditionalWaveChancePercents []uint32
+	FixedWaves                   [][]ZoneHordeEnemy
+	LieutenantChancePercent      uint32
+	LieutenantLimitPerWave       int
+	// SpawnWave retains the checkpoint representation; encounter policy resolves the final wave.
 	SpawnWave                 int
 	InterWaveDelayMillisecond uint32
 	IsAgentDefeatCompleting   bool
@@ -65,6 +70,7 @@ func DefaultZoneRules(binding GameplayBinding) ZoneRules {
 		EnemyPopulation: DefaultEnemyPopulationRules(), BossSpawning: DefaultBossSpawnRules(),
 		AllyAlert: ZoneAllyAlertRules{IsEnabled: true, RangePercent: 100, RangeOwner: "recipient", MaxHops: 1},
 		MutationAgent: ZoneMutationAgentRules{IsEnabled: true, MinimumChainLevel: 6,
+			LieutenantChancePercent: 30, LieutenantLimitPerWave: 1,
 			WaveCount: 3, SpawnWave: 3, InterWaveDelayMillisecond: 500, IsAgentDefeatCompleting: true},
 	}
 }
@@ -87,11 +93,27 @@ func (e ZoneRules) Validate() error {
 		return errors.New("zone ally alert settings invalid")
 	}
 	mutation := e.MutationAgent
+	err = ValidateZoneHordeWaves(mutation.FixedWaves, mutation.WaveCount)
+	if err != nil {
+		return fmt.Errorf("zoneHorde: %w", err)
+	}
+	if len(mutation.FixedWaves) != 0 && len(mutation.AdditionalWaveChancePercents) != 0 {
+		return errors.New("fixed horde waves cannot use continuation chances")
+	}
+	if mutation.LieutenantChancePercent > 100 || mutation.LieutenantLimitPerWave < 0 || mutation.LieutenantLimitPerWave > 15 {
+		return errors.New("zone mutation lieutenant settings invalid")
+	}
 	if mutation.MinimumChainLevel < 1 || mutation.MinimumChainLevel > 72 ||
 		mutation.WaveCount < 1 || mutation.WaveCount > 10 ||
+		mutation.WaveCount+len(mutation.AdditionalWaveChancePercents) > 10 ||
 		mutation.SpawnWave < 1 || mutation.SpawnWave > mutation.WaveCount ||
 		mutation.InterWaveDelayMillisecond > 30000 {
 		return errors.New("zone mutation agent settings invalid")
+	}
+	for _, chancePercent := range mutation.AdditionalWaveChancePercents {
+		if chancePercent > 100 {
+			return errors.New("zone mutation wave chance must be between 0 and 100")
+		}
 	}
 	return nil
 }

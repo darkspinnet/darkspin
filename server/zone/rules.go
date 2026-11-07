@@ -36,11 +36,15 @@ func (e *Zone) restoreZoneRules(snapshot zonecheckpoint.Snapshot) error {
 	policy := zonehorde.Policy{
 		IsMutationAgentEnabled: mutation.IsEnabled, MutationAgentMinChainLevel: mutation.MinimumChainLevel,
 		WaveCount: mutation.WaveCount, MutationAgentWaveOrdinal: mutation.SpawnWave,
+		AdditionalWaveChancePercents:    append([]uint32(nil), mutation.AdditionalWaveChancePercents...),
+		FixedWaves:                      game.CloneZoneHordeWaves(mutation.FixedWaves),
+		LieutenantChancePercent:         mutation.LieutenantChancePercent,
+		LieutenantLimitPerWave:          mutation.LieutenantLimitPerWave,
 		InterWaveDelay:                  time.Duration(mutation.InterWaveDelayMillisecond) * time.Millisecond,
 		IsMutationAgentDefeatCompleting: mutation.IsAgentDefeatCompleting,
 	}
 	// Eligibility is already resolved in this snapshot. Restore completed
 	// encounters into this policy before the zone can admit another wave.
-	e.info.Horde = zonehorde.NewCampaignSessionWithPolicy(72, policy)
+	e.info.Horde = zonehorde.NewCampaignSessionWithSeed(72, policy, e.info.RunSeed)
 	return nil
 }

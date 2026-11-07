@@ -3144,6 +3144,11 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 				}
 				transition.immediatePackets = append(transition.immediatePackets, barrierPackets...)
 			}
+			alertPacket, alertErr := marshalCampaignHordeAlert(tutorialHordeDefeatedClientEventID)
+			if alertErr != nil {
+				return campaignDamageTransition{}, fmt.Errorf("hordeDefeated: %w", alertErr)
+			}
+			transition.immediatePackets = append(transition.immediatePackets, alertPacket)
 		}
 		if hordeTransition.NextWaveActorCount != 0 {
 			plans, err := s.planCampaignHordeFollowup(hordeTransition)
@@ -3152,6 +3157,13 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 			}
 			transition.hordePlans = plans
 			transition.hordeZone = s.zone
+			// Announce the next wave with the clearing hit, before the world
+			// timer's inter-wave delay. Spawn retries must not repeat the banner.
+			alertPacket, alertErr := marshalCampaignHordeAlert(tutorialHordeIncomingClientEventID)
+			if alertErr != nil {
+				return campaignDamageTransition{}, fmt.Errorf("hordeNextIncoming: %w", alertErr)
+			}
+			transition.immediatePackets = append(transition.immediatePackets, alertPacket)
 		}
 		if hordeTransition.IsComplete {
 			plans, packets, isStarted, err := s.admitCampaignGenericBossAfterHorde(

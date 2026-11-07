@@ -174,6 +174,8 @@ func newSession(
 	excludedLoci := make([]PopulationLocus, 0)
 	for _, markerSet := range director.MarkerSets {
 		if strings.Contains(strings.ToLower(markerSet.Name), "_ai_horde_") {
+			// Horde waves own their population budget. Their lieutenant spawns
+			// must not consume or inflate the ambient section allocation.
 			continue
 		}
 		if !director.IsInitialLayoutSelected &&

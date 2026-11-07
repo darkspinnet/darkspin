@@ -252,6 +252,11 @@ func (e campaignEncounterRuntime) acceptTriggerPublicationsLocked(
 			return result, fmt.Errorf("hordeState: %w", stateErr)
 		}
 		plannedPackets = append(plannedPackets, hordeStatePacket)
+		alertPacket, alertErr := marshalCampaignHordeAlert(tutorialHordeIncomingClientEventID)
+		if alertErr != nil {
+			return result, fmt.Errorf("hordeIncoming: %w", alertErr)
+		}
+		plannedPackets = append([][]byte{alertPacket}, plannedPackets...)
 		hordeErr := peerSession.zone.AdmitFirstHorde(
 			publication, peerSession.deployedObjectID, plannedHorde,
 		)

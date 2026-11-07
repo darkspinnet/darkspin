@@ -90,8 +90,12 @@ func (e campaignPreparation) legacyZoneRules(rules game.ZoneRules) game.ZoneRule
 	rules.MutationAgent = game.ZoneMutationAgentRules{
 		IsEnabled: policy.IsMutationAgentEnabled, MinimumChainLevel: policy.MutationAgentMinChainLevel,
 		WaveCount: policy.WaveCount, SpawnWave: policy.MutationAgentWaveOrdinal,
-		InterWaveDelayMillisecond: uint32(policy.InterWaveDelay / time.Millisecond),
-		IsAgentDefeatCompleting:   policy.IsMutationAgentDefeatCompleting,
+		AdditionalWaveChancePercents: append([]uint32(nil), policy.AdditionalWaveChancePercents...),
+		FixedWaves:                   game.CloneZoneHordeWaves(policy.FixedWaves),
+		LieutenantChancePercent:      policy.LieutenantChancePercent,
+		LieutenantLimitPerWave:       policy.LieutenantLimitPerWave,
+		InterWaveDelayMillisecond:    uint32(policy.InterWaveDelay / time.Millisecond),
+		IsAgentDefeatCompleting:      policy.IsMutationAgentDefeatCompleting,
 	}
 	return rules
 }
@@ -100,6 +104,10 @@ func campaignZoneHordePolicy(rules game.ZoneMutationAgentRules) zonehorde.Policy
 	return zonehorde.Policy{
 		IsMutationAgentEnabled: rules.IsEnabled, MutationAgentMinChainLevel: rules.MinimumChainLevel,
 		WaveCount: rules.WaveCount, MutationAgentWaveOrdinal: rules.SpawnWave,
+		AdditionalWaveChancePercents:    append([]uint32(nil), rules.AdditionalWaveChancePercents...),
+		FixedWaves:                      game.CloneZoneHordeWaves(rules.FixedWaves),
+		LieutenantChancePercent:         rules.LieutenantChancePercent,
+		LieutenantLimitPerWave:          rules.LieutenantLimitPerWave,
 		InterWaveDelay:                  time.Duration(rules.InterWaveDelayMillisecond) * time.Millisecond,
 		IsMutationAgentDefeatCompleting: rules.IsAgentDefeatCompleting,
 	}
@@ -112,7 +120,7 @@ func campaignZoneHordeSession(binding game.GameplayBinding, rules game.ZoneRules
 		// different restoring member must not apply their unlock gate again.
 		progression = 72
 	}
-	return zonehorde.NewCampaignSessionWithPolicy(progression, campaignZoneHordePolicy(rules.MutationAgent))
+	return zonehorde.NewCampaignSessionWithSeed(progression, campaignZoneHordePolicy(rules.MutationAgent), binding.RunSeed)
 }
 
 func campaignZoneAllyAlertRules(instance *zone.Zone) zonenpc.AllyAlertRules {

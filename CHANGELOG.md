@@ -2,6 +2,15 @@
 
 ### 2026-11-07
 
+- Show Horde Incoming on campaign horde entry and immediately between waves, and Horde Defeated when the encounter completes and its fences open.
+- Set static campaign 2-4's four horde waves to explicit Strafing Drakon, Arachno Striker, Chrono Striker, and Magnetic Master rosters, with one Mutation Agent on the final wave.
+- Set static campaign 2-3 horde waves to 6 Robo-bombers, then 2 Raytheoids, then 4 Robo-bombers and 4 Sting Raiders with one Mutation Agent.
+- Set static campaign 2-1 horde waves to 6, 6, and 8 Dynospheres, then 6 Dynospheres with one Mending Tanglid and one Mutation Agent.
+- Reduce horde lieutenant allowance to a 30% chance per wave with a maximum of one, configurable separately from ordinary map population in zone rules.
+- Keep campaign Mutation Agent encounters at four waves by default; replays use two waves with seeded 80% third-wave and conditional 50% fourth-wave chances, spawning the agent on the final wave.
+- Increase the default initial boss add count from 2 to 4.
+- Lower the default Mutation Agent minimum chain level from 7 to 4 (1-4).
+- Increase the default zone population from 15 to 25 enemies per section.
 - Move admin-panel remote diagnostic downloads from darkspin/bugs/server-downloads to darkspin/downloads, grouped in stable server folders without random suffixes.
 - #190 Prevent catalyst moves, drops, and pickups from leaving Health or Power above reduced capacity and disconnecting the client.
 - #190 Fix Proximity Mine placement failing when pursuit used a timestamp older than its admitted movement state.

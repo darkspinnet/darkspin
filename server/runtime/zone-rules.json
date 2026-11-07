@@ -1,6 +1,6 @@
 {
   "default": {
-    "enemies_per_section": 15,
+    "enemies_per_section": 25,
     "enemy_population": {
       "agent_selection": "current_coop",
       "agents_per_section": 1,
@@ -17,17 +17,137 @@
     },
     "boss_spawning": {
       "opening_adds_per_anchor": 1,
-      "initial_boss_add_count": 2,
+      "initial_boss_add_count": 4,
       "captain_delay_millisecond": 2000
     },
     "mutation_agent": {
-      "minimum_chain_level": 7,
-      "wave_count": 3,
-      "spawn_wave": 3,
+      "minimum_chain_level": 4,
+      "wave_count": 4,
+      "lieutenant_chance_percent": 30,
+      "lieutenant_limit_per_wave": 1,
       "inter_wave_delay_millisecond": 500,
       "completion": "agent_defeat"
     }
   },
-  "campaign": {},
+  "replay_default": {
+    "mutation_agent": {
+      "minimum_chain_level": 4,
+      "wave_count": 2,
+      "lieutenant_chance_percent": 30,
+      "lieutenant_limit_per_wave": 1,
+      "additional_wave_chance_percents": [80, 50],
+      "inter_wave_delay_millisecond": 500,
+      "completion": "agent_defeat"
+    }
+  },
+  "campaign": {
+    "2-1": {
+      "enemies_per_section": 25,
+      "enemy_population": {
+        "agent_selection": "current_coop",
+        "agents_per_section": 1,
+        "roster_selection": "current_composition",
+        "external_roster_weight_percent": 50,
+        "ambient_elite_chance_percent": 0,
+        "owned_summon_health_scaling": "run_and_party",
+        "fixture_health_scaling": "base"
+      },
+      "ally_alert": {
+        "range_percent": 100,
+        "range_owner": "recipient",
+        "max_hops": 1
+      },
+      "boss_spawning": {
+        "opening_adds_per_anchor": 1,
+        "initial_boss_add_count": 4,
+        "captain_delay_millisecond": 2000
+      },
+      "mutation_agent": {
+        "minimum_chain_level": 4,
+        "wave_count": 4,
+        "lieutenant_chance_percent": 30,
+        "lieutenant_limit_per_wave": 1,
+        "fixed_waves": [
+          [{"noun": "CitadelBasicShield.Noun", "count": 6}],
+          [{"noun": "CitadelBasicShield.Noun", "count": 6}],
+          [{"noun": "CitadelBasicShield.Noun", "count": 8}],
+          [{"noun": "CitadelBasicShield.Noun", "count": 6}, {"noun": "VerdanthSpecialTwo.Noun", "count": 1}]
+        ],
+        "inter_wave_delay_millisecond": 500,
+        "completion": "agent_defeat"
+      }
+    },
+    "2-3": {
+      "enemies_per_section": 25,
+      "enemy_population": {
+        "agent_selection": "current_coop",
+        "agents_per_section": 1,
+        "roster_selection": "current_composition",
+        "external_roster_weight_percent": 50,
+        "ambient_elite_chance_percent": 0,
+        "owned_summon_health_scaling": "run_and_party",
+        "fixture_health_scaling": "base"
+      },
+      "ally_alert": {
+        "range_percent": 100,
+        "range_owner": "recipient",
+        "max_hops": 1
+      },
+      "boss_spawning": {
+        "opening_adds_per_anchor": 1,
+        "initial_boss_add_count": 4,
+        "captain_delay_millisecond": 2000
+      },
+      "mutation_agent": {
+        "minimum_chain_level": 4,
+        "wave_count": 3,
+        "lieutenant_chance_percent": 30,
+        "lieutenant_limit_per_wave": 1,
+        "fixed_waves": [
+          [{"noun": "CitadelSpecificThree.Noun", "count": 6}],
+          [{"noun": "ZelemSpecialThree.Noun", "count": 2}],
+          [{"noun": "CitadelSpecificThree.Noun", "count": 4}, {"noun": "ZelemBasicFlyingMelee.Noun", "count": 4}]
+        ],
+        "inter_wave_delay_millisecond": 500,
+        "completion": "agent_defeat"
+      }
+    },
+    "2-4": {
+      "enemies_per_section": 25,
+      "enemy_population": {
+        "agent_selection": "current_coop",
+        "agents_per_section": 1,
+        "roster_selection": "current_composition",
+        "external_roster_weight_percent": 50,
+        "ambient_elite_chance_percent": 0,
+        "owned_summon_health_scaling": "run_and_party",
+        "fixture_health_scaling": "base"
+      },
+      "ally_alert": {
+        "range_percent": 100,
+        "range_owner": "recipient",
+        "max_hops": 1
+      },
+      "boss_spawning": {
+        "opening_adds_per_anchor": 1,
+        "initial_boss_add_count": 4,
+        "captain_delay_millisecond": 2000
+      },
+      "mutation_agent": {
+        "minimum_chain_level": 4,
+        "wave_count": 4,
+        "lieutenant_chance_percent": 30,
+        "lieutenant_limit_per_wave": 1,
+        "fixed_waves": [
+          [{"noun": "ZelemBasicPackfly.Noun", "count": 4}, {"noun": "NocturnaSpecialHomer.Noun", "count": 1}],
+          [{"noun": "VerdanthBasicMelee.Noun", "count": 2}, {"noun": "ZelemSpecialTwo.Noun", "count": 1}, {"noun": "ZelemBasicPackfly.Noun", "count": 4}],
+          [{"noun": "VerdanthBasicMelee.Noun", "count": 2}, {"noun": "ZelemBasicPackfly.Noun", "count": 2}, {"noun": "NocturnaSpecialHomer.Noun", "count": 2}],
+          [{"noun": "ZelemBasicPackfly.Noun", "count": 2}, {"noun": "NocturnaSpecialHomer.Noun", "count": 2}, {"noun": "VerdanthBasicMelee.Noun", "count": 2}]
+        ],
+        "inter_wave_delay_millisecond": 500,
+        "completion": "agent_defeat"
+      }
+    }
+  },
   "replay": {}
 }

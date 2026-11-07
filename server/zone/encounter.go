@@ -76,7 +76,7 @@ func (e *Zone) PlanInitialEncounter(
 		return InitialEncounterPlan{}, errors.New("encounter planning allocator unavailable")
 	}
 	hordePlans, nextHordeObjectID, err := zonehorde.PlanFirstWaveWithPolicy(
-		directorDefinition, publication, objectID.Next(), gameID, population.SectionRosters(), horde.Policy(),
+		directorDefinition, publication, objectID.Next(), gameID, population.SectionRosters(), horde.EncounterPolicy(publication),
 	)
 	if err != nil {
 		return InitialEncounterPlan{}, fmt.Errorf("initialHordePlan: %w", err)
@@ -142,7 +142,7 @@ func (e *Zone) PlanHordeFollowup(
 	}
 	plans, nextHordeObjectID, err := zonehorde.PlanWaveWithPolicy(
 		directorDefinition, publication, objectID.Next(), gameID,
-		transition.NextWaveActorCount, transition.NextWaveOrdinal, population.SectionRosters(), horde.Policy(),
+		transition.NextWaveActorCount, transition.NextWaveOrdinal, population.SectionRosters(), horde.EncounterPolicy(publication),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("hordeFollowupPlan: %w", err)

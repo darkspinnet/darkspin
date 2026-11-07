@@ -448,9 +448,14 @@ func (e campaignTutorialActivation) admitHorde() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("hordeState: %w", err)
 	}
+	alertPacket, alertErr := marshalCampaignHordeAlert(tutorialHordeIncomingClientEventID)
+	if alertErr != nil {
+		return nil, fmt.Errorf("hordeIncoming: %w", alertErr)
+	}
 	err = e.zone.AdmitFirstHorde(e.plan.Publication, e.activationHeroID, e.plan.Actors)
 	if err != nil {
 		return nil, fmt.Errorf("hordeAdmit: %w", err)
 	}
+	packets = append([][]byte{alertPacket}, packets...)
 	return append(packets, statePacket), nil
 }
