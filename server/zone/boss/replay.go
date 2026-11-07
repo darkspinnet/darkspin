@@ -6,8 +6,8 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 )
 
-// NamedBossNounForDirector keeps first-clear occurrences on their named boss
-// while replay destinations use the selected map's authored captain tier.
+// NamedBossNounForDirector keeps named first-clear encounters, restricts
+// destructors to chapter finales, and uses authored captains on replay maps.
 func NamedBossNounForDirector(
 	director game.CampaignDirector, chainLevelIndex uint32,
 ) (string, bool) {
@@ -17,11 +17,21 @@ func NamedBossNounForDirector(
 		if rules.LeaderSelection == "authored_planet_boss" {
 			candidate, isCandidateFound := authoredPlanetLeader(director)
 			if isCandidateFound {
-				return candidate, true
+				nounName, isFound = candidate, true
 			}
+		}
+		// Later campaign ranks reorder maps. A destructor map can occur
+		// between chapter finales; its eligible level captain owns that
+		// encounter instead of the first-rank map's destructor.
+		if isFound && IsFinalBossNoun(nounName) && chainLevelIndex%4 != 0 {
+			return eligibleCaptain(director)
 		}
 		return nounName, isFound
 	}
+	return eligibleCaptain(director)
+}
+
+func eligibleCaptain(director game.CampaignDirector) (string, bool) {
 	if director.Level == "" || director.Difficulty == 0 || director.Difficulty > 72 {
 		return "", false
 	}
@@ -62,6 +72,9 @@ func firstClearLeader(director game.CampaignDirector, stage uint32) (string, boo
 }
 
 func authoredPlanetLeader(director game.CampaignDirector) (string, bool) {
+	if director.Difficulty%4 != 0 {
+		return "", false
+	}
 	expectedNouns := map[string]string{"zelems_4": "zelemboss", "verdanth_4": "verdanthboss", "nocturna_1": "shadowboss", "cryos_2": "cryosboss", "infinity_4": "citadelboss", "scaldron_4": "scaldronboss"}
 	expected, isOccurrence := expectedNouns[strings.ToLower(director.Level)]
 	if !isOccurrence {
@@ -103,6 +116,14 @@ func LeaderPolicyResult(director game.CampaignDirector) string {
 	rules := director.BossSpawnRules.Resolved()
 	if director.IsReplay && rules.ReplayLeaderSelection == "eligible_captain" {
 		return "darkspin:eligible_captain"
+	}
+	nounName, isNamed := firstClearLeader(director, director.Difficulty)
+	if director.Difficulty%4 != 0 && isNamed && IsFinalBossNoun(nounName) {
+		captain, isCaptainFound := eligibleCaptain(director)
+		if isCaptainFound {
+			return "darkspin:eligible_captain:non_finale:" + captain
+		}
+		return "darkspin:non_finale:no_unique_eligible_captain"
 	}
 	if rules.LeaderSelection != "authored_planet_boss" {
 		return "darkspin:current_campaign"

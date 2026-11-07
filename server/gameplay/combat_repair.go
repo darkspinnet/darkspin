@@ -13,7 +13,6 @@ import (
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
 
-const reparatronCyberCreatureType = uint32(0)
 const reparatronAlertDelay = 1166667 * time.Microsecond
 const reparatronReviveDelay = 1900 * time.Millisecond
 
@@ -296,9 +295,9 @@ func (r campaignNPCActionRuntime) reparatronRepairCandidates(
 		if !isRepairable {
 			continue
 		}
-		physics, isPhysicsFound := r.program.NounPhysics[candidate.Plan.NounName]
-		if !isPhysicsFound || !physics.IsCreatureTypeKnown ||
-			physics.CreatureType != reparatronCyberCreatureType {
+		// The imported NPC class owns creature type. The partial noun-physics
+		// catalog does not contain every robot (including Reparatrons).
+		if !candidate.Plan.NPCProfile.IsKnown || candidate.Plan.NPCProfile.CreatureType != 0 {
 			continue
 		}
 		candidateObjectIDs = append(candidateObjectIDs, candidate.Plan.ObjectID)

@@ -966,6 +966,11 @@ func prepareBeastPetCharge(
 		peerSession.zone == nil || peerSession.zone.Companion() == nil {
 		return zonecompanion.Pursuit{}, game.DamageRange{}, nil, nil
 	}
+	damageProfile, profileErr := peerSession.beastPetDamageProfile()
+	if profileErr != nil {
+		return zonecompanion.Pursuit{}, game.DamageRange{}, nil,
+			fmt.Errorf("beastChargeProfile: %w", profileErr)
+	}
 	companion := peerSession.zone.Companion()
 	peerSession.retireBeastChargePets(time.Time{})
 	pet, isPetFound := companion.Snapshot(peerSession.beastPetObjectID)
@@ -1038,10 +1043,7 @@ func prepareBeastPetCharge(
 	}
 	damage, err := game.ResolveAbilityDamageRange(
 		game.AbilityDamage{Minimum: 8, Maximum: 12, Coefficient: 0.05},
-		game.DamageProfile{
-			PrimaryAttribute:        peerSession.beastPetDamage,
-			IsPrimaryAttributeFound: true,
-		},
+		damageProfile,
 	)
 	if err != nil {
 		if pursuit.TravelDuration > 0 {

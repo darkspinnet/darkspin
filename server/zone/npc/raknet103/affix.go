@@ -10,6 +10,19 @@ import (
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
+// Build 103 Ghostly Activate explicitly adds this installed shader. Modifier
+// replication supplies the HUD entry but does not execute the server Lua.
+const ghostlyShaderSlot uint8 = 12
+
+func ghostlyShader(objectID uint32, isRemovalRequested bool) raknet.AttachedEffectMessage {
+	return raknet.AttachedEffectMessage{
+		Slot: ghostlyShaderSlot, ObjectID: objectID,
+		Asset:           util.HashID("shadow_ghostform_shader_effect.ServerEventDef"),
+		IsForceAttached: !isRemovalRequested, IsRemovalRequested: isRemovalRequested,
+		IsHardStop: isRemovalRequested,
+	}
+}
+
 func affixAuraMessage(plan zonenpc.SpawnPlan, aura zonenpc.AffixAura) (raknet.ModifierCreatedMessage, error) {
 	index, isFound := zonenpc.AffixAuraIndex(aura.ModifierName)
 	if !isFound {
@@ -57,6 +70,14 @@ func AffixChanges(changes []zonenpc.AffixChange) ([][]byte, error) {
 				return nil, fmt.Errorf("auraCreate: %w", err)
 			}
 			messages = append(messages, message)
+		}
+		wasGhostly := plan.BossIdentity.HasModifier("Ghostly_NPCAffixModifier")
+		for _, aura := range change.PreviousAuras {
+			wasGhostly = wasGhostly || aura.ModifierName == "Ghostly_NPCAffixModifier"
+		}
+		isGhostly := plan.HasAffixModifier("Ghostly_NPCAffixModifier")
+		if wasGhostly != isGhostly {
+			messages = append(messages, ghostlyShader(plan.ObjectID, !isGhostly))
 		}
 		messages = append(messages, raknet.AttributeDataUpdateMessage{
 			ObjectID: plan.ObjectID, Value: affixAttributes(change.Target),

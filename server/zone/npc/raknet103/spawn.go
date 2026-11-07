@@ -276,6 +276,9 @@ func spawnWithAnimation(plan zonenpc.SpawnPlan, isRemnant bool, reflection rakne
 		}
 		messages = append(messages, message)
 	}
+	if plan.HasAffixModifier("Ghostly_NPCAffixModifier") {
+		messages = append(messages, ghostlyShader(plan.ObjectID, false))
+	}
 	if effectName := zonenpc.PackflyBoostEffectName(plan.PackflyHelperCount); effectName != "" {
 		messages = append(messages, raknet.AttachedEffectMessage{
 			Slot: 19, ObjectID: plan.ObjectID, IsForceAttached: true, Asset: util.HashID(effectName),

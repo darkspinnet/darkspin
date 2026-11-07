@@ -333,6 +333,9 @@ func (e *campaignDroneFollowStep) produce() ([][]byte, error) {
 		}
 		goalPosition := raknet.Vector3(goal)
 		facing := invincitronDroneFacing(position, goal)
+		goalFlags := uint32(0x01)
+		stopDistance := float32(0)
+		targetObjectID := uint32(0)
 		if !e.isMoveStarted || isDiscontinuous {
 			goalPacket, marshalErr := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
 				ObjectID: e.objectID, GoalFlags: 0x01, GoalPosition: goalPosition, Facing: facing,
@@ -342,10 +345,14 @@ func (e *campaignDroneFollowStep) produce() ([][]byte, error) {
 			}
 			packets = append(packets, goalPacket)
 		}
-		// Refresh the active mover's goals without resetting travel progress.
+		// Combat leaves the drone with a fifteen-metre attack stop distance.
+		// Orbit goals are less than a metre apart: clear that distance and
+		// any combat target whenever the orbit reclaims locomotion ownership.
 		locomotionPacket, marshalErr := raknet.MarshalApplication(raknet.LocomotionUpdateContractMessage{
 			ObjectID: e.objectID, Locomotion: raknet.LocomotionReflection{
 				GoalPosition: &goalPosition, PartialGoalPosition: &goalPosition, Facing: &facing,
+				GoalFlags: &goalFlags, AllowedStopDistance: &stopDistance,
+				DesiredStopDistance: &stopDistance, TargetObjectID: &targetObjectID,
 			},
 		})
 		if marshalErr != nil {

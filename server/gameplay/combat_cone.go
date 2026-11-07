@@ -341,10 +341,11 @@ func (e campaignConeSchedule) hit() ([][]byte, error) {
 			source.Plan.Position, facing, target,
 			e.plan.Profile.Radius, e.plan.Profile.Angle,
 		)
-		if e.plan.Profile.AbilityName == "NomadBioSpecialTwoSwipe" &&
+		if (e.plan.Profile.AbilityName == "NomadBioSpecialTwoSwipe" ||
+			e.plan.Profile.AbilityName == "NocturnaSpecialMunchMelee") &&
 			target.ObjectID == primary.ObjectID {
-			// Build 103 chunk 702 inherits the primary melee hit; its
-			// additionalTargetsRange of 3 only bounds the extra victim.
+			// Build 103 chunks 702 and 167 inherit the primary melee hit;
+			// their secondary arc must not shorten the primary attack range.
 			// Reuse melee range validation, including both actor footprints.
 			primaryPlan, controlErr := zonenpc.PlanControlWithProfile(
 				source, target.ObjectID, target.Position, e.plan.Profile,

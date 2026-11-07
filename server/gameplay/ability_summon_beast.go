@@ -900,15 +900,17 @@ func (r campaignDamageRuntime) startBeastPetAttackWithResume(
 		return nil, nil
 	}
 	ability := r.npc.program.BeastPetBasic
+	damageProfile, profileErr := peerSession.beastPetDamageProfile()
+	if profileErr != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("beastPetProfile: %w", profileErr)
+	}
 	damageRange, err := game.ResolveAbilityDamageRange(
 		game.AbilityDamage{
 			Minimum: ability.MinimumDamage, Maximum: ability.MaximumDamage,
 			Coefficient: ability.DamageCoefficient,
 		},
-		game.DamageProfile{
-			PrimaryAttribute:        peerSession.beastPetDamage,
-			IsPrimaryAttributeFound: true,
-		},
+		damageProfile,
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()

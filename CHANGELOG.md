@@ -2,6 +2,10 @@
 
 ### 2026-11-06
 
+- #188 Repair eligible Cyber corpses without requiring a physics-catalog entry, and include Mending Tanglid captains in fleeing behavior.
+- #188 Restore Savage Ally stat scaling and apply PetDamage as a separate bonus for attacks and Charge.
+- #188 Restrict destructor encounters to x-4 missions and preserve Carrion Maw's primary melee reach.
+- #188 Publish Ghostly aura shaders on entry and exit, and clear stale combat stopping distances during drone orbits.
 - #185 Keep one Mutation Agent sphere visible when it switches between idle and firing.
 - #186 Prevent a client crash when continuing a campaign with an AI Companion in a slot vacated by a player.
 - #184 Refill Health and Power to their catalyst-adjusted maximums when continuing a campaign, and restore Power on damaging hits with Power Leech.

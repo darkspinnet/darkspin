@@ -146,7 +146,8 @@ func (r campaignNPCActionRuntime) produceMendingTanglidFlee(
 	source zonenpc.Snapshot, target zone.NPCTarget, profile zonenpc.ActionProfile,
 	timestamp uint64,
 ) ([][]byte, bool, error) {
-	if campaignDifficultyNounFamily(source.Plan.NounName) != "verdanthspecialtwo" ||
+	family := campaignDifficultyNounFamily(source.Plan.NounName)
+	if (family != "verdanthspecialtwo" && family != "verdanthspecialtwo_captain") ||
 		zonegeometry.Distance(source.Plan.Position, target.Position) >= 10 {
 		return nil, false, nil
 	}
