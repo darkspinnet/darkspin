@@ -2,9 +2,13 @@
 
 ### 2026-11-07
 
+- Move admin-panel remote diagnostic downloads from darkspin/bugs/server-downloads to darkspin/downloads, grouped in stable server folders without random suffixes.
+- [#190](https://github.com/darkspinnet/darkspin/issues/190) Prevent catalyst moves, drops, and pickups from leaving Health or Power above reduced capacity and disconnecting the client.
+- [#190](https://github.com/darkspinnet/darkspin/issues/190) Fix Proximity Mine placement failing when pursuit used a timestamp older than its admitted movement state.
+- [#190](https://github.com/darkspinnet/darkspin/issues/190) Preserve Haster's death animation when a queued attack would otherwise overwrite it.
+- [#190](https://github.com/darkspinnet/darkspin/issues/190) Resolve mission-item Create Detail requests against collected mission loot and preserve their detail status through checkpoints and reward claims.
 - Move gameplay tuning from blanket Server Rules controls to server-embedded JSON defaults with separate campaign and replay mission overrides and checkpointed zone rules.
 - Reduce the default pause between horde waves from 1500 ms to 500 ms.
-- Remove the universal enemies-per-section Server Rules setting and use destination-map population budgets, retaining provisional counts until each map is tuned.
 - Clear defeated mobs' combat statuses and remove their active status modifiers across all co-op players, including Electro Swath's reduced healing and stun effects, while preserving corpse and resurrection lifecycles.
 - Extend launcher campaign progress from the first 24 missions to all 72, displaying Invasion as 7-1 onward and Apocalypse as 13-1 onward with the correct planet names.
 - Stagger campaign player and AI Companion beam-in by group slot at 200 ms intervals, keeping heroes hidden and protected until their entry.

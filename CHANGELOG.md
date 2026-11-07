@@ -2,6 +2,11 @@
 
 ### 2026-11-07
 
+- Move admin-panel remote diagnostic downloads from darkspin/bugs/server-downloads to darkspin/downloads, grouped in stable server folders without random suffixes.
+- #190 Prevent catalyst moves, drops, and pickups from leaving Health or Power above reduced capacity and disconnecting the client.
+- #190 Fix Proximity Mine placement failing when pursuit used a timestamp older than its admitted movement state.
+- #190 Preserve Haster's death animation when a queued attack would otherwise overwrite it.
+- #190 Resolve mission-item Create Detail requests against collected mission loot and preserve their detail status through checkpoints and reward claims.
 - Move gameplay tuning from blanket Server Rules controls to server-embedded JSON defaults with separate campaign and replay mission overrides and checkpointed zone rules.
 - Reduce the default pause between horde waves from 1500 ms to 500 ms.
 - Clear defeated mobs' combat statuses and remove their active status modifiers across all co-op players, including Electro Swath's reduced healing and stun effects, while preserving corpse and resurrection lifecycles.

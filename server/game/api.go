@@ -70,6 +70,7 @@ type API struct {
 	qosPort             uint16
 	logger              *log.Logger
 	resumeActivator     ResumeActivator
+	partDetailConverter PartDetailConverter
 	isModded            bool
 	isDedicated         bool
 	broadcastMutex      sync.Mutex
@@ -77,21 +78,22 @@ type API struct {
 }
 
 type APIOptions struct {
-	BotPortraitFinder BotPortraitFinder
-	IsModded          bool
-	IsDedicated       bool
-	UserManager       UserManager
-	Template          *sporenet.TemplateDatabase
-	PartCatalog       *PartCatalog
-	Vendor            *sporenet.Vendor
-	PartShopRules     sporenet.PartShopRules
-	Storage           string
-	StaticFileSystem  fs.FS
-	Host              string
-	HTTPPort          uint16
-	QoSPort           uint16
-	Logger            *log.Logger
-	ResumeActivator   ResumeActivator
+	BotPortraitFinder   BotPortraitFinder
+	IsModded            bool
+	IsDedicated         bool
+	UserManager         UserManager
+	Template            *sporenet.TemplateDatabase
+	PartCatalog         *PartCatalog
+	Vendor              *sporenet.Vendor
+	PartShopRules       sporenet.PartShopRules
+	Storage             string
+	StaticFileSystem    fs.FS
+	Host                string
+	HTTPPort            uint16
+	QoSPort             uint16
+	Logger              *log.Logger
+	ResumeActivator     ResumeActivator
+	PartDetailConverter PartDetailConverter
 }
 
 func RegisterAPI(router *recaphttp.Router, options APIOptions) error {
@@ -105,6 +107,7 @@ func RegisterAPI(router *recaphttp.Router, options APIOptions) error {
 		storage: options.Storage, staticFileSystem: options.StaticFileSystem,
 		host: options.Host, httpPort: options.HTTPPort, qosPort: options.QoSPort, logger: logger,
 		resumeActivator:     options.ResumeActivator,
+		partDetailConverter: options.PartDetailConverter,
 		isModded:            options.IsModded,
 		isDedicated:         options.IsDedicated,
 		partShopRules:       options.PartShopRules,
@@ -349,7 +352,6 @@ func (a *API) game(writer http.ResponseWriter, request *http.Request, uri *recap
 		a.vendorParts(writer, request, user, values.Get("transactions"))
 	case "api.inventory.updatePartStatus":
 		partIDs, partIDErr := parseUint64CSV(values.Get("part_id"))
-		canonicalizePartStatusIDs(partIDs)
 		statusCodes, statusErr := parseUint64CSV(values.Get("status"))
 		isDetailStatus := len(statusCodes) != 0
 		for _, currentStatus := range statusCodes {
@@ -363,9 +365,7 @@ func (a *API) game(writer http.ResponseWriter, request *http.Request, uri *recap
 			len(partIDs) == len(statusCodes) && isDetailStatus
 		var statusErrApply error
 		if isSuccess {
-			_, statusErrApply = a.userManager.ConvertPartsToDetail(
-				request.Context(), user, partIDs,
-			)
+			statusErrApply = a.convertPartsToDetail(request.Context(), user, partIDs)
 			isSuccess = statusErrApply == nil
 		}
 		if a.logger != nil {

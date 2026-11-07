@@ -12,6 +12,7 @@ type Equipment struct {
 	Level             uint16
 	Rarity            uint8
 	Cost              uint32
+	IsDetail          bool
 }
 
 type EquipmentInventory struct {
@@ -39,6 +40,17 @@ type EquipmentCollection struct {
 type EquipmentCompletion struct {
 	CompletionID uint64
 	Inventory    EquipmentInventory
+}
+
+// EquipmentDetailRequest keeps mission object identities separate from account
+// part identities. The consuming zone validates mission ownership first.
+type EquipmentDetailRequest struct {
+	ObjectIDs    []uint32
+	OwnedPartIDs []uint64
+}
+
+type OwnedPartDetailStore interface {
+	ConvertOwnedPartsToDetail(context.Context, []uint64) error
 }
 
 // EquipmentStore persists a completed mission as one idempotent transaction.

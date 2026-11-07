@@ -946,6 +946,7 @@ func (s *gameplayPeerSession) pendingPackets() ([][]byte, uint64) {
 	// No transport acknowledgement is required when every byte in an
 	// untagged batch has expired. Never discard an attachment delivery owner.
 	s.pendingPacketBatches = pruneExpiredCinematicBatches(s.pendingPacketBatches, now)
+	s.pendingPacketBatches = s.pruneCorpseAnimationBatches(s.pendingPacketBatches)
 	packetCount := 0
 	for _, batch := range s.pendingPacketBatches {
 		packetCount += len(batch.packets)
@@ -962,7 +963,7 @@ func (s *gameplayPeerSession) pendingPackets() ([][]byte, uint64) {
 		if batch.isCampaignPresentation && (!s.dungeonSetup.IsCommitted() || s.isRejoinPending) {
 			break
 		}
-		packets = append(packets, batch.packetsAt(now)...)
+		packets = append(packets, s.retainCorpseAnimations(batch.packetsAt(now))...)
 		batchID = batch.id
 	}
 	return packets, batchID

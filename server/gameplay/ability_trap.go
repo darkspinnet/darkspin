@@ -558,6 +558,9 @@ func (r campaignAbilityCommandRuntime) handleHeroTrap(
 	}
 	if !isInsideZoneTrigger(peerSession.playerPosition, position, admissionRange) {
 		if definition.Name == "ClaymoreTrap" || definition.IsShouldPursue {
+			// Admission refreshes the motion clock under the registry lock.
+			// Pursuit must use that time rather than the earlier request time.
+			req.startTime = abilityStartTime
 			return r.pursueTrapLocked(req, peerSession, sessionKey, position, admissionRange)
 		}
 		r.registry.mutex.Unlock()

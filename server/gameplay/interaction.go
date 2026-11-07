@@ -544,7 +544,6 @@ func (r campaignInteractionRuntime) handlePickup(
 			r.registry.mutex.Unlock()
 			return nil, errors.New("campaignCrystalInventory: unavailable")
 		}
-		previousInventory := pendingInventory
 		pendingPickup := crystalPickup.Object
 		// Each pickup interaction owns a fresh simulator clock. Admission takes
 		// one second, longer than the retained half-second lob, so the pickup is
@@ -620,8 +619,7 @@ func (r campaignInteractionRuntime) handlePickup(
 		step := campaignCrystalPickupStep{
 			runtime: r, ctx: ctx, sessionKey: sessionKey,
 			generation: generation, objectID: objectID, run: crystalRun,
-			previousInventory: previousInventory,
-			pendingInventory:  &pendingInventory, pendingPickup: &pendingPickup,
+			pendingInventory: &pendingInventory, pendingPickup: &pendingPickup,
 			pickupPosition:  crystalPickup.Object.Position,
 			isLootBagReward: crystalPickup.IsLootBagReward,
 			releasePacket:   releasePacket,
@@ -1362,18 +1360,17 @@ func (f campaignEquipmentPickupFailure) handle(_ error) {
 }
 
 type campaignCrystalPickupStep struct {
-	runtime           campaignInteractionRuntime
-	ctx               context.Context
-	sessionKey        string
-	generation        uint64
-	objectID          uint32
-	run               *interactraknet.CrystalPickupRun
-	previousInventory sim.CrystalInventory
-	pendingInventory  *sim.CrystalInventory
-	pendingPickup     *sim.CrystalPickupObject
-	pickupPosition    sim.Position
-	isLootBagReward   bool
-	releasePacket     []byte
+	runtime          campaignInteractionRuntime
+	ctx              context.Context
+	sessionKey       string
+	generation       uint64
+	objectID         uint32
+	run              *interactraknet.CrystalPickupRun
+	pendingInventory *sim.CrystalInventory
+	pendingPickup    *sim.CrystalPickupObject
+	pickupPosition   sim.Position
+	isLootBagReward  bool
+	releasePacket    []byte
 }
 
 func (s campaignCrystalPickupStep) produce() ([][]byte, error) {
@@ -1418,14 +1415,19 @@ func (s campaignCrystalPickupStep) produce() ([][]byte, error) {
 	isCheckpointReady := false
 	if len(result[0].Actions) != 0 &&
 		result[0].Actions[0].Kind == sim.CrystalSlotAssigned {
+		stagedSession, stageErr := peerSession.prepareCrystalInventory(*s.pendingInventory)
+		if stageErr != nil {
+			peerSession.zone.Pickups().Release(s.objectID)
+			peerSession.releaseCampaignCrystalSchedule(s.objectID, s.run)
+			s.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("crystalPickupStage: %w", stageErr)
+		}
 		packet, err = interactraknet.MarshalCrystalCollection(
 			result[0], s.objectID, uint8(peerSession.binding.Slot),
 			*s.pendingInventory,
 		)
 		if err == nil {
-			previewSession := peerSession
-			previewSession.setCrystalInventory(*s.pendingInventory)
-			resourcePackets, resourceErr := previewSession.marshalCrystalResources()
+			resourcePackets, resourceErr := stagedSession.marshalCrystalResources()
 			if resourceErr != nil {
 				err = fmt.Errorf("crystalResources: %w", resourceErr)
 			} else {
@@ -1438,30 +1440,15 @@ func (s campaignCrystalPickupStep) produce() ([][]byte, error) {
 			// The CrystalAcquired packet has no player selector and must
 			// remain local to the collecting player's HUD.
 			worldPackets = append(worldPackets, packet[:3]...)
-			err = peerSession.zone.SetCrystalInventory(
-				peerSession.binding.UserID, peerSession.generation,
-				*s.pendingInventory,
-			)
+			err = peerSession.commitCrystalInventory(stagedSession, s.objectID)
 			if err == nil {
-				if !peerSession.zone.Pickups().Commit(s.objectID) {
-					rollbackErr := peerSession.zone.SetCrystalInventory(
-						peerSession.binding.UserID, peerSession.generation,
-						s.previousInventory,
+				peerSession.zone.PickupPayload().RemoveCrystal(s.objectID)
+				if s.isLootBagReward {
+					peerSession.campaignCrystalSelectionBag.record(
+						s.pendingPickup.CrystalType, s.pendingPickup.Rarity,
 					)
-					err = fmt.Errorf(
-						"crystalPickupCommit: %w",
-						errors.Join(errors.New("reservation missing"), rollbackErr),
-					)
-				} else {
-					peerSession.setCrystalInventory(*s.pendingInventory)
-					peerSession.zone.PickupPayload().RemoveCrystal(s.objectID)
-					if s.isLootBagReward {
-						peerSession.campaignCrystalSelectionBag.record(
-							s.pendingPickup.CrystalType, s.pendingPickup.Rarity,
-						)
-					}
-					isCheckpointReady = true
 				}
+				isCheckpointReady = true
 			}
 		}
 	} else if len(result[0].Actions) != 0 {
@@ -1485,9 +1472,15 @@ func (s campaignCrystalPickupStep) produce() ([][]byte, error) {
 			if !isInventoryFound {
 				err = errors.New("crystal repair inventory unavailable")
 			} else {
-				peerSession.setCrystalInventory(inventory)
+				var stagedSession gameplayPeerSession
+				stagedSession, err = peerSession.prepareCrystalInventory(inventory)
 				var repairPackets [][]byte
-				repairPackets, err = marshalCrystalRepair(peerSession)
+				if err == nil {
+					repairPackets, err = marshalCrystalRepair(stagedSession)
+				}
+				if err == nil {
+					err = peerSession.commitCrystalInventory(stagedSession, 0)
+				}
 				if err == nil {
 					packet = append(packet, repairPackets...)
 				}

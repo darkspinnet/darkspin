@@ -990,20 +990,6 @@ func New(options Options) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resumeCoordinator: %w", err)
 	}
-	err = game.RegisterAPI(router, game.APIOptions{
-		BotPortraitFinder: gameManager,
-		IsDedicated:       isDedicated,
-		IsModded:          options.IsModded,
-		UserManager:       userManager, Template: templateDatabase, PartCatalog: partCatalog, Vendor: vendor,
-		PartShopRules:   serverRuleStore.shopRules,
-		ResumeActivator: resumeCoordinator,
-		Storage:         runtimePath, StaticFileSystem: webFileSystem,
-		Host: host, HTTPPort: ports.http, QoSPort: ports.qos,
-		Logger: logger,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("apiRegister: %w", err)
-	}
 	err = readiness.RegisterWithAdmission(router, buildinfo.Version, gameVersion, panelMaintenance)
 	if err != nil {
 		return nil, fmt.Errorf("readinessRegister: %w", err)
@@ -1077,6 +1063,22 @@ func New(options Options) (*Server, error) {
 		gameplayJoin, userManager, simulationProgram, logger, campaignSetup, navigationSource,
 		zone.NewSchedulerTimer(taskScheduler), checkpointManager, serverRuleStore,
 	)
+	err = game.RegisterAPI(router, game.APIOptions{
+		BotPortraitFinder: gameManager,
+		IsDedicated:       isDedicated,
+		IsModded:          options.IsModded,
+		UserManager:       userManager, Template: templateDatabase, PartCatalog: partCatalog, Vendor: vendor,
+		PartShopRules:       serverRuleStore.shopRules,
+		ResumeActivator:     resumeCoordinator,
+		PartDetailConverter: gameplayLifecycle,
+		Storage:             runtimePath, StaticFileSystem: webFileSystem,
+		Host: host, HTTPPort: ports.http, QoSPort: ports.qos,
+		Logger: logger,
+	})
+	if err != nil {
+		gameplayLifecycle.Cleanup()
+		return nil, fmt.Errorf("apiRegister: %w", err)
+	}
 	reportContext := reportContextProvider{
 		gameplay: gameplayLifecycle, presence: presenceRegistry,
 		isModded: options.IsModded, modNames: append([]string(nil), options.ModNames...),

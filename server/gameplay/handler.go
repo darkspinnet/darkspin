@@ -883,6 +883,7 @@ type gameplayHandlerDependencies struct {
 
 type Lifecycle struct {
 	accountTransportSource accountTransportSource
+	partDetailConverter    game.PartDetailConverter
 	cleanup                func()
 	disconnectAddress      func(string, uint64)
 	discardGame            func(uint32)
@@ -949,32 +950,43 @@ func (r gameplayCrystalRuntime) handle(packet raknet.Packet) ([][]byte, error) {
 			return r.result(command, false)
 		}
 		isMoved := inventory.Move(int(command.SourceSlot), int(command.DestinationSlot), slotCount)
-		if isMoved {
-			err = peerSession.zone.SetCrystalInventory(
-				peerSession.binding.UserID, peerSession.generation, inventory,
-			)
-			if err == nil {
-				peerSession.setCrystalInventory(inventory)
-				r.registry.sessions[sessionKey] = peerSession
-			}
-		}
-		r.registry.mutex.Unlock()
-		if err != nil {
-			return nil, fmt.Errorf("crystalMoveStore: %w", err)
-		}
 		if !isMoved {
+			r.registry.mutex.Unlock()
 			return r.result(command, false)
 		}
-		resultPackets, resultErr := r.acceptedResult(command, peerSession)
+		staged, stageErr := peerSession.prepareCrystalInventory(inventory)
+		if stageErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("crystalMoveStage: %w", stageErr)
+		}
+		resultPackets, statePackets, resultErr := r.prepareResult(command, staged)
 		if resultErr != nil {
+			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("crystalMoveResult: %w", resultErr)
 		}
-		return resultPackets, nil
+		err = peerSession.commitCrystalInventory(staged, 0)
+		if err != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("crystalMoveStore: %w", err)
+		}
+		r.registry.sessions[sessionKey] = peerSession
+		r.registry.mutex.Unlock()
+		return r.acceptedResult(peerSession, resultPackets, statePackets), nil
 	}
 	slot, isRemoved := inventory.Remove(int(command.SourceSlot), slotCount)
 	if !isRemoved || slot.NounName == "" {
 		r.registry.mutex.Unlock()
 		return r.result(command, false)
+	}
+	staged, stageErr := peerSession.prepareCrystalInventory(inventory)
+	if stageErr != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("crystalDropStage: %w", stageErr)
+	}
+	resultPackets, statePackets, resultErr := r.prepareResult(command, staged)
+	if resultErr != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("crystalDropResult: %w", resultErr)
 	}
 	source := sim.Position{
 		X: peerSession.playerPosition.X, Y: peerSession.playerPosition.Y,
@@ -1024,9 +1036,7 @@ func (r gameplayCrystalRuntime) handle(packet raknet.Packet) ([][]byte, error) {
 		})
 	}
 	if err == nil {
-		err = peerSession.zone.SetCrystalInventory(
-			peerSession.binding.UserID, peerSession.generation, inventory,
-		)
+		err = peerSession.commitCrystalInventory(staged, 0)
 	}
 	if err != nil {
 		peerSession.zone.Pickups().Remove(objectID)
@@ -1035,7 +1045,6 @@ func (r gameplayCrystalRuntime) handle(packet raknet.Packet) ([][]byte, error) {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("crystalDropCommit: %w", err)
 	}
-	peerSession.setCrystalInventory(inventory)
 	for candidateKey, candidate := range r.registry.sessions {
 		if candidateKey == sessionKey || candidate.zone != peerSession.zone {
 			continue
@@ -1052,24 +1061,26 @@ func (r gameplayCrystalRuntime) handle(packet raknet.Packet) ([][]byte, error) {
 	}
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
-	resultPackets, err := r.acceptedResult(command, peerSession)
-	if err != nil {
-		return nil, fmt.Errorf("crystalDropResult: %w", err)
-	}
-	return append(resultPackets, worldPackets...), nil
+	return append(r.acceptedResult(peerSession, resultPackets, statePackets), worldPackets...), nil
 }
 
-func (r gameplayCrystalRuntime) acceptedResult(
+func (r gameplayCrystalRuntime) prepareResult(
 	command raknet.CrystalDragCommand, peerSession gameplayPeerSession,
-) ([][]byte, error) {
+) ([][]byte, [][]byte, error) {
 	statePackets, err := marshalGameplayCrystalState(peerSession)
 	if err != nil {
-		return nil, fmt.Errorf("crystalBonusMarshal: %w", err)
+		return nil, nil, fmt.Errorf("crystalBonusMarshal: %w", err)
 	}
 	resultPackets, err := r.result(command, true)
 	if err != nil {
-		return nil, fmt.Errorf("crystalAcceptedResult: %w", err)
+		return nil, nil, fmt.Errorf("crystalAcceptedResult: %w", err)
 	}
+	return resultPackets, statePackets, nil
+}
+
+func (r gameplayCrystalRuntime) acceptedResult(
+	peerSession gameplayPeerSession, resultPackets [][]byte, statePackets [][]byte,
+) [][]byte {
 	// Teammates track this player's catalyst records too. The drag response
 	// itself is local, but inventory and link updates include the player slot.
 	r.registry.mutex.Lock()
@@ -1090,7 +1101,7 @@ func (r gameplayCrystalRuntime) acceptedResult(
 	r.registry.mutex.Unlock()
 	// A drag response changes the HUD, but does not refresh the player-owned
 	// crystal records used by subsequent tooltips and drag admission.
-	return append(resultPackets, statePackets...), nil
+	return append(resultPackets, statePackets...)
 }
 
 func (r gameplayCrystalRuntime) result(
@@ -1276,6 +1287,7 @@ func NewHandler(
 	handler := newGameplayHandlerWithDependencies(
 		gameplayJoin, progression, program, logger, dependency,
 	)
+	lifecycle.partDetailConverter = newPartDetailConverter(transportSource.registry, progression)
 	if lifecycle.cleanup == nil {
 		lifecycle.cleanup = func() {}
 	}

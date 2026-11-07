@@ -126,25 +126,17 @@ func (e *App) DownloadRemoteControlDiagnostic(serverAddress, identity, kind, nam
 	if logDirectory == "" || reportDirectory == "" {
 		return RemoteControlDiagnosticDownload{}, errors.New("launcher report directories are unavailable")
 	}
-	directory := filepath.Join(reportDirectory, "server-downloads")
+	directory := filepath.Join(filepath.Dir(reportDirectory), "downloads", reportSlug(address))
 	err = os.MkdirAll(directory, 0o700)
 	if err != nil {
 		return RemoteControlDiagnosticDownload{}, fmt.Errorf("diagnosticMkdir: %w", err)
 	}
-	// Each download gets its own directory, preserving the report's extension
-	// and split-archive filename without overwriting an earlier download.
-	directory, err = os.MkdirTemp(directory, reportSlug(address)+"-*")
-	if err != nil {
-		return RemoteControlDiagnosticDownload{}, fmt.Errorf("diagnosticTemp: %w", err)
-	}
+	// Keep downloads together by server. Duplicate filenames receive a suffix
+	// without overwriting a previously downloaded report.
 	filename := "_" + strings.Map(diagnosticFilenameRune, path.Base(name))
 	destination := filepath.Join(directory, filename)
-	err = saveDiagnosticDownload(response, destination)
+	destination, err = saveDiagnosticDownload(response, destination)
 	if err != nil {
-		removeErr := os.Remove(directory)
-		if removeErr != nil {
-			e.log(fmt.Sprintf("Diagnostic download directory cleanup failed: %v", removeErr))
-		}
 		return RemoteControlDiagnosticDownload{}, fmt.Errorf("diagnosticSave: %w", err)
 	}
 	return RemoteControlDiagnosticDownload{Path: destination}, nil
@@ -157,31 +149,42 @@ func diagnosticFilenameRune(character rune) rune {
 	return character
 }
 
-func saveDiagnosticDownload(response *http.Response, destination string) error {
-	w, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return fmt.Errorf("downloadCreate: %w", err)
+func saveDiagnosticDownload(response *http.Response, destination string) (string, error) {
+	originalDestination := destination
+	extension := filepath.Ext(destination)
+	var w *os.File
+	for attempt := 1; ; attempt++ {
+		var err error
+		w, err = os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if errors.Is(err, os.ErrExist) {
+			destination = fmt.Sprintf("%s (%d)%s", strings.TrimSuffix(originalDestination, extension), attempt+1, extension)
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("downloadCreate: %w", err)
+		}
+		break
 	}
 	count, copyErr := io.Copy(w, io.LimitReader(response.Body, diagnostic.MaxDownloadSize+1))
 	closeErr := w.Close()
 	if copyErr == nil && closeErr == nil && count <= diagnostic.MaxDownloadSize &&
 		(response.ContentLength < 0 || count == response.ContentLength) {
-		return nil
+		return destination, nil
 	}
 	removeErr := os.Remove(destination)
 	if removeErr != nil {
-		return fmt.Errorf("downloadCleanup: %w", removeErr)
+		return "", fmt.Errorf("downloadCleanup: %w", removeErr)
 	}
 	if copyErr != nil {
-		return fmt.Errorf("downloadRead: %w", copyErr)
+		return "", fmt.Errorf("downloadRead: %w", copyErr)
 	}
 	if closeErr != nil {
-		return fmt.Errorf("downloadClose: %w", closeErr)
+		return "", fmt.Errorf("downloadClose: %w", closeErr)
 	}
 	if count > diagnostic.MaxDownloadSize {
-		return errors.New("controlPanel:diagnostic_too_large")
+		return "", errors.New("controlPanel:diagnostic_too_large")
 	}
-	return errors.New("diagnostic download was incomplete")
+	return "", errors.New("diagnostic download was incomplete")
 }
 
 func closeDiagnosticResponse(body io.ReadCloser) {
