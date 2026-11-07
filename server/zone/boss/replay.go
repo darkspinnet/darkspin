@@ -6,11 +6,14 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 )
 
-// NamedBossNounForDirector keeps named first-clear encounters, restricts
-// destructors to chapter finales, and uses authored captains on replay maps.
+// NamedBossNounForDirector enforces static campaign finales separately from
+// the existing configurable replay encounter policy.
 func NamedBossNounForDirector(
 	director game.CampaignDirector, chainLevelIndex uint32,
 ) (string, bool) {
+	if !director.IsReplay {
+		return staticCampaignLeader(director, chainLevelIndex)
+	}
 	rules := director.BossSpawnRules.Resolved()
 	if !director.IsReplay || rules.ReplayLeaderSelection == "same_as_first_clear" {
 		nounName, isFound := firstClearLeader(director, chainLevelIndex)
@@ -80,39 +83,23 @@ func authoredPlanetLeader(director game.CampaignDirector) (string, bool) {
 	if !isOccurrence {
 		return "", false
 	}
-	nouns := make(map[string]string)
-	for _, pool := range director.ExternalPools {
-		if !strings.EqualFold(pool.ConfigurationName, director.PlanetConfigName) || !strings.EqualFold(pool.ConfigKind, "boss") {
-			continue
-		}
-		for _, entry := range pool.Entries {
-			if director.Difficulty < entry.MinimumDifficulty || director.Difficulty > entry.MaximumDifficulty {
-				continue
-			}
-			name := strings.TrimSuffix(strings.ToLower(entry.NounName), ".noun")
-			name = strings.TrimSuffix(strings.TrimSuffix(name, "_2"), "_3")
-			if name != expected || !entry.NPCProfile.IsKnown || entry.NPCProfile.HitPoint <= 0 {
-				continue
-			}
-			identity, isIdentityFound := namedBossIdentity(director, entry.NounName)
-			if !isIdentityFound || !identity.IsKnown {
-				continue
-			}
-			nouns[strings.ToLower(entry.NounName)] = entry.NounName
-		}
-	}
-	if len(nouns) != 1 {
-		return "", false
-	}
-	for _, noun := range nouns {
-		return noun, true
-	}
-	return "", false
+	return eligiblePlanetLeader(director, expected)
 }
 
 // LeaderPolicyResult identifies reconstructed policy and ambiguous/missing
 // authored candidates in the existing mission diagnostics.
 func LeaderPolicyResult(director game.CampaignDirector) string {
+	if !director.IsReplay {
+		role := "captain"
+		if director.Difficulty%4 == 0 {
+			role = "planet_boss"
+		}
+		nounName, isFound := staticCampaignLeader(director, director.Difficulty)
+		if !isFound {
+			return "darkspin:static_campaign:" + role + ":required_leader_unavailable"
+		}
+		return "darkspin:static_campaign:" + role + ":" + nounName
+	}
 	rules := director.BossSpawnRules.Resolved()
 	if director.IsReplay && rules.ReplayLeaderSelection == "eligible_captain" {
 		return "darkspin:eligible_captain"

@@ -93,12 +93,15 @@ func PlanInitialEncounter(
 	if !isBossIdentityFound {
 		return nil, firstObjectID, errors.New("boss plan identity: missing")
 	}
-	leaderEntry.NPCProfile = zonenpc.ApplyCaptainProfile(leaderEntry.NPCProfile, bossIdentity)
+	isCaptain := !IsFinalBossNoun(leaderEntry.NounName)
+	if isCaptain {
+		leaderEntry.NPCProfile = zonenpc.ApplyCaptainProfile(leaderEntry.NPCProfile, bossIdentity)
+	}
 	plans := []zonenpc.SpawnPlan{{
 		ObjectID: firstObjectID, NounName: leaderEntry.NounName,
 		Position: bossMarker.Position, LocusID: bossMarker.MarkerID,
 		Rotation: bossMarker.Rotation,
-		Kind:     sim.DirectorLocusBoss, IsCaptain: true, IsBoss: true,
+		Kind:     sim.DirectorLocusBoss, IsCaptain: isCaptain, IsBoss: true,
 		MarkerSetName: publication.MarkerSetName,
 		NPCProfile:    leaderEntry.NPCProfile,
 		BossIdentity:  bossIdentity,

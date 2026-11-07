@@ -15,6 +15,8 @@ type namedBossDefinition struct {
 	chainLevelIndex [3]uint32
 }
 
+// Retained for the existing replay catalog; static progression uses the
+// mission-number rule and imported captain/planet pools in campaign.go.
 var namedBossCatalog = [...]namedBossDefinition{
 	1:  {level: "zelems_1", nounName: [3]string{"ZelemSpecialHaster_Captain.Noun", "ZelemSpecialOne_Captain_2.Noun", "ZelemSpecialTwo_Captain_3.Noun"}, chainLevelIndex: [3]uint32{1, 41, 68}},
 	2:  {level: "zelems_3", nounName: [3]string{"ZelemSpecialOne_Captain.Noun", "NomadSnipe_Captain_2.Noun", "ZelemSpecialHaster_Captain_3.Noun"}, chainLevelIndex: [3]uint32{2, 28, 54}},
@@ -57,7 +59,9 @@ func SelectNamedLeader(
 		if director.IsReplay {
 			return game.CampaignDirectorEntry{}, errors.New("replay captain unavailable")
 		}
-		return entry[int((gameID^markerID)%uint32(len(entry)))], nil
+		return game.CampaignDirectorEntry{}, fmt.Errorf(
+			"campaignLeader[%s:%d]: required encounter unavailable", director.Level, chainLevelIndex,
+		)
 	}
 	var selected game.CampaignDirectorEntry
 	for _, candidate := range entry {
@@ -86,7 +90,9 @@ func ValidateNamedBossDirector(
 		if director.IsReplay {
 			return errors.New("replay captain unavailable")
 		}
-		return nil
+		return fmt.Errorf(
+			"campaignLeader[%s:%d]: required encounter unavailable", director.Level, chainLevelIndex,
+		)
 	}
 	_, isIdentityFound := namedBossIdentity(director, nounName)
 	if !isIdentityFound {
@@ -126,11 +132,15 @@ func NamedBossEntries(
 	}
 	entry := make([]game.CampaignDirectorEntry, 0, 1)
 	for _, pool := range director.Pools {
-		if director.IsReplay && director.BossSpawnRules.Resolved().ReplayLeaderSelection != "same_as_first_clear" && (!strings.EqualFold(pool.ConfigurationName, "levelConfig") ||
+		if (!director.IsReplay || director.BossSpawnRules.Resolved().ReplayLeaderSelection != "same_as_first_clear") && (!strings.EqualFold(pool.ConfigurationName, "levelConfig") ||
 			!strings.EqualFold(pool.ConfigKind, "captain")) {
 			continue
 		}
 		for _, candidate := range pool.Entries {
+			if !director.IsReplay && (director.Difficulty < candidate.MinimumDifficulty ||
+				director.Difficulty > candidate.MaximumDifficulty) {
+				continue
+			}
 			if !strings.EqualFold(candidate.NounName, nounName) {
 				continue
 			}
@@ -170,7 +180,9 @@ func PrepareNamedBossDirector(
 				"replayCaptain[%s:%d]: expected one authored captain", director.Level, director.Difficulty,
 			)
 		}
-		return director, nil
+		return game.CampaignDirector{}, fmt.Errorf(
+			"campaignLeader[%s:%d]: required encounter unavailable", director.Level, chainLevelIndex,
+		)
 	}
 	_, isIdentityFound := namedBossIdentity(director, nounName)
 	if !isIdentityFound {
@@ -259,7 +271,7 @@ func prepareNamedCaptainProfile(
 	}
 	director.Pools = append([]game.CampaignDirectorPool(nil), director.Pools...)
 	for poolIndex := range director.Pools {
-		if director.IsReplay && director.BossSpawnRules.Resolved().ReplayLeaderSelection != "same_as_first_clear" && (!strings.EqualFold(director.Pools[poolIndex].ConfigurationName, "levelConfig") ||
+		if (!director.IsReplay || director.BossSpawnRules.Resolved().ReplayLeaderSelection != "same_as_first_clear") && (!strings.EqualFold(director.Pools[poolIndex].ConfigurationName, "levelConfig") ||
 			!strings.EqualFold(director.Pools[poolIndex].ConfigKind, "captain")) {
 			continue
 		}
