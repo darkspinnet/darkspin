@@ -194,6 +194,8 @@ type Snapshot struct {
 	IsInitialAggroSet               bool
 	InitialAggroAnimationFlag       uint32
 	recentDamages                   []recentDamage
+	combatIdle                      combatIdleState
+	targetTooFar                    targetTooFarState
 	Plan                            SpawnPlan
 	Origin                          game.Vec3
 	Facing                          game.Vec3

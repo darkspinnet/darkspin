@@ -3025,6 +3025,20 @@ func (r gameplayPendingRuntime) pollWorld(
 	if len(projected) != 0 {
 		return projected, nil
 	}
+	combatIdlePackets, err := r.pollCombatIdleBehaviors(packet)
+	if err != nil {
+		return nil, fmt.Errorf("combatIdlePoll: %w", err)
+	}
+	if len(combatIdlePackets) != 0 {
+		return combatIdlePackets, nil
+	}
+	passivePackets, err := r.pollPassiveBehaviors(packet)
+	if err != nil {
+		return nil, fmt.Errorf("passivePoll: %w", err)
+	}
+	if len(passivePackets) != 0 {
+		return passivePackets, nil
+	}
 	recoveryPackets, err := r.recoverNPCs(packet)
 	if err != nil {
 		return nil, fmt.Errorf("npcRecovery: %w", err)

@@ -2,6 +2,11 @@
 
 ### 2026-11-07
 
+- Let newly eligible higher-priority NPC idle behaviors interrupt active idle movement with cleanup before replacement.
+- Execute authored FollowStrafe through TargetTooFar, including Scaldron Copter's approach, with separate cooldowns and attack-range interruption.
+- Correct NPC strafing from object-follow goals to exact lateral goals while facing the target.
+- Fix a server compilation error in NPC idle animation pause timing.
+- Dispatch authored NPC combat-idle and passive movement through resolved AI definitions, with separate conditional cooldowns and cleanup when attacks, death, resurrection, or disconnects interrupt movement.
 - Show Horde Incoming on campaign horde entry and immediately between waves, and Horde Defeated when the encounter completes and its fences open.
 - Set static campaign 2-4's four horde waves to explicit Strafing Drakon, Arachno Striker, Chrono Striker, and Magnetic Master rosters, with one Mutation Agent on the final wave.
 - Set static campaign 2-3 horde waves to 6 Robo-bombers, then 2 Raytheoids, then 4 Robo-bombers and 4 Sting Raiders with one Mutation Agent.

@@ -250,6 +250,17 @@ func (r campaignNPCPursuitRuntime) scheduleTargetCorrection(
 	if actionGeneration == 0 {
 		return errors.New("enemy pursuit action unavailable")
 	}
+	if targetObjectID == 0 && !isCampaignNPCSecondaryPursuit(profile.AbilityName) &&
+		profile.Family != zonenpc.ActionCharge && profile.AbilityName != "Repair" {
+		isHandled, err := r.startTargetTooFar(packet, sessionKey, generation, objectID,
+			targetObjectID, timestamp, profile, onArrival)
+		if err != nil {
+			return fmt.Errorf("targetFarStart: %w", err)
+		}
+		if isHandled {
+			return nil
+		}
+	}
 	return r.scheduleActionCorrection(
 		packet, sessionKey, generation, actionGeneration, objectID,
 		targetObjectID, timestamp, publishedGoal, lastPublicationTimestamp,

@@ -127,6 +127,14 @@ func (r campaignNPCActionRuntime) produceBoundedStrafeOrIdle(
 		return nil, nil
 	}
 	enemy, isEnemyFound := peerSession.zone.NPCs().NPC(objectID)
+	if isEnemyFound && enemy.Plan.NPCProfile.AIGraph != nil && enemy.Plan.NPCProfile.AIGraph.IsResolved &&
+		(isCommonNPCBehavior(enemy.Plan.NPCProfile.AIGraph.CombatIdle) ||
+			isCommonNPCBehavior(enemy.Plan.NPCProfile.AIGraph.CombatIdle2)) {
+		// The authored actor-owned idle now runs inside the actual attack
+		// cooldown. Do not append another hardcoded pause after it has elapsed.
+		r.registry.mutex.Unlock()
+		return produceCampaignNPCStrafeResume(resume, timestamp)
+	}
 	if !isEnemyFound ||
 		!isCampaignNPCBoundedStrafeProfile(profile, enemy.Plan.IsCaptain) {
 		r.registry.mutex.Unlock()

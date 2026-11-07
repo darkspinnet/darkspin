@@ -2,6 +2,11 @@
 
 ### 2026-11-07
 
+- Let newly eligible higher-priority NPC idle behaviors interrupt active idle movement with cleanup before replacement.
+- Execute authored FollowStrafe through TargetTooFar, including Scaldron Copter's approach, with separate cooldowns and attack-range interruption.
+- Correct NPC strafing from object-follow goals to exact lateral goals while facing the target.
+- Fix a server compilation error in NPC idle animation pause timing.
+- Dispatch authored NPC combat-idle and passive movement through resolved AI definitions, with separate conditional cooldowns and cleanup when attacks, death, resurrection, or disconnects interrupt movement.
 - Show Horde Incoming on campaign horde entry and immediately between waves, and Horde Defeated when the encounter completes and its fences open.
 - Set static campaign 2-4's four horde waves to explicit Strafing Drakon, Arachno Striker, Chrono Striker, and Magnetic Master rosters, with one Mutation Agent on the final wave.
 - Set static campaign 2-3 horde waves to 6 Robo-bombers, then 2 Raytheoids, then 4 Robo-bombers and 4 Sting Raiders with one Mutation Agent.
@@ -11,8 +16,6 @@
 - Increase the default initial boss add count from 2 to 4.
 - Lower the default Mutation Agent minimum chain level from 7 to 4 (1-4).
 - Increase the default zone population from 15 to 25 enemies per section.
-- Let temporary-file cleanup remove read-only Go module-cache files and empty folders on Windows.
-- Add mage temp:preview and temp:clean to inspect or remove build-cache and development-log files older than 30 days and prune empty folders while preserving scenario runs and filesystem links.
 - Move admin-panel remote diagnostic downloads from darkspin/bugs/server-downloads to darkspin/downloads, grouped in stable server folders without random suffixes.
 - [#190](https://github.com/darkspinnet/darkspin/issues/190) Prevent catalyst moves, drops, and pickups from leaving Health or Power above reduced capacity and disconnecting the client.
 - [#190](https://github.com/darkspinnet/darkspin/issues/190) Fix Proximity Mine placement failing when pursuit used a timestamp older than its admitted movement state.

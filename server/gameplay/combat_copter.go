@@ -364,6 +364,25 @@ func (e *campaignScaldronCopterRun) strafe() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
+	graph := source.Plan.NPCProfile.AIGraph
+	if graph != nil && graph.IsResolved && graph.TargetTooFar == "nBehavior_FollowStrafe" &&
+		zonegeometry.Distance(source.Plan.Position, target.Position) >= profile.Range {
+		e.runtime.registry.mutex.Unlock()
+		isHandled, err := e.runtime.pursuit.startTargetTooFar(e.packet, e.sessionKey, e.generation,
+			e.objectID, 0, e.strafeTimestamp, profile, e.resumeTargetTooFar)
+		if err != nil {
+			return e.fail("copterTargetFar", err)
+		}
+		if isHandled {
+			// FollowStrafe owns movement and resumes this circle coroutine.
+			return nil, nil
+		}
+		err = e.schedule(campaignScaldronCopterMoveTick, e.strafe)
+		if err != nil {
+			return e.fail("copterTargetFarNext", err)
+		}
+		return nil, nil
+	}
 	if !e.runtime.now().Before(e.circleExpiresAt) {
 		e.circleRadius = 7 + float32(peerSession.zone.NPCRandom().Float64())*2
 		e.circleExpiresAt = e.runtime.now().Add(time.Duration(
@@ -415,6 +434,15 @@ func (e *campaignScaldronCopterRun) strafe() ([][]byte, error) {
 	err = e.schedule(campaignScaldronCopterMoveTick, e.strafe)
 	if err != nil {
 		return e.fail("copterStrafeNext", err)
+	}
+	return packets, nil
+}
+
+func (e *campaignScaldronCopterRun) resumeTargetTooFar(timestamp uint64) ([][]byte, error) {
+	e.strafeTimestamp = timestamp
+	packets, err := e.strafe()
+	if err != nil {
+		return nil, fmt.Errorf("copterCircleResume: %w", err)
 	}
 	return packets, nil
 }

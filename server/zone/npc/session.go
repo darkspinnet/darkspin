@@ -870,6 +870,16 @@ func (s *Session) ReleaseActions(owner ActionOwner) []Snapshot {
 	released := make([]Snapshot, 0)
 	for _, objectID := range s.objectIDs {
 		npc := s.npcs[objectID]
+		run := npc.combatIdle.run
+		if run.Owner == owner && isCombatIdleRunStored(npc, run) {
+			clearCombatIdleMovementBuff(&npc, run)
+			npc.combatIdle.run = CombatIdleRun{}
+			s.npcs[objectID] = npc
+		}
+		if npc.targetTooFar.run.Owner == owner {
+			npc.targetTooFar.run = TargetTooFarRun{}
+			s.npcs[objectID] = npc
+		}
 		if npc.IsDefeated || !npc.IsActionStarted ||
 			npc.ActionOwner != owner {
 			continue
@@ -1661,6 +1671,9 @@ func (s *Session) resurrect(
 		npc.ActionGeneration = 1
 	}
 	npc.status = status{}
+	npc.Plan.SupportIdleMovementBuff = 0
+	npc.combatIdle = combatIdleState{}
+	npc.targetTooFar = targetTooFarState{}
 	mutationGeneration := npc.Mutation.Generation + 1
 	if mutationGeneration == 0 {
 		mutationGeneration = 1

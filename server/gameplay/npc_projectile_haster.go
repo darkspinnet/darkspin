@@ -204,6 +204,17 @@ func (r campaignNPCActionRuntime) produceHasterProjectile(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("enemyHasterProjectileRun: %w", runErr)
 	}
+	idlePackets, isWindowSet, idleErr := prepareNPCIdleWindow(peerSession.zone.NPCs(), enemy,
+		startedAt, ability.ReleaseDelay, ability.Cooldown)
+	if idleErr != nil || !isWindowSet {
+		projectileRun.Stop()
+		r.registry.mutex.Unlock()
+		if idleErr != nil {
+			return nil, fmt.Errorf("enemyHasterIdle: %w", idleErr)
+		}
+		return nil, nil
+	}
+	immediatePackets = append(idlePackets, immediatePackets...)
 	trackErr := peerSession.trackCampaignNPCProjectile(projectileObjectID, projectileRun)
 	if trackErr != nil {
 		projectileRun.Stop()

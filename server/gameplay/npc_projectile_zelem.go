@@ -670,6 +670,23 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		}
 		immediatePackets = append(turnPackets, immediatePackets...)
 	}
+	if !volley.isActive || volley.shotIndex == 0 {
+		releaseDelay := profile.ReleaseDelay
+		for _, shotDelay := range profile.ProjectileShotDeadlines {
+			releaseDelay = max(releaseDelay, shotDelay+profile.HitDelay)
+		}
+		idlePackets, isWindowSet, idleErr := prepareNPCIdleWindow(peerSession.zone.NPCs(), enemy,
+			startedAt, releaseDelay, profile.Cooldown)
+		if idleErr != nil || !isWindowSet {
+			projectileRun.Stop()
+			r.registry.mutex.Unlock()
+			if idleErr != nil {
+				return nil, fmt.Errorf("enemyShotIdle: %w", idleErr)
+			}
+			return nil, nil
+		}
+		immediatePackets = append(idlePackets, immediatePackets...)
+	}
 	trackErr := peerSession.trackCampaignNPCProjectile(projectileObjectID, projectileRun)
 	if trackErr != nil {
 		projectileRun.Stop()

@@ -363,11 +363,12 @@ func BoundedStrafe(
 			PositionY: source.Y, PositionZ: source.Z,
 		},
 		raknet.ObjectPlayerMoveMessage{
-			ObjectID: objectID, GoalFlags: 0x41,
+			// Build-103 A0A8A0 -> A14C80 uses an exact point plus facing
+			// target (0x101), not object-follow (0x40). The server owns
+			// WaitForNearGoal stopping; native desired/allowed distances are zero.
+			ObjectID: objectID, GoalFlags: 0x101,
 			GoalPosition: goal, Facing: direction(source, target),
-			AllowedStopDistance: stopDistance,
-			DesiredStopDistance: stopDistance,
-			TargetPosition:      target, TargetObjectID: targetObjectID,
+			TargetPosition: target, TargetObjectID: targetObjectID,
 		},
 		raknet.LocomotionUnreliableMessage{
 			ObjectID: objectID, GoalPosition: goal,
