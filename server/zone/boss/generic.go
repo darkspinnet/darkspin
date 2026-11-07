@@ -81,7 +81,7 @@ func PlanNamedEncounter(
 			errors.New("named boss plan: boss anchor unavailable")
 	}
 	namedBossNoun, isNamedBoss := NamedBossNounForDirector(director, chainLevelIndex)
-	if !director.IsReplay && !isNamedBoss {
+	if !isNamedBoss {
 		return game.CampaignDirectorPublication{}, nil, firstObjectID, fmt.Errorf(
 			"campaignLeader[%s:%d]: required encounter unavailable", director.Level, chainLevelIndex,
 		)

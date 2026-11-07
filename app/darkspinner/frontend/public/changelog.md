@@ -2,6 +2,8 @@
 
 ### 2026-11-06
 
+- Make replay endings use the randomized destination planet's difficulty-appropriate destructor or Corruptor on x-4 missions and the destination map's captain otherwise.
+
 - Require a captain at every non-x-4 static campaign ending and the planet's destructor or Corruptor at every x-4 ending.
 - Correct 11-4's first-clear boss from the Rezzer captain to rank-two Nashira.
 - [#189](https://github.com/darkspinnet/darkspin/issues/189) Keep Nashira's two-duplicate limit across hero deaths and concurrent co-op attacks, and initialize Shadow Toss lob motion.

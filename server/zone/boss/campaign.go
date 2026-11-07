@@ -6,9 +6,9 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 )
 
-// Static progression chooses the encounter class from the mission number,
-// independently of sector order and the separately configured replay policy.
-func staticCampaignLeader(director game.CampaignDirector, stage uint32) (string, bool) {
+// Campaign endings choose the encounter class from the mission number and the
+// eligible variant from the destination planet, including randomized replays.
+func campaignEndingLeader(director game.CampaignDirector, stage uint32) (string, bool) {
 	if stage == 0 || stage > 72 || director.Difficulty == 0 || director.Difficulty > 72 {
 		return "", false
 	}

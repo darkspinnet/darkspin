@@ -6,32 +6,12 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 )
 
-// NamedBossNounForDirector enforces static campaign finales separately from
-// the existing configurable replay encounter policy.
+// NamedBossNounForDirector chooses the encounter class from the mission number
+// and its eligible noun from the destination map and planet, including replays.
 func NamedBossNounForDirector(
 	director game.CampaignDirector, chainLevelIndex uint32,
 ) (string, bool) {
-	if !director.IsReplay {
-		return staticCampaignLeader(director, chainLevelIndex)
-	}
-	rules := director.BossSpawnRules.Resolved()
-	if !director.IsReplay || rules.ReplayLeaderSelection == "same_as_first_clear" {
-		nounName, isFound := firstClearLeader(director, chainLevelIndex)
-		if rules.LeaderSelection == "authored_planet_boss" {
-			candidate, isCandidateFound := authoredPlanetLeader(director)
-			if isCandidateFound {
-				nounName, isFound = candidate, true
-			}
-		}
-		// Later campaign ranks reorder maps. A destructor map can occur
-		// between chapter finales; its eligible level captain owns that
-		// encounter instead of the first-rank map's destructor.
-		if isFound && IsFinalBossNoun(nounName) && chainLevelIndex%4 != 0 {
-			return eligibleCaptain(director)
-		}
-		return nounName, isFound
-	}
-	return eligibleCaptain(director)
+	return campaignEndingLeader(director, chainLevelIndex)
 }
 
 func eligibleCaptain(director game.CampaignDirector) (string, bool) {
@@ -58,66 +38,19 @@ func eligibleCaptain(director game.CampaignDirector) (string, bool) {
 	return nounName, nounName != ""
 }
 
-func firstClearLeader(director game.CampaignDirector, stage uint32) (string, bool) {
-	if !director.IsReplay {
-		return NamedBossNoun(stage, director.Level)
-	}
-	// A replay destination can differ from the stage's campaign destination.
-	// Apply that map's first-clear catalog entry for the selected threat tier.
-	rank := min((director.Difficulty-1)/24, uint32(2))
-	for _, definition := range namedBossCatalog {
-		if strings.EqualFold(definition.level, director.Level) {
-			noun := definition.nounName[rank]
-			return noun, noun != ""
-		}
-	}
-	return "", false
-}
-
-func authoredPlanetLeader(director game.CampaignDirector) (string, bool) {
-	if director.Difficulty%4 != 0 {
-		return "", false
-	}
-	expectedNouns := map[string]string{"zelems_4": "zelemboss", "verdanth_4": "verdanthboss", "nocturna_1": "shadowboss", "nocturna_3": "shadowboss", "cryos_2": "cryosboss", "infinity_4": "citadelboss", "scaldron_4": "scaldronboss"}
-	expected, isOccurrence := expectedNouns[strings.ToLower(director.Level)]
-	if !isOccurrence {
-		return "", false
-	}
-	return eligiblePlanetLeader(director, expected)
-}
-
-// LeaderPolicyResult identifies reconstructed policy and ambiguous/missing
-// authored candidates in the existing mission diagnostics.
+// LeaderPolicyResult records the ending rule and selected destination noun.
 func LeaderPolicyResult(director game.CampaignDirector) string {
-	if !director.IsReplay {
-		role := "captain"
-		if director.Difficulty%4 == 0 {
-			role = "planet_boss"
-		}
-		nounName, isFound := staticCampaignLeader(director, director.Difficulty)
-		if !isFound {
-			return "darkspin:static_campaign:" + role + ":required_leader_unavailable"
-		}
-		return "darkspin:static_campaign:" + role + ":" + nounName
+	mode := "static_campaign"
+	if director.IsReplay {
+		mode = "replay"
 	}
-	rules := director.BossSpawnRules.Resolved()
-	if director.IsReplay && rules.ReplayLeaderSelection == "eligible_captain" {
-		return "darkspin:eligible_captain"
+	role := "captain"
+	if director.Difficulty%4 == 0 {
+		role = "planet_boss"
 	}
-	nounName, isNamed := firstClearLeader(director, director.Difficulty)
-	if director.Difficulty%4 != 0 && isNamed && IsFinalBossNoun(nounName) {
-		captain, isCaptainFound := eligibleCaptain(director)
-		if isCaptainFound {
-			return "darkspin:eligible_captain:non_finale:" + captain
-		}
-		return "darkspin:non_finale:no_unique_eligible_captain"
+	nounName, isFound := campaignEndingLeader(director, director.Difficulty)
+	if !isFound {
+		return "darkspin:" + mode + ":" + role + ":required_leader_unavailable"
 	}
-	if rules.LeaderSelection != "authored_planet_boss" {
-		return "darkspin:current_campaign"
-	}
-	noun, isFound := authoredPlanetLeader(director)
-	if isFound {
-		return "darkspin:authored_planet_boss:" + noun
-	}
-	return "darkspin:campaign_fallback:no_unique_matching_eligible_planet_boss"
+	return "darkspin:" + mode + ":" + role + ":" + nounName
 }
