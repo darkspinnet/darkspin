@@ -53,7 +53,7 @@ func InspectSelectedAdmission(
 			BossMarkerID:     plans[0].LocusID,
 			EventName:        publication.EventName, CallbackName: publication.CallbackName,
 			LeaderNoun: plans[0].NounName, ListenerCount: len(publication.Listeners),
-			PlanCount: len(plans), IsLeaderDeferred: true,
+			PlanCount: len(plans), IsLeaderDeferred: plans[0].IsCaptain && len(plans) > 1,
 			IsFinalBoss: IsFinalBossNoun(plans[0].NounName),
 		}
 		for _, markerSet := range director.MarkerSets {

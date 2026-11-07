@@ -6,8 +6,8 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 )
 
-// NamedBossNounForDirector chooses the encounter class from the mission number
-// and its eligible noun from the destination map and planet, including replays.
+// NamedBossNounForDirector selects the static or seeded replay ending and its
+// eligible noun from the destination map and planet.
 func NamedBossNounForDirector(
 	director game.CampaignDirector, chainLevelIndex uint32,
 ) (string, bool) {
@@ -45,7 +45,7 @@ func LeaderPolicyResult(director game.CampaignDirector) string {
 		mode = "replay"
 	}
 	role := "captain"
-	if director.Difficulty%4 == 0 {
+	if isDestructorEnding(director, director.Difficulty) {
 		role = "planet_boss"
 	}
 	nounName, isFound := campaignEndingLeader(director, director.Difficulty)

@@ -63,24 +63,16 @@ func PlanInitialEncounter(
 		return nil, firstObjectID, nil
 	}
 	if publication.TriggerMarkerID == 0 || firstObjectID == 0 ||
-		firstObjectID > zoneobject.ProjectileIDStart-5 {
+		firstObjectID >= zoneobject.ProjectileIDStart {
 		return nil, firstObjectID, errors.New("boss plan: invalid publication")
 	}
-	bossMarker, addMarker, err := initialMarkers(director, publication)
+	bossMarker, err := initialLeaderMarker(director, publication)
 	if err != nil {
 		return nil, firstObjectID, fmt.Errorf("bossMarkers: %w", err)
-	}
-	addMarker = expandOpeningMarkers(addMarker, director.BossSpawnRules.Resolved().OpeningAddsPerAnchor)
-	if uint32(len(addMarker)+1) > zoneobject.ProjectileIDStart-firstObjectID {
-		return nil, firstObjectID, errors.New("boss plan: object IDs exhausted")
 	}
 	// Named captains belong to the boss roster, not the lieutenant pool used
 	// for ordinary population. Use the same prepared roster as admission audit.
 	leaderEntries := NamedBossEntries(director, chainLevelIndex)
-	agentEntry := bossAddEntries(director)
-	if len(agentEntry) == 0 {
-		return nil, firstObjectID, errors.New("boss plan: empty pool")
-	}
 	leaderEntry, err := SelectNamedLeader(
 		director, leaderEntries, chainLevelIndex, gameID, bossMarker.MarkerID,
 	)
@@ -106,13 +98,28 @@ func PlanInitialEncounter(
 		NPCProfile:    leaderEntry.NPCProfile,
 		BossIdentity:  bossIdentity,
 	}}
+	if !isCaptain {
+		return plans, firstObjectID + 1, nil
+	}
+	addMarkers, err := initialAddMarkers(director, publication)
+	if err != nil {
+		return nil, firstObjectID, fmt.Errorf("bossAddMarkers: %w", err)
+	}
+	addMarkers = expandOpeningMarkers(addMarkers, director.BossSpawnRules.Resolved().OpeningAddsPerAnchor)
+	if uint32(len(addMarkers)+1) > zoneobject.ProjectileIDStart-firstObjectID {
+		return nil, firstObjectID, errors.New("boss plan: object IDs exhausted")
+	}
+	agentEntries := bossAddEntries(director)
+	if len(agentEntries) == 0 {
+		return nil, firstObjectID, errors.New("boss plan: empty pool")
+	}
 	random := initialAddRandom(director, gameID, bossMarker.MarkerID, 1)
-	for index, marker := range addMarker {
-		entryIndex, choiceErr := random.Index(uint32(len(agentEntry)))
+	for index, marker := range addMarkers {
+		entryIndex, choiceErr := random.Index(uint32(len(agentEntries)))
 		if choiceErr != nil {
 			return nil, firstObjectID, fmt.Errorf("bossAddChoice[%d]: %w", index, choiceErr)
 		}
-		entry := agentEntry[entryIndex]
+		entry := agentEntries[entryIndex]
 		plans = append(plans, zonenpc.SpawnPlan{
 			ObjectID: firstObjectID + 1 + uint32(index),
 			NounName: entry.NounName, Position: marker.Position,
@@ -244,10 +251,9 @@ func initialAddRandom(
 	return sim.NewSimulatorRandom(seed ^ markerID ^ waveOrdinal*0x103 ^ 0x424f5353)
 }
 
-func initialMarkers(
-	director game.CampaignDirector,
-	publication game.CampaignDirectorPublication,
-) (game.CampaignDirectorMarker, []game.CampaignDirectorMarker, error) {
+func initialLeaderMarker(
+	director game.CampaignDirector, publication game.CampaignDirectorPublication,
+) (game.CampaignDirectorMarker, error) {
 	var bossMarker game.CampaignDirectorMarker
 	for _, markerSet := range director.MarkerSets {
 		if markerSet.Ordinal != publication.MarkerSetOrdinal ||
@@ -256,17 +262,12 @@ func initialMarkers(
 		}
 		bossMarker = initialBossAnchor(markerSet)
 	}
-	addMarker, err := initialAddMarkers(director, publication)
-	if err != nil {
-		return game.CampaignDirectorMarker{}, nil,
-			fmt.Errorf("addMarkers: %w", err)
-	}
 	if bossMarker.MarkerID == 0 ||
 		!zonepopulation.IsFinitePosition(bossMarker.Position) {
-		return game.CampaignDirectorMarker{}, nil,
+		return game.CampaignDirectorMarker{},
 			errors.New("incomplete")
 	}
-	return bossMarker, addMarker, nil
+	return bossMarker, nil
 }
 
 // The authored boss anchor also owns a trigger volume. The content loader

@@ -1464,12 +1464,12 @@ func (r campaignMovementCommandRuntime) handle(
 	response = append(response, tutorialCapsulePackets...)
 	response = append(response, tutorialHordePackets...)
 	response = append(response, companionFollowPackets...)
+	response = append(response, namedBossPackets...)
 	response = append(response, firstActionPackets...)
 	response = append(response, companionAttackPackets...)
 	response = append(response, encounterUnlockPackets...)
 	response = append(response, immediateUnlockPackets...)
 	response = append(response, immediateBossPackets...)
-	response = append(response, namedBossPackets...)
 	response = append(response, securityDeactivationPackets...)
 	response = append(response, securityActivationPackets...)
 	response = append(response, tutorialTeleporterPackets...)
@@ -2318,7 +2318,7 @@ func (r campaignEncounterRuntime) advance(
 				break
 			}
 		}
-		if peerSession.binding.Mode == game.ModeChain && len(result.bossPlans) == 0 &&
+		if peerSession.binding.Mode == game.ModeChain && len(result.bossPlans) == 0 && len(result.namedBossPlans) == 0 &&
 			!isNamedBossTriggerPending {
 			namedBossPlan, isNamedBossPlanned, namedBossErr :=
 				peerSession.zone.PlanBossNearPosition(

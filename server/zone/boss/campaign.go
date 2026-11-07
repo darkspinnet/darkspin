@@ -4,15 +4,17 @@ import (
 	"strings"
 
 	"github.com/darkspinnet/darkspin/server/game"
+	"github.com/darkspinnet/darkspin/server/sim"
+	"github.com/darkspinnet/darkspin/server/util"
 )
 
-// Campaign endings choose the encounter class from the mission number and the
-// eligible variant from the destination planet, including randomized replays.
+// Static endings use the mission number; replay endings use a separate seeded
+// forty-percent Destructor draw. The eligible variant follows the destination.
 func campaignEndingLeader(director game.CampaignDirector, stage uint32) (string, bool) {
 	if stage == 0 || stage > 72 || director.Difficulty == 0 || director.Difficulty > 72 {
 		return "", false
 	}
-	if stage%4 != 0 {
+	if !isDestructorEnding(director, stage) {
 		nounName, isFound := eligibleCaptain(director)
 		return nounName, isFound && !IsFinalBossNoun(nounName)
 	}
@@ -34,6 +36,17 @@ func campaignEndingLeader(director game.CampaignDirector, stage uint32) (string,
 		return "", false
 	}
 	return eligiblePlanetLeader(director, family)
+}
+
+func isDestructorEnding(director game.CampaignDirector, stage uint32) bool {
+	if !director.IsReplay {
+		return stage%4 == 0
+	}
+	// Recreate a private stream so preparation, admission and rejoin agree
+	// without consuming map-layout, population or loot draws.
+	seed := uint32(director.RunSeed) ^ uint32(director.RunSeed>>32) ^
+		stage*0x9e3779b9 ^ util.HashID(strings.ToLower(director.Level)) ^ 0x424f5353
+	return sim.NewSimulatorRandom(seed).Float64() < 0.4
 }
 
 func eligiblePlanetLeader(director game.CampaignDirector, family string) (string, bool) {

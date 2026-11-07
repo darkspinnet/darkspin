@@ -124,8 +124,17 @@ func (e gameplayPendingRuntime) pollCampaignTriggers(packet raknet.Packet) ([][]
 			return nil, fmt.Errorf("triggerPollSpawn: %w", err)
 		}
 	}
+	if len(encounter.namedBossPlans) > 0 {
+		err = peerSession.zone.PublishNPCSpawn(zoneprojection.NPCSpawn{
+			Plans: encounter.namedBossPlans, TargetObjectID: peerSession.deployedObjectID,
+		}, peerSession.binding.UserID, peerSession.generation)
+		if err != nil {
+			return nil, fmt.Errorf("triggerPollDestructor: %w", err)
+		}
+	}
+	firstActionPlans := slices.Concat(encounter.hordePlans, encounter.namedBossPlans)
 	firstPackets, err := e.action.movement.campaign.npc.scheduleFirstActionsWithIntroductions(
-		packet, sessionKey, peerSession.generation, encounter.hordePlans, packet.SourceTime, nil,
+		packet, sessionKey, peerSession.generation, firstActionPlans, packet.SourceTime, nil,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("triggerPollAction: %w", err)
@@ -139,6 +148,7 @@ func (e gameplayPendingRuntime) pollCampaignTriggers(packet raknet.Packet) ([][]
 		return nil, fmt.Errorf("triggerPollBoss: %w", err)
 	}
 	packets := append(encounter.hordePackets, encounter.unlockPackets...)
+	packets = append(packets, encounter.namedBossPackets...)
 	packets = append(packets, firstPackets...)
 	packets = append(packets, unlockPackets...)
 	packets = append(packets, bossPackets...)

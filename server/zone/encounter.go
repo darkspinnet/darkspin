@@ -97,7 +97,7 @@ func (e *Zone) PlanInitialEncounter(
 	if err != nil {
 		return InitialEncounterPlan{}, fmt.Errorf("initialBossPlan: %w", err)
 	}
-	if len(bossPlans) != 0 {
+	if len(bossPlans) != 0 && bossPlans[0].IsCaptain {
 		if horde == nil {
 			return InitialEncounterPlan{}, errors.New("initial boss order unavailable")
 		}
@@ -329,8 +329,8 @@ func (e *Zone) AdmitDeveloperBoss(
 }
 
 // ArmBossEncounter commits an authored director publication and reserves its
-// boss plans. The adds remain dormant until AdmitBoss publishes the delayed
-// opening phase.
+// boss plans. AdmitBoss publishes the captain's delayed opening phase or the
+// Destructor itself without a pre-wave.
 func (e *Zone) ArmBossEncounter(
 	publication game.CampaignDirectorPublication,
 	targetObjectID uint32,
@@ -341,17 +341,19 @@ func (e *Zone) ArmBossEncounter(
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.state != StateActive || targetObjectID == 0 || len(plans) < 2 {
+	if e.state != StateActive || targetObjectID == 0 || len(plans) == 0 {
 		return errors.New("boss encounter admission invalid")
 	}
-	err := zoneboss.ValidateInitialOrder(e.info.Horde)
-	if err != nil {
-		return fmt.Errorf("bossOrder: %w", err)
+	if plans[0].IsCaptain {
+		err := zoneboss.ValidateInitialOrder(e.info.Horde)
+		if err != nil {
+			return fmt.Errorf("bossOrder: %w", err)
+		}
 	}
 	if e.info.Director == nil || e.info.Boss == nil || e.info.NPCs == nil {
 		return errors.New("boss encounter authority unavailable")
 	}
-	err = e.info.Director.CanAccept(publication)
+	err := e.info.Director.CanAccept(publication)
 	if err != nil {
 		return fmt.Errorf("bossPublicationCheck: %w", err)
 	}
@@ -359,7 +361,11 @@ func (e *Zone) ArmBossEncounter(
 	if err != nil {
 		return fmt.Errorf("bossStateCheck: %w", err)
 	}
-	err = e.info.NPCs.CanAdd(plans[1:], targetObjectID)
+	livePlans := plans
+	if plans[0].IsCaptain && len(plans) > 1 {
+		livePlans = plans[1:]
+	}
+	err = e.info.NPCs.CanAdd(livePlans, targetObjectID)
 	if err != nil {
 		return fmt.Errorf("bossNPCCheck: %w", err)
 	}

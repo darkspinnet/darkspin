@@ -300,9 +300,10 @@ type CampaignDirector struct {
 	OrbDifficultyScales           []float32
 	// IsFirstClear retains the requesting player's personal campaign state.
 	IsFirstClear bool
-	// IsReplay selects the shared randomized replay roster and authored captain.
+	// IsReplay selects the shared randomized replay roster and seeded ending.
 	IsReplay   bool
 	IsNoReplay bool
+	RunSeed    uint64
 	// Enabling this mode is server policy, not a recovered original-server decision.
 	IsFirstTimeDirectorEnabled bool
 	// IsFirstTimeRosterSelected records the party-progress branch after checking
@@ -1003,6 +1004,7 @@ func (o *CampaignSetup) Execute(ctx context.Context, binding GameplayBinding) (C
 	}
 	director.IsFirstClear = binding.IsFirstRunLevel()
 	director.IsReplay = binding.IsReplayRandomized
+	director.RunSeed = binding.RunSeed
 	director.IsNoReplay = binding.IsNoReplay
 	director.IsFirstTimeDirectorEnabled = binding.IsFirstTimeDirectorEnabled || binding.IsNoReplay
 	if !binding.IsWarped && len(director.Pools) == 0 {

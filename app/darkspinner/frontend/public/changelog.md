@@ -2,6 +2,8 @@
 
 ### 2026-11-07
 
+- Change randomized replay endings from mission-number selection to a seeded 40% chance of the destination planet's Destructor without pre-waves and a 60% chance of a captain.
+- Skip captain pre-waves when a Destructor is selected, including Apocalypse 17-4 Polaris and randomized replays, and start its normal cinematic and introduction immediately.
 - Fix scenario login tokens to use the account's current credential revision so newly created administrator profiles can authenticate.
 - Add native-input command regression scenarios with isolated admin fixtures, fresh reply and gameplay-effect checks, diagnostic artifact checks, and explicit gaps for unobserved native commands.
 - [#192](https://github.com/darkspinnet/darkspin/issues/192) Restore owner-stat scaling for Char's Elemental Guardian attacks and Enrage in campaign and Arena.
