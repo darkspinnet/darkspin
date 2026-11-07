@@ -504,6 +504,11 @@ func (r campaignDamageRuntime) publishNPCStuns(
 		if err != nil {
 			return nil, fmt.Errorf("shockwaveStunRun: %w", err)
 		}
+		run.record = zoneeffect.Modifier{
+			InstanceID: run.instanceID, GUID: modifierID,
+			SourceObjectID: sourceObjectID, TargetObjectID: result.Damage.ObjectID,
+			Kind: zoneeffect.ModifierKindDebuff,
+		}
 		statusDuration := zonenpc.CrowdControlDuration(result.Snapshot.Plan, duration)
 		stunExpiresAt := r.npc.now().Add(statusDuration)
 		r.registry.mutex.Lock()
@@ -1930,6 +1935,11 @@ func (r campaignDamageRuntime) publishTransition(
 	packets = append(packets, fearCleanupPackets...)
 	packets = append(packets, hasteCleanupPackets...)
 	packets = append(packets, healingCleanupPackets...)
+	corpsePackets, corpseErr := r.retireCorpseStatuses(sessionKey, generation, transition.defeatedObjectID)
+	if corpseErr != nil {
+		return nil, fmt.Errorf("transitionCorpse: %w", corpseErr)
+	}
+	packets = append(packets, corpsePackets...)
 	if len(transition.bossCompletionPacket) != 0 {
 		step := campaignBossCompletionStep{
 			runtime: r, sessionKey: sessionKey, generation: generation,

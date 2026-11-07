@@ -317,6 +317,7 @@ type controlledHeroState struct {
 	deployedObjectID              uint32
 	heroInputLockedObjectID       uint32
 	heroInputLockedUntil          time.Time
+	campaignEntryPendingObjectID  uint32
 	maximumHitPoints              [squad.Size]float32
 	scenarioHitPointMaximums      [squad.Size]float32
 	arenaHitPointIncreases        [squad.Size]float32
@@ -1008,6 +1009,9 @@ func (e gameplayPeerSession) abilityRandom() (*sim.SimulatorRandom, error) {
 }
 
 func (e gameplayPeerSession) heroInputLockRemaining(at time.Time) time.Duration {
+	if e.campaignEntryPendingObjectID != 0 {
+		return max(time.Millisecond, e.heroInputLockedUntil.Sub(at))
+	}
 	if e.heroInputLockedObjectID == 0 || at.IsZero() ||
 		!at.Before(e.heroInputLockedUntil) {
 		return 0

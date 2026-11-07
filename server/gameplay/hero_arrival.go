@@ -103,7 +103,8 @@ const heroArrivalLockDuration = time.Second
 const heroArrivalKnockbackDelay = 500 * time.Millisecond
 
 func (e gameplayPeerSession) isHeroArrivalProtected(at time.Time) bool {
-	return e.heroInputLockedObjectID != 0 && at.Before(e.heroInputLockedUntil)
+	return e.campaignEntryPendingObjectID != 0 ||
+		e.heroInputLockedObjectID != 0 && at.Before(e.heroInputLockedUntil)
 }
 
 func (e gameplayPeerSession) isHeroDamageImmune(at time.Time) bool {
@@ -154,7 +155,7 @@ func (e heroArrivalCommit) commit() {
 		return
 	}
 	at := e.now()
-	peerSession.beginHeroArrival(at)
+	peerSession.beginHeroArrival(at.Add(campaignEntryDelay(peerSession.binding)))
 	packets, err := peerSession.refreshEnemyImmobilizedAttributes(at)
 	if err != nil {
 		e.registry.logger.Printf("RakNet hero arrival movement hold failed object=%d: %v", e.objectID, err)

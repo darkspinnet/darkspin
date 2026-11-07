@@ -38,7 +38,6 @@ import (
 	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
 	zoneencounter "github.com/darkspinnet/darkspin/server/zone/encounter"
 	zonehero "github.com/darkspinnet/darkspin/server/zone/hero"
-	heroraknet "github.com/darkspinnet/darkspin/server/zone/hero/raknet103"
 	zonehorde "github.com/darkspinnet/darkspin/server/zone/horde"
 	zoneinteract "github.com/darkspinnet/darkspin/server/zone/interact"
 	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
@@ -5253,6 +5252,11 @@ func (r gameplaySetupRuntime) publishCampaign(
 		return nil, false, fmt.Errorf("pingCampaignMembers: %w", err)
 	}
 	response = append(response, memberPackets...)
+	pendingEntryPackets, err := r.pendingCampaignEntryPackets(peerSession.zone)
+	if err != nil {
+		return nil, false, fmt.Errorf("pingCampaignEntryHide: %w", err)
+	}
+	response = append(response, pendingEntryPackets...)
 	arrivalPacketIndex := len(response)
 	response = append(response, fieldMedicPackets...)
 	isCheckpointBaseline := peerSession.zone.IsRestored() ||
@@ -5396,12 +5400,8 @@ func (r gameplaySetupRuntime) publishCampaign(
 	arrivalTimestamp := advanceHeroArrivalTimestamp(
 		packet.SourceTime, publishStartedAt, r.now(),
 	)
-	beamPackets, err := heroraknet.BeamIn(
-		peerSession.deployedObjectID,
-		campaignCharacterEntry(
-			peerSession.binding.Creatures[peerSession.deployedCreatureIndex],
-		),
-		zonePosition(entryPosition), arrivalTimestamp,
+	beamPackets, err := r.campaignEntryPackets(
+		packet, peerSession, setupEpoch, zonePosition(entryPosition), arrivalTimestamp,
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("pingCampaignBeamIn: %w", err)

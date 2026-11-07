@@ -5,6 +5,18 @@ const campaignPlanets = [
   'Infinity', 'Infinity', 'Cryos', 'Cryos',
   'Nocturna', 'Nocturna', 'Infinity', 'Infinity',
   'Scaldron', 'Scaldron', 'Scaldron', 'Scaldron',
+  'Cryos', 'Cryos', "Zelem's Nexus", "Zelem's Nexus",
+  'Infinity', 'Infinity', 'Verdanth', 'Verdanth',
+  'Scaldron', 'Scaldron', 'Cryos', 'Cryos',
+  'Nocturna', 'Nocturna', 'Infinity', 'Infinity',
+  "Zelem's Nexus", "Zelem's Nexus", 'Nocturna', 'Nocturna',
+  'Verdanth', 'Verdanth', 'Scaldron', 'Scaldron',
+  'Nocturna', 'Infinity', 'Cryos', 'Verdanth',
+  'Scaldron', "Zelem's Nexus", 'Nocturna', 'Infinity',
+  "Zelem's Nexus", 'Verdanth', 'Scaldron', 'Cryos',
+  'Verdanth', 'Cryos', "Zelem's Nexus", 'Nocturna',
+  'Infinity', 'Scaldron', 'Verdanth', "Zelem's Nexus",
+  'Cryos', 'Nocturna', 'Infinity', 'Scaldron',
 ]
 
 export function campaignLevelFor(profile) {
@@ -34,11 +46,12 @@ export function profileLastPlayedTime(profile) {
 
 export function campaignLabelFor(chainLevel) {
   if (!chainLevel) return 'TUTORIAL'
-  const planet = Math.floor((chainLevel - 1) / 4) + 1
-  const mission = ((chainLevel - 1) % 4) + 1
+  const level = Math.min(campaignPlanets.length, chainLevel)
+  const planet = Math.floor((level - 1) / 4) + 1
+  const mission = ((level - 1) % 4) + 1
   return `${planet}-${mission}`
 }
 
 export function campaignDetailFor(chainLevel) {
-  return chainLevel ? campaignPlanets[chainLevel - 1] : 'CRYOS TRAINING'
+  return chainLevel ? campaignPlanets[Math.min(campaignPlanets.length, chainLevel) - 1] : 'CRYOS TRAINING'
 }

@@ -12,7 +12,6 @@ import (
 	"github.com/darkspinnet/darkspin/server/squad"
 	"github.com/darkspinnet/darkspin/server/zone"
 	zonecheckpoint "github.com/darkspinnet/darkspin/server/zone/checkpoint"
-	heroraknet "github.com/darkspinnet/darkspin/server/zone/hero/raknet103"
 	memberraknet "github.com/darkspinnet/darkspin/server/zone/member/raknet103"
 	zoneobject "github.com/darkspinnet/darkspin/server/zone/object"
 	zoneprojection "github.com/darkspinnet/darkspin/server/zone/projection"
@@ -373,9 +372,8 @@ func (e gameplaySetupRuntime) publishCampaignServerBot(
 	if err != nil {
 		return nil, false, fmt.Errorf("botRoster: %w", err)
 	}
-	beamPackets, err := heroraknet.BeamIn(member.deployedObjectID,
-		campaignCharacterEntry(member.binding.Creatures[member.deployedCreatureIndex]),
-		zonePosition(position), packet.SourceTime)
+	beamPackets, err := e.campaignEntryPackets(
+		packet, member, setupEpoch, zonePosition(position), packet.SourceTime)
 	if err != nil {
 		return nil, false, fmt.Errorf("botArrival: %w", err)
 	}

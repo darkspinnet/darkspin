@@ -1,5 +1,11 @@
 # Changelog
 
+### 2026-11-07
+
+- Clear defeated mobs' combat statuses and remove their active status modifiers across all co-op players, including Electro Swath's reduced healing and stun effects, while preserving corpse and resurrection lifecycles.
+- Extend launcher campaign progress from the first 24 missions to all 72, displaying Invasion as 7-1 onward and Apocalypse as 13-1 onward with the correct planet names.
+- Stagger campaign player and AI Companion beam-in by group slot at 200 ms intervals, keeping heroes hidden and protected until their entry.
+
 ### 2026-11-06
 
 - Make replay endings use the randomized destination planet's difficulty-appropriate destructor or Corruptor on x-4 missions and the destination map's captain otherwise.

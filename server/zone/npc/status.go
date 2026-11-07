@@ -78,6 +78,26 @@ type status struct {
 
 const unstoppableModifierName = "Unstoppable_NPCAffixModifier"
 
+// ClearCorpseStatuses discards live combat state without changing the corpse's
+// consumers, fade lifecycle, encounter identity, or resurrection bookkeeping.
+func (e *Session) ClearCorpseStatuses(objectID uint32) {
+	if e == nil || objectID == 0 {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	corpse, isFound := e.npcs[objectID]
+	if !isFound || !corpse.IsDefeated {
+		return
+	}
+	corpse.status = status{
+		corpseConsumerCount:   corpse.status.corpseConsumerCount,
+		isCorpseFading:        corpse.status.isCorpseFading,
+		isCorpseFadePublished: corpse.status.isCorpseFadePublished,
+	}
+	e.npcs[objectID] = corpse
+}
+
 func (s *Session) HasDebuff(objectID uint32, at time.Time) bool {
 	if s == nil || objectID == 0 || at.IsZero() {
 		return false
