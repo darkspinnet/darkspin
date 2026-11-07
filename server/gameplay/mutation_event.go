@@ -20,6 +20,13 @@ const (
 	mutationModelFrame
 )
 
+// Build 103's ServerEvent receiver (0x506D90) tracks and removes effects only in wire slots 1–16.
+const (
+	mutationBeamEffectSlot     = 13
+	mutationParticleEffectSlot = 14
+	mutationModelEffectSlot    = 15
+)
+
 type mutationVisualSnapshot struct {
 	startedAt         time.Time
 	targetID          uint32
@@ -124,32 +131,17 @@ func marshalMutationVisual(frame mutationPendingEvent, snapshot mutationVisualSn
 			IsForceAttached: snapshot.isActive, IsRemovalRequested: !snapshot.isActive, IsHardStop: !snapshot.isActive,
 		})
 	case mutationModelFrame:
-		idle := raknet.AttachedEffectMessage{
-			Slot: 17, ObjectID: objectID, Asset: util.HashID("effect_environment_mutant_agent_smoke_model.ServerEventDef"),
-			IsRemovalRequested: true, IsHardStop: true,
-		}
-		firing := raknet.AttachedEffectMessage{
-			Slot: 22, ObjectID: objectID, Asset: util.HashID("mutant_agent_infect_smoke_muzzle_model.ServerEventDef"),
-			IsRemovalRequested: true, IsHardStop: true,
-		}
-		// Remove the outgoing model before starting its replacement.
+		asset := "effect_environment_mutant_agent_smoke_model.ServerEventDef"
 		if snapshot.isFiring {
-			firing.IsRemovalRequested, firing.IsHardStop, firing.IsForceAttached = false, false, true
-			messages = append(messages, idle, firing)
-		} else {
-			if snapshot.isActive {
-				idle.IsRemovalRequested, idle.IsHardStop, idle.IsForceAttached = false, false, true
-			}
-			messages = append(messages, firing, idle)
+			asset = "mutant_agent_infect_smoke_muzzle_model.ServerEventDef"
 		}
+		// Both models share one slot, including during rejoin and repair.
+		messages = appendMutationEffect(messages, objectID, 0, mutationModelEffectSlot, asset, snapshot.isActive)
 	case mutationBeamFrame:
-		for index, asset := range []string{"mutation_beam.ServerEventDef", "mutation_particles.ServerEventDef"} {
-			messages = append(messages, raknet.AttachedEffectMessage{
-				Slot: uint8(20 + index), ObjectID: objectID, SecondaryObjectID: snapshot.targetID,
-				Asset: util.HashID(asset), IsForceAttached: snapshot.isActive,
-				IsRemovalRequested: !snapshot.isActive, IsHardStop: !snapshot.isActive,
-			})
-		}
+		messages = appendMutationEffect(messages, objectID, snapshot.targetID, mutationBeamEffectSlot,
+			"mutation_beam.ServerEventDef", snapshot.isActive)
+		messages = appendMutationEffect(messages, objectID, snapshot.targetID, mutationParticleEffectSlot,
+			"mutation_particles.ServerEventDef", snapshot.isActive)
 	case mutationTransformFrame:
 		if !snapshot.isActive {
 			return nil, nil
@@ -192,6 +184,20 @@ func marshalMutationVisual(frame mutationPendingEvent, snapshot mutationVisualSn
 		packets = append(packets, packet)
 	}
 	return packets, nil
+}
+
+func appendMutationEffect(
+	messages []raknet.ApplicationMessage, objectID, targetID uint32, slot uint8, asset string, isActive bool,
+) []raknet.ApplicationMessage {
+	messages = append(messages, raknet.AttachedEffectMessage{
+		Slot: slot, ObjectID: objectID, IsRemovalRequested: true, IsHardStop: true,
+	})
+	if !isActive {
+		return messages
+	}
+	return append(messages, raknet.AttachedEffectMessage{
+		Slot: slot, ObjectID: objectID, SecondaryObjectID: targetID, Asset: util.HashID(asset), IsForceAttached: true,
+	})
 }
 
 func (e *gameplaySessionRegistry) refreshMutationEventsLocked(member *gameplayPeerSession, at time.Time, sourceTime uint64) error {

@@ -49,6 +49,7 @@ Each phase writes CPU, heap, mutex, block and goroutine `.pprof` files plus `sum
 - `local/camera_held.lua` — Camera behavior during held movement and a hero switch.
 - `local/cinematic_toggle.lua` — Opening movie and in-game cinematic settings.
 - `local/controlled_npc.lua` — AI-disabled NPC movement and combat commands.
+- `local/mutation_agent.lua` — One Mutation Agent with numbered screenshots for idle, wandering, firing, the mutation beam, ally growth, and defeat.
 - `local/coop_combat.lua` — Two-client native co-op combat in mission 1-1.
 - `local/coop_gear.lua` — Co-op appearance, equipment stats, and squad switches.
 - `local/coop_replace.lua` — Repeated co-op hero replacement with both clients observing.

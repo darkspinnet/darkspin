@@ -46,6 +46,7 @@ func (e *Session) ScenarioNearby(ctx context.Context, center scenario.WorldPosit
 			HitPoint: actor.HitPoint, IsDead: actor.IsDefeated, IsPublished: actor.IsPublished,
 			IsHostile: actor.Faction == FactionNonPlayerAligned, IsFixture: actor.Plan.IsFixture, IsBoss: actor.Plan.IsBoss,
 			IsHostilityAvailable: actor.Faction != FactionUnknown,
+			MutationPhase:        scenarioMutationPhase(actor),
 			DistanceSquared:      dx*dx + dy*dy + dz*dz}
 		index := sort.Search(len(npcs), func(index int) bool {
 			return npcs[index].DistanceSquared > npc.DistanceSquared || npcs[index].DistanceSquared == npc.DistanceSquared && npcs[index].ObjectID >= npc.ObjectID
@@ -60,4 +61,30 @@ func (e *Session) ScenarioNearby(ctx context.Context, center scenario.WorldPosit
 		npcs[index] = npc
 	}
 	return npcs, total, nil
+}
+
+func scenarioMutationPhase(actor Snapshot) string {
+	if actor.IsDefeated || !actor.IsPublished {
+		return ""
+	}
+	if actor.Mutation.Transform.IsActive {
+		return "growing"
+	}
+	if actor.Mutation.Transform.SourceObjectID != 0 && actor.Plan.IsEliteModifierApplied() {
+		return "promoted"
+	}
+	if !actor.Mutation.IsPassiveActive {
+		return ""
+	}
+	beam := actor.Mutation.Beam
+	switch {
+	case beam.IsActive && beam.IsChannelActive:
+		return "channel"
+	case beam.IsActive && beam.IsModelActive:
+		return "firing"
+	case beam.IsActive:
+		return "windup"
+	default:
+		return "idle"
+	}
 }

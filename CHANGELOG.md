@@ -2,6 +2,7 @@
 
 ### 2026-11-06
 
+- #185 Keep one Mutation Agent sphere visible when it switches between idle and firing.
 - #186 Prevent a client crash when continuing a campaign with an AI Companion in a slot vacated by a player.
 - #184 Refill Health and Power to their catalyst-adjusted maximums when continuing a campaign, and restore Power on damaging hits with Power Leech.
 - #184 Refresh Suppression from proximity and publish the Strangling Briars slow when each pulse lands.

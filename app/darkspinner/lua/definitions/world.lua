@@ -127,6 +127,7 @@
 ---@field is_defeated boolean
 
 ---@class WorldNPC
+---@field mutation_phase? 'idle'|'windup'|'firing'|'channel'|'growing'|'promoted' Authoritative Mutation Agent or recipient phase. Does not certify native rendering.
 ---@field object_id integer
 ---@field noun string
 ---@field position WorldPosition

@@ -135,6 +135,7 @@ type WorldNPC struct {
 	IsHostilityAvailable bool
 	IsFixture            bool
 	IsBoss               bool
+	MutationPhase        string
 	DistanceSquared      float64
 }
 

@@ -2,28 +2,19 @@
 
 ### 2026-11-06
 
+- [#185](https://github.com/darkspinnet/darkspin/issues/185) Keep one Mutation Agent sphere visible when it switches between idle and firing.
 - [#186](https://github.com/darkspinnet/darkspin/issues/186) Prevent a client crash when continuing a campaign with an AI Companion in a slot vacated by a player.
-
 - [#184](https://github.com/darkspinnet/darkspin/issues/184) Refill Health and Power to their catalyst-adjusted maximums when continuing a campaign, and restore Power on damaging hits with Power Leech.
-
 - [#184](https://github.com/darkspinnet/darkspin/issues/184) Refresh Suppression from proximity and publish the Strangling Briars slow when each pulse lands.
-
 - [#184](https://github.com/darkspinnet/darkspin/issues/184) Keep Blastopod missiles alive until contact or range exhaustion, and stop Ghostly Tracker charges without a teleport.
-
 - [#184](https://github.com/darkspinnet/darkspin/issues/184) Update Invincitron's orbit without restarting its mover each step, and restore the authored Sentry Drone Laser muzzle effect.
 
 ### 2026-11-05
 
 - [#183](https://github.com/darkspinnet/darkspin/issues/183) Move remote server maintenance notices into the yellow Server status, with details on hover or keyboard focus.
-
 - Let Omicron release its cage and retreat after taking enough direct damage, and have its repair drone orbit while healing.
-
 - [#182](https://github.com/darkspinnet/darkspin/issues/182) Let Tree of Life heal nearby players and AI Companions in either direction by treating members of the same campaign party as allies.
-
-- Show the Lua tab in development scenario builds only when Darkspinner starts with `--lua`.
-
 - [#180](https://github.com/darkspinnet/darkspin/issues/180) Fix Frigid Caverns loading when Toxic Fungus must be removed from a teleporter without spawning a replacement.
-
 - Make campaign AI Companions target the enemy holding a teammate in a cage so they can free them through combat.
 - [#181](https://github.com/darkspinnet/darkspin/issues/181) Swap Mutation Agent models only when the firing model starts or stops, removing the outgoing model first.
 - [#181](https://github.com/darkspinnet/darkspin/issues/181) Let Invincitron's drone interpolate ordinary orbit movement and face along its path.
