@@ -3,13 +3,14 @@ package gameplay
 import (
 	"math"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/sim"
 	zoneinteract "github.com/darkspinnet/darkspin/server/zone/interact"
 	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
 )
 
-// Retain the ordinary reachable landing unless an equipment or catalyst pickup
-// already occupies it. An inventory-full item must not cover another pickup.
+// Sample around the source for every drop. A fixed point toward the player
+// can land under the hero, and reusing it piles up equipment and catalysts.
 func (e *gameplayPeerSession) separatedCampaignDropDestination(
 	source sim.Position, destination sim.Position,
 ) sim.Position {
@@ -17,9 +18,6 @@ func (e *gameplayPeerSession) separatedCampaignDropDestination(
 		return destination
 	}
 	pickups := e.zone.Pickups().Snapshots()
-	if isCampaignDropPositionClear(destination, pickups) {
-		return destination
-	}
 	// Reuse the build-103 DropStuffForObject ring sampler rather than giving
 	// every item and catalyst the same player-directed compatibility point.
 	placement, err := zoneloot.NewPlacement(source, 0, e.zone.DropRandom())
@@ -47,11 +45,17 @@ func isCampaignDropPositionClear(destination sim.Position, pickups []zoneinterac
 		if pickup.Kind != zoneinteract.PickupEquipment && pickup.Kind != zoneinteract.PickupCrystal {
 			continue
 		}
-		if math.Abs(float64(destination.Z-pickup.Position.Z)) > 2 {
+		occupied := pickup.Position
+		if !pickup.Flight.StartedAt.IsZero() {
+			// New pickups still occupy their launch pose while in flight.
+			// Reserve the landing now so the next drop cannot select it too.
+			occupied = game.Vec3(pickup.Flight.Destination)
+		}
+		if math.Abs(float64(destination.Z-occupied.Z)) > 2 {
 			continue
 		}
-		dx := destination.X - pickup.Position.X
-		dy := destination.Y - pickup.Position.Y
+		dx := destination.X - occupied.X
+		dy := destination.Y - occupied.Y
 		if dx*dx+dy*dy < 2.25 {
 			return false
 		}

@@ -32,7 +32,7 @@ var namedBossCatalog = [...]namedBossDefinition{
 	14: {level: "infinity_3", nounName: [3]string{"NomadShielder_Captain.Noun", "CitadelSpecialFour_Captain_2.Noun", "CitadelSpecialFour_Captain_3.Noun"}, chainLevelIndex: [3]uint32{14, 30, 56}},
 	15: {level: "cryos_1", nounName: [3]string{"CryosSpecialTwo_Captain.Noun", "CryosSpecialOne_Captain_2.Noun", "NomadRuption_Captain_3.Noun"}, chainLevelIndex: [3]uint32{15, 25, 60}},
 	16: {level: "cryos_2", nounName: [3]string{"CryosBoss.Noun", "CryosElementalSpecialThree_Captain_2.Noun", "CryosSpecialTwo_Captain_3.Noun"}, chainLevelIndex: [3]uint32{16, 26, 51}},
-	17: {level: "nocturna_3", nounName: [3]string{"NocturnaSpecialMunch_Captain.Noun", "Rezzer_Captain_2.Noun", "Rezzer_Captain_3.Noun"}, chainLevelIndex: [3]uint32{17, 44, 49}},
+	17: {level: "nocturna_3", nounName: [3]string{"NocturnaSpecialMunch_Captain.Noun", "ShadowBoss_2.Noun", "Rezzer_Captain_3.Noun"}, chainLevelIndex: [3]uint32{17, 44, 49}},
 	18: {level: "nocturna_2", nounName: [3]string{"Rezzer_Captain.Noun", "nct_lieu_su_stealther_Captain_2.Noun", "NocturnaSpecialLeech_Captain_3.Noun"}, chainLevelIndex: [3]uint32{18, 38, 64}},
 	19: {level: "infinity_1", nounName: [3]string{"CitadelSpecialThree_Captain.Noun", "CitadelSpecialTwo_Captain_2.Noun", "CitadelSpecialTwo_Captain_3.Noun"}, chainLevelIndex: [3]uint32{19, 29, 71}},
 	20: {level: "infinity_4", nounName: [3]string{"CitadelBoss.Noun", "CitadelSpecialThree_Captain_2.Noun", "CitadelSpecialThree_Captain_3.Noun"}, chainLevelIndex: [3]uint32{20, 39, 50}},

@@ -75,7 +75,7 @@ func authoredPlanetLeader(director game.CampaignDirector) (string, bool) {
 	if director.Difficulty%4 != 0 {
 		return "", false
 	}
-	expectedNouns := map[string]string{"zelems_4": "zelemboss", "verdanth_4": "verdanthboss", "nocturna_1": "shadowboss", "cryos_2": "cryosboss", "infinity_4": "citadelboss", "scaldron_4": "scaldronboss"}
+	expectedNouns := map[string]string{"zelems_4": "zelemboss", "verdanth_4": "verdanthboss", "nocturna_1": "shadowboss", "nocturna_3": "shadowboss", "cryos_2": "cryosboss", "infinity_4": "citadelboss", "scaldron_4": "scaldronboss"}
 	expected, isOccurrence := expectedNouns[strings.ToLower(director.Level)]
 	if !isOccurrence {
 		return "", false

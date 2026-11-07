@@ -1126,8 +1126,8 @@ func StealthState(
 	if objectID == 0 {
 		return nil, errors.New("npc stealth state invalid")
 	}
-	packet, err := raknet.MarshalApplication(raknet.AgentBlackboardUpdateMessage{
-		ObjectID: objectID, Stealth: uint8(stealthType), IsTargetable: true,
+	packet, err := raknet.MarshalApplication(raknet.AgentStealthMessage{
+		ObjectID: objectID, Stealth: uint8(stealthType),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("stealthStateMarshal: %w", err)
@@ -1374,8 +1374,8 @@ func ChargeStart(
 		})
 	}
 	if plan.Profile.StealthType != 0 {
-		messages = append(messages, raknet.AgentBlackboardUpdateMessage{
-			ObjectID: plan.SourceObjectID, IsTargetable: true,
+		messages = append(messages, raknet.AgentStealthMessage{
+			ObjectID: plan.SourceObjectID,
 		})
 	}
 	return marshalMessages(messages, "chargeStart")
@@ -1415,8 +1415,8 @@ func ChargeMovementState(
 		raknet.AttributeDataUpdateMessage{
 			ObjectID: objectID, Value: map[uint8]float32{48: movementSpeedBuff},
 		},
-		raknet.AgentBlackboardUpdateMessage{
-			ObjectID: objectID, Stealth: uint8(stealthType), IsTargetable: true,
+		raknet.AgentStealthMessage{
+			ObjectID: objectID, Stealth: uint8(stealthType),
 		},
 	}, "chargeMovementState")
 }

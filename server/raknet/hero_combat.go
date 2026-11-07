@@ -19,15 +19,18 @@ func (e HeroCombatStateMessage) EncodePayload() []byte {
 	return binary.LittleEndian.AppendUint32(payload, e.AttackerCount)
 }
 
-// HeroStealthMessage preserves the independently replicated combat state.
-type HeroStealthMessage struct {
+// AgentStealthMessage preserves the independently replicated target and combat
+// state while updating stealth and targetability for either heroes or NPCs.
+type AgentStealthMessage struct {
 	ObjectID uint32
 	Stealth  uint8
 }
 
-func (HeroStealthMessage) PacketID() PacketID { return AgentBlackboardUpdate }
+func (AgentStealthMessage) PacketID() PacketID { return AgentBlackboardUpdate }
 
-func (e HeroStealthMessage) EncodePayload() []byte {
+func (e AgentStealthMessage) EncodePayload() []byte {
 	payload := binary.LittleEndian.AppendUint32(nil, e.ObjectID)
 	return append(payload, 0x0c, e.Stealth, 1)
 }
+
+type HeroStealthMessage = AgentStealthMessage

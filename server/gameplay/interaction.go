@@ -1606,11 +1606,7 @@ func (s *gameplayPeerSession) spawnCampaignNPCDNA(
 		}
 		return nil, 0, nil
 	}
-	amountDraw, err := s.zone.DropRandom().Index(zoneloot.DNAChanceBasis + 1)
-	if err != nil {
-		reservation.Release()
-		return nil, 0, fmt.Errorf("dnaAmount: %w", err)
-	}
+	amountDraw := s.zone.DropRandom().Float64()
 	// Unresolved source classes retain the prior 11-challenge compatibility
 	// amount; resolved classes and active Elite attachments own their challenge.
 	challenge, npcType := s.campaignNPCRewardSource(enemy.Plan, 11)

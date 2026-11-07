@@ -241,7 +241,7 @@ type NPCDNAAmountInput struct {
 	Stage             uint32
 	Challenge         int32
 	DroppedMultiplier float32
-	RandomDraw        uint32
+	RandomDraw        float64
 	Tuning            game.DNADropTuning
 }
 
@@ -250,14 +250,15 @@ func NPCDNAAmount(req NPCDNAAmountInput) (uint32, error) {
 	if err != nil {
 		return 0, fmt.Errorf("dnaTuning: %w", err)
 	}
-	if req.Stage == 0 || req.DroppedMultiplier < 0 || req.RandomDraw > DNAChanceBasis ||
+	if req.Stage == 0 || req.DroppedMultiplier < 0 || req.RandomDraw < 0 || req.RandomDraw >= 1 ||
+		math.IsNaN(req.RandomDraw) || math.IsInf(req.RandomDraw, 0) ||
 		math.IsNaN(float64(req.DroppedMultiplier)) || math.IsInf(float64(req.DroppedMultiplier), 0) {
 		return 0, errors.New("invalid campaign DNA amount input")
 	}
 	quarter := (uint64(req.Stage) + 3) / 4
 	remainder := (uint64(req.Stage)-1)%4 + 1
 	exponent := 10*quarter + remainder
-	// Native sub_9CF9A0 stores the later pow result and the >130
+	// Build-103 sub_9CABF0 stores the later pow result and the >130
 	// intermediate product as float32 before multiplying the first segment.
 	firstGrowth := math.Pow(float64(req.Tuning.FirstGrowthBase), float64(min(exponent, uint64(70))))
 	growth := float32(firstGrowth)
@@ -271,9 +272,11 @@ func NPCDNAAmount(req NPCDNAAmountInput) (uint32, error) {
 	}
 	factorWidth := float32(req.Tuning.AmountFactors[1] - req.Tuning.AmountFactors[0])
 	randomFactor := float32(float64(req.Tuning.AmountFactors[0]) +
-		float64(factorWidth)*float64(req.RandomDraw)/float64(DNAChanceBasis))
+		float64(factorWidth)*req.RandomDraw)
 	// Explicit conversions preserve each native float32 rounding boundary and
-	// prevent fused operations from changing the final signed truncation.
+	// prevent fused operations from changing the amount. Native CVTSS2SI follows
+	// the gameplay thread's unverified MXCSR rounding mode; retain the existing
+	// truncation policy until that mode is established.
 	amount := float32(1 / float64(req.Tuning.Chance))
 	amount = float32(amount * float32(req.Challenge))
 	amount = float32(amount * req.Tuning.AmountScalar)

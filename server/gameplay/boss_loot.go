@@ -164,6 +164,11 @@ type campaignDropProjector struct {
 	mesh *navigation.Mesh
 }
 
+// Native 103's closest-area query is unbounded before the sampler's strict
+// horizontal acceptance check. Keep a bounded server search that still reaches
+// the floor from elevated enemies, rather than actor movement's three units.
+const campaignDropProjectionDistance = float32(32)
+
 func (e *gameplayPeerSession) destructorDropCenter(enemy zonenpc.Snapshot) sim.Position {
 	source := sim.Position(enemy.Plan.Position)
 	nav := e.zone.Navigation()
@@ -193,7 +198,9 @@ func (e campaignDropProjector) ProjectDropPosition(destination sim.Position) (si
 	if !isLayerFound {
 		return sim.Position{}, false
 	}
-	options := navigation.ProjectionOptions{PlanLayer: layer, MaxDistance: zonenavigation.ProjectionDistance}
+	options := navigation.ProjectionOptions{
+		PlanLayer: layer, MaxDistance: campaignDropProjectionDistance,
+	}
 	projection, err := e.mesh.Project(navigation.Vec3(destination), options)
 	if err != nil {
 		// Failed projection consumes this candidate; the sampler tries another.

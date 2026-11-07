@@ -14,6 +14,24 @@ const (
 	nashiraNonCombatSpeed       = 5.5
 )
 
+// NashiraDuplicateObjectIDs includes defeated duplicates: the two splits are
+// consumed for the boss's whole life, rather than for one hero's combat action.
+func (e *Session) NashiraDuplicateObjectIDs(objectID uint32) []uint32 {
+	if e == nil || objectID == 0 {
+		return nil
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	objectIDs := make([]uint32, 0, 2)
+	for _, childObjectID := range e.objectIDs {
+		child := e.npcs[childObjectID]
+		if child.Plan.OwnerObjectID == objectID && IsNashiraNoun(child.Plan.NounName) {
+			objectIDs = append(objectIDs, childObjectID)
+		}
+	}
+	return objectIDs
+}
+
 // NashiraCloneProfile keeps combat behavior without replaying the boss entrance.
 func NashiraCloneProfile(profile ActionProfile) ActionProfile {
 	profile.FirstAggroAnimationName = ""
