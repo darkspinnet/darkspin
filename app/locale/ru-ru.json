@@ -1,6 +1,7 @@
 {
   "locale": "ru-ru",
   "messages": {
+    "Standing enemy counts are managed per level; the remaining controls adjust composition and scaling.": "",
     "Sync Snapshot failed. Check the server logs for details.": "",
     "You cannot edit your own access or an account with a higher status, or grant a status above your own.": "",
     "Close control panel": "",
@@ -605,7 +606,7 @@
     "Default: 15; allowed: 10–60. Each map normally has three route sections. Available spawn points can limit the result. Fixed opening encounters, companions, scripted spawns, hordes and boss waves have separate counts.": "По умолчанию: 15; разрешено: 10–60. На каждой карте обычно есть три участка маршрута. Доступные точки появления могут ограничить результат. Фиксированные начальные встречи, компаньоны, заскриптованные появления, орды и волны боссов имеют отдельный подсчет.",
     "Defeat": "Поражение",
     "Delay after clearing the opening wave before the captain enters. Default: 2000; allowed: 0–30000.": "Задержка после прохождения первой волны перед входом капитана. По умолчанию: 2000; разрешено: 0–30000.",
-    "Delay before the next wave begins. Allowed: 0–30000. Default: 1500.": "Задержка перед началом следующей волны. Разрешено: 0–30000. По умолчанию: 1500.",
+    "Delay before the next wave begins. Allowed: 0–30000. Default: 500.": "Задержка перед началом следующей волны. Разрешено: 0–30000. По умолчанию: 500.",
     "Deployment": "Развертывание",
     "Destructible": "Разрушаемый",
     "Detached game cleanup failed for PID {0}: {1}": "Не удалось выполнить очистку отдельной игры для PID {0}: {1}",

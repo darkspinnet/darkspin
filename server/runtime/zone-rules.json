@@ -1,0 +1,33 @@
+{
+  "default": {
+    "enemies_per_section": 15,
+    "enemy_population": {
+      "agent_selection": "current_coop",
+      "agents_per_section": 1,
+      "roster_selection": "current_composition",
+      "external_roster_weight_percent": 50,
+      "ambient_elite_chance_percent": 0,
+      "owned_summon_health_scaling": "run_and_party",
+      "fixture_health_scaling": "base"
+    },
+    "ally_alert": {
+      "range_percent": 100,
+      "range_owner": "recipient",
+      "max_hops": 1
+    },
+    "boss_spawning": {
+      "opening_adds_per_anchor": 1,
+      "initial_boss_add_count": 2,
+      "captain_delay_millisecond": 2000
+    },
+    "mutation_agent": {
+      "minimum_chain_level": 7,
+      "wave_count": 3,
+      "spawn_wave": 3,
+      "inter_wave_delay_millisecond": 500,
+      "completion": "agent_defeat"
+    }
+  },
+  "campaign": {},
+  "replay": {}
+}

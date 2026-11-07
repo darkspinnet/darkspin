@@ -190,7 +190,7 @@ func snapshotSession(
 	state.ClearedSpawnGroupIDs = zoneSnapshot.ClearedSpawnGroupIDs
 	state.IsPopulationPrimed = zoneSnapshot.IsPopulationPrimed
 	if peerSession.zone.Population() != nil {
-		state.EnemyTargetPerSection = peerSession.zone.DirectorDefinition().EnemyPopulationRules.Resolved().EnemiesPerSection
+		state.EnemyTargetPerSection = peerSession.zone.DirectorDefinition().PopulationTarget()
 	}
 	state.IsZoneRestored = zoneSnapshot.IsRestored
 	state.IsObjectiveComplete = zoneSnapshot.IsObjectiveComplete

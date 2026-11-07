@@ -2038,6 +2038,10 @@ func (e *Zone) restoreCheckpoint(snapshot zonecheckpoint.Snapshot) error {
 	if e == nil {
 		return errors.New("nil zone")
 	}
+	ruleErr := e.restoreZoneRules(snapshot)
+	if ruleErr != nil {
+		return fmt.Errorf("checkpointRules: %w", ruleErr)
+	}
 	if snapshot.IsPopulationRandomSet && e.info.Population != nil {
 		err := e.info.Population.RestoreRandom(snapshot.PopulationRandom, snapshot.PopulationMixedRandomState)
 		if err != nil {
@@ -2567,7 +2571,9 @@ func (e *Zone) SaveCheckpoint(reason zonecheckpoint.Reason) {
 	security := e.info.Security.Snapshot()
 	hordes := e.info.Horde.Snapshots()
 	triggerProgresses := e.info.Director.TriggerProgress()
+	zoneRules := e.checkpointZoneRules()
 	snapshot := zonecheckpoint.Snapshot{
+		ZoneRules: zoneRules, IsZoneRuleSnapshotSet: zoneRules.Key != "",
 		EnemyPopulationRules: e.info.DirectorDefinition.EnemyPopulationRules.Resolved(), BossSpawnRules: e.info.DirectorDefinition.BossSpawnRules.Resolved(), IsSpawnRuleSnapshotSet: true,
 		Version: zonecheckpoint.Version, ZoneID: zoneID, RunSeed: runSeed,
 		IsReplayRandomized: isReplayRandomized,

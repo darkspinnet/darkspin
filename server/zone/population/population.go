@@ -259,7 +259,7 @@ func newSession(
 	}
 	recipe := "authored-candidates"
 	if strings.EqualFold(director.Level, game.InitialChainLevel) && isFirstClear {
-		recipe = fmt.Sprintf("initial-chain-local-plan-%d-per-section", director.EnemyPopulationRules.EnemiesPerSection)
+		recipe = fmt.Sprintf("initial-chain-local-plan-%d-per-section", director.PopulationTarget())
 		var planErr error
 		candidates, planErr = applyInitialChainPopulationPlan(candidates, director, isFirstClear,
 			random, sim.NewSimulatorRandom(seed^0x53454354))
@@ -267,7 +267,7 @@ func newSession(
 			return nil, fmt.Errorf("populationInitialPlan: %w", planErr)
 		}
 	} else {
-		recipe = fmt.Sprintf("section-roster-%d-per-section", director.EnemyPopulationRules.EnemiesPerSection)
+		recipe = fmt.Sprintf("section-roster-%d-per-section", director.PopulationTarget())
 		var planErr error
 		candidates, planErr = applyCampaignSectionPopulation(candidates, director, sectionRosters, random)
 		if planErr != nil {
@@ -616,7 +616,7 @@ func applyInitialChainPopulationPlan(
 		if isFirstClear && section == sim.DirectorRouteSectionA {
 			floorPlan, err := planInitialChainFirstClearOpening(
 				sectionCandidate, firstTimeTheme, sectionTheme, random,
-				int(director.EnemyPopulationRules.Resolved().EnemiesPerSection),
+				int(director.PopulationTarget()),
 			)
 			if err != nil {
 				return nil, fmt.Errorf("openingFloor: %w", err)
@@ -647,7 +647,7 @@ func applyInitialChainPopulationPlan(
 		}
 		floorPlan, err := planCampaignFloor(
 			sectionCandidate, theme, random,
-			int(director.EnemyPopulationRules.Resolved().EnemiesPerSection), eliteTarget, openingAnchor,
+			int(director.PopulationTarget()), eliteTarget, openingAnchor,
 			isFirstClear && section == sim.DirectorRouteSectionA,
 		)
 		if err != nil {

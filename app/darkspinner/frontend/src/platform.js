@@ -101,8 +101,6 @@ export const GetRemoteControlMaintenance = (...args) => controlPanelCall('GetRem
 export const StartRemoteControlMaintenance = (...args) => controlPanelCall('StartRemoteControlMaintenance', ...args)
 export const CancelRemoteControlMaintenance = (...args) => controlPanelCall('CancelRemoteControlMaintenance', ...args)
 export const GetServerConfiguration = () => call('GetServerConfiguration')
-export const GetServerRulesConfiguration = () => call('GetServerRulesConfiguration')
-export const SetServerRulesConfiguration = request => call('SetServerRulesConfiguration', request)
 export const GetStatus = () => call('GetStatus')
 export const GetLauncherAutomationConfiguration = () => isWails()
   ? window.go.main.App.GetLauncherAutomationConfiguration()

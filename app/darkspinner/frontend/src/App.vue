@@ -22,7 +22,6 @@ import { setLauncherLocale, translate } from './localization'
 import { remoteErrorText, remoteUsernameError, remotePasswordError } from './remote'
 import { GetLauncherLanguageConfiguration, SetLauncherLocale } from './platform'
 import { campaignDetailFor, campaignLabelFor, profileCreateDate, profileLastPlayedDate, profileLastPlayedTime } from './profile'
-import ServerRulesConfiguration from '@/components/ServerRulesConfiguration.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { BrowserOpenURL, CancelPatch, CheckRemoteServers, ClipboardSetText, CompactSnapshots, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteModProfile, DeleteProfile, DeleteRemoteConnection, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherAutomationConfiguration, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetSquadSnapshot, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, ResetModProfileDisplay, ResetProfileDisplay, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetAutoPatch, SetAutoPlay, SetIdentity, SetLocalServicesRequired, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
 
@@ -1804,7 +1803,6 @@ async function copyLauncherFailure() {
           <TabsTrigger value="general">{{ $t("General") }}</TabsTrigger>
           <TabsTrigger value="multiplayer">{{ $t("Multiplayer") }}</TabsTrigger>
           <TabsTrigger value="spore">Spore</TabsTrigger>
-          <TabsTrigger value="server-rules">{{ $t("Server Rule") }}</TabsTrigger>
           <TabsTrigger value="advanced">{{ $t("Advanced") }}</TabsTrigger>
         </TabsList>
         <TabsContent value="general">
@@ -1862,10 +1860,6 @@ async function copyLauncherFailure() {
               <p v-if="serverConfigurationError" class="management-message configuration-error" role="alert">{{ $t(serverConfigurationError) }}</p>
             </Card>
           </div>
-        </TabsContent>
-        <TabsContent value="server-rules">
-          <p v-if="launchPage === 'remote'" class="management-message">{{ $t('Server Rules are not shown for remote crogenitors') }}</p>
-          <ServerRulesConfiguration v-else :build-version="status.version" :is-active="configTab === 'server-rules'" :is-server-online="status.isServerOnline" :server-error="status.serverError" />
         </TabsContent>
         <TabsContent value="advanced">
           <div class="config-general-grid">

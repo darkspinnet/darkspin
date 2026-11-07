@@ -1,6 +1,7 @@
 {
   "locale": "fr-fr",
   "messages": {
+    "Standing enemy counts are managed per level; the remaining controls adjust composition and scaling.": "",
     "Sync Snapshot failed. Check the server logs for details.": "",
     "You cannot edit your own access or an account with a higher status, or grant a status above your own.": "",
     "Close control panel": "",
@@ -605,7 +606,7 @@
     "Default: 15; allowed: 10–60. Each map normally has three route sections. Available spawn points can limit the result. Fixed opening encounters, companions, scripted spawns, hordes and boss waves have separate counts.": "Par défaut : 15 ; autorisé : 10-60. Chaque carte comporte normalement trois sections d'itinéraire. Les points d'apparition disponibles peuvent limiter le résultat. Les rencontres d'ouverture fixes, les compagnons, les apparitions scriptées, les hordes et les vagues de boss ont des comptes séparés.",
     "Defeat": "Défaite",
     "Delay after clearing the opening wave before the captain enters. Default: 2000; allowed: 0–30000.": "Délai après avoir terminé la vague d'ouverture avant que le capitaine n'entre. Par défaut : 2000 ; autorisé : 0 à 30 000.",
-    "Delay before the next wave begins. Allowed: 0–30000. Default: 1500.": "Délai avant le début de la vague suivante. Autorisé : 0 à 30 000. Par défaut : 1 500.",
+    "Delay before the next wave begins. Allowed: 0–30000. Default: 500.": "Délai avant le début de la vague suivante. Autorisé : 0 à 30 000. Par défaut : 500.",
     "Deployment": "Déploiement",
     "Destructible": "Destructible",
     "Detached game cleanup failed for PID {0}: {1}": "Échec du nettoyage du jeu détaché pour le PID {0} : {1}",

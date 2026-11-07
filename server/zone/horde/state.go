@@ -13,7 +13,7 @@ import (
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
-const InterWaveDelay = 1500 * time.Millisecond
+const InterWaveDelay = 500 * time.Millisecond
 const gateContactRadius = float32(2)
 
 type Phase uint8

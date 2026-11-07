@@ -1799,10 +1799,7 @@ func (r campaignDamageRuntime) publishTransition(
 		member, isMemberFound := r.registry.sessions[sessionKey]
 		r.registry.mutex.RUnlock()
 		if isMemberFound && member.generation == generation && member.zone != nil {
-			rules := zonenpc.DefaultAllyAlertRules()
-			if r.npc.allyAlertRuleSource != nil {
-				rules = r.npc.allyAlertRuleSource.AllyAlertRules()
-			}
+			rules := campaignZoneAllyAlertRules(member.zone)
 			deathErr := member.zone.NPCs().RecordAdditionalKitAllyDeath(transition.defeatedObjectID, rules)
 			if deathErr != nil {
 				return nil, fmt.Errorf("allyDeathStimulus: %w", deathErr)

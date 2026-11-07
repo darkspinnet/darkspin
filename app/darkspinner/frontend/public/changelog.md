@@ -2,10 +2,11 @@
 
 ### 2026-11-07
 
+- Move gameplay tuning from blanket Server Rules controls to server-embedded JSON defaults with separate campaign and replay mission overrides and checkpointed zone rules.
+- Reduce the default pause between horde waves from 1500 ms to 500 ms.
+- Remove the universal enemies-per-section Server Rules setting and use destination-map population budgets, retaining provisional counts until each map is tuned.
 - Clear defeated mobs' combat statuses and remove their active status modifiers across all co-op players, including Electro Swath's reduced healing and stun effects, while preserving corpse and resurrection lifecycles.
-
 - Extend launcher campaign progress from the first 24 missions to all 72, displaying Invasion as 7-1 onward and Apocalypse as 13-1 onward with the correct planet names.
-
 - Stagger campaign player and AI Companion beam-in by group slot at 200 ms intervals, keeping heroes hidden and protected until their entry.
 
 ### 2026-11-06
@@ -90,7 +91,6 @@
 ### 2026-11-02
 
 - Widen the Manage update card and adapt status cards to narrow panels so update-check status remains readable beside its button.
-
 - [#165](https://github.com/darkspinnet/darkspin/issues/165) Prevent delayed recovery of older commands from canceling Quantum Superposition or resetting newer accepted abilities and movement.
 - [#163](https://github.com/darkspinnet/darkspin/issues/163) Include native exception reports and minidumps created or changed since client launch in automatic crash ZIPs, preserving ordinary logs when a native report is unavailable.
 - [#162](https://github.com/darkspinnet/darkspin/issues/162) Reduce campaign NPC polling allocations by filtering hazard sources before copying and using compact security, combat-presence, and AI-target snapshots.
@@ -890,7 +890,6 @@
 - Resolve teleport endpoints from all seeded selected marker definitions instead of filtered director placements, preserving full IDs, later-selected duplicate overwrites and missing-destination behavior.
 - Retain authored catalyst noun modifier identity and line-bonus tuning in content.db, exposing both to pickup and effect consumers without changing current effect calculations.
 - Route campaign named events by full simulator event hash across selected live listener owners, retaining duplicate subscriptions, empty dispatches and native swap-removal on owner destruction.
-
 - Separate scaled actor navigation footprints from unscaled noun spawn radii, retaining actor navigation layers across movement and restore while preserving combat footprints.
 - Retain authored NPC AI graphs and gambit overrides, initialize the first start phase without RNG, and preserve node/gambit cursors through version-6 checkpoints without inferring phase execution behavior.
 - Select navigation layers from imported NavPower tuning radii with the native backward scan, including oversized actors and the Arena radius cap.
@@ -1102,7 +1101,6 @@
 - Change Sage's Tree of Life from five repeated growth stages and a six-second lifetime to one full-growth effect and an eight-minute lifetime, playing its disappearance effect only at expiry and retaining the tree after a hero falls.
 - Hold mission equipment pickups until successful completion, forfeiting them on abort or squad defeat and preventing reconnects or checkpoint restoration from recovering lost loot.
 - Change Space Barracudas from overlapping teleport loops to one opening blink followed by ranged attacks, choosing reachable landings around the target with a preference for its rear.
-
 - Correct enemy damage scaling from stat plus 1 to the authored stat minus 8, reducing inflated early-campaign hits while preserving hero damage.
 - Preserve separate current and maximum health and energy through reconnects, checkpoint restoration, and party snapshots so recovered bars do not exceed 100% and keep flashing.
 - Make sphere teleporters transfer heroes immediately once their collision footprint fits inside, and keep each gate inactive while enemies remain within roughly three Blitz collision lengths.
@@ -1342,6 +1340,5 @@
 - Change Invincitron's hover drone from remaining at its owner's position to circling above him, with its firing position following the same orbit.
 - Restore Nashira's Shadow Panic shriek on her melee/lob attack paths, with timed nearby fear, a fifteen-second cooldown, and normal attacks resuming after the cast.
 - Change Nashira illusion deaths from the full boss death animation to a brief duplication-effect disappearance; preserve the real boss's death sequence.
-
 - Fix boss-summoned Exploder Scarabs failing damage and explosion processing because they were incorrectly treated as boss-wave actors.
 - Change Laser Tank beams from following heroes to fixed placement anchors, with explicit effect cleanup when firing ends or is interrupted.

@@ -38,7 +38,6 @@ import (
 	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
 	zoneencounter "github.com/darkspinnet/darkspin/server/zone/encounter"
 	zonehero "github.com/darkspinnet/darkspin/server/zone/hero"
-	zonehorde "github.com/darkspinnet/darkspin/server/zone/horde"
 	zoneinteract "github.com/darkspinnet/darkspin/server/zone/interact"
 	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
@@ -5907,43 +5906,18 @@ func (p campaignPreparation) loadDirector(
 	if err != nil {
 		return game.CampaignDirector{}, fmt.Errorf("directorLoad: %w", err)
 	}
-	director.BossSpawnRules = game.DefaultBossSpawnRules()
-	director.EnemyPopulationRules = game.DefaultEnemyPopulationRules()
-	populationRuleSource, isPopulationRuleSource := p.spawnRuleSource.(interface {
-		EnemyPopulationRules() game.EnemyPopulationRules
-	})
-	if isPopulationRuleSource {
-		director.EnemyPopulationRules = populationRuleSource.EnemyPopulationRules()
+	director.ZoneRules, err = p.zoneRules(ctx, binding)
+	if err != nil {
+		return game.CampaignDirector{}, fmt.Errorf("directorZoneRules: %w", err)
 	}
-	spawnRuleSource, isSpawnRuleSource := p.spawnRuleSource.(interface{ BossSpawnRules() game.BossSpawnRules })
-	if isSpawnRuleSource {
-		director.BossSpawnRules = spawnRuleSource.BossSpawnRules()
-	}
-	missionRuleSource, isMissionRuleSource := p.spawnRuleSource.(interface {
-		SpawnRulesSnapshot() (game.EnemyPopulationRules, game.BossSpawnRules)
-	})
-	if isMissionRuleSource {
-		director.EnemyPopulationRules, director.BossSpawnRules = missionRuleSource.SpawnRulesSnapshot()
-	}
-	if p.checkpoint != nil {
-		snapshot, isFound, loadErr := p.checkpoint.Load(ctx, uint64(binding.GameID))
-		if loadErr != nil {
-			return game.CampaignDirector{}, fmt.Errorf("directorRuleCheckpoint: %w", loadErr)
-		}
-		if isFound && snapshot.IsSpawnRuleSnapshotSet {
-			validateErr := zonecheckpoint.Validate(snapshot, uint64(binding.GameID), binding.Level, binding.Difficulty, binding.UserID)
-			if validateErr == nil {
-				director.EnemyPopulationRules = snapshot.EnemyPopulationRules.Resolved()
-				director.BossSpawnRules = snapshot.BossSpawnRules.Resolved()
-			}
-		}
-	}
+	director.BossSpawnRules = director.ZoneRules.BossSpawning
+	director.EnemyPopulationRules = director.ZoneRules.EnemyPopulation
 	director, err = game.ApplyPopulationRules(director)
 	if err != nil {
 		return game.CampaignDirector{}, fmt.Errorf("directorPopulation: %w", err)
 	}
 	if p.logger != nil {
-		p.logger.Printf("Dark Spin NPC policy game=%d stage=%d party=%d population=%+v boss=%+v agents=%d leader_result=%s", binding.GameID, binding.Difficulty, binding.CombatParticipantCount, director.EnemyPopulationRules, director.BossSpawnRules, len(director.OrdinaryAgentEntries), zoneboss.LeaderPolicyResult(director))
+		p.logger.Printf("Dark Spin NPC policy game=%d stage=%d party=%d rule_key=%q target=%d population=%+v boss=%+v agents=%d leader_result=%s", binding.GameID, binding.Difficulty, binding.CombatParticipantCount, director.ZoneRules.Key, director.PopulationTarget(), director.EnemyPopulationRules, director.BossSpawnRules, len(director.OrdinaryAgentEntries), zoneboss.LeaderPolicyResult(director))
 	}
 	director, err = p.selectInitialMapLayout(director, binding)
 	if err != nil {
@@ -6381,7 +6355,7 @@ func (p campaignPreparation) initialize(
 	if capsuleRandomErr != nil {
 		return fmt.Errorf("statusChainCapsuleRandom: %w", capsuleRandomErr)
 	}
-	hordePolicy := p.hordePolicy()
+	hordePolicy := campaignZoneHordePolicy(director.ZoneRules.MutationAgent)
 	hordePolicyErr := hordePolicy.Validate()
 	if hordePolicyErr != nil {
 		return fmt.Errorf("hordePolicy: %w", hordePolicyErr)
@@ -6440,7 +6414,7 @@ func (p campaignPreparation) initialize(
 			Director:                directorSession,
 			Script:                  scriptRegistry,
 			Encounter:               zoneencounter.NewStageSession(),
-			Horde:                   zonehorde.NewCampaignSessionWithPolicy(binding.ChainProgression, hordePolicy),
+			Horde:                   campaignZoneHordeSession(binding, director.ZoneRules, restoreSnapshot),
 			Boss:                    zoneboss.NewSession(director.BossSpawnRules),
 			Death:                   zonedeath.NewSession(),
 			Objective:               objectiveSession,

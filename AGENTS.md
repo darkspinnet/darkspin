@@ -75,10 +75,10 @@ Never use .cache, instead put it in bin/cache/
 ## Configuration ownership
 
 - Keep development binaries and their runtime working directories under `bin`. Never place binaries in the repository root or run them there with an implicit runtime/configuration directory. Generating a default `darkspin.toml` in the proper runtime directory is allowed; use that directory and its explicit configuration path for diagnostics.
-- Store every user-exposed configuration option in `darkspin.toml`, including launcher preferences. Use named sections within that file instead of creating separate configuration files for individual features.
+- Store user-exposed application configuration in `darkspin.toml`, including launcher preferences. Per-zone gameplay rules are the explicit exception below.
 - Do not create `darkspin/launcher.toml`, another `launcher.toml`, or other feature-specific TOML files. When replacing an older configuration file, migrate its settings into `darkspin.toml` and delete the old file only after a successful save. Preserve explicit settings already present in `darkspin.toml`.
 - Every TOML configuration file and its user-exposed settings must be editable through the launcher's Config interface; do not add settings that require users to edit files manually.
-- Server rules currently live in `server.toml`. Include that existing file in the launcher editing requirement; its existence is not permission to introduce more TOML files.
+- Per-zone gameplay rules live in the source-owned `server/runtime/zone-rules.json` and are embedded into the server binary at build time. Do not create runtime copies, runtime overrides, client endpoints, or launcher Config controls for this JSON. Keep one `default` rule entry and optional `campaign`/`replay` mission overrides; unspecified levels fall back to `default`. For a specific-level tweak, copy the default entry into that mission and apply the changes. Key campaign and replay missions separately using their full 1-1 through 18-4 progression; do not collapse Invasion or Apocalypse into first-tier map identities or reintroduce blanket Server Rules controls. Retire the old gameplay sections from `server.toml` only after validating the embedded rules, preserving unrelated sections such as `part_shop`.
 - Configuration writers must preserve settings owned by other features when saving a shared TOML file.
 
 ## Changelog
@@ -86,6 +86,7 @@ Never use .cache, instead put it in bin/cache/
 - Record user-visible changes in the root `CHANGELOG.md` under a daily heading
   formatted as `### YYYY-MM-DD`.
 - Do not apply the Go line-length limit or fixed-column wrapping to Markdown. Keep each changelog bullet on one physical line.
+- Do not insert blank lines between changelog entries within the same daily section. Keep one blank line after each daily heading and between daily sections.
 - Reuse the current day's heading when multiple completed tasks land on the
   same date; do not create duplicate headings for that date.
 - Keep each change to one brief `- ` line. Describe meaningful transitions as

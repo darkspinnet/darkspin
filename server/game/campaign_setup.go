@@ -268,6 +268,7 @@ type CampaignScriptObject struct {
 
 // CampaignDirector is the immutable level input accepted by campaign setup.
 type CampaignDirector struct {
+	ZoneRules                ZoneRules
 	AttributeMirrorTuning    AttributeMirrorTuning
 	LocalPools               []CampaignDirectorPool
 	OrdinaryAgentEntries     []CampaignDirectorEntry

@@ -3,7 +3,6 @@ package gameplay
 import (
 	"fmt"
 
-	"github.com/darkspinnet/darkspin/server/raknet"
 	effectraknet "github.com/darkspinnet/darkspin/server/zone/effect/raknet103"
 )
 
