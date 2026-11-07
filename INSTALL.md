@@ -10,6 +10,7 @@
 - if linux, `sudo apt install libgtk-3-dev libwebkit2gtk-4.0-dev`
 - run `go install github.com/magefile/mage@latest`
 - run `go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0`
+- Lua conversion uses generated WebAssembly build inputs. Mage builds prepare these automatically from a valid `bin/cache/lua-wasm` bundle. On the first source build, install Rust 1.99.1 with the `wasm32-wasip1` target and provide WASI SDK 25 and the original Lua 5.1.5 source through `WASI_SDK` and `LUA_SOURCE`; Windows preparation can download the pinned SDK and Lua source automatically. See [the compiler build instructions](content/lua51/compiler/wasm/README.md). For direct Go commands, run `mage darkrun:preparelua` and pass `-overlay=bin/cache/lua-wasm/overlay.json` to `go build`.
 - run `mage build` to build everything, a good initial sanity test
 - if pnmp fails, run `winget install OpenJS.NodeJS.LTS` then `npm install --global pnpm`
 
@@ -132,6 +133,14 @@ request protocol captures. Sync Snapshot's rolling gameplay history and `/bug`
 capture do not depend on that file. The protocol trace adds HTTP, Blaze, and QoS
 metadata that is distinct from the snapshot's gameplay traffic.
 Generated IDA and game reverse-engineering logs belong under `bin/game/logs`.
+
+Run `mage temp:preview` to list files last modified more than 30 days ago, or
+`mage temp:clean` to delete them and prune empty folders. Cleanup covers
+`bin/cache`, `bin/game/logs`, and `darkspin/logs` beneath `bin/game`, `bin/server`,
+and `bin/darkspinner`. It skips scenario-owned directories and filesystem links.
+The cutoff uses modification time, including cached tools and reference extracts;
+preview the list before removing anything you still need. Run cleanup while
+development builds and diagnostic tools are stopped.
 
 `mage darkspin:auth` rebuilds darkspin and runs `darkspin auth --local` from `bin/server`.
 The auth broker and game server read the same `[auth]` settings from

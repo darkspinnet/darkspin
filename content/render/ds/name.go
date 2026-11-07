@@ -32,6 +32,10 @@ type resourcePairKey struct {
 }
 
 func packageResourcePaths(resources []dbpf.Resource, names map[uint32]string) []string {
+	return packageResourcePathsWithLua(resources, names, nil)
+}
+
+func packageResourcePathsWithLua(resources []dbpf.Resource, names map[uint32]string, luaNames map[luaResourceKey]luaResourceName) []string {
 	aliases := packageResourceAliases(resources, names)
 	paths := make([]string, len(resources))
 	usedPaths := make(map[string]bool, len(resources))
@@ -56,6 +60,22 @@ func packageResourcePaths(resources []dbpf.Resource, names map[uint32]string) []
 		isMovieAsset := resource.Entry.Type == movie.ResourceType
 		isAnimationAsset := resource.Entry.Type == animation.ResourceType
 		isScaleformAsset := scaleform.IsResourceType(resource.Entry.Type)
+		isLuaAsset := resource.Entry.Type == luaResourceType
+		if isLuaAsset {
+			lookup := luaNames[luaResourceKey{group: resource.Entry.Group, instance: resource.Entry.Instance}]
+			groupName := lookup.Group
+			if groupName == "" {
+				groupName = fmt.Sprintf("0x%08X", resource.Entry.Group)
+			}
+			alias.category = filepath.Join("lua", safeResourceName(groupName))
+			alias.name = lookup.Name
+			if lookup.Evidence == "defined-global" {
+				alias.name += "__" + resourceInstanceName(resource.Entry.Instance)
+			}
+			if alias.name == "" {
+				alias.name = resourceInstanceName(resource.Entry.Instance)
+			}
+		}
 		if isAudioAsset || isAudioProperty {
 			alias.category = audioResourceCategory(resource.Entry.Type, alias.name)
 		}
@@ -92,7 +112,7 @@ func packageResourcePaths(resources []dbpf.Resource, names map[uint32]string) []
 			name += fmt.Sprintf("__%08x_%08x_%016x", resource.Entry.Type, resource.Entry.Group, resource.Entry.Instance)
 		}
 		path := filepath.ToSlash(filepath.Join(alias.category, kind, name+".dse"))
-		if resource.Entry.Type == prop.AudioResourceType || audio.IsStreamType(resource.Entry.Type) || audio.IsPatchType(resource.Entry.Type) || isMovieAsset || isAnimationAsset || isScaleformAsset || isPaired && pairKey.family == "render" {
+		if resource.Entry.Type == prop.AudioResourceType || audio.IsStreamType(resource.Entry.Type) || audio.IsPatchType(resource.Entry.Type) || isMovieAsset || isAnimationAsset || isScaleformAsset || isLuaAsset || isPaired && pairKey.family == "render" {
 			path = filepath.ToSlash(filepath.Join(alias.category, name+".dse"))
 		}
 		pathKey := strings.ToLower(path)
@@ -116,7 +136,7 @@ func packageResourcePaths(resources []dbpf.Resource, names map[uint32]string) []
 			} else {
 				name += fmt.Sprintf("__%08x_%08x_%016x", resource.Entry.Type, resource.Entry.Group, resource.Entry.Instance)
 				path = filepath.ToSlash(filepath.Join(alias.category, kind, name+".dse"))
-				if resource.Entry.Type == prop.AudioResourceType || audio.IsStreamType(resource.Entry.Type) || audio.IsPatchType(resource.Entry.Type) || isMovieAsset || isAnimationAsset || isScaleformAsset || isPaired && pairKey.family == "render" {
+				if resource.Entry.Type == prop.AudioResourceType || audio.IsStreamType(resource.Entry.Type) || audio.IsPatchType(resource.Entry.Type) || isMovieAsset || isAnimationAsset || isScaleformAsset || isLuaAsset || isPaired && pairKey.family == "render" {
 					path = filepath.ToSlash(filepath.Join(alias.category, name+".dse"))
 				}
 				pathKey = strings.ToLower(path)
@@ -336,6 +356,8 @@ func packageResourceAliases(resources []dbpf.Resource, names map[uint32]string) 
 
 func resourceKind(typeCode uint32) string {
 	switch typeCode {
+	case luaResourceType:
+		return "lua"
 	case rw4.ResourceType:
 		return "rw4"
 	case prop.ResourceType:

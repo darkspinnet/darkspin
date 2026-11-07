@@ -412,6 +412,7 @@ func (e *deploymentCommand) prepareEnvironment() error {
 }
 
 func (e *deploymentCommand) build() error {
+	mg.SerialDeps((Darkrun{}).PrepareLua)
 	err := Version()
 	if err != nil {
 		return fmt.Errorf("versionValidate: %w", err)

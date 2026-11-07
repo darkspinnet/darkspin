@@ -13,6 +13,7 @@ import (
 
 	compiled "github.com/darkspinnet/darkspin/content/animation"
 	"github.com/darkspinnet/darkspin/content/dbpf"
+	luaDecompiler "github.com/darkspinnet/darkspin/content/lua51/decompiler"
 	"github.com/darkspinnet/darkspin/content/render/ds"
 	"github.com/darkspinnet/darkspin/content/render/gltf"
 	"github.com/darkspinnet/darkspin/content/render/gmsh"
@@ -21,20 +22,57 @@ import (
 )
 
 func newConvertCommand() *cobra.Command {
+	isLuaNotices := false
+	contentDBPath := ""
 	command := &cobra.Command{
 		Use:   "convert <source[:entry]> [destination]",
-		Short: "Convert a DBPF package to or from a strict .ds directory",
+		Short: "Convert packages to/from .ds and Lua source to/from Lua 5.1 bytecode",
 		Long: "Convert a DBPF package to or from a strict .ds directory.\n\n" +
 			"Without a destination, Creatures.package converts to Creatures.ds in the\n" +
 			"current directory, and a <name>.ds directory converts back to <name>.package\n" +
 			"in the current directory. An explicit . uses the same default destination.\n" +
 			"Existing destinations are not overwritten.\n" +
 			"Audio bundles repack both packages into their parent directory by default.\n" +
-			"Selected entries and other DS directories require an explicit destination.",
-		Args: cobra.RangeArgs(1, 2),
+			"Selected entries and other DS directories require an explicit destination.\n\n" +
+			"Lua source compiles to .luac; native Lua 5.1 bytecode decompiles to .lua.\n" +
+			"Bytecode is detected by its header, including compiled files named .lua.\n" +
+			"A compiled .lua defaults to <name>.decompiled.lua. Lua conversion runs\n" +
+			"inside Darkrun without external tools. Package Lua resources include\n" +
+			"editable source and LuaLS definitions. Original comments cannot be recovered.",
+		Args: func(command *cobra.Command, args []string) error {
+			if isLuaNotices {
+				err := cobra.NoArgs(command, args)
+				if err != nil {
+					return fmt.Errorf("noticeArgs: %w", err)
+				}
+				return nil
+			}
+			err := cobra.RangeArgs(1, 2)(command, args)
+			if err != nil {
+				return fmt.Errorf("convertArgs: %w", err)
+			}
+			return nil
+		},
 		RunE: func(command *cobra.Command, args []string) error {
+			if isLuaNotices {
+				_, err := fmt.Fprintln(command.OutOrStdout(), luaDecompiler.Attribution)
+				if err != nil {
+					return fmt.Errorf("noticeWrite: %w", err)
+				}
+				return nil
+			}
 			startedAt := time.Now()
 			target := parsePackageTarget(args[0])
+			if contentDBPath != "" && target.Selector != "" {
+				return errors.New("--content-db requires a full package or DS directory export")
+			}
+			isLua, luaErr := convertLuaTarget(command, target, args)
+			if luaErr != nil {
+				return fmt.Errorf("convertLua: %w", luaErr)
+			}
+			if isLua {
+				return nil
+			}
 			if target.Selector == "" && strings.EqualFold(filepath.Base(target.Path), "AudioProps.package") {
 				_, err := fmt.Fprintf(command.ErrOrStderr(), "Skipping %s: convert Audio.package instead; it includes the sibling AudioProps.package in one Audio.ds bundle.\n", target.Path)
 				if err != nil {
@@ -50,6 +88,15 @@ func newConvertCommand() *cobra.Command {
 				destinationPath, destinationErr = defaultConvertDestination(target)
 				if destinationErr != nil {
 					return fmt.Errorf("convertDestination: %w", destinationErr)
+				}
+			}
+			if contentDBPath != "" {
+				fi, statErr := os.Stat(target.Path)
+				if statErr != nil {
+					return fmt.Errorf("ownerSourceStat: %w", statErr)
+				}
+				if fi.IsDir() && !strings.EqualFold(filepath.Ext(destinationPath), ".ds") {
+					return errors.New("--content-db requires a DS directory destination")
 				}
 			}
 			names, err := discoverRenderNames(target.Path)
@@ -68,6 +115,10 @@ func newConvertCommand() *cobra.Command {
 				err = ds.ExtractPackageResourcePathWithNames(command.Context(), target.Path, destinationPath, ordinal, names)
 				if err != nil {
 					return fmt.Errorf("convertResource: %w", err)
+				}
+				err = writeLuaRecoverySummary(command, destinationPath)
+				if err != nil {
+					return fmt.Errorf("convertLuaSummary: %w", err)
 				}
 				_, err = fmt.Fprintf(command.OutOrStdout(), "Converted in %.2f seconds\n", time.Since(startedAt).Seconds())
 				if err != nil {
@@ -97,6 +148,16 @@ func newConvertCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("convertPath: %w", err)
 			}
+			if contentDBPath != "" {
+				err = enrichLuaIndexOwners(command.Context(), destinationPath, contentDBPath)
+				if err != nil {
+					return fmt.Errorf("luaOwners: %w", err)
+				}
+			}
+			err = writeLuaRecoverySummary(command, destinationPath)
+			if err != nil {
+				return fmt.Errorf("convertLuaSummary: %w", err)
+			}
 			_, err = fmt.Fprintf(command.OutOrStdout(), "Converted in %.2f seconds\n", time.Since(startedAt).Seconds())
 			if err != nil {
 				return fmt.Errorf("convertOutput: %w", err)
@@ -104,6 +165,9 @@ func newConvertCommand() *cobra.Command {
 			return nil
 		},
 	}
+	command.Flags().BoolVar(&isLuaNotices, "attribution", false, "Print the bundled root ATTRIBUTION.txt")
+	command.Flags().BoolVar(&isLuaNotices, "lua-notices", false, "Print bundled attribution (alias for --attribution)")
+	command.Flags().StringVar(&contentDBPath, "content-db", "", "Enrich the exported Lua index with noun/ability owners from an imported content.db")
 	return command
 }
 

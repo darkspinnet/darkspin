@@ -182,6 +182,7 @@ func Build() error {
 }
 
 func buildDarkrun(isScenario bool) (string, error) {
+	mg.SerialDeps((Darkrun{}).PrepareLua)
 	outputDirectory := filepath.Join("bin", "server")
 	err := os.MkdirAll(outputDirectory, 0o755)
 	if err != nil {
@@ -298,6 +299,7 @@ func buildLauncher(linkerFlags string) error {
 }
 
 func buildDarkSpinner(linkerFlags, outputPath, targetOS string, isScenario bool) error {
+	mg.SerialDeps((Darkrun{}).PrepareLua)
 	targetArch := darkSpinnerArchitecture(targetOS)
 	if targetOS == "windows" && targetArch == "amd64" {
 		helperPath := filepath.Join("app", "darkspinner", "fangloader.exe")
@@ -599,6 +601,7 @@ func (Scenario) Build() error {
 
 // BuildCI packages the standalone amd64 server for Windows or Linux.
 func (Darkrun) BuildCI(targetOS string) error {
+	mg.SerialDeps((Darkrun{}).PrepareLua)
 	if targetOS != "windows" && targetOS != "linux" {
 		return fmt.Errorf("unsupported Darkrun target %q", targetOS)
 	}
@@ -888,6 +891,7 @@ func runVersionedWailsBuild(projectPath string, arguments ...string) error {
 }
 
 func runVersionedWailsBuildEnvironment(projectPath string, environment map[string]string, arguments ...string) error {
+	mg.SerialDeps((Darkrun{}).PrepareLua)
 	configurationPath := filepath.Join(projectPath, "wails.json")
 	contents, err := os.ReadFile(configurationPath)
 	if err != nil {

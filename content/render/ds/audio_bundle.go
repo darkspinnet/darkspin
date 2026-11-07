@@ -531,7 +531,7 @@ func writeAudioBundleResources(ctx context.Context, reader *dbpf.Reader, destina
 		if err != nil {
 			return fmt.Errorf("resourceOpen[%d]: %w", ordinal, err)
 		}
-		err = writeResourceWithPropertyDeclaration(definitionPath, resourceDefinitionIdentity(resource.PayloadPath), ordinal, resource.Entry, payload, names, propertyDeclaration)
+		err = writeResourceWithPropertyDeclaration(ctx, definitionPath, resourceDefinitionIdentity(resource.PayloadPath), ordinal, resource.Entry, payload, names, propertyDeclaration)
 		if err != nil {
 			return fmt.Errorf("resourceWrite[%d]: %w", ordinal, err)
 		}

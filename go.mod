@@ -11,6 +11,7 @@ require (
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/magefile/mage v1.15.0
 	github.com/spf13/cobra v1.10.1
+	github.com/tetratelabs/wazero v1.9.0
 	github.com/wailsapp/wails/v2 v2.13.0
 	github.com/yuin/gopher-lua v1.1.1
 	golang.org/x/crypto v0.52.0

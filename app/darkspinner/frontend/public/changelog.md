@@ -2,6 +2,8 @@
 
 ### 2026-11-07
 
+- Let temporary-file cleanup remove read-only Go module-cache files and empty folders on Windows.
+- Add mage temp:preview and temp:clean to inspect or remove build-cache and development-log files older than 30 days and prune empty folders while preserving scenario runs and filesystem links.
 - Move admin-panel remote diagnostic downloads from darkspin/bugs/server-downloads to darkspin/downloads, grouped in stable server folders without random suffixes.
 - [#190](https://github.com/darkspinnet/darkspin/issues/190) Prevent catalyst moves, drops, and pickups from leaving Health or Power above reduced capacity and disconnecting the client.
 - [#190](https://github.com/darkspinnet/darkspin/issues/190) Fix Proximity Mine placement failing when pursuit used a timestamp older than its admitted movement state.

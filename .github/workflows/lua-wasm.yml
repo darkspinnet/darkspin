@@ -1,0 +1,74 @@
+name: Lua WebAssembly build inputs
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare portable Lua modules
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      GOCACHE: ${{ github.workspace }}/bin/cache/go-build
+      MAGEFILE_CACHE: ${{ github.workspace }}/bin/cache/magefile
+      CARGO_HOME: ${{ github.workspace }}/bin/cache/lua-decompiler/cargo
+      RUSTUP_HOME: ${{ github.workspace }}/bin/cache/lua-decompiler/rustup
+      CARGO_TARGET_DIR: ${{ github.workspace }}/bin/cache/lua-decompiler/target
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Restore portable Lua modules
+        id: lua-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            bin/cache/lua-wasm/*.wasm
+            bin/cache/lua-wasm/manifest.json
+          key: lua-wasm-windows-v1-${{ hashFiles('.github/workflows/lua-wasm.yml', 'mage_lua*.go', 'content/lua51/compiler/wasm/**', 'content/lua51/decompiler/wasm/**') }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Install Mage
+        run: go install github.com/magefile/mage@v1.15.0
+
+      - name: Set up native Rust build dependencies
+        if: steps.lua-cache.outputs.cache-hit != 'true'
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          install: mingw-w64-ucrt-x86_64-gcc
+
+      - name: Add native Rust linker to PATH
+        if: steps.lua-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          "${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin" |
+            Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install pinned Rust WebAssembly toolchain
+        if: steps.lua-cache.outputs.cache-hit != 'true'
+        run: |
+          rustup toolchain install 1.99.1-x86_64-pc-windows-gnu --profile minimal
+          rustup target add wasm32-wasip1 --toolchain 1.99.1-x86_64-pc-windows-gnu
+
+      - name: Prepare and validate portable Lua modules
+        run: mage darkrun:preparelua
+
+      - name: Upload portable Lua modules
+        uses: actions/upload-artifact@v4
+        with:
+          name: internal-lua-wasm
+          path: |
+            bin/cache/lua-wasm/*.wasm
+            bin/cache/lua-wasm/manifest.json
+          if-no-files-found: error
+          retention-days: 1
