@@ -114,6 +114,7 @@ type debugWorldState struct {
 	IsNPCTruncated          bool                      `json:"is_npc_truncated"`
 	Pickups                 []debugWorldPickup        `json:"pickups"`
 	PickupTotal             int                       `json:"pickup_total"`
+	EquipmentDropCount      int                       `json:"equipment_drop_count"`
 	IsPickupTruncated       bool                      `json:"is_pickup_truncated"`
 	IsPickupAvailable       bool                      `json:"is_pickup_available"`
 	PickupUnavailableReason string                    `json:"pickup_unavailable_reason,omitempty"`
@@ -195,6 +196,7 @@ func observeDebugWorld(ctx context.Context, host *debugHost, clientManager *debu
 	result.NPCTotal = world.NPCTotal
 	result.IsNPCTruncated = world.IsNPCTruncated
 	result.PickupTotal = world.PickupTotal
+	result.EquipmentDropCount = world.EquipmentDropCount
 	result.IsPickupTruncated = world.IsPickupTruncated
 	result.IsPickupAvailable = world.IsPickupAvailable
 	result.PickupUnavailableReason = world.PickupUnavailableReason

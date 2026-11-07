@@ -184,6 +184,7 @@ type ActionProfile struct {
 	IsProjectileParallelVolley       bool
 	IsProjectileTrackingBetweenShots bool
 	IsProjectileLeadingTarget        bool
+	IsProjectileHoming               bool
 	IsProjectilePiercing             bool
 	IsProjectileCloseOffsetXFound    bool
 	IsProjectileCloseOffsetYFound    bool
@@ -204,6 +205,12 @@ func (e ActionProfile) Clone() ActionProfile {
 
 func (e ActionProfile) IsEqual(other ActionProfile) bool {
 	return reflect.DeepEqual(e, other)
+}
+
+// IsHomingProjectile permits an authored zero homing delay. Existing profiles
+// that use a positive delay as their enablement retain their current behavior.
+func (e ActionProfile) IsHomingProjectile() bool {
+	return e.IsProjectileHoming || e.HomingDelay > 0
 }
 
 func (e ActionProfile) ModifierGUID() uint32 {
@@ -1076,7 +1083,9 @@ func ZelemMarkSeekerProfile(nounName string) (ActionProfile, bool) {
 			0, 0, 2700 * time.Millisecond, 2700 * time.Millisecond,
 			3260 * time.Millisecond, 3260 * time.Millisecond,
 		},
-		HomingDelay: 16 * time.Millisecond,
+		// Build-103 chunk 784 enables homing; its projectile-template parent
+		// supplies zero homing delay, not a positive enablement sentinel.
+		IsProjectileHoming: true,
 		ProjectileOffsets: []game.Vec3{
 			{X: 2, Y: 1, Z: -1.5}, {X: -2, Y: 1, Z: -1.5},
 			{X: 3.25, Y: 0.75, Z: -1.5}, {X: -3.25, Y: 0.75, Z: -1.5},

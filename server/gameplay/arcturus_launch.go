@@ -45,7 +45,7 @@ func (e campaignNPCActionRuntime) produceArcturusLaunch(packet raknet.Packet, se
 		return nil, false, nil
 	}
 	state := current.campaignArcturusStates[objectID]
-	if state == nil {
+	if state == nil || state.zone != current.zone {
 		e.registry.mutex.Unlock()
 		return nil, false, nil
 	}
@@ -78,13 +78,6 @@ func (e campaignNPCActionRuntime) produceArcturusLaunch(packet raknet.Packet, se
 		sessionKey: sessionKey, generation: generation, objectID: objectID,
 		timestamp: timestamp, state: state, protectedUntil: e.now().Add(9200 * time.Millisecond)}
 	state.launch = run
-	if state.turret != nil {
-		turret, isTurretFound := current.zone.NPCs().NPC(state.turret.objectID)
-		if !isTurretFound || turret.IsDefeated {
-			// TurretCheck recreates a destroyed turret at a later launch.
-			state.turret = nil
-		}
-	}
 	e.registry.mutex.Unlock()
 	animation, err := npcraknet.AnimationState(objectID, "ctd_boss_tc_attack1_launch", timestamp)
 	if err != nil {
@@ -130,7 +123,8 @@ func (e *campaignArcturusLaunch) abort() {
 	e.runtime.registry.mutex.Lock()
 	defer e.runtime.registry.mutex.Unlock()
 	current, isFound := e.runtime.registry.sessions[e.sessionKey]
-	if isFound && current.generation == e.generation && current.campaignArcturusStates[e.objectID] == e.state && e.state.launch == e {
+	if isFound && current.generation == e.generation && current.zone == e.state.zone &&
+		current.campaignArcturusStates[e.objectID] == e.state && e.state.launch == e {
 		e.state.launch = nil
 		current.zone.NPCs().ClearIntangible(e.objectID, e.protectedUntil)
 	}
@@ -141,7 +135,7 @@ func (e campaignArcturusLaunchStep) produce() ([][]byte, error) {
 	run.runtime.registry.mutex.Lock()
 	current, isFound := run.runtime.registry.sessions[run.sessionKey]
 	if !isFound || current.generation != run.generation || current.isZoneTerminal() ||
-		current.campaignArcturusStates[run.objectID] != run.state || run.state.launch != run {
+		current.zone != run.state.zone || current.campaignArcturusStates[run.objectID] != run.state || run.state.launch != run {
 		run.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
@@ -172,6 +166,24 @@ func (e campaignArcturusLaunchStep) produce() ([][]byte, error) {
 	case e.phase >= 2 && e.phase <= 13:
 		packets, err = run.dropMissile(&current, boss, run.timestamp+1500+uint64(e.phase-2)*500)
 	case e.phase == 14:
+		if run.state.turret != nil {
+			turret, isTurretFound := current.zone.NPCs().NPC(run.state.turret.objectID)
+			if !isTurretFound || turret.IsDefeated {
+				run.state.turret = nil
+			}
+		}
+		if zonenpc.ArcturusRank(boss.Plan.NounName) > 1 && run.state.turret == nil {
+			// Chunk 569 invokes TurretCheck after its missile phase, just
+			// before landing. A dead turret is not recreated by passive ticks.
+			owner := campaignArcturusSpawnStep{runtime: run.runtime, packet: run.packet,
+				sessionKey: run.sessionKey, generation: run.generation, objectID: run.objectID,
+				timestamp: run.timestamp + 9000, state: run.state}
+			turretPackets, turretErr := owner.startTurret(&current, boss)
+			if turretErr != nil {
+				run.runtime.logger.Printf("Arcturus landing turret omitted source=%d: %v", run.objectID, turretErr)
+			}
+			packets = append(packets, turretPackets...)
+		}
 		position := run.state.center
 		err = current.zone.NPCs().SetPosition(run.objectID, position)
 		if err == nil {

@@ -63,6 +63,7 @@ func matchesSnapshotSelection(npc *Snapshot, selection SnapshotSelection) bool {
 	case SelectIdleAction:
 		return !npc.IsDefeated && npc.IsScenarioAIEnabled() && !npc.Plan.IsFixture &&
 			npc.TargetObjectID != 0 && !npc.IsActionStarted && !IsAgentHealingChild(npc.Plan) &&
+			!IsArcturusTurret(npc.Plan) &&
 			!time.Now().Before(npc.actionRetryAt)
 	case SelectScenarioFixture:
 		return npc.Plan.IsFixture && npc.IsScenarioControlled()

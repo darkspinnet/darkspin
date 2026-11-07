@@ -8,6 +8,11 @@ After a script finishes or is stopped, its server and clients stay available for
 
 ## Utility
 
+- `local/commands.lua` — Native slash-command regression for diagnostics, account mutations, normalization, resources, teleport, spawning, God mode, effects and equipment drops.
+- `local/commands_events.lua` — Numeric/named event aliases and numeric warp normalization with independent mission effects.
+- `local/commands_terminal.lua` — Separate owned missions for kill, reset, recap, victory, defeat and process exit, including ordinary-role denial checks.
+- `local/commands_social.lua` — Native party changes, co-op follow and AI damage, with an intentionally failing coverage verdict for native commands whose effects cannot yet be observed.
+- [Command coverage](COMMANDS.md) — Exact inventory, prerequisites, assertions, remaining gaps and execution instructions. These scripts require the scenario observation APIs added alongside them; they have not been run.
 - `inspect.lua` — Reads supervisor state without launching a game client.
 - `local/profile_campaign.lua` — CPU, memory and contention profiles for startup, AI-world idle, a second solo client, controlled NPC combat alongside the AI world, and native next-mission continuation.
 - `local/companion_looks.lua` — Native campaign matchmaking with an AI companion and a player/companion appearance capture; rerun for a fresh match-local seed.
@@ -23,6 +28,7 @@ Each phase writes CPU, heap, mutex, block and goroutine `.pprof` files plus `sum
 - `definitions/client.lua` — Client handle and core operations.
 - `definitions/debug.lua` — Debugger pause, resume, and state.
 - `definitions/diagnostic.lua` — Captures and diagnostic artifacts.
+- `definitions/chat.lua` — Fresh owned command replies, native trace markers and diagnostic artifact metadata; no server-side command-dispatch shortcut.
 - `definitions/error.lua` — Scenario error results.
 - `definitions/hero.lua` — Hero and squad observations.
 - `definitions/mission.lua` — Mission selection, entry, and completion.

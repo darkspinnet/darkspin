@@ -123,7 +123,6 @@ func (e fireTempestStep) arenaSpawn() ([][]byte, error) {
 		generation: e.run.generation, ownerObjectID: e.run.ownerObjectID,
 		objectID: e.run.petObjectID, kind: arenaCombatPetFire,
 		startedAt: e.run.runtime.now(), attackAbility: e.run.runtime.program.FireTempestPetBasic,
-		petDamage:    member.binding.Creatures[member.deployedCreatureIndex].PetDamage + fireTempestPetPrimaryStatOffset,
 		deletePacket: deletePacket, isPublished: true,
 	}
 	if e.run.arenaWorld.combatPets == nil {
@@ -321,8 +320,7 @@ func (e fireTempestStep) arenaEnragePulse() ([][]byte, error) {
 		e.run.isEnrageBuffApplied = true
 	}
 	creature := e.creature
-	creature.DamageProfile.PrimaryAttribute = creature.PetDamage
-	creature.DamageProfile.IsPrimaryAttributeFound = true
+	creature.DamageProfile = fireTempestPetDamageProfile(creature)
 	creature.DamageProfile.DamageBuff += fireTempestEnrageDamageBuff
 	definition := e.definition
 	definition.Kind = sim.AbilityKindAuraArea

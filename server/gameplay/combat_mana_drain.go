@@ -375,6 +375,7 @@ func (r campaignNPCActionRuntime) publishNPCSelfDeath(
 	if err != nil {
 		return nil, fmt.Errorf("npcSelfDeathDefinition: %w", err)
 	}
+	definition = withScarabSelfDetonationDeath(source, definition)
 	publication, err := marshalZoneNPCDamage(
 		definition,
 		zoneNPCDamageResult{

@@ -51,10 +51,10 @@ func newCampaignNPCProjectileFlight(
 }
 
 func isCampaignNPCProjectileSampled(profile zonenpc.ActionProfile) bool {
-	if profile.AbilityName == "ZelemSpecialThree" {
+	if profile.AbilityName == "ZelemSpecialThree" || profile.AbilityName == "ZelemMarkSeeker" {
 		return true
 	}
-	if (profile.HomingDelay > 0 && profile.AbilityName != "CitadelSpecificFour_Bolt" &&
+	if (profile.IsHomingProjectile() && profile.AbilityName != "CitadelSpecificFour_Bolt" &&
 		profile.AbilityName != "NocturnaSpecialHomer") || profile.IsProjectilePiercing || profile.AbilityName == "Puller" {
 		return false
 	}
@@ -164,7 +164,7 @@ func (e campaignNPCProjectileStep) sampleFlightLocked(current *gameplayPeerSessi
 		}
 		*current = updated
 	}
-	if schedule.plan.Profile.HomingDelay > 0 {
+	if schedule.plan.Profile.IsHomingProjectile() {
 		target, isTargetFound := current.campaignNPCTarget(schedule.generation, schedule.target.ObjectID)
 		if isTargetFound {
 			aim := schedule.projectileTargetPosition.Add(target.Position.Sub(schedule.target.Position))

@@ -1,11 +1,45 @@
 package npc
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
 )
+
+// IsArcturusTurret identifies the boss-owned source whose passive owns its
+// laser sweep. It must never enter the ordinary agent attack scheduler.
+func IsArcturusTurret(plan SpawnPlan) bool {
+	if plan.OwnerObjectID == 0 {
+		return false
+	}
+	return strings.EqualFold(plan.NounName, "CitadelBossTurret_v1.Noun") ||
+		strings.EqualFold(plan.NounName, "CitadelBossTurret_v2.Noun")
+}
+
+// SetArcturusTurretExposed mirrors build-103 TurretCheck/Launch: full physics
+// is removed while the boss is grounded and restored during its airborne phase.
+// Full removal also removes navigation blocking; packet publication must use
+// this same state rather than leaving an invisible server-side obstacle.
+func (e *Session) SetArcturusTurretExposed(objectID uint32, isExposed bool, protectedUntil time.Time) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	actor, isFound := e.npcs[objectID]
+	if !isFound || actor.IsDefeated || !IsArcturusTurret(actor.Plan) || protectedUntil.IsZero() {
+		return fmt.Errorf("turretPhaseUnavailable: %d", objectID)
+	}
+	if isExposed {
+		if actor.status.intangibleExpiresAt == protectedUntil {
+			actor.status.intangibleExpiresAt = time.Time{}
+		}
+	} else if protectedUntil.After(actor.status.intangibleExpiresAt) {
+		actor.status.intangibleExpiresAt = protectedUntil
+	}
+	actor.IsNavigationCollisionEnabled = isExposed
+	e.npcs[objectID] = actor
+	return nil
+}
 
 func ArcturusRank(nounName string) int {
 	switch strings.ToLower(nounName) {

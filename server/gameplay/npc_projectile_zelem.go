@@ -632,7 +632,7 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		FootprintRadius: enemy.Plan.NPCProfile.FootprintRadius,
 		CollisionDelay:  collisionDelay, IsDirectHit: true, IsCollisionExternallyDriven: true,
 		IsPiercing:  profile.IsProjectilePiercing,
-		HomingDelay: profile.HomingDelay, IsHoming: profile.HomingDelay > 0,
+		HomingDelay: profile.HomingDelay, IsHoming: profile.IsHomingProjectile(),
 		Damage: result.Damage, IsCritical: result.IsCritical,
 		IsControl:      isControlProjectile,
 		TargetHitPoint: target.HitPoint, TargetManaPoint: target.ManaPoint,
@@ -731,7 +731,7 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 	}
 	// Sampled missiles expire when the flight exhausts its actual range. A
 	// wall-clock deadline based on nominal speed can cut a slowed flight short.
-	if profile.HomingDelay > 0 && flight == nil {
+	if profile.IsHomingProjectile() && flight == nil {
 		expiryDelay := ability.HitDelay + time.Duration(
 			float64(profile.ProjectileDistance)/float64(profile.ProjectileSpeed)*
 				float64(time.Second),
@@ -815,7 +815,7 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		targetPosition.X, targetPosition.Y, targetPosition.Z,
 		aimTarget.LinearVelocity.X, aimTarget.LinearVelocity.Y,
 		aimTarget.LinearVelocity.Z, distance, collisionDelay.Milliseconds(),
-		profile.HomingDelay > 0, profile.IsProjectilePiercing,
+		profile.IsHomingProjectile(), profile.IsProjectilePiercing,
 	)
 	return nil, nil
 }

@@ -1866,6 +1866,9 @@
     "SAVE PASSWORD": "SAVE PASSWORD",
     "New passwords do not match.": "New passwords do not match.",
     "Password changed. Sign in again.": "Password changed. Sign in again.",
-    "Password changed, but the launcher could not update the saved password. Sign in again.": "Password changed, but the launcher could not update the saved password. Sign in again."
+    "Password changed, but the launcher could not update the saved password. Sign in again.": "Password changed, but the launcher could not update the saved password. Sign in again.",
+    "This command requires administrator access on this server.": "This command requires administrator access on this server.",
+    "Unable to check command permissions. Try again.": "Unable to check command permissions. Try again.",
+    "This command is unavailable. Join an active mission first.": "This command is unavailable. Join an active mission first."
   }
 }

@@ -146,7 +146,7 @@ func (e campaignNPCProjectileStep) produce() ([][]byte, error) {
 		return packets, nil
 	}
 	var collision sim.ProjectileBoxCollision
-	isHomingActive := schedule.plan.Profile.HomingDelay > 0 &&
+	isHomingActive := schedule.plan.Profile.IsHomingProjectile() &&
 		e.deadline-schedule.plan.Profile.HitDelay >= schedule.plan.Profile.HomingDelay
 	gravityTrajectory, isGravityDeflected :=
 		schedule.run.GravityCollisionTrajectory()

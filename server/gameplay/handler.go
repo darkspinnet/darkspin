@@ -2648,16 +2648,6 @@ func (r gameplayPendingRuntime) pollWorld(
 	isRejoinNeeded := isFound && peerSession.isRejoinPending &&
 		peerSession.stage.IsDungeon() && peerSession.zone != nil
 	r.registry.mutex.RUnlock()
-	if isFound && peerSession.zone != nil {
-		questErr := r.publishQuestCrystals(ctx, packet, packet.Address.String())
-		if questErr != nil && r.logger != nil {
-			r.logger.Printf("Quest crystal delivery retained: %v", questErr)
-		}
-		recoveryErr := r.damage.npc.recoverCorruptorSecondAggro(packet.Address.String(), peerSession.generation, packet.SourceTime)
-		if recoveryErr != nil {
-			return nil, fmt.Errorf("corruptorRecovery: %w", recoveryErr)
-		}
-	}
 	if isRejoinNeeded {
 		packets, err := r.setup.publishRejoin(packet, peerSession)
 		if err != nil {
@@ -2695,6 +2685,26 @@ func (r gameplayPendingRuntime) pollWorld(
 			return nil, fmt.Errorf("recoveryBaseline: %w", err)
 		}
 		return packets, nil
+	}
+	// Operator commands must not wait behind continuously queued world
+	// publications or a failing NPC recovery loop. Rejoin and baseline delivery
+	// above still establish the objects needed by their responses first.
+	commandPackets, isCommandHandled, commandErr := r.consumePlayerEventCommand(ctx, packet)
+	if commandErr != nil {
+		return nil, fmt.Errorf("eventPoll: %w", commandErr)
+	}
+	if isCommandHandled {
+		return commandPackets, nil
+	}
+	if isFound && peerSession.zone != nil {
+		questErr := r.publishQuestCrystals(ctx, packet, packet.Address.String())
+		if questErr != nil && r.logger != nil {
+			r.logger.Printf("Quest crystal delivery retained: %v", questErr)
+		}
+		recoveryErr := r.damage.npc.recoverCorruptorSecondAggro(packet.Address.String(), peerSession.generation, packet.SourceTime)
+		if recoveryErr != nil {
+			return nil, fmt.Errorf("corruptorRecovery: %w", recoveryErr)
+		}
 	}
 	err := r.action.overdrive.reconcilePresentation(packet)
 	if err != nil {
@@ -3067,13 +3077,6 @@ func (r gameplayPendingRuntime) pollWorld(
 	if len(responses) != 0 {
 		return responses, nil
 	}
-	responses, _, err = r.consumePlayerEventCommand(ctx, packet)
-	if err != nil {
-		return nil, fmt.Errorf("eventPoll: %w", err)
-	}
-	if len(responses) != 0 {
-		return responses, nil
-	}
 	responses, _, err = r.consumeEffectPreview(ctx, packet)
 	if err != nil {
 		return nil, fmt.Errorf("effectPoll: %w", err)
@@ -3163,7 +3166,7 @@ func (r gameplayPendingRuntime) recoverIdleNPCActions(
 	plans := make([]zonenpc.SpawnPlan, 0)
 	for _, npc := range peerSession.zone.NPCs().SelectedSnapshots(zonenpc.SelectIdleAction) {
 		if npc.IsDefeated || !npc.IsScenarioAIEnabled() || npc.Plan.IsFixture || npc.TargetObjectID == 0 ||
-			npc.IsActionStarted || zonenpc.IsAgentHealingChild(npc.Plan) {
+			npc.IsActionStarted || zonenpc.IsAgentHealingChild(npc.Plan) || zonenpc.IsArcturusTurret(npc.Plan) {
 			continue
 		}
 		_, isTargetFound := peerSession.campaignNPCTarget(
@@ -3218,7 +3221,7 @@ func (r gameplayPendingRuntime) recoverNPCs(
 	plans := make([]zonenpc.SpawnPlan, 0)
 	for _, npc := range peerSession.zone.NPCs().Snapshots() {
 		if npc.IsDefeated || npc.Plan.IsFixture || npc.TargetObjectID == 0 ||
-			npc.IsActionStarted || zonenpc.IsAgentHealingChild(npc.Plan) {
+			npc.IsActionStarted || zonenpc.IsAgentHealingChild(npc.Plan) || zonenpc.IsArcturusTurret(npc.Plan) {
 			continue
 		}
 		plans = append(plans, npc.Plan)
@@ -4568,6 +4571,11 @@ func stopGameplayPeerRuntime(
 	peerSession.stopCampaignPlasmaModifiers(modifierInstancePool)
 	peerSession.stopCampaignNPCModifiers(modifierInstancePool)
 	peerSession.stopCampaignNPCProjectiles()
+	clear(peerSession.campaignTwinLaserEndpointIDs)
+	arcturusErr := peerSession.retireArcturusControllers()
+	if arcturusErr != nil {
+		log.Printf("RakNet Arcturus controller cleanup failed user=%d: %v", peerSession.binding.UserID, arcturusErr)
+	}
 	for _, instanceID := range peerSession.passiveModifierInstance {
 		if instanceID != 0 && modifierInstancePool != nil {
 			_ = modifierInstancePool.Release(instanceID)

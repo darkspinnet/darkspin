@@ -79,6 +79,11 @@ func (r campaignDamageRuntime) startFieldMedicDroneAttackFor(
 		return nil, nil
 	}
 	ability := r.npc.program.SentryDroneLaser
+	if peerSession.isOverdriveActiveAt(r.npc.now()) {
+		// SentryDroneLaser ranks 3/4 author {2, 6}; ranks 1/2 use {1, 3}.
+		ability.MinimumDamage *= 2
+		ability.MaximumDamage *= 2
+	}
 	plan, isPlanFound, err := peerSession.zone.Companion().ReserveActorAttack(
 		objectID,
 		peerSession.zone.NPCs().LiveSnapshots(), ability.Range, r.npc.now(),
@@ -121,14 +126,18 @@ func (r campaignDamageRuntime) startFieldMedicDroneAttackFor(
 		return nil, fmt.Errorf("fieldMedicDroneProjectileID: %w", objectIDErr)
 	}
 	creature := peerSession.binding.Creatures[peerSession.deployedCreatureIndex]
+	// Build 103 mirrors the owner's base Strength/Dexterity/Mind onto this
+	// drone (all three authored multipliers are 1). PetDamage is a separate
+	// projectile-template multiplier, not the primary attribute itself.
+	petMultiplier := max(float32(0), 1+creature.PetDamage)
 	damageRange, damageErr := game.ResolveAbilityDamageRange(
 		game.AbilityDamage{
-			Minimum: ability.MinimumDamage, Maximum: ability.MaximumDamage,
+			Minimum: ability.MinimumDamage * petMultiplier, Maximum: ability.MaximumDamage * petMultiplier,
 			Coefficient: ability.DamageCoefficient,
 		},
 		game.DamageProfile{
-			PrimaryAttribute:        creature.PetDamage,
-			IsPrimaryAttributeFound: true,
+			PrimaryAttribute:        creature.DamageProfile.PrimaryAttribute,
+			IsPrimaryAttributeFound: creature.DamageProfile.IsPrimaryAttributeFound,
 		},
 	)
 	if damageErr != nil {

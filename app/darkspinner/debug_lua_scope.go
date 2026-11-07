@@ -14,7 +14,7 @@ type debugLuaScope struct {
 }
 
 func registerDebugLuaClientScopes(state *lua.LState) {
-	for _, name := range []string{"ClientScene", "ClientUI", "ClientCinematic", "ClientMission", "ClientParty", "ClientDiagnostics", "ClientWorld", "ClientDebug", "ClientAbility", "ClientPVP"} {
+	for _, name := range []string{"ClientScene", "ClientUI", "ClientCinematic", "ClientMission", "ClientParty", "ClientDiagnostics", "ClientWorld", "ClientDebug", "ClientAbility", "ClientPVP", "ClientChat"} {
 		meta := state.NewTypeMetatable(name)
 		state.SetField(meta, "__index", state.NewFunction(debugLuaScopeIndex))
 		state.SetField(meta, "__metatable", lua.LString(name))
@@ -28,7 +28,9 @@ func registerDebugLuaClientScopes(state *lua.LState) {
 
 func debugLuaClientScope(state *lua.LState, client *debugLuaClient, kind string) *lua.LUserData {
 	meta := "ClientUI"
-	if kind == "scene" {
+	if kind == "chat" {
+		meta = "ClientChat"
+	} else if kind == "scene" {
 		meta = "ClientScene"
 	} else if kind == "cinematic" {
 		meta = "ClientCinematic"
@@ -71,6 +73,9 @@ func debugLuaScopeIndex(state *lua.LState) int {
 		return 0
 	}
 	name := state.CheckString(2)
+	if scope.kind == "chat" {
+		return debugLuaChatIndex(state, name)
+	}
 	if scope.kind == "pvp" {
 		return debugLuaPVPIndex(state, name)
 	}

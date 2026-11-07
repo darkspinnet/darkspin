@@ -2335,7 +2335,7 @@ func (c *luaCompiler) callClosure(closure *luaClosure, arguments []luaValue) ([]
 	prototype := closure.prototype
 	err := c.reserveMemory(int(prototype.MaxStackSize), "registerFrame")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("callFrame: %w", err)
 	}
 	registers := make([]luaValue, int(prototype.MaxStackSize))
 	parameterCount := min(int(prototype.ParameterCount), len(arguments))
@@ -2348,6 +2348,11 @@ func (c *luaCompiler) callClosure(closure *luaClosure, arguments []luaValue) ([]
 	previousPC := c.currentPC
 	c.currentIdentity = closure.identity
 	defer func() {
+		// Registers belong to this invocation, not the retained objective.
+		// Close captured cells before returning the temporary frame's budget;
+		// closure/upvalue allocations retain their separately charged budget.
+		closeLuaUpvalues(openUpvalue, 0)
+		c.memoryBudget += len(registers)
 		c.currentIdentity = previousIdentity
 		c.currentPC = previousPC
 	}()

@@ -36,6 +36,25 @@ func (e campaignProjectileStep) produceFlight(
 		return e.produceWaveFlight(peerSession, now, isFinalScheduledStep, packets)
 	}
 	enemies := schedule.runtime.registry.abilityTargetsLocked(schedule.runtime, peerSession, schedule.definition, schedule.packet.SourceTime)
+	if schedule.projectile.IsHoming && schedule.targetObjectID != 0 {
+		target, isTargetFound := enemies.NPC(schedule.targetObjectID)
+		if isTargetFound && target.IsPublished && !target.IsDefeated && target.HitPoint > 0 {
+			geometry, isFallback, geometryErr := abilityTargetProjectileGeometryLocked(schedule.runtime, peerSession, target)
+			if geometryErr != nil {
+				schedule.runtime.registry.mutex.Unlock()
+				return nil, fmt.Errorf("homingGeometry: %w", geometryErr)
+			}
+			// The conservative fallback is shared with the collision sweep.
+			if !isFallback || geometry.TargetMinimum != geometry.TargetMaximum {
+				aim := campaignProjectileAimPosition(target.Plan.Position, target.Plan.NPCProfile.FootprintRadius, geometry)
+				err = schedule.run.SteerHomingTarget(now, sim.Position(aim))
+				if err != nil {
+					schedule.runtime.registry.mutex.Unlock()
+					return nil, fmt.Errorf("homingSteer: %w", err)
+				}
+			}
+		}
+	}
 	targets := make([]sim.ProjectileCollisionTarget, 0)
 	fallbackObjectIDs := make(map[uint32]bool)
 	fallbackCount := 0

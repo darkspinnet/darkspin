@@ -17,6 +17,10 @@ import (
 // LastReportedLocation is never a native scene or proof of world readiness.
 // Empty fields and false availability represent absent/unsupported observations.
 type DebugProfileState struct {
+	Level                     uint32
+	DNA                       uint32
+	PartCount                 uint32
+	IsResourcesAvailable      bool
 	CapturedAt                time.Time
 	UserID                    int64
 	IsAuthenticated           bool
@@ -93,6 +97,9 @@ func (e *Server) DebugProfileState(ctx context.Context, userID int64) (DebugProf
 	if !result.IsAuthenticated || user == nil {
 		return result, nil
 	}
+	resources := user.DebugResources()
+	result.Level, result.DNA, result.PartCount = resources.Level, resources.DNA, resources.PartCount
+	result.IsResourcesAvailable = true
 	result.GameID = user.CurrentGameID()
 	result.IsNoReplayEnabled = user.IsNoReplayEnabled()
 	result.PlaygroupID = user.CurrentPlaygroupID()

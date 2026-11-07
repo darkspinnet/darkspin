@@ -9,6 +9,7 @@
 ---@field rarity integer Normal=0, uncommon=1, rare=2, epic=3.
 
 ---@class SeedProfileRequest
+---@field is_admin? boolean Grants administrator access only to this freshly created isolated account; defaults false.
 ---@field is_overdrive_unlocked? boolean Seeds the owned account's ordinary Overdrive unlock; defaults false.
 ---@field equipped_parts? SeedEquippedPart[] Real owned equipment on this fresh profile; does not create an edited creature mesh or simulate an editor save.
 ---@field is_pvp_enabled? boolean Seeds an unlocked PvP squad with independent owned copies of the supplied heroes; preserves the campaign squad.
@@ -17,6 +18,7 @@
 ---@field chain_progression? integer Supplied completed-campaign progression; defaults to 0.
 
 ---@class CloneProfileRequest
+---@field is_admin? boolean Explicit administrator seed on the new isolated account; never elevates the source account.
 ---@field is_overdrive_unlocked? boolean Explicit Overdrive unlock for the new owned account; source unlocks are not copied.
 ---@field equipped_parts? SeedEquippedPart[] Explicit fresh equipment; source inventory is never copied.
 ---@field is_pvp_enabled? boolean Seeds an unlocked PvP squad using copies of the resolved source hero templates.
@@ -61,6 +63,10 @@
 
 ---Independent read-only server observations; reading does not activate a profile.
 ---@class ProfileSnapshot
+---@field level integer
+---@field dna integer
+---@field part_count integer Owned parts occupying inventory slots, excluding sold/deleted entries.
+---@field is_resources_available boolean Resource counts require a currently authenticated active owned account.
 ---@field name string Owned profile alias.
 ---@field user_id integer
 ---@field captured_at string Collection time, not the client's publication time.

@@ -79,6 +79,7 @@ type ProjectileRun struct {
 	timeBubbleLeases   map[*ProjectileTimeBubbleLease]struct{}
 	isCollisionSampled bool
 	homingDelay        time.Duration
+	isHoming           bool
 	motionSegments     []sim.ProjectileMotionSegment
 	frozenUntil        time.Time
 	freezeRevision     uint64
@@ -137,7 +138,7 @@ func NewProjectileRun(input ProjectileInput) (*ProjectileRun, [][]byte, error) {
 		(input.Damage <= 0 && !input.IsControl) || input.TargetHitPoint < 0 {
 		return nil, nil, errors.New("invalid Poison Cloud input")
 	}
-	if input.IsHoming && input.HomingDelay <= 0 {
+	if input.IsHoming && input.HomingDelay < 0 {
 		return nil, nil, errors.New("invalid homing projectile input")
 	}
 	resolver := roleResolver{
@@ -269,6 +270,7 @@ func NewProjectileRun(input ProjectileInput) (*ProjectileRun, [][]byte, error) {
 	run.isCollisionSampled = input.IsCollisionSampled
 	if input.IsHoming {
 		run.homingDelay = input.HomingDelay
+		run.isHoming = true
 	}
 	err = session.DispatchPending(context.Background())
 	if err != nil {

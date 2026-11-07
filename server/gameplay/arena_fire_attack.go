@@ -89,10 +89,8 @@ func (r campaignDamageRuntime) startArenaFireTempestPetAttack(
 		return nil, fmt.Errorf("arenaFireProjectileID: %w", err)
 	}
 	ability = applyCompanionAttackBuff(ability, plan)
-	damageRange, err := game.ResolveAbilityDamageRange(game.AbilityDamage{
-		Minimum: ability.MinimumDamage, Maximum: ability.MaximumDamage,
-		Coefficient: ability.DamageCoefficient},
-		game.DamageProfile{PrimaryAttribute: pet.petDamage, IsPrimaryAttributeFound: true})
+	creature := member.binding.Creatures[member.deployedCreatureIndex]
+	damageRange, err := fireTempestPetDamageRange(ability, creature)
 	if err != nil {
 		run.arenaWorld.companion.ReleaseAttack(plan.ObjectID, plan.TargetObjectID)
 		r.registry.mutex.Unlock()

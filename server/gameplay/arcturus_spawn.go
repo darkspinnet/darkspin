@@ -8,6 +8,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
+	"github.com/darkspinnet/darkspin/server/zone"
 	zonedifficulty "github.com/darkspinnet/darkspin/server/zone/difficulty"
 	zonenavigation "github.com/darkspinnet/darkspin/server/zone/navigation"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
@@ -16,10 +17,13 @@ import (
 )
 
 type campaignArcturusState struct {
-	center     game.Vec3
-	nextLaunch uint64
-	launch     *campaignArcturusLaunch
-	turret     *campaignArcturusTurret
+	zone            *zone.Zone
+	center          game.Vec3
+	nextLaunch      uint64
+	launch          *campaignArcturusLaunch
+	turret          *campaignArcturusTurret
+	spawnReadyAt    time.Time
+	isTurretChecked bool
 }
 
 type campaignArcturusSpawnStep struct {
@@ -44,18 +48,25 @@ func (e campaignNPCActionRuntime) startArcturusControllers(packet raknet.Packet,
 		}
 		e.registry.mutex.Lock()
 		current, isFound := e.registry.sessions[sessionKey]
-		if !isFound || current.generation != generation || current.isZoneTerminal() {
+		if !isFound || current.generation != generation || current.zone == nil || current.isZoneTerminal() {
 			e.registry.mutex.Unlock()
 			continue
 		}
 		if current.campaignArcturusStates == nil {
 			current.campaignArcturusStates = make(map[uint32]*campaignArcturusState)
 		}
-		if current.campaignArcturusStates[plan.ObjectID] != nil {
+		state := current.campaignArcturusStates[plan.ObjectID]
+		if state != nil && state.zone == current.zone {
 			e.registry.mutex.Unlock()
 			continue
 		}
-		state := &campaignArcturusState{center: plan.Position, nextLaunch: timestamp + 30000}
+		state = &campaignArcturusState{zone: current.zone, center: plan.Position, nextLaunch: timestamp + 30000}
+		actor, isActorFound := current.zone.NPCs().NPC(plan.ObjectID)
+		if isActorFound && actor.TargetObjectID != 0 {
+			// Chunk 527 waits eight seconds after initial aggro, then waits
+			// its first one-second tick before attempting a scarab spawn.
+			state.spawnReadyAt = e.now().Add(9 * time.Second)
+		}
 		current.campaignArcturusStates[plan.ObjectID] = state
 		e.registry.sessions[sessionKey] = current
 		e.registry.mutex.Unlock()
@@ -80,7 +91,7 @@ func (e campaignArcturusSpawnStep) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	current, isFound := e.runtime.registry.sessions[e.sessionKey]
 	if !isFound || current.generation != e.generation || current.isZoneTerminal() ||
-		current.campaignArcturusStates[e.objectID] != e.state {
+		current.zone != e.state.zone || current.campaignArcturusStates[e.objectID] != e.state {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
@@ -101,12 +112,23 @@ func (e campaignArcturusSpawnStep) produce() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	if rank > 1 && e.state.turret == nil && boss.TargetObjectID != 0 {
-		packets, spawnErr = e.startTurret(&current, boss)
+	now := e.runtime.now()
+	if rank > 1 && !e.state.isTurretChecked && boss.IsFirstActionStarted && boss.TargetObjectID != 0 {
+		cinematicRemaining, cinematicRadius := boss.IntroductionRemaining(now)
+		// Chunk 97 calls TurretCheck after the first-aggro cinematic, before
+		// its final one-second pause. It is not a spawn-time passive action.
+		if !boss.IsIntroductionPending() || (cinematicRadius > 0 && cinematicRemaining == 0) {
+			packets, spawnErr = e.startTurret(&current, boss)
+			e.state.isTurretChecked = spawnErr == nil
+		}
 	}
 	// CitadelBossPassive (chunk 527) ranks its one-second spawn roll.
 	spawnChances := [...]float32{0.2, 0.25, 0.3}
-	if boss.TargetObjectID != 0 && len(current.zone.LiveNPCTargets()) > 0 && current.zone.NPCRandom().Float64() < float64(spawnChances[rank-1]) {
+	isSpawnActive := boss.TargetObjectID != 0 && len(current.zone.LiveNPCTargets()) > 0
+	if isSpawnActive && e.state.spawnReadyAt.IsZero() {
+		e.state.spawnReadyAt = now.Add(9 * time.Second)
+	}
+	if isSpawnActive && !now.Before(e.state.spawnReadyAt) && current.zone.NPCRandom().Float64() < float64(spawnChances[rank-1]) {
 		var scarabPackets [][]byte
 		var scarabErr error
 		plans, scarabPackets, scarabErr = current.spawnArcturusScarab(boss, e.state.center)

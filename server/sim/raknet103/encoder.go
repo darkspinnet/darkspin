@@ -280,7 +280,7 @@ func (e *Encoder) encodeEvent(ctx context.Context, event sim.Event) ([]byte, err
 			return nil, fmt.Errorf("motionRole: %w", err)
 		}
 		if intent.IsHoming {
-			if intent.TargetRole == "" || intent.HomingDelay <= 0 {
+			if intent.TargetRole == "" || intent.HomingDelay < 0 {
 				return nil, errors.New("homing motion invalid")
 			}
 			target, targetErr := e.resolveRole(ctx, intent.TargetRole)

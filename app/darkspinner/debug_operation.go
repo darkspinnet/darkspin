@@ -41,6 +41,7 @@ type debugProfileCreateRequest struct {
 	IsSourceCloneAllowed bool                       `json:"is_source_clone_allowed"`
 	IsPVPEnabled         bool                       `json:"is_pvp_enabled"`
 	IsOverdriveUnlocked  bool                       `json:"is_overdrive_unlocked"`
+	IsAdmin              bool                       `json:"is_admin"`
 	EquippedParts        []debugEquippedPartRequest `json:"equipped_parts"`
 }
 
@@ -309,6 +310,7 @@ func (e *debugSupervisor) executeSerializedDebugOperation(ctx context.Context, o
 		}
 		profileReq := sporenet.DebugProfileRequest{RunID: e.id, ClientName: req.Name, HeroNouns: heroNouns, ChainProgression: req.ChainProgression, SourceLoginName: req.SourceLoginName, IsSourceCloneAllowed: req.IsSourceCloneAllowed, IsPVPEnabled: req.IsPVPEnabled}
 		profileReq.IsOverdriveUnlocked = req.IsOverdriveUnlocked
+		profileReq.IsAdmin = req.IsAdmin
 		for _, part := range req.EquippedParts {
 			profileReq.EquippedParts = append(profileReq.EquippedParts, sporenet.DebugEquippedPart{
 				SquadCategory: part.SquadCategory, HeroIndex: part.HeroIndex,
@@ -366,7 +368,7 @@ func (e *debugSupervisor) executeSerializedDebugOperation(ctx context.Context, o
 		default:
 			return nil, fmt.Errorf("unsupported client launch mode %q", req.LaunchMode)
 		}
-		credential, err := state.host.ProfileCredential(req.ProfileName)
+		credential, err := state.host.RefreshProfileCredential(ctx, req.ProfileName)
 		if err != nil {
 			return nil, fmt.Errorf("launchProfile: %w", err)
 		}

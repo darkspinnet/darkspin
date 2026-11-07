@@ -473,8 +473,7 @@ func (e fireTempestStep) enragePulse() ([][]byte, error) {
 		}
 	}
 	creature := e.creature
-	creature.DamageProfile.PrimaryAttribute = creature.PetDamage
-	creature.DamageProfile.IsPrimaryAttributeFound = true
+	creature.DamageProfile = fireTempestPetDamageProfile(creature)
 	creature.DamageProfile.DamageBuff += fireTempestEnrageDamageBuff
 	damageDefinition := e.definition
 	damageDefinition.Kind = sim.AbilityKindAuraArea

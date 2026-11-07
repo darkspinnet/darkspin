@@ -61,6 +61,16 @@ func SpawnSnapshot(snapshot zonenpc.Snapshot, now time.Time, sourceTime uint64) 
 	if err != nil {
 		return nil, fmt.Errorf("snapshotSpawn: %w", err)
 	}
+	if zonenpc.IsArcturusTurret(snapshot.Plan) && snapshot.IsNavigationCollisionEnabled &&
+		!snapshot.IsDefeated && snapshot.HitPoint > 0 {
+		packet, collisionErr := raknet.MarshalApplication(raknet.ObjectCollisionUpdateMessage{
+			ObjectID: snapshot.Plan.ObjectID, IsCollisionEnabled: true,
+		})
+		if collisionErr != nil {
+			return nil, fmt.Errorf("snapshotTurretPhysics: %w", collisionErr)
+		}
+		packets = append(packets, packet)
+	}
 	if snapshot.AdditionalKit.IsHitAnimationDisabled && !snapshot.IsDefeated {
 		packet, attributeErr := raknet.MarshalApplication(raknet.AttributeDataUpdateMessage{
 			ObjectID: snapshot.Plan.ObjectID, Value: map[uint8]float32{110: 1},
@@ -127,6 +137,11 @@ func spawnWithAnimation(plan zonenpc.SpawnPlan, isRemnant bool, reflection rakne
 		!isActionKnown || !actionProfile.IsSpawnStealthed
 	isVisible = isVisible && !plan.IsIntroductionHidden
 	isCollidable := profile.IsTargetable
+	if zonenpc.IsArcturusTurret(plan) {
+		// TurretCheck immediately removes the new turret's physics. Exposed
+		// airborne turrets restore it explicitly from their live snapshot.
+		isCollidable = false
+	}
 	if plan.IsFixture && plan.IsPlacementKnown {
 		isVisible = plan.IsPlacementVisible && !plan.IsIntroductionHidden
 		isCollidable = plan.IsPlacementCollidable

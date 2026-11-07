@@ -163,6 +163,8 @@ type LightningSecondaryAbilityDefinition struct {
 type AbilityDefinition struct {
 	ProjectileWave                  *ProjectileWaveDefinition
 	IsPiercing                      bool
+	IsHoming                        bool
+	HomingDelay                     time.Duration
 	TimeLapse                       *TimeLapseDefinition
 	IsFacingSuppressed              bool
 	IsFacingPolicyKnown             bool
@@ -909,6 +911,20 @@ func abilityDefinitionFromLua(table *luaTable, provenance Provenance) (AbilityDe
 		return AbilityDefinition{}, fmt.Errorf("speed: %w", err)
 	}
 	definition.Speed = float32(speed)
+	definition.IsHoming, err = luaAbilityRankBoolean(table, "homing", 1)
+	if err != nil {
+		return AbilityDefinition{}, fmt.Errorf("projectileHoming: %w", err)
+	}
+	homingDelay, isHomingDelayFound, homingErr := luaAbilityOptionalRankFloat32(table, "homingDelay", 1)
+	if homingErr != nil {
+		return AbilityDefinition{}, fmt.Errorf("homingDelay: %w", homingErr)
+	}
+	if isHomingDelayFound {
+		if homingDelay < 0 {
+			return AbilityDefinition{}, errors.New("homing delay is negative")
+		}
+		definition.HomingDelay = luaSeconds(float64(homingDelay))
+	}
 	acceleration, isAccelerationFound, err := luaAbilityOptionalRankFloat32(
 		table, "acceleration", 1,
 	)

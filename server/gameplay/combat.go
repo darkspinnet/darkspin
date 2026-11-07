@@ -6218,7 +6218,7 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 	}
 	defer spawnPresentationGuard.releaseUnlessCommitted()
 	for index, plan := range plans {
-		if zonenpc.IsAgentHealingChild(plan) {
+		if zonenpc.IsAgentHealingChild(plan) || zonenpc.IsArcturusTurret(plan) {
 			continue
 		}
 		npc, isNPCFound := npcSession.NPC(plan.ObjectID)

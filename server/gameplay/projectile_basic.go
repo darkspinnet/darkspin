@@ -266,6 +266,8 @@ func (r campaignAbilityCommandRuntime) handleProjectileBasic(
 				},
 				FootprintRadius: actorFootprint,
 				CollisionDelay:  collisionDelay, IsDirectHit: isEnemyFound,
+				IsHoming:                    isEnemyFound && projectileDefinition.IsHoming,
+				HomingDelay:                 projectileDefinition.HomingDelay,
 				IsCollisionExternallyDriven: true, Damage: projectilePlan.Damage.Maximum,
 				IsCollisionSampled: flight != nil,
 				IsPiercing:         projectileDefinition.IsPiercing,

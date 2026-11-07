@@ -27,6 +27,10 @@ type debugLocationRequest struct {
 // Explicit debug response allowlist. Neither a persisted account aggregate nor
 // the complete bug-report context is serialized through this endpoint.
 type debugProfileState struct {
+	Level                     uint32        `json:"level"`
+	DNA                       uint32        `json:"dna"`
+	PartCount                 uint32        `json:"part_count"`
+	IsResourcesAvailable      bool          `json:"is_resources_available"`
 	Name                      string        `json:"name"`
 	UserID                    int64         `json:"user_id"`
 	CapturedAt                time.Time     `json:"captured_at"`
@@ -92,6 +96,7 @@ func debugProfileStateDTO(name string, observation serverruntime.DebugProfileSta
 		presenceStatus = "stale"
 	}
 	return debugProfileState{Name: name, UserID: observation.UserID, CapturedAt: observation.CapturedAt,
+		Level: observation.Level, DNA: observation.DNA, PartCount: observation.PartCount, IsResourcesAvailable: observation.IsResourcesAvailable,
 		IsReplay: observation.IsReplay, IsReplayRandomized: observation.IsReplayRandomized, IsNoReplay: observation.IsNoReplay, IsNoReplayEnabled: observation.IsNoReplayEnabled,
 		IsAuthenticated: observation.IsAuthenticated, SessionID: observation.SessionID, IsUserActive: observation.IsUserActive,
 		GameID: observation.GameID, PlaygroupID: observation.PlaygroupID,

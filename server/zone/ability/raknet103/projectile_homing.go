@@ -22,7 +22,7 @@ func (e *ProjectileRun) SteerHomingTarget(now time.Time, target sim.Position) er
 	}
 	e.motionMutex.Lock()
 	defer e.motionMutex.Unlock()
-	if !e.isCollisionSampled || e.homingDelay <= 0 || e.isFinished || e.isGravityDeflected ||
+	if !e.isCollisionSampled || !e.isHoming || e.isFinished || e.isGravityDeflected ||
 		now.Before(e.launchAt.Add(e.homingDelay)) || now.Before(e.frozenUntil) {
 		return nil
 	}

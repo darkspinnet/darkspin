@@ -61,6 +61,8 @@ type debugHost struct {
 	runErr            error
 	logOutput         *os.File
 	serverLogPath     string
+	runtimePath       string
+	reportDirectory   string
 	serverTracePath   string
 }
 
@@ -171,6 +173,7 @@ func newDebugHost(ctx context.Context, req debugHostRequest) (*debugHost, error)
 		return nil, fmt.Errorf("hostLog: %w", err)
 	}
 	host := &debugHost{runID: req.RunID, secret: secret, GameDirectory: req.GameDirectory,
+		runtimePath: runtimePath, reportDirectory: req.Paths.ReportDirectory,
 		serverLogPath: filepath.Join(req.Paths.ReportDirectory, "server.log"), serverTracePath: filepath.Join(req.Paths.TraceDirectory, "server.jsonl"),
 		FangPath: req.FangPath, ContentPath: working.Path, IsModded: req.IsModded, Address: net.JoinHostPort("127.0.0.1", strconv.Itoa(int(req.Port))),
 		credentialsByName: make(map[string]debugProfileCredential), done: make(chan struct{}), logOutput: logOutput}
@@ -331,7 +334,11 @@ func (e *debugHost) createProfile(ctx context.Context, req sporenet.DebugProfile
 	if err != nil {
 		return sporenet.DebugProfile{}, fmt.Errorf("profileCreate: %w", err)
 	}
-	jwt, err := issueScenarioJWT(e.secret, profile.LoginName, profile.UserID)
+	revision, err := e.server.DebugCredentialRevision(ctx, profile.UserID, profile.LoginName)
+	if err != nil {
+		return sporenet.DebugProfile{}, fmt.Errorf("profileRevision: %w", err)
+	}
+	jwt, err := issueScenarioJWT(e.secret, profile.LoginName, profile.UserID, revision)
 	if err != nil {
 		return sporenet.DebugProfile{}, fmt.Errorf("profileToken: %w", err)
 	}
@@ -351,8 +358,28 @@ func (e *debugHost) ProfileCredential(name string) (debugProfileCredential, erro
 		return debugProfileCredential{}, errors.New("owned debug server has stopped")
 	default:
 	}
-	// Inspection outlives a launch token; issue fresh credentials at launch time.
-	jwt, err := issueScenarioJWT(e.secret, credential.LoginName, credential.UserID)
+	return credential, nil
+}
+
+// RefreshProfileCredential is the launch-only I/O path. Identity observations
+// use ProfileCredential without issuing or caching another launch token.
+func (e *debugHost) RefreshProfileCredential(ctx context.Context, name string) (debugProfileCredential, error) {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	credential, isCreated := e.credentialsByName[name]
+	if !isCreated {
+		return debugProfileCredential{}, errors.New("client has no fresh owned profile")
+	}
+	select {
+	case <-e.done:
+		return debugProfileCredential{}, errors.New("owned debug server has stopped")
+	default:
+	}
+	revision, err := e.server.DebugCredentialRevision(ctx, credential.UserID, credential.LoginName)
+	if err != nil {
+		return debugProfileCredential{}, fmt.Errorf("refreshRevision: %w", err)
+	}
+	jwt, err := issueScenarioJWT(e.secret, credential.LoginName, credential.UserID, revision)
 	if err != nil {
 		return debugProfileCredential{}, fmt.Errorf("profileRefresh: %w", err)
 	}

@@ -1314,8 +1314,8 @@ func (s *gameplayPeerSession) stopCampaignNPCProjectiles() {
 	clear(s.warpTotemWarnings)
 	clear(s.warpTotemDischarges)
 	s.randomTeleport = randomTeleport{}
-	clear(s.campaignTwinLaserEndpointIDs)
-	clear(s.campaignArcturusStates)
+	// Boss beam ownership survives hero death so its scheduled finish can
+	// remove source effects even after the selected hero changes.
 	s.pickupPursuit = nil
 	s.interactablePursuit = nil
 	clear(s.campaignNPCRuptionNextMagmas)

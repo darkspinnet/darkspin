@@ -186,7 +186,13 @@ func newScenarioHost(ctx context.Context, req desktop.StartRequest) (*scenarioHo
 		closeErr := logOutput.Close()
 		return nil, fmt.Errorf("profileEvidence: %w", errors.Join(err, closeErr))
 	}
-	host.JWT, err = issueScenarioJWT(secret, loginName, profile.UserID)
+	revision, revisionErr := host.server.DebugCredentialRevision(startupContext, profile.UserID, loginName)
+	if revisionErr != nil {
+		host.server.Close()
+		closeErr := logOutput.Close()
+		return nil, fmt.Errorf("credentialRead: %w", errors.Join(revisionErr, closeErr))
+	}
+	host.JWT, err = issueScenarioJWT(secret, loginName, profile.UserID, revision)
 	if err != nil {
 		host.server.Close()
 		closeErr := logOutput.Close()
@@ -239,12 +245,12 @@ func scenarioRandomText() (string, error) {
 	return hex.EncodeToString(secret), nil
 }
 
-func issueScenarioJWT(secret, loginName string, userID int64) (string, error) {
+func issueScenarioJWT(secret, loginName string, userID, revision int64) (string, error) {
 	issuer, err := serverauth.NewJWTIssuer([]byte(secret), "darkspin-scenario", "darkspin")
 	if err != nil {
 		return "", fmt.Errorf("issuerCreate: %w", err)
 	}
-	token, err := issuer.IssueForAccount(loginName, userID, 10*time.Minute, "")
+	token, err := issuer.IssueForCredential(loginName, userID, revision, 10*time.Minute, "")
 	if err != nil {
 		return "", fmt.Errorf("tokenSign: %w", err)
 	}

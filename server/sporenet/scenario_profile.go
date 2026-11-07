@@ -24,6 +24,7 @@ type DebugProfileRequest struct {
 	IsSourceCloneAllowed bool
 	IsPVPEnabled         bool
 	IsOverdriveUnlocked  bool
+	IsAdmin              bool
 	EquippedParts        []DebugEquippedPart
 }
 

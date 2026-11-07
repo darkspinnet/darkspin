@@ -2,6 +2,18 @@
 
 ### 2026-11-07
 
+- Fix scenario login tokens to use the account's current credential revision so newly created administrator profiles can authenticate.
+- Add native-input command regression scenarios with isolated admin fixtures, fresh reply and gameplay-effect checks, diagnostic artifact checks, and explicit gaps for unobserved native commands.
+- #192 Restore owner-stat scaling for Char's Elemental Guardian attacks and Enrage in campaign and Arena.
+- #192 Apply Undermind burn damage with its authored Mind coefficient and mission difficulty scaling.
+- #192 Play Reparatrons' authored wake-up animation before combat begins.
+- #192 Enable immediate homing for Polaris's missiles and resolve their hits along the tracked flight instead of the initial straight-line timer.
+- #192 Prevent objective scripts from exhausting their memory allowance merely by handling repeated events.
+- Process queued gameplay commands before recurring world updates and NPC recovery, and explain administrator-access or missing-mission failures for in-game commands.
+- #191 Preserve Arcturus turret controllers through hero death, retire their effects on session teardown, and correct turret entrance timing, grounded collision, opposing beams, and initial Scarab spawn delay.
+- #191 Preserve TwinLaser effect ownership through hero death so scheduled cleanup removes the boss's beam effects.
+- #191 Restore Meditron's targeted basic-attack homing and Sentry Drone's owner-stat, pet-bonus, and Overdrive damage scaling.
+- #191 Remove self-detonated Exploder Scarabs after 100 ms instead of retaining spent bombs for about 15 seconds.
 - Let newly eligible higher-priority NPC idle behaviors interrupt active idle movement with cleanup before replacement.
 - Execute authored FollowStrafe through TargetTooFar, including Scaldron Copter's approach, with separate cooldowns and attack-range interruption.
 - Correct NPC strafing from object-follow goals to exact lateral goals while facing the target.

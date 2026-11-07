@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/accountaccess"
 	"github.com/darkspinnet/darkspin/server/blaze/tdf"
 	"github.com/darkspinnet/darkspin/server/chat"
 	"github.com/darkspinnet/darkspin/server/party"
@@ -357,6 +358,18 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 		if isCommand {
 			err = messenger.AuthorizeCommand(ctx, user.AccountID(), commandName)
 			if err != nil {
+				denialBody := "This command requires administrator access on this server."
+				if !errors.Is(err, accountaccess.ErrAccessDenied) && !errors.Is(err, accountaccess.ErrNotFound) {
+					denialBody = "Unable to check command permissions. Try again."
+				}
+				if request.Session.server != nil && request.Session.server.logger != nil {
+					request.Session.server.logger.Printf("Blaze chat command denied user=%d command=%s: %v",
+						user.AccountID(), commandName, err)
+				}
+				replyErr := queueMessagingSystemResponse(request, user, denialBody)
+				if replyErr != nil {
+					return nil, fmt.Errorf("commandDeniedReply: %w", replyErr)
+				}
 				return &Response{ErrorCode: messagingErrorUnknown}, nil
 			}
 			responseBody := fmt.Sprintf("Unknown command %s. Available: /help, /emote, /taunt, /ss, /bug, /b, /ping, /hint, /loc, /stat, /follow, /ai, /effect, /summon, /level, /warp, /noreplay, /spawn, /drop, /dna, /damage, /heal, /power, /mana, /event, /goto, /kill, /reset, /recap, /victory, /defeat, /exit", commandName)
@@ -867,7 +880,9 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 					})
 					if eventErr == nil {
 						responseBody = "Defeating all live enemies"
-					} else if !errors.Is(eventErr, chat.ErrEventUnavailable) {
+					} else if errors.Is(eventErr, chat.ErrEventUnavailable) {
+						responseBody = "This command is unavailable. Join an active mission first."
+					} else {
 						return nil, fmt.Errorf("commandKill: %w", eventErr)
 					}
 				}
@@ -912,7 +927,9 @@ func messagingSendHandler(messenger *chat.Service, partyService *party.Service) 
 					})
 					if eventErr == nil {
 						responseBody = "Completing the active level with victory"
-					} else if !errors.Is(eventErr, chat.ErrEventUnavailable) {
+					} else if errors.Is(eventErr, chat.ErrEventUnavailable) {
+						responseBody = "This command is unavailable. Join an active mission first."
+					} else {
 						return nil, fmt.Errorf("commandVictory: %w", eventErr)
 					}
 				}
@@ -1264,7 +1281,12 @@ func queueMessagingSystemResponse(request *Request, user *sporenet.User, body st
 		}}),
 		tdf.FieldNamed("TIME", tdf.IntegerValue(uint64(time.Now().Unix()))),
 	}
-	return request.QueueUserNotification(user.Account.ID, MessagingComponentID, 0x01, notification)
+	err := request.QueueUserNotification(user.Account.ID, MessagingComponentID, 0x01, notification)
+	if err != nil {
+		return fmt.Errorf("systemQueue: %w", err)
+	}
+	recordScenarioCommandReply(request, user, body)
+	return nil
 }
 
 // NotifySystemChat sends one unsolicited Darkspin chat line to every active

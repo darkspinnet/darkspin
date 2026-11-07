@@ -58,6 +58,7 @@
 ---per-call timeouts override that call only. Scene/UI scopes inherit changes
 ---dynamically, including scopes obtained before SetTimeout. afterRevision is 0.
 ---@class ManagedClient
+---@field Chat ClientChat Read-only server command-reply evidence; sends only through owned UI operations.
 ---@field PVP ClientPVP Native arena lobby observations, guarded Accept and verified combat readiness.
 ---@field ID string Immutable client_id.
 ---@field PID integer Immutable spawned process ID. Use Snapshot().is_running to check liveness before external debugger attachment.
