@@ -1,6 +1,7 @@
 #include "client103/bootstrap.h"
 #include "zoom/zoom.h"
 #include "editor/editor.h"
+#include "orion/orion.h"
 #include "display/display.h"
 #include "shop/shop.h"
 #include "bug/bug.h"
@@ -4518,6 +4519,11 @@ int fang_install(const char* hostname, unsigned short port, unsigned short party
     }
     fang_network_reset_diagnostics();
     trace_client_state("sentry_tooltip_hook", (unsigned int)fang_tooltip_install(executable));
+    {
+        int is_orion_installed = fang_orion_install(executable);
+        trace_client_state("orion_blaster_hook", (unsigned int)is_orion_installed);
+        if (!is_orion_installed) result |= 0x8;
+    }
     executable_module = executable;
     ZeroMemory(snapshot_mode, sizeof(snapshot_mode));
     GetEnvironmentVariableA(

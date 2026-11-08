@@ -2,6 +2,7 @@
 
 ### 2026-11-08
 
+- [#197](https://github.com/darkspinnet/darkspin/issues/197) Restore Orion's missing right blaster with a Fang redirect from its broken mesh reference to the matching installed mesh.
 - [#196](https://github.com/darkspinnet/darkspin/issues/196) Preserve lethal piercing-projectile death updates instead of losing them when death cancels the projectile, and reject defeated heroes' ability casts.
 - [#196](https://github.com/darkspinnet/darkspin/issues/196) Remove Mirror Beetle copies when their original dies by linking them to the existing owner-death cleanup.
 - [#196](https://github.com/darkspinnet/darkspin/issues/196) Change Ray Killer attacks from a fixed seven-ray fan to one ray per eligible target in range.
