@@ -65,8 +65,15 @@ func (e campaignMaserCleanseStep) hit() ([][]byte, error) {
 			e.runtime.registry.mutex.Unlock()
 			return packets, fmt.Errorf("cloudCleanse: %w", cloudErr)
 		}
+		isAuraPurged, auraErr := e.runtime.registry.retireTargetAuraModifiersLocked(peerSession.zone, ally.Plan.ObjectID)
+		// Aura removal queues to every peer, including this working owner.
+		peerSession = e.runtime.registry.sessions[e.sessionKey]
+		if auraErr != nil {
+			e.runtime.registry.mutex.Unlock()
+			return packets, fmt.Errorf("auraCleanse: %w", auraErr)
+		}
 		isPurged := peerSession.zone.NPCs().PurgeDebuffs(ally.Plan.ObjectID)
-		if !isPurged && len(cloudPackets) == 0 && len(fixturePackets) == 0 {
+		if !isPurged && !isAuraPurged && len(cloudPackets) == 0 && len(fixturePackets) == 0 {
 			continue
 		}
 		packets = append(packets, e.runtime.registry.retireTargetInfectionRootsLocked(peerSession.zone.NPCs(), ally.Plan.ObjectID)...)

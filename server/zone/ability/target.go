@@ -14,6 +14,14 @@ type TargetReader interface {
 	LiveSnapshots() []zonenpc.Snapshot
 }
 
+// IsHostileTarget is the shared live-target boundary for hero attack selection,
+// admission and impact. Visibility and authored targeting exceptions remain
+// owned by their existing ability and NPC policies.
+func IsHostileTarget(target zonenpc.Snapshot) bool {
+	return target.Plan.ObjectID != 0 && target.IsPublished && !target.IsBirthPending &&
+		!target.IsDefeated && target.HitPoint > 0 && target.Faction == zonenpc.FactionNonPlayerAligned
+}
+
 type DamageTargets interface {
 	TargetReader
 	Hit(zonenpc.HitRequest) (zonenpc.DamageResult, error)

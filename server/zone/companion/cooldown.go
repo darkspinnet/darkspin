@@ -13,6 +13,10 @@ func (e Actor) PositionAt(at time.Time) game.Vec3 {
 		if !at.After(e.pursuitStartedAt) {
 			return e.pursuitSource
 		}
+		if len(e.pursuitPaths) != 0 {
+			sample := e.walkingPosition(e.pursuitPaths, walkingFraction(e.pursuitStartedAt, e.pursuitDeadline, at))
+			return sample.position
+		}
 		if !at.Before(e.pursuitDeadline) {
 			return e.PursuitPosition
 		}

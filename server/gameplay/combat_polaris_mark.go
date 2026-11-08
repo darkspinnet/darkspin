@@ -125,7 +125,7 @@ func (e campaignNPCActionRuntime) producePolarisMark(
 	e.registry.mutex.Unlock()
 	packets, err := e.startNPCAttack(sessionKey, generation, plan, timestamp)
 	if err != nil {
-		e.restoreCampaignNPCPolarisState(sessionKey, generation, objectID, previous)
+		e.restoreCampaignNPCPolarisState(sessionKey, generation, objectID, plan.ActionGeneration, previous)
 		return nil, true, fmt.Errorf("markStart: %w", err)
 	}
 	step := campaignPolarisMarkStep{runtime: e, packet: packet, sessionKey: sessionKey,
@@ -138,8 +138,8 @@ func (e campaignNPCActionRuntime) producePolarisMark(
 		err = errors.New("nil cancellation")
 	}
 	if err != nil {
-		e.restoreCampaignNPCPolarisState(sessionKey, generation, objectID, previous)
-		e.releaseAction(sessionKey, generation, objectID)
+		e.restoreCampaignNPCPolarisState(sessionKey, generation, objectID, plan.ActionGeneration, previous)
+		e.releaseActionGeneration(sessionKey, generation, objectID, plan.ActionGeneration)
 		return nil, true, fmt.Errorf("markSchedule: %w", err)
 	}
 	return packets, true, nil

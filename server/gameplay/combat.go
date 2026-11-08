@@ -1602,7 +1602,7 @@ func (e campaignCompanionAttackStep) hit() ([][]byte, error) {
 		return nil, nil
 	}
 	target, isTargetFound := peerSession.zone.NPCs().NPC(e.plan.TargetObjectID)
-	isHitValid := isTargetFound && !target.IsDefeated && target.HitPoint > 0 &&
+	isHitValid := isTargetFound && zoneability.IsHostileTarget(target) &&
 		companion.Position.Sub(target.Plan.Position).Length() <= e.plan.CenterRange
 	damage := e.ability.MinimumDamage
 	isCritical := false
@@ -4823,20 +4823,31 @@ func (e campaignNPCAttackSchedule) hit() ([][]byte, error) {
 		return nil, nil
 	}
 	currentNPC, isNPCFound := current.zone.NPCs().NPC(req.objectID)
-	if isNPCFound && currentNPC.IsShieldActive && e.plan.Profile.AbilityName != "NomadShielderBash" {
+	if !isNPCFound || currentNPC.TargetObjectID != e.plan.TargetObjectID {
+		// This windup belongs to its captured target. A changed aggro target
+		// waits for the source-scoped next cycle rather than inheriting a hit.
+		runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	if currentNPC.IsShieldActive && e.plan.Profile.AbilityName != "NomadShielderBash" {
 		runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
 	currentTarget, isTargetFound := current.campaignNPCTarget(
-		req.generation, currentNPC.TargetObjectID,
+		req.generation, e.plan.TargetObjectID,
 	)
-	if !isNPCFound || !isTargetFound {
+	if !isTargetFound {
 		runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
 	currentPlan := e.plan
 	var impactPacket []byte
 	var err error
+	currentTarget, err = runtime.registry.sampleNPCTargetLocked(current.zone, currentTarget, runtime.now())
+	if err != nil {
+		runtime.registry.mutex.Unlock()
+		return e.fail("enemyHitTarget", err)
+	}
 	if req.kind == campaignNPCAttackSnipeMelee {
 		currentPlan, err = zonenpc.PlanAttackWithProfile(
 			currentNPC, currentTarget.ObjectID, currentTarget.Position,
@@ -6752,6 +6763,7 @@ func (s *gameplayPeerSession) untrackCampaignNPCModifier(
 		return
 	}
 	s.forgetHeroHealingReduction(run)
+	s.forgetHeroTimeRavagerSlow(run)
 	delete(s.campaignNPCModifiers, run.instanceID)
 }
 
@@ -6854,7 +6866,7 @@ func (s *gameplayPeerSession) stopCampaignNPCModifiers(pool *modifierPool) {
 			run.cancel()
 		}
 		if s.zone != nil && s.zone.NPCs() != nil {
-			s.zone.NPCs().ClearSlow(targetObjectID, run.expiresAt)
+			s.zone.NPCs().ClearSlowModifier(targetObjectID, run.modifier.instanceID)
 		}
 		if s.zone != nil && s.zone.Effect() != nil {
 			s.zone.Effect().Remove(run.modifier.instanceID)

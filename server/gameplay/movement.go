@@ -237,12 +237,20 @@ func (e campaignCompanionFollowStep) produce() ([][]byte, error) {
 		}
 		return nil, nil
 	}
-	packets, err := companionraknet.FollowArrival(e.plan)
+	// Publish the refreshed route's accepted pose rather than a captured goal
+	// that might no longer be the authoritative destination.
+	currentActor, isCurrentActorFound := e.zone.Companion().Snapshot(e.plan.ObjectID)
+	if !isCurrentActorFound || currentActor.FollowRevision != e.plan.Revision {
+		return nil, nil
+	}
+	arrival := e.plan
+	arrival.Destination = currentActor.Position
+	packets, err := companionraknet.FollowArrival(arrival)
 	if err != nil {
 		return nil, fmt.Errorf("followArrival: %w", err)
 	}
 	isReleased := e.zone.Companion().ReleaseFollow(
-		e.plan.ObjectID, e.plan.Revision, e.plan.Destination,
+		e.plan.ObjectID, e.plan.Revision, arrival.Destination,
 	)
 	if !isReleased {
 		return nil, nil

@@ -83,6 +83,7 @@ func (e *Session) FollowFlyingActor(userID uint64, generation uint64, ownerID ui
 		TravelDuration: duration, Deadline: at.Add(duration), Revision: actor.FollowRevision,
 	}
 	actor.Facing = facing
+	actor.followPaths = nil
 	actor.followPlan = plan
 	actor.followStartedAt = at
 	actor.followDeadline = plan.Deadline

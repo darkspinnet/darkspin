@@ -230,6 +230,13 @@ func (e *sporogenesisHot) purgeTargetLocked() ([][]byte, error) {
 		if cloudErr != nil {
 			return packets, fmt.Errorf("sporogenesisCloudPurge: %w", cloudErr)
 		}
+		isAuraPurged, auraErr := e.runtime.registry.retireTargetAuraModifiersLocked(e.originZone, e.target.objectID)
+		if auraErr != nil {
+			return packets, fmt.Errorf("sporogenesisAuraPurge: %w", auraErr)
+		}
+		if isAuraPurged {
+			// Accepted aura deletions are already queued to the shared zone.
+		}
 		e.originZone.NPCs().PurgeDebuffs(e.target.objectID)
 		packets = append(packets, e.runtime.registry.retireTargetInfectionRootsLocked(e.originZone.NPCs(), e.target.objectID)...)
 	}

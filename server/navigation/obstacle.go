@@ -55,6 +55,24 @@ func (e *Mesh) DisableObstacle(markerID uint32) {
 	}
 }
 
+// IsSegmentClear rechecks a sampled segment of an already admitted terrain
+// path against the current collision overlay. It is not a terrain/path query.
+func (e *Mesh) IsSegmentClear(start, end Vec3, planLayer uint8) bool {
+	if e == nil || !isFinite(start) || !isFinite(end) {
+		return false
+	}
+	if int(planLayer) >= len(e.layers) {
+		return false
+	}
+	layer := e.layers[planLayer]
+	for _, obstacle := range e.obstacles {
+		if obstacle.intersects(start, end, layer.info.Radius, layer.info.Height) {
+			return false
+		}
+	}
+	return true
+}
+
 func (e Obstacle) local(point Vec3) Vec3 {
 	angle := float64(e.Yaw) * math.Pi / 180
 	cosine, sine := float32(math.Cos(angle)), float32(math.Sin(angle))
@@ -94,13 +112,18 @@ func (e Obstacle) intersects(start Vec3, end Vec3, radius float32, height float3
 }
 
 func (e *Mesh) isObstructed(point Vec3, planLayer uint8) bool {
+	return e.firstObstruction(point, planLayer) != nil
+}
+
+func (e *Mesh) firstObstruction(point Vec3, planLayer uint8) *Obstacle {
 	info := e.layers[planLayer].info
-	for _, obstacle := range e.obstacles {
+	for index := range e.obstacles {
+		obstacle := &e.obstacles[index]
 		if obstacle.intersects(point, point, info.Radius, info.Height) {
-			return true
+			return obstacle
 		}
 	}
-	return false
+	return nil
 }
 
 func (e *Mesh) pathObstacles(path Path, planLayer uint8) []int {

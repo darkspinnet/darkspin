@@ -83,6 +83,10 @@ func (e *Actor) followPosition(at time.Time) game.Vec3 {
 	if !at.After(e.followStartedAt) {
 		return e.followPlan.Position
 	}
+	if len(e.followPaths) != 0 {
+		sample := e.walkingPosition(e.followPaths, walkingFraction(e.followStartedAt, e.followDeadline, at))
+		return sample.position
+	}
 	if !at.Before(e.followDeadline) {
 		return e.followPlan.Destination
 	}
@@ -94,6 +98,7 @@ func (e *Actor) followPosition(at time.Time) game.Vec3 {
 }
 
 func (e *Actor) clearFollow() {
+	e.followPaths = nil
 	e.IsFollowing = false
 	e.followPlan = Follow{}
 	e.followStartedAt = time.Time{}

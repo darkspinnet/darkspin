@@ -2,6 +2,19 @@
 
 ### 2026-11-08
 
+- Include Orcus's active shield immunity in Lua sleep and silence admission and shared crowd-control checks, with independent expiry and renewal tracking.
+- Honor Overdrive's silence immunity through the same live hero contribution lookup used for poison immunity.
+- Resume interrupted NPC actions after live crowd-control removal instead of waiting for an obsolete expiry, and discard wakeups belonging to replaced actions.
+- Release failed Arcturus launch actions and fence Polaris phase handoffs and rollback against stale continuations so encounter polling can recover.
+- Release NPC pursuit reservations on slow-presentation or shield-ending failures and reject stale pursuit-to-attack handoffs.
+- Use consistent live hostile-target checks for hero and companion attack selection, admission, and basic impacts, rejecting friendly, unpublished, or pending-birth targets.
+- Let grounded companions pursue the next reachable enemy when a nearer target has no route ending within attack range.
+- Keep NPC melee windups bound to their selected target and check moving heroes at their current simulated position when the hit lands.
+- Preserve independently owned NPC slows through expiry and rollback, and allow stacking slows to apply freshly after their modifier is cleansed.
+- Retire accepted aura modifiers and their callbacks when NPC cleanses remove crowd control, keeping server status and client modifier removal together.
+- Deliver environmental damage to Sleeping Cloud's authored callback and cage/stealth reactions, including live clouds retained after their caster disconnects.
+- Change grounded companion follow and pursuit from straight-line server movement to navigation routes with path-based travel timing and authoritative arrival positions.
+- Include the blocking scenery marker, navigation footprint, and collision bounds in rejected movement diagnostics to help identify deployment lockups.
 - Use Sleeping Cloud and Psistorm's authored modifier admission callbacks with current NPC immunity contributions and game mode, including direct and aura-granted Unstoppable.
 - Run Sleeping Cloud's authored damage callback and track sleep per modifier so overlapping clouds and rejected applications cannot clear or borrow another cloud's sleep.
 - Run campaign Psistorm's authored aura callbacks with retained target state, preserving rejected silence requests until targets leave and keeping overlapping fields' silence independent.

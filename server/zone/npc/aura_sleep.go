@@ -10,8 +10,8 @@ import (
 // ApplyAuraSleep reports this cloud's actual admission and records only its
 // exact handle. Existing sleep from another source cannot turn rejection into
 // acceptance. Authored admission and commit observe the same locked actor.
-func (e *Session) ApplyAuraSleep(objectID, instanceID uint32, expiresAt time.Time, admission AuraAdmission) (bool, error) {
-	if e == nil || objectID == 0 || instanceID == 0 || expiresAt.IsZero() || admission == nil {
+func (e *Session) ApplyAuraSleep(objectID, instanceID uint32, at, expiresAt time.Time, admission AuraAdmission) (bool, error) {
+	if e == nil || objectID == 0 || instanceID == 0 || at.IsZero() || expiresAt.IsZero() || admission == nil {
 		return false, errors.New("invalid aura sleep")
 	}
 	e.mu.Lock()
@@ -23,7 +23,7 @@ func (e *Session) ApplyAuraSleep(objectID, instanceID uint32, expiresAt time.Tim
 	if _, isTracked := actor.status.auraSleeps[instanceID]; isTracked {
 		return false, errors.New("duplicate aura sleep")
 	}
-	isAccepted, err := admission.CanUseAura(auraImmunitySnapshot(actor))
+	isAccepted, err := admission.CanUseAura(auraImmunitySnapshot(actor, at))
 	if err != nil {
 		return false, fmt.Errorf("sleepCanUse: %w", err)
 	}

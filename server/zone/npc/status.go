@@ -27,6 +27,7 @@ type status struct {
 	physicalVulnerabilityEnd    time.Time
 	damageReduction             float32
 	damageReductionEnd          time.Time
+	verdanthShieldExpiresAt     time.Time
 	isDamageFleePending         bool
 	energyTakenIncrease         float32
 	energyVulnerabilityOwner    uint32
@@ -72,6 +73,9 @@ type status struct {
 	slowExpiresAt               time.Time
 	slowMovementScale           float32
 	slowAttackScale             float32
+	slowModifiers               map[uint32]slowModifier
+	slowNextOrder               uint64
+	slowOrder                   uint64
 	publishedSlowMovementScale  float32
 	stunExpiresAt               time.Time
 	tauntExpiresAt              time.Time
@@ -127,7 +131,7 @@ func (s *Session) HasDebuff(objectID uint32, at time.Time) bool {
 		at.Before(status.rootExpiresAt) || at.Before(status.bioEntangleExpiresAt) || at.Before(status.supportHealerRootExpiresAt) ||
 		at.Before(status.silenceEnd()) ||
 		at.Before(status.sleepEnd()) ||
-		at.Before(status.slowExpiresAt) ||
+		at.Before(status.slowEnd()) ||
 		at.Before(status.stunExpiresAt) ||
 		at.Before(status.tauntExpiresAt)
 }
@@ -161,7 +165,7 @@ func (s *Session) PurgeDebuffs(objectID uint32) bool {
 		!status.rootExpiresAt.IsZero() || !status.bioEntangleExpiresAt.IsZero() || !status.supportHealerRootExpiresAt.IsZero() ||
 		!status.silenceExpiresAt.IsZero() || len(status.auraSilences) != 0 ||
 		!status.sleepExpiresAt.IsZero() || len(status.auraSleeps) != 0 ||
-		!status.slowExpiresAt.IsZero() ||
+		!status.slowExpiresAt.IsZero() || len(status.slowModifiers) != 0 ||
 		!status.stunExpiresAt.IsZero() ||
 		!status.tauntExpiresAt.IsZero() || isBasicPurged
 	if !isPurged {
@@ -194,6 +198,7 @@ func (s *Session) PurgeDebuffs(objectID uint32) bool {
 	status.slowExpiresAt = time.Time{}
 	status.slowMovementScale = 0
 	status.slowAttackScale = 0
+	status.slowModifiers = nil
 	status.stunExpiresAt = time.Time{}
 	status.tauntExpiresAt = time.Time{}
 	status.tauntTargetObjectID = 0
@@ -254,7 +259,7 @@ func (s *Session) ApplyTaunt(
 		npc.Faction == target.Faction {
 		return Snapshot{}, fmt.Errorf("npcTauntMissing: %d", objectID)
 	}
-	if npc.HasAffixModifier(unstoppableModifierName) {
+	if npc.ControlImmunity(time.Now()).Taunt > 0 {
 		return npc, nil
 	}
 	npc.TargetObjectID = target.ObjectID
@@ -370,6 +375,8 @@ func (s *Session) ApplySlow(
 		return fmt.Errorf("npcSlowMissing: %d", objectID)
 	}
 	if npc.status.slowExpiresAt.Before(expiresAt) {
+		npc.status.slowNextOrder++
+		npc.status.slowOrder = npc.status.slowNextOrder
 		npc.status.slowExpiresAt = expiresAt
 		npc.status.slowMovementScale = movementScale
 		npc.status.slowAttackScale = attackScale
@@ -411,14 +418,10 @@ func (s *Session) slowScales(
 	if !isFound || npc.IsDefeated {
 		return SlowScales{Movement: 1, Attack: 1}
 	}
-	movementScale := float32(1)
-	attackScale := float32(1)
-	if at.Before(npc.status.slowExpiresAt) {
-		movementScale = max(float32(0.05), npc.status.slowMovementScale)
-		attackScale = max(float32(0.05), npc.status.slowAttackScale)
-	}
-	movementScale *= areaShiftMovementScale(npc, at)
-	return SlowScales{Movement: max(float32(0.05), movementScale), Attack: attackScale}
+	scales := npc.status.slowProfile(at)
+	scales.Movement *= areaShiftMovementScale(npc, at)
+	scales.Movement = max(float32(0.05), scales.Movement)
+	return scales
 }
 
 func (s *Session) SlowProfile(objectID uint32, at time.Time) (float32, float32) {
@@ -808,7 +811,8 @@ func (s *Session) applySimpleStatus(
 	if !isFound || npc.IsDefeated {
 		return fmt.Errorf("npcStatusMissing: %d", objectID)
 	}
-	if isStatusBlockedByShield(npc) || npc.HasAffixModifier(unstoppableModifierName) {
+	immunity := npc.ControlImmunity(time.Now())
+	if isStatusBlockedByShield(npc) || kind == "sleep" && immunity.Sleep > 0 || kind == "silence" && immunity.Silence > 0 {
 		return nil
 	}
 	if kind == "silence" {
@@ -961,7 +965,7 @@ func (s *Session) AdmitBanish(objectID uint32, at, expiresAt time.Time) (bool, e
 	if !isFound || npc.IsDefeated {
 		return false, fmt.Errorf("npcBanishMissing: %d", objectID)
 	}
-	if npc.IsMutationBanishImmune() || isStatusBlockedByShield(npc) || at.Before(npc.status.banishExpiresAt) ||
+	if npc.IsMutationBanishImmune() || npc.ControlImmunity(at).Banish > 0 || isStatusBlockedByShield(npc) || at.Before(npc.status.banishExpiresAt) ||
 		at.Before(npc.status.intangibleExpiresAt) {
 		return false, nil
 	}
@@ -981,7 +985,7 @@ func (s *Session) ApplyBanish(objectID uint32, expiresAt time.Time) error {
 	if !isFound || npc.IsDefeated {
 		return fmt.Errorf("npcBanishMissing: %d", objectID)
 	}
-	if npc.IsMutationBanishImmune() || isStatusBlockedByShield(npc) {
+	if npc.IsMutationBanishImmune() || npc.ControlImmunity(time.Now()).Banish > 0 || isStatusBlockedByShield(npc) {
 		return nil
 	}
 	endDirectionalShield(&npc)
@@ -1030,7 +1034,7 @@ func (s *Session) ApplyStun(objectID uint32, expiresAt time.Time) error {
 	if !isFound || npc.IsDefeated {
 		return fmt.Errorf("npcStunMissing: %d", objectID)
 	}
-	if isStatusBlockedByShield(npc) || npc.HasAffixModifier(unstoppableModifierName) {
+	if isStatusBlockedByShield(npc) || npc.ControlImmunity(time.Now()).Stun > 0 {
 		return nil
 	}
 	endDirectionalShield(&npc)
@@ -1096,7 +1100,7 @@ func (s *Session) ApplyFear(objectID uint32, expiresAt time.Time) error {
 	if !isFound || npc.IsDefeated {
 		return fmt.Errorf("npcFearMissing: %d", objectID)
 	}
-	if isStatusBlockedByShield(npc) || npc.HasAffixModifier(unstoppableModifierName) {
+	if isStatusBlockedByShield(npc) || npc.ControlImmunity(time.Now()).Fear > 0 {
 		return nil
 	}
 	if npc.status.fearExpiresAt.Before(expiresAt) {

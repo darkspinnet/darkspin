@@ -106,7 +106,7 @@ func (e campaignPursuitProgressProducer) produce() ([][]byte, error) {
 	}
 	targets := e.runtime.registry.abilityTargetsLocked(e.runtime, peerSession, sim.AbilityDefinition{}, e.packet.SourceTime)
 	target, isTargetFound := targets.NPC(pursuit.TargetObjectID)
-	if !pursuit.IsGround && (!isTargetFound || target.IsDefeated || target.HitPoint <= 0) {
+	if !pursuit.IsGround && (!isTargetFound || !zoneability.IsHostileTarget(target)) {
 		cancelPacket, err := abilityraknet.Acknowledge(
 			abilityraknet.AcknowledgeRequest{
 				SyncStamp: pursuit.SyncStamp, ResponseType: raknet.ActionResponseRejected,
@@ -780,7 +780,7 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 		// radii are separate from this range calculation.
 		actorFootprint = peerSession.deployedCampaignActorFootprintRadius()
 		targetEnemy, isTargetFound := enemies.NPC(targetObjectID)
-		if isTargetFound {
+		if isTargetFound && zoneability.IsHostileTarget(targetEnemy) {
 			targetFootprint = targetEnemy.Plan.ActorFootprintRadius()
 			maximumRange += actorFootprint + targetFootprint
 			if peerSession.binding.Mode != game.ModeArena && !targetEnemy.Plan.IsFixture {

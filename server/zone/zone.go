@@ -303,6 +303,7 @@ func New(id uint64, generation uint64, info ZoneInfo) (*Zone, error) {
 		return nil, fmt.Errorf("zoneNavigation: %w", navigationErr)
 	}
 	info.Companion.ConfigureActorFootprints(info.DirectorDefinition.NounFootprintsByNoun)
+	info.Companion.ConfigureNavigation(info.Navigation)
 	info.Companion.BindMovementModifiers(info.Effect)
 	info.Companion.ConfigureNPCProfiles(info.DirectorDefinition.NPCProfilesByNoun)
 	info.NPCs.ConfigureAffixContext(info.Difficulty, uint32(len(zone.members)))

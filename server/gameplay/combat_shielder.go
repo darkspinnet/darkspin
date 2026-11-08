@@ -165,7 +165,7 @@ func (e *campaignNomadShielderShieldRun) finish(isAlive bool) ([][]byte, error) 
 	} else {
 		packets = append(packets, stopPacket)
 	}
-	step := campaignNPCStunResumeStep{
+	step := campaignNPCTimedResumeStep{
 		timestamp: stopTimestamp +
 			uint64(e.profile.StopReleaseDelay/time.Millisecond),
 		resume: e.resume,

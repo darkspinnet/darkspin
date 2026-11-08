@@ -72,7 +72,7 @@ func (e campaignNPCActionRuntime) produceShieldedNomadAction(
 		generation: generation, objectID: enemy.Plan.ObjectID,
 		kind: campaignNPCAttackMelee,
 	}
-	step := campaignNPCStunResumeStep{
+	step := campaignNPCTimedResumeStep{
 		timestamp: timestamp + uint64(retryDelay/time.Millisecond), resume: request.resume,
 	}
 	cancel, err := scheduleNPCProducers(e.registry, packet, []raknet.ScheduledPacketProducer{{

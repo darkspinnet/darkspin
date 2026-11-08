@@ -57,7 +57,7 @@ func (e fieldMedicTransferExpiry) produce() ([][]byte, error) {
 	if isCurrent {
 		clearFieldMedicNPCStatus(
 			peerSession.zone.NPCs(), e.targetObjectID,
-			e.run.record.GUID, e.expiresAt,
+			e.run.instanceID, e.run.record.GUID, e.expiresAt,
 		)
 		peerSession.zone.Effect().Remove(e.run.instanceID)
 		peerSession.untrackCampaignNPCModifier(e.run)
@@ -289,18 +289,20 @@ func (e fieldMedicActiveSchedule) transferDebuffLocked(
 	}
 	duration = zonenpc.CrowdControlDuration(target.Plan, duration)
 	expiresAt := e.runtime.now().Add(duration)
-	err := applyFieldMedicNPCStatus(
-		peerSession.zone.NPCs(), targetObjectID, modifier, expiresAt,
-	)
-	if err != nil {
-		return nil, false, fmt.Errorf("fieldMedicStatusApply: %w", err)
-	}
 	run, err := newCampaignNPCModifierRun(e.runtime.modifierPool)
 	if err != nil {
-		clearFieldMedicNPCStatus(
-			peerSession.zone.NPCs(), targetObjectID, modifier.GUID, expiresAt,
-		)
 		return nil, false, fmt.Errorf("fieldMedicRun: %w", err)
+	}
+	err = applyFieldMedicNPCStatus(
+		peerSession.zone.NPCs(), targetObjectID, run.instanceID, modifier, expiresAt,
+	)
+	if err != nil {
+		isCreated, releaseErr := run.release(e.runtime.modifierPool)
+		if isCreated {
+			return nil, false, fmt.Errorf("fieldMedicStatusApply: %w",
+				errors.Join(err, releaseErr, errors.New("unpublished transfer was already created")))
+		}
+		return nil, false, fmt.Errorf("fieldMedicStatusApply: %w", errors.Join(err, releaseErr))
 	}
 	run.record = zoneeffect.Modifier{
 		InstanceID: run.instanceID, GUID: modifier.GUID,
@@ -318,7 +320,7 @@ func (e fieldMedicActiveSchedule) transferDebuffLocked(
 	if err != nil {
 		peerSession.untrackCampaignNPCModifier(run)
 		clearFieldMedicNPCStatus(
-			peerSession.zone.NPCs(), targetObjectID, modifier.GUID, expiresAt,
+			peerSession.zone.NPCs(), targetObjectID, run.instanceID, modifier.GUID, expiresAt,
 		)
 		_, _ = run.release(e.runtime.modifierPool)
 		return nil, false, fmt.Errorf("fieldMedicTrack: %w", err)
@@ -333,7 +335,7 @@ func (e fieldMedicActiveSchedule) transferDebuffLocked(
 		peerSession.zone.Effect().Remove(run.instanceID)
 		peerSession.untrackCampaignNPCModifier(run)
 		clearFieldMedicNPCStatus(
-			peerSession.zone.NPCs(), targetObjectID, modifier.GUID, expiresAt,
+			peerSession.zone.NPCs(), targetObjectID, run.instanceID, modifier.GUID, expiresAt,
 		)
 		_, _ = run.release(e.runtime.modifierPool)
 		return nil, false, fmt.Errorf("fieldMedicCreate: %w", err)
@@ -349,7 +351,7 @@ func (e fieldMedicActiveSchedule) transferDebuffLocked(
 		peerSession.zone.Effect().Remove(run.instanceID)
 		peerSession.untrackCampaignNPCModifier(run)
 		clearFieldMedicNPCStatus(
-			peerSession.zone.NPCs(), targetObjectID, modifier.GUID, expiresAt,
+			peerSession.zone.NPCs(), targetObjectID, run.instanceID, modifier.GUID, expiresAt,
 		)
 		_, _ = run.release(e.runtime.modifierPool)
 		return nil, false, fmt.Errorf("fieldMedicSchedule: %w", err)
@@ -360,7 +362,7 @@ func (e fieldMedicActiveSchedule) transferDebuffLocked(
 		peerSession.zone.Effect().Remove(run.instanceID)
 		peerSession.untrackCampaignNPCModifier(run)
 		clearFieldMedicNPCStatus(
-			peerSession.zone.NPCs(), targetObjectID, modifier.GUID, expiresAt,
+			peerSession.zone.NPCs(), targetObjectID, run.instanceID, modifier.GUID, expiresAt,
 		)
 		_, _ = run.release(e.runtime.modifierPool)
 		return nil, false, errors.New("fieldMedicCreateRun: modifier unavailable")

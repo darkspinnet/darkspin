@@ -52,13 +52,53 @@ func (m *Mesh) Project(point Vec3, options ProjectionOptions) (Projection, error
 	if err != nil {
 		return Projection{}, fmt.Errorf("projectPolygon: %w", err)
 	}
-	if m.isObstructed(projection.Position, options.PlanLayer) {
+	obstacle := m.firstObstruction(projection.Position, options.PlanLayer)
+	if obstacle != nil {
+		obstructedPosition := projection.Position
 		projection, err = m.projectObstacleBoundary(point, projection, options)
 		if err != nil {
-			return Projection{}, fmt.Errorf("projectBoundary: %w", err)
+			return Projection{}, fmt.Errorf("projectBoundary: %w", &ProjectionObstructionError{
+				cause: err, MarkerID: obstacle.MarkerID,
+				PlanLayer: options.PlanLayer, LayerRadius: selected.info.Radius,
+				Height: selected.info.Height, InputPosition: point, ProjectedPosition: obstructedPosition,
+				ObstaclePosition: obstacle.Position, ObstacleMinimum: obstacle.Minimum,
+				ObstacleMaximum: obstacle.Maximum, ObstacleYaw: obstacle.Yaw,
+			})
 		}
 	}
 	return projection, nil
+}
+
+// ProjectionObstructionError preserves the rejection and sentinel chain while
+// exposing the first selected-layout proxy and layer that blocked projection.
+type ProjectionObstructionError struct {
+	cause             error
+	MarkerID          uint32
+	PlanLayer         uint8
+	LayerRadius       float32
+	Height            float32
+	InputPosition     Vec3
+	ProjectedPosition Vec3
+	ObstaclePosition  Vec3
+	ObstacleMinimum   Vec3
+	ObstacleMaximum   Vec3
+	ObstacleYaw       float32
+}
+
+func (e *ProjectionObstructionError) Error() string {
+	return fmt.Sprintf(
+		"%v marker=%#x layer=%d layer_radius=%.6g height=%.6g input=(%.6g,%.6g,%.6g) projected=(%.6g,%.6g,%.6g) obstacle=(%.6g,%.6g,%.6g) minimum=(%.6g,%.6g,%.6g) maximum=(%.6g,%.6g,%.6g) yaw=%.6g",
+		e.cause, e.MarkerID, e.PlanLayer, e.LayerRadius, e.Height,
+		e.InputPosition.X, e.InputPosition.Y, e.InputPosition.Z,
+		e.ProjectedPosition.X, e.ProjectedPosition.Y, e.ProjectedPosition.Z,
+		e.ObstaclePosition.X, e.ObstaclePosition.Y, e.ObstaclePosition.Z,
+		e.ObstacleMinimum.X, e.ObstacleMinimum.Y, e.ObstacleMinimum.Z,
+		e.ObstacleMaximum.X, e.ObstacleMaximum.Y, e.ObstacleMaximum.Z, e.ObstacleYaw,
+	)
+}
+
+func (e *ProjectionObstructionError) Unwrap() error {
+	return e.cause
 }
 
 func projectPolygonIndexes(

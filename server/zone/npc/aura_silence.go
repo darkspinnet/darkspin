@@ -10,8 +10,8 @@ import (
 // ApplyAuraSilence reports this request's admission independently of silence
 // already supplied by another modifier. Authored admission and commit observe
 // the same locked actor.
-func (e *Session) ApplyAuraSilence(objectID, instanceID uint32, expiresAt time.Time, admission AuraAdmission) (bool, error) {
-	if e == nil || objectID == 0 || instanceID == 0 || expiresAt.IsZero() || admission == nil {
+func (e *Session) ApplyAuraSilence(objectID, instanceID uint32, at, expiresAt time.Time, admission AuraAdmission) (bool, error) {
+	if e == nil || objectID == 0 || instanceID == 0 || at.IsZero() || expiresAt.IsZero() || admission == nil {
 		return false, errors.New("invalid aura silence")
 	}
 	e.mu.Lock()
@@ -23,7 +23,7 @@ func (e *Session) ApplyAuraSilence(objectID, instanceID uint32, expiresAt time.T
 	if _, isTracked := actor.status.auraSilences[instanceID]; isTracked {
 		return false, errors.New("duplicate aura silence")
 	}
-	isAccepted, err := admission.CanUseAura(auraImmunitySnapshot(actor))
+	isAccepted, err := admission.CanUseAura(auraImmunitySnapshot(actor, at))
 	if err != nil {
 		return false, fmt.Errorf("silenceCanUse: %w", err)
 	}

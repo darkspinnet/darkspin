@@ -92,6 +92,7 @@ func purgeInvincitronDebuffs(actor *Snapshot) {
 	status.slowExpiresAt = time.Time{}
 	status.slowMovementScale = 0
 	status.slowAttackScale = 0
+	status.slowModifiers = nil
 	status.stunExpiresAt = time.Time{}
 	status.tauntExpiresAt = time.Time{}
 	status.tauntTargetObjectID = 0

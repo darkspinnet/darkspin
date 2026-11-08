@@ -94,7 +94,7 @@ func PlanBasic(command BasicCommand) (BasicPlan, error) {
 		return plan, nil
 	}
 	enemy, isFound := command.NPCs.NPC(targetObjectID)
-	if !isFound || enemy.IsDefeated || enemy.HitPoint <= 0 {
+	if !isFound || !IsHostileTarget(enemy) {
 		return BasicPlan{}, fmt.Errorf("targetUnavailable: %d", targetObjectID)
 	}
 	distance := positionDistance(command.SourcePosition, enemy.Plan.Position)
@@ -163,7 +163,7 @@ func NearestTarget(
 	selectedObjectID := uint32(0)
 	selectedDistance := maximumRange
 	for _, enemy := range enemies.LiveSnapshots() {
-		if enemy.TargetObjectID != sourceObjectID {
+		if !IsHostileTarget(enemy) || enemy.TargetObjectID != sourceObjectID {
 			continue
 		}
 		distance := positionDistance(sourcePosition, enemy.Plan.Position)
@@ -330,7 +330,7 @@ func ValidateBasicCommit(
 		}
 	}
 	enemy, isFound := enemies.NPC(plan.TargetObjectID)
-	if !isFound || enemy.IsDefeated || enemy.HitPoint <= 0 {
+	if !isFound || !IsHostileTarget(enemy) {
 		return fmt.Errorf("targetUnavailable: %d", plan.TargetObjectID)
 	}
 	return nil

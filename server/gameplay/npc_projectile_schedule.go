@@ -368,7 +368,7 @@ func (e campaignNPCProjectileSchedule) next() ([][]byte, error) {
 		)
 	} else if e.plan.Profile.AbilityName == "ZelemMarkSeeker" {
 		packets, err = e.runtime.producePolarisPhaseTransition(
-			e.packet, e.sessionKey, e.generation, e.sourceObjectID, timestamp,
+			e.packet, e.sessionKey, e.generation, e.sourceObjectID, e.plan.ActionGeneration, timestamp,
 			polarisNextGravityOrb,
 		)
 	} else if e.plan.Profile.AbilityName == "Puller" {

@@ -15,7 +15,7 @@ func (e heroAuraAreaSchedule) applySleepingCloudTarget(objectID, instanceID uint
 	if err != nil {
 		return nil, false, fmt.Errorf("sleepCallback: %w", err)
 	}
-	isApplied, err := e.run.npc.ApplyAuraSleep(objectID, instanceID, expiresAt, luaAuraAdmission{
+	isApplied, err := e.run.npc.ApplyAuraSleep(objectID, instanceID, e.runtime.now(), expiresAt, luaAuraAdmission{
 		modifier: modifier, isChainGame: e.binding.Mode == game.ModeChain,
 	})
 	if err != nil {

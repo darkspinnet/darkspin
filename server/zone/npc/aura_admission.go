@@ -1,5 +1,7 @@
 package npc
 
+import "time"
+
 // AuraImmunitySnapshot contains the current immunity contributions represented
 // by the server's NPC authority. It does not claim to recover unknown inherent
 // or class attributes from installed content.
@@ -15,13 +17,10 @@ type AuraAdmission interface {
 	CanUseAura(req AuraImmunitySnapshot) (bool, error)
 }
 
-func auraImmunitySnapshot(actor Snapshot) AuraImmunitySnapshot {
-	immunity := AuraImmunitySnapshot{}
-	// Build-103 Unstoppable Tick adds one to ImmuneToSleep (75) and
-	// ImmuneToSilence (78). HasAffixModifier includes active aura grants.
-	if actor.HasAffixModifier(unstoppableModifierName) {
-		immunity.ImmuneToSleep = 1
-		immunity.ImmuneToSilence = 1
+func auraImmunitySnapshot(actor Snapshot, at time.Time) AuraImmunitySnapshot {
+	immunity := actor.ControlImmunity(at)
+	return AuraImmunitySnapshot{
+		ImmuneToSleep:   immunity.Sleep,
+		ImmuneToSilence: immunity.Silence,
 	}
-	return immunity
 }

@@ -41,6 +41,7 @@ type heroAuraAreaRun struct {
 	npc               *zonenpc.Session
 	modifierPool      *modifierPool
 	targets           map[uint32]heroAuraAreaTarget
+	retiredTargets    map[uint32]uint32
 	sleepAttempts     map[uint32]struct{}
 	projectiles       map[uint32]heroAuraAreaProjectile
 	statusKind        sim.AbilityStatusKind
@@ -93,47 +94,39 @@ func (r campaignDamageRuntime) breakSleepingCloudOnDamage(
 	// are retired. A scan or cleanup cannot replace a membership in between.
 	runs := make(map[*heroAuraAreaRun]heroAuraAreaTarget)
 	deletes := make([]heroAuraAreaTargetDelete, 0)
-	for _, candidate := range r.registry.sessions {
-		if candidate.zone != peerSession.zone {
+	for run := range r.registry.auraRuns {
+		if run == nil || run.statusKind != sim.AbilityStatusKindSleep ||
+			run.originalZone != peerSession.zone || run.npc != peerSession.zone.NPCs() {
 			continue
 		}
-		for _, run := range candidate.heroAuraAreas {
-			if run == nil || run.statusKind != sim.AbilityStatusKindSleep ||
-				run.npc != peerSession.zone.NPCs() {
-				continue
-			}
-			if _, isTracked := runs[run]; isTracked {
-				continue
-			}
-			run.mutex.Lock()
-			if run.isCleaned {
-				run.mutex.Unlock()
-				continue
-			}
-			target, isTracked := run.targets[objectID]
-			if !isTracked {
-				run.mutex.Unlock()
-				continue
-			}
-			isActive, callbackErr := target.sleep.Damage(sim.LuaSleepDamage{DescriptorMask: descriptorMask})
-			if callbackErr != nil {
-				// A failed callback retires its Lua runtime. Retire the exact
-				// accepted handle too, without blocking other clouds' wakeups.
-				isActive = false
-				if r.logger != nil {
-					r.logger.Printf("RakNet sleep callback retired target=%d instance=%d: %v", objectID, target.instanceID, callbackErr)
-				}
-			}
-			if isActive {
-				run.mutex.Unlock()
-				continue
-			}
-			defer run.mutex.Unlock()
-			runs[run] = target
-			deletes = append(deletes, heroAuraAreaTargetDelete{
-				objectID: objectID, instanceID: target.instanceID,
-			})
+		run.mutex.Lock()
+		if run.isCleaned {
+			run.mutex.Unlock()
+			continue
 		}
+		target, isTracked := run.targets[objectID]
+		if !isTracked {
+			run.mutex.Unlock()
+			continue
+		}
+		isActive, callbackErr := target.sleep.Damage(sim.LuaSleepDamage{DescriptorMask: descriptorMask})
+		if callbackErr != nil {
+			// A failed callback retires its Lua runtime. Retire the exact
+			// accepted handle too, without blocking other clouds' wakeups.
+			isActive = false
+			if r.logger != nil {
+				r.logger.Printf("RakNet sleep callback retired target=%d instance=%d: %v", objectID, target.instanceID, callbackErr)
+			}
+		}
+		if isActive {
+			run.mutex.Unlock()
+			continue
+		}
+		defer run.mutex.Unlock()
+		runs[run] = target
+		deletes = append(deletes, heroAuraAreaTargetDelete{
+			objectID: objectID, instanceID: target.instanceID,
+		})
 	}
 	packets, err := marshalAuraAreaDeletes(deletes)
 	if err != nil {
@@ -172,8 +165,6 @@ func (e *heroAuraAreaRun) clearStatus(objectID uint32, expiresAt time.Time) {
 		e.npc.ClearSilence(objectID, expiresAt)
 	case sim.AbilityStatusKindSleep:
 		e.npc.ClearSleep(objectID, expiresAt)
-	case sim.AbilityStatusKindSlow:
-		e.npc.ClearSlow(objectID, expiresAt)
 	}
 }
 
@@ -432,7 +423,7 @@ func (e heroAuraAreaSchedule) reconcile(
 			e.run.sleepAttempts[objectID] = struct{}{}
 			target.sleep, isApplied, err = e.applySleepingCloudTarget(objectID, instanceID, expiresAt)
 		} else {
-			err = e.applyStatus(peerSession.zone.NPCs(), objectID, expiresAt)
+			err = e.applyStatus(peerSession.zone.NPCs(), objectID, instanceID, expiresAt)
 			isApplied = err == nil && e.statusRemaining(peerSession.zone.NPCs(), objectID, now) != 0
 		}
 		if err != nil {
@@ -461,7 +452,7 @@ func (e heroAuraAreaSchedule) reconcile(
 }
 
 func (e heroAuraAreaSchedule) applyStatus(
-	npc *zonenpc.Session, objectID uint32, expiresAt time.Time,
+	npc *zonenpc.Session, objectID, instanceID uint32, expiresAt time.Time,
 ) error {
 	switch e.definition.StatusKind {
 	case sim.AbilityStatusKindSilence:
@@ -469,7 +460,7 @@ func (e heroAuraAreaSchedule) applyStatus(
 	case sim.AbilityStatusKindSleep:
 		return npc.ApplySleep(objectID, expiresAt)
 	case sim.AbilityStatusKindSlow:
-		return npc.ApplySlow(objectID, expiresAt, 0.40, 0.60)
+		return npc.ApplySlowModifier(objectID, instanceID, expiresAt, 0.40, 0.60)
 	default:
 		return errors.New("unsupported aura status")
 	}

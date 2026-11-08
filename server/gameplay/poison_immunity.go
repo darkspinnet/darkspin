@@ -21,17 +21,16 @@ func (e campaignNPCActionRuntime) poisonAdmissionLocked(member gameplayPeerSessi
 		if target.deployedHitPoint() <= 0 || int(target.deployedCreatureIndex) >= len(target.binding.Creatures) {
 			return false, nil
 		}
-		creature := target.projectPassiveCreature(target.deployedCreatureIndex, now)
+		ownImmunity, isKnown := target.heroOwnImmunity(now)
+		if !isKnown {
+			return false, errors.New("poison hero immunity unavailable")
+		}
 		// Native9E16C0's general IsDebuff gate is independent of DOT149's
 		// Chain-only logical80 gate. Overdrive grants own80, not general49.
-		if creature.PartAttribute[49] > 0 || target.heroModifierRun.IsDebuffImmune() {
+		if ownImmunity.isDebuffImmune {
 			return false, nil
 		}
-		immunity := creature.PartAttribute[80]
-		if target.isOverdriveActiveAt(now) {
-			immunity++
-		}
-		return target.binding.Mode != game.ModeChain || immunity <= 0, nil
+		return target.binding.Mode != game.ModeChain || ownImmunity.poisonOrDisease <= 0, nil
 	}
 	immunity, isKnown := world.NPCs().PoisonImmunity(objectID)
 	if !isKnown {

@@ -59,11 +59,11 @@ func polarisHealthLossBand(hitPoint float32, maximumHitPoint float32) uint8 {
 
 func (r campaignNPCActionRuntime) producePolarisPhaseTransition(
 	packet raknet.Packet, sessionKey string, generation uint64,
-	objectID uint32, timestamp uint64, nextPhase polarisNextPhase,
+	objectID uint32, actionGeneration uint64, timestamp uint64, nextPhase polarisNextPhase,
 ) ([][]byte, error) {
 	r.registry.mutex.Lock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
-	isCurrent := isFound && peerSession.isCampaignNPCSourceActive(generation, objectID)
+	isCurrent := isFound && peerSession.isCampaignNPCSourceGenerationActive(generation, objectID, actionGeneration)
 	if !isCurrent {
 		r.registry.mutex.Unlock()
 		return nil, nil
@@ -93,6 +93,9 @@ func (r campaignNPCActionRuntime) producePolarisPhaseTransition(
 	)
 	if !isTargetFound {
 		r.registry.mutex.Unlock()
+		// No phase producer is installed after this handoff. Relinquish the
+		// captured action so encounter polling can select another live target.
+		r.releaseActionGeneration(sessionKey, generation, objectID, actionGeneration)
 		return nil, nil
 	}
 	plan := zonenpc.AttackPlan{
@@ -113,7 +116,7 @@ func (r campaignNPCActionRuntime) producePolarisPhaseTransition(
 	startPackets, err := r.startNPCAttack(sessionKey, generation, plan, timestamp)
 	if err != nil {
 		r.restoreCampaignNPCPolarisState(
-			sessionKey, generation, objectID, previousState,
+			sessionKey, generation, objectID, plan.ActionGeneration, previousState,
 		)
 		return nil, fmt.Errorf("enemyPolarisBlinkStart: %w", err)
 	}
@@ -131,9 +134,9 @@ func (r campaignNPCActionRuntime) producePolarisPhaseTransition(
 	}
 	if err != nil {
 		r.restoreCampaignNPCPolarisState(
-			sessionKey, generation, objectID, previousState,
+			sessionKey, generation, objectID, plan.ActionGeneration, previousState,
 		)
-		r.releaseAction(sessionKey, generation, objectID)
+		r.releaseActionGeneration(sessionKey, generation, objectID, plan.ActionGeneration)
 		return nil, fmt.Errorf("enemyPolarisBlinkSchedule: %w", err)
 	}
 	return startPackets, nil
@@ -141,18 +144,24 @@ func (r campaignNPCActionRuntime) producePolarisPhaseTransition(
 
 func (r campaignNPCActionRuntime) restoreCampaignNPCPolarisState(
 	sessionKey string, generation uint64, objectID uint32,
-	state campaignNPCPolarisState,
+	actionGeneration uint64, state campaignNPCPolarisState,
 ) {
 	r.registry.mutex.Lock()
+	defer r.registry.mutex.Unlock()
 	peerSession, isFound := r.registry.sessions[sessionKey]
-	if isFound && peerSession.generation == generation {
-		if peerSession.campaignNPCPolarisStates == nil {
-			peerSession.campaignNPCPolarisStates = make(map[uint32]campaignNPCPolarisState)
-		}
-		peerSession.campaignNPCPolarisStates[objectID] = state
-		r.registry.sessions[sessionKey] = peerSession
+	if !isFound || peerSession.generation != generation || peerSession.zone == nil ||
+		peerSession.zone.NPCs() == nil || actionGeneration == 0 {
+		return
 	}
-	r.registry.mutex.Unlock()
+	actor, isActorFound := peerSession.zone.NPCs().NPC(objectID)
+	if !isActorFound || actor.ActionGeneration != actionGeneration {
+		return
+	}
+	if peerSession.campaignNPCPolarisStates == nil {
+		peerSession.campaignNPCPolarisStates = make(map[uint32]campaignNPCPolarisState)
+	}
+	peerSession.campaignNPCPolarisStates[objectID] = state
+	r.registry.sessions[sessionKey] = peerSession
 }
 
 func (e campaignNPCPolarisBlinkSchedule) hit() ([][]byte, error) {

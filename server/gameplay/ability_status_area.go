@@ -66,7 +66,7 @@ func (e *heroStatusAreaRun) Cleanup() []heroStatusAreaTarget {
 		case sim.AbilityStatusKindCurse:
 			e.npc.ClearCurse(target.objectID, target.expiresAt)
 		case sim.AbilityStatusKindSlow:
-			e.npc.ClearSlow(target.objectID, target.expiresAt)
+			e.npc.ClearSlowModifier(target.objectID, target.instanceID)
 		case sim.AbilityStatusKindStun:
 			e.npc.ClearStun(target.objectID, target.expiresAt)
 		case sim.AbilityStatusKindSilence:
@@ -137,19 +137,20 @@ func (r campaignAbilityCommandRuntime) applyTargetStatus(
 			duration = zonenpc.CrowdControlDuration(target.Plan, duration)
 		}
 		expiresAt := r.now().Add(duration)
-		err := applyAcceptedHitNPCStatus(
-			run.npc, targetObjectID, expiresAt, definition,
-		)
-		if err != nil {
-			r.registry.mutex.Unlock()
-			run.Stop()
-			return nil, fmt.Errorf("hitStatusApply[%d]: %w", index, err)
-		}
 		instanceID, err := r.modifierPool.Allocate()
 		if err != nil {
 			r.registry.mutex.Unlock()
 			run.Stop()
 			return nil, fmt.Errorf("hitStatusModifier[%d]: %w", index, err)
+		}
+		err = applyAcceptedHitNPCStatus(
+			run.npc, targetObjectID, instanceID, expiresAt, definition,
+		)
+		if err != nil {
+			releaseErr := r.modifierPool.Release(instanceID)
+			r.registry.mutex.Unlock()
+			run.Stop()
+			return nil, fmt.Errorf("hitStatusApply[%d]: %w", index, errors.Join(err, releaseErr))
 		}
 		target := heroStatusAreaTarget{
 			objectID: targetObjectID, instanceID: instanceID,
@@ -158,7 +159,7 @@ func (r campaignAbilityCommandRuntime) applyTargetStatus(
 		if !run.Add(target) {
 			_ = r.modifierPool.Release(instanceID)
 			clearAcceptedHitNPCStatus(
-				run.npc, targetObjectID, expiresAt, definition.StatusKind,
+				run.npc, targetObjectID, instanceID, expiresAt, definition.StatusKind,
 			)
 			continue
 		}
@@ -219,13 +220,13 @@ func (r campaignAbilityCommandRuntime) applyTargetStatus(
 }
 
 func applyAcceptedHitNPCStatus(
-	npc *zonenpc.Session, objectID uint32, expiresAt time.Time,
+	npc *zonenpc.Session, objectID, instanceID uint32, expiresAt time.Time,
 	definition sim.AbilityDefinition,
 ) error {
 	switch definition.StatusKind {
 	case sim.AbilityStatusKindSlow:
-		return npc.ApplySlow(
-			objectID, expiresAt,
+		return npc.ApplySlowModifier(
+			objectID, instanceID, expiresAt,
 			definition.StatusMovementScale, definition.StatusAttackScale,
 		)
 	case sim.AbilityStatusKindStun:
@@ -242,12 +243,12 @@ func applyAcceptedHitNPCStatus(
 }
 
 func clearAcceptedHitNPCStatus(
-	npc *zonenpc.Session, objectID uint32, expiresAt time.Time,
+	npc *zonenpc.Session, objectID, instanceID uint32, expiresAt time.Time,
 	statusKind sim.AbilityStatusKind,
 ) {
 	switch statusKind {
 	case sim.AbilityStatusKindSlow:
-		npc.ClearSlow(objectID, expiresAt)
+		npc.ClearSlowModifier(objectID, instanceID)
 	case sim.AbilityStatusKindStun:
 		npc.ClearStun(objectID, expiresAt)
 	case sim.AbilityStatusKindSilence:

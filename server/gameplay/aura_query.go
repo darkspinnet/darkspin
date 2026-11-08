@@ -103,7 +103,7 @@ func (e heroAuraWorld) RequestAuraModifier(req sim.LuaAuraModifierRequest) (uint
 		e.run.releaseAuraInstance(instanceID)
 		return 0, fmt.Errorf("auraEncode: %w", err)
 	}
-	isApplied, err := e.run.npc.ApplyAuraSilence(objectID, instanceID, e.expiresAt, luaAuraAdmission{
+	isApplied, err := e.run.npc.ApplyAuraSilence(objectID, instanceID, e.schedule.runtime.now(), e.expiresAt, luaAuraAdmission{
 		modifier: e.run.silenceAdmission, isChainGame: e.schedule.binding.Mode == game.ModeChain,
 	})
 	if err != nil {
@@ -127,6 +127,10 @@ func (e heroAuraWorld) DeleteAuraModifier(req sim.LuaAuraModifierDelete) error {
 	objectID, err := auraNPCObjectID(req.TargetRole)
 	if err != nil {
 		return fmt.Errorf("auraDeleteID: %w", err)
+	}
+	if instanceID, isRetired := e.run.retiredTargets[objectID]; isRetired && instanceID == req.InstanceID {
+		delete(e.run.retiredTargets, objectID)
+		return nil
 	}
 	target, isTracked := e.run.targets[objectID]
 	if !isTracked || target.instanceID != req.InstanceID {
@@ -182,6 +186,10 @@ func (e *heroAuraAreaRun) clearAuraTargetStatus(objectID uint32, target heroAura
 	}
 	if e.isLuaAura {
 		e.npc.ClearAuraSilence(objectID, target.instanceID)
+		return
+	}
+	if e.statusKind == sim.AbilityStatusKindSlow && e.arenaGameID == 0 {
+		e.npc.ClearSlowModifier(objectID, target.instanceID)
 		return
 	}
 	e.clearStatus(objectID, target.expiresAt)

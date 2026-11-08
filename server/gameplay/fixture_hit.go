@@ -18,10 +18,14 @@ func (e campaignFixtureBlastStep) publishOwnedHit(target zonenpc.Snapshot, damag
 		return nil, fmt.Errorf("fixtureHitEncode: %w", err)
 	}
 	e.publication.recordPreparedPackets(packets)
-	err = e.runtime.projection.recordEnemyDamageObjective(e.sessionKey, e.generation, zonenpc.DamageEvent{
+	damageEvent := zonenpc.DamageEvent{
 		SourceObjectID: e.source.Plan.ObjectID, TargetObjectID: target.Plan.ObjectID,
 		Position: target.Plan.Position, Damage: damage.Damage, HitPoint: damage.HitPoint,
-	})
+	}
+	// Owned fixture feedback must keep its publication FIFO, while the
+	// accepted hit still reaches the same source callbacks as ordinary hits.
+	e.runtime.projection.recordOperativeCageDamage(e.sessionKey, e.generation, damageEvent)
+	err = e.runtime.projection.recordEnemyDamageObjective(e.sessionKey, e.generation, damageEvent)
 	if err != nil {
 		return packets, fmt.Errorf("fixtureHitObjective: %w", err)
 	}

@@ -20,14 +20,15 @@ import (
 )
 
 type campaignArcturusLaunch struct {
-	runtime        campaignNPCActionRuntime
-	packet         raknet.Packet
-	sessionKey     string
-	generation     uint64
-	objectID       uint32
-	timestamp      uint64
-	state          *campaignArcturusState
-	protectedUntil time.Time
+	runtime          campaignNPCActionRuntime
+	packet           raknet.Packet
+	sessionKey       string
+	generation       uint64
+	objectID         uint32
+	actionGeneration uint64
+	timestamp        uint64
+	state            *campaignArcturusState
+	protectedUntil   time.Time
 }
 
 type campaignArcturusLaunchStep struct {
@@ -76,7 +77,8 @@ func (e campaignNPCActionRuntime) produceArcturusLaunch(packet raknet.Packet, se
 	}
 	run := &campaignArcturusLaunch{runtime: e, packet: packet.Autonomous(),
 		sessionKey: sessionKey, generation: generation, objectID: objectID,
-		timestamp: timestamp, state: state, protectedUntil: e.now().Add(9200 * time.Millisecond)}
+		actionGeneration: boss.ActionGeneration,
+		timestamp:        timestamp, state: state, protectedUntil: e.now().Add(9200 * time.Millisecond)}
 	state.launch = run
 	e.registry.mutex.Unlock()
 	animation, err := npcraknet.AnimationState(objectID, "ctd_boss_tc_attack1_launch", timestamp)
@@ -130,6 +132,12 @@ func (e *campaignArcturusLaunch) abort() {
 		current.campaignArcturusStates[e.objectID] == e.state && e.state.launch == e {
 		e.state.launch = nil
 		current.zone.NPCs().ClearIntangible(e.objectID, e.protectedUntil)
+		// SupersedeAction retired the previous cast before launch preparation.
+		// Failed preparation owns no next producer; release only that new cast
+		// so the encounter loop can reacquire it without touching a replacement.
+		current.zone.NPCs().ReleaseActionGeneration(e.objectID, zonenpc.ActionOwner{
+			UserID: current.binding.UserID, PeerGeneration: e.generation,
+		}, e.actionGeneration)
 	}
 }
 
@@ -145,6 +153,14 @@ func (e campaignArcturusLaunchStep) produce() ([][]byte, error) {
 	boss, isBossFound := current.zone.NPCs().NPC(run.objectID)
 	if !isBossFound {
 		run.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	if !boss.IsActionStarted || boss.ActionGeneration != run.actionGeneration ||
+		boss.ActionOwner != (zonenpc.ActionOwner{UserID: current.binding.UserID, PeerGeneration: run.generation}) {
+		run.runtime.registry.mutex.Unlock()
+		// Landing and combat resume belong to this exclusive launch, not a
+		// newer action. Abort removes only its state and exact protection lease.
+		run.abort()
 		return nil, nil
 	}
 	isAlive := !boss.IsDefeated && boss.HitPoint > 0

@@ -612,7 +612,7 @@ func (e campaignConeSchedule) next() ([][]byte, error) {
 	}
 	if e.plan.Profile.AbilityName == "ZelemBossPush" {
 		return e.runtime.producePolarisPhaseTransition(
-			e.packet, e.sessionKey, e.generation, e.objectID, timestamp,
+			e.packet, e.sessionKey, e.generation, e.objectID, e.actionGeneration, timestamp,
 			polarisNextMarkSeeker,
 		)
 	}

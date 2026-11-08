@@ -87,7 +87,7 @@ func isFieldMedicStatusSupported(guid uint32) bool {
 }
 
 func applyFieldMedicNPCStatus(
-	npc *zonenpc.Session, objectID uint32, modifier zoneeffect.Modifier, expiresAt time.Time,
+	npc *zonenpc.Session, objectID, instanceID uint32, modifier zoneeffect.Modifier, expiresAt time.Time,
 ) error {
 	switch modifier.GUID {
 	case util.HashID("SleepModifier"):
@@ -99,7 +99,7 @@ func applyFieldMedicNPCStatus(
 	case util.HashID("EntangleModifier"), util.HashID("VerdanthBasicRootmobModifier"):
 		return npc.ApplyRoot(objectID, expiresAt)
 	case util.HashID("NomadSnipe_SlowDebuff"):
-		err := npc.ApplySlow(objectID, expiresAt,
+		err := npc.ApplySlowModifier(objectID, instanceID, expiresAt,
 			max(float32(0.05), 1+modifier.MovementSpeedBuff),
 			max(float32(0.05), 1+modifier.AttackSpeed))
 		if err != nil {
@@ -112,7 +112,7 @@ func applyFieldMedicNPCStatus(
 }
 
 func clearFieldMedicNPCStatus(
-	npc *zonenpc.Session, objectID uint32, guid uint32, expiresAt time.Time,
+	npc *zonenpc.Session, objectID, instanceID uint32, guid uint32, expiresAt time.Time,
 ) {
 	if npc == nil {
 		return
@@ -127,7 +127,7 @@ func clearFieldMedicNPCStatus(
 	case util.HashID("EntangleModifier"), util.HashID("VerdanthBasicRootmobModifier"):
 		npc.ClearRoot(objectID, expiresAt)
 	case util.HashID("NomadSnipe_SlowDebuff"):
-		npc.ClearSlow(objectID, expiresAt)
+		npc.ClearSlowModifier(objectID, instanceID)
 	}
 }
 

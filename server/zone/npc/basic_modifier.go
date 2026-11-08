@@ -85,7 +85,7 @@ func (e *Session) ApplyBasicModifier(objectID uint32, key BasicModifierKey, rank
 		// PummelDebuff's ten-second marker admits independently of its
 		// PummelSilence child, whose CanUseModifier checks ImmuneToSilence.
 		current.ActiveUntil = time.Time{}
-		if !npc.HasAffixModifier(unstoppableModifierName) {
+		if npc.ControlImmunity(at).Silence <= 0 {
 			silenceDuration := 2500 * time.Millisecond
 			if current.Rank >= 2 {
 				silenceDuration = 1500 * time.Millisecond

@@ -117,6 +117,7 @@ func (e *heroAuraAreaRun) retireAuraLocked() error {
 		e.releaseAuraInstance(target.instanceID)
 	}
 	e.targets = nil
+	e.retiredTargets = nil
 	e.isCleaned = true
 	if e.stopContext != nil {
 		isStopped := e.stopContext()

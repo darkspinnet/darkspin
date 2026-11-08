@@ -135,10 +135,7 @@ func mutationApproachSpeed(actor Snapshot, at time.Time) (float32, float32, erro
 		speed += baseSpeed * 1.5
 		bonus += 1.5
 	}
-	scale := float32(1)
-	if at.Before(actor.status.slowExpiresAt) {
-		scale = max(float32(0.05), actor.status.slowMovementScale)
-	}
+	scale := actor.status.slowProfile(at).Movement
 	scale *= areaShiftMovementScale(actor, at)
 	return speed * max(float32(0.05), scale), bonus, nil
 }
@@ -269,10 +266,7 @@ func (e *Session) advanceMutationMovementLocked(source *Snapshot, req MutationMo
 		speed += baseSpeed * 1.5
 	}
 	// Match SlowMovementScale without reacquiring the already-held NPC lock.
-	slowScale := float32(1)
-	if req.At.Before(actor.status.slowExpiresAt) {
-		slowScale = max(float32(0.05), actor.status.slowMovementScale)
-	}
+	slowScale := actor.status.slowProfile(req.At).Movement
 	slowScale *= areaShiftMovementScale(actor, req.At)
 	speed *= max(float32(0.05), slowScale)
 	elapsed := req.At.Sub(state.UpdatedAt)

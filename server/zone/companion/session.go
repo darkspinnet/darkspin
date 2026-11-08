@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
+	"github.com/darkspinnet/darkspin/server/navigation"
+	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
@@ -19,6 +21,10 @@ const attackRangeTolerance = 0.25
 const minimumPursuitDuration = 50 * time.Millisecond
 
 type Actor struct {
+	Navigation             navigation.ActorNavigation
+	navigationMesh         *navigation.Mesh
+	followPaths            []game.Vec3
+	pursuitPaths           []game.Vec3
 	ActorFootprint         *game.NavigationFootprint
 	UserID                 uint64
 	PeerGeneration         uint64
@@ -132,6 +138,7 @@ type Pursuit struct {
 }
 
 type Session struct {
+	navigationMesh         *navigation.Mesh
 	aggroRangesByNoun      map[uint32]float32
 	movementModifierSource MovementModifierSource
 	actorFootprints        map[uint32]game.NavigationFootprint
@@ -270,6 +277,7 @@ func (e *Session) put(actor Actor, isRetained bool) error {
 	actor.FollowRevision = e.nextFollowRevision()
 	actor.clearPursuit()
 	actor.PursuitRevision = e.nextPursuitRevision()
+	actor = e.configureActorNavigation(actor)
 	e.actors[actor.ObjectID] = actor
 	return nil
 }
@@ -518,8 +526,16 @@ func (e *Session) followActors(
 		if actor.MovementSpeed > 0 {
 			actorMovementSpeed = actor.MovementSpeed * movementScale(actor)
 		}
+		points, destination, pathErr := e.walkingPaths(actor, goal)
+		if pathErr != nil {
+			continue
+		}
+		travelDistance := distance - actorStopDistance
+		if len(points) != 0 {
+			travelDistance = walkingDistance(points)
+		}
 		travelDuration := time.Duration(
-			float64((distance-actorStopDistance)/actorMovementSpeed) *
+			float64(travelDistance/actorMovementSpeed) *
 				float64(time.Second),
 		)
 		travelDuration = max(travelDuration, minimumPursuitDuration)
@@ -530,13 +546,14 @@ func (e *Session) followActors(
 			DesiredStopDistance:   actorStopDistance,
 			AttackTargetObjectID:  actor.TargetObjectID,
 			PursuitTargetObjectID: actor.PursuitObjectID,
-			Destination:           goal,
+			Destination:           destination,
 			TravelDuration:        travelDuration,
 			Deadline:              at.Add(travelDuration),
 			Revision:              actor.FollowRevision,
 		}
 		follows = append(follows, plan)
 		actor.followPlan = plan
+		actor.followPaths = points
 		actor.followStartedAt = at
 		actor.followDeadline = at.Add(travelDuration)
 		actor.TargetObjectID = 0
@@ -646,9 +663,7 @@ func (e *Session) ReserveAttacks(
 		selectedDistance := float32(math.MaxFloat32)
 		selectedRange := float32(0)
 		for _, target := range targets {
-			if !target.IsPublished || target.IsDefeated || target.HitPoint <= 0 ||
-				target.Plan.IsFixture ||
-				target.Faction == zonenpc.FactionPlayerAligned {
+			if !zoneability.IsHostileTarget(target) || target.Plan.IsFixture {
 				continue
 			}
 			centerRange := attackRange + actor.ActorFootprintRadius() +
@@ -728,9 +743,7 @@ func (e *Session) ReserveActorAttack(
 	selectedDistance := float32(math.MaxFloat32)
 	selectedRange := float32(0)
 	for _, target := range targets {
-		if !target.IsPublished || target.IsDefeated || target.HitPoint <= 0 ||
-			target.Plan.IsFixture ||
-			target.Faction == zonenpc.FactionPlayerAligned {
+		if !zoneability.IsHostileTarget(target) || target.Plan.IsFixture {
 			continue
 		}
 		centerRange := attackRange + actor.ActorFootprintRadius() +
@@ -799,62 +812,36 @@ func (e *Session) ReservePursuits(
 			actor.TargetObjectID != 0 || actor.PursuitObjectID != 0 || actor.IsCinematicImmobilized(at) {
 			continue
 		}
-		var selected zonenpc.Snapshot
-		selectedDistance := float32(math.MaxFloat32)
-		selectedStopDistance := float32(0)
-		for _, target := range targets {
-			if !target.IsPublished || target.IsDefeated || target.HitPoint <= 0 ||
-				target.Plan.IsFixture ||
-				target.Faction == zonenpc.FactionPlayerAligned {
-				continue
-			}
-			// The hit tolerance is an acceptance margin, not a destination.
-			// Stopping on its outer edge can round beyond the attack boundary
-			// and repeatedly reserve another minimum-duration pursuit.
-			stopDistance := attackRange + actor.ActorFootprintRadius() +
-				max(float32(0), target.Plan.ActorFootprintRadius())
-			distance := actor.Position.Sub(target.Plan.Position).Length()
-			maximumRange := aggroRadius
-			if actor.AggroRadius > 0 {
-				maximumRange = actor.acquisitionCenterRange(target.Plan.ActorFootprintRadius())
-			}
-			if distance <= stopDistance || distance > maximumRange ||
-				distance > selectedDistance {
-				continue
-			}
-			if distance == selectedDistance && selected.Plan.ObjectID != 0 &&
-				target.Plan.ObjectID > selected.Plan.ObjectID {
-				continue
-			}
-			selected = target
-			selectedDistance = distance
-			selectedStopDistance = stopDistance
-		}
-		if selected.Plan.ObjectID == 0 {
+		selection := e.selectPursuit(actor, targets, attackRange, aggroRadius, false)
+		if selection.target.Plan.ObjectID == 0 {
 			continue
 		}
-		if actor.IsFollowing {
-			actor.clearFollow()
-			actor.FollowRevision = e.nextFollowRevision()
-		}
+		selected := selection.target
+		selectedStopDistance := selection.stopDistance
 		source := actor.Position
-		delta := source.Sub(selected.Plan.Position)
-		destination := selected.Plan.Position.Add(
-			delta.Scale(selectedStopDistance / selectedDistance),
-		)
+		points, destination := selection.paths, selection.destination
 		actorMovementSpeed := movementSpeed * movementScale(actor)
+		travelDistance := selection.distance - selection.stopDistance
+		if len(points) != 0 {
+			travelDistance = walkingDistance(points)
+		}
 		travelDuration := time.Duration(
-			float64((selectedDistance-selectedStopDistance)/actorMovementSpeed) *
+			float64(travelDistance/actorMovementSpeed) *
 				float64(time.Second),
 		)
 		if travelDuration <= 0 {
 			continue
 		}
 		travelDuration = max(travelDuration, minimumPursuitDuration)
+		if actor.IsFollowing {
+			actor.clearFollow()
+			actor.FollowRevision = e.nextFollowRevision()
+		}
 		actor.PursuitObjectID = selected.Plan.ObjectID
 		actor.PursuitPosition = destination
 		actor.PursuitRevision = e.nextPursuitRevision()
 		actor.pursuitSource = source
+		actor.pursuitPaths = points
 		actor.pursuitStartedAt = at
 		actor.pursuitDeadline = at.Add(travelDuration)
 		e.actors[objectID] = actor
@@ -923,65 +910,40 @@ func (e *Session) reserveActorPursuit(
 	}
 	actor = e.refreshMovementModifiersLocked(actor, at)
 	actor.Position = actor.followPosition(at)
-	var selected zonenpc.Snapshot
-	selectedDistance := float32(math.MaxFloat32)
-	selectedStopDistance := float32(0)
-	for _, target := range targets {
-		if !target.IsPublished || target.IsDefeated || target.HitPoint <= 0 ||
-			target.Plan.IsFixture ||
-			target.Faction == zonenpc.FactionPlayerAligned {
-			continue
-		}
-		// Keep the destination inside the hit acceptance margin; float32
-		// projection must not turn arrival into another pursuit reservation.
-		stopDistance := attackRange + actor.ActorFootprintRadius() +
-			max(float32(0), target.Plan.ActorFootprintRadius())
-		distance := actor.Position.Sub(target.Plan.Position).Length()
-		maximumRange := aggroRadius
-		if !isForced && actor.AggroRadius > 0 {
-			maximumRange = actor.acquisitionCenterRange(target.Plan.ActorFootprintRadius())
-		}
-		if distance <= stopDistance || distance > maximumRange ||
-			distance > selectedDistance {
-			continue
-		}
-		if distance == selectedDistance && selected.Plan.ObjectID != 0 &&
-			target.Plan.ObjectID > selected.Plan.ObjectID {
-			continue
-		}
-		selected = target
-		selectedDistance = distance
-		selectedStopDistance = stopDistance
-	}
-	if selected.Plan.ObjectID == 0 {
+	selection := e.selectPursuit(actor, targets, attackRange, aggroRadius, isForced)
+	if selection.target.Plan.ObjectID == 0 {
 		return Pursuit{}, false, nil
 	}
-	if actor.IsFollowing {
-		actor.clearFollow()
-		actor.FollowRevision = e.nextFollowRevision()
-	}
+	selected := selection.target
+	selectedStopDistance := selection.stopDistance
 	source := actor.Position
-	delta := source.Sub(selected.Plan.Position)
-	destination := selected.Plan.Position.Add(
-		delta.Scale(selectedStopDistance / selectedDistance),
-	)
+	points, destination := selection.paths, selection.destination
 	actorMovementSpeed := movementSpeed * movementScale(actor)
 	if isForced {
 		actorMovementSpeed = movementSpeed * max(float32(.05), 1+actor.MovementSpeedBuff)
 	}
+	travelDistance := selection.distance - selection.stopDistance
+	if len(points) != 0 {
+		travelDistance = walkingDistance(points)
+	}
 	travelDuration := time.Duration(
-		float64((selectedDistance-selectedStopDistance)/actorMovementSpeed) *
+		float64(travelDistance/actorMovementSpeed) *
 			float64(time.Second),
 	)
 	if travelDuration <= 0 {
 		return Pursuit{}, false, nil
 	}
 	travelDuration = max(travelDuration, minimumPursuitDuration)
+	if actor.IsFollowing {
+		actor.clearFollow()
+		actor.FollowRevision = e.nextFollowRevision()
+	}
 	actor.PursuitObjectID = selected.Plan.ObjectID
 	actor.isForcedPursuit = isForced
 	actor.PursuitPosition = destination
 	actor.PursuitRevision = e.nextPursuitRevision()
 	actor.pursuitSource = source
+	actor.pursuitPaths = points
 	actor.pursuitStartedAt = at
 	actor.pursuitDeadline = at.Add(travelDuration)
 	e.actors[objectID] = actor

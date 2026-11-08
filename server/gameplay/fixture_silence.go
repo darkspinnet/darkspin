@@ -167,11 +167,14 @@ func (e gameplayPendingRuntime) enterSilenceFieldLocked(caller *gameplayPeerSess
 		if targetMember.deployedObjectID != target.ObjectID || int(targetMember.deployedCreatureIndex) >= len(targetMember.binding.Creatures) {
 			return nil, nil
 		}
-		creature := targetMember.projectPassiveCreature(targetMember.deployedCreatureIndex, now)
-		immunity = creature.PartAttribute[78]
+		ownImmunity, isKnown := targetMember.heroOwnImmunity(now)
+		if !isKnown {
+			return nil, errors.New("silence field hero immunity unavailable")
+		}
+		immunity = ownImmunity.silence
 		// Native9E16C0 checks ModImmuneDebuff49 for descriptor IsDebuff
 		// independently of this modifier's chain-only ImmuneToSilence gate.
-		if creature.PartAttribute[49] > 0 || targetMember.heroModifierRun.IsDebuffImmune() {
+		if ownImmunity.isDebuffImmune {
 			return nil, nil
 		}
 	} else {

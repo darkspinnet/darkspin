@@ -71,15 +71,6 @@ func (r campaignNPCPursuitRuntime) advanceTargetPoseAtLocked(
 	return peerSession, nil
 }
 
-type campaignNPCStunResumeStep struct {
-	timestamp uint64
-	resume    campaignNPCArrival
-}
-
-func (s campaignNPCStunResumeStep) produce() ([][]byte, error) {
-	return s.resume(s.timestamp)
-}
-
 type campaignNPCPursuitStep struct {
 	runtime                  campaignNPCPursuitRuntime
 	packet                   raknet.Packet
@@ -115,41 +106,15 @@ func (r campaignNPCPursuitRuntime) deferAction(
 	if resume == nil {
 		return false, errors.New("enemy stun resume unavailable")
 	}
-	r.registry.mutex.RLock()
-	peerSession, isFound := r.registry.sessions[sessionKey]
-	isCurrent := isFound && peerSession.generation == generation &&
-		peerSession.zone.NPCs() != nil
-	remaining := time.Duration(0)
-	if isCurrent {
-		remaining = max(
-			peerSession.zone.NPCs().StunRemaining(objectID, r.now()),
-			peerSession.zone.NPCs().SleepRemaining(objectID, r.now()),
-			peerSession.zone.NPCs().SilenceRemaining(objectID, r.now()),
-		)
+	step := campaignNPCControlResume{
+		runtime: r, packet: packet, sessionKey: sessionKey, generation: generation,
+		objectID: objectID, timestamp: timestamp, resumeAction: resume,
 	}
-	r.registry.mutex.RUnlock()
-	if remaining <= 0 {
-		return false, nil
-	}
-	nextTimestamp := timestamp + uint64(remaining/time.Millisecond)
-	step := campaignNPCStunResumeStep{
-		timestamp: nextTimestamp, resume: resume,
-	}
-	producer := raknet.ScheduledPacketProducer{
-		Delay:   remaining,
-		Produce: step.produce,
-	}
-	producers := r.registry.producerGuard.scheduledProducers(
-		sessionKey, []raknet.ScheduledPacketProducer{producer},
-	)
-	cancel, err := packet.ScheduleProducers(producers)
-	if err == nil && cancel == nil {
-		err = errors.New("nil cancellation")
-	}
+	isDeferred, err := step.deferControl()
 	if err != nil {
-		return false, fmt.Errorf("enemyStunResumeSchedule: %w", err)
+		return false, fmt.Errorf("enemyActionDefer: %w", err)
 	}
-	return true, nil
+	return isDeferred, nil
 }
 
 func (r campaignNPCPursuitRuntime) deferCommit(
@@ -159,36 +124,16 @@ func (r campaignNPCPursuitRuntime) deferCommit(
 	if resume == nil {
 		return false, errors.New("enemy commit resume unavailable")
 	}
-	r.registry.mutex.RLock()
-	peerSession, isFound := r.registry.sessions[sessionKey]
-	isCurrent := isFound && peerSession.generation == generation &&
-		peerSession.zone != nil && peerSession.zone.NPCs() != nil
-	remaining := time.Duration(0)
-	if isCurrent {
-		remaining = max(
-			peerSession.zone.NPCs().StunRemaining(objectID, r.now()),
-			peerSession.zone.NPCs().SleepRemaining(objectID, r.now()),
-		)
+	step := campaignNPCControlResume{
+		runtime: r, packet: packet, sessionKey: sessionKey, generation: generation,
+		objectID: objectID, resumeCommit: resume,
 	}
-	r.registry.mutex.RUnlock()
-	if remaining <= 0 {
-		return false, nil
-	}
-	producers := r.registry.producerGuard.scheduledProducers(
-		sessionKey, []raknet.ScheduledPacketProducer{{
-			Delay: remaining, Produce: resume,
-		}},
-	)
-	cancel, err := packet.ScheduleProducers(producers)
-	if err == nil && cancel == nil {
-		err = errors.New("nil cancellation")
-	}
+	isDeferred, err := step.deferControl()
 	if err != nil {
-		return false, fmt.Errorf("enemyCommitResumeSchedule: %w", err)
+		return false, fmt.Errorf("enemyCommitDefer: %w", err)
 	}
-	return true, nil
+	return isDeferred, nil
 }
-
 func (r campaignNPCPursuitRuntime) schedule(
 	packet raknet.Packet, sessionKey string, generation uint64,
 	objectID uint32, timestamp uint64, publishedGoal game.Vec3,
@@ -466,6 +411,7 @@ func (r campaignNPCPursuitRuntime) produceStep(
 	if profile.Family != zonenpc.ActionCharge {
 		slowPacket, slowErr := marshalNPCSlowMovement(npcSession, enemy.Plan, slowMovementScale)
 		if slowErr != nil {
+			npcSession.ReleaseActionGeneration(objectID, owner, actionGeneration)
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("pursuitSlow: %w", slowErr)
 		}
@@ -479,6 +425,7 @@ func (r campaignNPCPursuitRuntime) produceStep(
 		// shield monitor end the stance and restart the action after recovery.
 		shieldErr := npcSession.EndShield(objectID)
 		if shieldErr != nil {
+			npcSession.ReleaseActionGeneration(objectID, owner, actionGeneration)
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("pursuitShieldEnd: %w", shieldErr)
 		}
@@ -743,6 +690,18 @@ func (r campaignNPCPursuitRuntime) produceStep(
 		if stopErr != nil {
 			npcSession.ReleaseActionGeneration(objectID, owner, actionGeneration)
 			return nil, fmt.Errorf("enemyPursuitStop: %w", stopErr)
+		}
+		// Packet preparation runs outside the registry lock. Recheck the
+		// original reservation before handing off to a fresh attack producer;
+		// an old pursuit must not attach itself to a replacement action.
+		r.registry.mutex.RLock()
+		latest, isLatestFound := r.registry.sessions[sessionKey]
+		isArrivalCurrent := isLatestFound && latest.zone == peerSession.zone &&
+			latest.binding.UserID == owner.UserID &&
+			latest.isCampaignNPCSourceGenerationActive(generation, objectID, actionGeneration)
+		r.registry.mutex.RUnlock()
+		if !isArrivalCurrent {
+			return nil, nil
 		}
 		attackPackets, attackErr := onArrival(nextTimestamp)
 		if attackErr != nil {

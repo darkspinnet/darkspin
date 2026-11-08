@@ -264,7 +264,7 @@ func (e campaignFixtureBlastStep) damageProjected(targetID uint32, profile zonen
 	if err != nil {
 		return nil, false, fmt.Errorf("fixtureDamageTransition: %w", err)
 	}
-	packets, err := e.publishDamage(target, damage, transition, acceptedAt)
+	packets, err := e.publishDamage(target, damage, transition, acceptedAt, profile.DescriptorMask)
 	if err != nil {
 		return packets, false, fmt.Errorf("fixtureDamagePublish: %w", err)
 	}
@@ -279,7 +279,10 @@ func (e campaignFixtureBlastStep) damageProjected(targetID uint32, profile zonen
 	return packets, isSurviving, nil
 }
 
-func (e campaignFixtureBlastStep) publishDamage(target zonenpc.Snapshot, damage zonenpc.DamageResult, transition campaignDamageTransition, acceptedAt time.Time) ([][]byte, error) {
+func (e campaignFixtureBlastStep) publishDamage(
+	target zonenpc.Snapshot, damage zonenpc.DamageResult,
+	transition campaignDamageTransition, acceptedAt time.Time, descriptorMask uint32,
+) ([][]byte, error) {
 	r := e.runtime
 	packets := make([][]byte, 0)
 	if damage.IsDefeated {
@@ -337,6 +340,19 @@ func (e campaignFixtureBlastStep) publishDamage(target zonenpc.Snapshot, damage 
 		})
 		if err != nil {
 			return packets, fmt.Errorf("fixtureHitProjection: %w", err)
+		}
+	}
+	if !damage.IsDamageImmune {
+		// Fixture hits bypass the hero area's publication path, but deliver
+		// the same accepted damage callback to each exact sleep modifier.
+		// Preserve the tick profile's descriptors so authored DoT stays asleep.
+		wakePackets, wakeErr := r.breakSleepingCloudOnDamage(
+			e.sessionKey, e.generation, target.Plan.ObjectID, descriptorMask,
+		)
+		packets = append(packets, wakePackets...)
+		e.publication.recordPreparedPackets(wakePackets)
+		if wakeErr != nil {
+			return packets, fmt.Errorf("fixtureSleepEvent: %w", wakeErr)
 		}
 	}
 	transitionPackets, err := r.publishTransition(e.packet, e.sessionKey, e.generation, transition, e.timestamp)
