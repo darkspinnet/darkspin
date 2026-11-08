@@ -362,6 +362,7 @@ type Service struct {
 	warpRequester          WarpRequester
 	noReplaySetter         NoReplaySetter
 	commandAuthorizer      CommandAuthorizer
+	isLocalCommandAccess   bool
 	npcSpawner             NPCSpawner
 	npcScalePreviewer      NPCScalePreviewer
 	godModeToggler         GodModeToggler

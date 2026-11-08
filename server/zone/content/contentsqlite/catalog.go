@@ -993,6 +993,7 @@ func recoveredHeroAbilityDefinitions() map[string]sim.AbilityDefinition {
 		},
 		"LightspeedTempestActive": {
 			Name: "LightspeedTempestActive", Kind: sim.AbilityKindCursorArea,
+			Cooldown: 8 * time.Second, ManaCost: 18, ManaCoefficient: 0.09,
 			Range: 35, Radius: 7,
 			AnimationName: "lightspeedtempest_active",
 			HitDelay:      100 * time.Millisecond,

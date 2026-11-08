@@ -7,7 +7,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/accountaccess"
 )
 
-// CommandAuthorizer reads durable permissions rather than client/profile flags.
+// CommandAuthorizer reads dedicated-server permissions from durable account access.
 type CommandAuthorizer interface {
 	Read(context.Context, int64) (accountaccess.Access, error)
 }
@@ -16,11 +16,20 @@ func (e *Service) UseCommandAuthorizer(authorizer CommandAuthorizer) {
 	e.commandAuthorizer = authorizer
 }
 
-// AuthorizeCommand keeps ordinary player commands available and denies all
-// other commands unless the authenticated sender is currently an administrator.
+// UseLocalCommandAccess makes authenticated local-play accounts administrative
+// for in-game commands. Only the server composition selects this policy.
+func (e *Service) UseLocalCommandAccess() {
+	e.isLocalCommandAccess = true
+}
+
+// AuthorizeCommand keeps local play administrative by default. Dedicated
+// servers require durable administrator access for privileged commands.
 func (e *Service) AuthorizeCommand(ctx context.Context, userID int64, name string) error {
 	if ctx == nil || userID <= 0 {
 		return accountaccess.ErrAccessDenied
+	}
+	if e.isLocalCommandAccess {
+		return nil
 	}
 	switch name {
 	case "/help", "/emote", "/taunt", "/bug", "/b", "/ping", "/hint", "/loc", "/stat", "/follow", "/exit":

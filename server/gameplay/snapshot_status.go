@@ -15,14 +15,15 @@ func snapshotHeroSpeed(peerSession gameplayPeerSession) *snapshot.HeroSpeedState
 	creature := peerSession.binding.Creatures[peerSession.deployedCreatureIndex]
 	attackSpeed := peerSession.enemyAttackSpeed()
 	movementSpeed := peerSession.enemyMovementSpeedBuff()
+	passiveAttack, passiveMovement := peerSession.lightspeedPassiveBonuses(peerSession.deployedCreatureIndex, time.Now())
 	return &snapshot.HeroSpeedState{
 		ObjectID:                peerSession.deployedObjectID,
 		EquipmentAttackSpeed:    creature.PartAttribute[23],
 		EquipmentMovementSpeed:  creature.PartAttribute[48],
-		PassiveMovementIncrease: creature.PassiveMovementIncrease,
+		PassiveMovementIncrease: creature.PassiveMovementIncrease + passiveMovement,
 		DebuffAttackSpeed:       attackSpeed, DebuffMovementSpeed: movementSpeed,
-		ExpectedSlowAttribute23: creature.PartAttribute[23] + attackSpeed,
-		ExpectedSlowAttribute48: creature.PartAttribute[48] + movementSpeed,
+		ExpectedSlowAttribute23: creature.PartAttribute[23] + attackSpeed + passiveAttack,
+		ExpectedSlowAttribute48: creature.PartAttribute[48] + movementSpeed + passiveMovement,
 	}
 }
 

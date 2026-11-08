@@ -2,6 +2,10 @@
 
 ### 2026-11-08
 
+- #194 Restore administrator command access by default for local play; only dedicated servers require an account status above 250.
+- #194 Restore Temporal Siphon's authored base cooldown and power cost instead of allowing repeated free casts.
+- #194 Synchronize Orion's health-based movement and attack haste with the client and teammates, preserving it through temporary slow updates.
+- #194 Restore Pain Hounds' owner-primary-stat damage scaling and separate pet-damage bonus in campaign and Arena.
 - #193 Keep Sentry Drone stationary through its full firing release instead of resuming owner-follow at projectile launch.
 - #193 Correct Swift Slasher wander movement from premature one-second advances and hero-follow goals to elapsed-time movement along retained wander destinations, with authored ranked durations.
 

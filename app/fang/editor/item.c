@@ -8,17 +8,17 @@ typedef int (FANG_THISCALL *editor_available_fn)(BYTE*, const BYTE*, BYTE*);
 typedef void (FANG_THISCALL *editor_message_fn)(BYTE*, unsigned int, unsigned int, int);
 typedef void* (__cdecl *editor_account_fn)(void);
 typedef const BYTE* (FANG_THISCALL *editor_entry_fn)(void*, unsigned int, unsigned int);
-typedef unsigned char (FANG_THISCALL *editor_mirror_fn)(const BYTE*);
+typedef unsigned char (FANG_THISCALL *editor_active_fn)(const BYTE*);
 
 static editor_available_fn native_editor_available;
 static editor_message_fn native_editor_message;
 static editor_account_fn native_editor_account;
 static editor_entry_fn native_editor_entry;
-static editor_mirror_fn native_editor_mirror;
+static editor_active_fn native_editor_active;
 static uint64_t editor_last_reserved_id;
 
 /* sub_4CC100 matches physical item IDs against the live creature's parts
- * and their mirrored children. sub_69C050/sub_69D010 expose the creature's
+ * and their active attachment children. sub_69C050/sub_69D010 expose the creature's
  * pointer vector at [24,28); placed-part IDs live at [40,48). Use that live
  * geometry at editor +176, as passed by native callers to sub_4CC100, rather
  * than the separate editor +156 field or the last saved equipment set.
@@ -34,7 +34,7 @@ static int editor_part_has_item(const BYTE* part, uint64_t item_id) {
     return attached_id == item_id;
 }
 
-// Reads: searches live parts and mirrored children for an item ID, reporting unreadable geometry.
+// Reads: searches live parts and active attachment children for an item ID, reporting unreadable geometry.
 static int editor_model_has_item(const BYTE* model, uint64_t item_id) {
     const BYTE* const* parts;
     const BYTE* const* end;
@@ -67,7 +67,9 @@ static int editor_model_has_item(const BYTE* model, uint64_t item_id) {
         if (!readable_range(part, 61)) {
             return -1;
         }
-        if (!native_editor_mirror(part)) {
+        /* Build 103 sub_6A2470 reads active/visible byte +60. Counterpart
+         * symmetry uses the separate +992 link, not this child-vector gate. */
+        if (!native_editor_active(part)) {
             continue;
         }
         if (!readable_range(part, 844)) {
@@ -161,6 +163,6 @@ int fang_install_editor_item(HMODULE executable) {
     native_editor_message = (editor_message_fn)(base + 0x3AE8A0);
     native_editor_account = (editor_account_fn)(base + 0xE5AC0);
     native_editor_entry = (editor_entry_fn)(base + 0xC0FD0);
-    native_editor_mirror = (editor_mirror_fn)(base + 0x2A2470);
+    native_editor_active = (editor_active_fn)(base + 0x2A2470);
     return patch_pointer(available, native_editor_available, editor_available);
 }

@@ -870,6 +870,9 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("chatInit: %w", err)
 	}
 	chatService.UseCommandAuthorizer(accessService)
+	if !isDedicated {
+		chatService.UseLocalCommandAccess()
+	}
 	chatService.UseEffectPreviewer(chatlocal.NewEffectPreviewer(gameManager))
 	chatService.UseResourceMutator(chatlocal.NewResourceMutator(gameManager))
 	chatService.UseEventTriggerer(chatlocal.NewEventTriggerer(gameManager))

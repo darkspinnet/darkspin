@@ -735,6 +735,7 @@ func (r campaignDamageRuntime) startPlasmaSentinelPetActorAttack(
 	peerSession, isFound := r.registry.sessions[sessionKey]
 	isCurrent := isFound && peerSession.generation == generation &&
 		peerSession.plasmaSentinelActive != nil &&
+		peerSession.deployedObjectID == peerSession.plasmaSentinelActive.ownerObjectID &&
 		peerSession.plasmaSentinelActive.hasPet(objectID) &&
 		peerSession.zone != nil && peerSession.zone.Companion() != nil &&
 		peerSession.zone.NPCs() != nil
@@ -748,17 +749,7 @@ func (r campaignDamageRuntime) startPlasmaSentinelPetActorAttack(
 		return nil, nil
 	}
 	ability := r.npc.program.PlasmaSentinelPetBasic
-	petDamage := float32(0)
-	if peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures)) {
-		petDamage = peerSession.binding.Creatures[peerSession.deployedCreatureIndex].PetDamage
-	}
-	damageRange, err := game.ResolveAbilityDamageRange(
-		game.AbilityDamage{
-			Minimum: ability.MinimumDamage, Maximum: ability.MaximumDamage,
-			Coefficient: ability.DamageCoefficient,
-		},
-		game.DamageProfile{PrimaryAttribute: petDamage, IsPrimaryAttributeFound: true},
-	)
+	damageRange, err := peerSession.plasmaPetDamageRange(ability)
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("plasmaSentinelPetDamage: %w", err)
