@@ -33,6 +33,7 @@ type reportManifest struct {
 	GameplayError     string                `json:"gameplay_error,omitempty"`
 	Files             []reportFileRecord    `json:"files"`
 	NativeCrashErrors []string              `json:"native_crash_errors,omitempty"`
+	LauncherLogError  string                `json:"launcher_log_error,omitempty"`
 }
 
 type reportState struct {
@@ -165,6 +166,22 @@ func (a *App) createSessionReportArchive(
 	}
 	createdAt := time.Now().UTC()
 	manifest := a.sessionReportManifest(createdAt, title, nil, session)
+	a.mu.Lock()
+	launcherCtx := a.ctx
+	a.mu.Unlock()
+	var flushErr error
+	if launcherCtx == nil {
+		flushErr = errors.New("launcher log flush context unavailable")
+	} else {
+		flushCtx, flushCancel := context.WithTimeout(launcherCtx, 2*time.Second)
+		flushErr = a.logSession.flush(flushCtx)
+		flushCancel()
+	}
+	if flushErr != nil {
+		// Still preserve the available diagnostics when a failed disk cannot
+		// finish the log. The archive states that its log tail may be incomplete.
+		manifest.LauncherLogError = flushErr.Error()
+	}
 	level := strings.TrimSpace(manifest.Gameplay.Mission.Label)
 	if level == "" {
 		level = strings.TrimSpace(manifest.Gameplay.LocationLabel)

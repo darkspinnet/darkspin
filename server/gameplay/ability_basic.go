@@ -4072,6 +4072,28 @@ func (r campaignAbilityCommandRuntime) handleCloudLobBasic(
 	}
 	cloudPlan, planErr := zoneability.PlanCloudLobAt(cloudReq)
 	if planErr != nil {
+		var rangeErr zoneability.TargetRangeError
+		if errors.As(planErr, &rangeErr) && definition.IsShouldPursue &&
+			targetObjectID != 0 && peerSession.zone != nil {
+			target, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
+			if isTargetFound && !target.IsDefeated && target.HitPoint > 0 {
+				request.startTime = abilityStartTime
+				isPursuitRetry := peerSession.campaignPlayerPursuitSession().IsRetry(
+					command.Common.ObjectID, targetObjectID,
+					command.Ability.Index, command.Common.Unknown[0],
+				)
+				packets, isPursuitStarted, pursuitErr := r.transferPlayerAbilityPursuit(
+					request, peerSession, target, heroAbilityAdmissionRange(creature, definition), isPursuitRetry,
+				)
+				if pursuitErr != nil {
+					return nil, fmt.Errorf("cloudPursuit: %w", pursuitErr)
+				}
+				if isPursuitStarted {
+					r.logger.Printf("RakNet campaign cloud lob pursuit started source=%d target=%d ability=%s", command.Common.ObjectID, targetObjectID, definition.Name)
+				}
+				return packets, nil
+			}
+		}
 		r.registry.mutex.Unlock()
 		return request.reject(planErr.Error())
 	}

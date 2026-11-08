@@ -244,6 +244,9 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		generation: generation, sourceObjectID: objectID, timestamp: timestamp,
 		kind: campaignNPCProjectileZelem,
 		plan: zonenpc.AttackPlan{ActionGeneration: actionGeneration},
+		// A stun or pursuit resumes this selected shot, not the source's
+		// default attack family (Polaris defaults to its non-projectile push).
+		volley: volley, isShotPending: true,
 	}
 	isDeferred, err := r.pursuit.deferAction(
 		packet, sessionKey, generation, objectID, timestamp,
@@ -377,6 +380,7 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 	ability, abilityErr := campaignNPCProjectileAbility(profile)
 	if abilityErr != nil {
 		r.registry.mutex.Unlock()
+		r.releaseActionGeneration(sessionKey, generation, objectID, actionGeneration)
 		return nil, fmt.Errorf("enemyZelemAbility: %w", abilityErr)
 	}
 	plan := zonenpc.AttackPlan{}

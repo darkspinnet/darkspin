@@ -45,6 +45,7 @@ type campaignNPCProjectileSchedule struct {
 	run                         *abilityraknet.ProjectileRun
 	flight                      *campaignNPCProjectileFlight
 	volley                      campaignNPCProjectileVolley
+	isShotPending               bool
 	projectileSourcePosition    game.Vec3
 	projectileTargetPosition    game.Vec3
 	isProjectileTrajectoryFound bool
@@ -289,6 +290,11 @@ func (e campaignNPCProjectileSchedule) resumeZelem(
 	e.runtime.registry.mutex.RUnlock()
 	if !isCurrent || !isEnemyFound || enemy.IsDefeated {
 		return nil, nil
+	}
+	if e.isShotPending {
+		return e.runtime.produceZelemShotWithVolley(
+			e.packet, e.sessionKey, e.generation, e.sourceObjectID, timestamp, e.volley,
+		)
 	}
 	profile, isProfileFound := zonenpc.ActionProfileForPlan(enemy.Plan)
 	if isProfileFound && profile.Family == zonenpc.ActionZelemRanged &&

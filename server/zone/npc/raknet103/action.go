@@ -72,14 +72,26 @@ func RandomTeleport(
 		return nil, errors.New("npc random teleport invalid")
 	}
 	position := vector(destination)
+	goalFlags := uint32(0x20)
+	targetObjectID := uint32(0)
+	externalMotion := raknet.Vector3{}
+	stopDistance := float32(0)
 	return marshalMessages([]raknet.ApplicationMessage{
-		raknet.ObjectPlayerMoveMessage{
-			ObjectID: plan.TargetObjectID, GoalFlags: 0x20, GoalPosition: position,
+		// Build 103's fixed movement receiver skips the controlling hero.
+		// Reflection clears its old route, and 5392F0 resets the physics root
+		// and owner input pose; an ObjectUpdate only changes object fields.
+		raknet.LocomotionUpdateContractMessage{
+			ObjectID: plan.TargetObjectID,
+			Locomotion: raknet.LocomotionReflection{
+				GoalFlags: &goalFlags, GoalPosition: &position,
+				PartialGoalPosition: &position, TargetObjectID: &targetObjectID,
+				ExternalLinearVelocity: &externalMotion, ExternalForce: &externalMotion,
+				AllowedStopDistance: &stopDistance, DesiredStopDistance: &stopDistance,
+			},
 		},
-		raknet.ObjectUpdateMessage{
-			ObjectID: plan.TargetObjectID, PositionX: destination.X,
-			PositionY: destination.Y, PositionZ: destination.Z,
-			IsVisible: true,
+		raknet.ObjectTeleportMessage{
+			ObjectID: plan.TargetObjectID, Position: position,
+			Orientation: raknet.Quaternion{W: 1},
 		},
 		raknet.SetAnimationStateMessage{
 			ObjectID:  plan.TargetObjectID,

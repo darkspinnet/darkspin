@@ -38,7 +38,7 @@ type App struct {
 	controlActivityCache     remoteControlActivityCache
 	controlOperation         remoteControlOperation
 	snapshotCompactMu        sync.Mutex
-	logMu                    sync.Mutex
+	logSession               launcherLogSession
 	timingMu                 sync.Mutex
 	cancel                   context.CancelFunc
 	patchCancel              context.CancelFunc
@@ -281,6 +281,10 @@ func (a *App) shutdown(context.Context) {
 	}
 	a.stopServices()
 	a.log("Shutdown finished")
+	err := a.logSession.close()
+	if err != nil {
+		launcherLogFailure(err)
+	}
 }
 
 func (a *App) GetStatus() LauncherStatus {
@@ -1049,13 +1053,7 @@ func (a *App) log(message string) {
 		return
 	}
 	logPath := filepath.Join(gameDirectory, "darkspin", "logs", "darkspinner.log")
-	a.logMu.Lock()
-	output, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err == nil {
-		_, _ = fmt.Fprintf(output, "%s %s\n", time.Now().Format(time.RFC3339Nano), visibleLauncherText(message))
-		_ = output.Close()
-	}
-	a.logMu.Unlock()
+	a.logSession.enqueue(logPath, fmt.Sprintf("%s %s\n", time.Now().Format(time.RFC3339Nano), visibleLauncherText(message)))
 }
 
 func visibleLauncherStatus(status LauncherStatus) LauncherStatus {
