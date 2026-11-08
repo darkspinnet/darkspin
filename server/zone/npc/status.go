@@ -66,7 +66,9 @@ type status struct {
 	supportHealerRootExpiresAt  time.Time
 	supportHealerRootInstanceID uint32
 	silenceExpiresAt            time.Time
+	auraSilences                map[uint32]time.Time
 	sleepExpiresAt              time.Time
+	auraSleeps                  map[uint32]time.Time
 	slowExpiresAt               time.Time
 	slowMovementScale           float32
 	slowAttackScale             float32
@@ -123,8 +125,8 @@ func (s *Session) HasDebuff(objectID uint32, at time.Time) bool {
 		at.Before(status.fearExpiresAt) ||
 		at.Before(status.intangibleExpiresAt) ||
 		at.Before(status.rootExpiresAt) || at.Before(status.bioEntangleExpiresAt) || at.Before(status.supportHealerRootExpiresAt) ||
-		at.Before(status.silenceExpiresAt) ||
-		at.Before(status.sleepExpiresAt) ||
+		at.Before(status.silenceEnd()) ||
+		at.Before(status.sleepEnd()) ||
 		at.Before(status.slowExpiresAt) ||
 		at.Before(status.stunExpiresAt) ||
 		at.Before(status.tauntExpiresAt)
@@ -157,8 +159,8 @@ func (s *Session) PurgeDebuffs(objectID uint32) bool {
 		!status.fearExpiresAt.IsZero() ||
 		!status.intangibleExpiresAt.IsZero() ||
 		!status.rootExpiresAt.IsZero() || !status.bioEntangleExpiresAt.IsZero() || !status.supportHealerRootExpiresAt.IsZero() ||
-		!status.silenceExpiresAt.IsZero() ||
-		!status.sleepExpiresAt.IsZero() ||
+		!status.silenceExpiresAt.IsZero() || len(status.auraSilences) != 0 ||
+		!status.sleepExpiresAt.IsZero() || len(status.auraSleeps) != 0 ||
 		!status.slowExpiresAt.IsZero() ||
 		!status.stunExpiresAt.IsZero() ||
 		!status.tauntExpiresAt.IsZero() || isBasicPurged
@@ -186,7 +188,9 @@ func (s *Session) PurgeDebuffs(objectID uint32) bool {
 	status.supportHealerRootExpiresAt = time.Time{}
 	status.supportHealerRootInstanceID = 0
 	status.silenceExpiresAt = time.Time{}
+	status.auraSilences = nil
 	status.sleepExpiresAt = time.Time{}
+	status.auraSleeps = nil
 	status.slowExpiresAt = time.Time{}
 	status.slowMovementScale = 0
 	status.slowAttackScale = 0
@@ -870,9 +874,9 @@ func (s *Session) simpleStatusRemaining(
 	expiresAt := time.Time{}
 	switch kind {
 	case "silence":
-		expiresAt = npc.status.silenceExpiresAt
+		expiresAt = npc.status.silenceEnd()
 	case "sleep":
-		expiresAt = npc.status.sleepExpiresAt
+		expiresAt = npc.status.sleepEnd()
 	}
 	if !at.Before(expiresAt) {
 		return 0
@@ -1058,8 +1062,9 @@ func (s *Session) StunRemaining(objectID uint32, at time.Time) time.Duration {
 	if expiresAt.Before(npc.status.banishExpiresAt) {
 		expiresAt = npc.status.banishExpiresAt
 	}
-	if expiresAt.Before(npc.status.sleepExpiresAt) {
-		expiresAt = npc.status.sleepExpiresAt
+	sleepEnd := npc.status.sleepEnd()
+	if expiresAt.Before(sleepEnd) {
+		expiresAt = sleepEnd
 	}
 	if !at.Before(expiresAt) {
 		return transformRemaining

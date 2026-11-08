@@ -384,7 +384,7 @@ func (r campaignNPCPursuitRuntime) produceStep(
 	}
 	// Ordinary pursuit must observe aura entry/exit while a path is already
 	// running. Secondary actions retain their scripted charge/leap speed.
-	isAttributeDrivenRetreat := profile.AbilityName == "SupportFlee" || profile.AbilityName == "SupportFleeFacing" || profile.AbilityName == "Burrow"
+	isAttributeDrivenRetreat := profile.AbilityName == "SupportFlee" || profile.AbilityName == "SupportFleeFacing" || profile.AbilityName == "OmicronApproach" || profile.AbilityName == "Burrow"
 	// The drainer switches from a channel to ordinary melee when its target
 	// runs out of mana. It retains class/aura speed rather than a scripted leap speed.
 	isDrainerMelee := profile.AbilityName == "DrainerMelee"

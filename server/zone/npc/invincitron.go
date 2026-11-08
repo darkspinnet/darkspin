@@ -86,7 +86,9 @@ func purgeInvincitronDebuffs(actor *Snapshot) {
 	status.supportHealerRootExpiresAt = time.Time{}
 	status.supportHealerRootInstanceID = 0
 	status.silenceExpiresAt = time.Time{}
+	status.auraSilences = nil
 	status.sleepExpiresAt = time.Time{}
+	status.auraSleeps = nil
 	status.slowExpiresAt = time.Time{}
 	status.slowMovementScale = 0
 	status.slowAttackScale = 0

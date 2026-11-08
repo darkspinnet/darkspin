@@ -112,8 +112,9 @@ func (e *campaignNPCSupportIdle) advance(now time.Time, isFacing bool) {
 		firstBuff, secondBuff = -.15, -.3
 	}
 	if e.isOmicron {
-		// Build-103 chunk 184 uses immediate fatigue stages and a five-second pause.
-		delay, firstLength, secondLength, pauseLength = 2*time.Second, 0, 0, 5*time.Second
+		// Build-103 chunk 184 sets both stage lengths and tiredPauseLength
+		// to zero. Its constant five is the initial minimum retreat distance.
+		delay, firstLength, secondLength, pauseLength = 2*time.Second, 0, 0, 0
 	}
 	switch e.phase {
 	case 0:
@@ -187,7 +188,16 @@ func (e campaignNPCActionRuntime) produceNPCSupportIdle(packet raknet.Packet,
 	if isOmicron {
 		safeDistance = 15
 	}
-	if source.Plan.Position.Sub(target.Position).Length() >= safeDistance {
+	if isOmicron && source.Plan.Position.Sub(target.Position).Length() > safeDistance {
+		e.registry.mutex.Unlock()
+		approachPackets, approachErr := e.produceOmicronApproach(packet, sessionKey,
+			generation, source, target.ObjectID, target.Position, profile, resume, timestamp)
+		if approachErr != nil {
+			return nil, fmt.Errorf("supportApproach: %w", approachErr)
+		}
+		return approachPackets, nil
+	}
+	if !isOmicron && source.Plan.Position.Sub(target.Position).Length() >= safeDistance {
 		e.registry.mutex.Unlock()
 		if isFacing {
 			turnPlan := zonenpc.AttackPlan{SourceObjectID: source.Plan.ObjectID, TargetObjectID: target.ObjectID,

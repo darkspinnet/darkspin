@@ -78,9 +78,23 @@ func (e *heroAuraAreaRun) retireAuraLocked() error {
 		return nil
 	}
 	e.isStopping = true
+	if e.silenceAdmission != nil {
+		e.silenceAdmission.Stop()
+		e.silenceAdmission = nil
+	}
 	if e.cancel != nil {
 		e.cancel()
 		e.cancel = nil
+	}
+	if e.aura != nil {
+		err := e.aura.Close(heroAuraWorld{run: e})
+		e.aura.Stop()
+		e.aura = nil
+		if err != nil && e.runtime.logger != nil {
+			// Accepted handles remain in targets until their deletion is
+			// queued. The ordinary retirement below is the cleanup fallback.
+			e.runtime.logger.Printf("RakNet aura Lua cleanup fell back object=%d: %v", e.objectID, err)
+		}
 	}
 	deletes := make([]heroAuraAreaTargetDelete, 0, len(e.targets))
 	for objectID, target := range e.targets {
@@ -99,7 +113,7 @@ func (e *heroAuraAreaRun) retireAuraLocked() error {
 	}
 	e.runtime.registry.queueProjectileRetirementLocked(e.originalZone, packets)
 	for objectID, target := range e.targets {
-		e.clearStatus(objectID, target.expiresAt)
+		e.clearAuraTargetStatus(objectID, target)
 		e.releaseAuraInstance(target.instanceID)
 	}
 	e.targets = nil

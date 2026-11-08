@@ -48,6 +48,9 @@ type LuaBytecode struct {
 }
 
 type LuaObjectInput struct {
+	IsPlayerControlled              bool
+	Position                        Position
+	OwnerRole                       Role
 	Role                            Role
 	IsAlive                         bool
 	Team                            int
@@ -57,6 +60,7 @@ type LuaObjectInput struct {
 // LuaAbilityInput supplies the allowlisted bytecode and authoritative values
 // needed to compile one ability activation into a typed simulation program.
 type LuaAbilityInput struct {
+	Query LuaWorldQuery
 	// Random is supplied only by live execution, never content import.
 	Random                           *SimulatorRandom
 	Root                             LuaBytecode
@@ -207,6 +211,7 @@ type LuaObjectiveRuntime struct {
 }
 
 type LuaModifierInput struct {
+	Query LuaWorldQuery
 	// Random is supplied only by live execution, never content import.
 	Random                  *SimulatorRandom
 	Root                    LuaBytecode
@@ -926,6 +931,7 @@ func createLuaModifierCompiler(input LuaModifierInput, triggerRole Role) (*luaCo
 		Random: input.Random,
 		Root:   input.Root, Modules: input.Modules, Role: input.Role, Position: input.Position,
 		InstructionBudget: input.InstructionBudget, MemoryBudget: input.MemoryBudget,
+		Query:       input.Query,
 		destination: input.Destination, triggerRole: triggerRole,
 		isTriggerModifierActive: input.IsTriggerModifierActive,
 		nearbyObjects:           append([]LuaObjectInput(nil), input.NearbyObjects...),
@@ -1504,16 +1510,7 @@ func (c *luaCompiler) registerGlobals() {
 
 	nGameObject := newLuaTable(nil)
 	c.setNative(nGameObject, "DropObject", c.dropObjectiveObject)
-	c.setNative(nGameObject, "GetPosition", func(arguments []luaValue) ([]luaValue, error) {
-		if err := c.requireRole(arguments); err != nil {
-			return nil, fmt.Errorf("getPositionRole: %w", err)
-		}
-		return []luaValue{
-			numberLuaValue(float64(c.input.Position.X)),
-			numberLuaValue(float64(c.input.Position.Y)),
-			numberLuaValue(float64(c.input.Position.Z)),
-		}, nil
-	})
+	c.setNative(nGameObject, "GetPosition", c.objectPosition)
 	c.setNative(nGameObject, "GetTeleporterDestination", func(arguments []luaValue) ([]luaValue, error) {
 		err := c.requireRole(arguments)
 		if err != nil {
@@ -1525,12 +1522,7 @@ func (c *luaCompiler) registerGlobals() {
 			numberLuaValue(float64(c.input.destination.Z)),
 		}, nil
 	})
-	c.setNative(nGameObject, "GetOwnerID", func(arguments []luaValue) ([]luaValue, error) {
-		if len(arguments) != 1 || arguments[0].kind != luaString {
-			return nil, errors.New("owner arguments")
-		}
-		return []luaValue{{kind: luaNil}}, nil
-	})
+	c.setNative(nGameObject, "GetOwnerID", c.objectOwner)
 	c.setNative(nGameObject, "IsAlive", func(arguments []luaValue) ([]luaValue, error) {
 		object, err := c.luaObjectArgument(arguments)
 		if err != nil {
@@ -2026,35 +2018,7 @@ func (c *luaCompiler) registerGlobals() {
 		}
 		return []luaValue{numberLuaValue(1)}, nil
 	})
-	c.setNative(nObjectManager, "GetObjectsInRadius", func(arguments []luaValue) ([]luaValue, error) {
-		if len(arguments) != 5 || arguments[0].kind != luaNumber ||
-			arguments[1].kind != luaNumber || arguments[2].kind != luaNumber ||
-			arguments[3].kind != luaNumber || arguments[4].kind != luaTableValue {
-			return nil, fmt.Errorf("objects radius arguments: %s", luaKinds(arguments))
-		}
-		objects, err := c.newRuntimeTable(nil)
-		if err != nil {
-			return nil, fmt.Errorf("objectsTable: %w", err)
-		}
-		nearbyObjects := c.input.nearbyObjects
-		if len(c.input.nearbyObjectScans) != 0 {
-			scanIndex := min(c.input.nearbyObjectScanIndex, len(c.input.nearbyObjectScans)-1)
-			nearbyObjects = c.input.nearbyObjectScans[scanIndex]
-			c.input.nearbyObjectScanIndex++
-		}
-		for index, object := range nearbyObjects {
-			if object.Role == "" {
-				return nil, fmt.Errorf("nearbyRole[%d]", index)
-			}
-			err = c.setRuntimeField(
-				objects, numberLuaKey(float64(index+1)), stringLuaValue(string(object.Role)),
-			)
-			if err != nil {
-				return nil, fmt.Errorf("nearbyField[%d]: %w", index, err)
-			}
-		}
-		return []luaValue{tableLuaValue(objects)}, nil
-	})
+	c.setNative(nObjectManager, "GetObjectsInRadius", c.objectsInRadius)
 	c.setNative(nObjectManager, "DestroyTriggerVolume", func(arguments []luaValue) ([]luaValue, error) {
 		if len(arguments) != 1 || arguments[0].kind != luaNumber || arguments[0].number != 1 {
 			return nil, fmt.Errorf("destroy trigger volume arguments: %s", luaKinds(arguments))
@@ -2066,6 +2030,13 @@ func (c *luaCompiler) registerGlobals() {
 
 	nPlayer := newLuaTable(nil)
 	c.setNative(nPlayer, "IsPlayerControlledObject", func(arguments []luaValue) ([]luaValue, error) {
+		if c.input.Query != nil {
+			object, err := c.luaObjectArgument(arguments)
+			if err != nil {
+				return nil, fmt.Errorf("playerObject: %w", err)
+			}
+			return []luaValue{booleanLuaValue(object.IsPlayerControlled)}, nil
+		}
 		if len(arguments) == 1 && arguments[0].kind == luaNumber &&
 			(c.objectiveEvent.Kind == LuaObjectiveEventDamage ||
 				c.objectiveEvent.Kind == LuaObjectiveEventHeal ||
@@ -2874,16 +2845,17 @@ func (c *luaCompiler) luaObjectArgument(arguments []luaValue) (LuaObjectInput, e
 	if len(arguments) != 1 || arguments[0].kind != luaString {
 		return LuaObjectInput{}, errors.New("object role required")
 	}
-	for _, object := range c.input.nearbyObjects {
+	if c.input.Query != nil {
+		return c.queryObject(Role(arguments[0].text))
+	}
+	nearbyObjects := c.input.nearbyObjects
+	if len(c.input.nearbyObjectScans) != 0 {
+		scanIndex := min(max(c.input.nearbyObjectScanIndex-1, 0), len(c.input.nearbyObjectScans)-1)
+		nearbyObjects = c.input.nearbyObjectScans[scanIndex]
+	}
+	for _, object := range nearbyObjects {
 		if string(object.Role) == arguments[0].text {
 			return object, nil
-		}
-	}
-	for _, nearbyObjects := range c.input.nearbyObjectScans {
-		for _, object := range nearbyObjects {
-			if string(object.Role) == arguments[0].text {
-				return object, nil
-			}
 		}
 	}
 	return LuaObjectInput{}, fmt.Errorf("object role: %s", arguments[0].text)

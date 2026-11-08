@@ -21,6 +21,7 @@ const heroAuraAreaScanInterval = 250 * time.Millisecond
 const timeBubbleAbilityName = "SpacetimeRandom2"
 
 type heroAuraAreaTarget struct {
+	sleep      *sim.LuaSleepingCloudModifier
 	instanceID uint32
 	expiresAt  time.Time
 }
@@ -33,6 +34,9 @@ type heroAuraAreaProjectile struct {
 
 type heroAuraAreaRun struct {
 	mutex             sync.Mutex
+	aura              *sim.LuaAuraRuntime
+	silenceAdmission  *sim.LuaPsistormModifier
+	isLuaAura         bool
 	cast              *channelCast
 	npc               *zonenpc.Session
 	modifierPool      *modifierPool
@@ -76,7 +80,7 @@ func (r campaignDamageRuntime) breakSleepingCloudOnDamage(
 	sessionKey string, generation uint64, objectID uint32,
 	descriptorMask uint32,
 ) ([][]byte, error) {
-	if objectID == 0 || descriptorMask&4 != 0 {
+	if objectID == 0 {
 		return nil, nil
 	}
 	r.registry.mutex.Lock()
@@ -111,6 +115,19 @@ func (r campaignDamageRuntime) breakSleepingCloudOnDamage(
 				run.mutex.Unlock()
 				continue
 			}
+			isActive, callbackErr := target.sleep.Damage(sim.LuaSleepDamage{DescriptorMask: descriptorMask})
+			if callbackErr != nil {
+				// A failed callback retires its Lua runtime. Retire the exact
+				// accepted handle too, without blocking other clouds' wakeups.
+				isActive = false
+				if r.logger != nil {
+					r.logger.Printf("RakNet sleep callback retired target=%d instance=%d: %v", objectID, target.instanceID, callbackErr)
+				}
+			}
+			if isActive {
+				run.mutex.Unlock()
+				continue
+			}
 			defer run.mutex.Unlock()
 			runs[run] = target
 			deletes = append(deletes, heroAuraAreaTargetDelete{
@@ -123,7 +140,7 @@ func (r campaignDamageRuntime) breakSleepingCloudOnDamage(
 		return nil, fmt.Errorf("sleepBreakMarshal: %w", err)
 	}
 	for run, target := range runs {
-		run.clearStatus(objectID, target.expiresAt)
+		run.clearAuraTargetStatus(objectID, target)
 		delete(run.targets, objectID)
 	}
 	// Include the attacker in the same queue boundary. Returning these packets
@@ -346,6 +363,18 @@ func (e heroAuraAreaSchedule) reconcile(
 		}
 		return nil, errors.New("Arena aura runtime unavailable")
 	}
+	if e.definition.Name == "Psistorm" {
+		e.run.mutex.Lock()
+		defer e.run.mutex.Unlock()
+		if e.run.isCleaned || e.run.isStopping {
+			return nil, nil
+		}
+		err := e.reconcileLuaAuraLocked(peerSession, deadline, expiresAt)
+		if err != nil {
+			return nil, fmt.Errorf("psistormAura: %w", err)
+		}
+		return nil, nil
+	}
 	live := make(map[uint32]zonenpc.Snapshot)
 	for _, target := range peerSession.zone.NPCs().LiveSnapshots() {
 		if target.Faction != zonenpc.FactionNonPlayerAligned ||
@@ -370,7 +399,7 @@ func (e heroAuraAreaSchedule) reconcile(
 			return nil, fmt.Errorf("auraExitEncode: %w", err)
 		}
 		e.queueNPCMembershipLocked(peerSession, packets, false)
-		e.run.clearStatus(objectID, tracked.expiresAt)
+		e.run.clearAuraTargetStatus(objectID, tracked)
 		delete(e.run.targets, objectID)
 		e.run.releaseAuraInstance(tracked.instanceID)
 	}
@@ -392,11 +421,8 @@ func (e heroAuraAreaSchedule) reconcile(
 			e.run.releaseAuraInstance(instanceID)
 			return nil, fmt.Errorf("auraEntryEncode: %w", err)
 		}
-		err = e.applyStatus(peerSession.zone.NPCs(), objectID, expiresAt)
-		if err != nil {
-			e.run.releaseAuraInstance(instanceID)
-			return nil, fmt.Errorf("auraEntryApply: %w", err)
-		}
+		target := heroAuraAreaTarget{instanceID: instanceID, expiresAt: expiresAt}
+		isApplied := false
 		if e.run.isSleepingCloud {
 			// The Lua cloud retains idModifiers[target] after damage ends the
 			// sleep. A membership scan must not turn that into another entry.
@@ -404,12 +430,20 @@ func (e heroAuraAreaSchedule) reconcile(
 				e.run.sleepAttempts = make(map[uint32]struct{})
 			}
 			e.run.sleepAttempts[objectID] = struct{}{}
+			target.sleep, isApplied, err = e.applySleepingCloudTarget(objectID, instanceID, expiresAt)
+		} else {
+			err = e.applyStatus(peerSession.zone.NPCs(), objectID, expiresAt)
+			isApplied = err == nil && e.statusRemaining(peerSession.zone.NPCs(), objectID, now) != 0
 		}
-		if e.statusRemaining(peerSession.zone.NPCs(), objectID, now) == 0 {
+		if err != nil {
+			e.run.releaseAuraInstance(instanceID)
+			return nil, fmt.Errorf("auraEntryApply: %w", err)
+		}
+		if !isApplied {
 			e.run.releaseAuraInstance(instanceID)
 			continue
 		}
-		e.run.targets[objectID] = heroAuraAreaTarget{instanceID: instanceID, expiresAt: expiresAt}
+		e.run.targets[objectID] = target
 		e.queueNPCMembershipLocked(peerSession, packets, true)
 	}
 	if e.run.isTimeBubble {

@@ -262,6 +262,7 @@ type zonePresentationRuntime struct {
 	campaignUnlockPresentation              *unlockraknet.ActiveSession
 	securityTransfer                        *securityraknet.Transfer
 	teleporterHandoff                       *teleportraknet.Handoff
+	tutorialTeleporterModifier              *sim.LuaModifierRuntime
 	teleporterContact                       sim.SphereContactState
 	teleporterSample                        teleporterContactSample
 	pickupContact                           pickupContactState
@@ -1743,6 +1744,10 @@ func (s *gameplayPeerSession) resetRetainedTransportState() {
 	if s == nil {
 		return
 	}
+	if s.tutorialTeleporterModifier != nil {
+		s.tutorialTeleporterModifier.Stop()
+		s.tutorialTeleporterModifier = nil
+	}
 	s.clearScenarioHeroAbilityRank()
 	s.retireArenaHitStatuses()
 	s.operativeCage = nil
@@ -2006,6 +2011,7 @@ func (e *gameplayPeerSession) resetRejectedActionAdmission(
 ) *abilityraknet.MeleeRun {
 	traps := e.heroTraps
 	statusAreas := e.heroStatusAreas
+	auraAreas := e.heroAuraAreas
 	infections := e.heroInfections
 	bursts := e.heroBurstAttacks
 	beastObjectID := e.beastPetObjectID
@@ -2029,6 +2035,7 @@ func (e *gameplayPeerSession) resetRejectedActionAdmission(
 	}
 	e.heroTraps = nil
 	e.heroStatusAreas = nil
+	e.heroAuraAreas = nil
 	e.heroInfections = nil
 	e.heroBurstAttacks = nil
 	// Rejection is not an owner switch, death, or summon expiry. Preserve the
@@ -2040,6 +2047,7 @@ func (e *gameplayPeerSession) resetRejectedActionAdmission(
 	run := e.resetFailedActionAdmission(modifierInstancePool, effectPool, retainedSlots...)
 	e.heroTraps = traps
 	e.heroStatusAreas = statusAreas
+	e.heroAuraAreas = auraAreas
 	e.heroInfections = infections
 	e.heroBurstAttacks = bursts
 	e.beastPetObjectID = beastObjectID

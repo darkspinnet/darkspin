@@ -18,9 +18,9 @@ func isMutationAbilityBlocked(actor Snapshot, at time.Time) bool {
 	if isStatusBlockedByShield(actor) {
 		return false
 	}
-	return at.Before(actor.status.stunExpiresAt) || at.Before(actor.status.sleepExpiresAt) ||
+	return at.Before(actor.status.stunExpiresAt) || at.Before(actor.status.sleepEnd()) ||
 		at.Before(actor.status.banishExpiresAt) || at.Before(actor.status.intangibleExpiresAt) ||
-		at.Before(actor.status.silenceExpiresAt)
+		at.Before(actor.status.silenceEnd())
 }
 
 func beginMutationPassive(actor *Snapshot, at time.Time) {

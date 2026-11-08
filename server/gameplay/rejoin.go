@@ -35,6 +35,23 @@ var errRejoinSnapshotActive = errors.New("rejoin snapshot remained active")
 func (r gameplaySetupRuntime) publishRejoin(
 	packet raknet.Packet, peerSession gameplayPeerSession,
 ) ([][]byte, error) {
+	if peerSession.binding.Mode == game.ModeTutorial {
+		r.registry.mutex.Lock()
+		current, isFound := r.registry.sessions[packet.Address.String()]
+		if !isFound || current.transportGeneration != peerSession.transportGeneration ||
+			current.generation != peerSession.generation || current.zone != peerSession.zone {
+			r.registry.mutex.Unlock()
+			return nil, errors.New("tutorial rejoin replaced")
+		}
+		err := current.prepareTutorialTeleporterModifier(r.program.BossTeleporter)
+		if err != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("tutorialRejoin: %w", err)
+		}
+		peerSession.tutorialTeleporterModifier = current.tutorialTeleporterModifier
+		r.registry.sessions[packet.Address.String()] = current
+		r.registry.mutex.Unlock()
+	}
 	if !peerSession.arePassiveModifiersAllocated {
 		passiveModifierInstance, err := zoneability.AllocatePassiveModifiers(
 			r.modifierPool, peerSession.binding.Creatures,

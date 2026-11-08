@@ -215,7 +215,7 @@ func (e *Session) advanceMutationMovement(source *Snapshot, req MutationAdvanceR
 
 func (e *Session) advanceMutationMovementLocked(source *Snapshot, req MutationMovementRequest) (MutationMovementResult, error) {
 	actor := *source
-	if actor.IsDefeated || actor.Plan.NounName != MutationAgentNounName {
+	if actor.IsDefeated || !isMutationWanderActor(actor) {
 		return MutationMovementResult{}, nil
 	}
 	state := req.State
@@ -358,6 +358,24 @@ func (e *Session) advanceMutationMovementLocked(source *Snapshot, req MutationMo
 	return result, nil
 }
 
+// The mutation lifecycle already admits derived agents through their authored
+// death ability. Require the build-103 MutationAgent contract in both phases
+// before that lifecycle owns their movement, without a literal-noun gate.
+func isMutationWanderActor(actor Snapshot) bool {
+	if actor.Plan.NounName == MutationAgentNounName {
+		return true
+	}
+	if !isMutationAgent(actor.Plan) {
+		return false
+	}
+	graph := actor.Plan.NPCProfile.AIGraph
+	if graph == nil || !graph.IsResolved {
+		return false
+	}
+	return strings.EqualFold(graph.PassiveIdle, "nBehavior_MutationAgent_Wander") &&
+		strings.EqualFold(graph.CombatIdle, "nBehavior_MutationAgent_Wander")
+}
+
 func (e *Session) mutationWaypointLocked(actor Snapshot, destination game.Vec3) (game.Vec3, bool) {
 	if e.navigationMesh == nil {
 		return actor.Plan.Position, false
@@ -405,7 +423,7 @@ func isMutationMovementBlocked(actor Snapshot, at time.Time) bool {
 	}
 	return at.Before(actor.status.rootExpiresAt) || at.Before(actor.status.bioEntangleExpiresAt) ||
 		at.Before(actor.status.supportHealerRootExpiresAt) || at.Before(actor.status.stunExpiresAt) ||
-		at.Before(actor.status.banishExpiresAt) || at.Before(actor.status.sleepExpiresAt)
+		at.Before(actor.status.banishExpiresAt) || at.Before(actor.status.sleepEnd())
 }
 
 func (e *Session) mutationDestinationLocked(actor Snapshot, origin game.Vec3) (game.Vec3, error) {

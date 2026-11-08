@@ -23,4 +23,7 @@ type Simulation struct {
 	Activation sim.Program
 	Entry      sim.Program
 	Teleport   sim.Program
+	// SecurityInput is immutable source data; live private state belongs to
+	// the platform session, never to the shared content catalog.
+	SecurityInput sim.LuaModifierInput
 }

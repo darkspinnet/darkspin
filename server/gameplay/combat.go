@@ -7731,7 +7731,7 @@ func isCampaignNPCSecondaryPursuit(abilityName string) bool {
 		"NomadBioSpecialTwoJumpAttack", "CitadelSpecialTwo_Melee",
 		"Smash", "StealthAttack", "RezMelee", "FastSwipe",
 		"NomadSpecialOneCleave", "NomadSpacetimeAgent_Blink", "PositionFirePet",
-		"SupportFlee", "SupportFleeFacing",
+		"SupportFlee", "SupportFleeFacing", "OmicronApproach",
 		"Burrow", "Flee",
 		"VerdanthBasicPickyMelee", "VerdanthBasicPickyChargingAttack":
 		return true

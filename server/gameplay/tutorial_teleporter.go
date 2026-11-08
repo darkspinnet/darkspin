@@ -80,11 +80,19 @@ func (e *gameplayPeerSession) observeTutorialTeleporter(
 		!isTutorialTeleporterContact(previous, current, e.deployedCampaignFootprintRadius()) {
 		return packets, false, nil
 	}
+	isAccepted, err := e.admitTutorialTeleporter()
+	if err != nil {
+		return nil, false, fmt.Errorf("tutorialTeleporterAdmission: %w", err)
+	}
+	if !isAccepted {
+		return packets, false, nil
+	}
 	teleportPackets, err := securityraknet.Teleport(securityraknet.TeleportRequest{
 		ObjectID: e.deployedObjectID, Teleport: tutorialBossTeleport,
 		Orientation: orientation, Timestamp: timestamp,
 	})
 	if err != nil {
+		e.tutorialTeleporterModifier.Stop()
 		return nil, false, fmt.Errorf("tutorialTeleporterMarshal: %w", err)
 	}
 	destination := raknet.Vector3{
@@ -94,6 +102,7 @@ func (e *gameplayPeerSession) observeTutorialTeleporter(
 	}
 	err = e.teleportPlayer(now, destination)
 	if err != nil {
+		e.tutorialTeleporterModifier.Stop()
 		return nil, false, fmt.Errorf("tutorialTeleporterMove: %w", err)
 	}
 	companionPackets, err := e.teleportOwnedCompanions(
@@ -104,10 +113,12 @@ func (e *gameplayPeerSession) observeTutorialTeleporter(
 		},
 	)
 	if err != nil {
+		e.tutorialTeleporterModifier.Stop()
 		return nil, false, fmt.Errorf("tutorialTeleporterCompanion: %w", err)
 	}
 	err = e.syncZoneHeroPose()
 	if err != nil {
+		e.tutorialTeleporterModifier.Stop()
 		return nil, false, fmt.Errorf("tutorialTeleporterPose: %w", err)
 	}
 	e.isTutorialTeleporterUsed = true

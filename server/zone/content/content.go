@@ -89,6 +89,9 @@ type Programs struct {
 	IntroSecondCreature        MarkerProgram
 	SecurityTeleporter         sim.LuaBytecode
 	TeleporterModifier         sim.LuaBytecode
+	AuraUtils                  sim.LuaBytecode
+	SleepingCloud              sim.LuaBytecode
+	Psistorm                   sim.LuaBytecode
 	BossTeleporter             zoneteleport.Simulation
 	InvisibleBehavior          sim.Program
 	SpawnModifier              sim.Program

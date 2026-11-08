@@ -3,10 +3,40 @@ package gameplay
 import (
 	"fmt"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
+	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
+	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
 
 const omicronCageAbility = "NomadCyberOne_Cage"
+
+// Build-103 chunk 184 Tick moves toward a target farther than safeDistance
+// before selecting another retreat. Keep this as live-target pursuit so a
+// moving target cannot leave Omicron waiting indefinitely at a stale point.
+func (e campaignNPCActionRuntime) produceOmicronApproach(
+	packet raknet.Packet, sessionKey string, generation uint64,
+	source zonenpc.Snapshot, targetObjectID uint32, targetPosition game.Vec3,
+	profile zonenpc.ActionProfile, resume campaignNPCSupportIdleResume, timestamp uint64,
+) ([][]byte, error) {
+	profile.AbilityName = "OmicronApproach"
+	profile.Range = 15
+	plan := zonenpc.FirstActionPlan{
+		ObjectID: source.Plan.ObjectID, TargetObjectID: targetObjectID,
+		ActionGeneration: source.ActionGeneration, SourcePosition: source.Plan.Position,
+		TargetPosition: targetPosition, Profile: profile, IsPursuitNeeded: true,
+	}
+	packets, err := npcraknet.Pursuit(plan)
+	if err != nil {
+		return nil, fmt.Errorf("omicronApproachMarshal: %w", err)
+	}
+	err = e.pursuit.schedule(packet, sessionKey, generation, source.Plan.ObjectID,
+		timestamp, targetPosition, profile, resume.produce)
+	if err != nil {
+		return nil, fmt.Errorf("omicronApproachSchedule: %w", err)
+	}
+	return packets, nil
+}
 
 func (e campaignNPCActionRuntime) produceOmicronRetreat(
 	packet raknet.Packet, sessionKey string, generation uint64, objectID uint32, timestamp uint64,

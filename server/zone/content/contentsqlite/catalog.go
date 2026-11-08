@@ -1501,6 +1501,31 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 	if interactHealthObelisk.Kind != sim.AbilityKindInteractable || !interactHealthObelisk.IsOrbDrop {
 		return zonecontent.Programs{}, fmt.Errorf("interactHealthObeliskKind: %#v", interactHealthObelisk)
 	}
+	auraUtils, err := loadPinnedLuaBytecode(ctx, store, 739,
+		"f799492be501ad2374fa169c872b641c0f7246ec7ee23997397ea8841a0c68af", "auraUtils")
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("auraLoad: %w", err)
+	}
+	sleepingCloud, err := loadPinnedLuaBytecode(ctx, store, 398,
+		"fa0c17925d8d59177b1d99f7cbaaf9aa2c5309e03885f42e314e338dd45ecaab", "sleepingCloud")
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("sleepLoad: %w", err)
+	}
+	sleepModifier, err := sim.NewLuaSleepingCloudModifier(sleepingCloud)
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("sleepCallback: %w", err)
+	}
+	sleepModifier.Stop()
+	psistorm, err := loadPinnedLuaBytecode(ctx, store, 425,
+		"1507dd076b52ab6752e14e4c0974f825bc6d5acb19fc262b3acf15b61318dafd", "psistorm")
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("psistormLoad: %w", err)
+	}
+	psistormModifier, err := sim.NewLuaPsistormModifier(psistorm)
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("psistormCallback: %w", err)
+	}
+	psistormModifier.Stop()
 	securityTeleporter, err := loadPinnedLuaBytecode(
 		ctx, store, zoneteleport.SecurityChunkID, zoneteleport.SecuritySHA256,
 		"securityTeleporter",
@@ -1780,6 +1805,9 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		InteractWithObelisk:        interactWithObelisk,
 		InteractHealthObelisk:      interactHealthObelisk,
 		SecurityTeleporter:         securityTeleporter,
+		AuraUtils:                  auraUtils,
+		SleepingCloud:              sleepingCloud,
+		Psistorm:                   psistorm,
 		TeleporterModifier:         teleporterModifier,
 		BossTeleporter:             bossTeleporter,
 		InvisibleBehavior:          invisibleLifecycle,

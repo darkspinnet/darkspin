@@ -4587,6 +4587,10 @@ func stopGameplayPeerRuntime(
 	if peerSession.teleporterHandoff != nil {
 		peerSession.teleporterHandoff.Stop()
 	}
+	if peerSession.tutorialTeleporterModifier != nil {
+		peerSession.tutorialTeleporterModifier.Stop()
+		peerSession.tutorialTeleporterModifier = nil
+	}
 	if peerSession.securityTransfer != nil {
 		peerSession.securityTransfer.Stop()
 	}
@@ -5330,6 +5334,12 @@ func (r gameplaySetupRuntime) publishCampaign(
 			return nil, false, fmt.Errorf("pingCampaignObjectiveMarshal[%d]: %w", index, marshalErr)
 		}
 		response = append(response, objectivePacket)
+	}
+	if peerSession.binding.Mode == game.ModeTutorial {
+		err = peerSession.prepareTutorialTeleporterModifier(r.program.BossTeleporter)
+		if err != nil {
+			return nil, false, fmt.Errorf("tutorialModifier: %w", err)
+		}
 	}
 	tutorialTeleporterPackets, err := peerSession.tutorialTeleporterInitialState()
 	if err != nil {

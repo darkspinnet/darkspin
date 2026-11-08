@@ -48,6 +48,10 @@ func CompileSimulation(
 		Activation: activation,
 		Entry:      entry,
 		Teleport:   teleport,
+		SecurityInput: sim.LuaModifierInput{
+			Root: security, Role: SecurityRole,
+			Position: platformPosition, Destination: destination,
+		},
 	}, nil
 }
 
