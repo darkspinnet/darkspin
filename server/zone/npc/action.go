@@ -140,6 +140,7 @@ type ActionProfile struct {
 	ProjectileFlightDuration         time.Duration
 	ProjectileShotInterval           time.Duration
 	ProjectileShotCount              uint32
+	ProjectileTargetRadius           float32
 	ProjectileShotDeadlines          []time.Duration
 	ProjectileShotAngles             []float32
 	HomingDelay                      time.Duration
@@ -1603,9 +1604,8 @@ func cryosElementalSpecialThreeProfile(
 		MissEffectName:           "ineffective_common_small.ServerEventDef",
 		ProjectileSpeed:          projectileSpeed,
 		ProjectileDistance:       50,
-		// Keep a forward fan even when only one hero is in range.
-		ProjectileShotAngles:       []float32{-45, -30, -15, 0, 15, 30, 45},
-		ProjectileShotCount:        7,
+		// Build 103 selects one projectile per hostile target within this radius.
+		ProjectileTargetRadius:     20,
 		IsProjectileParallelVolley: true,
 		IsProjectilePiercing:       true,
 		IsDamageProfileKnown:       true,

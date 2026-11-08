@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
@@ -313,15 +314,19 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		}
 		return nil, nil
 	}
+	targetObjectID := enemy.TargetObjectID
+	if volley.isActive && len(volley.targets) > volley.shotIndex {
+		targetObjectID = volley.targets[volley.shotIndex].ObjectID
+	}
 	peerSession, err = r.pursuit.advanceTargetPoseLocked(
-		peerSession, enemy.TargetObjectID,
+		peerSession, targetObjectID,
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("enemyZelemTargetPose: %w", err)
 	}
 	target, isTargetFound := peerSession.campaignNPCTarget(
-		generation, enemy.TargetObjectID,
+		generation, targetObjectID,
 	)
 	if !isTargetFound {
 		r.registry.mutex.Unlock()
@@ -376,6 +381,29 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		)
 		profile = applyNPCSlowTiming(profile, slowAttackScale)
 	}
+	if !volley.isActive && profile.ProjectileTargetRadius > 0 {
+		targets := peerSession.zone.LiveNPCTargets()
+		sort.Slice(targets, func(a, b int) bool {
+			return targets[a].ObjectID < targets[b].ObjectID
+		})
+		// Keep the admitted target first, then emit one beam per other target.
+		if zonegeometry.Distance(enemy.Plan.Position, target.Position) <= profile.ProjectileTargetRadius {
+			volley.targets = append(volley.targets, target)
+		}
+		for _, candidate := range targets {
+			if candidate.ObjectID == target.ObjectID || zonegeometry.Distance(enemy.Plan.Position, candidate.Position) > profile.ProjectileTargetRadius {
+				continue
+			}
+			volley.targets = append(volley.targets, candidate)
+		}
+		if len(volley.targets) == 0 {
+			r.registry.mutex.Unlock()
+			r.releaseAction(sessionKey, generation, objectID)
+			return nil, nil
+		}
+		target = volley.targets[0]
+		profile.ProjectileShotCount = uint32(len(volley.targets))
+	}
 	isControlProjectile := profile.AbilityName == "Puller"
 	ability, abilityErr := campaignNPCProjectileAbility(profile)
 	if abilityErr != nil {
@@ -387,12 +415,16 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 	var planErr error
 	if volley.isActive {
 		if profile.ProjectileShotCount < 2 ||
-			volley.plan.TargetObjectID != target.ObjectID {
+			(len(volley.targets) == 0 && volley.plan.TargetObjectID != target.ObjectID) {
 			r.registry.mutex.Unlock()
 			return nil, nil
 		}
+		attackRange := profile.Range
+		if profile.ProjectileTargetRadius > 0 {
+			attackRange = profile.ProjectileTargetRadius
+		}
 		volleyRange, rangeErr := zoneaction.NPCStopDistance(
-			profile.Range, enemy.Plan.ActorFootprintRadius(),
+			attackRange, enemy.Plan.ActorFootprintRadius(),
 			target.ActorFootprintRadius,
 		)
 		isVolleyTargetInRange := rangeErr == nil &&
@@ -497,11 +529,14 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		volley = campaignNPCProjectileVolley{
 			isActive: true, startTimestamp: timestamp,
 			retainedTargetPosition: target.Position,
+			targets:                volley.targets,
 			plan:                   plan,
 		}
 	}
 	aimTarget := target
-	if volley.isActive && !profile.IsProjectileTrackingBetweenShots {
+	if volley.isActive && len(volley.targets) > volley.shotIndex {
+		aimTarget.Position = volley.targets[volley.shotIndex].Position
+	} else if volley.isActive && !profile.IsProjectileTrackingBetweenShots {
 		aimTarget.Position = volley.retainedTargetPosition
 	}
 	aimGeometry := geometry
@@ -531,7 +566,7 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 	if volley.isActive {
 		sourcePosition.Z += projectileOffset.Z
 	}
-	if volley.isActive && profile.IsProjectileParallelVolley {
+	if volley.isActive && profile.IsProjectileParallelVolley && len(volley.targets) == 0 {
 		if volley.shotIndex < len(profile.ProjectileOffsets) {
 			sourcePosition = campaignNPCProjectileSourceOffset(
 				sourcePosition, targetPosition, projectileOffset,

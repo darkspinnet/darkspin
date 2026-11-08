@@ -2,6 +2,11 @@
 
 ### 2026-11-08
 
+- #196 Preserve lethal piercing-projectile death updates instead of losing them when death cancels the projectile, and reject defeated heroes' ability casts.
+- #196 Remove Mirror Beetle copies when their original dies by linking them to the existing owner-death cleanup.
+- #196 Change Ray Killer attacks from a fixed seven-ray fan to one ray per eligible target in range.
+- #196 Include enemy bounding spheres in Meteor Strike's area targeting instead of requiring their centers to be inside the blast.
+- #196 Remove unsupported Arcturus visibility changes during flight so its native launch animation controls presentation.
 - #195 Preserve Polaris's selected projectile attack through stun and pursuit recovery, and release failed attacks instead of leaving the boss stuck.
 - #195 Send native hero teleports for Teleport Gun instead of updating only the displayed object fields.
 - #195 Include actor footprints in Sprout's range check and honor authored pursuit instead of repeatedly rejecting valid edge-of-range attacks.

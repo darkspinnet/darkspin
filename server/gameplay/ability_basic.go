@@ -455,6 +455,7 @@ func (r campaignAbilityCommandRuntime) handleBasic(
 	isSessionCurrent := isFound &&
 		peerSession.generation == commandSession.generation &&
 		command.Common.ObjectID == peerSession.deployedObjectID &&
+		peerSession.deployedHitPoint() > 0 && !peerSession.isHeroSelectionPending &&
 		peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures)) &&
 		((peerSession.binding.Mode == game.ModeArena && peerSession.isArenaCombatActive) ||
 			(peerSession.zone != nil && peerSession.zone.NPCs() != nil && peerSession.zone.Population() != nil))
@@ -958,12 +959,16 @@ func (r campaignAbilityCommandRuntime) handleCharacter(
 	// Accepted Arena statuses share recipient-owned maps with expiry jobs.
 	// Sample control gates under their registry lock before dispatching.
 	r.registry.mutex.RLock()
+	isDefeated := commandSession.deployedHitPoint() <= 0 || commandSession.isHeroSelectionPending
 	isSilenced := commandSession.isEnemySilenceActive(abilityStartTime)
 	isAsleep := commandSession.isEnemySleepActive(abilityStartTime)
 	isDazed := commandSession.isScarabDazed()
 	isStunned := commandSession.isEnemyStunActive(abilityStartTime)
 	isTerrified := commandSession.isEnemyFearActive(abilityStartTime)
 	r.registry.mutex.RUnlock()
+	if isDefeated {
+		return request.reject("hero defeated or selection pending")
+	}
 	if command.Ability.Index != 0 && isSilenced {
 		return request.reject("silenced")
 	}

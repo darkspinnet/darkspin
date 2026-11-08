@@ -448,14 +448,14 @@ func cursorAreaTargets(
 		enemy, isFound := enemies.NPC(targetObjectID)
 		if isFound && !enemy.IsDefeated && enemy.HitPoint > 0 &&
 			enemy.Faction == zonenpc.FactionNonPlayerAligned &&
-			positionDistance(center, enemy.Plan.Position) <= radius {
+			positionDistance(center, enemy.Plan.Position) < radius+enemy.Plan.SpatialRadius() {
 			target = append(target, enemy)
 		}
 	}
 	for _, enemy := range enemies.LiveSnapshots() {
 		if enemy.Plan.ObjectID == targetObjectID ||
 			enemy.Faction != zonenpc.FactionNonPlayerAligned ||
-			positionDistance(center, enemy.Plan.Position) > radius {
+			positionDistance(center, enemy.Plan.Position) >= radius+enemy.Plan.SpatialRadius() {
 			continue
 		}
 		target = append(target, enemy)

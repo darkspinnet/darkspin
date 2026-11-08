@@ -91,10 +91,13 @@ func (e campaignNPCActionRuntime) produceArcturusLaunch(packet raknet.Packet, se
 	}
 	producers := make([]raknet.ScheduledPacketProducer, 0, 17)
 	for phase := 0; phase < 17; phase++ {
+		// Build-103 launch animation owns the airborne presentation. Its Lua
+		// does not hide the actor; do not suppress its native model/render state.
+		if phase == 1 {
+			continue
+		}
 		delay := time.Second
 		switch {
-		case phase == 1:
-			delay = 2 * time.Second
 		case phase >= 2 && phase <= 13:
 			delay = 1500*time.Millisecond + time.Duration(phase-2)*500*time.Millisecond
 		case phase == 14:
@@ -158,11 +161,6 @@ func (e campaignArcturusLaunchStep) produce() ([][]byte, error) {
 	switch {
 	case e.phase == 0:
 		err = current.zone.NPCs().ApplyIntangible(run.objectID, run.protectedUntil)
-	case e.phase == 1:
-		var packet []byte
-		packet, err = raknet.MarshalApplication(raknet.ObjectUpdateMessage{ObjectID: run.objectID,
-			IsVisible: false, PositionX: boss.Plan.Position.X, PositionY: boss.Plan.Position.Y, PositionZ: boss.Plan.Position.Z})
-		packets = append(packets, packet)
 	case e.phase >= 2 && e.phase <= 13:
 		packets, err = run.dropMissile(&current, boss, run.timestamp+1500+uint64(e.phase-2)*500)
 	case e.phase == 14:
@@ -188,8 +186,8 @@ func (e campaignArcturusLaunchStep) produce() ([][]byte, error) {
 		err = current.zone.NPCs().SetPosition(run.objectID, position)
 		if err == nil {
 			var packet []byte
-			packet, err = raknet.MarshalApplication(raknet.ObjectUpdateMessage{ObjectID: run.objectID,
-				IsVisible: true, PositionX: position.X, PositionY: position.Y, PositionZ: position.Z})
+			packet, err = raknet.MarshalApplication(raknet.ObjectPositionUpdateMessage{ObjectID: run.objectID,
+				PositionX: position.X, PositionY: position.Y, PositionZ: position.Z})
 			packets = append(packets, packet)
 		}
 		if err == nil {

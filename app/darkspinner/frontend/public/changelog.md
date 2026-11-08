@@ -2,16 +2,21 @@
 
 ### 2026-11-08
 
-- #195 Preserve Polaris's selected projectile attack through stun and pursuit recovery, and release failed attacks instead of leaving the boss stuck.
-- #195 Send native hero teleports for Teleport Gun instead of updating only the displayed object fields.
-- #195 Include actor footprints in Sprout's range check and honor authored pursuit instead of repeatedly rejecting valid edge-of-range attacks.
-- #195 Move launcher log writes off gameplay dispatch, with bounded buffering and report/shutdown flushes, to prevent slow disk writes from stalling combat.
-- #194 Restore administrator command access by default for local play; only dedicated servers require an account status above 250.
-- #194 Restore Temporal Siphon's authored base cooldown and power cost instead of allowing repeated free casts.
-- #194 Synchronize Orion's health-based movement and attack haste with the client and teammates, preserving it through temporary slow updates.
-- #194 Restore Pain Hounds' owner-primary-stat damage scaling and separate pet-damage bonus in campaign and Arena.
-- #193 Keep Sentry Drone stationary through its full firing release instead of resuming owner-follow at projectile launch.
-- #193 Correct Swift Slasher wander movement from premature one-second advances and hero-follow goals to elapsed-time movement along retained wander destinations, with authored ranked durations.
+- [#196](https://github.com/darkspinnet/darkspin/issues/196) Preserve lethal piercing-projectile death updates instead of losing them when death cancels the projectile, and reject defeated heroes' ability casts.
+- [#196](https://github.com/darkspinnet/darkspin/issues/196) Remove Mirror Beetle copies when their original dies by linking them to the existing owner-death cleanup.
+- [#196](https://github.com/darkspinnet/darkspin/issues/196) Change Ray Killer attacks from a fixed seven-ray fan to one ray per eligible target in range.
+- [#196](https://github.com/darkspinnet/darkspin/issues/196) Include enemy bounding spheres in Meteor Strike's area targeting instead of requiring their centers to be inside the blast.
+- [#196](https://github.com/darkspinnet/darkspin/issues/196) Remove unsupported Arcturus visibility changes during flight so its native launch animation controls presentation.
+- [#195](https://github.com/darkspinnet/darkspin/issues/195) Preserve Polaris's selected projectile attack through stun and pursuit recovery, and release failed attacks instead of leaving the boss stuck.
+- [#195](https://github.com/darkspinnet/darkspin/issues/195) Send native hero teleports for Teleport Gun instead of updating only the displayed object fields.
+- [#195](https://github.com/darkspinnet/darkspin/issues/195) Include actor footprints in Sprout's range check and honor authored pursuit instead of repeatedly rejecting valid edge-of-range attacks.
+- [#195](https://github.com/darkspinnet/darkspin/issues/195) Move launcher log writes off gameplay dispatch, with bounded buffering and report/shutdown flushes, to prevent slow disk writes from stalling combat.
+- [#194](https://github.com/darkspinnet/darkspin/issues/194) Restore administrator command access by default for local play; only dedicated servers require an account status above 250.
+- [#194](https://github.com/darkspinnet/darkspin/issues/194) Restore Temporal Siphon's authored base cooldown and power cost instead of allowing repeated free casts.
+- [#194](https://github.com/darkspinnet/darkspin/issues/194) Synchronize Orion's health-based movement and attack haste with the client and teammates, preserving it through temporary slow updates.
+- [#194](https://github.com/darkspinnet/darkspin/issues/194) Restore Pain Hounds' owner-primary-stat damage scaling and separate pet-damage bonus in campaign and Arena.
+- [#193](https://github.com/darkspinnet/darkspin/issues/193) Keep Sentry Drone stationary through its full firing release instead of resuming owner-follow at projectile launch.
+- [#193](https://github.com/darkspinnet/darkspin/issues/193) Correct Swift Slasher wander movement from premature one-second advances and hero-follow goals to elapsed-time movement along retained wander destinations, with authored ranked durations.
 
 ### 2026-11-07
 

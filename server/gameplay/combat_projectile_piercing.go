@@ -206,16 +206,9 @@ func (e campaignNPCProjectileSchedule) producePiercingImpact(
 	if err != nil {
 		return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("contactsResolve: %w", err)
 	}
-	packets := make([][]byte, 0, len(contacts)*3+2)
-	statDelta := sporenet.PlayerStatDelta{}
-	for _, contact := range contacts {
-		hitPackets, targetStatDelta, contactErr := e.piercingContact(peerSession, contact, deadline)
-		if contactErr != nil {
-			return nil, statDelta, fmt.Errorf("impactContact: %w", contactErr)
-		}
-		packets = append(packets, hitPackets...)
-		statDelta.PVEDamageTaken += targetStatDelta.PVEDamageTaken
-	}
+	// Complete projectile simulation before committing contacts. A lethal hero
+	// hit cancels the owner's projectile runs; resolving afterward would fail
+	// with a stopped simulator and discard the committed death publication.
 	terminalPackets, err := e.run.ResolveCollision(
 		context.Background(), deadline, false, false, 0,
 		e.result.Damage, e.result.IsCritical,
@@ -228,6 +221,16 @@ func (e campaignNPCProjectileSchedule) producePiercingImpact(
 	)
 	if err != nil {
 		return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("terminalResolve: %w", err)
+	}
+	packets := make([][]byte, 0, len(contacts)*3+len(terminalPackets))
+	statDelta := sporenet.PlayerStatDelta{}
+	for _, contact := range contacts {
+		hitPackets, targetStatDelta, contactErr := e.piercingContact(peerSession, contact, deadline)
+		if contactErr != nil {
+			return nil, statDelta, fmt.Errorf("impactContact: %w", contactErr)
+		}
+		packets = append(packets, hitPackets...)
+		statDelta.PVEDamageTaken += targetStatDelta.PVEDamageTaken
 	}
 	packets = append(packets, terminalPackets...)
 	return packets, statDelta, nil
