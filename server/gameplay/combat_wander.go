@@ -5,123 +5,161 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
+	zoneaction "github.com/darkspinnet/darkspin/server/zone/action"
 	zonenavigation "github.com/darkspinnet/darkspin/server/zone/navigation"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
 
 type campaignScaldronNestleWanderStep struct {
-	runtime    campaignNPCActionRuntime
-	packet     raknet.Packet
-	sessionKey string
-	generation uint64
-	objectID   uint32
-	timestamp  uint64
-	stepIndex  uint32
-	profile    zonenpc.ActionProfile
+	runtime          campaignNPCActionRuntime
+	packet           raknet.Packet
+	sessionKey       string
+	generation       uint64
+	objectID         uint32
+	timestamp        uint64
+	actionGeneration uint64
+	startedAt        time.Time
+	advancedAt       time.Time
+	destination      game.Vec3
+	waypoint         game.Vec3
+	isMoving         bool
+	profile          zonenpc.ActionProfile
 }
 
 func (e campaignScaldronNestleWanderStep) fail(
 	step string, err error,
 ) ([][]byte, error) {
-	e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
+	e.runtime.releaseActionGeneration(e.sessionKey, e.generation, e.objectID, e.actionGeneration)
 	return nil, fmt.Errorf("%s: %w", step, err)
 }
 
 func (e campaignScaldronNestleWanderStep) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
-	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
-	isCurrent := isFound && peerSession.isCampaignNPCActionActiveAt(
-		e.generation, e.objectID, e.runtime.now(),
-	)
-	if !isCurrent || peerSession.zone.NPCRandom() == nil {
+	member, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isCurrent := isFound && member.isCampaignNPCActionActiveAt(e.generation, e.objectID, e.runtime.now())
+	if !isCurrent || member.zone.NPCRandom() == nil {
 		e.runtime.registry.mutex.Unlock()
-		if isFound {
-			e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
+		return nil, nil
+	}
+	enemy, isEnemyFound := member.zone.NPCs().NPC(e.objectID)
+	target, isTargetFound := member.campaignNPCTarget(e.generation, enemy.TargetObjectID)
+	if !isEnemyFound || !isTargetFound || enemy.ActionGeneration != e.actionGeneration {
+		e.runtime.registry.mutex.Unlock()
+		return nil, nil
+	}
+	now := e.runtime.now()
+	elapsed := now.Sub(e.advancedAt)
+	e.advancedAt = now
+	packets := make([][]byte, 0)
+	if e.isMoving {
+		speed := enemy.Plan.NPCProfile.BaseCombatSpeed
+		if speed <= 0 {
+			speed = e.profile.MovementSpeed
 		}
-		return nil, nil
+		speed *= max(float32(0), 1+zonenpc.EffectiveMovementSpeedBuff(enemy.Plan))
+		speed *= member.zone.NPCs().SlowMovementScale(e.objectID, now)
+		step, err := member.zone.NPCs().AdvancePursuit(member.zone.Navigation(), e.objectID,
+			e.destination, 0.1, speed, enemy.NavigationRadius(), elapsed)
+		if err != nil {
+			e.runtime.registry.mutex.Unlock()
+			return e.fail("nestleWanderAdvance", err)
+		}
+		enemy.Plan.Position = step.Position
+		if step.IsBlocked || step.IsInRange {
+			e.isMoving = false
+		} else {
+			waypoint := e.destination
+			if step.IsWaypointKnown {
+				waypoint = step.Waypoint
+			}
+			if waypoint != e.waypoint {
+				moves, err := npcraknet.CircleTargetMovement(e.objectID, waypoint, target.ObjectID)
+				if err != nil {
+					e.runtime.registry.mutex.Unlock()
+					return e.fail("nestleWanderWaypoint", err)
+				}
+				e.waypoint = waypoint
+				packets = append(packets, moves...)
+			}
+		}
 	}
-	enemy, isEnemyFound := peerSession.zone.NPCs().NPC(e.objectID)
-	target, isTargetFound := peerSession.campaignNPCTarget(
-		e.generation, enemy.TargetObjectID,
-	)
-	if !isEnemyFound || !isTargetFound {
-		e.runtime.registry.mutex.Unlock()
-		e.runtime.releaseAction(e.sessionKey, e.generation, e.objectID)
-		return nil, nil
+	isComplete := !now.Before(e.startedAt.Add(e.profile.ModifierDuration))
+	if !e.isMoving && !isComplete {
+		distance := e.profile.MinimumRange + float32(member.zone.NPCRandom().Float64())*(e.profile.Range-e.profile.MinimumRange)
+		destination, isDestinationFound, err := zonenavigation.RandomTeleportDestination(
+			member.zone.Navigation(), member.zone.NPCRandom(), zonenavigation.RandomTeleportRequest{
+				SourcePosition: enemy.Plan.Position, FootprintRadius: enemy.NavigationRadius(),
+				MinimumDistance: e.profile.MinimumRange, NormalDistance: distance, MaximumDistance: e.profile.Range,
+			})
+		if err != nil {
+			e.runtime.registry.mutex.Unlock()
+			return e.fail("nestleWanderDestination", err)
+		}
+		if isDestinationFound {
+			waypoint := destination
+			if member.zone.Navigation() != nil {
+				// Query the first corridor point without advancing the live actor.
+				projection, err := zoneaction.AdvancePursuitPathStep(member.zone.Navigation(), enemy.Plan.Position,
+					destination, enemy.NavigationRadius(), 0.0001, enemy.Navigation)
+				if err != nil {
+					e.runtime.registry.mutex.Unlock()
+					return e.fail("nestleWanderRoute", err)
+				}
+				waypoint = projection.Waypoint
+			}
+			moves, err := npcraknet.CircleTargetMovement(e.objectID, waypoint, target.ObjectID)
+			if err != nil {
+				e.runtime.registry.mutex.Unlock()
+				return e.fail("nestleWanderStart", err)
+			}
+			e.destination, e.waypoint, e.isMoving = destination, waypoint, true
+			packets = append(packets, moves...)
+		}
 	}
-	distance := e.profile.MinimumRange +
-		float32(peerSession.zone.NPCRandom().Float64())*
-			(e.profile.Range-e.profile.MinimumRange)
-	destination, isDestinationFound, err :=
-		zonenavigation.RandomTeleportDestination(
-			peerSession.zone.Navigation(), peerSession.zone.NPCRandom(),
-			zonenavigation.RandomTeleportRequest{
-				SourcePosition:  enemy.Plan.Position,
-				FootprintRadius: max(enemy.Plan.NPCProfile.FootprintRadius, 0.25),
-				MinimumDistance: e.profile.MinimumRange,
-				NormalDistance:  distance,
-				MaximumDistance: e.profile.Range,
-			},
-		)
-	if err != nil {
-		e.runtime.registry.mutex.Unlock()
-		return e.fail("nestleWanderDestination", err)
-	}
-	if !isDestinationFound {
-		destination = enemy.Plan.Position
-	}
-	step, err := peerSession.zone.NPCs().AdvancePursuit(
-		peerSession.zone.Navigation(), e.objectID, destination, 0.1,
-		e.profile.MovementSpeed, enemy.Plan.NPCProfile.FootprintRadius,
-		e.profile.HitDelay,
-	)
-	if err != nil {
-		e.runtime.registry.mutex.Unlock()
-		return e.fail("nestleWanderAdvance", err)
-	}
-	e.runtime.registry.sessions[e.sessionKey] = peerSession
+	e.runtime.registry.sessions[e.sessionKey] = member
 	e.runtime.registry.mutex.Unlock()
-	var packets [][]byte
-	if step.IsBlocked {
-		packets, err = npcraknet.StopAtPose(e.objectID, step.Position, enemy.Facing)
-	} else {
-		packets, err = npcraknet.PursuitRedirect(
-			e.objectID, step.Position, target.ObjectID, destination, 0.1,
-		)
-	}
-	if err != nil {
-		return e.fail("nestleWanderRedirect", err)
-	}
-	stepCount := uint32(e.profile.ModifierDuration / e.profile.HitDelay)
-	if e.stepIndex+1 < stepCount {
-		next := e
-		next.stepIndex++
-		next.timestamp += uint64(e.profile.HitDelay / time.Millisecond)
-		_, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
-			Delay: e.profile.HitDelay, Produce: next.produce,
+	if isComplete {
+		stops, err := npcraknet.StopAtPose(e.objectID, enemy.Plan.Position, enemy.Facing)
+		if err != nil {
+			return e.fail("nestleWanderStop", err)
+		}
+		packets = append(packets, stops...)
+		e.timestamp += uint64(e.profile.ReleaseDelay / time.Millisecond)
+		cancel, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
+			Delay: e.profile.ReleaseDelay, Produce: e.resume,
 		}})
+		if scheduleErr == nil && cancel == nil {
+			scheduleErr = errors.New("nil cancellation")
+		}
 		if scheduleErr != nil {
-			return e.fail("nestleWanderSchedule", scheduleErr)
+			return e.fail("nestleWanderResumeSchedule", scheduleErr)
 		}
 		return packets, nil
 	}
-	resume := e
-	resume.timestamp += uint64(
-		(e.profile.HitDelay + e.profile.ReleaseDelay) / time.Millisecond,
-	)
-	_, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
-		Delay:   e.profile.HitDelay + e.profile.ReleaseDelay,
-		Produce: resume.resume,
+	e.timestamp += uint64(campaignPursuitFallbackTick / time.Millisecond)
+	cancel, scheduleErr := scheduleNPCProducers(e.runtime.registry, e.packet, []raknet.ScheduledPacketProducer{{
+		Delay: campaignPursuitFallbackTick, Produce: e.produce,
 	}})
+	if scheduleErr == nil && cancel == nil {
+		scheduleErr = errors.New("nil cancellation")
+	}
 	if scheduleErr != nil {
-		return e.fail("nestleWanderResumeSchedule", scheduleErr)
+		return e.fail("nestleWanderSchedule", scheduleErr)
 	}
 	return packets, nil
 }
 
 func (e campaignScaldronNestleWanderStep) resume() ([][]byte, error) {
+	e.runtime.registry.mutex.RLock()
+	member, isFound := e.runtime.registry.sessions[e.sessionKey]
+	isCurrent := isFound && member.isCampaignNPCSourceGenerationActive(e.generation, e.objectID, e.actionGeneration)
+	e.runtime.registry.mutex.RUnlock()
+	if !isCurrent {
+		return nil, nil
+	}
 	packets, err := e.runtime.produceEnemyMelee(
 		e.packet, e.sessionKey, e.generation, e.objectID, e.timestamp,
 	)
@@ -166,7 +204,7 @@ func (r campaignNPCActionRuntime) produceScaldronBasicNestleWander(
 	step := campaignScaldronNestleWanderStep{
 		runtime: r, packet: packet, sessionKey: sessionKey,
 		generation: generation, objectID: objectID, timestamp: timestamp,
-		profile: profile,
+		profile: profile, actionGeneration: enemy.ActionGeneration, startedAt: r.now(), advancedAt: r.now(),
 	}
 	packets, err := step.produce()
 	if err != nil {

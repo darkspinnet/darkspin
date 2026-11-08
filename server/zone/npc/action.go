@@ -4676,23 +4676,27 @@ func scaldronBasicNestleMeleeProfile(cooldown time.Duration) ActionProfile {
 }
 
 func ScaldronBasicNestleWanderProfile(nounName string) (ActionProfile, bool) {
+	var duration time.Duration
 	switch strings.ToLower(strings.TrimSpace(nounName)) {
-	case "scaldronbasicnestle.noun", "scaldronbasicnestle_2.noun",
-		"scaldronbasicnestle_3.noun":
-		return ActionProfile{
-			AbilityName:            "ScaldronBasicNestle_Wander",
-			HitDelay:               time.Second,
-			ReleaseDelay:           time.Second,
-			Cooldown:               8 * time.Second,
-			MinimumRange:           3,
-			Range:                  5,
-			ModifierDuration:       3 * time.Second,
-			MovementSpeed:          7,
-			NonCombatMovementSpeed: 5.5,
-		}, true
+	case "scaldronbasicnestle.noun":
+		duration = 2500 * time.Millisecond
+	case "scaldronbasicnestle_2.noun":
+		duration = 2250 * time.Millisecond
+	case "scaldronbasicnestle_3.noun":
+		duration = 2 * time.Second
 	default:
 		return ActionProfile{}, false
 	}
+	return ActionProfile{
+		AbilityName:            "ScaldronBasicNestle_Wander",
+		ReleaseDelay:           time.Second,
+		Cooldown:               8 * time.Second,
+		MinimumRange:           2.5,
+		Range:                  5,
+		ModifierDuration:       duration,
+		MovementSpeed:          7,
+		NonCombatMovementSpeed: 5.5,
+	}, true
 }
 
 func scaldronBasicMinesMeleeProfile() ActionProfile {

@@ -97,10 +97,11 @@ func (r campaignDamageRuntime) startFieldMedicDroneAttackFor(
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
-	// Reservation stops the server follow route. Hold and publish that same
-	// pose so the native drone cannot keep following its old goal at launch.
+	// Reservation stops the server follow route. Keep the same pose through
+	// the authored cast release, not only the earlier projectile launch.
 	attackAt := r.npc.now()
-	heldDrone, holdErr := peerSession.zone.Companion().HoldFollow(objectID, attackAt, attackAt.Add(ability.HitDelay))
+	holdDuration := max(ability.HitDelay, ability.ReleaseDelay)
+	heldDrone, holdErr := peerSession.zone.Companion().HoldFollow(objectID, attackAt, attackAt.Add(holdDuration))
 	if holdErr != nil {
 		peerSession.zone.Companion().ReleaseAttack(plan.ObjectID, plan.TargetObjectID)
 		r.registry.mutex.Unlock()

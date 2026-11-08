@@ -1,5 +1,10 @@
 # Changelog
 
+### 2026-11-08
+
+- #193 Keep Sentry Drone stationary through its full firing release instead of resuming owner-follow at projectile launch.
+- #193 Correct Swift Slasher wander movement from premature one-second advances and hero-follow goals to elapsed-time movement along retained wander destinations, with authored ranked durations.
+
 ### 2026-11-07
 
 - Change randomized replay endings from mission-number selection to a seeded 40% chance of the destination planet's Destructor without pre-waves and a 60% chance of a captain.
