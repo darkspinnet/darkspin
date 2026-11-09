@@ -507,11 +507,17 @@ func (e campaignStealtherSchedule) scheduleNext(timestamp uint64) {
 		e.runtime.registry.mutex.RUnlock()
 		return
 	}
-	err := member.zone.NPCs().BeginStealthCooldown(
+	npcSession := member.zone.NPCs()
+	owner := zonenpc.ActionOwner{UserID: member.binding.UserID, PeerGeneration: e.generation}
+	err := npcSession.BeginStealthCooldown(
 		e.objectID, e.plan.ActionGeneration, e.runtime.now().Add(e.plan.Profile.Cooldown),
 	)
 	e.runtime.registry.mutex.RUnlock()
 	if err != nil {
+		isReleased := npcSession.ReleaseActionGeneration(e.objectID, owner, e.plan.ActionGeneration)
+		if !isReleased {
+			// A defeated or replaced action no longer owns this recovery.
+		}
 		if e.runtime.logger != nil {
 			e.runtime.logger.Printf("Stealth cooldown not started object=%d: %v", e.objectID, err)
 		}
@@ -534,8 +540,17 @@ func (e campaignStealtherSchedule) scheduleNext(timestamp uint64) {
 	if err == nil && cancel == nil {
 		err = errors.New("stealth recovery cancellation unavailable")
 	}
-	if err != nil && e.runtime.logger != nil {
-		e.runtime.logger.Printf("Stealth recovery not scheduled object=%d: %v", e.objectID, err)
+	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
+		isReleased := npcSession.ReleaseActionGeneration(e.objectID, owner, e.plan.ActionGeneration)
+		if !isReleased {
+			// A later action already replaced the failed recovery's owner.
+		}
+		if e.runtime.logger != nil {
+			e.runtime.logger.Printf("Stealth recovery not scheduled object=%d: %v", e.objectID, err)
+		}
 	}
 }
 

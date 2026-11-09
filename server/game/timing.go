@@ -26,10 +26,12 @@ type ModifierTiming struct {
 	IsBuff           bool
 	IsDebuff         bool
 	IsDamageOverTime bool
-	IsCrowdControl   bool
+	// IsCrowdControl is retained for existing callers. Native duration scaling
+	// classifies all non-DoT debuffs from descriptors, regardless of this flag.
+	IsCrowdControl bool
 }
 
-// ModifierTimingProfile contains the source and recipient duration attributes
+// ModifierTimingProfile contains the recipient's own duration attributes
 // applied before the client's separate diminishing-return stage.
 type ModifierTimingProfile struct {
 	BuffDurationIncrease      float32
@@ -162,8 +164,8 @@ func ResolveOverdriveDuration(
 }
 
 // ResolveModifierAttributeDuration reproduces the attribute-only portion of
-// build-103 sub_9DE220. Buff/debuff source scaling is followed by recipient
-// DoT or crowd-control reduction. The caller remains responsible for the
+// build-103 sub_9DE220. Recipient buff/debuff scaling is followed by recipient
+// DoT or non-DoT debuff reduction. The caller remains responsible for the
 // client's separate diminishing-return and modifier-specific stages.
 func ResolveModifierAttributeDuration(modifier ModifierTiming, profile ModifierTimingProfile) (time.Duration, error) {
 	if modifier.Duration < 0 {
@@ -188,11 +190,17 @@ func ResolveModifierAttributeDuration(modifier ModifierTiming, profile ModifierT
 	}
 	if modifier.IsDamageOverTime {
 		seconds *= float64(1 - profile.DamageOverTimeReduction)
-	} else if modifier.IsCrowdControl {
+	} else if modifier.IsDebuff {
 		seconds *= float64(1 - profile.CrowdControlTimeReduction)
 	}
-	seconds = max(0, seconds)
-	return time.Duration(seconds * float64(time.Second)), nil
+	// Native 9DE3D9 floors to .001 seconds, then 9DE3F8 multiplies by1000
+	// and truncates to whole milliseconds. Fully reduced timed modifiers still
+	// live for one millisecond; they are not rejected as zero-duration grants.
+	milliseconds := math.Trunc(max(0.001, seconds) * 1000)
+	if math.IsNaN(milliseconds) || math.IsInf(milliseconds, 0) || milliseconds > math.MaxInt32 {
+		return 0, errors.New("invalid modifier duration result")
+	}
+	return time.Duration(milliseconds) * time.Millisecond, nil
 }
 
 func timingProfile(attribute [partAttributeCount]float32) TimingProfile {

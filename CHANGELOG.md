@@ -2,6 +2,8 @@
 
 ### 2026-11-08
 
+- Apply recipient duration reductions to verified timed silence and snare modifiers, keeping server expiry and client duration aligned with build-103's one-millisecond minimum.
+- Release Stealther action reservations when cooldown or recovery scheduling fails so later attacks can resume.
 - Correct hero damage, healing, and their tooltips from a primary-stat baseline of -1 to build-103's MagicNumbers baseline of 8, and preserve the owner's explicit damage baseline for Sentry Drone attacks.
 - Change idle enemy walking from repeated position corrections to native waypoint movement, enabling authored idle speed and preserving interpolation between waypoint changes.
 - Run Strafe and Small Strafe's original Lua callbacks for destination choice, movement reduction, arrival distance, and cleanup instead of duplicated Go behavior decisions.

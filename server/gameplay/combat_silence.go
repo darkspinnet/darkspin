@@ -116,6 +116,22 @@ func (r campaignNPCActionRuntime) applyCampaignNPCSilence(
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
+	duration := profile.ModifierDuration
+	if isRangedSilence && target.IsHero {
+		if peerSession.deployedCreatureIndex >= uint32(len(peerSession.binding.Creatures)) {
+			r.registry.mutex.Unlock()
+			return nil, errors.New("silence recipient unavailable")
+		}
+		// Build-103 modifier267 owns a ranked two-second duration and
+		// IsDebuff descriptor. Citadel's aura lease is a separate lifetime.
+		projected, durationErr := projectRecipientModifierDuration(duration, 1<<5,
+			peerSession.binding.Creatures[peerSession.deployedCreatureIndex])
+		if durationErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("silenceDuration: %w", durationErr)
+		}
+		duration = projected
+	}
 	if peerSession.campaignNPCSilences == nil {
 		peerSession.campaignNPCSilences = make(map[uint32]*campaignNPCSilenceRun)
 	}
@@ -147,7 +163,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCSilence(
 	modifierID := util.HashID(profile.ModifierName)
 	isRefresh := !isNew && run.modifierID == modifierID
 	startedAt := r.now()
-	run.expiresAt = startedAt.Add(profile.ModifierDuration)
+	run.expiresAt = startedAt.Add(duration)
 	if previousExpiresAt.After(run.expiresAt) {
 		run.expiresAt = previousExpiresAt
 	}
