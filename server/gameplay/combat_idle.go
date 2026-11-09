@@ -7,6 +7,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
+	"github.com/darkspinnet/darkspin/server/sim"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
@@ -16,20 +17,23 @@ const campaignNPCBehaviorTick = 100 * time.Millisecond
 // The actor owns selection, cooldowns and the lease. This adapter owns only the
 // movement coroutine and its reliable client presentation.
 type campaignNPCBehaviorRun struct {
-	runtime       campaignNPCActionRuntime
-	packet        raknet.Packet
-	sessionKey    string
-	generation    uint64
-	run           zonenpc.CombatIdleRun
-	npcSession    *zonenpc.Session
-	timestamp     uint64
-	destination   game.Vec3
-	isMoving      bool
-	wasMoving     bool
-	isTurnChecked bool
-	pauseUntil    time.Time
-	movementBuff  float32
-	flee          *campaignNPCSupportIdle
+	runtime        campaignNPCActionRuntime
+	packet         raknet.Packet
+	sessionKey     string
+	generation     uint64
+	run            zonenpc.CombatIdleRun
+	npcSession     *zonenpc.Session
+	timestamp      uint64
+	destination    game.Vec3
+	isMoving       bool
+	wasMoving      bool
+	isTurnChecked  bool
+	pauseUntil     time.Time
+	movementBuff   float32
+	flee           *campaignNPCSupportIdle
+	strafe         *sim.LuaStrafeRuntime
+	strafePlan     sim.LuaStrafePlan
+	strafeTargetID uint32
 }
 
 func isCommonNPCBehavior(behavior string) bool {
@@ -293,14 +297,24 @@ func (e *campaignNPCBehaviorRun) produce() ([][]byte, error) {
 }
 
 func (e *campaignNPCBehaviorRun) finishLocked(member *gameplayPeerSession) ([][]byte, error) {
+	var strafeErr error
+	if e.strafe != nil {
+		cleanup, err := e.strafe.Deactivate()
+		e.strafe = nil
+		if err != nil {
+			strafeErr = fmt.Errorf("strafeDeactivate: %w", err)
+		} else if !cleanup.IsStopRequested || cleanup.RemovedMovementSpeedBuff != e.strafePlan.MovementSpeedBuff {
+			strafeErr = errors.New("strafe cleanup contract invalid")
+		}
+	}
 	npcSession := member.zone.NPCs()
 	isFinished, isStopAllowed := npcSession.FinishCombatIdle(e.run)
 	if !isFinished {
-		return nil, nil
+		return nil, strafeErr
 	}
 	source, isFound := npcSession.NPC(e.run.ObjectID)
 	if !isFound || source.IsDefeated {
-		return nil, nil
+		return nil, strafeErr
 	}
 	var packets [][]byte
 	if e.movementBuff != 0 {
@@ -321,5 +335,5 @@ func (e *campaignNPCBehaviorRun) finishLocked(member *gameplayPeerSession) ([][]
 		}
 		packets = append(packets, stopPackets...)
 	}
-	return packets, nil
+	return packets, strafeErr
 }

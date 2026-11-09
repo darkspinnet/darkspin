@@ -39,8 +39,12 @@ func (e *campaignNPCBehaviorRun) moveLocked(member *gameplayPeerSession,
 	isStrafe := behavior == "nbehavior_strafe" || behavior == "nbehavior_smallstrafe" || isStrafeOrIdle
 	isFlee := behavior == "nbehavior_flee" || behavior == "nbehavior_fleefacing"
 	isFacing := isStrafe || behavior == "nbehavior_fleefacing"
-	target, isTargetFound := member.campaignNPCTarget(e.generation, source.TargetObjectID)
-	if (isStrafe || isFlee) && !isTargetFound {
+	targetObjectID := source.TargetObjectID
+	if (behavior == "nbehavior_strafe" || behavior == "nbehavior_smallstrafe") && e.strafe != nil {
+		targetObjectID = e.strafeTargetID
+	}
+	target, isTargetFound := member.campaignNPCTarget(e.generation, targetObjectID)
+	if (isStrafe || isFlee) && !isTargetFound && behavior != "nbehavior_strafe" && behavior != "nbehavior_smallstrafe" {
 		return nil, true, nil
 	}
 	if member.zone.NPCRandom() == nil {
@@ -56,6 +60,18 @@ func (e *campaignNPCBehaviorRun) moveLocked(member *gameplayPeerSession,
 	flavorPauseSeconds := float32(4.4)
 	flavorPause := time.Duration(float64(flavorPauseSeconds) * float64(time.Second))
 	if !e.isMoving {
+		if behavior == "nbehavior_strafe" || behavior == "nbehavior_smallstrafe" {
+			startPackets, startErr := e.startLuaStrafeLocked(member, source, target, isTargetFound, now)
+			if startErr != nil {
+				return nil, false, fmt.Errorf("behaviorStrafeStart: %w", startErr)
+			}
+			packets = append(packets, startPackets...)
+			updated, isFound := member.zone.NPCs().NPC(source.Plan.ObjectID)
+			if !isFound {
+				return packets, true, nil
+			}
+			source = updated
+		}
 		// Build-103 chunks 400 and 451 both define StrafeOrIdle, with
 		// different probabilities (.8 and .5). Preserve Dark Spin's existing
 		// .5 policy until the native global registration winner is established.
@@ -104,18 +120,9 @@ func (e *campaignNPCBehaviorRun) moveLocked(member *gameplayPeerSession,
 		e.destination = destination
 		e.isMoving = true
 		e.wasMoving = true
-		if isStrafe && !isStrafeOrIdle {
-			movementBuff := float32(-0.15)
-			if behavior == "nbehavior_smallstrafe" {
-				movementBuff = -0.25
-			}
-			attributes, updated, err := e.setMovementBuffLocked(member, source, movementBuff, now)
-			if err != nil {
-				return nil, false, fmt.Errorf("behaviorStrafeBuff: %w", err)
-			}
-			source = updated
-			packets = append(packets, attributes...)
-		}
+	}
+	if behavior == "nbehavior_strafe" || behavior == "nbehavior_smallstrafe" {
+		stopDistance = e.strafePlan.NearGoalDistance
 	}
 	speed := source.Plan.NPCProfile.BaseCombatSpeed
 	if isWander || isStroll {
@@ -210,6 +217,9 @@ func (e *campaignNPCBehaviorRun) movementDestinationLocked(member *gameplayPeerS
 	source zonenpc.Snapshot, target game.Vec3,
 ) (game.Vec3, bool, error) {
 	behavior := strings.ToLower(e.run.Choice.Behavior)
+	if behavior == "nbehavior_strafe" || behavior == "nbehavior_smallstrafe" {
+		return game.Vec3(e.strafePlan.Destination), e.strafePlan.IsMoveRequested && e.strafePlan.IsWaiting, nil
+	}
 	random := member.zone.NPCRandom()
 	if behavior == "nbehavior_flee" || behavior == "nbehavior_fleefacing" {
 		minimum, maximum := float32(5), float32(10)
@@ -231,16 +241,13 @@ func (e *campaignNPCBehaviorRun) movementDestinationLocked(member *gameplayPeerS
 		}
 		return destination, isProjected, nil
 	}
-	if behavior == "nbehavior_strafe" || behavior == "nbehavior_smallstrafe" || behavior == "nbehavior_strafeoridle" {
+	if behavior == "nbehavior_strafeoridle" {
 		delta := target.Sub(source.Plan.Position)
 		length := delta.Length()
 		if length == 0 {
 			return game.Vec3{}, false, nil
 		}
 		distance := float32(8)
-		if behavior == "nbehavior_smallstrafe" {
-			distance = 6
-		}
 		side := float32(1)
 		if random.Float64() <= 0.5 {
 			side = -1

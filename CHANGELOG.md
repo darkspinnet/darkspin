@@ -2,6 +2,7 @@
 
 ### 2026-11-08
 
+- Run Strafe and Small Strafe's original Lua callbacks for destination choice, movement reduction, arrival distance, and cleanup instead of duplicated Go behavior decisions.
 - Include Orcus's active shield immunity in Lua sleep and silence admission and shared crowd-control checks, with independent expiry and renewal tracking.
 - Honor Overdrive's silence immunity through the same live hero contribution lookup used for poison immunity.
 - Resume interrupted NPC actions after live crowd-control removal instead of waiting for an obsolete expiry, and discard wakeups belonging to replaced actions.

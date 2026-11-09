@@ -1526,6 +1526,16 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		return zonecontent.Programs{}, fmt.Errorf("psistormCallback: %w", err)
 	}
 	psistormModifier.Stop()
+	strafe, err := loadStrafeLua(ctx, store, 427,
+		"fd987598a7a920cf852639d20143f2c378c67f48627fceaa6d683030b8eca22d")
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("strafeLoad: %w", err)
+	}
+	smallStrafe, err := loadStrafeLua(ctx, store, 481,
+		"d0610a6729bd8f2cf3fddb3fe42a66fe8808eb531b8499fe4c0d998b77c0e221")
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("smallStrafeLoad: %w", err)
+	}
 	securityTeleporter, err := loadPinnedLuaBytecode(
 		ctx, store, zoneteleport.SecurityChunkID, zoneteleport.SecuritySHA256,
 		"securityTeleporter",
@@ -1808,6 +1818,8 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		AuraUtils:                  auraUtils,
 		SleepingCloud:              sleepingCloud,
 		Psistorm:                   psistorm,
+		Strafe:                     strafe,
+		SmallStrafe:                smallStrafe,
 		TeleporterModifier:         teleporterModifier,
 		BossTeleporter:             bossTeleporter,
 		InvisibleBehavior:          invisibleLifecycle,

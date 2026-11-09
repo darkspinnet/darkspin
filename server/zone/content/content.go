@@ -92,6 +92,8 @@ type Programs struct {
 	AuraUtils                  sim.LuaBytecode
 	SleepingCloud              sim.LuaBytecode
 	Psistorm                   sim.LuaBytecode
+	Strafe                     sim.LuaAbilityInput
+	SmallStrafe                sim.LuaAbilityInput
 	BossTeleporter             zoneteleport.Simulation
 	InvisibleBehavior          sim.Program
 	SpawnModifier              sim.Program
