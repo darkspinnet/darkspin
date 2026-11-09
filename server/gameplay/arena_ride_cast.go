@@ -24,7 +24,8 @@ func (e *arenaRideRun) breakRootLocked() {
 			status.retire(&source)
 		}
 	}
-	if source.enemyRootTargetObjectID == e.objectID {
+	if source.isHeroControlActive(heroControlRoot, e.runtime.now()) {
+		source.clearHeroControlKind(heroControlRoot)
 		source.enemyRootTargetObjectID = 0
 		source.enemyRootExpiresAt = time.Time{}
 		packets, err := source.refreshEnemyImmobilizedAttributes(e.runtime.now())

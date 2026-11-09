@@ -61,8 +61,18 @@ func (e *Session) MotionSnapshots(at time.Time) []MotionSnapshot {
 		actor.Position = actor.PositionAt(at)
 		snapshot := MotionSnapshot{Actor: actor}
 		if actor.IsFollowing && at.Before(actor.followDeadline) {
-			snapshot.MovementSpeed = actor.followPlan.Destination.Sub(actor.followPlan.Position).Length() /
+			travelDistance := actor.followPlan.Destination.Sub(actor.followPlan.Position).Length()
+			if len(actor.followPaths) != 0 {
+				travelDistance = walkingDistance(actor.followPaths, e.navigationMesh)
+			}
+			snapshot.MovementSpeed = travelDistance /
 				float32(actor.followPlan.TravelDuration.Seconds())
+			if travelDistance == 0 {
+				snapshot.MovementSpeed = CompatibilityMovementSpeed * movementScale(actor)
+				if actor.MovementSpeed > 0 {
+					snapshot.MovementSpeed = actor.MovementSpeed * movementScale(actor)
+				}
+			}
 			snapshot.Follow = actor.followPlan
 			snapshot.Follow.Position = actor.Position
 			snapshot.Follow.TravelDuration = actor.followDeadline.Sub(at)

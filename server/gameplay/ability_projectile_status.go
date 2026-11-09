@@ -253,7 +253,7 @@ func (e *heroProjectileStatusRun) Cleanup() heroProjectileStatusDelete {
 		case sim.AbilityStatusKindCurse:
 			e.npc.ClearCurse(e.targetID, e.expiresAt)
 		case sim.AbilityStatusKindStun:
-			e.npc.ClearStun(e.targetID, e.expiresAt)
+			e.npc.ClearStunModifier(e.targetID, e.instanceID)
 		}
 		_ = e.modifierPool.Release(e.instanceID)
 	}
@@ -286,7 +286,7 @@ func (e *heroProjectileStatusRun) clearSplashStatus(
 	case sim.AbilityStatusKindCurse:
 		e.npc.ClearCurse(target.targetID, target.expiresAt)
 	case sim.AbilityStatusKindStun:
-		e.npc.ClearStun(target.targetID, target.expiresAt)
+		e.npc.ClearStunModifier(target.targetID, target.instanceID)
 	}
 }
 
@@ -482,30 +482,34 @@ func (e heroProjectileStatusSchedule) impactNow() ([][]byte, error) {
 	packets = filterProjectileCombatPackets(packets)
 	duration := zonenpc.CrowdControlDuration(target.Plan, e.definition.StatusDuration)
 	expiresAt := e.runtime.now().Add(duration)
+	instanceID, err := e.runtime.modifierPool.Allocate()
+	if err != nil {
+		e.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("projectileStatusModifier: %w", err)
+	}
 	reaction := laserModifierReaction{}
 	isAdmitted := true
 	if e.definition.StatusKind == sim.AbilityStatusKindStun {
 		reaction, isAdmitted, err = e.runtime.registry.admitLaserControlModifierLocked(
-			&peerSession, e.targetObjectID, sim.AbilityStatusKindStun, e.runtime.now(), expiresAt)
+			&peerSession, e.targetObjectID, instanceID, sim.AbilityStatusKindStun, e.runtime.now(), expiresAt)
 	} else {
 		err = e.applyStatus(peerSession.zone.NPCs(), expiresAt)
 	}
 	if err != nil {
+		releaseErr := e.runtime.modifierPool.Release(instanceID)
 		e.runtime.registry.mutex.Unlock()
-		return nil, fmt.Errorf("projectileStatusApply: %w", err)
+		return nil, fmt.Errorf("projectileStatusApply: %w", errors.Join(err, releaseErr))
 	}
 	if !isAdmitted {
+		releaseErr := e.runtime.modifierPool.Release(instanceID)
 		e.runtime.registry.mutex.Unlock()
+		if releaseErr != nil {
+			return nil, fmt.Errorf("deniedRelease: %w", releaseErr)
+		}
 		return packets, nil
 	}
-	instanceID, err := e.runtime.modifierPool.Allocate()
-	if err != nil {
-		e.clearStatus(peerSession.zone.NPCs(), expiresAt)
-		e.runtime.registry.mutex.Unlock()
-		return nil, fmt.Errorf("projectileStatusModifier: %w", err)
-	}
 	if !e.run.Apply(instanceID, expiresAt) {
-		e.clearStatus(peerSession.zone.NPCs(), expiresAt)
+		e.clearStatus(peerSession.zone.NPCs(), instanceID, expiresAt)
 		_ = e.runtime.modifierPool.Release(instanceID)
 		e.runtime.registry.mutex.Unlock()
 		return packets, nil
@@ -760,15 +764,13 @@ func (e heroProjectileStatusSchedule) applyStatus(
 		return npc.ApplyFear(e.targetObjectID, expiresAt)
 	case sim.AbilityStatusKindCurse:
 		return npc.ApplyCurse(e.targetObjectID, expiresAt)
-	case sim.AbilityStatusKindStun:
-		return npc.ApplyStun(e.targetObjectID, expiresAt)
 	default:
 		return errors.New("unsupported projectile status")
 	}
 }
 
 func (e heroProjectileStatusSchedule) clearStatus(
-	npc *zonenpc.Session, expiresAt time.Time,
+	npc *zonenpc.Session, instanceID uint32, expiresAt time.Time,
 ) {
 	switch e.definition.StatusKind {
 	case sim.AbilityStatusKindFear:
@@ -776,7 +778,7 @@ func (e heroProjectileStatusSchedule) clearStatus(
 	case sim.AbilityStatusKindCurse:
 		npc.ClearCurse(e.targetObjectID, expiresAt)
 	case sim.AbilityStatusKindStun:
-		npc.ClearStun(e.targetObjectID, expiresAt)
+		npc.ClearStunModifier(e.targetObjectID, instanceID)
 	}
 }
 

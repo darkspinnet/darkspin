@@ -118,7 +118,7 @@ func (e gameplayPeerSession) isArenaHitSilenceActive(at time.Time) bool {
 func (e gameplayPeerSession) arenaSilenceAmount(at time.Time) float32 {
 	amount := e.projectPassiveCreature(e.deployedCreatureIndex, at).PartAttribute[14]
 	amount += float32(e.fixtureSilenceCount())
-	if at.Before(e.enemySilenceExpiresAt) {
+	if e.isHeroControlActive(heroControlSilence, at) {
 		amount++
 	}
 	for _, status := range e.arenaHitStatuses {

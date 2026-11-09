@@ -3,7 +3,11 @@
 // outside this package.
 package sim
 
-import "time"
+import (
+	"time"
+
+	"github.com/darkspinnet/darkspin/server/attribute"
+)
 
 // Role is a stable authored object identity independent of a network object ID.
 type Role string
@@ -335,13 +339,35 @@ const AttributeImmobilized AttributeKind = "immobilized"
 const AttributeIntangible AttributeKind = "intangible"
 const AttributeInvisibleToSecurityTeleporter AttributeKind = "invisible_to_security_teleporter"
 
+const (
+	AttributeMaxHealth          AttributeKind = "max_health"
+	AttributeAttackSpeedScale   AttributeKind = "attack_speed_scale"
+	AttributeMovementSpeedBuff  AttributeKind = "movement_speed_buff"
+	AttributeAoERadius          AttributeKind = "aoe_radius"
+	AttributeImmuneToStunned    AttributeKind = "immune_to_stunned"
+	AttributeDirectAttackDamage AttributeKind = "direct_attack_damage"
+	AttributeBodyScale          AttributeKind = "body_scale"
+)
+
 type AttributeModifierIntent struct {
 	Role          Role
 	AttributeKind AttributeKind
 	Amount        float32
+	// Numeric contributions carry their exact compiler-local identity and
+	// operation. Removal retires that record; it never negates a percent,
+	// best, or clamp amount. Legacy control deltas retain zero metadata.
+	Handle    uint32
+	Operation attribute.Operation
+	IsRemoval bool
 }
 
 func (AttributeModifierIntent) intentDomain() Domain { return DomainAuthority }
+
+// IsLegacyDelta identifies the narrow additive flag contract used by the
+// existing spawn, death and teleport adapters.
+func (e AttributeModifierIntent) IsLegacyDelta() bool {
+	return e.Handle == 0 && e.Operation == 0 && !e.IsRemoval
+}
 
 type ModifierRequestIntent struct {
 	TargetRole    Role

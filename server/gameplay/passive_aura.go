@@ -33,11 +33,9 @@ func (e gameplayPendingRuntime) pollNativeSilenceAuraLocked(member *gameplayPeer
 		}
 		member.untrackCampaignNPCModifier(run)
 		member.zone.Effect().Remove(run.instanceID)
-		if run.record.TargetObjectID == member.deployedObjectID && member.enemySilenceExpiresAt == run.record.ExpiresAt {
-			member.enemySilenceExpiresAt = time.Time{}
-		}
-		member.zone.Companion().ClearSilence(run.record.TargetObjectID, run.record.ExpiresAt)
-		member.zone.NPCs().ClearSilence(run.record.TargetObjectID, run.record.ExpiresAt)
+		member.clearHeroControl(run.instanceID, run.record.TargetObjectID)
+		member.zone.Companion().ClearSilenceModifier(run.record.TargetObjectID, run.instanceID)
+		member.zone.NPCs().ClearSilenceModifier(run.record.TargetObjectID, run.instanceID)
 		isCreated, err := run.release(e.modifierPool)
 		if err != nil {
 			return packets, fmt.Errorf("auraSilenceRelease: %w", err)
@@ -138,7 +136,7 @@ func (e gameplayPendingRuntime) pollNativeSilenceAuraLocked(member *gameplayPeer
 	if isNew {
 		current.create()
 	}
-	member.extendEnemySilence(record.TargetObjectID, record.ExpiresAt)
+	member.admitHeroControl(heroControlSilence, current, record.TargetObjectID, record.ExpiresAt)
 	packets = append(packets, created)
 	if !isNew {
 		return packets, nil

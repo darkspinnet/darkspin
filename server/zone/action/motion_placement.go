@@ -44,10 +44,16 @@ func (e *Motion) DeploymentPosition(at time.Time, footprintRadius float32, mode 
 	mesh := e.navigation
 	anchor := e.navigationAnchor
 	isAnchorPresent := e.isNavigationAnchorPresent
+	position, isBlocked, err := e.advanceClearPathLocked(movement, elapsed)
 	e.mu.RUnlock()
-	position, err := movement.Position(elapsed)
 	if err != nil {
 		return sim.Position{}, fmt.Errorf("deploymentSample: %w", err)
+	}
+	if isBlocked {
+		// The stopped clear-side pose replaces the old anchor as the source
+		// for deployment; an earlier anchor must not recover across the gate.
+		anchor = position
+		isAnchorPresent = true
 	}
 	destination, err := zonenavigation.DeploymentPosition(mesh, zonenavigation.DeploymentRequest{
 		Position: game.Vec3(position), AnchorPosition: game.Vec3(anchor), IsAnchorPresent: isAnchorPresent,

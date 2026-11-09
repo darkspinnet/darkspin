@@ -3,6 +3,7 @@ package npc
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 )
 
@@ -19,6 +20,7 @@ type status struct {
 	absorptionShieldRecharge     time.Duration
 	carapaceDamageMaximum        float32
 	banishExpiresAt              time.Time
+	banishModifiers              map[uint32]time.Time
 	curseExpiresAt               time.Time
 	curseDamage                  CurseDamageProfile
 	damageTakenIncrease          float32
@@ -63,13 +65,16 @@ type status struct {
 	isStealthed                  bool
 	isHauntInitialized           bool
 	rootExpiresAt                time.Time
+	rootModifiers                map[uint32]time.Time
 	bioEntangleExpiresAt         time.Time
 	bioEntangleInstanceID        uint32
 	supportHealerRootExpiresAt   time.Time
 	supportHealerRootInstanceID  uint32
 	silenceExpiresAt             time.Time
+	silenceModifiers             map[uint32]time.Time
 	auraSilences                 map[uint32]time.Time
 	sleepExpiresAt               time.Time
+	sleepModifiers               map[uint32]time.Time
 	auraSleeps                   map[uint32]time.Time
 	slowExpiresAt                time.Time
 	slowMovementScale            float32
@@ -79,6 +84,8 @@ type status struct {
 	slowOrder                    uint64
 	publishedSlowMovementScale   float32
 	stunExpiresAt                time.Time
+	stunModifiers                map[uint32]time.Time
+	timeStopModifiers            map[uint32]time.Time
 	tauntExpiresAt               time.Time
 	tauntTargetObjectID          uint32
 }
@@ -121,7 +128,7 @@ func (s *Session) HasDebuff(objectID uint32, at time.Time) bool {
 			return true
 		}
 	}
-	return at.Before(status.banishExpiresAt) ||
+	return at.Before(status.banishEnd()) ||
 		at.Before(status.curseExpiresAt) ||
 		status.damageTakenIncrease > 0 ||
 		at.Before(status.physicalVulnerabilityEnd) || at.Before(status.beastVulnerability.ExpiresAt) ||
@@ -129,11 +136,11 @@ func (s *Session) HasDebuff(objectID uint32, at time.Time) bool {
 		at.Before(status.healingReductionEnd) ||
 		at.Before(status.fearExpiresAt) ||
 		at.Before(status.intangibleExpiresAt) ||
-		at.Before(status.rootExpiresAt) || at.Before(status.bioEntangleExpiresAt) || at.Before(status.supportHealerRootExpiresAt) ||
+		at.Before(status.rootEnd()) || at.Before(status.bioEntangleExpiresAt) || at.Before(status.supportHealerRootExpiresAt) ||
 		at.Before(status.silenceEnd()) ||
 		at.Before(status.sleepEnd()) ||
 		at.Before(status.slowEnd()) ||
-		at.Before(status.stunExpiresAt) ||
+		at.Before(status.stunEnd()) ||
 		at.Before(status.tauntExpiresAt)
 }
 
@@ -148,14 +155,20 @@ func (s *Session) PurgeDebuffs(objectID uint32) bool {
 		return false
 	}
 	status := &npc.status
+	status.basicModifiers = maps.Clone(status.basicModifiers)
 	isBasicPurged := false
 	for key, modifier := range status.basicModifiers {
+		if key.Kind == BasicModifierPummel {
+			isBasicPurged = isBasicPurged || !modifier.ActiveUntil.IsZero()
+			modifier.ActiveUntil = time.Time{}
+			status.basicModifiers[key] = modifier
+		}
 		if modifier.IsDebuff() {
 			delete(status.basicModifiers, key)
 			isBasicPurged = true
 		}
 	}
-	isPurged := !status.banishExpiresAt.IsZero() ||
+	isPurged := !status.banishExpiresAt.IsZero() || len(status.banishModifiers) != 0 ||
 		!status.curseExpiresAt.IsZero() ||
 		status.damageTakenIncrease > 0 ||
 		!status.physicalVulnerabilityEnd.IsZero() || !status.beastVulnerability.ExpiresAt.IsZero() ||
@@ -163,16 +176,17 @@ func (s *Session) PurgeDebuffs(objectID uint32) bool {
 		!status.healingReductionEnd.IsZero() ||
 		!status.fearExpiresAt.IsZero() ||
 		!status.intangibleExpiresAt.IsZero() ||
-		!status.rootExpiresAt.IsZero() || !status.bioEntangleExpiresAt.IsZero() || !status.supportHealerRootExpiresAt.IsZero() ||
-		!status.silenceExpiresAt.IsZero() || len(status.auraSilences) != 0 ||
-		!status.sleepExpiresAt.IsZero() || len(status.auraSleeps) != 0 ||
+		!status.rootExpiresAt.IsZero() || len(status.rootModifiers) != 0 || !status.bioEntangleExpiresAt.IsZero() || !status.supportHealerRootExpiresAt.IsZero() ||
+		!status.silenceExpiresAt.IsZero() || len(status.silenceModifiers) != 0 || len(status.auraSilences) != 0 ||
+		!status.sleepExpiresAt.IsZero() || len(status.sleepModifiers) != 0 || len(status.auraSleeps) != 0 ||
 		!status.slowExpiresAt.IsZero() || len(status.slowModifiers) != 0 ||
-		!status.stunExpiresAt.IsZero() ||
+		!status.stunExpiresAt.IsZero() || len(status.stunModifiers) != 0 ||
 		!status.tauntExpiresAt.IsZero() || isBasicPurged
 	if !isPurged {
 		return false
 	}
 	status.banishExpiresAt = time.Time{}
+	status.banishModifiers = nil
 	status.curseExpiresAt = time.Time{}
 	status.curseDamage = CurseDamageProfile{}
 	status.damageTakenIncrease = 0
@@ -189,19 +203,24 @@ func (s *Session) PurgeDebuffs(objectID uint32) bool {
 	status.fearExpiresAt = time.Time{}
 	status.intangibleExpiresAt = time.Time{}
 	status.rootExpiresAt = time.Time{}
+	status.rootModifiers = nil
 	status.bioEntangleExpiresAt = time.Time{}
 	status.bioEntangleInstanceID = 0
 	status.supportHealerRootExpiresAt = time.Time{}
 	status.supportHealerRootInstanceID = 0
 	status.silenceExpiresAt = time.Time{}
+	status.silenceModifiers = nil
 	status.auraSilences = nil
 	status.sleepExpiresAt = time.Time{}
+	status.sleepModifiers = nil
 	status.auraSleeps = nil
 	status.slowExpiresAt = time.Time{}
 	status.slowMovementScale = 0
 	status.slowAttackScale = 0
 	status.slowModifiers = nil
 	status.stunExpiresAt = time.Time{}
+	status.stunModifiers = nil
+	status.timeStopModifiers = nil
 	status.tauntExpiresAt = time.Time{}
 	status.tauntTargetObjectID = 0
 	s.npcs[objectID] = npc
@@ -943,10 +962,10 @@ func (s *Session) RootRemaining(objectID uint32, at time.Time) time.Duration {
 	}
 	cinematicRemaining := max(time.Duration(0), npc.cinematic.immobilizedUntil.Sub(at))
 	if isStatusBlockedByShield(npc) ||
-		!at.Before(npc.status.rootExpiresAt) && !at.Before(npc.status.bioEntangleExpiresAt) && !at.Before(npc.status.supportHealerRootExpiresAt) {
+		!at.Before(npc.status.rootEnd()) && !at.Before(npc.status.bioEntangleExpiresAt) && !at.Before(npc.status.supportHealerRootExpiresAt) {
 		return cinematicRemaining
 	}
-	expiresAt := npc.status.rootExpiresAt
+	expiresAt := npc.status.rootEnd()
 	if expiresAt.Before(npc.status.bioEntangleExpiresAt) {
 		expiresAt = npc.status.bioEntangleExpiresAt
 	}
@@ -974,7 +993,7 @@ func (s *Session) AdmitBanish(objectID uint32, at, expiresAt time.Time) (bool, e
 	if !isFound || npc.IsDefeated {
 		return false, fmt.Errorf("npcBanishMissing: %d", objectID)
 	}
-	if npc.IsMutationBanishImmune() || npc.ControlImmunity(at).Banish > 0 || isStatusBlockedByShield(npc) || at.Before(npc.status.banishExpiresAt) ||
+	if npc.IsMutationBanishImmune() || npc.ControlImmunity(at).Banish > 0 || isStatusBlockedByShield(npc) || at.Before(npc.status.banishEnd()) ||
 		at.Before(npc.status.intangibleExpiresAt) {
 		return false, nil
 	}
@@ -1027,10 +1046,10 @@ func (s *Session) BanishRemaining(objectID uint32, at time.Time) time.Duration {
 	defer s.mu.RUnlock()
 	npc, isFound := s.npcs[objectID]
 	if !isFound || npc.IsDefeated || isStatusBlockedByShield(npc) ||
-		!at.Before(npc.status.banishExpiresAt) {
+		!at.Before(npc.status.banishEnd()) {
 		return 0
 	}
-	return npc.status.banishExpiresAt.Sub(at)
+	return npc.status.banishEnd().Sub(at)
 }
 
 func (s *Session) ApplyStun(objectID uint32, expiresAt time.Time) error {
@@ -1061,9 +1080,9 @@ func (s *Session) StunRemaining(objectID uint32, at time.Time) time.Duration {
 	if isStatusBlockedByShield(npc) {
 		return transformRemaining
 	}
-	expiresAt := npc.status.stunExpiresAt
-	if expiresAt.Before(npc.status.banishExpiresAt) {
-		expiresAt = npc.status.banishExpiresAt
+	expiresAt := npc.status.stunEnd()
+	if expiresAt.Before(npc.status.banishEnd()) {
+		expiresAt = npc.status.banishEnd()
 	}
 	sleepEnd := npc.status.sleepEnd()
 	if expiresAt.Before(sleepEnd) {

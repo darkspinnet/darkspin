@@ -66,7 +66,7 @@ func (e *Session) ClearAuraSleep(objectID, instanceID uint32) {
 }
 
 func (e status) sleepEnd() time.Time {
-	expiresAt := e.sleepExpiresAt
+	expiresAt := controlEnd(e.sleepExpiresAt, e.sleepModifiers)
 	for _, contributionEnd := range e.auraSleeps {
 		if expiresAt.Before(contributionEnd) {
 			expiresAt = contributionEnd

@@ -80,7 +80,10 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 	timestamp uint64,
 ) ([][]byte, error) {
 	profile := plan.Profile
-	if profile.MovementSpeedBuff < 0 || profile.ModifierName == "CryosBossShock" {
+	if profile.MovementSpeedBuff < 0 || profile.ModifierName == "CryosBossShock" ||
+		profile.ModifierName == "SleepModifier" || profile.ModifierName == "StalkerShock" ||
+		profile.ModifierName == "AcFreeze" || profile.ModifierName == "SilenceModifier" ||
+		profile.ModifierName == "EntangleModifier" || profile.ModifierName == "VerdanthBasicRootmobModifier" {
 		r.registry.mutex.RLock()
 		sourceMember, isSourceFound := r.registry.sessions[sessionKey]
 		if isSourceFound {
@@ -120,6 +123,14 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 		profile.ModifierName == "SilenceModifier" || profile.ModifierName == "CitadelMinionSuicide_Daze" || isRoot) && r.now == nil {
 		return nil, errors.New("enemy modifier clock unavailable")
 	}
+	r.registry.mutex.RLock()
+	member, isMemberFound := r.registry.sessions[sessionKey]
+	isBlocked := isMemberFound && member.zone != nil &&
+		r.registry.isNativeIrreplaceableModifierBlocked(&member, plan.TargetObjectID, profile.ModifierGUID())
+	r.registry.mutex.RUnlock()
+	if isBlocked {
+		return nil, nil
+	}
 	run, err := newCampaignNPCModifierRun(r.modifierPool)
 	if err != nil {
 		return nil, fmt.Errorf("enemyTimedModifierRun: %w", err)
@@ -146,6 +157,9 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 	if isCurrent && r.isTargetStatusImmuneLocked(&peerSession, plan.TargetObjectID) {
 		isCurrent = false
 	}
+	if isCurrent && r.registry.isNativeIrreplaceableModifierBlocked(&peerSession, plan.TargetObjectID, profile.ModifierGUID()) {
+		isCurrent = false
+	}
 	if isCurrent {
 		profile.ModifierDuration, err = projectCampaignTimedModifierDuration(
 			profile, peerSession, plan.TargetObjectID,
@@ -162,16 +176,6 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 	}
 	if isCurrent && profile.ModifierName == "CitadelMinionSuicide_Daze" && plan.TargetObjectID == peerSession.deployedObjectID && peerSession.isScarabDazed() {
 		isCurrent = false
-	}
-	// Speed template453 is CasterUnique: repeated casts from one source do
-	// not stack another contribution while that source's modifier is alive.
-	if isCurrent && (profile.ModifierName == "Chilled" || profile.ModifierName == "SlowNovaModifier") {
-		for _, existing := range peerSession.campaignNPCModifiers {
-			if existing != nil && existing.isActive() && existing.record.GUID == profile.ModifierGUID() && existing.record.SourceObjectID == plan.SourceObjectID && existing.record.TargetObjectID == plan.TargetObjectID {
-				isCurrent = false
-				break
-			}
-		}
 	}
 	if isCurrent {
 		err = peerSession.trackCampaignNPCModifier(run)
@@ -282,11 +286,11 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 	}
 	if profile.ModifierName == "SleepModifier" {
 		at := r.now()
-		expiresAt := at.Add(profile.ModifierDuration)
+		expiresAt := run.record.ExpiresAt
 		r.registry.mutex.Lock()
 		for targetSessionKey, targetSession := range r.registry.sessions {
 			if targetSession.zone != peerSession.zone ||
-				!targetSession.extendEnemySleep(plan.TargetObjectID, expiresAt) {
+				!targetSession.admitHeroControl(heroControlSleep, run, plan.TargetObjectID, expiresAt) {
 				continue
 			}
 			interruptedBasic := targetSession.resetInterruptibleActionAdmission()
@@ -311,11 +315,11 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 	}
 	if isStun {
 		at := r.now()
-		expiresAt := at.Add(profile.ModifierDuration)
+		expiresAt := run.record.ExpiresAt
 		r.registry.mutex.Lock()
 		for targetSessionKey, targetSession := range r.registry.sessions {
 			if targetSession.zone != peerSession.zone ||
-				!targetSession.extendEnemyStun(plan.TargetObjectID, expiresAt) {
+				!targetSession.admitHeroControl(heroControlStun, run, plan.TargetObjectID, expiresAt) {
 				continue
 			}
 			stopPackets, stopErr := stopEnemyControlledHeroMovement(&targetSession, at)
@@ -335,11 +339,11 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 		r.registry.mutex.Unlock()
 	}
 	if profile.ModifierName == "SilenceModifier" {
-		expiresAt := r.now().Add(profile.ModifierDuration)
+		expiresAt := run.record.ExpiresAt
 		r.registry.mutex.Lock()
 		for targetSessionKey, targetSession := range r.registry.sessions {
 			if targetSession.zone != peerSession.zone ||
-				!targetSession.extendEnemySilence(plan.TargetObjectID, expiresAt) {
+				!targetSession.admitHeroControl(heroControlSilence, run, plan.TargetObjectID, expiresAt) {
 				continue
 			}
 			r.registry.sessions[targetSessionKey] = targetSession
@@ -347,12 +351,12 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 		r.registry.mutex.Unlock()
 	}
 	if isRoot {
-		expiresAt := r.now().Add(profile.ModifierDuration)
+		expiresAt := run.record.ExpiresAt
 		rootStopPackets := make([][]byte, 0, 1)
 		r.registry.mutex.Lock()
 		for targetSessionKey, targetSession := range r.registry.sessions {
 			if targetSession.zone != peerSession.zone ||
-				!targetSession.extendEnemyRoot(plan.TargetObjectID, expiresAt) {
+				!targetSession.admitHeroControl(heroControlRoot, run, plan.TargetObjectID, expiresAt) {
 				continue
 			}
 			// Stop queued approach callbacks as well as the current route; they
@@ -406,17 +410,40 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 			return nil, fmt.Errorf("enemyEntangleFocus: %w", err)
 		}
 	}
+	if profile.ModifierName == "SleepModifier" {
+		// Native pose corrections must finish before SleepModifier takes
+		// animation ownership; otherwise the stop can replace status_sleep.
+		packets = append(packets[1:], createPacket)
+	}
+	if isVerifiedNativeReplacingModifier(profile.ModifierGUID()) {
+		admission := campaignAbilityCommandRuntime{
+			registry: r.registry, modifierPool: r.modifierPool, logger: r.logger,
+		}
+		r.registry.mutex.Lock()
+		current, isCurrentFound := r.registry.sessions[sessionKey]
+		isCurrent = isCurrentFound && current.generation == generation &&
+			current.campaignNPCModifiers[run.instanceID] == run
+		if !isCurrent {
+			r.registry.mutex.Unlock()
+			return nil, nil
+		}
+		replacements, replacementErr := admission.prepareNativeUniqueReplacementsLocked(&current, run)
+		if replacementErr != nil {
+			r.registry.mutex.Unlock()
+			cancel()
+			r.rollbackCampaignNPCTimedModifier(sessionKey, generation, run)
+			return nil, fmt.Errorf("controlReplacement: %w", replacementErr)
+		}
+		deletes := admission.commitNativeUniqueReplacementsLocked(sessionKey, &current, replacements)
+		r.registry.mutex.Unlock()
+		packets = append(deletes, packets...)
+	}
 	if profile.MovementSpeedBuff != 0 {
 		speedPackets, speedErr := r.refreshScarabDazeMovement(sessionKey, generation, plan.TargetObjectID)
 		if speedErr != nil {
 			return nil, fmt.Errorf("scarabDazeSpeed: %w", speedErr)
 		}
 		packets = append(packets, speedPackets...)
-	}
-	if profile.ModifierName == "SleepModifier" {
-		// Native pose corrections must finish before SleepModifier takes
-		// animation ownership; otherwise the stop can replace status_sleep.
-		packets = append(packets[1:], createPacket)
 	}
 	return packets, nil
 }

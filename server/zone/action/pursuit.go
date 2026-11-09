@@ -218,8 +218,9 @@ func AdvancePursuitPath(
 }
 
 type PursuitPathStep struct {
-	Position game.Vec3
-	Waypoint game.Vec3
+	Position   game.Vec3
+	Waypoint   game.Vec3
+	Traversals []basenavigation.Traversal
 }
 
 // Return the same next corridor point used to advance the server actor, so
@@ -227,6 +228,30 @@ type PursuitPathStep struct {
 func AdvancePursuitPathStep(
 	mesh *basenavigation.Mesh, source game.Vec3, target game.Vec3,
 	footprintRadius float32, travel float32, actors ...basenavigation.ActorNavigation,
+) (PursuitPathStep, error) {
+	step, err := advancePathStep(mesh, source, target, footprintRadius, travel, false, actors...)
+	if err != nil {
+		return PursuitPathStep{}, fmt.Errorf("pursuitWalk: %w", err)
+	}
+	return step, nil
+}
+
+// AdvanceTraversalPathStep is reserved for movement owners that commit and
+// publish the returned semantic teleports. Other path callers remain walk-only.
+func AdvanceTraversalPathStep(
+	mesh *basenavigation.Mesh, source game.Vec3, target game.Vec3,
+	footprintRadius float32, travel float32, actors ...basenavigation.ActorNavigation,
+) (PursuitPathStep, error) {
+	step, err := advancePathStep(mesh, source, target, footprintRadius, travel, true, actors...)
+	if err != nil {
+		return PursuitPathStep{}, fmt.Errorf("pursuitTraversal: %w", err)
+	}
+	return step, nil
+}
+
+func advancePathStep(
+	mesh *basenavigation.Mesh, source game.Vec3, target game.Vec3,
+	footprintRadius float32, travel float32, isTraversalAllowed bool, actors ...basenavigation.ActorNavigation,
 ) (PursuitPathStep, error) {
 	if mesh == nil || !zonegeometry.IsFinite(source) ||
 		!zonegeometry.IsFinite(target) ||
@@ -245,7 +270,8 @@ func AdvancePursuitPathStep(
 			ProjectionOptions: basenavigation.ProjectionOptions{
 				PlanLayer: planLayer, MaxDistance: pursuitProjectionDistance,
 			},
-			MaxVisitedPolygon: maximumVisitedPolygon,
+			MaxVisitedPolygon:  maximumVisitedPolygon,
+			IsTraversalAllowed: isTraversalAllowed,
 		},
 	)
 	if err != nil {
@@ -254,7 +280,18 @@ func AdvancePursuitPathStep(
 
 	position := basenavigation.Vec3{X: source.X, Y: source.Y, Z: source.Z}
 	waypoint := target
-	for _, point := range path.Points {
+	for pointIndex, point := range path.Points {
+		if pointIndex > 0 {
+			traversal := path.TraversalAt(pointIndex - 1)
+			if traversal.MarkerID != 0 {
+				current := mesh.TraversalSegment(traversal.Source, traversal.Destination)
+				if !current.IsEnabled {
+					return PursuitPathStep{Position: game.Vec3(position), Waypoint: game.Vec3(position)}, nil
+				}
+				return PursuitPathStep{Position: game.Vec3(traversal.Destination), Waypoint: game.Vec3(traversal.Destination),
+					Traversals: []basenavigation.Traversal{traversal}}, nil
+			}
+		}
 		deltaX := point.X - position.X
 		deltaY := point.Y - position.Y
 		deltaZ := point.Z - position.Z
@@ -265,17 +302,38 @@ func AdvancePursuitPathStep(
 			continue
 		}
 		if travel >= distance {
+			if isTraversalAllowed {
+				traversal := mesh.TraverseSegment(position, point)
+				if traversal.MarkerID != 0 {
+					if !mesh.IsSegmentClear(position, traversal.Source, planLayer) {
+						return PursuitPathStep{Position: game.Vec3(position), Waypoint: game.Vec3(position)}, nil
+					}
+					return PursuitPathStep{Position: game.Vec3(traversal.Destination), Waypoint: game.Vec3(traversal.Destination),
+						Traversals: []basenavigation.Traversal{traversal}}, nil
+				}
+			}
 			position = point
 			travel -= distance
 			continue
 		}
 		scale := travel / distance
 		waypoint = game.Vec3{X: point.X, Y: point.Y, Z: point.Z}
-		position = basenavigation.Vec3{
+		next := basenavigation.Vec3{
 			X: position.X + deltaX*scale,
 			Y: position.Y + deltaY*scale,
 			Z: position.Z + deltaZ*scale,
 		}
+		if isTraversalAllowed {
+			traversal := mesh.TraverseSegment(position, next)
+			if traversal.MarkerID != 0 {
+				if !mesh.IsSegmentClear(position, traversal.Source, planLayer) {
+					return PursuitPathStep{Position: game.Vec3(position), Waypoint: game.Vec3(position)}, nil
+				}
+				return PursuitPathStep{Position: game.Vec3(traversal.Destination), Waypoint: game.Vec3(traversal.Destination),
+					Traversals: []basenavigation.Traversal{traversal}}, nil
+			}
+		}
+		position = next
 		break
 	}
 	return PursuitPathStep{

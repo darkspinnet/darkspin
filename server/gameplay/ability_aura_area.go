@@ -92,6 +92,10 @@ func (r campaignDamageRuntime) breakSleepingCloudOnDamage(
 	if !isFound || peerSession.generation != generation || peerSession.zone == nil {
 		return nil, nil
 	}
+	err := r.registry.wakeTransferredSleepLocked(peerSession.zone, objectID, r.npc.modifierPool)
+	if err != nil {
+		return nil, fmt.Errorf("transferSleepWake: %w", err)
+	}
 	// Keep each exact run locked until its deletions are queued and its handles
 	// are retired. A scan or cleanup cannot replace a membership in between.
 	runs := make(map[*heroAuraAreaRun]heroAuraAreaTarget)
@@ -157,16 +161,16 @@ func (r campaignDamageRuntime) breakSleepingCloudOnDamage(
 	return nil, releaseErr
 }
 
-func (e *heroAuraAreaRun) clearStatus(objectID uint32, expiresAt time.Time) {
+func (e *heroAuraAreaRun) clearStatus(objectID, instanceID uint32, expiresAt time.Time) {
 	if e.arenaGameID != 0 {
 		e.clearArenaSphereSlowLocked(objectID)
 		return
 	}
 	switch e.statusKind {
 	case sim.AbilityStatusKindSilence:
-		e.npc.ClearSilence(objectID, expiresAt)
+		e.npc.ClearSilenceModifier(objectID, instanceID)
 	case sim.AbilityStatusKindSleep:
-		e.npc.ClearSleep(objectID, expiresAt)
+		e.npc.ClearSleepModifier(objectID, instanceID)
 	}
 }
 
@@ -424,6 +428,10 @@ func (e heroAuraAreaSchedule) reconcile(
 			}
 			e.run.sleepAttempts[objectID] = struct{}{}
 			target.sleep, isApplied, err = e.applySleepingCloudTarget(objectID, instanceID, expiresAt)
+		} else if e.definition.StatusKind == sim.AbilityStatusKindSilence {
+			isApplied, err = peerSession.zone.NPCs().AdmitSilenceModifier(objectID, instanceID, now, expiresAt)
+		} else if e.definition.StatusKind == sim.AbilityStatusKindSleep {
+			isApplied, err = peerSession.zone.NPCs().AdmitSleepModifier(objectID, instanceID, now, expiresAt)
 		} else {
 			err = e.applyStatus(peerSession.zone.NPCs(), objectID, instanceID, expiresAt)
 			isApplied = err == nil && e.statusRemaining(peerSession.zone.NPCs(), objectID, now) != 0
@@ -457,10 +465,6 @@ func (e heroAuraAreaSchedule) applyStatus(
 	npc *zonenpc.Session, objectID, instanceID uint32, expiresAt time.Time,
 ) error {
 	switch e.definition.StatusKind {
-	case sim.AbilityStatusKindSilence:
-		return npc.ApplySilence(objectID, expiresAt)
-	case sim.AbilityStatusKindSleep:
-		return npc.ApplySleep(objectID, expiresAt)
 	case sim.AbilityStatusKindSlow:
 		return npc.ApplySlowModifier(objectID, instanceID, expiresAt, 0.40, 0.60)
 	default:

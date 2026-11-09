@@ -1,10 +1,14 @@
 package companion
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/darkspinnet/darkspin/server/attribute"
+)
 
 // ApplyMaximumHitPointPercent owns FieldMedicHealthBuff829's Unique
-// kPercentChange contribution. Only one such modifier is admitted at a time;
-// mixed attribute-operation ordering is deliberately not modeled here.
+// kPercentChange contribution. Only one such modifier is admitted at a time.
 func (e *Session) ApplyMaximumHitPointPercent(objectID, instanceID uint32, percent float32) error {
 	if e == nil || objectID == 0 || instanceID == 0 || !isFiniteNonNegative(percent) {
 		return errors.New("invalid companion capacity modifier")
@@ -18,7 +22,12 @@ func (e *Session) ApplyMaximumHitPointPercent(objectID, instanceID uint32, perce
 	if actor.maximumHitPointModifierID == 0 {
 		actor.maximumHitPointBase = actor.MaximumHitPoint
 	}
-	capacity := actor.maximumHitPointBase * (1 + percent)
+	capacity, err := attribute.Resolve(actor.maximumHitPointBase, []attribute.Contribution{
+		{Handle: instanceID, Operation: attribute.PercentChange, Amount: percent},
+	})
+	if err != nil {
+		return fmt.Errorf("capacityResolve: %w", err)
+	}
 	if !isFinitePositive(capacity) {
 		return errors.New("companion capacity aggregate invalid")
 	}

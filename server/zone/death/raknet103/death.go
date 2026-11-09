@@ -680,7 +680,7 @@ func (o *enemyDeathOutbox) Stop(_ context.Context, _ sim.EventMeta, intent sim.L
 func (o *enemyDeathOutbox) ApplyModifier(
 	_ context.Context, _ sim.EventMeta, intent sim.AttributeModifierIntent,
 ) error {
-	if intent.Role != enemyDeathTargetRole || intent.AttributeKind != sim.AttributeImmobilized ||
+	if !intent.IsLegacyDelta() || intent.Role != enemyDeathTargetRole || intent.AttributeKind != sim.AttributeImmobilized ||
 		(intent.Amount != 1 && intent.Amount != -1) {
 		return fmt.Errorf("attributeIntent: %#v", intent)
 	}

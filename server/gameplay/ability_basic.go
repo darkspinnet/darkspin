@@ -1535,17 +1535,16 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 			duration := zonenpc.CrowdControlDuration(
 				result.Snapshot.Plan, e.definition.StatusDuration,
 			)
-			expiresAt := now.Add(duration)
-			err = current.zone.NPCs().ApplyStun(result.Damage.ObjectID, expiresAt)
-			if err != nil {
+			controlPackets, isAdmitted, controlErr := e.admitTeleportControlLocked(
+				&current, result.Damage.ObjectID, now, duration)
+			if controlErr != nil {
 				e.runtime.registry.mutex.Unlock()
-				return nil, fmt.Errorf("campaignTeleportAreaStun: %w", err)
+				return nil, fmt.Errorf("campaignTeleportControl: %w", controlErr)
 			}
-			err = current.zone.NPCs().ApplySilence(result.Damage.ObjectID, expiresAt)
-			if err != nil {
-				e.runtime.registry.mutex.Unlock()
-				return nil, fmt.Errorf("campaignTeleportAreaSilence: %w", err)
+			if !isAdmitted {
+				continue
 			}
+			projectilePackets = append(projectilePackets, controlPackets...)
 			if e.definition.Name == "TimeRavagerSupport" {
 				e.runtime.registry.sessions[e.sessionKey] = current
 				freezePacket, freezeErr := freezeChronoObjectLocked(
@@ -1600,10 +1599,13 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("campaignAreaBasicPublish: %w", err)
 	}
-	statusPackets, err := e.runtime.applyAcceptedHitStatus(
-		e.packet, e.sessionKey, e.generation, e.command.Common.ObjectID,
-		e.hitTimestamp, plan, results,
-	)
+	var statusPackets [][]byte
+	if e.definition.Kind != sim.AbilityKindTeleportArea {
+		statusPackets, err = e.runtime.applyAcceptedHitStatus(
+			e.packet, e.sessionKey, e.generation, e.command.Common.ObjectID,
+			e.hitTimestamp, plan, results,
+		)
+	}
 	if err != nil {
 		e.runtime.logger.Printf(
 			"RakNet hero accepted-hit status omitted for %s: %v",
@@ -1815,6 +1817,7 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 			return request.reject("cursor position unavailable")
 		}
 		if definition.Kind == sim.AbilityKindTeleportArea {
+			peerSession.clearHeroControlKind(heroControlRoot)
 			peerSession.enemyRootExpiresAt = time.Time{}
 			peerSession.enemyRootTargetObjectID = 0
 			var projected game.Vec3

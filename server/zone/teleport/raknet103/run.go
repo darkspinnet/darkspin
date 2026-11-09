@@ -255,7 +255,7 @@ func (o *teleporterOutbox) Stop(_ context.Context, meta sim.EventMeta, intent si
 func (o *teleporterOutbox) ApplyModifier(
 	_ context.Context, meta sim.EventMeta, intent sim.AttributeModifierIntent,
 ) error {
-	if intent.Role != zoneteleport.EntrantRole ||
+	if !intent.IsLegacyDelta() || intent.Role != zoneteleport.EntrantRole ||
 		intent.AttributeKind != sim.AttributeImmobilized || intent.Amount != 1 {
 		return fmt.Errorf("attributeIntent: %#v", intent)
 	}

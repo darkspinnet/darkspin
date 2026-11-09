@@ -77,12 +77,15 @@ func (m *Motion) Position() sim.Position {
 // command-driven encounter observers still need to process.
 func (e *Motion) SamplePosition(now time.Time) (sim.Position, error) {
 	e.mu.RLock()
+	defer e.mu.RUnlock()
 	movement := e.movement.Clone()
 	at := max(now.Sub(e.startedAt), movement.Snapshot().At)
-	e.mu.RUnlock()
-	position, err := movement.Position(at)
+	position, isBlocked, err := e.advanceClearPathLocked(movement, at)
 	if err != nil {
 		return sim.Position{}, fmt.Errorf("motionSample: %w", err)
+	}
+	if isBlocked {
+		return position, nil
 	}
 	return position, nil
 }
@@ -97,11 +100,20 @@ func (e *Motion) SetSpeed(now time.Time, speed float32) error {
 		return fmt.Errorf("speedTime: %w", err)
 	}
 	movement := e.movement.Clone()
-	err = movement.SetSpeed(max(elapsed, movement.Snapshot().At), speed)
+	at := max(elapsed, movement.Snapshot().At)
+	position, isBlocked, err := e.advanceClearPathLocked(movement, at)
+	if err != nil {
+		return fmt.Errorf("speedCollision: %w", err)
+	}
+	err = movement.SetSpeed(at, speed)
 	if err != nil {
 		return fmt.Errorf("speedPath: %w", err)
 	}
 	e.movement = movement
+	if isBlocked {
+		e.position = position
+		e.rememberNavigationPositionLocked(position)
+	}
 	e.revision++
 	return nil
 }
@@ -219,11 +231,11 @@ func (m *Motion) advance(
 		return sim.Position{}, sim.Position{}, fmt.Errorf("advanceTime: %w", err)
 	}
 	movement := m.movement.Clone()
-	position, err := movement.Position(elapsed)
+	position, isBlocked, err := m.advanceClearPathLocked(movement, elapsed)
 	if err != nil {
 		return sim.Position{}, sim.Position{}, fmt.Errorf("motionAdvance: %w", err)
 	}
-	if isReported {
+	if isReported && !isBlocked {
 		var isAccepted bool
 		position, isAccepted, err = m.reconcilePosition(movement, elapsed, reported, correctionRange)
 		if err != nil {
@@ -234,6 +246,7 @@ func (m *Motion) advance(
 			position = movement.Snapshot().Position
 		}
 	}
+	isStop = isStop || isBlocked
 	if isStop {
 		position, err = movement.Stop(elapsed)
 		if err != nil {
@@ -269,15 +282,12 @@ func (m *Motion) AdvancePosition(
 	if err != nil {
 		return sim.Position{}, fmt.Errorf("positionTime: %w", err)
 	}
-	movement := m.movement
-	if isReported {
-		movement = movement.Clone()
-	}
-	position, err := movement.Position(elapsed)
+	movement := m.movement.Clone()
+	position, isBlocked, err := m.advanceClearPathLocked(movement, elapsed)
 	if err != nil {
 		return sim.Position{}, fmt.Errorf("motionPosition: %w", err)
 	}
-	if isReported {
+	if isReported && !isBlocked {
 		var isAccepted bool
 		position, isAccepted, err = m.reconcilePosition(movement, elapsed, reported, correctionRange)
 		if err != nil {
@@ -300,6 +310,9 @@ func (m *Motion) AdvancePosition(
 	}
 	m.movement = movement
 	m.position = position
+	if isBlocked {
+		m.rememberNavigationPositionLocked(position)
+	}
 	m.revision++
 	return position, nil
 }
@@ -314,10 +327,18 @@ func (m *Motion) Stop(now time.Time) (sim.Position, error) {
 	if err != nil {
 		return sim.Position{}, fmt.Errorf("stopTime: %w", err)
 	}
-	position, err := m.movement.Stop(elapsed)
+	movement := m.movement.Clone()
+	position, isBlocked, err := m.advanceClearPathLocked(movement, elapsed)
+	if err != nil {
+		return sim.Position{}, fmt.Errorf("stopCollision: %w", err)
+	}
+	if !isBlocked {
+		position, err = movement.Stop(elapsed)
+	}
 	if err != nil {
 		return sim.Position{}, fmt.Errorf("motionStop: %w", err)
 	}
+	m.movement = movement
 	m.position = position
 	m.projectionRange = zonenavigation.ProjectionDistance
 	m.rememberNavigationPositionLocked(position)

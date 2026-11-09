@@ -52,6 +52,9 @@ func (e *accountHTTPResponse) WriteHeader(status int) {
 }
 
 func (e *accountHTTPResponse) Write(payload []byte) (int, error) {
+	// Keep the protocol content type explicit on the underlying writer at the
+	// body sink, including for static analysis of this forwarding wrapper.
+	e.ResponseWriter.Header().Set("Content-Type", "application/xml; charset=utf-8")
 	if e.status == 0 {
 		e.WriteHeader(http.StatusOK)
 	}

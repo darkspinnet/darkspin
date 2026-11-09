@@ -245,6 +245,7 @@ func (e *sporogenesisHot) purgeTargetLocked() ([][]byte, error) {
 			// Accepted aura deletions are already queued to the shared zone.
 		}
 		e.originZone.NPCs().PurgeDebuffs(e.target.objectID)
+		e.runtime.registry.reconcileNPCChronoLocked(e.originZone, e.target.objectID)
 		packets = append(packets, e.runtime.registry.retireTargetInfectionRootsLocked(e.originZone.NPCs(), e.target.objectID)...)
 	}
 	// Companion debuffs retain their native target ID in the owner's ordinary

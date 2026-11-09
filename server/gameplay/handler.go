@@ -2905,6 +2905,15 @@ func (r gameplayPendingRuntime) pollWorld(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("mutationFeedbackPending: %w", mutationFeedbackErr)
 	}
+	if isFound && peerSession.zone != nil {
+		r.registry.sessions[packet.Address.String()] = peerSession
+		traversalErr := r.registry.queueNavigationTeleportsLocked(peerSession.zone)
+		if traversalErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("navigationTraversal: %w", traversalErr)
+		}
+		peerSession = r.registry.sessions[packet.Address.String()]
+	}
 	pendingBatchCount := len(peerSession.pendingPacketBatches)
 	queuedPackets, pendingPacketBatchID := peerSession.pendingPacketsForResponse(packet.ResponseID())
 	overdriveFrames := peerSession.pendingOverdriveFrames(pendingPacketBatchID)
@@ -4794,6 +4803,7 @@ func resetGameplayPeerRuntime(
 	peerSession.isGraviticEffectAttached = false
 	peerSession.graviticProjectiles = nil
 	peerSession.isGraviticSpeedPresented = false
+	peerSession.heroControls = nil
 	peerSession.enemySilenceExpiresAt = time.Time{}
 	peerSession.enemySleepExpiresAt = time.Time{}
 	peerSession.enemyStunExpiresAt = time.Time{}

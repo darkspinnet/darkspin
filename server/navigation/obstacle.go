@@ -7,14 +7,15 @@ import (
 	"sync/atomic"
 )
 
-// Obstacle is an upright static collision box in game coordinates. The
+// Obstacle is an upright collision box in game coordinates. The
 // selected layout owns these boxes; the cached terrain mesh remains immutable.
 type Obstacle struct {
-	MarkerID uint32
-	Position Vec3
-	Minimum  Vec3
-	Maximum  Vec3
-	Yaw      float32
+	MarkerID            uint32
+	Position            Vec3
+	Minimum             Vec3
+	Maximum             Vec3
+	Yaw                 float32
+	IsInitiallyDisabled bool
 	// Selected Nocturna wall proxies permit bounded projection to free faces.
 	// Other obstacles retain strict rejection of an obstructed projection.
 	IsBoundaryProjectionEnabled bool
@@ -38,8 +39,33 @@ func (e *Mesh) WithObstacles(obstacles []Obstacle) (*Mesh, error) {
 	result.obstacles = append([]Obstacle(nil), obstacles...)
 	for index := range result.obstacles {
 		result.obstacles[index].isDisabled = new(atomic.Bool)
+		result.obstacles[index].isDisabled.Store(result.obstacles[index].IsInitiallyDisabled)
 	}
 	return &result, nil
+}
+
+// WithAdditionalObstacles preserves existing obstacle lifetime while attaching
+// another feature's initially configured colliders to this zone's mesh.
+func (e *Mesh) WithAdditionalObstacles(obstacles []Obstacle) (*Mesh, error) {
+	result, err := e.WithObstacles(obstacles)
+	if err != nil {
+		return nil, fmt.Errorf("additionalBounds: %w", err)
+	}
+	result.obstacles = append(append([]Obstacle(nil), e.obstacles...), result.obstacles...)
+	return result, nil
+}
+
+// SetObstacleEnabled changes a selected collider for every actor sharing this
+// mesh. Horde barriers use it for both activation and encounter completion.
+func (e *Mesh) SetObstacleEnabled(markerID uint32, isEnabled bool) {
+	if e == nil || markerID == 0 {
+		return
+	}
+	for _, obstacle := range e.obstacles {
+		if obstacle.MarkerID == markerID && obstacle.isDisabled != nil {
+			obstacle.isDisabled.Store(!isEnabled)
+		}
+	}
 }
 
 // DisableObstacle retires a placed collider without changing the shared terrain
@@ -154,9 +180,9 @@ type obstacleRoute struct {
 
 // CreatePath retains terrain corridors, then searches around authored collision
 // boxes when needed. Every candidate edge is itself a terrain path and is
-// checked against every box. This compatibility overlay does not claim native
-// topology splitting or dynamic-door lifecycle parity.
-func (e *Mesh) CreatePath(start Vec3, goal Vec3, options PathOptions) (Path, error) {
+// checked against every enabled box. The overlay does not claim native
+// topology splitting.
+func (e *Mesh) walkingPath(start Vec3, goal Vec3, options PathOptions) (Path, error) {
 	path, err := e.terrainPath(start, goal, options)
 	if err != nil {
 		return Path{}, fmt.Errorf("pathTerrain: %w", err)

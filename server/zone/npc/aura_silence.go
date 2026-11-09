@@ -67,10 +67,15 @@ func (e *Session) ClearAuraSilence(objectID, instanceID uint32) {
 }
 
 func (e status) silenceEnd() time.Time {
-	expiresAt := e.silenceExpiresAt
+	expiresAt := controlEnd(e.silenceExpiresAt, e.silenceModifiers)
 	for _, contributionEnd := range e.auraSilences {
 		if expiresAt.Before(contributionEnd) {
 			expiresAt = contributionEnd
+		}
+	}
+	for _, modifier := range e.basicModifiers {
+		if modifier.Key.Kind == BasicModifierPummel && expiresAt.Before(modifier.ActiveUntil) {
+			expiresAt = modifier.ActiveUntil
 		}
 	}
 	return expiresAt

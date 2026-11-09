@@ -331,6 +331,7 @@ type controlledHeroState struct {
 	areaBasicGeneration           uint64
 	movementContactGeneration     uint64
 	nextProjectileObjectID        uint32
+	heroControls                  map[uint32]heroControlContribution
 	enemySilenceExpiresAt         time.Time
 	enemySleepExpiresAt           time.Time
 	enemyStunExpiresAt            time.Time
@@ -447,7 +448,7 @@ func (s *gameplayPeerSession) isEnemySleepActive(at time.Time) bool {
 	if s == nil || at.IsZero() {
 		return false
 	}
-	if at.Before(s.enemySleepExpiresAt) {
+	if s.isHeroControlActive(heroControlSleep, at) {
 		return true
 	}
 	for _, status := range s.arenaHitStatuses {
@@ -480,8 +481,7 @@ func (s *gameplayPeerSession) isEnemyStunActive(at time.Time) bool {
 		return true
 	}
 	return s != nil && !at.IsZero() &&
-		s.deployedObjectID == s.enemyStunTargetObjectID &&
-		at.Before(s.enemyStunExpiresAt)
+		s.isHeroControlActive(heroControlStun, at)
 }
 
 func (s *gameplayPeerSession) extendEnemyRoot(
@@ -500,7 +500,7 @@ func (s *gameplayPeerSession) extendEnemyRoot(
 
 func (s *gameplayPeerSession) isEnemyRootActive(at time.Time) bool {
 	return s != nil && !at.IsZero() &&
-		((s.deployedObjectID == s.enemyRootTargetObjectID && at.Before(s.enemyRootExpiresAt)) ||
+		(s.isHeroControlActive(heroControlRoot, at) ||
 			s.isArenaHitRootActive(at))
 }
 
@@ -538,7 +538,7 @@ func (s *gameplayPeerSession) extendEnemySilence(
 }
 
 func (e gameplayPeerSession) isEnemySilenceActive(at time.Time) bool {
-	return !at.IsZero() && (at.Before(e.enemySilenceExpiresAt) || e.isArenaHitSilenceActive(at) || e.fixtureSilenceCount() > 0)
+	return !at.IsZero() && (e.isHeroControlActive(heroControlSilence, at) || e.isArenaHitSilenceActive(at) || e.fixtureSilenceCount() > 0)
 }
 
 type controlledHeroPresentation struct {
@@ -1727,6 +1727,7 @@ func (s *gameplayPeerSession) clearEnemyHeroStatuses() {
 	}
 	s.clearScenarioHeroAbilityRank()
 	s.retireArenaHitStatuses()
+	s.heroControls = nil
 	s.enemySilenceExpiresAt = time.Time{}
 	s.enemySleepExpiresAt = time.Time{}
 	s.enemyStunExpiresAt = time.Time{}
@@ -1782,6 +1783,7 @@ func (s *gameplayPeerSession) resetRetainedTransportState() {
 	}
 	s.pendingPacketBatches = retainedBatches
 	s.isPendingPacketOverflow = false
+	s.heroControls = nil
 	s.enemySilenceExpiresAt = time.Time{}
 	s.enemySleepExpiresAt = time.Time{}
 	s.enemyStunExpiresAt = time.Time{}

@@ -79,6 +79,7 @@ func (e campaignMaserCleanseStep) hit() ([][]byte, error) {
 			return packets, fmt.Errorf("auraCleanse: %w", auraErr)
 		}
 		isPurged := peerSession.zone.NPCs().PurgeDebuffs(ally.Plan.ObjectID)
+		e.runtime.registry.reconcileNPCChronoLocked(peerSession.zone, ally.Plan.ObjectID)
 		if !isPurged && !isAuraPurged && !isFirePurged && len(cloudPackets) == 0 && len(fixturePackets) == 0 {
 			continue
 		}

@@ -12,7 +12,7 @@ import (
 // Prepare the existing controller's deletes before accepting a new control
 // modifier. A different status already present is never proof of admission.
 func (e *gameplaySessionRegistry) admitLaserControlModifierLocked(member *gameplayPeerSession,
-	objectID uint32, kind sim.AbilityStatusKind, at, expiresAt time.Time,
+	objectID, instanceID uint32, kind sim.AbilityStatusKind, at, expiresAt time.Time,
 ) (laserModifierReaction, bool, error) {
 	reaction, err := e.prepareLaserControlReactionLocked(member, objectID)
 	if err != nil {
@@ -24,11 +24,11 @@ func (e *gameplaySessionRegistry) admitLaserControlModifierLocked(member *gamepl
 	var isAdmitted bool
 	switch kind {
 	case sim.AbilityStatusKindStun:
-		isAdmitted, err = member.zone.NPCs().AdmitStun(objectID, at, expiresAt)
+		isAdmitted, err = member.zone.NPCs().AdmitStunModifier(objectID, instanceID, at, expiresAt)
 	case sim.AbilityStatusKindSilence:
-		isAdmitted, err = member.zone.NPCs().AdmitSilence(objectID, at, expiresAt)
+		isAdmitted, err = member.zone.NPCs().AdmitSilenceModifier(objectID, instanceID, at, expiresAt)
 	case sim.AbilityStatusKindBanish:
-		isAdmitted, err = member.zone.NPCs().AdmitBanish(objectID, at, expiresAt)
+		isAdmitted, err = member.zone.NPCs().AdmitBanishModifier(objectID, instanceID, at, expiresAt)
 	default:
 		return laserModifierReaction{}, false, errors.New("unsupported laser control modifier")
 	}

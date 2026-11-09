@@ -86,6 +86,7 @@ type Mesh struct {
 	layers    []layer
 	tunings   []LayerTuning
 	obstacles []Obstacle
+	links     []TraversalLink
 }
 
 func ParseBFX(data []byte) (*Mesh, error) {

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/attribute"
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
@@ -377,6 +378,10 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 		definition.RootModifierID == 0 || definition.StatusDuration <= 0 {
 		return nil, nil
 	}
+	healthContribution := r.program.FieldMedicHealthContribution
+	if healthContribution.Handle == 0 || healthContribution.Operation != attribute.PercentChange {
+		return nil, errors.New("field medic health contribution unavailable")
+	}
 	r.registry.mutex.Lock()
 	defer r.registry.mutex.Unlock()
 	peerSession, isFound := r.registry.sessions[target.sessionKey]
@@ -434,7 +439,11 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 	if baseMaximumHitPoint <= 0 {
 		baseMaximumHitPoint = campaignHeroResourceFallback
 	}
-	maximumHitPoint := baseMaximumHitPoint * 0.25
+	projectedMaximum, err := attribute.Resolve(baseMaximumHitPoint, []attribute.Contribution{healthContribution})
+	if err != nil {
+		return nil, fmt.Errorf("healthProject: %w", err)
+	}
+	maximumHitPoint := projectedMaximum - baseMaximumHitPoint
 	instanceID, err := r.modifierPool.Allocate()
 	if err != nil {
 		return nil, fmt.Errorf("fieldMedicHealthAllocate: %w", err)
@@ -462,8 +471,8 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 		return nil, fmt.Errorf("fieldMedicHealthCreate: %w", err)
 	}
 	if target.isCompanion {
-		// Build-103829 Tick uses kPercentChange(.25), not a captured kAdd.
-		err = peerSession.zone.Companion().ApplyMaximumHitPointPercent(target.objectID, instanceID, 0.25)
+		// The installed modifier's Tick supplies the operation and amount.
+		err = peerSession.zone.Companion().ApplyMaximumHitPointPercent(target.objectID, instanceID, healthContribution.Amount)
 	} else if peerSession.binding.Mode == game.ModeArena {
 		peerSession.arenaHitPointIncreases[target.creatureIndex] += maximumHitPoint
 	} else {

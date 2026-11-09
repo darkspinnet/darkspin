@@ -29,14 +29,16 @@ var ErrProjectionUnavailable = errors.New("navigation projection unavailable")
 
 type PathOptions struct {
 	ProjectionOptions
-	MaxVisitedPolygon int
+	MaxVisitedPolygon  int
+	IsTraversalAllowed bool
 }
 
 type Path struct {
-	Start    Projection
-	Goal     Projection
-	Corridor []uint32
-	Points   []Vec3
+	Start      Projection
+	Goal       Projection
+	Corridor   []uint32
+	Points     []Vec3
+	Traversals []Traversal
 }
 
 func (m *Mesh) Project(point Vec3, options ProjectionOptions) (Projection, error) {

@@ -55,8 +55,9 @@ func (e *Session) walkingPaths(actor Actor, destination game.Vec3) ([]game.Vec3,
 		return nil, game.Vec3{}, errors.New("companion navigation unavailable")
 	}
 	path, err := e.navigationMesh.CreatePath(navigation.Vec3(actor.Position), navigation.Vec3(destination), navigation.PathOptions{
-		ProjectionOptions: navigation.ProjectionOptions{PlanLayer: actor.Navigation.PlanLayer, MaxDistance: 3},
-		MaxVisitedPolygon: 2048,
+		ProjectionOptions:  navigation.ProjectionOptions{PlanLayer: actor.Navigation.PlanLayer, MaxDistance: 3},
+		MaxVisitedPolygon:  2048,
+		IsTraversalAllowed: true,
 	})
 	if err != nil {
 		return nil, game.Vec3{}, fmt.Errorf("companionPath: %w", err)
@@ -70,17 +71,47 @@ func (e *Session) walkingPaths(actor Actor, destination game.Vec3) ([]game.Vec3,
 		}
 	}
 	if len(points) > 1 && !e.navigationMesh.IsSegmentClear(navigation.Vec3(points[0]), navigation.Vec3(points[1]), actor.Navigation.PlanLayer) {
-		return nil, game.Vec3{}, errors.New("companion path start obstructed")
+		traversal := e.navigationMesh.TraversalSegment(navigation.Vec3(points[0]), navigation.Vec3(points[1]))
+		if !traversal.IsEnabled {
+			return nil, game.Vec3{}, errors.New("companion path start obstructed")
+		}
 	}
 	return points, game.Vec3(path.Goal.Position), nil
 }
 
-func walkingDistance(points []game.Vec3) float32 {
+func walkingDistance(points []game.Vec3, meshes ...*navigation.Mesh) float32 {
 	distance := float32(0)
 	for index := 1; index < len(points); index++ {
+		if len(meshes) != 0 && meshes[0].TraversalSegment(navigation.Vec3(points[index-1]), navigation.Vec3(points[index])).MarkerID != 0 {
+			continue
+		}
 		distance += points[index].Sub(points[index-1]).Length()
 	}
 	return distance
+}
+
+// Let native ground navigation approach the authored source while the server
+// retains the full route and selected target. A jump is published separately.
+func gateWaypointForPaths(points []game.Vec3, mesh *navigation.Mesh) (game.Vec3, bool) {
+	for index := 1; index < len(points); index++ {
+		traversal := mesh.TraversalSegment(navigation.Vec3(points[index-1]), navigation.Vec3(points[index]))
+		if traversal.MarkerID != 0 {
+			return points[index-1], true
+		}
+	}
+	return game.Vec3{}, false
+}
+
+// NavigationDestination retains the accepted full goal after an inward jump;
+// presentation may resume ordinary native navigation once the pose is restored.
+func (e Actor) NavigationDestination() (game.Vec3, bool) {
+	if e.PursuitObjectID != 0 {
+		return e.PursuitPosition, true
+	}
+	if e.IsFollowing {
+		return e.followPlan.Destination, true
+	}
+	return game.Vec3{}, false
 }
 
 func walkingFraction(start, deadline, at time.Time) float32 {
@@ -96,20 +127,44 @@ func walkingFraction(start, deadline, at time.Time) float32 {
 // Only already admitted terrain segments are sampled here. Each sample also
 // checks the current shared collision overlay before accepting travel.
 type walkingSample struct {
-	position  game.Vec3
-	nextIndex int
-	isBlocked bool
+	traversals []navigation.Traversal
+	position   game.Vec3
+	nextIndex  int
+	isBlocked  bool
 }
 
 func (e Actor) walkingPosition(points []game.Vec3, fraction float32) walkingSample {
-	remaining := walkingDistance(points) * fraction
+	remaining := walkingDistance(points, e.navigationMesh) * fraction
 	position := points[0]
 	for index := 1; index < len(points); index++ {
+		traversal := e.navigationMesh.TraversalSegment(navigation.Vec3(position), navigation.Vec3(points[index]))
+		if traversal.MarkerID != 0 {
+			if !traversal.IsEnabled {
+				return walkingSample{position: position, nextIndex: index, isBlocked: true}
+			}
+			return walkingSample{position: game.Vec3(traversal.Destination), nextIndex: index + 1,
+				traversals: []navigation.Traversal{traversal}}
+		}
 		delta := points[index].Sub(position)
 		length := delta.Length()
 		next := points[index]
 		if length > remaining && length > 0 {
 			next = position.Add(delta.Scale(remaining / length))
+		}
+		traversal = e.navigationMesh.TraverseSegment(navigation.Vec3(position), navigation.Vec3(next))
+		if traversal.MarkerID != 0 {
+			if !e.navigationMesh.IsSegmentClear(navigation.Vec3(position), traversal.Source, e.Navigation.PlanLayer) {
+				return walkingSample{position: position, nextIndex: index, isBlocked: true}
+			}
+			for linkIndex := index; linkIndex < len(points); linkIndex++ {
+				planned := e.navigationMesh.TraversalSegment(navigation.Vec3(points[linkIndex-1]), navigation.Vec3(points[linkIndex]))
+				if planned.MarkerID == traversal.MarkerID {
+					return walkingSample{position: game.Vec3(traversal.Destination), nextIndex: linkIndex + 1,
+						traversals: []navigation.Traversal{traversal}}
+				}
+			}
+			return walkingSample{position: game.Vec3(traversal.Destination), nextIndex: len(points), isBlocked: true,
+				traversals: []navigation.Traversal{traversal}}
 		}
 		if e.navigationMesh != nil && !e.navigationMesh.IsSegmentClear(navigation.Vec3(position), navigation.Vec3(next), e.Navigation.PlanLayer) {
 			return walkingSample{position: position, nextIndex: index, isBlocked: true}
@@ -138,8 +193,10 @@ func (e *Session) refreshWalkingPathsLocked(actor Actor, at time.Time) Actor {
 	if len(actor.followPaths) != 0 && actor.IsFollowing && at.After(actor.followStartedAt) {
 		sample := actor.walkingPosition(actor.followPaths, walkingFraction(actor.followStartedAt, actor.followDeadline, at))
 		actor.Position = sample.position
+		e.recordNavigationTraversals(actor.ObjectID, sample.traversals)
 		actor.followPaths = remainingWalkingPaths(actor.followPaths, sample.position, sample.nextIndex)
 		actor.followPlan.Position = sample.position
+		actor.followPlan.Waypoint, actor.followPlan.IsWaypointKnown = gateWaypointForPaths(actor.followPaths, e.navigationMesh)
 		actor.followStartedAt = at
 		if sample.isBlocked {
 			actor.followPaths = nil
@@ -153,6 +210,7 @@ func (e *Session) refreshWalkingPathsLocked(actor Actor, at time.Time) Actor {
 	if len(actor.pursuitPaths) != 0 && actor.PursuitObjectID != 0 && at.After(actor.pursuitStartedAt) {
 		sample := actor.walkingPosition(actor.pursuitPaths, walkingFraction(actor.pursuitStartedAt, actor.pursuitDeadline, at))
 		actor.Position = sample.position
+		e.recordNavigationTraversals(actor.ObjectID, sample.traversals)
 		actor.pursuitPaths = remainingWalkingPaths(actor.pursuitPaths, sample.position, sample.nextIndex)
 		actor.pursuitSource = sample.position
 		actor.pursuitStartedAt = at
@@ -164,4 +222,29 @@ func (e *Session) refreshWalkingPathsLocked(actor Actor, at time.Time) Actor {
 		}
 	}
 	return actor
+}
+
+type NavigationTeleport struct {
+	ObjectID uint32
+	MarkerID uint32
+	Position game.Vec3
+}
+
+func (e *Session) DrainNavigationTeleports() []NavigationTeleport {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	teleports := e.navigationTeleports
+	e.navigationTeleports = nil
+	return teleports
+}
+
+func (e *Session) recordNavigationTraversals(objectID uint32, traversals []navigation.Traversal) {
+	for _, traversal := range traversals {
+		e.navigationTeleports = append(e.navigationTeleports, NavigationTeleport{
+			ObjectID: objectID, MarkerID: traversal.MarkerID, Position: game.Vec3(traversal.Destination),
+		})
+	}
 }

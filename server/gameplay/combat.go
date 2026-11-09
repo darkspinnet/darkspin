@@ -453,8 +453,8 @@ func (s campaignShockwaveStunExpiryStep) produce() ([][]byte, error) {
 	isCurrent := isFound && peerSession.generation == s.generation &&
 		peerSession.zone.NPCs() != nil
 	if isCurrent {
-		peerSession.zone.NPCs().ClearStun(
-			s.targetObjectID, s.stunExpiresAt,
+		peerSession.zone.NPCs().ClearStunModifier(
+			s.targetObjectID, s.run.instanceID,
 		)
 		peerSession.untrackCampaignNPCModifier(s.run)
 		s.runtime.registry.sessions[s.sessionKey] = peerSession
@@ -516,14 +516,20 @@ func (r campaignDamageRuntime) publishNPCStuns(
 		isCurrent := isFound && currentSession.generation == generation &&
 			currentSession.zone.NPCs() != nil
 		if isCurrent {
-			err = currentSession.zone.NPCs().ApplyStun(
-				result.Damage.ObjectID, stunExpiresAt,
-			)
-			if err == nil {
+			var reaction laserModifierReaction
+			var isAdmitted bool
+			reaction, isAdmitted, err = r.registry.admitLaserControlModifierLocked(&currentSession,
+				result.Damage.ObjectID, run.instanceID, sim.AbilityStatusKindStun, r.npc.now(), stunExpiresAt)
+			isCurrent = err == nil && isAdmitted
+			if isCurrent {
+				run.record.Duration = statusDuration
+				run.record.ExpiresAt = stunExpiresAt
 				err = currentSession.trackCampaignNPCModifier(run)
-			}
-			if err == nil {
-				r.registry.sessions[sessionKey] = currentSession
+				if err != nil {
+					currentSession.zone.NPCs().ClearStunModifier(result.Damage.ObjectID, run.instanceID)
+				} else {
+					r.registry.queueLaserControlReactionLocked(sessionKey, &currentSession, reaction)
+				}
 			}
 		}
 		r.registry.mutex.Unlock()
@@ -553,8 +559,8 @@ func (r campaignDamageRuntime) publishNPCStuns(
 			latestSession, isLatestFound := r.registry.sessions[sessionKey]
 			if isLatestFound && latestSession.generation == generation &&
 				latestSession.zone.NPCs() != nil {
-				latestSession.zone.NPCs().ClearStun(
-					result.Damage.ObjectID, stunExpiresAt,
+				latestSession.zone.NPCs().ClearStunModifier(
+					result.Damage.ObjectID, run.instanceID,
 				)
 				latestSession.untrackCampaignNPCModifier(run)
 				r.registry.sessions[sessionKey] = latestSession
@@ -585,7 +591,7 @@ func (r campaignDamageRuntime) publishNPCStuns(
 			latestSession, isLatestFound := r.registry.sessions[sessionKey]
 			if isLatestFound && latestSession.generation == generation &&
 				latestSession.zone.NPCs() != nil {
-				latestSession.zone.NPCs().ClearStun(targetObjectID, stunExpiresAt)
+				latestSession.zone.NPCs().ClearStunModifier(targetObjectID, run.instanceID)
 				latestSession.untrackCampaignNPCModifier(run)
 				r.registry.sessions[sessionKey] = latestSession
 			}
@@ -4017,7 +4023,7 @@ func (s *gameplayPeerSession) removeCampaignPlasmaModifier(
 		return false
 	}
 	if run.kind == zoneability.PlasmaModifierShock && s.zone.NPCs() != nil {
-		s.zone.NPCs().ClearStun(run.targetID, run.expiresAt)
+		s.zone.NPCs().ClearStunModifier(run.targetID, run.modifier.instanceID)
 	}
 	delete(s.campaignPlasmaModifiers, run.targetID)
 	s.untrackCampaignNPCModifier(run.modifier)
@@ -4034,7 +4040,7 @@ func (s *gameplayPeerSession) stopCampaignPlasmaModifiers(pool *modifierPool) {
 		}
 		if run.kind == zoneability.PlasmaModifierShock &&
 			s.zone.NPCs() != nil {
-			s.zone.NPCs().ClearStun(targetID, run.expiresAt)
+			s.zone.NPCs().ClearStunModifier(targetID, run.modifier.instanceID)
 		}
 		s.untrackCampaignNPCModifier(run.modifier)
 		if run.modifier != nil && pool != nil {
@@ -4131,9 +4137,12 @@ func (r campaignDamageRuntime) publishPlasmaModifier(
 	isCurrent := isFound && currentSession.generation == generation &&
 		currentSession.zone.NPCs() != nil
 	var previous *campaignPlasmaModifierRun
+	reaction := laserModifierReaction{}
 	if isCurrent && plan.Kind == zoneability.PlasmaModifierShock {
-		err = currentSession.zone.NPCs().ApplyStun(targetObjectID, run.expiresAt)
-		isCurrent = err == nil
+		var isAdmitted bool
+		reaction, isAdmitted, err = r.registry.admitLaserControlModifierLocked(&currentSession,
+			targetObjectID, modifier.instanceID, sim.AbilityStatusKindStun, r.npc.now(), run.expiresAt)
+		isCurrent = err == nil && isAdmitted
 	}
 	if isCurrent {
 		previous, err = currentSession.installCampaignPlasmaModifier(run)
@@ -4141,10 +4150,10 @@ func (r campaignDamageRuntime) publishPlasmaModifier(
 	}
 	if !isCurrent && plan.Kind == zoneability.PlasmaModifierShock &&
 		currentSession.zone.NPCs() != nil {
-		currentSession.zone.NPCs().ClearStun(targetObjectID, run.expiresAt)
+		currentSession.zone.NPCs().ClearStunModifier(targetObjectID, run.modifier.instanceID)
 	}
 	if isCurrent {
-		r.registry.sessions[sessionKey] = currentSession
+		r.registry.queueLaserControlReactionLocked(sessionKey, &currentSession, reaction)
 	}
 	r.registry.mutex.Unlock()
 	if !isCurrent {
@@ -4169,8 +4178,8 @@ func (r campaignDamageRuntime) publishPlasmaModifier(
 			latestSession.untrackCampaignNPCModifier(previous.modifier)
 			if previous.kind == zoneability.PlasmaModifierShock &&
 				latestSession.zone.NPCs() != nil {
-				latestSession.zone.NPCs().ClearStun(
-					previous.targetID, previous.expiresAt,
+				latestSession.zone.NPCs().ClearStunModifier(
+					previous.targetID, previous.modifier.instanceID,
 				)
 			}
 			r.registry.sessions[sessionKey] = latestSession
@@ -6657,6 +6666,9 @@ func (campaignNPCActionRuntime) publishFirstAggro(
 }
 
 type campaignNPCModifierRun struct {
+	teleportControl    *teleportControlState
+	transferredControl *transferredControl
+	companionSilence   *companionSilenceControl
 	fixtureBurn        *campaignFixtureBurnState
 	operativeCage      *operativeCageState
 	frogCage           *nomadFrogCage
@@ -6702,6 +6714,16 @@ func (r *campaignNPCModifierRun) isActive() bool {
 	return r.isCreated && !r.isReleased
 }
 
+// isOwned includes a pending allocation registered before packet publication.
+func (e *campaignNPCModifierRun) isOwned() bool {
+	if e == nil {
+		return false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return !e.isReleased
+}
+
 func (r *campaignNPCModifierRun) release(pool *modifierPool) (bool, error) {
 	if r == nil {
 		return false, nil
@@ -6711,6 +6733,9 @@ func (r *campaignNPCModifierRun) release(pool *modifierPool) (bool, error) {
 	if r.isReleased {
 		return false, nil
 	}
+	r.teleportControl.clear()
+	r.transferredControl.clear()
+	r.companionSilence.clear()
 	err := pool.Release(r.instanceID)
 	if err != nil {
 		return false, fmt.Errorf("enemyModifierRelease: %w", err)
@@ -6748,6 +6773,7 @@ func (s *gameplayPeerSession) untrackCampaignNPCModifier(
 	if s == nil || run == nil || s.campaignNPCModifiers[run.instanceID] != run {
 		return
 	}
+	s.clearHeroControl(run.instanceID, run.record.TargetObjectID)
 	s.forgetHeroHealingReduction(run)
 	s.forgetHeroTimeRavagerSlow(run)
 	delete(s.campaignNPCModifiers, run.instanceID)
@@ -6962,8 +6988,11 @@ func (s *gameplayPeerSession) stopCampaignNPCModifiers(pool *modifierPool) {
 		_, _ = run.modifier.release(pool)
 		delete(s.campaignNPCFears, targetObjectID)
 	}
+	s.heroControls = nil
 	s.enemySilenceExpiresAt = time.Time{}
 	s.enemySleepExpiresAt = time.Time{}
+	s.enemyStunExpiresAt = time.Time{}
+	s.enemyStunTargetObjectID = 0
 	s.enemyRootExpiresAt = time.Time{}
 	s.enemyRootTargetObjectID = 0
 	s.enemyFearExpiresAt = time.Time{}
@@ -7828,6 +7857,12 @@ func (r campaignNPCActionRuntime) commitHeroTargetDamage(
 	if targetSession == nil {
 		return hitPackets, sporenet.PlayerStatDelta{},
 			errors.New("enemy target session unavailable")
+	}
+	if damage.PreviousHitPoint > damage.HitPoint {
+		wakeErr := r.wakeHeroSleepLocked(peerSession, targetSession)
+		if wakeErr != nil {
+			return nil, sporenet.PlayerStatDelta{}, fmt.Errorf("targetSleepWake: %w", wakeErr)
+		}
 	}
 	if damage.IsDefeated {
 		cleanupPackets, cleanupErr := r.retireNPCSupportTargetLocked(peerSession, targetSession.deployedObjectID)

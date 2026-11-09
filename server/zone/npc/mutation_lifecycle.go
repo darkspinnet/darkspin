@@ -18,8 +18,8 @@ func isMutationAbilityBlocked(actor Snapshot, at time.Time) bool {
 	if isStatusBlockedByShield(actor) {
 		return false
 	}
-	return at.Before(actor.status.stunExpiresAt) || at.Before(actor.status.sleepEnd()) ||
-		at.Before(actor.status.banishExpiresAt) || at.Before(actor.status.intangibleExpiresAt) ||
+	return at.Before(actor.status.stunEnd()) || at.Before(actor.status.sleepEnd()) ||
+		at.Before(actor.status.banishEnd()) || at.Before(actor.status.intangibleExpiresAt) ||
 		at.Before(actor.status.silenceEnd())
 }
 
@@ -68,7 +68,7 @@ func (e *Session) mutationBeamTarget(actor Snapshot, at time.Time) (Snapshot, bo
 	target, isFound := e.npcs[beam.TargetObjectID]
 	return target, isFound && target.IsPublished && !target.IsDefeated && target.HitPoint > 0 &&
 		target.Mutation.Generation == beam.TargetGeneration && target.Faction == beam.Faction &&
-		!at.Before(target.status.intangibleExpiresAt) && !at.Before(target.status.banishExpiresAt) &&
+		!at.Before(target.status.intangibleExpiresAt) && !at.Before(target.status.banishEnd()) &&
 		!at.Before(target.cinematic.intangibleUntil)
 }
 

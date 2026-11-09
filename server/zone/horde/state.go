@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
+	"github.com/darkspinnet/darkspin/server/navigation"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
 const InterWaveDelay = 500 * time.Millisecond
-const gateContactRadius = float32(2)
 
 type Phase uint8
 
@@ -69,12 +69,15 @@ type encounter struct {
 }
 
 type Session struct {
-	mu                       sync.RWMutex
-	areMutationAgentsEnabled bool
-	policy                   Policy
-	waveSeed                 uint64
-	encountersByMarkerSet    map[string]*encounter
-	wavesByMarkerSet         map[string]*WaveSequence
+	mu                          sync.RWMutex
+	areMutationAgentsEnabled    bool
+	policy                      Policy
+	waveSeed                    uint64
+	encountersByMarkerSet       map[string]*encounter
+	wavesByMarkerSet            map[string]*WaveSequence
+	navigationMesh              *navigation.Mesh
+	barrierMarkerIDsByMarkerSet map[string][]uint32
+	linkMarkerIDsByMarkerSet    map[string][]uint32
 }
 
 // IsActive includes the delay between waves, while a horde still owns its
@@ -237,6 +240,7 @@ func (s *Session) AdmitFirstWave(
 		waveCount:       s.encounterPolicy(publication).WaveCount,
 		mutationAgentID: mutationAgentID,
 	}
+	s.setNavigationEnabled(key, true)
 	return nil
 }
 
@@ -325,6 +329,7 @@ func (s *Session) Defeat(
 	encounter.phase = PhaseComplete
 	clear(encounter.liveObjectIDs)
 	encounter.isGateActive = false
+	s.setNavigationEnabled(key, false)
 	encounter.completion = Completion{
 		MarkerSetName: encounter.publication.MarkerSetName,
 		EventName:     "horde complete", TriggerMarkerID: encounter.publication.TriggerMarkerID,
@@ -573,32 +578,14 @@ func (s *Session) ConstrainMovement(
 	if !isFinitePosition(previous) || !isFinitePosition(current) {
 		return current, GateContact{}, errors.New("horde gate: invalid position")
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, markerSet := range director.MarkerSets {
-		encounter := s.encountersByMarkerSet[strings.ToLower(markerSet.Name)]
-		if encounter == nil || !encounter.isGateActive {
+	for _, link := range s.GateLinks(director) {
+		if !link.Route.CrossesTrigger(previous, current) {
 			continue
 		}
-		isGateFound := false
-		for _, marker := range markerSet.Markers {
-			if !strings.EqualFold(marker.NounName, "HordeGateTeleporter.Noun") ||
-				!gateHasContact(marker) {
-				continue
-			}
-			isGateFound = true
-			radiusSquared := gateContactRadius * gateContactRadius
-			if segmentDistanceSquared(previous, current, marker.Position) > radiusSquared {
-				continue
-			}
-			return previous, GateContact{
-				MarkerSetName: markerSet.Name, MarkerID: marker.MarkerID,
-				Position: marker.Position, ReturnPosition: previous,
-			}, nil
-		}
-		if !isGateFound {
-			continue
-		}
+		return link.Route.Destination, GateContact{
+			MarkerSetName: link.MarkerSetName, MarkerID: link.Route.MarkerID,
+			Position: link.Route.Source, ReturnPosition: link.Route.Destination,
+		}, nil
 	}
 	return current, GateContact{}, nil
 }
@@ -612,33 +599,6 @@ func clonePublication(
 		publication.Listeners...,
 	)
 	return cloned
-}
-
-func gateHasContact(marker game.CampaignDirectorMarker) bool {
-	for _, event := range marker.Events {
-		if event.CallbackName == "HordeGateTeleporter_OnEnter" {
-			return true
-		}
-	}
-	return false
-}
-
-func segmentDistanceSquared(start game.Vec3, end game.Vec3, point game.Vec3) float32 {
-	delta := game.Vec3{X: end.X - start.X, Y: end.Y - start.Y, Z: end.Z - start.Z}
-	lengthSquared := delta.X*delta.X + delta.Y*delta.Y + delta.Z*delta.Z
-	if lengthSquared == 0 {
-		x := start.X - point.X
-		y := start.Y - point.Y
-		z := start.Z - point.Z
-		return x*x + y*y + z*z
-	}
-	projection := ((point.X-start.X)*delta.X + (point.Y-start.Y)*delta.Y +
-		(point.Z-start.Z)*delta.Z) / lengthSquared
-	projection = min(float32(1), max(float32(0), projection))
-	x := start.X + projection*delta.X - point.X
-	y := start.Y + projection*delta.Y - point.Y
-	z := start.Z + projection*delta.Z - point.Z
-	return x*x + y*y + z*z
 }
 
 func isFinitePosition(position game.Vec3) bool {

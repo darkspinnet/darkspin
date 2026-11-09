@@ -17,17 +17,31 @@ func Follow(plans []zonecompanion.Follow) ([][]byte, error) {
 			return nil, fmt.Errorf("follow[%d]: invalid", index)
 		}
 		// TravelDuration and Revision belong to scheduled server arrival.
-		facingX := current.Goal.X - current.Position.X
-		facingY := current.Goal.Y - current.Position.Y
-		facingZ := current.Goal.Z - current.Position.Z
+		goalPosition := current.Goal
+		if current.IsWaypointKnown {
+			goalPosition = current.Waypoint
+		}
+		facingX := goalPosition.X - current.Position.X
+		facingY := goalPosition.Y - current.Position.Y
+		facingZ := goalPosition.Z - current.Position.Z
 		facingLength := float32(math.Sqrt(float64(
 			facingX*facingX + facingY*facingY + facingZ*facingZ,
 		)))
-		if facingLength <= 0 {
+		if facingLength <= 0 && !current.IsWaypointKnown {
 			return nil, fmt.Errorf("follow[%d]: zero direction", index)
 		}
 		goalFlags := uint32(0x41)
 		targetID := current.OwnerObjectID
+		stopDistance := current.DesiredStopDistance
+		if current.IsWaypointKnown {
+			goalFlags = 1
+			targetID = 0
+			stopDistance = 0
+			if facingLength <= 0 {
+				goalFlags = 0x20
+				facingLength = 1
+			}
+		}
 		if current.IsExact {
 			// Build 103 MoveToPointExact (A147D0) sets goal flag 1.
 			goalFlags = 1
@@ -36,17 +50,17 @@ func Follow(plans []zonecompanion.Follow) ([][]byte, error) {
 		movePacket, err := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
 			ObjectID: current.ObjectID, GoalFlags: goalFlags,
 			GoalPosition: raknet.Vector3{
-				X: current.Goal.X, Y: current.Goal.Y, Z: current.Goal.Z,
+				X: goalPosition.X, Y: goalPosition.Y, Z: goalPosition.Z,
 			},
 			Facing: raknet.Vector3{
 				X: facingX / facingLength,
 				Y: facingY / facingLength,
 				Z: facingZ / facingLength,
 			},
-			AllowedStopDistance: current.DesiredStopDistance,
-			DesiredStopDistance: current.DesiredStopDistance,
+			AllowedStopDistance: stopDistance,
+			DesiredStopDistance: stopDistance,
 			TargetPosition: raknet.Vector3{
-				X: current.Goal.X, Y: current.Goal.Y, Z: current.Goal.Z,
+				X: goalPosition.X, Y: goalPosition.Y, Z: goalPosition.Z,
 			},
 			TargetObjectID: targetID,
 		})
@@ -57,7 +71,7 @@ func Follow(plans []zonecompanion.Follow) ([][]byte, error) {
 			return nil, errors.New("follow packet empty")
 		}
 		goal := raknet.Vector3{
-			X: current.Goal.X, Y: current.Goal.Y, Z: current.Goal.Z,
+			X: goalPosition.X, Y: goalPosition.Y, Z: goalPosition.Z,
 		}
 		correctionPacket, err := raknet.MarshalApplication(
 			raknet.LocomotionUnreliableMessage{

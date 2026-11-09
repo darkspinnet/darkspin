@@ -201,5 +201,5 @@ func (e *heroAuraAreaRun) clearAuraTargetStatus(objectID uint32, target heroAura
 		e.npc.ClearSlowModifier(objectID, target.instanceID)
 		return
 	}
-	e.clearStatus(objectID, target.expiresAt)
+	e.clearStatus(objectID, target.instanceID, target.expiresAt)
 }

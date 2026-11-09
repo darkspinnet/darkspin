@@ -1,6 +1,9 @@
 package npc
 
-import "time"
+import (
+	"maps"
+	"time"
+)
 
 type BasicModifierKind uint8
 
@@ -91,11 +94,9 @@ func (e *Session) ApplyBasicModifier(objectID uint32, key BasicModifierKey, rank
 				silenceDuration = 1500 * time.Millisecond
 			}
 			current.ActiveUntil = at.Add(CrowdControlDuration(npc.Plan, silenceDuration))
-			if npc.status.silenceExpiresAt.Before(current.ActiveUntil) {
-				npc.status.silenceExpiresAt = current.ActiveUntil
-			}
 		}
 	}
+	npc.status.basicModifiers = maps.Clone(npc.status.basicModifiers)
 	if npc.status.basicModifiers == nil {
 		npc.status.basicModifiers = make(map[BasicModifierKey]BasicModifier)
 	}
@@ -134,12 +135,10 @@ func (e *Session) RestoreBasicModifier(objectID uint32, expected BasicModifier, 
 	if !isFound || npc.status.basicModifiers[expected.Key] != expected {
 		return
 	}
+	npc.status.basicModifiers = maps.Clone(npc.status.basicModifiers)
 	delete(npc.status.basicModifiers, expected.Key)
 	if previous.StackCount > 0 {
 		npc.status.basicModifiers[expected.Key] = previous
-	}
-	if expected.Key.Kind == BasicModifierPummel && npc.status.silenceExpiresAt == expected.ActiveUntil {
-		npc.status.silenceExpiresAt = previous.ActiveUntil
 	}
 	if expected.Key.Kind == BasicModifierHaste {
 		npc.refreshHasteProfile(time.Now())

@@ -6,6 +6,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 	"strings"
 
+	"github.com/darkspinnet/darkspin/server/attribute"
 	"github.com/darkspinnet/darkspin/server/sim"
 	"github.com/darkspinnet/darkspin/server/util"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
@@ -47,70 +48,71 @@ type HeroKit struct {
 }
 
 type Programs struct {
-	ChainLevel                 []string
-	ArenaLevels                map[string]ArenaLevel
-	Critical                   sim.CriticalTuning
-	Difficulty                 sim.DifficultyCombatTuning
-	PlayerBasicAbility         map[uint32]sim.AbilityDefinition
-	PlayerBasicUnsupported     map[uint32]string
-	HeroKits                   map[uint32]HeroKit
-	NonPlayerHitPoint          map[uint32]float32
-	NonPlayerDefenses          map[uint32]game.CampaignNPCProfile
-	NonPlayerAggroRanges       map[uint32]float32
-	NonPlayerCritical          map[uint32]sim.CriticalProfile
-	NounPhysics                map[string]NounPhysics
-	NounPhysicsByID            map[uint32]NounPhysics
-	NavigationFootprintsByNoun map[uint32]game.NavigationFootprint
-	SpawnExtentsByNoun         map[string]game.Vec3
-	NPCDeathAnimations         map[string]string
-	ProjectileHalfExtent       sim.Position
-	QuadraFirstAggro           sim.Program
-	LightningBasic             sim.AbilityDefinition
-	ElectronSphere             sim.AbilityDefinition
-	SupportHealerBasic         sim.AbilityDefinition
-	SupportHealerPassive       sim.SummonPassiveDefinition
-	SupportHealerPetBasic      sim.AbilityDefinition
-	SupportHealerPetAggroRange float32
-	SentryDroneLaser           sim.AbilityDefinition
-	NomadDroneLaser            sim.AbilityDefinition
-	FireTempestPetBasic        sim.AbilityDefinition
-	BeastPetBasic              sim.AbilityDefinition
-	PlasmaSentinelPetBasic     sim.AbilityDefinition
-	PoisonMelee                sim.AbilityDefinition
-	PoisonCloud                sim.AbilityDefinition
-	PlasmaLightning            sim.AbilityDefinition
-	TailZap                    sim.AbilityDefinition
-	BurstShot                  sim.AbilityDefinition
-	InteractWithObelisk        sim.AbilityDefinition
-	InteractHealthObelisk      sim.AbilityDefinition
-	IntroAbilitySecond         MarkerProgram
-	IntroHealthAndPower        sim.MarkerTrigger
-	IntroOverdrive             MarkerProgram
-	IntroSecondCreature        MarkerProgram
-	SecurityTeleporter         sim.LuaBytecode
-	TeleporterModifier         sim.LuaBytecode
-	AuraUtils                  sim.LuaBytecode
-	SleepingCloud              sim.LuaBytecode
-	Psistorm                   sim.LuaBytecode
-	Strafe                     sim.LuaAbilityInput
-	SmallStrafe                sim.LuaAbilityInput
-	BossTeleporter             zoneteleport.Simulation
-	InvisibleBehavior          sim.Program
-	SpawnModifier              sim.Program
-	SoloSupportUnlock          sim.Program
-	SupportUnlock              sim.Program
-	OverdriveUnlock            sim.Program
-	CatalystUnlock             sim.Program
-	CrystalPickup              sim.Program
-	ObjectiveInitializers      []sim.Program
-	ObjectiveInput             []sim.LuaObjectiveInput
-	CrystalDefinitions         []sim.CrystalDefinition
-	CrystalEffectsByNoun       map[string]CrystalEffect
-	CrystalLevelOffsets        []sim.CrystalLevelOffset
-	CrystalLineBonusPercent    float32
-	TutorialMajorStageCount    uint32
-	CrystalMinorStageCount     uint32
-	EliteRewardBonus           uint32
+	ChainLevel                   []string
+	ArenaLevels                  map[string]ArenaLevel
+	Critical                     sim.CriticalTuning
+	Difficulty                   sim.DifficultyCombatTuning
+	PlayerBasicAbility           map[uint32]sim.AbilityDefinition
+	PlayerBasicUnsupported       map[uint32]string
+	HeroKits                     map[uint32]HeroKit
+	NonPlayerHitPoint            map[uint32]float32
+	NonPlayerDefenses            map[uint32]game.CampaignNPCProfile
+	NonPlayerAggroRanges         map[uint32]float32
+	NonPlayerCritical            map[uint32]sim.CriticalProfile
+	NounPhysics                  map[string]NounPhysics
+	NounPhysicsByID              map[uint32]NounPhysics
+	NavigationFootprintsByNoun   map[uint32]game.NavigationFootprint
+	SpawnExtentsByNoun           map[string]game.Vec3
+	NPCDeathAnimations           map[string]string
+	ProjectileHalfExtent         sim.Position
+	QuadraFirstAggro             sim.Program
+	LightningBasic               sim.AbilityDefinition
+	ElectronSphere               sim.AbilityDefinition
+	SupportHealerBasic           sim.AbilityDefinition
+	SupportHealerPassive         sim.SummonPassiveDefinition
+	SupportHealerPetBasic        sim.AbilityDefinition
+	SupportHealerPetAggroRange   float32
+	SentryDroneLaser             sim.AbilityDefinition
+	NomadDroneLaser              sim.AbilityDefinition
+	FireTempestPetBasic          sim.AbilityDefinition
+	BeastPetBasic                sim.AbilityDefinition
+	PlasmaSentinelPetBasic       sim.AbilityDefinition
+	PoisonMelee                  sim.AbilityDefinition
+	PoisonCloud                  sim.AbilityDefinition
+	PlasmaLightning              sim.AbilityDefinition
+	TailZap                      sim.AbilityDefinition
+	BurstShot                    sim.AbilityDefinition
+	InteractWithObelisk          sim.AbilityDefinition
+	InteractHealthObelisk        sim.AbilityDefinition
+	IntroAbilitySecond           MarkerProgram
+	IntroHealthAndPower          sim.MarkerTrigger
+	IntroOverdrive               MarkerProgram
+	IntroSecondCreature          MarkerProgram
+	SecurityTeleporter           sim.LuaBytecode
+	TeleporterModifier           sim.LuaBytecode
+	AuraUtils                    sim.LuaBytecode
+	SleepingCloud                sim.LuaBytecode
+	Psistorm                     sim.LuaBytecode
+	Strafe                       sim.LuaAbilityInput
+	SmallStrafe                  sim.LuaAbilityInput
+	FieldMedicHealthContribution attribute.Contribution
+	BossTeleporter               zoneteleport.Simulation
+	InvisibleBehavior            sim.Program
+	SpawnModifier                sim.Program
+	SoloSupportUnlock            sim.Program
+	SupportUnlock                sim.Program
+	OverdriveUnlock              sim.Program
+	CatalystUnlock               sim.Program
+	CrystalPickup                sim.Program
+	ObjectiveInitializers        []sim.Program
+	ObjectiveInput               []sim.LuaObjectiveInput
+	CrystalDefinitions           []sim.CrystalDefinition
+	CrystalEffectsByNoun         map[string]CrystalEffect
+	CrystalLevelOffsets          []sim.CrystalLevelOffset
+	CrystalLineBonusPercent      float32
+	TutorialMajorStageCount      uint32
+	CrystalMinorStageCount       uint32
+	EliteRewardBonus             uint32
 }
 
 // CrystalEffect is noun-owned catalyst identity for pickup, HUD, and effect

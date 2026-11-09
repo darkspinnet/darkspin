@@ -297,6 +297,15 @@ func New(id uint64, generation uint64, info ZoneInfo) (*Zone, error) {
 			return nil, fmt.Errorf("zoneRestore: %w", err)
 		}
 	}
+	// Restoring zone rules can replace the horde owner. Bind the overlay to the
+	// final owner, then give every actor the same configured mesh.
+	configuredNavigation, hordeNavigationErr := zone.info.Horde.ConfigureNavigation(zone.info.DirectorDefinition, zone.info.Navigation)
+	if hordeNavigationErr != nil {
+		cancel()
+		return nil, fmt.Errorf("zoneHordeNavigation: %w", hordeNavigationErr)
+	}
+	zone.info.Navigation = configuredNavigation
+	info.Navigation = configuredNavigation
 	navigationErr := info.NPCs.ConfigureNavigation(info.Navigation, info.DirectorDefinition.NounFootprintsByInstance)
 	if navigationErr != nil {
 		cancel()

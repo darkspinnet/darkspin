@@ -12,6 +12,31 @@ import (
 	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
 )
 
+type NavigationTeleport struct {
+	ObjectID uint32
+	MarkerID uint32
+	Position game.Vec3
+}
+
+func (e *Session) DrainNavigationTeleports() []NavigationTeleport {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	teleports := e.navigationTeleports
+	e.navigationTeleports = nil
+	return teleports
+}
+
+func (e *Session) recordNavigationTraversals(objectID uint32, traversals []navigation.Traversal) {
+	for _, traversal := range traversals {
+		e.navigationTeleports = append(e.navigationTeleports, NavigationTeleport{
+			ObjectID: objectID, MarkerID: traversal.MarkerID, Position: game.Vec3(traversal.Destination),
+		})
+	}
+}
+
 // ConfigureNavigation supplies noun geometry once at zone creation. Restored
 // actor objects retain their stored planLayer; new actors select at creation.
 func (e *Session) ConfigureNavigation(mesh *navigation.Mesh, footprints map[uint32]game.NavigationFootprint) error {

@@ -107,6 +107,9 @@ type SemanticTraceIntent struct {
 	Distance                float32 `json:"distance,omitempty"`
 	RangeIncrease           float32 `json:"range_increase,omitempty"`
 	Scalar                  float32 `json:"scalar,omitempty"`
+	AttributeHandle         uint32  `json:"attribute_handle,omitempty"`
+	AttributeOperation      uint8   `json:"attribute_operation,omitempty"`
+	IsAttributeRemoval      bool    `json:"is_attribute_removal,omitempty"`
 	IntegerChange           int32   `json:"integer_change,omitempty"`
 	PositionX               float32 `json:"position_x,omitempty"`
 	PositionY               float32 `json:"position_y,omitempty"`
@@ -470,6 +473,8 @@ func buildSemanticTraceIntent(intent Intent) (SemanticTraceIntent, error) {
 		return SemanticTraceIntent{
 			Kind: "attribute_modifier", Role: string(typedIntent.Role),
 			ActionKind: string(typedIntent.AttributeKind), Scalar: typedIntent.Amount,
+			AttributeHandle: typedIntent.Handle, AttributeOperation: uint8(typedIntent.Operation),
+			IsAttributeRemoval: typedIntent.IsRemoval,
 		}, nil
 	case ModifierRequestIntent:
 		return SemanticTraceIntent{

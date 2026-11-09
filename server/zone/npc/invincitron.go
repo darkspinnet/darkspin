@@ -2,6 +2,7 @@ package npc
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 )
@@ -60,12 +61,18 @@ func (e InvincitronRage) IsActive(at time.Time) bool { return at.Before(e.Expire
 // statuses (including haste, shields and enrage) owned by other features.
 func purgeInvincitronDebuffs(actor *Snapshot) {
 	status := &actor.status
+	status.basicModifiers = maps.Clone(status.basicModifiers)
 	for key, modifier := range status.basicModifiers {
+		if key.Kind == BasicModifierPummel {
+			modifier.ActiveUntil = time.Time{}
+			status.basicModifiers[key] = modifier
+		}
 		if modifier.IsDebuff() {
 			delete(status.basicModifiers, key)
 		}
 	}
 	status.banishExpiresAt = time.Time{}
+	status.banishModifiers = nil
 	status.curseExpiresAt = time.Time{}
 	status.curseDamage = CurseDamageProfile{}
 	status.damageTakenIncrease = 0
@@ -82,19 +89,24 @@ func purgeInvincitronDebuffs(actor *Snapshot) {
 	status.fearExpiresAt = time.Time{}
 	status.areaShiftExpiresAt = time.Time{}
 	status.rootExpiresAt = time.Time{}
+	status.rootModifiers = nil
 	status.bioEntangleExpiresAt = time.Time{}
 	status.bioEntangleInstanceID = 0
 	status.supportHealerRootExpiresAt = time.Time{}
 	status.supportHealerRootInstanceID = 0
 	status.silenceExpiresAt = time.Time{}
+	status.silenceModifiers = nil
 	status.auraSilences = nil
 	status.sleepExpiresAt = time.Time{}
+	status.sleepModifiers = nil
 	status.auraSleeps = nil
 	status.slowExpiresAt = time.Time{}
 	status.slowMovementScale = 0
 	status.slowAttackScale = 0
 	status.slowModifiers = nil
 	status.stunExpiresAt = time.Time{}
+	status.stunModifiers = nil
+	status.timeStopModifiers = nil
 	status.tauntExpiresAt = time.Time{}
 	status.tauntTargetObjectID = 0
 }

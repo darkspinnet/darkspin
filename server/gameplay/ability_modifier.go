@@ -1087,7 +1087,7 @@ func (r campaignAbilityCommandRuntime) purgeHeroDebuffsLocked(
 			run.cancel = nil
 		}
 		delete(peerSession.campaignNPCSilences, objectID)
-		peerSession.enemySilenceExpiresAt = time.Time{}
+		peerSession.clearHeroControl(run.modifier.instanceID, objectID)
 		peerSession.untrackCampaignNPCModifier(run.modifier)
 		packet, err := purgeHeroSpecialDebuff(
 			objectID, run.modifier, r.modifierPool,

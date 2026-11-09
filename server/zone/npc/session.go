@@ -17,6 +17,7 @@ import (
 )
 
 type Session struct {
+	navigationTeleports    []NavigationTeleport
 	attributeMirrorChanges map[uint32]bool
 	attributeMirrorIDs     []uint32
 	merakGeysers           map[uint32]MerakGeyser
@@ -1250,7 +1251,7 @@ func (s *Session) damage(
 	isFieldDamage := isAreaAttack && meta.DescriptorMask&(1<<1|1<<7) == 0
 	now := time.Now()
 	if !meta.isForcedDefeat && (npc.Plan.IsIntroductionHidden || now.Before(npc.status.intangibleExpiresAt) || now.Before(npc.cinematic.intangibleUntil) ||
-		now.Before(npc.status.banishExpiresAt) || now.Before(npc.status.chargeProtectionEnd) ||
+		now.Before(npc.status.banishEnd()) || now.Before(npc.status.chargeProtectionEnd) ||
 		(npc.IsTurtleActive && (len(damageSource) == 0 || damageSource[0] == 0)) ||
 		(npc.IsShieldActive && isShieldDamageImmune(npc, sourcePosition, isFieldDamage, isDamageOverTime))) {
 		return DamageResult{

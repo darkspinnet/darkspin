@@ -60,6 +60,7 @@ type Actor struct {
 	CooldownEnd               time.Time
 	AttackReleaseEnd          time.Time
 	silenceExpiresAt          time.Time
+	silenceModifiers          map[uint32]time.Time
 	silenceLeases             map[uint32]struct{}
 	silenceImmunity           float32
 	poisonImmunity            float32
@@ -102,6 +103,8 @@ type Buff struct {
 }
 
 type Follow struct {
+	Waypoint              game.Vec3
+	IsWaypointKnown       bool
 	IsExact               bool
 	ObjectID              uint32
 	OwnerObjectID         uint32
@@ -131,6 +134,8 @@ type Attack struct {
 }
 
 type Pursuit struct {
+	Waypoint            game.Vec3
+	IsWaypointKnown     bool
 	ObjectID            uint32
 	TargetObjectID      uint32
 	Position            game.Vec3
@@ -141,6 +146,7 @@ type Pursuit struct {
 }
 
 type Session struct {
+	navigationTeleports    []NavigationTeleport
 	navigationMesh         *navigation.Mesh
 	aggroRangesByNoun      map[uint32]float32
 	movementModifierSource MovementModifierSource
@@ -257,18 +263,24 @@ func (e *Session) put(actor Actor, isRetained bool) error {
 		actor.cinematicRevision = current.cinematicRevision
 		actor.cinematicHolds = current.cinematicHolds
 		actor.lifeRevision = current.lifeRevision
+		actor.silenceExpiresAt = current.silenceExpiresAt
+		actor.silenceModifiers = current.silenceModifiers
+		actor.silenceLeases = current.silenceLeases
 		if actor.PeerGeneration != current.PeerGeneration {
 			actor.lifeRevision = e.nextLifeRevision()
+			actor.clearSilence()
 		}
 		if current.IsCinematicImmobilized(time.Now()) {
 			actor.Position = current.Position
 		}
 	} else if !isRetained {
 		actor.clearCinematic()
+		actor.clearSilence()
 		actor.lifeRevision = e.nextLifeRevision()
 	}
 	if actor.HitPoint <= 0 {
 		actor.clearCinematic()
+		actor.clearSilence()
 	}
 	if !isRetained && isFound && (actor.UserID != current.UserID ||
 		actor.PeerGeneration != current.PeerGeneration || actor.OwnerObjectID != current.OwnerObjectID ||
@@ -414,6 +426,7 @@ func (e *Session) SetHitPoint(
 	actor.HitPoint = hitPoint
 	if hitPoint == 0 {
 		actor.clearCinematic()
+		actor.clearSilence()
 		actor.clearFollow()
 		actor.FollowRevision = e.nextFollowRevision()
 		actor.clearPursuit()
@@ -541,7 +554,7 @@ func (e *Session) followActors(
 		}
 		travelDistance := distance - actorStopDistance
 		if len(points) != 0 {
-			travelDistance = walkingDistance(points)
+			travelDistance = walkingDistance(points, e.navigationMesh)
 		}
 		travelDuration := time.Duration(
 			float64(travelDistance/actorMovementSpeed) *
@@ -560,6 +573,7 @@ func (e *Session) followActors(
 			Deadline:              at.Add(travelDuration),
 			Revision:              actor.FollowRevision,
 		}
+		plan.Waypoint, plan.IsWaypointKnown = gateWaypointForPaths(points, e.navigationMesh)
 		follows = append(follows, plan)
 		actor.followPlan = plan
 		actor.followPaths = points
@@ -832,13 +846,13 @@ func (e *Session) ReservePursuits(
 		actorMovementSpeed := movementSpeed * movementScale(actor)
 		travelDistance := selection.distance - selection.stopDistance
 		if len(points) != 0 {
-			travelDistance = walkingDistance(points)
+			travelDistance = walkingDistance(points, e.navigationMesh)
 		}
 		travelDuration := time.Duration(
 			float64(travelDistance/actorMovementSpeed) *
 				float64(time.Second),
 		)
-		if travelDuration <= 0 {
+		if travelDuration <= 0 && len(points) == 0 {
 			continue
 		}
 		travelDuration = max(travelDuration, minimumPursuitDuration)
@@ -861,6 +875,8 @@ func (e *Session) ReservePursuits(
 			TravelDuration:      travelDuration,
 			Revision:            actor.PursuitRevision,
 		})
+		lastIndex := len(pursuit) - 1
+		pursuit[lastIndex].Waypoint, pursuit[lastIndex].IsWaypointKnown = gateWaypointForPaths(points, e.navigationMesh)
 	}
 	sort.Slice(pursuit, func(left int, right int) bool {
 		return pursuit[left].ObjectID < pursuit[right].ObjectID
@@ -933,13 +949,13 @@ func (e *Session) reserveActorPursuit(
 	}
 	travelDistance := selection.distance - selection.stopDistance
 	if len(points) != 0 {
-		travelDistance = walkingDistance(points)
+		travelDistance = walkingDistance(points, e.navigationMesh)
 	}
 	travelDuration := time.Duration(
 		float64(travelDistance/actorMovementSpeed) *
 			float64(time.Second),
 	)
-	if travelDuration <= 0 {
+	if travelDuration <= 0 && len(points) == 0 {
 		return Pursuit{}, false, nil
 	}
 	travelDuration = max(travelDuration, minimumPursuitDuration)
@@ -956,13 +972,15 @@ func (e *Session) reserveActorPursuit(
 	actor.pursuitStartedAt = at
 	actor.pursuitDeadline = at.Add(travelDuration)
 	e.actors[objectID] = actor
-	return Pursuit{
+	plan := Pursuit{
 		ObjectID: objectID, TargetObjectID: selected.Plan.ObjectID,
 		Position: source, TargetPosition: selected.Plan.Position,
 		DesiredStopDistance: selectedStopDistance,
 		TravelDuration:      travelDuration,
 		Revision:            actor.PursuitRevision,
-	}, true, nil
+	}
+	plan.Waypoint, plan.IsWaypointKnown = gateWaypointForPaths(points, e.navigationMesh)
+	return plan, true, nil
 }
 
 func resolveCooldown(cooldown time.Duration, actor Actor) time.Duration {

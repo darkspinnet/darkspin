@@ -38,9 +38,7 @@ func (e campaignNPCSilenceExpiryStep) produce() ([][]byte, error) {
 		e.run.revision == e.revision
 	if isCurrent {
 		delete(peerSession.campaignNPCSilences, e.run.targetID)
-		if peerSession.deployedObjectID == e.run.targetID && peerSession.enemySilenceExpiresAt == e.run.expiresAt {
-			peerSession.enemySilenceExpiresAt = time.Time{}
-		}
+		peerSession.clearHeroControl(e.run.modifier.instanceID, e.run.targetID)
 		peerSession.untrackCampaignNPCModifier(e.run.modifier)
 		e.run.cancel = nil
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
@@ -159,7 +157,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCSilence(
 	previousExpiresAt := run.expiresAt
 	previousRevision := run.revision
 	previousCancel := run.cancel
-	previousHeroExpiresAt := peerSession.enemySilenceExpiresAt
+	previousHeroExpiresAt := previousExpiresAt
 	modifierID := util.HashID(profile.ModifierName)
 	isRefresh := !isNew && run.modifierID == modifierID
 	startedAt := r.now()
@@ -172,7 +170,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCSilence(
 	expiresAt := run.expiresAt
 	peerSession.campaignNPCSilences[plan.TargetObjectID] = run
 	if plan.TargetObjectID == peerSession.deployedObjectID {
-		peerSession.extendEnemySilence(plan.TargetObjectID, run.expiresAt)
+		peerSession.admitHeroControl(heroControlSilence, run.modifier, plan.TargetObjectID, run.expiresAt)
 	}
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
@@ -261,8 +259,9 @@ func (r campaignNPCActionRuntime) rollbackNocturnaBasicRangedSilence(
 		peerSession.campaignNPCSilences[run.targetID] == run &&
 		run.revision == revision
 	if isCurrent {
-		if peerSession.deployedObjectID == run.targetID && peerSession.enemySilenceExpiresAt == run.expiresAt {
-			peerSession.enemySilenceExpiresAt = previousHeroExpiresAt
+		peerSession.clearHeroControl(run.modifier.instanceID, run.targetID)
+		if !isNew {
+			peerSession.admitHeroControl(heroControlSilence, run.modifier, run.targetID, previousHeroExpiresAt)
 		}
 		if isNew {
 			delete(peerSession.campaignNPCSilences, run.targetID)

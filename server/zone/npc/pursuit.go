@@ -118,7 +118,7 @@ func (s *Session) AdvancePursuit(
 	// instead of spending that entire interval moving into the target's center.
 	travel = min(travel, max(arrivalMargin, distance-stopDistance+arrivalMargin))
 	if mesh != nil {
-		pathStep, pathErr := zoneaction.AdvancePursuitPathStep(
+		pathStep, pathErr := zoneaction.AdvanceTraversalPathStep(
 			mesh, source, targetPosition, max(npc.NavigationRadius(), minimumNavigationFootprintRadius), travel, npc.Navigation,
 		)
 		destination := pathStep.Position
@@ -126,6 +126,7 @@ func (s *Session) AdvancePursuit(
 			npc.Facing = directionTo(source, destination)
 			npc.Plan.Position = destination
 			s.npcs[objectID] = npc
+			s.recordNavigationTraversals(objectID, pathStep.Traversals)
 			return PursuitStep{
 				Position: destination,
 				Waypoint: pathStep.Waypoint, IsWaypointKnown: true,

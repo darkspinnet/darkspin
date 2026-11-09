@@ -113,10 +113,10 @@ func isCombatIdleActorValid(actor Snapshot, owner ActionOwner, generation uint64
 func isCombatIdleUnblocked(actor Snapshot, now time.Time) bool {
 	status := actor.status
 	return !now.Before(actor.cinematic.immobilizedUntil) && !now.Before(actor.cinematic.intangibleUntil) &&
-		!actor.cinematic.isPending && !now.Before(status.stunExpiresAt) && !now.Before(status.sleepEnd()) &&
-		!now.Before(status.rootExpiresAt) && !now.Before(status.bioEntangleExpiresAt) &&
+		!actor.cinematic.isPending && !now.Before(status.stunEnd()) && !now.Before(status.sleepEnd()) &&
+		!now.Before(status.rootEnd()) && !now.Before(status.bioEntangleExpiresAt) &&
 		!now.Before(status.supportHealerRootExpiresAt) && !now.Before(status.fearExpiresAt) &&
-		!now.Before(status.banishExpiresAt) && !now.Before(status.intangibleExpiresAt)
+		!now.Before(status.banishEnd()) && !now.Before(status.intangibleExpiresAt)
 }
 
 func isCombatIdleWindowOpen(actor Snapshot, owner ActionOwner, generation uint64, now time.Time) bool {

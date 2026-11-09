@@ -80,7 +80,7 @@ func (e *heroChannelAreaRun) ReleaseTargets(targets []heroChannelAreaTarget) {
 		return
 	}
 	for _, target := range targets {
-		e.npc.ClearStun(target.snapshot.Plan.ObjectID, target.expiresAt)
+		e.npc.ClearStunModifier(target.snapshot.Plan.ObjectID, target.instanceID)
 		err := e.modifierPool.Release(target.instanceID)
 		if err != nil {
 			log.Printf("RakNet channel modifier release failed instance=%d: %v", target.instanceID, err)
@@ -172,7 +172,7 @@ func (e heroChannelAreaSchedule) lift() ([][]byte, error) {
 			return nil, fmt.Errorf("channelAreaModifier[%d]: %w", index, err)
 		}
 		reaction, isAdmitted, err := e.runtime.registry.admitLaserControlModifierLocked(
-			&peerSession, target.Plan.ObjectID, sim.AbilityStatusKindStun, e.runtime.now(), expiresAt)
+			&peerSession, target.Plan.ObjectID, instance, sim.AbilityStatusKindStun, e.runtime.now(), expiresAt)
 		if err != nil {
 			releaseErr := e.runtime.modifierPool.Release(instance)
 			if releaseErr != nil {
