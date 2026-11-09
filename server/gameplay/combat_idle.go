@@ -17,23 +17,27 @@ const campaignNPCBehaviorTick = 100 * time.Millisecond
 // The actor owns selection, cooldowns and the lease. This adapter owns only the
 // movement coroutine and its reliable client presentation.
 type campaignNPCBehaviorRun struct {
-	runtime        campaignNPCActionRuntime
-	packet         raknet.Packet
-	sessionKey     string
-	generation     uint64
-	run            zonenpc.CombatIdleRun
-	npcSession     *zonenpc.Session
-	timestamp      uint64
-	destination    game.Vec3
-	isMoving       bool
-	wasMoving      bool
-	isTurnChecked  bool
-	pauseUntil     time.Time
-	movementBuff   float32
-	flee           *campaignNPCSupportIdle
-	strafe         *sim.LuaStrafeRuntime
-	strafePlan     sim.LuaStrafePlan
-	strafeTargetID uint32
+	runtime              campaignNPCActionRuntime
+	packet               raknet.Packet
+	sessionKey           string
+	generation           uint64
+	run                  zonenpc.CombatIdleRun
+	npcSession           *zonenpc.Session
+	timestamp            uint64
+	destination          game.Vec3
+	isMoving             bool
+	wasMoving            bool
+	isTurnChecked        bool
+	pauseUntil           time.Time
+	movementBuff         float32
+	flee                 *campaignNPCSupportIdle
+	strafe               *sim.LuaStrafeRuntime
+	strafePlan           sim.LuaStrafePlan
+	strafeTargetID       uint32
+	isIdleSpeedPublished bool
+	idleMovementSpeed    float32
+	isWaypointPublished  bool
+	publishedWaypoint    game.Vec3
 }
 
 func isCommonNPCBehavior(behavior string) bool {

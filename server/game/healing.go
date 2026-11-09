@@ -50,7 +50,7 @@ func ResolveAbilityHealing(ability AbilityHealing, profile HealingProfile) (floa
 	}
 	healing := ability.Amount
 	if profile.IsPrimaryAttributeFound && ability.Coefficient != 0 {
-		healing *= 1 + (profile.PrimaryAttribute+1)*ability.Coefficient
+		healing *= 1 + (profile.PrimaryAttribute-PrimaryAttributeIgnoreAmount)*ability.Coefficient
 	}
 	multiplier := float32(1) + profile.HealingIncrease
 	if ability.IsDescriptorFound && ability.Descriptor&4096 != 0 {

@@ -1848,10 +1848,9 @@ func profileAbilityProjectedNumber(template *sporenet.TemplateCreature, stats []
 	if isHealing {
 		projected := number
 		if isFound && coefficient != 0 {
-			// Game 5.3.0.103 sub_43A170 routes damage tokens through
-			// sub_9E5B10/sub_9E4E60. The latter applies the authored coefficient to
-			// the class-selected primary attribute relative to the build's -1 base.
-			projected *= 1 + (primary+1)*coefficient
+			// Build-103 healing uses the same MagicNumbers baseline as damage
+			// through sub_9E5550 -> sub_9E4E60.
+			projected *= 1 + (primary-float64(PrimaryAttributeIgnoreAmount))*coefficient
 		}
 		return math.Floor(projected)
 	}

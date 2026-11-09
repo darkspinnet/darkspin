@@ -118,6 +118,7 @@ func (e *campaignNPCBehaviorRun) moveLocked(member *gameplayPeerSession,
 			return nil, true, nil
 		}
 		e.destination = destination
+		e.isWaypointPublished = false
 		e.isMoving = true
 		e.wasMoving = true
 	}
@@ -132,6 +133,23 @@ func (e *campaignNPCBehaviorRun) moveLocked(member *gameplayPeerSession,
 	speed *= member.zone.NPCs().SlowMovementScale(source.Plan.ObjectID, now)
 	if speed <= 0 {
 		return packets, true, nil
+	}
+	if (isWander || isStroll) && (!e.isIdleSpeedPublished || e.idleMovementSpeed != speed) {
+		// Preplaced actors start with zero idle speed. Enable native walking
+		// only when an authoritative idle movement is actually admitted.
+		attributePacket, attributeErr := raknet.MarshalApplication(raknet.AttributeDataUpdateMessage{
+			ObjectID: source.Plan.ObjectID, Value: map[uint8]float32{
+				11: source.Plan.NPCProfile.IdleMovementSpeed,
+				48: (1+zonenpc.EffectiveMovementSpeedBuff(source.Plan))*
+					member.zone.NPCs().SlowMovementScale(source.Plan.ObjectID, now) - 1,
+			},
+		})
+		if attributeErr != nil {
+			return nil, false, fmt.Errorf("behaviorIdleSpeed: %w", attributeErr)
+		}
+		e.isIdleSpeedPublished = true
+		e.idleMovementSpeed = speed
+		packets = append(packets, attributePacket)
 	}
 	step, err := member.zone.NPCs().AdvancePursuit(member.zone.Navigation(), source.Plan.ObjectID,
 		e.destination, stopDistance, speed, source.NavigationRadius(), campaignNPCBehaviorTick)
@@ -197,14 +215,14 @@ func (e *campaignNPCBehaviorRun) moveLocked(member *gameplayPeerSession,
 			return packets, true, nil
 		}
 	} else {
-		var positionPacket []byte
-		positionPacket, err = raknet.MarshalApplication(raknet.ObjectPositionUpdateMessage{
-			ObjectID: source.Plan.ObjectID, PositionX: step.Position.X,
-			PositionY: step.Position.Y, PositionZ: step.Position.Z,
-		})
-		if err == nil {
+		// Fixed-point movement lets the client interpolate toward the next
+		// corridor waypoint. Position corrections here snap its root each tick.
+		if !e.isWaypointPublished || e.publishedWaypoint != waypoint {
 			moves, err = npcraknet.PursuitWaypoint(source.Plan.ObjectID, waypoint)
-			moves = append([][]byte{positionPacket}, moves...)
+			if err == nil {
+				e.isWaypointPublished = true
+				e.publishedWaypoint = waypoint
+			}
 		}
 	}
 	if err != nil {

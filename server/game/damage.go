@@ -6,6 +6,10 @@ import (
 	"math"
 )
 
+// PrimaryAttributeIgnoreAmount is the signed integer at offset 0x34 in
+// build-103's MagicNumbers resource, subtracted by the shared stat scaler.
+const PrimaryAttributeIgnoreAmount = float32(8)
+
 // AbilityDamage describes the authored inputs consumed by build-103's
 // attacker-side damage projection before critical and target-side reduction.
 type AbilityDamage struct {
@@ -121,9 +125,9 @@ func ResolveAbilityDamageRange(ability AbilityDamage, profile DamageProfile) (Da
 	minimum := ability.Minimum
 	maximum := ability.Maximum
 	if profile.IsPrimaryAttributeFound && ability.Coefficient != 0 {
-		// Callers with recovered tuning supply the baseline subtracted by
-		// sub_9E4E60. Preserve the existing hero balance for other callers.
-		baseline := float32(-1)
+		// sub_9E4E60 uses the same MagicNumbers baseline for hero and NPC
+		// attackers. Explicit snapshot tuning remains authoritative when set.
+		baseline := PrimaryAttributeIgnoreAmount
 		if profile.IsPrimaryAttributeBaselineFound {
 			baseline = profile.PrimaryAttributeBaseline
 		}

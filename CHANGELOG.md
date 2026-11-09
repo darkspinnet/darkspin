@@ -2,6 +2,8 @@
 
 ### 2026-11-08
 
+- Correct hero damage, healing, and their tooltips from a primary-stat baseline of -1 to build-103's MagicNumbers baseline of 8, and preserve the owner's explicit damage baseline for Sentry Drone attacks.
+- Change idle enemy walking from repeated position corrections to native waypoint movement, enabling authored idle speed and preserving interpolation between waypoint changes.
 - Run Strafe and Small Strafe's original Lua callbacks for destination choice, movement reduction, arrival distance, and cleanup instead of duplicated Go behavior decisions.
 - Include Orcus's active shield immunity in Lua sleep and silence admission and shared crowd-control checks, with independent expiry and renewal tracking.
 - Honor Overdrive's silence immunity through the same live hero contribution lookup used for poison immunity.

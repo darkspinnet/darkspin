@@ -17,7 +17,7 @@ func (e gameplayPeerSession) beastPetDamageProfile() (game.DamageProfile, error)
 	// owner's PetDamage bonus; that percentage is not a primary stat.
 	return game.DamageProfile{
 		PrimaryAttribute: creature.Mind, IsPrimaryAttributeFound: true,
-		PrimaryAttributeBaseline: 8, IsPrimaryAttributeBaselineFound: true,
+		PrimaryAttributeBaseline: game.PrimaryAttributeIgnoreAmount, IsPrimaryAttributeBaselineFound: true,
 		DamageBuff: creature.PetDamage,
 	}, nil
 }

@@ -14,10 +14,6 @@ import (
 
 var ErrControlTargetOutOfRange = errors.New("npc control target out of range")
 
-// Build 103's MagicNumbers resource stores this signed stat baseline at
-// offset 52. sub_9E4E60 subtracts it before applying an ability coefficient.
-const nonPlayerPrimaryAttributeBaseline = float32(8)
-
 // Chunk 802 adds this to a captain's EliteModifier DamageBuff. Its authored
 // 1.5 captain total subtracts the lieutenant elite bonus of 0.5.
 const captainDamageBonus = float32(1.5 - 0.5)
@@ -143,7 +139,7 @@ func DamageProfileAt(npc Snapshot, at time.Time) game.DamageProfile {
 	damageProfile := game.DamageProfile{
 		PrimaryAttribute:                npc.Plan.NPCProfile.Mind,
 		IsPrimaryAttributeFound:         true,
-		PrimaryAttributeBaseline:        nonPlayerPrimaryAttributeBaseline,
+		PrimaryAttributeBaseline:        game.PrimaryAttributeIgnoreAmount,
 		IsPrimaryAttributeBaselineFound: true,
 	}
 

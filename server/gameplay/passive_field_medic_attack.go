@@ -137,8 +137,10 @@ func (r campaignDamageRuntime) startFieldMedicDroneAttackFor(
 			Coefficient: ability.DamageCoefficient,
 		},
 		game.DamageProfile{
-			PrimaryAttribute:        creature.DamageProfile.PrimaryAttribute,
-			IsPrimaryAttributeFound: creature.DamageProfile.IsPrimaryAttributeFound,
+			PrimaryAttribute:                creature.DamageProfile.PrimaryAttribute,
+			IsPrimaryAttributeFound:         creature.DamageProfile.IsPrimaryAttributeFound,
+			PrimaryAttributeBaseline:        creature.DamageProfile.PrimaryAttributeBaseline,
+			IsPrimaryAttributeBaselineFound: creature.DamageProfile.IsPrimaryAttributeBaselineFound,
 		},
 	)
 	if damageErr != nil {
