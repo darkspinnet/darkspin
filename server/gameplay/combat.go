@@ -1203,17 +1203,7 @@ func (r campaignDamageRuntime) startCompanionAttacks(
 		return packets, nil
 	}
 	ability := r.npc.program.SupportHealerPetBasic
-	petDamage := float32(0)
-	if peerSession.deployedCreatureIndex < uint32(len(peerSession.binding.Creatures)) {
-		petDamage = peerSession.binding.Creatures[peerSession.deployedCreatureIndex].PetDamage
-	}
-	damageRange, err := game.ResolveAbilityDamageRange(
-		game.AbilityDamage{
-			Minimum: ability.MinimumDamage, Maximum: ability.MaximumDamage,
-			Coefficient: ability.DamageCoefficient,
-		},
-		game.DamageProfile{PrimaryAttribute: petDamage, IsPrimaryAttributeFound: true},
-	)
+	damageRange, err := peerSession.sagePetDamageRange(ability)
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("companionDamageRange: %w", err)

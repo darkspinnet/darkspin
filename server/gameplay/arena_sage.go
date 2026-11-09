@@ -178,7 +178,6 @@ func (e gameplayPendingRuntime) advanceArenaSageLocked(packet raknet.Packet, key
 			sessionKey: key, gameID: member.binding.GameID, generation: member.generation,
 			ownerObjectID: req.OwnerObjectID, objectID: req.ObjectID, kind: arenaCombatPetSage,
 			startedAt: now, attackAbility: e.damage.npc.program.SupportHealerPetBasic,
-			petDamage:    member.binding.Creatures[member.deployedCreatureIndex].PetDamage,
 			deletePacket: deletePacket, isPublished: true}
 		if world.combatPets == nil {
 			world.combatPets = make(map[uint32]*arenaCombatPetRun)

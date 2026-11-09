@@ -2,6 +2,7 @@
 
 ### 2026-11-08
 
+- #198 Restore Sage's Dendrone damage scaling from nearly flat damage to mirrored owner stats and a separate pet-damage bonus in campaign and Arena.
 - Apply recipient duration reductions to verified timed silence and snare modifiers, keeping server expiry and client duration aligned with build-103's one-millisecond minimum.
 - Release Stealther action reservations when cooldown or recovery scheduling fails so later attacks can resume.
 - Correct hero damage, healing, and their tooltips from a primary-stat baseline of -1 to build-103's MagicNumbers baseline of 8, and preserve the owner's explicit damage baseline for Sentry Drone attacks.
