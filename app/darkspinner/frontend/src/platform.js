@@ -88,6 +88,10 @@ export const ChangeRemoteControlPassword = (...args) => controlPanelCall('Change
 export const SetRemoteControlPassword = (...args) => controlPanelCall('SetRemoteControlPassword', ...args)
 export const DeleteRemoteControlAccount = (...args) => controlPanelCall('DeleteRemoteControlAccount', ...args)
 export const GetRemoteControlIdentity = (...args) => controlPanelCall('GetRemoteControlIdentity', ...args)
+export const GetRemoteControlMatchmaking = (...args) => controlPanelCall('GetRemoteControlMatchmaking', ...args)
+export const GetRemoteControlCapacity = (...args) => controlPanelCall('GetRemoteControlCapacity', ...args)
+export const SetRemoteControlCapacity = (...args) => controlPanelCall('SetRemoteControlCapacity', ...args)
+export const SetRemoteControlMatchmaking = (...args) => controlPanelCall('SetRemoteControlMatchmaking', ...args)
 export const SetRemoteControlIdentity = (...args) => controlPanelCall('SetRemoteControlIdentity', ...args)
 export const GetRemoteControlAnnouncements = (...args) => controlPanelCall('GetRemoteControlAnnouncements', ...args)
 export const SendRemoteControlAnnouncement = (...args) => controlPanelCall('SendRemoteControlAnnouncement', ...args)
@@ -209,3 +213,6 @@ export async function Quit() {
   await call('Quit')
   window.close()
 }
+
+export const GetMatchmakingConfiguration = () => isWails() ? window.go.main.App.GetMatchmakingConfiguration() : call('GetMatchmakingConfiguration')
+export const SetMatchmakingConfiguration = req => isWails() ? window.go.main.App.SetMatchmakingConfiguration(req) : call('SetMatchmakingConfiguration', req)

@@ -7,37 +7,27 @@ import (
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
+	"github.com/darkspinnet/darkspin/server/matchmaking"
 	"github.com/darkspinnet/darkspin/server/pvp"
 )
 
 const matchmakingBotFillDelay = 30 * time.Second
 
-// SetMatchmakingConfig supplies launcher-owned settings for bot-filled games.
-func (e *Registry) SetMatchmakingConfig(config *game.Config) {
+// SetMatchmakingConfiguration supplies durable server-owned bot preferences.
+func (e *Registry) SetMatchmakingConfiguration(configuration *matchmaking.Service) {
 	e.mu.Lock()
-	e.matchmakingConfig = config
+	e.matchmakingConfiguration = configuration
 	e.mu.Unlock()
 }
 
-func (e *Registry) campaignMatchmakingBotSize() (uint32, error) {
+func (e *Registry) campaignMatchmakingSettings() matchmaking.Settings {
 	e.mu.RLock()
-	config := e.matchmakingConfig
+	configuration := e.matchmakingConfiguration
 	e.mu.RUnlock()
-	if config == nil {
-		return 1, nil
+	if configuration == nil {
+		return matchmaking.Default()
 	}
-	botSize, err := config.CampaignMatchmakingBotSize()
-	if err != nil {
-		return 0, fmt.Errorf("botSize: %w", err)
-	}
-	return botSize, nil
-}
-
-func (e *Registry) isCampaignBotSquadMirroringEnabled() bool {
-	e.mu.RLock()
-	config := e.matchmakingConfig
-	e.mu.RUnlock()
-	return config == nil || config.Bool(game.ConfigIsCampaignBotSquadMirroringEnabled)
+	return configuration.Current()
 }
 
 func isBotFillCriteria(criteria pvp.MatchmakingCriteria) bool {
@@ -178,12 +168,11 @@ func queueMatchmakingFormation(
 		botSize := uint32(1)
 		isSquadMirroringEnabled := true
 		if criteria.GameType == pvp.CampaignGameType {
-			botSize, formErr = request.Session.server.registry.campaignMatchmakingBotSize()
-			isSquadMirroringEnabled = request.Session.server.registry.isCampaignBotSquadMirroringEnabled()
+			settings := request.Session.server.registry.campaignMatchmakingSettings()
+			botSize = settings.CampaignMatchmakingBotSize
+			isSquadMirroringEnabled = settings.IsCampaignBotSquadMirroringEnabled
 		}
-		if formErr == nil {
-			instance, formErr = formBotFilledGame(gameManager, userDirectory, sessions, criteria, botSize, isSquadMirroringEnabled)
-		}
+		instance, formErr = formBotFilledGame(gameManager, userDirectory, sessions, criteria, botSize, isSquadMirroringEnabled)
 	} else {
 		instance, formErr = formMatchmakingGame(gameManager, userDirectory, sessions, criteria)
 	}

@@ -127,7 +127,13 @@ func openAccountAccessOperator(
 	if err != nil {
 		return nil, nil, fmt.Errorf("configPath: %w", err)
 	}
-	config, isGenerated, err := game.LoadConfig(configPath)
+	var config *game.Config
+	var isGenerated bool
+	if playerstore.IsEnvironmentConfigured() {
+		config, isGenerated, err = game.LoadDedicatedConfig(configPath)
+	} else {
+		config, isGenerated, err = LoadLocalConfiguration(configPath)
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("configLoad: %w", err)
 	}

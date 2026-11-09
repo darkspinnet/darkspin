@@ -45,11 +45,13 @@ func (e *App) OpenLocalControlPanel(identity string) (RemoteControlPanel, error)
 	e.selectControlActivityOwnerLocked(address, identity)
 	token, err := gameServer.OpenLocalControlPanel(ctx, identity)
 	if err != nil {
+		e.log(fmt.Sprintf("Local control panel session failed: %v", err))
 		return RemoteControlPanel{}, fmt.Errorf("panelOpen: %w", err)
 	}
 	e.controlPanel = remoteControlSession{address: address, identity: identity, token: token, isLocal: true}
 	panel, err := e.getRemoteControlPanelLocked(ctx)
 	if err != nil {
+		e.log(fmt.Sprintf("Local control panel initial read failed: %v", err))
 		return RemoteControlPanel{}, fmt.Errorf("panelInitial: %w", err)
 	}
 	e.controlPanel.identity = panel.Profile.LoginName

@@ -88,7 +88,7 @@ func startLauncherBootstrap(handler http.Handler, token string) (string, *http.S
 	port := defaultRemoteServerPort
 	_, err = os.Stat(pathSet.configPath)
 	if err == nil {
-		config, _, loadErr := game.LoadConfig(pathSet.configPath)
+		config, _, loadErr := server.LoadLocalConfiguration(pathSet.configPath)
 		if loadErr != nil {
 			return "", nil, nil, fmt.Errorf("configLoad: %w", loadErr)
 		}
@@ -205,6 +205,8 @@ func launcherMethods(app *App) map[string]any {
 		"GetProfiles":                        app.GetProfiles,
 		"GetRemoteProfiles":                  app.GetRemoteProfiles,
 		"GetServerConfiguration":             app.GetServerConfiguration,
+		"GetMatchmakingConfiguration":        app.GetMatchmakingConfiguration,
+		"SetMatchmakingConfiguration":        app.SetMatchmakingConfiguration,
 		"GetSquadSnapshot":                   app.GetSquadSnapshot,
 		"GetStatus":                          app.GetStatus,
 		"GetLauncherAutomationConfiguration": app.GetLauncherAutomationConfiguration,
@@ -240,6 +242,10 @@ func launcherMethods(app *App) map[string]any {
 		"SetRemoteControlPassword":           app.SetRemoteControlPassword,
 		"DeleteRemoteControlAccount":         app.DeleteRemoteControlAccount,
 		"GetRemoteControlIdentity":           app.GetRemoteControlIdentity,
+		"GetRemoteControlMatchmaking":        app.GetRemoteControlMatchmaking,
+		"GetRemoteControlCapacity":           app.GetRemoteControlCapacity,
+		"SetRemoteControlCapacity":           app.SetRemoteControlCapacity,
+		"SetRemoteControlMatchmaking":        app.SetRemoteControlMatchmaking,
 		"SetRemoteControlIdentity":           app.SetRemoteControlIdentity,
 		"GetRemoteControlAnnouncements":      app.GetRemoteControlAnnouncements,
 		"SendRemoteControlAnnouncement":      app.SendRemoteControlAnnouncement,

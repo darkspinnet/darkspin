@@ -5,10 +5,12 @@ services:
     environment:
       DARKSPIN_BOOTSTRAP_PATH: /darkspin
       DARKSPIN_ADVERTISED_HOST: "${DARKSPIN_ADVERTISED_HOST:?Set DARKSPIN_ADVERTISED_HOST to the reachable server IPv4 address}"
-      DARKSPIN_IS_DEDICATED: "true"
       DARKSPIN_BIND_HOST: "${DARKSPIN_BIND_HOST:-0.0.0.0}"
       DARKSPIN_PORT: "${DARKSPIN_PORT:-42127}"
       DARKSPIN_GAME_PATH: /game
+      DARKSPIN_CONTENT_PATH: /darkspin/runtime/darkspin/cache
+      # Empty preserves an existing runtime/darkspin.toml auth.jwt_secret.
+      DARKSPIN_AUTH_JWT_SECRET: "${DARKSPIN_AUTH_JWT_SECRET:-}"
       # Compose always uses its managed PostgreSQL database. The same settings
       # initialize PostgreSQL and connect Darkrun; content.db remains SQLite.
       PGHOST: postgres
@@ -18,7 +20,7 @@ services:
       PGPASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD for the database}"
       PGSSLMODE: disable
       PGCONNECT_TIMEOUT: "10"
-      # Explicit environment owns these settings over saved [bootstrap] values.
+      # Dedicated server configuration comes exclusively from its environment.
       # Defaults match .env.example and the application's fresh configuration.
       DARKSPIN_IS_UPDATE_ENABLED: "${DARKSPIN_IS_UPDATE_ENABLED:-true}"
       DARKSPIN_UPDATE_CRON: "${DARKSPIN_UPDATE_CRON:-30 3 * * *}"

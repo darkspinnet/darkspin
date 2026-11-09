@@ -31,8 +31,7 @@ func (e *gameplayPeerSession) stopArenaBeastPet() ([][]byte, error) {
 			enrage.cancel = nil
 		}
 		world.companion.ClearBodyScale(objectID)
-		world.companion.RemoveBuff(objectID,
-			zonecompanion.Buff{DamageBuff: beastPetEnrageDamageIncrease})
+		world.companion.ClearBuffModifier(objectID, enrage.instanceID)
 		modifierPacket, modErr := effectraknet.ModifierDelete(objectID, enrage.instanceID)
 		if modErr != nil {
 			return nil, fmt.Errorf("arenaBeastStopEnrage: %w", modErr)

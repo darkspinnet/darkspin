@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { Button } from '@/components/ui/button'
 import ServerIdentityConfiguration from './ServerIdentityConfiguration.vue'
+import RemoteControlMatchmaking from './RemoteControlMatchmaking.vue'
+import RemoteControlCapacity from './RemoteControlCapacity.vue'
 import ConfigHelp from './ConfigHelp.vue'
 import { SendRemoteControlAnnouncement } from '../platform'
 import { panelError } from '../control_panel'
@@ -13,6 +15,8 @@ const delivery = ref(null)
 const error = ref('')
 const isBusy = ref(false)
 const isIdentityBusy = ref(false)
+const isMatchmakingBusy = ref(false)
+const isCapacityBusy = ref(false)
 const operations = computed(() => props.panel.server.supported_operations || [])
 const isMessageReady = computed(() => !!message.value.trim() && new TextEncoder().encode(message.value).length <= 512)
 function updateAnnouncement(event) {
@@ -32,7 +36,7 @@ function updateAnnouncement(event) {
 }
 let generation = 0
 let isDisposed = false
-watch([isBusy, isIdentityBusy], () => emit('busy', isBusy.value || isIdentityBusy.value), { flush:'sync' })
+watch([isBusy, isIdentityBusy, isMatchmakingBusy, isCapacityBusy], () => emit('busy', isBusy.value || isIdentityBusy.value || isMatchmakingBusy.value || isCapacityBusy.value), { flush:'sync' })
 function isCurrent(current, profile) {
   return !isDisposed && current === generation && props.profile?.serverAddress === profile?.serverAddress && props.profile?.loginName === profile?.loginName
 }
@@ -69,12 +73,14 @@ onBeforeUnmount(() => { isDisposed = true; emit('busy', false) })
 <template>
   <div class="server-management">
     <ServerIdentityConfiguration v-if="operations.includes('admin.identity.write')" :profile="profile" @busy="isIdentityBusy = $event" @changed="emit('changed')" @invalidated="emit('invalidated', $event)" />
+    <RemoteControlCapacity v-if="operations.includes('admin.capacity.write')" :profile="profile" :is-disabled="isBusy || isIdentityBusy || isMatchmakingBusy" @busy="isCapacityBusy = $event" @invalidated="emit('invalidated', $event)" />
+    <RemoteControlMatchmaking v-if="operations.includes('admin.matchmaking.write')" :profile="profile" :is-disabled="isBusy || isIdentityBusy || isCapacityBusy" @busy="isMatchmakingBusy = $event" @invalidated="emit('invalidated', $event)" />
     <section v-if="operations.includes('admin.announcements.write')">
       <h3>{{ $t('ANNOUNCEMENTS') }}<ConfigHelp text="Send a message to connected players" /></h3>
       <form @submit.prevent="announce">
         <label for="control-announcement">{{ $t('MESSAGE TO CONNECTED PLAYERS') }}</label>
-        <textarea id="control-announcement" :value="message" rows="3" :disabled="isBusy || isIdentityBusy" @input="updateAnnouncement" @compositionend="updateAnnouncement"></textarea>
-        <Button type="submit" :disabled="!isMessageReady || isBusy || isIdentityBusy">{{ $t('SEND ANNOUNCEMENT') }}</Button>
+        <textarea id="control-announcement" :value="message" rows="3" :disabled="isBusy || isIdentityBusy || isMatchmakingBusy || isCapacityBusy" @input="updateAnnouncement" @compositionend="updateAnnouncement"></textarea>
+        <Button type="submit" :disabled="!isMessageReady || isBusy || isIdentityBusy || isMatchmakingBusy || isCapacityBusy">{{ $t('SEND ANNOUNCEMENT') }}</Button>
       </form>
       <p v-if="delivery" role="status">{{ $t('Delivered to {0} connected players.', [delivery.delivered]) }} {{ $t(delivery.is_delivery_partial ? 'Delivery was partial; some players may not have received the message.' : 'The server completed this delivery attempt.') }}</p>
       <p v-if="delivery && delivery.outcome === 'failed'" role="alert">{{ $t('The announcement delivery failed.') }}</p>

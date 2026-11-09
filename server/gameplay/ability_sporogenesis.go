@@ -220,6 +220,13 @@ func (e *sporogenesisHot) apply() error {
 func (e *sporogenesisHot) purgeTargetLocked() ([][]byte, error) {
 	packets := make([][]byte, 0)
 	if e.isNPC {
+		isFirePurged, fireErr := e.runtime.registry.retireFireVulnerabilityLocked(e.originZone, e.target.objectID)
+		if fireErr != nil {
+			return packets, fmt.Errorf("sporogenesisFirePurge: %w", fireErr)
+		}
+		if isFirePurged {
+			// The shared owner queued exact modifier removal for every peer.
+		}
 		fixturePackets, fixtureErr := e.runtime.registry.retireFixtureBurnsLocked(e.originZone.NPCs(), e.target.objectID, e.runtime.modifierPool)
 		packets = append(packets, fixturePackets...)
 		if fixtureErr != nil {

@@ -1143,12 +1143,8 @@ func applyCompanionAttackBuff(
 	ability sim.AbilityDefinition, plan zonecompanion.Attack,
 ) sim.AbilityDefinition {
 	damageScale := 1 + plan.DamageBuff + plan.EnergyDamageBuff
-	ability.MinimumDamage = float32(math.Floor(float64(
-		ability.MinimumDamage * damageScale,
-	)))
-	ability.MaximumDamage = float32(math.Ceil(float64(
-		ability.MaximumDamage * damageScale,
-	)))
+	ability.MinimumDamage *= damageScale
+	ability.MaximumDamage *= damageScale
 	attackScale := max(float32(0.05), 1+plan.AttackSpeed)
 	ability.HitDelay = time.Duration(float64(ability.HitDelay) / float64(attackScale))
 	ability.ReleaseDelay = time.Duration(

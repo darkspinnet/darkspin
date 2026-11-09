@@ -99,7 +99,7 @@ func ObserveBackupArchive(root string, success BackupSuccess) ArchiveObservation
 	if hashErr != nil || databaseErr != nil || len(previousHash) != 32 || len(databaseHash) != 32 {
 		return observation
 	}
-	paths := []string{filepath.Join("bin", installedBinaryName()), "runtime/darkspin.toml", "postgres.dump"}
+	paths := []string{filepath.Join("bin", installedBinaryName()), "postgres.dump"}
 	for _, rel := range paths {
 		path := filepath.Join(archivePath, filepath.FromSlash(rel))
 		err = storage.checkPath(path)

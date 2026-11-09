@@ -87,6 +87,11 @@ func New(ctx context.Context, path string, options Options) (*Repository, error)
 		closeErr := db.Close()
 		return nil, fmt.Errorf("activitySchema: %w", errors.Join(err, closeErr))
 	}
+	err = repository.CapacityStore().EnsureSchema(ctx, false)
+	if err != nil {
+		closeErr := db.Close()
+		return nil, fmt.Errorf("capacitySchema: %w", errors.Join(err, closeErr))
+	}
 	return repository, nil
 }
 
@@ -668,6 +673,11 @@ func normalizeOptions(options Options) Options {
 
 func sqliteDSN(path string, busyTimeout time.Duration) string {
 	parameters := url.Values{}
+	// Reserve the writer before schema inspection or other read/modify/write
+	// transactions. Deferred upgrades can fail with SQLITE_BUSY immediately,
+	// bypassing the busy timeout when another pool has advanced the snapshot.
+	// The driver keeps explicit read-only transactions deferred for WAL readers.
+	parameters.Set("_txlock", "immediate")
 	parameters.Add("_pragma", "busy_timeout("+strconv.FormatInt(busyTimeout.Milliseconds(), 10)+")")
 	parameters.Add("_pragma", "foreign_keys(1)")
 	parameters.Add("_pragma", "journal_mode(WAL)")

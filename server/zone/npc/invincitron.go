@@ -76,6 +76,7 @@ func purgeInvincitronDebuffs(actor *Snapshot) {
 	status.energyTakenIncrease = 0
 	status.energyVulnerabilityOwner = 0
 	status.energyVulnerabilityEnd = time.Time{}
+	status.energyVulnerabilityModifiers = nil
 	status.healingReduction = 0
 	status.healingReductionEnd = time.Time{}
 	status.fearExpiresAt = time.Time{}

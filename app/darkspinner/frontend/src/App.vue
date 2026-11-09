@@ -23,7 +23,7 @@ import { remoteErrorText, remoteUsernameError, remotePasswordError } from './rem
 import { GetLauncherLanguageConfiguration, SetLauncherLocale } from './platform'
 import { campaignDetailFor, campaignLabelFor, profileCreateDate, profileLastPlayedDate, profileLastPlayedTime } from './profile'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { BrowserOpenURL, CancelPatch, CheckRemoteServers, ClipboardSetText, CompactSnapshots, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteModProfile, DeleteProfile, DeleteRemoteConnection, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherAutomationConfiguration, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetSquadSnapshot, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, ResetModProfileDisplay, ResetProfileDisplay, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetAutoPatch, SetAutoPlay, SetIdentity, SetLocalServicesRequired, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
+import { BrowserOpenURL, CancelPatch, CheckRemoteServers, ClipboardSetText, CompactSnapshots, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteModProfile, DeleteProfile, DeleteRemoteConnection, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherAutomationConfiguration, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetMatchmakingConfiguration, SetMatchmakingConfiguration, GetSquadSnapshot, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, ResetModProfileDisplay, ResetProfileDisplay, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetAutoPatch, SetAutoPlay, SetIdentity, SetLocalServicesRequired, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
 
 const status = ref({ state:'starting', message:'Starting DarkSpinner', identity:'', auth:'Starting', server:'Starting', patch:'Pending', game:'Checking', avatar:'Preparing', profile:'Starting', content:'Pending', identityError:'', authError:'', serverError:'', patchError:'', gameError:'', avatarError:'', profileError:'', contentError:'', lastRun:'', launcherNotice:'', version:'', buildChannel:'production', progress:0, patchProgress:0, avatarProgress:0, contentProgress:0, isAuthenticated:false, isAuthOnline:false, isServerOnline:false, isPatchComplete:false, isPatchActive:false, isGameReady:false, isAvatarReady:false, isProfileStoreReady:false, isContentReady:false, isPlayReady:false, isCinematicSkipped:false, isIntroSkipped:false, isLastRunFailure:false, isStartupBlocked:false })
 const retainedProfileName = localStorage.getItem('darkspinner.selectedProfile') || localStorage.getItem('darkspinner.identity') || ''
@@ -89,24 +89,26 @@ const isRemotePasswordRemembered = ref(true)
 const isRemoteRegistration = ref(false)
 const isRemoteBusy = ref(false)
 const remoteMessage = ref('Enter a server address or ask for LAN suggestions.')
-const serverConfiguration = ref({ port:42127, isMultiplayerEnabled:false, locale:'en-us', locales:[], snapshotMode:'auto', campaignMatchmakingBotSize:1, isCampaignBotSquadMirroringEnabled:true })
+const serverConfiguration = ref({ port:42127, locale:'en-us', locales:[], snapshotMode:'auto' })
 const configuredServerPort = ref(42127)
 const configuredBindHost = ref('')
 const configuredAdvertisedHost = ref('127.0.0.1')
-const isConfiguredDedicated = ref(false)
-const isConfiguredMultiplayerEnabled = ref(false)
 const configuredLocale = ref('en-us')
 const launcherLanguageConfiguration = ref({ locale:'en-us', locales:[] })
 const configuredLauncherLocale = ref('en-us')
 const isLauncherLanguageLoaded = ref(false)
 const configuredSnapshotMode = ref('auto')
 const configuredCampaignMatchmakingBotSize = ref('1')
+const isMatchmakingConfigurationLoaded = ref(false)
 const isConfiguredCampaignBotSquadMirroringEnabled = ref(true)
 const systemWineRunner = 'system'
 const wineRunnerConfiguration = ref({ isSupported:false, selectedPath:'', runners:[] })
 const configuredWineRunner = ref(systemWineRunner)
 const isWineRunnerBusy = ref(false)
 const isServerConfigurationBusy = ref(false)
+const isServerConfigurationLoaded = ref(false)
+const isServerConfigurationReady = computed(() => status.value.isServerOnline && isServerConfigurationLoaded.value && !isServerConfigurationBusy.value)
+let serverConfigurationGeneration = 0
 const configTab = ref('general')
 const serverConfigurationError = ref('')
 const integrationStatus = ref({ isStartMenuInstalled:false, isDesktopInstalled:false, isSteamLaunchInstalled:false, isManagementSupported:false, error:'', message:'' })
@@ -117,7 +119,6 @@ const isSelectedProfileRunning = ref(false)
 const isDetachedClientDetected = ref(false)
 const isClientStopBusy = ref(false)
 const isUninstallConfirmOpen = ref(false)
-const isMultiplayerConfirmOpen = ref(false)
 const isRunningGameConfirmOpen = ref(false)
 const isRunningGameConfirmBusy = ref(false)
 const launcherNotice = ref('')
@@ -539,6 +540,14 @@ watch(isPlayEnabled, next => {
   if (next && activePage.value === 'play') void refreshInterruptedMission()
 })
 
+watch(() => status.value.isServerOnline, isOnline => {
+  serverConfigurationGeneration++
+  isServerConfigurationLoaded.value = false
+  isMatchmakingConfigurationLoaded.value = false
+  serverConfigurationError.value = ''
+  if (isOnline) void refreshServerConfiguration()
+})
+
 onMounted(async () => {
   window.addEventListener('keydown', updateShiftKey)
   window.addEventListener('keyup', updateShiftKey)
@@ -803,20 +812,25 @@ async function setAutoPlay(isEnabled) {
 }
 
 async function refreshServerConfiguration() {
+  const generation = ++serverConfigurationGeneration
+  isServerConfigurationLoaded.value = false
   serverConfigurationError.value = ''
   try {
-    serverConfiguration.value = await GetServerConfiguration()
+    const configuration = await GetServerConfiguration()
+    if (generation !== serverConfigurationGeneration) return
+    serverConfiguration.value = configuration
     configuredServerPort.value = serverConfiguration.value.port
     configuredBindHost.value = serverConfiguration.value.bindHost
     configuredAdvertisedHost.value = serverConfiguration.value.advertisedHost
-    isConfiguredDedicated.value = serverConfiguration.value.isDedicated
-    isConfiguredMultiplayerEnabled.value = serverConfiguration.value.isMultiplayerEnabled
     configuredLocale.value = serverConfiguration.value.locale
     configuredSnapshotMode.value = serverConfiguration.value.snapshotMode
-    configuredCampaignMatchmakingBotSize.value = String(serverConfiguration.value.campaignMatchmakingBotSize)
-    isConfiguredCampaignBotSquadMirroringEnabled.value = serverConfiguration.value.isCampaignBotSquadMirroringEnabled
+    isServerConfigurationLoaded.value = true
   }
-  catch (error) { serverConfigurationError.value = visibleLauncherText(error) }
+  catch (error) {
+    if (generation !== serverConfigurationGeneration) return
+    serverConfigurationError.value = visibleLauncherText(error)
+  }
+  if (launchPage.value !== 'remote' && status.value.isServerOnline) await refreshMatchmakingConfiguration(generation)
   await refreshWineRunnerConfiguration()
 }
 
@@ -845,20 +859,49 @@ function wineRunnerLabel(runner) {
   return `${runner.kind} — ${runner.label}${version}${suffix}`
 }
 
-async function saveMultiplayerConfiguration() {
-  if (!isServerPortValid.value || isServerConfigurationBusy.value) return
-  if (Number(configuredServerPort.value) === Number(serverConfiguration.value.port) &&
-    isConfiguredMultiplayerEnabled.value === serverConfiguration.value.isMultiplayerEnabled) return
-  if (isConfiguredMultiplayerEnabled.value && !serverConfiguration.value.isMultiplayerEnabled) {
-    isMultiplayerConfirmOpen.value = true
-    return
-  }
+async function saveServerNetworkConfiguration() {
+  if (!isServerPortValid.value || !isServerConfigurationReady.value) return
+  if (Number(configuredServerPort.value) === Number(serverConfiguration.value.port)) return
   await applyServerConfiguration(false, true)
 }
 
 async function saveGeneralConfiguration() {
   if (isServerConfigurationBusy.value || !configuredLocale.value) return
   await applyServerConfiguration(true)
+}
+
+async function refreshMatchmakingConfiguration(generation = serverConfigurationGeneration) {
+  isMatchmakingConfigurationLoaded.value = false
+  if (!status.value.isServerOnline) return
+  try {
+    const configuration = await GetMatchmakingConfiguration()
+    if (generation !== serverConfigurationGeneration || !status.value.isServerOnline) return
+    configuredCampaignMatchmakingBotSize.value = String(configuration.campaignMatchmakingBotSize)
+    isConfiguredCampaignBotSquadMirroringEnabled.value = configuration.isCampaignBotSquadMirroringEnabled
+    isMatchmakingConfigurationLoaded.value = true
+  }
+  catch (error) {
+    if (generation === serverConfigurationGeneration && status.value.isServerOnline) serverConfigurationError.value = visibleLauncherText(error)
+  }
+}
+
+async function saveMatchmakingConfiguration() {
+  if (launchPage.value === 'remote' || !isServerConfigurationReady.value || !isMatchmakingConfigurationLoaded.value) return
+  isServerConfigurationBusy.value = true
+  serverConfigurationError.value = ''
+  try {
+    const configuration = await SetMatchmakingConfiguration({
+      campaignMatchmakingBotSize:Number(configuredCampaignMatchmakingBotSize.value),
+      isCampaignBotSquadMirroringEnabled:isConfiguredCampaignBotSquadMirroringEnabled.value,
+    })
+    configuredCampaignMatchmakingBotSize.value = String(configuration.campaignMatchmakingBotSize)
+    isConfiguredCampaignBotSquadMirroringEnabled.value = configuration.isCampaignBotSquadMirroringEnabled
+  }
+  catch (error) {
+    await refreshMatchmakingConfiguration()
+    serverConfigurationError.value = visibleLauncherText(error)
+  }
+  finally { isServerConfigurationBusy.value = false }
 }
 
 async function saveSnapshotConfiguration() {
@@ -868,27 +911,14 @@ async function saveSnapshotConfiguration() {
   const configuration = serverConfiguration.value
   try {
     serverConfiguration.value = await SetServerConfiguration({
-      port:configuration.port, isMultiplayerEnabled:configuration.isMultiplayerEnabled,
+      port:configuration.port,
       locale:configuration.locale, snapshotMode:configuredSnapshotMode.value,
-      campaignMatchmakingBotSize:configuration.campaignMatchmakingBotSize,
-      isCampaignBotSquadMirroringEnabled:configuration.isCampaignBotSquadMirroringEnabled,
       bindHost:configuration.bindHost, advertisedHost:configuration.advertisedHost,
-      isDedicated:configuration.isDedicated,
     })
     configuredSnapshotMode.value = serverConfiguration.value.snapshotMode
   }
   catch (error) { serverConfigurationError.value = visibleLauncherText(error) }
   finally { isServerConfigurationBusy.value = false }
-}
-
-async function confirmMultiplayerConfiguration() {
-  isMultiplayerConfirmOpen.value = false
-  await applyServerConfiguration(false, true)
-}
-
-function cancelMultiplayerConfiguration() {
-  isMultiplayerConfirmOpen.value = false
-  isConfiguredMultiplayerEnabled.value = serverConfiguration.value.isMultiplayerEnabled
 }
 
 async function setSkipCinematic(isSkipped) {
@@ -914,22 +944,18 @@ async function setSkipIntro(isSkipped) {
   finally { isServerConfigurationBusy.value = false }
 }
 
-async function applyServerConfiguration(isGeneralOnly = false, isMultiplayerOnly = false) {
+async function applyServerConfiguration(isGeneralOnly = false, isNetworkOnly = false) {
   isServerConfigurationBusy.value = true
   serverConfigurationError.value = ''
   const req = {
     port:isGeneralOnly ? serverConfiguration.value.port : Number(configuredServerPort.value),
-    isMultiplayerEnabled:isGeneralOnly ? serverConfiguration.value.isMultiplayerEnabled : isConfiguredMultiplayerEnabled.value,
-    locale:isMultiplayerOnly ? serverConfiguration.value.locale : configuredLocale.value,
-    snapshotMode:isGeneralOnly || isMultiplayerOnly ? serverConfiguration.value.snapshotMode : configuredSnapshotMode.value,
-    campaignMatchmakingBotSize:isMultiplayerOnly ? serverConfiguration.value.campaignMatchmakingBotSize : Number(configuredCampaignMatchmakingBotSize.value),
-    isCampaignBotSquadMirroringEnabled:isMultiplayerOnly ? serverConfiguration.value.isCampaignBotSquadMirroringEnabled : isConfiguredCampaignBotSquadMirroringEnabled.value,
+    locale:isNetworkOnly ? serverConfiguration.value.locale : configuredLocale.value,
+    snapshotMode:isGeneralOnly || isNetworkOnly ? serverConfiguration.value.snapshotMode : configuredSnapshotMode.value,
     bindHost:isGeneralOnly ? serverConfiguration.value.bindHost : configuredBindHost.value,
     advertisedHost:isGeneralOnly ? serverConfiguration.value.advertisedHost : configuredAdvertisedHost.value,
-    isDedicated:isGeneralOnly ? serverConfiguration.value.isDedicated : isConfiguredDedicated.value,
   }
   const selectedWineRunnerPath = configuredWineRunner.value === systemWineRunner ? '' : configuredWineRunner.value
-  if (!isMultiplayerOnly && wineRunnerConfiguration.value.isSupported && selectedWineRunnerPath !== wineRunnerConfiguration.value.selectedPath) {
+  if (!isNetworkOnly && wineRunnerConfiguration.value.isSupported && selectedWineRunnerPath !== wineRunnerConfiguration.value.selectedPath) {
     try { applyWineRunnerConfiguration(await SetWineRunner(selectedWineRunnerPath)) }
     catch (error) {
       serverConfigurationError.value = visibleLauncherText(error)
@@ -943,13 +969,9 @@ async function applyServerConfiguration(isGeneralOnly = false, isMultiplayerOnly
       configuredServerPort.value = serverConfiguration.value.port
       configuredBindHost.value = serverConfiguration.value.bindHost
       configuredAdvertisedHost.value = serverConfiguration.value.advertisedHost
-      isConfiguredDedicated.value = serverConfiguration.value.isDedicated
-      isConfiguredMultiplayerEnabled.value = serverConfiguration.value.isMultiplayerEnabled
-      if (!isMultiplayerOnly) configuredSnapshotMode.value = serverConfiguration.value.snapshotMode
+      if (!isNetworkOnly) configuredSnapshotMode.value = serverConfiguration.value.snapshotMode
     }
     configuredLocale.value = serverConfiguration.value.locale
-    configuredCampaignMatchmakingBotSize.value = String(serverConfiguration.value.campaignMatchmakingBotSize)
-    isConfiguredCampaignBotSquadMirroringEnabled.value = serverConfiguration.value.isCampaignBotSquadMirroringEnabled
   }
   catch (error) { serverConfigurationError.value = visibleLauncherText(error) }
   finally { isServerConfigurationBusy.value = false }
@@ -1801,8 +1823,7 @@ async function copyLauncherFailure() {
       <Tabs v-model="configTab" :unmount-on-hide="false" class="config-tabs">
         <TabsList :aria-label='$t("Configuration sections")'>
           <TabsTrigger value="general">{{ $t("General") }}</TabsTrigger>
-          <TabsTrigger value="multiplayer">{{ $t("Multiplayer") }}</TabsTrigger>
-          <TabsTrigger value="spore">Spore</TabsTrigger>
+          <TabsTrigger value="server">{{ $t("Server") }}</TabsTrigger>
           <TabsTrigger value="advanced">{{ $t("Advanced") }}</TabsTrigger>
         </TabsList>
         <TabsContent value="general">
@@ -1836,9 +1857,22 @@ async function copyLauncherFailure() {
                 </Select>
               </template>
             </Card>
+            <SporeConfiguration />
+          </div>
+          <p v-if="serverConfigurationError" class="management-message configuration-error" role="alert">{{ $t(serverConfigurationError) }}</p>
+        </TabsContent>
+        <TabsContent value="server">
+          <p v-if="launchPage === 'remote'" class="management-message">{{ $t("Server settings are only available for non-remote Crogenitors.") }}</p>
+          <div v-else class="config-general-grid">
+            <Card class="management-card config-port-card">
+              <label for="config-server-port">{{ $t("PORT") }}<ConfigHelp text="Network port used by Darkspinner and your local game client." /></label>
+              <Input id="config-server-port" v-model.number="configuredServerPort" @change="saveServerNetworkConfiguration" type="number" min="1" max="65534" inputmode="numeric" :disabled="!isServerConfigurationReady" />
+              <p v-if="!status.isServerOnline" class="management-message">{{ $t("Server settings will be available when the local server is ready.") }}</p>
+              <p v-if="serverConfigurationError" class="management-message configuration-error" role="alert">{{ $t(serverConfigurationError) }}</p>
+            </Card>
             <Card class="management-card config-port-card">
               <label class="config-locale" for="config-campaign-bot-size"><strong>{{ $t("MATCHMAKING") }}<ConfigHelp text="Choose how many bots join your campaign party." /></strong></label>
-              <Select v-model="configuredCampaignMatchmakingBotSize" @update:model-value="saveGeneralConfiguration" :disabled="isServerConfigurationBusy">
+              <Select v-model="configuredCampaignMatchmakingBotSize" @update:model-value="saveMatchmakingConfiguration" :disabled="!isServerConfigurationReady || !isMatchmakingConfigurationLoaded">
                 <SelectTrigger id="config-campaign-bot-size" class="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="1">{{ $t("1 BOT") }}</SelectItem>
@@ -1846,18 +1880,7 @@ async function copyLauncherFailure() {
                   <SelectItem value="3">{{ $t("3 BOTS") }}</SelectItem>
                 </SelectContent>
               </Select>
-              <label class="management-toggle"><Checkbox v-model="isConfiguredCampaignBotSquadMirroringEnabled" @update:model-value="saveGeneralConfiguration" :disabled="isServerConfigurationBusy" /><span><strong>{{ $t("USE SQUADS FOR BOTS") }}<ConfigHelp text="Use your other unlocked PvE squads as matchmaking bots." /></strong><small>{{ $t("Copy unused unlocked PvE squads into matchmaking bots.") }}</small></span></label>
-            </Card>
-          </div>
-          <p v-if="serverConfigurationError" class="management-message configuration-error" role="alert">{{ $t(serverConfigurationError) }}</p>
-        </TabsContent>
-        <TabsContent value="multiplayer">
-          <div class="config-general-grid">
-            <Card class="management-card config-port-card">
-              <label class="management-toggle config-multiplayer"><Checkbox v-model="isConfiguredMultiplayerEnabled" @update:model-value="saveMultiplayerConfiguration" :disabled="isServerConfigurationBusy" /><span><strong>{{ $t("ALLOW MULTIPLAYER CONNECTIONS") }}<ConfigHelp text="Allow other computers to connect to your local server." /></strong></span></label>
-              <label for="config-server-port">{{ $t("PORT") }}<ConfigHelp text="Network port used by your local server. Other players must connect using this port." /></label>
-              <Input id="config-server-port" v-model.number="configuredServerPort" @change="saveMultiplayerConfiguration" type="number" min="1" max="65534" inputmode="numeric" :disabled="isServerConfigurationBusy" />
-              <p v-if="serverConfigurationError" class="management-message configuration-error" role="alert">{{ $t(serverConfigurationError) }}</p>
+              <label class="management-toggle"><Checkbox v-model="isConfiguredCampaignBotSquadMirroringEnabled" @update:model-value="saveMatchmakingConfiguration" :disabled="!isServerConfigurationReady || !isMatchmakingConfigurationLoaded" /><span><strong>{{ $t("USE SQUADS FOR BOTS") }}<ConfigHelp text="Use your other unlocked PvE squads as matchmaking bots." /></strong><small>{{ $t("Copy unused unlocked PvE squads into matchmaking bots.") }}</small></span></label>
             </Card>
           </div>
         </TabsContent>
@@ -1905,11 +1928,6 @@ async function copyLauncherFailure() {
             </Card>
           </div>
         </TabsContent>
-        <TabsContent value="spore">
-          <div class="config-general-grid">
-            <SporeConfiguration />
-          </div>
-        </TabsContent>
       </Tabs>
     </section></TabsContent>
 
@@ -1932,7 +1950,7 @@ async function copyLauncherFailure() {
     </section></TabsContent>
 
 
-    <TabsContent v-if="!isInstallationRequired && !luaConsole.isSelected" v-show="activePage === 'mod'" value="mod" force-mount as-child><ModPage ref="modPage" :status="status" :is-active="activePage === 'mod'" @configure="configTab = 'spore'; showPage('config')" @profiles="modProfiles = $event" @selection="selectedModProfile = $event" @busy="isModBusy = $event" @readiness="isModPlayReady = $event" @launch="activeClientRoute = 'mod'"><template #picker><LaunchCrogenitorPicker :is-shift-held="isShiftHeld" :profiles="launchProfiles" :selected-key="selectedLaunchKey" :is-creation-disabled="isBusy" :is-disabled="isRemoteBusy || (activePage === 'mod' && isModBusy)" :is-action-disabled="isProfileActionDisabled" :is-mod="activePage === 'mod'" @select="chooseLaunchProfile" @create="createLaunchProfile" @control-panel="activePage === 'remote' ? controlPanel?.open() : localControlPanel?.open()" @edit="modPage?.editProfile()" @reset-display="requestResetProfileDisplay(activePage === 'remote' ? selectedRemoteProfile : selectedProfileRecord)" @delete="activePage === 'remote' ? requestRemoteProfileDelete($event) : requestDeleteProfile()" /></template></ModPage></TabsContent>
+    <TabsContent v-if="!isInstallationRequired && !luaConsole.isSelected" v-show="activePage === 'mod'" value="mod" force-mount as-child><ModPage ref="modPage" :status="status" :is-active="activePage === 'mod'" @configure="configTab = 'general'; showPage('config')" @profiles="modProfiles = $event" @selection="selectedModProfile = $event" @busy="isModBusy = $event" @readiness="isModPlayReady = $event" @launch="activeClientRoute = 'mod'"><template #picker><LaunchCrogenitorPicker :is-shift-held="isShiftHeld" :profiles="launchProfiles" :selected-key="selectedLaunchKey" :is-creation-disabled="isBusy" :is-disabled="isRemoteBusy || (activePage === 'mod' && isModBusy)" :is-action-disabled="isProfileActionDisabled" :is-mod="activePage === 'mod'" @select="chooseLaunchProfile" @create="createLaunchProfile" @control-panel="activePage === 'remote' ? controlPanel?.open() : localControlPanel?.open()" @edit="modPage?.editProfile()" @reset-display="requestResetProfileDisplay(activePage === 'remote' ? selectedRemoteProfile : selectedProfileRecord)" @delete="activePage === 'remote' ? requestRemoteProfileDelete($event) : requestDeleteProfile()" /></template></ModPage></TabsContent>
     </Tabs>
 
     <footer :class="{ 'launch-footer':!isInstallationRequired }">
@@ -2053,19 +2071,6 @@ async function copyLauncherFailure() {
         <div class="notice-actions">
           <Button variant="outline" class="onboarding-cancel" type="button" :disabled="isRunningGameConfirmBusy" @click="isRunningGameConfirmOpen = false">{{ $t("KEEP CURRENT CLIENT") }}</Button>
           <Button variant="destructive" class="danger-confirm" type="button" :disabled="isRunningGameConfirmBusy" @click="replaceRunningGame">{{ $t(isRunningGameConfirmBusy ? 'CLOSING...' : 'CLOSE & START SELECTED') }}</Button>
-        </div>
-      </div>
-    </LauncherDialog>
-
-    <LauncherDialog @interact="handleLauncherInteraction" v-if="isMultiplayerConfirmOpen" :is-dismissible="true" @close="cancelMultiplayerConfiguration">
-      <div class="notice-card network-notice">
-        <p class="eyebrow">{{ $t("WINDOWS NETWORK ACCESS") }}</p>
-        <DialogTitle as="h2">{{ $t("ENABLE LAN MULTIPLAYER?") }}</DialogTitle>
-        <p>{{ $t("After Darkspinner restarts, Windows may ask which networks can reach it. Enable ") }}<strong>{{ $t("Private networks") }}</strong>{{ $t(", then choose ") }}<strong>{{ $t("Allow access") }}</strong>{{ $t(". Public networks are not required for normal LAN play.") }}</p>
-        <p class="network-recovery">{{ $t("If the Windows prompt does not appear or was previously dismissed, use ") }}<strong>{{ $t("Open Firewall") }}</strong>{{ $t(" in Config.") }}</p>
-        <div class="notice-actions">
-          <Button variant="outline" class="onboarding-cancel" type="button" @click="cancelMultiplayerConfiguration">{{ $t("CANCEL") }}</Button>
-          <Button variant="default" class="onboarding-create" type="button" @click="confirmMultiplayerConfiguration">{{ $t("ENABLE & RESTART") }}</Button>
         </div>
       </div>
     </LauncherDialog>

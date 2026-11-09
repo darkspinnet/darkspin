@@ -32,6 +32,11 @@ func (e *Store) ListUsers(ctx context.Context, actor accountaccess.Actor, req ac
 	if err != nil {
 		return accountaccess.UserList{}, fmt.Errorf("usersValidate: %w", err)
 	}
+	// Bound the query and allocations here as well as at the feature boundary.
+	limit := req.Limit
+	if limit < 1 || limit > 100 {
+		return accountaccess.UserList{}, fmt.Errorf("usersLimit: %w", accountaccess.ErrInvalidRequest)
+	}
 	tx, err := e.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return accountaccess.UserList{}, fmt.Errorf("usersBegin: %w", err)
@@ -52,15 +57,15 @@ func (e *Store) ListUsers(ctx context.Context, actor accountaccess.Actor, req ac
 		arguments = append(arguments, pattern, pattern)
 	}
 	query += ` ORDER BY u.id LIMIT ?`
-	arguments = append(arguments, req.Limit+1)
-	rows := make([]summaryRow, 0, req.Limit+1)
+	arguments = append(arguments, limit+1)
+	rows := make([]summaryRow, 0, limit+1)
 	err = tx.SelectContext(ctx, &rows, tx.Rebind(query), arguments...)
 	if err != nil {
 		return accountaccess.UserList{}, fmt.Errorf("usersSelect: %w", err)
 	}
-	result := accountaccess.UserList{Users: make([]accountaccess.UserSummary, 0, req.Limit)}
-	if len(rows) > req.Limit {
-		rows = rows[:req.Limit]
+	result := accountaccess.UserList{Users: make([]accountaccess.UserSummary, 0, limit)}
+	if len(rows) > limit {
+		rows = rows[:limit]
 		result.NextUserID = rows[len(rows)-1].UserID
 	}
 	for _, row := range rows {
@@ -103,6 +108,11 @@ func (e *Store) ListHistory(ctx context.Context, actor accountaccess.Actor, req 
 	req, err = accountaccess.NormalizeHistoryRequest(req)
 	if err != nil {
 		return accountaccess.History{}, fmt.Errorf("historyValidate: %w", err)
+	}
+	// Bound the query and allocations here as well as at the feature boundary.
+	limit := req.Limit
+	if limit < 1 || limit > 100 {
+		return accountaccess.History{}, fmt.Errorf("historyLimit: %w", accountaccess.ErrInvalidRequest)
 	}
 	tx, err := e.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -154,15 +164,15 @@ func (e *Store) ListHistory(ctx context.Context, actor accountaccess.Actor, req 
 		arguments = append(arguments, req.OperationID)
 	}
 	query += ` ORDER BY id DESC LIMIT ?`
-	arguments = append(arguments, req.Limit+1)
-	rows := make([]eventRow, 0, req.Limit+1)
+	arguments = append(arguments, limit+1)
+	rows := make([]eventRow, 0, limit+1)
 	err = tx.SelectContext(ctx, &rows, tx.Rebind(query), arguments...)
 	if err != nil {
 		return accountaccess.History{}, fmt.Errorf("historySelect: %w", err)
 	}
-	result := accountaccess.History{Events: make([]accountaccess.AdminEvent, 0, req.Limit)}
-	if len(rows) > req.Limit {
-		rows = rows[:req.Limit]
+	result := accountaccess.History{Events: make([]accountaccess.AdminEvent, 0, limit)}
+	if len(rows) > limit {
+		rows = rows[:limit]
 		result.NextEventID = rows[len(rows)-1].ID
 	}
 	for _, row := range rows {

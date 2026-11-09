@@ -12,6 +12,7 @@ export function panelError(failure) {
     ['update_check_unsupported', 'This deployment does not support update checks.'],
     ['unauthorized', 'The password is incorrect or your control panel session expired.'],
     ['forbidden', 'This account cannot access the control panel.'],
+    ['invalid_source', 'The control panel rejected the launcher connection. Close the panel and try again.'],
     ['version_mismatch', 'The launcher and server need compatible major and minor versions.'],
     ['rate_limited', 'Too many requests. Wait before trying again.'],
     ['unavailable', 'The server cannot read account information right now. Try again later.'],

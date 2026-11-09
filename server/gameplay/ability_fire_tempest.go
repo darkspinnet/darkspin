@@ -536,8 +536,8 @@ func (e fireTempestStep) enragePulse() ([][]byte, error) {
 				e.run.runtime.registry.mutex.Unlock()
 				return packets, nil
 			}
-			err = latest.zone.Companion().AddBuff(
-				pet.ObjectID, zonecompanion.Buff{DamageBuff: fireTempestEnrageDamageBuff},
+			err = latest.zone.Companion().ApplyBuffModifier(
+				pet.ObjectID, enrageInstanceID, zonecompanion.Buff{DamageBuff: fireTempestEnrageDamageBuff},
 			)
 			if err != nil {
 				currentPet, isPetFound = latest.zone.Companion().Snapshot(pet.ObjectID)
@@ -549,8 +549,8 @@ func (e fireTempestStep) enragePulse() ([][]byte, error) {
 			}
 			err = latest.zone.Companion().SetBodyScale(pet.ObjectID, fireTempestEnrageBodyScale)
 			if err != nil {
-				latest.zone.Companion().RemoveBuff(
-					pet.ObjectID, zonecompanion.Buff{DamageBuff: fireTempestEnrageDamageBuff},
+				latest.zone.Companion().ClearBuffModifier(
+					pet.ObjectID, enrageInstanceID,
 				)
 				currentPet, isPetFound = latest.zone.Companion().Snapshot(pet.ObjectID)
 				e.run.runtime.registry.mutex.Unlock()
@@ -584,9 +584,8 @@ func (e fireTempestStep) enrageExpire() ([][]byte, error) {
 	if isEnrageBuffApplied && peerSession.zone != nil &&
 		peerSession.zone.Companion() != nil {
 		peerSession.zone.Companion().ClearBodyScale(e.run.petObjectID)
-		peerSession.zone.Companion().RemoveBuff(
-			e.run.petObjectID,
-			zonecompanion.Buff{DamageBuff: fireTempestEnrageDamageBuff},
+		peerSession.zone.Companion().ClearBuffModifier(
+			e.run.petObjectID, instanceID,
 		)
 	}
 	e.run.isEnrageBuffApplied = false

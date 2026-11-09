@@ -95,6 +95,7 @@ type campaignNPCPoisonKey struct {
 }
 
 type campaignNPCPoisonStep struct {
+	isExpiry       bool
 	runtime        campaignNPCActionRuntime
 	sessionKey     string
 	generation     uint64
@@ -114,6 +115,25 @@ func (e campaignNPCPoisonStep) produce() ([][]byte, error) {
 	if !isCurrent {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
+	}
+	if e.isExpiry {
+		packet, err := effectraknet.ModifierDelete(e.run.plan.TargetObjectID, e.run.modifier.instanceID)
+		if err != nil {
+			e.runtime.registry.mutex.Unlock()
+			return nil, fmt.Errorf("poisonExpiryDelete: %w", err)
+		}
+		delete(peerSession.campaignNPCPoisons, e.run.key)
+		peerSession.untrackCampaignNPCModifier(e.run.modifier)
+		e.runtime.registry.sessions[e.sessionKey] = peerSession
+		e.runtime.registry.mutex.Unlock()
+		isCreated, err := e.run.modifier.release(e.runtime.modifierPool)
+		if err != nil {
+			return nil, fmt.Errorf("poisonExpiryRelease: %w", err)
+		}
+		if !isCreated {
+			return nil, nil
+		}
+		return [][]byte{packet}, nil
 	}
 	profile := e.run.plan.Profile
 	if isCadencedNPCPoison(profile.ModifierName) && e.run.stackingTickAt != e.stackingTickAt {
@@ -287,7 +307,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCDisease(
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}
-	_, isTargetFound := peerSession.campaignNPCTarget(
+	target, isTargetFound := peerSession.campaignNPCTarget(
 		generation, plan.TargetObjectID,
 	)
 	if !isTargetFound {
@@ -302,6 +322,24 @@ func (r campaignNPCActionRuntime) applyCampaignNPCDisease(
 	if r.isTargetStatusImmuneLocked(&peerSession, plan.TargetObjectID) {
 		r.registry.mutex.Unlock()
 		return nil, nil
+	}
+	if target.IsHero && (profile.ModifierName == "RuptionBurn" || profile.ModifierName == "NoctFlyerPoison") {
+		recipient, recipientKey := r.heroTargetSession(&peerSession, target)
+		if recipient == nil || recipient.deployedCreatureIndex >= uint32(len(recipient.binding.Creatures)) {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("poisonRecipient: unavailable target=%d session=%s", plan.TargetObjectID, recipientKey)
+		}
+		// Build-103 modifiers809/677 own native durations and both carry
+		// IsDebuff|IsDoT. Their shared template149 waits indefinitely;
+		// recipient attributes shorten the lifetime, not the tick interval.
+		duration, err := projectRecipientModifierDuration(profile.ModifierDuration, 36,
+			recipient.binding.Creatures[recipient.deployedCreatureIndex])
+		if err != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("poisonDuration: %w", err)
+		}
+		profile.ModifierDuration = duration
+		plan.Profile = profile
 	}
 	tickDamage := game.DamageRange{
 		Minimum: profile.ModifierTickDamage,
@@ -439,14 +477,20 @@ func (r campaignNPCActionRuntime) applyCampaignNPCDisease(
 	}
 
 	tickCount := uint32(profile.ModifierDuration / profile.ModifierTickDuration)
+	if profile.ModifierDuration%profile.ModifierTickDuration != 0 {
+		tickCount++
+	}
 	if isCadencedNPCPoison(profile.ModifierName) {
 		tickCount = 1
 	}
 	producers := make([]raknet.ScheduledPacketProducer, 0, tickCount)
 	for tickIndex := uint32(1); tickIndex <= tickCount; tickIndex++ {
 		delay := time.Duration(tickIndex) * profile.ModifierTickDuration
+		isExpiry := delay > profile.ModifierDuration
+		delay = min(delay, profile.ModifierDuration)
 		step := campaignNPCPoisonStep{
-			runtime: r, sessionKey: sessionKey, generation: generation,
+			isExpiry: isExpiry,
+			runtime:  r, sessionKey: sessionKey, generation: generation,
 			timestamp: timestamp + uint64(delay/time.Millisecond),
 			tickIndex: tickIndex, revision: revision, run: run,
 			stackingTickAt: run.stackingTickAt,

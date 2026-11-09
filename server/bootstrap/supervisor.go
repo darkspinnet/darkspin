@@ -77,7 +77,7 @@ func Run(ctx context.Context, req Options) error {
 		return fmt.Errorf("configPath: %w", err)
 	}
 	if req.ConfigPath != filepath.Join(rootPath, "runtime", "darkspin.toml") {
-		return errors.New("bootstrap configuration must be root/runtime/darkspin.toml so backups cover the complete runtime")
+		return errors.New("bootstrap runtime anchor must be root/runtime/darkspin.toml")
 	}
 	if req.Logger == nil {
 		req.Logger = slog.Default()

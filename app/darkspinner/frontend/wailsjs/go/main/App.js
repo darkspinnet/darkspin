@@ -126,6 +126,10 @@ export function GetLuaConsole() {
   return window['go']['main']['App']['GetLuaConsole']();
 }
 
+export function GetMatchmakingConfiguration() {
+  return window['go']['main']['App']['GetMatchmakingConfiguration']();
+}
+
 export function GetModConfiguration() {
   return window['go']['main']['App']['GetModConfiguration']();
 }
@@ -154,6 +158,10 @@ export function GetRemoteControlAnnouncements(arg1, arg2) {
   return window['go']['main']['App']['GetRemoteControlAnnouncements'](arg1, arg2);
 }
 
+export function GetRemoteControlCapacity(arg1, arg2) {
+  return window['go']['main']['App']['GetRemoteControlCapacity'](arg1, arg2);
+}
+
 export function GetRemoteControlHealth(arg1, arg2) {
   return window['go']['main']['App']['GetRemoteControlHealth'](arg1, arg2);
 }
@@ -164,6 +172,10 @@ export function GetRemoteControlIdentity(arg1, arg2) {
 
 export function GetRemoteControlMaintenance(arg1, arg2) {
   return window['go']['main']['App']['GetRemoteControlMaintenance'](arg1, arg2);
+}
+
+export function GetRemoteControlMatchmaking(arg1, arg2) {
+  return window['go']['main']['App']['GetRemoteControlMatchmaking'](arg1, arg2);
 }
 
 export function GetRemoteControlPanel(arg1, arg2) {
@@ -366,12 +378,24 @@ export function SetLocalServicesRequired(arg1) {
   return window['go']['main']['App']['SetLocalServicesRequired'](arg1);
 }
 
+export function SetMatchmakingConfiguration(arg1) {
+  return window['go']['main']['App']['SetMatchmakingConfiguration'](arg1);
+}
+
 export function SetModSporePath(arg1) {
   return window['go']['main']['App']['SetModSporePath'](arg1);
 }
 
+export function SetRemoteControlCapacity(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetRemoteControlCapacity'](arg1, arg2, arg3);
+}
+
 export function SetRemoteControlIdentity(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetRemoteControlIdentity'](arg1, arg2, arg3);
+}
+
+export function SetRemoteControlMatchmaking(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetRemoteControlMatchmaking'](arg1, arg2, arg3);
 }
 
 export function SetRemoteControlPassword(arg1, arg2, arg3, arg4, arg5) {
@@ -382,8 +406,8 @@ export function SetRemoteControlUserAccess(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['SetRemoteControlUserAccess'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
-export function SetServerConfiguration(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['SetServerConfiguration'](arg1, arg2, arg3, arg4);
+export function SetServerConfiguration(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetServerConfiguration'](arg1, arg2, arg3);
 }
 
 export function SetServerPort(arg1) {

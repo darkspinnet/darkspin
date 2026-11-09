@@ -61,6 +61,10 @@ func (e *heroAuraAreaRun) retainAuraLocked() {
 
 // Caller owns the registry write lock; cleanup retains identity until encoded.
 func (e *heroAuraAreaRun) retireAuraLocked() error {
+	if e.cloudAction != nil {
+		e.cloudAction.Stop()
+		e.cloudAction = nil
+	}
 	if e.isTimeBubble {
 		err := e.retireTimeBubbleLocked(e.runtime.now())
 		if err != nil {

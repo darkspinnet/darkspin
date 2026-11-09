@@ -35,6 +35,10 @@ type adminEventDTO struct {
 
 func (e *Service) adminOperation(writer http.ResponseWriter, req *http.Request, actor accountaccess.Actor) {
 	switch req.URL.Path {
+	case "/api/control/admin/capacity":
+		e.capacityOperation(writer, req, actor)
+	case "/api/control/admin/matchmaking":
+		e.matchmakingOperation(writer, req, actor)
 	case "/api/control/admin/update", "/api/control/admin/update/check":
 		e.updateOperation(writer, req, actor)
 	case "/api/control/admin/maintenance", "/api/control/admin/maintenance/restart", "/api/control/admin/maintenance/update", "/api/control/admin/maintenance/mode", "/api/control/admin/maintenance/cancel":

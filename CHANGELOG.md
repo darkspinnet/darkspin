@@ -2,6 +2,30 @@
 
 ### 2026-11-08
 
+- Preserve trusted local control-panel sessions through loopback request validation, distinguish launcher-source rejections from account permission failures, and log local panel initialization failures.
+- Prevent concurrent local profile initialization from failing on SQLite read-to-write lock upgrades by reserving write transactions before schema inspection while retaining concurrent WAL readers.
+- Preserve existing dedicated TOML signing keys when the environment override is absent, retaining compatibility with automatically updated containers and including the legacy key file in backups.
+- Upgrade both launcher frontends from Vue v3.5.39 to v3.5.45 and Vite v7.3.6 to v7.3.7 to fix renderer XSS and development-server security alerts, and update the legacy launcher's source-map-js to v1.2.2.
+- Reduce the seeded chance of a Destructor ending on replay maps from 40% to 20%.
+- Disable Server configuration controls until the local server is ready, refresh them automatically after startup, and prevent client preference lookups from reopening the profile database during initialization.
+- Upgrade Darkspinner's source-map-js dependency from v1.2.1 to v1.2.2 to address a dependency security alert.
+- Separate tooltip rounding from combat scaling, preserving fixed fractional hits and formatting tooltip minimums with build-103's nearest-even conversion.
+- Preserve fractional damage through NPC difficulty, companion buffs, and area scaling so intermediate rounding cannot compound.
+- Upgrade Echo from v4.15.3 to v4.16.1 to address ten dependency security alerts, including its required Go 1.26 and supporting dependency updates.
+- Upgrade the PostgreSQL driver from pgx v5.7.6 to v5.9.2 to address three dependency security alerts.
+- Protect account XML responses against browser script execution with an explicit XML content type, disabled MIME sniffing, and a sandboxed content policy.
+- Expose Server Capacity in the local admin panel and authorize local Crogenitors as local server administrators without changing persisted roles or dedicated-server permissions.
+- Track companion buffs and health bonuses by exact modifier handle so repeated or stale expiry cannot remove a surviving contribution.
+- Preserve unrelated hero stat gains and signed penalties during modifier cleanup and rollback, and prevent retired effects from being restored after asynchronous failure.
+- Share energy-vulnerability stacks across peers with one target owner and the native cap of two stacks, including cleanup on dispel, death, and zone shutdown.
+- Store the server-wide player limit in the database, default new PostgreSQL settings to 100 and SQLite to 25, and let dedicated admins update the limit live from Admin Server.
+- Derive dedicated mode from the host entry point, require deployment environment settings without a darkspin.toml fallback, and store local server settings in the database while retaining client preferences in TOML.
+- Deliver Sleeping Cloud's authored new-action reaction for fresh admitted movement and committed character casts, retiring its field and owned sleep effects without releasing newer actions.
+- Apply the laser controller's modifier-added reaction immediately when Psistorm silence is admitted, removing active beams while preserving the controller.
+- Move bot matchmaking settings from TOML to the server database with fresh defaults, expose dedicated-server admin controls, and hide local Server settings for remote Crogenitors.
+- Extend recipient duration scaling to Arboreal Might and additional verified slows, stuns, vulnerability, poison, and burning effects, preserving buff refreshes and damage tick cadence.
+- Correct the boss chain-lightning shock's base duration from two to 2.5 seconds before recipient duration reductions.
+- Rename Config's Multiplayer tab to Server, move Matchmaking into Server, and move Spore settings into General.
 - #198 Restore Sage's Dendrone damage scaling from nearly flat damage to mirrored owner stats and a separate pet-damage bonus in campaign and Arena.
 - Apply recipient duration reductions to verified timed silence and snare modifiers, keeping server expiry and client duration aligned with build-103's one-millisecond minimum.
 - Release Stealther action reservations when cooldown or recovery scheduling fails so later attacks can resume.

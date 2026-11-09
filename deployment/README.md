@@ -18,7 +18,7 @@ Edit `.env`:
 ```dotenv
 # Copy to .env beside compose.yaml. Linux amd64; PostgreSQL is required.
 # Recreate affected containers after edits; restarting preserves their old environment.
-# Explicit bootstrap environment values override saved runtime/darkspin.toml settings.
+# Dedicated settings use the environment; existing TOML signing keys remain supported.
 
 # Compose project/volume namespace. Keep stable to retain the same database volume.
 # Takes effect on the next Compose invocation; never use down -v to preserve data.
@@ -33,6 +33,9 @@ DARKSPIN_ADVERTISED_HOST=
 DARKSPIN_BIND_HOST=0.0.0.0
 # Server port number, published on the host for both TCP and UDP. Recreate Darkrun.
 DARKSPIN_PORT=42127
+# New installs: a unique signing secret containing at least 32 bytes. Keep it stable
+# across restarts. Leave empty to retain an existing runtime/darkspin.toml auth.jwt_secret.
+DARKSPIN_AUTH_JWT_SECRET=
 
 # Writable host directory for binaries, settings, cache and appearance files.
 # Relative to compose.yaml; prepare permissions before recreating Darkrun.
@@ -55,10 +58,10 @@ POSTGRES_USER=darkspin
 POSTGRES_PASSWORD=
 
 # Enable scheduled backups and updates; manual updates still work when false.
-# Applied when Darkrun is recreated; overrides saved [bootstrap] settings.
+# Applied when Darkrun is recreated.
 DARKSPIN_IS_UPDATE_ENABLED=true
 # UTC cron schedule for starting the maintenance warning/drain period.
-# Applied when Darkrun is recreated; overrides the saved schedule.
+# Applied when Darkrun is recreated.
 DARKSPIN_UPDATE_CRON="30 3 * * *"
 # Maximum minutes of player warnings/draining before scheduled shutdown.
 # Applied when Darkrun is recreated; shutdown can proceed earlier after draining.
@@ -69,11 +72,11 @@ DARKSPIN_UPDATE_START_TIMEOUT_SECONDS=1800
 # pruning occurs after successful candidate validation, not when this file is edited.
 DARKSPIN_BACKUP_RETENTION_DAYS=7
 # HTTPS manifest/manifest-ZIP URL for initial install and subsequent updates.
-# Applied when Darkrun is recreated; overrides the saved update source.
+# Applied when Darkrun is recreated.
 DARKSPIN_UPDATE_MANIFEST_URL=https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-update-linux-amd64-unstable.zip
 ```
 
-Supply the IPv4 players can reach, the absolute host path to the build-103 game installation, and a long, unique database password in the three empty assignments. They have no safe universal defaults. Single quotes preserve literal `$` characters in `.env`. Restrict access to `.env`, which contains credentials. Compose rejects an empty or omitted `POSTGRES_PASSWORD`.
+Supply the IPv4 players can reach, the absolute host path to the build-103 game installation, a long unique database password, and a unique signing secret of at least 32 bytes in the four empty assignments. They have no safe universal defaults. Keep the signing secret stable across restarts. Existing operators may leave `DARKSPIN_AUTH_JWT_SECRET` unset or empty: the server retains `[auth].jwt_secret` from `runtime/darkspin.toml`. Single quotes preserve literal `$` characters in `.env`. Restrict access to `.env`, which contains credentials. Compose rejects missing database passwords. A new installation still needs a signing secret; an upgrade can retain its existing TOML key.
 
 The game root must contain `DarksporeBin/` and `Data/`. UID/GID 65532 must be able to read and traverse it. Allow the configured game port for **both TCP and UDP**.
 
@@ -81,7 +84,9 @@ The block above is the complete supported operator input inventory for this Comp
 
 Editing `.env` requires recreating the affected container to replace its environment. After a Darkrun-only change, run `docker compose up -d --no-build --force-recreate darkrun`. An ordinary `docker compose restart darkrun` keeps the existing environment. Changes shared with PostgreSQL require recreating both affected services with `docker compose up -d --no-build --force-recreate`; first perform any required existing database/role migration described in the comments. Keep the project name and persistence paths stable unless deliberately migrating their data.
 
-On bootstrap startup, explicit command-line flags take precedence over non-empty environment values, which take precedence over saved TOML settings and application defaults. Compose supplies the bootstrap defaults explicitly, so its active default assignments override previously saved values rather than preserving them. The supervisor loads these settings when it starts; replacing the child server during an update does not reload the container environment or supervisor settings.
+Dedicated servers read deployment settings from their environment; mutable server preferences are stored in PostgreSQL. The signing key is the compatibility exception: a nonempty `DARKSPIN_AUTH_JWT_SECRET` takes precedence, otherwise the existing `[auth].jwt_secret` is retained. Explicit command-line overrides are passed to child processes through that environment. Dedicated startup reads only the legacy signing key from `darkspin.toml` when needed; other legacy settings cannot change server mode or deployment configuration. Older auto-updating containers without `DARKSPIN_CONTENT_PATH` retain the standard cache directory alongside that legacy configuration. Compose supplies the required network, content-cache, authentication, and database inputs. The supervisor loads settings when it starts; replacing the child server during an update does not reload the container environment or supervisor settings.
+
+The server-wide player limit is stored in `admission_configuration.world_player_limit` (row `id = 1`), rather than TOML or an environment variable. A new PostgreSQL configuration defaults to **100**; dedicated admins can change it under **Admin → Server → Server Capacity**, immediately affecting new logins. Subsequent starts preserve the saved setting. Local SQLite defaults to **25**; local Crogenitors are administrators of their local server and can change the same setting live through the local admin panel. To edit it offline instead, stop the local server and edit the SQLite row directly or use `darkrun db admission_configuration set world_player_limit 50 where id=1 --config PATH/darkspin.toml`, then restart the local server. The limit counts authenticated players across the server, independently of the four-player party limit.
 
 ## Start and stop
 
@@ -92,9 +97,9 @@ docker compose logs -f postgres darkrun
 docker compose ps
 ```
 
-On first launch, the Darkrun entry point downloads a versioned manifest and its exact binary artifact, verifies its SHA-256 and build identity, and installs it in the runtime mount. It then runs `darkrun bootstrap`, which starts the dedicated server with `/darkspin/runtime/darkspin.toml`. Subsequent launches recover pending updates before serving players. The server creates its settings, authentication secret, content cache, and missing player tables before accepting players.
+On first launch, the Darkrun entry point downloads a versioned manifest and its exact binary artifact, verifies its SHA-256 and build identity, and installs it in the runtime mount. It then runs `darkrun bootstrap` using `/darkspin/runtime` as its runtime directory. Subsequent launches recover pending updates before serving players. The server validates the supplied environment and prepares its content cache and missing database tables before accepting players. Server identity and bot matchmaking preferences are stored in PostgreSQL and edited through the admin panel.
 
-Dedicated server and supervisor output is saved to `/darkspin/runtime/darkspin/logs/logs/YYYY-MM-DD.txt` using UTC dates, rather than normal Docker console output. Direct `darkrun server --dedicated` mode uses the same path beneath its configured runtime. Existing files are appended across restarts, and rotation happens at midnight UTC even while idle. On the host, these files are beneath `${DARKSPIN_HOME_PATH:-./darkspin}/runtime/darkspin/logs/logs`; use Admin → Diagnostic → Log to download them, or follow the current file directly. Docker logs still show the database, entry-point failures, and emergency output if file logging fails.
+Dedicated server and supervisor output is saved to `/darkspin/runtime/darkspin/logs/logs/YYYY-MM-DD.txt` using UTC dates, rather than normal Docker console output. Direct `darkrun server` mode uses the same path beneath its configured runtime. Existing files are appended across restarts, and rotation happens at midnight UTC even while idle. On the host, these files are beneath `${DARKSPIN_HOME_PATH:-./darkspin}/runtime/darkspin/logs/logs`; use Admin → Diagnostic → Log to download them, or follow the current file directly. Docker logs still show the database, entry-point failures, and emergency output if file logging fails.
 
 Retention runs at startup and midnight UTC. Daily logs keep the current UTC date and the six preceding dates. Regular files in `darkspin/logs/traces` and `darkspin/bugs`, including snapshots and reports, are deleted after seven days by modification time, and expired empty subdirectories are removed. The active protocol trace is protected until its writer closes. Cleanup stays inside these diagnostic directories and does not follow symbolic links or delete settings, saves, databases, or backups. Backup retention remains separate.
 
@@ -112,7 +117,7 @@ This stops both services while preserving their data. `docker compose stop darkr
 
 `POSTGRES_DB`, `POSTGRES_USER`, and required `POSTGRES_PASSWORD` are the single source for both database initialization and Darkrun's `PGDATABASE`, `PGUSER`, and `PGPASSWORD`. Compose sets `PGHOST=postgres`, port 5432, and `PGSSLMODE=disable` for its private network. No second Compose variant or TOML database flag is needed.
 
-For a native host deployment with an existing database, set `DARKSPIN_POSTGRES_URL` or `PGHOST`, `PGDATABASE`, and `PGUSER`, plus authentication/TLS settings, and run `darkrun server --dedicated --config PATH/darkspin.toml`. The database and role must already exist with permission to create tables. URL passwords must be URL-encoded. Darkrun requires these settings even outside Compose. Desktop local play remains on SQLite.
+For a native host deployment with an existing database, set `DARKSPIN_POSTGRES_URL` or `PGHOST`, `PGDATABASE`, and `PGUSER`, plus database authentication/TLS settings. Also set `DARKSPIN_PORT`, `DARKSPIN_BIND_HOST`, `DARKSPIN_ADVERTISED_HOST`, `DARKSPIN_CONTENT_PATH`, and `DARKSPIN_AUTH_JWT_SECRET`, then run `darkrun server --config PATH/darkspin.toml`. That filename anchors `PATH/darkspin` and supplies only the existing signing key when the environment override is absent. The database and role must already exist with permission to create tables. URL passwords must be URL-encoded. Desktop local play remains on SQLite and keeps its launcher preferences in TOML.
 
 For administration inside Compose, the running container already has the correct connection environment:
 
@@ -289,8 +294,6 @@ The separate `DARKSPIN_HOME_PATH` directory is mounted writable at `/darkspin`:
 darkspin/
   bin/darkrun
   runtime/
-    darkspin.toml
-    server.toml
     darkspin/
       saves/      # appearance files; old SQLite saves may remain
       cache/      # SQLite content.db and generated web content
@@ -304,15 +307,15 @@ darkspin/
         postgres.dump
         snapshot.json
         bin/darkrun
-        runtime/  # settings and saves from the same stopped server
+        runtime/  # appearance/save files from the same stopped server
   firstboot.json  # durable update/recovery state, when present
 ```
 
-Scheduled snapshots include PostgreSQL alongside authentication secrets and uploaded appearance files. Keep an independent copy of completed backups outside this host. Copying only `runtime/` does not capture PostgreSQL player data, and a dump is not continuous point-in-time recovery. Keep the game mount read-only and never point multiple servers at the same runtime.
+Scheduled snapshots include PostgreSQL and uploaded appearance files. Keep a separate protected backup of deployment environment secrets, including the signing secret, as well as an independent copy of completed snapshots outside this host. Copying only `runtime/` does not capture PostgreSQL player data, and a dump is not continuous point-in-time recovery. Keep the game mount read-only and never point multiple servers at the same runtime.
 
 ## Scheduled backups, updates and recovery
 
-By default, maintenance warnings start daily at **03:30 UTC**, with a **30-minute maximum drain interval**. Shutdown proceeds earlier when active matches finish. The active `.env` settings and Compose defaults own these `[bootstrap]` values over saved `runtime/darkspin.toml` settings. Changing that TOML through a separate local Config interface does not override the container environment; manage this deployment through `.env`. The remote panel only observes update state and requests maintenance; it does not edit these deployment settings. The defaults allow 30 minutes for candidate startup and retain completed backups for seven days. Set `DARKSPIN_IS_UPDATE_ENABLED=false` to disable scheduled maintenance.
+By default, maintenance warnings start daily at **03:30 UTC**, with a **30-minute maximum drain interval**. Shutdown proceeds earlier when active matches finish. Manage this deployment through `.env`; dedicated hosts do not read TOML settings. The remote panel only observes update state and requests maintenance; it does not edit these deployment settings. The defaults allow 30 minutes for candidate startup and retain completed backups for seven days. Set `DARKSPIN_IS_UPDATE_ENABLED=false` to disable scheduled maintenance.
 
 Each scheduled clean shutdown follows this sequence, even when no new binary is available:
 
@@ -366,4 +369,4 @@ Start builds the current Linux amd64 Darkrun source, builds the bootstrap infras
 
 `mage deployment:logs` reads the latest daily server file directly from the bind directory and shows up to 100 lines within a 64 KiB tail. It does not require a Docker connection. Use `docker compose logs` separately for PostgreSQL and container entry-point diagnostics.
 
-All generated files and bind paths live under `bin/deployment`: `runtime/` contains the bootstrap binary, settings, and content cache; `postgres/` contains PostgreSQL data; `game` is a read-only-mounted directory link to the existing game installation; `image/` contains the infrastructure build context; and `logs/` contains build/Compose output. Game assets are neither copied into the image nor modified. The generated `.env` contains a random database password, an advertised host IPv4, and port `42137`; subsequent starts preserve it. Scheduled updates are disabled for this local deployment so published binaries cannot automatically replace the source build. The downloadable production Compose setup remains separate.
+All generated files and bind paths live under `bin/deployment`: `runtime/` contains the bootstrap binary and content cache; `postgres/` contains PostgreSQL data; `game` is a read-only-mounted directory link to the existing game installation; `image/` contains the infrastructure build context; and `logs/` contains build/Compose output. Game assets are neither copied into the image nor modified. The generated `.env` contains independent random database and signing secrets, an advertised host IPv4, and port `42137`; subsequent starts preserve them. Older local deployment environments receive a signing secret only when that assignment is missing. Scheduled updates are disabled for this local deployment so published binaries cannot automatically replace the source build. The downloadable production Compose setup remains separate.

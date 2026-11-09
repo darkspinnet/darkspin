@@ -90,7 +90,7 @@ func (e *Store) CompleteServerOperation(ctx context.Context, operationID string,
 	}
 	defer rollback(tx)
 	query := `SELECT action FROM admin_event WHERE operation_id = ? AND outcome = 'accepted'
-		AND action IN ('server.identity', 'server.announcement', 'maintenance.restart',
+		AND action IN ('server.identity', 'server.announcement', 'server.matchmaking', 'server.capacity', 'maintenance.restart',
 			'maintenance.update', 'maintenance.hold', 'maintenance.cancel',
 			'diagnostic.download', 'diagnostic.delete') ORDER BY id LIMIT 1`
 	if e.isPostgres {

@@ -76,12 +76,15 @@ type Config struct {
 	ConnectionControl     ConnectionControl
 	HealthReader          HealthReader
 	Information           Information
+	Matchmaking           Matchmaking
+	Capacity              Capacity
 	MaintenanceController MaintenanceController
 	UpdateReader          UpdateReader
 	Diagnostic            Diagnostic
 }
 
 type session struct {
+	isLocal    bool
 	id         string
 	accountID  int64
 	revision   int64

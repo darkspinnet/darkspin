@@ -659,24 +659,6 @@ func (r campaignMovementCommandRuntime) handle(
 	commandSession gameplayPeerSession,
 ) ([][]byte, error) {
 	var err error
-	if commandSession.isSleepingCloudActive(r.now()) {
-		// Immobilized holds the native mover for this fixed-duration cast.
-		// Repeated walking input at the held pose needs no placement reset.
-		deltaX := command.Common.Position.X - commandSession.playerPosition.X
-		deltaY := command.Common.Position.Y - commandSession.playerPosition.Y
-		radius := commandSession.deployedCampaignNavigationRadius()
-		if isFiniteZonePosition(command.Common.Position) && radius > 0 &&
-			deltaX*deltaX+deltaY*deltaY <= radius*radius {
-			return nil, nil
-		}
-		packets, marshalErr := marshalPlayerMovementCorrection(
-			command.Common.ObjectID, commandSession.playerPosition, command.Common.Orientation,
-		)
-		if marshalErr != nil {
-			return nil, fmt.Errorf("moveSleepingCloud: %w", marshalErr)
-		}
-		return packets, nil
-	}
 	if commandSession.isKnockbackActive(r.now()) {
 		// The native jump owns the mover until landing. A walk/stop correction
 		// here would cancel its displacement and airborne reaction.
@@ -814,6 +796,11 @@ func (r campaignMovementCommandRuntime) handle(
 	}
 	goal = raknet.Vector3{X: admission.Goal.X, Y: admission.Goal.Y, Z: admission.Goal.Z}
 	sessionKey := packet.Address.String()
+	err = r.registry.startedMovementAction(sessionKey, commandSession.generation,
+		command.Common.ObjectID, game.Vec3(goal), command.Movement.GoalFlags&0x20 != 0, r.now(), packet.SourceTime)
+	if err != nil {
+		return nil, fmt.Errorf("moveActionEvent: %w", err)
+	}
 	interruption := r.action.interruptMovement(
 		sessionKey, commandSession.generation, command.Common.ObjectID,
 		game.Vec3{X: goal.X, Y: goal.Y, Z: goal.Z}, r.now(), packet.SourceTime,

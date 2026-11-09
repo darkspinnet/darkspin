@@ -15,9 +15,11 @@ import (
 
 var _ accountaccess.ModerationStore = (*Store)(nil)
 
-func checkActor(ctx context.Context, row accessRow, actor accountaccess.Actor) error {
+func (e *Store) checkActor(ctx context.Context, row accessRow, actor accountaccess.Actor) error {
+	access := row.access()
+	isLocalAdministrator := !e.isPostgres && accountaccess.IsLocalAdministrator(ctx)
 	if row.UserID != actor.UserID || actor.Revision <= 0 || row.Revision != actor.Revision ||
-		!row.access().IsAdmin() {
+		access.IsBlocked() || !access.IsAdmin() && !isLocalAdministrator {
 		return accountaccess.ErrAccessDenied
 	}
 	err := accountaccess.CheckPeer(ctx, row.access())
@@ -40,7 +42,7 @@ func (e *Store) authorizeActor(ctx context.Context, tx *sqlx.Tx, actor accountac
 	if err != nil {
 		return fmt.Errorf("actorRead: %w", err)
 	}
-	err = checkActor(ctx, row, actor)
+	err = e.checkActor(ctx, row, actor)
 	if err != nil {
 		return fmt.Errorf("actorCheck: %w", err)
 	}
@@ -185,7 +187,7 @@ func (e *Store) lockActorTarget(ctx context.Context, tx *sqlx.Tx, actor accounta
 			targetRow = row
 		}
 	}
-	err = checkActor(ctx, actorRow, actor)
+	err = e.checkActor(ctx, actorRow, actor)
 	if err != nil {
 		return accessRow{}, fmt.Errorf("targetActor: %w", err)
 	}

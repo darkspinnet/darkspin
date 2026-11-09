@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/darkspinnet/darkspin/server/game"
@@ -15,27 +14,42 @@ import (
 
 // ServerConfiguration is the launcher-editable server and client configuration.
 type ServerConfiguration struct {
-	BindHost                           string         `json:"bindHost"`
-	AdvertisedHost                     string         `json:"advertisedHost"`
-	IsDedicated                        bool           `json:"isDedicated"`
-	Port                               uint16         `json:"port"`
-	IsMultiplayerEnabled               bool           `json:"isMultiplayerEnabled"`
-	Locale                             string         `json:"locale"`
-	Locales                            []ClientLocale `json:"locales"`
-	SnapshotMode                       string         `json:"snapshotMode"`
-	CampaignMatchmakingBotSize         uint32         `json:"campaignMatchmakingBotSize"`
-	IsCampaignBotSquadMirroringEnabled bool           `json:"isCampaignBotSquadMirroringEnabled"`
+	BindHost       string         `json:"bindHost"`
+	AdvertisedHost string         `json:"advertisedHost"`
+	Port           uint16         `json:"port"`
+	Locale         string         `json:"locale"`
+	Locales        []ClientLocale `json:"locales"`
+	SnapshotMode   string         `json:"snapshotMode"`
 }
 
 // GetServerConfiguration returns the persisted local network configuration.
 func (e *App) GetServerConfiguration() (ServerConfiguration, error) {
+	e.serverMu.Lock()
+	defer e.serverMu.Unlock()
 	pathSet, err := e.spinnerPaths()
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("configPath: %w", err)
 	}
+	e.mu.Lock()
+	gameServer := e.serviceSet.gameServer
+	isOfflineConfigurationReady := !e.isInitializing && e.status.IsProfileStoreReady && e.status.Server != "Starting"
+	e.mu.Unlock()
 	config, _, err := game.LoadConfig(pathSet.configPath)
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("configLoad: %w", err)
+	}
+	if gameServer != nil {
+		for _, key := range []game.ConfigKey{game.ConfigServerPort, game.ConfigServerBindHost, game.ConfigServerAdvertisedHost} {
+			err = config.Set(key, gameServer.Config().String(key))
+			if err != nil {
+				return ServerConfiguration{}, fmt.Errorf("serverSetting: %w", err)
+			}
+		}
+	} else if isOfflineConfigurationReady {
+		config, _, err = server.LoadLocalConfiguration(pathSet.configPath)
+		if err != nil {
+			return ServerConfiguration{}, fmt.Errorf("offlineConfiguration: %w", err)
+		}
 	}
 	configuration, err := serverConfiguration(config, pathSet.gamePath)
 	if err != nil {
@@ -60,7 +74,7 @@ func (e *App) SetServerPort(port uint16) (ServerConfiguration, error) {
 		return ServerConfiguration{}, fmt.Errorf("configRead: %w", err)
 	}
 	return e.SetServerConfiguration(
-		port, configuration.IsMultiplayerEnabled,
+		port,
 		configuration.Locale, configuration.SnapshotMode,
 	)
 }
@@ -68,14 +82,13 @@ func (e *App) SetServerPort(port uint16) (ServerConfiguration, error) {
 // SetServerConfiguration persists launcher settings and restarts the embedded
 // server only when its network binding changed.
 func (e *App) SetServerConfiguration(
-	port uint16, isMultiplayerEnabled bool, locale string, snapshotMode string,
+	port uint16, locale string, snapshotMode string,
 ) (ServerConfiguration, error) {
 	req, err := e.GetServerConfiguration()
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("configRead: %w", err)
 	}
 	req.Port = port
-	req.IsMultiplayerEnabled = isMultiplayerEnabled
 	req.Locale = locale
 	req.SnapshotMode = snapshotMode
 	configuration, err := e.SetServerSetup(req)
@@ -89,14 +102,10 @@ func (e *App) SetServerConfiguration(
 // rollback flow as the launcher network controls.
 func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, error) {
 	port := req.Port
-	isMultiplayerEnabled := req.IsMultiplayerEnabled
 	locale := req.Locale
 	snapshotMode := req.SnapshotMode
 	if port == 0 || port == ^uint16(0) {
 		return ServerConfiguration{}, errors.New("server port must be between 1 and 65534")
-	}
-	if req.CampaignMatchmakingBotSize < 1 || req.CampaignMatchmakingBotSize > 3 {
-		return ServerConfiguration{}, errors.New("campaign matchmaking bot size must be between 1 and 3")
 	}
 	e.serverMu.Lock()
 	defer e.serverMu.Unlock()
@@ -105,6 +114,10 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 	if e.isShuttingDown {
 		e.mu.Unlock()
 		return ServerConfiguration{}, errors.New("Darkspinner is shutting down")
+	}
+	if e.isInitializing && !e.status.IsServerOnline || e.status.Server == "Starting" {
+		e.mu.Unlock()
+		return ServerConfiguration{}, errors.New("Server settings are not available while the local server is starting.")
 	}
 	if e.cancel != nil || e.gameDone != nil {
 		e.mu.Unlock()
@@ -117,23 +130,17 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("configPath: %w", err)
 	}
-	config, _, err := game.LoadConfig(pathSet.configPath)
+	config, _, err := server.LoadLocalConfiguration(pathSet.configPath)
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("configLoad: %w", err)
 	}
 	previousSettings := map[game.ConfigKey]string{
-		game.ConfigCampaignMatchmakingBotSize:         config.String(game.ConfigCampaignMatchmakingBotSize),
-		game.ConfigIsCampaignBotSquadMirroringEnabled: config.String(game.ConfigIsCampaignBotSquadMirroringEnabled),
-		game.ConfigServerBindHost:                     config.String(game.ConfigServerBindHost),
-		game.ConfigServerAdvertisedHost:               config.String(game.ConfigServerAdvertisedHost),
-		game.ConfigServerIsDedicated:                  config.String(game.ConfigServerIsDedicated),
+		game.ConfigServerBindHost:       config.String(game.ConfigServerBindHost),
+		game.ConfigServerAdvertisedHost: config.String(game.ConfigServerAdvertisedHost),
 	}
 	settings := map[game.ConfigKey]string{
-		game.ConfigCampaignMatchmakingBotSize:         strconv.FormatUint(uint64(req.CampaignMatchmakingBotSize), 10),
-		game.ConfigIsCampaignBotSquadMirroringEnabled: strconv.FormatBool(req.IsCampaignBotSquadMirroringEnabled),
-		game.ConfigServerBindHost:                     strings.TrimSpace(req.BindHost),
-		game.ConfigServerAdvertisedHost:               strings.TrimSpace(req.AdvertisedHost),
-		game.ConfigServerIsDedicated:                  strconv.FormatBool(req.IsDedicated),
+		game.ConfigServerBindHost:       strings.TrimSpace(req.BindHost),
+		game.ConfigServerAdvertisedHost: strings.TrimSpace(req.AdvertisedHost),
 	}
 	isSetupChanged := false
 	for key, setting := range settings {
@@ -150,16 +157,10 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 	if bindHost == "" || advertisedHost == "" {
 		return ServerConfiguration{}, errors.New("network hosts are empty")
 	}
-	isAuthPrepared, err := config.PrepareDedicatedAuth()
-	if err != nil {
-		return ServerConfiguration{}, fmt.Errorf("authPrepare: %w", err)
-	}
-	isSetupChanged = isSetupChanged || isAuthPrepared
 	previousPort, err := config.Uint16(game.ConfigServerPort)
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("previousPort: %w", err)
 	}
-	isPreviouslyMultiplayerEnabled := config.Bool(game.ConfigIsMultiplayerEnabled)
 	previousLocale := config.String(game.ConfigClientLocale)
 	previousSnapshotMode, err := snapshot.ParseMode(
 		config.String(game.ConfigSnapshotMode),
@@ -179,7 +180,7 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 	if !hasClientLocale(locales, locale) {
 		return ServerConfiguration{}, fmt.Errorf("locale %q is not installed", locale)
 	}
-	if !isSetupChanged && previousPort == port && isPreviouslyMultiplayerEnabled == isMultiplayerEnabled &&
+	if !isSetupChanged && previousPort == port &&
 		normalizeClientLocale(previousLocale) == locale &&
 		previousSnapshotMode == selectedSnapshotMode {
 		configuration, configErr := serverConfiguration(config, pathSet.gamePath)
@@ -192,10 +193,6 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("portSet: %w", err)
 	}
-	err = config.Set(game.ConfigIsMultiplayerEnabled, strconv.FormatBool(isMultiplayerEnabled))
-	if err != nil {
-		return ServerConfiguration{}, fmt.Errorf("multiplayerSet: %w", err)
-	}
 	err = config.Set(game.ConfigClientLocale, locale)
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("localeSet: %w", err)
@@ -204,7 +201,7 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("snapshotModeSet: %w", err)
 	}
-	err = config.Save(pathSet.configPath)
+	err = server.SaveLocalConfiguration(pathSet.configPath, config)
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("configSave: %w", err)
 	}
@@ -216,8 +213,7 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 		return configuration, nil
 	}
 
-	isNetworkChanged := isSetupChanged || previousPort != port ||
-		isPreviouslyMultiplayerEnabled != isMultiplayerEnabled
+	isNetworkChanged := isSetupChanged || previousPort != port
 	if !isNetworkChanged {
 		if previousSnapshotMode != selectedSnapshotMode {
 			err = gameServer.SetSnapshotMode(string(selectedSnapshotMode))
@@ -226,7 +222,7 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 					game.ConfigSnapshotMode, string(previousSnapshotMode),
 				)
 				if rollbackErr == nil {
-					rollbackErr = config.Save(pathSet.configPath)
+					rollbackErr = server.SaveLocalConfiguration(pathSet.configPath, config)
 				}
 				if rollbackErr != nil {
 					return ServerConfiguration{}, fmt.Errorf(
@@ -255,12 +251,6 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 	}
 	rollbackErr := config.Set(game.ConfigServerPort, fmt.Sprintf("%d", previousPort))
 	if rollbackErr == nil {
-		rollbackErr = config.Set(
-			game.ConfigIsMultiplayerEnabled,
-			strconv.FormatBool(isPreviouslyMultiplayerEnabled),
-		)
-	}
-	if rollbackErr == nil {
 		rollbackErr = config.Set(game.ConfigClientLocale, previousLocale)
 	}
 	if rollbackErr == nil {
@@ -269,7 +259,7 @@ func (e *App) SetServerSetup(req ServerConfiguration) (ServerConfiguration, erro
 		)
 	}
 	if rollbackErr == nil {
-		rollbackErr = config.Save(pathSet.configPath)
+		rollbackErr = server.SaveLocalConfiguration(pathSet.configPath, config)
 	}
 	if rollbackErr != nil {
 		return ServerConfiguration{}, fmt.Errorf(
@@ -335,11 +325,18 @@ func (e *App) restartGameServer(pathSet *spinnerPathSet) error {
 }
 
 func (e *App) spinnerPaths() (*spinnerPathSet, error) {
+	e.mu.Lock()
+	paths := e.serviceSet.paths
+	e.mu.Unlock()
+	if paths != nil {
+		pathSet := *paths
+		return &pathSet, nil
+	}
 	basePath, err := executableDirectory()
 	if err != nil {
 		return nil, fmt.Errorf("baseResolve: %w", err)
 	}
-	pathSet, err := resolveSpinnerPaths(basePath)
+	pathSet, err := resolveSpinnerBasePaths(basePath)
 	if err != nil {
 		return nil, fmt.Errorf("pathResolve: %w", err)
 	}
@@ -354,10 +351,6 @@ func serverConfiguration(config *game.Config, gamePath string) (ServerConfigurat
 	if port == 0 || port == ^uint16(0) {
 		return ServerConfiguration{}, errors.New("server port must be between 1 and 65534")
 	}
-	campaignMatchmakingBotSize, err := config.CampaignMatchmakingBotSize()
-	if err != nil {
-		return ServerConfiguration{}, fmt.Errorf("campaignBotSize: %w", err)
-	}
 	locales, err := detectClientLocales(gamePath)
 	if err != nil {
 		return ServerConfiguration{}, fmt.Errorf("localeDetect: %w", err)
@@ -371,16 +364,12 @@ func serverConfiguration(config *game.Config, gamePath string) (ServerConfigurat
 		return ServerConfiguration{}, fmt.Errorf("snapshotModeLoad: %w", err)
 	}
 	return ServerConfiguration{
-		BindHost:                           config.String(game.ConfigServerBindHost),
-		AdvertisedHost:                     config.String(game.ConfigServerAdvertisedHost),
-		IsDedicated:                        config.Bool(game.ConfigServerIsDedicated),
-		Port:                               port,
-		IsMultiplayerEnabled:               config.Bool(game.ConfigIsMultiplayerEnabled),
-		Locale:                             locale,
-		Locales:                            locales,
-		SnapshotMode:                       string(snapshotMode),
-		CampaignMatchmakingBotSize:         campaignMatchmakingBotSize,
-		IsCampaignBotSquadMirroringEnabled: config.Bool(game.ConfigIsCampaignBotSquadMirroringEnabled),
+		BindHost:       config.String(game.ConfigServerBindHost),
+		AdvertisedHost: config.String(game.ConfigServerAdvertisedHost),
+		Port:           port,
+		Locale:         locale,
+		Locales:        locales,
+		SnapshotMode:   string(snapshotMode),
 	}, nil
 }
 

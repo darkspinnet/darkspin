@@ -1,76 +1,16 @@
-# Darkspin server configuration.
-# This file is written automatically when the configured path does not exist.
+# Darkspinner client preferences. Server settings live in the local database;
+# dedicated hosts use environment variables and never read this file.
 
 [game]
-# Reject clients whose detected Game version differs from the server.
-is_version_locked = false
-# Restrict the web UI and matchmaking flow to single-player content.
-is_singleplayer_only = false
 locale = ""
-# Number of heroes in each campaign matchmaking bot squad (1 to 3).
-campaign_matchmaking_bot_size = 1
-is_campaign_bot_squad_mirroring_enabled = true
 
 [launcher]
-# Launcher text language. On first use, inherit the previous explicit game
-# language or detect the operating-system language, then save independently.
 locale = ""
-# Saved choices for new game instances. Explicit launch flags override them
-# for the current launcher run without changing these preferences.
 is_intro_skipped = false
 is_cinematic_skipped = false
 
-[server]
-is_multiplayer_enabled = false
-# Dedicated mode requires a non-loopback advertised IPv4 and a private JWT secret.
-is_dedicated = false
-# Empty selects loopback, or all interfaces for multiplayer/dedicated mode.
-bind_host = ""
-# Client-visible literal IPv4; never use 0.0.0.0 or a container DNS name here.
-advertised_host = "127.0.0.1"
-port = 42127
-# Maximum simultaneously authenticated players across the server. This is
-# separate from the four-player limit of an individual Game game instance.
-# The default is conservative for local SQLite. A PostgreSQL deployment may
-# raise this (for example, to 1000) after sizing its database and host.
-world_player_limit = 25
-
-[chat]
-# Accepted messages are always written to chat_log when SQLite is active.
-# Optional stdout output provides live diagnostics without a separate chat file.
-is_stdout_enabled = true
-
-[storage]
-# SQLite is for desktop local play. Dedicated darkrun requires PostgreSQL through
-# DARKSPIN_POSTGRES_URL or PGHOST/PGDATABASE/PGUSER environment settings.
-# PostgreSQL connection credentials are never saved to this file.
-driver = "sqlite"
-
-[content]
-# Private prepared directory containing content.db and www/static. Empty uses
-# darkspin/cache beside this configuration; relative paths start beside it.
-path = ""
-
-[auth]
-# Shared HS256 signing secret used by the desktop auth broker and game server.
-# Replace this development value before exposing a server beyond localhost.
-# The secret must contain at least 32 bytes.
-jwt_secret = "darkspin-local-development-secret-do-not-use-in-production"
-jwt_issuer = "darkspin-web"
-jwt_audience = "darkspin"
-
 [snapshot]
-# Off keeps no rolling sync diagnostics. Manual records the rolling buffer for
-# /ss dump. Auto also snapshots detected anomalies silently and is the default.
+# Local client diagnostic capture preferences.
 mode = "auto"
 buffer_duration_seconds = 60
 delay_seconds = 30
-
-[bootstrap]
-# Dedicated Linux supervisor only; schedule uses UTC. Maintenance always restarts.
-is_update_enabled = true
-update_cron = "30 3 * * *"
-warning_minutes = 30
-startup_timeout_seconds = 1800
-backup_retention_days = 7
-manifest_url = "https://nightly.link/darkspinnet/darkspin/workflows/main-build/main/darkrun-update-linux-amd64-unstable.zip"

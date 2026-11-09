@@ -7,79 +7,80 @@ import (
 )
 
 type status struct {
-	beastVulnerability          BeastVulnerability
-	basicModifiers              map[BasicModifierKey]BasicModifier
-	repairBlockedUntil          time.Time
-	stealthReadyAt              time.Time
-	swiftMovementSpeedBuff      float32
-	areaShiftExpiresAt          time.Time
-	absorptionShieldAmount      float32
-	absorptionShieldMaximum     float32
-	absorptionShieldReadyAt     time.Time
-	absorptionShieldRecharge    time.Duration
-	carapaceDamageMaximum       float32
-	banishExpiresAt             time.Time
-	curseExpiresAt              time.Time
-	curseDamage                 CurseDamageProfile
-	damageTakenIncrease         float32
-	damageVulnerabilityOwner    uint32
-	physicalTakenIncrease       float32
-	physicalVulnerabilityEnd    time.Time
-	damageReduction             float32
-	damageReductionEnd          time.Time
-	verdanthShieldExpiresAt     time.Time
-	isDamageFleePending         bool
-	energyTakenIncrease         float32
-	energyVulnerabilityOwner    uint32
-	energyVulnerabilityEnd      time.Time
-	healingReduction            float32
-	healingReductionEnd         time.Time
-	hasteExpiresAt              time.Time
-	hasteAttackSpeed            float32
-	hasteCooldownReduction      float32
-	hasteMovementSpeedBuff      float32
-	hasteActionProfile          ActionProfile
-	isHasteActionKnown          bool
-	isHasteProfileStored        bool
-	energyBuffExpiresAt         time.Time
-	energyDamageIncrease        float32
-	fearExpiresAt               time.Time
-	intangibleExpiresAt         time.Time
-	chargeProtectionEnd         time.Time
-	munchExpiresAt              time.Time
-	munchDamageIncrease         float32
-	munchStack                  uint32
-	passiveDamageIncrease       float32
-	passiveEnrageStack          uint32
-	oozeBaseGraphicsScale       float32
-	oozeBaseMaximumHitPoint     float32
-	oozeGrowthDamageIncrease    float32
-	oozeGrowthStack             uint32
-	oozeGrowthReadyTimestamp    uint64
-	corpseConsumerCount         uint32
-	isCorpseFading              bool
-	isCorpseFadePublished       bool
-	isStealthed                 bool
-	isHauntInitialized          bool
-	rootExpiresAt               time.Time
-	bioEntangleExpiresAt        time.Time
-	bioEntangleInstanceID       uint32
-	supportHealerRootExpiresAt  time.Time
-	supportHealerRootInstanceID uint32
-	silenceExpiresAt            time.Time
-	auraSilences                map[uint32]time.Time
-	sleepExpiresAt              time.Time
-	auraSleeps                  map[uint32]time.Time
-	slowExpiresAt               time.Time
-	slowMovementScale           float32
-	slowAttackScale             float32
-	slowModifiers               map[uint32]slowModifier
-	slowNextOrder               uint64
-	slowOrder                   uint64
-	publishedSlowMovementScale  float32
-	stunExpiresAt               time.Time
-	tauntExpiresAt              time.Time
-	tauntTargetObjectID         uint32
+	beastVulnerability           BeastVulnerability
+	basicModifiers               map[BasicModifierKey]BasicModifier
+	repairBlockedUntil           time.Time
+	stealthReadyAt               time.Time
+	swiftMovementSpeedBuff       float32
+	areaShiftExpiresAt           time.Time
+	absorptionShieldAmount       float32
+	absorptionShieldMaximum      float32
+	absorptionShieldReadyAt      time.Time
+	absorptionShieldRecharge     time.Duration
+	carapaceDamageMaximum        float32
+	banishExpiresAt              time.Time
+	curseExpiresAt               time.Time
+	curseDamage                  CurseDamageProfile
+	damageTakenIncrease          float32
+	damageVulnerabilityOwner     uint32
+	physicalTakenIncrease        float32
+	physicalVulnerabilityEnd     time.Time
+	damageReduction              float32
+	damageReductionEnd           time.Time
+	verdanthShieldExpiresAt      time.Time
+	isDamageFleePending          bool
+	energyTakenIncrease          float32
+	energyVulnerabilityOwner     uint32
+	energyVulnerabilityEnd       time.Time
+	energyVulnerabilityModifiers map[uint32]energyVulnerabilityModifier
+	healingReduction             float32
+	healingReductionEnd          time.Time
+	hasteExpiresAt               time.Time
+	hasteAttackSpeed             float32
+	hasteCooldownReduction       float32
+	hasteMovementSpeedBuff       float32
+	hasteActionProfile           ActionProfile
+	isHasteActionKnown           bool
+	isHasteProfileStored         bool
+	energyBuffExpiresAt          time.Time
+	energyDamageIncrease         float32
+	fearExpiresAt                time.Time
+	intangibleExpiresAt          time.Time
+	chargeProtectionEnd          time.Time
+	munchExpiresAt               time.Time
+	munchDamageIncrease          float32
+	munchStack                   uint32
+	passiveDamageIncrease        float32
+	passiveEnrageStack           uint32
+	oozeBaseGraphicsScale        float32
+	oozeBaseMaximumHitPoint      float32
+	oozeGrowthDamageIncrease     float32
+	oozeGrowthStack              uint32
+	oozeGrowthReadyTimestamp     uint64
+	corpseConsumerCount          uint32
+	isCorpseFading               bool
+	isCorpseFadePublished        bool
+	isStealthed                  bool
+	isHauntInitialized           bool
+	rootExpiresAt                time.Time
+	bioEntangleExpiresAt         time.Time
+	bioEntangleInstanceID        uint32
+	supportHealerRootExpiresAt   time.Time
+	supportHealerRootInstanceID  uint32
+	silenceExpiresAt             time.Time
+	auraSilences                 map[uint32]time.Time
+	sleepExpiresAt               time.Time
+	auraSleeps                   map[uint32]time.Time
+	slowExpiresAt                time.Time
+	slowMovementScale            float32
+	slowAttackScale              float32
+	slowModifiers                map[uint32]slowModifier
+	slowNextOrder                uint64
+	slowOrder                    uint64
+	publishedSlowMovementScale   float32
+	stunExpiresAt                time.Time
+	tauntExpiresAt               time.Time
+	tauntTargetObjectID          uint32
 }
 
 const unstoppableModifierName = "Unstoppable_NPCAffixModifier"
@@ -124,7 +125,7 @@ func (s *Session) HasDebuff(objectID uint32, at time.Time) bool {
 		at.Before(status.curseExpiresAt) ||
 		status.damageTakenIncrease > 0 ||
 		at.Before(status.physicalVulnerabilityEnd) || at.Before(status.beastVulnerability.ExpiresAt) ||
-		at.Before(status.energyVulnerabilityEnd) ||
+		status.energyVulnerabilityIncrease(at) > 0 ||
 		at.Before(status.healingReductionEnd) ||
 		at.Before(status.fearExpiresAt) ||
 		at.Before(status.intangibleExpiresAt) ||
@@ -158,7 +159,7 @@ func (s *Session) PurgeDebuffs(objectID uint32) bool {
 		!status.curseExpiresAt.IsZero() ||
 		status.damageTakenIncrease > 0 ||
 		!status.physicalVulnerabilityEnd.IsZero() || !status.beastVulnerability.ExpiresAt.IsZero() ||
-		!status.energyVulnerabilityEnd.IsZero() ||
+		!status.energyVulnerabilityEnd.IsZero() || len(status.energyVulnerabilityModifiers) != 0 ||
 		!status.healingReductionEnd.IsZero() ||
 		!status.fearExpiresAt.IsZero() ||
 		!status.intangibleExpiresAt.IsZero() ||
@@ -182,6 +183,7 @@ func (s *Session) PurgeDebuffs(objectID uint32) bool {
 	status.energyTakenIncrease = 0
 	status.energyVulnerabilityOwner = 0
 	status.energyVulnerabilityEnd = time.Time{}
+	status.energyVulnerabilityModifiers = nil
 	status.healingReduction = 0
 	status.healingReductionEnd = time.Time{}
 	status.fearExpiresAt = time.Time{}

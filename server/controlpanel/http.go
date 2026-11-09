@@ -58,8 +58,8 @@ func (e *Service) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 	request = request.WithContext(accountaccess.WithPeer(request.Context(), request.RemoteAddr))
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.Header().Set("X-Content-Type-Options", "nosniff")
-	if !e.isRequestAllowed(request) {
-		writeError(writer, http.StatusForbidden, "Panel requests must come from the launcher.")
+	if !e.isRequestAllowed(request) && !e.isOwnedLocalRequest(request) {
+		writeErrorCode(writer, http.StatusForbidden, "invalid_source", "Panel requests must come from the launcher.")
 		return
 	}
 	err := buildinfo.CheckCompatibility(request.Header.Get(auth.ClientVersionHeader), buildinfo.Version)
@@ -85,6 +85,7 @@ func (e *Service) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 	isAllowedMethod := isReadRoute && request.Method == http.MethodGet ||
 		isSessionRoute && (request.Method == http.MethodGet || request.Method == http.MethodDelete) ||
 		operationMethod != "" && (operationMethod == request.Method ||
+			operationMethod == "GET, PATCH" && (request.Method == http.MethodGet || request.Method == http.MethodPatch) ||
 			operationMethod == "PATCH, DELETE" && (request.Method == http.MethodPatch || request.Method == http.MethodDelete))
 	if !isAllowedMethod {
 		writer.Header().Set("Allow", "GET")
@@ -181,7 +182,7 @@ func (e *Service) signIn(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusInternalServerError, "Panel session could not be created.")
 		return
 	}
-	writeJSON(writer, http.StatusCreated, sessionResponse(token, entry, identity, access.IsAdmin()))
+	writeJSON(writer, http.StatusCreated, sessionResponse(token, entry, identity, access.IsAdmin() || !e.config.IsDedicated))
 }
 
 func (e *Service) authorizedRequest(writer http.ResponseWriter, request *http.Request) {
@@ -196,6 +197,9 @@ func (e *Service) authorizedRequest(writer http.ResponseWriter, request *http.Re
 	if !isFound {
 		writeError(writer, http.StatusUnauthorized, "Sign in to this server again.")
 		return
+	}
+	if !e.config.IsDedicated {
+		request = request.WithContext(accountaccess.WithLocalAdministrator(request.Context()))
 	}
 	access, err := e.config.AccessReader.Read(request.Context(), entry.accountID)
 	if errors.Is(err, accountaccess.ErrNotFound) {
@@ -241,7 +245,7 @@ func (e *Service) authorizedRequest(writer http.ResponseWriter, request *http.Re
 			writer.WriteHeader(http.StatusNoContent)
 			return
 		}
-		writeJSON(writer, http.StatusOK, sessionResponse("", entry, identity, access.IsAdmin()))
+		writeJSON(writer, http.StatusOK, sessionResponse("", entry, identity, access.IsAdmin() || accountaccess.IsLocalAdministrator(request.Context())))
 	case "/api/control/server":
 		e.serverSummary(writer, request)
 	default:
@@ -311,6 +315,30 @@ func (e *Service) isRequestAllowed(request *http.Request) bool {
 	return expectedErr == nil && expectedHost != "" && requestErr == nil &&
 		requestPort == expectedPort && (strings.EqualFold(requestHost, "localhost") ||
 		requestIP != nil && requestIP.IsLoopback())
+}
+
+// The in-process launcher already pinned its local session to this server. A
+// valid owner token over loopback does not need advertised Host metadata, which
+// may differ when the launcher routes requests through its local listener.
+func (e *Service) isOwnedLocalRequest(request *http.Request) bool {
+	if e.config.IsDedicated || request.Header.Get("Origin") != "" {
+		return false
+	}
+	host, port, err := net.SplitHostPort(request.RemoteAddr)
+	if err != nil || port == "" {
+		return false
+	}
+	address := net.ParseIP(host)
+	if address == nil || !address.IsLoopback() {
+		return false
+	}
+	fields := strings.Fields(request.Header.Get("Authorization"))
+	if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") ||
+		len(fields[1]) != 47 || !strings.HasPrefix(fields[1], "cps_") {
+		return false
+	}
+	entry, isFound := e.findSession(sha256.Sum256([]byte(fields[1])))
+	return isFound && entry.isLocal
 }
 
 func writeError(writer http.ResponseWriter, status int, message string) {

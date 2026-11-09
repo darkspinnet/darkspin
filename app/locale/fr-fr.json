@@ -1,6 +1,15 @@
 {
   "locale": "fr-fr",
   "messages": {
+    "The control panel rejected the launcher connection. Close the panel and try again.": "",
+    "Server settings are not available while the local server is starting.": "",
+    "Server settings will be available when the local server is ready.": "",
+    "SAVE": "",
+    "Maximum number of players admitted to this server at once.": "",
+    "WORLD PLAYER LIMIT": "",
+    "SERVER CAPACITY": "",
+    "Network port used by Darkspinner and your local game client.": "",
+    "Server settings are only available for non-remote Crogenitors.": "",
     "Standing enemy counts are managed per level; the remaining controls adjust composition and scaling.": "",
     "Sync Snapshot failed. Check the server logs for details.": "",
     "You cannot edit your own access or an account with a higher status, or grant a status above your own.": "",

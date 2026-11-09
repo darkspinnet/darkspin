@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-var snapshotPaths = []string{"bin/darkrun", "runtime/darkspin.toml", "runtime/server.toml", "runtime/darkspin/saves"}
+var snapshotPaths = []string{"bin/darkrun", "runtime/darkspin.toml", "runtime/darkspin/saves"}
 
 func (e *Storage) backupPath(id string) (string, error) {
 	clean := filepath.Clean(filepath.FromSlash(id))
@@ -305,6 +305,11 @@ func (e *Storage) restorePath(backup, rel string) error {
 	isAbsent := errors.Is(err, os.ErrNotExist)
 	if err != nil && !isAbsent {
 		return fmt.Errorf("restoreStat: %w", err)
+	}
+	if isAbsent && rel == "runtime/darkspin.toml" {
+		// Snapshots from environment-only builds omitted this file. Keep any
+		// current compatibility key rather than removing it during rollback.
+		return nil
 	}
 	if !isAbsent {
 		if fi.IsDir() {

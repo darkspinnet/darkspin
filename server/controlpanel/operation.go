@@ -59,6 +59,8 @@ func controlMethod(path string) string {
 		return http.MethodGet
 	case "/api/control/admin/identity":
 		return http.MethodPatch
+	case "/api/control/admin/matchmaking", "/api/control/admin/capacity":
+		return "GET, PATCH"
 	case "/api/control/admin/announcements":
 		return http.MethodPost
 	case "/api/control/account":
@@ -99,6 +101,12 @@ func (e *Service) supportedOperations() []string {
 	}
 	if e.config.Information != nil {
 		operations = append(operations, "server.identity.read", "server.announcements.read", "admin.identity.write", "admin.announcements.write")
+	}
+	if e.config.IsDedicated && e.config.Matchmaking != nil {
+		operations = append(operations, "admin.matchmaking.read", "admin.matchmaking.write")
+	}
+	if e.config.Capacity != nil {
+		operations = append(operations, "admin.capacity.read", "admin.capacity.write")
 	}
 	if e.config.HealthReader != nil {
 		operations = append(operations, "admin.health.read")
@@ -155,7 +163,8 @@ func decodeBoundedControlRequest(writer http.ResponseWriter, req *http.Request, 
 
 func (e *Service) controlOperation(writer http.ResponseWriter, req *http.Request, entry session, access accountaccess.Access) {
 	// Apply the administrator boundary before dispatching any admin route.
-	if strings.HasPrefix(req.URL.Path, "/api/control/admin/") && !access.IsAdmin() {
+	if strings.HasPrefix(req.URL.Path, "/api/control/admin/") && !access.IsAdmin() &&
+		!accountaccess.IsLocalAdministrator(req.Context()) {
 		writeError(writer, http.StatusForbidden, "Administrator access is required.")
 		return
 	}

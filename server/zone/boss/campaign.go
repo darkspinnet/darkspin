@@ -9,7 +9,7 @@ import (
 )
 
 // Static endings use the mission number; replay endings use a separate seeded
-// forty-percent Destructor draw. The eligible variant follows the destination.
+// twenty-percent Destructor draw. The eligible variant follows the destination.
 func campaignEndingLeader(director game.CampaignDirector, stage uint32) (string, bool) {
 	if stage == 0 || stage > 72 || director.Difficulty == 0 || director.Difficulty > 72 {
 		return "", false
@@ -46,7 +46,7 @@ func isDestructorEnding(director game.CampaignDirector, stage uint32) bool {
 	// without consuming map-layout, population or loot draws.
 	seed := uint32(director.RunSeed) ^ uint32(director.RunSeed>>32) ^
 		stage*0x9e3779b9 ^ util.HashID(strings.ToLower(director.Level)) ^ 0x424f5353
-	return sim.NewSimulatorRandom(seed).Float64() < 0.4
+	return sim.NewSimulatorRandom(seed).Float64() < 0.2
 }
 
 func eligiblePlanetLeader(director game.CampaignDirector, family string) (string, bool) {

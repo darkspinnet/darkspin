@@ -76,7 +76,7 @@ func NewStorage(root string, retentionDays int) (*Storage, error) {
 		"runtime/maintenance-result.json", "runtime/maintenance-result.json.tmp",
 		"runtime/backup-observation.json", "runtime/backup-observation.json.tmp",
 		"runtime/restore-observation.json", "runtime/restore-observation.json.tmp",
-		"runtime/darkspin.toml", "runtime/server.toml", "runtime/darkspin/server.lock", "runtime/darkspin/maintenance.json",
+		"runtime/darkspin/server.lock", "runtime/darkspin/maintenance.json",
 		"runtime/darkspin/saves/darkspin.db", "runtime/darkspin/saves/darkspin.db-wal",
 		"runtime/darkspin/saves/darkspin.db-shm", "runtime/darkspin/cache/content.db",
 	}

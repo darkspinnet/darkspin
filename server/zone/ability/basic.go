@@ -308,10 +308,12 @@ func ValidateBasicCommit(
 	minimum := float64(plan.Damage.Minimum)
 	maximum := float64(plan.Damage.Maximum)
 	if math.IsNaN(minimum) || math.IsNaN(maximum) || math.IsInf(minimum, 0) ||
-		math.IsInf(maximum, 0) || minimum <= 0 || minimum > maximum ||
-		math.Trunc(minimum) != minimum || math.Trunc(maximum) != maximum ||
-		maximum-minimum+1 > math.MaxUint32 {
+		math.IsInf(maximum, 0) || minimum <= 0 || minimum > maximum {
 		return errors.New("invalid damage range")
+	}
+	err := sim.ValidateRankDamageRange(sim.DamageRange{Minimum: plan.Damage.Minimum, Maximum: plan.Damage.Maximum})
+	if err != nil {
+		return fmt.Errorf("basicDamageRange: %w", err)
 	}
 	if invalidNumber(tuning.DamageBonus) || tuning.DamageBonus <= 0 {
 		return errors.New("invalid critical damage bonus")

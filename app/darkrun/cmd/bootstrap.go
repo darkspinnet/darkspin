@@ -41,7 +41,7 @@ func newBootstrapCommand() *cobra.Command {
 	command := &cobra.Command{Use: "bootstrap", Short: "Supervise a dedicated server with PostgreSQL backups and updates", Args: cobra.NoArgs, RunE: e.run}
 	e.setup.registerFlags(command)
 	command.Flags().StringVar(&e.rootPath, "path", "./darkspin", "bootstrap root containing bin, runtime, and backup")
-	command.Flags().StringVar(&e.configPath, "config", "", "must be PATH/runtime/darkspin.toml")
+	command.Flags().StringVar(&e.configPath, "config", "", "runtime path anchor; must be PATH/runtime/darkspin.toml (no configuration file is read)")
 	command.Flags().StringVar(&e.gamePath, "game-path", "", "required readable build-103 installation")
 	command.Flags().StringVar(&e.updateCron, "update-cron", "30 3 * * *", "UTC cron time to begin maintenance warnings")
 	command.Flags().IntVar(&e.warningMinuteCount, "update-warning-minutes", 30, "warning interval before shutdown")
@@ -187,33 +187,30 @@ func (e *bootstrapOptions) prepare(command *cobra.Command, rootPath, configPath 
 	if err != nil {
 		return options, fmt.Errorf("settingsPath: %w", err)
 	}
-	config, err := e.setup.prepare(command, configPath)
-	if err != nil {
-		return options, fmt.Errorf("serverSettings: %w", err)
-	}
-	if !config.Bool(game.ConfigServerIsDedicated) {
-		return options, errors.New("PostgreSQL bootstrap requires --dedicated")
-	}
 	settings := []struct {
-		flag    string
-		key     game.ConfigKey
-		setting string
+		flag     string
+		variable string
+		setting  string
 	}{
-		{"update-enabled", game.ConfigBootstrapIsUpdateEnabled, strconv.FormatBool(e.isUpdateEnabled)},
-		{"update-cron", game.ConfigBootstrapUpdateCron, e.updateCron},
-		{"update-warning-minutes", game.ConfigBootstrapWarningMinutes, strconv.Itoa(e.warningMinuteCount)},
-		{"update-start-timeout-seconds", game.ConfigBootstrapStartupTimeoutSeconds, strconv.Itoa(e.startupSecondCount)},
-		{"backup-retention-days", game.ConfigBootstrapBackupRetentionDays, strconv.Itoa(e.retentionDayCount)},
-		{"update-manifest-url", game.ConfigBootstrapManifestURL, e.manifestURL},
+		{"update-enabled", "DARKSPIN_IS_UPDATE_ENABLED", strconv.FormatBool(e.isUpdateEnabled)},
+		{"update-cron", "DARKSPIN_UPDATE_CRON", e.updateCron},
+		{"update-warning-minutes", "DARKSPIN_UPDATE_WARNING_MINUTES", strconv.Itoa(e.warningMinuteCount)},
+		{"update-start-timeout-seconds", "DARKSPIN_UPDATE_START_TIMEOUT_SECONDS", strconv.Itoa(e.startupSecondCount)},
+		{"backup-retention-days", "DARKSPIN_BACKUP_RETENTION_DAYS", strconv.Itoa(e.retentionDayCount)},
+		{"update-manifest-url", "DARKSPIN_UPDATE_MANIFEST_URL", e.manifestURL},
 	}
 	for _, setting := range settings {
 		if !command.Flags().Changed(setting.flag) {
 			continue
 		}
-		err = config.Set(setting.key, strings.TrimSpace(setting.setting))
+		err = os.Setenv(setting.variable, strings.TrimSpace(setting.setting))
 		if err != nil {
-			return options, fmt.Errorf("bootstrapSet[%s]: %w", setting.flag, err)
+			return options, fmt.Errorf("bootstrapEnvironment[%s]: %w", setting.variable, err)
 		}
+	}
+	config, err := e.setup.prepare(command, configPath)
+	if err != nil {
+		return options, fmt.Errorf("serverSettings: %w", err)
 	}
 	schedule, err := bootstrapSchedule(config, rootPath)
 	if err != nil {
@@ -243,10 +240,6 @@ func (e *bootstrapOptions) prepare(command *cobra.Command, rootPath, configPath 
 		return options, fmt.Errorf("gamePath: %w", err)
 	}
 	options.ServerArgs = []string{"--game-path", gamePath}
-	err = config.Save(configPath)
-	if err != nil {
-		return options, fmt.Errorf("bootstrapSave: %w", err)
-	}
 	return options, nil
 }
 
@@ -310,23 +303,12 @@ func validateBootstrapPaths(command *cobra.Command, rootPath, configPath, reques
 	if configPath != filepath.Join(rootPath, "runtime", game.DefaultConfigFilename) {
 		return errors.New("bootstrap requires PATH/runtime/darkspin.toml")
 	}
-	config := game.DefaultConfig()
-	fi, err := os.Stat(configPath)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("layoutStat: %w", err)
+	config, isCreated, err := game.LoadDedicatedConfig(configPath)
+	if err != nil {
+		return fmt.Errorf("layoutLoad: %w", err)
 	}
-	if err == nil {
-		if !fi.Mode().IsRegular() {
-			return errors.New("bootstrap config must be a regular file")
-		}
-		var isCreated bool
-		config, isCreated, err = game.LoadConfig(configPath)
-		if err != nil {
-			return fmt.Errorf("layoutLoad: %w", err)
-		}
-		if isCreated {
-			return errors.New("bootstrap config disappeared while validating")
-		}
+	if isCreated {
+		return errors.New("dedicated configuration unexpectedly created a file")
 	}
 	if command.Flags().Changed("content-path") {
 		requestedContentPath = strings.TrimSpace(requestedContentPath)

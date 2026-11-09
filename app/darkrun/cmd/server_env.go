@@ -21,7 +21,6 @@ func applyServerEnvironment(command *cobra.Command) error {
 		{"config", "DARKSPIN_CONFIG_PATH"},
 		{"bind-host", "DARKSPIN_BIND_HOST"},
 		{"port", "DARKSPIN_PORT"},
-		{"dedicated", "DARKSPIN_IS_DEDICATED"},
 	}
 	for _, setting := range settings {
 		if command.Flags().Changed(setting.flag) {

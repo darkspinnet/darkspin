@@ -11,11 +11,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// FromEnvironment requires a PostgreSQL connection for the headless host.
-// Missing, partial or invalid settings are errors, never a SQLite fallback.
-// Callers opt into this only for the dedicated darkrun host or its admin tools.
-func FromEnvironment() (*pgx.ConnConfig, error) {
-	connectionURL := strings.TrimSpace(os.Getenv("DARKSPIN_POSTGRES_URL"))
+// IsEnvironmentConfigured detects even partial PostgreSQL settings so dedicated
+// administrative tools never silently fall back to a different local database.
+func IsEnvironmentConfigured() bool {
 	isRequested := os.Getenv("DARKSPIN_POSTGRES_URL") != ""
 	for _, name := range []string{
 		"PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD",
@@ -23,7 +21,14 @@ func FromEnvironment() (*pgx.ConnConfig, error) {
 	} {
 		isRequested = isRequested || os.Getenv(name) != ""
 	}
-	if !isRequested {
+	return isRequested
+}
+
+// FromEnvironment requires a PostgreSQL connection for the dedicated host.
+// Missing, partial or invalid settings are errors, never a SQLite fallback.
+func FromEnvironment() (*pgx.ConnConfig, error) {
+	connectionURL := strings.TrimSpace(os.Getenv("DARKSPIN_POSTGRES_URL"))
+	if !IsEnvironmentConfigured() {
 		return nil, errors.New("darkrun requires PostgreSQL; set DARKSPIN_POSTGRES_URL or PGHOST, PGDATABASE and PGUSER")
 	}
 	if connectionURL == "" {

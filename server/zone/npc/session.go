@@ -1286,9 +1286,7 @@ func (s *Session) damage(
 		}
 		if isEnergyDamage {
 			increase := npc.status.basicEnergyIncrease(now)
-			if now.Before(npc.status.energyVulnerabilityEnd) {
-				increase += npc.status.energyTakenIncrease
-			}
+			increase += npc.status.energyVulnerabilityIncrease(now)
 			damage *= 1 + increase
 		}
 	}

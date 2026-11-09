@@ -2,8 +2,8 @@ package gameplay
 
 import "time"
 
-// Sleeping Cloud is a fixed-duration cast; releasing its key does not retire
-// the field. Keep predicted movement from moving its stationary caster.
+// Sleeping Cloud holds its caster until expiry or the authored action event
+// ends the cast. Releasing its key alone does not start a new action.
 func (e gameplayPeerSession) isSleepingCloudActive(now time.Time) bool {
 	for _, run := range e.heroAuraAreas {
 		if run == nil || !run.isSleepingCloud ||

@@ -73,7 +73,7 @@ func newMapCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("mapConfigPath: %w", err)
 			}
-			config, isConfigCreated, err := game.LoadConfig(resolvedConfigPath)
+			config, isConfigCreated, err := loadToolConfiguration(resolvedConfigPath)
 			if err != nil {
 				return fmt.Errorf("mapConfigLoad: %w", err)
 			}

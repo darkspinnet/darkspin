@@ -261,12 +261,7 @@ func (e campaignAbilityCommandRuntime) applyArenaTargetStatusLocked(sessionKey s
 			continue
 		}
 		targetDuration := duration
-		// Build-103 modifier740 has native duration5s and inherits IsDebuff
-		// from SpeedTemplate453. The ability's own descriptors omit that bit.
-		// Other families may use Lua waits; retain their authored timing until
-		// their actual modifier-duration contract is recovered independently.
-		if definition.Name == "TCShieldedSentinelSupport" &&
-			definition.RootModifierID == util.HashID("TCShieldedSentinel_Support_Snare") && duration == 5*time.Second {
+		if isArenaNativeModifierDuration(definition, duration) {
 			if member.deployedObjectID != objectID || int(member.deployedCreatureIndex) >= len(member.binding.Creatures) {
 				return nil, errors.New("arena duration recipient unavailable")
 			}

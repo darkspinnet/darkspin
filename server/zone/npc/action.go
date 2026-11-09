@@ -901,7 +901,7 @@ func scaldronBossChainLightningProfile(nounName string) (ActionProfile, bool) {
 		DamageType:                3,
 		DamageSource:              1,
 		ModifierName:              "CryosBossShock",
-		ModifierDuration:          2 * time.Second,
+		ModifierDuration:          2500 * time.Millisecond,
 		ModifierChance:            100,
 		MaximumTargetCount:        5,
 		TrailEffectName:           "cryos_boss_chain_lightning_attack_beam_effect.ServerEventDef",

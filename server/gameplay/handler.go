@@ -386,6 +386,10 @@ func (r gameplayActionRuntime) handleCommand(
 		}()
 	}
 	disposition := &gameplayActionDisposition{}
+	var cloudListeners []*heroAuraAreaRun
+	if isSessionFound && command.Common.Type == raknet.ActionUseCharacterAbility && command.Ability != nil {
+		cloudListeners = r.registry.sleepingCloudListeners(packet.Address.String(), peerSession.generation)
+	}
 	ctx = context.WithValue(ctx, gameplayActionDispositionKey{}, disposition)
 	response, err := r.dispatch(ctx, packet, command)
 	duration := r.now().Sub(startedAt)
@@ -444,6 +448,17 @@ func (r gameplayActionRuntime) handleCommand(
 		return protected, err
 	}
 	scheduleSet.seal()
+	if len(cloudListeners) != 0 && command.Common.Type == raknet.ActionUseCharacterAbility && !disposition.isBasicRetained {
+		abilityID, isAccepted := acceptedAbilityID(protected)
+		if isAccepted && abilityID != 0 {
+			commit := cloudActionCommit{registry: r.registry, sessionKey: packet.Address.String(),
+				generation: peerSession.generation, runs: cloudListeners, now: r.now(), timestamp: packet.SourceTime}
+			commitErr := packet.AfterResponseCommit(commit.commit)
+			if commitErr != nil {
+				return protected, fmt.Errorf("cloudActionCommit: %w", commitErr)
+			}
+		}
+	}
 	if command.Ability != nil && !disposition.isBasicRetained &&
 		hasActionResponseForSync(protected, command.Common.Unknown[0]) {
 		// A newly admitted attack or special replaces the queued basic intent.

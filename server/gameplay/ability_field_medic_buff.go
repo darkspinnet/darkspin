@@ -78,16 +78,7 @@ func (e *fieldMedicHeroBuffRun) remove(peerSession *gameplayPeerSession) error {
 			peerSession.zone.Companion().Snapshot(e.targetObjectID)
 		if isFound && companion.UserID == e.userID && companion.PeerGeneration == e.generation &&
 			companion.OwnerObjectID == e.targetOwnerObjectID {
-			previousCompanion, updatedCompanion, err := peerSession.zone.Companion().SetMaximumHitPoint(
-				e.targetObjectID,
-				max(float32(1), companion.MaximumHitPoint-e.maximumHitPoint),
-			)
-			if err != nil {
-				return fmt.Errorf("companionCapacity: %w", err)
-			}
-			// The companion operation clamps current health to its new capacity.
-			_ = previousCompanion
-			_ = updatedCompanion
+			peerSession.zone.Companion().ClearMaximumHitPointPercent(e.targetObjectID, e.instanceID)
 		}
 		e.maximumHitPoint = 0
 		return nil
@@ -471,13 +462,8 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 		return nil, fmt.Errorf("fieldMedicHealthCreate: %w", err)
 	}
 	if target.isCompanion {
-		previousCompanion, updatedCompanion, capacityErr := peerSession.zone.Companion().SetMaximumHitPoint(
-			target.objectID, baseMaximumHitPoint+maximumHitPoint,
-		)
-		err = capacityErr
-		// Capacity application leaves the existing health unchanged.
-		_ = previousCompanion
-		_ = updatedCompanion
+		// Build-103829 Tick uses kPercentChange(.25), not a captured kAdd.
+		err = peerSession.zone.Companion().ApplyMaximumHitPointPercent(target.objectID, instanceID, 0.25)
 	} else if peerSession.binding.Mode == game.ModeArena {
 		peerSession.arenaHitPointIncreases[target.creatureIndex] += maximumHitPoint
 	} else {

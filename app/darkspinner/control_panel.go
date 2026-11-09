@@ -254,7 +254,7 @@ func remoteControlResponseError(response *http.Response) error {
 	decodeErr := json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&failure)
 	if decodeErr == nil {
 		switch failure.Code {
-		case "unauthorized", "forbidden", "version_mismatch", "rate_limited", "unavailable", "target_online", "name_in_use", "invalid_password", "invalid_name", "admin_protected", "conflict", "invalid_request", "not_found", "username_required", "username_pattern", "username_too_long", "password_required", "password_too_long", "outcome_unknown", "maintenance_conflict", "maintenance_stopping", "maintenance_unsupported", "update_unavailable", "update_unsupported", "update_check_unsupported", "diagnostic_too_large", "diagnostic_invalid_request", "diagnostic_not_found", "diagnostic_unavailable", "diagnostic_conflict", "access_protected":
+		case "unauthorized", "forbidden", "invalid_source", "version_mismatch", "rate_limited", "unavailable", "target_online", "name_in_use", "invalid_password", "invalid_name", "admin_protected", "conflict", "invalid_request", "not_found", "username_required", "username_pattern", "username_too_long", "password_required", "password_too_long", "outcome_unknown", "maintenance_conflict", "maintenance_stopping", "maintenance_unsupported", "update_unavailable", "update_unsupported", "update_check_unsupported", "diagnostic_too_large", "diagnostic_invalid_request", "diagnostic_not_found", "diagnostic_unavailable", "diagnostic_conflict", "access_protected":
 			return fmt.Errorf("controlPanel:%s", failure.Code)
 		}
 	}

@@ -33,7 +33,7 @@ func ValidateServerOperation(actor Actor, action, reason string) error {
 }
 
 func validateServerOperationFields(action, reason string) error {
-	if action != "server.identity" && action != "server.announcement" &&
+	if action != "server.identity" && action != "server.announcement" && action != "server.matchmaking" && action != "server.capacity" &&
 		action != "maintenance.restart" && action != "maintenance.update" &&
 		action != "maintenance.hold" && action != "maintenance.cancel" &&
 		action != "diagnostic.download" && action != "diagnostic.delete" {

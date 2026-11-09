@@ -3808,8 +3808,9 @@ func normalizeCampaignMeleeDamage(damage game.DamageRange) game.DamageRange {
 		math.IsInf(minimum, 0) || math.IsInf(maximum, 0) {
 		return damage
 	}
-	damage.Minimum = max(float32(1), float32(math.Floor(minimum)))
-	damage.Maximum = max(damage.Minimum, float32(math.Ceil(maximum)))
+	// Retain the existing melee minimum without quantizing projected bounds.
+	damage.Minimum = max(float32(1), damage.Minimum)
+	damage.Maximum = max(damage.Minimum, damage.Maximum)
 	return damage
 }
 

@@ -70,7 +70,7 @@ watch(isAnyBusy, next => emit('busy', next), { flush:'sync' })
 function initialTab() {
   const operations = props.panel.server.supported_operations || []
   if (operations.some(operation => ['admin.maintenance.read', 'admin.update.read', 'admin.health.read'].includes(operation))) return 'manage'
-  if (operations.some(operation => ['server.identity.read', 'admin.announcements.write'].includes(operation))) return 'server'
+  if (operations.some(operation => ['server.identity.read', 'admin.announcements.write', 'admin.matchmaking.read', 'admin.capacity.read'].includes(operation))) return 'server'
   if (props.panel.requested_maintenance_id && operations.includes('admin.maintenance.read')) return 'manage'
   if (operations.includes('admin.diagnostics.list')) return 'diagnostic'
   if (operations.includes('admin.users.list')) return 'users'
@@ -181,7 +181,7 @@ if (tab.value === 'users' && operations.value.includes('admin.users.list')) void
 <template>
   <Tabs :model-value="tab" class="admin-view" @update:model-value="switchTab">
     <TabsList class="admin-tabs" :aria-label="$t('Administrator pages')">
-      <TabsTrigger v-if="operations.some(operation => ['server.identity.read', 'admin.announcements.write'].includes(operation))" value="server" :disabled="isAnyBusy">{{ $t('SERVER') }}</TabsTrigger>
+      <TabsTrigger v-if="operations.some(operation => ['server.identity.read', 'admin.announcements.write', 'admin.matchmaking.read', 'admin.capacity.read'].includes(operation))" value="server" :disabled="isAnyBusy">{{ $t('SERVER') }}</TabsTrigger>
       <TabsTrigger v-if="operations.some(operation => ['admin.maintenance.read', 'admin.update.read', 'admin.health.read'].includes(operation))" value="manage" :disabled="isAnyBusy">{{ $t('MANAGE') }}</TabsTrigger>
       <TabsTrigger v-if="operations.includes('admin.diagnostics.list')" value="diagnostic" :disabled="isAnyBusy">{{ $t('DIAGNOSTIC') }}</TabsTrigger>
       <TabsTrigger v-if="operations.includes('admin.users.list')" value="users" :disabled="isAnyBusy">{{ $t('USER') }}</TabsTrigger>

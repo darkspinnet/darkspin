@@ -584,12 +584,8 @@ func CommitArea(
 		if scaledDamage, isScaled := plan.DamageScale[target.Plan.ObjectID]; isScaled {
 			damageScale = scaledDamage
 		}
-		minimumDamage := float32(math.Floor(
-			float64(targetDamage.Minimum * damageScale),
-		))
-		maximumDamage := float32(math.Ceil(
-			float64(targetDamage.Maximum * damageScale),
-		))
+		minimumDamage := targetDamage.Minimum * damageScale
+		maximumDamage := targetDamage.Maximum * damageScale
 		selectedDamage, err := sim.SelectRankDamage(random, sim.DamageRange{
 			Minimum: minimumDamage,
 			Maximum: maximumDamage,

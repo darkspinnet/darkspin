@@ -10,6 +10,7 @@ import (
 
 	serverauth "github.com/darkspinnet/darkspin/server/auth"
 	"github.com/darkspinnet/darkspin/server/game"
+	serverruntime "github.com/darkspinnet/darkspin/server/runtime"
 	"github.com/spf13/cobra"
 )
 
@@ -39,7 +40,7 @@ func newAuthCommand() *cobra.Command {
 }
 
 func runLocalAuth(ctx context.Context, cmd *cobra.Command, address, configPath string) error {
-	config, _, err := game.LoadConfig(configPath)
+	config, _, err := serverruntime.LoadLocalConfiguration(configPath)
 	if err != nil {
 		return fmt.Errorf("configLoad: %w", err)
 	}

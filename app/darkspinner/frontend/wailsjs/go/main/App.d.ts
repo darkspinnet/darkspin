@@ -64,6 +64,8 @@ export function GetLauncherLanguageConfiguration():Promise<main.LauncherLanguage
 
 export function GetLuaConsole():Promise<main.LuaConsoleSnapshot>;
 
+export function GetMatchmakingConfiguration():Promise<main.MatchmakingConfiguration>;
+
 export function GetModConfiguration():Promise<main.ModConfiguration>;
 
 export function GetModPortrait(arg1:string):Promise<string>;
@@ -78,11 +80,15 @@ export function GetRemoteControlActivity(arg1:string,arg2:string,arg3:string):Pr
 
 export function GetRemoteControlAnnouncements(arg1:string,arg2:string):Promise<main.RemoteControlAnnouncementList>;
 
+export function GetRemoteControlCapacity(arg1:string,arg2:string):Promise<main.RemoteControlCapacity>;
+
 export function GetRemoteControlHealth(arg1:string,arg2:string):Promise<main.RemoteControlHealth>;
 
 export function GetRemoteControlIdentity(arg1:string,arg2:string):Promise<main.ServerIdentityConfiguration>;
 
 export function GetRemoteControlMaintenance(arg1:string,arg2:string):Promise<main.RemoteControlMaintenance>;
+
+export function GetRemoteControlMatchmaking(arg1:string,arg2:string):Promise<main.RemoteControlMatchmaking>;
 
 export function GetRemoteControlPanel(arg1:string,arg2:string):Promise<main.RemoteControlPanel>;
 
@@ -184,15 +190,21 @@ export function SetLauncherLocale(arg1:string):Promise<void>;
 
 export function SetLocalServicesRequired(arg1:boolean):Promise<void>;
 
+export function SetMatchmakingConfiguration(arg1:main.MatchmakingConfiguration):Promise<main.MatchmakingConfiguration>;
+
 export function SetModSporePath(arg1:string):Promise<void>;
 
+export function SetRemoteControlCapacity(arg1:string,arg2:string,arg3:main.RemoteControlCapacity):Promise<main.RemoteControlCapacity>;
+
 export function SetRemoteControlIdentity(arg1:string,arg2:string,arg3:main.ServerIdentityConfiguration):Promise<main.ServerIdentityConfiguration>;
+
+export function SetRemoteControlMatchmaking(arg1:string,arg2:string,arg3:main.RemoteControlMatchmaking):Promise<main.RemoteControlMatchmaking>;
 
 export function SetRemoteControlPassword(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<main.RemoteControlActionResult>;
 
 export function SetRemoteControlUserAccess(arg1:string,arg2:string,arg3:number,arg4:number,arg5:string,arg6:string):Promise<main.RemoteControlAccessResult>;
 
-export function SetServerConfiguration(arg1:number,arg2:boolean,arg3:string,arg4:string):Promise<main.ServerConfiguration>;
+export function SetServerConfiguration(arg1:number,arg2:string,arg3:string):Promise<main.ServerConfiguration>;
 
 export function SetServerPort(arg1:number):Promise<main.ServerConfiguration>;
 

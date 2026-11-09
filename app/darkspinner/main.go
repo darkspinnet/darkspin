@@ -21,6 +21,7 @@ import (
 
 	serverauth "github.com/darkspinnet/darkspin/server/auth"
 	"github.com/darkspinnet/darkspin/server/game"
+	server "github.com/darkspinnet/darkspin/server/runtime"
 	"github.com/wailsapp/wails/v2"
 	wailsoptions "github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -353,7 +354,7 @@ func runWithSnapshotControl(ctx context.Context, arguments []string, connection 
 	if err != nil {
 		return fmt.Errorf("gameData: %w", err)
 	}
-	gameConfig, _, err := game.LoadConfig(pathSet.configPath)
+	gameConfig, _, err := server.LoadLocalConfiguration(pathSet.configPath)
 	if err != nil {
 		return fmt.Errorf("localeConfig: %w", err)
 	}

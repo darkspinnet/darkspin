@@ -52,6 +52,8 @@ type heroAuraAreaRun struct {
 	isStopping        bool
 	isObjectPublished bool
 	isSleepingCloud   bool
+	cloudAction       *sim.LuaSleepingCloudAbility
+	cloudReply        cloudActionReply
 	expiresAt         time.Time
 	runtime           campaignAbilityCommandRuntime
 	originalZone      *zone.Zone
@@ -722,8 +724,12 @@ func (r campaignAbilityCommandRuntime) handleHeroAuraArea(
 		return req.reject("aura area release unavailable")
 	}
 	cast := r.registry.reserveChannelCastLocked(peerSession, req.command.Common.ObjectID, cooldownReservation, releaseReservation)
+	var cloudAction *sim.LuaSleepingCloudAbility
 	movementPackets := make([][]byte, 0)
 	err = peerSession.stopPlayerMovement(abilityStartTime)
+	if err == nil && isSleepingCloud {
+		cloudAction, err = sim.NewLuaSleepingCloudAbility(r.program.SleepingCloud)
+	}
 	if err == nil && isSleepingCloud {
 		movementPackets, err = marshalZonePlayerStop(req.command.Common.ObjectID, peerSession.playerPosition)
 		if err == nil {
@@ -738,6 +744,9 @@ func (r campaignAbilityCommandRuntime) handleHeroAuraArea(
 		err = cast.debitLocked(&peerSession, manaCost)
 	}
 	if err != nil {
+		if cloudAction != nil {
+			cloudAction.Stop()
+		}
 		refundPacket, refundErr := cast.failLocked(&peerSession, true, cast.revision)
 		r.registry.sessions[sessionKey] = peerSession
 		if len(refundPacket) != 0 {
@@ -751,6 +760,8 @@ func (r campaignAbilityCommandRuntime) handleHeroAuraArea(
 	}
 	run := &heroAuraAreaRun{
 		cast:            cast,
+		cloudAction:     cloudAction,
+		cloudReply:      cloudActionReply{syncStamp: req.command.Common.Unknown[0], abilityID: activeAbilityID, abilityIndex: req.command.Ability.Index},
 		isSleepingCloud: isSleepingCloud, expiresAt: abilityStartTime.Add(projected.ReleaseDelay),
 		runtime: r, originalZone: peerSession.zone,
 		isTimeBubble: definition.Name == timeBubbleAbilityName,

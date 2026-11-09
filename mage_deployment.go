@@ -356,7 +356,7 @@ func (e *deploymentCommand) prepareEnvironment() error {
 		if !fi.Mode().IsRegular() {
 			return errors.New("deployment environment is not a regular file")
 		}
-		return nil // Keep the database password and operator's explicit settings.
+		return nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("environmentStat: %w", err)
@@ -401,14 +401,31 @@ func (e *deploymentCommand) prepareEnvironment() error {
 	if byteCount != len(secret) {
 		return errors.New("incomplete deployment password")
 	}
+	signingSecret, err := newDeploymentSigningSecret()
+	if err != nil {
+		return fmt.Errorf("signingGenerate: %w", err)
+	}
 	contents := "COMPOSE_PROJECT_NAME=darkspin-deployment\nDARKSPIN_ADVERTISED_HOST=" + host +
 		"\nDARKSPIN_PORT=42137\nDARKSPIN_HOME_PATH=./runtime\nDARKSPIN_GAME_HOST_PATH=./game\n" +
-		"POSTGRES_DB=darkspin\nPOSTGRES_USER=darkspin\nPOSTGRES_PASSWORD=" + hex.EncodeToString(secret) + "\n"
+		"POSTGRES_DB=darkspin\nPOSTGRES_USER=darkspin\nPOSTGRES_PASSWORD=" + hex.EncodeToString(secret) + "\n" +
+		"DARKSPIN_AUTH_JWT_SECRET=" + signingSecret + "\n"
 	err = os.WriteFile(path, []byte(contents), 0o600)
 	if err != nil {
 		return fmt.Errorf("environmentWrite: %w", err)
 	}
 	return nil
+}
+
+func newDeploymentSigningSecret() (string, error) {
+	secret := make([]byte, 32)
+	byteCount, err := rand.Read(secret)
+	if err != nil {
+		return "", fmt.Errorf("signingRandom: %w", err)
+	}
+	if byteCount != len(secret) {
+		return "", errors.New("incomplete deployment signing secret")
+	}
+	return hex.EncodeToString(secret), nil
 }
 
 func (e *deploymentCommand) build() error {

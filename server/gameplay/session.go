@@ -2237,6 +2237,7 @@ type gameplaySessionRegistry struct {
 	chronoFreezes            map[chronoFreezeKey]*chronoFreezeStep
 	timeBubbles              map[*heroAuraAreaRun]struct{}
 	auraRuns                 map[*heroAuraAreaRun]struct{}
+	fireVulnerabilities      map[*zone.Zone]map[uint32]*heroEnergyVulnerabilityRun
 	projectileRetirements    map[*abilityraknet.ProjectileRun]*campaignProjectileRetirement
 	projectileFreezes        map[*abilityraknet.ProjectileRun]map[uint32]*hostileProjectileFreezeStep
 	chargeRuns               map[*heroChargeRun]struct{}

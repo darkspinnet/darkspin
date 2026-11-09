@@ -51,9 +51,11 @@ type heroModifierRun struct {
 	isArborealMight  bool
 	isAbilityBreak   bool
 	isShadowStealth  bool
+	isReplaced       bool
 	effectSlot       uint8
 	isEffectAttached bool
 	expiresAt        time.Time
+	duration         time.Duration
 	quantum          quantumStateRuntime
 	cancel           raknet.CancelSchedule
 }
@@ -233,9 +235,9 @@ func (e *heroModifierRun) Remove(peerSession *gameplayPeerSession) {
 		return
 	}
 	profile := &peerSession.binding.Creatures[e.creatureIndex].DamageProfile
-	profile.DamageBuff = max(float32(0), profile.DamageBuff-e.damageBuff)
+	profile.DamageBuff -= e.damageBuff
 	creature := &peerSession.binding.Creatures[e.creatureIndex]
-	creature.AutoCrit = max(float32(0), creature.AutoCrit-e.autoCrit)
+	creature.AutoCrit -= e.autoCrit
 	e.damageBuff = 0
 	e.autoCrit = 0
 }
@@ -390,36 +392,72 @@ type heroModifierScheduleFailure struct {
 	run                 *heroModifierRun
 	previousRun         *heroModifierRun
 	previousManaPoint   float32
-	previousDamageBuff  float32
-	previousAutoCrit    float32
 	cooldownReservation zoneability.CooldownReservation
 	releaseReservation  zoneaction.ReleaseReservation
 	isInstanceAllocated bool
 }
 
 func (e heroModifierScheduleFailure) handle(scheduleErr error) {
+	previousRun := e.previousRun
+	var expiredRun *heroModifierRun
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
 		peerSession.heroModifierRun == e.run
 	if isCurrent {
-		profile := &peerSession.binding.Creatures[e.run.creatureIndex].DamageProfile
-		profile.DamageBuff = e.previousDamageBuff
-		peerSession.binding.Creatures[e.run.creatureIndex].AutoCrit = e.previousAutoCrit
-		_ = peerSession.setCampaignCharacterManaPoints(
+		if previousRun != nil && !previousRun.isReplaced && !e.runtime.now().Before(previousRun.expiresAt) {
+			expiredRun = previousRun
+			expiredRun.isReplaced = true
+			cleanupPackets, cleanupErr := expiredRun.stopPresentation(e.runtime.effectPool)
+			e.runtime.registry.queueChannelRemovalsLocked(peerSession.zone, cleanupPackets)
+			peerSession = e.runtime.registry.sessions[e.sessionKey]
+			if cleanupErr != nil && e.runtime.logger != nil {
+				e.runtime.logger.Printf("Expired hero modifier rollback cleanup failed: %v", cleanupErr)
+			}
+			if cleanupErr == nil && expiredRun.instanceID != e.run.instanceID {
+				releaseErr := e.runtime.modifierPool.Release(expiredRun.instanceID)
+				if releaseErr != nil && e.runtime.logger != nil {
+					e.runtime.logger.Printf("Expired hero modifier handle release failed: %v", releaseErr)
+				}
+			}
+		}
+		if previousRun != nil && (previousRun.isReplaced || !e.runtime.now().Before(previousRun.expiresAt)) {
+			previousRun = nil
+		}
+		// Undo this run's own grants. A saved aggregate would overwrite
+		// passive stacks or other contributions accepted since admission.
+		e.run.Remove(&peerSession)
+		if previousRun != nil && previousRun.creatureIndex == e.run.creatureIndex {
+			creature := &peerSession.binding.Creatures[e.run.creatureIndex]
+			creature.DamageProfile.DamageBuff += previousRun.damageBuff
+			creature.AutoCrit += previousRun.autoCrit
+		}
+		manaErr := peerSession.setCampaignCharacterManaPoints(
 			e.run.creatureIndex, e.previousManaPoint,
 		)
+		if manaErr != nil && e.runtime.logger != nil {
+			e.runtime.logger.Printf("Hero modifier rollback mana restore failed: %v", manaErr)
+		}
 		peerSession.abilityCooldownSession().Rollback(e.cooldownReservation)
 		peerSession.abilityReleaseSession().Rollback(e.releaseReservation)
-		peerSession.heroModifierRun = e.previousRun
+		peerSession.heroModifierRun = previousRun
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
+		if previousRun == nil || previousRun.instanceID != e.run.instanceID {
+			cleanupPackets, cleanupErr := e.run.stopPresentation(e.runtime.effectPool)
+			e.runtime.registry.queueChannelRemovalsLocked(peerSession.zone, cleanupPackets)
+			if cleanupErr != nil && e.runtime.logger != nil {
+				e.runtime.logger.Printf("Hero modifier rollback cleanup failed: %v", cleanupErr)
+			}
+		}
 	}
 	e.runtime.registry.mutex.Unlock()
+	if expiredRun != nil {
+		expiredRun.Cancel()
+	}
 	if !isCurrent {
 		return
 	}
-	isPreviousShadowStealth := e.previousRun != nil &&
-		e.previousRun.isShadowStealth
+	isPreviousShadowStealth := previousRun != nil && previousRun.isShadowStealth
 	if e.run.isShadowStealth || isPreviousShadowStealth {
 		acquired := []zonenpc.Snapshot(nil)
 		stealthPacket := []byte(nil)
@@ -443,7 +481,7 @@ func (e heroModifierScheduleFailure) handle(scheduleErr error) {
 		}
 		if isPreviousShadowStealth {
 			acquired, stealthPacket, err = peerSession.setShadowRavagerStealth(
-				e.previousRun.objectID, true,
+				previousRun.objectID, true,
 			)
 			if len(stealthPacket) != 0 && e.runtime.logger != nil {
 				e.runtime.logger.Printf(
@@ -476,8 +514,11 @@ func (e heroModifierScheduleFailure) handle(scheduleErr error) {
 			}
 		}
 	}
-	if e.isInstanceAllocated {
-		_ = e.runtime.modifierPool.Release(e.run.instanceID)
+	if e.isInstanceAllocated || previousRun == nil {
+		releaseErr := e.runtime.modifierPool.Release(e.run.instanceID)
+		if releaseErr != nil && e.runtime.logger != nil {
+			e.runtime.logger.Printf("Hero modifier rollback handle release failed: %v", releaseErr)
+		}
 	}
 	e.run.releaseEffect(e.runtime.effectPool)
 	e.runtime.logger.Printf(
@@ -535,6 +576,15 @@ func (r campaignAbilityCommandRuntime) handleHeroSelfModifier(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("heroModifierTiming: %w", err)
 	}
+	if definition.Name == "ArborealMight" {
+		// Build-103 modifier312 owns a native duration and IsBuff descriptor.
+		// Its Tick waits forever; native expiry owns the effect's lifetime.
+		definition.Duration, err = projectRecipientModifierDuration(definition.Duration, 1<<4, creature)
+		if err != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("arborealDuration: %w", err)
+		}
+	}
 	manaCost, err := game.ResolveAbilityManaCost(
 		definition.ManaCost, creature.DamageProfile.PrimaryAttribute,
 		definition.ManaCoefficient, peerSession.isOverdriveActiveAt(req.startTime),
@@ -559,6 +609,9 @@ func (r campaignAbilityCommandRuntime) handleHeroSelfModifier(
 	if previousRun != nil && previousRun.abilityID == ability.ID &&
 		previousRun.creatureIndex == creatureIndex {
 		if definition.Name == "ArborealMight" {
+			// ResetDuration restarts the accepted modifier's stored duration
+			// (build-103 A660A0), rather than taking a fresh attribute snapshot.
+			definition.Duration = previousRun.duration
 			maximumStack := arborealMightMaximumStack(abilityRank)
 			isArborealAtMaximum = previousRun.stackCount >= maximumStack
 			stackCount = min(
@@ -577,8 +630,6 @@ func (r campaignAbilityCommandRuntime) handleHeroSelfModifier(
 
 	remainingManaPoint := peerSession.deployedManaPoint() - manaCost
 	previousManaPoint := peerSession.deployedManaPoint()
-	previousDamageBuff := creature.DamageProfile.DamageBuff
-	previousAutoCrit := creature.AutoCrit
 	damageBuff := float32(0)
 	autoCrit := float32(0)
 	if definition.Name == "ArborealMight" {
@@ -601,6 +652,7 @@ func (r campaignAbilityCommandRuntime) handleHeroSelfModifier(
 		isAbilityBreak:  definition.Name == "ShadowRavagerSupport",
 		isShadowStealth: definition.Name == "ShadowRavagerSupport",
 		expiresAt:       req.startTime.Add(definition.Duration),
+		duration:        definition.Duration,
 	}
 	if isArborealAtMaximum {
 		run.expiresAt = previousRun.expiresAt
@@ -784,11 +836,8 @@ func (r campaignAbilityCommandRuntime) handleHeroSelfModifier(
 	}
 	profile := &peerSession.binding.Creatures[creatureIndex].DamageProfile
 	if previousRun != nil && previousRun.creatureIndex == creatureIndex {
-		profile.DamageBuff = max(float32(0), profile.DamageBuff-previousRun.damageBuff)
-		peerSession.binding.Creatures[creatureIndex].AutoCrit = max(
-			float32(0),
-			peerSession.binding.Creatures[creatureIndex].AutoCrit-previousRun.autoCrit,
-		)
+		profile.DamageBuff -= previousRun.damageBuff
+		peerSession.binding.Creatures[creatureIndex].AutoCrit -= previousRun.autoCrit
 	}
 	profile.DamageBuff += damageBuff
 	peerSession.binding.Creatures[creatureIndex].AutoCrit += autoCrit
@@ -822,8 +871,6 @@ func (r campaignAbilityCommandRuntime) handleHeroSelfModifier(
 		sessionKey: sessionKey, generation: generation,
 		run: run, previousRun: previousRun,
 		previousManaPoint:   previousManaPoint,
-		previousDamageBuff:  previousDamageBuff,
-		previousAutoCrit:    previousAutoCrit,
 		cooldownReservation: cooldownReservation,
 		releaseReservation:  releaseReservation,
 		isInstanceAllocated: isInstanceAllocated,
@@ -879,8 +926,29 @@ func (r campaignAbilityCommandRuntime) handleHeroSelfModifier(
 		startPackets = append(startPackets, targetPackets...)
 	}
 	if previousRun != nil {
-		previousRun.Cancel()
-		previousRun.releaseEffect(r.effectPool)
+		r.registry.mutex.Lock()
+		current := r.registry.sessions[sessionKey]
+		isReplacementCurrent := current.generation == generation && current.heroModifierRun == run
+		if isReplacementCurrent {
+			previousRun.isReplaced = true
+			if previousRun.instanceID != run.instanceID {
+				cleanupPackets, cleanupErr := previousRun.stopPresentation(r.effectPool)
+				r.registry.queueChannelRemovalsLocked(current.zone, cleanupPackets)
+				if cleanupErr != nil {
+					r.logger.Printf("Replaced hero modifier cleanup failed: %v", cleanupErr)
+				} else {
+					releaseErr := r.modifierPool.Release(previousRun.instanceID)
+					if releaseErr != nil {
+						r.logger.Printf("Replaced hero modifier handle release failed: %v", releaseErr)
+					}
+				}
+			}
+		}
+		r.registry.mutex.Unlock()
+		if isReplacementCurrent {
+			previousRun.Cancel()
+			previousRun.releaseEffect(r.effectPool)
+		}
 	}
 	if definition.Name == "TechRandom2" {
 		purgePackets, purgeErr := r.purgeHeroDebuffs(
@@ -1134,7 +1202,7 @@ func (r campaignDamageRuntime) refreshArborealMightOnDeath(
 			game.Vec3(candidate.playerPosition).Sub(position).Length() >= 20 {
 			continue
 		}
-		run.expiresAt = now.Add(15 * time.Second)
+		run.expiresAt = now.Add(run.duration)
 		candidate.heroModifierRun = run
 		r.registry.sessions[key] = candidate
 		refreshes = append(refreshes, refresh{

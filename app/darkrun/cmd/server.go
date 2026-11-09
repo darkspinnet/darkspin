@@ -146,9 +146,6 @@ func (e *serverCommandOptions) run(cmd *cobra.Command, _ []string) (resultErr er
 	if err != nil {
 		return fmt.Errorf("serverSetup: %w", err)
 	}
-	if !config.Bool(game.ConfigServerIsDedicated) {
-		return errors.New("PostgreSQL player storage requires --dedicated")
-	}
 	diagnostic, err := openDedicatedDiagnostics(cmd.Context(), e.server.RuntimePath, e.server.TracePath, !e.setup.isPrepareOnly)
 	if err != nil {
 		return fmt.Errorf("serverLog: %w", err)

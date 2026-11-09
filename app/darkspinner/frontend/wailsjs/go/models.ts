@@ -395,6 +395,20 @@ export namespace main {
 		}
 	}
 	
+	export class MatchmakingConfiguration {
+	    campaignMatchmakingBotSize: number;
+	    isCampaignBotSquadMirroringEnabled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new MatchmakingConfiguration(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.campaignMatchmakingBotSize = source["campaignMatchmakingBotSize"];
+	        this.isCampaignBotSquadMirroringEnabled = source["isCampaignBotSquadMirroringEnabled"];
+	    }
+	}
 	export class ModBinding {
 	    heroNoun: number;
 	    creationId: string;
@@ -1045,6 +1059,18 @@ export namespace main {
 	}
 	
 	
+	export class RemoteControlCapacity {
+	    world_player_limit: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RemoteControlCapacity(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.world_player_limit = source["world_player_limit"];
+	    }
+	}
 	
 	export class RemoteControlDiagnostic {
 	    name: string;
@@ -1537,6 +1563,20 @@ export namespace main {
 	    }
 	}
 	
+	export class RemoteControlMatchmaking {
+	    campaign_matchmaking_bot_size: number;
+	    is_campaign_bot_squad_mirroring_enabled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new RemoteControlMatchmaking(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.campaign_matchmaking_bot_size = source["campaign_matchmaking_bot_size"];
+	        this.is_campaign_bot_squad_mirroring_enabled = source["is_campaign_bot_squad_mirroring_enabled"];
+	    }
+	}
 	
 	export class remoteControlServer {
 	    name: string;
@@ -2045,14 +2085,10 @@ export namespace main {
 	export class ServerConfiguration {
 	    bindHost: string;
 	    advertisedHost: string;
-	    isDedicated: boolean;
 	    port: number;
-	    isMultiplayerEnabled: boolean;
 	    locale: string;
 	    locales: ClientLocale[];
 	    snapshotMode: string;
-	    campaignMatchmakingBotSize: number;
-	    isCampaignBotSquadMirroringEnabled: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ServerConfiguration(source);
@@ -2062,14 +2098,10 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.bindHost = source["bindHost"];
 	        this.advertisedHost = source["advertisedHost"];
-	        this.isDedicated = source["isDedicated"];
 	        this.port = source["port"];
-	        this.isMultiplayerEnabled = source["isMultiplayerEnabled"];
 	        this.locale = source["locale"];
 	        this.locales = this.convertValues(source["locales"], ClientLocale);
 	        this.snapshotMode = source["snapshotMode"];
-	        this.campaignMatchmakingBotSize = source["campaignMatchmakingBotSize"];
-	        this.isCampaignBotSquadMirroringEnabled = source["isCampaignBotSquadMirroringEnabled"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

@@ -3,7 +3,6 @@ package npc
 import (
 	"errors"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/game"
@@ -215,12 +214,8 @@ func resolveAttackDamageAt(npc Snapshot, profile ActionProfile, at time.Time) (g
 	if difficultyDamageMultiplier == 0 {
 		difficultyDamageMultiplier = 1
 	}
-	damage.Minimum = float32(math.Floor(
-		float64(damage.Minimum * difficultyDamageMultiplier),
-	))
-	damage.Maximum = float32(math.Ceil(
-		float64(damage.Maximum * difficultyDamageMultiplier),
-	))
+	damage.Minimum *= difficultyDamageMultiplier
+	damage.Maximum *= difficultyDamageMultiplier
 	return damage, nil
 }
 

@@ -103,6 +103,11 @@ func (e heroAuraWorld) RequestAuraModifier(req sim.LuaAuraModifierRequest) (uint
 		e.run.releaseAuraInstance(instanceID)
 		return 0, fmt.Errorf("auraEncode: %w", err)
 	}
+	reaction, err := e.schedule.runtime.registry.prepareLaserSilenceReactionLocked(e.member, objectID)
+	if err != nil {
+		e.run.releaseAuraInstance(instanceID)
+		return 0, fmt.Errorf("auraReaction: %w", err)
+	}
 	isApplied, err := e.run.npc.ApplyAuraSilence(objectID, instanceID, e.schedule.runtime.now(), e.expiresAt, luaAuraAdmission{
 		modifier: e.run.silenceAdmission, isChainGame: e.schedule.binding.Mode == game.ModeChain,
 	})
@@ -117,6 +122,10 @@ func (e heroAuraWorld) RequestAuraModifier(req sim.LuaAuraModifierRequest) (uint
 	// Retain the accepted handle before returning to any fallible Lua call.
 	e.run.targets[objectID] = heroAuraAreaTarget{instanceID: instanceID, expiresAt: e.expiresAt}
 	e.schedule.queueNPCMembershipLocked(e.member, packets, true)
+	if len(reaction.packets) != 0 {
+		e.schedule.queueNPCMembershipLocked(e.member, reaction.packets, false)
+	}
+	reaction.commit()
 	return instanceID, nil
 }
 

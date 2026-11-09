@@ -80,7 +80,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 	timestamp uint64,
 ) ([][]byte, error) {
 	profile := plan.Profile
-	if profile.MovementSpeedBuff < 0 {
+	if profile.MovementSpeedBuff < 0 || profile.ModifierName == "CryosBossShock" {
 		r.registry.mutex.RLock()
 		sourceMember, isSourceFound := r.registry.sessions[sessionKey]
 		if isSourceFound {
@@ -145,6 +145,20 @@ func (r campaignNPCActionRuntime) applyCampaignNPCTimedModifier(
 	}
 	if isCurrent && r.isTargetStatusImmuneLocked(&peerSession, plan.TargetObjectID) {
 		isCurrent = false
+	}
+	if isCurrent {
+		profile.ModifierDuration, err = projectCampaignTimedModifierDuration(
+			profile, peerSession, plan.TargetObjectID,
+		)
+		if err != nil {
+			r.registry.mutex.Unlock()
+			_, releaseErr := run.release(r.modifierPool)
+			return nil, fmt.Errorf("enemyTimedDuration: %w", errors.Join(err, releaseErr))
+		}
+		run.record.Duration = profile.ModifierDuration
+		if !isIndefinite {
+			run.record.ExpiresAt = r.now().Add(profile.ModifierDuration)
+		}
 	}
 	if isCurrent && profile.ModifierName == "CitadelMinionSuicide_Daze" && plan.TargetObjectID == peerSession.deployedObjectID && peerSession.isScarabDazed() {
 		isCurrent = false

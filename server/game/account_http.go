@@ -42,6 +42,11 @@ func (e *accountHTTPResponse) WriteHeader(status int) {
 	if e.status != 0 {
 		return
 	}
+	// Account responses are protocol XML, including player-controlled setting
+	// names. Never let a browser interpret those elements as active content.
+	e.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	e.Header().Set("X-Content-Type-Options", "nosniff")
+	e.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	e.status = status
 	e.ResponseWriter.WriteHeader(status)
 }

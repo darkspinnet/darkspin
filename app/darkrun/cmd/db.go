@@ -16,6 +16,7 @@ import (
 
 	"github.com/darkspinnet/darkspin/server/game"
 	server "github.com/darkspinnet/darkspin/server/runtime"
+	"github.com/darkspinnet/darkspin/server/runtime/playerstore"
 	"github.com/darkspinnet/darkspin/server/sporenet"
 	"github.com/jmoiron/sqlx"
 	"github.com/spf13/cobra"
@@ -110,9 +111,18 @@ func runDatabaseCommand(ctx context.Context, output io.Writer, options databaseC
 	if err != nil {
 		return fmt.Errorf("configPath: %w", err)
 	}
-	config, _, err := game.LoadConfig(configPath)
+	var config *game.Config
+	var isGenerated bool
+	if playerstore.IsEnvironmentConfigured() {
+		config, isGenerated, err = game.LoadDedicatedConfig(configPath)
+	} else {
+		config, isGenerated, err = server.LoadLocalConfiguration(configPath)
+	}
 	if err != nil {
 		return fmt.Errorf("configLoad: %w", err)
+	}
+	if isGenerated && playerstore.IsEnvironmentConfigured() {
+		return errors.New("dedicated database settings require environment configuration")
 	}
 	driver := strings.ToLower(strings.TrimSpace(config.String(game.ConfigStorageDriver)))
 	if driver != "" && driver != "sqlite" {
@@ -195,7 +205,7 @@ func runDatabaseCommand(ctx context.Context, output io.Writer, options databaseC
 	if err != nil {
 		return fmt.Errorf("contentPath: %w", err)
 	}
-	target, err := openConfiguredDatabaseTarget(ctx, config, runtimePath, contentPath, table)
+	target, err := openConfiguredDatabaseTarget(ctx, runtimePath, contentPath, table)
 	if err != nil {
 		return fmt.Errorf("targetOpen: %w", err)
 	}

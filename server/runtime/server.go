@@ -39,6 +39,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/instance"
 	"github.com/darkspinnet/darkspin/server/loginhistory"
 	"github.com/darkspinnet/darkspin/server/maintenance"
+	matchmakingconfig "github.com/darkspinnet/darkspin/server/matchmaking"
 	navigationcontentsqlite "github.com/darkspinnet/darkspin/server/navigation/contentsqlite"
 	"github.com/darkspinnet/darkspin/server/party"
 	partylocal "github.com/darkspinnet/darkspin/server/party/local"
@@ -95,7 +96,7 @@ func CopyUserProfile(
 	if err != nil {
 		return sporenet.UserProfileCopy{}, fmt.Errorf("configPath: %w", err)
 	}
-	config, _, err := game.LoadConfig(configPath)
+	config, err := loadAdministrativeConfiguration(configPath)
 	if err != nil {
 		return sporenet.UserProfileCopy{}, fmt.Errorf("configLoad: %w", err)
 	}
@@ -136,7 +137,7 @@ func CompleteTutorialProfile(
 	if err != nil {
 		return TutorialProfileCompletion{}, fmt.Errorf("configPath: %w", err)
 	}
-	config, _, err := game.LoadConfig(configPath)
+	config, err := loadAdministrativeConfiguration(configPath)
 	if err != nil {
 		return TutorialProfileCompletion{}, fmt.Errorf("configLoad: %w", err)
 	}
@@ -279,6 +280,7 @@ type Server struct {
 	roomManager                   *sporenet.RoomManager
 	gameManager                   *game.Manager
 	matchmaking                   *pvp.Matchmaking
+	matchmakingConfiguration      *matchmakingconfig.Service
 	partyService                  *party.Service
 	template                      *sporenet.TemplateDatabase
 	vendor                        *sporenet.Vendor
@@ -562,7 +564,13 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("gameDetect: %w", err)
 	}
 	gameVersion := contentsqlite.SourceVersion
-	config, isConfigGenerated, err := game.LoadConfig(configPath)
+	var config *game.Config
+	var isConfigGenerated bool
+	if options.Postgres != nil {
+		config, isConfigGenerated, err = game.LoadDedicatedConfig(configPath)
+	} else {
+		config, isConfigGenerated, err = LoadLocalConfigurationAt(configPath, userDatabasePath)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("configLoad: %w", err)
 	}
@@ -677,6 +685,14 @@ func New(options Options) (*Server, error) {
 		return nil, errors.New("account access storage unavailable")
 	}
 	accessService := accountaccess.New(accessProvider.AccountAccess())
+	capacityConfiguration, err := initializeCapacity(context.Background(), userRepository, accessService, userManager)
+	if err != nil {
+		return nil, fmt.Errorf("capacityInit: %w", err)
+	}
+	matchmakingConfiguration, err := initializeMatchmakingConfiguration(context.Background(), userRepository, config, configPath, accessService)
+	if err != nil {
+		return nil, fmt.Errorf("matchmakingInit: %w", err)
+	}
 	activityProvider, isActivityAvailable := userRepository.(interface {
 		ActivityStore() activity.Store
 	})
@@ -728,6 +744,8 @@ func New(options Options) (*Server, error) {
 		AccessReader: accessService, Observer: panelObserver,
 		AccountController: userManager, Moderator: accessService, ConnectionControl: panelConnection,
 		Information: informationProvider, HealthReader: healthReader,
+		Matchmaking:           matchmakingConfiguration,
+		Capacity:              capacityConfiguration,
 		ActivityReader:        activityService,
 		UserActivityReader:    activityService,
 		MetricsReviewer:       accessService,
@@ -798,11 +816,6 @@ func New(options Options) (*Server, error) {
 			logger.Printf("Checkpoint manager initialization cleanup failed: %v", closeErr)
 		}
 	}()
-	worldPlayerLimit, err := config.Uint32(game.ConfigWorldPlayerLimit)
-	if err != nil {
-		return nil, fmt.Errorf("worldPlayerLimit: %w", err)
-	}
-	userManager.SetWorldPlayerLimit(worldPlayerLimit)
 	var loginTokenVerifier blaze.LoginTokenVerifier
 	var localAuthHandler http.Handler
 	jwtSecret := config.String(game.ConfigAuthJWTSecret)
@@ -913,7 +926,7 @@ func New(options Options) (*Server, error) {
 	}
 	presenceRegistry := blaze.NewPresenceRegistry()
 	matchmaking := pvp.NewMatchmaking()
-	registry.SetMatchmakingConfig(config)
+	registry.SetMatchmakingConfiguration(matchmakingConfiguration)
 	if isDedicated {
 		err = blaze.RegisterDedicatedSporeNetComponentsWithMembership(
 			registry, userManager, loginTokenVerifier, partyService, presenceRegistry,
@@ -1126,38 +1139,39 @@ func New(options Options) (*Server, error) {
 			GamePath:         gamePath,
 			GameVersion:      gameVersion,
 		},
-		config:                config,
-		serverRuleStore:       serverRuleStore,
-		isConfigGenerated:     isConfigGenerated,
-		scheduler:             taskScheduler,
-		blazeServers:          blazeServers,
-		maintenanceServers:    allBlazeServers,
-		sharedTCPServers:      sharedTCPServers,
-		udpServer:             udpServer,
-		gameplayCleanup:       gameplayLifecycle.Cleanup,
-		gameplayDiscard:       gameplayLifecycle.DiscardGame,
-		gameplayDiscardMember: gameplayLifecycle.DiscardMember,
-		bugContext:            gameplayLifecycle,
-		reportContext:         reportContext,
-		httpServers:           httpServers,
-		httpRouter:            router,
-		userManager:           userManager,
-		controlPanel:          panel,
-		activity:              activityService,
-		userStore:             userStore,
-		saveBuffer:            profileBuffer,
-		contentStore:          contentStore,
-		checkpoint:            checkpointManager,
-		checkpointStore:       checkpointStore,
-		roomManager:           roomManager,
-		gameManager:           gameManager,
-		matchmaking:           matchmaking,
-		partyService:          partyService,
-		template:              templateDatabase,
-		vendor:                vendor,
-		logger:                logger,
-		traceRecorder:         traceRecorder,
-		snapshot:              snapshotService,
+		config:                   config,
+		serverRuleStore:          serverRuleStore,
+		isConfigGenerated:        isConfigGenerated,
+		scheduler:                taskScheduler,
+		blazeServers:             blazeServers,
+		maintenanceServers:       allBlazeServers,
+		sharedTCPServers:         sharedTCPServers,
+		udpServer:                udpServer,
+		gameplayCleanup:          gameplayLifecycle.Cleanup,
+		gameplayDiscard:          gameplayLifecycle.DiscardGame,
+		gameplayDiscardMember:    gameplayLifecycle.DiscardMember,
+		bugContext:               gameplayLifecycle,
+		reportContext:            reportContext,
+		httpServers:              httpServers,
+		httpRouter:               router,
+		userManager:              userManager,
+		controlPanel:             panel,
+		activity:                 activityService,
+		userStore:                userStore,
+		saveBuffer:               profileBuffer,
+		contentStore:             contentStore,
+		checkpoint:               checkpointManager,
+		checkpointStore:          checkpointStore,
+		roomManager:              roomManager,
+		gameManager:              gameManager,
+		matchmaking:              matchmaking,
+		matchmakingConfiguration: matchmakingConfiguration,
+		partyService:             partyService,
+		template:                 templateDatabase,
+		vendor:                   vendor,
+		logger:                   logger,
+		traceRecorder:            traceRecorder,
+		snapshot:                 snapshotService,
 	}
 	panelMaintenance.server = application
 	application.panelMaintenance = panelMaintenance

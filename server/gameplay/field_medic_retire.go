@@ -169,7 +169,7 @@ func (e *fieldMedicCompanionBuffRun) retire() ([][]byte, error) {
 		actor, isFound := e.zone.Companion().Snapshot(e.targetObjectID)
 		if isFound && actor.UserID == e.userID && actor.PeerGeneration == e.generation &&
 			actor.OwnerObjectID == e.ownerObjectID {
-			e.zone.Companion().RemoveBuff(e.targetObjectID, e.buff)
+			e.zone.Companion().ClearBuffModifier(e.targetObjectID, e.instanceID)
 		}
 		e.zone.Effect().Remove(e.instanceID)
 	}

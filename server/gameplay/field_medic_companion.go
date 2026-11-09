@@ -164,7 +164,7 @@ func (e fieldMedicActiveSchedule) transferBuffToCompanionLocked(
 		err = errors.Join(err, releaseErr)
 		return nil, false, fmt.Errorf("create: %w", err)
 	}
-	err = peerSession.zone.Companion().AddBuff(targetObjectID, buff)
+	err = peerSession.zone.Companion().ApplyBuffModifier(targetObjectID, instanceID, buff)
 	if err != nil {
 		releaseErr := e.runtime.modifierPool.Release(instanceID)
 		err = errors.Join(err, releaseErr)
@@ -182,7 +182,7 @@ func (e fieldMedicActiveSchedule) transferBuffToCompanionLocked(
 	record.Kind = zoneeffect.ModifierKindBuff
 	err = peerSession.zone.Effect().Put(record)
 	if err != nil {
-		peerSession.zone.Companion().RemoveBuff(targetObjectID, buff)
+		peerSession.zone.Companion().ClearBuffModifier(targetObjectID, instanceID)
 		delete(peerSession.fieldMedicCompanionBuffs, instanceID)
 		releaseErr := e.runtime.modifierPool.Release(instanceID)
 		err = errors.Join(err, releaseErr)
@@ -197,7 +197,7 @@ func (e fieldMedicActiveSchedule) transferBuffToCompanionLocked(
 	}
 	if scheduleErr != nil {
 		peerSession.zone.Effect().Remove(instanceID)
-		peerSession.zone.Companion().RemoveBuff(targetObjectID, buff)
+		peerSession.zone.Companion().ClearBuffModifier(targetObjectID, instanceID)
 		delete(peerSession.fieldMedicCompanionBuffs, instanceID)
 		releaseErr := e.runtime.modifierPool.Release(instanceID)
 		err = errors.Join(err, releaseErr)

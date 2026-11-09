@@ -62,6 +62,10 @@ func NewPostgres(ctx context.Context, database *sqlx.DB) (*Repository, error) {
 	if err != nil {
 		return nil, fmt.Errorf("activitySchema: %w", err)
 	}
+	err = repository.CapacityStore().EnsureSchema(ctx, true)
+	if err != nil {
+		return nil, fmt.Errorf("capacitySchema: %w", err)
+	}
 	return repository, nil
 }
 

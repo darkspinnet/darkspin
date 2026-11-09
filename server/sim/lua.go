@@ -305,7 +305,7 @@ type luaCompiler struct {
 	privateTable          *luaTable
 	triggerCallbacks      []*luaClosure
 	attributeHandle       uint32
-	attributeKinds        map[uint32]AttributeKind
+	attributeModifiers    map[uint32]AttributeModifierIntent
 	internalObjectIndexes map[*luaTable]int
 	threadInteger         [16]luaValue
 	objectiveEvent        LuaObjectiveEvent
@@ -1011,7 +1011,7 @@ func newLuaCompiler(input LuaAbilityInput) (*luaCompiler, error) {
 	compiler := &luaCompiler{
 		input: input, global: newLuaTable(nil), moduleChunks: make(map[string]*contentlua.Chunk),
 		loadedModules: make(map[string]bool), instructionBudget: budget, memoryBudget: memoryBudget,
-		attributeKinds: make(map[uint32]AttributeKind), internalObjectIndexes: make(map[*luaTable]int),
+		attributeModifiers: make(map[uint32]AttributeModifierIntent), internalObjectIndexes: make(map[*luaTable]int),
 	}
 	for name := range input.preloadedModules {
 		compiler.loadedModules[name] = true
@@ -1709,6 +1709,15 @@ func (c *luaCompiler) registerGlobals() {
 		stringLuaValue(string(AttributeInvisibleToSecurityTeleporter)),
 	)
 	c.global.set(stringLuaKey("nAttributeType"), tableLuaValue(nAttributeType))
+	// Build-103 GlobalDefinitions659 supplies these operation identities. The
+	// constrained attribute binding below implements only additive grants.
+	nAttributeOp := newLuaTable(nil)
+	nAttributeOp.set(stringLuaKey("kAdd"), numberLuaValue(1))
+	nAttributeOp.set(stringLuaKey("kPercentChange"), numberLuaValue(2))
+	nAttributeOp.set(stringLuaKey("kClamp"), numberLuaValue(3))
+	nAttributeOp.set(stringLuaKey("kAddBest"), numberLuaValue(4))
+	nAttributeOp.set(stringLuaKey("kPercentChangeBest"), numberLuaValue(5))
+	c.global.set(stringLuaKey("nAttributeOp"), tableLuaValue(nAttributeOp))
 	nAttribute := newLuaTable(nil)
 	c.setNative(nAttribute, "GetHealthMultiplierForDifficulty", func(arguments []luaValue) ([]luaValue, error) {
 		if len(arguments) != 0 {
@@ -1717,26 +1726,37 @@ func (c *luaCompiler) registerGlobals() {
 		return []luaValue{numberLuaValue(c.input.objectiveHealthMultiplier)}, nil
 	})
 	c.setNative(nAttribute, "AddAttributeModifier", func(arguments []luaValue) ([]luaValue, error) {
-		if err := c.requireRole(arguments); err != nil {
+		err := c.requireRole(arguments)
+		if err != nil {
 			return nil, fmt.Errorf("attributeRole: %w", err)
 		}
-		if len(arguments) != 3 || arguments[1].kind != luaString || arguments[2].kind != luaNumber {
+		if (len(arguments) != 3 && len(arguments) != 4) || arguments[1].kind != luaString || arguments[2].kind != luaNumber {
 			return nil, fmt.Errorf("attribute arguments: %s", luaKinds(arguments))
 		}
-		attributeKinds := AttributeKind(arguments[1].text)
-		if attributeKinds != AttributeImmobilized && attributeKinds != AttributeIntangible &&
-			attributeKinds != AttributeInvisibleToSecurityTeleporter {
+		if len(arguments) == 4 && (arguments[3].kind != luaNumber || arguments[3].number != 1) {
+			return nil, errors.New("unsupported attribute operation")
+		}
+		amount := arguments[2].number
+		if math.IsNaN(amount) || math.IsInf(amount, 0) || amount > math.MaxFloat32 || amount < -math.MaxFloat32 {
+			return nil, errors.New("invalid attribute amount")
+		}
+		attributeKind := AttributeKind(arguments[1].text)
+		if attributeKind != AttributeImmobilized && attributeKind != AttributeIntangible &&
+			attributeKind != AttributeInvisibleToSecurityTeleporter {
 			return nil, fmt.Errorf("attribute kind: %s", arguments[1].text)
 		}
-		c.emit(AttributeModifierIntent{
-			Role: c.input.Role, AttributeKind: attributeKinds, Amount: float32(arguments[2].number),
-		})
+		if c.attributeHandle == math.MaxUint32 {
+			return nil, errors.New("attribute handle exhausted")
+		}
+		modifier := AttributeModifierIntent{Role: c.input.Role, AttributeKind: attributeKind, Amount: float32(amount)}
 		c.attributeHandle++
-		c.attributeKinds[c.attributeHandle] = attributeKinds
+		c.attributeModifiers[c.attributeHandle] = modifier
+		c.emit(modifier)
 		return []luaValue{numberLuaValue(float64(c.attributeHandle))}, nil
 	})
 	c.setNative(nAttribute, "RemoveAttributeModifier", func(arguments []luaValue) ([]luaValue, error) {
-		if err := c.requireRole(arguments); err != nil {
+		err := c.requireRole(arguments)
+		if err != nil {
 			return nil, fmt.Errorf("attributeRemoveRole: %w", err)
 		}
 		if len(arguments) != 2 || arguments[1].kind != luaNumber {
@@ -1746,12 +1766,13 @@ func (c *luaCompiler) registerGlobals() {
 		if arguments[1].number != float64(handle) || handle == 0 {
 			return nil, fmt.Errorf("attribute remove handle: %g", arguments[1].number)
 		}
-		attributeKinds, isFound := c.attributeKinds[handle]
+		modifier, isFound := c.attributeModifiers[handle]
 		if !isFound {
 			return nil, fmt.Errorf("attribute remove unknown handle: %d", handle)
 		}
-		delete(c.attributeKinds, handle)
-		c.emit(AttributeModifierIntent{Role: c.input.Role, AttributeKind: attributeKinds, Amount: -1})
+		delete(c.attributeModifiers, handle)
+		modifier.Amount = -modifier.Amount
+		c.emit(modifier)
 		return nil, nil
 	})
 	c.setNative(nAttribute, "GetAttributeValue", func(arguments []luaValue) ([]luaValue, error) {

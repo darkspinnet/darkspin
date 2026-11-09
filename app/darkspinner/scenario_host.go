@@ -113,8 +113,8 @@ func newScenarioHost(ctx context.Context, req desktop.StartRequest) (*scenarioHo
 	}
 	config := game.DefaultConfig()
 	settings := map[game.ConfigKey]string{
-		game.ConfigServerPort:           strconv.Itoa(int(req.Port)),
-		game.ConfigIsMultiplayerEnabled: "false", game.ConfigStorageDriver: "sqlite",
+		game.ConfigServerPort:    strconv.Itoa(int(req.Port)),
+		game.ConfigStorageDriver: "sqlite",
 		game.ConfigAuthJWTSecret: secret, game.ConfigAuthJWTIssuer: "darkspin-scenario",
 		game.ConfigAuthJWTAudience: "darkspin", game.ConfigSnapshotMode: "off",
 		game.ConfigIsChatStdoutEnabled: "false",
@@ -126,7 +126,7 @@ func newScenarioHost(ctx context.Context, req desktop.StartRequest) (*scenarioHo
 		}
 	}
 	configPath := filepath.Join(runtimePath, "darkspin.toml")
-	err = config.Save(configPath)
+	err = serverruntime.SaveLocalConfigurationAt(configPath, filepath.Join(runtimePath, serverruntime.SaveDirectory, serverruntime.UserDatabaseFilename), config)
 	if err != nil {
 		return nil, fmt.Errorf("configSave: %w", err)
 	}

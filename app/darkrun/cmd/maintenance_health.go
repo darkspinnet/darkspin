@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"strconv"
 
 	"github.com/darkspinnet/darkspin/server/buildinfo"
@@ -16,19 +15,12 @@ import (
 )
 
 func checkMaintenanceReadiness(ctx context.Context, configPath string) error {
-	fi, err := os.Stat(configPath)
-	if err != nil {
-		return fmt.Errorf("configStat: %w", err)
-	}
-	if !fi.Mode().IsRegular() {
-		return errors.New("readiness requires an existing configuration file")
-	}
-	config, isCreated, err := game.LoadConfig(configPath)
+	config, isCreated, err := game.LoadDedicatedConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("configLoad: %w", err)
 	}
 	if isCreated {
-		return errors.New("readiness configuration was missing")
+		return errors.New("readiness requires dedicated environment configuration")
 	}
 	bindHost, advertisedHost, err := config.NetworkHosts()
 	if err != nil {

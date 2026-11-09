@@ -68,6 +68,6 @@ if [ "$1" = server ]; then
   mkdir -p "$root/runtime"
   unset DARKSPIN_BOOTSTRAP_ROOT
   shift
-  set -- server --config "$root/runtime/darkspin.toml" --dedicated "$@"
+  set -- server --config "$root/runtime/darkspin.toml" "$@"
 fi
 exec "$binary" "$@"

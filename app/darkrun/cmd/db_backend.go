@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/darkspinnet/darkspin/server/game"
 	server "github.com/darkspinnet/darkspin/server/runtime"
 	"github.com/darkspinnet/darkspin/server/runtime/playerstore"
 	"github.com/jmoiron/sqlx"
@@ -21,9 +20,9 @@ func (e *databaseTarget) bind(query string) string {
 }
 
 func openConfiguredDatabaseTarget(
-	ctx context.Context, config *game.Config, runtimePath, contentPath, table string,
+	ctx context.Context, runtimePath, contentPath, table string,
 ) (*databaseTarget, error) {
-	if !config.Bool(game.ConfigServerIsDedicated) {
+	if !playerstore.IsEnvironmentConfigured() {
 		target, err := openDatabaseTarget(ctx, runtimePath, contentPath, table)
 		if err != nil {
 			return nil, fmt.Errorf("sqliteTarget: %w", err)
@@ -57,7 +56,7 @@ func isPlayerTable(table string) bool {
 		"pvp_match_result", "user_association", "squad", "squad_creature",
 		"creature", "creature_stat", "creature_ability_stat", "part", "part_shop",
 		"extension", "chat_log", "zone_checkpoint", "zone_checkpoint_member",
-		"account_access", "admin_event", "user_login_ip", "server_identity",
+		"account_access", "admin_event", "user_login_ip", "server_identity", "matchmaking_configuration", "host_configuration", "admission_configuration",
 		"activity_collection", "activity_maintenance", "activity_signup_sample",
 		"activity_hour_distribution", "activity_day_distribution",
 		"activity_hour_queue", "activity_day_queue",

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,7 +12,6 @@ import (
 )
 
 type serverSetupOptions struct {
-	isDedicated    bool
 	isPrepareOnly  bool
 	bindHost       string
 	advertisedHost string
@@ -22,70 +20,47 @@ type serverSetupOptions struct {
 }
 
 func (e *serverSetupOptions) registerFlags(command *cobra.Command) {
-	command.Flags().BoolVar(&e.isDedicated, "dedicated", false, "save password-required login mode (enabled for new configurations)")
-	command.Flags().BoolVar(&e.isPrepareOnly, "prepare-only", false, "prepare settings and private content without starting listeners")
-	command.Flags().StringVar(&e.bindHost, "bind-host", "", "save the IPv4 listener address (empty selects automatic binding)")
-	command.Flags().StringVar(&e.advertisedHost, "advertised-host", "", "save the IPv4 address clients use to reach this server")
-	command.Flags().StringVar(&e.contentPath, "content-path", "", "save the prepared content directory containing content.db and www/static")
-	command.Flags().Uint16Var(&e.port, "port", 42127, "save the server TCP/UDP port")
+	command.Flags().BoolVar(&e.isPrepareOnly, "prepare-only", false, "validate environment and prepare private content without starting listeners")
+	command.Flags().StringVar(&e.bindHost, "bind-host", "", "override DARKSPIN_BIND_HOST for this server and its children")
+	command.Flags().StringVar(&e.advertisedHost, "advertised-host", "", "override DARKSPIN_ADVERTISED_HOST for this server and its children")
+	command.Flags().StringVar(&e.contentPath, "content-path", "", "override DARKSPIN_CONTENT_PATH for this server and its children")
+	command.Flags().Uint16Var(&e.port, "port", 42127, "override DARKSPIN_PORT for this server and its children")
 }
 
 func (e *serverSetupOptions) prepare(command *cobra.Command, configPath string) (*game.Config, error) {
-	fi, err := os.Stat(configPath)
-	isCreated := errors.Is(err, os.ErrNotExist)
-	if err != nil && !isCreated {
-		return nil, fmt.Errorf("settingsStat: %w", err)
-	}
-	config := game.DefaultConfig()
-	if !isCreated {
-		if fi.IsDir() {
-			return nil, errors.New("config path must name a file")
-		}
-		config, isCreated, err = game.LoadConfig(configPath)
+	contentPath := strings.TrimSpace(e.contentPath)
+	if command.Flags().Changed("content-path") && contentPath != "" {
+		absolutePath, err := filepath.Abs(contentPath)
 		if err != nil {
-			return nil, fmt.Errorf("settingsLoad: %w", err)
+			return nil, fmt.Errorf("contentPath: %w", err)
 		}
-	}
-	if isCreated && !command.Flags().Changed("dedicated") {
-		err = config.Set(game.ConfigServerIsDedicated, "true")
-		if err != nil {
-			return nil, fmt.Errorf("dedicatedDefault: %w", err)
-		}
+		contentPath = absolutePath
 	}
 	settings := []struct {
-		flag    string
-		key     game.ConfigKey
-		setting string
+		flag     string
+		variable string
+		setting  string
 	}{
-		{"dedicated", game.ConfigServerIsDedicated, strconv.FormatBool(e.isDedicated)},
-		{"bind-host", game.ConfigServerBindHost, strings.TrimSpace(e.bindHost)},
-		{"advertised-host", game.ConfigServerAdvertisedHost, strings.TrimSpace(e.advertisedHost)},
-		{"port", game.ConfigServerPort, strconv.FormatUint(uint64(e.port), 10)},
+		{"bind-host", "DARKSPIN_BIND_HOST", strings.TrimSpace(e.bindHost)},
+		{"advertised-host", "DARKSPIN_ADVERTISED_HOST", strings.TrimSpace(e.advertisedHost)},
+		{"port", "DARKSPIN_PORT", strconv.FormatUint(uint64(e.port), 10)},
+		{"content-path", "DARKSPIN_CONTENT_PATH", contentPath},
 	}
-	isChanged := isCreated
 	for _, setting := range settings {
 		if !command.Flags().Changed(setting.flag) {
 			continue
 		}
-		err = config.Set(setting.key, setting.setting)
+		err := os.Setenv(setting.variable, setting.setting)
 		if err != nil {
-			return nil, fmt.Errorf("settingSet[%s]: %w", setting.flag, err)
+			return nil, fmt.Errorf("environmentSet[%s]: %w", setting.flag, err)
 		}
-		isChanged = true
 	}
-	if command.Flags().Changed("content-path") {
-		contentPath := strings.TrimSpace(e.contentPath)
-		if contentPath != "" {
-			contentPath, err = filepath.Abs(contentPath)
-			if err != nil {
-				return nil, fmt.Errorf("contentPath: %w", err)
-			}
-		}
-		err = config.Set(game.ConfigContentPath, contentPath)
-		if err != nil {
-			return nil, fmt.Errorf("contentSet: %w", err)
-		}
-		isChanged = true
+	config, isCreated, err := game.LoadDedicatedConfig(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("settingsLoad: %w", err)
+	}
+	if isCreated {
+		return nil, fmt.Errorf("dedicated settings must come from the environment")
 	}
 	bindHost, advertisedHost, err := config.NetworkHosts()
 	if err != nil {
@@ -100,16 +75,6 @@ func (e *serverSetupOptions) prepare(command *cobra.Command, configPath string) 
 	}
 	if port == 0 || port == ^uint16(0) {
 		return nil, fmt.Errorf("server port must be between 1 and 65534")
-	}
-	isSecretChanged, err := config.PrepareDedicatedAuth()
-	if err != nil {
-		return nil, fmt.Errorf("authPrepare: %w", err)
-	}
-	if isChanged || isSecretChanged {
-		err = config.Save(configPath)
-		if err != nil {
-			return nil, fmt.Errorf("settingsSave: %w", err)
-		}
 	}
 	return config, nil
 }

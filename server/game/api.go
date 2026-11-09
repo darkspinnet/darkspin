@@ -1862,9 +1862,11 @@ func profileAbilityProjectedNumber(template *sporenet.TemplateCreature, stats []
 		return 0
 	}
 	if isMinimumDamage {
-		return float64(projected.Minimum)
+		// Build-103 43AFC3 uses CVTSS2SI with the normal nearest-even
+		// rounding mode. Display conversion does not belong in combat math.
+		return math.RoundToEven(float64(projected.Minimum))
 	}
-	return float64(projected.Maximum)
+	return math.Ceil(float64(projected.Maximum))
 }
 
 func profileAbilityDamage(

@@ -143,7 +143,7 @@ func ResolveAbilityDamageRange(ability AbilityDamage, profile DamageProfile) (Da
 	}
 	minimum = max(0, minimum)
 	maximum = max(0, maximum)
-	return DamageRange{Minimum: float32(math.Floor(float64(minimum))), Maximum: float32(math.Ceil(float64(maximum)))}, nil
+	return DamageRange{Minimum: minimum, Maximum: maximum}, nil
 }
 
 func damageProfile(primaryAttribute float32, isPrimaryAttributeFound bool, attribute [partAttributeCount]float32) DamageProfile {

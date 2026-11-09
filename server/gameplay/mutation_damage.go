@@ -340,8 +340,8 @@ func (e gameplayPendingRuntime) prepareMutationDamageTargets(member *gameplayPee
 	if multiplier < 0 {
 		return nil, errors.New("mutation difficulty invalid")
 	}
-	damage.Minimum = float32(math.Floor(float64(damage.Minimum * multiplier)))
-	damage.Maximum = float32(math.Ceil(float64(damage.Maximum * multiplier)))
+	damage.Minimum *= multiplier
+	damage.Maximum *= multiplier
 	if math.IsNaN(float64(damage.Minimum)) || math.IsInf(float64(damage.Minimum), 0) ||
 		math.IsNaN(float64(damage.Maximum)) || math.IsInf(float64(damage.Maximum), 0) {
 		return nil, errors.New("mutation damage overflow")

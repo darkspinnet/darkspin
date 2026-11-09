@@ -21,66 +21,69 @@ const attackRangeTolerance = 0.25
 const minimumPursuitDuration = 50 * time.Millisecond
 
 type Actor struct {
-	Navigation             navigation.ActorNavigation
-	navigationMesh         *navigation.Mesh
-	followPaths            []game.Vec3
-	pursuitPaths           []game.Vec3
-	ActorFootprint         *game.NavigationFootprint
-	UserID                 uint64
-	PeerGeneration         uint64
-	ObjectID               uint32
-	OwnerObjectID          uint32
-	Noun                   uint32
-	Position               game.Vec3
-	Facing                 game.Vec3
-	FootprintRadius        float32
-	AggroRadius            float32
-	HitPoint               float32
-	MaximumHitPoint        float32
-	DeathRevision          uint64
-	lifeRevision           uint64
-	BodyScale              float32
-	IsTargetable           bool
-	IsCombatant            bool
-	IsAttackDisabled       bool
-	IsSageCompanion        bool
-	IsAbilityControlled    bool
-	IsStationary           bool
-	IsFollowManaged        bool
-	IsIntangible           bool
-	AbilityAnimation       string
-	TargetObjectID         uint32
-	PursuitObjectID        uint32
-	PursuitPosition        game.Vec3
-	PursuitRevision        uint64
-	pursuitSource          game.Vec3
-	pursuitStartedAt       time.Time
-	pursuitDeadline        time.Time
-	isForcedPursuit        bool
-	CooldownEnd            time.Time
-	AttackReleaseEnd       time.Time
-	silenceExpiresAt       time.Time
-	silenceLeases          map[uint32]struct{}
-	silenceImmunity        float32
-	poisonImmunity         float32
-	DamageBuff             float32
-	EnergyDamageBuff       float32
-	AttackSpeed            float32
-	CooldownReduction      float32
-	MovementSpeedBuff      float32
-	movementModifierBuff   float32
-	movementModifierExpiry time.Time
-	MovementSpeed          float32
-	FollowDistance         float32
-	FollowRevision         uint64
-	IsFollowing            bool
-	followPlan             Follow
-	followStartedAt        time.Time
-	followDeadline         time.Time
-	followHoldUntil        time.Time
-	cinematicUntil         time.Time
-	cinematicRevision      uint64
-	cinematicHolds         map[uint64]time.Time
+	Navigation                navigation.ActorNavigation
+	navigationMesh            *navigation.Mesh
+	followPaths               []game.Vec3
+	pursuitPaths              []game.Vec3
+	ActorFootprint            *game.NavigationFootprint
+	UserID                    uint64
+	PeerGeneration            uint64
+	ObjectID                  uint32
+	OwnerObjectID             uint32
+	Noun                      uint32
+	Position                  game.Vec3
+	Facing                    game.Vec3
+	FootprintRadius           float32
+	AggroRadius               float32
+	HitPoint                  float32
+	MaximumHitPoint           float32
+	DeathRevision             uint64
+	lifeRevision              uint64
+	BodyScale                 float32
+	IsTargetable              bool
+	IsCombatant               bool
+	IsAttackDisabled          bool
+	IsSageCompanion           bool
+	IsAbilityControlled       bool
+	IsStationary              bool
+	IsFollowManaged           bool
+	IsIntangible              bool
+	AbilityAnimation          string
+	TargetObjectID            uint32
+	PursuitObjectID           uint32
+	PursuitPosition           game.Vec3
+	PursuitRevision           uint64
+	pursuitSource             game.Vec3
+	pursuitStartedAt          time.Time
+	pursuitDeadline           time.Time
+	isForcedPursuit           bool
+	CooldownEnd               time.Time
+	AttackReleaseEnd          time.Time
+	silenceExpiresAt          time.Time
+	silenceLeases             map[uint32]struct{}
+	silenceImmunity           float32
+	poisonImmunity            float32
+	DamageBuff                float32
+	EnergyDamageBuff          float32
+	AttackSpeed               float32
+	CooldownReduction         float32
+	MovementSpeedBuff         float32
+	buffModifiers             map[uint32]Buff
+	maximumHitPointModifierID uint32
+	maximumHitPointBase       float32
+	movementModifierBuff      float32
+	movementModifierExpiry    time.Time
+	MovementSpeed             float32
+	FollowDistance            float32
+	FollowRevision            uint64
+	IsFollowing               bool
+	followPlan                Follow
+	followStartedAt           time.Time
+	followDeadline            time.Time
+	followHoldUntil           time.Time
+	cinematicUntil            time.Time
+	cinematicRevision         uint64
+	cinematicHolds            map[uint64]time.Time
 }
 
 func (e Actor) AcquisitionRange() float32 {
@@ -266,6 +269,12 @@ func (e *Session) put(actor Actor, isRetained bool) error {
 	}
 	if actor.HitPoint <= 0 {
 		actor.clearCinematic()
+	}
+	if !isRetained && isFound && (actor.UserID != current.UserID ||
+		actor.PeerGeneration != current.PeerGeneration || actor.OwnerObjectID != current.OwnerObjectID ||
+		actor.Noun != current.Noun || actor.DeathRevision != current.DeathRevision ||
+		actor.HitPoint <= 0 || current.HitPoint <= 0) {
+		actor = clearActorBuffModifiers(actor)
 	}
 	if e.actorRevisions == nil {
 		e.actorRevisions = make(map[uint32]uint64)

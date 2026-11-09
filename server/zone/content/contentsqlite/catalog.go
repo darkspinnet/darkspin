@@ -1516,6 +1516,11 @@ func Load(store *contentstore.Store) (zonecontent.Programs, error) {
 		return zonecontent.Programs{}, fmt.Errorf("sleepCallback: %w", err)
 	}
 	sleepModifier.Stop()
+	sleepAbility, err := sim.NewLuaSleepingCloudAbility(sleepingCloud)
+	if err != nil {
+		return zonecontent.Programs{}, fmt.Errorf("sleepEvent: %w", err)
+	}
+	sleepAbility.Stop()
 	psistorm, err := loadPinnedLuaBytecode(ctx, store, 425,
 		"1507dd076b52ab6752e14e4c0974f825bc6d5acb19fc262b3acf15b61318dafd", "psistorm")
 	if err != nil {

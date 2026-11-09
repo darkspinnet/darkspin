@@ -65,12 +65,12 @@ func openAdministrativeProfileRepository(configFilename string) (sporenet.UserRe
 	if err != nil {
 		return nil, nil, fmt.Errorf("configPath: %w", err)
 	}
-	config, _, err := game.LoadConfig(configPath)
+	config, isGenerated, err := game.LoadDedicatedConfig(configPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("configLoad: %w", err)
 	}
-	if !config.Bool(game.ConfigServerIsDedicated) {
-		return nil, nil, errors.New("profile administration is only available to dedicated-server administrators")
+	if isGenerated {
+		return nil, nil, errors.New("dedicated profile administration requires environment configuration")
 	}
 	runtimePath := filepath.Join(filepath.Dir(configPath), DarkspinDirectory)
 	databasePath := filepath.Join(runtimePath, SaveDirectory, UserDatabaseFilename)

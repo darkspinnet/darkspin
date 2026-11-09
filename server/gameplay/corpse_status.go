@@ -25,6 +25,13 @@ func (e campaignDamageRuntime) retireCorpseStatuses(
 	if !isCorpseFound || !corpse.IsDefeated {
 		return nil, nil
 	}
+	isFireRetired, fireErr := e.registry.retireFireVulnerabilityLocked(member.zone, objectID)
+	if fireErr != nil {
+		return nil, fmt.Errorf("corpseFire: %w", fireErr)
+	}
+	if isFireRetired {
+		// Deletion is queued before the shared contribution's handle is freed.
+	}
 	packets, err := e.registry.retireFixtureBurnsLocked(npc, objectID, e.npc.modifierPool)
 	if err != nil {
 		return packets, fmt.Errorf("corpseFixture: %w", err)

@@ -63,15 +63,12 @@ func replaceConfiguration(path string, previousContents, contents []byte) error 
 	if err != nil {
 		return fmt.Errorf("configurationDecode: %w", err)
 	}
-	mode := os.FileMode(0o644)
+	mode := os.FileMode(0o600)
 	fi, err := os.Stat(path)
 	if err == nil {
 		mode = fi.Mode().Perm()
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("configurationStat: %w", err)
-	}
-	if document.Server.IsDedicated != nil && *document.Server.IsDedicated {
-		mode = 0o600
 	}
 	err = os.MkdirAll(filepath.Dir(path), 0o755)
 	if err != nil {
