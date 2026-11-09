@@ -599,6 +599,7 @@ func (r campaignNPCActionRuntime) spawnPlasmaSentinelPet(
 	attributePacket, err := raknet.MarshalApplication(raknet.AttributeDataUpdateMessage{
 		ObjectID: objectID,
 		Value: map[uint8]float32{
+			4:  hitPoint,
 			11: zonecompanion.CompatibilityMovementSpeed,
 			12: zonecompanion.CompatibilityMovementSpeed,
 			48: 0,
@@ -607,6 +608,13 @@ func (r campaignNPCActionRuntime) spawnPlasmaSentinelPet(
 	if err != nil {
 		rollbackPlasmaSentinelPet(peerSession, run, objectID)
 		return nil, fmt.Errorf("plasmaSentinelPetAttribute: %w", err)
+	}
+	healthPacket, err := raknet.MarshalApplication(raknet.CombatantDataUpdateMessage{
+		ObjectID: objectID, HitPoints: hitPoint,
+	})
+	if err != nil {
+		rollbackPlasmaSentinelPet(peerSession, run, objectID)
+		return nil, fmt.Errorf("plasmaSentinelPetHealth: %w", err)
 	}
 	spawnPacket, err := raknet.MarshalApplication(raknet.ServerEventMessage{
 		Asset: util.HashID("PlasmaSentinelPetSpawn"), ObjectID: objectID,
@@ -630,7 +638,7 @@ func (r campaignNPCActionRuntime) spawnPlasmaSentinelPet(
 	}
 	run.pets[petIndex].cancel = cancel
 	packets := append([][]byte{modifierPacket}, createPackets...)
-	packets = append(packets, attributePacket, spawnPacket)
+	packets = append(packets, attributePacket, healthPacket, spawnPacket)
 	birth := plasmaPetBirthStep{
 		run: run, identity: gameplayProducerIdentityFromSession(run.sessionKey, *peerSession, true),
 		packet: run.packet.Autonomous(), objectID: objectID, timestamp: timestamp, packets: packets,

@@ -11,7 +11,7 @@ import (
 )
 
 // loadFieldMedicHealthContribution executes the installed build-103 modifier's
-// Tick callback through the general Lua attribute binding. Runtime owns its
+// Activate callback through the general Lua attribute binding. Runtime owns its
 // recipient and lifetime; this import recovers the authored operation/amount.
 func loadFieldMedicHealthContribution(ctx context.Context, store *contentstore.Store) (attribute.Contribution, error) {
 	root, err := loadPinnedLuaBytecode(ctx, store, 829,
@@ -30,7 +30,7 @@ func loadFieldMedicHealthContribution(ctx context.Context, store *contentstore.S
 	const recipientRole sim.Role = "fieldMedicRecipient"
 	program, err := sim.CompileLuaModifier(sim.LuaModifierInput{
 		Root: root, Modules: modules, Role: recipientRole,
-		Callback: "Tick", IsYieldAfterWait: true,
+		Callback: "Activate", IsYieldAfterWait: true,
 	})
 	if err != nil {
 		return attribute.Contribution{}, fmt.Errorf("healthCompile: %w", err)

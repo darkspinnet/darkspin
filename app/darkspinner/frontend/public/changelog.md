@@ -2,6 +2,21 @@
 
 ### 2026-11-08
 
+- Fix server startup by loading Field Medic's maximum-health grant from its authored build-103 Activate callback instead of a nonexistent Tick callback.
+- #199 Initialize Pain Hounds with their scaled current and maximum health on the client before combat begins in campaign and Arena.
+- Track hero sleep, stun, root, and silence by exact modifier handle so dispels and expiry preserve other active effects.
+- Restore verified native root replacement and slow admission rules, preserving distinct casters while replacing their own prior slow instances.
+- Run verified numeric Lua attribute grants with native additive, percentage, best, and clamp operations, deriving the health capacity bonus from the installed modifier.
+- Track NPC sleep and roots and companion silence by exact modifier handle so expiry and dispels preserve surviving contributions.
+- Reject immune transferred sleep before publication, restore its damage-wake behavior, and apply build-103 Unique replacement across party members.
+- Reject immune Quantum State control effects before publishing their modifiers, and deliver accepted time-stop and transferred-debuff reactions immediately.
+- Track stun, silence, and banish by exact modifier handle so removing one effect preserves other active contributions.
+- Match build-103 time-stop admission and replacement rules, keeping Frozen presentation synchronized with dispels and surviving effects.
+- Share closed horde fences across server navigation and restore authored inward gate traversal for heroes, enemies, and companions, including paths already in motion.
+- Allow unrelated hero self buffs to coexist with independent stat grants, expiry, and cleanup, while preserving same-modifier replacement and stacking rules.
+- Interrupt active laser beams immediately after additional accepted stun, banish, and silence applications, preserving beams when the new control effect is rejected.
+- Keep verified Poison and Ruption Burn instances independent per NPC caster so overlapping applications retain their own damage and expiry.
+- Validate incoming hero navigation placement before voluntary deployment, use bounded validated-position recovery when available, and publish the same arrival position to the server and client.
 - Preserve trusted local control-panel sessions through loopback request validation, distinguish launcher-source rejections from account permission failures, and log local panel initialization failures.
 - Prevent concurrent local profile initialization from failing on SQLite read-to-write lock upgrades by reserving write transactions before schema inspection while retaining concurrent WAL readers.
 - Preserve existing dedicated TOML signing keys when the environment override is absent, retaining compatibility with automatically updated containers and including the legacy key file in backups.
@@ -11,7 +26,7 @@
 - Upgrade Darkspinner's source-map-js dependency from v1.2.1 to v1.2.2 to address a dependency security alert.
 - Separate tooltip rounding from combat scaling, preserving fixed fractional hits and formatting tooltip minimums with build-103's nearest-even conversion.
 - Preserve fractional damage through NPC difficulty, companion buffs, and area scaling so intermediate rounding cannot compound.
-- Upgrade Echo from v4.15.3 to v4.16.1 to address ten dependency security alerts, including its required Go 1.26 and supporting dependency updates.
+- Upgrade Echo from v4.15.3 to v4.16.3 to address dependency vulnerabilities, including default client-IP spoofing and proxy identity forwarding, with its required Go 1.26 and supporting dependency updates.
 - Upgrade the PostgreSQL driver from pgx v5.7.6 to v5.9.2 to address three dependency security alerts.
 - Protect account XML responses against browser script execution with an explicit XML content type, disabled MIME sniffing, and a sandboxed content policy.
 - Expose Server Capacity in the local admin panel and authorize local Crogenitors as local server administrators without changing persisted roles or dedicated-server permissions.

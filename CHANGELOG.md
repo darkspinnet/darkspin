@@ -2,6 +2,8 @@
 
 ### 2026-11-08
 
+- Fix server startup by loading Field Medic's maximum-health grant from its authored build-103 Activate callback instead of a nonexistent Tick callback.
+- #199 Initialize Pain Hounds with their scaled current and maximum health on the client before combat begins in campaign and Arena.
 - Track hero sleep, stun, root, and silence by exact modifier handle so dispels and expiry preserve other active effects.
 - Restore verified native root replacement and slow admission rules, preserving distinct casters while replacing their own prior slow instances.
 - Run verified numeric Lua attribute grants with native additive, percentage, best, and clamp operations, deriving the health capacity bonus from the installed modifier.
