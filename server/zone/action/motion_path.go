@@ -30,6 +30,7 @@ func (e *Motion) SetActorNavigation(mesh *navigation.Mesh, footprintRadius float
 	}
 	e.navigationObjectID = objectID
 	e.navigation = mesh
+	e.isNavigationAnchorPresent = false
 	e.footprintRadius = footprintRadius
 	e.navigationActor = navigation.ActorNavigation{Radius: footprintRadius, Mode: mode}
 	if mesh != nil {
@@ -39,6 +40,7 @@ func (e *Motion) SetActorNavigation(mesh *navigation.Mesh, footprintRadius float
 			e.navigationActor.IsPresent = true
 		}
 	}
+	e.rememberNavigationPositionLocked(e.position)
 }
 
 func (e *Motion) setGoal(
@@ -77,6 +79,10 @@ func (e *Motion) setGoal(
 	if err != nil {
 		return sim.Position{}, fmt.Errorf("routeSet: %w", err)
 	}
+	// CreatePath already validated this terrain point and collision clearance;
+	// do not repeat a projection for every movement/pose observation.
+	e.navigationAnchor = sim.Position(path.Start.Position)
+	e.isNavigationAnchorPresent = true
 	return result, nil
 }
 

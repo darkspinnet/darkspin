@@ -17,7 +17,7 @@ func (e gameplayPeerSession) heroOwnImmunity(now time.Time) (heroOwnImmunitySnap
 	creature := e.binding.Creatures[e.deployedCreatureIndex]
 	immunity := heroOwnImmunitySnapshot{
 		silence: creature.PartAttribute[78], poisonOrDisease: creature.PartAttribute[80],
-		isDebuffImmune: creature.PartAttribute[49] > 0 || e.heroModifierRun.IsDebuffImmune(),
+		isDebuffImmune: creature.PartAttribute[49] > 0 || e.hasHeroDebuffImmunity(),
 	}
 	if e.isOverdriveActiveAt(now) {
 		// Build-103 OverdriveModifier561 Activate grants one to own78 and

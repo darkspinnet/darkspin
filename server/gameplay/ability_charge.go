@@ -361,9 +361,12 @@ func (e heroChargeSchedule) applyBeastPetChargeStatus(
 	for _, npc := range targets {
 		duration := zonenpc.CrowdControlDuration(npc.Plan, e.definition.StatusDuration)
 		expiresAt := e.runtime.now().Add(duration)
-		err := e.applyStatus(peerSession.zone.NPCs(), npc.Plan.ObjectID, expiresAt)
+		reaction, isAdmitted, err := e.admitStatusLocked(peerSession, npc.Plan.ObjectID, expiresAt)
 		if err != nil {
 			return nil, fmt.Errorf("apply[%d]: %w", npc.Plan.ObjectID, err)
+		}
+		if !isAdmitted {
+			continue
 		}
 		instanceID, err := e.runtime.modifierPool.Allocate()
 		if err != nil {
@@ -395,6 +398,7 @@ func (e heroChargeSchedule) applyBeastPetChargeStatus(
 		if err != nil {
 			return nil, fmt.Errorf("petChargeCommit: %w", err)
 		}
+		e.runtime.registry.queueLaserControlReactionLocked(e.sessionKey, peerSession, reaction)
 	}
 	return packets, nil
 }
@@ -535,10 +539,13 @@ func (e heroChargeSchedule) impact() ([][]byte, error) {
 	for _, npc := range statusTargets {
 		duration := zonenpc.CrowdControlDuration(npc.Plan, e.definition.StatusDuration)
 		expiresAt := e.runtime.now().Add(duration)
-		applyErr := e.applyStatus(peerSession.zone.NPCs(), npc.Plan.ObjectID, expiresAt)
+		reaction, isAdmitted, applyErr := e.admitStatusLocked(&peerSession, npc.Plan.ObjectID, expiresAt)
 		if applyErr != nil {
 			e.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("heroChargeStatus[%d]: %w", npc.Plan.ObjectID, applyErr)
+		}
+		if !isAdmitted {
+			continue
 		}
 		instanceID, allocateErr := e.runtime.modifierPool.Allocate()
 		if allocateErr != nil {
@@ -572,6 +579,7 @@ func (e heroChargeSchedule) impact() ([][]byte, error) {
 			e.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("chargeCommit: %w", commitErr)
 		}
+		e.runtime.registry.queueLaserControlReactionLocked(e.sessionKey, &peerSession, reaction)
 	}
 	if e.definition.Name == "BeastCharge" {
 		e.run.mutex.Lock()
@@ -929,6 +937,29 @@ func (e heroChargeSchedule) statusTargets(
 		}
 	}
 	return target
+}
+
+func (e heroChargeSchedule) admitStatusLocked(member *gameplayPeerSession,
+	objectID uint32, expiresAt time.Time,
+) (laserModifierReaction, bool, error) {
+	kind := sim.AbilityStatusKindStun
+	switch e.definition.Name {
+	case "BeastCharge":
+	case "PhantomCharge":
+		kind = sim.AbilityStatusKindSilence
+	default:
+		err := e.applyStatus(member.zone.NPCs(), objectID, expiresAt)
+		if err != nil {
+			return laserModifierReaction{}, false, fmt.Errorf("chargeStatus: %w", err)
+		}
+		return laserModifierReaction{}, true, nil
+	}
+	reaction, isAdmitted, err := e.runtime.registry.admitLaserControlModifierLocked(member,
+		objectID, kind, e.runtime.now(), expiresAt)
+	if err != nil {
+		return laserModifierReaction{}, false, fmt.Errorf("chargeControl: %w", err)
+	}
+	return reaction, isAdmitted, nil
 }
 
 func (e heroChargeSchedule) applyStatus(

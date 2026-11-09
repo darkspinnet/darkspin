@@ -482,10 +482,21 @@ func (e heroProjectileStatusSchedule) impactNow() ([][]byte, error) {
 	packets = filterProjectileCombatPackets(packets)
 	duration := zonenpc.CrowdControlDuration(target.Plan, e.definition.StatusDuration)
 	expiresAt := e.runtime.now().Add(duration)
-	err = e.applyStatus(peerSession.zone.NPCs(), expiresAt)
+	reaction := laserModifierReaction{}
+	isAdmitted := true
+	if e.definition.StatusKind == sim.AbilityStatusKindStun {
+		reaction, isAdmitted, err = e.runtime.registry.admitLaserControlModifierLocked(
+			&peerSession, e.targetObjectID, sim.AbilityStatusKindStun, e.runtime.now(), expiresAt)
+	} else {
+		err = e.applyStatus(peerSession.zone.NPCs(), expiresAt)
+	}
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("projectileStatusApply: %w", err)
+	}
+	if !isAdmitted {
+		e.runtime.registry.mutex.Unlock()
+		return packets, nil
 	}
 	instanceID, err := e.runtime.modifierPool.Allocate()
 	if err != nil {
@@ -499,8 +510,6 @@ func (e heroProjectileStatusSchedule) impactNow() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return packets, nil
 	}
-	e.runtime.registry.sessions[e.sessionKey] = peerSession
-	e.runtime.registry.mutex.Unlock()
 	modifierPacket, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{
 		TargetID: e.targetObjectID, ModifierGUID: e.definition.RootModifierID,
 		InstanceID:           instanceID,
@@ -511,8 +520,14 @@ func (e heroProjectileStatusSchedule) impactNow() ([][]byte, error) {
 		IsBound:              e.definition.StatusKind == sim.AbilityStatusKindStun,
 	})
 	if err != nil {
+		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("projectileStatusModifierMarshal: %w", err)
 	}
+	if e.definition.StatusKind == sim.AbilityStatusKindStun {
+		e.runtime.registry.queueLaserControlReactionLocked(e.sessionKey, &peerSession, reaction)
+	}
+	e.runtime.registry.sessions[e.sessionKey] = peerSession
+	e.runtime.registry.mutex.Unlock()
 	packets = append(packets, modifierPacket)
 	if e.definition.StatusKind != sim.AbilityStatusKindFear {
 		return packets, nil

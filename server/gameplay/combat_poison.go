@@ -92,6 +92,7 @@ type campaignNPCPoisonRun struct {
 type campaignNPCPoisonKey struct {
 	targetObjectID uint32
 	modifierName   string
+	sourceObjectID uint32
 }
 
 type campaignNPCPoisonStep struct {
@@ -369,9 +370,7 @@ func (r campaignNPCActionRuntime) applyCampaignNPCDisease(
 	if peerSession.campaignNPCPoisons == nil {
 		peerSession.campaignNPCPoisons = make(map[campaignNPCPoisonKey]*campaignNPCPoisonRun)
 	}
-	key := campaignNPCPoisonKey{
-		targetObjectID: plan.TargetObjectID, modifierName: profile.ModifierName,
-	}
+	key := nativeNPCPoisonKey(plan)
 	previous := peerSession.campaignNPCPoisons[key]
 	if previous != nil && isCadencedNPCPoison(profile.ModifierName) {
 		var packets [][]byte

@@ -3699,8 +3699,7 @@ func (r campaignAbilityCommandRuntime) handleMeleeBasic(
 	// Chunk555's UsedAbility/DealtDamage callbacks exclude basic attacks.
 	// The shared accepted-cast and damage publication owners handle the passive.
 	isFireRavagerStun := false
-	isShadowCloakCrit := peerSession.heroModifierRun != nil &&
-		peerSession.heroModifierRun.isShadowStealth
+	isShadowCloakCrit := peerSession.shadowStealthModifier() != nil
 	peerSession.basicAttack = basicRun
 	peerSession.basicAttackSyncStamp = command.Common.Unknown[0]
 	peerSession.retainAttackPose(

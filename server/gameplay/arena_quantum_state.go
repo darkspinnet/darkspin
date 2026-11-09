@@ -30,7 +30,7 @@ type arenaQuantumStateReaction struct {
 func (e *arenaAbilityTargets) reserveArenaQuantumStateLocked(key string, victim *gameplayPeerSession,
 	attackerID uint32,
 ) error {
-	run := victim.heroModifierRun
+	run := victim.quantumStateModifier()
 	if run == nil || !run.isQuantumState || victim.deployedHitPoint() <= 0 ||
 		victim.deployedObjectID != run.objectID || e.runtime.registry.timer == nil {
 		return nil
@@ -77,7 +77,7 @@ func (e arenaQuantumStateReaction) apply() {
 	match := e.runtime.registry.arenaMatches[e.gameID]
 	if !isFound || match == nil || !match.isCombatActive || owner.binding.Mode != game.ModeArena ||
 		owner.binding.GameID != e.gameID || owner.deployedObjectID != e.ownerObjectID ||
-		owner.deployedHitPoint() <= 0 || owner.heroModifierRun != e.ownerRun {
+		owner.deployedHitPoint() <= 0 || !owner.isHeroModifierCurrent(e.ownerRun) {
 		e.runtime.registry.mutex.Unlock()
 		return
 	}

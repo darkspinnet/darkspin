@@ -147,8 +147,10 @@ func (e *gameplayPeerSession) selectNPCSupportTarget(source zonenpc.Snapshot,
 }
 
 func (e *gameplayPeerSession) hasNPCSupportModifier(objectID uint32, name string) bool {
-	if e.campaignNPCPoisons[campaignNPCPoisonKey{targetObjectID: objectID, modifierName: name}] != nil {
-		return true
+	for key, run := range e.campaignNPCPoisons {
+		if run != nil && key.targetObjectID == objectID && key.modifierName == name {
+			return true
+		}
 	}
 	for _, modifier := range e.zone.Effect().Snapshot() {
 		if modifier.TargetObjectID == objectID && modifier.GUID == util.HashID(name) {

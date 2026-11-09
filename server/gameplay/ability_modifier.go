@@ -38,6 +38,7 @@ func arborealMightDamagePerStack(rank int32) float32 {
 
 type heroModifierRun struct {
 	abilityID        uint32
+	modifierID       uint32
 	creatureIndex    uint32
 	instanceID       uint32
 	objectID         uint32
@@ -163,15 +164,13 @@ func (r campaignAbilityCommandRuntime) breakHeroModifierOnAcceptedAbility(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("heroModifierTrapperBreak: %w", err)
 	}
-	isHeroModifierBreak := peerSession.heroModifierRun != nil &&
-		peerSession.heroModifierRun.isAbilityBreak &&
-		peerSession.heroModifierRun.abilityID != abilityID
+	run := peerSession.shadowStealthModifier()
+	isHeroModifierBreak := run != nil && run.isAbilityBreak && run.abilityID != abilityID
 	if !isHeroModifierBreak {
 		r.registry.sessions[sessionKey] = peerSession
 		r.registry.mutex.Unlock()
 		return packets, nil
 	}
-	run := peerSession.heroModifierRun
 	modifierPacket, err := effectraknet.ModifierDelete(run.objectID, run.instanceID)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -189,7 +188,7 @@ func (r campaignAbilityCommandRuntime) breakHeroModifierOnAcceptedAbility(
 			return nil, fmt.Errorf("heroModifierBreakStealth: %w", err)
 		}
 	}
-	peerSession.heroModifierRun = nil
+	peerSession.forgetHeroModifier(run)
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
 
@@ -292,7 +291,7 @@ func (e heroModifierReleaseStep) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.RLock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
-		peerSession.heroModifierRun == e.run
+		peerSession.isHeroModifierCurrent(e.run)
 	e.runtime.registry.mutex.RUnlock()
 	if !isCurrent {
 		return nil, nil
@@ -312,7 +311,7 @@ func (e heroModifierExpiryStep) produce() ([][]byte, error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
-		peerSession.heroModifierRun == e.run
+		peerSession.isHeroModifierCurrent(e.run)
 	if !isCurrent {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
@@ -342,7 +341,7 @@ func (e heroModifierExpiryStep) produce() ([][]byte, error) {
 			return nil, fmt.Errorf("heroModifierExpiryStealth: %w", stealthErr)
 		}
 	}
-	peerSession.heroModifierRun = nil
+	peerSession.forgetHeroModifier(e.run)
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()
 
@@ -403,7 +402,7 @@ func (e heroModifierScheduleFailure) handle(scheduleErr error) {
 	e.runtime.registry.mutex.Lock()
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.generation &&
-		peerSession.heroModifierRun == e.run
+		peerSession.isHeroModifierCurrent(e.run)
 	if isCurrent {
 		if previousRun != nil && !previousRun.isReplaced && !e.runtime.now().Before(previousRun.expiresAt) {
 			expiredRun = previousRun
@@ -440,7 +439,10 @@ func (e heroModifierScheduleFailure) handle(scheduleErr error) {
 		}
 		peerSession.abilityCooldownSession().Rollback(e.cooldownReservation)
 		peerSession.abilityReleaseSession().Rollback(e.releaseReservation)
-		peerSession.heroModifierRun = previousRun
+		peerSession.forgetHeroModifier(e.run)
+		if previousRun != nil {
+			peerSession.putHeroModifier(previousRun)
+		}
 		e.runtime.registry.sessions[e.sessionKey] = peerSession
 		if previousRun == nil || previousRun.instanceID != e.run.instanceID {
 			cleanupPackets, cleanupErr := e.run.stopPresentation(e.runtime.effectPool)
@@ -601,7 +603,7 @@ func (r campaignAbilityCommandRuntime) handleHeroSelfModifier(
 		return r.startOmniShieldLocked(req, ability, cooldownKey, sessionKey, peerSession, definition, manaCost)
 	}
 
-	previousRun := peerSession.heroModifierRun
+	previousRun := peerSession.heroModifier(definition.RootModifierID)
 	stackCount := uint32(1)
 	instanceID := uint32(0)
 	isInstanceAllocated := false
@@ -640,7 +642,7 @@ func (r campaignAbilityCommandRuntime) handleHeroSelfModifier(
 		autoCrit = 1
 	}
 	run := &heroModifierRun{
-		abilityID: ability.ID, creatureIndex: creatureIndex,
+		abilityID: ability.ID, modifierID: definition.RootModifierID, creatureIndex: creatureIndex,
 		instanceID: instanceID, objectID: req.command.Common.ObjectID,
 		stackCount: stackCount, damageBuff: damageBuff, autoCrit: autoCrit,
 		isDamageImmune: definition.Name == "TechRandom2" ||
@@ -841,7 +843,7 @@ func (r campaignAbilityCommandRuntime) handleHeroSelfModifier(
 	}
 	profile.DamageBuff += damageBuff
 	peerSession.binding.Creatures[creatureIndex].AutoCrit += autoCrit
-	peerSession.heroModifierRun = run
+	peerSession.putHeroModifier(run)
 	generation := peerSession.generation
 	r.registry.sessions[sessionKey] = peerSession
 	r.registry.mutex.Unlock()
@@ -928,7 +930,7 @@ func (r campaignAbilityCommandRuntime) handleHeroSelfModifier(
 	if previousRun != nil {
 		r.registry.mutex.Lock()
 		current := r.registry.sessions[sessionKey]
-		isReplacementCurrent := current.generation == generation && current.heroModifierRun == run
+		isReplacementCurrent := current.generation == generation && current.isHeroModifierCurrent(run)
 		if isReplacementCurrent {
 			previousRun.isReplaced = true
 			if previousRun.instanceID != run.instanceID {
@@ -1196,14 +1198,14 @@ func (r campaignDamageRuntime) refreshArborealMightOnDeath(
 	}
 	refreshes := make([]refresh, 0, len(r.registry.sessions))
 	for key, candidate := range r.registry.sessions {
-		run := candidate.heroModifierRun
+		run := candidate.arborealMightModifier()
 		if candidate.zone != source.zone || candidate.deployedHitPoint() <= 0 ||
 			run == nil || !run.isArborealMight ||
 			game.Vec3(candidate.playerPosition).Sub(position).Length() >= 20 {
 			continue
 		}
 		run.expiresAt = now.Add(run.duration)
-		candidate.heroModifierRun = run
+		candidate.putHeroModifier(run)
 		r.registry.sessions[key] = candidate
 		refreshes = append(refreshes, refresh{
 			objectID: run.objectID, instanceID: run.instanceID,

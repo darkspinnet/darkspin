@@ -78,14 +78,13 @@ func reserveQuantumStateReactionLocked(
 	peerSession *gameplayPeerSession, sourceObjectID uint32,
 	targetObjectID uint32, timestamp uint64,
 ) error {
-	if peerSession == nil || peerSession.heroModifierRun == nil ||
-		!peerSession.heroModifierRun.isQuantumState ||
+	if peerSession == nil || peerSession.quantumStateModifier() == nil ||
 		sourceObjectID != peerSession.deployedObjectID || targetObjectID == 0 ||
 		peerSession.zone == nil || peerSession.zone.NPCs() == nil ||
 		peerSession.zone.Population() == nil {
 		return nil
 	}
-	run := peerSession.heroModifierRun
+	run := peerSession.quantumStateModifier()
 	now := run.quantum.runtime.npc.now()
 	if now.Before(run.quantum.activeAt) || now.Before(run.quantum.nextActivation) {
 		return nil
@@ -144,7 +143,7 @@ func (e quantumStateReactionStep) produce() ([][]byte, error) {
 	runtime.registry.mutex.Lock()
 	peerSession, isFound := runtime.registry.sessions[e.run.quantum.sessionKey]
 	isCurrent := isFound && peerSession.generation == e.run.quantum.generation &&
-		peerSession.heroModifierRun == e.run && peerSession.zone != nil &&
+		peerSession.isHeroModifierCurrent(e.run) && peerSession.zone != nil &&
 		peerSession.zone.NPCs() != nil
 	if !isCurrent {
 		runtime.registry.mutex.Unlock()

@@ -143,14 +143,29 @@ func (r campaignAbilityCommandRuntime) applyTargetStatus(
 			run.Stop()
 			return nil, fmt.Errorf("hitStatusModifier[%d]: %w", index, err)
 		}
-		err = applyAcceptedHitNPCStatus(
-			run.npc, targetObjectID, instanceID, expiresAt, definition,
-		)
+		reaction := laserModifierReaction{}
+		isAdmitted := true
+		isLaserControl := definition.StatusKind == sim.AbilityStatusKindStun || definition.StatusKind == sim.AbilityStatusKindSilence
+		if isLaserControl {
+			reaction, isAdmitted, err = r.registry.admitLaserControlModifierLocked(&peerSession,
+				targetObjectID, definition.StatusKind, r.now(), expiresAt)
+		} else {
+			err = applyAcceptedHitNPCStatus(run.npc, targetObjectID, instanceID, expiresAt, definition)
+		}
 		if err != nil {
 			releaseErr := r.modifierPool.Release(instanceID)
 			r.registry.mutex.Unlock()
 			run.Stop()
 			return nil, fmt.Errorf("hitStatusApply[%d]: %w", index, errors.Join(err, releaseErr))
+		}
+		if !isAdmitted {
+			releaseErr := r.modifierPool.Release(instanceID)
+			if releaseErr != nil {
+				r.registry.mutex.Unlock()
+				run.Stop()
+				return nil, fmt.Errorf("hitStatusRejectedRelease: %w", releaseErr)
+			}
+			continue
 		}
 		target := heroStatusAreaTarget{
 			objectID: targetObjectID, instanceID: instanceID,
@@ -170,6 +185,9 @@ func (r campaignAbilityCommandRuntime) applyTargetStatus(
 			StackCount:           1, StartMilliseconds: hitTimestamp, NPCAffixAssetID: 0,
 			IsBound: definition.StatusKind == sim.AbilityStatusKindStun,
 		})
+		if isLaserControl {
+			r.registry.queueLaserControlReactionLocked(sessionKey, &peerSession, reaction)
+		}
 	}
 	if len(messages) == 0 {
 		r.registry.mutex.Unlock()
@@ -354,11 +372,12 @@ func (e heroStatusAreaSchedule) apply() ([][]byte, error) {
 		}
 		expiresAt := e.runtime.now().Add(duration)
 		var err error
+		reaction := laserModifierReaction{}
 		switch e.definition.StatusKind {
 		case sim.AbilityStatusKindBanish:
 			var isAdmitted bool
-			isAdmitted, err = peerSession.zone.NPCs().AdmitBanish(
-				target.Plan.ObjectID, e.runtime.now(), expiresAt,
+			reaction, isAdmitted, err = e.runtime.registry.admitLaserControlModifierLocked(
+				&peerSession, target.Plan.ObjectID, sim.AbilityStatusKindBanish, e.runtime.now(), expiresAt,
 			)
 			if err == nil && !isAdmitted {
 				continue
@@ -420,6 +439,9 @@ func (e heroStatusAreaSchedule) apply() ([][]byte, error) {
 				uint64(e.definition.HitDelay/time.Millisecond),
 			NPCAffixAssetID: 0,
 		})
+		if e.definition.StatusKind == sim.AbilityStatusKindBanish {
+			e.runtime.registry.queueLaserControlReactionLocked(e.sessionKey, &peerSession, reaction)
+		}
 	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.mutex.Unlock()

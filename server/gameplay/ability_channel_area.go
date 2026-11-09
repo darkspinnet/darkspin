@@ -152,6 +152,7 @@ func (e heroChannelAreaSchedule) lift() ([][]byte, error) {
 	}
 	e.run.cast.activateLocked(e.run.cast.revision)
 	targets := make([]heroChannelAreaTarget, 0)
+	reactions := make([]laserModifierReaction, 0)
 	messages := make([]raknet.ApplicationMessage, 0)
 	for index, target := range peerSession.zone.NPCs().LiveSnapshots() {
 		if target.Faction != zonenpc.FactionNonPlayerAligned ||
@@ -170,7 +171,8 @@ func (e heroChannelAreaSchedule) lift() ([][]byte, error) {
 			e.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("channelAreaModifier[%d]: %w", index, err)
 		}
-		err = peerSession.zone.NPCs().ApplyStun(target.Plan.ObjectID, expiresAt)
+		reaction, isAdmitted, err := e.runtime.registry.admitLaserControlModifierLocked(
+			&peerSession, target.Plan.ObjectID, sim.AbilityStatusKindStun, e.runtime.now(), expiresAt)
 		if err != nil {
 			releaseErr := e.runtime.modifierPool.Release(instance)
 			if releaseErr != nil {
@@ -180,7 +182,7 @@ func (e heroChannelAreaSchedule) lift() ([][]byte, error) {
 			e.runtime.registry.mutex.Unlock()
 			return nil, fmt.Errorf("channelAreaStun[%d]: %w", index, err)
 		}
-		if peerSession.zone.NPCs().StunRemaining(target.Plan.ObjectID, e.runtime.now()) == 0 {
+		if !isAdmitted {
 			releaseErr := e.runtime.modifierPool.Release(instance)
 			if releaseErr != nil {
 				e.runtime.logger.Printf("RakNet blocked gravity lift modifier release failed: %v", releaseErr)
@@ -190,6 +192,7 @@ func (e heroChannelAreaSchedule) lift() ([][]byte, error) {
 		targets = append(targets, heroChannelAreaTarget{
 			snapshot: target, instanceID: instance, expiresAt: expiresAt,
 		})
+		reactions = append(reactions, reaction)
 		messages = append(messages, raknet.ModifierCreatedMessage{
 			TargetID: target.Plan.ObjectID, ModifierGUID: e.definition.RootModifierID,
 			InstanceID: instance, StackCount: 1,
@@ -233,6 +236,9 @@ func (e heroChannelAreaSchedule) lift() ([][]byte, error) {
 		e.run.targets[index].isPublished = true
 	}
 	e.run.mutex.Unlock()
+	for _, reaction := range reactions {
+		e.runtime.registry.queueLaserControlReactionLocked(e.sessionKey, &peerSession, reaction)
+	}
 	e.runtime.registry.sessions[e.sessionKey] = peerSession
 	e.runtime.registry.queueChannelPresentationLocked(e.run.zone, packets)
 	e.runtime.registry.mutex.Unlock()

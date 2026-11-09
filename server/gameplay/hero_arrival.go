@@ -17,7 +17,12 @@ func marshalCampaignCharacterSwitch(
 	sourceHitPoint, sourcePowerPoint, targetHitPoint, targetPowerPoint float32,
 	position raknet.Vector3, orientation raknet.Quaternion, animationTimestamp uint64,
 	deployCooldownDeadline uint64, isDeathSelection bool,
+	deploymentPositions ...raknet.Vector3,
 ) ([][]byte, error) {
+	deploymentPosition := position
+	if len(deploymentPositions) != 0 {
+		deploymentPosition = deploymentPositions[0]
+	}
 	sourceBeam := campaignCharacterBeam(sourceCreature, false)
 	messages := make([]raknet.ApplicationMessage, 0, 15)
 	if !isDeathSelection {
@@ -50,7 +55,7 @@ func marshalCampaignCharacterSwitch(
 		},
 	)
 	messages = append(messages, campaignCharacterArrivalMessages(
-		targetObjectID, targetCreature, position, orientation,
+		targetObjectID, targetCreature, deploymentPosition, orientation,
 		animationTimestamp,
 	)...)
 	// Deploy can replace the target object's local combatant state. Publish the
@@ -108,7 +113,7 @@ func (e gameplayPeerSession) isHeroArrivalProtected(at time.Time) bool {
 }
 
 func (e gameplayPeerSession) isHeroDamageImmune(at time.Time) bool {
-	return e.isGodModeEnabled || e.campaignTunnelTransfer != nil || e.isHeroArrivalProtected(at) || e.heroModifierRun.IsDamageImmune() ||
+	return e.isGodModeEnabled || e.campaignTunnelTransfer != nil || e.isHeroArrivalProtected(at) || e.hasHeroDamageImmunity() ||
 		e.heroQuantumBlink != nil || e.hasOmniShieldAt(e.deployedObjectID, at) || e.isArenaBanished(at)
 }
 

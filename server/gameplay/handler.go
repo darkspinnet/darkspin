@@ -4720,11 +4720,11 @@ func stopGameplayPeerRuntime(
 			_ = modifierInstancePool.Release(peerSession.ghostFormRun.InstanceID())
 		}
 	}
-	if peerSession.heroModifierRun != nil {
-		peerSession.heroModifierRun.Cancel()
-		if peerSession.heroModifierRun.isShadowStealth {
+	for _, modifierRun := range peerSession.heroModifierRuns {
+		modifierRun.Cancel()
+		if modifierRun.isShadowStealth {
 			acquired, stealthPacket, err := peerSession.setShadowRavagerStealth(
-				peerSession.heroModifierRun.objectID, false,
+				modifierRun.objectID, false,
 			)
 			_ = acquired
 			_ = stealthPacket
@@ -4733,11 +4733,13 @@ func stopGameplayPeerRuntime(
 				// peer immediately retires the same zone hero authority.
 			}
 		}
-		peerSession.heroModifierRun.Remove(peerSession)
+		modifierRun.Remove(peerSession)
+		modifierRun.releaseEffect(effectPool)
 		if modifierInstancePool != nil {
-			_ = modifierInstancePool.Release(peerSession.heroModifierRun.instanceID)
+			_ = modifierInstancePool.Release(modifierRun.instanceID)
 		}
 	}
+	peerSession.heroModifierRuns = nil
 	_, _ = stopMissileFlak(peerSession, modifierInstancePool)
 	_, _ = stopPoisonNovaCooldown(peerSession, modifierInstancePool)
 	fieldMedicHeroPackets, fieldMedicHeroErr := peerSession.stopFieldMedicHeroBuffs(modifierInstancePool)

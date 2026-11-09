@@ -29,7 +29,7 @@ type arenaAfflictionRun struct {
 }
 
 func (e gameplayPeerSession) isArenaStealthed() bool {
-	return e.isTrapperStealthed || e.heroModifierRun != nil && e.heroModifierRun.isShadowStealth
+	return e.isTrapperStealthed || e.shadowStealthModifier() != nil
 }
 
 type arenaAfflictionTickStep struct {

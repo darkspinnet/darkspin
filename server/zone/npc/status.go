@@ -778,7 +778,14 @@ func (s *Session) ClearEnergyDamageVulnerability(
 }
 
 func (s *Session) ApplySilence(objectID uint32, expiresAt time.Time) error {
-	return s.applySimpleStatus(objectID, expiresAt, "silence")
+	isAdmitted, err := s.AdmitSilence(objectID, time.Now(), expiresAt)
+	if err != nil {
+		return fmt.Errorf("silenceAdmission: %w", err)
+	}
+	if !isAdmitted {
+		return nil
+	}
+	return nil
 }
 
 func (s *Session) ClearSilence(objectID uint32, expiresAt time.Time) {
@@ -1027,23 +1034,13 @@ func (s *Session) BanishRemaining(objectID uint32, at time.Time) time.Duration {
 }
 
 func (s *Session) ApplyStun(objectID uint32, expiresAt time.Time) error {
-	if s == nil || objectID == 0 || expiresAt.IsZero() {
-		return errors.New("invalid npc stun")
+	isAdmitted, err := s.AdmitStun(objectID, time.Now(), expiresAt)
+	if err != nil {
+		return fmt.Errorf("stunAdmission: %w", err)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	npc, isFound := s.npcs[objectID]
-	if !isFound || npc.IsDefeated {
-		return fmt.Errorf("npcStunMissing: %d", objectID)
-	}
-	if isStatusBlockedByShield(npc) || npc.ControlImmunity(time.Now()).Stun > 0 {
+	if !isAdmitted {
 		return nil
 	}
-	endDirectionalShield(&npc)
-	if npc.status.stunExpiresAt.Before(expiresAt) {
-		npc.status.stunExpiresAt = expiresAt
-	}
-	s.npcs[objectID] = npc
 	return nil
 }
 

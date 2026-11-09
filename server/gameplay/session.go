@@ -552,7 +552,7 @@ type controlledHeroPresentation struct {
 	plasmaWreathStoppedRuns      []*abilityraknet.PlasmaWreathRun
 	enrageRun                    *abilityraknet.EnrageRun
 	ghostFormRun                 *abilityraknet.GhostFormRun
-	heroModifierRun              *heroModifierRun
+	heroModifierRuns             map[heroModifierKey]*heroModifierRun
 	omniShields                  map[uint32]*omniShieldRun
 	omniShieldRegistry           *gameplaySessionRegistry
 	missileFlakRun               *missileFlakRun
@@ -1206,7 +1206,7 @@ func (s *gameplayPeerSession) campaignNPCTarget(
 
 func (s *gameplayPeerSession) isHeroDebuffImmune(targetObjectID uint32) bool {
 	return s != nil && targetObjectID == s.deployedObjectID &&
-		(s.isHeroArrivalProtected(time.Now()) || s.heroModifierRun.IsDebuffImmune() || s.hasOmniShieldAt(targetObjectID, time.Now()) || s.isArenaBanished(time.Now()))
+		(s.isHeroArrivalProtected(time.Now()) || s.hasHeroDebuffImmunity() || s.hasOmniShieldAt(targetObjectID, time.Now()) || s.isArenaBanished(time.Now()))
 }
 
 func (s *gameplayPeerSession) trackCampaignNPCProjectile(
@@ -2025,14 +2025,13 @@ func (e *gameplayPeerSession) resetRejectedActionAdmission(
 	if timedArea != nil && timedArea.isEffectBound {
 		retainedSlots = append(retainedSlots, timedArea.effectSlot)
 	}
-	var arborealMight *heroModifierRun
-	if e.heroModifierRun != nil && e.heroModifierRun.isArborealMight {
-		arborealMight = e.heroModifierRun
-		if arborealMight.isEffectAttached {
-			retainedSlots = append(retainedSlots, arborealMight.effectSlot)
+	modifierRuns := e.heroModifierRuns
+	for _, modifierRun := range modifierRuns {
+		if modifierRun.isEffectAttached {
+			retainedSlots = append(retainedSlots, modifierRun.effectSlot)
 		}
-		e.heroModifierRun = nil
 	}
+	e.heroModifierRuns = nil
 	e.heroTraps = nil
 	e.heroStatusAreas = nil
 	e.heroAuraAreas = nil
@@ -2054,9 +2053,7 @@ func (e *gameplayPeerSession) resetRejectedActionAdmission(
 	e.heroSummons = summons
 	e.heroTimedArea = timedArea
 	e.ghostFormRun = ghostForm
-	if arborealMight != nil {
-		e.heroModifierRun = arborealMight
-	}
+	e.heroModifierRuns = modifierRuns
 	return run
 }
 
@@ -2148,11 +2145,11 @@ func (e *gameplayPeerSession) resetFailedActionAdmission(
 		e.enrageRun = nil
 	}
 	e.retireGhostForm(modifierInstancePool)
-	if e.heroModifierRun != nil {
-		e.heroModifierRun.Cancel()
-		if e.heroModifierRun.isShadowStealth {
+	for _, modifierRun := range e.heroModifierRuns {
+		modifierRun.Cancel()
+		if modifierRun.isShadowStealth {
 			acquired, stealthPacket, err := e.setShadowRavagerStealth(
-				e.heroModifierRun.objectID, false,
+				modifierRun.objectID, false,
 			)
 			_ = acquired
 			_ = stealthPacket
@@ -2161,18 +2158,18 @@ func (e *gameplayPeerSession) resetFailedActionAdmission(
 				// removes the same hero authority immediately afterward.
 			}
 		}
-		e.heroModifierRun.Remove(e)
+		modifierRun.Remove(e)
 		// Recovery retires the expiry callback, so publish its client cleanup now.
-		modifierPackets, modifierErr := e.heroModifierRun.stopPresentation(effectPool)
+		modifierPackets, modifierErr := modifierRun.stopPresentation(effectPool)
 		if modifierErr != nil {
 			log.Printf("RakNet hero modifier action reset cleanup failed user=%d: %v", e.binding.UserID, modifierErr)
 		}
 		e.queueCampaignPackets(modifierPackets)
 		if modifierInstancePool != nil {
-			_ = modifierInstancePool.Release(e.heroModifierRun.instanceID)
+			_ = modifierInstancePool.Release(modifierRun.instanceID)
 		}
-		e.heroModifierRun = nil
 	}
+	e.heroModifierRuns = nil
 	_, _ = stopMissileFlak(e, modifierInstancePool)
 	_, _ = stopPoisonNovaCooldown(e, modifierInstancePool)
 	e.rollbackPendingPlasmaWreath()
@@ -4742,7 +4739,7 @@ func (r gameplaySwitchRuntime) handle(
 	var preparedSagePoll *sagePassivePoll
 	var interruptedBasic *abilityraknet.MeleeRun
 	var stoppedGhostRun *abilityraknet.GhostFormRun
-	var stoppedHeroModifierRun *heroModifierRun
+	var stoppedHeroModifierRuns []*heroModifierRun
 	stoppedSagePackets := [][]byte(nil)
 	stoppedWreathPackets := make([][]byte, 0)
 	stoppedGhostPackets := make([][]byte, 0)
@@ -4775,6 +4772,17 @@ func (r gameplaySwitchRuntime) handle(
 	if peerSession.zone == nil || peerSession.zone.NPCs() == nil {
 		r.registry.mutex.Unlock()
 		return nil, errors.New("switchCampaignNPCSession: unavailable")
+	}
+	deploymentPosition, deploymentErr := peerSession.campaignDeploymentPosition(command.Value, switchStartTime)
+	if deploymentErr != nil {
+		if isVoluntarySwitch {
+			r.registry.mutex.Unlock()
+			return r.reject(command, commandSession, switchStartTime, fmt.Sprintf("deployment navigation unavailable: %v", deploymentErr))
+		}
+		// A missing safe placement must not prevent selecting a living hero.
+		// Retain death selection's existing placement and record the blocker.
+		deploymentPosition = peerSession.playerPosition
+		r.logger.Printf("RakNet deployment navigation fallback remote=%s: %v", packet.Address, deploymentErr)
 	}
 	targetCharacter, err = peerSession.normalizeCampaignCharacterResources(
 		command.Value,
@@ -4864,6 +4872,9 @@ func (r gameplaySwitchRuntime) handle(
 	if err != nil {
 		r.logger.Printf("RakNet player movement cleanup omitted during switch remote=%s: %v", packet.Address, err)
 	}
+	if deploymentErr != nil {
+		deploymentPosition = peerSession.playerPosition
+	}
 	arrivalTimestamp := packet.SourceTime
 	if isVoluntarySwitch {
 		arrivalTimestamp += uint64(campaignCreatureWarpOutDelay / time.Millisecond)
@@ -4876,7 +4887,7 @@ func (r gameplaySwitchRuntime) handle(
 		peerSession.playerPosition, command.Common.Orientation,
 		arrivalTimestamp,
 		packet.SourceTime+uint64(campaignCreatureSwapCooldown/time.Millisecond),
-		isDeathSelection || isVoluntarySwitch,
+		isDeathSelection || isVoluntarySwitch, deploymentPosition,
 	)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -4925,8 +4936,8 @@ func (r gameplaySwitchRuntime) handle(
 		}
 		peerSession.ghostFormRun = nil
 	}
-	if peerSession.heroModifierRun != nil {
-		stoppedHeroModifierRun = peerSession.heroModifierRun
+	for _, stoppedHeroModifierRun := range peerSession.heroModifierRuns {
+		stoppedHeroModifierRuns = append(stoppedHeroModifierRuns, stoppedHeroModifierRun)
 		stoppedHeroModifierRun.Remove(&peerSession)
 		if stoppedHeroModifierRun.isShadowStealth {
 			acquired, stealthPacket, stealthErr := peerSession.setShadowRavagerStealth(
@@ -4975,8 +4986,8 @@ func (r gameplaySwitchRuntime) handle(
 				r.logger.Printf("RakNet hero scale cleanup omitted during switch remote=%s: %v", packet.Address, attributeErr)
 			}
 		}
-		peerSession.heroModifierRun = nil
 	}
+	peerSession.heroModifierRuns = nil
 	flakPacket, flakErr := stopMissileFlak(&peerSession, r.modifierPool)
 	if flakErr == nil && flakPacket != nil {
 		stoppedFlakPackets = append(stoppedFlakPackets, flakPacket)
@@ -5017,6 +5028,14 @@ func (r gameplaySwitchRuntime) handle(
 	peerSession.deployedCreatureIndex = command.Value
 	peerSession.passiveStationarySince[command.Value] = switchPresentationTime
 	peerSession.deployedObjectID = targetObjectID
+	if peerSession.playerMotion != nil {
+		peerSession.playerMotion.SetActorNavigation(peerSession.zone.Navigation(), peerSession.deployedCampaignNavigationRadius(), targetObjectID, uint8(peerSession.binding.Mode))
+	}
+	err = peerSession.placeTeleportedPlayer(switchStartTime, deploymentPosition)
+	if err != nil {
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("switchPlacement: %w", err)
+	}
 	initialShieldPackets, err := peerSession.activateTCShield(command.Value, switchPresentationTime, r.effectPool, r.registry)
 	if err != nil {
 		r.registry.mutex.Unlock()
@@ -5119,7 +5138,7 @@ func (r gameplaySwitchRuntime) handle(
 		stoppedGhostRun.Cancel()
 		_ = r.modifierPool.Release(stoppedGhostRun.InstanceID())
 	}
-	if stoppedHeroModifierRun != nil {
+	for _, stoppedHeroModifierRun := range stoppedHeroModifierRuns {
 		stoppedHeroModifierRun.Cancel()
 		_ = r.modifierPool.Release(stoppedHeroModifierRun.instanceID)
 	}

@@ -103,7 +103,7 @@ func (e gameplayPendingRuntime) planPlayerAISupportLocked(member *gameplayPeerSe
 		if (!isHeal && !isDefense) ||
 			!member.abilityCooldownSession().IsReady(zoneability.HeroAbilityCooldown(skill.id), now) ||
 			(isHeal && (member.heroHealingTicks != nil || member.treeOfLifeRun != nil)) ||
-			(isDefense && member.heroModifierRun != nil) {
+			(isDefense && member.heroModifier(skill.definition.RootModifierID) != nil) {
 			continue
 		}
 		cost, err := game.ResolveAbilityManaCost(skill.definition.ManaCost, skill.creature.DamageProfile.PrimaryAttribute,

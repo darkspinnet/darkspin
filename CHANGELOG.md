@@ -2,6 +2,10 @@
 
 ### 2026-11-08
 
+- Allow unrelated hero self buffs to coexist with independent stat grants, expiry, and cleanup, while preserving same-modifier replacement and stacking rules.
+- Interrupt active laser beams immediately after additional accepted stun, banish, and silence applications, preserving beams when the new control effect is rejected.
+- Keep verified Poison and Ruption Burn instances independent per NPC caster so overlapping applications retain their own damage and expiry.
+- Validate incoming hero navigation placement before voluntary deployment, use bounded validated-position recovery when available, and publish the same arrival position to the server and client.
 - Preserve trusted local control-panel sessions through loopback request validation, distinguish launcher-source rejections from account permission failures, and log local panel initialization failures.
 - Prevent concurrent local profile initialization from failing on SQLite read-to-write lock upgrades by reserving write transactions before schema inspection while retaining concurrent WAL readers.
 - Preserve existing dedicated TOML signing keys when the environment override is absent, retaining compatibility with automatically updated containers and including the legacy key file in backups.

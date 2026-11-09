@@ -12,26 +12,30 @@ import (
 )
 
 type Motion struct {
-	mu                 sync.RWMutex
-	movement           *sim.LinearMovement
-	position           sim.Position
-	startedAt          time.Time
-	revision           uint64
-	navigation         *navigation.Mesh
-	footprintRadius    float32
-	navigationActor    navigation.ActorNavigation
-	navigationObjectID uint32
-	projectionRange    float32
+	mu                        sync.RWMutex
+	movement                  *sim.LinearMovement
+	position                  sim.Position
+	startedAt                 time.Time
+	revision                  uint64
+	navigation                *navigation.Mesh
+	footprintRadius           float32
+	navigationActor           navigation.ActorNavigation
+	navigationObjectID        uint32
+	navigationAnchor          sim.Position
+	isNavigationAnchorPresent bool
+	projectionRange           float32
 }
 
 type MotionSnapshot struct {
-	navigationObjectID uint32
-	navigationActor    navigation.ActorNavigation
-	movement           *sim.LinearMovement
-	position           sim.Position
-	startedAt          time.Time
-	Revision           uint64
-	projectionRange    float32
+	navigationObjectID        uint32
+	navigationAnchor          sim.Position
+	isNavigationAnchorPresent bool
+	navigationActor           navigation.ActorNavigation
+	movement                  *sim.LinearMovement
+	position                  sim.Position
+	startedAt                 time.Time
+	Revision                  uint64
+	projectionRange           float32
 }
 
 func (e MotionSnapshot) Position() sim.Position {
@@ -131,7 +135,8 @@ func (m *Motion) Snapshot() MotionSnapshot {
 
 func (m *Motion) snapshot() MotionSnapshot {
 	return MotionSnapshot{
-		navigationActor:    m.navigationActor,
+		navigationActor:  m.navigationActor,
+		navigationAnchor: m.navigationAnchor, isNavigationAnchorPresent: m.isNavigationAnchorPresent,
 		navigationObjectID: m.navigationObjectID,
 		movement:           m.movement.Clone(), position: m.position,
 		startedAt: m.startedAt, Revision: m.revision,
@@ -150,6 +155,8 @@ func (m *Motion) Restore(snapshot MotionSnapshot, expectedRevision uint64) (sim.
 	}
 	m.navigationObjectID = snapshot.navigationObjectID
 	m.navigationActor = snapshot.navigationActor
+	m.navigationAnchor = snapshot.navigationAnchor
+	m.isNavigationAnchorPresent = snapshot.isNavigationAnchorPresent
 	m.movement = snapshot.movement.Clone()
 	m.position = snapshot.position
 	m.startedAt = snapshot.startedAt
@@ -243,6 +250,9 @@ func (m *Motion) advance(
 	m.movement = movement
 	m.position = position
 	m.projectionRange = projectionRange
+	if isStop {
+		m.rememberNavigationPositionLocked(position)
+	}
 	m.revision++
 	return previous, position, nil
 }
@@ -310,6 +320,7 @@ func (m *Motion) Stop(now time.Time) (sim.Position, error) {
 	}
 	m.position = position
 	m.projectionRange = zonenavigation.ProjectionDistance
+	m.rememberNavigationPositionLocked(position)
 	m.revision++
 	return position, nil
 }
@@ -330,6 +341,8 @@ func (m *Motion) Teleport(now time.Time, destination sim.Position) error {
 	}
 	m.position = destination
 	m.projectionRange = zonenavigation.ProjectionDistance
+	m.isNavigationAnchorPresent = false
+	m.rememberNavigationPositionLocked(destination)
 	m.revision++
 	return nil
 }
