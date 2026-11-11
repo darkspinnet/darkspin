@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
@@ -405,6 +406,7 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		profile.ProjectileShotCount = uint32(len(volley.targets))
 	}
 	isControlProjectile := profile.AbilityName == "Puller"
+	isThornNova := profile.AbilityName == "ScaldronBasicThorno_ThornNova"
 	ability, abilityErr := campaignNPCProjectileAbility(profile)
 	if abilityErr != nil {
 		r.registry.mutex.Unlock()
@@ -429,7 +431,7 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		)
 		isVolleyTargetInRange := rangeErr == nil &&
 			zonegeometry.Distance(enemy.Plan.Position, target.Position) < volleyRange
-		if !isVolleyTargetInRange {
+		if !isVolleyTargetInRange && !isThornNova {
 			r.registry.mutex.Unlock()
 			r.logger.Printf(
 				"RakNet campaign projectile volley stopped object=%d target=%d shot=%d/%d distance=%.3f range=%.3f reason=live target out of range",
@@ -566,7 +568,7 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 	if volley.isActive {
 		sourcePosition.Z += projectileOffset.Z
 	}
-	if volley.isActive && profile.IsProjectileParallelVolley && len(volley.targets) == 0 {
+	if volley.isActive && profile.IsProjectileParallelVolley && len(volley.targets) == 0 && !isThornNova {
 		if volley.shotIndex < len(profile.ProjectileOffsets) {
 			sourcePosition = campaignNPCProjectileSourceOffset(
 				sourcePosition, targetPosition, projectileOffset,
@@ -614,6 +616,15 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 			sourcePosition, targetPosition, profile.ProjectileDistance,
 		)
 	}
+	sourceFootprint := enemy.Plan.NPCProfile.FootprintRadius
+	if isThornNova {
+		// Build 103 SpawnThorn starts at the caster center. GetFixedDir
+		// spaces the one-based shot indices around the world XY plane.
+		angle := 2 * math.Pi * (float64(volley.shotIndex) + 1.5) / float64(profile.ProjectileShotCount)
+		sine, cosine := math.Sincos(angle)
+		targetPosition = sourcePosition.Add(game.Vec3{X: float32(cosine), Y: float32(sine)}.Scale(profile.ProjectileDistance))
+		sourceFootprint = 0
+	}
 	isDelayedVolleyShot := volley.isActive && volley.shotIndex > 0 &&
 		volley.shotIndex < len(profile.ProjectileShotDeadlines) &&
 		profile.ProjectileShotDeadlines[volley.shotIndex] > 0
@@ -623,7 +634,7 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		ability.ReleaseDelay = 0
 	}
 	launchPosition := campaignProjectileLaunchPosition(
-		sourcePosition, targetPosition, enemy.Plan.NPCProfile.FootprintRadius,
+		sourcePosition, targetPosition, sourceFootprint,
 	)
 	distance := zoneability.Distance(launchPosition, targetPosition)
 	collisionDelay := max(
@@ -668,7 +679,7 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		ImpactPosition: sim.Position{
 			X: targetPosition.X, Y: targetPosition.Y, Z: targetPosition.Z,
 		},
-		FootprintRadius: enemy.Plan.NPCProfile.FootprintRadius,
+		FootprintRadius: sourceFootprint,
 		CollisionDelay:  collisionDelay, IsDirectHit: true, IsCollisionExternallyDriven: true,
 		IsPiercing:  profile.IsProjectilePiercing,
 		HomingDelay: profile.HomingDelay, IsHoming: profile.IsHomingProjectile(),

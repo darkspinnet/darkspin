@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/darkspinnet/darkspin/server/raknet"
@@ -637,7 +638,7 @@ func analyzeTimeline(report *analysisReport, events []replayEvent) {
 		report.Metrics.IncompleteClientApplyCount += counts[0] - counts[1]
 		addFinding(report, analysisFinding{
 			ID: fmt.Sprintf("client-apply-incomplete-%d", objectID), Severity: "warning",
-			Category: "client_apply", Title: "Client movement apply did not complete",
+			Category: "client_apply", Title: "Client movement apply samples are unmatched",
 			Detail:   fmt.Sprintf("Object %d has %d before-apply images and %d after-apply images in the capture.", objectID, counts[0], counts[1]),
 			ObjectID: objectID,
 		})
@@ -1078,7 +1079,7 @@ func analyzeCompleteness(report *analysisReport, capture clientCapture, timeline
 }
 
 func classifyAnalysis(report *analysisReport) {
-	if classifyTriggerMovement(report) {
+	if classifyTriggerMovement(report) || classifyDuplicateDelete(report) {
 		return
 	}
 	cause := "not_isolated"
@@ -1099,8 +1100,7 @@ func classifyAnalysis(report *analysisReport) {
 		summary = "Aligned client object memory disagrees with authoritative active-object presence or positions."
 	} else if report.Metrics.IncompleteClientApplyCount > 0 {
 		cause = "client_application_path"
-		confidence = "medium"
-		summary = "Movement entered the client apply path without a corresponding post-apply image."
+		summary = "The capture contains more before-apply images than after-apply images. Missing trace records or the capture boundary can explain the difference."
 	} else if report.Metrics.NACKDatagramCount > 0 || report.Metrics.RetransmitCount > 0 {
 		cause = "transport_loss_or_retransmission"
 		confidence = "medium"
@@ -1127,6 +1127,26 @@ func classifyAnalysis(report *analysisReport) {
 	report.Confidence = confidence
 	report.Summary = summary
 	report.Recommendations = recommendationsForCause(cause)
+}
+
+func classifyDuplicateDelete(report *analysisReport) bool {
+	if report.TriggerObjectID == 0 || report.Context != duplicateDeleteContext {
+		return false
+	}
+	report.LikelyCause = "duplicate_delete_unverified"
+	report.Confidence = "low"
+	report.Summary = fmt.Sprintf("The live monitor flagged a repeated delete for object %d. The retained application trace does not show both deletes for that object.", report.TriggerObjectID)
+	report.Recommendations = []string{"Compare the triggering object's create and delete packets within the same peer generation."}
+	for _, finding := range report.Findings {
+		if finding.ObjectID != report.TriggerObjectID || !strings.HasSuffix(finding.ID, "-duplicate-delete") {
+			continue
+		}
+		report.LikelyCause = "server_packet_ordering"
+		report.Confidence = "medium"
+		report.Summary = fmt.Sprintf("The retained application trace also shows repeated deletion of object %d within one peer generation.", report.TriggerObjectID)
+		break
+	}
+	return true
 }
 
 func recommendationsForCause(cause string) []string {

@@ -223,13 +223,24 @@ type PursuitPathStep struct {
 	Traversals []basenavigation.Traversal
 }
 
+// PursuitRoute retains the corridor for one movement toward a fixed goal.
+type PursuitRoute struct {
+	mesh             *basenavigation.Mesh
+	path             basenavigation.Path
+	source           game.Vec3
+	target           game.Vec3
+	topologyRevision uint64
+	pointIndex       int
+	planLayer        uint8
+}
+
 // Return the same next corridor point used to advance the server actor, so
 // remote locomotion can follow that segment rather than steering through walls.
 func AdvancePursuitPathStep(
 	mesh *basenavigation.Mesh, source game.Vec3, target game.Vec3,
 	footprintRadius float32, travel float32, actors ...basenavigation.ActorNavigation,
 ) (PursuitPathStep, error) {
-	step, err := advancePathStep(mesh, source, target, footprintRadius, travel, false, actors...)
+	step, err := advancePathStep(mesh, source, target, footprintRadius, travel, false, nil, actors...)
 	if err != nil {
 		return PursuitPathStep{}, fmt.Errorf("pursuitWalk: %w", err)
 	}
@@ -242,16 +253,28 @@ func AdvanceTraversalPathStep(
 	mesh *basenavigation.Mesh, source game.Vec3, target game.Vec3,
 	footprintRadius float32, travel float32, actors ...basenavigation.ActorNavigation,
 ) (PursuitPathStep, error) {
-	step, err := advancePathStep(mesh, source, target, footprintRadius, travel, true, actors...)
+	step, err := advancePathStep(mesh, source, target, footprintRadius, travel, true, nil, actors...)
 	if err != nil {
 		return PursuitPathStep{}, fmt.Errorf("pursuitTraversal: %w", err)
 	}
 	return step, nil
 }
 
+func (e *PursuitRoute) Advance(
+	mesh *basenavigation.Mesh, source game.Vec3, target game.Vec3,
+	footprintRadius float32, travel float32, actor basenavigation.ActorNavigation,
+) (PursuitPathStep, error) {
+	step, err := advancePathStep(mesh, source, target, footprintRadius, travel, true, e, actor)
+	if err != nil {
+		return PursuitPathStep{}, fmt.Errorf("pursuitRoute: %w", err)
+	}
+	return step, nil
+}
+
 func advancePathStep(
 	mesh *basenavigation.Mesh, source game.Vec3, target game.Vec3,
-	footprintRadius float32, travel float32, isTraversalAllowed bool, actors ...basenavigation.ActorNavigation,
+	footprintRadius float32, travel float32, isTraversalAllowed bool,
+	route *PursuitRoute, actors ...basenavigation.ActorNavigation,
 ) (PursuitPathStep, error) {
 	if mesh == nil || !zonegeometry.IsFinite(source) ||
 		!zonegeometry.IsFinite(target) ||
@@ -263,27 +286,40 @@ func advancePathStep(
 	if !isLayerFound {
 		return PursuitPathStep{}, errors.New("campaign pursuit layer unavailable")
 	}
-	path, err := mesh.CreatePath(
-		basenavigation.Vec3{X: source.X, Y: source.Y, Z: source.Z},
-		basenavigation.Vec3{X: target.X, Y: target.Y, Z: target.Z},
-		basenavigation.PathOptions{
-			ProjectionOptions: basenavigation.ProjectionOptions{
-				PlanLayer: planLayer, MaxDistance: pursuitProjectionDistance,
+	topologyRevision := mesh.TopologyRevision()
+	if route == nil {
+		route = &PursuitRoute{}
+	}
+	if route.mesh != mesh || route.source != source || route.target != target ||
+		route.planLayer != planLayer || route.topologyRevision != topologyRevision {
+		path, err := mesh.CreatePath(
+			basenavigation.Vec3(source), basenavigation.Vec3(target),
+			basenavigation.PathOptions{
+				ProjectionOptions: basenavigation.ProjectionOptions{
+					PlanLayer: planLayer, MaxDistance: pursuitProjectionDistance,
+				},
+				MaxVisitedPolygon:  maximumVisitedPolygon,
+				IsTraversalAllowed: isTraversalAllowed,
 			},
-			MaxVisitedPolygon:  maximumVisitedPolygon,
-			IsTraversalAllowed: isTraversalAllowed,
-		},
-	)
-	if err != nil {
-		return PursuitPathStep{}, fmt.Errorf("campaignPursuitCreate: %w", err)
+		)
+		if err != nil {
+			return PursuitPathStep{}, fmt.Errorf("campaignPursuitCreate: %w", err)
+		}
+		*route = PursuitRoute{
+			mesh: mesh, path: path, source: source, target: target,
+			planLayer: planLayer, topologyRevision: topologyRevision,
+		}
 	}
 
-	position := basenavigation.Vec3{X: source.X, Y: source.Y, Z: source.Z}
+	position := basenavigation.Vec3(source)
 	waypoint := target
-	for pointIndex, point := range path.Points {
+	for route.pointIndex < len(route.path.Points) {
+		pointIndex := route.pointIndex
+		point := route.path.Points[pointIndex]
 		if pointIndex > 0 {
-			traversal := path.TraversalAt(pointIndex - 1)
+			traversal := route.path.TraversalAt(pointIndex - 1)
 			if traversal.MarkerID != 0 {
+				*route = PursuitRoute{}
 				current := mesh.TraversalSegment(traversal.Source, traversal.Destination)
 				if !current.IsEnabled {
 					return PursuitPathStep{Position: game.Vec3(position), Waypoint: game.Vec3(position)}, nil
@@ -299,12 +335,14 @@ func advancePathStep(
 			deltaX*deltaX + deltaY*deltaY + deltaZ*deltaZ,
 		)))
 		if distance == 0 {
+			route.pointIndex++
 			continue
 		}
 		if travel >= distance {
 			if isTraversalAllowed {
 				traversal := mesh.TraverseSegment(position, point)
 				if traversal.MarkerID != 0 {
+					*route = PursuitRoute{}
 					if !mesh.IsSegmentClear(position, traversal.Source, planLayer) {
 						return PursuitPathStep{Position: game.Vec3(position), Waypoint: game.Vec3(position)}, nil
 					}
@@ -314,6 +352,7 @@ func advancePathStep(
 			}
 			position = point
 			travel -= distance
+			route.pointIndex++
 			continue
 		}
 		scale := travel / distance
@@ -326,6 +365,7 @@ func advancePathStep(
 		if isTraversalAllowed {
 			traversal := mesh.TraverseSegment(position, next)
 			if traversal.MarkerID != 0 {
+				*route = PursuitRoute{}
 				if !mesh.IsSegmentClear(position, traversal.Source, planLayer) {
 					return PursuitPathStep{Position: game.Vec3(position), Waypoint: game.Vec3(position)}, nil
 				}
@@ -336,6 +376,7 @@ func advancePathStep(
 		position = next
 		break
 	}
+	route.source = game.Vec3(position)
 	return PursuitPathStep{
 		Position: game.Vec3{X: position.X, Y: position.Y, Z: position.Z}, Waypoint: waypoint,
 	}, nil

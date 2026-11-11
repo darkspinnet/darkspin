@@ -36,6 +36,9 @@ func (e *Mesh) WithObstacles(obstacles []Obstacle) (*Mesh, error) {
 		}
 	}
 	result := *e
+	if result.topologyRevision == nil {
+		result.topologyRevision = new(atomic.Uint64)
+	}
 	result.obstacles = append([]Obstacle(nil), obstacles...)
 	for index := range result.obstacles {
 		result.obstacles[index].isDisabled = new(atomic.Bool)
@@ -62,8 +65,9 @@ func (e *Mesh) SetObstacleEnabled(markerID uint32, isEnabled bool) {
 		return
 	}
 	for _, obstacle := range e.obstacles {
-		if obstacle.MarkerID == markerID && obstacle.isDisabled != nil {
-			obstacle.isDisabled.Store(!isEnabled)
+		if obstacle.MarkerID == markerID && obstacle.isDisabled != nil &&
+			obstacle.isDisabled.Swap(!isEnabled) != !isEnabled {
+			e.topologyRevision.Add(1)
 		}
 	}
 }
@@ -71,14 +75,7 @@ func (e *Mesh) SetObstacleEnabled(markerID uint32, isEnabled bool) {
 // DisableObstacle retires a placed collider without changing the shared terrain
 // mesh. All actors using this layout observe the same collision lifetime.
 func (e *Mesh) DisableObstacle(markerID uint32) {
-	if e == nil || markerID == 0 {
-		return
-	}
-	for _, obstacle := range e.obstacles {
-		if obstacle.MarkerID == markerID && obstacle.isDisabled != nil {
-			obstacle.isDisabled.Store(true)
-		}
-	}
+	e.SetObstacleEnabled(markerID, false)
 }
 
 // IsSegmentClear rechecks a sampled segment of an already admitted terrain

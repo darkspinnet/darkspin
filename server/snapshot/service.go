@@ -62,6 +62,13 @@ type objectFlow struct {
 	lastMovementAt time.Time
 }
 
+const duplicateDeleteContext = "duplicate object delete"
+
+type peerObjectFlows struct {
+	generation uint64
+	objects    map[uint32]objectFlow
+}
+
 type clientFlow struct {
 	position       raknet.Vector3
 	lastReportedAt time.Time
@@ -170,7 +177,7 @@ type Service struct {
 	nextIncident             atomic.Uint64
 	lastAutomaticAt          time.Time
 	isAutomaticDumpRunning   bool
-	flowsByRemote            map[string]map[uint32]objectFlow
+	flowsByRemote            map[string]peerObjectFlows
 	clientFlowsByRemote      map[string]map[uint32]clientFlow
 	clientObjectDriftFlows   map[string]clientObjectDriftFlow
 	movements                []movementSample
@@ -228,7 +235,7 @@ func New(options Options) (*Service, error) {
 		mode:           mode, bufferDuration: bufferDuration, delay: delay,
 		buildVersion: options.BuildVersion, logger: logger,
 		resolveUserName:        options.ResolveUserName,
-		flowsByRemote:          make(map[string]map[uint32]objectFlow),
+		flowsByRemote:          make(map[string]peerObjectFlows),
 		clientFlowsByRemote:    make(map[string]map[uint32]clientFlow),
 		clientObjectDriftFlows: make(map[string]clientObjectDriftFlow),
 		nackTimesByRemote:      make(map[string][]time.Time),
@@ -422,14 +429,18 @@ func (e *Service) detectLocked(event trafficEvent) (autoRequest, bool) {
 	if event.Direction != raknet.ObservationServerToClient {
 		return autoRequest{}, false
 	}
-	if event.Stage != raknet.ObservationDatagram || event.PacketID == 0 {
+	if event.Stage != raknet.ObservationDatagram || event.PacketID == 0 || event.ObjectID == 0 {
 		return autoRequest{}, false
 	}
-	flows := e.flowsByRemote[event.Remote]
-	if flows == nil {
-		flows = make(map[uint32]objectFlow)
-		e.flowsByRemote[event.Remote] = flows
+	peer := e.flowsByRemote[event.Remote]
+	if event.PeerGeneration < peer.generation {
+		return autoRequest{}, false
 	}
+	if peer.objects == nil || peer.generation != event.PeerGeneration {
+		peer = peerObjectFlows{generation: event.PeerGeneration, objects: make(map[uint32]objectFlow)}
+		e.flowsByRemote[event.Remote] = peer
+	}
+	flows := peer.objects
 	flow := flows[event.ObjectID]
 	switch raknet.PacketID(event.PacketID) {
 	case raknet.ObjectCreate:
@@ -448,7 +459,7 @@ func (e *Service) detectLocked(event trafficEvent) (autoRequest, bool) {
 		}
 	case raknet.ObjectDelete:
 		if flow.isCreated && flow.isDeleted {
-			return e.anomalyRequestLocked(event, "duplicate object delete"), true
+			return e.anomalyRequestLocked(event, duplicateDeleteContext), true
 		}
 		if flow.isCreated {
 			flow.isDeleted = true
@@ -560,7 +571,7 @@ func vectorDistance(left raknet.Vector3, right raknet.Vector3) float32 {
 }
 
 func (e *Service) anomalyRequestLocked(event trafficEvent, contextText string) autoRequest {
-	fingerprint := fmt.Sprintf("%s:%02x:%d", event.Remote, event.PacketID, event.ObjectID)
+	fingerprint := fmt.Sprintf("%s:%d:%02x:%d", event.Remote, event.PeerGeneration, event.PacketID, event.ObjectID)
 	return autoRequest{anomaly: anomaly{
 		Actor: Actor{Remote: event.Remote}, Context: contextText,
 		Fingerprint: fingerprint, ObjectID: event.ObjectID,
@@ -936,7 +947,7 @@ func (e *Service) setMode(mode Mode) {
 		e.events = nil
 		e.bufferedByte = 0
 		e.droppedEventTimes = nil
-		e.flowsByRemote = make(map[string]map[uint32]objectFlow)
+		e.flowsByRemote = make(map[string]peerObjectFlows)
 		e.clientFlowsByRemote = make(map[string]map[uint32]clientFlow)
 		e.nackTimesByRemote = make(map[string][]time.Time)
 	}

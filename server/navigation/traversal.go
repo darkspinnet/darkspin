@@ -35,6 +35,9 @@ func (e *Mesh) WithTraversalLinks(links []TraversalLink) (*Mesh, error) {
 		return nil, errors.New("traversal mesh unavailable")
 	}
 	result := *e
+	if result.topologyRevision == nil {
+		result.topologyRevision = new(atomic.Uint64)
+	}
 	result.links = append([]TraversalLink(nil), links...)
 	for index := range result.links {
 		link := &result.links[index]
@@ -54,10 +57,17 @@ func (e *Mesh) SetTraversalLinkEnabled(markerID uint32, isEnabled bool) {
 		return
 	}
 	for _, link := range e.links {
-		if link.MarkerID == markerID {
-			link.isEnabled.Store(isEnabled)
+		if link.MarkerID == markerID && link.isEnabled.Swap(isEnabled) != isEnabled {
+			e.topologyRevision.Add(1)
 		}
 	}
+}
+
+func (e *Mesh) TopologyRevision() uint64 {
+	if e == nil || e.topologyRevision == nil {
+		return 0
+	}
+	return e.topologyRevision.Load()
 }
 
 // CreatePath permits authored jumps only for callers that explicitly consume
@@ -78,6 +88,19 @@ func (e *Mesh) CreatePath(start Vec3, goal Vec3, options PathOptions) (Path, err
 		if !link.isEnabled.Load() {
 			continue
 		}
+		// A route through this gate must walk to its trigger and from its
+		// destination. Skip expensive obstacle searches when even those
+		// straight-line lower bounds cannot improve the current route.
+		center := add(link.Source, link.Offset)
+		triggerRadius := link.SphereRadius
+		if !link.IsSphere {
+			triggerRadius = distance(Vec3{}, link.BoxDimensions) / 2
+		}
+		approachMinimum := max(float32(0), planarDistance(start, center)-triggerRadius-options.MaxDistance)
+		departureMinimum := max(float32(0), planarDistance(link.Destination, goal)-2*options.MaxDistance)
+		if approachMinimum+departureMinimum > bestDistance {
+			continue
+		}
 		entry := link.approach(start)
 		approach, err := e.walkingPath(start, entry, options)
 		if err != nil {
@@ -86,13 +109,17 @@ func (e *Mesh) CreatePath(start Vec3, goal Vec3, options PathOptions) (Path, err
 		if !link.contains(approach.Goal.Position) {
 			continue
 		}
+		approachDistance := approach.Distance()
+		if approachDistance+departureMinimum >= bestDistance {
+			continue
+		}
 		departureOptions := options
 		departureOptions.IsComponentConstrained = false
 		departure, err := e.walkingPath(link.Destination, goal, departureOptions)
 		if err != nil {
 			continue
 		}
-		travelDistance := approach.Distance() + departure.Distance()
+		travelDistance := approachDistance + departure.Distance()
 		if travelDistance >= bestDistance {
 			continue
 		}

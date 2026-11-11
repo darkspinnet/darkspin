@@ -188,7 +188,7 @@ func NashiraFiendProfile(nounName string) (ActionProfile, bool) {
 		return ActionProfile{}, false
 	}
 	profile := shooterPoisonSpitProfile(
-		4*time.Second, 18, 5+float32(rank), 5+float32(rank), 4, true,
+		4*time.Second, 18, 5+float32(rank), 5+float32(rank), 4, false,
 	)
 	profile.AbilityName = "ShadowBossMinionBolt"
 	profile.AnimationName = "nct_minn_su_x3_attack1"

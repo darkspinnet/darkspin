@@ -1,5 +1,14 @@
 # Changelog
 
+### 2026-11-11
+
+- #200 Reduce gameplay stalls around active horde fences by reusing NPC movement routes and skipping gate routes that cannot improve an existing path.
+- #200 Check inward horde gate contact while heroes are moving so they can enter without sending another movement command.
+- #200 Restore Piercing Triped's ranked Thorn Nova projectile ring from build-103 ability data.
+- #200 Remove teleport packets from normal Charging Brute and fear-movement arrivals and from Sentry Drone firing.
+- #200 Make Dark Fiend bolts fire in the direction the creature is facing.
+- #200 Keep Sync Snapshot deletion evidence scoped to the affected object and connection so unrelated movement traces no longer get reported as the cause.
+
 ### 2026-11-08
 
 - Fix server startup by loading Field Medic's maximum-health grant from its authored build-103 Activate callback instead of a nonexistent Tick callback.

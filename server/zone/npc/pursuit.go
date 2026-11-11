@@ -86,6 +86,7 @@ func (s *Session) AdvancePursuits(
 func (s *Session) AdvancePursuit(
 	mesh *navigation.Mesh, objectID uint32, targetPosition game.Vec3, stopDistance float32,
 	speed float32, footprintRadius float32, elapsed time.Duration,
+	routes ...*zoneaction.PursuitRoute,
 ) (PursuitStep, error) {
 	if s == nil || objectID == 0 || !zonegeometry.IsFinite(targetPosition) ||
 		!zonegeometry.IsFinitePositiveScalar(stopDistance) ||
@@ -118,7 +119,11 @@ func (s *Session) AdvancePursuit(
 	// instead of spending that entire interval moving into the target's center.
 	travel = min(travel, max(arrivalMargin, distance-stopDistance+arrivalMargin))
 	if mesh != nil {
-		pathStep, pathErr := zoneaction.AdvanceTraversalPathStep(
+		var route *zoneaction.PursuitRoute
+		if len(routes) != 0 {
+			route = routes[0]
+		}
+		pathStep, pathErr := route.Advance(
 			mesh, source, targetPosition, max(npc.NavigationRadius(), minimumNavigationFootprintRadius), travel, npc.Navigation,
 		)
 		destination := pathStep.Position

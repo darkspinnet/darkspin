@@ -8,6 +8,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/game"
 	"github.com/darkspinnet/darkspin/server/raknet"
 	"github.com/darkspinnet/darkspin/server/sim"
+	zoneaction "github.com/darkspinnet/darkspin/server/zone/action"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
 )
@@ -25,6 +26,7 @@ type campaignNPCBehaviorRun struct {
 	npcSession           *zonenpc.Session
 	timestamp            uint64
 	destination          game.Vec3
+	route                zoneaction.PursuitRoute
 	isMoving             bool
 	wasMoving            bool
 	isTurnChecked        bool

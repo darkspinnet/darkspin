@@ -21,7 +21,6 @@ import (
 	companionraknet "github.com/darkspinnet/darkspin/server/zone/companion/raknet103"
 	zonehero "github.com/darkspinnet/darkspin/server/zone/hero"
 	zonehorde "github.com/darkspinnet/darkspin/server/zone/horde"
-	horderaknet "github.com/darkspinnet/darkspin/server/zone/horde/raknet103"
 	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 	npcraknet "github.com/darkspinnet/darkspin/server/zone/npc/raknet103"
@@ -969,6 +968,10 @@ func (r campaignMovementCommandRuntime) handle(
 			}
 			r.registry.sessions[packet.Address.String()] = peerSession
 			r.registry.mutex.Unlock()
+			publishErr := publishCampaignPeersAfterCommit(r.registry, packet, encounterResult.gatePackets)
+			if publishErr != nil {
+				return nil, fmt.Errorf("moveCampaignGatePublish: %w", publishErr)
+			}
 			return encounterResult.gatePackets, nil
 		}
 		current = encounterResult.current
@@ -2190,18 +2193,9 @@ func (r campaignEncounterRuntime) advance(
 	isTutorialCreatureMarkerEntered := false
 	isTutorialCapsuleMarkerEntered := false
 	if routeMovement.GateContact.MarkerID != 0 {
-		constrainedPosition := raknet.Vector3{
-			X: result.current.X, Y: result.current.Y, Z: result.current.Z,
-		}
-		movementErr := peerSession.teleportPlayer(movementNow, constrainedPosition)
-		if movementErr != nil {
-			return result, fmt.Errorf("moveCampaignGatePosition: %w", movementErr)
-		}
-		result.gatePackets, err = horderaknet.GateRepel(
-			objectID, routeMovement.GateContact,
-		)
+		result.gatePackets, err = peerSession.enterHordeGate(objectID, routeMovement.GateContact, movementNow)
 		if err != nil {
-			return result, fmt.Errorf("moveCampaignHordeGateMarshal: %w", err)
+			return result, fmt.Errorf("moveCampaignHordeGate: %w", err)
 		}
 		r.logger.Printf("RakNet campaign horde gate repelled %s marker_set=%q marker=%d return=(%.3f,%.3f,%.3f)",
 			packet.Address, routeMovement.GateContact.MarkerSetName,

@@ -173,7 +173,9 @@ func (r campaignDamageRuntime) startFieldMedicDroneAttackFor(
 	} else {
 		facing = game.Vec3{X: 1}
 	}
-	posePackets, poseErr := npcraknet.StopAtPose(plan.ObjectID, plan.Position, facing)
+	// The attack already owns the sampled follow pose. A teleport at the
+	// start of every shot makes the drone appear to jump out of its orbit.
+	posePackets, poseErr := npcraknet.MovementStop(plan.ObjectID, plan.Position)
 	if poseErr != nil {
 		peerSession.zone.Companion().ReleaseAttack(plan.ObjectID, plan.TargetObjectID)
 		r.registry.mutex.Unlock()

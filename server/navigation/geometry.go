@@ -150,3 +150,7 @@ func squaredDistance(a Vec3, b Vec3) float32 {
 func distance(a Vec3, b Vec3) float32 {
 	return float32(math.Sqrt(float64(squaredDistance(a, b))))
 }
+
+func planarDistance(a Vec3, b Vec3) float32 {
+	return float32(math.Hypot(float64(a.X)-float64(b.X), float64(a.Y)-float64(b.Y)))
+}

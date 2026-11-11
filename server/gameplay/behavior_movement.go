@@ -118,6 +118,7 @@ func (e *campaignNPCBehaviorRun) moveLocked(member *gameplayPeerSession,
 			return nil, true, nil
 		}
 		e.destination = destination
+		e.route = zoneaction.PursuitRoute{}
 		e.isWaypointPublished = false
 		e.isMoving = true
 		e.wasMoving = true
@@ -152,7 +153,7 @@ func (e *campaignNPCBehaviorRun) moveLocked(member *gameplayPeerSession,
 		packets = append(packets, attributePacket)
 	}
 	step, err := member.zone.NPCs().AdvancePursuit(member.zone.Navigation(), source.Plan.ObjectID,
-		e.destination, stopDistance, speed, source.NavigationRadius(), campaignNPCBehaviorTick)
+		e.destination, stopDistance, speed, source.NavigationRadius(), campaignNPCBehaviorTick, &e.route)
 	if err != nil {
 		return nil, false, fmt.Errorf("behaviorAdvance: %w", err)
 	}

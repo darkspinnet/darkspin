@@ -3822,15 +3822,15 @@ func ActionProfileForNoun(nounName string) (ActionProfile, bool) {
 		return scaldronBasicMinesMeleeProfile(), true
 	case "scaldronbasicthorno.noun":
 		return scaldronBasicThornoNovaProfile(
-			4, 5, 8, 3, 6, 0.2, 0.2,
+			4, 5, 8, 12, 3, 6, 0.2, 0.2,
 		), true
 	case "scaldronbasicthorno_2.noun":
 		return scaldronBasicThornoNovaProfile(
-			6, 7, 12, 3, 5, 0.333, 0.5,
+			6, 7, 12, 16, 3, 5, 0.333, 0.5,
 		), true
 	case "scaldronbasicthorno_3.noun":
 		return scaldronBasicThornoNovaProfile(
-			8, 9, 16, 2, 4, 0.5, 1,
+			8, 9, 16, 20, 2, 4, 0.5, 1,
 		), true
 	case "scaldronbasicblink.noun":
 		return scaldronBasicBlinkAttackProfile(
@@ -4796,19 +4796,17 @@ func boomerDeathDetonationProfile(
 }
 
 func scaldronBasicThornoNovaProfile(
-	attackRange float32, radius float32, maximumTargetCount uint32,
+	attackRange float32, radius float32, shotCount uint32, projectileSpeed float32,
 	minimumDamage float32, maximumDamage float32,
 	physicalDamageReduction float32, meleeDamageReflection float32,
 ) ActionProfile {
 	return ActionProfile{
-		Family: ActionCone, AbilityName: "ScaldronBasicThorno_ThornNova",
+		Family: ActionProjectile, AbilityName: "ScaldronBasicThorno_ThornNova",
 		AnimationName:                  "sca_minn_lf_01_attack1",
 		HitDelay:                       330 * time.Millisecond,
 		ReleaseDelay:                   time.Second,
 		Cooldown:                       6 * time.Second,
 		Range:                          attackRange,
-		Radius:                         radius,
-		Angle:                          360,
 		MovementSpeed:                  7,
 		NonCombatMovementSpeed:         5.5,
 		MinimumDamage:                  minimumDamage,
@@ -4817,8 +4815,14 @@ func scaldronBasicThornoNovaProfile(
 		DescriptorMask:                 1 << 6,
 		DamageType:                     2,
 		DamageSource:                   0,
-		MaximumTargetCount:             maximumTargetCount,
+		ProjectileNoun:                 "Ability_Fireball.Noun",
+		ProjectileSpeed:                projectileSpeed,
+		ProjectileDistance:             radius,
+		ProjectileShotCount:            shotCount,
+		IsProjectileParallelVolley:     true,
+		TrailEffectName:                "ScaldronBasicThorno_ThornProjectileTrail.ServerEventDef",
 		ImpactEffectName:               "life_common_melee_hit.ServerEventDef",
+		MissEffectName:                 "ineffective_common_small.ServerEventDef",
 		PassiveEffectName:              "ScaldronBasicThorno_ThornsPassive.ServerEventDef",
 		PassivePhysicalDamageReduction: physicalDamageReduction,
 		PassiveMeleeDamageReflection:   meleeDamageReflection,

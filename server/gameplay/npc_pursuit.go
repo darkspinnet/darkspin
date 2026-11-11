@@ -674,9 +674,10 @@ func (r campaignNPCPursuitRuntime) produceStep(
 	if step.IsInRange {
 		var stopPackets [][]byte
 		var stopErr error
-		if profile.AbilityName == "NoctGhostCharge" {
-			// The client is already sliding to this fixed goal. A pose
-			// correction here teleports the Ghostly Tracker to the end.
+		switch profile.AbilityName {
+		case "NoctGhostCharge", "VerdanthBasicPicky", "Flee":
+			// These moves already run on the client. Finish with the native
+			// stop command so the accepted endpoint isn't presented as a teleport.
 			stopPacket, marshalErr := raknet.MarshalApplication(raknet.ObjectPlayerMoveMessage{
 				ObjectID: objectID, GoalFlags: 0x20, GoalPosition: raknet.Vector3(step.Position),
 			})
@@ -684,7 +685,7 @@ func (r campaignNPCPursuitRuntime) produceStep(
 			if stopErr == nil {
 				stopPackets = [][]byte{stopPacket}
 			}
-		} else {
+		default:
 			stopPackets, stopErr = npcraknet.StopAtPose(objectID, step.Position, enemy.Facing)
 		}
 		if stopErr != nil {
