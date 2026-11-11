@@ -42,11 +42,11 @@ func (e campaignNPCActionRuntime) produceShieldedNomadAction(
 	}
 	grenade, isGrenadeFound := zonenpc.NomadShielderGrenadeProfile(enemy.Plan.NounName)
 	shield, isShieldFound := zonenpc.NomadShielderDirectionalShieldProfile(enemy.Plan.NounName)
-	// PositionForAttack's IsAbleToHit requires a target within twenty metres,
-	// facing within ten degrees. Leave the shield stance before repositioning.
+	// The initial setup faces the target. Once the shield is up, retain that
+	// stance while the target is in grenade range and on the shielded side.
 	grenade.Range = min(shield.Range, grenade.Range)
 	isPositioned := isTargetFound && isGrenadeFound && isShieldFound &&
-		isNomadShielderAttackPosition(enemy, target, grenade, 20)
+		isNomadShielderAttackPosition(enemy, target, grenade, 180)
 	if !isPositioned {
 		e.registry.mutex.Lock()
 		member, isFound := e.registry.sessions[sessionKey]

@@ -99,8 +99,12 @@ func (e *Session) SelectPassiveIdle(objectID uint32, isPassive bool, now time.Ti
 }
 
 func isCombatIdleActorValid(actor Snapshot, owner ActionOwner, generation uint64) bool {
+	return !actor.IsIntroductionPending() && isCombatIdleOwnerValid(actor, owner, generation)
+}
+
+func isCombatIdleOwnerValid(actor Snapshot, owner ActionOwner, generation uint64) bool {
 	if !actor.IsPublished || actor.IsDefeated || actor.HitPoint <= 0 || actor.IsBirthPending ||
-		actor.Plan.IsIntroductionHidden || actor.IsIntroductionPending() || actor.IsTurtleActive {
+		actor.Plan.IsIntroductionHidden || actor.IsTurtleActive {
 		return false
 	}
 	if generation == 0 {
@@ -137,7 +141,10 @@ func (e *Session) MarkCombatIdleWindow(objectID uint32, owner ActionOwner, actio
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	actor, isFound := e.npcs[objectID]
-	if !isFound || !isCombatIdleActorValid(actor, owner, actionGeneration) {
+	// The first attack and entrance completion can produce on the same
+	// deadline. Register its recovery now, but keep behavior admission gated
+	// on the entrance publication committing.
+	if !isFound || !isCombatIdleOwnerValid(actor, owner, actionGeneration) {
 		return false
 	}
 	state := actor.combatIdle

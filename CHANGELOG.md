@@ -2,6 +2,8 @@
 
 ### 2026-11-11
 
+- #202 Let Herbipods and Isotronic Laser Units fire when their first attack shares a deadline with the end of their entrance.
+- #202 Keep Shielded Grenadiers in their grenade stance while heroes stay in range and in front, and synchronize shield facing on setup.
 - #201 Bound NPC behavior detour searches that can stall gameplay and exhaust the local connection queue.
 - #200 Reduce gameplay stalls around active horde fences by reusing NPC movement routes and skipping gate routes that cannot improve an existing path.
 - #200 Check inward horde gate contact while heroes are moving so they can enter without sending another movement command.
