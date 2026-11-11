@@ -164,22 +164,23 @@ func (e *Mesh) pathObstacles(path Path, planLayer uint8) []int {
 }
 
 type obstacleRoute struct {
-	mesh              *Mesh
-	options           PathOptions
-	nodes             []Vec3
-	paths             map[[2]int]Path
-	areEdgesExamined  map[[2]int]bool
-	obstacleIndexes   map[int]bool
-	heights           map[int]float32
-	areObstaclesAdded map[int]bool
-	areContactsAdded  map[int]bool
+	mesh                   *Mesh
+	options                PathOptions
+	nodes                  []Vec3
+	paths                  map[[2]int]Path
+	areEdgesExamined       map[[2]int]bool
+	obstacleIndexes        map[int]bool
+	heights                map[int]float32
+	areObstaclesAdded      map[int]bool
+	areContactsAdded       map[int]bool
+	remainingObstacleEdges *int
 }
 
 // CreatePath retains terrain corridors, then searches around authored collision
 // boxes when needed. Every candidate edge is itself a terrain path and is
 // checked against every enabled box. The overlay does not claim native
 // topology splitting.
-func (e *Mesh) walkingPath(start Vec3, goal Vec3, options PathOptions) (Path, error) {
+func (e *Mesh) walkingPath(start Vec3, goal Vec3, options PathOptions, remainingObstacleEdges *int) (Path, error) {
 	path, err := e.terrainPath(start, goal, options)
 	if err != nil {
 		return Path{}, fmt.Errorf("pathTerrain: %w", err)
@@ -188,13 +189,17 @@ func (e *Mesh) walkingPath(start Vec3, goal Vec3, options PathOptions) (Path, er
 	if len(indexes) == 0 {
 		return path, nil
 	}
+	if remainingObstacleEdges != nil && *remainingObstacleEdges == 0 {
+		return Path{}, errors.New("navigation obstacle search budget exhausted")
+	}
 	options.ComponentID = path.Start.ComponentID
 	options.IsComponentConstrained = true
 	route := obstacleRoute{
 		mesh: e, options: options, nodes: []Vec3{path.Start.Position, path.Goal.Position},
 		paths: make(map[[2]int]Path), areEdgesExamined: make(map[[2]int]bool),
 		obstacleIndexes: make(map[int]bool), heights: make(map[int]float32), areObstaclesAdded: make(map[int]bool),
-		areContactsAdded: make(map[int]bool),
+		areContactsAdded:       make(map[int]bool),
+		remainingObstacleEdges: remainingObstacleEdges,
 	}
 	route.recordObstacles(path, indexes)
 	for pass := 0; pass < len(e.obstacles); pass++ {
@@ -205,6 +210,9 @@ func (e *Mesh) walkingPath(start Vec3, goal Vec3, options PathOptions) (Path, er
 		if isFound {
 			result.Start, result.Goal = path.Start, path.Goal
 			return result, nil
+		}
+		if remainingObstacleEdges != nil && *remainingObstacleEdges == 0 {
+			return Path{}, errors.New("navigation obstacle search budget exhausted")
 		}
 	}
 	// A box corner can lie outside a narrow authored walkway. Search nearby
@@ -219,6 +227,9 @@ func (e *Mesh) walkingPath(start Vec3, goal Vec3, options PathOptions) (Path, er
 		if isFound {
 			result.Start, result.Goal = path.Start, path.Goal
 			return result, nil
+		}
+		if remainingObstacleEdges != nil && *remainingObstacleEdges == 0 {
+			return Path{}, errors.New("navigation obstacle search budget exhausted")
 		}
 	}
 	return Path{}, errors.New("navigation obstacle route unavailable")
@@ -327,6 +338,12 @@ func (e *obstacleRoute) edge(source int, target int) (Path, bool) {
 	if e.areEdgesExamined[key] {
 		path, isFound := e.paths[key]
 		return path, isFound
+	}
+	if e.remainingObstacleEdges != nil {
+		if *e.remainingObstacleEdges == 0 {
+			return Path{}, false
+		}
+		(*e.remainingObstacleEdges)--
 	}
 	e.areEdgesExamined[key] = true
 	path, err := e.mesh.terrainPath(e.nodes[source], e.nodes[target], e.options)

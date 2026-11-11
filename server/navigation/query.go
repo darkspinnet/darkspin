@@ -30,6 +30,7 @@ var ErrProjectionUnavailable = errors.New("navigation projection unavailable")
 type PathOptions struct {
 	ProjectionOptions
 	MaxVisitedPolygon  int
+	MaxObstacleEdges   int // Zero leaves obstacle detours uncapped.
 	IsTraversalAllowed bool
 }
 

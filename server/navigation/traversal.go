@@ -73,7 +73,12 @@ func (e *Mesh) TopologyRevision() uint64 {
 // CreatePath permits authored jumps only for callers that explicitly consume
 // Traversals. Forced and direct movement retain walk-only paths by default.
 func (e *Mesh) CreatePath(start Vec3, goal Vec3, options PathOptions) (Path, error) {
-	best, walkErr := e.walkingPath(start, goal, options)
+	var remainingObstacleEdges *int
+	if options.MaxObstacleEdges > 0 {
+		edgeLimit := options.MaxObstacleEdges
+		remainingObstacleEdges = &edgeLimit
+	}
+	best, walkErr := e.walkingPath(start, goal, options, remainingObstacleEdges)
 	if !options.IsTraversalAllowed || e == nil {
 		if walkErr != nil {
 			return Path{}, fmt.Errorf("createWalk: %w", walkErr)
@@ -85,6 +90,9 @@ func (e *Mesh) CreatePath(start Vec3, goal Vec3, options PathOptions) (Path, err
 		bestDistance = best.Distance()
 	}
 	for _, link := range e.links {
+		if remainingObstacleEdges != nil && *remainingObstacleEdges == 0 {
+			break
+		}
 		if !link.isEnabled.Load() {
 			continue
 		}
@@ -102,7 +110,7 @@ func (e *Mesh) CreatePath(start Vec3, goal Vec3, options PathOptions) (Path, err
 			continue
 		}
 		entry := link.approach(start)
-		approach, err := e.walkingPath(start, entry, options)
+		approach, err := e.walkingPath(start, entry, options, remainingObstacleEdges)
 		if err != nil {
 			continue // An authored source must have a real unobstructed approach.
 		}
@@ -115,7 +123,7 @@ func (e *Mesh) CreatePath(start Vec3, goal Vec3, options PathOptions) (Path, err
 		}
 		departureOptions := options
 		departureOptions.IsComponentConstrained = false
-		departure, err := e.walkingPath(link.Destination, goal, departureOptions)
+		departure, err := e.walkingPath(link.Destination, goal, departureOptions, remainingObstacleEdges)
 		if err != nil {
 			continue
 		}

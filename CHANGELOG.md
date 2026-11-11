@@ -2,6 +2,7 @@
 
 ### 2026-11-11
 
+- #201 Bound NPC behavior detour searches that can stall gameplay and exhaust the local connection queue.
 - #200 Reduce gameplay stalls around active horde fences by reusing NPC movement routes and skipping gate routes that cannot improve an existing path.
 - #200 Check inward horde gate contact while heroes are moving so they can enter without sending another movement command.
 - #200 Restore Piercing Triped's ranked Thorn Nova projectile ring from build-103 ability data.

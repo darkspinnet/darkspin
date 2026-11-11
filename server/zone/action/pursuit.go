@@ -14,6 +14,7 @@ import (
 const maximumVisitedPolygon = 2048
 const PursuitTimeout = 8 * time.Second
 const pursuitProjectionDistance = 12
+const behaviorObstacleEdgeLimit = 32
 
 // PlayerPursuitDestination retains the NPC center for ordinary pursuit. When
 // that center is inside a collision blocker, approach a reachable contact in
@@ -287,8 +288,13 @@ func advancePathStep(
 		return PursuitPathStep{}, errors.New("campaign pursuit layer unavailable")
 	}
 	topologyRevision := mesh.TopologyRevision()
+	maxObstacleEdges := 0
 	if route == nil {
 		route = &PursuitRoute{}
+	} else {
+		// A discretionary behavior can finish when it cannot find a short
+		// detour. Its route query runs while gameplay commands wait on the lock.
+		maxObstacleEdges = behaviorObstacleEdgeLimit
 	}
 	if route.mesh != mesh || route.source != source || route.target != target ||
 		route.planLayer != planLayer || route.topologyRevision != topologyRevision {
@@ -299,6 +305,7 @@ func advancePathStep(
 					PlanLayer: planLayer, MaxDistance: pursuitProjectionDistance,
 				},
 				MaxVisitedPolygon:  maximumVisitedPolygon,
+				MaxObstacleEdges:   maxObstacleEdges,
 				IsTraversalAllowed: isTraversalAllowed,
 			},
 		)
