@@ -899,6 +899,8 @@
     "OAuth credential ready for": "OAuth учетные данные готовы к",
     "OFF — no rolling capture": "ВЫКЛ — без непрерывного захвата",
     "OPEN BUG FOLDER ↗": "ОТКРЫТЬ ПАПКУ С ОШИБКАМИ ↗",
+    "OPEN LOG FOLDER ↗": "",
+    "OPEN SNAPSHOT FOLDER ↗": "",
     "OPEN CONFIG": "ОТКРЫТЬ КОНФИГ",
     "OPEN STEAM INSTALL": "ОТКРЫТЬ STEAM УСТАНОВИТЬ",
     "OPENING ADDS PER ANCHOR": "ОТКРЫТИЕ ДОБАВЛЕНИЙ НА ЯКОРЬ",

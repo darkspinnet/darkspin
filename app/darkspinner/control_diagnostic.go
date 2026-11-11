@@ -119,27 +119,53 @@ func (e *App) DownloadRemoteControlDiagnostic(serverAddress, identity, kind, nam
 	if response.ContentLength > diagnostic.MaxDownloadSize {
 		return RemoteControlDiagnosticDownload{}, errors.New("controlPanel:diagnostic_too_large")
 	}
-	logDirectory, reportDirectory, err := e.reportPaths()
+	directory, err := e.controlDiagnosticDirectory(address)
 	if err != nil {
 		return RemoteControlDiagnosticDownload{}, fmt.Errorf("diagnosticDirectory: %w", err)
 	}
-	if logDirectory == "" || reportDirectory == "" {
-		return RemoteControlDiagnosticDownload{}, errors.New("launcher report directories are unavailable")
-	}
-	directory := filepath.Join(filepath.Dir(reportDirectory), "downloads", reportSlug(address))
 	err = os.MkdirAll(directory, 0o700)
 	if err != nil {
 		return RemoteControlDiagnosticDownload{}, fmt.Errorf("diagnosticMkdir: %w", err)
 	}
 	// Keep downloads together by server. Duplicate filenames receive a suffix
 	// without overwriting a previously downloaded report.
-	filename := "_" + strings.Map(diagnosticFilenameRune, path.Base(name))
+	filename := strings.TrimRight(strings.Map(diagnosticFilenameRune, path.Base(name)), " .")
+	if filename == "" || !filepath.IsLocal(filename) {
+		filename = "download-" + filename
+	}
 	destination := filepath.Join(directory, filename)
 	destination, err = saveDiagnosticDownload(response, destination)
 	if err != nil {
 		return RemoteControlDiagnosticDownload{}, fmt.Errorf("diagnosticSave: %w", err)
 	}
 	return RemoteControlDiagnosticDownload{Path: destination}, nil
+}
+
+func (e *App) OpenControlDiagnosticFolder(serverAddress string) error {
+	address, err := normalizeRemoteServerAddress(serverAddress)
+	if err != nil {
+		return fmt.Errorf("diagnosticAddress: %w", err)
+	}
+	directory, err := e.controlDiagnosticDirectory(address)
+	if err != nil {
+		return fmt.Errorf("diagnosticDirectory: %w", err)
+	}
+	err = revealReportDirectory(directory)
+	if err != nil {
+		return fmt.Errorf("diagnosticReveal: %w", err)
+	}
+	return nil
+}
+
+func (e *App) controlDiagnosticDirectory(address string) (string, error) {
+	logDirectory, reportDirectory, err := e.reportPaths()
+	if err != nil {
+		return "", fmt.Errorf("reportPaths: %w", err)
+	}
+	if logDirectory == "" || reportDirectory == "" {
+		return "", errors.New("launcher report directories are unavailable")
+	}
+	return filepath.Join(filepath.Dir(reportDirectory), "downloads", reportSlug(address)), nil
 }
 
 func diagnosticFilenameRune(character rune) rune {

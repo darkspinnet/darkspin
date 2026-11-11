@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { DialogTitle } from '@/components/ui/dialog'
 import LauncherDialog from './LauncherDialog.vue'
-import { ListRemoteControlDiagnostics, DownloadRemoteControlDiagnostic, DeleteRemoteControlDiagnostic, OpenReportFolder } from '../platform'
+import { ListRemoteControlDiagnostics, DownloadRemoteControlDiagnostic, DeleteRemoteControlDiagnostic, OpenControlDiagnosticFolder } from '../platform'
 import { panelError } from '../control_panel'
 import { formatControlTime } from '../control_time'
 
@@ -19,6 +19,11 @@ const isLoaded = ref(false)
 const pendingFile = ref(null)
 const error = ref('')
 const savedPath = ref('')
+const folderLabels = {
+  log: 'OPEN LOG FOLDER ↗',
+  bug: 'OPEN BUG FOLDER ↗',
+  snapshot: 'OPEN SNAPSHOT FOLDER ↗',
+}
 const operations = computed(() => props.panel?.server?.supported_operations || [])
 let generation = 0
 let isDisposed = false
@@ -103,11 +108,11 @@ async function deleteFile() {
   finally { if (isCurrent(current)) isBusy.value = false }
 }
 async function openFolder() {
-  if (isBusy.value) return
+  if (isBusy.value || !savedPath.value) return
   const current = generation
   isBusy.value = true
   error.value = ''
-  try { await OpenReportFolder() }
+  try { await OpenControlDiagnosticFolder(props.profile.serverAddress) }
   catch (failure) { if (isCurrent(current)) failed(failure) }
   finally { if (isCurrent(current)) isBusy.value = false }
 }
@@ -130,7 +135,7 @@ void read()
       <TabsContent :value="kind" class="diagnostic-files">
         <p v-if="error && !pendingFile" role="alert">{{ $t(error) }}</p>
         <p v-if="isBusy" role="status">{{ $t('LOADING...') }}</p>
-        <div v-if="savedPath" class="saved-file" role="status"><p>{{ $t('Saved to {0}', [savedPath]) }}</p><Button variant="outline" :disabled="isBusy" @click="openFolder">{{ $t('OPEN BUG FOLDER ↗') }}</Button></div>
+        <div v-if="savedPath" class="saved-file" role="status"><p>{{ $t('Saved to {0}', [savedPath]) }}</p><Button variant="outline" :disabled="isBusy" @click="openFolder">{{ $t(folderLabels[kind]) }}</Button></div>
         <div v-if="files.length" class="table-scroll"><table>
           <thead><tr><th>{{ $t('NAME') }}</th><th>{{ $t('SIZE (BYTES)') }}</th><th>{{ $t('MODIFIED (LOCAL)') }}</th><th>{{ $t('ACTION') }}</th></tr></thead>
           <tbody><tr v-for="file in files" :key="file.name">

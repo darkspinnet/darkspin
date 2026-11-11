@@ -77,6 +77,7 @@ export const CloseRemoteControlPanel = () => controlPanelCall('CloseRemoteContro
 export const ListRemoteControlUsers = (...args) => controlPanelCall('ListRemoteControlUsers', ...args)
 export const ListRemoteControlDiagnostics = (...args) => controlPanelCall('ListRemoteControlDiagnostics', ...args)
 export const DownloadRemoteControlDiagnostic = (...args) => controlPanelCall('DownloadRemoteControlDiagnostic', ...args)
+export const OpenControlDiagnosticFolder = serverAddress => controlPanelCall('OpenControlDiagnosticFolder', serverAddress)
 export const DeleteRemoteControlDiagnostic = (...args) => controlPanelCall('DeleteRemoteControlDiagnostic', ...args)
 export const ListRemoteControlHistory = (...args) => controlPanelCall('ListRemoteControlHistory', ...args)
 export const FilterRemoteControlHistory = (...args) => controlPanelCall('FilterRemoteControlHistory', ...args)

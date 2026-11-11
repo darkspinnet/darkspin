@@ -231,6 +231,7 @@ func launcherMethods(app *App) map[string]any {
 		"ListRemoteControlUsers":             app.ListRemoteControlUsers,
 		"ListRemoteControlDiagnostics":       app.ListRemoteControlDiagnostics,
 		"DownloadRemoteControlDiagnostic":    app.DownloadRemoteControlDiagnostic,
+		"OpenControlDiagnosticFolder":        app.OpenControlDiagnosticFolder,
 		"DeleteRemoteControlDiagnostic":      app.DeleteRemoteControlDiagnostic,
 		"ListRemoteControlHistory":           app.ListRemoteControlHistory,
 		"FilterRemoteControlHistory":         app.FilterRemoteControlHistory,

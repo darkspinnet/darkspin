@@ -2,6 +2,7 @@
 
 ### 2026-11-11
 
+- Open the selected server’s download folder from the Admin Panel’s Log, Bug, and Snapshot tabs and save diagnostic files without a leading underscore.
 - #203 Use ordinary movement stops when NPCs finish walking or idle movement to reduce visible teleport snaps.
 - #203 Give destructible DNA drops a nearby landing outside the hero’s pickup radius when terrain allows.
 - #203 Let Char’s Fire Tempest pet look for targets again after an idle interval.

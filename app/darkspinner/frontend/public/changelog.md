@@ -2,6 +2,12 @@
 
 ### 2026-11-11
 
+- [#203](https://github.com/darkspinnet/darkspin/issues/203) Use ordinary movement stops when NPCs finish walking or idle movement to reduce visible teleport snaps.
+- [#203](https://github.com/darkspinnet/darkspin/issues/203) Give destructible DNA drops a nearby landing outside the hero’s pickup radius when terrain allows.
+- [#203](https://github.com/darkspinnet/darkspin/issues/203) Let Char’s Fire Tempest pet look for targets again after an idle interval.
+- [#202](https://github.com/darkspinnet/darkspin/issues/202) Let Herbipods and Isotronic Laser Units fire when their first attack shares a deadline with the end of their entrance.
+- [#202](https://github.com/darkspinnet/darkspin/issues/202) Keep Shielded Grenadiers in their grenade stance while heroes stay in range and in front, and synchronize shield facing on setup.
+- [#201](https://github.com/darkspinnet/darkspin/issues/201) Bound NPC behavior detour searches that can stall gameplay and exhaust the local connection queue.
 - [#200](https://github.com/darkspinnet/darkspin/issues/200) Reduce gameplay stalls around active horde fences by reusing NPC movement routes and skipping gate routes that cannot improve an existing path.
 - [#200](https://github.com/darkspinnet/darkspin/issues/200) Check inward horde gate contact while heroes are moving so they can enter without sending another movement command.
 - [#200](https://github.com/darkspinnet/darkspin/issues/200) Restore Piercing Triped's ranked Thorn Nova projectile ring from build-103 ability data.
