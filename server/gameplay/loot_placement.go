@@ -4,10 +4,55 @@ import (
 	"math"
 
 	"github.com/darkspinnet/darkspin/server/game"
+	"github.com/darkspinnet/darkspin/server/navigation"
 	"github.com/darkspinnet/darkspin/server/sim"
 	zoneinteract "github.com/darkspinnet/darkspin/server/zone/interact"
 	zoneloot "github.com/darkspinnet/darkspin/server/zone/loot"
+	zonenavigation "github.com/darkspinnet/darkspin/server/zone/navigation"
 )
+
+func (e *gameplayPeerSession) fixtureDNADropDestination(source sim.Position, destination sim.Position, clearance float32) sim.Position {
+	player := navigation.Vec3(e.playerPosition)
+	if float32Hypot(destination.X-player.X, destination.Y-player.Y) > campaignDNAPickupRadius {
+		return destination
+	}
+	mesh := e.zone.Navigation()
+	if mesh == nil {
+		return destination
+	}
+	layer, isLayerFound := mesh.SelectLayerForMode(campaignSecurityBlitzFootprintFallback, uint8(e.binding.Mode))
+	if !isLayerFound {
+		return destination
+	}
+	options := navigation.ProjectionOptions{PlanLayer: layer, MaxDistance: zonenavigation.ProjectionDistance}
+	playerProjection, err := mesh.Project(player, options)
+	if err != nil {
+		return destination
+	}
+	options.ComponentID = playerProjection.ComponentID
+	options.IsComponentConstrained = true
+	options.MaxDistance = 1
+	// Try the far side of the breakable and then both sides of it. Keep the
+	// original reachable landing when scenery blocks every alternate.
+	toward := campaignDropDestination(source, e.playerPosition)
+	radius := max(clearance+1, campaignDNAPickupRadius+1)
+	dx := (toward.X - source.X) * radius / 2
+	dy := (toward.Y - source.Y) * radius / 2
+	for _, offset := range [3]navigation.Vec3{{X: -dx, Y: -dy}, {X: -dy, Y: dx}, {X: dy, Y: -dx}} {
+		candidate := navigation.Vec3{X: source.X + offset.X, Y: source.Y + offset.Y, Z: source.Z}
+		projection, projectErr := mesh.Project(candidate, options)
+		if projectErr != nil {
+			continue
+		}
+		land := projection.Position
+		if float32Hypot(land.X-player.X, land.Y-player.Y) <= campaignDNAPickupRadius ||
+			float32Hypot(land.X-source.X, land.Y-source.Y) < clearance {
+			continue
+		}
+		return sim.Position(land)
+	}
+	return destination
+}
 
 // Sample around the source for every drop. A fixed point toward the player
 // can land under the hero, and reusing it piles up equipment and catalysts.

@@ -1625,6 +1625,9 @@ func (s *gameplayPeerSession) spawnCampaignNPCDNA(
 		clearance = enemy.Plan.ActorFootprintRadius() + s.deployedCampaignNavigationRadius()
 	}
 	destination := s.reachableCampaignDropDestinationWithClearance(source, clearance)
+	if enemy.Plan.IsFixture {
+		destination = s.fixtureDNADropDestination(source, destination, clearance)
+	}
 	objectID, err := s.reserveCampaignObjectID()
 	if err != nil {
 		reservation.Release()

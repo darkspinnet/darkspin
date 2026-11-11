@@ -686,7 +686,7 @@ func (r campaignNPCPursuitRuntime) produceStep(
 				stopPackets = [][]byte{stopPacket}
 			}
 		default:
-			stopPackets, stopErr = npcraknet.StopAtPose(objectID, step.Position, enemy.Facing)
+			stopPackets, stopErr = npcraknet.MovementStop(objectID, step.Position)
 		}
 		if stopErr != nil {
 			npcSession.ReleaseActionGeneration(objectID, owner, actionGeneration)

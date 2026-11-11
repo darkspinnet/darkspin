@@ -2,6 +2,9 @@
 
 ### 2026-11-11
 
+- #203 Use ordinary movement stops when NPCs finish walking or idle movement to reduce visible teleport snaps.
+- #203 Give destructible DNA drops a nearby landing outside the hero’s pickup radius when terrain allows.
+- #203 Let Char’s Fire Tempest pet look for targets again after an idle interval.
 - #202 Let Herbipods and Isotronic Laser Units fire when their first attack shares a deadline with the end of their entrance.
 - #202 Keep Shielded Grenadiers in their grenade stance while heroes stay in range and in front, and synchronize shield facing on setup.
 - #201 Bound NPC behavior detour searches that can stall gameplay and exhaust the local connection queue.

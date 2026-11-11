@@ -121,7 +121,6 @@ func (e *campaignNPCBehaviorRun) moveLocked(member *gameplayPeerSession,
 		e.route = zoneaction.PursuitRoute{}
 		e.isWaypointPublished = false
 		e.isMoving = true
-		e.wasMoving = true
 	}
 	if behavior == "nbehavior_strafe" || behavior == "nbehavior_smallstrafe" {
 		stopDistance = e.strafePlan.NearGoalDistance
@@ -159,7 +158,13 @@ func (e *campaignNPCBehaviorRun) moveLocked(member *gameplayPeerSession,
 	}
 	if step.IsBlocked || step.IsInRange {
 		e.isMoving = false
-		stops, stopErr := npcraknet.StopAtPose(source.Plan.ObjectID, step.Position, source.Facing)
+		var stops [][]byte
+		var stopErr error
+		if step.IsBlocked {
+			stops, stopErr = npcraknet.StopAtPose(source.Plan.ObjectID, step.Position, source.Facing)
+		} else {
+			stops, stopErr = npcraknet.MovementStop(source.Plan.ObjectID, step.Position)
+		}
 		if stopErr != nil {
 			return nil, false, fmt.Errorf("behaviorArrivalStop: %w", stopErr)
 		}
@@ -321,11 +326,10 @@ func (e *campaignNPCBehaviorRun) movementDestinationLocked(member *gameplayPeerS
 func (e *campaignNPCBehaviorRun) strafeIdleLocked(member *gameplayPeerSession,
 	source zonenpc.Snapshot, targetObjectID uint32, targetPosition game.Vec3,
 ) ([][]byte, error) {
-	packets, err := npcraknet.StopAtPose(source.Plan.ObjectID, source.Plan.Position, source.Facing)
+	packets, err := npcraknet.MovementStop(source.Plan.ObjectID, source.Plan.Position)
 	if err != nil {
 		return nil, fmt.Errorf("strafeIdleStop: %w", err)
 	}
-	e.wasMoving = true
 	turns, err := e.faceMovementTargetLocked(member, source, targetObjectID, targetPosition)
 	if err != nil {
 		return nil, fmt.Errorf("strafeIdleFace: %w", err)

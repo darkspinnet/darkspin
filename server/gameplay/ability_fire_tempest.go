@@ -133,13 +133,13 @@ func (e fireTempestStep) monitor() ([][]byte, error) {
 	}
 	ownerPosition := game.Vec3(peerSession.playerPosition)
 	if pet.Position.Sub(ownerPosition).Length() <= 50 {
-		isAttackResumeNeeded := e.run.isAttackResumeNeeded
+		isAttackNeeded := e.run.attack == nil && !e.run.runtime.now().Before(pet.CooldownEnd)
 		e.run.runtime.registry.mutex.Unlock()
 		err := e.scheduleMonitor()
 		if err != nil {
 			return nil, fmt.Errorf("fireTempestMonitorContinue: %w", err)
 		}
-		if isAttackResumeNeeded {
+		if isAttackNeeded {
 			packets, attackErr := e.run.runtime.damage.startFireTempestPetAttack(
 				e.run.packet, e.run.sessionKey, e.run.generation,
 				e.timestamp+uint64(e.deadline/time.Millisecond),

@@ -28,7 +28,6 @@ type campaignNPCBehaviorRun struct {
 	destination          game.Vec3
 	route                zoneaction.PursuitRoute
 	isMoving             bool
-	wasMoving            bool
 	isTurnChecked        bool
 	pauseUntil           time.Time
 	movementBuff         float32
@@ -334,8 +333,8 @@ func (e *campaignNPCBehaviorRun) finishLocked(member *gameplayPeerSession) ([][]
 			packets = append(packets, attributePacket)
 		}
 	}
-	if isStopAllowed && (e.wasMoving || e.isMoving) {
-		stopPackets, err := npcraknet.StopAtPose(e.run.ObjectID, source.Plan.Position, source.Facing)
+	if isStopAllowed && e.isMoving {
+		stopPackets, err := npcraknet.MovementStop(e.run.ObjectID, source.Plan.Position)
 		if err != nil {
 			return nil, fmt.Errorf("behaviorStop: %w", err)
 		}
