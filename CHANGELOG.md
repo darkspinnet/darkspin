@@ -2,6 +2,7 @@
 
 ### 2026-11-13
 
+- #207 Let Char’s Fire Tempest Basic hit a selected enemy that moves away from the cursor before impact.
 - #206 Keep Orion’s Lightspeed Haste stacks on one modifier and update active movement when his health-based speed changes.
 - #206 Synchronize Titan’s attack stop with the controlling client and resolve his basic attack from his position at impact.
 - #206 Resolve Ray Killer projectile hits as the rays travel.

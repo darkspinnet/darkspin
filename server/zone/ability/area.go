@@ -324,9 +324,27 @@ func PlanCursorAreaWithAdmission(
 	if err != nil {
 		return AreaPlan{}, fmt.Errorf("cursorAreaDamage: %w", err)
 	}
-	target := cursorAreaTargets(
-		enemies, sourceObjectID, targetObjectID, center, projected.Radius,
-	)
+	isSingleTarget := projected.Name == "FireTempestBasic"
+	var target []zonenpc.Snapshot
+	if isSingleTarget {
+		// Build 103 Fire Tempest Basic checks the selected hostile first. Its
+		// cursor radius is only used to find a fallback when that target
+		// is gone, and that fallback takes at most one hit.
+		selected, isFound := enemies.NPC(targetObjectID)
+		if isFound && IsHostileTarget(selected) {
+			target = []zonenpc.Snapshot{selected}
+		} else {
+			for _, candidate := range enemies.LiveSnapshots() {
+				if candidate.Plan.ObjectID != sourceObjectID && IsHostileTarget(candidate) &&
+					positionDistance(center, candidate.Plan.Position) < projected.Radius+candidate.Plan.SpatialRadius() {
+					target = append(target, candidate)
+					break
+				}
+			}
+		}
+	} else {
+		target = cursorAreaTargets(enemies, sourceObjectID, targetObjectID, center, projected.Radius)
+	}
 	targetDamage := make(map[uint32]game.DamageRange)
 	if projected.SecondaryMinimumDamage > 0 && projected.SecondaryMaximumDamage > 0 {
 		secondaryDefinition := projected
@@ -347,7 +365,7 @@ func PlanCursorAreaWithAdmission(
 	return AreaPlan{
 		SourceObjectID: sourceObjectID, AbilityID: util.HashID(projected.Name),
 		Definition: projected, Damage: damage, Center: center, Target: target,
-		TargetDamage: targetDamage,
+		TargetDamage: targetDamage, IsSingleTarget: isSingleTarget,
 	}, nil
 }
 
