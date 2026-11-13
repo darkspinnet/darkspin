@@ -51,7 +51,10 @@ func newCampaignNPCProjectileFlight(
 }
 
 func isCampaignNPCProjectileSampled(profile zonenpc.ActionProfile) bool {
-	if profile.AbilityName == "ZelemSpecialThree" || profile.AbilityName == "ZelemMarkSeeker" {
+	switch profile.AbilityName {
+	case "ZelemSpecialThree", "ZelemMarkSeeker", "CryosElementalSpecialThree":
+		// Ray Killer's piercing shots apply contacts as the beam travels.
+		// Sweeping the entire ray at expiry uses the target's later position.
 		return true
 	}
 	if (profile.IsHomingProjectile() && profile.AbilityName != "CitadelSpecificFour_Bolt" &&

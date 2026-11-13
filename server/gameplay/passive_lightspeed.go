@@ -44,7 +44,7 @@ func startLightspeedPassive(
 	}
 	peerSession.lightspeedPassiveEpoch++
 	epoch := peerSession.lightspeedPassiveEpoch
-	packets, err := peerSession.updateLightspeedPassiveEffect(runtime.effectPool)
+	packets, err := peerSession.updateLightspeedPassiveEffect(runtime.effectPool, runtime.registry, runtime.npc.now())
 	if err != nil {
 		runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("lightspeedPassiveStart: %w", err)
@@ -75,7 +75,7 @@ func (e lightspeedPassiveStep) produce() ([][]byte, error) {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	packets, err := peerSession.updateLightspeedPassiveEffect(e.runtime.effectPool)
+	packets, err := peerSession.updateLightspeedPassiveEffect(e.runtime.effectPool, e.runtime.registry, e.runtime.npc.now())
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()
 		return nil, fmt.Errorf("lightspeedPassiveUpdate: %w", err)
@@ -104,7 +104,7 @@ func (e gameplayPeerSession) isLightspeedPassiveActive() bool {
 }
 
 func (e *gameplayPeerSession) updateLightspeedPassiveEffect(
-	effectPool *attachedEffectPool,
+	effectPool *attachedEffectPool, registry *gameplaySessionRegistry, now time.Time,
 ) ([][]byte, error) {
 	if e == nil || effectPool == nil {
 		return nil, nil
@@ -120,6 +120,18 @@ func (e *gameplayPeerSession) updateLightspeedPassiveEffect(
 			return nil, fmt.Errorf("lightspeedAttributes: %w", err)
 		}
 		packets = append(packets, attributePacket)
+		if e.playerMotion != nil && e.heroCharge == nil && e.heroQuantumBlink == nil &&
+			!e.isEnemyFearActive(now) && !e.isEnemyRootActive(now) && !e.isSleepingCloudActive(now) {
+			movement := e.playerMotion.Snapshot().Movement()
+			increase := max(float32(-0.9), registry.passiveMovementIncrease(*e)+e.enemyMovementSpeedBuff())
+			speed := zonePlayerMoveSpeed * (1 + increase)
+			if movement.IsMoving && movement.Speed != speed {
+				err = e.playerMotion.SetSpeed(now, speed)
+				if err != nil {
+					return nil, fmt.Errorf("lightspeedMotion: %w", err)
+				}
+			}
+		}
 		healthRatio := e.passiveHealthRatio(e.deployedCreatureIndex)
 		tier = min(uint8(len(lightspeedPassiveEffect)),
 			uint8(math.Floor(float64(healthRatio*float32(len(lightspeedPassiveEffect)))))+1)

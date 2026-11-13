@@ -1543,12 +1543,17 @@ func (r campaignMovementCommandRuntime) rejectActiveAttackMovement(
 	command raknet.ActionCommandData, playerPosition raknet.Vector3,
 	basicSyncStamp uint8, attackPose retainedAttackPose,
 ) ([][]byte, error) {
-	response, err := marshalZonePlayerStop(command.Common.ObjectID, playerPosition)
+	var response [][]byte
+	var err error
 	if attackPose.isActive {
 		response, err = marshalZonePlayerAttackPose(
 			command.Common.ObjectID, playerPosition,
 			attackPose.facing, attackPose.targetPosition,
 		)
+	} else {
+		var stopPacket []byte
+		stopPacket, err = marshalReflectedPlayerStop(command.Common.ObjectID, playerPosition)
+		response = [][]byte{stopPacket}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("moveCampaignAttackMarshal: %w", err)

@@ -1400,6 +1400,9 @@ func (e campaignAreaHitStep) produce() ([][]byte, error) {
 			e.sourcePosition, e.center, e.creature, e.definition, e.admissionRange,
 		)
 	} else if e.definition.Kind == sim.AbilityKindPointBlank {
+		if e.definition.Name == "TCShieldedSentinelBasic" {
+			e.sourcePosition = game.Vec3(current.playerPosition)
+		}
 		if e.definition.BonusDamageMultiplier > 0 {
 			plan, err = zoneability.ResolvePointBlankBasicHit(
 				enemies, e.command.Common.ObjectID,
@@ -1967,6 +1970,16 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 		return nil, fmt.Errorf("campaignAreaBasicStop: %w", err)
 	}
 	playerMotionRevision := peerSession.playerMotionRevision()
+	if definition.Name == "TCShieldedSentinelBasic" && previousPlayerMotion.Movement().IsMoving {
+		stopPacket, stopErr := marshalReflectedPlayerStop(command.Common.ObjectID, peerSession.playerPosition)
+		if stopErr != nil {
+			peerSession.basicSequenceSession().Restore(previousBasicSequence, basicSequenceRevision)
+			peerSession.restorePlayerMotion(previousPlayerMotion, playerMotionRevision)
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("titanBasicStop: %w", stopErr)
+		}
+		posePackets = append(posePackets, stopPacket)
+	}
 	muzzleEffectName := areaPlan.Definition.MuzzleEffectName
 	if definition.Name == "TCShieldedSentinelSupport" || definition.Name == "MissileTempestSupport" || definition.Name == "SpacetimeRandom3" {
 		// Its Lua emits the object-only muzzle after waiting for the hit.

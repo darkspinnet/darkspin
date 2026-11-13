@@ -37,13 +37,13 @@ func (e campaignNPCProjectileStep) samplePiercingFlightLocked(
 	if err != nil {
 		return nil, statDelta, fmt.Errorf("piercingTravel: %w", err)
 	}
+	var terminalPackets [][]byte
 	if travel.IsResolved {
-		packets, resolveErr := schedule.run.ResolveCollision(context.Background(), e.deadline,
+		terminalPackets, err = schedule.run.ResolveCollision(context.Background(), e.deadline,
 			false, false, 0, schedule.result.Damage, schedule.result.IsCritical, travel.Position, snapshot.Direction)
-		if resolveErr != nil {
-			return nil, statDelta, fmt.Errorf("piercingExpire: %w", resolveErr)
+		if err != nil {
+			return nil, statDelta, fmt.Errorf("piercingExpire: %w", err)
 		}
-		return packets, statDelta, nil
 	}
 	remainingDistance := snapshot.RemainingDistance
 	for _, segment := range segments {
@@ -94,7 +94,7 @@ func (e campaignNPCProjectileStep) samplePiercingFlightLocked(
 		}
 		remainingDistance -= segment.Distance
 	}
-	return packets, statDelta, nil
+	return append(packets, terminalPackets...), statDelta, nil
 }
 
 func campaignNPCProjectileRangeEndpoint(

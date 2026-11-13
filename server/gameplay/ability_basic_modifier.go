@@ -137,9 +137,18 @@ func (e campaignDamageRuntime) applyBasicHitModifier(packet raknet.Packet, sessi
 	if kind == zonenpc.BasicModifierEnergyVulnerability {
 		record.EnergyDamageTakenIncrease = .1 * float32(state.StackCount)
 	}
-	createPacket, err := effectraknet.ModifierCreate(effectraknet.ModifierCreateRequest{SourceObjectID: record.SourceObjectID, TargetObjectID: key.targetID, ModifierID: record.GUID, InstanceID: record.InstanceID, StackCount: state.StackCount, Duration: record.Duration, Timestamp: timestamp})
+	var modifierPacket []byte
+	var err error
+	if previous != nil && kind == zonenpc.BasicModifierHaste {
+		modifierPacket, err = raknet.MarshalApplication(raknet.ModifierUpdatedMessage{
+			TargetID: key.targetID, InstanceID: record.InstanceID,
+			StartMilliseconds: int64(timestamp), StackCount: state.StackCount,
+		})
+	} else {
+		modifierPacket, err = effectraknet.ModifierCreate(effectraknet.ModifierCreateRequest{SourceObjectID: record.SourceObjectID, TargetObjectID: key.targetID, ModifierID: record.GUID, InstanceID: record.InstanceID, StackCount: state.StackCount, Duration: record.Duration, Timestamp: timestamp})
+	}
 	if err != nil {
-		return nil, fmt.Errorf("basicCreate: %w", err)
+		return nil, fmt.Errorf("basicPublish: %w", err)
 	}
 	if previous == nil {
 		err = effect.Put(record)
@@ -171,7 +180,7 @@ func (e campaignDamageRuntime) applyBasicHitModifier(packet raknet.Packet, sessi
 			return nil, fmt.Errorf("basicBurnDamage: %w", err)
 		}
 	}
-	packets = append(packets, createPacket)
+	packets = append(packets, modifierPacket)
 	if kind == zonenpc.BasicModifierPummel && now.Before(state.ActiveUntil) {
 		run.silence, err = newCampaignNPCModifierRun(e.npc.modifierPool)
 		if err != nil {

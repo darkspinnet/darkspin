@@ -2,6 +2,9 @@
 
 ### 2026-11-13
 
+- #206 Keep Orion’s Lightspeed Haste stacks on one modifier and update active movement when his health-based speed changes.
+- #206 Synchronize Titan’s attack stop with the controlling client and resolve his basic attack from his position at impact.
+- #206 Resolve Ray Killer projectile hits as the rays travel.
 - #205 Limit automatic Sync Snapshots to one capture per category per connection and 512 MiB of retained ZIPs.
 - #205 Keep destroyed Warp Totem wreckage solid for current players and late joiners.
 - #204 Fill the extra health capacity when Meditron’s Reconstruct applies Reinforced.

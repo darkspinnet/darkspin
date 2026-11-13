@@ -23,6 +23,23 @@ func marshalPlayerMovementCorrection(
 		orientation.Z == 0 && orientation.W == 0 {
 		orientation.W = 1
 	}
+	stopPacket, err := marshalReflectedPlayerStop(objectID, position)
+	if err != nil {
+		return nil, fmt.Errorf("correctionStop: %w", err)
+	}
+	placementPacket, err := raknet.MarshalApplication(raknet.ObjectTeleportMessage{
+		ObjectID: objectID, Position: position, Orientation: orientation,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("correctionPlacement: %w", err)
+	}
+	return [][]byte{stopPacket, placementPacket}, nil
+}
+
+func marshalReflectedPlayerStop(objectID uint32, position raknet.Vector3) ([]byte, error) {
+	if objectID == 0 || !isFiniteZonePosition(position) {
+		return nil, errors.New("invalid player stop")
+	}
 	goalFlags := uint32(0x20)
 	targetObjectID := uint32(0)
 	externalMotion := raknet.Vector3{}
@@ -37,15 +54,9 @@ func marshalPlayerMovementCorrection(
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("correctionStop: %w", err)
+		return nil, fmt.Errorf("reflectedStop: %w", err)
 	}
-	placementPacket, err := raknet.MarshalApplication(raknet.ObjectTeleportMessage{
-		ObjectID: objectID, Position: position, Orientation: orientation,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("correctionPlacement: %w", err)
-	}
-	return [][]byte{stopPacket, placementPacket}, nil
+	return stopPacket, nil
 }
 
 // An accepted stop can retain the server pose when navigation rejects the
