@@ -423,7 +423,7 @@ func campaignNPCDeathDefinition(
 		isFixture:           isFixture,
 		isBoss:              snapshot.Plan.IsBoss || isDestructor,
 		isRemnantRetained:   isNightmareVine || isGraviticRemnant || isVerdanthTotem || isWarpTotem || isCryosGeyser || isBossVent || isPipe || isScaldronRemnantRetained || replacementNoun != "",
-		isCollisionRetained: isGraviticRemnant || isBossVent,
+		isCollisionRetained: isGraviticRemnant || isBossVent || isWarpTotem,
 		isDeathAnimationSuppressed: isIllusion || isNightmareVine || isGraviticRemnant ||
 			isVerdanthTotem || isWarpTotem || isCryosGeyser || isBossVent || isNocturnaPlant || isToxicactusPlant || isStalagmite || isPipe || isScaldronPlant || replacementNoun != "",
 		ordinaryDeathAnimation: ordinaryDeathAnimation,

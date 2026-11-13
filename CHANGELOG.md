@@ -2,6 +2,8 @@
 
 ### 2026-11-13
 
+- #205 Limit automatic Sync Snapshots to one capture per category per connection and 512 MiB of retained ZIPs.
+- #205 Keep destroyed Warp Totem wreckage solid for current players and late joiners.
 - #204 Fill the extra health capacity when Meditron’s Reconstruct applies Reinforced.
 
 ### 2026-11-11

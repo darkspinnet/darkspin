@@ -26,6 +26,7 @@ type analysisReport struct {
 	SnapshotID                  string                      `json:"snapshot_id"`
 	CreatedAt                   time.Time                   `json:"created_at"`
 	Trigger                     string                      `json:"trigger"`
+	Category                    string                      `json:"category,omitempty"`
 	Context                     string                      `json:"context"`
 	LikelyCause                 string                      `json:"likely_cause"`
 	Confidence                  string                      `json:"confidence"`
@@ -263,7 +264,7 @@ func analyzeSnapshot(
 	}
 	report := analysisReport{
 		FormatVersion: 11, SnapshotID: id, CreatedAt: createdAt.UTC(),
-		Trigger: req.Trigger, Context: req.Context,
+		Trigger: req.Trigger, Context: req.Context, Category: req.Category,
 		TriggerObjectID: req.ObjectID,
 		Findings:        make([]analysisFinding, 0),
 		Metrics: analysisMetrics{

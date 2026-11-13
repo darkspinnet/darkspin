@@ -776,6 +776,7 @@ func New(options Options) (*Server, error) {
 		BufferDuration: time.Duration(snapshotBufferSecond) * time.Second,
 		Delay:          time.Duration(snapshotDelaySecond) * time.Second,
 		BuildVersion:   buildinfo.Version, Logger: logger,
+		StorageCapacity: storageCapacity,
 		ResolveUserName: func(userID int64) string {
 			user := userManager.UserByID(userID)
 			if user == nil {

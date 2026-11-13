@@ -59,7 +59,7 @@ func Remnants(snapshots []zonenpc.Snapshot) ([][]byte, error) {
 				ObjectID: snapshot.Plan.ObjectID, IsTargetable: false,
 			},
 			raknet.ObjectCollisionUpdateMessage{
-				ObjectID: snapshot.Plan.ObjectID, IsCollisionEnabled: !isGeyser && !isPipe && !isWarpTotem,
+				ObjectID: snapshot.Plan.ObjectID, IsCollisionEnabled: !isGeyser && !isPipe,
 			},
 		}
 		if graphicsState != 0 {

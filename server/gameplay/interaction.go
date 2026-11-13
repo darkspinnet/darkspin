@@ -1619,8 +1619,8 @@ func (s *gameplayPeerSession) spawnCampaignNPCDNA(
 		Z: enemy.Plan.Position.Z,
 	}
 	clearance := float32(0)
-	if zonenpc.IsGraviticRemnant(enemy.Plan) {
-		// These fixtures keep a solid foundation after death. A two-unit lob
+	if zonenpc.IsGraviticRemnant(enemy.Plan) || zonenpc.IsWarpTotem(enemy.Plan) {
+		// These fixtures keep solid wreckage after death. A two-unit lob
 		// lands inside their authored bounds, outside the hero's pickup reach.
 		clearance = enemy.Plan.ActorFootprintRadius() + s.deployedCampaignNavigationRadius()
 	}
