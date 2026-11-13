@@ -1,5 +1,9 @@
 # Changelog
 
+### 2026-11-13
+
+- #204 Fill the extra health capacity when Meditron’s Reconstruct applies Reinforced.
+
 ### 2026-11-11
 
 - Open the selected server’s download folder from the Admin Panel’s Log, Bug, and Snapshot tabs and save diagnostic files without a leading underscore.

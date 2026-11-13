@@ -366,7 +366,7 @@ func fieldMedicTargetResourcePackets(
 	if err != nil {
 		return nil, fmt.Errorf("fieldMedicCompanionMaximum: %w", err)
 	}
-	return [][]byte{healthPacket, attributePacket}, nil
+	return [][]byte{attributePacket, healthPacket}, nil
 }
 
 func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
@@ -403,10 +403,19 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 
 	packets := make([][]byte, 0, 3)
 	isHealthReplacement := false
+	refreshHitPoint := float32(0)
 	for instanceID, previous := range peerSession.fieldMedicHeroBuffs {
 		if previous == nil || previous.maximumHitPoint <= 0 ||
 			previous.targetObjectID != target.objectID {
 			continue
+		}
+		if target.isCompanion {
+			companion, isCompanionFound := peerSession.zone.Companion().Snapshot(target.objectID)
+			if isCompanionFound {
+				refreshHitPoint = companion.HitPoint
+			}
+		} else {
+			refreshHitPoint = peerSession.deployedHitPoint()
 		}
 		retiredPackets, err := previous.retire(&peerSession, r.modifierPool)
 		peerSession.queueCampaignPackets(retiredPackets)
@@ -423,7 +432,7 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 		isHealthReplacement = true
 	}
 
-	baseMaximumHitPoint := float32(0)
+	var baseMaximumHitPoint, previousHitPoint float32
 	if target.isCompanion {
 		companion, isCompanionFound :=
 			peerSession.zone.Companion().Snapshot(target.objectID)
@@ -432,9 +441,10 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 			return nil, nil
 		}
 		baseMaximumHitPoint = companion.MaximumHitPoint
+		previousHitPoint = companion.HitPoint
 	} else {
-		baseMaximumHitPoint, _ =
-			peerSession.characterResourceMaximum(target.creatureIndex)
+		baseMaximumHitPoint = peerSession.characterHitPointMaximum(target.creatureIndex)
+		previousHitPoint = peerSession.deployedHitPoint()
 	}
 	if baseMaximumHitPoint <= 0 {
 		baseMaximumHitPoint = campaignHeroResourceFallback
@@ -471,7 +481,7 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 		return nil, fmt.Errorf("fieldMedicHealthCreate: %w", err)
 	}
 	if target.isCompanion {
-		// The installed modifier's Tick supplies the operation and amount.
+		// The installed modifier's Activate supplies the operation and amount.
 		err = peerSession.zone.Companion().ApplyMaximumHitPointPercent(target.objectID, instanceID, healthContribution.Amount)
 	} else if peerSession.binding.Mode == game.ModeArena {
 		peerSession.arenaHitPointIncreases[target.creatureIndex] += maximumHitPoint
@@ -499,23 +509,6 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 		r.registry.sessions[target.sessionKey] = peerSession
 		return nil, fmt.Errorf("fieldMedicHealthInventory: %w", err)
 	}
-	if !target.isCompanion {
-		err = peerSession.syncZoneHero()
-	}
-	if err != nil {
-		rollbackErr := rollbackFieldMedicHeroBuff(&peerSession, run, r.modifierPool)
-		err = errors.Join(err, rollbackErr)
-		r.registry.sessions[target.sessionKey] = peerSession
-		return nil, fmt.Errorf("fieldMedicHealthSync: %w", err)
-	}
-	resourcePackets, err := fieldMedicTargetResourcePackets(peerSession, run)
-	if err != nil {
-		rollbackErr := rollbackFieldMedicHeroBuff(&peerSession, run, r.modifierPool)
-		err = errors.Join(err, rollbackErr)
-		r.registry.sessions[target.sessionKey] = peerSession
-		return nil, fmt.Errorf("fieldMedicHealthResource: %w", err)
-	}
-	r.registry.sessions[target.sessionKey] = peerSession
 	expiry := fieldMedicHeroBuffExpiry{runtime: r, run: run}
 	cancel, scheduleErr := scheduleFieldMedicExpiry(r, run.expiresAt, expiry.execute)
 	if scheduleErr == nil && cancel == nil {
@@ -528,6 +521,26 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 		return nil, fmt.Errorf("fieldMedicHealthSchedule: %w", errors.Join(scheduleErr, err))
 	}
 	run.cancel = cancel
+	if !target.isCompanion {
+		projectedMaximum = peerSession.characterHitPointMaximum(target.creatureIndex)
+	}
+	hitPoint := min(projectedMaximum, previousHitPoint+max(0, projectedMaximum-baseMaximumHitPoint))
+	if isHealthReplacement {
+		// Retirement may clamp health to the unbuffed maximum. Restore that
+		// temporary loss on refresh without granting the bonus a second time.
+		hitPoint = min(projectedMaximum, max(previousHitPoint, refreshHitPoint))
+	}
+	resourcePackets, err := applyFieldMedicSupportResources(&peerSession, run, hitPoint)
+	if err != nil {
+		restoreErr := setFieldMedicSupportHitPoint(&peerSession, run, previousHitPoint)
+		rollbackErr := rollbackFieldMedicHeroBuff(&peerSession, run, r.modifierPool)
+		if !run.isCompanion {
+			restoreErr = errors.Join(restoreErr, peerSession.syncZoneSquadCheckpoint())
+		}
+		r.registry.sessions[target.sessionKey] = peerSession
+		return nil, fmt.Errorf("fieldMedicHealthResource: %w", errors.Join(err, restoreErr, rollbackErr))
+	}
+	r.registry.sessions[target.sessionKey] = peerSession
 	if target.sessionKey != sourceSessionKey && peerSession.zone != nil {
 		if target.isCompanion {
 			peerSession.zone.PublishCompanionResourceTo(target.userID, target.generation, target.objectID)
@@ -549,6 +562,46 @@ func (r campaignAbilityCommandRuntime) applyFieldMedicSupportHealthBuff(
 		return nil, nil
 	}
 	return packets, nil
+}
+
+func applyFieldMedicSupportResources(peerSession *gameplayPeerSession, run *fieldMedicHeroBuffRun, hitPoint float32) ([][]byte, error) {
+	err := setFieldMedicSupportHitPoint(peerSession, run, hitPoint)
+	if err != nil {
+		return nil, fmt.Errorf("healthCommit: %w", err)
+	}
+	if !run.isCompanion {
+		err = peerSession.syncZoneHero()
+		if err != nil {
+			return nil, fmt.Errorf("healthSync: %w", err)
+		}
+		err = peerSession.syncZoneSquadCheckpoint()
+		if err != nil {
+			return nil, fmt.Errorf("healthCheckpoint: %w", err)
+		}
+	}
+	packets, err := fieldMedicTargetResourcePackets(*peerSession, run)
+	if err != nil {
+		return nil, fmt.Errorf("healthPackets: %w", err)
+	}
+	return packets, nil
+}
+
+func setFieldMedicSupportHitPoint(peerSession *gameplayPeerSession, run *fieldMedicHeroBuffRun, hitPoint float32) error {
+	if run.isCompanion {
+		_, _, err := peerSession.zone.Companion().SetHitPoint(run.targetObjectID, hitPoint)
+		if err != nil {
+			return fmt.Errorf("companionHealth: %w", err)
+		}
+		return nil
+	}
+	isGameOver, err := peerSession.squad.SetHitPoints(run.creatureIndex, hitPoint)
+	if err != nil {
+		return fmt.Errorf("squadHealth: %w", err)
+	}
+	if isGameOver {
+		return errors.New("field medic health unexpectedly ended the game")
+	}
+	return nil
 }
 
 func (e fieldMedicActiveSchedule) transferBuffsLocked(

@@ -39,6 +39,7 @@ func (e *fieldMedicHeroBuffRun) retire(peerSession *gameplayPeerSession, pool *m
 	if err != nil {
 		return nil, fmt.Errorf("heroDelete: %w", err)
 	}
+	isCapacityBuff := e.maximumHitPoint > 0
 	err = e.remove(peerSession)
 	if err != nil {
 		return nil, fmt.Errorf("heroRemove: %w", err)
@@ -63,6 +64,12 @@ func (e *fieldMedicHeroBuffRun) retire(peerSession *gameplayPeerSession, pool *m
 		syncErr := peerSession.syncZoneHero()
 		if syncErr != nil {
 			retirementErr = errors.Join(retirementErr, fmt.Errorf("heroSync: %w", syncErr))
+		}
+		if isCapacityBuff {
+			checkpointErr := peerSession.syncZoneSquadCheckpoint()
+			if checkpointErr != nil {
+				retirementErr = errors.Join(retirementErr, fmt.Errorf("heroCheckpoint: %w", checkpointErr))
+			}
 		}
 	}
 	if inventory := e.inventory(); inventory != nil {
@@ -248,6 +255,10 @@ func (e *gameplaySessionRegistry) queueFieldMedicRealmPacketsLocked(world *zone.
 func rollbackFieldMedicHeroBuff(peerSession *gameplayPeerSession, run *fieldMedicHeroBuffRun, pool *modifierPool) error {
 	run.mutex.Lock()
 	defer run.mutex.Unlock()
+	if run.cancel != nil {
+		run.cancel()
+		run.cancel = nil
+	}
 	removeErr := run.remove(peerSession)
 	inventory := run.inventory()
 	if inventory != nil {
