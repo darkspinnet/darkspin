@@ -2,6 +2,8 @@
 
 ### 2026-11-13
 
+- #209 Stop NPC pursuit when a hero enters Shadow Cloak and keep Ballistic Quadrakillers from turning during Virulent Vines.
+- #209 Keep destroyed Cryos Ecostabilizers solid for current players and late joiners.
 - #208 Make Cannonators close in for melee when their target is less than 8 units away and fire from 8 units or farther.
 - #207 Let Char’s Fire Tempest Basic hit a selected enemy that moves away from the cursor before impact.
 - #206 Keep Orion’s Lightspeed Haste stacks on one modifier and update active movement when his health-based speed changes.

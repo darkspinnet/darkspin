@@ -40,6 +40,7 @@ type Target struct {
 	CorpseFadeDelay        time.Duration
 	GraphicsState          uint32
 	ReplacementNoun        string
+	ReplacementScale       float32
 	Rotation               raknet.Vector3
 	ExplosionEffectName    string
 	CreatureType           uint32
@@ -497,7 +498,7 @@ func (o *enemyDeathOutbox) SetGraphicsState(
 			raknet.ObjectCreateMessage{
 				ObjectID: o.target.ObjectID, Noun: util.HashID(o.target.ReplacementNoun),
 				PositionX: o.target.Position.X, PositionY: o.target.Position.Y,
-				PositionZ: o.target.Position.Z, Rotation: o.target.Rotation, Scale: 1,
+				PositionZ: o.target.Position.Z, Rotation: o.target.Rotation, Scale: o.target.ReplacementScale,
 				IsCollisionEnabled: o.target.IsCollisionRetained,
 			},
 			raknet.CombatantDataDeltaMessage{

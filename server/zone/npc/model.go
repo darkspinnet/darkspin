@@ -299,6 +299,7 @@ const (
 	ActionEventCancel
 	ActionEventReturn
 	ActionEventBossActive
+	ActionEventMovementPause
 )
 
 type ActionEvent struct {

@@ -1392,6 +1392,9 @@ func (e *Zone) SetHeroStealthed(
 			e.mu.Unlock()
 			return nil, fmt.Errorf("instanceStealthTargetRelease: %w", err)
 		}
+		for _, npc := range released {
+			e.PublishNPCMovementPause(npc)
+		}
 	}
 	acquired, err := e.info.NPCs.AcquireTargets(
 		e.livePlayerAlignedTargets(), true,
@@ -1918,6 +1921,17 @@ func (e *Zone) completeNPCReturn(objectID uint32) {
 	npc, isFound := e.info.NPCs.NPC(objectID)
 	if !isFound || npc.IsDefeated || npc.TargetObjectID != 0 {
 		e.mu.Unlock()
+		return
+	}
+	rootRemaining := e.info.NPCs.RootRemaining(objectID, time.Now())
+	if rootRemaining > 0 {
+		step := npcReturnStep{zone: e, objectID: objectID}
+		err := e.info.Timeline.Schedule(zonenpc.ReturnTimelineKey(objectID), rootRemaining, step.execute, e.info.Timer.Schedule)
+		e.mu.Unlock()
+		if err != nil {
+			// A stopped zone or an already scheduled return needs no retry.
+			return
+		}
 		return
 	}
 	returning := e.info.NPCs.ReturnHome([]uint32{objectID})
@@ -3506,6 +3520,20 @@ func (e *Zone) PublishNPCActionAll(action zonenpc.ActionEvent) {
 		return
 	}
 	e.projection.PublishNPCActionAll(action)
+}
+
+func (e *Zone) PublishNPCMovementPause(npc zonenpc.Snapshot) {
+	if !npc.IsActionStarted || npc.IsIntroductionPending() {
+		return
+	}
+	e.PublishNPCActionAll(zonenpc.ActionEvent{
+		Kind: zonenpc.ActionEventMovementPause,
+		Plan: zonenpc.FirstActionPlan{
+			ObjectID:       npc.Plan.ObjectID,
+			SourcePosition: npc.Plan.Position,
+			SourceFacing:   npc.Facing,
+		},
+	})
 }
 
 func (e *Zone) PublishNPCForcedMovement(

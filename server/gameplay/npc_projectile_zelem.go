@@ -565,6 +565,12 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 	if volley.isActive {
 		sourcePosition.Z += projectileOffset.Z
 	}
+	isBurstShotRooted := profile.AbilityName == "BurstShot" &&
+		peerSession.zone.NPCs().RootRemaining(objectID, r.now()) > 0
+	if isBurstShotRooted {
+		// Immobilized gunners can fire along their existing heading.
+		targetPosition = sourcePosition.Add(enemy.Facing.Scale(profile.ProjectileDistance))
+	}
 	if volley.isActive && profile.IsProjectileParallelVolley && len(volley.targets) == 0 && !isThornNova {
 		if volley.shotIndex < len(profile.ProjectileOffsets) {
 			sourcePosition = campaignNPCProjectileSourceOffset(
@@ -695,7 +701,8 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 	}
 	// Caster pose uses the root and selected target, never muzzle offsets,
 	// spread, leading, or the projectile's maximum-range endpoint.
-	if !volley.isActive || volley.shotIndex == 0 || profile.IsProjectileTrackingBetweenShots {
+	if !isBurstShotRooted &&
+		(!volley.isActive || volley.shotIndex == 0 || profile.IsProjectileTrackingBetweenShots) {
 		facingPlan := plan
 		facingPlan.SourcePosition = enemy.Plan.Position
 		facingPlan.TargetPosition = aimTarget.Position
@@ -704,7 +711,10 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 			facingPlan.Profile.IsFacingPolicyKnown = true
 			facingPlan.Profile.IsFacingSuppressed = false
 		}
-		turnPackets, turnErr := npcraknet.FaceTarget(facingPlan, profile.IsProjectileTrackingBetweenShots)
+		// Burst Shot validates its target again for each shot. A live object
+		// facing goal would keep tracking independently of those checks.
+		isLiveTracking := profile.IsProjectileTrackingBetweenShots && profile.AbilityName != "BurstShot"
+		turnPackets, turnErr := npcraknet.FaceTarget(facingPlan, isLiveTracking)
 		if turnErr != nil {
 			projectileRun.Stop()
 			r.registry.mutex.Unlock()

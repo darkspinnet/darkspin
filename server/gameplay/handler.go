@@ -4220,6 +4220,15 @@ func marshalCampaignProjection(event zoneprojection.Event) ([][]byte, error) {
 				return nil, fmt.Errorf("npcActionReturn: %w", err)
 			}
 			return packets, nil
+		case zonenpc.ActionEventMovementPause:
+			packets, err := npcraknet.MovementPause(
+				action.Plan.ObjectID, action.Plan.SourcePosition,
+				action.Plan.SourceFacing,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("npcActionPause: %w", err)
+			}
+			return packets, nil
 		default:
 			return nil, fmt.Errorf("npcActionKind: %d", action.Kind)
 		}

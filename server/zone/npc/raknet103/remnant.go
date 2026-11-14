@@ -38,7 +38,7 @@ func Remnants(snapshots []zonenpc.Snapshot) ([][]byte, error) {
 				PositionX: plan.Position.X, PositionY: plan.Position.Y,
 				PositionZ: plan.Position.Z,
 				Rotation:  raknet.Vector3{X: plan.Rotation.X, Y: plan.Rotation.Y, Z: plan.Rotation.Z},
-				Scale:     1, IsCollisionEnabled: false,
+				Scale:     plan.RuntimeObjectScale(), IsCollisionEnabled: true,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("remnantReplacement[%d]: %w", plan.ObjectID, err)

@@ -202,6 +202,7 @@ type zoneNPCDeathDefinition struct {
 	corpseFadeDelay            time.Duration
 	graphicsState              uint32
 	replacementNoun            string
+	replacementScale           float32
 	rotation                   raknet.Vector3
 	explosionEffectName        string
 	deleteDelay                time.Duration
@@ -423,13 +424,14 @@ func campaignNPCDeathDefinition(
 		isFixture:           isFixture,
 		isBoss:              snapshot.Plan.IsBoss || isDestructor,
 		isRemnantRetained:   isNightmareVine || isGraviticRemnant || isVerdanthTotem || isWarpTotem || isCryosGeyser || isBossVent || isPipe || isScaldronRemnantRetained || replacementNoun != "",
-		isCollisionRetained: isGraviticRemnant || isBossVent || isWarpTotem,
+		isCollisionRetained: isGraviticRemnant || isBossVent || isWarpTotem || replacementNoun != "",
 		isDeathAnimationSuppressed: isIllusion || isNightmareVine || isGraviticRemnant ||
 			isVerdanthTotem || isWarpTotem || isCryosGeyser || isBossVent || isNocturnaPlant || isToxicactusPlant || isStalagmite || isPipe || isScaldronPlant || replacementNoun != "",
 		ordinaryDeathAnimation: ordinaryDeathAnimation,
 		corpseFadeDelay:        deathPresentation.PresentationDuration,
 		graphicsState:          graphicsState,
 		replacementNoun:        replacementNoun,
+		replacementScale:       snapshot.Plan.RuntimeObjectScale(),
 		rotation: raknet.Vector3{X: snapshot.Plan.Rotation.X,
 			Y: snapshot.Plan.Rotation.Y, Z: snapshot.Plan.Rotation.Z},
 		explosionEffectName: explosionEffectName,
@@ -3317,6 +3319,7 @@ func campaignDeathTarget(target zoneNPCDeathDefinition) deathraknet.Target {
 		CorpseFadeDelay:        target.corpseFadeDelay,
 		GraphicsState:          target.graphicsState,
 		ReplacementNoun:        target.replacementNoun,
+		ReplacementScale:       target.replacementScale,
 		Rotation:               target.rotation,
 		ExplosionEffectName:    target.explosionEffectName,
 		CreatureType:           target.creatureType, IsCreatureTypeKnown: target.isCreatureTypeKnown,
@@ -6295,6 +6298,9 @@ func (r campaignNPCActionRuntime) scheduleFirstActionsWithIntroductions(
 		}
 		if isFirstAction && !isFloorWarpIntroduction &&
 			action.Profile.IsFirstAggroDurationKnown && (!isRetainedIntroduction || introTiming.IsNew) {
+			if action.Profile.AbilityName == "BurstShot" && npcSession.RootRemaining(plan.ObjectID, r.now()) > 0 {
+				action.Profile.IsFirstAggroFacingSuppressed = true
+			}
 			aggroPackets, err := npcraknet.FirstAggro(action, timestamp)
 			if err != nil {
 				npcSession.ReleaseAction(plan.ObjectID, owner)

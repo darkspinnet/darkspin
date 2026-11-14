@@ -725,6 +725,12 @@ func (r campaignAbilityCommandRuntime) handleHeroInfection(
 		return nil, errors.New("infection stopped before schedule acceptance")
 	}
 	replacedPackets, replaceErr := schedule.acceptPrimary(entry, cancel)
+	if replaceErr == nil && run.npc.RootRemaining(targetObjectID, r.now()) > 0 {
+		target, isTargetFound := run.npc.NPC(targetObjectID)
+		if isTargetFound {
+			current.zone.PublishNPCMovementPause(target)
+		}
+	}
 	r.registry.mutex.Unlock()
 	if replaceErr != nil {
 		cancel()
