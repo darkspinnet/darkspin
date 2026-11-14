@@ -84,8 +84,8 @@ func (e heroHealingTicksSchedule) startSporogenesis(deadline time.Duration) ([][
 		e.runtime.registry.queueChannelPresentationLocked(target.originZone, [][]byte{impactPacket})
 		e.runtime.registry.mutex.Unlock()
 		if !target.isNPC && !target.target.isCompanion {
-			purged, purgeErr := e.runtime.purgeHeroDebuffs(target.target.sessionKey, target.target.generation, target.target.objectID)
 			e.runtime.registry.mutex.Lock()
+			purged, purgeErr := e.runtime.purgeHeroDebuffsLocked(target.target.sessionKey, target.target.generation, target.target.objectID)
 			e.runtime.registry.queueChannelRemovalsLocked(target.originZone, purged)
 			e.runtime.registry.mutex.Unlock()
 			if purgeErr != nil {

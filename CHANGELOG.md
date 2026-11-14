@@ -2,6 +2,11 @@
 
 ### 2026-11-13
 
+- #210 Restore Orcus’s three-second basic melee cooldown.
+- #210 Refresh movement and attack speed when Sporogenesis cleanses a slow.
+- #210 Let Savage use Wild Charge toward the cursor without an enemy target.
+- #210 Restore Savage’s Ally spawn and enrage animation timing and play a death animation when it is defeated.
+- #210 Let Titan’s basic attack hit enemies whose bounds overlap its area.
 - #209 Stop NPC pursuit when a hero enters Shadow Cloak and keep Ballistic Quadrakillers from turning during Virulent Vines.
 - #209 Keep destroyed Cryos Ecostabilizers solid for current players and late joiners.
 - #208 Make Cannonators close in for melee when their target is less than 8 units away and fire from 8 units or farther.

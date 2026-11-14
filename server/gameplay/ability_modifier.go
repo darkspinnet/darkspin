@@ -1005,6 +1005,7 @@ func (r campaignAbilityCommandRuntime) purgeHeroDebuffsLocked(
 		return nil, nil
 	}
 	packets := make([][]byte, 0)
+	isSlowPurged := false
 	for _, modifier := range peerSession.zone.Effect().Snapshot() {
 		if modifier.TargetObjectID != objectID ||
 			modifier.Kind != zoneeffect.ModifierKindDebuff {
@@ -1047,6 +1048,7 @@ func (r campaignAbilityCommandRuntime) purgeHeroDebuffsLocked(
 		clearFieldMedicHeroStatus(&peerSession, modifier)
 		peerSession.zone.Effect().Remove(modifier.InstanceID)
 		peerSession.untrackCampaignNPCModifier(run)
+		isSlowPurged = isSlowPurged || modifier.AttackSpeed < 0 || modifier.MovementSpeedBuff < 0
 		isCreated, releaseErr := run.release(r.modifierPool)
 		packets = append(packets, packet)
 		if releaseErr != nil {
@@ -1056,6 +1058,16 @@ func (r campaignAbilityCommandRuntime) purgeHeroDebuffsLocked(
 		if !isCreated {
 			r.logger.Printf("Hero cleanse retired inactive modifier instance=%d", modifier.InstanceID)
 		}
+	}
+	if isSlowPurged {
+		attributePacket, err := peerSession.marshalHeroSlowAttributes(
+			objectID, peerSession.enemyAttackSpeed(), peerSession.enemyMovementSpeedBuff(),
+		)
+		if err != nil {
+			r.registry.sessions[sessionKey] = peerSession
+			return packets, fmt.Errorf("heroDebuffAttributes: %w", err)
+		}
+		packets = append(packets, attributePacket)
 	}
 	for key, run := range peerSession.campaignNPCPoisons {
 		if key.targetObjectID != objectID || run == nil {

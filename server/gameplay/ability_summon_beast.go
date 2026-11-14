@@ -364,7 +364,7 @@ func (e *beastPetEnrageRun) expire() ([][]byte, error) {
 
 func (e *gameplayPeerSession) spawnBeastPet(
 	program Programs, objectID uint32, ownerObjectID uint32,
-	position game.Vec3, petDamage float32,
+	position game.Vec3, petDamage float32, timestamp uint64,
 ) ([][]byte, error) {
 	if e == nil || e.zone == nil || e.zone.Companion() == nil ||
 		objectID == 0 || ownerObjectID == 0 {
@@ -417,7 +417,7 @@ func (e *gameplayPeerSession) spawnBeastPet(
 		},
 		raknet.SetAnimationStateMessage{
 			ObjectID: objectID, State: util.HashID("beastsentinel_pet_spawn"),
-			Scale: 1,
+			Timestamp: timestamp, Scale: 1,
 		},
 	}
 	for index, current := range message {
@@ -535,6 +535,14 @@ func (r campaignAbilityCommandRuntime) handleSummonBeastEnrage(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("summonBeastEnrageStart: %w", err)
 	}
+	roarPacket, err := abilityraknet.Animation(peerSession.beastPetObjectID,
+		"beastsentinel_pet_enrage", req.packet.SourceTime)
+	if err != nil {
+		releaseErr := r.modifierPool.Release(instanceID)
+		r.registry.mutex.Unlock()
+		return nil, fmt.Errorf("summonBeastEnrageRoar: %w", errors.Join(err, releaseErr))
+	}
+	startPackets = append(startPackets, roarPacket)
 	cooldownReservation, isCooldownReserved := peerSession.abilityCooldownSession().Reserve(
 		zoneability.HeroAbilityCooldown(ability.ID), req.startTime, definition.Cooldown,
 	)
@@ -784,7 +792,7 @@ func (r campaignAbilityCommandRuntime) handleSummonBeast(
 			req.packet, objectID, req.command.Common.ObjectID, position, supportCreature.PetDamage)
 	} else {
 		spawnPackets, err = peerSession.spawnBeastPet(r.program, objectID,
-			req.command.Common.ObjectID, position, supportCreature.PetDamage)
+			req.command.Common.ObjectID, position, supportCreature.PetDamage, req.packet.SourceTime)
 	}
 	if err != nil {
 		_ = peerSession.setDeployedManaPoints(previousManaPoint)

@@ -1122,7 +1122,8 @@ func (r campaignAbilityCommandRuntime) handleHeroCharge(
 	isTargetAvailable := isTargetFound && !target.IsDefeated && target.HitPoint > 0 &&
 		target.Faction == zonenpc.FactionNonPlayerAligned
 	isCursorDirected := definition.Name == "EntanglingRush" ||
-		definition.Name == "PhantomCharge"
+		definition.Name == "PhantomCharge" ||
+		(definition.Name == "BeastCharge" && !isTargetAvailable)
 	if !isTargetAvailable && !isCursorDirected {
 		r.registry.mutex.Unlock()
 		return req.reject("charge target unavailable")
@@ -1164,10 +1165,28 @@ func (r campaignAbilityCommandRuntime) handleHeroCharge(
 	}
 	stopDistance := projected.Distance
 	if projected.Name == "BeastCharge" {
-		stopDistance = peerSession.deployedCampaignActorFootprintRadius() +
-			max(float32(0.5), target.Plan.ActorFootprintRadius()) + 0.2
+		stopDistance = peerSession.deployedCampaignActorFootprintRadius() * 0.5
+		if isTargetAvailable {
+			stopDistance = peerSession.deployedCampaignActorFootprintRadius() +
+				max(float32(0.5), target.Plan.ActorFootprintRadius()) + 0.2
+		}
 	}
 	destination := chargeDestination(startPosition, targetPosition, stopDistance)
+	if projected.Name == "BeastCharge" && !isTargetAvailable {
+		clipped, isReachable, clipErr := navigationClippedMovementDestination(
+			peerSession.zone.Navigation(), game.Vec3(startPosition), game.Vec3(destination),
+			peerSession.deployedCampaignNavigationRadius(),
+		)
+		if clipErr != nil {
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("beastChargeDestination: %w", clipErr)
+		}
+		if !isReachable {
+			r.registry.mutex.Unlock()
+			return req.reject("charge destination unreachable")
+		}
+		destination = raknet.Vector3(clipped)
+	}
 	if projected.Name == "PhantomCharge" {
 		// The sliding branch of the client template uses the exact cursor point.
 		destination = targetPosition
@@ -1239,7 +1258,7 @@ func (r campaignAbilityCommandRuntime) handleHeroCharge(
 		return nil, fmt.Errorf("heroChargeAnimation: %w", err)
 	}
 	movementTargetPosition := target.Plan.Position
-	if projected.Name == "PhantomCharge" {
+	if isCursorDirected {
 		movementTargetPosition = game.Vec3(targetPosition)
 	}
 	var movePackets [][]byte
@@ -1290,7 +1309,7 @@ func (r campaignAbilityCommandRuntime) handleHeroCharge(
 	petPursuit := zonecompanion.Pursuit{}
 	petDamage := game.DamageRange{}
 	petPackets := make([][]byte, 0)
-	if projected.Name == "BeastCharge" {
+	if projected.Name == "BeastCharge" && isTargetAvailable {
 		petPursuit, petDamage, petPackets, err = prepareBeastPetCharge(
 			&peerSession, target, r.now(),
 		)

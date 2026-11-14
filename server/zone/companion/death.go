@@ -6,8 +6,7 @@ import (
 	"github.com/darkspinnet/darkspin/server/util"
 )
 
-// DeathProfile contains only the two installed, recovered pet death scripts.
-// Their WaitUntilTime calls have no Basic descriptor or optional speed scaling.
+// DeathProfile holds the animation and corpse lifetime for a defeated pet.
 type DeathProfile struct {
 	AbilityName   string
 	AnimationName string
@@ -20,6 +19,10 @@ func DeathProfileForNoun(noun uint32) (DeathProfile, bool) {
 		return DeathProfile{AbilityName: "FireElementalPetDeath", AnimationName: "firetempest_pet_death", Duration: 1399999976 * time.Nanosecond}, true
 	case util.HashID("PlasmaSentinelPet.Noun"):
 		return DeathProfile{AbilityName: "PlasmaSentinelPetDeath", AnimationName: "el_plasmasentinel_pet_death", Duration: 1899999976 * time.Nanosecond}, true
+	case util.HashID("BeastSentinelPet.Noun"):
+		// Use the standard melee death state for an ordinary kill. The pet's
+		// authored burrow is reserved for the defeated-owner sequence.
+		return DeathProfile{AnimationName: "gen_death_melee", Duration: 2 * time.Second}, true
 	default:
 		return DeathProfile{}, false
 	}

@@ -86,8 +86,8 @@ func OrcusFallbackProfile(nounName string) (ActionProfile, bool) {
 	return ActionProfile{
 		Family: ActionNomadDrone, AbilityName: "VerdanthBossFallbackMelee",
 		AnimationName: "ver_boss_lf_spawneater_melee",
-		HitDelay:      466667 * time.Microsecond,
-		ReleaseDelay:  1500 * time.Millisecond, Cooldown: 1500 * time.Millisecond,
+		HitDelay:      500 * time.Millisecond,
+		ReleaseDelay:  2 * time.Second, Cooldown: 3 * time.Second,
 		Range: 2.25, MovementSpeed: movementSpeed,
 		NonCombatMovementSpeed: nonCombatMovementSpeed,
 		MinimumDamage:          5, MaximumDamage: 8,

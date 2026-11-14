@@ -547,8 +547,15 @@ func ResolvePointBlankBasicHit(
 	}
 	target := make([]zonenpc.Snapshot, 0)
 	for _, enemy := range enemies.LiveSnapshots() {
-		if enemy.Faction != zonenpc.FactionNonPlayerAligned ||
-			positionDistance(sourcePosition, enemy.Plan.Position) > projected.Radius {
+		if enemy.Faction != zonenpc.FactionNonPlayerAligned {
+			continue
+		}
+		radius := projected.Radius
+		if projected.Name == "TCShieldedSentinelBasic" {
+			// Build 103 queries for overlapping object spheres.
+			radius += enemy.Plan.SpatialRadius()
+		}
+		if positionDistance(sourcePosition, enemy.Plan.Position) > radius {
 			continue
 		}
 		target = append(target, enemy)
