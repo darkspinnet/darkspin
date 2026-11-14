@@ -88,7 +88,6 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 	isLob := false
 	isCryosRezMelee := false
 	isHomerMelee := false
-	isHybridMelee := false
 	isSpecialTwoMelee := false
 	isNashiraMelee := false
 	isPullerMelee := false
@@ -119,16 +118,6 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 			)
 			isHomerMelee = isSelectedFound &&
 				selectedProfile.AbilityName == "NocturnaSpecialHomerMelee"
-		}
-		_, isHybridFamily := zonenpc.ZelemBasicHybridMeleeProfile(
-			peekNPC.Plan.NounName,
-		)
-		if isPeekNPCFound && isPeekTargetFound && isHybridFamily {
-			selectedProfile, isSelectedFound := campaignNPCActionProfile(
-				peekNPC.Plan, peekTarget.Position, peekTarget.FootprintRadius,
-			)
-			isHybridMelee = isSelectedFound &&
-				selectedProfile.AbilityName == "ZelemBasicHybridMelee"
 		}
 		_, isSpecialTwoFamily := zonenpc.CitadelSpecialTwoMeleeProfile(
 			peekNPC.Plan.NounName,
@@ -184,7 +173,7 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 			packet, sessionKey, generation, objectID, timestamp,
 		)
 	}
-	if isHomerMelee || isHybridMelee || isSpecialTwoMelee || isNashiraMelee {
+	if isHomerMelee || isSpecialTwoMelee || isNashiraMelee {
 		return r.produceEnemyMelee(
 			packet, sessionKey, generation, objectID, timestamp,
 		)
@@ -349,6 +338,14 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 		return nil, nil
 	}
 	profile, isProfileFound := zonenpc.ActionProfileForPlan(enemy.Plan)
+	if profile.AbilityName == "ZelemBasicHybridProjectile" && volley.plan.Profile.AbilityName == "" {
+		profile, isProfileFound = campaignNPCActionProfile(enemy.Plan, target.Position, target.ActorFootprintRadius)
+		if isProfileFound && profile.AbilityName == "ZelemBasicHybridMelee" {
+			r.registry.sessions[sessionKey] = peerSession
+			r.registry.mutex.Unlock()
+			return r.produceEnemyMelee(packet, sessionKey, generation, objectID, timestamp)
+		}
+	}
 	if zonenpc.ArcturusRank(enemy.Plan.NounName) != 0 && !volley.isActive {
 		profile, isProfileFound = campaignNPCActionProfile(enemy.Plan, target.Position, target.ActorFootprintRadius)
 		if isProfileFound && profile.Family == zonenpc.ActionCone {

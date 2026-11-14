@@ -2,6 +2,7 @@
 
 ### 2026-11-13
 
+- #208 Make Cannonators close in for melee when their target is less than 8 units away and fire from 8 units or farther.
 - #207 Let Char’s Fire Tempest Basic hit a selected enemy that moves away from the cursor before impact.
 - #206 Keep Orion’s Lightspeed Haste stacks on one modifier and update active movement when his health-based speed changes.
 - #206 Synchronize Titan’s attack stop with the controlling client and resolve his basic attack from his position at impact.

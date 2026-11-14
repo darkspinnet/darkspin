@@ -4499,17 +4499,11 @@ func campaignNPCActionProfile(
 	}
 	hybridMeleeProfile, isHybridMeleeFound :=
 		zonenpc.ZelemBasicHybridMeleeProfile(plan.NounName)
-	if isHybridMeleeFound {
-		deltaX := targetPosition.X - plan.Position.X
-		deltaY := targetPosition.Y - plan.Position.Y
-		centerDistance := float32(math.Hypot(float64(deltaX), float64(deltaY)))
-		surfaceDistance := max(
-			float32(0), centerDistance-plan.ActorFootprintRadius()-
-				targetFootprintRadius,
-		)
-		if surfaceDistance <= hybridMeleeProfile.Range {
-			return campaignAffixActionProfile(plan, hybridMeleeProfile, true)
-		}
+	// Build 103 ZelemBasicHybrid.Phase checks the projectile gambit first
+	// at distance >= 8. Melee has its own shorter reach and pursues into it.
+	const cannonatorRangedDistance = 8
+	if isHybridMeleeFound && zonegeometry.Distance(plan.Position, targetPosition) < cannonatorRangedDistance {
+		return campaignAffixActionProfile(plan, hybridMeleeProfile, true)
 	}
 	specialTwoMeleeProfile, isSpecialTwoMeleeFound :=
 		zonenpc.CitadelSpecialTwoMeleeProfile(plan.NounName)
