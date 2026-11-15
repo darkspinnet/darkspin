@@ -7754,7 +7754,7 @@ func (r campaignNPCActionRuntime) produceHasterBuff(
 
 func isCampaignNPCSecondaryPursuit(abilityName string) bool {
 	switch abilityName {
-	case "CryosBasicChargeHeadbutt", "GhostlyBoltFlee", "DrainerMelee",
+	case "CryosBasicChargeHeadbutt", "GhostlyBoltFlee", "DrainerMelee", "ZelemBasicHybridMelee",
 		"NomadBioSpecialTwoJumpAttack", "CitadelSpecialTwo_Melee",
 		"Smash", "StealthAttack", "RezMelee", "FastSwipe",
 		"NomadSpecialOneCleave", "NomadSpacetimeAgent_Blink", "PositionFirePet",

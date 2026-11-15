@@ -1,5 +1,13 @@
 # Changelog
 
+### 2026-11-15
+
+- #212 Let Cannonators pursue into their melee attack range.
+- #212 Keep dormant robots stationary until activation and wake Raytheoids when a visible hero damages them from outside aggro range.
+- #212 Restrict Corruptor replay encounters to Perceptory on the final mission of each difficulty.
+- #212 Send the controlling client a movement stop when Lumin starts a basic attack while moving.
+- #212 Keep enemies at their current positions when they lose a stealthed hero instead of teleporting them home.
+
 ### 2026-11-13
 
 - #210 Restore Orcus’s three-second basic melee cooldown.

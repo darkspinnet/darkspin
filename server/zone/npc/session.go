@@ -682,6 +682,22 @@ func (s *Session) AcquireTarget(
 }
 
 func (s *Session) Retarget(objectID uint32, target Target) (Snapshot, bool, error) {
+	npc, isAcquired, err := s.retarget(objectID, target, false)
+	if err != nil {
+		return Snapshot{}, false, fmt.Errorf("targetReplace: %w", err)
+	}
+	return npc, isAcquired, nil
+}
+
+func (e *Session) WakeDamagedRaytheoid(objectID uint32, target Target) (Snapshot, bool, error) {
+	npc, isAcquired, err := e.retarget(objectID, target, true)
+	if err != nil {
+		return Snapshot{}, false, fmt.Errorf("damageWake: %w", err)
+	}
+	return npc, isAcquired, nil
+}
+
+func (s *Session) retarget(objectID uint32, target Target, isDamageWake bool) (Snapshot, bool, error) {
 	if s == nil || objectID == 0 || target.ObjectID == 0 || !target.IsAlive ||
 		target.Faction == FactionUnknown ||
 		!zonegeometry.IsFinite(target.Position) || target.FootprintRadius < 0 ||
@@ -695,6 +711,10 @@ func (s *Session) Retarget(objectID uint32, target Target) (Snapshot, bool, erro
 	if !isFound || npc.IsDefeated || !npc.IsPublished || npc.HitPoint <= 0 ||
 		!npc.IsScenarioAIEnabled() || npc.Plan.IsFixture || npc.Faction == target.Faction {
 		return npc, false, nil
+	}
+	if isDamageWake && (nounSpecies(npc.Plan.NounName) != "zelemspecialthree" ||
+		npc.IsBirthPending || npc.TargetObjectID != 0 || npc.IsActionStarted) {
+		return Snapshot{}, false, nil
 	}
 	if npc.TargetObjectID != target.ObjectID && time.Now().Before(npc.status.tauntExpiresAt) {
 		return npc, false, nil

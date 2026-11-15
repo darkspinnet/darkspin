@@ -42,6 +42,11 @@ func isDestructorEnding(director game.CampaignDirector, stage uint32) bool {
 	if !director.IsReplay {
 		return stage%4 == 0
 	}
+	if strings.EqualFold(director.PlanetConfigName, "scaldron.levelconfig") &&
+		(stage%24 != 0 || !strings.EqualFold(director.Level, "scaldron_4")) {
+		// Replay map selection does not carry the Corruptor's authored arena.
+		return false
+	}
 	// Recreate a private stream so preparation, admission and rejoin agree
 	// without consuming map-layout, population or loot draws.
 	seed := uint32(director.RunSeed) ^ uint32(director.RunSeed>>32) ^

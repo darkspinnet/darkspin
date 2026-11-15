@@ -70,6 +70,12 @@ func isPassiveBehaviorActorEligible(actor zonenpc.Snapshot) bool {
 		return false
 	}
 	profile, isProfileFound := zonenpc.ActionProfileForPlan(actor.Plan)
+	if isProfileFound && !actor.IsFirstActionStarted &&
+		(profile.FirstAggroAbilityName == "FirstAggro_ActivateRobot" ||
+			profile.FirstAggroAbilityName == "FirstAggro_ActivateSpecialRobot") {
+		// Activation owns the transition out of the dormant pose.
+		return false
+	}
 	if isProfileFound && profile.AbilityName == "ScaldronBasicCopter_Passive" {
 		// The copter's independent passive already owns its pre-aggro wander.
 		return false

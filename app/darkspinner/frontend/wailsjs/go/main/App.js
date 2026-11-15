@@ -258,6 +258,10 @@ export function ModerateRemoteControlUser(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['ModerateRemoteControlUser'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function OpenControlDiagnosticFolder(arg1) {
+  return window['go']['main']['App']['OpenControlDiagnosticFolder'](arg1);
+}
+
 export function OpenFirewallSettings() {
   return window['go']['main']['App']['OpenFirewallSettings']();
 }

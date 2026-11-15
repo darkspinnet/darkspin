@@ -130,6 +130,8 @@ export function LoginRemoteProfile(arg1:string,arg2:string,arg3:string,arg4:bool
 
 export function ModerateRemoteControlUser(arg1:string,arg2:string,arg3:number,arg4:string,arg5:string):Promise<main.RemoteControlActionResult>;
 
+export function OpenControlDiagnosticFolder(arg1:string):Promise<void>;
+
 export function OpenFirewallSettings():Promise<void>;
 
 export function OpenLocalControlPanel(arg1:string):Promise<main.RemoteControlPanel>;

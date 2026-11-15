@@ -1403,16 +1403,16 @@ func (e *Zone) SetHeroStealthed(
 		e.mu.Unlock()
 		return nil, fmt.Errorf("instanceStealthTargetAcquire: %w", err)
 	}
-	returning := e.returnUnacquiredNPCs(released, acquired)
 	timeline := e.info.Timeline
 	e.mu.Unlock()
 	for _, npc := range released {
 		timeline.Cancel(zonenpc.FirstActionTimelineKey(npc.Plan.ObjectID))
+		// Losing sight of a cloaked hero stops pursuit at the current pose.
+		timeline.Cancel(zonenpc.ReturnTimelineKey(npc.Plan.ObjectID))
 	}
 	for _, npc := range acquired {
 		timeline.Cancel(zonenpc.ReturnTimelineKey(npc.Plan.ObjectID))
 	}
-	e.publishNPCReturns(returning)
 	return acquired, nil
 }
 
@@ -3079,9 +3079,40 @@ func (e *Zone) RecordNPCDamage(
 	var objectiveErr error
 	if !damage.IsDamageImmune {
 		objectiveErr = e.ApplyNPCDamageObjectives(ctx, damage)
+		if damage.Damage > 0 && damage.HitPoint > 0 {
+			wakeErr := e.wakeDamagedRaytheoid(damage)
+			if wakeErr != nil {
+				objectiveErr = errors.Join(objectiveErr, wakeErr)
+			}
+		}
 	}
 	e.projection.PublishNPCDamage(damage)
 	return objectiveErr
+}
+
+func (e *Zone) wakeDamagedRaytheoid(damage zonenpc.DamageEvent) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.state != StateActive || e.info.NPCs == nil {
+		return nil
+	}
+	hero, isFound := e.info.Hero.SnapshotByObjectID(damage.SourceObjectID)
+	if !isFound || hero.IsStealthed || hero.HitPoint <= 0 {
+		return nil
+	}
+	owner := zonenpc.ActionOwner{UserID: hero.UserID, PeerGeneration: hero.PeerGeneration}
+	actor, isAcquired, err := e.info.NPCs.WakeDamagedRaytheoid(damage.TargetObjectID, zonenpc.Target{
+		ObjectID: hero.ObjectID, Position: hero.Position, FootprintRadius: hero.FootprintRadius,
+		Faction: zonenpc.FactionPlayerAligned, Owner: owner, IsAlive: true,
+	})
+	if err != nil {
+		return fmt.Errorf("raytheoidWake: %w", err)
+	}
+	if isAcquired {
+		e.info.Timeline.Cancel(zonenpc.ReturnTimelineKey(actor.Plan.ObjectID))
+		e.projection.PublishNPCTargets([]zonenpc.Snapshot{actor}, zoneprojection.Subscriber{})
+	}
+	return nil
 }
 
 // RecordNPCHeal routes committed non-player healing through selected packaged

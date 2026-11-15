@@ -1,7 +1,34 @@
 # Changelog
 
+### 2026-11-15
+
+- [#212](https://github.com/darkspinnet/darkspin/issues/212) Let Cannonators pursue into their melee attack range.
+- [#212](https://github.com/darkspinnet/darkspin/issues/212) Keep dormant robots stationary until activation and wake Raytheoids when a visible hero damages them from outside aggro range.
+- [#212](https://github.com/darkspinnet/darkspin/issues/212) Restrict Corruptor replay encounters to Perceptory on the final mission of each difficulty.
+- [#212](https://github.com/darkspinnet/darkspin/issues/212) Send the controlling client a movement stop when Lumin starts a basic attack while moving.
+- [#212](https://github.com/darkspinnet/darkspin/issues/212) Keep enemies at their current positions when they lose a stealthed hero instead of teleporting them home.
+
+### 2026-11-13
+
+- [#210](https://github.com/darkspinnet/darkspin/issues/210) Restore Orcus’s three-second basic melee cooldown.
+- [#210](https://github.com/darkspinnet/darkspin/issues/210) Refresh movement and attack speed when Sporogenesis cleanses a slow.
+- [#210](https://github.com/darkspinnet/darkspin/issues/210) Let Savage use Wild Charge toward the cursor without an enemy target.
+- [#210](https://github.com/darkspinnet/darkspin/issues/210) Restore Savage’s Ally spawn and enrage animation timing and play a death animation when it is defeated.
+- [#210](https://github.com/darkspinnet/darkspin/issues/210) Let Titan’s basic attack hit enemies whose bounds overlap its area.
+- [#209](https://github.com/darkspinnet/darkspin/issues/209) Stop NPC pursuit when a hero enters Shadow Cloak and keep Ballistic Quadrakillers from turning during Virulent Vines.
+- [#209](https://github.com/darkspinnet/darkspin/issues/209) Keep destroyed Cryos Ecostabilizers solid for current players and late joiners.
+- [#208](https://github.com/darkspinnet/darkspin/issues/208) Make Cannonators close in for melee when their target is less than 8 units away and fire from 8 units or farther.
+- [#207](https://github.com/darkspinnet/darkspin/issues/207) Let Char’s Fire Tempest Basic hit a selected enemy that moves away from the cursor before impact.
+- [#206](https://github.com/darkspinnet/darkspin/issues/206) Keep Orion’s Lightspeed Haste stacks on one modifier and update active movement when his health-based speed changes.
+- [#206](https://github.com/darkspinnet/darkspin/issues/206) Synchronize Titan’s attack stop with the controlling client and resolve his basic attack from his position at impact.
+- [#206](https://github.com/darkspinnet/darkspin/issues/206) Resolve Ray Killer projectile hits as the rays travel.
+- [#205](https://github.com/darkspinnet/darkspin/issues/205) Limit automatic Sync Snapshots to one capture per category per connection and 512 MiB of retained ZIPs.
+- [#205](https://github.com/darkspinnet/darkspin/issues/205) Keep destroyed Warp Totem wreckage solid for current players and late joiners.
+- [#204](https://github.com/darkspinnet/darkspin/issues/204) Fill the extra health capacity when Meditron’s Reconstruct applies Reinforced.
+
 ### 2026-11-11
 
+- Open the selected server’s download folder from the Admin Panel’s Log, Bug, and Snapshot tabs and save diagnostic files without a leading underscore.
 - [#203](https://github.com/darkspinnet/darkspin/issues/203) Use ordinary movement stops when NPCs finish walking or idle movement to reduce visible teleport snaps.
 - [#203](https://github.com/darkspinnet/darkspin/issues/203) Give destructible DNA drops a nearby landing outside the hero’s pickup radius when terrain allows.
 - [#203](https://github.com/darkspinnet/darkspin/issues/203) Let Char’s Fire Tempest pet look for targets again after an idle interval.
