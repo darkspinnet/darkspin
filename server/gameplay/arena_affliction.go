@@ -161,7 +161,8 @@ func (e *arenaProjectileStatusRun) scanAffliction(deadline time.Duration) ([][]b
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	snapshot := e.projectile.Snapshot(e.runtime.now())
+	now := e.runtime.now()
+	snapshot := e.projectile.Snapshot(now)
 	if !snapshot.IsActive {
 		e.runtime.registry.mutex.Unlock()
 		return nil, nil
@@ -173,20 +174,21 @@ func (e *arenaProjectileStatusRun) scanAffliction(deadline time.Duration) ([][]b
 	slices.SortFunc(candidates, func(left, right zonenpc.Snapshot) int {
 		return cmp.Compare(left.Plan.ObjectID, right.Plan.ObjectID)
 	})
-	contacts := make([]uint32, 0)
 	retarget := uint32(0)
 	retargetPosition := game.Vec3{}
 	retargetDistance := float32(afflictionBoltRetargetRange + 1)
+	ownerPosition := game.Vec3(member.playerPosition)
+	isOwnerAlive := member.deployedHitPoint() > 0
 	for _, candidate := range candidates {
 		objectID := candidate.Plan.ObjectID
 		_, victim, isFound := targets.member(objectID)
-		if !isFound || victim.isHeroDebuffImmune(objectID) || victim.isOverdriveActiveAt(e.runtime.now()) ||
+		if !isFound || victim.isHeroDebuffImmune(objectID) || victim.isOverdriveActiveAt(now) ||
 			victim.isArenaStealthed() {
 			continue
 		}
 		statusKey := arenaHitStatusKey{modifierID: e.definition.RootModifierID}
 		if status := victim.arenaHitStatuses[statusKey]; status != nil && status.matches(victim) &&
-			e.runtime.now().Before(status.expiresAt) {
+			now.Before(status.expiresAt) {
 			continue
 		}
 		contactPosition := candidate.Plan.Position
@@ -196,31 +198,25 @@ func (e *arenaProjectileStatusRun) scanAffliction(deadline time.Duration) ([][]b
 				e.runtime.registry.mutex.Unlock()
 				return nil, fmt.Errorf("arenaAfflictionContact: %w", err)
 			}
-			contacts = append(contacts, objectID)
 			continue
 		}
 		distance := contactPosition.Sub(game.Vec3(snapshot.Position)).Length()
-		if distance <= afflictionBoltRetargetRange && distance < retargetDistance {
+		if objectID == snapshot.TargetObjectID {
+			retarget, retargetPosition, retargetDistance = objectID, contactPosition, 0
+		} else if isOwnerAlive && candidate.Plan.Position.Sub(ownerPosition).Length() < afflictionBoltRetargetRange &&
+			distance <= afflictionBoltRetargetRange && distance < retargetDistance {
 			retarget, retargetPosition, retargetDistance = objectID, contactPosition, distance
 		}
 	}
-	var packets [][]byte
-	if retarget != 0 {
-		retargetPackets, err := e.projectile.Retarget(e.runtime.now(), retarget,
-			sim.Position(retargetPosition), afflictionBoltTurnRate)
-		if err != nil {
-			e.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf("arenaAfflictionRetarget: %w", err)
-		}
-		packets = append(packets, retargetPackets...)
-	} else if len(contacts) > 0 {
-		continuePackets, err := e.projectile.Retarget(e.runtime.now(), 0, snapshot.Position,
-			afflictionBoltTurnRate)
-		if err != nil {
-			e.runtime.registry.mutex.Unlock()
-			return nil, fmt.Errorf("arenaAfflictionContinue: %w", err)
-		}
-		packets = append(packets, continuePackets...)
+	if retarget == 0 && isOwnerAlive {
+		retarget = e.sourceObjectID
+		retargetPosition = ownerPosition
+	}
+	packets, err := e.projectile.Retarget(now, retarget,
+		sim.Position(retargetPosition), afflictionBoltTurnRate)
+	if err != nil {
+		e.runtime.registry.mutex.Unlock()
+		return nil, fmt.Errorf("arenaAfflictionRetarget: %w", err)
 	}
 	e.queueLocked(packets)
 	e.runtime.registry.mutex.Unlock()

@@ -477,6 +477,15 @@ func (r campaignNPCActionRuntime) produceZelemShotWithVolley(
 			r.registry.mutex.Unlock()
 			return nil, nil
 		}
+		if profile.MovementSpeed <= 0 {
+			// A stationary attacker must re-enter attack selection when a
+			// target returns. Pursuit would wait indefinitely for movement.
+			peerSession.zone.NPCs().ReleaseBlockedPursuit(
+				objectID, enemy.ActionOwner, actionGeneration, r.now().Add(500*time.Millisecond),
+			)
+			r.registry.mutex.Unlock()
+			return nil, nil
+		}
 		pursuitPackets, marshalErr := npcraknet.Pursuit(action)
 		if marshalErr != nil {
 			r.registry.mutex.Unlock()

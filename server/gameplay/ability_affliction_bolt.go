@@ -38,7 +38,8 @@ func (e heroAfflictionBoltStep) scan() ([][]byte, error) {
 		e.schedule.runtime.registry.mutex.Unlock()
 		return nil, nil
 	}
-	snapshot := e.schedule.run.projectile.Snapshot(e.schedule.runtime.now())
+	now := e.schedule.runtime.now()
+	snapshot := e.schedule.run.projectile.Snapshot(now)
 	if !snapshot.IsActive {
 		e.schedule.runtime.registry.mutex.Unlock()
 		return nil, nil
@@ -57,17 +58,14 @@ func (e heroAfflictionBoltStep) scan() ([][]byte, error) {
 			candidate.Faction != zonenpc.FactionNonPlayerAligned ||
 			e.schedule.run.HasSplash(objectID) ||
 			peerSession.zone.NPCs().IsStealthed(objectID) ||
-			peerSession.zone.NPCs().CurseRemaining(
-				objectID, e.schedule.runtime.now(),
-			) > 0 || !zonegeometry.SegmentIntersectsSphere(
-			previousPosition, currentPosition, contactPosition,
-			e.schedule.definition.Radius,
-		) {
+			peerSession.zone.NPCs().CurseRemaining(objectID, now) > 0 ||
+			!zonegeometry.SegmentIntersectsSphere(
+				previousPosition, currentPosition, contactPosition,
+				e.schedule.definition.Radius,
+			) {
 			continue
 		}
-		expiresAt := e.schedule.runtime.now().Add(
-			e.schedule.definition.StatusDuration,
-		)
+		expiresAt := now.Add(e.schedule.definition.StatusDuration)
 		err := peerSession.zone.NPCs().ApplyCurse(objectID, expiresAt)
 		if err != nil {
 			e.schedule.runtime.registry.mutex.Unlock()
@@ -91,6 +89,8 @@ func (e heroAfflictionBoltStep) scan() ([][]byte, error) {
 	}
 	retarget := zonenpc.Snapshot{}
 	retargetDistance := float32(afflictionBoltRetargetRange + 1)
+	ownerPosition := game.Vec3(peerSession.playerPosition)
+	isOwnerAlive := peerSession.deployedObjectID == e.schedule.sourceObjectID && peerSession.deployedHitPoint() > 0
 	for _, candidate := range liveNPCs {
 		objectID := candidate.Plan.ObjectID
 		distance := zonegeometry.Distance(
@@ -101,9 +101,17 @@ func (e heroAfflictionBoltStep) scan() ([][]byte, error) {
 			candidate.Faction != zonenpc.FactionNonPlayerAligned ||
 			e.schedule.run.HasSplash(objectID) ||
 			peerSession.zone.NPCs().IsStealthed(objectID) ||
-			peerSession.zone.NPCs().CurseRemaining(
-				objectID, e.schedule.runtime.now(),
-			) > 0 || distance > afflictionBoltRetargetRange ||
+			peerSession.zone.NPCs().CurseRemaining(objectID, now) > 0 {
+			continue
+		}
+		// Build 103 keeps following a still-valid target. The owner leash
+		// applies when looking for a replacement.
+		if objectID == snapshot.TargetObjectID {
+			retarget = candidate
+			break
+		}
+		if !isOwnerAlive || zonegeometry.Distance(candidate.Plan.Position, ownerPosition) >= afflictionBoltRetargetRange ||
+			distance > afflictionBoltRetargetRange ||
 			distance >= retargetDistance {
 			continue
 		}
@@ -113,27 +121,16 @@ func (e heroAfflictionBoltStep) scan() ([][]byte, error) {
 	e.schedule.runtime.registry.sessions[e.schedule.sessionKey] = peerSession
 	e.schedule.runtime.registry.mutex.Unlock()
 
-	packets := make([][]byte, 0, len(contacts)+1)
-	if retarget.Plan.ObjectID != 0 {
-		targetPosition := sim.Position(retarget.Plan.Position)
-		targetPosition.Z += retarget.Plan.NPCProfile.FootprintRadius
-		retargetPackets, err := e.schedule.run.projectile.Retarget(
-			e.schedule.runtime.now(), retarget.Plan.ObjectID, targetPosition,
-			afflictionBoltTurnRate,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("afflictionRetarget: %w", err)
-		}
-		packets = append(packets, retargetPackets...)
-	} else if len(contacts) > 0 {
-		continuePackets, err := e.schedule.run.projectile.Retarget(
-			e.schedule.runtime.now(), 0, snapshot.Position,
-			afflictionBoltTurnRate,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("afflictionContinue: %w", err)
-		}
-		packets = append(packets, continuePackets...)
+	targetID := retarget.Plan.ObjectID
+	targetPosition := sim.Position(retarget.Plan.Position)
+	targetPosition.Z += retarget.Plan.NPCProfile.FootprintRadius
+	if targetID == 0 && isOwnerAlive {
+		targetID = e.schedule.sourceObjectID
+		targetPosition = sim.Position(ownerPosition)
+	}
+	packets, err := e.schedule.run.projectile.Retarget(now, targetID, targetPosition, afflictionBoltTurnRate)
+	if err != nil {
+		return nil, fmt.Errorf("afflictionRetarget: %w", err)
 	}
 	for index, contact := range contacts {
 		packet, err := raknet.MarshalApplication(raknet.ModifierCreatedMessage{

@@ -3,6 +3,11 @@
 ### 2026-11-17
 
 - Let players running DarkSpinner as administrator acknowledge the risk and remember their choice, with a reset in Config Advanced.
+- [#213](https://github.com/darkspinnet/darkspin/issues/213) Stop sampled hero and enemy projectiles at authored map blockers.
+- [#214](https://github.com/darkspinnet/darkspin/issues/214) Keep Herbipods in place during fear and let their attacks resume when targets return to range.
+- [#214](https://github.com/darkspinnet/darkspin/issues/214) Prevent Merak's killing blow from spawning another Blazer.
+- [#214](https://github.com/darkspinnet/darkspin/issues/214) Keep Astri defeated once the captain is killed.
+- [#214](https://github.com/darkspinnet/darkspin/issues/214) Keep Affliction Bolt active for its authored flight duration and let it home back to its caster when it has no eligible enemy.
 
 ### 2026-11-15
 

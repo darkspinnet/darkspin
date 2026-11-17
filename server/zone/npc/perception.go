@@ -21,14 +21,22 @@ func AcquisitionRange(plan SpawnPlan, fallback float32) float32 {
 	if !profile.IsClassKnown || profile.IsPlayerPet {
 		return EffectiveAggroRange(profile, fallback)
 	}
-	switch strings.ToLower(strings.TrimSpace(plan.NounName)) {
-	case "verdanthbasicranged.noun", "verdanthbasicranged_2.noun", "verdanthbasicranged_3.noun":
+	if IsHerbipod(plan) {
 		radius := EffectivePerceptionRange(&profile)
 		if zonegeometry.IsFinitePositiveScalar(radius) {
 			return radius
 		}
 	}
 	return EffectiveAggroRange(profile, fallback)
+}
+
+func IsHerbipod(plan SpawnPlan) bool {
+	switch strings.ToLower(strings.TrimSpace(plan.NounName)) {
+	case "verdanthbasicranged.noun", "verdanthbasicranged_2.noun", "verdanthbasicranged_3.noun":
+		return true
+	default:
+		return false
+	}
 }
 
 type PerceptionQuery struct {

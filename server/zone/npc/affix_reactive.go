@@ -73,10 +73,17 @@ func canReceiveResurrection(plan SpawnPlan) bool {
 		(!plan.NPCProfile.IsClassKnown || plan.NPCProfile.NPCType != eliteMinionNPCType)
 }
 
-// Sau's defeat ends the captain's lifetime; nearby resurrection sources must
-// not reopen it while the remaining encounter adds are still alive.
+// Sau and Astri stay defeated while their remaining encounter adds are alive.
 func IsResurrectionBlocked(plan SpawnPlan) bool {
-	return plan.IsBoss && nounSpecies(plan.NounName) == "cryosspecialone"
+	if !plan.IsBoss {
+		return false
+	}
+	switch nounSpecies(plan.NounName) {
+	case "cryosspecialone", "cryosspecialtwo":
+		return true
+	default:
+		return false
+	}
 }
 
 // affixResurrectionFraction validates the aura child at the instant of the

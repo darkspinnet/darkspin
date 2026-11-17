@@ -54,7 +54,9 @@ func (r campaignAbilityCommandRuntime) startTerrifyFlee(
 		return nil, nil
 	}
 	target, isTargetFound := npcSession.NPC(targetObjectID)
-	if !isTargetFound || target.IsDefeated || target.HitPoint <= 0 {
+	// Herbipods can be feared, but their stationary turret locomotion cannot
+	// follow the flee path. Moving the server actor would leave its client body behind.
+	if !isTargetFound || target.IsDefeated || target.HitPoint <= 0 || zonenpc.IsHerbipod(target.Plan) {
 		r.registry.mutex.Unlock()
 		return nil, nil
 	}

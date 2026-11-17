@@ -146,12 +146,16 @@ func (r campaignAbilityCommandRuntime) handleArenaProjectileStatus(
 	travelDistance := zoneability.Distance(launch, targetPosition)
 	travelDelay := max(abilityraknet.ProjectileCollisionTick,
 		time.Duration(float64(travelDistance)/float64(projected.Speed)*float64(time.Second)))
+	collisionDelay := travelDelay
+	if projected.Name == "AfflictionBolt" {
+		collisionDelay = afflictionBoltFlightDuration(projected)
+	}
 	projectile, initialPackets, err := abilityraknet.NewProjectileRun(abilityraknet.ProjectileInput{
 		Ability: projected, ActorObjectID: req.command.Common.ObjectID,
 		TargetObjectID: targetObjectID, ProjectileObjectID: projectileID,
 		ActorPosition: sim.Position(actorPosition), TargetPosition: sim.Position(targetPosition),
 		ActorFacing: sim.Position(facing), ImpactPosition: sim.Position(targetPosition),
-		FootprintRadius: actorFootprint, CollisionDelay: travelDelay,
+		FootprintRadius: actorFootprint, CollisionDelay: collisionDelay,
 		IsDirectHit: true, IsCollisionExternallyDriven: true,
 		Damage: damage.Maximum, TargetHitPoint: target.HitPoint, ActorTeam: 1,
 		SourceTime: req.packet.SourceTime})

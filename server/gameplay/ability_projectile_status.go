@@ -911,6 +911,10 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 		time.Duration(float64(travelDistance)/float64(projected.Speed)*float64(time.Second)),
 	)
 	impactDeadline := projected.HitDelay + travelDelay
+	collisionDelay := travelDelay
+	if projected.Name == "AfflictionBolt" {
+		collisionDelay = afflictionBoltFlightDuration(projected)
+	}
 	projectileRun, immediatePackets, err := abilityraknet.NewProjectileRun(
 		abilityraknet.ProjectileInput{
 			Ability: projected, ActorObjectID: req.command.Common.ObjectID,
@@ -918,7 +922,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 			ActorPosition: sim.Position(actorPosition), TargetPosition: sim.Position(targetPosition),
 			ActorFacing: sim.Position(facing), ImpactPosition: sim.Position(targetPosition),
 			FootprintRadius: actorFootprint,
-			CollisionDelay:  travelDelay, IsDirectHit: true,
+			CollisionDelay:  collisionDelay, IsDirectHit: true,
 			IsCollisionExternallyDriven: true, Damage: damage.Maximum,
 			TargetHitPoint: target.HitPoint, ActorTeam: 1,
 			SourceTime: req.packet.SourceTime,
