@@ -186,6 +186,8 @@ export function SetAutoPatch(arg1:boolean):Promise<void>;
 
 export function SetAutoPlay(arg1:boolean):Promise<void>;
 
+export function SetElevatedLaunchAllowed(arg1:boolean):Promise<void>;
+
 export function SetIdentity(arg1:string):Promise<main.LauncherStatus>;
 
 export function SetLauncherLocale(arg1:string):Promise<void>;

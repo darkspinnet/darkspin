@@ -86,6 +86,7 @@ func (e campaignProjectileStep) produceFlight(
 		packets = append(packets, homingPackets...)
 	}
 	snapshot, segments := schedule.run.SampleCollisionMotion(now)
+	segments = clipProjectileObstacles(peerSession.zone.Navigation(), segments)
 	result, err := schedule.flight.AdvanceMotion(
 		e.deadline-schedule.projectile.HitDelay, segments,
 		snapshot.IsActive && snapshot.RemainingDistance <= 0, targets,
@@ -129,10 +130,14 @@ func (e campaignProjectileStep) produceFlight(
 		}
 		e.finishFlightLocked(&peerSession)
 		schedule.runtime.registry.mutex.Unlock()
+		outcome := "range-expired"
+		if result.IsBlocked {
+			outcome = "obstacle"
+		}
 		schedule.runtime.logger.Printf(
-			"RakNet projectile trajectory resolved kind=hero-basic projectile=%d source=%d target=%d outcome=range-expired endpoint=(%.3f,%.3f,%.3f) distance=%.3f flight_ms=%d",
+			"RakNet projectile trajectory resolved kind=hero-basic projectile=%d source=%d target=%d outcome=%s endpoint=(%.3f,%.3f,%.3f) distance=%.3f flight_ms=%d",
 			schedule.projectileObjectID, schedule.sourceObjectID, schedule.targetObjectID,
-			result.Position.X, result.Position.Y, result.Position.Z, result.Distance,
+			outcome, result.Position.X, result.Position.Y, result.Position.Z, result.Distance,
 			(e.deadline - schedule.projectile.HitDelay).Milliseconds(),
 		)
 		return append(packets, impactPackets...), nil

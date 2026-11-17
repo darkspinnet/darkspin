@@ -197,6 +197,7 @@ func (e campaignNPCProjectileStep) sampleFlightLocked(current *gameplayPeerSessi
 		}
 		return append(packets, impactPackets...), statDelta, nil, nil
 	}
+	segments = clipProjectileObstacles(current.zone.Navigation(), segments)
 	result, err := schedule.flight.collision.AdvanceMotion(e.deadline-schedule.flight.hitDelay,
 		segments, snapshot.IsActive && snapshot.RemainingDistance <= 0, targets)
 	if err != nil {

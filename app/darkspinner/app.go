@@ -56,8 +56,7 @@ type App struct {
 	status                   LauncherStatus
 	installation             InstallationStatus
 	discoveredGameRoot       string
-	integrationError         string
-	startupError             string
+	installationArguments    []string
 	preparationTiming        *preparationTimingRecorder
 	presentation             launcherPresentation
 	launcherHandler          http.Handler
@@ -70,55 +69,57 @@ type App struct {
 type LauncherStatus struct {
 	AutomaticClientReport *AutomaticClientReport `json:"automaticClientReport,omitempty"`
 
-	State               string `json:"state"`
-	Message             string `json:"message"`
-	Identity            string `json:"identity"`
-	Auth                string `json:"auth"`
-	Server              string `json:"server"`
-	Patch               string `json:"patch"`
-	Game                string `json:"game"`
-	Avatar              string `json:"avatar"`
-	Profile             string `json:"profile"`
-	Content             string `json:"content"`
-	IdentityError       string `json:"identityError"`
-	AuthError           string `json:"authError"`
-	ServerError         string `json:"serverError"`
-	PatchError          string `json:"patchError"`
-	GameError           string `json:"gameError"`
-	AvatarError         string `json:"avatarError"`
-	ProfileError        string `json:"profileError"`
-	ContentError        string `json:"contentError"`
-	LastRun             string `json:"lastRun"`
-	ClientLoginFailure  string `json:"clientLoginFailure"`
-	LoginFailureID      string `json:"clientLoginFailureId"`
-	LauncherNotice      string `json:"launcherNotice"`
-	ManifestURL         string `json:"manifestUrl"`
-	GameDirectory       string `json:"gameDirectory"`
-	Version             string `json:"version"`
-	BuildChannel        string `json:"buildChannel"`
-	Progress            int    `json:"progress"`
-	PatchProgress       int    `json:"patchProgress"`
-	AvatarProgress      int    `json:"avatarProgress"`
-	ContentProgress     int    `json:"contentProgress"`
-	RequiredFile        int    `json:"requiredFile"`
-	DeleteFile          int    `json:"deleteFile"`
-	DownloadByte        int64  `json:"downloadByte"`
-	IsAuthenticated     bool   `json:"isAuthenticated"`
-	IsAuthOnline        bool   `json:"isAuthOnline"`
-	IsServerOnline      bool   `json:"isServerOnline"`
-	IsPatchComplete     bool   `json:"isPatchComplete"`
-	IsPatchActive       bool   `json:"isPatchActive"`
-	IsGameReady         bool   `json:"isGameReady"`
-	IsAvatarReady       bool   `json:"isAvatarReady"`
-	IsProfileStoreReady bool   `json:"isProfileStoreReady"`
-	IsContentReady      bool   `json:"isContentReady"`
-	IsPlayReady         bool   `json:"isPlayReady"`
-	IsAutoPlayRequested bool   `json:"isAutoPlayRequested"`
-	IsPatchEnabled      bool   `json:"isPatchEnabled"`
-	IsCinematicSkipped  bool   `json:"isCinematicSkipped"`
-	IsIntroSkipped      bool   `json:"isIntroSkipped"`
-	IsLastRunFailure    bool   `json:"isLastRunFailure"`
-	IsStartupBlocked    bool   `json:"isStartupBlocked"`
+	State                     string `json:"state"`
+	Message                   string `json:"message"`
+	Identity                  string `json:"identity"`
+	Auth                      string `json:"auth"`
+	Server                    string `json:"server"`
+	Patch                     string `json:"patch"`
+	Game                      string `json:"game"`
+	Avatar                    string `json:"avatar"`
+	Profile                   string `json:"profile"`
+	Content                   string `json:"content"`
+	IdentityError             string `json:"identityError"`
+	AuthError                 string `json:"authError"`
+	ServerError               string `json:"serverError"`
+	PatchError                string `json:"patchError"`
+	GameError                 string `json:"gameError"`
+	AvatarError               string `json:"avatarError"`
+	ProfileError              string `json:"profileError"`
+	ContentError              string `json:"contentError"`
+	LastRun                   string `json:"lastRun"`
+	ClientLoginFailure        string `json:"clientLoginFailure"`
+	LoginFailureID            string `json:"clientLoginFailureId"`
+	LauncherNotice            string `json:"launcherNotice"`
+	ManifestURL               string `json:"manifestUrl"`
+	GameDirectory             string `json:"gameDirectory"`
+	Version                   string `json:"version"`
+	BuildChannel              string `json:"buildChannel"`
+	Progress                  int    `json:"progress"`
+	PatchProgress             int    `json:"patchProgress"`
+	AvatarProgress            int    `json:"avatarProgress"`
+	ContentProgress           int    `json:"contentProgress"`
+	RequiredFile              int    `json:"requiredFile"`
+	DeleteFile                int    `json:"deleteFile"`
+	DownloadByte              int64  `json:"downloadByte"`
+	IsAuthenticated           bool   `json:"isAuthenticated"`
+	IsAuthOnline              bool   `json:"isAuthOnline"`
+	IsServerOnline            bool   `json:"isServerOnline"`
+	IsPatchComplete           bool   `json:"isPatchComplete"`
+	IsPatchActive             bool   `json:"isPatchActive"`
+	IsGameReady               bool   `json:"isGameReady"`
+	IsAvatarReady             bool   `json:"isAvatarReady"`
+	IsProfileStoreReady       bool   `json:"isProfileStoreReady"`
+	IsContentReady            bool   `json:"isContentReady"`
+	IsPlayReady               bool   `json:"isPlayReady"`
+	IsAutoPlayRequested       bool   `json:"isAutoPlayRequested"`
+	IsPatchEnabled            bool   `json:"isPatchEnabled"`
+	IsCinematicSkipped        bool   `json:"isCinematicSkipped"`
+	IsIntroSkipped            bool   `json:"isIntroSkipped"`
+	IsLastRunFailure          bool   `json:"isLastRunFailure"`
+	IsStartupBlocked          bool   `json:"isStartupBlocked"`
+	IsElevatedLaunchSupported bool   `json:"isElevatedLaunchSupported"`
+	IsElevatedLaunchAllowed   bool   `json:"isElevatedLaunchAllowed"`
 }
 
 func NewApp(arguments []string) *App {
@@ -154,34 +155,37 @@ func NewApp(arguments []string) *App {
 }
 
 func (a *App) startup(ctx context.Context) {
+	a.mu.Lock()
 	a.ctx = ctx
-	if a.startupError != "" {
-		a.mu.Lock()
-		a.status.State = "error"
-		a.status.Message = "Standard user required"
-		a.status.Auth = "Blocked"
-		a.status.Server = "Blocked"
-		a.status.Patch = "Blocked"
-		a.status.Game = "Blocked"
-		a.status.Avatar = "Blocked"
-		a.status.Profile = "Blocked"
-		a.status.Content = "Blocked"
-		a.status.LauncherNotice = a.startupError
-		a.status.IsStartupBlocked = true
-		a.emitStatusLocked()
-		a.mu.Unlock()
+	isBlocked := a.status.IsStartupBlocked
+	a.mu.Unlock()
+	if isBlocked {
 		return
 	}
-	if a.integrationError != "" {
-		a.status.LauncherNotice = "Integration setup failed: " + a.integrationError
-	}
+	a.startLauncher(ctx)
+}
+
+func (a *App) startLauncher(ctx context.Context) {
 	lifecycleCtx, lifecycleCancel := context.WithCancel(ctx)
 	initializeDone := make(chan struct{})
 	a.mu.Lock()
+	if a.isShuttingDown {
+		a.mu.Unlock()
+		lifecycleCancel()
+		return
+	}
 	a.lifecycleCtx = lifecycleCtx
 	a.serviceSet.cancel = lifecycleCancel
 	a.serviceSet.initializeDone = initializeDone
 	a.mu.Unlock()
+	integrationErr := completePendingInstallation(a.installationArguments)
+	if integrationErr != nil {
+		writeStartupDiagnostic("DarkSpinner integration setup failed", integrationErr)
+		a.mu.Lock()
+		a.status.LauncherNotice = "Integration setup failed: " + integrationErr.Error()
+		a.emitStatusLocked()
+		a.mu.Unlock()
+	}
 	basePath, err := executableDirectory()
 	if err != nil {
 		close(initializeDone)

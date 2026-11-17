@@ -8,6 +8,7 @@ locale = ""
 locale = ""
 is_intro_skipped = false
 is_cinematic_skipped = false
+is_elevated_launch_allowed = false
 
 [snapshot]
 # Local client diagnostic capture preferences.

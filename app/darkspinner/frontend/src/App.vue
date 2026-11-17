@@ -20,7 +20,7 @@ import RemoteControlPanel from '@/components/RemoteControlPanel.vue'
 import { RefreshCw } from '@lucide/vue'
 import { setLauncherLocale, translate } from './localization'
 import { remoteErrorText, remoteUsernameError, remotePasswordError } from './remote'
-import { GetLauncherLanguageConfiguration, SetLauncherLocale } from './platform'
+import { GetLauncherLanguageConfiguration, SetElevatedLaunchAllowed, SetLauncherLocale } from './platform'
 import { campaignDetailFor, campaignLabelFor, profileCreateDate, profileLastPlayedDate, profileLastPlayedTime } from './profile'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { BrowserOpenURL, CancelPatch, CheckRemoteServers, ClipboardSetText, CompactSnapshots, CloseRunningGame, CloseRunningProfile, CreateProfile, DeleteModProfile, DeleteProfile, DeleteRemoteConnection, DeleteRemoteProfile, DiscardInterruptedMission, EventsOn, GetInstallationStatus, GetInterruptedMission, GetLauncherAutomationConfiguration, GetLauncherIntegrationStatus, GetProfileAvatars, GetProfiles, GetRemoteProfiles, GetServerConfiguration, GetMatchmakingConfiguration, SetMatchmakingConfiguration, GetSquadSnapshot, GetStatus, GetWineRunnerConfiguration, HasDetachedGameInstances, IsProfileRunning, LaunchRemoteProfile, LoginRemoteProfile, OpenReportFolder, OpenSteamDemoInstall, Patch, Play, Quit, RefreshInstallationStatus, RegisterRemoteProfile, RelocateToGameRoot, RemoveLauncherIntegration, RepairLauncherIntegration, ResetModProfileDisplay, ResetProfileDisplay, RestartLauncher, ScanRemoteServers, ScanWineRunners, SendReport, SetAutoPatch, SetAutoPlay, SetIdentity, SetLocalServicesRequired, SetServerConfiguration, SetSkipCinematic, SetSkipIntro, SetWineRunner, StartDetachedGameInstance, UninstallDarkspinner } from './platform'
@@ -122,6 +122,9 @@ const isUninstallConfirmOpen = ref(false)
 const isRunningGameConfirmOpen = ref(false)
 const isRunningGameConfirmBusy = ref(false)
 const launcherNotice = ref('')
+const isElevationPreferenceBusy = ref(false)
+const elevationPreferenceError = ref('')
+let isLauncherViewInitialized = false
 const remoteLoginFailure = ref('')
 const dismissedClientLoginFailureID = ref('')
 const clientLoginFailure = computed(() => remoteLoginFailure.value || (status.value.clientLoginFailureId &&
@@ -548,6 +551,10 @@ watch(() => status.value.isServerOnline, isOnline => {
   if (isOnline) void refreshServerConfiguration()
 })
 
+watch(() => status.value.isStartupBlocked, (isBlocked, wasBlocked) => {
+  if (wasBlocked && !isBlocked) void initializeLauncherView()
+})
+
 onMounted(async () => {
   window.addEventListener('keydown', updateShiftKey)
   window.addEventListener('keyup', updateShiftKey)
@@ -562,6 +569,12 @@ onMounted(async () => {
   })
   await refreshLauncherLanguageConfiguration()
   status.value = { ...status.value, ...(await GetStatus()) }
+  if (!status.value.isStartupBlocked) await initializeLauncherView()
+})
+
+async function initializeLauncherView() {
+  if (isLauncherViewInitialized) return
+  isLauncherViewInitialized = true
   await refreshRemoteProfiles()
   luaConsole.value = await GetLuaConsole()
   if (luaConsole.value.isSelected) {
@@ -587,7 +600,7 @@ onMounted(async () => {
   preparationProgressTimer = window.setInterval(() => { preparationProgressClock.value = Date.now() }, 100)
   await maybeAutoPatch()
   await maybeAutoLaunch()
-})
+}
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', updateShiftKey)
@@ -1709,12 +1722,21 @@ function showLauncherNotice(message) {
   if (notice && notice !== dismissedLauncherNotice) launcherNotice.value = notice
 }
 function dismissLauncherNotice() {
-	if (status.value.isStartupBlocked) {
-		Quit()
-		return
-	}
   dismissedLauncherNotice = launcherNotice.value
   launcherNotice.value = ''
+}
+async function saveElevationPreference(isAllowed) {
+  if (isElevationPreferenceBusy.value) return
+  isElevationPreferenceBusy.value = true
+  elevationPreferenceError.value = ''
+  try {
+    await SetElevatedLaunchAllowed(isAllowed)
+    status.value = { ...status.value, isElevatedLaunchAllowed:isAllowed }
+  } catch {
+    elevationPreferenceError.value = 'Could not save the administrator launch preference.'
+  } finally {
+    isElevationPreferenceBusy.value = false
+  }
 }
 function recordError(error) {
   status.value = { ...status.value, lastRun:visibleLauncherText(error), isLastRunFailure:true }
@@ -1728,7 +1750,7 @@ async function copyLauncherFailure() {
 
 <template>
   <main class="spinner-shell" :class="{ onboarding:isInstallationRequired, management:['remote', 'config', 'mod'].includes(activePage), 'remote-accent':activePage === 'remote', 'mod-accent':activePage === 'mod' }" @pointerdown.capture="handleLauncherInteraction" @keydown.capture="handleLauncherInteraction">
-    <Tabs :model-value="activePage" @update:model-value="showPage" class="workspace" :class="{ 'navigation-hidden':isInstallationRequired }">
+    <Tabs v-if="!status.isStartupBlocked" :model-value="activePage" @update:model-value="showPage" class="workspace" :class="{ 'navigation-hidden':isInstallationRequired }">
       <div v-if="!isInstallationRequired" class="workspace-navigation">
         <button class="workspace-wordmark" type="button" :aria-label='$t("Show Dark Spin credits")' @click="isCreditsOpen = true"><span>DARK</span><strong>SPIN</strong></button>
         <TabsList :aria-label='$t("Launcher pages")'>
@@ -1899,6 +1921,11 @@ async function copyLauncherFailure() {
               </SelectContent>
               </Select>
               <label class="management-toggle"><Checkbox :model-value="status.isCinematicSkipped" :disabled="isBusy || isServerConfigurationBusy" @update:model-value="setSkipCinematic" /><span><strong>{{ $t("SKIP IN-GAME CINEMATICS") }}<ConfigHelp text="Skip supported story scenes during gameplay." /></strong></span></label>
+              <label v-if="status.isElevatedLaunchSupported" class="management-toggle">
+                <Checkbox :model-value="status.isElevatedLaunchAllowed" :disabled="isElevationPreferenceBusy" @update:model-value="saveElevationPreference" />
+                <span><strong>{{ $t("ALLOW ADMINISTRATOR MODE") }}<ConfigHelp text="DarkSpinner normally runs with standard Windows permissions. Some setups may require administrator privileges, such as when Steam is installed in a folder that only administrators can access. This setting skips the warning on future administrator launches." /></strong></span>
+              </label>
+              <p v-if="elevationPreferenceError" class="management-message configuration-error" role="alert">{{ $t(elevationPreferenceError) }}</p>
               <p v-if="serverConfigurationError" class="management-message configuration-error" role="alert">{{ $t(serverConfigurationError) }}</p>
             </Card>
             <Card class="management-card shortcuts-card">
@@ -1953,7 +1980,7 @@ async function copyLauncherFailure() {
     <TabsContent v-if="!isInstallationRequired && !luaConsole.isSelected" v-show="activePage === 'mod'" value="mod" force-mount as-child><ModPage ref="modPage" :status="status" :is-active="activePage === 'mod'" @configure="configTab = 'general'; showPage('config')" @profiles="modProfiles = $event" @selection="selectedModProfile = $event" @busy="isModBusy = $event" @readiness="isModPlayReady = $event" @launch="activeClientRoute = 'mod'"><template #picker><LaunchCrogenitorPicker :is-shift-held="isShiftHeld" :profiles="launchProfiles" :selected-key="selectedLaunchKey" :is-creation-disabled="isBusy" :is-disabled="isRemoteBusy || (activePage === 'mod' && isModBusy)" :is-action-disabled="isProfileActionDisabled" :is-mod="activePage === 'mod'" @select="chooseLaunchProfile" @create="createLaunchProfile" @control-panel="activePage === 'remote' ? controlPanel?.open() : localControlPanel?.open()" @edit="modPage?.editProfile()" @reset-display="requestResetProfileDisplay(activePage === 'remote' ? selectedRemoteProfile : selectedProfileRecord)" @delete="activePage === 'remote' ? requestRemoteProfileDelete($event) : requestDeleteProfile()" /></template></ModPage></TabsContent>
     </Tabs>
 
-    <footer :class="{ 'launch-footer':!isInstallationRequired }">
+    <footer v-if="!status.isStartupBlocked" :class="{ 'launch-footer':!isInstallationRequired }">
       <div v-if="!isInstallationRequired" class="launcher-dock">
         <div v-if="launcherFailure" class="launcher-failure" role="alert">
           <p>{{ $t(launcherFailure) }}</p>
@@ -2108,13 +2135,26 @@ async function copyLauncherFailure() {
       </div>
     </LauncherDialog>
 
+    <LauncherDialog @interact="handleLauncherInteraction" v-else-if="status.isStartupBlocked">
+      <div class="notice-card danger-notice">
+        <p class="eyebrow">{{ $t("PRIVILEGE CHECK") }}</p>
+        <DialogTitle as="h2">{{ $t("RUNNING AS ADMINISTRATOR") }}</DialogTitle>
+        <p>{{ $t("You started DarkSpinner as an administrator. Please exit and try running it as a standard user first. Only continue as administrator if your setup requires it, since doing so adds unnecessary risk in most cases.") }}</p>
+        <p v-if="elevationPreferenceError" class="configuration-error" role="alert">{{ $t(elevationPreferenceError) }}</p>
+        <div class="notice-actions">
+          <Button variant="outline" class="onboarding-cancel" type="button" :disabled="isElevationPreferenceBusy" @click="Quit">{{ $t("EXIT DARKSPINNER") }}</Button>
+          <Button variant="outline" type="button" :disabled="isElevationPreferenceBusy" @click="saveElevationPreference(true)">{{ $t("ACCEPT RISK AND CONTINUE") }}</Button>
+        </div>
+      </div>
+    </LauncherDialog>
+
     <LauncherDialog @interact="handleLauncherInteraction" v-else-if="launcherNotice">
       <div class="notice-card danger-notice">
-        <p class="eyebrow">{{ $t(status.isStartupBlocked ? 'PRIVILEGE CHECK' : 'LAUNCHER ATTENTION REQUIRED') }}</p>
-        <DialogTitle as="h2">{{ $t(status.isStartupBlocked ? 'STANDARD USER REQUIRED' : 'SETUP COULD NOT FINISH') }}</DialogTitle>
+        <p class="eyebrow">{{ $t("LAUNCHER ATTENTION REQUIRED") }}</p>
+        <DialogTitle as="h2">{{ $t("SETUP COULD NOT FINISH") }}</DialogTitle>
         <p>{{ $t(launcherNotice) }}</p>
         <div class="notice-actions">
-          <Button variant="outline" class="onboarding-cancel" type="button" @click="dismissLauncherNotice">{{ $t(status.isStartupBlocked ? 'EXIT DARKSPINNER' : 'CLOSE') }}</Button>
+          <Button variant="outline" class="onboarding-cancel" type="button" @click="dismissLauncherNotice">{{ $t("CLOSE") }}</Button>
         </div>
       </div>
     </LauncherDialog>

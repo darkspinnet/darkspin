@@ -1,5 +1,10 @@
 # Changelog
 
+### 2026-11-17
+
+- Let players running DarkSpinner as administrator acknowledge the risk and remember their choice, with a reset in Config Advanced.
+- #213 Stop sampled hero and enemy projectiles at authored map blockers.
+
 ### 2026-11-15
 
 - #212 Let Cannonators pursue into their melee attack range.

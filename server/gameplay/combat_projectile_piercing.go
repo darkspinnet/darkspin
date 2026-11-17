@@ -31,6 +31,11 @@ func (e campaignNPCProjectileStep) samplePiercingFlightLocked(
 ) ([][]byte, sporenet.PlayerStatDelta, error) {
 	schedule := e.schedule
 	flight := schedule.flight
+	remainingDistance := snapshot.RemainingDistance
+	for _, segment := range segments {
+		remainingDistance += segment.Distance
+	}
+	segments = clipProjectileObstacles(member.zone.Navigation(), segments)
 	travel, err := flight.collision.AdvanceMotion(e.deadline-flight.hitDelay, segments,
 		snapshot.IsActive && snapshot.RemainingDistance <= 0, nil)
 	statDelta := sporenet.PlayerStatDelta{}
@@ -45,12 +50,11 @@ func (e campaignNPCProjectileStep) samplePiercingFlightLocked(
 			return nil, statDelta, fmt.Errorf("piercingExpire: %w", err)
 		}
 	}
-	remainingDistance := snapshot.RemainingDistance
-	for _, segment := range segments {
-		remainingDistance += segment.Distance
-	}
 	packets := make([][]byte, 0)
 	for _, segment := range segments {
+		if segment.IsBlocked && segment.Distance == 0 {
+			break
+		}
 		contacts := make([]campaignNPCPiercingContact, 0)
 		for _, target := range targets {
 			if _, isPierced := flight.piercedTargets[target.ObjectID]; isPierced {
@@ -65,7 +69,8 @@ func (e campaignNPCProjectileStep) samplePiercingFlightLocked(
 			if collisionErr != nil {
 				return nil, statDelta, fmt.Errorf("piercingTarget[%d]: %w", target.ObjectID, collisionErr)
 			}
-			if !collision.IsDirectHit || collision.TravelDistance > segment.Distance {
+			if !collision.IsDirectHit || collision.TravelDistance > segment.Distance ||
+				(segment.IsBlocked && collision.TravelDistance >= segment.Distance) {
 				continue
 			}
 			current, isFound := member.zone.NPCTarget(target.ObjectID)

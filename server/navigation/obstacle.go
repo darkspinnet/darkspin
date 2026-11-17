@@ -96,6 +96,25 @@ func (e *Mesh) IsSegmentClear(start, end Vec3, planLayer uint8) bool {
 	return true
 }
 
+// FirstObstacleContact returns the earliest fraction of a segment inside an
+// enabled authored blocker, without the clearance used for walking actors.
+func (e *Mesh) FirstObstacleContact(start, end Vec3) (float32, bool) {
+	if e == nil || !isFinite(start) || !isFinite(end) {
+		return 0, false
+	}
+	nearest := float32(1)
+	for _, obstacle := range e.obstacles {
+		entry, isHit := obstacle.segmentEntry(start, end, 0, 0)
+		if isHit && entry < nearest {
+			nearest = entry
+			if nearest == 0 {
+				break
+			}
+		}
+	}
+	return nearest, nearest < 1
+}
+
 func (e Obstacle) local(point Vec3) Vec3 {
 	angle := float64(e.Yaw) * math.Pi / 180
 	cosine, sine := float32(math.Cos(angle)), float32(math.Sin(angle))
@@ -104,8 +123,13 @@ func (e Obstacle) local(point Vec3) Vec3 {
 }
 
 func (e Obstacle) intersects(start Vec3, end Vec3, radius float32, height float32) bool {
+	_, isHit := e.segmentEntry(start, end, radius, height)
+	return isHit
+}
+
+func (e Obstacle) segmentEntry(start, end Vec3, radius, height float32) (float32, bool) {
 	if e.isDisabled != nil && e.isDisabled.Load() {
-		return false
+		return 0, false
 	}
 	start, end = e.local(start), e.local(end)
 	minimums := [3]float32{e.Minimum.X - radius, e.Minimum.Y - radius, e.Minimum.Z - height}
@@ -117,7 +141,7 @@ func (e Obstacle) intersects(start Vec3, end Vec3, radius float32, height float3
 		delta := ends[axis] - starts[axis]
 		if math.Abs(float64(delta)) < 0.000001 {
 			if starts[axis] <= minimums[axis] || starts[axis] >= maximums[axis] {
-				return false
+				return 0, false
 			}
 			continue
 		}
@@ -128,10 +152,10 @@ func (e Obstacle) intersects(start Vec3, end Vec3, radius float32, height float3
 		}
 		entry, exit = max(entry, first), min(exit, last)
 		if entry >= exit {
-			return false
+			return 0, false
 		}
 	}
-	return entry < exit
+	return entry, true
 }
 
 func (e *Mesh) isObstructed(point Vec3, planLayer uint8) bool {

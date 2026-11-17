@@ -107,7 +107,6 @@ func main() {
 		}
 		return
 	}
-	privilegeErr := ensureStandardUser()
 	err := configureDarkSpinnerVersion()
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner version failed:", err)
@@ -118,9 +117,16 @@ func main() {
 		return
 	}
 	if hasLaunchArgument(os.Args[1:], detachedGameArgument) {
-		if privilegeErr != nil {
-			_, _ = fmt.Fprintln(os.Stderr, privilegeLaunchMessage(privilegeErr))
-			return
+		if ensureStandardUser() != nil {
+			isAllowed, preferenceErr := readElevatedLaunchPreference()
+			if preferenceErr != nil {
+				writeDetachedLaunchError(fmt.Errorf("detachedElevationRead: %w", preferenceErr))
+				return
+			}
+			if !isAllowed {
+				writeDetachedLaunchError(errors.New("open DarkSpinner and acknowledge the administrator warning before launching an elevated game instance"))
+				return
+			}
 		}
 		err = runDetachedGame(os.Args[1:])
 		if err != nil {
@@ -145,19 +151,14 @@ func main() {
 		return
 	}
 	defer releaseInstance()
-	var integrationErr error
-	if privilegeErr == nil {
-		integrationErr = completePendingInstallation(os.Args[1:])
-		if integrationErr != nil {
-			_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner integration setup failed:", integrationErr)
-		}
-	}
 	err = prepareRuntime()
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "DarkSpinner startup failed:", err)
 		os.Exit(1)
 	}
 	app := NewApp(removePresentationArguments(removeInstallationArguments(os.Args[1:])))
+	app.installationArguments = os.Args[1:]
+	app.configureElevatedLaunch()
 	basePath, cleanupErr := executableDirectory()
 	if cleanupErr == nil {
 		cleanupErr = cleanupDetachedLogs(basePath)
@@ -166,12 +167,6 @@ func main() {
 		count, outputErr := fmt.Fprintln(os.Stderr, "Launcher diagnostic cleanup:", cleanupErr)
 		if outputErr != nil || count == 0 { /* Startup remains available if a previous log is locked. */
 		}
-	}
-	if privilegeErr != nil {
-		app.startupError = privilegeLaunchMessage(privilegeErr)
-	}
-	if integrationErr != nil {
-		app.integrationError = integrationErr.Error()
 	}
 	if isHeadless {
 		err = runHeadless(app, !hasLaunchArgument(os.Args[1:], "no-browser"))
@@ -218,13 +213,6 @@ func removePresentationArguments(arguments []string) []string {
 	return filteredArguments
 }
 
-func privilegeLaunchMessage(err error) string {
-	if errors.Is(err, errElevatedLaunch) {
-		return "DarkSpinner cannot run as an administrator. Close this launcher and start it normally without Run as administrator."
-	}
-	return fmt.Sprintf("DarkSpinner could not verify standard-user mode: %v", err)
-}
-
 func hasVersionArgument(arguments []string) bool {
 	for _, argument := range arguments {
 		if argument == "--version" || argument == "-version" {
@@ -232,6 +220,13 @@ func hasVersionArgument(arguments []string) bool {
 		}
 	}
 	return false
+}
+
+func writeStartupDiagnostic(message string, err error) {
+	count, writeErr := fmt.Fprintln(os.Stderr, message+":", err)
+	if writeErr != nil || count == 0 {
+		// Early diagnostics are best effort when stderr is unavailable.
+	}
 }
 
 func run(ctx context.Context, arguments []string) error {

@@ -370,6 +370,10 @@ export function SetAutoPlay(arg1) {
   return window['go']['main']['App']['SetAutoPlay'](arg1);
 }
 
+export function SetElevatedLaunchAllowed(arg1) {
+  return window['go']['main']['App']['SetElevatedLaunchAllowed'](arg1);
+}
+
 export function SetIdentity(arg1) {
   return window['go']['main']['App']['SetIdentity'](arg1);
 }

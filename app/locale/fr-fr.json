@@ -1,6 +1,12 @@
 {
   "locale": "fr-fr",
   "messages": {
+    "ACCEPT RISK AND CONTINUE": "",
+    "ALLOW ADMINISTRATOR MODE": "",
+    "Could not save the administrator launch preference.": "",
+    "You started DarkSpinner as an administrator. Please exit and try running it as a standard user first. Only continue as administrator if your setup requires it, since doing so adds unnecessary risk in most cases.": "",
+    "DarkSpinner normally runs with standard Windows permissions. Some setups may require administrator privileges, such as when Steam is installed in a folder that only administrators can access. This setting skips the warning on future administrator launches.": "",
+    "RUNNING AS ADMINISTRATOR": "",
     "The control panel rejected the launcher connection. Close the panel and try again.": "",
     "Server settings are not available while the local server is starting.": "",
     "Server settings will be available when the local server is ready.": "",

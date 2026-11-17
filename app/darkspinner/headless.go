@@ -212,6 +212,7 @@ func launcherMethods(app *App) map[string]any {
 		"GetLauncherAutomationConfiguration": app.GetLauncherAutomationConfiguration,
 		"GetLauncherLanguageConfiguration":   app.GetLauncherLanguageConfiguration,
 		"SetLauncherLocale":                  app.SetLauncherLocale,
+		"SetElevatedLaunchAllowed":           app.SetElevatedLaunchAllowed,
 		"SetAutoPatch":                       app.SetAutoPatch,
 		"SetAutoPlay":                        app.SetAutoPlay,
 		"SetLocalServicesRequired":           app.SetLocalServicesRequired,

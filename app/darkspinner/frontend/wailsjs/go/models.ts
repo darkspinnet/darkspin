@@ -237,6 +237,8 @@ export namespace main {
 	    isIntroSkipped: boolean;
 	    isLastRunFailure: boolean;
 	    isStartupBlocked: boolean;
+	    isElevatedLaunchSupported: boolean;
+	    isElevatedLaunchAllowed: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new LauncherStatus(source);
@@ -294,6 +296,8 @@ export namespace main {
 	        this.isIntroSkipped = source["isIntroSkipped"];
 	        this.isLastRunFailure = source["isLastRunFailure"];
 	        this.isStartupBlocked = source["isStartupBlocked"];
+	        this.isElevatedLaunchSupported = source["isElevatedLaunchSupported"];
+	        this.isElevatedLaunchAllowed = source["isElevatedLaunchAllowed"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
