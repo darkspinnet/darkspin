@@ -10,12 +10,22 @@ import (
 	"github.com/darkspinnet/darkspin/server/sim"
 	zoneability "github.com/darkspinnet/darkspin/server/zone/ability"
 	zonegeometry "github.com/darkspinnet/darkspin/server/zone/geometry"
+	geometryraknet "github.com/darkspinnet/darkspin/server/zone/geometry/raknet103"
 	zonenpc "github.com/darkspinnet/darkspin/server/zone/npc"
 )
 
 const afflictionBoltScanInterval = 100 * time.Millisecond
 const afflictionBoltRetargetRange = 20
 const afflictionBoltTurnRate = 6
+
+func afflictionBoltLaunchAim(position raknet.Vector3, footprint float32, orientation raknet.Quaternion) (raknet.Vector3, error) {
+	facing, err := geometryraknet.Forward(orientation)
+	if err != nil {
+		return raknet.Vector3{}, fmt.Errorf("launchFacing: %w", err)
+	}
+	distance := max(float32(1), footprint*2)
+	return raknet.Vector3(game.Vec3(position).Add(game.Vec3(facing).Scale(distance))), nil
+}
 
 type heroAfflictionBoltContact struct {
 	targetID   uint32
@@ -127,8 +137,9 @@ func (e heroAfflictionBoltStep) scan() ([][]byte, error) {
 	if targetID == 0 && isOwnerAlive {
 		targetID = e.schedule.sourceObjectID
 		targetPosition = sim.Position(ownerPosition)
+		targetPosition.Z += max(float32(0.5), peerSession.deployedCampaignFootprintRadius())
 	}
-	packets, err := e.schedule.run.projectile.Retarget(now, targetID, targetPosition, afflictionBoltTurnRate)
+	packets, err := e.schedule.run.projectile.RetargetAffliction(now, targetID, targetPosition, afflictionBoltTurnRate)
 	if err != nil {
 		return nil, fmt.Errorf("afflictionRetarget: %w", err)
 	}

@@ -1788,6 +1788,15 @@ func (r campaignDamageRuntime) publishTransition(
 			sessionKey, transition.bossStartError)
 	}
 	packets := make([][]byte, 0, len(transition.immediatePackets)+1)
+	if transition.stealthCleanupObjectID != 0 {
+		stealthPackets, stealthErr := r.npc.interruptStealtherDamage(
+			sessionKey, generation, transition.stealthCleanupObjectID, timestamp,
+		)
+		if stealthErr != nil {
+			return nil, fmt.Errorf("stealthDamage: %w", stealthErr)
+		}
+		packets = append(packets, stealthPackets...)
+	}
 	if transition.defeatedObjectID != 0 {
 		r.registry.mutex.RLock()
 		member, isMemberFound := r.registry.sessions[sessionKey]
@@ -2517,6 +2526,7 @@ type campaignDamageTransition struct {
 	corruptorPortalRespawn       *campaignCorruptorPortalRespawnPlan
 	defeatedObjectID             uint32
 	fearCleanupObjectID          uint32
+	stealthCleanupObjectID       uint32
 	healingCleanupObjectID       uint32
 	sinkholeCleanupObjectID      uint32
 	experience                   uint32
@@ -2622,6 +2632,14 @@ func (s *gameplayPeerSession) applyCampaignDamageTransitionWithKill(
 		return campaignDamageTransition{}, errors.New("campaign transition unavailable")
 	}
 	transition := campaignDamageTransition{}
+	if result.Damage > 0 && !result.IsDamageImmune && s.zone.NPCs().IsStealthed(result.ObjectID) {
+		target, isTargetFound := s.zone.NPCs().NPC(result.ObjectID)
+		_, isStealther := zonenpc.StealtherStealthProfile(target.Plan.NounName)
+		if isTargetFound && isStealther {
+			s.zone.NPCs().ClearStealth(result.ObjectID)
+			transition.stealthCleanupObjectID = result.ObjectID
+		}
+	}
 	if s.requestCampaignCorruptorPhase(result) {
 		transition.corruptorPhaseObjectID = result.ObjectID
 	}
@@ -6666,6 +6684,7 @@ func (campaignNPCActionRuntime) publishFirstAggro(
 }
 
 type campaignNPCModifierRun struct {
+	stealther          *campaignStealtherSchedule
 	teleportControl    *teleportControlState
 	transferredControl *transferredControl
 	companionSilence   *companionSilenceControl

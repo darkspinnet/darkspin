@@ -830,8 +830,9 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 		return req.reject("projectile status definition unavailable")
 	}
 	target, isTargetFound := peerSession.zone.NPCs().NPC(targetObjectID)
+	isTargetless := definition.Name == "AfflictionBolt" && targetObjectID == 0
 	admissionRange := heroAbilityAdmissionRange(creature, definition)
-	if !isTargetFound || target.IsDefeated || target.HitPoint <= 0 ||
+	if !isTargetless && (!isTargetFound || target.IsDefeated || target.HitPoint <= 0 ||
 		target.Faction != zonenpc.FactionNonPlayerAligned ||
 		(definition.Name == "AfflictionBolt" &&
 			(peerSession.zone.NPCs().CurseRemaining(targetObjectID, r.now()) > 0 ||
@@ -839,7 +840,7 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 		!isInsideZoneTrigger(
 			peerSession.playerPosition, raknet.Vector3(target.Plan.Position),
 			admissionRange,
-		) {
+		)) {
 		r.registry.mutex.Unlock()
 		return req.reject("projectile status target unavailable")
 	}
@@ -873,6 +874,9 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("projectileStatusSpeed: %w", err)
 	}
+	if projected.Name == "AfflictionBolt" {
+		projected.Distance = projected.Speed * float32(afflictionBoltFlightDuration(definition).Seconds())
+	}
 	previousProjectileObjectID := peerSession.nextProjectileObjectID
 	projectileObjectID, err := peerSession.reserveCampaignProjectileIDs(1, 1000)
 	if err != nil {
@@ -881,11 +885,16 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 	}
 	actorPosition := peerSession.playerPosition
 	actorFootprint := peerSession.deployedCampaignFootprintRadius()
-	geometry, _, err := campaignTargetProjectileGeometry(r.program, target)
-	if err != nil {
-		peerSession.restoreCampaignProjectileID(previousProjectileObjectID)
-		r.registry.mutex.Unlock()
-		return nil, fmt.Errorf("projectileStatusGeometry: %w", err)
+	geometry := zonenpc.ProjectileGeometry{}
+	if !isTargetless {
+		var isGeometryFallback bool
+		geometry, isGeometryFallback, err = campaignTargetProjectileGeometry(r.program, target)
+		if err != nil {
+			peerSession.restoreCampaignProjectileID(previousProjectileObjectID)
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("projectileStatusGeometry: %w", err)
+		}
+		_ = isGeometryFallback
 	}
 	actorHeight := actorFootprint
 	actorPhysics, isActorPhysicsFound := r.program.NounPhysicsByID[creature.Noun]
@@ -899,6 +908,14 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 	targetPosition := raknet.Vector3(campaignProjectileAimPosition(
 		target.Plan.Position, target.Plan.NPCProfile.FootprintRadius, geometry,
 	))
+	if isTargetless {
+		targetPosition, err = afflictionBoltLaunchAim(actorPosition, actorFootprint, req.command.Common.Orientation)
+		if err != nil {
+			peerSession.restoreCampaignProjectileID(previousProjectileObjectID)
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("afflictionLaunchAim: %w", err)
+		}
+	}
 	facing := zoneability.ProjectileDirection(actorPosition, targetPosition)
 	launchPosition := campaignProjectileLaunchPosition(
 		game.Vec3(actorPosition), game.Vec3(targetPosition), actorFootprint,
@@ -912,13 +929,17 @@ func (r campaignAbilityCommandRuntime) handleHeroProjectileStatus(
 	)
 	impactDeadline := projected.HitDelay + travelDelay
 	collisionDelay := travelDelay
+	launchTargetID := targetObjectID
 	if projected.Name == "AfflictionBolt" {
 		collisionDelay = afflictionBoltFlightDuration(projected)
+	}
+	if isTargetless {
+		launchTargetID = req.command.Common.ObjectID
 	}
 	projectileRun, immediatePackets, err := abilityraknet.NewProjectileRun(
 		abilityraknet.ProjectileInput{
 			Ability: projected, ActorObjectID: req.command.Common.ObjectID,
-			TargetObjectID: targetObjectID, ProjectileObjectID: projectileObjectID,
+			TargetObjectID: launchTargetID, ProjectileObjectID: projectileObjectID,
 			ActorPosition: sim.Position(actorPosition), TargetPosition: sim.Position(targetPosition),
 			ActorFacing: sim.Position(facing), ImpactPosition: sim.Position(targetPosition),
 			FootprintRadius: actorFootprint,

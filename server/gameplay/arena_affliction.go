@@ -211,8 +211,9 @@ func (e *arenaProjectileStatusRun) scanAffliction(deadline time.Duration) ([][]b
 	if retarget == 0 && isOwnerAlive {
 		retarget = e.sourceObjectID
 		retargetPosition = ownerPosition
+		retargetPosition.Z += max(float32(0.5), member.deployedCampaignFootprintRadius())
 	}
-	packets, err := e.projectile.Retarget(now, retarget,
+	packets, err := e.projectile.RetargetAffliction(now, retarget,
 		sim.Position(retargetPosition), afflictionBoltTurnRate)
 	if err != nil {
 		e.runtime.registry.mutex.Unlock()

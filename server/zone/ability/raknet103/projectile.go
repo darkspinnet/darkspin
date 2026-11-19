@@ -71,6 +71,7 @@ type ProjectileRun struct {
 	acceleration       float32
 	distance           float32
 	retargetID         uint32
+	afflictionTurnAt   time.Time
 	motionMutex        sync.Mutex
 	motionPosition     sim.Position
 	motionUpdated      time.Time

@@ -171,6 +171,7 @@ type zoneEffectPresentation struct {
 	heroPassivePoisons                  map[uint32]*heroPassivePoisonRun
 	heroHitPoisons                      map[heroHitPoisonKey]*heroHitPoisonRun
 	heroTimeRavagerSlows                map[uint32]*heroTimeRavagerSlowRun
+	hasteFieldEffects                   map[uint32]*channelEffects
 	heroEnergyVulnerabilities           map[uint32]*heroEnergyVulnerabilityRun
 	heroHealingReductions               map[heroHealingReductionKey]*heroHealingReductionRun
 	heroTaunts                          map[uint32]*heroTauntRun
@@ -252,7 +253,6 @@ type zonePresentationRuntime struct {
 	cryosPoisonExpiresAt    time.Time
 	cryosPoisonSourceID     uint32
 	cryosBurnExpiresAt      time.Time
-	cryosBurnHazard         campaignLavaHazard
 	plasmaBurn              *campaignNPCModifierRun
 	plasmaBurnEffect        *plasmaBurnPresentation
 	plasmaBurnReadyAt       time.Time
@@ -353,7 +353,6 @@ type controlledHeroState struct {
 	heroKnockbackLanding          heroKnockbackLanding
 	enemyFearExpiresAt            time.Time
 	enemyFearTargetObjectID       uint32
-	campaignLavaReadyAt           time.Time
 	graviticSlowObjectID          uint32
 	sinkholeWind                  sinkholeWind
 	sinkholeMovementBuff          float32
@@ -1722,6 +1721,7 @@ func (s *gameplayPeerSession) resetAbilityRelease() {
 // member. The client presents those modifiers on a specific hero object even
 // though their authoritative expiry is owned by the peer session.
 func (s *gameplayPeerSession) clearEnemyHeroStatuses() {
+	s.retireHasteFields()
 	if s == nil {
 		return
 	}
@@ -1742,6 +1742,7 @@ func (s *gameplayPeerSession) clearEnemyHeroStatuses() {
 // state that was canceled with the old connection. Zone-owned world progress,
 // squad resources, cooldowns, and the stopped authoritative pose survive.
 func (s *gameplayPeerSession) resetRetainedTransportState() {
+	s.retireHasteFields()
 	if s == nil {
 		return
 	}

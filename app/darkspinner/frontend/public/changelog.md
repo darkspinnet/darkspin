@@ -1,5 +1,13 @@
 # Changelog
 
+### 2026-11-19
+
+- [#215](https://github.com/darkspinnet/darkspin/issues/215) Remove the guessed Infinity hazard circle that dealt 10% maximum-health damage on walkable ground.
+- [#215](https://github.com/darkspinnet/darkspin/issues/215) Allow Affliction Bolt casts without an enemy target and synchronize its turning flight and elevated caster return between server and client.
+- [#216](https://github.com/darkspinnet/darkspin/issues/216) Show Vex's Haste Field on its recipients and share its presentation with co-op players.
+- [#216](https://github.com/darkspinnet/darkspin/issues/216) Stop Pterodyne's stealth approach and pending fear when damage removes its stealth.
+- [#216](https://github.com/darkspinnet/darkspin/issues/216) Stop native movement and update cursor-facing for area basic attacks, and keep held targeted basics ahead of movement input.
+
 ### 2026-11-17
 
 - Let players running DarkSpinner as administrator acknowledge the risk and remember their choice, with a reset in Config Advanced.

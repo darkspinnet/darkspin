@@ -75,18 +75,19 @@ func (r campaignAbilityCommandRuntime) handleArenaProjectileStatus(
 	}
 	match := r.registry.arenaMatches[member.binding.GameID]
 	targets := r.registry.abilityTargetsLocked(r, member, definition, req.packet.SourceTime).(*arenaAbilityTargets)
-	if targetObjectID == 0 || match == nil || !match.isCombatActive || match.random == nil {
+	isTargetless := definition.Name == "AfflictionBolt" && targetObjectID == 0
+	if (!isTargetless && targetObjectID == 0) || match == nil || !match.isCombatActive || match.random == nil {
 		r.registry.mutex.Unlock()
 		return req.reject("projectile status target unavailable")
 	}
 	target, isTargetFound := targets.NPC(targetObjectID)
-	if !isTargetFound || target.IsDefeated || target.HitPoint <= 0 ||
+	if !isTargetless && (!isTargetFound || target.IsDefeated || target.HitPoint <= 0 ||
 		!isInsideZoneTrigger(member.playerPosition, raknet.Vector3(target.Plan.Position),
-			heroAbilityAdmissionRange(creature, definition)) {
+			heroAbilityAdmissionRange(creature, definition))) {
 		r.registry.mutex.Unlock()
 		return req.reject("projectile status target unavailable")
 	}
-	if definition.Name == "AfflictionBolt" {
+	if definition.Name == "AfflictionBolt" && !isTargetless {
 		_, victim, isVictimFound := targets.member(targetObjectID)
 		if !isVictimFound || victim.isArenaStealthed() || victim.isArenaHitCurseActive(r.now()) {
 			r.registry.mutex.Unlock()
@@ -102,6 +103,9 @@ func (r campaignAbilityCommandRuntime) handleArenaProjectileStatus(
 	if err != nil {
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("arenaStatusSpeed: %w", err)
+	}
+	if projected.Name == "AfflictionBolt" {
+		projected.Distance = projected.Speed * float32(afflictionBoltFlightDuration(definition).Seconds())
 	}
 	damage, err := zoneability.ProjectDamage(creature, projected,
 		projected.MinimumDamagePerTick, projected.MaximumDamagePerTick)
@@ -126,11 +130,16 @@ func (r campaignAbilityCommandRuntime) handleArenaProjectileStatus(
 		r.registry.mutex.Unlock()
 		return nil, fmt.Errorf("arenaStatusProjectileID: %w", err)
 	}
-	geometry, _, err := abilityTargetProjectileGeometryLocked(r, member, target)
-	if err != nil {
-		member.restoreCampaignProjectileID(previousProjectileID)
-		r.registry.mutex.Unlock()
-		return nil, fmt.Errorf("arenaStatusGeometry: %w", err)
+	geometry := zonenpc.ProjectileGeometry{}
+	if !isTargetless {
+		var isGeometryFallback bool
+		geometry, isGeometryFallback, err = abilityTargetProjectileGeometryLocked(r, member, target)
+		if err != nil {
+			member.restoreCampaignProjectileID(previousProjectileID)
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("arenaStatusGeometry: %w", err)
+		}
+		_ = isGeometryFallback
 	}
 	actorFootprint := member.deployedCampaignFootprintRadius()
 	actorPosition := member.playerPosition
@@ -141,18 +150,31 @@ func (r campaignAbilityCommandRuntime) handleArenaProjectileStatus(
 	actorPosition.Z += max(float32(0), actorHeight)
 	targetPosition := campaignProjectileAimPosition(target.Plan.Position,
 		target.Plan.NPCProfile.FootprintRadius, geometry)
+	if isTargetless {
+		aim, aimErr := afflictionBoltLaunchAim(actorPosition, actorFootprint, req.command.Common.Orientation)
+		if aimErr != nil {
+			member.restoreCampaignProjectileID(previousProjectileID)
+			r.registry.mutex.Unlock()
+			return nil, fmt.Errorf("arenaAfflictionAim: %w", aimErr)
+		}
+		targetPosition = game.Vec3(aim)
+	}
 	facing := zoneability.ProjectileDirection(actorPosition, raknet.Vector3(targetPosition))
 	launch := campaignProjectileLaunchPosition(game.Vec3(actorPosition), targetPosition, actorFootprint)
 	travelDistance := zoneability.Distance(launch, targetPosition)
 	travelDelay := max(abilityraknet.ProjectileCollisionTick,
 		time.Duration(float64(travelDistance)/float64(projected.Speed)*float64(time.Second)))
 	collisionDelay := travelDelay
+	launchTargetID := targetObjectID
 	if projected.Name == "AfflictionBolt" {
 		collisionDelay = afflictionBoltFlightDuration(projected)
 	}
+	if isTargetless {
+		launchTargetID = req.command.Common.ObjectID
+	}
 	projectile, initialPackets, err := abilityraknet.NewProjectileRun(abilityraknet.ProjectileInput{
 		Ability: projected, ActorObjectID: req.command.Common.ObjectID,
-		TargetObjectID: targetObjectID, ProjectileObjectID: projectileID,
+		TargetObjectID: launchTargetID, ProjectileObjectID: projectileID,
 		ActorPosition: sim.Position(actorPosition), TargetPosition: sim.Position(targetPosition),
 		ActorFacing: sim.Position(facing), ImpactPosition: sim.Position(targetPosition),
 		FootprintRadius: actorFootprint, CollisionDelay: collisionDelay,

@@ -164,6 +164,9 @@ func (e campaignStealtherSchedule) retirePreviousStealth() [][]byte {
 }
 
 func (e campaignStealtherSchedule) ownStealthModifier(modifier *campaignNPCModifierRun) {
+	owned := e
+	owned.modifier = modifier
+	modifier.stealther = &owned
 	modifier.record = zoneeffect.Modifier{
 		InstanceID: modifier.instanceID, GUID: stealtherStealthModifierID,
 		SourceObjectID: e.objectID, TargetObjectID: e.objectID,
@@ -240,6 +243,10 @@ func (e campaignStealtherSchedule) cast(timestamp uint64) ([][]byte, error) {
 		return nil, nil
 	}
 	enemy, isEnemyFound := peerSession.zone.NPCs().NPC(e.objectID)
+	if e.modifier != nil && !peerSession.zone.NPCs().IsStealthed(e.objectID) {
+		e.runtime.registry.mutex.Unlock()
+		return e.finishStealth(false, timestamp), nil
+	}
 	target, isTargetFound := peerSession.campaignNPCTarget(
 		e.generation, enemy.TargetObjectID,
 	)
@@ -368,7 +375,7 @@ func (e campaignStealtherSchedule) hit() ([][]byte, error) {
 	}
 	isAttackActive := peerSession.isCampaignNPCAttackActiveAt(
 		e.generation, e.objectID, e.plan.TargetObjectID, e.runtime.now(),
-	)
+	) && peerSession.zone.NPCs().IsStealthed(e.objectID)
 	if !isAttackActive {
 		e.runtime.registry.mutex.Unlock()
 		return e.finishStealth(false, e.timestamp), nil
@@ -561,7 +568,9 @@ func (e campaignStealtherSchedule) fear() ([][]byte, error) {
 	peerSession, isFound := e.runtime.registry.sessions[e.sessionKey]
 	isCurrent := isFound && peerSession.isCampaignNPCSourceActive(
 		e.generation, e.objectID,
-	)
+	) && e.modifier != nil &&
+		peerSession.campaignNPCModifiers[e.modifier.instanceID] == e.modifier &&
+		peerSession.zone.NPCs().IsStealthed(e.objectID)
 	if !isCurrent {
 		e.runtime.registry.mutex.RUnlock()
 		return nil, nil

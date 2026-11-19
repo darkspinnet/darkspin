@@ -598,7 +598,9 @@ func (e campaignActionAuthority) interruptMovement(
 		e.registry.sessions[sessionKey] = peerSession
 		return interruption
 	}
-	if !peerSession.isAbilityReleaseReady(now) {
+	isBasicHeld := peerSession.basicSequenceSession().IsHeld() &&
+		!peerSession.campaignPlayerPursuitSession().Snapshot().IsActive
+	if !peerSession.isAbilityReleaseReady(now) || isBasicHeld {
 		attackPose := peerSession.attackPose
 		if peerSession.basicAttack == nil && !attackPose.isActiveAt(now) {
 			attackPose = retainedAttackPose{}

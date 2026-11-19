@@ -1950,16 +1950,22 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 	areaPlan.Definition.HitDelay = selection.HitDelay
 	areaPlan.Definition.ReleaseDelay = selection.ReleaseDelay
 	var posePackets [][]byte
-	if definition.Name == "FireTempestBasic" {
-		facing := geometryraknet.Direction(peerSession.playerPosition, center)
+	poseTarget := center
+	if !isActiveRequest && isReportedZonePosition(command.Ability.CursorPosition) &&
+		isFiniteZonePosition(command.Ability.CursorPosition) {
+		poseTarget = command.Ability.CursorPosition
+	}
+	if (definition.Name == "FireTempestBasic" || !isActiveRequest) &&
+		zoneability.Distance(game.Vec3(peerSession.playerPosition), game.Vec3(poseTarget)) > 0.001 {
+		facing := geometryraknet.Direction(peerSession.playerPosition, poseTarget)
 		posePackets, err = marshalZonePlayerAttackPose(command.Common.ObjectID,
-			peerSession.playerPosition, facing, center)
+			peerSession.playerPosition, facing, poseTarget)
 		if err != nil {
 			peerSession.basicSequenceSession().Restore(previousBasicSequence, basicSequenceRevision)
 			r.registry.mutex.Unlock()
 			return nil, fmt.Errorf("areaBasicFacing: %w", err)
 		}
-		peerSession.retainAttackPose(facing, center, targetObjectID,
+		peerSession.retainAttackPose(facing, poseTarget, targetObjectID,
 			abilityStartTime.Add(selection.ReleaseDelay))
 	}
 	if definition.Kind != sim.AbilityKindTeleportArea {
@@ -1970,13 +1976,13 @@ func (r campaignAbilityCommandRuntime) handleAreaBasic(
 		return nil, fmt.Errorf("campaignAreaBasicStop: %w", err)
 	}
 	playerMotionRevision := peerSession.playerMotionRevision()
-	if definition.Name == "TCShieldedSentinelBasic" && previousPlayerMotion.Movement().IsMoving {
+	if definition.Kind != sim.AbilityKindTeleportArea && previousPlayerMotion.Movement().IsMoving {
 		stopPacket, stopErr := marshalReflectedPlayerStop(command.Common.ObjectID, peerSession.playerPosition)
 		if stopErr != nil {
 			peerSession.basicSequenceSession().Restore(previousBasicSequence, basicSequenceRevision)
 			peerSession.restorePlayerMotion(previousPlayerMotion, playerMotionRevision)
 			r.registry.mutex.Unlock()
-			return nil, fmt.Errorf("titanBasicStop: %w", stopErr)
+			return nil, fmt.Errorf("areaBasicStop: %w", stopErr)
 		}
 		posePackets = append(posePackets, stopPacket)
 	}
