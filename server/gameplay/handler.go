@@ -2864,10 +2864,10 @@ func (r gameplayPendingRuntime) pollWorld(
 				return nil, fmt.Errorf("swiftPoll: %w", swiftErr)
 			}
 			rootHazardPackets = append(rootHazardPackets, swiftPackets...)
-			hasteErr := r.pollHasteFieldLocked(packet.Address.String(), &peerSession)
-			if hasteErr != nil {
+			passiveFieldErr := r.pollPassiveFieldsLocked(packet.Address.String(), &peerSession)
+			if passiveFieldErr != nil {
 				r.registry.mutex.Unlock()
-				return nil, fmt.Errorf("hasteFieldPoll: %w", hasteErr)
+				return nil, fmt.Errorf("passiveFieldPoll: %w", passiveFieldErr)
 			}
 		}
 		r.registry.sessions[packet.Address.String()] = peerSession
@@ -4606,7 +4606,7 @@ func stopGameplayPeerRuntime(
 		effectPool.ReleaseObject(peerSession.deployedObjectID)
 	}
 	peerSession.stopHardenedMantle()
-	peerSession.retireHasteFields()
+	peerSession.retirePassiveFields()
 	peerSession.stopCampaignPlasmaModifiers(modifierInstancePool)
 	peerSession.stopCampaignNPCModifiers(modifierInstancePool)
 	peerSession.stopCampaignNPCProjectiles()

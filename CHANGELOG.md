@@ -1,5 +1,10 @@
 # Changelog
 
+### 2026-11-22
+
+- #217 Restore Lumin's Charge Field recipient visuals, including its Overdrive effect, and retire them when recipients leave the aura.
+- #217 Use the correct attachment slot for SRS-42's Targeting Computer so its scanner effect can be removed without accumulating.
+
 ### 2026-11-19
 
 - #215 Remove the guessed Infinity hazard circle that dealt 10% maximum-health damage on walkable ground.
