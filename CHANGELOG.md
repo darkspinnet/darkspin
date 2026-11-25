@@ -1,5 +1,10 @@
 # Changelog
 
+### 2026-11-24
+
+- #218 Restore Wraith's Desecrated Visage aura on its caster and remove it on death or hero changes.
+- #218 Enable ambient elite spawning at the authored stage-dependent chances in default and existing campaign zone rules.
+
 ### 2026-11-22
 
 - #217 Restore Lumin's Charge Field recipient visuals, including its Overdrive effect, and retire them when recipients leave the aura.

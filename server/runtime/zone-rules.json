@@ -6,7 +6,7 @@
       "agents_per_section": 1,
       "roster_selection": "current_composition",
       "external_roster_weight_percent": 50,
-      "ambient_elite_chance_percent": 0,
+      "ambient_elite_chance_percent": 100,
       "owned_summon_health_scaling": "run_and_party",
       "fixture_health_scaling": "base"
     },
@@ -48,7 +48,7 @@
         "agents_per_section": 1,
         "roster_selection": "current_composition",
         "external_roster_weight_percent": 50,
-        "ambient_elite_chance_percent": 0,
+        "ambient_elite_chance_percent": 100,
         "owned_summon_health_scaling": "run_and_party",
         "fixture_health_scaling": "base"
       },
@@ -84,7 +84,7 @@
         "agents_per_section": 1,
         "roster_selection": "current_composition",
         "external_roster_weight_percent": 50,
-        "ambient_elite_chance_percent": 0,
+        "ambient_elite_chance_percent": 100,
         "owned_summon_health_scaling": "run_and_party",
         "fixture_health_scaling": "base"
       },
@@ -119,7 +119,7 @@
         "agents_per_section": 1,
         "roster_selection": "current_composition",
         "external_roster_weight_percent": 50,
-        "ambient_elite_chance_percent": 0,
+        "ambient_elite_chance_percent": 100,
         "owned_summon_health_scaling": "run_and_party",
         "fixture_health_scaling": "base"
       },

@@ -90,13 +90,15 @@ func (e campaignNamedBossTriggerStep) admit() error {
 		return fmt.Errorf("bossTriggerPlan: empty encounter")
 	}
 	if e.runtime.logger != nil {
+		leader := encounter.Actors[0]
 		e.runtime.logger.Printf(
-			"Campaign boss admission stage=planned game=%d level=%q marker_set=%q trigger=%d anchor=%d leader=%q actors=%d deferred=%t target=%d",
+			"Campaign boss admission stage=planned game=%d level=%q marker_set=%q trigger=%d anchor=%d leader=%q actors=%d deferred=%t target=%d spawn=(%.3f,%.3f,%.3f) maximum_health=%.3f base_health=%.3f npc_type=%d",
 			peerSession.binding.GameID, peerSession.binding.Level, e.publication.MarkerSetName,
 			e.publication.TriggerMarkerID, encounter.Publication.TriggerMarkerID,
 			encounter.Actors[0].NounName, len(encounter.Actors),
 			encounter.Actors[0].IsCaptain && len(encounter.Actors) > 1,
-			peerSession.deployedObjectID,
+			peerSession.deployedObjectID, leader.Position.X, leader.Position.Y, leader.Position.Z,
+			leader.NPCProfile.HitPoint, leader.NPCProfile.BaseHitPoint, leader.NPCProfile.NPCType,
 		)
 	}
 	livePlans := encounter.Actors

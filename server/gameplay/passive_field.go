@@ -13,7 +13,7 @@ type passiveFieldKey struct {
 	assetID  uint32
 }
 
-// Build 103 declares the recipient foot effects in the aura child modifiers.
+// Build 103 declares recipient foot effects and caster effects in its aura modifiers.
 // Server-projected bonuses retain their existing owner.
 func (e gameplayPendingRuntime) pollPassiveFieldsLocked(sessionKey string, member *gameplayPeerSession) error {
 	positions := make(map[uint32]game.Vec3)
@@ -49,6 +49,12 @@ func (e gameplayPendingRuntime) pollPassiveFieldsLocked(sessionKey string, membe
 				assetID = critEffectID
 				if source.isOverdriveActiveAt(e.now()) {
 					assetID = overdriveEffectID
+				}
+			case util.HashID("CrushingDread"):
+				// Build-103 chunk 944 adds the aura to its caster; nearby
+				// allies do not receive this enemy-facing debuff presentation.
+				if objectID == source.deployedObjectID {
+					assetID = util.HashID("shadow_dread_aura_rings_effect.ServerEventDef")
 				}
 			}
 			if assetID != 0 {
